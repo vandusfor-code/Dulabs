@@ -70,7 +70,7 @@ const products: Product[] = [
 
 export default function Products() {
   return (
-    <section id="productos" className="scroll-mt-20 py-28">
+    <section id="productos" className="cv-auto scroll-mt-20 py-28">
       <div className="mx-auto w-full max-w-[1440px] px-5 sm:px-8 lg:px-12">
         <Reveal className="mb-16 max-w-3xl">
           <p className="mb-4 text-xs font-medium uppercase tracking-[0.25em] text-lime">
@@ -83,8 +83,8 @@ export default function Products() {
 
         <div className="flex flex-col gap-8">
           {products.map((product, i) => (
-            <Reveal key={product.name} delay={i * 100}>
-              <article className="group grid gap-10 rounded-3xl border border-edge bg-card/60 p-8 transition-colors duration-300 hover:border-lime/25 sm:p-12 lg:grid-cols-[1.2fr_1fr]">
+            <Reveal key={product.name} variant={i % 2 === 0 ? "left" : "right"}>
+              <article className="group grid gap-10 rounded-3xl border border-edge bg-card/60 p-8 transition-[border-color,transform,box-shadow] duration-300 hover:-translate-y-1 hover:border-lime/25 hover:shadow-[0_20px_60px_-24px_rgba(198,255,61,0.12)] sm:p-12 lg:grid-cols-[1.2fr_1fr]">
                 <div>
                   <div className="mb-6 flex items-center gap-3">
                     <span className="rounded-full bg-lime/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-lime">

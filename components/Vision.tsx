@@ -4,7 +4,7 @@ export default function Vision() {
   return (
     <section
       id="nosotros"
-      className="scroll-mt-20 border-y border-edge/60 bg-ink-2/50 py-28"
+      className="cv-auto scroll-mt-20 border-y border-edge/60 bg-ink-2/50 py-28"
     >
       <div className="mx-auto w-full max-w-[1440px] px-5 sm:px-8 lg:px-12">
         <Reveal className="mx-auto max-w-4xl text-center">
@@ -12,7 +12,8 @@ export default function Vision() {
             Visión
           </p>
           <h2 className="text-3xl font-semibold tracking-tight text-white sm:text-5xl">
-            El futuro del software es conversacional.
+            El futuro del software es{" "}
+            <span className="text-shimmer">conversacional.</span>
           </h2>
           <p className="mt-8 text-lg leading-relaxed text-mist">
             Durante décadas aprendimos a usar software. Creemos que durante las

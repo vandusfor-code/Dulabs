@@ -6,7 +6,7 @@ export default function Technology() {
   return (
     <section
       id="tecnologia"
-      className="scroll-mt-20 border-y border-edge/60 bg-ink-2/50 py-24"
+      className="cv-auto scroll-mt-20 border-y border-edge/60 bg-ink-2/50 py-24"
     >
       <div className="mx-auto w-full max-w-[1440px] px-5 text-center sm:px-8 lg:px-12">
         <Reveal>
@@ -21,16 +21,19 @@ export default function Technology() {
             fiables, seguras y escalables.
           </p>
         </Reveal>
-        <Reveal delay={120}>
-          <div className="mt-12 flex flex-wrap items-center justify-center gap-x-12 gap-y-6">
-            {stack.map((name) => (
-              <span
-                key={name}
-                className="text-lg font-semibold tracking-tight text-mist/50 transition-colors duration-300 hover:text-mist"
-              >
-                {name}
-              </span>
-            ))}
+        <Reveal delay={120} variant="zoom">
+          <div className="marquee-mask mt-12">
+            <div className="marquee flex items-center gap-20">
+              {[...stack, ...stack].map((name, i) => (
+                <span
+                  key={i}
+                  aria-hidden={i >= stack.length}
+                  className="whitespace-nowrap text-xl font-semibold tracking-tight text-mist/50 transition-colors duration-300 hover:text-lime"
+                >
+                  {name}
+                </span>
+              ))}
+            </div>
           </div>
         </Reveal>
       </div>

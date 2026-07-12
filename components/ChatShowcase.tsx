@@ -42,16 +42,17 @@ const chats: Chat[] = [
   },
 ];
 
-function Bubble({ message }: { message: Message }) {
+function Bubble({ message, delay }: { message: Message; delay: number }) {
   const isUser = message.from === "user";
   return (
     <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
       <div
-        className={`max-w-[85%] rounded-2xl px-3.5 py-2.5 text-[13px] leading-relaxed ${
+        className={`bubble max-w-[85%] rounded-2xl px-3.5 py-2.5 text-[13px] leading-relaxed ${
           isUser
             ? "rounded-br-sm bg-lime/15 text-lime-soft"
             : "rounded-bl-sm border border-edge bg-ink-2 text-white/90"
         }`}
+        style={{ "--d": `${delay}s` } as React.CSSProperties}
       >
         <p>{message.text}</p>
         <p
@@ -69,10 +70,12 @@ function Bubble({ message }: { message: Message }) {
 export default function ChatShowcase() {
   return (
     <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 lg:gap-6">
-      {chats.map((chat) => (
+      {chats.map((chat, cardIndex) => (
         <div
           key={chat.product}
-          className="rounded-2xl border border-edge bg-card/80 p-5 backdrop-blur-sm transition-colors duration-300 hover:border-lime/25"
+          className={`chat-card float-slow flex flex-col rounded-2xl border border-edge bg-card/80 p-5 backdrop-blur-sm transition-[border-color,transform] duration-300 hover:border-lime/25 ${
+            cardIndex === 1 ? "[animation-delay:-3s]" : cardIndex === 2 ? "[animation-delay:-6s]" : ""
+          }`}
         >
           <div className="mb-4 flex items-center justify-between border-b border-edge pb-3">
             <div className="flex items-center gap-2.5">
@@ -82,7 +85,7 @@ export default function ChatShowcase() {
               <div>
                 <p className="text-sm font-semibold text-white">{chat.product}</p>
                 <p className="flex items-center gap-1.5 text-[11px] text-mist">
-                  <span className="h-1.5 w-1.5 rounded-full bg-lime" />
+                  <span className="typing-dot h-1.5 w-1.5 rounded-full bg-lime" />
                   en línea
                 </p>
               </div>
@@ -91,10 +94,18 @@ export default function ChatShowcase() {
               {chat.tag}
             </span>
           </div>
-          <div className="flex flex-col gap-2.5">
+          <div className="flex flex-1 flex-col gap-2.5">
             {chat.messages.map((message, i) => (
-              <Bubble key={i} message={message} />
+              <Bubble key={i} message={message} delay={0.2 + i * 0.45} />
             ))}
+          </div>
+          <div className="mt-4 flex items-center gap-2 border-t border-edge pt-3 text-[11px] text-mist/70">
+            <span className="flex gap-1">
+              <span className="typing-dot h-1 w-1 rounded-full bg-mist" />
+              <span className="typing-dot h-1 w-1 rounded-full bg-mist" />
+              <span className="typing-dot h-1 w-1 rounded-full bg-mist" />
+            </span>
+            {chat.product} está escribiendo…
           </div>
         </div>
       ))}

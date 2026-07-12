@@ -24,6 +24,7 @@ body {
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  -webkit-tap-highlight-color: transparent;
 }
 
 ::selection {
@@ -31,33 +32,263 @@ body {
   color: var(--color-ink);
 }
 
-/* Scroll reveal */
+/* ---------- Keyframes (transform/opacity only: GPU-composited) ---------- */
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(26px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes bubble-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes dot-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.75);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes float-y {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+@keyframes marquee {
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+@keyframes aurora-a {
+  0%,
+  100% {
+    transform: translate(-8%, -4%) scale(1);
+  }
+  50% {
+    transform: translate(10%, 8%) scale(1.15);
+  }
+}
+
+@keyframes aurora-b {
+  0%,
+  100% {
+    transform: translate(8%, 6%) scale(1.1);
+  }
+  50% {
+    transform: translate(-8%, -6%) scale(0.92);
+  }
+}
+
+@keyframes shine {
+  from {
+    transform: translateX(-160%) skewX(-18deg);
+  }
+  to {
+    transform: translateX(320%) skewX(-18deg);
+  }
+}
+
+@keyframes text-pan {
+  to {
+    background-position: -200% center;
+  }
+}
+
+/* ---------- Entrance on page load (hero) ---------- */
+
+.rise {
+  opacity: 0;
+  animation: rise 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+.rise-d1 {
+  animation-delay: 0.05s;
+}
+.rise-d2 {
+  animation-delay: 0.15s;
+}
+.rise-d3 {
+  animation-delay: 0.28s;
+}
+.rise-d4 {
+  animation-delay: 0.42s;
+}
+
+/* ---------- Scroll reveal ---------- */
+
 .reveal {
   opacity: 0;
   transform: translateY(28px);
   transition:
     opacity 0.8s cubic-bezier(0.16, 1, 0.3, 1),
     transform 0.8s cubic-bezier(0.16, 1, 0.3, 1);
-  will-change: opacity, transform;
 }
-
+.reveal[data-v="left"] {
+  transform: translateX(-34px);
+}
+.reveal[data-v="right"] {
+  transform: translateX(34px);
+}
+.reveal[data-v="zoom"] {
+  transform: scale(0.95);
+}
 .reveal-visible {
   opacity: 1;
   transform: none;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  html {
-    scroll-behavior: auto;
-  }
-  .reveal {
-    opacity: 1;
-    transform: none;
-    transition: none;
+/* ---------- Chat showcase ---------- */
+
+.chat-card .bubble {
+  opacity: 0;
+}
+.reveal-visible .chat-card .bubble {
+  animation: bubble-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation-delay: var(--d, 0s);
+}
+.typing-dot {
+  animation: dot-pulse 1.3s ease-in-out infinite;
+}
+.typing-dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.typing-dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@media (min-width: 768px) and (prefers-reduced-motion: no-preference) {
+  .float-slow {
+    animation: float-y 9s ease-in-out infinite;
   }
 }
 
-/* Subtle radial glow used behind hero */
+/* ---------- Tech marquee ---------- */
+
+.marquee-mask {
+  overflow: hidden;
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    black 12%,
+    black 88%,
+    transparent
+  );
+}
+.marquee {
+  width: max-content;
+  animation: marquee 30s linear infinite;
+}
+.marquee:hover {
+  animation-play-state: paused;
+}
+
+/* ---------- Button shine sweep ---------- */
+
+.btn-shine {
+  position: relative;
+  overflow: hidden;
+}
+.btn-shine::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 38%;
+  background: linear-gradient(
+    105deg,
+    transparent,
+    rgba(255, 255, 255, 0.4),
+    transparent
+  );
+  transform: translateX(-160%) skewX(-18deg);
+  pointer-events: none;
+}
+.btn-shine:hover::after {
+  animation: shine 0.9s ease;
+}
+
+/* ---------- Shimmer text ---------- */
+
+.text-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--color-lime),
+    var(--color-lime-soft),
+    #ffffff,
+    var(--color-lime)
+  );
+  background-size: 250% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: text-pan 7s linear infinite;
+}
+
+/* ---------- Aurora background (hero) ---------- */
+
+.aurora {
+  position: absolute;
+  border-radius: 9999px;
+  pointer-events: none;
+  filter: blur(90px);
+  will-change: transform;
+}
+.aurora-a {
+  width: 560px;
+  height: 560px;
+  left: -10%;
+  top: -22%;
+  opacity: 0.14;
+  background: radial-gradient(circle, var(--color-lime), transparent 65%);
+  animation: aurora-a 24s ease-in-out infinite;
+}
+.aurora-b {
+  width: 460px;
+  height: 460px;
+  right: -8%;
+  top: 0%;
+  opacity: 0.09;
+  background: radial-gradient(circle, var(--color-lime-soft), transparent 65%);
+  animation: aurora-b 28s ease-in-out infinite;
+}
+@media (max-width: 767px) {
+  .aurora {
+    display: none;
+  }
+}
+
+/* ---------- Rendering performance ---------- */
+
+.cv-auto {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 720px;
+}
+
 .hero-glow {
   background: radial-gradient(
     ellipse 60% 45% at 50% 0%,
@@ -66,9 +297,32 @@ body {
   );
 }
 
-/* Faint dot grid texture */
 .dot-grid {
   background-image: radial-gradient(rgba(198, 255, 61, 0.055) 1px, transparent 1px);
   background-size: 28px 28px;
   mask-image: radial-gradient(ellipse 70% 60% at 50% 0%, black 30%, transparent 75%);
+}
+
+/* ---------- Reduced motion: everything settles instantly ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  .rise,
+  .reveal,
+  .chat-card .bubble,
+  .reveal-visible .chat-card .bubble {
+    opacity: 1;
+    transform: none;
+    animation: none;
+    transition: none;
+  }
+  .marquee,
+  .aurora,
+  .typing-dot,
+  .text-shimmer,
+  .float-slow {
+    animation: none;
+  }
 }
