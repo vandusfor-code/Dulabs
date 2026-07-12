@@ -79,7 +79,7 @@ export default function Footer() {
             <p className="mt-4 text-sm leading-relaxed text-mist">
               Duvan Andres Ramos Padilla
               <br />
-              CR 36 # 47 - 17, Brr. Santa Elena
+              BRR SANTA ELENA V CR 36 46 17
               <br />
               Montería, Córdoba 230001
               <br />
