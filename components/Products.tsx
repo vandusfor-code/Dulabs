@@ -8,6 +8,8 @@ type Product = {
   features: string[];
   footnote?: string;
   cta: string;
+  href: string;
+  external?: boolean;
 };
 
 const products: Product[] = [
@@ -26,6 +28,8 @@ const products: Product[] = [
       "Bienestar personal",
     ],
     cta: "Conocer Du Life",
+    href: "https://www.dur.life/",
+    external: true,
   },
   {
     name: "Du Academy",
@@ -42,6 +46,7 @@ const products: Product[] = [
       "Conocimiento organizacional",
     ],
     cta: "Conocer Du Academy",
+    href: "#contacto",
   },
   {
     name: "Du IA Business",
@@ -59,6 +64,7 @@ const products: Product[] = [
     footnote:
       "Compatible con WhatsApp Business, Cloud API, coexistencia, CRM, ERP y Google Workspace.",
     cta: "Conocer Du IA Business",
+    href: "#contacto",
   },
 ];
 
@@ -100,7 +106,10 @@ export default function Products() {
                     </p>
                   )}
                   <a
-                    href="#contacto"
+                    href={product.href}
+                    {...(product.external
+                      ? { target: "_blank", rel: "noopener noreferrer" }
+                      : {})}
                     className="mt-8 inline-flex items-center gap-2 text-sm font-semibold text-lime transition-colors duration-200 hover:text-lime-hover"
                   >
                     {product.cta}

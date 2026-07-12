@@ -2,7 +2,7 @@ const columns = [
   {
     title: "Productos",
     links: [
-      { label: "Du Life", href: "#productos" },
+      { label: "Du Life", href: "https://www.dur.life/" },
       { label: "Du Academy", href: "#productos" },
       { label: "Du IA Business", href: "#productos" },
     ],
@@ -57,6 +57,9 @@ export default function Footer() {
                   <li key={link.label}>
                     <a
                       href={link.href}
+                      {...(link.href.startsWith("http")
+                        ? { target: "_blank", rel: "noopener noreferrer" }
+                        : {})}
                       className="text-sm text-mist transition-colors duration-200 hover:text-white"
                     >
                       {link.label}
