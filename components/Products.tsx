@@ -65,8 +65,8 @@ const products: Product[] = [
 export default function Products() {
   return (
     <section id="productos" className="scroll-mt-20 py-28">
-      <div className="mx-auto max-w-6xl px-6">
-        <Reveal className="mb-16 max-w-2xl">
+      <div className="mx-auto w-full max-w-[1440px] px-5 sm:px-8 lg:px-12">
+        <Reveal className="mb-16 max-w-3xl">
           <p className="mb-4 text-xs font-medium uppercase tracking-[0.25em] text-lime">
             Productos
           </p>

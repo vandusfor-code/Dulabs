@@ -11,7 +11,7 @@ const pillars = [
 export default function Trust() {
   return (
     <section className="py-20">
-      <div className="mx-auto max-w-6xl px-6">
+      <div className="mx-auto w-full max-w-[1440px] px-5 sm:px-8 lg:px-12">
         <Reveal>
           <div className="flex flex-wrap items-center justify-center gap-x-10 gap-y-5 rounded-2xl border border-edge bg-card/40 px-8 py-8">
             {pillars.map((pillar) => (

@@ -68,7 +68,7 @@ function Bubble({ message }: { message: Message }) {
 
 export default function ChatShowcase() {
   return (
-    <div className="grid gap-5 md:grid-cols-3">
+    <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 lg:gap-6">
       {chats.map((chat) => (
         <div
           key={chat.product}

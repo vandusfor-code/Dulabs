@@ -8,7 +8,7 @@ export default function Technology() {
       id="tecnologia"
       className="scroll-mt-20 border-y border-edge/60 bg-ink-2/50 py-24"
     >
-      <div className="mx-auto max-w-6xl px-6 text-center">
+      <div className="mx-auto w-full max-w-[1440px] px-5 text-center sm:px-8 lg:px-12">
         <Reveal>
           <p className="mb-4 text-xs font-medium uppercase tracking-[0.25em] text-lime">
             Tecnología
