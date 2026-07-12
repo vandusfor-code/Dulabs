@@ -1,14 +1,29 @@
+import Header from "@/components/Header";
+import Hero from "@/components/Hero";
+import Philosophy from "@/components/Philosophy";
+import Products from "@/components/Products";
+import Technology from "@/components/Technology";
+import Differential from "@/components/Differential";
+import Vision from "@/components/Vision";
+import Trust from "@/components/Trust";
+import FinalCTA from "@/components/FinalCTA";
+import Footer from "@/components/Footer";
+
 export default function Home() {
   return (
-    <main className="flex flex-1 items-center justify-center px-6 bg-zinc-50 font-sans dark:bg-black">
-      <section className="text-center">
-        <h1 className="text-6xl font-bold tracking-tight text-black sm:text-8xl dark:text-zinc-50">
-          Dulabs
-        </h1>
-        <p className="mt-4 text-lg text-zinc-600 dark:text-zinc-400">
-          Coming soon
-        </p>
-      </section>
-    </main>
+    <>
+      <Header />
+      <main>
+        <Hero />
+        <Philosophy />
+        <Products />
+        <Technology />
+        <Differential />
+        <Vision />
+        <Trust />
+        <FinalCTA />
+      </main>
+      <Footer />
+    </>
   );
 }

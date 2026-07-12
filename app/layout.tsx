@@ -13,8 +13,19 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Dulabs",
-  description: "Dulabs landing page",
+  title: "Du Labs — Tecnología conversacional para personas y empresas",
+  description:
+    "Creamos productos y soluciones que transforman WhatsApp en asistentes inteligentes capaces de organizar vidas, formar equipos y automatizar empresas.",
+  metadataBase: new URL("https://dulabs.co"),
+  openGraph: {
+    title: "Du Labs — Tecnología conversacional",
+    description:
+      "Inteligencia artificial que vive donde ya hablas todos los días.",
+    url: "https://dulabs.co",
+    siteName: "Du Labs",
+    locale: "es_CO",
+    type: "website",
+  },
 };
 
 export default function RootLayout({
@@ -24,10 +35,12 @@ export default function RootLayout({
 }>) {
   return (
     <html
-      lang="en"
+      lang="es"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col bg-ink text-white">
+        {children}
+      </body>
     </html>
   );
 }
