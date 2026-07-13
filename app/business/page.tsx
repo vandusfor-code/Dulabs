@@ -21,19 +21,19 @@ const pilares: Pillar[] = [
     numero: "01",
     titulo: "Cero Bloqueos — API Oficial de Meta",
     descripcion:
-      "Al conectarte mediante el flujo oficial de Meta (Embedded Signup), tu negocio opera bajo las reglas legales de WhatsApp. Sin trucos raros ni extensiones de navegador que arriesguen tu línea. Tu número queda blindado contra baneos y suspensiones, garantizando estabilidad total para tu operación comercial.",
+      "Al conectarte mediante el flujo oficial de Meta (Embedded Signup), tu negocio opera bajo las reglas legales de WhatsApp. Sin trucos raros ni extensiones de navegador que arriesguen tu línea. Tu número queda blindado contra suspensiones, garantizando estabilidad total.",
   },
   {
     numero: "02",
     titulo: "Envío de Mensajes Masivos Autorizados",
     descripcion:
-      "Llega a cientos de clientes de un solo golpe de forma segura. Utiliza las plantillas oficiales aprobadas por Meta para enviar campañas de marketing, promociones o recordatorios masivos automatizados sin miedo a ser marcado como spam.",
+      "Llega a cientos de clientes de un solo golpe de forma segura. Utiliza las plantillas oficiales aprobadas por Meta para enviar campañas de marketing, promociones o recordatorios masivos sin miedo a ser marcado como spam.",
   },
   {
     numero: "03",
     titulo: "Inteligencia Artificial en Modo Coexistencia",
     descripcion:
-      "Entrena a la IA (Claude) desde tu dashboard con tus precios, servicios y horarios para que atienda en la nube 24/7. Disfruta de lo mejor de dos mundos: el bot responde al instante con contexto perfecto, pero tú sigues viendo los chats y puedes intervenir desde tu aplicación móvil de WhatsApp cuando quieras.",
+      "Entrena a la IA desde tu dashboard con tus precios y horarios. Disfruta de lo mejor de dos mundos: el bot atiende en la nube 24/7, pero tú sigues viendo los chats y puedes responder desde tu aplicación móvil de WhatsApp normal cuando quieras.",
   },
 ];
 

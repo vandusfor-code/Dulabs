@@ -20,6 +20,17 @@ export async function POST(request: NextRequest) {
     return Response.json({ success: false, error: "Falta 'code'" }, { status: 400 });
   }
 
+  const authHeader = request.headers.get("authorization") ?? "";
+  const sessionToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
+  if (!sessionToken) {
+    return Response.json({ success: false, error: "Falta la sesión del usuario" }, { status: 401 });
+  }
+  const { data: userData, error: userError } = await supabaseAdmin().auth.getUser(sessionToken);
+  if (userError || !userData.user) {
+    return Response.json({ success: false, error: "Sesión inválida" }, { status: 401 });
+  }
+  const idTenant = userData.user.id;
+
   const appId = process.env.NEXT_PUBLIC_META_APP_ID;
   const appSecret = process.env.META_APP_SECRET;
   if (!appId || !appSecret) {
@@ -88,6 +99,7 @@ export async function POST(request: NextRequest) {
       .from("dulabs_clientes_config")
       .upsert(
         {
+          id_tenant: idTenant,
           phone_number_id: phone.id,
           whatsapp_business_account_id: wabaId,
           meta_permanent_token: tenantToken,
