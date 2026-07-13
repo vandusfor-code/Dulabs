@@ -20,6 +20,7 @@ const columns = [
     links: [
       { label: "Privacidad", href: "/privacidad" },
       { label: "Términos", href: "/terminos" },
+      { label: "Eliminación de datos", href: "/eliminacion-datos" },
     ],
   },
 ];
