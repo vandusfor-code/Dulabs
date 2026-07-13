@@ -1,3 +1,4 @@
+import Link from "next/link";
 import Reveal from "./Reveal";
 import ChatShowcase from "./ChatShowcase";
 
@@ -18,17 +19,19 @@ export default function Hero() {
             hablas <span className="text-shimmer">todos los días.</span>
           </h1>
           <p className="rise rise-d3 mx-auto mt-6 max-w-3xl text-lg leading-relaxed text-mist sm:text-xl">
-            Creamos productos y soluciones que transforman WhatsApp en
-            asistentes inteligentes capaces de organizar vidas, formar equipos
-            y automatizar empresas.
+            Automatiza tu WhatsApp Business con Inteligencia Artificial
+            utilizando la API Oficial de Meta. Olvídate de los bloqueos y
+            baneos de números, envía mensajes masivos autorizados a tus
+            clientes y mantén el control total respondiendo en paralelo desde
+            tu celular con nuestro Modo Coexistencia.
           </p>
           <div className="rise rise-d4 mt-10 flex flex-wrap items-center justify-center gap-4">
-            <a
-              href="#productos"
+            <Link
+              href="/business"
               className="btn-shine rounded-lg bg-lime px-6 py-3 text-sm font-semibold text-ink transition-[background-color,transform] duration-200 hover:-translate-y-0.5 hover:bg-lime-hover active:scale-[0.97]"
             >
-              Ver productos
-            </a>
+              Activar mi API Oficial →
+            </Link>
             <a
               href="#contacto"
               className="rounded-lg border border-edge px-6 py-3 text-sm text-white transition-[border-color,transform] duration-200 hover:-translate-y-0.5 hover:border-mist/40"
