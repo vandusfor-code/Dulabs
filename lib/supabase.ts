@@ -2,14 +2,25 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 export type ClienteConfig = {
   id: string;
+  id_tenant: string;
   nombre_negocio: string;
-  waba_id: string;
+  whatsapp_business_account_id: string;
   phone_number_id: string;
   telefono_negocio: string;
-  prompt_ia: string | null;
+  prompt_sistema: string | null;
   api_key_ia: string | null;
+  meta_permanent_token: string | null;
   estado_pausa: boolean;
   pausado_hasta: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PausaChat = {
+  id: number;
+  phone_number_id: string;
+  telefono_cliente: string;
+  pausado_hasta: string;
   created_at: string;
 };
 

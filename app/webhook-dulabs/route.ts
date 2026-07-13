@@ -10,6 +10,7 @@ const GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? "v23.0";
 
 type MetaMessage = {
   from: string;
+  to?: string;
   id: string;
   type: string;
   text?: { body: string };
@@ -20,7 +21,7 @@ type MetaChangeValue = {
   metadata?: { display_phone_number?: string; phone_number_id?: string };
   messages?: MetaMessage[];
   statuses?: unknown[];
-  smb_message_echoes?: unknown[];
+  smb_message_echoes?: MetaMessage[];
 };
 
 // --- Verificación inicial del webhook (Hub Challenge de Meta) ---------------
@@ -92,17 +93,25 @@ async function procesarCambio(phoneNumberId: string, value: MetaChangeValue) {
 
   const displayPhone = soloDigitos(value.metadata?.display_phone_number ?? "");
 
-  // Eco de coexistencia: el dueño respondió desde el teclado de su celular.
+  // Ecos de coexistencia: el dueño respondió desde el teclado de su celular.
   // (Los mensajes enviados por nuestra propia API llegan como "statuses",
   // nunca como ecos, así que esto solo detecta intervención humana real.)
-  const hayEco =
-    (value.smb_message_echoes?.length ?? 0) > 0 ||
-    (value.messages ?? []).some((m) => soloDigitos(m.from) === displayPhone);
+  // La pausa es POR CHAT: necesitamos el número del cliente final ("to") al
+  // que le respondió el dueño, no solo el hecho de que hubo un eco.
+  const ecos = [
+    ...(value.smb_message_echoes ?? []),
+    ...(value.messages ?? []).filter((m) => soloDigitos(m.from) === displayPhone),
+  ];
 
-  if (hayEco) {
-    await activarPausaHumana(cliente);
-    return;
+  for (const eco of ecos) {
+    const telefonoCliente = soloDigitos(eco.to ?? "");
+    if (telefonoCliente) {
+      await activarPausaHumana(phoneNumberId, telefonoCliente);
+    } else {
+      console.warn("[webhook-dulabs] eco de coexistencia sin destinatario ('to'):", eco);
+    }
   }
+  if (ecos.length > 0) return;
 
   // Mensajes de clientes finales
   for (const mensaje of value.messages ?? []) {
@@ -111,41 +120,44 @@ async function procesarCambio(phoneNumberId: string, value: MetaChangeValue) {
   }
 }
 
-async function activarPausaHumana(cliente: ClienteConfig) {
+async function activarPausaHumana(phoneNumberId: string, telefonoCliente: string) {
   const supabase = supabaseAdmin();
   const pausadoHasta = new Date(Date.now() + PAUSA_HUMANA_MS).toISOString();
-  const { error } = await supabase
-    .from("dulabs_clientes_config")
-    .update({ estado_pausa: true, pausado_hasta: pausadoHasta })
-    .eq("id", cliente.id);
+  const { error } = await supabase.from("dulabs_pausas_chat").upsert(
+    { phone_number_id: phoneNumberId, telefono_cliente: telefonoCliente, pausado_hasta: pausadoHasta },
+    { onConflict: "phone_number_id,telefono_cliente" }
+  );
   if (error) {
     console.error("[webhook-dulabs] error activando pausa:", error.message);
   } else {
     console.log(
-      `[webhook-dulabs] pausa humana activada para "${cliente.nombre_negocio}" hasta ${pausadoHasta}`
+      `[webhook-dulabs] pausa humana activada para ${phoneNumberId} <-> ${telefonoCliente} hasta ${pausadoHasta}`
     );
   }
 }
 
 async function atenderMensaje(cliente: ClienteConfig, mensaje: MetaMessage) {
-  // Control de pausa: si el humano intervino y la ventana sigue vigente, silencio.
-  if (cliente.estado_pausa && cliente.pausado_hasta) {
-    if (new Date(cliente.pausado_hasta).getTime() > Date.now()) {
-      console.log(
-        `[webhook-dulabs] IA en silencio para "${cliente.nombre_negocio}" (pausa vigente)`
-      );
-      return;
-    }
-    // La ventana expiró: reactivar la IA.
-    await supabaseAdmin()
-      .from("dulabs_clientes_config")
-      .update({ estado_pausa: false, pausado_hasta: null })
-      .eq("id", cliente.id);
+  // Control de pausa por chat: si el humano intervino en ESTA conversación y
+  // la ventana sigue vigente, la IA guarda silencio (filas vencidas se ignoran).
+  const { data: pausa, error } = await supabaseAdmin()
+    .from("dulabs_pausas_chat")
+    .select("pausado_hasta")
+    .eq("phone_number_id", cliente.phone_number_id)
+    .eq("telefono_cliente", soloDigitos(mensaje.from))
+    .maybeSingle();
+  if (error) {
+    console.error("[webhook-dulabs] error consultando pausa:", error.message);
+  }
+  if (pausa && new Date(pausa.pausado_hasta).getTime() > Date.now()) {
+    console.log(
+      `[webhook-dulabs] IA en silencio para "${cliente.nombre_negocio}" <-> ${mensaje.from} (pausa vigente)`
+    );
+    return;
   }
 
   const respuesta = await generarRespuestaIA(cliente, mensaje.text!.body);
   if (respuesta) {
-    await enviarWhatsApp(cliente.phone_number_id, mensaje.from, respuesta);
+    await enviarWhatsApp(cliente, mensaje.from, respuesta);
   }
 }
 
@@ -163,7 +175,7 @@ async function generarRespuestaIA(
 
   const anthropic = new Anthropic({ apiKey });
   const system =
-    cliente.prompt_ia ??
+    cliente.prompt_sistema ??
     `Eres el asistente de WhatsApp del negocio "${cliente.nombre_negocio}". Responde de forma breve, amable y útil.`;
 
   try {
@@ -195,15 +207,17 @@ async function generarRespuestaIA(
 
 // --- Envío por la API de WhatsApp de Meta --------------------------------------
 
-async function enviarWhatsApp(phoneNumberId: string, para: string, texto: string) {
-  const token = process.env.META_ACCESS_TOKEN;
+async function enviarWhatsApp(cliente: ClienteConfig, para: string, texto: string) {
+  // Cada tenant usa su propio token permanente (Embedded Signup); el token
+  // global de plataforma queda como respaldo para números registrados a mano.
+  const token = cliente.meta_permanent_token || process.env.META_ACCESS_TOKEN;
   if (!token) {
-    console.error("[webhook-dulabs] falta META_ACCESS_TOKEN");
+    console.error("[webhook-dulabs] sin token de Meta para", cliente.nombre_negocio);
     return;
   }
 
   const res = await fetch(
-    `https://graph.facebook.com/${GRAPH_VERSION}/${phoneNumberId}/messages`,
+    `https://graph.facebook.com/${GRAPH_VERSION}/${cliente.phone_number_id}/messages`,
     {
       method: "POST",
       headers: {
