@@ -46,6 +46,9 @@ type Negocio = {
   whatsapp_business_account_id: string;
   conectado: boolean;
   updated_at: string;
+  plan: string;
+  mensajes_usados: number;
+  mensajes_limite: number;
 };
 
 const supabaseConfigFaltante =
@@ -323,6 +326,26 @@ export default function ConexionPage() {
                     </dd>
                   </div>
                 </dl>
+
+                <div className="mt-5 border-t border-edge/60 pt-5">
+                  <div className="flex items-center justify-between gap-3 text-sm">
+                    <span className="rounded-full bg-lime/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.15em] text-lime">
+                      {n.plan}
+                    </span>
+                    <span className="text-mist">
+                      {n.mensajes_usados.toLocaleString("es-CO")} /{" "}
+                      {n.mensajes_limite.toLocaleString("es-CO")} mensajes este mes
+                    </span>
+                  </div>
+                  <div className="mt-2.5 h-1.5 w-full overflow-hidden rounded-full bg-ink-2">
+                    <div
+                      className="h-full rounded-full bg-lime"
+                      style={{
+                        width: `${Math.min(100, (n.mensajes_usados / n.mensajes_limite) * 100)}%`,
+                      }}
+                    />
+                  </div>
+                </div>
               </div>
             ))}
           </div>

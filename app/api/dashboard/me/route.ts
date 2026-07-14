@@ -30,6 +30,8 @@ export async function GET(request: NextRequest) {
     return Response.json({ error: error.message }, { status: 500 });
   }
 
+  // TODO: plan y consumo son placeholder mientras conectamos facturación y
+  // conteo real de mensajes por tenant. No representan datos reales todavía.
   const negocios = (data ?? []).map((n) => ({
     nombre_negocio: n.nombre_negocio,
     telefono_negocio: n.telefono_negocio,
@@ -37,6 +39,9 @@ export async function GET(request: NextRequest) {
     whatsapp_business_account_id: n.whatsapp_business_account_id,
     conectado: Boolean(n.meta_permanent_token || process.env.META_ACCESS_TOKEN),
     updated_at: n.updated_at,
+    plan: "Plan Pro",
+    mensajes_usados: 128,
+    mensajes_limite: 5000,
   }));
 
   return Response.json({ email: userData.user.email, negocios });
