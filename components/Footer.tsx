@@ -75,10 +75,20 @@ export default function Footer() {
         <div className="mt-14 grid gap-10 border-t border-edge/60 pt-10 md:grid-cols-2">
           <div>
             <h3 className="text-sm font-semibold text-white">
-              Responsable del tratamiento de datos y propietario del servicio
+              Información legal
             </h3>
             <p className="mt-4 text-sm leading-relaxed text-mist">
-              Duvan Andres Ramos Padilla
+              <span className="text-mist/70">Titular del servicio:</span>
+              <br />
+              RAMOS PADILLA DUVAN ANDRES
+            </p>
+            <p className="mt-4 text-sm leading-relaxed text-mist">
+              <span className="text-mist/70">Nombre comercial:</span>
+              <br />
+              DULABS
+            </p>
+            <p className="mt-4 text-sm leading-relaxed text-mist">
+              <span className="text-mist/70">Dirección principal:</span>
               <br />
               BRR SANTA ELENA V CR 36 46 17
               <br />
@@ -86,9 +96,19 @@ export default function Footer() {
               <br />
               Colombia
             </p>
+            <p className="mt-4 text-sm leading-relaxed text-mist">
+              <span className="text-mist/70">Correo electrónico:</span>
+              <br />
+              contacto@dulabs.co
+            </p>
+            <p className="mt-4 text-sm leading-relaxed text-mist">
+              <span className="text-mist/70">Sitio web:</span>
+              <br />
+              https://www.dulabs.co
+            </p>
             <p className="mt-4 text-sm leading-relaxed text-mist/80">
-              Du Labs es una marca y plataforma digital operada por Duvan
-              Andres Ramos Padilla.
+              Du Labs es una marca comercial y plataforma digital operada por
+              RAMOS PADILLA DUVAN ANDRES.
             </p>
           </div>
           <div className="md:justify-self-end">
