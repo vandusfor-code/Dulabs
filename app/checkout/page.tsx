@@ -95,9 +95,11 @@ export default function CheckoutPage() {
         });
         const tokenJson = await tokenRes.json();
         if (!tokenRes.ok || !tokenJson.data?.id) {
-          throw new Error(
-            tokenJson.error?.reason ?? "No se pudo validar la tarjeta con Wompi."
-          );
+          const detalle =
+            tokenJson.error?.reason ??
+            (tokenJson.error?.messages ? JSON.stringify(tokenJson.error.messages) : null) ??
+            JSON.stringify(tokenJson);
+          throw new Error(`Wompi (tokens/cards) respondió ${tokenRes.status}: ${detalle}`);
         }
 
         // 3. Nuestro backend crea la fuente de pago recurrente y cobra el
