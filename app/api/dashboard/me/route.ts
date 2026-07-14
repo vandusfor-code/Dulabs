@@ -62,5 +62,11 @@ export async function GET(request: NextRequest) {
     };
   });
 
-  return Response.json({ email: userData.user.email, negocios });
+  const { data: suscripcion } = await supabase
+    .from("dulabs_suscripciones")
+    .select("plan, precio_cop, estado, fecha_proximo_cobro")
+    .eq("id_tenant", userData.user.id)
+    .maybeSingle();
+
+  return Response.json({ email: userData.user.email, negocios, suscripcion });
 }

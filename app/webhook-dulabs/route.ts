@@ -137,6 +137,8 @@ async function activarPausaHumana(phoneNumberId: string, telefonoCliente: string
 }
 
 async function atenderMensaje(cliente: ClienteConfig, mensaje: MetaMessage) {
+  await registrarMensaje(cliente.phone_number_id, soloDigitos(mensaje.from), "entrante", mensaje.text!.body);
+
   // Control de pausa por chat: si el humano intervino en ESTA conversación y
   // la ventana sigue vigente, la IA guarda silencio (filas vencidas se ignoran).
   const { data: pausa, error } = await supabaseAdmin()
@@ -242,6 +244,26 @@ async function enviarWhatsApp(cliente: ClienteConfig, para: string, texto: strin
   }
 
   await incrementarUsoMensajes(cliente);
+  await registrarMensaje(cliente.phone_number_id, soloDigitos(para), "saliente", texto);
+}
+
+// --- Historial de mensajes (para la vista de actividad reciente) --------------
+
+async function registrarMensaje(
+  phoneNumberId: string,
+  telefonoCliente: string,
+  direccion: "entrante" | "saliente",
+  contenido: string
+) {
+  const { error } = await supabaseAdmin().from("dulabs_mensajes_log").insert({
+    phone_number_id: phoneNumberId,
+    telefono_cliente: telefonoCliente,
+    direccion,
+    contenido,
+  });
+  if (error) {
+    console.error("[webhook-dulabs] error registrando mensaje en el historial:", error.message);
+  }
 }
 
 // --- Conteo de uso mensual (para el panel de plan/consumo) --------------------
