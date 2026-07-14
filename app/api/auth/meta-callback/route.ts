@@ -8,7 +8,12 @@ const GRAPH = `https://graph.facebook.com/${process.env.META_GRAPH_VERSION ?? "v
 type GraphError = { error?: { message?: string; code?: number } };
 
 export async function POST(request: NextRequest) {
-  let body: { code?: string; waba_id?: string; phone_number_id?: string };
+  let body: {
+    code?: string;
+    waba_id?: string;
+    phone_number_id?: string;
+    plan?: string | null;
+  };
   try {
     body = await request.json();
   } catch {
@@ -106,6 +111,9 @@ export async function POST(request: NextRequest) {
           nombre_negocio: nombreNegocio,
           telefono_negocio: phone.display_phone_number.replace(/\D/g, ""),
           updated_at: new Date().toISOString(),
+          // Solo se sobreescribe si el front mandó un plan elegido en esta
+          // conexión; si no, el upsert no toca la columna (conserva el actual).
+          ...(body.plan ? { plan: body.plan } : {}),
         },
         { onConflict: "phone_number_id" }
       );

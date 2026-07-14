@@ -238,6 +238,23 @@ async function enviarWhatsApp(cliente: ClienteConfig, para: string, texto: strin
       `[webhook-dulabs] Meta respondió ${res.status}:`,
       await res.text()
     );
+    return;
+  }
+
+  await incrementarUsoMensajes(cliente);
+}
+
+// --- Conteo de uso mensual (para el panel de plan/consumo) --------------------
+
+async function incrementarUsoMensajes(cliente: ClienteConfig) {
+  const mesHoy = new Date().toISOString().slice(0, 7); // "YYYY-MM"
+  const nuevoUsados = cliente.mes_actual === mesHoy ? cliente.mensajes_usados_mes + 1 : 1;
+  const { error } = await supabaseAdmin()
+    .from("dulabs_clientes_config")
+    .update({ mensajes_usados_mes: nuevoUsados, mes_actual: mesHoy })
+    .eq("id", cliente.id);
+  if (error) {
+    console.error("[webhook-dulabs] error incrementando uso de mensajes:", error.message);
   }
 }
 

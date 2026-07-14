@@ -3,6 +3,7 @@ import Link from "next/link";
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
 import Reveal from "@/components/Reveal";
+import PlanButton from "@/components/PlanButton";
 
 export const metadata: Metadata = {
   title: "Du IA Business — API Oficial de WhatsApp con IA | Du Labs",
@@ -194,16 +195,14 @@ export default function BusinessPage() {
                         </li>
                       ))}
                     </ul>
-                    <Link
-                      href="/dashboard/conexion"
+                    <PlanButton
+                      plan={plan.nombre}
                       className={`mt-10 inline-flex items-center justify-center rounded-lg px-6 py-3 text-sm font-semibold transition-[background-color,transform] duration-200 hover:-translate-y-0.5 active:scale-[0.97] ${
                         plan.destacado
                           ? "btn-shine bg-lime text-ink hover:bg-lime-hover"
                           : "border border-edge text-white hover:border-mist/40"
                       }`}
-                    >
-                      Elegir {plan.nombre}
-                    </Link>
+                    />
                   </article>
                 </Reveal>
               ))}

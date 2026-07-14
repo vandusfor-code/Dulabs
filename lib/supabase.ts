@@ -12,6 +12,9 @@ export type ClienteConfig = {
   meta_permanent_token: string | null;
   estado_pausa: boolean;
   pausado_hasta: string | null;
+  plan: string | null;
+  mensajes_usados_mes: number;
+  mes_actual: string;
   created_at: string;
   updated_at: string;
 };

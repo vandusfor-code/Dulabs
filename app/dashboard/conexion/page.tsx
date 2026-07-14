@@ -48,11 +48,14 @@ type Negocio = {
   updated_at: string;
   plan: string;
   mensajes_usados: number;
-  mensajes_limite: number;
+  mensajes_limite: number | null;
+  prompt_sistema: string | null;
 };
 
 const supabaseConfigFaltante =
   !process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+const PLAN_PENDIENTE_KEY = "du_labs_plan_elegido";
 
 function formatearTelefono(digitos: string): string {
   if (digitos.length === 11 && digitos[0] === "1") {
@@ -62,6 +65,81 @@ function formatearTelefono(digitos: string): string {
     return `+57 ${digitos.slice(2, 5)} ${digitos.slice(5, 8)} ${digitos.slice(8)}`;
   }
   return `+${digitos}`;
+}
+
+function EntrenarIA({
+  negocio,
+  accessToken,
+}: {
+  negocio: Negocio;
+  accessToken: string;
+}) {
+  const [abierto, setAbierto] = useState(false);
+  const [prompt, setPrompt] = useState(negocio.prompt_sistema ?? "");
+  const [guardando, setGuardando] = useState(false);
+  const [mensaje, setMensaje] = useState<string | null>(null);
+
+  const guardar = useCallback(async () => {
+    setGuardando(true);
+    setMensaje(null);
+    try {
+      const res = await fetch("/api/dashboard/prompt", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          phone_number_id: negocio.phone_number_id,
+          prompt_sistema: prompt,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Error guardando");
+      setMensaje("Guardado. La IA usará estas instrucciones desde el próximo mensaje.");
+    } catch (err) {
+      setMensaje(err instanceof Error ? err.message : String(err));
+    } finally {
+      setGuardando(false);
+    }
+  }, [accessToken, negocio.phone_number_id, prompt]);
+
+  return (
+    <div className="mt-5 border-t border-edge/60 pt-5">
+      <button
+        onClick={() => setAbierto((v) => !v)}
+        className="flex w-full items-center justify-between text-sm font-semibold text-white"
+      >
+        Entrenar a la IA (precios, horarios, tono)
+        <span className={`transition-transform duration-200 ${abierto ? "rotate-180" : ""}`}>
+          ▾
+        </span>
+      </button>
+      {abierto && (
+        <div className="mt-4">
+          <textarea
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            rows={6}
+            maxLength={4000}
+            placeholder={`Eres el asistente de WhatsApp del negocio "${negocio.nombre_negocio}". Responde de forma breve, amable y útil. Nuestros precios son... Atendemos de... a...`}
+            className="w-full rounded-lg border border-edge bg-ink-2 px-4 py-3 text-sm leading-relaxed text-white outline-none transition-colors duration-200 focus:border-lime/50"
+          />
+          <div className="mt-3 flex items-center justify-between gap-3">
+            <button
+              onClick={guardar}
+              disabled={guardando}
+              className="btn-shine rounded-lg bg-lime px-5 py-2.5 text-sm font-semibold text-ink transition-[background-color,transform] duration-200 hover:-translate-y-0.5 hover:bg-lime-hover active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {guardando ? "Guardando…" : "Guardar"}
+            </button>
+            <span className="text-xs text-mist">{prompt.length} / 4000</span>
+          </div>
+          {mensaje && <p className="mt-3 text-xs leading-relaxed text-mist">{mensaje}</p>}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function ConexionPage() {
@@ -182,17 +260,24 @@ export default function ConexionPage() {
           return;
         }
 
+        const planPendiente = localStorage.getItem(PLAN_PENDIENTE_KEY);
+
         fetch("/api/auth/meta-callback", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${accessToken}`,
           },
-          body: JSON.stringify({ code, ...sessionInfo.current }),
+          body: JSON.stringify({
+            code,
+            ...sessionInfo.current,
+            plan: planPendiente,
+          }),
         })
           .then((res) => res.json())
           .then((data) => {
             if (data.success) {
+              localStorage.removeItem(PLAN_PENDIENTE_KEY);
               setEstado({
                 fase: "exito",
                 negocio: data.negocio ?? "tu negocio",
@@ -333,19 +418,25 @@ export default function ConexionPage() {
                       {n.plan}
                     </span>
                     <span className="text-mist">
-                      {n.mensajes_usados.toLocaleString("es-CO")} /{" "}
-                      {n.mensajes_limite.toLocaleString("es-CO")} mensajes este mes
+                      {n.mensajes_limite === null
+                        ? `${n.mensajes_usados.toLocaleString("es-CO")} mensajes este mes · Ilimitado`
+                        : `${n.mensajes_usados.toLocaleString("es-CO")} / ${n.mensajes_limite.toLocaleString("es-CO")} mensajes este mes`}
                     </span>
                   </div>
                   <div className="mt-2.5 h-1.5 w-full overflow-hidden rounded-full bg-ink-2">
                     <div
                       className="h-full rounded-full bg-lime"
                       style={{
-                        width: `${Math.min(100, (n.mensajes_usados / n.mensajes_limite) * 100)}%`,
+                        width:
+                          n.mensajes_limite === null
+                            ? "100%"
+                            : `${Math.min(100, (n.mensajes_usados / n.mensajes_limite) * 100)}%`,
                       }}
                     />
                   </div>
                 </div>
+
+                <EntrenarIA negocio={n} accessToken={session.access_token} />
               </div>
             ))}
           </div>
@@ -366,6 +457,12 @@ export default function ConexionPage() {
                 ✅ <strong>{estado.negocio}</strong> quedó conectado a Du Labs
                 {estado.telefono ? ` (${estado.telefono})` : ""}. Los mensajes
                 de tus clientes ya serán atendidos por tu asistente de IA.
+                <button
+                  onClick={() => setEstado({ fase: "listo" })}
+                  className="mt-4 block text-sm font-semibold text-lime hover:text-white"
+                >
+                  Conectar otro número →
+                </button>
               </div>
             ) : (
               <button
