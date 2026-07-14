@@ -40,12 +40,68 @@ type EstadoConexion =
 type SessionInfo = { waba_id?: string; phone_number_id?: string };
 
 const PLAN_PENDIENTE_KEY = "du_labs_plan_elegido";
+const BANNER_IA_KEY = "du_labs_banner_ia_cerrado";
+
+function IconoRobot({ className = "h-5 w-5" }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.6}
+      className={className}
+    >
+      <rect x="4" y="8" width="16" height="10" rx="2" />
+      <path strokeLinecap="round" d="M9 8V5a3 3 0 016 0v3" />
+      <circle cx="9" cy="13" r="1" fill="currentColor" stroke="none" />
+      <circle cx="15" cy="13" r="1" fill="currentColor" stroke="none" />
+      <path strokeLinecap="round" d="M9 16h6" />
+    </svg>
+  );
+}
+
+function BannerAgentesIA() {
+  const [cerrado, setCerrado] = useState(() =>
+    typeof window === "undefined" ? true : localStorage.getItem(BANNER_IA_KEY) === "1"
+  );
+
+  if (cerrado) return null;
+
+  return (
+    <div className="relative mt-8 overflow-hidden rounded-2xl border border-lime/20 bg-gradient-to-br from-ink-2 via-ink-2 to-lime/5 p-6 sm:p-8">
+      <button
+        onClick={() => {
+          localStorage.setItem(BANNER_IA_KEY, "1");
+          setCerrado(true);
+        }}
+        aria-label="Cerrar"
+        className="absolute right-5 top-5 text-mist transition-colors duration-200 hover:text-white"
+      >
+        ✕
+      </button>
+      <div className="max-w-xl">
+        <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-lime/10 text-lime">
+          <IconoRobot />
+        </div>
+        <h2 className="mt-4 text-xl font-semibold text-white">
+          Agentes de IA — automatiza precios, horarios y atención
+        </h2>
+        <ul className="mt-3 space-y-1.5 text-sm leading-relaxed text-mist">
+          <li>· Configura tu asistente sin conocimientos técnicos.</li>
+          <li>· Entrénalo con tus precios, horarios y el tono de tu marca.</li>
+          <li>· Pruébalo al instante, siempre bajo tu control.</li>
+        </ul>
+      </div>
+    </div>
+  );
+}
 
 function EntrenarIA({ negocio, accessToken }: { negocio: Negocio; accessToken: string }) {
   const [abierto, setAbierto] = useState(false);
   const [prompt, setPrompt] = useState(negocio.prompt_sistema ?? "");
   const [guardando, setGuardando] = useState(false);
   const [mensaje, setMensaje] = useState<string | null>(null);
+  const entrenada = (negocio.prompt_sistema ?? "").trim().length > 0;
 
   const guardar = useCallback(async () => {
     setGuardando(true);
@@ -74,38 +130,64 @@ function EntrenarIA({ negocio, accessToken }: { negocio: Negocio; accessToken: s
 
   return (
     <div className="mt-5 border-t border-edge/60 pt-5">
-      <button
-        onClick={() => setAbierto((v) => !v)}
-        className="flex w-full items-center justify-between text-sm font-semibold text-white"
-      >
-        Entrenar a la IA (precios, horarios, tono)
-        <span className={`transition-transform duration-200 ${abierto ? "rotate-180" : ""}`}>
-          ▾
-        </span>
-      </button>
-      {abierto && (
-        <div className="mt-4">
-          <textarea
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            rows={6}
-            maxLength={4000}
-            placeholder={`Eres el asistente de WhatsApp del negocio "${negocio.nombre_negocio}". Responde de forma breve, amable y útil. Nuestros precios son... Atendemos de... a...`}
-            className="w-full rounded-lg border border-edge bg-ink-2 px-4 py-3 text-sm leading-relaxed text-white outline-none transition-colors duration-200 focus:border-lime/50"
-          />
-          <div className="mt-3 flex items-center justify-between gap-3">
-            <button
-              onClick={guardar}
-              disabled={guardando}
-              className="btn-shine rounded-lg bg-lime px-5 py-2.5 text-sm font-semibold text-ink transition-[background-color,transform] duration-200 hover:-translate-y-0.5 hover:bg-lime-hover active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {guardando ? "Guardando…" : "Guardar"}
-            </button>
-            <span className="text-xs text-mist">{prompt.length} / 4000</span>
+      {!abierto ? (
+        <button
+          onClick={() => setAbierto(true)}
+          className="flex w-full items-center gap-3 rounded-xl border border-edge/60 bg-ink-2/60 p-4 text-left transition-colors duration-200 hover:border-edge"
+        >
+          <span
+            className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${
+              entrenada ? "bg-lime/10 text-lime" : "bg-white/5 text-mist"
+            }`}
+          >
+            <IconoRobot />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-semibold text-white">
+              {entrenada ? "IA entrenada" : "Tu IA todavía no está entrenada"}
+            </span>
+            <span className="block text-xs text-mist">
+              {entrenada
+                ? "Precios, horarios y tono ya configurados."
+                : "Configura precios, horarios y tono para que responda por ti."}
+            </span>
+          </span>
+          <span className="shrink-0 text-xs font-semibold text-lime">
+            {entrenada ? "Editar →" : "Entrenar ahora →"}
+          </span>
+        </button>
+      ) : (
+        <div>
+          <button
+            onClick={() => setAbierto(false)}
+            className="flex w-full items-center justify-between text-sm font-semibold text-white"
+          >
+            Entrenar a la IA (precios, horarios, tono)
+            <span className="rotate-180">▾</span>
+          </button>
+            <div className="mt-4">
+              <textarea
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                rows={6}
+                maxLength={4000}
+                placeholder={`Eres el asistente de WhatsApp del negocio "${negocio.nombre_negocio}". Responde de forma breve, amable y útil. Nuestros precios son... Atendemos de... a...`}
+                className="w-full rounded-lg border border-edge bg-ink-2 px-4 py-3 text-sm leading-relaxed text-white outline-none transition-colors duration-200 focus:border-lime/50"
+              />
+              <div className="mt-3 flex items-center justify-between gap-3">
+                <button
+                  onClick={guardar}
+                  disabled={guardando}
+                  className="btn-shine rounded-lg bg-lime px-5 py-2.5 text-sm font-semibold text-ink transition-[background-color,transform] duration-200 hover:-translate-y-0.5 hover:bg-lime-hover active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {guardando ? "Guardando…" : "Guardar"}
+                </button>
+                <span className="text-xs text-mist">{prompt.length} / 4000</span>
+              </div>
+              {mensaje && <p className="mt-3 text-xs leading-relaxed text-mist">{mensaje}</p>}
+            </div>
           </div>
-          {mensaje && <p className="mt-3 text-xs leading-relaxed text-mist">{mensaje}</p>}
-        </div>
-      )}
+        )}
     </div>
   );
 }
@@ -258,6 +340,8 @@ export default function ConexionPage() {
           </Link>
         </div>
       )}
+
+      <BannerAgentesIA />
 
       {/* --- Panel administrativo: números ya conectados, desde Supabase --- */}
       <section className="mt-10">
