@@ -77,7 +77,7 @@ export default function LoginPage() {
           {modo === "login" ? "Inicia sesión" : "Crea tu cuenta"}
         </h1>
         <p className="mt-3 text-sm leading-relaxed text-mist">
-          Accede a tu panel de Du IA Business para conectar y administrar tus
+          Accede a tu panel de Du Labs para conectar y administrar tus
           números de WhatsApp.
         </p>
 
