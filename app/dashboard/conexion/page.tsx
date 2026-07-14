@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useDashboard, type Negocio } from "@/lib/dashboard-session";
+import { formatearTelefono } from "@/lib/format";
 
 const GRAPH_VERSION = "v23.0";
 
@@ -39,16 +40,6 @@ type EstadoConexion =
 type SessionInfo = { waba_id?: string; phone_number_id?: string };
 
 const PLAN_PENDIENTE_KEY = "du_labs_plan_elegido";
-
-function formatearTelefono(digitos: string): string {
-  if (digitos.length === 11 && digitos[0] === "1") {
-    return `+1 ${digitos.slice(1, 4)}-${digitos.slice(4, 7)}-${digitos.slice(7)}`;
-  }
-  if (digitos.length === 12 && digitos.startsWith("57")) {
-    return `+57 ${digitos.slice(2, 5)} ${digitos.slice(5, 8)} ${digitos.slice(8)}`;
-  }
-  return `+${digitos}`;
-}
 
 function EntrenarIA({ negocio, accessToken }: { negocio: Negocio; accessToken: string }) {
   const [abierto, setAbierto] = useState(false);

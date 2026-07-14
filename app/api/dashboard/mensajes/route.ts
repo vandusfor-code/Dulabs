@@ -32,12 +32,26 @@ export async function GET(request: NextRequest) {
     return Response.json({ mensajes: [] });
   }
 
-  const { data, error } = await supabase
+  // Filtro opcional a un solo hilo (vista de conversación en el inbox).
+  const telefonoCliente = request.nextUrl.searchParams.get("telefono_cliente");
+  const phoneNumberIdFiltro = request.nextUrl.searchParams.get("phone_number_id");
+
+  let query = supabase
     .from("dulabs_mensajes_log")
     .select("phone_number_id, telefono_cliente, direccion, contenido, created_at")
-    .in("phone_number_id", phoneNumberIds)
-    .order("created_at", { ascending: false })
-    .limit(100);
+    .in("phone_number_id", phoneNumberIds);
+
+  if (telefonoCliente && phoneNumberIdFiltro) {
+    query = query
+      .eq("telefono_cliente", telefonoCliente)
+      .eq("phone_number_id", phoneNumberIdFiltro)
+      .order("created_at", { ascending: true })
+      .limit(200);
+  } else {
+    query = query.order("created_at", { ascending: false }).limit(100);
+  }
+
+  const { data, error } = await query;
 
   if (error) {
     return Response.json({ error: error.message }, { status: 500 });
