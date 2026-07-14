@@ -30,6 +30,10 @@ const ICONOS = {
       d="M2 7a2 2 0 012-2h16a2 2 0 012 2v10a2 2 0 01-2 2H4a2 2 0 01-2-2V7zM2 10h20"
     />
   ),
+  enviar: (
+    <path strokeLinecap="round" strokeLinejoin="round" d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" />
+  ),
+  check: <path strokeLinecap="round" strokeLinejoin="round" d="M20 6L9 17l-5-5" />,
 };
 
 function Icono({ nombre }: { nombre: keyof typeof ICONOS }) {
@@ -120,8 +124,150 @@ function GraficaActividad() {
   );
 }
 
+function nombreDesdeEmail(email: string | undefined): string {
+  if (!email) return "";
+  const prefijo = email.split("@")[0] ?? "";
+  return prefijo
+    .replace(/[._-]+/g, " ")
+    .split(" ")
+    .filter(Boolean)
+    .map((p) => p[0].toUpperCase() + p.slice(1))
+    .join(" ");
+}
+
+const VENTAJAS = [
+  {
+    icono: "bolt" as const,
+    titulo: "Automatización con IA",
+    descripcion: "Tu asistente responde solo en WhatsApp, entrenado con el prompt de tu negocio.",
+    href: "/dashboard/conexion",
+  },
+  {
+    icono: "enviar" as const,
+    titulo: "Plantillas y campañas",
+    descripcion: "Crea plantillas aprobadas por Meta y envía campañas masivas en segundos.",
+    href: "/dashboard/plantillas",
+  },
+  {
+    icono: "mensaje" as const,
+    titulo: "Mensajes en un solo lugar",
+    descripcion: "Revisa cada conversación, pausa la IA y toma el control cuando lo necesites.",
+    href: "/dashboard/mensajes",
+  },
+];
+
+function PantallaBienvenida({
+  nombre,
+  suscripcionActiva,
+}: {
+  nombre: string;
+  suscripcionActiva: boolean;
+}) {
+  const pasos = [
+    { etiqueta: "Activa tu plan", hecho: suscripcionActiva, href: "/checkout" },
+    { etiqueta: "Conecta tu número de WhatsApp", hecho: false, href: "/dashboard/conexion" },
+    { etiqueta: "Entrena tu IA con tu propio prompt", hecho: false, href: "/dashboard/conexion" },
+  ];
+
+  return (
+    <div>
+      <div>
+        <h1 className="text-2xl font-semibold sm:text-3xl">
+          Hola{nombre ? `, ${nombre}` : ""} 👋
+        </h1>
+        <p className="mt-1 text-sm text-mist">
+          Bienvenido a Du IA Business. Vamos a dejar tu WhatsApp funcionando.
+        </p>
+      </div>
+
+      <div className="mt-8 overflow-hidden rounded-2xl border border-lime/20 bg-gradient-to-br from-lime/15 via-card to-card p-8 sm:p-10">
+        <div className="flex flex-col items-start gap-6 sm:flex-row sm:items-center sm:justify-between">
+          <div className="max-w-lg">
+            <p className="text-xs font-semibold uppercase tracking-widest text-lime">
+              Primeros pasos
+            </p>
+            <h2 className="mt-2 text-xl font-semibold text-white sm:text-2xl">
+              Conecta tu primer número de WhatsApp
+            </h2>
+            <p className="mt-2 text-sm leading-relaxed text-mist">
+              En minutos tu negocio va a responder solo, 24/7, con la IA entrenada a tu manera.
+            </p>
+          </div>
+          <Link
+            href="/dashboard/conexion"
+            className="btn-shine shrink-0 rounded-lg bg-lime px-5 py-3 text-sm font-semibold text-ink transition-colors duration-200 hover:bg-lime-hover"
+          >
+            Conectar número →
+          </Link>
+        </div>
+      </div>
+
+      <div className="mt-6 grid gap-3 sm:grid-cols-3">
+        {pasos.map((p, i) => (
+          <Link
+            key={p.etiqueta}
+            href={p.href}
+            className={`flex items-center gap-3 rounded-xl border p-4 transition-colors duration-200 ${
+              p.hecho ? "border-lime/30 bg-lime/5" : "border-edge/60 bg-card hover:border-edge"
+            }`}
+          >
+            <span
+              className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${
+                p.hecho ? "bg-lime text-ink" : "border border-edge text-mist"
+              }`}
+            >
+              {p.hecho ? <Icono nombre="check" /> : i + 1}
+            </span>
+            <span className={`text-sm ${p.hecho ? "text-white" : "text-mist"}`}>{p.etiqueta}</span>
+          </Link>
+        ))}
+      </div>
+
+      <div className="mt-10">
+        <p className="text-sm font-semibold text-white">Todo lo que puedes hacer</p>
+        <div className="mt-4 grid gap-5 sm:grid-cols-3">
+          {VENTAJAS.map((v) => (
+            <Link
+              key={v.titulo}
+              href={v.href}
+              className="group rounded-2xl border border-edge/60 bg-card p-6 transition-[border-color,transform] duration-200 hover:-translate-y-0.5 hover:border-edge"
+            >
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-lime/10 text-lime">
+                <Icono nombre={v.icono} />
+              </div>
+              <p className="mt-4 text-sm font-semibold text-white">{v.titulo}</p>
+              <p className="mt-1.5 text-xs leading-relaxed text-mist">{v.descripcion}</p>
+              <span className="mt-3 inline-flex items-center text-xs font-semibold text-lime opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+                Ir ahora →
+              </span>
+            </Link>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function ResumenPage() {
-  const { negocios, suscripcion } = useDashboard();
+  const { session, negocios, suscripcion } = useDashboard();
+
+  const nombre = nombreDesdeEmail(session?.user.email);
+
+  if (negocios === null) {
+    return (
+      <div className="mx-auto w-full max-w-6xl">
+        <p className="text-sm text-mist">Cargando tu panel…</p>
+      </div>
+    );
+  }
+
+  if (negocios.length === 0) {
+    return (
+      <div className="mx-auto w-full max-w-6xl">
+        <PantallaBienvenida nombre={nombre} suscripcionActiva={!!suscripcion} />
+      </div>
+    );
+  }
 
   const numerosActivos = negocios?.filter((n) => n.conectado).length ?? 0;
   const mensajesUsados = negocios?.reduce((acc, n) => acc + n.mensajes_usados, 0) ?? 0;
