@@ -64,7 +64,9 @@ export async function crearTransaccion(params: {
 }): Promise<Transaccion> {
   return wompiRequest<Transaccion>("/transactions", {
     method: "POST",
-    body: { currency: "COP", ...params },
+    // installments: 1 = pago de contado (nuestras suscripciones no manejan
+    // cuotas), pero Wompi lo exige como campo obligatorio igual.
+    body: { currency: "COP", payment_method: { installments: 1 }, ...params },
   });
 }
 
