@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import type { Session } from "@supabase/supabase-js";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 
@@ -153,6 +154,9 @@ export default function ConexionPage() {
   );
   const [negocios, setNegocios] = useState<Negocio[] | null>(null);
   const [errorNegocios, setErrorNegocios] = useState<string | null>(null);
+  const [planPendiente] = useState<string | null>(() =>
+    typeof window === "undefined" ? null : localStorage.getItem(PLAN_PENDIENTE_KEY)
+  );
 
   const [estado, setEstado] = useState<EstadoConexion>({ fase: "cargando" });
   // El popup de Embedded Signup postea la sesión (waba_id + phone_number_id)
@@ -260,7 +264,7 @@ export default function ConexionPage() {
           return;
         }
 
-        const planPendiente = localStorage.getItem(PLAN_PENDIENTE_KEY);
+        const planElegido = localStorage.getItem(PLAN_PENDIENTE_KEY);
 
         fetch("/api/auth/meta-callback", {
           method: "POST",
@@ -271,7 +275,7 @@ export default function ConexionPage() {
           body: JSON.stringify({
             code,
             ...sessionInfo.current,
-            plan: planPendiente,
+            plan: planElegido,
           }),
         })
           .then((res) => res.json())
@@ -352,6 +356,21 @@ export default function ConexionPage() {
           </button>
         </div>
         <p className="mt-2 text-sm text-mist">{session.user.email}</p>
+
+        {planPendiente && (
+          <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-lime/40 bg-lime/10 p-4 text-sm">
+            <span>
+              Elegiste el <strong>{planPendiente}</strong>. Falta activar tu
+              suscripción para completar el registro.
+            </span>
+            <Link
+              href="/checkout"
+              className="rounded-lg bg-lime px-4 py-2 text-xs font-semibold text-ink hover:bg-lime-hover"
+            >
+              Completar suscripción →
+            </Link>
+          </div>
+        )}
 
         {/* --- Panel administrativo: números ya conectados, desde Supabase --- */}
         <section className="mt-10">
