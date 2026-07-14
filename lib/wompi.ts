@@ -55,6 +55,13 @@ export type Transaccion = {
   amount_in_cents: number;
 };
 
+function firmaIntegridad(reference: string, amountInCents: number, currency: string): string {
+  const integrityKey = process.env.WOMPI_INTEGRITY_KEY;
+  if (!integrityKey) throw new Error("Falta WOMPI_INTEGRITY_KEY en el servidor");
+  const cadena = `${reference}${amountInCents}${currency}${integrityKey}`;
+  return crypto.createHash("sha256").update(cadena).digest("hex");
+}
+
 export async function crearTransaccion(params: {
   amount_in_cents: number;
   customer_email: string;
@@ -66,7 +73,13 @@ export async function crearTransaccion(params: {
     method: "POST",
     // installments: 1 = pago de contado (nuestras suscripciones no manejan
     // cuotas), pero Wompi lo exige como campo obligatorio igual.
-    body: { currency: "COP", payment_method: { installments: 1 }, ...params },
+    // signature: firma de integridad exigida también en creación server-side.
+    body: {
+      currency: "COP",
+      payment_method: { installments: 1 },
+      signature: firmaIntegridad(params.reference, params.amount_in_cents, "COP"),
+      ...params,
+    },
   });
 }
 
