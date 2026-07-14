@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { useDashboard } from "@/lib/dashboard-session";
 import { formatearTelefono } from "@/lib/format";
 
@@ -29,8 +30,26 @@ function horaCorta(fecha: string): string {
   });
 }
 
+function IconoChat() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.2}
+      className="h-12 w-12 text-mist/40"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M8 10h.01M12 10h.01M16 10h.01M21 12a9 9 0 11-9-9 9 9 0 019 9z"
+      />
+    </svg>
+  );
+}
+
 export default function MensajesPage() {
-  const { session } = useDashboard();
+  const { session, negocios } = useDashboard();
   const [conversaciones, setConversaciones] = useState<Conversacion[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busqueda, setBusqueda] = useState("");
@@ -95,7 +114,7 @@ export default function MensajesPage() {
           )}
           {conversaciones !== null && conversacionesFiltradas.length === 0 && (
             <p className="p-4 text-xs leading-relaxed text-mist">
-              Sin conversaciones todavía.
+              Todavía no tienes chats.
             </p>
           )}
           {conversacionesFiltradas.map((c) => (
@@ -133,8 +152,33 @@ export default function MensajesPage() {
       {/* --- Columna 2: hilo de la conversación --- */}
       <div className="flex min-w-0 flex-1 flex-col rounded-2xl border border-edge/60 bg-card">
         {!seleccionada ? (
-          <div className="flex flex-1 items-center justify-center p-8 text-center text-sm text-mist">
-            Selecciona una conversación para ver el historial.
+          <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
+            <IconoChat />
+            {conversaciones !== null && conversaciones.length === 0 ? (
+              (negocios?.length ?? 0) === 0 ? (
+                <>
+                  <p className="text-sm font-semibold text-white">Conecta tu número de WhatsApp</p>
+                  <p className="max-w-xs text-xs leading-relaxed text-mist">
+                    Necesitas un número conectado para empezar a recibir y responder mensajes aquí.
+                  </p>
+                  <Link
+                    href="/dashboard/conexion"
+                    className="mt-2 rounded-lg bg-lime px-4 py-2 text-xs font-semibold text-ink transition-colors duration-200 hover:bg-lime-hover"
+                  >
+                    Conectar número →
+                  </Link>
+                </>
+              ) : (
+                <>
+                  <p className="text-sm font-semibold text-white">Todavía no hablaste con nadie</p>
+                  <p className="max-w-xs text-xs leading-relaxed text-mist">
+                    Los chats van a aparecer aquí en cuanto tus clientes te escriban por WhatsApp.
+                  </p>
+                </>
+              )
+            ) : (
+              <p className="text-sm text-mist">Selecciona una conversación para ver el historial.</p>
+            )}
           </div>
         ) : (
           <>
