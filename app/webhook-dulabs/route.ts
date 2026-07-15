@@ -14,13 +14,20 @@ type MetaMessage = {
   id: string;
   type: string;
   text?: { body: string };
+  context?: { id?: string };
+};
+
+type MetaStatus = {
+  id: string;
+  status: "sent" | "delivered" | "read" | "failed" | string;
+  timestamp?: string;
 };
 
 type MetaChangeValue = {
   messaging_product?: string;
   metadata?: { display_phone_number?: string; phone_number_id?: string };
   messages?: MetaMessage[];
-  statuses?: unknown[];
+  statuses?: MetaStatus[];
   smb_message_echoes?: MetaMessage[];
 };
 
@@ -113,10 +120,69 @@ async function procesarCambio(phoneNumberId: string, value: MetaChangeValue) {
   }
   if (ecos.length > 0) return;
 
+  // Estado de entrega/lectura de mensajes que enviamos (campañas e IA).
+  for (const estado of value.statuses ?? []) {
+    await actualizarEstadoEntrega(estado);
+  }
+
+  // Respuestas citadas (swipe-to-reply) a un mensaje de campaña específico.
+  for (const mensaje of value.messages ?? []) {
+    if (mensaje.context?.id) await marcarRespondido(mensaje.context.id);
+  }
+
   // Mensajes de clientes finales
   for (const mensaje of value.messages ?? []) {
     if (mensaje.type !== "text" || !mensaje.text?.body) continue; // esqueleto: solo texto
     await atenderMensaje(cliente, mensaje);
+  }
+}
+
+const RANGO_ESTADO: Record<string, number> = { enviado: 0, entregado: 1, leido: 2, fallido: 3 };
+const ESTADO_META_A_DB: Record<string, string> = {
+  sent: "enviado",
+  delivered: "entregado",
+  read: "leido",
+  failed: "fallido",
+};
+
+async function actualizarEstadoEntrega(estado: MetaStatus) {
+  const nuevoEstado = ESTADO_META_A_DB[estado.status];
+  if (!nuevoEstado) return;
+
+  const supabase = supabaseAdmin();
+  const { data: fila, error: errorLectura } = await supabase
+    .from("dulabs_mensajes_log")
+    .select("id, estado_entrega")
+    .eq("wamid", estado.id)
+    .maybeSingle();
+  if (errorLectura) {
+    console.error("[webhook-dulabs] error buscando mensaje por wamid:", errorLectura.message);
+    return;
+  }
+  if (!fila) return; // mensaje no enviado por una campaña rastreada (o IA sin wamid guardado)
+
+  if (nuevoEstado !== "fallido" && RANGO_ESTADO[nuevoEstado] <= RANGO_ESTADO[fila.estado_entrega]) {
+    return; // no retroceder el estado si los eventos llegan desordenados
+  }
+
+  const marcaTiempo = estado.timestamp ? new Date(Number(estado.timestamp) * 1000).toISOString() : new Date().toISOString();
+  const cambios: Record<string, string> = { estado_entrega: nuevoEstado };
+  if (nuevoEstado === "entregado") cambios.entregado_at = marcaTiempo;
+  if (nuevoEstado === "leido") cambios.leido_at = marcaTiempo;
+
+  const { error: errorUpdate } = await supabase.from("dulabs_mensajes_log").update(cambios).eq("id", fila.id);
+  if (errorUpdate) {
+    console.error("[webhook-dulabs] error actualizando estado de entrega:", errorUpdate.message);
+  }
+}
+
+async function marcarRespondido(wamidCitado: string) {
+  const { error } = await supabaseAdmin()
+    .from("dulabs_mensajes_log")
+    .update({ respondido: true })
+    .eq("wamid", wamidCitado);
+  if (error) {
+    console.error("[webhook-dulabs] error marcando mensaje como respondido:", error.message);
   }
 }
 

@@ -62,13 +62,26 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: "Sin token de Meta para este número" }, { status: 500 });
   }
 
+  const { data: campana, error: campanaError } = await supabase
+    .from("dulabs_campanas")
+    .insert({
+      id_tenant: userData.user.id,
+      phone_number_id: plantilla.phone_number_id,
+      plantilla_id: plantilla.id,
+      nombre: plantilla.nombre,
+      destinatarios_total: destinatarios.length,
+    })
+    .select("id")
+    .single();
+  if (campanaError) return Response.json({ error: campanaError.message }, { status: 500 });
+
   let enviados = 0;
   const fallidos: { destinatario: string; error: string }[] = [];
 
   for (const destinatario of destinatarios) {
     const numero = destinatario.replace(/\D/g, "");
     try {
-      await enviarPlantilla({
+      const { wamid } = await enviarPlantilla({
         phoneNumberId: plantilla.phone_number_id,
         token: metaToken,
         para: numero,
@@ -80,6 +93,8 @@ export async function POST(request: NextRequest) {
         telefono_cliente: numero,
         direccion: "saliente",
         contenido: `[Campaña: ${plantilla.nombre}] ${plantilla.cuerpo}`,
+        campana_id: campana.id,
+        wamid,
       });
       enviados++;
     } catch (err) {

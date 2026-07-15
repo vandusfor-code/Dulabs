@@ -60,7 +60,7 @@ export async function enviarPlantilla(params: {
   para: string;
   nombrePlantilla: string;
   idioma: string;
-}): Promise<void> {
+}): Promise<{ wamid: string | null }> {
   const res = await fetch(`${GRAPH}/${params.phoneNumberId}/messages`, {
     method: "POST",
     headers: {
@@ -74,8 +74,9 @@ export async function enviarPlantilla(params: {
       template: { name: params.nombrePlantilla, language: { code: params.idioma } },
     }),
   });
+  const json = (await res.json()) as { messages?: { id?: string }[] } & GraphError;
   if (!res.ok) {
-    const json = (await res.json()) as GraphError;
     throw new Error(`Meta respondió ${res.status}: ${json.error?.message ?? "sin detalle"}`);
   }
+  return { wamid: json.messages?.[0]?.id ?? null };
 }
