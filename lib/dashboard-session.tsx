@@ -94,8 +94,8 @@ export function DashboardSessionProvider({ children }: { children: ReactNode }) 
 
   if (supabaseConfigFaltante) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-ink px-5 text-white">
-        <p className="max-w-md rounded-lg border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-300">
+      <main className="flex min-h-screen items-center justify-center bg-ink px-5 text-fg">
+        <p className="max-w-md rounded-lg border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-600">
           Faltan NEXT_PUBLIC_SUPABASE_URL o NEXT_PUBLIC_SUPABASE_ANON_KEY en el entorno.
         </p>
       </main>
@@ -103,7 +103,7 @@ export function DashboardSessionProvider({ children }: { children: ReactNode }) 
   }
   if (session === "verificando") {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-ink px-5 text-white">
+      <main className="flex min-h-screen items-center justify-center bg-ink px-5 text-fg">
         <p className="text-sm text-mist">Verificando tu sesión…</p>
       </main>
     );

@@ -75,15 +75,15 @@ function BannerAgentesIA() {
           setCerrado(true);
         }}
         aria-label="Cerrar"
-        className="absolute right-5 top-5 text-mist transition-colors duration-200 hover:text-white"
+        className="absolute right-5 top-5 text-mist transition-colors duration-200 hover:text-fg"
       >
         ✕
       </button>
       <div className="max-w-xl">
-        <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-lime/10 text-lime">
+        <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-lime/10 text-lime-text">
           <IconoRobot />
         </div>
-        <h2 className="mt-4 text-xl font-semibold text-white">
+        <h2 className="mt-4 text-xl font-semibold text-fg">
           Agentes de IA — automatiza precios, horarios y atención
         </h2>
         <ul className="mt-3 space-y-1.5 text-sm leading-relaxed text-mist">
@@ -137,13 +137,13 @@ function EntrenarIA({ negocio, accessToken }: { negocio: Negocio; accessToken: s
         >
           <span
             className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${
-              entrenada ? "bg-lime/10 text-lime" : "bg-white/5 text-mist"
+              entrenada ? "bg-lime/10 text-lime-text" : "bg-edge text-mist"
             }`}
           >
             <IconoRobot />
           </span>
           <span className="min-w-0 flex-1">
-            <span className="block text-sm font-semibold text-white">
+            <span className="block text-sm font-semibold text-fg">
               {entrenada ? "IA entrenada" : "Tu IA todavía no está entrenada"}
             </span>
             <span className="block text-xs text-mist">
@@ -152,7 +152,7 @@ function EntrenarIA({ negocio, accessToken }: { negocio: Negocio; accessToken: s
                 : "Configura precios, horarios y tono para que responda por ti."}
             </span>
           </span>
-          <span className="shrink-0 text-xs font-semibold text-lime">
+          <span className="shrink-0 text-xs font-semibold text-lime-text">
             {entrenada ? "Editar →" : "Entrenar ahora →"}
           </span>
         </button>
@@ -160,7 +160,7 @@ function EntrenarIA({ negocio, accessToken }: { negocio: Negocio; accessToken: s
         <div>
           <button
             onClick={() => setAbierto(false)}
-            className="flex w-full items-center justify-between text-sm font-semibold text-white"
+            className="flex w-full items-center justify-between text-sm font-semibold text-fg"
           >
             Entrenar a la IA (precios, horarios, tono)
             <span className="rotate-180">▾</span>
@@ -172,13 +172,13 @@ function EntrenarIA({ negocio, accessToken }: { negocio: Negocio; accessToken: s
                 rows={6}
                 maxLength={4000}
                 placeholder={`Eres el asistente de WhatsApp del negocio "${negocio.nombre_negocio}". Responde de forma breve, amable y útil. Nuestros precios son... Atendemos de... a...`}
-                className="w-full rounded-lg border border-edge bg-ink-2 px-4 py-3 text-sm leading-relaxed text-white outline-none transition-colors duration-200 focus:border-lime/50"
+                className="w-full rounded-lg border border-edge bg-ink-2 px-4 py-3 text-sm leading-relaxed text-fg outline-none transition-colors duration-200 focus:border-lime/50"
               />
               <div className="mt-3 flex items-center justify-between gap-3">
                 <button
                   onClick={guardar}
                   disabled={guardando}
-                  className="btn-shine rounded-lg bg-lime px-5 py-2.5 text-sm font-semibold text-ink transition-[background-color,transform] duration-200 hover:-translate-y-0.5 hover:bg-lime-hover active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50"
+                  className="btn-shine rounded-lg bg-lime px-5 py-2.5 text-sm font-semibold text-lime-fg transition-[background-color,transform] duration-200 hover:-translate-y-0.5 hover:bg-lime-hover active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {guardando ? "Guardando…" : "Guardar"}
                 </button>
@@ -334,7 +334,7 @@ export default function ConexionPage() {
           </span>
           <Link
             href="/checkout"
-            className="rounded-lg bg-lime px-4 py-2 text-xs font-semibold text-ink hover:bg-lime-hover"
+            className="rounded-lg bg-lime px-4 py-2 text-xs font-semibold text-lime-fg hover:bg-lime-hover"
           >
             Completar suscripción →
           </Link>
@@ -350,7 +350,7 @@ export default function ConexionPage() {
         </h2>
 
         {errorNegocios && (
-          <p className="mt-4 rounded-lg border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-300">
+          <p className="mt-4 rounded-lg border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-600">
             {errorNegocios}
           </p>
         )}
@@ -373,7 +373,7 @@ export default function ConexionPage() {
               className="rounded-2xl border border-edge/60 bg-card p-6"
             >
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <h3 className="text-lg font-semibold text-white">
+                <h3 className="text-lg font-semibold text-fg">
                   {n.nombre_negocio}
                 </h3>
                 <span className="inline-flex items-center gap-2 rounded-full border border-edge/60 bg-ink-2/80 px-3 py-1 text-xs">
@@ -390,13 +390,13 @@ export default function ConexionPage() {
               <dl className="mt-5 grid gap-3 text-sm sm:grid-cols-2">
                 <div>
                   <dt className="text-mist">Número de teléfono</dt>
-                  <dd className="mt-1 font-medium text-white">
+                  <dd className="mt-1 font-medium text-fg">
                     {formatearTelefono(n.telefono_negocio)}
                   </dd>
                 </div>
                 <div>
                   <dt className="text-mist">WABA ID</dt>
-                  <dd className="mt-1 break-all font-mono text-xs text-white/85">
+                  <dd className="mt-1 break-all font-mono text-xs text-fg/85">
                     {n.whatsapp_business_account_id}
                   </dd>
                 </div>
@@ -404,7 +404,7 @@ export default function ConexionPage() {
 
               <div className="mt-5 border-t border-edge/60 pt-5">
                 <div className="flex items-center justify-between gap-3 text-sm">
-                  <span className="rounded-full bg-lime/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.15em] text-lime">
+                  <span className="rounded-full bg-lime/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.15em] text-lime-text">
                     {n.plan}
                   </span>
                   <span className="text-mist">
@@ -449,7 +449,7 @@ export default function ConexionPage() {
               de tus clientes ya serán atendidos por tu asistente de IA.
               <button
                 onClick={() => setEstado({ fase: "listo" })}
-                className="mt-4 block text-sm font-semibold text-lime hover:text-white"
+                className="mt-4 block text-sm font-semibold text-lime-text hover:text-fg"
               >
                 Conectar otro número →
               </button>
@@ -472,12 +472,12 @@ export default function ConexionPage() {
           )}
 
           {configFaltante && (
-            <p className="mt-4 rounded-lg border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-300">
+            <p className="mt-4 rounded-lg border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-600">
               Faltan NEXT_PUBLIC_META_APP_ID o NEXT_PUBLIC_META_CONFIG_ID en el entorno.
             </p>
           )}
           {estado.fase === "error" && (
-            <p className="mt-4 rounded-lg border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-300">
+            <p className="mt-4 rounded-lg border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-600">
               {estado.mensaje}
             </p>
           )}

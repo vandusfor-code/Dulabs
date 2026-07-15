@@ -10,10 +10,10 @@ export default function Technology() {
     >
       <div className="mx-auto w-full max-w-[1440px] px-5 text-center sm:px-8 lg:px-12">
         <Reveal>
-          <p className="mb-4 text-xs font-medium uppercase tracking-[0.25em] text-lime">
+          <p className="mb-4 text-xs font-medium uppercase tracking-[0.25em] text-lime-text">
             Tecnología
           </p>
-          <h2 className="text-3xl font-semibold tracking-tight text-white sm:text-4xl">
+          <h2 className="text-3xl font-semibold tracking-tight text-fg sm:text-4xl">
             Construido sobre infraestructura empresarial.
           </h2>
           <p className="mx-auto mt-5 max-w-xl text-mist">
@@ -28,7 +28,7 @@ export default function Technology() {
                 <span
                   key={i}
                   aria-hidden={i >= stack.length}
-                  className="whitespace-nowrap text-xl font-semibold tracking-tight text-mist/50 transition-colors duration-300 hover:text-lime"
+                  className="whitespace-nowrap text-xl font-semibold tracking-tight text-mist/50 transition-colors duration-300 hover:text-lime-text"
                 >
                   {name}
                 </span>

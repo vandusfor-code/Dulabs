@@ -99,16 +99,16 @@ export default function MensajesPage() {
       {/* --- Columna 1: lista de conversaciones --- */}
       <div className="flex w-72 shrink-0 flex-col rounded-2xl border border-edge/60 bg-card">
         <div className="border-b border-edge/60 p-4">
-          <h1 className="text-sm font-semibold text-white">Mensajes</h1>
+          <h1 className="text-sm font-semibold text-fg">Mensajes</h1>
           <input
             value={busqueda}
             onChange={(e) => setBusqueda(e.target.value)}
             placeholder="Buscar…"
-            className="mt-3 w-full rounded-lg border border-edge bg-ink-2 px-3 py-2 text-xs text-white outline-none focus:border-lime/50"
+            className="mt-3 w-full rounded-lg border border-edge bg-ink-2 px-3 py-2 text-xs text-fg outline-none focus:border-lime/50"
           />
         </div>
         <div className="flex-1 overflow-y-auto">
-          {error && <p className="p-4 text-xs text-red-300">{error}</p>}
+          {error && <p className="p-4 text-xs text-red-600">{error}</p>}
           {!error && conversaciones === null && (
             <p className="p-4 text-xs text-mist">Cargando…</p>
           )}
@@ -132,7 +132,7 @@ export default function MensajesPage() {
               }`}
             >
               <div className="flex items-center justify-between gap-2">
-                <span className="text-xs font-semibold text-white">
+                <span className="text-xs font-semibold text-fg">
                   {formatearTelefono(c.telefono_cliente)}
                 </span>
                 <span
@@ -157,20 +157,20 @@ export default function MensajesPage() {
             {conversaciones !== null && conversaciones.length === 0 ? (
               (negocios?.length ?? 0) === 0 ? (
                 <>
-                  <p className="text-sm font-semibold text-white">Conecta tu número de WhatsApp</p>
+                  <p className="text-sm font-semibold text-fg">Conecta tu número de WhatsApp</p>
                   <p className="max-w-xs text-xs leading-relaxed text-mist">
                     Necesitas un número conectado para empezar a recibir y responder mensajes aquí.
                   </p>
                   <Link
                     href="/dashboard/conexion"
-                    className="mt-2 rounded-lg bg-lime px-4 py-2 text-xs font-semibold text-ink transition-colors duration-200 hover:bg-lime-hover"
+                    className="mt-2 rounded-lg bg-lime px-4 py-2 text-xs font-semibold text-lime-fg transition-colors duration-200 hover:bg-lime-hover"
                   >
                     Conectar número →
                   </Link>
                 </>
               ) : (
                 <>
-                  <p className="text-sm font-semibold text-white">Todavía no hablaste con nadie</p>
+                  <p className="text-sm font-semibold text-fg">Todavía no hablaste con nadie</p>
                   <p className="max-w-xs text-xs leading-relaxed text-mist">
                     Los chats van a aparecer aquí en cuanto tus clientes te escriban por WhatsApp.
                   </p>
@@ -183,7 +183,7 @@ export default function MensajesPage() {
         ) : (
           <>
             <div className="border-b border-edge/60 p-4">
-              <p className="text-sm font-semibold text-white">
+              <p className="text-sm font-semibold text-fg">
                 {formatearTelefono(seleccionada.telefono_cliente)}
               </p>
               <p className="text-xs text-mist">{seleccionada.nombre_negocio}</p>
@@ -198,8 +198,8 @@ export default function MensajesPage() {
                   <div
                     className={`max-w-[75%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
                       m.direccion === "saliente"
-                        ? "bg-lime/15 text-white"
-                        : "bg-ink-2 text-white/90"
+                        ? "bg-lime/15 text-fg"
+                        : "bg-ink-2 text-fg/90"
                     }`}
                   >
                     <p>{m.contenido}</p>
@@ -224,13 +224,13 @@ export default function MensajesPage() {
             <dl className="mt-4 flex flex-col gap-4">
               <div>
                 <dt className="text-[11px] text-mist">Teléfono</dt>
-                <dd className="mt-1 text-sm font-medium text-white">
+                <dd className="mt-1 text-sm font-medium text-fg">
                   {formatearTelefono(seleccionada.telefono_cliente)}
                 </dd>
               </div>
               <div>
                 <dt className="text-[11px] text-mist">Negocio</dt>
-                <dd className="mt-1 text-sm font-medium text-white">
+                <dd className="mt-1 text-sm font-medium text-fg">
                   {seleccionada.nombre_negocio}
                 </dd>
               </div>
@@ -240,8 +240,8 @@ export default function MensajesPage() {
                   <span
                     className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide ${
                       seleccionada.pausado
-                        ? "bg-white/10 text-white"
-                        : "bg-lime/10 text-lime"
+                        ? "bg-edge text-mist"
+                        : "bg-lime/10 text-lime-text"
                     }`}
                   >
                     <span

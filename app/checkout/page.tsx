@@ -132,8 +132,8 @@ export default function CheckoutPage() {
 
   if (wompiConfigFaltante) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-ink px-5 text-white">
-        <p className="max-w-md rounded-lg border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-300">
+      <main className="flex min-h-screen items-center justify-center bg-ink px-5 text-fg">
+        <p className="max-w-md rounded-lg border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-600">
           Falta NEXT_PUBLIC_WOMPI_PUBLIC_KEY en el entorno.
         </p>
       </main>
@@ -141,7 +141,7 @@ export default function CheckoutPage() {
   }
   if (session === "verificando") {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-ink px-5 text-white">
+      <main className="flex min-h-screen items-center justify-center bg-ink px-5 text-fg">
         <p className="text-sm text-mist">Verificando tu sesión…</p>
       </main>
     );
@@ -149,9 +149,9 @@ export default function CheckoutPage() {
   if (!session) return null;
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-ink px-5 py-16 text-white">
+    <main className="flex min-h-screen items-center justify-center bg-ink px-5 py-16 text-fg">
       <div className="w-full max-w-md rounded-2xl border border-edge/60 bg-card p-8 sm:p-10">
-        <Link href="/dashboard/conexion" className="text-sm text-lime hover:text-white">
+        <Link href="/dashboard/conexion" className="text-sm text-lime-text hover:text-fg">
           ← Volver al panel
         </Link>
         <h1 className="mt-6 text-2xl font-semibold">Activa tu suscripción</h1>
@@ -163,7 +163,7 @@ export default function CheckoutPage() {
         {estado.fase === "exito" ? (
           <div className="mt-8 rounded-xl border border-lime/40 bg-lime/10 p-5 text-sm leading-relaxed">
             ✅ Suscripción activada. Ya puedes conectar o seguir usando tu WhatsApp Business.
-            <Link href="/dashboard/conexion" className="mt-3 block font-semibold text-lime hover:text-white">
+            <Link href="/dashboard/conexion" className="mt-3 block font-semibold text-lime-text hover:text-fg">
               Ir al panel →
             </Link>
           </div>
@@ -179,7 +179,7 @@ export default function CheckoutPage() {
                 value={numero}
                 onChange={(e) => setNumero(e.target.value)}
                 placeholder="4242 4242 4242 4242"
-                className="w-full rounded-lg border border-edge bg-ink-2 px-4 py-2.5 text-sm text-white outline-none focus:border-lime/50"
+                className="w-full rounded-lg border border-edge bg-ink-2 px-4 py-2.5 text-sm text-fg outline-none focus:border-lime/50"
               />
             </div>
             <div className="grid grid-cols-3 gap-3">
@@ -192,7 +192,7 @@ export default function CheckoutPage() {
                   value={mes}
                   onChange={(e) => setMes(e.target.value)}
                   placeholder="MM"
-                  className="w-full rounded-lg border border-edge bg-ink-2 px-4 py-2.5 text-sm text-white outline-none focus:border-lime/50"
+                  className="w-full rounded-lg border border-edge bg-ink-2 px-4 py-2.5 text-sm text-fg outline-none focus:border-lime/50"
                 />
               </div>
               <div>
@@ -204,7 +204,7 @@ export default function CheckoutPage() {
                   value={anio}
                   onChange={(e) => setAnio(e.target.value)}
                   placeholder="AA"
-                  className="w-full rounded-lg border border-edge bg-ink-2 px-4 py-2.5 text-sm text-white outline-none focus:border-lime/50"
+                  className="w-full rounded-lg border border-edge bg-ink-2 px-4 py-2.5 text-sm text-fg outline-none focus:border-lime/50"
                 />
               </div>
               <div>
@@ -216,7 +216,7 @@ export default function CheckoutPage() {
                   value={cvc}
                   onChange={(e) => setCvc(e.target.value)}
                   placeholder="123"
-                  className="w-full rounded-lg border border-edge bg-ink-2 px-4 py-2.5 text-sm text-white outline-none focus:border-lime/50"
+                  className="w-full rounded-lg border border-edge bg-ink-2 px-4 py-2.5 text-sm text-fg outline-none focus:border-lime/50"
                 />
               </div>
             </div>
@@ -229,12 +229,12 @@ export default function CheckoutPage() {
                 value={titular}
                 onChange={(e) => setTitular(e.target.value)}
                 placeholder="Como aparece en la tarjeta"
-                className="w-full rounded-lg border border-edge bg-ink-2 px-4 py-2.5 text-sm text-white outline-none focus:border-lime/50"
+                className="w-full rounded-lg border border-edge bg-ink-2 px-4 py-2.5 text-sm text-fg outline-none focus:border-lime/50"
               />
             </div>
 
             {estado.fase === "error" && (
-              <p className="rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-300">
+              <p className="rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-600">
                 {estado.mensaje}
               </p>
             )}
@@ -242,7 +242,7 @@ export default function CheckoutPage() {
             <button
               type="submit"
               disabled={estado.fase === "procesando"}
-              className="btn-shine mt-2 rounded-lg bg-lime px-6 py-3 text-sm font-semibold text-ink transition-[background-color,transform] duration-200 hover:-translate-y-0.5 hover:bg-lime-hover active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50"
+              className="btn-shine mt-2 rounded-lg bg-lime px-6 py-3 text-sm font-semibold text-lime-fg transition-[background-color,transform] duration-200 hover:-translate-y-0.5 hover:bg-lime-hover active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50"
             >
               {estado.fase === "procesando" ? "Procesando…" : "Confirmar y pagar"}
             </button>

@@ -45,7 +45,7 @@ function Icono({ nombre }: { nombre: keyof typeof ICONOS }) {
 }
 
 const COLORES = {
-  lime: "bg-lime/10 text-lime",
+  lime: "bg-lime/10 text-lime-text",
   sky: "bg-sky-400/10 text-sky-400",
   violet: "bg-violet-400/10 text-violet-400",
   amber: "bg-amber-400/10 text-amber-400",
@@ -70,7 +70,7 @@ function StatCard({
         <Icono nombre={icono} />
       </div>
       <p className="mt-4 text-xs font-medium text-mist">{etiqueta}</p>
-      <p className="mt-1 text-3xl font-semibold tracking-tight text-white">{valor}</p>
+      <p className="mt-1 text-3xl font-semibold tracking-tight text-fg">{valor}</p>
       {detalle && <p className="mt-1.5 text-xs text-mist/80">{detalle}</p>}
     </div>
   );
@@ -96,7 +96,7 @@ function GraficaActividad() {
     <div className="rounded-2xl border border-edge/60 bg-card p-6">
       <div className="flex items-center justify-between">
         <div>
-          <p className="text-sm font-semibold text-white">Mensajes procesados</p>
+          <p className="text-sm font-semibold text-fg">Mensajes procesados</p>
           <p className="text-xs text-mist">Últimos 7 días</p>
         </div>
       </div>
@@ -183,10 +183,10 @@ function PantallaBienvenida({
       <div className="mt-8 overflow-hidden rounded-2xl border border-lime/20 bg-gradient-to-br from-lime/15 via-card to-card p-8 sm:p-10">
         <div className="flex flex-col items-start gap-6 sm:flex-row sm:items-center sm:justify-between">
           <div className="max-w-lg">
-            <p className="text-xs font-semibold uppercase tracking-widest text-lime">
+            <p className="text-xs font-semibold uppercase tracking-widest text-lime-text">
               Primeros pasos
             </p>
-            <h2 className="mt-2 text-xl font-semibold text-white sm:text-2xl">
+            <h2 className="mt-2 text-xl font-semibold text-fg sm:text-2xl">
               Conecta tu primer número de WhatsApp
             </h2>
             <p className="mt-2 text-sm leading-relaxed text-mist">
@@ -195,7 +195,7 @@ function PantallaBienvenida({
           </div>
           <Link
             href="/dashboard/conexion"
-            className="btn-shine shrink-0 rounded-lg bg-lime px-5 py-3 text-sm font-semibold text-ink transition-colors duration-200 hover:bg-lime-hover"
+            className="btn-shine shrink-0 rounded-lg bg-lime px-5 py-3 text-sm font-semibold text-lime-fg transition-colors duration-200 hover:bg-lime-hover"
           >
             Conectar número →
           </Link>
@@ -213,18 +213,18 @@ function PantallaBienvenida({
           >
             <span
               className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${
-                p.hecho ? "bg-lime text-ink" : "border border-edge text-mist"
+                p.hecho ? "bg-lime text-lime-fg" : "border border-edge text-mist"
               }`}
             >
               {p.hecho ? <Icono nombre="check" /> : i + 1}
             </span>
-            <span className={`text-sm ${p.hecho ? "text-white" : "text-mist"}`}>{p.etiqueta}</span>
+            <span className={`text-sm ${p.hecho ? "text-fg" : "text-mist"}`}>{p.etiqueta}</span>
           </Link>
         ))}
       </div>
 
       <div className="mt-10">
-        <p className="text-sm font-semibold text-white">Todo lo que puedes hacer</p>
+        <p className="text-sm font-semibold text-fg">Todo lo que puedes hacer</p>
         <div className="mt-4 grid gap-5 sm:grid-cols-3">
           {VENTAJAS.map((v) => (
             <Link
@@ -232,12 +232,12 @@ function PantallaBienvenida({
               href={v.href}
               className="group rounded-2xl border border-edge/60 bg-card p-6 transition-[border-color,transform] duration-200 hover:-translate-y-0.5 hover:border-edge"
             >
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-lime/10 text-lime">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-lime/10 text-lime-text">
                 <Icono nombre={v.icono} />
               </div>
-              <p className="mt-4 text-sm font-semibold text-white">{v.titulo}</p>
+              <p className="mt-4 text-sm font-semibold text-fg">{v.titulo}</p>
               <p className="mt-1.5 text-xs leading-relaxed text-mist">{v.descripcion}</p>
-              <span className="mt-3 inline-flex items-center text-xs font-semibold text-lime opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+              <span className="mt-3 inline-flex items-center text-xs font-semibold text-lime-text opacity-0 transition-opacity duration-200 group-hover:opacity-100">
                 Ir ahora →
               </span>
             </Link>
@@ -333,10 +333,10 @@ export default function ResumenPage() {
         {suscripcion ? (
           <div className="flex flex-col justify-between rounded-2xl bg-gradient-to-br from-lime/20 via-lime/5 to-transparent p-6">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-widest text-lime">
+              <p className="text-xs font-semibold uppercase tracking-widest text-lime-text">
                 Suscripción
               </p>
-              <p className="mt-3 text-2xl font-semibold text-white">{suscripcion.plan}</p>
+              <p className="mt-3 text-2xl font-semibold text-fg">{suscripcion.plan}</p>
               <p className="mt-1 text-sm text-mist">
                 ${suscripcion.precio_cop.toLocaleString("es-CO")} COP / mes
               </p>
@@ -346,7 +346,7 @@ export default function ResumenPage() {
                     suscripcion.estado === "activa" ? "bg-lime" : "bg-red-400"
                   }`}
                 />
-                <span className={suscripcion.estado === "activa" ? "text-lime" : "text-red-400"}>
+                <span className={suscripcion.estado === "activa" ? "text-lime-text" : "text-red-600"}>
                   {suscripcion.estado === "activa" ? "Activa" : suscripcion.estado}
                 </span>
               </div>
@@ -360,7 +360,7 @@ export default function ResumenPage() {
             </div>
             <Link
               href="/dashboard/cuenta"
-              className="mt-6 rounded-lg bg-lime px-4 py-2.5 text-center text-sm font-semibold text-ink transition-colors duration-200 hover:bg-lime-hover"
+              className="mt-6 rounded-lg bg-lime px-4 py-2.5 text-center text-sm font-semibold text-lime-fg transition-colors duration-200 hover:bg-lime-hover"
             >
               Ver cuenta →
             </Link>
@@ -368,16 +368,16 @@ export default function ResumenPage() {
         ) : (
           <div className="flex flex-col justify-between rounded-2xl bg-gradient-to-br from-lime/20 via-lime/5 to-transparent p-6">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-widest text-lime">
+              <p className="text-xs font-semibold uppercase tracking-widest text-lime-text">
                 Sin suscripción
               </p>
-              <p className="mt-3 text-lg font-semibold leading-snug text-white">
+              <p className="mt-3 text-lg font-semibold leading-snug text-fg">
                 Activa tu plan para desbloquear todo Du IA Business.
               </p>
             </div>
             <Link
               href="/checkout"
-              className="mt-6 rounded-lg bg-lime px-4 py-2.5 text-center text-sm font-semibold text-ink transition-colors duration-200 hover:bg-lime-hover"
+              className="mt-6 rounded-lg bg-lime px-4 py-2.5 text-center text-sm font-semibold text-lime-fg transition-colors duration-200 hover:bg-lime-hover"
             >
               Activar suscripción →
             </Link>
@@ -388,8 +388,8 @@ export default function ResumenPage() {
       {/* --- Tabla de números --- */}
       <div className="mt-6 rounded-2xl border border-edge/60 bg-card">
         <div className="flex items-center justify-between border-b border-edge/60 p-6">
-          <p className="text-sm font-semibold text-white">Tus números</p>
-          <Link href="/dashboard/conexion" className="text-xs font-semibold text-lime hover:text-white">
+          <p className="text-sm font-semibold text-fg">Tus números</p>
+          <Link href="/dashboard/conexion" className="text-xs font-semibold text-lime-text hover:text-fg">
             Ver todos →
           </Link>
         </div>
@@ -406,12 +406,12 @@ export default function ResumenPage() {
             <tbody>
               {negocios?.map((n) => (
                 <tr key={n.phone_number_id} className="border-t border-edge/40">
-                  <td className="px-6 py-3.5 font-medium text-white">{n.nombre_negocio}</td>
+                  <td className="px-6 py-3.5 font-medium text-fg">{n.nombre_negocio}</td>
                   <td className="px-6 py-3.5 text-mist">{formatearTelefono(n.telefono_negocio)}</td>
                   <td className="px-6 py-3.5">
                     <span
                       className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide ${
-                        n.conectado ? "bg-lime/10 text-lime" : "bg-white/10 text-white"
+                        n.conectado ? "bg-lime/10 text-lime-text" : "bg-edge text-mist"
                       }`}
                     >
                       <span className={`h-1.5 w-1.5 rounded-full ${n.conectado ? "bg-lime" : "bg-mist/60"}`} />

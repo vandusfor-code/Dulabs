@@ -101,7 +101,7 @@ export default function BusinessPage() {
               <span className="typing-dot h-1.5 w-1.5 rounded-full bg-lime" />
               Du IA Business
             </p>
-            <h1 className="rise rise-d2 mx-auto max-w-4xl text-4xl font-semibold leading-[1.08] tracking-tight text-white sm:text-6xl">
+            <h1 className="rise rise-d2 mx-auto max-w-4xl text-4xl font-semibold leading-[1.08] tracking-tight text-fg sm:text-6xl">
               La forma oficial y segura de{" "}
               <span className="text-shimmer">automatizar tu WhatsApp.</span>
             </h1>
@@ -115,10 +115,10 @@ export default function BusinessPage() {
         <section className="cv-auto scroll-mt-20 py-20">
           <div className="mx-auto w-full max-w-[1440px] px-5 sm:px-8 lg:px-12">
             <Reveal className="mb-16 max-w-3xl">
-              <p className="mb-4 text-xs font-medium uppercase tracking-[0.25em] text-lime">
+              <p className="mb-4 text-xs font-medium uppercase tracking-[0.25em] text-lime-text">
                 Por qué Du IA Business
               </p>
-              <h2 className="text-3xl font-semibold tracking-tight text-white sm:text-5xl">
+              <h2 className="text-3xl font-semibold tracking-tight text-fg sm:text-5xl">
                 Tres pilares técnicos que blindan tu operación.
               </h2>
             </Reveal>
@@ -127,10 +127,10 @@ export default function BusinessPage() {
               {pilares.map((pilar, i) => (
                 <Reveal key={pilar.numero} delay={i * 100}>
                   <article className="h-full rounded-3xl border border-edge bg-card/60 p-8 transition-[border-color,transform,box-shadow] duration-300 hover:-translate-y-1 hover:border-lime/25 hover:shadow-[0_20px_60px_-24px_rgba(198,255,61,0.12)]">
-                    <span className="text-sm font-semibold text-lime">
+                    <span className="text-sm font-semibold text-lime-text">
                       {pilar.numero}
                     </span>
-                    <h3 className="mt-4 text-xl font-semibold tracking-tight text-white">
+                    <h3 className="mt-4 text-xl font-semibold tracking-tight text-fg">
                       {pilar.titulo}
                     </h3>
                     <p className="mt-4 leading-relaxed text-mist">
@@ -146,10 +146,10 @@ export default function BusinessPage() {
         <section className="cv-auto scroll-mt-20 py-20">
           <div className="mx-auto w-full max-w-[1440px] px-5 sm:px-8 lg:px-12">
             <Reveal className="mb-16 max-w-3xl">
-              <p className="mb-4 text-xs font-medium uppercase tracking-[0.25em] text-lime">
+              <p className="mb-4 text-xs font-medium uppercase tracking-[0.25em] text-lime-text">
                 Planes
               </p>
-              <h2 className="text-3xl font-semibold tracking-tight text-white sm:text-5xl">
+              <h2 className="text-3xl font-semibold tracking-tight text-fg sm:text-5xl">
                 Un plan para cada etapa de tu negocio.
               </h2>
               <p className="mt-5 leading-relaxed text-mist">
@@ -168,15 +168,15 @@ export default function BusinessPage() {
                     }`}
                   >
                     {plan.destacado && (
-                      <span className="mb-5 inline-flex w-fit items-center rounded-full bg-lime/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-lime">
+                      <span className="mb-5 inline-flex w-fit items-center rounded-full bg-lime/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-lime-text">
                         Recomendado
                       </span>
                     )}
-                    <h3 className="text-xl font-semibold text-white">
+                    <h3 className="text-xl font-semibold text-fg">
                       {plan.nombre}
                     </h3>
                     <p className="mt-4 flex items-baseline gap-1.5">
-                      <span className="text-4xl font-semibold tracking-tight text-white">
+                      <span className="text-4xl font-semibold tracking-tight text-fg">
                         {plan.precio}
                       </span>
                       <span className="text-sm text-mist">COP / mes</span>
@@ -188,7 +188,7 @@ export default function BusinessPage() {
                       {plan.incluye.map((item) => (
                         <li
                           key={item}
-                          className="flex items-start gap-3 text-sm leading-relaxed text-white/85"
+                          className="flex items-start gap-3 text-sm leading-relaxed text-fg/85"
                         >
                           <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-lime" />
                           {item}
@@ -199,8 +199,8 @@ export default function BusinessPage() {
                       plan={plan.nombre}
                       className={`mt-10 inline-flex items-center justify-center rounded-lg px-6 py-3 text-sm font-semibold transition-[background-color,transform] duration-200 hover:-translate-y-0.5 active:scale-[0.97] ${
                         plan.destacado
-                          ? "btn-shine bg-lime text-ink hover:bg-lime-hover"
-                          : "border border-edge text-white hover:border-mist/40"
+                          ? "btn-shine bg-lime text-lime-fg hover:bg-lime-hover"
+                          : "border border-edge text-fg hover:border-mist/40"
                       }`}
                     />
                   </article>
@@ -216,13 +216,13 @@ export default function BusinessPage() {
               <div className="hero-glow relative overflow-hidden rounded-3xl border border-edge bg-ink-2/80 px-8 py-20 text-center sm:px-16">
                 <div className="dot-grid pointer-events-none absolute inset-0" />
                 <div className="relative">
-                  <h2 className="mx-auto max-w-2xl text-3xl font-semibold tracking-tight text-white sm:text-4xl">
+                  <h2 className="mx-auto max-w-2xl text-3xl font-semibold tracking-tight text-fg sm:text-4xl">
                     ¿Listo para transformar la atención de tu negocio?
                   </h2>
                   <div className="mt-10 flex flex-wrap items-center justify-center gap-4">
                     <Link
                       href="/dashboard/conexion"
-                      className="btn-shine rounded-lg bg-lime px-6 py-3 text-sm font-semibold text-ink transition-[background-color,transform] duration-200 hover:-translate-y-0.5 hover:bg-lime-hover active:scale-[0.97]"
+                      className="btn-shine rounded-lg bg-lime px-6 py-3 text-sm font-semibold text-lime-fg transition-[background-color,transform] duration-200 hover:-translate-y-0.5 hover:bg-lime-hover active:scale-[0.97]"
                     >
                       Conectar mi WhatsApp Business Ahora
                     </Link>

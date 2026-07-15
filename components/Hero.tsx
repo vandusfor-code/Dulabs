@@ -14,7 +14,7 @@ export default function Hero() {
             <span className="typing-dot h-1.5 w-1.5 rounded-full bg-lime" />
             Tecnología conversacional para personas y empresas
           </p>
-          <h1 className="rise rise-d2 text-4xl font-semibold leading-[1.08] tracking-tight text-white sm:text-6xl xl:text-7xl">
+          <h1 className="rise rise-d2 text-4xl font-semibold leading-[1.08] tracking-tight text-fg sm:text-6xl xl:text-7xl">
             La inteligencia artificial funciona mejor cuando vive donde ya
             hablas <span className="text-shimmer">todos los días.</span>
           </h1>
@@ -28,13 +28,13 @@ export default function Hero() {
           <div className="rise rise-d4 mt-10 flex flex-wrap items-center justify-center gap-4">
             <Link
               href="/business"
-              className="btn-shine rounded-lg bg-lime px-6 py-3 text-sm font-semibold text-ink transition-[background-color,transform] duration-200 hover:-translate-y-0.5 hover:bg-lime-hover active:scale-[0.97]"
+              className="btn-shine rounded-lg bg-lime px-6 py-3 text-sm font-semibold text-lime-fg transition-[background-color,transform] duration-200 hover:-translate-y-0.5 hover:bg-lime-hover active:scale-[0.97]"
             >
               Activar mi API Oficial →
             </Link>
             <a
               href="#contacto"
-              className="rounded-lg border border-edge px-6 py-3 text-sm text-white transition-[border-color,transform] duration-200 hover:-translate-y-0.5 hover:border-mist/40"
+              className="rounded-lg border border-edge px-6 py-3 text-sm text-fg transition-[border-color,transform] duration-200 hover:-translate-y-0.5 hover:border-mist/40"
             >
               Hablar con nosotros
             </a>

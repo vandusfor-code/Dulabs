@@ -49,15 +49,15 @@ function Bubble({ message, delay }: { message: Message; delay: number }) {
       <div
         className={`bubble max-w-[85%] rounded-2xl px-3.5 py-2.5 text-[13px] leading-relaxed ${
           isUser
-            ? "rounded-br-sm bg-lime/15 text-lime-soft"
-            : "rounded-bl-sm border border-edge bg-ink-2 text-white/90"
+            ? "rounded-br-sm bg-lime/15 text-lime-text"
+            : "rounded-bl-sm border border-edge bg-ink-2 text-fg/90"
         }`}
         style={{ "--d": `${delay}s` } as React.CSSProperties}
       >
         <p>{message.text}</p>
         <p
           className={`mt-1 text-right text-[10px] ${
-            isUser ? "text-lime/50" : "text-mist/60"
+            isUser ? "text-lime-text/70" : "text-mist/60"
           }`}
         >
           {message.time} {isUser ? "✓✓" : ""}
@@ -79,11 +79,11 @@ export default function ChatShowcase() {
         >
           <div className="mb-4 flex items-center justify-between border-b border-edge pb-3">
             <div className="flex items-center gap-2.5">
-              <span className="flex h-8 w-8 items-center justify-center rounded-full bg-lime/10 text-[10px] font-bold text-lime">
+              <span className="flex h-8 w-8 items-center justify-center rounded-full bg-lime/10 text-[10px] font-bold text-lime-text">
                 {chat.product.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase()}
               </span>
               <div>
-                <p className="text-sm font-semibold text-white">{chat.product}</p>
+                <p className="text-sm font-semibold text-fg">{chat.product}</p>
                 <p className="flex items-center gap-1.5 text-[11px] text-mist">
                   <span className="typing-dot h-1.5 w-1.5 rounded-full bg-lime" />
                   en línea

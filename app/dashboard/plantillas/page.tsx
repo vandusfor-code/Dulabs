@@ -28,15 +28,15 @@ function BannerMarketing() {
           setCerrado(true);
         }}
         aria-label="Cerrar"
-        className="absolute right-5 top-5 text-mist transition-colors duration-200 hover:text-white"
+        className="absolute right-5 top-5 text-mist transition-colors duration-200 hover:text-fg"
       >
         ✕
       </button>
       <div className="max-w-xl">
-        <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-lime/10 text-lime">
+        <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-lime/10 text-lime-text">
           <IconoEnviar />
         </div>
-        <h2 className="mt-4 text-xl font-semibold text-white">
+        <h2 className="mt-4 text-xl font-semibold text-fg">
           Marketing — plantillas y campañas masivas por WhatsApp
         </h2>
         <ul className="mt-3 space-y-1.5 text-sm leading-relaxed text-mist">
@@ -63,10 +63,10 @@ type Plantilla = {
 function BadgeEstado({ estado }: { estado: string }) {
   const estilos =
     estado === "APPROVED"
-      ? "bg-lime/10 text-lime"
+      ? "bg-lime/10 text-lime-text"
       : estado === "REJECTED"
-        ? "bg-red-500/10 text-red-400"
-        : "bg-white/10 text-white";
+        ? "bg-red-500/10 text-red-600"
+        : "bg-edge text-mist";
   return (
     <span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide ${estilos}`}>
       {estado === "pendiente" ? "PENDING" : estado}
@@ -182,7 +182,7 @@ export default function PlantillasPage() {
       </p>
 
       {error && (
-        <p className="mt-6 rounded-lg border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-300">
+        <p className="mt-6 rounded-lg border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-600">
           {error}
         </p>
       )}
@@ -201,7 +201,7 @@ export default function PlantillasPage() {
               <select
                 value={phoneNumberId}
                 onChange={(e) => setPhoneNumberIdElegido(e.target.value)}
-                className="w-full rounded-lg border border-edge bg-ink-2 px-4 py-2.5 text-sm text-white outline-none focus:border-lime/50"
+                className="w-full rounded-lg border border-edge bg-ink-2 px-4 py-2.5 text-sm text-fg outline-none focus:border-lime/50"
               >
                 {negocios.map((n) => (
                   <option key={n.phone_number_id} value={n.phone_number_id}>
@@ -219,7 +219,7 @@ export default function PlantillasPage() {
                 value={nombre}
                 onChange={(e) => setNombre(e.target.value)}
                 placeholder="promo_julio"
-                className="w-full rounded-lg border border-edge bg-ink-2 px-4 py-2.5 text-sm text-white outline-none focus:border-lime/50"
+                className="w-full rounded-lg border border-edge bg-ink-2 px-4 py-2.5 text-sm text-fg outline-none focus:border-lime/50"
               />
             </div>
             <div>
@@ -227,7 +227,7 @@ export default function PlantillasPage() {
               <select
                 value={categoria}
                 onChange={(e) => setCategoria(e.target.value)}
-                className="w-full rounded-lg border border-edge bg-ink-2 px-4 py-2.5 text-sm text-white outline-none focus:border-lime/50"
+                className="w-full rounded-lg border border-edge bg-ink-2 px-4 py-2.5 text-sm text-fg outline-none focus:border-lime/50"
               >
                 <option value="UTILITY">Utilidad</option>
                 <option value="MARKETING">Marketing</option>
@@ -246,7 +246,7 @@ export default function PlantillasPage() {
               value={cuerpo}
               onChange={(e) => setCuerpo(e.target.value)}
               placeholder="Hola, tenemos una promoción especial este mes para ti."
-              className="w-full rounded-lg border border-edge bg-ink-2 px-4 py-3 text-sm text-white outline-none focus:border-lime/50"
+              className="w-full rounded-lg border border-edge bg-ink-2 px-4 py-3 text-sm text-fg outline-none focus:border-lime/50"
             />
           </div>
           {mensajeCrear && (
@@ -257,7 +257,7 @@ export default function PlantillasPage() {
           <button
             type="submit"
             disabled={creando || !phoneNumberId}
-            className="btn-shine self-start rounded-lg bg-lime px-5 py-2.5 text-sm font-semibold text-ink transition-[background-color,transform] duration-200 hover:-translate-y-0.5 hover:bg-lime-hover active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50"
+            className="btn-shine self-start rounded-lg bg-lime px-5 py-2.5 text-sm font-semibold text-lime-fg transition-[background-color,transform] duration-200 hover:-translate-y-0.5 hover:bg-lime-hover active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50"
           >
             {creando ? "Enviando a Meta…" : "Enviar a revisión"}
           </button>
@@ -271,10 +271,10 @@ export default function PlantillasPage() {
         </h2>
         {plantillas !== null && plantillas.length === 0 && (
           <div className="mt-4 flex flex-col items-center gap-2 rounded-xl border border-edge/60 bg-card p-8 text-center">
-            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-lime/10 text-lime">
+            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-lime/10 text-lime-text">
               <IconoEnviar />
             </span>
-            <p className="mt-1 text-sm font-semibold text-white">
+            <p className="mt-1 text-sm font-semibold text-fg">
               Todavía no has creado ninguna plantilla
             </p>
             <p className="max-w-xs text-xs leading-relaxed text-mist">
@@ -286,7 +286,7 @@ export default function PlantillasPage() {
           {plantillas?.map((p) => (
             <div key={p.id} className="rounded-xl border border-edge/60 bg-card p-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-sm font-semibold text-white">{p.nombre}</p>
+                <p className="text-sm font-semibold text-fg">{p.nombre}</p>
                 <BadgeEstado estado={p.estado} />
               </div>
               <p className="mt-2 text-sm text-mist">{p.cuerpo}</p>
@@ -314,7 +314,7 @@ export default function PlantillasPage() {
                 required
                 value={plantillaCampana}
                 onChange={(e) => setPlantillaCampana(Number(e.target.value))}
-                className="w-full rounded-lg border border-edge bg-ink-2 px-4 py-2.5 text-sm text-white outline-none focus:border-lime/50"
+                className="w-full rounded-lg border border-edge bg-ink-2 px-4 py-2.5 text-sm text-fg outline-none focus:border-lime/50"
               >
                 <option value="">Selecciona una plantilla</option>
                 {plantillasAprobadas.map((p) => (
@@ -334,7 +334,7 @@ export default function PlantillasPage() {
                 value={destinatarios}
                 onChange={(e) => setDestinatarios(e.target.value)}
                 placeholder={"573001234567\n573007654321"}
-                className="w-full rounded-lg border border-edge bg-ink-2 px-4 py-3 text-sm text-white outline-none focus:border-lime/50"
+                className="w-full rounded-lg border border-edge bg-ink-2 px-4 py-3 text-sm text-fg outline-none focus:border-lime/50"
               />
             </div>
             {resultadoCampana && (
@@ -345,7 +345,7 @@ export default function PlantillasPage() {
             <button
               type="submit"
               disabled={enviandoCampana}
-              className="btn-shine self-start rounded-lg bg-lime px-5 py-2.5 text-sm font-semibold text-ink transition-[background-color,transform] duration-200 hover:-translate-y-0.5 hover:bg-lime-hover active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50"
+              className="btn-shine self-start rounded-lg bg-lime px-5 py-2.5 text-sm font-semibold text-lime-fg transition-[background-color,transform] duration-200 hover:-translate-y-0.5 hover:bg-lime-hover active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50"
             >
               {enviandoCampana ? "Enviando…" : "Enviar campaña"}
             </button>

@@ -227,16 +227,16 @@ const PRIVACY_POLICY_HTML = `<h1>Política de Privacidad</h1>
 
 export default function PrivacidadPage() {
   return (
-    <main className="bg-ink px-5 py-20 text-white sm:px-8">
+    <main className="bg-ink px-5 py-20 text-fg sm:px-8">
       <div className="mx-auto w-full max-w-3xl">
         <Link
           href="/"
-          className="text-sm text-lime transition-colors duration-200 hover:text-white"
+          className="text-sm text-lime-text transition-colors duration-200 hover:text-fg"
         >
           ← Volver a Du Labs
         </Link>
         <article
-          className="mt-8 text-mist [&_a]:text-lime [&_a]:underline [&_a]:underline-offset-2 [&_a:hover]:text-white [&_h1]:mb-2 [&_h1]:text-3xl [&_h1]:font-semibold [&_h1]:text-white [&_h2]:mt-10 [&_h2]:text-xl [&_h2]:font-semibold [&_h2]:text-white [&_h3]:mt-6 [&_h3]:text-lg [&_h3]:font-semibold [&_h3]:text-white [&_h4]:mt-4 [&_h4]:text-base [&_h4]:font-semibold [&_h4]:text-white [&_li]:leading-relaxed [&_p]:mt-4 [&_p]:leading-relaxed [&_strong]:font-semibold [&_strong]:text-white [&_ul]:mt-4 [&_ul]:list-disc [&_ul]:space-y-2 [&_ul]:pl-6"
+          className="mt-8 text-mist [&_a]:text-lime-text [&_a]:underline [&_a]:underline-offset-2 [&_a:hover]:text-fg [&_h1]:mb-2 [&_h1]:text-3xl [&_h1]:font-semibold [&_h1]:text-fg [&_h2]:mt-10 [&_h2]:text-xl [&_h2]:font-semibold [&_h2]:text-fg [&_h3]:mt-6 [&_h3]:text-lg [&_h3]:font-semibold [&_h3]:text-fg [&_h4]:mt-4 [&_h4]:text-base [&_h4]:font-semibold [&_h4]:text-fg [&_li]:leading-relaxed [&_p]:mt-4 [&_p]:leading-relaxed [&_strong]:font-semibold [&_strong]:text-fg [&_ul]:mt-4 [&_ul]:list-disc [&_ul]:space-y-2 [&_ul]:pl-6"
           dangerouslySetInnerHTML={{ __html: PRIVACY_POLICY_HTML }}
         />
       </div>

@@ -65,11 +65,11 @@ export default function LoginPage() {
   };
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-ink px-5 py-16 text-white">
+    <main className="flex min-h-screen items-center justify-center bg-ink px-5 py-16 text-fg">
       <div className="w-full max-w-md rounded-2xl border border-edge/60 bg-card p-8 sm:p-10">
         <Link
           href="/"
-          className="text-sm text-lime transition-colors duration-200 hover:text-white"
+          className="text-sm text-lime-text transition-colors duration-200 hover:text-fg"
         >
           ← Volver a Du Labs
         </Link>
@@ -82,7 +82,7 @@ export default function LoginPage() {
         </p>
 
         {supabaseConfigFaltante && (
-          <p className="mt-4 rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-300">
+          <p className="mt-4 rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-600">
             Faltan NEXT_PUBLIC_SUPABASE_URL o NEXT_PUBLIC_SUPABASE_ANON_KEY en el entorno.
           </p>
         )}
@@ -97,7 +97,7 @@ export default function LoginPage() {
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full rounded-lg border border-edge bg-ink-2 px-4 py-2.5 text-sm text-white outline-none transition-colors duration-200 focus:border-lime/50"
+              className="w-full rounded-lg border border-edge bg-ink-2 px-4 py-2.5 text-sm text-fg outline-none transition-colors duration-200 focus:border-lime/50"
               placeholder="tu@negocio.com"
             />
           </div>
@@ -111,18 +111,18 @@ export default function LoginPage() {
               minLength={6}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full rounded-lg border border-edge bg-ink-2 px-4 py-2.5 text-sm text-white outline-none transition-colors duration-200 focus:border-lime/50"
+              className="w-full rounded-lg border border-edge bg-ink-2 px-4 py-2.5 text-sm text-fg outline-none transition-colors duration-200 focus:border-lime/50"
               placeholder="••••••••"
             />
           </div>
 
           {error && (
-            <p className="rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-300">
+            <p className="rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-600">
               {error}
             </p>
           )}
           {mensaje && (
-            <p className="rounded-lg border border-lime/40 bg-lime/10 p-3 text-sm text-lime">
+            <p className="rounded-lg border border-lime/40 bg-lime/10 p-3 text-sm text-lime-text">
               {mensaje}
             </p>
           )}
@@ -130,7 +130,7 @@ export default function LoginPage() {
           <button
             type="submit"
             disabled={cargando || supabaseConfigFaltante}
-            className="btn-shine mt-2 rounded-lg bg-lime px-6 py-3 text-sm font-semibold text-ink transition-[background-color,transform] duration-200 hover:-translate-y-0.5 hover:bg-lime-hover active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50"
+            className="btn-shine mt-2 rounded-lg bg-lime px-6 py-3 text-sm font-semibold text-lime-fg transition-[background-color,transform] duration-200 hover:-translate-y-0.5 hover:bg-lime-hover active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50"
           >
             {cargando
               ? "Un momento…"
@@ -149,7 +149,7 @@ export default function LoginPage() {
               setError(null);
               setMensaje(null);
             }}
-            className="font-semibold text-lime hover:text-white"
+            className="font-semibold text-lime-text hover:text-fg"
           >
             {modo === "login" ? "Regístrate" : "Inicia sesión"}
           </button>

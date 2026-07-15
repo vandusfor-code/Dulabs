@@ -54,11 +54,11 @@ export default function CuentaPage() {
           <dl className="mt-4 grid gap-4 sm:grid-cols-2">
             <div>
               <dt className="text-xs text-mist">Plan</dt>
-              <dd className="mt-1 text-sm font-medium text-white">{suscripcion.plan}</dd>
+              <dd className="mt-1 text-sm font-medium text-fg">{suscripcion.plan}</dd>
             </div>
             <div>
               <dt className="text-xs text-mist">Precio</dt>
-              <dd className="mt-1 text-sm font-medium text-white">
+              <dd className="mt-1 text-sm font-medium text-fg">
                 ${suscripcion.precio_cop.toLocaleString("es-CO")} COP / mes
               </dd>
             </div>
@@ -66,7 +66,7 @@ export default function CuentaPage() {
               <dt className="text-xs text-mist">Estado</dt>
               <dd
                 className={`mt-1 text-sm font-medium ${
-                  suscripcion.estado === "activa" ? "text-lime" : "text-red-400"
+                  suscripcion.estado === "activa" ? "text-lime-text" : "text-red-600"
                 }`}
               >
                 {suscripcion.estado}
@@ -74,7 +74,7 @@ export default function CuentaPage() {
             </div>
             <div>
               <dt className="text-xs text-mist">Próximo cobro</dt>
-              <dd className="mt-1 text-sm font-medium text-white">
+              <dd className="mt-1 text-sm font-medium text-fg">
                 {new Date(
                   suscripcion.fecha_proximo_cobro + "T00:00:00"
                 ).toLocaleDateString("es-CO", { day: "numeric", month: "long", year: "numeric" })}
@@ -103,7 +103,7 @@ export default function CuentaPage() {
               minLength={6}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full rounded-lg border border-edge bg-ink-2 px-4 py-2.5 text-sm text-white outline-none focus:border-lime/50"
+              className="w-full rounded-lg border border-edge bg-ink-2 px-4 py-2.5 text-sm text-fg outline-none focus:border-lime/50"
             />
           </div>
           <div>
@@ -116,17 +116,17 @@ export default function CuentaPage() {
               minLength={6}
               value={confirmar}
               onChange={(e) => setConfirmar(e.target.value)}
-              className="w-full rounded-lg border border-edge bg-ink-2 px-4 py-2.5 text-sm text-white outline-none focus:border-lime/50"
+              className="w-full rounded-lg border border-edge bg-ink-2 px-4 py-2.5 text-sm text-fg outline-none focus:border-lime/50"
             />
           </div>
 
           {error && (
-            <p className="rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-300">
+            <p className="rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-600">
               {error}
             </p>
           )}
           {mensaje && (
-            <p className="rounded-lg border border-lime/40 bg-lime/10 p-3 text-sm text-lime">
+            <p className="rounded-lg border border-lime/40 bg-lime/10 p-3 text-sm text-lime-text">
               {mensaje}
             </p>
           )}
@@ -134,7 +134,7 @@ export default function CuentaPage() {
           <button
             type="submit"
             disabled={guardando}
-            className="btn-shine mt-2 self-start rounded-lg bg-lime px-6 py-2.5 text-sm font-semibold text-ink transition-[background-color,transform] duration-200 hover:-translate-y-0.5 hover:bg-lime-hover active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50"
+            className="btn-shine mt-2 self-start rounded-lg bg-lime px-6 py-2.5 text-sm font-semibold text-lime-fg transition-[background-color,transform] duration-200 hover:-translate-y-0.5 hover:bg-lime-hover active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50"
           >
             {guardando ? "Guardando…" : "Actualizar contraseña"}
           </button>

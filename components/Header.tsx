@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import ThemeToggle from "./ThemeToggle";
 
 const navLinks = [
   { label: "Productos", href: "#productos" },
@@ -49,10 +50,10 @@ export default function Header() {
     >
       <div className="mx-auto flex h-16 w-full max-w-[1440px] items-center justify-between px-5 sm:px-8 lg:px-12">
         <a href="#" className="group flex items-center gap-2.5">
-          <span className="flex h-7 w-7 items-center justify-center rounded-md bg-lime text-[11px] font-bold tracking-tight text-ink transition-transform duration-300 group-hover:rotate-[-6deg] group-hover:scale-105">
+          <span className="flex h-7 w-7 items-center justify-center rounded-md bg-lime text-[11px] font-bold tracking-tight text-lime-fg transition-transform duration-300 group-hover:rotate-[-6deg] group-hover:scale-105">
             DU
           </span>
-          <span className="text-sm font-semibold tracking-[0.18em] text-white">
+          <span className="text-sm font-semibold tracking-[0.18em] text-fg">
             DU LABS
           </span>
         </a>
@@ -62,7 +63,7 @@ export default function Header() {
             <a
               key={link.href}
               href={link.href}
-              className="relative text-sm text-mist transition-colors duration-200 after:absolute after:-bottom-1 after:left-0 after:h-px after:w-0 after:bg-lime after:transition-[width] after:duration-300 hover:text-white hover:after:w-full"
+              className="relative text-sm text-mist transition-colors duration-200 after:absolute after:-bottom-1 after:left-0 after:h-px after:w-0 after:bg-lime after:transition-[width] after:duration-300 hover:text-fg hover:after:w-full"
             >
               {link.label}
             </a>
@@ -70,15 +71,16 @@ export default function Header() {
         </nav>
 
         <div className="flex items-center gap-3">
+          <ThemeToggle className="hidden sm:flex" />
           <a
             href="#contacto"
-            className="hidden rounded-lg border border-edge px-4 py-2 text-sm text-mist transition-colors duration-200 hover:border-mist/40 hover:text-white lg:block"
+            className="hidden rounded-lg border border-edge px-4 py-2 text-sm text-mist transition-colors duration-200 hover:border-mist/40 hover:text-fg lg:block"
           >
             Contactar
           </a>
           <a
             href="#contacto"
-            className="btn-shine hidden rounded-lg bg-lime px-4 py-2 text-sm font-semibold text-ink transition-[background-color,transform] duration-200 hover:bg-lime-hover active:scale-[0.97] sm:block"
+            className="btn-shine hidden rounded-lg bg-lime px-4 py-2 text-sm font-semibold text-lime-fg transition-[background-color,transform] duration-200 hover:bg-lime-hover active:scale-[0.97] sm:block"
           >
             Solicitar demo
           </a>
@@ -90,12 +92,12 @@ export default function Header() {
             className="flex h-9 w-9 flex-col items-center justify-center gap-[5px] rounded-lg border border-edge md:hidden"
           >
             <span
-              className={`h-px w-4 bg-white transition-transform duration-200 ${
+              className={`h-px w-4 bg-fg transition-transform duration-200 ${
                 open ? "translate-y-[3px] rotate-45" : ""
               }`}
             />
             <span
-              className={`h-px w-4 bg-white transition-transform duration-200 ${
+              className={`h-px w-4 bg-fg transition-transform duration-200 ${
                 open ? "-translate-y-[3px] -rotate-45" : ""
               }`}
             />
@@ -117,7 +119,7 @@ export default function Header() {
                 key={link.href}
                 href={link.href}
                 onClick={() => setOpen(false)}
-                className="rounded-lg px-3 py-3 text-sm text-mist transition-colors duration-200 hover:bg-ink-2 hover:text-white"
+                className="rounded-lg px-3 py-3 text-sm text-mist transition-colors duration-200 hover:bg-ink-2 hover:text-fg"
               >
                 {link.label}
               </a>
@@ -125,7 +127,7 @@ export default function Header() {
             <a
               href="#contacto"
               onClick={() => setOpen(false)}
-              className="mt-2 rounded-lg bg-lime px-3 py-3 text-center text-sm font-semibold text-ink"
+              className="mt-2 rounded-lg bg-lime px-3 py-3 text-center text-sm font-semibold text-lime-fg"
             >
               Solicitar demo
             </a>

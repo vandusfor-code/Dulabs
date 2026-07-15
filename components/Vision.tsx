@@ -8,10 +8,10 @@ export default function Vision() {
     >
       <div className="mx-auto w-full max-w-[1440px] px-5 sm:px-8 lg:px-12">
         <Reveal className="mx-auto max-w-4xl text-center">
-          <p className="mb-4 text-xs font-medium uppercase tracking-[0.25em] text-lime">
+          <p className="mb-4 text-xs font-medium uppercase tracking-[0.25em] text-lime-text">
             Visión
           </p>
-          <h2 className="text-3xl font-semibold tracking-tight text-white sm:text-5xl">
+          <h2 className="text-3xl font-semibold tracking-tight text-fg sm:text-5xl">
             El futuro del software es{" "}
             <span className="text-shimmer">conversacional.</span>
           </h2>
@@ -19,7 +19,7 @@ export default function Vision() {
             Durante décadas aprendimos a usar software. Creemos que durante las
             próximas décadas el software aprenderá a hablar nuestro idioma.
           </p>
-          <p className="mt-4 text-lg font-medium text-white">
+          <p className="mt-4 text-lg font-medium text-fg">
             Du Labs existe para construir ese futuro.
           </p>
         </Reveal>

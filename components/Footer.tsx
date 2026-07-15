@@ -32,10 +32,10 @@ export default function Footer() {
         <div className="grid gap-12 md:grid-cols-[1.5fr_1fr_1fr_1fr]">
           <div>
             <div className="flex items-center gap-2.5">
-              <span className="flex h-7 w-7 items-center justify-center rounded-md bg-lime text-[11px] font-bold tracking-tight text-ink">
+              <span className="flex h-7 w-7 items-center justify-center rounded-md bg-lime text-[11px] font-bold tracking-tight text-lime-fg">
                 DU
               </span>
-              <span className="text-sm font-semibold tracking-[0.18em] text-white">
+              <span className="text-sm font-semibold tracking-[0.18em] text-fg">
                 DU LABS
               </span>
             </div>
@@ -50,7 +50,7 @@ export default function Footer() {
           </div>
           {columns.map((column) => (
             <div key={column.title}>
-              <h3 className="text-sm font-semibold text-white">
+              <h3 className="text-sm font-semibold text-fg">
                 {column.title}
               </h3>
               <ul className="mt-4 flex flex-col gap-3">
@@ -61,7 +61,7 @@ export default function Footer() {
                       {...(link.href.startsWith("http")
                         ? { target: "_blank", rel: "noopener noreferrer" }
                         : {})}
-                      className="text-sm text-mist transition-colors duration-200 hover:text-white"
+                      className="text-sm text-mist transition-colors duration-200 hover:text-fg"
                     >
                       {link.label}
                     </a>
@@ -74,7 +74,7 @@ export default function Footer() {
 
         <div className="mt-14 grid gap-10 border-t border-edge/60 pt-10 md:grid-cols-2">
           <div>
-            <h3 className="text-sm font-semibold text-white">
+            <h3 className="text-sm font-semibold text-fg">
               Información legal
             </h3>
             <p className="mt-4 text-sm leading-relaxed text-mist">
@@ -112,12 +112,12 @@ export default function Footer() {
             </p>
           </div>
           <div className="md:justify-self-end">
-            <h3 className="text-sm font-semibold text-white">Contacto</h3>
+            <h3 className="text-sm font-semibold text-fg">Contacto</h3>
             <ul className="mt-4 flex flex-col gap-3 text-sm text-mist">
               <li>
                 <a
                   href="mailto:vandusfor@gmail.com"
-                  className="transition-colors duration-200 hover:text-white"
+                  className="transition-colors duration-200 hover:text-fg"
                 >
                   vandusfor@gmail.com
                 </a>
@@ -125,7 +125,7 @@ export default function Footer() {
               <li>
                 <a
                   href="tel:+573148127388"
-                  className="transition-colors duration-200 hover:text-white"
+                  className="transition-colors duration-200 hover:text-fg"
                 >
                   +57 314 812 7388
                 </a>
@@ -133,7 +133,7 @@ export default function Footer() {
               <li>
                 <a
                   href="https://dulabs.co"
-                  className="transition-colors duration-200 hover:text-white"
+                  className="transition-colors duration-200 hover:text-fg"
                 >
                   dulabs.co
                 </a>

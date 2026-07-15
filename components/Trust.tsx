@@ -17,9 +17,9 @@ export default function Trust() {
             {pillars.map((pillar) => (
               <span
                 key={pillar}
-                className="group flex items-center gap-2.5 text-sm font-medium text-white/85 transition-colors duration-200 hover:text-white"
+                className="group flex items-center gap-2.5 text-sm font-medium text-fg/85 transition-colors duration-200 hover:text-fg"
               >
-                <span className="flex h-4 w-4 items-center justify-center rounded-full bg-lime/15 text-[9px] text-lime transition-transform duration-300 group-hover:scale-125">
+                <span className="flex h-4 w-4 items-center justify-center rounded-full bg-lime/15 text-[9px] text-lime-text transition-transform duration-300 group-hover:scale-125">
                   ✓
                 </span>
                 {pillar}

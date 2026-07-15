@@ -1,17 +1,33 @@
 @import "tailwindcss";
 
 @theme {
-  --color-ink: #0a0f0d;
-  --color-ink-2: #111714;
-  --color-card: #161d19;
+  /* Light theme (default) */
+  --color-ink: #ffffff;
+  --color-ink-2: #f4f6f3;
+  --color-card: #ffffff;
   --color-lime: #c6ff3d;
   --color-lime-hover: #b1f125;
   --color-lime-soft: #d7ff74;
-  --color-mist: #a1a8a3;
-  --color-edge: #262f29;
+  --color-lime-text: #4d7a0a;
+  --color-mist: #6b756f;
+  --color-edge: #e3e6e0;
+  --color-fg: #0a0f0d;
+  /* Fixed dark text for on-lime buttons/badges — same in both themes */
+  --color-lime-fg: #0a0f0d;
 
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+}
+
+/* Dark theme override — toggled via data-theme="dark" on <html> */
+:root[data-theme="dark"] {
+  --color-ink: #0a0f0d;
+  --color-ink-2: #111714;
+  --color-card: #161d19;
+  --color-lime-text: #c6ff3d;
+  --color-mist: #a1a8a3;
+  --color-edge: #262f29;
+  --color-fg: #ffffff;
 }
 
 html {
@@ -20,16 +36,17 @@ html {
 
 body {
   background: var(--color-ink);
-  color: #ffffff;
+  color: var(--color-fg);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   -webkit-tap-highlight-color: transparent;
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
 ::selection {
   background: var(--color-lime);
-  color: var(--color-ink);
+  color: #0a0f0d;
 }
 
 /* ---------- Keyframes (transform/opacity only: GPU-composited) ---------- */
@@ -239,7 +256,7 @@ body {
     90deg,
     var(--color-lime),
     var(--color-lime-soft),
-    #ffffff,
+    var(--color-fg),
     var(--color-lime)
   );
   background-size: 250% auto;

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import { DashboardSessionProvider, useDashboard } from "@/lib/dashboard-session";
+import ThemeToggle from "@/components/ThemeToggle";
 
 const NAV = [
   { href: "/dashboard", label: "Resumen", icon: "◧" },
@@ -26,10 +27,10 @@ function Sidebar() {
   return (
     <aside className="flex w-64 shrink-0 flex-col border-r border-edge/60 bg-ink-2/60 px-4 py-6">
       <Link href="/" className="flex items-center gap-2.5 px-2">
-        <span className="flex h-7 w-7 items-center justify-center rounded-md bg-lime text-[11px] font-bold tracking-tight text-ink">
+        <span className="flex h-7 w-7 items-center justify-center rounded-md bg-lime text-[11px] font-bold tracking-tight text-lime-fg">
           DU
         </span>
-        <span className="text-sm font-semibold tracking-[0.18em] text-white">
+        <span className="text-sm font-semibold tracking-[0.18em] text-fg">
           DU LABS
         </span>
       </Link>
@@ -46,8 +47,8 @@ function Sidebar() {
               href={item.href}
               className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-colors duration-200 ${
                 activo
-                  ? "bg-lime/10 font-semibold text-lime"
-                  : "text-mist hover:bg-ink-2 hover:text-white"
+                  ? "bg-lime/10 font-semibold text-lime-text"
+                  : "text-mist hover:bg-ink-2 hover:text-fg"
               }`}
             >
               <span className="w-4 text-center text-xs">{item.icon}</span>
@@ -59,7 +60,7 @@ function Sidebar() {
 
       <button
         onClick={cerrarSesion}
-        className="mt-auto rounded-lg border border-edge px-3 py-2.5 text-left text-sm text-mist transition-colors duration-200 hover:border-mist/40 hover:text-white"
+        className="mt-auto rounded-lg border border-edge px-3 py-2.5 text-left text-sm text-mist transition-colors duration-200 hover:border-mist/40 hover:text-fg"
       >
         Cerrar sesión
       </button>
@@ -71,10 +72,13 @@ function Topbar() {
   const { session } = useDashboard();
   return (
     <header className="flex h-16 shrink-0 items-center justify-between border-b border-edge/60 bg-ink-2/40 px-8">
-      <p className="text-xs font-semibold uppercase tracking-widest text-lime">
+      <p className="text-xs font-semibold uppercase tracking-widest text-lime-text">
         Du IA Business
       </p>
-      <p className="text-sm text-mist">{session?.user.email}</p>
+      <div className="flex items-center gap-4">
+        <p className="text-sm text-mist">{session?.user.email}</p>
+        <ThemeToggle />
+      </div>
     </header>
   );
 }
@@ -82,7 +86,7 @@ function Topbar() {
 export default function DashboardShell({ children }: { children: ReactNode }) {
   return (
     <DashboardSessionProvider>
-      <div className="flex min-h-screen bg-ink text-white">
+      <div className="flex min-h-screen bg-ink text-fg">
         <Sidebar />
         <div className="flex min-w-0 flex-1 flex-col">
           <Topbar />
