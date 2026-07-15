@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Phone as PhoneIcon, BadgeCheck } from "lucide-react";
-import { useDashboard } from "@/lib/dashboard-session";
+import { Phone as PhoneIcon, BadgeCheck, Pencil, Check, X } from "lucide-react";
+import { useDashboard, type Negocio } from "@/lib/dashboard-session";
 import { formatearTelefono } from "@/lib/format";
 import { PageHeader, Pill } from "@/components/dashboard/shell/ui";
 
@@ -41,6 +41,135 @@ type EstadoConexion =
 type SessionInfo = { waba_id?: string; phone_number_id?: string };
 
 const PLAN_PENDIENTE_KEY = "du_labs_plan_elegido";
+
+function NumeroCard({
+  negocio,
+  accessToken,
+  onActualizado,
+}: {
+  negocio: Negocio;
+  accessToken: string;
+  onActualizado: () => void;
+}) {
+  const [editando, setEditando] = useState(false);
+  const [nombre, setNombre] = useState(negocio.nombre_negocio);
+  const [guardando, setGuardando] = useState(false);
+
+  const guardarNombre = useCallback(async () => {
+    const valor = nombre.trim();
+    if (!valor || valor === negocio.nombre_negocio) {
+      setEditando(false);
+      setNombre(negocio.nombre_negocio);
+      return;
+    }
+    setGuardando(true);
+    try {
+      const res = await fetch("/api/dashboard/negocio", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ phone_number_id: negocio.phone_number_id, nombre_negocio: valor }),
+      });
+      if (!res.ok) throw new Error();
+      setEditando(false);
+      onActualizado();
+    } catch {
+      setNombre(negocio.nombre_negocio);
+    } finally {
+      setGuardando(false);
+    }
+  }, [nombre, negocio.nombre_negocio, negocio.phone_number_id, accessToken, onActualizado]);
+
+  return (
+    <div className="rounded-xl border border-edge bg-card p-5">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-lime/10 text-lime-text">
+            <PhoneIcon className="size-4" />
+          </div>
+          <div className="min-w-0">
+            {editando ? (
+              <div className="flex items-center gap-1.5">
+                <input
+                  autoFocus
+                  value={nombre}
+                  maxLength={60}
+                  onChange={(e) => setNombre(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") guardarNombre();
+                    if (e.key === "Escape") {
+                      setEditando(false);
+                      setNombre(negocio.nombre_negocio);
+                    }
+                  }}
+                  className="w-40 rounded-md border border-edge bg-ink px-2 py-1 text-sm text-fg outline-none focus:border-lime/50"
+                />
+                <button
+                  onClick={guardarNombre}
+                  disabled={guardando}
+                  className="flex size-6 items-center justify-center rounded-md text-lime-text hover:bg-lime/10 disabled:opacity-50"
+                  aria-label="Guardar nombre"
+                >
+                  <Check className="size-3.5" />
+                </button>
+                <button
+                  onClick={() => {
+                    setEditando(false);
+                    setNombre(negocio.nombre_negocio);
+                  }}
+                  className="flex size-6 items-center justify-center rounded-md text-mist hover:bg-ink"
+                  aria-label="Cancelar"
+                >
+                  <X className="size-3.5" />
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setEditando(true)}
+                className="group flex items-center gap-1.5 text-left"
+              >
+                <span className="truncate text-sm font-semibold text-fg">{negocio.nombre_negocio}</span>
+                <Pencil className="size-3 shrink-0 text-mist opacity-0 transition-opacity group-hover:opacity-100" />
+              </button>
+            )}
+            <p className="font-mono text-[10.5px] uppercase tracking-widest text-mist">
+              {formatearTelefono(negocio.telefono_negocio)}
+            </p>
+          </div>
+        </div>
+        <Pill tone={negocio.conectado ? "success" : "neutral"}>
+          {negocio.conectado && <BadgeCheck className="size-3" />}
+          {negocio.conectado ? "Verificado" : "Pendiente"}
+        </Pill>
+      </div>
+
+      <div className="mt-4 border-t border-edge pt-4">
+        <div className="flex items-center justify-between text-xs">
+          <span className="rounded-full bg-lime/10 px-2.5 py-1 font-semibold uppercase tracking-wide text-lime-text">
+            {negocio.plan}
+          </span>
+          <span className="text-mist">
+            {negocio.mensajes_limite === null
+              ? `${negocio.mensajes_usados.toLocaleString("es-CO")} mensajes · Ilimitado`
+              : `${negocio.mensajes_usados.toLocaleString("es-CO")} / ${negocio.mensajes_limite.toLocaleString("es-CO")} mensajes`}
+          </span>
+        </div>
+        <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-ink">
+          <div
+            className="h-full rounded-full bg-lime"
+            style={{
+              width:
+                negocio.mensajes_limite === null
+                  ? "100%"
+                  : `${Math.min(100, (negocio.mensajes_usados / negocio.mensajes_limite) * 100)}%`,
+            }}
+          />
+        </div>
+      </div>
+
+      <p className="mt-4 break-all font-mono text-[10.5px] text-mist/70">WABA {negocio.whatsapp_business_account_id}</p>
+    </div>
+  );
+}
 
 export default function ConexionPage() {
   const { session, negocios, errorNegocios, cargarNegocios } = useDashboard();
@@ -201,56 +330,15 @@ export default function ConexionPage() {
           </p>
         )}
 
-        {negocios && negocios.length > 0 && (
+        {negocios && negocios.length > 0 && session && (
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             {negocios.map((n) => (
-              <div key={n.phone_number_id} className="rounded-xl border border-edge bg-card p-5">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2.5">
-                    <div className="flex size-9 items-center justify-center rounded-lg bg-lime/10 text-lime-text">
-                      <PhoneIcon className="size-4" />
-                    </div>
-                    <div>
-                      <p className="text-sm font-semibold text-fg">{n.nombre_negocio}</p>
-                      <p className="font-mono text-[10.5px] uppercase tracking-widest text-mist">
-                        {formatearTelefono(n.telefono_negocio)}
-                      </p>
-                    </div>
-                  </div>
-                  <Pill tone={n.conectado ? "success" : "neutral"}>
-                    {n.conectado && <BadgeCheck className="size-3" />}
-                    {n.conectado ? "Verificado" : "Pendiente"}
-                  </Pill>
-                </div>
-
-                <div className="mt-4 border-t border-edge pt-4">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="rounded-full bg-lime/10 px-2.5 py-1 font-semibold uppercase tracking-wide text-lime-text">
-                      {n.plan}
-                    </span>
-                    <span className="text-mist">
-                      {n.mensajes_limite === null
-                        ? `${n.mensajes_usados.toLocaleString("es-CO")} mensajes · Ilimitado`
-                        : `${n.mensajes_usados.toLocaleString("es-CO")} / ${n.mensajes_limite.toLocaleString("es-CO")} mensajes`}
-                    </span>
-                  </div>
-                  <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-ink">
-                    <div
-                      className="h-full rounded-full bg-lime"
-                      style={{
-                        width:
-                          n.mensajes_limite === null
-                            ? "100%"
-                            : `${Math.min(100, (n.mensajes_usados / n.mensajes_limite) * 100)}%`,
-                      }}
-                    />
-                  </div>
-                </div>
-
-                <p className="mt-4 break-all font-mono text-[10.5px] text-mist/70">
-                  WABA {n.whatsapp_business_account_id}
-                </p>
-              </div>
+              <NumeroCard
+                key={n.phone_number_id}
+                negocio={n}
+                accessToken={session.access_token}
+                onActualizado={cargarNegocios}
+              />
             ))}
           </div>
         )}
@@ -280,9 +368,9 @@ export default function ConexionPage() {
               <button
                 onClick={conectar}
                 disabled={estado.fase !== "listo"}
-                className="flex w-full items-center justify-center gap-3 rounded-xl bg-[#1877F2] px-6 py-4 text-base font-semibold text-white transition hover:bg-[#166FE5] disabled:cursor-not-allowed disabled:opacity-50"
+                className="flex items-center justify-center gap-2 rounded-lg bg-[#1877F2] px-4 py-2.5 text-sm font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                <svg viewBox="0 0 24 24" className="h-6 w-6 fill-white" aria-hidden>
+                <svg viewBox="0 0 24 24" className="size-4 fill-white" aria-hidden>
                   <path d="M24 12.073C24 5.405 18.627 0 12 0S0 5.405 0 12.073C0 18.1 4.388 23.094 10.125 24v-8.437H7.078v-3.49h3.047v-2.66c0-3.026 1.792-4.697 4.533-4.697 1.313 0 2.686.236 2.686.236v2.971H15.83c-1.491 0-1.956.93-1.956 1.886v2.264h3.328l-.532 3.49h-2.796V24C19.612 23.094 24 18.1 24 12.073z" />
                 </svg>
                 {estado.fase === "conectando"
