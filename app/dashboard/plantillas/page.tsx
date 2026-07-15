@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { LayoutTemplate, CircleCheck, Clock, CircleAlert, Plus } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { LayoutTemplate, CircleCheck, Clock, CircleAlert, Plus, FileEdit, Ban } from "lucide-react";
 import { useDashboard } from "@/lib/dashboard-session";
-import { PageHeader, Pill } from "@/components/dashboard/shell/ui";
+import { PageHeader, Pill, StatTile } from "@/components/dashboard/shell/ui";
 
 type Plantilla = {
   id: number;
@@ -13,6 +13,7 @@ type Plantilla = {
   idioma: string;
   cuerpo: string;
   estado: string;
+  borrador: boolean;
   created_at: string;
 };
 
@@ -23,7 +24,19 @@ const estadoInfo: Record<string, { tone: "success" | "warning" | "danger" | "neu
   REJECTED: { tone: "danger", label: "Rechazada", icon: CircleAlert },
   pendiente: { tone: "warning", label: "En revisión", icon: Clock },
   PENDING: { tone: "warning", label: "En revisión", icon: Clock },
+  IN_APPEAL: { tone: "warning", label: "En apelación", icon: Clock },
+  PAUSED: { tone: "warning", label: "Pausada por Meta", icon: Ban },
+  DISABLED: { tone: "danger", label: "Deshabilitada", icon: Ban },
+  PENDING_DELETION: { tone: "neutral", label: "Eliminando…", icon: Clock },
+  DELETED: { tone: "neutral", label: "Eliminada", icon: CircleAlert },
+  LIMIT_EXCEEDED: { tone: "danger", label: "Límite excedido", icon: CircleAlert },
+  borrador: { tone: "neutral", label: "Borrador", icon: FileEdit },
 };
+
+function infoDePlantilla(p: Plantilla) {
+  if (p.borrador) return estadoInfo.borrador;
+  return estadoInfo[p.estado] ?? estadoInfo.pendiente;
+}
 
 export default function PlantillasPage() {
   const { session, negocios } = useDashboard();
@@ -40,6 +53,7 @@ export default function PlantillasPage() {
   const [cuerpo, setCuerpo] = useState("");
   const [creando, setCreando] = useState(false);
   const [mensajeCrear, setMensajeCrear] = useState<string | null>(null);
+  const [publicandoId, setPublicandoId] = useState<number | null>(null);
 
   const cargarPlantillas = useCallback(() => {
     if (!session) return;
@@ -57,7 +71,7 @@ export default function PlantillasPage() {
   }, [cargarPlantillas]);
 
   const crearPlantilla = useCallback(
-    async (e: FormEvent) => {
+    async (e: { preventDefault: () => void }, borrador: boolean) => {
       e.preventDefault();
       if (!session) return;
       setCreando(true);
@@ -66,11 +80,11 @@ export default function PlantillasPage() {
         const res = await fetch("/api/plantillas", {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
-          body: JSON.stringify({ phone_number_id: phoneNumberId, nombre, categoria, cuerpo }),
+          body: JSON.stringify({ phone_number_id: phoneNumberId, nombre, categoria, cuerpo, borrador }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error ?? "Error creando la plantilla");
-        setMensajeCrear(`Enviada a revisión de Meta (estado: ${data.estado}).`);
+        setMensajeCrear(borrador ? "Guardada como borrador." : `Enviada a revisión de Meta (estado: ${data.estado}).`);
         setNombre("");
         setCuerpo("");
         cargarPlantillas();
@@ -83,8 +97,47 @@ export default function PlantillasPage() {
     [session, phoneNumberId, nombre, categoria, cuerpo, cargarPlantillas]
   );
 
+  const publicarBorrador = useCallback(
+    async (p: Plantilla) => {
+      if (!session) return;
+      setPublicandoId(p.id);
+      try {
+        const res = await fetch("/api/plantillas", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+          body: JSON.stringify({
+            id: p.id,
+            phone_number_id: p.phone_number_id,
+            nombre: p.nombre,
+            categoria: p.categoria,
+            cuerpo: p.cuerpo,
+            idioma: p.idioma,
+            borrador: false,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error ?? "Error enviando a revisión");
+        cargarPlantillas();
+      } catch (err) {
+        setMensajeCrear(err instanceof Error ? err.message : String(err));
+      } finally {
+        setPublicandoId(null);
+      }
+    },
+    [session, cargarPlantillas]
+  );
+
   const filtradas = (plantillas ?? []).filter((p) => cat === "Todas" || p.categoria === cat);
   const activa = filtradas.find((p) => p.id === activeId) ?? filtradas[0] ?? null;
+
+  const todas = plantillas ?? [];
+  const conteos = {
+    aprobadas: todas.filter((p) => p.estado === "APPROVED").length,
+    pendientes: todas.filter((p) => !p.borrador && ["pendiente", "PENDING", "IN_APPEAL"].includes(p.estado)).length,
+    rechazadas: todas.filter((p) => ["REJECTED", "DISABLED", "LIMIT_EXCEEDED"].includes(p.estado)).length,
+    pausadas: todas.filter((p) => p.estado === "PAUSED").length,
+    borradores: todas.filter((p) => p.borrador).length,
+  };
 
   return (
     <div className="pb-12">
@@ -106,9 +159,19 @@ export default function PlantillasPage() {
           <p className="mb-6 rounded-lg border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-400">{error}</p>
         )}
 
+        {plantillas !== null && plantillas.length > 0 && (
+          <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-5">
+            <StatTile label="Aprobadas" value={String(conteos.aprobadas)} icon={CircleCheck} />
+            <StatTile label="En revisión" value={String(conteos.pendientes)} icon={Clock} />
+            <StatTile label="Rechazadas" value={String(conteos.rechazadas)} icon={CircleAlert} />
+            <StatTile label="Pausadas" value={String(conteos.pausadas)} icon={Ban} />
+            <StatTile label="Borradores" value={String(conteos.borradores)} icon={FileEdit} />
+          </div>
+        )}
+
         {formAbierto && (
           <form
-            onSubmit={crearPlantilla}
+            onSubmit={(e) => crearPlantilla(e, false)}
             className="mb-6 flex flex-col gap-4 rounded-xl border border-edge bg-card p-6"
           >
             {negocios && negocios.length > 1 && (
@@ -166,13 +229,23 @@ export default function PlantillasPage() {
             {mensajeCrear && (
               <p className="rounded-lg border border-edge bg-ink p-3 text-xs leading-relaxed text-mist">{mensajeCrear}</p>
             )}
-            <button
-              type="submit"
-              disabled={creando || !phoneNumberId}
-              className="btn-shine self-start rounded-lg bg-lime px-5 py-2.5 text-sm font-semibold text-lime-fg transition-[background-color,transform] duration-200 hover:-translate-y-0.5 hover:bg-lime-hover active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {creando ? "Enviando a Meta…" : "Enviar a revisión"}
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                type="submit"
+                disabled={creando || !phoneNumberId}
+                className="btn-shine rounded-lg bg-lime px-5 py-2.5 text-sm font-semibold text-lime-fg transition-[background-color,transform] duration-200 hover:-translate-y-0.5 hover:bg-lime-hover active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {creando ? "Enviando a Meta…" : "Enviar a revisión"}
+              </button>
+              <button
+                type="button"
+                onClick={(e) => crearPlantilla(e, true)}
+                disabled={creando || !phoneNumberId}
+                className="rounded-lg border border-edge px-5 py-2.5 text-sm font-semibold text-fg transition-colors hover:border-lime/40 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Guardar borrador
+              </button>
+            </div>
           </form>
         )}
 
@@ -203,7 +276,7 @@ export default function PlantillasPage() {
             ) : (
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 {filtradas.map((p) => {
-                  const info = estadoInfo[p.estado] ?? estadoInfo.pendiente;
+                  const info = infoDePlantilla(p);
                   return (
                     <button
                       key={p.id}
@@ -255,6 +328,15 @@ export default function PlantillasPage() {
               <p className="mt-3 text-center text-xs text-mist">
                 {activa ? activa.nombre : "Así se verá tu próxima plantilla"}
               </p>
+              {activa?.borrador && (
+                <button
+                  onClick={() => publicarBorrador(activa)}
+                  disabled={publicandoId === activa.id}
+                  className="btn-shine mt-3 w-full rounded-lg bg-lime px-4 py-2.5 text-sm font-semibold text-lime-fg transition-[background-color,transform] duration-200 hover:-translate-y-0.5 hover:bg-lime-hover active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {publicandoId === activa.id ? "Enviando…" : "Enviar a revisión"}
+                </button>
+              )}
             </div>
           </div>
         </div>

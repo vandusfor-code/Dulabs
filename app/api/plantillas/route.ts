@@ -61,17 +61,21 @@ export async function GET(request: NextRequest) {
   return Response.json({ plantillas });
 }
 
-// Crea una plantilla nueva y la somete a la API de Meta para aprobación.
+// Crea una plantilla nueva (o la somete a revisión si ya existía como
+// borrador local) y la envía a la API de Meta para aprobación, salvo que se
+// pida guardarla como borrador (sin tocar Meta todavía).
 export async function POST(request: NextRequest) {
   const user = await usuarioDeSesion(request);
   if (!user) return Response.json({ error: "Sesión inválida" }, { status: 401 });
 
   let body: {
+    id?: number;
     phone_number_id?: string;
     nombre?: string;
     categoria?: string;
     idioma?: string;
     cuerpo?: string;
+    borrador?: boolean;
   };
   try {
     body = await request.json();
@@ -79,7 +83,7 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: "JSON inválido" }, { status: 400 });
   }
 
-  const { phone_number_id, nombre, categoria, cuerpo } = body;
+  const { id, phone_number_id, nombre, categoria, cuerpo, borrador } = body;
   const idioma = body.idioma || "es_CO";
   if (!phone_number_id || !nombre || !categoria || !cuerpo) {
     return Response.json({ error: "Faltan campos requeridos" }, { status: 400 });
@@ -98,12 +102,39 @@ export async function POST(request: NextRequest) {
   if (clienteError) return Response.json({ error: clienteError.message }, { status: 500 });
   if (!cliente) return Response.json({ error: "Número no encontrado" }, { status: 404 });
 
+  const nombreNormalizado = normalizarNombrePlantilla(nombre);
+
+  // Guardar (o actualizar) como borrador local: no se toca Meta todavía.
+  if (borrador) {
+    if (id) {
+      const { error: updateError } = await supabase
+        .from("dulabs_plantillas")
+        .update({ nombre: nombreNormalizado, categoria, idioma, cuerpo })
+        .eq("id", id)
+        .eq("id_tenant", user.id)
+        .eq("borrador", true);
+      if (updateError) return Response.json({ error: updateError.message }, { status: 500 });
+      return Response.json({ success: true, estado: "borrador" });
+    }
+    const { error: insertError } = await supabase.from("dulabs_plantillas").insert({
+      id_tenant: user.id,
+      phone_number_id,
+      whatsapp_business_account_id: cliente.whatsapp_business_account_id,
+      nombre: nombreNormalizado,
+      categoria,
+      idioma,
+      cuerpo,
+      estado: "borrador",
+      borrador: true,
+    });
+    if (insertError) return Response.json({ error: insertError.message }, { status: 500 });
+    return Response.json({ success: true, estado: "borrador" });
+  }
+
   const token = cliente.meta_permanent_token || process.env.META_ACCESS_TOKEN;
   if (!token) {
     return Response.json({ error: "Sin token de Meta configurado para este número" }, { status: 500 });
   }
-
-  const nombreNormalizado = normalizarNombrePlantilla(nombre);
 
   try {
     const resultado = await crearPlantillaMeta({
@@ -114,6 +145,26 @@ export async function POST(request: NextRequest) {
       idioma,
       cuerpo,
     });
+
+    // Promover un borrador existente en vez de insertar una fila duplicada.
+    if (id) {
+      const { error: promoteError } = await supabase
+        .from("dulabs_plantillas")
+        .update({
+          nombre: nombreNormalizado,
+          categoria,
+          idioma,
+          cuerpo,
+          meta_template_id: resultado.id,
+          estado: resultado.status,
+          borrador: false,
+        })
+        .eq("id", id)
+        .eq("id_tenant", user.id)
+        .eq("borrador", true);
+      if (promoteError) throw new Error(promoteError.message);
+      return Response.json({ success: true, estado: resultado.status });
+    }
 
     const { error: dbError } = await supabase.from("dulabs_plantillas").insert({
       id_tenant: user.id,
