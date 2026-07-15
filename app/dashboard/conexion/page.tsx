@@ -320,7 +320,7 @@ export default function ConexionPage() {
   }, [configId, session, cargarNegocios]);
 
   return (
-    <div className="mx-auto w-full max-w-4xl">
+    <div className="mx-auto w-full max-w-6xl">
       <h1 className="text-2xl font-semibold sm:text-3xl">Números</h1>
       <p className="mt-2 text-sm text-mist">
         Administra las líneas de WhatsApp conectadas a tu cuenta.

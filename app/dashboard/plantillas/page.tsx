@@ -174,7 +174,7 @@ export default function PlantillasPage() {
   const plantillasAprobadas = plantillas?.filter((p) => p.estado === "APPROVED") ?? [];
 
   return (
-    <div className="mx-auto w-full max-w-4xl">
+    <div className="mx-auto w-full max-w-6xl">
       <h1 className="text-2xl font-semibold sm:text-3xl">Plantillas y Campañas</h1>
       <p className="mt-2 text-sm text-mist">
         Crea plantillas de mensaje, espera la aprobación de Meta, y mándalas
