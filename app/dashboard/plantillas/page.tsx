@@ -1,53 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { LayoutTemplate, CircleCheck, Clock, CircleAlert, Plus } from "lucide-react";
 import { useDashboard } from "@/lib/dashboard-session";
-
-const BANNER_MKT_KEY = "du_labs_banner_marketing_cerrado";
-
-function IconoEnviar({ className = "h-5 w-5" }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} className={className}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" />
-    </svg>
-  );
-}
-
-function BannerMarketing() {
-  const [cerrado, setCerrado] = useState(() =>
-    typeof window === "undefined" ? true : localStorage.getItem(BANNER_MKT_KEY) === "1"
-  );
-
-  if (cerrado) return null;
-
-  return (
-    <div className="relative mt-8 overflow-hidden rounded-2xl border border-lime/20 bg-gradient-to-br from-ink-2 via-ink-2 to-lime/5 p-6 sm:p-8">
-      <button
-        onClick={() => {
-          localStorage.setItem(BANNER_MKT_KEY, "1");
-          setCerrado(true);
-        }}
-        aria-label="Cerrar"
-        className="absolute right-5 top-5 text-mist transition-colors duration-200 hover:text-fg"
-      >
-        ✕
-      </button>
-      <div className="max-w-xl">
-        <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-lime/10 text-lime-text">
-          <IconoEnviar />
-        </div>
-        <h2 className="mt-4 text-xl font-semibold text-fg">
-          Marketing — plantillas y campañas masivas por WhatsApp
-        </h2>
-        <ul className="mt-3 space-y-1.5 text-sm leading-relaxed text-mist">
-          <li>· Crea plantillas y espera la aprobación automática de Meta.</li>
-          <li>· Envía una campaña a toda tu lista de clientes en segundos.</li>
-          <li>· Sigue el estado de cada plantilla: aprobada, en revisión o rechazada.</li>
-        </ul>
-      </div>
-    </div>
-  );
-}
+import { PageHeader, Pill } from "@/components/dashboard/shell/ui";
 
 type Plantilla = {
   id: number;
@@ -60,24 +16,22 @@ type Plantilla = {
   created_at: string;
 };
 
-function BadgeEstado({ estado }: { estado: string }) {
-  const estilos =
-    estado === "APPROVED"
-      ? "bg-lime/10 text-lime-text"
-      : estado === "REJECTED"
-        ? "bg-red-500/10 text-red-600"
-        : "bg-edge text-mist";
-  return (
-    <span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide ${estilos}`}>
-      {estado === "pendiente" ? "PENDING" : estado}
-    </span>
-  );
-}
+const categorias = ["Todas", "MARKETING", "UTILITY", "AUTHENTICATION"] as const;
+
+const estadoInfo: Record<string, { tone: "success" | "warning" | "danger" | "neutral"; label: string; icon: typeof CircleCheck }> = {
+  APPROVED: { tone: "success", label: "Aprobada", icon: CircleCheck },
+  REJECTED: { tone: "danger", label: "Rechazada", icon: CircleAlert },
+  pendiente: { tone: "warning", label: "En revisión", icon: Clock },
+  PENDING: { tone: "warning", label: "En revisión", icon: Clock },
+};
 
 export default function PlantillasPage() {
   const { session, negocios } = useDashboard();
   const [plantillas, setPlantillas] = useState<Plantilla[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [cat, setCat] = useState<(typeof categorias)[number]>("Todas");
+  const [activeId, setActiveId] = useState<number | null>(null);
+  const [formAbierto, setFormAbierto] = useState(false);
 
   const [phoneNumberIdElegido, setPhoneNumberIdElegido] = useState("");
   const phoneNumberId = phoneNumberIdElegido || negocios?.[0]?.phone_number_id || "";
@@ -86,11 +40,6 @@ export default function PlantillasPage() {
   const [cuerpo, setCuerpo] = useState("");
   const [creando, setCreando] = useState(false);
   const [mensajeCrear, setMensajeCrear] = useState<string | null>(null);
-
-  const [plantillaCampana, setPlantillaCampana] = useState<number | "">("");
-  const [destinatarios, setDestinatarios] = useState("");
-  const [enviandoCampana, setEnviandoCampana] = useState(false);
-  const [resultadoCampana, setResultadoCampana] = useState<string | null>(null);
 
   const cargarPlantillas = useCallback(() => {
     if (!session) return;
@@ -107,7 +56,6 @@ export default function PlantillasPage() {
     cargarPlantillas();
   }, [cargarPlantillas]);
 
-
   const crearPlantilla = useCallback(
     async (e: FormEvent) => {
       e.preventDefault();
@@ -117,10 +65,7 @@ export default function PlantillasPage() {
       try {
         const res = await fetch("/api/plantillas", {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${session.access_token}`,
-          },
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
           body: JSON.stringify({ phone_number_id: phoneNumberId, nombre, categoria, cuerpo }),
         });
         const data = await res.json();
@@ -138,220 +83,179 @@ export default function PlantillasPage() {
     [session, phoneNumberId, nombre, categoria, cuerpo, cargarPlantillas]
   );
 
-  const enviarCampana = useCallback(
-    async (e: FormEvent) => {
-      e.preventDefault();
-      if (!session || !plantillaCampana) return;
-      setEnviandoCampana(true);
-      setResultadoCampana(null);
-      const lista = destinatarios
-        .split(/[\n,]+/)
-        .map((d) => d.trim())
-        .filter(Boolean);
-      try {
-        const res = await fetch("/api/campanas/enviar", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${session.access_token}`,
-          },
-          body: JSON.stringify({ plantilla_id: plantillaCampana, destinatarios: lista }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error ?? "Error enviando la campaña");
-        setResultadoCampana(
-          `Enviados: ${data.enviados}${data.fallidos?.length ? ` · Fallidos: ${data.fallidos.length}` : ""}`
-        );
-      } catch (err) {
-        setResultadoCampana(err instanceof Error ? err.message : String(err));
-      } finally {
-        setEnviandoCampana(false);
-      }
-    },
-    [session, plantillaCampana, destinatarios]
-  );
-
-  const plantillasAprobadas = plantillas?.filter((p) => p.estado === "APPROVED") ?? [];
+  const filtradas = (plantillas ?? []).filter((p) => cat === "Todas" || p.categoria === cat);
+  const activa = filtradas.find((p) => p.id === activeId) ?? filtradas[0] ?? null;
 
   return (
-    <div className="mx-auto w-full max-w-6xl">
-      <h1 className="text-2xl font-semibold sm:text-3xl">Plantillas y Campañas</h1>
-      <p className="mt-2 text-sm text-mist">
-        Crea plantillas de mensaje, espera la aprobación de Meta, y mándalas
-        a varios clientes de un solo golpe.
-      </p>
+    <div className="pb-12">
+      <PageHeader
+        eyebrow="Crear"
+        title="Plantillas"
+        description="Diseña, envía a revisión y administra tus plantillas de mensaje de WhatsApp."
+      >
+        <button
+          onClick={() => setFormAbierto((v) => !v)}
+          className="flex items-center gap-2 rounded-lg bg-lime px-3.5 py-2 text-sm font-medium text-lime-fg transition-opacity hover:opacity-90"
+        >
+          <Plus className="size-4" /> Nueva plantilla
+        </button>
+      </PageHeader>
 
-      {error && (
-        <p className="mt-6 rounded-lg border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-600">
-          {error}
-        </p>
-      )}
-
-      <BannerMarketing />
-
-      {/* --- Crear plantilla --- */}
-      <section className="mt-8 rounded-2xl border border-edge/60 bg-card p-6 sm:p-8">
-        <h2 className="text-sm font-semibold uppercase tracking-widest text-mist">
-          Nueva plantilla
-        </h2>
-        <form onSubmit={crearPlantilla} className="mt-4 flex flex-col gap-4">
-          {negocios && negocios.length > 1 && (
-            <div>
-              <label className="mb-1.5 block text-xs font-medium text-mist">Número</label>
-              <select
-                value={phoneNumberId}
-                onChange={(e) => setPhoneNumberIdElegido(e.target.value)}
-                className="w-full rounded-lg border border-edge bg-ink-2 px-4 py-2.5 text-sm text-fg outline-none focus:border-lime/50"
-              >
-                {negocios.map((n) => (
-                  <option key={n.phone_number_id} value={n.phone_number_id}>
-                    {n.nombre_negocio}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div>
-              <label className="mb-1.5 block text-xs font-medium text-mist">Nombre</label>
-              <input
-                required
-                value={nombre}
-                onChange={(e) => setNombre(e.target.value)}
-                placeholder="promo_julio"
-                className="w-full rounded-lg border border-edge bg-ink-2 px-4 py-2.5 text-sm text-fg outline-none focus:border-lime/50"
-              />
-            </div>
-            <div>
-              <label className="mb-1.5 block text-xs font-medium text-mist">Categoría</label>
-              <select
-                value={categoria}
-                onChange={(e) => setCategoria(e.target.value)}
-                className="w-full rounded-lg border border-edge bg-ink-2 px-4 py-2.5 text-sm text-fg outline-none focus:border-lime/50"
-              >
-                <option value="UTILITY">Utilidad</option>
-                <option value="MARKETING">Marketing</option>
-                <option value="AUTHENTICATION">Autenticación</option>
-              </select>
-            </div>
-          </div>
-          <div>
-            <label className="mb-1.5 block text-xs font-medium text-mist">
-              Texto del mensaje
-            </label>
-            <textarea
-              required
-              rows={4}
-              maxLength={1024}
-              value={cuerpo}
-              onChange={(e) => setCuerpo(e.target.value)}
-              placeholder="Hola, tenemos una promoción especial este mes para ti."
-              className="w-full rounded-lg border border-edge bg-ink-2 px-4 py-3 text-sm text-fg outline-none focus:border-lime/50"
-            />
-          </div>
-          {mensajeCrear && (
-            <p className="rounded-lg border border-edge/60 bg-ink-2 p-3 text-xs leading-relaxed text-mist">
-              {mensajeCrear}
-            </p>
-          )}
-          <button
-            type="submit"
-            disabled={creando || !phoneNumberId}
-            className="btn-shine self-start rounded-lg bg-lime px-5 py-2.5 text-sm font-semibold text-lime-fg transition-[background-color,transform] duration-200 hover:-translate-y-0.5 hover:bg-lime-hover active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {creando ? "Enviando a Meta…" : "Enviar a revisión"}
-          </button>
-        </form>
-      </section>
-
-      {/* --- Lista de plantillas --- */}
-      <section className="mt-8">
-        <h2 className="text-sm font-semibold uppercase tracking-widest text-mist">
-          Tus plantillas
-        </h2>
-        {plantillas !== null && plantillas.length === 0 && (
-          <div className="mt-4 flex flex-col items-center gap-2 rounded-xl border border-edge/60 bg-card p-8 text-center">
-            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-lime/10 text-lime-text">
-              <IconoEnviar />
-            </span>
-            <p className="mt-1 text-sm font-semibold text-fg">
-              Todavía no has creado ninguna plantilla
-            </p>
-            <p className="max-w-xs text-xs leading-relaxed text-mist">
-              Crea tu primera plantilla arriba para empezar a mandar campañas masivas.
-            </p>
-          </div>
+      <div className="px-4 pt-6 md:px-8">
+        {error && (
+          <p className="mb-6 rounded-lg border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-400">{error}</p>
         )}
-        <div className="mt-4 flex flex-col gap-3">
-          {plantillas?.map((p) => (
-            <div key={p.id} className="rounded-xl border border-edge/60 bg-card p-4">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-sm font-semibold text-fg">{p.nombre}</p>
-                <BadgeEstado estado={p.estado} />
-              </div>
-              <p className="mt-2 text-sm text-mist">{p.cuerpo}</p>
-            </div>
-          ))}
-        </div>
-      </section>
 
-      {/* --- Enviar campaña --- */}
-      <section className="mt-8 rounded-2xl border border-edge/60 bg-card p-6 sm:p-8">
-        <h2 className="text-sm font-semibold uppercase tracking-widest text-mist">
-          Enviar campaña masiva
-        </h2>
-        {plantillasAprobadas.length === 0 ? (
-          <p className="mt-4 text-sm leading-relaxed text-mist">
-            Necesitas al menos una plantilla con estado <strong>APPROVED</strong> para
-            poder mandar una campaña. Meta revisa las plantillas nuevas
-            automáticamente, normalmente en minutos u horas.
-          </p>
-        ) : (
-          <form onSubmit={enviarCampana} className="mt-4 flex flex-col gap-4">
-            <div>
-              <label className="mb-1.5 block text-xs font-medium text-mist">Plantilla</label>
-              <select
-                required
-                value={plantillaCampana}
-                onChange={(e) => setPlantillaCampana(Number(e.target.value))}
-                className="w-full rounded-lg border border-edge bg-ink-2 px-4 py-2.5 text-sm text-fg outline-none focus:border-lime/50"
-              >
-                <option value="">Selecciona una plantilla</option>
-                {plantillasAprobadas.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.nombre}
-                  </option>
-                ))}
-              </select>
+        {formAbierto && (
+          <form
+            onSubmit={crearPlantilla}
+            className="mb-6 flex flex-col gap-4 rounded-xl border border-edge bg-card p-6"
+          >
+            {negocios && negocios.length > 1 && (
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-mist">Número</label>
+                <select
+                  value={phoneNumberId}
+                  onChange={(e) => setPhoneNumberIdElegido(e.target.value)}
+                  className="w-full rounded-lg border border-edge bg-ink px-4 py-2.5 text-sm text-fg outline-none focus:border-lime/50"
+                >
+                  {negocios.map((n) => (
+                    <option key={n.phone_number_id} value={n.phone_number_id}>
+                      {n.nombre_negocio}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-mist">Nombre</label>
+                <input
+                  required
+                  value={nombre}
+                  onChange={(e) => setNombre(e.target.value)}
+                  placeholder="promo_julio"
+                  className="w-full rounded-lg border border-edge bg-ink px-4 py-2.5 text-sm text-fg outline-none focus:border-lime/50"
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-mist">Categoría</label>
+                <select
+                  value={categoria}
+                  onChange={(e) => setCategoria(e.target.value)}
+                  className="w-full rounded-lg border border-edge bg-ink px-4 py-2.5 text-sm text-fg outline-none focus:border-lime/50"
+                >
+                  <option value="UTILITY">Utilidad</option>
+                  <option value="MARKETING">Marketing</option>
+                  <option value="AUTHENTICATION">Autenticación</option>
+                </select>
+              </div>
             </div>
             <div>
-              <label className="mb-1.5 block text-xs font-medium text-mist">
-                Destinatarios (uno por línea, con indicativo de país)
-              </label>
+              <label className="mb-1.5 block text-xs font-medium text-mist">Texto del mensaje</label>
               <textarea
                 required
-                rows={5}
-                value={destinatarios}
-                onChange={(e) => setDestinatarios(e.target.value)}
-                placeholder={"573001234567\n573007654321"}
-                className="w-full rounded-lg border border-edge bg-ink-2 px-4 py-3 text-sm text-fg outline-none focus:border-lime/50"
+                rows={4}
+                maxLength={1024}
+                value={cuerpo}
+                onChange={(e) => setCuerpo(e.target.value)}
+                placeholder="Hola, tenemos una promoción especial este mes para ti."
+                className="w-full rounded-lg border border-edge bg-ink px-4 py-3 text-sm text-fg outline-none focus:border-lime/50"
               />
             </div>
-            {resultadoCampana && (
-              <p className="rounded-lg border border-edge/60 bg-ink-2 p-3 text-xs leading-relaxed text-mist">
-                {resultadoCampana}
-              </p>
+            {mensajeCrear && (
+              <p className="rounded-lg border border-edge bg-ink p-3 text-xs leading-relaxed text-mist">{mensajeCrear}</p>
             )}
             <button
               type="submit"
-              disabled={enviandoCampana}
+              disabled={creando || !phoneNumberId}
               className="btn-shine self-start rounded-lg bg-lime px-5 py-2.5 text-sm font-semibold text-lime-fg transition-[background-color,transform] duration-200 hover:-translate-y-0.5 hover:bg-lime-hover active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {enviandoCampana ? "Enviando…" : "Enviar campaña"}
+              {creando ? "Enviando a Meta…" : "Enviar a revisión"}
             </button>
           </form>
         )}
-      </section>
+
+        <div className="flex gap-1 overflow-x-auto">
+          {categorias.map((c) => (
+            <button
+              key={c}
+              onClick={() => setCat(c)}
+              className={`whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+                cat === c ? "bg-lime text-lime-fg" : "bg-card text-mist hover:text-fg"
+              }`}
+            >
+              {c === "Todas" ? "Todas" : c === "MARKETING" ? "Marketing" : c === "UTILITY" ? "Utilidad" : "Autenticación"}
+            </button>
+          ))}
+        </div>
+
+        {plantillas !== null && filtradas.length === 0 && (
+          <div className="mt-5 flex flex-col items-center gap-2 rounded-xl border border-edge bg-card p-10 text-center">
+            <LayoutTemplate className="size-9 text-mist/40" strokeWidth={1.2} />
+            <p className="mt-1 text-sm font-semibold text-fg">Todavía no has creado ninguna plantilla</p>
+            <p className="max-w-xs text-xs leading-relaxed text-mist">
+              Créala arriba para empezar a mandar campañas masivas.
+            </p>
+          </div>
+        )}
+
+        {filtradas.length > 0 && (
+          <div className="mt-5 grid grid-cols-1 gap-6 lg:grid-cols-[1fr_minmax(0,340px)]">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {filtradas.map((p) => {
+                const info = estadoInfo[p.estado] ?? estadoInfo.pendiente;
+                return (
+                  <button
+                    key={p.id}
+                    onClick={() => setActiveId(p.id)}
+                    className={`rounded-xl border p-4 text-left transition-colors ${
+                      activa?.id === p.id ? "border-lime/40 bg-card" : "border-edge bg-card hover:border-lime/25"
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <div className="flex size-8 items-center justify-center rounded-lg bg-ink text-mist">
+                          <LayoutTemplate className="size-4" />
+                        </div>
+                        <span className="font-mono text-sm font-medium text-fg">{p.nombre}</span>
+                      </div>
+                      <Pill tone={info.tone}>
+                        <info.icon className="size-3" /> {info.label}
+                      </Pill>
+                    </div>
+                    <p className="mt-3 line-clamp-2 text-sm leading-relaxed text-mist">{p.cuerpo}</p>
+                    <p className="mt-3 font-mono text-[10.5px] uppercase tracking-widest text-mist">
+                      {p.categoria} · {p.idioma}
+                    </p>
+                  </button>
+                );
+              })}
+            </div>
+
+            {activa && (
+              <div className="lg:sticky lg:top-20 lg:self-start">
+                <div className="rounded-xl border border-edge bg-card p-4">
+                  <p className="font-mono text-[10.5px] uppercase tracking-widest text-mist">Vista previa</p>
+                  <div className="mt-3 rounded-[1.75rem] border border-edge bg-ink p-2.5">
+                    <div className="rounded-[1.4rem] bg-[#0b3b2e] p-3">
+                      <div className="mb-2 flex justify-center">
+                        <span className="rounded-full bg-black/20 px-2 py-0.5 font-mono text-[9.5px] text-white/70">
+                          Hoy
+                        </span>
+                      </div>
+                      <div className="max-w-[92%] rounded-xl rounded-tl-sm bg-card p-3 shadow-sm">
+                        <p className="whitespace-pre-line text-sm leading-relaxed text-fg">{activa.cuerpo}</p>
+                        <p className="mt-1 text-right text-[10px] text-mist">10:24 ✓✓</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

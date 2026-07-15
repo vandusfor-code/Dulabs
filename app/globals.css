@@ -64,6 +64,27 @@
   --color-site-input: rgb(255 255 255 / 10%);
 }
 
+/* ---------- Dashboard app palette (fixed dark, scoped via .dash-scope) ---------- */
+/* Applied on the DashboardShell wrapper only — overrides the dashboard's
+   ink/card/mist/edge/fg tokens above for every /dashboard/* page (and
+   anything else nested inside it), independent of the data-theme toggle.
+   Ported from the v0 dashboard design; lime kept as the brand accent. */
+.dash-scope {
+  --color-ink: #17181d;
+  --color-ink-2: #1c1e24;
+  --color-card: #1e2027;
+  --color-mist: #a3a8b4;
+  --color-edge: #2b2d36;
+  --color-fg: #f4f5f7;
+  --color-lime-text: #c6ff3d;
+
+  --color-chart-1: #c6ff3d;
+  --color-chart-2: #5eb8ff;
+  --color-chart-3: #d7ff74;
+  --color-chart-4: #b98cff;
+  --color-chart-5: #7b8094;
+}
+
 html {
   scroll-behavior: smooth;
 }

@@ -2,8 +2,10 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { MessagesSquare, Search, Filter } from "lucide-react";
 import { useDashboard } from "@/lib/dashboard-session";
 import { formatearTelefono } from "@/lib/format";
+import { Pill } from "@/components/dashboard/shell/ui";
 
 type Conversacion = {
   phone_number_id: string;
@@ -28,24 +30,6 @@ function horaCorta(fecha: string): string {
     hour: "2-digit",
     minute: "2-digit",
   });
-}
-
-function IconoChat() {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.2}
-      className="h-12 w-12 text-mist/40"
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M8 10h.01M12 10h.01M16 10h.01M21 12a9 9 0 11-9-9 9 9 0 019 9z"
-      />
-    </svg>
-  );
 }
 
 export default function MensajesPage() {
@@ -88,34 +72,47 @@ export default function MensajesPage() {
   }, [session, seleccionada]);
 
   const conversacionesFiltradas =
-    conversaciones?.filter((c) =>
-      formatearTelefono(c.telefono_cliente).includes(busqueda) ||
-      c.telefono_cliente.includes(busqueda) ||
-      c.nombre_negocio.toLowerCase().includes(busqueda.toLowerCase())
+    conversaciones?.filter(
+      (c) =>
+        formatearTelefono(c.telefono_cliente).includes(busqueda) ||
+        c.telefono_cliente.includes(busqueda) ||
+        c.nombre_negocio.toLowerCase().includes(busqueda.toLowerCase())
     ) ?? [];
 
+  const abiertos = conversaciones?.filter((c) => !c.pausado).length ?? 0;
+
   return (
-    <div className="mx-auto flex h-[calc(100vh-8rem)] w-full max-w-6xl gap-5">
-      {/* --- Columna 1: lista de conversaciones --- */}
-      <div className="flex w-72 shrink-0 flex-col rounded-2xl border border-edge/60 bg-card">
-        <div className="border-b border-edge/60 p-4">
-          <h1 className="text-sm font-semibold text-fg">Mensajes</h1>
-          <input
-            value={busqueda}
-            onChange={(e) => setBusqueda(e.target.value)}
-            placeholder="Buscar…"
-            className="mt-3 w-full rounded-lg border border-edge bg-ink-2 px-3 py-2 text-xs text-fg outline-none focus:border-lime/50"
-          />
+    <div className="flex h-[calc(100vh-4rem)] overflow-hidden">
+      {/* Lista */}
+      <div className="flex w-full shrink-0 flex-col border-r border-edge md:w-80 lg:w-96">
+        <div className="border-b border-edge p-4">
+          <div className="flex items-center justify-between">
+            <h1 className="text-lg font-semibold text-fg">Mensajes</h1>
+            <div className="flex items-center gap-2">
+              <Pill tone="success">
+                <span className="size-1.5 rounded-full bg-lime" /> {abiertos} activos
+              </Pill>
+              <button className="flex size-8 items-center justify-center rounded-lg border border-edge text-mist hover:text-fg">
+                <Filter className="size-4" />
+              </button>
+            </div>
+          </div>
+          <div className="relative mt-3">
+            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-mist" />
+            <input
+              value={busqueda}
+              onChange={(e) => setBusqueda(e.target.value)}
+              placeholder="Buscar mensajes…"
+              className="h-9 w-full rounded-lg border border-edge bg-card pl-9 pr-3 text-sm text-fg outline-none placeholder:text-mist focus:border-lime/50"
+            />
+          </div>
         </div>
+
         <div className="flex-1 overflow-y-auto">
-          {error && <p className="p-4 text-xs text-red-600">{error}</p>}
-          {!error && conversaciones === null && (
-            <p className="p-4 text-xs text-mist">Cargando…</p>
-          )}
+          {error && <p className="p-4 text-xs text-red-400">{error}</p>}
+          {!error && conversaciones === null && <p className="p-4 text-xs text-mist">Cargando…</p>}
           {conversaciones !== null && conversacionesFiltradas.length === 0 && (
-            <p className="p-4 text-xs leading-relaxed text-mist">
-              Todavía no tienes chats.
-            </p>
+            <p className="p-4 text-xs leading-relaxed text-mist">Todavía no tienes chats.</p>
           )}
           {conversacionesFiltradas.map((c) => (
             <button
@@ -124,36 +121,45 @@ export default function MensajesPage() {
                 setSeleccionada(c);
                 setHilo(null);
               }}
-              className={`flex w-full flex-col gap-1 border-b border-edge/40 px-4 py-3 text-left transition-colors duration-150 ${
+              className={`flex w-full gap-3 border-b border-edge/60 px-4 py-3.5 text-left transition-colors ${
                 seleccionada?.telefono_cliente === c.telefono_cliente &&
                 seleccionada?.phone_number_id === c.phone_number_id
-                  ? "bg-lime/10"
-                  : "hover:bg-ink-2"
+                  ? "bg-ink"
+                  : "hover:bg-ink/60"
               }`}
             >
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-xs font-semibold text-fg">
-                  {formatearTelefono(c.telefono_cliente)}
-                </span>
+              <div className="relative">
+                <div className="flex size-10 items-center justify-center rounded-full bg-gradient-to-br from-ink to-card text-xs font-semibold text-fg">
+                  {c.telefono_cliente.slice(-2)}
+                </div>
                 <span
-                  className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-                    c.pausado ? "bg-mist/60" : "bg-lime"
+                  className={`absolute -bottom-0.5 -right-0.5 size-3 rounded-full border-2 border-ink-2 ${
+                    c.pausado ? "bg-mist/50" : "bg-lime"
                   }`}
-                  title={c.pausado ? "Pausado (humano interviniendo)" : "IA activa"}
                 />
               </div>
-              <p className="truncate text-xs text-mist">{c.ultimo_mensaje}</p>
-              <span className="text-[10px] text-mist/60">{horaCorta(c.ultima_fecha)}</span>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate text-sm font-medium text-fg">
+                    {formatearTelefono(c.telefono_cliente)}
+                  </span>
+                  <span className="shrink-0 text-[11px] text-mist">{horaCorta(c.ultima_fecha)}</span>
+                </div>
+                <p className="mt-0.5 truncate text-sm text-mist">{c.ultimo_mensaje}</p>
+                <p className="mt-1 font-mono text-[10px] uppercase tracking-widest text-mist/70">
+                  {c.nombre_negocio}
+                </p>
+              </div>
             </button>
           ))}
         </div>
       </div>
 
-      {/* --- Columna 2: hilo de la conversación --- */}
-      <div className="flex min-w-0 flex-1 flex-col rounded-2xl border border-edge/60 bg-card">
+      {/* Hilo */}
+      <div className="hidden min-w-0 flex-1 flex-col md:flex">
         {!seleccionada ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
-            <IconoChat />
+            <MessagesSquare className="size-12 text-mist/40" strokeWidth={1.2} />
             {conversaciones !== null && conversaciones.length === 0 ? (
               (negocios?.length ?? 0) === 0 ? (
                 <>
@@ -182,28 +188,40 @@ export default function MensajesPage() {
           </div>
         ) : (
           <>
-            <div className="border-b border-edge/60 p-4">
-              <p className="text-sm font-semibold text-fg">
-                {formatearTelefono(seleccionada.telefono_cliente)}
-              </p>
-              <p className="text-xs text-mist">{seleccionada.nombre_negocio}</p>
+            <div className="flex items-center justify-between border-b border-edge px-5 py-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-semibold text-fg">
+                    {formatearTelefono(seleccionada.telefono_cliente)}
+                  </span>
+                  <Pill tone={seleccionada.pausado ? "neutral" : "success"}>
+                    {seleccionada.pausado ? "Pausado" : "IA activa"}
+                  </Pill>
+                </div>
+                <p className="mt-0.5 font-mono text-[10.5px] uppercase tracking-widest text-mist">
+                  {seleccionada.nombre_negocio}
+                </p>
+              </div>
             </div>
-            <div className="flex-1 space-y-3 overflow-y-auto p-5">
+            <div className="flex-1 space-y-3 overflow-y-auto bg-ink/40 p-5">
               {hilo === null && <p className="text-xs text-mist">Cargando…</p>}
               {hilo?.map((m, i) => (
-                <div
-                  key={i}
-                  className={`flex ${m.direccion === "saliente" ? "justify-end" : "justify-start"}`}
-                >
+                <div key={i} className={`flex ${m.direccion === "saliente" ? "justify-end" : "justify-start"}`}>
                   <div
                     className={`max-w-[75%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
                       m.direccion === "saliente"
-                        ? "bg-lime/15 text-fg"
-                        : "bg-ink-2 text-fg/90"
+                        ? "rounded-br-sm bg-lime text-lime-fg"
+                        : "rounded-bl-sm border border-edge bg-card text-fg"
                     }`}
                   >
                     <p>{m.contenido}</p>
-                    <p className="mt-1 text-[10px] text-mist/60">{horaCorta(m.created_at)}</p>
+                    <p
+                      className={`mt-1 text-[10px] ${
+                        m.direccion === "saliente" ? "text-lime-fg/70" : "text-mist"
+                      }`}
+                    >
+                      {horaCorta(m.created_at)}
+                    </p>
                   </div>
                 </div>
               ))}
@@ -212,48 +230,30 @@ export default function MensajesPage() {
         )}
       </div>
 
-      {/* --- Columna 3: datos del cliente --- */}
-      <div className="flex w-64 shrink-0 flex-col rounded-2xl border border-edge/60 bg-card p-5">
+      {/* Panel cliente */}
+      <div className="hidden w-72 shrink-0 flex-col overflow-y-auto border-l border-edge xl:flex">
         {!seleccionada ? (
-          <p className="text-xs text-mist">Sin conversación seleccionada.</p>
+          <p className="p-5 text-xs text-mist">Sin conversación seleccionada.</p>
         ) : (
           <>
-            <h2 className="text-xs font-semibold uppercase tracking-widest text-mist">
-              Cliente
-            </h2>
-            <dl className="mt-4 flex flex-col gap-4">
-              <div>
-                <dt className="text-[11px] text-mist">Teléfono</dt>
-                <dd className="mt-1 text-sm font-medium text-fg">
-                  {formatearTelefono(seleccionada.telefono_cliente)}
-                </dd>
+            <div className="flex flex-col items-center border-b border-edge p-6 text-center">
+              <div className="flex size-16 items-center justify-center rounded-full bg-gradient-to-br from-lime/30 to-card text-lg font-semibold text-fg">
+                {seleccionada.telefono_cliente.slice(-2)}
               </div>
-              <div>
-                <dt className="text-[11px] text-mist">Negocio</dt>
-                <dd className="mt-1 text-sm font-medium text-fg">
-                  {seleccionada.nombre_negocio}
-                </dd>
+              <p className="mt-3 font-semibold text-fg">{formatearTelefono(seleccionada.telefono_cliente)}</p>
+              <p className="mt-1 font-mono text-[10.5px] uppercase tracking-widest text-mist">
+                {seleccionada.nombre_negocio}
+              </p>
+            </div>
+            <div className="p-5">
+              <p className="mb-3 font-mono text-[10.5px] uppercase tracking-widest text-mist">Estado</p>
+              <div className="flex items-center gap-2.5 rounded-lg border border-edge bg-card px-3 py-2.5">
+                <span className={`size-2 rounded-full ${seleccionada.pausado ? "bg-mist/50" : "bg-lime"}`} />
+                <span className="text-sm text-fg">
+                  {seleccionada.pausado ? "Humano interviniendo" : "IA respondiendo"}
+                </span>
               </div>
-              <div>
-                <dt className="text-[11px] text-mist">Estado</dt>
-                <dd className="mt-1.5">
-                  <span
-                    className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide ${
-                      seleccionada.pausado
-                        ? "bg-edge text-mist"
-                        : "bg-lime/10 text-lime-text"
-                    }`}
-                  >
-                    <span
-                      className={`h-1.5 w-1.5 rounded-full ${
-                        seleccionada.pausado ? "bg-mist/60" : "bg-lime"
-                      }`}
-                    />
-                    {seleccionada.pausado ? "Humano interviniendo" : "IA activa"}
-                  </span>
-                </dd>
-              </div>
-            </dl>
+            </div>
           </>
         )}
       </div>

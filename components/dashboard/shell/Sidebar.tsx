@@ -1,0 +1,146 @@
+"use client";
+
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
+import { Sparkles } from "lucide-react";
+import { navSections } from "./nav";
+import { useDashboard } from "@/lib/dashboard-session";
+import { supabaseBrowser } from "@/lib/supabase-browser";
+
+function cn(...cls: Array<string | false | undefined>) {
+  return cls.filter(Boolean).join(" ");
+}
+
+export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
+  const pathname = usePathname();
+  const router = useRouter();
+  const { session, negocios, suscripcion } = useDashboard();
+
+  const cerrarSesion = async () => {
+    await supabaseBrowser().auth.signOut();
+    router.replace("/login");
+  };
+
+  const mensajesUsados = negocios?.reduce((acc, n) => acc + n.mensajes_usados, 0) ?? 0;
+  const algunoIlimitado = negocios?.some((n) => n.mensajes_limite === null) ?? false;
+  const limite = algunoIlimitado
+    ? null
+    : (negocios?.reduce((acc, n) => acc + (n.mensajes_limite ?? 0), 0) ?? 0);
+  const porcentaje = limite ? Math.min(100, Math.round((mensajesUsados / limite) * 100)) : 0;
+
+  const email = session?.user.email ?? "";
+  const iniciales = email.slice(0, 2).toUpperCase();
+
+  return (
+    <div className="flex h-full flex-col bg-ink-2">
+      {/* Brand */}
+      <div className="flex h-16 items-center gap-2.5 px-5">
+        <div className="flex size-8 items-center justify-center rounded-lg bg-lime text-lime-fg">
+          <span className="font-mono text-base font-bold leading-none">D</span>
+        </div>
+        <div className="flex flex-col leading-none">
+          <span className="text-sm font-semibold tracking-tight text-fg">Du Labs</span>
+          <span className="mt-1 font-mono text-[10.5px] uppercase tracking-widest text-mist">
+            Business OS
+          </span>
+        </div>
+      </div>
+
+      {/* Plan */}
+      <div className="px-3">
+        <Link
+          href="/dashboard/cuenta"
+          className="group flex w-full items-center gap-3 rounded-lg border border-edge bg-card px-3 py-2.5 text-left transition-colors hover:bg-ink-2"
+        >
+          <div className="flex size-7 shrink-0 items-center justify-center rounded-md bg-gradient-to-br from-lime/30 to-lime/5 text-[11px] font-semibold text-lime-text">
+            {(suscripcion?.plan ?? negocios?.[0]?.plan ?? "DU").slice(0, 2).toUpperCase()}
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-medium text-fg">
+              {suscripcion?.plan ?? negocios?.[0]?.plan ?? "Sin plan"}
+            </p>
+            <p className="mt-0.5 font-mono text-[10.5px] uppercase tracking-widest text-mist">
+              {negocios?.length ?? 0} número{negocios?.length === 1 ? "" : "s"}
+            </p>
+          </div>
+        </Link>
+      </div>
+
+      {/* Nav */}
+      <nav className="mt-5 flex-1 space-y-6 overflow-y-auto px-3 pb-4">
+        {navSections.map((section) => (
+          <div key={section.title}>
+            <p className="px-3 pb-2 font-mono text-[10.5px] uppercase tracking-widest text-mist/70">
+              {section.title}
+            </p>
+            <ul className="space-y-0.5">
+              {section.items.map((item) => {
+                const active =
+                  item.href === "/dashboard" ? pathname === "/dashboard" : pathname.startsWith(item.href);
+                return (
+                  <li key={item.href}>
+                    <Link
+                      href={item.href}
+                      onClick={onNavigate}
+                      className={cn(
+                        "group flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
+                        active ? "bg-lime/10 font-medium text-fg" : "text-mist hover:bg-ink-2 hover:text-fg"
+                      )}
+                    >
+                      <item.icon
+                        className={cn(
+                          "size-[18px] shrink-0 transition-colors",
+                          active ? "text-lime-text" : "text-mist group-hover:text-fg"
+                        )}
+                      />
+                      <span className="flex-1 truncate">{item.label}</span>
+                      {active && <span className="size-1.5 rounded-full bg-lime" />}
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        ))}
+      </nav>
+
+      {/* Uso del plan */}
+      {negocios && negocios.length > 0 && (
+        <div className="p-3">
+          <div className="relative overflow-hidden rounded-xl border border-lime/20 bg-gradient-to-br from-lime/10 to-transparent p-4">
+            <div className="flex items-center gap-2">
+              <Sparkles className="size-4 text-lime-text" />
+              <span className="text-sm font-medium text-fg">Tu IA este mes</span>
+            </div>
+            <p className="mt-1.5 text-xs leading-relaxed text-mist">
+              {mensajesUsados.toLocaleString("es-CO")} mensajes procesados
+              {limite !== null ? ` de ${limite.toLocaleString("es-CO")}` : " · ilimitado"}.
+            </p>
+            {limite !== null && (
+              <div className="mt-3 flex items-center gap-2">
+                <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-ink">
+                  <div className="h-full rounded-full bg-lime" style={{ width: `${porcentaje}%` }} />
+                </div>
+                <span className="font-mono text-[10.5px] text-lime-text">{porcentaje}%</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* User */}
+      <button
+        onClick={cerrarSesion}
+        className="flex items-center gap-3 border-t border-edge px-4 py-3 text-left transition-colors hover:bg-ink"
+      >
+        <div className="flex size-8 items-center justify-center rounded-full bg-card text-xs font-medium text-fg">
+          {iniciales || "DU"}
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-medium text-fg">{email || "Tu cuenta"}</p>
+          <p className="mt-0.5 font-mono text-[10.5px] uppercase tracking-widest text-mist">Cerrar sesión</p>
+        </div>
+      </button>
+    </div>
+  );
+}
