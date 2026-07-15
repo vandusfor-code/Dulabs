@@ -21,6 +21,7 @@ type MetaStatus = {
   id: string;
   status: "sent" | "delivered" | "read" | "failed" | string;
   timestamp?: string;
+  pricing?: { category?: string };
 };
 
 type MetaChangeValue = {
@@ -114,6 +115,14 @@ async function procesarCambio(phoneNumberId: string, value: MetaChangeValue) {
     const telefonoCliente = soloDigitos(eco.to ?? "");
     if (telefonoCliente) {
       await activarPausaHumana(phoneNumberId, telefonoCliente);
+      await registrarMensaje(
+        phoneNumberId,
+        telefonoCliente,
+        "saliente",
+        eco.text?.body ?? `[mensaje ${eco.type}]`,
+        "manual",
+        eco.id
+      );
     } else {
       console.warn("[webhook-dulabs] eco de coexistencia sin destinatario ('to'):", eco);
     }
@@ -169,6 +178,7 @@ async function actualizarEstadoEntrega(estado: MetaStatus) {
   const cambios: Record<string, string> = { estado_entrega: nuevoEstado };
   if (nuevoEstado === "entregado") cambios.entregado_at = marcaTiempo;
   if (nuevoEstado === "leido") cambios.leido_at = marcaTiempo;
+  if (estado.pricing?.category) cambios.pricing_categoria = estado.pricing.category;
 
   const { error: errorUpdate } = await supabase.from("dulabs_mensajes_log").update(cambios).eq("id", fila.id);
   if (errorUpdate) {
@@ -203,7 +213,7 @@ async function activarPausaHumana(phoneNumberId: string, telefonoCliente: string
 }
 
 async function atenderMensaje(cliente: ClienteConfig, mensaje: MetaMessage) {
-  await registrarMensaje(cliente.phone_number_id, soloDigitos(mensaje.from), "entrante", mensaje.text!.body);
+  await registrarMensaje(cliente.phone_number_id, soloDigitos(mensaje.from), "entrante", mensaje.text!.body, "entrante");
 
   // Control de pausa por chat: si el humano intervino en ESTA conversación y
   // la ventana sigue vigente, la IA guarda silencio (filas vencidas se ignoran).
@@ -312,8 +322,11 @@ async function enviarWhatsApp(cliente: ClienteConfig, para: string, texto: strin
     return;
   }
 
+  const json = (await res.json()) as { messages?: { id?: string }[] };
+  const wamid = json.messages?.[0]?.id;
+
   await incrementarUsoMensajes(cliente);
-  await registrarMensaje(cliente.phone_number_id, soloDigitos(para), "saliente", texto);
+  await registrarMensaje(cliente.phone_number_id, soloDigitos(para), "saliente", texto, "ia", wamid);
 }
 
 // --- Historial de mensajes (para la vista de actividad reciente) --------------
@@ -322,13 +335,17 @@ async function registrarMensaje(
   phoneNumberId: string,
   telefonoCliente: string,
   direccion: "entrante" | "saliente",
-  contenido: string
+  contenido: string,
+  origen: "entrante" | "ia" | "manual" | "campaña",
+  wamid?: string
 ) {
   const { error } = await supabaseAdmin().from("dulabs_mensajes_log").insert({
     phone_number_id: phoneNumberId,
     telefono_cliente: telefonoCliente,
     direccion,
     contenido,
+    origen,
+    wamid: wamid ?? null,
   });
   if (error) {
     console.error("[webhook-dulabs] error registrando mensaje en el historial:", error.message);

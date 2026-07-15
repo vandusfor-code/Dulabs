@@ -42,6 +42,37 @@ type SessionInfo = { waba_id?: string; phone_number_id?: string };
 
 const PLAN_PENDIENTE_KEY = "du_labs_plan_elegido";
 
+const CALIDAD_INFO: Record<string, { label: string; tone: "success" | "warning" | "danger" | "neutral" }> = {
+  GREEN: { label: "Alta", tone: "success" },
+  YELLOW: { label: "Media", tone: "warning" },
+  RED: { label: "Baja", tone: "danger" },
+  UNKNOWN: { label: "Sin datos aún", tone: "neutral" },
+};
+
+const LIMITE_INFO: Record<string, string> = {
+  TIER_50: "50 conversaciones/día",
+  TIER_250: "250 conversaciones/día",
+  TIER_1K: "1.000 conversaciones/día",
+  TIER_10K: "10.000 conversaciones/día",
+  TIER_100K: "100.000 conversaciones/día",
+  TIER_UNLIMITED: "Ilimitado",
+};
+
+const VERIFICACION_INFO: Record<string, string> = {
+  VERIFIED: "Verificado",
+  NOT_VERIFIED: "No verificado",
+  PENDING: "En proceso",
+  EXPIRED: "Expirado",
+};
+
+const NOMBRE_VISIBLE_INFO: Record<string, string> = {
+  APPROVED: "Aprobado",
+  AVAILABLE_WITHOUT_REVIEW: "Aprobado",
+  PENDING_REVIEW: "En revisión",
+  DECLINED: "Rechazado",
+  NONE: "Sin definir",
+};
+
 function NumeroCard({
   negocio,
   accessToken,
@@ -166,7 +197,37 @@ function NumeroCard({
         </div>
       </div>
 
+      <div className="mt-4 grid grid-cols-2 gap-2.5 border-t border-edge pt-4">
+        <MetaDato label="Calidad" pill={negocio.calidad ? CALIDAD_INFO[negocio.calidad] : undefined} />
+        <MetaDato label="Límite de mensajería" texto={negocio.limite_mensajeria ? LIMITE_INFO[negocio.limite_mensajeria] ?? negocio.limite_mensajeria : undefined} />
+        <MetaDato label="Verificación" texto={negocio.estado_verificacion ? VERIFICACION_INFO[negocio.estado_verificacion] ?? negocio.estado_verificacion : undefined} />
+        <MetaDato label="Nombre visible" texto={negocio.estado_nombre_visible ? NOMBRE_VISIBLE_INFO[negocio.estado_nombre_visible] ?? negocio.estado_nombre_visible : undefined} />
+      </div>
+
       <p className="mt-4 break-all font-mono text-[10.5px] text-mist/70">WABA {negocio.whatsapp_business_account_id}</p>
+    </div>
+  );
+}
+
+function MetaDato({
+  label,
+  texto,
+  pill,
+}: {
+  label: string;
+  texto?: string;
+  pill?: { label: string; tone: "success" | "warning" | "danger" | "neutral" };
+}) {
+  return (
+    <div>
+      <p className="font-mono text-[10.5px] uppercase tracking-widest text-mist">{label}</p>
+      {pill ? (
+        <div className="mt-1">
+          <Pill tone={pill.tone}>{pill.label}</Pill>
+        </div>
+      ) : (
+        <p className="mt-1 text-sm text-fg">{texto ?? "—"}</p>
+      )}
     </div>
   );
 }

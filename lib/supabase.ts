@@ -18,6 +18,11 @@ export type ClienteConfig = {
   base_conocimiento: string | null;
   base_conocimiento_nombre_archivo: string | null;
   base_conocimiento_actualizado_at: string | null;
+  calidad: string | null;
+  limite_mensajeria: string | null;
+  estado_verificacion: string | null;
+  estado_nombre_visible: string | null;
+  ultima_sincronizacion_meta: string | null;
   created_at: string;
   updated_at: string;
 };

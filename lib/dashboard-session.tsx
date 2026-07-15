@@ -26,6 +26,10 @@ export type Negocio = {
   base_conocimiento_nombre_archivo: string | null;
   base_conocimiento_actualizado_at: string | null;
   base_conocimiento_caracteres: number;
+  calidad: string | null;
+  limite_mensajeria: string | null;
+  estado_verificacion: string | null;
+  estado_nombre_visible: string | null;
 };
 
 export type Suscripcion = {

@@ -95,6 +95,7 @@ export async function POST(request: NextRequest) {
         contenido: `[Campaña: ${plantilla.nombre}] ${plantilla.cuerpo}`,
         campana_id: campana.id,
         wamid,
+        origen: "campaña",
       });
       enviados++;
     } catch (err) {

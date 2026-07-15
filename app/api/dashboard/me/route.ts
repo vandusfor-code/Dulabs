@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { consultarEstadoNumero } from "@/lib/meta-numero";
 
 export const runtime = "nodejs";
 
@@ -9,6 +10,7 @@ const LIMITE_MENSAJES_POR_PLAN: Record<string, number> = {
   "Plan Enterprise": Infinity,
 };
 const PLAN_POR_DEFECTO = "Plan Pro";
+const UNA_HORA_MS = 60 * 60 * 1000;
 
 function mesActualISO(): string {
   return new Date().toISOString().slice(0, 7); // "YYYY-MM"
@@ -32,7 +34,7 @@ export async function GET(request: NextRequest) {
   const { data, error } = await supabase
     .from("dulabs_clientes_config")
     .select(
-      "nombre_negocio, telefono_negocio, phone_number_id, whatsapp_business_account_id, meta_permanent_token, updated_at, plan, mensajes_usados_mes, mes_actual, prompt_sistema, base_conocimiento, base_conocimiento_nombre_archivo, base_conocimiento_actualizado_at"
+      "nombre_negocio, telefono_negocio, phone_number_id, whatsapp_business_account_id, meta_permanent_token, updated_at, plan, mensajes_usados_mes, mes_actual, prompt_sistema, base_conocimiento, base_conocimiento_nombre_archivo, base_conocimiento_actualizado_at, calidad, limite_mensajeria, estado_verificacion, estado_nombre_visible, ultima_sincronizacion_meta"
     )
     .eq("id_tenant", userData.user.id)
     .order("updated_at", { ascending: false });
@@ -40,6 +42,41 @@ export async function GET(request: NextRequest) {
   if (error) {
     return Response.json({ error: error.message }, { status: 500 });
   }
+
+  // Resincroniza el estado operativo real del número (calidad, límite de
+  // mensajería, verificación) desde Meta si nunca se hizo o si ya pasó más
+  // de una hora — evita pegarle a la Graph API en cada carga del dashboard.
+  await Promise.all(
+    (data ?? []).map(async (n) => {
+      const token = n.meta_permanent_token || process.env.META_ACCESS_TOKEN;
+      if (!token) return;
+      const desactualizado =
+        !n.ultima_sincronizacion_meta ||
+        Date.now() - new Date(n.ultima_sincronizacion_meta).getTime() > UNA_HORA_MS;
+      if (!desactualizado) return;
+
+      const estado = await consultarEstadoNumero({ phoneNumberId: n.phone_number_id, token });
+      if (!estado) return;
+
+      n.calidad = estado.calidad;
+      n.limite_mensajeria = estado.limite_mensajeria;
+      n.estado_verificacion = estado.estado_verificacion;
+      n.estado_nombre_visible = estado.estado_nombre_visible;
+      n.ultima_sincronizacion_meta = new Date().toISOString();
+
+      await supabase
+        .from("dulabs_clientes_config")
+        .update({
+          calidad: n.calidad,
+          limite_mensajeria: n.limite_mensajeria,
+          estado_verificacion: n.estado_verificacion,
+          estado_nombre_visible: n.estado_nombre_visible,
+          ultima_sincronizacion_meta: n.ultima_sincronizacion_meta,
+        })
+        .eq("phone_number_id", n.phone_number_id)
+        .eq("id_tenant", userData.user.id);
+    })
+  );
 
   const mesHoy = mesActualISO();
   const negocios = (data ?? []).map((n) => {
@@ -62,6 +99,10 @@ export async function GET(request: NextRequest) {
       base_conocimiento_nombre_archivo: n.base_conocimiento_nombre_archivo,
       base_conocimiento_actualizado_at: n.base_conocimiento_actualizado_at,
       base_conocimiento_caracteres: n.base_conocimiento?.length ?? 0,
+      calidad: n.calidad,
+      limite_mensajeria: n.limite_mensajeria,
+      estado_verificacion: n.estado_verificacion,
+      estado_nombre_visible: n.estado_nombre_visible,
     };
   });
 
