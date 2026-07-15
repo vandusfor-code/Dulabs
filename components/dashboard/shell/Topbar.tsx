@@ -78,8 +78,11 @@ export function Topbar({ onMenu }: { onMenu?: () => void }) {
         <input
           type="text"
           placeholder="Buscar conversaciones, plantillas…"
-          className="h-9 w-full rounded-lg border border-edge bg-card pl-9 pr-3 text-sm text-fg outline-none transition-colors placeholder:text-mist focus:border-lime/50"
+          className="h-9 w-full rounded-lg border border-edge bg-card pl-9 pr-16 text-sm text-fg outline-none transition-colors placeholder:text-mist focus:border-lime/50"
         />
+        <kbd className="pointer-events-none absolute right-2.5 rounded border border-edge bg-ink px-1.5 py-1 font-mono text-[10.5px] text-mist">
+          ⌘K
+        </kbd>
       </div>
 
       <div className="ml-auto flex items-center gap-2 md:ml-0">

@@ -68,21 +68,27 @@
 /* Applied on the DashboardShell wrapper only — overrides the dashboard's
    ink/card/mist/edge/fg tokens above for every /dashboard/* page (and
    anything else nested inside it), independent of the data-theme toggle.
-   Ported from the v0 dashboard design; lime kept as the brand accent. */
+   Values are the literal oklch() colors from the v0 dashboard source
+   (vandusfor-code/du-labs-dashboard_vercel), not hex approximations. */
 .dash-scope {
-  --color-ink: #17181d;
-  --color-ink-2: #1c1e24;
-  --color-card: #1e2027;
-  --color-mist: #a3a8b4;
-  --color-edge: #2b2d36;
-  --color-fg: #f4f5f7;
-  --color-lime-text: #c6ff3d;
+  --color-ink: oklch(0.165 0.006 260);
+  --color-ink-2: oklch(0.185 0.006 260);
+  --color-card: oklch(0.205 0.007 260);
+  --color-mist: oklch(0.66 0.012 260);
+  --color-edge: oklch(1 0 0 / 9%);
+  --color-fg: oklch(0.96 0.004 260);
 
-  --color-chart-1: #c6ff3d;
-  --color-chart-2: #5eb8ff;
-  --color-chart-3: #d7ff74;
-  --color-chart-4: #b98cff;
-  --color-chart-5: #7b8094;
+  --color-lime: oklch(0.8 0.17 158);
+  --color-lime-hover: oklch(0.85 0.17 158);
+  --color-lime-soft: oklch(0.88 0.13 158);
+  --color-lime-text: oklch(0.8 0.17 158);
+  --color-lime-fg: oklch(0.19 0.03 160);
+
+  --color-chart-1: oklch(0.8 0.17 158);
+  --color-chart-2: oklch(0.68 0.13 200);
+  --color-chart-3: oklch(0.82 0.15 78);
+  --color-chart-4: oklch(0.62 0.16 264);
+  --color-chart-5: oklch(0.55 0.01 260);
 }
 
 html {

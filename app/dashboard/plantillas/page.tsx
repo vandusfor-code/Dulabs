@@ -190,71 +190,74 @@ export default function PlantillasPage() {
           ))}
         </div>
 
-        {plantillas !== null && filtradas.length === 0 && (
-          <div className="mt-5 flex flex-col items-center gap-2 rounded-xl border border-edge bg-card p-10 text-center">
-            <LayoutTemplate className="size-9 text-mist/40" strokeWidth={1.2} />
-            <p className="mt-1 text-sm font-semibold text-fg">Todavía no has creado ninguna plantilla</p>
-            <p className="max-w-xs text-xs leading-relaxed text-mist">
-              Créala arriba para empezar a mandar campañas masivas.
-            </p>
-          </div>
-        )}
-
-        {filtradas.length > 0 && (
-          <div className="mt-5 grid grid-cols-1 gap-6 lg:grid-cols-[1fr_minmax(0,340px)]">
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              {filtradas.map((p) => {
-                const info = estadoInfo[p.estado] ?? estadoInfo.pendiente;
-                return (
-                  <button
-                    key={p.id}
-                    onClick={() => setActiveId(p.id)}
-                    className={`rounded-xl border p-4 text-left transition-colors ${
-                      activa?.id === p.id ? "border-lime/40 bg-card" : "border-edge bg-card hover:border-lime/25"
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <div className="flex size-8 items-center justify-center rounded-lg bg-ink text-mist">
-                          <LayoutTemplate className="size-4" />
+        <div className="mt-5 grid grid-cols-1 gap-6 lg:grid-cols-[1fr_minmax(0,340px)]">
+          <div>
+            {plantillas !== null && filtradas.length === 0 ? (
+              <div className="flex flex-col items-center gap-2 rounded-xl border border-edge bg-card p-10 text-center">
+                <LayoutTemplate className="size-9 text-mist/40" strokeWidth={1.2} />
+                <p className="mt-1 text-sm font-semibold text-fg">Todavía no has creado ninguna plantilla</p>
+                <p className="max-w-xs text-xs leading-relaxed text-mist">
+                  Créala arriba para empezar a mandar campañas masivas.
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                {filtradas.map((p) => {
+                  const info = estadoInfo[p.estado] ?? estadoInfo.pendiente;
+                  return (
+                    <button
+                      key={p.id}
+                      onClick={() => setActiveId(p.id)}
+                      className={`rounded-xl border p-4 text-left transition-colors ${
+                        activa?.id === p.id ? "border-lime/40 bg-card" : "border-edge bg-card hover:border-lime/25"
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <div className="flex size-8 items-center justify-center rounded-lg bg-ink text-mist">
+                            <LayoutTemplate className="size-4" />
+                          </div>
+                          <span className="font-mono text-sm font-medium text-fg">{p.nombre}</span>
                         </div>
-                        <span className="font-mono text-sm font-medium text-fg">{p.nombre}</span>
+                        <Pill tone={info.tone}>
+                          <info.icon className="size-3" /> {info.label}
+                        </Pill>
                       </div>
-                      <Pill tone={info.tone}>
-                        <info.icon className="size-3" /> {info.label}
-                      </Pill>
-                    </div>
-                    <p className="mt-3 line-clamp-2 text-sm leading-relaxed text-mist">{p.cuerpo}</p>
-                    <p className="mt-3 font-mono text-[10.5px] uppercase tracking-widest text-mist">
-                      {p.categoria} · {p.idioma}
-                    </p>
-                  </button>
-                );
-              })}
-            </div>
-
-            {activa && (
-              <div className="lg:sticky lg:top-20 lg:self-start">
-                <div className="rounded-xl border border-edge bg-card p-4">
-                  <p className="font-mono text-[10.5px] uppercase tracking-widest text-mist">Vista previa</p>
-                  <div className="mt-3 rounded-[1.75rem] border border-edge bg-ink p-2.5">
-                    <div className="rounded-[1.4rem] bg-[#0b3b2e] p-3">
-                      <div className="mb-2 flex justify-center">
-                        <span className="rounded-full bg-black/20 px-2 py-0.5 font-mono text-[9.5px] text-white/70">
-                          Hoy
-                        </span>
-                      </div>
-                      <div className="max-w-[92%] rounded-xl rounded-tl-sm bg-card p-3 shadow-sm">
-                        <p className="whitespace-pre-line text-sm leading-relaxed text-fg">{activa.cuerpo}</p>
-                        <p className="mt-1 text-right text-[10px] text-mist">10:24 ✓✓</p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
+                      <p className="mt-3 line-clamp-2 text-sm leading-relaxed text-mist">{p.cuerpo}</p>
+                      <p className="mt-3 font-mono text-[10.5px] uppercase tracking-widest text-mist">
+                        {p.categoria} · {p.idioma}
+                      </p>
+                    </button>
+                  );
+                })}
               </div>
             )}
           </div>
-        )}
+
+          <div className="lg:sticky lg:top-20 lg:self-start">
+            <div className="rounded-xl border border-edge bg-card p-4">
+              <p className="font-mono text-[10.5px] uppercase tracking-widest text-mist">Vista previa</p>
+              <div className="mt-3 rounded-[1.75rem] border border-edge bg-ink p-2.5">
+                <div className="rounded-[1.4rem] bg-[#0b3b2e] p-3">
+                  <div className="mb-2 flex justify-center">
+                    <span className="rounded-full bg-black/20 px-2 py-0.5 font-mono text-[9.5px] text-white/70">
+                      Hoy
+                    </span>
+                  </div>
+                  <div className="max-w-[92%] rounded-xl rounded-tl-sm bg-card p-3 shadow-sm">
+                    <p className="whitespace-pre-line text-sm leading-relaxed text-fg">
+                      {activa ? activa.cuerpo : "Hola, tenemos una promoción especial este mes para ti."}
+                    </p>
+                    <p className="mt-1 text-right text-[10px] text-mist">10:24 ✓✓</p>
+                  </div>
+                </div>
+              </div>
+              <p className="mt-3 text-center text-xs text-mist">
+                {activa ? activa.nombre : "Así se verá tu próxima plantilla"}
+              </p>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );
