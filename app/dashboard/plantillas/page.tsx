@@ -3,6 +3,52 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useDashboard } from "@/lib/dashboard-session";
 
+const BANNER_MKT_KEY = "du_labs_banner_marketing_cerrado";
+
+function IconoEnviar({ className = "h-5 w-5" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} className={className}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" />
+    </svg>
+  );
+}
+
+function BannerMarketing() {
+  const [cerrado, setCerrado] = useState(() =>
+    typeof window === "undefined" ? true : localStorage.getItem(BANNER_MKT_KEY) === "1"
+  );
+
+  if (cerrado) return null;
+
+  return (
+    <div className="relative mt-8 overflow-hidden rounded-2xl border border-lime/20 bg-gradient-to-br from-ink-2 via-ink-2 to-lime/5 p-6 sm:p-8">
+      <button
+        onClick={() => {
+          localStorage.setItem(BANNER_MKT_KEY, "1");
+          setCerrado(true);
+        }}
+        aria-label="Cerrar"
+        className="absolute right-5 top-5 text-mist transition-colors duration-200 hover:text-white"
+      >
+        ✕
+      </button>
+      <div className="max-w-xl">
+        <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-lime/10 text-lime">
+          <IconoEnviar />
+        </div>
+        <h2 className="mt-4 text-xl font-semibold text-white">
+          Marketing — plantillas y campañas masivas por WhatsApp
+        </h2>
+        <ul className="mt-3 space-y-1.5 text-sm leading-relaxed text-mist">
+          <li>· Crea plantillas y espera la aprobación automática de Meta.</li>
+          <li>· Envía una campaña a toda tu lista de clientes en segundos.</li>
+          <li>· Sigue el estado de cada plantilla: aprobada, en revisión o rechazada.</li>
+        </ul>
+      </div>
+    </div>
+  );
+}
+
 type Plantilla = {
   id: number;
   phone_number_id: string;
@@ -141,6 +187,8 @@ export default function PlantillasPage() {
         </p>
       )}
 
+      <BannerMarketing />
+
       {/* --- Crear plantilla --- */}
       <section className="mt-8 rounded-2xl border border-edge/60 bg-card p-6 sm:p-8">
         <h2 className="text-sm font-semibold uppercase tracking-widest text-mist">
@@ -222,9 +270,17 @@ export default function PlantillasPage() {
           Tus plantillas
         </h2>
         {plantillas !== null && plantillas.length === 0 && (
-          <p className="mt-4 rounded-xl border border-edge/60 bg-card p-5 text-sm leading-relaxed text-mist">
-            Todavía no has creado ninguna plantilla.
-          </p>
+          <div className="mt-4 flex flex-col items-center gap-2 rounded-xl border border-edge/60 bg-card p-8 text-center">
+            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-lime/10 text-lime">
+              <IconoEnviar />
+            </span>
+            <p className="mt-1 text-sm font-semibold text-white">
+              Todavía no has creado ninguna plantilla
+            </p>
+            <p className="max-w-xs text-xs leading-relaxed text-mist">
+              Crea tu primera plantilla arriba para empezar a mandar campañas masivas.
+            </p>
+          </div>
         )}
         <div className="mt-4 flex flex-col gap-3">
           {plantillas?.map((p) => (
