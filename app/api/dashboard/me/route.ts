@@ -1,3 +1,4 @@
+import { after } from "next/server";
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { consultarEstadoNumero } from "@/lib/meta-numero";
@@ -45,38 +46,42 @@ export async function GET(request: NextRequest) {
 
   // Resincroniza el estado operativo real del número (calidad, límite de
   // mensajería, verificación) desde Meta si nunca se hizo o si ya pasó más
-  // de una hora — evita pegarle a la Graph API en cada carga del dashboard.
-  await Promise.all(
-    (data ?? []).map(async (n) => {
-      const token = n.meta_permanent_token || process.env.META_ACCESS_TOKEN;
-      if (!token) return;
-      const desactualizado =
-        !n.ultima_sincronizacion_meta ||
-        Date.now() - new Date(n.ultima_sincronizacion_meta).getTime() > UNA_HORA_MS;
-      if (!desactualizado) return;
+  // de una hora. Corre DESPUÉS de responder (after()) para que una Graph API
+  // lenta o caída nunca retrase ni cuelgue la carga del dashboard — el
+  // usuario ve los datos ya guardados y la próxima carga trae los nuevos.
+  const pendientesDeSincronizar = (data ?? []).filter((n) => {
+    const token = n.meta_permanent_token || process.env.META_ACCESS_TOKEN;
+    if (!token) return false;
+    return (
+      !n.ultima_sincronizacion_meta ||
+      Date.now() - new Date(n.ultima_sincronizacion_meta).getTime() > UNA_HORA_MS
+    );
+  });
 
-      const estado = await consultarEstadoNumero({ phoneNumberId: n.phone_number_id, token });
-      if (!estado) return;
+  if (pendientesDeSincronizar.length > 0) {
+    after(async () => {
+      await Promise.all(
+        pendientesDeSincronizar.map(async (n) => {
+          const token = n.meta_permanent_token || process.env.META_ACCESS_TOKEN;
+          if (!token) return;
+          const estado = await consultarEstadoNumero({ phoneNumberId: n.phone_number_id, token });
+          if (!estado) return;
 
-      n.calidad = estado.calidad;
-      n.limite_mensajeria = estado.limite_mensajeria;
-      n.estado_verificacion = estado.estado_verificacion;
-      n.estado_nombre_visible = estado.estado_nombre_visible;
-      n.ultima_sincronizacion_meta = new Date().toISOString();
-
-      await supabase
-        .from("dulabs_clientes_config")
-        .update({
-          calidad: n.calidad,
-          limite_mensajeria: n.limite_mensajeria,
-          estado_verificacion: n.estado_verificacion,
-          estado_nombre_visible: n.estado_nombre_visible,
-          ultima_sincronizacion_meta: n.ultima_sincronizacion_meta,
+          await supabase
+            .from("dulabs_clientes_config")
+            .update({
+              calidad: estado.calidad,
+              limite_mensajeria: estado.limite_mensajeria,
+              estado_verificacion: estado.estado_verificacion,
+              estado_nombre_visible: estado.estado_nombre_visible,
+              ultima_sincronizacion_meta: new Date().toISOString(),
+            })
+            .eq("phone_number_id", n.phone_number_id)
+            .eq("id_tenant", userData.user.id);
         })
-        .eq("phone_number_id", n.phone_number_id)
-        .eq("id_tenant", userData.user.id);
-    })
-  );
+      );
+    });
+  }
 
   const mesHoy = mesActualISO();
   const negocios = (data ?? []).map((n) => {

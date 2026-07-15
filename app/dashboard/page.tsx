@@ -133,7 +133,7 @@ function PantallaBienvenida({ nombre, suscripcionActiva }: { nombre: string; sus
 }
 
 export default function ResumenPage() {
-  const { session, negocios, suscripcion } = useDashboard();
+  const { session, negocios, suscripcion, errorNegocios, cargarNegocios } = useDashboard();
   const [dias, setDias] = useState<{ fecha: string; cantidad: number }[] | null>(null);
   const [resumen, setResumen] = useState<Resumen | null>(null);
 
@@ -150,6 +150,20 @@ export default function ResumenPage() {
   }, [session]);
 
   const nombre = nombreDesdeEmail(session?.user.email);
+
+  if (negocios === null && errorNegocios) {
+    return (
+      <div className="px-4 py-8 md:px-8">
+        <p className="rounded-lg border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-400">{errorNegocios}</p>
+        <button
+          onClick={() => cargarNegocios()}
+          className="mt-4 rounded-lg border border-edge px-4 py-2 text-sm font-semibold text-fg transition-colors hover:border-lime/40"
+        >
+          Reintentar
+        </button>
+      </div>
+    );
+  }
 
   if (negocios === null) {
     return (
