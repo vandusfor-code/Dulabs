@@ -1,29 +1,35 @@
-import Header from "@/components/Header";
-import Hero from "@/components/Hero";
-import Philosophy from "@/components/Philosophy";
-import Products from "@/components/Products";
-import Technology from "@/components/Technology";
-import Differential from "@/components/Differential";
-import Vision from "@/components/Vision";
-import Trust from "@/components/Trust";
-import FinalCTA from "@/components/FinalCTA";
-import Footer from "@/components/Footer";
+import { Nav } from "@/components/site/Nav";
+import { Hero } from "@/components/site/Hero";
+import {
+  CoexistenceSection,
+  CampaignsSection,
+  WhatsAppSection,
+  TrainingSection,
+  InboxSection,
+  MetricsSection,
+  PricingSection,
+  FaqSection,
+  FinalCta,
+  Footer,
+} from "@/components/site/Sections";
 
 export default function Home() {
   return (
-    <>
-      <Header />
+    <div className="relative min-h-screen bg-site-bg text-site-fg">
+      <Nav />
       <main>
         <Hero />
-        <Philosophy />
-        <Products />
-        <Technology />
-        <Differential />
-        <Vision />
-        <Trust />
-        <FinalCTA />
+        <CoexistenceSection />
+        <CampaignsSection />
+        <WhatsAppSection />
+        <TrainingSection />
+        <InboxSection />
+        <MetricsSection />
+        <PricingSection />
+        <FaqSection />
+        <FinalCta />
       </main>
       <Footer />
-    </>
+    </div>
   );
 }

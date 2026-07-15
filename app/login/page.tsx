@@ -4,6 +4,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase-browser";
+import { AuthVisual } from "@/components/site/AuthVisual";
 
 type Modo = "login" | "registro";
 
@@ -65,96 +66,108 @@ export default function LoginPage() {
   };
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-ink px-5 py-16 text-fg">
-      <div className="w-full max-w-md rounded-2xl border border-edge/60 bg-card p-8 sm:p-10">
-        <Link
-          href="/"
-          className="text-sm text-lime-text transition-colors duration-200 hover:text-fg"
-        >
-          ← Volver a Du Labs
-        </Link>
-        <h1 className="mt-6 text-2xl font-semibold sm:text-3xl">
-          {modo === "login" ? "Inicia sesión" : "Crea tu cuenta"}
-        </h1>
-        <p className="mt-3 text-sm leading-relaxed text-mist">
-          Accede a tu panel de Du Labs para conectar y administrar tus
-          números de WhatsApp.
-        </p>
+    <main className="grid min-h-screen bg-site-bg text-site-fg lg:grid-cols-2">
+      <div className="relative flex items-center justify-center px-6 py-16">
+        <div className="pointer-events-none absolute inset-0 site-grid-bg-fine opacity-40 lg:hidden" />
+        <div className="relative w-full max-w-[400px]">
+          <Link href="/" className="text-[13px] text-site-primary transition-colors duration-200 hover:text-site-fg">
+            ← Volver a Du Labs
+          </Link>
 
-        {supabaseConfigFaltante && (
-          <p className="mt-4 rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-600">
-            Faltan NEXT_PUBLIC_SUPABASE_URL o NEXT_PUBLIC_SUPABASE_ANON_KEY en el entorno.
+          <div className="mt-8 mb-6 inline-flex items-center rounded-full border border-site-border bg-white/[0.02] p-1 text-[12px]">
+            {(["login", "registro"] as Modo[]).map((m) => (
+              <button
+                key={m}
+                onClick={() => {
+                  setModo(m);
+                  setError(null);
+                  setMensaje(null);
+                }}
+                className={`relative rounded-full px-4 py-1.5 transition-all ${
+                  modo === m ? "bg-site-fg text-site-bg" : "text-site-muted-fg hover:text-site-fg"
+                }`}
+              >
+                {m === "login" ? "Iniciar sesión" : "Crear cuenta"}
+              </button>
+            ))}
+          </div>
+
+          <h1 className="font-display text-[28px] font-medium leading-[1.08] tracking-tight site-text-gradient">
+            {modo === "login" ? "Bienvenido de vuelta." : "Activa tu WhatsApp con IA."}
+          </h1>
+          <p className="mt-2 text-[13.5px] text-site-muted-fg">
+            {modo === "login"
+              ? "Accede a tu panel de Du Labs para conectar y administrar tus números de WhatsApp."
+              : "Crea tu cuenta para conectar tu WhatsApp Business en minutos."}
           </p>
-        )}
 
-        <form onSubmit={enviar} className="mt-8 flex flex-col gap-4">
-          <div>
-            <label className="mb-1.5 block text-xs font-medium text-mist">
-              Correo
-            </label>
-            <input
-              type="email"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-full rounded-lg border border-edge bg-ink-2 px-4 py-2.5 text-sm text-fg outline-none transition-colors duration-200 focus:border-lime/50"
-              placeholder="tu@negocio.com"
-            />
-          </div>
-          <div>
-            <label className="mb-1.5 block text-xs font-medium text-mist">
-              Contraseña
-            </label>
-            <input
-              type="password"
-              required
-              minLength={6}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full rounded-lg border border-edge bg-ink-2 px-4 py-2.5 text-sm text-fg outline-none transition-colors duration-200 focus:border-lime/50"
-              placeholder="••••••••"
-            />
-          </div>
-
-          {error && (
-            <p className="rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-600">
-              {error}
-            </p>
-          )}
-          {mensaje && (
-            <p className="rounded-lg border border-lime/40 bg-lime/10 p-3 text-sm text-lime-text">
-              {mensaje}
+          {supabaseConfigFaltante && (
+            <p className="mt-4 rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-400">
+              Faltan NEXT_PUBLIC_SUPABASE_URL o NEXT_PUBLIC_SUPABASE_ANON_KEY en el entorno.
             </p>
           )}
 
-          <button
-            type="submit"
-            disabled={cargando || supabaseConfigFaltante}
-            className="btn-shine mt-2 rounded-lg bg-lime px-6 py-3 text-sm font-semibold text-lime-fg transition-[background-color,transform] duration-200 hover:-translate-y-0.5 hover:bg-lime-hover active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {cargando
-              ? "Un momento…"
-              : modo === "login"
-                ? "Iniciar sesión"
-                : "Crear cuenta"}
-          </button>
-        </form>
+          <form onSubmit={enviar} className="mt-7 flex flex-col gap-3.5">
+            <div>
+              <label className="mb-1.5 block text-[12px] font-medium text-site-muted-fg">Correo</label>
+              <input
+                type="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="w-full rounded-lg border border-site-border bg-white/[0.02] px-4 py-2.5 text-sm text-site-fg outline-none transition-colors duration-200 focus:border-site-primary/50"
+                placeholder="tu@negocio.com"
+              />
+            </div>
+            <div>
+              <label className="mb-1.5 block text-[12px] font-medium text-site-muted-fg">Contraseña</label>
+              <input
+                type="password"
+                required
+                minLength={6}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full rounded-lg border border-site-border bg-white/[0.02] px-4 py-2.5 text-sm text-site-fg outline-none transition-colors duration-200 focus:border-site-primary/50"
+                placeholder="••••••••"
+              />
+            </div>
 
-        <p className="mt-6 text-center text-sm text-mist">
-          {modo === "login" ? "¿No tienes cuenta? " : "¿Ya tienes cuenta? "}
-          <button
-            type="button"
-            onClick={() => {
-              setModo(modo === "login" ? "registro" : "login");
-              setError(null);
-              setMensaje(null);
-            }}
-            className="font-semibold text-lime-text hover:text-fg"
-          >
-            {modo === "login" ? "Regístrate" : "Inicia sesión"}
-          </button>
-        </p>
+            {error && (
+              <p className="rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-400">{error}</p>
+            )}
+            {mensaje && (
+              <p className="rounded-lg border border-site-primary/40 bg-site-primary/10 p-3 text-sm text-site-primary">
+                {mensaje}
+              </p>
+            )}
+
+            <button
+              type="submit"
+              disabled={cargando || supabaseConfigFaltante}
+              className="mt-2 inline-flex h-11 items-center justify-center rounded-full bg-site-primary text-[13.5px] font-medium text-site-primary-fg transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {cargando ? "Un momento…" : modo === "login" ? "Iniciar sesión" : "Crear cuenta"}
+            </button>
+          </form>
+
+          <p className="mt-6 text-center text-[13px] text-site-muted-fg">
+            {modo === "login" ? "¿No tienes cuenta? " : "¿Ya tienes cuenta? "}
+            <button
+              type="button"
+              onClick={() => {
+                setModo(modo === "login" ? "registro" : "login");
+                setError(null);
+                setMensaje(null);
+              }}
+              className="font-semibold text-site-primary hover:text-site-fg"
+            >
+              {modo === "login" ? "Regístrate" : "Inicia sesión"}
+            </button>
+          </p>
+        </div>
       </div>
+
+      <AuthVisual />
     </main>
   );
 }

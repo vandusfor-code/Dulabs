@@ -15,6 +15,16 @@
   /* Fixed dark text for on-lime buttons/badges — same in both themes */
   --color-lime-fg: #0a0f0d;
 
+  /* Fixed landing-page brand palette — deliberate dark bands, same in both themes */
+  --color-verde-oscuro: #243015;
+  --color-verde-oscuro-2: #2f3f1c;
+  --color-noir: #111111;
+
+  /* Secondary band palette — light by default, flips in dark theme below */
+  --color-bg-secundario: #f7f8f5;
+  --color-borde-secundario: #e8e8e8;
+  --color-texto-secundario: #666666;
+
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, monospace;
 }
@@ -28,6 +38,30 @@
   --color-mist: #a1a8a3;
   --color-edge: #262f29;
   --color-fg: #ffffff;
+
+  --color-bg-secundario: #10140d;
+  --color-borde-secundario: #262f29;
+  --color-texto-secundario: #a1a8a3;
+}
+
+/* ---------- Marketing site palette (fixed dark, "site-" prefixed) ---------- */
+/* Scoped to the public marketing pages only — independent of the dashboard's
+   light/dark toggle above. Ported from the Lovable design, brand lime kept
+   consistent with the rest of Du Labs. */
+@theme {
+  --color-site-bg: #050505;
+  --color-site-fg: #ffffff;
+  --color-site-surface: #0b0b0b;
+  --color-site-card: #111111;
+  --color-site-primary: #c6ff3d;
+  --color-site-primary-fg: #0a0f0d;
+  --color-site-primary-glow: #d7ff74;
+  --color-site-secondary: #1c1c1c;
+  --color-site-muted: #1c1c1c;
+  --color-site-muted-fg: #b7b7b7;
+  --color-site-destructive: #e5484d;
+  --color-site-border: rgb(255 255 255 / 7%);
+  --color-site-input: rgb(255 255 255 / 10%);
 }
 
 html {
@@ -299,6 +333,49 @@ body {
   }
 }
 
+/* ---------- Premium card depth ---------- */
+
+.shadow-card {
+  box-shadow:
+    0 1px 2px rgba(17, 17, 17, 0.04),
+    0 12px 32px -12px rgba(17, 17, 17, 0.10),
+    0 24px 64px -24px rgba(36, 48, 21, 0.12);
+}
+.shadow-card-hover {
+  transition: box-shadow 0.3s ease, transform 0.3s ease;
+}
+.shadow-card-hover:hover {
+  box-shadow:
+    0 1px 2px rgba(17, 17, 17, 0.05),
+    0 16px 40px -14px rgba(17, 17, 17, 0.14),
+    0 0 0 1px rgba(198, 255, 61, 0.25),
+    0 28px 72px -20px rgba(198, 255, 61, 0.16);
+}
+
+.live-dot {
+  position: relative;
+}
+.live-dot::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 9999px;
+  border: 1.5px solid currentColor;
+  opacity: 0.6;
+  animation: live-ping 2s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+}
+@keyframes live-ping {
+  0% {
+    transform: scale(0.8);
+    opacity: 0.6;
+  }
+  75%,
+  100% {
+    transform: scale(1.9);
+    opacity: 0;
+  }
+}
+
 /* ---------- Rendering performance ---------- */
 
 .cv-auto {
@@ -320,6 +397,115 @@ body {
   mask-image: radial-gradient(ellipse 70% 60% at 50% 0%, black 30%, transparent 75%);
 }
 
+/* ---------- Marketing site surfaces (ported from Lovable design) ---------- */
+
+.site-ambient-bg {
+  background-image:
+    radial-gradient(ellipse 70% 55% at 50% 0%, rgb(198 255 61 / 0.10), transparent 60%),
+    radial-gradient(ellipse 45% 40% at 85% 15%, rgb(215 255 116 / 0.06), transparent 70%),
+    radial-gradient(ellipse 40% 35% at 10% 25%, rgb(120 180 255 / 0.05), transparent 70%);
+}
+.site-mesh-bg {
+  background-image: conic-gradient(
+    from 220deg at 50% 50%,
+    rgb(198 255 61 / 0.08),
+    rgb(90 170 255 / 0.04),
+    rgb(198 255 61 / 0.06),
+    rgb(215 255 116 / 0.05),
+    rgb(198 255 61 / 0.08)
+  );
+}
+.site-grid-bg {
+  background-image:
+    linear-gradient(to right, rgb(255 255 255 / 0.045) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(255 255 255 / 0.045) 1px, transparent 1px);
+  background-size: 64px 64px;
+}
+.site-grid-bg-fine {
+  background-image:
+    linear-gradient(to right, rgb(255 255 255 / 0.045) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(255 255 255 / 0.045) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+.site-grid-bg-dot {
+  background-image: radial-gradient(circle, rgb(255 255 255 / 0.09) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+.site-glass {
+  background: color-mix(in oklab, var(--color-site-surface) 55%, transparent);
+  backdrop-filter: blur(24px) saturate(140%);
+  border: 1px solid rgb(255 255 255 / 0.06);
+  box-shadow: inset 0 1px 0 0 rgb(255 255 255 / 0.06);
+}
+.site-glass-strong {
+  background: color-mix(in oklab, var(--color-site-card) 80%, transparent);
+  backdrop-filter: blur(32px) saturate(160%);
+  border: 1px solid rgb(255 255 255 / 0.08);
+  box-shadow:
+    inset 0 1px 0 0 rgb(255 255 255 / 0.06),
+    0 20px 60px -30px rgb(0 0 0 / 0.6);
+}
+.site-panel {
+  background: linear-gradient(180deg, rgb(255 255 255 / 0.02), transparent);
+  border: 1px solid rgb(255 255 255 / 0.06);
+  box-shadow: inset 0 1px 0 0 rgb(255 255 255 / 0.06);
+  border-radius: 0.75rem;
+}
+.site-card-elevated {
+  background: var(--color-site-card);
+  border: 1px solid rgb(255 255 255 / 0.06);
+  box-shadow:
+    0 30px 80px -30px rgb(0 0 0 / 0.7),
+    0 0 0 1px rgb(255 255 255 / 0.05);
+}
+.site-glow-primary {
+  box-shadow: 0 0 80px -20px rgb(198 255 61 / 0.28);
+}
+.site-text-gradient {
+  background: linear-gradient(180deg, #ffffff 0%, #b8b8b8 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.site-text-gradient-primary {
+  background: linear-gradient(135deg, #c6ff3d, #d7ff74);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+@keyframes site-ambient-shift {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); opacity: 0.9; }
+  50% { transform: translate3d(1.5%, -1%, 0) scale(1.04); opacity: 1; }
+}
+@keyframes site-fade-up {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes site-ping-soft {
+  0% { transform: scale(1); opacity: 0.6; }
+  100% { transform: scale(2.4); opacity: 0; }
+}
+@keyframes site-ring-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+@keyframes site-bar-rise {
+  from { transform: scaleY(0.2); }
+  to { transform: scaleY(1); }
+}
+.animate-site-ambient { animation: site-ambient-shift 22s ease-in-out infinite; }
+.animate-site-fade-up { animation: site-fade-up 0.8s cubic-bezier(.2,.7,.2,1) both; }
+.animate-site-ping-soft { animation: site-ping-soft 2.4s cubic-bezier(0, 0, 0.2, 1) infinite; }
+.animate-site-ring-spin { animation: site-ring-spin 24s linear infinite; }
+.animate-site-bar-rise { animation: site-bar-rise 0.8s ease-out both; }
+.animate-site-marquee { animation: marquee 50s linear infinite; }
+.animate-site-float { animation: float-y 7s ease-in-out infinite; }
+.animate-site-pulse-glow { animation: dot-pulse 2.6s ease-in-out infinite; }
+.reflect-below {
+  mask-image: linear-gradient(to bottom, black 0%, black 60%, transparent 100%);
+}
+
 /* ---------- Reduced motion: everything settles instantly ---------- */
 
 @media (prefers-reduced-motion: reduce) {
@@ -339,7 +525,16 @@ body {
   .aurora,
   .typing-dot,
   .text-shimmer,
-  .float-slow {
+  .float-slow,
+  .live-dot::after,
+  .animate-site-ambient,
+  .animate-site-fade-up,
+  .animate-site-ping-soft,
+  .animate-site-ring-spin,
+  .animate-site-bar-rise,
+  .animate-site-marquee,
+  .animate-site-float,
+  .animate-site-pulse-glow {
     animation: none;
   }
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 export const THEME_KEY = "du_labs_theme";
 
@@ -25,11 +25,9 @@ function IconoLuna() {
 }
 
 export default function ThemeToggle({ className = "" }: { className?: string }) {
-  const [oscuro, setOscuro] = useState(false);
-
-  useEffect(() => {
-    setOscuro(document.documentElement.getAttribute("data-theme") === "dark");
-  }, []);
+  const [oscuro, setOscuro] = useState(() =>
+    typeof document === "undefined" ? false : document.documentElement.getAttribute("data-theme") === "dark"
+  );
 
   const alternar = () => {
     const nuevo = !oscuro;
