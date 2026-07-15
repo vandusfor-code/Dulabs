@@ -15,6 +15,9 @@ export type ClienteConfig = {
   plan: string | null;
   mensajes_usados_mes: number;
   mes_actual: string;
+  base_conocimiento: string | null;
+  base_conocimiento_nombre_archivo: string | null;
+  base_conocimiento_actualizado_at: string | null;
   created_at: string;
   updated_at: string;
 };

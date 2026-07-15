@@ -23,6 +23,9 @@ export type Negocio = {
   mensajes_usados: number;
   mensajes_limite: number | null;
   prompt_sistema: string | null;
+  base_conocimiento_nombre_archivo: string | null;
+  base_conocimiento_actualizado_at: string | null;
+  base_conocimiento_caracteres: number;
 };
 
 export type Suscripcion = {

@@ -1,13 +1,133 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import Link from "next/link";
-import { Bot, MessagesSquare, Gauge, Phone, ShieldCheck, Sparkles } from "lucide-react";
+import { Bot, MessagesSquare, Gauge, Phone, ShieldCheck, Sparkles, FileUp, FileText, X } from "lucide-react";
 import { useDashboard, type Negocio } from "@/lib/dashboard-session";
 import { formatearTelefono } from "@/lib/format";
 import { PageHeader, Pill } from "@/components/dashboard/shell/ui";
 
-function AgentDetail({ negocio, accessToken }: { negocio: Negocio; accessToken: string }) {
+function BaseConocimiento({
+  negocio,
+  accessToken,
+  onActualizado,
+}: {
+  negocio: Negocio;
+  accessToken: string;
+  onActualizado: () => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [subiendo, setSubiendo] = useState(false);
+  const [mensaje, setMensaje] = useState<string | null>(null);
+
+  const tieneArchivo = Boolean(negocio.base_conocimiento_nombre_archivo);
+
+  const subirArchivo = useCallback(
+    async (archivo: File) => {
+      setSubiendo(true);
+      setMensaje(null);
+      try {
+        const form = new FormData();
+        form.append("phone_number_id", negocio.phone_number_id);
+        form.append("archivo", archivo);
+        const res = await fetch("/api/dashboard/base-conocimiento", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${accessToken}` },
+          body: form,
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error ?? "Error subiendo el archivo");
+        setMensaje(
+          `Cargado: ${data.caracteres.toLocaleString("es-CO")} caracteres${data.truncado ? " (se recortó por tamaño)" : ""}.`
+        );
+        onActualizado();
+      } catch (err) {
+        setMensaje(err instanceof Error ? err.message : String(err));
+      } finally {
+        setSubiendo(false);
+        if (inputRef.current) inputRef.current.value = "";
+      }
+    },
+    [accessToken, negocio.phone_number_id, onActualizado]
+  );
+
+  const quitarArchivo = useCallback(async () => {
+    setSubiendo(true);
+    setMensaje(null);
+    try {
+      const res = await fetch("/api/dashboard/base-conocimiento", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ phone_number_id: negocio.phone_number_id }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Error quitando el archivo");
+      onActualizado();
+    } catch (err) {
+      setMensaje(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSubiendo(false);
+    }
+  }, [accessToken, negocio.phone_number_id, onActualizado]);
+
+  return (
+    <div className="rounded-xl border border-edge bg-card p-5">
+      <div className="mb-3 flex items-center gap-2">
+        <FileUp className="size-4 text-mist" />
+        <h3 className="text-sm font-semibold text-fg">Base de conocimiento</h3>
+      </div>
+      <p className="text-xs leading-relaxed text-mist">
+        Sube tu listado de precios (Excel/CSV) o un documento (PDF, como estatutos o políticas). La IA lo usará como
+        referencia además de las instrucciones de arriba.
+      </p>
+
+      {tieneArchivo ? (
+        <div className="mt-4 flex items-center justify-between gap-3 rounded-lg border border-edge bg-ink p-3">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <FileText className="size-4 shrink-0 text-lime-text" />
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium text-fg">{negocio.base_conocimiento_nombre_archivo}</p>
+              <p className="mt-0.5 font-mono text-[10.5px] uppercase tracking-widest text-mist">
+                {negocio.base_conocimiento_caracteres.toLocaleString("es-CO")} caracteres
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={quitarArchivo}
+            disabled={subiendo}
+            className="flex size-8 shrink-0 items-center justify-center rounded-lg text-mist transition-colors hover:text-red-400 disabled:opacity-50"
+            aria-label="Quitar archivo"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
+      ) : (
+        <p className="mt-3 text-xs text-mist">Todavía no has subido ningún archivo.</p>
+      )}
+
+      <input
+        ref={inputRef}
+        type="file"
+        accept=".xlsx,.xls,.csv,.pdf"
+        className="hidden"
+        onChange={(e) => {
+          const archivo = e.target.files?.[0];
+          if (archivo) subirArchivo(archivo);
+        }}
+      />
+      <button
+        onClick={() => inputRef.current?.click()}
+        disabled={subiendo}
+        className="mt-3 rounded-lg border border-edge px-4 py-2 text-xs font-semibold text-fg transition-colors hover:border-lime/40 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {subiendo ? "Procesando…" : tieneArchivo ? "Reemplazar archivo" : "Subir archivo"}
+      </button>
+      {mensaje && <p className="mt-3 text-xs leading-relaxed text-mist">{mensaje}</p>}
+    </div>
+  );
+}
+
+function AgentDetail({ negocio, accessToken, onActualizado }: { negocio: Negocio; accessToken: string; onActualizado: () => void }) {
   const [prompt, setPrompt] = useState(negocio.prompt_sistema ?? "");
   const [guardando, setGuardando] = useState(false);
   const [mensaje, setMensaje] = useState<string | null>(null);
@@ -97,6 +217,8 @@ function AgentDetail({ negocio, accessToken }: { negocio: Negocio; accessToken: 
         {mensaje && <p className="mt-3 text-xs leading-relaxed text-mist">{mensaje}</p>}
       </div>
 
+      <BaseConocimiento negocio={negocio} accessToken={accessToken} onActualizado={onActualizado} />
+
       <div className="rounded-xl border border-edge bg-card p-5">
         <div className="mb-3 flex items-center gap-2">
           <ShieldCheck className="size-4 text-mist" />
@@ -106,7 +228,7 @@ function AgentDetail({ negocio, accessToken }: { negocio: Negocio; accessToken: 
           {[
             "Responde con la API Oficial de WhatsApp Business de Meta",
             "Se pausa automáticamente si tú respondes desde tu celular",
-            "Solo usa las instrucciones que le diste arriba, nada más",
+            "Solo usa las instrucciones y la base de conocimiento que le diste, nada más",
           ].map((t) => (
             <li key={t} className="flex items-center gap-2.5 rounded-lg border border-edge bg-ink px-3 py-2.5 text-fg/90">
               <span className="size-1.5 rounded-full bg-lime" />
@@ -132,7 +254,7 @@ function Metric({ icon: Icon, label, value }: { icon: typeof Bot; label: string;
 }
 
 export default function AgentesPage() {
-  const { session, negocios } = useDashboard();
+  const { session, negocios, cargarNegocios } = useDashboard();
   const [activeId, setActiveId] = useState<string | null>(null);
 
   const activo = negocios?.find((n) => n.phone_number_id === activeId) ?? negocios?.[0] ?? null;
@@ -195,7 +317,11 @@ export default function AgentesPage() {
               })}
             </div>
 
-            <div>{session && activo && <AgentDetail negocio={activo} accessToken={session.access_token} />}</div>
+            <div>
+              {session && activo && (
+                <AgentDetail negocio={activo} accessToken={session.access_token} onActualizado={cargarNegocios} />
+              )}
+            </div>
           </div>
         )}
       </div>

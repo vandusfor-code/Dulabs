@@ -242,9 +242,12 @@ async function generarRespuestaIA(
   }
 
   const anthropic = new Anthropic({ apiKey });
-  const system =
+  let system =
     cliente.prompt_sistema ??
     `Eres el asistente de WhatsApp del negocio "${cliente.nombre_negocio}". Responde de forma breve, amable y útil.`;
+  if (cliente.base_conocimiento) {
+    system += `\n\n--- Información de referencia del negocio (catálogo, precios o documentos) ---\n${cliente.base_conocimiento}`;
+  }
 
   try {
     const response = await anthropic.messages.create({
