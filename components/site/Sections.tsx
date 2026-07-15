@@ -692,9 +692,69 @@ export function Footer() {
             </div>
           ))}
         </div>
-        <div className="mt-14 flex flex-wrap items-center justify-between gap-4 border-t border-site-border pt-6 text-[11px] text-site-muted-fg">
-          <div>© {new Date().getFullYear()} Du Labs. RAMOS PADILLA DUVAN ANDRES. Todos los derechos reservados.</div>
-          <a href="mailto:contacto@dulabs.co" className="hover:text-site-fg">contacto@dulabs.co</a>
+
+        <div className="mt-14 grid gap-10 border-t border-site-border pt-10 md:grid-cols-2">
+          <div>
+            <h3 className="text-[12.5px] font-semibold text-site-fg">Información legal</h3>
+            <p className="mt-4 text-[12.5px] leading-relaxed text-site-muted-fg">
+              <span className="text-site-muted-fg/70">Titular del servicio:</span>
+              <br />
+              RAMOS PADILLA DUVAN ANDRES
+            </p>
+            <p className="mt-4 text-[12.5px] leading-relaxed text-site-muted-fg">
+              <span className="text-site-muted-fg/70">Nombre comercial:</span>
+              <br />
+              DULABS
+            </p>
+            <p className="mt-4 text-[12.5px] leading-relaxed text-site-muted-fg">
+              <span className="text-site-muted-fg/70">Dirección principal:</span>
+              <br />
+              BRR SANTA ELENA V CR 36 47 17
+              <br />
+              Montería, Córdoba 230001
+              <br />
+              Colombia
+            </p>
+            <p className="mt-4 text-[12.5px] leading-relaxed text-site-muted-fg">
+              <span className="text-site-muted-fg/70">Correo electrónico:</span>
+              <br />
+              contacto@dulabs.co
+            </p>
+            <p className="mt-4 text-[12.5px] leading-relaxed text-site-muted-fg">
+              <span className="text-site-muted-fg/70">Sitio web:</span>
+              <br />
+              https://www.dulabs.co
+            </p>
+            <p className="mt-4 text-[12.5px] leading-relaxed text-site-muted-fg/80">
+              Du Labs es una marca comercial y plataforma digital operada por
+              RAMOS PADILLA DUVAN ANDRES.
+            </p>
+          </div>
+          <div className="md:justify-self-end">
+            <h3 className="text-[12.5px] font-semibold text-site-fg">Contacto</h3>
+            <ul className="mt-4 flex flex-col gap-2 text-[12.5px] text-site-muted-fg">
+              <li>
+                <a href="mailto:vandusfor@gmail.com" className="transition-colors duration-200 hover:text-site-fg">
+                  vandusfor@gmail.com
+                </a>
+              </li>
+              <li>
+                <a href="tel:+573148127388" className="transition-colors duration-200 hover:text-site-fg">
+                  +57 314 812 7388
+                </a>
+              </li>
+              <li>
+                <a href="https://dulabs.co" className="transition-colors duration-200 hover:text-site-fg">
+                  dulabs.co
+                </a>
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <div className="mt-12 flex flex-wrap items-center justify-between gap-4 border-t border-site-border pt-8 text-[11px] text-site-muted-fg/70">
+          <p>© {new Date().getFullYear()} Du Labs. Todos los derechos reservados.</p>
+          <p>Hecho en Colombia 🇨🇴</p>
         </div>
       </div>
     </footer>
