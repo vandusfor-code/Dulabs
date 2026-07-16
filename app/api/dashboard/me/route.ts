@@ -83,6 +83,31 @@ export async function GET(request: NextRequest) {
     });
   }
 
+  // Enviados reales por número (30 días) y hoy, para el cupo diario y el
+  // total de capacidad de la pantalla de Números.
+  const phoneNumberIds = (data ?? []).map((n) => n.phone_number_id);
+  const enviados30dPorNumero = new Map<string, number>();
+  const enviadosHoyPorNumero = new Map<string, number>();
+  if (phoneNumberIds.length > 0) {
+    const hace30d = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const inicioHoy = new Date();
+    inicioHoy.setHours(0, 0, 0, 0);
+
+    const { data: mensajes30d } = await supabase
+      .from("dulabs_mensajes_log")
+      .select("phone_number_id, created_at")
+      .in("phone_number_id", phoneNumberIds)
+      .eq("direccion", "saliente")
+      .gte("created_at", hace30d.toISOString());
+
+    for (const m of mensajes30d ?? []) {
+      enviados30dPorNumero.set(m.phone_number_id, (enviados30dPorNumero.get(m.phone_number_id) ?? 0) + 1);
+      if (new Date(m.created_at) >= inicioHoy) {
+        enviadosHoyPorNumero.set(m.phone_number_id, (enviadosHoyPorNumero.get(m.phone_number_id) ?? 0) + 1);
+      }
+    }
+  }
+
   const mesHoy = mesActualISO();
   const negocios = (data ?? []).map((n) => {
     const plan = n.plan ?? PLAN_POR_DEFECTO;
@@ -110,6 +135,8 @@ export async function GET(request: NextRequest) {
       estado_nombre_visible: n.estado_nombre_visible,
       nombre_agente: n.nombre_agente,
       ia_pausada: n.ia_pausada,
+      enviados_30d: enviados30dPorNumero.get(n.phone_number_id) ?? 0,
+      enviados_hoy: enviadosHoyPorNumero.get(n.phone_number_id) ?? 0,
     };
   });
 

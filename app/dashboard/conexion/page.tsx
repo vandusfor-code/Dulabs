@@ -1,10 +1,18 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Phone as PhoneIcon, BadgeCheck, Pencil, Check, X } from "lucide-react";
+import { Phone as PhoneIcon, BadgeCheck, Pencil, Check, X, Bot, MessagesSquare } from "lucide-react";
 import { useDashboard, type Negocio } from "@/lib/dashboard-session";
-import { formatearTelefono, CALIDAD_INFO } from "@/lib/format";
-import { PageHeader, Pill } from "@/components/dashboard/shell/ui";
+import { formatearTelefono, nombreDelAgente, CALIDAD_INFO } from "@/lib/format";
+import { PageHeader, Pill, StatTile } from "@/components/dashboard/shell/ui";
+
+const LIMITE_NUMERICO: Record<string, number> = {
+  TIER_50: 50,
+  TIER_250: 250,
+  TIER_1K: 1000,
+  TIER_10K: 10000,
+  TIER_100K: 100000,
+};
 
 const GRAPH_VERSION = "v23.0";
 
@@ -103,6 +111,36 @@ function NumeroCard({
     }
   }, [nombre, negocio.nombre_negocio, negocio.phone_number_id, accessToken, onActualizado]);
 
+  const [editandoAgente, setEditandoAgente] = useState(false);
+  const [nombreAgenteInput, setNombreAgenteInput] = useState(nombreDelAgente(negocio));
+  const [guardandoAgente, setGuardandoAgente] = useState(false);
+
+  const guardarNombreAgente = useCallback(async () => {
+    const valor = nombreAgenteInput.trim();
+    if (!valor || valor === nombreDelAgente(negocio)) {
+      setEditandoAgente(false);
+      setNombreAgenteInput(nombreDelAgente(negocio));
+      return;
+    }
+    setGuardandoAgente(true);
+    try {
+      const res = await fetch("/api/dashboard/negocio", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ phone_number_id: negocio.phone_number_id, nombre_agente: valor }),
+      });
+      if (!res.ok) throw new Error();
+      setEditandoAgente(false);
+      onActualizado();
+    } catch {
+      setNombreAgenteInput(nombreDelAgente(negocio));
+    } finally {
+      setGuardandoAgente(false);
+    }
+  }, [nombreAgenteInput, negocio, accessToken, onActualizado]);
+
+  const cupoDiario = negocio.limite_mensajeria ? LIMITE_NUMERICO[negocio.limite_mensajeria] : undefined;
+
   return (
     <div className="rounded-xl border border-edge bg-card p-5">
       <div className="flex items-center justify-between gap-3">
@@ -158,12 +196,74 @@ function NumeroCard({
             <p className="font-mono text-[10.5px] uppercase tracking-widest text-mist">
               {formatearTelefono(negocio.telefono_negocio)}
             </p>
+            {editandoAgente ? (
+              <div className="mt-1.5 flex items-center gap-1.5">
+                <input
+                  autoFocus
+                  value={nombreAgenteInput}
+                  maxLength={60}
+                  onChange={(e) => setNombreAgenteInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") guardarNombreAgente();
+                    if (e.key === "Escape") {
+                      setEditandoAgente(false);
+                      setNombreAgenteInput(nombreDelAgente(negocio));
+                    }
+                  }}
+                  className="w-32 rounded-md border border-edge bg-ink px-2 py-1 text-xs text-fg outline-none focus:border-lime/50"
+                />
+                <button
+                  onClick={guardarNombreAgente}
+                  disabled={guardandoAgente}
+                  className="flex size-5 items-center justify-center rounded-md text-lime-text hover:bg-lime/10 disabled:opacity-50"
+                  aria-label="Guardar nombre del agente"
+                >
+                  <Check className="size-3" />
+                </button>
+                <button
+                  onClick={() => {
+                    setEditandoAgente(false);
+                    setNombreAgenteInput(nombreDelAgente(negocio));
+                  }}
+                  className="flex size-5 items-center justify-center rounded-md text-mist hover:bg-ink"
+                  aria-label="Cancelar"
+                >
+                  <X className="size-3" />
+                </button>
+              </div>
+            ) : (
+              <button onClick={() => setEditandoAgente(true)} className="group mt-1.5 flex items-center gap-1.5">
+                <Bot className="size-3 text-mist" />
+                <span className="text-xs text-mist">
+                  <span className="font-medium text-lime-text">{nombreDelAgente(negocio)}</span>
+                </span>
+                <Pencil className="size-3 text-mist opacity-0 transition-opacity group-hover:opacity-100" />
+              </button>
+            )}
           </div>
         </div>
         <Pill tone={negocio.conectado ? "success" : "neutral"}>
           {negocio.conectado && <BadgeCheck className="size-3" />}
           {negocio.conectado ? "Verificado" : "Pendiente"}
         </Pill>
+      </div>
+
+      <div className="mt-4 flex items-center justify-between border-t border-edge pt-4 text-xs">
+        <span className="flex items-center gap-1.5 text-mist">
+          <MessagesSquare className="size-3.5" /> {negocio.enviados_30d.toLocaleString("es-CO")} enviados (30d)
+        </span>
+        {cupoDiario !== undefined && (
+          <div className="flex items-center gap-2">
+            <span className="text-mist">Cupo diario</span>
+            <div className="h-1.5 w-16 overflow-hidden rounded-full bg-ink">
+              <div
+                className="h-full rounded-full bg-lime"
+                style={{ width: `${Math.min(100, (negocio.enviados_hoy / cupoDiario) * 100)}%` }}
+              />
+            </div>
+            <span className="font-medium text-fg">{Math.round(Math.min(100, (negocio.enviados_hoy / cupoDiario) * 100))}%</span>
+          </div>
+        )}
       </div>
 
       <div className="mt-4 border-t border-edge pt-4">
@@ -346,6 +446,26 @@ export default function ConexionPage() {
     );
   }, [configId, session, cargarNegocios]);
 
+  const numerosConectados = negocios?.filter((n) => n.conectado).length ?? 0;
+  const negociosConTier = (negocios ?? []).filter((n) => n.limite_mensajeria && LIMITE_NUMERICO[n.limite_mensajeria]);
+  const capacidadTotal = negociosConTier.reduce((acc, n) => acc + LIMITE_NUMERICO[n.limite_mensajeria!], 0);
+  const hayIlimitado = (negocios ?? []).some((n) => n.limite_mensajeria === "TIER_UNLIMITED");
+  const negociosConCalidad = (negocios ?? []).filter((n) => n.calidad && n.calidad in CALIDAD_INFO);
+  const RANGO_CALIDAD: Record<string, number> = { GREEN: 3, YELLOW: 2, RED: 1, UNKNOWN: 0 };
+  const calidadPromedioValor =
+    negociosConCalidad.length > 0
+      ? negociosConCalidad.reduce((acc, n) => acc + (RANGO_CALIDAD[n.calidad!] ?? 0), 0) / negociosConCalidad.length
+      : null;
+  const calidadPromedioLabel =
+    calidadPromedioValor === null
+      ? "—"
+      : calidadPromedioValor >= 2.5
+        ? "Alta"
+        : calidadPromedioValor >= 1.5
+          ? "Media"
+          : "Baja";
+  const mensajesHoy = (negocios ?? []).reduce((acc, n) => acc + n.enviados_hoy, 0);
+
   return (
     <div className="pb-12">
       <PageHeader
@@ -355,6 +475,19 @@ export default function ConexionPage() {
       />
 
       <div className="px-4 pt-6 md:px-8">
+        {negocios !== null && negocios.length > 0 && (
+          <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
+            <StatTile label="Números conectados" value={String(numerosConectados)} icon={PhoneIcon} />
+            <StatTile
+              label="Capacidad total / 24h"
+              value={hayIlimitado ? "Ilimitado" : capacidadTotal > 0 ? capacidadTotal.toLocaleString("es-CO") : "—"}
+              icon={BadgeCheck}
+            />
+            <StatTile label="Calidad promedio" value={calidadPromedioLabel} icon={Bot} />
+            <StatTile label="Mensajes hoy" value={mensajesHoy.toLocaleString("es-CO")} icon={MessagesSquare} />
+          </div>
+        )}
+
         {planPendiente && (
           <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-lime/40 bg-lime/10 p-4 text-sm">
             <span className="text-fg">
