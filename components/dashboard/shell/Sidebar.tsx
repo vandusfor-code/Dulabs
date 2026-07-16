@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import { Sparkles } from "lucide-react";
 import { navSections } from "./nav";
@@ -35,9 +36,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
     <div className="flex h-full flex-col bg-ink-2">
       {/* Brand */}
       <div className="flex h-16 items-center gap-2.5 px-5">
-        <div className="flex size-8 items-center justify-center rounded-lg bg-lime text-lime-fg">
-          <span className="font-mono text-base font-bold leading-none">D</span>
-        </div>
+        <Image src="/logo.png" alt="Du Labs" width={32} height={32} className="rounded-lg" priority />
         <div className="flex flex-col leading-none">
           <span className="text-sm font-semibold tracking-tight text-fg">Du Labs</span>
           <span className="mt-1 font-mono text-[10.5px] uppercase tracking-widest text-mist">

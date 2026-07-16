@@ -39,6 +39,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import PlanButton from "@/components/PlanButton";
 import { Reveal } from "./Reveal";
 
@@ -1136,12 +1137,7 @@ export function Footer() {
         <div className="grid grid-cols-2 gap-10 md:grid-cols-4">
           <div className="col-span-2">
             <div className="flex items-center gap-2 font-display text-[15px] font-medium tracking-tight text-site-fg">
-              <span className="flex h-6 w-6 items-center justify-center rounded-[6px] bg-site-fg text-site-bg">
-                <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none">
-                  <path d="M3 3h5a5 5 0 0 1 0 10H3V3Z" fill="currentColor" />
-                  <circle cx="11.5" cy="8" r="1.2" fill="var(--color-site-primary)" />
-                </svg>
-              </span>
+              <Image src="/logo.png" alt="Du Labs" width={24} height={24} className="rounded-full" />
               Du Labs
             </div>
             <p className="mt-4 max-w-xs text-[12.5px] leading-relaxed text-site-muted-fg">

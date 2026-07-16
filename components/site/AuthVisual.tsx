@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Image from "next/image";
 
 const conversaciones = [
   { name: "Peluquería Estilo", msg: "Turno confirmado · 5:30pm", time: "0.8s" },
@@ -26,12 +27,7 @@ export function AuthVisual() {
       <div className="pointer-events-none absolute -right-32 bottom-0 h-[420px] w-[420px] rounded-full bg-site-primary-glow/10 blur-[120px]" />
 
       <div className="absolute left-10 top-8 z-10 flex items-center gap-2.5 font-display text-[14px] font-medium tracking-tight text-site-fg">
-        <span className="flex h-6 w-6 items-center justify-center rounded-[6px] bg-site-fg text-site-bg">
-          <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none">
-            <path d="M3 3h5a5 5 0 0 1 0 10H3V3Z" fill="currentColor" />
-            <circle cx="11.5" cy="8" r="1.2" fill="var(--color-site-primary)" />
-          </svg>
-        </span>
+        <Image src="/logo.png" alt="Du Labs" width={24} height={24} className="rounded-full" />
         <span>Du Labs</span>
       </div>
 

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 
 const links = [
   { label: "Plataforma", href: "#plataforma" },
@@ -30,12 +31,7 @@ export function Nav() {
     >
       <div className="mx-auto flex h-14 max-w-[1280px] items-center justify-between px-6">
         <Link href="#top" className="flex items-center gap-2.5 font-display text-[14px] font-medium tracking-tight text-site-fg">
-          <span className="flex h-6 w-6 items-center justify-center rounded-[6px] bg-site-fg text-site-bg">
-            <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none">
-              <path d="M3 3h5a5 5 0 0 1 0 10H3V3Z" fill="currentColor" />
-              <circle cx="11.5" cy="8" r="1.2" fill="var(--color-site-primary)" />
-            </svg>
-          </span>
+          <Image src="/logo.png" alt="Du Labs" width={24} height={24} className="rounded-full" priority />
           <span>Du Labs</span>
         </Link>
         <nav className="hidden items-center gap-7 md:flex">
