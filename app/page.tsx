@@ -1,12 +1,19 @@
 import { Nav } from "@/components/site/Nav";
 import { Hero } from "@/components/site/Hero";
+import { Reveal } from "@/components/site/Reveal";
 import {
   CoexistenceSection,
-  CampaignsSection,
-  WhatsAppSection,
   TrainingSection,
+  KnowledgeSection,
+  CampaignsSection,
+  WhatsappInfraSection,
+  WhatsAppSection,
   InboxSection,
+  PlatformOverviewSection,
   MetricsSection,
+  ScaleSection,
+  LatamSection,
+  EcosystemSection,
   PricingSection,
   FaqSection,
   FinalCta,
@@ -19,14 +26,45 @@ export default function Home() {
       <Nav />
       <main>
         <Hero />
-        <CoexistenceSection />
-        <CampaignsSection />
-        <WhatsAppSection />
+
+        <Reveal>
+          <CoexistenceSection />
+        </Reveal>
+
+        {/* Un agente por número — con nombre propio, no un rol genérico */}
         <TrainingSection />
-        <InboxSection />
-        <MetricsSection />
-        <PricingSection />
-        <FaqSection />
+        <KnowledgeSection />
+
+        <Reveal>
+          <CampaignsSection />
+        </Reveal>
+
+        <WhatsappInfraSection />
+
+        <Reveal>
+          <WhatsAppSection />
+        </Reveal>
+        <Reveal>
+          <InboxSection />
+        </Reveal>
+
+        <PlatformOverviewSection />
+
+        <Reveal>
+          <MetricsSection />
+        </Reveal>
+
+        <ScaleSection />
+        <LatamSection />
+        <EcosystemSection />
+
+        <Reveal>
+          <PricingSection />
+        </Reveal>
+        <Reveal>
+          <FaqSection />
+        </Reveal>
+
         <FinalCta />
       </main>
       <Footer />

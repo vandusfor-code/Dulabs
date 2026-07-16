@@ -2,22 +2,45 @@
 
 import {
   ArrowRight,
+  ArrowUpRight,
+  BadgeCheck,
+  BarChart3,
   Bot,
+  Briefcase,
   Check,
   CheckCircle2,
   ChevronDown,
+  CreditCard,
+  FileCheck2,
+  FileText,
+  FileUp,
+  Gauge,
   Globe,
+  GraduationCap,
+  HeartPulse,
+  Infinity as InfinityIcon,
+  Languages,
+  Layers,
+  LayoutGrid,
   Megaphone,
   MessageCircle,
   Pause,
+  Phone,
+  Play,
+  Radio,
   Send,
+  ServerCog,
   ShieldCheck,
   Smartphone,
   Sparkles,
+  Store,
+  UserPlus,
+  Users,
 } from "lucide-react";
 import { useState } from "react";
 import Link from "next/link";
 import PlanButton from "@/components/PlanButton";
+import { Reveal } from "./Reveal";
 
 /* =========================================================
    Shared primitives
@@ -334,34 +357,186 @@ function TraceLine({ k, v, ok }: { k: string; v: string; ok?: boolean }) {
    4. Entrena tu IA (reemplaza "Analytics")
 ========================================================= */
 
+const AGENT_FEATURES = [
+  {
+    icon: Bot,
+    title: "Nombre propio",
+    desc: "Cada número tiene un solo agente, con el nombre que tú le pongas — no un rol genérico ni una plantilla.",
+  },
+  {
+    icon: Sparkles,
+    title: "Instrucciones personalizadas",
+    desc: "Un cuadro de texto simple, sin código. Le escribes tus precios, horarios y tono, y responde así desde el próximo mensaje.",
+  },
+  {
+    icon: FileUp,
+    title: "Base de conocimiento",
+    desc: "Sube tu listado de precios (Excel o CSV) o un documento (PDF) y el agente lo usa como referencia real al responder.",
+  },
+  {
+    icon: Play,
+    title: "Playground de prueba",
+    desc: "Chatea con tu agente en un entorno de prueba, con sus instrucciones y conocimiento reales, antes de que hable con un cliente.",
+  },
+];
+
 export function TrainingSection() {
   return (
     <section id="entrenamiento" className="relative border-t border-site-border py-28">
       <div className="mx-auto max-w-[1280px] px-6">
         <SectionHeading
-          eyebrow="Entrena tu IA"
-          title={<>Le enseñas tus precios y horarios. <br className="hidden md:block" />Ella responde como tú lo harías.</>}
-          desc="Un cuadro de texto simple, sin código. Escribes cómo quieres que hable tu negocio y la IA lo usa desde el próximo mensaje."
-          align="center"
+          eyebrow="Tu agente de IA"
+          title={<>Un agente por número, <br className="hidden md:block" />a tu manera — no un rol genérico.</>}
+          desc="Nada de roles preconfigurados de ventas o soporte. Cada número tiene un solo agente, con el nombre, las instrucciones y el conocimiento que tú le des."
         />
-        <div className="mx-auto mt-12 max-w-2xl">
-          <Panel className="p-6">
-            <div className="flex items-center justify-between border-b border-site-border pb-3">
-              <span className="font-display text-[13px] font-medium text-site-fg">Entrenar a la IA</span>
-              <span className="font-mono text-[9.5px] uppercase tracking-widest text-site-primary">Guardado</span>
-            </div>
-            <div className="mt-4 rounded-lg border border-site-border bg-white/[0.02] p-4 text-[13px] leading-relaxed text-site-fg/80">
-              Eres el asistente de WhatsApp de &quot;Peluquería Estilo&quot;. Responde de forma
-              breve y amable. Cortes desde $25.000, tinte desde $60.000. Atendemos de
-              martes a sábado, 9am a 6pm.
-            </div>
-            <div className="mt-4 flex items-center justify-between text-[11px] text-site-muted-fg">
-              <span>312 / 4000</span>
-              <span className="inline-flex items-center gap-1.5 text-site-primary">
-                <CheckCircle2 className="h-3.5 w-3.5" /> La IA ya responde con esto
-              </span>
-            </div>
-          </Panel>
+
+        <div className="mt-12 grid grid-cols-12 gap-4">
+          <Reveal variant="left" className="col-span-12 lg:col-span-5">
+            <Panel className="p-6">
+              <div className="flex items-center justify-between border-b border-site-border pb-3">
+                <span className="font-display text-[13px] font-medium text-site-fg">Entrenar a Ava</span>
+                <span className="font-mono text-[9.5px] uppercase tracking-widest text-site-primary">Guardado</span>
+              </div>
+              <div className="mt-4 rounded-lg border border-site-border bg-white/[0.02] p-4 text-[13px] leading-relaxed text-site-fg/80">
+                Eres el asistente de WhatsApp de &quot;Peluquería Estilo&quot;. Responde de forma
+                breve y amable. Cortes desde $25.000, tinte desde $60.000. Atendemos de
+                martes a sábado, 9am a 6pm.
+              </div>
+              <div className="mt-4 flex items-center justify-between text-[11px] text-site-muted-fg">
+                <span>312 / 4000</span>
+                <span className="inline-flex items-center gap-1.5 text-site-primary">
+                  <CheckCircle2 className="h-3.5 w-3.5" /> Ava ya responde con esto
+                </span>
+              </div>
+            </Panel>
+          </Reveal>
+
+          <div className="col-span-12 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:col-span-7">
+            {AGENT_FEATURES.map((f, i) => (
+              <Reveal key={f.title} delay={i * 80}>
+                <div className="h-full rounded-xl border border-site-border bg-white/[0.02] p-4">
+                  <f.icon className="h-4 w-4 text-site-primary" />
+                  <div className="mt-2 font-display text-[13.5px] font-medium text-site-fg">{f.title}</div>
+                  <div className="mt-1 text-[12.5px] leading-relaxed text-site-muted-fg">{f.desc}</div>
+                </div>
+              </Reveal>
+            ))}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/* =========================================================
+   4b. Base de conocimiento
+========================================================= */
+
+export function KnowledgeSection() {
+  const knowledgeItems = [
+    { icon: FileText, title: "Excel, CSV o PDF", desc: "Listados de precios, catálogos o políticas — los formatos que ya usas." },
+    { icon: Gauge, title: "Un archivo por número", desc: "Cada agente tiene su propia base de conocimiento, independiente de los demás." },
+    { icon: ShieldCheck, title: "Solo lo que tú subiste", desc: "El agente responde con tus instrucciones y tu archivo, nada más." },
+  ];
+
+  return (
+    <section id="conocimiento" className="relative border-t border-site-border py-28">
+      <div className="mx-auto max-w-[1280px] px-6">
+        <SectionHeading
+          eyebrow="Base de conocimiento"
+          title={<>Sube un archivo. <br className="hidden md:block" />El agente lo usa como referencia real.</>}
+          desc="Un listado de precios en Excel o CSV, o un documento en PDF. Sin bases de datos complicadas — un archivo por número, listo para responder con eso."
+        />
+
+        <div className="mt-12 grid grid-cols-12 gap-4">
+          <Reveal variant="left" className="col-span-12 lg:col-span-7">
+            <Panel className="h-full p-5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <FileUp className="h-4 w-4 text-site-primary" />
+                  <span className="font-display text-[13px] font-medium text-site-fg">Base de conocimiento</span>
+                </div>
+                <span className="inline-flex items-center gap-1.5 rounded-lg border border-site-border bg-white/[0.02] px-3 py-1.5 text-[11px] text-site-muted-fg">
+                  Reemplazar archivo
+                </span>
+              </div>
+              <div className="mt-4 flex items-center gap-3 rounded-lg border border-site-border bg-white/[0.02] px-3 py-3">
+                <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-white/[0.04]">
+                  <FileText className="h-4 w-4 text-site-muted-fg" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-[13px] text-site-fg">precios-peluqueria.xlsx</div>
+                  <div className="text-[11px] text-site-muted-fg">4.820 caracteres</div>
+                </div>
+                <CheckCircle2 className="h-4 w-4 shrink-0 text-site-primary" />
+              </div>
+              <p className="mt-4 text-[12.5px] leading-relaxed text-site-muted-fg">
+                El agente combina esto con sus instrucciones de tono y horarios para responder con tus datos reales
+                — nunca inventa precios que no le diste.
+              </p>
+            </Panel>
+          </Reveal>
+
+          <div className="col-span-12 space-y-3 lg:col-span-5">
+            {knowledgeItems.map((f, i) => (
+              <Reveal key={f.title} delay={i * 80}>
+                <div className="rounded-xl border border-site-border bg-white/[0.02] p-4">
+                  <f.icon className="h-4 w-4 text-site-primary" />
+                  <div className="mt-2 font-display text-[13.5px] font-medium text-site-fg">{f.title}</div>
+                  <div className="mt-1 text-[12.5px] leading-relaxed text-site-muted-fg">{f.desc}</div>
+                </div>
+              </Reveal>
+            ))}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/* =========================================================
+   4c. Infraestructura oficial de WhatsApp
+========================================================= */
+
+const INFRA_ITEMS = [
+  { icon: ShieldCheck, title: "API Oficial de WhatsApp Business", desc: "Construido directamente sobre la Cloud API de Meta — sin atajos no oficiales, sin riesgo de bloqueo." },
+  { icon: UserPlus, title: "Embedded Signup", desc: "Conecta un número nuevo en minutos con el flujo nativo de Meta." },
+  { icon: Layers, title: "Múltiples números", desc: "Administra cada línea conectada desde un solo panel." },
+  { icon: FileCheck2, title: "Gestión de plantillas", desc: "Crea, envía a revisión y sigue el estado real de aprobación de tus plantillas." },
+  { icon: Radio, title: "Campañas masivas", desc: "Llega a toda tu lista de contactos con plantillas aprobadas por Meta." },
+  { icon: BadgeCheck, title: "Verificación de Meta", desc: "Consulta la calidad real de tu número y desbloquea límites de mensajería más altos." },
+  { icon: Users, title: "Traspaso a un humano", desc: "Toma cualquier conversación desde tu celular cuando quieras, sin perder el hilo." },
+];
+
+export function WhatsappInfraSection() {
+  return (
+    <section id="infraestructura" className="relative border-t border-site-border bg-site-card/20 py-28">
+      <div className="mx-auto max-w-[1280px] px-6">
+        <SectionHeading
+          eyebrow="Infraestructura confiable"
+          title={<>Construido sobre la infraestructura <br className="hidden md:block" />oficial de WhatsApp.</>}
+          desc="Cada mensaje pasa por la plataforma verificada de Meta. Confiabilidad, cumplimiento y entrega, por defecto."
+        />
+
+        <div className="mt-12 grid grid-cols-1 gap-px overflow-hidden rounded-2xl border border-site-border bg-white/5 sm:grid-cols-2 lg:grid-cols-3">
+          {INFRA_ITEMS.map((item, i) => (
+            <Reveal key={item.title} delay={(i % 3) * 60} className="h-full">
+              <div className="group h-full bg-site-bg p-6 transition-colors hover:bg-white/[0.02]">
+                <span className="flex size-10 items-center justify-center rounded-lg border border-site-border bg-white/[0.02]">
+                  <item.icon className="h-5 w-5 text-site-primary" />
+                </span>
+                <h3 className="mt-4 font-display text-[15px] font-medium tracking-tight text-site-fg">{item.title}</h3>
+                <p className="mt-2 text-[13px] leading-relaxed text-site-muted-fg">{item.desc}</p>
+              </div>
+            </Reveal>
+          ))}
+          <div className="flex flex-col justify-center bg-site-primary/5 p-6">
+            <ShieldCheck className="h-6 w-6 text-site-primary" />
+            <p className="mt-3 text-[13px] leading-relaxed text-site-muted-fg">
+              Corre sobre la red global de mensajería de Meta — la misma infraestructura que usan las marcas más
+              grandes del mundo.
+            </p>
+          </div>
         </div>
       </div>
     </section>
@@ -418,6 +593,290 @@ export function InboxSection() {
             </div>
           </div>
         </Panel>
+      </div>
+    </section>
+  );
+}
+
+/* =========================================================
+   5b. Una plataforma completa (7 módulos reales)
+========================================================= */
+
+const PLATFORM_MODULES = [
+  {
+    key: "resumen",
+    icon: LayoutGrid,
+    label: "Resumen",
+    headline: "Cada número, agente y conversación en una sola vista.",
+    points: ["Automatización real por número", "Consumo del plan en vivo", "Actividad reciente"],
+  },
+  {
+    key: "agentes",
+    icon: Bot,
+    label: "Agentes de IA",
+    headline: "Configura tu agente en minutos, sin código.",
+    points: ["Un agente por número, con nombre propio", "Instrucciones y base de conocimiento", "Pausa manual o por coexistencia"],
+  },
+  {
+    key: "plantillas",
+    icon: FileText,
+    label: "Plantillas",
+    headline: "Crea y sigue tus plantillas hasta la aprobación.",
+    points: ["Estado real de aprobación de Meta", "Variables detectadas automáticamente", "Borradores locales antes de publicar"],
+  },
+  {
+    key: "campanas",
+    icon: Megaphone,
+    label: "Campañas",
+    headline: "Lanza campañas masivas con confianza.",
+    points: ["Entrega y lectura en tiempo real", "Embudo de conversión por campaña", "Solo plantillas aprobadas por Meta"],
+  },
+  {
+    key: "numeros",
+    icon: Phone,
+    label: "Números",
+    headline: "Administra cada línea desde un solo lugar.",
+    points: ["Conexión con Embedded Signup", "Calidad y límite reales de Meta", "Cupo diario en vivo"],
+  },
+  {
+    key: "analytics",
+    icon: BarChart3,
+    label: "Analytics",
+    headline: "Mide el desempeño real de toda tu operación.",
+    points: ["Embudo de entrega real", "Mapa de actividad por hora", "Desempeño real por plantilla"],
+  },
+  {
+    key: "cuenta",
+    icon: CreditCard,
+    label: "Cuenta",
+    headline: "Tu plan y consumo, siempre visibles.",
+    points: ["Plan mensual fijo", "Consumo real de conversaciones", "Pagos y renovación con Wompi"],
+  },
+] as const;
+
+export function PlatformOverviewSection() {
+  const [active, setActive] = useState(0);
+  const current = PLATFORM_MODULES[active];
+
+  return (
+    <section id="plataforma-completa" className="relative border-t border-site-border py-28">
+      <div className="mx-auto max-w-[1280px] px-6">
+        <SectionHeading
+          eyebrow="Una plataforma"
+          title={<>Una plataforma. <br className="hidden md:block" />Cada conversación, en un solo lugar.</>}
+          desc="Entiende todo el producto en menos de diez segundos. Siete módulos, un solo panel de control."
+        />
+
+        <div className="mt-12 grid grid-cols-1 gap-4 lg:grid-cols-[260px_1fr]">
+          <div
+            className="flex gap-2 overflow-x-auto lg:flex-col lg:overflow-visible"
+            role="tablist"
+            aria-label="Módulos de la plataforma"
+          >
+            {PLATFORM_MODULES.map((m, i) => (
+              <button
+                key={m.key}
+                role="tab"
+                aria-selected={i === active}
+                onClick={() => setActive(i)}
+                className={`flex shrink-0 items-center gap-2.5 rounded-xl border px-4 py-3 text-[13px] transition-colors lg:w-full ${
+                  i === active
+                    ? "border-site-primary/30 bg-site-primary/10 text-site-fg"
+                    : "border-site-border bg-white/[0.02] text-site-muted-fg hover:text-site-fg"
+                }`}
+              >
+                <m.icon className={`h-4 w-4 ${i === active ? "text-site-primary" : ""}`} />
+                {m.label}
+              </button>
+            ))}
+          </div>
+
+          <Panel className="overflow-hidden">
+            <div className="flex items-center gap-2 border-b border-site-border bg-white/[0.02] px-5 py-3">
+              <current.icon className="h-4 w-4 text-site-primary" />
+              <span className="font-display text-[13px] font-medium text-site-fg">{current.label}</span>
+            </div>
+            <div className="grid grid-cols-1 gap-6 p-6 md:grid-cols-2 md:items-center">
+              <div>
+                <h3 className="font-display text-[22px] font-medium leading-tight tracking-tight text-site-fg">
+                  {current.headline}
+                </h3>
+                <ul className="mt-5 flex flex-col gap-2.5">
+                  {current.points.map((p) => (
+                    <li key={p} className="flex items-center gap-2.5 text-[13px] text-site-muted-fg">
+                      <span className="h-1.5 w-1.5 rounded-full bg-site-primary" />
+                      {p}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div className="rounded-xl border border-site-border bg-white/[0.02] p-4">
+                <div className="flex items-center justify-between border-b border-site-border pb-3">
+                  <span className="font-mono text-[10.5px] uppercase tracking-widest text-site-muted-fg">
+                    {current.label}
+                  </span>
+                  <span className="h-2 w-2 rounded-full bg-site-primary animate-site-pulse-glow" />
+                </div>
+                <div className="mt-3 flex flex-col gap-2.5">
+                  {[0, 1, 2, 3].map((row) => (
+                    <div key={row} className="flex items-center gap-2.5">
+                      <span className="size-6 shrink-0 rounded-md bg-white/[0.04]" />
+                      <span className="h-2 rounded-full bg-white/[0.04]" style={{ width: `${70 - row * 12}%` }} />
+                      <span className="ml-auto h-2 w-8 rounded-full bg-site-primary/30" />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </Panel>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/* =========================================================
+   5c. Diseñado para crecer
+========================================================= */
+
+const SCALE_ITEMS = [
+  { icon: Phone, title: "Varios números", desc: "Conecta las líneas que necesites y adminístralas desde un solo panel." },
+  { icon: Bot, title: "Un agente por número", desc: "Cada línea tiene su propio asistente, con nombre e instrucciones independientes." },
+  { icon: Megaphone, title: "Plantillas y campañas sin límite", desc: "Crea las plantillas y campañas que necesites, según el consumo de tu plan." },
+  { icon: Gauge, title: "Consumo siempre visible", desc: "Ve en tiempo real cuántas conversaciones has usado y cuántas te quedan." },
+];
+
+export function ScaleSection() {
+  return (
+    <section id="escala" className="relative py-28">
+      <div className="mx-auto max-w-[1280px] px-6">
+        <div className="grid grid-cols-1 gap-12 lg:grid-cols-2 lg:items-center">
+          <SectionHeading
+            eyebrow="Diseñado para crecer"
+            title={<>Desde tu primer número <br className="hidden md:block" />hasta toda tu operación.</>}
+            desc="Du Labs crece contigo. Ya sea que manejes una línea o varias, el panel se mantiene igual de simple."
+          />
+          <Reveal variant="zoom">
+            <div className="relative flex items-center justify-center rounded-2xl border border-site-border bg-white/[0.02] p-8">
+              <div className="pointer-events-none absolute inset-0 rounded-2xl site-grid-bg opacity-40" />
+              <div className="relative flex flex-col items-center text-center">
+                <span className="flex size-16 items-center justify-center rounded-2xl border border-site-primary/30 bg-site-primary/10">
+                  <InfinityIcon className="h-8 w-8 text-site-primary" />
+                </span>
+                <div className="mt-4 font-display text-[26px] font-medium tracking-tight text-site-fg">
+                  Crece con tu negocio
+                </div>
+                <p className="mt-1 text-[13px] text-site-muted-fg">Sin cambiar de plataforma cuando sumas números.</p>
+              </div>
+            </div>
+          </Reveal>
+        </div>
+
+        <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {SCALE_ITEMS.map((item, i) => (
+            <Reveal key={item.title} delay={i * 70}>
+              <div className="h-full rounded-2xl border border-site-border bg-white/[0.02] p-6">
+                <span className="flex size-10 items-center justify-center rounded-lg border border-site-border bg-white/[0.02]">
+                  <item.icon className="h-5 w-5 text-site-primary" />
+                </span>
+                <h3 className="mt-4 font-display text-[15px] font-medium tracking-tight text-site-fg">{item.title}</h3>
+                <p className="mt-2 text-[13px] leading-relaxed text-site-muted-fg">{item.desc}</p>
+              </div>
+            </Reveal>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/* =========================================================
+   5d. Hecho para Latinoamérica
+========================================================= */
+
+const LATAM_ITEMS = [
+  { icon: ShieldCheck, title: "APIs oficiales de Meta", desc: "Cumplimiento total con la plataforma de negocios de Meta en cualquier mercado." },
+  { icon: Languages, title: "Pensado en español", desc: "Un producto, agentes y soporte diseñados en español desde el primer día." },
+  { icon: Store, title: "Negocios locales", desc: "Construido para cómo se hace comercio de verdad: dentro de conversaciones de WhatsApp." },
+  { icon: ServerCog, title: "Confiabilidad real", desc: "Infraestructura que funciona igual, desde tu primer número hasta cuando crezcas." },
+];
+
+export function LatamSection() {
+  return (
+    <section className="relative border-t border-site-border bg-site-card/20 py-28">
+      <div className="pointer-events-none absolute left-1/2 top-0 h-64 w-[720px] -translate-x-1/2 rounded-full bg-site-primary/5 blur-[120px]" />
+      <div className="relative mx-auto max-w-[1280px] px-6">
+        <SectionHeading
+          eyebrow="Hecho para Latinoamérica"
+          title={<>Infraestructura pensada <br className="hidden md:block" />para cómo la región hace negocios.</>}
+          desc="El comercio conversacional ya es el estándar en Latinoamérica. Du Labs está construido para eso, de forma nativa."
+          align="center"
+        />
+        <div className="mx-auto mt-12 grid max-w-5xl grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {LATAM_ITEMS.map((item, i) => (
+            <Reveal key={item.title} delay={i * 70}>
+              <div className="h-full rounded-2xl border border-site-border bg-white/[0.02] p-6 text-center">
+                <span className="mx-auto flex size-11 items-center justify-center rounded-xl border border-site-border bg-white/[0.02]">
+                  <item.icon className="h-5 w-5 text-site-primary" />
+                </span>
+                <h3 className="mt-4 font-display text-[15px] font-medium tracking-tight text-site-fg">{item.title}</h3>
+                <p className="mt-2 text-[13px] leading-relaxed text-site-muted-fg">{item.desc}</p>
+              </div>
+            </Reveal>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/* =========================================================
+   5e. El ecosistema Du
+========================================================= */
+
+const ECOSYSTEM_PILLARS = [
+  {
+    icon: Briefcase,
+    name: "Du IA Business",
+    desc: "La capa de plataforma — agentes de IA e infraestructura conversacional que corren tu operación en WhatsApp.",
+  },
+  {
+    icon: GraduationCap,
+    name: "Du Academy",
+    desc: "Aprende a diseñar y escalar IA conversacional, con formación pensada para equipos y operadores.",
+  },
+  {
+    icon: HeartPulse,
+    name: "Du Life",
+    desc: "Tecnología conversacional aplicada al día a día — llevando IA a los canales que la gente ya usa.",
+  },
+];
+
+export function EcosystemSection() {
+  return (
+    <section className="relative py-28">
+      <div className="mx-auto max-w-[1280px] px-6">
+        <SectionHeading
+          eyebrow="El ecosistema Du"
+          title={<>IA donde ya vive <br className="hidden md:block" />la conversación.</>}
+          desc="Du Labs cree en una idea: el futuro del software es conversacional. Nuestro ecosistema lleva esa idea a los negocios, la formación y el día a día."
+        />
+        <div className="mt-12 grid grid-cols-1 gap-4 md:grid-cols-3">
+          {ECOSYSTEM_PILLARS.map((p, i) => (
+            <Reveal key={p.name} delay={i * 80}>
+              <div className="group relative h-full overflow-hidden rounded-2xl border border-site-border bg-white/[0.02] p-6 transition-colors hover:border-site-primary/30">
+                <div className="flex items-center justify-between">
+                  <span className="flex size-11 items-center justify-center rounded-xl border border-site-border bg-white/[0.02]">
+                    <p.icon className="h-5 w-5 text-site-primary" />
+                  </span>
+                  <ArrowUpRight className="h-4 w-4 text-site-muted-fg transition-colors group-hover:text-site-primary" />
+                </div>
+                <h3 className="mt-5 font-display text-[16px] font-medium tracking-tight text-site-fg">{p.name}</h3>
+                <p className="mt-2 text-[13px] leading-relaxed text-site-muted-fg">{p.desc}</p>
+              </div>
+            </Reveal>
+          ))}
+        </div>
       </div>
     </section>
   );
@@ -651,8 +1110,25 @@ export function FinalCta() {
 
 export function Footer() {
   const cols = [
-    { title: "Producto", links: [{ l: "Modo coexistencia", h: "#coexistencia" }, { l: "Plantillas y campañas", h: "#campanas" }, { l: "WhatsApp", h: "#whatsapp" }, { l: "Precios", h: "#precios" }] },
-    { title: "Legal", links: [{ l: "Privacidad", h: "/privacidad" }, { l: "Términos", h: "/terminos" }, { l: "Eliminación de datos", h: "/eliminacion-datos" }] },
+    {
+      title: "Producto",
+      links: [
+        { l: "Modo coexistencia", h: "#coexistencia" },
+        { l: "Agentes de IA", h: "#entrenamiento" },
+        { l: "Base de conocimiento", h: "#conocimiento" },
+        { l: "Plantillas y campañas", h: "#campanas" },
+        { l: "Infraestructura", h: "#infraestructura" },
+        { l: "Precios", h: "#precios" },
+      ],
+    },
+    {
+      title: "Legal",
+      links: [
+        { l: "Privacidad", h: "/privacidad" },
+        { l: "Términos", h: "/terminos" },
+        { l: "Eliminación de datos", h: "/eliminacion-datos" },
+      ],
+    },
   ];
   return (
     <footer className="relative border-t border-site-border bg-site-bg">

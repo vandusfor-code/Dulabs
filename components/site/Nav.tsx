@@ -5,8 +5,9 @@ import Link from "next/link";
 
 const links = [
   { label: "Plataforma", href: "#plataforma" },
-  { label: "WhatsApp", href: "#whatsapp" },
-  { label: "Métricas", href: "#metricas" },
+  { label: "Agentes", href: "#entrenamiento" },
+  { label: "Infraestructura", href: "#infraestructura" },
+  { label: "Escala", href: "#escala" },
   { label: "Precios", href: "#precios" },
 ];
 
