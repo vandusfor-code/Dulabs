@@ -47,3 +47,30 @@ export async function consultarEstadoNumero(params: {
     clearTimeout(timeoutId);
   }
 }
+
+// Desuscribe la app de Du Labs del WABA del cliente: Meta deja de enviarnos
+// webhooks (mensajes, estados) de ese número. Es el paso real de "revocar
+// acceso" que puede automatizarse vía Graph API — la revocación completa del
+// token del System User solo puede hacerla el propio negocio desde su Meta
+// Business Suite. Nunca lanza: si falla, se sigue con el borrado local.
+export async function desuscribirWaba(params: {
+  wabaId: string;
+  token: string;
+}): Promise<boolean> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
+
+  try {
+    const res = await fetch(`${GRAPH}/${params.wabaId}/subscribed_apps`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${params.token}` },
+      signal: controller.signal,
+    });
+    return res.ok;
+  } catch (err) {
+    console.error("[meta-numero] error desuscribiendo la app del WABA:", err);
+    return false;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}

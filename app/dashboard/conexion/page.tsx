@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Phone as PhoneIcon, BadgeCheck, Pencil, Check, X, Bot, MessagesSquare } from "lucide-react";
+import { Phone as PhoneIcon, BadgeCheck, Pencil, Check, X, Bot, MessagesSquare, Trash2 } from "lucide-react";
 import { useDashboard, type Negocio } from "@/lib/dashboard-session";
 import { formatearTelefono, nombreDelAgente, CALIDAD_INFO } from "@/lib/format";
 import { PageHeader, Pill, StatTile } from "@/components/dashboard/shell/ui";
@@ -140,6 +140,28 @@ function NumeroCard({
   }, [nombreAgenteInput, negocio, accessToken, onActualizado]);
 
   const cupoDiario = negocio.limite_mensajeria ? LIMITE_NUMERICO[negocio.limite_mensajeria] : undefined;
+
+  const [confirmandoBorrado, setConfirmandoBorrado] = useState(false);
+  const [eliminando, setEliminando] = useState(false);
+  const [errorEliminar, setErrorEliminar] = useState<string | null>(null);
+
+  const eliminarDatos = useCallback(async () => {
+    setEliminando(true);
+    setErrorEliminar(null);
+    try {
+      const res = await fetch("/api/dashboard/negocio", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ phone_number_id: negocio.phone_number_id }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? "No se pudo eliminar el número.");
+      onActualizado();
+    } catch (err) {
+      setErrorEliminar(err instanceof Error ? err.message : "No se pudo eliminar el número.");
+      setEliminando(false);
+    }
+  }, [accessToken, negocio.phone_number_id, onActualizado]);
 
   return (
     <div className="rounded-xl border border-edge bg-card p-5">
@@ -298,6 +320,44 @@ function NumeroCard({
       </div>
 
       <p className="mt-4 break-all font-mono text-[10.5px] text-mist/70">WABA {negocio.whatsapp_business_account_id}</p>
+
+      <div className="mt-4 border-t border-edge pt-4">
+        {confirmandoBorrado ? (
+          <div className="rounded-lg border border-red-500/40 bg-red-500/10 p-3">
+            <p className="text-xs leading-relaxed text-red-400">
+              Esto desconecta el número de Meta y borra permanentemente sus mensajes, campañas y configuración.
+              No se puede deshacer.
+            </p>
+            {errorEliminar && <p className="mt-2 text-xs text-red-400">{errorEliminar}</p>}
+            <div className="mt-3 flex items-center gap-2">
+              <button
+                onClick={eliminarDatos}
+                disabled={eliminando}
+                className="rounded-md bg-red-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-600 disabled:opacity-50"
+              >
+                {eliminando ? "Eliminando…" : "Sí, eliminar todo"}
+              </button>
+              <button
+                onClick={() => {
+                  setConfirmandoBorrado(false);
+                  setErrorEliminar(null);
+                }}
+                disabled={eliminando}
+                className="rounded-md px-3 py-1.5 text-xs font-medium text-mist hover:bg-ink disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button
+            onClick={() => setConfirmandoBorrado(true)}
+            className="flex items-center gap-1.5 text-xs font-medium text-mist hover:text-red-400"
+          >
+            <Trash2 className="size-3.5" /> Eliminar mis datos
+          </button>
+        )}
+      </div>
     </div>
   );
 }

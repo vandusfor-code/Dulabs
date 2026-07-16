@@ -2,8 +2,9 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 export const metadata: Metadata = {
-  title: "Eliminación de Datos — Du Labs",
-  description: "Instrucciones para la eliminación de datos de usuario en Du Labs.",
+  title: "Política de Eliminación de Datos de WhatsApp — Du Labs",
+  description:
+    "Cómo solicitar la eliminación de los datos asociados a tu cuenta de WhatsApp Business conectada a Du Labs.",
 };
 
 const ARTICLE_CLASSNAME =
@@ -20,83 +21,111 @@ export default function EliminacionDatosPage() {
           ← Volver a Du Labs
         </Link>
         <article className={ARTICLE_CLASSNAME}>
-          <h1>Instrucciones para la Eliminación de Datos — Du Labs</h1>
-          <p>Última actualización: 13 de julio de 2026</p>
+          <h1>Política de Eliminación de Datos de WhatsApp — Du Labs</h1>
+          <p>Última actualización: abril de 2026</p>
           <p>
-            En Du Labs (accesible a través de{" "}
-            <a href="https://dulabs.co">https://dulabs.co</a>), valoramos la
-            privacidad de tus datos y cumplimos estrictamente con las
-            políticas de Meta plataformas respecto a la Solicitud de
-            Eliminación de Datos de Usuarios (User Data Deletion Callback /
-            Instructions).
-          </p>
-          <p>
-            Si has conectado tu cuenta corporativa de Facebook o tu número de
-            WhatsApp Business a nuestra aplicación y deseas revocar los
-            permisos o eliminar por completo tus datos de nuestros
-            servidores, puedes hacerlo de forma inmediata siguiendo estos
-            pasos:
+            En Du Labs, operado por RAMOS PADILLA DUVAN ANDRES, respetamos tu
+            privacidad y los datos de tus clientes. Esta política explica
+            cómo puedes solicitar la eliminación de los datos asociados a tu
+            cuenta de WhatsApp Business conectada a través de nuestra
+            plataforma.
           </p>
 
-          <h2>1. Cómo desvincular tu cuenta y eliminar tus datos</h2>
+          <h2>1. ¿Qué datos recopilamos de WhatsApp?</h2>
           <p>
-            Tienes tres opciones directas para solicitar o ejecutar la
-            eliminación de tu información:
+            Cuando conectas tu número de WhatsApp Business a Du Labs, podemos
+            procesar:
           </p>
           <ul>
             <li>
-              <strong>Opción A (Desde el Dashboard de Du Labs):</strong>{" "}
-              Inicia sesión en tu panel de control, dirígete a la sección de
-              &quot;Configuración de Canales&quot;, selecciona el número de
-              WhatsApp vinculado y haz clic en &quot;Eliminar Canal /
-              Desconectar&quot;. Este proceso revoca los tokens de acceso de
-              Meta de forma automática y elimina las credenciales de sesión
-              en nuestros servidores.
+              <strong>Datos del negocio:</strong> nombre, correo y número de
+              teléfono conectado.
             </li>
             <li>
-              <strong>Opción B (Desde tu cuenta de Facebook):</strong>
-              <ul>
-                <li>
-                  Ve a la configuración de tu perfil de Facebook o Meta
-                  Business Suite.
-                </li>
-                <li>
-                  Navega a Configuración y Privacidad &gt; Configuración
-                  &gt; Aplicaciones y sitios web.
-                </li>
-                <li>Busca la aplicación Du Labs.</li>
-                <li>Haz clic en el botón Eliminar o Revocar accesos.</li>
-              </ul>
+              <strong>Datos de conversación:</strong> mensajes enviados y
+              recibidos, nombre del cliente final, fecha y hora.
             </li>
             <li>
-              <strong>Opción C (Solicitud Directa):</strong> Si prefieres que
-              nuestro equipo técnico realice la eliminación manual de todo tu
-              historial de mensajes y registros de IA, envía una solicitud
-              por correo electrónico a{" "}
-              <a href="mailto:vandusfor@gmail.com">vandusfor@gmail.com</a>{" "}
-              (o mediante nuestro canal de soporte en la web) con el asunto
-              &quot;Eliminación de Datos - Du Labs&quot;. Procesaremos tu
-              solicitud en un plazo menor a 48 horas hábiles.
+              <strong>Datos técnicos:</strong> ID de WhatsApp, logs de
+              webhooks y estado de mensajes.
+            </li>
+          </ul>
+          <p>
+            Usamos estos datos únicamente para: prestar el servicio de
+            chatbot, generar reportes y cumplir con obligaciones legales.
+          </p>
+
+          <h2>2. ¿Cómo solicitar la eliminación de datos?</h2>
+          <p>Tienes dos opciones:</p>
+
+          <h3>Opción A: Desde tu panel de Du Labs</h3>
+          <ul>
+            <li>
+              Inicia sesión en{" "}
+              <a href="https://dulabs.co">dulabs.co</a>
+            </li>
+            <li>Ve a Números y busca la línea que quieres desconectar</li>
+            <li>
+              Haz clic en &quot;Eliminar mis datos&quot; y confirma. El
+              número se desconecta de Meta y sus datos se borran de
+              inmediato.
             </li>
           </ul>
 
-          <h2>2. Datos que son eliminados permanentemente</h2>
+          <h3>Opción B: Solicitud por correo</h3>
           <p>
-            Al ejecutar la desvinculación o procesar tu solicitud, Du Labs
-            borra de manera definitiva:
+            Envía un correo a:{" "}
+            <a href="mailto:contacto@dulabs.co">contacto@dulabs.co</a>
           </p>
+          <p>Asunto: SOLICITUD ELIMINACIÓN DATOS WHATSAPP</p>
+          <p>
+            Incluye: nombre del negocio, número de WhatsApp conectado y
+            correo de la cuenta Du Labs.
+          </p>
+          <p>
+            Responderemos y confirmaremos la eliminación en un máximo de 5
+            días hábiles.
+          </p>
+
+          <h2>3. ¿Qué se elimina?</h2>
+          <p>Al solicitar la eliminación:</p>
           <ul>
             <li>
-              Los tokens de acceso de la API oficial de WhatsApp generados
-              durante el Embedded Signup.
+              Desconectamos tu número de la WhatsApp Business API de Meta.
             </li>
             <li>
-              El historial temporal de mensajes procesados por la IA en tus
-              chats.
+              Borramos todos los mensajes, logs y datos de clientes
+              asociados a tu cuenta en nuestros servidores.
+            </li>
+            <li>Revocamos los permisos de acceso a tu WhatsApp Business.</li>
+          </ul>
+          <p>
+            <strong>Nota:</strong> algunos datos pueden conservarse por 30
+            días adicionales por temas de seguridad y respaldo, y luego se
+            eliminan permanentemente. No vendemos ni compartimos tus datos
+            con terceros.
+          </p>
+
+          <h2>4. Datos de tus clientes finales</h2>
+          <p>
+            Como negocio, tú eres el responsable de los datos de tus
+            clientes. Al usar Du Labs te comprometes a tener el consentimiento
+            de tus clientes para contactarlos por WhatsApp. Si un cliente
+            final te pide borrar sus datos, escríbenos a{" "}
+            <a href="mailto:contacto@dulabs.co">contacto@dulabs.co</a> con el
+            número del cliente y su solicitud, y eliminamos su conversación de
+            nuestros servidores.
+          </p>
+
+          <h2>5. Contacto</h2>
+          <p>Para cualquier duda sobre esta política:</p>
+          <ul>
+            <li>Du Labs</li>
+            <li>
+              Correo: <a href="mailto:contacto@dulabs.co">contacto@dulabs.co</a>
             </li>
             <li>
-              Cualquier configuración personalizada de prompts o
-              instrucciones del bot asignadas a tu número.
+              Web: <a href="https://dulabs.co">dulabs.co</a>
             </li>
           </ul>
         </article>
