@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { LayoutTemplate, CircleCheck, Clock, CircleAlert, Plus, FileEdit, Ban } from "lucide-react";
+import { LayoutTemplate, CircleCheck, Clock, CircleAlert, Plus, FileEdit, Ban, Search, Copy, Check as CheckIcon } from "lucide-react";
 import { useDashboard } from "@/lib/dashboard-session";
 import { PageHeader, Pill, StatTile } from "@/components/dashboard/shell/ui";
 
@@ -15,7 +15,14 @@ type Plantilla = {
   estado: string;
   borrador: boolean;
   created_at: string;
+  enviados: number;
+  tasaLectura: number;
 };
+
+function contarVariables(cuerpo: string): number {
+  const coincidencias = cuerpo.match(/\{\{\d+\}\}/g);
+  return coincidencias ? new Set(coincidencias).size : 0;
+}
 
 const categorias = ["Todas", "MARKETING", "UTILITY", "AUTHENTICATION"] as const;
 
@@ -43,8 +50,10 @@ export default function PlantillasPage() {
   const [plantillas, setPlantillas] = useState<Plantilla[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [cat, setCat] = useState<(typeof categorias)[number]>("Todas");
+  const [busqueda, setBusqueda] = useState("");
   const [activeId, setActiveId] = useState<number | null>(null);
   const [formAbierto, setFormAbierto] = useState(false);
+  const [copiado, setCopiado] = useState(false);
 
   const [phoneNumberIdElegido, setPhoneNumberIdElegido] = useState("");
   const phoneNumberId = phoneNumberIdElegido || negocios?.[0]?.phone_number_id || "";
@@ -127,8 +136,22 @@ export default function PlantillasPage() {
     [session, cargarPlantillas]
   );
 
-  const filtradas = (plantillas ?? []).filter((p) => cat === "Todas" || p.categoria === cat);
+  const filtradas = (plantillas ?? []).filter((p) => {
+    if (cat !== "Todas" && p.categoria !== cat) return false;
+    if (busqueda.trim() && !p.nombre.toLowerCase().includes(busqueda.trim().toLowerCase())) return false;
+    return true;
+  });
   const activa = filtradas.find((p) => p.id === activeId) ?? filtradas[0] ?? null;
+  const variablesActiva = activa ? contarVariables(activa.cuerpo) : 0;
+  const nombreNegocioActiva = negocios?.find((n) => n.phone_number_id === activa?.phone_number_id)?.nombre_negocio;
+
+  const copiarTexto = () => {
+    if (!activa) return;
+    navigator.clipboard.writeText(activa.cuerpo).then(() => {
+      setCopiado(true);
+      setTimeout(() => setCopiado(false), 1500);
+    });
+  };
 
   const todas = plantillas ?? [];
   const conteos = {
@@ -249,18 +272,29 @@ export default function PlantillasPage() {
           </form>
         )}
 
-        <div className="flex gap-1 overflow-x-auto">
-          {categorias.map((c) => (
-            <button
-              key={c}
-              onClick={() => setCat(c)}
-              className={`whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
-                cat === c ? "bg-lime text-lime-fg" : "bg-card text-mist hover:text-fg"
-              }`}
-            >
-              {c === "Todas" ? "Todas" : c === "MARKETING" ? "Marketing" : c === "UTILITY" ? "Utilidad" : "Autenticación"}
-            </button>
-          ))}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex gap-1 overflow-x-auto">
+            {categorias.map((c) => (
+              <button
+                key={c}
+                onClick={() => setCat(c)}
+                className={`whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+                  cat === c ? "bg-lime text-lime-fg" : "bg-card text-mist hover:text-fg"
+                }`}
+              >
+                {c === "Todas" ? "Todas" : c === "MARKETING" ? "Marketing" : c === "UTILITY" ? "Utilidad" : "Autenticación"}
+              </button>
+            ))}
+          </div>
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-mist" />
+            <input
+              value={busqueda}
+              onChange={(e) => setBusqueda(e.target.value)}
+              placeholder="Buscar plantillas…"
+              className="w-56 rounded-lg border border-edge bg-card py-1.5 pl-9 pr-3 text-sm text-fg outline-none focus:border-lime/50"
+            />
+          </div>
         </div>
 
         <div className="mt-5 grid grid-cols-1 gap-6 lg:grid-cols-[1fr_minmax(0,340px)]">
@@ -297,9 +331,15 @@ export default function PlantillasPage() {
                         </Pill>
                       </div>
                       <p className="mt-3 line-clamp-2 text-sm leading-relaxed text-mist">{p.cuerpo}</p>
-                      <p className="mt-3 font-mono text-[10.5px] uppercase tracking-widest text-mist">
-                        {p.categoria} · {p.idioma}
-                      </p>
+                      <div className="mt-3 flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5">
+                          <Pill tone={p.categoria === "MARKETING" ? "info" : "neutral"}>{p.categoria}</Pill>
+                          <span className="font-mono text-[10.5px] uppercase tracking-widest text-mist">{p.idioma}</span>
+                        </div>
+                        <span className="font-mono text-[10.5px] uppercase tracking-widest text-mist">
+                          {p.enviados.toLocaleString("es-CO")} enviados
+                        </span>
+                      </div>
                     </button>
                   );
                 })}
@@ -309,7 +349,18 @@ export default function PlantillasPage() {
 
           <div className="lg:sticky lg:top-20 lg:self-start">
             <div className="rounded-xl border border-edge bg-card p-4">
-              <p className="font-mono text-[10.5px] uppercase tracking-widest text-mist">Vista previa</p>
+              <div className="flex items-center justify-between">
+                <p className="font-mono text-[10.5px] uppercase tracking-widest text-mist">Vista previa</p>
+                {activa && (
+                  <button
+                    onClick={copiarTexto}
+                    className="flex items-center gap-1 text-xs text-mist transition-colors hover:text-fg"
+                  >
+                    {copiado ? <CheckIcon className="size-3.5 text-lime-text" /> : <Copy className="size-3.5" />}
+                    {copiado ? "Copiado" : "Copiar"}
+                  </button>
+                )}
+              </div>
               <div className="mt-3 rounded-[1.75rem] border border-edge bg-ink p-2.5">
                 <div className="rounded-[1.4rem] bg-[#0b3b2e] p-3">
                   <div className="mb-2 flex justify-center">
@@ -321,18 +372,37 @@ export default function PlantillasPage() {
                     <p className="whitespace-pre-line text-sm leading-relaxed text-fg">
                       {activa ? activa.cuerpo : "Hola, tenemos una promoción especial este mes para ti."}
                     </p>
-                    <p className="mt-1 text-right text-[10px] text-mist">10:24 ✓✓</p>
+                    <div className="mt-1.5 flex items-center justify-between gap-2">
+                      <span className="truncate text-[10px] text-mist">{nombreNegocioActiva ?? ""}</span>
+                      <span className="shrink-0 text-[10px] text-mist">10:24 ✓✓</span>
+                    </div>
                   </div>
                 </div>
               </div>
               <p className="mt-3 text-center text-xs text-mist">
                 {activa ? activa.nombre : "Así se verá tu próxima plantilla"}
               </p>
+
+              {activa && (
+                <div className="mt-4 grid grid-cols-2 gap-2 border-t border-edge pt-4">
+                  <div>
+                    <p className="font-mono text-[10.5px] uppercase tracking-widest text-mist">Variables</p>
+                    <p className="mt-1 text-lg font-semibold text-fg">{variablesActiva}</p>
+                  </div>
+                  <div>
+                    <p className="font-mono text-[10.5px] uppercase tracking-widest text-mist">Tasa de lectura</p>
+                    <p className="mt-1 text-lg font-semibold text-fg">
+                      {activa.enviados > 0 ? `${Math.round(activa.tasaLectura * 100)}%` : "—"}
+                    </p>
+                  </div>
+                </div>
+              )}
+
               {activa?.borrador && (
                 <button
                   onClick={() => publicarBorrador(activa)}
                   disabled={publicandoId === activa.id}
-                  className="btn-shine mt-3 w-full rounded-lg bg-lime px-4 py-2.5 text-sm font-semibold text-lime-fg transition-[background-color,transform] duration-200 hover:-translate-y-0.5 hover:bg-lime-hover active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50"
+                  className="btn-shine mt-4 w-full rounded-lg bg-lime px-4 py-2.5 text-sm font-semibold text-lime-fg transition-[background-color,transform] duration-200 hover:-translate-y-0.5 hover:bg-lime-hover active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {publicandoId === activa.id ? "Enviando…" : "Enviar a revisión"}
                 </button>

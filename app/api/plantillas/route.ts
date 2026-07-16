@@ -58,7 +58,44 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  return Response.json({ plantillas });
+  // Consumo real por plantilla (enviados y % de lectura), a partir de las
+  // campañas que la usaron y el estado de entrega real de esos mensajes.
+  const idsPlantillas = (plantillas ?? []).map((p) => p.id);
+  const estadisticas = new Map<number, { enviados: number; leidos: number }>();
+  if (idsPlantillas.length > 0) {
+    const { data: campanas } = await supabase
+      .from("dulabs_campanas")
+      .select("id, plantilla_id")
+      .in("plantilla_id", idsPlantillas);
+    const plantillaPorCampana = new Map((campanas ?? []).map((c) => [c.id, c.plantilla_id as number]));
+    const idsCampanas = (campanas ?? []).map((c) => c.id);
+
+    if (idsCampanas.length > 0) {
+      const { data: mensajes } = await supabase
+        .from("dulabs_mensajes_log")
+        .select("campana_id, estado_entrega")
+        .in("campana_id", idsCampanas);
+      for (const m of mensajes ?? []) {
+        const plantillaId = plantillaPorCampana.get(m.campana_id);
+        if (!plantillaId) continue;
+        const acc = estadisticas.get(plantillaId) ?? { enviados: 0, leidos: 0 };
+        acc.enviados++;
+        if (m.estado_entrega === "leido") acc.leidos++;
+        estadisticas.set(plantillaId, acc);
+      }
+    }
+  }
+
+  const plantillasConStats = (plantillas ?? []).map((p) => {
+    const stats = estadisticas.get(p.id) ?? { enviados: 0, leidos: 0 };
+    return {
+      ...p,
+      enviados: stats.enviados,
+      tasaLectura: stats.enviados > 0 ? stats.leidos / stats.enviados : 0,
+    };
+  });
+
+  return Response.json({ plantillas: plantillasConStats });
 }
 
 // Crea una plantilla nueva (o la somete a revisión si ya existía como
