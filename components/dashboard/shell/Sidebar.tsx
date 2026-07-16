@@ -3,7 +3,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
-import { Sparkles } from "lucide-react";
+import { LogOut, Sparkles } from "lucide-react";
 import { navSections } from "./nav";
 import { useDashboard } from "@/lib/dashboard-session";
 import { supabaseBrowser } from "@/lib/supabase-browser";
@@ -128,18 +128,32 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
       )}
 
       {/* User */}
-      <button
-        onClick={cerrarSesion}
-        className="flex items-center gap-3 border-t border-edge px-4 py-3 text-left transition-colors hover:bg-ink"
-      >
-        <div className="flex size-8 items-center justify-center rounded-full bg-card text-xs font-medium text-fg">
-          {iniciales || "DU"}
-        </div>
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium text-fg">{email || "Tu cuenta"}</p>
-          <p className="mt-0.5 font-mono text-[10.5px] uppercase tracking-widest text-mist">Cerrar sesión</p>
-        </div>
-      </button>
+      <div className="flex items-center gap-1.5 border-t border-edge px-3 py-3">
+        <Link
+          href="/dashboard/cuenta"
+          onClick={onNavigate}
+          className={cn(
+            "flex min-w-0 flex-1 items-center gap-3 rounded-lg px-2 py-2 text-left transition-colors hover:bg-ink",
+            pathname === "/dashboard/cuenta" && "bg-lime/10"
+          )}
+        >
+          <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-card text-xs font-medium text-fg">
+            {iniciales || "DU"}
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-medium text-fg">{email || "Tu cuenta"}</p>
+            <p className="mt-0.5 font-mono text-[10.5px] uppercase tracking-widest text-mist">Ver perfil</p>
+          </div>
+        </Link>
+        <button
+          onClick={cerrarSesion}
+          aria-label="Cerrar sesión"
+          title="Cerrar sesión"
+          className="flex size-8 shrink-0 items-center justify-center rounded-lg text-mist transition-colors hover:bg-ink hover:text-fg"
+        >
+          <LogOut className="size-4" />
+        </button>
+      </div>
     </div>
   );
 }
