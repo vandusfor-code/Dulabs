@@ -23,6 +23,7 @@ export type ClienteConfig = {
   estado_verificacion: string | null;
   estado_nombre_visible: string | null;
   ultima_sincronizacion_meta: string | null;
+  nombre_agente: string | null;
   created_at: string;
   updated_at: string;
 };

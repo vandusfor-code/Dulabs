@@ -23,12 +23,12 @@ export async function GET(request: NextRequest) {
 
   const phoneNumberIds = (negocios ?? []).map((n) => n.phone_number_id);
 
-  const dias: { fecha: string; cantidad: number }[] = [];
+  const dias: { fecha: string; cantidad: number; entrante: number; saliente: number }[] = [];
   const hoy = new Date();
   for (let i = 6; i >= 0; i--) {
     const d = new Date(hoy);
     d.setDate(d.getDate() - i);
-    dias.push({ fecha: d.toISOString().slice(0, 10), cantidad: 0 });
+    dias.push({ fecha: d.toISOString().slice(0, 10), cantidad: 0, entrante: 0, saliente: 0 });
   }
 
   if (phoneNumberIds.length > 0) {
@@ -38,7 +38,7 @@ export async function GET(request: NextRequest) {
 
     const { data, error } = await supabase
       .from("dulabs_mensajes_log")
-      .select("created_at")
+      .select("created_at, direccion")
       .in("phone_number_id", phoneNumberIds)
       .gte("created_at", desde.toISOString());
     if (error) return Response.json({ error: error.message }, { status: 500 });
@@ -47,7 +47,10 @@ export async function GET(request: NextRequest) {
     for (const m of data ?? []) {
       const fecha = m.created_at.slice(0, 10);
       const idx = indicePorFecha.get(fecha);
-      if (idx !== undefined) dias[idx].cantidad++;
+      if (idx === undefined) continue;
+      dias[idx].cantidad++;
+      if (m.direccion === "entrante") dias[idx].entrante++;
+      else dias[idx].saliente++;
     }
   }
 

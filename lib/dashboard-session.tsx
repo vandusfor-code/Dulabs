@@ -30,6 +30,7 @@ export type Negocio = {
   limite_mensajeria: string | null;
   estado_verificacion: string | null;
   estado_nombre_visible: string | null;
+  nombre_agente: string | null;
 };
 
 export type Suscripcion = {

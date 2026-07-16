@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Phone as PhoneIcon, BadgeCheck, Pencil, Check, X } from "lucide-react";
 import { useDashboard, type Negocio } from "@/lib/dashboard-session";
-import { formatearTelefono } from "@/lib/format";
+import { formatearTelefono, CALIDAD_INFO } from "@/lib/format";
 import { PageHeader, Pill } from "@/components/dashboard/shell/ui";
 
 const GRAPH_VERSION = "v23.0";
@@ -41,13 +41,6 @@ type EstadoConexion =
 type SessionInfo = { waba_id?: string; phone_number_id?: string };
 
 const PLAN_PENDIENTE_KEY = "du_labs_plan_elegido";
-
-const CALIDAD_INFO: Record<string, { label: string; tone: "success" | "warning" | "danger" | "neutral" }> = {
-  GREEN: { label: "Alta", tone: "success" },
-  YELLOW: { label: "Media", tone: "warning" },
-  RED: { label: "Baja", tone: "danger" },
-  UNKNOWN: { label: "Sin datos aún", tone: "neutral" },
-};
 
 const LIMITE_INFO: Record<string, string> = {
   TIER_50: "50 conversaciones/día",

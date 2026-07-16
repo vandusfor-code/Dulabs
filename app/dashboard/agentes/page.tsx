@@ -2,9 +2,9 @@
 
 import { useCallback, useRef, useState } from "react";
 import Link from "next/link";
-import { Bot, MessagesSquare, Gauge, Phone, ShieldCheck, Sparkles, FileUp, FileText, X } from "lucide-react";
+import { Bot, MessagesSquare, Gauge, Phone, ShieldCheck, Sparkles, FileUp, FileText, X, Pencil, Check } from "lucide-react";
 import { useDashboard, type Negocio } from "@/lib/dashboard-session";
-import { formatearTelefono } from "@/lib/format";
+import { formatearTelefono, nombreDelAgente } from "@/lib/format";
 import { PageHeader, Pill } from "@/components/dashboard/shell/ui";
 
 function BaseConocimiento({
@@ -133,6 +133,34 @@ function AgentDetail({ negocio, accessToken, onActualizado }: { negocio: Negocio
   const [mensaje, setMensaje] = useState<string | null>(null);
   const entrenada = (negocio.prompt_sistema ?? "").trim().length > 0;
 
+  const [editandoNombre, setEditandoNombre] = useState(false);
+  const [nombreAgenteInput, setNombreAgenteInput] = useState(nombreDelAgente(negocio));
+  const [guardandoNombre, setGuardandoNombre] = useState(false);
+
+  const guardarNombreAgente = useCallback(async () => {
+    const valor = nombreAgenteInput.trim();
+    if (!valor || valor === nombreDelAgente(negocio)) {
+      setEditandoNombre(false);
+      setNombreAgenteInput(nombreDelAgente(negocio));
+      return;
+    }
+    setGuardandoNombre(true);
+    try {
+      const res = await fetch("/api/dashboard/negocio", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ phone_number_id: negocio.phone_number_id, nombre_agente: valor }),
+      });
+      if (!res.ok) throw new Error();
+      setEditandoNombre(false);
+      onActualizado();
+    } catch {
+      setNombreAgenteInput(nombreDelAgente(negocio));
+    } finally {
+      setGuardandoNombre(false);
+    }
+  }, [nombreAgenteInput, negocio, accessToken, onActualizado]);
+
   const guardar = useCallback(async () => {
     setGuardando(true);
     setMensaje(null);
@@ -176,6 +204,49 @@ function AgentDetail({ negocio, accessToken, onActualizado }: { negocio: Negocio
                 <Pill tone={entrenada ? "success" : "neutral"}>{entrenada ? "Entrenada" : "Sin entrenar"}</Pill>
               </div>
               <p className="mt-1 text-sm text-mist">{formatearTelefono(negocio.telefono_negocio)} · WhatsApp Cloud API</p>
+              {editandoNombre ? (
+                <div className="mt-2 flex items-center gap-1.5">
+                  <input
+                    autoFocus
+                    value={nombreAgenteInput}
+                    maxLength={60}
+                    onChange={(e) => setNombreAgenteInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") guardarNombreAgente();
+                      if (e.key === "Escape") {
+                        setEditandoNombre(false);
+                        setNombreAgenteInput(nombreDelAgente(negocio));
+                      }
+                    }}
+                    className="w-40 rounded-md border border-edge bg-ink px-2 py-1 text-sm text-fg outline-none focus:border-lime/50"
+                  />
+                  <button
+                    onClick={guardarNombreAgente}
+                    disabled={guardandoNombre}
+                    className="flex size-6 items-center justify-center rounded-md text-lime-text hover:bg-lime/10 disabled:opacity-50"
+                    aria-label="Guardar nombre del agente"
+                  >
+                    <Check className="size-3.5" />
+                  </button>
+                  <button
+                    onClick={() => {
+                      setEditandoNombre(false);
+                      setNombreAgenteInput(nombreDelAgente(negocio));
+                    }}
+                    className="flex size-6 items-center justify-center rounded-md text-mist hover:bg-ink"
+                    aria-label="Cancelar"
+                  >
+                    <X className="size-3.5" />
+                  </button>
+                </div>
+              ) : (
+                <button onClick={() => setEditandoNombre(true)} className="group mt-2 flex items-center gap-1.5">
+                  <span className="text-xs text-mist">
+                    Agente: <span className="font-medium text-lime-text">{nombreDelAgente(negocio)}</span>
+                  </span>
+                  <Pencil className="size-3 text-mist opacity-0 transition-opacity group-hover:opacity-100" />
+                </button>
+              )}
             </div>
           </div>
         </div>
