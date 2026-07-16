@@ -53,6 +53,7 @@ export async function POST(request: NextRequest) {
     .from("dulabs_clientes_config")
     .select("*")
     .eq("phone_number_id", plantilla.phone_number_id)
+    .eq("id_tenant", userData.user.id)
     .maybeSingle();
   if (clienteError) return Response.json({ error: clienteError.message }, { status: 500 });
   if (!cliente) return Response.json({ error: "Número no encontrado" }, { status: 404 });
