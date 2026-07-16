@@ -1,7 +1,17 @@
+import { timingSafeEqual, createHash } from "node:crypto";
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 
 export const runtime = "nodejs";
+
+// Comparación en tiempo constante sobre hashes de longitud fija, para que ni
+// la longitud ni el contenido del secreto se filtren por timing.
+function claveValida(recibida: string | null, esperada: string | undefined): boolean {
+  if (!recibida || !esperada) return false;
+  const a = createHash("sha256").update(recibida).digest();
+  const b = createHash("sha256").update(esperada).digest();
+  return timingSafeEqual(a, b);
+}
 
 const GRAPH = `https://graph.facebook.com/${process.env.META_GRAPH_VERSION ?? "v23.0"}`;
 
@@ -24,8 +34,11 @@ type DebugTokenResponse = {
 export async function GET(request: NextRequest) {
   const params = request.nextUrl.searchParams;
 
-  const key = params.get("key");
-  if (!process.env.META_VERIFY_TOKEN || key !== process.env.META_VERIFY_TOKEN) {
+  // Secreto propio de diagnóstico (DIAGNOSTICS_SECRET), separado del
+  // META_VERIFY_TOKEN del handshake público del webhook: un secreto por
+  // propósito. Si la variable no está configurada, el endpoint queda
+  // deshabilitado (403 siempre) en vez de caer a otro secreto.
+  if (!claveValida(params.get("key"), process.env.DIAGNOSTICS_SECRET)) {
     return new Response("Forbidden", { status: 403 });
   }
 
