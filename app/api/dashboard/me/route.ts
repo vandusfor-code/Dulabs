@@ -35,7 +35,7 @@ export async function GET(request: NextRequest) {
   const { data, error } = await supabase
     .from("dulabs_clientes_config")
     .select(
-      "nombre_negocio, telefono_negocio, phone_number_id, whatsapp_business_account_id, meta_permanent_token, updated_at, plan, mensajes_usados_mes, mes_actual, prompt_sistema, base_conocimiento, base_conocimiento_nombre_archivo, base_conocimiento_actualizado_at, calidad, limite_mensajeria, estado_verificacion, estado_nombre_visible, ultima_sincronizacion_meta, nombre_agente"
+      "nombre_negocio, telefono_negocio, phone_number_id, whatsapp_business_account_id, meta_permanent_token, updated_at, plan, mensajes_usados_mes, mes_actual, prompt_sistema, base_conocimiento, base_conocimiento_nombre_archivo, base_conocimiento_actualizado_at, calidad, limite_mensajeria, estado_verificacion, estado_nombre_visible, ultima_sincronizacion_meta, nombre_agente, ia_pausada"
     )
     .eq("id_tenant", userData.user.id)
     .order("updated_at", { ascending: false });
@@ -109,6 +109,7 @@ export async function GET(request: NextRequest) {
       estado_verificacion: n.estado_verificacion,
       estado_nombre_visible: n.estado_nombre_visible,
       nombre_agente: n.nombre_agente,
+      ia_pausada: n.ia_pausada,
     };
   });
 

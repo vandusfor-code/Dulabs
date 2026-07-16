@@ -24,6 +24,7 @@ export type ClienteConfig = {
   estado_nombre_visible: string | null;
   ultima_sincronizacion_meta: string | null;
   nombre_agente: string | null;
+  ia_pausada: boolean;
   created_at: string;
   updated_at: string;
 };

@@ -1,7 +1,7 @@
 import { after } from "next/server";
 import type { NextRequest } from "next/server";
-import Anthropic from "@anthropic-ai/sdk";
 import { supabaseAdmin, type ClienteConfig } from "@/lib/supabase";
+import { generarRespuestaIA } from "@/lib/ia";
 
 export const runtime = "nodejs";
 
@@ -215,6 +215,12 @@ async function activarPausaHumana(phoneNumberId: string, telefonoCliente: string
 async function atenderMensaje(cliente: ClienteConfig, mensaje: MetaMessage) {
   await registrarMensaje(cliente.phone_number_id, soloDigitos(mensaje.from), "entrante", mensaje.text!.body, "entrante");
 
+  // Pausa manual de todo el número, activada desde Agentes de IA.
+  if (cliente.ia_pausada) {
+    console.log(`[webhook-dulabs] IA pausada manualmente para "${cliente.nombre_negocio}"`);
+    return;
+  }
+
   // Control de pausa por chat: si el humano intervino en ESTA conversación y
   // la ventana sigue vigente, la IA guarda silencio (filas vencidas se ignoran).
   const { data: pausa, error } = await supabaseAdmin()
@@ -236,53 +242,6 @@ async function atenderMensaje(cliente: ClienteConfig, mensaje: MetaMessage) {
   const respuesta = await generarRespuestaIA(cliente, mensaje.text!.body);
   if (respuesta) {
     await enviarWhatsApp(cliente, mensaje.from, respuesta);
-  }
-}
-
-// --- IA (Claude) --------------------------------------------------------------
-
-async function generarRespuestaIA(
-  cliente: ClienteConfig,
-  textoUsuario: string
-): Promise<string | null> {
-  const apiKey = cliente.api_key_ia || process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    console.error("[webhook-dulabs] sin API key de IA configurada");
-    return null;
-  }
-
-  const anthropic = new Anthropic({ apiKey });
-  let system =
-    cliente.prompt_sistema ??
-    `Eres el asistente de WhatsApp del negocio "${cliente.nombre_negocio}". Responde de forma breve, amable y útil.`;
-  if (cliente.base_conocimiento) {
-    system += `\n\n--- Información de referencia del negocio (catálogo, precios o documentos) ---\n${cliente.base_conocimiento}`;
-  }
-
-  try {
-    const response = await anthropic.messages.create({
-      model: "claude-opus-4-8",
-      max_tokens: 1024,
-      thinking: { type: "adaptive" },
-      system,
-      messages: [{ role: "user", content: textoUsuario }],
-    });
-
-    const texto = response.content
-      .filter((block) => block.type === "text")
-      .map((block) => block.text)
-      .join("\n")
-      .trim();
-    return texto || null;
-  } catch (err) {
-    if (err instanceof Anthropic.RateLimitError) {
-      console.error("[webhook-dulabs] IA rate-limited");
-    } else if (err instanceof Anthropic.APIError) {
-      console.error(`[webhook-dulabs] error de IA ${err.status}:`, err.message);
-    } else {
-      console.error("[webhook-dulabs] error de IA:", err);
-    }
-    return null;
   }
 }
 

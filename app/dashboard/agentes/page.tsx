@@ -1,11 +1,42 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Bot, MessagesSquare, Gauge, Phone, ShieldCheck, Sparkles, FileUp, FileText, X, Pencil, Check } from "lucide-react";
+import {
+  Bot,
+  MessagesSquare,
+  Gauge,
+  ShieldCheck,
+  Sparkles,
+  FileUp,
+  FileText,
+  X,
+  Pencil,
+  Check,
+  Pause,
+  Play,
+  TrendingUp,
+  Clock,
+  Send,
+  MessageSquareText,
+} from "lucide-react";
 import { useDashboard, type Negocio } from "@/lib/dashboard-session";
 import { formatearTelefono, nombreDelAgente } from "@/lib/format";
 import { PageHeader, Pill } from "@/components/dashboard/shell/ui";
+
+type MetricasNumero = {
+  phone_number_id: string;
+  tasaAutomatizacion: number;
+  tiempoRespuestaSeg: number | null;
+  mensajesAtendidos24h: number;
+};
+
+function formatearDuracion(seg: number): string {
+  if (seg < 60) return `${Math.round(seg)}s`;
+  const min = Math.floor(seg / 60);
+  const resto = Math.round(seg % 60);
+  return resto > 0 ? `${min}m ${resto}s` : `${min}m`;
+}
 
 function BaseConocimiento({
   negocio,
@@ -127,7 +158,103 @@ function BaseConocimiento({
   );
 }
 
-function AgentDetail({ negocio, accessToken, onActualizado }: { negocio: Negocio; accessToken: string; onActualizado: () => void }) {
+type MensajePlayground = { rol: "usuario" | "ia"; texto: string };
+
+function Playground({ negocio, accessToken }: { negocio: Negocio; accessToken: string }) {
+  const [mensajes, setMensajes] = useState<MensajePlayground[]>([]);
+  const [entrada, setEntrada] = useState("");
+  const [enviando, setEnviando] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const enviar = useCallback(async () => {
+    const texto = entrada.trim();
+    if (!texto || enviando) return;
+    setEntrada("");
+    setError(null);
+    setMensajes((prev) => [...prev, { rol: "usuario", texto }]);
+    setEnviando(true);
+    try {
+      const res = await fetch("/api/dashboard/playground", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ phone_number_id: negocio.phone_number_id, mensaje: texto }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Error consultando a la IA");
+      setMensajes((prev) => [...prev, { rol: "ia", texto: data.respuesta }]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setEnviando(false);
+    }
+  }, [entrada, enviando, negocio.phone_number_id, accessToken]);
+
+  return (
+    <div className="rounded-xl border border-edge bg-card p-5">
+      <div className="mb-3 flex items-center gap-2">
+        <MessageSquareText className="size-4 text-mist" />
+        <h3 className="text-sm font-semibold text-fg">Probar en playground</h3>
+      </div>
+      <p className="text-xs leading-relaxed text-mist">
+        Chatea con {nombreDelAgente(negocio)} usando sus instrucciones y base de conocimiento reales — nada de esto
+        se envía por WhatsApp ni cuenta contra tu consumo.
+      </p>
+
+      <div className="mt-3 max-h-72 space-y-2.5 overflow-y-auto rounded-lg border border-edge bg-ink p-3">
+        {mensajes.length === 0 ? (
+          <p className="text-xs text-mist">Escribe algo como lo haría un cliente…</p>
+        ) : (
+          mensajes.map((m, i) => (
+            <div key={i} className={`flex ${m.rol === "usuario" ? "justify-end" : "justify-start"}`}>
+              <p
+                className={`max-w-[85%] whitespace-pre-line rounded-lg px-3 py-2 text-sm ${
+                  m.rol === "usuario" ? "bg-lime/15 text-fg" : "bg-card text-fg"
+                }`}
+              >
+                {m.texto}
+              </p>
+            </div>
+          ))
+        )}
+        {enviando && <p className="text-xs text-mist">{nombreDelAgente(negocio)} está escribiendo…</p>}
+      </div>
+
+      {error && <p className="mt-2 text-xs text-red-400">{error}</p>}
+
+      <div className="mt-3 flex items-center gap-2">
+        <input
+          value={entrada}
+          onChange={(e) => setEntrada(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") enviar();
+          }}
+          placeholder="Escribe un mensaje de prueba…"
+          className="w-full rounded-lg border border-edge bg-ink px-3 py-2 text-sm text-fg outline-none focus:border-lime/50"
+        />
+        <button
+          onClick={enviar}
+          disabled={enviando || !entrada.trim()}
+          className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-lime text-lime-fg transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+          aria-label="Enviar"
+        >
+          <Send className="size-4" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function AgentDetail({
+  negocio,
+  accessToken,
+  onActualizado,
+  metricas,
+}: {
+  negocio: Negocio;
+  accessToken: string;
+  onActualizado: () => void;
+  metricas: MetricasNumero | null;
+}) {
   const [prompt, setPrompt] = useState(negocio.prompt_sistema ?? "");
   const [guardando, setGuardando] = useState(false);
   const [mensaje, setMensaje] = useState<string | null>(null);
@@ -185,6 +312,22 @@ function AgentDetail({ negocio, accessToken, onActualizado }: { negocio: Negocio
 
   const usados = negocio.mensajes_usados;
   const limite = negocio.mensajes_limite;
+
+  const [cambiandoPausa, setCambiandoPausa] = useState(false);
+  const alternarPausa = useCallback(async () => {
+    setCambiandoPausa(true);
+    try {
+      const res = await fetch("/api/dashboard/negocio", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ phone_number_id: negocio.phone_number_id, ia_pausada: !negocio.ia_pausada }),
+      });
+      if (!res.ok) throw new Error();
+      onActualizado();
+    } finally {
+      setCambiandoPausa(false);
+    }
+  }, [accessToken, negocio.phone_number_id, negocio.ia_pausada, onActualizado]);
 
   return (
     <div className="space-y-4">
@@ -249,16 +392,41 @@ function AgentDetail({ negocio, accessToken, onActualizado }: { negocio: Negocio
               )}
             </div>
           </div>
+
+          <div className="flex items-center gap-2">
+            {negocio.ia_pausada && <Pill tone="warning">IA pausada</Pill>}
+            <button
+              onClick={alternarPausa}
+              disabled={cambiandoPausa}
+              className={`flex items-center gap-2 rounded-lg border px-3.5 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                negocio.ia_pausada
+                  ? "border-lime/40 text-lime-text hover:bg-lime/10"
+                  : "border-edge text-fg hover:border-red-400/40 hover:text-red-400"
+              }`}
+            >
+              {negocio.ia_pausada ? <Play className="size-3.5" /> : <Pause className="size-3.5" />}
+              {negocio.ia_pausada ? "Reanudar IA" : "Pausar IA"}
+            </button>
+          </div>
         </div>
 
-        <div className="mt-5 grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-edge bg-edge md:grid-cols-3">
+        <div className="mt-5 grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-edge bg-edge md:grid-cols-4">
+          <Metric
+            icon={TrendingUp}
+            label="Resolución (24h)"
+            value={metricas && metricas.mensajesAtendidos24h > 0 ? `${Math.round(metricas.tasaAutomatizacion * 100)}%` : "—"}
+          />
           <Metric icon={MessagesSquare} label="Mensajes este mes" value={usados.toLocaleString("es-CO")} />
+          <Metric
+            icon={Clock}
+            label="Latencia promedio"
+            value={metricas?.tiempoRespuestaSeg != null ? formatearDuracion(metricas.tiempoRespuestaSeg) : "—"}
+          />
           <Metric
             icon={Gauge}
             label="Límite del plan"
             value={limite === null ? "Ilimitado" : limite.toLocaleString("es-CO")}
           />
-          <Metric icon={Phone} label="Modo" value="Coexistencia" />
         </div>
       </div>
 
@@ -290,6 +458,8 @@ function AgentDetail({ negocio, accessToken, onActualizado }: { negocio: Negocio
 
       <BaseConocimiento negocio={negocio} accessToken={accessToken} onActualizado={onActualizado} />
 
+      <Playground negocio={negocio} accessToken={accessToken} />
+
       <div className="rounded-xl border border-edge bg-card p-5">
         <div className="mb-3 flex items-center gap-2">
           <ShieldCheck className="size-4 text-mist" />
@@ -299,7 +469,7 @@ function AgentDetail({ negocio, accessToken, onActualizado }: { negocio: Negocio
           {[
             "Responde con la API Oficial de WhatsApp Business de Meta",
             "Se pausa automáticamente si tú respondes desde tu celular",
-            "Solo usa las instrucciones y la base de conocimiento que le diste, nada más",
+            negocio.ia_pausada ? "Actualmente pausada manualmente — no responderá hasta que la reanudes" : "Solo usa las instrucciones y la base de conocimiento que le diste, nada más",
           ].map((t) => (
             <li key={t} className="flex items-center gap-2.5 rounded-lg border border-edge bg-ink px-3 py-2.5 text-fg/90">
               <span className="size-1.5 rounded-full bg-lime" />
@@ -327,8 +497,18 @@ function Metric({ icon: Icon, label, value }: { icon: typeof Bot; label: string;
 export default function AgentesPage() {
   const { session, negocios, cargarNegocios } = useDashboard();
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [metricasPorNumero, setMetricasPorNumero] = useState<MetricasNumero[] | null>(null);
+
+  useEffect(() => {
+    if (!session) return;
+    fetch("/api/dashboard/resumen", { headers: { Authorization: `Bearer ${session.access_token}` } })
+      .then((res) => res.json())
+      .then((data) => setMetricasPorNumero(data.metricasPorNumero ?? []))
+      .catch(() => setMetricasPorNumero([]));
+  }, [session]);
 
   const activo = negocios?.find((n) => n.phone_number_id === activeId) ?? negocios?.[0] ?? null;
+  const metricasActivo = metricasPorNumero?.find((m) => m.phone_number_id === activo?.phone_number_id) ?? null;
 
   return (
     <div className="pb-12">
@@ -390,7 +570,12 @@ export default function AgentesPage() {
 
             <div>
               {session && activo && (
-                <AgentDetail negocio={activo} accessToken={session.access_token} onActualizado={cargarNegocios} />
+                <AgentDetail
+                  negocio={activo}
+                  accessToken={session.access_token}
+                  onActualizado={cargarNegocios}
+                  metricas={metricasActivo}
+                />
               )}
             </div>
           </div>

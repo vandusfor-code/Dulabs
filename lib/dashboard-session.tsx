@@ -31,6 +31,7 @@ export type Negocio = {
   estado_verificacion: string | null;
   estado_nombre_visible: string | null;
   nombre_agente: string | null;
+  ia_pausada: boolean;
 };
 
 export type Suscripcion = {

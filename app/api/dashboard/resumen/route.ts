@@ -92,6 +92,7 @@ export async function GET(request: NextRequest) {
   let sinResponder24h = 0;
   let tiempoRespuestaSeg: number | null = null;
   let mejorAgente: { nombre: string; tasaAutomatizacion: number } | null = null;
+  const metricasPorNumero: { phone_number_id: string; tasaAutomatizacion: number; tiempoRespuestaSeg: number | null; mensajesAtendidos24h: number }[] = [];
   const actividadReciente: { tipo: string; descripcion: string; created_at: string }[] = [];
   const porCategoriaMes = new Map<string, number>();
   let deltaConversacionesPct: number | null = null;
@@ -133,27 +134,35 @@ export async function GET(request: NextRequest) {
     deltaTiempoRespuestaSeg =
       tiempoRespuestaSeg !== null && tiempoRespuestaAyerSeg !== null ? tiempoRespuestaSeg - tiempoRespuestaAyerSeg : null;
 
-    // Mejor número por tasa de automatización real (solo tiene sentido con >1 número).
-    if (phoneNumberIds.length > 1) {
-      const porNumero = new Map<string, { ia: number; total: number }>();
-      for (const s of salientes) {
-        const acc = porNumero.get(s.phone_number_id) ?? { ia: 0, total: 0 };
-        acc.total++;
-        if (s.origen === "ia") acc.ia++;
-        porNumero.set(s.phone_number_id, acc);
-      }
-      let mejor: { phoneNumberId: string; tasa: number } | null = null;
-      for (const [phoneNumberId, { ia, total }] of porNumero) {
-        if (total === 0) continue;
-        const tasa = ia / total;
-        if (!mejor || tasa > mejor.tasa) mejor = { phoneNumberId, tasa };
-      }
-      if (mejor) {
-        mejorAgente = {
-          nombre: nombrePorNumero.get(mejor.phoneNumberId) ?? "Tu asistente",
-          tasaAutomatizacion: mejor.tasa,
-        };
-      }
+    // Métricas reales por número (para la ficha de cada agente) y, si hay
+    // más de uno, cuál tiene la mejor tasa de automatización real.
+    const gruposPorNumero = new Map<string, FilaMensaje[]>();
+    for (const f of filas) {
+      const lista = gruposPorNumero.get(f.phone_number_id) ?? [];
+      lista.push(f);
+      gruposPorNumero.set(f.phone_number_id, lista);
+    }
+    for (const phoneNumberId of phoneNumberIds) {
+      const filasNumero = gruposPorNumero.get(phoneNumberId) ?? [];
+      const salientesNumero = filasNumero.filter((f) => f.direccion === "saliente");
+      const iaNumero = salientesNumero.filter((f) => f.origen === "ia").length;
+      metricasPorNumero.push({
+        phone_number_id: phoneNumberId,
+        tasaAutomatizacion: salientesNumero.length > 0 ? iaNumero / salientesNumero.length : 0,
+        tiempoRespuestaSeg: tiempoRespuestaPromedioSeg(agruparPorConversacion(filasNumero)),
+        mensajesAtendidos24h: salientesNumero.length,
+      });
+    }
+    let mejor: { phoneNumberId: string; tasa: number } | null = null;
+    for (const m of metricasPorNumero) {
+      if (m.mensajesAtendidos24h === 0) continue;
+      if (!mejor || m.tasaAutomatizacion > mejor.tasa) mejor = { phoneNumberId: m.phone_number_id, tasa: m.tasaAutomatizacion };
+    }
+    if (mejor && phoneNumberIds.length > 1) {
+      mejorAgente = {
+        nombre: nombrePorNumero.get(mejor.phoneNumberId) ?? "Tu asistente",
+        tasaAutomatizacion: mejor.tasa,
+      };
     }
 
     // Actividad reciente (últimos 8 eventos reales, sin categorizar el motivo).
@@ -205,6 +214,7 @@ export async function GET(request: NextRequest) {
     porCategoriaMes: Array.from(porCategoriaMes, ([categoria, cantidad]) => ({ categoria, cantidad })),
     tiempoRespuestaSeg,
     mejorAgente,
+    metricasPorNumero,
     autopilot: { resueltoPorIA: iaTotal24h, atendidoManual: manualesTotal24h, sinResponder: sinResponder24h },
     actividadReciente,
     deltaConversacionesPct,

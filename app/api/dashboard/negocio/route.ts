@@ -19,19 +19,19 @@ export async function PATCH(request: NextRequest) {
     return Response.json({ error: "Sesión inválida" }, { status: 401 });
   }
 
-  let body: { phone_number_id?: string; nombre_negocio?: string; nombre_agente?: string };
+  let body: { phone_number_id?: string; nombre_negocio?: string; nombre_agente?: string; ia_pausada?: boolean };
   try {
     body = await request.json();
   } catch {
     return Response.json({ error: "JSON inválido" }, { status: 400 });
   }
 
-  const { phone_number_id } = body;
+  const { phone_number_id, ia_pausada } = body;
   const nombreNegocio = body.nombre_negocio?.trim();
   const nombreAgente = body.nombre_agente?.trim();
-  if (!phone_number_id || (!nombreNegocio && !nombreAgente)) {
+  if (!phone_number_id || (!nombreNegocio && !nombreAgente && ia_pausada === undefined)) {
     return Response.json(
-      { error: "Falta 'phone_number_id' y al menos 'nombre_negocio' o 'nombre_agente'" },
+      { error: "Falta 'phone_number_id' y al menos 'nombre_negocio', 'nombre_agente' o 'ia_pausada'" },
       { status: 400 }
     );
   }
@@ -39,9 +39,10 @@ export async function PATCH(request: NextRequest) {
     return Response.json({ error: `El nombre no puede superar ${MAX_NOMBRE_LENGTH} caracteres` }, { status: 400 });
   }
 
-  const cambios: Record<string, string> = { updated_at: new Date().toISOString() };
+  const cambios: Record<string, string | boolean> = { updated_at: new Date().toISOString() };
   if (nombreNegocio) cambios.nombre_negocio = nombreNegocio;
   if (nombreAgente) cambios.nombre_agente = nombreAgente;
+  if (ia_pausada !== undefined) cambios.ia_pausada = ia_pausada;
 
   const { error } = await supabase
     .from("dulabs_clientes_config")
