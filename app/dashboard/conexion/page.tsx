@@ -352,7 +352,7 @@ function NumeroCard({
         ) : (
           <button
             onClick={() => setConfirmandoBorrado(true)}
-            className="flex items-center gap-1.5 text-xs font-medium text-mist hover:text-red-400"
+            className="flex items-center gap-1.5 rounded-lg border border-red-500/30 bg-red-500/5 px-3 py-1.5 text-xs font-semibold text-red-500 transition-colors hover:bg-red-500/10 hover:border-red-500/50"
           >
             <Trash2 className="size-3.5" /> Eliminar mis datos
           </button>
