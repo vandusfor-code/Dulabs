@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { CommandCenter } from "./CommandCenter";
+import { SplitText } from "./SplitText";
+import { HeroSpotlight } from "./HeroSpotlight";
 
 export function Hero() {
   return (
@@ -9,6 +11,7 @@ export function Hero() {
       <div className="pointer-events-none absolute inset-0 site-mesh-bg opacity-40" />
       <div className="pointer-events-none absolute inset-0 site-grid-bg [mask-image:radial-gradient(ellipse_at_center_top,black_20%,transparent_75%)]" />
       <div className="pointer-events-none absolute left-1/2 top-0 h-[600px] w-[900px] -translate-x-1/2 rounded-full bg-site-primary/10 blur-[140px]" />
+      <HeroSpotlight />
 
       <div className="relative mx-auto max-w-[1280px] px-6">
         <div className="flex justify-center">
@@ -25,9 +28,13 @@ export function Hero() {
         </div>
 
         <h1 className="mx-auto mt-8 max-w-5xl text-center font-display text-[42px] font-medium leading-[1.02] tracking-[-0.03em] text-site-fg md:text-[68px] lg:text-[76px]">
-          <span className="site-text-gradient">La IA que atiende tu WhatsApp</span>
+          <SplitText text="La IA que atiende tu WhatsApp" className="site-text-gradient" />
           <br />
-          <span className="site-text-gradient-primary">sin arriesgar tu número.</span>
+          <SplitText
+            text="sin arriesgar tu número."
+            className="site-text-gradient-primary"
+            startDelay={320}
+          />
         </h1>
 
         <p className="mx-auto mt-7 max-w-2xl text-center text-[16px] leading-relaxed text-site-muted-fg md:text-[17px]">

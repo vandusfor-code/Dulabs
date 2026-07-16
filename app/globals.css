@@ -533,6 +533,71 @@ body {
   mask-image: linear-gradient(to bottom, black 0%, black 60%, transparent 100%);
 }
 
+/* ---------- Film grain overlay (marketing site only) ---------- */
+
+.site-grain {
+  position: fixed;
+  inset: -60px;
+  z-index: 30;
+  pointer-events: none;
+  opacity: 0.035;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 180px 180px;
+  animation: site-grain-shift 1.2s steps(4) infinite;
+}
+@keyframes site-grain-shift {
+  0% { transform: translate3d(0, 0, 0); }
+  25% { transform: translate3d(-2%, -3%, 0); }
+  50% { transform: translate3d(-3%, 2%, 0); }
+  75% { transform: translate3d(2%, -1%, 0); }
+  100% { transform: translate3d(0, 0, 0); }
+}
+
+/* ---------- Word-by-word split reveal (hero headline) ---------- */
+
+.site-word {
+  display: inline-block;
+  opacity: 0;
+  transform: translateY(0.3em);
+  filter: blur(4px);
+  transition:
+    opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.6s cubic-bezier(0.16, 1, 0.3, 1),
+    filter 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.site-word-visible {
+  opacity: 1;
+  transform: none;
+  filter: blur(0);
+}
+/* Words inherit the parent's gradient text-clip so the split doesn't flatten it to solid color */
+.site-text-gradient .site-word,
+.site-text-gradient-primary .site-word {
+  background: inherit;
+  -webkit-background-clip: inherit;
+  background-clip: inherit;
+  color: inherit;
+}
+
+/* ---------- Cursor-reactive hero spotlight ---------- */
+
+.site-spotlight {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.4s ease;
+  background: radial-gradient(
+    480px circle at var(--x, 50%) var(--y, 0%),
+    rgb(198 255 61 / 0.10),
+    transparent 70%
+  );
+}
+.site-spotlight[data-active="true"] {
+  opacity: 1;
+}
+
 /* ---------- Staggered feed entrance (activity streams, lists) ---------- */
 
 @keyframes site-stream-in {
@@ -578,7 +643,20 @@ body {
   .animate-site-marquee,
   .animate-site-float,
   .animate-site-pulse-glow,
-  .site-stream-in {
+  .site-stream-in,
+  .site-grain {
     animation: none;
+  }
+  .site-word {
+    opacity: 1;
+    transform: none;
+    filter: none;
+    transition: none;
+  }
+  .site-grain {
+    display: none;
+  }
+  .site-spotlight {
+    display: none;
   }
 }

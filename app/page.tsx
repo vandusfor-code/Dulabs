@@ -23,6 +23,7 @@ import {
 export default function Home() {
   return (
     <div className="relative min-h-screen bg-site-bg text-site-fg">
+      <div className="site-grain" aria-hidden />
       <Nav />
       <main>
         <Hero />
