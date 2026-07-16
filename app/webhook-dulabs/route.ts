@@ -2,6 +2,7 @@ import { after } from "next/server";
 import type { NextRequest } from "next/server";
 import { supabaseAdmin, type ClienteConfig } from "@/lib/supabase";
 import { generarRespuestaIA } from "@/lib/ia";
+import { verificarFirmaMeta, compararVerifyToken } from "@/lib/meta-firma";
 
 export const runtime = "nodejs";
 
@@ -40,8 +41,7 @@ export async function GET(request: NextRequest) {
   const token = params.get("hub.verify_token");
   const challenge = params.get("hub.challenge");
 
-  const verifyToken = process.env.META_VERIFY_TOKEN;
-  if (mode === "subscribe" && verifyToken && token === verifyToken) {
+  if (mode === "subscribe" && compararVerifyToken(token, process.env.META_VERIFY_TOKEN)) {
     return new Response(challenge ?? "", { status: 200 });
   }
   return new Response("Forbidden", { status: 403 });
@@ -50,9 +50,16 @@ export async function GET(request: NextRequest) {
 // --- Recepción de eventos ----------------------------------------------------
 
 export async function POST(request: NextRequest) {
+  // La firma se calcula sobre los bytes EXACTOS del body: hay que leer el texto
+  // crudo antes de parsear (re-serializar cambiaría el HMAC).
+  const rawBody = await request.text();
+  if (!verificarFirmaMeta(rawBody, request.headers.get("x-hub-signature-256"))) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+
   let payload: { entry?: { changes?: { field: string; value: MetaChangeValue }[] }[] };
   try {
-    payload = await request.json();
+    payload = JSON.parse(rawBody);
   } catch {
     return new Response("Bad Request", { status: 400 });
   }
