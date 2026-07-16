@@ -280,9 +280,9 @@ export default function CuentaPage() {
           Zona de peligro
         </h2>
         <p className="mt-3 text-sm leading-relaxed text-mist">
-          Esto desconecta todos tus números de Meta, borra permanentemente todos tus mensajes,
-          campañas y plantillas, cancela tu suscripción y elimina tu cuenta de acceso a Du Labs.
-          No se puede deshacer.
+          Esto elimina todos tus datos de WhatsApp: desconecta todos tus números de Meta y borra
+          permanentemente todos tus mensajes, campañas y plantillas. También cancela tu
+          suscripción y elimina tu cuenta de acceso a Du Labs. No se puede deshacer.
         </p>
 
         {!confirmandoBorrado ? (
