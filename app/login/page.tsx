@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import { AuthVisual } from "@/components/site/AuthVisual";
+import { useI18n } from "@/lib/i18n";
+import { LanguageSelector } from "@/components/LanguageSelector";
 
 type Modo = "login" | "registro";
 
@@ -13,6 +15,7 @@ const supabaseConfigFaltante =
 
 export default function LoginPage() {
   const router = useRouter();
+  const { t } = useI18n();
   const [modo, setModo] = useState<Modo>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -59,7 +62,10 @@ export default function LoginPage() {
         return;
       }
       setMensaje(
-        "Cuenta creada. Si tu proyecto requiere confirmación por correo, revisa tu bandeja antes de iniciar sesión."
+        t(
+          "Cuenta creada. Si tu proyecto requiere confirmación por correo, revisa tu bandeja antes de iniciar sesión.",
+          "Account created. If your project requires email confirmation, check your inbox before signing in."
+        )
       );
       setModo("login");
     }
@@ -69,9 +75,12 @@ export default function LoginPage() {
     <main className="grid min-h-screen bg-site-bg text-site-fg lg:grid-cols-2">
       <div className="relative flex items-center justify-center px-6 py-16">
         <div className="pointer-events-none absolute inset-0 site-grid-bg-fine opacity-40 lg:hidden" />
+        <div className="absolute right-6 top-6 z-10">
+          <LanguageSelector />
+        </div>
         <div className="relative w-full max-w-[400px]">
           <Link href="/" className="text-[13px] text-site-primary transition-colors duration-200 hover:text-site-fg">
-            ← Volver a Du Labs
+            {t("← Volver a Du Labs", "← Back to Du Labs")}
           </Link>
 
           <div className="mt-8 mb-6 inline-flex items-center rounded-full border border-site-border bg-white/[0.02] p-1 text-[12px]">
@@ -87,18 +96,18 @@ export default function LoginPage() {
                   modo === m ? "bg-site-fg text-site-bg" : "text-site-muted-fg hover:text-site-fg"
                 }`}
               >
-                {m === "login" ? "Iniciar sesión" : "Crear cuenta"}
+                {m === "login" ? t("Iniciar sesión", "Log in") : t("Crear cuenta", "Sign up")}
               </button>
             ))}
           </div>
 
           <h1 className="font-display text-[28px] font-medium leading-[1.08] tracking-tight site-text-gradient">
-            {modo === "login" ? "Bienvenido de vuelta." : "Activa tu WhatsApp con IA."}
+            {modo === "login" ? t("Bienvenido de vuelta.", "Welcome back.") : t("Activa tu WhatsApp con IA.", "Activate your WhatsApp with AI.")}
           </h1>
           <p className="mt-2 text-[13.5px] text-site-muted-fg">
             {modo === "login"
-              ? "Accede a tu panel de Du Labs para conectar y administrar tus números de WhatsApp."
-              : "Crea tu cuenta para conectar tu WhatsApp Business en minutos."}
+              ? t("Accede a tu panel de Du Labs para conectar y administrar tus números de WhatsApp.", "Access your Du Labs dashboard to connect and manage your WhatsApp numbers.")
+              : t("Crea tu cuenta para conectar tu WhatsApp Business en minutos.", "Create your account to connect your WhatsApp Business in minutes.")}
           </p>
 
           {supabaseConfigFaltante && (
@@ -109,7 +118,7 @@ export default function LoginPage() {
 
           <form onSubmit={enviar} className="mt-7 flex flex-col gap-3.5">
             <div>
-              <label className="mb-1.5 block text-[12px] font-medium text-site-muted-fg">Correo</label>
+              <label className="mb-1.5 block text-[12px] font-medium text-site-muted-fg">{t("Correo", "Email")}</label>
               <input
                 type="email"
                 required
@@ -120,7 +129,7 @@ export default function LoginPage() {
               />
             </div>
             <div>
-              <label className="mb-1.5 block text-[12px] font-medium text-site-muted-fg">Contraseña</label>
+              <label className="mb-1.5 block text-[12px] font-medium text-site-muted-fg">{t("Contraseña", "Password")}</label>
               <input
                 type="password"
                 required
@@ -146,12 +155,12 @@ export default function LoginPage() {
               disabled={cargando || supabaseConfigFaltante}
               className="mt-2 inline-flex h-11 items-center justify-center rounded-full bg-site-primary text-[13.5px] font-medium text-site-primary-fg transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {cargando ? "Un momento…" : modo === "login" ? "Iniciar sesión" : "Crear cuenta"}
+              {cargando ? t("Un momento…", "One moment…") : modo === "login" ? t("Iniciar sesión", "Log in") : t("Crear cuenta", "Sign up")}
             </button>
           </form>
 
           <p className="mt-6 text-center text-[13px] text-site-muted-fg">
-            {modo === "login" ? "¿No tienes cuenta? " : "¿Ya tienes cuenta? "}
+            {modo === "login" ? t("¿No tienes cuenta? ", "Don't have an account? ") : t("¿Ya tienes cuenta? ", "Already have an account? ")}
             <button
               type="button"
               onClick={() => {
@@ -161,7 +170,7 @@ export default function LoginPage() {
               }}
               className="font-semibold text-site-primary hover:text-site-fg"
             >
-              {modo === "login" ? "Regístrate" : "Inicia sesión"}
+              {modo === "login" ? t("Regístrate", "Sign up") : t("Inicia sesión", "Log in")}
             </button>
           </p>
         </div>

@@ -2,15 +2,16 @@
 
 import { useEffect, useState } from "react";
 import Image from "next/image";
-
-const conversaciones = [
-  { name: "Peluquería Estilo", msg: "Turno confirmado · 5:30pm", time: "0.8s" },
-  { name: "+57 300 ••• ••56", msg: "Precio del servicio enviado", time: "0.6s" },
-  { name: "+57 310 ••• ••99", msg: "Plantilla de campaña entregada", time: "0.4s" },
-  { name: "Peluquería Estilo", msg: "Handoff → dueño respondió", time: "0.3s" },
-];
+import { useI18n } from "@/lib/i18n";
 
 export function AuthVisual() {
+  const { t } = useI18n();
+  const conversaciones = [
+    { name: t("Peluquería Estilo", "Estilo Hair Salon"), msg: t("Turno confirmado · 5:30pm", "Appointment confirmed · 5:30pm"), time: "0.8s" },
+    { name: "+57 300 ••• ••56", msg: t("Precio del servicio enviado", "Service price sent"), time: "0.6s" },
+    { name: "+57 310 ••• ••99", msg: t("Plantilla de campaña entregada", "Campaign template delivered"), time: "0.4s" },
+    { name: t("Peluquería Estilo", "Estilo Hair Salon"), msg: t("Handoff → dueño respondió", "Handoff → owner replied"), time: "0.3s" },
+  ];
   const [tick, setTick] = useState(0);
   useEffect(() => {
     const id = setInterval(() => setTick((t) => t + 1), 2200);
@@ -33,10 +34,10 @@ export function AuthVisual() {
 
       <div className="absolute left-10 bottom-10 z-10 max-w-md">
         <p className="font-mono text-[10px] uppercase tracking-[0.22em] text-site-muted-fg">
-          IA para WhatsApp Business
+          {t("IA para WhatsApp Business", "AI for WhatsApp Business")}
         </p>
         <h2 className="mt-4 font-display text-[30px] leading-[1.08] tracking-tight site-text-gradient">
-          Donde tu negocio ya <br /> responde de verdad.
+          {t("Donde tu negocio ya", "Where your business already")} <br /> {t("responde de verdad.", "truly replies.")}
         </h2>
         <div className="mt-6 flex items-center gap-4 text-[11px] text-site-muted-fg">
           <span className="flex items-center gap-1.5">
@@ -44,10 +45,10 @@ export function AuthVisual() {
               <span className="absolute inset-0 rounded-full bg-site-primary animate-site-ping-soft" />
               <span className="relative h-1.5 w-1.5 rounded-full bg-site-primary" />
             </span>
-            Todo funcionando con normalidad
+            {t("Todo funcionando con normalidad", "All systems operational")}
           </span>
           <span className="h-3 w-px bg-white/10" />
-          <span>API Oficial de Meta</span>
+          <span>{t("API Oficial de Meta", "Official Meta API")}</span>
         </div>
       </div>
 
@@ -55,7 +56,7 @@ export function AuthVisual() {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span className="h-1.5 w-1.5 rounded-full bg-site-primary animate-site-pulse-glow" />
-            <span className="font-mono text-[10px] uppercase tracking-widest text-site-muted-fg">Conversaciones en vivo</span>
+            <span className="font-mono text-[10px] uppercase tracking-widest text-site-muted-fg">{t("Conversaciones en vivo", "Live conversations")}</span>
           </div>
         </div>
         <div className="mt-3 space-y-2">
@@ -72,7 +73,7 @@ export function AuthVisual() {
       </div>
 
       <div className="absolute right-16 bottom-32 w-[220px] rounded-xl site-glass p-4">
-        <div className="font-mono text-[10px] uppercase tracking-widest text-site-muted-fg">Tiempo de respuesta</div>
+        <div className="font-mono text-[10px] uppercase tracking-widest text-site-muted-fg">{t("Tiempo de respuesta", "Response time")}</div>
         <div className="mt-1 flex items-baseline gap-2">
           <span className="font-display text-[26px] font-medium tracking-tight text-site-fg">&lt;2s</span>
         </div>
