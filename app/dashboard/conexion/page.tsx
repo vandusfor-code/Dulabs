@@ -160,7 +160,7 @@ function NumeroCard({
       setErrorEliminar(err instanceof Error ? err.message : t("No se pudo eliminar el número.", "Couldn't delete the number."));
       setEliminando(false);
     }
-  }, [accessToken, negocio.phone_number_id, onActualizado]);
+  }, [accessToken, negocio.phone_number_id, onActualizado, t]);
 
   return (
     <div className="rounded-xl border border-edge bg-card p-5">
