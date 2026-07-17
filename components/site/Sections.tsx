@@ -42,6 +42,7 @@ import Link from "next/link";
 import Image from "next/image";
 import PlanButton from "@/components/PlanButton";
 import { Reveal } from "./Reveal";
+import { useI18n } from "@/lib/i18n";
 
 /* =========================================================
    Shared primitives
@@ -121,27 +122,31 @@ function MsgOut({ children }: { children: React.ReactNode }) {
 ========================================================= */
 
 export function CoexistenceSection() {
+  const { t } = useI18n();
   return (
     <section id="coexistencia" className="relative border-t border-site-border py-28">
       <div className="mx-auto max-w-[1280px] px-6">
         <SectionHeading
-          eyebrow="Modo coexistencia"
-          title={<>La IA responde, tú sigues <br className="hidden md:block" />usando tu WhatsApp normal.</>}
-          desc="No pierdes tu número ni tu app. Tu asistente atiende en paralelo desde la nube, y tú puedes tomar cualquier conversación desde tu celular cuando quieras."
+          eyebrow={t("Modo coexistencia", "Coexistence mode")}
+          title={<>{t("La IA responde, tú sigues", "The AI replies, you keep")} <br className="hidden md:block" />{t("usando tu WhatsApp normal.", "using your regular WhatsApp.")}</>}
+          desc={t(
+            "No pierdes tu número ni tu app. Tu asistente atiende en paralelo desde la nube, y tú puedes tomar cualquier conversación desde tu celular cuando quieras.",
+            "You don't lose your number or your app. Your assistant answers in parallel from the cloud, and you can take over any conversation from your phone whenever you want."
+          )}
         />
 
         <div className="mt-12 grid grid-cols-12 gap-4">
           <Panel className="col-span-12 p-6 lg:col-span-7">
             <div className="flex items-center gap-2">
               <Smartphone className="h-3.5 w-3.5 text-site-primary" />
-              <span className="font-display text-[13px] font-medium text-site-fg">Tu celular + la IA, al mismo tiempo</span>
+              <span className="font-display text-[13px] font-medium text-site-fg">{t("Tu celular + la IA, al mismo tiempo", "Your phone + the AI, at the same time")}</span>
             </div>
             <div className="mt-6 grid gap-4 sm:grid-cols-2">
               {[
-                { icon: Bot, title: "La IA responde 24/7", desc: "Mientras no estás disponible, tu asistente sigue atendiendo con el prompt que tú le diste." },
-                { icon: Pause, title: "Pausa por conversación", desc: "En cuanto tú respondes un chat desde tu celular, la IA se pausa sola solo en ese chat." },
-                { icon: MessageCircle, title: "Historial compartido", desc: "Todo lo que la IA respondió lo ves también en tu WhatsApp normal, sin duplicados." },
-                { icon: ShieldCheck, title: "Cero riesgo para tu número", desc: "Todo pasa por la API Oficial de Meta — no hay extensiones ni trucos que arriesguen tu cuenta." },
+                { icon: Bot, title: t("La IA responde 24/7", "The AI replies 24/7"), desc: t("Mientras no estás disponible, tu asistente sigue atendiendo con el prompt que tú le diste.", "While you're unavailable, your assistant keeps answering with the prompt you gave it.") },
+                { icon: Pause, title: t("Pausa por conversación", "Pause per conversation"), desc: t("En cuanto tú respondes un chat desde tu celular, la IA se pausa sola solo en ese chat.", "As soon as you reply to a chat from your phone, the AI pauses itself in that chat only.") },
+                { icon: MessageCircle, title: t("Historial compartido", "Shared history"), desc: t("Todo lo que la IA respondió lo ves también en tu WhatsApp normal, sin duplicados.", "Everything the AI replied also shows up in your regular WhatsApp, with no duplicates.") },
+                { icon: ShieldCheck, title: t("Cero riesgo para tu número", "Zero risk to your number"), desc: t("Todo pasa por la API Oficial de Meta — no hay extensiones ni trucos que arriesguen tu cuenta.", "Everything goes through the Official Meta API — no extensions or hacks that put your account at risk.") },
               ].map((f) => (
                 <div key={f.title} className="rounded-xl border border-site-border bg-white/[0.02] p-4">
                   <f.icon className="h-4 w-4 text-site-primary" />
@@ -160,19 +165,19 @@ export function CoexistenceSection() {
                     <Bot className="h-3 w-3 text-site-primary" />
                   </div>
                   <div>
-                    <div className="font-medium leading-none">Peluquería Estilo</div>
-                    <div className="mt-0.5 font-mono text-[9px] uppercase tracking-widest text-site-primary">IA activa</div>
+                    <div className="font-medium leading-none">{t("Peluquería Estilo", "Estilo Hair Salon")}</div>
+                    <div className="mt-0.5 font-mono text-[9px] uppercase tracking-widest text-site-primary">{t("IA activa", "AI active")}</div>
                   </div>
                 </div>
               }
             >
-              <MsgIn>Hola, ¿tienen turno para hoy?</MsgIn>
-              <MsgOut>¡Hola! Sí, tengo espacio a las 4pm y 5:30pm. ¿Cuál prefieres?</MsgOut>
-              <MsgIn>A las 5:30</MsgIn>
+              <MsgIn>{t("Hola, ¿tienen turno para hoy?", "Hi, do you have an opening today?")}</MsgIn>
+              <MsgOut>{t("¡Hola! Sí, tengo espacio a las 4pm y 5:30pm. ¿Cuál prefieres?", "Hi! Yes, I have 4pm and 5:30pm available. Which do you prefer?")}</MsgOut>
+              <MsgIn>{t("A las 5:30", "At 5:30")}</MsgIn>
               <div className="mx-auto my-1 w-fit rounded-full bg-white/[0.04] px-2.5 py-1 font-mono text-[9px] uppercase tracking-widest text-site-muted-fg">
-                Dueño respondió desde su celular
+                {t("Dueño respondió desde su celular", "Owner replied from their phone")}
               </div>
-              <MsgOut>Listo, te espero a las 5:30. ¡Nos vemos!</MsgOut>
+              <MsgOut>{t("Listo, te espero a las 5:30. ¡Nos vemos!", "Done, see you at 5:30!")}</MsgOut>
             </PhoneMock>
           </div>
         </div>
