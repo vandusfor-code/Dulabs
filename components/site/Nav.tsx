@@ -3,16 +3,18 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
-
-const links = [
-  { label: "Plataforma", href: "#plataforma" },
-  { label: "Agentes", href: "#entrenamiento" },
-  { label: "Infraestructura", href: "#infraestructura" },
-  { label: "Escala", href: "#escala" },
-  { label: "Precios", href: "#precios" },
-];
+import { useI18n } from "@/lib/i18n";
+import { LanguageSelector } from "@/components/LanguageSelector";
 
 export function Nav() {
+  const { t } = useI18n();
+  const links = [
+    { label: t("Plataforma", "Platform"), href: "#plataforma" },
+    { label: t("Agentes", "Agents"), href: "#entrenamiento" },
+    { label: t("Infraestructura", "Infrastructure"), href: "#infraestructura" },
+    { label: t("Escala", "Scale"), href: "#escala" },
+    { label: t("Precios", "Pricing"), href: "#precios" },
+  ];
   const [scrolled, setScrolled] = useState(false);
   useEffect(() => {
     const on = () => setScrolled(window.scrollY > 8);
@@ -46,14 +48,15 @@ export function Nav() {
           ))}
         </nav>
         <div className="flex items-center gap-3">
+          <LanguageSelector />
           <Link href="/login" className="hidden text-[13px] text-site-muted-fg transition-colors hover:text-site-fg md:inline">
-            Iniciar sesión
+            {t("Iniciar sesión", "Log in")}
           </Link>
           <Link
             href="/business"
             className="group inline-flex h-8 items-center gap-1.5 rounded-full bg-site-fg px-3.5 text-[12.5px] font-medium text-site-bg transition-all hover:bg-site-fg/90"
           >
-            Activar mi API
+            {t("Activar mi API", "Activate my API")}
             <span aria-hidden className="transition-transform group-hover:translate-x-0.5">→</span>
           </Link>
         </div>
