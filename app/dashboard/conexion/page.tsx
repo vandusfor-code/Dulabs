@@ -5,6 +5,7 @@ import { Phone as PhoneIcon, BadgeCheck, Pencil, Check, X, Bot, MessagesSquare, 
 import { useDashboard, type Negocio } from "@/lib/dashboard-session";
 import { formatearTelefono, nombreDelAgente, CALIDAD_INFO } from "@/lib/format";
 import { PageHeader, Pill, StatTile } from "@/components/dashboard/shell/ui";
+import { useI18n } from "@/lib/i18n";
 
 const LIMITE_NUMERICO: Record<string, number> = {
   TIER_50: 50,
@@ -50,30 +51,6 @@ type SessionInfo = { waba_id?: string; phone_number_id?: string };
 
 const PLAN_PENDIENTE_KEY = "du_labs_plan_elegido";
 
-const LIMITE_INFO: Record<string, string> = {
-  TIER_50: "50 conversaciones/día",
-  TIER_250: "250 conversaciones/día",
-  TIER_1K: "1.000 conversaciones/día",
-  TIER_10K: "10.000 conversaciones/día",
-  TIER_100K: "100.000 conversaciones/día",
-  TIER_UNLIMITED: "Ilimitado",
-};
-
-const VERIFICACION_INFO: Record<string, string> = {
-  VERIFIED: "Verificado",
-  NOT_VERIFIED: "No verificado",
-  PENDING: "En proceso",
-  EXPIRED: "Expirado",
-};
-
-const NOMBRE_VISIBLE_INFO: Record<string, string> = {
-  APPROVED: "Aprobado",
-  AVAILABLE_WITHOUT_REVIEW: "Aprobado",
-  PENDING_REVIEW: "En revisión",
-  DECLINED: "Rechazado",
-  NONE: "Sin definir",
-};
-
 function NumeroCard({
   negocio,
   accessToken,
@@ -83,6 +60,28 @@ function NumeroCard({
   accessToken: string;
   onActualizado: () => void;
 }) {
+  const { t } = useI18n();
+  const LIMITE_INFO: Record<string, string> = {
+    TIER_50: t("50 conversaciones/día", "50 conversations/day"),
+    TIER_250: t("250 conversaciones/día", "250 conversations/day"),
+    TIER_1K: t("1.000 conversaciones/día", "1,000 conversations/day"),
+    TIER_10K: t("10.000 conversaciones/día", "10,000 conversations/day"),
+    TIER_100K: t("100.000 conversaciones/día", "100,000 conversations/day"),
+    TIER_UNLIMITED: t("Ilimitado", "Unlimited"),
+  };
+  const VERIFICACION_INFO: Record<string, string> = {
+    VERIFIED: t("Verificado", "Verified"),
+    NOT_VERIFIED: t("No verificado", "Not verified"),
+    PENDING: t("En proceso", "In progress"),
+    EXPIRED: t("Expirado", "Expired"),
+  };
+  const NOMBRE_VISIBLE_INFO: Record<string, string> = {
+    APPROVED: t("Aprobado", "Approved"),
+    AVAILABLE_WITHOUT_REVIEW: t("Aprobado", "Approved"),
+    PENDING_REVIEW: t("En revisión", "Under review"),
+    DECLINED: t("Rechazado", "Declined"),
+    NONE: t("Sin definir", "Not set"),
+  };
   const [editando, setEditando] = useState(false);
   const [nombre, setNombre] = useState(negocio.nombre_negocio);
   const [guardando, setGuardando] = useState(false);
@@ -155,10 +154,10 @@ function NumeroCard({
         body: JSON.stringify({ phone_number_id: negocio.phone_number_id }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error ?? "No se pudo eliminar el número.");
+      if (!res.ok) throw new Error(data.error ?? t("No se pudo eliminar el número.", "Couldn't delete the number."));
       onActualizado();
     } catch (err) {
-      setErrorEliminar(err instanceof Error ? err.message : "No se pudo eliminar el número.");
+      setErrorEliminar(err instanceof Error ? err.message : t("No se pudo eliminar el número.", "Couldn't delete the number."));
       setEliminando(false);
     }
   }, [accessToken, negocio.phone_number_id, onActualizado]);
@@ -191,7 +190,7 @@ function NumeroCard({
                   onClick={guardarNombre}
                   disabled={guardando}
                   className="flex size-6 items-center justify-center rounded-md text-lime-text hover:bg-lime/10 disabled:opacity-50"
-                  aria-label="Guardar nombre"
+                  aria-label={t("Guardar nombre", "Save name")}
                 >
                   <Check className="size-3.5" />
                 </button>
@@ -201,7 +200,7 @@ function NumeroCard({
                     setNombre(negocio.nombre_negocio);
                   }}
                   className="flex size-6 items-center justify-center rounded-md text-mist hover:bg-ink"
-                  aria-label="Cancelar"
+                  aria-label={t("Cancelar", "Cancel")}
                 >
                   <X className="size-3.5" />
                 </button>
@@ -238,7 +237,7 @@ function NumeroCard({
                   onClick={guardarNombreAgente}
                   disabled={guardandoAgente}
                   className="flex size-5 items-center justify-center rounded-md text-lime-text hover:bg-lime/10 disabled:opacity-50"
-                  aria-label="Guardar nombre del agente"
+                  aria-label={t("Guardar nombre del agente", "Save agent name")}
                 >
                   <Check className="size-3" />
                 </button>
@@ -248,7 +247,7 @@ function NumeroCard({
                     setNombreAgenteInput(nombreDelAgente(negocio));
                   }}
                   className="flex size-5 items-center justify-center rounded-md text-mist hover:bg-ink"
-                  aria-label="Cancelar"
+                  aria-label={t("Cancelar", "Cancel")}
                 >
                   <X className="size-3" />
                 </button>
@@ -266,17 +265,17 @@ function NumeroCard({
         </div>
         <Pill tone={negocio.conectado ? "success" : "neutral"}>
           {negocio.conectado && <BadgeCheck className="size-3" />}
-          {negocio.conectado ? "Verificado" : "Pendiente"}
+          {negocio.conectado ? t("Verificado", "Verified") : t("Pendiente", "Pending")}
         </Pill>
       </div>
 
       <div className="mt-4 flex items-center justify-between border-t border-edge pt-4 text-xs">
         <span className="flex items-center gap-1.5 text-mist">
-          <MessagesSquare className="size-3.5" /> {negocio.enviados_30d.toLocaleString("es-CO")} enviados (30d)
+          <MessagesSquare className="size-3.5" /> {negocio.enviados_30d.toLocaleString("es-CO")} {t("enviados (30d)", "sent (30d)")}
         </span>
         {cupoDiario !== undefined && (
           <div className="flex items-center gap-2">
-            <span className="text-mist">Cupo diario</span>
+            <span className="text-mist">{t("Cupo diario", "Daily quota")}</span>
             <div className="h-1.5 w-16 overflow-hidden rounded-full bg-ink">
               <div
                 className="h-full rounded-full bg-lime"
@@ -295,8 +294,8 @@ function NumeroCard({
           </span>
           <span className="text-mist">
             {negocio.mensajes_limite === null
-              ? `${negocio.mensajes_usados.toLocaleString("es-CO")} mensajes · Ilimitado`
-              : `${negocio.mensajes_usados.toLocaleString("es-CO")} / ${negocio.mensajes_limite.toLocaleString("es-CO")} mensajes`}
+              ? `${negocio.mensajes_usados.toLocaleString("es-CO")} ${t("mensajes · Ilimitado", "messages · Unlimited")}`
+              : `${negocio.mensajes_usados.toLocaleString("es-CO")} / ${negocio.mensajes_limite.toLocaleString("es-CO")} ${t("mensajes", "messages")}`}
           </span>
         </div>
         <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-ink">
@@ -313,10 +312,17 @@ function NumeroCard({
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-2.5 border-t border-edge pt-4">
-        <MetaDato label="Calidad" pill={negocio.calidad ? CALIDAD_INFO[negocio.calidad] : undefined} />
-        <MetaDato label="Límite de mensajería" texto={negocio.limite_mensajeria ? LIMITE_INFO[negocio.limite_mensajeria] ?? negocio.limite_mensajeria : undefined} />
-        <MetaDato label="Verificación" texto={negocio.estado_verificacion ? VERIFICACION_INFO[negocio.estado_verificacion] ?? negocio.estado_verificacion : undefined} />
-        <MetaDato label="Nombre visible" texto={negocio.estado_nombre_visible ? NOMBRE_VISIBLE_INFO[negocio.estado_nombre_visible] ?? negocio.estado_nombre_visible : undefined} />
+        <MetaDato
+          label={t("Calidad", "Quality")}
+          pill={
+            negocio.calidad && CALIDAD_INFO[negocio.calidad]
+              ? { label: t(CALIDAD_INFO[negocio.calidad].label, CALIDAD_INFO[negocio.calidad].labelEn), tone: CALIDAD_INFO[negocio.calidad].tone }
+              : undefined
+          }
+        />
+        <MetaDato label={t("Límite de mensajería", "Messaging limit")} texto={negocio.limite_mensajeria ? LIMITE_INFO[negocio.limite_mensajeria] ?? negocio.limite_mensajeria : undefined} />
+        <MetaDato label={t("Verificación", "Verification")} texto={negocio.estado_verificacion ? VERIFICACION_INFO[negocio.estado_verificacion] ?? negocio.estado_verificacion : undefined} />
+        <MetaDato label={t("Nombre visible", "Display name")} texto={negocio.estado_nombre_visible ? NOMBRE_VISIBLE_INFO[negocio.estado_nombre_visible] ?? negocio.estado_nombre_visible : undefined} />
       </div>
 
       <p className="mt-4 break-all font-mono text-[10.5px] text-mist/70">WABA {negocio.whatsapp_business_account_id}</p>
@@ -325,8 +331,10 @@ function NumeroCard({
         {confirmandoBorrado ? (
           <div className="rounded-lg border border-red-500/40 bg-red-500/10 p-3">
             <p className="text-xs leading-relaxed text-red-400">
-              Esto desconecta el número de Meta y borra permanentemente sus mensajes, campañas y configuración.
-              No se puede deshacer.
+              {t(
+                "Esto desconecta el número de Meta y borra permanentemente sus mensajes, campañas y configuración. No se puede deshacer.",
+                "This disconnects the number from Meta and permanently deletes its messages, campaigns and settings. This can't be undone."
+              )}
             </p>
             {errorEliminar && <p className="mt-2 text-xs text-red-400">{errorEliminar}</p>}
             <div className="mt-3 flex items-center gap-2">
@@ -335,7 +343,7 @@ function NumeroCard({
                 disabled={eliminando}
                 className="rounded-md bg-red-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-600 disabled:opacity-50"
               >
-                {eliminando ? "Eliminando…" : "Sí, eliminar todo"}
+                {eliminando ? t("Eliminando…", "Deleting…") : t("Sí, eliminar todo", "Yes, delete everything")}
               </button>
               <button
                 onClick={() => {
@@ -345,7 +353,7 @@ function NumeroCard({
                 disabled={eliminando}
                 className="rounded-md px-3 py-1.5 text-xs font-medium text-mist hover:bg-ink disabled:opacity-50"
               >
-                Cancelar
+                {t("Cancelar", "Cancel")}
               </button>
             </div>
           </div>
@@ -354,7 +362,7 @@ function NumeroCard({
             onClick={() => setConfirmandoBorrado(true)}
             className="flex items-center gap-1.5 rounded-lg border border-red-500/30 bg-red-500/5 px-3 py-1.5 text-xs font-semibold text-red-500 transition-colors hover:bg-red-500/10 hover:border-red-500/50"
           >
-            <Trash2 className="size-3.5" /> Eliminar mis datos
+            <Trash2 className="size-3.5" /> {t("Eliminar mis datos", "Delete my data")}
           </button>
         )}
       </div>
@@ -387,6 +395,7 @@ function MetaDato({
 
 export default function ConexionPage() {
   const { session, negocios, errorNegocios, cargarNegocios } = useDashboard();
+  const { t } = useI18n();
   const appId = process.env.NEXT_PUBLIC_META_APP_ID;
   const configId = process.env.NEXT_PUBLIC_META_CONFIG_ID;
   const configFaltante = !appId || !configId;
@@ -452,7 +461,7 @@ export default function ConexionPage() {
         if (!code) {
           setEstado({
             fase: "error",
-            mensaje: "El flujo fue cancelado o Meta no generó el código de autorización.",
+            mensaje: t("El flujo fue cancelado o Meta no generó el código de autorización.", "The flow was cancelled or Meta didn't generate the authorization code."),
           });
           return;
         }
@@ -477,14 +486,14 @@ export default function ConexionPage() {
               localStorage.removeItem(PLAN_PENDIENTE_KEY);
               setEstado({
                 fase: "exito",
-                negocio: data.negocio ?? "tu negocio",
+                negocio: data.negocio ?? t("tu negocio", "your business"),
                 telefono: data.telefono ?? "",
               });
               cargarNegocios();
             } else {
               setEstado({
                 fase: "error",
-                mensaje: data.error ?? "Error desconocido en la vinculación.",
+                mensaje: data.error ?? t("Error desconocido en la vinculación.", "Unknown error while linking."),
               });
             }
           })
@@ -504,7 +513,7 @@ export default function ConexionPage() {
         },
       }
     );
-  }, [configId, session, cargarNegocios]);
+  }, [configId, session, cargarNegocios, t]);
 
   const numerosConectados = negocios?.filter((n) => n.conectado).length ?? 0;
   const negociosConTier = (negocios ?? []).filter((n) => n.limite_mensajeria && LIMITE_NUMERICO[n.limite_mensajeria]);
@@ -520,44 +529,44 @@ export default function ConexionPage() {
     calidadPromedioValor === null
       ? "—"
       : calidadPromedioValor >= 2.5
-        ? "Alta"
+        ? t("Alta", "High")
         : calidadPromedioValor >= 1.5
-          ? "Media"
-          : "Baja";
+          ? t("Media", "Medium")
+          : t("Baja", "Low");
   const mensajesHoy = (negocios ?? []).reduce((acc, n) => acc + n.enviados_hoy, 0);
 
   return (
     <div className="pb-12">
       <PageHeader
-        eyebrow="Infraestructura"
-        title="Números"
-        description="Administra las líneas de WhatsApp conectadas a tu cuenta."
+        eyebrow={t("Infraestructura", "Infrastructure")}
+        title={t("Números", "Numbers")}
+        description={t("Administra las líneas de WhatsApp conectadas a tu cuenta.", "Manage the WhatsApp lines connected to your account.")}
       />
 
       <div className="px-4 pt-6 md:px-8">
         {negocios !== null && negocios.length > 0 && (
           <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
-            <StatTile label="Números conectados" value={String(numerosConectados)} icon={PhoneIcon} />
+            <StatTile label={t("Números conectados", "Connected numbers")} value={String(numerosConectados)} icon={PhoneIcon} />
             <StatTile
-              label="Capacidad total / 24h"
-              value={hayIlimitado ? "Ilimitado" : capacidadTotal > 0 ? capacidadTotal.toLocaleString("es-CO") : "—"}
+              label={t("Capacidad total / 24h", "Total capacity / 24h")}
+              value={hayIlimitado ? t("Ilimitado", "Unlimited") : capacidadTotal > 0 ? capacidadTotal.toLocaleString("es-CO") : "—"}
               icon={BadgeCheck}
             />
-            <StatTile label="Calidad promedio" value={calidadPromedioLabel} icon={Bot} />
-            <StatTile label="Mensajes hoy" value={mensajesHoy.toLocaleString("es-CO")} icon={MessagesSquare} />
+            <StatTile label={t("Calidad promedio", "Average quality")} value={calidadPromedioLabel} icon={Bot} />
+            <StatTile label={t("Mensajes hoy", "Messages today")} value={mensajesHoy.toLocaleString("es-CO")} icon={MessagesSquare} />
           </div>
         )}
 
         {planPendiente && (
           <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-lime/40 bg-lime/10 p-4 text-sm">
             <span className="text-fg">
-              Elegiste el <strong>{planPendiente}</strong>. Falta activar tu suscripción para completar el registro.
+              {t("Elegiste el", "You chose")} <strong>{planPendiente}</strong>. {t("Falta activar tu suscripción para completar el registro.", "You still need to activate your subscription to finish signing up.")}
             </span>
             <a
               href="/checkout"
               className="rounded-lg bg-lime px-4 py-2 text-xs font-semibold text-lime-fg hover:bg-lime-hover"
             >
-              Completar suscripción →
+              {t("Completar suscripción →", "Complete subscription →")}
             </a>
           </div>
         )}
@@ -568,12 +577,14 @@ export default function ConexionPage() {
           </p>
         )}
 
-        {!errorNegocios && negocios === null && <p className="text-sm text-mist">Cargando tus números…</p>}
+        {!errorNegocios && negocios === null && <p className="text-sm text-mist">{t("Cargando tus números…", "Loading your numbers…")}</p>}
 
         {negocios !== null && negocios.length === 0 && (
           <p className="rounded-xl border border-edge bg-card p-5 text-sm leading-relaxed text-mist">
-            Todavía no tienes ningún número conectado. Usa el botón de abajo para vincular tu primer WhatsApp
-            Business.
+            {t(
+              "Todavía no tienes ningún número conectado. Usa el botón de abajo para vincular tu primer WhatsApp Business.",
+              "You don't have any connected number yet. Use the button below to link your first WhatsApp Business."
+            )}
           </p>
         )}
 
@@ -593,22 +604,22 @@ export default function ConexionPage() {
         {/* Conectar un número nuevo */}
         <div className="mt-6 rounded-xl border border-edge bg-card p-6 sm:p-8">
           <p className="text-sm leading-relaxed text-mist">
-            Inicia sesión con el Facebook de tu empresa y vincula tu número de WhatsApp Business. Seguirás usando
-            tu app móvil con normalidad: la IA de Du Labs atenderá en paralelo y tú podrás intervenir cuando
-            quieras.
+            {t(
+              "Inicia sesión con el Facebook de tu empresa y vincula tu número de WhatsApp Business. Seguirás usando tu app móvil con normalidad: la IA de Du Labs atenderá en paralelo y tú podrás intervenir cuando quieras.",
+              "Log in with your business Facebook and link your WhatsApp Business number. You'll keep using your mobile app as usual: Du Labs' AI answers in parallel and you can step in whenever you want."
+            )}
           </p>
 
           <div className="mt-6">
             {estado.fase === "exito" ? (
               <div className="rounded-xl border border-lime/40 bg-lime/10 p-5 text-sm leading-relaxed text-fg">
-                ✅ <strong>{estado.negocio}</strong> quedó conectado a Du Labs
-                {estado.telefono ? ` (${estado.telefono})` : ""}. Los mensajes de tus clientes ya serán atendidos
-                por tu asistente de IA.
+                ✅ <strong>{estado.negocio}</strong> {t("quedó conectado a Du Labs", "is now connected to Du Labs")}
+                {estado.telefono ? ` (${estado.telefono})` : ""}. {t("Los mensajes de tus clientes ya serán atendidos por tu asistente de IA.", "Your customers' messages will now be handled by your AI assistant.")}
                 <button
                   onClick={() => setEstado({ fase: "listo" })}
                   className="mt-4 block text-sm font-semibold text-lime-text hover:text-fg"
                 >
-                  Conectar otro número →
+                  {t("Conectar otro número →", "Connect another number →")}
                 </button>
               </div>
             ) : (
@@ -621,10 +632,10 @@ export default function ConexionPage() {
                   <path d="M24 12.073C24 5.405 18.627 0 12 0S0 5.405 0 12.073C0 18.1 4.388 23.094 10.125 24v-8.437H7.078v-3.49h3.047v-2.66c0-3.026 1.792-4.697 4.533-4.697 1.313 0 2.686.236 2.686.236v2.971H15.83c-1.491 0-1.956.93-1.956 1.886v2.264h3.328l-.532 3.49h-2.796V24C19.612 23.094 24 18.1 24 12.073z" />
                 </svg>
                 {estado.fase === "conectando"
-                  ? "Conectando…"
+                  ? t("Conectando…", "Connecting…")
                   : estado.fase === "cargando"
-                    ? "Cargando…"
-                    : "Conectar nuevo número con Facebook"}
+                    ? t("Cargando…", "Loading…")
+                    : t("Conectar nuevo número con Facebook", "Connect a new number with Facebook")}
               </button>
             )}
 
@@ -641,9 +652,10 @@ export default function ConexionPage() {
           </div>
 
           <p className="mt-6 text-xs leading-relaxed text-mist/70">
-            Al conectar autorizas a Du Labs a enviar y recibir mensajes de WhatsApp en nombre de tu negocio
-            mediante la API oficial de Meta. Tu sesión de WhatsApp Business en el celular no se cierra (modo
-            coexistencia).
+            {t(
+              "Al conectar autorizas a Du Labs a enviar y recibir mensajes de WhatsApp en nombre de tu negocio mediante la API oficial de Meta. Tu sesión de WhatsApp Business en el celular no se cierra (modo coexistencia).",
+              "By connecting you authorize Du Labs to send and receive WhatsApp messages on behalf of your business via Meta's official API. Your WhatsApp Business session on your phone stays open (coexistence mode)."
+            )}
           </p>
         </div>
       </div>

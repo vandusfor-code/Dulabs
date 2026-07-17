@@ -2,11 +2,11 @@ export function nombreDelAgente(negocio: { nombre_agente: string | null; nombre_
   return negocio.nombre_agente || `Asistente de ${negocio.nombre_negocio}`;
 }
 
-export const CALIDAD_INFO: Record<string, { label: string; tone: "success" | "warning" | "danger" | "neutral" }> = {
-  GREEN: { label: "Alta", tone: "success" },
-  YELLOW: { label: "Media", tone: "warning" },
-  RED: { label: "Baja", tone: "danger" },
-  UNKNOWN: { label: "Sin datos aún", tone: "neutral" },
+export const CALIDAD_INFO: Record<string, { label: string; labelEn: string; tone: "success" | "warning" | "danger" | "neutral" }> = {
+  GREEN: { label: "Alta", labelEn: "High", tone: "success" },
+  YELLOW: { label: "Media", labelEn: "Medium", tone: "warning" },
+  RED: { label: "Baja", labelEn: "Low", tone: "danger" },
+  UNKNOWN: { label: "Sin datos aún", labelEn: "No data yet", tone: "neutral" },
 };
 
 export function formatearTelefono(digitos: string): string {
