@@ -1127,7 +1127,7 @@ export function Footer() {
       links: [
         { l: "Privacidad", h: "/privacidad" },
         { l: "Términos", h: "/terminos" },
-        { l: "Eliminación de datos", h: "/eliminacion-de-datos-whatsapp" },
+        { l: "Eliminación de datos - WhatsApp", h: "/eliminacion-de-datos-whatsapp" },
       ],
     },
   ];
