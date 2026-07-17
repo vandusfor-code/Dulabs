@@ -191,13 +191,17 @@ export function CoexistenceSection() {
 ========================================================= */
 
 export function CampaignsSection() {
+  const { t } = useI18n();
   return (
     <section id="campanas" className="relative border-t border-site-border py-28">
       <div className="mx-auto max-w-[1280px] px-6">
         <SectionHeading
-          eyebrow="Plantillas y campañas"
-          title={<>Mensajes masivos autorizados, <br className="hidden md:block" />sin miedo a que te marquen como spam.</>}
-          desc="Crea plantillas con Meta, espera la aprobación, y envía campañas a toda tu lista de clientes en segundos — todo desde tu panel."
+          eyebrow={t("Plantillas y campañas", "Templates & campaigns")}
+          title={<>{t("Mensajes masivos autorizados,", "Authorized bulk messages,")} <br className="hidden md:block" />{t("sin miedo a que te marquen como spam.", "without fear of being flagged as spam.")}</>}
+          desc={t(
+            "Crea plantillas con Meta, espera la aprobación, y envía campañas a toda tu lista de clientes en segundos — todo desde tu panel.",
+            "Create templates with Meta, wait for approval, and send campaigns to your whole customer list in seconds — all from your dashboard."
+          )}
         />
 
         <div className="mt-12 grid grid-cols-12 gap-4">
@@ -207,22 +211,25 @@ export function CampaignsSection() {
                 <Megaphone className="h-3.5 w-3.5 text-site-primary" />
                 <span className="font-display text-[13px] font-medium text-site-fg">promo_julio</span>
                 <span className="rounded-full bg-site-primary/10 px-1.5 py-0.5 font-mono text-[9.5px] uppercase tracking-widest text-site-primary ring-1 ring-site-primary/20">
-                  Aprobada
+                  {t("Aprobada", "Approved")}
                 </span>
               </div>
               <button className="inline-flex items-center gap-1 rounded-md bg-site-primary px-2 py-1 text-[11px] font-medium text-site-primary-fg">
-                <Send className="h-3 w-3" /> Enviar
+                <Send className="h-3 w-3" /> {t("Enviar", "Send")}
               </button>
             </div>
             <div className="p-5">
               <div className="rounded-lg border border-site-border bg-white/[0.02] p-4 text-[13px] leading-relaxed text-site-fg/90">
-                Hola 👋, tenemos una promoción especial esta semana en nuestros servicios. Escríbenos para reservar tu cita.
+                {t(
+                  "Hola 👋, tenemos una promoción especial esta semana en nuestros servicios. Escríbenos para reservar tu cita.",
+                  "Hi 👋, we have a special promotion on our services this week. Message us to book your appointment."
+                )}
               </div>
               <div className="mt-4 grid grid-cols-3 gap-3 text-center">
                 {[
-                  { l: "Destinatarios", v: "312" },
-                  { l: "Enviados", v: "312" },
-                  { l: "Fallidos", v: "0" },
+                  { l: t("Destinatarios", "Recipients"), v: "312" },
+                  { l: t("Enviados", "Sent"), v: "312" },
+                  { l: t("Fallidos", "Failed"), v: "0" },
                 ].map((s) => (
                   <div key={s.l} className="rounded-lg border border-site-border bg-white/[0.02] p-3">
                     <div className="font-display text-[20px] font-medium text-site-fg">{s.v}</div>
@@ -235,9 +242,9 @@ export function CampaignsSection() {
 
           <div className="col-span-12 space-y-3 lg:col-span-5">
             {[
-              { step: "1", title: "Escribe tu plantilla", desc: "Nombre, categoría y el texto del mensaje." },
-              { step: "2", title: "Meta la revisa", desc: "Aprobación automática, normalmente en minutos u horas." },
-              { step: "3", title: "Envía la campaña", desc: "Pega tu lista de números y listo — se manda a todos." },
+              { step: "1", title: t("Escribe tu plantilla", "Write your template"), desc: t("Nombre, categoría y el texto del mensaje.", "Name, category and the message text.") },
+              { step: "2", title: t("Meta la revisa", "Meta reviews it"), desc: t("Aprobación automática, normalmente en minutos u horas.", "Automatic approval, usually in minutes or hours.") },
+              { step: "3", title: t("Envía la campaña", "Send the campaign"), desc: t("Pega tu lista de números y listo — se manda a todos.", "Paste your list of numbers and done — it goes out to everyone.") },
             ].map((s) => (
               <div key={s.step} className="flex items-start gap-3 rounded-xl border border-site-border bg-white/[0.02] p-4">
                 <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-site-primary/10 font-mono text-[11px] font-semibold text-site-primary ring-1 ring-site-primary/25">
@@ -261,32 +268,36 @@ export function CampaignsSection() {
 ========================================================= */
 
 export function WhatsAppSection() {
+  const { t } = useI18n();
   return (
     <section id="whatsapp" className="relative border-t border-site-border py-28">
       <div className="mx-auto max-w-[1280px] px-6">
         <div className="grid grid-cols-12 gap-8 lg:gap-12">
           <div className="col-span-12 lg:col-span-5 lg:pt-6">
             <SectionHeading
-              eyebrow="WhatsApp · API Oficial"
-              title={<>Automatización real, <br className="hidden md:block" />sobre la infraestructura de Meta.</>}
-              desc="Conectas tu número mediante el flujo oficial de Meta (Embedded Signup). Nada de extensiones de navegador ni trucos que arriesguen tu cuenta."
+              eyebrow={t("WhatsApp · API Oficial", "WhatsApp · Official API")}
+              title={<>{t("Automatización real,", "Real automation,")} <br className="hidden md:block" />{t("sobre la infraestructura de Meta.", "on Meta's infrastructure.")}</>}
+              desc={t(
+                "Conectas tu número mediante el flujo oficial de Meta (Embedded Signup). Nada de extensiones de navegador ni trucos que arriesguen tu cuenta.",
+                "You connect your number through Meta's official flow (Embedded Signup). No browser extensions or hacks that put your account at risk."
+              )}
             />
             <ul className="mt-8 space-y-3 text-[13.5px]">
               {[
-                "Conexión oficial vía Embedded Signup de Meta",
-                "Plantillas y mensajes interactivos nativos",
-                "Modo coexistencia: tú y la IA, en paralelo",
-                "IA entrenada con tus precios y horarios",
-              ].map((t) => (
-                <li key={t} className="flex items-start gap-2.5 text-site-fg/90">
+                t("Conexión oficial vía Embedded Signup de Meta", "Official connection via Meta's Embedded Signup"),
+                t("Plantillas y mensajes interactivos nativos", "Native templates and interactive messages"),
+                t("Modo coexistencia: tú y la IA, en paralelo", "Coexistence mode: you and the AI, in parallel"),
+                t("IA entrenada con tus precios y horarios", "AI trained on your prices and hours"),
+              ].map((item) => (
+                <li key={item} className="flex items-start gap-2.5 text-site-fg/90">
                   <Check className="mt-0.5 h-4 w-4 flex-shrink-0 text-site-primary" />
-                  {t}
+                  {item}
                 </li>
               ))}
             </ul>
             <div className="mt-8">
               <Link href="/business" className="inline-flex items-center gap-1 text-[13.5px] font-medium text-site-fg hover:text-site-primary">
-                Ver planes y precios <ArrowRight className="h-3.5 w-3.5" />
+                {t("Ver planes y precios", "See plans and pricing")} <ArrowRight className="h-3.5 w-3.5" />
               </Link>
             </div>
           </div>
@@ -307,36 +318,36 @@ export function WhatsAppSection() {
                           </div>
                           <div>
                             <div className="font-medium leading-none">Du IA Business</div>
-                            <div className="mt-0.5 font-mono text-[9px] uppercase tracking-widest text-site-primary">En línea</div>
+                            <div className="mt-0.5 font-mono text-[9px] uppercase tracking-widest text-site-primary">{t("En línea", "Online")}</div>
                           </div>
                         </div>
                       }
                     >
-                      <MsgIn>Hola, ¿cuánto cuesta el servicio básico?</MsgIn>
+                      <MsgIn>{t("Hola, ¿cuánto cuesta el servicio básico?", "Hi, how much is the basic service?")}</MsgIn>
                       <MsgOut>
-                        ¡Hola! El servicio básico cuesta $45.000. ¿Quieres agendar una cita?
+                        {t("¡Hola! El servicio básico cuesta $45.000. ¿Quieres agendar una cita?", "Hi! The basic service is $45,000. Would you like to book an appointment?")}
                         <div className="mt-2 grid grid-cols-2 gap-1.5">
-                          <button className="rounded-md bg-site-primary/15 py-1 text-[10px] font-medium text-site-primary ring-1 ring-site-primary/25">Agendar</button>
-                          <button className="rounded-md bg-white/5 py-1 text-[10px] text-site-fg ring-1 ring-white/10">Ver más</button>
+                          <button className="rounded-md bg-site-primary/15 py-1 text-[10px] font-medium text-site-primary ring-1 ring-site-primary/25">{t("Agendar", "Book")}</button>
+                          <button className="rounded-md bg-white/5 py-1 text-[10px] text-site-fg ring-1 ring-white/10">{t("Ver más", "See more")}</button>
                         </div>
                       </MsgOut>
-                      <div className="text-center font-mono text-[9px] uppercase tracking-widest text-site-muted-fg">escribiendo…</div>
+                      <div className="text-center font-mono text-[9px] uppercase tracking-widest text-site-muted-fg">{t("escribiendo…", "typing…")}</div>
                     </PhoneMock>
                   </div>
 
                   <div className="col-span-12 space-y-3 md:col-span-6">
                     <div className="site-panel p-3">
-                      <div className="mb-2 font-mono text-[10px] uppercase tracking-widest text-site-muted-fg">Cómo funciona</div>
+                      <div className="mb-2 font-mono text-[10px] uppercase tracking-widest text-site-muted-fg">{t("Cómo funciona", "How it works")}</div>
                       <div className="space-y-1.5 font-mono text-[10.5px]">
                         <TraceLine k="webhook.recibido" v="Meta Cloud API" ok />
-                        <TraceLine k="ia.responde" v="con tu prompt entrenado" ok />
-                        <TraceLine k="wa.enviado" v="entregado" ok />
+                        <TraceLine k="ia.responde" v={t("con tu prompt entrenado", "with your trained prompt")} ok />
+                        <TraceLine k="wa.enviado" v={t("entregado", "delivered")} ok />
                       </div>
                     </div>
                     <div className="site-panel p-3">
-                      <div className="font-mono text-[10px] uppercase tracking-widest text-site-muted-fg">Modelo de IA</div>
+                      <div className="font-mono text-[10px] uppercase tracking-widest text-site-muted-fg">{t("Modelo de IA", "AI model")}</div>
                       <div className="mt-1 font-display text-[15px] font-medium text-site-fg">Claude (Anthropic)</div>
-                      <div className="mt-1 text-[11px] text-site-muted-fg">Entrenado con el prompt de tu negocio: precios, horarios y tono.</div>
+                      <div className="mt-1 text-[11px] text-site-muted-fg">{t("Entrenado con el prompt de tu negocio: precios, horarios y tono.", "Trained with your business prompt: prices, hours and tone.")}</div>
                     </div>
                   </div>
                 </div>
@@ -363,55 +374,71 @@ function TraceLine({ k, v, ok }: { k: string; v: string; ok?: boolean }) {
    4. Entrena tu IA (reemplaza "Analytics")
 ========================================================= */
 
-const AGENT_FEATURES = [
-  {
-    icon: Bot,
-    title: "Nombre propio",
-    desc: "Cada número tiene un solo agente, con el nombre que tú le pongas — no un rol genérico ni una plantilla.",
-  },
-  {
-    icon: Sparkles,
-    title: "Instrucciones personalizadas",
-    desc: "Un cuadro de texto simple, sin código. Le escribes tus precios, horarios y tono, y responde así desde el próximo mensaje.",
-  },
-  {
-    icon: FileUp,
-    title: "Base de conocimiento",
-    desc: "Sube tu listado de precios (Excel o CSV) o un documento (PDF) y el agente lo usa como referencia real al responder.",
-  },
-  {
-    icon: Play,
-    title: "Playground de prueba",
-    desc: "Chatea con tu agente en un entorno de prueba, con sus instrucciones y conocimiento reales, antes de que hable con un cliente.",
-  },
-];
-
 export function TrainingSection() {
+  const { t } = useI18n();
+  const AGENT_FEATURES = [
+    {
+      icon: Bot,
+      title: t("Nombre propio", "Its own name"),
+      desc: t(
+        "Cada número tiene un solo agente, con el nombre que tú le pongas — no un rol genérico ni una plantilla.",
+        "Each number has a single agent, with the name you give it — not a generic role or a template."
+      ),
+    },
+    {
+      icon: Sparkles,
+      title: t("Instrucciones personalizadas", "Custom instructions"),
+      desc: t(
+        "Un cuadro de texto simple, sin código. Le escribes tus precios, horarios y tono, y responde así desde el próximo mensaje.",
+        "A simple text box, no code. You write your prices, hours and tone, and it replies that way from the next message on."
+      ),
+    },
+    {
+      icon: FileUp,
+      title: t("Base de conocimiento", "Knowledge base"),
+      desc: t(
+        "Sube tu listado de precios (Excel o CSV) o un documento (PDF) y el agente lo usa como referencia real al responder.",
+        "Upload your price list (Excel or CSV) or a document (PDF) and the agent uses it as a real reference when replying."
+      ),
+    },
+    {
+      icon: Play,
+      title: t("Playground de prueba", "Test playground"),
+      desc: t(
+        "Chatea con tu agente en un entorno de prueba, con sus instrucciones y conocimiento reales, antes de que hable con un cliente.",
+        "Chat with your agent in a test environment, with its real instructions and knowledge, before it talks to a customer."
+      ),
+    },
+  ];
   return (
     <section id="entrenamiento" className="relative border-t border-site-border py-28">
       <div className="mx-auto max-w-[1280px] px-6">
         <SectionHeading
-          eyebrow="Tu agente de IA"
-          title={<>Un agente por número, <br className="hidden md:block" />a tu manera — no un rol genérico.</>}
-          desc="Nada de roles preconfigurados de ventas o soporte. Cada número tiene un solo agente, con el nombre, las instrucciones y el conocimiento que tú le des."
+          eyebrow={t("Tu agente de IA", "Your AI agent")}
+          title={<>{t("Un agente por número,", "One agent per number,")} <br className="hidden md:block" />{t("a tu manera — no un rol genérico.", "your way — not a generic role.")}</>}
+          desc={t(
+            "Nada de roles preconfigurados de ventas o soporte. Cada número tiene un solo agente, con el nombre, las instrucciones y el conocimiento que tú le des.",
+            "No preset sales or support roles. Each number has a single agent, with the name, instructions and knowledge you give it."
+          )}
         />
 
         <div className="mt-12 grid grid-cols-12 gap-4">
           <Reveal variant="left" className="col-span-12 lg:col-span-5">
             <Panel className="p-6">
               <div className="flex items-center justify-between border-b border-site-border pb-3">
-                <span className="font-display text-[13px] font-medium text-site-fg">Entrenar a Ava</span>
-                <span className="font-mono text-[9.5px] uppercase tracking-widest text-site-primary">Guardado</span>
+                <span className="font-display text-[13px] font-medium text-site-fg">{t("Entrenar a Ava", "Train Ava")}</span>
+                <span className="font-mono text-[9.5px] uppercase tracking-widest text-site-primary">{t("Guardado", "Saved")}</span>
               </div>
               <div className="mt-4 rounded-lg border border-site-border bg-white/[0.02] p-4 text-[13px] leading-relaxed text-site-fg/80">
-                Eres el asistente de WhatsApp de &quot;Peluquería Estilo&quot;. Responde de forma
-                breve y amable. Cortes desde $25.000, tinte desde $60.000. Atendemos de
-                martes a sábado, 9am a 6pm.
+                {t(
+                  'Eres el asistente de WhatsApp de "Peluquería Estilo". Responde de forma breve y amable. Cortes desde $25.000, tinte desde $60.000. Atendemos de martes a sábado, 9am a 6pm.',
+                  'You are the WhatsApp assistant for "Estilo Hair Salon". Reply briefly and kindly. Haircuts from $25,000, coloring from $60,000. Open Tuesday to Saturday, 9am to 6pm.'
+                )}
               </div>
               <div className="mt-4 flex items-center justify-between text-[11px] text-site-muted-fg">
                 <span>312 / 4000</span>
                 <span className="inline-flex items-center gap-1.5 text-site-primary">
-                  <CheckCircle2 className="h-3.5 w-3.5" /> Ava ya responde con esto
+                  <CheckCircle2 className="h-3.5 w-3.5" /> {t("Ava ya responde con esto", "Ava already replies with this")}
                 </span>
               </div>
             </Panel>
@@ -439,19 +466,23 @@ export function TrainingSection() {
 ========================================================= */
 
 export function KnowledgeSection() {
+  const { t } = useI18n();
   const knowledgeItems = [
-    { icon: FileText, title: "Excel, CSV o PDF", desc: "Listados de precios, catálogos o políticas — los formatos que ya usas." },
-    { icon: Gauge, title: "Un archivo por número", desc: "Cada agente tiene su propia base de conocimiento, independiente de los demás." },
-    { icon: ShieldCheck, title: "Solo lo que tú subiste", desc: "El agente responde con tus instrucciones y tu archivo, nada más." },
+    { icon: FileText, title: t("Excel, CSV o PDF", "Excel, CSV or PDF"), desc: t("Listados de precios, catálogos o políticas — los formatos que ya usas.", "Price lists, catalogs or policies — the formats you already use.") },
+    { icon: Gauge, title: t("Un archivo por número", "One file per number"), desc: t("Cada agente tiene su propia base de conocimiento, independiente de los demás.", "Each agent has its own knowledge base, independent from the rest.") },
+    { icon: ShieldCheck, title: t("Solo lo que tú subiste", "Only what you uploaded"), desc: t("El agente responde con tus instrucciones y tu archivo, nada más.", "The agent replies with your instructions and your file, nothing else.") },
   ];
 
   return (
     <section id="conocimiento" className="relative border-t border-site-border py-28">
       <div className="mx-auto max-w-[1280px] px-6">
         <SectionHeading
-          eyebrow="Base de conocimiento"
-          title={<>Sube un archivo. <br className="hidden md:block" />El agente lo usa como referencia real.</>}
-          desc="Un listado de precios en Excel o CSV, o un documento en PDF. Sin bases de datos complicadas — un archivo por número, listo para responder con eso."
+          eyebrow={t("Base de conocimiento", "Knowledge base")}
+          title={<>{t("Sube un archivo.", "Upload a file.")} <br className="hidden md:block" />{t("El agente lo usa como referencia real.", "The agent uses it as a real reference.")}</>}
+          desc={t(
+            "Un listado de precios en Excel o CSV, o un documento en PDF. Sin bases de datos complicadas — un archivo por número, listo para responder con eso.",
+            "A price list in Excel or CSV, or a PDF document. No complicated databases — one file per number, ready to answer with it."
+          )}
         />
 
         <div className="mt-12 grid grid-cols-12 gap-4">
@@ -460,10 +491,10 @@ export function KnowledgeSection() {
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <FileUp className="h-4 w-4 text-site-primary" />
-                  <span className="font-display text-[13px] font-medium text-site-fg">Base de conocimiento</span>
+                  <span className="font-display text-[13px] font-medium text-site-fg">{t("Base de conocimiento", "Knowledge base")}</span>
                 </div>
                 <span className="inline-flex items-center gap-1.5 rounded-lg border border-site-border bg-white/[0.02] px-3 py-1.5 text-[11px] text-site-muted-fg">
-                  Reemplazar archivo
+                  {t("Reemplazar archivo", "Replace file")}
                 </span>
               </div>
               <div className="mt-4 flex items-center gap-3 rounded-lg border border-site-border bg-white/[0.02] px-3 py-3">
@@ -472,13 +503,15 @@ export function KnowledgeSection() {
                 </span>
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-[13px] text-site-fg">precios-peluqueria.xlsx</div>
-                  <div className="text-[11px] text-site-muted-fg">4.820 caracteres</div>
+                  <div className="text-[11px] text-site-muted-fg">{t("4.820 caracteres", "4,820 characters")}</div>
                 </div>
                 <CheckCircle2 className="h-4 w-4 shrink-0 text-site-primary" />
               </div>
               <p className="mt-4 text-[12.5px] leading-relaxed text-site-muted-fg">
-                El agente combina esto con sus instrucciones de tono y horarios para responder con tus datos reales
-                — nunca inventa precios que no le diste.
+                {t(
+                  "El agente combina esto con sus instrucciones de tono y horarios para responder con tus datos reales — nunca inventa precios que no le diste.",
+                  "The agent combines this with its tone and hours instructions to reply with your real data — it never makes up prices you didn't give it."
+                )}
               </p>
             </Panel>
           </Reveal>
@@ -504,24 +537,27 @@ export function KnowledgeSection() {
    4c. Infraestructura oficial de WhatsApp
 ========================================================= */
 
-const INFRA_ITEMS = [
-  { icon: ShieldCheck, title: "API Oficial de WhatsApp Business", desc: "Construido directamente sobre la Cloud API de Meta — sin atajos no oficiales, sin riesgo de bloqueo." },
-  { icon: UserPlus, title: "Embedded Signup", desc: "Conecta un número nuevo en minutos con el flujo nativo de Meta." },
-  { icon: Layers, title: "Múltiples números", desc: "Administra cada línea conectada desde un solo panel." },
-  { icon: FileCheck2, title: "Gestión de plantillas", desc: "Crea, envía a revisión y sigue el estado real de aprobación de tus plantillas." },
-  { icon: Radio, title: "Campañas masivas", desc: "Llega a toda tu lista de contactos con plantillas aprobadas por Meta." },
-  { icon: BadgeCheck, title: "Verificación de Meta", desc: "Consulta la calidad real de tu número y desbloquea límites de mensajería más altos." },
-  { icon: Users, title: "Traspaso a un humano", desc: "Toma cualquier conversación desde tu celular cuando quieras, sin perder el hilo." },
-];
-
 export function WhatsappInfraSection() {
+  const { t } = useI18n();
+  const INFRA_ITEMS = [
+    { icon: ShieldCheck, title: t("API Oficial de WhatsApp Business", "Official WhatsApp Business API"), desc: t("Construido directamente sobre la Cloud API de Meta — sin atajos no oficiales, sin riesgo de bloqueo.", "Built directly on Meta's Cloud API — no unofficial shortcuts, no ban risk.") },
+    { icon: UserPlus, title: "Embedded Signup", desc: t("Conecta un número nuevo en minutos con el flujo nativo de Meta.", "Connect a new number in minutes with Meta's native flow.") },
+    { icon: Layers, title: t("Múltiples números", "Multiple numbers"), desc: t("Administra cada línea conectada desde un solo panel.", "Manage every connected line from a single dashboard.") },
+    { icon: FileCheck2, title: t("Gestión de plantillas", "Template management"), desc: t("Crea, envía a revisión y sigue el estado real de aprobación de tus plantillas.", "Create, submit for review and track the real approval status of your templates.") },
+    { icon: Radio, title: t("Campañas masivas", "Bulk campaigns"), desc: t("Llega a toda tu lista de contactos con plantillas aprobadas por Meta.", "Reach your entire contact list with Meta-approved templates.") },
+    { icon: BadgeCheck, title: t("Verificación de Meta", "Meta verification"), desc: t("Consulta la calidad real de tu número y desbloquea límites de mensajería más altos.", "Check your number's real quality and unlock higher messaging limits.") },
+    { icon: Users, title: t("Traspaso a un humano", "Human handoff"), desc: t("Toma cualquier conversación desde tu celular cuando quieras, sin perder el hilo.", "Take over any conversation from your phone whenever you want, without losing context.") },
+  ];
   return (
     <section id="infraestructura" className="relative border-t border-site-border bg-site-card/20 py-28">
       <div className="mx-auto max-w-[1280px] px-6">
         <SectionHeading
-          eyebrow="Infraestructura confiable"
-          title={<>Construido sobre la infraestructura <br className="hidden md:block" />oficial de WhatsApp.</>}
-          desc="Cada mensaje pasa por la plataforma verificada de Meta. Confiabilidad, cumplimiento y entrega, por defecto."
+          eyebrow={t("Infraestructura confiable", "Reliable infrastructure")}
+          title={<>{t("Construido sobre la infraestructura", "Built on WhatsApp's")} <br className="hidden md:block" />{t("oficial de WhatsApp.", "official infrastructure.")}</>}
+          desc={t(
+            "Cada mensaje pasa por la plataforma verificada de Meta. Confiabilidad, cumplimiento y entrega, por defecto.",
+            "Every message goes through Meta's verified platform. Reliability, compliance and delivery, by default."
+          )}
         />
 
         <div className="mt-12 grid grid-cols-1 gap-px overflow-hidden rounded-2xl border border-site-border bg-white/5 sm:grid-cols-2 lg:grid-cols-3">
@@ -539,8 +575,10 @@ export function WhatsappInfraSection() {
           <div className="flex flex-col justify-center bg-site-primary/5 p-6">
             <ShieldCheck className="h-6 w-6 text-site-primary" />
             <p className="mt-3 text-[13px] leading-relaxed text-site-muted-fg">
-              Corre sobre la red global de mensajería de Meta — la misma infraestructura que usan las marcas más
-              grandes del mundo.
+              {t(
+                "Corre sobre la red global de mensajería de Meta — la misma infraestructura que usan las marcas más grandes del mundo.",
+                "Runs on Meta's global messaging network — the same infrastructure used by the world's biggest brands."
+              )}
             </p>
           </div>
         </div>
@@ -554,18 +592,22 @@ export function WhatsappInfraSection() {
 ========================================================= */
 
 export function InboxSection() {
+  const { t } = useI18n();
   const chats = [
-    { name: "Peluquería Estilo", last: "Listo, te espero a las 5:30", active: true },
-    { name: "+57 300 123 4567", last: "¿Cuánto cuesta el servicio básico?", active: false },
-    { name: "+57 310 555 8899", last: "Perfecto, muchas gracias", active: true },
+    { name: t("Peluquería Estilo", "Estilo Hair Salon"), last: t("Listo, te espero a las 5:30", "Done, see you at 5:30"), active: true },
+    { name: "+57 300 123 4567", last: t("¿Cuánto cuesta el servicio básico?", "How much is the basic service?"), active: false },
+    { name: "+57 310 555 8899", last: t("Perfecto, muchas gracias", "Perfect, thank you very much"), active: true },
   ];
   return (
     <section id="mensajes" className="relative border-t border-site-border py-28">
       <div className="mx-auto max-w-[1280px] px-6">
         <SectionHeading
-          eyebrow="Mensajes"
-          title={<>Todas tus conversaciones, <br className="hidden md:block" />en un solo lugar.</>}
-          desc="Revisa cada chat, mira si la IA está activa o si pausaste para responder tú mismo, y ten el historial completo siempre a mano."
+          eyebrow={t("Mensajes", "Messages")}
+          title={<>{t("Todas tus conversaciones,", "All your conversations,")} <br className="hidden md:block" />{t("en un solo lugar.", "in one place.")}</>}
+          desc={t(
+            "Revisa cada chat, mira si la IA está activa o si pausaste para responder tú mismo, y ten el historial completo siempre a mano.",
+            "Review every chat, see whether the AI is active or paused for you to reply yourself, and keep the full history always at hand."
+          )}
         />
         <Panel className="mt-12 overflow-hidden">
           <div className="grid grid-cols-12">
@@ -583,18 +625,18 @@ export function InboxSection() {
                         : "bg-white/5 text-site-muted-fg ring-white/10"
                     }`}
                   >
-                    {c.active ? "IA activa" : "Pausado"}
+                    {c.active ? t("IA activa", "AI active") : t("Pausado", "Paused")}
                   </span>
                 </div>
               ))}
             </div>
             <div className="col-span-12 hidden border-l border-site-border p-5 md:col-span-7 md:block">
-              <div className="font-mono text-[10px] uppercase tracking-widest text-site-muted-fg">Peluquería Estilo</div>
+              <div className="font-mono text-[10px] uppercase tracking-widest text-site-muted-fg">{t("Peluquería Estilo", "Estilo Hair Salon")}</div>
               <div className="mt-3 space-y-2">
-                <MsgIn>Hola, ¿tienen turno para hoy?</MsgIn>
-                <MsgOut>¡Hola! Sí, tengo espacio a las 4pm y 5:30pm. ¿Cuál prefieres?</MsgOut>
-                <MsgIn>A las 5:30</MsgIn>
-                <MsgOut>Listo, te espero a las 5:30. ¡Nos vemos!</MsgOut>
+                <MsgIn>{t("Hola, ¿tienen turno para hoy?", "Hi, do you have an opening today?")}</MsgIn>
+                <MsgOut>{t("¡Hola! Sí, tengo espacio a las 4pm y 5:30pm. ¿Cuál prefieres?", "Hi! Yes, I have 4pm and 5:30pm available. Which do you prefer?")}</MsgOut>
+                <MsgIn>{t("A las 5:30", "At 5:30")}</MsgIn>
+                <MsgOut>{t("Listo, te espero a las 5:30. ¡Nos vemos!", "Done, see you at 5:30!")}</MsgOut>
               </div>
             </div>
           </div>
@@ -608,59 +650,59 @@ export function InboxSection() {
    5b. Una plataforma completa (7 módulos reales)
 ========================================================= */
 
-const PLATFORM_MODULES = [
-  {
-    key: "resumen",
-    icon: LayoutGrid,
-    label: "Resumen",
-    headline: "Cada número, agente y conversación en una sola vista.",
-    points: ["Automatización real por número", "Consumo del plan en vivo", "Actividad reciente"],
-  },
-  {
-    key: "agentes",
-    icon: Bot,
-    label: "Agentes de IA",
-    headline: "Configura tu agente en minutos, sin código.",
-    points: ["Un agente por número, con nombre propio", "Instrucciones y base de conocimiento", "Pausa manual o por coexistencia"],
-  },
-  {
-    key: "plantillas",
-    icon: FileText,
-    label: "Plantillas",
-    headline: "Crea y sigue tus plantillas hasta la aprobación.",
-    points: ["Estado real de aprobación de Meta", "Variables detectadas automáticamente", "Borradores locales antes de publicar"],
-  },
-  {
-    key: "campanas",
-    icon: Megaphone,
-    label: "Campañas",
-    headline: "Lanza campañas masivas con confianza.",
-    points: ["Entrega y lectura en tiempo real", "Embudo de conversión por campaña", "Solo plantillas aprobadas por Meta"],
-  },
-  {
-    key: "numeros",
-    icon: Phone,
-    label: "Números",
-    headline: "Administra cada línea desde un solo lugar.",
-    points: ["Conexión con Embedded Signup", "Calidad y límite reales de Meta", "Cupo diario en vivo"],
-  },
-  {
-    key: "analytics",
-    icon: BarChart3,
-    label: "Analytics",
-    headline: "Mide el desempeño real de toda tu operación.",
-    points: ["Embudo de entrega real", "Mapa de actividad por hora", "Desempeño real por plantilla"],
-  },
-  {
-    key: "cuenta",
-    icon: CreditCard,
-    label: "Cuenta",
-    headline: "Tu plan y consumo, siempre visibles.",
-    points: ["Plan mensual fijo", "Consumo real de conversaciones", "Pagos y renovación con Wompi"],
-  },
-] as const;
-
 export function PlatformOverviewSection() {
+  const { t } = useI18n();
+  const PLATFORM_MODULES = [
+    {
+      key: "resumen",
+      icon: LayoutGrid,
+      label: t("Resumen", "Overview"),
+      headline: t("Cada número, agente y conversación en una sola vista.", "Every number, agent and conversation in one view."),
+      points: [t("Automatización real por número", "Real automation per number"), t("Consumo del plan en vivo", "Live plan usage"), t("Actividad reciente", "Recent activity")],
+    },
+    {
+      key: "agentes",
+      icon: Bot,
+      label: t("Agentes de IA", "AI agents"),
+      headline: t("Configura tu agente en minutos, sin código.", "Set up your agent in minutes, no code."),
+      points: [t("Un agente por número, con nombre propio", "One agent per number, with its own name"), t("Instrucciones y base de conocimiento", "Instructions and knowledge base"), t("Pausa manual o por coexistencia", "Manual or coexistence pause")],
+    },
+    {
+      key: "plantillas",
+      icon: FileText,
+      label: t("Plantillas", "Templates"),
+      headline: t("Crea y sigue tus plantillas hasta la aprobación.", "Create and track your templates through approval."),
+      points: [t("Estado real de aprobación de Meta", "Real Meta approval status"), t("Variables detectadas automáticamente", "Variables detected automatically"), t("Borradores locales antes de publicar", "Local drafts before publishing")],
+    },
+    {
+      key: "campanas",
+      icon: Megaphone,
+      label: t("Campañas", "Campaigns"),
+      headline: t("Lanza campañas masivas con confianza.", "Launch bulk campaigns with confidence."),
+      points: [t("Entrega y lectura en tiempo real", "Real-time delivery and read status"), t("Embudo de conversión por campaña", "Conversion funnel per campaign"), t("Solo plantillas aprobadas por Meta", "Only Meta-approved templates")],
+    },
+    {
+      key: "numeros",
+      icon: Phone,
+      label: t("Números", "Numbers"),
+      headline: t("Administra cada línea desde un solo lugar.", "Manage every line from a single place."),
+      points: [t("Conexión con Embedded Signup", "Connection via Embedded Signup"), t("Calidad y límite reales de Meta", "Real Meta quality and limits"), t("Cupo diario en vivo", "Live daily quota")],
+    },
+    {
+      key: "analytics",
+      icon: BarChart3,
+      label: "Analytics",
+      headline: t("Mide el desempeño real de toda tu operación.", "Measure the real performance of your whole operation."),
+      points: [t("Embudo de entrega real", "Real delivery funnel"), t("Mapa de actividad por hora", "Activity heatmap by hour"), t("Desempeño real por plantilla", "Real performance per template")],
+    },
+    {
+      key: "cuenta",
+      icon: CreditCard,
+      label: t("Cuenta", "Account"),
+      headline: t("Tu plan y consumo, siempre visibles.", "Your plan and usage, always visible."),
+      points: [t("Plan mensual fijo", "Fixed monthly plan"), t("Consumo real de conversaciones", "Real conversation usage"), t("Pagos y renovación con Wompi", "Payments and renewal with Wompi")],
+    },
+  ];
   const [active, setActive] = useState(0);
   const current = PLATFORM_MODULES[active];
 
@@ -668,16 +710,19 @@ export function PlatformOverviewSection() {
     <section id="plataforma-completa" className="relative border-t border-site-border py-28">
       <div className="mx-auto max-w-[1280px] px-6">
         <SectionHeading
-          eyebrow="Una plataforma"
-          title={<>Una plataforma. <br className="hidden md:block" />Cada conversación, en un solo lugar.</>}
-          desc="Entiende todo el producto en menos de diez segundos. Siete módulos, un solo panel de control."
+          eyebrow={t("Una plataforma", "One platform")}
+          title={<>{t("Una plataforma.", "One platform.")} <br className="hidden md:block" />{t("Cada conversación, en un solo lugar.", "Every conversation, in one place.")}</>}
+          desc={t(
+            "Entiende todo el producto en menos de diez segundos. Siete módulos, un solo panel de control.",
+            "Understand the whole product in under ten seconds. Seven modules, one control panel."
+          )}
         />
 
         <div className="mt-12 grid grid-cols-1 gap-4 lg:grid-cols-[260px_1fr]">
           <div
             className="flex gap-2 overflow-x-auto lg:flex-col lg:overflow-visible"
             role="tablist"
-            aria-label="Módulos de la plataforma"
+            aria-label={t("Módulos de la plataforma", "Platform modules")}
           >
             {PLATFORM_MODULES.map((m, i) => (
               <button
@@ -745,22 +790,25 @@ export function PlatformOverviewSection() {
    5c. Diseñado para crecer
 ========================================================= */
 
-const SCALE_ITEMS = [
-  { icon: Phone, title: "Varios números", desc: "Conecta las líneas que necesites y adminístralas desde un solo panel." },
-  { icon: Bot, title: "Un agente por número", desc: "Cada línea tiene su propio asistente, con nombre e instrucciones independientes." },
-  { icon: Megaphone, title: "Plantillas y campañas sin límite", desc: "Crea las plantillas y campañas que necesites, según el consumo de tu plan." },
-  { icon: Gauge, title: "Consumo siempre visible", desc: "Ve en tiempo real cuántas conversaciones has usado y cuántas te quedan." },
-];
-
 export function ScaleSection() {
+  const { t } = useI18n();
+  const SCALE_ITEMS = [
+    { icon: Phone, title: t("Varios números", "Multiple numbers"), desc: t("Conecta las líneas que necesites y adminístralas desde un solo panel.", "Connect as many lines as you need and manage them from a single dashboard.") },
+    { icon: Bot, title: t("Un agente por número", "One agent per number"), desc: t("Cada línea tiene su propio asistente, con nombre e instrucciones independientes.", "Each line has its own assistant, with independent name and instructions.") },
+    { icon: Megaphone, title: t("Plantillas y campañas sin límite", "Unlimited templates & campaigns"), desc: t("Crea las plantillas y campañas que necesites, según el consumo de tu plan.", "Create as many templates and campaigns as you need, based on your plan usage.") },
+    { icon: Gauge, title: t("Consumo siempre visible", "Usage always visible"), desc: t("Ve en tiempo real cuántas conversaciones has usado y cuántas te quedan.", "See in real time how many conversations you've used and how many are left.") },
+  ];
   return (
     <section id="escala" className="relative py-28">
       <div className="mx-auto max-w-[1280px] px-6">
         <div className="grid grid-cols-1 gap-12 lg:grid-cols-2 lg:items-center">
           <SectionHeading
-            eyebrow="Diseñado para crecer"
-            title={<>Desde tu primer número <br className="hidden md:block" />hasta toda tu operación.</>}
-            desc="Du Labs crece contigo. Ya sea que manejes una línea o varias, el panel se mantiene igual de simple."
+            eyebrow={t("Diseñado para crecer", "Built to grow")}
+            title={<>{t("Desde tu primer número", "From your first number")} <br className="hidden md:block" />{t("hasta toda tu operación.", "to your entire operation.")}</>}
+            desc={t(
+              "Du Labs crece contigo. Ya sea que manejes una línea o varias, el panel se mantiene igual de simple.",
+              "Du Labs grows with you. Whether you run one line or many, the dashboard stays just as simple."
+            )}
           />
           <Reveal variant="zoom">
             <div className="relative flex items-center justify-center rounded-2xl border border-site-border bg-white/[0.02] p-8">
@@ -770,9 +818,9 @@ export function ScaleSection() {
                   <InfinityIcon className="h-8 w-8 text-site-primary" />
                 </span>
                 <div className="mt-4 font-display text-[26px] font-medium tracking-tight text-site-fg">
-                  Crece con tu negocio
+                  {t("Crece con tu negocio", "Grows with your business")}
                 </div>
-                <p className="mt-1 text-[13px] text-site-muted-fg">Sin cambiar de plataforma cuando sumas números.</p>
+                <p className="mt-1 text-[13px] text-site-muted-fg">{t("Sin cambiar de plataforma cuando sumas números.", "No switching platforms when you add numbers.")}</p>
               </div>
             </div>
           </Reveal>
@@ -800,22 +848,25 @@ export function ScaleSection() {
    5d. Hecho para Latinoamérica
 ========================================================= */
 
-const LATAM_ITEMS = [
-  { icon: ShieldCheck, title: "APIs oficiales de Meta", desc: "Cumplimiento total con la plataforma de negocios de Meta en cualquier mercado." },
-  { icon: Languages, title: "Pensado en español", desc: "Un producto, agentes y soporte diseñados en español desde el primer día." },
-  { icon: Store, title: "Negocios locales", desc: "Construido para cómo se hace comercio de verdad: dentro de conversaciones de WhatsApp." },
-  { icon: ServerCog, title: "Confiabilidad real", desc: "Infraestructura que funciona igual, desde tu primer número hasta cuando crezcas." },
-];
-
 export function LatamSection() {
+  const { t } = useI18n();
+  const LATAM_ITEMS = [
+    { icon: ShieldCheck, title: t("APIs oficiales de Meta", "Official Meta APIs"), desc: t("Cumplimiento total con la plataforma de negocios de Meta en cualquier mercado.", "Full compliance with Meta's business platform in any market.") },
+    { icon: Languages, title: t("Pensado en español", "Built in Spanish"), desc: t("Un producto, agentes y soporte diseñados en español desde el primer día.", "A product, agents and support designed in Spanish from day one.") },
+    { icon: Store, title: t("Negocios locales", "Local businesses"), desc: t("Construido para cómo se hace comercio de verdad: dentro de conversaciones de WhatsApp.", "Built for how commerce really happens: inside WhatsApp conversations.") },
+    { icon: ServerCog, title: t("Confiabilidad real", "Real reliability"), desc: t("Infraestructura que funciona igual, desde tu primer número hasta cuando crezcas.", "Infrastructure that works the same, from your first number to when you scale.") },
+  ];
   return (
     <section className="relative border-t border-site-border bg-site-card/20 py-28">
       <div className="pointer-events-none absolute left-1/2 top-0 h-64 w-[720px] -translate-x-1/2 rounded-full bg-site-primary/5 blur-[120px]" />
       <div className="relative mx-auto max-w-[1280px] px-6">
         <SectionHeading
-          eyebrow="Hecho para Latinoamérica"
-          title={<>Infraestructura pensada <br className="hidden md:block" />para cómo la región hace negocios.</>}
-          desc="El comercio conversacional ya es el estándar en Latinoamérica. Du Labs está construido para eso, de forma nativa."
+          eyebrow={t("Hecho para Latinoamérica", "Made for Latin America")}
+          title={<>{t("Infraestructura pensada", "Infrastructure designed")} <br className="hidden md:block" />{t("para cómo la región hace negocios.", "for how the region does business.")}</>}
+          desc={t(
+            "El comercio conversacional ya es el estándar en Latinoamérica. Du Labs está construido para eso, de forma nativa.",
+            "Conversational commerce is already the standard in Latin America. Du Labs is built for it, natively."
+          )}
           align="center"
         />
         <div className="mx-auto mt-12 grid max-w-5xl grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -840,32 +891,44 @@ export function LatamSection() {
    5e. El ecosistema Du
 ========================================================= */
 
-const ECOSYSTEM_PILLARS = [
-  {
-    icon: Briefcase,
-    name: "Du IA Business",
-    desc: "La capa de plataforma — agentes de IA e infraestructura conversacional que corren tu operación en WhatsApp.",
-  },
-  {
-    icon: GraduationCap,
-    name: "Du Academy",
-    desc: "Aprende a diseñar y escalar IA conversacional, con formación pensada para equipos y operadores.",
-  },
-  {
-    icon: HeartPulse,
-    name: "Du Life",
-    desc: "Tecnología conversacional aplicada al día a día — llevando IA a los canales que la gente ya usa.",
-  },
-];
-
 export function EcosystemSection() {
+  const { t } = useI18n();
+  const ECOSYSTEM_PILLARS = [
+    {
+      icon: Briefcase,
+      name: "Du IA Business",
+      desc: t(
+        "La capa de plataforma — agentes de IA e infraestructura conversacional que corren tu operación en WhatsApp.",
+        "The platform layer — AI agents and conversational infrastructure that run your operation on WhatsApp."
+      ),
+    },
+    {
+      icon: GraduationCap,
+      name: "Du Academy",
+      desc: t(
+        "Aprende a diseñar y escalar IA conversacional, con formación pensada para equipos y operadores.",
+        "Learn to design and scale conversational AI, with training built for teams and operators."
+      ),
+    },
+    {
+      icon: HeartPulse,
+      name: "Du Life",
+      desc: t(
+        "Tecnología conversacional aplicada al día a día — llevando IA a los canales que la gente ya usa.",
+        "Conversational technology for everyday life — bringing AI to the channels people already use."
+      ),
+    },
+  ];
   return (
     <section className="relative py-28">
       <div className="mx-auto max-w-[1280px] px-6">
         <SectionHeading
-          eyebrow="El ecosistema Du"
-          title={<>IA donde ya vive <br className="hidden md:block" />la conversación.</>}
-          desc="Du Labs cree en una idea: el futuro del software es conversacional. Nuestro ecosistema lleva esa idea a los negocios, la formación y el día a día."
+          eyebrow={t("El ecosistema Du", "The Du ecosystem")}
+          title={<>{t("IA donde ya vive", "AI where the conversation")} <br className="hidden md:block" />{t("la conversación.", "already lives.")}</>}
+          desc={t(
+            "Du Labs cree en una idea: el futuro del software es conversacional. Nuestro ecosistema lleva esa idea a los negocios, la formación y el día a día.",
+            "Du Labs believes in one idea: the future of software is conversational. Our ecosystem brings that idea to business, education and everyday life."
+          )}
         />
         <div className="mt-12 grid grid-cols-1 gap-4 md:grid-cols-3">
           {ECOSYSTEM_PILLARS.map((p, i) => (
@@ -893,16 +956,17 @@ export function EcosystemSection() {
 ========================================================= */
 
 export function MetricsSection() {
+  const { t } = useI18n();
   const metrics = [
-    { v: "100%", l: "API Oficial de Meta", s: "Cada mensaje pasa por la infraestructura oficial de WhatsApp." },
-    { v: "0%", l: "Riesgo de bloqueo", s: "Sin extensiones ni trucos que arriesguen tu número." },
-    { v: "24/7", l: "IA respondiendo", s: "Mientras tú sigues usando tu WhatsApp normal." },
-    { v: "<2s", l: "Tiempo de respuesta", s: "Respuestas instantáneas para tus clientes." },
+    { v: "100%", l: t("API Oficial de Meta", "Official Meta API"), s: t("Cada mensaje pasa por la infraestructura oficial de WhatsApp.", "Every message goes through WhatsApp's official infrastructure.") },
+    { v: "0%", l: t("Riesgo de bloqueo", "Ban risk"), s: t("Sin extensiones ni trucos que arriesguen tu número.", "No extensions or hacks that risk your number.") },
+    { v: "24/7", l: t("IA respondiendo", "AI replying"), s: t("Mientras tú sigues usando tu WhatsApp normal.", "While you keep using your regular WhatsApp.") },
+    { v: "<2s", l: t("Tiempo de respuesta", "Response time"), s: t("Respuestas instantáneas para tus clientes.", "Instant replies for your customers.") },
   ];
   return (
     <section id="metricas" className="relative border-t border-site-border py-28">
       <div className="mx-auto max-w-[1280px] px-6">
-        <SectionHeading eyebrow="Por qué Du Labs" title={<>Construido sobre lo que Meta exige, <br className="hidden md:block" />no sobre atajos.</>} align="center" />
+        <SectionHeading eyebrow={t("Por qué Du Labs", "Why Du Labs")} title={<>{t("Construido sobre lo que Meta exige,", "Built on what Meta requires,")} <br className="hidden md:block" />{t("no sobre atajos.", "not on shortcuts.")}</>} align="center" />
         <div className="mt-14 grid grid-cols-2 gap-px overflow-hidden rounded-2xl border border-site-border bg-white/5 md:grid-cols-4">
           {metrics.map((m) => (
             <div key={m.l} className="bg-site-bg p-8 text-center">
@@ -923,69 +987,69 @@ export function MetricsSection() {
    7. Precios (planes reales de Du Labs)
 ========================================================= */
 
-const tiers = [
-  {
-    name: "Plan Básico",
-    price: "$59.990",
-    tag: "Emprendedores y pequeños negocios locales.",
-    features: ["1 número de WhatsApp", "IA en Modo Coexistencia", "Hasta 1.000 mensajes / mes", "Soporte estándar por correo"],
-  },
-  {
-    name: "Plan Pro",
-    price: "$129.990",
-    tag: "Negocios en crecimiento y marcas comerciales.",
-    features: ["Todo lo del Plan Básico", "Plantillas y campañas masivas", "Hasta 5.000 mensajes / mes", "Soporte prioritario por WhatsApp"],
-    featured: true,
-  },
-  {
-    name: "Plan Enterprise",
-    price: "$299.990",
-    tag: "Empresas con operaciones de alta demanda.",
-    features: ["Todo lo del Plan Pro", "Mensajes ilimitados*", "Múltiples números en paralelo", "Soporte dedicado 24/7"],
-  },
-];
-
 export function PricingSection() {
+  const { t } = useI18n();
+  const tiers = [
+    {
+      name: "Plan Básico",
+      price: "$59.990",
+      tag: t("Emprendedores y pequeños negocios locales.", "Entrepreneurs and small local businesses."),
+      features: [t("1 número de WhatsApp", "1 WhatsApp number"), t("IA en Modo Coexistencia", "AI in Coexistence Mode"), t("Hasta 1.000 mensajes / mes", "Up to 1,000 messages / month"), t("Soporte estándar por correo", "Standard email support")],
+    },
+    {
+      name: "Plan Pro",
+      price: "$129.990",
+      tag: t("Negocios en crecimiento y marcas comerciales.", "Growing businesses and commercial brands."),
+      features: [t("Todo lo del Plan Básico", "Everything in Plan Básico"), t("Plantillas y campañas masivas", "Templates and bulk campaigns"), t("Hasta 5.000 mensajes / mes", "Up to 5,000 messages / month"), t("Soporte prioritario por WhatsApp", "Priority support via WhatsApp")],
+      featured: true,
+    },
+    {
+      name: "Plan Enterprise",
+      price: "$299.990",
+      tag: t("Empresas con operaciones de alta demanda.", "Companies with high-demand operations."),
+      features: [t("Todo lo del Plan Pro", "Everything in Plan Pro"), t("Mensajes ilimitados*", "Unlimited messages*"), t("Múltiples números en paralelo", "Multiple numbers in parallel"), t("Soporte dedicado 24/7", "Dedicated 24/7 support")],
+    },
+  ];
   return (
     <section id="precios" className="relative border-t border-site-border py-28">
       <div className="mx-auto max-w-[1280px] px-6">
         <SectionHeading
-          eyebrow="Precios"
-          title={<>Un plan para cada etapa de tu negocio.</>}
-          desc="Precios en pesos colombianos (COP), cobro recurrente mensual."
+          eyebrow={t("Precios", "Pricing")}
+          title={<>{t("Un plan para cada etapa de tu negocio.", "A plan for every stage of your business.")}</>}
+          desc={t("Precios en pesos colombianos (COP), cobro recurrente mensual.", "Prices in Colombian pesos (COP), recurring monthly billing.")}
           align="center"
         />
         <div className="mt-14 grid grid-cols-1 gap-4 md:grid-cols-3">
-          {tiers.map((t) => (
+          {tiers.map((tier) => (
             <div
-              key={t.name}
+              key={tier.name}
               className={`relative overflow-hidden rounded-2xl border p-7 ${
-                t.featured
+                tier.featured
                   ? "border-site-primary/30 bg-gradient-to-b from-site-primary/[0.08] to-site-card/60 ring-1 ring-site-primary/20"
                   : "border-site-border bg-site-card/50"
               }`}
             >
-              {t.featured && (
+              {tier.featured && (
                 <div className="absolute right-5 top-5 rounded-full bg-site-primary px-2 py-0.5 font-mono text-[9.5px] uppercase tracking-widest text-site-primary-fg">
-                  Recomendado
+                  {t("Recomendado", "Recommended")}
                 </div>
               )}
-              <div className="font-mono text-[10px] uppercase tracking-widest text-site-muted-fg">{t.name}</div>
+              <div className="font-mono text-[10px] uppercase tracking-widest text-site-muted-fg">{tier.name}</div>
               <div className="mt-4 flex items-baseline gap-1">
-                <span className="font-display text-[36px] font-medium tracking-tight text-site-fg">{t.price}</span>
-                <span className="text-[12px] text-site-muted-fg">COP / mes</span>
+                <span className="font-display text-[36px] font-medium tracking-tight text-site-fg">{tier.price}</span>
+                <span className="text-[12px] text-site-muted-fg">{t("COP / mes", "COP / mo")}</span>
               </div>
-              <p className="mt-2 text-[13px] text-site-muted-fg">{t.tag}</p>
+              <p className="mt-2 text-[13px] text-site-muted-fg">{tier.tag}</p>
               <PlanButton
-                plan={t.name}
+                plan={tier.name}
                 className={`mt-6 inline-flex h-10 w-full items-center justify-center rounded-lg text-[13px] font-medium transition-all ${
-                  t.featured
+                  tier.featured
                     ? "bg-site-primary text-site-primary-fg hover:brightness-110"
                     : "border border-site-border text-site-fg hover:border-white/20 hover:bg-white/[0.03]"
                 }`}
               />
               <div className="mt-6 space-y-2.5 border-t border-site-border pt-6">
-                {t.features.map((f) => (
+                {tier.features.map((f) => (
                   <div key={f} className="flex items-start gap-2.5 text-[13px] text-site-fg/90">
                     <Check className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-site-primary" />
                     {f}
@@ -997,9 +1061,9 @@ export function PricingSection() {
         </div>
 
         <div className="mt-6 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-[12px] text-site-muted-fg">
-          <span className="inline-flex items-center gap-1.5"><ShieldCheck className="h-3.5 w-3.5 text-site-primary" /> API Oficial de Meta</span>
-          <span className="inline-flex items-center gap-1.5"><Globe className="h-3.5 w-3.5 text-site-primary" /> Datos alojados de forma segura</span>
-          <span className="inline-flex items-center gap-1.5"><Sparkles className="h-3.5 w-3.5 text-site-primary" /> IA con Claude (Anthropic)</span>
+          <span className="inline-flex items-center gap-1.5"><ShieldCheck className="h-3.5 w-3.5 text-site-primary" /> {t("API Oficial de Meta", "Official Meta API")}</span>
+          <span className="inline-flex items-center gap-1.5"><Globe className="h-3.5 w-3.5 text-site-primary" /> {t("Datos alojados de forma segura", "Data hosted securely")}</span>
+          <span className="inline-flex items-center gap-1.5"><Sparkles className="h-3.5 w-3.5 text-site-primary" /> {t("IA con Claude (Anthropic)", "AI powered by Claude (Anthropic)")}</span>
         </div>
       </div>
     </section>
@@ -1010,39 +1074,57 @@ export function PricingSection() {
    8. FAQ (respuestas reales)
 ========================================================= */
 
-const faqs = [
-  {
-    q: "¿Qué tan rápido puedo conectar mi WhatsApp?",
-    a: "El flujo de conexión con Meta (Embedded Signup) toma unos minutos. En cuanto conectas tu número, ya puedes entrenar tu IA y empezar a recibir mensajes.",
-  },
-  {
-    q: "¿Usan la API oficial de WhatsApp?",
-    a: "Sí. Todo pasa por la API Oficial de WhatsApp Business (Meta Cloud API) — sin hacks no oficiales, sin riesgo de baneo.",
-  },
-  {
-    q: "¿Qué modelo de IA usan?",
-    a: "Usamos Claude, de Anthropic, entrenado con el prompt específico de tu negocio: precios, horarios y tono de atención.",
-  },
-  {
-    q: "¿Pierdo el control de mi WhatsApp?",
-    a: "No. Con Modo Coexistencia sigues usando tu WhatsApp Business normal desde el celular. La IA responde en paralelo y se pausa sola en cualquier chat donde tú respondas.",
-  },
-  {
-    q: "¿Puedo enviar mensajes masivos?",
-    a: "Sí, con plantillas aprobadas por Meta. Creas la plantilla, Meta la aprueba, y envías la campaña a tu lista de clientes desde tu panel.",
-  },
-  {
-    q: "¿Con qué se integra Du Labs hoy?",
-    a: "Hoy nos enfocamos 100% en hacer WhatsApp Business excelente: conexión oficial, IA entrenada, plantillas y campañas, y bandeja de mensajes centralizada.",
-  },
-];
-
 export function FaqSection() {
+  const { t } = useI18n();
+  const faqs = [
+    {
+      q: t("¿Qué tan rápido puedo conectar mi WhatsApp?", "How fast can I connect my WhatsApp?"),
+      a: t(
+        "El flujo de conexión con Meta (Embedded Signup) toma unos minutos. En cuanto conectas tu número, ya puedes entrenar tu IA y empezar a recibir mensajes.",
+        "Meta's connection flow (Embedded Signup) takes a few minutes. As soon as you connect your number, you can train your AI and start receiving messages."
+      ),
+    },
+    {
+      q: t("¿Usan la API oficial de WhatsApp?", "Do you use the official WhatsApp API?"),
+      a: t(
+        "Sí. Todo pasa por la API Oficial de WhatsApp Business (Meta Cloud API) — sin hacks no oficiales, sin riesgo de baneo.",
+        "Yes. Everything goes through the Official WhatsApp Business API (Meta Cloud API) — no unofficial hacks, no ban risk."
+      ),
+    },
+    {
+      q: t("¿Qué modelo de IA usan?", "Which AI model do you use?"),
+      a: t(
+        "Usamos Claude, de Anthropic, entrenado con el prompt específico de tu negocio: precios, horarios y tono de atención.",
+        "We use Claude, by Anthropic, trained with your business-specific prompt: prices, hours and tone of service."
+      ),
+    },
+    {
+      q: t("¿Pierdo el control de mi WhatsApp?", "Do I lose control of my WhatsApp?"),
+      a: t(
+        "No. Con Modo Coexistencia sigues usando tu WhatsApp Business normal desde el celular. La IA responde en paralelo y se pausa sola en cualquier chat donde tú respondas.",
+        "No. With Coexistence Mode you keep using your regular WhatsApp Business from your phone. The AI replies in parallel and pauses itself in any chat where you reply."
+      ),
+    },
+    {
+      q: t("¿Puedo enviar mensajes masivos?", "Can I send bulk messages?"),
+      a: t(
+        "Sí, con plantillas aprobadas por Meta. Creas la plantilla, Meta la aprueba, y envías la campaña a tu lista de clientes desde tu panel.",
+        "Yes, with Meta-approved templates. You create the template, Meta approves it, and you send the campaign to your customer list from your dashboard."
+      ),
+    },
+    {
+      q: t("¿Con qué se integra Du Labs hoy?", "What does Du Labs integrate with today?"),
+      a: t(
+        "Hoy nos enfocamos 100% en hacer WhatsApp Business excelente: conexión oficial, IA entrenada, plantillas y campañas, y bandeja de mensajes centralizada.",
+        "Today we're 100% focused on making WhatsApp Business excellent: official connection, trained AI, templates and campaigns, and a centralized message inbox."
+      ),
+    },
+  ];
   const [open, setOpen] = useState<number | null>(0);
   return (
     <section id="faq" className="relative border-t border-site-border py-28">
       <div className="mx-auto max-w-3xl px-6">
-        <SectionHeading eyebrow="Preguntas frecuentes" title={<>Respuestas, antes de que preguntes.</>} align="center" />
+        <SectionHeading eyebrow={t("Preguntas frecuentes", "Frequently asked questions")} title={<>{t("Respuestas, antes de que preguntes.", "Answers, before you even ask.")}</>} align="center" />
         <div className="mt-12 divide-y divide-site-border overflow-hidden rounded-2xl border border-site-border bg-site-card/40">
           {faqs.map((f, i) => {
             const isOpen = open === i;
@@ -1073,6 +1155,7 @@ export function FaqSection() {
 ========================================================= */
 
 export function FinalCta() {
+  const { t } = useI18n();
   return (
     <section id="demo" className="relative overflow-hidden border-t border-site-border py-32">
       <div className="pointer-events-none absolute inset-0 site-ambient-bg animate-site-ambient opacity-90" />
@@ -1080,21 +1163,23 @@ export function FinalCta() {
       <div className="pointer-events-none absolute left-1/2 top-0 h-[500px] w-[900px] -translate-x-1/2 rounded-full bg-site-primary/15 blur-[140px]" />
 
       <div className="relative mx-auto max-w-3xl px-6 text-center">
-        <SectionLabel>Empecemos</SectionLabel>
+        <SectionLabel>{t("Empecemos", "Let's start")}</SectionLabel>
         <h2 className="mt-5 font-display text-[38px] font-medium leading-[1.05] tracking-[-0.025em] site-text-gradient md:text-[56px]">
-          Conecta tu WhatsApp <br />
-          <span className="site-text-gradient-primary">y deja que la IA atienda hoy.</span>
+          {t("Conecta tu WhatsApp", "Connect your WhatsApp")} <br />
+          <span className="site-text-gradient-primary">{t("y deja que la IA atienda hoy.", "and let the AI answer today.")}</span>
         </h2>
         <p className="mx-auto mt-5 max-w-xl text-[15px] leading-relaxed text-site-muted-fg">
-          API Oficial de Meta, sin bloqueos, IA en Modo Coexistencia. Listo para
-          producción desde el primer día.
+          {t(
+            "API Oficial de Meta, sin bloqueos, IA en Modo Coexistencia. Listo para producción desde el primer día.",
+            "Official Meta API, no bans, AI in Coexistence Mode. Production-ready from day one."
+          )}
         </p>
         <div className="mt-10 flex flex-wrap items-center justify-center gap-3">
           <Link
             href="/business"
             className="group inline-flex h-11 items-center rounded-full bg-site-fg px-5 text-[13.5px] font-medium text-site-bg transition-all hover:bg-site-fg/90"
           >
-            Activar mi API Oficial <ArrowRight className="ml-1.5 h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+            {t("Activar mi API Oficial", "Activate my Official API")} <ArrowRight className="ml-1.5 h-4 w-4 transition-transform group-hover:translate-x-0.5" />
           </Link>
           <a
             href="https://wa.me/573148127388"
@@ -1102,7 +1187,7 @@ export function FinalCta() {
             rel="noopener noreferrer"
             className="inline-flex h-11 items-center rounded-full border border-site-border bg-white/[0.02] px-5 text-[13.5px] font-medium text-site-fg backdrop-blur-md hover:border-white/20"
           >
-            Hablar por WhatsApp
+            {t("Hablar por WhatsApp", "Chat on WhatsApp")}
           </a>
         </div>
       </div>
@@ -1115,24 +1200,25 @@ export function FinalCta() {
 ========================================================= */
 
 export function Footer() {
+  const { t } = useI18n();
   const cols = [
     {
-      title: "Producto",
+      title: t("Producto", "Product"),
       links: [
-        { l: "Modo coexistencia", h: "#coexistencia" },
-        { l: "Agentes de IA", h: "#entrenamiento" },
-        { l: "Base de conocimiento", h: "#conocimiento" },
-        { l: "Plantillas y campañas", h: "#campanas" },
-        { l: "Infraestructura", h: "#infraestructura" },
-        { l: "Precios", h: "#precios" },
+        { l: t("Modo coexistencia", "Coexistence mode"), h: "#coexistencia" },
+        { l: t("Agentes de IA", "AI agents"), h: "#entrenamiento" },
+        { l: t("Base de conocimiento", "Knowledge base"), h: "#conocimiento" },
+        { l: t("Plantillas y campañas", "Templates & campaigns"), h: "#campanas" },
+        { l: t("Infraestructura", "Infrastructure"), h: "#infraestructura" },
+        { l: t("Precios", "Pricing"), h: "#precios" },
       ],
     },
     {
       title: "Legal",
       links: [
-        { l: "Privacidad", h: "/privacidad" },
-        { l: "Términos", h: "/terminos" },
-        { l: "Eliminación de datos - WhatsApp", h: "/eliminacion-de-datos-whatsapp" },
+        { l: t("Privacidad", "Privacy"), h: "/privacidad" },
+        { l: t("Términos", "Terms"), h: "/terminos" },
+        { l: t("Eliminación de datos - WhatsApp", "Data deletion - WhatsApp"), h: "/eliminacion-de-datos-whatsapp" },
       ],
     },
   ];
@@ -1146,12 +1232,14 @@ export function Footer() {
               Du Labs
             </div>
             <p className="mt-4 max-w-xs text-[12.5px] leading-relaxed text-site-muted-fg">
-              Automatización de WhatsApp Business con IA, sobre la API Oficial de Meta.
-              Hecho en Montería, Colombia.
+              {t(
+                "Automatización de WhatsApp Business con IA, sobre la API Oficial de Meta. Hecho en Montería, Colombia.",
+                "WhatsApp Business automation with AI, on the Official Meta API. Made in Montería, Colombia."
+              )}
             </p>
             <div className="mt-6 flex items-center gap-2 font-mono text-[10px] uppercase tracking-widest text-site-muted-fg">
               <span className="h-1.5 w-1.5 rounded-full bg-site-primary shadow-[0_0_6px_var(--color-site-primary)]" />
-              Todo funcionando con normalidad
+              {t("Todo funcionando con normalidad", "All systems operational")}
             </div>
           </div>
           {cols.map((c) => (
@@ -1172,19 +1260,19 @@ export function Footer() {
 
         <div className="mt-14 grid gap-10 border-t border-site-border pt-10 md:grid-cols-2">
           <div>
-            <h3 className="text-[12.5px] font-semibold text-site-fg">Información legal</h3>
+            <h3 className="text-[12.5px] font-semibold text-site-fg">{t("Información legal", "Legal information")}</h3>
             <p className="mt-4 text-[12.5px] leading-relaxed text-site-muted-fg">
-              <span className="text-site-muted-fg/70">Titular del servicio:</span>
+              <span className="text-site-muted-fg/70">{t("Titular del servicio:", "Service holder:")}</span>
               <br />
               RAMOS PADILLA DUVAN ANDRES
             </p>
             <p className="mt-4 text-[12.5px] leading-relaxed text-site-muted-fg">
-              <span className="text-site-muted-fg/70">Nombre comercial:</span>
+              <span className="text-site-muted-fg/70">{t("Nombre comercial:", "Trade name:")}</span>
               <br />
               DULABS
             </p>
             <p className="mt-4 text-[12.5px] leading-relaxed text-site-muted-fg">
-              <span className="text-site-muted-fg/70">Dirección principal:</span>
+              <span className="text-site-muted-fg/70">{t("Dirección principal:", "Main address:")}</span>
               <br />
               BRR SANTA ELENA V CR 36 47 17
               <br />
@@ -1193,22 +1281,24 @@ export function Footer() {
               Colombia
             </p>
             <p className="mt-4 text-[12.5px] leading-relaxed text-site-muted-fg">
-              <span className="text-site-muted-fg/70">Correo electrónico:</span>
+              <span className="text-site-muted-fg/70">{t("Correo electrónico:", "Email:")}</span>
               <br />
               contacto@dulabs.co
             </p>
             <p className="mt-4 text-[12.5px] leading-relaxed text-site-muted-fg">
-              <span className="text-site-muted-fg/70">Sitio web:</span>
+              <span className="text-site-muted-fg/70">{t("Sitio web:", "Website:")}</span>
               <br />
               https://www.dulabs.co
             </p>
             <p className="mt-4 text-[12.5px] leading-relaxed text-site-muted-fg/80">
-              Du Labs es una marca comercial y plataforma digital operada por
-              RAMOS PADILLA DUVAN ANDRES.
+              {t(
+                "Du Labs es una marca comercial y plataforma digital operada por RAMOS PADILLA DUVAN ANDRES.",
+                "Du Labs is a trademark and digital platform operated by RAMOS PADILLA DUVAN ANDRES."
+              )}
             </p>
           </div>
           <div className="md:justify-self-end">
-            <h3 className="text-[12.5px] font-semibold text-site-fg">Contacto</h3>
+            <h3 className="text-[12.5px] font-semibold text-site-fg">{t("Contacto", "Contact")}</h3>
             <ul className="mt-4 flex flex-col gap-2 text-[12.5px] text-site-muted-fg">
               <li>
                 <a href="mailto:vandusfor@gmail.com" className="transition-colors duration-200 hover:text-site-fg">
@@ -1230,8 +1320,8 @@ export function Footer() {
         </div>
 
         <div className="mt-12 flex flex-wrap items-center justify-between gap-4 border-t border-site-border pt-8 text-[11px] text-site-muted-fg/70">
-          <p>© {new Date().getFullYear()} Du Labs. Todos los derechos reservados.</p>
-          <p>Hecho en Colombia 🇨🇴</p>
+          <p>© {new Date().getFullYear()} Du Labs. {t("Todos los derechos reservados.", "All rights reserved.")}</p>
+          <p>{t("Hecho en Colombia 🇨🇴", "Made in Colombia 🇨🇴")}</p>
         </div>
       </div>
     </footer>

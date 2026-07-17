@@ -1,4 +1,7 @@
+"use client";
+
 import { Megaphone, MessageSquare, Phone, Search, Sparkles, Users, Zap } from "lucide-react";
+import { useI18n } from "@/lib/i18n";
 
 /**
  * Hero product surface — a stylized mockup of the real Du Labs dashboard
@@ -6,6 +9,7 @@ import { Megaphone, MessageSquare, Phone, Search, Sparkles, Users, Zap } from "l
  * product, just the actual dashboard dressed in the marketing site's glass UI.
  */
 export function CommandCenter() {
+  const { t } = useI18n();
   return (
     <div className="relative mx-auto w-full max-w-[1180px]">
       <div className="pointer-events-none absolute -inset-16 -z-10">
@@ -32,7 +36,7 @@ export function CommandCenter() {
           <div className="flex items-center gap-2">
             <StatusDot />
             <span className="font-mono text-[10.5px] uppercase tracking-widest text-site-muted-fg">
-              WhatsApp Cloud API · en vivo
+              {t("WhatsApp Cloud API · en vivo", "WhatsApp Cloud API · live")}
             </span>
           </div>
         </div>
@@ -40,76 +44,76 @@ export function CommandCenter() {
         <div className="grid grid-cols-12">
           {/* Sidebar */}
           <aside className="col-span-3 hidden border-r border-site-border bg-black/20 p-3 lg:block">
-            <SidebarGroup label="Panel" />
-            <SideItem icon={Zap} label="Resumen" active />
-            <SideItem icon={Phone} label="Números" count={1} />
-            <SideItem icon={Megaphone} label="Plantillas y campañas" />
-            <SideItem icon={MessageSquare} label="Mensajes" count={38} />
-            <SideItem icon={Users} label="Cuenta" />
+            <SidebarGroup label={t("Panel", "Panel")} />
+            <SideItem icon={Zap} label={t("Resumen", "Overview")} active />
+            <SideItem icon={Phone} label={t("Números", "Numbers")} count={1} />
+            <SideItem icon={Megaphone} label={t("Plantillas y campañas", "Templates & campaigns")} />
+            <SideItem icon={MessageSquare} label={t("Mensajes", "Messages")} count={38} />
+            <SideItem icon={Users} label={t("Cuenta", "Account")} />
           </aside>
 
           {/* Main */}
           <main className="col-span-12 lg:col-span-9">
             <div className="flex items-center justify-between border-b border-site-border px-5 py-3">
               <div>
-                <div className="font-mono text-[10.5px] uppercase tracking-widest text-site-muted-fg">Resumen</div>
+                <div className="font-mono text-[10.5px] uppercase tracking-widest text-site-muted-fg">{t("Resumen", "Overview")}</div>
                 <div className="mt-0.5 font-display text-[15px] font-medium tracking-tight text-site-fg">
-                  Tu WhatsApp Business, en un panel
+                  {t("Tu WhatsApp Business, en un panel", "Your WhatsApp Business, in one panel")}
                 </div>
               </div>
               <div className="hidden items-center gap-2 md:flex">
                 <Chip primary>
-                  <Sparkles className="h-3 w-3" /> IA entrenada
+                  <Sparkles className="h-3 w-3" /> {t("IA entrenada", "AI trained")}
                 </Chip>
               </div>
             </div>
 
             {/* Stats */}
             <div className="grid grid-cols-2 gap-px border-b border-site-border bg-white/5 md:grid-cols-4">
-              <Kpi label="Números activos" value="1" icon={Phone} />
-              <Kpi label="Mensajes procesados" value="1,284" icon={MessageSquare} />
-              <Kpi label="Mensajes restantes" value="3,716" icon={Zap} />
-              <Kpi label="Plan actual" value="Pro" accent />
+              <Kpi label={t("Números activos", "Active numbers")} value="1" icon={Phone} />
+              <Kpi label={t("Mensajes procesados", "Messages processed")} value="1,284" icon={MessageSquare} />
+              <Kpi label={t("Mensajes restantes", "Messages remaining")} value="3,716" icon={Zap} />
+              <Kpi label={t("Plan actual", "Current plan")} value="Pro" accent />
             </div>
 
             <div className="grid grid-cols-12 gap-3 p-3.5 md:p-4">
               {/* Activity chart */}
               <div className="site-panel col-span-12 p-4 md:col-span-7">
-                <PanelHead title="Mensajes procesados · 7 días" meta={<span className="font-mono text-[10px] text-site-muted-fg">esta semana</span>} />
+                <PanelHead title={t("Mensajes procesados · 7 días", "Messages processed · 7 days")} meta={<span className="font-mono text-[10px] text-site-muted-fg">{t("esta semana", "this week")}</span>} />
                 <Bars />
                 <div className="mt-2 flex items-center justify-between text-[10px] text-site-muted-fg">
-                  <span>lun</span><span>mar</span><span>mié</span><span>jue</span><span>vie</span><span>sáb</span><span>dom</span>
+                  <span>{t("lun", "Mon")}</span><span>{t("mar", "Tue")}</span><span>{t("mié", "Wed")}</span><span>{t("jue", "Thu")}</span><span>{t("vie", "Fri")}</span><span>{t("sáb", "Sat")}</span><span>{t("dom", "Sun")}</span>
                 </div>
               </div>
 
               {/* Live chat */}
               <div className="site-panel col-span-12 p-4 md:col-span-5">
                 <PanelHead
-                  title="Conversación"
+                  title={t("Conversación", "Conversation")}
                   meta={
                     <span className="inline-flex items-center gap-1 rounded-full bg-white/[0.04] px-1.5 py-0.5 font-mono text-[9.5px] uppercase tracking-widest text-site-muted-fg ring-1 ring-white/5">
                       <span className="h-1.5 w-1.5 rounded-full bg-site-primary shadow-[0_0_6px_var(--color-site-primary)]" />
-                      WhatsApp · IA activa
+                      {t("WhatsApp · IA activa", "WhatsApp · AI active")}
                     </span>
                   }
                 />
                 <div className="mt-3 space-y-2">
-                  <Bubble side="in">¿Tienen disponibilidad mañana en la tarde?</Bubble>
-                  <Bubble side="out" ai>¡Hola! Sí, tenemos espacio a las 3:00 p.m. y 4:30 p.m. ¿Cuál prefieres?</Bubble>
-                  <Bubble side="in">A las 3 está perfecto</Bubble>
-                  <Bubble side="out" ai typing>Agendado ✓ Te llega la confirmación…</Bubble>
+                  <Bubble side="in">{t("¿Tienen disponibilidad mañana en la tarde?", "Do you have availability tomorrow afternoon?")}</Bubble>
+                  <Bubble side="out" ai>{t("¡Hola! Sí, tenemos espacio a las 3:00 p.m. y 4:30 p.m. ¿Cuál prefieres?", "Hi! Yes, we have 3:00 pm and 4:30 pm open. Which do you prefer?")}</Bubble>
+                  <Bubble side="in">{t("A las 3 está perfecto", "3 works perfectly")}</Bubble>
+                  <Bubble side="out" ai typing>{t("Agendado ✓ Te llega la confirmación…", "Booked ✓ Confirmation on its way…")}</Bubble>
                 </div>
               </div>
 
               {/* Números table */}
               <div className="site-panel col-span-12 p-4">
-                <PanelHead title="Tus números" meta={<Chip>Activo</Chip>} />
+                <PanelHead title={t("Tus números", "Your numbers")} meta={<Chip>{t("Activo", "Active")}</Chip>} />
                 <div className="mt-3 flex items-center justify-between rounded-lg border border-site-border bg-white/[0.02] px-3 py-2.5 text-[12px]">
-                  <span className="text-site-fg">Peluquería Estilo</span>
+                  <span className="text-site-fg">{t("Peluquería Estilo", "Estilo Hair Salon")}</span>
                   <span className="font-mono text-site-muted-fg">+57 300 ••• ••56</span>
                   <span className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest text-site-primary">
                     <span className="h-1.5 w-1.5 rounded-full bg-site-primary shadow-[0_0_6px_var(--color-site-primary)]" />
-                    Activo
+                    {t("Activo", "Active")}
                   </span>
                 </div>
               </div>
