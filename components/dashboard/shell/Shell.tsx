@@ -4,8 +4,10 @@ import { useState, type ReactNode } from "react";
 import { X } from "lucide-react";
 import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
+import { useI18n } from "@/lib/i18n";
 
 export function Shell({ children }: { children: ReactNode }) {
+  const { t } = useI18n();
   const [mobileOpen, setMobileOpen] = useState(false);
 
   return (
@@ -23,7 +25,7 @@ export function Shell({ children }: { children: ReactNode }) {
             <button
               onClick={() => setMobileOpen(false)}
               className="absolute right-3 top-4 z-10 flex size-8 items-center justify-center rounded-lg text-mist hover:text-fg"
-              aria-label="Cerrar menú"
+              aria-label={t("Cerrar menú", "Close menu")}
             >
               <X className="size-4" />
             </button>

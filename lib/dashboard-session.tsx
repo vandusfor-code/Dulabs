@@ -115,7 +115,7 @@ export function DashboardSessionProvider({ children }: { children: ReactNode }) 
   if (session === "verificando") {
     return (
       <main className="flex min-h-screen items-center justify-center bg-ink px-5 text-fg">
-        <p className="text-sm text-mist">Verificando tu sesión…</p>
+        <p className="text-sm text-mist">Verificando tu sesión… · Verifying your session…</p>
       </main>
     );
   }

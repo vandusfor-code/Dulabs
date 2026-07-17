@@ -7,6 +7,7 @@ import { LogOut, Sparkles } from "lucide-react";
 import { navSections } from "./nav";
 import { useDashboard } from "@/lib/dashboard-session";
 import { supabaseBrowser } from "@/lib/supabase-browser";
+import { useI18n } from "@/lib/i18n";
 
 function cn(...cls: Array<string | false | undefined>) {
   return cls.filter(Boolean).join(" ");
@@ -16,6 +17,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
   const router = useRouter();
   const { session, negocios, suscripcion } = useDashboard();
+  const { t } = useI18n();
 
   const cerrarSesion = async () => {
     await supabaseBrowser().auth.signOut();
@@ -56,10 +58,11 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           </div>
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-medium text-fg">
-              {suscripcion?.plan ?? negocios?.[0]?.plan ?? "Sin plan"}
+              {suscripcion?.plan ?? negocios?.[0]?.plan ?? t("Sin plan", "No plan")}
             </p>
             <p className="mt-0.5 font-mono text-[10.5px] uppercase tracking-widest text-mist">
-              {negocios?.length ?? 0} número{negocios?.length === 1 ? "" : "s"}
+              {negocios?.length ?? 0}{" "}
+              {negocios?.length === 1 ? t("número", "number") : t("números", "numbers")}
             </p>
           </div>
         </Link>
@@ -70,7 +73,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         {navSections.map((section) => (
           <div key={section.title}>
             <p className="px-3 pb-2 font-mono text-[10.5px] uppercase tracking-widest text-mist/70">
-              {section.title}
+              {t(section.title, section.titleEn)}
             </p>
             <ul className="space-y-0.5">
               {section.items.map((item) => {
@@ -92,7 +95,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
                           active ? "text-lime-text" : "text-mist group-hover:text-fg"
                         )}
                       />
-                      <span className="flex-1 truncate">{item.label}</span>
+                      <span className="flex-1 truncate">{t(item.label, item.labelEn)}</span>
                       {active && <span className="size-1.5 rounded-full bg-lime" />}
                     </Link>
                   </li>
@@ -109,11 +112,11 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           <div className="relative overflow-hidden rounded-xl border border-lime/20 bg-gradient-to-br from-lime/10 to-transparent p-4">
             <div className="flex items-center gap-2">
               <Sparkles className="size-4 text-lime-text" />
-              <span className="text-sm font-medium text-fg">Tu IA este mes</span>
+              <span className="text-sm font-medium text-fg">{t("Tu IA este mes", "Your AI this month")}</span>
             </div>
             <p className="mt-1.5 text-xs leading-relaxed text-mist">
-              {mensajesUsados.toLocaleString("es-CO")} mensajes procesados
-              {limite !== null ? ` de ${limite.toLocaleString("es-CO")}` : " · ilimitado"}.
+              {mensajesUsados.toLocaleString("es-CO")} {t("mensajes procesados", "messages processed")}
+              {limite !== null ? ` ${t("de", "of")} ${limite.toLocaleString("es-CO")}` : ` · ${t("ilimitado", "unlimited")}`}.
             </p>
             {limite !== null && (
               <div className="mt-3 flex items-center gap-2">
@@ -141,14 +144,14 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
             {iniciales || "DU"}
           </div>
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium text-fg">{email || "Tu cuenta"}</p>
-            <p className="mt-0.5 font-mono text-[10.5px] uppercase tracking-widest text-mist">Ver perfil</p>
+            <p className="truncate text-sm font-medium text-fg">{email || t("Tu cuenta", "Your account")}</p>
+            <p className="mt-0.5 font-mono text-[10.5px] uppercase tracking-widest text-mist">{t("Ver perfil", "View profile")}</p>
           </div>
         </Link>
         <button
           onClick={cerrarSesion}
-          aria-label="Cerrar sesión"
-          title="Cerrar sesión"
+          aria-label={t("Cerrar sesión", "Log out")}
+          title={t("Cerrar sesión", "Log out")}
           className="flex size-8 shrink-0 items-center justify-center rounded-lg text-mist transition-colors hover:bg-ink hover:text-fg"
         >
           <LogOut className="size-4" />

@@ -5,9 +5,12 @@ import Link from "next/link";
 import { Search, Bell, ChevronDown, Phone, Menu } from "lucide-react";
 import { useDashboard } from "@/lib/dashboard-session";
 import { formatearTelefono } from "@/lib/format";
+import { useI18n } from "@/lib/i18n";
+import { LanguageSelector } from "@/components/LanguageSelector";
 
 export function Topbar({ onMenu }: { onMenu?: () => void }) {
   const { negocios } = useDashboard();
+  const { t } = useI18n();
   const [numberOpen, setNumberOpen] = useState(false);
 
   const activo = negocios?.[0];
@@ -17,7 +20,7 @@ export function Topbar({ onMenu }: { onMenu?: () => void }) {
       <button
         onClick={onMenu}
         className="flex size-9 items-center justify-center rounded-lg border border-edge text-mist transition-colors hover:text-fg lg:hidden"
-        aria-label="Abrir menú"
+        aria-label={t("Abrir menú", "Open menu")}
       >
         <Menu className="size-4" />
       </button>
@@ -34,10 +37,10 @@ export function Topbar({ onMenu }: { onMenu?: () => void }) {
             </span>
             <Phone className="size-4 text-mist" />
             <span className="hidden font-medium text-fg sm:inline">
-              {activo ? formatearTelefono(activo.telefono_negocio) : "Sin número"}
+              {activo ? formatearTelefono(activo.telefono_negocio) : t("Sin número", "No number")}
             </span>
             <span className="font-medium text-fg sm:hidden">
-              {negocios.length > 1 ? `${negocios.length} números` : "Número"}
+              {negocios.length > 1 ? `${negocios.length} ${t("números", "numbers")}` : t("Número", "Number")}
             </span>
             {negocios.length > 1 && <ChevronDown className="size-4 text-mist" />}
           </button>
@@ -46,7 +49,7 @@ export function Topbar({ onMenu }: { onMenu?: () => void }) {
               <div className="fixed inset-0 z-10" onClick={() => setNumberOpen(false)} />
               <div className="absolute left-0 top-full z-20 mt-2 w-72 rounded-xl border border-edge bg-card p-1.5 shadow-2xl">
                 <p className="px-2.5 py-2 font-mono text-[10.5px] uppercase tracking-widest text-mist">
-                  Números conectados
+                  {t("Números conectados", "Connected numbers")}
                 </p>
                 {negocios.map((n) => (
                   <div key={n.phone_number_id} className="flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left">
@@ -69,7 +72,7 @@ export function Topbar({ onMenu }: { onMenu?: () => void }) {
           className="flex items-center gap-2 rounded-lg border border-edge bg-card px-3 py-2 text-sm text-mist transition-colors hover:text-fg"
         >
           <Phone className="size-4" />
-          Conectar número
+          {t("Conectar número", "Connect number")}
         </Link>
       )}
 
@@ -77,7 +80,7 @@ export function Topbar({ onMenu }: { onMenu?: () => void }) {
         <Search className="pointer-events-none absolute left-3 size-4 text-mist" />
         <input
           type="text"
-          placeholder="Buscar conversaciones, plantillas…"
+          placeholder={t("Buscar conversaciones, plantillas…", "Search conversations, templates…")}
           className="h-9 w-full rounded-lg border border-edge bg-card pl-9 pr-16 text-sm text-fg outline-none transition-colors placeholder:text-mist focus:border-lime/50"
         />
         <kbd className="pointer-events-none absolute right-2.5 rounded border border-edge bg-ink px-1.5 py-1 font-mono text-[10.5px] text-mist">
@@ -86,9 +89,10 @@ export function Topbar({ onMenu }: { onMenu?: () => void }) {
       </div>
 
       <div className="ml-auto flex items-center gap-2 md:ml-0">
+        <LanguageSelector tone="dark" />
         <button
           className="relative flex size-9 items-center justify-center rounded-lg border border-edge text-mist transition-colors hover:text-fg"
-          aria-label="Notificaciones"
+          aria-label={t("Notificaciones", "Notifications")}
         >
           <Bell className="size-4" />
         </button>
