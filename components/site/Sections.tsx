@@ -23,6 +23,7 @@ import {
   Languages,
   Layers,
   LayoutGrid,
+  Lock,
   Megaphone,
   MessageCircle,
   Pause,
@@ -63,17 +64,32 @@ export function SectionHeading({
   title,
   desc,
   align = "left",
+  labelStyle = "pill",
+  size = "lg",
 }: {
-  eyebrow: string;
+  eyebrow?: string;
   title: React.ReactNode;
   desc?: string;
   align?: "left" | "center";
+  /** "pill" = bordered chip (default, use sparingly); "kicker" = plain colored
+   * small-caps text, no chip; "none" = no eyebrow line at all. */
+  labelStyle?: "pill" | "kicker" | "none";
+  /** "lg" = default 32/46px scale, reserved for the page's flagship moments;
+   * "md" = a step down (26/38px) for supporting sections. */
+  size?: "lg" | "md";
 }) {
   const centered = align === "center";
+  const titleSize =
+    size === "md"
+      ? "text-[26px] md:text-[38px]"
+      : "text-[32px] md:text-[46px]";
   return (
     <div className={centered ? "mx-auto max-w-3xl text-center" : "max-w-3xl"}>
-      <SectionLabel>{eyebrow}</SectionLabel>
-      <h2 className="mt-4 font-display text-[32px] font-medium leading-[1.05] tracking-[-0.025em] site-text-gradient md:text-[46px]">
+      {labelStyle === "pill" && eyebrow && <SectionLabel>{eyebrow}</SectionLabel>}
+      {labelStyle === "kicker" && eyebrow && (
+        <p className="font-mono text-[11px] font-medium uppercase tracking-[0.28em] text-site-primary">{eyebrow}</p>
+      )}
+      <h2 className={`${labelStyle === "none" ? "" : "mt-4"} font-display ${titleSize} font-medium leading-[1.05] tracking-[-0.025em] site-text-gradient`}>
         {title}
       </h2>
       {desc && (
@@ -285,7 +301,7 @@ export function WhatsAppSection() {
         <div className="grid grid-cols-12 gap-8 lg:gap-12">
           <div className="col-span-12 lg:col-span-5 lg:pt-6">
             <SectionHeading
-              eyebrow={t("WhatsApp · API Oficial", "WhatsApp · Official API")}
+              labelStyle="none"
               title={<>{t("Automatización real,", "Real automation,")} <br className="hidden md:block" />{t("sobre la infraestructura de Meta.", "on Meta's infrastructure.")}</>}
               desc={t(
                 "Conectas tu número mediante el flujo oficial de Meta (Embedded Signup). Nada de extensiones de navegador ni trucos que arriesguen tu cuenta.",
@@ -314,9 +330,6 @@ export function WhatsAppSection() {
 
           <div className="col-span-12 lg:col-span-7">
             <div className="relative">
-              <div className="absolute -inset-10 -z-10 opacity-70">
-                <div className="absolute inset-0 rounded-full bg-site-primary/15 blur-[100px]" />
-              </div>
               <Panel className="p-4 md:p-6">
                 <div className="grid grid-cols-12 gap-4">
                   <div className="col-span-12 md:col-span-6">
@@ -368,7 +381,7 @@ export function WhatsAppSection() {
 
         <div className="mt-16">
           <div className="flex items-center gap-2">
-            <ShieldCheck className="h-3.5 w-3.5 text-site-primary" />
+            <BadgeCheck className="h-3.5 w-3.5 text-site-primary" />
             <span className="font-mono text-[11px] uppercase tracking-widest text-site-muted-fg">
               {t("Por qué es confiable", "Why it's reliable")}
             </span>
@@ -377,16 +390,14 @@ export function WhatsAppSection() {
             {INFRA_ITEMS.map((item, i) => (
               <Reveal key={item.title} delay={(i % 4) * 60} className="h-full">
                 <div className="group h-full bg-site-bg p-5 transition-colors hover:bg-white/[0.02]">
-                  <span className="flex size-9 items-center justify-center rounded-lg border border-site-border bg-white/[0.02]">
-                    <item.icon className="h-4 w-4 text-site-primary" />
-                  </span>
+                  <item.icon className="h-5 w-5 text-site-primary" />
                   <h3 className="mt-3 font-display text-[14px] font-medium tracking-tight text-site-fg">{item.title}</h3>
                   <p className="mt-1.5 text-[12px] leading-relaxed text-site-muted-fg">{item.desc}</p>
                 </div>
               </Reveal>
             ))}
             <div className="flex flex-col justify-center bg-site-primary/5 p-5">
-              <ShieldCheck className="h-5 w-5 text-site-primary" />
+              <Globe className="h-5 w-5 text-site-primary" />
               <p className="mt-2.5 text-[12px] leading-relaxed text-site-muted-fg">
                 {t(
                   "Corre sobre la red global de mensajería de Meta — la misma infraestructura que usan las marcas más grandes del mundo.",
@@ -456,6 +467,8 @@ export function TrainingSection() {
       <div className="mx-auto max-w-[1280px] px-6">
         <SectionHeading
           eyebrow={t("Tu agente de IA", "Your AI agent")}
+          labelStyle="kicker"
+          size="md"
           title={<>{t("Un agente por número,", "One agent per number,")} <br className="hidden md:block" />{t("a tu manera — no un rol genérico.", "your way — not a generic role.")}</>}
           desc={t(
             "Nada de roles preconfigurados de ventas o soporte. Cada número tiene un solo agente, con el nombre, las instrucciones y el conocimiento que tú le des.",
@@ -485,13 +498,13 @@ export function TrainingSection() {
             </Panel>
           </Reveal>
 
-          <div className="col-span-12 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:col-span-7">
+          <div className="col-span-12 grid grid-cols-1 gap-x-6 gap-y-6 sm:grid-cols-2 lg:col-span-7">
             {AGENT_FEATURES.map((f, i) => (
               <Reveal key={f.title} delay={i * 80}>
-                <div className="h-full rounded-xl border border-site-border bg-white/[0.02] p-4">
-                  <f.icon className="h-4 w-4 text-site-primary" />
-                  <div className="mt-2 font-display text-[13.5px] font-medium text-site-fg">{f.title}</div>
-                  <div className="mt-1 text-[12.5px] leading-relaxed text-site-muted-fg">{f.desc}</div>
+                <div className="h-full">
+                  <f.icon className="h-5 w-5 text-site-primary" />
+                  <div className="mt-3 font-display text-[14px] font-medium text-site-fg">{f.title}</div>
+                  <div className="mt-1.5 text-[12.5px] leading-relaxed text-site-muted-fg">{f.desc}</div>
                 </div>
               </Reveal>
             ))}
@@ -511,7 +524,7 @@ export function KnowledgeSection() {
   const knowledgeItems = [
     { icon: FileText, title: t("Excel, CSV o PDF", "Excel, CSV or PDF"), desc: t("Listados de precios, catálogos o políticas — los formatos que ya usas.", "Price lists, catalogs or policies — the formats you already use.") },
     { icon: Gauge, title: t("Un archivo por número", "One file per number"), desc: t("Cada agente tiene su propia base de conocimiento, independiente de los demás.", "Each agent has its own knowledge base, independent from the rest.") },
-    { icon: ShieldCheck, title: t("Solo lo que tú subiste", "Only what you uploaded"), desc: t("El agente responde con tus instrucciones y tu archivo, nada más.", "The agent replies with your instructions and your file, nothing else.") },
+    { icon: Lock, title: t("Solo lo que tú subiste", "Only what you uploaded"), desc: t("El agente responde con tus instrucciones y tu archivo, nada más.", "The agent replies with your instructions and your file, nothing else.") },
   ];
 
   return (
@@ -519,6 +532,8 @@ export function KnowledgeSection() {
       <div className="mx-auto max-w-[1280px] px-6">
         <SectionHeading
           eyebrow={t("Base de conocimiento", "Knowledge base")}
+          labelStyle="kicker"
+          size="md"
           title={<>{t("Sube un archivo.", "Upload a file.")} <br className="hidden md:block" />{t("El agente lo usa como referencia real.", "The agent uses it as a real reference.")}</>}
           desc={t(
             "Un listado de precios en Excel o CSV, o un documento en PDF. Sin bases de datos complicadas — un archivo por número, listo para responder con eso.",
@@ -557,10 +572,10 @@ export function KnowledgeSection() {
             </Panel>
           </Reveal>
 
-          <div className="col-span-12 space-y-3 lg:col-span-5">
+          <div className="col-span-12 divide-y divide-site-border lg:col-span-5">
             {knowledgeItems.map((f, i) => (
               <Reveal key={f.title} delay={i * 80}>
-                <div className="rounded-xl border border-site-border bg-white/[0.02] p-4">
+                <div className={i === 0 ? "pb-4" : "py-4"}>
                   <f.icon className="h-4 w-4 text-site-primary" />
                   <div className="mt-2 font-display text-[13.5px] font-medium text-site-fg">{f.title}</div>
                   <div className="mt-1 text-[12.5px] leading-relaxed text-site-muted-fg">{f.desc}</div>
@@ -863,7 +878,8 @@ export function GrowthSection() {
     <section id="escala" className="relative border-t border-site-border py-20">
       <div className="mx-auto max-w-[1280px] px-6">
         <SectionHeading
-          eyebrow={t("Por qué Du Labs", "Why Du Labs")}
+          labelStyle="none"
+          size="md"
           title={<>{t("Diseñado para crecer,", "Built to grow,")} <br className="hidden md:block" />{t("pensado para Latinoamérica.", "made for Latin America.")}</>}
           desc={t(
             "Escala, mercado y ecosistema — todo lo que respalda a Du Labs, en un solo lugar.",
@@ -917,13 +933,11 @@ export function GrowthSection() {
                 </div>
               </div>
             </Reveal>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-x-6 gap-y-6 sm:grid-cols-2">
               {SCALE_ITEMS.map((item, i) => (
                 <Reveal key={item.title} delay={i * 70}>
-                  <div className="h-full rounded-2xl border border-site-border bg-white/[0.02] p-5">
-                    <span className="flex size-9 items-center justify-center rounded-lg border border-site-border bg-white/[0.02]">
-                      <item.icon className="h-4 w-4 text-site-primary" />
-                    </span>
+                  <div className="h-full">
+                    <item.icon className="h-5 w-5 text-site-primary" />
                     <h4 className="mt-3 font-display text-[14px] font-medium tracking-tight text-site-fg">{item.title}</h4>
                     <p className="mt-1.5 text-[12px] leading-relaxed text-site-muted-fg">{item.desc}</p>
                   </div>
@@ -934,14 +948,12 @@ export function GrowthSection() {
         )}
 
         {active === 1 && (
-          <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="mt-8 grid grid-cols-1 divide-y divide-site-border sm:grid-cols-2 sm:divide-y-0 sm:gap-x-6 lg:grid-cols-4">
             {LATAM_ITEMS.map((item, i) => (
               <Reveal key={item.title} delay={i * 70}>
-                <div className="h-full rounded-2xl border border-site-border bg-white/[0.02] p-6 text-center">
-                  <span className="mx-auto flex size-11 items-center justify-center rounded-xl border border-site-border bg-white/[0.02]">
-                    <item.icon className="h-5 w-5 text-site-primary" />
-                  </span>
-                  <h4 className="mt-4 font-display text-[15px] font-medium tracking-tight text-site-fg">{item.title}</h4>
+                <div className="py-4 text-center sm:py-0">
+                  <item.icon className="mx-auto h-5 w-5 text-site-primary" />
+                  <h4 className="mt-3 font-display text-[15px] font-medium tracking-tight text-site-fg">{item.title}</h4>
                   <p className="mt-2 text-[13px] leading-relaxed text-site-muted-fg">{item.desc}</p>
                 </div>
               </Reveal>
@@ -950,17 +962,15 @@ export function GrowthSection() {
         )}
 
         {active === 2 && (
-          <div className="mt-8 grid grid-cols-1 gap-4 md:grid-cols-3">
+          <div className="mt-8 grid grid-cols-1 gap-x-6 gap-y-8 md:grid-cols-3">
             {ECOSYSTEM_PILLARS.map((p, i) => (
               <Reveal key={p.name} delay={i * 80}>
-                <div className="group relative h-full overflow-hidden rounded-2xl border border-site-border bg-white/[0.02] p-6 transition-colors hover:border-site-primary/30">
+                <div className="group h-full border-t border-site-border pt-4 transition-colors hover:border-site-primary/40">
                   <div className="flex items-center justify-between">
-                    <span className="flex size-11 items-center justify-center rounded-xl border border-site-border bg-white/[0.02]">
-                      <p.icon className="h-5 w-5 text-site-primary" />
-                    </span>
+                    <p.icon className="h-5 w-5 text-site-primary" />
                     <ArrowUpRight className="h-4 w-4 text-site-muted-fg transition-colors group-hover:text-site-primary" />
                   </div>
-                  <h4 className="mt-5 font-display text-[16px] font-medium tracking-tight text-site-fg">{p.name}</h4>
+                  <h4 className="mt-4 font-display text-[16px] font-medium tracking-tight text-site-fg">{p.name}</h4>
                   <p className="mt-2 text-[13px] leading-relaxed text-site-muted-fg">{p.desc}</p>
                 </div>
               </Reveal>
@@ -1144,7 +1154,13 @@ export function FaqSection() {
   return (
     <section id="faq" className="relative border-t border-site-border py-20">
       <div className="mx-auto max-w-3xl px-6">
-        <SectionHeading eyebrow={t("Preguntas frecuentes", "Frequently asked questions")} title={<>{t("Respuestas, antes de que preguntes.", "Answers, before you even ask.")}</>} align="center" />
+        <SectionHeading
+          eyebrow={t("Preguntas frecuentes", "Frequently asked questions")}
+          labelStyle="kicker"
+          size="md"
+          title={<>{t("Respuestas, antes de que preguntes.", "Answers, before you even ask.")}</>}
+          align="center"
+        />
         <div className="mt-12 divide-y divide-site-border overflow-hidden rounded-2xl border border-site-border bg-site-card/40">
           {faqs.map((f, i) => {
             const isOpen = open === i;
