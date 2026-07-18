@@ -53,6 +53,7 @@ async function limpiar() {
   await admin.from("dulabs_clientes_config").delete().eq("phone_number_id", PHONE_FAKE);
   if (usuarioA) {
     await admin.from("dulabs_suscripciones").delete().eq("id_tenant", usuarioA.id);
+    await admin.from("dulabs_miembros_equipo").delete().eq("tenant_id", usuarioA.id);
     await admin.auth.admin.deleteUser(usuarioA.id);
   }
   if (usuarioB) await admin.auth.admin.deleteUser(usuarioB.id);
@@ -73,6 +74,20 @@ try {
   console.log(`Usuarios efímeros creados (${emailA}, ${emailB})\n`);
 
   // 2. Datos de prueba del tenant A (vía service role, ignora RLS).
+  //    Las políticas ya no comparan id_tenant = auth.uid() directo: resuelven
+  //    el tenant del usuario autenticado vía dulabs_miembros_equipo, así que
+  //    A necesita ser miembro admin/activo de su propio tenant para que las
+  //    políticas lo reconozcan (B queda sin membresía a propósito, para
+  //    probar el caso "sin equipo no ve nada").
+  const { error: errMiembro } = await admin.from("dulabs_miembros_equipo").insert({
+    tenant_id: usuarioA.id,
+    user_id: usuarioA.id,
+    email: emailA,
+    rol: "admin",
+    estado: "activo",
+  });
+  if (errMiembro) throw new Error(`seed miembros_equipo: ${errMiembro.message}`);
+
   const { error: errCfg } = await admin.from("dulabs_clientes_config").insert({
     id_tenant: usuarioA.id,
     nombre_negocio: "RLS Test (borrar)",
@@ -106,6 +121,8 @@ try {
   check("A ve sus propios mensajes (vía phone_number_id)", !msgA.error && msgA.data?.length === 1, msgA.error?.message ?? `filas: ${msgA.data?.length}`);
   const cfgA = await cliA.from("dulabs_clientes_config").select("phone_number_id");
   check("clientes_config NO devuelve filas ni al propio tenant (tokens protegidos)", !cfgA.error && cfgA.data?.length === 0, cfgA.error?.message ?? `filas: ${cfgA.data?.length}`);
+  const equipoA = await cliA.from("dulabs_miembros_equipo").select("user_id").eq("tenant_id", usuarioA.id);
+  check("A ve su propia membresía de equipo", !equipoA.error && equipoA.data?.length === 1, equipoA.error?.message ?? `filas: ${equipoA.data?.length}`);
 
   // 4. Como tenant B: no debe ver NADA de A.
   const cliB = await clienteAutenticado(emailB, passB);
@@ -115,6 +132,8 @@ try {
   check("B no ve los mensajes de A", !msgB.error && msgB.data?.length === 0, msgB.error?.message ?? `filas: ${msgB.data?.length}`);
   const cfgB = await cliB.from("dulabs_clientes_config").select("phone_number_id");
   check("B no ve la configuración de A", !cfgB.error && cfgB.data?.length === 0, cfgB.error?.message ?? `filas: ${cfgB.data?.length}`);
+  const equipoB = await cliB.from("dulabs_miembros_equipo").select("user_id").eq("tenant_id", usuarioA.id);
+  check("B (sin equipo) no ve la membresía de A", !equipoB.error && equipoB.data?.length === 0, equipoB.error?.message ?? `filas: ${equipoB.data?.length}`);
 
   // 5. Escrituras con anon+sesión deben fallar (no hay políticas de INSERT).
   const insB = await cliB.from("dulabs_mensajes_log").insert({
