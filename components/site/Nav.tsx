@@ -13,7 +13,6 @@ export function Nav() {
     { label: t("Agentes", "Agents"), href: "#entrenamiento" },
     { label: t("Infraestructura", "Infrastructure"), href: "#infraestructura" },
     { label: t("Escala", "Scale"), href: "#escala" },
-    { label: t("Precios", "Pricing"), href: "#precios" },
   ];
   const [scrolled, setScrolled] = useState(false);
   useEffect(() => {
@@ -46,6 +45,12 @@ export function Nav() {
               {l.label}
             </a>
           ))}
+          <Link
+            href="/precios"
+            className="text-[13px] text-site-muted-fg transition-colors hover:text-site-fg"
+          >
+            {t("Precios", "Pricing")}
+          </Link>
         </nav>
         <div className="flex items-center gap-3">
           <LanguageSelector />

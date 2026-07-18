@@ -11,7 +11,6 @@ import {
   PlatformOverviewSection,
   MetricsSection,
   GrowthSection,
-  PricingSection,
   FaqSection,
   FinalCta,
   Footer,
@@ -53,9 +52,6 @@ export default function Home() {
         {/* GrowthSection fusiona Escala + LatAm + Ecosistema en pestañas */}
         <GrowthSection />
 
-        <Reveal>
-          <PricingSection />
-        </Reveal>
         <Reveal>
           <FaqSection />
         </Reveal>

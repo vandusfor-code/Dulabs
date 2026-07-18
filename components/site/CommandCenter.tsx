@@ -6,27 +6,22 @@ import { useI18n } from "@/lib/i18n";
 /**
  * Hero product surface — a stylized mockup of the real Du Labs dashboard
  * (Resumen: KPI cards, actividad chart, tabla de números). Not a fictional
- * product, just the actual dashboard dressed in the marketing site's glass UI.
+ * product, just the actual dashboard.
  */
 export function CommandCenter() {
   const { t } = useI18n();
   return (
     <div className="relative mx-auto w-full max-w-[1180px]">
-      <div className="pointer-events-none absolute -inset-16 -z-10">
-        <div className="absolute inset-x-10 top-0 h-56 rounded-full bg-site-primary/15 blur-[120px]" />
-        <div className="absolute inset-x-40 top-20 h-56 rounded-full bg-site-primary-glow/10 blur-[120px]" />
-      </div>
-
-      <div className="site-glass-strong relative overflow-hidden rounded-2xl">
+      <div className="relative overflow-hidden rounded-2xl border border-site-border bg-site-card">
         {/* Chrome */}
-        <div className="flex items-center justify-between border-b border-site-border bg-gradient-to-b from-white/[0.02] to-transparent px-4 py-2.5">
+        <div className="flex items-center justify-between border-b border-site-border bg-site-card px-4 py-2.5">
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-1.5">
               <span className="h-2.5 w-2.5 rounded-full bg-white/10 ring-1 ring-white/5" />
               <span className="h-2.5 w-2.5 rounded-full bg-white/10 ring-1 ring-white/5" />
               <span className="h-2.5 w-2.5 rounded-full bg-white/10 ring-1 ring-white/5" />
             </div>
-            <div className="hidden items-center gap-1 rounded-md bg-white/[0.03] px-2 py-1 font-mono text-[10.5px] text-site-muted-fg ring-1 ring-white/5 md:flex">
+            <div className="hidden items-center gap-1 rounded-md bg-site-card px-2 py-1 font-mono text-[10.5px] text-site-muted-fg ring-1 ring-white/5 md:flex">
               <Search className="h-3 w-3" />
               app.dulabs.co
               <span className="ml-1 text-white/30">/</span>
@@ -91,7 +86,7 @@ export function CommandCenter() {
                 <PanelHead
                   title={t("Conversación", "Conversation")}
                   meta={
-                    <span className="inline-flex items-center gap-1 rounded-full bg-white/[0.04] px-1.5 py-0.5 font-mono text-[9.5px] uppercase tracking-widest text-site-muted-fg ring-1 ring-white/5">
+                    <span className="inline-flex items-center gap-1 rounded-full bg-site-card px-1.5 py-0.5 font-mono text-[9.5px] uppercase tracking-widest text-site-muted-fg ring-1 ring-white/5">
                       <span className="h-1.5 w-1.5 rounded-full bg-site-primary shadow-[0_0_6px_var(--color-site-primary)]" />
                       {t("WhatsApp · IA activa", "WhatsApp · AI active")}
                     </span>
@@ -108,7 +103,7 @@ export function CommandCenter() {
               {/* Números table */}
               <div className="site-panel col-span-12 p-4">
                 <PanelHead title={t("Tus números", "Your numbers")} meta={<Chip>{t("Activo", "Active")}</Chip>} />
-                <div className="mt-3 flex items-center justify-between rounded-lg border border-site-border bg-white/[0.02] px-3 py-2.5 text-[12px]">
+                <div className="mt-3 flex items-center justify-between rounded-lg border border-site-border bg-site-card px-3 py-2.5 text-[12px]">
                   <span className="text-site-fg">{t("Peluquería Estilo", "Estilo Hair Salon")}</span>
                   <span className="font-mono text-site-muted-fg">+57 300 ••• ••56</span>
                   <span className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest text-site-primary">
@@ -121,12 +116,6 @@ export function CommandCenter() {
           </main>
         </div>
       </div>
-
-      {/* Reflection */}
-      <div
-        aria-hidden
-        className="pointer-events-none mx-auto -mt-4 h-40 w-[92%] scale-y-[-1] rounded-b-2xl bg-gradient-to-b from-white/[0.03] to-transparent blur-md reflect-below opacity-40"
-      />
     </div>
   );
 }
@@ -161,7 +150,7 @@ function SideItem({
   return (
     <div
       className={`mb-0.5 flex items-center justify-between rounded-md px-2 py-1.5 text-[12px] ${
-        active ? "bg-white/[0.05] text-site-fg ring-1 ring-white/10" : "text-site-muted-fg hover:bg-white/[0.02]"
+        active ? "bg-site-card text-site-fg ring-1 ring-white/10" : "text-site-muted-fg hover:bg-site-card"
       }`}
     >
       <span className="flex items-center gap-2">
@@ -177,7 +166,7 @@ function Chip({ children, primary }: { children: React.ReactNode; primary?: bool
   return (
     <span
       className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest ring-1 ${
-        primary ? "bg-site-primary/10 text-site-primary ring-site-primary/25" : "bg-white/[0.03] text-site-muted-fg ring-white/10"
+        primary ? "bg-site-primary/10 text-site-primary ring-site-primary/25" : "bg-site-card text-site-muted-fg ring-white/10"
       }`}
     >
       {children}
@@ -235,7 +224,7 @@ function Bubble({ side, ai, typing, children }: { side: "in" | "out"; ai?: boole
       className={`max-w-[85%] rounded-lg px-2.5 py-1.5 text-[11px] leading-relaxed ${
         side === "out"
           ? "ml-auto rounded-tr-sm bg-site-primary/15 text-site-fg ring-1 ring-site-primary/25"
-          : "rounded-tl-sm bg-white/[0.05] text-site-fg/90 ring-1 ring-white/6"
+          : "rounded-tl-sm bg-site-card text-site-fg/90 ring-1 ring-white/6"
       } ${typing ? "opacity-70" : ""}`}
     >
       {children}

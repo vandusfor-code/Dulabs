@@ -52,7 +52,7 @@ import { useI18n } from "@/lib/i18n";
 
 export function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
-    <div className="inline-flex items-center gap-2 rounded-full border border-site-border bg-white/[0.02] px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.2em] text-site-muted-fg">
+    <div className="inline-flex items-center gap-2 rounded-full border border-site-border bg-site-card px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.2em] text-site-muted-fg">
       <span className="h-1 w-1 rounded-full bg-site-primary shadow-[0_0_6px_var(--color-site-primary)]" />
       {children}
     </div>
@@ -89,7 +89,7 @@ export function SectionHeading({
       {labelStyle === "kicker" && eyebrow && (
         <p className="font-mono text-[11px] font-medium uppercase tracking-[0.28em] text-site-primary">{eyebrow}</p>
       )}
-      <h2 className={`${labelStyle === "none" ? "" : "mt-4"} font-display ${titleSize} font-medium leading-[1.05] tracking-[-0.025em] ${size === "md" ? "text-site-fg" : "site-text-gradient"}`}>
+      <h2 className={`${labelStyle === "none" ? "" : "mt-4"} font-display ${titleSize} font-medium leading-[1.05] tracking-[-0.025em] text-site-fg`}>
         {title}
       </h2>
       {desc && (
@@ -103,7 +103,7 @@ export function SectionHeading({
 
 function Panel({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return (
-    <div className={`relative overflow-hidden rounded-2xl border border-site-border bg-gradient-to-b from-white/[0.02] to-transparent ${className}`}>
+    <div className={`relative overflow-hidden rounded-2xl border border-site-border bg-site-card ${className}`}>
       {children}
     </div>
   );
@@ -121,7 +121,7 @@ function PhoneMock({ children, header }: { children: React.ReactNode; header: Re
 }
 function MsgIn({ children }: { children: React.ReactNode }) {
   return (
-    <div className="max-w-[85%] rounded-lg rounded-tl-sm bg-white/[0.05] px-2.5 py-1.5 text-[11px] text-site-fg/90 ring-1 ring-white/6">
+    <div className="max-w-[85%] rounded-lg rounded-tl-sm bg-site-card px-2.5 py-1.5 text-[11px] text-site-fg/90 ring-1 ring-white/6">
       {children}
     </div>
   );
@@ -165,7 +165,7 @@ export function CoexistenceSection() {
                 { icon: MessageCircle, title: t("Historial compartido", "Shared history"), desc: t("Todo lo que la IA respondió lo ves también en tu WhatsApp normal, sin duplicados.", "Everything the AI replied also shows up in your regular WhatsApp, with no duplicates.") },
                 { icon: ShieldCheck, title: t("Cero riesgo para tu número", "Zero risk to your number"), desc: t("Nada de extensiones de navegador ni trucos — todo corre sobre los servidores oficiales de Meta.", "No browser extensions or hacks — everything runs on Meta's own official servers.") },
               ].map((f) => (
-                <div key={f.title} className="rounded-xl border border-site-border bg-white/[0.02] p-4">
+                <div key={f.title} className="rounded-xl border border-site-border bg-site-card p-4">
                   <f.icon className="h-4 w-4 text-site-primary" />
                   <div className="mt-2 font-display text-[13.5px] font-medium text-site-fg">{f.title}</div>
                   <div className="mt-1 text-[12.5px] leading-relaxed text-site-muted-fg">{f.desc}</div>
@@ -177,7 +177,7 @@ export function CoexistenceSection() {
           <div className="col-span-12 lg:col-span-5">
             <PhoneMock
               header={
-                <div className="flex items-center gap-2 border-b border-white/5 bg-white/[0.02] px-3 py-2.5 text-[11px] text-site-fg">
+                <div className="flex items-center gap-2 border-b border-white/5 bg-site-card px-3 py-2.5 text-[11px] text-site-fg">
                   <div className="grid h-6 w-6 place-items-center rounded-full bg-site-primary/15 ring-1 ring-site-primary/25">
                     <Bot className="h-3 w-3 text-site-primary" />
                   </div>
@@ -191,7 +191,7 @@ export function CoexistenceSection() {
               <MsgIn>{t("Hola, ¿tienen turno para hoy?", "Hi, do you have an opening today?")}</MsgIn>
               <MsgOut>{t("¡Hola! Sí, tengo espacio a las 4pm y 5:30pm. ¿Cuál prefieres?", "Hi! Yes, I have 4pm and 5:30pm available. Which do you prefer?")}</MsgOut>
               <MsgIn>{t("A las 5:30", "At 5:30")}</MsgIn>
-              <div className="mx-auto my-1 w-fit rounded-full bg-white/[0.04] px-2.5 py-1 font-mono text-[9px] uppercase tracking-widest text-site-muted-fg">
+              <div className="mx-auto my-1 w-fit rounded-full bg-site-card px-2.5 py-1 font-mono text-[9px] uppercase tracking-widest text-site-muted-fg">
                 {t("Dueño respondió desde su celular", "Owner replied from their phone")}
               </div>
               <MsgOut>{t("Listo, te espero a las 5:30. ¡Nos vemos!", "Done, see you at 5:30!")}</MsgOut>
@@ -223,7 +223,7 @@ export function CampaignsSection() {
 
         <div className="mt-12 grid grid-cols-12 gap-4">
           <Panel className="col-span-12 lg:col-span-7">
-            <div className="flex items-center justify-between border-b border-site-border bg-white/[0.02] px-4 py-2.5">
+            <div className="flex items-center justify-between border-b border-site-border bg-site-card px-4 py-2.5">
               <div className="flex items-center gap-2">
                 <Megaphone className="h-3.5 w-3.5 text-site-primary" />
                 <span className="font-display text-[13px] font-medium text-site-fg">promo_julio</span>
@@ -236,7 +236,7 @@ export function CampaignsSection() {
               </button>
             </div>
             <div className="p-5">
-              <div className="rounded-lg border border-site-border bg-white/[0.02] p-4 text-[13px] leading-relaxed text-site-fg/90">
+              <div className="rounded-lg border border-site-border bg-site-card p-4 text-[13px] leading-relaxed text-site-fg/90">
                 {t(
                   "Hola 👋, tenemos una promoción especial esta semana en nuestros servicios. Escríbenos para reservar tu cita.",
                   "Hi 👋, we have a special promotion on our services this week. Message us to book your appointment."
@@ -248,7 +248,7 @@ export function CampaignsSection() {
                   { l: t("Enviados", "Sent"), v: "312" },
                   { l: t("Fallidos", "Failed"), v: "0" },
                 ].map((s) => (
-                  <div key={s.l} className="rounded-lg border border-site-border bg-white/[0.02] p-3">
+                  <div key={s.l} className="rounded-lg border border-site-border bg-site-card p-3">
                     <div className="font-display text-[20px] font-medium text-site-fg">{s.v}</div>
                     <div className="mt-0.5 font-mono text-[9.5px] uppercase tracking-widest text-site-muted-fg">{s.l}</div>
                   </div>
@@ -263,7 +263,7 @@ export function CampaignsSection() {
               { step: "2", title: t("Meta la revisa", "Meta reviews it"), desc: t("Aprobación automática, normalmente en minutos u horas.", "Automatic approval, usually in minutes or hours.") },
               { step: "3", title: t("Envía la campaña", "Send the campaign"), desc: t("Pega tu lista de números y listo — se manda a todos.", "Paste your list of numbers and done — it goes out to everyone.") },
             ].map((s) => (
-              <div key={s.step} className="flex items-start gap-3 rounded-xl border border-site-border bg-white/[0.02] p-4">
+              <div key={s.step} className="flex items-start gap-3 rounded-xl border border-site-border bg-site-card p-4">
                 <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-site-primary/10 font-mono text-[11px] font-semibold text-site-primary ring-1 ring-site-primary/25">
                   {s.step}
                 </span>
@@ -322,7 +322,7 @@ export function WhatsAppSection() {
               ))}
             </ul>
             <div className="mt-8">
-              <Link href="/business" className="inline-flex items-center gap-1 text-[13.5px] font-medium text-site-fg hover:text-site-primary">
+              <Link href="/precios" className="inline-flex items-center gap-1 text-[13.5px] font-medium text-site-fg hover:text-site-primary">
                 {t("Ver planes y precios", "See plans and pricing")} <ArrowRight className="h-3.5 w-3.5" />
               </Link>
             </div>
@@ -335,7 +335,7 @@ export function WhatsAppSection() {
                   <div className="col-span-12 md:col-span-6">
                     <PhoneMock
                       header={
-                        <div className="flex items-center gap-2 border-b border-white/5 bg-white/[0.02] px-3 py-2.5 text-[11px] text-site-fg">
+                        <div className="flex items-center gap-2 border-b border-white/5 bg-site-card px-3 py-2.5 text-[11px] text-site-fg">
                           <div className="grid h-6 w-6 place-items-center rounded-full bg-site-primary/15 ring-1 ring-site-primary/25">
                             <Bot className="h-3 w-3 text-site-primary" />
                           </div>
@@ -389,7 +389,7 @@ export function WhatsAppSection() {
           <div className="mt-5 grid grid-cols-1 gap-px overflow-hidden rounded-2xl border border-site-border bg-white/5 sm:grid-cols-2 lg:grid-cols-4">
             {INFRA_ITEMS.map((item, i) => (
               <Reveal key={item.title} delay={(i % 4) * 60} className="h-full">
-                <div className="group h-full bg-site-bg p-5 transition-colors hover:bg-white/[0.02]">
+                <div className="group h-full bg-site-bg p-5 transition-colors hover:bg-site-card">
                   <item.icon className="h-5 w-5 text-site-primary" />
                   <h3 className="mt-3 font-display text-[14px] font-medium tracking-tight text-site-fg">{item.title}</h3>
                   <p className="mt-1.5 text-[12px] leading-relaxed text-site-muted-fg">{item.desc}</p>
@@ -483,7 +483,7 @@ export function TrainingSection() {
                 <span className="font-display text-[13px] font-medium text-site-fg">{t("Entrenar a Ava", "Train Ava")}</span>
                 <span className="font-mono text-[9.5px] uppercase tracking-widest text-site-primary">{t("Guardado", "Saved")}</span>
               </div>
-              <div className="mt-4 rounded-lg border border-site-border bg-white/[0.02] p-4 text-[13px] leading-relaxed text-site-fg/80">
+              <div className="mt-4 rounded-lg border border-site-border bg-site-card p-4 text-[13px] leading-relaxed text-site-fg/80">
                 {t(
                   'Eres el asistente de WhatsApp de "Peluquería Estilo". Responde de forma breve y amable. Cortes desde $25.000, tinte desde $60.000. Atendemos de martes a sábado, 9am a 6pm.',
                   'You are the WhatsApp assistant for "Estilo Hair Salon". Reply briefly and kindly. Haircuts from $25,000, coloring from $60,000. Open Tuesday to Saturday, 9am to 6pm.'
@@ -549,12 +549,12 @@ export function KnowledgeSection() {
                   <FileUp className="h-4 w-4 text-site-primary" />
                   <span className="font-display text-[13px] font-medium text-site-fg">{t("Base de conocimiento", "Knowledge base")}</span>
                 </div>
-                <span className="inline-flex items-center gap-1.5 rounded-lg border border-site-border bg-white/[0.02] px-3 py-1.5 text-[11px] text-site-muted-fg">
+                <span className="inline-flex items-center gap-1.5 rounded-lg border border-site-border bg-site-card px-3 py-1.5 text-[11px] text-site-muted-fg">
                   {t("Reemplazar archivo", "Replace file")}
                 </span>
               </div>
-              <div className="mt-4 flex items-center gap-3 rounded-lg border border-site-border bg-white/[0.02] px-3 py-3">
-                <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-white/[0.04]">
+              <div className="mt-4 flex items-center gap-3 rounded-lg border border-site-border bg-site-card px-3 py-3">
+                <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-site-card">
                   <FileText className="h-4 w-4 text-site-muted-fg" />
                 </span>
                 <div className="min-w-0 flex-1">
@@ -607,7 +607,7 @@ export function PlatformOverviewSection() {
     { name: "+57 310 555 8899", last: t("Perfecto, muchas gracias", "Perfect, thank you very much"), active: true },
   ];
   const inboxVisual = (
-    <div className="overflow-hidden rounded-xl border border-site-border bg-white/[0.02]">
+    <div className="overflow-hidden rounded-xl border border-site-border bg-site-card">
       <div className="divide-y divide-site-border">
         {chats.map((c) => (
           <div key={c.name} className="flex items-center justify-between px-4 py-2.5">
@@ -738,7 +738,7 @@ export function PlatformOverviewSection() {
                 className={`flex shrink-0 items-center gap-2.5 rounded-xl border px-4 py-3 text-[13px] transition-colors lg:w-full ${
                   i === active
                     ? "border-site-primary/30 bg-site-primary/10 text-site-fg"
-                    : "border-site-border bg-white/[0.02] text-site-muted-fg hover:text-site-fg"
+                    : "border-site-border bg-site-card text-site-muted-fg hover:text-site-fg"
                 }`}
               >
                 <m.icon className={`h-4 w-4 ${i === active ? "text-site-primary" : ""}`} />
@@ -748,7 +748,7 @@ export function PlatformOverviewSection() {
           </div>
 
           <Panel className="overflow-hidden">
-            <div className="flex items-center gap-2 border-b border-site-border bg-white/[0.02] px-5 py-3">
+            <div className="flex items-center gap-2 border-b border-site-border bg-site-card px-5 py-3">
               <current.icon className="h-4 w-4 text-site-primary" />
               <span className="font-display text-[13px] font-medium text-site-fg">{current.label}</span>
             </div>
@@ -767,7 +767,7 @@ export function PlatformOverviewSection() {
                 </ul>
               </div>
               {current.visual ?? (
-                <div className="rounded-xl border border-site-border bg-white/[0.02] p-4">
+                <div className="rounded-xl border border-site-border bg-site-card p-4">
                   <div className="flex items-center justify-between border-b border-site-border pb-3">
                     <span className="font-mono text-[10.5px] uppercase tracking-widest text-site-muted-fg">
                       {current.label}
@@ -777,8 +777,8 @@ export function PlatformOverviewSection() {
                   <div className="mt-3 flex flex-col gap-2.5">
                     {[0, 1, 2, 3].map((row) => (
                       <div key={row} className="flex items-center gap-2.5">
-                        <span className="size-6 shrink-0 rounded-md bg-white/[0.04]" />
-                        <span className="h-2 rounded-full bg-white/[0.04]" style={{ width: `${70 - row * 12}%` }} />
+                        <span className="size-6 shrink-0 rounded-md bg-site-card" />
+                        <span className="h-2 rounded-full bg-site-card" style={{ width: `${70 - row * 12}%` }} />
                         <span className="ml-auto h-2 w-8 rounded-full bg-site-primary/30" />
                       </div>
                     ))}
@@ -901,7 +901,7 @@ export function GrowthSection() {
               className={`flex shrink-0 items-center gap-2.5 rounded-xl border px-4 py-3 text-[13px] transition-colors ${
                 i === active
                   ? "border-site-primary/30 bg-site-primary/10 text-site-fg"
-                  : "border-site-border bg-white/[0.02] text-site-muted-fg hover:text-site-fg"
+                  : "border-site-border bg-site-card text-site-muted-fg hover:text-site-fg"
               }`}
             >
               <tab.icon className={`h-4 w-4 ${i === active ? "text-site-primary" : ""}`} />
@@ -920,7 +920,7 @@ export function GrowthSection() {
         {active === 0 && (
           <div className="mt-8 grid grid-cols-1 gap-8 lg:grid-cols-2 lg:items-center">
             <Reveal variant="zoom">
-              <div className="relative flex items-center justify-center rounded-2xl border border-site-border bg-white/[0.02] p-8">
+              <div className="relative flex items-center justify-center rounded-2xl border border-site-border bg-site-card p-8">
                 <div className="pointer-events-none absolute inset-0 rounded-2xl site-grid-bg opacity-40" />
                 <div className="relative flex flex-col items-center text-center">
                   <span className="flex size-16 items-center justify-center rounded-2xl border border-site-primary/30 bg-site-primary/10">
@@ -1000,7 +1000,7 @@ export function MetricsSection() {
         <div className="grid grid-cols-2 gap-px overflow-hidden rounded-2xl border border-site-border bg-white/5 md:grid-cols-4">
           {metrics.map((m) => (
             <div key={m.l} className="bg-site-bg p-6 text-center">
-              <div className="font-display text-[32px] font-medium leading-none tracking-tight site-text-gradient-primary md:text-[38px]">
+              <div className="font-display text-[32px] font-medium leading-none tracking-tight text-site-primary md:text-[38px]">
                 {m.v}
               </div>
               <div className="mt-3 text-[12.5px] font-medium text-site-fg">{m.l}</div>
@@ -1075,7 +1075,7 @@ export function PricingSection() {
                 className={`mt-6 inline-flex h-10 w-full items-center justify-center rounded-lg text-[13px] font-medium transition-all ${
                   tier.featured
                     ? "bg-site-primary text-site-primary-fg hover:brightness-110"
-                    : "border border-site-border text-site-fg hover:border-white/20 hover:bg-white/[0.03]"
+                    : "border border-site-border text-site-fg hover:border-white/20 hover:bg-site-card"
                 }`}
               />
               <div className="mt-6 space-y-2.5 border-t border-site-border pt-6">
@@ -1168,7 +1168,7 @@ export function FaqSection() {
               <button
                 key={f.q}
                 onClick={() => setOpen(isOpen ? null : i)}
-                className="w-full px-6 py-5 text-left transition-colors hover:bg-white/[0.02]"
+                className="w-full px-6 py-5 text-left transition-colors hover:bg-site-card"
               >
                 <div className="flex items-center justify-between gap-4">
                   <span className="font-display text-[15px] font-medium text-site-fg">{f.q}</span>
@@ -1196,7 +1196,6 @@ export function FinalCta() {
     <section id="demo" className="relative overflow-hidden border-t border-site-border py-24">
       <div className="pointer-events-none absolute inset-0 site-ambient-bg animate-site-ambient opacity-90" />
       <div className="pointer-events-none absolute inset-0 site-grid-bg [mask-image:radial-gradient(ellipse_at_center,black_10%,transparent_70%)]" />
-      <div className="pointer-events-none absolute left-1/2 top-0 h-[500px] w-[900px] -translate-x-1/2 rounded-full bg-site-primary/15 blur-[140px]" />
 
       <div className="relative mx-auto max-w-3xl px-6 text-center">
         <SectionLabel>{t("Empecemos", "Let's start")}</SectionLabel>
@@ -1221,7 +1220,7 @@ export function FinalCta() {
             href="https://wa.me/573148127388"
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex h-11 items-center rounded-full border border-site-border bg-white/[0.02] px-5 text-[13.5px] font-medium text-site-fg backdrop-blur-md hover:border-white/20"
+            className="inline-flex h-11 items-center rounded-full border border-site-border bg-site-card px-5 text-[13.5px] font-medium text-site-fg hover:border-white/20"
           >
             {t("Hablar por WhatsApp", "Chat on WhatsApp")}
           </a>
@@ -1246,7 +1245,7 @@ export function Footer() {
         { l: t("Base de conocimiento", "Knowledge base"), h: "#conocimiento" },
         { l: t("Plantillas y campañas", "Templates & campaigns"), h: "#campanas" },
         { l: t("Infraestructura", "Infrastructure"), h: "#infraestructura" },
-        { l: t("Precios", "Pricing"), h: "#precios" },
+        { l: t("Precios", "Pricing"), h: "/precios" },
       ],
     },
     {
