@@ -580,11 +580,12 @@ body {
   color: inherit;
 }
 
-/* ---------- Cursor-reactive hero spotlight ---------- */
+/* ---------- Cursor-reactive spotlight (whole landing page) ---------- */
 
-.site-spotlight {
-  position: absolute;
+.site-spotlight-page {
+  position: fixed;
   inset: 0;
+  z-index: 1;
   pointer-events: none;
   opacity: 0;
   transition: opacity 0.4s ease;
@@ -594,7 +595,7 @@ body {
     transparent 70%
   );
 }
-.site-spotlight[data-active="true"] {
+.site-spotlight-page[data-active="true"] {
   opacity: 1;
 }
 
@@ -656,7 +657,7 @@ body {
   .site-grain {
     display: none;
   }
-  .site-spotlight {
+  .site-spotlight-page {
     display: none;
   }
 }
