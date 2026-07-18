@@ -134,7 +134,7 @@ export default function CheckoutPage() {
 
   if (wompiConfigFaltante) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-ink px-5 text-fg">
+      <main className="dash-scope flex min-h-screen items-center justify-center bg-ink px-5 text-fg">
         <p className="max-w-md rounded-lg border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-600">
           {t("Falta NEXT_PUBLIC_WOMPI_PUBLIC_KEY en el entorno.", "NEXT_PUBLIC_WOMPI_PUBLIC_KEY is missing from the environment.")}
         </p>
@@ -143,7 +143,7 @@ export default function CheckoutPage() {
   }
   if (session === "verificando") {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-ink px-5 text-fg">
+      <main className="dash-scope flex min-h-screen items-center justify-center bg-ink px-5 text-fg">
         <p className="text-sm text-mist">{t("Verificando tu sesión…", "Verifying your session…")}</p>
       </main>
     );
@@ -151,7 +151,7 @@ export default function CheckoutPage() {
   if (!session) return null;
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-ink px-5 py-16 text-fg">
+    <main className="dash-scope flex min-h-screen items-center justify-center bg-ink px-5 py-16 text-fg">
       <div className="w-full max-w-md rounded-2xl border border-edge/60 bg-card p-8 sm:p-10">
         <Link href="/dashboard/conexion" className="text-sm text-lime-text hover:text-fg">
           {t("← Volver al panel", "← Back to dashboard")}

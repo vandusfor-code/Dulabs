@@ -10,7 +10,7 @@ const ARTICLE_CLASSNAME =
 export default function PrivacidadPage() {
   const { t } = useI18n();
   return (
-    <main className="bg-ink px-5 py-20 text-fg sm:px-8">
+    <main className="dash-scope bg-ink px-5 py-20 text-fg sm:px-8">
       <div className="mx-auto w-full max-w-3xl">
         <div className="flex items-center justify-between">
           <Link
