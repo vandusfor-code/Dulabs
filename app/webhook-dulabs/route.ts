@@ -3,11 +3,11 @@ import type { NextRequest } from "next/server";
 import { supabaseAdmin, type ClienteConfig } from "@/lib/supabase";
 import { generarRespuestaIA } from "@/lib/ia";
 import { verificarFirmaMeta, compararVerifyToken } from "@/lib/meta-firma";
+import { enviarTexto } from "@/lib/whatsapp";
 
 export const runtime = "nodejs";
 
 const PAUSA_HUMANA_MS = 30 * 60 * 1000;
-const GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? "v23.0";
 
 type MetaMessage = {
   from: string;
@@ -263,36 +263,16 @@ async function enviarWhatsApp(cliente: ClienteConfig, para: string, texto: strin
     return;
   }
 
-  const res = await fetch(
-    `https://graph.facebook.com/${GRAPH_VERSION}/${cliente.phone_number_id}/messages`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        messaging_product: "whatsapp",
-        to: para,
-        type: "text",
-        text: { body: texto },
-      }),
-    }
-  );
-
-  if (!res.ok) {
-    console.error(
-      `[webhook-dulabs] Meta respondió ${res.status}:`,
-      await res.text()
-    );
+  let wamid: string | null = null;
+  try {
+    ({ wamid } = await enviarTexto({ phoneNumberId: cliente.phone_number_id, token, para, texto }));
+  } catch (err) {
+    console.error("[webhook-dulabs] error enviando a Meta:", err);
     return;
   }
 
-  const json = (await res.json()) as { messages?: { id?: string }[] };
-  const wamid = json.messages?.[0]?.id;
-
   await incrementarUsoMensajes(cliente);
-  await registrarMensaje(cliente.phone_number_id, soloDigitos(para), "saliente", texto, "ia", wamid);
+  await registrarMensaje(cliente.phone_number_id, soloDigitos(para), "saliente", texto, "ia", wamid ?? undefined);
 }
 
 // --- Historial de mensajes (para la vista de actividad reciente) --------------
@@ -302,7 +282,7 @@ async function registrarMensaje(
   telefonoCliente: string,
   direccion: "entrante" | "saliente",
   contenido: string,
-  origen: "entrante" | "ia" | "manual" | "campaña",
+  origen: "entrante" | "ia" | "manual" | "campaña" | "agente",
   wamid?: string
 ) {
   const { error } = await supabaseAdmin().from("dulabs_mensajes_log").insert({
