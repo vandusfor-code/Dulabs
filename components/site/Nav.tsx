@@ -9,10 +9,10 @@ import { LanguageSelector } from "@/components/LanguageSelector";
 export function Nav() {
   const { t } = useI18n();
   const links = [
-    { label: t("Plataforma", "Platform"), href: "#plataforma" },
-    { label: t("Agentes", "Agents"), href: "#entrenamiento" },
-    { label: t("Infraestructura", "Infrastructure"), href: "#infraestructura" },
-    { label: t("Escala", "Scale"), href: "#escala" },
+    { label: t("Plataforma", "Platform"), href: "/#plataforma" },
+    { label: t("Agentes", "Agents"), href: "/#entrenamiento" },
+    { label: t("Infraestructura", "Infrastructure"), href: "/#infraestructura" },
+    { label: t("Escala", "Scale"), href: "/#escala" },
   ];
   const [scrolled, setScrolled] = useState(false);
   useEffect(() => {

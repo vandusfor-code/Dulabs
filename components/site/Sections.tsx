@@ -1240,11 +1240,11 @@ export function Footer() {
     {
       title: t("Producto", "Product"),
       links: [
-        { l: t("Modo coexistencia", "Coexistence mode"), h: "#coexistencia" },
-        { l: t("Agentes de IA", "AI agents"), h: "#entrenamiento" },
-        { l: t("Base de conocimiento", "Knowledge base"), h: "#conocimiento" },
-        { l: t("Plantillas y campañas", "Templates & campaigns"), h: "#campanas" },
-        { l: t("Infraestructura", "Infrastructure"), h: "#infraestructura" },
+        { l: t("Modo coexistencia", "Coexistence mode"), h: "/#coexistencia" },
+        { l: t("Agentes de IA", "AI agents"), h: "/#entrenamiento" },
+        { l: t("Base de conocimiento", "Knowledge base"), h: "/#conocimiento" },
+        { l: t("Plantillas y campañas", "Templates & campaigns"), h: "/#campanas" },
+        { l: t("Infraestructura", "Infrastructure"), h: "/#infraestructura" },
         { l: t("Precios", "Pricing"), h: "/precios" },
       ],
     },
