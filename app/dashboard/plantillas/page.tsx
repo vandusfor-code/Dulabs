@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { LayoutTemplate, CircleCheck, Clock, CircleAlert, Plus, FileEdit, Ban, Search, Copy, Check as CheckIcon } from "lucide-react";
 import { useDashboard } from "@/lib/dashboard-session";
 import { PageHeader, Pill, StatTile } from "@/components/dashboard/shell/ui";
+import { useI18n } from "@/lib/i18n";
 
 type Plantilla = {
   id: number;
@@ -26,27 +27,24 @@ function contarVariables(cuerpo: string): number {
 
 const categorias = ["Todas", "MARKETING", "UTILITY", "AUTHENTICATION"] as const;
 
-const estadoInfo: Record<string, { tone: "success" | "warning" | "danger" | "neutral"; label: string; icon: typeof CircleCheck }> = {
-  APPROVED: { tone: "success", label: "Aprobada", icon: CircleCheck },
-  REJECTED: { tone: "danger", label: "Rechazada", icon: CircleAlert },
-  pendiente: { tone: "warning", label: "En revisión", icon: Clock },
-  PENDING: { tone: "warning", label: "En revisión", icon: Clock },
-  IN_APPEAL: { tone: "warning", label: "En apelación", icon: Clock },
-  PAUSED: { tone: "warning", label: "Pausada por Meta", icon: Ban },
-  DISABLED: { tone: "danger", label: "Deshabilitada", icon: Ban },
-  PENDING_DELETION: { tone: "neutral", label: "Eliminando…", icon: Clock },
-  DELETED: { tone: "neutral", label: "Eliminada", icon: CircleAlert },
-  LIMIT_EXCEEDED: { tone: "danger", label: "Límite excedido", icon: CircleAlert },
-  borrador: { tone: "neutral", label: "Borrador", icon: FileEdit },
-};
-
-function infoDePlantilla(p: Plantilla) {
-  if (p.borrador) return estadoInfo.borrador;
-  return estadoInfo[p.estado] ?? estadoInfo.pendiente;
-}
-
 export default function PlantillasPage() {
   const { session, negocios } = useDashboard();
+  const { t } = useI18n();
+  const estadoInfo: Record<string, { tone: "success" | "warning" | "danger" | "neutral"; label: string; icon: typeof CircleCheck }> = {
+    APPROVED: { tone: "success", label: t("Aprobada", "Approved"), icon: CircleCheck },
+    REJECTED: { tone: "danger", label: t("Rechazada", "Rejected"), icon: CircleAlert },
+    pendiente: { tone: "warning", label: t("En revisión", "Under review"), icon: Clock },
+    PENDING: { tone: "warning", label: t("En revisión", "Under review"), icon: Clock },
+    IN_APPEAL: { tone: "warning", label: t("En apelación", "In appeal"), icon: Clock },
+    PAUSED: { tone: "warning", label: t("Pausada por Meta", "Paused by Meta"), icon: Ban },
+    DISABLED: { tone: "danger", label: t("Deshabilitada", "Disabled"), icon: Ban },
+    PENDING_DELETION: { tone: "neutral", label: t("Eliminando…", "Deleting…"), icon: Clock },
+    DELETED: { tone: "neutral", label: t("Eliminada", "Deleted"), icon: CircleAlert },
+    LIMIT_EXCEEDED: { tone: "danger", label: t("Límite excedido", "Limit exceeded"), icon: CircleAlert },
+    borrador: { tone: "neutral", label: t("Borrador", "Draft"), icon: FileEdit },
+  };
+  const infoDePlantilla = (p: Plantilla) =>
+    p.borrador ? estadoInfo.borrador : estadoInfo[p.estado] ?? estadoInfo.pendiente;
   const [plantillas, setPlantillas] = useState<Plantilla[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [cat, setCat] = useState<(typeof categorias)[number]>("Todas");
@@ -92,8 +90,8 @@ export default function PlantillasPage() {
           body: JSON.stringify({ phone_number_id: phoneNumberId, nombre, categoria, cuerpo, borrador }),
         });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.error ?? "Error creando la plantilla");
-        setMensajeCrear(borrador ? "Guardada como borrador." : `Enviada a revisión de Meta (estado: ${data.estado}).`);
+        if (!res.ok) throw new Error(data.error ?? t("Error creando la plantilla", "Error creating the template"));
+        setMensajeCrear(borrador ? t("Guardada como borrador.", "Saved as a draft.") : t(`Enviada a revisión de Meta (estado: ${data.estado}).`, `Submitted for Meta review (status: ${data.estado}).`));
         setNombre("");
         setCuerpo("");
         cargarPlantillas();
@@ -103,7 +101,7 @@ export default function PlantillasPage() {
         setCreando(false);
       }
     },
-    [session, phoneNumberId, nombre, categoria, cuerpo, cargarPlantillas]
+    [session, phoneNumberId, nombre, categoria, cuerpo, cargarPlantillas, t]
   );
 
   const publicarBorrador = useCallback(
@@ -125,7 +123,7 @@ export default function PlantillasPage() {
           }),
         });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.error ?? "Error enviando a revisión");
+        if (!res.ok) throw new Error(data.error ?? t("Error enviando a revisión", "Error submitting for review"));
         cargarPlantillas();
       } catch (err) {
         setMensajeCrear(err instanceof Error ? err.message : String(err));
@@ -133,7 +131,7 @@ export default function PlantillasPage() {
         setPublicandoId(null);
       }
     },
-    [session, cargarPlantillas]
+    [session, cargarPlantillas, t]
   );
 
   const filtradas = (plantillas ?? []).filter((p) => {
@@ -165,15 +163,15 @@ export default function PlantillasPage() {
   return (
     <div className="pb-12">
       <PageHeader
-        eyebrow="Crear"
-        title="Plantillas"
-        description="Diseña, envía a revisión y administra tus plantillas de mensaje de WhatsApp."
+        eyebrow={t("Crear", "Create")}
+        title={t("Plantillas", "Templates")}
+        description={t("Diseña, envía a revisión y administra tus plantillas de mensaje de WhatsApp.", "Design, submit for review and manage your WhatsApp message templates.")}
       >
         <button
           onClick={() => setFormAbierto((v) => !v)}
           className="flex items-center gap-2 rounded-lg bg-lime px-3.5 py-2 text-sm font-medium text-lime-fg transition-opacity hover:opacity-90"
         >
-          <Plus className="size-4" /> Nueva plantilla
+          <Plus className="size-4" /> {t("Nueva plantilla", "New template")}
         </button>
       </PageHeader>
 
@@ -184,11 +182,11 @@ export default function PlantillasPage() {
 
         {plantillas !== null && plantillas.length > 0 && (
           <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-5">
-            <StatTile label="Aprobadas" value={String(conteos.aprobadas)} icon={CircleCheck} />
-            <StatTile label="En revisión" value={String(conteos.pendientes)} icon={Clock} />
-            <StatTile label="Rechazadas" value={String(conteos.rechazadas)} icon={CircleAlert} />
-            <StatTile label="Pausadas" value={String(conteos.pausadas)} icon={Ban} />
-            <StatTile label="Borradores" value={String(conteos.borradores)} icon={FileEdit} />
+            <StatTile label={t("Aprobadas", "Approved")} value={String(conteos.aprobadas)} icon={CircleCheck} />
+            <StatTile label={t("En revisión", "Under review")} value={String(conteos.pendientes)} icon={Clock} />
+            <StatTile label={t("Rechazadas", "Rejected")} value={String(conteos.rechazadas)} icon={CircleAlert} />
+            <StatTile label={t("Pausadas", "Paused")} value={String(conteos.pausadas)} icon={Ban} />
+            <StatTile label={t("Borradores", "Drafts")} value={String(conteos.borradores)} icon={FileEdit} />
           </div>
         )}
 
@@ -199,7 +197,7 @@ export default function PlantillasPage() {
           >
             {negocios && negocios.length > 1 && (
               <div>
-                <label className="mb-1.5 block text-xs font-medium text-mist">Número</label>
+                <label className="mb-1.5 block text-xs font-medium text-mist">{t("Número", "Number")}</label>
                 <select
                   value={phoneNumberId}
                   onChange={(e) => setPhoneNumberIdElegido(e.target.value)}
@@ -215,7 +213,7 @@ export default function PlantillasPage() {
             )}
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
-                <label className="mb-1.5 block text-xs font-medium text-mist">Nombre</label>
+                <label className="mb-1.5 block text-xs font-medium text-mist">{t("Nombre", "Name")}</label>
                 <input
                   required
                   value={nombre}
@@ -225,27 +223,27 @@ export default function PlantillasPage() {
                 />
               </div>
               <div>
-                <label className="mb-1.5 block text-xs font-medium text-mist">Categoría</label>
+                <label className="mb-1.5 block text-xs font-medium text-mist">{t("Categoría", "Category")}</label>
                 <select
                   value={categoria}
                   onChange={(e) => setCategoria(e.target.value)}
                   className="w-full rounded-lg border border-edge bg-ink px-4 py-2.5 text-sm text-fg outline-none focus:border-lime/50"
                 >
-                  <option value="UTILITY">Utilidad</option>
+                  <option value="UTILITY">{t("Utilidad", "Utility")}</option>
                   <option value="MARKETING">Marketing</option>
-                  <option value="AUTHENTICATION">Autenticación</option>
+                  <option value="AUTHENTICATION">{t("Autenticación", "Authentication")}</option>
                 </select>
               </div>
             </div>
             <div>
-              <label className="mb-1.5 block text-xs font-medium text-mist">Texto del mensaje</label>
+              <label className="mb-1.5 block text-xs font-medium text-mist">{t("Texto del mensaje", "Message text")}</label>
               <textarea
                 required
                 rows={4}
                 maxLength={1024}
                 value={cuerpo}
                 onChange={(e) => setCuerpo(e.target.value)}
-                placeholder="Hola, tenemos una promoción especial este mes para ti."
+                placeholder={t("Hola, tenemos una promoción especial este mes para ti.", "Hi, we have a special promotion for you this month.")}
                 className="w-full rounded-lg border border-edge bg-ink px-4 py-3 text-sm text-fg outline-none focus:border-lime/50"
               />
             </div>
@@ -258,7 +256,7 @@ export default function PlantillasPage() {
                 disabled={creando || !phoneNumberId}
                 className="btn-shine rounded-lg bg-lime px-5 py-2.5 text-sm font-semibold text-lime-fg transition-[background-color,transform] duration-200 hover:-translate-y-0.5 hover:bg-lime-hover active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {creando ? "Enviando a Meta…" : "Enviar a revisión"}
+                {creando ? t("Enviando a Meta…", "Sending to Meta…") : t("Enviar a revisión", "Submit for review")}
               </button>
               <button
                 type="button"
@@ -266,7 +264,7 @@ export default function PlantillasPage() {
                 disabled={creando || !phoneNumberId}
                 className="rounded-lg border border-edge px-5 py-2.5 text-sm font-semibold text-fg transition-colors hover:border-lime/40 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                Guardar borrador
+                {t("Guardar borrador", "Save draft")}
               </button>
             </div>
           </form>
@@ -282,7 +280,7 @@ export default function PlantillasPage() {
                   cat === c ? "bg-lime text-lime-fg" : "bg-card text-mist hover:text-fg"
                 }`}
               >
-                {c === "Todas" ? "Todas" : c === "MARKETING" ? "Marketing" : c === "UTILITY" ? "Utilidad" : "Autenticación"}
+                {c === "Todas" ? t("Todas", "All") : c === "MARKETING" ? "Marketing" : c === "UTILITY" ? t("Utilidad", "Utility") : t("Autenticación", "Authentication")}
               </button>
             ))}
           </div>
@@ -291,7 +289,7 @@ export default function PlantillasPage() {
             <input
               value={busqueda}
               onChange={(e) => setBusqueda(e.target.value)}
-              placeholder="Buscar plantillas…"
+              placeholder={t("Buscar plantillas…", "Search templates…")}
               className="w-56 rounded-lg border border-edge bg-card py-1.5 pl-9 pr-3 text-sm text-fg outline-none focus:border-lime/50"
             />
           </div>
@@ -302,9 +300,9 @@ export default function PlantillasPage() {
             {plantillas !== null && filtradas.length === 0 ? (
               <div className="flex flex-col items-center gap-2 rounded-xl border border-edge bg-card p-10 text-center">
                 <LayoutTemplate className="size-9 text-mist/40" strokeWidth={1.2} />
-                <p className="mt-1 text-sm font-semibold text-fg">Todavía no has creado ninguna plantilla</p>
+                <p className="mt-1 text-sm font-semibold text-fg">{t("Todavía no has creado ninguna plantilla", "You haven't created any template yet")}</p>
                 <p className="max-w-xs text-xs leading-relaxed text-mist">
-                  Créala arriba para empezar a mandar campañas masivas.
+                  {t("Créala arriba para empezar a mandar campañas masivas.", "Create one above to start sending bulk campaigns.")}
                 </p>
               </div>
             ) : (
@@ -337,7 +335,7 @@ export default function PlantillasPage() {
                           <span className="font-mono text-[10.5px] uppercase tracking-widest text-mist">{p.idioma}</span>
                         </div>
                         <span className="font-mono text-[10.5px] uppercase tracking-widest text-mist">
-                          {p.enviados.toLocaleString("es-CO")} enviados
+                          {p.enviados.toLocaleString("es-CO")} {t("enviados", "sent")}
                         </span>
                       </div>
                     </button>
@@ -350,14 +348,14 @@ export default function PlantillasPage() {
           <div className="lg:sticky lg:top-20 lg:self-start">
             <div className="rounded-xl border border-edge bg-card p-4">
               <div className="flex items-center justify-between">
-                <p className="font-mono text-[10.5px] uppercase tracking-widest text-mist">Vista previa</p>
+                <p className="font-mono text-[10.5px] uppercase tracking-widest text-mist">{t("Vista previa", "Preview")}</p>
                 {activa && (
                   <button
                     onClick={copiarTexto}
                     className="flex items-center gap-1 text-xs text-mist transition-colors hover:text-fg"
                   >
                     {copiado ? <CheckIcon className="size-3.5 text-lime-text" /> : <Copy className="size-3.5" />}
-                    {copiado ? "Copiado" : "Copiar"}
+                    {copiado ? t("Copiado", "Copied") : t("Copiar", "Copy")}
                   </button>
                 )}
               </div>
@@ -365,12 +363,12 @@ export default function PlantillasPage() {
                 <div className="rounded-[1.4rem] bg-[#0b3b2e] p-3">
                   <div className="mb-2 flex justify-center">
                     <span className="rounded-full bg-black/20 px-2 py-0.5 font-mono text-[9.5px] text-white/70">
-                      Hoy
+                      {t("Hoy", "Today")}
                     </span>
                   </div>
                   <div className="max-w-[92%] rounded-xl rounded-tl-sm bg-card p-3 shadow-sm">
                     <p className="whitespace-pre-line text-sm leading-relaxed text-fg">
-                      {activa ? activa.cuerpo : "Hola, tenemos una promoción especial este mes para ti."}
+                      {activa ? activa.cuerpo : t("Hola, tenemos una promoción especial este mes para ti.", "Hi, we have a special promotion for you this month.")}
                     </p>
                     <div className="mt-1.5 flex items-center justify-between gap-2">
                       <span className="truncate text-[10px] text-mist">{nombreNegocioActiva ?? ""}</span>
@@ -380,17 +378,17 @@ export default function PlantillasPage() {
                 </div>
               </div>
               <p className="mt-3 text-center text-xs text-mist">
-                {activa ? activa.nombre : "Así se verá tu próxima plantilla"}
+                {activa ? activa.nombre : t("Así se verá tu próxima plantilla", "This is how your next template will look")}
               </p>
 
               {activa && (
                 <div className="mt-4 grid grid-cols-2 gap-2 border-t border-edge pt-4">
                   <div>
-                    <p className="font-mono text-[10.5px] uppercase tracking-widest text-mist">Variables</p>
+                    <p className="font-mono text-[10.5px] uppercase tracking-widest text-mist">{t("Variables", "Variables")}</p>
                     <p className="mt-1 text-lg font-semibold text-fg">{variablesActiva}</p>
                   </div>
                   <div>
-                    <p className="font-mono text-[10.5px] uppercase tracking-widest text-mist">Tasa de lectura</p>
+                    <p className="font-mono text-[10.5px] uppercase tracking-widest text-mist">{t("Tasa de lectura", "Read rate")}</p>
                     <p className="mt-1 text-lg font-semibold text-fg">
                       {activa.enviados > 0 ? `${Math.round(activa.tasaLectura * 100)}%` : "—"}
                     </p>
@@ -404,7 +402,7 @@ export default function PlantillasPage() {
                   disabled={publicandoId === activa.id}
                   className="btn-shine mt-4 w-full rounded-lg bg-lime px-4 py-2.5 text-sm font-semibold text-lime-fg transition-[background-color,transform] duration-200 hover:-translate-y-0.5 hover:bg-lime-hover active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {publicandoId === activa.id ? "Enviando…" : "Enviar a revisión"}
+                  {publicandoId === activa.id ? t("Enviando…", "Sending…") : t("Enviar a revisión", "Submit for review")}
                 </button>
               )}
             </div>
