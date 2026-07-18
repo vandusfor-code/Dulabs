@@ -1258,7 +1258,7 @@ export function Footer() {
           ))}
         </div>
 
-        <div className="mt-14 grid gap-10 border-t border-site-border pt-10 md:grid-cols-2">
+        <div className="mt-14 grid gap-10 border-t border-site-border pt-10 md:grid-cols-3">
           <div>
             <h3 className="text-[12.5px] font-semibold text-site-fg">{t("Información legal", "Legal information")}</h3>
             <p className="mt-4 text-[12.5px] leading-relaxed text-site-muted-fg">
@@ -1295,6 +1295,33 @@ export function Footer() {
                 "Du Labs es una marca comercial y plataforma digital operada por RAMOS PADILLA DUVAN ANDRES.",
                 "Du Labs is a trademark and digital platform operated by RAMOS PADILLA DUVAN ANDRES."
               )}
+            </p>
+          </div>
+          <div>
+            <h3 className="text-[12.5px] font-semibold text-site-fg">{t("Información del negocio", "Business information")}</h3>
+            <p className="mt-4 text-[12.5px] leading-relaxed text-site-muted-fg">
+              <span className="text-site-muted-fg/70">{t("Nombre legal del negocio:", "Legal business name:")}</span>
+              <br />
+              Duván Andrés Ramos Padilla
+            </p>
+            <p className="mt-4 text-[12.5px] leading-relaxed text-site-muted-fg">
+              <span className="text-site-muted-fg/70">{t("Nombre comercial:", "Trade name:")}</span>
+              <br />
+              PORTABILIDADES
+            </p>
+            <p className="mt-4 text-[12.5px] leading-relaxed text-site-muted-fg">
+              <span className="text-site-muted-fg/70">{t("Dirección:", "Address:")}</span>
+              <br />
+              CR 36 47 17 BRR SANTA ELENA
+              <br />
+              Montería, Córdoba 230001
+              <br />
+              Colombia
+            </p>
+            <p className="mt-4 text-[12.5px] leading-relaxed text-site-muted-fg">
+              <span className="text-site-muted-fg/70">{t("Teléfono del negocio:", "Business phone:")}</span>
+              <br />
+              +573148127388
             </p>
           </div>
           <div className="md:justify-self-end">
