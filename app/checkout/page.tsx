@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import type { Session } from "@supabase/supabase-js";
 import { supabaseBrowser } from "@/lib/supabase-browser";
+import { useI18n } from "@/lib/i18n";
 
 const PLAN_PENDIENTE_KEY = "du_labs_plan_elegido";
 const PRECIO_COP_POR_PLAN: Record<string, number> = {
@@ -30,6 +31,7 @@ type Estado =
 
 export default function CheckoutPage() {
   const router = useRouter();
+  const { t } = useI18n();
   const publicKey = process.env.NEXT_PUBLIC_WOMPI_PUBLIC_KEY;
 
   const [session, setSession] = useState<Session | null | "verificando">("verificando");
@@ -74,7 +76,7 @@ export default function CheckoutPage() {
         const personalAuthToken =
           merchantJson.data?.presigned_personal_data_auth?.acceptance_token;
         if (!acceptanceToken || !personalAuthToken) {
-          throw new Error("No se pudieron obtener los tokens de aceptación de Wompi.");
+          throw new Error(t("No se pudieron obtener los tokens de aceptación de Wompi.", "Could not obtain Wompi acceptance tokens."));
         }
 
         // 2. Tokenizar la tarjeta directamente desde el navegador: el número
@@ -119,7 +121,7 @@ export default function CheckoutPage() {
           }),
         });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.error ?? "Error procesando el pago.");
+        if (!res.ok) throw new Error(data.error ?? t("Error procesando el pago.", "Error processing the payment."));
 
         localStorage.removeItem(PLAN_PENDIENTE_KEY);
         setEstado({ fase: "exito" });
@@ -127,14 +129,14 @@ export default function CheckoutPage() {
         setEstado({ fase: "error", mensaje: err instanceof Error ? err.message : String(err) });
       }
     },
-    [session, publicKey, plan, numero, mes, anio, cvc, titular]
+    [session, publicKey, plan, numero, mes, anio, cvc, titular, t]
   );
 
   if (wompiConfigFaltante) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-ink px-5 text-fg">
         <p className="max-w-md rounded-lg border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-600">
-          Falta NEXT_PUBLIC_WOMPI_PUBLIC_KEY en el entorno.
+          {t("Falta NEXT_PUBLIC_WOMPI_PUBLIC_KEY en el entorno.", "NEXT_PUBLIC_WOMPI_PUBLIC_KEY is missing from the environment.")}
         </p>
       </main>
     );
@@ -142,7 +144,7 @@ export default function CheckoutPage() {
   if (session === "verificando") {
     return (
       <main className="flex min-h-screen items-center justify-center bg-ink px-5 text-fg">
-        <p className="text-sm text-mist">Verificando tu sesión…</p>
+        <p className="text-sm text-mist">{t("Verificando tu sesión…", "Verifying your session…")}</p>
       </main>
     );
   }
@@ -152,26 +154,26 @@ export default function CheckoutPage() {
     <main className="flex min-h-screen items-center justify-center bg-ink px-5 py-16 text-fg">
       <div className="w-full max-w-md rounded-2xl border border-edge/60 bg-card p-8 sm:p-10">
         <Link href="/dashboard/conexion" className="text-sm text-lime-text hover:text-fg">
-          ← Volver al panel
+          {t("← Volver al panel", "← Back to dashboard")}
         </Link>
-        <h1 className="mt-6 text-2xl font-semibold">Activa tu suscripción</h1>
+        <h1 className="mt-6 text-2xl font-semibold">{t("Activa tu suscripción", "Activate your subscription")}</h1>
         <p className="mt-3 text-sm leading-relaxed text-mist">
-          {plan} — ${PRECIO_COP_POR_PLAN[plan]?.toLocaleString("es-CO") ?? "—"} COP / mes.
-          Se te cobrará automáticamente cada mes con esta tarjeta.
+          {plan} — ${PRECIO_COP_POR_PLAN[plan]?.toLocaleString("es-CO") ?? "—"} COP / {t("mes", "month")}.{" "}
+          {t("Se te cobrará automáticamente cada mes con esta tarjeta.", "You'll be charged automatically every month with this card.")}
         </p>
 
         {estado.fase === "exito" ? (
           <div className="mt-8 rounded-xl border border-lime/40 bg-lime/10 p-5 text-sm leading-relaxed">
-            ✅ Suscripción activada. Ya puedes conectar o seguir usando tu WhatsApp Business.
+            {t("✅ Suscripción activada. Ya puedes conectar o seguir usando tu WhatsApp Business.", "✅ Subscription activated. You can now connect or keep using your WhatsApp Business.")}
             <Link href="/dashboard/conexion" className="mt-3 block font-semibold text-lime-text hover:text-fg">
-              Ir al panel →
+              {t("Ir al panel →", "Go to dashboard →")}
             </Link>
           </div>
         ) : (
           <form onSubmit={pagar} className="mt-8 flex flex-col gap-4">
             <div>
               <label className="mb-1.5 block text-xs font-medium text-mist">
-                Número de tarjeta
+                {t("Número de tarjeta", "Card number")}
               </label>
               <input
                 required
@@ -184,7 +186,7 @@ export default function CheckoutPage() {
             </div>
             <div className="grid grid-cols-3 gap-3">
               <div>
-                <label className="mb-1.5 block text-xs font-medium text-mist">Mes</label>
+                <label className="mb-1.5 block text-xs font-medium text-mist">{t("Mes", "Month")}</label>
                 <input
                   required
                   inputMode="numeric"
@@ -196,7 +198,7 @@ export default function CheckoutPage() {
                 />
               </div>
               <div>
-                <label className="mb-1.5 block text-xs font-medium text-mist">Año</label>
+                <label className="mb-1.5 block text-xs font-medium text-mist">{t("Año", "Year")}</label>
                 <input
                   required
                   inputMode="numeric"
@@ -222,13 +224,13 @@ export default function CheckoutPage() {
             </div>
             <div>
               <label className="mb-1.5 block text-xs font-medium text-mist">
-                Nombre del titular
+                {t("Nombre del titular", "Cardholder name")}
               </label>
               <input
                 required
                 value={titular}
                 onChange={(e) => setTitular(e.target.value)}
-                placeholder="Como aparece en la tarjeta"
+                placeholder={t("Como aparece en la tarjeta", "As it appears on the card")}
                 className="w-full rounded-lg border border-edge bg-ink-2 px-4 py-2.5 text-sm text-fg outline-none focus:border-lime/50"
               />
             </div>
@@ -244,14 +246,16 @@ export default function CheckoutPage() {
               disabled={estado.fase === "procesando"}
               className="btn-shine mt-2 rounded-lg bg-lime px-6 py-3 text-sm font-semibold text-lime-fg transition-[background-color,transform] duration-200 hover:-translate-y-0.5 hover:bg-lime-hover active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {estado.fase === "procesando" ? "Procesando…" : "Confirmar y pagar"}
+              {estado.fase === "procesando" ? t("Procesando…", "Processing…") : t("Confirmar y pagar", "Confirm and pay")}
             </button>
           </form>
         )}
 
         <p className="mt-6 text-xs leading-relaxed text-mist/70">
-          El pago se procesa directamente con Wompi. Du Labs nunca ve ni
-          almacena el número completo de tu tarjeta.
+          {t(
+            "El pago se procesa directamente con Wompi. Du Labs nunca ve ni almacena el número completo de tu tarjeta.",
+            "The payment is processed directly with Wompi. Du Labs never sees or stores your full card number."
+          )}
         </p>
       </div>
     </main>
