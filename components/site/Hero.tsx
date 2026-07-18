@@ -21,12 +21,12 @@ export function Hero() {
         <div className="flex justify-center">
           <a
             href="#plataforma"
-            className="group inline-flex items-center gap-2 rounded-full border border-site-border bg-white/[0.02] px-3 py-1 font-mono text-[10.5px] text-site-muted-fg backdrop-blur-md transition-all hover:border-site-primary/30 hover:text-site-fg"
+            className="group inline-flex items-center gap-2 whitespace-nowrap rounded-full border border-site-border bg-white/[0.02] px-3 py-1 font-mono text-[10.5px] text-site-muted-fg backdrop-blur-md transition-all hover:border-site-primary/30 hover:text-site-fg"
           >
-            <span className="inline-flex items-center gap-1 rounded-full bg-site-primary/10 px-1.5 py-0.5 text-[9.5px] font-medium uppercase tracking-widest text-site-primary ring-1 ring-site-primary/25">
+            <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-site-primary/10 px-1.5 py-0.5 text-[9.5px] font-medium uppercase tracking-widest text-site-primary ring-1 ring-site-primary/25">
               {t("API Oficial de Meta", "Official Meta API")}
             </span>
-            <span className="uppercase tracking-widest">{t("Modo coexistencia disponible", "Coexistence mode available")}</span>
+            <span className="hidden uppercase tracking-widest sm:inline">{t("Modo coexistencia disponible", "Coexistence mode available")}</span>
             <ArrowRight className="h-3 w-3 transition-transform group-hover:translate-x-0.5" />
           </a>
         </div>
@@ -65,13 +65,13 @@ export function Hero() {
           </a>
         </div>
 
-        <div className="mt-10 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 font-mono text-[10px] uppercase tracking-[0.18em] text-site-muted-fg">
+        <div className="mt-10 grid grid-cols-2 gap-x-4 gap-y-2 text-center font-mono text-[10px] uppercase tracking-[0.18em] text-site-muted-fg sm:flex sm:flex-wrap sm:items-center sm:justify-center sm:gap-x-6">
           <span>{t("API Oficial de Meta", "Official Meta API")}</span>
-          <span className="text-white/15">/</span>
+          <span className="hidden text-white/15 sm:inline">/</span>
           <span>{t("0% riesgo de bloqueo", "0% ban risk")}</span>
-          <span className="text-white/15">/</span>
+          <span className="hidden text-white/15 sm:inline">/</span>
           <span>{t("Modo coexistencia", "Coexistence mode")}</span>
-          <span className="text-white/15">/</span>
+          <span className="hidden text-white/15 sm:inline">/</span>
           <span>{t("Entrenado con Claude (Anthropic)", "Trained with Claude (Anthropic)")}</span>
         </div>
 
