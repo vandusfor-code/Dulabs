@@ -6,14 +6,10 @@ import {
   TrainingSection,
   KnowledgeSection,
   CampaignsSection,
-  WhatsappInfraSection,
   WhatsAppSection,
-  InboxSection,
   PlatformOverviewSection,
   MetricsSection,
-  ScaleSection,
-  LatamSection,
-  EcosystemSection,
+  GrowthSection,
   PricingSection,
   FaqSection,
   FinalCta,
@@ -29,6 +25,10 @@ export default function Home() {
         <Hero />
 
         <Reveal>
+          <MetricsSection />
+        </Reveal>
+
+        <Reveal>
           <CoexistenceSection />
         </Reveal>
 
@@ -40,24 +40,16 @@ export default function Home() {
           <CampaignsSection />
         </Reveal>
 
-        <WhatsappInfraSection />
-
+        {/* WhatsAppSection incluye la antigua grilla de infraestructura */}
         <Reveal>
           <WhatsAppSection />
         </Reveal>
-        <Reveal>
-          <InboxSection />
-        </Reveal>
 
+        {/* PlatformOverviewSection incluye la antigua pestaña "Mensajes" */}
         <PlatformOverviewSection />
 
-        <Reveal>
-          <MetricsSection />
-        </Reveal>
-
-        <ScaleSection />
-        <LatamSection />
-        <EcosystemSection />
+        {/* GrowthSection fusiona Escala + LatAm + Ecosistema en pestañas */}
+        <GrowthSection />
 
         <Reveal>
           <PricingSection />

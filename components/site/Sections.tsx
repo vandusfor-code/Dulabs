@@ -19,6 +19,7 @@ import {
   GraduationCap,
   HeartPulse,
   Infinity as InfinityIcon,
+  Inbox,
   Languages,
   Layers,
   LayoutGrid,
@@ -124,7 +125,7 @@ function MsgOut({ children }: { children: React.ReactNode }) {
 export function CoexistenceSection() {
   const { t } = useI18n();
   return (
-    <section id="coexistencia" className="relative border-t border-site-border py-28">
+    <section id="coexistencia" className="relative border-t border-site-border py-20">
       <div className="mx-auto max-w-[1280px] px-6">
         <SectionHeading
           eyebrow={t("Modo coexistencia", "Coexistence mode")}
@@ -193,7 +194,7 @@ export function CoexistenceSection() {
 export function CampaignsSection() {
   const { t } = useI18n();
   return (
-    <section id="campanas" className="relative border-t border-site-border py-28">
+    <section id="campanas" className="relative border-t border-site-border py-20">
       <div className="mx-auto max-w-[1280px] px-6">
         <SectionHeading
           eyebrow={t("Plantillas y campañas", "Templates & campaigns")}
@@ -269,8 +270,17 @@ export function CampaignsSection() {
 
 export function WhatsAppSection() {
   const { t } = useI18n();
+  const INFRA_ITEMS = [
+    { icon: ShieldCheck, title: t("API Oficial de WhatsApp Business", "Official WhatsApp Business API"), desc: t("Construido directamente sobre la Cloud API de Meta — sin atajos no oficiales, sin riesgo de bloqueo.", "Built directly on Meta's Cloud API — no unofficial shortcuts, no ban risk.") },
+    { icon: UserPlus, title: "Embedded Signup", desc: t("Conecta un número nuevo en minutos con el flujo nativo de Meta.", "Connect a new number in minutes with Meta's native flow.") },
+    { icon: Layers, title: t("Múltiples números", "Multiple numbers"), desc: t("Administra cada línea conectada desde un solo panel.", "Manage every connected line from a single dashboard.") },
+    { icon: FileCheck2, title: t("Gestión de plantillas", "Template management"), desc: t("Crea, envía a revisión y sigue el estado real de aprobación de tus plantillas.", "Create, submit for review and track the real approval status of your templates.") },
+    { icon: Radio, title: t("Campañas masivas", "Bulk campaigns"), desc: t("Llega a toda tu lista de contactos con plantillas aprobadas por Meta.", "Reach your entire contact list with Meta-approved templates.") },
+    { icon: BadgeCheck, title: t("Verificación de Meta", "Meta verification"), desc: t("Consulta la calidad real de tu número y desbloquea límites de mensajería más altos.", "Check your number's real quality and unlock higher messaging limits.") },
+    { icon: Users, title: t("Traspaso a un humano", "Human handoff"), desc: t("Toma cualquier conversación desde tu celular cuando quieras, sin perder el hilo.", "Take over any conversation from your phone whenever you want, without losing context.") },
+  ];
   return (
-    <section id="whatsapp" className="relative border-t border-site-border py-28">
+    <section id="infraestructura" className="relative border-t border-site-border py-20">
       <div className="mx-auto max-w-[1280px] px-6">
         <div className="grid grid-cols-12 gap-8 lg:gap-12">
           <div className="col-span-12 lg:col-span-5 lg:pt-6">
@@ -355,6 +365,37 @@ export function WhatsAppSection() {
             </div>
           </div>
         </div>
+
+        <div className="mt-16">
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="h-3.5 w-3.5 text-site-primary" />
+            <span className="font-mono text-[11px] uppercase tracking-widest text-site-muted-fg">
+              {t("Por qué es confiable", "Why it's reliable")}
+            </span>
+          </div>
+          <div className="mt-5 grid grid-cols-1 gap-px overflow-hidden rounded-2xl border border-site-border bg-white/5 sm:grid-cols-2 lg:grid-cols-4">
+            {INFRA_ITEMS.map((item, i) => (
+              <Reveal key={item.title} delay={(i % 4) * 60} className="h-full">
+                <div className="group h-full bg-site-bg p-5 transition-colors hover:bg-white/[0.02]">
+                  <span className="flex size-9 items-center justify-center rounded-lg border border-site-border bg-white/[0.02]">
+                    <item.icon className="h-4 w-4 text-site-primary" />
+                  </span>
+                  <h3 className="mt-3 font-display text-[14px] font-medium tracking-tight text-site-fg">{item.title}</h3>
+                  <p className="mt-1.5 text-[12px] leading-relaxed text-site-muted-fg">{item.desc}</p>
+                </div>
+              </Reveal>
+            ))}
+            <div className="flex flex-col justify-center bg-site-primary/5 p-5">
+              <ShieldCheck className="h-5 w-5 text-site-primary" />
+              <p className="mt-2.5 text-[12px] leading-relaxed text-site-muted-fg">
+                {t(
+                  "Corre sobre la red global de mensajería de Meta — la misma infraestructura que usan las marcas más grandes del mundo.",
+                  "Runs on Meta's global messaging network — the same infrastructure used by the world's biggest brands."
+                )}
+              </p>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
   );
@@ -411,7 +452,7 @@ export function TrainingSection() {
     },
   ];
   return (
-    <section id="entrenamiento" className="relative border-t border-site-border py-28">
+    <section id="entrenamiento" className="relative border-t border-site-border py-20">
       <div className="mx-auto max-w-[1280px] px-6">
         <SectionHeading
           eyebrow={t("Tu agente de IA", "Your AI agent")}
@@ -474,7 +515,7 @@ export function KnowledgeSection() {
   ];
 
   return (
-    <section id="conocimiento" className="relative border-t border-site-border py-28">
+    <section id="conocimiento" className="relative border-t border-site-border py-20">
       <div className="mx-auto max-w-[1280px] px-6">
         <SectionHeading
           eyebrow={t("Base de conocimiento", "Knowledge base")}
@@ -534,131 +575,80 @@ export function KnowledgeSection() {
 }
 
 /* =========================================================
-   4c. Infraestructura oficial de WhatsApp
+   5. Mensajes centralizados (reemplaza "Integrations")
+   — nota: ahora se muestra como pestaña "Mensajes" dentro de
+   PlatformOverviewSection, ver más abajo.
 ========================================================= */
-
-export function WhatsappInfraSection() {
-  const { t } = useI18n();
-  const INFRA_ITEMS = [
-    { icon: ShieldCheck, title: t("API Oficial de WhatsApp Business", "Official WhatsApp Business API"), desc: t("Construido directamente sobre la Cloud API de Meta — sin atajos no oficiales, sin riesgo de bloqueo.", "Built directly on Meta's Cloud API — no unofficial shortcuts, no ban risk.") },
-    { icon: UserPlus, title: "Embedded Signup", desc: t("Conecta un número nuevo en minutos con el flujo nativo de Meta.", "Connect a new number in minutes with Meta's native flow.") },
-    { icon: Layers, title: t("Múltiples números", "Multiple numbers"), desc: t("Administra cada línea conectada desde un solo panel.", "Manage every connected line from a single dashboard.") },
-    { icon: FileCheck2, title: t("Gestión de plantillas", "Template management"), desc: t("Crea, envía a revisión y sigue el estado real de aprobación de tus plantillas.", "Create, submit for review and track the real approval status of your templates.") },
-    { icon: Radio, title: t("Campañas masivas", "Bulk campaigns"), desc: t("Llega a toda tu lista de contactos con plantillas aprobadas por Meta.", "Reach your entire contact list with Meta-approved templates.") },
-    { icon: BadgeCheck, title: t("Verificación de Meta", "Meta verification"), desc: t("Consulta la calidad real de tu número y desbloquea límites de mensajería más altos.", "Check your number's real quality and unlock higher messaging limits.") },
-    { icon: Users, title: t("Traspaso a un humano", "Human handoff"), desc: t("Toma cualquier conversación desde tu celular cuando quieras, sin perder el hilo.", "Take over any conversation from your phone whenever you want, without losing context.") },
-  ];
-  return (
-    <section id="infraestructura" className="relative border-t border-site-border bg-site-card/20 py-28">
-      <div className="mx-auto max-w-[1280px] px-6">
-        <SectionHeading
-          eyebrow={t("Infraestructura confiable", "Reliable infrastructure")}
-          title={<>{t("Construido sobre la infraestructura", "Built on WhatsApp's")} <br className="hidden md:block" />{t("oficial de WhatsApp.", "official infrastructure.")}</>}
-          desc={t(
-            "Cada mensaje pasa por la plataforma verificada de Meta. Confiabilidad, cumplimiento y entrega, por defecto.",
-            "Every message goes through Meta's verified platform. Reliability, compliance and delivery, by default."
-          )}
-        />
-
-        <div className="mt-12 grid grid-cols-1 gap-px overflow-hidden rounded-2xl border border-site-border bg-white/5 sm:grid-cols-2 lg:grid-cols-3">
-          {INFRA_ITEMS.map((item, i) => (
-            <Reveal key={item.title} delay={(i % 3) * 60} className="h-full">
-              <div className="group h-full bg-site-bg p-6 transition-colors hover:bg-white/[0.02]">
-                <span className="flex size-10 items-center justify-center rounded-lg border border-site-border bg-white/[0.02]">
-                  <item.icon className="h-5 w-5 text-site-primary" />
-                </span>
-                <h3 className="mt-4 font-display text-[15px] font-medium tracking-tight text-site-fg">{item.title}</h3>
-                <p className="mt-2 text-[13px] leading-relaxed text-site-muted-fg">{item.desc}</p>
-              </div>
-            </Reveal>
-          ))}
-          <div className="flex flex-col justify-center bg-site-primary/5 p-6">
-            <ShieldCheck className="h-6 w-6 text-site-primary" />
-            <p className="mt-3 text-[13px] leading-relaxed text-site-muted-fg">
-              {t(
-                "Corre sobre la red global de mensajería de Meta — la misma infraestructura que usan las marcas más grandes del mundo.",
-                "Runs on Meta's global messaging network — the same infrastructure used by the world's biggest brands."
-              )}
-            </p>
-          </div>
-        </div>
-      </div>
-    </section>
-  );
-}
 
 /* =========================================================
-   5. Mensajes centralizados (reemplaza "Integrations")
+   5b. Una plataforma completa (8 módulos reales)
 ========================================================= */
 
-export function InboxSection() {
+export function PlatformOverviewSection() {
   const { t } = useI18n();
   const chats = [
     { name: t("Peluquería Estilo", "Estilo Hair Salon"), last: t("Listo, te espero a las 5:30", "Done, see you at 5:30"), active: true },
     { name: "+57 300 123 4567", last: t("¿Cuánto cuesta el servicio básico?", "How much is the basic service?"), active: false },
     { name: "+57 310 555 8899", last: t("Perfecto, muchas gracias", "Perfect, thank you very much"), active: true },
   ];
-  return (
-    <section id="mensajes" className="relative border-t border-site-border py-28">
-      <div className="mx-auto max-w-[1280px] px-6">
-        <SectionHeading
-          eyebrow={t("Mensajes", "Messages")}
-          title={<>{t("Todas tus conversaciones,", "All your conversations,")} <br className="hidden md:block" />{t("en un solo lugar.", "in one place.")}</>}
-          desc={t(
-            "Revisa cada chat, mira si la IA está activa o si pausaste para responder tú mismo, y ten el historial completo siempre a mano.",
-            "Review every chat, see whether the AI is active or paused for you to reply yourself, and keep the full history always at hand."
-          )}
-        />
-        <Panel className="mt-12 overflow-hidden">
-          <div className="grid grid-cols-12">
-            <div className="col-span-12 divide-y divide-site-border md:col-span-5">
-              {chats.map((c) => (
-                <div key={c.name} className="flex items-center justify-between px-4 py-3.5">
-                  <div className="min-w-0">
-                    <div className="truncate text-[13px] font-medium text-site-fg">{c.name}</div>
-                    <div className="mt-0.5 truncate text-[12px] text-site-muted-fg">{c.last}</div>
-                  </div>
-                  <span
-                    className={`ml-3 shrink-0 rounded-full px-2 py-0.5 font-mono text-[9px] uppercase tracking-widest ring-1 ${
-                      c.active
-                        ? "bg-site-primary/10 text-site-primary ring-site-primary/25"
-                        : "bg-white/5 text-site-muted-fg ring-white/10"
-                    }`}
-                  >
-                    {c.active ? t("IA activa", "AI active") : t("Pausado", "Paused")}
-                  </span>
-                </div>
-              ))}
+  const inboxVisual = (
+    <div className="overflow-hidden rounded-xl border border-site-border bg-white/[0.02]">
+      <div className="divide-y divide-site-border">
+        {chats.map((c) => (
+          <div key={c.name} className="flex items-center justify-between px-4 py-2.5">
+            <div className="min-w-0">
+              <div className="truncate text-[12px] font-medium text-site-fg">{c.name}</div>
+              <div className="mt-0.5 truncate text-[11px] text-site-muted-fg">{c.last}</div>
             </div>
-            <div className="col-span-12 hidden border-l border-site-border p-5 md:col-span-7 md:block">
-              <div className="font-mono text-[10px] uppercase tracking-widest text-site-muted-fg">{t("Peluquería Estilo", "Estilo Hair Salon")}</div>
-              <div className="mt-3 space-y-2">
-                <MsgIn>{t("Hola, ¿tienen turno para hoy?", "Hi, do you have an opening today?")}</MsgIn>
-                <MsgOut>{t("¡Hola! Sí, tengo espacio a las 4pm y 5:30pm. ¿Cuál prefieres?", "Hi! Yes, I have 4pm and 5:30pm available. Which do you prefer?")}</MsgOut>
-                <MsgIn>{t("A las 5:30", "At 5:30")}</MsgIn>
-                <MsgOut>{t("Listo, te espero a las 5:30. ¡Nos vemos!", "Done, see you at 5:30!")}</MsgOut>
-              </div>
-            </div>
+            <span
+              className={`ml-3 shrink-0 rounded-full px-1.5 py-0.5 font-mono text-[8.5px] uppercase tracking-widest ring-1 ${
+                c.active
+                  ? "bg-site-primary/10 text-site-primary ring-site-primary/25"
+                  : "bg-white/5 text-site-muted-fg ring-white/10"
+              }`}
+            >
+              {c.active ? t("IA activa", "AI active") : t("Pausado", "Paused")}
+            </span>
           </div>
-        </Panel>
+        ))}
       </div>
-    </section>
+      <div className="border-t border-site-border p-3">
+        <div className="font-mono text-[9.5px] uppercase tracking-widest text-site-muted-fg">{t("Peluquería Estilo", "Estilo Hair Salon")}</div>
+        <div className="mt-2 space-y-1.5">
+          <MsgIn>{t("Hola, ¿tienen turno para hoy?", "Hi, do you have an opening today?")}</MsgIn>
+          <MsgOut>{t("¡Hola! Sí, tengo espacio a las 4pm y 5:30pm. ¿Cuál prefieres?", "Hi! Yes, I have 4pm and 5:30pm available. Which do you prefer?")}</MsgOut>
+          <MsgIn>{t("A las 5:30", "At 5:30")}</MsgIn>
+          <MsgOut>{t("Listo, te espero a las 5:30. ¡Nos vemos!", "Done, see you at 5:30!")}</MsgOut>
+        </div>
+      </div>
+    </div>
   );
-}
-
-/* =========================================================
-   5b. Una plataforma completa (7 módulos reales)
-========================================================= */
-
-export function PlatformOverviewSection() {
-  const { t } = useI18n();
-  const PLATFORM_MODULES = [
+  const PLATFORM_MODULES: {
+    key: string;
+    icon: typeof LayoutGrid;
+    label: string;
+    headline: string;
+    points: string[];
+    visual?: React.ReactNode;
+  }[] = [
     {
       key: "resumen",
       icon: LayoutGrid,
       label: t("Resumen", "Overview"),
       headline: t("Cada número, agente y conversación en una sola vista.", "Every number, agent and conversation in one view."),
       points: [t("Automatización real por número", "Real automation per number"), t("Consumo del plan en vivo", "Live plan usage"), t("Actividad reciente", "Recent activity")],
+    },
+    {
+      key: "mensajes",
+      icon: Inbox,
+      label: t("Mensajes", "Messages"),
+      headline: t("Revisa cada chat y responde donde haga falta.", "Check every chat and reply wherever needed."),
+      points: [
+        t("Estado de IA activa o pausada, por chat", "AI active/paused status, per chat"),
+        t("Historial completo siempre a mano", "Full history always at hand"),
+        t("Todos tus números en una sola bandeja", "All your numbers in a single inbox"),
+      ],
+      visual: inboxVisual,
     },
     {
       key: "agentes",
@@ -707,14 +697,14 @@ export function PlatformOverviewSection() {
   const current = PLATFORM_MODULES[active];
 
   return (
-    <section id="plataforma-completa" className="relative border-t border-site-border py-28">
+    <section id="plataforma-completa" className="relative border-t border-site-border py-20">
       <div className="mx-auto max-w-[1280px] px-6">
         <SectionHeading
           eyebrow={t("Una plataforma", "One platform")}
           title={<>{t("Una plataforma.", "One platform.")} <br className="hidden md:block" />{t("Cada conversación, en un solo lugar.", "Every conversation, in one place.")}</>}
           desc={t(
-            "Entiende todo el producto en menos de diez segundos. Siete módulos, un solo panel de control.",
-            "Understand the whole product in under ten seconds. Seven modules, one control panel."
+            "Entiende todo el producto en menos de diez segundos. Ocho módulos, un solo panel de control.",
+            "Understand the whole product in under ten seconds. Eight modules, one control panel."
           )}
         />
 
@@ -761,23 +751,25 @@ export function PlatformOverviewSection() {
                   ))}
                 </ul>
               </div>
-              <div className="rounded-xl border border-site-border bg-white/[0.02] p-4">
-                <div className="flex items-center justify-between border-b border-site-border pb-3">
-                  <span className="font-mono text-[10.5px] uppercase tracking-widest text-site-muted-fg">
-                    {current.label}
-                  </span>
-                  <span className="h-2 w-2 rounded-full bg-site-primary animate-site-pulse-glow" />
+              {current.visual ?? (
+                <div className="rounded-xl border border-site-border bg-white/[0.02] p-4">
+                  <div className="flex items-center justify-between border-b border-site-border pb-3">
+                    <span className="font-mono text-[10.5px] uppercase tracking-widest text-site-muted-fg">
+                      {current.label}
+                    </span>
+                    <span className="h-2 w-2 rounded-full bg-site-primary animate-site-pulse-glow" />
+                  </div>
+                  <div className="mt-3 flex flex-col gap-2.5">
+                    {[0, 1, 2, 3].map((row) => (
+                      <div key={row} className="flex items-center gap-2.5">
+                        <span className="size-6 shrink-0 rounded-md bg-white/[0.04]" />
+                        <span className="h-2 rounded-full bg-white/[0.04]" style={{ width: `${70 - row * 12}%` }} />
+                        <span className="ml-auto h-2 w-8 rounded-full bg-site-primary/30" />
+                      </div>
+                    ))}
+                  </div>
                 </div>
-                <div className="mt-3 flex flex-col gap-2.5">
-                  {[0, 1, 2, 3].map((row) => (
-                    <div key={row} className="flex items-center gap-2.5">
-                      <span className="size-6 shrink-0 rounded-md bg-white/[0.04]" />
-                      <span className="h-2 rounded-full bg-white/[0.04]" style={{ width: `${70 - row * 12}%` }} />
-                      <span className="ml-auto h-2 w-8 rounded-full bg-site-primary/30" />
-                    </div>
-                  ))}
-                </div>
-              </div>
+              )}
             </div>
           </Panel>
         </div>
@@ -787,10 +779,11 @@ export function PlatformOverviewSection() {
 }
 
 /* =========================================================
-   5c. Diseñado para crecer
+   5c. Por qué Du Labs — Escala, LatAm y Ecosistema, en pestañas
+   (fusión de las antiguas ScaleSection + LatamSection + EcosystemSection)
 ========================================================= */
 
-export function ScaleSection() {
+export function GrowthSection() {
   const { t } = useI18n();
   const SCALE_ITEMS = [
     { icon: Phone, title: t("Varios números", "Multiple numbers"), desc: t("Conecta las líneas que necesites y adminístralas desde un solo panel.", "Connect as many lines as you need and manage them from a single dashboard.") },
@@ -798,101 +791,12 @@ export function ScaleSection() {
     { icon: Megaphone, title: t("Plantillas y campañas sin límite", "Unlimited templates & campaigns"), desc: t("Crea las plantillas y campañas que necesites, según el consumo de tu plan.", "Create as many templates and campaigns as you need, based on your plan usage.") },
     { icon: Gauge, title: t("Consumo siempre visible", "Usage always visible"), desc: t("Ve en tiempo real cuántas conversaciones has usado y cuántas te quedan.", "See in real time how many conversations you've used and how many are left.") },
   ];
-  return (
-    <section id="escala" className="relative py-28">
-      <div className="mx-auto max-w-[1280px] px-6">
-        <div className="grid grid-cols-1 gap-12 lg:grid-cols-2 lg:items-center">
-          <SectionHeading
-            eyebrow={t("Diseñado para crecer", "Built to grow")}
-            title={<>{t("Desde tu primer número", "From your first number")} <br className="hidden md:block" />{t("hasta toda tu operación.", "to your entire operation.")}</>}
-            desc={t(
-              "Du Labs crece contigo. Ya sea que manejes una línea o varias, el panel se mantiene igual de simple.",
-              "Du Labs grows with you. Whether you run one line or many, the dashboard stays just as simple."
-            )}
-          />
-          <Reveal variant="zoom">
-            <div className="relative flex items-center justify-center rounded-2xl border border-site-border bg-white/[0.02] p-8">
-              <div className="pointer-events-none absolute inset-0 rounded-2xl site-grid-bg opacity-40" />
-              <div className="relative flex flex-col items-center text-center">
-                <span className="flex size-16 items-center justify-center rounded-2xl border border-site-primary/30 bg-site-primary/10">
-                  <InfinityIcon className="h-8 w-8 text-site-primary" />
-                </span>
-                <div className="mt-4 font-display text-[26px] font-medium tracking-tight text-site-fg">
-                  {t("Crece con tu negocio", "Grows with your business")}
-                </div>
-                <p className="mt-1 text-[13px] text-site-muted-fg">{t("Sin cambiar de plataforma cuando sumas números.", "No switching platforms when you add numbers.")}</p>
-              </div>
-            </div>
-          </Reveal>
-        </div>
-
-        <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {SCALE_ITEMS.map((item, i) => (
-            <Reveal key={item.title} delay={i * 70}>
-              <div className="h-full rounded-2xl border border-site-border bg-white/[0.02] p-6">
-                <span className="flex size-10 items-center justify-center rounded-lg border border-site-border bg-white/[0.02]">
-                  <item.icon className="h-5 w-5 text-site-primary" />
-                </span>
-                <h3 className="mt-4 font-display text-[15px] font-medium tracking-tight text-site-fg">{item.title}</h3>
-                <p className="mt-2 text-[13px] leading-relaxed text-site-muted-fg">{item.desc}</p>
-              </div>
-            </Reveal>
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-/* =========================================================
-   5d. Hecho para Latinoamérica
-========================================================= */
-
-export function LatamSection() {
-  const { t } = useI18n();
   const LATAM_ITEMS = [
     { icon: ShieldCheck, title: t("APIs oficiales de Meta", "Official Meta APIs"), desc: t("Cumplimiento total con la plataforma de negocios de Meta en cualquier mercado.", "Full compliance with Meta's business platform in any market.") },
     { icon: Languages, title: t("Pensado en español", "Built in Spanish"), desc: t("Un producto, agentes y soporte diseñados en español desde el primer día.", "A product, agents and support designed in Spanish from day one.") },
     { icon: Store, title: t("Negocios locales", "Local businesses"), desc: t("Construido para cómo se hace comercio de verdad: dentro de conversaciones de WhatsApp.", "Built for how commerce really happens: inside WhatsApp conversations.") },
     { icon: ServerCog, title: t("Confiabilidad real", "Real reliability"), desc: t("Infraestructura que funciona igual, desde tu primer número hasta cuando crezcas.", "Infrastructure that works the same, from your first number to when you scale.") },
   ];
-  return (
-    <section className="relative border-t border-site-border bg-site-card/20 py-28">
-      <div className="pointer-events-none absolute left-1/2 top-0 h-64 w-[720px] -translate-x-1/2 rounded-full bg-site-primary/5 blur-[120px]" />
-      <div className="relative mx-auto max-w-[1280px] px-6">
-        <SectionHeading
-          eyebrow={t("Hecho para Latinoamérica", "Made for Latin America")}
-          title={<>{t("Infraestructura pensada", "Infrastructure designed")} <br className="hidden md:block" />{t("para cómo la región hace negocios.", "for how the region does business.")}</>}
-          desc={t(
-            "El comercio conversacional ya es el estándar en Latinoamérica. Du Labs está construido para eso, de forma nativa.",
-            "Conversational commerce is already the standard in Latin America. Du Labs is built for it, natively."
-          )}
-          align="center"
-        />
-        <div className="mx-auto mt-12 grid max-w-5xl grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {LATAM_ITEMS.map((item, i) => (
-            <Reveal key={item.title} delay={i * 70}>
-              <div className="h-full rounded-2xl border border-site-border bg-white/[0.02] p-6 text-center">
-                <span className="mx-auto flex size-11 items-center justify-center rounded-xl border border-site-border bg-white/[0.02]">
-                  <item.icon className="h-5 w-5 text-site-primary" />
-                </span>
-                <h3 className="mt-4 font-display text-[15px] font-medium tracking-tight text-site-fg">{item.title}</h3>
-                <p className="mt-2 text-[13px] leading-relaxed text-site-muted-fg">{item.desc}</p>
-              </div>
-            </Reveal>
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-/* =========================================================
-   5e. El ecosistema Du
-========================================================= */
-
-export function EcosystemSection() {
-  const { t } = useI18n();
   const ECOSYSTEM_PILLARS = [
     {
       icon: Briefcase,
@@ -919,33 +823,150 @@ export function EcosystemSection() {
       ),
     },
   ];
+
+  const TABS = [
+    {
+      key: "escala",
+      icon: InfinityIcon,
+      label: t("Escala", "Scale"),
+      headline: t("Desde tu primer número hasta toda tu operación.", "From your first number to your entire operation."),
+      desc: t(
+        "Du Labs crece contigo. Ya sea que manejes una línea o varias, el panel se mantiene igual de simple.",
+        "Du Labs grows with you. Whether you run one line or many, the dashboard stays just as simple."
+      ),
+    },
+    {
+      key: "latam",
+      icon: Languages,
+      label: "LatAm",
+      headline: t("Infraestructura pensada para cómo la región hace negocios.", "Infrastructure designed for how the region does business."),
+      desc: t(
+        "El comercio conversacional ya es el estándar en Latinoamérica. Du Labs está construido para eso, de forma nativa.",
+        "Conversational commerce is already the standard in Latin America. Du Labs is built for it, natively."
+      ),
+    },
+    {
+      key: "ecosistema",
+      icon: Briefcase,
+      label: t("Ecosistema", "Ecosystem"),
+      headline: t("IA donde ya vive la conversación.", "AI where the conversation already lives."),
+      desc: t(
+        "Du Labs cree en una idea: el futuro del software es conversacional. Nuestro ecosistema lleva esa idea a los negocios, la formación y el día a día.",
+        "Du Labs believes in one idea: the future of software is conversational. Our ecosystem brings that idea to business, education and everyday life."
+      ),
+    },
+  ];
+  const [active, setActive] = useState(0);
+  const current = TABS[active];
+
   return (
-    <section className="relative py-28">
+    <section id="escala" className="relative border-t border-site-border py-20">
       <div className="mx-auto max-w-[1280px] px-6">
         <SectionHeading
-          eyebrow={t("El ecosistema Du", "The Du ecosystem")}
-          title={<>{t("IA donde ya vive", "AI where the conversation")} <br className="hidden md:block" />{t("la conversación.", "already lives.")}</>}
+          eyebrow={t("Por qué Du Labs", "Why Du Labs")}
+          title={<>{t("Diseñado para crecer,", "Built to grow,")} <br className="hidden md:block" />{t("pensado para Latinoamérica.", "made for Latin America.")}</>}
           desc={t(
-            "Du Labs cree en una idea: el futuro del software es conversacional. Nuestro ecosistema lleva esa idea a los negocios, la formación y el día a día.",
-            "Du Labs believes in one idea: the future of software is conversational. Our ecosystem brings that idea to business, education and everyday life."
+            "Escala, mercado y ecosistema — todo lo que respalda a Du Labs, en un solo lugar.",
+            "Scale, market and ecosystem — everything behind Du Labs, in one place."
           )}
         />
-        <div className="mt-12 grid grid-cols-1 gap-4 md:grid-cols-3">
-          {ECOSYSTEM_PILLARS.map((p, i) => (
-            <Reveal key={p.name} delay={i * 80}>
-              <div className="group relative h-full overflow-hidden rounded-2xl border border-site-border bg-white/[0.02] p-6 transition-colors hover:border-site-primary/30">
-                <div className="flex items-center justify-between">
-                  <span className="flex size-11 items-center justify-center rounded-xl border border-site-border bg-white/[0.02]">
-                    <p.icon className="h-5 w-5 text-site-primary" />
-                  </span>
-                  <ArrowUpRight className="h-4 w-4 text-site-muted-fg transition-colors group-hover:text-site-primary" />
-                </div>
-                <h3 className="mt-5 font-display text-[16px] font-medium tracking-tight text-site-fg">{p.name}</h3>
-                <p className="mt-2 text-[13px] leading-relaxed text-site-muted-fg">{p.desc}</p>
-              </div>
-            </Reveal>
+
+        <div
+          className="mt-10 flex gap-2 overflow-x-auto"
+          role="tablist"
+          aria-label={t("Por qué Du Labs", "Why Du Labs")}
+        >
+          {TABS.map((tab, i) => (
+            <button
+              key={tab.key}
+              role="tab"
+              aria-selected={i === active}
+              onClick={() => setActive(i)}
+              className={`flex shrink-0 items-center gap-2.5 rounded-xl border px-4 py-3 text-[13px] transition-colors ${
+                i === active
+                  ? "border-site-primary/30 bg-site-primary/10 text-site-fg"
+                  : "border-site-border bg-white/[0.02] text-site-muted-fg hover:text-site-fg"
+              }`}
+            >
+              <tab.icon className={`h-4 w-4 ${i === active ? "text-site-primary" : ""}`} />
+              {tab.label}
+            </button>
           ))}
         </div>
+
+        <div className="mt-6">
+          <h3 className="font-display text-[22px] font-medium leading-tight tracking-tight text-site-fg">
+            {current.headline}
+          </h3>
+          <p className="mt-2 max-w-2xl text-[13.5px] leading-relaxed text-site-muted-fg">{current.desc}</p>
+        </div>
+
+        {active === 0 && (
+          <div className="mt-8 grid grid-cols-1 gap-8 lg:grid-cols-2 lg:items-center">
+            <Reveal variant="zoom">
+              <div className="relative flex items-center justify-center rounded-2xl border border-site-border bg-white/[0.02] p-8">
+                <div className="pointer-events-none absolute inset-0 rounded-2xl site-grid-bg opacity-40" />
+                <div className="relative flex flex-col items-center text-center">
+                  <span className="flex size-16 items-center justify-center rounded-2xl border border-site-primary/30 bg-site-primary/10">
+                    <InfinityIcon className="h-8 w-8 text-site-primary" />
+                  </span>
+                  <div className="mt-4 font-display text-[26px] font-medium tracking-tight text-site-fg">
+                    {t("Crece con tu negocio", "Grows with your business")}
+                  </div>
+                  <p className="mt-1 text-[13px] text-site-muted-fg">{t("Sin cambiar de plataforma cuando sumas números.", "No switching platforms when you add numbers.")}</p>
+                </div>
+              </div>
+            </Reveal>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              {SCALE_ITEMS.map((item, i) => (
+                <Reveal key={item.title} delay={i * 70}>
+                  <div className="h-full rounded-2xl border border-site-border bg-white/[0.02] p-5">
+                    <span className="flex size-9 items-center justify-center rounded-lg border border-site-border bg-white/[0.02]">
+                      <item.icon className="h-4 w-4 text-site-primary" />
+                    </span>
+                    <h4 className="mt-3 font-display text-[14px] font-medium tracking-tight text-site-fg">{item.title}</h4>
+                    <p className="mt-1.5 text-[12px] leading-relaxed text-site-muted-fg">{item.desc}</p>
+                  </div>
+                </Reveal>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {active === 1 && (
+          <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {LATAM_ITEMS.map((item, i) => (
+              <Reveal key={item.title} delay={i * 70}>
+                <div className="h-full rounded-2xl border border-site-border bg-white/[0.02] p-6 text-center">
+                  <span className="mx-auto flex size-11 items-center justify-center rounded-xl border border-site-border bg-white/[0.02]">
+                    <item.icon className="h-5 w-5 text-site-primary" />
+                  </span>
+                  <h4 className="mt-4 font-display text-[15px] font-medium tracking-tight text-site-fg">{item.title}</h4>
+                  <p className="mt-2 text-[13px] leading-relaxed text-site-muted-fg">{item.desc}</p>
+                </div>
+              </Reveal>
+            ))}
+          </div>
+        )}
+
+        {active === 2 && (
+          <div className="mt-8 grid grid-cols-1 gap-4 md:grid-cols-3">
+            {ECOSYSTEM_PILLARS.map((p, i) => (
+              <Reveal key={p.name} delay={i * 80}>
+                <div className="group relative h-full overflow-hidden rounded-2xl border border-site-border bg-white/[0.02] p-6 transition-colors hover:border-site-primary/30">
+                  <div className="flex items-center justify-between">
+                    <span className="flex size-11 items-center justify-center rounded-xl border border-site-border bg-white/[0.02]">
+                      <p.icon className="h-5 w-5 text-site-primary" />
+                    </span>
+                    <ArrowUpRight className="h-4 w-4 text-site-muted-fg transition-colors group-hover:text-site-primary" />
+                  </div>
+                  <h4 className="mt-5 font-display text-[16px] font-medium tracking-tight text-site-fg">{p.name}</h4>
+                  <p className="mt-2 text-[13px] leading-relaxed text-site-muted-fg">{p.desc}</p>
+                </div>
+              </Reveal>
+            ))}
+          </div>
+        )}
       </div>
     </section>
   );
@@ -964,17 +985,16 @@ export function MetricsSection() {
     { v: "<2s", l: t("Tiempo de respuesta", "Response time"), s: t("Respuestas instantáneas para tus clientes.", "Instant replies for your customers.") },
   ];
   return (
-    <section id="metricas" className="relative border-t border-site-border py-28">
+    <section id="metricas" className="relative border-t border-site-border py-10">
       <div className="mx-auto max-w-[1280px] px-6">
-        <SectionHeading eyebrow={t("Por qué Du Labs", "Why Du Labs")} title={<>{t("Construido sobre lo que Meta exige,", "Built on what Meta requires,")} <br className="hidden md:block" />{t("no sobre atajos.", "not on shortcuts.")}</>} align="center" />
-        <div className="mt-14 grid grid-cols-2 gap-px overflow-hidden rounded-2xl border border-site-border bg-white/5 md:grid-cols-4">
+        <div className="grid grid-cols-2 gap-px overflow-hidden rounded-2xl border border-site-border bg-white/5 md:grid-cols-4">
           {metrics.map((m) => (
-            <div key={m.l} className="bg-site-bg p-8 text-center">
-              <div className="font-display text-[44px] font-medium leading-none tracking-tight site-text-gradient-primary md:text-[52px]">
+            <div key={m.l} className="bg-site-bg p-6 text-center">
+              <div className="font-display text-[32px] font-medium leading-none tracking-tight site-text-gradient-primary md:text-[38px]">
                 {m.v}
               </div>
-              <div className="mt-4 text-[13.5px] font-medium text-site-fg">{m.l}</div>
-              <div className="mt-1 text-[11.5px] text-site-muted-fg">{m.s}</div>
+              <div className="mt-3 text-[12.5px] font-medium text-site-fg">{m.l}</div>
+              <div className="mt-1 text-[11px] text-site-muted-fg">{m.s}</div>
             </div>
           ))}
         </div>
@@ -1011,7 +1031,7 @@ export function PricingSection() {
     },
   ];
   return (
-    <section id="precios" className="relative border-t border-site-border py-28">
+    <section id="precios" className="relative border-t border-site-border py-20">
       <div className="mx-auto max-w-[1280px] px-6">
         <SectionHeading
           eyebrow={t("Precios", "Pricing")}
@@ -1122,7 +1142,7 @@ export function FaqSection() {
   ];
   const [open, setOpen] = useState<number | null>(0);
   return (
-    <section id="faq" className="relative border-t border-site-border py-28">
+    <section id="faq" className="relative border-t border-site-border py-20">
       <div className="mx-auto max-w-3xl px-6">
         <SectionHeading eyebrow={t("Preguntas frecuentes", "Frequently asked questions")} title={<>{t("Respuestas, antes de que preguntes.", "Answers, before you even ask.")}</>} align="center" />
         <div className="mt-12 divide-y divide-site-border overflow-hidden rounded-2xl border border-site-border bg-site-card/40">
@@ -1157,7 +1177,7 @@ export function FaqSection() {
 export function FinalCta() {
   const { t } = useI18n();
   return (
-    <section id="demo" className="relative overflow-hidden border-t border-site-border py-32">
+    <section id="demo" className="relative overflow-hidden border-t border-site-border py-24">
       <div className="pointer-events-none absolute inset-0 site-ambient-bg animate-site-ambient opacity-90" />
       <div className="pointer-events-none absolute inset-0 site-grid-bg [mask-image:radial-gradient(ellipse_at_center,black_10%,transparent_70%)]" />
       <div className="pointer-events-none absolute left-1/2 top-0 h-[500px] w-[900px] -translate-x-1/2 rounded-full bg-site-primary/15 blur-[140px]" />
