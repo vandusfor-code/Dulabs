@@ -32,12 +32,36 @@ export async function GET(request: NextRequest) {
     return Response.json({ error: "Sesión inválida" }, { status: 401 });
   }
 
+  // Esta ruta necesita ver membresías invitado/suspendido también (no solo
+  // activo), para poder completar la primera invitación y rechazar accesos
+  // suspendidos — por eso no usa resolverMiembroEquipo() (solo activos).
+  const { data: filaMiembro, error: miembroError } = await supabase
+    .from("dulabs_miembros_equipo")
+    .select("id, tenant_id, rol, estado")
+    .eq("user_id", userData.user.id)
+    .maybeSingle();
+  if (miembroError) return Response.json({ error: miembroError.message }, { status: 500 });
+
+  if (!filaMiembro) {
+    // Usuario autenticado que todavía no conectó un número ni se suscribió:
+    // sin equipo, sin negocios — mismo comportamiento vacío de hoy.
+    return Response.json({ email: userData.user.email, negocios: [], suscripcion: null, rol: null });
+  }
+  if (filaMiembro.estado === "suspendido") {
+    return Response.json({ error: "Tu acceso a este equipo fue suspendido" }, { status: 403 });
+  }
+  if (filaMiembro.estado === "invitado") {
+    await supabase.from("dulabs_miembros_equipo").update({ estado: "activo" }).eq("id", filaMiembro.id);
+  }
+  const tenantId = filaMiembro.tenant_id;
+  const rol = filaMiembro.rol;
+
   const { data, error } = await supabase
     .from("dulabs_clientes_config")
     .select(
       "nombre_negocio, telefono_negocio, phone_number_id, whatsapp_business_account_id, meta_permanent_token, updated_at, plan, mensajes_usados_mes, mes_actual, prompt_sistema, base_conocimiento, base_conocimiento_nombre_archivo, base_conocimiento_actualizado_at, calidad, limite_mensajeria, estado_verificacion, estado_nombre_visible, ultima_sincronizacion_meta, nombre_agente, ia_pausada"
     )
-    .eq("id_tenant", userData.user.id)
+    .eq("id_tenant", tenantId)
     .order("updated_at", { ascending: false });
 
   if (error) {
@@ -77,7 +101,7 @@ export async function GET(request: NextRequest) {
               ultima_sincronizacion_meta: new Date().toISOString(),
             })
             .eq("phone_number_id", n.phone_number_id)
-            .eq("id_tenant", userData.user.id);
+            .eq("id_tenant", tenantId);
         })
       );
     });
@@ -143,8 +167,8 @@ export async function GET(request: NextRequest) {
   const { data: suscripcion } = await supabase
     .from("dulabs_suscripciones")
     .select("plan, precio_cop, estado, fecha_proximo_cobro")
-    .eq("id_tenant", userData.user.id)
+    .eq("id_tenant", tenantId)
     .maybeSingle();
 
-  return Response.json({ email: userData.user.email, negocios, suscripcion });
+  return Response.json({ email: userData.user.email, negocios, suscripcion, rol });
 }

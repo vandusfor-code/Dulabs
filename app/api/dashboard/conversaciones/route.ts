@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { resolverMiembroEquipo } from "@/lib/team";
 
 export const runtime = "nodejs";
 
@@ -15,11 +16,13 @@ export async function GET(request: NextRequest) {
   if (userError || !userData.user) {
     return Response.json({ error: "Sesión inválida" }, { status: 401 });
   }
+  const miembro = await resolverMiembroEquipo(supabase, userData.user.id);
+  if (!miembro) return Response.json({ error: "No perteneces a ningún equipo activo" }, { status: 403 });
 
   const { data: negocios, error: negociosError } = await supabase
     .from("dulabs_clientes_config")
     .select("phone_number_id, nombre_negocio")
-    .eq("id_tenant", userData.user.id);
+    .eq("id_tenant", miembro.tenantId);
   if (negociosError) return Response.json({ error: negociosError.message }, { status: 500 });
 
   const phoneNumberIds = (negocios ?? []).map((n) => n.phone_number_id);
@@ -64,10 +67,38 @@ export async function GET(request: NextRequest) {
       .map((p) => `${p.phone_number_id}:${p.telefono_cliente}`)
   );
 
-  const resultado = conversaciones.map((c) => ({
-    ...c,
-    pausado: pausadas.has(`${c.phone_number_id}:${c.telefono_cliente}`),
-  }));
+  // Asignación de equipo por conversación.
+  const { data: asignaciones } = await supabase
+    .from("dulabs_conversacion_asignaciones")
+    .select("phone_number_id, telefono_cliente, miembro_id")
+    .in("phone_number_id", phoneNumberIds);
+  const { data: miembrosTenant } = await supabase
+    .from("dulabs_miembros_equipo")
+    .select("id, email, nombre")
+    .eq("tenant_id", miembro.tenantId);
+  const miembroPorId = new Map((miembrosTenant ?? []).map((m) => [m.id, m]));
+  const asignacionPorClave = new Map(
+    (asignaciones ?? []).map((a) => [`${a.phone_number_id}:${a.telefono_cliente}`, a.miembro_id])
+  );
+
+  const filtro = request.nextUrl.searchParams.get("filtro") ?? "todas"; // "mias" | "sin_asignar" | "todas"
+
+  let resultado = conversaciones.map((c) => {
+    const clave = `${c.phone_number_id}:${c.telefono_cliente}`;
+    const miembroIdAsignado = asignacionPorClave.get(clave) ?? null;
+    const asignado = miembroIdAsignado ? miembroPorId.get(miembroIdAsignado) : null;
+    return {
+      ...c,
+      pausado: pausadas.has(clave),
+      asignado_a: asignado ? { miembro_id: asignado.id, nombre: asignado.nombre || asignado.email } : null,
+    };
+  });
+
+  if (filtro === "mias") {
+    resultado = resultado.filter((c) => c.asignado_a?.miembro_id === miembro.miembroId);
+  } else if (filtro === "sin_asignar") {
+    resultado = resultado.filter((c) => !c.asignado_a);
+  }
 
   return Response.json({ conversaciones: resultado });
 }
