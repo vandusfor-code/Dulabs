@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
-import { MessagesSquare, Search, Filter } from "lucide-react";
+import { MessagesSquare, Search, Send } from "lucide-react";
 import { useDashboard } from "@/lib/dashboard-session";
 import { formatearTelefono } from "@/lib/format";
 import { Pill } from "@/components/dashboard/shell/ui";
@@ -16,7 +16,10 @@ type Conversacion = {
   ultima_direccion: "entrante" | "saliente";
   ultima_fecha: string;
   pausado: boolean;
+  asignado_a: { miembro_id: number; nombre: string } | null;
 };
+
+type Filtro = "todas" | "mias" | "sin_asignar";
 
 type MensajeHilo = {
   direccion: "entrante" | "saliente";
@@ -34,17 +37,23 @@ function horaCorta(fecha: string, t: (es: string, en: string) => string): string
 }
 
 export default function MensajesPage() {
-  const { session, negocios } = useDashboard();
+  const { session, negocios, rol } = useDashboard();
   const { t } = useI18n();
   const [conversaciones, setConversaciones] = useState<Conversacion[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busqueda, setBusqueda] = useState("");
-  const [seleccionada, setSeleccionada] = useState<Conversacion | null>(null);
+  const [filtro, setFiltro] = useState<Filtro>("todas");
+  const [seleccionadaClave, setSeleccionadaClave] = useState<string | null>(null);
   const [hilo, setHilo] = useState<MensajeHilo[] | null>(null);
+
+  // Se deriva de `conversaciones` en cada render (en vez de guardarse aparte)
+  // para que siempre refleje la asignación/pausa más reciente sin necesitar
+  // un efecto que la sincronice.
+  const seleccionada = conversaciones?.find((c) => `${c.phone_number_id}:${c.telefono_cliente}` === seleccionadaClave) ?? null;
 
   const cargarConversaciones = useCallback(() => {
     if (!session) return;
-    fetch("/api/dashboard/conversaciones", {
+    fetch(`/api/dashboard/conversaciones?filtro=${filtro}`, {
       headers: { Authorization: `Bearer ${session.access_token}` },
     })
       .then((res) => res.json())
@@ -53,7 +62,7 @@ export default function MensajesPage() {
         setConversaciones(data.conversaciones ?? []);
       })
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
-  }, [session]);
+  }, [session, filtro]);
 
   useEffect(() => {
     cargarConversaciones();
@@ -72,6 +81,47 @@ export default function MensajesPage() {
       .then((data) => setHilo(data.mensajes ?? []))
       .catch(() => setHilo([]));
   }, [session, seleccionada]);
+
+  const [textoRespuesta, setTextoRespuesta] = useState("");
+  const [enviando, setEnviando] = useState(false);
+  const [errorEnvio, setErrorEnvio] = useState<string | null>(null);
+  const [fueraDeVentana, setFueraDeVentana] = useState(false);
+
+  const enviarMensaje = useCallback(
+    async (e: FormEvent) => {
+      e.preventDefault();
+      if (!session || !seleccionada) return;
+      const texto = textoRespuesta.trim();
+      if (!texto) return;
+      setEnviando(true);
+      setErrorEnvio(null);
+      setFueraDeVentana(false);
+      try {
+        const res = await fetch("/api/dashboard/mensajes", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+          body: JSON.stringify({
+            phone_number_id: seleccionada.phone_number_id,
+            telefono_cliente: seleccionada.telefono_cliente,
+            texto,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          if (data.fuera_de_ventana) setFueraDeVentana(true);
+          throw new Error(data.error ?? t("Error enviando el mensaje", "Error sending the message"));
+        }
+        setHilo((prev) => [...(prev ?? []), { direccion: "saliente", contenido: texto, created_at: new Date().toISOString() }]);
+        setTextoRespuesta("");
+        cargarConversaciones();
+      } catch (err) {
+        setErrorEnvio(err instanceof Error ? err.message : String(err));
+      } finally {
+        setEnviando(false);
+      }
+    },
+    [session, seleccionada, textoRespuesta, cargarConversaciones, t]
+  );
 
   const conversacionesFiltradas =
     conversaciones?.filter(
@@ -94,11 +144,17 @@ export default function MensajesPage() {
               <Pill tone="success">
                 <span className="size-1.5 rounded-full bg-lime" /> {abiertos} {t("activos", "active")}
               </Pill>
-              <button className="flex size-8 items-center justify-center rounded-lg border border-edge text-mist hover:text-fg">
-                <Filter className="size-4" />
-              </button>
             </div>
           </div>
+          <select
+            value={filtro}
+            onChange={(e) => setFiltro(e.target.value as Filtro)}
+            className="mt-2 w-full rounded-lg border border-edge bg-card px-3 py-1.5 text-xs text-fg outline-none focus:border-lime/50"
+          >
+            <option value="todas">{t("Todas", "All")}</option>
+            <option value="mias">{t("Mías", "Mine")}</option>
+            <option value="sin_asignar">{t("Sin asignar", "Unassigned")}</option>
+          </select>
           <div className="relative mt-3">
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-mist" />
             <input
@@ -120,7 +176,7 @@ export default function MensajesPage() {
             <button
               key={`${c.phone_number_id}:${c.telefono_cliente}`}
               onClick={() => {
-                setSeleccionada(c);
+                setSeleccionadaClave(`${c.phone_number_id}:${c.telefono_cliente}`);
                 setHilo(null);
               }}
               className={`flex w-full gap-3 border-b border-edge/60 px-4 py-3.5 text-left transition-colors ${
@@ -148,9 +204,15 @@ export default function MensajesPage() {
                   <span className="shrink-0 text-[11px] text-mist">{horaCorta(c.ultima_fecha, t)}</span>
                 </div>
                 <p className="mt-0.5 truncate text-sm text-mist">{c.ultimo_mensaje}</p>
-                <p className="mt-1 font-mono text-[10px] uppercase tracking-widest text-mist/70">
-                  {c.nombre_negocio}
-                </p>
+                <div className="mt-1 flex items-center gap-1.5">
+                  <p className="truncate font-mono text-[10px] uppercase tracking-widest text-mist/70">
+                    {c.nombre_negocio}
+                  </p>
+                  <span className="size-0.5 shrink-0 rounded-full bg-mist/40" />
+                  <span className="truncate text-[10px] text-mist/70">
+                    {c.asignado_a?.nombre ?? t("Sin asignar", "Unassigned")}
+                  </span>
+                </div>
               </div>
             </button>
           ))}
@@ -227,6 +289,48 @@ export default function MensajesPage() {
                   </div>
                 </div>
               ))}
+            </div>
+            <div className="border-t border-edge p-4">
+              {rol === "lectura" ? (
+                <textarea
+                  disabled
+                  placeholder={t(
+                    "No tienes permiso para responder (rol de solo lectura).",
+                    "You don't have permission to reply (read-only role)."
+                  )}
+                  className="h-11 w-full resize-none rounded-lg border border-edge bg-ink px-3 py-2.5 text-sm text-mist placeholder:text-mist/70"
+                />
+              ) : (
+                <form onSubmit={enviarMensaje} className="flex items-end gap-2">
+                  <textarea
+                    value={textoRespuesta}
+                    onChange={(e) => setTextoRespuesta(e.target.value)}
+                    placeholder={t("Escribe una respuesta…", "Type a reply…")}
+                    className="h-11 flex-1 resize-none rounded-lg border border-edge bg-card px-3 py-2.5 text-sm text-fg outline-none placeholder:text-mist focus:border-lime/50"
+                  />
+                  <button
+                    type="submit"
+                    disabled={enviando || !textoRespuesta.trim()}
+                    className="flex h-11 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-lime px-4 text-xs font-semibold text-lime-fg transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <Send className="size-3.5" />
+                    {t("Enviar", "Send")}
+                  </button>
+                </form>
+              )}
+              {errorEnvio && (
+                <p className="mt-2 text-xs text-red-400">
+                  {errorEnvio}
+                  {fueraDeVentana && (
+                    <>
+                      {" "}
+                      <Link href="/dashboard/plantillas" className="underline hover:text-red-300">
+                        {t("Ir a Plantillas →", "Go to Templates →")}
+                      </Link>
+                    </>
+                  )}
+                </p>
+              )}
             </div>
           </>
         )}
