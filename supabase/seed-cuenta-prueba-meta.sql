@@ -13,6 +13,11 @@
 -- supabase/migrations/. Es seguro volver a correrlo (usa "on conflict" en
 -- la plantilla y no duplica si ya existe), pero volver a correrlo SÍ
 -- agregará otra tanda de 7 días de mensajes y otra campaña.
+--
+-- De aquí en adelante, app/api/cron/simular-actividad-meta/route.ts (Vercel
+-- Cron, ver vercel.json) agrega una conversación nueva cada día para que la
+-- cuenta nunca se vea sin actividad reciente — no hace falta volver a correr
+-- este script salvo que quieras reforzar los datos iniciales.
 
 do $$
 declare
