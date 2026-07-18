@@ -89,7 +89,7 @@ export function SectionHeading({
       {labelStyle === "kicker" && eyebrow && (
         <p className="font-mono text-[11px] font-medium uppercase tracking-[0.28em] text-site-primary">{eyebrow}</p>
       )}
-      <h2 className={`${labelStyle === "none" ? "" : "mt-4"} font-display ${titleSize} font-medium leading-[1.05] tracking-[-0.025em] site-text-gradient`}>
+      <h2 className={`${labelStyle === "none" ? "" : "mt-4"} font-display ${titleSize} font-medium leading-[1.05] tracking-[-0.025em] ${size === "md" ? "text-site-fg" : "site-text-gradient"}`}>
         {title}
       </h2>
       {desc && (
@@ -163,7 +163,7 @@ export function CoexistenceSection() {
                 { icon: Bot, title: t("La IA responde 24/7", "The AI replies 24/7"), desc: t("Mientras no estás disponible, tu asistente sigue atendiendo con el prompt que tú le diste.", "While you're unavailable, your assistant keeps answering with the prompt you gave it.") },
                 { icon: Pause, title: t("Pausa por conversación", "Pause per conversation"), desc: t("En cuanto tú respondes un chat desde tu celular, la IA se pausa sola solo en ese chat.", "As soon as you reply to a chat from your phone, the AI pauses itself in that chat only.") },
                 { icon: MessageCircle, title: t("Historial compartido", "Shared history"), desc: t("Todo lo que la IA respondió lo ves también en tu WhatsApp normal, sin duplicados.", "Everything the AI replied also shows up in your regular WhatsApp, with no duplicates.") },
-                { icon: ShieldCheck, title: t("Cero riesgo para tu número", "Zero risk to your number"), desc: t("Todo pasa por la API Oficial de Meta — no hay extensiones ni trucos que arriesguen tu cuenta.", "Everything goes through the Official Meta API — no extensions or hacks that put your account at risk.") },
+                { icon: ShieldCheck, title: t("Cero riesgo para tu número", "Zero risk to your number"), desc: t("Nada de extensiones de navegador ni trucos — todo corre sobre los servidores oficiales de Meta.", "No browser extensions or hacks — everything runs on Meta's own official servers.") },
               ].map((f) => (
                 <div key={f.title} className="rounded-xl border border-site-border bg-white/[0.02] p-4">
                   <f.icon className="h-4 w-4 text-site-primary" />
@@ -1206,8 +1206,8 @@ export function FinalCta() {
         </h2>
         <p className="mx-auto mt-5 max-w-xl text-[15px] leading-relaxed text-site-muted-fg">
           {t(
-            "API Oficial de Meta, sin bloqueos, IA en Modo Coexistencia. Listo para producción desde el primer día.",
-            "Official Meta API, no bans, AI in Coexistence Mode. Production-ready from day one."
+            "Sin bloqueos, sin extensiones raras, listo para producción desde el primer día.",
+            "No bans, no sketchy extensions, production-ready from day one."
           )}
         </p>
         <div className="mt-10 flex flex-wrap items-center justify-center gap-3">
