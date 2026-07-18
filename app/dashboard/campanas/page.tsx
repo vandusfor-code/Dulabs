@@ -16,6 +16,7 @@ import {
 import { useDashboard } from "@/lib/dashboard-session";
 import { PageHeader, Pill, StatTile } from "@/components/dashboard/shell/ui";
 import { AreaTrend } from "@/components/dashboard/shell/charts";
+import { useI18n } from "@/lib/i18n";
 
 type Plantilla = {
   id: number;
@@ -49,24 +50,23 @@ type DatosCampanas = {
   campanas: Campana[];
 };
 
-const estadoInfo: Record<Campana["estado"], { tone: "success" | "danger"; label: string }> = {
-  completado: { tone: "success", label: "Completada" },
-  fallido: { tone: "danger", label: "Fallida" },
-};
-
-const etapas = [
-  { key: "sent" as const, label: "Enviados", icon: Send, color: "var(--color-chart-5)" },
-  { key: "delivered" as const, label: "Entregados", icon: CircleCheck, color: "var(--color-chart-4)" },
-  { key: "read" as const, label: "Leídos", icon: Eye, color: "var(--color-chart-2)" },
-  { key: "replied" as const, label: "Respondidos", icon: MessagesSquare, color: "var(--color-chart-1)" },
-];
-
 function pct(valor: number): string {
   return `${(valor * 100).toFixed(1)}%`;
 }
 
 export default function CampanasPage() {
   const { session } = useDashboard();
+  const { t } = useI18n();
+  const estadoInfo: Record<Campana["estado"], { tone: "success" | "danger"; label: string }> = {
+    completado: { tone: "success", label: t("Completada", "Completed") },
+    fallido: { tone: "danger", label: t("Fallida", "Failed") },
+  };
+  const etapas = [
+    { key: "sent" as const, label: t("Enviados", "Sent"), icon: Send, color: "var(--color-chart-5)" },
+    { key: "delivered" as const, label: t("Entregados", "Delivered"), icon: CircleCheck, color: "var(--color-chart-4)" },
+    { key: "read" as const, label: t("Leídos", "Read"), icon: Eye, color: "var(--color-chart-2)" },
+    { key: "replied" as const, label: t("Respondidos", "Replied"), icon: MessagesSquare, color: "var(--color-chart-1)" },
+  ];
   const [plantillas, setPlantillas] = useState<Plantilla[] | null>(null);
   const [datos, setDatos] = useState<DatosCampanas | null>(null);
   const [activeId, setActiveId] = useState<number | null>(null);
@@ -113,7 +113,7 @@ export default function CampanasPage() {
           body: JSON.stringify({ plantilla_id: plantillaCampana, destinatarios: lista }),
         });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.error ?? "Error enviando la campaña");
+        if (!res.ok) throw new Error(data.error ?? t("Error enviando la campaña", "Error sending the campaign"));
         setResultadoCampana({ enviados: data.enviados, fallidos: data.fallidos?.length ?? 0 });
         setDestinatarios("");
         cargarDatos();
@@ -123,7 +123,7 @@ export default function CampanasPage() {
         setEnviandoCampana(false);
       }
     },
-    [session, plantillaCampana, destinatarios, cargarDatos]
+    [session, plantillaCampana, destinatarios, cargarDatos, t]
   );
 
   const aprobadas = (plantillas ?? []).filter((p) => p.estado === "APPROVED");
@@ -136,14 +136,17 @@ export default function CampanasPage() {
     <div className="pb-12">
       <PageHeader
         eyebrow="Broadcasts"
-        title="Campañas"
-        description="Envía transmisiones a tus contactos y sigue la entrega, lectura y respuesta en tiempo real."
+        title={t("Campañas", "Campaigns")}
+        description={t(
+          "Envía transmisiones a tus contactos y sigue la entrega, lectura y respuesta en tiempo real.",
+          "Send broadcasts to your contacts and track delivery, read, and reply status in real time."
+        )}
       >
         <button
           onClick={() => setFormAbierto((v) => !v)}
           className="flex items-center gap-2 rounded-lg bg-lime px-3.5 py-2 text-sm font-medium text-lime-fg transition-opacity hover:opacity-90"
         >
-          <Plus className="size-4" /> Nueva campaña
+          <Plus className="size-4" /> {t("Nueva campaña", "New campaign")}
         </button>
       </PageHeader>
 
@@ -151,32 +154,32 @@ export default function CampanasPage() {
         {formAbierto && (
           <div className="mb-6">
             {plantillas === null ? (
-              <p className="text-sm text-mist">Cargando plantillas…</p>
+              <p className="text-sm text-mist">{t("Cargando plantillas…", "Loading templates…")}</p>
             ) : aprobadas.length === 0 ? (
               <div className="rounded-xl border border-edge bg-card p-8 text-center">
                 <Send className="mx-auto size-10 text-mist/40" strokeWidth={1.2} />
-                <p className="mt-3 text-sm font-semibold text-fg">Necesitas una plantilla aprobada</p>
+                <p className="mt-3 text-sm font-semibold text-fg">{t("Necesitas una plantilla aprobada", "You need an approved template")}</p>
                 <p className="mx-auto mt-1 max-w-sm text-xs leading-relaxed text-mist">
-                  Meta revisa las plantillas nuevas automáticamente, normalmente en minutos u horas.
+                  {t("Meta revisa las plantillas nuevas automáticamente, normalmente en minutos u horas.", "Meta reviews new templates automatically, usually within minutes or hours.")}
                 </p>
                 <Link
                   href="/dashboard/plantillas"
                   className="mt-4 inline-block rounded-lg bg-lime px-4 py-2 text-xs font-semibold text-lime-fg hover:bg-lime-hover"
                 >
-                  Crear una plantilla →
+                  {t("Crear una plantilla →", "Create a template →")}
                 </Link>
               </div>
             ) : (
               <form onSubmit={enviarCampana} className="flex flex-col gap-4 rounded-xl border border-edge bg-card p-6">
                 <div>
-                  <label className="mb-1.5 block text-xs font-medium text-mist">Plantilla</label>
+                  <label className="mb-1.5 block text-xs font-medium text-mist">{t("Plantilla", "Template")}</label>
                   <select
                     required
                     value={plantillaCampana}
                     onChange={(e) => setPlantillaCampana(Number(e.target.value))}
                     className="w-full rounded-lg border border-edge bg-ink px-4 py-2.5 text-sm text-fg outline-none focus:border-lime/50"
                   >
-                    <option value="">Selecciona una plantilla</option>
+                    <option value="">{t("Selecciona una plantilla", "Select a template")}</option>
                     {aprobadas.map((p) => (
                       <option key={p.id} value={p.id}>
                         {p.nombre}
@@ -186,7 +189,7 @@ export default function CampanasPage() {
                 </div>
                 <div>
                   <label className="mb-1.5 block text-xs font-medium text-mist">
-                    Destinatarios (uno por línea, con indicativo de país)
+                    {t("Destinatarios (uno por línea, con indicativo de país)", "Recipients (one per line, with country code)")}
                   </label>
                   <textarea
                     required
@@ -197,14 +200,17 @@ export default function CampanasPage() {
                     className="w-full rounded-lg border border-edge bg-ink px-4 py-3 text-sm text-fg outline-none focus:border-lime/50"
                   />
                   <p className="mt-1.5 flex items-center gap-1.5 text-xs text-mist">
-                    <Users className="size-3.5" /> {conteoDestinatarios} destinatario{conteoDestinatarios === 1 ? "" : "s"}
+                    <Users className="size-3.5" /> {conteoDestinatarios} {conteoDestinatarios === 1 ? t("destinatario", "recipient") : t("destinatarios", "recipients")}
                   </p>
                 </div>
                 {resultadoCampana && (
                   <p className="rounded-lg border border-edge bg-ink p-3 text-xs leading-relaxed text-mist">
                     {typeof resultadoCampana === "string"
                       ? resultadoCampana
-                      : `Enviados: ${resultadoCampana.enviados}${resultadoCampana.fallidos ? ` · Fallidos: ${resultadoCampana.fallidos}` : ""}`}
+                      : t(
+                          `Enviados: ${resultadoCampana.enviados}${resultadoCampana.fallidos ? ` · Fallidos: ${resultadoCampana.fallidos}` : ""}`,
+                          `Sent: ${resultadoCampana.enviados}${resultadoCampana.fallidos ? ` · Failed: ${resultadoCampana.fallidos}` : ""}`
+                        )}
                   </p>
                 )}
                 <button
@@ -212,7 +218,7 @@ export default function CampanasPage() {
                   disabled={enviandoCampana}
                   className="btn-shine self-start rounded-lg bg-lime px-5 py-2.5 text-sm font-semibold text-lime-fg transition-[background-color,transform] duration-200 hover:-translate-y-0.5 hover:bg-lime-hover active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {enviandoCampana ? "Enviando…" : "Enviar campaña"}
+                  {enviandoCampana ? t("Enviando…", "Sending…") : t("Enviar campaña", "Send campaign")}
                 </button>
               </form>
             )}
@@ -221,28 +227,28 @@ export default function CampanasPage() {
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <StatTile
-            label="Mensajes enviados"
+            label={t("Mensajes enviados", "Messages sent")}
             value={(datos?.kpis.mensajesEnviados ?? 0).toLocaleString("es-CO")}
             delta={datos?.kpis.deltaEnviadosPct != null ? pct(Math.abs(datos.kpis.deltaEnviadosPct)) : undefined}
             positive={(datos?.kpis.deltaEnviadosPct ?? 0) >= 0}
             icon={Send}
           />
           <StatTile
-            label="Tasa de entrega"
+            label={t("Tasa de entrega", "Delivery rate")}
             value={pct(datos?.kpis.tasaEntrega ?? 0)}
             delta={datos?.kpis.deltaTasaEntregaPts != null ? pct(Math.abs(datos.kpis.deltaTasaEntregaPts)) : undefined}
             positive={(datos?.kpis.deltaTasaEntregaPts ?? 0) >= 0}
             icon={CircleCheck}
           />
           <StatTile
-            label="Tasa de lectura"
+            label={t("Tasa de lectura", "Read rate")}
             value={pct(datos?.kpis.tasaLectura ?? 0)}
             delta={datos?.kpis.deltaTasaLecturaPts != null ? pct(Math.abs(datos.kpis.deltaTasaLecturaPts)) : undefined}
             positive={(datos?.kpis.deltaTasaLecturaPts ?? 0) >= 0}
             icon={Eye}
           />
           <StatTile
-            label="Tasa de respuesta"
+            label={t("Tasa de respuesta", "Reply rate")}
             value={pct(datos?.kpis.tasaRespuesta ?? 0)}
             delta={datos?.kpis.deltaTasaRespuestaPts != null ? pct(Math.abs(datos.kpis.deltaTasaRespuestaPts)) : undefined}
             positive={(datos?.kpis.deltaTasaRespuestaPts ?? 0) >= 0}
@@ -253,24 +259,24 @@ export default function CampanasPage() {
         <div className="mt-6 rounded-xl border border-edge bg-card p-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h2 className="text-base font-semibold text-fg">Rendimiento de campañas</h2>
-              <p className="text-sm text-mist">Entregados vs leídos, últimas 6 semanas</p>
+              <h2 className="text-base font-semibold text-fg">{t("Rendimiento de campañas", "Campaign performance")}</h2>
+              <p className="text-sm text-mist">{t("Entregados vs leídos, últimas 6 semanas", "Delivered vs. read, last 6 weeks")}</p>
             </div>
             <div className="flex items-center gap-4">
-              <Legend color="var(--color-chart-4)" label="Entregados" />
-              <Legend color="var(--color-chart-2)" label="Leídos" />
+              <Legend color="var(--color-chart-4)" label={t("Entregados", "Delivered")} />
+              <Legend color="var(--color-chart-2)" label={t("Leídos", "Read")} />
             </div>
           </div>
           <div className="mt-4">
             {datos === null ? (
-              <div className="flex h-[220px] items-center justify-center text-sm text-mist">Cargando…</div>
+              <div className="flex h-[220px] items-center justify-center text-sm text-mist">{t("Cargando…", "Loading…")}</div>
             ) : (
               <AreaTrend
                 data={datos.tendencia}
                 height={220}
                 keys={[
-                  { key: "entregados", name: "Entregados", color: "var(--color-chart-4)" },
-                  { key: "leidos", name: "Leídos", color: "var(--color-chart-2)" },
+                  { key: "entregados", name: t("Entregados", "Delivered"), color: "var(--color-chart-4)" },
+                  { key: "leidos", name: t("Leídos", "Read"), color: "var(--color-chart-2)" },
                 ]}
               />
             )}
@@ -282,9 +288,9 @@ export default function CampanasPage() {
             {datos !== null && campanas.length === 0 ? (
               <div className="flex flex-col items-center gap-2 rounded-xl border border-edge bg-card p-10 text-center">
                 <Send className="size-9 text-mist/40" strokeWidth={1.2} />
-                <p className="mt-1 text-sm font-semibold text-fg">Todavía no has enviado ninguna campaña</p>
+                <p className="mt-1 text-sm font-semibold text-fg">{t("Todavía no has enviado ninguna campaña", "You haven't sent any campaigns yet")}</p>
                 <p className="max-w-xs text-xs leading-relaxed text-mist">
-                  Créala con &ldquo;Nueva campaña&rdquo; para empezar a mandar transmisiones.
+                  {t("Créala con “Nueva campaña” para empezar a mandar transmisiones.", "Create one with “New campaign” to start sending broadcasts.")}
                 </p>
               </div>
             ) : (
@@ -312,7 +318,7 @@ export default function CampanasPage() {
                             </span>
                             <span className="size-0.5 rounded-full bg-mist/40" />
                             <span className="flex items-center gap-1 font-mono text-[10.5px] uppercase tracking-widest text-mist">
-                              <Users className="size-3" /> {c.destinatarios_total} destinatarios
+                              <Users className="size-3" /> {c.destinatarios_total} {t("destinatarios", "recipients")}
                             </span>
                           </div>
                         </div>
@@ -324,9 +330,9 @@ export default function CampanasPage() {
                       <div className="flex-1">
                         <div className="flex items-center justify-between">
                           <span className="font-mono text-[10.5px] uppercase tracking-widest text-mist">
-                            Alcance {c.funnel.sent.toLocaleString("es-CO")}
+                            {t("Alcance", "Reach")} {c.funnel.sent.toLocaleString("es-CO")}
                           </span>
-                          <span className="text-xs font-medium tabular-nums text-fg">{readPct}% leído</span>
+                          <span className="text-xs font-medium tabular-nums text-fg">{readPct}% {t("leído", "read")}</span>
                         </div>
                         <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-ink">
                           <div className="h-full bg-lime" style={{ width: `${readPct}%` }} />
@@ -335,7 +341,7 @@ export default function CampanasPage() {
                       <div className="flex items-center gap-1.5 text-xs text-mist">
                         <Clock className="size-3.5" />
                         <span className="hidden sm:inline">
-                          {new Date(c.created_at).toLocaleDateString("es-CO", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                          {new Date(c.created_at).toLocaleDateString(t("es-CO", "en-US"), { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
                         </span>
                       </div>
                     </div>
@@ -346,13 +352,13 @@ export default function CampanasPage() {
           </div>
 
           <div className="rounded-xl border border-edge bg-card p-5 lg:sticky lg:top-20 lg:self-start">
-            <p className="font-mono text-[10.5px] uppercase tracking-widest text-mist">Embudo de conversión</p>
-            <h3 className="mt-1 font-semibold text-fg">{activa ? activa.nombre : "Sin campañas todavía"}</h3>
+            <p className="font-mono text-[10.5px] uppercase tracking-widest text-mist">{t("Embudo de conversión", "Conversion funnel")}</p>
+            <h3 className="mt-1 font-semibold text-fg">{activa ? activa.nombre : t("Sin campañas todavía", "No campaigns yet")}</h3>
 
             {!activa || activa.funnel.sent === 0 ? (
               <div className="mt-6 flex flex-col items-center justify-center rounded-lg border border-dashed border-edge py-10 text-center">
                 <Calendar className="size-6 text-mist" />
-                <p className="mt-2 text-sm text-mist">Envía tu primera campaña para ver el embudo aquí.</p>
+                <p className="mt-2 text-sm text-mist">{t("Envía tu primera campaña para ver el embudo aquí.", "Send your first campaign to see the funnel here.")}</p>
               </div>
             ) : (
               <div className="mt-4 space-y-2.5">
