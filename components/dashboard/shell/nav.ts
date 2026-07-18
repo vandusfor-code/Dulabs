@@ -7,6 +7,7 @@ import {
   Phone,
   ChartNoAxesCombined,
   Users,
+  Zap,
   type LucideIcon,
 } from "lucide-react";
 import type { Rol } from "@/lib/team";
@@ -32,6 +33,13 @@ export const navSections: NavSection[] = [
     items: [
       { label: "Resumen", labelEn: "Overview", href: "/dashboard", icon: LayoutGrid },
       { label: "Mensajes", labelEn: "Messages", href: "/dashboard/mensajes", icon: MessagesSquare },
+      {
+        label: "Respuestas rápidas",
+        labelEn: "Quick replies",
+        href: "/dashboard/respuestas-rapidas",
+        icon: Zap,
+        rolesPermitidos: ["admin", "agente"],
+      },
       { label: "Agentes de IA", labelEn: "AI agents", href: "/dashboard/agentes", icon: Bot },
     ],
   },

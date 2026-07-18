@@ -81,7 +81,29 @@ export async function GET(request: NextRequest) {
     (asignaciones ?? []).map((a) => [`${a.phone_number_id}:${a.telefono_cliente}`, a.miembro_id])
   );
 
+  // Etiquetas por conversación (muchos-a-muchos, a diferencia de la
+  // asignación que es 1:1 — se agrupa en un array por clave).
+  const { data: etiquetasTenant } = await supabase
+    .from("dulabs_etiquetas")
+    .select("id, nombre, color")
+    .eq("tenant_id", miembro.tenantId);
+  const etiquetaPorId = new Map((etiquetasTenant ?? []).map((e) => [e.id, e]));
+  const { data: conversacionEtiquetas } = await supabase
+    .from("dulabs_conversacion_etiquetas")
+    .select("phone_number_id, telefono_cliente, etiqueta_id")
+    .in("phone_number_id", phoneNumberIds);
+  const etiquetasPorClave = new Map<string, { id: number; nombre: string; color: string }[]>();
+  for (const ce of conversacionEtiquetas ?? []) {
+    const etiqueta = etiquetaPorId.get(ce.etiqueta_id);
+    if (!etiqueta) continue;
+    const clave = `${ce.phone_number_id}:${ce.telefono_cliente}`;
+    const lista = etiquetasPorClave.get(clave) ?? [];
+    lista.push(etiqueta);
+    etiquetasPorClave.set(clave, lista);
+  }
+
   const filtro = request.nextUrl.searchParams.get("filtro") ?? "todas"; // "mias" | "sin_asignar" | "todas"
+  const etiquetaIdFiltro = request.nextUrl.searchParams.get("etiqueta_id");
 
   let resultado = conversaciones.map((c) => {
     const clave = `${c.phone_number_id}:${c.telefono_cliente}`;
@@ -91,6 +113,7 @@ export async function GET(request: NextRequest) {
       ...c,
       pausado: pausadas.has(clave),
       asignado_a: asignado ? { miembro_id: asignado.id, nombre: asignado.nombre || asignado.email } : null,
+      etiquetas: etiquetasPorClave.get(clave) ?? [],
     };
   });
 
@@ -98,6 +121,10 @@ export async function GET(request: NextRequest) {
     resultado = resultado.filter((c) => c.asignado_a?.miembro_id === miembro.miembroId);
   } else if (filtro === "sin_asignar") {
     resultado = resultado.filter((c) => !c.asignado_a);
+  }
+  if (etiquetaIdFiltro) {
+    const idNum = Number(etiquetaIdFiltro);
+    resultado = resultado.filter((c) => c.etiquetas.some((e) => e.id === idNum));
   }
 
   return Response.json({ conversaciones: resultado });

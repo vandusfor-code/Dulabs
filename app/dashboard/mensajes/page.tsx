@@ -2,11 +2,13 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
-import { MessagesSquare, Search, Send } from "lucide-react";
+import { MessagesSquare, Search, Send, Tag, Plus } from "lucide-react";
 import { useDashboard } from "@/lib/dashboard-session";
 import { formatearTelefono } from "@/lib/format";
 import { Pill } from "@/components/dashboard/shell/ui";
 import { useI18n } from "@/lib/i18n";
+
+type Etiqueta = { id: number; nombre: string; color: string };
 
 type Conversacion = {
   phone_number_id: string;
@@ -17,7 +19,10 @@ type Conversacion = {
   ultima_fecha: string;
   pausado: boolean;
   asignado_a: { miembro_id: number; nombre: string } | null;
+  etiquetas: Etiqueta[];
 };
+
+type RespuestaRapida = { id: number; atajo: string; mensaje: string };
 
 type Filtro = "todas" | "mias" | "sin_asignar";
 
@@ -43,17 +48,20 @@ export default function MensajesPage() {
   const [error, setError] = useState<string | null>(null);
   const [busqueda, setBusqueda] = useState("");
   const [filtro, setFiltro] = useState<Filtro>("todas");
+  const [etiquetaFiltro, setEtiquetaFiltro] = useState<number | null>(null);
   const [seleccionadaClave, setSeleccionadaClave] = useState<string | null>(null);
   const [hilo, setHilo] = useState<MensajeHilo[] | null>(null);
 
   // Se deriva de `conversaciones` en cada render (en vez de guardarse aparte)
-  // para que siempre refleje la asignación/pausa más reciente sin necesitar
-  // un efecto que la sincronice.
+  // para que siempre refleje la asignación/pausa/etiquetas más recientes sin
+  // necesitar un efecto que la sincronice.
   const seleccionada = conversaciones?.find((c) => `${c.phone_number_id}:${c.telefono_cliente}` === seleccionadaClave) ?? null;
 
   const cargarConversaciones = useCallback(() => {
     if (!session) return;
-    fetch(`/api/dashboard/conversaciones?filtro=${filtro}`, {
+    const params = new URLSearchParams({ filtro });
+    if (etiquetaFiltro) params.set("etiqueta_id", String(etiquetaFiltro));
+    fetch(`/api/dashboard/conversaciones?${params}`, {
       headers: { Authorization: `Bearer ${session.access_token}` },
     })
       .then((res) => res.json())
@@ -62,11 +70,34 @@ export default function MensajesPage() {
         setConversaciones(data.conversaciones ?? []);
       })
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
-  }, [session, filtro]);
+  }, [session, filtro, etiquetaFiltro]);
 
   useEffect(() => {
     cargarConversaciones();
   }, [cargarConversaciones]);
+
+  // Catálogo de etiquetas del tenant — cualquier rol activo lo puede ver.
+  const [etiquetasCatalogo, setEtiquetasCatalogo] = useState<Etiqueta[] | null>(null);
+  const cargarEtiquetas = useCallback(() => {
+    if (!session) return;
+    fetch("/api/dashboard/etiquetas", { headers: { Authorization: `Bearer ${session.access_token}` } })
+      .then((res) => res.json())
+      .then((data) => setEtiquetasCatalogo(data.etiquetas ?? []))
+      .catch(() => setEtiquetasCatalogo([]));
+  }, [session]);
+  useEffect(() => {
+    cargarEtiquetas();
+  }, [cargarEtiquetas]);
+
+  // Respuestas rápidas — solo admin/agente las usan (lectura no envía mensajes).
+  const [respuestasRapidas, setRespuestasRapidas] = useState<RespuestaRapida[]>([]);
+  useEffect(() => {
+    if (!session || rol === "lectura") return;
+    fetch("/api/dashboard/respuestas-rapidas", { headers: { Authorization: `Bearer ${session.access_token}` } })
+      .then((res) => res.json())
+      .then((data) => setRespuestasRapidas(data.respuestas ?? []))
+      .catch(() => setRespuestasRapidas([]));
+  }, [session, rol]);
 
   useEffect(() => {
     if (!session || !seleccionada) return;
@@ -123,6 +154,73 @@ export default function MensajesPage() {
     [session, seleccionada, textoRespuesta, cargarConversaciones, t]
   );
 
+  // Picker de respuestas rápidas: escribir "/" al inicio del compose box
+  // filtra por atajo; seleccionar una reemplaza el texto por su mensaje.
+  const mostrarPicker = textoRespuesta.startsWith("/");
+  const respuestasFiltradas = mostrarPicker
+    ? respuestasRapidas.filter((r) => r.atajo.toLowerCase().startsWith(textoRespuesta.slice(1).toLowerCase()))
+    : [];
+
+  const insertarRespuestaRapida = (r: RespuestaRapida) => {
+    setTextoRespuesta(r.mensaje);
+  };
+
+  // Popover de etiquetas de la conversación abierta.
+  const [popoverEtiquetasAbierto, setPopoverEtiquetasAbierto] = useState(false);
+  const [nuevaEtiquetaNombre, setNuevaEtiquetaNombre] = useState("");
+  const [nuevaEtiquetaColor, setNuevaEtiquetaColor] = useState("#c6ff3d");
+  const [guardandoEtiqueta, setGuardandoEtiqueta] = useState(false);
+  const [errorEtiqueta, setErrorEtiqueta] = useState<string | null>(null);
+
+  const alternarEtiqueta = useCallback(
+    async (etiquetaId: number, aplicada: boolean) => {
+      if (!session || !seleccionada) return;
+      setErrorEtiqueta(null);
+      try {
+        const res = await fetch("/api/dashboard/conversaciones/etiquetas", {
+          method: aplicada ? "DELETE" : "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+          body: JSON.stringify({
+            phone_number_id: seleccionada.phone_number_id,
+            telefono_cliente: seleccionada.telefono_cliente,
+            etiqueta_id: etiquetaId,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error ?? t("No se pudo actualizar la etiqueta.", "Couldn't update the tag."));
+        cargarConversaciones();
+      } catch (err) {
+        setErrorEtiqueta(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [session, seleccionada, cargarConversaciones, t]
+  );
+
+  const crearEtiqueta = useCallback(
+    async (e: FormEvent) => {
+      e.preventDefault();
+      if (!session || !nuevaEtiquetaNombre.trim()) return;
+      setGuardandoEtiqueta(true);
+      setErrorEtiqueta(null);
+      try {
+        const res = await fetch("/api/dashboard/etiquetas", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+          body: JSON.stringify({ nombre: nuevaEtiquetaNombre.trim(), color: nuevaEtiquetaColor }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error ?? t("No se pudo crear la etiqueta.", "Couldn't create the tag."));
+        setNuevaEtiquetaNombre("");
+        cargarEtiquetas();
+      } catch (err) {
+        setErrorEtiqueta(err instanceof Error ? err.message : String(err));
+      } finally {
+        setGuardandoEtiqueta(false);
+      }
+    },
+    [session, nuevaEtiquetaNombre, nuevaEtiquetaColor, cargarEtiquetas, t]
+  );
+
   const conversacionesFiltradas =
     conversaciones?.filter(
       (c) =>
@@ -146,15 +244,29 @@ export default function MensajesPage() {
               </Pill>
             </div>
           </div>
-          <select
-            value={filtro}
-            onChange={(e) => setFiltro(e.target.value as Filtro)}
-            className="mt-2 w-full rounded-lg border border-edge bg-card px-3 py-1.5 text-xs text-fg outline-none focus:border-lime/50"
-          >
-            <option value="todas">{t("Todas", "All")}</option>
-            <option value="mias">{t("Mías", "Mine")}</option>
-            <option value="sin_asignar">{t("Sin asignar", "Unassigned")}</option>
-          </select>
+          <div className="mt-2 flex gap-2">
+            <select
+              value={filtro}
+              onChange={(e) => setFiltro(e.target.value as Filtro)}
+              className="w-full rounded-lg border border-edge bg-card px-3 py-1.5 text-xs text-fg outline-none focus:border-lime/50"
+            >
+              <option value="todas">{t("Todas", "All")}</option>
+              <option value="mias">{t("Mías", "Mine")}</option>
+              <option value="sin_asignar">{t("Sin asignar", "Unassigned")}</option>
+            </select>
+            <select
+              value={etiquetaFiltro ?? ""}
+              onChange={(e) => setEtiquetaFiltro(e.target.value ? Number(e.target.value) : null)}
+              className="w-full rounded-lg border border-edge bg-card px-3 py-1.5 text-xs text-fg outline-none focus:border-lime/50"
+            >
+              <option value="">{t("Todas las etiquetas", "All tags")}</option>
+              {(etiquetasCatalogo ?? []).map((e) => (
+                <option key={e.id} value={e.id}>
+                  {e.nombre}
+                </option>
+              ))}
+            </select>
+          </div>
           <div className="relative mt-3">
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-mist" />
             <input
@@ -213,6 +325,16 @@ export default function MensajesPage() {
                     {c.asignado_a?.nombre ?? t("Sin asignar", "Unassigned")}
                   </span>
                 </div>
+                {c.etiquetas.length > 0 && (
+                  <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                    {c.etiquetas.map((et) => (
+                      <span key={et.id} className="flex items-center gap-1">
+                        <span className="size-1.5 shrink-0 rounded-full" style={{ backgroundColor: et.color }} />
+                        <span className="truncate text-[10px] text-mist/70">{et.nombre}</span>
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
             </button>
           ))}
@@ -253,19 +375,90 @@ export default function MensajesPage() {
         ) : (
           <>
             <div className="flex items-center justify-between border-b border-edge px-5 py-3">
-              <div>
-                <div className="flex items-center gap-2">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
                   <span className="text-sm font-semibold text-fg">
                     {formatearTelefono(seleccionada.telefono_cliente)}
                   </span>
                   <Pill tone={seleccionada.pausado ? "neutral" : "success"}>
                     {seleccionada.pausado ? t("Pausado", "Paused") : t("IA activa", "AI active")}
                   </Pill>
+                  {seleccionada.etiquetas.map((et) => (
+                    <span
+                      key={et.id}
+                      className="flex items-center gap-1 rounded-full border border-edge px-2 py-0.5 text-[10px] text-mist"
+                    >
+                      <span className="size-1.5 rounded-full" style={{ backgroundColor: et.color }} />
+                      {et.nombre}
+                    </span>
+                  ))}
                 </div>
                 <p className="mt-0.5 font-mono text-[10.5px] uppercase tracking-widest text-mist">
                   {seleccionada.nombre_negocio}
                 </p>
               </div>
+              {rol !== "lectura" && (
+                <div className="relative shrink-0">
+                  <button
+                    onClick={() => setPopoverEtiquetasAbierto((v) => !v)}
+                    className="flex items-center gap-1.5 rounded-lg border border-edge px-2.5 py-1.5 text-xs text-fg transition-colors hover:bg-ink"
+                  >
+                    <Tag className="size-3.5" />
+                    {t("Etiquetas", "Tags")}
+                  </button>
+                  {popoverEtiquetasAbierto && (
+                    <>
+                      <div className="fixed inset-0 z-10" onClick={() => setPopoverEtiquetasAbierto(false)} />
+                      <div className="absolute right-0 top-full z-20 mt-2 w-64 rounded-xl border border-edge bg-card p-3 shadow-lg">
+                        {(etiquetasCatalogo ?? []).length === 0 ? (
+                          <p className="text-xs text-mist">{t("Todavía no hay etiquetas.", "No tags yet.")}</p>
+                        ) : (
+                          <div className="flex flex-col gap-1.5">
+                            {(etiquetasCatalogo ?? []).map((et) => {
+                              const aplicada = seleccionada.etiquetas.some((se) => se.id === et.id);
+                              return (
+                                <label key={et.id} className="flex cursor-pointer items-center gap-2 text-xs text-fg">
+                                  <input
+                                    type="checkbox"
+                                    checked={aplicada}
+                                    onChange={() => alternarEtiqueta(et.id, aplicada)}
+                                    className="size-3.5 accent-lime"
+                                  />
+                                  <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: et.color }} />
+                                  {et.nombre}
+                                </label>
+                              );
+                            })}
+                          </div>
+                        )}
+                        <form onSubmit={crearEtiqueta} className="mt-3 flex items-center gap-1.5 border-t border-edge pt-3">
+                          <input
+                            type="color"
+                            value={nuevaEtiquetaColor}
+                            onChange={(e) => setNuevaEtiquetaColor(e.target.value)}
+                            className="size-7 shrink-0 cursor-pointer rounded border border-edge bg-transparent"
+                          />
+                          <input
+                            type="text"
+                            value={nuevaEtiquetaNombre}
+                            onChange={(e) => setNuevaEtiquetaNombre(e.target.value)}
+                            placeholder={t("Nueva etiqueta", "New tag")}
+                            className="min-w-0 flex-1 rounded-lg border border-edge bg-ink px-2 py-1.5 text-xs text-fg outline-none focus:border-lime/50"
+                          />
+                          <button
+                            type="submit"
+                            disabled={guardandoEtiqueta || !nuevaEtiquetaNombre.trim()}
+                            className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-lime text-lime-fg disabled:opacity-50"
+                          >
+                            <Plus className="size-3.5" />
+                          </button>
+                        </form>
+                        {errorEtiqueta && <p className="mt-2 text-[11px] text-red-400">{errorEtiqueta}</p>}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
             </div>
             <div className="flex-1 space-y-3 overflow-y-auto bg-ink/40 p-5">
               {hilo === null && <p className="text-xs text-mist">{t("Cargando…", "Loading…")}</p>}
@@ -302,12 +495,29 @@ export default function MensajesPage() {
                 />
               ) : (
                 <form onSubmit={enviarMensaje} className="flex items-end gap-2">
-                  <textarea
-                    value={textoRespuesta}
-                    onChange={(e) => setTextoRespuesta(e.target.value)}
-                    placeholder={t("Escribe una respuesta…", "Type a reply…")}
-                    className="h-11 flex-1 resize-none rounded-lg border border-edge bg-card px-3 py-2.5 text-sm text-fg outline-none placeholder:text-mist focus:border-lime/50"
-                  />
+                  <div className="relative flex-1">
+                    {mostrarPicker && respuestasFiltradas.length > 0 && (
+                      <div className="absolute bottom-full left-0 z-20 mb-2 w-full overflow-hidden rounded-lg border border-edge bg-card shadow-lg">
+                        {respuestasFiltradas.map((r) => (
+                          <button
+                            key={r.id}
+                            type="button"
+                            onClick={() => insertarRespuestaRapida(r)}
+                            className="flex w-full flex-col items-start gap-0.5 border-b border-edge/60 px-3 py-2 text-left transition-colors last:border-b-0 hover:bg-ink"
+                          >
+                            <span className="text-xs font-medium text-lime-text">/{r.atajo}</span>
+                            <span className="truncate text-xs text-mist">{r.mensaje}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    <textarea
+                      value={textoRespuesta}
+                      onChange={(e) => setTextoRespuesta(e.target.value)}
+                      placeholder={t('Escribe una respuesta… (usa "/" para respuestas rápidas)', 'Type a reply… (use "/" for quick replies)')}
+                      className="h-11 w-full resize-none rounded-lg border border-edge bg-card px-3 py-2.5 text-sm text-fg outline-none placeholder:text-mist focus:border-lime/50"
+                    />
+                  </div>
                   <button
                     type="submit"
                     disabled={enviando || !textoRespuesta.trim()}

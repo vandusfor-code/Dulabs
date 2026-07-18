@@ -5,6 +5,44 @@ import { resolverMiembroEquipo } from "@/lib/team";
 export const runtime = "nodejs";
 
 const DIAS_VENTANA = 30;
+const TOPE_RESPUESTA_SEG = 3600; // gaps más largos se asumen un hilo nuevo, no una respuesta
+
+type FilaMensajeConversacion = {
+  phone_number_id: string;
+  telefono_cliente: string;
+  direccion: string;
+  origen: string;
+  created_at: string;
+};
+
+// Tiempo promedio de primera respuesta, sin importar quién responda (IA o
+// humano) — a diferencia del cálculo equivalente en resumen/route.ts, que
+// solo cuenta respuestas de la IA. Agrupa por conversación, ordena
+// cronológicamente y mide el primer salto entrante -> saliente de cada hilo.
+function tiempoPrimeraRespuestaPromedioSeg(filas: FilaMensajeConversacion[]): number | null {
+  const grupos = new Map<string, FilaMensajeConversacion[]>();
+  for (const f of filas) {
+    const clave = `${f.phone_number_id}:${f.telefono_cliente}`;
+    const lista = grupos.get(clave) ?? [];
+    lista.push(f);
+    grupos.set(clave, lista);
+  }
+
+  const gaps: number[] = [];
+  for (const lista of grupos.values()) {
+    lista.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+    for (let i = 0; i < lista.length - 1; i++) {
+      const actual = lista[i];
+      const siguiente = lista[i + 1];
+      if (actual.direccion === "entrante" && siguiente.direccion === "saliente") {
+        const gap = (new Date(siguiente.created_at).getTime() - new Date(actual.created_at).getTime()) / 1000;
+        if (gap > 0 && gap <= TOPE_RESPUESTA_SEG) gaps.push(gap);
+      }
+    }
+  }
+  if (gaps.length === 0) return null;
+  return gaps.reduce((a, b) => a + b, 0) / gaps.length;
+}
 
 // Analytics real, sin métricas de negocio inventadas (nada de "revenue" ni
 // "converted" — Du Labs no rastrea ventas). Todo sale de dulabs_mensajes_log
@@ -32,16 +70,19 @@ export async function GET(request: NextRequest) {
   const funnel = { enviados: 0, entregados: 0, leidos: 0, respondidos: 0 };
   const heatmap: number[][] = Array.from({ length: 7 }, () => Array(24).fill(0));
   const canales = new Map<string, number>();
+  let primeraRespuestaPromedioSeg: number | null = null;
 
   if (phoneNumberIds.length > 0) {
     const desde = new Date(Date.now() - DIAS_VENTANA * 24 * 60 * 60 * 1000);
 
     const { data: mensajes, error: mensajesError } = await supabase
       .from("dulabs_mensajes_log")
-      .select("direccion, origen, estado_entrega, respondido, created_at")
+      .select("phone_number_id, telefono_cliente, direccion, origen, estado_entrega, respondido, created_at")
       .in("phone_number_id", phoneNumberIds)
       .gte("created_at", desde.toISOString());
     if (mensajesError) return Response.json({ error: mensajesError.message }, { status: 500 });
+
+    primeraRespuestaPromedioSeg = tiempoPrimeraRespuestaPromedioSeg(mensajes ?? []);
 
     for (const m of mensajes ?? []) {
       if (m.direccion === "saliente") {
@@ -119,5 +160,6 @@ export async function GET(request: NextRequest) {
     heatmap,
     canales: Array.from(canales, ([canal, cantidad]) => ({ canal, cantidad })),
     topPlantillas: topPlantillas.slice(0, 5),
+    primeraRespuesta: { promedioSeg: primeraRespuestaPromedioSeg },
   });
 }

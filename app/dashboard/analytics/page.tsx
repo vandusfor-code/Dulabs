@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { MessagesSquare, TrendingUp, Phone, Bot, LayoutTemplate } from "lucide-react";
+import { MessagesSquare, TrendingUp, Phone, Bot, LayoutTemplate, Timer } from "lucide-react";
 import { useDashboard } from "@/lib/dashboard-session";
 import { formatearTelefono } from "@/lib/format";
 import { PageHeader, StatTile } from "@/components/dashboard/shell/ui";
@@ -17,7 +17,15 @@ type Analytics = {
   heatmap: number[][];
   canales: { canal: string; cantidad: number }[];
   topPlantillas: { nombre: string; enviados: number; tasaLectura: number; tasaRespuesta: number }[];
+  primeraRespuesta: { promedioSeg: number | null };
 };
+
+function formatearDuracion(seg: number, t: (es: string, en: string) => string): string {
+  if (seg < 60) return `${Math.round(seg)}${t("s", "s")}`;
+  const min = Math.floor(seg / 60);
+  const resto = Math.round(seg % 60);
+  return `${min}${t("m", "m")} ${resto}${t("s", "s")}`;
+}
 
 export default function AnalyticsPage() {
   const { session, negocios } = useDashboard();
@@ -92,11 +100,20 @@ export default function AnalyticsPage() {
       />
 
       <div className="px-4 pt-6 md:px-8">
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
           <StatTile label={t("Mensajes este mes", "Messages this month")} value={mensajesUsados.toLocaleString("es-CO")} icon={MessagesSquare} />
           <StatTile label={t("Últimos 7 días", "Last 7 days")} value={totalSemana.toLocaleString("es-CO")} icon={TrendingUp} />
           <StatTile label={t("Promedio diario", "Daily average")} value={promedioDiario.toLocaleString("es-CO")} icon={Bot} />
           <StatTile label={t("Números activos", "Active numbers")} value={String(numerosActivos)} icon={Phone} />
+          <StatTile
+            label={t("Tiempo de primera respuesta", "First response time")}
+            value={
+              analytics?.primeraRespuesta.promedioSeg != null
+                ? formatearDuracion(analytics.primeraRespuesta.promedioSeg, t)
+                : "—"
+            }
+            icon={Timer}
+          />
         </div>
 
         <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-3">
