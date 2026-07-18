@@ -1274,7 +1274,7 @@ export function Footer() {
             <p className="mt-4 text-[12.5px] leading-relaxed text-site-muted-fg">
               <span className="text-site-muted-fg/70">{t("Dirección principal:", "Main address:")}</span>
               <br />
-              BRR SANTA ELENA V CR 36 47 17
+              CR 36 47 17 BRR SANTA ELENA
               <br />
               Montería, Córdoba 230001
               <br />
