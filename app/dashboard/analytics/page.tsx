@@ -6,18 +6,11 @@ import { useDashboard } from "@/lib/dashboard-session";
 import { formatearTelefono } from "@/lib/format";
 import { PageHeader, StatTile } from "@/components/dashboard/shell/ui";
 import { AreaTrend, Donut } from "@/components/dashboard/shell/charts";
+import { useI18n } from "@/lib/i18n";
 
 const COLORES_DONUT = ["var(--color-chart-1)", "var(--color-chart-2)", "var(--color-chart-3)", "var(--color-chart-4)", "var(--color-chart-5)"];
 
-const DIAS_SEMANA = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
 const BLOQUES_HORA = [0, 3, 6, 9, 12, 15, 18, 21];
-
-const CANAL_LABEL: Record<string, string> = { ia: "IA", "campaña": "Campañas", manual: "Manual" };
-const CANAL_COLOR: Record<string, string> = {
-  ia: "var(--color-chart-1)",
-  "campaña": "var(--color-chart-2)",
-  manual: "var(--color-chart-3)",
-};
 
 type Analytics = {
   funnel: { enviados: number; entregados: number; leidos: number; respondidos: number };
@@ -28,6 +21,14 @@ type Analytics = {
 
 export default function AnalyticsPage() {
   const { session, negocios } = useDashboard();
+  const { t } = useI18n();
+  const DIAS_SEMANA = [t("Lun", "Mon"), t("Mar", "Tue"), t("Mié", "Wed"), t("Jue", "Thu"), t("Vie", "Fri"), t("Sáb", "Sat"), t("Dom", "Sun")];
+  const CANAL_LABEL: Record<string, string> = { ia: "IA", "campaña": t("Campañas", "Campaigns"), manual: t("Manual", "Manual") };
+  const CANAL_COLOR: Record<string, string> = {
+    ia: "var(--color-chart-1)",
+    "campaña": "var(--color-chart-2)",
+    manual: "var(--color-chart-3)",
+  };
   const [dias, setDias] = useState<{ fecha: string; cantidad: number }[] | null>(null);
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
 
@@ -49,7 +50,7 @@ export default function AnalyticsPage() {
   const numerosActivos = negocios?.filter((n) => n.conectado).length ?? 0;
 
   const chartData = (dias ?? []).map((d) => ({
-    label: new Date(d.fecha + "T00:00:00").toLocaleDateString("es-CO", { weekday: "short" }),
+    label: new Date(d.fecha + "T00:00:00").toLocaleDateString(t("es-CO", "en-US"), { weekday: "short" }),
     mensajes: d.cantidad,
   }));
 
@@ -60,10 +61,10 @@ export default function AnalyticsPage() {
   const funnel = analytics?.funnel;
   const etapasFunnel = funnel
     ? [
-        { etiqueta: "Enviados", valor: funnel.enviados },
-        { etiqueta: "Entregados", valor: funnel.entregados },
-        { etiqueta: "Leídos", valor: funnel.leidos },
-        { etiqueta: "Respondidos", valor: funnel.respondidos },
+        { etiqueta: t("Enviados", "Sent"), valor: funnel.enviados },
+        { etiqueta: t("Entregados", "Delivered"), valor: funnel.entregados },
+        { etiqueta: t("Leídos", "Read"), valor: funnel.leidos },
+        { etiqueta: t("Respondidos", "Replied"), valor: funnel.respondidos },
       ]
     : [];
   const baseFunnel = funnel?.enviados || 1;
@@ -84,35 +85,38 @@ export default function AnalyticsPage() {
       <PageHeader
         eyebrow="Infraestructura"
         title="Analytics"
-        description="El estado real de tu operación en WhatsApp: mensajes procesados, ritmo diario y distribución por número."
+        description={t(
+          "El estado real de tu operación en WhatsApp: mensajes procesados, ritmo diario y distribución por número.",
+          "The real state of your WhatsApp operation: messages processed, daily pace, and distribution by number."
+        )}
       />
 
       <div className="px-4 pt-6 md:px-8">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <StatTile label="Mensajes este mes" value={mensajesUsados.toLocaleString("es-CO")} icon={MessagesSquare} />
-          <StatTile label="Últimos 7 días" value={totalSemana.toLocaleString("es-CO")} icon={TrendingUp} />
-          <StatTile label="Promedio diario" value={promedioDiario.toLocaleString("es-CO")} icon={Bot} />
-          <StatTile label="Números activos" value={String(numerosActivos)} icon={Phone} />
+          <StatTile label={t("Mensajes este mes", "Messages this month")} value={mensajesUsados.toLocaleString("es-CO")} icon={MessagesSquare} />
+          <StatTile label={t("Últimos 7 días", "Last 7 days")} value={totalSemana.toLocaleString("es-CO")} icon={TrendingUp} />
+          <StatTile label={t("Promedio diario", "Daily average")} value={promedioDiario.toLocaleString("es-CO")} icon={Bot} />
+          <StatTile label={t("Números activos", "Active numbers")} value={String(numerosActivos)} icon={Phone} />
         </div>
 
         <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-3">
           <div className="rounded-xl border border-edge bg-card p-5 lg:col-span-2">
-            <h2 className="text-base font-semibold text-fg">Mensajes procesados</h2>
-            <p className="text-sm text-mist">Últimos 7 días, todos los números</p>
+            <h2 className="text-base font-semibold text-fg">{t("Mensajes procesados", "Messages processed")}</h2>
+            <p className="text-sm text-mist">{t("Últimos 7 días, todos los números", "Last 7 days, all numbers")}</p>
             <div className="mt-4">
               {dias === null ? (
-                <div className="flex h-[220px] items-center justify-center text-sm text-mist">Cargando…</div>
+                <div className="flex h-[220px] items-center justify-center text-sm text-mist">{t("Cargando…", "Loading…")}</div>
               ) : (
-                <AreaTrend data={chartData} keys={[{ key: "mensajes", name: "Mensajes", color: "var(--color-lime)" }]} />
+                <AreaTrend data={chartData} keys={[{ key: "mensajes", name: t("Mensajes", "Messages"), color: "var(--color-lime)" }]} />
               )}
             </div>
           </div>
 
           <div className="rounded-xl border border-edge bg-card p-5">
-            <h2 className="text-base font-semibold text-fg">Por número</h2>
-            <p className="text-sm text-mist">Mensajes de este mes</p>
+            <h2 className="text-base font-semibold text-fg">{t("Por número", "By number")}</h2>
+            <p className="text-sm text-mist">{t("Mensajes de este mes", "Messages this month")}</p>
             {porNegocio.length === 0 ? (
-              <p className="mt-8 text-center text-sm text-mist">Todavía sin mensajes este mes.</p>
+              <p className="mt-8 text-center text-sm text-mist">{t("Todavía sin mensajes este mes.", "No messages yet this month.")}</p>
             ) : (
               <>
                 <Donut data={porNegocio} />
@@ -133,17 +137,17 @@ export default function AnalyticsPage() {
         <div className="mt-6 rounded-xl border border-edge bg-card p-5">
           <div className="flex items-center justify-between">
             <div>
-              <h2 className="text-base font-semibold text-fg">Embudo de entrega</h2>
-              <p className="text-sm text-mist">Últimos 30 días, todos los números</p>
+              <h2 className="text-base font-semibold text-fg">{t("Embudo de entrega", "Delivery funnel")}</h2>
+              <p className="text-sm text-mist">{t("Últimos 30 días, todos los números", "Last 30 days, all numbers")}</p>
             </div>
             {funnel && funnel.enviados > 0 && (
               <span className="rounded-full bg-lime/10 px-2.5 py-1 text-xs font-semibold text-lime-text">
-                {Math.round((funnel.respondidos / baseFunnel) * 100)}% respondido
+                {Math.round((funnel.respondidos / baseFunnel) * 100)}% {t("respondido", "replied")}
               </span>
             )}
           </div>
           {!funnel || funnel.enviados === 0 ? (
-            <p className="mt-6 text-sm text-mist">Todavía sin mensajes en los últimos 30 días.</p>
+            <p className="mt-6 text-sm text-mist">{t("Todavía sin mensajes en los últimos 30 días.", "No messages yet in the last 30 days.")}</p>
           ) : (
             <div className="mt-4 space-y-3">
               {etapasFunnel.map((e) => {
@@ -168,8 +172,8 @@ export default function AnalyticsPage() {
 
         <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-3">
           <div className="rounded-xl border border-edge bg-card p-5 lg:col-span-2">
-            <h2 className="text-base font-semibold text-fg">Mapa de actividad</h2>
-            <p className="text-sm text-mist">Cuándo responden tus clientes — últimos 30 días</p>
+            <h2 className="text-base font-semibold text-fg">{t("Mapa de actividad", "Activity map")}</h2>
+            <p className="text-sm text-mist">{t("Cuándo responden tus clientes — últimos 30 días", "When your customers reply — last 30 days")}</p>
             <div className="mt-4 overflow-x-auto">
               <div className="min-w-[520px]">
                 <div className="grid grid-cols-[40px_repeat(8,1fr)] gap-1 text-[10px] text-mist">
@@ -186,7 +190,7 @@ export default function AnalyticsPage() {
                     {(heatmapBloques[i] ?? BLOQUES_HORA.map(() => 0)).map((valor, j) => (
                       <div
                         key={j}
-                        title={`${dia} ${String(BLOQUES_HORA[j]).padStart(2, "0")}:00 — ${valor} respuestas`}
+                        title={`${dia} ${String(BLOQUES_HORA[j]).padStart(2, "0")}:00 — ${valor} ${t("respuestas", "replies")}`}
                         className="h-7 rounded-md bg-lime"
                         style={{ opacity: valor === 0 ? 0.06 : 0.15 + 0.85 * (valor / maxHeatmap) }}
                       />
@@ -198,10 +202,10 @@ export default function AnalyticsPage() {
           </div>
 
           <div className="rounded-xl border border-edge bg-card p-5">
-            <h2 className="text-base font-semibold text-fg">Por canal</h2>
-            <p className="text-sm text-mist">Últimos 30 días</p>
+            <h2 className="text-base font-semibold text-fg">{t("Por canal", "By channel")}</h2>
+            <p className="text-sm text-mist">{t("Últimos 30 días", "Last 30 days")}</p>
             {canalesData.length === 0 ? (
-              <p className="mt-8 text-center text-sm text-mist">Todavía sin mensajes salientes.</p>
+              <p className="mt-8 text-center text-sm text-mist">{t("Todavía sin mensajes salientes.", "No outbound messages yet.")}</p>
             ) : (
               <>
                 <Donut data={canalesData} />
@@ -221,14 +225,14 @@ export default function AnalyticsPage() {
 
         {analytics && analytics.topPlantillas.length > 0 && (
           <div className="mt-6 rounded-xl border border-edge bg-card p-5">
-            <h2 className="text-base font-semibold text-fg">Plantillas con mejor desempeño</h2>
-            <p className="text-sm text-mist">Últimos 30 días, por envíos</p>
+            <h2 className="text-base font-semibold text-fg">{t("Plantillas con mejor desempeño", "Top-performing templates")}</h2>
+            <p className="text-sm text-mist">{t("Últimos 30 días, por envíos", "Last 30 days, by sends")}</p>
             <div className="mt-4 divide-y divide-edge">
               <div className="grid grid-cols-[1fr_repeat(3,90px)] gap-2 pb-2 font-mono text-[10.5px] uppercase tracking-widest text-mist">
-                <span>Plantilla</span>
-                <span className="text-right">Enviados</span>
-                <span className="text-right">Leídas</span>
-                <span className="text-right">Respondidas</span>
+                <span>{t("Plantilla", "Template")}</span>
+                <span className="text-right">{t("Enviados", "Sent")}</span>
+                <span className="text-right">{t("Leídas", "Read")}</span>
+                <span className="text-right">{t("Respondidas", "Replied")}</span>
               </div>
               {analytics.topPlantillas.map((p) => (
                 <div key={p.nombre} className="grid grid-cols-[1fr_repeat(3,90px)] items-center gap-2 py-3 text-sm">
@@ -245,7 +249,7 @@ export default function AnalyticsPage() {
         )}
 
         <div className="mt-6 rounded-xl border border-edge bg-card p-5">
-          <h2 className="text-base font-semibold text-fg">Tus números</h2>
+          <h2 className="text-base font-semibold text-fg">{t("Tus números", "Your numbers")}</h2>
           <div className="mt-4 divide-y divide-edge">
             {negocios?.map((n) => (
               <div key={n.phone_number_id} className="flex items-center justify-between py-3 first:pt-0 last:pb-0">
