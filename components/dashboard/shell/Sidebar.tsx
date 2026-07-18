@@ -16,7 +16,7 @@ function cn(...cls: Array<string | false | undefined>) {
 export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { session, negocios, suscripcion } = useDashboard();
+  const { session, negocios, suscripcion, rol } = useDashboard();
   const { t } = useI18n();
 
   const cerrarSesion = async () => {
@@ -76,31 +76,33 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
               {t(section.title, section.titleEn)}
             </p>
             <ul className="space-y-0.5">
-              {section.items.map((item) => {
-                const active =
-                  item.href === "/dashboard" ? pathname === "/dashboard" : pathname.startsWith(item.href);
-                return (
-                  <li key={item.href}>
-                    <Link
-                      href={item.href}
-                      onClick={onNavigate}
-                      className={cn(
-                        "group flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
-                        active ? "bg-lime/10 font-medium text-fg" : "text-mist hover:bg-ink-2 hover:text-fg"
-                      )}
-                    >
-                      <item.icon
+              {section.items
+                .filter((item) => !item.rolesPermitidos || (rol && item.rolesPermitidos.includes(rol)))
+                .map((item) => {
+                  const active =
+                    item.href === "/dashboard" ? pathname === "/dashboard" : pathname.startsWith(item.href);
+                  return (
+                    <li key={item.href}>
+                      <Link
+                        href={item.href}
+                        onClick={onNavigate}
                         className={cn(
-                          "size-[18px] shrink-0 transition-colors",
-                          active ? "text-lime-text" : "text-mist group-hover:text-fg"
+                          "group flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
+                          active ? "bg-lime/10 font-medium text-fg" : "text-mist hover:bg-ink-2 hover:text-fg"
                         )}
-                      />
-                      <span className="flex-1 truncate">{t(item.label, item.labelEn)}</span>
-                      {active && <span className="size-1.5 rounded-full bg-lime" />}
-                    </Link>
-                  </li>
-                );
-              })}
+                      >
+                        <item.icon
+                          className={cn(
+                            "size-[18px] shrink-0 transition-colors",
+                            active ? "text-lime-text" : "text-mist group-hover:text-fg"
+                          )}
+                        />
+                        <span className="flex-1 truncate">{t(item.label, item.labelEn)}</span>
+                        {active && <span className="size-1.5 rounded-full bg-lime" />}
+                      </Link>
+                    </li>
+                  );
+                })}
             </ul>
           </div>
         ))}

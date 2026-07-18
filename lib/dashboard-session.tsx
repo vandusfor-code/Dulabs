@@ -11,6 +11,7 @@ import {
 import { useRouter } from "next/navigation";
 import type { Session } from "@supabase/supabase-js";
 import { supabaseBrowser } from "@/lib/supabase-browser";
+import type { Rol } from "@/lib/team";
 
 export type Negocio = {
   nombre_negocio: string;
@@ -48,6 +49,7 @@ type DashboardContextValue = {
   negocios: Negocio[] | null;
   errorNegocios: string | null;
   suscripcion: Suscripcion;
+  rol: Rol | null;
   cargarNegocios: () => Promise<void>;
 };
 
@@ -62,6 +64,7 @@ export function DashboardSessionProvider({ children }: { children: ReactNode }) 
   const [negocios, setNegocios] = useState<Negocio[] | null>(null);
   const [errorNegocios, setErrorNegocios] = useState<string | null>(null);
   const [suscripcion, setSuscripcion] = useState<Suscripcion>(null);
+  const [rol, setRol] = useState<Rol | null>(null);
 
   const cargarNegocios = useCallback(async (accessToken?: string) => {
     const token = accessToken ?? (session !== "verificando" && session?.access_token);
@@ -74,6 +77,7 @@ export function DashboardSessionProvider({ children }: { children: ReactNode }) 
       if (!res.ok) throw new Error(data.error ?? "Error cargando tu panel");
       setNegocios(data.negocios ?? []);
       setSuscripcion(data.suscripcion ?? null);
+      setRol(data.rol ?? null);
     } catch (err) {
       setErrorNegocios(err instanceof Error ? err.message : String(err));
     }
@@ -128,6 +132,7 @@ export function DashboardSessionProvider({ children }: { children: ReactNode }) 
         negocios,
         errorNegocios,
         suscripcion,
+        rol,
         cargarNegocios: () => cargarNegocios(),
       }}
     >

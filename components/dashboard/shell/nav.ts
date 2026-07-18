@@ -6,14 +6,17 @@ import {
   Send,
   Phone,
   ChartNoAxesCombined,
+  Users,
   type LucideIcon,
 } from "lucide-react";
+import type { Rol } from "@/lib/team";
 
 export type NavItem = {
   label: string;
   labelEn: string;
   href: string;
   icon: LucideIcon;
+  rolesPermitidos?: Rol[]; // undefined = visible a todos los roles
 };
 
 export type NavSection = {
@@ -46,6 +49,7 @@ export const navSections: NavSection[] = [
     items: [
       { label: "Números", labelEn: "Numbers", href: "/dashboard/conexion", icon: Phone },
       { label: "Analytics", labelEn: "Analytics", href: "/dashboard/analytics", icon: ChartNoAxesCombined },
+      { label: "Equipo", labelEn: "Team", href: "/dashboard/equipo", icon: Users, rolesPermitidos: ["admin"] },
     ],
   },
 ];
