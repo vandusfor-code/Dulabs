@@ -6,6 +6,7 @@ import { MessagesSquare, Search, Filter } from "lucide-react";
 import { useDashboard } from "@/lib/dashboard-session";
 import { formatearTelefono } from "@/lib/format";
 import { Pill } from "@/components/dashboard/shell/ui";
+import { useI18n } from "@/lib/i18n";
 
 type Conversacion = {
   phone_number_id: string;
@@ -23,8 +24,8 @@ type MensajeHilo = {
   created_at: string;
 };
 
-function horaCorta(fecha: string): string {
-  return new Date(fecha).toLocaleString("es-CO", {
+function horaCorta(fecha: string, t: (es: string, en: string) => string): string {
+  return new Date(fecha).toLocaleString(t("es-CO", "en-US"), {
     day: "numeric",
     month: "short",
     hour: "2-digit",
@@ -34,6 +35,7 @@ function horaCorta(fecha: string): string {
 
 export default function MensajesPage() {
   const { session, negocios } = useDashboard();
+  const { t } = useI18n();
   const [conversaciones, setConversaciones] = useState<Conversacion[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busqueda, setBusqueda] = useState("");
@@ -87,10 +89,10 @@ export default function MensajesPage() {
       <div className="flex w-full shrink-0 flex-col border-r border-edge md:w-80 lg:w-96">
         <div className="border-b border-edge p-4">
           <div className="flex items-center justify-between">
-            <h1 className="text-lg font-semibold text-fg">Mensajes</h1>
+            <h1 className="text-lg font-semibold text-fg">{t("Mensajes", "Messages")}</h1>
             <div className="flex items-center gap-2">
               <Pill tone="success">
-                <span className="size-1.5 rounded-full bg-lime" /> {abiertos} activos
+                <span className="size-1.5 rounded-full bg-lime" /> {abiertos} {t("activos", "active")}
               </Pill>
               <button className="flex size-8 items-center justify-center rounded-lg border border-edge text-mist hover:text-fg">
                 <Filter className="size-4" />
@@ -102,7 +104,7 @@ export default function MensajesPage() {
             <input
               value={busqueda}
               onChange={(e) => setBusqueda(e.target.value)}
-              placeholder="Buscar mensajes…"
+              placeholder={t("Buscar mensajes…", "Search messages…")}
               className="h-9 w-full rounded-lg border border-edge bg-card pl-9 pr-3 text-sm text-fg outline-none placeholder:text-mist focus:border-lime/50"
             />
           </div>
@@ -110,9 +112,9 @@ export default function MensajesPage() {
 
         <div className="flex-1 overflow-y-auto">
           {error && <p className="p-4 text-xs text-red-400">{error}</p>}
-          {!error && conversaciones === null && <p className="p-4 text-xs text-mist">Cargando…</p>}
+          {!error && conversaciones === null && <p className="p-4 text-xs text-mist">{t("Cargando…", "Loading…")}</p>}
           {conversaciones !== null && conversacionesFiltradas.length === 0 && (
-            <p className="p-4 text-xs leading-relaxed text-mist">Todavía no tienes chats.</p>
+            <p className="p-4 text-xs leading-relaxed text-mist">{t("Todavía no tienes chats.", "You don't have any chats yet.")}</p>
           )}
           {conversacionesFiltradas.map((c) => (
             <button
@@ -143,7 +145,7 @@ export default function MensajesPage() {
                   <span className="truncate text-sm font-medium text-fg">
                     {formatearTelefono(c.telefono_cliente)}
                   </span>
-                  <span className="shrink-0 text-[11px] text-mist">{horaCorta(c.ultima_fecha)}</span>
+                  <span className="shrink-0 text-[11px] text-mist">{horaCorta(c.ultima_fecha, t)}</span>
                 </div>
                 <p className="mt-0.5 truncate text-sm text-mist">{c.ultimo_mensaje}</p>
                 <p className="mt-1 font-mono text-[10px] uppercase tracking-widest text-mist/70">
@@ -163,27 +165,27 @@ export default function MensajesPage() {
             {conversaciones !== null && conversaciones.length === 0 ? (
               (negocios?.length ?? 0) === 0 ? (
                 <>
-                  <p className="text-sm font-semibold text-fg">Conecta tu número de WhatsApp</p>
+                  <p className="text-sm font-semibold text-fg">{t("Conecta tu número de WhatsApp", "Connect your WhatsApp number")}</p>
                   <p className="max-w-xs text-xs leading-relaxed text-mist">
-                    Necesitas un número conectado para empezar a recibir y responder mensajes aquí.
+                    {t("Necesitas un número conectado para empezar a recibir y responder mensajes aquí.", "You need a connected number to start receiving and replying to messages here.")}
                   </p>
                   <Link
                     href="/dashboard/conexion"
                     className="mt-2 rounded-lg bg-lime px-4 py-2 text-xs font-semibold text-lime-fg transition-colors duration-200 hover:bg-lime-hover"
                   >
-                    Conectar número →
+                    {t("Conectar número →", "Connect a number →")}
                   </Link>
                 </>
               ) : (
                 <>
-                  <p className="text-sm font-semibold text-fg">Todavía no hablaste con nadie</p>
+                  <p className="text-sm font-semibold text-fg">{t("Todavía no hablaste con nadie", "You haven't talked to anyone yet")}</p>
                   <p className="max-w-xs text-xs leading-relaxed text-mist">
-                    Los chats van a aparecer aquí en cuanto tus clientes te escriban por WhatsApp.
+                    {t("Los chats van a aparecer aquí en cuanto tus clientes te escriban por WhatsApp.", "Chats will show up here as soon as your customers message you on WhatsApp.")}
                   </p>
                 </>
               )
             ) : (
-              <p className="text-sm text-mist">Selecciona una conversación para ver el historial.</p>
+              <p className="text-sm text-mist">{t("Selecciona una conversación para ver el historial.", "Select a conversation to see the history.")}</p>
             )}
           </div>
         ) : (
@@ -195,7 +197,7 @@ export default function MensajesPage() {
                     {formatearTelefono(seleccionada.telefono_cliente)}
                   </span>
                   <Pill tone={seleccionada.pausado ? "neutral" : "success"}>
-                    {seleccionada.pausado ? "Pausado" : "IA activa"}
+                    {seleccionada.pausado ? t("Pausado", "Paused") : t("IA activa", "AI active")}
                   </Pill>
                 </div>
                 <p className="mt-0.5 font-mono text-[10.5px] uppercase tracking-widest text-mist">
@@ -204,7 +206,7 @@ export default function MensajesPage() {
               </div>
             </div>
             <div className="flex-1 space-y-3 overflow-y-auto bg-ink/40 p-5">
-              {hilo === null && <p className="text-xs text-mist">Cargando…</p>}
+              {hilo === null && <p className="text-xs text-mist">{t("Cargando…", "Loading…")}</p>}
               {hilo?.map((m, i) => (
                 <div key={i} className={`flex ${m.direccion === "saliente" ? "justify-end" : "justify-start"}`}>
                   <div
@@ -220,7 +222,7 @@ export default function MensajesPage() {
                         m.direccion === "saliente" ? "text-lime-fg/70" : "text-mist"
                       }`}
                     >
-                      {horaCorta(m.created_at)}
+                      {horaCorta(m.created_at, t)}
                     </p>
                   </div>
                 </div>
@@ -233,7 +235,7 @@ export default function MensajesPage() {
       {/* Panel cliente */}
       <div className="hidden w-72 shrink-0 flex-col overflow-y-auto border-l border-edge xl:flex">
         {!seleccionada ? (
-          <p className="p-5 text-xs text-mist">Sin conversación seleccionada.</p>
+          <p className="p-5 text-xs text-mist">{t("Sin conversación seleccionada.", "No conversation selected.")}</p>
         ) : (
           <>
             <div className="flex flex-col items-center border-b border-edge p-6 text-center">
@@ -246,11 +248,11 @@ export default function MensajesPage() {
               </p>
             </div>
             <div className="p-5">
-              <p className="mb-3 font-mono text-[10.5px] uppercase tracking-widest text-mist">Estado</p>
+              <p className="mb-3 font-mono text-[10.5px] uppercase tracking-widest text-mist">{t("Estado", "Status")}</p>
               <div className="flex items-center gap-2.5 rounded-lg border border-edge bg-card px-3 py-2.5">
                 <span className={`size-2 rounded-full ${seleccionada.pausado ? "bg-mist/50" : "bg-lime"}`} />
                 <span className="text-sm text-fg">
-                  {seleccionada.pausado ? "Humano interviniendo" : "IA respondiendo"}
+                  {seleccionada.pausado ? t("Humano interviniendo", "Human taking over") : t("IA respondiendo", "AI replying")}
                 </span>
               </div>
             </div>
