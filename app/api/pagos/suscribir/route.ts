@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { crearFuentePago, crearTransaccion } from "@/lib/wompi";
 import { precioPlan } from "@/lib/planes";
+import { resolverMiembroEquipo, requireRol } from "@/lib/team";
 
 export const runtime = "nodejs";
 
@@ -19,6 +20,24 @@ export async function POST(request: NextRequest) {
   const { data: userData, error: userError } = await supabase.auth.getUser(sessionToken);
   if (userError || !userData.user) {
     return Response.json({ error: "Sesión inválida" }, { status: 401 });
+  }
+
+  const miembroExistente = await resolverMiembroEquipo(supabase, userData.user.id);
+  let idTenant: string;
+  if (miembroExistente) {
+    if (!requireRol(miembroExistente, ["admin"])) {
+      return Response.json({ error: "Solo un administrador del equipo puede gestionar la suscripción" }, { status: 403 });
+    }
+    idTenant = miembroExistente.tenantId;
+  } else {
+    idTenant = userData.user.id;
+    const { error: provisionError } = await supabase.from("dulabs_miembros_equipo").upsert(
+      { tenant_id: idTenant, user_id: idTenant, email: userData.user.email ?? "", rol: "admin", estado: "activo" },
+      { onConflict: "user_id", ignoreDuplicates: true }
+    );
+    if (provisionError) {
+      console.error("[pagos/suscribir] error provisionando miembro de equipo:", provisionError.message);
+    }
   }
 
   let body: {
@@ -52,7 +71,7 @@ export async function POST(request: NextRequest) {
       throw new Error(`La fuente de pago quedó en estado ${fuente.status}`);
     }
 
-    const referencia = `dulabs-${userData.user.id}-${Date.now()}`;
+    const referencia = `dulabs-${idTenant}-${Date.now()}`;
     const transaccion = await crearTransaccion({
       amount_in_cents: precioCop * 100,
       customer_email,
@@ -66,7 +85,7 @@ export async function POST(request: NextRequest) {
 
     const { error: dbError } = await supabase.from("dulabs_suscripciones").upsert(
       {
-        id_tenant: userData.user.id,
+        id_tenant: idTenant,
         plan,
         precio_cop: precioCop,
         wompi_payment_source_id: String(fuente.id),
@@ -80,7 +99,7 @@ export async function POST(request: NextRequest) {
     if (dbError) throw new Error(`Error guardando suscripción: ${dbError.message}`);
 
     await supabase.from("dulabs_pagos").insert({
-      id_tenant: userData.user.id,
+      id_tenant: idTenant,
       wompi_transaction_id: transaccion.id,
       monto_cop: precioCop,
       estado: transaccion.status,

@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import * as XLSX from "xlsx";
 import { PDFParse } from "pdf-parse";
 import { supabaseAdmin } from "@/lib/supabase";
+import { resolverMiembroEquipo, requireRol } from "@/lib/team";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -47,6 +48,10 @@ export async function POST(request: NextRequest) {
   if (userError || !userData.user) {
     return Response.json({ error: "Sesión inválida" }, { status: 401 });
   }
+  const miembro = await resolverMiembroEquipo(supabase, userData.user.id);
+  if (!requireRol(miembro, ["admin"])) {
+    return Response.json({ error: "No tienes permiso para esta acción" }, { status: 403 });
+  }
 
   const form = await request.formData();
   const phoneNumberId = form.get("phone_number_id");
@@ -83,7 +88,7 @@ export async function POST(request: NextRequest) {
       base_conocimiento_actualizado_at: new Date().toISOString(),
     })
     .eq("phone_number_id", phoneNumberId)
-    .eq("id_tenant", userData.user.id);
+    .eq("id_tenant", miembro.tenantId);
 
   if (error) return Response.json({ error: error.message }, { status: 500 });
 
@@ -101,6 +106,10 @@ export async function DELETE(request: NextRequest) {
   if (userError || !userData.user) {
     return Response.json({ error: "Sesión inválida" }, { status: 401 });
   }
+  const miembro = await resolverMiembroEquipo(supabase, userData.user.id);
+  if (!requireRol(miembro, ["admin"])) {
+    return Response.json({ error: "No tienes permiso para esta acción" }, { status: 403 });
+  }
 
   let body: { phone_number_id?: string };
   try {
@@ -116,7 +125,7 @@ export async function DELETE(request: NextRequest) {
     .from("dulabs_clientes_config")
     .update({ base_conocimiento: null, base_conocimiento_nombre_archivo: null, base_conocimiento_actualizado_at: null })
     .eq("phone_number_id", body.phone_number_id)
-    .eq("id_tenant", userData.user.id);
+    .eq("id_tenant", miembro.tenantId);
 
   if (error) return Response.json({ error: error.message }, { status: 500 });
 

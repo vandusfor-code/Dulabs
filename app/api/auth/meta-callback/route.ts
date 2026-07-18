@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { resolverMiembroEquipo, requireRol } from "@/lib/team";
 
 export const runtime = "nodejs";
 
@@ -34,7 +35,29 @@ export async function POST(request: NextRequest) {
   if (userError || !userData.user) {
     return Response.json({ success: false, error: "Sesión inválida" }, { status: 401 });
   }
-  const idTenant = userData.user.id;
+
+  const miembroExistente = await resolverMiembroEquipo(supabaseAdmin(), userData.user.id);
+  let idTenant: string;
+  if (miembroExistente) {
+    if (!requireRol(miembroExistente, ["admin"])) {
+      return Response.json(
+        { success: false, error: "Solo un administrador del equipo puede conectar números de WhatsApp" },
+        { status: 403 }
+      );
+    }
+    idTenant = miembroExistente.tenantId;
+  } else {
+    // Primer contacto de este usuario con la plataforma: se convierte en
+    // admin de su propio tenant nuevo (mismo comportamiento de hoy).
+    idTenant = userData.user.id;
+    const { error: provisionError } = await supabaseAdmin().from("dulabs_miembros_equipo").upsert(
+      { tenant_id: idTenant, user_id: idTenant, email: userData.user.email ?? "", rol: "admin", estado: "activo" },
+      { onConflict: "user_id", ignoreDuplicates: true }
+    );
+    if (provisionError) {
+      console.error("[meta-callback] error provisionando miembro de equipo:", provisionError.message);
+    }
+  }
 
   const appId = process.env.NEXT_PUBLIC_META_APP_ID;
   const appSecret = process.env.META_APP_SECRET;

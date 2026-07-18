@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { enviarPlantilla } from "@/lib/meta-templates";
+import { resolverMiembroEquipo, requireRol } from "@/lib/team";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -21,6 +22,10 @@ export async function POST(request: NextRequest) {
   if (userError || !userData.user) {
     return Response.json({ error: "Sesión inválida" }, { status: 401 });
   }
+  const miembro = await resolverMiembroEquipo(supabase, userData.user.id);
+  if (!requireRol(miembro, ["admin"])) {
+    return Response.json({ error: "No tienes permiso para esta acción" }, { status: 403 });
+  }
 
   let body: { plantilla_id?: number; destinatarios?: string[] };
   try {
@@ -38,7 +43,7 @@ export async function POST(request: NextRequest) {
     .from("dulabs_plantillas")
     .select("*")
     .eq("id", plantilla_id)
-    .eq("id_tenant", userData.user.id)
+    .eq("id_tenant", miembro.tenantId)
     .maybeSingle();
   if (plantillaError) return Response.json({ error: plantillaError.message }, { status: 500 });
   if (!plantilla) return Response.json({ error: "Plantilla no encontrada" }, { status: 404 });
@@ -53,7 +58,7 @@ export async function POST(request: NextRequest) {
     .from("dulabs_clientes_config")
     .select("*")
     .eq("phone_number_id", plantilla.phone_number_id)
-    .eq("id_tenant", userData.user.id)
+    .eq("id_tenant", miembro.tenantId)
     .maybeSingle();
   if (clienteError) return Response.json({ error: clienteError.message }, { status: 500 });
   if (!cliente) return Response.json({ error: "Número no encontrado" }, { status: 404 });
@@ -66,7 +71,7 @@ export async function POST(request: NextRequest) {
   const { data: campana, error: campanaError } = await supabase
     .from("dulabs_campanas")
     .insert({
-      id_tenant: userData.user.id,
+      id_tenant: miembro.tenantId,
       phone_number_id: plantilla.phone_number_id,
       plantilla_id: plantilla.id,
       nombre: plantilla.nombre,

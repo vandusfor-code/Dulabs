@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { resolverMiembroEquipo, requireRol } from "@/lib/team";
 
 export const runtime = "nodejs";
 
@@ -18,6 +19,10 @@ export async function PATCH(request: NextRequest) {
   const { data: userData, error: userError } = await supabase.auth.getUser(token);
   if (userError || !userData.user) {
     return Response.json({ error: "Sesión inválida" }, { status: 401 });
+  }
+  const miembro = await resolverMiembroEquipo(supabase, userData.user.id);
+  if (!requireRol(miembro, ["admin"])) {
+    return Response.json({ error: "No tienes permiso para esta acción" }, { status: 403 });
   }
 
   let body: { phone_number_id?: string; prompt_sistema?: string };
@@ -45,7 +50,7 @@ export async function PATCH(request: NextRequest) {
     .from("dulabs_clientes_config")
     .update({ prompt_sistema, updated_at: new Date().toISOString() })
     .eq("phone_number_id", phone_number_id)
-    .eq("id_tenant", userData.user.id);
+    .eq("id_tenant", miembro.tenantId);
 
   if (error) {
     return Response.json({ error: error.message }, { status: 500 });

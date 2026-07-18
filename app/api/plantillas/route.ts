@@ -5,6 +5,7 @@ import {
   consultarEstadoPlantilla,
   normalizarNombrePlantilla,
 } from "@/lib/meta-templates";
+import { resolverMiembroEquipo, requireRol } from "@/lib/team";
 
 export const runtime = "nodejs";
 
@@ -22,12 +23,14 @@ async function usuarioDeSesion(request: NextRequest) {
 export async function GET(request: NextRequest) {
   const user = await usuarioDeSesion(request);
   if (!user) return Response.json({ error: "Sesión inválida" }, { status: 401 });
-
   const supabase = supabaseAdmin();
+  const miembro = await resolverMiembroEquipo(supabase, user.id);
+  if (!miembro) return Response.json({ error: "No perteneces a ningún equipo activo" }, { status: 403 });
+
   const { data: plantillas, error } = await supabase
     .from("dulabs_plantillas")
     .select("*")
-    .eq("id_tenant", user.id)
+    .eq("id_tenant", miembro.tenantId)
     .order("created_at", { ascending: false });
   if (error) return Response.json({ error: error.message }, { status: 500 });
 
@@ -36,7 +39,7 @@ export async function GET(request: NextRequest) {
     const { data: negocios } = await supabase
       .from("dulabs_clientes_config")
       .select("phone_number_id, meta_permanent_token")
-      .eq("id_tenant", user.id);
+      .eq("id_tenant", miembro.tenantId);
     const tokenPorNumero = new Map(
       (negocios ?? []).map((n) => [n.phone_number_id, n.meta_permanent_token as string | null])
     );
@@ -104,6 +107,10 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   const user = await usuarioDeSesion(request);
   if (!user) return Response.json({ error: "Sesión inválida" }, { status: 401 });
+  const miembro = await resolverMiembroEquipo(supabaseAdmin(), user.id);
+  if (!requireRol(miembro, ["admin"])) {
+    return Response.json({ error: "No tienes permiso para esta acción" }, { status: 403 });
+  }
 
   let body: {
     id?: number;
@@ -134,7 +141,7 @@ export async function POST(request: NextRequest) {
     .from("dulabs_clientes_config")
     .select("whatsapp_business_account_id, meta_permanent_token")
     .eq("phone_number_id", phone_number_id)
-    .eq("id_tenant", user.id)
+    .eq("id_tenant", miembro.tenantId)
     .maybeSingle();
   if (clienteError) return Response.json({ error: clienteError.message }, { status: 500 });
   if (!cliente) return Response.json({ error: "Número no encontrado" }, { status: 404 });
@@ -148,13 +155,13 @@ export async function POST(request: NextRequest) {
         .from("dulabs_plantillas")
         .update({ nombre: nombreNormalizado, categoria, idioma, cuerpo })
         .eq("id", id)
-        .eq("id_tenant", user.id)
+        .eq("id_tenant", miembro.tenantId)
         .eq("borrador", true);
       if (updateError) return Response.json({ error: updateError.message }, { status: 500 });
       return Response.json({ success: true, estado: "borrador" });
     }
     const { error: insertError } = await supabase.from("dulabs_plantillas").insert({
-      id_tenant: user.id,
+      id_tenant: miembro.tenantId,
       phone_number_id,
       whatsapp_business_account_id: cliente.whatsapp_business_account_id,
       nombre: nombreNormalizado,
@@ -197,14 +204,14 @@ export async function POST(request: NextRequest) {
           borrador: false,
         })
         .eq("id", id)
-        .eq("id_tenant", user.id)
+        .eq("id_tenant", miembro.tenantId)
         .eq("borrador", true);
       if (promoteError) throw new Error(promoteError.message);
       return Response.json({ success: true, estado: resultado.status });
     }
 
     const { error: dbError } = await supabase.from("dulabs_plantillas").insert({
-      id_tenant: user.id,
+      id_tenant: miembro.tenantId,
       phone_number_id,
       whatsapp_business_account_id: cliente.whatsapp_business_account_id,
       nombre: nombreNormalizado,

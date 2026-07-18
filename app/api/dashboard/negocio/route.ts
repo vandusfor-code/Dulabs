@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { desuscribirWaba } from "@/lib/meta-numero";
+import { resolverMiembroEquipo, requireRol } from "@/lib/team";
 
 export const runtime = "nodejs";
 
@@ -18,6 +19,10 @@ export async function PATCH(request: NextRequest) {
   const { data: userData, error: userError } = await supabase.auth.getUser(token);
   if (userError || !userData.user) {
     return Response.json({ error: "Sesión inválida" }, { status: 401 });
+  }
+  const miembro = await resolverMiembroEquipo(supabase, userData.user.id);
+  if (!requireRol(miembro, ["admin"])) {
+    return Response.json({ error: "No tienes permiso para esta acción" }, { status: 403 });
   }
 
   let body: { phone_number_id?: string; nombre_negocio?: string; nombre_agente?: string; ia_pausada?: boolean };
@@ -49,7 +54,7 @@ export async function PATCH(request: NextRequest) {
     .from("dulabs_clientes_config")
     .update(cambios)
     .eq("phone_number_id", phone_number_id)
-    .eq("id_tenant", userData.user.id);
+    .eq("id_tenant", miembro.tenantId);
 
   if (error) return Response.json({ error: error.message }, { status: 500 });
 
@@ -69,6 +74,10 @@ export async function DELETE(request: NextRequest) {
   if (userError || !userData.user) {
     return Response.json({ error: "Sesión inválida" }, { status: 401 });
   }
+  const miembro = await resolverMiembroEquipo(supabase, userData.user.id);
+  if (!requireRol(miembro, ["admin"])) {
+    return Response.json({ error: "No tienes permiso para esta acción" }, { status: 403 });
+  }
 
   let body: { phone_number_id?: string };
   try {
@@ -86,7 +95,7 @@ export async function DELETE(request: NextRequest) {
     .from("dulabs_clientes_config")
     .select("whatsapp_business_account_id, meta_permanent_token")
     .eq("phone_number_id", phone_number_id)
-    .eq("id_tenant", userData.user.id)
+    .eq("id_tenant", miembro.tenantId)
     .maybeSingle();
 
   if (negocioError) return Response.json({ error: negocioError.message }, { status: 500 });
@@ -107,14 +116,14 @@ export async function DELETE(request: NextRequest) {
     .from("dulabs_campanas")
     .delete()
     .eq("phone_number_id", phone_number_id)
-    .eq("id_tenant", userData.user.id);
+    .eq("id_tenant", miembro.tenantId);
   if (campanasError) return Response.json({ error: campanasError.message }, { status: 500 });
 
   const { error: configError } = await supabase
     .from("dulabs_clientes_config")
     .delete()
     .eq("phone_number_id", phone_number_id)
-    .eq("id_tenant", userData.user.id);
+    .eq("id_tenant", miembro.tenantId);
   if (configError) return Response.json({ error: configError.message }, { status: 500 });
 
   return Response.json({ success: true });

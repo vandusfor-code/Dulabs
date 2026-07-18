@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { resolverMiembroEquipo } from "@/lib/team";
 
 export const runtime = "nodejs";
 
@@ -14,11 +15,13 @@ export async function GET(request: NextRequest) {
   if (userError || !userData.user) {
     return Response.json({ error: "Sesión inválida" }, { status: 401 });
   }
+  const miembro = await resolverMiembroEquipo(supabase, userData.user.id);
+  if (!miembro) return Response.json({ error: "No perteneces a ningún equipo activo" }, { status: 403 });
 
   const { data: negocios, error: negociosError } = await supabase
     .from("dulabs_clientes_config")
     .select("phone_number_id")
-    .eq("id_tenant", userData.user.id);
+    .eq("id_tenant", miembro.tenantId);
   if (negociosError) return Response.json({ error: negociosError.message }, { status: 500 });
 
   const phoneNumberIds = (negocios ?? []).map((n) => n.phone_number_id);

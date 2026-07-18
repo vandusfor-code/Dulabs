@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { resolverMiembroEquipo } from "@/lib/team";
 
 export const runtime = "nodejs";
 
@@ -36,11 +37,13 @@ export async function GET(request: NextRequest) {
   if (userError || !userData.user) {
     return Response.json({ error: "Sesión inválida" }, { status: 401 });
   }
+  const miembro = await resolverMiembroEquipo(supabase, userData.user.id);
+  if (!miembro) return Response.json({ error: "No perteneces a ningún equipo activo" }, { status: 403 });
 
   const { data: campanas, error: campanasError } = await supabase
     .from("dulabs_campanas")
     .select("id, nombre, plantilla_id, destinatarios_total, created_at, dulabs_plantillas(nombre, cuerpo)")
-    .eq("id_tenant", userData.user.id)
+    .eq("id_tenant", miembro.tenantId)
     .order("created_at", { ascending: false })
     .limit(50);
   if (campanasError) return Response.json({ error: campanasError.message }, { status: 500 });

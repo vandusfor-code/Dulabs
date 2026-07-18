@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { desuscribirWaba } from "@/lib/meta-numero";
+import { resolverMiembroEquipo, requireRol } from "@/lib/team";
 
 export const runtime = "nodejs";
 
@@ -17,7 +18,18 @@ export async function DELETE(request: NextRequest) {
   if (userError || !userData.user) {
     return Response.json({ error: "Sesión inválida" }, { status: 401 });
   }
-  const tenantId = userData.user.id;
+  const miembro = await resolverMiembroEquipo(supabase, userData.user.id);
+  if (!requireRol(miembro, ["admin"])) {
+    return Response.json({ error: "No tienes permiso para esta acción" }, { status: 403 });
+  }
+  const tenantId = miembro.tenantId;
+
+  // Cualquier admin del equipo puede borrar la cuenta completa — incluye a
+  // TODOS los miembros del equipo, no solo a quien la borra.
+  const { data: miembrosTenant } = await supabase
+    .from("dulabs_miembros_equipo")
+    .select("user_id")
+    .eq("tenant_id", tenantId);
 
   const { data: negocios, error: negociosError } = await supabase
     .from("dulabs_clientes_config")
@@ -45,8 +57,17 @@ export async function DELETE(request: NextRequest) {
   const { error: suscripcionError } = await supabase.from("dulabs_suscripciones").delete().eq("id_tenant", tenantId);
   if (suscripcionError) return Response.json({ error: suscripcionError.message }, { status: 500 });
 
-  const { error: deleteUserError } = await supabase.auth.admin.deleteUser(tenantId);
-  if (deleteUserError) return Response.json({ error: deleteUserError.message }, { status: 500 });
+  const { error: miembrosError } = await supabase.from("dulabs_miembros_equipo").delete().eq("tenant_id", tenantId);
+  if (miembrosError) return Response.json({ error: miembrosError.message }, { status: 500 });
+
+  // Borra el login de CADA miembro del equipo, no solo el de quien ejecuta
+  // la acción — "eliminar cuenta" borra el tenant completo.
+  for (const m of miembrosTenant ?? []) {
+    const { error: deleteUserError } = await supabase.auth.admin.deleteUser(m.user_id);
+    if (deleteUserError) {
+      console.error("[dashboard/cuenta] error borrando usuario", m.user_id, deleteUserError.message);
+    }
+  }
 
   return Response.json({ success: true });
 }

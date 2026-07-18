@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { resolverMiembroEquipo } from "@/lib/team";
 
 export const runtime = "nodejs";
 
@@ -67,11 +68,13 @@ export async function GET(request: NextRequest) {
   if (userError || !userData.user) {
     return Response.json({ error: "Sesión inválida" }, { status: 401 });
   }
+  const miembro = await resolverMiembroEquipo(supabase, userData.user.id);
+  if (!miembro) return Response.json({ error: "No perteneces a ningún equipo activo" }, { status: 403 });
 
   const { data: negocios, error: negociosError } = await supabase
     .from("dulabs_clientes_config")
     .select("phone_number_id, nombre_negocio, nombre_agente")
-    .eq("id_tenant", userData.user.id);
+    .eq("id_tenant", miembro.tenantId);
   if (negociosError) return Response.json({ error: negociosError.message }, { status: 500 });
   const phoneNumberIds = (negocios ?? []).map((n) => n.phone_number_id);
   const nombrePorNumero = new Map(
@@ -118,7 +121,7 @@ export async function GET(request: NextRequest) {
     conversaciones24h = salientes.length;
     automatizadas24h = salientes.filter((m) => m.origen === "ia").length;
     iaTotal24h = automatizadas24h;
-    manualesTotal24h = salientes.filter((m) => m.origen === "manual").length;
+    manualesTotal24h = salientes.filter((m) => m.origen === "manual" || m.origen === "agente").length;
 
     const conversacionesAyer = salientesAyer.length;
     const automatizadasAyer = salientesAyer.filter((m) => m.origen === "ia").length;
@@ -173,6 +176,7 @@ export async function GET(request: NextRequest) {
       if (f.direccion === "entrante") descripcion = "Un cliente escribió";
       else if (f.origen === "ia") descripcion = `${agente} respondió`;
       else if (f.origen === "campaña") descripcion = `${agente} envió una campaña`;
+      else if (f.origen === "agente") descripcion = "Un miembro del equipo respondió desde el Inbox";
       else descripcion = `${dueño} respondió manualmente`;
       actividadReciente.push({ tipo: f.origen || f.direccion, descripcion, created_at: f.created_at });
     }
@@ -194,7 +198,7 @@ export async function GET(request: NextRequest) {
   const { count: plantillasPendientes, error: plantillasError } = await supabase
     .from("dulabs_plantillas")
     .select("id", { count: "exact", head: true })
-    .eq("id_tenant", userData.user.id)
+    .eq("id_tenant", miembro.tenantId)
     .eq("borrador", false)
     .in("estado", ESTADOS_PENDIENTES);
   if (plantillasError) return Response.json({ error: plantillasError.message }, { status: 500 });
@@ -202,7 +206,7 @@ export async function GET(request: NextRequest) {
   const { count: campanasHoy, error: campanasError } = await supabase
     .from("dulabs_campanas")
     .select("id", { count: "exact", head: true })
-    .eq("id_tenant", userData.user.id)
+    .eq("id_tenant", miembro.tenantId)
     .gte("created_at", inicioHoy.toISOString());
   if (campanasError) return Response.json({ error: campanasError.message }, { status: 500 });
 

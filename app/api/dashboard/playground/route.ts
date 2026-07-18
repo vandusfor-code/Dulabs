@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { generarRespuestaIA } from "@/lib/ia";
+import { resolverMiembroEquipo, requireRol } from "@/lib/team";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -19,6 +20,10 @@ export async function POST(request: NextRequest) {
   const { data: userData, error: userError } = await supabase.auth.getUser(token);
   if (userError || !userData.user) {
     return Response.json({ error: "Sesión inválida" }, { status: 401 });
+  }
+  const miembro = await resolverMiembroEquipo(supabase, userData.user.id);
+  if (!requireRol(miembro, ["admin", "agente"])) {
+    return Response.json({ error: "No tienes permiso para esta acción" }, { status: 403 });
   }
 
   let body: { phone_number_id?: string; mensaje?: string };
@@ -41,7 +46,7 @@ export async function POST(request: NextRequest) {
     .from("dulabs_clientes_config")
     .select("prompt_sistema, base_conocimiento, nombre_negocio, api_key_ia")
     .eq("phone_number_id", phone_number_id)
-    .eq("id_tenant", userData.user.id)
+    .eq("id_tenant", miembro.tenantId)
     .maybeSingle();
   if (clienteError) return Response.json({ error: clienteError.message }, { status: 500 });
   if (!cliente) return Response.json({ error: "Número no encontrado" }, { status: 404 });

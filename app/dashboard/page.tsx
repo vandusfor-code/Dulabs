@@ -478,7 +478,7 @@ export default function ResumenPage() {
                     <div className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-ink text-mist">
                       {a.tipo === "entrante" ? (
                         <MessageCircle className="size-3.5" />
-                      ) : a.tipo === "manual" ? (
+                      ) : a.tipo === "manual" || a.tipo === "agente" ? (
                         <User className="size-3.5" />
                       ) : (
                         <Bot className="size-3.5 text-lime-text" />
