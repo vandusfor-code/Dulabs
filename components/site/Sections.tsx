@@ -1281,6 +1281,11 @@ export function Footer() {
               Colombia
             </p>
             <p className="mt-4 text-[12.5px] leading-relaxed text-site-muted-fg">
+              <span className="text-site-muted-fg/70">{t("Teléfono:", "Phone:")}</span>
+              <br />
+              +573148127388
+            </p>
+            <p className="mt-4 text-[12.5px] leading-relaxed text-site-muted-fg">
               <span className="text-site-muted-fg/70">{t("Correo electrónico:", "Email:")}</span>
               <br />
               contacto@dulabs.co
