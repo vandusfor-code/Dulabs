@@ -166,9 +166,8 @@ export function CoexistenceSection() {
                 { icon: ShieldCheck, title: t("Cero riesgo para tu número", "Zero risk to your number"), desc: t("Nada de extensiones de navegador ni trucos — todo corre sobre los servidores oficiales de Meta.", "No browser extensions or hacks — everything runs on Meta's own official servers.") },
               ].map((f) => (
                 <div key={f.title} className="rounded-xl border border-site-border bg-site-card p-4">
-                  <f.icon className="h-4 w-4 text-site-primary" />
-                  <div className="mt-2 font-display text-[13.5px] font-medium text-site-fg">{f.title}</div>
-                  <div className="mt-1 text-[12.5px] leading-relaxed text-site-muted-fg">{f.desc}</div>
+                  <div className="font-display text-[13.5px] font-medium text-site-fg">{f.title}</div>
+                  <div className="mt-1.5 text-[12.5px] leading-relaxed text-site-muted-fg">{f.desc}</div>
                 </div>
               ))}
             </div>
@@ -390,15 +389,13 @@ export function WhatsAppSection() {
             {INFRA_ITEMS.map((item, i) => (
               <Reveal key={item.title} delay={(i % 4) * 60} className="h-full">
                 <div className="group h-full bg-site-bg p-5 transition-colors hover:bg-site-card">
-                  <item.icon className="h-5 w-5 text-site-primary" />
-                  <h3 className="mt-3 font-display text-[14px] font-medium tracking-tight text-site-fg">{item.title}</h3>
+                  <h3 className="font-display text-[14px] font-medium tracking-tight text-site-fg">{item.title}</h3>
                   <p className="mt-1.5 text-[12px] leading-relaxed text-site-muted-fg">{item.desc}</p>
                 </div>
               </Reveal>
             ))}
             <div className="flex flex-col justify-center bg-site-primary/5 p-5">
-              <Globe className="h-5 w-5 text-site-primary" />
-              <p className="mt-2.5 text-[12px] leading-relaxed text-site-muted-fg">
+              <p className="text-[12px] leading-relaxed text-site-muted-fg">
                 {t(
                   "Corre sobre la red global de mensajería de Meta — la misma infraestructura que usan las marcas más grandes del mundo.",
                   "Runs on Meta's global messaging network — the same infrastructure used by the world's biggest brands."
@@ -502,8 +499,7 @@ export function TrainingSection() {
             {AGENT_FEATURES.map((f, i) => (
               <Reveal key={f.title} delay={i * 80}>
                 <div className="h-full">
-                  <f.icon className="h-5 w-5 text-site-primary" />
-                  <div className="mt-3 font-display text-[14px] font-medium text-site-fg">{f.title}</div>
+                  <div className="font-display text-[14px] font-medium text-site-fg">{f.title}</div>
                   <div className="mt-1.5 text-[12.5px] leading-relaxed text-site-muted-fg">{f.desc}</div>
                 </div>
               </Reveal>
@@ -576,8 +572,7 @@ export function KnowledgeSection() {
             {knowledgeItems.map((f, i) => (
               <Reveal key={f.title} delay={i * 80}>
                 <div className={i === 0 ? "pb-4" : "py-4"}>
-                  <f.icon className="h-4 w-4 text-site-primary" />
-                  <div className="mt-2 font-display text-[13.5px] font-medium text-site-fg">{f.title}</div>
+                  <div className="font-display text-[13.5px] font-medium text-site-fg">{f.title}</div>
                   <div className="mt-1 text-[12.5px] leading-relaxed text-site-muted-fg">{f.desc}</div>
                 </div>
               </Reveal>
@@ -937,8 +932,7 @@ export function GrowthSection() {
               {SCALE_ITEMS.map((item, i) => (
                 <Reveal key={item.title} delay={i * 70}>
                   <div className="h-full">
-                    <item.icon className="h-5 w-5 text-site-primary" />
-                    <h4 className="mt-3 font-display text-[14px] font-medium tracking-tight text-site-fg">{item.title}</h4>
+                    <h4 className="font-display text-[14px] font-medium tracking-tight text-site-fg">{item.title}</h4>
                     <p className="mt-1.5 text-[12px] leading-relaxed text-site-muted-fg">{item.desc}</p>
                   </div>
                 </Reveal>
@@ -952,8 +946,7 @@ export function GrowthSection() {
             {LATAM_ITEMS.map((item, i) => (
               <Reveal key={item.title} delay={i * 70}>
                 <div className="py-4 text-center sm:py-0">
-                  <item.icon className="mx-auto h-5 w-5 text-site-primary" />
-                  <h4 className="mt-3 font-display text-[15px] font-medium tracking-tight text-site-fg">{item.title}</h4>
+                  <h4 className="font-display text-[15px] font-medium tracking-tight text-site-fg">{item.title}</h4>
                   <p className="mt-2 text-[13px] leading-relaxed text-site-muted-fg">{item.desc}</p>
                 </div>
               </Reveal>
@@ -967,10 +960,9 @@ export function GrowthSection() {
               <Reveal key={p.name} delay={i * 80}>
                 <div className="group h-full border-t border-site-border pt-4 transition-colors hover:border-site-primary/40">
                   <div className="flex items-center justify-between">
-                    <p.icon className="h-5 w-5 text-site-primary" />
-                    <ArrowUpRight className="h-4 w-4 text-site-muted-fg transition-colors group-hover:text-site-primary" />
+                    <h4 className="font-display text-[16px] font-medium tracking-tight text-site-fg">{p.name}</h4>
+                    <ArrowUpRight className="h-4 w-4 shrink-0 text-site-muted-fg transition-colors group-hover:text-site-primary" />
                   </div>
-                  <h4 className="mt-4 font-display text-[16px] font-medium tracking-tight text-site-fg">{p.name}</h4>
                   <p className="mt-2 text-[13px] leading-relaxed text-site-muted-fg">{p.desc}</p>
                 </div>
               </Reveal>
