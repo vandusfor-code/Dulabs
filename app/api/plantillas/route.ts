@@ -6,6 +6,7 @@ import {
   normalizarNombrePlantilla,
 } from "@/lib/meta-templates";
 import { resolverMiembroEquipo, requireRol } from "@/lib/team";
+import { descifrarSecreto } from "@/lib/crypto";
 
 export const runtime = "nodejs";
 
@@ -41,7 +42,7 @@ export async function GET(request: NextRequest) {
       .select("phone_number_id, meta_permanent_token")
       .eq("id_tenant", miembro.tenantId);
     const tokenPorNumero = new Map(
-      (negocios ?? []).map((n) => [n.phone_number_id, n.meta_permanent_token as string | null])
+      (negocios ?? []).map((n) => [n.phone_number_id, n.meta_permanent_token ? descifrarSecreto(n.meta_permanent_token) : null])
     );
 
     await Promise.all(
@@ -175,7 +176,7 @@ export async function POST(request: NextRequest) {
     return Response.json({ success: true, estado: "borrador" });
   }
 
-  const token = cliente.meta_permanent_token || process.env.META_ACCESS_TOKEN;
+  const token = cliente.meta_permanent_token ? descifrarSecreto(cliente.meta_permanent_token) : process.env.META_ACCESS_TOKEN;
   if (!token) {
     return Response.json({ error: "Sin token de Meta configurado para este número" }, { status: 500 });
   }

@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { enviarPlantilla } from "@/lib/meta-templates";
 import { resolverMiembroEquipo, requireRol } from "@/lib/team";
+import { descifrarSecreto } from "@/lib/crypto";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -63,7 +64,7 @@ export async function POST(request: NextRequest) {
   if (clienteError) return Response.json({ error: clienteError.message }, { status: 500 });
   if (!cliente) return Response.json({ error: "Número no encontrado" }, { status: 404 });
 
-  const metaToken = cliente.meta_permanent_token || process.env.META_ACCESS_TOKEN;
+  const metaToken = cliente.meta_permanent_token ? descifrarSecreto(cliente.meta_permanent_token) : process.env.META_ACCESS_TOKEN;
   if (!metaToken) {
     return Response.json({ error: "Sin token de Meta para este número" }, { status: 500 });
   }

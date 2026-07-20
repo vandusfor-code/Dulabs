@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { resolverMiembroEquipo, requireRol } from "@/lib/team";
+import { cifrarSecreto } from "@/lib/crypto";
 
 export const runtime = "nodejs";
 
@@ -130,7 +131,7 @@ export async function POST(request: NextRequest) {
           id_tenant: idTenant,
           phone_number_id: phone.id,
           whatsapp_business_account_id: wabaId,
-          meta_permanent_token: tenantToken,
+          meta_permanent_token: cifrarSecreto(tenantToken),
           nombre_negocio: nombreNegocio,
           telefono_negocio: phone.display_phone_number.replace(/\D/g, ""),
           updated_at: new Date().toISOString(),
@@ -167,7 +168,7 @@ export async function POST(request: NextRequest) {
       phone_number_id: phone.id,
     });
   } catch (err) {
-    console.error("[meta-callback] error:", err);
+    console.error("[meta-callback] error:", err instanceof Error ? err.message : err);
     return Response.json(
       { success: false, error: err instanceof Error ? err.message : String(err) },
       { status: 500 }

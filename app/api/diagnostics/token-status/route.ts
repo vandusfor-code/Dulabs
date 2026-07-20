@@ -1,6 +1,7 @@
 import { timingSafeEqual, createHash } from "node:crypto";
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { descifrarSecreto } from "@/lib/crypto";
 
 export const runtime = "nodejs";
 
@@ -70,7 +71,7 @@ export async function GET(request: NextRequest) {
         { status: 404 }
       );
     }
-    tokenToInspect = data.meta_permanent_token;
+    tokenToInspect = descifrarSecreto(data.meta_permanent_token);
     source = `tenant:${data.nombre_negocio ?? phoneNumberId}`;
   } else {
     tokenToInspect = process.env.META_ACCESS_TOKEN ?? null;

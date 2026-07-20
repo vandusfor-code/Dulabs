@@ -4,6 +4,7 @@ import { supabaseAdmin, type ClienteConfig } from "@/lib/supabase";
 import { generarRespuestaIA } from "@/lib/ia";
 import { verificarFirmaMeta, compararVerifyToken } from "@/lib/meta-firma";
 import { enviarTexto } from "@/lib/whatsapp";
+import { descifrarSecreto } from "@/lib/crypto";
 
 export const runtime = "nodejs";
 
@@ -76,7 +77,7 @@ export async function POST(request: NextRequest) {
         try {
           await procesarCambio(phoneNumberId, value);
         } catch (err) {
-          console.error("[webhook-dulabs] error procesando cambio:", err);
+          console.error("[webhook-dulabs] error procesando cambio:", err instanceof Error ? err.message : err);
         }
       });
     }
@@ -131,7 +132,7 @@ async function procesarCambio(phoneNumberId: string, value: MetaChangeValue) {
         eco.id
       );
     } else {
-      console.warn("[webhook-dulabs] eco de coexistencia sin destinatario ('to'):", eco);
+      console.warn(`[webhook-dulabs] eco de coexistencia sin destinatario ('to'): id=${eco.id} type=${eco.type}`);
     }
   }
   if (ecos.length > 0) return;
@@ -213,9 +214,7 @@ async function activarPausaHumana(phoneNumberId: string, telefonoCliente: string
   if (error) {
     console.error("[webhook-dulabs] error activando pausa:", error.message);
   } else {
-    console.log(
-      `[webhook-dulabs] pausa humana activada para ${phoneNumberId} <-> ${telefonoCliente} hasta ${pausadoHasta}`
-    );
+    console.log(`[webhook-dulabs] pausa humana activada para ${phoneNumberId} hasta ${pausadoHasta}`);
   }
 }
 
@@ -240,9 +239,7 @@ async function atenderMensaje(cliente: ClienteConfig, mensaje: MetaMessage) {
     console.error("[webhook-dulabs] error consultando pausa:", error.message);
   }
   if (pausa && new Date(pausa.pausado_hasta).getTime() > Date.now()) {
-    console.log(
-      `[webhook-dulabs] IA en silencio para "${cliente.nombre_negocio}" <-> ${mensaje.from} (pausa vigente)`
-    );
+    console.log(`[webhook-dulabs] IA en silencio para "${cliente.nombre_negocio}" (pausa vigente)`);
     return;
   }
 
@@ -257,7 +254,7 @@ async function atenderMensaje(cliente: ClienteConfig, mensaje: MetaMessage) {
 async function enviarWhatsApp(cliente: ClienteConfig, para: string, texto: string) {
   // Cada tenant usa su propio token permanente (Embedded Signup); el token
   // global de plataforma queda como respaldo para números registrados a mano.
-  const token = cliente.meta_permanent_token || process.env.META_ACCESS_TOKEN;
+  const token = cliente.meta_permanent_token ? descifrarSecreto(cliente.meta_permanent_token) : process.env.META_ACCESS_TOKEN;
   if (!token) {
     console.error("[webhook-dulabs] sin token de Meta para", cliente.nombre_negocio);
     return;

@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { desuscribirWaba } from "@/lib/meta-numero";
 import { resolverMiembroEquipo, requireRol } from "@/lib/team";
+import { descifrarSecreto } from "@/lib/crypto";
 
 export const runtime = "nodejs";
 
@@ -38,11 +39,18 @@ export async function DELETE(request: NextRequest) {
   if (negociosError) return Response.json({ error: negociosError.message }, { status: 500 });
 
   for (const negocio of negocios ?? []) {
-    const metaToken = negocio.meta_permanent_token || process.env.META_ACCESS_TOKEN;
+    const metaToken = negocio.meta_permanent_token ? descifrarSecreto(negocio.meta_permanent_token) : process.env.META_ACCESS_TOKEN;
     if (metaToken) {
       await desuscribirWaba({ wabaId: negocio.whatsapp_business_account_id, token: metaToken });
     }
     await supabase.from("dulabs_mensajes_log").delete().eq("phone_number_id", negocio.phone_number_id);
+    // Tablas más nuevas keyeadas por phone_number_id, no por id_tenant —
+    // "eliminar cuenta" debe borrarlas también, no solo el historial de
+    // mensajes (ver /eliminacion-de-datos-whatsapp).
+    await supabase.from("dulabs_pausas_chat").delete().eq("phone_number_id", negocio.phone_number_id);
+    await supabase.from("dulabs_conversacion_asignaciones").delete().eq("phone_number_id", negocio.phone_number_id);
+    await supabase.from("dulabs_conversacion_eventos").delete().eq("phone_number_id", negocio.phone_number_id);
+    await supabase.from("dulabs_conversacion_etiquetas").delete().eq("phone_number_id", negocio.phone_number_id);
   }
 
   const { error: campanasError } = await supabase.from("dulabs_campanas").delete().eq("id_tenant", tenantId);
@@ -50,6 +58,12 @@ export async function DELETE(request: NextRequest) {
 
   const { error: plantillasError } = await supabase.from("dulabs_plantillas").delete().eq("id_tenant", tenantId);
   if (plantillasError) return Response.json({ error: plantillasError.message }, { status: 500 });
+
+  // Catálogos propios del tenant (no del número individual): etiquetas y
+  // respuestas rápidas. Borrar etiquetas también hace cascade sobre
+  // dulabs_conversacion_etiquetas restante, si algo quedó.
+  await supabase.from("dulabs_etiquetas").delete().eq("tenant_id", tenantId);
+  await supabase.from("dulabs_respuestas_rapidas").delete().eq("tenant_id", tenantId);
 
   const { error: configError } = await supabase.from("dulabs_clientes_config").delete().eq("id_tenant", tenantId);
   if (configError) return Response.json({ error: configError.message }, { status: 500 });

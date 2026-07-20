@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { ClienteConfig } from "@/lib/supabase";
+import { descifrarSecreto } from "@/lib/crypto";
 
 const MODELO = "claude-opus-4-8";
 
@@ -21,7 +22,7 @@ export async function generarRespuestaIA(
   cliente: Pick<ClienteConfig, "prompt_sistema" | "base_conocimiento" | "nombre_negocio" | "api_key_ia">,
   textoUsuario: string
 ): Promise<string | null> {
-  const apiKey = cliente.api_key_ia || process.env.ANTHROPIC_API_KEY;
+  const apiKey = cliente.api_key_ia ? descifrarSecreto(cliente.api_key_ia) : process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     console.error("[ia] sin API key de IA configurada");
     return null;
@@ -51,7 +52,7 @@ export async function generarRespuestaIA(
     } else if (err instanceof Anthropic.APIError) {
       console.error(`[ia] error de IA ${err.status}:`, err.message);
     } else {
-      console.error("[ia] error de IA:", err);
+      console.error("[ia] error de IA:", err instanceof Error ? err.message : err);
     }
     return null;
   }

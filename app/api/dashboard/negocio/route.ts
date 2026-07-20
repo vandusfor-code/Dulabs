@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { desuscribirWaba } from "@/lib/meta-numero";
 import { resolverMiembroEquipo, requireRol } from "@/lib/team";
+import { descifrarSecreto } from "@/lib/crypto";
 
 export const runtime = "nodejs";
 
@@ -101,7 +102,7 @@ export async function DELETE(request: NextRequest) {
   if (negocioError) return Response.json({ error: negocioError.message }, { status: 500 });
   if (!negocio) return Response.json({ error: "Número no encontrado" }, { status: 404 });
 
-  const metaToken = negocio.meta_permanent_token || process.env.META_ACCESS_TOKEN;
+  const metaToken = negocio.meta_permanent_token ? descifrarSecreto(negocio.meta_permanent_token) : process.env.META_ACCESS_TOKEN;
   if (metaToken) {
     await desuscribirWaba({ wabaId: negocio.whatsapp_business_account_id, token: metaToken });
   }
@@ -111,6 +112,15 @@ export async function DELETE(request: NextRequest) {
     .delete()
     .eq("phone_number_id", phone_number_id);
   if (mensajesError) return Response.json({ error: mensajesError.message }, { status: 500 });
+
+  // Datos de conversación asociados a este número específico (asignaciones,
+  // etiquetas aplicadas, bitácora de eventos, pausas activas) — la política
+  // de eliminación de datos promete borrar TODO lo asociado a la línea, no
+  // solo los mensajes.
+  await supabase.from("dulabs_pausas_chat").delete().eq("phone_number_id", phone_number_id);
+  await supabase.from("dulabs_conversacion_asignaciones").delete().eq("phone_number_id", phone_number_id);
+  await supabase.from("dulabs_conversacion_eventos").delete().eq("phone_number_id", phone_number_id);
+  await supabase.from("dulabs_conversacion_etiquetas").delete().eq("phone_number_id", phone_number_id);
 
   const { error: campanasError } = await supabase
     .from("dulabs_campanas")

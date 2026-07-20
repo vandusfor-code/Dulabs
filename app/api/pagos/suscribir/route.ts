@@ -107,7 +107,7 @@ export async function POST(request: NextRequest) {
 
     return Response.json({ success: true, estado_transaccion: transaccion.status });
   } catch (err) {
-    console.error("[pagos/suscribir] error:", err);
+    console.error("[pagos/suscribir] error:", err instanceof Error ? err.message : err);
     return Response.json(
       { error: err instanceof Error ? err.message : String(err) },
       { status: 500 }

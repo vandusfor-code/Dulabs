@@ -2,6 +2,7 @@ import { after } from "next/server";
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { consultarEstadoNumero } from "@/lib/meta-numero";
+import { descifrarSecreto } from "@/lib/crypto";
 
 export const runtime = "nodejs";
 
@@ -86,7 +87,7 @@ export async function GET(request: NextRequest) {
     after(async () => {
       await Promise.all(
         pendientesDeSincronizar.map(async (n) => {
-          const token = n.meta_permanent_token || process.env.META_ACCESS_TOKEN;
+          const token = n.meta_permanent_token ? descifrarSecreto(n.meta_permanent_token) : process.env.META_ACCESS_TOKEN;
           if (!token) return;
           const estado = await consultarEstadoNumero({ phoneNumberId: n.phone_number_id, token });
           if (!estado) return;
