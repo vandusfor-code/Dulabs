@@ -11,7 +11,6 @@ import {
   PlatformOverviewSection,
   MetricsSection,
   GrowthSection,
-  FaqSection,
   FinalCta,
   Footer,
 } from "@/components/site/Sections";
@@ -51,10 +50,6 @@ export default function Home() {
 
         {/* GrowthSection fusiona Escala + LatAm + Ecosistema en pestañas */}
         <GrowthSection />
-
-        <Reveal>
-          <FaqSection />
-        </Reveal>
 
         <FinalCta />
       </main>

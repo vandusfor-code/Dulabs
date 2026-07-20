@@ -9,7 +9,6 @@ import {
   Briefcase,
   Check,
   CheckCircle2,
-  ChevronDown,
   CreditCard,
   FileCheck2,
   FileText,
@@ -29,6 +28,7 @@ import {
   Pause,
   Phone,
   Play,
+  Plus,
   Radio,
   Send,
   ServerCog,
@@ -1161,23 +1161,24 @@ export function FaqSection() {
           title={<>{t("Respuestas, antes de que preguntes.", "Answers, before you even ask.")}</>}
           align="center"
         />
-        <div className="mt-12 divide-y divide-site-border overflow-hidden rounded-2xl border border-site-border bg-site-card/40">
+        <div className="mt-12">
           {faqs.map((f, i) => {
             const isOpen = open === i;
             return (
-              <button
-                key={f.q}
-                onClick={() => setOpen(isOpen ? null : i)}
-                className="w-full px-6 py-5 text-left transition-colors hover:bg-site-card"
-              >
-                <div className="flex items-center justify-between gap-4">
-                  <span className="font-display text-[15px] font-medium text-site-fg">{f.q}</span>
-                  <ChevronDown className={`h-4 w-4 flex-shrink-0 text-site-muted-fg transition-transform ${isOpen ? "rotate-180 text-site-primary" : ""}`} />
-                </div>
-                <div className={`grid overflow-hidden text-[13.5px] leading-relaxed text-site-muted-fg transition-all ${isOpen ? "mt-3 grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"}`}>
-                  <div className="min-h-0 overflow-hidden">{f.a}</div>
-                </div>
-              </button>
+              <div key={f.q} className={`border-t border-site-border ${i === faqs.length - 1 ? "border-b" : ""}`}>
+                <button onClick={() => setOpen(isOpen ? null : i)} className="flex w-full items-start gap-4 py-5 text-left">
+                  <span className="mt-0.5 shrink-0 font-mono text-[11px] text-site-muted-fg/50">{String(i + 1).padStart(2, "0")}</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-4">
+                      <span className="font-display text-[15px] font-medium text-site-fg">{f.q}</span>
+                      <Plus className={`h-4 w-4 flex-shrink-0 text-site-muted-fg transition-transform duration-200 ${isOpen ? "rotate-45 text-site-primary" : ""}`} />
+                    </div>
+                    <div className={`grid overflow-hidden text-[13.5px] leading-relaxed text-site-muted-fg transition-all ${isOpen ? "mt-3 grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"}`}>
+                      <div className="min-h-0 overflow-hidden">{f.a}</div>
+                    </div>
+                  </div>
+                </button>
+              </div>
             );
           })}
         </div>
@@ -1246,6 +1247,7 @@ export function Footer() {
         { l: t("Plantillas y campañas", "Templates & campaigns"), h: "/#campanas" },
         { l: t("Infraestructura", "Infrastructure"), h: "/#infraestructura" },
         { l: t("Precios", "Pricing"), h: "/precios" },
+        { l: t("Preguntas frecuentes", "FAQ"), h: "/preguntas-frecuentes" },
       ],
     },
     {
