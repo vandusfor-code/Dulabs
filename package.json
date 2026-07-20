@@ -12,7 +12,7 @@
     "@anthropic-ai/sdk": "^0.111.0",
     "@supabase/supabase-js": "^2.110.3",
     "exceljs": "^4.4.0",
-    "lucide-react": "^1.24.0",
+    "lucide-react": "^1.25.0",
     "next": "16.2.10",
     "pdf-parse": "^2.4.5",
     "react": "19.2.4",
