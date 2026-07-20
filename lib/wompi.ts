@@ -103,5 +103,13 @@ export function verificarChecksumEvento(payload: {
 
   const cadena = valores.join("") + payload.timestamp + eventsKey;
   const checksumCalculado = crypto.createHash("sha256").update(cadena).digest("hex").toUpperCase();
-  return checksumCalculado === payload.signature.checksum.toUpperCase();
+  const checksumRecibido = (payload.signature.checksum ?? "").toUpperCase();
+
+  // Comparación en tiempo constante (igual que verificarFirmaMeta en
+  // lib/meta-firma.ts) — timingSafeEqual exige buffers del mismo largo, así
+  // que un checksum recibido con longitud distinta se rechaza directo.
+  const a = Buffer.from(checksumCalculado, "utf8");
+  const b = Buffer.from(checksumRecibido, "utf8");
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
 }
