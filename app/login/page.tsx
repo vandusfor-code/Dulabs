@@ -44,16 +44,40 @@ export default function LoginPage() {
 
     const supabase = supabaseBrowser();
     if (modo === "login") {
-      const { error: err } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-      setCargando(false);
-      if (err) {
-        setError(err.message);
-        return;
+      try {
+        const res = await fetch("/api/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password }),
+        });
+        const data = await res.json();
+        setCargando(false);
+        if (!res.ok) {
+          if (data.bloqueado) {
+            setError(data.error);
+          } else if (typeof data.intentosRestantes === "number") {
+            setError(
+              data.intentosRestantes > 0
+                ? t(
+                    `${data.error} Te quedan ${data.intentosRestantes} intento(s) antes del bloqueo temporal.`,
+                    `${data.error} You have ${data.intentosRestantes} attempt(s) left before a temporary lockout.`
+                  )
+                : t("Credenciales inválidas. Cuenta bloqueada temporalmente por 15 minutos.", "Invalid credentials. Account temporarily locked for 15 minutes.")
+            );
+          } else {
+            setError(data.error ?? t("Error iniciando sesión", "Error signing in"));
+          }
+          return;
+        }
+        await supabase.auth.setSession({
+          access_token: data.session.access_token,
+          refresh_token: data.session.refresh_token,
+        });
+        router.push("/dashboard/conexion");
+      } catch (err) {
+        setCargando(false);
+        setError(err instanceof Error ? err.message : String(err));
       }
-      router.push("/dashboard/conexion");
     } else {
       const { error: err } = await supabase.auth.signUp({ email, password });
       setCargando(false);
