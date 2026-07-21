@@ -124,6 +124,22 @@ export async function POST(request: NextRequest) {
     // C. Persistencia multi-tenant (upsert por phone_number_id). La tabla tiene
     //    RLS activo sin políticas: solo este backend (service role) la toca.
     const supabase = supabaseAdmin();
+
+    // Un upsert por phone_number_id reasignaría silenciosamente id_tenant si
+    // el número ya pertenece a OTRO tenant (ej. un admin malicioso completando
+    // el Embedded Signup de un número que no es suyo). Bloquearlo antes de
+    // tocar la fila.
+    const { data: existente } = await supabase
+      .from("dulabs_clientes_config")
+      .select("id_tenant")
+      .eq("phone_number_id", phone.id)
+      .maybeSingle();
+    if (existente && existente.id_tenant !== idTenant) {
+      throw new Error(
+        "Este número de WhatsApp ya está conectado a otra cuenta de Du Labs. Contacta a soporte si crees que esto es un error."
+      );
+    }
+
     const { error: dbError } = await supabase
       .from("dulabs_clientes_config")
       .upsert(
