@@ -4,6 +4,7 @@ import {
   Bot,
   LayoutTemplate,
   Send,
+  ClipboardList,
   Phone,
   ChartNoAxesCombined,
   Users,
@@ -49,6 +50,7 @@ export const navSections: NavSection[] = [
     items: [
       { label: "Plantillas", labelEn: "Templates", href: "/dashboard/plantillas", icon: LayoutTemplate },
       { label: "Campañas", labelEn: "Campaigns", href: "/dashboard/campanas", icon: Send },
+      { label: "Encuestas", labelEn: "Surveys", href: "/dashboard/surveys", icon: ClipboardList },
     ],
   },
   {
