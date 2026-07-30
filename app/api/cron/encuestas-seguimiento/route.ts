@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { Receiver } from "@upstash/qstash";
 import { supabaseAdmin } from "@/lib/supabase";
 import { descifrarSecreto } from "@/lib/crypto";
 import { enviarTexto, dentroVentana24h } from "@/lib/whatsapp";
@@ -100,9 +101,38 @@ async function enviarMensajes(params: {
  * Es un no-op seguro si la migración del bot de encuestas no se ha corrido
  * (las tablas simplemente no existen todavía).
  */
-export async function GET(request: NextRequest) {
+// Acepta DOS disparadores válidos, para poder alternar sin romper nada:
+//  - QStash (github.com/upstash/qstash): firma criptográfica en el header
+//    `upstash-signature`, verificada contra las signing keys de la cuenta.
+//    Preciso y no depende del plan de Vercel (a diferencia de sus crons
+//    nativos, limitados a 1 disparo/día en el plan Hobby).
+//  - El cron nativo de Vercel (o una prueba manual con curl): el mismo
+//    `Authorization: Bearer $CRON_SECRET` que ya usan los demás crons.
+async function solicitudAutorizada(request: NextRequest, cuerpo: string): Promise<boolean> {
+  const firmaQstash = request.headers.get("upstash-signature");
+  if (firmaQstash) {
+    const currentSigningKey = process.env.QSTASH_CURRENT_SIGNING_KEY;
+    const nextSigningKey = process.env.QSTASH_NEXT_SIGNING_KEY;
+    if (!currentSigningKey || !nextSigningKey) {
+      console.error("[encuestas-seguimiento] llegó upstash-signature pero faltan QSTASH_CURRENT_SIGNING_KEY/QSTASH_NEXT_SIGNING_KEY");
+      return false;
+    }
+    try {
+      const receiver = new Receiver({ currentSigningKey, nextSigningKey });
+      return await receiver.verify({ signature: firmaQstash, body: cuerpo });
+    } catch (err) {
+      console.error("[encuestas-seguimiento] firma de QStash inválida:", err instanceof Error ? err.message : err);
+      return false;
+    }
+  }
+
   const auth = request.headers.get("authorization");
-  if (auth !== `Bearer ${process.env.CRON_SECRET}`) {
+  return auth === `Bearer ${process.env.CRON_SECRET}`;
+}
+
+export async function GET(request: NextRequest) {
+  const cuerpo = await request.text();
+  if (!(await solicitudAutorizada(request, cuerpo))) {
     return new Response("Unauthorized", { status: 401 });
   }
 

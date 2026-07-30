@@ -8,10 +8,6 @@
     {
       "path": "/api/cron/simular-actividad-meta",
       "schedule": "0 8 * * *"
-    },
-    {
-      "path": "/api/cron/encuestas-seguimiento",
-      "schedule": "0 19 * * *"
     }
   ]
 }

@@ -1,3 +1,31 @@
+# Pasos manuales pendientes en producción
+
+## Variables de entorno — QStash (`encuestas-seguimiento`) — pendiente
+
+`/api/cron/encuestas-seguimiento` ya no tiene cron nativo de Vercel (se quitó
+de `vercel.json` — el plan Hobby solo permite 1 disparo/día, insuficiente
+para recordatorios/reanudaciones oportunos). Ahora lo dispara **QStash**
+(console.upstash.com → QStash → Schedules), que sí es preciso y no depende
+del plan de Vercel.
+
+**Falta en Vercel** (Project Settings → Environment Variables):
+- `QSTASH_CURRENT_SIGNING_KEY`
+- `QSTASH_NEXT_SIGNING_KEY`
+
+Ambas se copian de console.upstash.com → QStash → **Signing Keys**. Sin
+ellas, la ruta sigue aceptando el `Authorization: Bearer $CRON_SECRET` de
+siempre como respaldo (curl manual o disparo alternativo), así que no hay
+riesgo de romper nada mientras las agregas — el bot de encuestas simplemente
+no recibirá el disparo automático de QStash hasta entonces.
+
+**Schedule en QStash** (Create schedule):
+- Destination URL: `https://www.dulabs.co/api/cron/encuestas-seguimiento`
+- Method: `GET`
+- Cron: `0 * * * *` (cada hora)
+
+Después de agregar las variables, redeploy (cualquier push a `main` sirve)
+para que la función las recoja.
+
 # Migraciones pendientes de aplicar en producción
 
 Los archivos en `supabase/migrations/` son la fuente de verdad del esquema,
