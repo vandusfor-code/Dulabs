@@ -76,7 +76,21 @@ export async function enviarPlantilla(params: {
   para: string;
   nombrePlantilla: string;
   idioma: string;
+  /**
+   * Variables NOMBRADAS del body ({{nombre_variable}}, no {{1}}/{{2}}) — el
+   * formato que usa el editor nativo de plantillas de Meta hoy en día.
+   */
+  variables?: { nombre: string; valor: string }[];
 }): Promise<{ wamid: string | null }> {
+  const components = params.variables?.length
+    ? [
+        {
+          type: "body",
+          parameters: params.variables.map((v) => ({ type: "text", parameter_name: v.nombre, text: v.valor })),
+        },
+      ]
+    : undefined;
+
   const res = await fetch(`${GRAPH}/${params.phoneNumberId}/messages`, {
     method: "POST",
     headers: {
@@ -87,7 +101,7 @@ export async function enviarPlantilla(params: {
       messaging_product: "whatsapp",
       to: params.para,
       type: "template",
-      template: { name: params.nombrePlantilla, language: { code: params.idioma } },
+      template: { name: params.nombrePlantilla, language: { code: params.idioma }, components },
     }),
   });
   const json = (await res.json()) as { messages?: { id?: string }[] } & GraphError;

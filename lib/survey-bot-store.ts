@@ -165,7 +165,8 @@ export async function createSessionRow(
   supabase: SupabaseClient,
   phoneNumberId: string,
   telefonoParticipante: string,
-  closeDate: string | null
+  closeDate: string | null,
+  nombreParticipante?: string | null
 ): Promise<SurveySession | null> {
   const session = createSession(closeDate);
   try {
@@ -173,6 +174,7 @@ export async function createSessionRow(
       {
         phone_number_id: phoneNumberId,
         telefono_participante: telefonoParticipante,
+        nombre_participante: nombreParticipante || null,
         ...sessionToRow(session),
       },
       { onConflict: "phone_number_id,telefono_participante" }

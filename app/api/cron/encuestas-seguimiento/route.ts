@@ -4,7 +4,9 @@ import { Receiver } from "@upstash/qstash";
 import { supabaseAdmin } from "@/lib/supabase";
 import { descifrarSecreto } from "@/lib/crypto";
 import { enviarTexto, dentroVentana24h } from "@/lib/whatsapp";
-import { enviarPlantilla } from "@/lib/meta-templates";
+import { enviarPlantilla, consultarEstadoPlantilla } from "@/lib/meta-templates";
+
+const IDIOMA_PLANTILLA = "es_CO";
 import { getSurveyBot, saveSession, markReminderSent, type StoredSurveyBot } from "@/lib/survey-bot-store";
 import { buildReminder, resumeScheduled, shouldResumeScheduled, type SurveySession } from "@/lib/survey-engine";
 
@@ -58,28 +60,27 @@ function needsReminder(row: SessionRow, bot: StoredSurveyBot, now: Date): boolea
 async function enviarMensajes(params: {
   supabase: SupabaseClient;
   phoneNumberId: string;
+  wabaId: string;
   numero: string;
   metaToken: string;
   mensajes: string[];
   dentroVentana: boolean;
   reminderTemplateName: string;
 }) {
-  const { supabase, phoneNumberId, numero, metaToken, mensajes, dentroVentana, reminderTemplateName } = params;
+  const { supabase, phoneNumberId, wabaId, numero, metaToken, mensajes, dentroVentana, reminderTemplateName } = params;
   for (const texto of mensajes) {
     let wamid: string | null = null;
     if (dentroVentana) {
       ({ wamid } = await enviarTexto({ phoneNumberId, token: metaToken, para: numero, texto }));
     } else {
-      const { data: plantilla } = await supabase
-        .from("dulabs_plantillas")
-        .select("nombre, idioma, estado")
-        .eq("phone_number_id", phoneNumberId)
-        .eq("nombre", reminderTemplateName)
-        .maybeSingle();
-      if (!plantilla || plantilla.estado !== "APPROVED") {
-        throw new Error(`Fuera de ventana de 24h y la plantilla "${reminderTemplateName}" no está aprobada.`);
+      // Verificación EN VIVO contra Meta — no depende de una fila local en
+      // dulabs_plantillas (funciona igual si la plantilla se creó directo en
+      // el Administrador de Meta).
+      const estado = await consultarEstadoPlantilla({ wabaId, token: metaToken, nombre: reminderTemplateName });
+      if (estado !== "APPROVED") {
+        throw new Error(`Fuera de ventana de 24h y la plantilla "${reminderTemplateName}" no está aprobada (estado: ${estado ?? "no encontrada"}).`);
       }
-      ({ wamid } = await enviarPlantilla({ phoneNumberId, token: metaToken, para: numero, nombrePlantilla: plantilla.nombre, idioma: plantilla.idioma }));
+      ({ wamid } = await enviarPlantilla({ phoneNumberId, token: metaToken, para: numero, nombrePlantilla: reminderTemplateName, idioma: IDIOMA_PLANTILLA }));
     }
     await supabase.from("dulabs_mensajes_log").insert({
       phone_number_id: phoneNumberId,
@@ -158,14 +159,15 @@ export async function GET(request: NextRequest) {
 
     const { data: cliente } = await supabase
       .from("dulabs_clientes_config")
-      .select("meta_permanent_token")
+      .select("meta_permanent_token, whatsapp_business_account_id")
       .eq("phone_number_id", phone_number_id)
       .maybeSingle();
     const metaToken = cliente?.meta_permanent_token ? descifrarSecreto(cliente.meta_permanent_token) : process.env.META_ACCESS_TOKEN;
-    if (!metaToken) {
-      errores.push(`${phone_number_id}: sin token de Meta`);
+    if (!metaToken || !cliente?.whatsapp_business_account_id) {
+      errores.push(`${phone_number_id}: sin token o WABA de Meta`);
       continue;
     }
+    const wabaId = cliente.whatsapp_business_account_id;
 
     const { data: sesiones, error: sesionesError } = await supabase
       .from("dulabs_survey_sessions")
@@ -187,6 +189,7 @@ export async function GET(request: NextRequest) {
           await enviarMensajes({
             supabase,
             phoneNumberId: phone_number_id,
+            wabaId,
             numero,
             metaToken,
             mensajes: resultado.messages,
@@ -204,6 +207,7 @@ export async function GET(request: NextRequest) {
           await enviarMensajes({
             supabase,
             phoneNumberId: phone_number_id,
+            wabaId,
             numero,
             metaToken,
             mensajes: resultado.messages,

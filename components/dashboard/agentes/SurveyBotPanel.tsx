@@ -307,10 +307,12 @@ function InvitarPanel({ phoneNumberId, accessToken }: { phoneNumberId: string; a
   const [enviando, setEnviando] = useState(false);
   const [resultado, setResultado] = useState<{ enviados: number; fallidos: { destinatario: string; error: string }[] } | string | null>(null);
 
-  const conteo = destinatarios.split(/[\n,]+/).map((d) => d.trim()).filter(Boolean).length;
+  // Una línea por destinatario ("teléfono" o "teléfono, Nombre") — la coma
+  // dentro de una línea separa teléfono/nombre, no dos destinatarios.
+  const conteo = destinatarios.split("\n").map((d) => d.trim()).filter(Boolean).length;
 
   const enviar = useCallback(async () => {
-    const lista = destinatarios.split(/[\n,]+/).map((d) => d.trim()).filter(Boolean);
+    const lista = destinatarios.split("\n").map((d) => d.trim()).filter(Boolean);
     if (lista.length === 0) return;
     setEnviando(true);
     setResultado(null);
@@ -339,15 +341,15 @@ function InvitarPanel({ phoneNumberId, accessToken }: { phoneNumberId: string; a
       </div>
       <p className="mt-1 text-[11px] leading-relaxed text-mist">
         {t(
-          "Uno por línea, con indicativo de país. Si el contacto escribió en las últimas 24h se le envía el saludo directo; si no, se usa la plantilla de invitación aprobada.",
-          "One per line, with country code. If the contact wrote in the last 24h they get the direct greeting; otherwise the approved invite template is used."
+          "Uno por línea: teléfono con indicativo de país, opcionalmente seguido de \", Nombre\" (para personalizar {{nombre_cliente}} en la plantilla). Si el contacto escribió en las últimas 24h se le envía el saludo directo; si no, se usa la plantilla de invitación aprobada.",
+          "One per line: phone with country code, optionally followed by \", Name\" (to fill {{nombre_cliente}} in the template). If the contact wrote in the last 24h they get the direct greeting; otherwise the approved invite template is used."
         )}
       </p>
       <textarea
         rows={3}
         value={destinatarios}
         onChange={(e) => setDestinatarios(e.target.value)}
-        placeholder={"573001234567\n573007654321"}
+        placeholder={"573001234567, Juan Pérez\n573007654321"}
         className={`${inputCls} mt-2 resize-none bg-card`}
       />
       <div className="mt-2 flex items-center justify-between gap-3">

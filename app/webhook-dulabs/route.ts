@@ -157,8 +157,13 @@ async function procesarCambio(phoneNumberId: string, value: MetaChangeValue) {
     // Tap de un botón QUICK_REPLY de plantilla: se procesa como si el
     // participante hubiera escrito el texto del botón (mismo motor de
     // encuestas/IA de abajo, sin lógica aparte para "type: button").
+    // Un mensaje "type: button" SOLO puede contener el texto de un botón que
+    // nosotros mismos definimos en una plantilla (nunca texto libre del
+    // usuario), así que normalizar "Si"/"No"/"Acepto" aquí no tiene el riesgo
+    // de ambigüedad que tendría interpretar esas mismas palabras si llegaran
+    // como texto libre.
     if (mensaje.type === "button" && mensaje.button?.text) {
-      mensaje.text = { body: mensaje.button.text };
+      mensaje.text = { body: normalizarTextoBoton(mensaje.button.text) };
     }
     if (mensaje.type !== "text" && mensaje.type !== "button") continue; // esqueleto: solo texto/botón
     if (!mensaje.text?.body) continue;
@@ -356,4 +361,28 @@ async function incrementarUsoMensajes(cliente: ClienteConfig) {
 
 function soloDigitos(valor: string): string {
   return valor.replace(/\D/g, "");
+}
+
+// Textos de botón conocidos (nuestras 2 plantillas de encuestas) -> frase
+// exacta que lib/survey-engine.ts reconoce. Como un mensaje "type: button"
+// solo puede traer el texto de un botón que NOSOTROS pusimos en una
+// plantilla, mapear palabras cortas como "si"/"no" aquí es seguro — no hay
+// riesgo de confundirlo con texto libre real del usuario.
+const BOTON_A_FRASE: Record<string, string> = {
+  "acepto": "comenzar",
+  "no acepto": "no deseo continuar",
+  "si": "continuar",
+  "sí": "continuar",
+  "no": "no deseo continuar",
+  "comenzar": "comenzar",
+  "continuar": "continuar",
+  "continuar encuesta": "continuar encuesta",
+  "mas tarde": "más tarde",
+  "más tarde": "más tarde",
+  "no deseo continuar": "no deseo continuar",
+};
+
+function normalizarTextoBoton(texto: string): string {
+  const clave = texto.toLowerCase().trim();
+  return BOTON_A_FRASE[clave] ?? texto;
 }

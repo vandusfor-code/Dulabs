@@ -3,28 +3,40 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { resolverMiembroEquipo, requireRol } from "@/lib/team";
 import { descifrarSecreto } from "@/lib/crypto";
 import { enviarTexto, dentroVentana24h } from "@/lib/whatsapp";
-import { enviarPlantilla } from "@/lib/meta-templates";
+import { enviarPlantilla, consultarEstadoPlantilla } from "@/lib/meta-templates";
 import { getSurveyBot, createSessionRow } from "@/lib/survey-bot-store";
 import { inviteSurvey } from "@/lib/survey-engine";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
+const IDIOMA_PLANTILLA = "es_CO";
+
 function soloDigitos(v: string): string {
   return v.replace(/\D/g, "");
 }
 
+/** "573001234567" o "573001234567, Juan Pérez" -> { telefono, nombre } */
+function parseDestinatario(linea: string): { telefono: string; nombre: string | null } {
+  const [tel, ...resto] = linea.split(",");
+  const telefono = soloDigitos(tel ?? "");
+  const nombre = resto.join(",").trim() || null;
+  return { telefono, nombre };
+}
+
 /**
  * Envía la invitación inicial de la encuesta predeterminada a una lista de
- * destinatarios: crea (o reinicia) su sesión y entrega el primer mensaje.
+ * destinatarios (uno por línea, opcionalmente "telefono, Nombre"): crea (o
+ * reinicia) su sesión y entrega el primer mensaje.
  *
  * - Si el contacto escribió en las últimas 24h, se envía el saludo
  *   personalizado en texto libre directamente (más rico, con el nombre real
  *   de la marca).
  * - Si no, WhatsApp exige una plantilla aprobada: se usa la configurada en
- *   `invite_template_name` (ver /dashboard/plantillas). Si esa plantilla
- *   todavía no está aprobada, ese destinatario queda marcado como fallido con
- *   un motivo claro — no se inventa un envío.
+ *   `invite_template_name`, verificando su estado EN VIVO contra Meta (no
+ *   depende de que la plantilla se haya creado desde /dashboard/plantillas —
+ *   funciona igual si se creó directo en el Administrador de Meta), y le
+ *   pasa {{nombre_cliente}}/{{nombre_encuesta}} como variables nombradas.
  */
 export async function POST(request: NextRequest) {
   const authHeader = request.headers.get("authorization") ?? "";
@@ -70,25 +82,25 @@ export async function POST(request: NextRequest) {
   const metaToken = cliente.meta_permanent_token ? descifrarSecreto(cliente.meta_permanent_token) : process.env.META_ACCESS_TOKEN;
   if (!metaToken) return Response.json({ error: "Sin token de Meta para este número" }, { status: 500 });
 
-  // La plantilla de invitación solo hace falta para quien esté FUERA de la
-  // ventana de 24h; se resuelve una vez y se reutiliza para todo el lote.
-  const { data: plantillaInvitacion } = await supabase
-    .from("dulabs_plantillas")
-    .select("nombre, idioma, estado")
-    .eq("phone_number_id", phone_number_id)
-    .eq("nombre", bot.inviteTemplateName)
-    .maybeSingle();
+  // Verificación EN VIVO contra Meta (no depende de una fila local en
+  // dulabs_plantillas — funciona igual si la plantilla se creó directo en el
+  // Administrador de Meta), resuelta una vez y reutilizada para todo el lote.
+  const estadoPlantillaInvitacion = await consultarEstadoPlantilla({
+    wabaId: cliente.whatsapp_business_account_id,
+    token: metaToken,
+    nombre: bot.inviteTemplateName,
+  });
 
   let enviados = 0;
   const fallidos: { destinatario: string; error: string }[] = [];
 
-  for (const destinatario of destinatarios) {
-    const numero = soloDigitos(destinatario);
+  for (const linea of destinatarios) {
+    const { telefono: numero, nombre } = parseDestinatario(linea);
     if (!numero) continue;
     try {
       const dentroVentana = await dentroVentana24h(supabase, phone_number_id, numero);
 
-      const session = await createSessionRow(supabase, phone_number_id, numero, bot.closeDate);
+      const session = await createSessionRow(supabase, phone_number_id, numero, bot.closeDate, nombre);
       if (!session) {
         throw new Error(
           "La tabla de sesiones del bot de encuestas no existe todavía (falta correr la migración 20260730090000_survey_bot.sql)."
@@ -109,23 +121,27 @@ export async function POST(request: NextRequest) {
           });
         }
       } else {
-        if (!plantillaInvitacion || plantillaInvitacion.estado !== "APPROVED") {
+        if (estadoPlantillaInvitacion !== "APPROVED") {
           throw new Error(
-            `Fuera de la ventana de 24h y la plantilla "${bot.inviteTemplateName}" aún no está aprobada por Meta (créala en Plantillas).`
+            `Fuera de la ventana de 24h y la plantilla "${bot.inviteTemplateName}" no está aprobada en Meta (estado: ${estadoPlantillaInvitacion ?? "no encontrada"}).`
           );
         }
         const { wamid } = await enviarPlantilla({
           phoneNumberId: phone_number_id,
           token: metaToken,
           para: numero,
-          nombrePlantilla: plantillaInvitacion.nombre,
-          idioma: plantillaInvitacion.idioma,
+          nombrePlantilla: bot.inviteTemplateName,
+          idioma: IDIOMA_PLANTILLA,
+          variables: [
+            { nombre: "nombre_cliente", valor: nombre || "cliente" },
+            { nombre: "nombre_encuesta", valor: bot.config.brandName },
+          ],
         });
         await supabase.from("dulabs_mensajes_log").insert({
           phone_number_id,
           telefono_cliente: numero,
           direccion: "saliente",
-          contenido: `[Invitación de encuesta] ${plantillaInvitacion.nombre}`,
+          contenido: `[Invitación de encuesta] ${bot.inviteTemplateName}`,
           origen: "agente",
           wamid,
         });

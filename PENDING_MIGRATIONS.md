@@ -24,3 +24,23 @@ plantillas con botones queda disponible sin necesidad de otro deploy.
 
 Después de aplicarla, borra esta sección (o el archivo completo si no queda
 ninguna migración pendiente).
+
+## `20260731100000_survey_sessions_nombre.sql` — pendiente
+
+Agrega la columna `nombre_participante` (text) a `dulabs_survey_sessions` —
+guarda el nombre del contacto si se conoció al invitarlo (formato
+"teléfono, Nombre" en el panel de invitaciones), usado para llenar
+`{{nombre_cliente}}` en la plantilla de invitación. Puramente aditiva.
+
+**Cómo aplicarla:** igual que arriba — pega el contenido del archivo en el
+SQL Editor de Supabase y dale Run.
+
+**Es seguro desplegar antes de correr esto.** Sin la columna, invitar
+funciona igual, solo que el nombre no queda guardado en la sesión (se sigue
+usando para llenar la plantilla en el momento del envío).
+
+Nota: las plantillas `du_encuesta_invitacion` y `du_encuesta_recordatorio` ya
+NO dependen de tener una fila en `dulabs_plantillas` — el envío consulta su
+estado de aprobación directo en Meta, así que funcionan igual si se crearon
+desde el Administrador de Meta (como en este caso) o desde
+`/dashboard/plantillas`.
