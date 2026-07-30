@@ -5,6 +5,8 @@ import { generarRespuestaIA } from "@/lib/ia";
 import { verificarFirmaMeta, compararVerifyToken } from "@/lib/meta-firma";
 import { enviarTexto } from "@/lib/whatsapp";
 import { descifrarSecreto } from "@/lib/crypto";
+import { getSurveyBot, getSession, saveSession } from "@/lib/survey-bot-store";
+import { handleMessage } from "@/lib/survey-engine";
 
 export const runtime = "nodejs";
 
@@ -221,6 +223,11 @@ async function activarPausaHumana(phoneNumberId: string, telefonoCliente: string
 async function atenderMensaje(cliente: ClienteConfig, mensaje: MetaMessage) {
   await registrarMensaje(cliente.phone_number_id, soloDigitos(mensaje.from), "entrante", mensaje.text!.body, "entrante");
 
+  // Bot de encuestas: SOLO toma el turno si este contacto ya tiene una sesión
+  // de encuesta activa (fue invitado explícitamente vía /dashboard/surveys).
+  // Cualquier otro mensaje sigue el flujo normal del asistente de IA de abajo.
+  if (await atenderMensajeEncuesta(cliente, mensaje)) return;
+
   // Pausa manual de todo el número, activada desde Agentes de IA.
   if (cliente.ia_pausada) {
     console.log(`[webhook-dulabs] IA pausada manualmente para "${cliente.nombre_negocio}"`);
@@ -247,6 +254,34 @@ async function atenderMensaje(cliente: ClienteConfig, mensaje: MetaMessage) {
   if (respuesta) {
     await enviarWhatsApp(cliente, mensaje.from, respuesta);
   }
+}
+
+// --- Bot de encuestas (motor determinístico) -----------------------------------
+//
+// Devuelve true si el mensaje fue atendido por el motor de encuestas (y por lo
+// tanto NO debe pasar al asistente de IA general). Devuelve false para dejar
+// que el flujo normal continúe: mensajes de contactos sin una sesión de
+// encuesta activa, o de participantes que ya la completaron/declinaron/venció.
+async function atenderMensajeEncuesta(cliente: ClienteConfig, mensaje: MetaMessage): Promise<boolean> {
+  const supabase = supabaseAdmin();
+  const telefono = soloDigitos(mensaje.from);
+
+  const bot = await getSurveyBot(supabase, cliente.phone_number_id);
+  if (!bot) return false; // número sin bot de encuestas configurado/activo
+
+  const session = await getSession(supabase, cliente.phone_number_id, telefono);
+  if (!session) return false; // nunca fue invitado a la encuesta
+  if (session.status === "completed" || session.status === "declined" || session.status === "expired") {
+    return false; // encuesta ya cerrada para este participante: que hable con el asistente normal
+  }
+
+  const resultado = handleMessage(bot.config, bot.questions, session, mensaje.text!.body, new Date());
+  await saveSession(supabase, cliente.phone_number_id, telefono, resultado.session);
+
+  for (const texto of resultado.messages) {
+    await enviarWhatsApp(cliente, mensaje.from, texto);
+  }
+  return true;
 }
 
 // --- Envío por la API de WhatsApp de Meta --------------------------------------

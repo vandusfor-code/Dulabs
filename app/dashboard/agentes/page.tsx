@@ -23,6 +23,7 @@ import {
 import { useDashboard, type Negocio } from "@/lib/dashboard-session";
 import { formatearTelefono, nombreDelAgente } from "@/lib/format";
 import { PageHeader, Pill } from "@/components/dashboard/shell/ui";
+import { SurveyBotPanel } from "@/components/dashboard/agentes/SurveyBotPanel";
 import { useI18n } from "@/lib/i18n";
 
 type MetricasNumero = {
@@ -473,6 +474,8 @@ function AgentDetail({
       <BaseConocimiento negocio={negocio} accessToken={accessToken} onActualizado={onActualizado} />
 
       <Playground negocio={negocio} accessToken={accessToken} />
+
+      <SurveyBotPanel phoneNumberId={negocio.phone_number_id} accessToken={accessToken} />
 
       <div className="rounded-xl border border-edge bg-card p-5">
         <div className="mb-3 flex items-center gap-2">
