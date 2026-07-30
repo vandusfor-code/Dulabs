@@ -153,15 +153,22 @@ const LATER_PHRASES = ["mas tarde", "luego", "despues", "ahora no", "en otro mom
 const BUSY_PHRASES = ["ocupado", "ocupada", "estoy ocupado", "no puedo ahora", "estoy trabajando", "en un momento", "espera", "dame un momento"];
 const PROGRESS_PHRASES = ["cuanto falta", "cuantas faltan", "cuanto queda", "cuantas preguntas", "en que vamos", "cuanto llevo", "cuantas van", "cuanto me falta"];
 const REPEAT_PHRASES = ["repite", "repetir", "no entendi", "otra vez", "cual era la pregunta", "que dijiste", "no entiendo", "repiteme", "de nuevo", "vuelve a"];
+// Coincide EXACTO con los quick-reply "Continuar" / "Continuar encuesta" que
+// devuelve el propio motor (offer_pause, buildReminder) y con el botón
+// QUICK_REPLY de la plantilla de recordatorio de Meta — para que tocar el
+// botón o escribirlo a mano hagan lo mismo: retomar sin tratarlo como
+// respuesta a la pregunta actual (bug real que esto corrige).
+const CONTINUE_PHRASES = ["continuar encuesta", "continuar", "continuemos", "sigamos", "continua", "retomar", "retomemos", "seguir", "dale continuemos"];
 const START_YES = new Set([...YES, "comenzar", "empezar", "empecemos", "comencemos", "arranquemos", "vamos"]);
 
-type Intent = "decline" | "later" | "busy" | "progress" | "repeat" | "answer";
+type Intent = "decline" | "later" | "busy" | "progress" | "repeat" | "continue" | "answer";
 
 function classify(text: string): Intent {
   const n = norm(text);
   if (DECLINE_PHRASES.some((p) => n.includes(p))) return "decline";
   if (PROGRESS_PHRASES.some((p) => n.includes(p))) return "progress";
   if (REPEAT_PHRASES.some((p) => n.includes(p))) return "repeat";
+  if (CONTINUE_PHRASES.some((p) => n.includes(p))) return "continue";
   if (LATER_PHRASES.some((p) => n.includes(p))) return "later";
   if (BUSY_PHRASES.some((p) => n.includes(p))) return "busy";
   return "answer";
@@ -535,6 +542,14 @@ export function handleMessage(
   }
 
   if (intent === "repeat") {
+    return { session: s, action: "ask", messages: [questionPrompt(current)], quickReplies: quickRepliesFor(current) };
+  }
+
+  if (intent === "continue") {
+    if (s.status === "paused" || s.status === "resume_scheduled") {
+      s.status = "in_progress";
+      s.resumeAt = null;
+    }
     return { session: s, action: "ask", messages: [questionPrompt(current)], quickReplies: quickRepliesFor(current) };
   }
 

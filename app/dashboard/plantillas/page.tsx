@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { LayoutTemplate, CircleCheck, Clock, CircleAlert, Plus, FileEdit, Ban, Search, Copy, Check as CheckIcon } from "lucide-react";
+import { LayoutTemplate, CircleCheck, Clock, CircleAlert, Plus, FileEdit, Ban, Search, Copy, Check as CheckIcon, X } from "lucide-react";
 import { useDashboard } from "@/lib/dashboard-session";
 import { PageHeader, Pill, StatTile } from "@/components/dashboard/shell/ui";
 import { useI18n } from "@/lib/i18n";
@@ -13,12 +13,16 @@ type Plantilla = {
   categoria: string;
   idioma: string;
   cuerpo: string;
+  botones: string[];
   estado: string;
   borrador: boolean;
   created_at: string;
   enviados: number;
   tasaLectura: number;
 };
+
+const MAX_BOTONES = 3;
+const MAX_CARACTERES_BOTON = 25;
 
 function contarVariables(cuerpo: string): number {
   const coincidencias = cuerpo.match(/\{\{\d+\}\}/g);
@@ -58,6 +62,7 @@ export default function PlantillasPage() {
   const [nombre, setNombre] = useState("");
   const [categoria, setCategoria] = useState("UTILITY");
   const [cuerpo, setCuerpo] = useState("");
+  const [botones, setBotones] = useState<string[]>([]);
   const [creando, setCreando] = useState(false);
   const [mensajeCrear, setMensajeCrear] = useState<string | null>(null);
   const [publicandoId, setPublicandoId] = useState<number | null>(null);
@@ -87,13 +92,14 @@ export default function PlantillasPage() {
         const res = await fetch("/api/plantillas", {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
-          body: JSON.stringify({ phone_number_id: phoneNumberId, nombre, categoria, cuerpo, borrador }),
+          body: JSON.stringify({ phone_number_id: phoneNumberId, nombre, categoria, cuerpo, botones, borrador }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error ?? t("Error creando la plantilla", "Error creating the template"));
         setMensajeCrear(borrador ? t("Guardada como borrador.", "Saved as a draft.") : t(`Enviada a revisión de Meta (estado: ${data.estado}).`, `Submitted for Meta review (status: ${data.estado}).`));
         setNombre("");
         setCuerpo("");
+        setBotones([]);
         cargarPlantillas();
       } catch (err) {
         setMensajeCrear(err instanceof Error ? err.message : String(err));
@@ -101,7 +107,7 @@ export default function PlantillasPage() {
         setCreando(false);
       }
     },
-    [session, phoneNumberId, nombre, categoria, cuerpo, cargarPlantillas, t]
+    [session, phoneNumberId, nombre, categoria, cuerpo, botones, cargarPlantillas, t]
   );
 
   const publicarBorrador = useCallback(
@@ -118,6 +124,7 @@ export default function PlantillasPage() {
             nombre: p.nombre,
             categoria: p.categoria,
             cuerpo: p.cuerpo,
+            botones: p.botones ?? [],
             idioma: p.idioma,
             borrador: false,
           }),
@@ -247,6 +254,44 @@ export default function PlantillasPage() {
                 className="w-full rounded-lg border border-edge bg-ink px-4 py-3 text-sm text-fg outline-none focus:border-lime/50"
               />
             </div>
+            <div>
+              <label className="mb-1.5 block text-xs font-medium text-mist">
+                {t("Botones de respuesta rápida (opcional)", "Quick-reply buttons (optional)")}
+              </label>
+              <div className="space-y-2">
+                {botones.map((b, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <input
+                      value={b}
+                      maxLength={MAX_CARACTERES_BOTON}
+                      onChange={(e) => setBotones((prev) => prev.map((x, idx) => (idx === i ? e.target.value : x)))}
+                      placeholder={t(`Botón ${i + 1}`, `Button ${i + 1}`)}
+                      className="w-full rounded-lg border border-edge bg-ink px-3 py-2 text-sm text-fg outline-none focus:border-lime/50"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setBotones((prev) => prev.filter((_, idx) => idx !== i))}
+                      aria-label={t("Quitar botón", "Remove button")}
+                      className="flex size-8 shrink-0 items-center justify-center rounded-lg text-mist transition-colors hover:text-red-400"
+                    >
+                      <X className="size-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+              {botones.length < MAX_BOTONES && (
+                <button
+                  type="button"
+                  onClick={() => setBotones((prev) => [...prev, ""])}
+                  className="mt-2 flex items-center gap-1.5 text-sm font-medium text-lime-text transition-opacity hover:opacity-80"
+                >
+                  <Plus className="size-4" /> {t("Agregar botón", "Add button")}
+                </button>
+              )}
+              <p className="mt-1 text-[10.5px] text-mist">
+                {t(`Hasta ${MAX_BOTONES} botones, ${MAX_CARACTERES_BOTON} caracteres cada uno.`, `Up to ${MAX_BOTONES} buttons, ${MAX_CARACTERES_BOTON} characters each.`)}
+              </p>
+            </div>
             {mensajeCrear && (
               <p className="rounded-lg border border-edge bg-ink p-3 text-xs leading-relaxed text-mist">{mensajeCrear}</p>
             )}
@@ -329,6 +374,15 @@ export default function PlantillasPage() {
                         </Pill>
                       </div>
                       <p className="mt-3 line-clamp-2 text-sm leading-relaxed text-mist">{p.cuerpo}</p>
+                      {p.botones?.length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {p.botones.map((b, i) => (
+                            <span key={i} className="rounded-full border border-edge px-2 py-0.5 text-[10.5px] text-mist">
+                              {b}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                       <div className="mt-3 flex items-center justify-between gap-2">
                         <div className="flex items-center gap-1.5">
                           <Pill tone={p.categoria === "MARKETING" ? "info" : "neutral"}>{p.categoria}</Pill>
@@ -375,6 +429,15 @@ export default function PlantillasPage() {
                       <span className="shrink-0 text-[10px] text-mist">10:24 ✓✓</span>
                     </div>
                   </div>
+                  {(activa ? activa.botones : botones).filter(Boolean).length > 0 && (
+                    <div className="mt-1.5 max-w-[92%] space-y-1">
+                      {(activa ? activa.botones : botones).filter(Boolean).map((b, i) => (
+                        <div key={i} className="rounded-lg bg-card/80 py-1.5 text-center text-xs font-medium text-lime-text">
+                          {b}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
               <p className="mt-3 text-center text-xs text-mist">

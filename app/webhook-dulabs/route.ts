@@ -18,6 +18,9 @@ type MetaMessage = {
   id: string;
   type: string;
   text?: { body: string };
+  // Tap de un botón QUICK_REPLY de una plantilla (ver lib/meta-templates.ts):
+  // Meta lo entrega como type "button", no "text".
+  button?: { text?: string; payload?: string };
   context?: { id?: string };
 };
 
@@ -151,7 +154,14 @@ async function procesarCambio(phoneNumberId: string, value: MetaChangeValue) {
 
   // Mensajes de clientes finales
   for (const mensaje of value.messages ?? []) {
-    if (mensaje.type !== "text" || !mensaje.text?.body) continue; // esqueleto: solo texto
+    // Tap de un botón QUICK_REPLY de plantilla: se procesa como si el
+    // participante hubiera escrito el texto del botón (mismo motor de
+    // encuestas/IA de abajo, sin lógica aparte para "type: button").
+    if (mensaje.type === "button" && mensaje.button?.text) {
+      mensaje.text = { body: mensaje.button.text };
+    }
+    if (mensaje.type !== "text" && mensaje.type !== "button") continue; // esqueleto: solo texto/botón
+    if (!mensaje.text?.body) continue;
     await atenderMensaje(cliente, mensaje);
   }
 }

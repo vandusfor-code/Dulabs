@@ -12,6 +12,11 @@ export function normalizarNombrePlantilla(nombre: string): string {
     .slice(0, 512);
 }
 
+// Meta permite máximo 3 botones QUICK_REPLY por plantilla, hasta 25
+// caracteres cada uno.
+export const MAX_BOTONES_PLANTILLA = 3;
+export const MAX_CARACTERES_BOTON = 25;
+
 export async function crearPlantillaMeta(params: {
   wabaId: string;
   token: string;
@@ -19,7 +24,18 @@ export async function crearPlantillaMeta(params: {
   categoria: string;
   idioma: string;
   cuerpo: string;
+  /** Textos de hasta 3 botones de respuesta rápida (opcional). */
+  botones?: string[];
 }): Promise<{ id: string; status: string }> {
+  const components: Record<string, unknown>[] = [{ type: "BODY", text: params.cuerpo }];
+  const botones = (params.botones ?? []).filter((b) => b.trim() !== "").slice(0, MAX_BOTONES_PLANTILLA);
+  if (botones.length > 0) {
+    components.push({
+      type: "BUTTONS",
+      buttons: botones.map((texto) => ({ type: "QUICK_REPLY", text: texto.slice(0, MAX_CARACTERES_BOTON) })),
+    });
+  }
+
   const res = await fetch(`${GRAPH}/${params.wabaId}/message_templates`, {
     method: "POST",
     headers: {
@@ -30,7 +46,7 @@ export async function crearPlantillaMeta(params: {
       name: params.nombre,
       category: params.categoria,
       language: params.idioma,
-      components: [{ type: "BODY", text: params.cuerpo }],
+      components,
     }),
   });
   const json = (await res.json()) as { id?: string; status?: string } & GraphError;

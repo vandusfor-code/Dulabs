@@ -4,6 +4,8 @@ import {
   crearPlantillaMeta,
   consultarEstadoPlantilla,
   normalizarNombrePlantilla,
+  MAX_BOTONES_PLANTILLA,
+  MAX_CARACTERES_BOTON,
 } from "@/lib/meta-templates";
 import { resolverMiembroEquipo, requireRol } from "@/lib/team";
 import { descifrarSecreto } from "@/lib/crypto";
@@ -120,6 +122,7 @@ export async function POST(request: NextRequest) {
     categoria?: string;
     idioma?: string;
     cuerpo?: string;
+    botones?: string[];
     borrador?: boolean;
   };
   try {
@@ -135,6 +138,10 @@ export async function POST(request: NextRequest) {
   }
   if (!["MARKETING", "UTILITY", "AUTHENTICATION"].includes(categoria)) {
     return Response.json({ error: "Categoría inválida" }, { status: 400 });
+  }
+  const botones = (body.botones ?? []).map((b) => b.trim()).filter(Boolean).slice(0, MAX_BOTONES_PLANTILLA);
+  if (botones.some((b) => b.length > MAX_CARACTERES_BOTON)) {
+    return Response.json({ error: `Cada botón puede tener máximo ${MAX_CARACTERES_BOTON} caracteres` }, { status: 400 });
   }
 
   const supabase = supabaseAdmin();
@@ -154,7 +161,7 @@ export async function POST(request: NextRequest) {
     if (id) {
       const { error: updateError } = await supabase
         .from("dulabs_plantillas")
-        .update({ nombre: nombreNormalizado, categoria, idioma, cuerpo })
+        .update({ nombre: nombreNormalizado, categoria, idioma, cuerpo, botones })
         .eq("id", id)
         .eq("id_tenant", miembro.tenantId)
         .eq("borrador", true);
@@ -169,6 +176,7 @@ export async function POST(request: NextRequest) {
       categoria,
       idioma,
       cuerpo,
+      botones,
       estado: "borrador",
       borrador: true,
     });
@@ -189,6 +197,7 @@ export async function POST(request: NextRequest) {
       categoria,
       idioma,
       cuerpo,
+      botones,
     });
 
     // Promover un borrador existente en vez de insertar una fila duplicada.
@@ -200,6 +209,7 @@ export async function POST(request: NextRequest) {
           categoria,
           idioma,
           cuerpo,
+          botones,
           meta_template_id: resultado.id,
           estado: resultado.status,
           borrador: false,
@@ -219,6 +229,7 @@ export async function POST(request: NextRequest) {
       categoria,
       idioma,
       cuerpo,
+      botones,
       meta_template_id: resultado.id,
       estado: resultado.status,
     });
