@@ -324,6 +324,10 @@ function SurveyEditor({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [importando, setImportando] = useState(false);
   const [propuesta, setPropuesta] = useState<EncuestaExtraida | null>(null);
+  // `propuesta` se conserva después de registrar (InvitarPanel sigue
+  // necesitando propuesta.destinatarios) — este flag solo controla si el
+  // banner de confirmación sigue visible.
+  const [propuestaRegistrada, setPropuestaRegistrada] = useState(false);
   const [errorImportar, setErrorImportar] = useState<string | null>(null);
 
   const importar = useCallback(
@@ -331,6 +335,7 @@ function SurveyEditor({
       setImportando(true);
       setErrorImportar(null);
       setPropuesta(null);
+      setPropuestaRegistrada(false);
       try {
         const form = new FormData();
         form.append("archivo", archivo);
@@ -358,11 +363,18 @@ function SurveyEditor({
     [accessToken, phoneNumberId, t]
   );
 
-  const aplicarPreguntas = useCallback(() => {
-    if (!propuesta || propuesta.preguntas.length === 0) return;
-    setQuestions([...questions, ...propuesta.preguntas]);
-    setActiveTab("questions");
-    setToast(t(`${propuesta.preguntas.length} preguntas agregadas.`, `${propuesta.preguntas.length} questions added.`));
+  const registrarPropuesta = useCallback(() => {
+    if (!propuesta) return;
+    if (propuesta.preguntas.length > 0) setQuestions([...questions, ...propuesta.preguntas]);
+    setPropuestaRegistrada(true);
+    setToast(
+      propuesta.destinatarios.length > 0
+        ? t(
+            `Registradas ${propuesta.preguntas.length} preguntas. ${propuesta.destinatarios.length} contactos listos para enviar en Ajustes.`,
+            `Registered ${propuesta.preguntas.length} questions. ${propuesta.destinatarios.length} contacts ready to send in Settings.`
+          )
+        : t(`Registradas ${propuesta.preguntas.length} preguntas.`, `Registered ${propuesta.preguntas.length} questions.`)
+    );
   }, [propuesta, questions, t]);
 
   const numeroActual = negocios.find((n) => n.phone_number_id === phoneNumberId) ?? null;
@@ -412,74 +424,30 @@ function SurveyEditor({
           </div>
         </div>
 
-        {(errorImportar || propuesta) && (
+        {(errorImportar || (propuesta && !propuestaRegistrada)) && (
           <div className="border-b border-edge px-4 py-3 md:px-6">
             {errorImportar && <p className="text-xs text-red-400">{errorImportar}</p>}
-            {propuesta && (
-              <div className="rounded-xl border border-lime/30 bg-lime/5 p-4">
-                <div className="flex items-center justify-between gap-3">
-                  <p className="text-sm font-medium text-fg">
-                    {propuesta.metodo === "estructurado"
-                      ? t(
-                          `Leído con la plantilla oficial: ${propuesta.preguntas.length} preguntas y ${propuesta.destinatarios.length} contactos.`,
-                          `Read with the official template: ${propuesta.preguntas.length} questions and ${propuesta.destinatarios.length} contacts.`
-                        )
-                      : t(
-                          `Interpretado por IA: ${propuesta.preguntas.length} preguntas y ${propuesta.destinatarios.length} contactos.`,
-                          `Interpreted by AI: ${propuesta.preguntas.length} questions and ${propuesta.destinatarios.length} contacts.`
-                        )}
-                  </p>
-                  <button onClick={() => setPropuesta(null)} className="text-mist hover:text-fg" aria-label={t("Descartar", "Discard")}>
-                    <X className="size-4" />
+            {propuesta && !propuestaRegistrada && (
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-lime/30 bg-lime/5 px-4 py-3">
+                <p className="text-sm text-fg">
+                  {propuesta.destinatarios.length > 0
+                    ? t(
+                        `Se encontraron ${propuesta.preguntas.length} preguntas y ${propuesta.destinatarios.length} contactos. ¿Los registro en esta encuesta?`,
+                        `Found ${propuesta.preguntas.length} questions and ${propuesta.destinatarios.length} contacts. Register them in this survey?`
+                      )
+                    : t(
+                        `Se encontraron ${propuesta.preguntas.length} preguntas. ¿Las registro en esta encuesta?`,
+                        `Found ${propuesta.preguntas.length} questions. Register them in this survey?`
+                      )}
+                </p>
+                <div className="flex shrink-0 items-center gap-2">
+                  <button onClick={() => setPropuesta(null)} className="rounded-lg px-3 py-1.5 text-xs font-medium text-mist hover:text-fg">
+                    {t("Cancelar", "Cancel")}
+                  </button>
+                  <button onClick={registrarPropuesta} className="flex items-center gap-2 rounded-lg bg-lime px-3.5 py-1.5 text-xs font-semibold text-lime-fg hover:opacity-90">
+                    <Check className="size-3.5" /> {t("Registrar", "Register")}
                   </button>
                 </div>
-                <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  {propuesta.preguntas.length > 0 && (
-                    <div>
-                      <p className="font-mono text-[10.5px] uppercase tracking-widest text-mist">{t("Preguntas", "Questions")}</p>
-                      <ul className="mt-1 max-h-32 space-y-1 overflow-y-auto text-xs text-mist">
-                        {propuesta.preguntas.map((p) => (
-                          <li key={p.id} className="truncate">
-                            • {p.text}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                  {propuesta.destinatarios.length > 0 && (
-                    <div>
-                      <p className="font-mono text-[10.5px] uppercase tracking-widest text-mist">{t("Contactos", "Contacts")}</p>
-                      <ul className="mt-1 max-h-32 space-y-1 overflow-y-auto text-xs text-mist">
-                        {propuesta.destinatarios.map((d, i) => (
-                          <li key={`${d.telefono}-${i}`} className="truncate">
-                            • {d.nombre ? `${d.nombre} — ${d.telefono}` : d.telefono}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                </div>
-                <div className="mt-3 flex flex-wrap items-center gap-2">
-                  {propuesta.preguntas.length > 0 && (
-                    <button onClick={aplicarPreguntas} className="flex items-center gap-2 rounded-lg bg-lime px-3.5 py-1.5 text-xs font-semibold text-lime-fg hover:opacity-90">
-                      <Check className="size-3.5" /> {t("Agregar preguntas al Builder", "Add questions to the Builder")}
-                    </button>
-                  )}
-                  {propuesta.destinatarios.length > 0 && (
-                    <button
-                      onClick={() => setActiveTab("settings")}
-                      className="flex items-center gap-2 rounded-lg border border-edge px-3.5 py-1.5 text-xs font-medium text-fg hover:border-lime/40"
-                    >
-                      {t("Ir a Ajustes para enviarles la encuesta →", "Go to Settings to send them the survey →")}
-                    </button>
-                  )}
-                </div>
-                <p className="mt-2 text-[11px] text-mist/70">
-                  {t(
-                    "Las preguntas quedan editables en la lista de abajo tras agregarlas. Los contactos ya quedan listos para enviar en Ajustes → Enviar invitaciones, con casilla para elegir cuáles.",
-                    "Questions stay editable in the list below once added. Contacts are ready to send in Settings → Send invitations, with a checkbox to pick which ones."
-                  )}
-                </p>
               </div>
             )}
           </div>
