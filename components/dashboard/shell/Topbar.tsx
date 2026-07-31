@@ -2,18 +2,18 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Search, Bell, ChevronDown, Phone, Menu } from "lucide-react";
+import { Search, Bell, ChevronDown, Phone, Menu, Check } from "lucide-react";
 import { useDashboard } from "@/lib/dashboard-session";
 import { formatearTelefono } from "@/lib/format";
 import { useI18n } from "@/lib/i18n";
 import { LanguageSelector } from "@/components/LanguageSelector";
 
 export function Topbar({ onMenu }: { onMenu?: () => void }) {
-  const { negocios } = useDashboard();
+  const { negocios, numeroActivoId, seleccionarNumero } = useDashboard();
   const { t } = useI18n();
   const [numberOpen, setNumberOpen] = useState(false);
 
-  const activo = negocios?.[0];
+  const activo = negocios?.find((n) => n.phone_number_id === numeroActivoId) ?? negocios?.[0];
 
   return (
     <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-edge bg-ink/80 px-4 backdrop-blur-xl md:px-6">
@@ -51,17 +51,33 @@ export function Topbar({ onMenu }: { onMenu?: () => void }) {
                 <p className="px-2.5 py-2 font-mono text-[10.5px] uppercase tracking-widest text-mist">
                   {t("Números conectados", "Connected numbers")}
                 </p>
-                {negocios.map((n) => (
-                  <div key={n.phone_number_id} className="flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left">
-                    <span className={`size-2 rounded-full ${n.conectado ? "bg-lime" : "bg-mist/40"}`} />
-                    <div className="flex-1">
-                      <p className="text-sm font-medium text-fg">{formatearTelefono(n.telefono_negocio)}</p>
-                      <p className="mt-0.5 font-mono text-[10.5px] uppercase tracking-widest text-mist">
-                        {n.nombre_negocio}
-                      </p>
-                    </div>
-                  </div>
-                ))}
+                {negocios.map((n) => {
+                  const seleccionado = n.phone_number_id === activo?.phone_number_id;
+                  return (
+                    <button
+                      key={n.phone_number_id}
+                      type="button"
+                      onClick={() => {
+                        seleccionarNumero(n.phone_number_id);
+                        setNumberOpen(false);
+                      }}
+                      className={`flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left transition-colors ${
+                        seleccionado ? "bg-lime/10" : "hover:bg-ink-2"
+                      }`}
+                    >
+                      <span className={`size-2 shrink-0 rounded-full ${n.conectado ? "bg-lime" : "bg-mist/40"}`} />
+                      <div className="min-w-0 flex-1">
+                        <p className={`truncate text-sm font-medium ${seleccionado ? "text-lime-text" : "text-fg"}`}>
+                          {formatearTelefono(n.telefono_negocio)}
+                        </p>
+                        <p className="mt-0.5 truncate font-mono text-[10.5px] uppercase tracking-widest text-mist">
+                          {n.nombre_negocio}
+                        </p>
+                      </div>
+                      {seleccionado && <Check className="size-4 shrink-0 text-lime-text" />}
+                    </button>
+                  );
+                })}
               </div>
             </>
           )}

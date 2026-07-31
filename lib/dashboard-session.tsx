@@ -50,9 +50,14 @@ type DashboardContextValue = {
   suscripcion: Suscripcion;
   rol: Rol | null;
   cargarNegocios: () => Promise<void>;
+  /** phone_number_id elegido en el selector de número del Topbar. */
+  numeroActivoId: string | null;
+  seleccionarNumero: (phoneNumberId: string) => void;
 };
 
 const DashboardContext = createContext<DashboardContextValue | null>(null);
+
+const NUMERO_ACTIVO_KEY = "du_labs_numero_activo";
 
 export const supabaseConfigFaltante =
   !process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -64,6 +69,27 @@ export function DashboardSessionProvider({ children }: { children: ReactNode }) 
   const [errorNegocios, setErrorNegocios] = useState<string | null>(null);
   const [suscripcion, setSuscripcion] = useState<Suscripcion>(null);
   const [rol, setRol] = useState<Rol | null>(null);
+  // Se hidrata una sola vez desde localStorage (lazy initializer, no efecto)
+  // — si el número guardado ya no existe (se eliminó, o nunca hubo uno), los
+  // consumidores (ver Topbar) ya caen a `negocios[0]` al resolverlo, así que
+  // no hace falta reconciliar/autocorregir este estado contra `negocios`.
+  const [numeroActivoId, setNumeroActivoId] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      return window.localStorage.getItem(NUMERO_ACTIVO_KEY);
+    } catch {
+      return null;
+    }
+  });
+
+  const seleccionarNumero = useCallback((phoneNumberId: string) => {
+    setNumeroActivoId(phoneNumberId);
+    try {
+      window.localStorage.setItem(NUMERO_ACTIVO_KEY, phoneNumberId);
+    } catch {
+      // localStorage puede fallar en modo privado/incógnito — no es crítico.
+    }
+  }, []);
 
   const cargarNegocios = useCallback(async (accessToken?: string) => {
     const token = accessToken ?? (session !== "verificando" && session?.access_token);
@@ -133,6 +159,8 @@ export function DashboardSessionProvider({ children }: { children: ReactNode }) 
         suscripcion,
         rol,
         cargarNegocios: () => cargarNegocios(),
+        numeroActivoId,
+        seleccionarNumero,
       }}
     >
       {children}
