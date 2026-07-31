@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   Search,
   Filter,
@@ -77,26 +78,60 @@ export function SurveysTable({
     );
   }, [surveys, search, status]);
 
-  // Menú "..." de cada fila: solo uno abierto a la vez, por eso un único ref
+  // Menú "..." de cada fila: se saca por portal a document.body y se
+  // posiciona en coordenadas de pantalla (fixed) calculadas del botón que lo
+  // abre. Necesario porque la tabla vive dentro de un contenedor
+  // `overflow-x-auto` — al fijar overflow-x, el navegador fuerza también
+  // overflow-y a "auto" en ese contenedor (regla del spec de CSS), así que
+  // un menú `absolute` ahí adentro queda recortado con su propio scroll en
+  // vez de flotar libre. Solo uno abierto a la vez, por eso un único ref
   // basta para detectar clics afuera y cerrarlo.
+  const MENU_ANCHO = 256; // w-64
+  const MENU_ALTO_ESTIMADO = 170; // suficiente para el estado de confirmación
   const [menuAbiertoId, setMenuAbiertoId] = useState<string | null>(null);
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
   const [confirmandoId, setConfirmandoId] = useState<string | null>(null);
   const [eliminandoId, setEliminandoId] = useState<string | null>(null);
   const [errorEliminar, setErrorEliminar] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
+  const cerrarMenu = useCallback(() => {
+    setMenuAbiertoId(null);
+    setMenuPos(null);
+    setConfirmandoId(null);
+    setErrorEliminar(null);
+  }, []);
+
+  const abrirMenu = useCallback((id: string, boton: HTMLButtonElement) => {
+    const rect = boton.getBoundingClientRect();
+    const espacioAbajo = window.innerHeight - rect.bottom;
+    const arriba = espacioAbajo < MENU_ALTO_ESTIMADO && rect.top > MENU_ALTO_ESTIMADO;
+    const left = Math.min(Math.max(8, rect.right - MENU_ANCHO), window.innerWidth - MENU_ANCHO - 8);
+    const top = arriba ? rect.top - MENU_ALTO_ESTIMADO - 4 : rect.bottom + 4;
+    setMenuPos({ top, left });
+    setMenuAbiertoId(id);
+    setConfirmandoId(null);
+    setErrorEliminar(null);
+  }, []);
+
   useEffect(() => {
     if (!menuAbiertoId) return;
     const onClickFuera = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setMenuAbiertoId(null);
-        setConfirmandoId(null);
-        setErrorEliminar(null);
-      }
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) cerrarMenu();
     };
+    // Cierra al hacer scroll (de la página o del contenedor con scroll
+    // horizontal) en vez de reposicionar — más simple y evita que el menú
+    // quede desalineado del botón que lo abrió.
+    const onScroll = () => cerrarMenu();
     document.addEventListener("mousedown", onClickFuera);
-    return () => document.removeEventListener("mousedown", onClickFuera);
-  }, [menuAbiertoId]);
+    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", onScroll);
+    return () => {
+      document.removeEventListener("mousedown", onClickFuera);
+      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", onScroll);
+    };
+  }, [menuAbiertoId, cerrarMenu]);
 
   const eliminarEncuesta = useCallback(
     async (phoneNumberId: string) => {
@@ -112,8 +147,7 @@ export function SurveysTable({
         if (!res.ok) {
           throw new Error(data.error ?? t("No se pudo eliminar la encuesta.", "Couldn't delete the survey."));
         }
-        setMenuAbiertoId(null);
-        setConfirmandoId(null);
+        cerrarMenu();
         onDeleted?.();
       } catch (err) {
         setErrorEliminar(err instanceof Error ? err.message : String(err));
@@ -121,7 +155,7 @@ export function SurveysTable({
         setEliminandoId(null);
       }
     },
-    [accessToken, onDeleted, t]
+    [accessToken, onDeleted, t, cerrarMenu]
   );
 
   const columns = [
@@ -135,7 +169,10 @@ export function SurveysTable({
     "",
   ];
 
+  const surveyEnMenu = surveys.find((s) => s.id === menuAbiertoId) ?? null;
+
   return (
+    <>
     <div className="rounded-xl border border-edge bg-card">
       {/* Toolbar */}
       <div className="flex flex-col gap-3 p-5 lg:flex-row lg:items-center lg:justify-between">
@@ -241,79 +278,19 @@ export function SurveysTable({
                   {/* Updated */}
                   <span className="text-mist">{t(s.updatedAt.es, s.updatedAt.en)}</span>
                   {/* Row menu */}
-                  <div className="relative">
-                    <button
-                      type="button"
-                      aria-label={t(`Acciones para ${s.name}`, `Actions for ${s.name}`)}
-                      title={t("Acciones", "Actions")}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (menuAbiertoId === s.id) {
-                          setMenuAbiertoId(null);
-                          setConfirmandoId(null);
-                          setErrorEliminar(null);
-                        } else {
-                          setMenuAbiertoId(s.id);
-                          setConfirmandoId(null);
-                          setErrorEliminar(null);
-                        }
-                      }}
-                      className="flex size-8 items-center justify-center rounded-lg text-mist transition-colors hover:bg-card hover:text-fg"
-                    >
-                      <MoreHorizontal className="size-4" />
-                    </button>
-
-                    {menuAbiertoId === s.id && (
-                      <div
-                        ref={menuRef}
-                        onClick={(e) => e.stopPropagation()}
-                        className="absolute right-0 top-full z-20 mt-1 w-64 rounded-lg border border-edge bg-card p-1.5 shadow-lg"
-                      >
-                        {confirmandoId === s.id ? (
-                          <div className="p-2">
-                            <p className="text-xs leading-relaxed text-fg">
-                              {t(
-                                `¿Eliminar "${s.name}"? Se borra la encuesta y las respuestas de todos los participantes. Esta acción no se puede deshacer.`,
-                                `Delete "${s.name}"? This removes the survey and every participant's answers. This can't be undone.`
-                              )}
-                            </p>
-                            {errorEliminar && (
-                              <p className="mt-2 text-xs text-red-400">{errorEliminar}</p>
-                            )}
-                            <div className="mt-2.5 flex items-center justify-end gap-2">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setConfirmandoId(null);
-                                  setErrorEliminar(null);
-                                }}
-                                disabled={eliminandoId === s.id}
-                                className="rounded-md px-2.5 py-1.5 text-xs font-medium text-mist hover:text-fg disabled:opacity-50"
-                              >
-                                {t("Cancelar", "Cancel")}
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => eliminarEncuesta(s.id)}
-                                disabled={eliminandoId === s.id}
-                                className="rounded-md bg-red-500/15 px-2.5 py-1.5 text-xs font-semibold text-red-400 transition-colors hover:bg-red-500/25 disabled:cursor-not-allowed disabled:opacity-50"
-                              >
-                                {eliminandoId === s.id ? t("Eliminando…", "Deleting…") : t("Sí, eliminar", "Yes, delete")}
-                              </button>
-                            </div>
-                          </div>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => setConfirmandoId(s.id)}
-                            className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-xs font-medium text-red-400 transition-colors hover:bg-red-500/10"
-                          >
-                            <Trash2 className="size-3.5" /> {t("Eliminar encuesta", "Delete survey")}
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </div>
+                  <button
+                    type="button"
+                    aria-label={t(`Acciones para ${s.name}`, `Actions for ${s.name}`)}
+                    title={t("Acciones", "Actions")}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (menuAbiertoId === s.id) cerrarMenu();
+                      else abrirMenu(s.id, e.currentTarget);
+                    }}
+                    className="flex size-8 items-center justify-center rounded-lg text-mist transition-colors hover:bg-card hover:text-fg"
+                  >
+                    <MoreHorizontal className="size-4" />
+                  </button>
                 </div>
               ))}
             </div>
@@ -352,5 +329,58 @@ export function SurveysTable({
         </div>
       </div>
     </div>
+
+    {menuAbiertoId && menuPos && surveyEnMenu &&
+      createPortal(
+        <div
+          ref={menuRef}
+          onClick={(e) => e.stopPropagation()}
+          style={{ position: "fixed", top: menuPos.top, left: menuPos.left }}
+          className="z-50 w-64 rounded-lg border border-edge bg-card p-1.5 shadow-lg"
+        >
+          {confirmandoId === surveyEnMenu.id ? (
+            <div className="p-2">
+              <p className="text-xs leading-relaxed text-fg">
+                {t(
+                  `¿Eliminar "${surveyEnMenu.name}"? Se borra la encuesta y las respuestas de todos los participantes. Esta acción no se puede deshacer.`,
+                  `Delete "${surveyEnMenu.name}"? This removes the survey and every participant's answers. This can't be undone.`
+                )}
+              </p>
+              {errorEliminar && <p className="mt-2 text-xs text-red-400">{errorEliminar}</p>}
+              <div className="mt-2.5 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setConfirmandoId(null);
+                    setErrorEliminar(null);
+                  }}
+                  disabled={eliminandoId === surveyEnMenu.id}
+                  className="rounded-md px-2.5 py-1.5 text-xs font-medium text-mist hover:text-fg disabled:opacity-50"
+                >
+                  {t("Cancelar", "Cancel")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => eliminarEncuesta(surveyEnMenu.id)}
+                  disabled={eliminandoId === surveyEnMenu.id}
+                  className="rounded-md bg-red-500/15 px-2.5 py-1.5 text-xs font-semibold text-red-400 transition-colors hover:bg-red-500/25 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {eliminandoId === surveyEnMenu.id ? t("Eliminando…", "Deleting…") : t("Sí, eliminar", "Yes, delete")}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setConfirmandoId(surveyEnMenu.id)}
+              className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-xs font-medium text-red-400 transition-colors hover:bg-red-500/10"
+            >
+              <Trash2 className="size-3.5" /> {t("Eliminar encuesta", "Delete survey")}
+            </button>
+          )}
+        </div>,
+        document.body
+      )}
+    </>
   );
 }
