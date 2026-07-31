@@ -177,7 +177,12 @@ export default function SurveysPage() {
         {/* Table + AI insights */}
         <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-3">
           <div className="lg:col-span-2">
-            <SurveysTable surveys={data.surveys} onRowClick={(s) => router.push(`/dashboard/surveys/${s.id}`)} />
+            <SurveysTable
+              surveys={data.surveys}
+              onRowClick={(s) => router.push(`/dashboard/surveys/${s.id}`)}
+              accessToken={session?.access_token}
+              onDeleted={cargar}
+            />
           </div>
           <AIInsightsPanel insights={data.insights} onViewReport={cargar} />
         </div>

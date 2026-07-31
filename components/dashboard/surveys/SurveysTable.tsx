@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Search,
   Filter,
@@ -10,6 +10,7 @@ import {
   ChevronRight,
   FileText,
   MoreHorizontal,
+  Trash2,
 } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import type { SurveyStatus, SurveySummary } from "@/lib/surveys";
@@ -55,9 +56,15 @@ function CompletionCell({ rate }: { rate: number }) {
 export function SurveysTable({
   surveys,
   onRowClick,
+  accessToken,
+  onDeleted,
 }: {
   surveys: SurveySummary[];
   onRowClick?: (survey: SurveySummary) => void;
+  /** Necesario para poder borrar encuestas desde el menú de la fila. */
+  accessToken?: string;
+  /** Se llama tras un borrado exitoso, para que el llamador recargue el tablero. */
+  onDeleted?: () => void;
 }) {
   const { t } = useI18n();
   const [search, setSearch] = useState("");
@@ -69,6 +76,53 @@ export function SurveysTable({
       (s) => (status === "all" || s.status === status) && (q === "" || s.name.toLowerCase().includes(q))
     );
   }, [surveys, search, status]);
+
+  // Menú "..." de cada fila: solo uno abierto a la vez, por eso un único ref
+  // basta para detectar clics afuera y cerrarlo.
+  const [menuAbiertoId, setMenuAbiertoId] = useState<string | null>(null);
+  const [confirmandoId, setConfirmandoId] = useState<string | null>(null);
+  const [eliminandoId, setEliminandoId] = useState<string | null>(null);
+  const [errorEliminar, setErrorEliminar] = useState<string | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!menuAbiertoId) return;
+    const onClickFuera = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuAbiertoId(null);
+        setConfirmandoId(null);
+        setErrorEliminar(null);
+      }
+    };
+    document.addEventListener("mousedown", onClickFuera);
+    return () => document.removeEventListener("mousedown", onClickFuera);
+  }, [menuAbiertoId]);
+
+  const eliminarEncuesta = useCallback(
+    async (phoneNumberId: string) => {
+      if (!accessToken) return;
+      setEliminandoId(phoneNumberId);
+      setErrorEliminar(null);
+      try {
+        const res = await fetch(`/api/dashboard/surveys/${phoneNumberId}`, {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(data.error ?? t("No se pudo eliminar la encuesta.", "Couldn't delete the survey."));
+        }
+        setMenuAbiertoId(null);
+        setConfirmandoId(null);
+        onDeleted?.();
+      } catch (err) {
+        setErrorEliminar(err instanceof Error ? err.message : String(err));
+      } finally {
+        setEliminandoId(null);
+      }
+    },
+    [accessToken, onDeleted, t]
+  );
 
   const columns = [
     t("Encuesta", "Survey"),
@@ -187,15 +241,79 @@ export function SurveysTable({
                   {/* Updated */}
                   <span className="text-mist">{t(s.updatedAt.es, s.updatedAt.en)}</span>
                   {/* Row menu */}
-                  <button
-                    type="button"
-                    aria-label={t(`Acciones para ${s.name}`, `Actions for ${s.name}`)}
-                    title={t("Acciones", "Actions")}
-                    onClick={(e) => e.stopPropagation()}
-                    className="flex size-8 items-center justify-center rounded-lg text-mist transition-colors hover:bg-card hover:text-fg"
-                  >
-                    <MoreHorizontal className="size-4" />
-                  </button>
+                  <div className="relative">
+                    <button
+                      type="button"
+                      aria-label={t(`Acciones para ${s.name}`, `Actions for ${s.name}`)}
+                      title={t("Acciones", "Actions")}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (menuAbiertoId === s.id) {
+                          setMenuAbiertoId(null);
+                          setConfirmandoId(null);
+                          setErrorEliminar(null);
+                        } else {
+                          setMenuAbiertoId(s.id);
+                          setConfirmandoId(null);
+                          setErrorEliminar(null);
+                        }
+                      }}
+                      className="flex size-8 items-center justify-center rounded-lg text-mist transition-colors hover:bg-card hover:text-fg"
+                    >
+                      <MoreHorizontal className="size-4" />
+                    </button>
+
+                    {menuAbiertoId === s.id && (
+                      <div
+                        ref={menuRef}
+                        onClick={(e) => e.stopPropagation()}
+                        className="absolute right-0 top-full z-20 mt-1 w-64 rounded-lg border border-edge bg-card p-1.5 shadow-lg"
+                      >
+                        {confirmandoId === s.id ? (
+                          <div className="p-2">
+                            <p className="text-xs leading-relaxed text-fg">
+                              {t(
+                                `¿Eliminar "${s.name}"? Se borra la encuesta y las respuestas de todos los participantes. Esta acción no se puede deshacer.`,
+                                `Delete "${s.name}"? This removes the survey and every participant's answers. This can't be undone.`
+                              )}
+                            </p>
+                            {errorEliminar && (
+                              <p className="mt-2 text-xs text-red-400">{errorEliminar}</p>
+                            )}
+                            <div className="mt-2.5 flex items-center justify-end gap-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setConfirmandoId(null);
+                                  setErrorEliminar(null);
+                                }}
+                                disabled={eliminandoId === s.id}
+                                className="rounded-md px-2.5 py-1.5 text-xs font-medium text-mist hover:text-fg disabled:opacity-50"
+                              >
+                                {t("Cancelar", "Cancel")}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => eliminarEncuesta(s.id)}
+                                disabled={eliminandoId === s.id}
+                                className="rounded-md bg-red-500/15 px-2.5 py-1.5 text-xs font-semibold text-red-400 transition-colors hover:bg-red-500/25 disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                {eliminandoId === s.id ? t("Eliminando…", "Deleting…") : t("Sí, eliminar", "Yes, delete")}
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setConfirmandoId(s.id)}
+                            className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-xs font-medium text-red-400 transition-colors hover:bg-red-500/10"
+                          >
+                            <Trash2 className="size-3.5" /> {t("Eliminar encuesta", "Delete survey")}
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>

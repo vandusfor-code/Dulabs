@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import { resolverMiembroEquipo } from "@/lib/team";
+import { resolverMiembroEquipo, requireRol } from "@/lib/team";
 import { detailFromConfig, questionsDataFromConfig, type SurveyConfigRow, type SurveySessionRow } from "@/lib/survey-stats";
 
 export const runtime = "nodejs";
@@ -73,4 +73,50 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     questionsData: questionsDataFromConfig(configRow, sesiones),
     participantes,
   });
+}
+
+// Elimina POR COMPLETO la encuesta de un número: la configuración
+// (dulabs_survey_bot_config) y el progreso de todos sus participantes
+// (dulabs_survey_sessions) — no hay soft-delete ni papelera. No borra el
+// número de WhatsApp en sí (dulabs_clientes_config), solo su encuesta.
+export async function DELETE(request: NextRequest, { params }: { params: Promise<{ phoneNumberId: string }> }) {
+  const { phoneNumberId } = await params;
+
+  const authHeader = request.headers.get("authorization") ?? "";
+  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
+  if (!token) return Response.json({ error: "Falta el token de sesión" }, { status: 401 });
+
+  const supabase = supabaseAdmin();
+  const { data: userData, error: userError } = await supabase.auth.getUser(token);
+  if (userError || !userData.user) return Response.json({ error: "Sesión inválida" }, { status: 401 });
+  const miembro = await resolverMiembroEquipo(supabase, userData.user.id);
+  if (!requireRol(miembro, ["admin"])) {
+    return Response.json({ error: "No tienes permiso para esta acción" }, { status: 403 });
+  }
+
+  const { data: cliente } = await supabase
+    .from("dulabs_clientes_config")
+    .select("phone_number_id")
+    .eq("phone_number_id", phoneNumberId)
+    .eq("id_tenant", miembro.tenantId)
+    .maybeSingle();
+  if (!cliente) return Response.json({ error: "Número no encontrado" }, { status: 404 });
+
+  const { error: sesionesError } = await supabase
+    .from("dulabs_survey_sessions")
+    .delete()
+    .eq("phone_number_id", phoneNumberId);
+  if (sesionesError) {
+    return Response.json({ error: `No se pudo eliminar: ${sesionesError.message}` }, { status: 503 });
+  }
+
+  const { error: configError } = await supabase
+    .from("dulabs_survey_bot_config")
+    .delete()
+    .eq("phone_number_id", phoneNumberId);
+  if (configError) {
+    return Response.json({ error: `No se pudo eliminar: ${configError.message}` }, { status: 503 });
+  }
+
+  return Response.json({ success: true });
 }
