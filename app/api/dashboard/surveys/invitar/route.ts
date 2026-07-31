@@ -6,6 +6,7 @@ import { enviarTexto, dentroVentana24h } from "@/lib/whatsapp";
 import { enviarPlantilla, consultarEstadoPlantilla } from "@/lib/meta-templates";
 import { getSurveyBot, createSessionRow } from "@/lib/survey-bot-store";
 import { inviteSurvey } from "@/lib/survey-engine";
+import { planDelTenant } from "@/lib/plan-limits";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -60,6 +61,16 @@ export async function POST(request: NextRequest) {
   const { phone_number_id, destinatarios } = body;
   if (!phone_number_id || !destinatarios?.length) {
     return Response.json({ error: "Faltan 'phone_number_id' o 'destinatarios'" }, { status: 400 });
+  }
+
+  const plan = await planDelTenant(supabase, miembro.tenantId);
+  if (plan.limites.contactosPorCampana !== null && destinatarios.length > plan.limites.contactosPorCampana) {
+    return Response.json(
+      {
+        error: `Tu plan ${plan.nombre} permite máximo ${plan.limites.contactosPorCampana.toLocaleString("es-CO")} contactos por envío (enviaste ${destinatarios.length.toLocaleString("es-CO")}). Mejora tu plan para invitar a más contactos de una vez.`,
+      },
+      { status: 400 }
+    );
   }
 
   const { data: cliente, error: clienteError } = await supabase

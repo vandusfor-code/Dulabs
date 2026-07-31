@@ -19,12 +19,12 @@ export function SummaryBar({
   estMinutes,
   totalQuestions,
   conditionalPaths,
-  completionGoal,
+  estadoLabel,
 }: {
   estMinutes: number;
   totalQuestions: number;
   conditionalPaths: number;
-  completionGoal: string;
+  estadoLabel: string;
 }) {
   const { t } = useI18n();
   return (
@@ -32,11 +32,7 @@ export function SummaryBar({
       <Item icon={Clock} label={t("Tiempo estimado", "Est. time to complete")} value={`~ ${estMinutes} min`} />
       <Item icon={MessageSquare} label={t("Total de preguntas", "Total questions")} value={String(totalQuestions)} />
       <Item icon={Share2} label={t("Rutas condicionales", "Conditional paths")} value={String(conditionalPaths)} />
-      <Item
-        icon={Users}
-        label={t("Meta de finalización", "Completion goal")}
-        value={completionGoal === "Increase response rate" ? t("Aumentar la tasa de respuesta", "Increase response rate") : completionGoal}
-      />
+      <Item icon={Users} label={t("Estado", "Status")} value={estadoLabel} />
     </div>
   );
 }

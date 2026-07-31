@@ -1,24 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { ClipboardList, RotateCcw, Send, Sparkles, ChevronDown, Check, Users } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
+import { ClipboardList, RotateCcw, Sparkles, ChevronDown, Check, Users, Send } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import type { SurveyQuestion } from "@/lib/survey-builder";
-import {
-  buildSurveyAgentSystemPrompt,
-  createSession,
-  handleMessage,
-  inviteSurvey,
-  startSurvey,
-  type EngineResult,
-  type SurveyBotConfig,
-  type SurveySession,
-} from "@/lib/survey-engine";
+import { buildSurveyAgentSystemPrompt, type SurveyBotConfig } from "@/lib/survey-engine";
+import { SurveySimulator } from "@/components/dashboard/surveys/SurveySimulator";
 
 // Forma remota (snake_case, tal cual la API/DB) — evita duplicar el mapeo en
 // cada campo del formulario; solo se convierte a SurveyBotConfig (camelCase)
-// justo antes de llamar al motor.
-interface RemoteBotConfig {
+// justo antes de llamar al motor. Compartida con el Builder de
+// /dashboard/surveys/new, que edita la misma configuración.
+export interface RemoteBotConfig {
   phone_number_id: string;
   brand_name: string;
   agent_name: string;
@@ -41,7 +35,7 @@ interface RemoteBotConfig {
   existe?: boolean;
 }
 
-function toEngineConfig(r: RemoteBotConfig): SurveyBotConfig {
+export function toEngineConfig(r: RemoteBotConfig): SurveyBotConfig {
   return {
     brandName: r.brand_name,
     agentName: r.agent_name,
@@ -54,8 +48,6 @@ function toEngineConfig(r: RemoteBotConfig): SurveyBotConfig {
     allowChangeAnswers: r.allow_change_answers,
   };
 }
-
-type ChatMsg = { role: "bot" | "user"; text: string };
 
 export function SurveyBotPanel({
   phoneNumberId,
@@ -249,10 +241,10 @@ export function SurveyBotPanel({
           </label>
 
           <p className="text-[11px] leading-relaxed text-mist">
-            {t(
-              `Encuesta activa: ${remote.questions.length} preguntas (la predeterminada de Du Labs). El constructor visual para personalizar las preguntas de este bot llega en una siguiente entrega.`,
-              `Active survey: ${remote.questions.length} questions (Du Labs' default set). The visual builder to customize this bot's questions ships in a follow-up.`
-            )}
+            {t(`Encuesta activa: ${remote.questions.length} preguntas.`, `Active survey: ${remote.questions.length} questions.`)}{" "}
+            <Link href={`/dashboard/surveys/new?phone_number_id=${phoneNumberId}`} className="font-medium text-lime-text hover:text-fg">
+              {t("Editar preguntas en Encuestas →", "Edit questions in Surveys →")}
+            </Link>
           </p>
 
           <div className="flex items-center gap-2 pt-1">
@@ -295,15 +287,28 @@ export function SurveyBotPanel({
         </div>
 
         {/* --- Simulador --- */}
-        <Simulator config={config} questions={remote.questions} />
+        <SurveySimulator config={config} questions={remote.questions} />
       </div>
     </div>
   );
 }
 
-function InvitarPanel({ phoneNumberId, accessToken }: { phoneNumberId: string; accessToken: string }) {
+export function InvitarPanel({
+  phoneNumberId,
+  accessToken,
+  prefill,
+}: {
+  phoneNumberId: string;
+  accessToken: string;
+  /**
+   * Contenido inicial del textarea (ej. contactos importados de un Excel).
+   * Para forzar que se recargue con un valor nuevo, monta este componente
+   * con una `key` distinta (ej. `key={prefill}`) — es lo que hace el Builder.
+   */
+  prefill?: string;
+}) {
   const { t } = useI18n();
-  const [destinatarios, setDestinatarios] = useState("");
+  const [destinatarios, setDestinatarios] = useState(prefill ?? "");
   const [enviando, setEnviando] = useState(false);
   const [resultado, setResultado] = useState<{ enviados: number; fallidos: { destinatario: string; error: string }[] } | string | null>(null);
 
@@ -372,128 +377,6 @@ function InvitarPanel({ phoneNumberId, accessToken }: { phoneNumberId: string; a
               )}
         </p>
       )}
-    </div>
-  );
-}
-
-interface SimState {
-  messages: ChatMsg[];
-  session: SurveySession;
-  quick: string[];
-  closed: boolean;
-}
-
-function initSim(config: SurveyBotConfig, questions: SurveyQuestion[]): SimState {
-  const closeDate = new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10);
-  const res = inviteSurvey(config, questions, createSession(closeDate));
-  return {
-    messages: res.messages.map((text): ChatMsg => ({ role: "bot", text })),
-    session: res.session,
-    quick: res.quickReplies ?? [],
-    closed: false,
-  };
-}
-
-function Simulator({ config, questions }: { config: SurveyBotConfig; questions: SurveyQuestion[] }) {
-  const { t } = useI18n();
-  const [sim, setSim] = useState<SimState>(() => initSim(config, questions));
-  const [input, setInput] = useState("");
-  const scrollRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [sim.messages]);
-
-  const reset = useCallback(() => {
-    setSim(initSim(config, questions));
-    setInput("");
-  }, [config, questions]);
-
-  const send = useCallback(
-    (text: string) => {
-      const value = text.trim();
-      if (!value || sim.closed) return;
-      setInput("");
-      const res: EngineResult =
-        sim.session.status === "invited" && /^(comenzar|s[ií]|ok|dale|listo|vamos|empezar)$/i.test(value)
-          ? startSurvey(config, questions, sim.session)
-          : handleMessage(config, questions, sim.session, value);
-      setSim((prev) => ({
-        messages: [...prev.messages, { role: "user", text: value }, ...res.messages.map((tx): ChatMsg => ({ role: "bot", text: tx }))],
-        session: res.session,
-        quick: res.quickReplies ?? [],
-        closed: res.action === "completed" || res.action === "closed",
-      }));
-    },
-    [sim.session, sim.closed, config, questions]
-  );
-
-  const answered = Object.keys(sim.session.answers).length;
-  const total = questions.filter((q) => q.type !== "message").length;
-
-  return (
-    <div className="flex flex-col rounded-xl border border-edge bg-ink">
-      <div className="flex items-center justify-between border-b border-edge px-4 py-3">
-        <div>
-          <p className="text-sm font-semibold text-fg">{t("Simulador en vivo", "Live simulator")}</p>
-          <p className="mt-0.5 text-[11px] text-mist">
-            {t("Estado", "Status")}: <span className="text-fg">{sim.session.status}</span> · {answered}/{total}
-          </p>
-        </div>
-        <button
-          onClick={reset}
-          className="flex items-center gap-1.5 rounded-lg border border-edge px-2.5 py-1.5 text-xs font-medium text-mist transition-colors hover:text-fg"
-        >
-          <RotateCcw className="size-3.5" /> {t("Reiniciar", "Restart")}
-        </button>
-      </div>
-
-      <div ref={scrollRef} className="h-80 space-y-2 overflow-y-auto p-3">
-        {sim.messages.map((m, i) => (
-          <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
-            <p
-              className={`max-w-[85%] whitespace-pre-line rounded-lg px-3 py-2 text-sm ${
-                m.role === "user" ? "bg-lime/15 text-fg" : "bg-card text-fg"
-              }`}
-            >
-              {m.text}
-            </p>
-          </div>
-        ))}
-      </div>
-
-      {sim.quick.length > 0 && !sim.closed && (
-        <div className="flex flex-wrap gap-1.5 px-3 pb-2">
-          {sim.quick.map((q) => (
-            <button
-              key={q}
-              onClick={() => send(q)}
-              className="rounded-full border border-edge bg-card px-2.5 py-1 text-xs text-fg transition-colors hover:border-lime/40"
-            >
-              {q}
-            </button>
-          ))}
-        </div>
-      )}
-
-      <div className="flex items-center gap-2 border-t border-edge p-3">
-        <input
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && send(input)}
-          disabled={sim.closed}
-          placeholder={sim.closed ? t("Encuesta finalizada — reinicia para probar de nuevo", "Survey ended — restart to try again") : t("Responde como lo haría un participante…", "Reply as a participant would…")}
-          className="w-full rounded-lg border border-edge bg-card px-3 py-2 text-sm text-fg outline-none focus:border-lime/50 disabled:opacity-50"
-        />
-        <button
-          onClick={() => send(input)}
-          disabled={sim.closed || !input.trim()}
-          className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-lime text-lime-fg transition-opacity hover:opacity-90 disabled:opacity-50"
-          aria-label={t("Enviar", "Send")}
-        >
-          <Send className="size-4" />
-        </button>
-      </div>
     </div>
   );
 }

@@ -1,15 +1,12 @@
 /**
  * Survey Detail — modelo de resultados de una encuesta (pantalla "Resumen").
  *
- * Alineado con DATA_AND_LOGIC.md del handoff. Es la referencia para el backend
- * real; por ahora la UI se alimenta de una fixture y de derivaciones sobre los
- * resúmenes demo del dashboard. Sin persistencia, sin motor, sin Meta.
+ * Los datos reales los arma lib/survey-stats.ts (detailFromConfig) a partir
+ * de dulabs_survey_bot_config + dulabs_survey_sessions.
  *
  * Regla de cuentas: los buckets de `results` son mutuamente excluyentes y su
  * suma es exactamente `sent`.
  */
-
-import { surveyDashboardDemo } from "@/lib/surveys";
 
 export type SurveyParticipantStatus =
   | "completed"
@@ -104,80 +101,3 @@ export function formatUpdatedAt(iso: string, lang: "es" | "en"): string {
   return `${Number(day)} ${MONTHS[lang][Number(mon) - 1]} ${y}, ${hh}:${mm}`;
 }
 
-// ---------- Fixtures + resolución por id ----------
-
-/** Fixture real entregada en el handoff (encuesta de satisfacción). */
-const FIXTURE_SATISFACCION: SurveyDetail = {
-  id: "srv-satisfaccion",
-  name: "Encuesta satisfacción servicios",
-  status: "active",
-  channel: "whatsapp",
-  service: "Crédito Social",
-  questionCount: 15,
-  startDate: "2026-06-01",
-  endDate: "2026-06-30",
-  sent: 1000,
-  started: 782,
-  updatedAt: "2026-07-28T14:35:00-05:00",
-  results: [
-    { status: "completed", count: 691 },
-    { status: "no_response", count: 87 },
-    { status: "abandoned", count: 54 },
-    { status: "resume_later", count: 42 },
-    { status: "declined", count: 38 },
-    { status: "undelivered", count: 35 },
-    { status: "in_progress", count: 53 },
-  ],
-};
-
-const FIXTURES: Record<string, SurveyDetail> = {
-  [FIXTURE_SATISFACCION.id]: FIXTURE_SATISFACCION,
-};
-
-/** Proporciones de la fixture para repartir "no efectivas" en encuestas derivadas. */
-const NON_COMPLETED_RATIOS: { status: SurveyParticipantStatus; weight: number }[] = FIXTURE_SATISFACCION.results
-  .filter((r) => r.status !== "completed")
-  .map((r) => ({ status: r.status, weight: r.count }));
-
-/**
- * Deriva un SurveyDetail a partir del resumen demo del dashboard (números
- * reales ya existentes), repartiendo las "no efectivas" según las proporciones
- * de la fixture. No inventa métricas nuevas: solo distribuye las existentes.
- */
-function deriveFromSummary(id: string): SurveyDetail | null {
-  const s = surveyDashboardDemo.surveys.find((x) => x.id === id);
-  if (!s) return null;
-
-  const nonEffective = Math.max(0, s.sent - s.completed);
-  const totalWeight = NON_COMPLETED_RATIOS.reduce((acc, r) => acc + r.weight, 0) || 1;
-
-  const raw = NON_COMPLETED_RATIOS.map((r) => ({
-    status: r.status,
-    count: Math.floor((nonEffective * r.weight) / totalWeight),
-  }));
-  // Ajuste de redondeo para que la suma sea exactamente nonEffective.
-  let assigned = raw.reduce((acc, r) => acc + r.count, 0);
-  let i = 0;
-  while (assigned < nonEffective && raw.length > 0) {
-    raw[i % raw.length].count += 1;
-    assigned += 1;
-    i += 1;
-  }
-
-  return {
-    id: s.id,
-    name: s.name,
-    status: s.status === "paused" || s.status === "archived" ? "paused" : s.status,
-    channel: "whatsapp",
-    questionCount: s.questionCount,
-    sent: s.sent,
-    started: s.started,
-    updatedAt: FIXTURE_SATISFACCION.updatedAt,
-    results: [{ status: "completed" as const, count: s.completed }, ...raw],
-  };
-}
-
-/** Resuelve el detalle de una encuesta por id (fixture real o derivada). */
-export function getSurveyDetail(id: string): SurveyDetail | null {
-  return FIXTURES[id] ?? deriveFromSummary(id);
-}

@@ -1,12 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { getSurveyQuestions } from "@/lib/survey-questions";
+import { useState } from "react";
+import type { SurveyQuestionsData } from "@/lib/survey-questions";
 import { QuestionNavigator } from "./QuestionNavigator";
 import { QuestionAnalyticsPanel } from "./QuestionAnalyticsPanel";
 
-export function QuestionsTab({ surveyId, onToast }: { surveyId: string; onToast: (msg: string) => void }) {
-  const data = useMemo(() => getSurveyQuestions(surveyId), [surveyId]);
+export function QuestionsTab({ data, onToast }: { data: SurveyQuestionsData; onToast: (msg: string) => void }) {
   const { questions, analytics, completed } = data;
 
   // Selección inicial: 3ª pregunta (como el mockup) o la primera disponible.

@@ -1,9 +1,10 @@
 /**
- * Survey Builder — modelo de la definición de una encuesta (borrador).
+ * Survey Builder — modelo de la definición de una encuesta.
  *
- * Alineado con ARCHITECTURE.md del handoff. Es la referencia para el backend
- * real (tablas `surveys` / `survey_questions`), pero por ahora solo alimenta la
- * UI del constructor con estado local. No hay persistencia ni motor todavía.
+ * `SurveyQuestion` es la fuente única de verdad del tipo de pregunta: lo usa
+ * tanto el Builder de /dashboard/surveys/new como el motor real del bot
+ * (lib/survey-engine.ts la importa directamente) y se persiste tal cual en
+ * la columna `questions` (jsonb) de `dulabs_survey_bot_config`.
  */
 
 export type QuestionType =
@@ -27,19 +28,6 @@ export interface SurveyQuestion {
   /** rating_* / nps_* */
   minLabel?: string;
   maxLabel?: string;
-}
-
-export type SurveyDraftStatus = "draft" | "active" | "paused" | "completed" | "archived";
-
-export interface SurveyDraft {
-  id: string;
-  name: string;
-  status: SurveyDraftStatus;
-  /** Mensaje de bienvenida que abre la conversación en WhatsApp. */
-  greeting: string;
-  questions: SurveyQuestion[];
-  conditionalPaths: number;
-  completionGoal: string;
 }
 
 /** Tipos que se responden con una escala numérica. */
@@ -165,134 +153,3 @@ export function createBlankQuestion(): SurveyQuestion {
   };
 }
 
-/** Borrador de demostración (encuesta de satisfacción Cofrem — 18 preguntas). */
-export function createDemoDraft(): SurveyDraft {
-  const q = (partial: Omit<SurveyQuestion, "id">): SurveyQuestion => ({ id: newQuestionId(), ...partial });
-  return {
-    id: "srv-cofrem-credito-social",
-    name: "Crédito Social Cofrem",
-    status: "draft",
-    greeting:
-      "Hola Duvan 👋\nQueremos conocer tu experiencia con nuestro servicio Crédito Social.\nSon 18 preguntas rápidas y tus respuestas nos ayudan a mejorar.",
-    conditionalPaths: 2,
-    completionGoal: "Increase response rate",
-    questions: [
-      q({
-        type: "single_choice",
-        text: "Municipio donde recibió el servicio",
-        required: true,
-        options: ["Armenia", "Calarcá", "Montenegro", "La Tebaida", "Circasia", "Otro"],
-      }),
-      q({
-        type: "single_choice",
-        text: "¿A través de qué medio se enteró del servicio Crédito Social Cofrem?",
-        required: true,
-        options: ["Redes sociales", "Recomendación", "Página web", "En la oficina", "Otro"],
-      }),
-      q({
-        type: "rating_1_10",
-        text: "¿Cómo califica la comodidad y adecuación de nuestras salas de espera y áreas de atención?",
-        required: true,
-        minLabel: "Muy deficiente",
-        maxLabel: "Excelente",
-        helpText: "Califique siendo 1 muy deficiente y 10 excelente",
-      }),
-      q({
-        type: "rating_1_10",
-        text: "¿Sintió que los módulos de atención ofrecían la privacidad necesaria para tratar sus trámites?",
-        required: true,
-        minLabel: "Nada de acuerdo",
-        maxLabel: "Totalmente de acuerdo",
-      }),
-      q({
-        type: "rating_1_10",
-        text: "¿Cómo califica la claridad de la información proporcionada por nuestros asesores?",
-        required: true,
-        minLabel: "Muy deficiente",
-        maxLabel: "Excelente",
-      }),
-      q({
-        type: "rating_1_10",
-        text: "¿Cómo califica la actitud y disposición de nuestros asesores para ayudarle?",
-        required: true,
-        minLabel: "Muy deficiente",
-        maxLabel: "Excelente",
-      }),
-      q({
-        type: "rating_1_10",
-        text: "¿Cómo califica el tiempo de espera para ser atendido?",
-        required: true,
-        minLabel: "Muy largo",
-        maxLabel: "Muy corto",
-      }),
-      q({
-        type: "rating_1_10",
-        text: "¿Cómo califica la agilidad en la solución de su solicitud?",
-        required: true,
-        minLabel: "Muy lenta",
-        maxLabel: "Muy ágil",
-      }),
-      q({
-        type: "yes_no",
-        text: "¿Le ofrecieron información clara sobre las condiciones del Crédito Social?",
-        required: true,
-      }),
-      q({
-        type: "rating_1_10",
-        text: "¿Cómo califica la limpieza y presentación de nuestras instalaciones?",
-        required: true,
-        minLabel: "Muy deficiente",
-        maxLabel: "Excelente",
-      }),
-      q({
-        type: "rating_1_5",
-        text: "¿Qué tan satisfecho quedó con la atención recibida en general?",
-        required: true,
-        minLabel: "Nada satisfecho",
-        maxLabel: "Muy satisfecho",
-      }),
-      q({
-        type: "single_choice",
-        text: "¿Qué canal prefiere para futuras comunicaciones?",
-        required: false,
-        options: ["WhatsApp", "Llamada", "Correo electrónico", "SMS"],
-      }),
-      q({
-        type: "yes_no",
-        text: "¿Resolvió su trámite en una sola visita?",
-        required: true,
-      }),
-      q({
-        type: "rating_1_10",
-        text: "¿Cómo califica la facilidad para agendar su cita?",
-        required: false,
-        minLabel: "Muy difícil",
-        maxLabel: "Muy fácil",
-      }),
-      q({
-        type: "multiple_choice",
-        text: "¿Qué aspectos podríamos mejorar?",
-        required: false,
-        helpText: "Puede elegir varias opciones",
-        options: ["Tiempo de espera", "Atención del personal", "Instalaciones", "Información", "Horarios"],
-      }),
-      q({
-        type: "open_text",
-        text: "¿Qué fue lo que más valoró de su experiencia?",
-        required: false,
-      }),
-      q({
-        type: "nps_0_10",
-        text: "¿Qué tan probable es que recomiende Cofrem a un familiar o amigo?",
-        required: true,
-        minLabel: "Nada probable",
-        maxLabel: "Muy probable",
-      }),
-      q({
-        type: "open_text",
-        text: "¿Tiene algún comentario o sugerencia adicional?",
-        required: false,
-      }),
-    ],
-  };
-}
