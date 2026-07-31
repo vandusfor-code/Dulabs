@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
 import {
   Plus,
@@ -12,11 +12,15 @@ import {
   Calendar,
   Clock,
   LayoutTemplate,
+  FileUp,
+  Download,
+  Check,
 } from "lucide-react";
 import { useDashboard } from "@/lib/dashboard-session";
 import { PageHeader, Pill, StatTile } from "@/components/dashboard/shell/ui";
 import { AreaTrend } from "@/components/dashboard/shell/charts";
 import { useI18n } from "@/lib/i18n";
+import type { ContactoImportado } from "@/lib/contactos-import";
 
 type Plantilla = {
   id: number;
@@ -78,6 +82,48 @@ export default function CampanasPage() {
   const [resultadoCampana, setResultadoCampana] = useState<{ enviados: number; fallidos: number } | string | null>(
     null
   );
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [importando, setImportando] = useState(false);
+  const [propuestaContactos, setPropuestaContactos] = useState<ContactoImportado[] | null>(null);
+  const [errorImportar, setErrorImportar] = useState<string | null>(null);
+
+  const importarContactos = useCallback(
+    async (archivo: File) => {
+      if (!session) return;
+      setImportando(true);
+      setErrorImportar(null);
+      setPropuestaContactos(null);
+      try {
+        const form = new FormData();
+        form.append("archivo", archivo);
+        const res = await fetch("/api/dashboard/campanas/importar", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${session.access_token}` },
+          body: form,
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error ?? t("Error importando el archivo", "Error importing the file"));
+        setPropuestaContactos(data.contactos as ContactoImportado[]);
+      } catch (err) {
+        setErrorImportar(err instanceof Error ? err.message : String(err));
+      } finally {
+        setImportando(false);
+        if (fileInputRef.current) fileInputRef.current.value = "";
+      }
+    },
+    [session, t]
+  );
+
+  const registrarContactos = useCallback(() => {
+    if (!propuestaContactos) return;
+    const numeros = propuestaContactos.map((c) => c.telefono);
+    setDestinatarios((prev) => {
+      const previos = prev.split(/[\n,]+/).map((d) => d.trim()).filter(Boolean);
+      return [...previos, ...numeros].join("\n");
+    });
+    setPropuestaContactos(null);
+  }, [propuestaContactos]);
 
   const cargarDatos = useCallback(() => {
     if (!session) return;
@@ -188,9 +234,68 @@ export default function CampanasPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="mb-1.5 block text-xs font-medium text-mist">
-                    {t("Destinatarios (uno por línea, con indicativo de país)", "Recipients (one per line, with country code)")}
-                  </label>
+                  <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+                    <label className="text-xs font-medium text-mist">
+                      {t("Destinatarios (uno por línea, con indicativo de país)", "Recipients (one per line, with country code)")}
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept=".xlsx"
+                        className="hidden"
+                        onChange={(e) => {
+                          const f = e.target.files?.[0];
+                          if (f) importarContactos(f);
+                        }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={importando}
+                        className="flex items-center gap-1.5 rounded-lg border border-edge px-2.5 py-1.5 text-xs font-medium text-fg transition-colors hover:border-lime/40 disabled:cursor-not-allowed disabled:opacity-50"
+                        title={t("Sube un .xlsx con las columnas Teléfono / Nombre (formato oficial)", "Upload an .xlsx with Teléfono / Nombre columns (official format)")}
+                      >
+                        <FileUp className="size-3.5" /> {importando ? t("Analizando…", "Analyzing…") : t("Importar Excel", "Import Excel")}
+                      </button>
+                      <a
+                        href="/plantillas/contactos-plantilla.xlsx"
+                        download
+                        className="flex items-center gap-1.5 rounded-lg border border-edge px-2.5 py-1.5 text-xs font-medium text-fg transition-colors hover:border-lime/40"
+                      >
+                        <Download className="size-3.5" /> {t("Plantilla", "Template")}
+                      </a>
+                    </div>
+                  </div>
+
+                  {errorImportar && <p className="mb-2 text-xs text-red-400">{errorImportar}</p>}
+                  {propuestaContactos && (
+                    <div className="mb-2 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-lime/30 bg-lime/5 px-4 py-3">
+                      <p className="text-sm text-fg">
+                        {t(
+                          `Se encontraron ${propuestaContactos.length} contactos. ¿Los registro?`,
+                          `Found ${propuestaContactos.length} contacts. Register them?`
+                        )}
+                      </p>
+                      <div className="flex shrink-0 items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setPropuestaContactos(null)}
+                          className="rounded-lg px-3 py-1.5 text-xs font-medium text-mist hover:text-fg"
+                        >
+                          {t("Cancelar", "Cancel")}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={registrarContactos}
+                          className="flex items-center gap-2 rounded-lg bg-lime px-3.5 py-1.5 text-xs font-semibold text-lime-fg hover:opacity-90"
+                        >
+                          <Check className="size-3.5" /> {t("Registrar", "Register")}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
                   <textarea
                     required
                     rows={5}

@@ -31,6 +31,48 @@ export function celdaATexto(valor: ExcelJS.CellValue): string {
   return String(valor);
 }
 
+export function normalizarEncabezado(s: string): string {
+  return s
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+/** Mapea encabezado normalizado (fila 1) -> número de columna. */
+export function mapearColumnas(hoja: ExcelJS.Worksheet): Map<string, number> {
+  const mapa = new Map<string, number>();
+  hoja.getRow(1).eachCell({ includeEmpty: false }, (celda, colNumber) => {
+    const texto = normalizarEncabezado(celdaATexto(celda.value));
+    if (texto) mapa.set(texto, colNumber);
+  });
+  return mapa;
+}
+
+export function buscarHoja(libro: ExcelJS.Workbook, contiene: string): ExcelJS.Worksheet | undefined {
+  return libro.worksheets.find((h) => normalizarEncabezado(h.name).includes(contiene));
+}
+
+// Google Sheets/Excel muestran un teléfono largo tecleado en una celda
+// numérica en notación científica (ej. "5,73182E+11") si la columna no está
+// formateada como texto — el valor interno sigue siendo el número exacto,
+// así que String(numero) ya da el teléfono completo. El riesgo real es si la
+// celda llega como STRING con esa misma notación (algunos exportadores
+// "hornean" el texto mostrado en vez del número): un simple
+// `.replace(/\D/g, "")` ahí mezclaría mantisa y exponente en un teléfono
+// distinto y válido en apariencia (ej. "5.73182E+11" -> "57318211"), en vez
+// de fallar visiblemente. Se detecta ese patrón y se reconstruye el número
+// real antes de limpiar dígitos.
+export function telefonoDeCelda(valor: ExcelJS.CellValue): string {
+  if (typeof valor === "number") return String(Math.trunc(valor));
+  const texto = celdaATexto(valor).trim();
+  if (/^\d+(\.\d+)?[eE][+-]?\d+$/.test(texto)) {
+    const numero = Number(texto);
+    if (Number.isFinite(numero)) return String(Math.trunc(numero));
+  }
+  return texto;
+}
+
 export function filaACsv(valores: ExcelJS.CellValue[]): string {
   // exceljs indexa las filas desde 1; el índice 0 de row.values viene vacío.
   return valores
