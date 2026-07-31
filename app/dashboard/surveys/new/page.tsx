@@ -121,6 +121,13 @@ function SurveyEditor({
   const [toast, setToast] = useState<string | null>(null);
   const [mostrarSimulador, setMostrarSimulador] = useState(false);
 
+  // Instantánea de lo que YA está publicado en producción (tal como llegó del
+  // GET, antes de cualquier edición local) — sirve para detectar si un
+  // guardado está a punto de reducir/vaciar una encuesta que ya está activa,
+  // y pedir confirmación antes de sobrescribirla en silencio.
+  const [publicado, setPublicado] = useState<{ activo: boolean; preguntas: number } | null>(null);
+  const [confirmandoSobrescritura, setConfirmandoSobrescritura] = useState<boolean | null>(null);
+
   useEffect(() => {
     fetch(`/api/dashboard/survey-bot-config?phone_number_id=${encodeURIComponent(phoneNumberId)}`, {
       headers: { Authorization: `Bearer ${accessToken}` },
@@ -129,6 +136,10 @@ function SurveyEditor({
       .then((data: RemoteBotConfig) => {
         setRemote(data);
         setSelectedId(data.questions[0]?.id ?? null);
+        setPublicado({
+          activo: data.active,
+          preguntas: data.questions.filter((q) => q.type !== "message").length,
+        });
       })
       .finally(() => setCargando(false));
   }, [phoneNumberId, accessToken]);
@@ -186,18 +197,9 @@ function SurveyEditor({
 
   const set = <K extends keyof RemoteBotConfig>(key: K, value: RemoteBotConfig[K]) => setRemote((r) => (r ? { ...r, [key]: value } : r));
 
-  const guardar = useCallback(
+  const guardarReal = useCallback(
     async (activar: boolean) => {
       if (!remote) return;
-      if (activar && questions.filter((q) => q.type !== "message").length === 0) {
-        setToast(t("Agrega al menos una pregunta antes de publicar", "Add at least one question before publishing"));
-        return;
-      }
-      if (activar && !remote.survey_name.trim()) {
-        setToast(t("Ponle un nombre a la encuesta antes de publicar (pestaña Ajustes)", "Name the survey before publishing (Settings tab)"));
-        setActiveTab("settings");
-        return;
-      }
       setGuardando(activar ? "publicar" : "borrador");
       try {
         const res = await fetch("/api/dashboard/survey-bot-config", {
@@ -208,6 +210,13 @@ function SurveyEditor({
         const data = await res.json();
         if (!res.ok) throw new Error(data.error ?? t("Error guardando", "Error saving"));
         setRemote((r) => (r ? { ...r, active: activar } : r));
+        // Este guardado ya es el nuevo "publicado" — futuras comparaciones de
+        // sobrescritura deben medirse contra esto, no contra el estado con el
+        // que se abrió el builder.
+        setPublicado({
+          activo: activar,
+          preguntas: questions.filter((q) => q.type !== "message").length,
+        });
         setToast(
           activar
             ? t("Encuesta publicada. El bot ya usa estas preguntas en producción.", "Survey published. The bot now uses these questions in production.")
@@ -220,6 +229,33 @@ function SurveyEditor({
       }
     },
     [remote, accessToken, questions, t]
+  );
+
+  const guardar = useCallback(
+    (activar: boolean) => {
+      if (!remote) return;
+      if (activar && questions.filter((q) => q.type !== "message").length === 0) {
+        setToast(t("Agrega al menos una pregunta antes de publicar", "Add at least one question before publishing"));
+        return;
+      }
+      if (activar && !remote.survey_name.trim()) {
+        setToast(t("Ponle un nombre a la encuesta antes de publicar (pestaña Ajustes)", "Name the survey before publishing (Settings tab)"));
+        setActiveTab("settings");
+        return;
+      }
+      // Candado contra sobrescritura silenciosa: si esta encuesta YA está
+      // activa en producción y este guardado la dejaría con MENOS preguntas
+      // (por ejemplo 0, si se abrió el builder para "empezar de nuevo" sin
+      // darse cuenta de que es la MISMA encuesta del número, no una nueva),
+      // pedir confirmación explícita en vez de guardar directo.
+      const preguntasActuales = questions.filter((q) => q.type !== "message").length;
+      if (publicado?.activo && preguntasActuales < publicado.preguntas) {
+        setConfirmandoSobrescritura(activar);
+        return;
+      }
+      guardarReal(activar);
+    },
+    [remote, questions, t, guardarReal, publicado]
   );
 
   // --- Importar desde Excel ---
@@ -644,6 +680,46 @@ function SurveyEditor({
       {toast && (
         <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-lg border border-edge bg-card px-4 py-2.5 text-sm text-fg shadow-xl" role="status">
           {toast}
+        </div>
+      )}
+
+      {/* Confirmación antes de sobrescribir una encuesta activa con menos preguntas */}
+      {confirmandoSobrescritura !== null && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          onClick={() => setConfirmandoSobrescritura(null)}
+        >
+          <div className="w-full max-w-md rounded-xl border border-edge bg-card p-5" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-sm font-semibold text-fg">
+              {t("Esta encuesta ya está activa en producción", "This survey is already live in production")}
+            </h3>
+            <p className="mt-2 text-sm leading-relaxed text-mist">
+              {t(
+                `Ahora mismo tiene ${publicado?.preguntas ?? 0} preguntas y está respondiendo a clientes. Guardar así la dejará con ${questions.filter((q) => q.type !== "message").length} preguntas${confirmandoSobrescritura ? "" : " y la pasará a borrador (dejará de responder)"}. Esto no se puede deshacer.`,
+                `Right now it has ${publicado?.preguntas ?? 0} questions and is replying to customers. Saving now will leave it with ${questions.filter((q) => q.type !== "message").length} questions${confirmandoSobrescritura ? "" : " and switch it to draft (it will stop replying)"}. This can't be undone.`
+              )}
+            </p>
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setConfirmandoSobrescritura(null)}
+                className="rounded-lg px-3.5 py-2 text-sm font-medium text-mist hover:text-fg"
+              >
+                {t("Cancelar", "Cancel")}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const activar = confirmandoSobrescritura;
+                  setConfirmandoSobrescritura(null);
+                  guardarReal(activar);
+                }}
+                className="rounded-lg bg-red-500/15 px-3.5 py-2 text-sm font-semibold text-red-400 transition-colors hover:bg-red-500/25"
+              >
+                {t("Sí, guardar así", "Yes, save anyway")}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

@@ -85,7 +85,7 @@ export async function POST(request: NextRequest) {
   const bot = await getSurveyBot(supabase, phone_number_id);
   if (!bot) {
     return Response.json(
-      { error: "Este número no tiene el bot de encuestas activo. Configúralo en Agentes de IA → Bot de encuestas." },
+      { error: "Este número no tiene una encuesta publicada. Ve a Encuestas → abre (o crea) la encuesta de este número, agrega preguntas y presiona \"Publicar encuesta\"." },
       { status: 400 }
     );
   }
