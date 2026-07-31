@@ -1,9 +1,14 @@
 import ExcelJS from "exceljs";
-import { PDFParse } from "pdf-parse";
 
 // Extractor de texto compartido para archivos subidos (base de conocimiento
 // de agentes, importación de encuestas, etc.): Excel/CSV se aplana a texto
 // tipo CSV por hoja, PDF se extrae con pdf-parse.
+//
+// "pdf-parse" se importa de forma perezosa (dentro de extraerTexto, nunca al
+// nivel del módulo): su dependencia pdfjs-dist referencia DOMMatrix al
+// evaluarse, que no existe en el runtime serverless de Vercel (es una API de
+// navegador) — un import estático tumba con un ReferenceError CUALQUIER ruta
+// que solo importe este archivo, incluso si nunca procesa un PDF.
 export const TAMANO_MAXIMO_BYTES = 4 * 1024 * 1024; // 4 MB
 // .xls (binario legacy) ya no se soporta — exceljs no lo lee. Cualquiera con
 // un .xls real lo puede volver a guardar como .xlsx en un clic.
@@ -48,6 +53,7 @@ export async function cargarLibroExcel(nombreArchivo: string, buffer: Buffer): P
 export async function extraerTexto(archivo: File, buffer: Buffer): Promise<string> {
   const ext = extension(archivo.name);
   if (ext === "pdf") {
+    const { PDFParse } = await import("pdf-parse");
     const parser = new PDFParse({ data: buffer });
     try {
       const resultado = await parser.getText();
