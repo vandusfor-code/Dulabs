@@ -481,22 +481,50 @@ function SurveyEditor({
               <Field
                 label={t("Nombre de la encuesta", "Survey name")}
                 hint={t(
-                  "Ej. \"Encuesta de satisfacción Q3\". Es el nombre que ves en la lista de Encuestas y llena {{nombre_encuesta}} en el mensaje de invitación de WhatsApp — distinto del nombre de tu empresa.",
-                  "E.g. \"Q3 satisfaction survey\". This is the name shown in the Surveys list and fills {{nombre_encuesta}} in the WhatsApp invitation message — different from your company name."
+                  "Ej. \"Encuesta de satisfacción Q3\". Es el nombre que ves en la lista de Encuestas y llena {{nombre_encuesta}} en la plantilla de invitación de Meta — distinto del nombre de tu empresa.",
+                  "E.g. \"Q3 satisfaction survey\". This is the name shown in the Surveys list and fills {{nombre_encuesta}} in Meta's invitation template — different from your company name."
                 )}
               >
-                <input
-                  value={remote.survey_name}
-                  maxLength={60}
-                  onChange={(e) => set("survey_name", e.target.value)}
-                  placeholder={t("Ej. Encuesta de satisfacción Q3", "e.g. Q3 satisfaction survey")}
-                  className={inputCls}
-                />
+                <div className="flex items-center gap-2">
+                  <input
+                    value={remote.survey_name}
+                    maxLength={60}
+                    onChange={(e) => set("survey_name", e.target.value)}
+                    placeholder={t("Ej. Encuesta de satisfacción Q3", "e.g. Q3 satisfaction survey")}
+                    className={inputCls}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => guardar(false)}
+                    disabled={guardando !== null}
+                    title={t("Guardar nombre", "Save name")}
+                    className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-edge text-mist transition-colors hover:border-lime/40 hover:text-lime-text disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <Check className="size-4" />
+                  </button>
+                </div>
               </Field>
-              <Field label={t("Nombre de la empresa o servicio", "Company or service name")} hint={t("Aparece en los mensajes del bot.", "Shown in the bot's messages.")}>
-                <input value={remote.brand_name} maxLength={60} onChange={(e) => set("brand_name", e.target.value)} className={inputCls} />
+              <Field label={t("Nombre de la empresa o servicio", "Company or service name")} hint={t("Aparece en los mensajes del bot (variable {brand}).", "Shown in the bot's messages ({brand} variable).")}>
+                <div className="flex items-center gap-2">
+                  <input value={remote.brand_name} maxLength={60} onChange={(e) => set("brand_name", e.target.value)} className={inputCls} />
+                  <button
+                    type="button"
+                    onClick={() => guardar(false)}
+                    disabled={guardando !== null}
+                    title={t("Guardar nombre", "Save name")}
+                    className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-edge text-mist transition-colors hover:border-lime/40 hover:text-lime-text disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <Check className="size-4" />
+                  </button>
+                </div>
               </Field>
-              <Field label={t("Mensaje de bienvenida", "Welcome message")} hint={t("Usa {brand} y {count}.", "Use {brand} and {count}.")}>
+              <Field
+                label={t("Mensaje de bienvenida (solo si ya te escribió en las últimas 24h)", "Welcome message (only if they already wrote to you in the last 24h)")}
+                hint={t(
+                  "Este texto SOLO se envía cuando el contacto ya te escribió antes (ventana de 24h de WhatsApp) — ahí no hace falta plantilla aprobada. Si NO te ha escrito, WhatsApp exige la plantilla de Meta aprobada (\"Plantilla Meta — invitación\" abajo); ese texto es fijo y no se edita aquí, se edita en Meta. Usa {brand} y {count}.",
+                  "This text is ONLY sent when the contact already wrote to you before (WhatsApp's 24h window) — no approved template needed there. If they haven't written to you, WhatsApp requires the approved Meta template (\"Meta template — invite\" below); that text is fixed and isn't edited here, it's edited in Meta. Use {brand} and {count}."
+                )}
+              >
                 <textarea rows={3} value={remote.intro_template} onChange={(e) => set("intro_template", e.target.value)} className={`${inputCls} resize-none`} />
               </Field>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">

@@ -142,12 +142,12 @@ export async function PATCH(request: NextRequest) {
     if (error) throw error;
     return Response.json({ success: true });
   } catch (err) {
+    // No adivinamos cuál migración falta (puede haber más de una pendiente
+    // con el tiempo) — mostramos el error real de Postgres tal cual, que
+    // normalmente ya dice qué tabla/columna no existe.
+    const mensaje = err instanceof Error ? err.message : String(err);
     return Response.json(
-      {
-        error:
-          "No se pudo guardar todavía: la tabla del bot de encuestas no existe en la base de datos. Corre la migración 20260730090000_survey_bot.sql y vuelve a intentar.",
-        detalle: err instanceof Error ? err.message : String(err),
-      },
+      { error: `No se pudo guardar: ${mensaje}` },
       { status: 503 }
     );
   }
