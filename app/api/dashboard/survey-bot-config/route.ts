@@ -126,15 +126,43 @@ export async function PATCH(request: NextRequest) {
     .maybeSingle();
   if (!cliente) return Response.json({ error: "Número no encontrado" }, { status: 404 });
 
-  const { phone_number_id: _omit, ...rest } = body;
-  void _omit;
+  // El frontend guarda reenviando el objeto completo que recibió del GET
+  // (`{...remote, active}`), que trae de vuelta campos que NO son columnas
+  // reales para escribir (el `existe` calculado) o que son de sistema (`id`
+  // identity, `id_tenant`, `created_at` de la fila original). Whitelist
+  // explícito en vez de un `...rest` a ciegas, para no reenviar nada de eso.
+  const CAMPOS_PERMITIDOS = [
+    "survey_name",
+    "brand_name",
+    "agent_name",
+    "intro_template",
+    "closing_template",
+    "decline_template",
+    "schedule_confirm_template",
+    "milestone_half",
+    "milestone_two_left",
+    "milestone_last",
+    "reminder_delay_hours",
+    "reminder_max",
+    "reminder_template",
+    "allow_change_answers",
+    "questions",
+    "close_date",
+    "invite_template_name",
+    "reminder_template_name",
+    "active",
+  ] as const satisfies readonly (keyof Body)[];
+  const cambios: Partial<Body> = {};
+  for (const campo of CAMPOS_PERMITIDOS) {
+    if (campo in body) cambios[campo] = body[campo] as never;
+  }
 
   try {
     const { error } = await supabase.from("dulabs_survey_bot_config").upsert(
       {
         id_tenant: miembro.tenantId,
         phone_number_id,
-        ...rest,
+        ...cambios,
         updated_at: new Date().toISOString(),
       },
       { onConflict: "phone_number_id" }
