@@ -267,10 +267,9 @@ function SurveyEditor({
     setToast(t(`${propuesta.preguntas.length} preguntas agregadas.`, `${propuesta.preguntas.length} questions added.`));
   }, [propuesta, questions, t]);
 
-  const destinatariosPropuestos = propuesta?.destinatarios.map((d) => (d.nombre ? `${d.telefono}, ${d.nombre}` : d.telefono)).join("\n") ?? "";
-
   const numeroActual = negocios.find((n) => n.phone_number_id === phoneNumberId) ?? null;
   const estadoLabel = !remote ? "—" : remote.active ? t("Activa", "Active") : t("Borrador", "Draft");
+  const [modoBienvenida, setModoBienvenida] = useState<"ventana24h" | "primerContacto">("ventana24h");
 
   if (cargando || !remote) {
     return <div className="flex flex-1 items-center justify-center p-10 text-sm text-mist">{t("Cargando…", "Loading…")}</div>;
@@ -336,15 +335,32 @@ function SurveyEditor({
                     <X className="size-4" />
                   </button>
                 </div>
-                {propuesta.preguntas.length > 0 && (
-                  <ul className="mt-2 max-h-32 space-y-1 overflow-y-auto text-xs text-mist">
-                    {propuesta.preguntas.map((p) => (
-                      <li key={p.id} className="truncate">
-                        • {p.text}
-                      </li>
-                    ))}
-                  </ul>
-                )}
+                <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  {propuesta.preguntas.length > 0 && (
+                    <div>
+                      <p className="font-mono text-[10.5px] uppercase tracking-widest text-mist">{t("Preguntas", "Questions")}</p>
+                      <ul className="mt-1 max-h-32 space-y-1 overflow-y-auto text-xs text-mist">
+                        {propuesta.preguntas.map((p) => (
+                          <li key={p.id} className="truncate">
+                            • {p.text}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {propuesta.destinatarios.length > 0 && (
+                    <div>
+                      <p className="font-mono text-[10.5px] uppercase tracking-widest text-mist">{t("Contactos", "Contacts")}</p>
+                      <ul className="mt-1 max-h-32 space-y-1 overflow-y-auto text-xs text-mist">
+                        {propuesta.destinatarios.map((d, i) => (
+                          <li key={`${d.telefono}-${i}`} className="truncate">
+                            • {d.nombre ? `${d.nombre} — ${d.telefono}` : d.telefono}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
                 <div className="mt-3 flex flex-wrap items-center gap-2">
                   {propuesta.preguntas.length > 0 && (
                     <button onClick={aplicarPreguntas} className="flex items-center gap-2 rounded-lg bg-lime px-3.5 py-1.5 text-xs font-semibold text-lime-fg hover:opacity-90">
@@ -356,14 +372,14 @@ function SurveyEditor({
                       onClick={() => setActiveTab("settings")}
                       className="flex items-center gap-2 rounded-lg border border-edge px-3.5 py-1.5 text-xs font-medium text-fg hover:border-lime/40"
                     >
-                      {t("Ir a Ajustes para invitar contactos →", "Go to Settings to invite contacts →")}
+                      {t("Ir a Ajustes para enviarles la encuesta →", "Go to Settings to send them the survey →")}
                     </button>
                   )}
                 </div>
                 <p className="mt-2 text-[11px] text-mist/70">
                   {t(
-                    "Revisa antes de aplicar: las preguntas quedan editables en la lista de abajo y los contactos en el textarea de Ajustes.",
-                    "Review before applying: questions stay editable in the list below and contacts in the Settings textarea."
+                    "Las preguntas quedan editables en la lista de abajo tras agregarlas. Los contactos ya quedan listos para enviar en Ajustes → Enviar invitaciones, con casilla para elegir cuáles.",
+                    "Questions stay editable in the list below once added. Contacts are ready to send in Settings → Send invitations, with a checkbox to pick which ones."
                   )}
                 </p>
               </div>
@@ -518,15 +534,53 @@ function SurveyEditor({
                   </button>
                 </div>
               </Field>
-              <Field
-                label={t("Mensaje de bienvenida (solo si ya te escribió en las últimas 24h)", "Welcome message (only if they already wrote to you in the last 24h)")}
-                hint={t(
-                  "Este texto SOLO se envía cuando el contacto ya te escribió antes (ventana de 24h de WhatsApp) — ahí no hace falta plantilla aprobada. Si NO te ha escrito, WhatsApp exige la plantilla de Meta aprobada (\"Plantilla Meta — invitación\" abajo); ese texto es fijo y no se edita aquí, se edita en Meta. Usa {brand} y {count}.",
-                  "This text is ONLY sent when the contact already wrote to you before (WhatsApp's 24h window) — no approved template needed there. If they haven't written to you, WhatsApp requires the approved Meta template (\"Meta template — invite\" below); that text is fixed and isn't edited here, it's edited in Meta. Use {brand} and {count}."
-                )}
-              >
-                <textarea rows={3} value={remote.intro_template} onChange={(e) => set("intro_template", e.target.value)} className={`${inputCls} resize-none`} />
-              </Field>
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-mist">{t("¿Cómo le llega la invitación a tu contacto?", "How does the invitation reach your contact?")}</label>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setModoBienvenida("ventana24h")}
+                    className={`flex-1 rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${modoBienvenida === "ventana24h" ? "border-lime/50 bg-lime/10 text-lime-text" : "border-edge text-mist hover:text-fg"}`}
+                  >
+                    {t("Ya te escribió (< 24h)", "Already wrote to you (< 24h)")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setModoBienvenida("primerContacto")}
+                    className={`flex-1 rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${modoBienvenida === "primerContacto" ? "border-lime/50 bg-lime/10 text-lime-text" : "border-edge text-mist hover:text-fg"}`}
+                  >
+                    {t("Primer contacto", "First contact")}
+                  </button>
+                </div>
+                <p className="mt-1.5 text-[10.5px] leading-relaxed text-mist/70">
+                  {t(
+                    "Esto es solo para que veas cuál mensaje aplica a cuál caso — Du Labs ya elige automáticamente la ruta correcta por cada contacto al enviar. Nunca se mandan los dos.",
+                    "This is just so you can see which message applies to which case — Du Labs already picks the right path automatically per contact when sending. Never both."
+                  )}
+                </p>
+              </div>
+
+              {modoBienvenida === "ventana24h" ? (
+                <Field
+                  label={t("Mensaje de bienvenida", "Welcome message")}
+                  hint={t("Texto libre que TÚ controlas — se envía solo cuando el contacto ya te escribió antes. Usa {brand} y {count}.", "Free text you control — sent only when the contact already wrote to you before. Use {brand} and {count}.")}
+                >
+                  <textarea rows={3} value={remote.intro_template} onChange={(e) => set("intro_template", e.target.value)} className={`${inputCls} resize-none`} />
+                </Field>
+              ) : (
+                <div className="rounded-lg border border-edge bg-ink p-3">
+                  <p className="text-sm font-medium text-fg">{t("Se usa tu plantilla aprobada de Meta", "Your approved Meta template is used")}</p>
+                  <p className="mt-1 text-xs leading-relaxed text-mist">
+                    {t(
+                      `Plantilla configurada: "${remote.invite_template_name || "—"}". Su texto es fijo — no se edita aquí, se edita/aprueba en tu Administrador de Meta. Esta pantalla solo le manda las variables {{nombre_cliente}} y {{nombre_encuesta}}.`,
+                      `Configured template: "${remote.invite_template_name || "—"}". Its text is fixed — it's not edited here, it's edited/approved in your Meta Business Manager. This screen only sends it the {{nombre_cliente}} and {{nombre_encuesta}} variables.`
+                    )}
+                  </p>
+                  <Link href="/dashboard/plantillas" className="mt-2 inline-block text-xs font-medium text-lime-text hover:text-fg">
+                    {t("Ver mis plantillas →", "View my templates →")}
+                  </Link>
+                </div>
+              )}
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <Field label={t("Fecha de cierre de la encuesta", "Survey close date")}>
                   <input type="date" value={remote.close_date ?? ""} onChange={(e) => set("close_date", e.target.value || null)} className={inputCls} />
@@ -547,7 +601,12 @@ function SurveyEditor({
                 </Field>
               </div>
 
-              <InvitarPanel key={destinatariosPropuestos} phoneNumberId={phoneNumberId} accessToken={accessToken} prefill={destinatariosPropuestos} />
+              <InvitarPanel
+                key={JSON.stringify(propuesta?.destinatarios ?? [])}
+                phoneNumberId={phoneNumberId}
+                accessToken={accessToken}
+                contactosSugeridos={propuesta?.destinatarios ?? []}
+              />
             </div>
           )}
         </div>

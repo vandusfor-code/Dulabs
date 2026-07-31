@@ -139,12 +139,15 @@ export async function PATCH(request: NextRequest) {
       },
       { onConflict: "phone_number_id" }
     );
-    if (error) throw error;
+    // El error de Supabase (PostgrestError) es un objeto plano, no una
+    // instancia de Error — se usa error.message directo en vez de lanzarlo y
+    // recapturarlo (throw + `err instanceof Error` con un objeto plano cae a
+    // String(err), que da "[object Object]" y esconde el mensaje real).
+    if (error) {
+      return Response.json({ error: `No se pudo guardar: ${error.message}` }, { status: 503 });
+    }
     return Response.json({ success: true });
   } catch (err) {
-    // No adivinamos cuál migración falta (puede haber más de una pendiente
-    // con el tiempo) — mostramos el error real de Postgres tal cual, que
-    // normalmente ya dice qué tabla/columna no existe.
     const mensaje = err instanceof Error ? err.message : String(err);
     return Response.json(
       { error: `No se pudo guardar: ${mensaje}` },
