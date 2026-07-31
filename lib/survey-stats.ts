@@ -17,6 +17,7 @@ import type { SurveyQuestionDef, SurveyQuestionType, QuestionAnalytics, OptionAg
 export interface SurveyConfigRow {
   phone_number_id: string;
   nombre_negocio: string;
+  survey_name: string;
   brand_name: string;
   questions: SurveyQuestion[];
   close_date: string | null;
@@ -182,7 +183,7 @@ export function summaryFromConfig(config: SurveyConfigRow, sessions: SurveySessi
           : { es: actualizada.toLocaleDateString("es-CO"), en: actualizada.toLocaleDateString("en-US") };
   return {
     id: config.phone_number_id,
-    name: config.brand_name || config.nombre_negocio,
+    name: config.survey_name || config.brand_name || config.nombre_negocio,
     status: statusFromConfig(config),
     questionCount: config.questions.filter((q) => q.type !== "message").length,
     sent,

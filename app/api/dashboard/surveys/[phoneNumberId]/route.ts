@@ -47,6 +47,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   const configRow: SurveyConfigRow = {
     phone_number_id: config.phone_number_id,
     nombre_negocio: cliente.nombre_negocio,
+    survey_name: config.survey_name ?? "",
     brand_name: config.brand_name,
     questions: config.questions,
     close_date: config.close_date,

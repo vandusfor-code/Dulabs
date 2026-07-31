@@ -2,16 +2,20 @@ import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { resolverMiembroEquipo, requireRol } from "@/lib/team";
 import { descifrarSecreto } from "@/lib/crypto";
-import { extraerTexto, TAMANO_MAXIMO_BYTES } from "@/lib/archivo-texto";
-import { extraerEncuestaDeTexto } from "@/lib/survey-import";
+import { extraerTexto, cargarLibroExcel, TAMANO_MAXIMO_BYTES } from "@/lib/archivo-texto";
+import { extraerEncuestaDeTexto, parseEncuestaEstructurada } from "@/lib/survey-import";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-// Sube un Excel/CSV con preguntas y/o contactos y devuelve una PROPUESTA de
-// encuesta (preguntas + destinatarios) interpretada por la IA — para que el
-// usuario la revise y edite en el Builder antes de aplicarla. Nunca guarda
-// nada por sí sola.
+// Sube un archivo con preguntas y/o contactos y devuelve una PROPUESTA de
+// encuesta para que el usuario la revise y edite en el Builder antes de
+// aplicarla — nunca guarda nada por sí sola.
+//
+// Dos caminos: si el .xlsx sigue el formato oficial (hojas "Preguntas"/
+// "Contactos", ver lib/survey-import.ts y public/plantillas/encuesta-plantilla.xlsx)
+// se lee por columnas fijas — determinista, sin IA, no necesita API key.
+// Si no coincide (archivo libre/desordenado), se interpreta con IA.
 export async function POST(request: NextRequest) {
   const authHeader = request.headers.get("authorization") ?? "";
   const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
@@ -35,6 +39,20 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: "El archivo supera el límite de 4 MB" }, { status: 400 });
   }
 
+  const buffer = Buffer.from(await archivo.arrayBuffer());
+
+  // 1. Formato oficial: hojas "Preguntas"/"Contactos" por columnas fijas.
+  try {
+    const libro = await cargarLibroExcel(archivo.name, buffer);
+    if (libro) {
+      const estructurado = parseEncuestaEstructurada(libro);
+      if (estructurado) return Response.json(estructurado);
+    }
+  } catch (err) {
+    return Response.json({ error: err instanceof Error ? err.message : "No se pudo leer el archivo" }, { status: 400 });
+  }
+
+  // 2. Archivo libre/desordenado: interpretación por IA.
   let apiKey = process.env.ANTHROPIC_API_KEY;
   if (typeof phoneNumberId === "string" && phoneNumberId) {
     const { data: cliente } = await supabase
@@ -45,11 +63,15 @@ export async function POST(request: NextRequest) {
       .maybeSingle();
     if (cliente?.api_key_ia) apiKey = descifrarSecreto(cliente.api_key_ia);
   }
-  if (!apiKey) return Response.json({ error: "Sin API key de IA configurada" }, { status: 500 });
+  if (!apiKey) {
+    return Response.json(
+      { error: "El archivo no sigue el formato oficial (hojas 'Preguntas'/'Contactos') y no hay una API key de IA configurada para interpretarlo de otra forma." },
+      { status: 400 }
+    );
+  }
 
   let texto: string;
   try {
-    const buffer = Buffer.from(await archivo.arrayBuffer());
     texto = await extraerTexto(archivo, buffer);
   } catch (err) {
     return Response.json({ error: err instanceof Error ? err.message : "No se pudo leer el archivo" }, { status: 400 });

@@ -1,5 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
+import type ExcelJS from "exceljs";
 import type { SurveyQuestion, QuestionType } from "@/lib/survey-builder";
+import { celdaATexto } from "@/lib/archivo-texto";
 
 const MODELO = "claude-opus-4-8";
 
@@ -21,6 +23,133 @@ export interface DestinatarioExtraido {
 export interface EncuestaExtraida {
   preguntas: SurveyQuestion[];
   destinatarios: DestinatarioExtraido[];
+  /** "estructurado" = se leyó por columnas fijas (100% confiable, sin IA); "ia" = interpretado. */
+  metodo: "estructurado" | "ia";
+}
+
+// ---------------------------------------------------------------------------
+// Formato oficial (determinista, sin IA): un .xlsx con hasta dos hojas.
+//
+//   Hoja "Preguntas": columnas Pregunta | Tipo | Obligatoria | Opción 1..N
+//     Tipo acepta (sin distinguir mayúsculas/acentos): Opción única,
+//     Opción múltiple, Sí/No, Calificación 1-5, Calificación 1-10, NPS,
+//     Texto libre (o los nombres internos: single_choice, multiple_choice,
+//     yes_no, rating_1_5, rating_1_10, nps_0_10, open_text).
+//     "Opción 1", "Opción 2", ... solo se usan si Tipo es de opción.
+//
+//   Hoja "Contactos": columnas Teléfono | Nombre
+//
+// Plantilla descargable: public/plantillas/encuesta-plantilla.xlsx
+// (generada por scripts/generar-plantilla-encuesta.mjs).
+// ---------------------------------------------------------------------------
+
+function normalizarEncabezado(s: string): string {
+  return s
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+const TIPO_POR_ETIQUETA: Record<string, QuestionType> = {
+  "opcion unica": "single_choice",
+  single_choice: "single_choice",
+  "opcion multiple": "multiple_choice",
+  multiple_choice: "multiple_choice",
+  "si/no": "yes_no",
+  "si / no": "yes_no",
+  yes_no: "yes_no",
+  "calificacion 1-5": "rating_1_5",
+  rating_1_5: "rating_1_5",
+  "calificacion 1-10": "rating_1_10",
+  rating_1_10: "rating_1_10",
+  nps: "nps_0_10",
+  "nps 0-10": "nps_0_10",
+  nps_0_10: "nps_0_10",
+  "texto libre": "open_text",
+  "texto abierto": "open_text",
+  open_text: "open_text",
+};
+
+function buscarHoja(libro: ExcelJS.Workbook, contiene: string): ExcelJS.Worksheet | undefined {
+  return libro.worksheets.find((h) => normalizarEncabezado(h.name).includes(contiene));
+}
+
+/** Mapea encabezado normalizado (fila 1) -> número de columna. */
+function mapearColumnas(hoja: ExcelJS.Worksheet): Map<string, number> {
+  const mapa = new Map<string, number>();
+  hoja.getRow(1).eachCell({ includeEmpty: false }, (celda, colNumber) => {
+    const texto = normalizarEncabezado(celdaATexto(celda.value));
+    if (texto) mapa.set(texto, colNumber);
+  });
+  return mapa;
+}
+
+function parsearHojaPreguntas(hoja: ExcelJS.Worksheet): SurveyQuestion[] {
+  const columnas = mapearColumnas(hoja);
+  const colPregunta = columnas.get("pregunta");
+  const colTipo = columnas.get("tipo");
+  if (!colPregunta || !colTipo) return []; // no coincide con el formato oficial
+
+  const colObligatoria = columnas.get("obligatoria");
+  const columnasOpcion = [...columnas.entries()]
+    .filter(([clave]) => clave.startsWith("opcion"))
+    .sort((a, b) => a[1] - b[1])
+    .map(([, indice]) => indice);
+
+  const preguntas: SurveyQuestion[] = [];
+  let contador = 0;
+  hoja.eachRow((fila, numeroFila) => {
+    if (numeroFila === 1) return;
+    const texto = celdaATexto(fila.getCell(colPregunta).value).trim();
+    if (!texto) return;
+    const tipo = TIPO_POR_ETIQUETA[normalizarEncabezado(celdaATexto(fila.getCell(colTipo).value))];
+    if (!tipo) return;
+
+    contador += 1;
+    const pregunta: SurveyQuestion = {
+      id: `import-${Date.now().toString(36)}-${contador}`,
+      type: tipo,
+      text: texto,
+      required: colObligatoria ? !/^no$/i.test(celdaATexto(fila.getCell(colObligatoria).value).trim()) : true,
+    };
+    if (tipo === "single_choice" || tipo === "multiple_choice") {
+      const opciones = columnasOpcion.map((c) => celdaATexto(fila.getCell(c).value).trim()).filter(Boolean);
+      pregunta.options = opciones.length > 0 ? opciones : ["", ""];
+    }
+    preguntas.push(pregunta);
+  });
+  return preguntas;
+}
+
+function parsearHojaContactos(hoja: ExcelJS.Worksheet): DestinatarioExtraido[] {
+  const columnas = mapearColumnas(hoja);
+  const colTelefono = columnas.get("telefono");
+  if (!colTelefono) return []; // no coincide con el formato oficial
+  const colNombre = columnas.get("nombre");
+
+  const destinatarios: DestinatarioExtraido[] = [];
+  hoja.eachRow((fila, numeroFila) => {
+    if (numeroFila === 1) return;
+    const telefono = celdaATexto(fila.getCell(colTelefono).value).replace(/\D/g, "");
+    if (telefono.length < 8) return;
+    const nombre = colNombre ? celdaATexto(fila.getCell(colNombre).value).trim() || null : null;
+    destinatarios.push({ telefono, nombre });
+  });
+  return destinatarios;
+}
+
+// Lee el .xlsx buscando las hojas "Preguntas"/"Contactos" del formato
+// oficial. Determinista, sin llamar a la IA — devuelve null si el archivo no
+// tiene ninguna de las dos hojas reconocibles, para que el llamador recurra
+// a la interpretación por IA (archivos más libres/desordenados).
+export function parseEncuestaEstructurada(libro: ExcelJS.Workbook): EncuestaExtraida | null {
+  const hojaPreguntas = buscarHoja(libro, "pregunta");
+  const hojaContactos = buscarHoja(libro, "contacto");
+  const preguntas = hojaPreguntas ? parsearHojaPreguntas(hojaPreguntas) : [];
+  const destinatarios = hojaContactos ? parsearHojaContactos(hojaContactos) : [];
+  if (preguntas.length === 0 && destinatarios.length === 0) return null;
+  return { preguntas, destinatarios, metodo: "estructurado" };
 }
 
 // Interpreta el texto crudo de un Excel/CSV subido (ya aplanado por
@@ -120,5 +249,5 @@ ${textoArchivo.slice(0, 50_000)}`,
     .map((d) => ({ telefono: (d.telefono ?? "").replace(/\D/g, ""), nombre: d.nombre?.trim() || null }))
     .filter((d) => d.telefono.length >= 8);
 
-  return { preguntas, destinatarios };
+  return { preguntas, destinatarios, metodo: "ia" };
 }

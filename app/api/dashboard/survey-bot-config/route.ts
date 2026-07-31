@@ -23,6 +23,7 @@ async function usuarioYMiembro(request: NextRequest) {
 function respuestaPorDefecto(phoneNumberId: string, brandNameFallback: string) {
   return {
     phone_number_id: phoneNumberId,
+    survey_name: "",
     brand_name: DEFAULT_SURVEY_BOT_CONFIG.brandName === "nuestro servicio" ? brandNameFallback : DEFAULT_SURVEY_BOT_CONFIG.brandName,
     agent_name: DEFAULT_SURVEY_BOT_CONFIG.agentName,
     intro_template: DEFAULT_SURVEY_BOT_CONFIG.introTemplate,
@@ -79,6 +80,7 @@ export async function GET(request: NextRequest) {
 
 type Body = {
   phone_number_id?: string;
+  survey_name?: string;
   brand_name?: string;
   agent_name?: string;
   intro_template?: string;

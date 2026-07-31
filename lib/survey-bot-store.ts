@@ -35,6 +35,8 @@ export const DEFAULT_SURVEY_QUESTIONS: SurveyQuestion[] = [
 export interface StoredSurveyBot {
   tenantId: string;
   phoneNumberId: string;
+  /** Nombre propio de la encuesta (llena {{nombre_encuesta}} en la plantilla de invitación) — distinto de config.brandName (la empresa). */
+  surveyName: string;
   config: SurveyBotConfig;
   questions: SurveyQuestion[];
   closeDate: string | null;
@@ -91,6 +93,10 @@ export async function getSurveyBot(supabase: SupabaseClient, phoneNumberId: stri
     return {
       tenantId: data.id_tenant,
       phoneNumberId: data.phone_number_id,
+      // Retrocompatible: encuestas configuradas antes de que existiera este
+      // campo (survey_name = '' en la base) siguen mandando algo sensato en
+      // {{nombre_encuesta}} en vez de un valor vacío.
+      surveyName: data.survey_name || data.brand_name || DEFAULT_SURVEY_BOT_CONFIG.brandName,
       config,
       questions:
         Array.isArray(data.questions) && data.questions.length > 0

@@ -145,7 +145,7 @@ export async function POST(request: NextRequest) {
           idioma: IDIOMA_PLANTILLA,
           variables: [
             { nombre: "nombre_cliente", valor: nombre || "cliente" },
-            { nombre: "nombre_encuesta", valor: bot.config.brandName },
+            { nombre: "nombre_encuesta", valor: bot.surveyName },
           ],
         });
         await supabase.from("dulabs_mensajes_log").insert({

@@ -26,7 +26,6 @@ import {
 import { useDashboard, type Negocio } from "@/lib/dashboard-session";
 import { formatearTelefono, nombreDelAgente } from "@/lib/format";
 import { PageHeader, Pill } from "@/components/dashboard/shell/ui";
-import { SurveyBotPanel } from "@/components/dashboard/agentes/SurveyBotPanel";
 import { useI18n } from "@/lib/i18n";
 import { PLANES, resolverPlanId } from "@/lib/planes";
 
@@ -714,8 +713,6 @@ function LegadoDetail({
       />
 
       <Playground phoneNumberId={negocio.phone_number_id} nombreMostrado={nombreDelAgente(negocio)} accessToken={accessToken} />
-
-      <SurveyBotPanel phoneNumberId={negocio.phone_number_id} accessToken={accessToken} />
 
       <div className="rounded-xl border border-edge bg-card p-5">
         <div className="mb-3 flex items-center gap-2">

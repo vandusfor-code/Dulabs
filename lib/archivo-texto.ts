@@ -37,6 +37,14 @@ export function filaACsv(valores: ExcelJS.CellValue[]): string {
     .join(",");
 }
 
+/** Carga un .xlsx como workbook de ExcelJS (para parseo estructurado por columnas). null si no es .xlsx. */
+export async function cargarLibroExcel(nombreArchivo: string, buffer: Buffer): Promise<ExcelJS.Workbook | null> {
+  if (extension(nombreArchivo) !== "xlsx") return null;
+  const libro = new ExcelJS.Workbook();
+  await libro.xlsx.load(buffer as unknown as ExcelJS.Buffer);
+  return libro;
+}
+
 export async function extraerTexto(archivo: File, buffer: Buffer): Promise<string> {
   const ext = extension(archivo.name);
   if (ext === "pdf") {
@@ -52,9 +60,8 @@ export async function extraerTexto(archivo: File, buffer: Buffer): Promise<strin
     if (ext === "csv") {
       return `# ${archivo.name}\n${buffer.toString("utf8")}`;
     }
-    const libro = new ExcelJS.Workbook();
-    await libro.xlsx.load(buffer as unknown as ExcelJS.Buffer);
-    return libro.worksheets
+    const libro = await cargarLibroExcel(archivo.name, buffer);
+    return (libro?.worksheets ?? [])
       .map((hoja) => {
         const filas: string[] = [];
         hoja.eachRow((fila) => filas.push(filaACsv(fila.values as ExcelJS.CellValue[])));

@@ -84,6 +84,7 @@ export async function GET(request: NextRequest) {
   const configRows: SurveyConfigRow[] = configsConEncuesta.map((c) => ({
     phone_number_id: c.phone_number_id,
     nombre_negocio: nombrePorNumero.get(c.phone_number_id) ?? c.brand_name,
+    survey_name: c.survey_name ?? "",
     brand_name: c.brand_name,
     questions: c.questions,
     close_date: c.close_date,

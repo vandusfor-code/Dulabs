@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { ChevronRight, Save, Play, Workflow, FileUp, X, Check, MessageSquareText } from "lucide-react";
+import { ChevronRight, Save, Play, Workflow, FileUp, Download, X, Check, MessageSquareText } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import { useDashboard, type Negocio } from "@/lib/dashboard-session";
 import { createBlankQuestion, estimatedMinutes, isChoiceType, isScaleType, newQuestionId, type SurveyQuestion } from "@/lib/survey-builder";
@@ -13,7 +13,8 @@ import { WhatsAppPreview } from "@/components/dashboard/surveys/builder/WhatsApp
 import { SummaryBar } from "@/components/dashboard/surveys/builder/SummaryBar";
 import { TabPlaceholder } from "@/components/dashboard/surveys/builder/TabPlaceholder";
 import { SurveySimulator } from "@/components/dashboard/surveys/SurveySimulator";
-import { InvitarPanel, toEngineConfig, type RemoteBotConfig } from "@/components/dashboard/agentes/SurveyBotPanel";
+import { InvitarPanel } from "@/components/dashboard/surveys/InvitarPanel";
+import { toEngineConfig, type RemoteBotConfig } from "@/lib/survey-remote-config";
 import type { EncuestaExtraida } from "@/lib/survey-import";
 
 function arrayMove<T>(arr: T[], from: number, to: number): T[] {
@@ -58,9 +59,8 @@ export default function CreateSurveyPage() {
   const accessToken = session?.access_token;
 
   // Selección explícita del usuario (o precargada por ?phone_number_id= en
-  // la URL, ej. desde el enlace de SurveyBotPanel). Si el tenant solo tiene
-  // un número, se usa ese por defecto — sin guardar un estado aparte para
-  // ello, se deriva en cada render.
+  // la URL). Si el tenant solo tiene un número, se usa ese por defecto — sin
+  // guardar un estado aparte para ello, se deriva en cada render.
   const [phoneNumberIdElegido, setPhoneNumberIdElegido] = useState<string | null>(() => {
     if (typeof window === "undefined") return null;
     return new URLSearchParams(window.location.search).get("phone_number_id");
@@ -193,6 +193,11 @@ function SurveyEditor({
         setToast(t("Agrega al menos una pregunta antes de publicar", "Add at least one question before publishing"));
         return;
       }
+      if (activar && !remote.survey_name.trim()) {
+        setToast(t("Ponle un nombre a la encuesta antes de publicar (pestaña Ajustes)", "Name the survey before publishing (Settings tab)"));
+        setActiveTab("settings");
+        return;
+      }
       setGuardando(activar ? "publicar" : "borrador");
       try {
         const res = await fetch("/api/dashboard/survey-bot-config", {
@@ -277,6 +282,22 @@ function SurveyEditor({
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-edge px-4 py-3 md:px-6">
           <span className="rounded-full bg-ink px-2 py-0.5 text-xs font-medium text-mist">{estadoLabel}</span>
           <div className="flex flex-wrap items-center gap-2">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".xlsx,.csv"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) importar(f);
+              }}
+            />
+            <button type="button" onClick={() => fileInputRef.current?.click()} disabled={importando} className={actionBtn} title={t("Sube un .xlsx con el formato oficial (hojas Preguntas/Contactos) o cualquier archivo suelto — la IA arma la propuesta si no coincide.", "Upload an .xlsx with the official format (Preguntas/Contactos sheets) or any loose file — AI builds the proposal if it doesn't match.")}>
+              <FileUp className="size-4" /> {importando ? t("Analizando…", "Analyzing…") : t("Importar Excel", "Import Excel")}
+            </button>
+            <a href="/plantillas/encuesta-plantilla.xlsx" download className={actionBtn}>
+              <Download className="size-4" /> {t("Plantilla", "Template")}
+            </a>
             <button type="button" onClick={() => guardar(false)} disabled={guardando !== null} className={actionBtn}>
               <Save className="size-4" /> {guardando === "borrador" ? t("Guardando…", "Saving…") : t("Guardar borrador", "Save draft")}
             </button>
@@ -294,81 +315,73 @@ function SurveyEditor({
           </div>
         </div>
 
+        {(errorImportar || propuesta) && (
+          <div className="border-b border-edge px-4 py-3 md:px-6">
+            {errorImportar && <p className="text-xs text-red-400">{errorImportar}</p>}
+            {propuesta && (
+              <div className="rounded-xl border border-lime/30 bg-lime/5 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-sm font-medium text-fg">
+                    {propuesta.metodo === "estructurado"
+                      ? t(
+                          `Leído con la plantilla oficial: ${propuesta.preguntas.length} preguntas y ${propuesta.destinatarios.length} contactos.`,
+                          `Read with the official template: ${propuesta.preguntas.length} questions and ${propuesta.destinatarios.length} contacts.`
+                        )
+                      : t(
+                          `Interpretado por IA: ${propuesta.preguntas.length} preguntas y ${propuesta.destinatarios.length} contactos.`,
+                          `Interpreted by AI: ${propuesta.preguntas.length} questions and ${propuesta.destinatarios.length} contacts.`
+                        )}
+                  </p>
+                  <button onClick={() => setPropuesta(null)} className="text-mist hover:text-fg" aria-label={t("Descartar", "Discard")}>
+                    <X className="size-4" />
+                  </button>
+                </div>
+                {propuesta.preguntas.length > 0 && (
+                  <ul className="mt-2 max-h-32 space-y-1 overflow-y-auto text-xs text-mist">
+                    {propuesta.preguntas.map((p) => (
+                      <li key={p.id} className="truncate">
+                        • {p.text}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  {propuesta.preguntas.length > 0 && (
+                    <button onClick={aplicarPreguntas} className="flex items-center gap-2 rounded-lg bg-lime px-3.5 py-1.5 text-xs font-semibold text-lime-fg hover:opacity-90">
+                      <Check className="size-3.5" /> {t("Agregar preguntas al Builder", "Add questions to the Builder")}
+                    </button>
+                  )}
+                  {propuesta.destinatarios.length > 0 && (
+                    <button
+                      onClick={() => setActiveTab("settings")}
+                      className="flex items-center gap-2 rounded-lg border border-edge px-3.5 py-1.5 text-xs font-medium text-fg hover:border-lime/40"
+                    >
+                      {t("Ir a Ajustes para invitar contactos →", "Go to Settings to invite contacts →")}
+                    </button>
+                  )}
+                </div>
+                <p className="mt-2 text-[11px] text-mist/70">
+                  {t(
+                    "Revisa antes de aplicar: las preguntas quedan editables en la lista de abajo y los contactos en el textarea de Ajustes.",
+                    "Review before applying: questions stay editable in the list below and contacts in the Settings textarea."
+                  )}
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+
         <BuilderTabs active={activeTab} onChange={setActiveTab} />
 
         <div className="flex-1 px-4 py-5 md:px-6">
           {activeTab === "questions" ? (
             <>
-              <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-dashed border-edge bg-card p-4">
-                <div>
-                  <p className="text-sm font-medium text-fg">{t("Importar desde Excel", "Import from Excel")}</p>
-                  <p className="text-xs text-mist">
-                    {t("Sube un archivo con preguntas y/o contactos — la IA arma la propuesta.", "Upload a file with questions and/or contacts — AI builds the proposal.")}
-                  </p>
-                </div>
-                <div>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept=".xlsx,.csv"
-                    className="hidden"
-                    onChange={(e) => {
-                      const f = e.target.files?.[0];
-                      if (f) importar(f);
-                    }}
-                  />
-                  <button type="button" onClick={() => fileInputRef.current?.click()} disabled={importando} className={actionBtn}>
-                    <FileUp className="size-4" /> {importando ? t("Analizando…", "Analyzing…") : t("Subir archivo", "Upload file")}
-                  </button>
-                </div>
-              </div>
-              {errorImportar && <p className="mb-4 text-xs text-red-400">{errorImportar}</p>}
-              {propuesta && (
-                <div className="mb-4 rounded-xl border border-lime/30 bg-lime/5 p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-sm font-medium text-fg">
-                      {t(
-                        `Se encontraron ${propuesta.preguntas.length} preguntas y ${propuesta.destinatarios.length} contactos.`,
-                        `Found ${propuesta.preguntas.length} questions and ${propuesta.destinatarios.length} contacts.`
-                      )}
-                    </p>
-                    <button onClick={() => setPropuesta(null)} className="text-mist hover:text-fg" aria-label={t("Descartar", "Discard")}>
-                      <X className="size-4" />
-                    </button>
-                  </div>
-                  {propuesta.preguntas.length > 0 && (
-                    <ul className="mt-2 max-h-32 space-y-1 overflow-y-auto text-xs text-mist">
-                      {propuesta.preguntas.map((p) => (
-                        <li key={p.id} className="truncate">
-                          • {p.text}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                  <div className="mt-3 flex flex-wrap items-center gap-2">
-                    {propuesta.preguntas.length > 0 && (
-                      <button onClick={aplicarPreguntas} className="flex items-center gap-2 rounded-lg bg-lime px-3.5 py-1.5 text-xs font-semibold text-lime-fg hover:opacity-90">
-                        <Check className="size-3.5" /> {t("Agregar preguntas al Builder", "Add questions to the Builder")}
-                      </button>
-                    )}
-                    {propuesta.destinatarios.length > 0 && (
-                      <button
-                        onClick={() => setActiveTab("settings")}
-                        className="flex items-center gap-2 rounded-lg border border-edge px-3.5 py-1.5 text-xs font-medium text-fg hover:border-lime/40"
-                      >
-                        {t("Ir a Ajustes para invitar contactos →", "Go to Settings to invite contacts →")}
-                      </button>
-                    )}
-                  </div>
-                  <p className="mt-2 text-[11px] text-mist/70">
-                    {t(
-                      "Revisa antes de aplicar: las preguntas quedan editables en la lista de abajo y los contactos en el textarea de Ajustes.",
-                      "Review before applying: questions stay editable in the list below and contacts in the Settings textarea."
-                    )}
-                  </p>
-                </div>
-              )}
-
+              <p className="mb-4 text-xs leading-relaxed text-mist">
+                {t(
+                  "¿Vas a importar desde Excel? Usa la plantilla oficial (botón \"Plantilla\" arriba): hoja \"Preguntas\" con columnas Pregunta / Tipo / Obligatoria / Opción 1, 2, 3… y hoja \"Contactos\" con Teléfono / Nombre. Si subes ese formato se lee exacto, sin IA; cualquier otro archivo se interpreta con IA.",
+                  "Importing from Excel? Use the official template (\"Template\" button above): a \"Preguntas\" sheet with Pregunta / Tipo / Obligatoria / Opción 1, 2, 3… columns and a \"Contactos\" sheet with Teléfono / Nombre. That exact format is read precisely, no AI; any other file gets interpreted by AI."
+                )}
+              </p>
               <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
                 <QuestionsList
                   questions={questions}
@@ -465,6 +478,21 @@ function SurveyEditor({
             </div>
           ) : (
             <div className="mx-auto max-w-xl space-y-4">
+              <Field
+                label={t("Nombre de la encuesta", "Survey name")}
+                hint={t(
+                  "Ej. \"Encuesta de satisfacción Q3\". Es el nombre que ves en la lista de Encuestas y llena {{nombre_encuesta}} en el mensaje de invitación de WhatsApp — distinto del nombre de tu empresa.",
+                  "E.g. \"Q3 satisfaction survey\". This is the name shown in the Surveys list and fills {{nombre_encuesta}} in the WhatsApp invitation message — different from your company name."
+                )}
+              >
+                <input
+                  value={remote.survey_name}
+                  maxLength={60}
+                  onChange={(e) => set("survey_name", e.target.value)}
+                  placeholder={t("Ej. Encuesta de satisfacción Q3", "e.g. Q3 satisfaction survey")}
+                  className={inputCls}
+                />
+              </Field>
               <Field label={t("Nombre de la empresa o servicio", "Company or service name")} hint={t("Aparece en los mensajes del bot.", "Shown in the bot's messages.")}>
                 <input value={remote.brand_name} maxLength={60} onChange={(e) => set("brand_name", e.target.value)} className={inputCls} />
               </Field>
