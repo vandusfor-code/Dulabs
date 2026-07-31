@@ -122,6 +122,26 @@ function parsearHojaPreguntas(hoja: ExcelJS.Worksheet): SurveyQuestion[] {
   return preguntas;
 }
 
+// Google Sheets/Excel muestran un teléfono largo tecleado en una celda
+// numérica en notación científica (ej. "5,73182E+11") si la columna no está
+// formateada como texto — el valor interno sigue siendo el número exacto,
+// así que String(numero) ya da el teléfono completo. El riesgo real es si la
+// celda llega como STRING con esa misma notación (algunos exportadores
+// "hornean" el texto mostrado en vez del número): un simple
+// `.replace(/\D/g, "")` ahí mezclaría mantisa y exponente en un teléfono
+// distinto y válido en apariencia (ej. "5.73182E+11" -> "57318211"), en vez
+// de fallar visiblemente. Se detecta ese patrón y se reconstruye el número
+// real antes de limpiar dígitos.
+function telefonoDeCelda(valor: ExcelJS.CellValue): string {
+  if (typeof valor === "number") return String(Math.trunc(valor));
+  const texto = celdaATexto(valor).trim();
+  if (/^\d+(\.\d+)?[eE][+-]?\d+$/.test(texto)) {
+    const numero = Number(texto);
+    if (Number.isFinite(numero)) return String(Math.trunc(numero));
+  }
+  return texto;
+}
+
 function parsearHojaContactos(hoja: ExcelJS.Worksheet): DestinatarioExtraido[] {
   const columnas = mapearColumnas(hoja);
   const colTelefono = columnas.get("telefono");
@@ -131,7 +151,7 @@ function parsearHojaContactos(hoja: ExcelJS.Worksheet): DestinatarioExtraido[] {
   const destinatarios: DestinatarioExtraido[] = [];
   hoja.eachRow((fila, numeroFila) => {
     if (numeroFila === 1) return;
-    const telefono = celdaATexto(fila.getCell(colTelefono).value).replace(/\D/g, "");
+    const telefono = telefonoDeCelda(fila.getCell(colTelefono).value).replace(/\D/g, "");
     if (telefono.length < 8) return;
     const nombre = colNombre ? celdaATexto(fila.getCell(colNombre).value).trim() || null : null;
     destinatarios.push({ telefono, nombre });
