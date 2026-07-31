@@ -15,6 +15,7 @@ import { TabPlaceholder } from "@/components/dashboard/surveys/builder/TabPlaceh
 import { SurveySimulator } from "@/components/dashboard/surveys/SurveySimulator";
 import { InvitarPanel } from "@/components/dashboard/surveys/InvitarPanel";
 import { toEngineConfig, type RemoteBotConfig } from "@/lib/survey-remote-config";
+import { DEFAULT_SURVEY_BOT_CONFIG } from "@/lib/survey-engine";
 import type { EncuestaExtraida } from "@/lib/survey-import";
 
 function arrayMove<T>(arr: T[], from: number, to: number): T[] {
@@ -35,6 +36,40 @@ function normalize(q: SurveyQuestion): SurveyQuestion {
     next.maxLabel ??= "";
   }
   return next;
+}
+
+/**
+ * Punto de partida en blanco para "+ Nueva encuesta" — mismos textos por
+ * defecto que usa el backend (DEFAULT_SURVEY_BOT_CONFIG), pero con
+ * `questions: []` y `active: false`. Existe porque el GET del backend, si ya
+ * hay una encuesta guardada para el número, siempre devuelve esa encuesta
+ * real (correcto para "Editar encuesta →"); esta función es lo que se
+ * muestra en el builder cuando el usuario llegó pidiendo explícitamente
+ * "nueva", para no arrastrar preguntas de una encuesta que ya existe.
+ */
+function encuestaEnBlanco(phoneNumberId: string, brandNameFallback: string): RemoteBotConfig {
+  return {
+    phone_number_id: phoneNumberId,
+    survey_name: "",
+    brand_name: DEFAULT_SURVEY_BOT_CONFIG.brandName === "nuestro servicio" ? brandNameFallback : DEFAULT_SURVEY_BOT_CONFIG.brandName,
+    agent_name: DEFAULT_SURVEY_BOT_CONFIG.agentName,
+    intro_template: DEFAULT_SURVEY_BOT_CONFIG.introTemplate,
+    closing_template: DEFAULT_SURVEY_BOT_CONFIG.closingTemplate,
+    decline_template: DEFAULT_SURVEY_BOT_CONFIG.declineTemplate,
+    schedule_confirm_template: DEFAULT_SURVEY_BOT_CONFIG.scheduleConfirmTemplate,
+    milestone_half: DEFAULT_SURVEY_BOT_CONFIG.milestones.half,
+    milestone_two_left: DEFAULT_SURVEY_BOT_CONFIG.milestones.twoLeft,
+    milestone_last: DEFAULT_SURVEY_BOT_CONFIG.milestones.last,
+    reminder_delay_hours: DEFAULT_SURVEY_BOT_CONFIG.reminder.delayHours,
+    reminder_max: DEFAULT_SURVEY_BOT_CONFIG.reminder.maxReminders,
+    reminder_template: DEFAULT_SURVEY_BOT_CONFIG.reminder.template,
+    allow_change_answers: DEFAULT_SURVEY_BOT_CONFIG.allowChangeAnswers,
+    questions: [],
+    close_date: null,
+    invite_template_name: "du_encuesta_invitacion",
+    reminder_template_name: "du_encuesta_recordatorio",
+    active: false,
+  };
 }
 
 const inputCls =
@@ -65,6 +100,19 @@ export default function CreateSurveyPage() {
     if (typeof window === "undefined") return null;
     return new URLSearchParams(window.location.search).get("phone_number_id");
   });
+  // "Editar encuesta →" (desde el detalle de una encuesta) llega con
+  // ?phone_number_id= en la URL — es la ÚNICA forma de decir "quiero seguir
+  // editando lo que ya existe para este número". Cualquier otra manera de
+  // llegar aquí (el botón "+ Nueva encuesta", el ítem del menú lateral, o
+  // luego cambiar el número en el selector de abajo) debe partir en blanco,
+  // aunque ese número YA tenga una encuesta guardada — nunca arrastrar sus
+  // preguntas sin que el usuario lo haya pedido explícitamente. Se calcula
+  // una sola vez al montar: cambiar el <select> después no debe convertir
+  // "nueva" en "editar".
+  const [modoEdicion] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return new URLSearchParams(window.location.search).has("phone_number_id");
+  });
   const phoneNumberId = phoneNumberIdElegido ?? (negocios && negocios.length === 1 ? negocios[0].phone_number_id : null);
 
   return (
@@ -75,9 +123,11 @@ export default function CreateSurveyPage() {
             {t("Encuestas", "Surveys")}
           </Link>
           <ChevronRight className="size-3.5" />
-          <span className="text-fg">{t("Nueva encuesta", "New survey")}</span>
+          <span className="text-fg">{modoEdicion ? t("Editar encuesta", "Edit survey") : t("Nueva encuesta", "New survey")}</span>
         </nav>
-        <h1 className="mt-2 text-2xl font-semibold tracking-tight text-fg md:text-[26px]">{t("Crear encuesta", "Create survey")}</h1>
+        <h1 className="mt-2 text-2xl font-semibold tracking-tight text-fg md:text-[26px]">
+          {modoEdicion ? t("Editar encuesta", "Edit survey") : t("Crear encuesta", "Create survey")}
+        </h1>
         <div className="mt-3 max-w-xs">
           <label className="mb-1.5 block text-xs font-medium text-mist">{t("Número de WhatsApp", "WhatsApp number")}</label>
           <select value={phoneNumberId ?? ""} onChange={(e) => setPhoneNumberIdElegido(e.target.value || null)} className={inputCls}>
@@ -96,7 +146,7 @@ export default function CreateSurveyPage() {
           {t("Elige un número de WhatsApp para crear o editar su encuesta.", "Choose a WhatsApp number to create or edit its survey.")}
         </div>
       ) : accessToken ? (
-        <SurveyEditor key={phoneNumberId} phoneNumberId={phoneNumberId} accessToken={accessToken} negocios={negocios ?? []} />
+        <SurveyEditor key={phoneNumberId} phoneNumberId={phoneNumberId} accessToken={accessToken} negocios={negocios ?? []} modoEdicion={modoEdicion} />
       ) : null}
     </div>
   );
@@ -106,10 +156,12 @@ function SurveyEditor({
   phoneNumberId,
   accessToken,
   negocios,
+  modoEdicion,
 }: {
   phoneNumberId: string;
   accessToken: string;
   negocios: Negocio[];
+  modoEdicion: boolean;
 }) {
   const { t } = useI18n();
 
@@ -134,15 +186,25 @@ function SurveyEditor({
     })
       .then((res) => res.json())
       .then((data: RemoteBotConfig) => {
-        setRemote(data);
-        setSelectedId(data.questions[0]?.id ?? null);
+        // El "publicado" (para el candado de sobrescritura) siempre refleja
+        // lo que REALMENTE hay guardado, sin importar el modo. Lo que se
+        // muestra en el builder es distinto: en modo edición, lo real; en
+        // modo "nueva", siempre en blanco — aunque el número ya tenga algo.
+        // `existe` solo viene en true cuando el GET encontró una fila real —
+        // si el número nunca se configuró, el backend responde con una
+        // encuesta de ejemplo (`active: true` incluido) solo para tener algo
+        // que mostrar; sin `existe`, no hay nada real que proteger.
         setPublicado({
-          activo: data.active,
+          activo: Boolean(data.existe) && data.active,
           preguntas: data.questions.filter((q) => q.type !== "message").length,
         });
+        const negocio = negocios.find((n) => n.phone_number_id === phoneNumberId);
+        const inicial = modoEdicion ? data : encuestaEnBlanco(phoneNumberId, negocio?.nombre_negocio ?? "");
+        setRemote(inicial);
+        setSelectedId(inicial.questions[0]?.id ?? null);
       })
       .finally(() => setCargando(false));
-  }, [phoneNumberId, accessToken]);
+  }, [phoneNumberId, accessToken, modoEdicion, negocios]);
 
   useEffect(() => {
     if (!toast) return;
