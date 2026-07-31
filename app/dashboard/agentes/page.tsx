@@ -5,7 +5,6 @@ import Link from "next/link";
 import {
   Bot,
   MessagesSquare,
-  Gauge,
   ShieldCheck,
   Sparkles,
   FileUp,
@@ -19,12 +18,26 @@ import {
   Clock,
   Send,
   MessageSquareText,
+  Plus,
+  Trash2,
+  ArrowRightLeft,
+  Phone,
 } from "lucide-react";
 import { useDashboard, type Negocio } from "@/lib/dashboard-session";
 import { formatearTelefono, nombreDelAgente } from "@/lib/format";
 import { PageHeader, Pill } from "@/components/dashboard/shell/ui";
 import { SurveyBotPanel } from "@/components/dashboard/agentes/SurveyBotPanel";
 import { useI18n } from "@/lib/i18n";
+import { PLANES, resolverPlanId } from "@/lib/planes";
+
+type AgentePerfil = {
+  id: number;
+  nombre: string;
+  prompt_sistema: string | null;
+  base_conocimiento_nombre_archivo: string | null;
+  base_conocimiento_actualizado_at: string | null;
+  created_at: string;
+};
 
 type MetricasNumero = {
   phone_number_id: string;
@@ -33,6 +46,8 @@ type MetricasNumero = {
   mensajesAtendidos24h: number;
 };
 
+type Objetivo = { tipo: "agente"; id: number } | { tipo: "legado"; phoneNumberId: string };
+
 function formatearDuracion(seg: number): string {
   if (seg < 60) return `${Math.round(seg)}s`;
   const min = Math.floor(seg / 60);
@@ -40,12 +55,16 @@ function formatearDuracion(seg: number): string {
   return resto > 0 ? `${min}m ${resto}s` : `${min}m`;
 }
 
+// Base de conocimiento reutilizable: apunta a un agente nuevo (agenteId) o,
+// en la ruta legada, directo a un número (phoneNumberId).
 function BaseConocimiento({
-  negocio,
+  target,
+  nombreArchivo,
   accessToken,
   onActualizado,
 }: {
-  negocio: Negocio;
+  target: { agenteId: number } | { phoneNumberId: string };
+  nombreArchivo: string | null;
   accessToken: string;
   onActualizado: () => void;
 }) {
@@ -54,7 +73,7 @@ function BaseConocimiento({
   const [subiendo, setSubiendo] = useState(false);
   const [mensaje, setMensaje] = useState<string | null>(null);
 
-  const tieneArchivo = Boolean(negocio.base_conocimiento_nombre_archivo);
+  const tieneArchivo = Boolean(nombreArchivo);
 
   const subirArchivo = useCallback(
     async (archivo: File) => {
@@ -62,7 +81,8 @@ function BaseConocimiento({
       setMensaje(null);
       try {
         const form = new FormData();
-        form.append("phone_number_id", negocio.phone_number_id);
+        if ("agenteId" in target) form.append("agente_id", String(target.agenteId));
+        else form.append("phone_number_id", target.phoneNumberId);
         form.append("archivo", archivo);
         const res = await fetch("/api/dashboard/base-conocimiento", {
           method: "POST",
@@ -85,7 +105,7 @@ function BaseConocimiento({
         if (inputRef.current) inputRef.current.value = "";
       }
     },
-    [accessToken, negocio.phone_number_id, onActualizado, t]
+    [accessToken, target, onActualizado, t]
   );
 
   const quitarArchivo = useCallback(async () => {
@@ -95,7 +115,7 @@ function BaseConocimiento({
       const res = await fetch("/api/dashboard/base-conocimiento", {
         method: "DELETE",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
-        body: JSON.stringify({ phone_number_id: negocio.phone_number_id }),
+        body: JSON.stringify("agenteId" in target ? { agente_id: target.agenteId } : { phone_number_id: target.phoneNumberId }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? t("Error quitando el archivo", "Error removing the file"));
@@ -105,7 +125,7 @@ function BaseConocimiento({
     } finally {
       setSubiendo(false);
     }
-  }, [accessToken, negocio.phone_number_id, onActualizado, t]);
+  }, [accessToken, target, onActualizado, t]);
 
   return (
     <div className="rounded-xl border border-edge bg-card p-5">
@@ -124,12 +144,7 @@ function BaseConocimiento({
         <div className="mt-4 flex items-center justify-between gap-3 rounded-lg border border-edge bg-ink p-3">
           <div className="flex min-w-0 items-center gap-2.5">
             <FileText className="size-4 shrink-0 text-lime-text" />
-            <div className="min-w-0">
-              <p className="truncate text-sm font-medium text-fg">{negocio.base_conocimiento_nombre_archivo}</p>
-              <p className="mt-0.5 font-mono text-[10.5px] uppercase tracking-widest text-mist">
-                {negocio.base_conocimiento_caracteres.toLocaleString("es-CO")} {t("caracteres", "characters")}
-              </p>
-            </div>
+            <p className="truncate text-sm font-medium text-fg">{nombreArchivo}</p>
           </div>
           <button
             onClick={quitarArchivo}
@@ -168,7 +183,7 @@ function BaseConocimiento({
 
 type MensajePlayground = { rol: "usuario" | "ia"; texto: string };
 
-function Playground({ negocio, accessToken }: { negocio: Negocio; accessToken: string }) {
+function Playground({ phoneNumberId, nombreMostrado, accessToken }: { phoneNumberId: string; nombreMostrado: string; accessToken: string }) {
   const { t } = useI18n();
   const [mensajes, setMensajes] = useState<MensajePlayground[]>([]);
   const [entrada, setEntrada] = useState("");
@@ -186,7 +201,7 @@ function Playground({ negocio, accessToken }: { negocio: Negocio; accessToken: s
       const res = await fetch("/api/dashboard/playground", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
-        body: JSON.stringify({ phone_number_id: negocio.phone_number_id, mensaje: texto }),
+        body: JSON.stringify({ phone_number_id: phoneNumberId, mensaje: texto }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? t("Error consultando a la IA", "Error querying the AI"));
@@ -196,7 +211,7 @@ function Playground({ negocio, accessToken }: { negocio: Negocio; accessToken: s
     } finally {
       setEnviando(false);
     }
-  }, [entrada, enviando, negocio.phone_number_id, accessToken, t]);
+  }, [entrada, enviando, phoneNumberId, accessToken, t]);
 
   return (
     <div className="rounded-xl border border-edge bg-card p-5">
@@ -206,8 +221,8 @@ function Playground({ negocio, accessToken }: { negocio: Negocio; accessToken: s
       </div>
       <p className="text-xs leading-relaxed text-mist">
         {t(
-          `Chatea con ${nombreDelAgente(negocio)} usando sus instrucciones y base de conocimiento reales — nada de esto se envía por WhatsApp ni cuenta contra tu consumo.`,
-          `Chat with ${nombreDelAgente(negocio)} using its real instructions and knowledge base — none of this is sent over WhatsApp or counts against your usage.`
+          `Chatea con ${nombreMostrado} usando sus instrucciones y base de conocimiento reales — nada de esto se envía por WhatsApp ni cuenta contra tu consumo.`,
+          `Chat with ${nombreMostrado} using its real instructions and knowledge base — none of this is sent over WhatsApp or counts against your usage.`
         )}
       </p>
 
@@ -227,7 +242,7 @@ function Playground({ negocio, accessToken }: { negocio: Negocio; accessToken: s
             </div>
           ))
         )}
-        {enviando && <p className="text-xs text-mist">{t(`${nombreDelAgente(negocio)} está escribiendo…`, `${nombreDelAgente(negocio)} is typing…`)}</p>}
+        {enviando && <p className="text-xs text-mist">{t(`${nombreMostrado} está escribiendo…`, `${nombreMostrado} is typing…`)}</p>}
       </div>
 
       {error && <p className="mt-2 text-xs text-red-400">{error}</p>}
@@ -255,7 +270,274 @@ function Playground({ negocio, accessToken }: { negocio: Negocio; accessToken: s
   );
 }
 
-function AgentDetail({
+function Metric({ icon: Icon, label, value }: { icon: typeof Bot; label: string; value: string }) {
+  return (
+    <div className="bg-card p-4">
+      <div className="flex items-center gap-1.5 text-mist">
+        <Icon className="size-3.5" />
+        <span className="font-mono text-[10.5px] uppercase tracking-widest">{label}</span>
+      </div>
+      <p className="mt-2 text-xl font-semibold tabular-nums text-fg">{value}</p>
+    </div>
+  );
+}
+
+// Vista de un agente NUEVO (dulabs_agentes): prompt propio, base de
+// conocimiento propia, y una lista de números del tenant para asignarlo o
+// quitarlo. Puede estar asignado a varios números a la vez (ej. "Ventas" en
+// dos líneas distintas) o a ninguno todavía.
+function AgentePerfilDetail({
+  agente,
+  negocios,
+  accessToken,
+  onActualizado,
+}: {
+  agente: AgentePerfil;
+  negocios: Negocio[];
+  accessToken: string;
+  onActualizado: () => void;
+}) {
+  const { t } = useI18n();
+  const [prompt, setPrompt] = useState(agente.prompt_sistema ?? "");
+  const [guardando, setGuardando] = useState(false);
+  const [mensaje, setMensaje] = useState<string | null>(null);
+  const entrenado = (agente.prompt_sistema ?? "").trim().length > 0;
+
+  const [editandoNombre, setEditandoNombre] = useState(false);
+  const [nombreInput, setNombreInput] = useState(agente.nombre);
+  const [guardandoNombre, setGuardandoNombre] = useState(false);
+  const [eliminando, setEliminando] = useState(false);
+  const [asignando, setAsignando] = useState<string | null>(null);
+
+  const guardarNombre = useCallback(async () => {
+    const valor = nombreInput.trim();
+    if (!valor || valor === agente.nombre) {
+      setEditandoNombre(false);
+      setNombreInput(agente.nombre);
+      return;
+    }
+    setGuardandoNombre(true);
+    try {
+      const res = await fetch("/api/dashboard/agentes", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ id: agente.id, nombre: valor }),
+      });
+      if (!res.ok) throw new Error();
+      setEditandoNombre(false);
+      onActualizado();
+    } catch {
+      setNombreInput(agente.nombre);
+    } finally {
+      setGuardandoNombre(false);
+    }
+  }, [nombreInput, agente, accessToken, onActualizado]);
+
+  const guardarPrompt = useCallback(async () => {
+    setGuardando(true);
+    setMensaje(null);
+    try {
+      const res = await fetch("/api/dashboard/agentes", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ id: agente.id, prompt_sistema: prompt }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? t("Error guardando", "Error saving"));
+      setMensaje(t("Guardado. La IA usará estas instrucciones desde el próximo mensaje.", "Saved. The AI will use these instructions from the next message on."));
+      onActualizado();
+    } catch (err) {
+      setMensaje(err instanceof Error ? err.message : String(err));
+    } finally {
+      setGuardando(false);
+    }
+  }, [accessToken, agente.id, prompt, onActualizado, t]);
+
+  const eliminar = useCallback(async () => {
+    if (!confirm(t("¿Eliminar este agente? Los números que lo usan volverán a quedar sin agente asignado.", "Delete this agent? The numbers using it will go back to unassigned."))) return;
+    setEliminando(true);
+    try {
+      const res = await fetch("/api/dashboard/agentes", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ id: agente.id }),
+      });
+      if (!res.ok) throw new Error();
+      onActualizado();
+    } finally {
+      setEliminando(false);
+    }
+  }, [agente.id, accessToken, onActualizado, t]);
+
+  const asignar = useCallback(
+    async (phoneNumberId: string, asignar: boolean) => {
+      setAsignando(phoneNumberId);
+      try {
+        const res = await fetch("/api/dashboard/negocio", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+          body: JSON.stringify({ phone_number_id: phoneNumberId, agente_id: asignar ? agente.id : null }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error ?? t("Error asignando", "Error assigning"));
+        onActualizado();
+      } finally {
+        setAsignando(null);
+      }
+    },
+    [agente.id, accessToken, onActualizado, t]
+  );
+
+  const numerosAsignados = negocios.filter((n) => n.agente_id === agente.id);
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-xl border border-edge bg-card p-5">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <div className={`flex size-14 items-center justify-center rounded-2xl ${entrenado ? "bg-lime/15 text-lime-text" : "bg-ink text-mist"}`}>
+              <Bot className="size-7" />
+            </div>
+            <div>
+              {editandoNombre ? (
+                <div className="flex items-center gap-1.5">
+                  <input
+                    autoFocus
+                    value={nombreInput}
+                    maxLength={60}
+                    onChange={(e) => setNombreInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") guardarNombre();
+                      if (e.key === "Escape") {
+                        setEditandoNombre(false);
+                        setNombreInput(agente.nombre);
+                      }
+                    }}
+                    className="w-48 rounded-md border border-edge bg-ink px-2 py-1 text-lg font-semibold text-fg outline-none focus:border-lime/50"
+                  />
+                  <button onClick={guardarNombre} disabled={guardandoNombre} className="flex size-6 items-center justify-center rounded-md text-lime-text hover:bg-lime/10 disabled:opacity-50" aria-label={t("Guardar", "Save")}>
+                    <Check className="size-3.5" />
+                  </button>
+                  <button
+                    onClick={() => {
+                      setEditandoNombre(false);
+                      setNombreInput(agente.nombre);
+                    }}
+                    className="flex size-6 items-center justify-center rounded-md text-mist hover:bg-ink"
+                    aria-label={t("Cancelar", "Cancel")}
+                  >
+                    <X className="size-3.5" />
+                  </button>
+                </div>
+              ) : (
+                <button onClick={() => setEditandoNombre(true)} className="group flex items-center gap-2">
+                  <h2 className="text-xl font-semibold text-fg">{agente.nombre}</h2>
+                  <Pencil className="size-3.5 text-mist opacity-0 transition-opacity group-hover:opacity-100" />
+                </button>
+              )}
+              <div className="mt-1 flex items-center gap-2">
+                <Pill tone={entrenado ? "success" : "neutral"}>{entrenado ? t("Entrenado", "Trained") : t("Sin entrenar", "Untrained")}</Pill>
+                <span className="text-xs text-mist">
+                  {numerosAsignados.length === 0
+                    ? t("Sin número asignado", "Not assigned to any number")
+                    : t(`Asignado a ${numerosAsignados.length} número(s)`, `Assigned to ${numerosAsignados.length} number(s)`)}
+                </span>
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={eliminar}
+            disabled={eliminando}
+            className="flex items-center gap-1.5 rounded-lg border border-red-500/30 px-3 py-2 text-xs font-medium text-red-400 transition-colors hover:bg-red-500/10 disabled:opacity-50"
+          >
+            <Trash2 className="size-3.5" />
+            {t("Eliminar agente", "Delete agent")}
+          </button>
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-edge bg-card p-5">
+        <div className="mb-3 flex items-center gap-2">
+          <Sparkles className="size-4 text-mist" />
+          <h3 className="text-sm font-semibold text-fg">{t("Instrucciones (precios, horarios, tono)", "Instructions (prices, hours, tone)")}</h3>
+        </div>
+        <textarea
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+          rows={7}
+          maxLength={4000}
+          placeholder={t(`Eres "${agente.nombre}". Responde de forma breve, amable y útil.`, `You are "${agente.nombre}". Reply briefly, kindly and helpfully.`)}
+          className="w-full rounded-lg border border-edge bg-ink px-4 py-3 text-sm leading-relaxed text-fg outline-none transition-colors duration-200 focus:border-lime/50"
+        />
+        <div className="mt-3 flex items-center justify-between gap-3">
+          <button
+            onClick={guardarPrompt}
+            disabled={guardando}
+            className="btn-shine rounded-lg bg-lime px-5 py-2.5 text-sm font-semibold text-lime-fg transition-[background-color,transform] duration-200 hover:-translate-y-0.5 hover:bg-lime-hover active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {guardando ? t("Guardando…", "Saving…") : t("Guardar", "Save")}
+          </button>
+          <span className="text-xs text-mist">{prompt.length} / 4000</span>
+        </div>
+        {mensaje && <p className="mt-3 text-xs leading-relaxed text-mist">{mensaje}</p>}
+      </div>
+
+      <BaseConocimiento
+        target={{ agenteId: agente.id }}
+        nombreArchivo={agente.base_conocimiento_nombre_archivo}
+        accessToken={accessToken}
+        onActualizado={onActualizado}
+      />
+
+      <div className="rounded-xl border border-edge bg-card p-5">
+        <div className="mb-3 flex items-center gap-2">
+          <ArrowRightLeft className="size-4 text-mist" />
+          <h3 className="text-sm font-semibold text-fg">{t("Números que atiende", "Numbers it handles")}</h3>
+        </div>
+        <p className="text-xs leading-relaxed text-mist">
+          {t(
+            "Marca en qué números de WhatsApp responde este agente. Puedes asignarlo a varios a la vez.",
+            "Check which WhatsApp numbers this agent replies on. You can assign it to more than one."
+          )}
+        </p>
+        <div className="mt-3 space-y-2">
+          {negocios.map((n) => {
+            const asignado = n.agente_id === agente.id;
+            const ocupadoPorOtro = n.agente_id !== null && n.agente_id !== agente.id;
+            return (
+              <label
+                key={n.phone_number_id}
+                className={`flex items-center justify-between gap-3 rounded-lg border border-edge bg-ink px-3 py-2.5 ${ocupadoPorOtro ? "opacity-50" : ""}`}
+              >
+                <div className="flex min-w-0 items-center gap-2.5">
+                  <Phone className="size-3.5 shrink-0 text-mist" />
+                  <div className="min-w-0">
+                    <p className="truncate text-sm text-fg">{n.nombre_negocio}</p>
+                    <p className="font-mono text-[10.5px] uppercase tracking-widest text-mist">{formatearTelefono(n.telefono_negocio)}</p>
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={asignado}
+                  disabled={asignando === n.phone_number_id || (ocupadoPorOtro && !asignado)}
+                  onChange={(e) => asignar(n.phone_number_id, e.target.checked)}
+                  className="size-4 accent-lime"
+                />
+              </label>
+            );
+          })}
+        </div>
+      </div>
+
+      {numerosAsignados[0] && <Playground phoneNumberId={numerosAsignados[0].phone_number_id} nombreMostrado={agente.nombre} accessToken={accessToken} />}
+    </div>
+  );
+}
+
+// Vista LEGADA (número sin agente_id asignado): mismo comportamiento de
+// siempre — prompt y base de conocimiento viven directo en la fila del
+// número. Se ofrece migrarlo a un agente nuevo cuando el usuario quiera.
+function LegadoDetail({
   negocio,
   accessToken,
   onActualizado,
@@ -271,34 +553,7 @@ function AgentDetail({
   const [guardando, setGuardando] = useState(false);
   const [mensaje, setMensaje] = useState<string | null>(null);
   const entrenada = (negocio.prompt_sistema ?? "").trim().length > 0;
-
-  const [editandoNombre, setEditandoNombre] = useState(false);
-  const [nombreAgenteInput, setNombreAgenteInput] = useState(nombreDelAgente(negocio));
-  const [guardandoNombre, setGuardandoNombre] = useState(false);
-
-  const guardarNombreAgente = useCallback(async () => {
-    const valor = nombreAgenteInput.trim();
-    if (!valor || valor === nombreDelAgente(negocio)) {
-      setEditandoNombre(false);
-      setNombreAgenteInput(nombreDelAgente(negocio));
-      return;
-    }
-    setGuardandoNombre(true);
-    try {
-      const res = await fetch("/api/dashboard/negocio", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
-        body: JSON.stringify({ phone_number_id: negocio.phone_number_id, nombre_agente: valor }),
-      });
-      if (!res.ok) throw new Error();
-      setEditandoNombre(false);
-      onActualizado();
-    } catch {
-      setNombreAgenteInput(nombreDelAgente(negocio));
-    } finally {
-      setGuardandoNombre(false);
-    }
-  }, [nombreAgenteInput, negocio, accessToken, onActualizado]);
+  const [migrando, setMigrando] = useState(false);
 
   const guardar = useCallback(async () => {
     setGuardando(true);
@@ -306,10 +561,7 @@ function AgentDetail({
     try {
       const res = await fetch("/api/dashboard/prompt", {
         method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${accessToken}`,
-        },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
         body: JSON.stringify({ phone_number_id: negocio.phone_number_id, prompt_sistema: prompt }),
       });
       const data = await res.json();
@@ -321,9 +573,6 @@ function AgentDetail({
       setGuardando(false);
     }
   }, [accessToken, negocio.phone_number_id, prompt, t]);
-
-  const usados = negocio.mensajes_usados;
-  const limite = negocio.mensajes_limite;
 
   const [cambiandoPausa, setCambiandoPausa] = useState(false);
   const alternarPausa = useCallback(async () => {
@@ -341,79 +590,48 @@ function AgentDetail({
     }
   }, [accessToken, negocio.phone_number_id, negocio.ia_pausada, onActualizado]);
 
+  const migrar = useCallback(async () => {
+    setMigrando(true);
+    try {
+      const res = await fetch("/api/dashboard/agentes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ migrar_desde_phone_number_id: negocio.phone_number_id }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? t("Error migrando", "Error migrating"));
+      onActualizado();
+    } catch (err) {
+      setMensaje(err instanceof Error ? err.message : String(err));
+    } finally {
+      setMigrando(false);
+    }
+  }, [negocio.phone_number_id, accessToken, onActualizado, t]);
+
   return (
     <div className="space-y-4">
       <div className="relative overflow-hidden rounded-xl border border-edge bg-card p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="flex items-center gap-4">
-            <div
-              className={`flex size-14 items-center justify-center rounded-2xl ${
-                entrenada ? "bg-lime/15 text-lime-text" : "bg-ink text-mist"
-              }`}
-            >
+            <div className={`flex size-14 items-center justify-center rounded-2xl ${entrenada ? "bg-lime/15 text-lime-text" : "bg-ink text-mist"}`}>
               <Bot className="size-7" />
             </div>
             <div>
               <div className="flex items-center gap-2">
                 <h2 className="text-xl font-semibold text-fg">{negocio.nombre_negocio}</h2>
                 <Pill tone={entrenada ? "success" : "neutral"}>{entrenada ? t("Entrenada", "Trained") : t("Sin entrenar", "Untrained")}</Pill>
+                <Pill tone="warning">{t("Agente heredado", "Legacy agent")}</Pill>
               </div>
               <p className="mt-1 text-sm text-mist">{formatearTelefono(negocio.telefono_negocio)} · WhatsApp Cloud API</p>
-              {editandoNombre ? (
-                <div className="mt-2 flex items-center gap-1.5">
-                  <input
-                    autoFocus
-                    value={nombreAgenteInput}
-                    maxLength={60}
-                    onChange={(e) => setNombreAgenteInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") guardarNombreAgente();
-                      if (e.key === "Escape") {
-                        setEditandoNombre(false);
-                        setNombreAgenteInput(nombreDelAgente(negocio));
-                      }
-                    }}
-                    className="w-40 rounded-md border border-edge bg-ink px-2 py-1 text-sm text-fg outline-none focus:border-lime/50"
-                  />
-                  <button
-                    onClick={guardarNombreAgente}
-                    disabled={guardandoNombre}
-                    className="flex size-6 items-center justify-center rounded-md text-lime-text hover:bg-lime/10 disabled:opacity-50"
-                    aria-label={t("Guardar nombre del agente", "Save agent name")}
-                  >
-                    <Check className="size-3.5" />
-                  </button>
-                  <button
-                    onClick={() => {
-                      setEditandoNombre(false);
-                      setNombreAgenteInput(nombreDelAgente(negocio));
-                    }}
-                    className="flex size-6 items-center justify-center rounded-md text-mist hover:bg-ink"
-                    aria-label={t("Cancelar", "Cancel")}
-                  >
-                    <X className="size-3.5" />
-                  </button>
-                </div>
-              ) : (
-                <button onClick={() => setEditandoNombre(true)} className="group mt-2 flex items-center gap-1.5">
-                  <span className="text-xs text-mist">
-                    {t("Agente:", "Agent:")} <span className="font-medium text-lime-text">{nombreDelAgente(negocio)}</span>
-                  </span>
-                  <Pencil className="size-3 text-mist opacity-0 transition-opacity group-hover:opacity-100" />
-                </button>
-              )}
             </div>
           </div>
-
           <div className="flex items-center gap-2">
             {negocio.ia_pausada && <Pill tone="warning">{t("IA pausada", "AI paused")}</Pill>}
             <button
               onClick={alternarPausa}
               disabled={cambiandoPausa}
               className={`flex items-center gap-2 rounded-lg border px-3.5 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-                negocio.ia_pausada
-                  ? "border-lime/40 text-lime-text hover:bg-lime/10"
-                  : "border-edge text-fg hover:border-red-400/40 hover:text-red-400"
+                negocio.ia_pausada ? "border-lime/40 text-lime-text hover:bg-lime/10" : "border-edge text-fg hover:border-red-400/40 hover:text-red-400"
               }`}
             >
               {negocio.ia_pausada ? <Play className="size-3.5" /> : <Pause className="size-3.5" />}
@@ -422,23 +640,40 @@ function AgentDetail({
           </div>
         </div>
 
-        <div className="mt-5 grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-edge bg-edge md:grid-cols-4">
+        <div className="mt-5 grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-edge bg-edge md:grid-cols-3">
           <Metric
             icon={TrendingUp}
             label={t("Resolución (24h)", "Resolution (24h)")}
             value={metricas && metricas.mensajesAtendidos24h > 0 ? `${Math.round(metricas.tasaAutomatizacion * 100)}%` : "—"}
           />
-          <Metric icon={MessagesSquare} label={t("Mensajes este mes", "Messages this month")} value={usados.toLocaleString("es-CO")} />
+          <Metric icon={MessagesSquare} label={t("Mensajes este mes", "Messages this month")} value={negocio.mensajes_usados.toLocaleString("es-CO")} />
           <Metric
             icon={Clock}
             label={t("Latencia promedio", "Average latency")}
             value={metricas?.tiempoRespuestaSeg != null ? formatearDuracion(metricas.tiempoRespuestaSeg) : "—"}
           />
-          <Metric
-            icon={Gauge}
-            label={t("Límite del plan", "Plan limit")}
-            value={limite === null ? t("Ilimitado", "Unlimited") : limite.toLocaleString("es-CO")}
-          />
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-lime/25 bg-lime/5 p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-medium text-fg">{t("Migrar a un agente reutilizable", "Migrate to a reusable agent")}</p>
+            <p className="mt-1 max-w-xl text-xs leading-relaxed text-mist">
+              {t(
+                "Convierte estas instrucciones en un agente que después puedes reasignar a otros números o duplicar. No cambia cómo responde ahora mismo.",
+                "Turn these instructions into an agent you can later reassign to other numbers or duplicate. It won't change how it replies right now."
+              )}
+            </p>
+          </div>
+          <button
+            onClick={migrar}
+            disabled={migrando}
+            className="flex shrink-0 items-center gap-2 rounded-lg bg-lime px-4 py-2 text-xs font-semibold text-lime-fg transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <ArrowRightLeft className="size-3.5" />
+            {migrando ? t("Migrando…", "Migrating…") : t("Migrar a agente nuevo", "Migrate to new agent")}
+          </button>
         </div>
       </div>
 
@@ -471,9 +706,14 @@ function AgentDetail({
         {mensaje && <p className="mt-3 text-xs leading-relaxed text-mist">{mensaje}</p>}
       </div>
 
-      <BaseConocimiento negocio={negocio} accessToken={accessToken} onActualizado={onActualizado} />
+      <BaseConocimiento
+        target={{ phoneNumberId: negocio.phone_number_id }}
+        nombreArchivo={negocio.base_conocimiento_nombre_archivo}
+        accessToken={accessToken}
+        onActualizado={onActualizado}
+      />
 
-      <Playground negocio={negocio} accessToken={accessToken} />
+      <Playground phoneNumberId={negocio.phone_number_id} nombreMostrado={nombreDelAgente(negocio)} accessToken={accessToken} />
 
       <SurveyBotPanel phoneNumberId={negocio.phone_number_id} accessToken={accessToken} />
 
@@ -501,23 +741,32 @@ function AgentDetail({
   );
 }
 
-function Metric({ icon: Icon, label, value }: { icon: typeof Bot; label: string; value: string }) {
-  return (
-    <div className="bg-card p-4">
-      <div className="flex items-center gap-1.5 text-mist">
-        <Icon className="size-3.5" />
-        <span className="font-mono text-[10.5px] uppercase tracking-widest">{label}</span>
-      </div>
-      <p className="mt-2 text-xl font-semibold tabular-nums text-fg">{value}</p>
-    </div>
-  );
-}
-
 export default function AgentesPage() {
-  const { session, negocios, cargarNegocios } = useDashboard();
+  const { session, negocios, suscripcion, cargarNegocios } = useDashboard();
   const { t } = useI18n();
-  const [activeId, setActiveId] = useState<string | null>(null);
+  const plan = PLANES[resolverPlanId(suscripcion?.plan)];
+
+  const [agentes, setAgentes] = useState<AgentePerfil[] | null>(null);
+  const [enUso, setEnUso] = useState(0);
+  const [objetivo, setObjetivo] = useState<Objetivo | null>(null);
   const [metricasPorNumero, setMetricasPorNumero] = useState<MetricasNumero[] | null>(null);
+  const [creando, setCreando] = useState(false);
+  const [errorCrear, setErrorCrear] = useState<string | null>(null);
+
+  const cargarAgentes = useCallback(() => {
+    if (!session) return;
+    fetch("/api/dashboard/agentes", { headers: { Authorization: `Bearer ${session.access_token}` } })
+      .then((res) => res.json())
+      .then((data) => {
+        setAgentes(data.agentes ?? []);
+        setEnUso(data.enUso ?? 0);
+      })
+      .catch(() => setAgentes([]));
+  }, [session]);
+
+  useEffect(() => {
+    cargarAgentes();
+  }, [cargarAgentes]);
 
   useEffect(() => {
     if (!session) return;
@@ -527,8 +776,57 @@ export default function AgentesPage() {
       .catch(() => setMetricasPorNumero([]));
   }, [session]);
 
-  const activo = negocios?.find((n) => n.phone_number_id === activeId) ?? negocios?.[0] ?? null;
-  const metricasActivo = metricasPorNumero?.find((m) => m.phone_number_id === activo?.phone_number_id) ?? null;
+  const actualizarTodo = useCallback(() => {
+    cargarAgentes();
+    cargarNegocios();
+  }, [cargarAgentes, cargarNegocios]);
+
+  const numerosLegado = (negocios ?? []).filter((n) => !n.agente_id);
+
+  // Selección efectiva: la que el usuario eligió, o si todavía no eligió
+  // nada, el primer agente (o si no hay agentes, el primer número legado) —
+  // así la pantalla nunca abre vacía si hay algo que configurar. Se computa
+  // en cada render en vez de guardarse en un efecto: no hay estado que
+  // sincronizar con nada externo, solo un valor por defecto derivado.
+  const objetivoActivo: Objetivo | null =
+    objetivo ??
+    (agentes && agentes.length > 0
+      ? { tipo: "agente", id: agentes[0].id }
+      : numerosLegado.length > 0
+        ? { tipo: "legado", phoneNumberId: numerosLegado[0].phone_number_id }
+        : null);
+
+  const crearAgente = useCallback(async () => {
+    if (!session) return;
+    setCreando(true);
+    setErrorCrear(null);
+    try {
+      const res = await fetch("/api/dashboard/agentes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? t("Error creando el agente", "Error creating agent"));
+      cargarAgentes();
+      setObjetivo({ tipo: "agente", id: data.agente.id });
+    } catch (err) {
+      setErrorCrear(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCreando(false);
+    }
+  }, [session, cargarAgentes, t]);
+
+  const enTope = plan.limites.agentesIA !== null && enUso >= plan.limites.agentesIA;
+  const agenteSeleccionado =
+    objetivoActivo?.tipo === "agente" ? agentes?.find((a) => a.id === objetivoActivo.id) ?? null : null;
+  const legadoSeleccionado =
+    objetivoActivo?.tipo === "legado" ? negocios?.find((n) => n.phone_number_id === objetivoActivo.phoneNumberId) ?? null : null;
+  const metricasLegado = legadoSeleccionado
+    ? metricasPorNumero?.find((m) => m.phone_number_id === legadoSeleccionado.phone_number_id) ?? null
+    : null;
+
+  const sinNada = negocios !== null && negocios.length === 0 && agentes !== null && agentes.length === 0;
 
   return (
     <div className="pb-12">
@@ -536,69 +834,114 @@ export default function AgentesPage() {
         eyebrow={t("Operar", "Operate")}
         title={t("Agentes de IA", "AI agents")}
         description={t(
-          "Cada número conectado tiene su propio asistente, entrenado con tus precios, horarios y tono — responde 24/7 sobre la API Oficial de Meta.",
-          "Each connected number has its own assistant, trained with your prices, hours and tone — replying 24/7 over the Official Meta API."
+          "Crea perfiles de IA reutilizables — con su propio tono, precios y base de conocimiento — y asígnalos a los números que quieras.",
+          "Create reusable AI profiles — with their own tone, prices and knowledge base — and assign them to whichever numbers you want."
         )}
       />
 
       <div className="px-4 pt-6 md:px-8">
-        {negocios !== null && negocios.length === 0 && (
+        {sinNada ? (
           <div className="rounded-xl border border-edge bg-card p-8 text-center">
             <Bot className="mx-auto size-10 text-mist/40" strokeWidth={1.2} />
             <p className="mt-3 text-sm font-semibold text-fg">{t("Todavía no tienes ningún número conectado", "You don't have any connected number yet")}</p>
             <p className="mt-1 text-xs text-mist">{t("Conecta tu WhatsApp para entrenar tu primer asistente.", "Connect your WhatsApp to train your first assistant.")}</p>
-            <Link
-              href="/dashboard/conexion"
-              className="mt-4 inline-block rounded-lg bg-lime px-4 py-2 text-xs font-semibold text-lime-fg hover:bg-lime-hover"
-            >
+            <Link href="/dashboard/conexion" className="mt-4 inline-block rounded-lg bg-lime px-4 py-2 text-xs font-semibold text-lime-fg hover:bg-lime-hover">
               {t("Conectar número →", "Connect number →")}
             </Link>
           </div>
-        )}
-
-        {negocios && negocios.length > 0 && (
+        ) : (
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,320px)_1fr]">
             <div className="space-y-3">
-              {negocios.map((n) => {
-                const entrenada = (n.prompt_sistema ?? "").trim().length > 0;
-                const seleccionado = activo?.phone_number_id === n.phone_number_id;
+              <div className="flex items-center justify-between gap-2">
+                <p className="font-mono text-[10.5px] uppercase tracking-widest text-mist">
+                  {plan.limites.agentesIA !== null
+                    ? `${enUso} / ${plan.limites.agentesIA} ${t("agentes de tu plan", "agents on your plan")} ${plan.nombre}`
+                    : t("Agentes ilimitados", "Unlimited agents")}
+                </p>
+              </div>
+
+              {enTope ? (
+                <p className="rounded-lg border border-edge bg-ink p-3 text-xs leading-relaxed text-mist">
+                  {t(`Ya usas los ${plan.limites.agentesIA} agentes de tu plan ${plan.nombre}.`, `You're already using all ${plan.limites.agentesIA} agents on your ${plan.nombre} plan.`)}{" "}
+                  <Link href="/precios" className="font-semibold text-lime-text hover:text-fg">
+                    {t("Mejorar plan →", "Upgrade plan →")}
+                  </Link>
+                </p>
+              ) : (
+                <button
+                  onClick={crearAgente}
+                  disabled={creando}
+                  className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-edge px-4 py-2.5 text-xs font-semibold text-fg transition-colors hover:border-lime/40 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Plus className="size-3.5" />
+                  {creando ? t("Creando…", "Creating…") : t("Crear agente", "Create agent")}
+                </button>
+              )}
+              {errorCrear && <p className="text-xs text-red-400">{errorCrear}</p>}
+
+              {agentes?.map((a) => {
+                const seleccionado = objetivoActivo?.tipo === "agente" && objetivoActivo.id === a.id;
+                const entrenado = (a.prompt_sistema ?? "").trim().length > 0;
+                const asignadoA = (negocios ?? []).filter((n) => n.agente_id === a.id).length;
                 return (
                   <button
-                    key={n.phone_number_id}
-                    onClick={() => setActiveId(n.phone_number_id)}
-                    className={`w-full rounded-xl border p-4 text-left transition-colors ${
-                      seleccionado ? "border-lime/40 bg-card" : "border-edge bg-card hover:border-lime/25"
-                    }`}
+                    key={a.id}
+                    onClick={() => setObjetivo({ tipo: "agente", id: a.id })}
+                    className={`w-full rounded-xl border p-4 text-left transition-colors ${seleccionado ? "border-lime/40 bg-card" : "border-edge bg-card hover:border-lime/25"}`}
                   >
                     <div className="flex items-center gap-3">
-                      <div
-                        className={`flex size-10 items-center justify-center rounded-xl ${
-                          entrenada ? "bg-lime/15 text-lime-text" : "bg-ink text-mist"
-                        }`}
-                      >
+                      <div className={`flex size-10 items-center justify-center rounded-xl ${entrenado ? "bg-lime/15 text-lime-text" : "bg-ink text-mist"}`}>
                         <Bot className="size-5" />
                       </div>
                       <div className="min-w-0 flex-1">
-                        <p className="truncate font-semibold text-fg">{n.nombre_negocio}</p>
+                        <p className="truncate font-semibold text-fg">{a.nombre}</p>
                         <p className="mt-0.5 font-mono text-[10.5px] uppercase tracking-widest text-mist">
-                          {formatearTelefono(n.telefono_negocio)}
+                          {asignadoA === 0 ? t("sin asignar", "unassigned") : t(`${asignadoA} número(s)`, `${asignadoA} number(s)`)}
                         </p>
                       </div>
-                      <Pill tone={entrenada ? "success" : "neutral"}>{entrenada ? t("Entrenada", "Trained") : t("Nueva", "New")}</Pill>
+                      <Pill tone={entrenado ? "success" : "neutral"}>{entrenado ? t("Entrenado", "Trained") : t("Nuevo", "New")}</Pill>
                     </div>
                   </button>
                 );
               })}
+
+              {numerosLegado.length > 0 && (
+                <>
+                  <p className="pt-2 font-mono text-[10.5px] uppercase tracking-widest text-mist/70">
+                    {t("Números sin agente asignado", "Numbers without an assigned agent")}
+                  </p>
+                  {numerosLegado.map((n) => {
+                    const seleccionado = objetivoActivo?.tipo === "legado" && objetivoActivo.phoneNumberId === n.phone_number_id;
+                    const entrenada = (n.prompt_sistema ?? "").trim().length > 0;
+                    return (
+                      <button
+                        key={n.phone_number_id}
+                        onClick={() => setObjetivo({ tipo: "legado", phoneNumberId: n.phone_number_id })}
+                        className={`w-full rounded-xl border p-4 text-left transition-colors ${seleccionado ? "border-lime/40 bg-card" : "border-edge bg-card hover:border-lime/25"}`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className={`flex size-10 items-center justify-center rounded-xl ${entrenada ? "bg-lime/15 text-lime-text" : "bg-ink text-mist"}`}>
+                            <Bot className="size-5" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate font-semibold text-fg">{n.nombre_negocio}</p>
+                            <p className="mt-0.5 font-mono text-[10.5px] uppercase tracking-widest text-mist">{formatearTelefono(n.telefono_negocio)}</p>
+                          </div>
+                          <Pill tone="warning">{t("heredado", "legacy")}</Pill>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </>
+              )}
             </div>
 
             <div>
-              {session && activo && (
-                <AgentDetail
-                  negocio={activo}
-                  accessToken={session.access_token}
-                  onActualizado={cargarNegocios}
-                  metricas={metricasActivo}
-                />
+              {session && agenteSeleccionado && (
+                <AgentePerfilDetail key={agenteSeleccionado.id} agente={agenteSeleccionado} negocios={negocios ?? []} accessToken={session.access_token} onActualizado={actualizarTodo} />
+              )}
+              {session && !agenteSeleccionado && legadoSeleccionado && (
+                <LegadoDetail key={legadoSeleccionado.phone_number_id} negocio={legadoSeleccionado} accessToken={session.access_token} onActualizado={actualizarTodo} metricas={metricasLegado} />
               )}
             </div>
           </div>

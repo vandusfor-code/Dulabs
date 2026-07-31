@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { resolverMiembroEquipo, requireRol } from "@/lib/team";
 import { cifrarSecreto } from "@/lib/crypto";
+import { planDelTenant, contarNumeros } from "@/lib/plan-limits";
 
 export const runtime = "nodejs";
 
@@ -138,6 +139,21 @@ export async function POST(request: NextRequest) {
       throw new Error(
         "Este número de WhatsApp ya está conectado a otra cuenta de Du Labs. Contacta a soporte si crees que esto es un error."
       );
+    }
+
+    // Solo aplica el tope al conectar un número NUEVO para este tenant — una
+    // reconexión de un número que ya es suyo (`existente` con el mismo
+    // idTenant) no debe bloquearse por haber llegado al límite.
+    if (!existente) {
+      const [plan, numerosActuales] = await Promise.all([
+        planDelTenant(supabase, idTenant),
+        contarNumeros(supabase, idTenant),
+      ]);
+      if (plan.limites.numeros !== null && numerosActuales >= plan.limites.numeros) {
+        throw new Error(
+          `Tu plan ${plan.nombre} permite máximo ${plan.limites.numeros} número${plan.limites.numeros === 1 ? "" : "s"} de WhatsApp conectado${plan.limites.numeros === 1 ? "" : "s"}. Mejora tu plan para conectar otro.`
+        );
+      }
     }
 
     const { error: dbError } = await supabase

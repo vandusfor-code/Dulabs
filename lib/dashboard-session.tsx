@@ -20,9 +20,7 @@ export type Negocio = {
   whatsapp_business_account_id: string;
   conectado: boolean;
   updated_at: string;
-  plan: string;
   mensajes_usados: number;
-  mensajes_limite: number | null;
   prompt_sistema: string | null;
   base_conocimiento_nombre_archivo: string | null;
   base_conocimiento_actualizado_at: string | null;
@@ -32,6 +30,7 @@ export type Negocio = {
   estado_verificacion: string | null;
   estado_nombre_visible: string | null;
   nombre_agente: string | null;
+  agente_id: number | null;
   ia_pausada: boolean;
   enviados_30d: number;
   enviados_hoy: number;

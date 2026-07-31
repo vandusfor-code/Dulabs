@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { generarRespuestaIA } from "@/lib/ia";
 import { resolverMiembroEquipo, requireRol } from "@/lib/team";
+import { resolverConfigAgente } from "@/lib/agentes";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -44,14 +45,15 @@ export async function POST(request: NextRequest) {
 
   const { data: cliente, error: clienteError } = await supabase
     .from("dulabs_clientes_config")
-    .select("prompt_sistema, base_conocimiento, nombre_negocio, api_key_ia")
+    .select("agente_id, prompt_sistema, base_conocimiento, nombre_negocio, api_key_ia, nombre_agente")
     .eq("phone_number_id", phone_number_id)
     .eq("id_tenant", miembro.tenantId)
     .maybeSingle();
   if (clienteError) return Response.json({ error: clienteError.message }, { status: 500 });
   if (!cliente) return Response.json({ error: "Número no encontrado" }, { status: 404 });
 
-  const respuesta = await generarRespuestaIA(cliente, mensaje);
+  const configAgente = await resolverConfigAgente(supabase, cliente);
+  const respuesta = await generarRespuestaIA({ ...configAgente, nombre_negocio: cliente.nombre_negocio }, mensaje);
   if (!respuesta) {
     return Response.json({ error: "La IA no pudo generar una respuesta. Revisa que tengas una API key configurada." }, { status: 500 });
   }

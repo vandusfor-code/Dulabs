@@ -25,6 +25,20 @@ export type ClienteConfig = {
   ultima_sincronizacion_meta: string | null;
   nombre_agente: string | null;
   ia_pausada: boolean;
+  agente_id: number | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AgenteConfig = {
+  id: number;
+  id_tenant: string;
+  nombre: string;
+  prompt_sistema: string | null;
+  base_conocimiento: string | null;
+  base_conocimiento_nombre_archivo: string | null;
+  base_conocimiento_actualizado_at: string | null;
+  api_key_ia: string | null;
   created_at: string;
   updated_at: string;
 };

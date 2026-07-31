@@ -2,6 +2,7 @@ import { after } from "next/server";
 import type { NextRequest } from "next/server";
 import { supabaseAdmin, type ClienteConfig } from "@/lib/supabase";
 import { generarRespuestaIA } from "@/lib/ia";
+import { resolverConfigAgente } from "@/lib/agentes";
 import { verificarFirmaMeta, compararVerifyToken } from "@/lib/meta-firma";
 import { enviarTexto } from "@/lib/whatsapp";
 import { descifrarSecreto } from "@/lib/crypto";
@@ -265,7 +266,11 @@ async function atenderMensaje(cliente: ClienteConfig, mensaje: MetaMessage) {
     return;
   }
 
-  const respuesta = await generarRespuestaIA(cliente, mensaje.text!.body);
+  const configAgente = await resolverConfigAgente(supabaseAdmin(), cliente);
+  const respuesta = await generarRespuestaIA(
+    { ...configAgente, nombre_negocio: cliente.nombre_negocio },
+    mensaje.text!.body
+  );
   if (respuesta) {
     await enviarWhatsApp(cliente, mensaje.from, respuesta);
   }

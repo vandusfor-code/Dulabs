@@ -277,8 +277,7 @@ export default function AnalyticsPage() {
                   </p>
                 </div>
                 <span className="text-sm tabular-nums text-mist">
-                  {n.mensajes_usados.toLocaleString("es-CO")}
-                  {n.mensajes_limite !== null && ` / ${n.mensajes_limite.toLocaleString("es-CO")}`}
+                  {n.mensajes_usados.toLocaleString("es-CO")} {t("mensajes este mes", "messages this month")}
                 </span>
               </div>
             ))}

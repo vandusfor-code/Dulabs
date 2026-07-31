@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { resolverMiembroEquipo, requireRol, type Miembro } from "@/lib/team";
+import { planDelTenant, contarUsuarios } from "@/lib/plan-limits";
 
 export const runtime = "nodejs";
 
@@ -69,6 +70,19 @@ export async function POST(request: NextRequest) {
             : "Ese correo ya pertenece a otra cuenta",
       },
       { status: 409 }
+    );
+  }
+
+  const [plan, usuariosActuales] = await Promise.all([
+    planDelTenant(supabase, miembro.tenantId),
+    contarUsuarios(supabase, miembro.tenantId),
+  ]);
+  if (plan.limites.usuarios !== null && usuariosActuales >= plan.limites.usuarios) {
+    return Response.json(
+      {
+        error: `Tu plan ${plan.nombre} permite máximo ${plan.limites.usuarios} usuario${plan.limites.usuarios === 1 ? "" : "s"} en el equipo. Mejora tu plan para invitar a más personas.`,
+      },
+      { status: 400 }
     );
   }
 

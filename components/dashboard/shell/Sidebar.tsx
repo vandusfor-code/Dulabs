@@ -8,6 +8,7 @@ import { navSections } from "./nav";
 import { useDashboard } from "@/lib/dashboard-session";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import { useI18n } from "@/lib/i18n";
+import { PLANES, resolverPlanId } from "@/lib/planes";
 
 function cn(...cls: Array<string | false | undefined>) {
   return cls.filter(Boolean).join(" ");
@@ -24,12 +25,8 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
     router.replace("/login");
   };
 
-  const mensajesUsados = negocios?.reduce((acc, n) => acc + n.mensajes_usados, 0) ?? 0;
-  const algunoIlimitado = negocios?.some((n) => n.mensajes_limite === null) ?? false;
-  const limite = algunoIlimitado
-    ? null
-    : (negocios?.reduce((acc, n) => acc + (n.mensajes_limite ?? 0), 0) ?? 0);
-  const porcentaje = limite ? Math.min(100, Math.round((mensajesUsados / limite) * 100)) : 0;
+  const plan = PLANES[resolverPlanId(suscripcion?.plan)];
+  const numerosUsados = negocios?.length ?? 0;
 
   const email = session?.user.email ?? "";
   const iniciales = email.slice(0, 2).toUpperCase();
@@ -54,15 +51,14 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           className="group flex w-full items-center gap-3 rounded-lg border border-edge bg-card px-3 py-2.5 text-left transition-colors hover:bg-ink-2"
         >
           <div className="flex size-7 shrink-0 items-center justify-center rounded-md bg-gradient-to-br from-lime/30 to-lime/5 text-[11px] font-semibold text-lime-text">
-            {(suscripcion?.plan ?? negocios?.[0]?.plan ?? "DU").slice(0, 2).toUpperCase()}
+            {plan.nombre.slice(0, 2).toUpperCase()}
           </div>
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium text-fg">
-              {suscripcion?.plan ?? negocios?.[0]?.plan ?? t("Sin plan", "No plan")}
-            </p>
+            <p className="truncate text-sm font-medium text-fg">{plan.nombre}</p>
             <p className="mt-0.5 font-mono text-[10.5px] uppercase tracking-widest text-mist">
-              {negocios?.length ?? 0}{" "}
-              {negocios?.length === 1 ? t("número", "number") : t("números", "numbers")}
+              {numerosUsados}
+              {plan.limites.numeros !== null ? ` / ${plan.limites.numeros}` : ""}{" "}
+              {numerosUsados === 1 ? t("número", "number") : t("números", "numbers")}
             </p>
           </div>
         </Link>
@@ -109,25 +105,19 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
       </nav>
 
       {/* Uso del plan */}
-      {negocios && negocios.length > 0 && (
+      {negocios && negocios.length > 0 && plan.limites.numeros !== null && numerosUsados >= plan.limites.numeros && (
         <div className="p-3">
           <div className="relative overflow-hidden rounded-xl border border-lime/20 bg-gradient-to-br from-lime/10 to-transparent p-4">
             <div className="flex items-center gap-2">
               <Sparkles className="size-4 text-lime-text" />
-              <span className="text-sm font-medium text-fg">{t("Tu IA este mes", "Your AI this month")}</span>
+              <span className="text-sm font-medium text-fg">{t("Ya usas todo tu plan", "You're using all of your plan")}</span>
             </div>
             <p className="mt-1.5 text-xs leading-relaxed text-mist">
-              {mensajesUsados.toLocaleString("es-CO")} {t("mensajes procesados", "messages processed")}
-              {limite !== null ? ` ${t("de", "of")} ${limite.toLocaleString("es-CO")}` : ` · ${t("ilimitado", "unlimited")}`}.
+              {t(`Llegaste al tope de números de tu plan ${plan.nombre}.`, `You've reached the number limit of your ${plan.nombre} plan.`)}
             </p>
-            {limite !== null && (
-              <div className="mt-3 flex items-center gap-2">
-                <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-ink">
-                  <div className="h-full rounded-full bg-lime" style={{ width: `${porcentaje}%` }} />
-                </div>
-                <span className="font-mono text-[10.5px] text-lime-text">{porcentaje}%</span>
-              </div>
-            )}
+            <Link href="/precios" onClick={onNavigate} className="mt-2 block text-xs font-semibold text-lime-text hover:text-fg">
+              {t("Mejorar plan →", "Upgrade plan →")}
+            </Link>
           </div>
         </div>
       )}

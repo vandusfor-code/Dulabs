@@ -1,11 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { Phone as PhoneIcon, BadgeCheck, Pencil, Check, X, Bot, MessagesSquare, Trash2 } from "lucide-react";
 import { useDashboard, type Negocio } from "@/lib/dashboard-session";
 import { formatearTelefono, nombreDelAgente, CALIDAD_INFO } from "@/lib/format";
 import { PageHeader, Pill, StatTile } from "@/components/dashboard/shell/ui";
 import { useI18n } from "@/lib/i18n";
+import { PLANES, resolverPlanId } from "@/lib/planes";
 
 const LIMITE_NUMERICO: Record<string, number> = {
   TIER_50: 50,
@@ -252,6 +254,16 @@ function NumeroCard({
                   <X className="size-3" />
                 </button>
               </div>
+            ) : negocio.agente_id ? (
+              <Link href="/dashboard/agentes" className="group mt-1.5 flex items-center gap-1.5">
+                <Bot className="size-3 text-mist" />
+                <span className="text-xs text-mist">
+                  <span className="font-medium text-lime-text">{nombreDelAgente(negocio)}</span>
+                </span>
+                <span className="text-[10.5px] text-mist underline decoration-dotted underline-offset-2 opacity-0 transition-opacity group-hover:opacity-100">
+                  {t("gestionar en Agentes de IA", "manage in AI agents")}
+                </span>
+              </Link>
             ) : (
               <button onClick={() => setEditandoAgente(true)} className="group mt-1.5 flex items-center gap-1.5">
                 <Bot className="size-3 text-mist" />
@@ -285,30 +297,6 @@ function NumeroCard({
             <span className="font-medium text-fg">{Math.round(Math.min(100, (negocio.enviados_hoy / cupoDiario) * 100))}%</span>
           </div>
         )}
-      </div>
-
-      <div className="mt-4 border-t border-edge pt-4">
-        <div className="flex items-center justify-between text-xs">
-          <span className="rounded-full bg-lime/10 px-2.5 py-1 font-semibold uppercase tracking-wide text-lime-text">
-            {negocio.plan}
-          </span>
-          <span className="text-mist">
-            {negocio.mensajes_limite === null
-              ? `${negocio.mensajes_usados.toLocaleString("es-CO")} ${t("mensajes · Ilimitado", "messages · Unlimited")}`
-              : `${negocio.mensajes_usados.toLocaleString("es-CO")} / ${negocio.mensajes_limite.toLocaleString("es-CO")} ${t("mensajes", "messages")}`}
-          </span>
-        </div>
-        <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-ink">
-          <div
-            className="h-full rounded-full bg-lime"
-            style={{
-              width:
-                negocio.mensajes_limite === null
-                  ? "100%"
-                  : `${Math.min(100, (negocio.mensajes_usados / negocio.mensajes_limite) * 100)}%`,
-            }}
-          />
-        </div>
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-2.5 border-t border-edge pt-4">
@@ -394,8 +382,11 @@ function MetaDato({
 }
 
 export default function ConexionPage() {
-  const { session, negocios, errorNegocios, cargarNegocios } = useDashboard();
+  const { session, negocios, suscripcion, errorNegocios, cargarNegocios } = useDashboard();
   const { t } = useI18n();
+  const plan = PLANES[resolverPlanId(suscripcion?.plan)];
+  const limiteNumeros = plan.limites.numeros;
+  const enTope = limiteNumeros !== null && (negocios?.length ?? 0) >= limiteNumeros;
   const appId = process.env.NEXT_PUBLIC_META_APP_ID;
   const configId = process.env.NEXT_PUBLIC_META_CONFIG_ID;
   const configFaltante = !appId || !configId;
@@ -610,6 +601,13 @@ export default function ConexionPage() {
             )}
           </p>
 
+          {limiteNumeros !== null && (
+            <p className="mt-3 font-mono text-[10.5px] uppercase tracking-widest text-mist">
+              {(negocios?.length ?? 0).toLocaleString("es-CO")} / {limiteNumeros.toLocaleString("es-CO")}{" "}
+              {t("números de tu plan", "numbers on your plan")} {plan.nombre}
+            </p>
+          )}
+
           <div className="mt-6">
             {estado.fase === "exito" ? (
               <div className="rounded-xl border border-lime/40 bg-lime/10 p-5 text-sm leading-relaxed text-fg">
@@ -621,6 +619,16 @@ export default function ConexionPage() {
                 >
                   {t("Conectar otro número →", "Connect another number →")}
                 </button>
+              </div>
+            ) : enTope ? (
+              <div className="rounded-xl border border-edge bg-ink p-5 text-sm leading-relaxed text-mist">
+                {t(
+                  `Ya usas los ${limiteNumeros} números que permite tu plan ${plan.nombre}.`,
+                  `You're already using all ${limiteNumeros} numbers your ${plan.nombre} plan allows.`
+                )}{" "}
+                <Link href="/precios" className="font-semibold text-lime-text hover:text-fg">
+                  {t("Mejorar plan →", "Upgrade plan →")}
+                </Link>
               </div>
             ) : (
               <button

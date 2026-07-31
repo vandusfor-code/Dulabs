@@ -6,12 +6,6 @@ import { descifrarSecreto } from "@/lib/crypto";
 
 export const runtime = "nodejs";
 
-const LIMITE_MENSAJES_POR_PLAN: Record<string, number> = {
-  "Plan Básico": 1000,
-  "Plan Pro": 5000,
-  "Plan Enterprise": Infinity,
-};
-const PLAN_POR_DEFECTO = "Plan Pro";
 const UNA_HORA_MS = 60 * 60 * 1000;
 
 function mesActualISO(): string {
@@ -60,13 +54,27 @@ export async function GET(request: NextRequest) {
   const { data, error } = await supabase
     .from("dulabs_clientes_config")
     .select(
-      "nombre_negocio, telefono_negocio, phone_number_id, whatsapp_business_account_id, meta_permanent_token, updated_at, plan, mensajes_usados_mes, mes_actual, prompt_sistema, base_conocimiento, base_conocimiento_nombre_archivo, base_conocimiento_actualizado_at, calidad, limite_mensajeria, estado_verificacion, estado_nombre_visible, ultima_sincronizacion_meta, nombre_agente, ia_pausada"
+      "nombre_negocio, telefono_negocio, phone_number_id, whatsapp_business_account_id, meta_permanent_token, updated_at, plan, mensajes_usados_mes, mes_actual, prompt_sistema, base_conocimiento, base_conocimiento_nombre_archivo, base_conocimiento_actualizado_at, calidad, limite_mensajeria, estado_verificacion, estado_nombre_visible, ultima_sincronizacion_meta, nombre_agente, ia_pausada, agente_id"
     )
     .eq("id_tenant", tenantId)
     .order("updated_at", { ascending: false });
 
   if (error) {
     return Response.json({ error: error.message }, { status: 500 });
+  }
+
+  // Nombre efectivo del agente que responde en cada número: el de su
+  // agente asignado (dulabs_agentes) si tiene uno, o su nombre legado si no
+  // — así el resto del dashboard (Números, Playground) no necesita saber
+  // de la distinción agente-nuevo/legado, solo lee "nombre_agente".
+  const idsAgentesAsignados = [...new Set((data ?? []).map((n) => n.agente_id).filter((id): id is number => id !== null))];
+  const nombrePorAgenteId = new Map<number, string>();
+  if (idsAgentesAsignados.length > 0) {
+    const { data: agentesAsignados } = await supabase
+      .from("dulabs_agentes")
+      .select("id, nombre")
+      .in("id", idsAgentesAsignados);
+    for (const a of agentesAsignados ?? []) nombrePorAgenteId.set(a.id, a.nombre);
   }
 
   // Resincroniza el estado operativo real del número (calidad, límite de
@@ -135,8 +143,6 @@ export async function GET(request: NextRequest) {
 
   const mesHoy = mesActualISO();
   const negocios = (data ?? []).map((n) => {
-    const plan = n.plan ?? PLAN_POR_DEFECTO;
-    const limite = LIMITE_MENSAJES_POR_PLAN[plan] ?? LIMITE_MENSAJES_POR_PLAN[PLAN_POR_DEFECTO];
     // El contador se reinicia en el primer envío del mes (webhook); si ya
     // cambió el mes y todavía no hubo envíos, mostramos 0 en vez del valor viejo.
     const usados = n.mes_actual === mesHoy ? n.mensajes_usados_mes : 0;
@@ -147,9 +153,7 @@ export async function GET(request: NextRequest) {
       whatsapp_business_account_id: n.whatsapp_business_account_id,
       conectado: Boolean(n.meta_permanent_token || process.env.META_ACCESS_TOKEN),
       updated_at: n.updated_at,
-      plan,
       mensajes_usados: usados,
-      mensajes_limite: Number.isFinite(limite) ? limite : null,
       prompt_sistema: n.prompt_sistema,
       base_conocimiento_nombre_archivo: n.base_conocimiento_nombre_archivo,
       base_conocimiento_actualizado_at: n.base_conocimiento_actualizado_at,
@@ -158,7 +162,8 @@ export async function GET(request: NextRequest) {
       limite_mensajeria: n.limite_mensajeria,
       estado_verificacion: n.estado_verificacion,
       estado_nombre_visible: n.estado_nombre_visible,
-      nombre_agente: n.nombre_agente,
+      nombre_agente: n.agente_id ? (nombrePorAgenteId.get(n.agente_id) ?? n.nombre_agente) : n.nombre_agente,
+      agente_id: n.agente_id,
       ia_pausada: n.ia_pausada,
       enviados_30d: enviados30dPorNumero.get(n.phone_number_id) ?? 0,
       enviados_hoy: enviadosHoyPorNumero.get(n.phone_number_id) ?? 0,

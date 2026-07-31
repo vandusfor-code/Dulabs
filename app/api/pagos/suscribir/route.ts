@@ -1,7 +1,7 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { crearFuentePago, crearTransaccion } from "@/lib/wompi";
-import { precioPlan } from "@/lib/planes";
+import { PLANES, type PlanId } from "@/lib/planes";
 import { resolverMiembroEquipo, requireRol } from "@/lib/team";
 
 export const runtime = "nodejs";
@@ -57,8 +57,14 @@ export async function POST(request: NextRequest) {
   if (!token || !plan || !customer_email || !acceptance_token || !accept_personal_auth) {
     return Response.json({ error: "Faltan campos requeridos" }, { status: 400 });
   }
-
-  const precioCop = precioPlan(plan);
+  if (!(plan in PLANES)) {
+    return Response.json({ error: "Plan inválido" }, { status: 400 });
+  }
+  const planDef = PLANES[plan as PlanId];
+  if (planDef.precioCop === null) {
+    return Response.json({ error: "El plan Enterprise se activa por cotización, contacta a soporte" }, { status: 400 });
+  }
+  const precioCop = planDef.precioCop;
 
   try {
     const fuente = await crearFuentePago({

@@ -3,10 +3,12 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { UserPlus } from "lucide-react";
+import Link from "next/link";
 import { useDashboard } from "@/lib/dashboard-session";
 import { PageHeader, Pill } from "@/components/dashboard/shell/ui";
 import { useI18n } from "@/lib/i18n";
 import type { Rol } from "@/lib/team";
+import { PLANES, resolverPlanId } from "@/lib/planes";
 
 type MiembroEquipo = {
   id: number;
@@ -19,8 +21,9 @@ type MiembroEquipo = {
 
 export default function EquipoPage() {
   const router = useRouter();
-  const { session, rol } = useDashboard();
+  const { session, rol, suscripcion } = useDashboard();
   const { t } = useI18n();
+  const plan = PLANES[resolverPlanId(suscripcion?.plan)];
 
   const [miembros, setMiembros] = useState<MiembroEquipo[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -117,6 +120,9 @@ export default function EquipoPage() {
 
   if (rol && rol !== "admin") return null;
 
+  const usuariosActivos = miembros?.filter((m) => m.estado !== "suspendido").length ?? 0;
+  const enTope = plan.limites.usuarios !== null && usuariosActivos >= plan.limites.usuarios;
+
   return (
     <div className="pb-12">
       <PageHeader
@@ -131,39 +137,57 @@ export default function EquipoPage() {
       <div className="px-4 pt-6 md:px-8">
         <section className="rounded-xl border border-edge bg-card p-5">
           <h2 className="text-sm font-semibold text-fg">{t("Invitar a alguien", "Invite someone")}</h2>
-          <form onSubmit={invitar} className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end">
-            <div className="flex-1">
-              <label className="mb-1.5 block text-xs font-medium text-mist">{t("Correo", "Email")}</label>
-              <input
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="nombre@ejemplo.com"
-                className="w-full rounded-lg border border-edge bg-ink px-4 py-2.5 text-sm text-fg outline-none focus:border-lime/50"
-              />
-            </div>
-            <div>
-              <label className="mb-1.5 block text-xs font-medium text-mist">{t("Rol", "Role")}</label>
-              <select
-                value={rolInvitado}
-                onChange={(e) => setRolInvitado(e.target.value as Rol)}
-                className="w-full rounded-lg border border-edge bg-ink px-4 py-2.5 text-sm text-fg outline-none focus:border-lime/50 sm:w-auto"
+          {plan.limites.usuarios !== null && (
+            <p className="mt-1 font-mono text-[10.5px] uppercase tracking-widest text-mist">
+              {usuariosActivos.toLocaleString("es-CO")} / {plan.limites.usuarios.toLocaleString("es-CO")}{" "}
+              {t("usuarios de tu plan", "users on your plan")} {plan.nombre}
+            </p>
+          )}
+          {enTope ? (
+            <p className="mt-4 rounded-lg border border-edge bg-ink p-4 text-sm leading-relaxed text-mist">
+              {t(
+                `Ya usas los ${plan.limites.usuarios} usuarios que permite tu plan ${plan.nombre}.`,
+                `You're already using all ${plan.limites.usuarios} users your ${plan.nombre} plan allows.`
+              )}{" "}
+              <Link href="/precios" className="font-semibold text-lime-text hover:text-fg">
+                {t("Mejorar plan →", "Upgrade plan →")}
+              </Link>
+            </p>
+          ) : (
+            <form onSubmit={invitar} className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end">
+              <div className="flex-1">
+                <label className="mb-1.5 block text-xs font-medium text-mist">{t("Correo", "Email")}</label>
+                <input
+                  type="email"
+                  required
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="nombre@ejemplo.com"
+                  className="w-full rounded-lg border border-edge bg-ink px-4 py-2.5 text-sm text-fg outline-none focus:border-lime/50"
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-mist">{t("Rol", "Role")}</label>
+                <select
+                  value={rolInvitado}
+                  onChange={(e) => setRolInvitado(e.target.value as Rol)}
+                  className="w-full rounded-lg border border-edge bg-ink px-4 py-2.5 text-sm text-fg outline-none focus:border-lime/50 sm:w-auto"
+                >
+                  <option value="admin">{t("Administrador", "Admin")}</option>
+                  <option value="agente">{t("Agente", "Agent")}</option>
+                  <option value="lectura">{t("Solo lectura", "Read only")}</option>
+                </select>
+              </div>
+              <button
+                type="submit"
+                disabled={invitando}
+                className="flex items-center justify-center gap-2 rounded-lg bg-lime px-4 py-2.5 text-sm font-semibold text-lime-fg transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                <option value="admin">{t("Administrador", "Admin")}</option>
-                <option value="agente">{t("Agente", "Agent")}</option>
-                <option value="lectura">{t("Solo lectura", "Read only")}</option>
-              </select>
-            </div>
-            <button
-              type="submit"
-              disabled={invitando}
-              className="flex items-center justify-center gap-2 rounded-lg bg-lime px-4 py-2.5 text-sm font-semibold text-lime-fg transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <UserPlus className="size-4" />
-              {invitando ? t("Invitando…", "Inviting…") : t("Invitar", "Invite")}
-            </button>
-          </form>
+                <UserPlus className="size-4" />
+                {invitando ? t("Invitando…", "Inviting…") : t("Invitar", "Invite")}
+              </button>
+            </form>
+          )}
           {errorInvitar && <p className="mt-3 text-xs text-red-400">{errorInvitar}</p>}
           {mensajeInvitar && <p className="mt-3 text-xs text-lime-text">{mensajeInvitar}</p>}
         </section>

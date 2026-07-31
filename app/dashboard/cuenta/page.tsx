@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useDashboard } from "@/lib/dashboard-session";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import { useI18n } from "@/lib/i18n";
+import { PLANES, resolverPlanId } from "@/lib/planes";
 
 export default function CuentaPage() {
   const router = useRouter();
@@ -195,7 +196,7 @@ export default function CuentaPage() {
           <dl className="mt-4 grid gap-4 sm:grid-cols-2">
             <div>
               <dt className="text-xs text-mist">{t("Plan", "Plan")}</dt>
-              <dd className="mt-1 text-sm font-medium text-fg">{suscripcion.plan}</dd>
+              <dd className="mt-1 text-sm font-medium text-fg">{PLANES[resolverPlanId(suscripcion.plan)].nombre}</dd>
             </div>
             <div>
               <dt className="text-xs text-mist">{t("Precio", "Price")}</dt>

@@ -45,6 +45,8 @@ import Image from "next/image";
 import PlanButton from "@/components/PlanButton";
 import { Reveal } from "./Reveal";
 import { useI18n } from "@/lib/i18n";
+import { PLANES, ORDEN_PLANES } from "@/lib/planes";
+import { PRICING_COPY } from "./pricing-copy";
 
 /* =========================================================
    Shared primitives
@@ -1010,28 +1012,19 @@ export function MetricsSection() {
 ========================================================= */
 
 export function PricingSection() {
-  const { t } = useI18n();
-  const tiers = [
-    {
-      name: "Plan Básico",
-      price: "$59.990",
-      tag: t("Emprendedores y pequeños negocios locales.", "Entrepreneurs and small local businesses."),
-      features: [t("1 número de WhatsApp", "1 WhatsApp number"), t("IA en Modo Coexistencia", "AI in Coexistence Mode"), t("Hasta 1.000 mensajes / mes", "Up to 1,000 messages / month"), t("Soporte estándar por correo", "Standard email support")],
-    },
-    {
-      name: "Plan Pro",
-      price: "$129.990",
-      tag: t("Negocios en crecimiento y marcas comerciales.", "Growing businesses and commercial brands."),
-      features: [t("Todo lo del Plan Básico", "Everything in Plan Básico"), t("Plantillas y campañas masivas", "Templates and bulk campaigns"), t("Hasta 5.000 mensajes / mes", "Up to 5,000 messages / month"), t("Soporte prioritario por WhatsApp", "Priority support via WhatsApp")],
-      featured: true,
-    },
-    {
-      name: "Plan Enterprise",
-      price: "$299.990",
-      tag: t("Empresas con operaciones de alta demanda.", "Companies with high-demand operations."),
-      features: [t("Todo lo del Plan Pro", "Everything in Plan Pro"), t("Mensajes ilimitados*", "Unlimited messages*"), t("Múltiples números en paralelo", "Multiple numbers in parallel"), t("Soporte dedicado 24/7", "Dedicated 24/7 support")],
-    },
-  ];
+  const { t, lang } = useI18n();
+  const tiers = ORDEN_PLANES.map((id) => {
+    const def = PLANES[id];
+    const copy = PRICING_COPY[id];
+    return {
+      id,
+      nombre: def.nombre,
+      precio: def.precioCop !== null ? `$${def.precioCop.toLocaleString("es-CO")}` : t("Cotización", "Custom quote"),
+      tag: lang === "en" ? copy.tag.en : copy.tag.es,
+      features: copy.features.map((f) => (lang === "en" ? f.en : f.es)),
+      featured: id === "growth",
+    };
+  });
   return (
     <section id="precios" className="relative border-t border-site-border py-20">
       <div className="mx-auto max-w-[1280px] px-6">
@@ -1041,10 +1034,10 @@ export function PricingSection() {
           desc={t("Precios en pesos colombianos (COP), cobro recurrente mensual.", "Prices in Colombian pesos (COP), recurring monthly billing.")}
           align="center"
         />
-        <div className="mt-14 grid grid-cols-1 gap-4 md:grid-cols-3">
+        <div className="mt-14 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
           {tiers.map((tier) => (
             <div
-              key={tier.name}
+              key={tier.id}
               className={`relative overflow-hidden rounded-2xl border p-7 ${
                 tier.featured
                   ? "border-site-primary/30 bg-gradient-to-b from-site-primary/[0.08] to-site-card/60 ring-1 ring-site-primary/20"
@@ -1056,14 +1049,14 @@ export function PricingSection() {
                   {t("Recomendado", "Recommended")}
                 </div>
               )}
-              <div className="font-mono text-[10px] uppercase tracking-widest text-site-muted-fg">{tier.name}</div>
+              <div className="font-mono text-[10px] uppercase tracking-widest text-site-muted-fg">{tier.nombre}</div>
               <div className="mt-4 flex items-baseline gap-1">
-                <span className="font-display text-[36px] font-medium tracking-tight text-site-fg">{tier.price}</span>
-                <span className="text-[12px] text-site-muted-fg">{t("COP / mes", "COP / mo")}</span>
+                <span className="font-display text-[32px] font-medium tracking-tight text-site-fg">{tier.precio}</span>
+                {tier.id !== "enterprise" && <span className="text-[12px] text-site-muted-fg">{t("COP / mes", "COP / mo")}</span>}
               </div>
               <p className="mt-2 text-[13px] text-site-muted-fg">{tier.tag}</p>
               <PlanButton
-                plan={tier.name}
+                planId={tier.id}
                 className={`mt-6 inline-flex h-10 w-full items-center justify-center rounded-lg text-[13px] font-medium transition-all ${
                   tier.featured
                     ? "bg-site-primary text-site-primary-fg hover:brightness-110"

@@ -6,13 +6,9 @@ import Link from "next/link";
 import type { Session } from "@supabase/supabase-js";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import { useI18n } from "@/lib/i18n";
+import { PLANES, PLAN_POR_DEFECTO, resolverPlanId, type PlanId } from "@/lib/planes";
 
 const PLAN_PENDIENTE_KEY = "du_labs_plan_elegido";
-const PRECIO_COP_POR_PLAN: Record<string, number> = {
-  "Plan Básico": 59990,
-  "Plan Pro": 129990,
-  "Plan Enterprise": 299990,
-};
 
 const wompiConfigFaltante = !process.env.NEXT_PUBLIC_WOMPI_PUBLIC_KEY;
 
@@ -35,7 +31,7 @@ export default function CheckoutPage() {
   const publicKey = process.env.NEXT_PUBLIC_WOMPI_PUBLIC_KEY;
 
   const [session, setSession] = useState<Session | null | "verificando">("verificando");
-  const [plan, setPlan] = useState<string>("Plan Pro");
+  const [plan, setPlan] = useState<PlanId>(PLAN_POR_DEFECTO);
   const [estado, setEstado] = useState<Estado>({ fase: "cargando" });
 
   const [numero, setNumero] = useState("");
@@ -54,7 +50,7 @@ export default function CheckoutPage() {
       }
       setSession(data.session);
       const planGuardado = localStorage.getItem(PLAN_PENDIENTE_KEY);
-      if (planGuardado) setPlan(planGuardado);
+      if (planGuardado) setPlan(resolverPlanId(planGuardado));
       setEstado({ fase: "listo" });
     });
   }, [router]);
@@ -158,7 +154,7 @@ export default function CheckoutPage() {
         </Link>
         <h1 className="mt-6 text-2xl font-semibold">{t("Activa tu suscripción", "Activate your subscription")}</h1>
         <p className="mt-3 text-sm leading-relaxed text-mist">
-          {plan} — ${PRECIO_COP_POR_PLAN[plan]?.toLocaleString("es-CO") ?? "—"} COP / {t("mes", "month")}.{" "}
+          {PLANES[plan].nombre} — ${PLANES[plan].precioCop?.toLocaleString("es-CO") ?? "—"} COP / {t("mes", "month")}.{" "}
           {t("Se te cobrará automáticamente cada mes con esta tarjeta.", "You'll be charged automatically every month with this card.")}
         </p>
 

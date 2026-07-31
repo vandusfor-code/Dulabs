@@ -108,15 +108,13 @@ export function StatTile({
 }
 
 export function PlanUsageCard({
-  plan,
-  usados,
-  limite,
+  planNombre,
+  cupos,
   renuevaEl,
   porCategoria,
 }: {
-  plan: string;
-  usados: number;
-  limite: number | null;
+  planNombre: string;
+  cupos: { label: string; usados: number; limite: number | null }[];
   renuevaEl: string | null;
   porCategoria: { categoria: string; cantidad: number }[];
 }) {
@@ -128,50 +126,35 @@ export function PlanUsageCard({
     service: t("Servicio", "Service"),
     referral_conversion: t("Conversión por referido", "Referral conversion"),
   };
-  const porcentaje = limite === null ? 0 : Math.min(100, Math.round((usados / limite) * 100));
-  const restantes = limite === null ? null : Math.max(0, limite - usados);
 
   return (
     <div className="rounded-xl border border-edge bg-card p-5">
       <div className="flex items-center justify-between">
-        <p className="font-mono text-[11px] uppercase tracking-widest text-mist">{t("Consumo del plan", "Plan usage")}</p>
+        <p className="font-mono text-[11px] uppercase tracking-widest text-mist">{t("Tu plan", "Your plan")}</p>
         <span className="rounded-full bg-lime/10 px-2.5 py-1 text-xs font-semibold uppercase tracking-wide text-lime-text">
-          {plan}
+          {planNombre}
         </span>
       </div>
 
-      <p className="mt-4 text-3xl font-semibold tracking-tight tabular-nums text-fg">
-        {usados.toLocaleString("es-CO")}
-        {limite !== null && <span className="text-mist"> / {limite.toLocaleString("es-CO")}</span>}
-      </p>
-      <p className="mt-1 text-sm text-mist">
-        {limite === null ? t("Conversaciones este mes · Ilimitado", "Conversations this month · Unlimited") : `${t("conversaciones este mes", "conversations this month")} · ${porcentaje}% ${t("consumido", "used")}`}
-      </p>
+      <div className="mt-4 grid grid-cols-3 gap-3 text-sm">
+        {cupos.map((c) => (
+          <div key={c.label}>
+            <p className="font-mono text-[10.5px] uppercase tracking-widest text-mist">{c.label}</p>
+            <p className="mt-1 font-medium tabular-nums text-fg">
+              {c.usados.toLocaleString("es-CO")}
+              {c.limite !== null && <span className="text-mist"> / {c.limite.toLocaleString("es-CO")}</span>}
+            </p>
+          </div>
+        ))}
+      </div>
 
-      {limite !== null && (
-        <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-ink">
-          <div
-            className={`h-full rounded-full ${porcentaje >= 90 ? "bg-red-400" : porcentaje >= 70 ? "bg-amber-400" : "bg-lime"}`}
-            style={{ width: `${porcentaje}%` }}
-          />
-        </div>
-      )}
-
-      <div className="mt-4 grid grid-cols-2 gap-3 border-t border-edge pt-4 text-sm">
-        <div>
-          <p className="font-mono text-[10.5px] uppercase tracking-widest text-mist">{t("Restantes", "Remaining")}</p>
-          <p className="mt-1 font-medium text-fg">
-            {restantes === null ? t("Ilimitado", "Unlimited") : restantes.toLocaleString("es-CO")}
-          </p>
-        </div>
-        <div>
-          <p className="font-mono text-[10.5px] uppercase tracking-widest text-mist">{t("Renovación", "Renewal")}</p>
-          <p className="mt-1 font-medium text-fg">
-            {renuevaEl
-              ? new Date(renuevaEl + "T00:00:00").toLocaleDateString("es-CO", { day: "numeric", month: "long" })
-              : "—"}
-          </p>
-        </div>
+      <div className="mt-4 border-t border-edge pt-4 text-sm">
+        <p className="font-mono text-[10.5px] uppercase tracking-widest text-mist">{t("Renovación", "Renewal")}</p>
+        <p className="mt-1 font-medium text-fg">
+          {renuevaEl
+            ? new Date(renuevaEl + "T00:00:00").toLocaleDateString("es-CO", { day: "numeric", month: "long" })
+            : "—"}
+        </p>
       </div>
 
       {porCategoria.length > 0 && (

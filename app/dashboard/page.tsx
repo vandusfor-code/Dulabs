@@ -18,6 +18,7 @@ import { formatearTelefono, CALIDAD_INFO } from "@/lib/format";
 import { PageHeader, StatTile, Pill, PlanUsageCard } from "@/components/dashboard/shell/ui";
 import { AreaTrend, Donut } from "@/components/dashboard/shell/charts";
 import { useI18n } from "@/lib/i18n";
+import { PLANES, resolverPlanId } from "@/lib/planes";
 
 type Resumen = {
   conversaciones24h: number;
@@ -252,10 +253,7 @@ export default function ResumenPage() {
 
   const numerosActivos = negocios.filter((n) => n.conectado).length;
   const mensajesUsados = negocios.reduce((acc, n) => acc + n.mensajes_usados, 0);
-  const algunoIlimitado = negocios.some((n) => n.mensajes_limite === null);
-  const mensajesLimite = algunoIlimitado
-    ? null
-    : negocios.reduce((acc, n) => acc + (n.mensajes_limite ?? 0), 0);
+  const plan = PLANES[resolverPlanId(suscripcion?.plan)];
   const chartData = (dias ?? []).map((d) => ({
     label: new Date(d.fecha + "T00:00:00").toLocaleDateString("es-CO", { weekday: "short" }),
     entrante: d.entrante,
@@ -497,9 +495,11 @@ export default function ResumenPage() {
           <div className="lg:col-span-2">
             {suscripcion ? (
               <PlanUsageCard
-                plan={suscripcion.plan}
-                usados={mensajesUsados}
-                limite={mensajesLimite}
+                planNombre={plan.nombre}
+                cupos={[
+                  { label: t("Números", "Numbers"), usados: numerosActivos, limite: plan.limites.numeros },
+                  { label: t("Mensajes/mes", "Messages/mo"), usados: mensajesUsados, limite: null },
+                ]}
                 renuevaEl={suscripcion.fecha_proximo_cobro}
                 porCategoria={resumen?.porCategoriaMes ?? []}
               />

@@ -26,7 +26,13 @@ export async function PATCH(request: NextRequest) {
     return Response.json({ error: "No tienes permiso para esta acción" }, { status: 403 });
   }
 
-  let body: { phone_number_id?: string; nombre_negocio?: string; nombre_agente?: string; ia_pausada?: boolean };
+  let body: {
+    phone_number_id?: string;
+    nombre_negocio?: string;
+    nombre_agente?: string;
+    ia_pausada?: boolean;
+    agente_id?: number | null;
+  };
   try {
     body = await request.json();
   } catch {
@@ -36,9 +42,10 @@ export async function PATCH(request: NextRequest) {
   const { phone_number_id, ia_pausada } = body;
   const nombreNegocio = body.nombre_negocio?.trim();
   const nombreAgente = body.nombre_agente?.trim();
-  if (!phone_number_id || (!nombreNegocio && !nombreAgente && ia_pausada === undefined)) {
+  const agenteIdProvisto = Object.prototype.hasOwnProperty.call(body, "agente_id");
+  if (!phone_number_id || (!nombreNegocio && !nombreAgente && ia_pausada === undefined && !agenteIdProvisto)) {
     return Response.json(
-      { error: "Falta 'phone_number_id' y al menos 'nombre_negocio', 'nombre_agente' o 'ia_pausada'" },
+      { error: "Falta 'phone_number_id' y al menos 'nombre_negocio', 'nombre_agente', 'ia_pausada' o 'agente_id'" },
       { status: 400 }
     );
   }
@@ -46,10 +53,24 @@ export async function PATCH(request: NextRequest) {
     return Response.json({ error: `El nombre no puede superar ${MAX_NOMBRE_LENGTH} caracteres` }, { status: 400 });
   }
 
-  const cambios: Record<string, string | boolean> = { updated_at: new Date().toISOString() };
+  const cambios: Record<string, string | boolean | number | null> = { updated_at: new Date().toISOString() };
   if (nombreNegocio) cambios.nombre_negocio = nombreNegocio;
   if (nombreAgente) cambios.nombre_agente = nombreAgente;
   if (ia_pausada !== undefined) cambios.ia_pausada = ia_pausada;
+
+  if (agenteIdProvisto) {
+    if (body.agente_id !== null) {
+      const { data: agente, error: agenteError } = await supabase
+        .from("dulabs_agentes")
+        .select("id")
+        .eq("id", body.agente_id)
+        .eq("id_tenant", miembro.tenantId)
+        .maybeSingle();
+      if (agenteError) return Response.json({ error: agenteError.message }, { status: 500 });
+      if (!agente) return Response.json({ error: "Agente no encontrado" }, { status: 404 });
+    }
+    cambios.agente_id = body.agente_id ?? null;
+  }
 
   const { error } = await supabase
     .from("dulabs_clientes_config")
