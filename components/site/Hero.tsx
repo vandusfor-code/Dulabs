@@ -27,11 +27,11 @@ export function Hero() {
           </a>
         </div>
 
-        <h1 className="mx-auto mt-8 max-w-5xl text-center font-display text-[42px] font-medium leading-[1.02] tracking-[-0.03em] text-site-fg md:text-[68px] lg:text-[76px]">
-          <SplitText text={t("La IA que atiende tu WhatsApp", "The AI that runs your WhatsApp")} className="site-text-gradient" />
+        <h1 className="mx-auto mt-8 max-w-5xl text-center font-display text-[38px] font-medium leading-[1.05] tracking-[-0.03em] text-site-fg md:text-[58px] lg:text-[64px]">
+          <SplitText text={t("Automatiza WhatsApp con IA:", "Automate WhatsApp with AI:")} className="site-text-gradient" />
           <br />
           <SplitText
-            text={t("sin arriesgar tu número.", "without risking your number.")}
+            text={t("atención, campañas y encuestas.", "support, campaigns and surveys.")}
             className="site-text-gradient-primary"
             startDelay={320}
           />
@@ -39,8 +39,8 @@ export function Hero() {
 
         <p className="mx-auto mt-7 max-w-2xl text-center text-[16px] leading-relaxed text-site-muted-fg md:text-[17px]">
           {t(
-            "Du Labs conecta tu WhatsApp Business a la API Oficial de Meta. Tu asistente de IA responde 24/7 mientras tú sigues usando tu celular con normalidad — sin bloqueos, sin trucos, sin perder el control.",
-            "Du Labs connects your WhatsApp Business to the Official Meta API. Your AI assistant replies 24/7 while you keep using your phone as usual — no bans, no hacks, no loss of control."
+            "Sobre la API Oficial de Meta. Un agente entrenado con tu negocio, sin arriesgar tu número. Desde $39.900 COP/mes.",
+            "On Meta's official API. An agent trained on your business, without risking your number. From $39,900 COP/month."
           )}
         </p>
 
@@ -49,15 +49,15 @@ export function Hero() {
             href="/business"
             className="group inline-flex h-11 items-center rounded-full bg-site-fg px-5 text-[13.5px] font-medium text-site-bg transition-all hover:bg-site-fg/90"
           >
-            {t("Activar mi API Oficial", "Activate my Official API")}
+            {t("Comenzar ahora", "Get started")}
             <ArrowRight className="ml-1.5 h-4 w-4 transition-transform group-hover:translate-x-0.5" />
           </Link>
           <a
-            href="#plataforma"
+            href="#precios"
             className="group inline-flex h-11 items-center rounded-full border border-site-border bg-site-card px-5 text-[13.5px] font-medium text-site-fg transition-all hover:border-white/20"
           >
             <span className="mr-1.5 h-1.5 w-1.5 rounded-full bg-site-primary shadow-[0_0_8px_var(--color-site-primary)]" />
-            {t("Ver la plataforma", "See the platform")}
+            {t("Ver planes ↓", "See plans ↓")}
           </a>
         </div>
 

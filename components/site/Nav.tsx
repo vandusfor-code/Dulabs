@@ -10,9 +10,8 @@ export function Nav() {
   const { t } = useI18n();
   const links = [
     { label: t("Plataforma", "Platform"), href: "/#plataforma" },
-    { label: t("Agentes", "Agents"), href: "/#entrenamiento" },
-    { label: t("Infraestructura", "Infrastructure"), href: "/#infraestructura" },
-    { label: t("Escala", "Scale"), href: "/#escala" },
+    { label: t("Qué incluye", "What's included"), href: "/#incluye" },
+    { label: t("Preguntas frecuentes", "FAQ"), href: "/#faq" },
   ];
   const [scrolled, setScrolled] = useState(false);
   useEffect(() => {

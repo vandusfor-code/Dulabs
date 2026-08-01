@@ -3,17 +3,15 @@ import { Hero } from "@/components/site/Hero";
 import { Reveal } from "@/components/site/Reveal";
 import { PageSpotlight } from "@/components/site/PageSpotlight";
 import {
-  CoexistenceSection,
-  TrainingSection,
-  KnowledgeSection,
-  CampaignsSection,
-  WhatsAppSection,
-  PlatformOverviewSection,
+  PricingSection,
+  FeaturesGridSection,
   MetricsSection,
-  GrowthSection,
+  FaqSection,
   FinalCta,
   Footer,
 } from "@/components/site/Sections";
+
+const FAQ_HOME_IDS = ["cancelar", "conexion", "seguridad", "meta-cobra"];
 
 export default function Home() {
   return (
@@ -25,31 +23,20 @@ export default function Home() {
         <Hero />
 
         <Reveal>
+          <PricingSection showComparisonLink />
+        </Reveal>
+
+        <Reveal>
+          <FeaturesGridSection />
+        </Reveal>
+
+        <Reveal>
           <MetricsSection />
         </Reveal>
 
         <Reveal>
-          <CoexistenceSection />
+          <FaqSection ids={FAQ_HOME_IDS} showMoreLink />
         </Reveal>
-
-        {/* Un agente por número — con nombre propio, no un rol genérico */}
-        <TrainingSection />
-        <KnowledgeSection />
-
-        <Reveal>
-          <CampaignsSection />
-        </Reveal>
-
-        {/* WhatsAppSection incluye la antigua grilla de infraestructura */}
-        <Reveal>
-          <WhatsAppSection />
-        </Reveal>
-
-        {/* PlatformOverviewSection incluye la antigua pestaña "Mensajes" */}
-        <PlatformOverviewSection />
-
-        {/* GrowthSection fusiona Escala + LatAm + Ecosistema en pestañas */}
-        <GrowthSection />
 
         <FinalCta />
       </main>
