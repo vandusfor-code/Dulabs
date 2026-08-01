@@ -52,6 +52,26 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // Límite de campañas por mes del plan (cuántas se pueden enviar desde el
+  // panel, no cuántas simultáneas). Se cuentan las campañas del tenant
+  // creadas desde el 1° del mes en curso.
+  if (plan.limites.campanasPorMes !== null) {
+    const inicioMes = `${mesActualISO()}-01T00:00:00`;
+    const { count: campanasEsteMes } = await supabase
+      .from("dulabs_campanas")
+      .select("id", { count: "exact", head: true })
+      .eq("id_tenant", miembro.tenantId)
+      .gte("created_at", inicioMes);
+    if ((campanasEsteMes ?? 0) >= plan.limites.campanasPorMes) {
+      return Response.json(
+        {
+          error: `Tu plan ${plan.nombre} permite ${plan.limites.campanasPorMes} campaña${plan.limites.campanasPorMes === 1 ? "" : "s"} al mes y ya las usaste todas. Mejora tu plan para enviar más este mes.`,
+        },
+        { status: 400 }
+      );
+    }
+  }
+
   const { data: plantilla, error: plantillaError } = await supabase
     .from("dulabs_plantillas")
     .select("*")

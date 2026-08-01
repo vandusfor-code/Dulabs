@@ -4,6 +4,7 @@ import { resolverMiembroEquipo, requireRol } from "@/lib/team";
 import { descifrarSecreto } from "@/lib/crypto";
 import { extraerTexto, cargarLibroExcel, TAMANO_MAXIMO_BYTES } from "@/lib/archivo-texto";
 import { extraerEncuestaDeTexto, parseEncuestaEstructurada } from "@/lib/survey-import";
+import { planDelTenant } from "@/lib/plan-limits";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -33,6 +34,14 @@ export async function POST(request: NextRequest) {
     const miembro = await resolverMiembroEquipo(supabase, userData.user.id);
     if (!requireRol(miembro, ["admin"])) {
       return Response.json({ error: "No tienes permiso para esta acción" }, { status: 403 });
+    }
+
+    const plan = await planDelTenant(supabase, miembro.tenantId);
+    if (!plan.limites.encuestas) {
+      return Response.json(
+        { error: "El módulo de Encuestas está disponible desde el plan Growth. Mejora tu plan para importar encuestas." },
+        { status: 403 }
+      );
     }
 
     const form = await request.formData();

@@ -10,6 +10,14 @@ export interface PlanLimites {
   agentesIA: number | null;
   contactosPorCampana: number | null;
   campanasSimultaneas: number | null;
+  /** Mensajes de IA salientes por mes (pool del tenant). null = ilimitado. */
+  mensajesIAMes: number | null;
+  /** Campañas que se pueden enviar por mes desde el panel. null = sin límite. */
+  campanasPorMes: number | null;
+  /** Acceso al módulo de Encuestas (crear/enviar/resultados/embudo). */
+  encuestas: boolean;
+  /** Insights de IA sobre respuestas de encuestas (análisis de sentimiento). */
+  insightsIA: boolean;
 }
 
 export interface PlanDef {
@@ -23,26 +31,66 @@ export const PLANES: Record<PlanId, PlanDef> = {
   start: {
     id: "start",
     nombre: "Start",
-    precioCop: 39900,
-    limites: { numeros: 1, usuarios: 1, agentesIA: 1, contactosPorCampana: 500, campanasSimultaneas: 1 },
+    precioCop: 19900,
+    limites: {
+      numeros: 1,
+      usuarios: 1,
+      agentesIA: 1,
+      contactosPorCampana: 500,
+      campanasSimultaneas: 1,
+      mensajesIAMes: 1000,
+      campanasPorMes: 8,
+      encuestas: false,
+      insightsIA: false,
+    },
   },
   growth: {
     id: "growth",
     nombre: "Growth",
-    precioCop: 89900,
-    limites: { numeros: 2, usuarios: 5, agentesIA: 3, contactosPorCampana: 5000, campanasSimultaneas: 3 },
+    precioCop: 49900,
+    limites: {
+      numeros: 2,
+      usuarios: 5,
+      agentesIA: 3,
+      contactosPorCampana: 5000,
+      campanasSimultaneas: 3,
+      mensajesIAMes: 2500,
+      campanasPorMes: 15,
+      encuestas: true,
+      insightsIA: false,
+    },
   },
   scale: {
     id: "scale",
     nombre: "Scale",
-    precioCop: 179900,
-    limites: { numeros: 5, usuarios: 20, agentesIA: null, contactosPorCampana: 50000, campanasSimultaneas: 10 },
+    precioCop: 149900,
+    limites: {
+      numeros: 5,
+      usuarios: 20,
+      agentesIA: null,
+      contactosPorCampana: 50000,
+      campanasSimultaneas: 10,
+      mensajesIAMes: 9000,
+      campanasPorMes: null,
+      encuestas: true,
+      insightsIA: true,
+    },
   },
   enterprise: {
     id: "enterprise",
     nombre: "Enterprise",
     precioCop: null,
-    limites: { numeros: null, usuarios: null, agentesIA: null, contactosPorCampana: null, campanasSimultaneas: null },
+    limites: {
+      numeros: null,
+      usuarios: null,
+      agentesIA: null,
+      contactosPorCampana: null,
+      campanasSimultaneas: null,
+      mensajesIAMes: null,
+      campanasPorMes: null,
+      encuestas: true,
+      insightsIA: true,
+    },
   },
 };
 

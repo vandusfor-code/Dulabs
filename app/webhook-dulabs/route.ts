@@ -2,7 +2,10 @@ import { after } from "next/server";
 import type { NextRequest } from "next/server";
 import { supabaseAdmin, type ClienteConfig } from "@/lib/supabase";
 import { generarRespuestaIA } from "@/lib/ia";
-import { resolverConfigAgente } from "@/lib/agentes";
+import { resolverConfigAgente, type ConfigAgenteEfectiva } from "@/lib/agentes";
+import { planDelTenant } from "@/lib/plan-limits";
+import { agentePorSlug, INSTRUCCION_ADMIN } from "@/lib/marketplace";
+import { getActivacionPorId, normalizarTelefono } from "@/lib/marketplace-store";
 import { verificarFirmaMeta, compararVerifyToken } from "@/lib/meta-firma";
 import { enviarTexto } from "@/lib/whatsapp";
 import { descifrarSecreto } from "@/lib/crypto";
@@ -266,7 +269,16 @@ async function atenderMensaje(cliente: ClienteConfig, mensaje: MetaMessage) {
     return;
   }
 
-  const configAgente = await resolverConfigAgente(supabaseAdmin(), cliente);
+  // Cupo mensual de mensajes de IA del plan (pool del tenant, sumado entre
+  // todos sus números). Al agotarse, la IA guarda silencio hasta el próximo
+  // mes o hasta que el tenant mejore su plan — el mensaje del cliente queda
+  // registrado igual (arriba) para que un humano pueda responderlo a mano.
+  if (!(await dentroDelCupoIA(cliente))) {
+    console.log(`[webhook-dulabs] cupo mensual de mensajes IA agotado para tenant ${cliente.id_tenant}`);
+    return;
+  }
+
+  const configAgente = await resolverConfigParaMensaje(cliente, mensaje.from);
   const respuesta = await generarRespuestaIA(
     { ...configAgente, nombre_negocio: cliente.nombre_negocio },
     mensaje.text!.body
@@ -274,6 +286,54 @@ async function atenderMensaje(cliente: ClienteConfig, mensaje: MetaMessage) {
   if (respuesta) {
     await enviarWhatsApp(cliente, mensaje.from, respuesta);
   }
+}
+
+// Resuelve qué config de IA responde este mensaje. Si el número tiene un
+// agente del Marketplace activo, usa el prompt del catálogo + la config del
+// negocio (sombreando la config propia, que queda intacta). Además, si el
+// remitente es el número admin configurado, antepone la instrucción de trato
+// administrativo (dirigirse por su nombre, tono operativo). Si no hay agente
+// del marketplace activo, cae a la resolución normal (agente propio/legado).
+async function resolverConfigParaMensaje(cliente: ClienteConfig, remitente: string): Promise<ConfigAgenteEfectiva> {
+  const supabase = supabaseAdmin();
+  if (cliente.marketplace_activacion_id) {
+    const act = await getActivacionPorId(supabase, cliente.marketplace_activacion_id);
+    if (act && act.estado === "activa") {
+      const agente = agentePorSlug(act.agente_slug);
+      if (agente) {
+        let prompt = agente.promptBase;
+        if (act.numero_admin && normalizarTelefono(remitente) === act.numero_admin) {
+          prompt = `${INSTRUCCION_ADMIN}${act.nombre_admin ? ` El administrador se llama ${act.nombre_admin}.` : ""}\n\n${prompt}`;
+        }
+        return {
+          prompt_sistema: prompt,
+          base_conocimiento: act.config_texto,
+          api_key_ia: cliente.api_key_ia,
+          nombre_agente: agente.nombre,
+        };
+      }
+    }
+  }
+  return resolverConfigAgente(supabase, cliente);
+}
+
+// Suma el consumo de mensajes de IA del mes en curso entre TODOS los números
+// del tenant y lo compara contra el tope de su plan (mensajesIAMes). null =
+// ilimitado (Enterprise). El contador por número (mensajes_usados_mes) lo
+// mantiene incrementarUsoMensajes en cada envío saliente.
+async function dentroDelCupoIA(cliente: ClienteConfig): Promise<boolean> {
+  const supabase = supabaseAdmin();
+  const plan = await planDelTenant(supabase, cliente.id_tenant);
+  if (plan.limites.mensajesIAMes === null) return true;
+  const mesHoy = new Date().toISOString().slice(0, 7);
+  const { data } = await supabase
+    .from("dulabs_clientes_config")
+    .select("mensajes_usados_mes, mes_actual")
+    .eq("id_tenant", cliente.id_tenant);
+  const usados = (data ?? [])
+    .filter((r) => r.mes_actual === mesHoy)
+    .reduce((suma, r) => suma + (r.mensajes_usados_mes ?? 0), 0);
+  return usados < plan.limites.mensajesIAMes;
 }
 
 // --- Bot de encuestas (motor determinístico) -----------------------------------

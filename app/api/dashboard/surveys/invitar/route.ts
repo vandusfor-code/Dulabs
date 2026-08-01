@@ -53,6 +53,12 @@ export async function POST(request: NextRequest) {
   }
 
   const plan = await planDelTenant(supabase, miembro.tenantId);
+  if (!plan.limites.encuestas) {
+    return Response.json(
+      { error: "El módulo de Encuestas está disponible desde el plan Growth. Mejora tu plan para enviar invitaciones de encuesta." },
+      { status: 403 }
+    );
+  }
   if (plan.limites.contactosPorCampana !== null && destinatarios.length > plan.limites.contactosPorCampana) {
     return Response.json(
       {

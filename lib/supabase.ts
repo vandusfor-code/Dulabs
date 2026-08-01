@@ -26,6 +26,7 @@ export type ClienteConfig = {
   nombre_agente: string | null;
   ia_pausada: boolean;
   agente_id: number | null;
+  marketplace_activacion_id: number | null;
   created_at: string;
   updated_at: string;
 };

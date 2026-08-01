@@ -1,8 +1,12 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { resolverMiembroEquipo, requireRol } from "@/lib/team";
+import { planDelTenant } from "@/lib/plan-limits";
 import { DEFAULT_SURVEY_BOT_CONFIG } from "@/lib/survey-engine";
 import { DEFAULT_SURVEY_QUESTIONS } from "@/lib/survey-bot-store";
+
+const MENSAJE_ENCUESTAS_BLOQUEADAS =
+  "El módulo de Encuestas está disponible desde el plan Growth. Mejora tu plan para crear y publicar encuestas por WhatsApp.";
 
 export const runtime = "nodejs";
 
@@ -125,6 +129,11 @@ export async function PATCH(request: NextRequest) {
     .eq("id_tenant", miembro.tenantId)
     .maybeSingle();
   if (!cliente) return Response.json({ error: "Número no encontrado" }, { status: 404 });
+
+  const plan = await planDelTenant(supabase, miembro.tenantId);
+  if (!plan.limites.encuestas) {
+    return Response.json({ error: MENSAJE_ENCUESTAS_BLOQUEADAS }, { status: 403 });
+  }
 
   // El frontend guarda reenviando el objeto completo que recibió del GET
   // (`{...remote, active}`), que trae de vuelta campos que NO son columnas

@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { resolverMiembroEquipo } from "@/lib/team";
+import { planDelTenant } from "@/lib/plan-limits";
 import {
   summaryFromConfig,
   kpisFromSessions,
@@ -106,8 +107,14 @@ export async function GET(request: NextRequest) {
       }
     }
   }
+  // Insights de IA (análisis de sentimiento) solo desde el plan Scale — en
+  // planes sin la feature se omite el análisis (queda null: el panel muestra
+  // su estado "sin suficientes datos / no disponible" honesto, sin llamar a Claude).
+  const plan = await planDelTenant(supabase, miembro.tenantId);
   const apiKeyDelTenant = configRows.map((c) => apiKeyPorNumero.get(c.phone_number_id)).find((k) => k) ?? null;
-  const insights = await analizarRespuestasTexto(respuestasTexto, apiKeyDelTenant ? apiKeyDelTenant : null);
+  const insights = plan.limites.insightsIA
+    ? await analizarRespuestasTexto(respuestasTexto, apiKeyDelTenant ? apiKeyDelTenant : null)
+    : null;
 
   const dashboard: SurveyDashboard = {
     kpis: kpisFromSessions(todasLasSesiones),
