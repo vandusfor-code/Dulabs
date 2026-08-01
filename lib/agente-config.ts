@@ -5,10 +5,15 @@ import { normalizarTelefono } from "@/lib/marketplace-store";
 // Parser de la plantilla de configuración de un agente del Marketplace
 // (public/plantillas/agente-config-plantilla.xlsx, generada por
 // scripts/generar-plantilla-agente-config.mjs): una hoja con columnas
-// Campo | Valor. El único campo que se lee de forma estructurada es el
-// "Número admin"; el resto es texto libre del negocio que se usa como base
-// de conocimiento del agente (igual que cualquier archivo de Base de
-// Conocimiento — la IA ya lo interpreta hoy).
+// Campo | Valor. Los campos que se leen de forma estructurada son "Número
+// admin", "Recursos disponibles simultáneos" y "Duración estándar de cita"
+// (estos dos últimos solo aplican a agentes con agenda, ver
+// lib/marketplace.ts `usaAgenda`); el resto es texto libre del negocio que
+// se usa como base de conocimiento del agente (igual que cualquier archivo
+// de Base de Conocimiento — la IA ya lo interpreta hoy).
+
+const RECURSOS_DISPONIBLES_POR_DEFECTO = 1;
+const DURACION_ESTANDAR_MIN_POR_DEFECTO = 30;
 
 export interface ConfigAgenteNegocio {
   /** Teléfono admin normalizado (solo dígitos, con código de país), o null. */
@@ -16,6 +21,15 @@ export interface ConfigAgenteNegocio {
   nombreAdmin: string | null;
   /** Todos los campos del negocio como "Campo: Valor", para la base de conocimiento. */
   textoNegocio: string;
+  /** Cuántas citas simultáneas puede atender el negocio (sillas/doctores/canchas). */
+  recursosDisponibles: number;
+  /** Duración estándar de una cita, en minutos. */
+  duracionEstandarMin: number;
+}
+
+function numeroEnteroPositivo(texto: string, porDefecto: number): number {
+  const n = parseInt(texto.replace(/\D/g, ""), 10);
+  return Number.isFinite(n) && n > 0 ? n : porDefecto;
 }
 
 export function parseConfigAgente(libro: ExcelJS.Workbook): ConfigAgenteNegocio | null {
@@ -28,6 +42,8 @@ export function parseConfigAgente(libro: ExcelJS.Workbook): ConfigAgenteNegocio 
 
   let numeroAdmin: string | null = null;
   let nombreAdmin: string | null = null;
+  let recursosDisponibles = RECURSOS_DISPONIBLES_POR_DEFECTO;
+  let duracionEstandarMin = DURACION_ESTANDAR_MIN_POR_DEFECTO;
   const lineas: string[] = [];
 
   hoja.eachRow((fila, numeroFila) => {
@@ -44,9 +60,17 @@ export function parseConfigAgente(libro: ExcelJS.Workbook): ConfigAgenteNegocio 
       nombreAdmin = valor;
       return;
     }
+    if (campoNorm.startsWith("recursos disponibles")) {
+      recursosDisponibles = numeroEnteroPositivo(valor, RECURSOS_DISPONIBLES_POR_DEFECTO);
+      return;
+    }
+    if (campoNorm.startsWith("duracion estandar")) {
+      duracionEstandarMin = numeroEnteroPositivo(valor, DURACION_ESTANDAR_MIN_POR_DEFECTO);
+      return;
+    }
     lineas.push(`${campo}: ${valor}`);
   });
 
   if (lineas.length === 0 && !numeroAdmin) return null;
-  return { numeroAdmin, nombreAdmin, textoNegocio: lineas.join("\n") };
+  return { numeroAdmin, nombreAdmin, textoNegocio: lineas.join("\n"), recursosDisponibles, duracionEstandarMin };
 }

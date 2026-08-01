@@ -28,6 +28,14 @@ hoja.addRows([
   { campo: "Número admin", valor: "+57 300 123 4567" },
   { campo: "Nombre del admin", valor: "Juan" },
   {
+    campo: "Recursos disponibles simultáneos (solo agentes con agenda: sillas, doctores, canchas...)",
+    valor: "3",
+  },
+  {
+    campo: "Duración estándar de cita en minutos (solo agentes con agenda)",
+    valor: "30",
+  },
+  {
     campo: "Información adicional (precios, servicios, políticas)",
     valor: "Cortes desde $25.000, tinte desde $60.000. No trabajamos con cita los domingos.",
   },

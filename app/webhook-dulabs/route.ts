@@ -5,7 +5,9 @@ import { generarRespuestaIA } from "@/lib/ia";
 import { resolverConfigAgente, type ConfigAgenteEfectiva } from "@/lib/agentes";
 import { planDelTenant } from "@/lib/plan-limits";
 import { agentePorSlug, INSTRUCCION_ADMIN } from "@/lib/marketplace";
-import { getActivacionPorId, normalizarTelefono } from "@/lib/marketplace-store";
+import { getActivacionPorId, normalizarTelefono, type ActivacionMarketplace } from "@/lib/marketplace-store";
+import { generarRespuestaAgendaIA, type EventoAgenda } from "@/lib/marketplace-agenda-ia";
+import { horaCorta } from "@/lib/marketplace-citas";
 import { verificarFirmaMeta, compararVerifyToken } from "@/lib/meta-firma";
 import { enviarTexto } from "@/lib/whatsapp";
 import { descifrarSecreto } from "@/lib/crypto";
@@ -38,6 +40,7 @@ type MetaStatus = {
 type MetaChangeValue = {
   messaging_product?: string;
   metadata?: { display_phone_number?: string; phone_number_id?: string };
+  contacts?: { wa_id?: string; profile?: { name?: string } }[];
   messages?: MetaMessage[];
   statuses?: MetaStatus[];
   smb_message_echoes?: MetaMessage[];
@@ -171,7 +174,9 @@ async function procesarCambio(phoneNumberId: string, value: MetaChangeValue) {
     }
     if (mensaje.type !== "text" && mensaje.type !== "button") continue; // esqueleto: solo texto/botón
     if (!mensaje.text?.body) continue;
-    await atenderMensaje(cliente, mensaje);
+    const nombreContacto =
+      (value.contacts ?? []).find((c) => soloDigitos(c.wa_id ?? "") === soloDigitos(mensaje.from))?.profile?.name ?? null;
+    await atenderMensaje(cliente, mensaje, nombreContacto);
   }
 }
 
@@ -239,7 +244,7 @@ async function activarPausaHumana(phoneNumberId: string, telefonoCliente: string
   }
 }
 
-async function atenderMensaje(cliente: ClienteConfig, mensaje: MetaMessage) {
+async function atenderMensaje(cliente: ClienteConfig, mensaje: MetaMessage, nombreContacto: string | null) {
   await registrarMensaje(cliente.phone_number_id, soloDigitos(mensaje.from), "entrante", mensaje.text!.body, "entrante");
 
   // Bot de encuestas: SOLO toma el turno si este contacto ya tiene una sesión
@@ -278,9 +283,31 @@ async function atenderMensaje(cliente: ClienteConfig, mensaje: MetaMessage) {
     return;
   }
 
-  const configAgente = await resolverConfigParaMensaje(cliente, mensaje.from);
+  const contexto = await resolverContextoMensaje(cliente, mensaje.from);
+
+  if (contexto.modo === "agenda") {
+    const resultado = await generarRespuestaAgendaIA({
+      supabase: supabaseAdmin(),
+      systemPrompt: contexto.systemPrompt,
+      apiKeyCifrada: cliente.api_key_ia,
+      textoUsuario: mensaje.text!.body,
+      activacionId: contexto.activacion.id,
+      phoneNumberId: cliente.phone_number_id,
+      telefonoRemitente: normalizarTelefono(mensaje.from),
+      nombreRemitente: nombreContacto,
+      esAdmin: contexto.esAdmin,
+      recursosDisponibles: contexto.activacion.recursos_disponibles,
+      duracionEstandarMin: contexto.activacion.duracion_estandar_min,
+    });
+    if (resultado.texto) await enviarWhatsApp(cliente, mensaje.from, resultado.texto);
+    for (const evento of resultado.eventos) {
+      await notificarAdminAgenda(cliente, contexto.activacion, contexto.agenteNombre, evento);
+    }
+    return;
+  }
+
   const respuesta = await generarRespuestaIA(
-    { ...configAgente, nombre_negocio: cliente.nombre_negocio },
+    { ...contexto.config, nombre_negocio: cliente.nombre_negocio },
     mensaje.text!.body
   );
   if (respuesta) {
@@ -288,33 +315,77 @@ async function atenderMensaje(cliente: ClienteConfig, mensaje: MetaMessage) {
   }
 }
 
-// Resuelve qué config de IA responde este mensaje. Si el número tiene un
-// agente del Marketplace activo, usa el prompt del catálogo + la config del
-// negocio (sombreando la config propia, que queda intacta). Además, si el
-// remitente es el número admin configurado, antepone la instrucción de trato
-// administrativo (dirigirse por su nombre, tono operativo). Si no hay agente
+type ContextoMensaje =
+  | { modo: "texto"; config: ConfigAgenteEfectiva }
+  | { modo: "agenda"; systemPrompt: string; activacion: ActivacionMarketplace; agenteNombre: string; esAdmin: boolean };
+
+// Resuelve cómo responder este mensaje. Si el número tiene un agente del
+// Marketplace activo CON agenda (ver lib/marketplace.ts `usaAgenda`), pasa a
+// modo "agenda" (herramientas reales de citas, ver
+// lib/marketplace-agenda-ia.ts). Si tiene un agente del marketplace SIN
+// agenda, sigue en modo "texto" pero con el prompt del catálogo (sombreando
+// la config propia, que queda intacta). Si el remitente es el número admin
+// configurado, antepone la instrucción de trato administrativo. Sin agente
 // del marketplace activo, cae a la resolución normal (agente propio/legado).
-async function resolverConfigParaMensaje(cliente: ClienteConfig, remitente: string): Promise<ConfigAgenteEfectiva> {
+async function resolverContextoMensaje(cliente: ClienteConfig, remitente: string): Promise<ContextoMensaje> {
   const supabase = supabaseAdmin();
   if (cliente.marketplace_activacion_id) {
     const act = await getActivacionPorId(supabase, cliente.marketplace_activacion_id);
     if (act && act.estado === "activa") {
       const agente = agentePorSlug(act.agente_slug);
       if (agente) {
-        let prompt = agente.promptBase;
-        if (act.numero_admin && normalizarTelefono(remitente) === act.numero_admin) {
-          prompt = `${INSTRUCCION_ADMIN}${act.nombre_admin ? ` El administrador se llama ${act.nombre_admin}.` : ""}\n\n${prompt}`;
+        const esAdmin = Boolean(act.numero_admin && normalizarTelefono(remitente) === act.numero_admin);
+        const instruccionAdmin = esAdmin
+          ? `${INSTRUCCION_ADMIN}${act.nombre_admin ? ` El administrador se llama ${act.nombre_admin}.` : ""}\n\n`
+          : "";
+        const prompt = `${instruccionAdmin}${agente.promptBase}`;
+        if (agente.usaAgenda) {
+          return { modo: "agenda", systemPrompt: prompt, activacion: act, agenteNombre: agente.nombre, esAdmin };
         }
         return {
-          prompt_sistema: prompt,
-          base_conocimiento: act.config_texto,
-          api_key_ia: cliente.api_key_ia,
-          nombre_agente: agente.nombre,
+          modo: "texto",
+          config: { prompt_sistema: prompt, base_conocimiento: act.config_texto, api_key_ia: cliente.api_key_ia, nombre_agente: agente.nombre },
         };
       }
     }
   }
-  return resolverConfigAgente(supabase, cliente);
+  return { modo: "texto", config: await resolverConfigAgente(supabase, cliente) };
+}
+
+// Notifica al admin configurado sobre un cambio de agenda (cita nueva,
+// cancelada o reagendada) — mensaje de sistema determinístico, NO generado
+// por la IA. Se envía como texto libre; si el admin no le ha escrito al
+// número en las últimas 24h, Meta lo rechaza (limitación conocida: no hay
+// todavía una plantilla Utility aprobada configurada para esto — ver
+// recordatorio_template_name). El fallo se registra en logs, sin interrumpir
+// la respuesta al cliente que sí está esperando.
+async function notificarAdminAgenda(
+  cliente: ClienteConfig,
+  activacion: ActivacionMarketplace,
+  agenteNombre: string,
+  evento: EventoAgenda
+) {
+  if (!activacion.numero_admin) return;
+  const token = resolverTokenMeta(cliente);
+  if (!token) return;
+
+  const cliente_ = evento.cita.nombre_cliente ?? evento.cita.numero_cliente;
+  const fechaHora = `${evento.cita.fecha} ${horaCorta(evento.cita.hora_inicio)}`;
+  let texto: string;
+  if (evento.tipo === "agendada") {
+    texto = `Nueva cita — ${agenteNombre}\n${cliente_}, ${fechaHora}${evento.cita.servicio ? ` (${evento.cita.servicio})` : ""}.`;
+  } else if (evento.tipo === "cancelada") {
+    texto = `Cita cancelada — ${agenteNombre}\n${cliente_}, ${fechaHora}.`;
+  } else {
+    texto = `Cita reagendada — ${agenteNombre}\n${cliente_}: ${evento.fechaAnterior} ${evento.horaAnterior} → ${fechaHora}.`;
+  }
+
+  try {
+    const { wamid } = await enviarTexto({ phoneNumberId: cliente.phone_number_id, token, para: activacion.numero_admin, texto });
+    await registrarMensaje(cliente.phone_number_id, activacion.numero_admin, "saliente", texto, "agente", wamid ?? undefined);
+  } catch (err) {
+    console.error(`[webhook-dulabs] no se pudo notificar al admin ${activacion.numero_admin}:`, err instanceof Error ? err.message : err);
+  }
 }
 
 // Suma el consumo de mensajes de IA del mes en curso entre TODOS los números
@@ -366,10 +437,14 @@ async function atenderMensajeEncuesta(cliente: ClienteConfig, mensaje: MetaMessa
 
 // --- Envío por la API de WhatsApp de Meta --------------------------------------
 
+// Cada tenant usa su propio token permanente (Embedded Signup); el token
+// global de plataforma queda como respaldo para números registrados a mano.
+function resolverTokenMeta(cliente: ClienteConfig): string | null {
+  return cliente.meta_permanent_token ? descifrarSecreto(cliente.meta_permanent_token) : (process.env.META_ACCESS_TOKEN ?? null);
+}
+
 async function enviarWhatsApp(cliente: ClienteConfig, para: string, texto: string) {
-  // Cada tenant usa su propio token permanente (Embedded Signup); el token
-  // global de plataforma queda como respaldo para números registrados a mano.
-  const token = cliente.meta_permanent_token ? descifrarSecreto(cliente.meta_permanent_token) : process.env.META_ACCESS_TOKEN;
+  const token = resolverTokenMeta(cliente);
   if (!token) {
     console.error("[webhook-dulabs] sin token de Meta para", cliente.nombre_negocio);
     return;

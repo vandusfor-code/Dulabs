@@ -60,6 +60,8 @@ export async function POST(request: NextRequest) {
         nombre_admin: config.nombreAdmin,
         config_texto: config.textoNegocio,
         config_nombre_archivo: archivo.name,
+        recursos_disponibles: config.recursosDisponibles,
+        duracion_estandar_min: config.duracionEstandarMin,
         updated_at: new Date().toISOString(),
       })
       .eq("id", cliente.marketplace_activacion_id)
