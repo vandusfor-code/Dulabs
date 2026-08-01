@@ -1,9 +1,10 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import { enviarPlantilla } from "@/lib/meta-templates";
+import { enviarPlantilla, contarVariablesPlantilla } from "@/lib/meta-templates";
 import { resolverMiembroEquipo, requireRol } from "@/lib/team";
 import { descifrarSecreto } from "@/lib/crypto";
 import { planDelTenant } from "@/lib/plan-limits";
+import { parseDestinatario } from "@/lib/destinatarios";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -117,9 +118,16 @@ export async function POST(request: NextRequest) {
 
     let enviados = 0;
     const fallidos: { destinatario: string; error: string }[] = [];
+    // Si la plantilla tiene exactamente una variable posicional ({{1}}), se
+    // asume que es el nombre del cliente y se rellena con el nombre que
+    // trajo cada destinatario ("teléfono, Nombre" — a mano o importado de
+    // Excel). Si no trajo nombre, o la plantilla no tiene esa variable, se
+    // envía sin personalizar (igual que antes).
+    const tieneVariableNombre = contarVariablesPlantilla(plantilla.cuerpo) === 1;
 
-    for (const destinatario of destinatarios) {
-      const numero = destinatario.replace(/\D/g, "");
+    for (const linea of destinatarios) {
+      const { telefono: numero, nombre } = parseDestinatario(linea);
+      if (!numero) continue;
       try {
         const { wamid } = await enviarPlantilla({
           phoneNumberId: plantilla.phone_number_id,
@@ -127,6 +135,7 @@ export async function POST(request: NextRequest) {
           para: numero,
           nombrePlantilla: plantilla.nombre,
           idioma: plantilla.idioma,
+          parametrosPosicionales: tieneVariableNombre ? [nombre || "cliente"] : undefined,
         });
         await supabase.from("dulabs_mensajes_log").insert({
           phone_number_id: plantilla.phone_number_id,

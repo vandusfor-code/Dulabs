@@ -117,10 +117,12 @@ export default function CampanasPage() {
 
   const registrarContactos = useCallback(() => {
     if (!propuestaContactos) return;
-    const numeros = propuestaContactos.map((c) => c.telefono);
+    // Si el Excel trajo nombre, se conserva en la línea ("teléfono, Nombre")
+    // — la plantilla que se use decide si lo aprovecha para personalizar.
+    const lineas = propuestaContactos.map((c) => (c.nombre ? `${c.telefono}, ${c.nombre}` : c.telefono));
     setDestinatarios((prev) => {
-      const previos = prev.split(/[\n,]+/).map((d) => d.trim()).filter(Boolean);
-      return [...previos, ...numeros].join("\n");
+      const previos = prev.split("\n").map((d) => d.trim()).filter(Boolean);
+      return [...previos, ...lineas].join("\n");
     });
     setPropuestaContactos(null);
   }, [propuestaContactos]);
@@ -149,7 +151,7 @@ export default function CampanasPage() {
       setEnviandoCampana(true);
       setResultadoCampana(null);
       const lista = destinatarios
-        .split(/[\n,]+/)
+        .split("\n")
         .map((d) => d.trim())
         .filter(Boolean);
       try {
@@ -173,7 +175,7 @@ export default function CampanasPage() {
   );
 
   const aprobadas = (plantillas ?? []).filter((p) => p.estado === "APPROVED");
-  const conteoDestinatarios = destinatarios.split(/[\n,]+/).map((d) => d.trim()).filter(Boolean).length;
+  const conteoDestinatarios = destinatarios.split("\n").map((d) => d.trim()).filter(Boolean).length;
 
   const campanas = datos?.campanas ?? [];
   const activa = campanas.find((c) => c.id === activeId) ?? campanas[0] ?? null;
@@ -236,7 +238,10 @@ export default function CampanasPage() {
                 <div>
                   <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
                     <label className="text-xs font-medium text-mist">
-                      {t("Destinatarios (uno por línea, con indicativo de país)", "Recipients (one per line, with country code)")}
+                      {t(
+                        "Destinatarios (uno por línea, con indicativo de país — opcionalmente: teléfono, Nombre)",
+                        "Recipients (one per line, with country code — optionally: phone, Name)"
+                      )}
                     </label>
                     <div className="flex items-center gap-2">
                       <input
@@ -301,7 +306,7 @@ export default function CampanasPage() {
                     rows={5}
                     value={destinatarios}
                     onChange={(e) => setDestinatarios(e.target.value)}
-                    placeholder={"573001234567\n573007654321"}
+                    placeholder={"573001234567\n573007654321, Juan Pérez"}
                     className="w-full rounded-lg border border-edge bg-ink px-4 py-3 text-sm text-fg outline-none focus:border-lime/50"
                   />
                   <p className="mt-1.5 flex items-center gap-1.5 text-xs text-mist">

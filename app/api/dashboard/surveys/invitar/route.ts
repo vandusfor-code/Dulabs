@@ -7,23 +7,12 @@ import { enviarPlantilla, consultarEstadoPlantilla } from "@/lib/meta-templates"
 import { getSurveyBot, createSessionRow } from "@/lib/survey-bot-store";
 import { inviteSurvey } from "@/lib/survey-engine";
 import { planDelTenant } from "@/lib/plan-limits";
+import { parseDestinatario } from "@/lib/destinatarios";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
 const IDIOMA_PLANTILLA = "es_CO";
-
-function soloDigitos(v: string): string {
-  return v.replace(/\D/g, "");
-}
-
-/** "573001234567" o "573001234567, Juan Pérez" -> { telefono, nombre } */
-function parseDestinatario(linea: string): { telefono: string; nombre: string | null } {
-  const [tel, ...resto] = linea.split(",");
-  const telefono = soloDigitos(tel ?? "");
-  const nombre = resto.join(",").trim() || null;
-  return { telefono, nombre };
-}
 
 /**
  * Envía la invitación inicial de la encuesta predeterminada a una lista de

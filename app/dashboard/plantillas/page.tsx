@@ -5,6 +5,7 @@ import { LayoutTemplate, CircleCheck, Clock, CircleAlert, Plus, FileEdit, Ban, S
 import { useDashboard } from "@/lib/dashboard-session";
 import { PageHeader, Pill, StatTile } from "@/components/dashboard/shell/ui";
 import { useI18n } from "@/lib/i18n";
+import { contarVariablesPlantilla } from "@/lib/meta-templates";
 
 type Plantilla = {
   id: number;
@@ -24,10 +25,6 @@ type Plantilla = {
 const MAX_BOTONES = 3;
 const MAX_CARACTERES_BOTON = 25;
 
-function contarVariables(cuerpo: string): number {
-  const coincidencias = cuerpo.match(/\{\{\d+\}\}/g);
-  return coincidencias ? new Set(coincidencias).size : 0;
-}
 
 const categorias = ["Todas", "MARKETING", "UTILITY", "AUTHENTICATION"] as const;
 
@@ -147,7 +144,7 @@ export default function PlantillasPage() {
     return true;
   });
   const activa = filtradas.find((p) => p.id === activeId) ?? filtradas[0] ?? null;
-  const variablesActiva = activa ? contarVariables(activa.cuerpo) : 0;
+  const variablesActiva = activa ? contarVariablesPlantilla(activa.cuerpo) : 0;
   const nombreNegocioActiva = negocios?.find((n) => n.phone_number_id === activa?.phone_number_id)?.nombre_negocio;
 
   const copiarTexto = () => {

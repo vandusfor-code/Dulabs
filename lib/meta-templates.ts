@@ -70,6 +70,13 @@ export async function consultarEstadoPlantilla(params: {
   return json.data?.[0]?.status ?? null;
 }
 
+// Cuenta las variables posicionales {{1}}, {{2}}… del cuerpo de una
+// plantilla creada desde /dashboard/plantillas (ver contarVariables ahí).
+export function contarVariablesPlantilla(cuerpo: string): number {
+  const coincidencias = cuerpo.match(/\{\{\d+\}\}/g);
+  return coincidencias ? new Set(coincidencias).size : 0;
+}
+
 export async function enviarPlantilla(params: {
   phoneNumberId: string;
   token: string;
@@ -81,6 +88,12 @@ export async function enviarPlantilla(params: {
    * formato que usa el editor nativo de plantillas de Meta hoy en día.
    */
   variables?: { nombre: string; valor: string }[];
+  /**
+   * Variables POSICIONALES del body ({{1}}, {{2}}…) — el formato que usan
+   * las plantillas creadas desde /dashboard/plantillas. Mutuamente
+   * excluyente con `variables`.
+   */
+  parametrosPosicionales?: string[];
 }): Promise<{ wamid: string | null }> {
   const components = params.variables?.length
     ? [
@@ -89,7 +102,14 @@ export async function enviarPlantilla(params: {
           parameters: params.variables.map((v) => ({ type: "text", parameter_name: v.nombre, text: v.valor })),
         },
       ]
-    : undefined;
+    : params.parametrosPosicionales?.length
+      ? [
+          {
+            type: "body",
+            parameters: params.parametrosPosicionales.map((valor) => ({ type: "text", text: valor })),
+          },
+        ]
+      : undefined;
 
   const res = await fetch(`${GRAPH}/${params.phoneNumberId}/messages`, {
     method: "POST",
