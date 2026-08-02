@@ -6,8 +6,7 @@ import { resolverConfigAgente, type ConfigAgenteEfectiva } from "@/lib/agentes";
 import { planDelTenant } from "@/lib/plan-limits";
 import { agentePorSlug, INSTRUCCION_ADMIN } from "@/lib/marketplace";
 import { getActivacionPorId, normalizarTelefono, type ActivacionMarketplace } from "@/lib/marketplace-store";
-import { generarRespuestaAgendaIA, type EventoAgenda } from "@/lib/marketplace-agenda-ia";
-import { horaCorta } from "@/lib/marketplace-citas";
+import { generarRespuestaAgendaIA } from "@/lib/marketplace-agenda-ia";
 import { verificarFirmaMeta, compararVerifyToken } from "@/lib/meta-firma";
 import { enviarTexto } from "@/lib/whatsapp";
 import { descifrarSecreto } from "@/lib/crypto";
@@ -300,9 +299,6 @@ async function atenderMensaje(cliente: ClienteConfig, mensaje: MetaMessage, nomb
       duracionEstandarMin: contexto.activacion.duracion_estandar_min,
     });
     if (resultado.texto) await enviarWhatsApp(cliente, mensaje.from, resultado.texto);
-    for (const evento of resultado.eventos) {
-      await notificarAdminAgenda(cliente, contexto.activacion, contexto.agenteNombre, evento);
-    }
     return;
   }
 
@@ -317,7 +313,7 @@ async function atenderMensaje(cliente: ClienteConfig, mensaje: MetaMessage, nomb
 
 type ContextoMensaje =
   | { modo: "texto"; config: ConfigAgenteEfectiva }
-  | { modo: "agenda"; systemPrompt: string; activacion: ActivacionMarketplace; agenteNombre: string; esAdmin: boolean };
+  | { modo: "agenda"; systemPrompt: string; activacion: ActivacionMarketplace; esAdmin: boolean };
 
 // Resuelve cómo responder este mensaje. Si el número tiene un agente del
 // Marketplace activo CON agenda (ver lib/marketplace.ts `usaAgenda`), pasa a
@@ -340,7 +336,7 @@ async function resolverContextoMensaje(cliente: ClienteConfig, remitente: string
           : "";
         const prompt = `${instruccionAdmin}${agente.promptBase}`;
         if (agente.usaAgenda) {
-          return { modo: "agenda", systemPrompt: prompt, activacion: act, agenteNombre: agente.nombre, esAdmin };
+          return { modo: "agenda", systemPrompt: prompt, activacion: act, esAdmin };
         }
         return {
           modo: "texto",
@@ -350,42 +346,6 @@ async function resolverContextoMensaje(cliente: ClienteConfig, remitente: string
     }
   }
   return { modo: "texto", config: await resolverConfigAgente(supabase, cliente) };
-}
-
-// Notifica al admin configurado sobre un cambio de agenda (cita nueva,
-// cancelada o reagendada) — mensaje de sistema determinístico, NO generado
-// por la IA. Se envía como texto libre; si el admin no le ha escrito al
-// número en las últimas 24h, Meta lo rechaza (limitación conocida: no hay
-// todavía una plantilla Utility aprobada configurada para esto — ver
-// recordatorio_template_name). El fallo se registra en logs, sin interrumpir
-// la respuesta al cliente que sí está esperando.
-async function notificarAdminAgenda(
-  cliente: ClienteConfig,
-  activacion: ActivacionMarketplace,
-  agenteNombre: string,
-  evento: EventoAgenda
-) {
-  if (!activacion.numero_admin) return;
-  const token = resolverTokenMeta(cliente);
-  if (!token) return;
-
-  const cliente_ = evento.cita.nombre_cliente ?? evento.cita.numero_cliente;
-  const fechaHora = `${evento.cita.fecha} ${horaCorta(evento.cita.hora_inicio)}`;
-  let texto: string;
-  if (evento.tipo === "agendada") {
-    texto = `Nueva cita — ${agenteNombre}\n${cliente_}, ${fechaHora}${evento.cita.servicio ? ` (${evento.cita.servicio})` : ""}.`;
-  } else if (evento.tipo === "cancelada") {
-    texto = `Cita cancelada — ${agenteNombre}\n${cliente_}, ${fechaHora}.`;
-  } else {
-    texto = `Cita reagendada — ${agenteNombre}\n${cliente_}: ${evento.fechaAnterior} ${evento.horaAnterior} → ${fechaHora}.`;
-  }
-
-  try {
-    const { wamid } = await enviarTexto({ phoneNumberId: cliente.phone_number_id, token, para: activacion.numero_admin, texto });
-    await registrarMensaje(cliente.phone_number_id, activacion.numero_admin, "saliente", texto, "agente", wamid ?? undefined);
-  } catch (err) {
-    console.error(`[webhook-dulabs] no se pudo notificar al admin ${activacion.numero_admin}:`, err instanceof Error ? err.message : err);
-  }
 }
 
 // Suma el consumo de mensajes de IA del mes en curso entre TODOS los números

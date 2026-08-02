@@ -47,7 +47,7 @@ export const AGENTES_MARKETPLACE: AgenteMarketplace[] = [
     categoria: "Barbería",
     icono: "Scissors",
     descripcion:
-      "Automatiza reservas, recordatorios y atención por WhatsApp. Reduce el tiempo operativo y mejora la respuesta a tus clientes.",
+      "Automatiza reservas y atención por WhatsApp. Reduce el tiempo operativo y mejora la respuesta a tus clientes.",
     queIncluye: [
       "Atención de reservas por WhatsApp",
       "Respuestas a preguntas frecuentes",
@@ -85,7 +85,7 @@ export const AGENTES_MARKETPLACE: AgenteMarketplace[] = [
     categoria: "Clínica",
     icono: "Cross",
     descripcion:
-      "Gestiona solicitudes de citas, recordatorios y atención automática por WhatsApp para tu clínica o consultorio.",
+      "Gestiona solicitudes de citas y atención automática por WhatsApp para tu clínica o consultorio.",
     queIncluye: [
       "Atención de solicitudes de cita",
       "Respuestas a preguntas frecuentes",

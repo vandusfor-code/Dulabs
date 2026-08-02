@@ -17,14 +17,8 @@ import {
 const MODELO = "claude-opus-4-8";
 const MAX_TURNOS_HERRAMIENTA = 4;
 
-export type EventoAgenda =
-  | { tipo: "agendada"; cita: Cita }
-  | { tipo: "cancelada"; cita: Cita }
-  | { tipo: "reagendada"; cita: Cita; fechaAnterior: string; horaAnterior: string };
-
 export interface ResultadoAgendaIA {
   texto: string | null;
-  eventos: EventoAgenda[];
 }
 
 // Genera la respuesta de un agente del Marketplace con capacidad de agenda
@@ -49,11 +43,10 @@ export async function generarRespuestaAgendaIA(params: {
   const apiKey = params.apiKeyCifrada ? descifrarSecreto(params.apiKeyCifrada) : process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     console.error("[marketplace-agenda-ia] sin API key de IA configurada");
-    return { texto: null, eventos: [] };
+    return { texto: null };
   }
 
   const anthropic = new Anthropic({ apiKey });
-  const eventos: EventoAgenda[] = [];
 
   const tools: Anthropic.Tool[] = [
     {
@@ -189,7 +182,6 @@ export async function generarRespuestaAgendaIA(params: {
           duracionMin: params.duracionEstandarMin,
           servicio: input.servicio ? String(input.servicio) : null,
         });
-        eventos.push({ tipo: "agendada", cita });
         return JSON.stringify({ success: true, cita_id: cita.id });
       }
       case "consultar_mis_citas": {
@@ -202,7 +194,6 @@ export async function generarRespuestaAgendaIA(params: {
         const cita = await resolverCitaObjetivo(input.cita_id);
         if (!cita) return JSON.stringify({ success: false, motivo: "No encontré esa cita." });
         await cancelarCita(params.supabase, cita.id, params.activacionId);
-        eventos.push({ tipo: "cancelada", cita });
         return JSON.stringify({ success: true });
       }
       case "reagendar_cita": {
@@ -219,10 +210,7 @@ export async function generarRespuestaAgendaIA(params: {
           excluirCitaId: cita.id,
         });
         if (!libre) return JSON.stringify({ success: false, motivo: "Ese nuevo horario no tiene cupo." });
-        const fechaAnterior = cita.fecha;
-        const horaAnterior = horaCorta(cita.hora_inicio);
-        const actualizada = await reagendarCita(params.supabase, cita.id, params.activacionId, nuevaFecha, nuevaHora);
-        eventos.push({ tipo: "reagendada", cita: actualizada, fechaAnterior, horaAnterior });
+        await reagendarCita(params.supabase, cita.id, params.activacionId, nuevaFecha, nuevaHora);
         return JSON.stringify({ success: true });
       }
       case "consultar_citas_del_negocio": {
@@ -268,7 +256,7 @@ export async function generarRespuestaAgendaIA(params: {
       } else {
         console.error("[marketplace-agenda-ia] error de IA:", err instanceof Error ? err.message : err);
       }
-      return { texto: null, eventos };
+      return { texto: null };
     }
 
     const bloquesHerramienta = response.content.filter(
@@ -280,7 +268,7 @@ export async function generarRespuestaAgendaIA(params: {
         .map((b) => b.text)
         .join("\n")
         .trim();
-      return { texto: texto || null, eventos };
+      return { texto: texto || null };
     }
 
     messages.push({ role: "assistant", content: response.content });
@@ -292,5 +280,5 @@ export async function generarRespuestaAgendaIA(params: {
     messages.push({ role: "user", content: resultados });
   }
 
-  return { texto: "Un momento, deja lo confirmo y te aviso. ¿Puedes repetir tu solicitud?", eventos };
+  return { texto: "Un momento, deja lo confirmo y te aviso. ¿Puedes repetir tu solicitud?" };
 }

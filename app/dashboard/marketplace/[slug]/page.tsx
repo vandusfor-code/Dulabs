@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { Check, ChevronRight, Download, FileUp, Phone, X } from "lucide-react";
+import { AlertTriangle, Check, CheckCircle2, ChevronRight, Download, FileUp, X } from "lucide-react";
 import { useDashboard } from "@/lib/dashboard-session";
 import { useI18n } from "@/lib/i18n";
 import { AgenteIcono } from "@/components/dashboard/marketplace/AgenteIcono";
@@ -30,6 +30,7 @@ export default function MarketplaceDetallePage() {
   const [estado, setEstado] = useState<MarketplaceEstado | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [modalAbierto, setModalAbierto] = useState(false);
+  const [tipoPlan, setTipoPlan] = useState<"recurrente" | "mes">("recurrente");
 
   const cargar = useCallback(() => {
     if (!session) return;
@@ -155,7 +156,13 @@ export default function MarketplaceDetallePage() {
             <section className="rounded-2xl border border-edge bg-card p-6">
               <h2 className="text-lg font-semibold text-fg">{t("Plan de pago", "Payment plan")}</h2>
               <div className="mt-4 space-y-3">
-                <div className="rounded-xl border border-lime/50 p-4">
+                <button
+                  type="button"
+                  onClick={() => setTipoPlan("recurrente")}
+                  className={`w-full rounded-xl border p-4 text-left transition-colors ${
+                    tipoPlan === "recurrente" ? "border-lime/60 bg-lime/5" : "border-edge hover:border-lime/30"
+                  }`}
+                >
                   <div className="text-xs font-medium text-lime-text">
                     {t(`Recomendado — ahorras $${(agente.precioMes - agente.precioRecurrente).toLocaleString("es-CO")}/mes`, `Recommended — save $${(agente.precioMes - agente.precioRecurrente).toLocaleString("es-CO")}/mo`)}
                   </div>
@@ -164,15 +171,21 @@ export default function MarketplaceDetallePage() {
                     <span className="text-sm text-mist">{t("/ mes", "/ mo")}</span>
                   </div>
                   <p className="mt-1 text-xs text-mist">{t("Cobro automático cada mes. Cancela cuando quieras.", "Automatic monthly billing. Cancel anytime.")}</p>
-                </div>
-                <div className="rounded-xl border border-edge p-4">
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTipoPlan("mes")}
+                  className={`w-full rounded-xl border p-4 text-left transition-colors ${
+                    tipoPlan === "mes" ? "border-lime/60 bg-lime/5" : "border-edge hover:border-lime/30"
+                  }`}
+                >
                   <div className="text-sm font-medium text-fg">{t("Un solo mes", "One month only")}</div>
                   <div className="mt-1 flex items-baseline gap-1">
                     <span className="text-2xl font-semibold text-fg">${agente.precioMes.toLocaleString("es-CO")}</span>
                     <span className="text-sm text-mist">{t("/ 1 mes", "/ 1 month")}</span>
                   </div>
                   <p className="mt-1 text-xs text-mist">{t("Pago único por 1 mes. Sin permanencia.", "Single payment for 1 month. No commitment.")}</p>
-                </div>
+                </button>
               </div>
               <button
                 onClick={() => setModalAbierto(true)}
@@ -188,10 +201,11 @@ export default function MarketplaceDetallePage() {
       {modalAbierto && (
         <ModalActivar
           agente={agente}
+          tipoPlan={tipoPlan}
           numeros={numerosDisponibles}
           accessToken={session?.access_token}
           onClose={() => setModalAbierto(false)}
-          onActivado={() => {
+          onFinalizado={() => {
             setModalAbierto(false);
             cargar();
           }}
@@ -344,6 +358,35 @@ function AdministrarAgente({ agente, onCambio, t }: { agente: AgenteVista; onCam
           </div>
         )}
       </dl>
+
+      {/* Próximas citas — solo agentes con agenda (Barbería, Clínica, Gimnasio,
+          Inmobiliaria, Abogado). Cancelar/reagendar se hace por WhatsApp; esto
+          es solo un vistazo, no duplica esa gestión aquí. */}
+      {act.citasProximas && (
+        <div className="mt-4 border-t border-edge pt-4">
+          <p className="text-xs font-medium uppercase tracking-wide text-mist">{t("Próximas citas", "Upcoming appointments")}</p>
+          {act.citasProximas.total === 0 ? (
+            <p className="mt-2 text-sm text-mist">{t("Sin citas próximas agendadas.", "No upcoming appointments.")}</p>
+          ) : (
+            <>
+              <ul className="mt-2 space-y-1.5 text-sm">
+                {act.citasProximas.proximas.map((c, i) => (
+                  <li key={i} className="flex items-center justify-between gap-3">
+                    <span className="text-fg/90">{c.cliente}</span>
+                    <span className="text-mist">{fmtFecha(c.fecha)} · {c.hora}</span>
+                  </li>
+                ))}
+              </ul>
+              {act.citasProximas.total > act.citasProximas.proximas.length && (
+                <p className="mt-1.5 text-xs text-mist">
+                  {t(`+ ${act.citasProximas.total - act.citasProximas.proximas.length} más`, `+ ${act.citasProximas.total - act.citasProximas.proximas.length} more`)}
+                </p>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
       {error && <p className="mt-3 text-xs text-red-400">{error}</p>}
       <div className="mt-5 flex flex-col gap-3">
         <div className="flex flex-wrap items-center gap-2">
@@ -377,32 +420,37 @@ function AdministrarAgente({ agente, onCambio, t }: { agente: AgenteVista; onCam
   );
 }
 
+type PasoModal = "numero" | "config" | "confirmacion";
+
 function ModalActivar({
   agente,
+  tipoPlan,
   numeros,
   accessToken,
   onClose,
-  onActivado,
+  onFinalizado,
   t,
 }: {
   agente: AgenteVista;
+  tipoPlan: "recurrente" | "mes";
   numeros: NumeroVista[];
   accessToken?: string;
   onClose: () => void;
-  onActivado: () => void;
+  onFinalizado: () => void;
   t: (es: string, en: string) => string;
 }) {
-  const [tipoPlan, setTipoPlan] = useState<"recurrente" | "mes">("recurrente");
-  const [phoneNumberId, setPhoneNumberId] = useState(numeros[0]?.phone_number_id ?? "");
+  const [paso, setPaso] = useState<PasoModal>("numero");
+  const [phoneNumberId, setPhoneNumberId] = useState("");
   const [archivo, setArchivo] = useState<File | null>(null);
   const [activando, setActivando] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [resultado, setResultado] = useState<{ fecha_proximo_cobro: string | null; vence_at: string | null; tipo_plan: "recurrente" | "mes" } | null>(null);
 
   const precio = tipoPlan === "recurrente" ? agente.precioRecurrente : agente.precioMes;
+  const numeroElegido = numeros.find((n) => n.phone_number_id === phoneNumberId) ?? null;
 
   const activar = async () => {
     if (!accessToken) return;
-    if (!phoneNumberId) return setError(t("Selecciona un número de WhatsApp.", "Select a WhatsApp number."));
     if (!archivo) return setError(t("Sube la plantilla de configuración de tu negocio.", "Upload your business configuration template."));
     setActivando(true);
     setError(null);
@@ -419,7 +467,8 @@ function ModalActivar({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? t("No se pudo activar el agente", "Could not activate the agent"));
-      onActivado();
+      setResultado(data.activacion);
+      setPaso("confirmacion");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -428,70 +477,82 @@ function ModalActivar({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={paso === "confirmacion" ? undefined : onClose}>
       <div
         className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-edge bg-card p-6"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between">
-          <h3 className="text-lg font-semibold text-fg">{t("Activar", "Activate")} {agente.nombre}</h3>
-          <button onClick={onClose} className="text-mist hover:text-fg"><X className="size-5" /></button>
-        </div>
+        {paso !== "confirmacion" && (
+          <div className="flex items-center justify-between">
+            <h3 className="text-lg font-semibold text-fg">{t("Activar", "Activate")} {agente.nombre}</h3>
+            <button onClick={onClose} className="text-mist hover:text-fg"><X className="size-5" /></button>
+          </div>
+        )}
 
-        {numeros.length === 0 ? (
-          <p className="mt-4 rounded-lg border border-edge bg-ink p-4 text-sm text-mist">
-            {t(
-              "No tienes números de WhatsApp disponibles (todos tienen ya un agente del marketplace activo, o aún no has conectado ninguno).",
-              "You have no available WhatsApp numbers (they all already have a marketplace agent active, or you haven't connected any yet)."
-            )}
-          </p>
-        ) : (
+        {paso === "numero" && (
           <>
-            {/* Plan */}
-            <div className="mt-5">
-              <p className="text-xs font-medium uppercase tracking-wide text-mist">{t("Plan de pago", "Payment plan")}</p>
-              <div className="mt-2 grid grid-cols-2 gap-3">
-                <button
-                  onClick={() => setTipoPlan("recurrente")}
-                  className={`rounded-xl border p-3 text-left transition-colors ${tipoPlan === "recurrente" ? "border-lime/60 bg-lime/5" : "border-edge hover:border-lime/30"}`}
-                >
-                  <div className="text-sm font-semibold text-fg">${agente.precioRecurrente.toLocaleString("es-CO")}<span className="text-xs font-normal text-mist"> {t("/ mes", "/ mo")}</span></div>
-                  <div className="mt-0.5 text-[11px] text-mist">{t("Recurrente", "Recurring")}</div>
-                </button>
-                <button
-                  onClick={() => setTipoPlan("mes")}
-                  className={`rounded-xl border p-3 text-left transition-colors ${tipoPlan === "mes" ? "border-lime/60 bg-lime/5" : "border-edge hover:border-lime/30"}`}
-                >
-                  <div className="text-sm font-semibold text-fg">${agente.precioMes.toLocaleString("es-CO")}<span className="text-xs font-normal text-mist"> {t("/ 1 mes", "/ 1 mo")}</span></div>
-                  <div className="mt-0.5 text-[11px] text-mist">{t("Sin permanencia", "No commitment")}</div>
-                </button>
-              </div>
-            </div>
-
-            {/* Número */}
-            <div className="mt-5">
-              <label className="text-xs font-medium uppercase tracking-wide text-mist">{t("Número de WhatsApp", "WhatsApp number")}</label>
-              <div className="mt-2 flex items-center gap-2 rounded-lg border border-edge bg-ink px-3">
-                <Phone className="size-4 text-mist" />
-                <select
-                  value={phoneNumberId}
-                  onChange={(e) => setPhoneNumberId(e.target.value)}
-                  className="w-full bg-transparent py-2.5 text-sm text-fg outline-none"
-                >
-                  {numeros.map((n) => (
-                    <option key={n.phone_number_id} value={n.phone_number_id}>{n.nombre_negocio}</option>
-                  ))}
-                </select>
-              </div>
-              <p className="mt-1.5 text-xs text-mist">
+            {numeros.length === 0 ? (
+              <p className="mt-4 rounded-lg border border-edge bg-ink p-4 text-sm text-mist">
                 {t(
-                  "Al activarlo, este número usa el agente comprado. Tu agente propio queda guardado y vuelve al desactivar.",
-                  "Once active, this number uses the purchased agent. Your own agent stays saved and returns when you deactivate."
+                  "No tienes números de WhatsApp disponibles (todos tienen ya un agente del marketplace activo, o aún no has conectado ninguno).",
+                  "You have no available WhatsApp numbers (they all already have a marketplace agent active, or you haven't connected any yet)."
                 )}
               </p>
-            </div>
+            ) : (
+              <>
+                <p className="mt-4 text-xs font-medium uppercase tracking-wide text-mist">
+                  {t("¿A qué número deseas activar este agente?", "Which number do you want to activate this agent on?")}
+                </p>
+                <div className="mt-2 space-y-2">
+                  {numeros.map((n) => (
+                    <label
+                      key={n.phone_number_id}
+                      className={`flex cursor-pointer items-center gap-3 rounded-xl border p-3.5 transition-colors ${
+                        phoneNumberId === n.phone_number_id ? "border-lime/60 bg-lime/5" : "border-edge hover:border-lime/30"
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="numero"
+                        value={n.phone_number_id}
+                        checked={phoneNumberId === n.phone_number_id}
+                        onChange={() => setPhoneNumberId(n.phone_number_id)}
+                        className="size-4 accent-lime"
+                      />
+                      <span className="text-sm font-medium text-fg">{n.nombre_negocio}</span>
+                    </label>
+                  ))}
+                </div>
 
-            {/* Config */}
+                <div className="mt-4 flex items-start gap-2.5 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3.5">
+                  <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-400" />
+                  <p className="text-xs leading-relaxed text-mist">
+                    {t(
+                      "Al activarlo en ese número, se desactiva temporalmente tu agente propio (o base de conocimiento) de ese número. No se borra: puedes volver a él cuando quieras desde \"Desactivar y volver a mi agente\".",
+                      "Activating it on that number temporarily disables your own agent (or knowledge base) for that number. It isn't deleted: you can go back to it anytime from \"Deactivate and return to my agent\"."
+                    )}
+                  </p>
+                </div>
+
+                {error && <p className="mt-4 text-xs text-red-400">{error}</p>}
+
+                <button
+                  onClick={() => {
+                    setError(null);
+                    setPaso("config");
+                  }}
+                  disabled={!phoneNumberId}
+                  className="mt-5 w-full rounded-lg bg-lime px-5 py-2.5 text-sm font-semibold text-lime-fg transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {t("Continuar", "Continue")}
+                </button>
+              </>
+            )}
+          </>
+        )}
+
+        {paso === "config" && (
+          <>
             <div className="mt-5">
               <label className="text-xs font-medium uppercase tracking-wide text-mist">{t("Configuración de tu negocio", "Your business setup")}</label>
               <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -516,19 +577,60 @@ function ModalActivar({
 
             {error && <p className="mt-4 text-xs text-red-400">{error}</p>}
 
-            <button
-              onClick={activar}
-              disabled={activando}
-              className="mt-6 w-full rounded-lg bg-lime px-5 py-2.5 text-sm font-semibold text-lime-fg transition-opacity hover:opacity-90 disabled:opacity-50"
-            >
-              {activando
-                ? t("Activando…", "Activating…")
-                : t(`Activar y pagar $${precio.toLocaleString("es-CO")}`, `Activate and pay $${precio.toLocaleString("es-CO")}`)}
-            </button>
+            <div className="mt-6 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setError(null);
+                  setPaso("numero");
+                }}
+                className="rounded-lg border border-edge px-4 py-2.5 text-sm font-medium text-fg hover:border-lime/40"
+              >
+                {t("Atrás", "Back")}
+              </button>
+              <button
+                onClick={activar}
+                disabled={activando}
+                className="flex-1 rounded-lg bg-lime px-5 py-2.5 text-sm font-semibold text-lime-fg transition-opacity hover:opacity-90 disabled:opacity-50"
+              >
+                {activando
+                  ? t("Activando…", "Activating…")
+                  : t(`Activar y pagar $${precio.toLocaleString("es-CO")}`, `Activate and pay $${precio.toLocaleString("es-CO")}`)}
+              </button>
+            </div>
             <p className="mt-2 text-center text-[11px] text-mist">
               {t("Se cobra al método de pago de tu plan.", "Charged to your plan's payment method.")}
             </p>
           </>
+        )}
+
+        {paso === "confirmacion" && resultado && (
+          <div className="py-4 text-center">
+            <CheckCircle2 className="mx-auto size-12 text-lime-text" strokeWidth={1.5} />
+            <h3 className="mt-4 text-lg font-semibold text-fg">{t("Tu agente está activo", "Your agent is active")}</h3>
+            <p className="mt-1.5 text-sm text-mist">
+              {agente.nombre} · {numeroElegido?.nombre_negocio}
+            </p>
+            <p className="mt-3 text-sm text-fg">
+              {resultado.tipo_plan === "recurrente"
+                ? t(`Próximo cobro: ${fmtFecha(resultado.fecha_proximo_cobro)}`, `Next charge: ${fmtFecha(resultado.fecha_proximo_cobro)}`)
+                : t(`Vence: ${fmtFecha(resultado.vence_at)}`, `Expires: ${fmtFecha(resultado.vence_at)}`)}
+            </p>
+            <div className="mt-6 flex flex-col gap-2">
+              <button
+                onClick={onFinalizado}
+                className="w-full rounded-lg bg-lime px-5 py-2.5 text-sm font-semibold text-lime-fg transition-opacity hover:opacity-90"
+              >
+                {t("Ir a Administrar", "Go to Manage")}
+              </button>
+              <Link
+                href="/dashboard/marketplace"
+                className="w-full rounded-lg border border-edge px-5 py-2.5 text-sm font-medium text-fg hover:border-lime/40"
+              >
+                {t("Volver al listado", "Back to listing")}
+              </Link>
+            </div>
+          </div>
         )}
       </div>
     </div>

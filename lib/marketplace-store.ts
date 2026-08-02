@@ -23,7 +23,6 @@ export interface ActivacionMarketplace {
   recursos_disponibles: number;
   /** Duración estándar de una cita, en minutos. Solo relevante si el agente usa agenda. */
   duracion_estandar_min: number;
-  recordatorio_template_name: string | null;
   wompi_payment_source_id: string | null;
   wompi_customer_email: string | null;
   created_at: string;
@@ -31,7 +30,7 @@ export interface ActivacionMarketplace {
 }
 
 const COLUMNAS =
-  "id, id_tenant, phone_number_id, agente_slug, tipo_plan, estado, precio_cop, fecha_proximo_cobro, vence_at, numero_admin, nombre_admin, config_texto, config_nombre_archivo, recursos_disponibles, duracion_estandar_min, recordatorio_template_name, wompi_payment_source_id, wompi_customer_email, created_at, updated_at";
+  "id, id_tenant, phone_number_id, agente_slug, tipo_plan, estado, precio_cop, fecha_proximo_cobro, vence_at, numero_admin, nombre_admin, config_texto, config_nombre_archivo, recursos_disponibles, duracion_estandar_min, wompi_payment_source_id, wompi_customer_email, created_at, updated_at";
 
 export async function getActivacionPorId(
   supabase: SupabaseClient,

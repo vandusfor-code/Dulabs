@@ -2,12 +2,6 @@ import type { NextRequest } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabaseAdmin } from "@/lib/supabase";
 import { crearTransaccion } from "@/lib/wompi";
-import { descifrarSecreto } from "@/lib/crypto";
-import { enviarTexto, dentroVentana24h } from "@/lib/whatsapp";
-import { enviarPlantilla, consultarEstadoPlantilla } from "@/lib/meta-templates";
-import { agentePorSlug } from "@/lib/marketplace";
-
-const IDIOMA_PLANTILLA = "es_CO";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -150,99 +144,5 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  // --- Recordatorios de citas: citas de hoy o mañana sin recordatorio
-  // enviado, de agentes con agenda. Se envían una vez en este batch diario —
-  // no es "N horas antes" exacto, ver nota en el módulo de agenda. Dentro de
-  // la ventana de 24h se manda texto libre; fuera de ella hace falta una
-  // plantilla Utility aprobada (recordatorio_template_name) — si no hay una
-  // configurada, el intento queda como error visible en el resultado, mismo
-  // patrón que /api/cron/encuestas-seguimiento.
-  const recordatorios: { id: number; ok: boolean; detalle: string }[] = [];
-  const manana = new Date();
-  manana.setDate(manana.getDate() + 1);
-  const mananaISO = manana.toISOString().slice(0, 10);
-
-  const { data: citasPendientes } = await supabase
-    .from("dulabs_marketplace_citas")
-    .select("id, activacion_id, phone_number_id, numero_cliente, nombre_cliente, fecha, hora_inicio, servicio")
-    .eq("estado", "agendada")
-    .eq("recordatorio_enviado", false)
-    .in("fecha", [hoy, mananaISO]);
-
-  if (citasPendientes && citasPendientes.length > 0) {
-    const activacionIds = [...new Set(citasPendientes.map((c) => c.activacion_id))];
-    const { data: activacionesRecordatorio } = await supabase
-      .from("dulabs_marketplace_activaciones")
-      .select("id, agente_slug, recordatorio_template_name")
-      .in("id", activacionIds);
-    const activacionPorId = new Map((activacionesRecordatorio ?? []).map((a) => [a.id, a]));
-
-    const phoneNumberIds = [...new Set(citasPendientes.map((c) => c.phone_number_id))];
-    const { data: clientes } = await supabase
-      .from("dulabs_clientes_config")
-      .select("phone_number_id, meta_permanent_token, whatsapp_business_account_id")
-      .in("phone_number_id", phoneNumberIds);
-    const clientePorNumero = new Map((clientes ?? []).map((c) => [c.phone_number_id, c]));
-
-    for (const cita of citasPendientes) {
-      try {
-        const activacion = activacionPorId.get(cita.activacion_id);
-        const cliente = clientePorNumero.get(cita.phone_number_id);
-        if (!activacion || !cliente) throw new Error("negocio o activación no encontrados");
-        const agente = agentePorSlug(activacion.agente_slug);
-        const token = cliente.meta_permanent_token ? descifrarSecreto(cliente.meta_permanent_token) : process.env.META_ACCESS_TOKEN;
-        if (!token) throw new Error("sin token de Meta");
-
-        const esHoy = cita.fecha === hoy;
-        const texto = `Recordatorio: tienes una cita ${esHoy ? "hoy" : "mañana"} a las ${cita.hora_inicio.slice(0, 5)}${
-          agente ? ` en ${agente.nombre}` : ""
-        }${cita.servicio ? ` (${cita.servicio})` : ""}.`;
-
-        const dentroVentana = await dentroVentana24h(supabase, cita.phone_number_id, cita.numero_cliente);
-        let wamid: string | null = null;
-        if (dentroVentana) {
-          ({ wamid } = await enviarTexto({ phoneNumberId: cita.phone_number_id, token, para: cita.numero_cliente, texto }));
-        } else {
-          if (!activacion.recordatorio_template_name) {
-            throw new Error("fuera de la ventana de 24h y sin plantilla de recordatorio configurada");
-          }
-          const estado = await consultarEstadoPlantilla({
-            wabaId: cliente.whatsapp_business_account_id,
-            token,
-            nombre: activacion.recordatorio_template_name,
-          });
-          if (estado !== "APPROVED") {
-            throw new Error(`plantilla "${activacion.recordatorio_template_name}" no aprobada (estado: ${estado ?? "no encontrada"})`);
-          }
-          ({ wamid } = await enviarPlantilla({
-            phoneNumberId: cita.phone_number_id,
-            token,
-            para: cita.numero_cliente,
-            nombrePlantilla: activacion.recordatorio_template_name,
-            idioma: IDIOMA_PLANTILLA,
-          }));
-        }
-
-        await supabase.from("dulabs_mensajes_log").insert({
-          phone_number_id: cita.phone_number_id,
-          telefono_cliente: cita.numero_cliente,
-          direccion: "saliente",
-          contenido: texto,
-          origen: "agente",
-          wamid,
-        });
-        await supabase
-          .from("dulabs_marketplace_citas")
-          .update({ recordatorio_enviado: true, updated_at: new Date().toISOString() })
-          .eq("id", cita.id);
-        recordatorios.push({ id: cita.id, ok: true, detalle: "enviado" });
-      } catch (err) {
-        const detalle = err instanceof Error ? err.message : String(err);
-        console.error(`[cobro-mensual] error enviando recordatorio de cita ${cita.id}:`, detalle);
-        recordatorios.push({ id: cita.id, ok: false, detalle });
-      }
-    }
-  }
-
-  return Response.json({ procesados: resultados.length, resultados, marketplace, recordatorios });
+  return Response.json({ procesados: resultados.length, resultados, marketplace });
 }
