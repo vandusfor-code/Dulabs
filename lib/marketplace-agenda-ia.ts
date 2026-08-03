@@ -162,16 +162,10 @@ export async function generarRespuestaAgendaIA(params: {
       case "agendar_cita": {
         const fecha = String(input.fecha ?? "");
         const hora = String(input.hora ?? "");
-        const libre = await verificarDisponibilidad(params.supabase, {
-          activacionId: params.activacionId,
-          fecha,
-          hora,
-          duracionMin: params.duracionEstandarMin,
-          recursosDisponibles: params.recursosDisponibles,
-        });
-        if (!libre) {
-          return JSON.stringify({ success: false, motivo: "Ese horario ya no tiene cupo. Vuelve a consultar disponibilidad." });
-        }
+        // crearCita hace su propio chequeo de cupo de forma atómica (RPC
+        // dulabs_reservar_cita) — un verificarDisponibilidad previo aquí
+        // sería redundante Y volvería a abrir la misma ventana de carrera
+        // que se está cerrando (hallazgo #5).
         const cita = await crearCita(params.supabase, {
           activacionId: params.activacionId,
           phoneNumberId: params.phoneNumberId,
@@ -181,7 +175,11 @@ export async function generarRespuestaAgendaIA(params: {
           hora,
           duracionMin: params.duracionEstandarMin,
           servicio: input.servicio ? String(input.servicio) : null,
+          recursosDisponibles: params.recursosDisponibles,
         });
+        if (!cita) {
+          return JSON.stringify({ success: false, motivo: "Ese horario ya no tiene cupo. Vuelve a consultar disponibilidad." });
+        }
         return JSON.stringify({ success: true, cita_id: cita.id });
       }
       case "consultar_mis_citas": {
@@ -201,16 +199,20 @@ export async function generarRespuestaAgendaIA(params: {
         if (!cita) return JSON.stringify({ success: false, motivo: "No encontré esa cita." });
         const nuevaFecha = String(input.nueva_fecha ?? "");
         const nuevaHora = String(input.nueva_hora ?? "");
-        const libre = await verificarDisponibilidad(params.supabase, {
-          activacionId: params.activacionId,
-          fecha: nuevaFecha,
-          hora: nuevaHora,
-          duracionMin: params.duracionEstandarMin,
-          recursosDisponibles: params.recursosDisponibles,
-          excluirCitaId: cita.id,
-        });
-        if (!libre) return JSON.stringify({ success: false, motivo: "Ese nuevo horario no tiene cupo." });
-        await reagendarCita(params.supabase, cita.id, params.activacionId, nuevaFecha, nuevaHora);
+        // Mismo criterio que agendar_cita: reagendarCita hace su propio
+        // chequeo de cupo atómico (RPC dulabs_reagendar_cita), excluyendo
+        // esta misma cita del conteo — sin pre-check separado que reabra la
+        // ventana de carrera.
+        const actualizada = await reagendarCita(
+          params.supabase,
+          cita.id,
+          params.activacionId,
+          nuevaFecha,
+          nuevaHora,
+          params.duracionEstandarMin,
+          params.recursosDisponibles
+        );
+        if (!actualizada) return JSON.stringify({ success: false, motivo: "Ese nuevo horario no tiene cupo." });
         return JSON.stringify({ success: true });
       }
       case "consultar_citas_del_negocio": {

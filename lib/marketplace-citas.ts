@@ -46,16 +46,20 @@ async function citasAgendadasDelDia(supabase: SupabaseClient, activacionId: numb
   return (data ?? []) as Cita[];
 }
 
+// Usado SOLO por la herramienta consultar_disponibilidad (lectura, no
+// escribe nada) — no tiene ventana de carrera porque no persiste. crearCita
+// y reagendarCita YA NO llaman a esta función antes de escribir: hacen su
+// propio chequeo atómico dentro de la RPC (dulabs_reservar_cita /
+// dulabs_reagendar_cita), que es la única fuente de verdad real sobre el
+// cupo en el momento exacto de agendar.
 export async function verificarDisponibilidad(
   supabase: SupabaseClient,
-  params: { activacionId: number; fecha: string; hora: string; duracionMin: number; recursosDisponibles: number; excluirCitaId?: number }
+  params: { activacionId: number; fecha: string; hora: string; duracionMin: number; recursosDisponibles: number }
 ): Promise<boolean> {
   const citas = await citasAgendadasDelDia(supabase, params.activacionId, params.fecha);
   const inicio = minutosDesdeMedianoche(params.hora);
-  const ocupados = citas.filter(
-    (c) =>
-      c.id !== params.excluirCitaId &&
-      seSuperponen(inicio, params.duracionMin, minutosDesdeMedianoche(c.hora_inicio), c.duracion_min)
+  const ocupados = citas.filter((c) =>
+    seSuperponen(inicio, params.duracionMin, minutosDesdeMedianoche(c.hora_inicio), c.duracion_min)
   ).length;
   return ocupados < params.recursosDisponibles;
 }
@@ -98,6 +102,11 @@ export async function sugerirHorariosLibres(
   return libres;
 }
 
+// Reserva atómica: cuenta solapamientos contra recursosDisponibles y solo
+// inserta si hay cupo, todo dentro de dulabs_reservar_cita (serializada por
+// un advisory lock transaccional en (activacion_id, fecha) — ver migración
+// 20260807090000_reserva_atomica_citas.sql). Devuelve null si no hay cupo
+// (el candado rechazó, no un error) en vez de lanzar excepción.
 export async function crearCita(
   supabase: SupabaseClient,
   params: {
@@ -109,25 +118,23 @@ export async function crearCita(
     hora: string;
     duracionMin: number;
     servicio: string | null;
+    recursosDisponibles: number;
   }
-): Promise<Cita> {
-  const { data, error } = await supabase
-    .from("dulabs_marketplace_citas")
-    .insert({
-      activacion_id: params.activacionId,
-      phone_number_id: params.phoneNumberId,
-      numero_cliente: params.numeroCliente,
-      nombre_cliente: params.nombreCliente,
-      fecha: params.fecha,
-      hora_inicio: params.hora,
-      duracion_min: params.duracionMin,
-      servicio: params.servicio,
-      estado: "agendada",
-    })
-    .select("*")
-    .single();
+): Promise<Cita | null> {
+  const { data, error } = await supabase.rpc("dulabs_reservar_cita", {
+    p_activacion_id: params.activacionId,
+    p_phone_number_id: params.phoneNumberId,
+    p_numero_cliente: params.numeroCliente,
+    p_nombre_cliente: params.nombreCliente,
+    p_fecha: params.fecha,
+    p_hora: params.hora,
+    p_duracion_min: params.duracionMin,
+    p_servicio: params.servicio,
+    p_recursos_disponibles: params.recursosDisponibles,
+  });
   if (error) throw new Error(error.message);
-  return data as Cita;
+  const filas = (data ?? []) as Cita[];
+  return filas[0] ?? null;
 }
 
 /** Próximas citas (hoy en adelante) de un cliente en un negocio, para que no tenga que dar un ID. */
@@ -181,23 +188,32 @@ export async function cancelarCita(supabase: SupabaseClient, id: number, activac
 }
 
 // Reagenda EN LA MISMA fila (no crea una cita nueva) — su estado sigue
-// 'agendada', solo cambian fecha/hora. 'reagendada' queda en el check
-// constraint para uso futuro (ej. un historial de auditoría), no se asigna
-// en este flujo.
+// 'agendada', solo cambian fecha/hora (duracion_min no se toca, igual que
+// antes). 'reagendada' queda en el check constraint para uso futuro (ej. un
+// historial de auditoría), no se asigna en este flujo.
+//
+// Atómico igual que crearCita: dulabs_reagendar_cita cuenta solapamientos en
+// el nuevo horario (excluyendo esta misma cita) bajo el mismo advisory lock
+// por (activacion_id, fecha). Devuelve null si el nuevo horario no tiene
+// cupo, en vez de lanzar excepción.
 export async function reagendarCita(
   supabase: SupabaseClient,
   id: number,
   activacionId: number,
   fecha: string,
-  hora: string
-): Promise<Cita> {
-  const { data, error } = await supabase
-    .from("dulabs_marketplace_citas")
-    .update({ fecha, hora_inicio: hora, updated_at: new Date().toISOString() })
-    .eq("id", id)
-    .eq("activacion_id", activacionId)
-    .select("*")
-    .single();
+  hora: string,
+  duracionMin: number,
+  recursosDisponibles: number
+): Promise<Cita | null> {
+  const { data, error } = await supabase.rpc("dulabs_reagendar_cita", {
+    p_cita_id: id,
+    p_activacion_id: activacionId,
+    p_fecha: fecha,
+    p_hora: hora,
+    p_duracion_min: duracionMin,
+    p_recursos_disponibles: recursosDisponibles,
+  });
   if (error) throw new Error(error.message);
-  return data as Cita;
+  const filas = (data ?? []) as Cita[];
+  return filas[0] ?? null;
 }
