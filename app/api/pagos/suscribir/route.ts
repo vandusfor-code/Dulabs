@@ -66,6 +66,35 @@ export async function POST(request: NextRequest) {
   }
   const precioCop = planDef.precioCop;
 
+  const proximoMes = new Date();
+  proximoMes.setMonth(proximoMes.getMonth() + 1);
+  const fechaProximoCobro = proximoMes.toISOString().slice(0, 10);
+
+  // Reserva atómica ANTES de cobrar: si el tenant ya tiene una suscripción
+  // activa o una reserva en curso (otra pestaña, un reintento de red), esto
+  // devuelve 0 filas y abortamos sin haber llamado a Wompi — cierra la
+  // ventana de doble cobro real que tenía esta ruta.
+  const { data: reserva, error: reservaError } = await supabase.rpc("dulabs_reservar_suscripcion", {
+    p_tenant: idTenant,
+    p_plan: plan,
+    p_precio_cop: precioCop,
+    p_fecha_proximo_cobro: fechaProximoCobro,
+  });
+  if (reservaError) {
+    console.error("[pagos/suscribir] error reservando suscripción:", reservaError.message);
+    return Response.json({ error: "No se pudo procesar la suscripción, intenta de nuevo" }, { status: 500 });
+  }
+  if (!reserva || reserva.length === 0) {
+    return Response.json(
+      { error: "Ya tienes una suscripción activa o un pago en proceso. Espera un momento y vuelve a intentar." },
+      { status: 409 }
+    );
+  }
+
+  // Se resuelve dentro del try y se lee en el catch para saber si la
+  // liberación de la reserva está pisando un cobro que Wompi ya aprobó.
+  let transaccion: Awaited<ReturnType<typeof crearTransaccion>> | null = null;
+
   try {
     const fuente = await crearFuentePago({
       token,
@@ -78,7 +107,7 @@ export async function POST(request: NextRequest) {
     }
 
     const referencia = `dulabs-${idTenant}-${Date.now()}`;
-    const transaccion = await crearTransaccion({
+    transaccion = await crearTransaccion({
       amount_in_cents: precioCop * 100,
       customer_email,
       reference: referencia,
@@ -86,22 +115,17 @@ export async function POST(request: NextRequest) {
       recurrent: true,
     });
 
-    const proximoMes = new Date();
-    proximoMes.setMonth(proximoMes.getMonth() + 1);
-
-    const { error: dbError } = await supabase.from("dulabs_suscripciones").upsert(
-      {
-        id_tenant: idTenant,
-        plan,
-        precio_cop: precioCop,
+    // Confirma la fila ya reservada (no un upsert nuevo: la fila ya existe
+    // en pendiente_pago desde la reserva de arriba).
+    const { error: dbError } = await supabase
+      .from("dulabs_suscripciones")
+      .update({
         wompi_payment_source_id: String(fuente.id),
         wompi_customer_email: customer_email,
         estado: transaccion.status === "DECLINED" ? "vencida" : "activa",
-        fecha_proximo_cobro: proximoMes.toISOString().slice(0, 10),
         updated_at: new Date().toISOString(),
-      },
-      { onConflict: "id_tenant" }
-    );
+      })
+      .eq("id_tenant", idTenant);
     if (dbError) throw new Error(`Error guardando suscripción: ${dbError.message}`);
 
     const { error: pagoInsertError } = await supabase.from("dulabs_pagos").insert({
@@ -120,6 +144,30 @@ export async function POST(request: NextRequest) {
 
     return Response.json({ success: true, estado_transaccion: transaccion.status });
   } catch (err) {
+    // Libera la reserva para que el tenant pueda reintentar — si se queda en
+    // pendiente_pago, dulabs_reservar_suscripcion bloquearía todos los
+    // intentos futuros de este tenant. El .eq("estado","pendiente_pago")
+    // evita pisar un estado que ya haya quedado resuelto por otro camino
+    // (p. ej. si el UPDATE de arriba sí llegó a aplicar pese al error).
+    //
+    // Caso raro pero real que esto NO resuelve, solo alerta: si Wompi ya
+    // aprobó el cobro (transaccion.status !== "DECLINED") y el UPDATE que
+    // debía guardar esa aprobación falló, esta liberación marca la fila
+    // "vencida" — el tenant queda viendo su suscripción como no pagada
+    // pese a que sí se le cobró. No hay forma segura de reintentar
+    // automáticamente sin arriesgar un estado peor, así que se deja
+    // logueado como alerta explícita para revisión manual.
+    if (transaccion && transaccion.status !== "DECLINED") {
+      console.error(
+        `[pagos/suscribir] ALERTA: transacción ${transaccion.id} APROBADA (tenant ${idTenant}, $${precioCop} COP) pero falló el paso posterior — la reserva se libera a 'vencida' y requiere arreglo manual:`,
+        err instanceof Error ? err.message : err
+      );
+    }
+    await supabase
+      .from("dulabs_suscripciones")
+      .update({ estado: "vencida", updated_at: new Date().toISOString() })
+      .eq("id_tenant", idTenant)
+      .eq("estado", "pendiente_pago");
     console.error("[pagos/suscribir] error:", err instanceof Error ? err.message : err);
     return Response.json(
       { error: err instanceof Error ? err.message : String(err) },
