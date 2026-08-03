@@ -133,8 +133,9 @@ async function procesarCambio(phoneNumberId: string, value: MetaChangeValue) {
   for (const eco of ecos) {
     const telefonoCliente = soloDigitos(eco.to ?? "");
     if (telefonoCliente) {
-      await activarPausaHumana(phoneNumberId, telefonoCliente);
-      await registrarMensaje(
+      // registrarMensaje es el candado atómico (constraint único en wamid):
+      // si Meta reentrega este eco, el INSERT choca y no se repite la pausa.
+      const yaProcesado = await registrarMensaje(
         phoneNumberId,
         telefonoCliente,
         "saliente",
@@ -142,6 +143,9 @@ async function procesarCambio(phoneNumberId: string, value: MetaChangeValue) {
         "manual",
         eco.id
       );
+      if (!yaProcesado) {
+        await activarPausaHumana(phoneNumberId, telefonoCliente);
+      }
     } else {
       console.warn(`[webhook-dulabs] eco de coexistencia sin destinatario ('to'): id=${eco.id} type=${eco.type}`);
     }
@@ -244,7 +248,26 @@ async function activarPausaHumana(phoneNumberId: string, telefonoCliente: string
 }
 
 async function atenderMensaje(cliente: ClienteConfig, mensaje: MetaMessage, nombreContacto: string | null) {
-  await registrarMensaje(cliente.phone_number_id, soloDigitos(mensaje.from), "entrante", mensaje.text!.body, "entrante");
+  // Deduplicación real contra reintentos de Meta (reentrega el mismo webhook
+  // si no respondemos 200 a tiempo): registrarMensaje es el candado atómico
+  // vía el constraint único en wamid. Si este mensaje ya se procesó antes,
+  // el INSERT choca (23505) y abortamos ANTES de cualquier efecto
+  // secundario — nada de respuesta de IA, cita de agenda ni cupo consumido
+  // se repite. No hay ventana de carrera: a diferencia de un SELECT previo,
+  // el INSERT con constraint único es atómico incluso si dos reentregas de
+  // Meta llegan genuinamente en paralelo.
+  const yaProcesado = await registrarMensaje(
+    cliente.phone_number_id,
+    soloDigitos(mensaje.from),
+    "entrante",
+    mensaje.text!.body,
+    "entrante",
+    mensaje.id
+  );
+  if (yaProcesado) {
+    console.log(`[webhook-dulabs] mensaje ${mensaje.id} ya fue procesado (reintento de Meta), ignorando`);
+    return;
+  }
 
   // Bot de encuestas: SOLO toma el turno si este contacto ya tiene una sesión
   // de encuesta activa (fue invitado explícitamente vía /dashboard/surveys).
@@ -424,6 +447,13 @@ async function enviarWhatsApp(cliente: ClienteConfig, para: string, texto: strin
 
 // --- Historial de mensajes (para la vista de actividad reciente) --------------
 
+// Registra un mensaje en el historial. Devuelve true si este wamid ya
+// estaba registrado (constraint único dulabs_mensajes_log_wamid_unico) —
+// esa colisión ES la deduplicación real: el llamador debe abortar sin
+// repetir ningún efecto secundario. Devuelve false tanto si el mensaje es
+// nuevo (se registró bien) como si el insert falló por un motivo distinto a
+// duplicado (no bloqueamos el procesamiento por un fallo de logging, mismo
+// criterio que ya usaba esta función).
 async function registrarMensaje(
   phoneNumberId: string,
   telefonoCliente: string,
@@ -431,7 +461,7 @@ async function registrarMensaje(
   contenido: string,
   origen: "entrante" | "ia" | "manual" | "campaña" | "agente",
   wamid?: string
-) {
+): Promise<boolean> {
   const { error } = await supabaseAdmin().from("dulabs_mensajes_log").insert({
     phone_number_id: phoneNumberId,
     telefono_cliente: telefonoCliente,
@@ -440,9 +470,12 @@ async function registrarMensaje(
     origen,
     wamid: wamid ?? null,
   });
-  if (error) {
-    console.error("[webhook-dulabs] error registrando mensaje en el historial:", error.message);
+  if (!error) return false;
+  if (error.code === "23505") {
+    return true;
   }
+  console.error("[webhook-dulabs] error registrando mensaje en el historial:", error.message);
+  return false;
 }
 
 // --- Conteo de uso mensual (para el panel de plan/consumo) --------------------
