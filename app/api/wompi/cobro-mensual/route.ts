@@ -1,27 +1,10 @@
 import type { NextRequest } from "next/server";
-import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabaseAdmin } from "@/lib/supabase";
 import { crearTransaccion } from "@/lib/wompi";
+import { desactivarActivacion } from "@/lib/marketplace-store";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
-
-// Desactiva una activación del marketplace: la marca 'vencida' y devuelve el
-// número a su agente propio (marketplace_activacion_id -> null). La config
-// propia del cliente nunca se tocó, así que vuelve a usarse sola.
-async function desactivarActivacionMarketplace(
-  supabase: SupabaseClient,
-  activacion: { id: number; phone_number_id: string }
-) {
-  await supabase
-    .from("dulabs_clientes_config")
-    .update({ marketplace_activacion_id: null })
-    .eq("marketplace_activacion_id", activacion.id);
-  await supabase
-    .from("dulabs_marketplace_activaciones")
-    .update({ estado: "vencida", updated_at: new Date().toISOString() })
-    .eq("id", activacion.id);
-}
 
 // Disparado diariamente por Vercel Cron. Cobra a cada suscripción activa
 // cuya fecha_proximo_cobro ya venció, reutilizando su fuente de pago
@@ -58,12 +41,19 @@ export async function GET(request: NextRequest) {
         recurrent: true,
       });
 
-      await supabase.from("dulabs_pagos").insert({
+      const { error: pagoInsertError } = await supabase.from("dulabs_pagos").insert({
         id_tenant: sub.id_tenant,
         wompi_transaction_id: transaccion.id,
         monto_cop: sub.precio_cop,
         estado: transaccion.status,
+        tipo: "suscripcion",
       });
+      if (pagoInsertError) {
+        console.error(
+          `[cobro-mensual] ALERTA: se cobró a Wompi (transacción ${transaccion.id}, tenant ${sub.id_tenant}, $${sub.precio_cop} COP) pero no se pudo registrar en dulabs_pagos — revisar si falta correr la migración de tipo/marketplace_activacion_id:`,
+          pagoInsertError.message
+        );
+      }
 
       const proximoMes = new Date();
       proximoMes.setMonth(proximoMes.getMonth() + 1);
@@ -97,7 +87,7 @@ export async function GET(request: NextRequest) {
     try {
       if (act.tipo_plan === "mes") {
         if (act.vence_at && act.vence_at <= hoy) {
-          await desactivarActivacionMarketplace(supabase, act);
+          await desactivarActivacion(supabase, act.id);
           marketplace.push({ id: act.id, ok: true, detalle: "vencida (1 mes)" });
         }
         continue;
@@ -106,7 +96,7 @@ export async function GET(request: NextRequest) {
       // Recurrente: cobrar solo si ya llegó la fecha.
       if (!act.fecha_proximo_cobro || act.fecha_proximo_cobro > hoy) continue;
       if (!act.wompi_payment_source_id || !act.wompi_customer_email) {
-        await desactivarActivacionMarketplace(supabase, act);
+        await desactivarActivacion(supabase, act.id);
         marketplace.push({ id: act.id, ok: false, detalle: "sin fuente de pago, desactivada" });
         continue;
       }
@@ -118,12 +108,20 @@ export async function GET(request: NextRequest) {
         payment_source_id: Number(act.wompi_payment_source_id),
         recurrent: true,
       });
-      await supabase.from("dulabs_pagos").insert({
+      const { error: pagoInsertError } = await supabase.from("dulabs_pagos").insert({
         id_tenant: act.id_tenant,
         wompi_transaction_id: transaccion.id,
         monto_cop: act.precio_cop,
         estado: transaccion.status,
+        tipo: "marketplace",
+        marketplace_activacion_id: act.id,
       });
+      if (pagoInsertError) {
+        console.error(
+          `[cobro-mensual] ALERTA: se cobró a Wompi (transacción ${transaccion.id}, activación marketplace ${act.id}, tenant ${act.id_tenant}, $${act.precio_cop} COP) pero no se pudo registrar en dulabs_pagos — revisar si falta correr la migración de tipo/marketplace_activacion_id:`,
+          pagoInsertError.message
+        );
+      }
 
       if (transaccion.status === "APPROVED") {
         const proximoMes = new Date();
@@ -134,7 +132,7 @@ export async function GET(request: NextRequest) {
           .eq("id", act.id);
         marketplace.push({ id: act.id, ok: true, detalle: "recobrada" });
       } else {
-        await desactivarActivacionMarketplace(supabase, act);
+        await desactivarActivacion(supabase, act.id);
         marketplace.push({ id: act.id, ok: false, detalle: `pago ${transaccion.status}, desactivada` });
       }
     } catch (err) {

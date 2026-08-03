@@ -107,12 +107,22 @@ export async function POST(request: NextRequest) {
       return Response.json({ error: `El pago no se pudo procesar (estado: ${transaccion.status}).` }, { status: 402 });
     }
 
-    await supabase.from("dulabs_pagos").insert({
-      id_tenant: miembro.tenantId,
-      wompi_transaction_id: transaccion.id,
-      monto_cop: precio,
-      estado: transaccion.status,
-    });
+    // La activación todavía no existe en este punto (se crea más abajo), así
+    // que el pago se registra sin marketplace_activacion_id y se enlaza
+    // después si la activación se crea con éxito. Si la activación falla,
+    // este registro del cobro queda igual — es lo único que permite detectar
+    // después un cobro sin activación correspondiente.
+    const { data: pagoInsertado } = await supabase
+      .from("dulabs_pagos")
+      .insert({
+        id_tenant: miembro.tenantId,
+        wompi_transaction_id: transaccion.id,
+        monto_cop: precio,
+        estado: transaccion.status,
+        tipo: "marketplace",
+      })
+      .select("id")
+      .single();
 
     // Fechas: recurrente -> próximo cobro en 1 mes; mes -> vence en 1 mes.
     const enUnMes = new Date();
@@ -143,6 +153,13 @@ export async function POST(request: NextRequest) {
       .single();
     if (insertError) {
       return Response.json({ error: `No se pudo activar: ${insertError.message}` }, { status: 503 });
+    }
+
+    // Enlaza el cobro ya registrado con la activación recién creada, para que
+    // el webhook de Wompi sepa cuál desactivar si esta transacción termina
+    // DECLINED/ERROR/VOIDED de forma asíncrona más tarde.
+    if (pagoInsertado) {
+      await supabase.from("dulabs_pagos").update({ marketplace_activacion_id: activacion.id }).eq("id", pagoInsertado.id);
     }
 
     // Enciende el agente en el número (sombrea la config propia, no la borra).

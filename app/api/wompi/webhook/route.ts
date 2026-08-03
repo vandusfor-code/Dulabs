@@ -1,6 +1,8 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { verificarChecksumEvento } from "@/lib/wompi";
+import { desactivarActivacion } from "@/lib/marketplace-store";
+import { resolverAccionWebhookPago } from "@/lib/wompi-webhook";
 
 export const runtime = "nodejs";
 
@@ -33,28 +35,59 @@ export async function POST(request: NextRequest) {
   const { id: transactionId, status } = payload.data.transaction;
   const supabase = supabaseAdmin();
 
+  // El `tipo` decide qué tabla actualizar: un pago de marketplace nunca debe
+  // tocar dulabs_suscripciones (el plan principal), y viceversa. Si la
+  // migración que agrega estas columnas todavía no corrió en Supabase, este
+  // select falla con "column does not exist" — pagoError queda registrado y
+  // `pago` sale null, así que no se actualiza nada (fail-safe) en vez de
+  // reventar o de repetir el bug viejo.
   const { data: pago, error: pagoError } = await supabase
     .from("dulabs_pagos")
     .update({ estado: status })
     .eq("wompi_transaction_id", transactionId)
-    .select("id_tenant")
+    .select("id_tenant, tipo, marketplace_activacion_id")
     .maybeSingle();
 
   if (pagoError) {
-    console.error("[wompi-webhook] error actualizando pago:", pagoError.message);
+    console.error(
+      `[wompi-webhook] error actualizando pago (¿falta correr la migración de tipo/marketplace_activacion_id?):`,
+      pagoError.message
+    );
   }
 
-  if (pago?.id_tenant) {
-    const nuevoEstado = status === "APPROVED" ? "activa" : status === "DECLINED" ? "vencida" : null;
-    if (nuevoEstado) {
-      const { error: subError } = await supabase
+  if (!pago) {
+    return new Response("EVENT_RECEIVED", { status: 200 });
+  }
+
+  const accion = resolverAccionWebhookPago(pago, status);
+
+  switch (accion.tipo) {
+    case "actualizar_suscripcion": {
+      const { error } = await supabase
         .from("dulabs_suscripciones")
-        .update({ estado: nuevoEstado, updated_at: new Date().toISOString() })
-        .eq("id_tenant", pago.id_tenant);
-      if (subError) {
-        console.error("[wompi-webhook] error actualizando suscripción:", subError.message);
+        .update({ estado: accion.estado, updated_at: new Date().toISOString() })
+        .eq("id_tenant", accion.idTenant);
+      if (error) {
+        console.error("[wompi-webhook] error actualizando suscripción:", error.message);
       }
+      break;
     }
+    case "desactivar_marketplace":
+      await desactivarActivacion(supabase, accion.activacionId);
+      break;
+    case "activar_marketplace": {
+      const { error } = await supabase
+        .from("dulabs_marketplace_activaciones")
+        .update({ estado: "activa", updated_at: new Date().toISOString() })
+        .eq("id", accion.activacionId);
+      if (error) {
+        console.error("[wompi-webhook] error activando activación de marketplace:", error.message);
+      }
+      break;
+    }
+    case "sin_accion":
+      console.log(`[wompi-webhook] transacción ${transactionId}: ${accion.motivo}`);
+      break;
   }
 
   return new Response("EVENT_RECEIVED", { status: 200 });

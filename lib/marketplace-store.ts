@@ -58,6 +58,23 @@ export async function getActivacionActivaPorNumero(
   return (data as ActivacionMarketplace | null) ?? null;
 }
 
+// Desactiva una activación del marketplace: la marca 'vencida' y devuelve el
+// número a su agente propio (marketplace_activacion_id -> null). La config
+// propia del cliente nunca se toca, así que vuelve a usarse sola. Compartida
+// entre el cron de cobro (vencimiento/rebote de pago recurrente) y el
+// webhook de Wompi (transacción de marketplace que termina DECLINED/ERROR/
+// VOIDED de forma asíncrona).
+export async function desactivarActivacion(supabase: SupabaseClient, activacionId: number): Promise<void> {
+  await supabase
+    .from("dulabs_clientes_config")
+    .update({ marketplace_activacion_id: null })
+    .eq("marketplace_activacion_id", activacionId);
+  await supabase
+    .from("dulabs_marketplace_activaciones")
+    .update({ estado: "vencida", updated_at: new Date().toISOString() })
+    .eq("id", activacionId);
+}
+
 // Normaliza un teléfono a solo dígitos con código de país, para que
 // "300 123 4567", "+57 300 123 4567" y "573001234567" se traten como el
 // mismo número al comparar el remitente entrante contra el número admin

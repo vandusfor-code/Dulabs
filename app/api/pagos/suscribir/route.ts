@@ -104,12 +104,19 @@ export async function POST(request: NextRequest) {
     );
     if (dbError) throw new Error(`Error guardando suscripción: ${dbError.message}`);
 
-    await supabase.from("dulabs_pagos").insert({
+    const { error: pagoInsertError } = await supabase.from("dulabs_pagos").insert({
       id_tenant: idTenant,
       wompi_transaction_id: transaccion.id,
       monto_cop: precioCop,
       estado: transaccion.status,
+      tipo: "suscripcion",
     });
+    if (pagoInsertError) {
+      console.error(
+        `[pagos/suscribir] ALERTA: se cobró a Wompi (transacción ${transaccion.id}, tenant ${idTenant}, $${precioCop} COP) pero no se pudo registrar en dulabs_pagos — revisar si falta correr la migración de tipo/marketplace_activacion_id:`,
+        pagoInsertError.message
+      );
+    }
 
     return Response.json({ success: true, estado_transaccion: transaccion.status });
   } catch (err) {
