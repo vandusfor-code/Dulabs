@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import { crearTransaccion } from "@/lib/wompi";
+import { crearTransaccion, resolverEstadoPago } from "@/lib/wompi";
 import { desactivarActivacion } from "@/lib/marketplace-store";
 
 export const runtime = "nodejs";
@@ -55,12 +55,32 @@ export async function GET(request: NextRequest) {
         );
       }
 
+      const estadoResultado = resolverEstadoPago(transaccion.status);
+
+      if (estadoResultado === "pendiente_pago") {
+        // Challenge 3DS en curso (confirmado real en producción, no solo
+        // teórico — ver dulabs_pagos id=1): no tocamos estado (la
+        // suscripción sigue "activa" mientras se confirma, no se corta el
+        // servicio por un cobro rutinario que todavía no se resolvió) ni
+        // fecha_proximo_cobro (para no saltarnos el reintento si termina
+        // rechazado). El webhook de Wompi confirmará el resultado final
+        // cuando llegue. Si el cron de mañana vuelve a intentar cobrar
+        // antes de que el webhook resuelva esto, es el mismo riesgo de
+        // reintento ya documentado por falta de idempotency-key hacia
+        // Wompi — fuera del alcance de este fix.
+        console.log(
+          `[cobro-mensual] transacción ${transaccion.id} quedó PENDING (tenant ${sub.id_tenant}) — se deja sin tocar, esperando confirmación del webhook.`
+        );
+        resultados.push({ id_tenant: sub.id_tenant, ok: true, detalle: "PENDING (esperando webhook)" });
+        continue;
+      }
+
       const proximoMes = new Date();
       proximoMes.setMonth(proximoMes.getMonth() + 1);
       await supabase
         .from("dulabs_suscripciones")
         .update({
-          estado: transaccion.status === "DECLINED" ? "vencida" : "activa",
+          estado: estadoResultado,
           fecha_proximo_cobro: proximoMes.toISOString().slice(0, 10),
           updated_at: new Date().toISOString(),
         })

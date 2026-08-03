@@ -55,6 +55,25 @@ export type Transaccion = {
   amount_in_cents: number;
 };
 
+// Fuente única de verdad de "qué significa este estado de Wompi para
+// dulabs_suscripciones/dulabs_marketplace_activaciones". Solo APPROVED
+// activa de inmediato. PENDING es un estado intermedio real (no solo
+// teórico: confirmado en dulabs_pagos id=1, un cobro que Wompi dejó en
+// PENDING en producción) — normalmente un challenge 3DS del banco en pagos
+// con tarjeta presente por primera vez; la confirmación final llega después
+// vía el webhook de eventos, así que no debe activar nada todavía. Cualquier
+// otro estado (DECLINED/ERROR/VOIDED, o uno no reconocido) se trata como
+// rechazo — mismo criterio que ya usa app/api/dashboard/marketplace/activar/route.ts.
+// `status` es `string` (no el literal union de Transaccion) a propósito:
+// también se llama con el `status` crudo de un payload de webhook externo,
+// que no está garantizado por el compilador a ser uno de los 5 valores
+// documentados.
+export function resolverEstadoPago(status: string): "activa" | "pendiente_pago" | "vencida" {
+  if (status === "APPROVED") return "activa";
+  if (status === "PENDING") return "pendiente_pago";
+  return "vencida";
+}
+
 function firmaIntegridad(reference: string, amountInCents: number, currency: string): string {
   const integrityKey = process.env.WOMPI_INTEGRITY_KEY;
   if (!integrityKey) throw new Error("Falta WOMPI_INTEGRITY_KEY en el servidor");

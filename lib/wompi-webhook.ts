@@ -1,3 +1,5 @@
+import { resolverEstadoPago } from "@/lib/wompi";
+
 // Lógica pura de decisión del webhook de Wompi, aislada de I/O para poder
 // probarla sin tocar Supabase real. El webhook (app/api/wompi/webhook/route.ts)
 // solo ejecuta la acción que esta función devuelve.
@@ -37,11 +39,13 @@ export function resolverAccionWebhookPago(pago: PagoParaWebhook, status: string)
     return { tipo: "sin_accion", motivo: `estado no terminal (${status}), esperando próximo evento` };
   }
 
-  // tipo === "suscripcion": mismo criterio que ya existía antes de este fix
-  // (preservado tal cual lo pidió el usuario, "como hoy").
-  return {
-    tipo: "actualizar_suscripcion",
-    idTenant: pago.id_tenant,
-    estado: status === "DECLINED" ? "vencida" : "activa",
-  };
+  // tipo === "suscripcion": mismo criterio de 3 vías que suscribir/route.ts y
+  // cobro-mensual/route.ts (resolverEstadoPago, lib/wompi.ts). PENDING no es
+  // terminal — no toca la suscripción todavía (sigue en pendiente_pago o
+  // "activa" según quien la haya dejado así), se espera el próximo evento.
+  const estado = resolverEstadoPago(status);
+  if (estado === "pendiente_pago") {
+    return { tipo: "sin_accion", motivo: `suscripción con estado no terminal (${status}), esperando próximo evento` };
+  }
+  return { tipo: "actualizar_suscripcion", idTenant: pago.id_tenant, estado };
 }

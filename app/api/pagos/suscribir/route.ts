@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import { crearFuentePago, crearTransaccion } from "@/lib/wompi";
+import { crearFuentePago, crearTransaccion, resolverEstadoPago } from "@/lib/wompi";
 import { PLANES, type PlanId } from "@/lib/planes";
 import { resolverMiembroEquipo, requireRol } from "@/lib/team";
 
@@ -116,13 +116,18 @@ export async function POST(request: NextRequest) {
     });
 
     // Confirma la fila ya reservada (no un upsert nuevo: la fila ya existe
-    // en pendiente_pago desde la reserva de arriba).
+    // en pendiente_pago desde la reserva de arriba). Solo APPROVED activa de
+    // inmediato; PENDING (challenge 3DS en curso, confirmado real en
+    // producción — ver dulabs_pagos id=1) deja la fila en pendiente_pago,
+    // igual que la dejó la reserva, hasta que el webhook confirme el
+    // resultado final; DECLINED/ERROR/VOIDED marcan vencida.
+    const estadoFinal = resolverEstadoPago(transaccion.status);
     const { error: dbError } = await supabase
       .from("dulabs_suscripciones")
       .update({
         wompi_payment_source_id: String(fuente.id),
         wompi_customer_email: customer_email,
-        estado: transaccion.status === "DECLINED" ? "vencida" : "activa",
+        estado: estadoFinal,
         updated_at: new Date().toISOString(),
       })
       .eq("id_tenant", idTenant);
@@ -142,6 +147,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (estadoFinal === "pendiente_pago") {
+      console.log(
+        `[pagos/suscribir] transacción ${transaccion.id} quedó PENDING (tenant ${idTenant}) — suscripción en pendiente_pago hasta que el webhook de Wompi confirme el resultado final.`
+      );
+    }
+
     return Response.json({ success: true, estado_transaccion: transaccion.status });
   } catch (err) {
     // Libera la reserva para que el tenant pueda reintentar — si se queda en
@@ -150,16 +161,18 @@ export async function POST(request: NextRequest) {
     // evita pisar un estado que ya haya quedado resuelto por otro camino
     // (p. ej. si el UPDATE de arriba sí llegó a aplicar pese al error).
     //
-    // Caso raro pero real que esto NO resuelve, solo alerta: si Wompi ya
-    // aprobó el cobro (transaccion.status !== "DECLINED") y el UPDATE que
-    // debía guardar esa aprobación falló, esta liberación marca la fila
-    // "vencida" — el tenant queda viendo su suscripción como no pagada
-    // pese a que sí se le cobró. No hay forma segura de reintentar
+    // Caso raro pero real que esto NO resuelve, solo alerta: si Wompi dejó
+    // el cobro en un estado que NO es rechazo (aprobado, o pendiente de
+    // confirmación real vía 3DS) y el UPDATE que debía guardar eso falló,
+    // esta liberación marca la fila "vencida" — el tenant queda viendo su
+    // suscripción como no pagada pese a que Wompi sí procesó (o podría
+    // terminar procesando) el cobro. No hay forma segura de reintentar
     // automáticamente sin arriesgar un estado peor, así que se deja
     // logueado como alerta explícita para revisión manual.
-    if (transaccion && transaccion.status !== "DECLINED") {
+    const estadoAlCaer = transaccion ? resolverEstadoPago(transaccion.status) : null;
+    if (estadoAlCaer === "activa" || estadoAlCaer === "pendiente_pago") {
       console.error(
-        `[pagos/suscribir] ALERTA: transacción ${transaccion.id} APROBADA (tenant ${idTenant}, $${precioCop} COP) pero falló el paso posterior — la reserva se libera a 'vencida' y requiere arreglo manual:`,
+        `[pagos/suscribir] ALERTA: transacción ${transaccion!.id} quedó en estado Wompi "${transaccion!.status}" (tenant ${idTenant}, $${precioCop} COP) pero falló el paso posterior — la reserva se libera a 'vencida' y requiere arreglo manual:`,
         err instanceof Error ? err.message : err
       );
     }
