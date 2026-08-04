@@ -11,9 +11,11 @@ import { verificarFirmaMeta, compararVerifyToken } from "@/lib/meta-firma";
 import { enviarTexto } from "@/lib/whatsapp";
 import { descifrarSecreto } from "@/lib/crypto";
 import { getSurveyBot, getSession, saveSession } from "@/lib/survey-bot-store";
-import { handleMessage } from "@/lib/survey-engine";
+import { handleMessage, questionPrompt } from "@/lib/survey-engine";
+import { interpretarRespuestaEncuesta, redactarPreguntaCalida, fraseEmpatica, type Sentimiento } from "@/lib/survey-agent-ia";
 
 export const runtime = "nodejs";
+export const maxDuration = 60;
 
 const PAUSA_HUMANA_MS = 30 * 60 * 1000;
 
@@ -409,10 +411,52 @@ async function atenderMensajeEncuesta(cliente: ClienteConfig, mensaje: MetaMessa
     return false; // encuesta ya cerrada para este participante: que hable con el asistente normal
   }
 
-  const resultado = handleMessage(bot.config, bot.questions, session, mensaje.text!.body, new Date());
+  const textoUsuario = mensaje.text!.body;
+  const apiKey = cliente.api_key_ia ? descifrarSecreto(cliente.api_key_ia) : process.env.ANTHROPIC_API_KEY;
+
+  // 1) Intento determinístico directo (rápido, sin costo): cubre respuestas
+  // ya literales (números, Sí/No, taps de botón, "más tarde"/"detener"…).
+  let resultado = handleMessage(bot.config, bot.questions, session, textoUsuario, new Date());
+  let sentimiento: Sentimiento = null;
+
+  // 2) Si el texto no validó contra la pregunta actual, la IA intenta
+  // interpretar lenguaje natural (sección 17 del spec: "la IA interpreta,
+  // el backend decide"). El texto normalizado que propone se vuelve a pasar
+  // por el motor real — nunca se guarda nada directo desde la IA, así que un
+  // valor mal propuesto simplemente vuelve a fallar la validación real.
+  if (resultado.action === "clarify" && apiKey) {
+    const preguntaActual = bot.questions[resultado.session.currentIndex];
+    if (preguntaActual) {
+      const interpretacion = await interpretarRespuestaEncuesta({ apiKey, pregunta: preguntaActual, textoUsuario });
+      sentimiento = interpretacion.sentimiento;
+      if (interpretacion.textoNormalizado) {
+        const reintento = handleMessage(bot.config, bot.questions, session, interpretacion.textoNormalizado, new Date());
+        if (reintento.action !== "clarify") resultado = reintento;
+      }
+    }
+  }
+
   await saveSession(supabase, cliente.phone_number_id, telefono, resultado.session);
 
-  for (const texto of resultado.messages) {
+  // 3) Redacta con calidez la pregunta que se está presentando (siempre el
+  // último mensaje en "ask"/"progress"/"clarify" — ver questionPrompt() en
+  // lib/survey-engine.ts). Las instrucciones obligatorias de cómo responder
+  // las sigue agregando el motor, nunca la IA.
+  const mensajesFinales = [...resultado.messages];
+  if ((resultado.action === "ask" || resultado.action === "progress" || resultado.action === "clarify") && apiKey) {
+    const preguntaMostrada = bot.questions[resultado.session.currentIndex];
+    if (preguntaMostrada) {
+      const textoCalido = await redactarPreguntaCalida({ apiKey, pregunta: preguntaMostrada, brandName: bot.config.brandName });
+      if (textoCalido) {
+        mensajesFinales[mensajesFinales.length - 1] = questionPrompt(preguntaMostrada, textoCalido);
+      }
+    }
+  }
+
+  const empatia = fraseEmpatica(sentimiento);
+  if (empatia) mensajesFinales.unshift(empatia);
+
+  for (const texto of mensajesFinales) {
     await enviarWhatsApp(cliente, mensaje.from, texto);
   }
   return true;

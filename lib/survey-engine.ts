@@ -329,8 +329,12 @@ function fill(tpl: string, vars: Record<string, string | number>): string {
   return tpl.replace(/\{(\w+)\}/g, (_, k) => String(vars[k] ?? `{${k}}`));
 }
 
-function questionPrompt(question: SurveyQuestion): string {
-  let body = question.text;
+// `textoBase` permite sustituir question.text por una redacción más cálida
+// (ver lib/survey-agent-ia.ts) sin duplicar la lógica de instrucciones
+// obligatorias (rango, opciones, ayuda) que sigue abajo, sin cambios y
+// SIEMPRE agregada tal cual — la IA nunca las genera ni puede omitirlas.
+export function questionPrompt(question: SurveyQuestion, textoBase?: string): string {
+  let body = textoBase ?? question.text;
   const range = scaleRange(question.type);
   if (range) {
     const min = question.minLabel ? ` (${range[0]} = ${question.minLabel})` : "";
