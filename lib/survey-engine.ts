@@ -100,6 +100,25 @@ export interface SurveySession {
   closeDate: string | null;
 }
 
+// Colombia es UTC-5 fijo (sin horario de verano).
+const BOGOTA_OFFSET_MS = 5 * 60 * 60 * 1000;
+
+// closeDate es "YYYY-MM-DD" (fecha de calendario, sin hora): la encuesta
+// debe seguir activa hasta el FINAL de ese día en hora Bogotá, no desde su
+// inicio. `new Date("2026-08-04").getTime()` da medianoche UTC de esa
+// fecha — 5 horas ANTES de medianoche Bogotá del día anterior siquiera —
+// así que comparar directo contra eso expiraba la encuesta desde el
+// arranque del propio día de cierre (bug real: una encuesta con close_date
+// = hoy quedaba expirada en el primer mensaje del participante, sin
+// procesar ni una sola respuesta). Se compara contra la medianoche Bogotá
+// del día SIGUIENTE en su lugar, para que closeDate siga vigente durante
+// todo ese día calendario en Colombia.
+function cierreVencido(closeDate: string, now: Date): boolean {
+  const [y, m, d] = closeDate.split("-").map(Number);
+  const medianocheBogotaDiaSiguienteEnUtc = Date.UTC(y, m - 1, d + 1) + BOGOTA_OFFSET_MS;
+  return now.getTime() >= medianocheBogotaDiaSiguienteEnUtc;
+}
+
 export function createSession(closeDate: string | null = null): SurveySession {
   return {
     status: "invited",
@@ -459,7 +478,7 @@ export function handleMessage(
   }
 
   // Vencimiento por fecha de cierre.
-  if (s.closeDate && new Date(s.closeDate).getTime() < now.getTime()) {
+  if (s.closeDate && cierreVencido(s.closeDate, now)) {
     s.status = "expired";
     return { session: s, action: "already_closed", messages: [] };
   }
@@ -609,7 +628,7 @@ export function shouldSendReminder(config: SurveyBotConfig, session: SurveySessi
   if (session.awaitingSchedule) return false; // esperando que diga la hora
   if (session.resumeAt) return false; // respetar el compromiso "más tarde"
   if (session.remindersSent >= config.reminder.maxReminders) return false;
-  if (session.closeDate && new Date(session.closeDate).getTime() < now.getTime()) return false;
+  if (session.closeDate && cierreVencido(session.closeDate, now)) return false;
   if (!session.lastInteractionAt) return false;
   const elapsedH = (now.getTime() - new Date(session.lastInteractionAt).getTime()) / 3_600_000;
   return elapsedH >= config.reminder.delayHours;
@@ -629,7 +648,7 @@ export function buildReminder(config: SurveyBotConfig, session: SurveySession): 
 /** ¿Ya llegó la hora del compromiso de reanudación ("más tarde")? */
 export function shouldResumeScheduled(session: SurveySession, now: Date = new Date()): boolean {
   if (session.status !== "resume_scheduled" || !session.resumeAt) return false;
-  if (session.closeDate && new Date(session.closeDate).getTime() < now.getTime()) return false;
+  if (session.closeDate && cierreVencido(session.closeDate, now)) return false;
   return new Date(session.resumeAt).getTime() <= now.getTime();
 }
 
