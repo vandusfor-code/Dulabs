@@ -47,6 +47,44 @@ type MetaChangeValue = {
   smb_message_echoes?: MetaMessage[];
 };
 
+// --- Reenvío a DuMo (CRM externo) --------------------------------------------
+//
+// dulabs y DuMo comparten la misma Meta App (un solo webhook suscrito en
+// Meta), así que dulabs actúa de relay para el número de WhatsApp que usa
+// DuMo: cualquier `change` de ESE número se reenvía tal cual, sin filtrar
+// por campo (mensajes, estados de entrega, ecos — todo lo que le sirva a
+// DuMo). Esto es ADEMÁS de, no en vez de, el procesamiento propio de
+// dulabs de abajo — si ese phone_number_id nunca se agrega a
+// dulabs_clientes_config, procesarCambio() ya lo ignora solo (no hay fila,
+// solo un console.warn), así que no hay riesgo de que dulabs también le
+// responda con su propia IA a los mensajes de DuMo.
+//
+// Nunca debe romper ni frenar el flujo propio de dulabs: corre dentro de
+// after() (se ejecuta tras responder 200 a Meta, igual que el resto del
+// trabajo pesado del webhook) y con su propio try/catch — un fallo acá
+// jamás afecta el procesamiento normal.
+const DUMO_URL = "https://du-mo.vercel.app/api/whatsapp/webhook";
+
+async function reenviarADumo(change: { field: string; value: MetaChangeValue }) {
+  const secret = process.env.DUMO_FORWARD_SECRET;
+  if (!secret) {
+    console.error("[webhook-dulabs] DUMO_FORWARD_SECRET no configurado, no se reenvía a DuMo");
+    return;
+  }
+  try {
+    const res = await fetch(DUMO_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-DuMo-Forward-Secret": secret },
+      body: JSON.stringify({ entry: [{ changes: [change] }] }),
+    });
+    if (!res.ok) {
+      console.error(`[webhook-dulabs] DuMo respondió ${res.status} al reenvío`);
+    }
+  } catch (err) {
+    console.error("[webhook-dulabs] error reenviando evento a DuMo:", err instanceof Error ? err.message : err);
+  }
+}
+
 // --- Verificación inicial del webhook (Hub Challenge de Meta) ---------------
 
 export async function GET(request: NextRequest) {
@@ -78,9 +116,16 @@ export async function POST(request: NextRequest) {
     return new Response("Bad Request", { status: 400 });
   }
 
-  // Meta exige un 200 rápido; el trabajo pesado (IA + envío) corre en after().
+  const dumoPhoneId = process.env.DUMO_PHONE_NUMBER_ID;
+
+  // Meta exige un 200 rápido; el trabajo pesado (IA + envío, y el reenvío a
+  // DuMo) corre en after().
   for (const entry of payload.entry ?? []) {
     for (const change of entry.changes ?? []) {
+      if (dumoPhoneId && change.value?.metadata?.phone_number_id === dumoPhoneId) {
+        after(() => reenviarADumo(change));
+      }
+
       if (change.field !== "messages" && change.field !== "smb_message_echoes") continue;
       const value = change.value;
       const phoneNumberId = value.metadata?.phone_number_id;
