@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Phone as PhoneIcon, BadgeCheck, Pencil, Check, X, Bot, MessagesSquare, Trash2 } from "lucide-react";
+import { Phone as PhoneIcon, BadgeCheck, Pencil, Check, X, Bot, MessagesSquare, Trash2, Link2, Loader2 } from "lucide-react";
 import { useDashboard, type Negocio } from "@/lib/dashboard-session";
 import { formatearTelefono, nombreDelAgente, CALIDAD_INFO } from "@/lib/format";
 import { PageHeader, Pill, StatTile } from "@/components/dashboard/shell/ui";
@@ -145,6 +145,47 @@ function NumeroCard({
   const [confirmandoBorrado, setConfirmandoBorrado] = useState(false);
   const [eliminando, setEliminando] = useState(false);
   const [errorEliminar, setErrorEliminar] = useState<string | null>(null);
+
+  const [conectandoDumo, setConectandoDumo] = useState(false);
+  const [errorDumo, setErrorDumo] = useState<string | null>(null);
+
+  const conectarConDumo = useCallback(async () => {
+    setConectandoDumo(true);
+    setErrorDumo(null);
+    try {
+      const res = await fetch("/api/dashboard/conectar-dumo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ phone_number_id: negocio.phone_number_id }),
+      });
+      const json = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(json.error ?? t("No se pudo conectar con DuMo", "Could not connect to DuMo"));
+      onActualizado();
+    } catch (err) {
+      setErrorDumo(err instanceof Error ? err.message : t("Error desconocido", "Unknown error"));
+    } finally {
+      setConectandoDumo(false);
+    }
+  }, [accessToken, negocio.phone_number_id, onActualizado, t]);
+
+  const desconectarDeDumo = useCallback(async () => {
+    setConectandoDumo(true);
+    setErrorDumo(null);
+    try {
+      const res = await fetch("/api/dashboard/conectar-dumo", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ phone_number_id: negocio.phone_number_id }),
+      });
+      const json = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(json.error ?? t("No se pudo desconectar de DuMo", "Could not disconnect from DuMo"));
+      onActualizado();
+    } catch (err) {
+      setErrorDumo(err instanceof Error ? err.message : t("Error desconocido", "Unknown error"));
+    } finally {
+      setConectandoDumo(false);
+    }
+  }, [accessToken, negocio.phone_number_id, onActualizado, t]);
 
   const eliminarDatos = useCallback(async () => {
     setEliminando(true);
@@ -314,6 +355,59 @@ function NumeroCard({
       </div>
 
       <p className="mt-4 break-all font-mono text-[10.5px] text-mist/70">WABA {negocio.whatsapp_business_account_id}</p>
+
+      <div className="mt-4 border-t border-edge pt-4">
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-xs font-semibold text-fg">DuMo</p>
+              <p className="mt-0.5 text-[11px] leading-relaxed text-mist">
+                {negocio.forward_to_dumo
+                  ? t(
+                      "Este número reenvía mensajes a DuMo. La IA de dulabs está pausada para este número.",
+                      "This number forwards messages to DuMo. dulabs AI is paused for this number.",
+                    )
+                  : t(
+                      "Conecta este número para atenderlo desde la bandeja de DuMo.",
+                      "Connect this number to handle it from the DuMo inbox.",
+                    )}
+              </p>
+            </div>
+            {negocio.forward_to_dumo && (
+              <Pill tone="success">
+                <Link2 className="size-3" />
+                {t("Conectado", "Connected")}
+              </Pill>
+            )}
+          </div>
+
+          {errorDumo && <p className="text-xs text-red-400">{errorDumo}</p>}
+
+          {negocio.conectado && (
+            negocio.forward_to_dumo ? (
+              <button
+                type="button"
+                onClick={desconectarDeDumo}
+                disabled={conectandoDumo}
+                className="flex items-center justify-center gap-1.5 rounded-lg border border-edge px-3 py-2 text-xs font-semibold text-fg transition-colors hover:border-mist hover:bg-ink disabled:opacity-50"
+              >
+                {conectandoDumo ? <Loader2 className="size-3.5 animate-spin" /> : <Link2 className="size-3.5" />}
+                {conectandoDumo ? t("Desconectando…", "Disconnecting…") : t("Desconectar de DuMo", "Disconnect from DuMo")}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={conectarConDumo}
+                disabled={conectandoDumo}
+                className="flex items-center justify-center gap-1.5 rounded-lg border border-lime/40 bg-lime/10 px-3 py-2 text-xs font-semibold text-lime-text transition-colors hover:bg-lime/15 disabled:opacity-50"
+              >
+                {conectandoDumo ? <Loader2 className="size-3.5 animate-spin" /> : <Link2 className="size-3.5" />}
+                {conectandoDumo ? t("Conectando…", "Connecting…") : t("Conectar con DuMo", "Connect to DuMo")}
+              </button>
+            )
+          )}
+        </div>
+      </div>
 
       <div className="mt-4 border-t border-edge pt-4">
         {confirmandoBorrado ? (

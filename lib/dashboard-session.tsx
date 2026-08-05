@@ -32,6 +32,7 @@ export type Negocio = {
   nombre_agente: string | null;
   agente_id: number | null;
   ia_pausada: boolean;
+  forward_to_dumo: boolean;
   enviados_30d: number;
   enviados_hoy: number;
 };

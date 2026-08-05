@@ -85,6 +85,23 @@ async function reenviarADumo(change: { field: string; value: MetaChangeValue }) 
   }
 }
 
+/** true si este phone_number_id debe reenviarse a DuMo (flag por número o env legacy). */
+async function debeReenviarADumo(phoneNumberId: string): Promise<boolean> {
+  const legacy = process.env.DUMO_PHONE_NUMBER_ID;
+  if (legacy && phoneNumberId === legacy) return true;
+
+  const { data, error } = await supabaseAdmin()
+    .from("dulabs_clientes_config")
+    .select("forward_to_dumo")
+    .eq("phone_number_id", phoneNumberId)
+    .maybeSingle();
+  if (error) {
+    console.error("[webhook-dulabs] error consultando forward_to_dumo:", error.message);
+    return false;
+  }
+  return Boolean(data?.forward_to_dumo);
+}
+
 // --- Verificación inicial del webhook (Hub Challenge de Meta) ---------------
 
 export async function GET(request: NextRequest) {
@@ -116,14 +133,19 @@ export async function POST(request: NextRequest) {
     return new Response("Bad Request", { status: 400 });
   }
 
-  const dumoPhoneId = process.env.DUMO_PHONE_NUMBER_ID;
-
-  // Meta exige un 200 rápido; el trabajo pesado (IA + envío, y el reenvío a
-  // DuMo) corre en after().
   for (const entry of payload.entry ?? []) {
     for (const change of entry.changes ?? []) {
-      if (dumoPhoneId && change.value?.metadata?.phone_number_id === dumoPhoneId) {
-        after(() => reenviarADumo(change));
+      const phoneId = change.value?.metadata?.phone_number_id;
+      if (phoneId) {
+        after(async () => {
+          try {
+            if (await debeReenviarADumo(phoneId)) {
+              await reenviarADumo(change);
+            }
+          } catch (err) {
+            console.error("[webhook-dulabs] error evaluando reenvío a DuMo:", err instanceof Error ? err.message : err);
+          }
+        });
       }
 
       if (change.field !== "messages" && change.field !== "smb_message_echoes") continue;

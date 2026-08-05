@@ -25,6 +25,7 @@ export type ClienteConfig = {
   ultima_sincronizacion_meta: string | null;
   nombre_agente: string | null;
   ia_pausada: boolean;
+  forward_to_dumo: boolean;
   agente_id: number | null;
   marketplace_activacion_id: number | null;
   created_at: string;
