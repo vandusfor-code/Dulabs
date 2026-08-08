@@ -13,6 +13,7 @@ import { descifrarSecreto } from "@/lib/crypto";
 import { getSurveyBot, getSession, saveSession } from "@/lib/survey-bot-store";
 import { handleMessage, questionPrompt } from "@/lib/survey-engine";
 import { interpretarRespuestaEncuesta, redactarPreguntaCalida, fraseEmpatica, type Sentimiento } from "@/lib/survey-agent-ia";
+import { procesarHistorialCoexistencia, type HistoryChangeValue } from "@/lib/coexistence-history";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -182,7 +183,9 @@ export async function POST(request: NextRequest) {
     return new Response("Unauthorized", { status: 401 });
   }
 
-  let payload: { entry?: { changes?: { field: string; value: MetaChangeValue }[] }[] };
+  let payload: {
+    entry?: { changes?: { field: string; value: MetaChangeValue | HistoryChangeValue }[] }[];
+  };
   try {
     payload = JSON.parse(rawBody);
   } catch {
@@ -192,7 +195,10 @@ export async function POST(request: NextRequest) {
   for (const entry of payload.entry ?? []) {
     for (const change of entry.changes ?? []) {
       const inboundPhoneId = change.value?.metadata?.phone_number_id;
-      const inboundCount = change.value?.messages?.length ?? 0;
+      const inboundCount =
+        change.field === "messages" && "messages" in (change.value ?? {})
+          ? ((change.value as MetaChangeValue).messages?.length ?? 0)
+          : 0;
       if (inboundPhoneId && inboundCount > 0) {
         console.log(
           `[webhook-dulabs] inbound messages=${inboundCount} phoneId=${inboundPhoneId} field=${change.field}`,
@@ -200,10 +206,30 @@ export async function POST(request: NextRequest) {
       }
 
       // Mensajes entrantes: reenvío síncrono a DuMo (no depender de after() en serverless).
-      await reenviarMensajesADumoSiAplica(change);
+      await reenviarMensajesADumoSiAplica(change as { field: string; value: MetaChangeValue });
 
       const phoneId = change.value?.metadata?.phone_number_id;
-      if (phoneId && change.field !== "messages") {
+
+      // Historial coexistencia: importar entrantes de hoy → dulabs + DuMo.
+      if (change.field === "history" && phoneId) {
+        after(async () => {
+          try {
+            if (await debeReenviarADumo(phoneId)) {
+              await procesarHistorialCoexistencia({
+                field: change.field,
+                value: change.value as HistoryChangeValue,
+              });
+            }
+          } catch (err) {
+            console.error(
+              "[webhook-dulabs] error procesando history coexistencia:",
+              err instanceof Error ? err.message : err,
+            );
+          }
+        });
+      }
+
+      if (phoneId && change.field !== "messages" && change.field !== "history") {
         after(async () => {
           try {
             if (await debeReenviarADumo(phoneId)) {

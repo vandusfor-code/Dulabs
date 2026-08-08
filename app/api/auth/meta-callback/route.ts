@@ -3,6 +3,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { resolverMiembroEquipo, requireRol } from "@/lib/team";
 import { cifrarSecreto } from "@/lib/crypto";
 import { planDelTenant, contarNumeros } from "@/lib/plan-limits";
+import { iniciarSyncCoexistencia } from "@/lib/coexistence-sync";
 
 export const runtime = "nodejs";
 
@@ -193,6 +194,20 @@ export async function POST(request: NextRequest) {
     console.log(
       `[meta-callback] tenant conectado: "${nombreNegocio}" (waba ${wabaId}, phone ${phone.id})`
     );
+
+    // Coexistencia: pedir sync de historial del WhatsApp Business App (1 vez / 24 h).
+    // El usuario debe aprobar en el celular; los webhooks `history` los procesa /webhook-dulabs.
+    const historySync = await iniciarSyncCoexistencia({
+      phoneNumberId: phone.id,
+      token: tenantToken,
+      syncType: "history",
+    });
+    if (historySync.ok) {
+      console.log(`[meta-callback] sync history solicitado (request_id=${historySync.requestId ?? "?"})`);
+    } else {
+      console.warn(`[meta-callback] sync history no iniciado (no fatal): ${historySync.error}`);
+    }
+
     return Response.json({
       success: true,
       negocio: nombreNegocio,
