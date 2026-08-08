@@ -98,10 +98,18 @@ async function reenviarADumo(change: { field: string; value: MetaChangeValue }) 
   }
 }
 
+/** IDs legacy en DUMO_PHONE_NUMBER_ID (uno o varios, coma-separados). */
+function legacyDumoPhoneIds(): string[] {
+  return (process.env.DUMO_PHONE_NUMBER_ID ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
 /** true si este phone_number_id debe reenviarse a DuMo (flag por número o env legacy). */
 async function debeReenviarADumo(phoneNumberId: string): Promise<boolean> {
-  const legacy = process.env.DUMO_PHONE_NUMBER_ID?.trim();
-  if (legacy && phoneNumberId === legacy) {
+  const legacyIds = legacyDumoPhoneIds();
+  if (legacyIds.includes(phoneNumberId)) {
     console.log(`[webhook-dulabs] reenvío DuMo por DUMO_PHONE_NUMBER_ID legacy (${phoneNumberId})`);
     return true;
   }
@@ -110,19 +118,19 @@ async function debeReenviarADumo(phoneNumberId: string): Promise<boolean> {
     .from("dulabs_clientes_config")
     .select("forward_to_dumo, nombre_negocio")
     .eq("phone_number_id", phoneNumberId)
-    .maybeSingle();
+    .eq("forward_to_dumo", true)
+    .limit(1);
   if (error) {
     console.error("[webhook-dulabs] error consultando forward_to_dumo:", error.message);
     return false;
   }
-  if (!data) {
-    console.warn(`[webhook-dulabs] phone_number_id sin fila en config: ${phoneNumberId}`);
-    return false;
-  }
-  if (data.forward_to_dumo) {
-    console.log(`[webhook-dulabs] reenvío DuMo activo para "${data.nombre_negocio}" (${phoneNumberId})`);
+  const row = data?.[0];
+  if (row) {
+    console.log(`[webhook-dulabs] reenvío DuMo activo para "${row.nombre_negocio}" (${phoneNumberId})`);
     return true;
   }
+
+  console.log(`[webhook-dulabs] sin reenvío DuMo para phoneId=${phoneNumberId} (forward_to_dumo=false o sin fila)`);
   return false;
 }
 
@@ -137,8 +145,6 @@ async function reenviarMensajesADumoSiAplica(change: { field: string; value: Met
   try {
     if (await debeReenviarADumo(phoneId)) {
       await reenviarADumo(change);
-    } else {
-      console.log(`[webhook-dulabs] sin reenvío DuMo para phoneId=${phoneId} (forward_to_dumo=false)`);
     }
   } catch (err) {
     console.error(
