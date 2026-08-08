@@ -98,12 +98,16 @@ async function reenviarADumo(change: { field: string; value: MetaChangeValue }) 
   }
 }
 
-/** IDs legacy en DUMO_PHONE_NUMBER_ID (uno o varios, coma-separados). */
+/** Portate (+56) — siempre reenviar a DuMo aunque falle el flag en BD o el env legacy. */
+const DUMO_RELAY_PHONE_IDS_HARDCODED = ["1058034444062074"];
+
+/** IDs en DUMO_PHONE_NUMBER_ID (env, coma-separados) + IDs fijos de DuMo. */
 function legacyDumoPhoneIds(): string[] {
-  return (process.env.DUMO_PHONE_NUMBER_ID ?? "")
+  const fromEnv = (process.env.DUMO_PHONE_NUMBER_ID ?? "")
     .split(",")
     .map((value) => value.trim())
     .filter(Boolean);
+  return [...new Set([...fromEnv, ...DUMO_RELAY_PHONE_IDS_HARDCODED])];
 }
 
 /** true si este phone_number_id debe reenviarse a DuMo (flag por número o env legacy). */
@@ -187,6 +191,14 @@ export async function POST(request: NextRequest) {
 
   for (const entry of payload.entry ?? []) {
     for (const change of entry.changes ?? []) {
+      const inboundPhoneId = change.value?.metadata?.phone_number_id;
+      const inboundCount = change.value?.messages?.length ?? 0;
+      if (inboundPhoneId && inboundCount > 0) {
+        console.log(
+          `[webhook-dulabs] inbound messages=${inboundCount} phoneId=${inboundPhoneId} field=${change.field}`,
+        );
+      }
+
       // Mensajes entrantes: reenvío síncrono a DuMo (no depender de after() en serverless).
       await reenviarMensajesADumoSiAplica(change);
 
