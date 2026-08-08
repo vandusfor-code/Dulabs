@@ -69,8 +69,9 @@ async function reenviarADumo(change: { field: string; value: MetaChangeValue }) 
   const secret = process.env.DUMO_FORWARD_SECRET;
   if (!secret) {
     console.error("[webhook-dulabs] DUMO_FORWARD_SECRET no configurado, no se reenvía a DuMo");
-    return;
+    return false;
   }
+  const phoneId = change.value?.metadata?.phone_number_id ?? "?";
   try {
     const res = await fetch(DUMO_URL, {
       method: "POST",
@@ -78,28 +79,73 @@ async function reenviarADumo(change: { field: string; value: MetaChangeValue }) 
       body: JSON.stringify({ entry: [{ changes: [change] }] }),
     });
     if (!res.ok) {
-      console.error(`[webhook-dulabs] DuMo respondió ${res.status} al reenvío`);
+      const detail = await res.text().catch(() => "");
+      console.error(
+        `[webhook-dulabs] DuMo respondió ${res.status} al reenvío (phoneId=${phoneId})${detail ? `: ${detail.slice(0, 200)}` : ""}`,
+      );
+      return false;
     }
+    console.log(
+      `[webhook-dulabs] reenviado a DuMo phoneId=${phoneId} field=${change.field} messages=${change.value?.messages?.length ?? 0}`,
+    );
+    return true;
   } catch (err) {
-    console.error("[webhook-dulabs] error reenviando evento a DuMo:", err instanceof Error ? err.message : err);
+    console.error(
+      "[webhook-dulabs] error reenviando evento a DuMo:",
+      err instanceof Error ? err.message : err,
+    );
+    return false;
   }
 }
 
 /** true si este phone_number_id debe reenviarse a DuMo (flag por número o env legacy). */
 async function debeReenviarADumo(phoneNumberId: string): Promise<boolean> {
-  const legacy = process.env.DUMO_PHONE_NUMBER_ID;
-  if (legacy && phoneNumberId === legacy) return true;
+  const legacy = process.env.DUMO_PHONE_NUMBER_ID?.trim();
+  if (legacy && phoneNumberId === legacy) {
+    console.log(`[webhook-dulabs] reenvío DuMo por DUMO_PHONE_NUMBER_ID legacy (${phoneNumberId})`);
+    return true;
+  }
 
   const { data, error } = await supabaseAdmin()
     .from("dulabs_clientes_config")
-    .select("forward_to_dumo")
+    .select("forward_to_dumo, nombre_negocio")
     .eq("phone_number_id", phoneNumberId)
     .maybeSingle();
   if (error) {
     console.error("[webhook-dulabs] error consultando forward_to_dumo:", error.message);
     return false;
   }
-  return Boolean(data?.forward_to_dumo);
+  if (!data) {
+    console.warn(`[webhook-dulabs] phone_number_id sin fila en config: ${phoneNumberId}`);
+    return false;
+  }
+  if (data.forward_to_dumo) {
+    console.log(`[webhook-dulabs] reenvío DuMo activo para "${data.nombre_negocio}" (${phoneNumberId})`);
+    return true;
+  }
+  return false;
+}
+
+/** Reenvía mensajes entrantes a DuMo antes de responder 200 a Meta (evita perder el after()). */
+async function reenviarMensajesADumoSiAplica(change: { field: string; value: MetaChangeValue }) {
+  if (change.field !== "messages") return;
+  if (!change.value?.messages?.length) return;
+
+  const phoneId = change.value.metadata?.phone_number_id;
+  if (!phoneId) return;
+
+  try {
+    if (await debeReenviarADumo(phoneId)) {
+      await reenviarADumo(change);
+    } else {
+      console.log(`[webhook-dulabs] sin reenvío DuMo para phoneId=${phoneId} (forward_to_dumo=false)`);
+    }
+  } catch (err) {
+    console.error(
+      "[webhook-dulabs] error evaluando reenvío a DuMo:",
+      err instanceof Error ? err.message : err,
+    );
+  }
 }
 
 // --- Verificación inicial del webhook (Hub Challenge de Meta) ---------------
@@ -135,8 +181,11 @@ export async function POST(request: NextRequest) {
 
   for (const entry of payload.entry ?? []) {
     for (const change of entry.changes ?? []) {
+      // Mensajes entrantes: reenvío síncrono a DuMo (no depender de after() en serverless).
+      await reenviarMensajesADumoSiAplica(change);
+
       const phoneId = change.value?.metadata?.phone_number_id;
-      if (phoneId) {
+      if (phoneId && change.field !== "messages") {
         after(async () => {
           try {
             if (await debeReenviarADumo(phoneId)) {
