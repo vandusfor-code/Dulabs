@@ -14,6 +14,8 @@ import { getSurveyBot, getSession, saveSession } from "@/lib/survey-bot-store";
 import { handleMessage, questionPrompt } from "@/lib/survey-engine";
 import { interpretarRespuestaEncuesta, redactarPreguntaCalida, fraseEmpatica, type Sentimiento } from "@/lib/survey-agent-ia";
 import { procesarHistorialCoexistencia, type HistoryChangeValue } from "@/lib/coexistence-history";
+import { getCampaignLead, getCampaignBotConfig, guardarCampaignLead } from "@/lib/campaign-lead-store";
+import { procesarMensajeCampaña } from "@/lib/campaign-lead-engine";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -139,6 +141,23 @@ async function debeReenviarADumo(phoneNumberId: string): Promise<boolean> {
   return false;
 }
 
+// DuMo rechaza explícitamente los mensajes type:"button" (los trata como no
+// soportados y le inserta al cliente un "⚠️ DuMo no admite botones" en la
+// conversación — verificado leyendo su código real). Un tap de botón de
+// campaña (SÍ/NO) es contenido perfectamente válido, así que se reenvía
+// como si fuera texto plano con el label del botón — nunca el evento crudo.
+// Se opera sobre una COPIA: el `change` original (usado más abajo por
+// procesarCambio/atenderMensajeCampaña) queda intacto.
+function normalizarBotonesParaDumo(value: MetaChangeValue): MetaChangeValue {
+  if (!value.messages?.some((m) => m.type === "button")) return value;
+  return {
+    ...value,
+    messages: value.messages.map((m) =>
+      m.type === "button" && m.button?.text ? { ...m, type: "text", text: { body: m.button.text } } : m,
+    ),
+  };
+}
+
 /** Reenvía mensajes entrantes a DuMo antes de responder 200 a Meta (evita perder el after()). */
 async function reenviarMensajesADumoSiAplica(change: { field: string; value: MetaChangeValue }) {
   if (change.field !== "messages") return;
@@ -149,7 +168,7 @@ async function reenviarMensajesADumoSiAplica(change: { field: string; value: Met
 
   try {
     if (await debeReenviarADumo(phoneId)) {
-      await reenviarADumo(change);
+      await reenviarADumo({ field: change.field, value: normalizarBotonesParaDumo(change.value) });
     }
   } catch (err) {
     console.error(
@@ -436,6 +455,14 @@ async function atenderMensaje(cliente: ClienteConfig, mensaje: MetaMessage, nomb
   // Cualquier otro mensaje sigue el flujo normal del asistente de IA de abajo.
   if (await atenderMensajeEncuesta(cliente, mensaje)) return;
 
+  // Bot de captación de leads por campaña: mismo criterio — SOLO toma el
+  // turno si este contacto ya tiene una fila en dulabs_campaign_leads
+  // (fue impactado por una campaña con bot de captación configurado). Se
+  // revisa ANTES de ia_pausada a propósito: debe funcionar incluso en
+  // números conectados a DuMo (forward_to_dumo=true), donde la IA general
+  // de dulabs ya está silenciada.
+  if (await atenderMensajeCampaña(cliente, mensaje)) return;
+
   // Pausa manual de todo el número, activada desde Agentes de IA.
   if (cliente.ia_pausada) {
     console.log(`[webhook-dulabs] IA pausada manualmente para "${cliente.nombre_negocio}"`);
@@ -617,6 +644,54 @@ async function atenderMensajeEncuesta(cliente: ClienteConfig, mensaje: MetaMessa
   if (empatia) mensajesFinales.unshift(empatia);
 
   for (const texto of mensajesFinales) {
+    await enviarWhatsApp(cliente, mensaje.from, texto);
+  }
+  return true;
+}
+
+// --- Bot de captación de leads por campaña (SÍ/NO -> RUT/teléfono/compañía) ---
+//
+// Devuelve true si el mensaje fue atendido por este flujo. Solo toma el
+// turno si el contacto ya tiene una fila en dulabs_campaign_leads en un
+// estado no terminal (fue impactado por una campaña con bot de captación
+// configurado, ver POST /api/campanas/enviar) — mismo criterio que
+// atenderMensajeEncuesta.
+async function atenderMensajeCampaña(cliente: ClienteConfig, mensaje: MetaMessage): Promise<boolean> {
+  const supabase = supabaseAdmin();
+  const telefono = soloDigitos(mensaje.from);
+
+  const lead = await getCampaignLead(supabase, cliente.phone_number_id, telefono);
+  if (!lead) return false; // nunca fue impactado por una campaña de captación
+  if (lead.session.estado === "lead_captured" || lead.session.estado === "not_interested" || lead.session.estado === "expired") {
+    return false; // flujo ya cerrado: que hable con el asistente normal
+  }
+  if (!lead.plantillaId) return false;
+
+  const config = await getCampaignBotConfig(supabase, cliente.phone_number_id, lead.plantillaId);
+  if (!config) return false;
+
+  // Texto CRUDO del botón (no el de normalizarTextoBoton, que tiene su
+  // propio diccionario para el bot de encuestas y podría reescribir
+  // "SÍ"/"NO" a otra cosa) — mensaje.button sigue disponible aunque
+  // procesarCambio ya haya llenado mensaje.text aparte.
+  const textoUsuario = mensaje.type === "button" && mensaje.button?.text ? mensaje.button.text : (mensaje.text?.body ?? "");
+
+  const resultado = procesarMensajeCampaña(config, lead.session, textoUsuario);
+  await guardarCampaignLead(supabase, cliente.phone_number_id, telefono, resultado.session);
+
+  if (resultado.action === "captured") {
+    console.log(
+      `[webhook-dulabs] lead capturado (campaña "${config.campaignLabel}") tenant=${config.tenantId} telefono=${telefono}`,
+    );
+    // Transferencia estructurada a DuMo (POST /api/whatsapp/lead-intake):
+    // pendiente de que ese endpoint exista del lado de DuMo (contrato ya
+    // acordado). Los datos ya quedan en dulabs_campaign_leads con el shape
+    // exacto del payload; dumo_sync_status queda 'not_applicable' hasta
+    // entonces — cuando el endpoint exista, este es el único punto que
+    // necesita el nuevo fetch().
+  }
+
+  for (const texto of resultado.messages) {
     await enviarWhatsApp(cliente, mensaje.from, texto);
   }
   return true;

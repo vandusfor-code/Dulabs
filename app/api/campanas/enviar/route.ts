@@ -5,6 +5,7 @@ import { resolverMiembroEquipo, requireRol } from "@/lib/team";
 import { descifrarSecreto } from "@/lib/crypto";
 import { planDelTenant } from "@/lib/plan-limits";
 import { parseDestinatario } from "@/lib/destinatarios";
+import { getCampaignBotConfig, crearCampaignLeadRow } from "@/lib/campaign-lead-store";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -136,6 +137,13 @@ export async function POST(request: NextRequest) {
       .single();
     if (campanaError) return Response.json({ error: campanaError.message }, { status: 500 });
 
+    // Si esta plantilla tiene un bot de captación de leads configurado (ver
+    // POST /api/dashboard/campaign-bot-config), cada destinatario que reciba
+    // el envío exitosamente queda con una sesión de captación esperando su
+    // respuesta SÍ/NO — el webhook (atenderMensajeCampaña) la revisa antes
+    // de cualquier otro flujo.
+    const botConfig = await getCampaignBotConfig(supabase, plantilla.phone_number_id, plantilla.id);
+
     let enviados = 0;
     const fallidos: { destinatario: string; error: string }[] = [];
     // Si la plantilla tiene exactamente una variable posicional ({{1}}), se
@@ -166,6 +174,16 @@ export async function POST(request: NextRequest) {
           wamid,
           origen: "campaña",
         });
+        if (botConfig) {
+          await crearCampaignLeadRow(supabase, {
+            idTenant: miembro.tenantId,
+            phoneNumberId: plantilla.phone_number_id,
+            telefonoCliente: numero,
+            campanaId: campana.id,
+            plantillaId: plantilla.id,
+            customerName: nombre || null,
+          });
+        }
         enviados++;
       } catch (err) {
         fallidos.push({ destinatario: numero, error: err instanceof Error ? err.message : String(err) });
