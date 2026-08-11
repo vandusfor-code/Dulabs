@@ -12,7 +12,7 @@
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { crearSesionCampaña, type CampaignBotConfig, type CampaignLeadSession } from "@/lib/campaign-lead-engine";
+import type { CampaignBotConfig, CampaignLeadSession } from "@/lib/campaign-lead-engine";
 import type { OperadorChileno } from "@/lib/campaign-lead-extraction";
 
 let warnedMissingTable = false;
@@ -72,6 +72,8 @@ export async function getCampaignBotConfig(
 
 export interface StoredCampaignLead {
   id: number;
+  /** Clave de idempotencia externa (futuro payload a DuMo). NO usar `id`. */
+  dulabsSessionId: string;
   campanaId: number | null;
   plantillaId: number | null;
   session: CampaignLeadSession;
@@ -102,7 +104,15 @@ function sessionToRow(session: CampaignLeadSession) {
   };
 }
 
-/** Sesión existente para (número, cliente), con sus ids de campaña/plantilla, o null si no existe/tabla ausente. */
+const ESTADOS_ACTIVOS = ["waiting_response", "requesting_data"] as const;
+
+/**
+ * Sesión ACTIVA para (número, cliente), o null si no hay ninguna activa
+ * ahora mismo (tabla ausente, nunca participó, o su(s) sesión(es) previas ya
+ * son terminales). Un teléfono puede tener varias filas históricas -- filtrar
+ * por estado activo es obligatorio, no cosmético: sin este filtro, un
+ * cliente con 2+ campañas pasadas rompería el maybeSingle() de abajo.
+ */
 export async function getCampaignLead(
   supabase: SupabaseClient,
   phoneNumberId: string,
@@ -114,13 +124,20 @@ export async function getCampaignLead(
       .select("*")
       .eq("phone_number_id", phoneNumberId)
       .eq("telefono_cliente", telefonoCliente)
+      .in("estado", ESTADOS_ACTIVOS)
       .maybeSingle();
     if (error) {
       logMissingOnce("getCampaignLead", error);
       return null;
     }
     if (!data) return null;
-    return { id: data.id, campanaId: data.campana_id ?? null, plantillaId: data.plantilla_id ?? null, session: rowToSession(data) };
+    return {
+      id: data.id,
+      dulabsSessionId: data.dulabs_session_id,
+      campanaId: data.campana_id ?? null,
+      plantillaId: data.plantilla_id ?? null,
+      session: rowToSession(data),
+    };
   } catch (err) {
     logMissingOnce("getCampaignLead (throw)", err);
     return null;
@@ -128,9 +145,16 @@ export async function getCampaignLead(
 }
 
 /**
- * Crea (o resetea, vía upsert) la sesión de captación para un destinatario
- * de campaña — se llama al enviar la plantilla, no al recibir la primera
- * respuesta (mismo momento que createSessionRow en el bot de encuestas).
+ * Crea la sesión de captación para un destinatario de campaña — se llama al
+ * enviar la plantilla, no al recibir la primera respuesta (mismo momento que
+ * createSessionRow en el bot de encuestas).
+ *
+ * Idempotente vía RPC dulabs_crear_campaign_lead_idempotente (atómica en
+ * Postgres, apoyada en el índice único parcial de sesión activa): si ese
+ * teléfono ya tiene una sesión activa (de esta campaña o de otra sin
+ * resolver), la devuelve tal cual, sin duplicar ni resetear su estado ni
+ * regenerar su dulabs_session_id. Si no, inserta una fila nueva y conserva
+ * el histórico de campañas anteriores de ese teléfono.
  */
 export async function crearCampaignLeadRow(
   supabase: SupabaseClient,
@@ -142,47 +166,75 @@ export async function crearCampaignLeadRow(
     plantillaId: number;
     customerName?: string | null;
   }
-): Promise<boolean> {
+): Promise<StoredCampaignLead | null> {
   try {
-    const session = crearSesionCampaña(params.customerName ?? null);
-    const { error } = await supabase.from("dulabs_campaign_leads").upsert(
-      {
-        id_tenant: params.idTenant,
-        phone_number_id: params.phoneNumberId,
-        telefono_cliente: params.telefonoCliente,
-        campana_id: params.campanaId,
-        plantilla_id: params.plantillaId,
-        dumo_sync_status: "not_applicable",
-        ...sessionToRow(session),
-      },
-      { onConflict: "phone_number_id,telefono_cliente" }
-    );
+    // Sin .single(): la función devuelve UNA fila compuesta (no SETOF), así
+    // que PostgREST ya entrega `data` como objeto directo, no como arreglo
+    // (mismo criterio que dulabs_intentar_iniciar_campana en
+    // app/api/campanas/enviar/route.ts, que tampoco encadena .single()).
+    const { data: rpcData, error } = await supabase.rpc("dulabs_crear_campaign_lead_idempotente", {
+      p_tenant: params.idTenant,
+      p_phone_number_id: params.phoneNumberId,
+      p_telefono_cliente: params.telefonoCliente,
+      p_campana_id: params.campanaId,
+      p_plantilla_id: params.plantillaId,
+      p_customer_name: params.customerName ?? null,
+    });
     if (error) {
       logMissingOnce("crearCampaignLeadRow", error);
-      return false;
+      return null;
     }
-    return true;
+    if (!rpcData) return null;
+    const data = rpcData as Record<string, unknown>;
+    return {
+      id: data.id as number,
+      dulabsSessionId: data.dulabs_session_id as string,
+      campanaId: (data.campana_id as number) ?? null,
+      plantillaId: (data.plantilla_id as number) ?? null,
+      session: rowToSession(data),
+    };
   } catch (err) {
     logMissingOnce("crearCampaignLeadRow (throw)", err);
-    return false;
+    return null;
   }
 }
 
-/** Persiste el estado resultante de un turno del motor. */
+/**
+ * Persiste el estado resultante de un turno del motor, en la fila exacta de
+ * esa sesión (dulabs_session_id) — NO por phone_number_id+telefono_cliente:
+ * un teléfono puede tener varias filas históricas, y filtrar solo por esos
+ * dos campos sobreescribiría también las sesiones terminales de campañas
+ * anteriores de ese mismo teléfono.
+ */
 export async function guardarCampaignLead(
   supabase: SupabaseClient,
-  phoneNumberId: string,
-  telefonoCliente: string,
+  dulabsSessionId: string,
   session: CampaignLeadSession
 ): Promise<void> {
   try {
     const { error } = await supabase
       .from("dulabs_campaign_leads")
       .update(sessionToRow(session))
-      .eq("phone_number_id", phoneNumberId)
-      .eq("telefono_cliente", telefonoCliente);
+      .eq("dulabs_session_id", dulabsSessionId);
     if (error) logMissingOnce("guardarCampaignLead", error);
   } catch (err) {
     logMissingOnce("guardarCampaignLead (throw)", err);
+  }
+}
+
+/** Actualiza dumo_sync_status tras intentar transferir un lead capturado a DuMo. */
+export async function marcarDumoSyncStatus(
+  supabase: SupabaseClient,
+  dulabsSessionId: string,
+  status: "pending" | "synced" | "error"
+): Promise<void> {
+  try {
+    const { error } = await supabase
+      .from("dulabs_campaign_leads")
+      .update({ dumo_sync_status: status, dumo_synced_at: status === "synced" ? new Date().toISOString() : null })
+      .eq("dulabs_session_id", dulabsSessionId);
+    if (error) logMissingOnce("marcarDumoSyncStatus", error);
+  } catch (err) {
+    logMissingOnce("marcarDumoSyncStatus (throw)", err);
   }
 }

@@ -14,8 +14,8 @@ import { getSurveyBot, getSession, saveSession } from "@/lib/survey-bot-store";
 import { handleMessage, questionPrompt } from "@/lib/survey-engine";
 import { interpretarRespuestaEncuesta, redactarPreguntaCalida, fraseEmpatica, type Sentimiento } from "@/lib/survey-agent-ia";
 import { procesarHistorialCoexistencia, type HistoryChangeValue } from "@/lib/coexistence-history";
-import { getCampaignLead, getCampaignBotConfig, guardarCampaignLead } from "@/lib/campaign-lead-store";
-import { procesarMensajeCampaña } from "@/lib/campaign-lead-engine";
+import { getCampaignLead, getCampaignBotConfig, guardarCampaignLead, marcarDumoSyncStatus } from "@/lib/campaign-lead-store";
+import { procesarMensajeCampaña, type CampaignLeadSession } from "@/lib/campaign-lead-engine";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -98,6 +98,71 @@ async function reenviarADumo(change: { field: string; value: MetaChangeValue }) 
       err instanceof Error ? err.message : err,
     );
     return false;
+  }
+}
+
+// --- Transferencia estructurada de leads capturados a DuMo ------------------
+//
+// Distinto de reenviarADumo (que reenvía CUALQUIER mensaje crudo de WhatsApp
+// para el número relay): esto solo se dispara UNA vez, cuando el motor de
+// captación de campañas llega a lead_captured, y manda el payload
+// estructurado (RUT/teléfono/compañía ya validados) al endpoint dedicado de
+// DuMo, no al webhook genérico de WhatsApp.
+const DUMO_LEAD_INTAKE_URL = "https://du-mo.vercel.app/api/whatsapp/lead-intake";
+
+async function sincronizarLeadConDuMo(params: {
+  dulabsSessionId: string;
+  tenantId: string;
+  phoneNumberId: string;
+  telefono: string;
+  campanaId: number | null;
+  campaignLabel: string;
+  session: CampaignLeadSession;
+}) {
+  const supabase = supabaseAdmin();
+  const secret = process.env.DULABS_LEAD_INTAKE_SECRET;
+  if (!secret) {
+    console.error("[webhook-dulabs] DULABS_LEAD_INTAKE_SECRET no configurado, no se transfiere el lead a DuMo");
+    return;
+  }
+
+  await marcarDumoSyncStatus(supabase, params.dulabsSessionId, "pending");
+  try {
+    const res = await fetch(DUMO_LEAD_INTAKE_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-dulabs-lead-secret": secret },
+      body: JSON.stringify({
+        dulabs_session_id: params.dulabsSessionId,
+        dulabs_tenant_id: params.tenantId,
+        phone_number_id: params.phoneNumberId,
+        wa_id: params.telefono,
+        customer_name: params.session.customerName,
+        rut: params.session.rut,
+        phone_provided: params.session.phoneProvided,
+        current_company_raw: params.session.currentCompanyRaw,
+        current_operator: params.session.currentOperator,
+        campaign_id: params.campanaId,
+        campaign_name: params.campaignLabel,
+        captured_at: params.session.capturedAt,
+        status: "lead_captured",
+      }),
+    });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      console.error(
+        `[webhook-dulabs] DuMo respondió ${res.status} al lead-intake (session=${params.dulabsSessionId})${detail ? `: ${detail.slice(0, 200)}` : ""}`,
+      );
+      await marcarDumoSyncStatus(supabase, params.dulabsSessionId, "error");
+      return;
+    }
+    console.log(`[webhook-dulabs] lead transferido a DuMo (session=${params.dulabsSessionId})`);
+    await marcarDumoSyncStatus(supabase, params.dulabsSessionId, "synced");
+  } catch (err) {
+    console.error(
+      "[webhook-dulabs] error transfiriendo lead a DuMo:",
+      err instanceof Error ? err.message : err,
+    );
+    await marcarDumoSyncStatus(supabase, params.dulabsSessionId, "error");
   }
 }
 
@@ -660,11 +725,11 @@ async function atenderMensajeCampaña(cliente: ClienteConfig, mensaje: MetaMessa
   const supabase = supabaseAdmin();
   const telefono = soloDigitos(mensaje.from);
 
+  // getCampaignLead ya filtra por estado activo (waiting_response/
+  // requesting_data) — nunca devuelve una fila terminal ni una sesión
+  // histórica de una campaña vieja ya cerrada.
   const lead = await getCampaignLead(supabase, cliente.phone_number_id, telefono);
-  if (!lead) return false; // nunca fue impactado por una campaña de captación
-  if (lead.session.estado === "lead_captured" || lead.session.estado === "not_interested" || lead.session.estado === "expired") {
-    return false; // flujo ya cerrado: que hable con el asistente normal
-  }
+  if (!lead) return false; // sin sesión activa: nunca fue impactado por una campaña, o ya se resolvió
   if (!lead.plantillaId) return false;
 
   const config = await getCampaignBotConfig(supabase, cliente.phone_number_id, lead.plantillaId);
@@ -677,18 +742,21 @@ async function atenderMensajeCampaña(cliente: ClienteConfig, mensaje: MetaMessa
   const textoUsuario = mensaje.type === "button" && mensaje.button?.text ? mensaje.button.text : (mensaje.text?.body ?? "");
 
   const resultado = procesarMensajeCampaña(config, lead.session, textoUsuario);
-  await guardarCampaignLead(supabase, cliente.phone_number_id, telefono, resultado.session);
+  await guardarCampaignLead(supabase, lead.dulabsSessionId, resultado.session);
 
   if (resultado.action === "captured") {
     console.log(
       `[webhook-dulabs] lead capturado (campaña "${config.campaignLabel}") tenant=${config.tenantId} telefono=${telefono}`,
     );
-    // Transferencia estructurada a DuMo (POST /api/whatsapp/lead-intake):
-    // pendiente de que ese endpoint exista del lado de DuMo (contrato ya
-    // acordado). Los datos ya quedan en dulabs_campaign_leads con el shape
-    // exacto del payload; dumo_sync_status queda 'not_applicable' hasta
-    // entonces — cuando el endpoint exista, este es el único punto que
-    // necesita el nuevo fetch().
+    await sincronizarLeadConDuMo({
+      dulabsSessionId: lead.dulabsSessionId,
+      tenantId: config.tenantId,
+      phoneNumberId: cliente.phone_number_id,
+      telefono,
+      campanaId: lead.campanaId,
+      campaignLabel: config.campaignLabel,
+      session: resultado.session,
+    });
   }
 
   for (const texto of resultado.messages) {

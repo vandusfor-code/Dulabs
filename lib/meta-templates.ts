@@ -24,10 +24,17 @@ export async function crearPlantillaMeta(params: {
   categoria: string;
   idioma: string;
   cuerpo: string;
+  /** Pie de página opcional (componente FOOTER). Vacío/ausente = sin footer. */
+  footer?: string | null;
   /** Textos de hasta 3 botones de respuesta rápida (opcional). */
   botones?: string[];
 }): Promise<{ id: string; status: string }> {
+  // Orden que exige Meta cuando hay varios componentes: BODY, luego FOOTER,
+  // luego BUTTONS.
   const components: Record<string, unknown>[] = [{ type: "BODY", text: params.cuerpo }];
+  if (params.footer?.trim()) {
+    components.push({ type: "FOOTER", text: params.footer.trim() });
+  }
   const botones = (params.botones ?? []).filter((b) => b.trim() !== "").slice(0, MAX_BOTONES_PLANTILLA);
   if (botones.length > 0) {
     components.push({

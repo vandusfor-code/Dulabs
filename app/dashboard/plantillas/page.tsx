@@ -14,6 +14,7 @@ type Plantilla = {
   categoria: string;
   idioma: string;
   cuerpo: string;
+  footer: string | null;
   botones: string[];
   estado: string;
   borrador: boolean;
@@ -121,6 +122,7 @@ export default function PlantillasPage() {
             nombre: p.nombre,
             categoria: p.categoria,
             cuerpo: p.cuerpo,
+            footer: p.footer,
             botones: p.botones ?? [],
             idioma: p.idioma,
             borrador: false,
@@ -421,6 +423,7 @@ export default function PlantillasPage() {
                     <p className="whitespace-pre-line text-sm leading-relaxed text-fg">
                       {activa ? activa.cuerpo : t("Hola, tenemos una promoción especial este mes para ti.", "Hi, we have a special promotion for you this month.")}
                     </p>
+                    {activa?.footer && <p className="mt-1.5 text-xs text-mist">{activa.footer}</p>}
                     <div className="mt-1.5 flex items-center justify-between gap-2">
                       <span className="truncate text-[10px] text-mist">{nombreNegocioActiva ?? ""}</span>
                       <span className="shrink-0 text-[10px] text-mist">10:24 ✓✓</span>

@@ -122,6 +122,7 @@ export async function POST(request: NextRequest) {
     categoria?: string;
     idioma?: string;
     cuerpo?: string;
+    footer?: string | null;
     botones?: string[];
     borrador?: boolean;
   };
@@ -133,6 +134,7 @@ export async function POST(request: NextRequest) {
 
   const { id, phone_number_id, nombre, categoria, cuerpo, borrador } = body;
   const idioma = body.idioma || "es_CO";
+  const footer = body.footer?.trim() || null;
   if (!phone_number_id || !nombre || !categoria || !cuerpo) {
     return Response.json({ error: "Faltan campos requeridos" }, { status: 400 });
   }
@@ -161,7 +163,7 @@ export async function POST(request: NextRequest) {
     if (id) {
       const { error: updateError } = await supabase
         .from("dulabs_plantillas")
-        .update({ nombre: nombreNormalizado, categoria, idioma, cuerpo, botones })
+        .update({ nombre: nombreNormalizado, categoria, idioma, cuerpo, footer, botones })
         .eq("id", id)
         .eq("id_tenant", miembro.tenantId)
         .eq("borrador", true);
@@ -176,6 +178,7 @@ export async function POST(request: NextRequest) {
       categoria,
       idioma,
       cuerpo,
+      footer,
       botones,
       estado: "borrador",
       borrador: true,
@@ -197,6 +200,7 @@ export async function POST(request: NextRequest) {
       categoria,
       idioma,
       cuerpo,
+      footer,
       botones,
     });
 
@@ -209,6 +213,7 @@ export async function POST(request: NextRequest) {
           categoria,
           idioma,
           cuerpo,
+          footer,
           botones,
           meta_template_id: resultado.id,
           estado: resultado.status,
@@ -229,6 +234,7 @@ export async function POST(request: NextRequest) {
       categoria,
       idioma,
       cuerpo,
+      footer,
       botones,
       meta_template_id: resultado.id,
       estado: resultado.status,
