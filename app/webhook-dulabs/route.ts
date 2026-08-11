@@ -136,7 +136,10 @@ async function sincronizarLeadConDuMo(params: {
         dulabs_tenant_id: params.tenantId,
         phone_number_id: params.phoneNumberId,
         wa_id: params.telefono,
-        customer_name: params.session.customerName,
+        // DuMo muestra el número como título del chat si customer_name viene
+        // vacío -- si no tenemos un nombre real del cliente, mandamos una
+        // etiqueta reconocible en vez de dejarlo en blanco.
+        customer_name: params.session.customerName || "Masivos DuMo",
         rut: params.session.rut,
         phone_provided: params.session.phoneProvided,
         current_company_raw: params.session.currentCompanyRaw,
