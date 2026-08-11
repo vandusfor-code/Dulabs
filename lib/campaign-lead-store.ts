@@ -61,6 +61,8 @@ export async function getCampaignBotConfig(
       yesButtonText: data.yes_button_text,
       noButtonText: data.no_button_text,
       askDataTemplate: data.ask_data_template,
+      askCompanyTemplate: data.ask_company_template ?? "",
+      askRutTemplate: data.ask_rut_template ?? "",
       confirmTemplate: data.confirm_template,
       declineTemplate: data.decline_template ?? null,
     };

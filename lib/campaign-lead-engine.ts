@@ -37,7 +37,12 @@ export interface CampaignBotConfig {
   campaignLabel: string;
   yesButtonText: string;
   noButtonText: string;
+  /** Primera pregunta de la secuencia (teléfono). */
   askDataTemplate: string;
+  /** Segunda pregunta de la secuencia (compañía actual). */
+  askCompanyTemplate: string;
+  /** Tercera y última pregunta de la secuencia (RUT). */
+  askRutTemplate: string;
   confirmTemplate: string;
   declineTemplate: string | null;
 }
@@ -78,25 +83,6 @@ function fill(tpl: string, vars: Record<string, string>): string {
   return tpl.replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? `{${k}}`);
 }
 
-/** Nombre legible de cada campo faltante, para armar el mensaje de "me falta X". */
-const ETIQUETAS_CAMPO: Record<"rut" | "telefono" | "compania", string> = {
-  rut: "tu número de RUT",
-  telefono: "tu número de teléfono",
-  compania: "la compañía con la que estás actualmente",
-};
-
-function mensajeFaltantes(faltantes: ("rut" | "telefono" | "compania")[]): string {
-  const etiquetas = faltantes.map((f) => ETIQUETAS_CAMPO[f]);
-  let listado: string;
-  if (etiquetas.length === 1) {
-    listado = etiquetas[0];
-  } else {
-    listado = `${etiquetas.slice(0, -1).join(", ")} y ${etiquetas[etiquetas.length - 1]}`;
-  }
-  const plural = faltantes.length > 1 ? "me faltan" : "solo me falta confirmar";
-  return `Gracias 😊 Para continuar, ${plural} ${listado}.`;
-}
-
 /** Procesa un mensaje entrante (ya normalizado a texto si venía de un botón). */
 export function procesarMensajeCampaña(
   config: CampaignBotConfig,
@@ -129,23 +115,28 @@ export function procesarMensajeCampaña(
   }
 
   // s.estado === "requesting_data"
+  // Extrae de forma tolerante TODO lo que venga en el mensaje (el cliente
+  // puede adelantarse y mandar más de un dato a la vez), pero nunca pisa un
+  // dato ya confirmado con uno vacío.
   const extraido = extraerDatosLead(userText);
-  // Nunca se pisa un dato ya confirmado con uno vacío — solo se completa lo
-  // que faltaba (sección 20: "no volver a pedir los datos que ya tiene").
-  if (extraido.rut && !s.rut) s.rut = extraido.rut;
   if (extraido.telefono && !s.phoneProvided) s.phoneProvided = extraido.telefono;
   if (extraido.companiaRaw && !s.currentCompanyRaw) {
     s.currentCompanyRaw = extraido.companiaRaw;
     s.currentOperator = extraido.companiaOperador;
   }
+  if (extraido.rut && !s.rut) s.rut = extraido.rut;
 
-  const faltantes: ("rut" | "telefono" | "compania")[] = [];
-  if (!s.rut) faltantes.push("rut");
-  if (!s.phoneProvided) faltantes.push("telefono");
-  if (!s.currentCompanyRaw) faltantes.push("compania");
-
-  if (faltantes.length > 0) {
-    return { session: s, action: "missing_fields", messages: [mensajeFaltantes(faltantes)] };
+  // Secuencia fija de UNA pregunta a la vez: teléfono -> compañía -> RUT.
+  // Si el cliente ya adelantó un dato posterior, ese paso se salta solo
+  // (arriba ya quedó guardado) y se sigue exactamente donde falte.
+  if (!s.phoneProvided) {
+    return { session: s, action: "missing_fields", messages: [config.askDataTemplate] };
+  }
+  if (!s.currentCompanyRaw) {
+    return { session: s, action: "missing_fields", messages: [config.askCompanyTemplate] };
+  }
+  if (!s.rut) {
+    return { session: s, action: "missing_fields", messages: [config.askRutTemplate] };
   }
 
   s.estado = "lead_captured";

@@ -15,14 +15,15 @@ async function usuarioYMiembro(request: NextRequest) {
   return miembro ? { supabase, miembro } : null;
 }
 
+// Secuencia de UNA pregunta a la vez: teléfono -> compañía -> RUT -> transferencia.
 const DEFAULTS = {
   campaign_label: "Campaña",
   yes_button_text: "SÍ",
   no_button_text: "NO",
-  ask_data_template:
-    "¡Claro! 😊 Para validar en el sistema si puedes aplicar a la oferta, confírmame por favor:\n\n📄 Número de RUT\n📱 Número de teléfono\n📡 Compañía actual",
-  confirm_template:
-    "✅ ¡Perfecto! Ya tenemos tus datos.\n\nEn un momento una de nuestras asesoras se pondrá en contacto contigo para validar la oferta y brindarte toda la información. 😊",
+  ask_data_template: "¡Claro! 😊 Para validar en el sistema si puedes aplicar a la oferta, confírmame tu número de teléfono.",
+  ask_company_template: "Perfecto 😊 ¿Me indicas el nombre de la compañía actual?",
+  ask_rut_template: "Excelente, ahora por último indícame tu número de RUT para así validar tu oferta disponible.",
+  confirm_template: "Genial 🙌 Tu chat será transferido a una de nuestras ejecutivas, por favor espera un momento en línea.",
   decline_template: null as string | null,
   active: true,
 };
@@ -74,6 +75,8 @@ type Body = {
   yes_button_text?: string;
   no_button_text?: string;
   ask_data_template?: string;
+  ask_company_template?: string;
+  ask_rut_template?: string;
   confirm_template?: string;
   decline_template?: string | null;
   active?: boolean;
@@ -120,6 +123,8 @@ export async function PATCH(request: NextRequest) {
     "yes_button_text",
     "no_button_text",
     "ask_data_template",
+    "ask_company_template",
+    "ask_rut_template",
     "confirm_template",
     "decline_template",
     "active",
