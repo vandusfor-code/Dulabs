@@ -37,11 +37,18 @@ export interface CampaignBotConfig {
   campaignLabel: string;
   yesButtonText: string;
   noButtonText: string;
-  /** Primera pregunta de la secuencia (teléfono). */
+  /**
+   * Si es false, el SÍ captura el lead de inmediato (sin pedir RUT/teléfono/
+   * compañía) y solo envía confirmTemplate. Algunas campañas sí necesitan
+   * esos datos (ver oferta_equipo_pie_cero); otras solo quieren transferir
+   * el contacto a una ejecutiva sin hacerlo esperar un formulario.
+   */
+  collectData: boolean;
+  /** Primera pregunta de la secuencia (teléfono). Solo se usa si collectData. */
   askDataTemplate: string;
-  /** Segunda pregunta de la secuencia (compañía actual). */
+  /** Segunda pregunta de la secuencia (compañía actual). Solo se usa si collectData. */
   askCompanyTemplate: string;
-  /** Tercera y última pregunta de la secuencia (RUT). */
+  /** Tercera y última pregunta de la secuencia (RUT). Solo se usa si collectData. */
   askRutTemplate: string;
   confirmTemplate: string;
   declineTemplate: string | null;
@@ -97,6 +104,17 @@ export function procesarMensajeCampaña(
 
   if (s.estado === "waiting_response") {
     if (esSi(userText, config)) {
+      if (!config.collectData) {
+        // Sin formulario: SÍ captura directo, sin pedir nada, y se
+        // transfiere de inmediato a la ejecutiva.
+        s.estado = "lead_captured";
+        s.capturedAt = new Date().toISOString();
+        return {
+          session: s,
+          action: "captured",
+          messages: [fill(config.confirmTemplate, { campaign: config.campaignLabel })],
+        };
+      }
       s.estado = "requesting_data";
       return { session: s, action: "ask_data", messages: [config.askDataTemplate] };
     }
