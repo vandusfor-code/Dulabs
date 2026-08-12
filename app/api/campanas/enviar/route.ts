@@ -8,7 +8,12 @@ import { parseDestinatario } from "@/lib/destinatarios";
 import { getCampaignBotConfig, crearCampaignLeadRow } from "@/lib/campaign-lead-store";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+// 60s se quedaba corto para campañas grandes: el envío es secuencial (una
+// llamada real a Meta por destinatario), y con ~170+ destinatarios se corta
+// a mitad de camino -- Vercel mata la función y el navegador recibe una
+// página de error genérica en vez del JSON esperado, dejando el resto de
+// la lista sin enviar y sin ningún aviso claro.
+export const maxDuration = 300;
 
 function mesActualISO(): string {
   return new Date().toISOString().slice(0, 7);
