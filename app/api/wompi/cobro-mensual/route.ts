@@ -22,6 +22,7 @@ export async function GET(request: NextRequest) {
     .from("dulabs_suscripciones")
     .select("id_tenant, plan, precio_cop, wompi_payment_source_id, wompi_customer_email")
     .eq("estado", "activa")
+    .eq("cortesia", false)
     .lte("fecha_proximo_cobro", hoy);
 
   if (error) {
