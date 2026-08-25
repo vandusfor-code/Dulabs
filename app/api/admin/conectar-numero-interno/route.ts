@@ -32,8 +32,7 @@ function autorizado(request: NextRequest): boolean {
 }
 
 type Body = {
-  whatsapp_business_account_id?: string;
-  phone_number_id?: string; // opcional: solo hace falta si el WABA tiene más de un número
+  phone_number_id?: string;
   tenant_email?: string;
   nombre_negocio?: string;
 };
@@ -50,12 +49,9 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: "JSON inválido" }, { status: 400 });
   }
 
-  const { whatsapp_business_account_id: wabaId, tenant_email, nombre_negocio } = body;
-  if (!wabaId || !tenant_email || !nombre_negocio) {
-    return Response.json(
-      { error: "Faltan 'whatsapp_business_account_id', 'tenant_email' o 'nombre_negocio'" },
-      { status: 400 }
-    );
+  const { phone_number_id: phoneNumberId, tenant_email, nombre_negocio } = body;
+  if (!phoneNumberId || !tenant_email || !nombre_negocio) {
+    return Response.json({ error: "Faltan 'phone_number_id', 'tenant_email' o 'nombre_negocio'" }, { status: 400 });
   }
 
   const token = process.env.META_ACCESS_TOKEN;
@@ -63,47 +59,31 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: "META_ACCESS_TOKEN no está configurado en el servidor" }, { status: 500 });
   }
 
-  // 1. Descubrir el número dentro del WABA (o validar el indicado).
-  const phonesRes = await fetch(`${GRAPH}/${wabaId}/phone_numbers?fields=id,display_phone_number,verified_name`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  const phonesJson = (await phonesRes.json()) as {
-    data?: { id: string; display_phone_number: string; verified_name?: string }[];
+  // 1. Consultar el número DIRECTO por su propio ID (no vía {waba}/phone_numbers
+  //    -- ese edge nos rechazaba el nodo del WABA aunque el número en sí es
+  //    accesible). De aquí sacamos también su whatsapp_business_account_id real.
+  const numeroRes = await fetch(
+    `${GRAPH}/${phoneNumberId}?fields=id,display_phone_number,verified_name,whatsapp_business_account_id`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  const numero = (await numeroRes.json()) as {
+    id: string;
+    display_phone_number: string;
+    verified_name?: string;
+    whatsapp_business_account_id: string;
   } & GraphError;
-  if (!phonesRes.ok) {
-    // Diagnóstico ampliado: el error "(#100) Tried accessing nonexisting
-    // field (phone_numbers)" puede ser por permisos O porque el ID no es
-    // en realidad un nodo de tipo WABA -- pedimos sus campos básicos para
-    // distinguir un caso del otro.
-    const [meRes, nodoRes] = await Promise.all([
-      fetch(`${GRAPH}/me?fields=id,name`, { headers: { Authorization: `Bearer ${token}` } }),
-      fetch(`${GRAPH}/${wabaId}?fields=id,name`, { headers: { Authorization: `Bearer ${token}` } }),
-    ]);
+  if (!numeroRes.ok) {
+    const meRes = await fetch(`${GRAPH}/me?fields=id,name`, { headers: { Authorization: `Bearer ${token}` } });
     const me = await meRes.json();
-    const nodo = await nodoRes.json();
     return Response.json(
       {
-        error: `Meta (phone_numbers) respondió ${phonesRes.status}: ${phonesJson.error?.message ?? "sin detalle"}`,
+        error: `Meta (phone_number) respondió ${numeroRes.status}: ${numero.error?.message ?? "sin detalle"}`,
         system_user_token_pertenece_a: me,
-        nodo_consultado: { id: wabaId, http: nodoRes.status, respuesta: nodo },
       },
       { status: 502 }
     );
   }
-  const numeros = phonesJson.data ?? [];
-  if (numeros.length === 0) {
-    return Response.json({ error: "Ese WABA no tiene ningún número de WhatsApp" }, { status: 404 });
-  }
-  const numero = body.phone_number_id ? numeros.find((n) => n.id === body.phone_number_id) : numeros[0];
-  if (!numero) {
-    return Response.json({ error: "phone_number_id no encontrado en ese WABA", numeros }, { status: 404 });
-  }
-  if (!body.phone_number_id && numeros.length > 1) {
-    return Response.json(
-      { error: "El WABA tiene más de un número — especifica cuál con 'phone_number_id'", numeros },
-      { status: 400 }
-    );
-  }
+  const wabaId = numero.whatsapp_business_account_id;
 
   const supabase = supabaseAdmin();
 
