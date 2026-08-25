@@ -507,88 +507,43 @@ export function Footer() {
           ))}
         </div>
 
-        <div className="mt-14 grid gap-10 border-t border-site-border pt-10 md:grid-cols-3">
+        {/* Datos de identificación del responsable del servicio. Deliberadamente
+            SIN dirección física ni teléfono personal: el titular opera desde su
+            domicilio y publicarlo exponía su casa. El canal de contacto oficial
+            es el correo corporativo, uno solo en todo el sitio. */}
+        <div className="mt-14 grid gap-10 border-t border-site-border pt-10 md:grid-cols-2">
           <div>
             <h3 className="text-[12.5px] font-semibold text-site-fg">{t("Información legal", "Legal information")}</h3>
-            <p className="mt-4 text-[12.5px] leading-relaxed text-site-muted-fg">
-              <span className="text-site-muted-fg/70">{t("Titular del servicio:", "Service holder:")}</span>
-              <br />
-              RAMOS PADILLA DUVAN ANDRES
-            </p>
-            <p className="mt-4 text-[12.5px] leading-relaxed text-site-muted-fg">
-              <span className="text-site-muted-fg/70">{t("Nombre comercial:", "Trade name:")}</span>
-              <br />
-              DULABS
-            </p>
-            <p className="mt-4 text-[12.5px] leading-relaxed text-site-muted-fg">
-              <span className="text-site-muted-fg/70">{t("Dirección principal:", "Main address:")}</span>
-              <br />
-              BRR SANTA ELENA V CR 36 47 17
-              <br />
-              Montería, Córdoba 230001
-              <br />
-              Colombia
-            </p>
-            <p className="mt-4 text-[12.5px] leading-relaxed text-site-muted-fg">
-              <span className="text-site-muted-fg/70">{t("Teléfono:", "Phone:")}</span>
-              <br />
-              +573148127388
-            </p>
-            <p className="mt-4 text-[12.5px] leading-relaxed text-site-muted-fg">
-              <span className="text-site-muted-fg/70">{t("Correo electrónico:", "Email:")}</span>
-              <br />
-              contacto@dulabs.co
-            </p>
-            <p className="mt-4 text-[12.5px] leading-relaxed text-site-muted-fg">
-              <span className="text-site-muted-fg/70">{t("Sitio web:", "Website:")}</span>
-              <br />
-              https://www.dulabs.co
-            </p>
-            <p className="mt-4 text-[12.5px] leading-relaxed text-site-muted-fg/80">
+            <dl className="mt-4 grid grid-cols-[auto_1fr] gap-x-4 gap-y-2.5 text-[12.5px] leading-relaxed">
+              <dt className="text-site-muted-fg/70">{t("Titular del servicio", "Service holder")}</dt>
+              <dd className="text-site-muted-fg">RAMOS PADILLA DUVAN ANDRES</dd>
+
+              <dt className="text-site-muted-fg/70">{t("Nombre comercial", "Trade name")}</dt>
+              <dd className="text-site-muted-fg">DULABS</dd>
+
+              <dt className="text-site-muted-fg/70">{t("País de operación", "Country of operation")}</dt>
+              <dd className="text-site-muted-fg">{t("Colombia", "Colombia")}</dd>
+
+              <dt className="text-site-muted-fg/70">{t("Sitio web", "Website")}</dt>
+              <dd className="text-site-muted-fg">
+                <a href="https://www.dulabs.co" className="transition-colors duration-200 hover:text-site-fg">
+                  www.dulabs.co
+                </a>
+              </dd>
+            </dl>
+            <p className="mt-5 text-[12.5px] leading-relaxed text-site-muted-fg/80">
               {t(
                 "Du Labs es una marca comercial y plataforma digital operada por RAMOS PADILLA DUVAN ANDRES.",
                 "Du Labs is a trademark and digital platform operated by RAMOS PADILLA DUVAN ANDRES."
               )}
             </p>
           </div>
-          <div>
-            <h3 className="text-[12.5px] font-semibold text-site-fg">{t("Información del negocio", "Business information")}</h3>
-            <p className="mt-4 text-[12.5px] leading-relaxed text-site-muted-fg">
-              <span className="text-site-muted-fg/70">{t("Nombre legal del negocio:", "Legal business name:")}</span>
-              <br />
-              Duván Andrés Ramos Padilla
-            </p>
-            <p className="mt-4 text-[12.5px] leading-relaxed text-site-muted-fg">
-              <span className="text-site-muted-fg/70">{t("Nombre comercial:", "Trade name:")}</span>
-              <br />
-              PORTABILIDADES
-            </p>
-            <p className="mt-4 text-[12.5px] leading-relaxed text-site-muted-fg">
-              <span className="text-site-muted-fg/70">{t("Dirección:", "Address:")}</span>
-              <br />
-              CR 36 47 17 BRR SANTA ELENA
-              <br />
-              Montería, Córdoba 230001
-              <br />
-              Colombia
-            </p>
-            <p className="mt-4 text-[12.5px] leading-relaxed text-site-muted-fg">
-              <span className="text-site-muted-fg/70">{t("Teléfono del negocio:", "Business phone:")}</span>
-              <br />
-              +573148127388
-            </p>
-          </div>
           <div className="md:justify-self-end">
             <h3 className="text-[12.5px] font-semibold text-site-fg">{t("Contacto", "Contact")}</h3>
             <ul className="mt-4 flex flex-col gap-2 text-[12.5px] text-site-muted-fg">
               <li>
-                <a href="mailto:vandusfor@gmail.com" className="transition-colors duration-200 hover:text-site-fg">
-                  vandusfor@gmail.com
-                </a>
-              </li>
-              <li>
-                <a href="tel:+573148127388" className="transition-colors duration-200 hover:text-site-fg">
-                  +57 314 812 7388
+                <a href="mailto:contacto@dulabs.co" className="transition-colors duration-200 hover:text-site-fg">
+                  contacto@dulabs.co
                 </a>
               </li>
               <li>
@@ -597,6 +552,12 @@ export function Footer() {
                 </a>
               </li>
             </ul>
+            <p className="mt-4 max-w-[26ch] text-[12px] leading-relaxed text-site-muted-fg/70">
+              {t(
+                "Escríbenos por correo y te respondemos en horario hábil.",
+                "Email us and we'll get back to you during business hours."
+              )}
+            </p>
           </div>
         </div>
 

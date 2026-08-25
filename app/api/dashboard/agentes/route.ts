@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { resolverMiembroEquipo, requireRol } from "@/lib/team";
 import { planDelTenant, contarAgentesEnUso } from "@/lib/plan-limits";
+import { esSinPlan, MENSAJE_SIN_PLAN } from "@/lib/planes";
 
 export const runtime = "nodejs";
 
@@ -64,7 +65,9 @@ export async function POST(request: NextRequest) {
   if (plan.limites.agentesIA !== null && enUso >= plan.limites.agentesIA) {
     return Response.json(
       {
-        error: `Tu plan ${plan.nombre} permite máximo ${plan.limites.agentesIA} agente${plan.limites.agentesIA === 1 ? "" : "s"} de IA. Mejora tu plan para crear otro.`,
+        error: esSinPlan(plan)
+          ? MENSAJE_SIN_PLAN
+          : `Tu plan ${plan.nombre} permite máximo ${plan.limites.agentesIA} agente${plan.limites.agentesIA === 1 ? "" : "s"} de IA. Mejora tu plan para crear otro.`,
       },
       { status: 400 }
     );

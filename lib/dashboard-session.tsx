@@ -42,6 +42,8 @@ export type Suscripcion = {
   precio_cop: number;
   estado: string;
   fecha_proximo_cobro: string;
+  /** true = el cliente canceló; conserva el servicio hasta fecha_proximo_cobro. */
+  cancelar_al_vencer?: boolean;
 } | null;
 
 type DashboardContextValue = {
@@ -50,6 +52,8 @@ type DashboardContextValue = {
   errorNegocios: string | null;
   suscripcion: Suscripcion;
   rol: Rol | null;
+  /** DuMo es una integración interna del operador, no una función del producto. */
+  puedeUsarDumo: boolean;
   cargarNegocios: () => Promise<void>;
   /** phone_number_id elegido en el selector de número del Topbar. */
   numeroActivoId: string | null;
@@ -70,6 +74,7 @@ export function DashboardSessionProvider({ children }: { children: ReactNode }) 
   const [errorNegocios, setErrorNegocios] = useState<string | null>(null);
   const [suscripcion, setSuscripcion] = useState<Suscripcion>(null);
   const [rol, setRol] = useState<Rol | null>(null);
+  const [puedeUsarDumo, setPuedeUsarDumo] = useState(false);
   // Se hidrata una sola vez desde localStorage (lazy initializer, no efecto)
   // — si el número guardado ya no existe (se eliminó, o nunca hubo uno), los
   // consumidores (ver Topbar) ya caen a `negocios[0]` al resolverlo, así que
@@ -104,6 +109,7 @@ export function DashboardSessionProvider({ children }: { children: ReactNode }) 
       setNegocios(data.negocios ?? []);
       setSuscripcion(data.suscripcion ?? null);
       setRol(data.rol ?? null);
+      setPuedeUsarDumo(Boolean(data.puede_usar_dumo));
     } catch (err) {
       setErrorNegocios(err instanceof Error ? err.message : String(err));
     }
@@ -159,6 +165,7 @@ export function DashboardSessionProvider({ children }: { children: ReactNode }) 
         errorNegocios,
         suscripcion,
         rol,
+        puedeUsarDumo,
         cargarNegocios: () => cargarNegocios(),
         numeroActivoId,
         seleccionarNumero,

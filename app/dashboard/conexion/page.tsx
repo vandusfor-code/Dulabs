@@ -148,6 +148,7 @@ function NumeroCard({
 
   const [conectandoDumo, setConectandoDumo] = useState(false);
   const [errorDumo, setErrorDumo] = useState<string | null>(null);
+  const { puedeUsarDumo } = useDashboard();
 
   const conectarConDumo = useCallback(async () => {
     setConectandoDumo(true);
@@ -356,6 +357,7 @@ function NumeroCard({
 
       <p className="mt-4 break-all font-mono text-[10.5px] text-mist/70">WABA {negocio.whatsapp_business_account_id}</p>
 
+      {puedeUsarDumo && (
       <div className="mt-4 border-t border-edge pt-4">
         <div className="flex flex-col gap-2">
           <div className="flex items-center justify-between gap-3">
@@ -408,6 +410,7 @@ function NumeroCard({
           )}
         </div>
       </div>
+      )}
 
       <div className="mt-4 border-t border-edge pt-4">
         {confirmandoBorrado ? (

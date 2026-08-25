@@ -4,6 +4,7 @@ import { enviarPlantilla, contarVariablesPlantilla } from "@/lib/meta-templates"
 import { resolverMiembroEquipo, requireRol } from "@/lib/team";
 import { descifrarSecreto } from "@/lib/crypto";
 import { planDelTenant } from "@/lib/plan-limits";
+import { esSinPlan, MENSAJE_SIN_PLAN } from "@/lib/planes";
 import { parseDestinatario } from "@/lib/destinatarios";
 import { getCampaignBotConfig, crearCampaignLeadRow } from "@/lib/campaign-lead-store";
 
@@ -52,7 +53,9 @@ export async function POST(request: NextRequest) {
   if (plan.limites.contactosPorCampana !== null && destinatarios.length > plan.limites.contactosPorCampana) {
     return Response.json(
       {
-        error: `Tu plan ${plan.nombre} permite máximo ${plan.limites.contactosPorCampana.toLocaleString("es-CO")} contactos por campaña (enviaste ${destinatarios.length.toLocaleString("es-CO")}). Mejora tu plan para llegar a más contactos de una vez.`,
+        error: esSinPlan(plan)
+          ? MENSAJE_SIN_PLAN
+          : `Tu plan ${plan.nombre} permite máximo ${plan.limites.contactosPorCampana.toLocaleString("es-CO")} contactos por campaña (enviaste ${destinatarios.length.toLocaleString("es-CO")}). Mejora tu plan para llegar a más contactos de una vez.`,
       },
       { status: 400 }
     );
@@ -71,7 +74,9 @@ export async function POST(request: NextRequest) {
     if ((campanasEsteMes ?? 0) >= plan.limites.campanasPorMes) {
       return Response.json(
         {
-          error: `Tu plan ${plan.nombre} permite ${plan.limites.campanasPorMes} campaña${plan.limites.campanasPorMes === 1 ? "" : "s"} al mes y ya las usaste todas. Mejora tu plan para enviar más este mes.`,
+          error: esSinPlan(plan)
+            ? MENSAJE_SIN_PLAN
+            : `Tu plan ${plan.nombre} permite ${plan.limites.campanasPorMes} campaña${plan.limites.campanasPorMes === 1 ? "" : "s"} al mes y ya las usaste todas. Mejora tu plan para enviar más este mes.`,
         },
         { status: 400 }
       );

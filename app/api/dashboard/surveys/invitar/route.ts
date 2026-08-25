@@ -7,6 +7,7 @@ import { enviarPlantilla, consultarEstadoPlantilla } from "@/lib/meta-templates"
 import { getSurveyBot, createSessionRow } from "@/lib/survey-bot-store";
 import { inviteSurvey } from "@/lib/survey-engine";
 import { planDelTenant } from "@/lib/plan-limits";
+import { esSinPlan, MENSAJE_SIN_PLAN } from "@/lib/planes";
 import { parseDestinatario } from "@/lib/destinatarios";
 
 export const runtime = "nodejs";
@@ -62,7 +63,9 @@ export async function POST(request: NextRequest) {
   if (plan.limites.contactosPorCampana !== null && destinatarios.length > plan.limites.contactosPorCampana) {
     return Response.json(
       {
-        error: `Tu plan ${plan.nombre} permite máximo ${plan.limites.contactosPorCampana.toLocaleString("es-CO")} contactos por envío (enviaste ${destinatarios.length.toLocaleString("es-CO")}). Mejora tu plan para invitar a más contactos de una vez.`,
+        error: esSinPlan(plan)
+          ? MENSAJE_SIN_PLAN
+          : `Tu plan ${plan.nombre} permite máximo ${plan.limites.contactosPorCampana.toLocaleString("es-CO")} contactos por envío (enviaste ${destinatarios.length.toLocaleString("es-CO")}). Mejora tu plan para invitar a más contactos de una vez.`,
       },
       { status: 400 }
     );

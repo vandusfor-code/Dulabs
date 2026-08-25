@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { resolverMiembroEquipo, requireRol, type Miembro } from "@/lib/team";
 import { planDelTenant, contarUsuarios } from "@/lib/plan-limits";
+import { esSinPlan, MENSAJE_SIN_PLAN } from "@/lib/planes";
 
 export const runtime = "nodejs";
 
@@ -80,7 +81,9 @@ export async function POST(request: NextRequest) {
   if (plan.limites.usuarios !== null && usuariosActuales >= plan.limites.usuarios) {
     return Response.json(
       {
-        error: `Tu plan ${plan.nombre} permite máximo ${plan.limites.usuarios} usuario${plan.limites.usuarios === 1 ? "" : "s"} en el equipo. Mejora tu plan para invitar a más personas.`,
+        error: esSinPlan(plan)
+          ? MENSAJE_SIN_PLAN
+          : `Tu plan ${plan.nombre} permite máximo ${plan.limites.usuarios} usuario${plan.limites.usuarios === 1 ? "" : "s"} en el equipo. Mejora tu plan para invitar a más personas.`,
       },
       { status: 400 }
     );

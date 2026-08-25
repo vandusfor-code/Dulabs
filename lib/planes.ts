@@ -137,3 +137,15 @@ export function resolverPlanId(valor: string | null | undefined): PlanId {
 export function planPorId(id: PlanId): PlanDef {
   return PLANES[id];
 }
+
+export function esSinPlan(plan: PlanDef): boolean {
+  return plan.id === "sin_plan";
+}
+
+// Mensaje de bloqueo cuando el tenant NO tiene suscripción activa. Sin esto,
+// los mensajes de límite se renderizan como "Tu plan Sin plan permite máximo
+// 0 números. Mejora tu plan para conectar otro." — literalmente cierto pero
+// inservible: el usuario no tiene que "mejorar" nada, tiene que activar su
+// primer plan, que es una acción distinta y en otra pantalla.
+export const MENSAJE_SIN_PLAN =
+  "Todavía no tienes un plan activo. Activa uno para empezar a usar Du Labs — puedes elegirlo en la página de planes.";

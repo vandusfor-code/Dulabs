@@ -9,8 +9,57 @@ import { PLANES, resolverPlanId } from "@/lib/planes";
 
 export default function CuentaPage() {
   const router = useRouter();
-  const { session, suscripcion } = useDashboard();
+  const { session, suscripcion, cargarNegocios } = useDashboard();
   const { t } = useI18n();
+
+  // --- Cancelar / reactivar la suscripción ---
+  const [cambiandoPlan, setCambiandoPlan] = useState(false);
+  const [mensajePlan, setMensajePlan] = useState<string | null>(null);
+  const [errorPlan, setErrorPlan] = useState<string | null>(null);
+
+  const llamarSuscripcion = useCallback(
+    async (metodo: "DELETE" | "POST", exito: string) => {
+      if (!session) return;
+      setErrorPlan(null);
+      setMensajePlan(null);
+      setCambiandoPlan(true);
+      try {
+        const res = await fetch("/api/dashboard/suscripcion", {
+          method: metodo,
+          headers: { Authorization: `Bearer ${session.access_token}` },
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          setErrorPlan(data.error ?? t("No se pudo completar la acción.", "Couldn't complete the action."));
+          return;
+        }
+        setMensajePlan(exito);
+        // Refresca la suscripción del contexto para que el panel refleje el
+        // cambio sin recargar la página.
+        await cargarNegocios();
+      } catch (err) {
+        setErrorPlan(err instanceof Error ? err.message : String(err));
+      } finally {
+        setCambiandoPlan(false);
+      }
+    },
+    [session, cargarNegocios, t]
+  );
+
+  const cancelarPlan = useCallback(() => {
+    const confirmado = window.confirm(
+      t(
+        "¿Seguro que quieres cancelar? Conservas el servicio hasta el final del periodo ya pagado y no se te vuelve a cobrar.",
+        "Are you sure you want to cancel? You keep the service until the end of the period you already paid for, and won't be charged again."
+      )
+    );
+    if (!confirmado) return;
+    void llamarSuscripcion("DELETE", t("Suscripción cancelada. No se harán más cobros.", "Subscription cancelled. No further charges."));
+  }, [llamarSuscripcion, t]);
+
+  const reactivarPlan = useCallback(() => {
+    void llamarSuscripcion("POST", t("Plan reactivado. Se renovará normalmente.", "Plan reactivated. It will renew normally."));
+  }, [llamarSuscripcion, t]);
 
   // --- Perfil (nombre y correo) ---
   const nombreActual = (session?.user.user_metadata?.nombre as string | undefined) ?? "";
@@ -215,7 +264,9 @@ export default function CuentaPage() {
               </dd>
             </div>
             <div>
-              <dt className="text-xs text-mist">{t("Próximo cobro", "Next charge")}</dt>
+              <dt className="text-xs text-mist">
+                {suscripcion.cancelar_al_vencer ? t("Activo hasta", "Active until") : t("Próximo cobro", "Next charge")}
+              </dt>
               <dd className="mt-1 text-sm font-medium text-fg">
                 {new Date(
                   suscripcion.fecha_proximo_cobro + "T00:00:00"
@@ -227,6 +278,46 @@ export default function CuentaPage() {
           <p className="mt-4 text-sm leading-relaxed text-mist">
             {t("No tienes una suscripción activa todavía.", "You don't have an active subscription yet.")}
           </p>
+        )}
+
+        {suscripcion && suscripcion.estado === "activa" && (
+          <div className="mt-6 border-t border-edge/60 pt-5">
+            {suscripcion.cancelar_al_vencer ? (
+              <>
+                <p className="text-sm leading-relaxed text-mist">
+                  {t(
+                    "Tu plan está cancelado y no se renovará. Conservas todas las funciones hasta la fecha de arriba.",
+                    "Your plan is cancelled and won't renew. You keep every feature until the date above."
+                  )}
+                </p>
+                <button
+                  onClick={reactivarPlan}
+                  disabled={cambiandoPlan}
+                  className="mt-3 rounded-lg bg-lime px-4 py-2 text-sm font-semibold text-lime-fg transition-colors hover:bg-lime-hover disabled:opacity-50"
+                >
+                  {cambiandoPlan ? t("Un momento…", "One moment…") : t("Reactivar mi plan", "Reactivate my plan")}
+                </button>
+              </>
+            ) : (
+              <>
+                <p className="text-sm leading-relaxed text-mist">
+                  {t(
+                    "Si cancelas, conservas el servicio hasta el final del periodo que ya pagaste. No se hacen más cobros.",
+                    "If you cancel, you keep the service until the end of the period you already paid for. No further charges."
+                  )}
+                </p>
+                <button
+                  onClick={cancelarPlan}
+                  disabled={cambiandoPlan}
+                  className="mt-3 rounded-lg border border-edge px-4 py-2 text-sm font-medium text-mist transition-colors hover:border-red-600/40 hover:text-red-600 disabled:opacity-50"
+                >
+                  {cambiandoPlan ? t("Un momento…", "One moment…") : t("Cancelar suscripción", "Cancel subscription")}
+                </button>
+              </>
+            )}
+            {mensajePlan && <p className="mt-3 text-xs leading-relaxed text-lime-text">{mensajePlan}</p>}
+            {errorPlan && <p className="mt-3 text-xs leading-relaxed text-red-600">{errorPlan}</p>}
+          </div>
         )}
       </section>
 

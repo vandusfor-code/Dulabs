@@ -398,7 +398,7 @@ export default function PrivacidadPage() {
           <h2>{t("Contáctanos", "Contact Us")}</h2>
           <p>{t("Si tienes alguna pregunta sobre esta Política de Privacidad, puedes contactarnos:", "If you have any questions about this Privacy Policy, You can contact us:")}</p>
           <ul>
-            <li>{t("Por correo electrónico:", "By email:")} vandusfor@gmail.com</li>
+            <li>{t("Por correo electrónico:", "By email:")} contacto@dulabs.co</li>
           </ul>
         </article>
       </div>

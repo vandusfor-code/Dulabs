@@ -112,7 +112,7 @@ export default function TerminosPage() {
           <h2>{t("5. Contacto", "5. Contact")}</h2>
           <p>
             {t("Para cualquier duda, aclaración o soporte legal relacionado con estos términos, puedes escribirnos directamente a:", "For any questions, clarifications, or legal support related to these terms, you can write to us directly at:")}{" "}
-            <a href="mailto:vandusfor@gmail.com">vandusfor@gmail.com</a>.
+            <a href="mailto:contacto@dulabs.co">contacto@dulabs.co</a>.
           </p>
         </article>
       </div>

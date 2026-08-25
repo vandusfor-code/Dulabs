@@ -97,6 +97,12 @@ function PantallaBienvenida({ nombre, suscripcionActiva }: { nombre: string; sus
       href: "/dashboard/mensajes",
     },
   ];
+  // Esta pantalla solo se muestra cuando el tenant todavía no tiene ningún
+  // número (ver ResumenPage), así que los pasos 2 y 3 están genuinamente
+  // pendientes. El paso 1 sí depende del estado real de la suscripción: una
+  // fila en "pendiente_pago" NO es un plan activo, y darla por hecha dejaba
+  // al usuario esperando un servicio que no se habilita hasta que el pago
+  // se confirme.
   const pasos = [
     { etiqueta: t("Activa tu plan", "Activate your plan"), hecho: suscripcionActiva, href: "/checkout" },
     { etiqueta: t("Conecta tu número de WhatsApp", "Connect your WhatsApp number"), hecho: false, href: "/dashboard/conexion" },
@@ -248,7 +254,7 @@ export default function ResumenPage() {
   }
 
   if (negocios.length === 0) {
-    return <PantallaBienvenida nombre={nombre} suscripcionActiva={!!suscripcion} />;
+    return <PantallaBienvenida nombre={nombre} suscripcionActiva={suscripcion?.estado === "activa"} />;
   }
 
   const numerosActivos = negocios.filter((n) => n.conectado).length;

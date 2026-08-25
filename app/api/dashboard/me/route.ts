@@ -3,6 +3,7 @@ import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { consultarEstadoNumero } from "@/lib/meta-numero";
 import { descifrarSecreto } from "@/lib/crypto";
+import { puedeUsarDumo } from "@/lib/dumo-acceso";
 
 export const runtime = "nodejs";
 
@@ -173,9 +174,15 @@ export async function GET(request: NextRequest) {
 
   const { data: suscripcion } = await supabase
     .from("dulabs_suscripciones")
-    .select("plan, precio_cop, estado, fecha_proximo_cobro")
+    .select("plan, precio_cop, estado, fecha_proximo_cobro, cancelar_al_vencer")
     .eq("id_tenant", tenantId)
     .maybeSingle();
 
-  return Response.json({ email: userData.user.email, negocios, suscripcion, rol });
+  return Response.json({
+    email: userData.user.email,
+    negocios,
+    suscripcion,
+    rol,
+    puede_usar_dumo: puedeUsarDumo(userData.user.email),
+  });
 }

@@ -20,7 +20,7 @@ export async function GET(request: NextRequest) {
 
   const { data: suscripciones, error } = await supabase
     .from("dulabs_suscripciones")
-    .select("id_tenant, plan, precio_cop, wompi_payment_source_id, wompi_customer_email")
+    .select("id_tenant, plan, precio_cop, wompi_payment_source_id, wompi_customer_email, cancelar_al_vencer")
     .eq("estado", "activa")
     .eq("cortesia", false)
     .not("wompi_payment_source_id", "is", null)
@@ -34,6 +34,18 @@ export async function GET(request: NextRequest) {
 
   for (const sub of suscripciones ?? []) {
     try {
+      // El cliente canceló y ya llegó el fin de su periodo pagado: se cierra
+      // la suscripción en vez de cobrarle otro mes.
+      if (sub.cancelar_al_vencer) {
+        await supabase
+          .from("dulabs_suscripciones")
+          .update({ estado: "cancelada", updated_at: new Date().toISOString() })
+          .eq("id_tenant", sub.id_tenant);
+        console.log(`[cobro-mensual] suscripción de ${sub.id_tenant} cerrada por cancelación del cliente (no se cobra).`);
+        resultados.push({ id_tenant: sub.id_tenant, ok: true, detalle: "cancelada por el cliente, no se cobró" });
+        continue;
+      }
+
       const referencia = `dulabs-recurrente-${sub.id_tenant}-${Date.now()}`;
       const transaccion = await crearTransaccion({
         amount_in_cents: sub.precio_cop * 100,

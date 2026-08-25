@@ -3,6 +3,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { resolverMiembroEquipo, requireRol } from "@/lib/team";
 import { cifrarSecreto } from "@/lib/crypto";
 import { planDelTenant, contarNumeros } from "@/lib/plan-limits";
+import { esSinPlan, MENSAJE_SIN_PLAN } from "@/lib/planes";
 import { iniciarSyncCoexistencia } from "@/lib/coexistence-sync";
 
 export const runtime = "nodejs";
@@ -152,7 +153,9 @@ export async function POST(request: NextRequest) {
       ]);
       if (plan.limites.numeros !== null && numerosActuales >= plan.limites.numeros) {
         throw new Error(
-          `Tu plan ${plan.nombre} permite máximo ${plan.limites.numeros} número${plan.limites.numeros === 1 ? "" : "s"} de WhatsApp conectado${plan.limites.numeros === 1 ? "" : "s"}. Mejora tu plan para conectar otro.`
+          esSinPlan(plan)
+            ? MENSAJE_SIN_PLAN
+            : `Tu plan ${plan.nombre} permite máximo ${plan.limites.numeros} número${plan.limites.numeros === 1 ? "" : "s"} de WhatsApp conectado${plan.limites.numeros === 1 ? "" : "s"}. Mejora tu plan para conectar otro.`
         );
       }
     }

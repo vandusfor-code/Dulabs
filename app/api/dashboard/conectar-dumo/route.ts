@@ -3,6 +3,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { registrarNumeroEnDumo, resolverTokenMeta } from "@/lib/dumo";
 import { formatearTelefono } from "@/lib/format";
 import { resolverMiembroEquipo, requireRol } from "@/lib/team";
+import { puedeUsarDumo } from "@/lib/dumo-acceso";
 
 export const runtime = "nodejs";
 
@@ -18,6 +19,13 @@ async function autenticarAdmin(request: NextRequest) {
   }
   const miembro = await resolverMiembroEquipo(supabase, userData.user.id);
   if (!requireRol(miembro, ["admin"])) {
+    return { error: Response.json({ error: "No tienes permiso para esta acción" }, { status: 403 }) };
+  }
+  // DuMo es una integración interna del operador, no una función del
+  // producto: ser admin del propio tenant no basta. Se valida en el
+  // servidor y no solo ocultando el botón, porque ocultar la UI no impide
+  // que alguien llame el endpoint directamente.
+  if (!puedeUsarDumo(userData.user.email)) {
     return { error: Response.json({ error: "No tienes permiso para esta acción" }, { status: 403 }) };
   }
   return { supabase, miembro };
