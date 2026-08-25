@@ -74,3 +74,31 @@ export function parseConfigAgente(libro: ExcelJS.Workbook): ConfigAgenteNegocio 
   if (lineas.length === 0 && !numeroAdmin) return null;
   return { numeroAdmin, nombreAdmin, textoNegocio: lineas.join("\n"), recursosDisponibles, duracionEstandarMin };
 }
+
+// Misma configuración, pero escrita a mano en el formulario de activación en
+// vez de subida en la plantilla. Existe porque exigir un .xlsx bien llenado
+// ANTES de poder comprar costaba ventas: quien no lograba llenarlo
+// simplemente no compraba. El Excel sigue siendo válido como atajo para
+// quien ya lo tiene armado.
+export function configDesdeFormulario(campos: {
+  nombreAdmin?: string | null;
+  numeroAdmin?: string | null;
+  textoNegocio?: string | null;
+  recursosDisponibles?: string | number | null;
+  duracionEstandarMin?: string | number | null;
+}): ConfigAgenteNegocio | null {
+  const textoNegocio = (campos.textoNegocio ?? "").trim();
+  // La información del negocio es lo único indispensable: es de donde el
+  // agente saca precios, horarios y servicios. Sin eso respondería en vacío.
+  if (textoNegocio.length === 0) return null;
+
+  const numero = (campos.numeroAdmin ?? "").trim();
+  const nombre = (campos.nombreAdmin ?? "").trim();
+  return {
+    numeroAdmin: numero ? normalizarTelefono(numero) : null,
+    nombreAdmin: nombre || null,
+    textoNegocio,
+    recursosDisponibles: numeroEnteroPositivo(String(campos.recursosDisponibles ?? ""), RECURSOS_DISPONIBLES_POR_DEFECTO),
+    duracionEstandarMin: numeroEnteroPositivo(String(campos.duracionEstandarMin ?? ""), DURACION_ESTANDAR_MIN_POR_DEFECTO),
+  };
+}

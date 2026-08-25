@@ -12,7 +12,7 @@ import type { MarketplaceEstado, AgenteVista, NumeroVista } from "@/components/d
 const PASOS = [
   { es: "Activa el agente", en: "Activate the agent", descEs: "Elige el plan que mejor se adapte.", descEn: "Pick the plan that fits best." },
   { es: "Selecciona el número", en: "Select the number", descEs: "El número de WhatsApp donde quieres activarlo.", descEn: "The WhatsApp number to activate it on." },
-  { es: "Configura tu negocio", en: "Configure your business", descEs: "Sube la plantilla con la info de tu negocio.", descEn: "Upload the template with your business info." },
+  { es: "Configura tu negocio", en: "Configure your business", descEs: "Escribe tus servicios, precios y horarios.", descEn: "Write your services, prices and hours." },
   { es: "Listo", en: "Done", descEs: "Tu agente queda funcionando 24/7 en minutos.", descEn: "Your agent is up and running 24/7 in minutes." },
 ];
 
@@ -247,8 +247,8 @@ function FaqMarketplace({ t }: { t: (es: string, en: string) => string }) {
     {
       q: t("¿Necesito conocimientos técnicos para configurarlo?", "Do I need technical knowledge to set it up?"),
       a: t(
-        "No. Descargas una plantilla de Excel, llenas los datos de tu negocio (dirección, horario, precios, número admin) y la subes. Nada de código.",
-        "No. You download an Excel template, fill in your business info (address, hours, prices, admin number) and upload it. No code."
+        "No. Escribes en un cuadro de texto los datos de tu negocio (dirección, horario, servicios y precios) y listo. Nada de código. Si prefieres, también puedes subir una plantilla de Excel.",
+        "No. You type your business info (address, hours, services and prices) into a text box and you're done. No code. If you prefer, you can also upload an Excel template."
       ),
     },
     {
@@ -442,6 +442,14 @@ function ModalActivar({
   const [paso, setPaso] = useState<PasoModal>("numero");
   const [phoneNumberId, setPhoneNumberId] = useState("");
   const [archivo, setArchivo] = useState<File | null>(null);
+  // La configuración se escribe aquí mismo. El Excel quedó como atajo
+  // opcional: exigirlo antes de poder comprar costaba ventas de quien no
+  // lograba llenarlo.
+  const [textoNegocio, setTextoNegocio] = useState("");
+  const [nombreAdmin, setNombreAdmin] = useState("");
+  const [numeroAdmin, setNumeroAdmin] = useState("");
+  const [recursos, setRecursos] = useState("1");
+  const [duracion, setDuracion] = useState("30");
   const [activando, setActivando] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [resultado, setResultado] = useState<{ fecha_proximo_cobro: string | null; vence_at: string | null; tipo_plan: "recurrente" | "mes" } | null>(null);
@@ -451,7 +459,14 @@ function ModalActivar({
 
   const activar = async () => {
     if (!accessToken) return;
-    if (!archivo) return setError(t("Sube la plantilla de configuración de tu negocio.", "Upload your business configuration template."));
+    if (!archivo && textoNegocio.trim().length === 0) {
+      return setError(
+        t(
+          "Cuéntanos sobre tu negocio para que el agente sepa qué responder.",
+          "Tell us about your business so the agent knows what to answer."
+        )
+      );
+    }
     setActivando(true);
     setError(null);
     try {
@@ -459,7 +474,15 @@ function ModalActivar({
       form.append("slug", agente.slug);
       form.append("phone_number_id", phoneNumberId);
       form.append("tipo_plan", tipoPlan);
-      form.append("config", archivo);
+      if (archivo) {
+        form.append("config", archivo);
+      } else {
+        form.append("texto_negocio", textoNegocio.trim());
+        form.append("nombre_admin", nombreAdmin.trim());
+        form.append("numero_admin", numeroAdmin.trim());
+        form.append("recursos_disponibles", recursos);
+        form.append("duracion_estandar_min", duracion);
+      }
       const res = await fetch("/api/dashboard/marketplace/activar", {
         method: "POST",
         headers: { Authorization: `Bearer ${accessToken}` },
@@ -554,8 +577,104 @@ function ModalActivar({
         {paso === "config" && (
           <>
             <div className="mt-5">
-              <label className="text-xs font-medium uppercase tracking-wide text-mist">{t("Configuración de tu negocio", "Your business setup")}</label>
-              <div className="mt-2 flex flex-wrap items-center gap-2">
+              <label htmlFor="texto-negocio" className="text-xs font-medium uppercase tracking-wide text-mist">
+                {t("Información de tu negocio", "Your business information")}
+              </label>
+              <p className="mt-1.5 text-[11.5px] leading-relaxed text-mist">
+                {t(
+                  "Esto es lo único que tu agente va a poder responder. Entre más detalle escribas, mejor atiende — y nunca se inventará nada que no esté aquí.",
+                  "This is the only thing your agent will be able to answer. The more detail you write, the better it performs — and it will never make up anything that isn't here."
+                )}
+              </p>
+              <textarea
+                id="texto-negocio"
+                value={textoNegocio}
+                onChange={(e) => setTextoNegocio(e.target.value)}
+                rows={9}
+                disabled={!!archivo}
+                placeholder={t(
+                  `Ejemplo:\n\nDirección: Cra 8 #22-15, Montería\nHorario: lunes a sábado 8am-7pm\n\nServicios y precios:\n- Corte de cabello $25.000\n- Corte + barba $35.000\n- Tinte desde $60.000\n\nFormas de pago: efectivo, Nequi, Daviplata\n\nOtros datos: parqueadero disponible, se atiende sin cita si hay silla libre.`,
+                  `Example:\n\nAddress: 123 Main St\nHours: Mon-Sat 8am-7pm\n\nServices and prices:\n- Haircut $25\n- Haircut + beard $35\n\nPayment methods: cash, card`
+                )}
+                className="mt-2 w-full rounded-lg border border-edge bg-ink px-3 py-2.5 text-sm text-fg outline-none transition-colors placeholder:text-mist/60 focus:border-lime/50 disabled:opacity-40"
+              />
+            </div>
+
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <div>
+                <label htmlFor="nombre-admin" className="text-xs font-medium uppercase tracking-wide text-mist">
+                  {t("Tu nombre", "Your name")}
+                </label>
+                <input
+                  id="nombre-admin"
+                  value={nombreAdmin}
+                  onChange={(e) => setNombreAdmin(e.target.value)}
+                  disabled={!!archivo}
+                  placeholder={t("Opcional", "Optional")}
+                  className="mt-1.5 w-full rounded-lg border border-edge bg-ink px-3 py-2 text-sm text-fg outline-none focus:border-lime/50 disabled:opacity-40"
+                />
+              </div>
+              <div>
+                <label htmlFor="numero-admin" className="text-xs font-medium uppercase tracking-wide text-mist">
+                  {t("Tu WhatsApp", "Your WhatsApp")}
+                </label>
+                <input
+                  id="numero-admin"
+                  value={numeroAdmin}
+                  onChange={(e) => setNumeroAdmin(e.target.value)}
+                  disabled={!!archivo}
+                  placeholder="3001234567"
+                  className="mt-1.5 w-full rounded-lg border border-edge bg-ink px-3 py-2 text-sm text-fg outline-none focus:border-lime/50 disabled:opacity-40"
+                />
+                <p className="mt-1 text-[11px] leading-relaxed text-mist">
+                  {t("Para que el agente te reconozca a ti y no te trate como cliente.", "So the agent recognizes you and doesn't treat you as a customer.")}
+                </p>
+              </div>
+            </div>
+
+            {agente.usaAgenda && (
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label htmlFor="recursos" className="text-xs font-medium uppercase tracking-wide text-mist">
+                    {t("Citas a la vez", "Simultaneous appointments")}
+                  </label>
+                  <input
+                    id="recursos"
+                    type="number"
+                    min={1}
+                    value={recursos}
+                    onChange={(e) => setRecursos(e.target.value)}
+                    disabled={!!archivo}
+                    className="mt-1.5 w-full rounded-lg border border-edge bg-ink px-3 py-2 text-sm text-fg outline-none focus:border-lime/50 disabled:opacity-40"
+                  />
+                  <p className="mt-1 text-[11px] leading-relaxed text-mist">
+                    {t("Cuántas personas puedes atender al mismo tiempo (sillas, consultorios, canchas).", "How many people you can serve at once.")}
+                  </p>
+                </div>
+                <div>
+                  <label htmlFor="duracion" className="text-xs font-medium uppercase tracking-wide text-mist">
+                    {t("Duración de cada cita", "Length of each appointment")}
+                  </label>
+                  <input
+                    id="duracion"
+                    type="number"
+                    min={5}
+                    step={5}
+                    value={duracion}
+                    onChange={(e) => setDuracion(e.target.value)}
+                    disabled={!!archivo}
+                    className="mt-1.5 w-full rounded-lg border border-edge bg-ink px-3 py-2 text-sm text-fg outline-none focus:border-lime/50 disabled:opacity-40"
+                  />
+                  <p className="mt-1 text-[11px] leading-relaxed text-mist">{t("En minutos.", "In minutes.")}</p>
+                </div>
+              </div>
+            )}
+
+            <details className="mt-4 rounded-lg border border-edge/70 px-3 py-2">
+              <summary className="cursor-pointer text-[11.5px] text-mist">
+                {t("¿Prefieres subir la plantilla de Excel?", "Prefer to upload the Excel template?")}
+              </summary>
+              <div className="mt-2.5 flex flex-wrap items-center gap-2">
                 <a
                   href="/plantillas/agente-config-plantilla.xlsx"
                   download
@@ -572,8 +691,25 @@ function ModalActivar({
                     onChange={(e) => setArchivo(e.target.files?.[0] ?? null)}
                   />
                 </label>
+                {archivo && (
+                  <button
+                    type="button"
+                    onClick={() => setArchivo(null)}
+                    className="text-xs text-mist underline hover:text-fg"
+                  >
+                    {t("Quitar archivo", "Remove file")}
+                  </button>
+                )}
               </div>
-            </div>
+              {archivo && (
+                <p className="mt-2 text-[11px] leading-relaxed text-mist">
+                  {t(
+                    "Se usará la plantilla; los campos de arriba quedan desactivados.",
+                    "The template will be used; the fields above are disabled."
+                  )}
+                </p>
+              )}
+            </details>
 
             {error && <p className="mt-4 text-xs text-red-400">{error}</p>}
 

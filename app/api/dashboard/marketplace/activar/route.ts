@@ -3,7 +3,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { resolverMiembroEquipo, requireRol } from "@/lib/team";
 import { crearTransaccion } from "@/lib/wompi";
 import { cargarLibroExcel, TAMANO_MAXIMO_BYTES } from "@/lib/archivo-texto";
-import { parseConfigAgente } from "@/lib/agente-config";
+import { parseConfigAgente, configDesdeFormulario, type ConfigAgenteNegocio } from "@/lib/agente-config";
 import { agentePorSlug, precioMarketplace, type TipoPlanMarketplace } from "@/lib/marketplace";
 import { desactivarActivacion } from "@/lib/marketplace-store";
 
@@ -49,10 +49,19 @@ export async function POST(request: NextRequest) {
       return Response.json({ error: "Plan de pago inválido" }, { status: 400 });
     }
     if (!phoneNumberId) return Response.json({ error: "Falta el número de WhatsApp" }, { status: 400 });
-    if (!(archivo instanceof File) || archivo.size === 0) {
-      return Response.json({ error: "Falta la plantilla de configuración. Descárgala, llénala y súbela." }, { status: 400 });
+
+    // Dos caminos válidos para la configuración: el formulario del modal (el
+    // normal) o la plantilla .xlsx (atajo para quien ya la tiene llena).
+    // Antes el Excel era obligatorio y bloqueaba la compra.
+    const traeArchivo = archivo instanceof File && archivo.size > 0;
+    const textoNegocioForm = String(form.get("texto_negocio") ?? "").trim();
+    if (!traeArchivo && textoNegocioForm.length === 0) {
+      return Response.json(
+        { error: "Cuéntanos sobre tu negocio (servicios, precios, horarios) para que el agente sepa qué responder." },
+        { status: 400 }
+      );
     }
-    if (archivo.size > TAMANO_MAXIMO_BYTES) {
+    if (traeArchivo && archivo.size > TAMANO_MAXIMO_BYTES) {
       return Response.json({ error: "El archivo supera el límite de 4 MB" }, { status: 400 });
     }
 
@@ -86,17 +95,34 @@ export async function POST(request: NextRequest) {
     }
 
     // Configuración del negocio (número admin + texto para base de conocimiento).
-    const buffer = Buffer.from(await archivo.arrayBuffer());
-    const libro = await cargarLibroExcel(archivo.name, buffer);
-    if (!libro) {
-      return Response.json({ error: "Sube la plantilla oficial en formato .xlsx (columnas Campo / Valor)." }, { status: 400 });
-    }
-    const config = parseConfigAgente(libro);
-    if (!config) {
-      return Response.json(
-        { error: "No pudimos leer la plantilla. Descarga la plantilla oficial y llénala sin cambiar las columnas Campo / Valor." },
-        { status: 400 }
-      );
+    let config: ConfigAgenteNegocio | null;
+    if (traeArchivo) {
+      const buffer = Buffer.from(await (archivo as File).arrayBuffer());
+      const libro = await cargarLibroExcel((archivo as File).name, buffer);
+      if (!libro) {
+        return Response.json({ error: "Sube la plantilla oficial en formato .xlsx (columnas Campo / Valor)." }, { status: 400 });
+      }
+      config = parseConfigAgente(libro);
+      if (!config) {
+        return Response.json(
+          { error: "No pudimos leer la plantilla. Descarga la plantilla oficial y llénala sin cambiar las columnas Campo / Valor." },
+          { status: 400 }
+        );
+      }
+    } else {
+      config = configDesdeFormulario({
+        nombreAdmin: String(form.get("nombre_admin") ?? ""),
+        numeroAdmin: String(form.get("numero_admin") ?? ""),
+        textoNegocio: textoNegocioForm,
+        recursosDisponibles: String(form.get("recursos_disponibles") ?? ""),
+        duracionEstandarMin: String(form.get("duracion_estandar_min") ?? ""),
+      });
+      if (!config) {
+        return Response.json(
+          { error: "Cuéntanos sobre tu negocio (servicios, precios, horarios) para que el agente sepa qué responder." },
+          { status: 400 }
+        );
+      }
     }
 
     const precio = precioMarketplace(tipoPlan);
@@ -129,7 +155,9 @@ export async function POST(request: NextRequest) {
         numero_admin: config.numeroAdmin,
         nombre_admin: config.nombreAdmin,
         config_texto: config.textoNegocio,
-        config_nombre_archivo: archivo.name,
+        // Queda registro de de dónde salió la configuración: el nombre del
+        // archivo si se subió la plantilla, o la marca del formulario.
+        config_nombre_archivo: traeArchivo ? (archivo as File).name : "Formulario de activación",
         recursos_disponibles: config.recursosDisponibles,
         duracion_estandar_min: config.duracionEstandarMin,
         wompi_payment_source_id: String(suscripcion.wompi_payment_source_id),
