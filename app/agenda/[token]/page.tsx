@@ -75,7 +75,7 @@ export default function AgendaEspecialistaPage() {
   }, [token]);
 
   const responder = useCallback(
-    async (citaId: number, accion: "confirmar" | "rechazar") => {
+    async (citaId: number, accion: "confirmar" | "rechazar" | "cancelar") => {
       setProcesandoId(citaId);
       try {
         const res = await fetch(`/api/agenda/${token}/citas/${citaId}`, {
@@ -93,6 +93,15 @@ export default function AgendaEspecialistaPage() {
       }
     },
     [token, cargar]
+  );
+
+  const cancelar = useCallback(
+    (c: Cita) => {
+      if (window.confirm(`¿Cancelar la cita de ${c.nombre_cliente}? Se le avisará por WhatsApp.`)) {
+        responder(c.id, "cancelar");
+      }
+    },
+    [responder]
   );
 
   if (error && !datos) {
@@ -234,15 +243,27 @@ export default function AgendaEspecialistaPage() {
                     <p className="truncate text-sm font-medium text-fg">{c.nombre_cliente}</p>
                     <p className="text-xs text-mist">{c.servicio}</p>
                   </div>
-                  <button
-                    onClick={() => setEditando(c)}
-                    className="flex shrink-0 items-center gap-1 rounded-full border border-edge px-2.5 py-1 text-[11px] font-medium text-fg active:bg-ink"
-                  >
-                    <Pencil className="size-3" /> Editar
-                  </button>
-                  <span className="shrink-0 rounded-full bg-lime/15 px-2.5 py-1 text-[11px] font-semibold text-lime-text">
-                    Confirmada
-                  </span>
+                  <div className="flex shrink-0 flex-col items-end gap-1.5">
+                    <span className="rounded-full bg-lime/15 px-2.5 py-1 text-[11px] font-semibold text-lime-text">
+                      Confirmada
+                    </span>
+                    <div className="flex gap-1.5">
+                      <button
+                        onClick={() => setEditando(c)}
+                        disabled={procesandoId === c.id}
+                        className="flex items-center gap-1 rounded-full border border-edge px-2.5 py-1 text-[11px] font-medium text-fg active:bg-ink disabled:opacity-50"
+                      >
+                        <Pencil className="size-3" /> Editar
+                      </button>
+                      <button
+                        onClick={() => cancelar(c)}
+                        disabled={procesandoId === c.id}
+                        className="flex items-center gap-1 rounded-full border border-edge px-2.5 py-1 text-[11px] font-medium text-mist active:bg-ink disabled:opacity-50"
+                      >
+                        <X className="size-3" /> Cancelar
+                      </button>
+                    </div>
+                  </div>
                 </div>
               ))}
             </div>

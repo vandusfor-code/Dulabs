@@ -5,12 +5,20 @@ import { clasificarFalloIA, registrarFalloIA } from "@/lib/alertas";
 import { construirMensajesConHistorial, type MensajeHistorialIA } from "@/lib/historial-conversacion";
 import {
   especialistaPorServicio,
+  especialistaPorId,
   crearCitaEspecialista,
   propuestaPendientePara,
   aceptarPropuesta,
   rechazarPropuesta,
+  citaActivaPara,
+  cancelarCita,
 } from "@/lib/especialistas";
-import { notificarNuevaSolicitud, formatearFechaHora } from "@/lib/especialistas-notificar";
+import {
+  notificarNuevaSolicitud,
+  notificarCitaCanceladaPorClienta,
+  notificarSolicitudCambioHorario,
+  formatearFechaHora,
+} from "@/lib/especialistas-notificar";
 import type { ClienteConfig } from "@/lib/supabase";
 import type { Especialista } from "@/lib/especialistas";
 
@@ -56,6 +64,13 @@ export async function generarRespuestaConEspecialistaIA(params: {
   // adivine del historial.
   const propuesta = await propuestaPendientePara(params.supabase, params.cliente.phone_number_id, params.telefonoRemitente);
 
+  // Si NO hay una propuesta esperando respuesta, revisamos si la clienta ya
+  // tiene una cita activa (pendiente o confirmada) -- así puede pedir
+  // cambiarle la hora o cancelarla sin repetir servicio y fecha. Si hay
+  // propuesta pendiente, priorizamos esa (ver más abajo): su próximo mensaje
+  // es más probablemente la respuesta a eso.
+  const citaActiva = propuesta ? null : await citaActivaPara(params.supabase, params.cliente.phone_number_id, params.telefonoRemitente);
+
   const tools: Anthropic.Tool[] = [
     {
       name: "crear_solicitud_cita",
@@ -99,6 +114,31 @@ export async function generarRespuestaConEspecialistaIA(params: {
       `\n\n--- Propuesta de horario pendiente ---\n` +
       `Le propusiste a esta clienta ${propuesta.servicio} el ${formatearFechaHora(propuesta.inicio)}, y está esperando que responda si le sirve. ` +
       `Interpreta su próximo mensaje como esa respuesta: si acepta (sí, dale, listo, me sirve, etc.) usa aceptar_propuesta_horario. Si no acepta o pide otro horario, usa rechazar_propuesta_horario, y luego ayúdala a encontrar uno nuevo con crear_solicitud_cita como de costumbre.`;
+  } else if (citaActiva) {
+    tools.push(
+      {
+        name: "cambiar_hora_mi_cita",
+        description:
+          "Cambia la fecha/hora de la cita que la clienta ya tiene agendada (pendiente o confirmada) por una nueva. Solo llamar cuando ya tengas la nueva fecha y hora confirmadas por la clienta. La cita queda pendiente de que la especialista confirme el nuevo horario.",
+        input_schema: {
+          type: "object",
+          properties: {
+            fecha: { type: "string", description: "Nueva fecha en formato YYYY-MM-DD" },
+            hora: { type: "string", description: "Nueva hora en formato HH:MM (24h)" },
+          },
+          required: ["fecha", "hora"],
+        },
+      },
+      {
+        name: "cancelar_mi_cita",
+        description: "Cancela la cita que la clienta ya tiene agendada. Llamar sin argumentos cuando pida cancelar.",
+        input_schema: { type: "object", properties: {} },
+      }
+    );
+    systemFinal +=
+      `\n\n--- Cita existente ---\n` +
+      `Esta clienta ya tiene una cita ${citaActiva.estado === "confirmada" ? "confirmada" : "pendiente de confirmación"} de ${citaActiva.servicio} el ${formatearFechaHora(citaActiva.inicio)}. ` +
+      `Si te pregunta por su cita, dile esa fecha y hora. Si pide cambiar la hora, usa cambiar_hora_mi_cita en cuanto tengas la nueva fecha/hora. Si pide cancelarla, usa cancelar_mi_cita.`;
   }
 
   async function ejecutarHerramientaConNombre(nombre: string, input: Record<string, unknown>): Promise<string> {
@@ -111,6 +151,45 @@ export async function generarRespuestaConEspecialistaIA(params: {
       if (!propuesta) return JSON.stringify({ success: false, error: "No hay ninguna propuesta pendiente." });
       const cita = await rechazarPropuesta(params.supabase, propuesta.id);
       return JSON.stringify(cita ? { success: true } : { success: false, error: "Esa propuesta ya no está disponible." });
+    }
+    if (nombre === "cancelar_mi_cita") {
+      if (!citaActiva) return JSON.stringify({ success: false, error: "No tiene ninguna cita activa." });
+      const cita = await cancelarCita(params.supabase, citaActiva.id, "La clienta canceló por WhatsApp");
+      if (!cita) return JSON.stringify({ success: false, error: "Esa cita ya no se puede cancelar." });
+      const especialista = await especialistaPorId(params.supabase, citaActiva.especialista_id);
+      if (especialista) await notificarCitaCanceladaPorClienta(params.cliente, especialista, cita);
+      return JSON.stringify({ success: true });
+    }
+    if (nombre === "cambiar_hora_mi_cita") {
+      if (!citaActiva) return JSON.stringify({ success: false, error: "No tiene ninguna cita activa." });
+      const especialista = await especialistaPorId(params.supabase, citaActiva.especialista_id);
+      if (!especialista) return JSON.stringify({ success: false, error: "No se pudo procesar el cambio." });
+
+      const fecha = String(input.fecha ?? "");
+      const hora = String(input.hora ?? "");
+      const nuevoInicio = new Date(`${fecha}T${hora}:00-05:00`);
+      if (Number.isNaN(nuevoInicio.getTime())) return JSON.stringify({ success: false, error: "Fecha u hora inválida." });
+
+      const resultado = await crearCitaEspecialista(params.supabase, {
+        especialistaId: especialista.id,
+        idTenant: especialista.id_tenant,
+        phoneNumberId: especialista.phone_number_id,
+        telefonoCliente: params.telefonoRemitente,
+        nombreCliente: citaActiva.nombre_cliente,
+        servicio: citaActiva.servicio,
+        inicio: nuevoInicio,
+        duracionMin: especialista.duracion_min,
+        origen: "whatsapp_ia",
+      });
+      if (!resultado.ok) {
+        if (resultado.motivo === "ocupado") return JSON.stringify({ success: false, ocupado: true });
+        return JSON.stringify({ success: false, error: "No se pudo cambiar el horario, intenta de nuevo." });
+      }
+      // Solo se cancela la cita anterior si la nueva quedó creada -- si el
+      // horario pedido estaba ocupado, la clienta conserva su cita original.
+      await cancelarCita(params.supabase, citaActiva.id, "Cambiada a un nuevo horario");
+      await notificarSolicitudCambioHorario(params.cliente, especialista as Especialista, citaActiva, resultado.cita);
+      return JSON.stringify({ success: true });
     }
     return ejecutarHerramienta(input);
   }

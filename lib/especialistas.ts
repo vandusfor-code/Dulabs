@@ -62,6 +62,11 @@ export async function especialistaPorRuta(supabase: SupabaseClient, ruta: string
   return especialistaPorToken(supabase, token);
 }
 
+export async function especialistaPorId(supabase: SupabaseClient, id: number): Promise<Especialista | null> {
+  const { data } = await supabase.from("dulabs_especialistas").select(COLUMNAS_ESPECIALISTA).eq("id", id).maybeSingle();
+  return (data as Especialista) ?? null;
+}
+
 export async function especialistaPorNumero(
   supabase: SupabaseClient,
   phoneNumberId: string,
@@ -281,6 +286,42 @@ export async function editarCitaConfirmada(
   }
   if (!data) return { ok: false, motivo: "no_encontrada" };
   return { ok: true, cita: data as CitaEspecialista };
+}
+
+// Cancela una cita, sea que aún esté pendiente de confirmación o ya
+// confirmada. 'cancelada' no está en el WHERE del constraint EXCLUDE, así
+// que el horario queda libre de inmediato para que alguien más lo tome.
+export async function cancelarCita(supabase: SupabaseClient, citaId: number, motivo?: string): Promise<CitaEspecialista | null> {
+  const { data } = await supabase
+    .from("dulabs_citas_especialista")
+    .update({ estado: "cancelada", motivo_rechazo: motivo ?? null, updated_at: new Date().toISOString() })
+    .eq("id", citaId)
+    .in("estado", ["pendiente", "confirmada"])
+    .select(COLUMNAS_CITA)
+    .maybeSingle();
+  return (data as CitaEspecialista) ?? null;
+}
+
+// Busca la cita activa (pendiente o confirmada) más próxima de esta clienta
+// con esta especialidad/negocio, para que el bot sepa a cuál se refiere
+// cuando pide cambiar la hora o cancelar, sin que ella tenga que repetir
+// fecha y servicio.
+export async function citaActivaPara(
+  supabase: SupabaseClient,
+  phoneNumberId: string,
+  telefonoCliente: string
+): Promise<CitaEspecialista | null> {
+  const { data } = await supabase
+    .from("dulabs_citas_especialista")
+    .select(COLUMNAS_CITA)
+    .eq("phone_number_id", phoneNumberId)
+    .eq("telefono_cliente", telefonoCliente)
+    .in("estado", ["pendiente", "confirmada"])
+    .gte("inicio", new Date().toISOString())
+    .order("inicio", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  return (data as CitaEspecialista) ?? null;
 }
 
 // Busca si esta clienta tiene una propuesta de horario esperando respuesta,

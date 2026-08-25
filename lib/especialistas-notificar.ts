@@ -87,6 +87,41 @@ export async function notificarCitaRechazada(
   return enviar(cliente, cita.telefono_cliente, texto);
 }
 
+// La especialista canceló una cita ya confirmada desde su panel.
+export async function notificarCitaCancelada(
+  cliente: Pick<ClienteConfig, "phone_number_id" | "meta_permanent_token">,
+  cita: CitaEspecialista
+): Promise<boolean> {
+  if (!cita.telefono_cliente) return false;
+  const texto = `Hola ${cita.nombre_cliente} 😊 Tu cita de ${cita.servicio} el ${formatearFechaHora(cita.inicio)} fue cancelada.${cita.motivo_rechazo ? ` ${cita.motivo_rechazo}` : ""}\n\n¿Quieres que te ayudemos a agendar otro horario?`;
+  return enviar(cliente, cita.telefono_cliente, texto);
+}
+
+// La clienta canceló su propia cita escribiéndole al bot.
+export async function notificarCitaCanceladaPorClienta(
+  cliente: Pick<ClienteConfig, "phone_number_id" | "meta_permanent_token">,
+  especialista: Pick<Especialista, "numero_whatsapp">,
+  cita: CitaEspecialista
+): Promise<boolean> {
+  const texto = `❌ ${cita.nombre_cliente} canceló su cita de ${cita.servicio} del ${formatearFechaHora(cita.inicio)}.`;
+  return enviar(cliente, especialista.numero_whatsapp, texto);
+}
+
+// La clienta pidió cambiar la hora de una cita que ya tenía (pendiente o
+// confirmada): se creó una solicitud nueva para el horario pedido y se
+// canceló la anterior. Un solo mensaje para que la especialista entienda
+// que es un cambio, no una cita nueva sin relación.
+export async function notificarSolicitudCambioHorario(
+  cliente: Pick<ClienteConfig, "phone_number_id" | "meta_permanent_token" | "nombre_negocio">,
+  especialista: Especialista,
+  citaAnterior: CitaEspecialista,
+  citaNueva: CitaEspecialista
+): Promise<boolean> {
+  const ruta = construirRutaAgenda(cliente.nombre_negocio, especialista.token);
+  const texto = `🔁 ${citaNueva.nombre_cliente} quiere cambiar su cita de ${citaAnterior.servicio}\n\nAntes: ${formatearFechaHora(citaAnterior.inicio)}\nAhora pide: ${formatearFechaHora(citaNueva.inicio)}\n\nConfírmalo o recházalo aquí:\n${SITE_URL}/agenda/${ruta}`;
+  return enviar(cliente, especialista.numero_whatsapp, texto);
+}
+
 export async function clienteDeEspecialista(supabase: SupabaseClient, phoneNumberId: string): Promise<ClienteConfig | null> {
   const { data } = await supabase.from("dulabs_clientes_config").select("*").eq("phone_number_id", phoneNumberId).maybeSingle();
   return (data as ClienteConfig) ?? null;

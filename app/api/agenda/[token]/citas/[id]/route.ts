@@ -1,12 +1,13 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import { especialistaPorRuta, confirmarCita, rechazarCita, proponerReagendamiento, editarCitaConfirmada } from "@/lib/especialistas";
+import { especialistaPorRuta, confirmarCita, rechazarCita, proponerReagendamiento, editarCitaConfirmada, cancelarCita } from "@/lib/especialistas";
 import {
   clienteDeEspecialista,
   notificarCitaConfirmada,
   notificarCitaRechazada,
   notificarPropuestaReagendamiento,
   notificarCitaModificada,
+  notificarCitaCancelada,
 } from "@/lib/especialistas-notificar";
 
 export const runtime = "nodejs";
@@ -34,7 +35,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   }
 
   let body: {
-    accion?: "confirmar" | "rechazar" | "reagendar" | "editar";
+    accion?: "confirmar" | "rechazar" | "reagendar" | "editar" | "cancelar";
     motivo?: string;
     nuevo_inicio?: string;
     duracion_min?: number;
@@ -45,8 +46,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   } catch {
     return Response.json({ error: "JSON inválido" }, { status: 400 });
   }
-  if (body.accion !== "confirmar" && body.accion !== "rechazar" && body.accion !== "reagendar" && body.accion !== "editar") {
-    return Response.json({ error: "'accion' debe ser 'confirmar', 'rechazar', 'reagendar' o 'editar'" }, { status: 400 });
+  const ACCIONES = ["confirmar", "rechazar", "reagendar", "editar", "cancelar"];
+  if (!body.accion || !ACCIONES.includes(body.accion)) {
+    return Response.json({ error: `'accion' debe ser una de: ${ACCIONES.join(", ")}` }, { status: 400 });
   }
 
   const cliente = await clienteDeEspecialista(supabase, especialista.phone_number_id);
@@ -62,6 +64,13 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const cita = await rechazarCita(supabase, citaId, body.motivo?.trim() || undefined);
     if (!cita) return Response.json({ error: "Esa solicitud ya fue procesada" }, { status: 409 });
     if (cliente) await notificarCitaRechazada(cliente, cita);
+    return Response.json({ success: true, cita });
+  }
+
+  if (body.accion === "cancelar") {
+    const cita = await cancelarCita(supabase, citaId, body.motivo?.trim() || undefined);
+    if (!cita) return Response.json({ error: "Esa cita ya no se puede cancelar" }, { status: 409 });
+    if (cliente) await notificarCitaCancelada(cliente, cita);
     return Response.json({ success: true, cita });
   }
 
