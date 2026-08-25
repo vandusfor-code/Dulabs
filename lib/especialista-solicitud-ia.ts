@@ -19,6 +19,7 @@ import {
   notificarSolicitudCambioHorario,
   formatearFechaHora,
 } from "@/lib/especialistas-notificar";
+import { nombreConocido, recordarNombreCliente } from "@/lib/clientes-conocidos";
 import type { ClienteConfig } from "@/lib/supabase";
 import type { Especialista } from "@/lib/especialistas";
 
@@ -71,6 +72,12 @@ export async function generarRespuestaConEspecialistaIA(params: {
   // es más probablemente la respuesta a eso.
   const citaActiva = propuesta ? null : await citaActivaPara(params.supabase, params.cliente.phone_number_id, params.telefonoRemitente);
 
+  // Nombre que la clienta dio de verdad en una cita anterior (no el de
+  // perfil de WhatsApp, que no es confiable) -- si existe, se le puede
+  // hablar por su nombre aunque esta conversación empiece días después,
+  // fuera de la ventana de 24h que cubre el historial reciente del chat.
+  const nombreYaConocido = await nombreConocido(params.supabase, params.cliente.phone_number_id, params.telefonoRemitente);
+
   const tools: Anthropic.Tool[] = [
     {
       name: "crear_solicitud_cita",
@@ -100,6 +107,12 @@ export async function generarRespuestaConEspecialistaIA(params: {
     `Hoy es ${hoy} (hora de Colombia). Para el servicio con agenda propia (ver la herramienta disponible) SÍ tienes una forma real de crear la solicitud en el sistema: usa crear_solicitud_cita solo cuando ya tengas confirmados por la clienta el servicio, la fecha, la hora y el nombre. No la llames antes de tener los cuatro datos completos.\n` +
     `Si la herramienta te dice que el horario está ocupado, díselo a la clienta tal cual y pídele que proponga otro horario -- nunca inventes ni asumas disponibilidad.\n` +
     `Para cualquier OTRO servicio que no tenga esa herramienta, sigues funcionando igual que siempre: solo tomas nota de la solicitud en texto, sin agenda real todavía.`;
+
+  if (nombreYaConocido) {
+    systemFinal +=
+      `\n\n--- Clienta conocida ---\n` +
+      `Esta clienta ya se llamó "${nombreYaConocido}" en una cita anterior. Puedes saludarla por su nombre con naturalidad (no en cada mensaje). No le preguntes cómo se llama de nuevo salvo que sea para una cita nueva y prefieras confirmarlo -- si lo hace, usa el nombre que te dé en ese momento.`;
+  }
 
   if (propuesta) {
     tools.push(
@@ -265,6 +278,12 @@ export async function generarRespuestaConEspecialistaIA(params: {
     // Best-effort: si la notificación a la especialista falla, la solicitud
     // ya quedó guardada igual -- no se pierde nada, solo no le llega el aviso.
     await notificarNuevaSolicitud(params.cliente, especialista as Especialista, resultado.cita);
+    await recordarNombreCliente(params.supabase, {
+      idTenant: especialista.id_tenant,
+      phoneNumberId: especialista.phone_number_id,
+      telefonoCliente: params.telefonoRemitente,
+      nombre: resultado.cita.nombre_cliente,
+    });
 
     return JSON.stringify({ success: true });
   }

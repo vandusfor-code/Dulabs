@@ -9,6 +9,7 @@ import {
   confirmarCita,
 } from "@/lib/especialistas";
 import { clienteDeEspecialista, notificarCitaConfirmada } from "@/lib/especialistas-notificar";
+import { recordarNombreCliente } from "@/lib/clientes-conocidos";
 
 export const runtime = "nodejs";
 
@@ -111,6 +112,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   if (confirmada?.telefono_cliente) {
     const cliente = await clienteDeEspecialista(supabase, especialista.phone_number_id);
     if (cliente) await notificarCitaConfirmada(cliente, confirmada);
+    await recordarNombreCliente(supabase, {
+      idTenant: dueño.id_tenant,
+      phoneNumberId: dueño.phone_number_id,
+      telefonoCliente: confirmada.telefono_cliente,
+      nombre: confirmada.nombre_cliente,
+    });
   }
 
   return Response.json({ success: true, cita: confirmada ?? resultado.cita });
