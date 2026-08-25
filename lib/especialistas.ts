@@ -10,6 +10,13 @@ export type Especialista = {
   duracion_min: number;
   token: string;
   activo: boolean;
+  // Si esta especialidad bloquea horario (una persona, un turno, como
+  // pestañas) o es el catálogo general donde varias citas a la misma hora
+  // son normales (varias personas atendiendo en paralelo).
+  bloquea_horario: boolean;
+  // Catálogo de respaldo: cuando un servicio pedido no calza con ninguna
+  // especialidad específica de este negocio, cae aquí.
+  es_general: boolean;
 };
 
 export type CitaEspecialista = {
@@ -25,7 +32,8 @@ export type CitaEspecialista = {
   origen: string;
 };
 
-const COLUMNAS_ESPECIALISTA = "id, id_tenant, phone_number_id, nombre, numero_whatsapp, servicio, duracion_min, token, activo";
+const COLUMNAS_ESPECIALISTA =
+  "id, id_tenant, phone_number_id, nombre, numero_whatsapp, servicio, duracion_min, token, activo, bloquea_horario, es_general";
 const COLUMNAS_CITA = "id, especialista_id, telefono_cliente, nombre_cliente, servicio, inicio, fin, estado, motivo_rechazo, origen";
 
 // Código de error de Postgres para una violación de constraint EXCLUDE
@@ -95,6 +103,10 @@ export async function tieneEspecialistasActivas(supabase: SupabaseClient, phoneN
   return (count ?? 0) > 0;
 }
 
+// Busca primero una especialidad específica (ej. "pestañas" -> Nicol). Si no
+// hay ninguna que calce, cae al catálogo general del negocio (si tiene uno
+// configurado) -- así el resto de servicios también quedan con agenda real,
+// sin que cada uno necesite su propia fila.
 export async function especialistaPorServicio(
   supabase: SupabaseClient,
   phoneNumberId: string,
@@ -104,10 +116,38 @@ export async function especialistaPorServicio(
     .from("dulabs_especialistas")
     .select(COLUMNAS_ESPECIALISTA)
     .eq("phone_number_id", phoneNumberId)
+    .eq("es_general", false)
     .ilike("servicio", servicio)
     .eq("activo", true)
     .maybeSingle();
-  return (data as Especialista) ?? null;
+  if (data) return data as Especialista;
+
+  const { data: general } = await supabase
+    .from("dulabs_especialistas")
+    .select(COLUMNAS_ESPECIALISTA)
+    .eq("phone_number_id", phoneNumberId)
+    .eq("es_general", true)
+    .eq("activo", true)
+    .maybeSingle();
+  return (general as Especialista) ?? null;
+}
+
+// Todas las especialidades activas que pertenecen a la MISMA persona (mismo
+// número de WhatsApp) -- ej. Daniela puede tener "pestañas" y "general" a la
+// vez. Sirve para que un solo link de agenda muestre y gestione TODAS sus
+// citas, sin que tenga que abrir un link distinto por cada especialidad.
+export async function especialistasDelMismaPersona(
+  supabase: SupabaseClient,
+  phoneNumberId: string,
+  numeroWhatsapp: string
+): Promise<Especialista[]> {
+  const { data } = await supabase
+    .from("dulabs_especialistas")
+    .select(COLUMNAS_ESPECIALISTA)
+    .eq("phone_number_id", phoneNumberId)
+    .eq("numero_whatsapp", numeroWhatsapp)
+    .eq("activo", true);
+  return (data as Especialista[]) ?? [];
 }
 
 export async function citasDeEspecialista(
@@ -141,6 +181,10 @@ export async function crearCitaEspecialista(
     servicio: string;
     inicio: Date;
     duracionMin: number;
+    // Si esta cita en particular participa en el candado de choque de
+    // horario -- normalmente se copia directo de especialista.bloquea_horario
+    // (ver lib/especialistas.ts Especialista.bloquea_horario).
+    bloqueaHorario: boolean;
     origen?: "manual" | "whatsapp_ia";
   }
 ): Promise<{ ok: true; cita: CitaEspecialista } | { ok: false; motivo: "ocupado" | "error"; detalle?: string }> {
@@ -154,6 +198,7 @@ export async function crearCitaEspecialista(
       telefono_cliente: params.telefonoCliente,
       nombre_cliente: params.nombreCliente,
       servicio: params.servicio,
+      bloquea_horario: params.bloqueaHorario,
       inicio: params.inicio.toISOString(),
       fin: fin.toISOString(),
       origen: params.origen ?? "manual",

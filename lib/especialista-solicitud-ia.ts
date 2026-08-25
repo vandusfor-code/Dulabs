@@ -83,6 +83,11 @@ export async function generarRespuestaConEspecialistaIA(params: {
           fecha: { type: "string", description: "Fecha en formato YYYY-MM-DD" },
           hora: { type: "string", description: "Hora en formato HH:MM (24h)" },
           nombre_cliente: { type: "string", description: "Nombre de la clienta" },
+          duracion_min: {
+            type: "number",
+            description:
+              "Duración estimada en minutos según lo que diga la información del negocio para ese servicio (ej. 180 para algo que toma 3 horas). Si no tienes esa información, omite este campo.",
+          },
         },
         required: ["servicio", "fecha", "hora", "nombre_cliente"],
       },
@@ -185,6 +190,7 @@ export async function generarRespuestaConEspecialistaIA(params: {
         servicio: citaActiva.servicio,
         inicio: nuevoInicio,
         duracionMin: especialista.duracion_min,
+        bloqueaHorario: especialista.bloquea_horario,
         origen: "whatsapp_ia",
       });
       if (!resultado.ok) {
@@ -214,6 +220,9 @@ export async function generarRespuestaConEspecialistaIA(params: {
       return JSON.stringify({ success: false, error: "Fecha u hora inválida." });
     }
 
+    const duracionMin =
+      typeof input.duracion_min === "number" && input.duracion_min > 0 ? input.duracion_min : especialista.duracion_min;
+
     const resultado = await crearCitaEspecialista(params.supabase, {
       especialistaId: especialista.id,
       idTenant: especialista.id_tenant,
@@ -222,7 +231,8 @@ export async function generarRespuestaConEspecialistaIA(params: {
       nombreCliente: String(input.nombre_cliente ?? "Clienta"),
       servicio,
       inicio,
-      duracionMin: especialista.duracion_min,
+      duracionMin,
+      bloqueaHorario: especialista.bloquea_horario,
       origen: "whatsapp_ia",
     });
 

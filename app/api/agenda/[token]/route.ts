@@ -1,6 +1,13 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import { especialistaPorRuta, citasDeEspecialista, crearCitaEspecialista, confirmarCita } from "@/lib/especialistas";
+import {
+  especialistaPorRuta,
+  especialistaPorServicio,
+  especialistasDelMismaPersona,
+  citasDeEspecialista,
+  crearCitaEspecialista,
+  confirmarCita,
+} from "@/lib/especialistas";
 import { clienteDeEspecialista, notificarCitaConfirmada } from "@/lib/especialistas-notificar";
 
 export const runtime = "nodejs";
@@ -9,23 +16,36 @@ export const runtime = "nodejs";
 // -- quien tiene el link ve y gestiona SOLO la agenda de esa persona. Mismo
 // criterio de "simple, sin login" que pidió el negocio para que Nicol lo use
 // desde el celular sin fricción.
+//
+// Una misma persona puede tener más de una especialidad registrada (ej.
+// Daniela: "pestañas" + el catálogo "general" del resto de servicios) --
+// se muestran juntas bajo el link de cualquiera de las dos, para que no
+// tenga que abrir un link distinto por cada una.
 export async function GET(request: NextRequest, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
   const supabase = supabaseAdmin();
   const especialista = await especialistaPorRuta(supabase, token);
   if (!especialista) return Response.json({ error: "Link inválido" }, { status: 404 });
 
+  const hermanas = await especialistasDelMismaPersona(supabase, especialista.phone_number_id, especialista.numero_whatsapp);
+  const ids = hermanas.length > 0 ? hermanas.map((e) => e.id) : [especialista.id];
+
   // Desde hoy (00:00 local) en adelante -- no interesa el historial viejo en esta vista.
   const inicioHoy = new Date();
   inicioHoy.setHours(0, 0, 0, 0);
-  const [citas, cliente] = await Promise.all([
-    citasDeEspecialista(supabase, especialista.id, { desde: inicioHoy.toISOString() }),
+  const [citasPorId, cliente] = await Promise.all([
+    Promise.all(ids.map((id) => citasDeEspecialista(supabase, id, { desde: inicioHoy.toISOString() }))),
     clienteDeEspecialista(supabase, especialista.phone_number_id),
   ]);
+  const citas = citasPorId.flat().sort((a, b) => a.inicio.localeCompare(b.inicio));
 
   return Response.json({
     negocio: cliente?.nombre_negocio ?? "Du Labs",
-    especialista: { nombre: especialista.nombre, servicio: especialista.servicio, duracion_min: especialista.duracion_min },
+    especialista: {
+      nombre: especialista.nombre,
+      servicio: ids.length > 1 ? "Todos los servicios" : especialista.servicio,
+      duracion_min: especialista.duracion_min,
+    },
     citas,
   });
 }
@@ -57,15 +77,23 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     return Response.json({ error: "Fecha/hora inválida" }, { status: 400 });
   }
 
+  const servicio = body.servicio?.trim() || especialista.servicio;
+  // El servicio que escribió puede pertenecer a OTRA de sus especialidades
+  // (ej. abrió el link de "pestañas" pero está anotando una de "uñas") --
+  // se resuelve igual que cuando lo pide el bot, así la cita queda bajo el
+  // recurso correcto (con o sin candado de horario según corresponda).
+  const dueño = (await especialistaPorServicio(supabase, especialista.phone_number_id, servicio)) ?? especialista;
+
   const resultado = await crearCitaEspecialista(supabase, {
-    especialistaId: especialista.id,
-    idTenant: especialista.id_tenant,
-    phoneNumberId: especialista.phone_number_id,
+    especialistaId: dueño.id,
+    idTenant: dueño.id_tenant,
+    phoneNumberId: dueño.phone_number_id,
     telefonoCliente: body.telefono_cliente?.trim() || null,
     nombreCliente,
-    servicio: body.servicio?.trim() || especialista.servicio,
+    servicio,
     inicio,
-    duracionMin: body.duracion_min ?? especialista.duracion_min,
+    duracionMin: body.duracion_min ?? dueño.duracion_min,
+    bloqueaHorario: dueño.bloquea_horario,
     origen: "manual",
   });
 

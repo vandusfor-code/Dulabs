@@ -1,6 +1,14 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import { especialistaPorRuta, confirmarCita, rechazarCita, proponerReagendamiento, editarCitaConfirmada, cancelarCita } from "@/lib/especialistas";
+import {
+  especialistaPorRuta,
+  especialistasDelMismaPersona,
+  confirmarCita,
+  rechazarCita,
+  proponerReagendamiento,
+  editarCitaConfirmada,
+  cancelarCita,
+} from "@/lib/especialistas";
 import {
   clienteDeEspecialista,
   notificarCitaConfirmada,
@@ -13,9 +21,11 @@ import {
 export const runtime = "nodejs";
 
 // Confirma, rechaza, o propone un nuevo horario para UNA solicitud. El token
-// en la URL debe ser el de la especialista dueña de esa cita -- así el link
-// de una persona nunca puede tocar la agenda de otra, aunque adivine un ID
-// de cita ajeno.
+// en la URL debe pertenecer a la MISMA persona dueña de esa cita -- así el
+// link de una persona nunca puede tocar la agenda de otra, aunque adivine un
+// ID de cita ajeno. "La misma persona" incluye todas sus especialidades
+// (ej. el link de "pestañas" de Daniela también puede actuar sobre una cita
+// de su catálogo "general", porque ambas comparten su número de WhatsApp).
 export async function POST(request: NextRequest, { params }: { params: Promise<{ token: string; id: string }> }) {
   const { token, id } = await params;
   const citaId = Number(id);
@@ -25,12 +35,15 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const especialista = await especialistaPorRuta(supabase, token);
   if (!especialista) return Response.json({ error: "Link inválido" }, { status: 404 });
 
+  const hermanas = await especialistasDelMismaPersona(supabase, especialista.phone_number_id, especialista.numero_whatsapp);
+  const idsPermitidos = new Set(hermanas.length > 0 ? hermanas.map((e) => e.id) : [especialista.id]);
+
   const { data: citaExistente } = await supabase
     .from("dulabs_citas_especialista")
     .select("especialista_id")
     .eq("id", citaId)
     .maybeSingle();
-  if (!citaExistente || citaExistente.especialista_id !== especialista.id) {
+  if (!citaExistente || !idsPermitidos.has(citaExistente.especialista_id)) {
     return Response.json({ error: "Cita no encontrada" }, { status: 404 });
   }
 

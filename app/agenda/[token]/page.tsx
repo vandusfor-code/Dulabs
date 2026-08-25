@@ -339,8 +339,14 @@ function NuevaCitaModal({
   onClose: () => void;
   onCreada: () => void;
 }) {
+  // Si el link agrupa varias especialidades, "servicioDefecto" es el rótulo
+  // genérico ("Todos los servicios"), no un servicio real -- en ese caso el
+  // campo arranca vacío para que lo escriba, en vez de dejarlo con un valor
+  // que no serviría para encontrar el recurso correcto.
+  const servicioEsGenerico = servicioDefecto === "Todos los servicios";
   const [nombre, setNombre] = useState("");
   const [telefono, setTelefono] = useState("");
+  const [servicio, setServicio] = useState(servicioEsGenerico ? "" : servicioDefecto);
   const [fecha, setFecha] = useState(() => new Date().toISOString().slice(0, 10));
   const [hora, setHora] = useState("");
   const [duracion, setDuracion] = useState(String(duracionDefecto));
@@ -348,8 +354,8 @@ function NuevaCitaModal({
   const [error, setError] = useState<string | null>(null);
 
   const guardar = async () => {
-    if (!nombre.trim() || !hora) {
-      setError("Falta el nombre o la hora.");
+    if (!nombre.trim() || !hora || !servicio.trim()) {
+      setError("Falta el nombre, el servicio o la hora.");
       return;
     }
     setGuardando(true);
@@ -362,7 +368,7 @@ function NuevaCitaModal({
         body: JSON.stringify({
           nombre_cliente: nombre.trim(),
           telefono_cliente: normalizarTelefono(telefono),
-          servicio: servicioDefecto,
+          servicio: servicio.trim(),
           inicio: inicio.toISOString(),
           duracion_min: Number(duracion) || duracionDefecto,
         }),
@@ -407,6 +413,15 @@ function NuevaCitaModal({
               className="w-full rounded-xl border border-edge bg-card px-3.5 py-3 text-sm text-fg outline-none focus:border-lime/50"
             />
             <p className="mt-1 text-[11px] text-mist">Si lo agregas, el bot reconoce a la clienta cuando te escriba por esta cita.</p>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-mist">Servicio</label>
+            <input
+              value={servicio}
+              onChange={(e) => setServicio(e.target.value)}
+              placeholder="Ej. semipermanente en manos"
+              className="w-full rounded-xl border border-edge bg-card px-3.5 py-3 text-sm text-fg outline-none focus:border-lime/50"
+            />
           </div>
           <div className="flex gap-3">
             <div className="flex-1">
