@@ -59,18 +59,17 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: "META_ACCESS_TOKEN no está configurado en el servidor" }, { status: 500 });
   }
 
-  // 1. Consultar el número DIRECTO por su propio ID (no vía {waba}/phone_numbers
-  //    -- ese edge nos rechazaba el nodo del WABA aunque el número en sí es
-  //    accesible). De aquí sacamos también su whatsapp_business_account_id real.
+  // 1. Consultar el número por su propio ID -- whatsapp_business_account_id
+  //    no es un campo válido sobre este nodo, así que solo pedimos lo que
+  //    lib/meta-numero.ts ya usa con éxito en el resto de la app.
   const numeroRes = await fetch(
-    `${GRAPH}/${phoneNumberId}?fields=id,display_phone_number,verified_name,whatsapp_business_account_id`,
+    `${GRAPH}/${phoneNumberId}?fields=id,display_phone_number,verified_name,quality_rating`,
     { headers: { Authorization: `Bearer ${token}` } }
   );
   const numero = (await numeroRes.json()) as {
     id: string;
     display_phone_number: string;
     verified_name?: string;
-    whatsapp_business_account_id: string;
   } & GraphError;
   if (!numeroRes.ok) {
     const meRes = await fetch(`${GRAPH}/me?fields=id,name`, { headers: { Authorization: `Bearer ${token}` } });
@@ -83,7 +82,33 @@ export async function POST(request: NextRequest) {
       { status: 502 }
     );
   }
-  const wabaId = numero.whatsapp_business_account_id;
+
+  // 2. Descubrir el WABA vía debug_token (mismos granular_scopes que usa
+  //    app/api/auth/meta-callback para el Embedded Signup normal) -- el ID
+  //    que se ve en Business Settings no es un nodo de Graph API consultable.
+  const appId = process.env.NEXT_PUBLIC_META_APP_ID;
+  const appSecret = process.env.META_APP_SECRET;
+  if (!appId || !appSecret) {
+    return Response.json({ error: "Faltan NEXT_PUBLIC_META_APP_ID o META_APP_SECRET en el servidor" }, { status: 500 });
+  }
+  const dbgRes = await fetch(`${GRAPH}/debug_token?input_token=${encodeURIComponent(token)}&access_token=${appId}|${appSecret}`);
+  const dbg = (await dbgRes.json()) as {
+    data?: { granular_scopes?: { scope: string; target_ids?: string[] }[] };
+  } & GraphError;
+  const wabaIds = dbg.data?.granular_scopes?.find((s) => s.scope === "whatsapp_business_management")?.target_ids ?? [];
+  if (!dbgRes.ok || wabaIds.length === 0) {
+    return Response.json(
+      { error: `No se pudo determinar el WABA del System User vía debug_token`, debug_token: dbg },
+      { status: 502 }
+    );
+  }
+  if (wabaIds.length > 1) {
+    return Response.json(
+      { error: "El System User tiene acceso a más de un WABA — hace falta lógica para elegir cuál", wabaIds },
+      { status: 400 }
+    );
+  }
+  const wabaId = wabaIds[0];
 
   const supabase = supabaseAdmin();
 
