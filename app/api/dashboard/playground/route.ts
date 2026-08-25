@@ -53,9 +53,34 @@ export async function POST(request: NextRequest) {
   if (!cliente) return Response.json({ error: "Número no encontrado" }, { status: 404 });
 
   const configAgente = await resolverConfigAgente(supabase, cliente);
-  const respuesta = await generarRespuestaIA({ ...configAgente, nombre_negocio: cliente.nombre_negocio }, mensaje);
+  const respuesta = await generarRespuestaIA({ ...configAgente, nombre_negocio: cliente.nombre_negocio }, mensaje, {
+    idTenant: miembro.tenantId,
+    phoneNumberId: phone_number_id,
+  });
   if (!respuesta) {
-    return Response.json({ error: "La IA no pudo generar una respuesta. Revisa que tengas una API key configurada." }, { status: 500 });
+    // El fallo real ya quedó clasificado y registrado en dulabs_fallos_ia
+    // (ver lib/alertas.ts) — lo leemos para decir la causa concreta en vez
+    // de mandar al usuario a "configurar tu API key", una pantalla que no
+    // existe en el dashboard.
+    const { data: ultimoFallo } = await supabase
+      .from("dulabs_fallos_ia")
+      .select("tipo")
+      .eq("id_tenant", miembro.tenantId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    const causas: Record<string, string> = {
+      sin_saldo: "El servicio de IA se quedó sin saldo. Ya se notificó al equipo de Du Labs.",
+      key_invalida: "La clave del servicio de IA es inválida. Ya se notificó al equipo de Du Labs.",
+      sin_key: "Falta configurar el servicio de IA. Ya se notificó al equipo de Du Labs.",
+      rate_limit: "El servicio de IA está saturado en este momento. Intenta de nuevo en unos minutos.",
+      sobrecarga: "El servicio de IA está sobrecargado en este momento. Intenta de nuevo en unos minutos.",
+    };
+    const error =
+      (ultimoFallo?.tipo && causas[ultimoFallo.tipo]) ??
+      "La IA no pudo generar una respuesta. Ya se notificó al equipo de Du Labs.";
+    return Response.json({ error }, { status: 500 });
   }
 
   return Response.json({ respuesta });

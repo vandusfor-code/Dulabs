@@ -1,6 +1,15 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { ClienteConfig } from "@/lib/supabase";
 import { descifrarSecreto } from "@/lib/crypto";
+import { clasificarFalloIA, registrarFalloIA } from "@/lib/alertas";
+
+// Contexto opcional del tenant, solo para poder decir en la alerta A QUIÉN
+// afectó el fallo. Es opcional para no obligar a cada llamador (ej. el
+// playground) a conocerlo.
+export type ContextoIA = {
+  idTenant?: string | null;
+  phoneNumberId?: string | null;
+};
 
 const MODELO = "claude-sonnet-5";
 
@@ -20,11 +29,18 @@ export function construirSystemPrompt(cliente: Pick<ClienteConfig, "prompt_siste
 // cómo respondería la IA a un cliente real.
 export async function generarRespuestaIA(
   cliente: Pick<ClienteConfig, "prompt_sistema" | "base_conocimiento" | "nombre_negocio" | "api_key_ia">,
-  textoUsuario: string
+  textoUsuario: string,
+  contexto: ContextoIA = {}
 ): Promise<string | null> {
   const apiKey = cliente.api_key_ia ? descifrarSecreto(cliente.api_key_ia) : process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
-    console.error("[ia] sin API key de IA configurada");
+    await registrarFalloIA({
+      tipo: "sin_key",
+      mensaje: "No hay api_key_ia del tenant ni ANTHROPIC_API_KEY en el servidor",
+      idTenant: contexto.idTenant,
+      phoneNumberId: contexto.phoneNumberId,
+      nombreNegocio: cliente.nombre_negocio,
+    });
     return null;
   }
 
@@ -47,13 +63,15 @@ export async function generarRespuestaIA(
       .trim();
     return texto || null;
   } catch (err) {
-    if (err instanceof Anthropic.RateLimitError) {
-      console.error("[ia] IA rate-limited");
-    } else if (err instanceof Anthropic.APIError) {
-      console.error(`[ia] error de IA ${err.status}:`, err.message);
-    } else {
-      console.error("[ia] error de IA:", err instanceof Error ? err.message : err);
-    }
+    const { tipo, mensaje, status } = clasificarFalloIA(err);
+    await registrarFalloIA({
+      tipo,
+      mensaje,
+      status,
+      idTenant: contexto.idTenant,
+      phoneNumberId: contexto.phoneNumberId,
+      nombreNegocio: cliente.nombre_negocio,
+    });
     return null;
   }
 }

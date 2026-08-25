@@ -584,7 +584,8 @@ async function atenderMensaje(cliente: ClienteConfig, mensaje: MetaMessage, nomb
 
   const respuesta = await generarRespuestaIA(
     { ...contexto.config, nombre_negocio: cliente.nombre_negocio },
-    mensaje.text!.body
+    mensaje.text!.body,
+    { idTenant: cliente.id_tenant, phoneNumberId: cliente.phone_number_id }
   );
   if (respuesta) {
     await enviarWhatsApp(cliente, mensaje.from, respuesta);
