@@ -33,6 +33,7 @@ function autorizado(request: NextRequest): boolean {
 
 type Body = {
   phone_number_id?: string;
+  whatsapp_business_account_id?: string;
   tenant_email?: string;
   nombre_negocio?: string;
 };
@@ -49,9 +50,12 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: "JSON inválido" }, { status: 400 });
   }
 
-  const { phone_number_id: phoneNumberId, tenant_email, nombre_negocio } = body;
-  if (!phoneNumberId || !tenant_email || !nombre_negocio) {
-    return Response.json({ error: "Faltan 'phone_number_id', 'tenant_email' o 'nombre_negocio'" }, { status: 400 });
+  const { phone_number_id: phoneNumberId, whatsapp_business_account_id: wabaId, tenant_email, nombre_negocio } = body;
+  if (!phoneNumberId || !wabaId || !tenant_email || !nombre_negocio) {
+    return Response.json(
+      { error: "Faltan 'phone_number_id', 'whatsapp_business_account_id', 'tenant_email' o 'nombre_negocio'" },
+      { status: 400 }
+    );
   }
 
   const token = process.env.META_ACCESS_TOKEN;
@@ -82,33 +86,6 @@ export async function POST(request: NextRequest) {
       { status: 502 }
     );
   }
-
-  // 2. Descubrir el WABA. El ID que se ve en Business Settings
-  //    ("Identificador") resultó ser el del Business Manager (nodo tipo
-  //    Business, sin edge /phone_numbers), no el del WABA en sí -- lo
-  //    correcto es pedirle al Business sus WABA propios.
-  const businessId = process.env.META_BUSINESS_ID_HINT ?? "1826177175068470";
-  const wabasRes = await fetch(
-    `${GRAPH}/${businessId}/owned_whatsapp_business_accounts?fields=id,name`,
-    { headers: { Authorization: `Bearer ${token}` } }
-  );
-  const wabasJson = (await wabasRes.json()) as { data?: { id: string; name: string }[] } & GraphError;
-  if (!wabasRes.ok || !wabasJson.data?.length) {
-    return Response.json(
-      {
-        error: `No se pudo listar owned_whatsapp_business_accounts de ${businessId}`,
-        detalle: wabasJson,
-      },
-      { status: 502 }
-    );
-  }
-  if (wabasJson.data.length > 1) {
-    return Response.json(
-      { error: "El Business tiene más de un WABA — hace falta lógica para elegir cuál", wabas: wabasJson.data },
-      { status: 400 }
-    );
-  }
-  const wabaId = wabasJson.data[0].id;
 
   const supabase = supabaseAdmin();
 
