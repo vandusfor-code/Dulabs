@@ -2,7 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { ClienteConfig } from "@/lib/supabase";
 import { descifrarSecreto } from "@/lib/crypto";
 
-const MODELO = "claude-opus-4-8";
+const MODELO = "claude-sonnet-5";
 
 export function construirSystemPrompt(cliente: Pick<ClienteConfig, "prompt_sistema" | "base_conocimiento" | "nombre_negocio">): string {
   let system =
