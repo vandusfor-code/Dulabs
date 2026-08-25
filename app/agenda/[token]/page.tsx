@@ -33,6 +33,18 @@ function esHoy(iso: string) {
   return d.toDateString() === hoy.toDateString();
 }
 
+// El bot reconoce a una clienta por el número tal como llega de WhatsApp:
+// indicativo de país + número, solo dígitos (ej. "573001234567"). Si
+// Daniela escribe el celular "a la colombiana" (10 dígitos, empieza en 3),
+// le agregamos el 57 -- así no depende de que ella lo escriba en el formato
+// exacto para que el vínculo funcione.
+function normalizarTelefono(valor: string): string | undefined {
+  const digitos = valor.replace(/\D/g, "");
+  if (!digitos) return undefined;
+  if (digitos.length === 10 && digitos.startsWith("3")) return `57${digitos}`;
+  return digitos;
+}
+
 // Agenda de una especialista, sin login: el token de la URL es la única
 // autenticación. Pensada primero para celular -- una sola columna, botones
 // grandes, nada que dependa de hover.
@@ -328,6 +340,7 @@ function NuevaCitaModal({
   onCreada: () => void;
 }) {
   const [nombre, setNombre] = useState("");
+  const [telefono, setTelefono] = useState("");
   const [fecha, setFecha] = useState(() => new Date().toISOString().slice(0, 10));
   const [hora, setHora] = useState("");
   const [duracion, setDuracion] = useState(String(duracionDefecto));
@@ -348,6 +361,7 @@ function NuevaCitaModal({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           nombre_cliente: nombre.trim(),
+          telefono_cliente: normalizarTelefono(telefono),
           servicio: servicioDefecto,
           inicio: inicio.toISOString(),
           duracion_min: Number(duracion) || duracionDefecto,
@@ -382,6 +396,17 @@ function NuevaCitaModal({
               placeholder="María Camila"
               className="w-full rounded-xl border border-edge bg-card px-3.5 py-3 text-sm text-fg outline-none focus:border-lime/50"
             />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-mist">WhatsApp (opcional)</label>
+            <input
+              value={telefono}
+              onChange={(e) => setTelefono(e.target.value)}
+              placeholder="3001234567"
+              inputMode="tel"
+              className="w-full rounded-xl border border-edge bg-card px-3.5 py-3 text-sm text-fg outline-none focus:border-lime/50"
+            />
+            <p className="mt-1 text-[11px] text-mist">Si lo agregas, el bot reconoce a la clienta cuando te escriba por esta cita.</p>
           </div>
           <div className="flex gap-3">
             <div className="flex-1">

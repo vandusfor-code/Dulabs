@@ -139,6 +139,10 @@ export async function generarRespuestaConEspecialistaIA(params: {
       `\n\n--- Cita existente ---\n` +
       `Esta clienta ya tiene una cita ${citaActiva.estado === "confirmada" ? "confirmada" : "pendiente de confirmación"} de ${citaActiva.servicio} el ${formatearFechaHora(citaActiva.inicio)}. ` +
       `Si te pregunta por su cita, dile esa fecha y hora. Si pide cambiar la hora, usa cambiar_hora_mi_cita en cuanto tengas la nueva fecha/hora. Si pide cancelarla, usa cancelar_mi_cita.`;
+  } else {
+    systemFinal +=
+      `\n\n--- Sin cita registrada ---\n` +
+      `No hay ninguna cita en el sistema a nombre de este número. Si la clienta dice que ya tenía una cita agendada de antes (por ejemplo, la agendó por llamada, Instagram o en persona, antes de que existiera este sistema), no le digas que no existe ni la hagas dudar: pídele el servicio, la fecha y la hora que recuerda, y regístrala igual que una solicitud nueva con crear_solicitud_cita. La especialista la reconocerá y la confirmará directamente en su panel.`;
   }
 
   async function ejecutarHerramientaConNombre(nombre: string, input: Record<string, unknown>): Promise<string> {
