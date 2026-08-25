@@ -1,8 +1,10 @@
 import { after } from "next/server";
 import type { NextRequest } from "next/server";
 import { supabaseAdmin, type ClienteConfig } from "@/lib/supabase";
-import { generarRespuestaIA } from "@/lib/ia";
+import { generarRespuestaIA, construirSystemPrompt } from "@/lib/ia";
 import { obtenerHistorialConversacion } from "@/lib/historial-conversacion";
+import { generarRespuestaConEspecialistaIA } from "@/lib/especialista-solicitud-ia";
+import { tieneEspecialistasActivas } from "@/lib/especialistas";
 import { resolverConfigAgente, type ConfigAgenteEfectiva } from "@/lib/agentes";
 import { planDelTenant } from "@/lib/plan-limits";
 import { agentePorSlug, INSTRUCCION_ADMIN } from "@/lib/marketplace";
@@ -596,14 +598,29 @@ async function atenderMensaje(cliente: ClienteConfig, mensaje: MetaMessage, nomb
     return;
   }
 
-  const respuesta = await generarRespuestaIA(
-    { ...contexto.config, nombre_negocio: cliente.nombre_negocio },
-    mensaje.text!.body,
-    { idTenant: cliente.id_tenant, phoneNumberId: cliente.phone_number_id },
-    await obtenerHistorialConversacion(supabaseAdmin(), cliente.phone_number_id, soloDigitos(mensaje.from), {
-      excluirWamid: mensaje.id,
-    })
-  );
+  const historial = await obtenerHistorialConversacion(supabaseAdmin(), cliente.phone_number_id, soloDigitos(mensaje.from), {
+    excluirWamid: mensaje.id,
+  });
+
+  // Solo entra aquí si el número tiene alguna especialista configurada (ver
+  // lib/especialistas.ts) -- para el resto de la plataforma este chequeo es
+  // un simple false y el comportamiento sigue exactamente igual que siempre.
+  const conEspecialistas = await tieneEspecialistasActivas(supabaseAdmin(), cliente.phone_number_id);
+  const respuesta = conEspecialistas
+    ? await generarRespuestaConEspecialistaIA({
+        supabase: supabaseAdmin(),
+        cliente,
+        systemPromptBase: construirSystemPrompt({ ...contexto.config, nombre_negocio: cliente.nombre_negocio }),
+        textoUsuario: mensaje.text!.body,
+        telefonoRemitente: soloDigitos(mensaje.from),
+        historial,
+      })
+    : await generarRespuestaIA(
+        { ...contexto.config, nombre_negocio: cliente.nombre_negocio },
+        mensaje.text!.body,
+        { idTenant: cliente.id_tenant, phoneNumberId: cliente.phone_number_id },
+        historial
+      );
   if (respuesta) {
     await enviarWhatsApp(cliente, mensaje.from, respuesta);
   }

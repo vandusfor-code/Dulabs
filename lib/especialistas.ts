@@ -52,6 +52,19 @@ export async function especialistaPorNumero(
   return (data as Especialista) ?? null;
 }
 
+// True si el número tiene al menos una especialista activa configurada.
+// El webhook lo usa para decidir si un número entra por el camino con
+// herramienta real de agenda o sigue por el camino de siempre (texto libre)
+// -- así ningún tenant sin especialistas ve cambiar su comportamiento.
+export async function tieneEspecialistasActivas(supabase: SupabaseClient, phoneNumberId: string): Promise<boolean> {
+  const { count } = await supabase
+    .from("dulabs_especialistas")
+    .select("id", { count: "exact", head: true })
+    .eq("phone_number_id", phoneNumberId)
+    .eq("activo", true);
+  return (count ?? 0) > 0;
+}
+
 export async function especialistaPorServicio(
   supabase: SupabaseClient,
   phoneNumberId: string,
