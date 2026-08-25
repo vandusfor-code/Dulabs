@@ -240,6 +240,49 @@ export async function rechazarPropuesta(supabase: SupabaseClient, citaId: number
   return (data as CitaEspecialista) ?? null;
 }
 
+// Edita una cita que YA está confirmada (cambio de horario, duración o
+// servicio decidido por la especialista, no una propuesta que la clienta
+// deba aceptar). Sigue el mismo camino atómico: el constraint EXCLUDE
+// decide si el nuevo horario choca con otra cita.
+export async function editarCitaConfirmada(
+  supabase: SupabaseClient,
+  citaId: number,
+  cambios: { nuevoInicio?: Date; duracionMin?: number; servicio?: string }
+): Promise<{ ok: true; cita: CitaEspecialista } | { ok: false; motivo: "ocupado" | "no_encontrada" | "error"; detalle?: string }> {
+  const { data: actual } = await supabase
+    .from("dulabs_citas_especialista")
+    .select(COLUMNAS_CITA)
+    .eq("id", citaId)
+    .eq("estado", "confirmada")
+    .maybeSingle();
+  if (!actual) return { ok: false, motivo: "no_encontrada" };
+  const cita = actual as CitaEspecialista;
+
+  const inicio = cambios.nuevoInicio ?? new Date(cita.inicio);
+  const duracionMin = cambios.duracionMin ?? (new Date(cita.fin).getTime() - new Date(cita.inicio).getTime()) / 60_000;
+  const fin = new Date(inicio.getTime() + duracionMin * 60_000);
+
+  const { data, error } = await supabase
+    .from("dulabs_citas_especialista")
+    .update({
+      inicio: inicio.toISOString(),
+      fin: fin.toISOString(),
+      servicio: cambios.servicio?.trim() || cita.servicio,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", citaId)
+    .eq("estado", "confirmada")
+    .select(COLUMNAS_CITA)
+    .maybeSingle();
+
+  if (error) {
+    if (error.code === CODIGO_SOLAPE) return { ok: false, motivo: "ocupado" };
+    return { ok: false, motivo: "error", detalle: error.message };
+  }
+  if (!data) return { ok: false, motivo: "no_encontrada" };
+  return { ok: true, cita: data as CitaEspecialista };
+}
+
 // Busca si esta clienta tiene una propuesta de horario esperando respuesta,
 // para que el bot sepa que su próximo mensaje probablemente es un sí/no a
 // eso, y no una solicitud nueva.

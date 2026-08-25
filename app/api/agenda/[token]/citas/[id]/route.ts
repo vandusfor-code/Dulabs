@@ -1,11 +1,12 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import { especialistaPorRuta, confirmarCita, rechazarCita, proponerReagendamiento } from "@/lib/especialistas";
+import { especialistaPorRuta, confirmarCita, rechazarCita, proponerReagendamiento, editarCitaConfirmada } from "@/lib/especialistas";
 import {
   clienteDeEspecialista,
   notificarCitaConfirmada,
   notificarCitaRechazada,
   notificarPropuestaReagendamiento,
+  notificarCitaModificada,
 } from "@/lib/especialistas-notificar";
 
 export const runtime = "nodejs";
@@ -32,14 +33,20 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     return Response.json({ error: "Cita no encontrada" }, { status: 404 });
   }
 
-  let body: { accion?: "confirmar" | "rechazar" | "reagendar"; motivo?: string; nuevo_inicio?: string; duracion_min?: number };
+  let body: {
+    accion?: "confirmar" | "rechazar" | "reagendar" | "editar";
+    motivo?: string;
+    nuevo_inicio?: string;
+    duracion_min?: number;
+    servicio?: string;
+  };
   try {
     body = await request.json();
   } catch {
     return Response.json({ error: "JSON inválido" }, { status: 400 });
   }
-  if (body.accion !== "confirmar" && body.accion !== "rechazar" && body.accion !== "reagendar") {
-    return Response.json({ error: "'accion' debe ser 'confirmar', 'rechazar' o 'reagendar'" }, { status: 400 });
+  if (body.accion !== "confirmar" && body.accion !== "rechazar" && body.accion !== "reagendar" && body.accion !== "editar") {
+    return Response.json({ error: "'accion' debe ser 'confirmar', 'rechazar', 'reagendar' o 'editar'" }, { status: 400 });
   }
 
   const cliente = await clienteDeEspecialista(supabase, especialista.phone_number_id);
@@ -58,18 +65,38 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     return Response.json({ success: true, cita });
   }
 
-  // reagendar
-  const inicioTexto = body.nuevo_inicio?.trim();
-  if (!inicioTexto) return Response.json({ error: "Falta 'nuevo_inicio'" }, { status: 400 });
-  const nuevoInicio = new Date(inicioTexto);
-  if (Number.isNaN(nuevoInicio.getTime())) return Response.json({ error: "Fecha/hora inválida" }, { status: 400 });
+  if (body.accion === "reagendar") {
+    const inicioTexto = body.nuevo_inicio?.trim();
+    if (!inicioTexto) return Response.json({ error: "Falta 'nuevo_inicio'" }, { status: 400 });
+    const nuevoInicio = new Date(inicioTexto);
+    if (Number.isNaN(nuevoInicio.getTime())) return Response.json({ error: "Fecha/hora inválida" }, { status: 400 });
 
-  const resultado = await proponerReagendamiento(supabase, citaId, nuevoInicio, body.duracion_min ?? especialista.duracion_min);
+    const resultado = await proponerReagendamiento(supabase, citaId, nuevoInicio, body.duracion_min ?? especialista.duracion_min);
+    if (!resultado.ok) {
+      if (resultado.motivo === "ocupado") return Response.json({ error: "Ese horario ya está ocupado" }, { status: 409 });
+      if (resultado.motivo === "no_encontrada") return Response.json({ error: "Esa solicitud ya fue procesada" }, { status: 409 });
+      return Response.json({ error: resultado.detalle ?? "No se pudo proponer el horario" }, { status: 500 });
+    }
+    if (cliente) await notificarPropuestaReagendamiento(cliente, resultado.cita);
+    return Response.json({ success: true, cita: resultado.cita });
+  }
+
+  // editar: cambia una cita YA confirmada directamente (sin pasar por
+  // 'propuesta' ni esperar que la clienta acepte) -- se le avisa del cambio,
+  // no se le pide confirmar.
+  const nuevoInicio = body.nuevo_inicio?.trim() ? new Date(body.nuevo_inicio.trim()) : undefined;
+  if (nuevoInicio && Number.isNaN(nuevoInicio.getTime())) return Response.json({ error: "Fecha/hora inválida" }, { status: 400 });
+
+  const resultado = await editarCitaConfirmada(supabase, citaId, {
+    nuevoInicio,
+    duracionMin: body.duracion_min,
+    servicio: body.servicio,
+  });
   if (!resultado.ok) {
     if (resultado.motivo === "ocupado") return Response.json({ error: "Ese horario ya está ocupado" }, { status: 409 });
-    if (resultado.motivo === "no_encontrada") return Response.json({ error: "Esa solicitud ya fue procesada" }, { status: 409 });
-    return Response.json({ error: resultado.detalle ?? "No se pudo proponer el horario" }, { status: 500 });
+    if (resultado.motivo === "no_encontrada") return Response.json({ error: "Esa cita no está confirmada" }, { status: 409 });
+    return Response.json({ error: resultado.detalle ?? "No se pudo editar la cita" }, { status: 500 });
   }
-  if (cliente) await notificarPropuestaReagendamiento(cliente, resultado.cita);
+  if (cliente) await notificarCitaModificada(cliente, resultado.cita);
   return Response.json({ success: true, cita: resultado.cita });
 }

@@ -65,6 +65,18 @@ export async function notificarPropuestaReagendamiento(
   return enviar(cliente, cita.telefono_cliente, texto);
 }
 
+// Avisa a la clienta que su cita YA confirmada fue modificada por la
+// especialista (cambio de horario, duración o servicio). Es informativa --
+// a diferencia de la propuesta de reagendamiento, no le pide que responda.
+export async function notificarCitaModificada(
+  cliente: Pick<ClienteConfig, "phone_number_id" | "meta_permanent_token">,
+  cita: CitaEspecialista
+): Promise<boolean> {
+  if (!cita.telefono_cliente) return false;
+  const texto = `Hola ${cita.nombre_cliente} 😊 Tu cita fue actualizada.\n\n✨ ${cita.servicio}\n📅 ${formatearFechaHora(cita.inicio)}\n\nCualquier duda, respóndenos por aquí 💕`;
+  return enviar(cliente, cita.telefono_cliente, texto);
+}
+
 // Avisa al cliente que su solicitud no se pudo confirmar.
 export async function notificarCitaRechazada(
   cliente: Pick<ClienteConfig, "phone_number_id" | "meta_permanent_token">,

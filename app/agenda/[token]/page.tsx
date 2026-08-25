@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { Calendar, Check, X, Plus, Loader2, Clock, CalendarClock } from "lucide-react";
+import { Calendar, Check, X, Plus, Loader2, Clock, CalendarClock, Pencil } from "lucide-react";
 
 type Cita = {
   id: number;
@@ -43,6 +43,7 @@ export default function AgendaEspecialistaPage() {
   const [procesandoId, setProcesandoId] = useState<number | null>(null);
   const [mostrarNueva, setMostrarNueva] = useState(false);
   const [reagendando, setReagendando] = useState<Cita | null>(null);
+  const [editando, setEditando] = useState<Cita | null>(null);
 
   // Recarga imperativa, para usar después de confirmar/rechazar/crear (no
   // desde el efecto de montaje -- ver más abajo).
@@ -233,6 +234,12 @@ export default function AgendaEspecialistaPage() {
                     <p className="truncate text-sm font-medium text-fg">{c.nombre_cliente}</p>
                     <p className="text-xs text-mist">{c.servicio}</p>
                   </div>
+                  <button
+                    onClick={() => setEditando(c)}
+                    className="flex shrink-0 items-center gap-1 rounded-full border border-edge px-2.5 py-1 text-[11px] font-medium text-fg active:bg-ink"
+                  >
+                    <Pencil className="size-3" /> Editar
+                  </button>
                   <span className="shrink-0 rounded-full bg-lime/15 px-2.5 py-1 text-[11px] font-semibold text-lime-text">
                     Confirmada
                   </span>
@@ -266,6 +273,18 @@ export default function AgendaEspecialistaPage() {
           onClose={() => setReagendando(null)}
           onPropuesto={() => {
             setReagendando(null);
+            cargar();
+          }}
+        />
+      )}
+
+      {editando && (
+        <EditarModal
+          token={token}
+          cita={editando}
+          onClose={() => setEditando(null)}
+          onEditada={() => {
+            setEditando(null);
             cargar();
           }}
         />
@@ -474,6 +493,103 @@ function ReagendarModal({
           {guardando && <Loader2 className="size-4 animate-spin" />}
           Enviar propuesta
         </button>
+      </div>
+    </div>
+  );
+}
+
+function EditarModal({
+  token,
+  cita,
+  onClose,
+  onEditada,
+}: {
+  token: string;
+  cita: Cita;
+  onClose: () => void;
+  onEditada: () => void;
+}) {
+  const actual = new Date(cita.inicio);
+  const [servicio, setServicio] = useState(cita.servicio);
+  const [fecha, setFecha] = useState(() => actual.toISOString().slice(0, 10));
+  const [hora, setHora] = useState(() => actual.toTimeString().slice(0, 5));
+  const [guardando, setGuardando] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const guardar = async () => {
+    if (!hora || !servicio.trim()) {
+      setError("Falta la hora o el servicio.");
+      return;
+    }
+    setGuardando(true);
+    setError(null);
+    try {
+      const nuevoInicio = new Date(`${fecha}T${hora}:00`);
+      const res = await fetch(`/api/agenda/${token}/citas/${cita.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accion: "editar", nuevo_inicio: nuevoInicio.toISOString(), servicio: servicio.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "No se pudo editar la cita");
+      onEditada();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error editando la cita");
+    } finally {
+      setGuardando(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-20 flex items-end justify-center bg-black/60" onClick={onClose}>
+      <div className="w-full max-w-md rounded-t-3xl border-t border-edge bg-ink p-5 pb-8" onClick={(e) => e.stopPropagation()}>
+        <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-edge" />
+        <h2 className="text-base font-semibold text-fg">Editar cita</h2>
+        <p className="mt-0.5 text-xs text-mist">
+          {cita.nombre_cliente}. Le avisamos por WhatsApp del cambio, no necesita confirmar de nuevo.
+        </p>
+
+        <div className="mt-4 flex flex-col gap-3">
+          <div>
+            <label className="mb-1 block text-xs font-medium text-mist">Servicio</label>
+            <input
+              value={servicio}
+              onChange={(e) => setServicio(e.target.value)}
+              className="w-full rounded-xl border border-edge bg-card px-3.5 py-3 text-sm text-fg outline-none focus:border-lime/50"
+            />
+          </div>
+          <div className="flex gap-3">
+            <div className="flex-1">
+              <label className="mb-1 block text-xs font-medium text-mist">Fecha</label>
+              <input
+                type="date"
+                value={fecha}
+                onChange={(e) => setFecha(e.target.value)}
+                className="w-full rounded-xl border border-edge bg-card px-3.5 py-3 text-sm text-fg outline-none focus:border-lime/50"
+              />
+            </div>
+            <div className="flex-1">
+              <label className="mb-1 block text-xs font-medium text-mist">Hora</label>
+              <input
+                type="time"
+                value={hora}
+                onChange={(e) => setHora(e.target.value)}
+                className="w-full rounded-xl border border-edge bg-card px-3.5 py-3 text-sm text-fg outline-none focus:border-lime/50"
+              />
+            </div>
+          </div>
+
+          {error && <p className="text-xs text-red-400">{error}</p>}
+
+          <button
+            onClick={guardar}
+            disabled={guardando}
+            className="mt-1 flex items-center justify-center gap-1.5 rounded-xl bg-lime py-3.5 text-sm font-semibold text-lime-fg disabled:opacity-50"
+          >
+            {guardando && <Loader2 className="size-4 animate-spin" />}
+            Guardar cambios
+          </button>
+        </div>
       </div>
     </div>
   );
