@@ -38,6 +38,24 @@ type Body = {
   nombre_negocio?: string;
 };
 
+// Diagnóstico de una sola vez: a qué Business Manager pertenece la app
+// (para saber qué negocio buscar al usar "Asignar socio" en Business
+// Settings, si el System User de META_ACCESS_TOKEN resulta ser de un
+// Business Manager distinto al dueño del WABA).
+export async function GET(request: NextRequest) {
+  if (!autorizado(request)) {
+    return Response.json({ error: "No autorizado" }, { status: 401 });
+  }
+  const appId = process.env.NEXT_PUBLIC_META_APP_ID;
+  const appSecret = process.env.META_APP_SECRET;
+  if (!appId || !appSecret) {
+    return Response.json({ error: "Faltan NEXT_PUBLIC_META_APP_ID o META_APP_SECRET" }, { status: 500 });
+  }
+  const res = await fetch(`${GRAPH}/${appId}?fields=id,name,business&access_token=${appId}|${appSecret}`);
+  const json = await res.json();
+  return Response.json({ http: res.status, app: json });
+}
+
 export async function POST(request: NextRequest) {
   if (!autorizado(request)) {
     return Response.json({ error: "No autorizado" }, { status: 401 });
