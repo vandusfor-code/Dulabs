@@ -1,13 +1,19 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import { especialistaPorToken, confirmarCita, rechazarCita } from "@/lib/especialistas";
-import { clienteDeEspecialista, notificarCitaConfirmada, notificarCitaRechazada } from "@/lib/especialistas-notificar";
+import { especialistaPorToken, confirmarCita, rechazarCita, proponerReagendamiento } from "@/lib/especialistas";
+import {
+  clienteDeEspecialista,
+  notificarCitaConfirmada,
+  notificarCitaRechazada,
+  notificarPropuestaReagendamiento,
+} from "@/lib/especialistas-notificar";
 
 export const runtime = "nodejs";
 
-// Confirma o rechaza UNA solicitud pendiente. El token en la URL debe ser el
-// de la especialista dueña de esa cita -- así el link de una persona nunca
-// puede tocar la agenda de otra, aunque adivine un ID de cita ajeno.
+// Confirma, rechaza, o propone un nuevo horario para UNA solicitud. El token
+// en la URL debe ser el de la especialista dueña de esa cita -- así el link
+// de una persona nunca puede tocar la agenda de otra, aunque adivine un ID
+// de cita ajeno.
 export async function POST(request: NextRequest, { params }: { params: Promise<{ token: string; id: string }> }) {
   const { token, id } = await params;
   const citaId = Number(id);
@@ -26,14 +32,14 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     return Response.json({ error: "Cita no encontrada" }, { status: 404 });
   }
 
-  let body: { accion?: "confirmar" | "rechazar"; motivo?: string };
+  let body: { accion?: "confirmar" | "rechazar" | "reagendar"; motivo?: string; nuevo_inicio?: string; duracion_min?: number };
   try {
     body = await request.json();
   } catch {
     return Response.json({ error: "JSON inválido" }, { status: 400 });
   }
-  if (body.accion !== "confirmar" && body.accion !== "rechazar") {
-    return Response.json({ error: "'accion' debe ser 'confirmar' o 'rechazar'" }, { status: 400 });
+  if (body.accion !== "confirmar" && body.accion !== "rechazar" && body.accion !== "reagendar") {
+    return Response.json({ error: "'accion' debe ser 'confirmar', 'rechazar' o 'reagendar'" }, { status: 400 });
   }
 
   const cliente = await clienteDeEspecialista(supabase, especialista.phone_number_id);
@@ -45,8 +51,25 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     return Response.json({ success: true, cita });
   }
 
-  const cita = await rechazarCita(supabase, citaId, body.motivo?.trim() || undefined);
-  if (!cita) return Response.json({ error: "Esa solicitud ya fue procesada" }, { status: 409 });
-  if (cliente) await notificarCitaRechazada(cliente, cita);
-  return Response.json({ success: true, cita });
+  if (body.accion === "rechazar") {
+    const cita = await rechazarCita(supabase, citaId, body.motivo?.trim() || undefined);
+    if (!cita) return Response.json({ error: "Esa solicitud ya fue procesada" }, { status: 409 });
+    if (cliente) await notificarCitaRechazada(cliente, cita);
+    return Response.json({ success: true, cita });
+  }
+
+  // reagendar
+  const inicioTexto = body.nuevo_inicio?.trim();
+  if (!inicioTexto) return Response.json({ error: "Falta 'nuevo_inicio'" }, { status: 400 });
+  const nuevoInicio = new Date(inicioTexto);
+  if (Number.isNaN(nuevoInicio.getTime())) return Response.json({ error: "Fecha/hora inválida" }, { status: 400 });
+
+  const resultado = await proponerReagendamiento(supabase, citaId, nuevoInicio, body.duracion_min ?? especialista.duracion_min);
+  if (!resultado.ok) {
+    if (resultado.motivo === "ocupado") return Response.json({ error: "Ese horario ya está ocupado" }, { status: 409 });
+    if (resultado.motivo === "no_encontrada") return Response.json({ error: "Esa solicitud ya fue procesada" }, { status: 409 });
+    return Response.json({ error: resultado.detalle ?? "No se pudo proponer el horario" }, { status: 500 });
+  }
+  if (cliente) await notificarPropuestaReagendamiento(cliente, resultado.cita);
+  return Response.json({ success: true, cita: resultado.cita });
 }

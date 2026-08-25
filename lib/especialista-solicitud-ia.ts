@@ -3,8 +3,14 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { descifrarSecreto } from "@/lib/crypto";
 import { clasificarFalloIA, registrarFalloIA } from "@/lib/alertas";
 import { construirMensajesConHistorial, type MensajeHistorialIA } from "@/lib/historial-conversacion";
-import { especialistaPorServicio, crearCitaEspecialista } from "@/lib/especialistas";
-import { notificarNuevaSolicitud } from "@/lib/especialistas-notificar";
+import {
+  especialistaPorServicio,
+  crearCitaEspecialista,
+  propuestaPendientePara,
+  aceptarPropuesta,
+  rechazarPropuesta,
+} from "@/lib/especialistas";
+import { notificarNuevaSolicitud, formatearFechaHora } from "@/lib/especialistas-notificar";
 import type { ClienteConfig } from "@/lib/supabase";
 import type { Especialista } from "@/lib/especialistas";
 
@@ -43,12 +49,12 @@ export async function generarRespuestaConEspecialistaIA(params: {
 
   const anthropic = new Anthropic({ apiKey });
   const hoy = new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" }); // YYYY-MM-DD
-  const systemFinal =
-    `${params.systemPromptBase}\n\n` +
-    `--- Agenda real ---\n` +
-    `Hoy es ${hoy} (hora de Colombia). Para el servicio con agenda propia (ver la herramienta disponible) SÍ tienes una forma real de crear la solicitud en el sistema: usa crear_solicitud_cita solo cuando ya tengas confirmados por la clienta el servicio, la fecha, la hora y el nombre. No la llames antes de tener los cuatro datos completos.\n` +
-    `Si la herramienta te dice que el horario está ocupado, díselo a la clienta tal cual y pídele que proponga otro horario -- nunca inventes ni asumas disponibilidad.\n` +
-    `Para cualquier OTRO servicio que no tenga esa herramienta, sigues funcionando igual que siempre: solo tomas nota de la solicitud en texto, sin agenda real todavía.`;
+
+  // Si esta clienta tiene un horario propuesto esperando respuesta, su
+  // próximo mensaje probablemente es un sí/no a eso -- no una solicitud
+  // nueva. Se lo decimos al modelo explícitamente en vez de esperar que lo
+  // adivine del historial.
+  const propuesta = await propuestaPendientePara(params.supabase, params.cliente.phone_number_id, params.telefonoRemitente);
 
   const tools: Anthropic.Tool[] = [
     {
@@ -67,6 +73,47 @@ export async function generarRespuestaConEspecialistaIA(params: {
       },
     },
   ];
+
+  let systemFinal =
+    `${params.systemPromptBase}\n\n` +
+    `--- Agenda real ---\n` +
+    `Hoy es ${hoy} (hora de Colombia). Para el servicio con agenda propia (ver la herramienta disponible) SÍ tienes una forma real de crear la solicitud en el sistema: usa crear_solicitud_cita solo cuando ya tengas confirmados por la clienta el servicio, la fecha, la hora y el nombre. No la llames antes de tener los cuatro datos completos.\n` +
+    `Si la herramienta te dice que el horario está ocupado, díselo a la clienta tal cual y pídele que proponga otro horario -- nunca inventes ni asumas disponibilidad.\n` +
+    `Para cualquier OTRO servicio que no tenga esa herramienta, sigues funcionando igual que siempre: solo tomas nota de la solicitud en texto, sin agenda real todavía.`;
+
+  if (propuesta) {
+    tools.push(
+      {
+        name: "aceptar_propuesta_horario",
+        description: "La clienta acepta el nuevo horario que la especialista le propuso. Llamar sin argumentos.",
+        input_schema: { type: "object", properties: {} },
+      },
+      {
+        name: "rechazar_propuesta_horario",
+        description:
+          "La clienta NO acepta el horario propuesto y quiere otro. Llamar sin argumentos -- después ayúdala a buscar un nuevo horario con crear_solicitud_cita.",
+        input_schema: { type: "object", properties: {} },
+      }
+    );
+    systemFinal +=
+      `\n\n--- Propuesta de horario pendiente ---\n` +
+      `Le propusiste a esta clienta ${propuesta.servicio} el ${formatearFechaHora(propuesta.inicio)}, y está esperando que responda si le sirve. ` +
+      `Interpreta su próximo mensaje como esa respuesta: si acepta (sí, dale, listo, me sirve, etc.) usa aceptar_propuesta_horario. Si no acepta o pide otro horario, usa rechazar_propuesta_horario, y luego ayúdala a encontrar uno nuevo con crear_solicitud_cita como de costumbre.`;
+  }
+
+  async function ejecutarHerramientaConNombre(nombre: string, input: Record<string, unknown>): Promise<string> {
+    if (nombre === "aceptar_propuesta_horario") {
+      if (!propuesta) return JSON.stringify({ success: false, error: "No hay ninguna propuesta pendiente." });
+      const cita = await aceptarPropuesta(params.supabase, propuesta.id);
+      return JSON.stringify(cita ? { success: true } : { success: false, error: "Esa propuesta ya no está disponible." });
+    }
+    if (nombre === "rechazar_propuesta_horario") {
+      if (!propuesta) return JSON.stringify({ success: false, error: "No hay ninguna propuesta pendiente." });
+      const cita = await rechazarPropuesta(params.supabase, propuesta.id);
+      return JSON.stringify(cita ? { success: true } : { success: false, error: "Esa propuesta ya no está disponible." });
+    }
+    return ejecutarHerramienta(input);
+  }
 
   async function ejecutarHerramienta(input: Record<string, unknown>): Promise<string> {
     const servicio = String(input.servicio ?? "");
@@ -149,7 +196,7 @@ export async function generarRespuestaConEspecialistaIA(params: {
     messages.push({ role: "assistant", content: response.content });
     const resultados: Anthropic.ToolResultBlockParam[] = [];
     for (const bloque of bloquesHerramienta) {
-      const resultado = await ejecutarHerramienta(bloque.input as Record<string, unknown>);
+      const resultado = await ejecutarHerramientaConNombre(bloque.name, bloque.input as Record<string, unknown>);
       resultados.push({ type: "tool_result", tool_use_id: bloque.id, content: resultado });
     }
     messages.push({ role: "user", content: resultados });

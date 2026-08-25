@@ -6,7 +6,7 @@ import type { CitaEspecialista, Especialista } from "@/lib/especialistas";
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://dulabs.co";
 
-function formatearFechaHora(iso: string): string {
+export function formatearFechaHora(iso: string): string {
   const d = new Date(iso);
   const fecha = d.toLocaleDateString("es-CO", { day: "numeric", month: "long", timeZone: "America/Bogota" });
   const hora = d.toLocaleTimeString("es-CO", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "America/Bogota" });
@@ -49,6 +49,18 @@ export async function notificarCitaConfirmada(
 ): Promise<boolean> {
   if (!cita.telefono_cliente) return false;
   const texto = `¡Listo, ${cita.nombre_cliente}! 💕 Tu cita quedó confirmada.\n\n✨ ${cita.servicio}\n📅 ${formatearFechaHora(cita.inicio)}\n\nTe esperamos 💕`;
+  return enviar(cliente, cita.telefono_cliente, texto);
+}
+
+// Avisa a la clienta que la especialista propuso un horario distinto al que
+// pidió, y le pide que responda directamente por el chat (sí/no) -- el bot
+// interpreta esa respuesta la próxima vez que escriba, sin botones.
+export async function notificarPropuestaReagendamiento(
+  cliente: Pick<ClienteConfig, "phone_number_id" | "meta_permanent_token">,
+  cita: CitaEspecialista
+): Promise<boolean> {
+  if (!cita.telefono_cliente) return false;
+  const texto = `Hola ${cita.nombre_cliente} 😊 No tenemos disponibilidad justo en el horario que pediste, pero sí podemos en este otro:\n\n✨ ${cita.servicio}\n📅 ${formatearFechaHora(cita.inicio)}\n\n¿Te sirve? Respóndenos por aquí mismo.`;
   return enviar(cliente, cita.telefono_cliente, texto);
 }
 

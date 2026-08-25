@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { Calendar, Check, X, Plus, Loader2, Clock } from "lucide-react";
+import { Calendar, Check, X, Plus, Loader2, Clock, CalendarClock } from "lucide-react";
 
 type Cita = {
   id: number;
@@ -11,7 +11,7 @@ type Cita = {
   servicio: string;
   inicio: string;
   fin: string;
-  estado: "pendiente" | "confirmada" | "rechazada" | "cancelada";
+  estado: "pendiente" | "confirmada" | "rechazada" | "cancelada" | "propuesta";
   origen: string;
 };
 
@@ -42,6 +42,7 @@ export default function AgendaEspecialistaPage() {
   const [error, setError] = useState<string | null>(null);
   const [procesandoId, setProcesandoId] = useState<number | null>(null);
   const [mostrarNueva, setMostrarNueva] = useState(false);
+  const [reagendando, setReagendando] = useState<Cita | null>(null);
 
   // Recarga imperativa, para usar después de confirmar/rechazar/crear (no
   // desde el efecto de montaje -- ver más abajo).
@@ -110,6 +111,7 @@ export default function AgendaEspecialistaPage() {
 
   const pendientes = datos.citas.filter((c) => c.estado === "pendiente");
   const confirmadas = datos.citas.filter((c) => c.estado === "confirmada");
+  const propuestas = datos.citas.filter((c) => c.estado === "propuesta");
 
   return (
     <main className="min-h-screen bg-ink pb-28">
@@ -143,23 +145,55 @@ export default function AgendaEspecialistaPage() {
                       <p className="text-xs text-mist">{formatearHora(c.inicio)}</p>
                     </div>
                   </div>
-                  <div className="mt-3.5 flex gap-2">
+                  <div className="mt-3.5 flex flex-col gap-2">
                     <button
                       onClick={() => responder(c.id, "confirmar")}
                       disabled={procesandoId === c.id}
-                      className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-lime py-3 text-sm font-semibold text-lime-fg transition-opacity active:opacity-70 disabled:opacity-50"
+                      className="flex items-center justify-center gap-1.5 rounded-xl bg-lime py-3 text-sm font-semibold text-lime-fg transition-opacity active:opacity-70 disabled:opacity-50"
                     >
                       {procesandoId === c.id ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
                       Confirmar
                     </button>
-                    <button
-                      onClick={() => responder(c.id, "rechazar")}
-                      disabled={procesandoId === c.id}
-                      className="flex items-center justify-center gap-1.5 rounded-xl border border-edge px-4 py-3 text-sm font-medium text-mist transition-colors active:bg-card disabled:opacity-50"
-                    >
-                      <X className="size-4" />
-                    </button>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setReagendando(c)}
+                        disabled={procesandoId === c.id}
+                        className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-edge py-2.5 text-xs font-medium text-fg transition-colors active:bg-card disabled:opacity-50"
+                      >
+                        <CalendarClock className="size-3.5" /> Reagendar
+                      </button>
+                      <button
+                        onClick={() => responder(c.id, "rechazar")}
+                        disabled={procesandoId === c.id}
+                        className="flex items-center justify-center gap-1.5 rounded-xl border border-edge px-4 py-2.5 text-xs font-medium text-mist transition-colors active:bg-card disabled:opacity-50"
+                      >
+                        <X className="size-3.5" />
+                      </button>
+                    </div>
                   </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {propuestas.length > 0 && (
+          <section className="mb-7">
+            <h2 className="mb-3 text-sm font-semibold text-fg">Esperando respuesta de la clienta</h2>
+            <div className="flex flex-col gap-2.5">
+              {propuestas.map((c) => (
+                <div key={c.id} className="rounded-xl border border-edge bg-card p-3.5">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-medium text-fg">{c.nombre_cliente}</p>
+                      <p className="mt-0.5 text-xs text-mist">{c.servicio}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-xs font-medium text-fg">{esHoy(c.inicio) ? "Hoy" : formatearFechaCorta(c.inicio)}</p>
+                      <p className="text-xs text-mist">{formatearHora(c.inicio)}</p>
+                    </div>
+                  </div>
+                  <p className="mt-2 text-[11px] text-mist">Le propusiste este horario, aún no responde.</p>
                 </div>
               ))}
             </div>
@@ -219,6 +253,19 @@ export default function AgendaEspecialistaPage() {
           onClose={() => setMostrarNueva(false)}
           onCreada={() => {
             setMostrarNueva(false);
+            cargar();
+          }}
+        />
+      )}
+
+      {reagendando && (
+        <ReagendarModal
+          token={token}
+          cita={reagendando}
+          duracionDefecto={datos.especialista.duracion_min}
+          onClose={() => setReagendando(null)}
+          onPropuesto={() => {
+            setReagendando(null);
             cargar();
           }}
         />
@@ -339,6 +386,94 @@ function NuevaCitaModal({
             Guardar cita
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function ReagendarModal({
+  token,
+  cita,
+  duracionDefecto,
+  onClose,
+  onPropuesto,
+}: {
+  token: string;
+  cita: Cita;
+  duracionDefecto: number;
+  onClose: () => void;
+  onPropuesto: () => void;
+}) {
+  const actual = new Date(cita.inicio);
+  const [fecha, setFecha] = useState(() => actual.toISOString().slice(0, 10));
+  const [hora, setHora] = useState(() => actual.toTimeString().slice(0, 5));
+  const [guardando, setGuardando] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const proponer = async () => {
+    if (!hora) {
+      setError("Falta la hora.");
+      return;
+    }
+    setGuardando(true);
+    setError(null);
+    try {
+      const nuevoInicio = new Date(`${fecha}T${hora}:00`);
+      const res = await fetch(`/api/agenda/${token}/citas/${cita.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accion: "reagendar", nuevo_inicio: nuevoInicio.toISOString(), duracion_min: duracionDefecto }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "No se pudo proponer el horario");
+      onPropuesto();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error proponiendo el horario");
+    } finally {
+      setGuardando(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-20 flex items-end justify-center bg-black/60" onClick={onClose}>
+      <div className="w-full max-w-md rounded-t-3xl border-t border-edge bg-ink p-5 pb-8" onClick={(e) => e.stopPropagation()}>
+        <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-edge" />
+        <h2 className="text-base font-semibold text-fg">Proponer otro horario</h2>
+        <p className="mt-0.5 text-xs text-mist">
+          Para {cita.nombre_cliente} · {cita.servicio}. Le avisamos por WhatsApp y queda a la espera de que confirme.
+        </p>
+
+        <div className="mt-4 flex gap-3">
+          <div className="flex-1">
+            <label className="mb-1 block text-xs font-medium text-mist">Fecha</label>
+            <input
+              type="date"
+              value={fecha}
+              onChange={(e) => setFecha(e.target.value)}
+              className="w-full rounded-xl border border-edge bg-card px-3.5 py-3 text-sm text-fg outline-none focus:border-lime/50"
+            />
+          </div>
+          <div className="flex-1">
+            <label className="mb-1 block text-xs font-medium text-mist">Hora</label>
+            <input
+              type="time"
+              value={hora}
+              onChange={(e) => setHora(e.target.value)}
+              className="w-full rounded-xl border border-edge bg-card px-3.5 py-3 text-sm text-fg outline-none focus:border-lime/50"
+            />
+          </div>
+        </div>
+
+        {error && <p className="mt-3 text-xs text-red-400">{error}</p>}
+
+        <button
+          onClick={proponer}
+          disabled={guardando}
+          className="mt-4 flex w-full items-center justify-center gap-1.5 rounded-xl bg-lime py-3.5 text-sm font-semibold text-lime-fg disabled:opacity-50"
+        >
+          {guardando && <Loader2 className="size-4 animate-spin" />}
+          Enviar propuesta
+        </button>
       </div>
     </div>
   );

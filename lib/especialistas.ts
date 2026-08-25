@@ -20,7 +20,7 @@ export type CitaEspecialista = {
   servicio: string;
   inicio: string;
   fin: string;
-  estado: "pendiente" | "confirmada" | "rechazada" | "cancelada";
+  estado: "pendiente" | "confirmada" | "rechazada" | "cancelada" | "propuesta";
   motivo_rechazo: string | null;
   origen: string;
 };
@@ -156,6 +156,81 @@ export async function rechazarCita(supabase: SupabaseClient, citaId: number, mot
     .eq("id", citaId)
     .eq("estado", "pendiente")
     .select(COLUMNAS_CITA)
+    .maybeSingle();
+  return (data as CitaEspecialista) ?? null;
+}
+
+// La especialista propone un horario distinto al pedido. Actualiza la MISMA
+// fila (no crea una nueva) para que el constraint EXCLUDE retenga el nuevo
+// horario mientras la clienta decide -- otra persona no puede tomarlo
+// mientras tanto. Si el horario propuesto choca con otra cita, Postgres lo
+// rechaza igual que en crearCitaEspecialista.
+export async function proponerReagendamiento(
+  supabase: SupabaseClient,
+  citaId: number,
+  nuevoInicio: Date,
+  duracionMin: number
+): Promise<{ ok: true; cita: CitaEspecialista } | { ok: false; motivo: "ocupado" | "no_encontrada" | "error"; detalle?: string }> {
+  const nuevoFin = new Date(nuevoInicio.getTime() + duracionMin * 60_000);
+  const { data, error } = await supabase
+    .from("dulabs_citas_especialista")
+    .update({ inicio: nuevoInicio.toISOString(), fin: nuevoFin.toISOString(), estado: "propuesta", updated_at: new Date().toISOString() })
+    .eq("id", citaId)
+    .eq("estado", "pendiente") // solo se propone sobre una solicitud aún sin resolver
+    .select(COLUMNAS_CITA)
+    .maybeSingle();
+
+  if (error) {
+    if (error.code === CODIGO_SOLAPE) return { ok: false, motivo: "ocupado" };
+    return { ok: false, motivo: "error", detalle: error.message };
+  }
+  if (!data) return { ok: false, motivo: "no_encontrada" };
+  return { ok: true, cita: data as CitaEspecialista };
+}
+
+// La clienta acepta el horario propuesto -- ya estaba retenido, solo se
+// confirma. No hace falta re-chequear disponibilidad: nadie más pudo
+// haberlo tomado mientras estaba en 'propuesta'.
+export async function aceptarPropuesta(supabase: SupabaseClient, citaId: number): Promise<CitaEspecialista | null> {
+  const { data } = await supabase
+    .from("dulabs_citas_especialista")
+    .update({ estado: "confirmada", updated_at: new Date().toISOString() })
+    .eq("id", citaId)
+    .eq("estado", "propuesta")
+    .select(COLUMNAS_CITA)
+    .maybeSingle();
+  return (data as CitaEspecialista) ?? null;
+}
+
+// La clienta no acepta el horario propuesto: se libera de inmediato (deja de
+// bloquear el constraint) para que alguien más pueda tomarlo.
+export async function rechazarPropuesta(supabase: SupabaseClient, citaId: number): Promise<CitaEspecialista | null> {
+  const { data } = await supabase
+    .from("dulabs_citas_especialista")
+    .update({ estado: "rechazada", motivo_rechazo: "La clienta no aceptó el horario propuesto", updated_at: new Date().toISOString() })
+    .eq("id", citaId)
+    .eq("estado", "propuesta")
+    .select(COLUMNAS_CITA)
+    .maybeSingle();
+  return (data as CitaEspecialista) ?? null;
+}
+
+// Busca si esta clienta tiene una propuesta de horario esperando respuesta,
+// para que el bot sepa que su próximo mensaje probablemente es un sí/no a
+// eso, y no una solicitud nueva.
+export async function propuestaPendientePara(
+  supabase: SupabaseClient,
+  phoneNumberId: string,
+  telefonoCliente: string
+): Promise<CitaEspecialista | null> {
+  const { data } = await supabase
+    .from("dulabs_citas_especialista")
+    .select(COLUMNAS_CITA)
+    .eq("phone_number_id", phoneNumberId)
+    .eq("telefono_cliente", telefonoCliente)
+    .eq("estado", "propuesta")
+    .order("created_at", { ascending: false })
+    .limit(1)
     .maybeSingle();
   return (data as CitaEspecialista) ?? null;
 }
