@@ -137,15 +137,25 @@ export async function generarRespuestaConEspecialistaIA(params: {
       {
         name: "cancelar_mi_cita",
         description:
-          "Cancela DEFINITIVAMENTE la cita que la clienta ya tiene agendada. Solo llamar después de que la clienta confirme explícitamente que sí quiere cancelar (no reagendar) -- nunca en el mismo mensaje en que lo pide por primera vez.",
-        input_schema: { type: "object", properties: {} },
+          "Cancela DEFINITIVAMENTE la cita que la clienta ya tiene agendada. NUNCA la llames en el mismo mensaje en que la clienta pide cancelar por primera vez -- antes debes preguntarle el motivo con cariño y ofrecerle reagendar en vez de cancelar. Pasa confirmado=true SOLO si, después de eso, la clienta insiste en que sí quiere cancelar.",
+        input_schema: {
+          type: "object",
+          properties: {
+            confirmado: {
+              type: "boolean",
+              description:
+                "true únicamente si ya le preguntaste el motivo, le ofreciste reagendar, y aun así insiste en cancelar. Si es la primera vez que lo pide, NO llames esta herramienta todavía -- solo responde preguntándole.",
+            },
+          },
+          required: ["confirmado"],
+        },
       }
     );
     systemFinal +=
       `\n\n--- Cita existente ---\n` +
       `Esta clienta ya tiene una cita ${citaActiva.estado === "confirmada" ? "confirmada" : "pendiente de confirmación"} de ${citaActiva.servicio} el ${formatearFechaHora(citaActiva.inicio)}. ` +
       `Si te pregunta por su cita, dile esa fecha y hora. Si pide cambiar la hora, usa cambiar_hora_mi_cita en cuanto tengas la nueva fecha/hora.\n` +
-      `Si dice que quiere CANCELAR, no llames cancelar_mi_cita de inmediato. Primero reacciona con cariño (algo como "Ay no 😢 ¿pasó algo?") y pregúntale el motivo. Luego pregúntale si prefiere que le ayudes a reagendarla para otro día en vez de perderla del todo. Solo si después de eso insiste en que sí, cancela con cancelar_mi_cita. Si en cambio prefiere otro horario, ayúdala con cambiar_hora_mi_cita como de costumbre.`;
+      `Si dice que quiere CANCELAR, la primera vez NO llames cancelar_mi_cita todavía (ni siquiera con confirmado=false) -- solo respóndele: reacciona con cariño (algo como "Ay no 😢 ¿pasó algo?"), pregúntale el motivo, y pregúntale si prefiere que le ayudes a reagendarla para otro día en vez de perderla del todo. Solo si después de eso insiste en que sí quiere cancelar, ahí sí llama cancelar_mi_cita con confirmado=true. Si en cambio prefiere otro horario, ayúdala con cambiar_hora_mi_cita.`;
   } else {
     systemFinal +=
       `\n\n--- Sin cita registrada ---\n` +
@@ -165,6 +175,15 @@ export async function generarRespuestaConEspecialistaIA(params: {
     }
     if (nombre === "cancelar_mi_cita") {
       if (!citaActiva) return JSON.stringify({ success: false, error: "No tiene ninguna cita activa." });
+      // Candado real, no solo una instrucción de texto: sin confirmado=true
+      // no se cancela nada, sin importar qué tan segura suene la clienta en
+      // el primer mensaje -- obliga a pasar por la pregunta del motivo.
+      if (input.confirmado !== true) {
+        return JSON.stringify({
+          success: false,
+          error: "Todavía no canceles. Primero pregúntale con cariño el motivo y ofrécele reagendar en vez de cancelar. Solo si insiste, vuelve a llamar esta herramienta con confirmado=true.",
+        });
+      }
       const cita = await cancelarCita(params.supabase, citaActiva.id, "La clienta canceló por WhatsApp");
       if (!cita) return JSON.stringify({ success: false, error: "Esa cita ya no se puede cancelar." });
       const especialista = await especialistaPorId(params.supabase, citaActiva.especialista_id);
