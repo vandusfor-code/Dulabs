@@ -40,6 +40,16 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: "Faltan 'phone_number_id', 'telefono_cliente' o 'etiqueta_id'" }, { status: 400 });
   }
 
+  // El número debe pertenecer al tenant del miembro (evita etiquetar una
+  // conversación ajena a través del phone_number_id).
+  const { data: cliente } = await supabase
+    .from("dulabs_clientes_config")
+    .select("phone_number_id")
+    .eq("phone_number_id", phone_number_id)
+    .eq("id_tenant", miembro.tenantId)
+    .maybeSingle();
+  if (!cliente) return Response.json({ error: "Número no encontrado" }, { status: 404 });
+
   // La etiqueta debe pertenecer al tenant del miembro (evita aplicar una
   // etiqueta ajena a través del id).
   const { data: etiqueta } = await supabase
@@ -73,7 +83,7 @@ export async function POST(request: NextRequest) {
 export async function DELETE(request: NextRequest) {
   const ctx = await autenticar(request);
   if ("error" in ctx) return ctx.error;
-  const { supabase } = ctx;
+  const { supabase, miembro } = ctx;
 
   let body: Body;
   try {
@@ -85,6 +95,25 @@ export async function DELETE(request: NextRequest) {
   if (!phone_number_id || !telefono_cliente || !etiqueta_id) {
     return Response.json({ error: "Faltan 'phone_number_id', 'telefono_cliente' o 'etiqueta_id'" }, { status: 400 });
   }
+
+  // Mismo chequeo de propiedad que POST: sin esto, cualquier admin/agente
+  // podía borrar etiquetas de conversaciones de OTRO tenant adivinando el
+  // phone_number_id + telefono_cliente + etiqueta_id.
+  const { data: cliente } = await supabase
+    .from("dulabs_clientes_config")
+    .select("phone_number_id")
+    .eq("phone_number_id", phone_number_id)
+    .eq("id_tenant", miembro.tenantId)
+    .maybeSingle();
+  if (!cliente) return Response.json({ error: "Número no encontrado" }, { status: 404 });
+
+  const { data: etiqueta } = await supabase
+    .from("dulabs_etiquetas")
+    .select("id")
+    .eq("id", etiqueta_id)
+    .eq("tenant_id", miembro.tenantId)
+    .maybeSingle();
+  if (!etiqueta) return Response.json({ error: "Etiqueta no encontrada" }, { status: 404 });
 
   const { error } = await supabase
     .from("dulabs_conversacion_etiquetas")
