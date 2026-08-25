@@ -3,6 +3,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { generarRespuestaIA } from "@/lib/ia";
 import { resolverMiembroEquipo, requireRol } from "@/lib/team";
 import { resolverConfigAgente } from "@/lib/agentes";
+import { historialPlaygroundAHistorialIA } from "@/lib/historial-conversacion";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -10,8 +11,8 @@ export const maxDuration = 60;
 const MAX_MENSAJE = 2000;
 
 // Chat de prueba: corre el mismo prompt + base de conocimiento reales del
-// agente contra Claude, sin enviar nada por WhatsApp ni tocar el historial
-// de conversaciones ni el contador de uso — es una prueba, no tráfico real.
+// agente contra Claude, con historial de la sesión de prueba, sin enviar
+// nada por WhatsApp ni tocar el contador de uso.
 export async function POST(request: NextRequest) {
   const authHeader = request.headers.get("authorization") ?? "";
   const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
@@ -27,7 +28,11 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: "No tienes permiso para esta acción" }, { status: 403 });
   }
 
-  let body: { phone_number_id?: string; mensaje?: string };
+  let body: {
+    phone_number_id?: string;
+    mensaje?: string;
+    historial?: { rol: "usuario" | "ia"; texto: string }[];
+  };
   try {
     body = await request.json();
   } catch {
@@ -53,10 +58,11 @@ export async function POST(request: NextRequest) {
   if (!cliente) return Response.json({ error: "Número no encontrado" }, { status: 404 });
 
   const configAgente = await resolverConfigAgente(supabase, cliente);
+  const historial = historialPlaygroundAHistorialIA(body.historial ?? []);
   const respuesta = await generarRespuestaIA({ ...configAgente, nombre_negocio: cliente.nombre_negocio }, mensaje, {
     idTenant: miembro.tenantId,
     phoneNumberId: phone_number_id,
-  });
+  }, historial);
   if (!respuesta) {
     // El fallo real ya quedó clasificado y registrado en dulabs_fallos_ia
     // (ver lib/alertas.ts) — lo leemos para decir la causa concreta en vez

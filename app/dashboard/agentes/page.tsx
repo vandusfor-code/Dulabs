@@ -192,6 +192,7 @@ function Playground({ phoneNumberId, nombreMostrado, accessToken }: { phoneNumbe
   const enviar = useCallback(async () => {
     const texto = entrada.trim();
     if (!texto || enviando) return;
+    const historialPrevio = mensajes;
     setEntrada("");
     setError(null);
     setMensajes((prev) => [...prev, { rol: "usuario", texto }]);
@@ -200,7 +201,7 @@ function Playground({ phoneNumberId, nombreMostrado, accessToken }: { phoneNumbe
       const res = await fetch("/api/dashboard/playground", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
-        body: JSON.stringify({ phone_number_id: phoneNumberId, mensaje: texto }),
+        body: JSON.stringify({ phone_number_id: phoneNumberId, mensaje: texto, historial: historialPrevio }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? t("Error consultando a la IA", "Error querying the AI"));
@@ -210,7 +211,7 @@ function Playground({ phoneNumberId, nombreMostrado, accessToken }: { phoneNumbe
     } finally {
       setEnviando(false);
     }
-  }, [entrada, enviando, phoneNumberId, accessToken, t]);
+  }, [entrada, enviando, mensajes, phoneNumberId, accessToken, t]);
 
   return (
     <div className="rounded-xl border border-edge bg-card p-5">
@@ -220,8 +221,8 @@ function Playground({ phoneNumberId, nombreMostrado, accessToken }: { phoneNumbe
       </div>
       <p className="text-xs leading-relaxed text-mist">
         {t(
-          `Chatea con ${nombreMostrado} usando sus instrucciones y base de conocimiento reales — nada de esto se envía por WhatsApp ni cuenta contra tu consumo.`,
-          `Chat with ${nombreMostrado} using its real instructions and knowledge base — none of this is sent over WhatsApp or counts against your usage.`
+          `Chatea con ${nombreMostrado} usando sus instrucciones y base de conocimiento reales. La conversación mantiene contexto entre mensajes, igual que en WhatsApp — nada de esto se envía por WhatsApp ni cuenta contra tu consumo.`,
+          `Chat with ${nombreMostrado} using its real instructions and knowledge base. The conversation keeps context across messages, just like WhatsApp — none of this is sent over WhatsApp or counts against your usage.`
         )}
       </p>
 

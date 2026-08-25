@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { ClienteConfig } from "@/lib/supabase";
 import { descifrarSecreto } from "@/lib/crypto";
 import { clasificarFalloIA, registrarFalloIA } from "@/lib/alertas";
+import { construirMensajesConHistorial, type MensajeHistorialIA } from "@/lib/historial-conversacion";
 
 // Contexto opcional del tenant, solo para poder decir en la alerta A QUIÉN
 // afectó el fallo. Es opcional para no obligar a cada llamador (ej. el
@@ -30,7 +31,8 @@ export function construirSystemPrompt(cliente: Pick<ClienteConfig, "prompt_siste
 export async function generarRespuestaIA(
   cliente: Pick<ClienteConfig, "prompt_sistema" | "base_conocimiento" | "nombre_negocio" | "api_key_ia">,
   textoUsuario: string,
-  contexto: ContextoIA = {}
+  contexto: ContextoIA = {},
+  historial: MensajeHistorialIA[] = []
 ): Promise<string | null> {
   const apiKey = cliente.api_key_ia ? descifrarSecreto(cliente.api_key_ia) : process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
@@ -58,7 +60,7 @@ export async function generarRespuestaIA(
       // reenvío en vez de precio completo -- con los prompts detallados del
       // Marketplace eso es la diferencia entre un margen sano y uno apretado.
       system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
-      messages: [{ role: "user", content: textoUsuario }],
+      messages: construirMensajesConHistorial(historial, textoUsuario),
     });
 
     const texto = response.content

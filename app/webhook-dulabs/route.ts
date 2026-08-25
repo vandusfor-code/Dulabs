@@ -2,6 +2,7 @@ import { after } from "next/server";
 import type { NextRequest } from "next/server";
 import { supabaseAdmin, type ClienteConfig } from "@/lib/supabase";
 import { generarRespuestaIA } from "@/lib/ia";
+import { obtenerHistorialConversacion } from "@/lib/historial-conversacion";
 import { resolverConfigAgente, type ConfigAgenteEfectiva } from "@/lib/agentes";
 import { planDelTenant } from "@/lib/plan-limits";
 import { agentePorSlug, INSTRUCCION_ADMIN } from "@/lib/marketplace";
@@ -585,7 +586,10 @@ async function atenderMensaje(cliente: ClienteConfig, mensaje: MetaMessage, nomb
   const respuesta = await generarRespuestaIA(
     { ...contexto.config, nombre_negocio: cliente.nombre_negocio },
     mensaje.text!.body,
-    { idTenant: cliente.id_tenant, phoneNumberId: cliente.phone_number_id }
+    { idTenant: cliente.id_tenant, phoneNumberId: cliente.phone_number_id },
+    await obtenerHistorialConversacion(supabaseAdmin(), cliente.phone_number_id, soloDigitos(mensaje.from), {
+      excluirWamid: mensaje.id,
+    })
   );
   if (respuesta) {
     await enviarWhatsApp(cliente, mensaje.from, respuesta);
