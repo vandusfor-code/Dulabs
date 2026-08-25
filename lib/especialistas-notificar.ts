@@ -6,6 +6,10 @@ import { construirRutaAgenda, type CitaEspecialista, type Especialista } from "@
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://dulabs.co";
 
+function formatearHora(iso: string): string {
+  return new Date(iso).toLocaleTimeString("es-CO", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "America/Bogota" });
+}
+
 export function formatearFechaHora(iso: string): string {
   const d = new Date(iso);
   const fecha = d.toLocaleDateString("es-CO", { day: "numeric", month: "long", timeZone: "America/Bogota" });
@@ -120,6 +124,18 @@ export async function notificarSolicitudCambioHorario(
   const ruta = construirRutaAgenda(cliente.nombre_negocio, especialista.token);
   const texto = `🔁 ${citaNueva.nombre_cliente} quiere cambiar su cita de ${citaAnterior.servicio}\n\nAntes: ${formatearFechaHora(citaAnterior.inicio)}\nAhora pide: ${formatearFechaHora(citaNueva.inicio)}\n\nConfírmalo o recházalo aquí:\n${SITE_URL}/agenda/${ruta}`;
   return enviar(cliente, especialista.numero_whatsapp, texto);
+}
+
+// Recordatorio de "1 hora antes", disparado por el cron periódico (ver
+// app/api/cron/recordatorios-citas). Solo la hora, no la fecha completa --
+// es siempre para hoy.
+export async function notificarRecordatorioCita(
+  cliente: Pick<ClienteConfig, "phone_number_id" | "meta_permanent_token">,
+  cita: Pick<CitaEspecialista, "nombre_cliente" | "servicio" | "inicio" | "telefono_cliente">
+): Promise<boolean> {
+  if (!cita.telefono_cliente) return false;
+  const texto = `¡Hola ${cita.nombre_cliente}! 💕 Te recordamos tu cita de ${cita.servicio} hoy a las ${formatearHora(cita.inicio)}.\n\n¡Te esperamos!`;
+  return enviar(cliente, cita.telefono_cliente, texto);
 }
 
 export async function clienteDeEspecialista(supabase: SupabaseClient, phoneNumberId: string): Promise<ClienteConfig | null> {
