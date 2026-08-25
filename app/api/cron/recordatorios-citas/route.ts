@@ -24,7 +24,11 @@ type CitaPendienteRecordatorio = {
 // Busca citas confirmadas cuyo inicio cae en la ventana de 55 a 65 minutos
 // desde ahora y les manda el recordatorio por WhatsApp una sola vez
 // (columna recordatorio_enviado evita reenviarlo en la siguiente pasada).
-export async function GET(request: NextRequest) {
+//
+// Acepta GET y POST -- QStash crea sus Schedules en POST por defecto, y no
+// vale la pena obligar a cambiarlo a mano en su panel cuando aceptar ambos
+// es gratis.
+async function manejar(request: NextRequest) {
   const cuerpo = await request.text();
   if (!(await solicitudAutorizadaCron(request, cuerpo))) {
     return new Response("Unauthorized", { status: 401 });
@@ -78,4 +82,12 @@ export async function GET(request: NextRequest) {
   }
 
   return Response.json({ enviados, errores });
+}
+
+export async function GET(request: NextRequest) {
+  return manejar(request);
+}
+
+export async function POST(request: NextRequest) {
+  return manejar(request);
 }
