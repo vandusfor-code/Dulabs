@@ -52,7 +52,12 @@ export async function generarRespuestaIA(
       model: MODELO,
       max_tokens: 1024,
       thinking: { type: "adaptive" },
-      system,
+      // El system prompt (instrucciones del agente + base de conocimiento del
+      // negocio) es idéntico en todos los mensajes de un mismo número y pesa
+      // más que el mensaje del cliente. Cachearlo lo cobra a ~10% en cada
+      // reenvío en vez de precio completo -- con los prompts detallados del
+      // Marketplace eso es la diferencia entre un margen sano y uno apretado.
+      system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
       messages: [{ role: "user", content: textoUsuario }],
     });
 

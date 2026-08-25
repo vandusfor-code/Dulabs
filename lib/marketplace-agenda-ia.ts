@@ -246,7 +246,11 @@ export async function generarRespuestaAgendaIA(params: {
       response = await anthropic.messages.create({
         model: MODELO,
         max_tokens: 1024,
-        system: systemFinal,
+        // Cacheado igual que en lib/ia.ts: este prompt (instrucciones del
+        // rubro + agenda + datos del negocio) se reenvía en CADA turno de
+        // herramienta, así que sin caché una sola cita puede cobrarlo 3 o 4
+        // veces a precio completo.
+        system: [{ type: "text", text: systemFinal, cache_control: { type: "ephemeral" } }],
         tools,
         messages,
       });
