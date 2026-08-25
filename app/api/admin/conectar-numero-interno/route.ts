@@ -71,8 +71,17 @@ export async function POST(request: NextRequest) {
     data?: { id: string; display_phone_number: string; verified_name?: string }[];
   } & GraphError;
   if (!phonesRes.ok) {
+    // Diagnóstico: casi siempre este error es "el System User de
+    // META_ACCESS_TOKEN no tiene el WABA asignado en Business Manager" --
+    // devolvemos su identidad para saber a quién asignarle acceso.
+    const meRes = await fetch(`${GRAPH}/me?fields=id,name`, { headers: { Authorization: `Bearer ${token}` } });
+    const me = await meRes.json();
     return Response.json(
-      { error: `Meta (phone_numbers) respondió ${phonesRes.status}: ${phonesJson.error?.message ?? "sin detalle"}` },
+      {
+        error: `Meta (phone_numbers) respondió ${phonesRes.status}: ${phonesJson.error?.message ?? "sin detalle"}`,
+        pista: "Probablemente el System User de META_ACCESS_TOKEN no tiene este WABA asignado en Business Manager.",
+        system_user_token_pertenece_a: me,
+      },
       { status: 502 }
     );
   }
