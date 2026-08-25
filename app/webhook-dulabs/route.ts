@@ -622,7 +622,15 @@ async function atenderMensaje(cliente: ClienteConfig, mensaje: MetaMessage, nomb
         historial
       );
   if (respuesta) {
-    await enviarWhatsApp(cliente, mensaje.from, respuesta);
+    // Con especialistas activas se permite que la IA parta su respuesta en
+    // dos mensajes (separados por línea en blanco) para sonar más humana --
+    // el resto de la plataforma sigue mandando un solo mensaje por turno,
+    // como siempre.
+    if (conEspecialistas) {
+      await enviarWhatsAppPartes(cliente, mensaje.from, respuesta);
+    } else {
+      await enviarWhatsApp(cliente, mensaje.from, respuesta);
+    }
   }
 }
 
@@ -828,6 +836,23 @@ async function enviarWhatsApp(cliente: ClienteConfig, para: string, texto: strin
 
   await incrementarUsoMensajes(cliente);
   await registrarMensaje(cliente.phone_number_id, soloDigitos(para), "saliente", texto, "ia", wamid ?? undefined);
+}
+
+// Si la IA separó su respuesta en párrafos con línea en blanco, se envían
+// como mensajes de WhatsApp aparte (como escribiría una persona real) en
+// vez de un solo bloque de texto largo. Máximo dos: la primera idea sola, el
+// resto junto -- así no se convierte en una ráfaga de mensajes.
+async function enviarWhatsAppPartes(cliente: ClienteConfig, para: string, texto: string) {
+  const partes = texto
+    .split(/\n{2,}/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  if (partes.length <= 1) {
+    await enviarWhatsApp(cliente, para, texto.trim());
+    return;
+  }
+  await enviarWhatsApp(cliente, para, partes[0]);
+  await enviarWhatsApp(cliente, para, partes.slice(1).join("\n\n"));
 }
 
 // --- Historial de mensajes (para la vista de actividad reciente) --------------

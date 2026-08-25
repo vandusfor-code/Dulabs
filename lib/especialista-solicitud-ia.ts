@@ -131,14 +131,16 @@ export async function generarRespuestaConEspecialistaIA(params: {
       },
       {
         name: "cancelar_mi_cita",
-        description: "Cancela la cita que la clienta ya tiene agendada. Llamar sin argumentos cuando pida cancelar.",
+        description:
+          "Cancela DEFINITIVAMENTE la cita que la clienta ya tiene agendada. Solo llamar después de que la clienta confirme explícitamente que sí quiere cancelar (no reagendar) -- nunca en el mismo mensaje en que lo pide por primera vez.",
         input_schema: { type: "object", properties: {} },
       }
     );
     systemFinal +=
       `\n\n--- Cita existente ---\n` +
       `Esta clienta ya tiene una cita ${citaActiva.estado === "confirmada" ? "confirmada" : "pendiente de confirmación"} de ${citaActiva.servicio} el ${formatearFechaHora(citaActiva.inicio)}. ` +
-      `Si te pregunta por su cita, dile esa fecha y hora. Si pide cambiar la hora, usa cambiar_hora_mi_cita en cuanto tengas la nueva fecha/hora. Si pide cancelarla, usa cancelar_mi_cita.`;
+      `Si te pregunta por su cita, dile esa fecha y hora. Si pide cambiar la hora, usa cambiar_hora_mi_cita en cuanto tengas la nueva fecha/hora.\n` +
+      `Si dice que quiere CANCELAR, no llames cancelar_mi_cita de inmediato. Primero reacciona con cariño (algo como "Ay no 😢 ¿pasó algo?") y pregúntale el motivo. Luego pregúntale si prefiere que le ayudes a reagendarla para otro día en vez de perderla del todo. Solo si después de eso insiste en que sí, cancela con cancelar_mi_cita. Si en cambio prefiere otro horario, ayúdala con cambiar_hora_mi_cita como de costumbre.`;
   } else {
     systemFinal +=
       `\n\n--- Sin cita registrada ---\n` +
