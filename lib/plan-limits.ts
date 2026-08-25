@@ -1,10 +1,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { PLANES, PLAN_POR_DEFECTO, resolverPlanId, type PlanDef } from "@/lib/planes";
+import { PLANES, SIN_PLAN, resolverPlanId, type PlanDef } from "@/lib/planes";
 
-// Plan real vigente del tenant. Sin fila en dulabs_suscripciones (o sin
-// suscripción "activa") cae a PLAN_POR_DEFECTO — así un tenant recién
-// provisionado (como Du Labs mismo antes de suscribirse) queda acotado al
-// plan más restrictivo en vez de sin límites.
+// Plan real vigente del tenant. Sin fila en dulabs_suscripciones con
+// estado "activa" (nunca pagó, o el pago quedó pendiente/vencido), cae a
+// SIN_PLAN: cero funcionalidad hasta que pague. No hay plan gratuito de
+// facto -- ver lib/planes.ts para el porqué.
 export async function planDelTenant(supabase: SupabaseClient, tenantId: string): Promise<PlanDef> {
   const { data } = await supabase
     .from("dulabs_suscripciones")
@@ -12,7 +12,8 @@ export async function planDelTenant(supabase: SupabaseClient, tenantId: string):
     .eq("id_tenant", tenantId)
     .eq("estado", "activa")
     .maybeSingle();
-  return PLANES[data ? resolverPlanId(data.plan) : PLAN_POR_DEFECTO];
+  if (!data) return SIN_PLAN;
+  return PLANES[resolverPlanId(data.plan)];
 }
 
 export async function contarNumeros(supabase: SupabaseClient, tenantId: string): Promise<number> {

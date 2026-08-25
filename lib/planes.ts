@@ -21,7 +21,7 @@ export interface PlanLimites {
 }
 
 export interface PlanDef {
-  id: PlanId;
+  id: PlanId | "sin_plan";
   nombre: string;
   precioCop: number | null; // null = "Solicitar cotización" (Enterprise)
   limites: PlanLimites;
@@ -95,11 +95,40 @@ export const PLANES: Record<PlanId, PlanDef> = {
 };
 
 export const ORDEN_PLANES: PlanId[] = ["start", "growth", "scale", "enterprise"];
+// Fallback SOLO para resolverPlanId: normaliza un nombre de plan viejo o
+// desconocido guardado en una suscripción que YA está activa (alguien que
+// sí pagó). NUNCA se usa para "sin suscripción" -- ver SIN_PLAN más abajo,
+// que es lo que consume planDelTenant() cuando no hay fila activa.
 export const PLAN_POR_DEFECTO: PlanId = "start";
+
+// Límites de un tenant SIN ninguna suscripción activa: cero funcionalidad
+// (no conecta número, la IA no responde, no puede enviar campañas ni
+// encuestas) hasta que pague. Deliberadamente NO es un plan comprable --no
+// está en PLANES ni en ORDEN_PLANES, el checkout nunca lo acepta-- para que
+// nunca se confunda con un plan real ni se le pueda asignar a una
+// suscripción por error.
+export const SIN_PLAN: PlanDef = {
+  id: "sin_plan",
+  nombre: "Sin plan",
+  precioCop: null,
+  limites: {
+    numeros: 0,
+    usuarios: 0,
+    agentesIA: 0,
+    contactosPorCampana: 0,
+    campanasSimultaneas: 0,
+    mensajesIAMes: 0,
+    campanasPorMes: 0,
+    encuestas: false,
+    insightsIA: false,
+  },
+};
 
 // Normaliza cualquier valor guardado (incluidos los nombres viejos "Plan
 // Básico"/"Plan Pro"/"Plan Enterprise" de antes de este cambio) a un PlanId
-// válido, cayendo a PLAN_POR_DEFECTO ante cualquier duda.
+// válido, cayendo a PLAN_POR_DEFECTO ante cualquier duda. Solo se llama
+// cuando YA se confirmó que hay una suscripción activa -- por eso cae a
+// "start" y no a "sin_plan".
 export function resolverPlanId(valor: string | null | undefined): PlanId {
   if (valor && valor in PLANES) return valor as PlanId;
   return PLAN_POR_DEFECTO;
