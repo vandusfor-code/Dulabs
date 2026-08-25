@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   Search,
-  Filter,
   Calendar,
   ChevronDown,
   ChevronLeft,
@@ -71,12 +70,50 @@ export function SurveysTable({
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<"all" | SurveyStatus>("all");
 
+  // Filtro por antigüedad. Antes era un div decorativo que decía "Últimos 30
+  // días" sin onClick ni efecto: la tabla siempre mostraba todo. El corte se
+  // calcula al cambiar el select (no durante el render) para no leer el reloj
+  // en medio de un render, que hace impuro el resultado.
+  const [rango, setRango] = useState<7 | 30 | 90 | 0>(0); // 0 = sin límite
+  const [desde, setDesde] = useState<number | null>(null);
+  const POR_PAGINA = 10;
+  const [pagina, setPagina] = useState(1);
+
+  const cambiarRango = useCallback((dias: 7 | 30 | 90 | 0) => {
+    setRango(dias);
+    setDesde(dias === 0 ? null : Date.now() - dias * 24 * 60 * 60 * 1000);
+    setPagina(1);
+  }, []);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return surveys.filter(
-      (s) => (status === "all" || s.status === status) && (q === "" || s.name.toLowerCase().includes(q))
-    );
-  }, [surveys, search, status]);
+    return surveys.filter((s) => {
+      if (status !== "all" && s.status !== status) return false;
+      if (q !== "" && !s.name.toLowerCase().includes(q)) return false;
+      if (desde !== null) {
+        // Sin fecha real (encuestas de demo) no se filtra por antigüedad:
+        // mejor mostrarla que esconderla por un dato que no tenemos.
+        if (!s.updatedAtISO) return true;
+        const fecha = new Date(s.updatedAtISO).getTime();
+        if (Number.isFinite(fecha) && fecha < desde) return false;
+      }
+      return true;
+    });
+  }, [surveys, search, status, desde]);
+
+  // Paginación real. Los botones estaban `disabled` a la fuerza y el
+  // indicador siempre decía "1", sin importar cuántas encuestas hubiera.
+  const totalPaginas = Math.max(1, Math.ceil(filtered.length / POR_PAGINA));
+  // La página se acota durante el render en vez de corregirse con un efecto:
+  // si un filtro deja menos páginas que la actual, se muestra la última en
+  // lugar de una página vacía.
+  const paginaActual = Math.min(pagina, totalPaginas);
+  const paginadas = useMemo(
+    () => filtered.slice((paginaActual - 1) * POR_PAGINA, paginaActual * POR_PAGINA),
+    [filtered, paginaActual]
+  );
+  const desdeVisible = filtered.length === 0 ? 0 : (paginaActual - 1) * POR_PAGINA + 1;
+  const hastaVisible = Math.min(paginaActual * POR_PAGINA, filtered.length);
 
   // Menú "..." de cada fila: se saca por portal a document.body y se
   // posiciona en coordenadas de pantalla (fixed) calculadas del botón que lo
@@ -203,19 +240,21 @@ export function SurveysTable({
             </select>
             <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 size-4 -translate-y-1/2 text-mist" />
           </div>
-          <div className="hidden items-center gap-2 rounded-lg border border-edge bg-ink py-2 pl-3 pr-3 text-sm text-mist sm:flex">
-            <Calendar className="size-4" />
-            <span>{t("Últimos 30 días", "Last 30 days")}</span>
-            <ChevronDown className="size-4" />
+          <div className="relative hidden sm:block">
+            <Calendar className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-mist" />
+            <select
+              value={rango}
+              onChange={(e) => cambiarRango(Number(e.target.value) as 7 | 30 | 90 | 0)}
+              aria-label={t("Filtrar por antigüedad", "Filter by recency")}
+              className="appearance-none rounded-lg border border-edge bg-ink py-2 pl-9 pr-8 text-sm text-fg outline-none focus:border-lime/50"
+            >
+              <option value={0}>{t("Todo el tiempo", "All time")}</option>
+              <option value={7}>{t("Últimos 7 días", "Last 7 days")}</option>
+              <option value={30}>{t("Últimos 30 días", "Last 30 days")}</option>
+              <option value={90}>{t("Últimos 90 días", "Last 90 days")}</option>
+            </select>
+            <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 size-4 -translate-y-1/2 text-mist" />
           </div>
-          <button
-            type="button"
-            aria-label={t("Más filtros", "More filters")}
-            title={t("Más filtros", "More filters")}
-            className="flex size-9 items-center justify-center rounded-lg border border-edge bg-ink text-mist transition-colors hover:border-lime/40 hover:text-fg"
-          >
-            <Filter className="size-4" />
-          </button>
         </div>
       </div>
 
@@ -236,7 +275,7 @@ export function SurveysTable({
             </p>
           ) : (
             <div className="divide-y divide-edge">
-              {filtered.map((s) => (
+              {paginadas.map((s) => (
                 <div
                   key={s.id}
                   role="button"
@@ -302,27 +341,30 @@ export function SurveysTable({
       <div className="flex items-center justify-between px-5 py-3.5">
         <p className="text-xs text-mist">
           {t(
-            `Mostrando ${filtered.length === 0 ? 0 : 1} a ${filtered.length} de ${filtered.length} encuestas`,
-            `Showing ${filtered.length === 0 ? 0 : 1} to ${filtered.length} of ${filtered.length} surveys`
+            `Mostrando ${desdeVisible} a ${hastaVisible} de ${filtered.length} encuestas`,
+            `Showing ${desdeVisible} to ${hastaVisible} of ${filtered.length} surveys`
           )}
         </p>
         <div className="flex items-center gap-1.5">
           <button
             type="button"
-            disabled
+            onClick={() => setPagina(Math.max(1, paginaActual - 1))}
+            disabled={paginaActual <= 1}
             aria-label={t("Página anterior", "Previous page")}
-            className="flex size-7 items-center justify-center rounded-md border border-edge text-mist disabled:opacity-40"
+            className="flex size-7 items-center justify-center rounded-md border border-edge text-mist transition-colors hover:text-fg disabled:opacity-40 disabled:hover:text-mist"
           >
             <ChevronLeft className="size-4" />
           </button>
-          <span className="flex size-7 items-center justify-center rounded-md bg-lime text-xs font-semibold text-lime-fg">
-            1
+          <span className="flex h-7 min-w-7 items-center justify-center rounded-md bg-lime px-2 text-xs font-semibold text-lime-fg">
+            {paginaActual}
+            {totalPaginas > 1 && <span className="ml-0.5 font-normal opacity-70">/{totalPaginas}</span>}
           </span>
           <button
             type="button"
-            disabled
+            onClick={() => setPagina(Math.min(totalPaginas, paginaActual + 1))}
+            disabled={paginaActual >= totalPaginas}
             aria-label={t("Página siguiente", "Next page")}
-            className="flex size-7 items-center justify-center rounded-md border border-edge text-mist disabled:opacity-40"
+            className="flex size-7 items-center justify-center rounded-md border border-edge text-mist transition-colors hover:text-fg disabled:opacity-40 disabled:hover:text-mist"
           >
             <ChevronRight className="size-4" />
           </button>

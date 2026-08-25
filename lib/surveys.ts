@@ -25,6 +25,8 @@ export interface SurveySummary {
   completed: number;
   completionRate: number;
   updatedAt: LocalizedText;
+  /** Fecha real ISO para filtrar/ordenar (updatedAt es solo texto a mostrar). */
+  updatedAtISO?: string;
 }
 
 export interface SurveyKpis {

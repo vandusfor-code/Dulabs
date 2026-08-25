@@ -202,6 +202,10 @@ function NumeroCard({
       onActualizado();
     } catch (err) {
       setErrorEliminar(err instanceof Error ? err.message : t("No se pudo eliminar el número.", "Couldn't delete the number."));
+    } finally {
+      // En finally y no solo en el catch: si el borrado salía bien pero la
+      // tarjeta seguía montada, el botón se quedaba en "Eliminando…" para
+      // siempre.
       setEliminando(false);
     }
   }, [accessToken, negocio.phone_number_id, onActualizado, t]);
@@ -648,7 +652,10 @@ export default function ConexionPage() {
         {planPendiente && (
           <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-lime/40 bg-lime/10 p-4 text-sm">
             <span className="text-fg">
-              {t("Elegiste el", "You chose")} <strong>{planPendiente}</strong>. {t("Falta activar tu suscripción para completar el registro.", "You still need to activate your subscription to finish signing up.")}
+              {/* El identificador crudo de localStorage ("growth") se muestra
+                  con su nombre real ("Growth"): el usuario eligió un plan con
+                  nombre propio, no una clave interna. */}
+              {t("Elegiste el plan", "You chose the")} <strong>{PLANES[resolverPlanId(planPendiente)].nombre}</strong>. {t("Falta activar tu suscripción para completar el registro.", "plan. You still need to activate your subscription to finish signing up.")}
             </span>
             <a
               href="/checkout"

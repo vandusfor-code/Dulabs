@@ -126,7 +126,7 @@ export default function EquipoPage() {
   return (
     <div className="pb-12">
       <PageHeader
-        eyebrow="Infraestructura"
+        eyebrow={t("Infraestructura", "Infrastructure")}
         title={t("Equipo", "Team")}
         description={t(
           "Invita a tu equipo a responder desde el Inbox web y controla qué puede hacer cada persona.",

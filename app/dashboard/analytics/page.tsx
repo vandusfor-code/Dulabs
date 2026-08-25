@@ -91,7 +91,7 @@ export default function AnalyticsPage() {
   return (
     <div className="pb-12">
       <PageHeader
-        eyebrow="Infraestructura"
+        eyebrow={t("Infraestructura", "Infrastructure")}
         title="Analytics"
         description={t(
           "El estado real de tu operación en WhatsApp: mensajes procesados, ritmo diario y distribución por número.",

@@ -5,42 +5,46 @@ pero aplicarlos a la base de datos real de producción es un paso manual
 aparte (vía el SQL Editor de Supabase) — no ocurre automáticamente al hacer
 `git push` o desplegar en Vercel.
 
-## `20260731090000_plantillas_botones.sql` — pendiente
+> Verificado el 25-ago-2026 consultando la base real: `botones` en
+> `dulabs_plantillas`, `nombre_participante` en `dulabs_survey_sessions` y
+> `dulabs_fallos_ia` ya existen. Las secciones que las daban por pendientes
+> estaban desactualizadas y se eliminaron.
 
-Agrega la columna `botones` (jsonb) a `dulabs_plantillas`, para guardar los
-textos de los botones QUICK_REPLY de cada plantilla. Puramente aditiva.
+## `20260825150000_cancelar_suscripcion.sql` — PENDIENTE
+
+Agrega la columna `cancelar_al_vencer` (boolean, default false) a
+`dulabs_suscripciones`. Es lo que permite cancelar un plan desde
+**Cuenta → Plan y facturación**: la cancelación es diferida (el cliente
+conserva el servicio hasta `fecha_proximo_cobro` y el cron cierra la
+suscripción en vez de volver a cobrar).
 
 **Cómo aplicarla:**
 1. Entra a tu proyecto en [supabase.com](https://supabase.com/dashboard) → **SQL Editor**.
-2. Pega el contenido completo de `supabase/migrations/20260731090000_plantillas_botones.sql`.
+2. Pega el contenido de `supabase/migrations/20260825150000_cancelar_suscripcion.sql`.
 3. Ejecuta (**Run**).
 
-**Es seguro desplegar el código antes de correr esto.** Sin la columna,
-crear/editar una plantilla seguirá funcionando (el `insert`/`update` con un
-campo `botones` que la tabla no tiene fallaría con un error claro de Postgres
-al intentar guardar botones — pero solo si el formulario envía botones; sin
-botones, todo sigue igual). En cuanto corras esta migración, guardar
-plantillas con botones queda disponible sin necesidad de otro deploy.
+**Es seguro desplegar el código antes de correr esto**, con una salvedad: hasta
+que la columna exista, el botón "Cancelar suscripción" devolverá un error de
+Postgres al pulsarlo, y el cron de cobro mensual fallará su consulta diaria
+(no cobrará de más — simplemente no procesará). Corre la migración el mismo
+día del despliegue.
 
 Después de aplicarla, borra esta sección (o el archivo completo si no queda
 ninguna migración pendiente).
 
-## `20260731100000_survey_sessions_nombre.sql` — pendiente
+---
 
-Agrega la columna `nombre_participante` (text) a `dulabs_survey_sessions` —
-guarda el nombre del contacto si se conoció al invitarlo (formato
-"teléfono, Nombre" en el panel de invitaciones), usado para llenar
-`{{nombre_cliente}}` en la plantilla de invitación. Puramente aditiva.
+## Variables de entorno que también son paso manual
 
-**Cómo aplicarla:** igual que arriba — pega el contenido del archivo en el
-SQL Editor de Supabase y dale Run.
+| Variable | Para qué | Dónde |
+|---|---|---|
+| `ALERTAS_PHONE_NUMBER_ID` | Número que envía las alertas internas de WhatsApp | Vercel |
+| `ALERTAS_META_TOKEN` | Token del System User de Meta con acceso a ese número | Vercel |
+| `ALERTAS_DESTINO` | Número que recibe las alertas (solo dígitos) | Vercel |
+| `DUMO_ADMIN_EMAILS` | Correos separados por coma que pueden ver/usar DuMo. **Sin esto, DuMo queda oculto para todos** (incluido el operador) | Vercel |
 
-**Es seguro desplegar antes de correr esto.** Sin la columna, invitar
-funciona igual, solo que el nombre no queda guardado en la sesión (se sigue
-usando para llenar la plantilla en el momento del envío).
+## Plantilla de correo de bienvenida
 
-Nota: las plantillas `du_encuesta_invitacion` y `du_encuesta_recordatorio` ya
-NO dependen de tener una fila en `dulabs_plantillas` — el envío consulta su
-estado de aprobación directo en Meta, así que funcionan igual si se crearon
-desde el Administrador de Meta (como en este caso) o desde
-`/dashboard/plantillas`.
+`supabase/correos/bienvenida.html` no se aplica solo: hay que pegarlo en
+**Supabase → Authentication → Emails → "Confirm signup"**, con el asunto
+`Confirma tu cuenta de Du Labs`.

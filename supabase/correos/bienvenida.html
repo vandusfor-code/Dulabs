@@ -1,0 +1,109 @@
+<!--
+  Correo de bienvenida / confirmación de cuenta de Du Labs.
+
+  DÓNDE VA: Supabase → Authentication → Emails → "Confirm signup" →
+  pegar este HTML en el cuerpo y poner como asunto:
+      Confirma tu cuenta de Du Labs
+
+  Por qué aquí y no en código: la plataforma no tiene proveedor de correo
+  propio (no hay Resend/SendGrid instalado), pero Supabase Auth ya envía
+  correos de verdad -- es el mismo canal que usan las invitaciones de
+  equipo. Aprovecharlo evita sumar un servicio, un dominio verificado y
+  una API key más solo para dar la bienvenida.
+
+  {{ .ConfirmationURL }} lo reemplaza Supabase con el enlace real.
+  HTML de correo a propósito: tablas y estilos en línea, porque Gmail y
+  Outlook descartan <style> y flex/grid.
+-->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0;padding:0;background-color:#0d0f0e;">
+  <tr>
+    <td align="center" style="padding:40px 16px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background-color:#141816;border:1px solid #232927;border-radius:16px;">
+
+        <tr>
+          <td style="padding:36px 36px 0 36px;">
+            <p style="margin:0;font-family:'Courier New',monospace;font-size:11px;letter-spacing:2px;text-transform:uppercase;color:#a3e635;">
+              Du Labs
+            </p>
+            <h1 style="margin:18px 0 0 0;font-family:Georgia,'Times New Roman',serif;font-size:27px;line-height:1.2;font-weight:600;color:#f2f5f3;">
+              Tu WhatsApp con IA empieza aquí
+            </h1>
+            <p style="margin:14px 0 0 0;font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.6;color:#9fb0aa;">
+              Gracias por crear tu cuenta. Confirma tu correo y en pocos minutos tu negocio puede estar respondiendo solo, 24/7, sobre la API oficial de WhatsApp.
+            </p>
+          </td>
+        </tr>
+
+        <tr>
+          <td align="center" style="padding:28px 36px 8px 36px;">
+            <table role="presentation" cellpadding="0" cellspacing="0">
+              <tr>
+                <td align="center" style="background-color:#a3e635;border-radius:999px;">
+                  <a href="{{ .ConfirmationURL }}"
+                     style="display:inline-block;padding:14px 32px;font-family:Helvetica,Arial,sans-serif;font-size:15px;font-weight:600;color:#0d0f0e;text-decoration:none;">
+                    Confirmar mi cuenta
+                  </a>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+        <tr>
+          <td style="padding:8px 36px 0 36px;">
+            <p style="margin:0;font-family:Helvetica,Arial,sans-serif;font-size:12px;line-height:1.6;color:#6f807b;text-align:center;">
+              Si el botón no funciona, copia y pega este enlace:<br>
+              <a href="{{ .ConfirmationURL }}" style="color:#a3e635;word-break:break-all;">{{ .ConfirmationURL }}</a>
+            </p>
+          </td>
+        </tr>
+
+        <tr>
+          <td style="padding:32px 36px 0 36px;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid #232927;">
+              <tr><td style="height:24px;"></td></tr>
+              <tr>
+                <td>
+                  <p style="margin:0 0 14px 0;font-family:Helvetica,Arial,sans-serif;font-size:13px;font-weight:600;color:#f2f5f3;">
+                    Lo que sigue, en tres pasos
+                  </p>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding-bottom:12px;font-family:Helvetica,Arial,sans-serif;font-size:13.5px;line-height:1.5;color:#9fb0aa;">
+                  <strong style="color:#a3e635;">1.</strong>&nbsp;&nbsp;Elige tu plan
+                </td>
+              </tr>
+              <tr>
+                <td style="padding-bottom:12px;font-family:Helvetica,Arial,sans-serif;font-size:13.5px;line-height:1.5;color:#9fb0aa;">
+                  <strong style="color:#a3e635;">2.</strong>&nbsp;&nbsp;Conecta tu número de WhatsApp Business
+                </td>
+              </tr>
+              <tr>
+                <td style="padding-bottom:4px;font-family:Helvetica,Arial,sans-serif;font-size:13.5px;line-height:1.5;color:#9fb0aa;">
+                  <strong style="color:#a3e635;">3.</strong>&nbsp;&nbsp;Entrena tu agente con la información de tu negocio
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+        <tr>
+          <td style="padding:28px 36px 34px 36px;">
+            <p style="margin:0;font-family:Helvetica,Arial,sans-serif;font-size:12px;line-height:1.6;color:#6f807b;">
+              ¿Dudas? Escríbenos a <a href="mailto:contacto@dulabs.co" style="color:#a3e635;text-decoration:none;">contacto@dulabs.co</a>.
+            </p>
+            <p style="margin:12px 0 0 0;font-family:Helvetica,Arial,sans-serif;font-size:11.5px;line-height:1.6;color:#55635f;">
+              Si no creaste esta cuenta, puedes ignorar este mensaje y no pasará nada.
+            </p>
+          </td>
+        </tr>
+
+      </table>
+
+      <p style="margin:22px 0 0 0;font-family:Helvetica,Arial,sans-serif;font-size:11px;color:#55635f;">
+        Du Labs · dulabs.co · Hecho en Colombia
+      </p>
+    </td>
+  </tr>
+</table>

@@ -183,7 +183,7 @@ export default function CampanasPage() {
   return (
     <div className="pb-12">
       <PageHeader
-        eyebrow="Broadcasts"
+        eyebrow={t("Campañas", "Broadcasts")}
         title={t("Campañas", "Campaigns")}
         description={t(
           "Envía transmisiones a tus contactos y sigue la entrega, lectura y respuesta en tiempo real.",

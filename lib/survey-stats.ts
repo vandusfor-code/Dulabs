@@ -191,6 +191,9 @@ export function summaryFromConfig(config: SurveyConfigRow, sessions: SurveySessi
     completed,
     completionRate: pct(completed, started),
     updatedAt: relativo,
+    // Fecha real, aparte del texto relativo que se muestra: el filtro por
+    // antigüedad de la tabla necesita algo comparable, y "hace 2 h" no lo es.
+    updatedAtISO: config.updated_at,
   };
 }
 

@@ -485,7 +485,7 @@ function ModalActivar({
         {paso !== "confirmacion" && (
           <div className="flex items-center justify-between">
             <h3 className="text-lg font-semibold text-fg">{t("Activar", "Activate")} {agente.nombre}</h3>
-            <button onClick={onClose} className="text-mist hover:text-fg"><X className="size-5" /></button>
+            <button onClick={onClose} aria-label={t("Cerrar", "Close")} className="text-mist hover:text-fg"><X className="size-5" /></button>
           </div>
         )}
 

@@ -27,9 +27,19 @@ export function SurveyPerformanceChart({
   const plotW = w - padL - padR;
   const plotH = h - padT - padB;
 
-  // Eje Y fijo a 2000 con marcas cada 500 (como el mockup).
-  const yMax = 2000;
-  const ticks = [0, 500, 1000, 1500, 2000];
+  // El eje Y se adapta a los datos reales. Antes estaba fijo en 2000 (como
+  // el mockup) y cualquier encuesta que superara esa cifra se dibujaba con
+  // la línea aplastada contra el borde, sin ningún aviso de que los valores
+  // estaban recortados -- un gráfico que miente en silencio. Se redondea
+  // hacia arriba a una escala "redonda" para que las marcas sigan legibles.
+  const maxDato = Math.max(0, ...data.flatMap((d) => [d.started, d.completed]));
+  const escalaBonita = (v: number) => {
+    if (v <= 0) return 100;
+    const magnitud = Math.pow(10, Math.floor(Math.log10(v)));
+    return Math.ceil(v / (magnitud / 2)) * (magnitud / 2);
+  };
+  const yMax = Math.max(100, escalaBonita(maxDato));
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => Math.round(yMax * f));
   const fmtTick = (v: number) => (v === 0 ? "0" : v >= 1000 ? `${v / 1000}K`.replace(".0", "") : String(v));
 
   const x = (i: number) => padL + (data.length > 1 ? (i / (data.length - 1)) * plotW : plotW / 2);

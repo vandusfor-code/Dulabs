@@ -87,8 +87,8 @@ export default function LoginPage() {
       }
       setMensaje(
         t(
-          "Cuenta creada. Si tu proyecto requiere confirmación por correo, revisa tu bandeja antes de iniciar sesión.",
-          "Account created. If your project requires email confirmation, check your inbox before signing in."
+          "¡Listo! Te enviamos un correo de bienvenida a tu bandeja. Confírmalo para entrar a tu panel.",
+          "You're in! We sent a welcome email to your inbox. Confirm it to access your dashboard."
         )
       );
       setModo("login");
