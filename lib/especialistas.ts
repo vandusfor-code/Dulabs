@@ -37,6 +37,31 @@ export async function especialistaPorToken(supabase: SupabaseClient, token: stri
   return (data as Especialista) ?? null;
 }
 
+// El link real es "nombre-del-spa-{token}": el nombre es puramente
+// cosmético (para que el link se vea bien), lo único que de verdad protege
+// el acceso es el token corto al final. Se busca por el ÚLTIMO segmento
+// después del guion -- así un link sin nombre (solo el token pelado)
+// también sigue funcionando, por compatibilidad.
+function normalizarSlug(texto: string): string {
+  return texto
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "") // quita tildes
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40);
+}
+
+export function construirRutaAgenda(nombreNegocio: string, token: string): string {
+  const slug = normalizarSlug(nombreNegocio);
+  return slug ? `${slug}-${token}` : token;
+}
+
+export async function especialistaPorRuta(supabase: SupabaseClient, ruta: string): Promise<Especialista | null> {
+  const token = ruta.split("-").pop() ?? ruta;
+  return especialistaPorToken(supabase, token);
+}
+
 export async function especialistaPorNumero(
   supabase: SupabaseClient,
   phoneNumberId: string,

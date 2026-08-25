@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { enviarTexto } from "@/lib/whatsapp";
 import { resolverTokenMeta } from "@/lib/dumo";
 import type { ClienteConfig } from "@/lib/supabase";
-import type { CitaEspecialista, Especialista } from "@/lib/especialistas";
+import { construirRutaAgenda, type CitaEspecialista, type Especialista } from "@/lib/especialistas";
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://dulabs.co";
 
@@ -34,11 +34,12 @@ async function enviar(cliente: Pick<ClienteConfig, "phone_number_id" | "meta_per
 // Avisa a la especialista que le llegó una solicitud nueva, con el link
 // directo a su agenda para que la apruebe o rechace.
 export async function notificarNuevaSolicitud(
-  cliente: Pick<ClienteConfig, "phone_number_id" | "meta_permanent_token">,
+  cliente: Pick<ClienteConfig, "phone_number_id" | "meta_permanent_token" | "nombre_negocio">,
   especialista: Especialista,
   cita: CitaEspecialista
 ): Promise<boolean> {
-  const texto = `📋 Nueva solicitud de cita\n\n${cita.nombre_cliente} · ${cita.servicio}\n${formatearFechaHora(cita.inicio)}\n\nConfírmala o recházala aquí:\n${SITE_URL}/agenda/${especialista.token}`;
+  const ruta = construirRutaAgenda(cliente.nombre_negocio, especialista.token);
+  const texto = `📋 Nueva solicitud de cita\n\n${cita.nombre_cliente} · ${cita.servicio}\n${formatearFechaHora(cita.inicio)}\n\nConfírmala o recházala aquí:\n${SITE_URL}/agenda/${ruta}`;
   return enviar(cliente, especialista.numero_whatsapp, texto);
 }
 

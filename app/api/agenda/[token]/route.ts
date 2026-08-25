@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import { especialistaPorToken, citasDeEspecialista, crearCitaEspecialista, confirmarCita } from "@/lib/especialistas";
+import { especialistaPorRuta, citasDeEspecialista, crearCitaEspecialista, confirmarCita } from "@/lib/especialistas";
 import { clienteDeEspecialista, notificarCitaConfirmada } from "@/lib/especialistas-notificar";
 
 export const runtime = "nodejs";
@@ -12,7 +12,7 @@ export const runtime = "nodejs";
 export async function GET(request: NextRequest, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
   const supabase = supabaseAdmin();
-  const especialista = await especialistaPorToken(supabase, token);
+  const especialista = await especialistaPorRuta(supabase, token);
   if (!especialista) return Response.json({ error: "Link inválido" }, { status: 404 });
 
   // Desde hoy (00:00 local) en adelante -- no interesa el historial viejo en esta vista.
@@ -37,7 +37,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
   const supabase = supabaseAdmin();
-  const especialista = await especialistaPorToken(supabase, token);
+  const especialista = await especialistaPorRuta(supabase, token);
   if (!especialista) return Response.json({ error: "Link inválido" }, { status: 404 });
 
   let body: { nombre_cliente?: string; telefono_cliente?: string; servicio?: string; inicio?: string; duracion_min?: number };

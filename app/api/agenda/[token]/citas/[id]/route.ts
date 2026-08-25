@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import { especialistaPorToken, confirmarCita, rechazarCita, proponerReagendamiento } from "@/lib/especialistas";
+import { especialistaPorRuta, confirmarCita, rechazarCita, proponerReagendamiento } from "@/lib/especialistas";
 import {
   clienteDeEspecialista,
   notificarCitaConfirmada,
@@ -20,7 +20,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   if (!Number.isInteger(citaId)) return Response.json({ error: "ID inválido" }, { status: 400 });
 
   const supabase = supabaseAdmin();
-  const especialista = await especialistaPorToken(supabase, token);
+  const especialista = await especialistaPorRuta(supabase, token);
   if (!especialista) return Response.json({ error: "Link inválido" }, { status: 404 });
 
   const { data: citaExistente } = await supabase
