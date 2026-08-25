@@ -25,6 +25,8 @@ export type ClienteConfig = {
   ultima_sincronizacion_meta: string | null;
   nombre_agente: string | null;
   ia_pausada: boolean;
+  /** NULL = responde a cualquiera. Con valor: solo estos números (coma-separados, solo dígitos) reciben respuesta. */
+  ia_restringida_a: string | null;
   forward_to_dumo: boolean;
   agente_id: number | null;
   marketplace_activacion_id: number | null;

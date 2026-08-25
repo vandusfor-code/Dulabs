@@ -538,6 +538,19 @@ async function atenderMensaje(cliente: ClienteConfig, mensaje: MetaMessage, nomb
     return;
   }
 
+  // Restricción temporal a ciertos remitentes (ej. mientras se prueba algo
+  // nuevo y no se quiere exponer clientes reales todavía). Distinta de
+  // ia_pausada: esa apaga TODO, incluidas las pruebas propias; esta deja
+  // pasar solo a los números autorizados y silencia al resto -- el mensaje
+  // de cualquiera queda igual registrado arriba, solo no recibe respuesta.
+  if (cliente.ia_restringida_a) {
+    const autorizados = cliente.ia_restringida_a.split(",").map((n) => n.trim()).filter(Boolean);
+    if (!autorizados.includes(soloDigitos(mensaje.from))) {
+      console.log(`[webhook-dulabs] IA restringida para "${cliente.nombre_negocio}": remitente no autorizado`);
+      return;
+    }
+  }
+
   // Control de pausa por chat: si el humano intervino en ESTA conversación y
   // la ventana sigue vigente, la IA guarda silencio (filas vencidas se ignoran).
   const { data: pausa, error } = await supabaseAdmin()
