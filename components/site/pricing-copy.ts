@@ -40,7 +40,7 @@ export const PRICING_COPY: Record<
     tag: { es: "Para negocios que manejan varias líneas de WhatsApp.", en: "For businesses running more than one WhatsApp line." },
     features: [
       { es: "Hasta 2 números de WhatsApp", en: "Up to 2 WhatsApp numbers" },
-      { es: "Hasta 2 agentes de IA", en: "Up to 2 AI agents" },
+      { es: "Hasta 3 agentes de IA", en: "Up to 3 AI agents" },
       { es: "2.500 respuestas de IA / mes", en: "2,500 AI replies / month" },
       { es: "Hasta 5 usuarios", en: "Up to 5 users" },
       { es: "Base de conocimiento", en: "Knowledge base" },

@@ -60,7 +60,7 @@ export default function WhatsappIaPage() {
         />
 
         <Reveal>
-          <ServiceCapabilities title="Qué incluye" desc="Todo corre sobre la API Oficial de WhatsApp Business (Meta Cloud API) — sin hacks no oficiales, sin riesgo de baneo." items={CAPACIDADES} />
+          <ServiceCapabilities title="Qué incluye" desc="Todo corre sobre la API Oficial de WhatsApp Business (Meta Cloud API) — sin herramientas no oficiales." items={CAPACIDADES} />
         </Reveal>
 
         <ServiceCallout>

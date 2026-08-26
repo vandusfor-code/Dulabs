@@ -5,6 +5,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { useI18n } from "@/lib/i18n";
 import { LanguageSelector } from "@/components/LanguageSelector";
+import { trackConversion } from "@/lib/site-analytics";
 import { MENSAJE_WHATSAPP_GENERICO_EN, MENSAJE_WHATSAPP_GENERICO_ES, whatsappVentasUrl } from "@/lib/site-contact";
 
 export function Nav() {
@@ -57,6 +58,7 @@ export function Nav() {
             href={whatsappVentasUrl(lang === "en" ? MENSAJE_WHATSAPP_GENERICO_EN : MENSAJE_WHATSAPP_GENERICO_ES)}
             target="_blank"
             rel="noopener noreferrer"
+            onClick={() => trackConversion("cta_whatsapp", { source: "nav" })}
             className="group inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-full bg-site-fg px-3.5 text-[12.5px] font-medium text-site-bg transition-all hover:bg-site-fg/90"
           >
             {t("Hablar con DuLabs", "Talk to DuLabs")}

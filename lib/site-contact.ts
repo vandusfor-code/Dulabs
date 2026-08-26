@@ -7,10 +7,14 @@ export function whatsappVentasUrl(mensaje: string): string {
   return `https://wa.me/${WHATSAPP_VENTAS_NUMERO}?text=${encodeURIComponent(mensaje)}`;
 }
 
-export const MENSAJE_WHATSAPP_GENERICO_ES =
-  "Hola, quiero que me configuren mi bot de WhatsApp con Dulabs 🙌";
-export const MENSAJE_WHATSAPP_GENERICO_EN =
-  "Hi, I'd like Dulabs to set up my WhatsApp bot 🙌";
+export const MENSAJE_WHATSAPP_GENERICO_ES = "Hola, quiero información sobre WhatsApp con IA.";
+export const MENSAJE_WHATSAPP_GENERICO_EN = "Hi, I'd like information about WhatsApp with AI.";
+
+export const MENSAJE_WHATSAPP_ENTERPRISE_ES = "Hola, quiero hablar sobre un proyecto para mi empresa.";
+export const MENSAJE_WHATSAPP_ENTERPRISE_EN = "Hi, I'd like to talk about a project for my company.";
+
+export const MENSAJE_WHATSAPP_CONTACTO_ES = "Hola, quiero conocer las soluciones de DuLabs.";
+export const MENSAJE_WHATSAPP_CONTACTO_EN = "Hi, I'd like to learn about DuLabs' solutions.";
 
 export function mensajePlanWhatsapp(nombrePlan: string, lang: "es" | "en"): string {
   return lang === "en"

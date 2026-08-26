@@ -49,7 +49,7 @@ export default function SolucionesEmpresarialesPage() {
               <p className="mt-5 text-[15.5px] leading-relaxed text-site-muted-fg md:text-[16.5px]">
                 No todas las empresas tienen los mismos procesos. Diseñamos e implementamos soluciones alrededor de
                 las necesidades reales de cada organización: IA, automatización, software, integraciones, datos y
-                sistemas internos.
+                sistemas internos. El tiempo depende del alcance del proyecto.
               </p>
               <div className="mt-8 flex flex-wrap items-center gap-3">
                 <a

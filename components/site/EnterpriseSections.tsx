@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useState, useRef, type FormEvent } from "react";
 import {
   ArrowRight,
   Bot,
@@ -15,7 +15,14 @@ import {
 import { SectionHeading } from "./Sections";
 import { Reveal } from "./Reveal";
 import { useI18n } from "@/lib/i18n";
-import { whatsappVentasUrl } from "@/lib/site-contact";
+import { trackConversion } from "@/lib/site-analytics";
+import {
+  MENSAJE_WHATSAPP_CONTACTO_EN,
+  MENSAJE_WHATSAPP_CONTACTO_ES,
+  MENSAJE_WHATSAPP_ENTERPRISE_EN,
+  MENSAJE_WHATSAPP_ENTERPRISE_ES,
+  whatsappVentasUrl,
+} from "@/lib/site-contact";
 
 /* =========================================================
    Soluciones — DuLabs no es solo el bot de WhatsApp
@@ -182,12 +189,18 @@ export function EnterpriseSection() {
                 <Building2 className="h-3 w-3" /> Enterprise
               </span>
               <h2 className="mt-5 max-w-xl font-display text-[32px] font-medium leading-[1.1] tracking-[-0.02em] text-site-fg md:text-[42px]">
-                {t("¿Necesitas algo más?", "Need something more?")}
+                {t("Soluciones tecnológicas a medida", "Custom technology solutions")}
               </h2>
               <p className="mt-5 max-w-lg text-[15.5px] leading-relaxed text-site-fg/90">
                 {t(
-                  "Construimos soluciones a medida para empresas que necesitan ir más allá de una plataforma estándar.",
-                  "We build custom solutions for companies that need to go beyond a standard platform."
+                  "Construimos soluciones a medida para empresas que necesitan ir más allá de una plataforma estándar: CRM empresarial, sistemas internos, agentes de IA, automatización, integraciones, dashboards y plataformas web.",
+                  "We build custom solutions for companies that need to go beyond a standard platform: enterprise CRM, internal systems, AI agents, automation, integrations, dashboards and web platforms."
+                )}
+              </p>
+              <p className="mt-3 max-w-lg text-[14px] leading-relaxed text-site-muted-fg">
+                {t(
+                  "Cotización personalizada según alcance y necesidades. El tiempo depende del alcance del proyecto.",
+                  "Custom quote based on scope and needs. Timeline depends on project scope."
                 )}
               </p>
               <p className="mt-3 max-w-lg text-[14px] leading-relaxed text-site-muted-fg">
@@ -207,10 +220,11 @@ export function EnterpriseSection() {
                 </a>
                 <a
                   href={whatsappVentasUrl(
-                    lang === "en" ? "Hi, I'd like to talk about an Enterprise project." : "Hola, quiero hablar sobre un proyecto Enterprise."
+                    lang === "en" ? MENSAJE_WHATSAPP_ENTERPRISE_EN : MENSAJE_WHATSAPP_ENTERPRISE_ES
                   )}
                   target="_blank"
                   rel="noopener noreferrer"
+                  onClick={() => trackConversion("cta_enterprise", { source: "enterprise_section" })}
                   className="inline-flex h-11 items-center rounded-full border border-site-border bg-site-card px-5 text-[13.5px] font-medium text-site-fg transition-all hover:border-white/20"
                 >
                   {t("Hablar con DuLabs", "Talk to DuLabs")}
@@ -285,6 +299,14 @@ export function EnterpriseContactSection() {
     t("Otro", "Other"),
   ];
 
+  const formStarted = useRef(false);
+
+  const marcarInicioFormulario = () => {
+    if (formStarted.current) return;
+    formStarted.current = true;
+    trackConversion("form_enterprise_start");
+  };
+
   const enviar = async (e: FormEvent) => {
     e.preventDefault();
     setEstado("enviando");
@@ -297,6 +319,7 @@ export function EnterpriseContactSection() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? t("No se pudo enviar la solicitud.", "Couldn't send the request."));
+      trackConversion("form_enterprise_submit");
       setEstado("exito");
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : t("Error enviando la solicitud.", "Error sending the request."));
@@ -338,10 +361,11 @@ export function EnterpriseContactSection() {
           </a>
           <a
             href={whatsappVentasUrl(
-              lang === "en" ? "Hi, I'd like to talk to DuLabs about a project." : "Hola, quiero hablar con DuLabs sobre un proyecto."
+              lang === "en" ? MENSAJE_WHATSAPP_CONTACTO_EN : MENSAJE_WHATSAPP_CONTACTO_ES
             )}
             target="_blank"
             rel="noopener noreferrer"
+            onClick={() => trackConversion("cta_enterprise", { source: "contact_section" })}
             className="group flex items-center justify-between gap-3 rounded-xl border border-site-border bg-site-card/50 p-5 transition-colors hover:border-white/20"
           >
             <div className="flex items-center gap-3">
@@ -368,7 +392,7 @@ export function EnterpriseContactSection() {
               </p>
             </div>
           ) : (
-            <form onSubmit={enviar} className="flex flex-col gap-4">
+            <form onSubmit={enviar} onFocus={marcarInicioFormulario} className="flex flex-col gap-4">
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
                   <label className="mb-1.5 block text-[12px] font-medium text-site-muted-fg">{t("Nombre", "Name")}</label>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useI18n } from "@/lib/i18n";
+import { trackConversion } from "@/lib/site-analytics";
 import { PLANES, type PlanId } from "@/lib/planes";
 import { mensajePlanWhatsapp, whatsappVentasUrl } from "@/lib/site-contact";
 
@@ -26,6 +27,7 @@ export default function PlanButton({
       }
       target={planId === "enterprise" ? undefined : "_blank"}
       rel={planId === "enterprise" ? undefined : "noopener noreferrer"}
+      onClick={() => trackConversion("plan_select", { plan: planId })}
       className={className}
     >
       {label ?? (planId === "enterprise" ? t("Hablar con ventas", "Talk to sales") : `${t("Quiero", "I want")} ${nombre}`)}

@@ -4,6 +4,7 @@ import { ArrowRight, Infinity, Share2, ShieldCheck, BrainCircuit, Zap } from "lu
 import { ProductMockup } from "./ProductMockup";
 import { SplitText } from "./SplitText";
 import { useI18n } from "@/lib/i18n";
+import { trackConversion } from "@/lib/site-analytics";
 import { MENSAJE_WHATSAPP_GENERICO_EN, MENSAJE_WHATSAPP_GENERICO_ES, whatsappVentasUrl } from "@/lib/site-contact";
 
 export function Hero() {
@@ -11,7 +12,7 @@ export function Hero() {
 
   const features = [
     { icon: Infinity, label: t("API Oficial\nde Meta", "Official Meta\nAPI") },
-    { icon: ShieldCheck, label: t("0% riesgo\nde bloqueo", "0% ban\nrisk") },
+    { icon: ShieldCheck, label: t("Sin herramientas\nno oficiales", "No unofficial\ntools") },
     { icon: Share2, label: t("Modo\nCoexistencia", "Coexistence\nMode") },
     { icon: BrainCircuit, label: t("Entrenado con\nClaude (Anthropic)", "Trained with\nClaude (Anthropic)") },
   ];
@@ -65,6 +66,7 @@ export function Hero() {
                 href={whatsappVentasUrl(lang === "en" ? MENSAJE_WHATSAPP_GENERICO_EN : MENSAJE_WHATSAPP_GENERICO_ES)}
                 target="_blank"
                 rel="noopener noreferrer"
+                onClick={() => trackConversion("cta_whatsapp", { source: "hero" })}
                 className="group inline-flex h-11 items-center rounded-full bg-site-fg px-5 text-[13.5px] font-medium text-site-bg transition-all hover:-translate-y-0.5 hover:bg-site-fg/90 hover:shadow-[0_10px_30px_-8px_rgba(255,255,255,0.25)]"
               >
                 {t("Cuéntanos de tu negocio", "Tell us about your business")}

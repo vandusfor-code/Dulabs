@@ -28,6 +28,7 @@ import { Reveal } from "./Reveal";
 import { useI18n } from "@/lib/i18n";
 import { PLANES, type PlanId } from "@/lib/planes";
 import { PRICING_COPY } from "./pricing-copy";
+import { trackConversion } from "@/lib/site-analytics";
 import { MENSAJE_WHATSAPP_GENERICO_EN, MENSAJE_WHATSAPP_GENERICO_ES, whatsappVentasUrl } from "@/lib/site-contact";
 
 /* =========================================================
@@ -169,7 +170,7 @@ export function FeaturesGridSection() {
     {
       icon: Send,
       title: t("Campañas", "Campaigns"),
-      desc: t("Mensajes masivos con plantillas aprobadas por Meta, sin riesgo de bloqueo.", "Bulk messages with Meta-approved templates, no ban risk."),
+      desc: t("Mensajes masivos con plantillas aprobadas por Meta. Sin herramientas no oficiales.", "Bulk messages with Meta-approved templates. No unofficial tools."),
     },
     {
       icon: Users,
@@ -229,7 +230,7 @@ export function MetricsSection() {
   const { t } = useI18n();
   const metrics = [
     { v: "100%", l: t("API Oficial de Meta", "Official Meta API"), s: t("Cada mensaje pasa por la infraestructura oficial de WhatsApp.", "Every message goes through WhatsApp's official infrastructure.") },
-    { v: "0%", l: t("Riesgo de bloqueo", "Ban risk"), s: t("Sin extensiones ni trucos que arriesguen tu número.", "No extensions or hacks that risk your number.") },
+    { v: "✓", l: t("Sin herramientas no oficiales", "No unofficial tools"), s: t("Infraestructura oficial de WhatsApp, sin extensiones ni hacks.", "Official WhatsApp infrastructure, no extensions or hacks.") },
     { v: "24/7", l: t("IA respondiendo", "AI replying"), s: t("Mientras tú sigues usando tu WhatsApp normal.", "While you keep using your regular WhatsApp.") },
     { v: "<2s", l: t("Tiempo de respuesta", "Response time"), s: t("Respuestas instantáneas para tus clientes.", "Instant replies for your customers.") },
   ];
@@ -507,8 +508,8 @@ export function FaqSection({ ids, showMoreLink = false }: { ids?: string[]; show
       id: "solo-whatsapp",
       q: t("¿DuLabs solo trabaja con WhatsApp?", "Does DuLabs only work with WhatsApp?"),
       a: t(
-        "No. WhatsApp con IA es nuestro producto más conocido, pero también desarrollamos automatizaciones, software a medida, CRM personalizados e integraciones entre sistemas. Si tu proyecto va más allá de WhatsApp, lo construimos igual.",
-        "No. WhatsApp with AI is our best-known product, but we also build automations, custom software, custom CRMs and integrations between systems. If your project goes beyond WhatsApp, we build that too."
+        "No. WhatsApp con IA es nuestro producto principal, pero también desarrollamos automatizaciones, software a medida, CRM personalizados e integraciones entre sistemas. Si tu proyecto va más allá de WhatsApp, lo construimos igual.",
+        "No. WhatsApp with AI is our main product, but we also build automations, custom software, custom CRMs and integrations between systems. If your project goes beyond WhatsApp, we build that too."
       ),
     },
     {
@@ -579,8 +580,8 @@ export function FaqSection({ ids, showMoreLink = false }: { ids?: string[]; show
       id: "api-oficial",
       q: t("¿Usan la API oficial de WhatsApp?", "Do you use the official WhatsApp API?"),
       a: t(
-        "Sí. Todo pasa por la API Oficial de WhatsApp Business (Meta Cloud API) — sin hacks no oficiales, sin riesgo de baneo.",
-        "Yes. Everything goes through the Official WhatsApp Business API (Meta Cloud API) — no unofficial hacks, no ban risk."
+        "Sí. Todo pasa por la API Oficial de WhatsApp Business (Meta Cloud API) — sin herramientas no oficiales.",
+        "Yes. Everything goes through the Official WhatsApp Business API (Meta Cloud API) — no unofficial tools."
       ),
     },
     {
@@ -706,8 +707,8 @@ export function FinalCta() {
         </h2>
         <p className="mx-auto mt-5 max-w-xl text-[15px] leading-relaxed text-site-muted-fg">
           {t(
-            "Sin configuración de tu parte, sin bloqueos, listo para producción en menos de 24 horas.",
-            "Nothing for you to configure, no bans, production-ready in under 24 hours."
+            "Sin configuración de tu parte. Infraestructura oficial de WhatsApp, listo para producción en menos de 24 horas.",
+            "Nothing for you to configure. Official WhatsApp infrastructure, production-ready in under 24 hours."
           )}
         </p>
         <div className="mt-10 flex flex-wrap items-center justify-center gap-3">
@@ -715,6 +716,7 @@ export function FinalCta() {
             href={whatsappVentasUrl(lang === "en" ? MENSAJE_WHATSAPP_GENERICO_EN : MENSAJE_WHATSAPP_GENERICO_ES)}
             target="_blank"
             rel="noopener noreferrer"
+            onClick={() => trackConversion("cta_whatsapp", { source: "final_cta" })}
             className="group inline-flex h-11 items-center rounded-full bg-site-fg px-5 text-[13.5px] font-medium text-site-bg transition-all hover:bg-site-fg/90"
           >
             {t("Hablar por WhatsApp", "Chat on WhatsApp")} <ArrowRight className="ml-1.5 h-4 w-4 transition-transform group-hover:translate-x-0.5" />

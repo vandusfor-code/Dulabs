@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import Script from "next/script";
 import { LangProvider } from "@/lib/i18n";
 import { JsonLd } from "@/components/site/JsonLd";
+import { SiteAnalytics } from "@/components/site/SiteAnalytics";
 import { organizationSchema, websiteSchema } from "@/lib/schema";
 import "./globals.css";
 
@@ -19,7 +20,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "DuLabs | IA, Automatización y Software para Empresas",
   description:
-    "DuLabs diseña e implementa soluciones de IA, automatización, software e integraciones para empresas. WhatsApp con IA, CRM, dashboards y soluciones a medida.",
+    "DuLabs diseña e implementa soluciones de IA, automatización, software e integraciones para empresas. WhatsApp con IA, CRM y soluciones a medida.",
   metadataBase: new URL("https://www.dulabs.co"),
   alternates: {
     canonical: "https://www.dulabs.co/",
@@ -57,6 +58,7 @@ export default function RootLayout({
       <body className="min-h-full flex flex-col bg-ink text-fg">
         <JsonLd data={organizationSchema()} />
         <JsonLd data={websiteSchema()} />
+        <SiteAnalytics />
         <Script id="tema-inicial" strategy="beforeInteractive">
           {`try {
             if (localStorage.getItem('du_labs_theme') === 'dark') {

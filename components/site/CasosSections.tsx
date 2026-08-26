@@ -35,13 +35,13 @@ const CASOS: Caso[] = [
     problema:
       "Un negocio de servicios de belleza recibía solicitudes de citas por WhatsApp de forma completamente manual, con riesgo de choques de horario y tiempo de respuesta lento fuera de horario de atención.",
     solucion:
-      "Un asistente de WhatsApp con IA que atiende, responde preguntas sobre servicios y precios, y gestiona el agendamiento de citas directamente por chat, validando disponibilidad real de cada especialista.",
+      "Un asistente de WhatsApp con IA que atiende consultas sobre servicios y precios, y recibe solicitudes de cita por chat para que el equipo las confirme manualmente.",
     tecnologia: ["WhatsApp Business Platform (Meta Cloud API)", "Claude (Anthropic)", "Supabase"],
     implementado: [
-      "Atención automática con base de conocimiento de servicios",
-      "Agendamiento de citas con validación de disponibilidad en tiempo real",
-      "Panel para que el equipo gestione su propia agenda",
-      "Reasignación de citas entre especialistas sin choques de horario",
+      "Atención automática con base de conocimiento de servicios y precios",
+      "Recepción de solicitudes de cita por WhatsApp",
+      "Asistente con IA entrenado con el tono del negocio",
+      "El equipo confirma las citas manualmente",
     ],
   },
 ];
