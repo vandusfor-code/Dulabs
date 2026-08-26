@@ -4,7 +4,8 @@ import { supabaseAdmin, type ClienteConfig } from "@/lib/supabase";
 import { generarRespuestaIA, construirSystemPrompt } from "@/lib/ia";
 import { obtenerHistorialConversacion } from "@/lib/historial-conversacion";
 import { generarRespuestaConEspecialistaIA } from "@/lib/especialista-solicitud-ia";
-import { tieneEspecialistasActivas } from "@/lib/especialistas";
+import { generarRespuestaAdminEspecialistaIA } from "@/lib/especialista-admin-ia";
+import { tieneEspecialistasActivas, especialistaPorNumero } from "@/lib/especialistas";
 import { resolverConfigAgente, type ConfigAgenteEfectiva } from "@/lib/agentes";
 import { planDelTenant } from "@/lib/plan-limits";
 import { agentePorSlug, INSTRUCCION_ADMIN } from "@/lib/marketplace";
@@ -629,7 +630,23 @@ async function atenderMensaje(cliente: ClienteConfig, mensaje: MetaMessage, nomb
   // lib/especialistas.ts) -- para el resto de la plataforma este chequeo es
   // un simple false y el comportamiento sigue exactamente igual que siempre.
   const conEspecialistas = await tieneEspecialistasActivas(supabaseAdmin(), cliente.phone_number_id);
-  const respuesta = conEspecialistas
+  // Si quien escribe es una de las propias especialistas del negocio (por su
+  // número de WhatsApp), se le atiende como administradora -- consulta la
+  // agenda y agenda citas ya confirmadas para otras personas, no como una
+  // clienta pidiendo un servicio para sí misma.
+  const especialistaAdmin = conEspecialistas
+    ? await especialistaPorNumero(supabaseAdmin(), cliente.phone_number_id, soloDigitos(mensaje.from))
+    : null;
+
+  const respuesta = especialistaAdmin
+    ? await generarRespuestaAdminEspecialistaIA({
+        supabase: supabaseAdmin(),
+        cliente,
+        especialista: especialistaAdmin,
+        textoUsuario: mensaje.text!.body,
+        historial,
+      })
+    : conEspecialistas
     ? await generarRespuestaConEspecialistaIA({
         supabase: supabaseAdmin(),
         cliente,

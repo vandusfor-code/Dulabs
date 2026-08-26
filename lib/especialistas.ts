@@ -75,6 +75,11 @@ export async function especialistaPorId(supabase: SupabaseClient, id: number): P
   return (data as Especialista) ?? null;
 }
 
+// Si quien escribe es una de las especialistas del negocio (por su número de
+// WhatsApp), para tratarla como administradora y no como clienta. Una misma
+// persona puede tener más de una fila (ej. Daniela: "pestañas" + "general"),
+// así que toma la primera -- solo importa que exista alguna, cualquiera de
+// sus filas comparte nombre/id_tenant/phone_number_id.
 export async function especialistaPorNumero(
   supabase: SupabaseClient,
   phoneNumberId: string,
@@ -86,8 +91,8 @@ export async function especialistaPorNumero(
     .eq("phone_number_id", phoneNumberId)
     .eq("numero_whatsapp", numeroRemitente)
     .eq("activo", true)
-    .maybeSingle();
-  return (data as Especialista) ?? null;
+    .limit(1);
+  return (data?.[0] as Especialista) ?? null;
 }
 
 // True si el número tiene al menos una especialista activa configurada.
