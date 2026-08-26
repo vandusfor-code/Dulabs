@@ -560,11 +560,16 @@ body {
   from { transform: scaleY(0.2); }
   to { transform: scaleY(1); }
 }
+@keyframes site-bubble-in {
+  from { opacity: 0; transform: translateY(6px) scale(0.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
 .animate-site-ambient { animation: site-ambient-shift 22s ease-in-out infinite; }
 .animate-site-fade-up { animation: site-fade-up 0.8s cubic-bezier(.2,.7,.2,1) both; }
 .animate-site-ping-soft { animation: site-ping-soft 2.4s cubic-bezier(0, 0, 0.2, 1) infinite; }
 .animate-site-ring-spin { animation: site-ring-spin 24s linear infinite; }
 .animate-site-bar-rise { animation: site-bar-rise 0.8s ease-out both; }
+.animate-site-bubble-in { animation: site-bubble-in 0.32s cubic-bezier(.2,.8,.2,1) both; }
 .animate-site-marquee { animation: marquee 50s linear infinite; }
 .animate-site-float { animation: float-y 7s ease-in-out infinite; }
 .animate-site-pulse-glow { animation: dot-pulse 2.6s ease-in-out infinite; }
@@ -683,6 +688,7 @@ body {
   .animate-site-marquee,
   .animate-site-float,
   .animate-site-pulse-glow,
+  .animate-site-bubble-in,
   .site-stream-in,
   .site-grain {
     animation: none;

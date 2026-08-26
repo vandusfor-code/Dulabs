@@ -1,7 +1,7 @@
 "use client";
 
 import { ArrowRight, Zap } from "lucide-react";
-import { CommandCenter } from "./CommandCenter";
+import { PhoneDemo } from "./PhoneDemo";
 import { SplitText } from "./SplitText";
 import { useI18n } from "@/lib/i18n";
 import { MENSAJE_WHATSAPP_GENERICO_EN, MENSAJE_WHATSAPP_GENERICO_ES, whatsappVentasUrl } from "@/lib/site-contact";
@@ -72,7 +72,7 @@ export function Hero() {
         </div>
 
         <div id="plataforma" className="relative mt-16 md:mt-20 animate-site-fade-up">
-          <CommandCenter />
+          <PhoneDemo />
         </div>
       </div>
     </section>
