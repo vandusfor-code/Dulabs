@@ -3,7 +3,9 @@ import { Hero } from "@/components/site/Hero";
 import { Reveal } from "@/components/site/Reveal";
 import { PageSpotlight } from "@/components/site/PageSpotlight";
 import {
+  HowItWorksSection,
   PricingSection,
+  NextLevelSection,
   FeaturesGridSection,
   MetricsSection,
   FaqSection,
@@ -11,7 +13,7 @@ import {
   Footer,
 } from "@/components/site/Sections";
 
-const FAQ_HOME_IDS = ["cancelar", "conexion", "seguridad", "meta-cobra"];
+const FAQ_HOME_IDS = ["cancelar", "conexion", "quien-configura", "seguridad", "meta-cobra"];
 
 export default function Home() {
   return (
@@ -23,7 +25,15 @@ export default function Home() {
         <Hero />
 
         <Reveal>
+          <HowItWorksSection />
+        </Reveal>
+
+        <Reveal>
           <PricingSection showComparisonLink />
+        </Reveal>
+
+        <Reveal>
+          <NextLevelSection />
         </Reveal>
 
         <Reveal>

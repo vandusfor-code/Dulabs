@@ -8,12 +8,15 @@ import {
   ClipboardList,
   FileUp,
   Globe,
+  MessageCircle,
   Phone,
   Plus,
+  Rocket,
   Send,
   ShieldCheck,
   Sparkles,
   Users,
+  Wrench,
   Zap,
 } from "lucide-react";
 import { useState } from "react";
@@ -24,6 +27,7 @@ import { Reveal } from "./Reveal";
 import { useI18n } from "@/lib/i18n";
 import { PLANES, ORDEN_PLANES } from "@/lib/planes";
 import { PRICING_COPY } from "./pricing-copy";
+import { MENSAJE_WHATSAPP_GENERICO_EN, MENSAJE_WHATSAPP_GENERICO_ES, whatsappVentasUrl } from "@/lib/site-contact";
 
 /* =========================================================
    Shared primitives
@@ -77,6 +81,70 @@ export function SectionHeading({
         </p>
       )}
     </div>
+  );
+}
+
+/* =========================================================
+   0. Cómo funciona — la promesa central: nosotros lo configuramos
+========================================================= */
+
+export function HowItWorksSection() {
+  const { t } = useI18n();
+  const steps = [
+    {
+      n: "01",
+      icon: MessageCircle,
+      title: t("Nos cuentas de tu negocio", "You tell us about your business"),
+      desc: t(
+        "Por WhatsApp: qué vendes, tus precios, tus horarios, tu equipo. Nada de formularios largos ni configuraciones técnicas de tu parte.",
+        "Over WhatsApp: what you sell, your prices, your hours, your team. No long forms, no technical setup on your end."
+      ),
+    },
+    {
+      n: "02",
+      icon: Wrench,
+      title: t("Nosotros lo configuramos", "We set it up"),
+      desc: t(
+        "Conectamos tu número, entrenamos tu IA con la información real de tu negocio, y la probamos antes de activarla.",
+        "We connect your number, train your AI with your business' real information, and test it before turning it on."
+      ),
+    },
+    {
+      n: "03",
+      icon: Rocket,
+      title: t("Recibes tu bot funcionando", "You get your bot, working"),
+      desc: t(
+        "En menos de 24 horas tu WhatsApp ya está respondiendo solo, listo para atender clientes.",
+        "In under 24 hours your WhatsApp is already replying on its own, ready to serve customers."
+      ),
+    },
+  ];
+  return (
+    <section id="como-funciona" className="relative border-t border-site-border py-20">
+      <div className="mx-auto max-w-[1280px] px-6">
+        <SectionHeading
+          eyebrow={t("Cómo funciona", "How it works")}
+          title={<>{t("Tú no configuras nada.", "You don't configure anything.")} <br className="hidden md:block" />{t("Lo hacemos nosotros, en menos de 24 horas.", "We do it, in under 24 hours.")}</>}
+          align="center"
+        />
+        <div className="mt-14 grid grid-cols-1 gap-6 md:grid-cols-3">
+          {steps.map((s, i) => (
+            <Reveal key={s.n} delay={i * 100}>
+              <div className="relative h-full rounded-2xl border border-site-border bg-site-card/50 p-7">
+                <div className="flex items-center justify-between">
+                  <span className="font-mono text-[11px] text-site-muted-fg/60">{s.n}</span>
+                  <div className="flex h-9 w-9 items-center justify-center rounded-full bg-site-primary/10 ring-1 ring-site-primary/20">
+                    <s.icon className="h-4 w-4 text-site-primary" />
+                  </div>
+                </div>
+                <h3 className="mt-5 font-display text-[18px] font-medium tracking-tight text-site-fg">{s.title}</h3>
+                <p className="mt-2 text-[13.5px] leading-relaxed text-site-muted-fg">{s.desc}</p>
+              </div>
+            </Reveal>
+          ))}
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -276,6 +344,62 @@ export function PricingSection({ showComparisonLink = false }: { showComparisonL
 }
 
 /* =========================================================
+   3b. Siguiente nivel — automatización a la medida, sin precio, se cotiza aparte
+========================================================= */
+
+export function NextLevelSection() {
+  const { t, lang } = useI18n();
+  const items = [
+    t("Integraciones con tu CRM, calendario o sistema de pagos", "Integrations with your CRM, calendar or payment system"),
+    t("Flujos automáticos a la medida de tu negocio (agenda, cobros, seguimientos)", "Custom automated flows for your business (scheduling, payments, follow-ups)"),
+    t("Paneles y reportes hechos a tu medida", "Custom-built dashboards and reports"),
+    t("Automatizaciones que conectan WhatsApp con el resto de tus herramientas", "Automations that connect WhatsApp to the rest of your tools"),
+  ];
+  return (
+    <section id="siguiente-nivel" className="relative border-t border-site-border py-20">
+      <div className="mx-auto max-w-[1280px] px-6">
+        <div className="overflow-hidden rounded-2xl border border-site-border bg-site-card/40 p-8 md:p-12">
+          <div className="grid gap-10 md:grid-cols-[1fr_auto] md:items-center">
+            <div>
+              <SectionHeading
+                eyebrow={t("Cuando quieras llevarlo más lejos", "When you want to take it further")}
+                labelStyle="kicker"
+                size="md"
+                title={t("Automatización e implementación a la medida.", "Custom automation and implementation.")}
+                desc={t(
+                  "El bot en 24 horas es el punto de partida. Cuando tu negocio esté listo para el siguiente nivel, construimos automatizaciones e integraciones a la medida — esto se conversa y se cotiza aparte, según lo que necesites.",
+                  "The 24-hour bot is the starting point. When your business is ready for the next level, we build custom automations and integrations — this is discussed and quoted separately, based on what you need."
+                )}
+              />
+              <ul className="mt-6 flex flex-col gap-2.5">
+                {items.map((it) => (
+                  <li key={it} className="flex items-start gap-2.5 text-[13.5px] text-site-fg/90">
+                    <Check className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-site-primary" />
+                    {it}
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <a
+              href={whatsappVentasUrl(
+                lang === "en"
+                  ? "Hi, I'd like to talk about custom automation for my business."
+                  : "Hola, quiero hablar sobre automatización a la medida para mi negocio."
+              )}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex h-11 shrink-0 items-center justify-center rounded-full border border-site-border bg-site-card px-6 text-[13.5px] font-medium text-site-fg transition-all hover:border-white/20 md:w-fit"
+            >
+              {t("Hablemos de tu caso", "Let's talk about your case")}
+            </a>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/* =========================================================
    4. FAQ (respuestas reales)
 ========================================================= */
 
@@ -284,10 +408,18 @@ export function FaqSection({ ids, showMoreLink = false }: { ids?: string[]; show
   const allFaqs = [
     {
       id: "conexion",
-      q: t("¿Qué tan rápido puedo conectar mi WhatsApp?", "How fast can I connect my WhatsApp?"),
+      q: t("¿Qué tan rápido queda listo mi bot?", "How fast is my bot ready?"),
       a: t(
-        "El flujo de conexión con Meta (Embedded Signup) toma unos minutos. En cuanto conectas tu número, ya puedes entrenar tu IA y empezar a recibir mensajes.",
-        "Meta's connection flow (Embedded Signup) takes a few minutes. As soon as you connect your number, you can train your AI and start receiving messages."
+        "Menos de 24 horas. Nos cuentas de tu negocio por WhatsApp, nosotros conectamos tu número, entrenamos tu IA y te avisamos apenas quede funcionando.",
+        "Under 24 hours. You tell us about your business over WhatsApp, we connect your number, train your AI, and let you know as soon as it's up and running."
+      ),
+    },
+    {
+      id: "quien-configura",
+      q: t("¿Yo tengo que configurar algo?", "Do I have to configure anything?"),
+      a: t(
+        "No. Nosotros conectamos tu número, escribimos las instrucciones de tu IA y probamos que responda bien antes de activarla. Tú solo nos cuentas de tu negocio.",
+        "No. We connect your number, write your AI's instructions, and test that it replies well before turning it on. You just tell us about your business."
       ),
     },
     {
@@ -407,7 +539,7 @@ export function FaqSection({ ids, showMoreLink = false }: { ids?: string[]; show
 ========================================================= */
 
 export function FinalCta() {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   return (
     <section id="demo" className="relative overflow-hidden border-t border-site-border py-24">
       <div className="pointer-events-none absolute inset-0 site-ambient-bg animate-site-ambient opacity-90" />
@@ -416,29 +548,29 @@ export function FinalCta() {
       <div className="relative mx-auto max-w-3xl px-6 text-center">
         <SectionLabel>{t("Empecemos", "Let's start")}</SectionLabel>
         <h2 className="mt-5 font-display text-[38px] font-medium leading-[1.05] tracking-[-0.025em] site-text-gradient md:text-[56px]">
-          {t("Conecta tu WhatsApp", "Connect your WhatsApp")} <br />
-          <span className="site-text-gradient-primary">{t("y deja que la IA atienda hoy.", "and let the AI answer today.")}</span>
+          {t("Cuéntanos de tu negocio", "Tell us about your business")} <br />
+          <span className="site-text-gradient-primary">{t("y lo tienes funcionando mañana.", "and have it running tomorrow.")}</span>
         </h2>
         <p className="mx-auto mt-5 max-w-xl text-[15px] leading-relaxed text-site-muted-fg">
           {t(
-            "Sin bloqueos, sin extensiones raras, listo para producción desde el primer día.",
-            "No bans, no sketchy extensions, production-ready from day one."
+            "Sin configuración de tu parte, sin bloqueos, listo para producción en menos de 24 horas.",
+            "Nothing for you to configure, no bans, production-ready in under 24 hours."
           )}
         </p>
         <div className="mt-10 flex flex-wrap items-center justify-center gap-3">
-          <Link
-            href="/business"
-            className="group inline-flex h-11 items-center rounded-full bg-site-fg px-5 text-[13.5px] font-medium text-site-bg transition-all hover:bg-site-fg/90"
-          >
-            {t("Comenzar ahora", "Get started")} <ArrowRight className="ml-1.5 h-4 w-4 transition-transform group-hover:translate-x-0.5" />
-          </Link>
           <a
-            href="https://wa.me/573148127388"
+            href={whatsappVentasUrl(lang === "en" ? MENSAJE_WHATSAPP_GENERICO_EN : MENSAJE_WHATSAPP_GENERICO_ES)}
             target="_blank"
             rel="noopener noreferrer"
+            className="group inline-flex h-11 items-center rounded-full bg-site-fg px-5 text-[13.5px] font-medium text-site-bg transition-all hover:bg-site-fg/90"
+          >
+            {t("Hablar por WhatsApp", "Chat on WhatsApp")} <ArrowRight className="ml-1.5 h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+          </a>
+          <a
+            href="#precios"
             className="inline-flex h-11 items-center rounded-full border border-site-border bg-site-card px-5 text-[13.5px] font-medium text-site-fg hover:border-white/20"
           >
-            {t("Hablar por WhatsApp", "Chat on WhatsApp")}
+            {t("Ver planes", "See plans")}
           </a>
         </div>
       </div>

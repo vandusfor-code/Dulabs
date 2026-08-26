@@ -1,6 +1,6 @@
 import { Nav } from "@/components/site/Nav";
 import { PageSpotlight } from "@/components/site/PageSpotlight";
-import { PricingSection, FaqSection, Footer } from "@/components/site/Sections";
+import { PricingSection, NextLevelSection, FaqSection, Footer } from "@/components/site/Sections";
 
 export default function PreciosPage() {
   return (
@@ -10,6 +10,7 @@ export default function PreciosPage() {
       <Nav />
       <main className="pt-24 md:pt-28">
         <PricingSection />
+        <NextLevelSection />
         <FaqSection />
       </main>
       <Footer />

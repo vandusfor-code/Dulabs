@@ -5,9 +5,10 @@ import Link from "next/link";
 import Image from "next/image";
 import { useI18n } from "@/lib/i18n";
 import { LanguageSelector } from "@/components/LanguageSelector";
+import { MENSAJE_WHATSAPP_GENERICO_EN, MENSAJE_WHATSAPP_GENERICO_ES, whatsappVentasUrl } from "@/lib/site-contact";
 
 export function Nav() {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const links = [
     { label: t("Plataforma", "Platform"), href: "/#plataforma" },
     { label: t("Qué incluye", "What's included"), href: "/#incluye" },
@@ -56,13 +57,15 @@ export function Nav() {
           <Link href="/login" className="hidden text-[13px] text-site-muted-fg transition-colors hover:text-site-fg md:inline">
             {t("Iniciar sesión", "Log in")}
           </Link>
-          <Link
-            href="/business"
+          <a
+            href={whatsappVentasUrl(lang === "en" ? MENSAJE_WHATSAPP_GENERICO_EN : MENSAJE_WHATSAPP_GENERICO_ES)}
+            target="_blank"
+            rel="noopener noreferrer"
             className="group inline-flex h-8 items-center gap-1.5 rounded-full bg-site-fg px-3.5 text-[12.5px] font-medium text-site-bg transition-all hover:bg-site-fg/90"
           >
-            {t("Activar mi API", "Activate my API")}
+            {t("Empieza en 24h", "Start in 24h")}
             <span aria-hidden className="transition-transform group-hover:translate-x-0.5">→</span>
-          </Link>
+          </a>
         </div>
       </div>
     </header>
