@@ -27,6 +27,8 @@ export type ClienteConfig = {
   ia_pausada: boolean;
   /** NULL = responde a cualquiera. Con valor: solo estos números (coma-separados, solo dígitos) reciben respuesta. */
   ia_restringida_a: string | null;
+  /** Lista negra: estos números (coma-separados, solo dígitos) NUNCA reciben respuesta de la IA, sin importar nada más. */
+  ia_numeros_bloqueados: string | null;
   forward_to_dumo: boolean;
   agente_id: number | null;
   marketplace_activacion_id: number | null;

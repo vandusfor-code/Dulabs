@@ -522,6 +522,17 @@ async function atenderMensaje(cliente: ClienteConfig, mensaje: MetaMessage, nomb
     return;
   }
 
+  // Lista negra: estos números NUNCA reciben respuesta, sin importar nada
+  // más -- se revisa antes que cualquier otro flujo (encuestas, campañas,
+  // IA normal), a propósito. El mensaje queda igual registrado arriba.
+  if (cliente.ia_numeros_bloqueados) {
+    const bloqueados = cliente.ia_numeros_bloqueados.split(",").map((n) => n.trim()).filter(Boolean);
+    if (bloqueados.includes(soloDigitos(mensaje.from))) {
+      console.log(`[webhook-dulabs] número en lista negra para "${cliente.nombre_negocio}", ignorando`);
+      return;
+    }
+  }
+
   // Bot de encuestas: SOLO toma el turno si este contacto ya tiene una sesión
   // de encuesta activa (fue invitado explícitamente vía /dashboard/surveys).
   // Cualquier otro mensaje sigue el flujo normal del asistente de IA de abajo.
