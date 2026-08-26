@@ -112,10 +112,16 @@ export async function tieneEspecialistasActivas(supabase: SupabaseClient, phoneN
   return (count ?? 0) > 0;
 }
 
-// Busca primero una especialidad específica (ej. "pestañas" -> Nicol). Si no
-// hay ninguna que calce, cae al catálogo general del negocio (si tiene uno
-// configurado) -- así el resto de servicios también quedan con agenda real,
-// sin que cada uno necesite su propia fila.
+// Busca primero una especialidad específica y EXCLUSIVA (ej. "pestañas" ->
+// Nicol). Comparación por contención en ambos sentidos, no igualdad exacta:
+// una clienta rara vez pide el servicio pelado, casi siempre viene con el
+// tipo específico ("pestañas volumen ruso") -- con igualdad exacta esa
+// solicitud no calzaba con la fila "pestañas" y se perdía la protección de
+// horario y la aprobación manual (bug real, encontrado en pruebas).
+// Se excluyen a propósito las filas de categoría compartida (manos/pies,
+// ver categoriaDeServicio) -- esas NO son una especialidad exclusiva, son
+// varias personas intercambiables, y se resuelven aparte con
+// especialistasPorCategoria.
 export async function especialistaPorServicio(
   supabase: SupabaseClient,
   phoneNumberId: string,
@@ -126,10 +132,15 @@ export async function especialistaPorServicio(
     .select(COLUMNAS_ESPECIALISTA)
     .eq("phone_number_id", phoneNumberId)
     .eq("es_general", false)
-    .ilike("servicio", servicio)
-    .eq("activo", true)
-    .maybeSingle();
-  if (data) return data as Especialista;
+    .eq("activo", true);
+
+  const pedido = servicio.toLowerCase();
+  const candidatas = ((data as Especialista[]) ?? []).filter((e) => {
+    const propio = e.servicio.toLowerCase();
+    if (propio.includes("manos") || propio.includes("pies")) return false; // categoría compartida, no exclusiva
+    return pedido.includes(propio) || propio.includes(pedido);
+  });
+  if (candidatas.length > 0) return candidatas[0];
 
   const { data: general } = await supabase
     .from("dulabs_especialistas")
