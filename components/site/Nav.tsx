@@ -30,7 +30,7 @@ export function Nav() {
           : "border-b border-transparent bg-transparent"
       }`}
     >
-      <div className="mx-auto flex h-14 max-w-[1280px] items-center justify-between px-6">
+      <div className="mx-auto flex h-14 max-w-[1440px] items-center justify-between px-6">
         <Link href="#top" className="flex items-center gap-2.5 font-display text-[14px] font-medium tracking-tight text-site-fg">
           <Image src="/logo.png" alt="Du Labs" width={24} height={24} className="rounded-full" priority />
           <span>Du Labs</span>

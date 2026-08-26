@@ -21,13 +21,18 @@ export function Hero() {
       <div className="pointer-events-none absolute inset-0 site-ambient-bg animate-site-ambient" />
       <div className="pointer-events-none absolute inset-0 site-grid-bg [mask-image:radial-gradient(ellipse_at_center_top,black_20%,transparent_75%)]" />
 
-      <div className="relative mx-auto max-w-[1280px] px-6">
-        <div className="grid items-center gap-12 lg:grid-cols-[1fr_auto] lg:gap-8">
+      <div className="relative mx-auto max-w-[1440px] px-6">
+        {/* La composición laptop+teléfono es ancha (640px) y no se ve bien
+            achicada -- en vez de intentar escalarla en el rango intermedio
+            (1024-1280px, donde apretaría demasiado el texto), el corte a dos
+            columnas empieza en xl (1280px). Por debajo, layout apilado con
+            solo el teléfono (igual que mobile). */}
+        <div className="grid items-center gap-12 xl:grid-cols-[1fr_auto] xl:gap-10">
           {/* ---------- Columna izquierda: contenido comercial ---------- */}
           {/* min-w-0: sin esto, el badge whitespace-nowrap fuerza el track del
               grid a su ancho de contenido y desborda en mobile. */}
-          <div className="min-w-0 text-center lg:text-left">
-            <div className="flex justify-center lg:justify-start">
+          <div className="min-w-0 text-center xl:text-left">
+            <div className="flex justify-center xl:justify-start">
               <a
                 href="#como-funciona"
                 className="group inline-flex max-w-full items-center gap-2 rounded-full border border-site-primary/25 bg-site-primary/10 px-3 py-1 font-mono text-[10.5px] text-site-fg transition-all hover:border-site-primary/40 sm:whitespace-nowrap"
@@ -38,7 +43,7 @@ export function Hero() {
               </a>
             </div>
 
-            <h1 className="mx-auto mt-8 max-w-xl font-display text-[38px] font-medium leading-[1.05] tracking-[-0.03em] text-site-fg md:text-[52px] lg:mx-0 lg:max-w-2xl lg:text-[50px] xl:text-[56px]">
+            <h1 className="mx-auto mt-8 max-w-2xl font-display text-[38px] font-medium leading-[1.05] tracking-[-0.03em] text-site-fg sm:text-[46px] md:text-[56px] xl:mx-0 xl:max-w-3xl xl:text-[54px] 2xl:text-[60px]">
               <SplitText text={t("Tu WhatsApp con IA,", "Your WhatsApp with AI,")} className="site-text-gradient" />
               <br />
               <SplitText
@@ -48,14 +53,14 @@ export function Hero() {
               />
             </h1>
 
-            <p className="mx-auto mt-7 max-w-md text-[16px] leading-relaxed text-site-muted-fg md:text-[17px] lg:mx-0">
+            <p className="mx-auto mt-7 max-w-md text-[16px] leading-relaxed text-site-muted-fg md:max-w-lg md:text-[17px] xl:mx-0">
               {t(
                 "Nos cuentas de tu negocio y nosotros conectamos, entrenamos y entregamos tu asistente de WhatsApp funcionando — sin que tengas que configurar nada. Sobre la API Oficial de Meta.",
                 "You tell us about your business and we connect, train and deliver your working WhatsApp assistant — with nothing for you to configure. On Meta's official API."
               )}
             </p>
 
-            <div className="mt-9 flex flex-wrap items-center justify-center gap-3 lg:justify-start">
+            <div className="mt-9 flex flex-wrap items-center justify-center gap-3 xl:justify-start">
               <a
                 href={whatsappVentasUrl(lang === "en" ? MENSAJE_WHATSAPP_GENERICO_EN : MENSAJE_WHATSAPP_GENERICO_ES)}
                 target="_blank"
@@ -74,7 +79,7 @@ export function Hero() {
               </a>
             </div>
 
-            <div className="mt-11 flex flex-wrap items-start justify-center gap-x-1 gap-y-6 lg:flex-nowrap lg:justify-start">
+            <div className="mt-11 flex flex-wrap items-start justify-center gap-x-1 gap-y-6 xl:flex-nowrap xl:justify-start">
               {features.map((f, i) => (
                 <div key={f.label} className="flex items-start">
                   {i > 0 && <span className="mx-3 mt-1.5 hidden h-8 w-px shrink-0 bg-white/10 sm:block" />}

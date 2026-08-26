@@ -121,7 +121,7 @@ export function HowItWorksSection() {
   ];
   return (
     <section id="como-funciona" className="relative border-t border-site-border py-20">
-      <div className="mx-auto max-w-[1280px] px-6">
+      <div className="mx-auto max-w-[1440px] px-6">
         <SectionHeading
           eyebrow={t("Cómo funciona", "How it works")}
           title={<>{t("Tú no configuras nada.", "You don't configure anything.")} <br className="hidden md:block" />{t("Lo hacemos nosotros, en menos de 24 horas.", "We do it, in under 24 hours.")}</>}
@@ -198,7 +198,7 @@ export function FeaturesGridSection() {
   ];
   return (
     <section id="incluye" className="relative border-t border-site-border py-20">
-      <div className="mx-auto max-w-[1280px] px-6">
+      <div className="mx-auto max-w-[1440px] px-6">
         <SectionHeading
           eyebrow={t("Qué incluye", "What's included")}
           title={<>{t("Todo lo que necesitas para operar", "Everything you need to run")} <br className="hidden md:block" />{t("WhatsApp con IA, en un solo panel.", "WhatsApp with AI, in a single panel.")}</>}
@@ -234,7 +234,7 @@ export function MetricsSection() {
   ];
   return (
     <section id="metricas" className="relative border-t border-site-border py-10">
-      <div className="mx-auto max-w-[1280px] px-6">
+      <div className="mx-auto max-w-[1440px] px-6">
         <div className="grid grid-cols-2 gap-px overflow-hidden rounded-2xl border border-site-border bg-white/5 md:grid-cols-4">
           {metrics.map((m) => (
             <div key={m.l} className="bg-site-bg p-6 text-center">
@@ -277,7 +277,7 @@ export function PricingSection({ showComparisonLink = false }: { showComparisonL
   });
   return (
     <section id="precios" className="relative border-t border-site-border py-20">
-      <div className="mx-auto max-w-[1280px] px-6">
+      <div className="mx-auto max-w-[1440px] px-6">
         <SectionHeading
           eyebrow={t("Precios", "Pricing")}
           title={<>{t("Un plan para cada etapa de tu negocio.", "A plan for every stage of your business.")}</>}
@@ -357,7 +357,7 @@ export function NextLevelSection() {
   ];
   return (
     <section id="siguiente-nivel" className="relative border-t border-site-border py-20">
-      <div className="mx-auto max-w-[1280px] px-6">
+      <div className="mx-auto max-w-[1440px] px-6">
         <div className="overflow-hidden rounded-2xl border border-site-border bg-site-card/40 p-8 md:p-12">
           <div className="grid gap-10 md:grid-cols-[1fr_auto] md:items-center">
             <div>
@@ -605,7 +605,7 @@ export function Footer() {
   ];
   return (
     <footer className="relative border-t border-site-border bg-site-bg">
-      <div className="mx-auto max-w-[1280px] px-6 py-16">
+      <div className="mx-auto max-w-[1440px] px-6 py-16">
         <div className="grid grid-cols-2 gap-10 md:grid-cols-4">
           <div className="col-span-2">
             <div className="flex items-center gap-2 font-display text-[15px] font-medium tracking-tight text-site-fg">

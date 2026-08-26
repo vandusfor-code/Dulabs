@@ -28,7 +28,7 @@ export function DashboardMockup() {
   const dias = [t("Lun", "Mon"), t("Mar", "Tue"), t("Mié", "Wed"), t("Jue", "Thu"), t("Vie", "Fri"), t("Sáb", "Sat"), t("Dom", "Sun")];
 
   return (
-    <div className="w-[470px] max-w-full select-none">
+    <div className="w-[560px] max-w-full select-none">
       <div className="rounded-t-xl border border-white/10 bg-[#0a0a0a] p-[6px] shadow-[0_30px_70px_-20px_rgba(0,0,0,0.65)]">
         {/* Barra superior */}
         <div className="flex items-center justify-between rounded-t-[6px] bg-[#0d0d0d] px-4 py-2.5">
