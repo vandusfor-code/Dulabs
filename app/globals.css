@@ -564,6 +564,14 @@ body {
   from { opacity: 0; transform: translateY(6px) scale(0.96); }
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
+@keyframes site-float-laptop {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+@keyframes site-float-phone {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-14px); }
+}
 .animate-site-ambient { animation: site-ambient-shift 22s ease-in-out infinite; }
 .animate-site-fade-up { animation: site-fade-up 0.8s cubic-bezier(.2,.7,.2,1) both; }
 .animate-site-ping-soft { animation: site-ping-soft 2.4s cubic-bezier(0, 0, 0.2, 1) infinite; }
@@ -572,6 +580,8 @@ body {
 .animate-site-bubble-in { animation: site-bubble-in 0.32s cubic-bezier(.2,.8,.2,1) both; }
 .animate-site-marquee { animation: marquee 50s linear infinite; }
 .animate-site-float { animation: float-y 7s ease-in-out infinite; }
+.animate-site-float-laptop { animation: site-float-laptop 8s ease-in-out infinite; }
+.animate-site-float-phone { animation: site-float-phone 6.5s ease-in-out infinite; animation-delay: -1.5s; }
 .animate-site-pulse-glow { animation: dot-pulse 2.6s ease-in-out infinite; }
 .reflect-below {
   mask-image: linear-gradient(to bottom, black 0%, black 60%, transparent 100%);
@@ -687,6 +697,8 @@ body {
   .animate-site-bar-rise,
   .animate-site-marquee,
   .animate-site-float,
+  .animate-site-float-laptop,
+  .animate-site-float-phone,
   .animate-site-pulse-glow,
   .animate-site-bubble-in,
   .site-stream-in,
