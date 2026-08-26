@@ -85,7 +85,7 @@ export async function generarRespuestaAdminEspecialistaIA(params: {
     `Puede pedirte dos cosas: consultar qué citas hay (usa consultar_citas), o agendar una cita para alguien (usa agendar_cita_admin). Si no te dice el servicio, pregúntaselo antes de agendar -- nunca lo asumas ni inventes uno.\n` +
     `Las citas que agendes así quedan CONFIRMADAS de inmediato -- ella administra, no hace falta la aprobación de nadie más.\n` +
     `Si menciona con quién debe ser (ej. "con Carla"), pásalo en con_quien. Si no dice nada, se agenda automático con quien esté libre.\n` +
-    `Si la herramienta de agendar te dice que el horario está ocupado, te devuelve los horarios ya tomados ese día -- usa eso para ofrecerle un hueco libre en vez de solo decir "ocupado".`;
+    `Si la herramienta de agendar te dice que el horario está ocupado, te devuelve los horarios ya tomados ese día (ya en hora de Colombia) -- calcula tú un hueco libre y ofréceselo en tu respuesta de texto, no vuelvas a llamar la herramienta a ciegas para "probar" otra hora.`;
 
   async function ejecutarHerramienta(nombre: string, input: Record<string, unknown>): Promise<string> {
     if (nombre === "consultar_citas") {

@@ -203,9 +203,16 @@ export async function crearCitaEnCategoria(
   return { ok: false, motivo: "ocupado" };
 }
 
+function horaLocal(iso: string): string {
+  return new Date(iso).toLocaleTimeString("es-CO", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "America/Bogota" });
+}
+
 // Todo lo agendado ese día entre las candidatas de una categoría, para que
 // el bot pueda proponerle a la clienta un horario libre real ("tengo a las
 // 3 o a las 5, ¿cuál te queda mejor?") en vez de solo decir "ocupado".
+// Las horas van en formato local de Colombia (no ISO/UTC crudo) -- el resto
+// del prompt razona en hora de Colombia, y mandarle UTC aquí confundía al
+// modelo al calcular huecos libres (probado: agotaba los reintentos).
 export async function citasDelDiaEnCategoria(
   supabase: SupabaseClient,
   candidatas: Especialista[],
@@ -227,8 +234,8 @@ export async function citasDelDiaEnCategoria(
   const nombrePorId = new Map(candidatas.map((c) => [c.id, c.nombre]));
   return ((data ?? []) as { especialista_id: number; inicio: string; fin: string }[]).map((r) => ({
     especialista: nombrePorId.get(r.especialista_id) ?? "?",
-    inicio: r.inicio,
-    fin: r.fin,
+    inicio: horaLocal(r.inicio),
+    fin: horaLocal(r.fin),
   }));
 }
 
