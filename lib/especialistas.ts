@@ -17,6 +17,10 @@ export type Especialista = {
   // Catálogo de respaldo: cuando un servicio pedido no calza con ninguna
   // especialidad específica de este negocio, cae aquí.
   es_general: boolean;
+  // Si una solicitud para esta especialidad necesita que un humano la
+  // apruebe (como pestañas -- disponibilidad real que el sistema no conoce)
+  // o si puede quedar confirmada sola en cuanto el horario esté libre.
+  requiere_aprobacion: boolean;
 };
 
 export type CitaEspecialista = {
@@ -33,7 +37,7 @@ export type CitaEspecialista = {
 };
 
 const COLUMNAS_ESPECIALISTA =
-  "id, id_tenant, phone_number_id, nombre, numero_whatsapp, servicio, duracion_min, token, activo, bloquea_horario, es_general";
+  "id, id_tenant, phone_number_id, nombre, numero_whatsapp, servicio, duracion_min, token, activo, bloquea_horario, es_general, requiere_aprobacion";
 const COLUMNAS_CITA = "id, especialista_id, telefono_cliente, nombre_cliente, servicio, inicio, fin, estado, motivo_rechazo, origen";
 
 // Código de error de Postgres para una violación de constraint EXCLUDE

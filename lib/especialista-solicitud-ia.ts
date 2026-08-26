@@ -19,6 +19,7 @@ import {
   cancelarCita,
 } from "@/lib/especialistas";
 import {
+  notificarNuevaSolicitud,
   notificarCitaAutoConfirmada,
   notificarCitaCanceladaPorClienta,
   formatearFechaHora,
@@ -26,9 +27,27 @@ import {
 import { nombreConocido, recordarNombreCliente } from "@/lib/clientes-conocidos";
 import { interpretarNombreWhatsapp } from "@/lib/nombre-whatsapp";
 import type { ClienteConfig } from "@/lib/supabase";
-import type { Especialista } from "@/lib/especialistas";
+import type { Especialista, CitaEspecialista } from "@/lib/especialistas";
 
 const MODELO = "claude-sonnet-5";
+
+// Nicol (pestañas) también trabaja por fuera del spa -- su disponibilidad
+// real solo se puede ofrecer después de las 3pm entre semana, y desde la
+// mañana los sábados (domingo el spa no abre). Regla específica de este
+// negocio, no una configuración general de horarios por especialista.
+function pestanasDisponible(inicio: Date): boolean {
+  const partes = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Bogota",
+    weekday: "short",
+    hour: "numeric",
+    hour12: false,
+  }).formatToParts(inicio);
+  const dia = partes.find((p) => p.type === "weekday")?.value;
+  const hora = Number(partes.find((p) => p.type === "hour")?.value ?? "0");
+  if (dia === "Sun") return false;
+  if (dia === "Sat") return true;
+  return hora >= 15;
+}
 
 // Igual que generarRespuestaIA (lib/ia.ts), pero con UNA herramienta real:
 // crear una solicitud de cita para un servicio que tiene especialista propia
@@ -112,7 +131,8 @@ export async function generarRespuestaConEspecialistaIA(params: {
   let systemFinal =
     `${params.systemPromptBase}\n\n` +
     `--- Agenda real ---\n` +
-    `Hoy es ${hoy} (hora de Colombia). Para el servicio con agenda propia (ver la herramienta disponible) SÍ tienes una forma real de agendar la cita: usa crear_solicitud_cita solo cuando ya tengas confirmados por la clienta el servicio, la fecha, la hora y el nombre. No la llames antes de tener los cuatro datos completos. La cita queda CONFIRMADA de una vez -- no le digas a la clienta que "queda pendiente de aprobación" ni nada parecido, dile directamente que quedó agendada.\n` +
+    `Hoy es ${hoy} (hora de Colombia). Para el servicio con agenda propia (ver la herramienta disponible) SÍ tienes una forma real de agendar la cita: usa crear_solicitud_cita solo cuando ya tengas confirmados por la clienta el servicio, la fecha, la hora y el nombre. No la llames antes de tener los cuatro datos completos.\n` +
+    `La respuesta trae "estado": "confirmada" (dile a la clienta que quedó agendada, ya sin nada más que hacer) o "pendiente" (dile que quedó como solicitud y que le confirman por este mismo chat en un rato -- NUNCA digas "confirmada" ni "agendada" si el estado es pendiente). No asumas cuál va a ser, revisa siempre lo que te devuelve la herramienta.\n` +
     `Si la herramienta te dice que el horario está ocupado, te va a devolver los horarios que ya están tomados ese día (horarios_tomados, ya en hora de Colombia). Mira esa lista, calcula tú misma 1 o 2 huecos libres dentro del horario de atención del negocio, y ofréceselos a la clienta en tu respuesta de texto ("tengo espacio a las X o a las Y, ¿cuál te queda mejor?") -- NO vuelvas a llamar la herramienta para "probar" otro horario a ciegas, eso ya lo sabes por la lista que te devolvió. Nunca inventes ni asumas disponibilidad que la herramienta no te confirmó.\n` +
     `Para cualquier OTRO servicio que no tenga esa herramienta, sigues funcionando igual que siempre: solo tomas nota de la solicitud en texto, sin agenda real todavía.`;
 
@@ -198,6 +218,28 @@ export async function generarRespuestaConEspecialistaIA(params: {
       `No hay ninguna cita en el sistema a nombre de este número. Si la clienta dice que ya tenía una cita agendada de antes (por ejemplo, la agendó por llamada, Instagram o en persona, antes de que existiera este sistema), no le digas que no existe ni la hagas dudar: pídele el servicio, la fecha y la hora que recuerda, y regístrala igual que una solicitud nueva con crear_solicitud_cita.`;
   }
 
+  // Cierra el paso: guarda el nombre, y confirma sola o avisa a la
+  // especialista según requiera_aprobacion -- pestañas (Nicol) siempre pide
+  // aprobación manual porque su disponibilidad real no la sabe el sistema
+  // (también trabaja por fuera); manos/pies confirman solas.
+  async function finalizarCitaCreada(especialista: Especialista, cita: CitaEspecialista): Promise<string> {
+    if (cita.telefono_cliente) {
+      await recordarNombreCliente(params.supabase, {
+        idTenant: especialista.id_tenant,
+        phoneNumberId: especialista.phone_number_id,
+        telefonoCliente: cita.telefono_cliente,
+        nombre: cita.nombre_cliente,
+      });
+    }
+    if (especialista.requiere_aprobacion) {
+      await notificarNuevaSolicitud(params.cliente, especialista, cita);
+      return JSON.stringify({ success: true, estado: "pendiente" });
+    }
+    const confirmada = (await confirmarCita(params.supabase, cita.id)) ?? cita;
+    await notificarCitaAutoConfirmada(params.cliente, especialista, confirmada);
+    return JSON.stringify({ success: true, estado: "confirmada" });
+  }
+
   async function ejecutarHerramientaConNombre(nombre: string, input: Record<string, unknown>): Promise<string> {
     if (nombre === "aceptar_propuesta_horario") {
       if (!propuesta) return JSON.stringify({ success: false, error: "No hay ninguna propuesta pendiente." });
@@ -258,9 +300,7 @@ export async function generarRespuestaConEspecialistaIA(params: {
       // Solo se cancela la cita anterior si la nueva quedó creada -- si el
       // horario pedido estaba ocupado, la clienta conserva su cita original.
       await cancelarCita(params.supabase, citaActiva.id, "Cambiada a un nuevo horario");
-      const confirmada = (await confirmarCita(params.supabase, resultado.cita.id)) ?? resultado.cita;
-      await notificarCitaAutoConfirmada(params.cliente, especialista as Especialista, confirmada);
-      return JSON.stringify({ success: true });
+      return finalizarCitaCreada(especialista, resultado.cita);
     }
     return ejecutarHerramienta(input);
   }
@@ -283,6 +323,12 @@ export async function generarRespuestaConEspecialistaIA(params: {
     const especialistaExclusiva = await especialistaPorServicio(params.supabase, params.cliente.phone_number_id, servicio);
 
     if (especialistaExclusiva) {
+      if (especialistaExclusiva.servicio.toLowerCase() === "pestañas" && !pestanasDisponible(inicio)) {
+        return JSON.stringify({
+          success: false,
+          error: "Nicol solo tiene disponibilidad para pestañas después de las 3:00 pm entre semana, o desde la mañana los sábados (domingo el spa no abre). Pídele a la clienta un horario dentro de ese rango.",
+        });
+      }
       const duracionMin =
         typeof input.duracion_min === "number" && input.duracion_min > 0 ? input.duracion_min : especialistaExclusiva.duracion_min;
       const resultado = await crearCitaEspecialista(params.supabase, {
@@ -304,15 +350,7 @@ export async function generarRespuestaConEspecialistaIA(params: {
         }
         return JSON.stringify({ success: false, error: "No se pudo agendar, intenta de nuevo." });
       }
-      const confirmada = (await confirmarCita(params.supabase, resultado.cita.id)) ?? resultado.cita;
-      await notificarCitaAutoConfirmada(params.cliente, especialistaExclusiva as Especialista, confirmada);
-      await recordarNombreCliente(params.supabase, {
-        idTenant: especialistaExclusiva.id_tenant,
-        phoneNumberId: especialistaExclusiva.phone_number_id,
-        telefonoCliente: params.telefonoRemitente,
-        nombre: confirmada.nombre_cliente,
-      });
-      return JSON.stringify({ success: true });
+      return finalizarCitaCreada(especialistaExclusiva as Especialista, resultado.cita);
     }
 
     const categoria = categoriaDeServicio(servicio);
@@ -341,19 +379,7 @@ export async function generarRespuestaConEspecialistaIA(params: {
       return JSON.stringify({ success: false, error: "No se pudo agendar, intenta de nuevo." });
     }
 
-    const confirmada = (await confirmarCita(params.supabase, resultado.cita.id)) ?? resultado.cita;
-    // Best-effort: si la notificación a la especialista falla, la cita ya
-    // quedó guardada y confirmada igual -- no se pierde nada, solo no le
-    // llega el aviso.
-    await notificarCitaAutoConfirmada(params.cliente, resultado.especialista, confirmada);
-    await recordarNombreCliente(params.supabase, {
-      idTenant: resultado.especialista.id_tenant,
-      phoneNumberId: resultado.especialista.phone_number_id,
-      telefonoCliente: params.telefonoRemitente,
-      nombre: confirmada.nombre_cliente,
-    });
-
-    return JSON.stringify({ success: true });
+    return finalizarCitaCreada(resultado.especialista, resultado.cita);
   }
 
   const messages = construirMensajesConHistorial(params.historial ?? [], params.textoUsuario);
