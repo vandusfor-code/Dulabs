@@ -12,6 +12,7 @@ import {
   especialistasPorCategoria,
   crearCitaEnCategoria,
   citasDelDiaEnCategoria,
+  hayHuecoLibreEseDia,
   propuestaPendientePara,
   aceptarPropuesta,
   rechazarPropuesta,
@@ -374,6 +375,30 @@ export async function generarRespuestaConEspecialistaIA(params: {
 
     if (!resultado.ok) {
       if (resultado.motivo === "ocupado") {
+        // Regla propia de este negocio (la definió la dueña, 2026-08-26):
+        // para PIES, Kelly es la fija -- solo se desborda a Carla si Kelly
+        // NO tiene ningún hueco libre ese día completo, no solo a la hora
+        // pedida. Nunca se ofrece a Carla mientras Kelly tenga espacio en
+        // algún otro momento del día.
+        if (categoria === "pies") {
+          const kelly = candidatas.find((e) => e.nombre.toLowerCase() === "kelly") ?? candidatas[0];
+          const kellyTieneHueco = await hayHuecoLibreEseDia(params.supabase, kelly, fecha, duracionMin);
+          if (!kellyTieneHueco) {
+            const candidatasManos = await especialistasPorCategoria(params.supabase, params.cliente.phone_number_id, "manos");
+            const carla = candidatasManos.find((e) => e.nombre.toLowerCase() === "carla");
+            if (carla) {
+              const resultadoCarla = await crearCitaEnCategoria(params.supabase, [carla], {
+                telefonoCliente: params.telefonoRemitente,
+                nombreCliente,
+                servicio,
+                inicio,
+                duracionMin,
+                origen: "whatsapp_ia",
+              });
+              if (resultadoCarla.ok) return finalizarCitaCreada(resultadoCarla.especialista, resultadoCarla.cita);
+            }
+          }
+        }
         const ocupados = await citasDelDiaEnCategoria(params.supabase, candidatas, fecha);
         return JSON.stringify({ success: false, ocupado: true, horarios_tomados: ocupados });
       }

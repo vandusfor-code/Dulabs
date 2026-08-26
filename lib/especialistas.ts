@@ -254,6 +254,53 @@ export async function citasDelDiaEnCategoria(
   }));
 }
 
+// Horario de atención de este spa (igual de específico que pestanasDisponible
+// en especialista-solicitud-ia.ts): lunes a viernes 9am-7pm, sábado 9am-6pm,
+// domingo cerrado. Ver "HORARIO DE ATENCIÓN" en la base de conocimiento.
+function ventanaAtencion(fechaISO: string): { apertura: Date; cierre: Date } | null {
+  const diaSemana = new Date(`${fechaISO}T12:00:00-05:00`).getDay(); // mediodía evita cruces de día por huso horario
+  if (diaSemana === 0) return null; // domingo cerrado
+  const apertura = new Date(`${fechaISO}T09:00:00-05:00`);
+  const cierre = new Date(`${fechaISO}T${diaSemana === 6 ? "18:00" : "19:00"}:00-05:00`);
+  return { apertura, cierre };
+}
+
+// Determina si esta especialista tiene AL MENOS un hueco de duracionMin
+// minutos libre ese día (no solo a una hora puntual) dentro del horario de
+// atención -- para reglas de desborde tipo "si Kelly no tiene NINGÚN espacio
+// ese día, se le puede dar a Carla" (ver ejecutarHerramienta en
+// especialista-solicitud-ia.ts, y la conversación real con la dueña del
+// negocio del 2026-08-26 que definió esta regla).
+export async function hayHuecoLibreEseDia(
+  supabase: SupabaseClient,
+  especialista: Especialista,
+  fechaISO: string,
+  duracionMin: number
+): Promise<boolean> {
+  const ventana = ventanaAtencion(fechaISO);
+  if (!ventana) return false;
+
+  const { data } = await supabase
+    .from("dulabs_citas_especialista")
+    .select("inicio, fin")
+    .eq("especialista_id", especialista.id)
+    .in("estado", ["pendiente", "confirmada", "propuesta"])
+    .gte("inicio", ventana.apertura.toISOString())
+    .lt("inicio", ventana.cierre.toISOString())
+    .order("inicio", { ascending: true });
+
+  const ocupadas = (data ?? []) as { inicio: string; fin: string }[];
+  const necesarioMs = duracionMin * 60_000;
+
+  let cursor = ventana.apertura.getTime();
+  for (const cita of ocupadas) {
+    const inicioMs = new Date(cita.inicio).getTime();
+    if (inicioMs - cursor >= necesarioMs) return true;
+    cursor = Math.max(cursor, new Date(cita.fin).getTime());
+  }
+  return ventana.cierre.getTime() - cursor >= necesarioMs;
+}
+
 // Todas las especialidades activas que pertenecen a la MISMA persona (mismo
 // número de WhatsApp) -- ej. Daniela puede tener "pestañas" y "general" a la
 // vez. Sirve para que un solo link de agenda muestre y gestione TODAS sus
