@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { CalendarDays, Calendar, Users, Sparkles, Tag, BarChart3, Settings } from "lucide-react";
 import { cn } from "./ui";
+import { partesLogo } from "./format";
 
 const NAV = [
   { label: "Agenda", icon: CalendarDays, href: (t: string) => `/agenda/${t}`, disponible: true },
@@ -17,14 +18,17 @@ const NAV = [
 
 export function Sidebar({ token, negocio }: { token: string; negocio: string }) {
   const pathname = usePathname();
+  const [linea1, linea2] = partesLogo(negocio);
 
   return (
     <div className="flex h-full flex-col bg-ink-2">
       <div className="flex h-20 flex-col justify-center px-6">
-        <span className="text-[15px] font-semibold leading-tight tracking-tight text-fg">{negocio}</span>
-        <span className="mt-0.5 text-[10.5px] font-medium uppercase tracking-[0.16em] text-lime-text">
-          Nails Spa
-        </span>
+        <span className="text-[15px] font-semibold leading-tight tracking-tight text-fg">{linea1}</span>
+        {linea2 && (
+          <span className="mt-0.5 text-[10.5px] font-medium uppercase tracking-[0.16em] text-lime-text">
+            {linea2}
+          </span>
+        )}
       </div>
 
       <nav className="mt-2 flex-1 space-y-0.5 px-3">

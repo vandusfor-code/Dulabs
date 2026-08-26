@@ -51,3 +51,13 @@ export function fechaComoInputDate(d: Date) {
   const offset = d.getTimezoneOffset();
   return new Date(d.getTime() - offset * 60000).toISOString().slice(0, 10);
 }
+
+// El logo del mockup va en dos líneas fijas ("DANIELA MANCO" / "NAILS SPA").
+// El nombre del negocio llega como un solo string ("Daniela Manco Nails
+// Spa") -- si termina en "Nails Spa" lo partimos ahí, si no cae en un solo
+// tenant sin ese sufijo, todo el nombre va en la primera línea.
+export function partesLogo(negocio: string): [string, string] {
+  const match = negocio.match(/^(.*?)\s+(nails\s*spa)$/i);
+  if (match) return [match[1].trim().toUpperCase(), match[2].toUpperCase().replace(/\s+/g, " ")];
+  return [negocio.toUpperCase(), ""];
+}

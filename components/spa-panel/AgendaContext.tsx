@@ -6,6 +6,8 @@ import { useAgendaData } from "./useAgendaData";
 import type { Cita, Datos } from "./types";
 import { Sidebar } from "./Sidebar";
 import { Header } from "./Header";
+import { MobileHero } from "./MobileHero";
+import { MobileMenuDrawer } from "./MobileMenuDrawer";
 import { MobileNav } from "./MobileNav";
 import { NewAppointmentModal } from "./modals/NewAppointmentModal";
 import { EditAppointmentModal } from "./modals/EditAppointmentModal";
@@ -44,6 +46,7 @@ export function AgendaProvider({ token, children }: { token: string; children: R
   const [reagendando, setReagendando] = useState<Cita | null>(null);
   const [cancelando, setCancelando] = useState<{ cita: Cita; modo: "cancelar" | "rechazar" } | null>(null);
   const [detalle, setDetalle] = useState<Cita | null>(null);
+  const [menuAbierto, setMenuAbierto] = useState(false);
 
   if (error && !datos) {
     return (
@@ -83,16 +86,23 @@ export function AgendaProvider({ token, children }: { token: string; children: R
             </div>
           </aside>
           <div className="min-w-0 flex-1">
-            <Header
-              nombre={datos.especialista.nombre}
-              servicio={datos.especialista.servicio}
-              onNuevaCita={() => setMostrarNueva(null)}
-            />
+            <div className="hidden lg:block">
+              <Header
+                nombre={datos.especialista.nombre}
+                servicio={datos.especialista.servicio}
+                onNuevaCita={() => setMostrarNueva(null)}
+              />
+            </div>
+            <MobileHero nombre={datos.especialista.nombre} negocio={datos.negocio} onAbrirMenu={() => setMenuAbierto(true)} />
             <main className="px-4 pb-24 pt-5 lg:px-8 lg:pb-10 lg:pt-6">{children}</main>
           </div>
         </div>
 
         <MobileNav token={token} onNuevaCita={() => setMostrarNueva(null)} />
+
+        {menuAbierto && (
+          <MobileMenuDrawer token={token} negocio={datos.negocio} onClose={() => setMenuAbierto(false)} />
+        )}
 
         {mostrarNueva !== undefined && (
           <NewAppointmentModal
