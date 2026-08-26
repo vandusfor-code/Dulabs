@@ -25,6 +25,17 @@
   --color-borde-secundario: #e8e8e8;
   --color-texto-secundario: #666666;
 
+  /* Status tones — only actually used inside .spa-scope today, declared
+     here (Tailwind v4 needs a @theme declaration to generate the utility
+     classes at all) with the same values as the default so nothing else
+     that might reach for bg-success/etc. gets a surprising color. */
+  --color-success: #eaf7ec;
+  --color-success-text: #328a45;
+  --color-warning: #fff5d9;
+  --color-warning-text: #a66a00;
+  --color-danger: #fbecec;
+  --color-danger-text: #c94b4b;
+
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, monospace;
 }
@@ -89,6 +100,35 @@
   --color-chart-3: oklch(0.82 0.15 78);
   --color-chart-4: oklch(0.62 0.16 264);
   --color-chart-5: oklch(0.55 0.01 260);
+}
+
+/* ---------- Spa panel palette (light, pink accent, scoped via .spa-scope) --- */
+/* Applied on the redesigned /agenda/[token] panel only — reuses the SAME
+   token names as the rest of the app (bg-ink, bg-card, border-edge,
+   text-mist, bg-lime, text-lime-text...) so existing components keep
+   working unchanged, they just render with this palette instead. Values
+   come directly from Daniela Manco Nails Spa's approved mockup, not the
+   platform's own brand lime. */
+.spa-scope {
+  --color-ink: #fcfbfa;
+  --color-ink-2: #f7f4f3;
+  --color-card: #ffffff;
+  --color-mist: #777777;
+  --color-edge: #ece8e8;
+  --color-fg: #222222;
+
+  --color-lime: #e95d83;
+  --color-lime-hover: #db4a72;
+  --color-lime-soft: #fff1f5;
+  --color-lime-text: #e95d83;
+  --color-lime-fg: #ffffff;
+
+  --color-success: #eaf7ec;
+  --color-success-text: #328a45;
+  --color-warning: #fff5d9;
+  --color-warning-text: #a66a00;
+  --color-danger: #fbecec;
+  --color-danger-text: #c94b4b;
 }
 
 html {
