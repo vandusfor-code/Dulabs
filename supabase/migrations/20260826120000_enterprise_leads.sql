@@ -22,3 +22,5 @@ create table if not exists public.dulabs_enterprise_leads (
 
 create index if not exists dulabs_enterprise_leads_created_idx
   on public.dulabs_enterprise_leads (created_at desc);
+
+alter table public.dulabs_enterprise_leads enable row level security;
