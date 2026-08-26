@@ -50,6 +50,25 @@ function pestanasDisponible(inicio: Date): boolean {
   return hora >= 15;
 }
 
+// Daniela solo atiende MANOS en las tardes, desde las 2:00 pm -- sin este
+// chequeo, la categoría compartida "manos" podía asignarle una cita de la
+// mañana con tal de que su agenda estuviera vacía a esa hora, sin importar
+// que ella no trabaje mañanas (bug real en producción, 2026-08-26: una
+// clienta pidió cita con Carla, Carla tenía un choque real, y el sistema
+// terminó reservando con Daniela en la mañana en su lugar).
+function danielaDisponible(inicio: Date): boolean {
+  const partes = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Bogota",
+    weekday: "short",
+    hour: "numeric",
+    hour12: false,
+  }).formatToParts(inicio);
+  const dia = partes.find((p) => p.type === "weekday")?.value;
+  const hora = Number(partes.find((p) => p.type === "hour")?.value ?? "0");
+  if (dia === "Sun") return false;
+  return hora >= 14;
+}
+
 // Igual que generarRespuestaIA (lib/ia.ts), pero con UNA herramienta real:
 // crear una solicitud de cita para un servicio que tiene especialista propia
 // con agenda (ej. pestañas -> Nicol). El resto de servicios del negocio
@@ -356,7 +375,14 @@ export async function generarRespuestaConEspecialistaIA(params: {
     }
 
     const categoria = categoriaDeServicio(servicio);
-    const candidatas = await especialistasPorCategoria(params.supabase, params.cliente.phone_number_id, categoria);
+    let candidatas = await especialistasPorCategoria(params.supabase, params.cliente.phone_number_id, categoria);
+    // Daniela solo aparece como candidata de "manos" en su ventana real
+    // (tardes) -- ver danielaDisponible arriba. Sin este filtro terminaba
+    // recibiendo citas de la mañana con tal de que su agenda estuviera
+    // vacía, sin importar que ella no trabaje a esa hora.
+    if (categoria === "manos") {
+      candidatas = candidatas.filter((e) => e.nombre.toLowerCase() !== "daniela" || danielaDisponible(inicio));
+    }
     if (candidatas.length === 0) {
       return JSON.stringify({ success: false, error: `No manejamos "${servicio}" con agenda propia todavía.` });
     }
