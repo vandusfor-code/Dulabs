@@ -52,13 +52,13 @@ export function MobileHero({
         </button>
       </div>
 
-      <div className="relative min-h-[26vh] px-4 pb-4 pt-5">
-        <div className="w-[54%]">
-          <h1 className="text-xl font-semibold leading-snug text-fg">
+      <div className="relative min-h-[17vh] px-4 pb-3.5 pt-4">
+        <div className="w-[56%]">
+          <h1 className="text-lg font-semibold leading-snug text-fg">
             Hola, <span className="text-lime-text">{nombre}</span> 👋
           </h1>
-          <p className="mt-3 text-sm leading-relaxed text-mist">¡Qué lindo verte por aquí! 💕</p>
-          <p className="mt-1.5 text-sm leading-relaxed text-mist">Gestiona tus citas de forma fácil y rápida</p>
+          <p className="mt-2 text-[13px] leading-snug text-mist">¡Qué lindo verte por aquí! 💕</p>
+          <p className="mt-1 text-[13px] leading-snug text-mist">Gestiona tus citas de forma fácil y rápida</p>
         </div>
 
         {manoDisponible && (
@@ -68,7 +68,7 @@ export function MobileHero({
             alt=""
             aria-hidden="true"
             onError={() => setManoDisponible(false)}
-            className="pointer-events-none absolute -right-2 -top-2 bottom-0 w-[48%] object-cover object-right-top [mask-image:linear-gradient(to_right,transparent,black_16%)] [-webkit-mask-image:linear-gradient(to_right,transparent,black_16%)]"
+            className="pointer-events-none absolute -right-2 top-0 h-full w-[46%] object-cover object-right-bottom [mask-image:linear-gradient(to_right,transparent,black_16%)] [-webkit-mask-image:linear-gradient(to_right,transparent,black_16%)]"
           />
         )}
       </div>

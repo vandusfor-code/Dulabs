@@ -6,15 +6,15 @@ import { esHoy, formatearDuracion, minutosEntre } from "./format";
 
 function StatCard({ label, value, hint, icon: Icon }: { label: string; value: string; hint: string; icon: LucideIcon }) {
   return (
-    <div className="rounded-2xl border border-edge bg-card p-5 shadow-[0_4px_20px_rgba(0,0,0,0.04)]">
+    <div className="rounded-2xl border border-edge bg-card p-3 shadow-[0_4px_20px_rgba(0,0,0,0.04)] lg:p-5">
       <div className="flex items-center justify-between">
-        <p className="text-xs font-medium text-mist">{label}</p>
-        <div className="flex size-9 items-center justify-center rounded-full bg-lime-soft text-lime-text">
-          <Icon className="size-4" />
+        <p className="text-[11px] font-medium text-mist lg:text-xs">{label}</p>
+        <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-lime-soft text-lime-text lg:size-9">
+          <Icon className="size-3.5 lg:size-4" />
         </div>
       </div>
-      <p className="mt-3 text-2xl font-semibold tracking-tight tabular-nums text-fg">{value}</p>
-      <p className="mt-1 text-xs text-mist">{hint}</p>
+      <p className="mt-1.5 text-lg font-semibold tracking-tight tabular-nums text-fg lg:mt-3 lg:text-2xl">{value}</p>
+      <p className="text-[11px] text-mist lg:mt-1 lg:text-xs">{hint}</p>
     </div>
   );
 }
@@ -39,7 +39,7 @@ export function StatsCards({ citas }: { citas: Cita[] }) {
   const pendientes = citas.filter((c) => c.estado === "pendiente");
 
   return (
-    <div className="grid grid-cols-2 gap-3.5 lg:grid-cols-4 lg:gap-4">
+    <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4 lg:gap-4">
       <StatCard
         label="Citas hoy"
         value={String(citasHoy.length)}
