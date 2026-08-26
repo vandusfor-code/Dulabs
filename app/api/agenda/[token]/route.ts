@@ -32,7 +32,13 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   if (!especialista) return Response.json({ error: "Link inválido" }, { status: 404 });
 
   const hermanas = await especialistasDelMismaPersona(supabase, especialista.phone_number_id, especialista.numero_whatsapp);
-  const ids = hermanas.length > 0 ? hermanas.map((e) => e.id) : [especialista.id];
+  const equipo = hermanas.length > 0 ? hermanas : [especialista];
+  const ids = equipo.map((e) => e.id);
+  // Varias especialidades pueden ser LA MISMA PERSONA (ej. Daniela: pestañas
+  // + manos-daniela) -- el desplegable de "reasignar profesional" del panel
+  // debe mostrar cada PERSONA una sola vez, no una fila por especialidad.
+  const nombrePorId = new Map(equipo.map((e) => [e.id, e.nombre] as const));
+  const equipoUnico = [...new Map(equipo.map((e) => [e.nombre, { id: e.id, nombre: e.nombre }])).values()];
 
   // Desde hoy (00:00 local) en adelante -- no interesa el historial viejo en esta vista.
   const inicioHoy = new Date();
@@ -41,7 +47,14 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     Promise.all(ids.map((id) => citasDeEspecialista(supabase, id, { desde: inicioHoy.toISOString() }))),
     clienteDeEspecialista(supabase, especialista.phone_number_id),
   ]);
-  const citas = citasPorId.flat().sort((a, b) => a.inicio.localeCompare(b.inicio));
+  // Cada cita queda marcada con quién la atiende de verdad -- varias
+  // especialidades comparten número de WhatsApp (ver especialistasDelMismaPersona),
+  // así que sin esto el panel mostraría citas de Carla o Kelly como si
+  // fueran de Daniela solo porque se ven desde su link.
+  const citas = citasPorId
+    .flat()
+    .map((c) => ({ ...c, profesional: nombrePorId.get(c.especialista_id) ?? especialista.nombre }))
+    .sort((a, b) => a.inicio.localeCompare(b.inicio));
 
   return Response.json({
     negocio: cliente?.nombre_negocio ?? "Du Labs",
@@ -50,6 +63,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       servicio: ids.length > 1 ? "Todos los servicios" : especialista.servicio,
       duracion_min: especialista.duracion_min,
     },
+    equipo: equipoUnico,
     citas,
   });
 }

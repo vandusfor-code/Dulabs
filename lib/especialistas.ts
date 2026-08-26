@@ -419,7 +419,7 @@ export async function rechazarPropuesta(supabase: SupabaseClient, citaId: number
 export async function editarCitaConfirmada(
   supabase: SupabaseClient,
   citaId: number,
-  cambios: { nuevoInicio?: Date; duracionMin?: number; servicio?: string }
+  cambios: { nuevoInicio?: Date; duracionMin?: number; servicio?: string; especialistaId?: number }
 ): Promise<{ ok: true; cita: CitaEspecialista } | { ok: false; motivo: "ocupado" | "no_encontrada" | "error"; detalle?: string }> {
   const { data: actual } = await supabase
     .from("dulabs_citas_especialista")
@@ -440,6 +440,11 @@ export async function editarCitaConfirmada(
       inicio: inicio.toISOString(),
       fin: fin.toISOString(),
       servicio: cambios.servicio?.trim() || cita.servicio,
+      // Reasignar a otra persona del equipo pasa por la MISMA columna que
+      // usa el constraint EXCLUDE -- si la persona elegida ya tiene algo a
+      // esa hora, Postgres rechaza el UPDATE completo (CODIGO_SOLAPE) igual
+      // que rechazaría un choque de horario normal, nunca queda a medias.
+      especialista_id: cambios.especialistaId ?? cita.especialista_id,
       updated_at: new Date().toISOString(),
     })
     .eq("id", citaId)

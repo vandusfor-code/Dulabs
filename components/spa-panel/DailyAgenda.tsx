@@ -69,7 +69,9 @@ export function DailyAgenda({ citas }: { citas: Cita[] }) {
                       {formatearHora(c.inicio)} – {formatearHora(c.fin)}
                     </p>
                     <p className="mt-0.5 text-sm font-medium text-fg">{c.nombre_cliente}</p>
-                    <p className="text-xs text-mist">{c.servicio}</p>
+                    <p className="text-xs text-mist">
+                      {c.servicio} · <span className="text-fg">{c.profesional}</span>
+                    </p>
                   </div>
                   <div className="flex items-center gap-1.5">
                     {c.estado === "pendiente" && (

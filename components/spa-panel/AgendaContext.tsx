@@ -40,7 +40,7 @@ export function useAgenda() {
 // vista "Agenda completa" (/agenda/[token]/completa) -- ambas páginas viven
 // bajo este layout y consumen el mismo contexto en vez de repetir el fetch.
 export function AgendaProvider({ token, children }: { token: string; children: ReactNode }) {
-  const { datos, error, procesandoId, ejecutarAccion, crearCita } = useAgendaData(token);
+  const { datos, error, setError, procesandoId, ejecutarAccion, crearCita } = useAgendaData(token);
   const [mostrarNueva, setMostrarNueva] = useState<Date | null | undefined>(undefined);
   const [editando, setEditando] = useState<Cita | null>(null);
   const [reagendando, setReagendando] = useState<Cita | null>(null);
@@ -67,7 +67,14 @@ export function AgendaProvider({ token, children }: { token: string; children: R
     token,
     datos,
     procesandoId,
-    confirmar: (c) => ejecutarAccion(c.id, { accion: "confirmar" }),
+    confirmar: (c) => {
+      // Botón directo en la tarjeta, sin modal propio que muestre un error
+      // local -- si falla, se guarda en el estado global para no dejar una
+      // promesa rechazada sin atrapar.
+      ejecutarAccion(c.id, { accion: "confirmar" }).catch((err) =>
+        setError(err instanceof Error ? err.message : "No se pudo confirmar la cita")
+      );
+    },
     rechazar: (c) => setCancelando({ cita: c, modo: "rechazar" }),
     abrirEditar: setEditando,
     abrirReagendar: setReagendando,
@@ -117,6 +124,7 @@ export function AgendaProvider({ token, children }: { token: string; children: R
         {editando && (
           <EditAppointmentModal
             cita={editando}
+            equipo={datos.equipo}
             onClose={() => setEditando(null)}
             onGuardar={(body) =>
               ejecutarAccion(editando.id, {
@@ -124,6 +132,7 @@ export function AgendaProvider({ token, children }: { token: string; children: R
                 nuevo_inicio: body.nuevo_inicio,
                 servicio: body.servicio,
                 duracion_min: body.duracion_min,
+                nuevo_especialista_id: body.nuevo_especialista_id,
               })
             }
           />
@@ -156,7 +165,7 @@ export function AgendaProvider({ token, children }: { token: string; children: R
         )}
 
         {detalle && (
-          <AppointmentDetailsModal cita={detalle} especialista={datos.especialista.nombre} onClose={() => setDetalle(null)} />
+          <AppointmentDetailsModal cita={detalle} especialista={detalle.profesional} onClose={() => setDetalle(null)} />
         )}
       </div>
     </Ctx.Provider>

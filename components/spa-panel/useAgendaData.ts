@@ -36,7 +36,22 @@ export function useAgendaData(token: string) {
   }, [token]);
 
   const ejecutarAccion = useCallback(
-    async (citaId: number, body: { accion: Accion; motivo?: string; nuevo_inicio?: string; duracion_min?: number; servicio?: string }) => {
+    // Antes tragaba el error, lo guardaba en un estado global y devolvía
+    // false -- los modales (Editar/Reagendar/Cancelar) esperan que esto
+    // lance para mostrar el error DENTRO del modal (ej. "ya tiene cita a
+    // esta hora") en vez de cerrarse igual con el error perdido en un
+    // estado que nadie mostraba post-carga.
+    async (
+      citaId: number,
+      body: {
+        accion: Accion;
+        motivo?: string;
+        nuevo_inicio?: string;
+        duracion_min?: number;
+        servicio?: string;
+        nuevo_especialista_id?: number;
+      }
+    ) => {
       setProcesandoId(citaId);
       try {
         const res = await fetch(`/api/agenda/${token}/citas/${citaId}`, {
@@ -47,10 +62,6 @@ export function useAgendaData(token: string) {
         const data = await res.json();
         if (!res.ok) throw new Error(data.error ?? "No se pudo actualizar la cita");
         await cargar();
-        return true;
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Error al actualizar la cita");
-        return false;
       } finally {
         setProcesandoId(null);
       }

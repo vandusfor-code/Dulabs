@@ -46,7 +46,7 @@ export function AppointmentCard({
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium text-fg">{cita.nombre_cliente}</p>
         <p className="truncate text-xs text-mist">
-          {cita.servicio} · {formatearDuracion(duracion)}
+          {cita.servicio} · {formatearDuracion(duracion)} · <span className="text-fg">{cita.profesional}</span>
         </p>
       </div>
 

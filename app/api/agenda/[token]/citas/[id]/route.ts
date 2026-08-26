@@ -53,6 +53,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     nuevo_inicio?: string;
     duracion_min?: number;
     servicio?: string;
+    nuevo_especialista_id?: number;
   };
   try {
     body = await request.json();
@@ -109,10 +110,19 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const nuevoInicio = body.nuevo_inicio?.trim() ? new Date(body.nuevo_inicio.trim()) : undefined;
   if (nuevoInicio && Number.isNaN(nuevoInicio.getTime())) return Response.json({ error: "Fecha/hora inválida" }, { status: 400 });
 
+  // Reasignar a otra persona del equipo: solo se permite dentro del mismo
+  // grupo de "hermanas" (mismo negocio/persona) que este token ya puede
+  // tocar -- idsPermitidos ya se calculó arriba para autorizar la cita
+  // misma, así que sirve igual para validar a quién se le puede reasignar.
+  if (body.nuevo_especialista_id !== undefined && !idsPermitidos.has(body.nuevo_especialista_id)) {
+    return Response.json({ error: "Esa persona no pertenece a este equipo" }, { status: 400 });
+  }
+
   const resultado = await editarCitaConfirmada(supabase, citaId, {
     nuevoInicio,
     duracionMin: body.duracion_min,
     servicio: body.servicio,
+    especialistaId: body.nuevo_especialista_id,
   });
   if (!resultado.ok) {
     if (resultado.motivo === "ocupado") return Response.json({ error: "Ese horario ya está ocupado" }, { status: 409 });
