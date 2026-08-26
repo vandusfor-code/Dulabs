@@ -258,7 +258,11 @@ export default function ConfigBotPage() {
       .then(({ ok, data }) => {
         if (!ok) throw new Error(data.error ?? "No se pudo cargar");
         setDatos(mergeRespuestas(DEFAULTS, data.respuestas));
-        if (data.actualizado_en) setGuardadoEn(data.actualizado_en);
+        // Solo mostrar "Guardado" si de verdad ya hay respuestas -- la fila
+        // trae un updated_at desde que se creó el link, antes de que nadie
+        // haya guardado nada todavía.
+        const yaTieneRespuestas = data.respuestas && Object.keys(data.respuestas).length > 0;
+        if (yaTieneRespuestas && data.actualizado_en) setGuardadoEn(data.actualizado_en);
       })
       .catch((err) => setError(err instanceof Error ? err.message : "Error cargando el formulario"))
       .finally(() => setCargando(false));
