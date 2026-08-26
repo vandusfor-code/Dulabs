@@ -23,7 +23,9 @@ export interface PlanLimites {
 export interface PlanDef {
   id: PlanId | "sin_plan";
   nombre: string;
-  precioCop: number | null; // null = "Solicitar cotización" (Enterprise)
+  precioCop: number | null; // null = "Solicitar cotización" (Enterprise) -- mensualidad, cobro recurrente
+  /** Pago único por configurar y poner en marcha el asistente. null = sin cobro de implementación (Enterprise, a medida). */
+  implementacionCop: number | null;
   limites: PlanLimites;
 }
 
@@ -31,7 +33,8 @@ export const PLANES: Record<PlanId, PlanDef> = {
   start: {
     id: "start",
     nombre: "Start",
-    precioCop: 19900,
+    precioCop: 39900,
+    implementacionCop: 99900,
     limites: {
       numeros: 1,
       usuarios: 1,
@@ -47,7 +50,8 @@ export const PLANES: Record<PlanId, PlanDef> = {
   growth: {
     id: "growth",
     nombre: "Growth",
-    precioCop: 49900,
+    precioCop: 89900,
+    implementacionCop: 149900,
     limites: {
       numeros: 2,
       usuarios: 5,
@@ -63,7 +67,8 @@ export const PLANES: Record<PlanId, PlanDef> = {
   scale: {
     id: "scale",
     nombre: "Scale",
-    precioCop: 149900,
+    precioCop: 179900,
+    implementacionCop: 249900,
     limites: {
       numeros: 5,
       usuarios: 20,
@@ -80,6 +85,7 @@ export const PLANES: Record<PlanId, PlanDef> = {
     id: "enterprise",
     nombre: "Enterprise",
     precioCop: null,
+    implementacionCop: null,
     limites: {
       numeros: null,
       usuarios: null,
@@ -111,6 +117,7 @@ export const SIN_PLAN: PlanDef = {
   id: "sin_plan",
   nombre: "Sin plan",
   precioCop: null,
+  implementacionCop: null,
   limites: {
     numeros: 0,
     usuarios: 0,

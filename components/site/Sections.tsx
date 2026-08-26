@@ -8,6 +8,7 @@ import {
   ClipboardList,
   FileUp,
   Globe,
+  Megaphone,
   MessageCircle,
   Phone,
   Plus,
@@ -269,9 +270,15 @@ export function PricingSection({ showComparisonLink = false }: { showComparisonL
     return {
       id,
       nombre: def.nombre,
-      precio: def.precioCop !== null ? `$${def.precioCop.toLocaleString("es-CO")}` : t("Cotización", "Custom quote"),
+      precioMensual: def.precioCop !== null ? `$${def.precioCop.toLocaleString("es-CO")}` : t("Cotización", "Custom quote"),
+      precioImplementacion: def.implementacionCop !== null ? `$${def.implementacionCop.toLocaleString("es-CO")}` : null,
       tag: lang === "en" ? copy.tag.en : copy.tag.es,
       features: copy.features.map((f) => (lang === "en" ? f.en : f.es)),
+      campanas: {
+        porMes: lang === "en" ? copy.campanas.porMes.en : copy.campanas.porMes.es,
+        destinatarios: lang === "en" ? copy.campanas.destinatarios.en : copy.campanas.destinatarios.es,
+      },
+      boton: lang === "en" ? copy.boton.en : copy.boton.es,
       featured: id === "growth",
     };
   });
@@ -281,14 +288,17 @@ export function PricingSection({ showComparisonLink = false }: { showComparisonL
         <SectionHeading
           eyebrow={t("Precios", "Pricing")}
           title={<>{t("Un plan para cada etapa de tu negocio.", "A plan for every stage of your business.")}</>}
-          desc={t("Precios en pesos colombianos (COP), cobro recurrente mensual.", "Prices in Colombian pesos (COP), recurring monthly billing.")}
+          desc={t(
+            "Nosotros configuramos tu asistente de IA según la información y procesos de tu negocio. Precios en pesos colombianos (COP).",
+            "We configure your AI assistant based on your business' information and processes. Prices in Colombian pesos (COP)."
+          )}
           align="center"
         />
         <div className="mt-14 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
           {tiers.map((tier) => (
             <div
               key={tier.id}
-              className={`relative overflow-hidden rounded-2xl border p-7 ${
+              className={`relative flex flex-col overflow-hidden rounded-2xl border p-7 ${
                 tier.featured
                   ? "border-site-primary/30 bg-gradient-to-b from-site-primary/[0.08] to-site-card/60 ring-1 ring-site-primary/20"
                   : "border-site-border bg-site-card/50"
@@ -296,23 +306,40 @@ export function PricingSection({ showComparisonLink = false }: { showComparisonL
             >
               {tier.featured && (
                 <div className="absolute right-5 top-5 rounded-full bg-site-primary px-2 py-0.5 font-mono text-[9.5px] uppercase tracking-widest text-site-primary-fg">
-                  {t("Recomendado", "Recommended")}
+                  {t("Más elegido", "Most chosen")}
                 </div>
               )}
+
+              {/* 1-2. Nombre + descripción */}
               <div className="font-mono text-[10px] uppercase tracking-widest text-site-muted-fg">{tier.nombre}</div>
-              <div className="mt-4 flex items-baseline gap-1">
-                <span className="font-display text-[32px] font-medium tracking-tight text-site-fg">{tier.precio}</span>
+              <p className="mt-2 text-[13px] text-site-muted-fg">{tier.tag}</p>
+
+              {/* 3. Precio mensual */}
+              <div className="mt-5 flex items-baseline gap-1">
+                <span className="font-display text-[30px] font-medium tracking-tight text-site-fg">{tier.precioMensual}</span>
                 {tier.id !== "enterprise" && <span className="text-[12px] text-site-muted-fg">{t("COP / mes", "COP / mo")}</span>}
               </div>
-              <p className="mt-2 text-[13px] text-site-muted-fg">{tier.tag}</p>
-              <PlanButton
-                planId={tier.id}
-                className={`mt-6 inline-flex h-10 w-full items-center justify-center rounded-lg text-[13px] font-medium transition-all ${
-                  tier.featured
-                    ? "bg-site-primary text-site-primary-fg hover:brightness-110"
-                    : "border border-site-border text-site-fg hover:border-white/20 hover:bg-site-card"
-                }`}
-              />
+              <div className="font-mono text-[9.5px] uppercase tracking-widest text-site-muted-fg/70">{t("Plan mensual", "Monthly plan")}</div>
+
+              {/* 4. Implementación (pago único) -- visualmente separada del
+                  mensual a propósito, para que no se lean como el mismo precio. */}
+              {tier.precioImplementacion && (
+                <div className="mt-4 rounded-lg border border-site-border/70 bg-black/20 px-3 py-2.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-mono text-[9.5px] uppercase tracking-widest text-site-muted-fg">{t("Implementación", "Setup")}</span>
+                    <span className="font-mono text-[9px] uppercase tracking-widest text-site-primary">{t("Pago único", "One-time")}</span>
+                  </div>
+                  <div className="mt-1 font-display text-[17px] font-medium text-site-fg">{tier.precioImplementacion}</div>
+                  <p className="mt-1 text-[10.5px] italic leading-relaxed text-site-muted-fg">
+                    {t(
+                      "Pago único por la configuración y puesta en marcha de tu asistente.",
+                      "One-time payment to configure and launch your assistant."
+                    )}
+                  </p>
+                </div>
+              )}
+
+              {/* 5. Beneficios */}
               <div className="mt-6 space-y-2.5 border-t border-site-border pt-6">
                 {tier.features.map((f) => (
                   <div key={f} className="flex items-start gap-2.5 text-[13px] text-site-fg/90">
@@ -321,9 +348,44 @@ export function PricingSection({ showComparisonLink = false }: { showComparisonL
                   </div>
                 ))}
               </div>
+
+              {/* 6. Campañas -- bloque propio, nunca un checkmark más, para
+                  que quede claro que el envío no está incluido. */}
+              <div className="mt-5 rounded-lg border border-site-border/70 bg-black/20 p-3">
+                <div className="flex items-center gap-1.5 text-[12.5px] font-medium text-site-fg">
+                  <Megaphone className="h-3.5 w-3.5 text-site-primary" />
+                  {t("Campañas de WhatsApp", "WhatsApp campaigns")}
+                </div>
+                <ul className="mt-2 space-y-1 text-[12px] text-site-muted-fg">
+                  <li>{tier.campanas.porMes}</li>
+                  <li>{tier.campanas.destinatarios}</li>
+                </ul>
+                <p className="mt-2 text-[11px] font-semibold text-site-fg">{t("Envío no incluido.", "Sending not included.")}</p>
+                <p className="mt-1 text-[10px] italic leading-relaxed text-site-muted-fg">
+                  {t(
+                    "Meta cobra directamente al negocio los cargos de mensajería de WhatsApp según sus tarifas vigentes.",
+                    "Meta charges the business directly for WhatsApp messaging fees, per its current pricing."
+                  )}
+                </p>
+              </div>
+
+              {/* 7. Botón */}
+              <PlanButton
+                planId={tier.id}
+                label={tier.boton}
+                className={`mt-6 inline-flex h-10 w-full items-center justify-center rounded-lg text-[13px] font-medium transition-all ${
+                  tier.featured
+                    ? "bg-site-primary text-site-primary-fg hover:brightness-110"
+                    : "border border-site-border text-site-fg hover:border-white/20 hover:bg-site-card"
+                }`}
+              />
             </div>
           ))}
         </div>
+
+        <p className="mt-6 text-center text-[11.5px] text-site-muted-fg">
+          {t("Los límites de IA y campañas son independientes.", "AI and campaign limits are independent of each other.")}
+        </p>
 
         <div className="mt-6 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-[12px] text-site-muted-fg">
           <span className="inline-flex items-center gap-1.5"><ShieldCheck className="h-3.5 w-3.5 text-site-primary" /> {t("API Oficial de Meta", "Official Meta API")}</span>
@@ -338,6 +400,23 @@ export function PricingSection({ showComparisonLink = false }: { showComparisonL
             </Link>
           </div>
         )}
+
+        {/* Aclaración general: Meta cobra la mensajería aparte, directo al negocio. */}
+        <div className="mx-auto mt-14 max-w-2xl rounded-2xl border border-site-border bg-site-card/40 p-6 text-center md:p-8">
+          <h3 className="font-display text-[18px] font-medium text-site-fg">{t("¿Y el costo de WhatsApp?", "What about the cost of WhatsApp?")}</h3>
+          <p className="mt-3 text-[13.5px] leading-relaxed text-site-muted-fg">
+            {t(
+              "Tu suscripción a DuLabs cubre la plataforma, la configuración y el uso de la IA según el plan elegido.",
+              "Your DuLabs subscription covers the platform, the setup and the AI usage for your chosen plan."
+            )}
+          </p>
+          <p className="mt-2.5 text-[13.5px] leading-relaxed text-site-muted-fg">
+            {t(
+              "Los costos de mensajería de WhatsApp no están incluidos en la suscripción de DuLabs. Meta cobra directamente al negocio los cargos correspondientes a los mensajes enviados mediante WhatsApp Business Platform, de acuerdo con sus tarifas vigentes.",
+              "WhatsApp messaging costs aren't included in the DuLabs subscription. Meta charges the business directly for messages sent through the WhatsApp Business Platform, per its current pricing."
+            )}
+          </p>
+        </div>
       </div>
     </section>
   );

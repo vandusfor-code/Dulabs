@@ -6,9 +6,12 @@ import { mensajePlanWhatsapp, whatsappVentasUrl } from "@/lib/site-contact";
 
 export default function PlanButton({
   planId,
+  label,
   className,
 }: {
   planId: PlanId;
+  /** Texto del botón (viene de PRICING_COPY, ya traducido). Si se omite, usa un genérico. */
+  label?: string;
   className: string;
 }) {
   const { t, lang } = useI18n();
@@ -25,7 +28,7 @@ export default function PlanButton({
       rel={planId === "enterprise" ? undefined : "noopener noreferrer"}
       className={className}
     >
-      {planId === "enterprise" ? t("Hablar con ventas", "Talk to sales") : `${t("Quiero", "I want")} ${nombre}`}
+      {label ?? (planId === "enterprise" ? t("Hablar con ventas", "Talk to sales") : `${t("Quiero", "I want")} ${nombre}`)}
     </a>
   );
 }
