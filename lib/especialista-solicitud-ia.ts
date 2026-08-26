@@ -133,6 +133,7 @@ export async function generarRespuestaConEspecialistaIA(params: {
     `--- Agenda real ---\n` +
     `Hoy es ${hoy} (hora de Colombia). Para el servicio con agenda propia (ver la herramienta disponible) SÍ tienes una forma real de agendar la cita: usa crear_solicitud_cita solo cuando ya tengas confirmados por la clienta el servicio, la fecha, la hora y el nombre. No la llames antes de tener los cuatro datos completos.\n` +
     `La respuesta trae "estado": "confirmada" (dile a la clienta que quedó agendada, ya sin nada más que hacer) o "pendiente" (dile que quedó como solicitud y que le confirman por este mismo chat en un rato -- NUNCA digas "confirmada" ni "agendada" si el estado es pendiente). No asumas cuál va a ser, revisa siempre lo que te devuelve la herramienta.\n` +
+    `La respuesta también trae "con": el nombre de quién REALMENTE va a atender la cita. Si la clienta pidió a alguien en particular pero el servicio se manejaba entre varias personas (manos o pies) y no era esa persona exclusiva, puede que "con" no sea la persona que ella pidió -- en ese caso, díselo con naturalidad en la misma confirmación ("te la dejé con Carla que tenía espacio a esa hora, ¿te sirve?"), nunca digas el nombre de quien ella pidió si la herramienta te devolvió otro nombre distinto.\n` +
     `Si la herramienta te dice que el horario está ocupado, te va a devolver los horarios que ya están tomados ese día (horarios_tomados, ya en hora de Colombia). Mira esa lista, calcula tú misma 1 o 2 huecos libres dentro del horario de atención del negocio, y ofréceselos a la clienta en tu respuesta de texto ("tengo espacio a las X o a las Y, ¿cuál te queda mejor?") -- NO vuelvas a llamar la herramienta para "probar" otro horario a ciegas, eso ya lo sabes por la lista que te devolvió. Nunca inventes ni asumas disponibilidad que la herramienta no te confirmó.\n` +
     `Para cualquier OTRO servicio que no tenga esa herramienta, sigues funcionando igual que siempre: solo tomas nota de la solicitud en texto, sin agenda real todavía.`;
 
@@ -233,11 +234,11 @@ export async function generarRespuestaConEspecialistaIA(params: {
     }
     if (especialista.requiere_aprobacion) {
       await notificarNuevaSolicitud(params.cliente, especialista, cita);
-      return JSON.stringify({ success: true, estado: "pendiente" });
+      return JSON.stringify({ success: true, estado: "pendiente", con: especialista.nombre });
     }
     const confirmada = (await confirmarCita(params.supabase, cita.id)) ?? cita;
     await notificarCitaAutoConfirmada(params.cliente, especialista, confirmada);
-    return JSON.stringify({ success: true, estado: "confirmada" });
+    return JSON.stringify({ success: true, estado: "confirmada", con: especialista.nombre });
   }
 
   async function ejecutarHerramientaConNombre(nombre: string, input: Record<string, unknown>): Promise<string> {

@@ -20,6 +20,7 @@ import { interpretarRespuestaEncuesta, redactarPreguntaCalida, fraseEmpatica, ty
 import { procesarHistorialCoexistencia, type HistoryChangeValue } from "@/lib/coexistence-history";
 import { getCampaignLead, getCampaignBotConfig, guardarCampaignLead, marcarDumoSyncStatus } from "@/lib/campaign-lead-store";
 import { procesarMensajeCampaña, type CampaignLeadSession } from "@/lib/campaign-lead-engine";
+import { adquirirCandadoChat, liberarCandadoChat } from "@/lib/chat-lock";
 
 export const runtime = "nodejs";
 // El flujo de agenda con especialista puede necesitar varias idas y vueltas
@@ -628,75 +629,93 @@ async function atenderMensaje(cliente: ClienteConfig, mensaje: MetaMessage, nomb
     await marcarLeidoConTyping({ phoneNumberId: cliente.phone_number_id, token: tokenMeta, messageId: mensaje.id });
   }
 
-  const contexto = await resolverContextoMensaje(cliente, mensaje.from);
+  // Candado real por conversación: aunque el freno de ráfaga de arriba ya
+  // pasó, dos mensajes separados por MÁS de esos ~2.5s (ej. "Sí" y "gracias"
+  // escritos con unos segundos de diferencia) pueden llegar cada uno como
+  // "el más reciente" en su propio momento y disparar la IA dos veces en
+  // PARALELO -- cada hilo revisando disponibilidad e intentando agendar por
+  // su cuenta, sin saber del otro. Eso es lo que causaba que una clienta
+  // recibiera "quedó agendada" seguido de "ya no hay espacio": el segundo
+  // hilo chocaba contra un horario que el primero ya había resuelto.
+  // Este candado serializa el tramo real de IA + agenda por chat -- si ya
+  // hay otro mensaje de esta misma clienta procesándose, este espera turno
+  // (nunca lo abandona) y cuando le toca, ya ve el resultado del anterior.
+  const yaTengoCandado = await adquirirCandadoChat(cliente.phone_number_id, soloDigitos(mensaje.from), mensaje.id);
+  try {
+    const contexto = await resolverContextoMensaje(cliente, mensaje.from);
 
-  if (contexto.modo === "agenda") {
-    const resultado = await generarRespuestaAgendaIA({
-      supabase: supabaseAdmin(),
-      systemPrompt: contexto.systemPrompt,
-      apiKeyCifrada: cliente.api_key_ia,
-      textoUsuario: mensaje.text!.body,
-      activacionId: contexto.activacion.id,
-      phoneNumberId: cliente.phone_number_id,
-      telefonoRemitente: normalizarTelefono(mensaje.from),
-      nombreRemitente: nombreContacto,
-      esAdmin: contexto.esAdmin,
-      recursosDisponibles: contexto.activacion.recursos_disponibles,
-      duracionEstandarMin: contexto.activacion.duracion_estandar_min,
+    if (contexto.modo === "agenda") {
+      const resultado = await generarRespuestaAgendaIA({
+        supabase: supabaseAdmin(),
+        systemPrompt: contexto.systemPrompt,
+        apiKeyCifrada: cliente.api_key_ia,
+        textoUsuario: mensaje.text!.body,
+        activacionId: contexto.activacion.id,
+        phoneNumberId: cliente.phone_number_id,
+        telefonoRemitente: normalizarTelefono(mensaje.from),
+        nombreRemitente: nombreContacto,
+        esAdmin: contexto.esAdmin,
+        recursosDisponibles: contexto.activacion.recursos_disponibles,
+        duracionEstandarMin: contexto.activacion.duracion_estandar_min,
+      });
+      if (resultado.texto) await enviarWhatsApp(cliente, mensaje.from, resultado.texto);
+      return;
+    }
+
+    const historial = await obtenerHistorialConversacion(supabaseAdmin(), cliente.phone_number_id, soloDigitos(mensaje.from), {
+      excluirWamid: mensaje.id,
     });
-    if (resultado.texto) await enviarWhatsApp(cliente, mensaje.from, resultado.texto);
-    return;
-  }
 
-  const historial = await obtenerHistorialConversacion(supabaseAdmin(), cliente.phone_number_id, soloDigitos(mensaje.from), {
-    excluirWamid: mensaje.id,
-  });
+    // Solo entra aquí si el número tiene alguna especialista configurada (ver
+    // lib/especialistas.ts) -- para el resto de la plataforma este chequeo es
+    // un simple false y el comportamiento sigue exactamente igual que siempre.
+    const conEspecialistas = await tieneEspecialistasActivas(supabaseAdmin(), cliente.phone_number_id);
+    // Si quien escribe es una de las propias especialistas del negocio (por su
+    // número de WhatsApp), se le atiende como administradora -- consulta la
+    // agenda y agenda citas ya confirmadas para otras personas, no como una
+    // clienta pidiendo un servicio para sí misma.
+    const especialistaAdmin = conEspecialistas
+      ? await especialistaPorNumero(supabaseAdmin(), cliente.phone_number_id, soloDigitos(mensaje.from))
+      : null;
 
-  // Solo entra aquí si el número tiene alguna especialista configurada (ver
-  // lib/especialistas.ts) -- para el resto de la plataforma este chequeo es
-  // un simple false y el comportamiento sigue exactamente igual que siempre.
-  const conEspecialistas = await tieneEspecialistasActivas(supabaseAdmin(), cliente.phone_number_id);
-  // Si quien escribe es una de las propias especialistas del negocio (por su
-  // número de WhatsApp), se le atiende como administradora -- consulta la
-  // agenda y agenda citas ya confirmadas para otras personas, no como una
-  // clienta pidiendo un servicio para sí misma.
-  const especialistaAdmin = conEspecialistas
-    ? await especialistaPorNumero(supabaseAdmin(), cliente.phone_number_id, soloDigitos(mensaje.from))
-    : null;
-
-  const respuesta = especialistaAdmin
-    ? await generarRespuestaAdminEspecialistaIA({
-        supabase: supabaseAdmin(),
-        cliente,
-        especialista: especialistaAdmin,
-        textoUsuario: mensaje.text!.body,
-        historial,
-      })
-    : conEspecialistas
-    ? await generarRespuestaConEspecialistaIA({
-        supabase: supabaseAdmin(),
-        cliente,
-        systemPromptBase: construirSystemPrompt({ ...contexto.config, nombre_negocio: cliente.nombre_negocio }),
-        textoUsuario: mensaje.text!.body,
-        telefonoRemitente: soloDigitos(mensaje.from),
-        nombrePerfilWhatsapp: nombreContacto,
-        historial,
-      })
-    : await generarRespuestaIA(
-        { ...contexto.config, nombre_negocio: cliente.nombre_negocio },
-        mensaje.text!.body,
-        { idTenant: cliente.id_tenant, phoneNumberId: cliente.phone_number_id },
-        historial
-      );
-  if (respuesta) {
-    // Con especialistas activas se permite que la IA parta su respuesta en
-    // dos mensajes (separados por línea en blanco) para sonar más humana --
-    // el resto de la plataforma sigue mandando un solo mensaje por turno,
-    // como siempre.
-    if (conEspecialistas) {
-      await enviarWhatsAppPartes(cliente, mensaje.from, respuesta);
-    } else {
-      await enviarWhatsApp(cliente, mensaje.from, respuesta);
+    const respuesta = especialistaAdmin
+      ? await generarRespuestaAdminEspecialistaIA({
+          supabase: supabaseAdmin(),
+          cliente,
+          especialista: especialistaAdmin,
+          textoUsuario: mensaje.text!.body,
+          historial,
+        })
+      : conEspecialistas
+      ? await generarRespuestaConEspecialistaIA({
+          supabase: supabaseAdmin(),
+          cliente,
+          systemPromptBase: construirSystemPrompt({ ...contexto.config, nombre_negocio: cliente.nombre_negocio }),
+          textoUsuario: mensaje.text!.body,
+          telefonoRemitente: soloDigitos(mensaje.from),
+          nombrePerfilWhatsapp: nombreContacto,
+          historial,
+        })
+      : await generarRespuestaIA(
+          { ...contexto.config, nombre_negocio: cliente.nombre_negocio },
+          mensaje.text!.body,
+          { idTenant: cliente.id_tenant, phoneNumberId: cliente.phone_number_id },
+          historial
+        );
+    if (respuesta) {
+      // Con especialistas activas se permite que la IA parta su respuesta en
+      // dos mensajes (separados por línea en blanco) para sonar más humana --
+      // el resto de la plataforma sigue mandando un solo mensaje por turno,
+      // como siempre.
+      if (conEspecialistas) {
+        await enviarWhatsAppPartes(cliente, mensaje.from, respuesta);
+      } else {
+        await enviarWhatsApp(cliente, mensaje.from, respuesta);
+      }
+    }
+  } finally {
+    if (yaTengoCandado) {
+      await liberarCandadoChat(cliente.phone_number_id, soloDigitos(mensaje.from), mensaje.id);
     }
   }
 }
