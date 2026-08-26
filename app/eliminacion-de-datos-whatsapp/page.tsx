@@ -60,7 +60,7 @@ export default function EliminacionDatosPage() {
           <ul>
             <li>
               {t("Inicia sesión en", "Sign in at")}{" "}
-              <a href="https://dulabs.co">dulabs.co</a>
+              <a href="https://www.dulabs.co">dulabs.co</a>
             </li>
             <li>{t("Ve a Números y busca la línea que quieres desconectar", "Go to Numbers and find the line you want to disconnect")}</li>
             <li>
@@ -133,7 +133,7 @@ export default function EliminacionDatosPage() {
               {t("Correo:", "Email:")} <a href="mailto:contacto@dulabs.co">contacto@dulabs.co</a>
             </li>
             <li>
-              {t("Web:", "Website:")} <a href="https://dulabs.co">dulabs.co</a>
+              {t("Web:", "Website:")} <a href="https://www.dulabs.co">dulabs.co</a>
             </li>
           </ul>
         </article>

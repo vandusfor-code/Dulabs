@@ -26,7 +26,7 @@ export default function TerminosPage() {
           <p>{t("Última actualización: 13 de julio de 2026", "Last updated: July 13, 2026")}</p>
           <p>
             {t("Bienvenido a Du Labs (accesible a través de", "Welcome to Du Labs (accessible via")}{" "}
-            <a href="https://dulabs.co">https://dulabs.co</a>
+            <a href="https://www.dulabs.co">https://www.dulabs.co</a>
             {t(
               "). Al registrarte, conectar tu cuenta y utilizar nuestra plataforma de automatización conversacional basada en inteligencia artificial, aceptas cumplir y quedar sujeto a los siguientes Términos y Condiciones de Servicio. Si no estás de acuerdo con alguna de estas cláusulas, deberás abstenerte de utilizar nuestro sistema.",
               "). By registering, connecting your account, and using our AI-based conversational automation platform, you agree to comply with and be bound by the following Terms and Conditions of Service. If you do not agree with any of these clauses, you must refrain from using our system."

@@ -26,7 +26,7 @@ import Image from "next/image";
 import PlanButton from "@/components/PlanButton";
 import { Reveal } from "./Reveal";
 import { useI18n } from "@/lib/i18n";
-import { PLANES, ORDEN_PLANES } from "@/lib/planes";
+import { PLANES, type PlanId } from "@/lib/planes";
 import { PRICING_COPY } from "./pricing-copy";
 import { MENSAJE_WHATSAPP_GENERICO_EN, MENSAJE_WHATSAPP_GENERICO_ES, whatsappVentasUrl } from "@/lib/site-contact";
 
@@ -262,9 +262,14 @@ export function MetricsSection() {
    3. Precios (planes reales de Du Labs)
 ========================================================= */
 
+// Enterprise NO es un plan más de esta grilla -- es un proyecto a medida,
+// con su propia sección (ver EnterpriseSections.tsx) y sin precio fijo. Esta
+// grilla es exclusivamente "WhatsApp + IA" (Start/Growth/Scale).
+const PLANES_WHATSAPP: PlanId[] = ["start", "growth", "scale"];
+
 export function PricingSection({ showComparisonLink = false }: { showComparisonLink?: boolean } = {}) {
   const { t, lang } = useI18n();
-  const tiers = ORDEN_PLANES.map((id) => {
+  const tiers = PLANES_WHATSAPP.map((id) => {
     const def = PLANES[id];
     const copy = PRICING_COPY[id];
     return {
@@ -285,8 +290,13 @@ export function PricingSection({ showComparisonLink = false }: { showComparisonL
   return (
     <section id="precios" className="relative border-t border-site-border py-20">
       <div className="mx-auto max-w-[1440px] px-6">
+        {/* Transición: esto es UNO de los productos de DuLabs, no todo DuLabs
+            -- ver EnterpriseSection para el resto. */}
+        <p className="mb-4 text-center font-mono text-[11px] uppercase tracking-[0.2em] text-site-muted-fg">
+          {t("Una de nuestras soluciones más utilizadas", "One of our most used solutions")}
+        </p>
         <SectionHeading
-          eyebrow={t("Precios", "Pricing")}
+          eyebrow={t("Planes WhatsApp con IA", "WhatsApp with AI plans")}
           title={<>{t("Un plan para cada etapa de tu negocio.", "A plan for every stage of your business.")}</>}
           desc={t(
             "Nosotros configuramos tu asistente de IA según la información y procesos de tu negocio. Precios en pesos colombianos (COP).",
@@ -294,7 +304,7 @@ export function PricingSection({ showComparisonLink = false }: { showComparisonL
           )}
           align="center"
         />
-        <div className="mt-14 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <div className="mx-auto mt-14 grid max-w-5xl grid-cols-1 gap-4 md:grid-cols-3">
           {tiers.map((tier) => (
             <div
               key={tier.id}
@@ -486,6 +496,70 @@ export function FaqSection({ ids, showMoreLink = false }: { ids?: string[]; show
   const { t } = useI18n();
   const allFaqs = [
     {
+      id: "que-es-dulabs",
+      q: t("¿Qué es DuLabs?", "What is DuLabs?"),
+      a: t(
+        "DuLabs es una empresa de tecnología con sede en Montería, Colombia, que diseña e implementa soluciones de inteligencia artificial, automatización, software e integraciones para empresas. WhatsApp con IA es uno de nuestros productos, no el único.",
+        "DuLabs is a technology company based in Montería, Colombia, that designs and implements AI, automation, software and integration solutions for businesses. WhatsApp with AI is one of our products, not the only one."
+      ),
+    },
+    {
+      id: "solo-whatsapp",
+      q: t("¿DuLabs solo trabaja con WhatsApp?", "Does DuLabs only work with WhatsApp?"),
+      a: t(
+        "No. WhatsApp con IA es nuestro producto más conocido, pero también desarrollamos automatizaciones, software a medida, CRM personalizados e integraciones entre sistemas. Si tu proyecto va más allá de WhatsApp, lo construimos igual.",
+        "No. WhatsApp with AI is our best-known product, but we also build automations, custom software, custom CRMs and integrations between systems. If your project goes beyond WhatsApp, we build that too."
+      ),
+    },
+    {
+      id: "software-personalizado",
+      q: t("¿Pueden desarrollar software personalizado?", "Can you build custom software?"),
+      a: t(
+        "Sí. Construimos plataformas web, sistemas internos, dashboards y herramientas empresariales cuando una solución estándar no se adapta a tu proceso.",
+        "Yes. We build web platforms, internal systems, dashboards and business tools when an off-the-shelf solution doesn't fit your process."
+      ),
+    },
+    {
+      id: "automatizar-procesos",
+      q: t("¿Pueden automatizar procesos de mi empresa?", "Can you automate my company's processes?"),
+      a: t(
+        "Sí. Automatizamos tareas repetitivas, notificaciones, seguimiento de clientes, asignación de tareas y flujos operativos, conectando las herramientas que ya usa tu equipo.",
+        "Yes. We automate repetitive tasks, notifications, customer follow-up, task assignment and operational workflows, connecting the tools your team already uses."
+      ),
+    },
+    {
+      id: "integrar-crm",
+      q: t("¿Pueden integrar WhatsApp con mi CRM?", "Can you integrate WhatsApp with my CRM?"),
+      a: t(
+        "Sí. Conectamos WhatsApp Business con tu CRM u otras herramientas mediante APIs, para que la información de tus conversaciones y clientes fluya en un solo lugar.",
+        "Yes. We connect WhatsApp Business with your CRM or other tools via APIs, so your conversation and customer data flows into one place."
+      ),
+    },
+    {
+      id: "empresas-grandes",
+      q: t("¿Trabajan con empresas grandes?", "Do you work with large companies?"),
+      a: t(
+        "Sí. Además de nuestros planes de WhatsApp con IA, tenemos una línea Enterprise para empresas que necesitan proyectos a medida: integraciones, sistemas internos y soluciones diseñadas alrededor de su operación.",
+        "Yes. Besides our WhatsApp with AI plans, we have an Enterprise line for companies that need custom projects: integrations, internal systems and solutions designed around their operation."
+      ),
+    },
+    {
+      id: "como-funciona-implementacion",
+      q: t("¿Cómo funciona una implementación?", "How does an implementation work?"),
+      a: t(
+        "Entendemos tu negocio y objetivo, diseñamos la solución, la desarrollamos e integramos, y la ponemos en funcionamiento acompañándote en el proceso. Para WhatsApp con IA esto toma menos de 24 horas; para proyectos a medida el tiempo depende del alcance.",
+        "We learn your business and goal, design the solution, build and integrate it, and put it to work while staying with you through the process. For WhatsApp with AI this takes under 24 hours; for custom projects the timeline depends on scope."
+      ),
+    },
+    {
+      id: "costo-proyecto",
+      q: t("¿Cuánto cuesta un proyecto personalizado?", "How much does a custom project cost?"),
+      a: t(
+        "El valor depende del alcance, las integraciones y la complejidad del proyecto. Trabajamos mediante cotización personalizada: nos cuentas qué necesitas y te proponemos un presupuesto acorde.",
+        "The cost depends on the scope, integrations and complexity of the project. We work through custom quotes: tell us what you need and we'll propose a budget that fits."
+      ),
+    },
+    {
       id: "conexion",
       q: t("¿Qué tan rápido queda listo mi bot?", "How fast is my bot ready?"),
       a: t(
@@ -559,10 +633,10 @@ export function FaqSection({ ids, showMoreLink = false }: { ids?: string[]; show
     },
     {
       id: "integraciones",
-      q: t("¿Con qué se integra Du Labs hoy?", "What does Du Labs integrate with today?"),
+      q: t("¿Con qué se integra DuLabs hoy?", "What does DuLabs integrate with today?"),
       a: t(
-        "Hoy nos enfocamos 100% en hacer WhatsApp Business excelente: conexión oficial, IA entrenada, plantillas y campañas, y bandeja de mensajes centralizada.",
-        "Today we're 100% focused on making WhatsApp Business excellent: official connection, trained AI, templates and campaigns, and a centralized message inbox."
+        "Nuestro producto de WhatsApp con IA corre 100% sobre la API Oficial de WhatsApp Business (Meta Cloud API), con IA entrenada, plantillas, campañas y bandeja centralizada. Para proyectos a medida también integramos con CRM y otras herramientas mediante APIs, según lo que necesite cada empresa.",
+        "Our WhatsApp with AI product runs 100% on the Official WhatsApp Business API (Meta Cloud API), with trained AI, templates, campaigns and a centralized inbox. For custom projects we also integrate with CRMs and other tools via APIs, depending on what each company needs."
       ),
     },
   ];
@@ -665,12 +739,22 @@ export function Footer() {
   const { t } = useI18n();
   const cols = [
     {
-      title: t("Producto", "Product"),
+      title: t("Soluciones", "Solutions"),
       links: [
-        { l: t("Plataforma", "Platform"), h: "/#plataforma" },
-        { l: t("Qué incluye", "What's included"), h: "/#incluye" },
-        { l: t("Precios", "Pricing"), h: "/#precios" },
-        { l: t("Preguntas frecuentes", "FAQ"), h: "/preguntas-frecuentes" },
+        { l: t("WhatsApp con IA", "WhatsApp with AI"), h: "/whatsapp-ia" },
+        { l: t("Automatización", "Automation"), h: "/automatizacion-empresas" },
+        { l: t("Software a medida", "Custom software"), h: "/software-a-medida" },
+        { l: t("Integraciones", "Integrations"), h: "/integraciones" },
+        { l: t("CRM personalizado", "Custom CRM"), h: "/crm-personalizado" },
+      ],
+    },
+    {
+      title: t("Empresa", "Company"),
+      links: [
+        { l: "Enterprise", h: "/soluciones-empresariales" },
+        { l: t("Casos", "Case studies"), h: "/casos" },
+        { l: t("Recursos", "Resources"), h: "/recursos" },
+        { l: t("Contacto", "Contact"), h: "/#contacto" },
       ],
     },
     {
@@ -685,16 +769,16 @@ export function Footer() {
   return (
     <footer className="relative border-t border-site-border bg-site-bg">
       <div className="mx-auto max-w-[1440px] px-6 py-16">
-        <div className="grid grid-cols-2 gap-10 md:grid-cols-4">
+        <div className="grid grid-cols-2 gap-10 sm:grid-cols-2 lg:grid-cols-5">
           <div className="col-span-2">
             <div className="flex items-center gap-2 font-display text-[15px] font-medium tracking-tight text-site-fg">
               <Image src="/logo.png" alt="Du Labs" width={24} height={24} className="rounded-full" />
-              Du Labs
+              DuLabs
             </div>
             <p className="mt-4 max-w-xs text-[12.5px] leading-relaxed text-site-muted-fg">
               {t(
-                "Automatización de WhatsApp Business con IA, sobre la API Oficial de Meta. Hecho en Montería, Colombia.",
-                "WhatsApp Business automation with AI, on the Official Meta API. Made in Montería, Colombia."
+                "IA, automatización y software para empresas. Hecho en Montería, Colombia.",
+                "AI, automation and software for businesses. Made in Montería, Colombia."
               )}
             </p>
             <div className="mt-6 flex items-center gap-2 font-mono text-[10px] uppercase tracking-widest text-site-muted-fg">
@@ -758,10 +842,11 @@ export function Footer() {
                 </a>
               </li>
               <li>
-                <a href="https://dulabs.co" className="transition-colors duration-200 hover:text-site-fg">
+                <a href="https://www.dulabs.co" className="transition-colors duration-200 hover:text-site-fg">
                   dulabs.co
                 </a>
               </li>
+              <li className="text-site-muted-fg/70">{t("Montería, Colombia", "Montería, Colombia")}</li>
             </ul>
             <p className="mt-4 max-w-[26ch] text-[12px] leading-relaxed text-site-muted-fg/70">
               {t(

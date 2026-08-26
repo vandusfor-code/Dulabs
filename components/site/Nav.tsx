@@ -10,9 +10,11 @@ import { MENSAJE_WHATSAPP_GENERICO_EN, MENSAJE_WHATSAPP_GENERICO_ES, whatsappVen
 export function Nav() {
   const { t, lang } = useI18n();
   const links = [
-    { label: t("Plataforma", "Platform"), href: "/#plataforma" },
-    { label: t("Qué incluye", "What's included"), href: "/#incluye" },
-    { label: t("Preguntas frecuentes", "FAQ"), href: "/#faq" },
+    { label: t("Soluciones", "Solutions"), href: "/#soluciones" },
+    { label: t("WhatsApp con IA", "WhatsApp with AI"), href: "/whatsapp-ia" },
+    { label: "Enterprise", href: "/soluciones-empresariales" },
+    { label: t("Casos", "Case studies"), href: "/casos" },
+    { label: t("Recursos", "Resources"), href: "/recursos" },
   ];
   const [scrolled, setScrolled] = useState(false);
   useEffect(() => {
@@ -35,22 +37,16 @@ export function Nav() {
           <Image src="/logo.png" alt="Du Labs" width={24} height={24} className="rounded-full" priority />
           <span>Du Labs</span>
         </Link>
-        <nav className="hidden items-center gap-7 md:flex">
+        <nav className="hidden items-center gap-6 lg:flex">
           {links.map((l) => (
             <a
               key={l.href}
               href={l.href}
-              className="text-[13px] text-site-muted-fg transition-colors hover:text-site-fg"
+              className="whitespace-nowrap text-[13px] text-site-muted-fg transition-colors hover:text-site-fg"
             >
               {l.label}
             </a>
           ))}
-          <Link
-            href="/precios"
-            className="text-[13px] text-site-muted-fg transition-colors hover:text-site-fg"
-          >
-            {t("Precios", "Pricing")}
-          </Link>
         </nav>
         <div className="flex items-center gap-3">
           <LanguageSelector />
@@ -61,9 +57,9 @@ export function Nav() {
             href={whatsappVentasUrl(lang === "en" ? MENSAJE_WHATSAPP_GENERICO_EN : MENSAJE_WHATSAPP_GENERICO_ES)}
             target="_blank"
             rel="noopener noreferrer"
-            className="group inline-flex h-8 items-center gap-1.5 rounded-full bg-site-fg px-3.5 text-[12.5px] font-medium text-site-bg transition-all hover:bg-site-fg/90"
+            className="group inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-full bg-site-fg px-3.5 text-[12.5px] font-medium text-site-bg transition-all hover:bg-site-fg/90"
           >
-            {t("Empieza en 24h", "Start in 24h")}
+            {t("Hablar con DuLabs", "Talk to DuLabs")}
             <span aria-hidden className="transition-transform group-hover:translate-x-0.5">→</span>
           </a>
         </div>
