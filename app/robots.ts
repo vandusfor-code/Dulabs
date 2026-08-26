@@ -5,7 +5,7 @@ export default function robots(): MetadataRoute.Robots {
     rules: {
       userAgent: "*",
       allow: "/",
-      disallow: ["/dashboard", "/agenda", "/login", "/checkout", "/api", "/webhook-dulabs"],
+      disallow: ["/dashboard", "/agenda", "/config-bot", "/login", "/checkout", "/api", "/webhook-dulabs"],
     },
     sitemap: "https://www.dulabs.co/sitemap.xml",
   };
