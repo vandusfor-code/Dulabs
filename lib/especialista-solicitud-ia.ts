@@ -20,6 +20,7 @@ import {
   formatearFechaHora,
 } from "@/lib/especialistas-notificar";
 import { nombreConocido, recordarNombreCliente } from "@/lib/clientes-conocidos";
+import { interpretarNombreWhatsapp } from "@/lib/nombre-whatsapp";
 import type { ClienteConfig } from "@/lib/supabase";
 import type { Especialista } from "@/lib/especialistas";
 
@@ -42,6 +43,9 @@ export async function generarRespuestaConEspecialistaIA(params: {
   systemPromptBase: string;
   textoUsuario: string;
   telefonoRemitente: string;
+  // Nombre de perfil crudo que llega de Meta (contacts[].profile.name) --
+  // solo una pista, nunca un nombre confirmado (ver interpretarNombreWhatsapp).
+  nombrePerfilWhatsapp?: string | null;
   historial?: MensajeHistorialIA[];
 }): Promise<string | null> {
   const apiKey = params.cliente.api_key_ia ? descifrarSecreto(params.cliente.api_key_ia) : process.env.ANTHROPIC_API_KEY;
@@ -108,10 +112,25 @@ export async function generarRespuestaConEspecialistaIA(params: {
     `Si la herramienta te dice que el horario está ocupado, díselo a la clienta tal cual y pídele que proponga otro horario -- nunca inventes ni asumas disponibilidad.\n` +
     `Para cualquier OTRO servicio que no tenga esa herramienta, sigues funcionando igual que siempre: solo tomas nota de la solicitud en texto, sin agenda real todavía.`;
 
+  // Prioridad del nombre: 1) lo que la clienta confirme explícitamente en
+  // este chat, 2) el que ya quedó guardado y confirmado de una cita
+  // anterior, 3) una suposición razonable sacada del perfil de WhatsApp
+  // (nunca se usa para agendar sin que ella la confirme primero), 4)
+  // ninguno -- nunca se inventa un nombre.
+  const nombreInterpretado = nombreYaConocido ? null : interpretarNombreWhatsapp(params.nombrePerfilWhatsapp);
+
   if (nombreYaConocido) {
     systemFinal +=
-      `\n\n--- Clienta conocida ---\n` +
-      `Esta clienta ya se llamó "${nombreYaConocido}" en una cita anterior. Puedes saludarla por su nombre con naturalidad (no en cada mensaje). No le preguntes cómo se llama de nuevo salvo que sea para una cita nueva y prefieras confirmarlo -- si lo hace, usa el nombre que te dé en ese momento.`;
+      `\n\n--- Nombre conocido ---\n` +
+      `Esta clienta ya se llamó "${nombreYaConocido}" en una cita anterior confirmada. Puedes saludarla y hablarle por ese nombre con naturalidad (no en cada mensaje), sin necesidad de volver a confirmarlo.`;
+  } else if (nombreInterpretado) {
+    systemFinal +=
+      `\n\n--- Posible nombre (sin confirmar) ---\n` +
+      `Por el perfil de WhatsApp, esta clienta podría llamarse "${nombreInterpretado}" -- es solo una suposición. No le preguntes de entrada "¿cómo te llamas?"; puedes usarlo con naturalidad si ayuda en la conversación, pero ANTES de dejar una cita registrada con crear_solicitud_cita, confírmalo primero con algo como: "Antes de dejarla agendada, solo quiero confirmar un detallito: ¿la cita es para ti, ${nombreInterpretado}? 💕". Si dice que sí, usa "${nombreInterpretado}" como nombre_cliente. Si dice que no o que es para otra persona, pregúntale el nombre correcto y usa ese en su lugar -- nunca asumas que el nombre supuesto es el correcto.`;
+  } else {
+    systemFinal +=
+      `\n\n--- Sin nombre confiable ---\n` +
+      `No tienes ningún nombre confiable de esta clienta todavía. No se lo preguntes de entrada -- conversa normal, y cuando llegue el momento de dejar una cita registrada, pídeselo ahí: "Para dejar tu cita registrada, ¿me compartes tu nombre, por favor? 🥰".`;
   }
 
   if (propuesta) {

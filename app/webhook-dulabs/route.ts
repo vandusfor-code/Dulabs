@@ -613,6 +613,7 @@ async function atenderMensaje(cliente: ClienteConfig, mensaje: MetaMessage, nomb
         systemPromptBase: construirSystemPrompt({ ...contexto.config, nombre_negocio: cliente.nombre_negocio }),
         textoUsuario: mensaje.text!.body,
         telefonoRemitente: soloDigitos(mensaje.from),
+        nombrePerfilWhatsapp: nombreContacto,
         historial,
       })
     : await generarRespuestaIA(
