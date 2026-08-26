@@ -47,14 +47,30 @@ export async function notificarNuevaSolicitud(
   return enviar(cliente, especialista.numero_whatsapp, texto);
 }
 
-// Avisa al cliente que su cita quedó confirmada.
+// Avisa al cliente que su cita quedó confirmada. Incluye la política real
+// del spa: si no confirma 1h antes, se cancela sola (así lo maneja Daniela
+// desde antes de Dulabs, ver conversación con el negocio).
 export async function notificarCitaConfirmada(
   cliente: Pick<ClienteConfig, "phone_number_id" | "meta_permanent_token">,
   cita: CitaEspecialista
 ): Promise<boolean> {
   if (!cita.telefono_cliente) return false;
-  const texto = `¡Listo, ${cita.nombre_cliente}! 💕 Tu cita quedó confirmada.\n\n✨ ${cita.servicio}\n📅 ${formatearFechaHora(cita.inicio)}\n\nTe esperamos 💕`;
+  const texto = `¡Listo, ${cita.nombre_cliente}! 💕 Tu cita quedó confirmada.\n\n✨ ${cita.servicio}\n📅 ${formatearFechaHora(cita.inicio)}\n\nRecuerda confirmarnos por aquí una hora antes de tu cita -- si no confirmas, lastimosamente se cancela automáticamente para dar espacio a otras clientas 💕`;
   return enviar(cliente, cita.telefono_cliente, texto);
+}
+
+// La especialista recibe un aviso informativo de una cita que quedó
+// confirmada sola en su calendario (modo automático) -- no necesita
+// aprobarla, pero puede entrar a su panel a editarla o cancelarla si algo
+// no le cuadra.
+export async function notificarCitaAutoConfirmada(
+  cliente: Pick<ClienteConfig, "phone_number_id" | "meta_permanent_token" | "nombre_negocio">,
+  especialista: Especialista,
+  cita: CitaEspecialista
+): Promise<boolean> {
+  const ruta = construirRutaAgenda(cliente.nombre_negocio, especialista.token);
+  const texto = `✅ Nueva cita confirmada en tu agenda\n\n${cita.nombre_cliente} · ${cita.servicio}\n${formatearFechaHora(cita.inicio)}\n\nSi necesitas cambiarla o cancelarla, entra aquí:\n${SITE_URL}/agenda/${ruta}`;
+  return enviar(cliente, especialista.numero_whatsapp, texto);
 }
 
 // Avisa a la clienta que la especialista propuso un horario distinto al que

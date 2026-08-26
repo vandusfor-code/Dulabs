@@ -347,6 +347,7 @@ function NuevaCitaModal({
   const [nombre, setNombre] = useState("");
   const [telefono, setTelefono] = useState("");
   const [servicio, setServicio] = useState(servicioEsGenerico ? "" : servicioDefecto);
+  const [conQuien, setConQuien] = useState("");
   const [fecha, setFecha] = useState(() => new Date().toISOString().slice(0, 10));
   const [hora, setHora] = useState("");
   const [duracion, setDuracion] = useState(String(duracionDefecto));
@@ -369,6 +370,7 @@ function NuevaCitaModal({
           nombre_cliente: nombre.trim(),
           telefono_cliente: normalizarTelefono(telefono),
           servicio: servicio.trim(),
+          con_quien: conQuien.trim() || undefined,
           inicio: inicio.toISOString(),
           duracion_min: Number(duracion) || duracionDefecto,
         }),
@@ -422,6 +424,16 @@ function NuevaCitaModal({
               placeholder="Ej. semipermanente en manos"
               className="w-full rounded-xl border border-edge bg-card px-3.5 py-3 text-sm text-fg outline-none focus:border-lime/50"
             />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-mist">¿Con quién? (opcional)</label>
+            <input
+              value={conQuien}
+              onChange={(e) => setConQuien(e.target.value)}
+              placeholder="Ej. Daniela, Carla, Kelly"
+              className="w-full rounded-xl border border-edge bg-card px-3.5 py-3 text-sm text-fg outline-none focus:border-lime/50"
+            />
+            <p className="mt-1 text-[11px] text-mist">Si no eliges a nadie, se agenda automático con quien esté libre.</p>
           </div>
           <div className="flex gap-3">
             <div className="flex-1">

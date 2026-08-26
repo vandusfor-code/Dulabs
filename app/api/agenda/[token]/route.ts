@@ -4,9 +4,12 @@ import {
   especialistaPorRuta,
   especialistaPorServicio,
   especialistasDelMismaPersona,
+  categoriaDeServicio,
+  especialistasPorCategoria,
+  crearCitaEnCategoria,
   citasDeEspecialista,
-  crearCitaEspecialista,
   confirmarCita,
+  type Especialista,
 } from "@/lib/especialistas";
 import { clienteDeEspecialista, notificarCitaConfirmada } from "@/lib/especialistas-notificar";
 import { recordarNombreCliente } from "@/lib/clientes-conocidos";
@@ -61,7 +64,14 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const especialista = await especialistaPorRuta(supabase, token);
   if (!especialista) return Response.json({ error: "Link inválido" }, { status: 404 });
 
-  let body: { nombre_cliente?: string; telefono_cliente?: string; servicio?: string; inicio?: string; duracion_min?: number };
+  let body: {
+    nombre_cliente?: string;
+    telefono_cliente?: string;
+    servicio?: string;
+    inicio?: string;
+    duracion_min?: number;
+    con_quien?: string;
+  };
   try {
     body = await request.json();
   } catch {
@@ -79,22 +89,29 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   }
 
   const servicio = body.servicio?.trim() || especialista.servicio;
+  const conQuien = body.con_quien?.trim().toLowerCase();
+
   // El servicio que escribió puede pertenecer a OTRA de sus especialidades
   // (ej. abrió el link de "pestañas" pero está anotando una de "uñas") --
-  // se resuelve igual que cuando lo pide el bot, así la cita queda bajo el
-  // recurso correcto (con o sin candado de horario según corresponda).
-  const dueño = (await especialistaPorServicio(supabase, especialista.phone_number_id, servicio)) ?? especialista;
+  // se resuelve igual que cuando lo pide el bot: primero especialidad propia
+  // y exclusiva (pestañas), si no calza cae a la categoría compartida
+  // (manos/pies), filtrada a una persona si se pidió "con_quien".
+  const especialistaExclusiva = await especialistaPorServicio(supabase, especialista.phone_number_id, servicio);
+  let candidatas: Especialista[];
+  if (especialistaExclusiva) {
+    candidatas = [especialistaExclusiva];
+  } else {
+    const porCategoria = await especialistasPorCategoria(supabase, especialista.phone_number_id, categoriaDeServicio(servicio));
+    candidatas = conQuien ? porCategoria.filter((e) => e.nombre.toLowerCase().includes(conQuien)) : porCategoria;
+    if (candidatas.length === 0) candidatas = [especialista]; // respaldo: la del link, si nada más calzó
+  }
 
-  const resultado = await crearCitaEspecialista(supabase, {
-    especialistaId: dueño.id,
-    idTenant: dueño.id_tenant,
-    phoneNumberId: dueño.phone_number_id,
+  const resultado = await crearCitaEnCategoria(supabase, candidatas, {
     telefonoCliente: body.telefono_cliente?.trim() || null,
     nombreCliente,
     servicio,
     inicio,
-    duracionMin: body.duracion_min ?? dueño.duracion_min,
-    bloqueaHorario: dueño.bloquea_horario,
+    duracionMin: body.duracion_min ?? candidatas[0].duracion_min,
     origen: "manual",
   });
 
@@ -108,17 +125,17 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   // Una cita creada por la propia especialista queda directamente confirmada
   // -- no tiene sentido que se apruebe a sí misma. Solo se avisa a la
   // clienta si dejó un teléfono real (una cita "personal" bloqueada no lo trae).
-  const confirmada = await confirmarCita(supabase, resultado.cita.id);
-  if (confirmada?.telefono_cliente) {
+  const confirmada = (await confirmarCita(supabase, resultado.cita.id)) ?? resultado.cita;
+  if (confirmada.telefono_cliente) {
     const cliente = await clienteDeEspecialista(supabase, especialista.phone_number_id);
     if (cliente) await notificarCitaConfirmada(cliente, confirmada);
     await recordarNombreCliente(supabase, {
-      idTenant: dueño.id_tenant,
-      phoneNumberId: dueño.phone_number_id,
+      idTenant: resultado.especialista.id_tenant,
+      phoneNumberId: resultado.especialista.phone_number_id,
       telefonoCliente: confirmada.telefono_cliente,
       nombre: confirmada.nombre_cliente,
     });
   }
 
-  return Response.json({ success: true, cita: confirmada ?? resultado.cita });
+  return Response.json({ success: true, cita: confirmada, con: resultado.especialista.nombre });
 }

@@ -137,6 +137,101 @@ export async function especialistaPorServicio(
   return (general as Especialista) ?? null;
 }
 
+export type CategoriaServicio = "pies" | "manos";
+
+// Deriva a qué categoría de recurso pertenece un servicio pedido en texto
+// libre -- "pies" si menciona pies/pedicure, "manos" para todo lo demás que
+// no tenga especialidad propia (incluye cejas, hidralips, forrado, press
+// on, acrílicas...). Pestañas NO pasa por aquí -- sigue resolviéndose por
+// especialistaPorServicio como siempre (especialidad propia, no categoría
+// compartida entre varias personas).
+export function categoriaDeServicio(servicio: string): CategoriaServicio {
+  return /pies|pedicure/i.test(servicio) ? "pies" : "manos";
+}
+
+// Todas las especialistas activas de esta categoría (ej. "manos": Daniela y
+// Carla) -- candidatas intercambiables para un mismo tipo de servicio. Cada
+// una bloquea SU propio horario; que una esté ocupada no dice nada de las
+// demás, por eso se agenda probando una por una (ver crearCitaEnCategoria).
+export async function especialistasPorCategoria(
+  supabase: SupabaseClient,
+  phoneNumberId: string,
+  categoria: CategoriaServicio
+): Promise<Especialista[]> {
+  const { data } = await supabase
+    .from("dulabs_especialistas")
+    .select(COLUMNAS_ESPECIALISTA)
+    .eq("phone_number_id", phoneNumberId)
+    .eq("activo", true)
+    .ilike("servicio", `%${categoria}%`)
+    .order("id", { ascending: true });
+  return (data as Especialista[]) ?? [];
+}
+
+// Intenta agendar con la primera candidata de la lista que tenga el horario
+// libre -- para categorías con varias personas intercambiables. Se prueba
+// una por una porque el constraint EXCLUDE es por especialista_id: que una
+// esté ocupada no bloquea a las demás.
+export async function crearCitaEnCategoria(
+  supabase: SupabaseClient,
+  candidatas: Especialista[],
+  params: {
+    telefonoCliente: string | null;
+    nombreCliente: string;
+    servicio: string;
+    inicio: Date;
+    duracionMin: number;
+    origen?: "manual" | "whatsapp_ia";
+  }
+): Promise<
+  | { ok: true; cita: CitaEspecialista; especialista: Especialista }
+  | { ok: false; motivo: "ocupado" | "sin_especialistas" | "error"; detalle?: string }
+> {
+  if (candidatas.length === 0) return { ok: false, motivo: "sin_especialistas" };
+  for (const especialista of candidatas) {
+    const resultado = await crearCitaEspecialista(supabase, {
+      ...params,
+      especialistaId: especialista.id,
+      idTenant: especialista.id_tenant,
+      phoneNumberId: especialista.phone_number_id,
+      bloqueaHorario: especialista.bloquea_horario,
+    });
+    if (resultado.ok) return { ok: true, cita: resultado.cita, especialista };
+    if (resultado.motivo === "error") return resultado;
+    // motivo "ocupado": esta candidata no puede, se prueba con la siguiente.
+  }
+  return { ok: false, motivo: "ocupado" };
+}
+
+// Todo lo agendado ese día entre las candidatas de una categoría, para que
+// el bot pueda proponerle a la clienta un horario libre real ("tengo a las
+// 3 o a las 5, ¿cuál te queda mejor?") en vez de solo decir "ocupado".
+export async function citasDelDiaEnCategoria(
+  supabase: SupabaseClient,
+  candidatas: Especialista[],
+  fechaISO: string
+): Promise<{ especialista: string; inicio: string; fin: string }[]> {
+  if (candidatas.length === 0) return [];
+  const desde = new Date(`${fechaISO}T00:00:00-05:00`);
+  const hasta = new Date(`${fechaISO}T23:59:59-05:00`);
+  if (Number.isNaN(desde.getTime())) return [];
+  const ids = candidatas.map((c) => c.id);
+  const { data } = await supabase
+    .from("dulabs_citas_especialista")
+    .select("especialista_id, inicio, fin")
+    .in("especialista_id", ids)
+    .in("estado", ["pendiente", "confirmada", "propuesta"])
+    .gte("inicio", desde.toISOString())
+    .lte("inicio", hasta.toISOString())
+    .order("inicio", { ascending: true });
+  const nombrePorId = new Map(candidatas.map((c) => [c.id, c.nombre]));
+  return ((data ?? []) as { especialista_id: number; inicio: string; fin: string }[]).map((r) => ({
+    especialista: nombrePorId.get(r.especialista_id) ?? "?",
+    inicio: r.inicio,
+    fin: r.fin,
+  }));
+}
+
 // Todas las especialidades activas que pertenecen a la MISMA persona (mismo
 // número de WhatsApp) -- ej. Daniela puede tener "pestañas" y "general" a la
 // vez. Sirve para que un solo link de agenda muestre y gestione TODAS sus

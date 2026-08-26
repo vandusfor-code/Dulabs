@@ -3,7 +3,15 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { descifrarSecreto } from "@/lib/crypto";
 import { clasificarFalloIA, registrarFalloIA } from "@/lib/alertas";
 import { construirMensajesConHistorial, type MensajeHistorialIA } from "@/lib/historial-conversacion";
-import { especialistaPorServicio, crearCitaEspecialista, confirmarCita, type Especialista } from "@/lib/especialistas";
+import {
+  especialistaPorServicio,
+  crearCitaEnCategoria,
+  categoriaDeServicio,
+  especialistasPorCategoria,
+  citasDelDiaEnCategoria,
+  confirmarCita,
+  type Especialista,
+} from "@/lib/especialistas";
 import { notificarCitaConfirmada } from "@/lib/especialistas-notificar";
 import { recordarNombreCliente } from "@/lib/clientes-conocidos";
 import type { ClienteConfig } from "@/lib/supabase";
@@ -51,7 +59,7 @@ export async function generarRespuestaAdminEspecialistaIA(params: {
     {
       name: "agendar_cita_admin",
       description:
-        "Agenda una cita YA CONFIRMADA para una clienta (no necesita aprobación de nadie más). Solo llamar cuando ya tengas servicio, fecha, hora y a nombre de quién es -- si no dijo el servicio, pregúntaselo primero, nunca lo asumas.",
+        "Agenda una cita YA CONFIRMADA para una clienta (no necesita aprobación de nadie más). Solo llamar cuando ya tengas servicio, fecha, hora y a nombre de quién es -- si no dijo el servicio, pregúntaselo primero, nunca lo asumas. Si el horario está ocupado, te devuelve los horarios tomados ese día para proponer otro.",
       input_schema: {
         type: "object",
         properties: {
@@ -60,6 +68,11 @@ export async function generarRespuestaAdminEspecialistaIA(params: {
           hora: { type: "string", description: "Hora en formato HH:MM (24h)" },
           nombre_cliente: { type: "string", description: "Nombre de la persona para quien es la cita" },
           telefono_cliente: { type: "string", description: "Teléfono de la clienta si lo sabe -- opcional. Si lo da, se le avisa por WhatsApp." },
+          con_quien: {
+            type: "string",
+            description:
+              "Nombre de la persona del equipo que la va a atender, SOLO si se especificó explícitamente (ej. 'con Carla', 'con Kelly'). Si no se menciona a nadie en particular, omite este campo -- se agenda con quien esté libre.",
+          },
         },
         required: ["servicio", "fecha", "hora", "nombre_cliente"],
       },
@@ -71,7 +84,8 @@ export async function generarRespuestaAdminEspecialistaIA(params: {
     `Hoy es ${hoy} (hora de Colombia).\n` +
     `Puede pedirte dos cosas: consultar qué citas hay (usa consultar_citas), o agendar una cita para alguien (usa agendar_cita_admin). Si no te dice el servicio, pregúntaselo antes de agendar -- nunca lo asumas ni inventes uno.\n` +
     `Las citas que agendes así quedan CONFIRMADAS de inmediato -- ella administra, no hace falta la aprobación de nadie más.\n` +
-    `Si la herramienta de agendar te dice que el horario está ocupado, díselo tal cual y pídele otro horario.`;
+    `Si menciona con quién debe ser (ej. "con Carla"), pásalo en con_quien. Si no dice nada, se agenda automático con quien esté libre.\n` +
+    `Si la herramienta de agendar te dice que el horario está ocupado, te devuelve los horarios ya tomados ese día -- usa eso para ofrecerle un hueco libre en vez de solo decir "ocupado".`;
 
   async function ejecutarHerramienta(nombre: string, input: Record<string, unknown>): Promise<string> {
     if (nombre === "consultar_citas") {
@@ -98,53 +112,66 @@ export async function generarRespuestaAdminEspecialistaIA(params: {
 
     if (nombre === "agendar_cita_admin") {
       const servicio = String(input.servicio ?? "");
-      const especialistaDestino = await especialistaPorServicio(params.supabase, params.especialista.phone_number_id, servicio);
-      if (!especialistaDestino) {
-        return JSON.stringify({ success: false, error: `No manejamos "${servicio}" con agenda propia todavía.` });
-      }
-
       const fecha = String(input.fecha ?? "");
       const hora = String(input.hora ?? "");
       const inicio = new Date(`${fecha}T${hora}:00-05:00`);
       if (Number.isNaN(inicio.getTime())) {
         return JSON.stringify({ success: false, error: "Fecha u hora inválida." });
       }
-
       const telefonoTexto = typeof input.telefono_cliente === "string" ? input.telefono_cliente.replace(/\D/g, "") : "";
+      const nombreCliente = String(input.nombre_cliente ?? "Clienta");
+      const conQuien = typeof input.con_quien === "string" ? input.con_quien.trim().toLowerCase() : "";
 
-      const resultado = await crearCitaEspecialista(params.supabase, {
-        especialistaId: especialistaDestino.id,
-        idTenant: especialistaDestino.id_tenant,
-        phoneNumberId: especialistaDestino.phone_number_id,
+      // Igual que en el flujo de la clienta: primero especialidad propia y
+      // exclusiva (pestañas), si no calza cae a la categoría compartida
+      // (manos/pies) -- filtrada a una sola persona si se pidió con nombre.
+      const especialistaExclusiva = await especialistaPorServicio(params.supabase, params.especialista.phone_number_id, servicio);
+      let candidatas: Especialista[];
+      if (especialistaExclusiva) {
+        candidatas = [especialistaExclusiva];
+      } else {
+        const porCategoria = await especialistasPorCategoria(params.supabase, params.especialista.phone_number_id, categoriaDeServicio(servicio));
+        candidatas = conQuien ? porCategoria.filter((e) => e.nombre.toLowerCase().includes(conQuien)) : porCategoria;
+      }
+      if (candidatas.length === 0) {
+        return JSON.stringify({ success: false, error: `No manejamos "${servicio}"${conQuien ? ` con "${conQuien}"` : ""} con agenda propia todavía.` });
+      }
+
+      const duracionMin =
+        typeof input.duracion_min === "number" && input.duracion_min > 0 ? input.duracion_min : candidatas[0].duracion_min;
+
+      const resultado = await crearCitaEnCategoria(params.supabase, candidatas, {
         telefonoCliente: telefonoTexto || null,
-        nombreCliente: String(input.nombre_cliente ?? "Clienta"),
+        nombreCliente,
         servicio,
         inicio,
-        duracionMin: especialistaDestino.duracion_min,
-        bloqueaHorario: especialistaDestino.bloquea_horario,
+        duracionMin,
         origen: "manual",
       });
 
       if (!resultado.ok) {
-        if (resultado.motivo === "ocupado") return JSON.stringify({ success: false, ocupado: true });
+        if (resultado.motivo === "ocupado") {
+          const ocupados = await citasDelDiaEnCategoria(params.supabase, candidatas, fecha);
+          return JSON.stringify({ success: false, ocupado: true, horarios_tomados: ocupados });
+        }
         return JSON.stringify({ success: false, error: "No se pudo agendar, intenta de nuevo." });
       }
 
       // Se auto-confirma: la creó la propia administradora, no necesita
       // aprobarse a sí misma -- mismo criterio que la creación manual desde
       // el panel (ver app/api/agenda/[token]/route.ts).
-      const confirmada = await confirmarCita(params.supabase, resultado.cita.id);
-      if (confirmada?.telefono_cliente) {
+      const confirmada = (await confirmarCita(params.supabase, resultado.cita.id)) ?? resultado.cita;
+      if (confirmada.telefono_cliente) {
         await notificarCitaConfirmada(params.cliente, confirmada);
         await recordarNombreCliente(params.supabase, {
-          idTenant: especialistaDestino.id_tenant,
-          phoneNumberId: especialistaDestino.phone_number_id,
+          idTenant: resultado.especialista.id_tenant,
+          phoneNumberId: resultado.especialista.phone_number_id,
           telefonoCliente: confirmada.telefono_cliente,
           nombre: confirmada.nombre_cliente,
         });
       }
 
-      return JSON.stringify({ success: true });
+      return JSON.stringify({ success: true, con: resultado.especialista.nombre });
     }
 
     return JSON.stringify({ success: false, error: "Herramienta desconocida." });
