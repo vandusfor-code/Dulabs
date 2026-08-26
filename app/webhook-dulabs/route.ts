@@ -578,6 +578,29 @@ async function atenderMensaje(cliente: ClienteConfig, mensaje: MetaMessage, nomb
     return;
   }
 
+  // Si el cliente escribe varios mensajes seguidos muy rápido, Meta entrega
+  // cada uno en un webhook aparte -- sin este freno, cada uno dispararía su
+  // propia llamada a la IA en paralelo, y podrían llegar dos (o más)
+  // respuestas sueltas que no se leyeron entre sí. Se espera un momento
+  // corto y se revisa si mientras tanto llegó un mensaje MÁS NUEVO de este
+  // mismo remitente: si lo hay, este mensaje se deja pasar en silencio --
+  // el más nuevo, al procesarse, ya lo ve en el historial (obtenerHistorialConversacion)
+  // y responde a la ráfaga completa de una sola vez.
+  await new Promise((resolve) => setTimeout(resolve, 2500));
+  const { data: masReciente } = await supabaseAdmin()
+    .from("dulabs_mensajes_log")
+    .select("wamid")
+    .eq("phone_number_id", cliente.phone_number_id)
+    .eq("telefono_cliente", soloDigitos(mensaje.from))
+    .eq("direccion", "entrante")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (masReciente?.wamid && masReciente.wamid !== mensaje.id) {
+    console.log(`[webhook-dulabs] mensaje ${mensaje.id} superado por uno más nuevo del mismo remitente, no respondo (evita duplicados)`);
+    return;
+  }
+
   const contexto = await resolverContextoMensaje(cliente, mensaje.from);
 
   if (contexto.modo === "agenda") {
