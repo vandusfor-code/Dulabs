@@ -21,6 +21,9 @@ const PALABRAS_GENERICAS = new Set([
   "numero",
   "number",
   "negocio",
+  // Nombre de la plataforma: nunca es el nombre real de una clienta, sale
+  // como perfil de WhatsApp en números de prueba/desarrollo.
+  "dulabs",
 ]);
 
 function capitalizar(token: string): string {
