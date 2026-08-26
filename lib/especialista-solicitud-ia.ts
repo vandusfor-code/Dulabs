@@ -382,6 +382,27 @@ export async function generarRespuestaConEspecialistaIA(params: {
     return finalizarCitaCreada(resultado.especialista, resultado.cita);
   }
 
+  // Red de seguridad: la clienta NUNCA debe quedarse sin respuesta. Antes,
+  // si la IA se quedaba sin turnos de herramienta (o devolvía texto vacío),
+  // la función devolvía null y el webhook simplemente no mandaba nada --
+  // silencio total, sin ningún aviso ni para la clienta ni para el negocio.
+  // Ahora en cualquiera de esos dos casos se manda este mensaje de
+  // respaldo y se alerta al dueño (registrarFalloIA, con su propio
+  // deduplicado de 6h) para que quede visible que algo falló.
+  const MENSAJE_RESPALDO =
+    "¡Uy, disculpa! Se me complicó un poco agendar tu cita en este momento 😅 Dame un segundo, ya te ayudo — si no te respondo enseguida, escríbeme de nuevo por aquí y seguimos.";
+
+  async function respaldoPorFalloSilencioso(mensaje: string): Promise<string> {
+    await registrarFalloIA({
+      tipo: "otro",
+      mensaje,
+      idTenant: params.cliente.id_tenant,
+      phoneNumberId: params.cliente.phone_number_id,
+      nombreNegocio: params.cliente.nombre_negocio,
+    });
+    return MENSAJE_RESPALDO;
+  }
+
   const messages = construirMensajesConHistorial(params.historial ?? [], params.textoUsuario);
   const MAX_TURNOS_HERRAMIENTA = 4;
 
@@ -405,7 +426,11 @@ export async function generarRespuestaConEspecialistaIA(params: {
         phoneNumberId: params.cliente.phone_number_id,
         nombreNegocio: params.cliente.nombre_negocio,
       });
-      return null;
+      // Antes esto devolvía null (silencio total para la clienta). El dueño
+      // ya queda alertado arriba con el tipo real de fallo (rate_limit,
+      // sobrecarga, sin_saldo...) -- pero la clienta también necesita algo,
+      // en vez de que el chat simplemente no conteste.
+      return MENSAJE_RESPALDO;
     }
 
     const bloquesHerramienta = response.content.filter(
@@ -417,7 +442,10 @@ export async function generarRespuestaConEspecialistaIA(params: {
         .map((b) => b.text)
         .join("\n")
         .trim();
-      return texto || null;
+      if (texto) return texto;
+      return respaldoPorFalloSilencioso(
+        `La IA devolvió texto vacío (stop_reason=${response.stop_reason}) intentando agendar una cita. Mensaje de la clienta: "${params.textoUsuario.slice(0, 200)}"`
+      );
     }
 
     messages.push({ role: "assistant", content: response.content });
@@ -429,5 +457,7 @@ export async function generarRespuestaConEspecialistaIA(params: {
     messages.push({ role: "user", content: resultados });
   }
 
-  return null;
+  return respaldoPorFalloSilencioso(
+    `Se agotaron los ${MAX_TURNOS_HERRAMIENTA} turnos de herramienta sin que la IA diera una respuesta final al intentar agendar una cita. Mensaje de la clienta: "${params.textoUsuario.slice(0, 200)}"`
+  );
 }

@@ -12,7 +12,7 @@ import { agentePorSlug, INSTRUCCION_ADMIN } from "@/lib/marketplace";
 import { getActivacionPorId, normalizarTelefono, type ActivacionMarketplace } from "@/lib/marketplace-store";
 import { generarRespuestaAgendaIA } from "@/lib/marketplace-agenda-ia";
 import { verificarFirmaMeta, compararVerifyToken } from "@/lib/meta-firma";
-import { enviarTexto } from "@/lib/whatsapp";
+import { enviarTexto, marcarLeidoConTyping } from "@/lib/whatsapp";
 import { descifrarSecreto } from "@/lib/crypto";
 import { getSurveyBot, getSession, saveSession } from "@/lib/survey-bot-store";
 import { handleMessage, questionPrompt } from "@/lib/survey-engine";
@@ -22,7 +22,12 @@ import { getCampaignLead, getCampaignBotConfig, guardarCampaignLead, marcarDumoS
 import { procesarMensajeCampaña, type CampaignLeadSession } from "@/lib/campaign-lead-engine";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+// El flujo de agenda con especialista puede necesitar varias idas y vueltas
+// con la IA (buscar hueco libre, reintentar, etc.) -- 60s se quedaba corto
+// y Vercel mataba la función a mitad de camino, dejando a la clienta sin
+// respuesta y sin ningún error visible. campanas/enviar ya usa 300s en este
+// mismo proyecto, así que el plan lo soporta.
+export const maxDuration = 120;
 
 const PAUSA_HUMANA_MS = 30 * 60 * 1000;
 
@@ -611,6 +616,16 @@ async function atenderMensaje(cliente: ClienteConfig, mensaje: MetaMessage, nomb
   if (masReciente?.wamid && masReciente.wamid !== mensaje.id) {
     console.log(`[webhook-dulabs] mensaje ${mensaje.id} superado por uno más nuevo del mismo remitente, no respondo (evita duplicados)`);
     return;
+  }
+
+  // A partir de aquí ya es seguro que SÍ le vamos a responder a este
+  // mensaje -- se marca leído y se activa "escribiendo..." para que la
+  // clienta vea que ya la estamos atendiendo mientras la IA procesa
+  // (puede tardar unos segundos, sobre todo si hay que consultar la
+  // agenda). Nunca lanza, así que no puede frenar la respuesta real.
+  const tokenMeta = resolverTokenMeta(cliente);
+  if (tokenMeta) {
+    await marcarLeidoConTyping({ phoneNumberId: cliente.phone_number_id, token: tokenMeta, messageId: mensaje.id });
   }
 
   const contexto = await resolverContextoMensaje(cliente, mensaje.from);

@@ -36,6 +36,41 @@ export async function enviarTexto(params: {
   return { wamid: json.messages?.[0]?.id ?? null };
 }
 
+// Marca el mensaje entrante como leído (doble check azul) y activa el
+// indicador "escribiendo..." de WhatsApp -- Meta lo apaga solo a los ~25s o
+// en cuanto le llega el siguiente mensaje real, lo que pase primero. Se
+// llama apenas se decide que SÍ se le va a responder a este mensaje, para
+// que la clienta vea que el negocio ya está en eso mientras la IA procesa.
+// Nunca lanza: un fallo acá (token vencido, mensaje ya viejo, etc.) no
+// puede tumbar el resto del flujo de respuesta.
+export async function marcarLeidoConTyping(params: {
+  phoneNumberId: string;
+  token: string;
+  messageId: string;
+}): Promise<void> {
+  try {
+    const res = await fetch(`${GRAPH}/${params.phoneNumberId}/messages`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${params.token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        status: "read",
+        message_id: params.messageId,
+        typing_indicator: { type: "text" },
+      }),
+    });
+    if (!res.ok) {
+      const detalle = await res.text().catch(() => "");
+      console.error(`[whatsapp] no se pudo marcar leído/typing (${res.status}): ${detalle.slice(0, 200)}`);
+    }
+  } catch (err) {
+    console.error("[whatsapp] error marcando leído/typing:", err instanceof Error ? err.message : err);
+  }
+}
+
 // True si el cliente final escribió en las últimas 24h. Fuera de esta
 // ventana, WhatsApp solo permite plantillas aprobadas (no aplica al envío de
 // campañas, que ya usa plantillas exclusivamente vía lib/meta-templates.ts).

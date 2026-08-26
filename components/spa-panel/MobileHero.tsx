@@ -10,9 +10,10 @@ import { partesLogo } from "./format";
 // recortada por el borde derecho. Solo se muestra en mobile -- el desktop
 // sigue usando <Header>.
 //
-// La foto real todavía no está disponible -- se referencia en
-// /public/mano-hero.png y se oculta sola (onError) mientras ese archivo no
-// exista, sin sustituirla por una ilustración genérica.
+// La foto de /public/mano-hero.png ya viene recortada y sin fondo (alpha
+// real, no una card) -- el onError solo queda como red de seguridad si el
+// archivo llegara a faltar en algún momento, para ocultarse sola en vez de
+// mostrar un ícono de imagen rota.
 export function MobileHero({
   nombre,
   negocio,
@@ -51,8 +52,8 @@ export function MobileHero({
         </button>
       </div>
 
-      <div className="relative min-h-[21vh] px-4 pb-4 pt-5">
-        <div className="w-[56%]">
+      <div className="relative min-h-[26vh] px-4 pb-4 pt-5">
+        <div className="w-[54%]">
           <h1 className="text-xl font-semibold leading-snug text-fg">
             Hola, <span className="text-lime-text">{nombre}</span> 👋
           </h1>
@@ -67,7 +68,7 @@ export function MobileHero({
             alt=""
             aria-hidden="true"
             onError={() => setManoDisponible(false)}
-            className="pointer-events-none absolute -right-3 bottom-0 top-4 w-[48%] object-contain object-right-bottom [mask-image:linear-gradient(to_right,transparent,black_22%)] [-webkit-mask-image:linear-gradient(to_right,transparent,black_22%)]"
+            className="pointer-events-none absolute -right-2 -top-2 bottom-0 w-[48%] object-cover object-right-top [mask-image:linear-gradient(to_right,transparent,black_16%)] [-webkit-mask-image:linear-gradient(to_right,transparent,black_16%)]"
           />
         )}
       </div>
