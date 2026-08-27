@@ -37,14 +37,14 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: "No tienes permiso para esta acción" }, { status: 403 });
   }
 
-  let body: { plantilla_id?: number; destinatarios?: string[] };
+  let body: { plantilla_id?: number; destinatarios?: string[]; header_media_id?: string };
   try {
     body = await request.json();
   } catch {
     return Response.json({ error: "JSON inválido" }, { status: 400 });
   }
 
-  const { plantilla_id, destinatarios } = body;
+  const { plantilla_id, destinatarios, header_media_id } = body;
   if (!plantilla_id || !destinatarios?.length) {
     return Response.json({ error: "Faltan campos requeridos" }, { status: 400 });
   }
@@ -94,6 +94,12 @@ export async function POST(request: NextRequest) {
   if (plantilla.estado !== "APPROVED") {
     return Response.json(
       { error: `La plantilla todavía no está aprobada (estado: ${plantilla.estado})` },
+      { status: 400 }
+    );
+  }
+  if (plantilla.header_formato && !header_media_id) {
+    return Response.json(
+      { error: `Esta plantilla necesita un archivo de encabezado (${plantilla.header_formato.toLowerCase()}) -- súbelo antes de enviar.` },
       { status: 400 }
     );
   }
@@ -174,6 +180,10 @@ export async function POST(request: NextRequest) {
           nombrePlantilla: plantilla.nombre,
           idioma: plantilla.idioma,
           parametrosPosicionales: tieneVariableNombre ? [nombre || "cliente"] : undefined,
+          headerMedia:
+            plantilla.header_formato && header_media_id
+              ? { formato: plantilla.header_formato, mediaId: header_media_id }
+              : undefined,
         });
         await supabase.from("dulabs_mensajes_log").insert({
           phone_number_id: plantilla.phone_number_id,

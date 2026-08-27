@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { LayoutTemplate, CircleCheck, Clock, CircleAlert, Plus, FileEdit, Ban, Search, Copy, Check as CheckIcon, X } from "lucide-react";
+import { LayoutTemplate, CircleCheck, Clock, CircleAlert, Plus, FileEdit, Ban, Search, Copy, Check as CheckIcon, X, Download as DownloadIcon, Image as ImageIcon } from "lucide-react";
 import { useDashboard } from "@/lib/dashboard-session";
 import { PageHeader, Pill, StatTile } from "@/components/dashboard/shell/ui";
 import { useI18n } from "@/lib/i18n";
@@ -17,6 +17,7 @@ type Plantilla = {
   footer: string | null;
   botones: string[];
   estado: string;
+  header_formato: string | null;
   borrador: boolean;
   created_at: string;
   enviados: number;
@@ -53,6 +54,7 @@ export default function PlantillasPage() {
   const [busqueda, setBusqueda] = useState("");
   const [activeId, setActiveId] = useState<number | null>(null);
   const [formAbierto, setFormAbierto] = useState(false);
+  const [importarAbierto, setImportarAbierto] = useState(false);
   const [copiado, setCopiado] = useState(false);
 
   const [phoneNumberIdElegido, setPhoneNumberIdElegido] = useState("");
@@ -64,6 +66,11 @@ export default function PlantillasPage() {
   const [creando, setCreando] = useState(false);
   const [mensajeCrear, setMensajeCrear] = useState<string | null>(null);
   const [publicandoId, setPublicandoId] = useState<number | null>(null);
+
+  const [nombreImportar, setNombreImportar] = useState("");
+  const [idiomaImportar, setIdiomaImportar] = useState("");
+  const [importando, setImportando] = useState(false);
+  const [mensajeImportar, setMensajeImportar] = useState<string | null>(null);
 
   const cargarPlantillas = useCallback(() => {
     if (!session) return;
@@ -106,6 +113,40 @@ export default function PlantillasPage() {
       }
     },
     [session, phoneNumberId, nombre, categoria, cuerpo, botones, cargarPlantillas, t]
+  );
+
+  // Para plantillas creadas directamente en el Administrador de Meta (ej.
+  // cualquiera con encabezado de imagen/video/documento, que el editor de
+  // arriba todavía no sabe crear) -- las trae por nombre y las registra
+  // aquí para poder usarlas en campañas.
+  const importarPlantilla = useCallback(
+    async (e: { preventDefault: () => void }) => {
+      e.preventDefault();
+      if (!session) return;
+      setImportando(true);
+      setMensajeImportar(null);
+      try {
+        const res = await fetch("/api/plantillas/importar", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+          body: JSON.stringify({ phone_number_id: phoneNumberId, nombre: nombreImportar, idioma: idiomaImportar || undefined }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error ?? t("Error importando la plantilla", "Error importing the template"));
+        setMensajeImportar(
+          data.header_formato
+            ? t(`Importada con encabezado de ${data.header_formato.toLowerCase()} (estado: ${data.estado}).`, `Imported with a ${data.header_formato.toLowerCase()} header (status: ${data.estado}).`)
+            : t(`Importada (estado: ${data.estado}).`, `Imported (status: ${data.estado}).`)
+        );
+        setNombreImportar("");
+        cargarPlantillas();
+      } catch (err) {
+        setMensajeImportar(err instanceof Error ? err.message : String(err));
+      } finally {
+        setImportando(false);
+      }
+    },
+    [session, phoneNumberId, nombreImportar, idiomaImportar, cargarPlantillas, t]
   );
 
   const publicarBorrador = useCallback(
@@ -173,17 +214,86 @@ export default function PlantillasPage() {
         title={t("Plantillas", "Templates")}
         description={t("Diseña, envía a revisión y administra tus plantillas de mensaje de WhatsApp.", "Design, submit for review and manage your WhatsApp message templates.")}
       >
-        <button
-          onClick={() => setFormAbierto((v) => !v)}
-          className="flex items-center gap-2 rounded-lg bg-lime px-3.5 py-2 text-sm font-medium text-lime-fg transition-opacity hover:opacity-90"
-        >
-          <Plus className="size-4" /> {t("Nueva plantilla", "New template")}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setImportarAbierto((v) => !v)}
+            className="flex items-center gap-2 rounded-lg border border-edge px-3.5 py-2 text-sm font-medium text-fg transition-colors hover:border-lime/40"
+          >
+            <DownloadIcon className="size-4" /> {t("Importar de Meta", "Import from Meta")}
+          </button>
+          <button
+            onClick={() => setFormAbierto((v) => !v)}
+            className="flex items-center gap-2 rounded-lg bg-lime px-3.5 py-2 text-sm font-medium text-lime-fg transition-opacity hover:opacity-90"
+          >
+            <Plus className="size-4" /> {t("Nueva plantilla", "New template")}
+          </button>
+        </div>
       </PageHeader>
 
       <div className="px-4 pt-6 md:px-8">
         {error && (
           <p className="mb-6 rounded-lg border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-400">{error}</p>
+        )}
+
+        {importarAbierto && (
+          <form
+            onSubmit={importarPlantilla}
+            className="mb-6 flex flex-col gap-4 rounded-xl border border-edge bg-card p-6"
+          >
+            <p className="text-xs leading-relaxed text-mist">
+              {t(
+                "Para plantillas que ya creaste directamente en el Administrador de WhatsApp de Meta (por ejemplo, con imagen en el encabezado). Escribe el nombre exacto y la traemos con su estado real.",
+                "For templates you already created directly in Meta's WhatsApp Manager (for example, with an image header). Type the exact name and we'll bring it in with its real status."
+              )}
+            </p>
+            {negocios && negocios.length > 1 && (
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-mist">{t("Número", "Number")}</label>
+                <select
+                  value={phoneNumberId}
+                  onChange={(e) => setPhoneNumberIdElegido(e.target.value)}
+                  className="w-full rounded-lg border border-edge bg-ink px-4 py-2.5 text-sm text-fg outline-none focus:border-lime/50"
+                >
+                  {negocios.map((n) => (
+                    <option key={n.phone_number_id} value={n.phone_number_id}>
+                      {n.nombre_negocio}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-mist">{t("Nombre exacto en Meta", "Exact name in Meta")}</label>
+                <input
+                  required
+                  value={nombreImportar}
+                  onChange={(e) => setNombreImportar(e.target.value)}
+                  placeholder="invitacion_asamblea_antioquia"
+                  className="w-full rounded-lg border border-edge bg-ink px-4 py-2.5 text-sm text-fg outline-none focus:border-lime/50"
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-mist">{t("Idioma (opcional)", "Language (optional)")}</label>
+                <input
+                  value={idiomaImportar}
+                  onChange={(e) => setIdiomaImportar(e.target.value)}
+                  placeholder="es_CO"
+                  className="w-full rounded-lg border border-edge bg-ink px-4 py-2.5 text-sm text-fg outline-none focus:border-lime/50"
+                />
+              </div>
+            </div>
+            {mensajeImportar && (
+              <p className="rounded-lg border border-edge bg-ink p-3 text-xs leading-relaxed text-mist">{mensajeImportar}</p>
+            )}
+            <button
+              type="submit"
+              disabled={importando || !phoneNumberId}
+              className="btn-shine self-start rounded-lg bg-lime px-5 py-2.5 text-sm font-semibold text-lime-fg transition-[background-color,transform] duration-200 hover:-translate-y-0.5 hover:bg-lime-hover active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {importando ? t("Importando…", "Importing…") : t("Importar", "Import")}
+            </button>
+          </form>
         )}
 
         {plantillas !== null && plantillas.length > 0 && (
@@ -367,6 +477,11 @@ export default function PlantillasPage() {
                             <LayoutTemplate className="size-4" />
                           </div>
                           <span className="font-mono text-sm font-medium text-fg">{p.nombre}</span>
+                          {p.header_formato && (
+                            <span title={t(`Con encabezado de ${p.header_formato.toLowerCase()}`, `With a ${p.header_formato.toLowerCase()} header`)}>
+                              <ImageIcon className="size-3.5 text-mist" />
+                            </span>
+                          )}
                         </div>
                         <Pill tone={info.tone}>
                           <info.icon className="size-3" /> {info.label}

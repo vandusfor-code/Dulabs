@@ -15,6 +15,7 @@ import {
   FileUp,
   Download,
   Check,
+  Image as ImageIcon,
 } from "lucide-react";
 import { useDashboard } from "@/lib/dashboard-session";
 import { PageHeader, Pill, StatTile } from "@/components/dashboard/shell/ui";
@@ -24,9 +25,11 @@ import type { ContactoImportado } from "@/lib/contactos-import";
 
 type Plantilla = {
   id: number;
+  phone_number_id: string;
   nombre: string;
   cuerpo: string;
   estado: string;
+  header_formato: string | null;
 };
 
 type Campana = {
@@ -82,6 +85,13 @@ export default function CampanasPage() {
   const [resultadoCampana, setResultadoCampana] = useState<{ enviados: number; fallidos: number } | string | null>(
     null
   );
+
+  // Archivo del encabezado (imagen/video/documento) -- solo aplica si la
+  // plantilla elegida lo pide (ver plantilla.header_formato). Se sube UNA
+  // vez a Meta al enviar, y el mismo media_id se reusa para todos los
+  // destinatarios (ver /api/campanas/media y /api/campanas/enviar).
+  const headerFileInputRef = useRef<HTMLInputElement>(null);
+  const [headerArchivo, setHeaderArchivo] = useState<File | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [importando, setImportando] = useState(false);
@@ -144,10 +154,18 @@ export default function CampanasPage() {
     cargarDatos();
   }, [session, cargarDatos]);
 
+  const plantillaElegida = (plantillas ?? []).find((p) => p.id === plantillaCampana) ?? null;
+
   const enviarCampana = useCallback(
     async (e: FormEvent) => {
       e.preventDefault();
-      if (!session || !plantillaCampana) return;
+      if (!session || !plantillaCampana || !plantillaElegida) return;
+      if (plantillaElegida.header_formato && !headerArchivo) {
+        setResultadoCampana(
+          t(`Esta plantilla necesita ${plantillaElegida.header_formato === "IMAGE" ? "una imagen" : "un archivo"} de encabezado.`, `This template needs a header ${plantillaElegida.header_formato.toLowerCase()}.`)
+        );
+        return;
+      }
       setEnviandoCampana(true);
       setResultadoCampana(null);
       const lista = destinatarios
@@ -155,15 +173,32 @@ export default function CampanasPage() {
         .map((d) => d.trim())
         .filter(Boolean);
       try {
+        let headerMediaId: string | undefined;
+        if (plantillaElegida.header_formato && headerArchivo) {
+          const form = new FormData();
+          form.append("phone_number_id", plantillaElegida.phone_number_id);
+          form.append("archivo", headerArchivo);
+          const resMedia = await fetch("/api/campanas/media", {
+            method: "POST",
+            headers: { Authorization: `Bearer ${session.access_token}` },
+            body: form,
+          });
+          const dataMedia = await resMedia.json();
+          if (!resMedia.ok) throw new Error(dataMedia.error ?? t("Error subiendo el archivo de encabezado", "Error uploading the header file"));
+          headerMediaId = dataMedia.media_id;
+        }
+
         const res = await fetch("/api/campanas/enviar", {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
-          body: JSON.stringify({ plantilla_id: plantillaCampana, destinatarios: lista }),
+          body: JSON.stringify({ plantilla_id: plantillaCampana, destinatarios: lista, header_media_id: headerMediaId }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error ?? t("Error enviando la campaña", "Error sending the campaign"));
         setResultadoCampana({ enviados: data.enviados, fallidos: data.fallidos?.length ?? 0 });
         setDestinatarios("");
+        setHeaderArchivo(null);
+        if (headerFileInputRef.current) headerFileInputRef.current.value = "";
         cargarDatos();
       } catch (err) {
         setResultadoCampana(err instanceof Error ? err.message : String(err));
@@ -171,7 +206,7 @@ export default function CampanasPage() {
         setEnviandoCampana(false);
       }
     },
-    [session, plantillaCampana, destinatarios, cargarDatos, t]
+    [session, plantillaCampana, plantillaElegida, headerArchivo, destinatarios, cargarDatos, t]
   );
 
   const aprobadas = (plantillas ?? []).filter((p) => p.estado === "APPROVED");
@@ -224,17 +259,61 @@ export default function CampanasPage() {
                   <select
                     required
                     value={plantillaCampana}
-                    onChange={(e) => setPlantillaCampana(Number(e.target.value))}
+                    onChange={(e) => {
+                      setPlantillaCampana(Number(e.target.value));
+                      setHeaderArchivo(null);
+                      if (headerFileInputRef.current) headerFileInputRef.current.value = "";
+                    }}
                     className="w-full rounded-lg border border-edge bg-ink px-4 py-2.5 text-sm text-fg outline-none focus:border-lime/50"
                   >
                     <option value="">{t("Selecciona una plantilla", "Select a template")}</option>
                     {aprobadas.map((p) => (
                       <option key={p.id} value={p.id}>
                         {p.nombre}
+                        {p.header_formato ? ` (${p.header_formato.toLowerCase()})` : ""}
                       </option>
                     ))}
                   </select>
                 </div>
+
+                {plantillaElegida?.header_formato && (
+                  <div>
+                    <label className="mb-1.5 block text-xs font-medium text-mist">
+                      {t(
+                        `Archivo de encabezado (${plantillaElegida.header_formato.toLowerCase()}) — se envía igual a todos los destinatarios`,
+                        `Header file (${plantillaElegida.header_formato.toLowerCase()}) — sent the same to every recipient`
+                      )}
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        ref={headerFileInputRef}
+                        type="file"
+                        accept={
+                          plantillaElegida.header_formato === "IMAGE"
+                            ? "image/*"
+                            : plantillaElegida.header_formato === "VIDEO"
+                              ? "video/*"
+                              : undefined
+                        }
+                        className="hidden"
+                        onChange={(e) => setHeaderArchivo(e.target.files?.[0] ?? null)}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => headerFileInputRef.current?.click()}
+                        className="flex items-center gap-1.5 rounded-lg border border-edge px-3 py-2 text-xs font-medium text-fg transition-colors hover:border-lime/40"
+                      >
+                        <ImageIcon className="size-3.5" />
+                        {headerArchivo ? headerArchivo.name : t("Elegir archivo", "Choose file")}
+                      </button>
+                      {headerArchivo && (
+                        <span className="flex items-center gap-1 text-xs text-lime-text">
+                          <Check className="size-3.5" /> {t("Listo", "Ready")}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
                 <div>
                   <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
                     <label className="text-xs font-medium text-mist">
@@ -325,7 +404,7 @@ export default function CampanasPage() {
                 )}
                 <button
                   type="submit"
-                  disabled={enviandoCampana}
+                  disabled={enviandoCampana || Boolean(plantillaElegida?.header_formato && !headerArchivo)}
                   className="btn-shine self-start rounded-lg bg-lime px-5 py-2.5 text-sm font-semibold text-lime-fg transition-[background-color,transform] duration-200 hover:-translate-y-0.5 hover:bg-lime-hover active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {enviandoCampana ? t("Enviando…", "Sending…") : t("Enviar campaña", "Send campaign")}
