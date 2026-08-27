@@ -28,16 +28,8 @@ import {
 import { nombreConocido, recordarNombreCliente } from "@/lib/clientes-conocidos";
 import { interpretarNombreWhatsapp } from "@/lib/nombre-whatsapp";
 import { enviarWhatsApp as enviarTextoDirecto, enviarBotonesWhatsApp } from "@/lib/whatsapp-outbound";
-import { activarPausaChat } from "@/lib/pausas-chat";
 import type { ClienteConfig } from "@/lib/supabase";
 import type { Especialista, CitaEspecialista } from "@/lib/especialistas";
-
-// Traspaso a un humano por interés en un PRODUCTO (no un servicio agendable):
-// pausa larga porque Daniela puede tardar en responder algo que no es una
-// cita con hora fija -- no tiene sentido que la IA "recupere" la conversación
-// a los 30 min como con el eco de coexistencia. 24h es un valor razonable
-// por defecto (ajustable si hace falta más o menos tiempo).
-const DURACION_PAUSA_PRODUCTO_MS = 24 * 60 * 60 * 1000;
 
 const MODELO = "claude-sonnet-5";
 
@@ -211,7 +203,7 @@ export async function generarRespuestaConEspecialistaIA(params: {
     `Si la herramienta te dice que el horario está ocupado, te va a devolver los horarios que ya están tomados ese día (horarios_tomados, ya en hora de Colombia). Mira esa lista, calcula tú misma 1 o 2 huecos libres dentro del horario de atención del negocio, y ofréceselos a la clienta en tu respuesta de texto ("tengo espacio a las X o a las Y, ¿cuál te queda mejor?") -- NO vuelvas a llamar la herramienta para "probar" otro horario a ciegas, eso ya lo sabes por la lista que te devolvió. Nunca inventes ni asumas disponibilidad que la herramienta no te confirmó.\n` +
     `Para cualquier OTRO servicio que no tenga esa herramienta, sigues funcionando igual que siempre: solo tomas nota de la solicitud en texto, sin agenda real todavía.\n\n` +
     `--- Productos y saludo con botones ---\n` +
-    `El spa también vende productos, aparte de los servicios que se agendan. Si en cualquier momento la clienta muestra interés en un PRODUCTO (comprarlo, preguntarle el precio para llevar, etc.) y no en un servicio agendable, usa derivar_a_daniela_por_producto -- sin importar si pasa en el saludo inicial o después de ya haber hablado de una cita. Esa herramienta ya manda el mensaje y pausa la conversación; no le sigas escribiendo nada más después de llamarla.` +
+    `El spa también vende productos, aparte de los servicios que se agendan. Si en cualquier momento la clienta muestra interés en un PRODUCTO (comprarlo, preguntarle el precio para llevar, etc.) y no en un servicio agendable, usa derivar_a_daniela_por_producto -- sin importar si pasa en el saludo inicial o después de ya haber hablado de una cita. Esa herramienta ya manda el mensaje; no le sigas escribiendo nada más después de llamarla. Si más adelante en el MISMO chat vuelve a tocar ese mismo producto antes de que Daniela responda, no llames la herramienta otra vez ni repitas el mensaje completo -- solo dile brevemente que Daniela ya le va a responder. Esto NO te bloquea para nada más: si en cualquier momento pide agendar un SERVICIO, ayúdala con toda normalidad, sin que lo del producto se lo impida.` +
     (esPrimerMensaje
       ? `\nComo esta es una conversación NUEVA, tu saludo va con mostrar_opciones_saludo (mensaje de bienvenida + botones "Servicio de Spa"/"Productos") en vez del saludo de texto normal en dos mensajes. Si la clienta escribe algo que ya deja claro qué quiere en su primer mensaje (ej. ya pide una cita puntual), igual saluda primero con esta herramienta antes de avanzar -- no te saltes el saludo.`
       : "");
@@ -400,7 +392,9 @@ export async function generarRespuestaConEspecialistaIA(params: {
           ? input.mensaje.trim()
           : "¡Claro que sí, cariño! En un momento Dani te responde 💛";
       await enviarTextoDirecto(params.supabase, params.cliente, params.telefonoRemitente, mensaje);
-      await activarPausaChat(params.supabase, params.cliente.phone_number_id, params.telefonoRemitente, DURACION_PAUSA_PRODUCTO_MS);
+      // Sin pausa de chat completo a propósito: si la clienta después pide un
+      // SERVICIO (una cita), el bot debe poder ayudarle con normalidad -- lo
+      // único que se evita es que la IA insista en el tema del producto.
       terminarConversacionAhora = true;
       return JSON.stringify({ success: true });
     }
