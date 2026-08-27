@@ -69,12 +69,19 @@ function CheckoutPageInterna() {
       const planElegido = planPorUrl ?? planGuardado;
       if (planElegido) setPlan(resolverPlanId(planElegido));
 
+      // "listo" (lo que revela el precio en pantalla) solo se marca DESPUÉS
+      // de que esta consulta termine -- éxito o error. Antes se marcaba
+      // "listo" de una vez y el precio negociado llegaba después por su
+      // cuenta: quien mirara la pantalla apenas cargaba (lo normal) veía el
+      // precio de LISTA por esa fracción de segundo, no el negociado.
       fetch("/api/dashboard/suscripcion", { headers: { Authorization: `Bearer ${data.session.access_token}` } })
         .then((res) => res.json())
         .then((json) => setPrecioNegociadoCop(json.precio_negociado_cop ?? null))
-        .catch(() => setPrecioNegociadoCop(null));
-
-      setEstado({ fase: "listo" });
+        .catch((err) => {
+          console.error("[checkout] no se pudo consultar el precio negociado:", err);
+          setPrecioNegociadoCop(null);
+        })
+        .finally(() => setEstado({ fase: "listo" }));
     });
   }, [router, searchParams]);
 
@@ -163,7 +170,7 @@ function CheckoutPageInterna() {
       </main>
     );
   }
-  if (session === "verificando") {
+  if (session === "verificando" || estado.fase === "cargando") {
     return (
       <main className="dash-scope flex min-h-screen items-center justify-center bg-ink px-5 text-fg">
         <p className="text-sm text-mist">{t("Verificando tu sesión…", "Verifying your session…")}</p>
