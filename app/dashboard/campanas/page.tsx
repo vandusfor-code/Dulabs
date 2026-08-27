@@ -85,6 +85,8 @@ export default function CampanasPage() {
   const [resultadoCampana, setResultadoCampana] = useState<{ enviados: number; fallidos: number } | string | null>(
     null
   );
+  // Progreso del envío por lotes -- null cuando no hay un envío en curso.
+  const [progresoCampana, setProgresoCampana] = useState<{ hecho: number; total: number } | null>(null);
 
   // Archivo del encabezado (imagen/video/documento) -- solo aplica si la
   // plantilla elegida lo pide (ver plantilla.header_formato). Se sube UNA
@@ -156,6 +158,13 @@ export default function CampanasPage() {
 
   const plantillaElegida = (plantillas ?? []).find((p) => p.id === plantillaCampana) ?? null;
 
+  // Tamaño de lote: cada lote es una llamada aparte a /api/campanas/enviar,
+  // así ninguna campaña -- sin importar el tamaño -- se acerca al límite de
+  // tiempo de la función (eso fue justo lo que cortó a mitad de camino una
+  // campaña real de 401 destinatarios). 100 por lote deja margen de sobra
+  // incluso si Meta responde lento.
+  const TAMANO_LOTE = 100;
+
   const enviarCampana = useCallback(
     async (e: FormEvent) => {
       e.preventDefault();
@@ -172,6 +181,7 @@ export default function CampanasPage() {
         .split("\n")
         .map((d) => d.trim())
         .filter(Boolean);
+      setProgresoCampana({ hecho: 0, total: lista.length });
       try {
         let headerMediaId: string | undefined;
         if (plantillaElegida.header_formato && headerArchivo) {
@@ -188,14 +198,36 @@ export default function CampanasPage() {
           headerMediaId = dataMedia.media_id;
         }
 
-        const res = await fetch("/api/campanas/enviar", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
-          body: JSON.stringify({ plantilla_id: plantillaCampana, destinatarios: lista, header_media_id: headerMediaId }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error ?? t("Error enviando la campaña", "Error sending the campaign"));
-        setResultadoCampana({ enviados: data.enviados, fallidos: data.fallidos?.length ?? 0 });
+        // Se manda en lotes chicos y secuenciales -- cada llamada termina
+        // rápido y sola, así que ninguna campaña se corta a mitad de camino
+        // sin importar cuántos destinatarios tenga.
+        let campanaId: number | undefined;
+        let totalEnviados = 0;
+        let totalFallidos = 0;
+        for (let i = 0; i < lista.length; i += TAMANO_LOTE) {
+          const lote = lista.slice(i, i + TAMANO_LOTE);
+          const esUltimoLote = i + TAMANO_LOTE >= lista.length;
+          const res = await fetch("/api/campanas/enviar", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+            body: JSON.stringify({
+              plantilla_id: plantillaCampana,
+              destinatarios: lote,
+              header_media_id: headerMediaId,
+              campana_id: campanaId,
+              destinatarios_total: lista.length,
+              es_ultimo_lote: esUltimoLote,
+            }),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error ?? t("Error enviando la campaña", "Error sending the campaign"));
+          campanaId = data.campana_id;
+          totalEnviados += data.enviados;
+          totalFallidos += data.fallidos?.length ?? 0;
+          setProgresoCampana({ hecho: Math.min(i + TAMANO_LOTE, lista.length), total: lista.length });
+        }
+
+        setResultadoCampana({ enviados: totalEnviados, fallidos: totalFallidos });
         setDestinatarios("");
         setHeaderArchivo(null);
         if (headerFileInputRef.current) headerFileInputRef.current.value = "";
@@ -203,6 +235,7 @@ export default function CampanasPage() {
       } catch (err) {
         setResultadoCampana(err instanceof Error ? err.message : String(err));
       } finally {
+        setProgresoCampana(null);
         setEnviandoCampana(false);
       }
     },
@@ -392,6 +425,22 @@ export default function CampanasPage() {
                     <Users className="size-3.5" /> {conteoDestinatarios} {conteoDestinatarios === 1 ? t("destinatario", "recipient") : t("destinatarios", "recipients")}
                   </p>
                 </div>
+                {progresoCampana && (
+                  <div>
+                    <div className="flex items-center justify-between text-xs text-mist">
+                      <span>{t("Enviando…", "Sending…")}</span>
+                      <span className="font-medium tabular-nums text-fg">
+                        {progresoCampana.hecho} / {progresoCampana.total}
+                      </span>
+                    </div>
+                    <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-ink">
+                      <div
+                        className="h-full rounded-full bg-lime transition-all"
+                        style={{ width: `${Math.round((progresoCampana.hecho / progresoCampana.total) * 100)}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
                 {resultadoCampana && (
                   <p className="rounded-lg border border-edge bg-ink p-3 text-xs leading-relaxed text-mist">
                     {typeof resultadoCampana === "string"
