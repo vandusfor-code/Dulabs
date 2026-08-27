@@ -13,7 +13,13 @@ import { agentePorSlug, INSTRUCCION_ADMIN } from "@/lib/marketplace";
 import { getActivacionPorId, normalizarTelefono, type ActivacionMarketplace } from "@/lib/marketplace-store";
 import { generarRespuestaAgendaIA } from "@/lib/marketplace-agenda-ia";
 import { verificarFirmaMeta, compararVerifyToken } from "@/lib/meta-firma";
-import { enviarTexto, marcarLeidoConTyping } from "@/lib/whatsapp";
+import { marcarLeidoConTyping } from "@/lib/whatsapp";
+import {
+  resolverTokenMeta as libResolverTokenMeta,
+  enviarWhatsApp as libEnviarWhatsApp,
+  enviarWhatsAppPartes as libEnviarWhatsAppPartes,
+  registrarMensaje as libRegistrarMensaje,
+} from "@/lib/whatsapp-outbound";
 import { descifrarSecreto } from "@/lib/crypto";
 import { getSurveyBot, getSession, saveSession } from "@/lib/survey-bot-store";
 import { handleMessage, questionPrompt } from "@/lib/survey-engine";
@@ -22,6 +28,7 @@ import { procesarHistorialCoexistencia, type HistoryChangeValue } from "@/lib/co
 import { getCampaignLead, getCampaignBotConfig, guardarCampaignLead, marcarDumoSyncStatus } from "@/lib/campaign-lead-store";
 import { procesarMensajeCampaña, type CampaignLeadSession } from "@/lib/campaign-lead-engine";
 import { adquirirCandadoChat, liberarCandadoChat } from "@/lib/chat-lock";
+import { activarPausaChat } from "@/lib/pausas-chat";
 
 export const runtime = "nodejs";
 // El flujo de agenda con especialista puede necesitar varias idas y vueltas
@@ -42,6 +49,11 @@ type MetaMessage = {
   // Tap de un botón QUICK_REPLY de una plantilla (ver lib/meta-templates.ts):
   // Meta lo entrega como type "button", no "text".
   button?: { text?: string; payload?: string };
+  // Tap de un botón de un mensaje interactivo normal (no plantilla, ver
+  // enviarBotonesWhatsApp en lib/whatsapp-outbound.ts) -- Meta lo entrega
+  // como type "interactive" con interactive.button_reply, distinto del
+  // "button" de arriba.
+  interactive?: { type?: string; button_reply?: { id?: string; title?: string } };
   context?: { id?: string };
 };
 
@@ -436,7 +448,14 @@ async function procesarCambio(phoneNumberId: string, value: MetaChangeValue) {
     if (mensaje.type === "button" && mensaje.button?.text) {
       mensaje.text = { body: normalizarTextoBoton(mensaje.button.text) };
     }
-    if (mensaje.type !== "text" && mensaje.type !== "button") continue; // esqueleto: solo texto/botón
+    // Tap de un botón de un mensaje interactivo normal (ver
+    // enviarBotonesWhatsApp) -- mismo criterio que arriba: el título del
+    // botón lo definimos nosotros, así que se trata como el texto que
+    // "escribió" la clienta.
+    if (mensaje.type === "interactive" && mensaje.interactive?.type === "button_reply" && mensaje.interactive.button_reply?.title) {
+      mensaje.text = { body: mensaje.interactive.button_reply.title };
+    }
+    if (mensaje.type !== "text" && mensaje.type !== "button" && mensaje.type !== "interactive") continue; // esqueleto: solo texto/botón
     if (!mensaje.text?.body) continue;
     const nombreContacto =
       (value.contacts ?? []).find((c) => soloDigitos(c.wa_id ?? "") === soloDigitos(mensaje.from))?.profile?.name ?? null;
@@ -499,17 +518,7 @@ async function marcarRespondido(wamidCitado: string) {
 }
 
 async function activarPausaHumana(phoneNumberId: string, telefonoCliente: string) {
-  const supabase = supabaseAdmin();
-  const pausadoHasta = new Date(Date.now() + PAUSA_HUMANA_MS).toISOString();
-  const { error } = await supabase.from("dulabs_pausas_chat").upsert(
-    { phone_number_id: phoneNumberId, telefono_cliente: telefonoCliente, pausado_hasta: pausadoHasta },
-    { onConflict: "phone_number_id,telefono_cliente" }
-  );
-  if (error) {
-    console.error("[webhook-dulabs] error activando pausa:", error.message);
-  } else {
-    console.log(`[webhook-dulabs] pausa humana activada para ${phoneNumberId} hasta ${pausadoHasta}`);
-  }
+  await activarPausaChat(supabaseAdmin(), phoneNumberId, telefonoCliente, PAUSA_HUMANA_MS);
 }
 
 async function atenderMensaje(cliente: ClienteConfig, mensaje: MetaMessage, nombreContacto: string | null) {
@@ -915,27 +924,14 @@ async function atenderMensajeCampaña(cliente: ClienteConfig, mensaje: MetaMessa
 
 // Cada tenant usa su propio token permanente (Embedded Signup); el token
 // global de plataforma queda como respaldo para números registrados a mano.
+// (Movido a lib/whatsapp-outbound.ts -- estos son wrappers delgados que
+// fijan supabaseAdmin() para no tener que tocar cada llamado existente.)
 function resolverTokenMeta(cliente: ClienteConfig): string | null {
-  return cliente.meta_permanent_token ? descifrarSecreto(cliente.meta_permanent_token) : (process.env.META_ACCESS_TOKEN ?? null);
+  return libResolverTokenMeta(cliente);
 }
 
 async function enviarWhatsApp(cliente: ClienteConfig, para: string, texto: string) {
-  const token = resolverTokenMeta(cliente);
-  if (!token) {
-    console.error("[webhook-dulabs] sin token de Meta para", cliente.nombre_negocio);
-    return;
-  }
-
-  let wamid: string | null = null;
-  try {
-    ({ wamid } = await enviarTexto({ phoneNumberId: cliente.phone_number_id, token, para, texto }));
-  } catch (err) {
-    console.error("[webhook-dulabs] error enviando a Meta:", err);
-    return;
-  }
-
-  await incrementarUsoMensajes(cliente);
-  await registrarMensaje(cliente.phone_number_id, soloDigitos(para), "saliente", texto, "ia", wamid ?? undefined);
+  await libEnviarWhatsApp(supabaseAdmin(), cliente, para, texto);
 }
 
 // Si la IA separó su respuesta en párrafos con línea en blanco, se envían
@@ -943,16 +939,7 @@ async function enviarWhatsApp(cliente: ClienteConfig, para: string, texto: strin
 // vez de un solo bloque de texto largo. Máximo dos: la primera idea sola, el
 // resto junto -- así no se convierte en una ráfaga de mensajes.
 async function enviarWhatsAppPartes(cliente: ClienteConfig, para: string, texto: string) {
-  const partes = texto
-    .split(/\n{2,}/)
-    .map((p) => p.trim())
-    .filter(Boolean);
-  if (partes.length <= 1) {
-    await enviarWhatsApp(cliente, para, texto.trim());
-    return;
-  }
-  await enviarWhatsApp(cliente, para, partes[0]);
-  await enviarWhatsApp(cliente, para, partes.slice(1).join("\n\n"));
+  await libEnviarWhatsAppPartes(supabaseAdmin(), cliente, para, texto);
 }
 
 // --- Historial de mensajes (para la vista de actividad reciente) --------------
@@ -972,34 +959,7 @@ async function registrarMensaje(
   origen: "entrante" | "ia" | "manual" | "campaña" | "agente",
   wamid?: string
 ): Promise<boolean> {
-  const { error } = await supabaseAdmin().from("dulabs_mensajes_log").insert({
-    phone_number_id: phoneNumberId,
-    telefono_cliente: telefonoCliente,
-    direccion,
-    contenido,
-    origen,
-    wamid: wamid ?? null,
-  });
-  if (!error) return false;
-  if (error.code === "23505") {
-    return true;
-  }
-  console.error("[webhook-dulabs] error registrando mensaje en el historial:", error.message);
-  return false;
-}
-
-// --- Conteo de uso mensual (para el panel de plan/consumo) --------------------
-
-async function incrementarUsoMensajes(cliente: ClienteConfig) {
-  const mesHoy = new Date().toISOString().slice(0, 7); // "YYYY-MM"
-  const nuevoUsados = cliente.mes_actual === mesHoy ? cliente.mensajes_usados_mes + 1 : 1;
-  const { error } = await supabaseAdmin()
-    .from("dulabs_clientes_config")
-    .update({ mensajes_usados_mes: nuevoUsados, mes_actual: mesHoy })
-    .eq("id", cliente.id);
-  if (error) {
-    console.error("[webhook-dulabs] error incrementando uso de mensajes:", error.message);
-  }
+  return libRegistrarMensaje(supabaseAdmin(), phoneNumberId, telefonoCliente, direccion, contenido, origen, wamid);
 }
 
 function soloDigitos(valor: string): string {

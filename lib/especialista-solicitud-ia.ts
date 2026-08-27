@@ -27,8 +27,17 @@ import {
 } from "@/lib/especialistas-notificar";
 import { nombreConocido, recordarNombreCliente } from "@/lib/clientes-conocidos";
 import { interpretarNombreWhatsapp } from "@/lib/nombre-whatsapp";
+import { enviarWhatsApp as enviarTextoDirecto, enviarBotonesWhatsApp } from "@/lib/whatsapp-outbound";
+import { activarPausaChat } from "@/lib/pausas-chat";
 import type { ClienteConfig } from "@/lib/supabase";
 import type { Especialista, CitaEspecialista } from "@/lib/especialistas";
+
+// Traspaso a un humano por interés en un PRODUCTO (no un servicio agendable):
+// pausa larga porque Daniela puede tardar en responder algo que no es una
+// cita con hora fija -- no tiene sentido que la IA "recupere" la conversación
+// a los 30 min como con el eco de coexistencia. 24h es un valor razonable
+// por defecto (ajustable si hace falta más o menos tiempo).
+const DURACION_PAUSA_PRODUCTO_MS = 24 * 60 * 60 * 1000;
 
 const MODELO = "claude-sonnet-5";
 
@@ -128,6 +137,11 @@ export async function generarRespuestaConEspecialistaIA(params: {
   // fuera de la ventana de 24h que cubre el historial reciente del chat.
   const nombreYaConocido = await nombreConocido(params.supabase, params.cliente.phone_number_id, params.telefonoRemitente);
 
+  // true cuando una herramienta ya mandó el mensaje final por su cuenta
+  // (botones, traspaso a Daniela) -- la función corta el ciclo y devuelve
+  // null, para que el llamador no mande nada más encima de lo ya enviado.
+  let terminarConversacionAhora = false;
+
   const tools: Anthropic.Tool[] = [
     {
       name: "crear_solicitud_cita",
@@ -149,7 +163,44 @@ export async function generarRespuestaConEspecialistaIA(params: {
         required: ["servicio", "fecha", "hora", "nombre_cliente"],
       },
     },
+    {
+      name: "derivar_a_daniela_por_producto",
+      description:
+        "Usar cuando la clienta muestra interés en comprar un PRODUCTO del spa (no un servicio que se agenda, como uñas/pestañas/cejas). Aplica sin importar en qué momento de la conversación pase -- desde el saludo inicial, o después de haber hablado de otra cosa. Envía el mensaje de traspaso y pausa la IA para esta clienta; Daniela responde personalmente desde su celular. Después de llamarla no hace falta escribir nada más, ella ya se encarga del mensaje.",
+      input_schema: {
+        type: "object",
+        properties: {
+          mensaje: {
+            type: "string",
+            description:
+              "Mensaje corto y cálido avisando que Daniela responde personalmente en un momento (ej. \"¡Claro que sí, cariño! En un momento Dani te responde 💛\"). Si lo omites, se usa un mensaje por defecto.",
+          },
+        },
+      },
+    },
   ];
+
+  // Saludo con botones (Servicio de Spa / Productos) SOLO al inicio de una
+  // conversación nueva -- si ya hay historial, no tiene sentido repetirlo.
+  const esPrimerMensaje = (params.historial?.length ?? 0) === 0;
+  if (esPrimerMensaje) {
+    tools.push({
+      name: "mostrar_opciones_saludo",
+      description:
+        "Envía el saludo de bienvenida al inicio de una conversación NUEVA, seguido de dos botones reales de WhatsApp para que la clienta elija entre 'Servicio de Spa' o 'Productos'. Llamar UNA sola vez, como parte del primer saludo (nunca a mitad de conversación). Esta herramienta ya envía todo -- no escribas ningún mensaje de texto aparte en el mismo turno.",
+      input_schema: {
+        type: "object",
+        properties: {
+          mensaje_bienvenida: {
+            type: "string",
+            description:
+              "El primer mensaje de bienvenida (ej. \"¡Hola! Bienvenida, Laura 🥰💕 ¿Cómo estás?\"), siguiendo las reglas de SALUDOS de tus instrucciones.",
+          },
+        },
+        required: ["mensaje_bienvenida"],
+      },
+    });
+  }
 
   let systemFinal =
     `${params.systemPromptBase}\n\n` +
@@ -158,7 +209,12 @@ export async function generarRespuestaConEspecialistaIA(params: {
     `La respuesta trae "estado": "confirmada" (dile a la clienta que quedó agendada, ya sin nada más que hacer) o "pendiente" (dile que quedó como solicitud y que le confirman por este mismo chat en un rato -- NUNCA digas "confirmada" ni "agendada" si el estado es pendiente). No asumas cuál va a ser, revisa siempre lo que te devuelve la herramienta.\n` +
     `La respuesta también trae "con": el nombre de quién REALMENTE va a atender la cita. Si la clienta pidió a alguien en particular pero el servicio se manejaba entre varias personas (manos o pies) y no era esa persona exclusiva, puede que "con" no sea la persona que ella pidió -- en ese caso, díselo con naturalidad en la misma confirmación ("te la dejé con Carla que tenía espacio a esa hora, ¿te sirve?"), nunca digas el nombre de quien ella pidió si la herramienta te devolvió otro nombre distinto.\n` +
     `Si la herramienta te dice que el horario está ocupado, te va a devolver los horarios que ya están tomados ese día (horarios_tomados, ya en hora de Colombia). Mira esa lista, calcula tú misma 1 o 2 huecos libres dentro del horario de atención del negocio, y ofréceselos a la clienta en tu respuesta de texto ("tengo espacio a las X o a las Y, ¿cuál te queda mejor?") -- NO vuelvas a llamar la herramienta para "probar" otro horario a ciegas, eso ya lo sabes por la lista que te devolvió. Nunca inventes ni asumas disponibilidad que la herramienta no te confirmó.\n` +
-    `Para cualquier OTRO servicio que no tenga esa herramienta, sigues funcionando igual que siempre: solo tomas nota de la solicitud en texto, sin agenda real todavía.`;
+    `Para cualquier OTRO servicio que no tenga esa herramienta, sigues funcionando igual que siempre: solo tomas nota de la solicitud en texto, sin agenda real todavía.\n\n` +
+    `--- Productos y saludo con botones ---\n` +
+    `El spa también vende productos, aparte de los servicios que se agendan. Si en cualquier momento la clienta muestra interés en un PRODUCTO (comprarlo, preguntarle el precio para llevar, etc.) y no en un servicio agendable, usa derivar_a_daniela_por_producto -- sin importar si pasa en el saludo inicial o después de ya haber hablado de una cita. Esa herramienta ya manda el mensaje y pausa la conversación; no le sigas escribiendo nada más después de llamarla.` +
+    (esPrimerMensaje
+      ? `\nComo esta es una conversación NUEVA, tu saludo va con mostrar_opciones_saludo (mensaje de bienvenida + botones "Servicio de Spa"/"Productos") en vez del saludo de texto normal en dos mensajes. Si la clienta escribe algo que ya deja claro qué quiere en su primer mensaje (ej. ya pide una cita puntual), igual saluda primero con esta herramienta antes de avanzar -- no te saltes el saludo.`
+      : "");
 
   // Prioridad del nombre: 1) lo que la clienta confirme explícitamente en
   // este chat, 2) el que ya quedó guardado y confirmado de una cita
@@ -325,6 +381,28 @@ export async function generarRespuestaConEspecialistaIA(params: {
       // horario pedido estaba ocupado, la clienta conserva su cita original.
       await cancelarCita(params.supabase, citaActiva.id, "Cambiada a un nuevo horario");
       return finalizarCitaCreada(especialista, resultado.cita);
+    }
+    if (nombre === "mostrar_opciones_saludo") {
+      const mensajeBienvenida = String(input.mensaje_bienvenida ?? "").trim();
+      if (mensajeBienvenida) {
+        await enviarTextoDirecto(params.supabase, params.cliente, params.telefonoRemitente, mensajeBienvenida);
+      }
+      await enviarBotonesWhatsApp(params.supabase, params.cliente, params.telefonoRemitente, "¿En qué estás interesada?", [
+        { id: "opcion_spa", titulo: "Servicio de Spa" },
+        { id: "opcion_productos", titulo: "Productos" },
+      ]);
+      terminarConversacionAhora = true;
+      return JSON.stringify({ success: true });
+    }
+    if (nombre === "derivar_a_daniela_por_producto") {
+      const mensaje =
+        typeof input.mensaje === "string" && input.mensaje.trim()
+          ? input.mensaje.trim()
+          : "¡Claro que sí, cariño! En un momento Dani te responde 💛";
+      await enviarTextoDirecto(params.supabase, params.cliente, params.telefonoRemitente, mensaje);
+      await activarPausaChat(params.supabase, params.cliente.phone_number_id, params.telefonoRemitente, DURACION_PAUSA_PRODUCTO_MS);
+      terminarConversacionAhora = true;
+      return JSON.stringify({ success: true });
     }
     return ejecutarHerramienta(input);
   }
@@ -533,6 +611,10 @@ export async function generarRespuestaConEspecialistaIA(params: {
       const resultado = await ejecutarHerramientaConNombre(bloque.name, bloque.input as Record<string, unknown>);
       resultados.push({ type: "tool_result", tool_use_id: bloque.id, content: resultado });
     }
+    // Botones de saludo o traspaso a Daniela: esas herramientas ya mandaron
+    // el mensaje final por su cuenta -- no hay que pedirle a la IA otro
+    // turno de texto encima (se mandaría un mensaje de más).
+    if (terminarConversacionAhora) return null;
     messages.push({ role: "user", content: resultados });
   }
 
