@@ -777,7 +777,7 @@ export function Footer() {
               <Image src="/logo.png" alt="Du Labs" width={24} height={24} className="rounded-full" />
               DuLabs
             </div>
-            <p className="mt-1 text-[11px] font-medium tracking-tight text-site-muted-fg/70">by People Group BPO</p>
+            <p className="mt-1 text-[11px] font-medium tracking-tight text-site-muted-fg/70">by People BPO</p>
             <p className="mt-4 max-w-xs text-[12.5px] leading-relaxed text-site-muted-fg">
               {t(
                 "IA, automatización y software para empresas. Hecho en Bogotá, Colombia.",
@@ -813,13 +813,13 @@ export function Footer() {
             <h3 className="text-[12.5px] font-semibold text-site-fg">{t("Información legal", "Legal information")}</h3>
             <dl className="mt-4 grid grid-cols-[auto_1fr] gap-x-4 gap-y-2.5 text-[12.5px] leading-relaxed">
               <dt className="text-site-muted-fg/70">{t("Titular del servicio", "Service holder")}</dt>
-              <dd className="text-site-muted-fg">People Group BPO</dd>
+              <dd className="text-site-muted-fg">People BPO</dd>
 
               <dt className="text-site-muted-fg/70">{t("Nombre comercial", "Trade name")}</dt>
               <dd className="text-site-muted-fg">DuLabs</dd>
 
               <dt className="text-site-muted-fg/70">{t("Marca / unidad tecnológica", "Brand / technology unit")}</dt>
-              <dd className="text-site-muted-fg">DuLabs by People Group BPO</dd>
+              <dd className="text-site-muted-fg">DuLabs by People BPO</dd>
 
               <dt className="text-site-muted-fg/70">{t("País de operación", "Country of operation")}</dt>
               <dd className="text-site-muted-fg">{t("Colombia", "Colombia")}</dd>
@@ -833,8 +833,8 @@ export function Footer() {
             </dl>
             <p className="mt-5 text-[12.5px] leading-relaxed text-site-muted-fg/80">
               {t(
-                "DuLabs es una marca y plataforma tecnológica de People Group BPO, enfocada en el desarrollo de soluciones de automatización, inteligencia artificial, integraciones y software empresarial.",
-                "DuLabs is a technology brand and platform of People Group BPO, focused on developing automation, artificial intelligence, integrations, and enterprise software solutions."
+                "DuLabs es una marca y plataforma tecnológica de People BPO, enfocada en el desarrollo de soluciones de automatización, inteligencia artificial, integraciones y software empresarial.",
+                "DuLabs is a technology brand and platform of People BPO, focused on developing automation, artificial intelligence, integrations, and enterprise software solutions."
               )}
             </p>
           </div>

@@ -26,8 +26,8 @@ export default function EliminacionDatosPage() {
           <p>{t("Última actualización: abril de 2026", "Last updated: April 2026")}</p>
           <p>
             {t(
-              "En DuLabs, operado por People Group BPO, respetamos tu privacidad y los datos de tus clientes. Esta política explica cómo puedes solicitar la eliminación de los datos asociados a tu cuenta de WhatsApp Business conectada a través de nuestra plataforma.",
-              "At DuLabs, operated by People Group BPO, we respect your privacy and your customers' data. This policy explains how you can request the deletion of data associated with your WhatsApp Business account connected through our platform."
+              "En DuLabs, operado por People BPO, respetamos tu privacidad y los datos de tus clientes. Esta política explica cómo puedes solicitar la eliminación de los datos asociados a tu cuenta de WhatsApp Business conectada a través de nuestra plataforma.",
+              "At DuLabs, operated by People BPO, we respect your privacy and your customers' data. This policy explains how you can request the deletion of data associated with your WhatsApp Business account connected through our platform."
             )}
           </p>
 
