@@ -10,6 +10,7 @@ import {
   Users,
   Zap,
   ShoppingCart,
+  ShieldCheck,
   type LucideIcon,
 } from "lucide-react";
 import type { Rol } from "@/lib/team";
@@ -26,6 +27,8 @@ export type NavSection = {
   title: string;
   titleEn: string;
   items: NavItem[];
+  /** Solo visible para admins del tenant DuLabs (ver lib/admin-tenant.ts) -- distinto de rolesPermitidos, que es por rol dentro de CUALQUIER tenant. */
+  soloAdminDulabs?: boolean;
 };
 
 export const navSections: NavSection[] = [
@@ -68,6 +71,15 @@ export const navSections: NavSection[] = [
       { label: "Números", labelEn: "Numbers", href: "/dashboard/conexion", icon: Phone },
       { label: "Analytics", labelEn: "Analytics", href: "/dashboard/analytics", icon: ChartNoAxesCombined },
       { label: "Equipo", labelEn: "Team", href: "/dashboard/equipo", icon: Users, rolesPermitidos: ["admin"] },
+    ],
+  },
+  {
+    title: "Operaciones DuLabs",
+    titleEn: "DuLabs Operations",
+    soloAdminDulabs: true,
+    items: [
+      { label: "Panel Admin", labelEn: "Admin panel", href: "/dashboard/admin", icon: ShieldCheck },
+      { label: "Clientes", labelEn: "Clients", href: "/dashboard/admin/clientes", icon: Users },
     ],
   },
 ];

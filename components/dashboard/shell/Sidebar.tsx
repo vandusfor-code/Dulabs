@@ -17,7 +17,7 @@ function cn(...cls: Array<string | false | undefined>) {
 export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { session, negocios, suscripcion, rol } = useDashboard();
+  const { session, negocios, suscripcion, rol, esAdminDulabs } = useDashboard();
   const { t } = useI18n();
 
   const cerrarSesion = async () => {
@@ -66,7 +66,9 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
 
       {/* Nav */}
       <nav className="mt-5 flex-1 space-y-6 overflow-y-auto px-3 pb-4">
-        {navSections.map((section) => (
+        {navSections
+          .filter((section) => !section.soloAdminDulabs || esAdminDulabs)
+          .map((section) => (
           <div key={section.title}>
             <p className="px-3 pb-2 font-mono text-[10.5px] uppercase tracking-widest text-mist/70">
               {t(section.title, section.titleEn)}

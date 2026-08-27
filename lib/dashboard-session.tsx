@@ -54,6 +54,8 @@ type DashboardContextValue = {
   rol: Rol | null;
   /** DuMo es una integración interna del operador, no una función del producto. */
   puedeUsarDumo: boolean;
+  /** Solo para mostrar/ocultar el link del Panel de Operaciones -- la autorización real vive en el backend. */
+  esAdminDulabs: boolean;
   cargarNegocios: () => Promise<void>;
   /** phone_number_id elegido en el selector de número del Topbar. */
   numeroActivoId: string | null;
@@ -75,6 +77,7 @@ export function DashboardSessionProvider({ children }: { children: ReactNode }) 
   const [suscripcion, setSuscripcion] = useState<Suscripcion>(null);
   const [rol, setRol] = useState<Rol | null>(null);
   const [puedeUsarDumo, setPuedeUsarDumo] = useState(false);
+  const [esAdminDulabs, setEsAdminDulabs] = useState(false);
   // Se hidrata una sola vez desde localStorage (lazy initializer, no efecto)
   // — si el número guardado ya no existe (se eliminó, o nunca hubo uno), los
   // consumidores (ver Topbar) ya caen a `negocios[0]` al resolverlo, así que
@@ -110,6 +113,7 @@ export function DashboardSessionProvider({ children }: { children: ReactNode }) 
       setSuscripcion(data.suscripcion ?? null);
       setRol(data.rol ?? null);
       setPuedeUsarDumo(Boolean(data.puede_usar_dumo));
+      setEsAdminDulabs(Boolean(data.es_admin_dulabs));
     } catch (err) {
       setErrorNegocios(err instanceof Error ? err.message : String(err));
     }
@@ -166,6 +170,7 @@ export function DashboardSessionProvider({ children }: { children: ReactNode }) 
         suscripcion,
         rol,
         puedeUsarDumo,
+        esAdminDulabs,
         cargarNegocios: () => cargarNegocios(),
         numeroActivoId,
         seleccionarNumero,

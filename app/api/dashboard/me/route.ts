@@ -4,6 +4,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { consultarEstadoNumero } from "@/lib/meta-numero";
 import { descifrarSecreto } from "@/lib/crypto";
 import { puedeUsarDumo } from "@/lib/dumo-acceso";
+import { esAdminDulabs } from "@/lib/admin-tenant";
 
 export const runtime = "nodejs";
 
@@ -41,7 +42,7 @@ export async function GET(request: NextRequest) {
   if (!filaMiembro) {
     // Usuario autenticado que todavía no conectó un número ni se suscribió:
     // sin equipo, sin negocios — mismo comportamiento vacío de hoy.
-    return Response.json({ email: userData.user.email, negocios: [], suscripcion: null, rol: null });
+    return Response.json({ email: userData.user.email, negocios: [], suscripcion: null, rol: null, es_admin_dulabs: false });
   }
   if (filaMiembro.estado === "suspendido") {
     return Response.json({ error: "Tu acceso a este equipo fue suspendido" }, { status: 403 });
@@ -184,5 +185,9 @@ export async function GET(request: NextRequest) {
     suscripcion,
     rol,
     puede_usar_dumo: puedeUsarDumo(userData.user.email),
+    // Solo para mostrar/ocultar el link del Panel de Operaciones en el nav
+    // -- la autorización REAL vive en cada endpoint /api/dashboard/admin/*
+    // (verificarAccesoAdminDulabs), que nunca confía en este booleano.
+    es_admin_dulabs: esAdminDulabs({ miembroId: filaMiembro.id, tenantId, userId: userData.user.id, rol, estado: filaMiembro.estado }),
   });
 }

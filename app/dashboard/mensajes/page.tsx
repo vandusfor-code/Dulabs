@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { Suspense, useCallback, useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { MessagesSquare, Search, Send, Tag, Plus } from "lucide-react";
 import { useDashboard } from "@/lib/dashboard-session";
 import { formatearTelefono } from "@/lib/format";
@@ -42,14 +43,29 @@ function horaCorta(fecha: string, t: (es: string, en: string) => string): string
 }
 
 export default function MensajesPage() {
+  // useSearchParams exige un límite de Suspense (deep-link opcional desde el
+  // Panel de Operaciones: /dashboard/mensajes?phone_number_id=...&telefono_cliente=...).
+  return (
+    <Suspense fallback={null}>
+      <MensajesPageInterna />
+    </Suspense>
+  );
+}
+
+function MensajesPageInterna() {
   const { session, negocios, rol } = useDashboard();
   const { t } = useI18n();
+  const searchParams = useSearchParams();
   const [conversaciones, setConversaciones] = useState<Conversacion[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busqueda, setBusqueda] = useState("");
   const [filtro, setFiltro] = useState<Filtro>("todas");
   const [etiquetaFiltro, setEtiquetaFiltro] = useState<number | null>(null);
-  const [seleccionadaClave, setSeleccionadaClave] = useState<string | null>(null);
+  const [seleccionadaClave, setSeleccionadaClave] = useState<string | null>(() => {
+    const phoneNumberId = searchParams.get("phone_number_id");
+    const telefonoCliente = searchParams.get("telefono_cliente");
+    return phoneNumberId && telefonoCliente ? `${phoneNumberId}:${telefonoCliente}` : null;
+  });
   const [hilo, setHilo] = useState<MensajeHilo[] | null>(null);
 
   // Se deriva de `conversaciones` en cada render (en vez de guardarse aparte)
