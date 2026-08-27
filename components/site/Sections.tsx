@@ -500,8 +500,8 @@ export function FaqSection({ ids, showMoreLink = false }: { ids?: string[]; show
       id: "que-es-dulabs",
       q: t("¿Qué es DuLabs?", "What is DuLabs?"),
       a: t(
-        "DuLabs es una empresa de tecnología con sede en Montería, Colombia, que diseña e implementa soluciones de inteligencia artificial, automatización, software e integraciones para empresas. WhatsApp con IA es uno de nuestros productos, no el único.",
-        "DuLabs is a technology company based in Montería, Colombia, that designs and implements AI, automation, software and integration solutions for businesses. WhatsApp with AI is one of our products, not the only one."
+        "DuLabs es una empresa de tecnología con sede en Bogotá, Colombia, que diseña e implementa soluciones de inteligencia artificial, automatización, software e integraciones para empresas. WhatsApp con IA es uno de nuestros productos, no el único.",
+        "DuLabs is a technology company based in Bogotá, Colombia, that designs and implements AI, automation, software and integration solutions for businesses. WhatsApp with AI is one of our products, not the only one."
       ),
     },
     {
@@ -780,8 +780,8 @@ export function Footer() {
             <p className="mt-1 text-[11px] font-medium tracking-tight text-site-muted-fg/70">by People Group BPO</p>
             <p className="mt-4 max-w-xs text-[12.5px] leading-relaxed text-site-muted-fg">
               {t(
-                "IA, automatización y software para empresas. Hecho en Montería, Colombia.",
-                "AI, automation and software for businesses. Made in Montería, Colombia."
+                "IA, automatización y software para empresas. Hecho en Bogotá, Colombia.",
+                "AI, automation and software for businesses. Made in Bogotá, Colombia."
               )}
             </p>
             <div className="mt-6 flex items-center gap-2 font-mono text-[10px] uppercase tracking-widest text-site-muted-fg">
@@ -851,7 +851,7 @@ export function Footer() {
                   dulabs.co
                 </a>
               </li>
-              <li className="text-site-muted-fg/70">{t("Montería, Colombia", "Montería, Colombia")}</li>
+              <li className="text-site-muted-fg/70">{t("Bogotá, Colombia", "Bogotá, Colombia")}</li>
             </ul>
             <p className="mt-4 max-w-[26ch] text-[12px] leading-relaxed text-site-muted-fg/70">
               {t(

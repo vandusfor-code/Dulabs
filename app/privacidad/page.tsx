@@ -58,7 +58,7 @@ export default function PrivacidadPage() {
               <p><strong>{t("Aplicación", "Application")}</strong> {t("se refiere a Du Labs, el programa de software proporcionado por la Compañía.", "refers to Du Labs, the software program provided by the Company.")}</p>
             </li>
             <li>
-              <p><strong>{t("Compañía", "Company")}</strong> {t("(referida como \"la Compañía\", \"Nosotros\", \"Nos\" o \"Nuestro\" en esta Política de Privacidad) se refiere a Du Labs, Montería, Córdoba, Colombia.", "(referred to as \"the Company\", \"We\", \"Us\", or \"Our\" in this Privacy Policy) refers to Du Labs, Montería, Córdoba, Colombia.")}</p>
+              <p><strong>{t("Compañía", "Company")}</strong> {t("(referida como \"la Compañía\", \"Nosotros\", \"Nos\" o \"Nuestro\" en esta Política de Privacidad) se refiere a Du Labs, Bogotá, Colombia.", "(referred to as \"the Company\", \"We\", \"Us\", or \"Our\" in this Privacy Policy) refers to Du Labs, Bogotá, Colombia.")}</p>
             </li>
             <li>
               <p><strong>{t("Cookies", "Cookies")}</strong> {t("son pequeños archivos que un sitio web coloca en tu computadora, dispositivo móvil o cualquier otro dispositivo, y que contienen detalles de tu historial de navegación en ese sitio, entre muchos otros usos.", "are small files placed on your computer, mobile device, or any other device by a website, containing details of your browsing history on that site among its many uses.")}</p>

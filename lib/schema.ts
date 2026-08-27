@@ -15,10 +15,10 @@ export function organizationSchema() {
     logo: `${SITE_URL}/logo.png`,
     email: "contacto@dulabs.co",
     description:
-      "DuLabs es una empresa de tecnología con sede en Montería, Colombia, que diseña e implementa soluciones de inteligencia artificial, automatización, software e integraciones para empresas.",
+      "DuLabs es una empresa de tecnología con sede en Bogotá, Colombia, que diseña e implementa soluciones de inteligencia artificial, automatización, software e integraciones para empresas.",
     address: {
       "@type": "PostalAddress",
-      addressLocality: "Montería",
+      addressLocality: "Bogotá",
       addressCountry: "CO",
     },
     areaServed: "CO",
