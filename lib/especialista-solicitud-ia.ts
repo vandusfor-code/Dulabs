@@ -33,6 +33,43 @@ import type { Especialista, CitaEspecialista } from "@/lib/especialistas";
 
 const MODELO = "claude-sonnet-5";
 
+// Red de seguridad real (ver huboResultadoRealDeAgendaEsteTurno más abajo):
+// frases que suenan a "tu cita ya quedó". Si el texto final del modelo trae
+// alguna de estas SIN que ninguna herramienta de agenda haya devuelto un
+// resultado real en ese mismo turno, no se envía tal cual -- es exactamente
+// el patrón del hallazgo real del 2026-08-27 (confirmó una hora que la
+// propia herramienta acababa de reportar ocupada, sin volver a consultarla).
+// A propósito solo frases con una señal fuerte de "esto acaba de pasar
+// ahora mismo" (ya, listo, acabo de) -- NO frases genéricas como "confirmada
+// para" o "queda confirmada" sueltas, que también son la forma normal de
+// responder "¿a qué hora era mi cita?" sobre una cita YA existente de antes
+// (ver "--- Cita existente ---" más abajo) sin haber llamado ninguna
+// herramienta en ese turno -- esas SÍ son respuestas legítimas y no deben
+// bloquearse.
+const FRASES_CONFIRMACION_CITA = [
+  "ya quedo",
+  "ya te la deje",
+  "ya la deje",
+  "ya lo deje",
+  "quedo agendad",
+  "ya esta agendad",
+  "listo, quedo",
+  "te la acabo de agendar",
+  "te la deje agendad",
+];
+
+function normalizarParaComparar(texto: string): string {
+  return texto
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+function pareceConfirmarCitaEnTexto(texto: string): boolean {
+  const n = normalizarParaComparar(texto);
+  return FRASES_CONFIRMACION_CITA.some((frase) => n.includes(frase));
+}
+
 // Nicol (pestañas) también trabaja por fuera del spa -- su disponibilidad
 // real solo se puede ofrecer después de las 3pm entre semana, y desde la
 // mañana los sábados (domingo el spa no abre). Regla específica de este
@@ -134,6 +171,17 @@ export async function generarRespuestaConEspecialistaIA(params: {
   // null, para que el llamador no mande nada más encima de lo ya enviado.
   let terminarConversacionAhora = false;
 
+  // Red de seguridad real (no solo una instrucción de texto): hallazgo del
+  // 2026-08-27 -- el modelo llegó a decirle a una clienta "ya quedó" agendada
+  // a una hora que la MISMA herramienta acababa de reportar ocupada dos
+  // mensajes antes, sin volver a llamar la herramienta en ese turno. Confiar
+  // en que el prompt por sí solo evite esto ya se intentó y no fue
+  // suficiente -- esto lo bloquea a nivel de código. true SOLO cuando una
+  // herramienta de agenda devolvió de verdad un resultado (éxito o fallo)
+  // EN ESTE MISMO turno -- se revisa antes de dejar salir cualquier texto
+  // final que suene a confirmación.
+  let huboResultadoRealDeAgendaEsteTurno = false;
+
   const tools: Anthropic.Tool[] = [
     {
       name: "crear_solicitud_cita",
@@ -202,6 +250,8 @@ export async function generarRespuestaConEspecialistaIA(params: {
     `La respuesta también trae "con": el nombre de quién REALMENTE va a atender la cita. Si la clienta pidió a alguien en particular pero el servicio se manejaba entre varias personas (manos o pies) y no era esa persona exclusiva, puede que "con" no sea la persona que ella pidió -- en ese caso, díselo con naturalidad en la misma confirmación ("te la dejé con Carla que tenía espacio a esa hora, ¿te sirve?"), nunca digas el nombre de quien ella pidió si la herramienta te devolvió otro nombre distinto.\n` +
     `Si la herramienta te dice que el horario está ocupado, te va a devolver los horarios que ya están tomados ese día (horarios_tomados, ya en hora de Colombia). Mira esa lista, calcula tú misma 1 o 2 huecos libres dentro del horario de atención del negocio, y ofréceselos a la clienta en tu respuesta de texto ("tengo espacio a las X o a las Y, ¿cuál te queda mejor?") -- NO vuelvas a llamar la herramienta para "probar" otro horario a ciegas, eso ya lo sabes por la lista que te devolvió. Nunca inventes ni asumas disponibilidad que la herramienta no te confirmó.\n` +
     `Para cualquier OTRO servicio que no tenga esa herramienta, sigues funcionando igual que siempre: solo tomas nota de la solicitud en texto, sin agenda real todavía.\n\n` +
+    `--- Regla innegociable: nunca inventes una confirmación ---\n` +
+    `NUNCA le digas a la clienta que su cita "ya quedó", "quedó confirmada" o "quedó agendada" a menos que hayas llamado crear_solicitud_cita o cambiar_hora_mi_cita EN ESTE MISMO mensaje y la herramienta te haya devuelto success:true. No repitas ni dediques de un turno anterior si en este turno no volviste a llamar la herramienta -- la disponibilidad pudo cambiar. Si la clienta manda un sticker, un emoji suelto, una nota de voz o cualquier cosa que no sea texto claro como respuesta a una pregunta de horario, NO lo interpretes como un "sí" a nada -- pídele con cariño que te confirme por escrito el servicio, el día y la hora exactos en un solo mensaje, y espera esa respuesta antes de llamar la herramienta.\n\n` +
     `--- Productos y saludo con botones ---\n` +
     `El spa también vende productos, aparte de los servicios que se agendan. Si en cualquier momento la clienta muestra interés en un PRODUCTO (comprarlo, preguntarle el precio para llevar, etc.) y no en un servicio agendable, usa derivar_a_daniela_por_producto -- sin importar si pasa en el saludo inicial o después de ya haber hablado de una cita. Esa herramienta ya manda el mensaje; no le sigas escribiendo nada más después de llamarla. Si más adelante en el MISMO chat vuelve a tocar ese mismo producto antes de que Daniela responda, no llames la herramienta otra vez ni repitas el mensaje completo -- solo dile brevemente que Daniela ya le va a responder. Esto NO te bloquea para nada más: si en cualquier momento pide agendar un SERVICIO, ayúdala con toda normalidad, sin que lo del producto se lo impida.` +
     (esPrimerMensaje
@@ -313,6 +363,20 @@ export async function generarRespuestaConEspecialistaIA(params: {
   }
 
   async function ejecutarHerramientaConNombre(nombre: string, input: Record<string, unknown>): Promise<string> {
+    // Cualquier herramienta que de verdad toca la agenda cuenta como
+    // "consultó la realidad en este turno" -- ver huboResultadoRealDeAgendaEsteTurno
+    // arriba. Se marca ANTES de ejecutar, no solo en el camino feliz: incluso
+    // un resultado de error es un resultado real que el modelo ya tiene en
+    // sus manos antes de escribir su respuesta final.
+    if (
+      nombre === "crear_solicitud_cita" ||
+      nombre === "cambiar_hora_mi_cita" ||
+      nombre === "aceptar_propuesta_horario" ||
+      nombre === "rechazar_propuesta_horario" ||
+      nombre === "cancelar_mi_cita"
+    ) {
+      huboResultadoRealDeAgendaEsteTurno = true;
+    }
     if (nombre === "aceptar_propuesta_horario") {
       if (!propuesta) return JSON.stringify({ success: false, error: "No hay ninguna propuesta pendiente." });
       const cita = await aceptarPropuesta(params.supabase, propuesta.id);
@@ -593,7 +657,24 @@ export async function generarRespuestaConEspecialistaIA(params: {
         .map((b) => b.text)
         .join("\n")
         .trim();
-      if (texto) return texto;
+      if (texto) {
+        // Guardia real (no una instrucción de prompt más): si el texto suena
+        // a "tu cita ya quedó" pero ninguna herramienta de agenda devolvió un
+        // resultado real EN ESTE turno, no se envía -- se registra como
+        // fallo y se le pide a la clienta que reconfirme en un solo mensaje,
+        // en vez de arriesgarse a mandar una confirmación falsa.
+        if (!huboResultadoRealDeAgendaEsteTurno && pareceConfirmarCitaEnTexto(texto)) {
+          await registrarFalloIA({
+            tipo: "otro",
+            mensaje: `Posible confirmación de cita SIN respaldo de herramienta en este turno -- texto bloqueado, no se envió: "${texto.slice(0, 300)}". Mensaje de la clienta: "${params.textoUsuario.slice(0, 200)}"`,
+            idTenant: params.cliente.id_tenant,
+            phoneNumberId: params.cliente.phone_number_id,
+            nombreNegocio: params.cliente.nombre_negocio,
+          });
+          return "Dame un segundito para dejarte esto bien confirmado 🙏 ¿Me repites en un solo mensaje el servicio, el día y la hora exactos que necesitas? Así te lo agendo de una sin enredos.";
+        }
+        return texto;
+      }
       return respaldoPorFalloSilencioso(
         `La IA devolvió texto vacío (stop_reason=${response.stop_reason}) intentando agendar una cita. Mensaje de la clienta: "${params.textoUsuario.slice(0, 200)}"`
       );
