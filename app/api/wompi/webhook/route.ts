@@ -3,6 +3,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { verificarChecksumEvento } from "@/lib/wompi";
 import { desactivarActivacion } from "@/lib/marketplace-store";
 import { resolverAccionWebhookPago } from "@/lib/wompi-webhook";
+import { dispararOnboardingSiAplica } from "@/lib/onboarding-trigger";
 
 export const runtime = "nodejs";
 
@@ -69,6 +70,12 @@ export async function POST(request: NextRequest) {
         .eq("id_tenant", accion.idTenant);
       if (error) {
         console.error("[wompi-webhook] error actualizando suscripción:", error.message);
+      } else if (accion.estado === "activa") {
+        // Onboarding automático por WhatsApp -- solo dispara en pago
+        // realmente confirmado (nunca en "vencida"), y es idempotente por
+        // tenant, así que una renovación mensual no manda una segunda
+        // bienvenida (ver lib/onboarding-trigger.ts).
+        await dispararOnboardingSiAplica(supabase, accion.idTenant);
       }
       break;
     }

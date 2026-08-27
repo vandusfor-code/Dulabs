@@ -3,6 +3,13 @@
 // canal principal de entrada en toda la página, no un botón secundario.
 export const WHATSAPP_VENTAS_NUMERO = "573148127388";
 
+// phone_number_id (Meta) del mismo número de arriba -- necesario para
+// mandar mensajes vía Graph API (enviarWhatsApp/enviarBotonesWhatsApp),
+// distinto del número visible que se usa en los links wa.me. Confirmado
+// directo en dulabs_clientes_config (id_tenant "Dulabs",
+// daf555ef-bda6-40d1-9833-bea40d69e38c) antes de hardcodearlo aquí.
+export const DULABS_PHONE_NUMBER_ID = "696346603563682";
+
 export function whatsappVentasUrl(mensaje: string): string {
   return `https://wa.me/${WHATSAPP_VENTAS_NUMERO}?text=${encodeURIComponent(mensaje)}`;
 }

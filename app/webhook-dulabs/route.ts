@@ -29,6 +29,8 @@ import { getCampaignLead, getCampaignBotConfig, guardarCampaignLead, marcarDumoS
 import { procesarMensajeCampaña, type CampaignLeadSession } from "@/lib/campaign-lead-engine";
 import { adquirirCandadoChat, liberarCandadoChat } from "@/lib/chat-lock";
 import { activarPausaChat } from "@/lib/pausas-chat";
+import { obtenerOnboardingSesionActivaPorTelefono, guardarOnboardingSesion, filaASesion } from "@/lib/onboarding-store";
+import { procesarMensajeOnboarding } from "@/lib/onboarding-engine";
 
 export const runtime = "nodejs";
 // El flujo de agenda con especialista puede necesitar varias idas y vueltas
@@ -39,6 +41,12 @@ export const runtime = "nodejs";
 export const maxDuration = 120;
 
 const PAUSA_HUMANA_MS = 30 * 60 * 1000;
+// Capa SECUNDARIA de protección tras terminar el onboarding (completado o
+// soporte_solicitado) -- el gate principal es el `estado` de la sesión, que
+// atenderMensajeOnboarding revisa primero y corta ahí mismo. Esta pausa es
+// solo por si algo más en el sistema consulta dulabs_pausas_chat para ese
+// chat; 5 años = efectivamente "hasta que un humano lo resuelva".
+const PAUSA_ONBOARDING_MS = 5 * 365 * 24 * 60 * 60 * 1000;
 
 type MetaMessage = {
   from: string;
@@ -567,6 +575,15 @@ async function atenderMensaje(cliente: ClienteConfig, mensaje: MetaMessage, nomb
   // de dulabs ya está silenciada.
   if (await atenderMensajeCampaña(cliente, mensaje)) return;
 
+  // Onboarding automático post-pago (ver lib/onboarding-trigger.ts, que
+  // manda la bienvenida) -- SOLO toma el turno si este teléfono ya tiene una
+  // fila en dulabs_onboarding_sesiones. El `estado` de esa fila es el gate
+  // PRINCIPAL contra que la IA general responda después de terminar: si ya
+  // es completado/soporte_solicitado, esta función devuelve true (mensaje
+  // atendido, nada más que hacer) sin llamar a la IA -- independiente de la
+  // pausa larga de abajo, que es solo una capa secundaria.
+  if (await atenderMensajeOnboarding(cliente, mensaje)) return;
+
   // Pausa manual de todo el número, activada desde Agentes de IA.
   if (cliente.ia_pausada) {
     console.log(`[webhook-dulabs] IA pausada manualmente para "${cliente.nombre_negocio}"`);
@@ -917,6 +934,40 @@ async function atenderMensajeCampaña(cliente: ClienteConfig, mensaje: MetaMessa
   for (const texto of resultado.messages) {
     await enviarWhatsApp(cliente, mensaje.from, texto);
   }
+  return true;
+}
+
+async function atenderMensajeOnboarding(cliente: ClienteConfig, mensaje: MetaMessage): Promise<boolean> {
+  const supabase = supabaseAdmin();
+  const telefono = soloDigitos(mensaje.from);
+
+  const fila = await obtenerOnboardingSesionActivaPorTelefono(supabase, cliente.phone_number_id, telefono);
+  if (!fila) return false; // este teléfono nunca recibió un onboarding -- sigue el flujo normal
+
+  // Gate principal: sesión ya terminal -> no se procesa nada más, ni
+  // siquiera se llega a mirar la pausa larga (ver comentario en el
+  // dispatch de arriba).
+  if (fila.estado === "completado" || fila.estado === "soporte_solicitado") {
+    return true;
+  }
+
+  const textoUsuario = mensaje.text?.body ?? "";
+  if (!textoUsuario) return true; // mensaje sin texto (imagen, audio...) dentro del onboarding: se ignora, no se pierde el progreso
+
+  const resultado = procesarMensajeOnboarding(filaASesion(fila), textoUsuario);
+  await guardarOnboardingSesion(supabase, fila.id, resultado.session);
+
+  for (const texto of resultado.messages) {
+    await enviarWhatsApp(cliente, mensaje.from, texto);
+  }
+
+  if (resultado.session.estado === "completado" || resultado.session.estado === "soporte_solicitado") {
+    console.log(
+      `[webhook-dulabs] onboarding terminado (${resultado.session.estado}) tenant=${fila.id_tenant} telefono=${telefono}`
+    );
+    await activarPausaChat(supabase, cliente.phone_number_id, telefono, PAUSA_ONBOARDING_MS);
+  }
+
   return true;
 }
 

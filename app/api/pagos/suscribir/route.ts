@@ -3,6 +3,8 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { crearFuentePago, crearTransaccion, resolverEstadoPago } from "@/lib/wompi";
 import { PLANES, type PlanId } from "@/lib/planes";
 import { resolverMiembroEquipo, requireRol } from "@/lib/team";
+import { normalizarTelefono } from "@/lib/marketplace-store";
+import { dispararOnboardingSiAplica } from "@/lib/onboarding-trigger";
 
 export const runtime = "nodejs";
 
@@ -44,6 +46,7 @@ export async function POST(request: NextRequest) {
     token?: string;
     plan?: string;
     customer_email?: string;
+    telefono?: string;
     acceptance_token?: string;
     accept_personal_auth?: string;
   };
@@ -53,9 +56,16 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: "JSON inválido" }, { status: 400 });
   }
 
-  const { token, plan, customer_email, acceptance_token, accept_personal_auth } = body;
-  if (!token || !plan || !customer_email || !acceptance_token || !accept_personal_auth) {
+  const { token, plan, customer_email, telefono, acceptance_token, accept_personal_auth } = body;
+  if (!token || !plan || !customer_email || !telefono || !acceptance_token || !accept_personal_auth) {
     return Response.json({ error: "Faltan campos requeridos" }, { status: 400 });
+  }
+  // Necesario para el onboarding automático por WhatsApp (ver
+  // app/api/wompi/webhook/route.ts) -- reusa la misma normalización que ya
+  // usa el resto del proyecto para teléfonos colombianos (lib/marketplace-store.ts).
+  const telefonoNormalizado = normalizarTelefono(telefono);
+  if (telefonoNormalizado.length < 10) {
+    return Response.json({ error: "El número de WhatsApp no es válido" }, { status: 400 });
   }
   if (!(plan in PLANES)) {
     return Response.json({ error: "Plan inválido" }, { status: 400 });
@@ -127,6 +137,7 @@ export async function POST(request: NextRequest) {
       .update({
         wompi_payment_source_id: String(fuente.id),
         wompi_customer_email: customer_email,
+        telefono_onboarding: telefonoNormalizado,
         estado: estadoFinal,
         updated_at: new Date().toISOString(),
       })
@@ -151,6 +162,14 @@ export async function POST(request: NextRequest) {
       console.log(
         `[pagos/suscribir] transacción ${transaccion.id} quedó PENDING (tenant ${idTenant}) — suscripción en pendiente_pago hasta que el webhook de Wompi confirme el resultado final.`
       );
+    } else if (estadoFinal === "activa") {
+      // Caso normal (tarjeta aprobada sin challenge 3DS): el pago ya está
+      // confirmado AQUÍ, sin esperar el webhook async de Wompi -- que puede
+      // tardar o, en un caso real que ya vimos esta sesión, no llegar.
+      // dispararOnboardingSiAplica es idempotente por tenant, así que si el
+      // webhook también dispara esto más tarde, no manda una segunda
+      // bienvenida.
+      await dispararOnboardingSiAplica(supabase, idTenant);
     }
 
     return Response.json({ success: true, estado_transaccion: transaccion.status });

@@ -34,6 +34,7 @@ export default function CheckoutPage() {
   const [plan, setPlan] = useState<PlanId>(PLAN_POR_DEFECTO);
   const [estado, setEstado] = useState<Estado>({ fase: "cargando" });
 
+  const [telefono, setTelefono] = useState("");
   const [numero, setNumero] = useState("");
   const [mes, setMes] = useState("");
   const [anio, setAnio] = useState("");
@@ -112,6 +113,7 @@ export default function CheckoutPage() {
             token: tokenJson.data.id,
             plan,
             customer_email: session.user.email,
+            telefono,
             acceptance_token: acceptanceToken,
             accept_personal_auth: personalAuthToken,
           }),
@@ -125,7 +127,7 @@ export default function CheckoutPage() {
         setEstado({ fase: "error", mensaje: err instanceof Error ? err.message : String(err) });
       }
     },
-    [session, publicKey, plan, numero, mes, anio, cvc, titular, t]
+    [session, publicKey, plan, telefono, numero, mes, anio, cvc, titular, t]
   );
 
   if (wompiConfigFaltante) {
@@ -167,6 +169,23 @@ export default function CheckoutPage() {
           </div>
         ) : (
           <form onSubmit={pagar} className="mt-8 flex flex-col gap-4">
+            <div>
+              <label className="mb-1.5 block text-xs font-medium text-mist">
+                {t("WhatsApp de contacto", "Contact WhatsApp")}
+              </label>
+              <input
+                required
+                type="tel"
+                inputMode="tel"
+                value={telefono}
+                onChange={(e) => setTelefono(e.target.value)}
+                placeholder="300 123 4567"
+                className="w-full rounded-lg border border-edge bg-ink-2 px-4 py-2.5 text-sm text-fg outline-none focus:border-lime/50"
+              />
+              <p className="mt-1.5 text-xs text-mist/70">
+                {t("Te escribimos por aquí para empezar la configuración.", "We'll message you here to start setup.")}
+              </p>
+            </div>
             <div>
               <label className="mb-1.5 block text-xs font-medium text-mist">
                 {t("Número de tarjeta", "Card number")}
