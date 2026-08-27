@@ -87,6 +87,39 @@ export function SectionHeading({
 }
 
 /* =========================================================
+   Respaldo — logos reales de People BPO (empresa detrás de DuLabs),
+   no clientes directos de DuLabs todavía. El texto lo deja explícito
+   a propósito para no insinuar una relación que no existe.
+========================================================= */
+
+const LOGOS_RESPALDO = [
+  { src: "/logos-clientes/icontec.png", alt: "ICONTEC", w: 999, h: 295 },
+  { src: "/logos-clientes/ur.png", alt: "Universidad del Rosario", w: 1973, h: 798 },
+  { src: "/logos-clientes/wom-chile.png", alt: "WOM Chile", w: 300, h: 131 },
+  { src: "/logos-clientes/farmasi.png", alt: "Farmasi", w: 3840, h: 2160 },
+];
+
+export function TrustedBySection() {
+  const { t } = useI18n();
+  return (
+    <section className="border-y border-site-border bg-site-card/40 py-10">
+      <div className="mx-auto max-w-[1440px] px-6">
+        <p className="text-center font-mono text-[10.5px] uppercase tracking-[0.2em] text-site-muted-fg">
+          {t("Con el respaldo de People BPO, que ya trabaja con", "Backed by People BPO, already trusted by")}
+        </p>
+        <div className="mt-6 flex flex-wrap items-center justify-center gap-4">
+          {LOGOS_RESPALDO.map((logo) => (
+            <div key={logo.alt} className="flex h-14 items-center justify-center rounded-xl bg-white px-6 py-3">
+              <Image src={logo.src} alt={logo.alt} width={logo.w} height={logo.h} className="h-6 w-auto object-contain sm:h-7" />
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/* =========================================================
    0. Cómo funciona — la promesa central: nosotros lo configuramos
 ========================================================= */
 

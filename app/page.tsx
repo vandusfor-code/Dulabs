@@ -5,6 +5,7 @@ import { PageSpotlight } from "@/components/site/PageSpotlight";
 import { JsonLd } from "@/components/site/JsonLd";
 import { breadcrumbSchema } from "@/lib/schema";
 import {
+  TrustedBySection,
   HowItWorksSection,
   PricingSection,
   NextLevelSection,
@@ -27,6 +28,8 @@ export default function Home() {
       <Nav />
       <main>
         <Hero />
+
+        <TrustedBySection />
 
         <Reveal>
           <HowItWorksSection />
