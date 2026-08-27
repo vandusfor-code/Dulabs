@@ -98,3 +98,35 @@ export async function obtenerClientesAdmin(supabase: SupabaseClient): Promise<Cl
     };
   });
 }
+
+export type NumeroAdmin = {
+  phoneNumberId: string;
+  nombreNegocio: string;
+  telefonoNegocio: string;
+  /** Mismo criterio que /api/dashboard/me: hay token de Meta guardado (propio o el genérico del entorno). */
+  conectado: boolean;
+  agenteId: number | null;
+  marketplaceActivacionId: number | null;
+};
+
+// Números de WhatsApp de UN tenant específico, para las secciones
+// "Soluciones", "Agente de IA" y "WhatsApp" del detalle de cliente del Panel
+// de Operaciones -- compartido entre esos endpoints para no repetir la
+// misma consulta ni duplicar la lógica de "conectado" (ver /api/dashboard/me).
+export async function obtenerNumerosAdmin(supabase: SupabaseClient, idTenant: string): Promise<NumeroAdmin[]> {
+  const { data, error } = await supabase
+    .from("dulabs_clientes_config")
+    .select("phone_number_id, nombre_negocio, telefono_negocio, meta_permanent_token, agente_id, marketplace_activacion_id")
+    .eq("id_tenant", idTenant)
+    .order("created_at", { ascending: true });
+  if (error) throw new Error(error.message);
+
+  return (data ?? []).map((n) => ({
+    phoneNumberId: n.phone_number_id,
+    nombreNegocio: n.nombre_negocio,
+    telefonoNegocio: n.telefono_negocio,
+    conectado: Boolean(n.meta_permanent_token || process.env.META_ACCESS_TOKEN),
+    agenteId: n.agente_id,
+    marketplaceActivacionId: n.marketplace_activacion_id,
+  }));
+}

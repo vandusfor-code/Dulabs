@@ -12,8 +12,10 @@ import { normalizarTelefono } from "@/lib/marketplace-store";
 // se usa como base de conocimiento del agente (igual que cualquier archivo
 // de Base de Conocimiento — la IA ya lo interpreta hoy).
 
-const RECURSOS_DISPONIBLES_POR_DEFECTO = 1;
-const DURACION_ESTANDAR_MIN_POR_DEFECTO = 30;
+// Exportados para que otros llamadores (ej. la activación en cortesía del
+// Panel de Operaciones) usen los mismos valores por defecto sin duplicarlos.
+export const RECURSOS_DISPONIBLES_POR_DEFECTO = 1;
+export const DURACION_ESTANDAR_MIN_POR_DEFECTO = 30;
 
 export interface ConfigAgenteNegocio {
   /** Teléfono admin normalizado (solo dígitos, con código de país), o null. */

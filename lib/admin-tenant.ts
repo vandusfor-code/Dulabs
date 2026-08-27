@@ -17,11 +17,12 @@ export function esAdminDulabs(miembro: Miembro | null): miembro is Miembro {
 
 // Punto único de autorización para las rutas del Panel de Operaciones --
 // nunca confiar en que el front ocultó el link: cada endpoint admin llama
-// esto primero. Devuelve el cliente supabase ya listo si autoriza, o una
-// Response de error si no.
+// esto primero. Devuelve el cliente supabase ya listo (más el miembro
+// autenticado, para endpoints que necesiten registrar QUIÉN hizo una acción
+// -- ver activarMarketplaceCortesia) si autoriza, o una Response de error si no.
 export async function verificarAccesoAdminDulabs(
   request: NextRequest
-): Promise<{ ok: true; supabase: SupabaseClient } | { ok: false; response: Response }> {
+): Promise<{ ok: true; supabase: SupabaseClient; miembro: Miembro } | { ok: false; response: Response }> {
   const authHeader = request.headers.get("authorization") ?? "";
   const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
   if (!token) {
@@ -39,5 +40,5 @@ export async function verificarAccesoAdminDulabs(
     return { ok: false, response: Response.json({ error: "No autorizado" }, { status: 403 }) };
   }
 
-  return { ok: true, supabase };
+  return { ok: true, supabase, miembro };
 }
