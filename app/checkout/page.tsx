@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useCallback, useEffect, useState, type FormEvent } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import type { Session } from "@supabase/supabase-js";
 import { supabaseBrowser } from "@/lib/supabase-browser";
@@ -26,12 +26,22 @@ type Estado =
   | { fase: "error"; mensaje: string };
 
 export default function CheckoutPage() {
+  return (
+    <Suspense fallback={null}>
+      <CheckoutPageInterna />
+    </Suspense>
+  );
+}
+
+function CheckoutPageInterna() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { t } = useI18n();
   const publicKey = process.env.NEXT_PUBLIC_WOMPI_PUBLIC_KEY;
 
   const [session, setSession] = useState<Session | null | "verificando">("verificando");
   const [plan, setPlan] = useState<PlanId>(PLAN_POR_DEFECTO);
+  const [precioNegociadoCop, setPrecioNegociadoCop] = useState<number | null>(null);
   const [estado, setEstado] = useState<Estado>({ fase: "cargando" });
 
   const [telefono, setTelefono] = useState("");
@@ -50,11 +60,25 @@ export default function CheckoutPage() {
         return;
       }
       setSession(data.session);
+      // Un link directo con ?plan=growth manda sobre lo que haya guardado en
+      // localStorage -- así se puede enviar a un cliente puntual (ej. por
+      // WhatsApp) un link que abra exactamente el plan correcto, sin
+      // depender de que haya pasado antes por /precios en ese mismo navegador.
+      const planPorUrl = searchParams.get("plan");
       const planGuardado = localStorage.getItem(PLAN_PENDIENTE_KEY);
-      if (planGuardado) setPlan(resolverPlanId(planGuardado));
+      const planElegido = planPorUrl ?? planGuardado;
+      if (planElegido) setPlan(resolverPlanId(planElegido));
+
+      fetch("/api/dashboard/suscripcion", { headers: { Authorization: `Bearer ${data.session.access_token}` } })
+        .then((res) => res.json())
+        .then((json) => setPrecioNegociadoCop(json.precio_negociado_cop ?? null))
+        .catch(() => setPrecioNegociadoCop(null));
+
       setEstado({ fase: "listo" });
     });
-  }, [router]);
+  }, [router, searchParams]);
+
+  const precioAMostrar = precioNegociadoCop ?? PLANES[plan].precioCop;
 
   const pagar = useCallback(
     async (e: FormEvent) => {
@@ -156,7 +180,7 @@ export default function CheckoutPage() {
         </Link>
         <h1 className="mt-6 text-2xl font-semibold">{t("Activa tu suscripción", "Activate your subscription")}</h1>
         <p className="mt-3 text-sm leading-relaxed text-mist">
-          {PLANES[plan].nombre} — ${PLANES[plan].precioCop?.toLocaleString("es-CO") ?? "—"} COP / {t("mes", "month")}.{" "}
+          {PLANES[plan].nombre} — ${precioAMostrar?.toLocaleString("es-CO") ?? "—"} COP / {t("mes", "month")}.{" "}
           {t("Se te cobrará automáticamente cada mes con esta tarjeta.", "You'll be charged automatically every month with this card.")}
         </p>
 

@@ -4,6 +4,35 @@ import { resolverMiembroEquipo, requireRol } from "@/lib/team";
 
 export const runtime = "nodejs";
 
+// Precio a mostrar en /checkout ANTES de cobrar: si el tenant ya tiene un
+// precio negociado (ver migración 20260827090000_precio_negociado.sql), el
+// checkout debe mostrar ESE número, no el de lista -- para que nunca se le
+// muestre un precio distinto al que realmente se le va a cobrar. Sin
+// requireRol(admin): un usuario recién registrado, sin membresía todavía
+// (mismo caso que resuelve /api/pagos/suscribir con su fallback de
+// aprovisionar), de todas formas nunca va a tener un precio negociado, así
+// que null es la respuesta correcta y segura para ese caso.
+export async function GET(request: NextRequest) {
+  const authHeader = request.headers.get("authorization") ?? "";
+  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
+  if (!token) return Response.json({ error: "Falta el token de sesión" }, { status: 401 });
+
+  const supabase = supabaseAdmin();
+  const { data: userData, error: userError } = await supabase.auth.getUser(token);
+  if (userError || !userData.user) return Response.json({ error: "Sesión inválida" }, { status: 401 });
+
+  const miembro = await resolverMiembroEquipo(supabase, userData.user.id);
+  const idTenant = miembro?.tenantId ?? userData.user.id;
+
+  const { data: suscripcion } = await supabase
+    .from("dulabs_suscripciones")
+    .select("precio_negociado_cop")
+    .eq("id_tenant", idTenant)
+    .maybeSingle();
+
+  return Response.json({ precio_negociado_cop: suscripcion?.precio_negociado_cop ?? null });
+}
+
 async function autenticarAdmin(request: NextRequest) {
   const authHeader = request.headers.get("authorization") ?? "";
   const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
