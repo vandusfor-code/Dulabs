@@ -31,7 +31,7 @@ export const metadata: Metadata = {
       "Diseñamos e implementamos soluciones de inteligencia artificial, automatización y software para empresas, desde WhatsApp con IA hasta sistemas e integraciones a medida.",
     url: "https://www.dulabs.co/",
     siteName: "DuLabs",
-    images: [{ url: "/mano-hero.png", width: 750, height: 1024 }],
+    images: [{ url: "/logo.png", width: 512, height: 512 }],
     locale: "es_CO",
     type: "website",
   },
@@ -40,7 +40,7 @@ export const metadata: Metadata = {
     title: "DuLabs | IA, Automatización y Software para Empresas",
     description:
       "Soluciones de inteligencia artificial, automatización y software para empresas. WhatsApp con IA, CRM, integraciones y desarrollos a medida.",
-    images: ["/mano-hero.png"],
+    images: ["/logo.png"],
   },
 };
 
