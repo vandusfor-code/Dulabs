@@ -149,6 +149,15 @@ export function esSinPlan(plan: PlanDef): boolean {
   return plan.id === "sin_plan";
 }
 
+// Precio real a cobrar: el negociado para ESTE tenant si existe (ver
+// dulabs_suscripciones.precio_negociado_cop), si no el de lista del plan.
+// Función pura y aislada a propósito -- es el único lugar que decide cuánto
+// se le cobra de verdad a alguien en Wompi, así que se puede probar sola sin
+// tocar la base de datos ni la API de pagos.
+export function resolverPrecioSuscripcion(precioListaCop: number, precioNegociadoCop: number | null): number {
+  return precioNegociadoCop ?? precioListaCop;
+}
+
 // Mensaje de bloqueo cuando el tenant NO tiene suscripción activa. Sin esto,
 // los mensajes de límite se renderizan como "Tu plan Sin plan permite máximo
 // 0 números. Mejora tu plan para conectar otro." — literalmente cierto pero

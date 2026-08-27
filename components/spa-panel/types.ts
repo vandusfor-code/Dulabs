@@ -18,11 +18,14 @@ export type Cita = {
 
 export type MiembroEquipo = { id: number; nombre: string };
 
-export type Datos = {
+export type DatosCargados = {
+  planPausado?: false;
   negocio: string;
   especialista: { nombre: string; servicio: string; duracion_min: number };
   equipo: MiembroEquipo[];
   citas: Cita[];
 };
+
+export type Datos = DatosCargados | { planPausado: true; negocio: string };
 
 export type Accion = "confirmar" | "rechazar" | "reagendar" | "editar" | "cancelar";

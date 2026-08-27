@@ -13,6 +13,7 @@ import {
 } from "@/lib/especialistas";
 import { clienteDeEspecialista, notificarCitaConfirmada } from "@/lib/especialistas-notificar";
 import { recordarNombreCliente } from "@/lib/clientes-conocidos";
+import { planDelTenant } from "@/lib/plan-limits";
 
 export const runtime = "nodejs";
 
@@ -30,6 +31,17 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   const supabase = supabaseAdmin();
   const especialista = await especialistaPorRuta(supabase, token);
   if (!especialista) return Response.json({ error: "Link inválido" }, { status: 404 });
+
+  // Plan pausado (cortesía vencida, pago pendiente, etc.): el panel abre
+  // normal -- nunca un error -- pero sin ninguna cita ni dato del negocio,
+  // solo lo justo para que el front muestre el aviso. Misma fuente de
+  // verdad que ya usa el resto de la plataforma (planDelTenant, ver
+  // lib/plan-limits.ts): SIN_PLAN cuando no hay una fila con estado='activa'.
+  const plan = await planDelTenant(supabase, especialista.id_tenant);
+  if (plan.id === "sin_plan") {
+    const clientePausado = await clienteDeEspecialista(supabase, especialista.phone_number_id);
+    return Response.json({ planPausado: true, negocio: clientePausado?.nombre_negocio ?? "Du Labs" });
+  }
 
   const hermanas = await especialistasDelMismaPersona(supabase, especialista.phone_number_id, especialista.numero_whatsapp);
   const equipo = hermanas.length > 0 ? hermanas : [especialista];
@@ -77,6 +89,11 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const supabase = supabaseAdmin();
   const especialista = await especialistaPorRuta(supabase, token);
   if (!especialista) return Response.json({ error: "Link inválido" }, { status: 404 });
+
+  const plan = await planDelTenant(supabase, especialista.id_tenant);
+  if (plan.id === "sin_plan") {
+    return Response.json({ error: "Plan pausado, pendiente de pago" }, { status: 403 });
+  }
 
   let body: {
     nombre_cliente?: string;

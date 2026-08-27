@@ -1,9 +1,9 @@
 "use client";
 
 import { createContext, useContext, useState, type ReactNode } from "react";
-import { Loader2 } from "lucide-react";
+import { Loader2, CalendarClock } from "lucide-react";
 import { useAgendaData } from "./useAgendaData";
-import type { Cita, Datos } from "./types";
+import type { Cita, DatosCargados } from "./types";
 import { Sidebar } from "./Sidebar";
 import { Header } from "./Header";
 import { MobileHero } from "./MobileHero";
@@ -17,7 +17,7 @@ import { AppointmentDetailsModal } from "./modals/AppointmentDetailsModal";
 
 type AgendaCtx = {
   token: string;
-  datos: Datos;
+  datos: DatosCargados;
   procesandoId: number | null;
   confirmar: (c: Cita) => void;
   rechazar: (c: Cita) => void;
@@ -59,6 +59,27 @@ export function AgendaProvider({ token, children }: { token: string; children: R
     return (
       <div className="spa-scope flex min-h-screen items-center justify-center bg-ink">
         <Loader2 className="size-6 animate-spin text-mist" />
+      </div>
+    );
+  }
+
+  // Plan pausado (cortesía vencida / pago pendiente): el panel llegó a
+  // cargar con normalidad (arriba), pero aquí se corta ANTES de construir
+  // el contexto -- ni Sidebar, ni citas, ni ningún modal se llegan a
+  // montar. No es un error de red (por eso no reusa la pantalla de arriba):
+  // es un estado real y esperado del negocio.
+  if (datos.planPausado) {
+    return (
+      <div className="spa-scope flex min-h-screen flex-col items-center justify-center gap-4 bg-ink px-6 text-center">
+        <div className="flex size-14 items-center justify-center rounded-2xl bg-amber-400/10 text-amber-400">
+          <CalendarClock className="size-7" />
+        </div>
+        <div>
+          <p className="text-lg font-semibold text-fg">Plan pausado</p>
+          <p className="mt-1.5 max-w-sm text-sm leading-relaxed text-mist">
+            El plan de {datos.negocio} está pendiente de pago. Actualiza el pago para volver a ver tu agenda.
+          </p>
+        </div>
       </div>
     );
   }

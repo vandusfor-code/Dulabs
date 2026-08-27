@@ -1,7 +1,7 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { crearFuentePago, crearTransaccion, resolverEstadoPago } from "@/lib/wompi";
-import { PLANES, type PlanId } from "@/lib/planes";
+import { PLANES, resolverPrecioSuscripcion, type PlanId } from "@/lib/planes";
 import { resolverMiembroEquipo, requireRol } from "@/lib/team";
 import { normalizarTelefono } from "@/lib/marketplace-store";
 import { dispararOnboardingSiAplica } from "@/lib/onboarding-trigger";
@@ -74,7 +74,19 @@ export async function POST(request: NextRequest) {
   if (planDef.precioCop === null) {
     return Response.json({ error: "El plan Enterprise se activa por cotización, contacta a soporte" }, { status: 400 });
   }
-  const precioCop = planDef.precioCop;
+
+  // Precio negociado (ver migración 20260827090000_precio_negociado.sql):
+  // se lee SIEMPRE de la fila que ya existe en base de datos para este
+  // tenant, nunca de nada que mande el navegador -- así un cliente normal
+  // no tiene ninguna forma de fijar su propio precio. La mayoría de
+  // tenants no tiene fila todavía en su primera suscripción, así que esto
+  // es null y se usa el precio de lista normal.
+  const { data: suscripcionExistente } = await supabase
+    .from("dulabs_suscripciones")
+    .select("precio_negociado_cop")
+    .eq("id_tenant", idTenant)
+    .maybeSingle();
+  const precioCop = resolverPrecioSuscripcion(planDef.precioCop, suscripcionExistente?.precio_negociado_cop ?? null);
 
   const proximoMes = new Date();
   proximoMes.setMonth(proximoMes.getMonth() + 1);

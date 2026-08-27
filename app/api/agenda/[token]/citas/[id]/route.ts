@@ -17,6 +17,7 @@ import {
   notificarCitaModificada,
   notificarCitaCancelada,
 } from "@/lib/especialistas-notificar";
+import { planDelTenant } from "@/lib/plan-limits";
 
 export const runtime = "nodejs";
 
@@ -34,6 +35,11 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const supabase = supabaseAdmin();
   const especialista = await especialistaPorRuta(supabase, token);
   if (!especialista) return Response.json({ error: "Link inválido" }, { status: 404 });
+
+  const plan = await planDelTenant(supabase, especialista.id_tenant);
+  if (plan.id === "sin_plan") {
+    return Response.json({ error: "Plan pausado, pendiente de pago" }, { status: 403 });
+  }
 
   const hermanas = await especialistasDelMismaPersona(supabase, especialista.phone_number_id, especialista.numero_whatsapp);
   const idsPermitidos = new Set(hermanas.length > 0 ? hermanas.map((e) => e.id) : [especialista.id]);
