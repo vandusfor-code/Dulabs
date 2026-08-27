@@ -777,6 +777,7 @@ export function Footer() {
               <Image src="/logo.png" alt="Du Labs" width={24} height={24} className="rounded-full" />
               DuLabs
             </div>
+            <p className="mt-1 text-[11px] font-medium tracking-tight text-site-muted-fg/70">by People Group BPO</p>
             <p className="mt-4 max-w-xs text-[12.5px] leading-relaxed text-site-muted-fg">
               {t(
                 "IA, automatización y software para empresas. Hecho en Montería, Colombia.",
@@ -805,18 +806,20 @@ export function Footer() {
         </div>
 
         {/* Datos de identificación del responsable del servicio. Deliberadamente
-            SIN dirección física ni teléfono personal: el titular opera desde su
-            domicilio y publicarlo exponía su casa. El canal de contacto oficial
-            es el correo corporativo, uno solo en todo el sitio. */}
+            SIN dirección física adicional: el canal de contacto oficial sigue
+            siendo el correo corporativo, uno solo en todo el sitio. */}
         <div className="mt-14 grid gap-10 border-t border-site-border pt-10 md:grid-cols-2">
           <div>
             <h3 className="text-[12.5px] font-semibold text-site-fg">{t("Información legal", "Legal information")}</h3>
             <dl className="mt-4 grid grid-cols-[auto_1fr] gap-x-4 gap-y-2.5 text-[12.5px] leading-relaxed">
               <dt className="text-site-muted-fg/70">{t("Titular del servicio", "Service holder")}</dt>
-              <dd className="text-site-muted-fg">RAMOS PADILLA DUVAN ANDRES</dd>
+              <dd className="text-site-muted-fg">People Group BPO</dd>
 
               <dt className="text-site-muted-fg/70">{t("Nombre comercial", "Trade name")}</dt>
-              <dd className="text-site-muted-fg">DULABS</dd>
+              <dd className="text-site-muted-fg">DuLabs</dd>
+
+              <dt className="text-site-muted-fg/70">{t("Marca / unidad tecnológica", "Brand / technology unit")}</dt>
+              <dd className="text-site-muted-fg">DuLabs by People Group BPO</dd>
 
               <dt className="text-site-muted-fg/70">{t("País de operación", "Country of operation")}</dt>
               <dd className="text-site-muted-fg">{t("Colombia", "Colombia")}</dd>
@@ -830,8 +833,8 @@ export function Footer() {
             </dl>
             <p className="mt-5 text-[12.5px] leading-relaxed text-site-muted-fg/80">
               {t(
-                "Du Labs es una marca comercial y plataforma digital operada por RAMOS PADILLA DUVAN ANDRES.",
-                "Du Labs is a trademark and digital platform operated by RAMOS PADILLA DUVAN ANDRES."
+                "DuLabs es una marca y plataforma tecnológica de People Group BPO, enfocada en el desarrollo de soluciones de automatización, inteligencia artificial, integraciones y software empresarial.",
+                "DuLabs is a technology brand and platform of People Group BPO, focused on developing automation, artificial intelligence, integrations, and enterprise software solutions."
               )}
             </p>
           </div>
