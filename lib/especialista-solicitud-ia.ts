@@ -50,12 +50,14 @@ function pestanasDisponible(inicio: Date): boolean {
   return hora >= 15;
 }
 
-// Daniela solo atiende MANOS en las tardes, desde las 2:00 pm -- sin este
-// chequeo, la categoría compartida "manos" podía asignarle una cita de la
-// mañana con tal de que su agenda estuviera vacía a esa hora, sin importar
-// que ella no trabaje mañanas (bug real en producción, 2026-08-26: una
-// clienta pidió cita con Carla, Carla tenía un choque real, y el sistema
+// Daniela solo atiende MANOS en las tardes, desde las 2:00 pm entre semana
+// -- sin este chequeo, la categoría compartida "manos" podía asignarle una
+// cita de la mañana con tal de que su agenda estuviera vacía a esa hora, sin
+// importar que ella no trabaje mañanas (bug real en producción, 2026-08-26:
+// una clienta pidió cita con Carla, Carla tenía un choque real, y el sistema
 // terminó reservando con Daniela en la mañana en su lugar).
+// Los SÁBADOS es distinto: ella misma confirmó (formulario de configuración,
+// 2026-08-26) que sí trabaja desde las 9:00 am ese día, no solo desde las 2pm.
 function danielaDisponible(inicio: Date): boolean {
   const partes = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/Bogota",
@@ -66,6 +68,7 @@ function danielaDisponible(inicio: Date): boolean {
   const dia = partes.find((p) => p.type === "weekday")?.value;
   const hora = Number(partes.find((p) => p.type === "hour")?.value ?? "0");
   if (dia === "Sun") return false;
+  if (dia === "Sat") return hora >= 9;
   return hora >= 14;
 }
 
@@ -376,12 +379,14 @@ export async function generarRespuestaConEspecialistaIA(params: {
 
     const categoria = categoriaDeServicio(servicio);
     let candidatas = await especialistasPorCategoria(params.supabase, params.cliente.phone_number_id, categoria);
-    // Daniela solo aparece como candidata de "manos" en su ventana real
-    // (tardes) -- ver danielaDisponible arriba. Sin este filtro terminaba
-    // recibiendo citas de la mañana con tal de que su agenda estuviera
-    // vacía, sin importar que ella no trabaje a esa hora.
+    // Regla propia de este negocio (formulario de configuración, 2026-08-26):
+    // para MANOS, Carla es la fija -- solo se desborda a Daniela si Carla no
+    // tiene ningún hueco libre ese día completo (mismo patrón que pies con
+    // Kelly/Carla más abajo). Por eso Daniela NUNCA es candidata en el primer
+    // intento; solo se prueba con ella en la rama "ocupado" si de verdad
+    // aplica, y siempre respetando su ventana real (ver danielaDisponible).
     if (categoria === "manos") {
-      candidatas = candidatas.filter((e) => e.nombre.toLowerCase() !== "daniela" || danielaDisponible(inicio));
+      candidatas = candidatas.filter((e) => e.nombre.toLowerCase() !== "daniela");
     }
     if (candidatas.length === 0) {
       return JSON.stringify({ success: false, error: `No manejamos "${servicio}" con agenda propia todavía.` });
@@ -422,6 +427,28 @@ export async function generarRespuestaConEspecialistaIA(params: {
                 origen: "whatsapp_ia",
               });
               if (resultadoCarla.ok) return finalizarCitaCreada(resultadoCarla.especialista, resultadoCarla.cita);
+            }
+          }
+        }
+        // Mismo patrón para MANOS: Carla es la fija, Daniela solo entra si
+        // Carla no tiene ningún hueco libre ese día completo Y el horario
+        // pedido cae dentro de la ventana real de Daniela.
+        if (categoria === "manos") {
+          const carla = candidatas.find((e) => e.nombre.toLowerCase() === "carla") ?? candidatas[0];
+          const carlaTieneHueco = await hayHuecoLibreEseDia(params.supabase, carla, fecha, duracionMin);
+          if (!carlaTieneHueco && danielaDisponible(inicio)) {
+            const candidatasTodasManos = await especialistasPorCategoria(params.supabase, params.cliente.phone_number_id, "manos");
+            const daniela = candidatasTodasManos.find((e) => e.nombre.toLowerCase() === "daniela");
+            if (daniela) {
+              const resultadoDaniela = await crearCitaEnCategoria(params.supabase, [daniela], {
+                telefonoCliente: params.telefonoRemitente,
+                nombreCliente,
+                servicio,
+                inicio,
+                duracionMin,
+                origen: "whatsapp_ia",
+              });
+              if (resultadoDaniela.ok) return finalizarCitaCreada(resultadoDaniela.especialista, resultadoDaniela.cita);
             }
           }
         }
