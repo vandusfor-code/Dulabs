@@ -30,6 +30,7 @@ export type ClienteConfig = {
   /** Lista negra: estos números (coma-separados, solo dígitos) NUNCA reciben respuesta de la IA, sin importar nada más. */
   ia_numeros_bloqueados: string | null;
   forward_to_dumo: boolean;
+  captura_leads: boolean;
   agente_id: number | null;
   marketplace_activacion_id: number | null;
   created_at: string;

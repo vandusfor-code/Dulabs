@@ -4,6 +4,7 @@ import { supabaseAdmin, type ClienteConfig } from "@/lib/supabase";
 import { generarRespuestaIA, construirSystemPrompt } from "@/lib/ia";
 import { obtenerHistorialConversacion } from "@/lib/historial-conversacion";
 import { generarRespuestaConEspecialistaIA } from "@/lib/especialista-solicitud-ia";
+import { generarRespuestaConLeadIA } from "@/lib/lead-solicitud-ia";
 import { generarRespuestaAdminEspecialistaIA } from "@/lib/especialista-admin-ia";
 import { tieneEspecialistasActivas, especialistaPorNumero } from "@/lib/especialistas";
 import { resolverConfigAgente, type ConfigAgenteEfectiva } from "@/lib/agentes";
@@ -699,6 +700,14 @@ async function atenderMensaje(cliente: ClienteConfig, mensaje: MetaMessage, nomb
           textoUsuario: mensaje.text!.body,
           telefonoRemitente: soloDigitos(mensaje.from),
           nombrePerfilWhatsapp: nombreContacto,
+          historial,
+        })
+      : cliente.captura_leads
+      ? await generarRespuestaConLeadIA({
+          supabase: supabaseAdmin(),
+          cliente,
+          textoUsuario: mensaje.text!.body,
+          telefonoRemitente: soloDigitos(mensaje.from),
           historial,
         })
       : await generarRespuestaIA(
