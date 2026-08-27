@@ -49,6 +49,7 @@ type MetaStatus = {
   status: "sent" | "delivered" | "read" | "failed" | string;
   timestamp?: string;
   pricing?: { category?: string };
+  errors?: { code?: number; title?: string; message?: string; error_data?: { details?: string } }[];
 };
 
 type MetaChangeValue = {
@@ -471,10 +472,14 @@ async function actualizarEstadoEntrega(estado: MetaStatus) {
   }
 
   const marcaTiempo = estado.timestamp ? new Date(Number(estado.timestamp) * 1000).toISOString() : new Date().toISOString();
-  const cambios: Record<string, string> = { estado_entrega: nuevoEstado };
+  const cambios: Record<string, string | number | null> = { estado_entrega: nuevoEstado };
   if (nuevoEstado === "entregado") cambios.entregado_at = marcaTiempo;
   if (nuevoEstado === "leido") cambios.leido_at = marcaTiempo;
   if (estado.pricing?.category) cambios.pricing_categoria = estado.pricing.category;
+  if (nuevoEstado === "fallido" && estado.errors?.[0]) {
+    cambios.error_codigo = estado.errors[0].code ?? null;
+    cambios.error_detalle = estado.errors[0].error_data?.details ?? estado.errors[0].title ?? estado.errors[0].message ?? null;
+  }
 
   const { error: errorUpdate } = await supabase.from("dulabs_mensajes_log").update(cambios).eq("id", fila.id);
   if (errorUpdate) {
