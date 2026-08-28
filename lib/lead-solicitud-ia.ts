@@ -3,10 +3,18 @@ import { descifrarSecreto } from "@/lib/crypto";
 import { clasificarFalloIA, registrarFalloIA } from "@/lib/alertas";
 import { construirMensajesConHistorial, type MensajeHistorialIA } from "@/lib/historial-conversacion";
 import { guardarLeadEnterprise, notificarLeadEnterprise } from "@/lib/enterprise-leads";
+import { activarPausaChat } from "@/lib/pausas-chat";
 import type { ClienteConfig } from "@/lib/supabase";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 const MODELO = "claude-sonnet-5";
+
+// Traspaso a soporte humano: 24h es suficiente para que una persona del
+// equipo tome la conversación de verdad, sin dejarla en silencio para
+// siempre como sí tiene sentido en el onboarding ya completado (ver
+// PAUSA_ONBOARDING_MS en app/webhook-dulabs/route.ts) -- acá, si la persona
+// vuelve días después por otro tema, la IA debe poder atenderla de nuevo.
+const PAUSA_SOPORTE_MS = 24 * 60 * 60 * 1000;
 
 // Igual que generarRespuestaConEspecialistaIA (lib/especialista-solicitud-ia.ts),
 // pero para el propio número de DuLabs: en vez de agendar una cita, la
@@ -51,15 +59,34 @@ export async function generarRespuestaConLeadIA(params: {
         required: ["nombre", "empresa", "correo", "necesidad"],
       },
     },
+    {
+      name: "transferir_a_soporte",
+      description:
+        "Transfiere la conversación a una persona del equipo de DuLabs y hace que la IA deje de responderle a este número por un buen rato. Úsala cuando la persona pida explícitamente hablar con alguien, pida soporte técnico, diga que ya es cliente y tiene un problema con su servicio, o cuando el caso sea sensible y no debas seguir resolviéndolo tú sola. Tu respuesta de texto en ese mismo turno debe ser el mensaje de despedida/traspaso -- nunca prometas un tiempo de respuesta concreto.",
+      input_schema: {
+        type: "object",
+        properties: {
+          motivo: { type: "string", description: "Por qué se transfiere, en pocas palabras (ej. 'ya es cliente, bot no le funciona')" },
+        },
+        required: ["motivo"],
+      },
+    },
   ];
 
   const systemFinal =
     `${params.cliente.prompt_sistema ?? ""}\n\n` +
     (params.cliente.base_conocimiento ? `--- Información de referencia de DuLabs ---\n${params.cliente.base_conocimiento}\n\n` : "") +
     `--- Registro de leads ---\n` +
-    `Tienes disponible guardar_lead_interesado para dejar registrado a alguien realmente interesado, con seguimiento real de un humano del equipo -- no es una promesa vacía. Nunca digas "ya quedó registrado" o "te contactamos pronto" a menos que de verdad hayas llamado esa herramienta y haya funcionado. Si todavía no tienes los 4 datos (nombre, empresa, correo, necesidad), sigue conversando para conseguirlos de a uno, no los pidas todos de golpe en un solo mensaje.`;
+    `Tienes disponible guardar_lead_interesado para dejar registrado a alguien realmente interesado, con seguimiento real de un humano del equipo -- no es una promesa vacía. Nunca digas "ya quedó registrado" o "te contactamos pronto" a menos que de verdad hayas llamado esa herramienta y haya funcionado. Si todavía no tienes los 4 datos (nombre, empresa, correo, necesidad), sigue conversando para conseguirlos de a uno, no los pidas todos de golpe en un solo mensaje.\n\n` +
+    `--- Traspaso a soporte ---\n` +
+    `Tienes disponible transferir_a_soporte para pasarle la conversación a una persona del equipo. Úsala cuando corresponda (pide soporte, ya es cliente con un problema, pide hablar con alguien, caso sensible) y no antes -- no la uses solo porque la conversación se puso difícil. Nunca digas "te transferí" o "ya te está atendiendo alguien" a menos que de verdad hayas llamado esa herramienta.`;
 
-  async function ejecutarHerramienta(input: Record<string, unknown>): Promise<string> {
+  async function ejecutarHerramienta(nombreHerramienta: string, input: Record<string, unknown>): Promise<string> {
+    if (nombreHerramienta === "transferir_a_soporte") {
+      await activarPausaChat(params.supabase, params.cliente.phone_number_id, params.telefonoRemitente, PAUSA_SOPORTE_MS);
+      return JSON.stringify({ success: true });
+    }
+
     const nombre = String(input.nombre ?? "").trim();
     const empresa = String(input.empresa ?? "").trim();
     const correo = String(input.correo ?? "").trim();
@@ -137,7 +164,7 @@ export async function generarRespuestaConLeadIA(params: {
     messages.push({ role: "assistant", content: response.content });
     const resultados: Anthropic.ToolResultBlockParam[] = [];
     for (const bloque of bloquesHerramienta) {
-      const resultado = await ejecutarHerramienta(bloque.input as Record<string, unknown>);
+      const resultado = await ejecutarHerramienta(bloque.name, bloque.input as Record<string, unknown>);
       resultados.push({ type: "tool_result", tool_use_id: bloque.id, content: resultado });
     }
     messages.push({ role: "user", content: resultados });

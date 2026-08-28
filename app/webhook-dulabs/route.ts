@@ -64,6 +64,12 @@ type MetaMessage = {
   // "button" de arriba.
   interactive?: { type?: string; button_reply?: { id?: string; title?: string } };
   context?: { id?: string };
+  // Presente SOLO en el primer mensaje de una conversación que arrancó
+  // tocando un anuncio "Click to WhatsApp" de Meta -- contexto real del
+  // anuncio (no formulario, eso es Meta Lead Ads, una integración aparte que
+  // este proyecto no tiene). Se usa para no volver a preguntar lo que el
+  // anuncio ya dice (ver construirTextoConContextoAnuncio).
+  referral?: { source_type?: string; headline?: string; body?: string };
 };
 
 type MetaStatus = {
@@ -699,6 +705,17 @@ async function atenderMensaje(cliente: ClienteConfig, mensaje: MetaMessage, nomb
       excluirWamid: mensaje.id,
     });
 
+    // Contexto del anuncio (Click to WhatsApp) SOLO presente en el mensaje que
+    // arrancó la conversación -- se antepone al texto que ve la IA (nunca a lo
+    // que se guarda en dulabs_mensajes_log, eso ya se registró arriba tal cual
+    // lo mandó la clienta) para que no vuelva a preguntar lo que el anuncio ya
+    // dice. En los turnos siguientes mensaje.referral ya no llega -- el hilo
+    // sigue coherente porque la propia primera respuesta de la IA quedó en el
+    // historial reflejando ese contexto.
+    const textoParaIA = mensaje.referral?.headline
+      ? `[Llega desde un anuncio de Meta: "${mensaje.referral.headline}"${mensaje.referral.body ? ` -- "${mensaje.referral.body}"` : ""}. No le preguntes esto, ya lo sabes.]\n\n${mensaje.text!.body}`
+      : mensaje.text!.body;
+
     // Solo entra aquí si el número tiene alguna especialista configurada (ver
     // lib/especialistas.ts) -- para el resto de la plataforma este chequeo es
     // un simple false y el comportamiento sigue exactamente igual que siempre.
@@ -733,13 +750,13 @@ async function atenderMensaje(cliente: ClienteConfig, mensaje: MetaMessage, nomb
       ? await generarRespuestaConLeadIA({
           supabase: supabaseAdmin(),
           cliente,
-          textoUsuario: mensaje.text!.body,
+          textoUsuario: textoParaIA,
           telefonoRemitente: soloDigitos(mensaje.from),
           historial,
         })
       : await generarRespuestaIA(
           { ...contexto.config, nombre_negocio: cliente.nombre_negocio },
-          mensaje.text!.body,
+          textoParaIA,
           { idTenant: cliente.id_tenant, phoneNumberId: cliente.phone_number_id },
           historial
         );
