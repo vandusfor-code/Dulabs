@@ -16,6 +16,23 @@ export async function planDelTenant(supabase: SupabaseClient, tenantId: string):
   return PLANES[resolverPlanId(data.plan)];
 }
 
+// Cupo de mensajes de IA que realmente aplica a este tenant: el negociado
+// (dulabs_suscripciones.mensajes_ia_mes_negociado) si existe, si no el
+// estándar del plan -- mismo patrón que resolverPrecioSuscripcion con
+// precio_negociado_cop. Sirve para que, si se baja el cupo estándar de un
+// plan, un tenant que ya pagó bajo la condición anterior no se vea afectado
+// hasta que decidamos migrarlo.
+export async function mensajesIAMesEfectivo(supabase: SupabaseClient, tenantId: string, plan: PlanDef): Promise<number | null> {
+  if (plan.limites.mensajesIAMes === null) return null; // ilimitado (Enterprise), nada que negociar
+  const { data } = await supabase
+    .from("dulabs_suscripciones")
+    .select("mensajes_ia_mes_negociado")
+    .eq("id_tenant", tenantId)
+    .eq("estado", "activa")
+    .maybeSingle();
+  return data?.mensajes_ia_mes_negociado ?? plan.limites.mensajesIAMes;
+}
+
 export async function contarNumeros(supabase: SupabaseClient, tenantId: string): Promise<number> {
   const { count } = await supabase
     .from("dulabs_clientes_config")

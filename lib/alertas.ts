@@ -60,8 +60,11 @@ function redactarAlerta(params: { tipo: TipoFalloIA; negocio: string | null; men
 }
 
 // Envía por WhatsApp desde el número interno de alertas. Nunca lanza: una
-// alerta que falla no puede tumbar el webhook que la disparó.
-async function enviarAlertaWhatsApp(texto: string): Promise<boolean> {
+// alerta que falla no puede tumbar el webhook que la disparó. Exportada
+// para que otras alertas internas (ej. mensajes sin respuesta, ver
+// app/api/cron/mensajes-sin-respuesta/route.ts) reutilicen el mismo canal
+// en vez de duplicar el fetch a Meta.
+export async function enviarAlertaWhatsApp(texto: string): Promise<boolean> {
   const phoneNumberId = process.env.ALERTAS_PHONE_NUMBER_ID;
   const token = process.env.ALERTAS_META_TOKEN;
   const destino = process.env.ALERTAS_DESTINO;

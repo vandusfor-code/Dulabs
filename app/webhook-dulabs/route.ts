@@ -8,7 +8,7 @@ import { generarRespuestaConLeadIA } from "@/lib/lead-solicitud-ia";
 import { generarRespuestaAdminEspecialistaIA } from "@/lib/especialista-admin-ia";
 import { tieneEspecialistasActivas, especialistaPorNumero } from "@/lib/especialistas";
 import { resolverConfigAgente, type ConfigAgenteEfectiva } from "@/lib/agentes";
-import { planDelTenant } from "@/lib/plan-limits";
+import { planDelTenant, mensajesIAMesEfectivo } from "@/lib/plan-limits";
 import { agentePorSlug, INSTRUCCION_ADMIN } from "@/lib/marketplace";
 import { getActivacionPorId, normalizarTelefono, type ActivacionMarketplace } from "@/lib/marketplace-store";
 import { generarRespuestaAgendaIA } from "@/lib/marketplace-agenda-ia";
@@ -372,6 +372,18 @@ export async function POST(request: NextRequest) {
       const phoneNumberId = value.metadata?.phone_number_id;
       if (!phoneNumberId) continue;
 
+      // Red de seguridad real: registra los mensajes entrantes de clientes AHORA,
+      // antes de responder 200 a Meta -- no dentro de after(). Si el trabajo
+      // diferido de abajo llegara a fallar por cualquier motivo (una falla
+      // puntual de infraestructura, no algo que podamos controlar 100%), el
+      // mensaje YA quedó visible en el historial de todas formas, en vez de
+      // desaparecer sin dejar rastro. Es una escritura rápida (un INSERT
+      // indexado por wamid) -- no mueve la aguja en el tiempo de respuesta al
+      // cliente, porque la generación de la respuesta real sigue en after().
+      if (change.field === "messages") {
+        await registrarMensajesEntrantesSincrono(phoneNumberId, value);
+      }
+
       after(async () => {
         try {
           await procesarCambio(phoneNumberId, value);
@@ -383,6 +395,53 @@ export async function POST(request: NextRequest) {
   }
 
   return new Response("EVENT_RECEIVED", { status: 200 });
+}
+
+// Registra en dulabs_mensajes_log cada mensaje entrante REAL de un cliente
+// (no ecos de coexistencia -- esos se manejan aparte dentro de
+// procesarCambio, y no deben aparecer como "el cliente escribió") de forma
+// síncrona, antes de responder 200 a Meta. procesado_at queda null a
+// propósito: solo lo marca atenderMensaje cuando de verdad lo atiende (ver
+// más abajo) -- así se puede distinguir "llegó pero nadie lo procesó" de
+// "llegó y se atendió", en vez de perder el mensaje sin dejar rastro si el
+// trabajo diferido (after()) llegara a fallar. Nunca lanza: un problema acá
+// no puede impedir que respondamos 200 a Meta a tiempo.
+async function registrarMensajesEntrantesSincrono(phoneNumberId: string, value: MetaChangeValue): Promise<void> {
+  const displayPhone = soloDigitos(value.metadata?.display_phone_number ?? "");
+  const supabase = supabaseAdmin();
+  for (const mensaje of value.messages ?? []) {
+    if (soloDigitos(mensaje.from) === displayPhone) continue; // eco de coexistencia, no un mensaje de cliente
+    const contenido = extraerTextoMensajeCrudo(mensaje);
+    if (!contenido) continue; // tipo no soportado (imagen, audio...) -- procesarCambio decide si lo ignora
+    try {
+      const { error } = await supabase.from("dulabs_mensajes_log").insert({
+        phone_number_id: phoneNumberId,
+        telefono_cliente: soloDigitos(mensaje.from),
+        direccion: "entrante",
+        contenido,
+        origen: "entrante",
+        wamid: mensaje.id,
+      });
+      if (error && error.code !== "23505") {
+        console.error("[webhook-dulabs] error en registro síncrono del mensaje:", error.message);
+      }
+    } catch (err) {
+      console.error("[webhook-dulabs] excepción en registro síncrono del mensaje:", err instanceof Error ? err.message : err);
+    }
+  }
+}
+
+// Mismo criterio de normalización que usa procesarCambio más abajo (botón de
+// plantilla / botón interactivo -> el texto que representan), duplicado acá
+// a propósito porque este registro corre ANTES y de forma independiente --
+// así el contenido guardado es el mismo que verá un humano en el Inbox.
+function extraerTextoMensajeCrudo(mensaje: MetaMessage): string | null {
+  if (mensaje.type === "button" && mensaje.button?.text) return normalizarTextoBoton(mensaje.button.text);
+  if (mensaje.type === "interactive" && mensaje.interactive?.type === "button_reply" && mensaje.interactive.button_reply?.title) {
+    return mensaje.interactive.button_reply.title;
+  }
+  if (mensaje.type === "text" && mensaje.text?.body) return mensaje.text.body;
+  return null;
 }
 
 // --- Lógica multi-tenant + coexistencia --------------------------------------
@@ -537,25 +596,54 @@ async function activarPausaHumana(phoneNumberId: string, telefonoCliente: string
 }
 
 async function atenderMensaje(cliente: ClienteConfig, mensaje: MetaMessage, nombreContacto: string | null) {
-  // Deduplicación real contra reintentos de Meta (reentrega el mismo webhook
-  // si no respondemos 200 a tiempo): registrarMensaje es el candado atómico
-  // vía el constraint único en wamid. Si este mensaje ya se procesó antes,
-  // el INSERT choca (23505) y abortamos ANTES de cualquier efecto
-  // secundario — nada de respuesta de IA, cita de agenda ni cupo consumido
-  // se repite. No hay ventana de carrera: a diferencia de un SELECT previo,
-  // el INSERT con constraint único es atómico incluso si dos reentregas de
-  // Meta llegan genuinamente en paralelo.
-  const yaProcesado = await registrarMensaje(
-    cliente.phone_number_id,
-    soloDigitos(mensaje.from),
-    "entrante",
-    mensaje.text!.body,
-    "entrante",
-    mensaje.id
-  );
-  if (yaProcesado) {
-    console.log(`[webhook-dulabs] mensaje ${mensaje.id} ya fue procesado (reintento de Meta), ignorando`);
-    return;
+  // Deduplicación real contra reintentos de Meta y contra dos ejecuciones en
+  // paralelo: UPDATE ... WHERE procesado_at IS NULL es atómico a nivel de
+  // fila en Postgres (igual de seguro que el candado por constraint único de
+  // antes), pero ahora separado de "¿está registrado?" -- el registro ya
+  // ocurrió de forma síncrona en el webhook (ver registrarMensajesEntrantesSincrono),
+  // así que este paso solo marca "ya lo estoy atendiendo", nunca lo crea.
+  const { data: marcado, error: errorMarcar } = await supabaseAdmin()
+    .from("dulabs_mensajes_log")
+    .update({ procesado_at: new Date().toISOString() })
+    .eq("wamid", mensaje.id)
+    .is("procesado_at", null)
+    .select("id")
+    .maybeSingle();
+  if (errorMarcar) {
+    console.error("[webhook-dulabs] error marcando mensaje como procesado:", errorMarcar.message);
+  }
+  if (!marcado) {
+    // Dos posibilidades: ya se procesó antes (reintento de Meta -- lo normal),
+    // o el registro síncrono nunca llegó a crear la fila (falla puntual). Se
+    // distinguen para no perder el mensaje en el segundo caso.
+    const { data: filaExistente } = await supabaseAdmin()
+      .from("dulabs_mensajes_log")
+      .select("id")
+      .eq("wamid", mensaje.id)
+      .maybeSingle();
+    if (filaExistente) {
+      console.log(`[webhook-dulabs] mensaje ${mensaje.id} ya fue procesado (reintento de Meta), ignorando`);
+      return;
+    }
+    // Respaldo: el registro síncrono no llegó a completarse -- se crea aquí
+    // mismo, ya marcada como procesada, para no perder el mensaje.
+    const { error: errorRespaldo } = await supabaseAdmin().from("dulabs_mensajes_log").insert({
+      phone_number_id: cliente.phone_number_id,
+      telefono_cliente: soloDigitos(mensaje.from),
+      direccion: "entrante",
+      contenido: mensaje.text!.body,
+      origen: "entrante",
+      wamid: mensaje.id,
+      procesado_at: new Date().toISOString(),
+    });
+    if (errorRespaldo) {
+      if (errorRespaldo.code === "23505") {
+        // Colisión real con otra ejecución en paralelo que ganó la carrera -- no duplicar la respuesta.
+        console.log(`[webhook-dulabs] mensaje ${mensaje.id} en colisión de respaldo, ignorando`);
+        return;
+      }
+      console.error("[webhook-dulabs] error en respaldo de registro:", errorRespaldo.message);
+    }
   }
 
   // Lista negra: estos números NUNCA reciben respuesta, sin importar nada
@@ -816,13 +904,15 @@ async function resolverContextoMensaje(cliente: ClienteConfig, remitente: string
 }
 
 // Suma el consumo de mensajes de IA del mes en curso entre TODOS los números
-// del tenant y lo compara contra el tope de su plan (mensajesIAMes). null =
-// ilimitado (Enterprise). El contador por número (mensajes_usados_mes) lo
-// mantiene incrementarUsoMensajes en cada envío saliente.
+// del tenant y lo compara contra su cupo efectivo (el negociado si existe,
+// si no el de su plan -- ver mensajesIAMesEfectivo). null = ilimitado
+// (Enterprise). El contador por número (mensajes_usados_mes) lo mantiene
+// incrementarUsoMensajes en cada envío saliente.
 async function dentroDelCupoIA(cliente: ClienteConfig): Promise<boolean> {
   const supabase = supabaseAdmin();
   const plan = await planDelTenant(supabase, cliente.id_tenant);
-  if (plan.limites.mensajesIAMes === null) return true;
+  const tope = await mensajesIAMesEfectivo(supabase, cliente.id_tenant, plan);
+  if (tope === null) return true;
   const mesHoy = new Date().toISOString().slice(0, 7);
   const { data } = await supabase
     .from("dulabs_clientes_config")
@@ -831,7 +921,7 @@ async function dentroDelCupoIA(cliente: ClienteConfig): Promise<boolean> {
   const usados = (data ?? [])
     .filter((r) => r.mes_actual === mesHoy)
     .reduce((suma, r) => suma + (r.mensajes_usados_mes ?? 0), 0);
-  return usados < plan.limites.mensajesIAMes;
+  return usados < tope;
 }
 
 // --- Bot de encuestas (motor determinístico) -----------------------------------

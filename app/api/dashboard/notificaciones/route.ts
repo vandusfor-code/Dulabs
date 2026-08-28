@@ -1,7 +1,7 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { resolverMiembroEquipo } from "@/lib/team";
-import { planDelTenant } from "@/lib/plan-limits";
+import { planDelTenant, mensajesIAMesEfectivo } from "@/lib/plan-limits";
 import { esSinPlan } from "@/lib/planes";
 
 export const runtime = "nodejs";
@@ -107,7 +107,8 @@ export async function GET(request: NextRequest) {
   }
 
   // --- Cupo mensual de mensajes de IA
-  if (!esSinPlan(plan) && plan.limites.mensajesIAMes !== null) {
+  const topeMensajesIA = !esSinPlan(plan) ? await mensajesIAMesEfectivo(supabase, miembro.tenantId, plan) : null;
+  if (topeMensajesIA !== null) {
     const mesActual = new Date().toISOString().slice(0, 7);
     const { data: numeros } = await supabase
       .from("dulabs_clientes_config")
@@ -117,7 +118,7 @@ export async function GET(request: NextRequest) {
       (acc, n) => acc + (n.mes_actual === mesActual ? (n.mensajes_usados_mes ?? 0) : 0),
       0
     );
-    const tope = plan.limites.mensajesIAMes;
+    const tope = topeMensajesIA;
     if (usados >= tope) {
       notificaciones.push({
         id: "cupo-agotado",
