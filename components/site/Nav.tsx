@@ -36,7 +36,10 @@ export function Nav() {
       <div className="mx-auto flex h-14 max-w-[1440px] items-center justify-between px-6">
         <Link href="#top" className="flex items-center gap-2.5 font-display text-[14px] font-medium tracking-tight text-site-fg">
           <Image src="/logo.png" alt="Du Labs" width={24} height={24} className="rounded-full" priority />
-          <span>Du Labs</span>
+          <span className="flex flex-col leading-none">
+            <span>Du Labs</span>
+            <span className="mt-0.5 hidden text-[9px] font-medium tracking-tight text-site-muted-fg/70 sm:block">by People BPO</span>
+          </span>
         </Link>
         <nav className="hidden items-center gap-6 lg:flex">
           {links.map((l) => (
