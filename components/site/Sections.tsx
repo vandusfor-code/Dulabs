@@ -88,30 +88,55 @@ export function SectionHeading({
 
 /* =========================================================
    Respaldo — logos reales de People BPO (empresa detrás de DuLabs),
-   no clientes directos de DuLabs todavía. El texto lo deja explícito
-   a propósito para no insinuar una relación que no existe.
+   no clientes directos de DuLabs todavía. Carrusel horizontal infinito
+   (CSS puro, reutiliza @keyframes marquee de globals.css): la lista se
+   renderiza dos veces seguidas y se anima a translateX(-50%), así que el
+   segundo tramo es un espejo exacto del primero y el reinicio nunca se
+   nota. Sin JS, sin librerías nuevas.
 ========================================================= */
 
 const LOGOS_RESPALDO = [
-  { src: "/logos-clientes/icontec.png", alt: "ICONTEC", w: 999, h: 295 },
-  { src: "/logos-clientes/ur.png", alt: "Universidad del Rosario", w: 1973, h: 798 },
-  { src: "/logos-clientes/wom-chile.png", alt: "WOM Chile", w: 300, h: 131 },
-  { src: "/logos-clientes/farmasi.png", alt: "Farmasi", w: 3840, h: 2160 },
+  { src: "/logos-clientes/icontec.png", alt: "ICONTEC" },
+  { src: "/logos-clientes/ur.png", alt: "Universidad del Rosario" },
+  { src: "/logos-clientes/wom-chile.png", alt: "WOM" },
+  { src: "/logos-clientes/farmasi.png", alt: "Farmasi" },
+  { src: "/logos-clientes/cofrem.svg", alt: "Cofrem" },
+  { src: "/logos-clientes/claro.svg", alt: "Claro" },
+  { src: "/logos-clientes/huspy.svg", alt: "Huspy" },
 ];
+
+function TarjetaLogo({ src, alt }: { src: string; alt: string }) {
+  return (
+    <div className="flex h-14 w-[132px] shrink-0 items-center justify-center rounded-xl border border-site-border bg-white px-5 py-3 sm:h-16 sm:w-[160px] md:w-[180px]">
+      {/* eslint-disable-next-line @next/next/no-img-element -- SVGs de marca (Cofrem/Claro/Huspy): next/image bloquea SVG local sin tocar la config global de seguridad de imágenes. */}
+      <img src={src} alt={alt} className="h-6 w-auto max-w-full object-contain sm:h-7" />
+    </div>
+  );
+}
 
 export function TrustedBySection() {
   const { t } = useI18n();
   return (
-    <section className="border-y border-site-border bg-site-card/40 py-10">
+    <section className="border-y border-site-border bg-site-card/40 py-14">
       <div className="mx-auto max-w-[1440px] px-6">
-        <p className="text-center font-mono text-[10.5px] uppercase tracking-[0.2em] text-site-muted-fg">
-          {t("Con el respaldo de People BPO, que ya trabaja con", "Backed by People BPO, already trusted by")}
-        </p>
-        <div className="mt-6 flex flex-wrap items-center justify-center gap-4">
-          {LOGOS_RESPALDO.map((logo) => (
-            <div key={logo.alt} className="flex h-14 items-center justify-center rounded-xl bg-white px-6 py-3">
-              <Image src={logo.src} alt={logo.alt} width={logo.w} height={logo.h} className="h-6 w-auto object-contain sm:h-7" />
-            </div>
+        <SectionHeading
+          align="center"
+          labelStyle="kicker"
+          size="md"
+          eyebrow={t("EXPERIENCIA EMPRESARIAL", "ENTERPRISE EXPERIENCE")}
+          title={
+            <>
+              {t("Experiencia que respalda", "Experience that backs")} <br className="hidden md:block" />
+              {t("nuestras soluciones", "our solutions")}
+            </>
+          }
+        />
+      </div>
+
+      <div className="relative mt-10 w-full overflow-hidden [mask-image:linear-gradient(to_right,transparent,black_8%,black_92%,transparent)]">
+        <div className="flex w-max gap-4 animate-site-marquee hover:[animation-play-state:paused] sm:gap-5">
+          {[...LOGOS_RESPALDO, ...LOGOS_RESPALDO].map((logo, i) => (
+            <TarjetaLogo key={`${logo.alt}-${i}`} src={logo.src} alt={logo.alt} />
           ))}
         </div>
       </div>
