@@ -1,20 +1,38 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useState, type FormEvent } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import { AuthVisual } from "@/components/site/AuthVisual";
 import { useI18n } from "@/lib/i18n";
 import { LanguageSelector } from "@/components/LanguageSelector";
+import { resolverPlanId } from "@/lib/planes";
 
 type Modo = "login" | "registro";
 
 const supabaseConfigFaltante =
   !process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
+// Misma clave que lee /checkout (ver app/checkout/page.tsx) -- así, si
+// alguien llega aquí con ?plan=growth desde un link del bot comercial,
+// el plan sobrevive el tramo de "regístrate -> confirma tu correo ->
+// inicia sesión" (Supabase no nos deja pasar ese parámetro por el correo
+// de confirmación) y lo recoge /checkout solo, sin que la persona tenga
+// que volver a elegirlo a mano.
+const PLAN_PENDIENTE_KEY = "du_labs_plan_elegido";
+
 export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginPageInterna />
+    </Suspense>
+  );
+}
+
+function LoginPageInterna() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { t } = useI18n();
   const [modo, setModo] = useState<Modo>("login");
   const [email, setEmail] = useState("");
@@ -23,12 +41,21 @@ export default function LoginPage() {
   const [mensaje, setMensaje] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Guarda el plan pendiente ANTES que nada -- así sobrevive aunque la
+  // persona cierre esta pestaña para ir a confirmar su correo y vuelva.
+  useEffect(() => {
+    const planPorUrl = searchParams.get("plan");
+    if (planPorUrl) localStorage.setItem(PLAN_PENDIENTE_KEY, resolverPlanId(planPorUrl));
+  }, [searchParams]);
+
+  const destinoTrasIniciarSesion = () => (localStorage.getItem(PLAN_PENDIENTE_KEY) ? "/checkout" : "/dashboard/conexion");
+
   useEffect(() => {
     if (supabaseConfigFaltante) return;
     supabaseBrowser()
       .auth.getSession()
       .then(({ data }) => {
-        if (data.session) router.replace("/dashboard/conexion");
+        if (data.session) router.replace(destinoTrasIniciarSesion());
       });
   }, [router]);
 
@@ -73,7 +100,7 @@ export default function LoginPage() {
           access_token: data.session.access_token,
           refresh_token: data.session.refresh_token,
         });
-        router.push("/dashboard/conexion");
+        router.push(destinoTrasIniciarSesion());
       } catch (err) {
         setCargando(false);
         setError(err instanceof Error ? err.message : String(err));
