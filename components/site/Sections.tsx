@@ -5,6 +5,7 @@ import {
   Bot,
   ChartNoAxesCombined,
   Check,
+  ChevronDown,
   ClipboardList,
   FileUp,
   Globe,
@@ -324,7 +325,129 @@ export function MetricsSection() {
 // Enterprise NO es un plan más de esta grilla -- es un proyecto a medida,
 // con su propia sección (ver EnterpriseSections.tsx) y sin precio fijo. Esta
 // grilla es exclusivamente "WhatsApp + IA" (Start/Growth/Scale).
-const PLANES_WHATSAPP: PlanId[] = ["start", "growth", "scale"];
+const PLANES_WHATSAPP: PlanId[] = ["start", "growth", "scale", "enterprise"];
+
+type TierData = {
+  id: PlanId;
+  nombre: string;
+  precioMensual: string;
+  precioImplementacion: string | null;
+  tag: string;
+  features: string[];
+  campanas: { porMes: string; destinatarios: string };
+  boton: string;
+  featured: boolean;
+};
+
+// Tarjeta colapsada por defecto (nombre, precio, botón) -- el detalle
+// completo (implementación, beneficios, campañas) se despliega hacia abajo
+// con un toggle, para que las 4 tarjetas no dominen la pantalla de una vez.
+// Estado propio por tarjeta (no uno solo compartido): cada plan se abre/cierra
+// de forma independiente.
+function TarjetaPlan({ tier }: { tier: TierData }) {
+  const { t } = useI18n();
+  const [expandido, setExpandido] = useState(false);
+  return (
+    <div
+      className={`relative flex flex-col overflow-hidden rounded-2xl border p-7 ${
+        tier.featured
+          ? "border-site-primary/30 bg-gradient-to-b from-site-primary/[0.08] to-site-card/60 ring-1 ring-site-primary/20"
+          : "border-site-border bg-site-card/50"
+      }`}
+    >
+      {tier.featured && (
+        <div className="absolute right-5 top-5 rounded-full bg-site-primary px-2 py-0.5 font-mono text-[9.5px] uppercase tracking-widest text-site-primary-fg">
+          {t("Más elegido", "Most chosen")}
+        </div>
+      )}
+
+      {/* 1-2. Nombre + descripción */}
+      <div className="font-mono text-[10px] uppercase tracking-widest text-site-muted-fg">{tier.nombre}</div>
+      <p className="mt-2 text-[13px] text-site-muted-fg">{tier.tag}</p>
+
+      {/* 3. Precio mensual */}
+      <div className="mt-5 flex items-baseline gap-1">
+        <span className="font-display text-[30px] font-medium tracking-tight text-site-fg">{tier.precioMensual}</span>
+        {tier.id !== "enterprise" && <span className="text-[12px] text-site-muted-fg">{t("COP / mes", "COP / mo")}</span>}
+      </div>
+      <div className="font-mono text-[9.5px] uppercase tracking-widest text-site-muted-fg/70">{t("Plan mensual", "Monthly plan")}</div>
+
+      {/* Toggle: el detalle completo queda oculto hasta que se pide. */}
+      <button
+        type="button"
+        onClick={() => setExpandido((v) => !v)}
+        aria-expanded={expandido}
+        className="mt-5 flex items-center gap-1.5 border-t border-site-border pt-4 text-[12px] font-medium text-site-muted-fg transition-colors hover:text-site-fg"
+      >
+        <ChevronDown className={`h-3.5 w-3.5 transition-transform ${expandido ? "rotate-180" : ""}`} />
+        {expandido ? t("Ver menos", "See less") : t("Ver todo lo incluido", "See everything included")}
+      </button>
+
+      {expandido && (
+        <>
+          {/* 4. Implementación (pago único) -- visualmente separada del
+              mensual a propósito, para que no se lean como el mismo precio. */}
+          {tier.precioImplementacion && (
+            <div className="mt-4 rounded-lg border border-site-border/70 bg-black/20 px-3 py-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-mono text-[9.5px] uppercase tracking-widest text-site-muted-fg">{t("Implementación", "Setup")}</span>
+                <span className="font-mono text-[9px] uppercase tracking-widest text-site-primary">{t("Pago único", "One-time")}</span>
+              </div>
+              <div className="mt-1 font-display text-[17px] font-medium text-site-fg">{tier.precioImplementacion}</div>
+              <p className="mt-1 text-[10.5px] italic leading-relaxed text-site-muted-fg">
+                {t(
+                  "Pago único por la configuración y puesta en marcha de tu asistente.",
+                  "One-time payment to configure and launch your assistant."
+                )}
+              </p>
+            </div>
+          )}
+
+          {/* 5. Beneficios */}
+          <div className="mt-4 space-y-2.5 border-t border-site-border pt-4">
+            {tier.features.map((f) => (
+              <div key={f} className="flex items-start gap-2.5 text-[13px] text-site-fg/90">
+                <Check className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-site-primary" />
+                {f}
+              </div>
+            ))}
+          </div>
+
+          {/* 6. Campañas -- bloque propio, nunca un checkmark más, para
+              que quede claro que el envío no está incluido. */}
+          <div className="mt-5 rounded-lg border border-site-border/70 bg-black/20 p-3">
+            <div className="flex items-center gap-1.5 text-[12.5px] font-medium text-site-fg">
+              <Megaphone className="h-3.5 w-3.5 text-site-primary" />
+              {t("Campañas de WhatsApp", "WhatsApp campaigns")}
+            </div>
+            <ul className="mt-2 space-y-1 text-[12px] text-site-muted-fg">
+              <li>{tier.campanas.porMes}</li>
+              <li>{tier.campanas.destinatarios}</li>
+            </ul>
+            <p className="mt-2 text-[11px] font-semibold text-site-fg">{t("Envío no incluido.", "Sending not included.")}</p>
+            <p className="mt-1 text-[10px] italic leading-relaxed text-site-muted-fg">
+              {t(
+                "Meta cobra directamente al negocio los cargos de mensajería de WhatsApp según sus tarifas vigentes.",
+                "Meta charges the business directly for WhatsApp messaging fees, per its current pricing."
+              )}
+            </p>
+          </div>
+        </>
+      )}
+
+      {/* 7. Botón -- siempre visible, colapsada o no la tarjeta. */}
+      <PlanButton
+        planId={tier.id}
+        label={tier.boton}
+        className={`mt-6 inline-flex h-10 w-full items-center justify-center rounded-lg text-[13px] font-medium transition-all ${
+          tier.featured
+            ? "bg-site-primary text-site-primary-fg hover:brightness-110"
+            : "border border-site-border text-site-fg hover:border-white/20 hover:bg-site-card"
+        }`}
+      />
+    </div>
+  );
+}
 
 export function PricingSection({ showComparisonLink = false }: { showComparisonLink?: boolean } = {}) {
   const { t, lang } = useI18n();
@@ -363,92 +486,9 @@ export function PricingSection({ showComparisonLink = false }: { showComparisonL
           )}
           align="center"
         />
-        <div className="mx-auto mt-14 grid max-w-5xl grid-cols-1 gap-4 md:grid-cols-3">
+        <div className="mx-auto mt-14 grid max-w-6xl grid-cols-1 items-start gap-4 sm:grid-cols-2 xl:grid-cols-4">
           {tiers.map((tier) => (
-            <div
-              key={tier.id}
-              className={`relative flex flex-col overflow-hidden rounded-2xl border p-7 ${
-                tier.featured
-                  ? "border-site-primary/30 bg-gradient-to-b from-site-primary/[0.08] to-site-card/60 ring-1 ring-site-primary/20"
-                  : "border-site-border bg-site-card/50"
-              }`}
-            >
-              {tier.featured && (
-                <div className="absolute right-5 top-5 rounded-full bg-site-primary px-2 py-0.5 font-mono text-[9.5px] uppercase tracking-widest text-site-primary-fg">
-                  {t("Más elegido", "Most chosen")}
-                </div>
-              )}
-
-              {/* 1-2. Nombre + descripción */}
-              <div className="font-mono text-[10px] uppercase tracking-widest text-site-muted-fg">{tier.nombre}</div>
-              <p className="mt-2 text-[13px] text-site-muted-fg">{tier.tag}</p>
-
-              {/* 3. Precio mensual */}
-              <div className="mt-5 flex items-baseline gap-1">
-                <span className="font-display text-[30px] font-medium tracking-tight text-site-fg">{tier.precioMensual}</span>
-                {tier.id !== "enterprise" && <span className="text-[12px] text-site-muted-fg">{t("COP / mes", "COP / mo")}</span>}
-              </div>
-              <div className="font-mono text-[9.5px] uppercase tracking-widest text-site-muted-fg/70">{t("Plan mensual", "Monthly plan")}</div>
-
-              {/* 4. Implementación (pago único) -- visualmente separada del
-                  mensual a propósito, para que no se lean como el mismo precio. */}
-              {tier.precioImplementacion && (
-                <div className="mt-4 rounded-lg border border-site-border/70 bg-black/20 px-3 py-2.5">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-mono text-[9.5px] uppercase tracking-widest text-site-muted-fg">{t("Implementación", "Setup")}</span>
-                    <span className="font-mono text-[9px] uppercase tracking-widest text-site-primary">{t("Pago único", "One-time")}</span>
-                  </div>
-                  <div className="mt-1 font-display text-[17px] font-medium text-site-fg">{tier.precioImplementacion}</div>
-                  <p className="mt-1 text-[10.5px] italic leading-relaxed text-site-muted-fg">
-                    {t(
-                      "Pago único por la configuración y puesta en marcha de tu asistente.",
-                      "One-time payment to configure and launch your assistant."
-                    )}
-                  </p>
-                </div>
-              )}
-
-              {/* 5. Beneficios */}
-              <div className="mt-6 space-y-2.5 border-t border-site-border pt-6">
-                {tier.features.map((f) => (
-                  <div key={f} className="flex items-start gap-2.5 text-[13px] text-site-fg/90">
-                    <Check className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-site-primary" />
-                    {f}
-                  </div>
-                ))}
-              </div>
-
-              {/* 6. Campañas -- bloque propio, nunca un checkmark más, para
-                  que quede claro que el envío no está incluido. */}
-              <div className="mt-5 rounded-lg border border-site-border/70 bg-black/20 p-3">
-                <div className="flex items-center gap-1.5 text-[12.5px] font-medium text-site-fg">
-                  <Megaphone className="h-3.5 w-3.5 text-site-primary" />
-                  {t("Campañas de WhatsApp", "WhatsApp campaigns")}
-                </div>
-                <ul className="mt-2 space-y-1 text-[12px] text-site-muted-fg">
-                  <li>{tier.campanas.porMes}</li>
-                  <li>{tier.campanas.destinatarios}</li>
-                </ul>
-                <p className="mt-2 text-[11px] font-semibold text-site-fg">{t("Envío no incluido.", "Sending not included.")}</p>
-                <p className="mt-1 text-[10px] italic leading-relaxed text-site-muted-fg">
-                  {t(
-                    "Meta cobra directamente al negocio los cargos de mensajería de WhatsApp según sus tarifas vigentes.",
-                    "Meta charges the business directly for WhatsApp messaging fees, per its current pricing."
-                  )}
-                </p>
-              </div>
-
-              {/* 7. Botón */}
-              <PlanButton
-                planId={tier.id}
-                label={tier.boton}
-                className={`mt-6 inline-flex h-10 w-full items-center justify-center rounded-lg text-[13px] font-medium transition-all ${
-                  tier.featured
-                    ? "bg-site-primary text-site-primary-fg hover:brightness-110"
-                    : "border border-site-border text-site-fg hover:border-white/20 hover:bg-site-card"
-                }`}
-              />
-            </div>
+            <TarjetaPlan key={tier.id} tier={tier} />
           ))}
         </div>
 
