@@ -7,6 +7,7 @@ import type { Session } from "@supabase/supabase-js";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import { useI18n } from "@/lib/i18n";
 import { PLANES, PLAN_POR_DEFECTO, resolverPlanId, type PlanId } from "@/lib/planes";
+import { whatsappVentasUrl, mensajeCompraConfirmadaWhatsapp } from "@/lib/site-contact";
 
 const PLAN_PENDIENTE_KEY = "du_labs_plan_elegido";
 
@@ -36,7 +37,7 @@ export default function CheckoutPage() {
 function CheckoutPageInterna() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const publicKey = process.env.NEXT_PUBLIC_WOMPI_PUBLIC_KEY;
 
   const [session, setSession] = useState<Session | null | "verificando">("verificando");
@@ -86,6 +87,19 @@ function CheckoutPageInterna() {
   }, [router, searchParams]);
 
   const precioAMostrar = precioNegociadoCop ?? PLANES[plan].precioCop;
+
+  const linkWhatsappCompra = whatsappVentasUrl(mensajeCompraConfirmadaWhatsapp(PLANES[plan].nombre, lang));
+
+  // Apenas se confirma el pago, se redirige de una vez a WhatsApp con el
+  // mensaje ya escrito -- el cliente solo tiene que tocar "Enviar" ahí. Ese
+  // mensaje real (no uno que mande DuLabs) es lo que abre la ventana de 24h
+  // y dispara la bienvenida del onboarding (ver lib/onboarding-trigger.ts),
+  // sin depender de ninguna plantilla aprobada por Meta.
+  useEffect(() => {
+    if (estado.fase === "exito") {
+      window.location.href = linkWhatsappCompra;
+    }
+  }, [estado.fase, linkWhatsappCompra]);
 
   const pagar = useCallback(
     async (e: FormEvent) => {
@@ -193,8 +207,20 @@ function CheckoutPageInterna() {
 
         {estado.fase === "exito" ? (
           <div className="mt-8 rounded-xl border border-lime/40 bg-lime/10 p-5 text-sm leading-relaxed">
-            {t("✅ Suscripción activada. Ya puedes conectar o seguir usando tu WhatsApp Business.", "✅ Subscription activated. You can now connect or keep using your WhatsApp Business.")}
-            <Link href="/dashboard/conexion" className="mt-3 block font-semibold text-lime-text hover:text-fg">
+            {t("✅ Suscripción activada. Te estamos llevando a WhatsApp para empezar la configuración.", "✅ Subscription activated. We're taking you to WhatsApp to start setup.")}
+            <a
+              href={linkWhatsappCompra}
+              className="btn-shine mt-4 block rounded-lg bg-lime px-6 py-3 text-center text-sm font-semibold text-lime-fg transition-[background-color,transform] duration-200 hover:-translate-y-0.5 hover:bg-lime-hover active:scale-[0.97]"
+            >
+              {t("Notificar compra a DuLabs →", "Notify DuLabs of your purchase →")}
+            </a>
+            <p className="mt-3 text-xs text-mist/70">
+              {t(
+                "Si no se abrió WhatsApp automáticamente, toca el botón de arriba.",
+                "If WhatsApp didn't open automatically, tap the button above."
+              )}
+            </p>
+            <Link href="/dashboard/conexion" className="mt-4 block font-semibold text-lime-text hover:text-fg">
               {t("Ir al panel →", "Go to dashboard →")}
             </Link>
           </div>

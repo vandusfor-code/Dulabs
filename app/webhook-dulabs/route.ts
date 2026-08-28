@@ -18,6 +18,7 @@ import {
   resolverTokenMeta as libResolverTokenMeta,
   enviarWhatsApp as libEnviarWhatsApp,
   enviarWhatsAppPartes as libEnviarWhatsAppPartes,
+  enviarBotonesWhatsApp,
   registrarMensaje as libRegistrarMensaje,
 } from "@/lib/whatsapp-outbound";
 import { descifrarSecreto } from "@/lib/crypto";
@@ -29,8 +30,8 @@ import { getCampaignLead, getCampaignBotConfig, guardarCampaignLead, marcarDumoS
 import { procesarMensajeCampaña, type CampaignLeadSession } from "@/lib/campaign-lead-engine";
 import { adquirirCandadoChat, liberarCandadoChat } from "@/lib/chat-lock";
 import { activarPausaChat } from "@/lib/pausas-chat";
-import { obtenerOnboardingSesionActivaPorTelefono, guardarOnboardingSesion, filaASesion } from "@/lib/onboarding-store";
-import { procesarMensajeOnboarding } from "@/lib/onboarding-engine";
+import { obtenerOnboardingSesionActivaPorTelefono, guardarOnboardingSesion, marcarBienvenidaEnviada, filaASesion } from "@/lib/onboarding-store";
+import { procesarMensajeOnboarding, textoBienvenida, BOTON_CONFIGURAR, BOTON_SOPORTE } from "@/lib/onboarding-engine";
 
 export const runtime = "nodejs";
 // El flujo de agenda con especialista puede necesitar varias idas y vueltas
@@ -948,6 +949,23 @@ async function atenderMensajeOnboarding(cliente: ClienteConfig, mensaje: MetaMes
   // siquiera se llega a mirar la pausa larga (ver comentario en el
   // dispatch de arriba).
   if (fila.estado === "completado" || fila.estado === "soporte_solicitado") {
+    return true;
+  }
+
+  // Primer mensaje real del cliente (el del link wa.me del checkout, ver
+  // lib/onboarding-trigger.ts) -- todavía no se le ha mandado nada. En vez
+  // de tratar ese mensaje como respuesta del flujo (es solo el aviso de
+  // "ya pagué", no una decisión), se manda AQUÍ la bienvenida real con
+  // botones interactivos -- ya dentro de la ventana de 24h que el cliente
+  // acaba de abrir, sin necesitar ninguna plantilla aprobada por Meta.
+  if (fila.estado === "menu_enviado" && !fila.bienvenida_enviada_at) {
+    await marcarBienvenidaEnviada(supabase, fila.id);
+    const { data: authUser } = await supabase.auth.admin.getUserById(fila.id_tenant);
+    const nombre = (authUser?.user?.user_metadata?.nombre as string | undefined) ?? null;
+    await enviarBotonesWhatsApp(supabase, cliente, mensaje.from, textoBienvenida(nombre, fila.plan), [
+      { id: "onboarding_configurar", titulo: BOTON_CONFIGURAR },
+      { id: "onboarding_soporte", titulo: BOTON_SOPORTE },
+    ]);
     return true;
   }
 

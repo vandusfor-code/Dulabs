@@ -11,6 +11,7 @@ export interface OnboardingSesionRow {
   business_description: string | null;
   implementation_idea: string | null;
   additional_information: string | null;
+  bienvenida_enviada_at: string | null;
 }
 
 function filaASesion(fila: OnboardingSesionRow): OnboardingSession {
@@ -61,6 +62,21 @@ export async function obtenerOnboardingSesionActivaPorTelefono(
     return null;
   }
   return (data as OnboardingSesionRow) ?? null;
+}
+
+// Marca que la bienvenida real (con botones) ya se envió -- se llama con el
+// PRIMER mensaje que escribe el cliente (el del link wa.me del checkout),
+// antes de tratarlo como una respuesta del flujo. Evita mandarla dos veces
+// si Meta reintrega el mismo webhook.
+export async function marcarBienvenidaEnviada(supabase: SupabaseClient, id: number): Promise<void> {
+  const { error } = await supabase
+    .from("dulabs_onboarding_sesiones")
+    .update({ bienvenida_enviada_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+    .eq("id", id)
+    .is("bienvenida_enviada_at", null);
+  if (error) {
+    console.error("[onboarding-store] error marcando bienvenida enviada:", error.message);
+  }
 }
 
 export async function guardarOnboardingSesion(supabase: SupabaseClient, id: number, session: OnboardingSession): Promise<void> {

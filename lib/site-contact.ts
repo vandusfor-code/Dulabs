@@ -28,3 +28,13 @@ export function mensajePlanWhatsapp(nombrePlan: string, lang: "es" | "en"): stri
     ? `Hi, I'd like to get the ${nombrePlan} plan and have Dulabs set up my WhatsApp bot 🙌`
     : `Hola, quiero el plan ${nombrePlan} y que me configuren mi bot de WhatsApp 🙌`;
 }
+
+// Mensaje del checkout post-pago: el cliente lo envía él mismo desde su
+// WhatsApp (no lo manda DuLabs) -- ese mensaje real es lo que abre la
+// ventana de servicio de 24h y dispara la bienvenida del onboarding (ver
+// lib/onboarding-trigger.ts). Nunca depende de una plantilla aprobada.
+export function mensajeCompraConfirmadaWhatsapp(nombrePlan: string, lang: "es" | "en"): string {
+  return lang === "en"
+    ? `Hi! I just paid for the ${nombrePlan} plan 🎉`
+    : `¡Hola! Acabo de pagar el plan ${nombrePlan} 🎉`;
+}

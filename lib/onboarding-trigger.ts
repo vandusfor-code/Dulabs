@@ -1,10 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { crearOnboardingSesionIdempotente } from "@/lib/onboarding-store";
-import { textoBienvenida, BOTON_CONFIGURAR, BOTON_SOPORTE } from "@/lib/onboarding-engine";
-import { enviarBotonesWhatsApp } from "@/lib/whatsapp-outbound";
 import { DULABS_PHONE_NUMBER_ID } from "@/lib/site-contact";
 import { PLANES, type PlanId } from "@/lib/planes";
-import type { ClienteConfig } from "@/lib/supabase";
 
 const GRAPH = `https://graph.facebook.com/${process.env.META_GRAPH_VERSION ?? "v23.0"}`;
 
@@ -36,9 +33,15 @@ async function avisarNuevoClienteDulabs(texto: string): Promise<void> {
 // (estado "activa") y ya actualizó dulabs_suscripciones -- ver
 // app/api/wompi/webhook/route.ts. Idempotente por diseño: la sesión es
 // única por tenant (constraint unique en id_tenant, ver la migración), así
-// que una renovación mensual del mismo tenant nunca vuelve a mandar la
-// bienvenida -- crearOnboardingSesionIdempotente solo devuelve una fila la
-// PRIMERA vez.
+// que una renovación mensual del mismo tenant nunca vuelve a crear otra --
+// crearOnboardingSesionIdempotente solo devuelve una fila la PRIMERA vez.
+//
+// A propósito NO manda ningún mensaje de WhatsApp aquí: el checkout redirige
+// al cliente a un link wa.me para que ÉL escriba primero (ver
+// app/checkout/page.tsx) -- eso abre la ventana de servicio de 24h de
+// verdad, sin depender de una plantilla aprobada por Meta. La bienvenida
+// real se manda cuando llega ese primer mensaje (ver
+// app/webhook-dulabs/route.ts, atenderMensajeOnboarding).
 export async function dispararOnboardingSiAplica(supabase: SupabaseClient, idTenant: string): Promise<void> {
   const { data: suscripcion, error: susError } = await supabase
     .from("dulabs_suscripciones")
@@ -85,23 +88,9 @@ export async function dispararOnboardingSiAplica(supabase: SupabaseClient, idTen
   const { data: authUser } = await supabase.auth.admin.getUserById(idTenant);
   const nombre = (authUser?.user?.user_metadata?.nombre as string | undefined) ?? null;
 
-  const { data: clienteDulabs, error: clienteError } = await supabase
-    .from("dulabs_clientes_config")
-    .select("*")
-    .eq("phone_number_id", DULABS_PHONE_NUMBER_ID)
-    .single();
-  if (clienteError || !clienteDulabs) {
-    console.error("[onboarding-trigger] no se encontró la config del número de DuLabs:", clienteError?.message);
-    return;
-  }
-
-  // Un solo mensaje interactivo real (texto de bienvenida + los 2 botones
-  // en el mismo envío) -- así es como WhatsApp entrega botones de verdad,
-  // no un mensaje de texto seguido de otro con los botones.
-  await enviarBotonesWhatsApp(supabase, clienteDulabs as ClienteConfig, telefono, textoBienvenida(nombre, planNombre), [
-    { id: "onboarding_configurar", titulo: BOTON_CONFIGURAR },
-    { id: "onboarding_soporte", titulo: BOTON_SOPORTE },
-  ]);
-
-  await avisarNuevoClienteDulabs(`🎉 Nuevo cliente DuLabs — plan ${planNombre}\n${nombre ?? correo}\nYa se le mandó el onboarding automático.`);
+  // Nada de WhatsApp aquí -- queda esperando a que el cliente escriba
+  // primero desde el link wa.me del checkout (ver comentario arriba).
+  await avisarNuevoClienteDulabs(
+    `🎉 Nuevo cliente DuLabs — plan ${planNombre}\n${nombre ?? correo}\nEsperando a que escriba por WhatsApp para iniciar el onboarding.`
+  );
 }
