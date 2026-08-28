@@ -454,13 +454,22 @@ export function PricingSection({ showComparisonLink = false }: { showComparisonL
   const tiers = PLANES_WHATSAPP.map((id) => {
     const def = PLANES[id];
     const copy = PRICING_COPY[id];
+    // El cupo de respuestas de IA se calcula acá desde lib/planes.ts en vez
+    // de vivir como texto fijo en pricing-copy.ts -- así nunca puede quedar
+    // desactualizado si el límite cambia (ver mensajesIAMes en lib/planes.ts).
+    const cupoIA =
+      def.limites.mensajesIAMes !== null
+        ? lang === "en"
+          ? `${def.limites.mensajesIAMes.toLocaleString("en-US")} AI replies / month`
+          : `${def.limites.mensajesIAMes.toLocaleString("es-CO")} respuestas de IA / mes`
+        : null;
     return {
       id,
       nombre: def.nombre,
       precioMensual: def.precioCop !== null ? `$${def.precioCop.toLocaleString("es-CO")}` : t("Cotización", "Custom quote"),
       precioImplementacion: def.implementacionCop !== null ? `$${def.implementacionCop.toLocaleString("es-CO")}` : null,
       tag: lang === "en" ? copy.tag.en : copy.tag.es,
-      features: copy.features.map((f) => (lang === "en" ? f.en : f.es)),
+      features: cupoIA ? [cupoIA, ...copy.features.map((f) => (lang === "en" ? f.en : f.es))] : copy.features.map((f) => (lang === "en" ? f.en : f.es)),
       campanas: {
         porMes: lang === "en" ? copy.campanas.porMes.en : copy.campanas.porMes.es,
         destinatarios: lang === "en" ? copy.campanas.destinatarios.en : copy.campanas.destinatarios.es,

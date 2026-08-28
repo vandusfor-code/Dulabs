@@ -24,7 +24,6 @@ export const PRICING_COPY: Record<
     features: [
       { es: "1 número de WhatsApp", en: "1 WhatsApp number" },
       { es: "1 agente de IA", en: "1 AI agent" },
-      { es: "1.000 respuestas de IA / mes", en: "1,000 AI replies / month" },
       { es: "Base de conocimiento", en: "Knowledge base" },
       { es: "Configuración personalizada del agente", en: "Custom agent configuration" },
       { es: "Plantillas con botones y variables", en: "Templates with buttons and variables" },
@@ -41,7 +40,6 @@ export const PRICING_COPY: Record<
     features: [
       { es: "Hasta 2 números de WhatsApp", en: "Up to 2 WhatsApp numbers" },
       { es: "Hasta 3 agentes de IA", en: "Up to 3 AI agents" },
-      { es: "2.500 respuestas de IA / mes", en: "2,500 AI replies / month" },
       { es: "Hasta 5 usuarios", en: "Up to 5 users" },
       { es: "Base de conocimiento", en: "Knowledge base" },
       { es: "Configuración personalizada del agente", en: "Custom agent configuration" },
@@ -59,7 +57,6 @@ export const PRICING_COPY: Record<
     features: [
       { es: "Hasta 5 números de WhatsApp", en: "Up to 5 WhatsApp numbers" },
       { es: "Agentes de IA ilimitados", en: "Unlimited AI agents" },
-      { es: "9.000 respuestas de IA / mes", en: "9,000 AI replies / month" },
       { es: "Hasta 20 usuarios", en: "Up to 20 users" },
       { es: "Base de conocimiento", en: "Knowledge base" },
       { es: "Configuración personalizada", en: "Custom configuration" },

@@ -3,8 +3,11 @@
 import { useI18n } from "@/lib/i18n";
 import { trackConversion } from "@/lib/site-analytics";
 import { PLANES, type PlanId } from "@/lib/planes";
-import { mensajePlanWhatsapp, whatsappVentasUrl } from "@/lib/site-contact";
 
+// Start/Growth/Scale llevan directo a registro + pago en la plataforma
+// (/login?plan=X guarda el plan elegido y /checkout lo recoge solo -- ver
+// PLAN_PENDIENTE_KEY en app/login/page.tsx). Enterprise no tiene precio
+// fijo, así que sigue yendo a contacto por correo.
 export default function PlanButton({
   planId,
   label,
@@ -15,18 +18,12 @@ export default function PlanButton({
   label?: string;
   className: string;
 }) {
-  const { t, lang } = useI18n();
+  const { t } = useI18n();
   const nombre = PLANES[planId].nombre;
 
   return (
     <a
-      href={
-        planId === "enterprise"
-          ? "mailto:contacto@dulabs.co?subject=Plan%20Enterprise"
-          : whatsappVentasUrl(mensajePlanWhatsapp(nombre, lang))
-      }
-      target={planId === "enterprise" ? undefined : "_blank"}
-      rel={planId === "enterprise" ? undefined : "noopener noreferrer"}
+      href={planId === "enterprise" ? "mailto:contacto@dulabs.co?subject=Plan%20Enterprise" : `/login?plan=${planId}`}
       onClick={() => trackConversion("plan_select", { plan: planId })}
       className={className}
     >
