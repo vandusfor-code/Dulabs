@@ -32,6 +32,12 @@ import { adquirirCandadoChat, liberarCandadoChat } from "@/lib/chat-lock";
 import { activarPausaChat } from "@/lib/pausas-chat";
 import { obtenerOnboardingSesionActivaPorTelefono, guardarOnboardingSesion, marcarBienvenidaEnviada, filaASesion } from "@/lib/onboarding-store";
 import { procesarMensajeOnboarding, textoBienvenida, BOTON_CONFIGURAR, BOTON_SOPORTE } from "@/lib/onboarding-engine";
+import {
+  advertirMensajeSinRemitente,
+  numeroWhatsappParaEnvio,
+  resolverTelefonoRemitenteMeta,
+  soloDigitos,
+} from "@/lib/webhook-meta-remitente";
 
 export const runtime = "nodejs";
 // El flujo de agenda con especialista puede necesitar varias idas y vueltas
@@ -410,13 +416,18 @@ async function registrarMensajesEntrantesSincrono(phoneNumberId: string, value: 
   const displayPhone = soloDigitos(value.metadata?.display_phone_number ?? "");
   const supabase = supabaseAdmin();
   for (const mensaje of value.messages ?? []) {
-    if (soloDigitos(mensaje.from) === displayPhone) continue; // eco de coexistencia, no un mensaje de cliente
+    const telefonoRemitente = resolverTelefonoRemitenteMeta(mensaje, value.contacts);
+    if (!telefonoRemitente) {
+      advertirMensajeSinRemitente(mensaje);
+      continue;
+    }
+    if (telefonoRemitente === displayPhone) continue; // eco de coexistencia, no un mensaje de cliente
     const contenido = extraerTextoMensajeCrudo(mensaje);
     if (!contenido) continue; // tipo no soportado (imagen, audio...) -- procesarCambio decide si lo ignora
     try {
       const { error } = await supabase.from("dulabs_mensajes_log").insert({
         phone_number_id: phoneNumberId,
-        telefono_cliente: soloDigitos(mensaje.from),
+        telefono_cliente: telefonoRemitente,
         direccion: "entrante",
         contenido,
         origen: "entrante",
@@ -474,7 +485,9 @@ async function procesarCambio(phoneNumberId: string, value: MetaChangeValue) {
   // que le respondió el dueño, no solo el hecho de que hubo un eco.
   const ecos = [
     ...(value.smb_message_echoes ?? []),
-    ...(value.messages ?? []).filter((m) => soloDigitos(m.from) === displayPhone),
+    ...(value.messages ?? []).filter(
+      (m) => m.from != null && String(m.from).trim() !== "" && soloDigitos(m.from) === displayPhone,
+    ),
   ];
 
   for (const eco of ecos) {
@@ -531,9 +544,14 @@ async function procesarCambio(phoneNumberId: string, value: MetaChangeValue) {
     }
     if (mensaje.type !== "text" && mensaje.type !== "button" && mensaje.type !== "interactive") continue; // esqueleto: solo texto/botón
     if (!mensaje.text?.body) continue;
+    const telefonoRemitente = resolverTelefonoRemitenteMeta(mensaje, value.contacts);
+    if (!telefonoRemitente) {
+      advertirMensajeSinRemitente(mensaje);
+      continue;
+    }
     const nombreContacto =
-      (value.contacts ?? []).find((c) => soloDigitos(c.wa_id ?? "") === soloDigitos(mensaje.from))?.profile?.name ?? null;
-    await atenderMensaje(cliente, mensaje, nombreContacto);
+      (value.contacts ?? []).find((c) => soloDigitos(c.wa_id ?? "") === telefonoRemitente)?.profile?.name ?? null;
+    await atenderMensaje(cliente, mensaje, nombreContacto, telefonoRemitente);
   }
 }
 
@@ -595,7 +613,13 @@ async function activarPausaHumana(phoneNumberId: string, telefonoCliente: string
   await activarPausaChat(supabaseAdmin(), phoneNumberId, telefonoCliente, PAUSA_HUMANA_MS);
 }
 
-async function atenderMensaje(cliente: ClienteConfig, mensaje: MetaMessage, nombreContacto: string | null) {
+async function atenderMensaje(
+  cliente: ClienteConfig,
+  mensaje: MetaMessage,
+  nombreContacto: string | null,
+  telefonoRemitente: string,
+) {
+  const destinoWhatsApp = numeroWhatsappParaEnvio(mensaje, telefonoRemitente);
   // Deduplicación real contra reintentos de Meta y contra dos ejecuciones en
   // paralelo: UPDATE ... WHERE procesado_at IS NULL es atómico a nivel de
   // fila en Postgres (igual de seguro que el candado por constraint único de
@@ -629,7 +653,7 @@ async function atenderMensaje(cliente: ClienteConfig, mensaje: MetaMessage, nomb
     // mismo, ya marcada como procesada, para no perder el mensaje.
     const { error: errorRespaldo } = await supabaseAdmin().from("dulabs_mensajes_log").insert({
       phone_number_id: cliente.phone_number_id,
-      telefono_cliente: soloDigitos(mensaje.from),
+      telefono_cliente: telefonoRemitente,
       direccion: "entrante",
       contenido: mensaje.text!.body,
       origen: "entrante",
@@ -651,7 +675,7 @@ async function atenderMensaje(cliente: ClienteConfig, mensaje: MetaMessage, nomb
   // IA normal), a propósito. El mensaje queda igual registrado arriba.
   if (cliente.ia_numeros_bloqueados) {
     const bloqueados = cliente.ia_numeros_bloqueados.split(",").map((n) => n.trim()).filter(Boolean);
-    if (bloqueados.includes(soloDigitos(mensaje.from))) {
+    if (bloqueados.includes(telefonoRemitente)) {
       console.log(`[webhook-dulabs] número en lista negra para "${cliente.nombre_negocio}", ignorando`);
       return;
     }
@@ -660,7 +684,7 @@ async function atenderMensaje(cliente: ClienteConfig, mensaje: MetaMessage, nomb
   // Bot de encuestas: SOLO toma el turno si este contacto ya tiene una sesión
   // de encuesta activa (fue invitado explícitamente vía /dashboard/surveys).
   // Cualquier otro mensaje sigue el flujo normal del asistente de IA de abajo.
-  if (await atenderMensajeEncuesta(cliente, mensaje)) return;
+  if (await atenderMensajeEncuesta(cliente, mensaje, telefonoRemitente, destinoWhatsApp)) return;
 
   // Bot de captación de leads por campaña: mismo criterio — SOLO toma el
   // turno si este contacto ya tiene una fila en dulabs_campaign_leads
@@ -668,7 +692,7 @@ async function atenderMensaje(cliente: ClienteConfig, mensaje: MetaMessage, nomb
   // revisa ANTES de ia_pausada a propósito: debe funcionar incluso en
   // números conectados a DuMo (forward_to_dumo=true), donde la IA general
   // de dulabs ya está silenciada.
-  if (await atenderMensajeCampaña(cliente, mensaje)) return;
+  if (await atenderMensajeCampaña(cliente, mensaje, telefonoRemitente, destinoWhatsApp)) return;
 
   // Onboarding automático post-pago (ver lib/onboarding-trigger.ts, que
   // manda la bienvenida) -- SOLO toma el turno si este teléfono ya tiene una
@@ -677,7 +701,7 @@ async function atenderMensaje(cliente: ClienteConfig, mensaje: MetaMessage, nomb
   // es completado/soporte_solicitado, esta función devuelve true (mensaje
   // atendido, nada más que hacer) sin llamar a la IA -- independiente de la
   // pausa larga de abajo, que es solo una capa secundaria.
-  if (await atenderMensajeOnboarding(cliente, mensaje)) return;
+  if (await atenderMensajeOnboarding(cliente, mensaje, telefonoRemitente, destinoWhatsApp)) return;
 
   // Pausa manual de todo el número, activada desde Agentes de IA.
   if (cliente.ia_pausada) {
@@ -692,7 +716,7 @@ async function atenderMensaje(cliente: ClienteConfig, mensaje: MetaMessage, nomb
   // de cualquiera queda igual registrado arriba, solo no recibe respuesta.
   if (cliente.ia_restringida_a) {
     const autorizados = cliente.ia_restringida_a.split(",").map((n) => n.trim()).filter(Boolean);
-    if (!autorizados.includes(soloDigitos(mensaje.from))) {
+    if (!autorizados.includes(telefonoRemitente)) {
       console.log(`[webhook-dulabs] IA restringida para "${cliente.nombre_negocio}": remitente no autorizado`);
       return;
     }
@@ -704,7 +728,7 @@ async function atenderMensaje(cliente: ClienteConfig, mensaje: MetaMessage, nomb
     .from("dulabs_pausas_chat")
     .select("pausado_hasta")
     .eq("phone_number_id", cliente.phone_number_id)
-    .eq("telefono_cliente", soloDigitos(mensaje.from))
+    .eq("telefono_cliente", telefonoRemitente)
     .maybeSingle();
   if (error) {
     console.error("[webhook-dulabs] error consultando pausa:", error.message);
@@ -736,7 +760,7 @@ async function atenderMensaje(cliente: ClienteConfig, mensaje: MetaMessage, nomb
     .from("dulabs_mensajes_log")
     .select("wamid")
     .eq("phone_number_id", cliente.phone_number_id)
-    .eq("telefono_cliente", soloDigitos(mensaje.from))
+    .eq("telefono_cliente", telefonoRemitente)
     .eq("direccion", "entrante")
     .order("created_at", { ascending: false })
     .limit(1)
@@ -767,9 +791,9 @@ async function atenderMensaje(cliente: ClienteConfig, mensaje: MetaMessage, nomb
   // Este candado serializa el tramo real de IA + agenda por chat -- si ya
   // hay otro mensaje de esta misma clienta procesándose, este espera turno
   // (nunca lo abandona) y cuando le toca, ya ve el resultado del anterior.
-  const yaTengoCandado = await adquirirCandadoChat(cliente.phone_number_id, soloDigitos(mensaje.from), mensaje.id);
+  const yaTengoCandado = await adquirirCandadoChat(cliente.phone_number_id, telefonoRemitente, mensaje.id);
   try {
-    const contexto = await resolverContextoMensaje(cliente, mensaje.from);
+    const contexto = await resolverContextoMensaje(cliente, destinoWhatsApp);
 
     if (contexto.modo === "agenda") {
       const resultado = await generarRespuestaAgendaIA({
@@ -779,17 +803,17 @@ async function atenderMensaje(cliente: ClienteConfig, mensaje: MetaMessage, nomb
         textoUsuario: mensaje.text!.body,
         activacionId: contexto.activacion.id,
         phoneNumberId: cliente.phone_number_id,
-        telefonoRemitente: normalizarTelefono(mensaje.from),
+        telefonoRemitente: normalizarTelefono(destinoWhatsApp),
         nombreRemitente: nombreContacto,
         esAdmin: contexto.esAdmin,
         recursosDisponibles: contexto.activacion.recursos_disponibles,
         duracionEstandarMin: contexto.activacion.duracion_estandar_min,
       });
-      if (resultado.texto) await enviarWhatsApp(cliente, mensaje.from, resultado.texto);
+      if (resultado.texto) await enviarWhatsApp(cliente, destinoWhatsApp, resultado.texto);
       return;
     }
 
-    const historial = await obtenerHistorialConversacion(supabaseAdmin(), cliente.phone_number_id, soloDigitos(mensaje.from), {
+    const historial = await obtenerHistorialConversacion(supabaseAdmin(), cliente.phone_number_id, telefonoRemitente, {
       excluirWamid: mensaje.id,
     });
 
@@ -813,7 +837,7 @@ async function atenderMensaje(cliente: ClienteConfig, mensaje: MetaMessage, nomb
     // agenda y agenda citas ya confirmadas para otras personas, no como una
     // clienta pidiendo un servicio para sí misma.
     const especialistaAdmin = conEspecialistas
-      ? await especialistaPorNumero(supabaseAdmin(), cliente.phone_number_id, soloDigitos(mensaje.from))
+      ? await especialistaPorNumero(supabaseAdmin(), cliente.phone_number_id, telefonoRemitente)
       : null;
 
     const respuesta = especialistaAdmin
@@ -830,7 +854,7 @@ async function atenderMensaje(cliente: ClienteConfig, mensaje: MetaMessage, nomb
           cliente,
           systemPromptBase: construirSystemPrompt({ ...contexto.config, nombre_negocio: cliente.nombre_negocio }),
           textoUsuario: mensaje.text!.body,
-          telefonoRemitente: soloDigitos(mensaje.from),
+          telefonoRemitente,
           nombrePerfilWhatsapp: nombreContacto,
           historial,
         })
@@ -839,7 +863,7 @@ async function atenderMensaje(cliente: ClienteConfig, mensaje: MetaMessage, nomb
           supabase: supabaseAdmin(),
           cliente,
           textoUsuario: textoParaIA,
-          telefonoRemitente: soloDigitos(mensaje.from),
+          telefonoRemitente,
           historial,
         })
       : await generarRespuestaIA(
@@ -854,14 +878,14 @@ async function atenderMensaje(cliente: ClienteConfig, mensaje: MetaMessage, nomb
       // el resto de la plataforma sigue mandando un solo mensaje por turno,
       // como siempre.
       if (conEspecialistas) {
-        await enviarWhatsAppPartes(cliente, mensaje.from, respuesta);
+        await enviarWhatsAppPartes(cliente, destinoWhatsApp, respuesta);
       } else {
-        await enviarWhatsApp(cliente, mensaje.from, respuesta);
+        await enviarWhatsApp(cliente, destinoWhatsApp, respuesta);
       }
     }
   } finally {
     if (yaTengoCandado) {
-      await liberarCandadoChat(cliente.phone_number_id, soloDigitos(mensaje.from), mensaje.id);
+      await liberarCandadoChat(cliente.phone_number_id, telefonoRemitente, mensaje.id);
     }
   }
 }
@@ -930,9 +954,14 @@ async function dentroDelCupoIA(cliente: ClienteConfig): Promise<boolean> {
 // tanto NO debe pasar al asistente de IA general). Devuelve false para dejar
 // que el flujo normal continúe: mensajes de contactos sin una sesión de
 // encuesta activa, o de participantes que ya la completaron/declinaron/venció.
-async function atenderMensajeEncuesta(cliente: ClienteConfig, mensaje: MetaMessage): Promise<boolean> {
+async function atenderMensajeEncuesta(
+  cliente: ClienteConfig,
+  mensaje: MetaMessage,
+  telefonoRemitente: string,
+  destinoWhatsApp: string,
+): Promise<boolean> {
   const supabase = supabaseAdmin();
-  const telefono = soloDigitos(mensaje.from);
+  const telefono = telefonoRemitente;
 
   const bot = await getSurveyBot(supabase, cliente.phone_number_id);
   if (!bot) return false; // número sin bot de encuestas configurado/activo
@@ -989,7 +1018,7 @@ async function atenderMensajeEncuesta(cliente: ClienteConfig, mensaje: MetaMessa
   if (empatia) mensajesFinales.unshift(empatia);
 
   for (const texto of mensajesFinales) {
-    await enviarWhatsApp(cliente, mensaje.from, texto);
+    await enviarWhatsApp(cliente, destinoWhatsApp, texto);
   }
   return true;
 }
@@ -1001,9 +1030,14 @@ async function atenderMensajeEncuesta(cliente: ClienteConfig, mensaje: MetaMessa
 // estado no terminal (fue impactado por una campaña con bot de captación
 // configurado, ver POST /api/campanas/enviar) — mismo criterio que
 // atenderMensajeEncuesta.
-async function atenderMensajeCampaña(cliente: ClienteConfig, mensaje: MetaMessage): Promise<boolean> {
+async function atenderMensajeCampaña(
+  cliente: ClienteConfig,
+  mensaje: MetaMessage,
+  telefonoRemitente: string,
+  destinoWhatsApp: string,
+): Promise<boolean> {
   const supabase = supabaseAdmin();
-  const telefono = soloDigitos(mensaje.from);
+  const telefono = telefonoRemitente;
 
   // getCampaignLead ya filtra por estado activo (waiting_response/
   // requesting_data) — nunca devuelve una fila terminal ni una sesión
@@ -1040,14 +1074,19 @@ async function atenderMensajeCampaña(cliente: ClienteConfig, mensaje: MetaMessa
   }
 
   for (const texto of resultado.messages) {
-    await enviarWhatsApp(cliente, mensaje.from, texto);
+    await enviarWhatsApp(cliente, destinoWhatsApp, texto);
   }
   return true;
 }
 
-async function atenderMensajeOnboarding(cliente: ClienteConfig, mensaje: MetaMessage): Promise<boolean> {
+async function atenderMensajeOnboarding(
+  cliente: ClienteConfig,
+  mensaje: MetaMessage,
+  telefonoRemitente: string,
+  destinoWhatsApp: string,
+): Promise<boolean> {
   const supabase = supabaseAdmin();
-  const telefono = soloDigitos(mensaje.from);
+  const telefono = telefonoRemitente;
 
   const fila = await obtenerOnboardingSesionActivaPorTelefono(supabase, cliente.phone_number_id, telefono);
   if (!fila) return false; // este teléfono nunca recibió un onboarding -- sigue el flujo normal
@@ -1069,7 +1108,7 @@ async function atenderMensajeOnboarding(cliente: ClienteConfig, mensaje: MetaMes
     await marcarBienvenidaEnviada(supabase, fila.id);
     const { data: authUser } = await supabase.auth.admin.getUserById(fila.id_tenant);
     const nombre = (authUser?.user?.user_metadata?.nombre as string | undefined) ?? null;
-    await enviarBotonesWhatsApp(supabase, cliente, mensaje.from, textoBienvenida(nombre, fila.plan), [
+    await enviarBotonesWhatsApp(supabase, cliente, destinoWhatsApp, textoBienvenida(nombre, fila.plan), [
       { id: "onboarding_configurar", titulo: BOTON_CONFIGURAR },
       { id: "onboarding_soporte", titulo: BOTON_SOPORTE },
     ]);
@@ -1083,7 +1122,7 @@ async function atenderMensajeOnboarding(cliente: ClienteConfig, mensaje: MetaMes
   await guardarOnboardingSesion(supabase, fila.id, resultado.session);
 
   for (const texto of resultado.messages) {
-    await enviarWhatsApp(cliente, mensaje.from, texto);
+    await enviarWhatsApp(cliente, destinoWhatsApp, texto);
   }
 
   if (resultado.session.estado === "completado" || resultado.session.estado === "soporte_solicitado") {
@@ -1136,10 +1175,6 @@ async function registrarMensaje(
   wamid?: string
 ): Promise<boolean> {
   return libRegistrarMensaje(supabaseAdmin(), phoneNumberId, telefonoCliente, direccion, contenido, origen, wamid);
-}
-
-function soloDigitos(valor: string): string {
-  return valor.replace(/\D/g, "");
 }
 
 // Textos de botón conocidos (nuestras 2 plantillas de encuestas) -> frase
