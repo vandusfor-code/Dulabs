@@ -1,0 +1,161 @@
+/**
+ * Resolución centralizada de integration + credential + tenant (Fase 4.1).
+ * Credenciales solo en memoria dentro del boundary del Executor Framework.
+ */
+
+import { descifrarSecreto } from "@/lib/crypto";
+import type { FlowCredentialRow, FlowIntegrationRow } from "@/lib/flow/flow-store-types";
+import {
+  EFFECT_RESULT_CLASSIFICATIONS,
+  type EffectExecutionContext,
+  type EffectExecutorKind,
+  type EffectResultClassification,
+} from "@/lib/flow/executor-types";
+import type { ActionNodeConfig } from "@/lib/flow/types";
+import { resolveActionCapabilitySpec } from "@/lib/flow/action-capabilities";
+
+export interface IntegrationResolverStore {
+  getIntegrationById(tenantId: string, integrationId: string): Promise<FlowIntegrationRow | null>;
+  getIntegrationCredentials(
+    tenantId: string,
+    integrationId: string,
+  ): Promise<FlowCredentialRow[]>;
+}
+
+export type IntegrationResolveOutcome =
+  | { ok: true; context: EffectExecutionContext }
+  | { ok: false; classification: EffectResultClassification; reason: string };
+
+const INTERNAL_ACTION_TYPES = new Set([
+  "crear_lead_enterprise",
+  "crear_lead_campana",
+  "agendar_cita_marketplace",
+  "transferir_soporte",
+]);
+
+const INTERNAL_WEBHOOK_TAGS = new Set(["consultar_disponibilidad"]);
+
+function isInternalAction(action?: ActionNodeConfig): boolean {
+  if (!action) return false;
+  if (INTERNAL_ACTION_TYPES.has(action.actionType)) return true;
+  if (action.actionType === "webhook_http") {
+    const tag = "semanticTag" in action ? action.semanticTag : undefined;
+    return Boolean(tag && INTERNAL_WEBHOOK_TAGS.has(tag));
+  }
+  return false;
+}
+
+function requiredCapabilityForAction(action?: ActionNodeConfig): string | undefined {
+  if (!action) return undefined;
+  const spec = resolveActionCapabilitySpec(action);
+  if (spec.semanticTag) return spec.semanticTag;
+  return action.actionType;
+}
+
+export class IntegrationResolver {
+  constructor(private readonly store: IntegrationResolverStore) {}
+
+  async resolve(input: {
+    tenantId: string;
+    integrationId?: string;
+    action?: ActionNodeConfig;
+    kind?: EffectExecutorKind;
+  }): Promise<IntegrationResolveOutcome> {
+    if (input.kind === "ai") {
+      return {
+        ok: true,
+        context: { tenantId: input.tenantId, internal: true },
+      };
+    }
+
+    if (isInternalAction(input.action)) {
+      return {
+        ok: true,
+        context: {
+          tenantId: input.tenantId,
+          internal: true,
+        },
+      };
+    }
+
+    if (!input.integrationId) {
+      return {
+        ok: false,
+        classification: EFFECT_RESULT_CLASSIFICATIONS.SECURITY_REJECTED,
+        reason: "integration_required",
+      };
+    }
+
+    const integration = await this.store.getIntegrationById(input.tenantId, input.integrationId);
+    if (!integration) {
+      return {
+        ok: false,
+        classification: EFFECT_RESULT_CLASSIFICATIONS.SECURITY_REJECTED,
+        reason: "integration_not_found",
+      };
+    }
+
+    if (integration.tenant_id !== input.tenantId) {
+      return {
+        ok: false,
+        classification: EFFECT_RESULT_CLASSIFICATIONS.SECURITY_REJECTED,
+        reason: "tenant_mismatch",
+      };
+    }
+
+    if (integration.status !== "approved") {
+      return {
+        ok: false,
+        classification: EFFECT_RESULT_CLASSIFICATIONS.SECURITY_REJECTED,
+        reason: "integration_not_approved",
+      };
+    }
+
+    const requiredCapability = requiredCapabilityForAction(input.action);
+    if (requiredCapability && integration.capability !== requiredCapability) {
+      return {
+        ok: false,
+        classification: EFFECT_RESULT_CLASSIFICATIONS.SECURITY_REJECTED,
+        reason: "capability_mismatch",
+      };
+    }
+
+    const credentialRows = await this.store.getIntegrationCredentials(
+      input.tenantId,
+      input.integrationId,
+    );
+
+    if (credentialRows.length === 0) {
+      return {
+        ok: false,
+        classification: EFFECT_RESULT_CLASSIFICATIONS.AUTH_ERROR,
+        reason: "credential_missing",
+      };
+    }
+
+    const credentials: Record<string, string> = {};
+    for (const row of credentialRows) {
+      credentials[row.credential_key] = descifrarSecreto(row.encrypted_value);
+    }
+
+    return {
+      ok: true,
+      context: {
+        tenantId: input.tenantId,
+        internal: false,
+        integrationId: integration.id,
+        capability: integration.capability,
+        credentials,
+      },
+    };
+  }
+}
+
+/** Resolver que rechaza integraciones externas (tests de acciones internas). */
+export function createInternalOnlyIntegrationResolver(): IntegrationResolver {
+  const store: IntegrationResolverStore = {
+    getIntegrationById: async () => null,
+    getIntegrationCredentials: async () => [],
+  };
+  return new IntegrationResolver(store);
+}
