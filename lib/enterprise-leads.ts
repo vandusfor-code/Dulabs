@@ -11,24 +11,41 @@ export type LeadEnterprise = {
   detalle?: string;
 };
 
+export type GuardarLeadEnterpriseResult =
+  | { success: true; leadId: number }
+  | { success: false; error?: string };
+
 // Guarda la solicitud. Tolera que la tabla todavía no exista (falta correr
 // la migración 20260826120000_enterprise_leads.sql) -- mismo criterio
 // defensivo que lib/survey-bot-store.ts y lib/alertas.ts: nunca se le
 // devuelve un error de servidor al visitante por eso, se registra en logs.
-export async function guardarLeadEnterprise(supabase: SupabaseClient, lead: LeadEnterprise): Promise<boolean> {
-  const { error } = await supabase.from("dulabs_enterprise_leads").insert({
-    nombre: lead.nombre,
-    empresa: lead.empresa,
-    correo: lead.correo,
-    telefono: lead.telefono || null,
-    necesidad: lead.necesidad,
-    detalle: lead.detalle || null,
-  });
+export async function guardarLeadEnterprise(
+  supabase: SupabaseClient,
+  lead: LeadEnterprise,
+): Promise<GuardarLeadEnterpriseResult> {
+  const { data, error } = await supabase
+    .from("dulabs_enterprise_leads")
+    .insert({
+      nombre: lead.nombre,
+      empresa: lead.empresa,
+      correo: lead.correo,
+      telefono: lead.telefono || null,
+      necesidad: lead.necesidad,
+      detalle: lead.detalle || null,
+    })
+    .select("id")
+    .maybeSingle();
+
   if (error) {
     console.error("[enterprise-leads] no se pudo guardar (¿falta la migración?):", error.message);
-    return false;
+    return { success: false, error: error.message };
   }
-  return true;
+
+  if (data?.id === undefined || data.id === null) {
+    return { success: false, error: "lead_id_missing" };
+  }
+
+  return { success: true, leadId: data.id as number };
 }
 
 // Avisa por WhatsApp al número interno de alertas (mismas env vars que

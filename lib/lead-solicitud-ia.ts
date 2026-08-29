@@ -102,8 +102,8 @@ export async function generarRespuestaConLeadIA(params: {
       necesidad,
       detalle: typeof input.detalle === "string" ? input.detalle : undefined,
     };
-    const ok = await guardarLeadEnterprise(params.supabase, lead);
-    if (!ok) return JSON.stringify({ success: false, error: "No se pudo guardar, intenta de nuevo." });
+    const saved = await guardarLeadEnterprise(params.supabase, lead);
+    if (!saved.success) return JSON.stringify({ success: false, error: "No se pudo guardar, intenta de nuevo." });
     await notificarLeadEnterprise(lead);
     return JSON.stringify({ success: true });
   }

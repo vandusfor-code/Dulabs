@@ -1,5 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+export type ActivarPausaChatResult =
+  | { ok: true; pausadoHasta: string }
+  | { ok: false; error: string };
+
 // Pausa la IA para UN chat puntual (no todo el número) hasta la hora que se
 // le indique -- usado tanto cuando el dueño responde manualmente desde su
 // celular (eco de coexistencia, ver app/webhook-dulabs/route.ts) como cuando
@@ -9,14 +13,16 @@ export async function activarPausaChat(
   supabase: SupabaseClient,
   phoneNumberId: string,
   telefonoCliente: string,
-  duracionMs: number
-): Promise<void> {
+  duracionMs: number,
+): Promise<ActivarPausaChatResult> {
   const pausadoHasta = new Date(Date.now() + duracionMs).toISOString();
   const { error } = await supabase.from("dulabs_pausas_chat").upsert(
     { phone_number_id: phoneNumberId, telefono_cliente: telefonoCliente, pausado_hasta: pausadoHasta },
-    { onConflict: "phone_number_id,telefono_cliente" }
+    { onConflict: "phone_number_id,telefono_cliente" },
   );
   if (error) {
     console.error("[pausas-chat] error activando pausa:", error.message);
+    return { ok: false, error: error.message };
   }
+  return { ok: true, pausadoHasta };
 }
