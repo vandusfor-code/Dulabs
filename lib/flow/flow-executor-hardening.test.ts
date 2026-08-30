@@ -79,6 +79,27 @@ function baseInternalDeps(
     sugerirHorariosLibres: async () => [],
     crearCita: async () => null,
     readPausaUntil: async () => "2026-09-02T10:00:00.000Z",
+    consultarDisponibilidadEspecialista: async () => ({
+      ok: false as const,
+      motivo: "servicio_no_manejado" as const,
+      detalle: "stub",
+    }),
+    agendarCitaEspecialista: async () => ({
+      ok: false as const,
+      motivo: "servicio_no_manejado" as const,
+      detalle: "stub",
+    }),
+    cancelarCitaEspecialista: async () => ({
+      ok: false as const,
+      motivo: "sin_cita_activa" as const,
+      detalle: "stub",
+    }),
+    consultarCitasActivasEspecialista: async () => ({ cantidad: 0, citas: [] }),
+    moverCitaEspecialista: async () => ({
+      ok: false as const,
+      motivo: "sin_cita_activa" as const,
+      detalle: "stub",
+    }),
     ...overrides,
   };
 }

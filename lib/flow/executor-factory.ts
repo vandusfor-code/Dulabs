@@ -10,6 +10,13 @@ import {
   sugerirHorariosLibres,
   verificarDisponibilidad,
 } from "@/lib/marketplace-citas";
+import {
+  consultarDisponibilidadEspecialista,
+  agendarCitaEspecialista,
+  cancelarCitaEspecialista,
+  consultarCitasActivasEspecialista,
+  moverCitaEspecialista,
+} from "@/lib/especialistas-flow-adaptador";
 import { ExecutorRegistry } from "@/lib/flow/executor-registry";
 import { EffectExecutorFramework } from "@/lib/flow/executor-framework";
 import {
@@ -23,7 +30,7 @@ import {
   InternalActionExecutor,
   type InternalActionDeps,
 } from "@/lib/flow/executors/internal-action-executor";
-import { SendMessageExecutor } from "@/lib/flow/executors/send-message-executor";
+import { SendMessageExecutor, type SendMessageDeps } from "@/lib/flow/executors/send-message-executor";
 import type { EffectExecutor } from "@/lib/flow/executor-types";
 
 async function readPausaUntil(
@@ -42,7 +49,7 @@ async function readPausaUntil(
 
 export function createDefaultExecutorRegistry(
   supabase: SupabaseClient,
-  overrides?: Partial<{ internalActionDeps: Partial<InternalActionDeps> }>,
+  overrides?: Partial<{ internalActionDeps: Partial<InternalActionDeps>; sendMessageDeps: Partial<SendMessageDeps> }>,
 ): ExecutorRegistry {
   const registry = new ExecutorRegistry();
   const internalDeps: InternalActionDeps = {
@@ -54,10 +61,16 @@ export function createDefaultExecutorRegistry(
     sugerirHorariosLibres,
     crearCita,
     readPausaUntil,
+    consultarDisponibilidadEspecialista,
+    agendarCitaEspecialista,
+    cancelarCitaEspecialista,
+    consultarCitasActivasEspecialista,
+    moverCitaEspecialista,
     ...overrides?.internalActionDeps,
   };
+  const sendMessageDeps: SendMessageDeps = { supabase, ...overrides?.sendMessageDeps };
   registry.register(new InternalActionExecutor(internalDeps));
-  registry.register(new SendMessageExecutor());
+  registry.register(new SendMessageExecutor(sendMessageDeps));
   registry.register(
     new ClaudeExecutor({
       resolveApiKey: async () => resolveAnthropicApiKeyFromEnv(),

@@ -169,6 +169,31 @@ const actionNodeConfigSchema = z.discriminatedUnion("actionType", [
     params: z.record(z.string(), z.string()).optional(),
   }),
   z.object({
+    actionType: z.literal("consultar_disponibilidad_especialista"),
+    semanticTag: semanticTagSchema,
+    params: z.record(z.string(), z.string()).optional(),
+  }),
+  z.object({
+    actionType: z.literal("agendar_cita_especialista"),
+    semanticTag: semanticTagSchema,
+    params: z.record(z.string(), z.string()).optional(),
+  }),
+  z.object({
+    actionType: z.literal("cancelar_cita_especialista"),
+    semanticTag: semanticTagSchema,
+    params: z.record(z.string(), z.string()).optional(),
+  }),
+  z.object({
+    actionType: z.literal("consultar_citas_activas_especialista"),
+    semanticTag: semanticTagSchema,
+    params: z.record(z.string(), z.string()).optional(),
+  }),
+  z.object({
+    actionType: z.literal("mover_cita_especialista"),
+    semanticTag: semanticTagSchema,
+    params: z.record(z.string(), z.string()).optional(),
+  }),
+  z.object({
     actionType: z.literal("webhook_http"),
     semanticTag: semanticTagSchema,
     url: z.string().url(),

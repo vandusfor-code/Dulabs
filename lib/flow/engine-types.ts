@@ -60,7 +60,18 @@ export interface PendingEffect {
 // ---------------------------------------------------------------------------
 
 export type FlowEngineEvent =
-  | { type: "start"; eventId?: string }
+  | {
+      type: "start";
+      eventId?: string;
+      /**
+       * Texto crudo del primer mensaje entrante, si lo hay. El Engine lo
+       * siembra en variables[FIRST_MESSAGE_TEXT_VARIABLE_KEY] (ver
+       * lib/flow/constants.ts) antes del auto-loop -- nunca se usa como
+       * respuesta automática a ningún nodo. Opcional: omitirlo mantiene el
+       * comportamiento exacto de antes.
+       */
+      text?: string;
+    }
   | { type: "text"; text: string; eventId?: string }
   | { type: "button"; id: string; eventId?: string }
   | {

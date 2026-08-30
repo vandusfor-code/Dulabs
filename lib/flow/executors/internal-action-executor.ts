@@ -14,6 +14,13 @@ import {
   type Cita,
 } from "@/lib/marketplace-citas";
 import {
+  consultarDisponibilidadEspecialista,
+  agendarCitaEspecialista,
+  cancelarCitaEspecialista,
+  consultarCitasActivasEspecialista,
+  moverCitaEspecialista,
+} from "@/lib/especialistas-flow-adaptador";
+import {
   EFFECT_RESULT_CLASSIFICATIONS,
   type EffectDispatchRequest,
   type EffectDispatchResult,
@@ -46,6 +53,16 @@ export interface InternalActionDeps {
     phoneNumberId: string,
     telefonoCliente: string,
   ) => Promise<string | null>;
+  // Fase 0 — adaptador de citas por especialista (dulabs_especialistas /
+  // dulabs_citas_especialista), NO marketplace. Ver
+  // lib/especialistas-flow-adaptador.ts.
+  consultarDisponibilidadEspecialista: typeof consultarDisponibilidadEspecialista;
+  agendarCitaEspecialista: typeof agendarCitaEspecialista;
+  cancelarCitaEspecialista: typeof cancelarCitaEspecialista;
+  // Fase 1 (Blocker #4).
+  consultarCitasActivasEspecialista: typeof consultarCitasActivasEspecialista;
+  // Fase 1 (Blocker #5).
+  moverCitaEspecialista: typeof moverCitaEspecialista;
 }
 
 const OPERATION_CLASS: Partial<Record<string, InternalActionOperationClass>> = {
@@ -54,6 +71,11 @@ const OPERATION_CLASS: Partial<Record<string, InternalActionOperationClass>> = {
   crear_lead_campana: "WRITE",
   agendar_cita_marketplace: "CRITICAL",
   transferir_soporte: "CRITICAL",
+  consultar_disponibilidad_especialista: "READ",
+  agendar_cita_especialista: "CRITICAL",
+  cancelar_cita_especialista: "CRITICAL",
+  consultar_citas_activas_especialista: "READ",
+  mover_cita_especialista: "CRITICAL",
 };
 
 function resolveInternalActionKey(action: ActionNodeConfig): string {
@@ -109,6 +131,18 @@ function criticalEvidenceMissing(
     }
     return null;
   }
+  if (actionKey === "agendar_cita_especialista") {
+    if (typeof data.citaId !== "number" && typeof data.citaId !== "string") {
+      return "missing_citaId";
+    }
+    // "pendiente" (Nicol/pestañas, requiere aprobación) es un resultado REAL
+    // igual que "confirmada" -- ambos son una fila real insertada en
+    // dulabs_citas_especialista. Ver comentario en action-capabilities.ts.
+    if (data.status !== "confirmada" && data.status !== "pendiente") {
+      return "missing_confirmed_or_pending_status";
+    }
+    return null;
+  }
   return null;
 }
 
@@ -160,6 +194,16 @@ export class InternalActionExecutor implements EffectExecutor {
         return this.agendarCita(request, params, signal);
       case "transferir_soporte":
         return this.transferirSoporte(request, action, signal);
+      case "consultar_disponibilidad_especialista":
+        return this.consultarDisponibilidadEspecialistaAction(request, params, signal);
+      case "agendar_cita_especialista":
+        return this.agendarCitaEspecialistaAction(request, params, signal);
+      case "cancelar_cita_especialista":
+        return this.cancelarCitaEspecialistaAction(request, params, signal);
+      case "consultar_citas_activas_especialista":
+        return this.consultarCitasActivasEspecialistaAction(request, params, signal);
+      case "mover_cita_especialista":
+        return this.moverCitaEspecialistaAction(request, params, signal);
       default:
         return {
           success: false,
@@ -470,6 +514,361 @@ export class InternalActionExecutor implements EffectExecutor {
       appliedResult: data,
       rawResult: data,
       metadata: { operationClass: OPERATION_CLASS.transferir_soporte },
+    };
+  }
+
+  // --- Fase 0: adaptador de citas por especialista (Daniela) --------------
+
+  private async consultarDisponibilidadEspecialistaAction(
+    request: EffectDispatchRequest,
+    params: Record<string, string>,
+    signal?: AbortSignal,
+  ): Promise<EffectDispatchResult> {
+    const phoneNumberId = request.conversation?.phoneNumberId ?? params.phoneNumberId ?? "";
+    const servicio = params.servicio ?? "";
+    const fecha = params.fecha ?? "";
+    const duracionMinInput = params.duracionMin ? num(params.duracionMin, 0) : undefined;
+
+    if (!phoneNumberId || !servicio || !fecha) {
+      return {
+        success: false,
+        classification: EFFECT_RESULT_CLASSIFICATIONS.VALIDATION_ERROR,
+        error: "missing_availability_params",
+      };
+    }
+
+    assertNotAborted(signal);
+    const owned = await this.deps.authorizer.assertPhoneNumberOwnedByTenant(request.tenantId, phoneNumberId);
+    if (!owned) return this.tenantRejected();
+    assertNotAborted(signal);
+
+    const resultado = await this.deps.consultarDisponibilidadEspecialista(this.deps.supabase, {
+      phoneNumberId,
+      servicio,
+      fecha,
+      duracionMinInput,
+    });
+
+    assertNotAborted(signal);
+
+    if (!resultado.ok) {
+      return {
+        success: false,
+        classification: EFFECT_RESULT_CLASSIFICATIONS.NON_RETRYABLE,
+        error: resultado.motivo,
+        data: { detalle: resultado.detalle },
+      };
+    }
+
+    const data = {
+      disponible: resultado.hayHueco,
+      especialista: resultado.especialistaResuelto,
+      duracionMin: resultado.duracionMin,
+      horariosTomados: resultado.horariosTomados,
+      effectId: request.effectId,
+    };
+
+    return {
+      success: true,
+      classification: EFFECT_RESULT_CLASSIFICATIONS.SUCCESS,
+      data,
+      appliedResult: data,
+      rawResult: data,
+      metadata: { operationClass: OPERATION_CLASS.consultar_disponibilidad_especialista },
+    };
+  }
+
+  private async agendarCitaEspecialistaAction(
+    request: EffectDispatchRequest,
+    params: Record<string, string>,
+    signal?: AbortSignal,
+  ): Promise<EffectDispatchResult> {
+    const phoneNumberId = request.conversation?.phoneNumberId ?? params.phoneNumberId ?? "";
+    const telefonoCliente = request.conversation?.telefonoCliente ?? params.telefonoCliente ?? "";
+    const servicio = params.servicio ?? "";
+    const fecha = params.fecha ?? "";
+    const hora = params.hora ?? "";
+    const nombreCliente = params.nombreCliente ?? "";
+    const duracionMinInput = params.duracionMin ? num(params.duracionMin, 0) : undefined;
+
+    if (!phoneNumberId || !telefonoCliente || !servicio || !fecha || !hora || !nombreCliente) {
+      return {
+        success: false,
+        classification: EFFECT_RESULT_CLASSIFICATIONS.VALIDATION_ERROR,
+        error: "missing_appointment_params",
+      };
+    }
+
+    assertNotAborted(signal);
+    const owned = await this.deps.authorizer.assertPhoneNumberOwnedByTenant(request.tenantId, phoneNumberId);
+    if (!owned) return this.tenantRejected();
+    assertNotAborted(signal);
+
+    const resultado = await this.deps.agendarCitaEspecialista(this.deps.supabase, {
+      phoneNumberId,
+      telefonoCliente,
+      servicio,
+      fecha,
+      hora,
+      nombreCliente,
+      duracionMinInput,
+    });
+
+    assertNotAborted(signal);
+
+    if (!resultado.ok) {
+      if (resultado.motivo === "ocupado") {
+        return {
+          success: false,
+          classification: EFFECT_RESULT_CLASSIFICATIONS.NON_RETRYABLE,
+          error: "ocupado",
+          data: { ocupado: true, horariosTomados: resultado.horariosTomados },
+        };
+      }
+      return {
+        success: false,
+        classification: EFFECT_RESULT_CLASSIFICATIONS.NON_RETRYABLE,
+        error: resultado.motivo,
+        data: { detalle: resultado.detalle },
+      };
+    }
+
+    const data: Record<string, unknown> = {
+      citaId: resultado.cita.id,
+      status: resultado.estado,
+      especialista: resultado.especialista.nombre,
+      servicio: resultado.cita.servicio,
+      inicio: resultado.cita.inicio,
+      fin: resultado.cita.fin,
+      effectId: request.effectId,
+    };
+
+    const evidenceError = criticalEvidenceMissing("agendar_cita_especialista", data);
+    if (evidenceError) {
+      return {
+        success: false,
+        classification: EFFECT_RESULT_CLASSIFICATIONS.EXTERNAL_AMBIGUOUS,
+        error: evidenceError,
+      };
+    }
+
+    return {
+      success: true,
+      classification: EFFECT_RESULT_CLASSIFICATIONS.SUCCESS,
+      data,
+      appliedResult: data,
+      rawResult: data,
+      externalReference: `cita_especialista:${resultado.cita.id}`,
+      metadata: { operationClass: OPERATION_CLASS.agendar_cita_especialista },
+    };
+  }
+
+  private async cancelarCitaEspecialistaAction(
+    request: EffectDispatchRequest,
+    params: Record<string, string>,
+    signal?: AbortSignal,
+  ): Promise<EffectDispatchResult> {
+    const phoneNumberId = request.conversation?.phoneNumberId ?? params.phoneNumberId ?? "";
+    const telefonoCliente = request.conversation?.telefonoCliente ?? params.telefonoCliente ?? "";
+    const confirmado = params.confirmado === "true";
+
+    if (!phoneNumberId || !telefonoCliente) {
+      return {
+        success: false,
+        classification: EFFECT_RESULT_CLASSIFICATIONS.VALIDATION_ERROR,
+        error: "missing_cancel_params",
+      };
+    }
+
+    // Fase 1 (Blocker #4) — citaId es OPCIONAL: sin él, cancela la cita
+    // activa más próxima (comportamiento sin cambios). Con él (cuando la
+    // clienta tenía varias citas y ya identificó cuál), cancela ESA
+    // puntualmente -- ver citaPorIdYCliente en el adaptador para la
+    // verificación real de que esa cita es de esta clienta.
+    let citaId: number | undefined;
+    if (params.citaId !== undefined) {
+      citaId = Number(params.citaId);
+      if (!Number.isFinite(citaId)) {
+        return {
+          success: false,
+          classification: EFFECT_RESULT_CLASSIFICATIONS.VALIDATION_ERROR,
+          error: "invalid_cita_id",
+        };
+      }
+    }
+
+    assertNotAborted(signal);
+    const owned = await this.deps.authorizer.assertPhoneNumberOwnedByTenant(request.tenantId, phoneNumberId);
+    if (!owned) return this.tenantRejected();
+    assertNotAborted(signal);
+
+    const resultado = await this.deps.cancelarCitaEspecialista(this.deps.supabase, {
+      phoneNumberId,
+      telefonoCliente,
+      confirmado,
+      citaId,
+    });
+
+    assertNotAborted(signal);
+
+    if (!resultado.ok) {
+      return {
+        success: false,
+        classification: EFFECT_RESULT_CLASSIFICATIONS.NON_RETRYABLE,
+        error: resultado.motivo,
+        data: { detalle: resultado.detalle },
+      };
+    }
+
+    const data = {
+      citaId: resultado.cita.id,
+      cancelada: true,
+      effectId: request.effectId,
+    };
+
+    return {
+      success: true,
+      classification: EFFECT_RESULT_CLASSIFICATIONS.SUCCESS,
+      data,
+      appliedResult: data,
+      rawResult: data,
+      metadata: { operationClass: OPERATION_CLASS.cancelar_cita_especialista },
+    };
+  }
+
+  /**
+   * Fase 1 (Blocker #4) — lista TODAS las citas activas reales de esta
+   * clienta (no solo la más próxima). Solo lectura, nunca cancela ni
+   * modifica nada.
+   */
+  private async consultarCitasActivasEspecialistaAction(
+    request: EffectDispatchRequest,
+    params: Record<string, string>,
+    signal?: AbortSignal,
+  ): Promise<EffectDispatchResult> {
+    const phoneNumberId = request.conversation?.phoneNumberId ?? params.phoneNumberId ?? "";
+    const telefonoCliente = request.conversation?.telefonoCliente ?? params.telefonoCliente ?? "";
+
+    if (!phoneNumberId || !telefonoCliente) {
+      return {
+        success: false,
+        classification: EFFECT_RESULT_CLASSIFICATIONS.VALIDATION_ERROR,
+        error: "missing_query_params",
+      };
+    }
+
+    assertNotAborted(signal);
+    const owned = await this.deps.authorizer.assertPhoneNumberOwnedByTenant(request.tenantId, phoneNumberId);
+    if (!owned) return this.tenantRejected();
+    assertNotAborted(signal);
+
+    const resultado = await this.deps.consultarCitasActivasEspecialista(this.deps.supabase, {
+      phoneNumberId,
+      telefonoCliente,
+    });
+
+    assertNotAborted(signal);
+
+    const data = {
+      cantidadCitas: resultado.cantidad,
+      citasActivas: resultado.citas.map((c) => ({ id: c.id, servicio: c.servicio, inicio: c.inicio })),
+      effectId: request.effectId,
+    };
+
+    return {
+      success: true,
+      classification: EFFECT_RESULT_CLASSIFICATIONS.SUCCESS,
+      data,
+      appliedResult: data,
+      rawResult: data,
+      metadata: { operationClass: OPERATION_CLASS.consultar_citas_activas_especialista },
+    };
+  }
+
+  /**
+   * Fase 1 (Blocker #5) — mueve (reagenda) una cita real existente. citaId
+   * es SIEMPRE requerido (a diferencia de cancelar, acá no hay "la más
+   * próxima" implícita -- siempre se mueve una cita puntual ya identificada
+   * en el flow). Ver moverCitaEspecialista en el adaptador para la
+   * estrategia atómica real (UPDATE sobre la misma fila, constraint
+   * EXCLUDE, nunca cancelar+crear).
+   */
+  private async moverCitaEspecialistaAction(
+    request: EffectDispatchRequest,
+    params: Record<string, string>,
+    signal?: AbortSignal,
+  ): Promise<EffectDispatchResult> {
+    const phoneNumberId = request.conversation?.phoneNumberId ?? params.phoneNumberId ?? "";
+    const telefonoCliente = request.conversation?.telefonoCliente ?? params.telefonoCliente ?? "";
+    const confirmado = params.confirmado === "true";
+    const nuevaFecha = params.nuevaFecha ?? "";
+    const nuevaHora = params.nuevaHora ?? "";
+
+    if (!phoneNumberId || !telefonoCliente || !params.citaId || !nuevaFecha || !nuevaHora) {
+      return {
+        success: false,
+        classification: EFFECT_RESULT_CLASSIFICATIONS.VALIDATION_ERROR,
+        error: "missing_reschedule_params",
+      };
+    }
+    const citaId = Number(params.citaId);
+    if (!Number.isFinite(citaId)) {
+      return {
+        success: false,
+        classification: EFFECT_RESULT_CLASSIFICATIONS.VALIDATION_ERROR,
+        error: "invalid_cita_id",
+      };
+    }
+
+    assertNotAborted(signal);
+    const owned = await this.deps.authorizer.assertPhoneNumberOwnedByTenant(request.tenantId, phoneNumberId);
+    if (!owned) return this.tenantRejected();
+    assertNotAborted(signal);
+
+    const resultado = await this.deps.moverCitaEspecialista(this.deps.supabase, {
+      phoneNumberId,
+      telefonoCliente,
+      citaId,
+      nuevaFecha,
+      nuevaHora,
+      confirmado,
+    });
+
+    assertNotAborted(signal);
+
+    if (!resultado.ok) {
+      if (resultado.motivo === "ocupado") {
+        return {
+          success: false,
+          classification: EFFECT_RESULT_CLASSIFICATIONS.NON_RETRYABLE,
+          error: "ocupado",
+          data: { ocupado: true, horariosTomados: resultado.horariosTomados },
+        };
+      }
+      return {
+        success: false,
+        classification: EFFECT_RESULT_CLASSIFICATIONS.NON_RETRYABLE,
+        error: resultado.motivo,
+        data: { detalle: resultado.detalle },
+      };
+    }
+
+    const data = {
+      citaId: resultado.cita.id,
+      movida: true,
+      servicio: resultado.cita.servicio,
+      inicio: resultado.cita.inicio,
+      fin: resultado.cita.fin,
+      effectId: request.effectId,
+    };
+
+    return {
+      success: true,
+      classification: EFFECT_RESULT_CLASSIFICATIONS.SUCCESS,
+      data,
+      appliedResult: data,
+      rawResult: data,
+      metadata: { operationClass: OPERATION_CLASS.mover_cita_especialista },
     };
   }
 }

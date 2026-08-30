@@ -196,7 +196,7 @@ export class ExecutionOrchestrator {
     const accumulatedEffects: EngineEffect[] = [];
     const dispatchedEffectIds: string[] = [];
     const pending: PendingEngineWork[] = [
-      { engineEvent: event.engineEvent, sourceEventId: event.eventId },
+      { engineEvent: resolve.engineEvent, sourceEventId: event.eventId },
     ];
     let internalEventsProcessed = 0;
 
@@ -261,13 +261,13 @@ export class ExecutionOrchestrator {
   private async resolveExecution(
     event: NormalizedFlowEvent,
   ): Promise<
-    | { kind: "ok"; executionRow: FlowExecutionRow }
+    | { kind: "ok"; executionRow: FlowExecutionRow; engineEvent: FlowEngineEvent }
     | { kind: "reject"; result: OrchestratorResult }
   > {
     const active = await this.deps.store.getActiveExecution(event.tenantId, event.conversation);
 
     if (active) {
-      return { kind: "ok", executionRow: active };
+      return { kind: "ok", executionRow: active, engineEvent: event.engineEvent };
     }
 
     if (!isLegitimateStartTrigger(event.engineEvent)) {
@@ -309,10 +309,35 @@ export class ExecutionOrchestrator {
     });
 
     if (createResult.created) {
-      return { kind: "ok", executionRow: createResult.row };
+      return { kind: "ok", executionRow: createResult.row, engineEvent: event.engineEvent };
     }
 
-    return { kind: "ok", executionRow: createResult.existing };
+    // Blocker #8 — perdimos la carrera de creación: esta fila NO la creamos
+    // nosotros, la creó (y puede ya haber avanzado) otra invocación
+    // concurrente de process() para la MISMA conversación. Un evento "start"
+    // original SIEMPRE resetea el estado del engine incondicionalmente
+    // (flow-engine.ts: currentNodeId/expectedInput/pendingEffect se pisan
+    // sin mirar si el estado ya traía progreso real) -- aplicarlo tal cual
+    // aquí pisaría el avance genuino del ganador y re-dispararía, por
+    // ejemplo, la clasificación de intención del router desde cero.
+    //
+    // Se transforma a "text" (preservando el texto original si lo había)
+    // para tratarlo como una continuación de la ejecución existente en vez
+    // de un reinicio: si esa fila de verdad está esperando texto
+    // (waiting_input + expectedInput:"text"), se aplica correctamente sobre
+    // el nodo real donde quedó; si no (waiting_effect, esperando botón,
+    // etc.), el propio guard INVALID_STATE del engine lo rechaza de forma
+    // segura -- nunca pisa ni corrompe el estado real, y el llamador
+    // (lib/flow-runtime-bridge.ts) ya sabe caer a LEGACY ante un
+    // engineError. Un evento que YA era "text"/"button" no se toca: nunca
+    // resetea nada, así que no había nada que corregir en ese caso -- ya
+    // pasa por el mismo guard fail-closed del engine contra el estado real.
+    const engineEvent: FlowEngineEvent =
+      event.engineEvent.type === "start"
+        ? { type: "text", text: event.engineEvent.text ?? "", eventId: event.engineEvent.eventId }
+        : event.engineEvent;
+
+    return { kind: "ok", executionRow: createResult.existing, engineEvent };
   }
 
   private async runEngineIterationWithCas(params: {

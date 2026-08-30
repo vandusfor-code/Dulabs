@@ -96,6 +96,18 @@ const SOURCE_TO_ACTION: Record<string, ActionNodeConfig> = {
   },
   reservar_cita: { actionType: "webhook_http", url: "", semanticTag: "reservar_cita" },
   agendar_cita_marketplace: { actionType: "agendar_cita_marketplace", params: {} },
+  // Fase 0 (autorizado explícitamente) — adaptador sobre dulabs_especialistas
+  // / dulabs_citas_especialista, NO marketplace. Misma forma que las demás
+  // entradas de este mapa: solo permite que capabilitiesFromVerifiedEntry
+  // reconozca el source real que produce InternalActionExecutor al
+  // despachar esta acción — no cambia ninguna regla de clasificación.
+  agendar_cita_especialista: { actionType: "agendar_cita_especialista", params: {} },
+  // Blocker #7 (gap 3, autorizado) — misma forma que agendar_cita_especialista:
+  // solo permite que capabilitiesFromVerifiedEntry reconozca el source real
+  // que produce InternalActionExecutor al despachar esta acción, para que la
+  // capability declarada en action-capabilities.ts (verifiesOnSuccess) pueda
+  // otorgarse en runtime. No cambia ninguna regla de clasificación de texto.
+  consultar_citas_activas_especialista: { actionType: "consultar_citas_activas_especialista", params: {} },
   crear_lead_enterprise: { actionType: "crear_lead_enterprise", params: {} },
   crear_lead_campana: { actionType: "crear_lead_campana", params: {} },
   transferir_soporte: { actionType: "transferir_soporte" },
@@ -104,7 +116,21 @@ const SOURCE_TO_ACTION: Record<string, ActionNodeConfig> = {
 
 const DOMAIN_CAPABILITY_RULES: Array<{ pattern: RegExp; capabilities: AssertionCapability[] }> = [
   {
-    pattern: /\b(cita|citas|horario|turno|espacio)\b|reserv\w+|agend\w+|asegur\w+/i,
+    // El \b de JS es ASCII: falla tras vocal acentuada ("agendé", "agendó",
+    // "reservé" no matchean con \w+). Se usan lookbehind/lookahead sobre el
+    // alfabeto español -- misma técnica ya usada en PAST_COMPLETION_PATTERN --
+    // para un límite de palabra correcto con acentos (Blocker #7, gap 1).
+    pattern:
+      /\b(cita|citas|horario|turno|espacio)\b|(?<![a-záéíóúüñ])(?:reserv|agend|asegur)[a-záéíóúüñ]*(?![a-záéíóúüñ])/i,
+    capabilities: ["appointment.reserved"],
+  },
+  {
+    // Blocker #7 (gap 2) -- alcance intencionalmente angosto: exige "te
+    // esperamos" + una referencia temporal/horaria explícita en la misma
+    // cláusula. NO se agrega "esperamos" como regla global: "Esperamos tu
+    // respuesta" / "Esperamos que te guste" no deben activar esta capability.
+    pattern:
+      /\bte\s+esperamos\b(?:\s+\S+){0,6}?\s*\b(?:mañana|hoy|pasado\s*mañana|el\s+\d{1,2}|a\s+las\s+\d{1,2}|\d{1,2}(?::\d{2})?\s*(?:am|pm|hrs?)\b)/i,
     capabilities: ["appointment.reserved"],
   },
   { pattern: /disponib\w+|cupos?\b/i, capabilities: ["appointment.available"] },
@@ -1484,6 +1510,23 @@ export function isResponseClearlySafeWithoutProvenance(
 const USER_INSTANCE_MARKER = /(?:^|\s)(?:tu|tus|su|sus|te|le|les|contigo|tuyo|tuya|tuyos|tuyas)(?:\s|$)/i;
 
 /**
+ * Blocker #7 (gap 3, corregido) — "tener" conjugado ligado DIRECTAMENTE a
+ * "cita/citas" (máx. 2 palabras de relleno entre medio), en vez de sumar
+ * tengo/tienes/tiene/tenemos/tienen a USER_INSTANCE_MARKER como marcador
+ * suelto. La primera versión de este fix (autorizada, luego revertida)
+ * agregaba esas conjugaciones a USER_INSTANCE_MARKER; como
+ * responseAssertsUserInstanceOperation solo exige que domainCaps no esté
+ * vacío en ALGÚN punto del texto (no cercanía), eso producía falsos
+ * positivos reales: "Tengo disponibilidad" (domainCaps vía "disponib...",
+ * sin relación con "tengo") y "Tengo una pregunta sobre mi cita" ("cita" a
+ * 4 palabras de "tengo", sin relación gramatical) quedaban bloqueados.
+ * Este patrón, en cambio, exige adyacencia real entre el verbo y "cita" --
+ * "Tengo" aislado, o "tengo" + un dominio no-cita lejano, nunca matchean.
+ */
+const TENER_CITA_INSTANCE =
+  /(?<![a-záéíóúüñ])(?:ten(?:go|emos|éis)|tien(?:es|e|en))(?![a-záéíóúüñ])(?:\s+\S+){0,2}\s+citas?(?![a-záéíóúüñ])/i;
+
+/**
  * Hallazgo A (4.8.1): contexto operacional derivado de la PROPIA respuesta, no solo de la
  * intención de usuario reconocida. Cuando la respuesta menciona un dominio operacional (cita,
  * pago, soporte, solicitud, disponibilidad) Y se dirige a la instancia del cliente (tu/te/su…),
@@ -1496,7 +1539,7 @@ function responseAssertsUserInstanceOperation(
   features: StructuralFeatures,
 ): boolean {
   if (features.domainCaps.length === 0) return false;
-  return USER_INSTANCE_MARKER.test(normalized);
+  return USER_INSTANCE_MARKER.test(normalized) || TENER_CITA_INSTANCE.test(normalized);
 }
 
 /**

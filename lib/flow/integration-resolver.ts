@@ -31,6 +31,17 @@ const INTERNAL_ACTION_TYPES = new Set([
   "crear_lead_campana",
   "agendar_cita_marketplace",
   "transferir_soporte",
+  // Fase 0 (autorizado) — mismo trato que agendar_cita_marketplace: acciones
+  // nativas sobre dulabs_especialistas/dulabs_citas_especialista, no
+  // requieren integración externa. Las 3 pertenecen al mismo adaptador (ver
+  // lib/especialistas-flow-adaptador.ts).
+  "agendar_cita_especialista",
+  "consultar_disponibilidad_especialista",
+  "cancelar_cita_especialista",
+  // Fase 1 (Blocker #4, autorizado) — misma razón que las anteriores.
+  "consultar_citas_activas_especialista",
+  // Fase 1 (Blocker #5, autorizado) — misma razón que las anteriores.
+  "mover_cita_especialista",
 ]);
 
 const INTERNAL_WEBHOOK_TAGS = new Set(["consultar_disponibilidad"]);
@@ -62,6 +73,19 @@ export class IntegrationResolver {
     kind?: EffectExecutorKind;
   }): Promise<IntegrationResolveOutcome> {
     if (input.kind === "ai") {
+      return {
+        ok: true,
+        context: { tenantId: input.tenantId, internal: true },
+      };
+    }
+
+    // Fase 0 (autorizado) — envío de WhatsApp nativo: usa el token Meta del
+    // propio tenant (resuelto por SendMessageExecutor vía ClienteConfig), no
+    // una integración externa configurada en dulabs_flow_integrations. Sin
+    // este bypass, TODO nodo "message" de CUALQUIER flow (no solo el
+    // adaptador de especialistas) fallaba siempre con integration_required
+    // antes de llegar al executor.
+    if (input.kind === "send_message") {
       return {
         ok: true,
         context: { tenantId: input.tenantId, internal: true },

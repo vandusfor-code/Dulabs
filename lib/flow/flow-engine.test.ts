@@ -4,7 +4,7 @@
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { FLOW_EDGE_HANDLE } from "@/lib/flow/constants";
+import { FIRST_MESSAGE_TEXT_VARIABLE_KEY, FLOW_EDGE_HANDLE } from "@/lib/flow/constants";
 import { FLOW_ENGINE_ERROR_CODES } from "@/lib/flow/engine-types";
 import type { FlowDefinition } from "@/lib/flow/types";
 import {
@@ -107,6 +107,79 @@ describe("Flow Engine — transiciones básicas", () => {
     const r = runFlowEngine(flow, state, { type: "text", text: "no-es-numero" });
     assert.equal(r.state.status, "waiting_input");
     assert.ok(r.effects.some((e) => e.type === "invalid_input"));
+  });
+});
+
+describe("Flow Engine — Fase 1 Blocker #1: texto del primer mensaje en 'start'", () => {
+  it("1. sin event.text -> comportamiento EXACTO de antes (sin regresión)", () => {
+    const flow = linearFlow();
+    const state = createFlowEngineState(flow);
+    const r = runFlowEngine(flow, state, { type: "start" });
+    assert.equal(r.state.variables[FIRST_MESSAGE_TEXT_VARIABLE_KEY], undefined);
+    assert.equal(r.state.currentNodeId, "q");
+    assert.equal(r.state.status, "waiting_input");
+  });
+
+  it("2. con event.text -> se siembra en variables, SIN tocar expectedInput ni auto-responder la pregunta", () => {
+    const flow = linearFlow();
+    const state = createFlowEngineState(flow);
+    const r = runFlowEngine(flow, state, { type: "start", text: "Hola, quiero pestañas" });
+    assert.equal(r.state.variables[FIRST_MESSAGE_TEXT_VARIABLE_KEY], "Hola, quiero pestañas");
+    // La pregunta "q" sigue esperando SU propia respuesta -- el texto del
+    // primer mensaje nunca se usa como si fuera la respuesta a "nombre".
+    assert.equal(r.state.variables.nombre, undefined);
+    assert.equal(r.state.currentNodeId, "q");
+    assert.equal(r.state.expectedInput, "text");
+    assert.equal(r.state.status, "waiting_input");
+  });
+
+  it("3. texto vacío o solo espacios -> NO se siembra (evita variables[key]='' fantasma)", () => {
+    const flow = linearFlow();
+    for (const vacio of ["", "   "]) {
+      const state = createFlowEngineState(flow);
+      const r = runFlowEngine(flow, state, { type: "start", text: vacio });
+      assert.equal(r.state.variables[FIRST_MESSAGE_TEXT_VARIABLE_KEY], undefined, `texto "${vacio}" no debería sembrarse`);
+    }
+  });
+
+  it("4. el grafo SÍ puede leer la variable (ej. un nodo condition), demostrando que es realmente utilizable", () => {
+    const flowConCondicion: FlowDefinition = {
+      name: "Test primer mensaje",
+      nodes: [
+        { id: "start", type: "start", config: { triggerType: "first_message" } },
+        {
+          id: "cond",
+          type: "condition",
+          config: { rules: [{ field: FIRST_MESSAGE_TEXT_VARIABLE_KEY, operator: "contains", value: "pestañas" }], match: "all" },
+        },
+        { id: "msg-pestanas", type: "message", config: { text: "Vi que quieres pestañas" } },
+        { id: "msg-generico", type: "message", config: { text: "¿Qué servicio quieres?" } },
+        { id: "end-a", type: "end", config: {} },
+        { id: "end-b", type: "end", config: {} },
+      ],
+      edges: [
+        { id: "e1", source: "start", target: "cond" },
+        { id: "e2", source: "cond", target: "msg-pestanas", sourceHandle: FLOW_EDGE_HANDLE.conditionTrue },
+        { id: "e3", source: "cond", target: "msg-generico", sourceHandle: FLOW_EDGE_HANDLE.conditionFalse },
+        { id: "e4", source: "msg-pestanas", target: "end-a" },
+        { id: "e5", source: "msg-generico", target: "end-b" },
+      ],
+      variables: [],
+    };
+
+    const conPestanas = runFlowEngine(
+      flowConCondicion,
+      createFlowEngineState(flowConCondicion),
+      { type: "start", text: "Hola, quiero pestañas para mañana" },
+    );
+    assert.ok(conPestanas.effects.some((e) => e.type === "send_message" && e.nodeId === "msg-pestanas"));
+
+    const sinPestanas = runFlowEngine(
+      flowConCondicion,
+      createFlowEngineState(flowConCondicion),
+      { type: "start", text: "Hola" },
+    );
+    assert.ok(sinPestanas.effects.some((e) => e.type === "send_message" && e.nodeId === "msg-generico"));
   });
 });
 

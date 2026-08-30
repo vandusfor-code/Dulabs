@@ -184,6 +184,19 @@ export type FlowActionType =
   | "etiquetar_conversacion"
   | "asignar_miembro"
   | "agendar_cita_marketplace"
+  // Fase 0 (migración Daniela → Flow): adaptador sobre el sistema REAL de
+  // especialistas (dulabs_especialistas / dulabs_citas_especialista) — NO
+  // sobre dulabs_marketplace_citas. Ver lib/especialistas-flow-adaptador.ts.
+  | "consultar_disponibilidad_especialista"
+  | "agendar_cita_especialista"
+  | "cancelar_cita_especialista"
+  // Fase 1 (Blocker #4): lista TODAS las citas activas de la clienta, no
+  // solo la más próxima -- necesaria para desambiguar cuál cancelar cuando
+  // tiene varias. Solo lectura, misma tabla.
+  | "consultar_citas_activas_especialista"
+  // Fase 1 (Blocker #5): reagenda (mueve) una cita existente a una nueva
+  // fecha/hora -- UPDATE atómico sobre la misma fila, nunca crea una nueva.
+  | "mover_cita_especialista"
   | "webhook_http"
   | "enviar_plantilla";
 
@@ -230,7 +243,12 @@ export interface SimpleActionConfig extends ActionSemanticTag {
   actionType:
     | "crear_lead_enterprise"
     | "crear_lead_campana"
-    | "agendar_cita_marketplace";
+    | "agendar_cita_marketplace"
+    | "consultar_disponibilidad_especialista"
+    | "agendar_cita_especialista"
+    | "cancelar_cita_especialista"
+    | "consultar_citas_activas_especialista"
+    | "mover_cita_especialista";
   params?: ActionParams;
 }
 

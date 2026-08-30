@@ -1260,3 +1260,152 @@ describe("Execution Orchestrator — effect result persistence (Fase 4.0.1)", ()
     assert.equal(result.dispatchedEffectIds.length, 1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Blocker #8 — carrera start/start no debe reiniciar una ejecución avanzada.
+//
+// Causa raíz: cuando dos eventos "start" concurrentes chocan contra el
+// índice único de una-ejecución-activa-por-conversación, el segundo recibía
+// createResult.existing (la fila del ganador, posiblemente ya avanzada) pero
+// seguía procesándose con SU PROPIO engineEvent original ("start"), que
+// flow-engine.ts resetea incondicionalmente -- pisando el progreso real.
+//
+// Fix (lib/flow/flow-orchestrator.ts::resolveExecution): cuando
+// createExecution devuelve active_execution_exists Y el evento original era
+// "start", se reescribe a {type:"text", text: <texto original>} antes de
+// pasarlo al engine -- nunca se toca flow-engine.ts.
+// ---------------------------------------------------------------------------
+describe("Execution Orchestrator — Blocker #8: race start/start", () => {
+  it("A. start concurrente: el segundo NO reinicia el Flow -- continúa desde el nodo real, usa el texto como respuesta genuina", async () => {
+    const flow = linearFlow(); // start -> msg("Hola") -> q("Nombre?", waiting_input/text) -> end
+    const { store } = createMockStore({ activeExecution: null, versions: { "version-pinned": versionRow(flow), "version-published": versionRow(flow) } });
+    const orch = buildOrchestrator(store);
+
+    // Primer "start" real: crea la ejecución, avanza hasta la pregunta.
+    const r1 = await orch.process(
+      normalizedEvent({ eventId: "evt-A", eventType: "start", engineEvent: { type: "start" } }),
+    );
+    assert.equal(r1.outcome, ORCHESTRATOR_OUTCOMES.PROCESSED);
+    const helloCount1 = r1.effects.filter((e) => e.type === "send_message").length;
+    assert.equal(helloCount1, 2, "el primer 'start' debe producir 'Hola' + el prompt de la pregunta ('Nombre?'), una sola vez cada uno");
+
+    const winningRow = await store.getExecutionById("tenant-1", r1.executionRowId!);
+    assert.equal(winningRow?.status, "waiting_input");
+    assert.equal(winningRow?.current_node_id, "q", "debe haber quedado esperando la pregunta, no en start");
+
+    // Simula la carrera: un SEGUNDO "start" (mismo disparador que produciría
+    // el bridge si, por la misma condición de carrera, también creyó que no
+    // había ejecución activa) llega DESPUÉS de que el ganador ya avanzó.
+    // createExecution ahora reporta el conflicto real contra esa fila.
+    store.createExecution = async () => ({
+      created: false,
+      reason: "active_execution_exists",
+      existing: winningRow!,
+    });
+
+    const r2 = await orch.process(
+      normalizedEvent({ eventId: "evt-B", eventType: "start", engineEvent: { type: "start", text: "manos" } }),
+    );
+
+    assert.equal(r2.outcome, ORCHESTRATOR_OUTCOMES.PROCESSED, "no debe fallar -- debe tratarse como continuación válida");
+    assert.equal(r2.executionRowId, r1.executionRowId, "misma fila -- nunca crea ni resetea a una ejecución nueva");
+
+    const helloCount2 = r2.effects.filter((e) => e.type === "send_message").length;
+    assert.equal(helloCount2, 0, "NO debe volver a emitir 'Hola' ni el prompt de la pregunta -- eso probaría que sí reinició desde start");
+
+    const finalRow = await store.getExecutionById("tenant-1", r1.executionRowId!);
+    assert.equal(finalRow?.status, "completed", "debe haber avanzado de verdad usando 'manos' como respuesta real a la pregunta pendiente");
+    assert.equal((finalRow?.variables as Record<string, unknown>)?.nombre, "manos", "el primer mensaje/turno no se pierde: el texto del evento se aplicó al nodo real que lo esperaba");
+  });
+
+  it("B. un evento 'text' que pierde la carrera de creación NO se reescribe -- ya es seguro tal cual (solo 'start' resetea)", async () => {
+    const row = baseExecutionRow({ id: "existing-row-text", status: "waiting_input", current_node_id: "q", expected_input: "text" });
+    const { store } = createMockStore({ activeExecution: null });
+    store.createExecution = async () => ({ created: false, reason: "active_execution_exists", existing: row });
+    store.getExecutionById = async () => row;
+    const orch = buildOrchestrator(store);
+
+    const result = await orch.process(
+      normalizedEvent({ eventId: "evt-text-race", eventType: "text", engineEvent: { type: "text", text: "Ana" } }),
+    );
+
+    assert.equal(result.outcome, ORCHESTRATOR_OUTCOMES.PROCESSED);
+    assert.equal(result.executionRowId, "existing-row-text");
+  });
+
+  it("C. cross-tenant: la fila existente de OTRO tenant sigue rechazándose tras el fix", async () => {
+    const otroTenantRow = baseExecutionRow({ id: "otro-tenant-row", tenant_id: "tenant-ajeno" });
+    const { store } = createMockStore({ activeExecution: null });
+    store.createExecution = async () => ({ created: false, reason: "active_execution_exists", existing: otroTenantRow });
+    const orch = buildOrchestrator(store);
+
+    const result = await orch.process(
+      normalizedEvent({ eventId: "evt-cross-tenant", eventType: "start", engineEvent: { type: "start" } }),
+    );
+
+    assert.equal(result.outcome, ORCHESTRATOR_OUTCOMES.REJECTED);
+    assert.equal(result.rejectReason, "tenant_mismatch");
+  });
+
+  it("D. no se duplican efectos/citas: un 'start' que llega mientras la fila real está 'waiting_effect' (acción en vuelo) NUNCA vuelve a despachar la acción", async () => {
+    const flow = actionFlow(); // start -> act(crear_lead_enterprise) -> end
+    let dispatchCalls = 0;
+    const inFlightRow = baseExecutionRow({
+      id: "row-waiting-effect",
+      status: "waiting_effect",
+      current_node_id: "act",
+      expected_input: undefined,
+      pending_effect: { effectId: "fx-inflight", nodeId: "act", kind: "action" },
+    });
+    const { store } = createMockStore({
+      activeExecution: null,
+      versions: { "version-pinned": versionRow(flow), "version-published": versionRow(flow) },
+    });
+    store.createExecution = async () => ({
+      created: false,
+      reason: "active_execution_exists",
+      existing: inFlightRow,
+    });
+    store.getExecutionById = async () => inFlightRow;
+
+    const orch = buildOrchestrator(store, {
+      action: {
+        dispatch: async () => {
+          dispatchCalls += 1;
+          return { result: { success: true, resultPayloadRaw: { ok: true } } };
+        },
+      },
+    });
+
+    const result = await orch.process(
+      normalizedEvent({ eventId: "evt-race-inflight", eventType: "start", engineEvent: { type: "start" } }),
+    );
+
+    // La reescritura a "text" choca contra el guard real del engine
+    // (status !== "waiting_input") -> INVALID_STATE, fail-closed. Nunca se
+    // vuelve a intentar la acción -- ni una cita ni un lead se duplican.
+    assert.equal(dispatchCalls, 0, "la acción en vuelo NUNCA debe volver a dispatcharse por culpa de un 'start' tardío");
+    assert.equal(result.engineError?.code, FLOW_ENGINE_ERROR_CODES.INVALID_STATE);
+  });
+
+  it("E. flows existentes (RESUME normal, sin carrera) siguen funcionando exactamente igual", async () => {
+    const row = baseExecutionRow();
+    const { store } = createMockStore({ activeExecution: row });
+    const orch = buildOrchestrator(store);
+    const result = await orch.process(normalizedEvent());
+
+    assert.equal(result.outcome, ORCHESTRATOR_OUTCOMES.PROCESSED);
+    assert.ok(result.effects.length > 0);
+  });
+
+  it("F. CREATE sin carrera (created:true) sigue usando el evento original tal cual -- 'start' real no se toca", async () => {
+    const { store, state } = createMockStore({ activeExecution: null });
+    const orch = buildOrchestrator(store);
+    const result = await orch.process(
+      normalizedEvent({ eventId: "evt-create-normal", eventType: "start", engineEvent: { type: "start" } }),
+    );
+
+    assert.equal(result.outcome, ORCHESTRATOR_OUTCOMES.PROCESSED);
+    assert.equal(state.createCalls.length, 1);
+  });
+});

@@ -5,7 +5,7 @@
  * NO ejecuta WhatsApp, IA, Supabase ni acciones externas.
  */
 
-import { FLOW_EDGE_HANDLE } from "@/lib/flow/constants";
+import { FIRST_MESSAGE_TEXT_VARIABLE_KEY, FLOW_EDGE_HANDLE } from "@/lib/flow/constants";
 import type {
   FlowEngineError,
   FlowEngineEvent,
@@ -921,6 +921,13 @@ export function runFlowEngine(
       currentNodeId: start.id,
       expectedInput: undefined,
       pendingEffect: undefined,
+      // Solo siembra el dato -- nunca decide por sí solo qué nodo lo
+      // consume. Un flow que no lee esta variable no cambia de
+      // comportamiento (ver FIRST_MESSAGE_TEXT_VARIABLE_KEY).
+      variables:
+        typeof event.text === "string" && event.text.trim()
+          ? { ...working.variables, [FIRST_MESSAGE_TEXT_VARIABLE_KEY]: event.text }
+          : working.variables,
     };
     return runAutoLoop(ctx, working, [], maxSteps, idGen);
   }

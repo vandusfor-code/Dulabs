@@ -459,12 +459,57 @@ describe("Effect lifecycle — Fase 4.1", () => {
   });
 });
 
-describe("send_message lifecycle — Fase 4.1", () => {
-  it("24. send_message follows effect lifecycle", async () => {
-    const executor = new SendMessageExecutor();
+describe("send_message lifecycle — Fase 4.1 / Fase 0 (I/O real)", () => {
+  it("24. send_message follows effect lifecycle (I/O real inyectado, sin red)", async () => {
+    const clienteFake = {
+      id: "c1",
+      id_tenant: TENANT_A,
+      phone_number_id: "123",
+      meta_permanent_token: null,
+      nombre_negocio: "Test",
+    } as never;
+    const executor = new SendMessageExecutor({
+      supabase: {} as never,
+      resolverCliente: async () => clienteFake,
+      enviarTexto: async () => ({ wamid: "wamid-fake-1" }),
+      enviarBotones: async () => ({ wamid: "wamid-fake-2" }),
+      incrementarUsoMensajes: async () => {},
+      registrarMensaje: async () => false,
+    });
+    // Sin meta_permanent_token ni META_ACCESS_TOKEN en el entorno de test,
+    // resolverTokenMeta devolvería null -- se fuerza vía env para este caso.
+    const prevToken = process.env.META_ACCESS_TOKEN;
+    process.env.META_ACCESS_TOKEN = "token-fake-test";
+    try {
+      const result = await executor.dispatch(
+        {
+          effectId: "fx-send",
+          executionRowId: "row",
+          tenantId: TENANT_A,
+          nodeId: "msg",
+          kind: "send_message",
+          payload: {},
+          attempt: 1,
+          message: { content: { text: "Hola" } },
+          conversation: { phoneNumberId: "123", telefonoCliente: "573001112233" },
+        },
+        { tenantId: TENANT_A, internal: true },
+      );
+      assert.equal(result.success, true);
+      assert.equal(result.classification, EFFECT_RESULT_CLASSIFICATIONS.SUCCESS);
+      assert.equal(result.data?.delivered, true);
+      assert.equal(result.data?.wamid, "wamid-fake-1");
+    } finally {
+      if (prevToken === undefined) delete process.env.META_ACCESS_TOKEN;
+      else process.env.META_ACCESS_TOKEN = prevToken;
+    }
+  });
+
+  it("24b. send_message sin conversation → VALIDATION_ERROR (no puede resolver destinatario)", async () => {
+    const executor = new SendMessageExecutor({ supabase: {} as never });
     const result = await executor.dispatch(
       {
-        effectId: "fx-send",
+        effectId: "fx-send-2",
         executionRowId: "row",
         tenantId: TENANT_A,
         nodeId: "msg",
@@ -475,9 +520,32 @@ describe("send_message lifecycle — Fase 4.1", () => {
       },
       { tenantId: TENANT_A, internal: true },
     );
-    assert.equal(result.success, true);
-    assert.equal(result.classification, EFFECT_RESULT_CLASSIFICATIONS.SUCCESS);
-    assert.equal(result.metadata?.stub, true);
+    assert.equal(result.success, false);
+    assert.equal(result.classification, EFFECT_RESULT_CLASSIFICATIONS.VALIDATION_ERROR);
+  });
+
+  it("24c. send_message cross-tenant → SECURITY_REJECTED", async () => {
+    const clienteDeOtroTenant = { id: "c2", id_tenant: TENANT_B, phone_number_id: "123" } as never;
+    const executor = new SendMessageExecutor({
+      supabase: {} as never,
+      resolverCliente: async () => clienteDeOtroTenant,
+    });
+    const result = await executor.dispatch(
+      {
+        effectId: "fx-send-3",
+        executionRowId: "row",
+        tenantId: TENANT_A,
+        nodeId: "msg",
+        kind: "send_message",
+        payload: {},
+        attempt: 1,
+        message: { content: { text: "Hola" } },
+        conversation: { phoneNumberId: "123", telefonoCliente: "573001112233" },
+      },
+      { tenantId: TENANT_A, internal: true },
+    );
+    assert.equal(result.success, false);
+    assert.equal(result.classification, EFFECT_RESULT_CLASSIFICATIONS.SECURITY_REJECTED);
   });
 
   it("25. duplicate send_message prevented — dispatchable contract", () => {
@@ -518,6 +586,27 @@ function baseInternalDeps(
     sugerirHorariosLibres: async () => [],
     crearCita: async () => null,
     readPausaUntil: async () => null,
+    consultarDisponibilidadEspecialista: async () => ({
+      ok: false as const,
+      motivo: "servicio_no_manejado" as const,
+      detalle: "stub",
+    }),
+    agendarCitaEspecialista: async () => ({
+      ok: false as const,
+      motivo: "servicio_no_manejado" as const,
+      detalle: "stub",
+    }),
+    cancelarCitaEspecialista: async () => ({
+      ok: false as const,
+      motivo: "sin_cita_activa" as const,
+      detalle: "stub",
+    }),
+    consultarCitasActivasEspecialista: async () => ({ cantidad: 0, citas: [] }),
+    moverCitaEspecialista: async () => ({
+      ok: false as const,
+      motivo: "sin_cita_activa" as const,
+      detalle: "stub",
+    }),
     ...overrides,
   };
 }

@@ -33,6 +33,18 @@ export type ClienteConfig = {
   captura_leads: boolean;
   agente_id: number | null;
   marketplace_activacion_id: number | null;
+  /**
+   * Opt-in EXPLÍCITO al motor Flow (Fase 0, migración
+   * 20260829120000_dulabs_flow_activacion_opt_in.sql). Default false/no
+   * existe todavía en DB hasta aplicar esa migración -- en ese caso llega
+   * `undefined`, que es falsy, así que el webhook sigue yendo a LEGACY sin
+   * ningún cambio de comportamiento. NUNCA inferir esto de otra señal
+   * (especialistas activas, marketplace_activacion_id, etc.) -- ver
+   * lib/flow-routing.ts.
+   */
+  flow_activo?: boolean;
+  /** Flow publicado que atiende este número cuando flow_activo=true. */
+  flow_id?: string | null;
   created_at: string;
   updated_at: string;
 };

@@ -34,6 +34,16 @@ export const AUTOMATIC_NODE_TYPES: ReadonlySet<FlowNodeType> = new Set([
   "end",
 ]);
 
+/**
+ * Variable reservada: texto crudo del primer mensaje entrante, sembrado por
+ * el Engine cuando el evento "start" lo trae (ver flow-engine.ts). Nunca se
+ * usa automáticamente como respuesta a ningún nodo -- queda disponible para
+ * que el propio grafo (ej. un nodo "ai" que la lea explícitamente) decida
+ * qué hacer con ella. Un flow que no la referencia no cambia de
+ * comportamiento. Mismo patrón que __verifiedResults.
+ */
+export const FIRST_MESSAGE_TEXT_VARIABLE_KEY = "__firstMessageText" as const;
+
 export const FLOW_VALIDATION_CODES = {
   DUPLICATE_NODE_ID: "DUPLICATE_NODE_ID",
   DUPLICATE_EDGE_ID: "DUPLICATE_EDGE_ID",

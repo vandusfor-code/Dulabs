@@ -64,6 +64,54 @@ const BY_ACTION_TYPE: Partial<Record<FlowActionType, ActionCapabilitySpec>> = {
     actionType: "asignar_miembro",
     criticality: "standard",
   },
+  // Fase 0 — adaptador sobre el sistema REAL de especialistas de Daniela
+  // (dulabs_especialistas / dulabs_citas_especialista), no marketplace.
+  consultar_disponibilidad_especialista: {
+    actionType: "consultar_disponibilidad_especialista",
+    criticality: "standard",
+    verifiesOnSuccess: ["appointment.available"],
+    outputVariables: ["disponible"],
+  },
+  agendar_cita_especialista: {
+    actionType: "agendar_cita_especialista",
+    criticality: "critical",
+    // "pendiente" (requiere aprobación, ej. Nicol/pestañas) es un resultado
+    // REAL igual que "confirmada" -- ambos dejan una fila real en
+    // dulabs_citas_especialista que bloquea el horario. La diferencia de
+    // redacción (confirmada vs. solicitud pendiente) es responsabilidad del
+    // nodo AI que lee la variable `estadoCita`, no de la capability.
+    verifiesOnSuccess: ["appointment.reserved"],
+    outputVariables: ["citaId"],
+    requiresFailureBranch: true,
+  },
+  cancelar_cita_especialista: {
+    actionType: "cancelar_cita_especialista",
+    criticality: "critical",
+    requiresFailureBranch: true,
+  },
+  // Fase 1 (Blocker #4). Blocker #7 (gap 3, autorizado): se agrega
+  // verifiesOnSuccess -- la capability se otorga por ÉXITO DE LA LECTURA
+  // real (mismo criterio ya aceptado hoy para
+  // consultar_disponibilidad_especialista/"disponible": no se condiciona al
+  // valor de cantidadCitas). La corrección de datos (¿de verdad hay una
+  // cita?) la garantiza el propio grafo del flow (la condición que exige
+  // cantidadCitas > 0 antes del nodo AI que compone la respuesta), no esta
+  // capability. No requiere rama de fallo explícita por la misma razón que
+  // consultar_disponibilidad_especialista.
+  consultar_citas_activas_especialista: {
+    actionType: "consultar_citas_activas_especialista",
+    criticality: "standard",
+    verifiesOnSuccess: ["appointment.reserved"],
+    outputVariables: ["cantidadCitas"],
+  },
+  // Fase 1 (Blocker #5) — crítica y requiere rama de fallo, mismo criterio
+  // que agendar/cancelar: mueve una cita real, no puede quedar sin ruta si
+  // el horario nuevo está ocupado o algo más falla.
+  mover_cita_especialista: {
+    actionType: "mover_cita_especialista",
+    criticality: "critical",
+    requiresFailureBranch: true,
+  },
 };
 
 /** Specs por semanticTag de webhook (prioridad sobre actionType genérico). */

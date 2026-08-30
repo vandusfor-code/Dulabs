@@ -7,6 +7,7 @@ import { generarRespuestaConEspecialistaIA } from "@/lib/especialista-solicitud-
 import { generarRespuestaConLeadIA } from "@/lib/lead-solicitud-ia";
 import { generarRespuestaAdminEspecialistaIA } from "@/lib/especialista-admin-ia";
 import { tieneEspecialistasActivas, especialistaPorNumero } from "@/lib/especialistas";
+import { debeAtenderConFlow, atenderMensajeConFlowConFallback } from "@/lib/flow-runtime-bridge";
 import { resolverConfigAgente, type ConfigAgenteEfectiva } from "@/lib/agentes";
 import { planDelTenant, mensajesIAMesEfectivo } from "@/lib/plan-limits";
 import { agentePorSlug, INSTRUCCION_ADMIN } from "@/lib/marketplace";
@@ -793,6 +794,33 @@ async function atenderMensaje(
   // (nunca lo abandona) y cuando le toca, ya ve el resultado del anterior.
   const yaTengoCandado = await adquirirCandadoChat(cliente.phone_number_id, telefonoRemitente, mensaje.id);
   try {
+    // Fase 0 (migración a Flow) — puerta EXPLÍCITA y opt-in, ver
+    // lib/flow-routing.ts. flow_activo=false (default de TODO tenant
+    // existente, incluida Daniela) dejaba esto sin efecto: el mensaje sigue
+    // exactamente por el camino LEGACY de siempre, sin ningún cambio.
+    // Fase 0 (gate de prueba por remitente) — telefonoRemitente ya está en
+    // scope de atenderMensaje; ver lib/flow-test-senders.ts para la lista de
+    // prueba temporal por phone_number_id.
+    //
+    // Fase 1 (Blocker #2, autorizado) — fallback de seguridad: si Flow no
+    // pudo atender el mensaje de forma segura (rejected/engineError/
+    // excepción/CAS agotado) Y no le mandó nada a la clienta todavía, NO se
+    // corta la conversación acá -- se sigue exactamente al camino LEGACY de
+    // abajo, sin ningún cambio respecto a un tenant con flow_activo=false.
+    // Ver lib/flow-runtime-bridge.ts::atenderMensajeConFlowConFallback para
+    // las reglas completas (nunca corren Flow y LEGACY en paralelo: esto es
+    // secuencial, dentro del mismo candado de conversación de abajo).
+    if (debeAtenderConFlow(cliente, telefonoRemitente)) {
+      const intentoFlow = await atenderMensajeConFlowConFallback({
+        supabase: supabaseAdmin(),
+        cliente: cliente as typeof cliente & { flow_activo: true; flow_id: string },
+        telefonoCliente: telefonoRemitente,
+        texto: mensaje.text!.body,
+        wamid: mensaje.id,
+      });
+      if (intentoFlow.handled) return;
+    }
+
     const contexto = await resolverContextoMensaje(cliente, destinoWhatsApp);
 
     if (contexto.modo === "agenda") {
