@@ -35,11 +35,15 @@ const actionProposalSchema = z
 
 export const aiOutputSchema = z.discriminatedUnion("mode", [
   z.object({ mode: z.literal("respond"), responseText: z.string() }).strict(),
+  // Blocker #7 (Fix A, autorizado) — classify SOLO puede producir una
+  // clasificación estructurada. Sin responseText: Claude no tiene forma de
+  // colar texto libre que el motor reenvíe como mensaje real (ver
+  // flow-engine.ts, rama classify -- no se modifica, pero deja de poder
+  // dispararse porque este campo ya no existe en la salida validada).
   z
     .object({
       mode: z.literal("classify"),
       classification: z.string().min(1),
-      responseText: z.string().optional(),
     })
     .strict(),
   z.object({ mode: z.literal("extract"), extracted: z.record(z.string(), z.unknown()) }).strict(),
@@ -64,13 +68,14 @@ export function buildAiOutputToolSchema(mode: ClaudeAiMode): Record<string, unkn
         required: ["mode", "responseText"],
       };
     case "classify":
+      // Blocker #7 (Fix A) — sin responseText en el schema que ve Claude:
+      // el modelo no puede ofrecer un campo que no existe en la herramienta.
       return {
         type: "object",
         additionalProperties: false,
         properties: {
           mode: { type: "string", enum: ["classify"] },
           classification: { type: "string" },
-          responseText: { type: "string" },
         },
         required: ["mode", "classification"],
       };

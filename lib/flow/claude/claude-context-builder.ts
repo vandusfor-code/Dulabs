@@ -85,7 +85,17 @@ export function buildAIRequest(input: {
     (typeof payload.__userMessage === "string" ? payload.__userMessage : undefined) ??
     (typeof payload.userMessage === "string" ? payload.userMessage : undefined) ??
     (typeof payload.lastUserMessage === "string" ? payload.lastUserMessage : undefined) ??
-    (typeof payload.text === "string" ? payload.text : undefined);
+    (typeof payload.text === "string" ? payload.text : undefined) ??
+    // Blocker #7 (Fix B, autorizado) — fallback FINAL, solo si ninguno de los
+    // campos anteriores existe. __firstMessageText (Blocker #1) se siembra en
+    // el evento "start" y stripInternalKeys() lo quita del bloque VARIABLES
+    // (empieza con "__"), pero eso no debe impedir que llegue a Claude como
+    // el mensaje real del usuario -- es exactamente lo que el nodo
+    // clasificador del router espera leer. No cambia la prioridad de ningún
+    // campo existente.
+    (typeof payload.__firstMessageText === "string" && payload.__firstMessageText.trim()
+      ? payload.__firstMessageText
+      : undefined);
 
   const historyRaw = payload.__conversationHistory;
   const conversationHistory = Array.isArray(historyRaw)

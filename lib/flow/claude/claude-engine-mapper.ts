@@ -13,8 +13,9 @@ export function mapAiOutputToEngineData(output: ParsedAIOutput): Record<string, 
       data.responseText = output.responseText;
       break;
     case "classify":
+      // Blocker #7 (Fix A) — classify ya no tiene responseText en el output
+      // validado (ver claude-output-schema.ts); no hay nada que reenviar.
       data.classification = output.classification;
-      if (output.responseText) data.responseText = output.responseText;
       break;
     case "extract":
       for (const [key, value] of Object.entries(output.extracted)) {
