@@ -55,7 +55,7 @@ export type ResultadoDisponibilidadEspecialista =
 export type ResultadoCrearCitaEspecialista =
   | { ok: true; cita: CitaEspecialista; especialista: Especialista; estado: "confirmada" | "pendiente" }
   | { ok: false; motivo: "ocupado"; horariosTomados: { especialista: string; inicio: string; fin: string }[] }
-  | { ok: false; motivo: "servicio_no_manejado" | "fuera_de_horario" | "fecha_invalida" | "error"; detalle: string };
+  | { ok: false; motivo: "servicio_no_manejado" | "fuera_de_horario" | "fecha_invalida" | "no_confirmado" | "error"; detalle: string };
 
 export type ResultadoCancelarCitaEspecialista =
   | { ok: true; cita: CitaEspecialista }
@@ -255,6 +255,16 @@ export async function consultarDisponibilidadEspecialista(
  * (constraint EXCLUDE de Postgres vía crearCitaEspecialista) -- nunca
  * "check antes, insert después".
  */
+/**
+ * Fase 2b (bug crítico real, defense-in-depth) — mismo candado real que
+ * cancelarCitaEspecialista/moverCitaEspecialista más abajo: sin
+ * confirmado=true no crea nada, ANTES de cualquier lectura/escritura. El
+ * grafo de Flow (daniela-agendar-cita.flow.ts) ya garantiza estructuralmente
+ * que este action solo se alcanza tras una clasificación 'confirma' -- este
+ * candado es una segunda barrera independiente, no la única: si el grafo
+ * alguna vez cambiara y dejara de proteger este camino, esta función seguiría
+ * rechazando la creación sin confirmado=true.
+ */
 export async function agendarCitaEspecialista(
   supabase: SupabaseClient,
   params: {
@@ -264,9 +274,18 @@ export async function agendarCitaEspecialista(
     fecha: string;
     hora: string;
     nombreCliente: string;
+    confirmado: boolean;
     duracionMinInput?: number;
   },
 ): Promise<ResultadoCrearCitaEspecialista> {
+  if (!params.confirmado) {
+    return {
+      ok: false,
+      motivo: "no_confirmado",
+      detalle:
+        "Todavía no agendes. Primero cuéntale a la clienta el servicio, la fecha, la hora y con quién sería, y pregúntale si confirma. Solo si dice que sí, vuelve a llamar esta acción con confirmado=true.",
+    };
+  }
   const inicio = parseFechaHora(params.fecha, params.hora);
   if (!inicio) return { ok: false, motivo: "fecha_invalida", detalle: "Fecha u hora inválida." };
 

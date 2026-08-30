@@ -589,6 +589,12 @@ export class InternalActionExecutor implements EffectExecutor {
     const fecha = params.fecha ?? "";
     const hora = params.hora ?? "";
     const nombreCliente = params.nombreCliente ?? "";
+    // Fase 2b (bug crítico real, defense-in-depth) — se transporta tal cual
+    // llegue en params (el grafo de Flow lo fija estático en "true" en el
+    // nodo act-agendar, alcanzable solo tras la clasificación 'confirma');
+    // la verificación real ocurre en el adaptador
+    // (especialistas-flow-adaptador.ts::agendarCitaEspecialista), no acá.
+    const confirmado = params.confirmado === "true";
     const duracionMinInput = params.duracionMin ? num(params.duracionMin, 0) : undefined;
 
     if (!phoneNumberId || !telefonoCliente || !servicio || !fecha || !hora || !nombreCliente) {
@@ -611,6 +617,7 @@ export class InternalActionExecutor implements EffectExecutor {
       fecha,
       hora,
       nombreCliente,
+      confirmado,
       duracionMinInput,
     });
 

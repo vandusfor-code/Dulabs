@@ -110,6 +110,134 @@ function danielaDisponible(inicio: Date): boolean {
   return hora >= 14;
 }
 
+// Fase 2 (bug crítico real, prueba 314 sin confirmación) — candado real de
+// código, no solo una instrucción de prompt, exactamente igual en espíritu
+// al que ya existe para cancelar_mi_cita (ver `input.confirmado !== true`
+// más abajo). Aislado por tenant vía `requiere_confirmacion_cita` (default
+// false/undefined = comportamiento LEGACY actual, sin cambio para ningún
+// otro tenant que dependa de la creación inmediata -- ver ClienteConfig en
+// lib/supabase.ts). Exportada para poder probarla en aislamiento sin montar
+// toda la conversación con Claude real.
+export function debeExigirConfirmacionAntesDeCrearCita(
+  cliente: Pick<ClienteConfig, "requiere_confirmacion_cita">,
+  input: Record<string, unknown>,
+): boolean {
+  return cliente.requiere_confirmacion_cita === true && input.confirmado !== true;
+}
+
+// Fase 2 — construye la herramienta crear_solicitud_cita. Cuando el tenant
+// NO tiene requiere_confirmacion_cita=true, es EXACTAMENTE el mismo objeto
+// que existía antes de este cambio (cero diferencia de comportamiento).
+// Exportada para poder probar el schema en aislamiento.
+export function buildCrearSolicitudCitaTool(requiereConfirmacion: boolean): Anthropic.Tool {
+  const baseProperties = {
+    servicio: { type: "string" as const, description: "Nombre del servicio, ej. 'pestañas'" },
+    fecha: { type: "string" as const, description: "Fecha en formato YYYY-MM-DD" },
+    hora: { type: "string" as const, description: "Hora en formato HH:MM (24h)" },
+    nombre_cliente: { type: "string" as const, description: "Nombre de la clienta" },
+    duracion_min: {
+      type: "number" as const,
+      description:
+        "Duración estimada en minutos según lo que diga la información del negocio para ese servicio (ej. 180 para algo que toma 3 horas). Si no tienes esa información, omite este campo.",
+    },
+  };
+  const baseRequired = ["servicio", "fecha", "hora", "nombre_cliente"];
+
+  if (!requiereConfirmacion) {
+    return {
+      name: "crear_solicitud_cita",
+      description:
+        "Agenda la cita para un servicio con agenda real -- queda CONFIRMADA de una vez, no necesita aprobación de nadie. Solo llamar cuando ya tengas servicio, fecha, hora y nombre confirmados por la clienta. Si el horario pedido está ocupado, la herramienta te devuelve los horarios ya tomados ese día para que le propongas a la clienta uno libre.",
+      input_schema: { type: "object", properties: baseProperties, required: baseRequired },
+    };
+  }
+
+  return {
+    name: "crear_solicitud_cita",
+    description:
+      "Agenda la cita para un servicio con agenda real -- pero SOLO queda creada después de que la clienta confirme explícitamente que sí quiere agendar. Primero reúne servicio/fecha/hora/nombre y llama esta herramienta SIN confirmado (o con confirmado=false) para que te diga qué disponibilidad real hay; cuéntaselo a la clienta y pregúntale si confirma. Solo cuando responda que sí, vuelve a llamar esta MISMA herramienta con confirmado=true. Si el horario pedido está ocupado, te devuelve los horarios ya tomados ese día.",
+    input_schema: {
+      type: "object",
+      properties: {
+        ...baseProperties,
+        confirmado: {
+          type: "boolean",
+          description:
+            "true únicamente si la clienta ya confirmó explícitamente (ej. 'sí', 'confirmo', 'dale', 'correcto') que quiere agendar la cita propuesta. Si es la primera vez que reúnes estos datos, NO pases true todavía -- pregúntale primero si confirma.",
+        },
+      },
+      required: [...baseRequired, "confirmado"],
+    },
+  };
+}
+
+// Fase 2b (bug crítico real, cierre de huecos adicionales) — mismo patrón
+// que buildCrearSolicitudCitaTool: cuando requiereConfirmacion es false, el
+// objeto devuelto es IDÉNTICO al original (cero cambio de comportamiento
+// para cualquier tenant sin el flag). Exportada para poder probar el schema
+// en aislamiento.
+export function buildCambiarHoraMiCitaTool(requiereConfirmacion: boolean): Anthropic.Tool {
+  const baseProperties = {
+    fecha: { type: "string" as const, description: "Nueva fecha en formato YYYY-MM-DD" },
+    hora: { type: "string" as const, description: "Nueva hora en formato HH:MM (24h)" },
+  };
+  const baseRequired = ["fecha", "hora"];
+
+  if (!requiereConfirmacion) {
+    return {
+      name: "cambiar_hora_mi_cita",
+      description:
+        "Cambia la fecha/hora de la cita que la clienta ya tiene agendada, a una nueva -- si está libre, queda CONFIRMADA de una vez, no necesita aprobación. Solo llamar cuando ya tengas la nueva fecha y hora confirmadas por la clienta. Si el nuevo horario está ocupado, te devuelve los horarios tomados ese día para proponer alternativas.",
+      input_schema: { type: "object", properties: baseProperties, required: baseRequired },
+    };
+  }
+
+  return {
+    name: "cambiar_hora_mi_cita",
+    description:
+      "Cambia la fecha/hora de la cita que la clienta ya tiene agendada -- pero SOLO queda cambiada después de que la clienta confirme explícitamente la nueva fecha/hora. Primero reúne la nueva fecha y hora y llama esta herramienta SIN confirmado (o con confirmado=false) para saber si ese horario está libre; cuéntaselo y pregúntale si confirma el cambio. Solo cuando responda que sí, vuelve a llamar esta MISMA herramienta con confirmado=true.",
+    input_schema: {
+      type: "object",
+      properties: {
+        ...baseProperties,
+        confirmado: {
+          type: "boolean",
+          description:
+            "true únicamente si la clienta ya confirmó explícitamente (ej. 'sí', 'confirmo', 'dale') que quiere mover su cita a la nueva fecha/hora propuesta. Si es la primera vez, NO pases true todavía -- pregúntale primero.",
+        },
+      },
+      required: [...baseRequired, "confirmado"],
+    },
+  };
+}
+
+export function buildAceptarPropuestaHorarioTool(requiereConfirmacion: boolean): Anthropic.Tool {
+  if (!requiereConfirmacion) {
+    return {
+      name: "aceptar_propuesta_horario",
+      description: "La clienta acepta el nuevo horario que la especialista le propuso. Llamar sin argumentos.",
+      input_schema: { type: "object", properties: {} },
+    };
+  }
+
+  return {
+    name: "aceptar_propuesta_horario",
+    description:
+      "La clienta acepta el nuevo horario que la especialista le propuso -- pero SOLO queda aceptado si su mensaje fue un sí claro e inequívoco. Llama esta herramienta con confirmado=true únicamente cuando la clienta haya respondido afirmativamente de forma clara (ej. 'sí', 'dale', 'me sirve', 'confirmo') a la propuesta. Que la especialista haya propuesto el horario NO es lo mismo que la clienta ya haya aceptado -- espera su respuesta real.",
+    input_schema: {
+      type: "object",
+      properties: {
+        confirmado: {
+          type: "boolean",
+          description:
+            "true únicamente si la clienta respondió con un sí claro e inequívoco a la propuesta de horario. Ante cualquier duda o respuesta ambigua, NO pases true -- usa rechazar_propuesta_horario o pídele que aclare.",
+        },
+      },
+      required: ["confirmado"],
+    },
+  };
+}
+
 // Igual que generarRespuestaIA (lib/ia.ts), pero con UNA herramienta real:
 // crear una solicitud de cita para un servicio que tiene especialista propia
 // con agenda (ej. pestañas -> Nicol). El resto de servicios del negocio
@@ -183,26 +311,7 @@ export async function generarRespuestaConEspecialistaIA(params: {
   let huboResultadoRealDeAgendaEsteTurno = false;
 
   const tools: Anthropic.Tool[] = [
-    {
-      name: "crear_solicitud_cita",
-      description:
-        "Agenda la cita para un servicio con agenda real -- queda CONFIRMADA de una vez, no necesita aprobación de nadie. Solo llamar cuando ya tengas servicio, fecha, hora y nombre confirmados por la clienta. Si el horario pedido está ocupado, la herramienta te devuelve los horarios ya tomados ese día para que le propongas a la clienta uno libre.",
-      input_schema: {
-        type: "object",
-        properties: {
-          servicio: { type: "string", description: "Nombre del servicio, ej. 'pestañas'" },
-          fecha: { type: "string", description: "Fecha en formato YYYY-MM-DD" },
-          hora: { type: "string", description: "Hora en formato HH:MM (24h)" },
-          nombre_cliente: { type: "string", description: "Nombre de la clienta" },
-          duracion_min: {
-            type: "number",
-            description:
-              "Duración estimada en minutos según lo que diga la información del negocio para ese servicio (ej. 180 para algo que toma 3 horas). Si no tienes esa información, omite este campo.",
-          },
-        },
-        required: ["servicio", "fecha", "hora", "nombre_cliente"],
-      },
-    },
+    buildCrearSolicitudCitaTool(params.cliente.requiere_confirmacion_cita === true),
     {
       name: "derivar_a_daniela_por_producto",
       description:
@@ -250,6 +359,10 @@ export async function generarRespuestaConEspecialistaIA(params: {
     `La respuesta también trae "con": el nombre de quién REALMENTE va a atender la cita. Si la clienta pidió a alguien en particular pero el servicio se manejaba entre varias personas (manos o pies) y no era esa persona exclusiva, puede que "con" no sea la persona que ella pidió -- en ese caso, díselo con naturalidad en la misma confirmación ("te la dejé con Carla que tenía espacio a esa hora, ¿te sirve?"), nunca digas el nombre de quien ella pidió si la herramienta te devolvió otro nombre distinto.\n` +
     `Si la herramienta te dice que el horario está ocupado, te va a devolver los horarios que ya están tomados ese día (horarios_tomados, ya en hora de Colombia). Mira esa lista, calcula tú misma 1 o 2 huecos libres dentro del horario de atención del negocio, y ofréceselos a la clienta en tu respuesta de texto ("tengo espacio a las X o a las Y, ¿cuál te queda mejor?") -- NO vuelvas a llamar la herramienta para "probar" otro horario a ciegas, eso ya lo sabes por la lista que te devolvió. Nunca inventes ni asumas disponibilidad que la herramienta no te confirmó.\n` +
     `Para cualquier OTRO servicio que no tenga esa herramienta, sigues funcionando igual que siempre: solo tomas nota de la solicitud en texto, sin agenda real todavía.\n\n` +
+    (params.cliente.requiere_confirmacion_cita === true
+      ? `--- Confirmación obligatoria antes de agendar ---\n` +
+        `Para esta clienta, agendar SIEMPRE requiere que ella confirme explícitamente antes de que la cita quede creada. Reúne servicio/fecha/hora/nombre, dile con naturalidad qué encontraste disponible (servicio, fecha, hora y con quién sería) y pregúntale si confirma. Solo si responde que sí, vuelve a llamar crear_solicitud_cita con confirmado=true. Si dice que no, o algo ambiguo, NO llames la herramienta con confirmado=true -- respeta su respuesta y no insistas en agendar sin que ella lo pida de nuevo.\n\n`
+      : "") +
     `--- Regla innegociable: nunca inventes una confirmación ---\n` +
     `NUNCA le digas a la clienta que su cita "ya quedó", "quedó confirmada" o "quedó agendada" a menos que hayas llamado crear_solicitud_cita o cambiar_hora_mi_cita EN ESTE MISMO mensaje y la herramienta te haya devuelto success:true. No repitas ni dediques de un turno anterior si en este turno no volviste a llamar la herramienta -- la disponibilidad pudo cambiar. Si la clienta manda un sticker, un emoji suelto, una nota de voz o cualquier cosa que no sea texto claro como respuesta a una pregunta de horario, NO lo interpretes como un "sí" a nada -- pídele con cariño que te confirme por escrito el servicio, el día y la hora exactos en un solo mensaje, y espera esa respuesta antes de llamar la herramienta.\n\n` +
     `--- Productos y saludo con botones ---\n` +
@@ -281,11 +394,7 @@ export async function generarRespuestaConEspecialistaIA(params: {
 
   if (propuesta) {
     tools.push(
-      {
-        name: "aceptar_propuesta_horario",
-        description: "La clienta acepta el nuevo horario que la especialista le propuso. Llamar sin argumentos.",
-        input_schema: { type: "object", properties: {} },
-      },
+      buildAceptarPropuestaHorarioTool(params.cliente.requiere_confirmacion_cita === true),
       {
         name: "rechazar_propuesta_horario",
         description:
@@ -299,19 +408,7 @@ export async function generarRespuestaConEspecialistaIA(params: {
       `Interpreta su próximo mensaje como esa respuesta: si acepta (sí, dale, listo, me sirve, etc.) usa aceptar_propuesta_horario. Si no acepta o pide otro horario, usa rechazar_propuesta_horario, y luego ayúdala a encontrar uno nuevo con crear_solicitud_cita como de costumbre.`;
   } else if (citaActiva) {
     tools.push(
-      {
-        name: "cambiar_hora_mi_cita",
-        description:
-          "Cambia la fecha/hora de la cita que la clienta ya tiene agendada, a una nueva -- si está libre, queda CONFIRMADA de una vez, no necesita aprobación. Solo llamar cuando ya tengas la nueva fecha y hora confirmadas por la clienta. Si el nuevo horario está ocupado, te devuelve los horarios tomados ese día para proponer alternativas.",
-        input_schema: {
-          type: "object",
-          properties: {
-            fecha: { type: "string", description: "Nueva fecha en formato YYYY-MM-DD" },
-            hora: { type: "string", description: "Nueva hora en formato HH:MM (24h)" },
-          },
-          required: ["fecha", "hora"],
-        },
-      },
+      buildCambiarHoraMiCitaTool(params.cliente.requiere_confirmacion_cita === true),
       {
         name: "cancelar_mi_cita",
         description:
@@ -378,6 +475,17 @@ export async function generarRespuestaConEspecialistaIA(params: {
       huboResultadoRealDeAgendaEsteTurno = true;
     }
     if (nombre === "aceptar_propuesta_horario") {
+      // Fase 2b (bug crítico real) — candado real de código, antes de tocar
+      // Supabase. Que la especialista haya propuesto un horario NO es lo
+      // mismo que la clienta ya lo haya aceptado -- solo aplica si el
+      // tenant tiene requiere_confirmacion_cita=true (default false = sin
+      // cambio para el resto).
+      if (debeExigirConfirmacionAntesDeCrearCita(params.cliente, input)) {
+        return JSON.stringify({
+          success: false,
+          error: "Todavía no la aceptes. Espera a que la clienta responda con un sí claro e inequívoco a la propuesta, y vuelve a llamar esta misma herramienta con confirmado=true.",
+        });
+      }
       if (!propuesta) return JSON.stringify({ success: false, error: "No hay ninguna propuesta pendiente." });
       const cita = await aceptarPropuesta(params.supabase, propuesta.id);
       return JSON.stringify(cita ? { success: true } : { success: false, error: "Esa propuesta ya no está disponible." });
@@ -405,6 +513,14 @@ export async function generarRespuestaConEspecialistaIA(params: {
       return JSON.stringify({ success: true });
     }
     if (nombre === "cambiar_hora_mi_cita") {
+      // Fase 2b (bug crítico real) — candado real de código, antes de
+      // CUALQUIER escritura (ni crear la nueva ni cancelar la vieja).
+      if (debeExigirConfirmacionAntesDeCrearCita(params.cliente, input)) {
+        return JSON.stringify({
+          success: false,
+          error: "Todavía no la cambies. Primero cuéntale a la clienta el nuevo día y hora que encontraste disponibles, y pregúntale si confirma el cambio. Solo si dice que sí, vuelve a llamar esta misma herramienta con confirmado=true.",
+        });
+      }
       if (!citaActiva) return JSON.stringify({ success: false, error: "No tiene ninguna cita activa." });
       const especialista = await especialistaPorId(params.supabase, citaActiva.especialista_id);
       if (!especialista) return JSON.stringify({ success: false, error: "No se pudo procesar el cambio." });
@@ -466,6 +582,17 @@ export async function generarRespuestaConEspecialistaIA(params: {
   }
 
   async function ejecutarHerramienta(input: Record<string, unknown>): Promise<string> {
+    // Fase 2 (bug crítico real, prueba 314 sin confirmación) — candado real
+    // de código, antes de tocar Supabase. Solo aplica si el tenant tiene
+    // requiere_confirmacion_cita=true (default false = sin cambio). Mismo
+    // espíritu que el candado ya existente para cancelar_mi_cita más arriba.
+    if (debeExigirConfirmacionAntesDeCrearCita(params.cliente, input)) {
+      return JSON.stringify({
+        success: false,
+        error:
+          "Todavía no la agendes. Primero cuéntale a la clienta el servicio, la fecha, la hora y con quién sería, y pregúntale si confirma. Solo si dice que sí, vuelve a llamar esta misma herramienta con confirmado=true.",
+      });
+    }
     const servicio = String(input.servicio ?? "");
     const fecha = String(input.fecha ?? "");
     const hora = String(input.hora ?? "");

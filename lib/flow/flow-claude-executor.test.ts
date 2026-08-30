@@ -18,7 +18,7 @@ import { buildClaudeSystemPrompt, buildClaudeUserMessages } from "@/lib/flow/cla
 import { buildAIExecutionContext } from "@/lib/flow/claude/claude-context-builder";
 import { parseAiOutputJson, containsProhibitedEvidenceFields } from "@/lib/flow/claude/claude-output-schema";
 import { createInitialAiBudget, checkAiBudget, applyAiUsage } from "@/lib/flow/claude/claude-budget";
-import type { AnthropicMessagesClient } from "@/lib/flow/claude/claude-types";
+import { DEFAULT_AI_BUDGET_LIMITS, type AnthropicMessagesClient } from "@/lib/flow/claude/claude-types";
 import { validateSecurityRules } from "@/lib/flow/validate-security";
 import type { FlowDefinition } from "@/lib/flow/types";
 import { sanitizeExecutorDispatchResult } from "@/lib/flow/executor-framework";
@@ -92,6 +92,26 @@ describe("Claude Executor — Fase 4.2 modes", () => {
   });
 
   it("2. classify", async () => {
+    // Blocker #7 (Fix A) -- este test antes mockeaba responseText junto a
+    // classification y solo afirmaba result.data?.classification. Desde el
+    // Fix A, aiOutputSchema ya no acepta responseText en mode:"classify"
+    // (.strict() la rechaza como campo no declarado) -- si el mock la
+    // incluyera, parseAiOutputJson fallaría con schema_validation y
+    // result.success sería false, rompiendo la aserción original. Se quita
+    // responseText del mock porque documentaba exactamente el bug que este
+    // blocker cierra: classify ya no puede producir texto libre.
+    const executor = claudeWithMock(
+      mockAnthropicClient({ mode: "classify", classification: "commercial" }),
+    );
+    const result = await executor.dispatch(
+      baseAiRequest({ ai: { instruction: "Clasifica", mode: "classify", classifications: ["commercial"] } }),
+      { tenantId: TENANT_A, internal: true },
+    );
+    assert.equal(result.success, true);
+    assert.equal(result.data?.classification, "commercial");
+  });
+
+  it("2b. classify + responseText (Blocker #7, Fix A) -- Claude ya NO puede colar texto libre, el efecto falla cerrado", async () => {
     const executor = claudeWithMock(
       mockAnthropicClient({ mode: "classify", classification: "commercial", responseText: "Te ayudo" }),
     );
@@ -99,7 +119,9 @@ describe("Claude Executor — Fase 4.2 modes", () => {
       baseAiRequest({ ai: { instruction: "Clasifica", mode: "classify", classifications: ["commercial"] } }),
       { tenantId: TENANT_A, internal: true },
     );
-    assert.equal(result.data?.classification, "commercial");
+    assert.equal(result.success, false, "un responseText en classify ya no es una salida válida -- debe fallar cerrado, nunca reenviarse como mensaje");
+    assert.equal(result.classification, EFFECT_RESULT_CLASSIFICATIONS.VALIDATION_ERROR);
+    assert.ok(result.data?.responseText === undefined, "jamás debe llegar responseText al engine para classify");
   });
 
   it("3. extract", async () => {
@@ -306,6 +328,49 @@ describe("Claude Executor — budget", () => {
     for (let i = 0; i < 10; i++) b = applyAiUsage(b, {});
     const check = checkAiBudget(b, { maxAiCalls: 10, maxInputTokens: 99999, maxOutputTokens: 99999, maxExecutionDurationMs: 99999 });
     assert.equal(check.ok, false);
+  });
+
+  // Fase 1 (bug crítico real, prueba 314 sin confirmación) -- causa raíz
+  // exacta: antes, el presupuesto medía reloj de pared desde la PRIMERA
+  // llamada AI de la ejecución (startedAtMs), y una clienta real tardando
+  // minutos entre preguntas agotaba el límite (120s) sin que ninguna
+  // llamada real a Claude fuera lenta. Ver claude-budget.ts/claude-types.ts.
+
+  it("23. conversación real de 5+ minutos entre mensajes (como el caso real del 314) -- NO debe fallar si el procesamiento real de Claude fue rápido", () => {
+    // startedAtMs hace 5 minutos (309s, igual al caso real auditado), pero
+    // cada llamada real a Claude tardó poco -- exactamente el escenario que
+    // rompía el diseño anterior.
+    const CINCO_MINUTOS_ATRAS = Date.now() - 309_000;
+    let budget = createInitialAiBudget(CINCO_MINUTOS_ATRAS);
+    // 4 llamadas AI reales ya resueltas en esta ejecución (router + 3 nodos),
+    // cada una tardó ~1.5s reales -- muy por debajo del límite de 120s.
+    for (let i = 0; i < 4; i++) {
+      budget = applyAiUsage(budget, { inputTokens: 500, outputTokens: 50, durationMs: 1500 });
+    }
+    const check = checkAiBudget(budget, DEFAULT_AI_BUDGET_LIMITS);
+    assert.equal(check.ok, true, "el presupuesto NO debe fallar solo porque la clienta tardó minutos en responder");
+  });
+
+  it("24. sí debe fallar si el tiempo de PROCESAMIENTO real acumulado (no el reloj de pared) supera el límite", () => {
+    const budget = createInitialAiBudget(Date.now());
+    const conProcesamientoLargo = applyAiUsage(budget, { inputTokens: 100, outputTokens: 100, durationMs: 130_000 });
+    const check = checkAiBudget(conProcesamientoLargo, DEFAULT_AI_BUDGET_LIMITS);
+    assert.equal(check.ok, false);
+    assert.equal((check as { reason: string }).reason, "max_execution_duration_exceeded");
+  });
+
+  it("25. dispatch real end-to-end: ClaudeExecutor.dispatch() con un budget que simula 5 minutos de reloj de pared no falla por tiempo", async () => {
+    const executor = claudeWithMock(mockAnthropicClient({ mode: "respond", responseText: "ok" }));
+    const budgetViejo = applyAiUsage(createInitialAiBudget(Date.now() - 309_000), {
+      inputTokens: 500,
+      outputTokens: 50,
+      durationMs: 1500,
+    });
+    const result = await executor.dispatch(
+      baseAiRequest({ payload: { __dulabsAiBudget: budgetViejo } }),
+      { tenantId: TENANT_A, internal: true },
+    );
+    assert.equal(result.success, true);
   });
 });
 

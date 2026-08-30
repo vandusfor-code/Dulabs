@@ -74,12 +74,27 @@ export interface AiBudgetState {
   inputTokens: number;
   outputTokens: number;
   startedAtMs: number;
+  /**
+   * Fase 1 (bug crítico real, prueba 314) — suma de la duración REAL de cada
+   * llamada a Claude ya resuelta en esta ejecución (ver claude-executor.ts,
+   * `Date.now() - started` por llamada). Antes, `checkAiBudget` comparaba
+   * `maxExecutionDurationMs` contra `Date.now() - startedAtMs` (reloj de
+   * pared desde la PRIMERA llamada AI de toda la ejecución) -- eso confundía
+   * "tiempo que Claude tardó procesando" con "tiempo que la clienta tardó
+   * escribiendo sus respuestas", y una conversación real de WhatsApp con
+   * varias preguntas fácilmente supera 120s de reloj de pared sin que
+   * ninguna llamada real haya sido lenta. Opcional para no romper objetos
+   * `AiBudgetState` ya persistidos/serializados antes de este cambio -- se
+   * trata como 0 si no existe.
+   */
+  totalProcessingMs?: number;
 }
 
 export interface AiBudgetLimits {
   maxAiCalls: number;
   maxInputTokens: number;
   maxOutputTokens: number;
+  /** Medido contra `totalProcessingMs` (tiempo real acumulado dentro de llamadas a Claude), no contra reloj de pared desde el inicio de la ejecución. */
   maxExecutionDurationMs: number;
 }
 

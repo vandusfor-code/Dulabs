@@ -9,10 +9,18 @@ import type { FlowDefinition } from "@/lib/flow/types";
  * (lib/especialistas-flow-adaptador.ts):
  *
  *   saludo → identificar servicio → fecha/hora → nombre
- *   → consultar disponibilidad REAL (acción, no la IA)
+ *   → consultar disponibilidad REAL (acción directa, sin nodo AI intermedio
+ *     -- ver nota de Fase 1 más abajo)
  *   → ¿disponible? no → avisar y terminar
- *                  sí → proponer horario a la IA para confirmar con la clienta
- *   → agendar cita REAL (acción crítica, constraint EXCLUDE real)
+ *                  sí → un nodo AI (mode: respond) le cuenta a la clienta lo
+ *                       que encontró disponible (servicio/fecha/hora/
+ *                       especialista, datos REALES de la acción, nunca
+ *                       inventados) -- todavía NO pregunta nada
+ *   → PREGUNTA EXPLÍCITA "¿Deseas confirmar la cita?" (nodo question)
+ *   → clasificar la respuesta: confirma / no_confirma
+ *       no confirma (o cualquier respuesta ambigua, por default) → abandona,
+ *                                                                   NO agenda nada
+ *       confirma → agendar cita REAL (acción directa, constraint EXCLUDE real)
  *   → ¿se creó? no → informar "ocupado"/error, nunca decir que quedó agendada
  *                sí → SOLO ENTONCES un nodo AI (mode: respond) redacta la
  *                     confirmación, leyendo las variables reales que dejó la
@@ -23,18 +31,53 @@ import type { FlowDefinition } from "@/lib/flow/types";
  *                     bloquearía por falta de evidencia si la acción no
  *                     hubiera corrido antes en este mismo turno.
  *
+ * Fase 1 (bug crítico real, prueba con el 314, autorizado) — dos cambios
+ * sobre el diseño original:
+ *
+ *   1. `ai-consultar` y `ai-agendar` (ambos `mode: "propose_action"`)
+ *      quedaron eliminados. Investigación confirmó que eran puro
+ *      passthrough: `act-consultar`/`act-agendar` ya reciben servicio/
+ *      fecha/hora/nombreCliente directamente de `state.variables` (el motor
+ *      mezcla el payload de la acción con las variables reales, ver
+ *      internal-action-executor.ts::mergeParams) -- el nodo AI no aportaba
+ *      ninguna interpretación real, solo "proponía" una llamada con datos
+ *      que ya existían. Consumían presupuesto de IA (`checkAiBudget`) sin
+ *      necesidad, y ESE fue el mecanismo exacto del bug real: el
+ *      presupuesto de ejecución (`maxExecutionDurationMs`, ver
+ *      lib/flow/claude/claude-budget.ts) se mide desde la PRIMERA llamada
+ *      AI de toda la ejecución (el classify del router), y una clienta real
+ *      tardando minutos en escribir servicio/fecha/hora/nombre agotaba ese
+ *      presupuesto antes de llegar a `ai-consultar`, sin que ninguna
+ *      llamada real a Claude/Supabase hubiera sido lenta. `validate-
+ *      security.ts` solo exige rama de fallo para acciones `critical`
+ *      (agendar_cita_especialista) -- no exige que una acción esté
+ *      precedida por un nodo AI, así que conectar `q-nombre`/`ai-clasificar-
+ *      confirmacion` directo a los nodos `action` es válido para publicar.
+ *
+ *   2. Se agregó la barrera de confirmación explícita
+ *      (`q-confirmar-cita` → `ai-clasificar-confirmacion`) que este diseño
+ *      NUNCA tuvo -- replicando el patrón ya probado de
+ *      lib/flows/daniela-cancelar-cita.flow.ts. Antes de este cambio, el
+ *      camino "sí hay disponibilidad" iba derecho a agendar sin preguntar
+ *      nada; la única garantía existente era "no mentir sobre el resultado
+ *      antes de que la acción corriera", no "pedir permiso antes de actuar".
+ *      `act-agendar` ahora es alcanzable ÚNICAMENTE desde la arista
+ *      `class:confirma` de `ai-clasificar-confirmacion` -- verificado por
+ *      test de alcanzabilidad en daniela-agendar-cita.flow.test.ts, igual
+ *      que ya existe para `act-cancelar` en el flow de cancelación.
+ *
  * Simplificado a propósito para esta fase de diseño (documentado en
- * DANIELA_PROMPT_A_FLOW.md): sin ramas de cancelar/reagendar, sin las
- * frases exactas de la personalidad de marca, sin el desvío a "Daniela por
- * producto" — esas son iteraciones de Builder posteriores, no necesarias
- * para demostrar que el adaptador y la arquitectura de evidencia sostienen
- * el caso de uso central.
+ * DANIELA_PROMPT_A_FLOW.md): sin ramas de reagendar, sin las frases exactas
+ * de la personalidad de marca, sin el desvío a "Daniela por producto" --
+ * esas son iteraciones de Builder posteriores, no necesarias para demostrar
+ * que el adaptador y la arquitectura de evidencia sostienen el caso de uso
+ * central.
  */
 export function danielaAgendarCitaFlow(): FlowDefinition {
   return {
-    name: "Daniela — Agendar cita (Fase 0, diseño)",
+    name: "Daniela — Agendar cita (Fase 1, corrección bug confirmación)",
     description:
-      "Reproduce el camino real de agendamiento de Daniela sobre dulabs_especialistas / dulabs_citas_especialista vía el adaptador de Fase 0. NO activado para ningún tenant.",
+      "Reproduce el camino real de agendamiento de Daniela sobre dulabs_especialistas / dulabs_citas_especialista vía el adaptador de Fase 0, con barrera de confirmación explícita antes de agendar (Fase 1). NO activado para ningún tenant.",
     nodes: [
       { id: "start", type: "start", config: { triggerType: "first_message" } },
 
@@ -68,16 +111,8 @@ export function danielaAgendarCitaFlow(): FlowDefinition {
         config: { text: "¿A nombre de quién la agendo?", variableKey: "nombreCliente", required: true, validation: { kind: "text" } },
       },
 
-      {
-        id: "ai-consultar",
-        type: "ai",
-        config: {
-          instruction:
-            "Vas a consultar disponibilidad real para el servicio, fecha y hora que dio la clienta. Propone la acción consultar_disponibilidad_especialista con esos datos. No afirmes nada sobre disponibilidad tú misma -- eso lo decide la herramienta.",
-          mode: "propose_action",
-          allowedTools: ["consultar_disponibilidad_especialista"],
-        },
-      },
+      // Fase 1 — acción DIRECTA, sin nodo AI intermedio (ver nota de diseño
+      // arriba). servicio/fecha ya están en state.variables.
       {
         id: "act-consultar",
         type: "action",
@@ -114,20 +149,64 @@ export function danielaAgendarCitaFlow(): FlowDefinition {
         },
       },
 
+      // Fase 1 — informa la disponibilidad real encontrada (datos de
+      // act-consultar: servicio/fecha/hora/especialista), pero TODAVÍA no
+      // pregunta nada -- eso lo hace q-confirmar-cita a continuación. Mismo
+      // patrón que ai-identificar-unica en daniela-cancelar-cita.flow.ts.
       {
-        id: "ai-agendar",
+        id: "ai-proponer-cita",
         type: "ai",
         config: {
           instruction:
-            "Hay disponibilidad real confirmada para lo que pidió la clienta. Propone la acción agendar_cita_especialista con servicio, fecha, hora y nombreCliente. NUNCA le digas a la clienta que su cita quedó agendada antes de que esta acción corra y tengas su resultado real.",
-          mode: "propose_action",
-          allowedTools: ["agendar_cita_especialista"],
+            "Hay disponibilidad real confirmada para lo que pidió la clienta, en las variables servicio, fecha, hora y especialista (ya reales, verificadas por la herramienta de consulta -- no las inventes ni las cambies). Cuéntale con naturalidad qué encontraste disponible: el servicio, el día, la hora y con quién sería. Todavía NO le preguntes si confirma -- eso lo hace la pregunta siguiente. NUNCA digas que la cita ya quedó agendada, solo que hay disponibilidad para eso.",
+          mode: "respond",
+        },
+      },
+
+      // Fase 1 — barrera de confirmación explícita (nunca existió antes).
+      // Replica el patrón ya probado de daniela-cancelar-cita.flow.ts:
+      // question (texto fijo) -> classify (confirma/no_confirma) -> SOLO
+      // "confirma" llega a la acción real.
+      {
+        id: "q-confirmar-cita",
+        type: "question",
+        config: {
+          text: "¿Deseas confirmar la cita?",
+          variableKey: "respuestaConfirmacionAgendarTexto",
+          required: true,
+          validation: { kind: "text" },
         },
       },
       {
+        id: "ai-clasificar-confirmacion",
+        type: "ai",
+        config: {
+          instruction:
+            "La clienta respondió, en respuestaConfirmacionAgendarTexto, a la pregunta de si confirma agendar la cita propuesta. Clasifica su respuesta como 'confirma' SOLO si es un sí claro e inequívoco (ej. 'sí', 'confirmo', 'dale', 'correcto', 'de una'). Cualquier otra cosa -- un no, una duda, 'mejor no', un cambio de tema, o cualquier respuesta que no sea un sí claro -- clasifícala como 'no_confirma'. Ante la duda, SIEMPRE 'no_confirma': nunca asumas que sí quiere agendar.",
+          mode: "classify",
+          classifications: ["confirma", "no_confirma"],
+        },
+      },
+      {
+        id: "msg-cita-no-confirmada",
+        type: "message",
+        config: {
+          text: "Entendido, no agendo nada por ahora 💛 Aquí estoy si quieres agendar en otro momento.",
+          messageRole: "informational",
+        },
+      },
+
+      // Fase 1 — acción DIRECTA, sin nodo AI intermedio. Solo alcanzable
+      // desde la arista class:confirma de ai-clasificar-confirmacion (ver
+      // test de alcanzabilidad). Fase 2b (defense-in-depth) — params.confirmado
+      // fijo en "true": es seguro porque este nodo es estructuralmente
+      // inalcanzable salvo tras 'confirma', y el adaptador
+      // (especialistas-flow-adaptador.ts::agendarCitaEspecialista) vuelve a
+      // exigirlo como segunda barrera independiente, no decorativa.
+      {
         id: "act-agendar",
         type: "action",
-        config: { actionType: "agendar_cita_especialista" },
+        config: { actionType: "agendar_cita_especialista", params: { confirmado: "true" } },
       },
 
       {
@@ -152,6 +231,7 @@ export function danielaAgendarCitaFlow(): FlowDefinition {
       { id: "end-confirmado", type: "end", config: {} },
       { id: "end-sin-disponibilidad", type: "end", config: {} },
       { id: "end-ocupado", type: "end", config: {} },
+      { id: "end-no-confirmada", type: "end", config: {} },
     ],
     edges: [
       { id: "e-start", source: "start", target: "msg-saludo" },
@@ -159,19 +239,24 @@ export function danielaAgendarCitaFlow(): FlowDefinition {
       { id: "e-servicio-fecha", source: "q-servicio", target: "q-fecha" },
       { id: "e-fecha-hora", source: "q-fecha", target: "q-hora" },
       { id: "e-hora-nombre", source: "q-hora", target: "q-nombre" },
-      { id: "e-nombre-ai-consultar", source: "q-nombre", target: "ai-consultar" },
-
-      { id: "e-ai-consultar-success", source: "ai-consultar", target: "act-consultar", sourceHandle: FLOW_EDGE_HANDLE.aiSuccess },
+      { id: "e-nombre-consultar", source: "q-nombre", target: "act-consultar" },
 
       { id: "e-consultar-cond", source: "act-consultar", target: "cond-disponible", sourceHandle: FLOW_EDGE_HANDLE.aiSuccess },
       { id: "e-consultar-no-reconocido", source: "act-consultar", target: "msg-servicio-no-reconocido", sourceHandle: FLOW_EDGE_HANDLE.aiFailure },
       { id: "e-no-reconocido-reintentar", source: "msg-servicio-no-reconocido", target: "q-servicio" },
 
-      { id: "e-cond-true", source: "cond-disponible", target: "ai-agendar", sourceHandle: FLOW_EDGE_HANDLE.conditionTrue },
+      { id: "e-cond-true", source: "cond-disponible", target: "ai-proponer-cita", sourceHandle: FLOW_EDGE_HANDLE.conditionTrue },
       { id: "e-cond-false", source: "cond-disponible", target: "msg-sin-disponibilidad", sourceHandle: FLOW_EDGE_HANDLE.conditionFalse },
       { id: "e-sin-disponibilidad-end", source: "msg-sin-disponibilidad", target: "end-sin-disponibilidad" },
 
-      { id: "e-ai-agendar-success", source: "ai-agendar", target: "act-agendar", sourceHandle: FLOW_EDGE_HANDLE.aiSuccess },
+      { id: "e-proponer-a-confirmar", source: "ai-proponer-cita", target: "q-confirmar-cita", sourceHandle: FLOW_EDGE_HANDLE.aiSuccess },
+      { id: "e-confirmar-a-clasificar", source: "q-confirmar-cita", target: "ai-clasificar-confirmacion" },
+
+      { id: "e-no-confirma", source: "ai-clasificar-confirmacion", target: "msg-cita-no-confirmada", sourceHandle: FLOW_EDGE_HANDLE.aiClass("no_confirma") },
+      { id: "e-no-confirma-default", source: "ai-clasificar-confirmacion", target: "msg-cita-no-confirmada", sourceHandle: FLOW_EDGE_HANDLE.aiDefault },
+      { id: "e-no-confirmada-end", source: "msg-cita-no-confirmada", target: "end-no-confirmada" },
+
+      { id: "e-confirma-agendar", source: "ai-clasificar-confirmacion", target: "act-agendar", sourceHandle: FLOW_EDGE_HANDLE.aiClass("confirma") },
 
       { id: "e-agendar-success", source: "act-agendar", target: "ai-confirmar", sourceHandle: FLOW_EDGE_HANDLE.aiSuccess },
       { id: "e-agendar-failure", source: "act-agendar", target: "msg-ocupado", sourceHandle: FLOW_EDGE_HANDLE.aiFailure },
@@ -185,6 +270,7 @@ export function danielaAgendarCitaFlow(): FlowDefinition {
       { key: "hora", label: "Hora", type: "string", required: true },
       { key: "nombreCliente", label: "Nombre de la clienta", type: "string", required: true },
       { key: "disponible", label: "¿Hay disponibilidad?", type: "boolean" },
+      { key: "respuestaConfirmacionAgendarTexto", label: "Respuesta de la clienta a la confirmación de agendar", type: "string" },
       { key: "citaId", label: "ID de la cita real creada", type: "string", linkedCapability: "appointment.reserved" },
       { key: "status", label: "Estado real de la cita (confirmada/pendiente)", type: "string" },
       { key: "especialista", label: "Especialista asignada realmente", type: "string" },

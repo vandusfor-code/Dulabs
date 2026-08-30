@@ -181,6 +181,7 @@ export class ClaudeExecutor implements EffectExecutor {
     const budgetAfter = applyAiUsage(aiRequest.budget, {
       inputTokens: response.usage?.input_tokens,
       outputTokens: response.usage?.output_tokens,
+      durationMs: Date.now() - started,
     });
 
     const engineData = mapAiOutputToEngineData(parsed.output);

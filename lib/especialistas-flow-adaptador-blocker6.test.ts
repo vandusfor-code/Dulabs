@@ -149,7 +149,9 @@ describe(
     let especialistaNicol: number; // requiere_aprobacion:true -> citas "pendiente"
 
     async function crearCitaDePrueba(phoneNumberId: string, telefonoCliente: string, fecha: string, hora: string) {
-      const r = await agendarCitaEspecialista(supabase, { phoneNumberId, telefonoCliente, servicio: "manos", fecha, hora, nombreCliente: "Cliente Blocker6" });
+      // confirmado:true -- Fase 2b agregó el candado real; este helper crea
+      // fixtures de prueba, no prueba el candado en sí.
+      const r = await agendarCitaEspecialista(supabase, { phoneNumberId, telefonoCliente, servicio: "manos", fecha, hora, nombreCliente: "Cliente Blocker6", confirmado: true });
       if (!r.ok) throw new Error(`no se pudo crear cita de prueba: ${JSON.stringify(r)}`);
       return r.cita;
     }
@@ -225,7 +227,7 @@ describe(
 
     it("cita PENDIENTE (requiere aprobación): SÍ cuenta como activa, SÍ puede cancelarse, NO puede reagendarse todavía (asimetría documentada, no un bug)", async () => {
       const telefonoCliente = "573001120605";
-      const rAgendar = await agendarCitaEspecialista(supabase, { phoneNumberId: PHONE_A, telefonoCliente, servicio: "pestañas", fecha: "2027-08-06", hora: "16:00", nombreCliente: "Cliente Pendiente" });
+      const rAgendar = await agendarCitaEspecialista(supabase, { phoneNumberId: PHONE_A, telefonoCliente, servicio: "pestañas", fecha: "2027-08-06", hora: "16:00", nombreCliente: "Cliente Pendiente", confirmado: true });
       assert.equal(rAgendar.ok, true);
       if (!rAgendar.ok) return;
       assert.equal(rAgendar.estado, "pendiente");
@@ -319,8 +321,8 @@ describe(
     it("K/L/M consolidado: tres tipos de concurrencia sobre el MISMO horario nuevo -- crear, reagendar y cancelar -- todas terminan en un estado final consistente", async () => {
       // K: crear la misma cita dos veces a la vez.
       const [crear1, crear2] = await Promise.all([
-        agendarCitaEspecialista(supabase, { phoneNumberId: PHONE_A, telefonoCliente: "573001120612", servicio: "manos", fecha: "2027-08-16", hora: "09:00", nombreCliente: "Concurrencia K-1" }),
-        agendarCitaEspecialista(supabase, { phoneNumberId: PHONE_A, telefonoCliente: "573001120613", servicio: "manos", fecha: "2027-08-16", hora: "09:00", nombreCliente: "Concurrencia K-2" }),
+        agendarCitaEspecialista(supabase, { phoneNumberId: PHONE_A, telefonoCliente: "573001120612", servicio: "manos", fecha: "2027-08-16", hora: "09:00", nombreCliente: "Concurrencia K-1", confirmado: true }),
+        agendarCitaEspecialista(supabase, { phoneNumberId: PHONE_A, telefonoCliente: "573001120613", servicio: "manos", fecha: "2027-08-16", hora: "09:00", nombreCliente: "Concurrencia K-2", confirmado: true }),
       ]);
       assert.equal([crear1, crear2].filter((r) => r.ok).length, 1, "K: solo una debe ganar el horario nuevo");
 

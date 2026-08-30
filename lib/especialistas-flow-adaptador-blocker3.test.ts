@@ -115,6 +115,8 @@ describe(
 
     it("7. servicio desconocido + intento de agendar → NO crea cita", async () => {
       const telefonoCliente = "573003330007";
+      // confirmado:true -- Fase 2b agregó el candado real ANTES de este
+      // chequeo; este test prueba la validación de servicio, no el candado.
       const r = await agendarCitaEspecialista(supabase, {
         phoneNumberId: PHONE_NUMBER_ID,
         telefonoCliente,
@@ -122,6 +124,7 @@ describe(
         fecha: FECHA,
         hora: "11:00",
         nombreCliente: "Cliente Blocker3",
+        confirmado: true,
       });
       assert.equal(r.ok, false);
       if (!r.ok) assert.equal(r.motivo, "servicio_no_manejado");
@@ -153,25 +156,18 @@ describe(
       for (const texto of ["masaje", "2027-05-10", "11:00", "Cliente Blocker3"]) {
         state = runFlowEngine(flow, state, { type: "text", text: texto }).state;
       }
-      // El nodo AI "ai-consultar" (mode propose_action) normalmente lo
-      // resuelve ClaudeExecutor con una llamada real -- para esta prueba
-      // (sin IA real, determinística) simulamos directamente el
-      // effect_result que produciría consultar_disponibilidad_especialista
-      // para un servicio no reconocido: success:false, servicio_no_manejado.
+      // Fase 1 (bug crítico real, prueba 314) — act-consultar ahora es una
+      // acción DIRECTA: q-nombre conecta a act-consultar sin ningún nodo AI
+      // intermedio (se eliminó "ai-consultar", puro pass-through -- ver
+      // daniela-agendar-cita.flow.ts). Ya no hace falta simular el paso de
+      // "propuesta" de un nodo AI; el motor pasa directo a esperar el
+      // efecto de la acción real.
       assert.equal(state.status, "waiting_effect");
-      assert.equal(state.pendingEffect?.nodeId, "ai-consultar");
-      const propuesta = runFlowEngine(flow, state, {
-        type: "effect_result",
-        success: true,
-        effectId: state.pendingEffect!.effectId,
-        data: { actionProposal: { actionType: "consultar_disponibilidad_especialista", params: { servicio: "masaje", fecha: "2027-05-10" } } },
-      });
-      assert.equal(propuesta.error, undefined);
-      assert.equal(propuesta.state.currentNodeId, "act-consultar");
-      const fallo = runFlowEngine(flow, propuesta.state, {
+      assert.equal(state.pendingEffect?.nodeId, "act-consultar");
+      const fallo = runFlowEngine(flow, state, {
         type: "effect_result",
         success: false,
-        effectId: propuesta.state.pendingEffect!.effectId,
+        effectId: state.pendingEffect!.effectId,
         error: "servicio_no_manejado",
       });
 

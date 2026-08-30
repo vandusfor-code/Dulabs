@@ -26,6 +26,7 @@ import {
   consultarCitasActivasEspecialista,
   moverCitaEspecialista,
 } from "@/lib/especialistas-flow-adaptador";
+import { crearCitaEspecialista, cancelarCita, confirmarCita } from "@/lib/especialistas";
 import { InternalActionExecutor, type InternalActionDeps } from "@/lib/flow/executors/internal-action-executor";
 import type { InternalActionAuthorizer } from "@/lib/flow/internal-action-authorizer";
 import { resolveActionCapabilitySpec } from "@/lib/flow/action-capabilities";
@@ -190,6 +191,7 @@ describe("Fase 0 — especialistas-flow-adaptador (integración real, tenant de 
       fecha: FECHA,
       hora: "16:00",
       nombreCliente: "Ana",
+      confirmado: true,
     });
     assert.equal(r.ok, true);
     if (r.ok) {
@@ -210,6 +212,7 @@ describe("Fase 0 — especialistas-flow-adaptador (integración real, tenant de 
       fecha: FECHA,
       hora: "16:00",
       nombreCliente: "Bea",
+      confirmado: true,
     });
     // Como Daniela NO tiene ningún hueco libre configurado aún y su ventana
     // de las 14h ya aplica un martes, el desborde podría asignarle a
@@ -235,6 +238,7 @@ describe("Fase 0 — especialistas-flow-adaptador (integración real, tenant de 
       fecha: FECHA,
       hora: "09:30",
       nombreCliente: "Cami",
+      confirmado: true,
     });
     assert.equal(r.ok, true);
     if (r.ok) citaIds.push(r.cita.id);
@@ -249,6 +253,7 @@ describe("Fase 0 — especialistas-flow-adaptador (integración real, tenant de 
         servicio: "pestañas set natural",
         ...slot,
         nombreCliente: "Dora",
+        confirmado: true,
       }),
       agendarCitaEspecialista(supabase, {
         phoneNumberId: PHONE_NUMBER_ID,
@@ -256,6 +261,7 @@ describe("Fase 0 — especialistas-flow-adaptador (integración real, tenant de 
         servicio: "pestañas set natural",
         ...slot,
         nombreCliente: "Eva",
+        confirmado: true,
       }),
     ]);
     const resultados = [a, b];
@@ -274,6 +280,7 @@ describe("Fase 0 — especialistas-flow-adaptador (integración real, tenant de 
       fecha: FECHA,
       hora: "10:00",
       nombreCliente: "Fer",
+      confirmado: true,
     });
     assert.equal(r.ok, true);
     if (r.ok) {
@@ -290,6 +297,7 @@ describe("Fase 0 — especialistas-flow-adaptador (integración real, tenant de 
       fecha: FECHA,
       hora: "17:30",
       nombreCliente: "Gina",
+      confirmado: true,
     });
     // Blocker #3 (autorizado): categoriaDeServicioReconocida() -- exclusiva
     // de este adaptador, ver su docstring -- ya NO cae a "manos" por
@@ -308,6 +316,7 @@ describe("Fase 0 — especialistas-flow-adaptador (integración real, tenant de 
       fecha: FECHA,
       hora: "15:30", // martes >= 15h: dentro de la ventana real de Nicol
       nombreCliente: "Hana",
+      confirmado: true,
     });
     assert.equal(r.ok, true);
     if (r.ok) {
@@ -325,9 +334,46 @@ describe("Fase 0 — especialistas-flow-adaptador (integración real, tenant de 
       fecha: FECHA,
       hora: "10:00", // martes 10am: antes de las 15h, fuera de la ventana de Nicol
       nombreCliente: "Ivon",
+      confirmado: true,
     });
     assert.equal(r.ok, false);
     if (!r.ok) assert.equal(r.motivo, "fuera_de_horario");
+  });
+
+  it("8c (Fase 2b, defense-in-depth) — agendarCitaEspecialista con confirmado=false → bloquea, cero INSERT real", async () => {
+    const telefonoCliente = "573001110008c";
+    const r = await agendarCitaEspecialista(supabase, {
+      phoneNumberId: PHONE_NUMBER_ID,
+      telefonoCliente,
+      servicio: "cejas",
+      fecha: FECHA,
+      hora: "18:00",
+      nombreCliente: "Confirmado False",
+      confirmado: false,
+    });
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.equal(r.motivo, "no_confirmado");
+    const { data: citas } = await supabase
+      .from("dulabs_citas_especialista")
+      .select("id")
+      .eq("phone_number_id", PHONE_NUMBER_ID)
+      .eq("telefono_cliente", telefonoCliente);
+    assert.equal(citas?.length, 0, "confirmado=false NUNCA debe crear una cita real");
+  });
+
+  it("8d (Fase 2b, defense-in-depth) — agendarCitaEspecialista con confirmado=true → SÍ crea (camino feliz, mismo candado que cancelar/mover)", async () => {
+    const telefonoCliente = "573001110008d";
+    const r = await agendarCitaEspecialista(supabase, {
+      phoneNumberId: PHONE_NUMBER_ID,
+      telefonoCliente,
+      servicio: "cejas",
+      fecha: FECHA,
+      hora: "18:30",
+      nombreCliente: "Confirmado True",
+      confirmado: true,
+    });
+    assert.equal(r.ok, true);
+    if (r.ok) citaIds.push(r.cita.id);
   });
 
   it("9. cancelación — sin confirmado=true no cancela nada (mismo candado que LEGACY)", async () => {
@@ -338,6 +384,7 @@ describe("Fase 0 — especialistas-flow-adaptador (integración real, tenant de 
       fecha: FECHA,
       hora: "12:30",
       nombreCliente: "Julia",
+      confirmado: true,
     });
     assert.equal(creada.ok, true);
     if (!creada.ok) return;
@@ -403,11 +450,16 @@ describe("Fase 0 — especialistas-flow-adaptador (integración real, tenant de 
         attempt: 1,
         action: {
           actionType: "agendar_cita_especialista",
+          // confirmado:"true" -- Fase 2b (defense-in-depth) agregó el
+          // candado real en agendarCitaEspecialista; este test prueba el
+          // cableado end-to-end del executor, no el candado en sí (ese ya
+          // lo prueba el test 11b más abajo).
           params: {
             servicio: "cejas con henna",
             fecha: FECHA,
             hora: "13:00",
             nombreCliente: "Karla",
+            confirmado: "true",
           },
         },
         conversation: { phoneNumberId: PHONE_NUMBER_ID, telefonoCliente: "573001110011" },
@@ -418,6 +470,58 @@ describe("Fase 0 — especialistas-flow-adaptador (integración real, tenant de 
     assert.equal(typeof result.data?.citaId, "number");
     if (typeof result.data?.citaId === "number") citaIds.push(result.data.citaId);
     assert.ok(result.data?.status === "confirmada" || result.data?.status === "pendiente");
+  });
+
+  it("11b (Fase 2b, defense-in-depth) — InternalActionExecutor dispatch SIN confirmado → cero INSERT real", async () => {
+    const authorizer: InternalActionAuthorizer = {
+      assertActivacionOwnedByTenant: async () => true,
+      assertPhoneNumberOwnedByTenant: async (tenantId, phoneNumberId) =>
+        tenantId === TENANT_ID && phoneNumberId === PHONE_NUMBER_ID,
+    };
+    const deps: InternalActionDeps = {
+      supabase,
+      authorizer,
+      guardarLeadEnterprise: async () => ({ success: true, leadId: 1 }),
+      activarPausaChat: async () => ({ ok: true, pausadoHasta: new Date().toISOString() }),
+      verificarDisponibilidad: async () => true,
+      sugerirHorariosLibres: async () => [],
+      crearCita: async () => null,
+      readPausaUntil: async () => null,
+      consultarDisponibilidadEspecialista,
+      agendarCitaEspecialista,
+      cancelarCitaEspecialista,
+      consultarCitasActivasEspecialista,
+      moverCitaEspecialista,
+    };
+    const executor = new InternalActionExecutor(deps);
+    const telefonoCliente = "573001110011-sin-confirmar";
+    const result = await executor.dispatch(
+      {
+        effectId: "eff-sin-confirmar",
+        executionRowId: "exec-sin-confirmar",
+        tenantId: TENANT_ID,
+        nodeId: "node-1",
+        kind: "action",
+        payload: {},
+        attempt: 1,
+        action: {
+          actionType: "agendar_cita_especialista",
+          // Sin confirmado -- exactamente el intento directo que el
+          // candado debe rechazar, incluso viniendo del executor real.
+          params: { servicio: "cejas con henna", fecha: FECHA, hora: "14:00", nombreCliente: "Karla Sin Confirmar" },
+        },
+        conversation: { phoneNumberId: PHONE_NUMBER_ID, telefonoCliente },
+      },
+      { tenantId: TENANT_ID, internal: true },
+    );
+    assert.equal(result.success, false);
+    assert.equal(result.error, "no_confirmado");
+    const { data: citas } = await supabase
+      .from("dulabs_citas_especialista")
+      .select("id")
+      .eq("phone_number_id", PHONE_NUMBER_ID)
+      .eq("telefono_cliente", telefonoCliente);
+    assert.equal(citas?.length, 0, "cero INSERT real cuando falta confirmado, incluso pasando por el executor completo");
   });
 
   it("12. cross-tenant — otro tenant NO puede agendar sobre el phone_number_id de prueba", async () => {
@@ -457,5 +561,169 @@ describe("Fase 0 — especialistas-flow-adaptador (integración real, tenant de 
     );
     assert.equal(result.success, false);
     assert.equal(result.classification, "SECURITY_REJECTED");
+  });
+
+  // ============================================================
+  // Parte 7 (auditoría exhaustiva) — cambiar_hora_mi_cita en LEGACY
+  // (especialista-solicitud-ia.ts) hace INSERT (crearCitaEspecialista) +
+  // CANCEL (cancelarCita) de la vieja, NO un UPDATE atómico como
+  // mover_cita_especialista de Flow (editarCitaConfirmada). Estas pruebas
+  // ejercitan las MISMAS dos funciones reales, en la MISMA secuencia, para
+  // demostrar B/C empíricamente. A (candado, cero escrituras si falta
+  // confirmado) ya está probado en especialista-solicitud-ia-confirmacion.test.ts
+  // vía debeExigirConfirmacionAntesDeCrearCita -- ese chequeo es literalmente
+  // la primera línea de ejecutarHerramienta, antes de esta secuencia, así
+  // que cero INSERT/CANCEL ahí es garantía estructural de código, no algo
+  // que dependa de I/O real para demostrarse.
+  describe("Parte 7 — cambiar_hora_mi_cita: patrón INSERT+CANCEL (mismo mecanismo real que usa especialista-solicitud-ia.ts)", () => {
+    // Fecha exclusiva (una semana después de FECHA) para no colisionar con
+    // los horarios que ya ocupan los tests 1-12/8c/8d/11/11b sobre el mismo
+    // especialista (Carla) -- evita depender de calcular a mano qué horas
+    // quedan libres entre tests.
+    const FECHA_PARTE7 = (() => {
+      const d = new Date(`${FECHA}T00:00:00-05:00`);
+      d.setUTCDate(d.getUTCDate() + 7);
+      return d.toISOString().slice(0, 10);
+    })();
+
+    it("B. con confirmación ya obtenida: INSERT nueva cita + CANCEL de la vieja -- ambas escrituras reales ocurren", async () => {
+      const telefonoCliente = "573001110020-cambiar-hora";
+      const vieja = await crearCitaEspecialista(supabase, {
+        especialistaId: especialistaIds[1]!, // Carla (manos)
+        idTenant: TENANT_ID,
+        phoneNumberId: PHONE_NUMBER_ID,
+        telefonoCliente,
+        nombreCliente: "Cambia Hora",
+        servicio: "manos",
+        inicio: new Date(`${FECHA_PARTE7}T19:00:00-05:00`),
+        duracionMin: 60,
+        bloqueaHorario: true,
+        origen: "whatsapp_ia",
+      });
+      assert.equal(vieja.ok, true);
+      if (!vieja.ok) return;
+      citaIds.push(vieja.cita.id);
+      // crearCitaEspecialista por sí sola deja estado="pendiente" -- la cita
+      // vieja representa una cita YA confirmada anteriormente (Carla no
+      // requiere aprobación), así que se confirma aquí para reflejar el
+      // estado real previo a un intento de cambiar_hora_mi_cita.
+      await confirmarCita(supabase, vieja.cita.id);
+
+      // Exactamente la secuencia real de especialista-solicitud-ia.ts:
+      // primero INSERT la nueva, y SOLO si tuvo éxito, CANCEL la vieja.
+      // Nota de diseño del test: la nueva hora (21:00) se eligió separada de
+      // la vieja (19:00-20:00) a propósito -- si se pidiera una hora que
+      // SE SOLAPA con la propia cita vieja (ej. 19:30), el INSERT fallaría
+      // con "ocupado" contra la cita vieja de la MISMA clienta (el EXCLUDE
+      // es por especialista_id, no distingue de quién es la cita que ya
+      // ocupa el horario) -- un hallazgo real y adicional de este patrón NO
+      // atómico: una clienta que pide mover su cita a un horario que se
+      // solapa con la que ya tiene vería "ocupado" incorrectamente. Con
+      // editarCitaConfirmada (UPDATE atómico, como usa Flow) esto no pasaría.
+      const nueva = await crearCitaEspecialista(supabase, {
+        especialistaId: especialistaIds[1]!,
+        idTenant: TENANT_ID,
+        phoneNumberId: PHONE_NUMBER_ID,
+        telefonoCliente,
+        nombreCliente: "Cambia Hora",
+        servicio: "manos",
+        inicio: new Date(`${FECHA_PARTE7}T21:00:00-05:00`),
+        duracionMin: 60,
+        bloqueaHorario: true,
+        origen: "whatsapp_ia",
+      });
+      assert.equal(nueva.ok, true, "el INSERT de la nueva hora debe tener éxito (horario libre)");
+      if (!nueva.ok) return;
+      citaIds.push(nueva.cita.id);
+      // finalizarCitaCreada (especialista-solicitud-ia.ts) confirma de una
+      // vez para especialistas que no requieren aprobación (Carla) -- se
+      // replica aquí para reflejar el resultado real que vería la clienta.
+      await confirmarCita(supabase, nueva.cita.id);
+      await cancelarCita(supabase, vieja.cita.id, "Cambiada a un nuevo horario");
+
+      const { data: filaVieja } = await supabase.from("dulabs_citas_especialista").select("estado").eq("id", vieja.cita.id).single();
+      const { data: filaNueva } = await supabase.from("dulabs_citas_especialista").select("estado").eq("id", nueva.cita.id).single();
+      assert.equal(filaVieja?.estado, "cancelada", "la cita vieja debe quedar cancelada");
+      assert.equal(filaNueva?.estado, "confirmada", "la cita nueva debe quedar confirmada");
+    });
+
+    it("C. si el INSERT de la nueva hora falla (horario ocupado), la cita vieja NUNCA se cancela -- verificado por lectura real tras el intento", async () => {
+      const telefonoCliente = "573001110021-cambiar-hora-fallo";
+      const otroCliente = "573001110022-ocupa-el-horario";
+      const vieja = await crearCitaEspecialista(supabase, {
+        especialistaId: especialistaIds[1]!,
+        idTenant: TENANT_ID,
+        phoneNumberId: PHONE_NUMBER_ID,
+        telefonoCliente,
+        nombreCliente: "Cambia Hora Fallo",
+        servicio: "manos",
+        inicio: new Date(`${FECHA_PARTE7}T11:00:00-05:00`),
+        duracionMin: 60,
+        bloqueaHorario: true,
+        origen: "whatsapp_ia",
+      });
+      assert.equal(vieja.ok, true);
+      if (!vieja.ok) return;
+      citaIds.push(vieja.cita.id);
+      await confirmarCita(supabase, vieja.cita.id);
+
+      // Otro cliente ya ocupa el horario al que se quiere cambiar (14:00 --
+      // separado de la cita vieja de las 11:00 para no confundir "choca con
+      // el ocupante" con "choca con su propia cita vieja", ver nota en el
+      // test B sobre el self-collision de este patrón no atómico).
+      const ocupante = await crearCitaEspecialista(supabase, {
+        especialistaId: especialistaIds[1]!,
+        idTenant: TENANT_ID,
+        phoneNumberId: PHONE_NUMBER_ID,
+        telefonoCliente: otroCliente,
+        nombreCliente: "Ocupante",
+        servicio: "manos",
+        inicio: new Date(`${FECHA_PARTE7}T14:00:00-05:00`),
+        duracionMin: 60,
+        bloqueaHorario: true,
+        origen: "whatsapp_ia",
+      });
+      assert.equal(ocupante.ok, true);
+      if (ocupante.ok) citaIds.push(ocupante.cita.id);
+
+      // Intento real de "cambiar_hora_mi_cita" hacia ese horario ya ocupado --
+      // exactamente lo que en especialista-solicitud-ia.ts hace que la
+      // función retorne ANTES de llegar a la línea de cancelarCita (ver
+      // el early-return en el "if (!resultado.ok)" de ejecutarHerramienta).
+      const intento = await crearCitaEspecialista(supabase, {
+        especialistaId: especialistaIds[1]!,
+        idTenant: TENANT_ID,
+        phoneNumberId: PHONE_NUMBER_ID,
+        telefonoCliente,
+        nombreCliente: "Cambia Hora Fallo",
+        servicio: "manos",
+        inicio: new Date(`${FECHA_PARTE7}T14:00:00-05:00`),
+        duracionMin: 60,
+        bloqueaHorario: true,
+        origen: "whatsapp_ia",
+      });
+      assert.equal(intento.ok, false);
+      if (!intento.ok) assert.equal(intento.motivo, "ocupado");
+      // NO se llama cancelarCita aquí -- exactamente como hace el código
+      // real (el early-return ocurre antes de esa línea).
+
+      const { data: filaVieja } = await supabase.from("dulabs_citas_especialista").select("estado").eq("id", vieja.cita.id).single();
+      assert.equal(filaVieja?.estado, "confirmada", "la cita vieja debe seguir intacta -- el INSERT fallido nunca debe disparar el CANCEL");
+    });
+
+    // D. Ventana de inconsistencia documentada (NO corregida en esta fase,
+    // por instrucción explícita): entre el INSERT exitoso de la nueva cita
+    // y el CANCEL de la vieja (dos sentencias SQL separadas, no una
+    // transacción), si el proceso muriera justo en el medio (crash, timeout
+    // de función serverless, etc.) quedarían DOS filas activas para la misma
+    // clienta -- la vieja todavía "confirmada" y la nueva también. A
+    // diferencia de mover_cita_especialista en Flow (que usa
+    // editarCitaConfirmada, un UPDATE atómico sobre la MISMA fila -- nunca
+    // dos filas), cambiar_hora_mi_cita en LEGACY no tiene esa garantía.
+    // Alternativa segura posible SIN tocar lib/especialistas.ts (propuesta,
+    // NO implementada): que especialista-solicitud-ia.ts llame a
+    // editarCitaConfirmada (ya existe, ya la usa Flow) en vez de
+    // crearCitaEspecialista+cancelarCita -- un UPDATE atómico real, mismo
+    // patrón que ya está probado y en uso.
   });
 });

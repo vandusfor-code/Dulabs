@@ -45,7 +45,10 @@ describe(
     let especialistaB: number;
 
     async function crearCitaDePrueba(phoneNumberId: string, telefonoCliente: string, fecha: string, hora: string) {
-      const r = await agendarCitaEspecialista(supabase, { phoneNumberId, telefonoCliente, servicio: "manos", fecha, hora, nombreCliente: "Cliente Blocker4" });
+      // confirmado:true -- Fase 2b agregó el candado real; este helper crea
+      // fixtures de prueba (ya "confirmadas" para efectos del setup), no
+      // prueba el candado en sí.
+      const r = await agendarCitaEspecialista(supabase, { phoneNumberId, telefonoCliente, servicio: "manos", fecha, hora, nombreCliente: "Cliente Blocker4", confirmado: true });
       if (!r.ok) throw new Error(`no se pudo crear cita de prueba: ${JSON.stringify(r)}`);
       return r.cita;
     }
