@@ -83,6 +83,36 @@ describe("Fase 1 — decidirFallbackDesdeResultado (lógica pura, sin DB)", () =
     assert.equal(r.requiereMarcarFallida, true, "engineError con executionRowId real SÍ hay que desenganchar");
   });
 
+  it("Bug raíz #3 (cita #796). engineError SIN send_message PERO con criticalActionExecuted=true -> NUNCA fallback a LEGACY (la cita ya se creó)", () => {
+    const r = decidirFallbackDesdeResultado(
+      baseResult({
+        outcome: ORCHESTRATOR_OUTCOMES.PROCESSED,
+        // Escenario EXACTO del incidente: act-agendar creó la cita real, luego
+        // ai-confirmar falló (engineError), sin haber enviado nada este turno.
+        engineError: { code: "INVALID_INPUT", message: "effect_failed", nodeId: "agendar__ai-confirmar" },
+        executionRowId: "row-796",
+        criticalActionExecuted: true,
+      }),
+    );
+    assert.equal(r.handled, true, "handled=true => el llamador NO corre LEGACY; LEGACY jamás contradice la cita creada");
+    assert.equal(r.motivo, "accion_critica_ya_ejecutada");
+    assert.equal(r.requiereMarcarFallida, true, "la ejecución quedó rota: el PRÓXIMO mensaje arranca limpio");
+    assert.equal(r.yaEnvioAlgo, false);
+  });
+
+  it("Bug raíz #3 (control). MISMO engineError sin send_message pero SIN acción crítica -> sí cae a LEGACY (comportamiento normal preservado)", () => {
+    const r = decidirFallbackDesdeResultado(
+      baseResult({
+        outcome: ORCHESTRATOR_OUTCOMES.PROCESSED,
+        engineError: { code: "INVALID_INPUT", message: "servicio_no_manejado", nodeId: "agendar__act-consultar" },
+        executionRowId: "row-sin-critica",
+        // criticalActionExecuted ausente/false: NO se ejecutó ninguna cita.
+      }),
+    );
+    assert.equal(r.handled, false, "sin acción crítica exitosa, el fallback a LEGACY sigue siendo correcto");
+    assert.equal(r.motivo, "fallback_a_legacy");
+  });
+
   it("E. engineError CON send_message ya emitido -> NUNCA fallback a LEGACY, aunque haya fallado", () => {
     const r = decidirFallbackDesdeResultado(
       baseResult({
@@ -195,7 +225,9 @@ describe(
             type: "action",
             config: {
               actionType: "agendar_cita_especialista",
-              params: { servicio: "manos", fecha: "2027-04-02", hora: "10:00", nombreCliente: "Cliente Blocker2" },
+              // confirmado:"true" -- Fase 2b agregó el candado real; sin él la
+              // acción falla con no_confirmado y no crearía la cita.
+              params: { servicio: "manos", fecha: "2027-04-02", hora: "10:00", nombreCliente: "Cliente Blocker2", confirmado: "true" },
             },
           },
           {
@@ -354,7 +386,7 @@ describe(
       // vuelva a llamar a Flow desde acá ni desde LEGACY.
     });
 
-    it("F. Flow crea una cita REAL y luego falla sin enviar nada -> fallback permitido, LEGACY vería la cita real (sin duplicarla)", async () => {
+    it("F (Bug raíz #3, cita #796). Flow crea una cita REAL y luego falla sin enviar nada -> NUNCA cae a LEGACY (acción crítica ya ejecutada)", async () => {
       const flowId = await crearYPublicar(flowAgendaYLuegoFalla(), "blocker2-agenda-falla");
       const cliente = {
         id: "c-blocker2-f",
@@ -374,32 +406,38 @@ describe(
         wamid: `wamid-blocker2-f-${randomUUID()}`,
       });
 
-      assert.equal(intento.handled, false, "no se envió ningún mensaje -> el fallback a LEGACY debe estar permitido");
-      assert.equal(intento.motivo, "fallback_a_legacy");
-      assert.ok(intento.result?.engineError);
+      // Bug raíz #3 — comportamiento NUEVO y correcto: act-agendar (crítica)
+      // creó la cita real; act-roto (posterior) falló. ANTES esto caía a
+      // LEGACY (que reprocesaba el mensaje y contradecía/duplicaba la cita, ver
+      // incidente #796). AHORA la señal estructurada criticalActionExecuted
+      // suprime el fallback: el turno queda manejado por Flow, LEGACY jamás
+      // corre.
+      assert.equal(intento.handled, true, "acción crítica exitosa -> Flow maneja el turno, LEGACY NO corre");
+      assert.equal(intento.motivo, "accion_critica_ya_ejecutada");
+      assert.equal(intento.result?.criticalActionExecuted, true);
+      assert.ok(intento.result?.engineError, "sí hubo un engineError real posterior (act-roto)");
       assert.equal(
         intento.result!.effects.some((e) => e.type === "send_message"),
         false,
-        "esta prueba exige específicamente que NO se haya enviado ningún mensaje",
+        "en este escenario Flow no alcanzó a enviar nada (por eso importa NO ceder a LEGACY)",
       );
 
-      // La cita SÍ quedó creada de verdad por act-agendar antes del crash.
+      // La cita SÍ quedó creada de verdad por act-agendar antes del crash, y
+      // es EXACTAMENTE UNA -- LEGACY no corrió, así que es imposible que la
+      // haya duplicado ni contradicho.
       const { data: citas } = await supabase
         .from("dulabs_citas_especialista")
         .select("id, estado, especialista_id")
         .eq("phone_number_id", PHONE_NUMBER_ID)
         .eq("telefono_cliente", telefonoCliente);
-      assert.equal(citas?.length, 1, "debe existir exactamente UNA cita real, creada por Flow antes del fallo");
+      assert.equal(citas?.length, 1, "debe existir exactamente UNA cita real -- ni cero, ni duplicada");
       assert.equal(citas?.[0]?.especialista_id, especialistaId);
 
-      // Misma consulta EXACTA que usa LEGACY (especialista-solicitud-ia.ts)
-      // antes de decidir su propio toolset -- si esto encuentra la cita
-      // real, LEGACY jamás la duplicaría, ofrecería cambiar/cancelar en su
-      // lugar. No se invoca la IA real de LEGACY acá (fuera de alcance de
-      // este blocker) -- se prueba la garantía real: visibilidad compartida.
-      const citaQueVeriaLegacy = await citaActivaPara(supabase, PHONE_NUMBER_ID, telefonoCliente);
-      assert.ok(citaQueVeriaLegacy, "LEGACY vería esta cita real antes de ofrecer crear una nueva");
-      assert.equal(citaQueVeriaLegacy?.id, citas?.[0]?.id);
+      // La ejecución quedó marcada rota (para que el PRÓXIMO mensaje arranque
+      // limpio), pero eso NO reintroduce a LEGACY para ESTE mensaje.
+      const citaSigueViva = await citaActivaPara(supabase, PHONE_NUMBER_ID, telefonoCliente);
+      assert.ok(citaSigueViva, "la cita real sigue activa");
+      assert.equal(citaSigueViva?.id, citas?.[0]?.id);
     });
   },
 );

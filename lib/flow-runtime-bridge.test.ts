@@ -105,7 +105,13 @@ describe(
             type: "action",
             config: {
               actionType: "agendar_cita_especialista",
-              params: { servicio: "manos", fecha: "2027-01-05", hora: "16:00", nombreCliente: "Cliente E2E" },
+              // confirmado:"true" -- Fase 2b agregó el candado real en
+              // agendarCitaEspecialista (especialistas-flow-adaptador.ts): sin
+              // este flag la acción falla con no_confirmado. Este smoke E2E
+              // prueba el pipeline de agendar, no el gate de confirmación, así
+              // que declara confirmado igual que el nodo real act-agendar del
+              // flow de Daniela.
+              params: { servicio: "manos", fecha: "2027-01-05", hora: "16:00", nombreCliente: "Cliente E2E", confirmado: "true" },
             },
           },
           { id: "msg-ok", type: "message", config: { text: "Listo por aquí." } },

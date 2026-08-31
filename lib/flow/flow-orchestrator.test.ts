@@ -7,6 +7,8 @@ import { randomUUID } from "node:crypto";
 import { describe, it } from "node:test";
 import { createFlowEngineState, runFlowEngine } from "@/lib/flow/flow-engine";
 import { FLOW_ENGINE_ERROR_CODES } from "@/lib/flow/engine-types";
+import { FLOW_EDGE_HANDLE } from "@/lib/flow/constants";
+import { decidirFallbackDesdeResultado } from "@/lib/flow-runtime-bridge";
 import type { FlowDefinition } from "@/lib/flow/types";
 import { FlowExecutionConcurrencyConflictError } from "@/lib/flow/flow-store-errors";
 import { engineStateToExecutionUpdate } from "@/lib/flow/flow-store-types";
@@ -1407,5 +1409,156 @@ describe("Execution Orchestrator — Blocker #8: race start/start", () => {
 
     assert.equal(result.outcome, ORCHESTRATOR_OUTCOMES.PROCESSED);
     assert.equal(state.createCalls.length, 1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Reproducción de INTEGRACIÓN del incidente real de la cita #796
+// (conversación real de Daniela, exec 725711cd, versión publicada 2a22eeb0):
+//
+//   act-agendar (agendar_cita_especialista, CRÍTICA) crea la cita real
+//     -> ai-confirmar (redacción del mensaje final) FALLA (Claude/budget/API)
+//
+// En el código DESPLEGADO en el incidente esto producía engineError sin
+// send_message y SIN señal estructurada, así que el webhook caía a LEGACY,
+// que re-consultaba la agenda, veía la cita recién creada como ocupada y
+// contradecía ("ese horario ya está ocupado"). Estos tests demuestran que
+// con los fixes (rama de respaldo en el grafo + criticalActionExecuted) esa
+// contradicción es imposible por dos barreras independientes.
+// ---------------------------------------------------------------------------
+
+/** Sección crítica del subflow de agendar: acción crítica exitosa seguida de
+ *  un nodo AI que redacta la confirmación. `conRespaldo` alterna la arista de
+ *  seguridad (ai-confirmar --aiFailure--> respaldo) para poder probar tanto el
+ *  grafo corregido como el grafo "drifteado" que tenía la versión publicada. */
+function citaCriticaFlow796(conRespaldo: boolean): FlowDefinition {
+  const nodes: FlowDefinition["nodes"] = [
+    { id: "start", type: "start", config: { triggerType: "manual" } },
+    {
+      id: "act-agendar",
+      type: "action",
+      config: { actionType: "agendar_cita_especialista", params: { confirmado: "true" } },
+    },
+    { id: "ai-confirmar", type: "ai", config: { instruction: "Confirma la cita real.", mode: "respond" } },
+    { id: "msg-ocupado", type: "message", config: { text: "¿Me das otra hora?" } },
+    { id: "end-ok", type: "end", config: {} },
+    { id: "end-ocupado", type: "end", config: {} },
+  ];
+  const edges: FlowDefinition["edges"] = [
+    { id: "e-start", source: "start", target: "act-agendar" },
+    { id: "e-agendar-ok", source: "act-agendar", target: "ai-confirmar", sourceHandle: FLOW_EDGE_HANDLE.aiSuccess },
+    { id: "e-agendar-fail", source: "act-agendar", target: "msg-ocupado", sourceHandle: FLOW_EDGE_HANDLE.aiFailure },
+    { id: "e-ocupado-end", source: "msg-ocupado", target: "end-ocupado" },
+    { id: "e-confirmar-ok", source: "ai-confirmar", target: "end-ok", sourceHandle: FLOW_EDGE_HANDLE.aiSuccess },
+  ];
+  if (conRespaldo) {
+    nodes.push(
+      { id: "msg-respaldo", type: "message", config: { text: "¡Listo! Tu cita quedó agendada 💛 Te esperamos." } },
+      { id: "end-respaldo", type: "end", config: {} },
+    );
+    edges.push(
+      { id: "e-confirmar-respaldo", source: "ai-confirmar", target: "msg-respaldo", sourceHandle: FLOW_EDGE_HANDLE.aiFailure },
+      { id: "e-respaldo-end", source: "msg-respaldo", target: "end-respaldo" },
+    );
+  }
+  return { name: "cita796", nodes, edges, variables: [] };
+}
+
+/** Executors: la acción crítica SIEMPRE crea la cita real; ai-confirmar SIEMPRE
+ *  falla (reproduce Claude/budget/API caído justo tras crear la cita). */
+function executorsIncidente796() {
+  return {
+    action: {
+      dispatch: async () => ({
+        result: {
+          success: true,
+          resultPayloadApplied: { citaId: 796, status: "confirmada", especialista: "Carla" },
+        },
+      }),
+    },
+    ai: {
+      dispatch: async () => ({ result: { success: false } }),
+    },
+  };
+}
+
+describe("Incidente cita #796 (integración) — acción crítica OK + ai-confirmar FALLA nunca cae a LEGACY", () => {
+  it("FIX primario (grafo): con la rama de respaldo, ai-confirmar caído envía la confirmación estática y COMPLETA -> handled, sin LEGACY, sin contradicción", async () => {
+    const flow = citaCriticaFlow796(true);
+    const { store } = createMockStore({
+      activeExecution: null,
+      versions: { "version-published": versionRow(flow), "version-pinned": versionRow(flow) },
+    });
+    const orch = buildOrchestrator(store, executorsIncidente796());
+
+    const result = await orch.process(
+      normalizedEvent({ eventId: "evt-796-respaldo", eventType: "start", engineEvent: { type: "start" } }),
+    );
+
+    assert.equal(result.outcome, ORCHESTRATOR_OUTCOMES.PROCESSED);
+    assert.equal(result.engineError, undefined, "la rama de respaldo evita el engineError");
+    assert.equal(result.criticalActionExecuted, true, "act-agendar creó la cita real (acción crítica)");
+    const enviosRespaldo = result.effects.filter(
+      (e) => e.type === "send_message" && e.nodeId === "msg-respaldo",
+    );
+    assert.equal(enviosRespaldo.length, 1, "el cliente SÍ recibe una confirmación veraz");
+    // Nunca reingresa a la acción ni re-consulta disponibilidad.
+    assert.equal(
+      result.effects.some((e) => e.nodeId === "act-agendar" && e.type === "send_message"),
+      false,
+    );
+
+    const decision = decidirFallbackDesdeResultado(result);
+    assert.equal(decision.handled, true, "handled=true => route.ts NO ejecuta LEGACY");
+    assert.equal(decision.motivo, "processed_ok");
+  });
+
+  it("FIX de defensa (drift): SIN rama de respaldo (como la versión publicada 2a22eeb0), ai-confirmar caído da engineError PERO criticalActionExecuted bloquea LEGACY", async () => {
+    const flow = citaCriticaFlow796(false);
+    const { store } = createMockStore({
+      activeExecution: null,
+      versions: { "version-published": versionRow(flow), "version-pinned": versionRow(flow) },
+    });
+    const orch = buildOrchestrator(store, executorsIncidente796());
+
+    const result = await orch.process(
+      normalizedEvent({ eventId: "evt-796-drift", eventType: "start", engineEvent: { type: "start" } }),
+    );
+
+    assert.equal(result.outcome, ORCHESTRATOR_OUTCOMES.PROCESSED);
+    assert.ok(result.engineError, "sin rama de respaldo, un efecto AI fallido produce engineError (escenario desplegado)");
+    assert.equal(result.engineError?.nodeId, "ai-confirmar");
+    assert.equal(
+      result.criticalActionExecuted,
+      true,
+      "la señal estructurada sobrevive al engineError POSTERIOR de la misma invocación",
+    );
+    assert.equal(
+      result.effects.some((e) => e.type === "send_message"),
+      false,
+      "en este camino no se envía nada (por eso antes caía a LEGACY)",
+    );
+
+    // Barrera del bridge: exactamente el incidente real, ahora bloqueado.
+    const decision = decidirFallbackDesdeResultado(result);
+    assert.equal(decision.handled, true, "criticalActionExecuted => NO cae a LEGACY, aunque no haya enviado nada");
+    assert.equal(decision.motivo, "accion_critica_ya_ejecutada");
+    assert.equal(decision.yaEnvioAlgo, false);
+  });
+
+  it("TEST E (idempotencia de webhook): el MISMO wamid reentregado por Meta se procesa una sola vez (DUPLICATE_EVENT, handled, sin LEGACY)", async () => {
+    const row = baseExecutionRow({ status: "waiting_input", current_node_id: "q" });
+    const { store } = createMockStore({
+      activeExecution: row,
+      insertEventResult: { inserted: false, row: null },
+    });
+    const orch = buildOrchestrator(store);
+
+    const result = await orch.process(normalizedEvent({ eventId: "wamid-repetido" }));
+
+    assert.equal(result.outcome, ORCHESTRATOR_OUTCOMES.DUPLICATE_EVENT);
+    const decision = decidirFallbackDesdeResultado(result);
+    assert.equal(decision.handled, true, "un reintento de webhook nunca dispara LEGACY ni una segunda respuesta");
+    assert.equal(decision.motivo, "duplicate_event");
   });
 });

@@ -152,16 +152,23 @@ describe(
     it("8. servicio desconocido → el FLOW real permite continuar (no muere, informa y vuelve a preguntar)", () => {
       const flow = danielaAgendarCitaFlow();
       let state = createFlowEngineState(flow, { executionId: randomUUID() });
-      state = runFlowEngine(flow, state, { type: "start" }).state;
+      state.variables = { ...state.variables, hoy: "2027-05-01" };
+      // Fase 3 (slot-filling) — el flow ahora arranca con ai-extraer. Se
+      // resuelve con {} (nada extraído del primer mensaje), así se preguntan
+      // los 4 datos en secuencia, exactamente como antes.
+      state = runFlowEngine(flow, state, { type: "start", text: "quiero una cita" }).state;
+      assert.equal(state.pendingEffect?.nodeId, "ai-extraer");
+      state = runFlowEngine(flow, state, {
+        type: "effect_result",
+        success: true,
+        effectId: state.pendingEffect!.effectId,
+        data: {},
+      }).state;
       for (const texto of ["masaje", "2027-05-10", "11:00", "Cliente Blocker3"]) {
         state = runFlowEngine(flow, state, { type: "text", text: texto }).state;
       }
-      // Fase 1 (bug crítico real, prueba 314) — act-consultar ahora es una
-      // acción DIRECTA: q-nombre conecta a act-consultar sin ningún nodo AI
-      // intermedio (se eliminó "ai-consultar", puro pass-through -- ver
-      // daniela-agendar-cita.flow.ts). Ya no hace falta simular el paso de
-      // "propuesta" de un nodo AI; el motor pasa directo a esperar el
-      // efecto de la acción real.
+      // act-consultar es una acción DIRECTA (q-nombre/cond-nombre conectan a
+      // ella sin nodo AI intermedio); el motor queda esperando su efecto.
       assert.equal(state.status, "waiting_effect");
       assert.equal(state.pendingEffect?.nodeId, "act-consultar");
       const fallo = runFlowEngine(flow, state, {

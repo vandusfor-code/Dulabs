@@ -81,19 +81,48 @@ export function danielaAgendarCitaFlow(): FlowDefinition {
     nodes: [
       { id: "start", type: "start", config: { triggerType: "first_message" } },
 
+      // Fase 3 (Bug raíz #4, slot-filling) — extrae del PRIMER mensaje de la
+      // clienta (userMessage = __firstMessageText, ver Fix B) lo que ya haya
+      // dicho: servicio, fecha, hora, nombre. Resuelve referencias relativas
+      // ("el viernes") usando la variable 'hoy' (sembrada por el orchestrator
+      // al crear la ejecución). Solo escribe una variable si está claramente
+      // presente; si no, la omite y la pregunta correspondiente se hará. La
+      // disponibilidad NUNCA se infiere acá -- eso lo decide act-consultar.
+      // outputVariables limita EXACTAMENTE qué puede escribir el modelo.
       {
-        id: "msg-saludo",
-        type: "message",
+        id: "ai-extraer",
+        type: "ai",
         config: {
-          text: "¿Qué servicio te gustaría agendar? 🥰",
-          messageRole: "informational",
+          instruction:
+            "Lee el mensaje de la clienta (contenido del usuario) y extrae SOLO los datos que estén claramente presentes para agendar una cita. Devuelve un objeto con las claves que apliquen: " +
+            "'servicio' (el servicio que menciona, ej. 'semipermanente', 'pestañas', 'manos'; NO lo inventes ni normalices a un catálogo), " +
+            "'fecha' (en formato YYYY-MM-DD; si la clienta usa una referencia relativa como 'el viernes', 'mañana', 'el 2', resuélvela usando la variable 'hoy' que contiene la fecha de hoy en Colombia; si no da ninguna fecha, OMITE esta clave), " +
+            "'hora' (en formato HH:MM de 24h; ej. '5:00 PM' -> '17:00'; si no da hora, OMITE esta clave), " +
+            "'nombreCliente' (solo si dice explícitamente a nombre de quién, ej. 'para Ana'; si no, OMITE esta clave). " +
+            "NO incluyas ninguna clave para un dato que la clienta no haya dado de forma clara. NO afirmes disponibilidad ni agendes nada -- esto solo interpreta el mensaje inicial.",
+          mode: "extract",
+          outputVariables: ["servicio", "fecha", "hora", "nombreCliente"],
         },
       },
 
+      // Fase 3 — slot-filling condicional: cada dato se pregunta SOLO si no se
+      // extrajo (o quedó vacío -- el operador 'exists' trata "" como faltante,
+      // ver flow-engine.ts evaluateRule). Una sola pregunta por dato (Bug raíz
+      // #5: ya no hay msg-saludo + q-servicio duplicados).
+      {
+        id: "cond-servicio",
+        type: "condition",
+        config: { rules: [{ field: "servicio", operator: "exists" }], match: "all" },
+      },
       {
         id: "q-servicio",
         type: "question",
-        config: { text: "¿Qué servicio quieres agendar?", variableKey: "servicio", required: true, validation: { kind: "text" } },
+        config: { text: "¿Qué servicio deseas agendar? 🥰", variableKey: "servicio", required: true, validation: { kind: "text" } },
+      },
+      {
+        id: "cond-fecha",
+        type: "condition",
+        config: { rules: [{ field: "fecha", operator: "exists" }], match: "all" },
       },
       {
         id: "q-fecha",
@@ -101,9 +130,19 @@ export function danielaAgendarCitaFlow(): FlowDefinition {
         config: { text: "¿Para qué día? (AAAA-MM-DD)", variableKey: "fecha", required: true, validation: { kind: "text" } },
       },
       {
+        id: "cond-hora",
+        type: "condition",
+        config: { rules: [{ field: "hora", operator: "exists" }], match: "all" },
+      },
+      {
         id: "q-hora",
         type: "question",
         config: { text: "¿A qué hora te queda bien? (HH:MM)", variableKey: "hora", required: true, validation: { kind: "text" } },
+      },
+      {
+        id: "cond-nombre",
+        type: "condition",
+        config: { rules: [{ field: "nombreCliente", operator: "exists" }], match: "all" },
       },
       {
         id: "q-nombre",
@@ -228,21 +267,59 @@ export function danielaAgendarCitaFlow(): FlowDefinition {
         },
       },
 
+      // Fase 3 (Bug raíz #2) — red de seguridad para ai-confirmar, igual que
+      // ya existe en cancelar/reagendar (msg-*-respaldo). act-agendar YA creó
+      // la cita real (venimos de su rama success); si por CUALQUIER razón
+      // ai-confirmar falla (claim-security, timeout, error de API), este
+      // mensaje estático deja claro que la cita SÍ quedó, sin volver a
+      // consultar ni crear nada, y CIERRA el flujo -- así el turno queda
+      // "manejado por Flow" (yaEnvioAlgo=true) y JAMÁS cae a LEGACY. Con el
+      // Fix del Bug raíz #1 este camino casi nunca se toma, pero es la
+      // garantía estructural de que una acción crítica exitosa nunca termina
+      // en una contradicción de LEGACY (incidente de la cita #796).
+      {
+        id: "msg-confirmada-respaldo",
+        type: "message",
+        config: {
+          text: "¡Listo! Tu cita quedó agendada 💛 Te esperamos.",
+          messageRole: "informational",
+        },
+      },
+
       { id: "end-confirmado", type: "end", config: {} },
+      { id: "end-confirmado-respaldo", type: "end", config: {} },
       { id: "end-sin-disponibilidad", type: "end", config: {} },
       { id: "end-ocupado", type: "end", config: {} },
       { id: "end-no-confirmada", type: "end", config: {} },
     ],
     edges: [
-      { id: "e-start", source: "start", target: "msg-saludo" },
-      { id: "e-saludo-servicio", source: "msg-saludo", target: "q-servicio" },
-      { id: "e-servicio-fecha", source: "q-servicio", target: "q-fecha" },
-      { id: "e-fecha-hora", source: "q-fecha", target: "q-hora" },
-      { id: "e-hora-nombre", source: "q-hora", target: "q-nombre" },
+      // Fase 3 — slot-filling condicional. start -> extracción -> por cada
+      // dato: si YA existe (extraído), se salta la pregunta; si no, se
+      // pregunta y luego se sigue al siguiente dato.
+      { id: "e-start", source: "start", target: "ai-extraer" },
+      { id: "e-extraer-servicio", source: "ai-extraer", target: "cond-servicio", sourceHandle: FLOW_EDGE_HANDLE.aiSuccess },
+
+      { id: "e-servicio-falta", source: "cond-servicio", target: "q-servicio", sourceHandle: FLOW_EDGE_HANDLE.conditionFalse },
+      { id: "e-servicio-tiene", source: "cond-servicio", target: "cond-fecha", sourceHandle: FLOW_EDGE_HANDLE.conditionTrue },
+      { id: "e-servicio-a-fecha", source: "q-servicio", target: "cond-fecha" },
+
+      { id: "e-fecha-falta", source: "cond-fecha", target: "q-fecha", sourceHandle: FLOW_EDGE_HANDLE.conditionFalse },
+      { id: "e-fecha-tiene", source: "cond-fecha", target: "cond-hora", sourceHandle: FLOW_EDGE_HANDLE.conditionTrue },
+      { id: "e-fecha-a-hora", source: "q-fecha", target: "cond-hora" },
+
+      { id: "e-hora-falta", source: "cond-hora", target: "q-hora", sourceHandle: FLOW_EDGE_HANDLE.conditionFalse },
+      { id: "e-hora-tiene", source: "cond-hora", target: "cond-nombre", sourceHandle: FLOW_EDGE_HANDLE.conditionTrue },
+      { id: "e-hora-a-nombre", source: "q-hora", target: "cond-nombre" },
+
+      { id: "e-nombre-falta", source: "cond-nombre", target: "q-nombre", sourceHandle: FLOW_EDGE_HANDLE.conditionFalse },
+      { id: "e-nombre-tiene", source: "cond-nombre", target: "act-consultar", sourceHandle: FLOW_EDGE_HANDLE.conditionTrue },
       { id: "e-nombre-consultar", source: "q-nombre", target: "act-consultar" },
 
       { id: "e-consultar-cond", source: "act-consultar", target: "cond-disponible", sourceHandle: FLOW_EDGE_HANDLE.aiSuccess },
       { id: "e-consultar-no-reconocido", source: "act-consultar", target: "msg-servicio-no-reconocido", sourceHandle: FLOW_EDGE_HANDLE.aiFailure },
+      // Servicio no reconocido: se vuelve a preguntar SOLO el servicio; la
+      // fecha/hora ya recolectadas se conservan (cond-fecha/cond-hora las
+      // saltarán). q-servicio sobrescribe el servicio inválido.
       { id: "e-no-reconocido-reintentar", source: "msg-servicio-no-reconocido", target: "q-servicio" },
 
       { id: "e-cond-true", source: "cond-disponible", target: "ai-proponer-cita", sourceHandle: FLOW_EDGE_HANDLE.conditionTrue },
@@ -263,8 +340,17 @@ export function danielaAgendarCitaFlow(): FlowDefinition {
       { id: "e-ocupado-end", source: "msg-ocupado", target: "end-ocupado" },
 
       { id: "e-confirmar-end", source: "ai-confirmar", target: "end-confirmado", sourceHandle: FLOW_EDGE_HANDLE.aiSuccess },
+      // Fase 3 (Bug raíz #2) — si ai-confirmar falla, cae al respaldo estático
+      // (la cita YA está creada) y cierra el flujo. NUNCA vuelve a act-agendar
+      // ni a act-consultar.
+      { id: "e-confirmar-respaldo", source: "ai-confirmar", target: "msg-confirmada-respaldo", sourceHandle: FLOW_EDGE_HANDLE.aiFailure },
+      { id: "e-respaldo-end", source: "msg-confirmada-respaldo", target: "end-confirmado-respaldo" },
     ],
     variables: [
+      // 'hoy' la siembra el orchestrator al crear la ejecución (fecha de hoy
+      // en Colombia, YYYY-MM-DD); la usa ai-extraer para resolver fechas
+      // relativas. Declarada aquí solo como documentación (sin defaultValue).
+      { key: "hoy", label: "Fecha de hoy (Colombia)", type: "string" },
       { key: "servicio", label: "Servicio", type: "string", required: true },
       { key: "fecha", label: "Fecha", type: "string", required: true },
       { key: "hora", label: "Hora", type: "string", required: true },

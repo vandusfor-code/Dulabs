@@ -130,6 +130,13 @@ export type MotivoIntentoFlow =
   | "send_message_ya_enviado"
   | "fallback_a_legacy"
   | "excepcion_fallback_a_legacy"
+  // Bug raíz #3 (incidente "disponible→ocupado", cita real #796) — Flow
+  // ejecutó una acción CRÍTICA con éxito (creó/canceló/movió una cita real)
+  // y SOLO falló una etapa posterior (ej. la redacción del mensaje final).
+  // NUNCA se cede a LEGACY en este caso: LEGACY reprocesaría el mismo mensaje
+  // y contradiría/duplicaría una operación que ya ocurrió de verdad. Señal
+  // estructurada (OrchestratorResult.criticalActionExecuted), no textual.
+  | "accion_critica_ya_ejecutada"
   // Fase 1 (Blocker #7) — Flow terminó SIN error y SIN enviar ningún
   // mensaje (ej. el enrutador clasificó la intención como "otro" y llegó a
   // un end deliberadamente vacío). Distinto de "processed_ok" (que si
@@ -202,6 +209,24 @@ export function decidirFallbackDesdeResultado(
   const esEjecucionRealYRota =
     (result.outcome === ORCHESTRATOR_OUTCOMES.PROCESSED && Boolean(result.engineError)) ||
     result.outcome === ORCHESTRATOR_OUTCOMES.CONCURRENCY_EXHAUSTED;
+
+  // Bug raíz #3 — barrera estructural: si Flow YA ejecutó una acción crítica
+  // con éxito en este turno, NUNCA se cede a LEGACY, aunque el Flow haya
+  // fallado después sin enviar nada. LEGACY reprocesaría el mismo mensaje y
+  // contradiría/duplicaría la operación real (exactamente lo que pasó con la
+  // cita #796: creada por Flow, y luego LEGACY dijo "ocupado"). Se marca la
+  // ejecución como rota (para que el PRÓXIMO mensaje arranque limpio), pero
+  // este mensaje se considera manejado por Flow. El mensaje final al cliente
+  // es responsabilidad de la rama de respaldo del propio Flow (ver
+  // daniela-agendar-cita.flow.ts: ai-confirmar --aiFailure--> respaldo).
+  if (result.criticalActionExecuted) {
+    return {
+      handled: true,
+      motivo: "accion_critica_ya_ejecutada",
+      requiereMarcarFallida: esEjecucionRealYRota && Boolean(result.executionRowId),
+      yaEnvioAlgo: false,
+    };
+  }
 
   return {
     handled: false,

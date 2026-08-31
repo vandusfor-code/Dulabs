@@ -19,6 +19,7 @@ import {
 } from "@/lib/flow/ai-runtime/ai-proposal-bridge";
 import { buildVerifiedActionEffectData } from "@/lib/flow/ai-runtime/verified-results";
 import { applyAiResponseClaimSecurity, filterClaimSecuredEffects } from "@/lib/flow/ai-runtime/ai-response-security";
+import { isCriticalAction } from "@/lib/flow/action-capabilities";
 import type {
   FlowEffectRow,
   FlowExecutionRow,
@@ -129,6 +130,8 @@ interface EngineIterationResult {
   engineError?: OrchestratorResult["engineError"];
   rejectReason?: OrchestratorRejectReason;
   detail?: string;
+  /** Bug raíz #3 — una acción crítica se ejecutó con éxito en esta iteración. */
+  criticalActionExecuted?: boolean;
 }
 
 export class ExecutionOrchestrator {
@@ -199,6 +202,10 @@ export class ExecutionOrchestrator {
       { engineEvent: resolve.engineEvent, sourceEventId: event.eventId },
     ];
     let internalEventsProcessed = 0;
+    // Bug raíz #3 — se acumula a través de TODAS las iteraciones del turno.
+    // Una acción crítica exitosa en cualquier iteración marca todo el turno,
+    // aunque una iteración POSTERIOR falle (ej. ai-confirmar → engineError).
+    let criticalActionExecuted = false;
 
     while (pending.length > 0) {
       const work = pending.shift()!;
@@ -210,6 +217,8 @@ export class ExecutionOrchestrator {
         sourceEventId: work.sourceEventId,
       });
 
+      if (iteration.criticalActionExecuted) criticalActionExecuted = true;
+
       if (iteration.engineError) {
         return {
           outcome: ORCHESTRATOR_OUTCOMES.PROCESSED,
@@ -217,6 +226,7 @@ export class ExecutionOrchestrator {
           effects: [...accumulatedEffects, ...iteration.effects],
           dispatchedEffectIds: [...dispatchedEffectIds, ...iteration.dispatchedEffectIds],
           engineError: iteration.engineError,
+          criticalActionExecuted,
         };
       }
 
@@ -229,6 +239,7 @@ export class ExecutionOrchestrator {
           engineError: iteration.engineError,
           rejectReason: iteration.rejectReason,
           detail: iteration.detail,
+          criticalActionExecuted,
         };
       }
 
@@ -243,6 +254,7 @@ export class ExecutionOrchestrator {
             effects: accumulatedEffects,
             dispatchedEffectIds,
             detail: "internal_event_limit_reached",
+            criticalActionExecuted,
           };
         }
         pending.push({ engineEvent: internalEvent, sourceEventId: event.eventId });
@@ -255,6 +267,7 @@ export class ExecutionOrchestrator {
       executionRowId: freshRow.id,
       effects: accumulatedEffects,
       dispatchedEffectIds,
+      criticalActionExecuted,
     };
   }
 
@@ -297,6 +310,18 @@ export class ExecutionOrchestrator {
       flowVersionId: versionRow.id,
       executionId,
     });
+    // Bug raíz #4 (slot-filling) — se siembra la fecha de HOY (hora de
+    // Colombia, YYYY-MM-DD) al CREAR la ejecución. Un nodo AI de extracción
+    // (ej. agendar__ai-extraer) puede así resolver referencias relativas
+    // ("el viernes") a una fecha concreta. Variable SIN prefijo "__" a
+    // propósito: debe ser visible para Claude en el bloque VARIABLES (los
+    // "__" se filtran vía stripInternalKeys). Es un dato inocuo y general:
+    // los flows que no lo lean simplemente lo ignoran. NO reemplaza ninguna
+    // consulta real -- solo ayuda a interpretar el primer mensaje.
+    initialState.variables = {
+      ...initialState.variables,
+      hoy: new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" }),
+    };
 
     const createResult = await this.deps.store.createExecution({
       tenantId: event.tenantId,
@@ -414,7 +439,20 @@ export class ExecutionOrchestrator {
 
         const effectOutcome = await this.registerAndDispatchEffects({
           tenantId: params.tenantId,
-          executionRow: { ...row, state_version: saveResult.stateVersion },
+          // Bug raíz #1 (incidente "disponible→ocupado") — se pasan las
+          // variables FRESCAS (runResult.state.variables, ya guardadas en
+          // line 395 vía saveExecutionState), no las de `row` (snapshot del
+          // INICIO de la iteración, antes de que el motor fusionara la
+          // evidencia verificada que la acción de este mismo turno acaba de
+          // producir). Sin esto, applyAiResponseClaimSecurity veía variables
+          // obsoletas SIN appointment.reserved y rechazaba erróneamente el
+          // mensaje de confirmación de una cita que SÍ se creó. Es la misma
+          // fuente de verdad que ya usaba filterClaimSecuredEffects (abajo).
+          executionRow: {
+            ...row,
+            variables: runResult.state.variables,
+            state_version: saveResult.stateVersion,
+          },
           effects: filterClaimSecuredEffects(runResult.effects, runResult.state.variables),
           flow: params.flow,
         });
@@ -472,6 +510,7 @@ export class ExecutionOrchestrator {
           effects: runResult.effects,
           dispatchedEffectIds: effectOutcome.dispatchedEffectIds,
           internalEvents: effectOutcome.internalEvents,
+          criticalActionExecuted: effectOutcome.criticalActionExecuted,
         };
       } catch (err) {
         if (err instanceof FlowExecutionConcurrencyConflictError) {
@@ -500,11 +539,13 @@ export class ExecutionOrchestrator {
     internalEvents: FlowEngineEvent[];
     variablesPatch?: Record<string, unknown>;
     aiBudgetAfter?: AiBudgetState;
+    criticalActionExecuted: boolean;
   }> {
     const dispatchedEffectIds: string[] = [];
     const internalEvents: FlowEngineEvent[] = [];
     let variablesPatch: Record<string, unknown> = {};
     let aiBudgetAfter: AiBudgetState | undefined;
+    let criticalActionExecuted = false;
     let currentAiBudget = params.executionRow.metadata?.aiBudget as AiBudgetState | undefined;
     const conversation = {
       phoneNumberId: params.executionRow.phone_number_id,
@@ -593,6 +634,12 @@ export class ExecutionOrchestrator {
 
       if (effect.type === "effect_required" && effect.kind === "action" && effect.action) {
         if (dispatchResult.success) {
+          // Bug raíz #3 — señal estructurada: una acción CRÍTICA (agendar/
+          // cancelar/mover cita) se ejecutó con éxito en este turno. El
+          // fallback a LEGACY no debe reprocesar el mensaje después de esto.
+          if (isCriticalAction(effect.action)) {
+            criticalActionExecuted = true;
+          }
           const verifiedData = buildVerifiedActionEffectData({
             action: effect.action,
             effectId: effect.effectId,
@@ -621,6 +668,7 @@ export class ExecutionOrchestrator {
       internalEvents,
       variablesPatch: Object.keys(variablesPatch).length ? variablesPatch : undefined,
       aiBudgetAfter,
+      criticalActionExecuted,
     };
   }
 

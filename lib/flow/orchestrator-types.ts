@@ -92,6 +92,17 @@ export interface OrchestratorResult {
   rejectReason?: OrchestratorRejectReason;
   /** Detalle adicional (sin secretos). */
   detail?: string;
+  /**
+   * Bug raíz #3 (incidente "disponible→ocupado") — true si en ESTA invocación
+   * el Flow ejecutó con éxito al menos una acción CRÍTICA (criticality
+   * "critical" en action-capabilities.ts: agendar/cancelar/mover cita, etc.).
+   * Señal estructurada, no textual: permite a lib/flow-runtime-bridge.ts
+   * decidir que NO debe caer a LEGACY aunque una etapa POSTERIOR del Flow
+   * (ej. la redacción del mensaje final) falle -- porque LEGACY re-procesaría
+   * el mismo mensaje y contradiría/duplicaría una operación crítica que ya
+   * ocurrió de verdad. Ver el incidente de la cita real #796.
+   */
+  criticalActionExecuted?: boolean;
 }
 
 // ---------------------------------------------------------------------------
