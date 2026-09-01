@@ -312,7 +312,10 @@ function processAutomaticNode(
             nodeId: node.id,
             content: {
               ...node.config,
-              text: interpolateTemplate(node.config.text, state.variables),
+              text:
+                typeof node.config.text === "string"
+                  ? interpolateTemplate(node.config.text, state.variables)
+                  : node.config.text,
             },
             executionId,
             effectId: nextEffectId("msg", idGen),
