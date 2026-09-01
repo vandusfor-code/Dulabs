@@ -1,5 +1,6 @@
 import { FLOW_EDGE_HANDLE } from "@/lib/flow/constants";
 import type { FlowDefinition } from "@/lib/flow/types";
+import { DANIELA_BUTTON_IDS } from "@/lib/flows/daniela-button-ids";
 
 /**
  * Fase 1 (Blocker #4, autorizado) — Daniela: cancelación de citas.
@@ -115,12 +116,14 @@ export function danielaCancelarCitaFlow(): FlowDefinition {
       // explícita ANTES de tocar nada.
       {
         id: "q-confirmar-cancelacion",
-        type: "question",
+        type: "buttons",
         config: {
-          text: "Solo para confirmar antes de cancelarla: ¿de verdad quieres cancelar esa cita?",
+          text: "¿Deseas cancelar esta cita?",
           variableKey: "respuestaConfirmacionTexto",
-          required: true,
-          validation: { kind: "text" },
+          buttons: [
+            { id: DANIELA_BUTTON_IDS.CANCELAR_CITA, label: "Cancelar cita" },
+            { id: DANIELA_BUTTON_IDS.MANTENER_CITA, label: "Mantener cita" },
+          ],
         },
       },
       {
@@ -128,7 +131,7 @@ export function danielaCancelarCitaFlow(): FlowDefinition {
         type: "ai",
         config: {
           instruction:
-            "La clienta respondió, en respuestaConfirmacionTexto, a la pregunta de si quiere cancelar su cita. Clasifica su respuesta como 'confirma' SOLO si es un sí claro e inequívoco a CANCELAR (ej. 'sí', 'sí, cancélala', 'confirmo'). Cualquier otra cosa -- un no, una duda, 'mejor no', un cambio de tema, o cualquier respuesta que no sea un sí claro a cancelar -- clasifícala como 'no_confirma'. Ante la duda, SIEMPRE 'no_confirma': nunca asumas que sí quiere cancelar.",
+            "La clienta respondió, en respuestaConfirmacionTexto, a la pregunta de si quiere cancelar su cita. Clasifica como 'confirma' SOLO si es un sí claro e inequívoco a CANCELAR (ej. 'sí', 'sí, cancélala', 'confirmo') o si el valor es exactamente 'cancelar_cita'. Cualquier otra cosa -- un no, 'mantener_cita', una duda, 'mejor no', un cambio de tema, o cualquier respuesta que no sea un sí claro a cancelar -- clasifícala como 'no_confirma'. Ante la duda, SIEMPRE 'no_confirma': nunca asumas que sí quiere cancelar.",
           mode: "classify",
           classifications: ["confirma", "no_confirma"],
         },
@@ -211,7 +214,9 @@ export function danielaCancelarCitaFlow(): FlowDefinition {
       { id: "e-seleccion-no-clara-end", source: "msg-seleccion-no-clara", target: "end-seleccion-no-clara" },
       { id: "e-seleccion-clara-a-confirmar", source: "cond-seleccion-clara", target: "q-confirmar-cancelacion", sourceHandle: FLOW_EDGE_HANDLE.conditionTrue },
 
-      { id: "e-confirmar-a-clasificar", source: "q-confirmar-cancelacion", target: "ai-clasificar-confirmacion" },
+      { id: "e-confirmar-cancelar-btn", source: "q-confirmar-cancelacion", target: "ai-clasificar-confirmacion", sourceHandle: FLOW_EDGE_HANDLE.button(DANIELA_BUTTON_IDS.CANCELAR_CITA) },
+      { id: "e-confirmar-mantener-btn", source: "q-confirmar-cancelacion", target: "msg-cancelacion-abandonada", sourceHandle: FLOW_EDGE_HANDLE.button(DANIELA_BUTTON_IDS.MANTENER_CITA) },
+      { id: "e-confirmar-texto", source: "q-confirmar-cancelacion", target: "ai-clasificar-confirmacion", sourceHandle: FLOW_EDGE_HANDLE.text },
 
       { id: "e-no-confirma", source: "ai-clasificar-confirmacion", target: "msg-cancelacion-abandonada", sourceHandle: FLOW_EDGE_HANDLE.aiClass("no_confirma") },
       { id: "e-no-confirma-default", source: "ai-clasificar-confirmacion", target: "msg-cancelacion-abandonada", sourceHandle: FLOW_EDGE_HANDLE.aiDefault },

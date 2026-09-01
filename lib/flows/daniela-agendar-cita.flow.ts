@@ -1,5 +1,6 @@
 import { FLOW_EDGE_HANDLE } from "@/lib/flow/constants";
 import type { FlowDefinition } from "@/lib/flow/types";
+import { DANIELA_BUTTON_IDS } from "@/lib/flows/daniela-button-ids";
 
 /**
  * Fase 0 (migración Daniela → Flow) — DISEÑO, no activado.
@@ -12,11 +13,11 @@ import type { FlowDefinition } from "@/lib/flow/types";
  *   → consultar disponibilidad REAL (acción directa, sin nodo AI intermedio
  *     -- ver nota de Fase 1 más abajo)
  *   → ¿disponible? no → avisar y terminar
- *                  sí → un nodo AI (mode: respond) le cuenta a la clienta lo
- *                       que encontró disponible (servicio/fecha/hora/
- *                       especialista, datos REALES de la acción, nunca
- *                       inventados) -- todavía NO pregunta nada
- *   → PREGUNTA EXPLÍCITA "¿Deseas confirmar la cita?" (nodo question)
+ *                  sí → UN mensaje de botones interpola servicio/fecha/hora/
+ *                       especialista (datos REALES de act-consultar) y pide
+ *                       la decisión: confirmar_cita / otro_horario
+ *                       (no hay nodo AI de propuesta: Claude saludaba y
+ *                       preguntaba de más)
  *   → clasificar la respuesta: confirma / no_confirma
  *       no confirma (o cualquier respuesta ambigua, por default) → abandona,
  *                                                                   NO agenda nada
@@ -117,7 +118,7 @@ export function danielaAgendarCitaFlow(): FlowDefinition {
       {
         id: "q-servicio",
         type: "question",
-        config: { text: "¿Qué servicio deseas agendar? 🥰", variableKey: "servicio", required: true, validation: { kind: "text" } },
+        config: { text: "¿Qué servicio te gustaría agendar? 💕", variableKey: "servicio", required: true, validation: { kind: "text" } },
       },
       {
         id: "cond-fecha",
@@ -188,32 +189,24 @@ export function danielaAgendarCitaFlow(): FlowDefinition {
         },
       },
 
-      // Fase 1 — informa la disponibilidad real encontrada (datos de
-      // act-consultar: servicio/fecha/hora/especialista), pero TODAVÍA no
-      // pregunta nada -- eso lo hace q-confirmar-cita a continuación. Mismo
-      // patrón que ai-identificar-unica en daniela-cancelar-cita.flow.ts.
-      {
-        id: "ai-proponer-cita",
-        type: "ai",
-        config: {
-          instruction:
-            "Hay disponibilidad real confirmada para lo que pidió la clienta, en las variables servicio, fecha, hora y especialista (ya reales, verificadas por la herramienta de consulta -- no las inventes ni las cambies). Cuéntale con naturalidad qué encontraste disponible: el servicio, el día, la hora y con quién sería. Todavía NO le preguntes si confirma -- eso lo hace la pregunta siguiente. NUNCA digas que la cita ya quedó agendada, solo que hay disponibilidad para eso.",
-          mode: "respond",
-        },
-      },
-
-      // Fase 1 — barrera de confirmación explícita (nunca existió antes).
-      // Replica el patrón ya probado de daniela-cancelar-cita.flow.ts:
-      // question (texto fijo) -> classify (confirma/no_confirma) -> SOLO
-      // "confirma" llega a la acción real.
+      // Propuesta + decisión en UN solo mensaje interactivo (datos reales de
+      // act-consultar interpolados). No hay nodo AI de propuesta: Claude
+      // saludaba y preguntaba de más. act-agendar SIGUE solo desde class:confirma.
       {
         id: "q-confirmar-cita",
-        type: "question",
+        type: "buttons",
         config: {
-          text: "¿Deseas confirmar la cita?",
+          text:
+            "Encontré disponibilidad para {{servicio}}:\n\n" +
+            "📅 {{fecha}}\n" +
+            "🕒 {{hora}}\n" +
+            "👩 {{especialista}}\n\n" +
+            "¿Deseas este horario?",
           variableKey: "respuestaConfirmacionAgendarTexto",
-          required: true,
-          validation: { kind: "text" },
+          buttons: [
+            { id: DANIELA_BUTTON_IDS.CONFIRMAR_CITA, label: "✅ Confirmar cita" },
+            { id: DANIELA_BUTTON_IDS.OTRO_HORARIO, label: "🔄 Otro horario" },
+          ],
         },
       },
       {
@@ -221,7 +214,7 @@ export function danielaAgendarCitaFlow(): FlowDefinition {
         type: "ai",
         config: {
           instruction:
-            "La clienta respondió, en respuestaConfirmacionAgendarTexto, a la pregunta de si confirma agendar la cita propuesta. Clasifica su respuesta como 'confirma' SOLO si es un sí claro e inequívoco (ej. 'sí', 'confirmo', 'dale', 'correcto', 'de una'). Cualquier otra cosa -- un no, una duda, 'mejor no', un cambio de tema, o cualquier respuesta que no sea un sí claro -- clasifícala como 'no_confirma'. Ante la duda, SIEMPRE 'no_confirma': nunca asumas que sí quiere agendar.",
+            "La clienta respondió, en respuestaConfirmacionAgendarTexto, a la pregunta de si confirma agendar la cita propuesta. Clasifica como 'confirma' SOLO si es un sí claro e inequívoco (ej. 'sí', 'confirmo', 'dale', 'correcto', 'de una', 'me sirve', 'perfecto') o si el valor es exactamente 'confirmar_cita'. Cualquier otra cosa -- un no, una duda, 'mejor no', 'otro_horario', un cambio de tema, o cualquier respuesta que no sea un sí claro -- clasifícala como 'no_confirma'. Ante la duda, SIEMPRE 'no_confirma': nunca asumas que sí quiere agendar.",
           mode: "classify",
           classifications: ["confirma", "no_confirma"],
         },
@@ -262,7 +255,7 @@ export function danielaAgendarCitaFlow(): FlowDefinition {
         type: "ai",
         config: {
           instruction:
-            "La acción de agendar YA CORRIÓ y tienes su resultado real en las variables citaId, status ('confirmada' o 'pendiente') y especialista. Redacta la confirmación a la clienta usando ESOS datos, nunca inventados: si status es 'confirmada', dile que su cita quedó confirmada con esa especialista; si es 'pendiente', dile que quedó como solicitud y que en breve se la confirman por este mismo chat -- nunca digas 'confirmada' ni 'agendada' cuando status sea 'pendiente'.",
+            "La acción de agendar YA CORRIÓ y tienes su resultado real en citaId, status ('confirmada' o 'pendiente'), especialista, servicio, fecha y hora. NUNCA saludes ni digas 'Hola' ni uses el nombre al inicio. Si status es 'confirmada', responde SOLO en este tono: '🎉 Tu cita para [servicio] quedó confirmada con [especialista] el [fecha] a las [hora]. ¡Te esperamos!' Si es 'pendiente', dile que quedó como solicitud y que en breve se la confirman por este mismo chat -- nunca digas 'confirmada' ni 'agendada' cuando status sea 'pendiente'. No preguntes nada más.",
           mode: "respond",
         },
       },
@@ -281,7 +274,7 @@ export function danielaAgendarCitaFlow(): FlowDefinition {
         id: "msg-confirmada-respaldo",
         type: "message",
         config: {
-          text: "¡Listo! Tu cita quedó agendada 💛 Te esperamos.",
+          text: "🎉 Tu cita quedó confirmada. ¡Te esperamos!",
           messageRole: "informational",
         },
       },
@@ -322,12 +315,13 @@ export function danielaAgendarCitaFlow(): FlowDefinition {
       // saltarán). q-servicio sobrescribe el servicio inválido.
       { id: "e-no-reconocido-reintentar", source: "msg-servicio-no-reconocido", target: "q-servicio" },
 
-      { id: "e-cond-true", source: "cond-disponible", target: "ai-proponer-cita", sourceHandle: FLOW_EDGE_HANDLE.conditionTrue },
+      { id: "e-cond-true", source: "cond-disponible", target: "q-confirmar-cita", sourceHandle: FLOW_EDGE_HANDLE.conditionTrue },
       { id: "e-cond-false", source: "cond-disponible", target: "msg-sin-disponibilidad", sourceHandle: FLOW_EDGE_HANDLE.conditionFalse },
       { id: "e-sin-disponibilidad-end", source: "msg-sin-disponibilidad", target: "end-sin-disponibilidad" },
 
-      { id: "e-proponer-a-confirmar", source: "ai-proponer-cita", target: "q-confirmar-cita", sourceHandle: FLOW_EDGE_HANDLE.aiSuccess },
-      { id: "e-confirmar-a-clasificar", source: "q-confirmar-cita", target: "ai-clasificar-confirmacion" },
+      { id: "e-confirmar-cita-btn", source: "q-confirmar-cita", target: "ai-clasificar-confirmacion", sourceHandle: FLOW_EDGE_HANDLE.button(DANIELA_BUTTON_IDS.CONFIRMAR_CITA) },
+      { id: "e-otro-horario-btn", source: "q-confirmar-cita", target: "q-fecha", sourceHandle: FLOW_EDGE_HANDLE.button(DANIELA_BUTTON_IDS.OTRO_HORARIO) },
+      { id: "e-confirmar-texto", source: "q-confirmar-cita", target: "ai-clasificar-confirmacion", sourceHandle: FLOW_EDGE_HANDLE.text },
 
       { id: "e-no-confirma", source: "ai-clasificar-confirmacion", target: "msg-cita-no-confirmada", sourceHandle: FLOW_EDGE_HANDLE.aiClass("no_confirma") },
       { id: "e-no-confirma-default", source: "ai-clasificar-confirmacion", target: "msg-cita-no-confirmada", sourceHandle: FLOW_EDGE_HANDLE.aiDefault },

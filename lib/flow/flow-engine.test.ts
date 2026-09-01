@@ -220,6 +220,39 @@ describe("Flow Engine — botones y condiciones", () => {
     assert.ok(msg && msg.type === "send_message" && msg.buttons?.length === 2);
   });
 
+  it("6b. BUTTONS interpola {{variables}} en el cuerpo", () => {
+    const flow: FlowDefinition = {
+      name: "Interp",
+      nodes: [
+        { id: "start", type: "start", config: { triggerType: "first_message" } },
+        {
+          id: "btn",
+          type: "buttons",
+          config: {
+            text: "Hay espacio para {{servicio}} el {{fecha}}",
+            buttons: [{ id: "ok", label: "Ok" }],
+            variableKey: "resp",
+          },
+        },
+        { id: "end", type: "end", config: {} },
+      ],
+      edges: [
+        { id: "e1", source: "start", target: "btn" },
+        { id: "e2", source: "btn", target: "end", sourceHandle: FLOW_EDGE_HANDLE.button("ok") },
+      ],
+      variables: [
+        { key: "servicio", label: "Servicio", type: "string" },
+        { key: "fecha", label: "Fecha", type: "string" },
+      ],
+    };
+    const state = createFlowEngineState(flow);
+    state.variables = { ...state.variables, servicio: "manos", fecha: "2026-10-02" };
+    const r = runFlowEngine(flow, state, { type: "start" });
+    const msg = r.effects.find((e) => e.type === "send_message" && e.nodeId === "btn");
+    assert.ok(msg && msg.type === "send_message");
+    assert.equal(msg.content.text, "Hay espacio para manos el 2026-10-02");
+  });
+
   it("7. BUTTONS toma camino correcto", () => {
     const flow = buttonsFlow();
     const state = runFlowEngine(flow, createFlowEngineState(flow), { type: "start" }).state;
@@ -233,6 +266,53 @@ describe("Flow Engine — botones y condiciones", () => {
     const flow = buttonsFlow();
     const state = runFlowEngine(flow, createFlowEngineState(flow), { type: "start" }).state;
     const r = runFlowEngine(flow, state, { type: "button", id: "xxx" });
+    assert.equal(r.state.status, "waiting_input");
+    assert.ok(r.effects.some((e) => e.type === "invalid_input"));
+  });
+
+  it("8b. texto que coincide con el ID del botón se trata como tap", () => {
+    const flow = buttonsFlow();
+    const state = runFlowEngine(flow, createFlowEngineState(flow), { type: "start" }).state;
+    const r = runFlowEngine(flow, state, { type: "text", text: "si" });
+    assert.equal(r.error, undefined);
+    assert.equal(r.state.status, "completed");
+    assert.equal(r.state.currentNodeId, "yes-end");
+    assert.equal(r.state.variables.resp, "si");
+  });
+
+  it("8c. texto que coincide con el label del botón se trata como tap", () => {
+    const flow = buttonsFlow();
+    const state = runFlowEngine(flow, createFlowEngineState(flow), { type: "start" }).state;
+    const r = runFlowEngine(flow, state, { type: "text", text: "Sí" });
+    assert.equal(r.error, undefined);
+    assert.equal(r.state.currentNodeId, "yes-end");
+  });
+
+  function buttonsFlowConTexto(): FlowDefinition {
+    const base = buttonsFlow();
+    return {
+      ...base,
+      nodes: [...base.nodes, { id: "texto-end", type: "end", config: {} }],
+      edges: [...base.edges, { id: "e-text", source: "btn", target: "texto-end", sourceHandle: FLOW_EDGE_HANDLE.text }],
+    };
+  }
+
+  it("8d. texto libre en botones sigue el edge text (NLU) y no duplica el prompt", () => {
+    const flow = buttonsFlowConTexto();
+    const start = runFlowEngine(flow, createFlowEngineState(flow), { type: "start" });
+    assert.equal(start.effects.filter((e) => e.type === "send_message").length, 1);
+    const r = runFlowEngine(flow, start.state, { type: "text", text: "me sirve, confírmala" });
+    assert.equal(r.error, undefined);
+    assert.equal(r.state.currentNodeId, "texto-end");
+    assert.equal(r.state.variables.resp, "me sirve, confírmala");
+    assert.equal(r.effects.filter((e) => e.type === "send_message").length, 0, "el fallback de texto no reenvía el menú");
+  });
+
+  it("8e. texto sin match y sin edge text: invalid_input, no crashea", () => {
+    const flow = buttonsFlow();
+    const state = runFlowEngine(flow, createFlowEngineState(flow), { type: "start" }).state;
+    const r = runFlowEngine(flow, state, { type: "text", text: "otra cosa" });
+    assert.equal(r.error, undefined);
     assert.equal(r.state.status, "waiting_input");
     assert.ok(r.effects.some((e) => e.type === "invalid_input"));
   });

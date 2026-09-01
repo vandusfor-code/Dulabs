@@ -7,6 +7,8 @@ import type { FlowNodeType } from "@/lib/flow/types";
 /** Prefijos de sourceHandle para edges salientes. */
 export const FLOW_EDGE_HANDLE = {
   button: (buttonId: string) => `button:${buttonId}` as const,
+  /** Fallback de lenguaje natural cuando el nodo espera un botón. */
+  text: "text" as const,
   conditionTrue: "true" as const,
   conditionFalse: "false" as const,
   aiClass: (value: string) => `class:${value}` as const,

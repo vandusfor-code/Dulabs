@@ -1,5 +1,6 @@
 import { FLOW_EDGE_HANDLE } from "@/lib/flow/constants";
 import type { FlowDefinition } from "@/lib/flow/types";
+import { DANIELA_BUTTON_IDS } from "@/lib/flows/daniela-button-ids";
 
 /**
  * Fase 1 (Blocker #5, autorizado) — Daniela: reagendamiento de citas.
@@ -63,8 +64,8 @@ export function danielaReagendarCitaFlow(): FlowDefinition {
       },
 
       // Una sola cita activa: la identifica Y se la muestra a la clienta
-      // -- mismo criterio que el flow de cancelar (mode "respond", no
-      // "extract": question/message no interpolan variables en su texto).
+      // -- mismo criterio que el flow de cancelar (mode "respond"): el
+      // identificador le cuenta la cita real a la clienta.
       {
         id: "ai-identificar-unica",
         type: "ai",
@@ -158,12 +159,14 @@ export function danielaReagendarCitaFlow(): FlowDefinition {
       // MISMO paso -- todavía no toca nada, solo pregunta.
       {
         id: "q-confirmar-reagendar",
-        type: "question",
+        type: "buttons",
         config: {
           text: "Sí, ese día hay espacio. ¿Confirmas que quieres moverla a esa fecha y hora?",
           variableKey: "respuestaConfirmacionTexto",
-          required: true,
-          validation: { kind: "text" },
+          buttons: [
+            { id: DANIELA_BUTTON_IDS.CONFIRMAR_CAMBIO, label: "Confirmar cambio" },
+            { id: DANIELA_BUTTON_IDS.MANTENER_CITA, label: "Mantener cita" },
+          ],
         },
       },
       {
@@ -171,7 +174,7 @@ export function danielaReagendarCitaFlow(): FlowDefinition {
         type: "ai",
         config: {
           instruction:
-            "La clienta respondió, en respuestaConfirmacionTexto, a la pregunta de si quiere mover su cita a la nueva fecha/hora. Clasifica su respuesta como 'confirma' SOLO si es un sí claro e inequívoco a MOVERLA (ej. 'sí', 'sí, muévela', 'confirmo'). Cualquier otra cosa -- un no, una duda, 'mejor no', o cualquier respuesta que no sea un sí claro -- clasifícala como 'no_confirma'. Ante la duda, SIEMPRE 'no_confirma': nunca asumas que sí quiere cambiar su cita.",
+            "La clienta respondió, en respuestaConfirmacionTexto, a la pregunta de si quiere mover su cita a la nueva fecha/hora. Clasifica como 'confirma' SOLO si es un sí claro e inequívoco a MOVERLA (ej. 'sí', 'sí, muévela', 'confirmo') o si el valor es exactamente 'confirmar_cambio'. Cualquier otra cosa -- un no, 'mantener_cita', una duda, 'mejor no', o cualquier respuesta que no sea un sí claro -- clasifícala como 'no_confirma'. Ante la duda, SIEMPRE 'no_confirma': nunca asumas que sí quiere cambiar su cita.",
           mode: "classify",
           classifications: ["confirma", "no_confirma"],
         },
@@ -258,7 +261,9 @@ export function danielaReagendarCitaFlow(): FlowDefinition {
       { id: "e-sin-disponibilidad-end", source: "msg-sin-disponibilidad", target: "end-sin-disponibilidad" },
       { id: "e-disponible-a-confirmar", source: "cond-disponible", target: "q-confirmar-reagendar", sourceHandle: FLOW_EDGE_HANDLE.conditionTrue },
 
-      { id: "e-confirmar-a-clasificar", source: "q-confirmar-reagendar", target: "ai-clasificar-confirmacion" },
+      { id: "e-confirmar-reagendar-btn", source: "q-confirmar-reagendar", target: "ai-clasificar-confirmacion", sourceHandle: FLOW_EDGE_HANDLE.button(DANIELA_BUTTON_IDS.CONFIRMAR_CAMBIO) },
+      { id: "e-confirmar-mantener-btn", source: "q-confirmar-reagendar", target: "msg-reagendamiento-abandonado", sourceHandle: FLOW_EDGE_HANDLE.button(DANIELA_BUTTON_IDS.MANTENER_CITA) },
+      { id: "e-confirmar-texto", source: "q-confirmar-reagendar", target: "ai-clasificar-confirmacion", sourceHandle: FLOW_EDGE_HANDLE.text },
       { id: "e-no-confirma", source: "ai-clasificar-confirmacion", target: "msg-reagendamiento-abandonado", sourceHandle: FLOW_EDGE_HANDLE.aiClass("no_confirma") },
       { id: "e-no-confirma-default", source: "ai-clasificar-confirmacion", target: "msg-reagendamiento-abandonado", sourceHandle: FLOW_EDGE_HANDLE.aiDefault },
       { id: "e-abandonado-end", source: "msg-reagendamiento-abandonado", target: "end-abandonado" },

@@ -1,8 +1,9 @@
-import { FLOW_EDGE_HANDLE } from "@/lib/flow/constants";
+import { FIRST_MESSAGE_TEXT_VARIABLE_KEY, FLOW_EDGE_HANDLE } from "@/lib/flow/constants";
 import type { FlowDefinition, FlowNode, FlowEdge, VariableDefinition } from "@/lib/flow/types";
 import { danielaAgendarCitaFlow } from "@/lib/flows/daniela-agendar-cita.flow";
 import { danielaCancelarCitaFlow } from "@/lib/flows/daniela-cancelar-cita.flow";
 import { danielaReagendarCitaFlow } from "@/lib/flows/daniela-reagendar-cita.flow";
+import { DANIELA_BUTTON_IDS } from "@/lib/flows/daniela-button-ids";
 
 /**
  * Fase 1 (Blocker #7, autorizado) — Daniela: enrutamiento de intenciones.
@@ -21,14 +22,12 @@ import { danielaReagendarCitaFlow } from "@/lib/flows/daniela-reagendar-cita.flo
  * servicios en la instrucción del clasificador sería repetir conocimiento
  * de negocio que ya vive, correctamente, en el adaptador.
  *
- * "INFORMACIÓN" / "CONVERSACIÓN" (precios, dudas generales, "no sé qué
- * hacerme") NO tienen sub-grafo propio en Flow todavía -- caen en la
- * categoría "otro", que termina SIN enviar ningún mensaje. Esto es
- * deliberado: permite que lib/flow-runtime-bridge.ts (ver el ajuste de
- * este mismo blocker) reconozca "Flow terminó pero no dijo nada" y deje
- * pasar el mensaje a LEGACY, que sí tiene acceso completo a
- * base_conocimiento y al prompt real de Daniela -- no se duplicó ni se
- * intentó reconstruir esa capacidad en Flow.
+ * "info_servicio" / "otro" terminan SIN enviar ningún mensaje (end-otro)
+ * para que LEGACY responda con base_conocimiento. "producto" envía el
+ * mensaje de derivación (mismo criterio que LEGACY derivar_a_daniela_por_
+ * producto: mensaje + terminar, SIN pausar el chat). "menu" muestra el
+ * menú inicial con botones; no es obligatorio si el primer mensaje ya
+ * trae una intención clara.
  */
 
 function importarSubflow(
@@ -91,16 +90,41 @@ export function danielaRouterFlow(): FlowDefinition {
       config: {
         instruction:
           "Lee el primer mensaje de la clienta en la variable __firstMessageText y clasifica su intención en UNA de estas categorías: " +
-          "'agendar' (quiere una cita nueva, ej. 'quiero una cita', 'quiero reservar', 'quiero un masaje' -- aunque el servicio no exista, la intención es agendar), " +
+          "'agendar' (quiere una cita NUEVA, ej. 'quiero una cita', 'quiero reservar', 'quiero un masaje', 'quiero hacerme las uñas', 'quiero una cita para el viernes', o el id de botón 'servicios_spa' -- aunque el servicio no exista, la intención es agendar). NO uses agendar si solo pregunta precio o información de un servicio SIN pedir cita. " +
+          "'producto' (interés en un PRODUCTO físico para comprar o consultar: shampoo, crema, aceite, esmalte para llevar a casa; ej. 'cuánto cuesta el shampoo', 'venden cremas', 'quiero comprar un aceite', o el id de botón 'productos'). NO es un servicio de spa (semipermanente, uñas, pestañas, cejas). " +
+          "'info_servicio' (pregunta de información, precio o recomendación de un SERVICIO del spa SIN pedir cita, ej. 'cuánto cuesta el semipermanente', 'cuánto vale el semipermanente', 'qué servicio me recomiendas'). " +
+          "'menu' (saludo o apertura SIN otra intención: 'hola', 'buenos días', 'hey', 'buenas'). " +
           "'cancelar' (quiere cancelar o quitar una cita existente, ej. 'quiero cancelar', 'ya no puedo ir', 'quiero quitar la cita'), " +
           "'reagendar' (quiere cambiar la fecha/hora de una cita existente, sin cancelarla, ej. 'quiero cambiar mi cita', 'quiero moverla para mañana', '¿será posible mover la que tengo?', 'la hora que tengo no me sirve'), " +
           "'consultar' (quiere saber qué cita tiene o para cuándo es, sin cambiar nada, ej. '¿qué cita tengo?', '¿me recuerdas para cuándo estoy?'), " +
-          "'otro' (cualquier otra cosa: preguntas de precios/información general, conversación sin intención clara, mensaje ambiguo, o mensaje vacío/sin texto reconocible). " +
-          "Ante la duda genuina entre dos categorías, o si __firstMessageText no existe o no aporta nada claro, clasifica SIEMPRE como 'otro' -- nunca asumas 'agendar' por defecto.",
+          "'otro' (cualquier otra cosa: conversación sin intención clara, mensaje ambiguo, o mensaje vacío/sin texto reconocible). " +
+          "Ante la duda genuina entre agendar e info_servicio, si NO pidió cita usa 'info_servicio'. Ante cualquier otra duda, o si __firstMessageText no existe o no aporta nada claro, clasifica SIEMPRE como 'otro' -- nunca asumas 'agendar' por defecto.",
         mode: "classify",
-        classifications: ["agendar", "cancelar", "reagendar", "consultar", "otro"],
+        classifications: ["agendar", "cancelar", "reagendar", "consultar", "producto", "info_servicio", "menu", "otro"],
       },
     },
+
+    {
+      id: "bt-menu-inicial",
+      type: "buttons",
+      config: {
+        text: "¡Hola! 👋💕 Bienvenido/a. ¿En qué podemos ayudarte?",
+        variableKey: FIRST_MESSAGE_TEXT_VARIABLE_KEY,
+        buttons: [
+          { id: DANIELA_BUTTON_IDS.SERVICIOS_SPA, label: "Servicios de Spa" },
+          { id: DANIELA_BUTTON_IDS.PRODUCTOS, label: "Productos" },
+        ],
+      },
+    },
+    {
+      id: "msg-producto",
+      type: "message",
+      config: {
+        text: "Perfecto 🛍️💕 En un momento Daniela te atenderá personalmente para brindarte información sobre nuestros productos. Espera un momento, por favor.",
+        messageRole: "informational",
+      },
+    },
+    { id: "end-producto", type: "end", config: {} },
 
     // Rama CONSULTAR -- propia de este blocker, no importada de ningún
     // sub-flow existente.
@@ -154,11 +178,19 @@ export function danielaRouterFlow(): FlowDefinition {
     { id: "e-clasificar-cancelar", source: "ai-clasificar-intencion", target: cancelar.entryNodeId, sourceHandle: FLOW_EDGE_HANDLE.aiClass("cancelar") },
     { id: "e-clasificar-reagendar", source: "ai-clasificar-intencion", target: reagendar.entryNodeId, sourceHandle: FLOW_EDGE_HANDLE.aiClass("reagendar") },
     { id: "e-clasificar-consultar", source: "ai-clasificar-intencion", target: "act-consultar-citas-router", sourceHandle: FLOW_EDGE_HANDLE.aiClass("consultar") },
+    { id: "e-clasificar-producto", source: "ai-clasificar-intencion", target: "msg-producto", sourceHandle: FLOW_EDGE_HANDLE.aiClass("producto") },
+    { id: "e-clasificar-info-servicio", source: "ai-clasificar-intencion", target: "end-otro", sourceHandle: FLOW_EDGE_HANDLE.aiClass("info_servicio") },
+    { id: "e-clasificar-menu", source: "ai-clasificar-intencion", target: "bt-menu-inicial", sourceHandle: FLOW_EDGE_HANDLE.aiClass("menu") },
 
-    // "otro" y cualquier valor no reconocido (default) terminan SIN enviar
-    // ningún mensaje -- ver docstring de cabecera sobre el hand-off a LEGACY.
+    // "otro" / info_servicio / default terminan SIN enviar mensaje -- LEGACY.
     { id: "e-clasificar-otro", source: "ai-clasificar-intencion", target: "end-otro", sourceHandle: FLOW_EDGE_HANDLE.aiClass("otro") },
     { id: "e-clasificar-default", source: "ai-clasificar-intencion", target: "end-otro", sourceHandle: FLOW_EDGE_HANDLE.aiDefault },
+
+    { id: "e-menu-servicios", source: "bt-menu-inicial", target: agendar.entryNodeId, sourceHandle: FLOW_EDGE_HANDLE.button(DANIELA_BUTTON_IDS.SERVICIOS_SPA) },
+    { id: "e-menu-productos", source: "bt-menu-inicial", target: "msg-producto", sourceHandle: FLOW_EDGE_HANDLE.button(DANIELA_BUTTON_IDS.PRODUCTOS) },
+    { id: "e-menu-texto", source: "bt-menu-inicial", target: "ai-clasificar-intencion", sourceHandle: FLOW_EDGE_HANDLE.text },
+
+    { id: "e-producto-end", source: "msg-producto", target: "end-producto" },
 
     { id: "e-consultar-cond", source: "act-consultar-citas-router", target: "cond-tiene-citas-router" },
     { id: "e-consultar-sin-cita", source: "cond-tiene-citas-router", target: "msg-sin-cita-router", sourceHandle: FLOW_EDGE_HANDLE.conditionFalse },
@@ -174,7 +206,7 @@ export function danielaRouterFlow(): FlowDefinition {
   return {
     name: "Daniela — Enrutador de intenciones (Fase 1, diseño)",
     description:
-      "Clasifica la intención del primer mensaje (agendar/cancelar/reagendar/consultar/otro) y enruta al sub-grafo correspondiente. 'otro' termina sin mensaje, dejando pasar a LEGACY. NO activado para ningún tenant.",
+      "Clasifica la intención del primer mensaje (agendar/producto/info_servicio/menu/cancelar/reagendar/consultar/otro) y enruta al sub-grafo correspondiente. 'otro' e 'info_servicio' terminan sin mensaje (LEGACY). NO activado para ningún tenant.",
     nodes,
     edges,
     variables: combinarVariables(

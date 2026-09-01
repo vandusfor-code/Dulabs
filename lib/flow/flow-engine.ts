@@ -27,6 +27,7 @@ import type {
   QuestionValidation,
   SaveDataMapping,
 } from "@/lib/flow/types";
+import { interpolateTemplate } from "@/lib/flow/message-interpolation";
 
 export const DEFAULT_MAX_AUTO_STEPS = 64;
 
@@ -309,7 +310,10 @@ function processAutomaticNode(
           {
             type: "send_message",
             nodeId: node.id,
-            content: node.config,
+            content: {
+              ...node.config,
+              text: interpolateTemplate(node.config.text, state.variables),
+            },
             executionId,
             effectId: nextEffectId("msg", idGen),
           },
@@ -473,7 +477,7 @@ function enterInputNode(
     effects.push({
       type: "send_message",
       nodeId: node.id,
-      content: { text: node.config.text },
+      content: { text: interpolateTemplate(node.config.text, state.variables) },
       executionId,
       effectId: nextEffectId("msg", idGen),
     });
@@ -500,7 +504,7 @@ function enterInputNode(
     effects.push({
       type: "send_message",
       nodeId: node.id,
-      content: { text: node.config.text },
+      content: { text: interpolateTemplate(node.config.text, state.variables) },
       buttons: node.config.buttons,
       executionId,
       effectId: nextEffectId("msg", idGen),
@@ -527,6 +531,74 @@ function enterInputNode(
   return processAutomaticNode(ctx, state, node, idGen);
 }
 
+function normalizeButtonToken(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function matchButtonFromFreeText(
+  buttons: { id: string; label: string }[],
+  text: string,
+): { id: string; label: string } | undefined {
+  const raw = text.trim();
+  if (!raw) return undefined;
+  const byId = buttons.find((b) => b.id === raw);
+  if (byId) return byId;
+  const normalized = normalizeButtonToken(raw);
+  if (!normalized) return undefined;
+  return buttons.find((b) => normalizeButtonToken(b.label) === normalized);
+}
+
+function handleTextOnButtons(
+  ctx: FlowGraphContext,
+  state: FlowEngineState,
+  node: Extract<FlowNode, { type: "buttons" }>,
+  text: string,
+  idGen?: () => string,
+): StepOutcome {
+  const matched = matchButtonFromFreeText(node.config.buttons, text);
+  if (matched) {
+    return handleButtonInput(ctx, state, node, matched.id, idGen);
+  }
+
+  const textNext = resolveNextNodeId(ctx.flow, node.id, FLOW_EDGE_HANDLE.text);
+  if (textNext) {
+    const variables = node.config.variableKey
+      ? { ...state.variables, [node.config.variableKey]: text }
+      : { ...state.variables };
+    return {
+      kind: "continue",
+      nextNodeId: textNext,
+      state: {
+        ...state,
+        variables,
+        status: "running",
+        expectedInput: undefined,
+        currentNodeId: textNext,
+      },
+    };
+  }
+
+  return {
+    kind: "halt",
+    state,
+    effects: [
+      {
+        type: "invalid_input",
+        nodeId: node.id,
+        executionId: state.executionId,
+        effectId: nextEffectId("invalid", idGen),
+        message: "Opción no válida.",
+        resendPrompt: true,
+      },
+    ],
+  };
+}
+
 function handleTextInput(
   ctx: FlowGraphContext,
   state: FlowEngineState,
@@ -534,6 +606,9 @@ function handleTextInput(
   text: string,
   idGen?: () => string,
 ): StepOutcome {
+  if (node.type === "buttons") {
+    return handleTextOnButtons(ctx, state, node, text, idGen);
+  }
   if (node.type !== "question") {
     return {
       kind: "fail",
@@ -933,7 +1008,12 @@ export function runFlowEngine(
   }
 
   if (event.type === "text") {
-    if (working.status !== "waiting_input" || working.expectedInput !== "text") {
+    // Un nodo buttons espera botón, PERO el texto libre sigue siendo válido
+    // (lenguaje natural equivalente: "Sí", "quiero una cita", etc.).
+    const esperabaTextoOBoton =
+      working.status === "waiting_input" &&
+      (working.expectedInput === "text" || working.expectedInput === "button");
+    if (!esperabaTextoOBoton) {
       return fail(
         working,
         FLOW_ENGINE_ERROR_CODES.INVALID_STATE,

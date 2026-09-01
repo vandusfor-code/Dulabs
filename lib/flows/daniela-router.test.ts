@@ -56,10 +56,18 @@ function clasificarComo(flow: ReturnType<typeof danielaRouterFlow>, texto: strin
 describe("Fase 1 — Blocker #7: enrutador de intenciones (motor, sin IA real)", () => {
   const flow = danielaRouterFlow();
 
-  it("1/2. 'Quiero una cita' / 'Quiero reservar' -> clasificadas como AGENDAR -> entra al sub-grafo de agendar (msg-saludo)", () => {
+  it("1/2. 'Quiero una cita' / 'Quiero reservar' -> clasificadas como AGENDAR -> entra a extraer, no agenda", () => {
     for (const texto of ["Quiero una cita", "Quiero reservar"]) {
-      const estado = clasificarComo(flow, texto, "agendar");
-      assert.equal(estado.currentNodeId, "agendar__q-servicio", "tras msg-saludo (automático) debe llegar a la pregunta de servicio");
+      let estado = clasificarComo(flow, texto, "agendar");
+      assert.equal(estado.pendingEffect?.nodeId, "agendar__ai-extraer");
+      assert.equal(estado.status, "waiting_effect");
+      estado = avanzar(flow, estado, {
+        type: "effect_result",
+        success: true,
+        effectId: estado.pendingEffect!.effectId,
+        data: {},
+      });
+      assert.equal(estado.currentNodeId, "agendar__q-servicio");
       assert.equal(estado.status, "waiting_input");
     }
   });
@@ -95,17 +103,25 @@ describe("Fase 1 — Blocker #7: enrutador de intenciones (motor, sin IA real)",
     assert.equal(r.effects.some((e) => e.type === "send_message"), false, "el enrutador no debe decir nada -- LEGACY responde con base_conocimiento real");
   });
 
-  it("10. 'Quiero masaje' -> clasificada como AGENDAR (no es una categoría de enrutamiento aparte) -> el propio sub-grafo de agendar maneja el servicio no reconocido (hereda el fix del Blocker #3)", () => {
+  it("10. 'Quiero masaje' -> clasificada como AGENDAR -> el sub-grafo maneja servicio no reconocido (Blocker #3)", () => {
     let estado = clasificarComo(flow, "Quiero masaje", "agendar");
+    estado = avanzar(flow, estado, {
+      type: "effect_result",
+      success: true,
+      effectId: estado.pendingEffect!.effectId,
+      data: {},
+    });
     assert.equal(estado.currentNodeId, "agendar__q-servicio");
     for (const texto of ["masaje", "2027-09-01", "10:00", "Cliente Router"]) {
       estado = avanzar(flow, estado, { type: "text", text: texto });
     }
-    assert.equal(estado.pendingEffect?.nodeId, "agendar__ai-consultar");
-    // Simula el intento de disponibilidad -> falla con servicio_no_manejado (Blocker #3).
-    const propuesta = avanzar(flow, estado, { type: "effect_result", success: true, effectId: estado.pendingEffect!.effectId, data: { actionProposal: {} } });
-    assert.equal(propuesta.currentNodeId, "agendar__act-consultar");
-    const fallo = runFlowEngine(flow, propuesta, { type: "effect_result", success: false, effectId: propuesta.pendingEffect!.effectId, error: "servicio_no_manejado" });
+    assert.equal(estado.pendingEffect?.nodeId, "agendar__act-consultar");
+    const fallo = runFlowEngine(flow, estado, {
+      type: "effect_result",
+      success: false,
+      effectId: estado.pendingEffect!.effectId,
+      error: "servicio_no_manejado",
+    });
     assert.equal(fallo.error, undefined, "no debe crashear (Blocker #3), ni siquiera entrando vía el enrutador");
     assert.equal(fallo.state.currentNodeId, "agendar__q-servicio", "vuelve a preguntar el servicio, hereda exactamente el comportamiento del Blocker #3");
   });
@@ -136,6 +152,12 @@ describe("Fase 1 — Blocker #7: enrutador de intenciones (motor, sin IA real)",
 
   it("14. intención válida (agendar) + datos insuficientes -> el sub-grafo sigue pidiendo lo que falta, no avanza a ciegas", () => {
     let estado = clasificarComo(flow, "Quiero una cita", "agendar");
+    estado = avanzar(flow, estado, {
+      type: "effect_result",
+      success: true,
+      effectId: estado.pendingEffect!.effectId,
+      data: {},
+    });
     assert.equal(estado.currentNodeId, "agendar__q-servicio");
     estado = avanzar(flow, estado, { type: "text", text: "manos" });
     assert.equal(estado.currentNodeId, "agendar__q-fecha", "sin fecha todavía, debe seguir preguntando, nunca saltar a consultar disponibilidad");
@@ -174,13 +196,26 @@ describe("Fase 1 — Blocker #7: cableado real del hand-off a LEGACY (sin Claude
     assert.equal(decision.motivo, "sin_intencion_reconocida");
   });
 
-  it("clasificación 'agendar' (CON mensaje real emitido) -> decidirFallbackDesdeResultado dice handled=true, LEGACY nunca responde encima", () => {
+  it("clasificación 'agendar' + extract vacío -> pregunta de servicio (1 mensaje) y handled=true", () => {
     const flow = danielaRouterFlow();
     let state = createFlowEngineState(flow, { executionId: randomUUID() });
     state = runFlowEngine(flow, state, { type: "start", text: "Quiero una cita" }).state;
-    const r = runFlowEngine(flow, state, { type: "effect_result", success: true, effectId: state.pendingEffect!.effectId, data: { classification: "agendar" } });
-    assert.equal(r.error, undefined);
-    assert.ok(r.effects.some((e) => e.type === "send_message"), "agendar sí debe haber enviado el saludo/pregunta de servicio");
+    const clasificado = runFlowEngine(flow, state, {
+      type: "effect_result",
+      success: true,
+      effectId: state.pendingEffect!.effectId,
+      data: { classification: "agendar" },
+    });
+    assert.equal(clasificado.error, undefined);
+    const r = runFlowEngine(flow, clasificado.state, {
+      type: "effect_result",
+      success: true,
+      effectId: clasificado.state.pendingEffect!.effectId,
+      data: {},
+    });
+    const envios = r.effects.filter((e) => e.type === "send_message");
+    assert.equal(envios.length, 1, "una sola pregunta de servicio, sin saludo duplicado");
+    assert.equal(envios[0] && "nodeId" in envios[0] ? envios[0].nodeId : "", "agendar__q-servicio");
 
     const decision = decidirFallbackDesdeResultado({
       outcome: "processed",

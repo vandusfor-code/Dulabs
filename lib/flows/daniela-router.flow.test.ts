@@ -29,23 +29,32 @@ describe("Fase 1 — Enrutador de Daniela pasa el validador real de publicación
     assert.equal(new Set(ids).size, ids.length);
   });
 
-  it("las 4 ramas de clasificación (agendar/cancelar/reagendar/consultar) apuntan a un nodo real distinto cada una", () => {
+  it("las ramas de clasificación apuntan a un nodo real distinto cada una", () => {
     const flow = danielaRouterFlow();
     const nodeIds = new Set(flow.nodes.map((n) => n.id));
     const ramas = flow.edges.filter((e) => e.source === "ai-clasificar-intencion");
-    assert.equal(ramas.length, 6, "agendar, cancelar, reagendar, consultar, otro, default");
+    assert.equal(
+      ramas.length,
+      9,
+      "agendar, cancelar, reagendar, consultar, producto, info_servicio, menu, otro, default",
+    );
     const targets = new Set(ramas.map((r) => r.target));
     for (const r of ramas) assert.ok(nodeIds.has(r.target), `el target "${r.target}" debe existir como nodo real`);
     assert.ok(targets.has("end-otro"));
+    assert.ok(targets.has("bt-menu-inicial"));
+    assert.ok(targets.has("msg-producto"));
   });
 
-  it("'otro' y el default terminan en end-otro SIN pasar por ningún nodo que envíe mensaje", () => {
+  it("'otro', 'info_servicio' y el default terminan en end-otro SIN pasar por ningún nodo que envíe mensaje", () => {
     const flow = danielaRouterFlow();
-    const edgesOtro = flow.edges.filter((e) => e.source === "ai-clasificar-intencion" && (e.sourceHandle === "class:otro" || e.sourceHandle === "default"));
+    const edgesOtro = flow.edges.filter(
+      (e) =>
+        e.source === "ai-clasificar-intencion" &&
+        (e.sourceHandle === "class:otro" || e.sourceHandle === "class:info_servicio" || e.sourceHandle === "default"),
+    );
     for (const e of edgesOtro) assert.equal(e.target, "end-otro");
     const endOtro = flow.nodes.find((n) => n.id === "end-otro");
     assert.equal(endOtro?.type, "end");
-    // end-otro no debe tener ninguna arista ENTRANTE que no sea directamente desde el clasificador.
     const entrantes = flow.edges.filter((e) => e.target === "end-otro");
     assert.ok(entrantes.every((e) => e.source === "ai-clasificar-intencion"));
   });

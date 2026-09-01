@@ -89,12 +89,13 @@ describe("Fase 0 — Flow de Daniela pasa el validador real de publicación", ()
     assert.ok(nodeIds.indexOf("q-confirmar-cita") < nodeIds.indexOf("act-agendar"));
   });
 
-  it("el mensaje que propone la cita (ai-proponer-cita) ocurre antes de preguntar confirmación, nunca la afirma como agendada", () => {
+  it("la propuesta de disponibilidad es UN solo nodo de botones (q-confirmar-cita); no existe ai-proponer-cita", () => {
     const flow = danielaAgendarCitaFlow();
-    const nodeIds = flow.nodes.map((n) => n.id);
-    assert.ok(nodeIds.indexOf("ai-proponer-cita") < nodeIds.indexOf("q-confirmar-cita"));
-    const edge = flow.edges.find((e) => e.source === "ai-proponer-cita");
-    assert.equal(edge?.target, "q-confirmar-cita");
+    assert.equal(flow.nodes.some((n) => n.id === "ai-proponer-cita"), false);
+    const fromCond = flow.edges.find((e) => e.source === "cond-disponible" && e.sourceHandle === "true");
+    assert.equal(fromCond?.target, "q-confirmar-cita");
+    const q = flow.nodes.find((n) => n.id === "q-confirmar-cita");
+    assert.ok(q && q.type === "buttons");
   });
 });
 
@@ -307,13 +308,11 @@ function conducirHastaAgendarExitoso(): {
   // Extrae los 4 datos -> todas las condiciones 'exists' pasan -> act-consultar
   state = push(resolverEfecto(flow, state, { servicio: "semipermanente", fecha: "2026-09-02", hora: "17:00", nombreCliente: "Duvan" }));
   assert.equal(state.pendingEffect?.nodeId, "act-consultar");
-  // Disponibilidad REAL: libre
+  // Disponibilidad REAL: libre → propuesta + botones en el MISMO nodo
   state = push(resolverEfecto(flow, state, { disponible: true, duracionMin: 120, especialista: "Carla", horariosTomados: [] }));
-  assert.equal(state.pendingEffect?.nodeId, "ai-proponer-cita");
-  // Propone la cita (aún no agenda)
-  state = push(resolverEfecto(flow, state, { responseText: "Encontré 17:00 con Carla el 2 de septiembre." }));
   assert.equal(state.status, "waiting_input");
   assert.equal(state.currentNodeId, "q-confirmar-cita");
+  assert.equal(state.expectedInput, "button");
   // Clienta confirma
   state = push(runFlowEngine(flow, state, { type: "text", text: "sí" }));
   assert.equal(state.pendingEffect?.nodeId, "ai-clasificar-confirmacion");
@@ -392,7 +391,6 @@ describe("Regresión incidente #796 — motor real, camino completo agendar", ()
     state = push(runFlowEngine(flow, state, { type: "start", text: "Quiero semipermanente el 2026-09-02 a las 17:00 para Duvan" }));
     state = push(resolverEfecto(flow, state, { servicio: "semipermanente", fecha: "2026-09-02", hora: "17:00", nombreCliente: "Duvan" }));
     state = push(resolverEfecto(flow, state, { disponible: true, duracionMin: 120, especialista: "Carla", horariosTomados: [] }));
-    state = push(resolverEfecto(flow, state, { responseText: "Encontré 17:00 con Carla." }));
     state = push(runFlowEngine(flow, state, { type: "text", text: "sí" }));
     state = push(resolverEfecto(flow, state, { classification: "confirma" }));
     assert.equal(state.pendingEffect?.nodeId, "act-agendar");

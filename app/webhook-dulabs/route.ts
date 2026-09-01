@@ -811,12 +811,17 @@ async function atenderMensaje(
     // las reglas completas (nunca corren Flow y LEGACY en paralelo: esto es
     // secuencial, dentro del mismo candado de conversación de abajo).
     if (debeAtenderConFlow(cliente, telefonoRemitente)) {
+      const buttonId =
+        mensaje.interactive?.type === "button_reply"
+          ? mensaje.interactive.button_reply?.id?.trim()
+          : undefined;
       const intentoFlow = await atenderMensajeConFlowConFallback({
         supabase: supabaseAdmin(),
         cliente: cliente as typeof cliente & { flow_activo: true; flow_id: string },
         telefonoCliente: telefonoRemitente,
         texto: mensaje.text!.body,
         wamid: mensaje.id,
+        buttonId: buttonId || undefined,
       });
       if (intentoFlow.handled) return;
     }

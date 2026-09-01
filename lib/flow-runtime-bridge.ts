@@ -61,6 +61,12 @@ export async function atenderMensajeConFlow(params: {
   telefonoCliente: string;
   texto: string;
   wamid: string;
+  /**
+   * ID estable del botón (interactive.button_reply.id). Se usa SOLO si la
+   * ejecución activa espera un botón. El texto visible sigue viajando en
+   * `texto` para inbox / LEGACY / NLU.
+   */
+  buttonId?: string;
   /** Solo para tests — inyecta el envío de WhatsApp sin tocar la red real. */
   sendMessageDepsOverride?: Partial<SendMessageDeps>;
 }): Promise<OrchestratorResult> {
@@ -102,9 +108,14 @@ export async function atenderMensajeConFlow(params: {
     phoneNumberId: params.cliente.phone_number_id,
     telefonoCliente: params.telefonoCliente,
   });
-  const engineEvent: FlowEngineEvent = activeExecution
-    ? { type: "text", text: params.texto, eventId: params.wamid }
-    : { type: "start", text: params.texto, eventId: params.wamid };
+  const buttonId = params.buttonId?.trim();
+  const textoInicio = buttonId || params.texto;
+  const engineEvent: FlowEngineEvent =
+    !activeExecution
+      ? { type: "start", text: textoInicio, eventId: params.wamid }
+      : buttonId && activeExecution.expected_input === "button"
+        ? { type: "button", id: buttonId, eventId: params.wamid }
+        : { type: "text", text: params.texto, eventId: params.wamid };
 
   return orchestrator.process({
     tenantId: params.cliente.id_tenant,
@@ -318,6 +329,7 @@ export async function atenderMensajeConFlowConFallback(params: {
   telefonoCliente: string;
   texto: string;
   wamid: string;
+  buttonId?: string;
   sendMessageDepsOverride?: Partial<SendMessageDeps>;
 }): Promise<ResultadoIntentoFlow> {
   let result: OrchestratorResult;
