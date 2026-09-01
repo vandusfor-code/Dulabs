@@ -3,6 +3,7 @@
  */
 
 import { sanitizePayloadForObservability } from "@/lib/flow/sanitize-observability-payload";
+import { presentarFechaHoraColombia } from "@/lib/timezone-colombia";
 import { createInitialAiBudget } from "@/lib/flow/claude/claude-budget";
 import {
   DEFAULT_AI_BUDGET_LIMITS,
@@ -120,8 +121,11 @@ export function buildAIRequest(input: {
     mode: resolveClaudeMode(input.ai),
     nodeInstructions: input.ai.instruction,
     conversation: input.request.conversation,
-    variables: stripInternalKeys(payload),
-    verifiedResults: extractVerifiedResults(payload),
+    variables: presentarFechaHoraColombia(stripInternalKeys(payload)) as Record<string, unknown>,
+    verifiedResults: extractVerifiedResults(payload).map((entry) => ({
+      ...entry,
+      data: presentarFechaHoraColombia(entry.data) as Record<string, unknown>,
+    })),
     allowedActionTypes: resolveAllowedActionTypes(input.ai),
     budget,
     budgetLimits: input.budgetLimits ?? DEFAULT_AI_BUDGET_LIMITS,
