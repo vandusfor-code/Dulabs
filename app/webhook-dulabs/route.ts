@@ -29,6 +29,8 @@ import { interpretarRespuestaEncuesta, redactarPreguntaCalida, fraseEmpatica, ty
 import { procesarHistorialCoexistencia, type HistoryChangeValue } from "@/lib/coexistence-history";
 import { getCampaignLead, getCampaignBotConfig, guardarCampaignLead, marcarDumoSyncStatus } from "@/lib/campaign-lead-store";
 import { procesarMensajeCampaña, type CampaignLeadSession } from "@/lib/campaign-lead-engine";
+import { obtenerSolicitudActiva, crearSolicitudProducto, guardarSolicitudProducto } from "@/lib/soluciones-financieras-store";
+import { detectarProductoPorBoton, preguntaParaProducto, procesarRespuestaProducto } from "@/lib/soluciones-financieras-bot";
 import { adquirirCandadoChat, liberarCandadoChat } from "@/lib/chat-lock";
 import { activarPausaChat } from "@/lib/pausas-chat";
 import { obtenerOnboardingSesionActivaPorTelefono, guardarOnboardingSesion, marcarBienvenidaEnviada, filaASesion } from "@/lib/onboarding-store";
@@ -695,6 +697,12 @@ async function atenderMensaje(
   // de dulabs ya está silenciada.
   if (await atenderMensajeCampaña(cliente, mensaje, telefonoRemitente, destinoWhatsApp)) return;
 
+  // Bot comercial de Soluciones Financieras (tenant específico, gateado por
+  // phone_number_id) -- mismo criterio que el de campañas: corre ANTES de
+  // ia_pausada porque el handoff a Charlotte se hace activando esa misma
+  // pausa, no dependiendo de ella para arrancar.
+  if (await atenderMensajeSolucionesFinancieras(cliente, mensaje, telefonoRemitente, destinoWhatsApp)) return;
+
   // Onboarding automático post-pago (ver lib/onboarding-trigger.ts, que
   // manda la bienvenida) -- SOLO toma el turno si este teléfono ya tiene una
   // fila en dulabs_onboarding_sesiones. El `estado` de esa fila es el gate
@@ -1109,6 +1117,66 @@ async function atenderMensajeCampaña(
   for (const texto of resultado.messages) {
     await enviarWhatsApp(cliente, destinoWhatsApp, texto);
   }
+  return true;
+}
+
+// --- Bot comercial de Soluciones Financieras (tenant específico) -------------
+//
+// Plantilla con 3 botones de producto -> UNA pregunta fija -> respuesta del
+// cliente -> mensaje de Charlotte -> handoff a asesora humana. A diferencia
+// de atenderMensajeCampaña (motor genérico configurable por campaña), este
+// flujo es fijo para ESTE tenant -- mismo criterio de hardcoding tenant-
+// específico que lib/especialista-solicitud-ia.ts para Daniela. Gateado
+// explícitamente por phone_number_id: nunca corre para ningún otro tenant.
+const PHONE_NUMBER_ID_SOLUCIONES_FINANCIERAS = "1275440315656562";
+
+async function atenderMensajeSolucionesFinancieras(
+  cliente: ClienteConfig,
+  mensaje: MetaMessage,
+  telefonoRemitente: string,
+  destinoWhatsApp: string,
+): Promise<boolean> {
+  if (cliente.phone_number_id !== PHONE_NUMBER_ID_SOLUCIONES_FINANCIERAS) return false;
+
+  const supabase = supabaseAdmin();
+  // Texto CRUDO del botón (no el normalizado por normalizarTextoBoton, que
+  // tiene su propio diccionario para el bot de encuestas) -- mismo criterio
+  // que atenderMensajeCampaña.
+  const textoUsuario = mensaje.type === "button" && mensaje.button?.text ? mensaje.button.text : (mensaje.text?.body ?? "");
+  if (!textoUsuario) return false;
+
+  const activa = await obtenerSolicitudActiva(supabase, cliente.phone_number_id, telefonoRemitente);
+
+  if (activa) {
+    // Ya hay una pregunta pendiente para este cliente: este mensaje es su respuesta.
+    const resultado = procesarRespuestaProducto(activa.session, textoUsuario);
+    await guardarSolicitudProducto(supabase, activa.id, resultado.session);
+    for (const texto of resultado.mensajes) {
+      await enviarWhatsApp(cliente, destinoWhatsApp, texto);
+    }
+    if (resultado.accion === "capturado") {
+      console.log(
+        `[webhook-dulabs] solicitud producto financiero capturada (${resultado.session.producto}) telefono=${telefonoRemitente}`,
+      );
+      // Handoff a Charlotte: pausa indefinida (mismo valor/criterio que
+      // PAUSA_ONBOARDING_MS para "soporte_solicitado" -- hasta que un
+      // humano lo resuelva, la IA general nunca vuelve a tomar el turno).
+      await activarPausaChat(supabase, cliente.phone_number_id, telefonoRemitente, PAUSA_ONBOARDING_MS);
+    }
+    return true;
+  }
+
+  // Sin solicitud activa: ¿es el tap de uno de los 3 botones de la plantilla?
+  const producto = detectarProductoPorBoton(textoUsuario);
+  if (!producto) return false; // no es ninguno de los 3 -- sigue el flujo normal (IA general)
+
+  await crearSolicitudProducto(supabase, {
+    idTenant: cliente.id_tenant,
+    phoneNumberId: cliente.phone_number_id,
+    telefonoCliente: telefonoRemitente,
+    producto,
+  });
+  await enviarWhatsApp(cliente, destinoWhatsApp, preguntaParaProducto(producto));
   return true;
 }
 

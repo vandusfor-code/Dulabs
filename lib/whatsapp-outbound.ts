@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { descifrarSecreto } from "@/lib/crypto";
-import { enviarTexto } from "@/lib/whatsapp";
+import { enviarTexto, enviarImagen, subirMedia } from "@/lib/whatsapp";
 import type { ClienteConfig } from "@/lib/supabase";
 
 const GRAPH = `https://graph.facebook.com/${process.env.META_GRAPH_VERSION ?? "v23.0"}`;
@@ -77,6 +77,43 @@ export async function enviarWhatsApp(supabase: SupabaseClient, cliente: ClienteC
   await registrarMensaje(supabase, cliente.phone_number_id, soloDigitos(para), "saliente", texto, "ia", wamid ?? undefined);
 }
 
+// Sube y envía una imagen con caption opcional -- mismo criterio que
+// enviarWhatsApp (token del tenant, incrementa uso, registra en el
+// historial), pero origen "manual" porque hoy solo se usa para envíos
+// directos (pruebas/campañas), nunca generado por la IA.
+export async function enviarImagenWhatsApp(
+  supabase: SupabaseClient,
+  cliente: ClienteConfig,
+  para: string,
+  archivo: Buffer,
+  tipoMime: string,
+  caption?: string
+) {
+  const token = resolverTokenMeta(cliente);
+  if (!token) {
+    console.error("[whatsapp-outbound] sin token de Meta para", cliente.nombre_negocio);
+    return;
+  }
+  let wamid: string | null = null;
+  try {
+    const { mediaId } = await subirMedia({ phoneNumberId: cliente.phone_number_id, token, archivo, tipoMime });
+    ({ wamid } = await enviarImagen({ phoneNumberId: cliente.phone_number_id, token, para, mediaId, caption }));
+  } catch (err) {
+    console.error("[whatsapp-outbound] error enviando imagen a Meta:", err);
+    return;
+  }
+  await incrementarUsoMensajes(supabase, cliente);
+  await registrarMensaje(
+    supabase,
+    cliente.phone_number_id,
+    soloDigitos(para),
+    "saliente",
+    caption ?? "[imagen]",
+    "manual",
+    wamid ?? undefined
+  );
+}
+
 // Si la IA separó su respuesta en párrafos con línea en blanco, se envían
 // como mensajes de WhatsApp aparte (como escribiría una persona real) en
 // vez de un solo bloque de texto largo. Máximo dos: la primera idea sola, el
@@ -105,6 +142,8 @@ export async function enviarBotones(params: {
   para: string;
   cuerpo: string;
   botones: { id: string; titulo: string }[];
+  /** Imagen opcional en el encabezado (id ya subido, ver subirMedia) -- mismo mensaje interactivo, no un segundo envío. */
+  headerMediaId?: string;
 }): Promise<{ wamid: string | null }> {
   const res = await fetch(`${GRAPH}/${params.phoneNumberId}/messages`, {
     method: "POST",
@@ -115,6 +154,7 @@ export async function enviarBotones(params: {
       type: "interactive",
       interactive: {
         type: "button",
+        ...(params.headerMediaId ? { header: { type: "image", image: { id: params.headerMediaId } } } : {}),
         body: { text: params.cuerpo },
         action: {
           buttons: params.botones.map((b) => ({ type: "reply", reply: { id: b.id, title: b.titulo.slice(0, 20) } })),
@@ -134,7 +174,8 @@ export async function enviarBotonesWhatsApp(
   cliente: ClienteConfig,
   para: string,
   cuerpo: string,
-  botones: { id: string; titulo: string }[]
+  botones: { id: string; titulo: string }[],
+  headerMediaId?: string
 ) {
   const token = resolverTokenMeta(cliente);
   if (!token) {
@@ -143,7 +184,7 @@ export async function enviarBotonesWhatsApp(
   }
   let wamid: string | null = null;
   try {
-    ({ wamid } = await enviarBotones({ phoneNumberId: cliente.phone_number_id, token, para, cuerpo, botones }));
+    ({ wamid } = await enviarBotones({ phoneNumberId: cliente.phone_number_id, token, para, cuerpo, botones, headerMediaId }));
   } catch (err) {
     console.error("[whatsapp-outbound] error enviando botones a Meta:", err);
     return;
