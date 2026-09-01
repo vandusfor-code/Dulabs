@@ -104,14 +104,15 @@ export interface FlowButton {
 // Pregunta
 // ---------------------------------------------------------------------------
 
-export type QuestionValidationKind = "text" | "number" | "email" | "phone" | "regex";
+export type QuestionValidationKind = "text" | "number" | "email" | "phone" | "regex" | "hora_colombia";
 
 export type QuestionValidation =
   | { kind: "text" }
   | { kind: "number" }
   | { kind: "email" }
   | { kind: "phone" }
-  | { kind: "regex"; pattern: string; flags?: string };
+  | { kind: "regex"; pattern: string; flags?: string }
+  | { kind: "hora_colombia" };
 
 // ---------------------------------------------------------------------------
 // Condición

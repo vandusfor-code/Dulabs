@@ -80,6 +80,7 @@ export const questionValidationSchema = z.discriminatedUnion("kind", [
     pattern: z.string().min(1),
     flags: z.string().optional(),
   }),
+  z.object({ kind: z.literal("hora_colombia") }),
 ]);
 
 export const conditionRuleSchema = z

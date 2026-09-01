@@ -138,7 +138,7 @@ export function danielaAgendarCitaFlow(): FlowDefinition {
       {
         id: "q-hora",
         type: "question",
-        config: { text: "¿A qué hora te queda bien? (HH:MM)", variableKey: "hora", required: true, validation: { kind: "text" } },
+        config: { text: "¿A qué hora te queda bien? (HH:MM)", variableKey: "hora", required: true, validation: { kind: "hora_colombia" } },
       },
       {
         id: "cond-nombre",

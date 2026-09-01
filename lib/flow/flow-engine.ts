@@ -6,6 +6,7 @@
  */
 
 import { FIRST_MESSAGE_TEXT_VARIABLE_KEY, FLOW_EDGE_HANDLE } from "@/lib/flow/constants";
+import { parseHoraColombia } from "@/lib/parse-hora-colombia";
 import type {
   FlowEngineError,
   FlowEngineEvent,
@@ -170,6 +171,11 @@ export function validateQuestionValue(
       } catch {
         return { ok: false, message: "Configuración de validación inválida." };
       }
+    }
+    case "hora_colombia": {
+      const parsed = parseHoraColombia(text);
+      if (parsed.ok) return { ok: true, value: parsed.hhmm };
+      return { ok: false, message: parsed.message };
     }
     default:
       return { ok: true, value: text };
