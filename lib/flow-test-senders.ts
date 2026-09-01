@@ -17,13 +17,7 @@
  * flow_activo=true para ese número, CUALQUIER remitente usa Flow (el
  * comportamiento real post-prueba, cuando ya no haga falta restringir).
  */
-const FLOW_TEST_SENDERS: Record<string, string[]> = {
-  // Daniela (spa de uñas) — fase de prueba: SOLO el 314 de prueba puede
-  // entrar a Flow aunque flow_activo llegara a activarse para este número.
-  // Cualquier otro remitente sigue por LEGACY. Ver autorización "gate de
-  // prueba por remitente".
-  "1282448611609227": ["573148127388"],
-};
+const FLOW_TEST_SENDERS: Record<string, string[]> = {};
 
 /**
  * Remitentes autorizados para Flow en este phone_number_id, o null si no
