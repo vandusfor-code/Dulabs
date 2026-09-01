@@ -186,7 +186,10 @@ export function danielaRouterFlow(): FlowDefinition {
     { id: "e-clasificar-otro", source: "ai-clasificar-intencion", target: "end-otro", sourceHandle: FLOW_EDGE_HANDLE.aiClass("otro") },
     { id: "e-clasificar-default", source: "ai-clasificar-intencion", target: "end-otro", sourceHandle: FLOW_EDGE_HANDLE.aiDefault },
 
-    { id: "e-menu-servicios", source: "bt-menu-inicial", target: agendar.entryNodeId, sourceHandle: FLOW_EDGE_HANDLE.button(DANIELA_BUTTON_IDS.SERVICIOS_SPA) },
+    // servicios_spa es selección de MENÚ (intención de agendar), no un
+    // servicio real del catálogo -- va directo a q-servicio, sin ai-extraer
+    // (que interpretaría el id del botón como variables.servicio).
+    { id: "e-menu-servicios", source: "bt-menu-inicial", target: "agendar__q-servicio", sourceHandle: FLOW_EDGE_HANDLE.button(DANIELA_BUTTON_IDS.SERVICIOS_SPA) },
     { id: "e-menu-productos", source: "bt-menu-inicial", target: "msg-producto", sourceHandle: FLOW_EDGE_HANDLE.button(DANIELA_BUTTON_IDS.PRODUCTOS) },
     { id: "e-menu-texto", source: "bt-menu-inicial", target: "ai-clasificar-intencion", sourceHandle: FLOW_EDGE_HANDLE.text },
 

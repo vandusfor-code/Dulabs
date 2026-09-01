@@ -2,6 +2,10 @@ import { FLOW_EDGE_HANDLE } from "@/lib/flow/constants";
 import type { FlowDefinition } from "@/lib/flow/types";
 import { DANIELA_BUTTON_IDS } from "@/lib/flows/daniela-button-ids";
 
+/** Mensaje estático post-confirmación (sin Claude) tras act-agendar exitoso. */
+export const DANIELA_MSG_RECORDATORIO_ASISTENCIA =
+  "📌 Importante: recuerda confirmar tu asistencia 1 hora antes de tu cita. De no hacerlo, la cita será cancelada automáticamente.";
+
 /**
  * Fase 0 (migración Daniela → Flow) — DISEÑO, no activado.
  *
@@ -279,6 +283,23 @@ export function danielaAgendarCitaFlow(): FlowDefinition {
         },
       },
 
+      {
+        id: "msg-recordatorio-asistencia",
+        type: "message",
+        config: {
+          text: DANIELA_MSG_RECORDATORIO_ASISTENCIA,
+          messageRole: "informational",
+        },
+      },
+      {
+        id: "msg-recordatorio-asistencia-respaldo",
+        type: "message",
+        config: {
+          text: DANIELA_MSG_RECORDATORIO_ASISTENCIA,
+          messageRole: "informational",
+        },
+      },
+
       { id: "end-confirmado", type: "end", config: {} },
       { id: "end-confirmado-respaldo", type: "end", config: {} },
       { id: "end-sin-disponibilidad", type: "end", config: {} },
@@ -333,12 +354,14 @@ export function danielaAgendarCitaFlow(): FlowDefinition {
       { id: "e-agendar-failure", source: "act-agendar", target: "msg-ocupado", sourceHandle: FLOW_EDGE_HANDLE.aiFailure },
       { id: "e-ocupado-end", source: "msg-ocupado", target: "end-ocupado" },
 
-      { id: "e-confirmar-end", source: "ai-confirmar", target: "end-confirmado", sourceHandle: FLOW_EDGE_HANDLE.aiSuccess },
+      { id: "e-confirmar-end", source: "ai-confirmar", target: "msg-recordatorio-asistencia", sourceHandle: FLOW_EDGE_HANDLE.aiSuccess },
+      { id: "e-recordatorio-end", source: "msg-recordatorio-asistencia", target: "end-confirmado" },
       // Fase 3 (Bug raíz #2) — si ai-confirmar falla, cae al respaldo estático
       // (la cita YA está creada) y cierra el flujo. NUNCA vuelve a act-agendar
       // ni a act-consultar.
       { id: "e-confirmar-respaldo", source: "ai-confirmar", target: "msg-confirmada-respaldo", sourceHandle: FLOW_EDGE_HANDLE.aiFailure },
-      { id: "e-respaldo-end", source: "msg-confirmada-respaldo", target: "end-confirmado-respaldo" },
+      { id: "e-respaldo-recordatorio", source: "msg-confirmada-respaldo", target: "msg-recordatorio-asistencia-respaldo" },
+      { id: "e-respaldo-recordatorio-end", source: "msg-recordatorio-asistencia-respaldo", target: "end-confirmado-respaldo" },
     ],
     variables: [
       // 'hoy' la siembra el orchestrator al crear la ejecución (fecha de hoy

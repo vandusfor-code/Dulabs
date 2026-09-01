@@ -337,6 +337,10 @@ describe("Regresión incidente #796 — motor real, camino completo agendar", ()
       run.effects?.some((e) => e.type === "send_message" && e.nodeId === "msg-confirmada-respaldo"),
       "envía la confirmación de respaldo veraz",
     );
+    const salientes = (run.effects ?? []).filter((e) => e.type === "send_message");
+    assert.equal(salientes.length, 2, "respaldo + recordatorio estático");
+    assert.equal(salientes[0]?.nodeId, "msg-confirmada-respaldo");
+    assert.equal(salientes[1]?.nodeId, "msg-recordatorio-asistencia-respaldo");
     assert.equal(run.state.status, "completed");
     assert.equal(run.state.currentNodeId, "end-confirmado-respaldo");
 
@@ -365,9 +369,10 @@ describe("Regresión incidente #796 — motor real, camino completo agendar", ()
 
     assert.equal(run.state.status, "completed");
     assert.equal(run.state.currentNodeId, "end-confirmado");
-    // Una sola confirmación (la del propio ai-confirmar) y ningún respaldo redundante.
     const confirmaciones = (run.effects ?? []).filter((e) => e.type === "send_message");
-    assert.equal(confirmaciones.length, 1);
+    assert.equal(confirmaciones.length, 2, "confirmación AI + recordatorio estático");
+    assert.equal(confirmaciones[0]?.nodeId, "ai-confirmar");
+    assert.equal(confirmaciones[1]?.nodeId, "msg-recordatorio-asistencia");
     assert.equal(
       todos.some((e) => e.type === "send_message" && e.nodeId === "msg-confirmada-respaldo"),
       false,

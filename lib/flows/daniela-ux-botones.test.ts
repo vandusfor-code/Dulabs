@@ -37,7 +37,10 @@ const PREGUNTA_SERVICIO_EQ =
   /qu[eé]\s+servicio\s+(?:te\s+gustar[ií]a|quieres|deseas)\s+agendar/i;
 
 function textosVisiblesDelNodo(node: FlowNode): string[] {
-  if (node.type === "question" || node.type === "buttons" || node.type === "message") {
+  if (node.type === "question" || node.type === "buttons") {
+    return [node.config.text];
+  }
+  if (node.type === "message" && node.config.text) {
     return [node.config.text];
   }
   return [];
@@ -172,7 +175,7 @@ describe("B. botón Productos → derivación humana, NO agendar", () => {
 });
 
 describe("C. botón Servicios → flujo normal, no crea cita", () => {
-  it("tap servicios_spa entra a extraer y no agenda", () => {
+  it("tap servicios_spa va directo a q-servicio sin contaminar variables.servicio", () => {
     const flow = danielaRouterFlow();
     const menu = clasificar(flow, "Hola", "menu");
     const tap = runFlowEngine(flow, menu.state, {
@@ -180,14 +183,20 @@ describe("C. botón Servicios → flujo normal, no crea cita", () => {
       id: DANIELA_BUTTON_IDS.SERVICIOS_SPA,
     });
     assert.equal(tap.error, undefined);
-    assert.equal(tap.state.pendingEffect?.nodeId, "agendar__ai-extraer");
+    assert.equal(tap.state.currentNodeId, "agendar__q-servicio");
+    assert.equal(tap.state.variables.servicio, undefined);
+    assert.notEqual(tap.state.variables.servicio, "servicios_spa");
     assert.equal(
       tap.effects.some((e) => e.type === "effect_required" && e.nodeId === "agendar__act-agendar"),
       false,
     );
-    const after = extraerVacio(flow, tap.state);
-    assert.equal(after.state.currentNodeId, "agendar__q-servicio");
-    assert.equal(sendMessages(after.effects).length, 1);
+    const envios = sendMessages(tap.effects);
+    assert.equal(envios.length, 1);
+    assert.equal(envios[0] && "nodeId" in envios[0] ? envios[0].nodeId : "", "agendar__q-servicio");
+    assert.match(messageText(envios[0]!), PREGUNTA_SERVICIO_EQ);
+    const r2 = runFlowEngine(flow, tap.state, { type: "text", text: "semipermanente en manos" });
+    assert.equal(r2.error, undefined);
+    assert.equal(r2.state.variables.servicio, "semipermanente en manos");
   });
 });
 
@@ -436,13 +445,13 @@ describe("N. no hay mensajes duplicados", () => {
     assert.equal(sendMessages(r.effects).length, 1);
   });
 
-  it("servicios + extract vacío: un solo send_message (q-servicio)", () => {
+  it("servicios: un solo send_message (q-servicio) al tocar el botón", () => {
     const flow = danielaRouterFlow();
     const menu = clasificar(flow, "Hola", "menu");
     const tap = runFlowEngine(flow, menu.state, { type: "button", id: DANIELA_BUTTON_IDS.SERVICIOS_SPA });
-    const after = extraerVacio(flow, tap.state);
-    assert.equal(sendMessages(after.effects).length, 1);
-    assert.equal(sendMessages(tap.effects).length, 0, "el tap de servicios no reenvía el menú");
+    assert.equal(sendMessages(tap.effects).length, 1);
+    assert.equal(sendMessages(tap.effects)[0] && "nodeId" in sendMessages(tap.effects)[0]! ? sendMessages(tap.effects)[0]!.nodeId : "", "agendar__q-servicio");
+    assert.equal(tap.state.currentNodeId, "agendar__q-servicio");
   });
 
   it("FALLA si se generan dos preguntas equivalentes de servicio en el mismo turno", () => {
@@ -540,7 +549,9 @@ describe("P. no crear cita antes de confirmar; una sola confirmación final", ()
     const todos = [...effects, ...tap.effects, ...confirma.effects, ...agendado.effects, ...final.effects];
     assert.equal(todos.filter((e) => e.type === "effect_required" && e.nodeId === "agendar__act-agendar").length, 1);
     const finales = sendMessages(final.effects);
-    assert.equal(finales.length, 1);
+    assert.equal(finales.length, 2, "confirmación AI + recordatorio estático");
+    assert.equal(finales[0] && "nodeId" in finales[0] ? finales[0].nodeId : "", "agendar__ai-confirmar");
+    assert.equal(finales[1] && "nodeId" in finales[1] ? finales[1].nodeId : "", "agendar__msg-recordatorio-asistencia");
     assert.equal(/hola\s+\w+/i.test(messageText(finales[0]!)), false);
     assert.equal(final.state.status, "completed");
   });
