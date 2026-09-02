@@ -119,7 +119,10 @@ export function parseFechaColombia(raw: string, hoyISO: string): ParseFechaColom
   // "el sábado" / "este sábado" / "próximo sábado" / "el próximo sábado" / "sábado"
   const diaAlt = Object.keys(DIAS_SEMANA).join("|");
   const mProximo = s.match(new RegExp(`^(?:el |la )?proximo(?:s)? (${diaAlt})$`));
-  const mEsteOSolo = s.match(new RegExp(`^(?:el |este )?(${diaAlt})$`));
+  // Tolera texto adicional después del día ("el sábado estaría bien", "el
+  // sábado por favor") -- antes exigía que el texto TERMINARA exactamente
+  // en el nombre del día.
+  const mEsteOSolo = s.match(new RegExp(`^(?:el |este )?(${diaAlt})\\b`));
 
   if (mProximo || mEsteOSolo) {
     const nombreDia = (mProximo?.[1] ?? mEsteOSolo?.[1])!;

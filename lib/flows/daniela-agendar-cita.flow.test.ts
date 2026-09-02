@@ -361,6 +361,57 @@ describe("Cierre final Daniela — catálogo real de servicios (requisitos expl�
     assert.equal(preguntaActual(resuelto.state), "q-fecha", "va directo a fecha, nunca pregunta el servicio de nuevo");
     assert.equal(resuelto.state.variables.servicio, "Dipping");
   });
+
+  // Cierre — Pestañas (autorizado): nunca se agenda por autoservicio, ver
+  // lib/flow-pestanas-hatch.ts. Estas pruebas cubren el camino DENTRO del
+  // grafo (servicio ya resuelto como "Pestañas", sin importar si se llegó
+  // por nombre o por índice) -- complementa, sin duplicar, la transferencia
+  // por texto libre que ya cubre flow-runtime-bridge-*.test.ts.
+  it("8. seleccionar 'Pestañas' POR NOMBRE transfiere de inmediato -- nunca muestra precio ni pide fecha", () => {
+    const { flow, state } = arrancarSinCitasPrevias("Quiero una cita", {});
+    const sinHint = resolverEfecto(flow, listarCatalogo(flow, state).state, {}, false).state;
+    const respuesta = runFlowEngine(flow, sinHint, { type: "text", text: "Pestañas" }).state;
+    const interpretado = resolverEfecto(flow, respuesta, { seleccionTipo: "nombre", seleccionNombre: "Pestañas" }).state;
+    assert.equal(interpretado.pendingEffect?.nodeId, "act-resolver-seleccion-servicio");
+    const resuelto = resolverEfecto(flow, interpretado, { servicio: "Pestañas", precio: 0, precioTexto: "$0" });
+    assert.equal(resuelto.error, undefined);
+    assert.equal(resuelto.state.pendingEffect?.nodeId, "act-handoff-pestanas", "transfiere de inmediato, nunca pasa por precio/fecha/disponibilidad");
+    assert.equal(
+      resuelto.effects?.some((e) => e.type === "send_message" && e.nodeId === "msg-precio-servicio"),
+      false,
+      "nunca debe mostrar precio para pestañas",
+    );
+  });
+
+  it("9. seleccionar 'Pestañas' POR ÍNDICE (posición 12) también transfiere de inmediato", () => {
+    const { flow, state } = arrancarSinCitasPrevias("Quiero una cita", {});
+    const sinHint = resolverEfecto(flow, listarCatalogo(flow, state).state, {}, false).state;
+    const respuesta = runFlowEngine(flow, sinHint, { type: "text", text: "la 12" }).state;
+    const interpretado = resolverEfecto(flow, respuesta, { seleccionTipo: "index", seleccionIndice: 12 }).state;
+    const resuelto = resolverEfecto(flow, interpretado, { servicio: "Pestañas", precio: 0, precioTexto: "$0" });
+    assert.equal(resuelto.state.pendingEffect?.nodeId, "act-handoff-pestanas");
+  });
+
+  it("10. tras transferir por pestañas, el flow SE DETIENE -- nunca pide fecha, nunca consulta disponibilidad, nunca agenda", () => {
+    const { flow, state } = arrancarSinCitasPrevias("Quiero una cita", {});
+    const sinHint = resolverEfecto(flow, listarCatalogo(flow, state).state, {}, false).state;
+    const respuesta = runFlowEngine(flow, sinHint, { type: "text", text: "Pestañas" }).state;
+    const interpretado = resolverEfecto(flow, respuesta, { seleccionTipo: "nombre", seleccionNombre: "Pestañas" }).state;
+    const resuelto = resolverEfecto(flow, interpretado, { servicio: "Pestañas", precio: 0, precioTexto: "$0" }).state;
+    assert.equal(resuelto.pendingEffect?.nodeId, "act-handoff-pestanas");
+    const final = resolverEfecto(flow, resuelto, { transferido: true });
+    assert.equal(final.state.status, "completed");
+    assert.equal(final.state.currentNodeId, "end-pestanas-transferido");
+    assert.equal(
+      final.effects?.some(
+        (e) =>
+          e.type === "effect_required" &&
+          (e.nodeId === "act-validar-fecha" || e.nodeId === "act-listar-horarios" || e.nodeId === "act-agendar"),
+      ),
+      false,
+      "nunca debe pedir fecha, consultar disponibilidad ni agendar para pestañas",
+    );
+  });
 });
 
 describe("Motor — slot-filling determinista vía runFlowEngine", () => {
@@ -516,6 +567,32 @@ describe("Motor — slot-filling determinista vía runFlowEngine", () => {
     const run = resolverEfecto(flow, state, { hora: "17:00" });
     assert.equal(run.state.status, "waiting_input");
     assert.equal(run.state.currentNodeId, "q-confirmar-cita", "va directo a confirmar, nunca pregunta el horario de nuevo");
+  });
+
+  it("I. 'El sábado estaría bien' (con relleno) se valida en UN solo intento -- tras responder el nombre, NO vuelve a preguntar la fecha", () => {
+    const { flow, state: s0 } = arrancarSinCitasPrevias("Quiero Dipping", { servicio: "Dipping" });
+    let state = resolverEfecto(flow, listarCatalogo(flow, s0).state, { servicio: "Dipping", precio: 70000, precioTexto: "$70.000" }).state;
+    assert.equal(preguntaActual(state), "q-fecha");
+    state = runFlowEngine(flow, state, { type: "text", text: "El sábado estaría bien" }).state;
+    assert.equal(preguntaActual(state), "q-nombre", "pide el nombre -- por diseño, ANTES de validar la fecha");
+    const run1 = runFlowEngine(flow, state, { type: "text", text: "Duvan" });
+    assert.equal(run1.state.pendingEffect?.nodeId, "act-validar-fecha");
+    assert.equal(
+      run1.effects?.some((e) => e.type === "send_message" && e.nodeId === "q-fecha"),
+      false,
+      "no debe reenviar la pregunta de fecha antes de intentar validarla",
+    );
+    // Simula lo que devuelve el executor real CON el fix del parser:
+    // "El sábado estaría bien" -> 2026-09-05, igual que "el sábado", en el
+    // primer y único intento (ver parse-fecha-colombia.test.ts).
+    const run2 = resolverEfecto(flow, run1.state, { fecha: "2026-09-05", nuevaFecha: "2026-09-05" });
+    assert.equal(run2.state.pendingEffect?.nodeId, "act-listar-horarios", "sigue directo, nunca vuelve a preguntar fecha ni nombre");
+    assert.equal(
+      run2.effects?.some((e) => e.type === "send_message" && (e.nodeId === "q-fecha" || e.nodeId === "msg-fecha-invalida")),
+      false,
+      "nunca debe reenviar mensajes de fecha inválida cuando la fecha sí se resolvió",
+    );
+    assert.equal(run2.state.variables.nombreCliente, "Duvan", "el nombre ya capturado se conserva intacto");
   });
 });
 

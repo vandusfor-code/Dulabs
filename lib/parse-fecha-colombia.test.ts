@@ -51,6 +51,12 @@ describe("parseFechaColombia — días de la semana", () => {
     if (r.ok) assert.equal(r.fecha, "2026-09-05");
   });
 
+  it("'El sábado estaría bien' -- frase natural con relleno, mismo resultado que 'el sábado'", () => {
+    const r = parseFechaColombia("El sábado estaría bien", HOY);
+    assert.equal(r.ok, true);
+    if (r.ok) assert.equal(r.fecha, "2026-09-05");
+  });
+
   it("el lunes (próximo lunes desde miércoles)", () => {
     const r = parseFechaColombia("el lunes", HOY);
     assert.equal(r.ok, true);

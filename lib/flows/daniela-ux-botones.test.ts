@@ -39,7 +39,7 @@ function messageText(effect: EngineEffect): string {
 }
 
 /** Preguntas equivalentes de servicio (catálogo real): deben existir como UNA sola. */
-const PREGUNTA_SERVICIO_EQ = /servicios disponibles/i;
+const PREGUNTA_SERVICIO_EQ = /cat[aá]logo de servicios/i;
 
 function textosVisiblesDelNodo(node: FlowNode): string[] {
   if (node.type === "question" || node.type === "buttons") return [node.config.text];
@@ -161,8 +161,8 @@ describe("UX botones — validador y candados de citas intactos", () => {
   });
 });
 
-describe("A. saludo → botones Servicios/Productos/Hablar con Dani", () => {
-  it("clasificación menu envía UN mensaje interactivo con 3 IDs estables", () => {
+describe("A. saludo → botones Servicios/Productos (sin 'Hablar con Dani')", () => {
+  it("clasificación menu envía UN mensaje interactivo con 2 IDs estables", () => {
     const flow = danielaRouterFlow();
     const r = clasificar(flow, "Hola", "menu");
     const envios = sendMessages(r.effects);
@@ -170,10 +170,10 @@ describe("A. saludo → botones Servicios/Productos/Hablar con Dani", () => {
     const msg = envios[0];
     assert.ok(msg && msg.type === "send_message");
     assert.equal(msg.nodeId, "bt-menu-inicial");
-    assert.equal(msg.buttons?.length, 3);
+    assert.equal(msg.buttons?.length, 2);
     assert.deepEqual(
       msg.buttons?.map((b) => b.id),
-      [DANIELA_BUTTON_IDS.SERVICIOS_SPA, DANIELA_BUTTON_IDS.PRODUCTOS, DANIELA_BUTTON_IDS.HABLAR_CON_DANI],
+      [DANIELA_BUTTON_IDS.SERVICIOS_SPA, DANIELA_BUTTON_IDS.PRODUCTOS],
     );
     assert.match(messageText(msg), /¡Hola!/);
     assert.equal(r.state.status, "waiting_input");
@@ -187,16 +187,25 @@ describe("A. saludo → botones Servicios/Productos/Hablar con Dani", () => {
     assert.equal(decision.handled, true);
   });
 
-  it("tap 'Hablar con Dani' -- acción directa, sin pasar por ninguna IA, transfiere de inmediato", () => {
+  // Cierre — "Hablar con Dani" (autorizado): el botón se quitó del menú
+  // inicial. Un tap con ese ID de botón antiguo (ej. cliente con la
+  // plantilla vieja todavía cacheada en WhatsApp) ya no calza contra
+  // bt-menu-inicial.config.buttons -- el motor lo rechaza como opción no
+  // válida, nunca transfiere. La transferencia a Dani por texto libre
+  // ("hablar con Dani") sigue intacta vía el escape hatch determinista
+  // (lib/flow-escape-hatch.ts), sin cambios.
+  it("tap con el ID antiguo de 'Hablar con Dani' ya no calza -- opción no válida, nunca transfiere", () => {
     const flow = danielaRouterFlow();
     const menu = clasificar(flow, "Hola", "menu");
     const tap = runFlowEngine(flow, menu.state, { type: "button", id: DANIELA_BUTTON_IDS.HABLAR_CON_DANI });
     assert.equal(tap.error, undefined);
-    const envios = sendMessages(tap.effects);
-    assert.equal(envios.length, 1);
-    assert.equal(envios[0] && "nodeId" in envios[0] ? envios[0].nodeId : "", "msg-hablar-con-dani");
-    assert.match(messageText(envios[0]!), /Dani te estará respondiendo/);
-    assert.equal(tap.state.pendingEffect?.nodeId, "act-handoff-daniela");
+    assert.equal(sendMessages(tap.effects).length, 0, "ningún mensaje de transferencia -- el botón ya no existe en el menú");
+    assert.equal(
+      tap.effects.some((e) => e.type === "invalid_input"),
+      true,
+      "se rechaza como opción no válida",
+    );
+    assert.notEqual(tap.state.pendingEffect?.nodeId, "act-handoff-daniela", "nunca transfiere por este botón antiguo");
   });
 });
 

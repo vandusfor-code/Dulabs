@@ -30,6 +30,7 @@ import {
   formatearPrecioCop,
 } from "@/lib/especialistas-flow-adaptador";
 import { parseFechaColombia } from "@/lib/parse-fecha-colombia";
+import { esMencionPestanas } from "@/lib/flow-pestanas-hatch";
 import {
   EFFECT_RESULT_CLASSIFICATIONS,
   type EffectDispatchRequest,
@@ -1054,6 +1055,14 @@ export class InternalActionExecutor implements EffectExecutor {
   ): Promise<EffectDispatchResult> {
     const baseConocimiento = params.baseConocimiento ?? "";
     const servicios = parseServiciosDesdeBaseConocimiento(baseConocimiento);
+    // Pestañas nunca tiene un precio único real (tiene ~20 sub-precios) y
+    // nunca se agenda por autoservicio -- se agrega visible en el catálogo
+    // (precio 0 = sentinel, nunca se muestra: el grafo transfiere antes de
+    // llegar a msg-precio-servicio, ver cond-servicio-pestanas). Solo se
+    // agrega si el tenant realmente tiene pestañas configuradas.
+    if (esMencionPestanas(baseConocimiento)) {
+      servicios.push({ nombre: "Pestañas", precio: 0 });
+    }
 
     const data = {
       serviciosDisponibles: servicios,

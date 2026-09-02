@@ -1,6 +1,7 @@
 import { FLOW_EDGE_HANDLE } from "@/lib/flow/constants";
 import type { FlowDefinition } from "@/lib/flow/types";
 import { DANIELA_BUTTON_IDS } from "@/lib/flows/daniela-button-ids";
+import { MENSAJE_TRANSFERENCIA_PESTANAS } from "@/lib/flow-pestanas-hatch";
 
 /** Mensaje estático post-confirmación (sin Claude) tras act-agendar exitoso. */
 export const DANIELA_MSG_RECORDATORIO_ASISTENCIA =
@@ -232,6 +233,28 @@ export function danielaAgendarCitaFlow(): FlowDefinition {
           messageRole: "informational",
         },
       },
+      // Pestañas nunca se agenda por autoservicio (Nicol confirma ella
+      // misma, cita previa) -- si el servicio resuelto es "Pestañas",
+      // transfiere de inmediato en vez de mostrar precio/pedir fecha. Mismo
+      // texto/acción exacta que ya usa la transferencia determinista de
+      // texto libre (lib/flow-pestanas-hatch.ts), para que sea idéntica sin
+      // importar por cuál de los dos caminos se llegue a "Pestañas".
+      {
+        id: "cond-servicio-pestanas",
+        type: "condition",
+        config: { rules: [{ field: "servicio", operator: "equals", value: "Pestañas" }], match: "all" },
+      },
+      {
+        id: "msg-pestanas-transferencia",
+        type: "message",
+        config: { text: MENSAJE_TRANSFERENCIA_PESTANAS, messageRole: "informational" },
+      },
+      {
+        id: "act-handoff-pestanas",
+        type: "action",
+        config: { actionType: "transferir_soporte", pauseDurationHours: 24 },
+      },
+      { id: "end-pestanas-transferido", type: "end", config: {} },
       {
         id: "cond-fecha",
         type: "condition",
@@ -541,14 +564,19 @@ export function danielaAgendarCitaFlow(): FlowDefinition {
       // Camino rápido: si 'servicio' (hint del primer mensaje) calza EXACTO
       // (por nombre) con un ítem real del catálogo, se salta la pregunta
       // abierta -- si no, cae a mostrar el catálogo y preguntar.
-      { id: "e-inicial-servicio-ok", source: "act-resolver-seleccion-inicial-servicio", target: "msg-precio-servicio", sourceHandle: FLOW_EDGE_HANDLE.aiSuccess },
+      { id: "e-inicial-servicio-ok", source: "act-resolver-seleccion-inicial-servicio", target: "cond-servicio-pestanas", sourceHandle: FLOW_EDGE_HANDLE.aiSuccess },
       { id: "e-inicial-servicio-fail", source: "act-resolver-seleccion-inicial-servicio", target: "q-seleccionar-servicio", sourceHandle: FLOW_EDGE_HANDLE.aiFailure },
 
       { id: "e-seleccionar-servicio-a-interpretar", source: "q-seleccionar-servicio", target: "ai-interpretar-seleccion-servicio" },
       { id: "e-interpretar-servicio-a-resolver", source: "ai-interpretar-seleccion-servicio", target: "act-resolver-seleccion-servicio", sourceHandle: FLOW_EDGE_HANDLE.aiSuccess },
-      { id: "e-resolver-servicio-ok", source: "act-resolver-seleccion-servicio", target: "msg-precio-servicio", sourceHandle: FLOW_EDGE_HANDLE.aiSuccess },
+      { id: "e-resolver-servicio-ok", source: "act-resolver-seleccion-servicio", target: "cond-servicio-pestanas", sourceHandle: FLOW_EDGE_HANDLE.aiSuccess },
       { id: "e-resolver-servicio-fail", source: "act-resolver-seleccion-servicio", target: "msg-seleccion-servicio-no-clara", sourceHandle: FLOW_EDGE_HANDLE.aiFailure },
       { id: "e-seleccion-servicio-no-clara-reintentar", source: "msg-seleccion-servicio-no-clara", target: "q-seleccionar-servicio" },
+
+      { id: "e-servicio-no-pestanas", source: "cond-servicio-pestanas", target: "msg-precio-servicio", sourceHandle: FLOW_EDGE_HANDLE.conditionFalse },
+      { id: "e-servicio-si-pestanas", source: "cond-servicio-pestanas", target: "msg-pestanas-transferencia", sourceHandle: FLOW_EDGE_HANDLE.conditionTrue },
+      { id: "e-pestanas-msg-handoff", source: "msg-pestanas-transferencia", target: "act-handoff-pestanas" },
+      { id: "e-pestanas-handoff-end", source: "act-handoff-pestanas", target: "end-pestanas-transferido", sourceHandle: FLOW_EDGE_HANDLE.aiSuccess },
 
       { id: "e-precio-a-fecha", source: "msg-precio-servicio", target: "cond-fecha" },
 
