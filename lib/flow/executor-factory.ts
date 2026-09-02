@@ -12,6 +12,7 @@ import {
 } from "@/lib/marketplace-citas";
 import {
   consultarDisponibilidadEspecialista,
+  validarServicioEspecialista,
   agendarCitaEspecialista,
   cancelarCitaEspecialista,
   consultarCitasActivasEspecialista,
@@ -61,8 +62,9 @@ export function createDefaultExecutorRegistry(
     sugerirHorariosLibres,
     crearCita,
     readPausaUntil,
-    consultarDisponibilidadEspecialista,
-    agendarCitaEspecialista,
+  consultarDisponibilidadEspecialista,
+  validarServicioEspecialista,
+  agendarCitaEspecialista,
     cancelarCitaEspecialista,
     consultarCitasActivasEspecialista,
     moverCitaEspecialista,

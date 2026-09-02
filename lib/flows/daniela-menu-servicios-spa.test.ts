@@ -80,7 +80,7 @@ describe("Menú servicios_spa — separación menú vs servicio real", () => {
       type: "button",
       id: DANIELA_BUTTON_IDS.PRODUCTOS,
     });
-    assert.equal(tap.state.currentNodeId, "end-producto");
+    assert.equal(tap.state.pendingEffect?.nodeId, "act-handoff-daniela");
     assert.equal(
       tap.effects.some((e) => e.type === "effect_required" && e.nodeId === "agendar__act-agendar"),
       false,
@@ -90,24 +90,24 @@ describe("Menú servicios_spa — separación menú vs servicio real", () => {
   it("E. 'Quiero comprar una crema' clasifica producto, no agenda", () => {
     const flow = danielaRouterFlow();
     const r = clasificar(flow, "Quiero comprar una crema", "producto");
-    assert.equal(r.state.currentNodeId, "end-producto");
+    assert.equal(r.state.pendingEffect?.nodeId, "act-handoff-daniela");
     assert.equal(
       r.effects.some((e) => e.type === "effect_required" && e.nodeId === "agendar__act-agendar"),
       false,
     );
   });
 
-  it("F. info de servicio sin cita → end-otro (LEGACY)", () => {
+  it("F. info de servicio sin cita → handoff a Daniela", () => {
     const flow = danielaRouterFlow();
     const r = clasificar(flow, "Quiero información sobre el semipermanente", "info_servicio");
-    assert.equal(r.state.currentNodeId, "end-otro");
+    assert.equal(r.state.pendingEffect?.nodeId, "act-handoff-daniela");
     const decision = decidirFallbackDesdeResultado({
       outcome: "processed",
       executionRowId: "menu-info",
       effects: r.effects as EngineEffect[],
       dispatchedEffectIds: [],
     });
-    assert.equal(decision.handled, false);
+    assert.equal(decision.handled, true);
   });
 
   it("6. tap servicios_spa no dispara act-agendar ni act-consultar", () => {

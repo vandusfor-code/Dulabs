@@ -97,10 +97,11 @@ export function danielaRouterFlow(): FlowDefinition {
           "'cancelar' (quiere cancelar o quitar una cita existente, ej. 'quiero cancelar', 'ya no puedo ir', 'quiero quitar la cita'), " +
           "'reagendar' (quiere cambiar la fecha/hora de una cita existente, sin cancelarla, ej. 'quiero cambiar mi cita', 'quiero moverla para mañana', '¿será posible mover la que tengo?', 'la hora que tengo no me sirve'), " +
           "'consultar' (quiere saber qué cita tiene o para cuándo es, sin cambiar nada, ej. '¿qué cita tengo?', '¿me recuerdas para cuándo estoy?'), " +
-          "'otro' (cualquier otra cosa: conversación sin intención clara, mensaje ambiguo, o mensaje vacío/sin texto reconocible). " +
-          "Ante la duda genuina entre agendar e info_servicio, si NO pidió cita usa 'info_servicio'. Ante cualquier otra duda, o si __firstMessageText no existe o no aporta nada claro, clasifica SIEMPRE como 'otro' -- nunca asumas 'agendar' por defecto.",
+          "'handoff_tema' (pagos, métodos de pago, transferencias, comprobantes de pago, preguntas administrativas, temas fuera de servicios/citas del spa, o cualquier cosa donde no debes inventar datos — ej. '¿cómo pago?', '¿aceptan transferencia?', '¿cuál es la cuenta?'), " +
+          "'otro' (mensaje ambiguo o sin intención clara tras leer el texto, ej. conversación suelta sin pedido concreto). " +
+          "Ante la duda genuera entre agendar e info_servicio, si NO pidió cita usa 'info_servicio'. Pagos y temas administrativos SIEMPRE 'handoff_tema', nunca 'agendar' ni 'info_servicio'. Ante cualquier otra duda genuina sin intención clara, o si __firstMessageText no existe o no aporta nada claro, clasifica como 'otro' — nunca asumas 'agendar' por defecto.",
         mode: "classify",
-        classifications: ["agendar", "cancelar", "reagendar", "consultar", "producto", "info_servicio", "menu", "otro"],
+        classifications: ["agendar", "cancelar", "reagendar", "consultar", "producto", "info_servicio", "menu", "handoff_tema", "otro"],
       },
     },
 
@@ -124,7 +125,28 @@ export function danielaRouterFlow(): FlowDefinition {
         messageRole: "informational",
       },
     },
-    { id: "end-producto", type: "end", config: {} },
+    {
+      id: "msg-handoff-tema",
+      type: "message",
+      config: {
+        text: "Ese tema prefiero que lo revise directamente Daniela para darte la información correcta 💕. Voy a pasarle tu conversación. Un momentico, por favor.",
+        messageRole: "informational",
+      },
+    },
+    {
+      id: "msg-handoff-duda",
+      type: "message",
+      config: {
+        text: "No quiero darte una información incorrecta 😊. Voy a pasar tu conversación directamente con Daniela para que pueda ayudarte. Un momentico, por favor.",
+        messageRole: "informational",
+      },
+    },
+    {
+      id: "act-handoff-daniela",
+      type: "action",
+      config: { actionType: "transferir_soporte", pauseDurationHours: 24 },
+    },
+    { id: "end-handoff", type: "end", config: {} },
 
     // Rama CONSULTAR -- propia de este blocker, no importada de ningún
     // sub-flow existente.
@@ -162,7 +184,6 @@ export function danielaRouterFlow(): FlowDefinition {
       },
     },
 
-    { id: "end-otro", type: "end", config: {} },
     { id: "end-consultar-sin-cita", type: "end", config: {} },
     { id: "end-consultar-informado", type: "end", config: {} },
 
@@ -179,12 +200,12 @@ export function danielaRouterFlow(): FlowDefinition {
     { id: "e-clasificar-reagendar", source: "ai-clasificar-intencion", target: reagendar.entryNodeId, sourceHandle: FLOW_EDGE_HANDLE.aiClass("reagendar") },
     { id: "e-clasificar-consultar", source: "ai-clasificar-intencion", target: "act-consultar-citas-router", sourceHandle: FLOW_EDGE_HANDLE.aiClass("consultar") },
     { id: "e-clasificar-producto", source: "ai-clasificar-intencion", target: "msg-producto", sourceHandle: FLOW_EDGE_HANDLE.aiClass("producto") },
-    { id: "e-clasificar-info-servicio", source: "ai-clasificar-intencion", target: "end-otro", sourceHandle: FLOW_EDGE_HANDLE.aiClass("info_servicio") },
+    { id: "e-clasificar-info-servicio", source: "ai-clasificar-intencion", target: "msg-handoff-tema", sourceHandle: FLOW_EDGE_HANDLE.aiClass("info_servicio") },
+    { id: "e-clasificar-handoff-tema", source: "ai-clasificar-intencion", target: "msg-handoff-tema", sourceHandle: FLOW_EDGE_HANDLE.aiClass("handoff_tema") },
     { id: "e-clasificar-menu", source: "ai-clasificar-intencion", target: "bt-menu-inicial", sourceHandle: FLOW_EDGE_HANDLE.aiClass("menu") },
 
-    // "otro" / info_servicio / default terminan SIN enviar mensaje -- LEGACY.
-    { id: "e-clasificar-otro", source: "ai-clasificar-intencion", target: "end-otro", sourceHandle: FLOW_EDGE_HANDLE.aiClass("otro") },
-    { id: "e-clasificar-default", source: "ai-clasificar-intencion", target: "end-otro", sourceHandle: FLOW_EDGE_HANDLE.aiDefault },
+    { id: "e-clasificar-otro", source: "ai-clasificar-intencion", target: "msg-handoff-duda", sourceHandle: FLOW_EDGE_HANDLE.aiClass("otro") },
+    { id: "e-clasificar-default", source: "ai-clasificar-intencion", target: "msg-handoff-duda", sourceHandle: FLOW_EDGE_HANDLE.aiDefault },
 
     // servicios_spa es selección de MENÚ (intención de agendar), no un
     // servicio real del catálogo -- va directo a q-servicio, sin ai-extraer
@@ -193,7 +214,10 @@ export function danielaRouterFlow(): FlowDefinition {
     { id: "e-menu-productos", source: "bt-menu-inicial", target: "msg-producto", sourceHandle: FLOW_EDGE_HANDLE.button(DANIELA_BUTTON_IDS.PRODUCTOS) },
     { id: "e-menu-texto", source: "bt-menu-inicial", target: "ai-clasificar-intencion", sourceHandle: FLOW_EDGE_HANDLE.text },
 
-    { id: "e-producto-end", source: "msg-producto", target: "end-producto" },
+    { id: "e-producto-handoff", source: "msg-producto", target: "act-handoff-daniela" },
+    { id: "e-handoff-tema-act", source: "msg-handoff-tema", target: "act-handoff-daniela" },
+    { id: "e-handoff-duda-act", source: "msg-handoff-duda", target: "act-handoff-daniela" },
+    { id: "e-handoff-end", source: "act-handoff-daniela", target: "end-handoff", sourceHandle: FLOW_EDGE_HANDLE.aiSuccess },
 
     { id: "e-consultar-cond", source: "act-consultar-citas-router", target: "cond-tiene-citas-router" },
     { id: "e-consultar-sin-cita", source: "cond-tiene-citas-router", target: "msg-sin-cita-router", sourceHandle: FLOW_EDGE_HANDLE.conditionFalse },

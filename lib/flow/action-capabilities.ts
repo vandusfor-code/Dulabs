@@ -72,6 +72,10 @@ const BY_ACTION_TYPE: Partial<Record<FlowActionType, ActionCapabilitySpec>> = {
     verifiesOnSuccess: ["appointment.available"],
     outputVariables: ["disponible"],
   },
+  validar_servicio_especialista: {
+    actionType: "validar_servicio_especialista",
+    criticality: "standard",
+  },
   agendar_cita_especialista: {
     actionType: "agendar_cita_especialista",
     criticality: "critical",

@@ -175,6 +175,11 @@ const actionNodeConfigSchema = z.discriminatedUnion("actionType", [
     params: z.record(z.string(), z.string()).optional(),
   }),
   z.object({
+    actionType: z.literal("validar_servicio_especialista"),
+    semanticTag: semanticTagSchema,
+    params: z.record(z.string(), z.string()).optional(),
+  }),
+  z.object({
     actionType: z.literal("agendar_cita_especialista"),
     semanticTag: semanticTagSchema,
     params: z.record(z.string(), z.string()).optional(),

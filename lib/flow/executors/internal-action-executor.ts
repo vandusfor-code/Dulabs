@@ -15,6 +15,7 @@ import {
 } from "@/lib/marketplace-citas";
 import {
   consultarDisponibilidadEspecialista,
+  validarServicioEspecialista,
   agendarCitaEspecialista,
   cancelarCitaEspecialista,
   consultarCitasActivasEspecialista,
@@ -57,6 +58,7 @@ export interface InternalActionDeps {
   // dulabs_citas_especialista), NO marketplace. Ver
   // lib/especialistas-flow-adaptador.ts.
   consultarDisponibilidadEspecialista: typeof consultarDisponibilidadEspecialista;
+  validarServicioEspecialista: typeof validarServicioEspecialista;
   agendarCitaEspecialista: typeof agendarCitaEspecialista;
   cancelarCitaEspecialista: typeof cancelarCitaEspecialista;
   // Fase 1 (Blocker #4).
@@ -72,6 +74,7 @@ const OPERATION_CLASS: Partial<Record<string, InternalActionOperationClass>> = {
   agendar_cita_marketplace: "CRITICAL",
   transferir_soporte: "CRITICAL",
   consultar_disponibilidad_especialista: "READ",
+  validar_servicio_especialista: "READ",
   agendar_cita_especialista: "CRITICAL",
   cancelar_cita_especialista: "CRITICAL",
   consultar_citas_activas_especialista: "READ",
@@ -196,6 +199,8 @@ export class InternalActionExecutor implements EffectExecutor {
         return this.transferirSoporte(request, action, signal);
       case "consultar_disponibilidad_especialista":
         return this.consultarDisponibilidadEspecialistaAction(request, params, signal);
+      case "validar_servicio_especialista":
+        return this.validarServicioEspecialistaAction(request, params, signal);
       case "agendar_cita_especialista":
         return this.agendarCitaEspecialistaAction(request, params, signal);
       case "cancelar_cita_especialista":
@@ -518,6 +523,55 @@ export class InternalActionExecutor implements EffectExecutor {
   }
 
   // --- Fase 0: adaptador de citas por especialista (Daniela) --------------
+
+  private async validarServicioEspecialistaAction(
+    request: EffectDispatchRequest,
+    params: Record<string, string>,
+    signal?: AbortSignal,
+  ): Promise<EffectDispatchResult> {
+    const phoneNumberId = request.conversation?.phoneNumberId ?? params.phoneNumberId ?? "";
+    const servicio = params.servicio ?? "";
+
+    if (!phoneNumberId || !servicio) {
+      return {
+        success: false,
+        classification: EFFECT_RESULT_CLASSIFICATIONS.VALIDATION_ERROR,
+        error: "missing_service_params",
+      };
+    }
+
+    assertNotAborted(signal);
+    const owned = await this.deps.authorizer.assertPhoneNumberOwnedByTenant(request.tenantId, phoneNumberId);
+    if (!owned) return this.tenantRejected();
+    assertNotAborted(signal);
+
+    const resultado = await this.deps.validarServicioEspecialista(this.deps.supabase, {
+      phoneNumberId,
+      servicio,
+    });
+
+    assertNotAborted(signal);
+
+    if (!resultado.ok) {
+      return {
+        success: false,
+        classification: EFFECT_RESULT_CLASSIFICATIONS.NON_RETRYABLE,
+        error: resultado.motivo,
+        data: { detalle: resultado.detalle },
+      };
+    }
+
+    const data = { servicioReconocido: true, effectId: request.effectId };
+
+    return {
+      success: true,
+      classification: EFFECT_RESULT_CLASSIFICATIONS.SUCCESS,
+      data,
+      appliedResult: data,
+      rawResult: data,
+      metadata: { operationClass: OPERATION_CLASS.validar_servicio_especialista },
+    };
+  }
 
   private async consultarDisponibilidadEspecialistaAction(
     request: EffectDispatchRequest,

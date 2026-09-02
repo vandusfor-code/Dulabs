@@ -165,8 +165,8 @@ describe("B. botón Productos → derivación humana, NO agendar", () => {
     const envios = sendMessages(tap.effects);
     assert.equal(envios.length, 1);
     assert.equal(envios[0] && "nodeId" in envios[0] ? envios[0].nodeId : "", "msg-producto");
-    assert.equal(tap.state.currentNodeId, "end-producto");
-    assert.equal(tap.state.status, "completed");
+    assert.equal(tap.state.pendingEffect?.nodeId, "act-handoff-daniela");
+    assert.equal(tap.state.status, "waiting_effect");
     assert.equal(
       tap.effects.some((e) => e.type === "effect_required" && e.nodeId === "agendar__act-agendar"),
       false,
@@ -207,7 +207,7 @@ describe("D/E. texto PRODUCTO → derivación", () => {
     const envios = sendMessages(r.effects);
     assert.equal(envios.length, 1);
     assert.equal(envios[0] && "nodeId" in envios[0] ? envios[0].nodeId : "", "msg-producto");
-    assert.equal(r.state.currentNodeId, "end-producto");
+    assert.equal(r.state.pendingEffect?.nodeId, "act-handoff-daniela");
     assert.equal(
       r.effects.some((e) => e.type === "effect_required" && e.nodeId === "agendar__act-agendar"),
       false,
@@ -217,25 +217,25 @@ describe("D/E. texto PRODUCTO → derivación", () => {
   it("E. 'quiero comprar una crema' (producto) deriva", () => {
     const flow = danielaRouterFlow();
     const r = clasificar(flow, "Quiero comprar una crema", "producto");
-    assert.equal(r.state.currentNodeId, "end-producto");
+    assert.equal(r.state.pendingEffect?.nodeId, "act-handoff-daniela");
     assert.equal(sendMessages(r.effects).length, 1);
   });
 });
 
 describe("F/G. SERVICIO-INFO vs AGENDAR", () => {
-  it("F. 'cuánto cuesta el semipermanente' (info_servicio) NO crea cita y cede a LEGACY", () => {
+  it("F. 'cuánto cuesta el semipermanente' (info_servicio) handoff a Daniela, NO crea cita", () => {
     const flow = danielaRouterFlow();
     const r = clasificar(flow, "Quiero saber cuánto cuesta el semipermanente", "info_servicio");
-    assert.equal(r.state.currentNodeId, "end-otro");
-    assert.equal(sendMessages(r.effects).length, 0);
+    assert.equal(r.state.pendingEffect?.nodeId, "act-handoff-daniela");
+    assert.ok(sendMessages(r.effects).some((e) => "nodeId" in e && e.nodeId === "msg-handoff-tema"));
     const decision = decidirFallbackDesdeResultado({
       outcome: "processed",
       executionRowId: "ux-info",
       effects: r.effects,
       dispatchedEffectIds: [],
     });
-    assert.equal(decision.handled, false);
-    assert.equal(decision.motivo, "sin_intencion_reconocida");
+    assert.equal(decision.handled, true);
+    assert.equal(decision.motivo, "processed_ok");
   });
 
   it("G. 'quiero una cita para semipermanente' (agendar) entra a extraer, no agenda solo", () => {
@@ -412,7 +412,7 @@ describe("M. botones y lenguaje natural equivalentes", () => {
     const flow = danielaRouterFlow();
     const menu = clasificar(flow, "Hola", "menu");
     const typed = runFlowEngine(flow, menu.state, { type: "text", text: "Productos" });
-    assert.equal(typed.state.currentNodeId, "end-producto");
+    assert.equal(typed.state.pendingEffect?.nodeId, "act-handoff-daniela");
     assert.equal(sendMessages(typed.effects).length, 1);
   });
 

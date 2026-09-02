@@ -42,6 +42,10 @@ import {
  * fuente es limpieza futura legítima, fuera del alcance de esta fase.
  */
 
+export type ResultadoValidarServicioEspecialista =
+  | { ok: true; servicioReconocido: true }
+  | { ok: false; motivo: "servicio_no_manejado"; detalle: string };
+
 export type ResultadoDisponibilidadEspecialista =
   | {
       ok: true;
@@ -210,6 +214,27 @@ async function resolverCandidatas(
   }
   if (candidatas.length === 0) return { tipo: "sin_especialistas" };
   return { tipo: "categoria", candidatas, categoria };
+}
+
+/**
+ * Solo lectura — valida que el texto de servicio sea reconocible para este
+ * tenant (resolverCandidatas), SIN consultar disponibilidad ni escribir
+ * variables de hueco. Usado en el slot-filling de agendar ANTES de pedir
+ * fecha/hora/nombre.
+ */
+export async function validarServicioEspecialista(
+  supabase: SupabaseClient,
+  params: { phoneNumberId: string; servicio: string },
+): Promise<ResultadoValidarServicioEspecialista> {
+  const resuelto = await resolverCandidatas(supabase, params.phoneNumberId, params.servicio);
+  if (resuelto.tipo === "sin_especialistas") {
+    return {
+      ok: false,
+      motivo: "servicio_no_manejado",
+      detalle: `No manejamos "${params.servicio}" con agenda propia todavía.`,
+    };
+  }
+  return { ok: true, servicioReconocido: true };
 }
 
 /**

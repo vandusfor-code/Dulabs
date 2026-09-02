@@ -591,6 +591,11 @@ function baseInternalDeps(
       motivo: "servicio_no_manejado" as const,
       detalle: "stub",
     }),
+    validarServicioEspecialista: async () => ({
+      ok: false as const,
+      motivo: "servicio_no_manejado" as const,
+      detalle: "stub",
+    }),
     agendarCitaEspecialista: async () => ({
       ok: false as const,
       motivo: "servicio_no_manejado" as const,

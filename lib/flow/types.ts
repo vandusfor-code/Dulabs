@@ -189,6 +189,7 @@ export type FlowActionType =
   // especialistas (dulabs_especialistas / dulabs_citas_especialista) — NO
   // sobre dulabs_marketplace_citas. Ver lib/especialistas-flow-adaptador.ts.
   | "consultar_disponibilidad_especialista"
+  | "validar_servicio_especialista"
   | "agendar_cita_especialista"
   | "cancelar_cita_especialista"
   // Fase 1 (Blocker #4): lista TODAS las citas activas de la clienta, no
@@ -246,6 +247,7 @@ export interface SimpleActionConfig extends ActionSemanticTag {
     | "crear_lead_campana"
     | "agendar_cita_marketplace"
     | "consultar_disponibilidad_especialista"
+    | "validar_servicio_especialista"
     | "agendar_cita_especialista"
     | "cancelar_cita_especialista"
     | "consultar_citas_activas_especialista"

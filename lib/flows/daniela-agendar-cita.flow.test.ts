@@ -192,32 +192,48 @@ describe("Fase 3 — slot-filling determinista (bugs #4 y #5) vía runFlowEngine
     assert.equal(textos.length, 1);
   });
 
-  it("A2. tras responder el servicio, avanza a q-nombre (fecha/hora YA están, se saltan) y NUNCA re-pregunta fecha ni hora", () => {
+  it("A2. tras responder el servicio, valida el servicio y avanza a q-nombre (fecha/hora YA están, se saltan) y NUNCA re-pregunta fecha ni hora", () => {
     const flow = danielaAgendarCitaFlow();
     let state = arrancarConExtraccion(
       "Quiero una cita para el viernes a las 5:00 PM",
       { fecha: "2026-09-04", hora: "17:00" },
     ).state;
     assert.equal(preguntaActual(state), "q-servicio");
-    const run = runFlowEngine(flow, state, { type: "text", text: "semipermanente" });
+    let run = runFlowEngine(flow, state, { type: "text", text: "semipermanente" });
+    state = run.state;
+    assert.equal(state.pendingEffect?.nodeId, "act-validar-servicio");
+    run = runFlowEngine(flow, state, {
+      type: "effect_result",
+      success: true,
+      effectId: state.pendingEffect!.effectId,
+      data: { servicioReconocido: true },
+    });
     state = run.state;
     // fecha y hora existen -> se saltan -> queda en q-nombre.
     assert.equal(preguntaActual(state), "q-nombre");
-    const pidioFecha = run.effects.some((e) => e.type === "send_message" && e.nodeId === "q-fecha");
-    const pidioHora = run.effects.some((e) => e.type === "send_message" && e.nodeId === "q-hora");
+    const pidioFecha = run.effects?.some((e) => e.type === "send_message" && e.nodeId === "q-fecha");
+    const pidioHora = run.effects?.some((e) => e.type === "send_message" && e.nodeId === "q-hora");
     assert.equal(pidioFecha, false, "NUNCA re-pregunta la fecha ya dada");
     assert.equal(pidioHora, false, "NUNCA re-pregunta la hora ya dada");
   });
 
-  it("B. mensaje con servicio+fecha+hora (todo extraído) -> NO pregunta ninguno de los tres; solo pide el nombre", () => {
-    const { state, effects } = arrancarConExtraccion(
+  it("B. mensaje con servicio+fecha+hora (todo extraído) -> valida servicio y solo pide el nombre", () => {
+    const flow = danielaAgendarCitaFlow();
+    let state = arrancarConExtraccion(
       "Quiero semipermanente el 2026-09-02 a las 17:00",
       { servicio: "semipermanente", fecha: "2026-09-02", hora: "17:00" },
-    );
-    assert.equal(preguntaActual(state), "q-nombre");
+    ).state;
+    assert.equal(state.pendingEffect?.nodeId, "act-validar-servicio");
+    const validado = runFlowEngine(flow, state, {
+      type: "effect_result",
+      success: true,
+      effectId: state.pendingEffect!.effectId,
+      data: { servicioReconocido: true },
+    });
+    assert.equal(preguntaActual(validado.state), "q-nombre");
     for (const nodo of ["q-servicio", "q-fecha", "q-hora"]) {
       assert.equal(
-        effects.some((e) => e.type === "send_message" && e.nodeId === nodo),
+        validado.effects?.some((e) => e.type === "send_message" && e.nodeId === nodo),
         false,
         `no debe preguntar ${nodo}`,
       );
@@ -229,6 +245,22 @@ describe("Fase 3 — slot-filling determinista (bugs #4 y #5) vía runFlowEngine
     assert.equal(preguntaActual(state), "q-servicio");
     const preguntasServicio = effects.filter((e) => e.type === "send_message" && e.nodeId === "q-servicio");
     assert.equal(preguntasServicio.length, 1);
+  });
+
+  it("E. servicio inválido en q-servicio (ej. fecha en lugar de servicio) falla en act-validar-servicio ANTES de pedir nombre", () => {
+    const flow = danielaAgendarCitaFlow();
+    let state = arrancarConExtraccion("Quiero una cita", {}).state;
+    assert.equal(preguntaActual(state), "q-servicio");
+    let run = runFlowEngine(flow, state, { type: "text", text: "Sábado o el viernes" });
+    state = run.state;
+    assert.equal(state.pendingEffect?.nodeId, "act-validar-servicio");
+    run = runFlowEngine(flow, state, {
+      type: "effect_result",
+      success: false,
+      effectId: state.pendingEffect!.effectId,
+      error: "servicio_no_manejado",
+    });
+    assert.equal(preguntaActual(run.state), "q-servicio", "vuelve a preguntar servicio tras validación fallida");
   });
 
   it("D. un solo turno de arranque NO produce dos preguntas de servicio (bug #5 cerrado end-to-end)", () => {
@@ -305,8 +337,10 @@ function conducirHastaAgendarExitoso(): {
   // start -> ai-extraer (efecto AI de extracción)
   state = push(runFlowEngine(flow, state, { type: "start", text: "Quiero semipermanente el 2026-09-02 a las 17:00 para Duvan" }));
   assert.equal(state.pendingEffect?.nodeId, "ai-extraer");
-  // Extrae los 4 datos -> todas las condiciones 'exists' pasan -> act-consultar
+  // Extrae los 4 datos -> act-validar-servicio -> act-consultar
   state = push(resolverEfecto(flow, state, { servicio: "semipermanente", fecha: "2026-09-02", hora: "17:00", nombreCliente: "Duvan" }));
+  assert.equal(state.pendingEffect?.nodeId, "act-validar-servicio");
+  state = push(resolverEfecto(flow, state, { servicioReconocido: true }));
   assert.equal(state.pendingEffect?.nodeId, "act-consultar");
   // Disponibilidad REAL: libre → propuesta + botones en el MISMO nodo
   state = push(resolverEfecto(flow, state, { disponible: true, duracionMin: 120, especialista: "Carla", horariosTomados: [] }));
@@ -395,6 +429,7 @@ describe("Regresión incidente #796 — motor real, camino completo agendar", ()
     };
     state = push(runFlowEngine(flow, state, { type: "start", text: "Quiero semipermanente el 2026-09-02 a las 17:00 para Duvan" }));
     state = push(resolverEfecto(flow, state, { servicio: "semipermanente", fecha: "2026-09-02", hora: "17:00", nombreCliente: "Duvan" }));
+    state = push(resolverEfecto(flow, state, { servicioReconocido: true }));
     state = push(resolverEfecto(flow, state, { disponible: true, duracionMin: 120, especialista: "Carla", horariosTomados: [] }));
     state = push(runFlowEngine(flow, state, { type: "text", text: "sí" }));
     state = push(resolverEfecto(flow, state, { classification: "confirma" }));
@@ -427,7 +462,7 @@ describe("Regresión incidente #796 — motor real, camino completo agendar", ()
 });
 
 describe("Regresión router (dos ejecuciones) — el reconocimiento vs. nueva cita deliberada", () => {
-  it("TAREA 7a: un 'gracias' tras una cita se clasifica 'otro' -> end-otro SIN mensaje (no reingresa a agendar; LEGACY maneja el cierre)", () => {
+  it("TAREA 7a: un 'gracias' tras una cita se clasifica 'otro' -> handoff (no reingresa a agendar)", () => {
     const flow = danielaRouterFlow();
     let state = createFlowEngineState(flow, {});
     const r1 = runFlowEngine(flow, state, { type: "start", text: "Muchas gracias" });
@@ -439,11 +474,10 @@ describe("Regresión router (dos ejecuciones) — el reconocimiento vs. nueva ci
       effectId: state.pendingEffect!.effectId,
       data: { classification: "otro" },
     });
-    assert.equal(r2.state.currentNodeId, "end-otro");
-    assert.equal(
+    assert.equal(r2.state.pendingEffect?.nodeId, "act-handoff-daniela");
+    assert.ok(
       (r2.effects ?? []).some((e) => e.type === "send_message"),
-      false,
-      "end-otro no envía nada -> el bridge deja pasar a LEGACY (handled=false), nunca re-agenda",
+      "handoff envía mensaje al cliente",
     );
     // NO entró al subflow de agendar.
     assert.equal(r2.state.currentNodeId?.startsWith("agendar__"), false);

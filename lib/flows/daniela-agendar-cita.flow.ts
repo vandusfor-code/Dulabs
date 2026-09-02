@@ -100,7 +100,7 @@ export function danielaAgendarCitaFlow(): FlowDefinition {
         config: {
           instruction:
             "Lee el mensaje de la clienta (contenido del usuario) y extrae SOLO los datos que estén claramente presentes para agendar una cita. Devuelve un objeto con las claves que apliquen: " +
-            "'servicio' (el servicio que menciona, ej. 'semipermanente', 'pestañas', 'manos'; NO lo inventes ni normalices a un catálogo), " +
+            "'servicio' (el servicio que menciona, ej. 'semipermanente', 'pestañas', 'manos'; NO lo inventes ni normalices a un catálogo; NUNCA uses servicio para días de la semana, fechas, horas ni nombres de persona — si el mensaje solo dice cuándo, ej. 'sábado', 'el viernes', 'mañana', OMITE servicio), " +
             "'fecha' (en formato YYYY-MM-DD; si la clienta usa una referencia relativa como 'el viernes', 'mañana', 'el 2', resuélvela usando la variable 'hoy' que contiene la fecha de hoy en Colombia; si no da ninguna fecha, OMITE esta clave), " +
             "'hora' (en formato HH:MM de 24h; ej. '5:00 PM' -> '17:00'; si no da hora, OMITE esta clave), " +
             "'nombreCliente' (solo si dice explícitamente a nombre de quién, ej. 'para Ana'; si no, OMITE esta clave). " +
@@ -157,6 +157,15 @@ export function danielaAgendarCitaFlow(): FlowDefinition {
 
       // Fase 1 — acción DIRECTA, sin nodo AI intermedio (ver nota de diseño
       // arriba). servicio/fecha ya están en state.variables.
+      // Valida que variables.servicio sea reconocible ANTES de pedir fecha/hora/
+      // nombre — evita recolectar todo el slot-filling y fallar al final con
+      // msg-servicio-no-reconocido (incidente producción: fecha en servicio).
+      {
+        id: "act-validar-servicio",
+        type: "action",
+        config: { actionType: "validar_servicio_especialista" },
+      },
+
       {
         id: "act-consultar",
         type: "action",
@@ -314,8 +323,10 @@ export function danielaAgendarCitaFlow(): FlowDefinition {
       { id: "e-extraer-servicio", source: "ai-extraer", target: "cond-servicio", sourceHandle: FLOW_EDGE_HANDLE.aiSuccess },
 
       { id: "e-servicio-falta", source: "cond-servicio", target: "q-servicio", sourceHandle: FLOW_EDGE_HANDLE.conditionFalse },
-      { id: "e-servicio-tiene", source: "cond-servicio", target: "cond-fecha", sourceHandle: FLOW_EDGE_HANDLE.conditionTrue },
-      { id: "e-servicio-a-fecha", source: "q-servicio", target: "cond-fecha" },
+      { id: "e-servicio-tiene", source: "cond-servicio", target: "act-validar-servicio", sourceHandle: FLOW_EDGE_HANDLE.conditionTrue },
+      { id: "e-servicio-a-validar", source: "q-servicio", target: "act-validar-servicio" },
+      { id: "e-validar-servicio-ok", source: "act-validar-servicio", target: "cond-fecha", sourceHandle: FLOW_EDGE_HANDLE.aiSuccess },
+      { id: "e-validar-servicio-fail", source: "act-validar-servicio", target: "msg-servicio-no-reconocido", sourceHandle: FLOW_EDGE_HANDLE.aiFailure },
 
       { id: "e-fecha-falta", source: "cond-fecha", target: "q-fecha", sourceHandle: FLOW_EDGE_HANDLE.conditionFalse },
       { id: "e-fecha-tiene", source: "cond-fecha", target: "cond-hora", sourceHandle: FLOW_EDGE_HANDLE.conditionTrue },
