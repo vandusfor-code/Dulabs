@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 import { verificarAccesoAdminDulabs } from "@/lib/admin-tenant";
+import { obtenerCreditosMasivos } from "@/lib/campanas-creditos";
 
 export const runtime = "nodejs";
 
@@ -34,6 +35,8 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     .maybeSingle();
   if (sesError) return Response.json({ error: sesError.message }, { status: 500 });
 
+  const creditosMasivos = await obtenerCreditosMasivos(supabase, idTenant);
+
   return Response.json({
     cliente: {
       idTenant: suscripcion.id_tenant,
@@ -62,6 +65,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
           actualizadoAt: sesion.updated_at,
         }
       : null,
+    creditosMasivos,
   });
 }
 

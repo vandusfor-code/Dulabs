@@ -100,6 +100,23 @@ export default function CampanasPage() {
   const [propuestaContactos, setPropuestaContactos] = useState<ContactoImportado[] | null>(null);
   const [errorImportar, setErrorImportar] = useState<string | null>(null);
 
+  // Saldo de mensajes masivos de cortesía -- null mientras carga, o si este
+  // tenant nunca tuvo un paquete/cortesía asignado (no está sujeto a este
+  // límite). El backend (/api/campanas/enviar) siempre vuelve a validar
+  // esto antes de enviar, esto es solo para que el usuario lo vea antes de
+  // intentarlo.
+  const [creditosMasivos, setCreditosMasivos] = useState<{ limite: number; usados: number; disponibles: number } | null>(null);
+  const cargarCreditosMasivos = useCallback(() => {
+    if (!session) return;
+    fetch("/api/dashboard/creditos-masivos", { headers: { Authorization: `Bearer ${session.access_token}` } })
+      .then((res) => res.json())
+      .then((data) => setCreditosMasivos(data.creditos ?? null))
+      .catch(() => setCreditosMasivos(null));
+  }, [session]);
+  useEffect(() => {
+    cargarCreditosMasivos();
+  }, [cargarCreditosMasivos]);
+
   const importarContactos = useCallback(
     async (archivo: File) => {
       if (!session) return;
@@ -175,6 +192,17 @@ export default function CampanasPage() {
         );
         return;
       }
+      // Aviso inmediato sin ir a red -- el backend (/api/campanas/enviar)
+      // vuelve a validar esto de todas formas antes de aceptar la campaña,
+      // esto es solo para no hacerle esperar el round-trip a algo que ya
+      // sabemos que va a rechazar.
+      const destinatariosActuales = destinatarios.split("\n").map((d) => d.trim()).filter(Boolean).length;
+      if (creditosMasivos && destinatariosActuales > creditosMasivos.disponibles) {
+        setResultadoCampana(
+          `Has alcanzado el límite de mensajes disponibles para tu cuenta. Actualmente tienes ${creditosMasivos.disponibles} mensajes de cortesía disponibles, pero esta campaña requiere ${destinatariosActuales}. Reduce la cantidad de destinatarios o adquiere un nuevo paquete de mensajes.`
+        );
+        return;
+      }
       setEnviandoCampana(true);
       setResultadoCampana(null);
       const lista = destinatarios
@@ -232,6 +260,7 @@ export default function CampanasPage() {
         setHeaderArchivo(null);
         if (headerFileInputRef.current) headerFileInputRef.current.value = "";
         cargarDatos();
+        cargarCreditosMasivos();
       } catch (err) {
         setResultadoCampana(err instanceof Error ? err.message : String(err));
       } finally {
@@ -239,11 +268,13 @@ export default function CampanasPage() {
         setEnviandoCampana(false);
       }
     },
-    [session, plantillaCampana, plantillaElegida, headerArchivo, destinatarios, cargarDatos, t]
+    [session, plantillaCampana, plantillaElegida, headerArchivo, destinatarios, creditosMasivos, cargarDatos, cargarCreditosMasivos, t]
   );
 
   const aprobadas = (plantillas ?? []).filter((p) => p.estado === "APPROVED");
   const conteoDestinatarios = destinatarios.split("\n").map((d) => d.trim()).filter(Boolean).length;
+  const sinCreditosDisponibles = creditosMasivos !== null && creditosMasivos.disponibles <= 0;
+  const campanaSuperaElSaldo = creditosMasivos !== null && conteoDestinatarios > creditosMasivos.disponibles;
 
   const campanas = datos?.campanas ?? [];
   const activa = campanas.find((c) => c.id === activeId) ?? campanas[0] ?? null;
@@ -424,6 +455,43 @@ export default function CampanasPage() {
                   <p className="mt-1.5 flex items-center gap-1.5 text-xs text-mist">
                     <Users className="size-3.5" /> {conteoDestinatarios} {conteoDestinatarios === 1 ? t("destinatario", "recipient") : t("destinatarios", "recipients")}
                   </p>
+                  {creditosMasivos && (
+                    <div className="mt-3 rounded-lg border border-edge bg-ink p-3">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-semibold uppercase tracking-wide text-mist">{t("Mensajes masivos", "Bulk messages")}</span>
+                        <span className="font-medium tabular-nums text-fg">
+                          {creditosMasivos.usados} / {creditosMasivos.limite} {t("utilizados", "used")}
+                        </span>
+                      </div>
+                      <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-card">
+                        <div
+                          className={`h-full rounded-full transition-all ${sinCreditosDisponibles ? "bg-red-500" : "bg-lime"}`}
+                          style={{ width: `${Math.min(100, Math.round((creditosMasivos.usados / Math.max(1, creditosMasivos.limite)) * 100))}%` }}
+                        />
+                      </div>
+                      <p className={`mt-1.5 text-xs ${sinCreditosDisponibles ? "text-red-400" : "text-mist"}`}>
+                        {sinCreditosDisponibles
+                          ? t("Has utilizado tus mensajes de cortesía.", "You've used up your courtesy messages.")
+                          : t(`${creditosMasivos.disponibles} mensajes disponibles`, `${creditosMasivos.disponibles} messages available`)}
+                      </p>
+                      {sinCreditosDisponibles && (
+                        <p className="mt-1 text-xs text-mist">
+                          {t(
+                            "Para continuar realizando envíos masivos, necesitas adquirir un nuevo paquete de mensajes.",
+                            "To keep sending bulk campaigns, you need to purchase a new message package."
+                          )}
+                        </p>
+                      )}
+                      {!sinCreditosDisponibles && campanaSuperaElSaldo && (
+                        <p className="mt-1 text-xs text-amber-400">
+                          {t(
+                            `Esta campaña tiene ${conteoDestinatarios} destinatarios, pero solo tienes ${creditosMasivos.disponibles} mensajes disponibles.`,
+                            `This campaign has ${conteoDestinatarios} recipients, but you only have ${creditosMasivos.disponibles} messages available.`
+                          )}
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
                 {progresoCampana && (
                   <div>
@@ -453,7 +521,7 @@ export default function CampanasPage() {
                 )}
                 <button
                   type="submit"
-                  disabled={enviandoCampana || Boolean(plantillaElegida?.header_formato && !headerArchivo)}
+                  disabled={enviandoCampana || Boolean(plantillaElegida?.header_formato && !headerArchivo) || sinCreditosDisponibles}
                   className="btn-shine self-start rounded-lg bg-lime px-5 py-2.5 text-sm font-semibold text-lime-fg transition-[background-color,transform] duration-200 hover:-translate-y-0.5 hover:bg-lime-hover active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {enviandoCampana ? t("Enviando…", "Sending…") : t("Enviar campaña", "Send campaign")}

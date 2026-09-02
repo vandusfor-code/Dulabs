@@ -7,6 +7,7 @@ import { planDelTenant } from "@/lib/plan-limits";
 import { esSinPlan, MENSAJE_SIN_PLAN } from "@/lib/planes";
 import { parseDestinatario } from "@/lib/destinatarios";
 import { getCampaignBotConfig, crearCampaignLeadRow } from "@/lib/campaign-lead-store";
+import { obtenerCreditosMasivos, consumirCreditosMasivos, reembolsarCreditosMasivos, mensajeSaldoInsuficiente } from "@/lib/campanas-creditos";
 
 export const runtime = "nodejs";
 // El envío es secuencial (una llamada real a Meta por destinatario) y una
@@ -104,6 +105,25 @@ export async function POST(request: NextRequest) {
           },
           { status: 400 }
         );
+      }
+    }
+
+    // Saldo de mensajes masivos de cortesía (independiente del cupo mensual
+    // de IA conversacional, ver lib/plan-limits.ts): se reserva ATÓMICAMENTE
+    // el total real de la campaña completa, ANTES de crear la fila y de
+    // mandar un solo mensaje -- si el saldo no alcanza, se rechaza la
+    // campaña ENTERA acá mismo, nunca se envía una parte. Solo en el primer
+    // lote: los lotes siguientes de la misma campaña ya están cubiertos por
+    // esta misma reserva.
+    const reservado = await consumirCreditosMasivos(supabase, miembro.tenantId, totalCampana);
+    if (!reservado) {
+      const creditos = await obtenerCreditosMasivos(supabase, miembro.tenantId);
+      // null = este tenant no tiene fila de créditos (nunca se le asignó
+      // cortesía/paquete) -- no está sujeto a este límite todavía, se deja
+      // pasar (comportamiento de hoy, sin cambios) en vez de bloquearlo por
+      // un límite que no le aplica.
+      if (creditos) {
+        return Response.json({ error: mensajeSaldoInsuficiente(creditos.disponibles, totalCampana) }, { status: 400 });
       }
     }
   }
@@ -259,6 +279,29 @@ export async function POST(request: NextRequest) {
         .from("dulabs_clientes_config")
         .update({ mensajes_usados_mes: nuevoUsados, mes_actual: mesHoy })
         .eq("id", cliente.id);
+    }
+
+    // El saldo de mensajes masivos se reservó por el TOTAL de la campaña en
+    // el primer lote (arriba); acá se devuelve lo reservado de más para los
+    // destinatarios que Meta terminó rechazando en ESTE lote -- así el saldo
+    // final refleja únicamente envíos realmente aceptados, nunca intentos
+    // fallidos. Se hace lote por lote (no solo en el último) para no tener
+    // que acumular estado entre requests.
+    if (fallidos.length > 0) {
+      await reembolsarCreditosMasivos(supabase, miembro.tenantId, fallidos.length);
+    }
+    // Auditoría: acumula (no sobreescribe) cuántos destinatarios de la
+    // campaña consumieron un crédito de verdad, lote a lote.
+    if (enviados > 0) {
+      const { data: campanaActual } = await supabase
+        .from("dulabs_campanas")
+        .select("mensajes_masivos_consumidos")
+        .eq("id", campana.id)
+        .single();
+      await supabase
+        .from("dulabs_campanas")
+        .update({ mensajes_masivos_consumidos: (campanaActual?.mensajes_masivos_consumidos ?? 0) + enviados })
+        .eq("id", campana.id);
     }
 
     return Response.json({ campana_id: campana.id, enviados, fallidos });
