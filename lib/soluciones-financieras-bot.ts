@@ -26,11 +26,13 @@ export const MENSAJE_CHARLOTTE =
 
 // Saludo de bienvenida: se manda UNA sola vez, en el primer mensaje real de
 // un contacto nuevo (ver esPrimerContacto en app/webhook-dulabs/route.ts),
-// sea cual sea su contenido -- reemplaza el menú anterior de 4 opciones.
-export const MENSAJE_BIENVENIDA =
-  "👋🏼 ¡Bienvenid@ a Soluciones Financieras!\nEs un gusto tenerte por aquí 😊\n¿En qué podemos ayudarte?";
+// sea cual sea su contenido -- reemplaza el menú anterior de 4 opciones. Va
+// en DOS mensajes separados (pedido explícito: el saludo todo junto con los
+// botones no gustó) -- el segundo es el cuerpo del mensaje de los botones.
+export const MENSAJE_BIENVENIDA_1 = "👋🏼 ¡Hola! Qué gusto tenerte en Soluciones Financieras.\nEstamos aquí para ayudarte 😊";
+export const MENSAJE_BIENVENIDA_2 = "¿Qué opción te interesa? 👇🏼";
 
-// Botones interactivos (no de plantilla) que acompañan MENSAJE_BIENVENIDA,
+// Botones interactivos (no de plantilla) que acompañan MENSAJE_BIENVENIDA_2,
 // mandados con enviarBotonesWhatsApp (lib/whatsapp-outbound.ts) -- el título
 // de cada uno debe calzar con una de las VARIANTES_POR_PRODUCTO de abajo.
 export const BOTONES_BIENVENIDA: { id: string; titulo: string }[] = [

@@ -33,7 +33,8 @@ import { obtenerSolicitudActiva, crearSolicitudProducto, guardarSolicitudProduct
 import {
   BOTONES_BIENVENIDA,
   detectarProductoPorBoton,
-  MENSAJE_BIENVENIDA,
+  MENSAJE_BIENVENIDA_1,
+  MENSAJE_BIENVENIDA_2,
   MENSAJE_TRANSFERENCIA_FALLBACK,
   preguntaParaProducto,
   procesarRespuestaProducto,
@@ -1231,7 +1232,8 @@ async function atenderMensajeSolucionesFinancieras(
   // sea cual sea el contenido. Si no, cualquier mensaje fuera de esos 3
   // flujos pasa directo a Charlotte (spec: nada de IA conversacional).
   if (await esPrimerContacto(cliente.phone_number_id, telefonoRemitente)) {
-    await enviarBotonesWhatsApp(supabase, cliente, destinoWhatsApp, MENSAJE_BIENVENIDA, BOTONES_BIENVENIDA);
+    await enviarWhatsApp(cliente, destinoWhatsApp, MENSAJE_BIENVENIDA_1);
+    await enviarBotonesWhatsApp(supabase, cliente, destinoWhatsApp, MENSAJE_BIENVENIDA_2, BOTONES_BIENVENIDA);
     return true;
   }
 

@@ -10,7 +10,8 @@ import {
   BOTONES_BIENVENIDA,
   crearSesionProducto,
   detectarProductoPorBoton,
-  MENSAJE_BIENVENIDA,
+  MENSAJE_BIENVENIDA_1,
+  MENSAJE_BIENVENIDA_2,
   MENSAJE_CHARLOTTE,
   MENSAJE_TRANSFERENCIA_FALLBACK,
   preguntaParaProducto,
@@ -44,11 +45,9 @@ describe("detectarProductoPorBoton", () => {
 });
 
 describe("bienvenida y fallback — textos y botones exactos pedidos", () => {
-  it("MENSAJE_BIENVENIDA", () => {
-    assert.equal(
-      MENSAJE_BIENVENIDA,
-      "👋🏼 ¡Bienvenid@ a Soluciones Financieras!\nEs un gusto tenerte por aquí 😊\n¿En qué podemos ayudarte?",
-    );
+  it("MENSAJE_BIENVENIDA_1 y MENSAJE_BIENVENIDA_2 (dos mensajes separados)", () => {
+    assert.equal(MENSAJE_BIENVENIDA_1, "👋🏼 ¡Hola! Qué gusto tenerte en Soluciones Financieras.\nEstamos aquí para ayudarte 😊");
+    assert.equal(MENSAJE_BIENVENIDA_2, "¿Qué opción te interesa? 👇🏼");
   });
 
   it("BOTONES_BIENVENIDA: exactamente los 3 botones, en orden, y cada título es reconocido por detectarProductoPorBoton", () => {
