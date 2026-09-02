@@ -60,12 +60,20 @@ describe("Rediseño de agendamiento — Flow de Daniela pasa el validador real d
     assert.equal(edgeAExito?.target, "ai-confirmar");
   });
 
-  it("act-agendar SOLO es alcanzable desde la rama 'confirma' de la clasificación -- nunca desde 'no_confirma' ni desde default", () => {
+  // Fix real (prueba real controlada post-publicación de v9, sept. 2026) —
+  // act-agendar ahora es alcanzable desde DOS caminos estructuralmente
+  // gateados: la rama 'confirma' de la clasificación (texto libre) Y el tap
+  // directo del botón "confirmar_cita" (atajo determinista, sin IA -- ver
+  // comentario junto a e-confirmar-cita-btn más abajo en este archivo).
+  // Ninguno es alcanzable desde 'no_confirma' ni desde texto sin confirmar.
+  it("act-agendar SOLO es alcanzable desde la rama 'confirma' de la clasificación o el botón confirmar_cita -- nunca desde 'no_confirma' ni desde default", () => {
     const flow = danielaAgendarCitaFlow();
     const haciaAgendar = flow.edges.filter((e) => e.target === "act-agendar");
-    assert.equal(haciaAgendar.length, 1);
-    assert.equal(haciaAgendar[0]?.source, "ai-clasificar-confirmacion");
-    assert.equal(haciaAgendar[0]?.sourceHandle, "class:confirma");
+    assert.equal(haciaAgendar.length, 2);
+    const desdeIA = haciaAgendar.find((e) => e.source === "ai-clasificar-confirmacion");
+    const desdeBoton = haciaAgendar.find((e) => e.source === "q-confirmar-cita");
+    assert.equal(desdeIA?.sourceHandle, "class:confirma");
+    assert.equal(desdeBoton?.sourceHandle, "button:confirmar_cita");
   });
 
   it("ninguna rama de 'no confirma' llega a act-agendar", () => {

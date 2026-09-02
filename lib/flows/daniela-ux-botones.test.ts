@@ -106,20 +106,34 @@ describe("UX botones — validador y candados de citas intactos", () => {
     assert.equal(result.valid, true);
   });
 
-  it("act-agendar del router SOLO es alcanzable desde class:confirma", () => {
+  // Fix real (prueba real controlada post-publicación de v9, sept. 2026) —
+  // act-agendar ahora es alcanzable desde DOS caminos, ambos estructuralmente
+  // gateados (nunca desde texto libre sin pasar por alguno de estos): (1) el
+  // tap real del botón "✅ Confirmar cita" (valor estructurado y controlado
+  // por nosotros, DIRECTO, sin IA de por medio -- ver el comentario en
+  // daniela-agendar-cita.flow.ts) y (2) class:confirma de
+  // ai-clasificar-confirmacion (para cuando la clienta responde con texto
+  // libre en vez de tocar el botón). La barrera de confirmación explícita
+  // se mantiene intacta: NINGÚN camino a act-agendar es alcanzable sin que
+  // la clienta haya confirmado explícitamente, por botón o por texto claro.
+  it("act-agendar del router SOLO es alcanzable desde el botón confirmar_cita o class:confirma", () => {
     const flow = danielaRouterFlow();
     const hacia = flow.edges.filter((e) => e.target === "agendar__act-agendar");
-    assert.equal(hacia.length, 1);
-    assert.equal(hacia[0]?.source, "agendar__ai-clasificar-confirmacion");
-    assert.equal(hacia[0]?.sourceHandle, FLOW_EDGE_HANDLE.aiClass("confirma"));
+    assert.equal(hacia.length, 2);
+    const desdeBoton = hacia.find((e) => e.source === "agendar__q-confirmar-cita");
+    const desdeIA = hacia.find((e) => e.source === "agendar__ai-clasificar-confirmacion");
+    assert.equal(desdeBoton?.sourceHandle, FLOW_EDGE_HANDLE.button(DANIELA_BUTTON_IDS.CONFIRMAR_CITA));
+    assert.equal(desdeIA?.sourceHandle, FLOW_EDGE_HANDLE.aiClass("confirma"));
   });
 
-  it("confirmar_cita NO apunta directo a act-agendar", () => {
+  it("confirmar_cita SÍ apunta directo a act-agendar (atajo determinista, valor estructurado del botón); el texto libre sigue pasando por ai-clasificar-confirmacion", () => {
     const flow = danielaAgendarCitaFlow();
     const btn = flow.edges.find(
       (e) => e.source === "q-confirmar-cita" && e.sourceHandle === FLOW_EDGE_HANDLE.button(DANIELA_BUTTON_IDS.CONFIRMAR_CITA),
     );
-    assert.equal(btn?.target, "ai-clasificar-confirmacion");
+    assert.equal(btn?.target, "act-agendar");
+    const texto = flow.edges.find((e) => e.source === "q-confirmar-cita" && e.sourceHandle === FLOW_EDGE_HANDLE.text);
+    assert.equal(texto?.target, "ai-clasificar-confirmacion");
   });
 
   it("cancelar: act-cancelar sigue DIRECTO desde class:confirma (rediseño: sin ai-proponer-cancelar); mantener_cita no cancela", () => {
@@ -354,16 +368,30 @@ describe("H/I/J. propuesta → Confirmar / Otro horario", () => {
     assert.equal(/hola\s+\w+/i.test(messageText(msg)), false, "la propuesta no saluda por nombre");
   });
 
-  it("I. botón Confirmar entra al clasificador existente, no a act-agendar", () => {
+  // Fix real (prueba real controlada post-publicación de v9, sept. 2026) —
+  // el tap del botón entra DIRECTO a act-agendar, sin pasar por el
+  // clasificador de IA: reproducido dos veces contra el tenant real que
+  // Claude clasificaba 'no_confirma' aun con el valor exacto que su propia
+  // instrucción dice que debe ser 'confirma' sin duda -- ver el comentario
+  // en daniela-agendar-cita.flow.ts. El texto libre SIGUE pasando por
+  // ai-clasificar-confirmacion (ver test siguiente).
+  it("I. botón Confirmar entra DIRECTO a act-agendar (atajo determinista, sin IA de por medio)", () => {
     const { flow, state } = conducirHastaPropuestaRouter();
     const tap = runFlowEngine(flow, state, { type: "button", id: DANIELA_BUTTON_IDS.CONFIRMAR_CITA });
     assert.equal(tap.error, undefined);
-    assert.equal(tap.state.pendingEffect?.nodeId, "agendar__ai-clasificar-confirmacion");
+    assert.equal(tap.state.pendingEffect?.nodeId, "agendar__act-agendar");
     assert.equal(tap.state.variables.respuestaConfirmacionAgendarTexto, DANIELA_BUTTON_IDS.CONFIRMAR_CITA);
-    const confirma = runFlowEngine(flow, tap.state, {
+  });
+
+  it("I2. texto libre confirmando SIGUE pasando por ai-clasificar-confirmacion (la barrera de confirmación no se saltó para texto libre)", () => {
+    const { flow, state } = conducirHastaPropuestaRouter();
+    const respuesta = runFlowEngine(flow, state, { type: "text", text: "sí, confirmo" });
+    assert.equal(respuesta.error, undefined);
+    assert.equal(respuesta.state.pendingEffect?.nodeId, "agendar__ai-clasificar-confirmacion");
+    const confirma = runFlowEngine(flow, respuesta.state, {
       type: "effect_result",
       success: true,
-      effectId: tap.state.pendingEffect!.effectId,
+      effectId: respuesta.state.pendingEffect!.effectId,
       data: { classification: "confirma" },
     });
     assert.equal(confirma.state.pendingEffect?.nodeId, "agendar__act-agendar");
@@ -468,11 +496,16 @@ describe("M. botones y lenguaje natural equivalentes", () => {
     assert.equal(sendMessages(typed.effects).length, 1);
   });
 
-  it("en confirmación, texto 'Sí' entra al mismo clasificador que el botón", () => {
+  // Fix real (sept. 2026) — excepción deliberada a la equivalencia
+  // botón/texto de este describe: el tap SÍ diverge del texto libre a
+  // propósito (atajo determinista solo para el valor estructurado del
+  // botón, ver comentario en daniela-agendar-cita.flow.ts) -- el texto
+  // libre sigue exactamente igual que antes, pasando por el clasificador.
+  it("en confirmación, el botón va DIRECTO a act-agendar; el texto 'Sí' sigue pasando por el clasificador", () => {
     const { flow, state } = conducirHastaPropuestaRouter();
     const porBoton = runFlowEngine(flow, state, { type: "button", id: DANIELA_BUTTON_IDS.CONFIRMAR_CITA });
     const porTexto = runFlowEngine(flow, state, { type: "text", text: "Sí, confírmala" });
-    assert.equal(porBoton.state.pendingEffect?.nodeId, "agendar__ai-clasificar-confirmacion");
+    assert.equal(porBoton.state.pendingEffect?.nodeId, "agendar__act-agendar");
     assert.equal(porTexto.state.pendingEffect?.nodeId, "agendar__ai-clasificar-confirmacion");
   });
 
@@ -585,20 +618,18 @@ describe("P. no crear cita antes de confirmar; una sola confirmación final", ()
     assert.equal(effects.some((e) => e.type === "effect_required" && e.nodeId === "agendar__act-agendar"), false);
   });
 
-  it("tras confirmar + clasificar confirma hay UN act-agendar y luego UNA confirmación", () => {
+  // Fix real (sept. 2026) — el tap ya no pasa por ai-clasificar-confirmacion
+  // (atajo determinista directo a act-agendar, ver comentario en
+  // daniela-agendar-cita.flow.ts), así que este test ya no simula el paso
+  // intermedio de "classification: confirma".
+  it("tras confirmar (botón directo) hay UN act-agendar y luego UNA confirmación", () => {
     const { flow, state, effects } = conducirHastaPropuestaRouter();
     const tap = runFlowEngine(flow, state, { type: "button", id: DANIELA_BUTTON_IDS.CONFIRMAR_CITA });
-    const confirma = runFlowEngine(flow, tap.state, {
+    assert.equal(tap.state.pendingEffect?.nodeId, "agendar__act-agendar");
+    const agendado = runFlowEngine(flow, tap.state, {
       type: "effect_result",
       success: true,
       effectId: tap.state.pendingEffect!.effectId,
-      data: { classification: "confirma" },
-    });
-    assert.equal(confirma.state.pendingEffect?.nodeId, "agendar__act-agendar");
-    const agendado = runFlowEngine(flow, confirma.state, {
-      type: "effect_result",
-      success: true,
-      effectId: confirma.state.pendingEffect!.effectId,
       data: { citaId: 99, status: "confirmada", especialista: "Carla" },
     });
     const final = runFlowEngine(flow, agendado.state, {
@@ -607,7 +638,7 @@ describe("P. no crear cita antes de confirmar; una sola confirmación final", ()
       effectId: agendado.state.pendingEffect!.effectId,
       data: { responseText: "🎉 Tu cita para semipermanente quedó confirmada con Carla el 2026-09-18 a las 15:00. ¡Te esperamos!" },
     });
-    const todos = [...effects, ...tap.effects, ...confirma.effects, ...agendado.effects, ...final.effects];
+    const todos = [...effects, ...tap.effects, ...agendado.effects, ...final.effects];
     assert.equal(todos.filter((e) => e.type === "effect_required" && e.nodeId === "agendar__act-agendar").length, 1);
     const finales = sendMessages(final.effects);
     assert.equal(finales.length, 2, "confirmación AI + recordatorio estático");

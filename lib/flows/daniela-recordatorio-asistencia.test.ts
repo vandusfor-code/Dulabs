@@ -162,10 +162,14 @@ describe("Recordatorio post-confirmación de cita nueva", () => {
     assert.equal(reagendar.nodes.some((n) => n.id.includes("recordatorio-asistencia")), false);
   });
 
-  it("7. act-agendar sigue solo alcanzable desde class:confirma", () => {
+  // Fix real (sept. 2026) — act-agendar ahora también es alcanzable desde
+  // el tap directo del botón confirmar_cita (atajo determinista, sin IA),
+  // además de class:confirma para texto libre. Ver daniela-ux-botones.test.ts.
+  it("7. act-agendar sigue solo alcanzable desde class:confirma o el botón confirmar_cita", () => {
     const flow = danielaAgendarCitaFlow();
     const hacia = flow.edges.filter((e) => e.target === "act-agendar");
-    assert.equal(hacia.length, 1);
-    assert.equal(hacia[0]?.sourceHandle, FLOW_EDGE_HANDLE.aiClass("confirma"));
+    assert.equal(hacia.length, 2);
+    assert.ok(hacia.some((e) => e.sourceHandle === FLOW_EDGE_HANDLE.aiClass("confirma")));
+    assert.ok(hacia.some((e) => e.sourceHandle === FLOW_EDGE_HANDLE.button("confirmar_cita")));
   });
 });

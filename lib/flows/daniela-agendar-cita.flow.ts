@@ -516,7 +516,21 @@ export function danielaAgendarCitaFlow(): FlowDefinition {
       { id: "e-resolver-fail", source: "act-resolver-seleccion-horario", target: "msg-seleccion-no-clara", sourceHandle: FLOW_EDGE_HANDLE.aiFailure },
       { id: "e-seleccion-no-clara-reintentar", source: "msg-seleccion-no-clara", target: "q-seleccionar-horario" },
 
-      { id: "e-confirmar-cita-btn", source: "q-confirmar-cita", target: "ai-clasificar-confirmacion", sourceHandle: FLOW_EDGE_HANDLE.button(DANIELA_BUTTON_IDS.CONFIRMAR_CITA) },
+      // Fix real (prueba real controlada post-publicación de v9, sept. 2026)
+      // — un tap del botón "✅ Confirmar cita" es un valor ESTRUCTURADO y
+      // controlado por nosotros mismos (id de botón estable, nunca texto
+      // libre de la clienta), no algo que deba depender de una
+      // clasificación probabilística de Claude. Encontrado reproducible dos
+      // veces seguidas: respuestaConfirmacionAgendarTexto llegaba exacto
+      // "confirmar_cita" (el caso que la propia instrucción de
+      // ai-clasificar-confirmacion dice que debe ser 'confirma' sin duda) y
+      // aun así Claude clasificaba 'no_confirma'. Atajo DIRECTO a
+      // act-agendar, mismo patrón "acción directa sin nodo AI intermedio"
+      // ya usado en el resto de este archivo -- NUNCA se salta la barrera
+      // de confirmación explícita: esto solo aplica al tap real del botón,
+      // el texto libre (e-confirmar-texto, abajo) sigue pasando por
+      // ai-clasificar-confirmacion exactamente igual que antes.
+      { id: "e-confirmar-cita-btn", source: "q-confirmar-cita", target: "act-agendar", sourceHandle: FLOW_EDGE_HANDLE.button(DANIELA_BUTTON_IDS.CONFIRMAR_CITA) },
       { id: "e-otro-horario-btn", source: "q-confirmar-cita", target: "act-relistar-horarios", sourceHandle: FLOW_EDGE_HANDLE.button(DANIELA_BUTTON_IDS.OTRO_HORARIO) },
       { id: "e-relistar-cond", source: "act-relistar-horarios", target: "cond-hay-horarios-otro", sourceHandle: FLOW_EDGE_HANDLE.aiSuccess },
       { id: "e-relistar-fail", source: "act-relistar-horarios", target: "msg-servicio-no-reconocido", sourceHandle: FLOW_EDGE_HANDLE.aiFailure },
