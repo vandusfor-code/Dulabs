@@ -38,6 +38,17 @@ const INTERNAL_ACTION_TYPES = new Set([
   "agendar_cita_especialista",
   "consultar_disponibilidad_especialista",
   "cancelar_cita_especialista",
+  // BUG REAL encontrado (prueba real controlada post-publicación de v9,
+  // sept. 2026): esta acción existe desde Blocker #3 (anterior a este
+  // rediseño, ya presente también en v8) y NUNCA se agregó acá -- mismo
+  // síntoma exacto que el hallazgo de abajo (SECURITY_REJECTED/
+  // "integration_required" en TODO dispatch real vía el orchestrator,
+  // invisible a los tests que llaman runFlowEngine directo). Encontrado al
+  // correr una prueba real end-to-end contra el tenant real de Daniela:
+  // CUALQUIER servicio real ("semipermanente", "pedicure") era rechazado
+  // con "Ese servicio no lo manejamos por acá" antes de llegar siquiera a
+  // resolverCandidatas().
+  "validar_servicio_especialista",
   // Fase 1 (Blocker #4, autorizado) — misma razón que las anteriores.
   "consultar_citas_activas_especialista",
   // Fase 1 (Blocker #5, autorizado) — misma razón que las anteriores.
