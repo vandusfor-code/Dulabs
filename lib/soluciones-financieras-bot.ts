@@ -24,6 +24,27 @@ const PREGUNTA_POR_PRODUCTO: Record<ProductoFinanciero, string> = {
 export const MENSAJE_CHARLOTTE =
   "¡Perfecto! 😊 Gracias por la información. En un momento Charlotte estará respondiéndote para continuar con tu asesoría.";
 
+// Saludo de bienvenida: se manda UNA sola vez, en el primer mensaje real de
+// un contacto nuevo (ver esPrimerContacto en app/webhook-dulabs/route.ts),
+// sea cual sea su contenido -- reemplaza el menú anterior de 4 opciones.
+export const MENSAJE_BIENVENIDA =
+  "👋🏼 ¡Bienvenid@ a Soluciones Financieras!\nEs un gusto tenerte por aquí 😊\n¿En qué podemos ayudarte?";
+
+// Botones interactivos (no de plantilla) que acompañan MENSAJE_BIENVENIDA,
+// mandados con enviarBotonesWhatsApp (lib/whatsapp-outbound.ts) -- el título
+// de cada uno debe calzar con una de las VARIANTES_POR_PRODUCTO de abajo.
+export const BOTONES_BIENVENIDA: { id: string; titulo: string }[] = [
+  { id: "producto_libre_inversion", titulo: "💰 Libre Inversión" },
+  { id: "producto_compra_cartera", titulo: "💳 Compra Cartera" },
+  { id: "producto_hipotecario", titulo: "🏠 Hipotecario" },
+];
+
+// Cualquier mensaje que no sea ni un tap de los 3 botones ni la respuesta a
+// una pregunta ya en curso (texto libre, "Hola", una imagen, un audio...) se
+// traspasa de una vez a Charlotte, sin que el bot intente responderlo.
+export const MENSAJE_TRANSFERENCIA_FALLBACK =
+  "¡Claro que sí! 😊 En un momento Charlotte estará respondiéndote para brindarte toda la información y ayudarte con tu solicitud.";
+
 const norm = (s: string): string => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
 
 // Deben calzar con el texto EXACTO de los botones QUICK_REPLY de la

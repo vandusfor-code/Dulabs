@@ -7,9 +7,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  BOTONES_BIENVENIDA,
   crearSesionProducto,
   detectarProductoPorBoton,
+  MENSAJE_BIENVENIDA,
   MENSAJE_CHARLOTTE,
+  MENSAJE_TRANSFERENCIA_FALLBACK,
   preguntaParaProducto,
   procesarRespuestaProducto,
 } from "@/lib/soluciones-financieras-bot";
@@ -37,6 +40,33 @@ describe("detectarProductoPorBoton", () => {
     assert.equal(detectarProductoPorBoton("hola"), null);
     assert.equal(detectarProductoPorBoton("Info de Libre"), null);
     assert.equal(detectarProductoPorBoton(""), null);
+  });
+});
+
+describe("bienvenida y fallback — textos y botones exactos pedidos", () => {
+  it("MENSAJE_BIENVENIDA", () => {
+    assert.equal(
+      MENSAJE_BIENVENIDA,
+      "👋🏼 ¡Bienvenid@ a Soluciones Financieras!\nEs un gusto tenerte por aquí 😊\n¿En qué podemos ayudarte?",
+    );
+  });
+
+  it("BOTONES_BIENVENIDA: exactamente los 3 botones, en orden, y cada título es reconocido por detectarProductoPorBoton", () => {
+    assert.equal(BOTONES_BIENVENIDA.length, 3);
+    assert.deepEqual(
+      BOTONES_BIENVENIDA.map((b) => b.titulo),
+      ["💰 Libre Inversión", "💳 Compra Cartera", "🏠 Hipotecario"],
+    );
+    assert.equal(detectarProductoPorBoton(BOTONES_BIENVENIDA[0].titulo), "libre_inversion");
+    assert.equal(detectarProductoPorBoton(BOTONES_BIENVENIDA[1].titulo), "compra_cartera");
+    assert.equal(detectarProductoPorBoton(BOTONES_BIENVENIDA[2].titulo), "hipotecario");
+  });
+
+  it("MENSAJE_TRANSFERENCIA_FALLBACK", () => {
+    assert.equal(
+      MENSAJE_TRANSFERENCIA_FALLBACK,
+      "¡Claro que sí! 😊 En un momento Charlotte estará respondiéndote para brindarte toda la información y ayudarte con tu solicitud.",
+    );
   });
 });
 

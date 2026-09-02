@@ -30,7 +30,14 @@ import { procesarHistorialCoexistencia, type HistoryChangeValue } from "@/lib/co
 import { getCampaignLead, getCampaignBotConfig, guardarCampaignLead, marcarDumoSyncStatus } from "@/lib/campaign-lead-store";
 import { procesarMensajeCampaña, type CampaignLeadSession } from "@/lib/campaign-lead-engine";
 import { obtenerSolicitudActiva, crearSolicitudProducto, guardarSolicitudProducto } from "@/lib/soluciones-financieras-store";
-import { detectarProductoPorBoton, preguntaParaProducto, procesarRespuestaProducto } from "@/lib/soluciones-financieras-bot";
+import {
+  BOTONES_BIENVENIDA,
+  detectarProductoPorBoton,
+  MENSAJE_BIENVENIDA,
+  MENSAJE_TRANSFERENCIA_FALLBACK,
+  preguntaParaProducto,
+  procesarRespuestaProducto,
+} from "@/lib/soluciones-financieras-bot";
 import { adquirirCandadoChat, liberarCandadoChat } from "@/lib/chat-lock";
 import { activarPausaChat } from "@/lib/pausas-chat";
 import { obtenerOnboardingSesionActivaPorTelefono, guardarOnboardingSesion, marcarBienvenidaEnviada, filaASesion } from "@/lib/onboarding-store";
@@ -545,8 +552,13 @@ async function procesarCambio(phoneNumberId: string, value: MetaChangeValue) {
     if (mensaje.type === "interactive" && mensaje.interactive?.type === "button_reply" && mensaje.interactive.button_reply?.title) {
       mensaje.text = { body: mensaje.interactive.button_reply.title };
     }
-    if (mensaje.type !== "text" && mensaje.type !== "button" && mensaje.type !== "interactive") continue; // esqueleto: solo texto/botón
-    if (!mensaje.text?.body) continue;
+    // Soluciones Financieras traspasa a Charlotte CUALQUIER mensaje fuera de
+    // sus 3 botones -- incluye audios/imágenes/etc (ver spec), así que para
+    // ESTE número puntual no se descartan los tipos sin texto como en el
+    // resto de tenants (esqueleto genérico: solo texto/botón).
+    const esSolucionesFinancieras = phoneNumberId === PHONE_NUMBER_ID_SOLUCIONES_FINANCIERAS;
+    if (mensaje.type !== "text" && mensaje.type !== "button" && mensaje.type !== "interactive" && !esSolucionesFinancieras) continue;
+    if (!mensaje.text?.body && !esSolucionesFinancieras) continue;
     const telefonoRemitente = resolverTelefonoRemitenteMeta(mensaje, value.contacts);
     if (!telefonoRemitente) {
       advertirMensajeSinRemitente(mensaje);
@@ -1122,13 +1134,36 @@ async function atenderMensajeCampaña(
 
 // --- Bot comercial de Soluciones Financieras (tenant específico) -------------
 //
-// Plantilla con 3 botones de producto -> UNA pregunta fija -> respuesta del
-// cliente -> mensaje de Charlotte -> handoff a asesora humana. A diferencia
-// de atenderMensajeCampaña (motor genérico configurable por campaña), este
-// flujo es fijo para ESTE tenant -- mismo criterio de hardcoding tenant-
-// específico que lib/especialista-solicitud-ia.ts para Daniela. Gateado
-// explícitamente por phone_number_id: nunca corre para ningún otro tenant.
+// Bienvenida con 3 botones de producto (mandados por Dulabs, no una
+// plantilla de Meta) -> UNA pregunta fija -> respuesta del cliente -> mensaje
+// de Charlotte -> handoff a asesora humana. Cualquier mensaje fuera de ese
+// guion (texto libre, audio, imagen...) traspasa de inmediato a Charlotte, sin
+// IA conversacional. A diferencia de atenderMensajeCampaña (motor genérico
+// configurable por campaña), este flujo es fijo para ESTE tenant -- mismo
+// criterio de hardcoding tenant-específico que lib/especialista-solicitud-ia.ts
+// para Daniela. Gateado explícitamente por phone_number_id: nunca corre para
+// ningún otro tenant, y para este tenant es dueño de TODA la conversación (no
+// deja caer nada a la IA general -- ver los dos filtros de tipo/texto
+// relajados para este número más arriba, en procesarCambio).
 const PHONE_NUMBER_ID_SOLUCIONES_FINANCIERAS = "1275440315656562";
+
+/** true si este es el primer mensaje que este contacto le escribe a este número (nunca antes quedó registrado en dulabs_mensajes_log). */
+async function esPrimerContacto(phoneNumberId: string, telefonoCliente: string): Promise<boolean> {
+  const { data, error } = await supabaseAdmin()
+    .from("dulabs_mensajes_log")
+    .select("id")
+    .eq("phone_number_id", phoneNumberId)
+    .eq("telefono_cliente", telefonoCliente)
+    .eq("direccion", "entrante")
+    .limit(2);
+  if (error) {
+    console.error("[webhook-dulabs] error consultando historial para bienvenida:", error.message);
+    return false; // si no se puede saber, no repetir la bienvenida -- se traspasa a Charlotte
+  }
+  // El mensaje actual ya quedó registrado (registrarMensajesEntrantesSincrono
+  // corre antes de este cascade): 1 fila = esta es la única, o sea la primera.
+  return (data?.length ?? 0) <= 1;
+}
 
 async function atenderMensajeSolucionesFinancieras(
   cliente: ClienteConfig,
@@ -1139,17 +1174,29 @@ async function atenderMensajeSolucionesFinancieras(
   if (cliente.phone_number_id !== PHONE_NUMBER_ID_SOLUCIONES_FINANCIERAS) return false;
 
   const supabase = supabaseAdmin();
+
+  // Ya hubo handoff a Charlotte (o pausa manual): guardar silencio, igual que
+  // el gate de dulabs_pausas_chat más abajo en la cascada -- si no, cada
+  // mensaje nuevo del cliente reactivaría el mensaje de traspaso de nuevo.
+  const { data: pausa } = await supabase
+    .from("dulabs_pausas_chat")
+    .select("pausado_hasta")
+    .eq("phone_number_id", cliente.phone_number_id)
+    .eq("telefono_cliente", telefonoRemitente)
+    .maybeSingle();
+  if (pausa && new Date(pausa.pausado_hasta).getTime() > Date.now()) return false;
+
   // Texto CRUDO del botón (no el normalizado por normalizarTextoBoton, que
   // tiene su propio diccionario para el bot de encuestas) -- mismo criterio
-  // que atenderMensajeCampaña.
+  // que atenderMensajeCampaña. Puede venir vacío (audio, imagen...).
   const textoUsuario = mensaje.type === "button" && mensaje.button?.text ? mensaje.button.text : (mensaje.text?.body ?? "");
-  if (!textoUsuario) return false;
 
   const activa = await obtenerSolicitudActiva(supabase, cliente.phone_number_id, telefonoRemitente);
 
   if (activa) {
-    // Ya hay una pregunta pendiente para este cliente: este mensaje es su respuesta.
-    const resultado = procesarRespuestaProducto(activa.session, textoUsuario);
+    // Ya hay una pregunta pendiente para este cliente: este mensaje es su
+    // respuesta, sea cual sea su forma (spec: no se valida formato).
+    const resultado = procesarRespuestaProducto(activa.session, textoUsuario || "(mensaje sin texto: audio/imagen/otro)");
     await guardarSolicitudProducto(supabase, activa.id, resultado.session);
     for (const texto of resultado.mensajes) {
       await enviarWhatsApp(cliente, destinoWhatsApp, texto);
@@ -1166,17 +1213,30 @@ async function atenderMensajeSolucionesFinancieras(
     return true;
   }
 
-  // Sin solicitud activa: ¿es el tap de uno de los 3 botones de la plantilla?
-  const producto = detectarProductoPorBoton(textoUsuario);
-  if (!producto) return false; // no es ninguno de los 3 -- sigue el flujo normal (IA general)
+  // Sin solicitud activa: ¿es el tap de uno de los 3 botones de bienvenida?
+  const producto = textoUsuario ? detectarProductoPorBoton(textoUsuario) : null;
+  if (producto) {
+    await crearSolicitudProducto(supabase, {
+      idTenant: cliente.id_tenant,
+      phoneNumberId: cliente.phone_number_id,
+      telefonoCliente: telefonoRemitente,
+      producto,
+    });
+    await enviarWhatsApp(cliente, destinoWhatsApp, preguntaParaProducto(producto));
+    return true;
+  }
 
-  await crearSolicitudProducto(supabase, {
-    idTenant: cliente.id_tenant,
-    phoneNumberId: cliente.phone_number_id,
-    telefonoCliente: telefonoRemitente,
-    producto,
-  });
-  await enviarWhatsApp(cliente, destinoWhatsApp, preguntaParaProducto(producto));
+  // No es un tap de los 3 botones ni la respuesta a una pregunta en curso:
+  // ¿es la primera vez que este contacto escribe? -> bienvenida + botones,
+  // sea cual sea el contenido. Si no, cualquier mensaje fuera de esos 3
+  // flujos pasa directo a Charlotte (spec: nada de IA conversacional).
+  if (await esPrimerContacto(cliente.phone_number_id, telefonoRemitente)) {
+    await enviarBotonesWhatsApp(supabase, cliente, destinoWhatsApp, MENSAJE_BIENVENIDA, BOTONES_BIENVENIDA);
+    return true;
+  }
+
+  await enviarWhatsApp(cliente, destinoWhatsApp, MENSAJE_TRANSFERENCIA_FALLBACK);
+  await activarPausaChat(supabase, cliente.phone_number_id, telefonoRemitente, PAUSA_ONBOARDING_MS);
   return true;
 }
 
