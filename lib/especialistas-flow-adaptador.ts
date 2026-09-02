@@ -529,6 +529,133 @@ function formatearHoraAmPm(hhmm: string): string {
   return `${h12}:${String(m).padStart(2, "0")} ${periodo}`;
 }
 
+// --- Cierre final Daniela (autorizado) — catálogo real de servicios -------
+//
+// Reemplaza la selección por categoría (Manos/Pies/Pestañas) por el
+// catálogo REAL y completo de servicios que Daniela ya tiene configurado en
+// base_conocimiento (texto libre subido por el negocio) -- NUNCA una lista
+// hardcodeada en el Flow: si el negocio actualiza su base_conocimiento, la
+// lista mostrada cambia sola, sin tocar código. Mismo patrón exacto que la
+// lista real de horarios (parseo determinista + resolución exacta contra la
+// lista mostrada, nunca contra algo que la IA pueda inventar).
+
+export interface ServicioCatalogo {
+  nombre: string;
+  precio: number;
+}
+
+const INICIO_SERVICIOS_UNAS = /SERVICIOS DE U[ÑN]AS Y PRECIOS/i;
+
+/** true si la línea es un encabezado de sección nueva (todo mayúsculas, sin ":") -- marca el fin de la lista de servicios. */
+function esEncabezadoSeccion(linea: string): boolean {
+  const t = linea.trim();
+  if (!t || t.includes(":")) return false;
+  return t === t.toUpperCase() && /[A-ZÁÉÍÓÚÑ]/.test(t);
+}
+
+/**
+ * Parsea el catálogo REAL (nombre + precio) desde la sección "SERVICIOS DE
+ * UÑAS Y PRECIOS" de base_conocimiento -- el texto que Daniela subió para
+ * su propio negocio. Nunca inventa, nunca agrega, nunca hardcodea un
+ * servicio: si esa sección no existe o no tiene líneas "Nombre: $precio",
+ * devuelve una lista vacía en vez de adivinar algo. Se detiene en el
+ * siguiente encabezado en mayúsculas (ej. "RETOQUE DE FORRADO"), así que
+ * pestañas (sección aparte, "PESTAÑAS (...)") queda fuera a propósito --
+ * pestañas nunca se ofrece como autoservicio, se transfiere siempre (ver
+ * lib/flow-pestanas-hatch.ts).
+ */
+export function parseServiciosDesdeBaseConocimiento(baseConocimiento: string): ServicioCatalogo[] {
+  const lineas = baseConocimiento.split("\n");
+  const inicioIdx = lineas.findIndex((l) => INICIO_SERVICIOS_UNAS.test(l));
+  if (inicioIdx === -1) return [];
+
+  const servicios: ServicioCatalogo[] = [];
+  for (let i = inicioIdx + 1; i < lineas.length; i++) {
+    const linea = lineas[i]!.trim();
+    if (!linea) continue;
+    if (esEncabezadoSeccion(linea)) break;
+    const m = linea.match(/^([^:]+):\s*\$\s*([\d.,]+)/);
+    if (!m) continue;
+    const nombre = m[1]!.trim();
+    const precio = Number(m[2]!.replace(/[.,]/g, ""));
+    if (!nombre || !Number.isFinite(precio) || precio <= 0) continue;
+    servicios.push({ nombre, precio });
+  }
+  return servicios;
+}
+
+/** 70000 -> "$70.000" (formato colombiano, sin depender de Intl para evitar diferencias de locale entre entornos). */
+export function formatearPrecioCop(precio: number): string {
+  const entero = Math.round(precio).toString();
+  const conSeparadores = entero.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  return `$${conSeparadores}`;
+}
+
+/** Texto legible determinista (nunca redactado por IA) para mostrar el catálogo real, ej. "1️⃣ Press on\n2️⃣ Semipermanente en manos". */
+export function formatearListaServicios(servicios: ServicioCatalogo[]): string {
+  const NUMEROS_EMOJI = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"];
+  return servicios.map((s, i) => `${NUMEROS_EMOJI[i] ?? `${i + 1}.`} ${s.nombre}`).join("\n");
+}
+
+function normalizarNombreServicio(s: string): string {
+  return s
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "");
+}
+
+export type ResultadoResolverSeleccionServicio =
+  | { ok: true; nombre: string; precio: number }
+  | { ok: false; motivo: "fuera_de_lista" | "ambiguo"; detalle: string };
+
+/**
+ * ÚNICA función que decide qué servicio quedó realmente seleccionado --
+ * mismo patrón exacto que resolverSeleccionHorario: la IA (o el texto ya
+ * extraído del primer mensaje) solo INTERPRETA en un candidato estructurado
+ * (índice 1-based o un nombre); esto lo valida SIEMPRE contra `servicios`,
+ * la lista REAL que se mostró. Un candidato que no exista en esa lista se
+ * rechaza siempre, sin excepción -- nunca se acepta un servicio inventado.
+ * Comparación de nombre insensible a mayúsculas/acentos, pero exacta (nunca
+ * "parecido a"): "semipermanente" solo (sin "en manos"/"en pies") no
+ * resuelve -- es ambiguo entre las dos entradas reales, y NO se adivina
+ * cuál quiso decir.
+ */
+export function resolverSeleccionServicio(params: {
+  servicios: ServicioCatalogo[];
+  seleccionTipo?: string;
+  seleccionIndice?: number;
+  seleccionNombre?: string;
+}): ResultadoResolverSeleccionServicio {
+  const { servicios } = params;
+
+  if (params.seleccionTipo === "index" && typeof params.seleccionIndice === "number") {
+    const idx = params.seleccionIndice; // 1-based ("la segunda" -> 2)
+    if (Number.isInteger(idx) && idx >= 1 && idx <= servicios.length) {
+      const s = servicios[idx - 1]!;
+      return { ok: true, nombre: s.nombre, precio: s.precio };
+    }
+    return {
+      ok: false,
+      motivo: "fuera_de_lista",
+      detalle: `Índice ${idx} fuera de la lista real de ${servicios.length} servicio(s).`,
+    };
+  }
+
+  if (params.seleccionTipo === "nombre" && typeof params.seleccionNombre === "string" && params.seleccionNombre.trim()) {
+    const buscado = normalizarNombreServicio(params.seleccionNombre);
+    const encontrado = servicios.find((s) => normalizarNombreServicio(s.nombre) === buscado);
+    if (encontrado) return { ok: true, nombre: encontrado.nombre, precio: encontrado.precio };
+    return {
+      ok: false,
+      motivo: "fuera_de_lista",
+      detalle: `"${params.seleccionNombre}" no está en la lista real de servicios mostrados.`,
+    };
+  }
+
+  return { ok: false, motivo: "ambiguo", detalle: "No se pudo identificar con certeza a cuál servicio se refiere." };
+}
+
 /**
  * Crea la cita REAL -- réplica exacta del árbol de decisión de
  * ejecutarHerramienta() en especialista-solicitud-ia.ts: especialidad

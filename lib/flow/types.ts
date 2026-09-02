@@ -216,6 +216,8 @@ export type FlowActionType =
   | "validar_fecha_especialista"
   | "listar_horarios_disponibles_especialista"
   | "resolver_seleccion_horario"
+  | "listar_servicios_especialista"
+  | "resolver_seleccion_servicio"
   | "webhook_http"
   | "enviar_plantilla";
 
@@ -271,7 +273,9 @@ export interface SimpleActionConfig extends ActionSemanticTag {
     | "mover_cita_especialista"
     | "validar_fecha_especialista"
     | "listar_horarios_disponibles_especialista"
-    | "resolver_seleccion_horario";
+    | "resolver_seleccion_horario"
+    | "listar_servicios_especialista"
+    | "resolver_seleccion_servicio";
   params?: ActionParams;
 }
 

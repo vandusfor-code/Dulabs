@@ -34,7 +34,7 @@ describe("Menú servicios_spa — separación menú vs servicio real", () => {
     assert.equal(result.valid, true);
   });
 
-  it("A. tap servicios_spa → q-categoria-servicio (Objetivo 1); variables.servicio NO es servicios_spa", () => {
+  it("A. tap servicios_spa → act-listar-servicios (catálogo real); variables.servicio NO es servicios_spa", () => {
     const flow = danielaRouterFlow();
     const menu = clasificar(flow, "Hola", "menu");
     const tap = runFlowEngine(flow, menu.state, {
@@ -42,10 +42,9 @@ describe("Menú servicios_spa — separación menú vs servicio real", () => {
       id: DANIELA_BUTTON_IDS.SERVICIOS_SPA,
     });
     assert.equal(tap.error, undefined);
-    assert.equal(tap.state.currentNodeId, "agendar__q-categoria-servicio");
+    assert.equal(tap.state.pendingEffect?.nodeId, "agendar__act-listar-servicios");
     assert.equal(tap.state.variables.servicio, undefined);
     assert.notEqual(tap.state.variables.servicio, "servicios_spa");
-    assert.notEqual(tap.state.variables.categoriaSeleccionada, "servicios_spa");
   });
 
   it("B. agendamiento directo sigue extrayendo servicio real vía ai-extraer", () => {
@@ -71,28 +70,50 @@ describe("Menú servicios_spa — separación menú vs servicio real", () => {
     assert.equal(extraido.state.variables.servicio, "semipermanente en manos");
   });
 
-  it("C. tap servicios_spa + texto semipermanente en manos → variables.servicio correcto", () => {
+  it("C. tap servicios_spa + seleccionar 'Semipermanente en manos' del catálogo real → variables.servicio correcto", () => {
     const flow = danielaRouterFlow();
     const menu = clasificar(flow, "Hola", "menu");
     const tap = runFlowEngine(flow, menu.state, {
       type: "button",
       id: DANIELA_BUTTON_IDS.SERVICIOS_SPA,
     });
-    assert.equal(tap.state.currentNodeId, "agendar__q-categoria-servicio");
-    // Texto que no calza exacto con ninguna etiqueta de botón (Manos/Pies/
-    // Pestañas) se trata como intento directo de servicio -- va a
-    // act-validar-servicio (acción real, no escritura síncrona).
-    const r2 = runFlowEngine(flow, tap.state, { type: "text", text: "semipermanente en manos" });
+    assert.equal(tap.state.pendingEffect?.nodeId, "agendar__act-listar-servicios");
+    const listado = runFlowEngine(flow, tap.state, {
+      type: "effect_result",
+      success: true,
+      effectId: tap.state.pendingEffect!.effectId,
+      data: {
+        serviciosDisponibles: [{ nombre: "Semipermanente en manos", precio: 45000 }],
+        serviciosDisponiblesTexto: "1️⃣ Semipermanente en manos",
+        cantidadServicios: 1,
+      },
+    });
+    // Sin hint de servicio (tap de botón) -> el camino rápido falla.
+    const sinHint = runFlowEngine(flow, listado.state, {
+      type: "effect_result",
+      success: false,
+      effectId: listado.state.pendingEffect!.effectId,
+      data: {},
+    });
+    assert.equal(sinHint.state.currentNodeId, "agendar__q-seleccionar-servicio");
+    const r2 = runFlowEngine(flow, sinHint.state, { type: "text", text: "semipermanente en manos" });
     assert.equal(r2.error, undefined);
-    assert.equal(r2.state.pendingEffect?.nodeId, "agendar__act-validar-servicio");
-    const r3 = runFlowEngine(flow, r2.state, {
+    assert.equal(r2.state.pendingEffect?.nodeId, "agendar__ai-interpretar-seleccion-servicio");
+    const interpretado = runFlowEngine(flow, r2.state, {
       type: "effect_result",
       success: true,
       effectId: r2.state.pendingEffect!.effectId,
-      data: { servicio: "semipermanente en manos", servicioReconocido: true },
+      data: { seleccionTipo: "nombre", seleccionNombre: "Semipermanente en manos" },
+    });
+    assert.equal(interpretado.state.pendingEffect?.nodeId, "agendar__act-resolver-seleccion-servicio");
+    const r3 = runFlowEngine(flow, interpretado.state, {
+      type: "effect_result",
+      success: true,
+      effectId: interpretado.state.pendingEffect!.effectId,
+      data: { servicio: "Semipermanente en manos", precio: 45000, precioTexto: "$45.000" },
     });
     assert.equal(r3.error, undefined);
-    assert.equal(r3.state.variables.servicio, "semipermanente en manos");
+    assert.equal(r3.state.variables.servicio, "Semipermanente en manos");
   });
 
   it("D. tap productos deriva a Daniela y no entra a agendar", () => {

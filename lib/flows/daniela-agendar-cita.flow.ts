@@ -139,37 +139,98 @@ export function danielaAgendarCitaFlow(): FlowDefinition {
       // extrajo (o quedó vacío -- el operador 'exists' trata "" como faltante,
       // ver flow-engine.ts evaluateRule). Una sola pregunta por dato (Bug raíz
       // #5: ya no hay msg-saludo + q-servicio duplicados).
+      // (cond-servicio se eliminó -- cierre final Daniela, autorizado: el
+      // catálogo real siempre se consulta primero, ver act-listar-servicios;
+      // el hint 'servicio' del primer mensaje lo consume directamente
+      // act-resolver-seleccion-inicial-servicio, sin necesitar este gate.)
+      // Cierre final Daniela (autorizado, sept. 2026) — REEMPLAZA la
+      // categoría por botones (Manos/Pies/Pestañas) por el catálogo REAL y
+      // completo de servicios, leído de base_conocimiento (nunca
+      // hardcodeado -- ver parseServiciosDesdeBaseConocimiento). Pestañas
+      // queda fuera de este catálogo a propósito: nunca se ofrece como
+      // autoservicio, se transfiere siempre de inmediato (ver
+      // lib/flow-pestanas-hatch.ts, interceptado ANTES de llegar acá,
+      // incluso en el primer mensaje).
       {
-        id: "cond-servicio",
-        type: "condition",
-        config: { rules: [{ field: "servicio", operator: "exists" }], match: "all" },
+        id: "act-listar-servicios",
+        type: "action",
+        config: { actionType: "listar_servicios_especialista" },
       },
-      // Objetivo 1 (rediseño, autorizado) — categoría real ANTES del
-      // servicio, por botones deterministas (backend decide por id, nunca
-      // por el texto visible -- ver categoriaMenuDesdeBotonId). Solo se
-      // pregunta cuando el servicio no vino ya del primer mensaje (mismo
-      // criterio que cond-servicio de siempre: no preguntar lo ya sabido).
-      // Las 3 categorías son las únicas reales y activas verificadas contra
-      // dulabs_especialistas para este tenant (Manos, Pies, Pestañas) --
-      // no existe una cuarta categoría ("Otros") con datos reales detrás,
-      // así que no se agrega un botón que no lleve a ningún especialista.
       {
-        id: "q-categoria-servicio",
-        type: "buttons",
+        id: "cond-hay-servicios",
+        type: "condition",
+        config: { rules: [{ field: "cantidadServicios", operator: "greater_than", value: 0 }], match: "all" },
+      },
+      // Caso límite defensivo (no se espera en producción real -- Daniela
+      // siempre tiene base_conocimiento configurado): si por alguna razón
+      // el catálogo real viene vacío, nunca se inventa nada, se transfiere.
+      {
+        id: "msg-catalogo-no-disponible",
+        type: "message",
         config: {
-          text: "¿Qué tipo de servicio te gustaría agendar? 💅",
-          variableKey: "categoriaSeleccionada",
-          buttons: [
-            { id: DANIELA_BUTTON_IDS.CATEGORIA_MANOS, label: "Manos" },
-            { id: DANIELA_BUTTON_IDS.CATEGORIA_PIES, label: "Pies" },
-            { id: DANIELA_BUTTON_IDS.CATEGORIA_PESTANAS, label: "Pestañas" },
-          ],
+          text: "En este momento no tengo el listado de servicios a la mano 😔 Te paso con Dani para que te ayude directamente.",
+          messageRole: "informational",
+        },
+      },
+      // Camino rápido: si el primer mensaje ya nombró un servicio real
+      // ("quiero un dipping"), se intenta resolverlo por NOMBRE exacto
+      // contra el catálogo real antes de mostrar la lista -- si no calza
+      // exacto (o es ambiguo, ej. "semipermanente" sin decir manos/pies),
+      // cae a mostrar el catálogo y preguntar, nunca un error visible.
+      {
+        id: "act-resolver-seleccion-inicial-servicio",
+        type: "action",
+        config: { actionType: "resolver_seleccion_servicio" },
+      },
+      {
+        id: "q-seleccionar-servicio",
+        type: "question",
+        config: {
+          text: "💅 Servicios disponibles\nSelecciona el de tu interés:\n\n{{serviciosDisponiblesTexto}}",
+          variableKey: "seleccionServicioTexto",
+          required: true,
+          validation: { kind: "text" },
         },
       },
       {
-        id: "q-servicio",
-        type: "question",
-        config: { text: "¿Qué servicio te gustaría agendar? 💕", variableKey: "servicio", required: true, validation: { kind: "text" } },
+        id: "ai-interpretar-seleccion-servicio",
+        type: "ai",
+        config: {
+          instruction:
+            "La clienta respondió, en seleccionServicioTexto, a cuál de los servicios reales mostrados prefiere (los servicios reales están en serviciosDisponiblesTexto, numerados). Interpreta su respuesta y devuelve SOLO uno de estos dos formatos, nunca ambos: " +
+            "si se refiere a una POSICIÓN de la lista (ej. 'la primera', 'la segunda', 'la cuarta', 'el 4', '4️⃣', solo el número '4'), devuelve 'seleccionTipo'='index' y 'seleccionIndice' = el número de esa posición empezando en 1. " +
+            "Si en cambio menciona el NOMBRE de un servicio (ej. 'Dipping', 'semipermanente en manos', 'acrílicas'), devuelve 'seleccionTipo'='nombre' y 'seleccionNombre' con el nombre tal como aparece en la lista mostrada. " +
+            "Si su respuesta es ambigua y no puedes identificar con certeza a cuál se refiere (ej. 'semipermanente' sin decir si es en manos o en pies, cuando la lista tiene las dos por separado, o no calza con nada mostrado), NO inventes: omite seleccionIndice y seleccionNombre, y devuelve solo 'seleccionTipo'='ambiguo'. NUNCA inventes un servicio que no esté entre los mostrados.",
+          mode: "extract",
+          outputVariables: ["seleccionTipo", "seleccionIndice", "seleccionNombre"],
+        },
+      },
+      {
+        id: "act-resolver-seleccion-servicio",
+        type: "action",
+        config: { actionType: "resolver_seleccion_servicio" },
+      },
+      {
+        id: "msg-seleccion-servicio-no-clara",
+        type: "message",
+        config: {
+          // Mismo criterio que msg-seleccion-no-clara (horarios):
+          // resolver_seleccion_servicio no otorga ninguna capability en su
+          // rama de fallo, así que este texto evita palabras que exigirían
+          // evidencia verificada.
+          text: "No logré identificarlo con certeza 😔 Estas son las opciones reales que tengo:\n\n{{serviciosDisponiblesTexto}}\n\n¿Cuál prefieres?",
+          messageRole: "informational",
+        },
+      },
+      // Precio real (del catálogo, nunca inventado) + transición inmediata
+      // a la pregunta de fecha (cond-fecha, sin cambios).
+      {
+        id: "msg-precio-servicio",
+        type: "message",
+        config: {
+          text: "¡Perfecto! 💕 El servicio de {{servicio}} tiene un valor de {{precioTexto}}.",
+          messageRole: "informational",
+        },
       },
       {
         id: "cond-fecha",
@@ -192,15 +253,14 @@ export function danielaAgendarCitaFlow(): FlowDefinition {
         config: { text: "¿A nombre de quién la agendo?", variableKey: "nombreCliente", required: true, validation: { kind: "text" } },
       },
 
-      // Fase 1 — acción DIRECTA, sin nodo AI intermedio. servicio ya está en
-      // state.variables. Valida que variables.servicio sea reconocible ANTES
-      // de pedir fecha/nombre — evita recolectar todo el slot-filling y
-      // fallar al final (incidente producción: fecha en servicio).
-      {
-        id: "act-validar-servicio",
-        type: "action",
-        config: { actionType: "validar_servicio_especialista" },
-      },
+      // Ya no hace falta act-validar-servicio: el servicio resuelto acá
+      // SIEMPRE viene del catálogo real (act-resolver-seleccion-inicial-
+      // servicio / act-resolver-seleccion-servicio), nunca de texto libre
+      // sin validar -- la validación queda incluida por construcción.
+      // msg-servicio-no-reconocido se conserva (reutilizado por
+      // act-listar-horarios/act-relistar-horarios si el servicio real
+      // resuelto no tiene categoría manos/pies reconocible, ej. un
+      // servicio exclusivo de otra especialista).
       {
         id: "msg-servicio-no-reconocido",
         type: "message",
@@ -442,6 +502,7 @@ export function danielaAgendarCitaFlow(): FlowDefinition {
       },
 
       { id: "end-mantiene-cita-existente", type: "end", config: {} },
+      { id: "end-catalogo-no-disponible", type: "end", config: {} },
       { id: "end-confirmado", type: "end", config: {} },
       { id: "end-confirmado-respaldo", type: "end", config: {} },
       { id: "end-no-confirmada", type: "end", config: {} },
@@ -464,24 +525,34 @@ export function danielaAgendarCitaFlow(): FlowDefinition {
       // Fase 3 — slot-filling condicional. ai-extraer -> por cada dato: si
       // YA existe (extraído), se salta la pregunta; si no, se pregunta y
       // luego se sigue al siguiente dato.
-      { id: "e-extraer-servicio", source: "ai-extraer", target: "cond-servicio", sourceHandle: FLOW_EDGE_HANDLE.aiSuccess },
+      //
+      // Cierre final Daniela (autorizado) — catálogo real SIEMPRE se
+      // consulta primero (independiente de si el primer mensaje ya nombró
+      // un servicio), porque hace falta la lista real + precios reales
+      // antes de poder resolver cualquier selección. El hint 'servicio'
+      // (si lo hay) lo consume directamente
+      // act-resolver-seleccion-inicial-servicio, sin un gate cond-servicio.
+      { id: "e-extraer-a-listar-servicios", source: "ai-extraer", target: "act-listar-servicios", sourceHandle: FLOW_EDGE_HANDLE.aiSuccess },
+      { id: "e-listar-servicios-cond", source: "act-listar-servicios", target: "cond-hay-servicios", sourceHandle: FLOW_EDGE_HANDLE.aiSuccess },
+      { id: "e-catalogo-vacio", source: "cond-hay-servicios", target: "msg-catalogo-no-disponible", sourceHandle: FLOW_EDGE_HANDLE.conditionFalse },
+      { id: "e-catalogo-vacio-end", source: "msg-catalogo-no-disponible", target: "end-catalogo-no-disponible" },
+      { id: "e-hay-servicios", source: "cond-hay-servicios", target: "act-resolver-seleccion-inicial-servicio", sourceHandle: FLOW_EDGE_HANDLE.conditionTrue },
 
-      // Objetivo 1 (rediseño, autorizado) — sin servicio conocido, primero
-      // categoría (botones reales) y LUEGO el servicio dentro de ella. Cada
-      // botón de categoría escribe categoriaSeleccionada (id estable) y cae
-      // al mismo q-servicio; texto libre en la categoría se trata como un
-      // intento directo de servicio (sin restricción de categoría, mismo
-      // criterio que ya existía antes de este cambio).
-      { id: "e-servicio-falta", source: "cond-servicio", target: "q-categoria-servicio", sourceHandle: FLOW_EDGE_HANDLE.conditionFalse },
-      { id: "e-servicio-tiene", source: "cond-servicio", target: "act-validar-servicio", sourceHandle: FLOW_EDGE_HANDLE.conditionTrue },
-      { id: "e-categoria-manos-btn", source: "q-categoria-servicio", target: "q-servicio", sourceHandle: FLOW_EDGE_HANDLE.button(DANIELA_BUTTON_IDS.CATEGORIA_MANOS) },
-      { id: "e-categoria-pies-btn", source: "q-categoria-servicio", target: "q-servicio", sourceHandle: FLOW_EDGE_HANDLE.button(DANIELA_BUTTON_IDS.CATEGORIA_PIES) },
-      { id: "e-categoria-pestanas-btn", source: "q-categoria-servicio", target: "q-servicio", sourceHandle: FLOW_EDGE_HANDLE.button(DANIELA_BUTTON_IDS.CATEGORIA_PESTANAS) },
-      { id: "e-categoria-texto", source: "q-categoria-servicio", target: "act-validar-servicio", sourceHandle: FLOW_EDGE_HANDLE.text },
-      { id: "e-servicio-a-validar", source: "q-servicio", target: "act-validar-servicio" },
-      { id: "e-validar-servicio-ok", source: "act-validar-servicio", target: "cond-fecha", sourceHandle: FLOW_EDGE_HANDLE.aiSuccess },
-      { id: "e-validar-servicio-fail", source: "act-validar-servicio", target: "msg-servicio-no-reconocido", sourceHandle: FLOW_EDGE_HANDLE.aiFailure },
-      { id: "e-no-reconocido-reintentar", source: "msg-servicio-no-reconocido", target: "q-servicio" },
+      // Camino rápido: si 'servicio' (hint del primer mensaje) calza EXACTO
+      // (por nombre) con un ítem real del catálogo, se salta la pregunta
+      // abierta -- si no, cae a mostrar el catálogo y preguntar.
+      { id: "e-inicial-servicio-ok", source: "act-resolver-seleccion-inicial-servicio", target: "msg-precio-servicio", sourceHandle: FLOW_EDGE_HANDLE.aiSuccess },
+      { id: "e-inicial-servicio-fail", source: "act-resolver-seleccion-inicial-servicio", target: "q-seleccionar-servicio", sourceHandle: FLOW_EDGE_HANDLE.aiFailure },
+
+      { id: "e-seleccionar-servicio-a-interpretar", source: "q-seleccionar-servicio", target: "ai-interpretar-seleccion-servicio" },
+      { id: "e-interpretar-servicio-a-resolver", source: "ai-interpretar-seleccion-servicio", target: "act-resolver-seleccion-servicio", sourceHandle: FLOW_EDGE_HANDLE.aiSuccess },
+      { id: "e-resolver-servicio-ok", source: "act-resolver-seleccion-servicio", target: "msg-precio-servicio", sourceHandle: FLOW_EDGE_HANDLE.aiSuccess },
+      { id: "e-resolver-servicio-fail", source: "act-resolver-seleccion-servicio", target: "msg-seleccion-servicio-no-clara", sourceHandle: FLOW_EDGE_HANDLE.aiFailure },
+      { id: "e-seleccion-servicio-no-clara-reintentar", source: "msg-seleccion-servicio-no-clara", target: "q-seleccionar-servicio" },
+
+      { id: "e-precio-a-fecha", source: "msg-precio-servicio", target: "cond-fecha" },
+
+      { id: "e-no-reconocido-reintentar", source: "msg-servicio-no-reconocido", target: "q-seleccionar-servicio" },
 
       { id: "e-fecha-falta", source: "cond-fecha", target: "q-fecha", sourceHandle: FLOW_EDGE_HANDLE.conditionFalse },
       { id: "e-fecha-tiene", source: "cond-fecha", target: "cond-nombre", sourceHandle: FLOW_EDGE_HANDLE.conditionTrue },
@@ -570,7 +641,14 @@ export function danielaAgendarCitaFlow(): FlowDefinition {
       { key: "cantidadCitas", label: "Cantidad de citas activas previas", type: "number" },
       { key: "citasActivas", label: "Lista de citas activas reales previas", type: "string" },
       { key: "respuestaAdicionalTexto", label: "Respuesta de la clienta a si quiere una cita adicional", type: "string" },
-      { key: "servicio", label: "Servicio", type: "string", required: true },
+      { key: "servicio", label: "Servicio (resuelto contra el catálogo real, nunca texto libre sin validar)", type: "string", required: true },
+      { key: "serviciosDisponibles", label: "Catálogo real de servicios (nombre + precio), desde base_conocimiento", type: "string" },
+      { key: "serviciosDisponiblesTexto", label: "Catálogo real, formateado para mostrar", type: "string" },
+      { key: "cantidadServicios", label: "Cantidad de servicios reales en el catálogo", type: "number" },
+      { key: "seleccionServicioTexto", label: "Respuesta de la clienta eligiendo un servicio", type: "string" },
+      { key: "seleccionNombre", label: "Nombre de servicio interpretado por la IA (candidato, se valida contra el catálogo real)", type: "string" },
+      { key: "precio", label: "Precio real del servicio seleccionado (COP)", type: "number" },
+      { key: "precioTexto", label: "Precio real, formateado para mostrar (ej. \"$70.000\")", type: "string" },
       { key: "fecha", label: "Fecha (validada, YYYY-MM-DD real)", type: "string", required: true },
       { key: "nombreCliente", label: "Nombre de la clienta", type: "string", required: true },
       { key: "hora", label: "Hora preferida (hint del primer mensaje, sin validar hasta act-resolver-seleccion-horario)", type: "string" },

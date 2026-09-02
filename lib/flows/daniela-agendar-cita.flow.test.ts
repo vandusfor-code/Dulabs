@@ -16,7 +16,6 @@ import assert from "node:assert/strict";
 import { validateFlowForPublish } from "@/lib/flow/validate-publish";
 import { danielaAgendarCitaFlow } from "@/lib/flows/daniela-agendar-cita.flow";
 import { danielaRouterFlow } from "@/lib/flows/daniela-router.flow";
-import { DANIELA_BUTTON_IDS } from "@/lib/flows/daniela-button-ids";
 import { createFlowEngineState, runFlowEngine } from "@/lib/flow/flow-engine";
 import type { EngineEffect, FlowEngineState } from "@/lib/flow/engine-types";
 
@@ -260,124 +259,142 @@ function preguntaActual(state: FlowEngineState): string | null {
 }
 
 // ============================================================================
-// Objetivo 1 (rediseño de categorías, autorizado) — requisitos explícitos.
-// Complementa Objetivo 1, caso 2/3/3b/4/4b (contra Supabase real) en
-// lib/especialistas-flow-adaptador.test.ts: acá se prueba el GRAFO
-// (botones deterministas, backend no confía en el texto visible, "OK 👌"
-// no avanza, continuación tras servicio), no la validación de negocio.
+// Cierre final Daniela (autorizado) — catálogo real de servicios, requisitos
+// explícitos. Complementa la cobertura exhaustiva del parser/resolver
+// puros en lib/especialistas-flow-adaptador.test.ts: acá se prueba el
+// GRAFO (la lista SIEMPRE sale de una acción real -- nunca botones fijos
+// ni texto hardcodeado --, "OK 👌" no avanza, continuación tras servicio
+// real), no la lógica de parseo en sí.
 // ============================================================================
-describe("Objetivo 1 — categoría antes del servicio (requisitos explícitos)", () => {
-  it("1. 'Servicios de Spa' muestra las 3 categorías reales por botón (Manos/Pies/Pestañas), IDs estables", () => {
+const SERVICIOS_CATALOGO = [
+  { nombre: "Press on", precio: 80000 },
+  { nombre: "Dipping", precio: 70000 },
+  { nombre: "Semipermanente en manos", precio: 45000 },
+];
+const SERVICIOS_TEXTO_CATALOGO = "1️⃣ Press on\n2️⃣ Dipping\n3️⃣ Semipermanente en manos";
+
+function listarCatalogo(flow: AgendarFlow, state: FlowEngineState): RunResult {
+  assert.equal(state.pendingEffect?.nodeId, "act-listar-servicios");
+  return resolverEfecto(flow, state, {
+    serviciosDisponibles: SERVICIOS_CATALOGO,
+    serviciosDisponiblesTexto: SERVICIOS_TEXTO_CATALOGO,
+    cantidadServicios: SERVICIOS_CATALOGO.length,
+  });
+}
+
+describe("Cierre final Daniela — catálogo real de servicios (requisitos explícitos)", () => {
+  it("1. act-listar-servicios es una ACCIÓN real (nunca botones fijos ni una lista hardcodeada en el nodo)", () => {
     const flow = danielaRouterFlow();
-    const catNode = flow.nodes.find((n) => n.id === "agendar__q-categoria-servicio");
-    assert.ok(catNode && catNode.type === "buttons", "debe ser un menú cerrado de botones, no una pregunta abierta de IA");
-    if (catNode.type !== "buttons") return;
-    const ids = catNode.config.buttons.map((b) => b.id).sort();
-    assert.deepEqual(ids, [DANIELA_BUTTON_IDS.CATEGORIA_MANOS, DANIELA_BUTTON_IDS.CATEGORIA_PESTANAS, DANIELA_BUTTON_IDS.CATEGORIA_PIES].sort());
-    // El backend decide por id, nunca por el label visible.
-    for (const b of catNode.config.buttons) assert.ok(b.id.startsWith("categoria_"), b.id);
+    const catNode = flow.nodes.find((n) => n.id === "agendar__act-listar-servicios");
+    assert.ok(catNode && catNode.type === "action", "debe ser una acción que consulta el catálogo real, no un menú fijo");
+    if (catNode.type !== "action") return;
+    assert.equal(catNode.config.actionType, "listar_servicios_especialista");
   });
 
-  it("2. seleccionar 'Manos' escribe categoriaSeleccionada con el id ESTABLE del botón, nunca con el label", () => {
+  it("2. sin hint de servicio, el camino rápido falla y muestra la lista real; seleccionar por NOMBRE resuelve exacto contra esa lista", () => {
     const { flow, state } = arrancarSinCitasPrevias("Quiero una cita", {});
-    assert.equal(preguntaActual(state), "q-categoria-servicio");
-    const tras = runFlowEngine(flow, state, { type: "button", id: DANIELA_BUTTON_IDS.CATEGORIA_MANOS }).state;
-    assert.equal(tras.variables.categoriaSeleccionada, DANIELA_BUTTON_IDS.CATEGORIA_MANOS);
-    assert.notEqual(tras.variables.categoriaSeleccionada, "Manos", "nunca el texto visible del botón");
+    const listado = listarCatalogo(flow, state).state;
+    assert.equal(listado.pendingEffect?.nodeId, "act-resolver-seleccion-inicial-servicio");
+    const sinHint = resolverEfecto(flow, listado, {}, false).state;
+    assert.equal(preguntaActual(sinHint), "q-seleccionar-servicio");
+
+    const respuesta = runFlowEngine(flow, sinHint, { type: "text", text: "Dipping" }).state;
+    assert.equal(respuesta.pendingEffect?.nodeId, "ai-interpretar-seleccion-servicio");
+    const interpretado = resolverEfecto(flow, respuesta, { seleccionTipo: "nombre", seleccionNombre: "Dipping" }).state;
+    assert.equal(interpretado.pendingEffect?.nodeId, "act-resolver-seleccion-servicio");
+    const resuelto = resolverEfecto(flow, interpretado, { servicio: "Dipping", precio: 70000, precioTexto: "$70.000" }).state;
+    assert.equal(resuelto.variables.servicio, "Dipping");
+    assert.equal(resuelto.variables.precioTexto, "$70.000", "nunca el texto visible del botón/label -- el precio real del catálogo");
   });
 
-  it("3. seleccionar otra categoría ('Pies') deja su propio id -- cada categoría es independiente", () => {
+  it("3. seleccionar por ÍNDICE (posición de la lista) resuelve al servicio real en esa posición -- cada índice es independiente", () => {
     const { flow, state } = arrancarSinCitasPrevias("Quiero una cita", {});
-    const tras = runFlowEngine(flow, state, { type: "button", id: DANIELA_BUTTON_IDS.CATEGORIA_PIES }).state;
-    assert.equal(tras.variables.categoriaSeleccionada, DANIELA_BUTTON_IDS.CATEGORIA_PIES);
-    assert.equal(preguntaActual(tras), "q-servicio");
+    const sinHint = resolverEfecto(flow, listarCatalogo(flow, state).state, {}, false).state;
+    const respuesta = runFlowEngine(flow, sinHint, { type: "text", text: "la segunda" }).state;
+    const interpretado = resolverEfecto(flow, respuesta, { seleccionTipo: "index", seleccionIndice: 2 }).state;
+    assert.equal(interpretado.pendingEffect?.nodeId, "act-resolver-seleccion-servicio");
+    const resuelto = resolverEfecto(flow, interpretado, { servicio: "Dipping", precio: 70000, precioTexto: "$70.000" }).state;
+    assert.equal(preguntaActual(resuelto), "q-fecha", "tras resolver el servicio real, sigue con normalidad al siguiente paso");
   });
 
-  it("4. servicio real pero de OTRA categoría se rechaza en act-validar-servicio (categoria_no_coincide) -- grafo llega a validar con la categoría en el payload", () => {
+  it("4. una selección que NO calza con la lista real se rechaza (act-resolver-seleccion-servicio failure) -- nunca inventa un servicio", () => {
     const { flow, state } = arrancarSinCitasPrevias("Quiero una cita", {});
-    const conCategoria = runFlowEngine(flow, state, { type: "button", id: DANIELA_BUTTON_IDS.CATEGORIA_MANOS }).state;
-    assert.equal(preguntaActual(conCategoria), "q-servicio");
-    const conServicio = runFlowEngine(flow, conCategoria, { type: "text", text: "pestañas volumen ruso" }).state;
-    assert.equal(conServicio.pendingEffect?.nodeId, "act-validar-servicio");
-    // El payload que recibiría el executor SÍ incluye la categoría elegida
-    // (mismo mecanismo que ya prueba internal-action-executor: variables de
-    // state se mergean a params) -- la validación de negocio real
-    // (categoria_no_coincide) ya está probada contra Supabase real en
-    // especialistas-flow-adaptador.test.ts, Objetivo 1 caso 4.
-    assert.equal(conServicio.variables.categoriaSeleccionada, DANIELA_BUTTON_IDS.CATEGORIA_MANOS);
-    const fallo = resolverEfecto(flow, conServicio, {}, false);
-    assert.equal(preguntaActual(fallo.state), "q-servicio", "rechazado, vuelve a preguntar servicio SIN perder la categoría");
-    assert.equal(fallo.state.variables.categoriaSeleccionada, DANIELA_BUTTON_IDS.CATEGORIA_MANOS, "la categoría elegida se conserva para el reintento");
+    const sinHint = resolverEfecto(flow, listarCatalogo(flow, state).state, {}, false).state;
+    const respuesta = runFlowEngine(flow, sinHint, { type: "text", text: "un masaje" }).state;
+    const interpretado = resolverEfecto(flow, respuesta, { seleccionTipo: "nombre", seleccionNombre: "un masaje" }).state;
+    assert.equal(interpretado.pendingEffect?.nodeId, "act-resolver-seleccion-servicio");
+    const fallo = resolverEfecto(flow, interpretado, { detalle: "fuera_de_lista" }, false);
+    assert.equal(preguntaActual(fallo.state), "q-seleccionar-servicio", "rechazado, vuelve a mostrar la lista real, nunca avanza");
   });
 
-  it("5. 'OK 👌' no avanza incorrectamente -- ni en la categoría ni en el servicio", () => {
+  it("5. 'OK 👌' no avanza incorrectamente -- la IA lo clasifica ambiguo, nunca se inventa una selección", () => {
     const { flow, state } = arrancarSinCitasPrevias("Quiero una cita", {});
-    assert.equal(preguntaActual(state), "q-categoria-servicio");
+    const sinHint = resolverEfecto(flow, listarCatalogo(flow, state).state, {}, false).state;
+    assert.equal(preguntaActual(sinHint), "q-seleccionar-servicio");
 
-    // "OK 👌" no calza con ningún botón de categoría -> texto libre -> se
-    // trata como intento de servicio, y falla (no es un servicio real).
-    const trasOkEnCategoria = runFlowEngine(flow, state, { type: "text", text: "OK 👌" }).state;
-    assert.equal(trasOkEnCategoria.pendingEffect?.nodeId, "act-validar-servicio");
-    const falloCategoria = resolverEfecto(flow, trasOkEnCategoria, {}, false);
-    assert.equal(preguntaActual(falloCategoria.state), "q-servicio", "no avanza a fecha ni a ningún otro paso");
-    assert.equal(falloCategoria.state.variables.servicio, undefined, "nunca queda 'OK 👌' guardado como servicio válido");
-
-    // Mismo resultado si "OK 👌" llega ya con categoría elegida, en q-servicio
-    // (q-servicio SÍ escribe la respuesta cruda en variables.servicio al
-    // responder, igual que cualquier otra pregunta -- mismo criterio que ya
-    // usa el test B con "un masaje" -- pero NUNCA avanza a fecha, y
-    // act-validar-servicio rechaza esa respuesta cruda por no ser un
-    // servicio real).
-    const conCategoria = runFlowEngine(flow, state, { type: "button", id: DANIELA_BUTTON_IDS.CATEGORIA_PIES }).state;
-    const trasOkEnServicio = runFlowEngine(flow, conCategoria, { type: "text", text: "OK 👌" }).state;
-    assert.equal(trasOkEnServicio.pendingEffect?.nodeId, "act-validar-servicio");
-    const falloServicio = resolverEfecto(flow, trasOkEnServicio, {}, false);
-    assert.equal(preguntaActual(falloServicio.state), "q-servicio", "vuelve a preguntar, no un loop ciego ni un reinicio del flow");
-    assert.notEqual(preguntaActual(falloServicio.state), "q-fecha", "nunca avanza de más solo porque se respondió algo");
+    const trasOk = runFlowEngine(flow, sinHint, { type: "text", text: "OK 👌" }).state;
+    assert.equal(trasOk.pendingEffect?.nodeId, "ai-interpretar-seleccion-servicio");
+    const ambiguo = resolverEfecto(flow, trasOk, { seleccionTipo: "ambiguo" }).state;
+    assert.equal(ambiguo.pendingEffect?.nodeId, "act-resolver-seleccion-servicio");
+    const fallo = resolverEfecto(flow, ambiguo, { detalle: "ambiguo" }, false);
+    assert.equal(preguntaActual(fallo.state), "q-seleccionar-servicio", "no avanza a fecha ni a ningún otro paso");
+    assert.equal(fallo.state.variables.servicio, undefined, "nunca queda 'OK 👌' guardado como servicio válido");
   });
 
   it("6. el flujo continúa correctamente después de seleccionar un servicio real (llega a pedir fecha)", () => {
     const { flow, state } = arrancarSinCitasPrevias("Quiero una cita", {});
-    const conCategoria = runFlowEngine(flow, state, { type: "button", id: DANIELA_BUTTON_IDS.CATEGORIA_MANOS }).state;
-    const conServicio = runFlowEngine(flow, conCategoria, { type: "text", text: "semipermanente en manos" }).state;
-    assert.equal(conServicio.pendingEffect?.nodeId, "act-validar-servicio");
-    const validado = resolverEfecto(flow, conServicio, { servicio: "semipermanente en manos", servicioReconocido: true });
+    const sinHint = resolverEfecto(flow, listarCatalogo(flow, state).state, {}, false).state;
+    const respuesta = runFlowEngine(flow, sinHint, { type: "text", text: "semipermanente en manos" }).state;
+    const interpretado = resolverEfecto(flow, respuesta, { seleccionTipo: "nombre", seleccionNombre: "Semipermanente en manos" }).state;
+    assert.equal(interpretado.pendingEffect?.nodeId, "act-resolver-seleccion-servicio");
+    const validado = resolverEfecto(flow, interpretado, { servicio: "Semipermanente en manos", precio: 45000, precioTexto: "$45.000" });
     assert.equal(validado.error, undefined);
-    assert.equal(validado.state.variables.servicio, "semipermanente en manos", "act-validar-servicio SÍ escribe servicio de vuelta");
+    assert.equal(validado.state.variables.servicio, "Semipermanente en manos", "act-resolver-seleccion-servicio SÍ escribe servicio de vuelta");
     assert.equal(preguntaActual(validado.state), "q-fecha", "sigue con normalidad al siguiente paso real del flow");
+  });
+
+  it("7. hint de servicio del primer mensaje SÍ calza con la lista real -> camino rápido, sin preguntar de nuevo", () => {
+    const { flow, state } = arrancarSinCitasPrevias("Quiero Dipping", { servicio: "Dipping" });
+    const listado = listarCatalogo(flow, state).state;
+    assert.equal(listado.pendingEffect?.nodeId, "act-resolver-seleccion-inicial-servicio");
+    const resuelto = resolverEfecto(flow, listado, { servicio: "Dipping", precio: 70000, precioTexto: "$70.000" });
+    assert.equal(preguntaActual(resuelto.state), "q-fecha", "va directo a fecha, nunca pregunta el servicio de nuevo");
+    assert.equal(resuelto.state.variables.servicio, "Dipping");
   });
 });
 
 describe("Motor — slot-filling determinista vía runFlowEngine", () => {
-  it("A. mensaje sin ningún dato ('quiero una cita') -> pregunta categoría, luego servicio, cada una UNA sola vez", () => {
-    const { flow, state, efectos } = arrancarSinCitasPrevias("Quiero una cita", {});
-    assert.equal(preguntaActual(state), "q-categoria-servicio", "Objetivo 1: categoría real antes del servicio");
-    const preguntasCategoria = efectos.filter((e) => e.type === "send_message" && e.nodeId === "q-categoria-servicio");
-    assert.equal(preguntasCategoria.length, 1);
-
-    const conCategoria = runFlowEngine(flow, state, { type: "button", id: DANIELA_BUTTON_IDS.CATEGORIA_MANOS }).state;
-    assert.equal(preguntaActual(conCategoria), "q-servicio");
+  it("A. mensaje sin ningún dato ('quiero una cita') -> consulta el catálogo real, luego pregunta el servicio, UNA sola vez", () => {
+    const { flow, state } = arrancarSinCitasPrevias("Quiero una cita", {});
+    assert.equal(state.pendingEffect?.nodeId, "act-listar-servicios", "Cierre final Daniela: catálogo real antes de preguntar el servicio");
+    const listado = listarCatalogo(flow, state).state;
+    assert.equal(listado.pendingEffect?.nodeId, "act-resolver-seleccion-inicial-servicio");
+    const sinHint = resolverEfecto(flow, listado, {}, false);
+    const preguntas = sinHint.effects?.filter((e) => e.type === "send_message" && e.nodeId === "q-seleccionar-servicio") ?? [];
+    assert.equal(preguntas.length, 1);
+    assert.equal(preguntaActual(sinHint.state), "q-seleccionar-servicio");
   });
 
-  it("B. servicio inválido en q-servicio falla en act-validar-servicio y vuelve a preguntar servicio (categoría ya elegida se conserva)", () => {
+  it("B. servicio inválido en q-seleccionar-servicio falla en act-resolver-seleccion-servicio y vuelve a preguntar (misma lista real)", () => {
     const { flow, state: s0 } = arrancarSinCitasPrevias("Quiero una cita", {});
-    assert.equal(preguntaActual(s0), "q-categoria-servicio");
-    const conCategoria = runFlowEngine(flow, s0, { type: "button", id: DANIELA_BUTTON_IDS.CATEGORIA_MANOS }).state;
-    assert.equal(preguntaActual(conCategoria), "q-servicio");
-    const state = runFlowEngine(flow, conCategoria, { type: "text", text: "un masaje" }).state;
-    assert.equal(state.pendingEffect?.nodeId, "act-validar-servicio");
-    const run = resolverEfecto(flow, state, {}, false);
-    assert.equal(preguntaActual(run.state), "q-servicio", "vuelve a preguntar servicio tras validación fallida");
-    assert.equal(run.state.variables.categoriaSeleccionada, DANIELA_BUTTON_IDS.CATEGORIA_MANOS, "la categoría elegida no se pierde en el reintento");
+    const sinHint = resolverEfecto(flow, listarCatalogo(flow, s0).state, {}, false).state;
+    assert.equal(preguntaActual(sinHint), "q-seleccionar-servicio");
+    const respuesta = runFlowEngine(flow, sinHint, { type: "text", text: "un masaje" }).state;
+    assert.equal(respuesta.pendingEffect?.nodeId, "ai-interpretar-seleccion-servicio");
+    const interpretado = resolverEfecto(flow, respuesta, { seleccionTipo: "nombre", seleccionNombre: "un masaje" }).state;
+    assert.equal(interpretado.pendingEffect?.nodeId, "act-resolver-seleccion-servicio");
+    const run = resolverEfecto(flow, interpretado, {}, false);
+    assert.equal(preguntaActual(run.state), "q-seleccionar-servicio", "vuelve a preguntar servicio tras resolución fallida");
+    assert.equal(run.state.variables.servicio, undefined, "nunca queda un servicio inválido guardado");
   });
 
   it("C. fecha en texto natural ('el sábado') -> act-validar-fecha la normaliza -> act-listar-horarios recibe la fecha YA real", () => {
-    const { flow, state: s0 } = arrancarSinCitasPrevias("Quiero semipermanente para Ana", {
-      servicio: "semipermanente",
+    const { flow, state: s0 } = arrancarSinCitasPrevias("Quiero Dipping para Ana", {
+      servicio: "Dipping",
       nombreCliente: "Ana",
     });
-    assert.equal(s0.pendingEffect?.nodeId, "act-validar-servicio");
-    let state = resolverEfecto(flow, s0, { servicioReconocido: true }).state;
+    assert.equal(s0.pendingEffect?.nodeId, "act-listar-servicios");
+    let state = resolverEfecto(flow, listarCatalogo(flow, s0).state, { servicio: "Dipping", precio: 70000, precioTexto: "$70.000" }).state;
     assert.equal(preguntaActual(state), "q-fecha");
     state = runFlowEngine(flow, state, { type: "text", text: "el sábado" }).state;
     assert.equal(state.pendingEffect?.nodeId, "act-validar-fecha");
@@ -388,11 +405,11 @@ describe("Motor — slot-filling determinista vía runFlowEngine", () => {
   });
 
   it("D. fecha inválida ('mmm no sé') -> act-validar-fecha falla -> vuelve a preguntar, NUNCA llega a listar horarios", () => {
-    const { flow, state: s0 } = arrancarSinCitasPrevias("Quiero semipermanente para Ana", {
-      servicio: "semipermanente",
+    const { flow, state: s0 } = arrancarSinCitasPrevias("Quiero Dipping para Ana", {
+      servicio: "Dipping",
       nombreCliente: "Ana",
     });
-    let state = resolverEfecto(flow, s0, { servicioReconocido: true }).state;
+    let state = resolverEfecto(flow, listarCatalogo(flow, s0).state, { servicio: "Dipping", precio: 70000, precioTexto: "$70.000" }).state;
     state = runFlowEngine(flow, state, { type: "text", text: "mmm no sé" }).state;
     assert.equal(state.pendingEffect?.nodeId, "act-validar-fecha");
     const run = resolverEfecto(flow, state, {}, false);
@@ -405,12 +422,12 @@ describe("Motor — slot-filling determinista vía runFlowEngine", () => {
   });
 
   it("E. sin horarios ese día -> informa y vuelve a pedir fecha, nunca inventa un horario", () => {
-    const { flow, state: s0 } = arrancarSinCitasPrevias("Quiero semipermanente el 2026-09-02 para Ana", {
-      servicio: "semipermanente",
+    const { flow, state: s0 } = arrancarSinCitasPrevias("Quiero Dipping el 2026-09-02 para Ana", {
+      servicio: "Dipping",
       fecha: "2026-09-02",
       nombreCliente: "Ana",
     });
-    let state = resolverEfecto(flow, s0, { servicioReconocido: true }).state;
+    let state = resolverEfecto(flow, listarCatalogo(flow, s0).state, { servicio: "Dipping", precio: 70000, precioTexto: "$70.000" }).state;
     assert.equal(state.pendingEffect?.nodeId, "act-validar-fecha");
     state = resolverEfecto(flow, state, { fecha: "2026-09-02", nuevaFecha: "2026-09-02" }).state;
     assert.equal(state.pendingEffect?.nodeId, "act-listar-horarios");
@@ -419,12 +436,12 @@ describe("Motor — slot-filling determinista vía runFlowEngine", () => {
   });
 
   it("F. hay horarios reales, la clienta escribe 'la segunda' -> ai-interpretar-seleccion + act-resolver-seleccion-horario resuelven 16:00→17:00 (índice 2)", () => {
-    const { flow, state: s0 } = arrancarSinCitasPrevias("Quiero semipermanente el 2026-09-02 para Ana", {
-      servicio: "semipermanente",
+    const { flow, state: s0 } = arrancarSinCitasPrevias("Quiero Dipping el 2026-09-02 para Ana", {
+      servicio: "Dipping",
       fecha: "2026-09-02",
       nombreCliente: "Ana",
     });
-    let state = resolverEfecto(flow, s0, { servicioReconocido: true }).state;
+    let state = resolverEfecto(flow, listarCatalogo(flow, s0).state, { servicio: "Dipping", precio: 70000, precioTexto: "$70.000" }).state;
     state = resolverEfecto(flow, state, { fecha: "2026-09-02", nuevaFecha: "2026-09-02" }).state;
     assert.equal(state.pendingEffect?.nodeId, "act-listar-horarios");
     state = resolverEfecto(flow, state, {
@@ -449,12 +466,12 @@ describe("Motor — slot-filling determinista vía runFlowEngine", () => {
   });
 
   it("G. la IA interpreta un horario FUERA de la lista real (alucinado) -> act-resolver-seleccion-horario lo RECHAZA, nunca llega a confirmar", () => {
-    const { flow, state: s0 } = arrancarSinCitasPrevias("Quiero semipermanente el 2026-09-02 para Ana", {
-      servicio: "semipermanente",
+    const { flow, state: s0 } = arrancarSinCitasPrevias("Quiero Dipping el 2026-09-02 para Ana", {
+      servicio: "Dipping",
       fecha: "2026-09-02",
       nombreCliente: "Ana",
     });
-    let state = resolverEfecto(flow, s0, { servicioReconocido: true }).state;
+    let state = resolverEfecto(flow, listarCatalogo(flow, s0).state, { servicio: "Dipping", precio: 70000, precioTexto: "$70.000" }).state;
     state = resolverEfecto(flow, state, { fecha: "2026-09-02", nuevaFecha: "2026-09-02" }).state;
     state = resolverEfecto(flow, state, {
       horariosDisponibles: HORARIOS_REALES,
@@ -480,13 +497,13 @@ describe("Motor — slot-filling determinista vía runFlowEngine", () => {
   });
 
   it("H. hint de hora del primer mensaje SÍ calza con la lista real -> camino rápido, sin preguntar de nuevo", () => {
-    const { flow, state: s0 } = arrancarSinCitasPrevias("Quiero semipermanente el 2026-09-02 a las 17:00 para Ana", {
-      servicio: "semipermanente",
+    const { flow, state: s0 } = arrancarSinCitasPrevias("Quiero Dipping el 2026-09-02 a las 17:00 para Ana", {
+      servicio: "Dipping",
       fecha: "2026-09-02",
       hora: "17:00",
       nombreCliente: "Ana",
     });
-    let state = resolverEfecto(flow, s0, { servicioReconocido: true }).state;
+    let state = resolverEfecto(flow, listarCatalogo(flow, s0).state, { servicio: "Dipping", precio: 70000, precioTexto: "$70.000" }).state;
     state = resolverEfecto(flow, state, { fecha: "2026-09-02", nuevaFecha: "2026-09-02" }).state;
     state = resolverEfecto(flow, state, {
       horariosDisponibles: HORARIOS_REALES,
@@ -509,8 +526,8 @@ describe("Motor — slot-filling determinista vía runFlowEngine", () => {
 // salidas críticas.
 // ============================================================
 function conducirHastaAgendarExitoso(): { flow: AgendarFlow; state: FlowEngineState; efectos: EngineEffect[] } {
-  const { flow, state: s0, efectos } = arrancarSinCitasPrevias("Quiero semipermanente el 2026-09-02 a las 17:00 para Duvan", {
-    servicio: "semipermanente",
+  const { flow, state: s0, efectos } = arrancarSinCitasPrevias("Quiero Dipping el 2026-09-02 a las 17:00 para Duvan", {
+    servicio: "Dipping",
     fecha: "2026-09-02",
     hora: "17:00",
     nombreCliente: "Duvan",
@@ -520,8 +537,10 @@ function conducirHastaAgendarExitoso(): { flow: AgendarFlow; state: FlowEngineSt
     return r.state;
   };
   let state = s0;
-  assert.equal(state.pendingEffect?.nodeId, "act-validar-servicio");
-  state = push(resolverEfecto(flow, state, { servicioReconocido: true }));
+  assert.equal(state.pendingEffect?.nodeId, "act-listar-servicios");
+  state = push(listarCatalogo(flow, state));
+  assert.equal(state.pendingEffect?.nodeId, "act-resolver-seleccion-inicial-servicio");
+  state = push(resolverEfecto(flow, state, { servicio: "Dipping", precio: 70000, precioTexto: "$70.000" }));
   assert.equal(state.pendingEffect?.nodeId, "act-validar-fecha");
   state = push(resolverEfecto(flow, state, { fecha: "2026-09-02", nuevaFecha: "2026-09-02" }));
   assert.equal(state.pendingEffect?.nodeId, "act-listar-horarios");
@@ -601,10 +620,11 @@ describe("Regresión incidente #796 — motor real, camino completo agendar (ada
       efectos.push(...(r.effects ?? []));
       return r.state;
     };
-    state = push(runFlowEngine(flow, state, { type: "start", text: "Quiero semipermanente el 2026-09-02 a las 17:00 para Duvan" }));
+    state = push(runFlowEngine(flow, state, { type: "start", text: "Quiero Dipping el 2026-09-02 a las 17:00 para Duvan" }));
     state = push(resolverEfecto(flow, state, { cantidadCitas: 0, citasActivas: [] }));
-    state = push(resolverEfecto(flow, state, { servicio: "semipermanente", fecha: "2026-09-02", hora: "17:00", nombreCliente: "Duvan" }));
-    state = push(resolverEfecto(flow, state, { servicioReconocido: true }));
+    state = push(resolverEfecto(flow, state, { servicio: "Dipping", fecha: "2026-09-02", hora: "17:00", nombreCliente: "Duvan" }));
+    state = push(listarCatalogo(flow, state));
+    state = push(resolverEfecto(flow, state, { servicio: "Dipping", precio: 70000, precioTexto: "$70.000" }));
     state = push(resolverEfecto(flow, state, { fecha: "2026-09-02", nuevaFecha: "2026-09-02" }));
     state = push(
       resolverEfecto(flow, state, {
@@ -682,8 +702,8 @@ describe("Regresión router (dos ejecuciones) — el reconocimiento vs. nueva ci
   it("el router entra a agendar por act-consultar-citas-previas y existe UNA sola pregunta de servicio (no hay msg-saludo)", () => {
     const flow = danielaRouterFlow();
     assert.equal(flow.nodes.some((n) => n.id.endsWith("msg-saludo")), false);
-    const preguntasServicio = flow.nodes.filter((n) => n.type === "question" && n.config.variableKey === "servicio");
-    assert.equal(preguntasServicio.length, 1, "una sola pregunta de servicio en todo el router");
+    const preguntasServicio = flow.nodes.filter((n) => n.type === "question" && n.config.variableKey === "seleccionServicioTexto");
+    assert.equal(preguntasServicio.length, 1, "una sola pregunta de servicio (catálogo real) en todo el router");
     const eAgendar = flow.edges.find((e) => e.sourceHandle === "class:agendar" && e.source === "ai-clasificar-intencion");
     assert.equal(eAgendar?.target, "agendar__act-consultar-citas-previas");
   });

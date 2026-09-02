@@ -24,6 +24,10 @@ import {
   resolverSeleccionHorario,
   formatearListaHorarios,
   categoriaMenuDesdeBotonId,
+  parseServiciosDesdeBaseConocimiento,
+  formatearListaServicios,
+  resolverSeleccionServicio,
+  formatearPrecioCop,
 } from "@/lib/especialistas-flow-adaptador";
 import { parseFechaColombia } from "@/lib/parse-fecha-colombia";
 import {
@@ -89,6 +93,8 @@ const OPERATION_CLASS: Partial<Record<string, InternalActionOperationClass>> = {
   validar_fecha_especialista: "READ",
   listar_horarios_disponibles_especialista: "READ",
   resolver_seleccion_horario: "READ",
+  listar_servicios_especialista: "READ",
+  resolver_seleccion_servicio: "READ",
 };
 
 function resolveInternalActionKey(action: ActionNodeConfig): string {
@@ -225,6 +231,10 @@ export class InternalActionExecutor implements EffectExecutor {
         return this.listarHorariosDisponiblesEspecialistaAction(request, params, signal);
       case "resolver_seleccion_horario":
         return this.resolverSeleccionHorarioAction(request, params);
+      case "listar_servicios_especialista":
+        return this.listarServiciosEspecialistaAction(request, params);
+      case "resolver_seleccion_servicio":
+        return this.resolverSeleccionServicioAction(request, params);
       default:
         return {
           success: false,
@@ -1027,6 +1037,98 @@ export class InternalActionExecutor implements EffectExecutor {
       appliedResult: data,
       rawResult: data,
       metadata: { operationClass: OPERATION_CLASS.resolver_seleccion_horario },
+    };
+  }
+
+  /**
+   * Cierre final Daniela (autorizado) — catálogo REAL de servicios, leído
+   * de `baseConocimiento` (ya sembrada en state.variables por el
+   * orchestrator, igual que `hoy`). Pura respecto a Supabase -- no hace
+   * ninguna consulta, solo parsea el texto real del negocio. Ver
+   * parseServiciosDesdeBaseConocimiento para el porqué de no inventar/
+   * hardcodear nada acá.
+   */
+  private async listarServiciosEspecialistaAction(
+    request: EffectDispatchRequest,
+    params: Record<string, string>,
+  ): Promise<EffectDispatchResult> {
+    const baseConocimiento = params.baseConocimiento ?? "";
+    const servicios = parseServiciosDesdeBaseConocimiento(baseConocimiento);
+
+    const data = {
+      serviciosDisponibles: servicios,
+      serviciosDisponiblesTexto: formatearListaServicios(servicios),
+      cantidadServicios: servicios.length,
+      effectId: request.effectId,
+    };
+
+    return {
+      success: true,
+      classification: EFFECT_RESULT_CLASSIFICATIONS.SUCCESS,
+      data,
+      appliedResult: data,
+      rawResult: data,
+      metadata: { operationClass: OPERATION_CLASS.listar_servicios_especialista },
+    };
+  }
+
+  /**
+   * Cierre final Daniela (autorizado) — ÚNICA función que decide qué
+   * servicio quedó realmente seleccionado. Lee `serviciosDisponibles`
+   * directo de `request.payload` (no de `params`: mergeParams descarta
+   * arrays/objetos, ver mergeParams arriba) -- es la lista REAL que ya dejó
+   * listar_servicios_especialista, nunca un valor que la IA pueda
+   * sustituir. Mismo nodo/actionType se usa en DOS puntos del grafo
+   * (camino rápido con el hint del primer mensaje, y tras la pregunta
+   * abierta) -- mismo patrón exacto que resolver_seleccion_horario.
+   */
+  private async resolverSeleccionServicioAction(
+    request: EffectDispatchRequest,
+    params: Record<string, string>,
+  ): Promise<EffectDispatchResult> {
+    const serviciosRaw = Array.isArray(request.payload.serviciosDisponibles) ? request.payload.serviciosDisponibles : [];
+    const servicios = serviciosRaw.filter(
+      (s): s is { nombre: string; precio: number } =>
+        typeof s === "object" && s !== null && typeof (s as { nombre?: unknown }).nombre === "string",
+    );
+
+    const tieneSeleccionExplicita =
+      params.seleccionTipo !== undefined || params.seleccionIndice !== undefined || params.seleccionNombre !== undefined;
+
+    const resultado = tieneSeleccionExplicita
+      ? resolverSeleccionServicio({
+          servicios,
+          seleccionTipo: params.seleccionTipo,
+          seleccionIndice: params.seleccionIndice !== undefined ? num(params.seleccionIndice, NaN) : undefined,
+          seleccionNombre: params.seleccionNombre,
+        })
+      : params.servicio
+        ? resolverSeleccionServicio({ servicios, seleccionTipo: "nombre", seleccionNombre: params.servicio })
+        : resolverSeleccionServicio({ servicios });
+
+    if (!resultado.ok) {
+      return {
+        success: false,
+        classification: EFFECT_RESULT_CLASSIFICATIONS.NON_RETRYABLE,
+        error: resultado.motivo,
+        data: { detalle: resultado.detalle, serviciosDisponiblesTexto: formatearListaServicios(servicios) },
+      };
+    }
+
+    const data = {
+      servicio: resultado.nombre,
+      precio: resultado.precio,
+      precioTexto: formatearPrecioCop(resultado.precio),
+      effectId: request.effectId,
+    };
+
+    return {
+      success: true,
+      classification: EFFECT_RESULT_CLASSIFICATIONS.SUCCESS,
+      data,
+      appliedResult: data,
+      rawResult: data,
+      metadata: { operationClass: OPERATION_CLASS.resolver_seleccion_servicio },
     };
   }
 

@@ -36,13 +36,15 @@ function conducirHastaAgendarExitoso() {
     efectos.push(...(r.effects ?? []));
     return r.state;
   };
-  state = push(runFlowEngine(flow, state, { type: "start", text: "Quiero semipermanente el 2026-09-02 a las 17:00 para Duvan" }));
+  state = push(runFlowEngine(flow, state, { type: "start", text: "Quiero Dipping el 2026-09-02 a las 17:00 para Duvan" }));
   assert.equal(state.pendingEffect?.nodeId, "act-consultar-citas-previas");
   state = push(resolverEfecto(flow, state, { cantidadCitas: 0, citasActivas: [] }));
   assert.equal(state.pendingEffect?.nodeId, "ai-extraer");
-  state = push(resolverEfecto(flow, state, { servicio: "semipermanente", fecha: "2026-09-02", hora: "17:00", nombreCliente: "Duvan" }));
-  assert.equal(state.pendingEffect?.nodeId, "act-validar-servicio");
-  state = push(resolverEfecto(flow, state, { servicioReconocido: true }));
+  state = push(resolverEfecto(flow, state, { servicio: "Dipping", fecha: "2026-09-02", hora: "17:00", nombreCliente: "Duvan" }));
+  assert.equal(state.pendingEffect?.nodeId, "act-listar-servicios");
+  state = push(resolverEfecto(flow, state, { serviciosDisponibles: [{ nombre: "Dipping", precio: 70000 }], serviciosDisponiblesTexto: "1️⃣ Dipping", cantidadServicios: 1 }));
+  assert.equal(state.pendingEffect?.nodeId, "act-resolver-seleccion-inicial-servicio");
+  state = push(resolverEfecto(flow, state, { servicio: "Dipping", precio: 70000, precioTexto: "$70.000" }));
   assert.equal(state.pendingEffect?.nodeId, "act-validar-fecha");
   state = push(resolverEfecto(flow, state, { fecha: "2026-09-02", nuevaFecha: "2026-09-02" }));
   assert.equal(state.pendingEffect?.nodeId, "act-listar-horarios");
@@ -89,10 +91,11 @@ describe("Recordatorio post-confirmación de cita nueva", () => {
     const flow = danielaAgendarCitaFlow();
     let state = createFlowEngineState(flow, {});
     state.variables = { ...state.variables, hoy: "2026-08-30" };
-    state = runFlowEngine(flow, state, { type: "start", text: "Quiero semipermanente el 2026-09-02 a las 17:00 para Duvan" }).state;
+    state = runFlowEngine(flow, state, { type: "start", text: "Quiero Dipping el 2026-09-02 a las 17:00 para Duvan" }).state;
     state = resolverEfecto(flow, state, { cantidadCitas: 0, citasActivas: [] }).state;
-    state = resolverEfecto(flow, state, { servicio: "semipermanente", fecha: "2026-09-02", hora: "17:00", nombreCliente: "Duvan" }).state;
-    state = resolverEfecto(flow, state, { servicioReconocido: true }).state;
+    state = resolverEfecto(flow, state, { servicio: "Dipping", fecha: "2026-09-02", hora: "17:00", nombreCliente: "Duvan" }).state;
+    state = resolverEfecto(flow, state, { serviciosDisponibles: [{ nombre: "Dipping", precio: 70000 }], serviciosDisponiblesTexto: "1️⃣ Dipping", cantidadServicios: 1 }).state;
+    state = resolverEfecto(flow, state, { servicio: "Dipping", precio: 70000, precioTexto: "$70.000" }).state;
     state = resolverEfecto(flow, state, { fecha: "2026-09-02", nuevaFecha: "2026-09-02" }).state;
     state = resolverEfecto(flow, state, {
       horariosDisponibles: HORARIOS_REALES,
@@ -118,10 +121,11 @@ describe("Recordatorio post-confirmación de cita nueva", () => {
       efectos.push(...(r.effects ?? []));
       return r.state;
     };
-    state = push(runFlowEngine(flow, state, { type: "start", text: "semipermanente 2026-09-02 17:00 Duvan" }));
+    state = push(runFlowEngine(flow, state, { type: "start", text: "Dipping 2026-09-02 17:00 Duvan" }));
     state = push(resolverEfecto(flow, state, { cantidadCitas: 0, citasActivas: [] }));
-    state = push(resolverEfecto(flow, state, { servicio: "semipermanente", fecha: "2026-09-02", hora: "17:00", nombreCliente: "Duvan" }));
-    state = push(resolverEfecto(flow, state, { servicioReconocido: true }));
+    state = push(resolverEfecto(flow, state, { servicio: "Dipping", fecha: "2026-09-02", hora: "17:00", nombreCliente: "Duvan" }));
+    state = push(resolverEfecto(flow, state, { serviciosDisponibles: [{ nombre: "Dipping", precio: 70000 }], serviciosDisponiblesTexto: "1️⃣ Dipping", cantidadServicios: 1 }));
+    state = push(resolverEfecto(flow, state, { servicio: "Dipping", precio: 70000, precioTexto: "$70.000" }));
     state = push(resolverEfecto(flow, state, { fecha: "2026-09-02", nuevaFecha: "2026-09-02" }));
     state = push(
       resolverEfecto(flow, state, {

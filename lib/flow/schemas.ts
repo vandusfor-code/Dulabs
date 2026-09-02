@@ -216,6 +216,16 @@ const actionNodeConfigSchema = z.discriminatedUnion("actionType", [
     params: z.record(z.string(), z.string()).optional(),
   }),
   z.object({
+    actionType: z.literal("listar_servicios_especialista"),
+    semanticTag: semanticTagSchema,
+    params: z.record(z.string(), z.string()).optional(),
+  }),
+  z.object({
+    actionType: z.literal("resolver_seleccion_servicio"),
+    semanticTag: semanticTagSchema,
+    params: z.record(z.string(), z.string()).optional(),
+  }),
+  z.object({
     actionType: z.literal("webhook_http"),
     semanticTag: semanticTagSchema,
     url: z.string().url(),

@@ -160,6 +160,24 @@ const BY_ACTION_TYPE: Partial<Record<FlowActionType, ActionCapabilitySpec>> = {
     actionType: "resolver_seleccion_horario",
     criticality: "standard",
   },
+  // Cierre final Daniela (autorizado) — solo lectura, parsea el catálogo
+  // real de base_conocimiento (sin I/O). Mismo criterio que
+  // listar_horarios_disponibles_especialista: no afirma ningún precio
+  // puntual por sí sola, solo expone la lista real para que la clienta
+  // elija -- resolver_seleccion_servicio es quien decide qué quedó
+  // seleccionado, comparando contra esta lista real.
+  listar_servicios_especialista: {
+    actionType: "listar_servicios_especialista",
+    criticality: "standard",
+    outputVariables: ["serviciosDisponibles"],
+  },
+  // Determinismo puro (sin I/O): valida el candidato contra la lista real
+  // ya devuelta por la acción anterior. El precio que produce viene
+  // directo de esa lista real (nunca inventado por IA).
+  resolver_seleccion_servicio: {
+    actionType: "resolver_seleccion_servicio",
+    criticality: "standard",
+  },
 };
 
 /** Specs por semanticTag de webhook (prioridad sobre actionType genérico). */

@@ -34,6 +34,7 @@ import type { FlowOrchestratorStore } from "@/lib/flow/orchestrator-types";
 import { registrarFalloIA } from "@/lib/alertas";
 import { resolverConfigAgente } from "@/lib/agentes";
 import { esInterrupcionEscapeHatch, MENSAJE_HABLAR_CON_DANI } from "@/lib/flow-escape-hatch";
+import { esMencionPestanas, MENSAJE_TRANSFERENCIA_PESTANAS } from "@/lib/flow-pestanas-hatch";
 import { pareceLikelyPreguntaLateral } from "@/lib/flow-lateral-question";
 import { enviarWhatsApp } from "@/lib/whatsapp-outbound";
 import { activarPausaChat } from "@/lib/pausas-chat";
@@ -185,7 +186,13 @@ export type MotivoIntentoFlow =
   // una pregunta abierta activa. Se respondió con información real
   // (base_conocimiento) y se reenvió la MISMA pregunta pendiente, sin tocar
   // el estado del engine -- ver intentarPreguntaLateral. Nunca es un fallo.
-  | "pregunta_lateral";
+  | "pregunta_lateral"
+  // Cierre final Daniela (autorizado) — pestañas NUNCA se agenda
+  // automáticamente (Nicol confirma ella misma, cita previa). Cualquier
+  // mención de pestañas -- primer mensaje, pregunta lateral, o respuesta
+  // libre a cualquier pregunta del flow -- transfiere de inmediato, SIN
+  // pasar por ninguna clasificación de IA. Ver lib/flow-pestanas-hatch.ts.
+  | "transferencia_pestanas";
 
 export interface ResultadoIntentoFlow {
   /** true = Flow ya resolvió este mensaje (con éxito o sin que haga falta
@@ -355,6 +362,50 @@ async function marcarEjecucionRotaComoFallida(params: {
  *   pasar por acá -- fuera del alcance de este blocker, documentado como
  *   límite conocido.
  */
+/**
+ * Cierre final Daniela (autorizado) — transferencia determinista de
+ * pestañas. A diferencia del escape hatch, SÍ debe disparar sin ejecución
+ * activa (primer mensaje "quiero pestañas" de una conversación nueva) --
+ * por eso no exige activeExecution como precondición: si existe una
+ * ejecución activa esperando texto, se cierra igual que el escape hatch
+ * (misma razón: la pregunta pendiente nunca se va a responder); si no
+ * existe ninguna, simplemente se manda el mensaje y se pausa el chat, sin
+ * nada que cerrar.
+ */
+async function intentarTransferenciaPestanas(params: {
+  supabase: SupabaseClient;
+  cliente: ClienteConfig;
+  telefonoCliente: string;
+  texto: string;
+  buttonId?: string;
+  store: FlowOrchestratorStore;
+}): Promise<ResultadoIntentoFlow | null> {
+  if (params.buttonId || !params.texto || !esMencionPestanas(params.texto)) return null;
+
+  const activeExecution = await params.store.getActiveExecution(params.cliente.id_tenant, {
+    phoneNumberId: params.cliente.phone_number_id,
+    telefonoCliente: params.telefonoCliente,
+  });
+
+  await enviarWhatsApp(params.supabase, params.cliente, params.telefonoCliente, MENSAJE_TRANSFERENCIA_PESTANAS);
+  await activarPausaChat(params.supabase, params.cliente.phone_number_id, params.telefonoCliente, 24 * 60 * 60 * 1000);
+
+  if (activeExecution && activeExecution.expected_input === "text") {
+    const state = executionRowToEngineState(activeExecution);
+    await params.store.saveExecutionState(
+      params.cliente.id_tenant,
+      activeExecution.id,
+      { ...state, status: "transferred" },
+      activeExecution.state_version,
+    ).catch(() => {
+      // Best-effort, mismo criterio que intentarEscapeHatch: un conflicto de
+      // concurrencia acá no debe tumbar la transferencia que ya se envió.
+    });
+  }
+
+  return { handled: true, motivo: "transferencia_pestanas" };
+}
+
 /**
  * Rediseño de agendamiento (autorizado) — escape hatch determinista.
  *
@@ -545,6 +596,16 @@ export async function atenderMensajeConFlowConFallback(params: {
   dispatchAiPreguntaLateralOverride?: DispatchAiPreguntaLateral;
 }): Promise<ResultadoIntentoFlow> {
   const store = createSupabaseFlowOrchestratorStore(params.supabase);
+
+  const pestanas = await intentarTransferenciaPestanas({
+    supabase: params.supabase,
+    cliente: params.cliente,
+    telefonoCliente: params.telefonoCliente,
+    texto: params.texto,
+    buttonId: params.buttonId,
+    store,
+  });
+  if (pestanas) return pestanas;
 
   const escapado = await intentarEscapeHatch({
     supabase: params.supabase,

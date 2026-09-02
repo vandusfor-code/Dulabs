@@ -1485,6 +1485,40 @@ function isConditionalProposalFrame(p: string): boolean {
 }
 
 /**
+ * Fragmento ilustrativo de una lista de ejemplos ("por ejemplo: 'el sábado',
+ * 'mañana' o '4 de septiembre'") -- NUNCA una afirmación propia del
+ * asistente, así que no debe contar como "proposición sustantiva" en
+ * ninguno de los bucles de isResponseClearlySafeWithoutProvenance.
+ *
+ * BUG REAL encontrado (cierre final Daniela, sept. 2026, prueba real
+ * controlada): una pregunta legítima y estructuralmente segura ("¿Qué día
+ * te gustaría tu cita? 📅 (por ejemplo: "el sábado", "mañana" o "4 de
+ * septiembre")") se bloqueaba SIEMPRE, silenciosamente (ningún efecto ni
+ * siquiera se registraba) -- no por la pregunta en sí (esa SÍ pasaba
+ * isAssistantQuestionContent vía propositionIsInterrogative), sino porque
+ * el paréntesis de ejemplos se trocea en fragmentos propios ("el sábado",
+ * "mañana" o "4 de septiembre") que no matchean NINGUNA categoría segura
+ * (no son pregunta, ni información, ni acción futura...) y el veredicto
+ * exige que TODAS las proposiciones sustantivas sean seguras. El problema
+ * nunca fue la palabra "cita" -- era tratar ejemplos citados entre comillas
+ * como si fueran afirmaciones independientes que necesitan su propia
+ * clasificación.
+ */
+function isIllustrativeExampleFragment(p: string): boolean {
+  const s = p.trim();
+  if (!s) return false;
+  if (/\bpor\s+ejemplo\b/i.test(s)) return true;
+  if (/^ej\.?\s*[:,]/i.test(s)) return true;
+  // Fragmento que ES (o empieza por) una cadena entre comillas, corto --
+  // patrón real de un ítem de lista de ejemplos, nunca una afirmación
+  // propia larga. El límite de longitud es deliberado: una afirmación real
+  // envuelta en comillas por estilo ("Sí, tu cita quedó confirmada") sigue
+  // evaluándose normalmente si es más larga que un ítem de ejemplo típico.
+  if (/^"/.test(s) && tokenize(s).length <= 6) return true;
+  return false;
+}
+
+/**
  * Proposición estructuralmente segura: demuestra que NO afirma ejecución/completitud externa.
  * Carga de prueba invertida — en contexto transaccional todo lo demás requiere evidencia.
  */
@@ -1534,7 +1568,7 @@ export function isResponseClearlySafeWithoutProvenance(
     let allClearlySafe = true;
     for (const prop of props) {
       const p = stripLeadingModalPrefix(prop);
-      if (!p || isBareNegationPrefix(p) || (tokenize(p).length <= 2 && isModalOrClosurePrefix(p))) continue;
+      if (!p || isBareNegationPrefix(p) || isIllustrativeExampleFragment(p) || (tokenize(p).length <= 2 && isModalOrClosurePrefix(p))) continue;
       substantiveEarly += 1;
       if (!isPropositionClearlySafe(prop, features, userContext)) allClearlySafe = false;
     }
@@ -1563,7 +1597,7 @@ export function isResponseClearlySafeWithoutProvenance(
     let unsafe = false;
     for (const prop of props) {
       const p = stripLeadingModalPrefix(prop);
-      if (!p || isBareNegationPrefix(p) || (tokenize(p).length <= 2 && isModalOrClosurePrefix(p))) continue;
+      if (!p || isBareNegationPrefix(p) || isIllustrativeExampleFragment(p) || (tokenize(p).length <= 2 && isModalOrClosurePrefix(p))) continue;
       substantive += 1;
       if (
         !isExplicitUncertaintyOrDeferral(prop) &&
@@ -1584,7 +1618,7 @@ export function isResponseClearlySafeWithoutProvenance(
     let substantive = 0;
     for (const prop of props) {
       const p = stripLeadingModalPrefix(prop);
-      if (!p || isBareNegationPrefix(p) || (tokenize(p).length <= 2 && isModalOrClosurePrefix(p))) continue;
+      if (!p || isBareNegationPrefix(p) || isIllustrativeExampleFragment(p) || (tokenize(p).length <= 2 && isModalOrClosurePrefix(p))) continue;
       substantive += 1;
       if (!isExplicitUncertaintyOrDeferral(prop) && !isPropositionDirectNegativeState(p)) {
         return false;
@@ -1607,7 +1641,7 @@ export function isResponseClearlySafeWithoutProvenance(
   for (const prop of props) {
     const p = stripLeadingModalPrefix(prop);
     if (!p) return false;
-    if (isBareNegationPrefix(p) || (tokenize(p).length <= 2 && isModalOrClosurePrefix(p))) continue;
+    if (isBareNegationPrefix(p) || isIllustrativeExampleFragment(p) || (tokenize(p).length <= 2 && isModalOrClosurePrefix(p))) continue;
     substantive += 1;
     if (!isPropositionClearlySafe(prop, features, userContext)) return false;
   }

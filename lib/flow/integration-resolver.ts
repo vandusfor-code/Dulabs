@@ -69,6 +69,15 @@ const INTERNAL_ACTION_TYPES = new Set([
   "validar_fecha_especialista",
   "listar_horarios_disponibles_especialista",
   "resolver_seleccion_horario",
+  // Cierre final Daniela (autorizado) — mismo trato exacto que las
+  // anteriores: acciones nativas sobre datos ya sembrados en
+  // state.variables (baseConocimiento), sin integración externa.
+  // Registradas acá DESDE EL PRIMER COMMIT que las introduce (a diferencia
+  // de las 3 de arriba, que se publicaron sin esto y causaron un bug real
+  // en producción -- ver commit "fix(flow): registra
+  // validar_servicio_especialista..." del mismo día).
+  "listar_servicios_especialista",
+  "resolver_seleccion_servicio",
 ]);
 
 const INTERNAL_WEBHOOK_TAGS = new Set(["consultar_disponibilidad"]);
