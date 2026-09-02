@@ -12,36 +12,105 @@ export function normalizarNombrePlantilla(nombre: string): string {
     .slice(0, 512);
 }
 
-// Meta permite máximo 3 botones QUICK_REPLY por plantilla, hasta 25
-// caracteres cada uno.
+// Meta permite máximo 3 botones QUICK_REPLY + 2 de llamada a la acción
+// (URL/llamar) por plantilla. Textos hasta 25 caracteres cada uno.
 export const MAX_BOTONES_PLANTILLA = 3;
+export const MAX_BOTONES_CTA = 2;
 export const MAX_CARACTERES_BOTON = 25;
 
-export async function crearPlantillaMeta(params: {
-  wabaId: string;
-  token: string;
-  nombre: string;
-  categoria: string;
-  idioma: string;
+export type FormatoHeaderPlantilla = "TEXT" | "IMAGE" | "VIDEO" | "DOCUMENT";
+
+export interface HeaderPlantillaInput {
+  formato: FormatoHeaderPlantilla;
+  /** Solo si formato === "TEXT": el contenido del encabezado (puede tener una variable {{1}}). */
+  texto?: string;
+  /** Solo si formato === "TEXT" y texto tiene {{1}}: el valor de ejemplo que exige Meta. */
+  ejemploTexto?: string;
+  /** Solo si formato !== "TEXT": handle devuelto por subirEjemploHeaderMeta. */
+  ejemploHandle?: string;
+}
+
+export interface BotonCTA {
+  tipo: "URL" | "PHONE_NUMBER";
+  texto: string;
+  /** URL completa (tipo URL) o teléfono en formato internacional (tipo PHONE_NUMBER). */
+  valor: string;
+}
+
+export interface ComponentesPlantillaInput {
   cuerpo: string;
-  /** Pie de página opcional (componente FOOTER). Vacío/ausente = sin footer. */
   footer?: string | null;
-  /** Textos de hasta 3 botones de respuesta rápida (opcional). */
+  header?: HeaderPlantillaInput | null;
+  /** Valor de ejemplo de cada variable {{1}},{{2}}… del BODY, en orden. Meta las exige si el body tiene variables. */
+  ejemplosVariables?: string[];
   botones?: string[];
-}): Promise<{ id: string; status: string }> {
-  // Orden que exige Meta cuando hay varios componentes: BODY, luego FOOTER,
-  // luego BUTTONS.
-  const components: Record<string, unknown>[] = [{ type: "BODY", text: params.cuerpo }];
-  if (params.footer?.trim()) {
-    components.push({ type: "FOOTER", text: params.footer.trim() });
+  botonesCta?: BotonCTA[];
+}
+
+/**
+ * Construye el array `components` exacto que espera la API de Meta para
+ * crear una plantilla -- función PURA (sin red), separada a propósito para
+ * poder probarla sin mockear fetch. Orden que exige Meta cuando hay varios
+ * componentes: HEADER, BODY, FOOTER, BUTTONS.
+ */
+export function construirComponentesPlantilla(input: ComponentesPlantillaInput): Record<string, unknown>[] {
+  const components: Record<string, unknown>[] = [];
+
+  if (input.header) {
+    if (input.header.formato === "TEXT") {
+      const headerComp: Record<string, unknown> = { type: "HEADER", format: "TEXT", text: input.header.texto ?? "" };
+      if (/\{\{1\}\}/.test(input.header.texto ?? "") && input.header.ejemploTexto) {
+        headerComp.example = { header_text: [input.header.ejemploTexto] };
+      }
+      components.push(headerComp);
+    } else if (input.header.ejemploHandle) {
+      components.push({
+        type: "HEADER",
+        format: input.header.formato,
+        example: { header_handle: [input.header.ejemploHandle] },
+      });
+    }
   }
-  const botones = (params.botones ?? []).filter((b) => b.trim() !== "").slice(0, MAX_BOTONES_PLANTILLA);
-  if (botones.length > 0) {
+
+  const bodyComponent: Record<string, unknown> = { type: "BODY", text: input.cuerpo };
+  if (input.ejemplosVariables?.length) {
+    bodyComponent.example = { body_text: [input.ejemplosVariables] };
+  }
+  components.push(bodyComponent);
+
+  if (input.footer?.trim()) {
+    components.push({ type: "FOOTER", text: input.footer.trim() });
+  }
+
+  const quickReply = (input.botones ?? []).filter((b) => b.trim() !== "").slice(0, MAX_BOTONES_PLANTILLA);
+  const cta = (input.botonesCta ?? []).slice(0, MAX_BOTONES_CTA);
+  if (quickReply.length > 0 || cta.length > 0) {
     components.push({
       type: "BUTTONS",
-      buttons: botones.map((texto) => ({ type: "QUICK_REPLY", text: texto.slice(0, MAX_CARACTERES_BOTON) })),
+      buttons: [
+        ...quickReply.map((texto) => ({ type: "QUICK_REPLY", text: texto.slice(0, MAX_CARACTERES_BOTON) })),
+        ...cta.map((b) =>
+          b.tipo === "URL"
+            ? { type: "URL", text: b.texto.slice(0, MAX_CARACTERES_BOTON), url: b.valor }
+            : { type: "PHONE_NUMBER", text: b.texto.slice(0, MAX_CARACTERES_BOTON), phone_number: b.valor }
+        ),
+      ],
     });
   }
+
+  return components;
+}
+
+export async function crearPlantillaMeta(
+  params: {
+    wabaId: string;
+    token: string;
+    nombre: string;
+    categoria: string;
+    idioma: string;
+  } & ComponentesPlantillaInput
+): Promise<{ id: string; status: string }> {
+  const components = construirComponentesPlantilla(params);
 
   const res = await fetch(`${GRAPH}/${params.wabaId}/message_templates`, {
     method: "POST",
@@ -63,6 +132,44 @@ export async function crearPlantillaMeta(params: {
   return { id: json.id, status: json.status ?? "PENDING" };
 }
 
+// Sube el archivo de EJEMPLO de un encabezado de imagen/video/documento
+// para poder crear la plantilla (distinto de subirMediaMeta, que sube el
+// archivo real para ENVIAR una plantilla ya aprobada). Meta exige este flujo
+// de "resumable upload" de 2 pasos específicamente para el `example` de una
+// plantilla nueva -- ver https://developers.facebook.com/docs/graph-api/guides/upload
+// El paso 2 usa el esquema "OAuth" (no "Bearer") y un file_offset, tal como
+// lo documenta Meta para este endpoint puntual.
+export async function subirEjemploHeaderMeta(params: {
+  appId: string;
+  token: string;
+  archivo: Buffer;
+  mimeType: string;
+  nombreArchivo: string;
+}): Promise<string> {
+  const sessionRes = await fetch(
+    `${GRAPH}/${params.appId}/uploads?file_name=${encodeURIComponent(params.nombreArchivo)}&file_length=${params.archivo.length}&file_type=${encodeURIComponent(params.mimeType)}`,
+    { method: "POST", headers: { Authorization: `Bearer ${params.token}` } }
+  );
+  const sessionJson = (await sessionRes.json()) as { id?: string } & GraphError;
+  if (!sessionRes.ok || !sessionJson.id) {
+    throw new Error(`Meta respondió ${sessionRes.status} creando la sesión de subida: ${sessionJson.error?.message ?? "sin detalle"}`);
+  }
+
+  const uploadRes = await fetch(`${GRAPH}/${sessionJson.id}`, {
+    method: "POST",
+    headers: {
+      Authorization: `OAuth ${params.token}`,
+      file_offset: "0",
+    },
+    body: new Uint8Array(params.archivo),
+  });
+  const uploadJson = (await uploadRes.json()) as { h?: string } & GraphError;
+  if (!uploadRes.ok || !uploadJson.h) {
+    throw new Error(`Meta respondió ${uploadRes.status} subiendo el ejemplo del encabezado: ${uploadJson.error?.message ?? "sin detalle"}`);
+  }
+  return uploadJson.h;
+}
+
 export async function consultarEstadoPlantilla(params: {
   wabaId: string;
   token: string;
@@ -81,7 +188,8 @@ type ComponenteMeta = {
   type: string;
   format?: string;
   text?: string;
-  buttons?: { type: string; text: string }[];
+  buttons?: { type: string; text: string; url?: string; phone_number?: string }[];
+  example?: { body_text?: string[][]; header_text?: string[]; header_handle?: string[] };
 };
 
 export type PlantillaImportada = {
@@ -92,8 +200,11 @@ export type PlantillaImportada = {
   cuerpo: string;
   footer: string | null;
   botones: string[];
-  /** 'IMAGE' | 'VIDEO' | 'DOCUMENT' | null -- null si el header no es de media (o no hay header). */
+  botonesCta: BotonCTA[];
+  /** 'TEXT' | 'IMAGE' | 'VIDEO' | 'DOCUMENT' | null -- null si no hay header. */
   headerFormato: string | null;
+  headerTexto: string | null;
+  variablesEjemplo: string[];
 };
 
 // Trae una plantilla YA EXISTENTE en Meta (creada ahí directamente, por
@@ -122,7 +233,9 @@ export async function importarPlantillaMeta(params: {
   const body = plantilla.components.find((c) => c.type === "BODY");
   const footer = plantilla.components.find((c) => c.type === "FOOTER");
   const header = plantilla.components.find((c) => c.type === "HEADER");
-  const botones = plantilla.components.find((c) => c.type === "BUTTONS");
+  const botonesComp = plantilla.components.find((c) => c.type === "BUTTONS");
+
+  const todosLosBotones = botonesComp?.buttons ?? [];
 
   return {
     metaTemplateId: plantilla.id,
@@ -131,8 +244,13 @@ export async function importarPlantillaMeta(params: {
     idioma: plantilla.language,
     cuerpo: body?.text ?? "",
     footer: footer?.text ?? null,
-    botones: (botones?.buttons ?? []).map((b) => b.text),
-    headerFormato: header && ["IMAGE", "VIDEO", "DOCUMENT"].includes(header.format ?? "") ? header.format! : null,
+    botones: todosLosBotones.filter((b) => b.type === "QUICK_REPLY").map((b) => b.text),
+    botonesCta: todosLosBotones
+      .filter((b): b is typeof b & { type: "URL" | "PHONE_NUMBER" } => b.type === "URL" || b.type === "PHONE_NUMBER")
+      .map((b) => ({ tipo: b.type, texto: b.text, valor: (b.type === "URL" ? b.url : b.phone_number) ?? "" })),
+    headerFormato: header && ["TEXT", "IMAGE", "VIDEO", "DOCUMENT"].includes(header.format ?? "") ? header.format! : null,
+    headerTexto: header?.format === "TEXT" ? (header.text ?? null) : null,
+    variablesEjemplo: body?.example?.body_text?.[0] ?? [],
   };
 }
 

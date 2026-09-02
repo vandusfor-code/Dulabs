@@ -80,9 +80,12 @@ export async function POST(request: NextRequest) {
         cuerpo: importada.cuerpo,
         footer: importada.footer,
         botones: importada.botones,
+        botones_cta: importada.botonesCta,
         meta_template_id: importada.metaTemplateId,
         estado: importada.estado,
         header_formato: importada.headerFormato,
+        header_texto: importada.headerTexto,
+        variables_ejemplo: importada.variablesEjemplo,
         borrador: false,
       },
       { onConflict: "whatsapp_business_account_id,nombre,idioma" }

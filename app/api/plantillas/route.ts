@@ -4,8 +4,12 @@ import {
   crearPlantillaMeta,
   consultarEstadoPlantilla,
   normalizarNombrePlantilla,
+  contarVariablesPlantilla,
   MAX_BOTONES_PLANTILLA,
+  MAX_BOTONES_CTA,
   MAX_CARACTERES_BOTON,
+  type FormatoHeaderPlantilla,
+  type BotonCTA,
 } from "@/lib/meta-templates";
 import { resolverMiembroEquipo, requireRol } from "@/lib/team";
 import { descifrarSecreto } from "@/lib/crypto";
@@ -124,6 +128,12 @@ export async function POST(request: NextRequest) {
     cuerpo?: string;
     footer?: string | null;
     botones?: string[];
+    botones_cta?: BotonCTA[];
+    header_formato?: FormatoHeaderPlantilla | null;
+    header_texto?: string | null;
+    header_ejemplo?: string | null;
+    header_ejemplo_handle?: string | null;
+    variables_ejemplo?: string[];
     borrador?: boolean;
   };
   try {
@@ -145,6 +155,41 @@ export async function POST(request: NextRequest) {
   if (botones.some((b) => b.length > MAX_CARACTERES_BOTON)) {
     return Response.json({ error: `Cada botón puede tener máximo ${MAX_CARACTERES_BOTON} caracteres` }, { status: 400 });
   }
+  const botonesCta = (body.botones_cta ?? []).slice(0, MAX_BOTONES_CTA);
+  if (botonesCta.some((b) => !b.texto?.trim() || !b.valor?.trim() || (b.tipo !== "URL" && b.tipo !== "PHONE_NUMBER"))) {
+    return Response.json({ error: "Cada botón de llamada a la acción necesita tipo, texto y valor (URL o teléfono)" }, { status: 400 });
+  }
+  if (botonesCta.some((b) => b.texto.length > MAX_CARACTERES_BOTON)) {
+    return Response.json({ error: `Cada botón puede tener máximo ${MAX_CARACTERES_BOTON} caracteres` }, { status: 400 });
+  }
+
+  const headerFormato = body.header_formato ?? null;
+  if (headerFormato && !["TEXT", "IMAGE", "VIDEO", "DOCUMENT"].includes(headerFormato)) {
+    return Response.json({ error: "Formato de encabezado inválido" }, { status: 400 });
+  }
+  const headerTexto = headerFormato === "TEXT" ? (body.header_texto?.trim() ?? "") : null;
+  if (headerFormato === "TEXT" && !headerTexto) {
+    return Response.json({ error: "El encabezado de texto no puede estar vacío" }, { status: 400 });
+  }
+  const headerEjemplo = headerFormato === "TEXT" ? (body.header_ejemplo?.trim() || null) : null;
+  if (headerFormato === "TEXT" && /\{\{1\}\}/.test(headerTexto ?? "") && !headerEjemplo) {
+    return Response.json({ error: "El encabezado tiene una variable {{1}}: falta el valor de ejemplo" }, { status: 400 });
+  }
+  if (headerFormato && headerFormato !== "TEXT" && !body.header_ejemplo_handle) {
+    return Response.json({ error: "Falta subir el archivo de ejemplo del encabezado" }, { status: 400 });
+  }
+
+  // Meta exige un valor de ejemplo por cada variable {{n}} del BODY para
+  // poder aprobar la plantilla -- se cuentan las mismas {{n}} que ya usa el
+  // envío real (contarVariablesPlantilla), nunca una cuenta inventada aparte.
+  const numeroVariables = contarVariablesPlantilla(cuerpo);
+  const variablesEjemplo = (body.variables_ejemplo ?? []).map((v) => v?.trim() ?? "").slice(0, numeroVariables);
+  if (numeroVariables > 0 && (variablesEjemplo.length !== numeroVariables || variablesEjemplo.some((v) => !v))) {
+    return Response.json(
+      { error: `El mensaje tiene ${numeroVariables} variable${numeroVariables === 1 ? "" : "s"} ({{1}}${numeroVariables > 1 ? `..{{${numeroVariables}}}` : ""}): falta el valor de ejemplo de cada una` },
+      { status: 400 }
+    );
+  }
 
   const supabase = supabaseAdmin();
   const { data: cliente, error: clienteError } = await supabase
@@ -158,12 +203,28 @@ export async function POST(request: NextRequest) {
 
   const nombreNormalizado = normalizarNombrePlantilla(nombre);
 
+  // Campos compartidos entre borrador y creación real -- una sola fuente
+  // para no repetir (y arriesgar desincronizar) la misma lista 4 veces.
+  const camposComunes = {
+    nombre: nombreNormalizado,
+    categoria,
+    idioma,
+    cuerpo,
+    footer,
+    botones,
+    botones_cta: botonesCta,
+    header_formato: headerFormato,
+    header_texto: headerTexto,
+    header_ejemplo: headerEjemplo,
+    variables_ejemplo: variablesEjemplo,
+  };
+
   // Guardar (o actualizar) como borrador local: no se toca Meta todavía.
   if (borrador) {
     if (id) {
       const { error: updateError } = await supabase
         .from("dulabs_plantillas")
-        .update({ nombre: nombreNormalizado, categoria, idioma, cuerpo, footer, botones })
+        .update(camposComunes)
         .eq("id", id)
         .eq("id_tenant", miembro.tenantId)
         .eq("borrador", true);
@@ -174,12 +235,7 @@ export async function POST(request: NextRequest) {
       id_tenant: miembro.tenantId,
       phone_number_id,
       whatsapp_business_account_id: cliente.whatsapp_business_account_id,
-      nombre: nombreNormalizado,
-      categoria,
-      idioma,
-      cuerpo,
-      footer,
-      botones,
+      ...camposComunes,
       estado: "borrador",
       borrador: true,
     });
@@ -202,6 +258,16 @@ export async function POST(request: NextRequest) {
       cuerpo,
       footer,
       botones,
+      botonesCta,
+      ejemplosVariables: variablesEjemplo,
+      header: headerFormato
+        ? {
+            formato: headerFormato,
+            texto: headerTexto ?? undefined,
+            ejemploTexto: headerEjemplo ?? undefined,
+            ejemploHandle: body.header_ejemplo_handle ?? undefined,
+          }
+        : null,
     });
 
     // Promover un borrador existente en vez de insertar una fila duplicada.
@@ -209,12 +275,7 @@ export async function POST(request: NextRequest) {
       const { error: promoteError } = await supabase
         .from("dulabs_plantillas")
         .update({
-          nombre: nombreNormalizado,
-          categoria,
-          idioma,
-          cuerpo,
-          footer,
-          botones,
+          ...camposComunes,
           meta_template_id: resultado.id,
           estado: resultado.status,
           borrador: false,
@@ -230,12 +291,7 @@ export async function POST(request: NextRequest) {
       id_tenant: miembro.tenantId,
       phone_number_id,
       whatsapp_business_account_id: cliente.whatsapp_business_account_id,
-      nombre: nombreNormalizado,
-      categoria,
-      idioma,
-      cuerpo,
-      footer,
-      botones,
+      ...camposComunes,
       meta_template_id: resultado.id,
       estado: resultado.status,
     });
