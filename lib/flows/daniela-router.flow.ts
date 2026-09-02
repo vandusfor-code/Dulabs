@@ -4,6 +4,7 @@ import { danielaAgendarCitaFlow } from "@/lib/flows/daniela-agendar-cita.flow";
 import { danielaCancelarCitaFlow } from "@/lib/flows/daniela-cancelar-cita.flow";
 import { danielaReagendarCitaFlow } from "@/lib/flows/daniela-reagendar-cita.flow";
 import { DANIELA_BUTTON_IDS } from "@/lib/flows/daniela-button-ids";
+import { MENSAJE_HABLAR_CON_DANI } from "@/lib/flow-escape-hatch";
 
 /**
  * Fase 1 (Blocker #7, autorizado) — Daniela: enrutamiento de intenciones.
@@ -123,6 +124,7 @@ export function danielaRouterFlow(): FlowDefinition {
         buttons: [
           { id: DANIELA_BUTTON_IDS.SERVICIOS_SPA, label: "Servicios de Spa" },
           { id: DANIELA_BUTTON_IDS.PRODUCTOS, label: "Productos" },
+          { id: DANIELA_BUTTON_IDS.HABLAR_CON_DANI, label: "Hablar con Dani" },
         ],
       },
     },
@@ -133,6 +135,17 @@ export function danielaRouterFlow(): FlowDefinition {
         text: "Perfecto 🛍️💕 En un momento Daniela te atenderá personalmente para brindarte información sobre nuestros productos. Espera un momento, por favor.",
         messageRole: "informational",
       },
+    },
+    // Rediseño de agendamiento (autorizado) -- ACCIÓN DIRECTA, nunca pasa
+    // por ai-clasificar-intencion: un tap de este botón es una decisión
+    // explícita e inequívoca de la clienta, no hay nada que interpretar.
+    // Mismo texto exacto que el escape hatch determinista
+    // (lib/flow-escape-hatch.ts), para que sea idéntico sin importar por
+    // cuál de los dos caminos se llegue a transferir con Daniela.
+    {
+      id: "msg-hablar-con-dani",
+      type: "message",
+      config: { text: MENSAJE_HABLAR_CON_DANI, messageRole: "informational" },
     },
     {
       id: "msg-handoff-tema",
@@ -234,11 +247,16 @@ export function danielaRouterFlow(): FlowDefinition {
     // servicios_spa es selección de MENÚ (intención de agendar), no un
     // servicio real del catálogo -- va directo a q-servicio, sin ai-extraer
     // (que interpretaría el id del botón como variables.servicio).
-    { id: "e-menu-servicios", source: "bt-menu-inicial", target: "agendar__q-servicio", sourceHandle: FLOW_EDGE_HANDLE.button(DANIELA_BUTTON_IDS.SERVICIOS_SPA) },
+    // Objetivo 1 (rediseño, autorizado) — el botón "Servicios de Spa" ahora
+    // entra por la categoría real (manos/pies/pestañas) antes de pedir el
+    // servicio específico, en vez de saltar directo a la pregunta abierta.
+    { id: "e-menu-servicios", source: "bt-menu-inicial", target: "agendar__q-categoria-servicio", sourceHandle: FLOW_EDGE_HANDLE.button(DANIELA_BUTTON_IDS.SERVICIOS_SPA) },
     { id: "e-menu-productos", source: "bt-menu-inicial", target: "msg-producto", sourceHandle: FLOW_EDGE_HANDLE.button(DANIELA_BUTTON_IDS.PRODUCTOS) },
+    { id: "e-menu-hablar-con-dani", source: "bt-menu-inicial", target: "msg-hablar-con-dani", sourceHandle: FLOW_EDGE_HANDLE.button(DANIELA_BUTTON_IDS.HABLAR_CON_DANI) },
     { id: "e-menu-texto", source: "bt-menu-inicial", target: "ai-clasificar-intencion", sourceHandle: FLOW_EDGE_HANDLE.text },
 
     { id: "e-producto-handoff", source: "msg-producto", target: "act-handoff-daniela" },
+    { id: "e-hablar-con-dani-handoff", source: "msg-hablar-con-dani", target: "act-handoff-daniela" },
     { id: "e-handoff-tema-act", source: "msg-handoff-tema", target: "act-handoff-daniela" },
     { id: "e-handoff-duda-act", source: "msg-handoff-duda", target: "act-handoff-daniela" },
     { id: "e-handoff-end", source: "act-handoff-daniela", target: "end-handoff", sourceHandle: FLOW_EDGE_HANDLE.aiSuccess },

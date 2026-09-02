@@ -88,9 +88,19 @@ const BY_ACTION_TYPE: Partial<Record<FlowActionType, ActionCapabilitySpec>> = {
     outputVariables: ["citaId"],
     requiresFailureBranch: true,
   },
+  // Bug raíz #3 (auditoría E2E Daniela, corregido) — capability dedicada,
+  // distinta de appointment.reserved: cancelar una cita real y exitosa es
+  // evidencia de CANCELACIÓN, no de creación. Antes de esto no declaraba
+  // ningún verifiesOnSuccess, así que la confirmación veraz "tu cita fue
+  // cancelada" quedaba bloqueada por claim-security para siempre, aunque la
+  // cancelación real ya hubiera ocurrido en la base de datos. outputVariables
+  // usa el campo real que devuelve cancelarCitaEspecialistaAction (ver
+  // internal-action-executor.ts) -- `cancelada: true`, no un nombre inventado.
   cancelar_cita_especialista: {
     actionType: "cancelar_cita_especialista",
     criticality: "critical",
+    verifiesOnSuccess: ["appointment.cancelled"],
+    outputVariables: ["cancelada"],
     requiresFailureBranch: true,
   },
   // Fase 1 (Blocker #4). Blocker #7 (gap 3, autorizado): se agrega
@@ -111,10 +121,44 @@ const BY_ACTION_TYPE: Partial<Record<FlowActionType, ActionCapabilitySpec>> = {
   // Fase 1 (Blocker #5) — crítica y requiere rama de fallo, mismo criterio
   // que agendar/cancelar: mueve una cita real, no puede quedar sin ruta si
   // el horario nuevo está ocupado o algo más falla.
+  // Bug raíz #3 (auditoría E2E Daniela, corregido) — mismo criterio que
+  // cancelar_cita_especialista arriba: capability dedicada
+  // appointment.rescheduled, distinta de appointment.reserved/cancelled.
+  // outputVariables usa el campo real `movida: true` que devuelve
+  // moverCitaEspecialistaAction.
   mover_cita_especialista: {
     actionType: "mover_cita_especialista",
     criticality: "critical",
+    verifiesOnSuccess: ["appointment.rescheduled"],
+    outputVariables: ["movida"],
     requiresFailureBranch: true,
+  },
+  // Rediseño de agendamiento (autorizado) — determinismo puro (sin I/O),
+  // mismo criterio que validar_servicio_especialista: rechaza con
+  // NON_RETRYABLE si el texto no se pudo convertir a una fecha real
+  // (parse-fecha-colombia.ts), nunca dobla como "sin disponibilidad".
+  validar_fecha_especialista: {
+    actionType: "validar_fecha_especialista",
+    criticality: "standard",
+  },
+  // Rediseño de agendamiento (autorizado) — solo lectura, mismo criterio
+  // que consultar_disponibilidad_especialista: la capability se otorga por
+  // éxito de la CONSULTA real (existe la lista, sea o no vacía), no por el
+  // contenido. Nunca afirma "hay horario a las X" -- eso lo decide
+  // resolver_seleccion_horario, comparando contra la lista real.
+  listar_horarios_disponibles_especialista: {
+    actionType: "listar_horarios_disponibles_especialista",
+    criticality: "standard",
+    verifiesOnSuccess: ["appointment.available"],
+    outputVariables: ["horariosDisponibles"],
+  },
+  // Determinismo puro (sin I/O): valida el candidato de la IA contra la
+  // lista real ya verificada por la acción anterior. No es información
+  // externa nueva, así que no declara verifiesOnSuccess propio -- el
+  // "hora" que produce hereda su evidencia de horariosDisponibles.
+  resolver_seleccion_horario: {
+    actionType: "resolver_seleccion_horario",
+    criticality: "standard",
   },
 };
 

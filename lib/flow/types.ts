@@ -73,6 +73,14 @@ export interface FlowMediaRef {
 export type AssertionCapability =
   | "appointment.reserved"
   | "appointment.available"
+  // Bug raíz #3 (auditoría E2E Daniela) — capabilities dedicadas de
+  // cancelar/mover, distintas de appointment.reserved: cancelar/mover una
+  // cita NO es evidencia de haber creado una (y viceversa) -- antes de esto,
+  // una cancelación o reagendamiento real y exitoso no otorgaba NINGUNA
+  // capability, así que la confirmación veraz quedaba bloqueada para
+  // siempre (ver lib/flow/external-claim-security.ts y action-capabilities.ts).
+  | "appointment.cancelled"
+  | "appointment.rescheduled"
   | "payment.completed"
   | "lead.created"
   | "support.transferred";
@@ -199,6 +207,15 @@ export type FlowActionType =
   // Fase 1 (Blocker #5): reagenda (mueve) una cita existente a una nueva
   // fecha/hora -- UPDATE atómico sobre la misma fila, nunca crea una nueva.
   | "mover_cita_especialista"
+  // Rediseño de agendamiento (autorizado) — reemplaza "¿a qué hora?" por
+  // "mostrar horarios reales y elegir uno". Todas de solo lectura /
+  // determinismo puro, nunca escriben nada. validar_fecha_especialista usa
+  // el mismo parser determinista que hora_colombia usa para horas
+  // (lib/parse-fecha-colombia.ts) -- nunca acepta una fecha en texto libre
+  // sin normalizar/verificar primero.
+  | "validar_fecha_especialista"
+  | "listar_horarios_disponibles_especialista"
+  | "resolver_seleccion_horario"
   | "webhook_http"
   | "enviar_plantilla";
 
@@ -251,7 +268,10 @@ export interface SimpleActionConfig extends ActionSemanticTag {
     | "agendar_cita_especialista"
     | "cancelar_cita_especialista"
     | "consultar_citas_activas_especialista"
-    | "mover_cita_especialista";
+    | "mover_cita_especialista"
+    | "validar_fecha_especialista"
+    | "listar_horarios_disponibles_especialista"
+    | "resolver_seleccion_horario";
   params?: ActionParams;
 }
 

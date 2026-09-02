@@ -28,6 +28,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { createFlowEngineState, runFlowEngine } from "@/lib/flow/flow-engine";
 import { danielaRouterFlow } from "@/lib/flows/daniela-router.flow";
+import { DANIELA_BUTTON_IDS } from "@/lib/flows/daniela-button-ids";
 import { decidirFallbackDesdeResultado } from "@/lib/flow-runtime-bridge";
 import type { FlowEngineState } from "@/lib/flow/engine-types";
 
@@ -56,9 +57,19 @@ function clasificarComo(flow: ReturnType<typeof danielaRouterFlow>, texto: strin
 describe("Fase 1 — Blocker #7: enrutador de intenciones (motor, sin IA real)", () => {
   const flow = danielaRouterFlow();
 
-  it("1/2. 'Quiero una cita' / 'Quiero reservar' -> clasificadas como AGENDAR -> entra a extraer, no agenda", () => {
+  it("1/2. 'Quiero una cita' / 'Quiero reservar' -> clasificadas como AGENDAR -> consulta citas previas, luego entra a extraer, no agenda", () => {
     for (const texto of ["Quiero una cita", "Quiero reservar"]) {
       let estado = clasificarComo(flow, texto, "agendar");
+      // Parte 13 del rediseño (autorizado) — antes de extraer nada, el
+      // sub-grafo consulta si la clienta YA tiene una cita activa real.
+      assert.equal(estado.pendingEffect?.nodeId, "agendar__act-consultar-citas-previas");
+      assert.equal(estado.status, "waiting_effect");
+      estado = avanzar(flow, estado, {
+        type: "effect_result",
+        success: true,
+        effectId: estado.pendingEffect!.effectId,
+        data: { cantidadCitas: 0, citasActivas: [] },
+      });
       assert.equal(estado.pendingEffect?.nodeId, "agendar__ai-extraer");
       assert.equal(estado.status, "waiting_effect");
       estado = avanzar(flow, estado, {
@@ -67,7 +78,7 @@ describe("Fase 1 — Blocker #7: enrutador de intenciones (motor, sin IA real)",
         effectId: estado.pendingEffect!.effectId,
         data: {},
       });
-      assert.equal(estado.currentNodeId, "agendar__q-servicio");
+      assert.equal(estado.currentNodeId, "agendar__q-categoria-servicio", "Objetivo 1: pide categoría antes del servicio");
       assert.equal(estado.status, "waiting_input");
     }
   });
@@ -104,12 +115,21 @@ describe("Fase 1 — Blocker #7: enrutador de intenciones (motor, sin IA real)",
 
   it("10. 'Quiero masaje' -> clasificada como AGENDAR -> servicio no reconocido se detecta en act-validar-servicio (Blocker #3)", () => {
     let estado = clasificarComo(flow, "Quiero masaje", "agendar");
+    // Parte 13 del rediseño (autorizado) — consulta citas previas primero.
+    estado = avanzar(flow, estado, {
+      type: "effect_result",
+      success: true,
+      effectId: estado.pendingEffect!.effectId,
+      data: { cantidadCitas: 0, citasActivas: [] },
+    });
     estado = avanzar(flow, estado, {
       type: "effect_result",
       success: true,
       effectId: estado.pendingEffect!.effectId,
       data: {},
     });
+    assert.equal(estado.currentNodeId, "agendar__q-categoria-servicio", "Objetivo 1: pide categoría antes del servicio");
+    estado = avanzar(flow, estado, { type: "button", id: DANIELA_BUTTON_IDS.CATEGORIA_MANOS });
     assert.equal(estado.currentNodeId, "agendar__q-servicio");
     estado = avanzar(flow, estado, { type: "text", text: "masaje" });
     assert.equal(estado.pendingEffect?.nodeId, "agendar__act-validar-servicio");
@@ -149,14 +169,26 @@ describe("Fase 1 — Blocker #7: enrutador de intenciones (motor, sin IA real)",
 
   it("14. intención válida (agendar) + datos insuficientes -> el sub-grafo sigue pidiendo lo que falta, no avanza a ciegas", () => {
     let estado = clasificarComo(flow, "Quiero una cita", "agendar");
+    // Parte 13 del rediseño (autorizado) — consulta citas previas primero.
+    estado = avanzar(flow, estado, {
+      type: "effect_result",
+      success: true,
+      effectId: estado.pendingEffect!.effectId,
+      data: { cantidadCitas: 0, citasActivas: [] },
+    });
     estado = avanzar(flow, estado, {
       type: "effect_result",
       success: true,
       effectId: estado.pendingEffect!.effectId,
       data: {},
     });
-    assert.equal(estado.currentNodeId, "agendar__q-servicio");
-    estado = avanzar(flow, estado, { type: "text", text: "manos" });
+    assert.equal(estado.currentNodeId, "agendar__q-categoria-servicio", "Objetivo 1: pide categoría antes del servicio");
+    // Texto libre que NO calza exacto con ninguna etiqueta de botón
+    // ("manos" solo sí calzaría y se interpretaría como el botón Manos --
+    // ver test dedicado en daniela-agendar-cita.flow.test.ts) se trata como
+    // intento directo de servicio (mismo criterio ya existente antes del
+    // rediseño de categorías).
+    estado = avanzar(flow, estado, { type: "text", text: "semipermanente en manos" });
     assert.equal(estado.pendingEffect?.nodeId, "agendar__act-validar-servicio", "valida servicio antes de pedir fecha");
   });
 
@@ -208,15 +240,23 @@ describe("Fase 1 — Blocker #7: cableado real del hand-off a Daniela (sin Claud
       data: { classification: "agendar" },
     });
     assert.equal(clasificado.error, undefined);
-    const r = runFlowEngine(flow, clasificado.state, {
+    // Parte 13 del rediseño (autorizado) — consulta citas previas primero.
+    const previas = runFlowEngine(flow, clasificado.state, {
       type: "effect_result",
       success: true,
       effectId: clasificado.state.pendingEffect!.effectId,
+      data: { cantidadCitas: 0, citasActivas: [] },
+    });
+    assert.equal(previas.error, undefined);
+    const r = runFlowEngine(flow, previas.state, {
+      type: "effect_result",
+      success: true,
+      effectId: previas.state.pendingEffect!.effectId,
       data: {},
     });
     const envios = r.effects.filter((e) => e.type === "send_message");
-    assert.equal(envios.length, 1, "una sola pregunta de servicio, sin saludo duplicado");
-    assert.equal(envios[0] && "nodeId" in envios[0] ? envios[0].nodeId : "", "agendar__q-servicio");
+    assert.equal(envios.length, 1, "una sola pregunta de categoría, sin saludo duplicado");
+    assert.equal(envios[0] && "nodeId" in envios[0] ? envios[0].nodeId : "", "agendar__q-categoria-servicio", "Objetivo 1: pide categoría antes del servicio");
 
     const decision = decidirFallbackDesdeResultado({
       outcome: "processed",

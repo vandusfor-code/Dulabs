@@ -234,7 +234,10 @@ describe("Fase 4.4.13 — M. runtime send_message barrier", () => {
       [
         {
           type: "send_message",
+          nodeId: "msg-1",
           content: { text: "De acuerdo, listo." },
+          executionId: "exec-1",
+          effectId: "fx-1",
         },
       ],
       { __userMessage: TX_USER },

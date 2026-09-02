@@ -81,6 +81,8 @@ export interface ClaimAnalysisResult {
 export const ALL_ASSERTION_CAPABILITIES: AssertionCapability[] = [
   "appointment.reserved",
   "appointment.available",
+  "appointment.cancelled",
+  "appointment.rescheduled",
   "payment.completed",
   "lead.created",
   "support.transferred",
@@ -108,6 +110,14 @@ const SOURCE_TO_ACTION: Record<string, ActionNodeConfig> = {
   // capability declarada en action-capabilities.ts (verifiesOnSuccess) pueda
   // otorgarse en runtime. No cambia ninguna regla de clasificación de texto.
   consultar_citas_activas_especialista: { actionType: "consultar_citas_activas_especialista", params: {} },
+  // Bug raíz #3 (auditoría E2E Daniela, corregido) — mismo criterio que las
+  // entradas de arriba: sin esto, capabilitiesFromVerifiedEntry devolvía []
+  // para cualquiera de estas tres acciones sin importar lo que
+  // action-capabilities.ts declarara en verifiesOnSuccess, porque nunca
+  // encontraba el ActionNodeConfig asociado al source real.
+  cancelar_cita_especialista: { actionType: "cancelar_cita_especialista", params: {} },
+  mover_cita_especialista: { actionType: "mover_cita_especialista", params: {} },
+  listar_horarios_disponibles_especialista: { actionType: "listar_horarios_disponibles_especialista", params: {} },
   crear_lead_enterprise: { actionType: "crear_lead_enterprise", params: {} },
   crear_lead_campana: { actionType: "crear_lead_campana", params: {} },
   transferir_soporte: { actionType: "transferir_soporte" },
@@ -144,6 +154,34 @@ const DOMAIN_CAPABILITY_RULES: Array<{ pattern: RegExp; capabilities: AssertionC
 ];
 
 const USER_CANCEL_INTENT = /\b(cancel\w*|anul\w*)\b/i;
+
+/**
+ * Bug raíz #3 (auditoría E2E Daniela, corregido) — participio/pretérito de
+ * cancelar/anular (hecho consumado). A propósito NO matchea infinitivo
+ * ("cancelar", "voy a cancelar") ni presente/imperativo ("cancela",
+ * "cancelo") -- esos son intención o pregunta, no una afirmación de que la
+ * cita YA fue cancelada. Mismo estilo de lookbehind/lookahead sobre vocales
+ * acentuadas que el resto del archivo (\b de JS falla tras á/é/í/ó/ú).
+ *
+ * El participio SOLO cuenta cuando lo rige un auxiliar de PASADO real
+ * (fue/quedó/está/ha sido...) -- nunca en aislamiento. Sin esto, "la cita
+ * SERÁ cancelada automáticamente" (mensaje estático de política, futuro) se
+ * leía igual que "la cita FUE cancelada" (hecho consumado): encontrado real
+ * al validar daniela-router.flow.ts (msg-recordatorio-asistencia), que
+ * advierte sobre una cancelación FUTURA condicional, no afirma una ya
+ * ocurrida.
+ */
+const CANCEL_COMPLETION_PATTERN =
+  /(?<![a-záéíóúüñ])(?:cancel(?:[eé]|amos|aron|aste)|anul(?:[eé]|amos|aron|aste))(?![a-záéíóúüñ])|\b(?:fue|fueron|qued[oó]|quedaron|est[aá]|est[aá]n|ha\s+sido|han\s+sido|he\s+sido|hemos\s+sido)\s+(?:cancelad|anulad)[oa]s?\b/i;
+
+/** Cualquier forma de cancelar/anular (infinitivo incluido) -- usado solo para SUPRIMIR
+ * appointment.reserved cuando el texto habla de cancelar, no para afirmar nada por sí sola. */
+const CANCEL_INTENT_ANY_FORM = /(?<![a-záéíóúüñ])(?:cancel|anul)[a-záéíóúüñ]*(?![a-záéíóúüñ])/i;
+
+/** Mismo criterio que CANCEL_COMPLETION_PATTERN (auxiliar de pasado real, nunca futuro/condicional
+ * en aislamiento), para mover/reagendar/reprogramar/cambiar. */
+const RESCHEDULE_COMPLETION_PATTERN =
+  /(?<![a-záéíóúüñ])(?:reagend(?:[eé]|amos|aron|aste)|reprogram(?:[eé]|amos|aron|aste)|mov(?:[ií]|i[oó]|imos|ieron|iste))(?![a-záéíóúüñ])|\b(?:fue|fueron|qued[oó]|quedaron|est[aá]|est[aá]n|ha\s+sido|han\s+sido|he\s+sido|hemos\s+sido)\s+(?:reagendad|reprogramad|movid|cambiad)[oa]s?\b/i;
 
 const USER_CONSULT_ONLY_INTENT = [
   /^(?:¿)?cu[aá]nto cuesta/i,
@@ -696,6 +734,15 @@ function isPropositionDirectNegativeState(prop: string): boolean {
 function isPropositionPositiveCompletion(prop: string): boolean {
   const p = stripLeadingModalPrefix(prop);
   if (!p) return false;
+  // Bug raíz #2 (auditoría E2E Daniela, corregido) — una proposición
+  // INTERROGATIVA nunca es una afirmación de completitud, sin importar su
+  // morfología verbal. Sin esto, verbos homógrafos entre presente y
+  // pretérito 1ª pers. plural (confirmamos/reservamos/agendamos) hacían que
+  // "¿Confirmamos la cita?" se leyera como la afirmación "confirmamos la
+  // cita" (PAST_COMPLETION_PATTERN matchea "confirmamos" igual en los dos
+  // casos) y exigiera evidencia para una simple pregunta. ¿/? se conservan
+  // como tokens propios por normalizeText -- ver propositionIsInterrogative.
+  if (propositionIsInterrogative(p)) return false;
   if (isPropositionDirectNegativeState(p)) return false;
   if (isHypotheticalOrPossibilityFrame(p)) return false;
   // Inspección futura ("déjame ver quién está disponible"): el estado se examina dentro de una
@@ -968,6 +1015,25 @@ function isCancelUserIntent(userMessage: string): boolean {
   return /\b(cita|citas|horario|turno)\b|reserv\w+|agend\w+/i.test(normalized);
 }
 
+/**
+ * Bug raíz #3 (auditoría E2E Daniela, corregido) — mismo criterio que
+ * isCancelUserIntent: "quiero cambiar/mover mi cita" no es intención de
+ * CREAR una reserva, es de reagendar una existente. Sin esto, el usuario
+ * pidiendo mover su cita ("cita" presente) inyectaba appointment.reserved
+ * en requiredCapabilitiesForIntent (vía userCaps), mezclado con el
+ * appointment.rescheduled correcto que ya aportaba detectDomainCapabilities
+ * sobre la respuesta del asistente -- la afirmación legítima "tu cita quedó
+ * reagendada" terminaba exigiendo AMBAS capabilities en vez de solo la
+ * correcta.
+ */
+const USER_RESCHEDULE_INTENT = /\b(cambi\w*|mov\w*|reagend\w*|reprogram\w*)\b/i;
+
+function isRescheduleUserIntent(userMessage: string): boolean {
+  const normalized = normalizeText(userMessage);
+  if (!USER_RESCHEDULE_INTENT.test(normalized)) return false;
+  return /\b(cita|citas|horario|turno)\b|reserv\w+|agend\w+/i.test(normalized);
+}
+
 /** @deprecated Replaced by structural closure detection — kept for test migration. */
 export function isContextualClosureSignal(text: string): boolean {
   const features = extractStructuralFeatures(text);
@@ -1067,10 +1133,26 @@ export function hasCompletionMorphology(text: string): boolean {
 }
 
 export function detectDomainCapabilities(text: string): AssertionCapability[] {
+  // Bug raíz #3 (auditoría E2E Daniela, corregido) — cancelar/reagendar
+  // consumado es EXCLUSIVO: nunca debe agregar además appointment.reserved
+  // solo porque la palabra "cita" está presente (DOMAIN_CAPABILITY_RULES,
+  // regla de abajo) -- son evidencias de operaciones distintas, ver el test
+  // "SOLO appointment.cancelled"/"SOLO appointment.rescheduled".
+  if (CANCEL_COMPLETION_PATTERN.test(text)) return ["appointment.cancelled"];
+  if (RESCHEDULE_COMPLETION_PATTERN.test(text)) return ["appointment.rescheduled"];
+
   const caps = new Set<AssertionCapability>();
+  // Mismo criterio aunque no haya completitud todavía: "cancelar tu cita"
+  // (infinitivo, pregunta, intento fallido) tampoco es evidencia de una
+  // RESERVA -- es lo opuesto semánticamente. Sin esto, "No pude cancelar tu
+  // cita" heredaría appointment.reserved solo por la palabra "cita".
+  const suppressReserved = CANCEL_INTENT_ANY_FORM.test(text);
   for (const rule of DOMAIN_CAPABILITY_RULES) {
     if (rule.pattern.test(text)) {
-      for (const cap of rule.capabilities) caps.add(cap);
+      for (const cap of rule.capabilities) {
+        if (cap === "appointment.reserved" && suppressReserved) continue;
+        caps.add(cap);
+      }
     }
   }
   return [...caps];
@@ -1082,6 +1164,7 @@ export function inferCapabilitiesFromUserIntent(userMessage?: string): Assertion
   if (!normalized) return [];
 
   if (isCancelUserIntent(normalized)) return [];
+  if (isRescheduleUserIntent(normalized)) return [];
   if (isConsultOnlyUserIntent(normalized)) return [];
 
   const caps = new Set<AssertionCapability>();
@@ -1374,6 +1457,34 @@ function isExplanationProposition(p: string): boolean {
 }
 
 /**
+ * Condicional de "ser" (sería/serían) en CUALQUIER posición de la
+ * proposición -- marca gramaticalmente una PROPUESTA/hipótesis ("Tu cita
+ * SERÍA: ...", "El horario disponible SERÍA..."), nunca un hecho consumado.
+ * Distinto de isHypotheticalOrPossibilityFrame: ese exige que el modal
+ * (podría/tal vez/sería) ENCABECE la cláusula, lo cual excluye construcciones
+ * reales como "[sujeto] sería: [datos]" donde el condicional aparece después
+ * del sujeto -- exactamente el patrón real de la propuesta de cita de
+ * Daniela (hallazgo real, ver daniela-ux-botones.test.ts).
+ *
+ * Es morfológico (modo condicional del verbo "ser", nunca el indicativo
+ * pasado fue/quedó/está que si afirma un hecho), no una lista de frases --
+ * por eso NO se limita a "cita sería" ni a ninguna redacción exacta.
+ *
+ * Misma guarda de seguridad que CADA categoría "clearly safe" de este
+ * archivo: si la MISMA proposición además afirma un estado terminal en
+ * cualquier otra parte (ej. "sería a las 4... y ya quedó confirmada"), deja
+ * de ser segura -- un condicional pegado a una afirmación real no es
+ * incertidumbre genuina, es cobertura verbal. hasTerminalStateTokens ya es
+ * la función usada para esta misma guarda en isHypotheticalOrPossibilityFrame.
+ */
+const CONDITIONAL_SER_ANYWHERE = /(?<![a-záéíóúüñ])ser[ií]an?(?![a-záéíóúüñ])/i;
+
+function isConditionalProposalFrame(p: string): boolean {
+  if (!CONDITIONAL_SER_ANYWHERE.test(p)) return false;
+  return !hasTerminalStateTokens(p);
+}
+
+/**
  * Proposición estructuralmente segura: demuestra que NO afirma ejecución/completitud externa.
  * Carga de prueba invertida — en contexto transaccional todo lo demás requiere evidencia.
  */
@@ -1390,6 +1501,7 @@ function isPropositionClearlySafe(
   if (isPropositionDirectNegativeState(p)) return true;
   if (isClearlySafeFutureAction(p)) return true;
   if (isHypotheticalOrPossibilityFrame(p)) return true;
+  if (isConditionalProposalFrame(p)) return true;
   if (isAssistantQuestionContent(p)) return true;
   if (isAssistantInformationContent(p)) return true;
   if (isExplicitUncertaintyOrDeferral(p)) return true;

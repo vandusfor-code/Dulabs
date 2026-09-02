@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { parseHoraColombia } from "@/lib/parse-hora-colombia";
 import { validateQuestionValue } from "@/lib/flow/flow-engine";
-import { danielaAgendarCitaFlow } from "@/lib/flows/daniela-agendar-cita.flow";
+import { danielaReagendarCitaFlow } from "@/lib/flows/daniela-reagendar-cita.flow";
 import { createFlowEngineState, runFlowEngine } from "@/lib/flow/flow-engine";
 import type { FlowEngineState } from "@/lib/flow/engine-types";
 
@@ -143,61 +143,75 @@ describe("validateQuestionValue hora_colombia", () => {
   });
 });
 
-function arrancarHastaQFecha(): { flow: ReturnType<typeof danielaAgendarCitaFlow>; state: FlowEngineState } {
-  const flow = danielaAgendarCitaFlow();
+// Rediseño de agendamiento (autorizado, sept. 2026) — daniela-agendar-cita.flow.ts
+// eliminó "q-hora" (texto libre validado) a favor de listar horarios REALES
+// y hacer elegir uno (ver act-listar-horarios/act-resolver-seleccion-horario
+// en ese archivo). El mecanismo hora_colombia probado abajo (parseHoraColombia
+// + validateQuestionValue, ya cubierto arriba de forma pura) sigue vivo tal
+// cual en daniela-reagendar-cita.flow.ts::q-nueva-hora -- mismo comentario
+// explícito en ese archivo ("mismo parseHoraColombia que ya usaba el q-hora
+// original de agendar"). Esta integración se retargetea ahí para no perder
+// la cobertura real del bug de "1" -> "Tarde" contra el engine real.
+function arrancarHastaQNuevaHora(): { flow: ReturnType<typeof danielaReagendarCitaFlow>; state: FlowEngineState } {
+  const flow = danielaReagendarCitaFlow();
   let state = createFlowEngineState(flow, {});
   state.variables = { ...state.variables, hoy: "2026-09-01" };
-  let run = runFlowEngine(flow, state, { type: "start", text: "Quiero semipermanente" });
+  let run = runFlowEngine(flow, state, { type: "start", text: "Quiero cambiar mi cita" });
   state = run.state;
-  assert.equal(state.pendingEffect?.nodeId, "ai-extraer");
+  assert.equal(state.pendingEffect?.nodeId, "act-consultar-citas");
   run = runFlowEngine(flow, state, {
     type: "effect_result",
     success: true,
     effectId: state.pendingEffect!.effectId,
-    data: { servicio: "semipermanente" },
+    data: { cantidadCitas: 1, citasActivas: [{ id: 1, servicio: "semipermanente", inicio: "2026-09-05T10:00:00" }] },
   });
   state = run.state;
-  // act-validar-servicio corre ANTES de fecha/hora/nombre (ver
-  // daniela-agendar-cita.flow.ts) -- mismo patrón de resolución que usa
-  // daniela-agendar-cita.flow.test.ts para este mismo nodo.
-  assert.equal(state.pendingEffect?.nodeId, "act-validar-servicio");
+  assert.equal(state.pendingEffect?.nodeId, "ai-identificar-unica");
   run = runFlowEngine(flow, state, {
     type: "effect_result",
     success: true,
     effectId: state.pendingEffect!.effectId,
-    data: { servicioReconocido: true },
+    data: { citaObjetivoId: "1", citaObjetivoDescripcion: "semipermanente el sábado", citaObjetivoServicio: "semipermanente" },
   });
   state = run.state;
-  assert.equal(state.currentNodeId, "q-fecha");
+  assert.equal(state.currentNodeId, "q-nueva-fecha");
   run = runFlowEngine(flow, state, { type: "text", text: "2026-10-16" });
   state = run.state;
-  assert.equal(state.currentNodeId, "q-hora");
+  assert.equal(state.pendingEffect?.nodeId, "act-validar-nueva-fecha");
+  run = runFlowEngine(flow, state, {
+    type: "effect_result",
+    success: true,
+    effectId: state.pendingEffect!.effectId,
+    data: { fecha: "2026-10-16", nuevaFecha: "2026-10-16" },
+  });
+  state = run.state;
+  assert.equal(state.currentNodeId, "q-nueva-hora");
   return { flow, state };
 }
 
-describe("Integración q-hora → variables.hora (camino real del Flow)", () => {
-  it('"4 de la tarde" en q-hora termina como variables.hora = "16:00"', () => {
-    const { flow, state } = arrancarHastaQFecha();
+describe("Integración q-nueva-hora → variables.nuevaHoraTexto (camino real del Flow)", () => {
+  it('"4 de la tarde" en q-nueva-hora termina como variables.nuevaHoraTexto = "16:00"', () => {
+    const { flow, state } = arrancarHastaQNuevaHora();
     const run = runFlowEngine(flow, state, { type: "text", text: "4 de la tarde" });
-    assert.equal(run.state.variables.hora, "16:00");
-    assert.equal(run.state.currentNodeId, "q-nombre");
+    assert.equal(run.state.variables.nuevaHoraTexto, "16:00");
+    assert.equal(run.state.pendingEffect?.nodeId, "act-consultar-disponibilidad");
   });
 
-  it('"a las 4" en q-hora NO avanza y pide aclaración', () => {
-    const { flow, state } = arrancarHastaQFecha();
+  it('"a las 4" en q-nueva-hora NO avanza y pide aclaración', () => {
+    const { flow, state } = arrancarHastaQNuevaHora();
     const run = runFlowEngine(flow, state, { type: "text", text: "a las 4" });
-    assert.equal(run.state.currentNodeId, "q-hora");
-    assert.equal(run.state.variables.hora, undefined);
+    assert.equal(run.state.currentNodeId, "q-nueva-hora");
+    assert.equal(run.state.variables.nuevaHoraTexto, undefined);
     assert.ok(run.effects.some((e) => e.type === "invalid_input"));
     const invalid = run.effects.find((e) => e.type === "invalid_input");
     assert.ok(invalid && invalid.type === "invalid_input");
     assert.match(invalid.message, /tarde|mañana/i);
   });
 
-  it('parseFechaHora acepta la hora normalizada de q-hora', () => {
-    const { flow, state } = arrancarHastaQFecha();
+  it('parseFechaHora acepta la hora normalizada de q-nueva-hora', () => {
+    const { flow, state } = arrancarHastaQNuevaHora();
     const run = runFlowEngine(flow, state, { type: "text", text: "4 de la tarde" });
-    const hora = String(run.state.variables.hora);
+    const hora = String(run.state.variables.nuevaHoraTexto);
     const parsed = parseFechaHora("2026-10-16", hora);
     assert.ok(parsed);
     assert.equal(parsed!.getUTCHours(), 21); // 16:00 COT = 21:00 UTC
@@ -210,40 +224,40 @@ describe("Integración q-hora → variables.hora (camino real del Flow)", () => 
   // un loop. Camino 100% real del engine, mismo helper que el resto del
   // archivo -- sin mockear nada de flow-engine.ts.
   // ---------------------------------------------------------------------------
-  it('"1" (ambiguo) -> "Tarde" (solo la aclaración) -> variables.hora = "13:00", avanza a q-nombre', () => {
-    const { flow, state } = arrancarHastaQFecha();
+  it('"1" (ambiguo) -> "Tarde" (solo la aclaración) -> variables.nuevaHoraTexto = "13:00", avanza a consultar disponibilidad', () => {
+    const { flow, state } = arrancarHastaQNuevaHora();
 
     const ambiguo = runFlowEngine(flow, state, { type: "text", text: "1" });
-    assert.equal(ambiguo.state.currentNodeId, "q-hora", "sigue en q-hora, esperando la aclaración");
-    assert.equal(ambiguo.state.variables.hora, undefined);
+    assert.equal(ambiguo.state.currentNodeId, "q-nueva-hora", "sigue en q-nueva-hora, esperando la aclaración");
+    assert.equal(ambiguo.state.variables.nuevaHoraTexto, undefined);
     const invalid = ambiguo.effects.find((e) => e.type === "invalid_input");
     assert.ok(invalid && invalid.type === "invalid_input");
     assert.match(invalid.message, /tarde|mañana/i);
 
     const aclarado = runFlowEngine(flow, ambiguo.state, { type: "text", text: "Tarde" });
-    assert.equal(aclarado.state.variables.hora, "13:00", "antes de este fix, esto quedaba undefined y el bot repetía el mensaje de formato");
-    assert.equal(aclarado.state.currentNodeId, "q-nombre");
+    assert.equal(aclarado.state.variables.nuevaHoraTexto, "13:00", "antes de este fix, esto quedaba undefined y el bot repetía el mensaje de formato");
+    assert.equal(aclarado.state.pendingEffect?.nodeId, "act-consultar-disponibilidad");
   });
 
   it('"13 horas" en el mismo mensaje ya no es ambiguo -- resultado idéntico sin pasar por la desambiguación', () => {
-    const { flow, state } = arrancarHastaQFecha();
+    const { flow, state } = arrancarHastaQNuevaHora();
     const run = runFlowEngine(flow, state, { type: "text", text: "13 horas" });
-    assert.equal(run.state.variables.hora, "13:00");
-    assert.equal(run.state.currentNodeId, "q-nombre");
+    assert.equal(run.state.variables.nuevaHoraTexto, "13:00");
+    assert.equal(run.state.pendingEffect?.nodeId, "act-consultar-disponibilidad");
   });
 
-  it("la hora ambigua pendiente no queda colgada para una q-hora futura (variables limpias tras resolver)", () => {
-    const { flow, state } = arrancarHastaQFecha();
+  it("la hora ambigua pendiente no queda colgada para una q-nueva-hora futura (variables limpias tras resolver)", () => {
+    const { flow, state } = arrancarHastaQNuevaHora();
     const ambiguo = runFlowEngine(flow, state, { type: "text", text: "1" });
     const aclarado = runFlowEngine(flow, ambiguo.state, { type: "text", text: "Tarde" });
     assert.equal(aclarado.state.variables.__horaAmbigua, undefined);
   });
 });
 
-describe("danielaAgendarCitaFlow — q-hora usa validation hora_colombia", () => {
-  it("nodo q-hora configurado con hora_colombia", () => {
-    const flow = danielaAgendarCitaFlow();
-    const qHora = flow.nodes.find((n) => n.id === "q-hora");
+describe("danielaReagendarCitaFlow — q-nueva-hora usa validation hora_colombia", () => {
+  it("nodo q-nueva-hora configurado con hora_colombia", () => {
+    const flow = danielaReagendarCitaFlow();
+    const qHora = flow.nodes.find((n) => n.id === "q-nueva-hora");
     assert.ok(qHora && qHora.type === "question");
     if (qHora.type === "question") {
       assert.equal(qHora.config.validation.kind, "hora_colombia");

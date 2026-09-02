@@ -34,7 +34,7 @@ describe("Menú servicios_spa — separación menú vs servicio real", () => {
     assert.equal(result.valid, true);
   });
 
-  it("A. tap servicios_spa → q-servicio; variables.servicio NO es servicios_spa", () => {
+  it("A. tap servicios_spa → q-categoria-servicio (Objetivo 1); variables.servicio NO es servicios_spa", () => {
     const flow = danielaRouterFlow();
     const menu = clasificar(flow, "Hola", "menu");
     const tap = runFlowEngine(flow, menu.state, {
@@ -42,19 +42,29 @@ describe("Menú servicios_spa — separación menú vs servicio real", () => {
       id: DANIELA_BUTTON_IDS.SERVICIOS_SPA,
     });
     assert.equal(tap.error, undefined);
-    assert.equal(tap.state.currentNodeId, "agendar__q-servicio");
+    assert.equal(tap.state.currentNodeId, "agendar__q-categoria-servicio");
     assert.equal(tap.state.variables.servicio, undefined);
     assert.notEqual(tap.state.variables.servicio, "servicios_spa");
+    assert.notEqual(tap.state.variables.categoriaSeleccionada, "servicios_spa");
   });
 
   it("B. agendamiento directo sigue extrayendo servicio real vía ai-extraer", () => {
     const flow = danielaRouterFlow();
     const r = clasificar(flow, "Quiero agendar semipermanente en manos", "agendar");
-    assert.equal(r.state.pendingEffect?.nodeId, "agendar__ai-extraer");
-    const extraido = runFlowEngine(flow, r.state, {
+    // Parte 13 del rediseño (autorizado) — consulta citas previas primero.
+    assert.equal(r.state.pendingEffect?.nodeId, "agendar__act-consultar-citas-previas");
+    const previas = runFlowEngine(flow, r.state, {
       type: "effect_result",
       success: true,
       effectId: r.state.pendingEffect!.effectId,
+      data: { cantidadCitas: 0, citasActivas: [] },
+    });
+    assert.equal(previas.error, undefined);
+    assert.equal(previas.state.pendingEffect?.nodeId, "agendar__ai-extraer");
+    const extraido = runFlowEngine(flow, previas.state, {
+      type: "effect_result",
+      success: true,
+      effectId: previas.state.pendingEffect!.effectId,
       data: { servicio: "semipermanente en manos" },
     });
     assert.equal(extraido.error, undefined);
@@ -68,9 +78,21 @@ describe("Menú servicios_spa — separación menú vs servicio real", () => {
       type: "button",
       id: DANIELA_BUTTON_IDS.SERVICIOS_SPA,
     });
+    assert.equal(tap.state.currentNodeId, "agendar__q-categoria-servicio");
+    // Texto que no calza exacto con ninguna etiqueta de botón (Manos/Pies/
+    // Pestañas) se trata como intento directo de servicio -- va a
+    // act-validar-servicio (acción real, no escritura síncrona).
     const r2 = runFlowEngine(flow, tap.state, { type: "text", text: "semipermanente en manos" });
     assert.equal(r2.error, undefined);
-    assert.equal(r2.state.variables.servicio, "semipermanente en manos");
+    assert.equal(r2.state.pendingEffect?.nodeId, "agendar__act-validar-servicio");
+    const r3 = runFlowEngine(flow, r2.state, {
+      type: "effect_result",
+      success: true,
+      effectId: r2.state.pendingEffect!.effectId,
+      data: { servicio: "semipermanente en manos", servicioReconocido: true },
+    });
+    assert.equal(r3.error, undefined);
+    assert.equal(r3.state.variables.servicio, "semipermanente en manos");
   });
 
   it("D. tap productos deriva a Daniela y no entra a agendar", () => {

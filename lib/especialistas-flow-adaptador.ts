@@ -11,10 +11,12 @@ import {
   citaActivaPara,
   cancelarCita,
   editarCitaConfirmada,
+  ventanaAtencion,
   type Especialista,
   type CitaEspecialista,
   type CategoriaServicio,
 } from "@/lib/especialistas";
+import { horaColombiaDesdeIso } from "@/lib/timezone-colombia";
 
 /**
  * Adaptador Fase 0 (migración Daniela → Flow) sobre el sistema REAL de
@@ -42,9 +44,41 @@ import {
  * fuente es limpieza futura legítima, fuera del alcance de esta fase.
  */
 
+/**
+ * Rediseño (autorizado) — categoría de MENÚ para la clienta, distinta de
+ * CategoriaServicio (lib/especialistas.ts, que es de RUTEO DE RECURSO:
+ * manos/pies, a quién asignarle la cita, binaria a propósito). Esta es la
+ * categoría que ve la clienta en el botón: las 3 categorías reales y
+ * ACTIVAS verificadas en dulabs_especialistas para el tenant de Daniela
+ * (Manos: Daniela+Carla, Pies: Kelly, Pestañas: Nicol -- confirmado contra
+ * producción, no inventado). "pestanas" nunca sale de categoriaDeServicio
+ * (esa función no la conoce) -- se deriva de que la resolución haya sido
+ * "exclusiva" contra una especialista cuyo `servicio` es "pestañas".
+ */
+export type CategoriaMenuServicio = "manos" | "pies" | "pestanas";
+
+/**
+ * Convierte el id ESTABLE del botón de categoría (ver DANIELA_BUTTON_IDS en
+ * lib/flows/daniela-button-ids.ts, ej. "categoria_manos") en la categoría de
+ * menú real -- el backend nunca confía en el texto visible del botón, solo
+ * en este id. Devuelve null para cualquier otra cosa (variable ausente,
+ * botón desconocido, o el propio texto de un servicio que no es un id de
+ * categoría) -- el llamador debe tratar null como "no hay categoría elegida
+ * todavía", nunca como una categoría válida por defecto.
+ */
+export function categoriaMenuDesdeBotonId(valor: string | undefined): CategoriaMenuServicio | null {
+  if (!valor) return null;
+  const sinPrefijo = valor.replace(/^categoria_/, "");
+  return sinPrefijo === "manos" || sinPrefijo === "pies" || sinPrefijo === "pestanas" ? sinPrefijo : null;
+}
+
 export type ResultadoValidarServicioEspecialista =
   | { ok: true; servicioReconocido: true }
-  | { ok: false; motivo: "servicio_no_manejado"; detalle: string };
+  | { ok: false; motivo: "servicio_no_manejado"; detalle: string }
+  // Rediseño (autorizado) — el servicio SÍ es real y reconocido, pero no
+  // pertenece a la categoría de menú que la clienta ya eligió por botón
+  // (ej. tocó "Manos" y luego escribió "pestañas volumen ruso").
+  | { ok: false; motivo: "categoria_no_coincide"; detalle: string };
 
 export type ResultadoDisponibilidadEspecialista =
   | {
@@ -224,7 +258,7 @@ async function resolverCandidatas(
  */
 export async function validarServicioEspecialista(
   supabase: SupabaseClient,
-  params: { phoneNumberId: string; servicio: string },
+  params: { phoneNumberId: string; servicio: string; categoriaEsperada?: CategoriaMenuServicio },
 ): Promise<ResultadoValidarServicioEspecialista> {
   const resuelto = await resolverCandidatas(supabase, params.phoneNumberId, params.servicio);
   if (resuelto.tipo === "sin_especialistas") {
@@ -234,7 +268,42 @@ export async function validarServicioEspecialista(
       detalle: `No manejamos "${params.servicio}" con agenda propia todavía.`,
     };
   }
+  // Rediseño (autorizado, Objetivo 1) — si la clienta ya eligió una
+  // categoría real por botón (categoriaSeleccionada), el servicio debe
+  // pertenecer a ESA categoría. No se rechaza por texto/label, se compara
+  // contra la categoría REAL que resolverCandidatas ya calculó -- mismo
+  // dato que decide a qué especialista se asigna la cita, no una copia.
+  if (params.categoriaEsperada) {
+    const categoriaReal = categoriaMenuDeResolucion(resuelto);
+    if (categoriaReal !== params.categoriaEsperada) {
+      return {
+        ok: false,
+        motivo: "categoria_no_coincide",
+        detalle: `"${params.servicio}" no pertenece a la categoría "${params.categoriaEsperada}" que ya elegiste.`,
+      };
+    }
+  }
   return { ok: true, servicioReconocido: true };
+}
+
+/**
+ * Deriva la categoría de MENÚ (manos/pies/pestañas) del resultado YA
+ * calculado por resolverCandidatas -- nunca vuelve a interpretar el texto
+ * del servicio por su cuenta. "pestanas" se reconoce por sustantivo real
+ * en el campo `servicio` de la especialista exclusiva resuelta (hoy, en
+ * datos reales, la única especialista exclusiva no-categoría es Nicol,
+ * servicio="pestañas") -- si en el futuro existiera otra especialista
+ * exclusiva que no sea de pestañas, esto devuelve null (categoría
+ * desconocida) en vez de adivinar, y validarServicioEspecialista la
+ * rechazaría por "categoria_no_coincide" antes que aceptar algo incierto.
+ */
+function categoriaMenuDeResolucion(
+  resuelto:
+    | { tipo: "exclusiva"; especialista: Especialista }
+    | { tipo: "categoria"; candidatas: Especialista[]; categoria: "manos" | "pies" },
+): CategoriaMenuServicio | null {
+  if (resuelto.tipo === "categoria") return resuelto.categoria;
+  return /pesta[ñn]as?/i.test(resuelto.especialista.servicio) ? "pestanas" : null;
 }
 
 /**
@@ -267,6 +336,197 @@ export async function consultarDisponibilidadEspecialista(
     hayHueco,
     horariosTomados,
   };
+}
+
+// --- Rediseño de agendamiento (autorizado) — lista real de horarios -------
+//
+// Reemplaza el modelo "pedir una hora puntual y comprobar sí/no" por
+// "mostrar los horarios REALES disponibles y que la clienta elija uno".
+// Reutiliza EXACTAMENTE las mismas reglas de negocio que ya usa
+// agendarCitaEspecialista (Carla fija en manos / Kelly fija en pies, con el
+// mismo criterio de desborde), calculadas como una LISTA en vez de un
+// booleano -- nunca una segunda fuente de verdad de las reglas.
+
+/** Cada cuánto se ofrece un horario dentro de la ventana de atención. Ajustable sin tocar ninguna regla de negocio. */
+const GRANULARIDAD_HORARIOS_MIN = 30;
+
+/**
+ * Enumera los horarios de inicio REALES (HH:MM, hora Colombia) libres de
+ * ESTA especialista puntual ese día, dentro de su ventana de atención real
+ * -- comprobando solape contra sus citas reales existentes, nunca "check
+ * antes, insert después" (la creación real sigue protegida aparte por el
+ * constraint EXCLUDE; esto es solo lectura para PROPONER opciones).
+ */
+async function horariosLibresParaEspecialista(
+  supabase: SupabaseClient,
+  especialista: Especialista,
+  fechaISO: string,
+  duracionMin: number,
+  filtroVentanaPropia?: (inicio: Date) => boolean,
+): Promise<string[]> {
+  const ventana = ventanaAtencion(fechaISO);
+  if (!ventana) return [];
+
+  const { data } = await supabase
+    .from("dulabs_citas_especialista")
+    .select("inicio, fin")
+    .eq("especialista_id", especialista.id)
+    .in("estado", ["pendiente", "confirmada", "propuesta"])
+    .gte("inicio", ventana.apertura.toISOString())
+    .lt("inicio", ventana.cierre.toISOString())
+    .order("inicio", { ascending: true });
+  const ocupadas = (data ?? []) as { inicio: string; fin: string }[];
+
+  const necesarioMs = duracionMin * 60_000;
+  const pasoMs = GRANULARIDAD_HORARIOS_MIN * 60_000;
+  const horarios: string[] = [];
+
+  for (
+    let cursorMs = ventana.apertura.getTime();
+    cursorMs + necesarioMs <= ventana.cierre.getTime();
+    cursorMs += pasoMs
+  ) {
+    const inicioSlot = new Date(cursorMs);
+    const finSlot = new Date(cursorMs + necesarioMs);
+    const solapa = ocupadas.some((o) => inicioSlot < new Date(o.fin) && finSlot > new Date(o.inicio));
+    if (solapa) continue;
+    if (filtroVentanaPropia && !filtroVentanaPropia(inicioSlot)) continue;
+    horarios.push(horaColombiaDesdeIso(inicioSlot.toISOString()));
+  }
+  return horarios;
+}
+
+export type ResultadoHorariosDisponiblesEspecialista =
+  | { ok: true; especialistaResuelto: string; duracionMin: number; horarios: string[] }
+  | { ok: false; motivo: "servicio_no_manejado"; detalle: string };
+
+/**
+ * Lista real de horarios disponibles para un servicio/fecha -- reemplaza al
+ * booleano de consultarDisponibilidadEspecialista para el nuevo modelo de
+ * agendamiento (esa función se conserva sin cambios, sigue usándose donde
+ * ya se usaba). `horarios` puede venir vacío (sin disponibilidad ese día);
+ * eso NO es un error, es una respuesta real y válida.
+ */
+export async function listarHorariosDisponiblesEspecialista(
+  supabase: SupabaseClient,
+  params: { phoneNumberId: string; servicio: string; fecha: string; duracionMinInput?: number },
+): Promise<ResultadoHorariosDisponiblesEspecialista> {
+  const resuelto = await resolverCandidatas(supabase, params.phoneNumberId, params.servicio);
+  if (resuelto.tipo === "sin_especialistas") {
+    return { ok: false, motivo: "servicio_no_manejado", detalle: `No manejamos "${params.servicio}" con agenda propia todavía.` };
+  }
+
+  if (resuelto.tipo === "exclusiva") {
+    const especialista = resuelto.especialista;
+    const duracionMin =
+      params.duracionMinInput && params.duracionMinInput > 0 ? params.duracionMinInput : especialista.duracion_min;
+    const filtro = especialista.servicio.toLowerCase() === "pestañas" ? pestanasDisponible : undefined;
+    const horarios = await horariosLibresParaEspecialista(supabase, especialista, params.fecha, duracionMin, filtro);
+    return { ok: true, especialistaResuelto: especialista.nombre, duracionMin, horarios };
+  }
+
+  const { candidatas, categoria } = resuelto;
+  const duracionMin =
+    params.duracionMinInput && params.duracionMinInput > 0 ? params.duracionMinInput : candidatas[0]!.duracion_min;
+
+  if (categoria === "pies") {
+    // Kelly fija; Carla es respaldo SOLO si Kelly no tiene ningún hueco ese
+    // día -- mismo criterio exacto que agendarCitaEspecialista, aquí el
+    // propio largo de la lista real ya es esa comprobación (sin repetirla
+    // aparte con hayHuecoLibreEseDia).
+    const kelly = candidatas.find((e) => e.nombre.toLowerCase() === "kelly") ?? candidatas[0]!;
+    const horariosKelly = await horariosLibresParaEspecialista(supabase, kelly, params.fecha, duracionMin);
+    if (horariosKelly.length > 0) return { ok: true, especialistaResuelto: kelly.nombre, duracionMin, horarios: horariosKelly };
+
+    const candidatasManos = await especialistasPorCategoria(supabase, params.phoneNumberId, "manos");
+    const carla = candidatasManos.find((e) => e.nombre.toLowerCase() === "carla");
+    if (carla) {
+      const horariosCarla = await horariosLibresParaEspecialista(supabase, carla, params.fecha, duracionMin);
+      if (horariosCarla.length > 0) return { ok: true, especialistaResuelto: carla.nombre, duracionMin, horarios: horariosCarla };
+    }
+    return { ok: true, especialistaResuelto: kelly.nombre, duracionMin, horarios: [] };
+  }
+
+  // categoria === "manos": Carla fija; Daniela es respaldo SOLO si Carla no
+  // tiene ningún hueco ese día Y el horario cae en su ventana real -- mismo
+  // criterio exacto que agendarCitaEspecialista.
+  const carla = candidatas.find((e) => e.nombre.toLowerCase() === "carla") ?? candidatas[0]!;
+  const horariosCarla = await horariosLibresParaEspecialista(supabase, carla, params.fecha, duracionMin);
+  if (horariosCarla.length > 0) return { ok: true, especialistaResuelto: carla.nombre, duracionMin, horarios: horariosCarla };
+
+  const candidatasTodasManos = await especialistasPorCategoria(supabase, params.phoneNumberId, "manos");
+  const daniela = candidatasTodasManos.find((e) => e.nombre.toLowerCase() === "daniela");
+  if (daniela) {
+    const horariosDaniela = await horariosLibresParaEspecialista(supabase, daniela, params.fecha, duracionMin, danielaDisponible);
+    if (horariosDaniela.length > 0) return { ok: true, especialistaResuelto: daniela.nombre, duracionMin, horarios: horariosDaniela };
+  }
+  return { ok: true, especialistaResuelto: carla.nombre, duracionMin, horarios: [] };
+}
+
+export type ResultadoResolverSeleccionHorario =
+  | { ok: true; hora: string }
+  | { ok: false; motivo: "fuera_de_lista" | "ambiguo"; detalle: string };
+
+/**
+ * ÚNICA función que decide qué hora quedó realmente seleccionada -- la IA
+ * (nodo ai-interpretar-seleccion) solo INTERPRETA lenguaje natural
+ * ("la segunda", "la de las 4", "esa") en un candidato estructurado
+ * (índice 1-based o una hora HH:MM); esta función lo valida SIEMPRE contra
+ * `horariosDisponibles`, la lista REAL que se le mostró a la clienta. Un
+ * candidato que no exista en esa lista se RECHAZA, sin excepción -- nunca
+ * se acepta un horario que Claude haya podido inventar. Pura, sin I/O:
+ * fácil de probar exhaustivamente.
+ */
+export function resolverSeleccionHorario(params: {
+  horariosDisponibles: string[];
+  seleccionTipo?: string;
+  seleccionIndice?: number;
+  seleccionHora?: string;
+}): ResultadoResolverSeleccionHorario {
+  const { horariosDisponibles } = params;
+
+  if (params.seleccionTipo === "index" && typeof params.seleccionIndice === "number") {
+    const idx = params.seleccionIndice; // 1-based ("la segunda" -> 2)
+    if (Number.isInteger(idx) && idx >= 1 && idx <= horariosDisponibles.length) {
+      return { ok: true, hora: horariosDisponibles[idx - 1]! };
+    }
+    return {
+      ok: false,
+      motivo: "fuera_de_lista",
+      detalle: `Índice ${idx} fuera de la lista real de ${horariosDisponibles.length} horario(s).`,
+    };
+  }
+
+  if (params.seleccionTipo === "time" && typeof params.seleccionHora === "string" && params.seleccionHora) {
+    if (horariosDisponibles.includes(params.seleccionHora)) {
+      return { ok: true, hora: params.seleccionHora };
+    }
+    return {
+      ok: false,
+      motivo: "fuera_de_lista",
+      detalle: `"${params.seleccionHora}" no está en la lista real de horarios disponibles.`,
+    };
+  }
+
+  return { ok: false, motivo: "ambiguo", detalle: "No se pudo identificar con certeza a cuál horario se refiere." };
+}
+
+/** Texto legible determinista (nunca redactado por IA) para mostrar la lista real de horarios, ej. "1️⃣ 3:00 p. m.\n2️⃣ 4:00 p. m.". */
+export function formatearListaHorarios(horarios: string[]): string {
+  const NUMEROS_EMOJI = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"];
+  return horarios
+    .map((hhmm, i) => `${NUMEROS_EMOJI[i] ?? `${i + 1}.`} ${formatearHoraAmPm(hhmm)}`)
+    .join("\n");
+}
+
+/** "16:00" -> "4:00 p. m." (español, sin depender de Intl para evitar diferencias de locale entre entornos). */
+function formatearHoraAmPm(hhmm: string): string {
+  const [hStr, mStr] = hhmm.split(":");
+  const h = Number(hStr);
+  const m = Number(mStr);
+  const periodo = h >= 12 ? "p. m." : "a. m.";
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}:${String(m).padStart(2, "0")} ${periodo}`;
 }
 
 /**

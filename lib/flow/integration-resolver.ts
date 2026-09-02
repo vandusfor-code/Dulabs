@@ -42,6 +42,22 @@ const INTERNAL_ACTION_TYPES = new Set([
   "consultar_citas_activas_especialista",
   // Fase 1 (Blocker #5, autorizado) — misma razón que las anteriores.
   "mover_cita_especialista",
+  // Rediseño de agendamiento (autorizado) — misma razón que las anteriores.
+  // BUG REAL encontrado (Objetivo 2, sept. 2026): estas 3 acciones nuevas
+  // nunca se agregaron acá, así que TODO dispatch real a través del
+  // orchestrator (IntegrationResolver.resolve) las rechazaba con
+  // SECURITY_REJECTED/"integration_required" -- el rediseño de agendamiento
+  // completo (act-validar-fecha, act-listar-horarios,
+  // act-resolver-seleccion-horario/-inicial) nunca hubiera funcionado en
+  // producción real, aunque los tests unitarios contra runFlowEngine
+  // directo (sin pasar por el orchestrator) sí pasaban -- esos tests nunca
+  // ejercitan este gate. Encontrado al escribir un test de integración real
+  // end-to-end para preguntas laterales (primera vez que algo de la
+  // suite pasa por atenderMensajeConFlowConFallback real con estas 3
+  // acciones en el camino).
+  "validar_fecha_especialista",
+  "listar_horarios_disponibles_especialista",
+  "resolver_seleccion_horario",
 ]);
 
 const INTERNAL_WEBHOOK_TAGS = new Set(["consultar_disponibilidad"]);

@@ -612,6 +612,11 @@ function baseInternalDeps(
       motivo: "sin_cita_activa" as const,
       detalle: "stub",
     }),
+    listarHorariosDisponiblesEspecialista: async () => ({
+      ok: false as const,
+      motivo: "servicio_no_manejado" as const,
+      detalle: "stub",
+    }),
     ...overrides,
   };
 }

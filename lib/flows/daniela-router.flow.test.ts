@@ -105,4 +105,43 @@ describe("Fase 1 — Enrutador de Daniela pasa el validador real de publicación
       assert.equal(edge?.target, "msg-handoff-tema");
     });
   });
+
+  // Rediseño de agendamiento (autorizado, Parte 2) — botón "Hablar con Dani"
+  // en el menú inicial: acción DIRECTA, nunca pasa por ai-clasificar-intencion.
+  describe("'Hablar con Dani' — botón directo, sin clasificación de IA", () => {
+    it("bt-menu-inicial tiene 3 botones: Servicios de Spa, Productos, Hablar con Dani", () => {
+      const flow = danielaRouterFlow();
+      const nodo = flow.nodes.find((n) => n.id === "bt-menu-inicial");
+      assert.equal(nodo?.type, "buttons");
+      if (nodo?.type === "buttons") {
+        assert.equal(nodo.config.buttons.length, 3);
+        assert.ok(nodo.config.buttons.some((b) => b.id === "hablar_con_dani"));
+      }
+    });
+
+    it("el tap del botón va DIRECTO a un mensaje fijo y luego a act-handoff-daniela -- nunca pasa por ai-clasificar-intencion", () => {
+      const flow = danielaRouterFlow();
+      const edge = flow.edges.find((e) => e.source === "bt-menu-inicial" && e.sourceHandle === "button:hablar_con_dani");
+      assert.ok(edge);
+      assert.equal(edge!.target, "msg-hablar-con-dani");
+      const siguiente = flow.edges.find((e) => e.source === "msg-hablar-con-dani");
+      assert.equal(siguiente?.target, "act-handoff-daniela");
+    });
+
+    it("el mensaje fijo es el texto exacto pedido, sin variantes redactadas por IA", () => {
+      const flow = danielaRouterFlow();
+      const nodo = flow.nodes.find((n) => n.id === "msg-hablar-con-dani");
+      assert.equal(nodo?.type, "message");
+      if (nodo?.type === "message") {
+        assert.equal(nodo.config.text, "Claro que sí 💚\n\nEn unos momentos Dani te estará respondiendo.\nDale un momentico, porfa.");
+      }
+    });
+
+    it("ningún camino desde bt-menu-inicial hacia el botón pasa por un nodo 'ai'", () => {
+      const flow = danielaRouterFlow();
+      const edge = flow.edges.find((e) => e.source === "bt-menu-inicial" && e.sourceHandle === "button:hablar_con_dani");
+      const destino = flow.nodes.find((n) => n.id === edge?.target);
+      assert.notEqual(destino?.type, "ai");
+    });
+  });
 });

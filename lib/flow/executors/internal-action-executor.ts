@@ -20,7 +20,12 @@ import {
   cancelarCitaEspecialista,
   consultarCitasActivasEspecialista,
   moverCitaEspecialista,
+  listarHorariosDisponiblesEspecialista,
+  resolverSeleccionHorario,
+  formatearListaHorarios,
+  categoriaMenuDesdeBotonId,
 } from "@/lib/especialistas-flow-adaptador";
+import { parseFechaColombia } from "@/lib/parse-fecha-colombia";
 import {
   EFFECT_RESULT_CLASSIFICATIONS,
   type EffectDispatchRequest,
@@ -65,6 +70,8 @@ export interface InternalActionDeps {
   consultarCitasActivasEspecialista: typeof consultarCitasActivasEspecialista;
   // Fase 1 (Blocker #5).
   moverCitaEspecialista: typeof moverCitaEspecialista;
+  // Rediseño de agendamiento (autorizado).
+  listarHorariosDisponiblesEspecialista: typeof listarHorariosDisponiblesEspecialista;
 }
 
 const OPERATION_CLASS: Partial<Record<string, InternalActionOperationClass>> = {
@@ -79,6 +86,9 @@ const OPERATION_CLASS: Partial<Record<string, InternalActionOperationClass>> = {
   cancelar_cita_especialista: "CRITICAL",
   consultar_citas_activas_especialista: "READ",
   mover_cita_especialista: "CRITICAL",
+  validar_fecha_especialista: "READ",
+  listar_horarios_disponibles_especialista: "READ",
+  resolver_seleccion_horario: "READ",
 };
 
 function resolveInternalActionKey(action: ActionNodeConfig): string {
@@ -209,6 +219,12 @@ export class InternalActionExecutor implements EffectExecutor {
         return this.consultarCitasActivasEspecialistaAction(request, params, signal);
       case "mover_cita_especialista":
         return this.moverCitaEspecialistaAction(request, params, signal);
+      case "validar_fecha_especialista":
+        return this.validarFechaEspecialistaAction(request, params);
+      case "listar_horarios_disponibles_especialista":
+        return this.listarHorariosDisponiblesEspecialistaAction(request, params, signal);
+      case "resolver_seleccion_horario":
+        return this.resolverSeleccionHorarioAction(request, params);
       default:
         return {
           success: false,
@@ -530,7 +546,17 @@ export class InternalActionExecutor implements EffectExecutor {
     signal?: AbortSignal,
   ): Promise<EffectDispatchResult> {
     const phoneNumberId = request.conversation?.phoneNumberId ?? params.phoneNumberId ?? "";
-    const servicio = params.servicio ?? "";
+    // Objetivo 1 (rediseño, autorizado) — q-categoria-servicio comparte UN
+    // solo variableKey (categoriaSeleccionada) para botón Y texto libre
+    // (mismo mecanismo nativo de un nodo "buttons"). Si la clienta escribió
+    // texto en vez de tocar un botón, ese texto SÍ es el intento de
+    // servicio (edge e-categoria-texto -> directo acá, sin pasar por
+    // q-servicio) -- por eso, sin `servicio` propio, se usa
+    // categoriaSeleccionada como el texto del servicio. Nunca ambiguo con
+    // un id real de botón: categoriaMenuDesdeBotonId exige coincidencia
+    // EXACTA con los 3 ids conocidos, así que texto libre real jamás se
+    // confunde con una categoría ya elegida.
+    const servicio = params.servicio ?? params.categoriaSeleccionada ?? "";
 
     if (!phoneNumberId || !servicio) {
       return {
@@ -545,9 +571,18 @@ export class InternalActionExecutor implements EffectExecutor {
     if (!owned) return this.tenantRejected();
     assertNotAborted(signal);
 
+    // Si la clienta ya tocó un botón de categoría real, categoriaSeleccionada
+    // llega con el id ESTABLE del botón, nunca con el texto visible.
+    // categoriaMenuDesdeBotonId ignora silenciosamente cualquier valor que
+    // no sea uno de los 3 ids reales -- si no hubo categoría (servicio ya
+    // venía del primer mensaje, o llegó como texto libre acá mismo), sigue
+    // validando sin restricción, igual que antes de este cambio.
+    const categoriaEsperada = categoriaMenuDesdeBotonId(params.categoriaSeleccionada) ?? undefined;
+
     const resultado = await this.deps.validarServicioEspecialista(this.deps.supabase, {
       phoneNumberId,
       servicio,
+      categoriaEsperada,
     });
 
     assertNotAborted(signal);
@@ -561,7 +596,14 @@ export class InternalActionExecutor implements EffectExecutor {
       };
     }
 
-    const data = { servicioReconocido: true, effectId: request.effectId };
+    // Objetivo 1 (rediseño, autorizado) — escribe `servicio` de vuelta
+    // siempre, incluida la ruta de texto libre en q-categoria-servicio
+    // (donde `servicio` nunca pasó por su propio nodo pregunta, ver arriba
+    // el fallback params.servicio ?? params.categoriaSeleccionada). Sin
+    // esto, act-listar-horarios y la propuesta final ({{servicio}}) se
+    // quedarían con la variable vacía por ese camino -- hallazgo real
+    // encontrado por el test C de daniela-menu-servicios-spa.test.ts.
+    const data = { servicio, servicioReconocido: true, effectId: request.effectId };
 
     return {
       success: true,
@@ -579,7 +621,12 @@ export class InternalActionExecutor implements EffectExecutor {
     signal?: AbortSignal,
   ): Promise<EffectDispatchResult> {
     const phoneNumberId = request.conversation?.phoneNumberId ?? params.phoneNumberId ?? "";
-    const servicio = params.servicio ?? "";
+    // Rediseño de agendamiento (autorizado) — reagendar identifica el
+    // servicio de la cita objetivo como `citaObjetivoServicio` (ver
+    // daniela-reagendar-cita.flow.ts); `fecha` ya llega validada por
+    // act-validar-nueva-fecha bajo ESE mismo nombre (escribe tanto `fecha`
+    // como `nuevaFecha`), así que acá no hace falta un segundo alias.
+    const servicio = params.servicio ?? params.citaObjetivoServicio ?? "";
     const fecha = params.fecha ?? "";
     const duracionMinInput = params.duracionMin ? num(params.duracionMin, 0) : undefined;
 
@@ -746,9 +793,19 @@ export class InternalActionExecutor implements EffectExecutor {
     // clienta tenía varias citas y ya identificó cuál), cancela ESA
     // puntualmente -- ver citaPorIdYCliente en el adaptador para la
     // verificación real de que esa cita es de esta clienta.
+    //
+    // Rediseño de agendamiento (autorizado) — también acepta `citaObjetivoId`
+    // (el nombre real de la variable que ya deja ai-identificar-unica/
+    // ai-identificar-seleccionada en este mismo flow): antes, el nodo
+    // ai-proponer-cancelar (propose_action, eliminado) hacía este mismo
+    // mapeo trivial vía una llamada a Claude sin ninguna interpretación
+    // real -- mismo criterio exacto que ya se aplicó en agendar (ver
+    // daniela-agendar-cita.flow.ts). `citaId` explícito sigue teniendo
+    // prioridad si algún día ambos coexistieran.
+    const citaIdRaw = params.citaId ?? params.citaObjetivoId;
     let citaId: number | undefined;
-    if (params.citaId !== undefined) {
-      citaId = Number(params.citaId);
+    if (citaIdRaw !== undefined) {
+      citaId = Number(citaIdRaw);
       if (!Number.isFinite(citaId)) {
         return {
           success: false,
@@ -847,6 +904,187 @@ export class InternalActionExecutor implements EffectExecutor {
   }
 
   /**
+   * Rediseño de agendamiento (autorizado) — lista real de horarios
+   * disponibles (reemplaza el booleano de consultarDisponibilidadEspecialista
+   * para el nuevo modelo). Solo lectura, nunca escribe nada.
+   */
+  private async listarHorariosDisponiblesEspecialistaAction(
+    request: EffectDispatchRequest,
+    params: Record<string, string>,
+    signal?: AbortSignal,
+  ): Promise<EffectDispatchResult> {
+    const phoneNumberId = request.conversation?.phoneNumberId ?? params.phoneNumberId ?? "";
+    const servicio = params.servicio ?? "";
+    const fecha = params.fecha ?? "";
+    const duracionMinInput = params.duracionMin ? num(params.duracionMin, 0) : undefined;
+
+    if (!phoneNumberId || !servicio || !fecha) {
+      return {
+        success: false,
+        classification: EFFECT_RESULT_CLASSIFICATIONS.VALIDATION_ERROR,
+        error: "missing_availability_params",
+      };
+    }
+
+    assertNotAborted(signal);
+    const owned = await this.deps.authorizer.assertPhoneNumberOwnedByTenant(request.tenantId, phoneNumberId);
+    if (!owned) return this.tenantRejected();
+    assertNotAborted(signal);
+
+    const resultado = await this.deps.listarHorariosDisponiblesEspecialista(this.deps.supabase, {
+      phoneNumberId,
+      servicio,
+      fecha,
+      duracionMinInput,
+    });
+
+    assertNotAborted(signal);
+
+    if (!resultado.ok) {
+      return {
+        success: false,
+        classification: EFFECT_RESULT_CLASSIFICATIONS.NON_RETRYABLE,
+        error: resultado.motivo,
+        data: { detalle: resultado.detalle },
+      };
+    }
+
+    const data = {
+      horariosDisponibles: resultado.horarios,
+      horariosDisponiblesTexto: formatearListaHorarios(resultado.horarios),
+      cantidadHorarios: resultado.horarios.length,
+      especialista: resultado.especialistaResuelto,
+      duracionMin: resultado.duracionMin,
+      effectId: request.effectId,
+    };
+
+    return {
+      success: true,
+      classification: EFFECT_RESULT_CLASSIFICATIONS.SUCCESS,
+      data,
+      appliedResult: data,
+      rawResult: data,
+      metadata: { operationClass: OPERATION_CLASS.listar_horarios_disponibles_especialista },
+    };
+  }
+
+  /**
+   * Rediseño de agendamiento (autorizado) — ÚNICA función que decide qué
+   * hora quedó seleccionada. Lee `horariosDisponibles` directo de
+   * `request.payload` (no de `params`: mergeParams descarta arrays, ver
+   * mergeParams arriba) -- es la lista REAL que ya dejó la acción de
+   * listar, nunca un valor que la IA pueda sustituir. resolverSeleccionHorario
+   * es pura (sin I/O); esto es solo el wrapper de acción del mismo patrón
+   * que el resto de acciones de este archivo.
+   *
+   * MISMO nodo/actionType se usa en DOS puntos del grafo de agendar (ver
+   * daniela-agendar-cita.flow.ts): (1) camino rápido, justo tras listar
+   * horarios, con la 'hora' ya extraída del primer mensaje (Parte 12: si no
+   * calza EXACTO con la lista real, se descarta en silencio -- nunca
+   * bloquea, solo no hay atajo); (2) tras que la clienta responda a la
+   * pregunta abierta de selección, con lo que interpretó ai-interpretar-
+   * seleccion (seleccionTipo/seleccionIndice/seleccionHora). Se distinguen
+   * solo por qué variables existen en `state` en ese momento -- ninguna
+   * config especial por nodo, ninguna interpolación necesaria.
+   */
+  private async resolverSeleccionHorarioAction(
+    request: EffectDispatchRequest,
+    params: Record<string, string>,
+  ): Promise<EffectDispatchResult> {
+    const horariosDisponibles = Array.isArray(request.payload.horariosDisponibles)
+      ? (request.payload.horariosDisponibles as unknown[]).filter((h): h is string => typeof h === "string")
+      : [];
+
+    const tieneSeleccionExplicita =
+      params.seleccionTipo !== undefined || params.seleccionIndice !== undefined || params.seleccionHora !== undefined;
+
+    const resultado = tieneSeleccionExplicita
+      ? resolverSeleccionHorario({
+          horariosDisponibles,
+          seleccionTipo: params.seleccionTipo,
+          seleccionIndice: params.seleccionIndice !== undefined ? num(params.seleccionIndice, NaN) : undefined,
+          seleccionHora: params.seleccionHora,
+        })
+      : params.hora
+        ? resolverSeleccionHorario({ horariosDisponibles, seleccionTipo: "time", seleccionHora: params.hora })
+        : resolverSeleccionHorario({ horariosDisponibles });
+
+    if (!resultado.ok) {
+      return {
+        success: false,
+        classification: EFFECT_RESULT_CLASSIFICATIONS.NON_RETRYABLE,
+        error: resultado.motivo,
+        data: { detalle: resultado.detalle, horariosDisponiblesTexto: formatearListaHorarios(horariosDisponibles) },
+      };
+    }
+
+    const data = { hora: resultado.hora, effectId: request.effectId };
+
+    return {
+      success: true,
+      classification: EFFECT_RESULT_CLASSIFICATIONS.SUCCESS,
+      data,
+      appliedResult: data,
+      rawResult: data,
+      metadata: { operationClass: OPERATION_CLASS.resolver_seleccion_horario },
+    };
+  }
+
+  /**
+   * Rediseño de agendamiento (autorizado) — validación determinista de
+   * fecha (parse-fecha-colombia.ts), mismo criterio que
+   * validarServicioEspecialistaAction: success:false si no se pudo
+   * convertir a una fecha real, para que el grafo pueda volver a preguntar
+   * en vez de dejar pasar texto libre hacia la lógica de disponibilidad
+   * (hallazgo 🔴 de la auditoría -- "el sábado" nunca debe llegar a
+   * ventanaAtencion sin pasar por acá primero). `hoy` viene sembrado en
+   * state.variables por el orchestrator, igual que ya lo usa ai-extraer.
+   *
+   * Reutilizado en DOS flows con nombres de variable distintos (agendar:
+   * `fecha`; reagendar: `nuevaFechaTexto`, ver daniela-reagendar-cita.flow.ts)
+   * -- lee cualquiera de los dos y escribe AMBOS nombres de salida
+   * (`fecha`/`nuevaFecha`) para que cada flow encuentre el suyo sin
+   * necesitar una segunda función ni ningún nodo AI de mapeo.
+   */
+  private async validarFechaEspecialistaAction(
+    request: EffectDispatchRequest,
+    params: Record<string, string>,
+  ): Promise<EffectDispatchResult> {
+    const fecha = params.fecha ?? params.nuevaFechaTexto ?? "";
+    const hoy = params.hoy ?? "";
+
+    if (!fecha || !hoy) {
+      return {
+        success: false,
+        classification: EFFECT_RESULT_CLASSIFICATIONS.VALIDATION_ERROR,
+        error: "missing_date_params",
+      };
+    }
+
+    const resultado = parseFechaColombia(fecha, hoy);
+
+    if (!resultado.ok) {
+      return {
+        success: false,
+        classification: EFFECT_RESULT_CLASSIFICATIONS.NON_RETRYABLE,
+        error: resultado.kind,
+        data: { detalle: resultado.message },
+      };
+    }
+
+    const data = { fecha: resultado.fecha, nuevaFecha: resultado.fecha, effectId: request.effectId };
+
+    return {
+      success: true,
+      classification: EFFECT_RESULT_CLASSIFICATIONS.SUCCESS,
+      data,
+      appliedResult: data,
+      rawResult: data,
+      metadata: { operationClass: OPERATION_CLASS.validar_fecha_especialista },
+    };
+  }
+
+  /**
    * Fase 1 (Blocker #5) — mueve (reagenda) una cita real existente. citaId
    * es SIEMPRE requerido (a diferencia de cancelar, acá no hay "la más
    * próxima" implícita -- siempre se mueve una cita puntual ya identificada
@@ -862,17 +1100,25 @@ export class InternalActionExecutor implements EffectExecutor {
     const phoneNumberId = request.conversation?.phoneNumberId ?? params.phoneNumberId ?? "";
     const telefonoCliente = request.conversation?.telefonoCliente ?? params.telefonoCliente ?? "";
     const confirmado = params.confirmado === "true";
-    const nuevaFecha = params.nuevaFecha ?? "";
-    const nuevaHora = params.nuevaHora ?? "";
+    // Rediseño de agendamiento (autorizado) — mismo criterio que
+    // cancelarCitaEspecialistaAction: acepta también los nombres reales que
+    // ya deja este flow (citaObjetivoId de ai-identificar-*, nuevaFechaTexto
+    // ya validada por act-validar-nueva-fecha, nuevaHoraTexto ya validada
+    // por la propia pregunta con validation.kind:"hora_colombia") -- ya no
+    // hace falta ai-proponer-mover (propose_action, eliminado) para este
+    // mapeo trivial de nombres.
+    const citaIdRaw = params.citaId ?? params.citaObjetivoId;
+    const nuevaFecha = params.nuevaFecha ?? params.nuevaFechaTexto ?? "";
+    const nuevaHora = params.nuevaHora ?? params.nuevaHoraTexto ?? "";
 
-    if (!phoneNumberId || !telefonoCliente || !params.citaId || !nuevaFecha || !nuevaHora) {
+    if (!phoneNumberId || !telefonoCliente || !citaIdRaw || !nuevaFecha || !nuevaHora) {
       return {
         success: false,
         classification: EFFECT_RESULT_CLASSIFICATIONS.VALIDATION_ERROR,
         error: "missing_reschedule_params",
       };
     }
-    const citaId = Number(params.citaId);
+    const citaId = Number(citaIdRaw);
     if (!Number.isFinite(citaId)) {
       return {
         success: false,

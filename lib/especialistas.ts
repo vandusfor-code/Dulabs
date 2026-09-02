@@ -257,7 +257,7 @@ export async function citasDelDiaEnCategoria(
 // Horario de atención de este spa (igual de específico que pestanasDisponible
 // en especialista-solicitud-ia.ts): lunes a viernes 9am-7pm, sábado 9am-6pm,
 // domingo cerrado. Ver "HORARIO DE ATENCIÓN" en la base de conocimiento.
-function ventanaAtencion(fechaISO: string): { apertura: Date; cierre: Date } | null {
+export function ventanaAtencion(fechaISO: string): { apertura: Date; cierre: Date } | null {
   const diaSemana = new Date(`${fechaISO}T12:00:00-05:00`).getDay(); // mediodía evita cruces de día por huso horario
   if (diaSemana === 0) return null; // domingo cerrado
   const apertura = new Date(`${fechaISO}T09:00:00-05:00`);

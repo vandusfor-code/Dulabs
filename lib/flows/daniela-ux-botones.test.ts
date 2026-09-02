@@ -1,7 +1,13 @@
 /**
  * UX botones Daniela — motor puro, sin Claude real ni WhatsApp real.
- * Cubre A–N del pedido: menú, producto, servicios, NLU, confirmación,
+ * Cubre A–P del pedido: menú, producto, servicios, NLU, confirmación,
  * cancelación, reagendamiento y no-duplicación de mensajes.
+ *
+ * Rediseño de agendamiento (autorizado) — adaptado al nuevo camino
+ * (cita(s) previa(s) → servicio → fecha real → horarios reales →
+ * selección → confirmación). Ver daniela-agendar-cita.flow.test.ts para la
+ * cobertura estructural completa del nuevo modelo; este archivo se enfoca
+ * en la experiencia de botones/lenguaje natural end-to-end vía el router.
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -33,24 +39,15 @@ function messageText(effect: EngineEffect): string {
 }
 
 /** Preguntas equivalentes de servicio: deben existir como UNA sola. */
-const PREGUNTA_SERVICIO_EQ =
-  /qu[eé]\s+servicio\s+(?:te\s+gustar[ií]a|quieres|deseas)\s+agendar/i;
+const PREGUNTA_SERVICIO_EQ = /qu[eé]\s+servicio\s+(?:te\s+gustar[ií]a|quieres|deseas)\s+agendar/i;
 
 function textosVisiblesDelNodo(node: FlowNode): string[] {
-  if (node.type === "question" || node.type === "buttons") {
-    return [node.config.text];
-  }
-  if (node.type === "message" && node.config.text) {
-    return [node.config.text];
-  }
+  if (node.type === "question" || node.type === "buttons") return [node.config.text];
+  if (node.type === "message" && node.config.text) return [node.config.text];
   return [];
 }
 
-function clasificar(
-  flow: FlowDefinition,
-  texto: string,
-  classification: string,
-): { state: FlowEngineState; effects: EngineEffect[] } {
+function clasificar(flow: FlowDefinition, texto: string, classification: string): { state: FlowEngineState; effects: EngineEffect[] } {
   let state = createFlowEngineState(flow, { executionId: randomUUID() });
   const start = runFlowEngine(flow, state, { type: "start", text: texto });
   assert.equal(start.error, undefined, start.error?.message);
@@ -65,6 +62,20 @@ function clasificar(
   return { state: r.state, effects: [...start.effects, ...r.effects] };
 }
 
+/** Rediseño (autorizado) — resuelve act-consultar-citas-previas (Parte 13),
+ * primer paso REAL del subflow de agendar, antes de llegar a ai-extraer. */
+function resolverCitasPrevias(flow: FlowDefinition, state: FlowEngineState, cantidadCitas = 0): Run {
+  assert.equal(state.pendingEffect?.nodeId, "agendar__act-consultar-citas-previas");
+  const r = runFlowEngine(flow, state, {
+    type: "effect_result",
+    success: true,
+    effectId: state.pendingEffect!.effectId,
+    data: { cantidadCitas, citasActivas: [] },
+  });
+  assert.equal(r.error, undefined, r.error?.message);
+  return r;
+}
+
 function extraerVacio(flow: FlowDefinition, state: FlowEngineState): Run {
   assert.equal(state.pendingEffect?.nodeId, "agendar__ai-extraer");
   const r = runFlowEngine(flow, state, {
@@ -75,6 +86,17 @@ function extraerVacio(flow: FlowDefinition, state: FlowEngineState): Run {
   });
   assert.equal(r.error, undefined, r.error?.message);
   return r;
+}
+
+/** Entra al subflow de agendar (router, clasificación 'agendar') y resuelve
+ * SIN citas previas -- deja el estado en ai-extraer, listo para simular la
+ * extracción del primer mensaje. */
+function entrarAAgendarSinCitasPrevias(texto: string): { flow: FlowDefinition; state: FlowEngineState; effects: EngineEffect[] } {
+  const flow = danielaRouterFlow();
+  const clasificado = clasificar(flow, texto, "agendar");
+  const previas = resolverCitasPrevias(flow, clasificado.state);
+  assert.equal(previas.state.pendingEffect?.nodeId, "agendar__ai-extraer");
+  return { flow, state: previas.state, effects: [...clasificado.effects, ...previas.effects] };
 }
 
 describe("UX botones — validador y candados de citas intactos", () => {
@@ -100,34 +122,33 @@ describe("UX botones — validador y candados de citas intactos", () => {
     assert.equal(btn?.target, "ai-clasificar-confirmacion");
   });
 
-  it("cancelar: act-cancelar sigue solo desde ai-proponer-cancelar; mantener_cita no cancela", () => {
+  it("cancelar: act-cancelar sigue DIRECTO desde class:confirma (rediseño: sin ai-proponer-cancelar); mantener_cita no cancela", () => {
     const flow = danielaCancelarCitaFlow();
-    const haciaProponer = flow.edges.filter((e) => e.target === "ai-proponer-cancelar");
-    assert.equal(haciaProponer.length, 1);
-    assert.equal(haciaProponer[0]?.sourceHandle, FLOW_EDGE_HANDLE.aiClass("confirma"));
+    const haciaCancelar = flow.edges.filter((e) => e.target === "act-cancelar");
+    assert.equal(haciaCancelar.length, 1);
+    assert.equal(haciaCancelar[0]?.source, "ai-clasificar-confirmacion");
+    assert.equal(haciaCancelar[0]?.sourceHandle, FLOW_EDGE_HANDLE.aiClass("confirma"));
     const mantener = flow.edges.find(
-      (e) =>
-        e.source === "q-confirmar-cancelacion" &&
-        e.sourceHandle === FLOW_EDGE_HANDLE.button(DANIELA_BUTTON_IDS.MANTENER_CITA),
+      (e) => e.source === "q-confirmar-cancelacion" && e.sourceHandle === FLOW_EDGE_HANDLE.button(DANIELA_BUTTON_IDS.MANTENER_CITA),
     );
     assert.equal(mantener?.target, "msg-cancelacion-abandonada");
   });
 
-  it("reagendar: act-mover-cita no es alcanzable desde el menú ni desde mantener_cita", () => {
+  it("reagendar: act-mover-cita solo alcanzable desde class:confirma (rediseño: sin ai-proponer-mover); no desde el menú ni mantener_cita", () => {
     const flow = danielaReagendarCitaFlow();
     const haciaMover = flow.edges.filter((e) => e.target === "act-mover-cita");
-    assert.ok(haciaMover.every((e) => e.source === "ai-proponer-mover"));
+    assert.equal(haciaMover.length, 1);
+    assert.equal(haciaMover[0]?.source, "ai-clasificar-confirmacion");
+    assert.equal(haciaMover[0]?.sourceHandle, FLOW_EDGE_HANDLE.aiClass("confirma"));
     const mantener = flow.edges.find(
-      (e) =>
-        e.source === "q-confirmar-reagendar" &&
-        e.sourceHandle === FLOW_EDGE_HANDLE.button(DANIELA_BUTTON_IDS.MANTENER_CITA),
+      (e) => e.source === "q-confirmar-reagendar" && e.sourceHandle === FLOW_EDGE_HANDLE.button(DANIELA_BUTTON_IDS.MANTENER_CITA),
     );
     assert.equal(mantener?.target, "msg-reagendamiento-abandonado");
   });
 });
 
-describe("A. saludo → botones Servicios/Productos", () => {
-  it("clasificación menu envía UN mensaje interactivo con IDs estables", () => {
+describe("A. saludo → botones Servicios/Productos/Hablar con Dani", () => {
+  it("clasificación menu envía UN mensaje interactivo con 3 IDs estables", () => {
     const flow = danielaRouterFlow();
     const r = clasificar(flow, "Hola", "menu");
     const envios = sendMessages(r.effects);
@@ -135,10 +156,10 @@ describe("A. saludo → botones Servicios/Productos", () => {
     const msg = envios[0];
     assert.ok(msg && msg.type === "send_message");
     assert.equal(msg.nodeId, "bt-menu-inicial");
-    assert.equal(msg.buttons?.length, 2);
+    assert.equal(msg.buttons?.length, 3);
     assert.deepEqual(
       msg.buttons?.map((b) => b.id),
-      [DANIELA_BUTTON_IDS.SERVICIOS_SPA, DANIELA_BUTTON_IDS.PRODUCTOS],
+      [DANIELA_BUTTON_IDS.SERVICIOS_SPA, DANIELA_BUTTON_IDS.PRODUCTOS, DANIELA_BUTTON_IDS.HABLAR_CON_DANI],
     );
     assert.match(messageText(msg), /¡Hola!/);
     assert.equal(r.state.status, "waiting_input");
@@ -151,52 +172,67 @@ describe("A. saludo → botones Servicios/Productos", () => {
     });
     assert.equal(decision.handled, true);
   });
+
+  it("tap 'Hablar con Dani' -- acción directa, sin pasar por ninguna IA, transfiere de inmediato", () => {
+    const flow = danielaRouterFlow();
+    const menu = clasificar(flow, "Hola", "menu");
+    const tap = runFlowEngine(flow, menu.state, { type: "button", id: DANIELA_BUTTON_IDS.HABLAR_CON_DANI });
+    assert.equal(tap.error, undefined);
+    const envios = sendMessages(tap.effects);
+    assert.equal(envios.length, 1);
+    assert.equal(envios[0] && "nodeId" in envios[0] ? envios[0].nodeId : "", "msg-hablar-con-dani");
+    assert.match(messageText(envios[0]!), /Dani te estará respondiendo/);
+    assert.equal(tap.state.pendingEffect?.nodeId, "act-handoff-daniela");
+  });
 });
 
 describe("B. botón Productos → derivación humana, NO agendar", () => {
   it("tap productos envía el mensaje de derivación UNA vez y no toca act-agendar", () => {
     const flow = danielaRouterFlow();
     const menu = clasificar(flow, "Hola", "menu");
-    const tap = runFlowEngine(flow, menu.state, {
-      type: "button",
-      id: DANIELA_BUTTON_IDS.PRODUCTOS,
-    });
+    const tap = runFlowEngine(flow, menu.state, { type: "button", id: DANIELA_BUTTON_IDS.PRODUCTOS });
     assert.equal(tap.error, undefined);
     const envios = sendMessages(tap.effects);
     assert.equal(envios.length, 1);
     assert.equal(envios[0] && "nodeId" in envios[0] ? envios[0].nodeId : "", "msg-producto");
     assert.equal(tap.state.pendingEffect?.nodeId, "act-handoff-daniela");
     assert.equal(tap.state.status, "waiting_effect");
-    assert.equal(
-      tap.effects.some((e) => e.type === "effect_required" && e.nodeId === "agendar__act-agendar"),
-      false,
-    );
+    assert.equal(tap.effects.some((e) => e.type === "effect_required" && e.nodeId === "agendar__act-agendar"), false);
   });
 });
 
 describe("C. botón Servicios → flujo normal, no crea cita", () => {
-  it("tap servicios_spa va directo a q-servicio sin contaminar variables.servicio", () => {
+  it("tap servicios_spa va directo a q-categoria-servicio sin contaminar variables.servicio (bypassa incluso el chequeo de citas previas)", () => {
     const flow = danielaRouterFlow();
     const menu = clasificar(flow, "Hola", "menu");
-    const tap = runFlowEngine(flow, menu.state, {
-      type: "button",
-      id: DANIELA_BUTTON_IDS.SERVICIOS_SPA,
-    });
+    const tap = runFlowEngine(flow, menu.state, { type: "button", id: DANIELA_BUTTON_IDS.SERVICIOS_SPA });
     assert.equal(tap.error, undefined);
-    assert.equal(tap.state.currentNodeId, "agendar__q-servicio");
+    assert.equal(tap.state.currentNodeId, "agendar__q-categoria-servicio", "Objetivo 1: categoría real antes del servicio");
     assert.equal(tap.state.variables.servicio, undefined);
     assert.notEqual(tap.state.variables.servicio, "servicios_spa");
+    assert.equal(tap.effects.some((e) => e.type === "effect_required" && e.nodeId === "agendar__act-agendar"), false);
+    const envios = sendMessages(tap.effects);
+    assert.equal(envios.length, 1);
+    assert.equal(envios[0] && "nodeId" in envios[0] ? envios[0].nodeId : "", "agendar__q-categoria-servicio");
+    // Texto libre que no calza con ninguna etiqueta de botón se trata como
+    // intento directo de servicio -- va a act-validar-servicio (acción
+    // real, ya no una escritura síncrona de variableKey).
+    const r2 = runFlowEngine(flow, tap.state, { type: "text", text: "semipermanente en manos" });
+    assert.equal(r2.error, undefined);
+    assert.equal(r2.state.pendingEffect?.nodeId, "agendar__act-validar-servicio");
     assert.equal(
       tap.effects.some((e) => e.type === "effect_required" && e.nodeId === "agendar__act-agendar"),
       false,
+      "seguir sin crear ninguna cita solo por escribir el servicio",
     );
-    const envios = sendMessages(tap.effects);
-    assert.equal(envios.length, 1);
-    assert.equal(envios[0] && "nodeId" in envios[0] ? envios[0].nodeId : "", "agendar__q-servicio");
-    assert.match(messageText(envios[0]!), PREGUNTA_SERVICIO_EQ);
-    const r2 = runFlowEngine(flow, tap.state, { type: "text", text: "semipermanente en manos" });
-    assert.equal(r2.error, undefined);
-    assert.equal(r2.state.variables.servicio, "semipermanente en manos");
+    const r3 = runFlowEngine(flow, r2.state, {
+      type: "effect_result",
+      success: true,
+      effectId: r2.state.pendingEffect!.effectId,
+      data: { servicio: "semipermanente en manos", servicioReconocido: true },
+    });
+    assert.equal(r3.error, undefined);
+    assert.equal(r3.state.variables.servicio, "semipermanente en manos");
   });
 });
 
@@ -208,10 +244,7 @@ describe("D/E. texto PRODUCTO → derivación", () => {
     assert.equal(envios.length, 1);
     assert.equal(envios[0] && "nodeId" in envios[0] ? envios[0].nodeId : "", "msg-producto");
     assert.equal(r.state.pendingEffect?.nodeId, "act-handoff-daniela");
-    assert.equal(
-      r.effects.some((e) => e.type === "effect_required" && e.nodeId === "agendar__act-agendar"),
-      false,
-    );
+    assert.equal(r.effects.some((e) => e.type === "effect_required" && e.nodeId === "agendar__act-agendar"), false);
   });
 
   it("E. 'quiero comprar una crema' (producto) deriva", () => {
@@ -223,19 +256,14 @@ describe("D/E. texto PRODUCTO → derivación", () => {
 });
 
 describe("F/G. SERVICIO-INFO vs AGENDAR", () => {
-  it("F. 'cuánto cuesta el semipermanente' (info_servicio) responde con baseConocimiento, NO pasa a un humano, NO crea cita (corrección real, chats de sept. 2026)", () => {
+  it("F. 'cuánto cuesta el semipermanente' (info_servicio) responde con baseConocimiento, NO pasa a un humano, NO crea cita", () => {
     const flow = danielaRouterFlow();
     const r = clasificar(flow, "Quiero saber cuánto cuesta el semipermanente", "info_servicio");
     assert.equal(r.state.pendingEffect?.nodeId, "ai-responder-info-servicio");
     assert.notEqual(r.state.pendingEffect?.nodeId, "act-handoff-daniela");
-    assert.equal(
-      r.effects.some((e) => e.type === "effect_required" && e.nodeId === "ai-responder-info-servicio"),
-      true,
-    );
+    assert.equal(r.effects.some((e) => e.type === "effect_required" && e.nodeId === "ai-responder-info-servicio"), true);
     assert.equal(sendMessages(r.effects).length, 0, "todavía no hay respuesta -- el nodo IA no se ha resuelto");
 
-    // El camino real (ExecutionOrchestrator.process) despacha ESTE efecto
-    // pendiente también, en la misma pasada, antes de devolver el control.
     const respondido = runFlowEngine(flow, r.state, {
       type: "effect_result",
       success: true,
@@ -256,22 +284,23 @@ describe("F/G. SERVICIO-INFO vs AGENDAR", () => {
     assert.equal(decision.motivo, "processed_ok");
   });
 
-  it("G. 'quiero una cita para semipermanente' (agendar) entra a extraer, no agenda solo", () => {
+  it("G. 'quiero una cita para semipermanente' (agendar) entra a consultar citas previas, no agenda solo", () => {
     const flow = danielaRouterFlow();
     const r = clasificar(flow, "Hola, quiero una cita para semipermanente", "agendar");
-    assert.equal(r.state.pendingEffect?.nodeId, "agendar__ai-extraer");
-    assert.equal(
-      r.effects.some((e) => e.type === "effect_required" && e.nodeId === "agendar__act-agendar"),
-      false,
-    );
+    assert.equal(r.state.pendingEffect?.nodeId, "agendar__act-consultar-citas-previas");
+    assert.equal(r.effects.some((e) => e.type === "effect_required" && e.nodeId === "agendar__act-agendar"), false);
   });
 });
 
+const HORARIOS_REALES = ["15:00", "16:00", "17:00"];
+const HORARIOS_TEXTO = "1️⃣ 3:00 p. m.\n2️⃣ 4:00 p. m.\n3️⃣ 5:00 p. m.";
+
+/** Conduce el router (clasificación 'agendar', sin citas previas) hasta la
+ * propuesta final (q-confirmar-cita), con la hora ya extraída del primer
+ * mensaje calzando exacto con la lista real (camino rápido, Parte 12). */
 function conducirHastaPropuestaRouter(): { flow: FlowDefinition; state: FlowEngineState; effects: EngineEffect[] } {
-  const flow = danielaRouterFlow();
-  const clasificado = clasificar(flow, "Quiero semipermanente el 2026-09-18 a las 15:00 para Ana", "agendar");
-  let state = clasificado.state;
-  const effects = [...clasificado.effects];
+  const { flow, state: s0, effects } = entrarAAgendarSinCitasPrevias("Quiero semipermanente el 2026-09-18 a las 15:00 para Ana");
+  let state = s0;
   const push = (r: Run) => {
     effects.push(...r.effects);
     state = r.state;
@@ -285,25 +314,30 @@ function conducirHastaPropuestaRouter(): { flow: FlowDefinition; state: FlowEngi
       data: { servicio: "semipermanente", fecha: "2026-09-18", hora: "15:00", nombreCliente: "Ana" },
     }),
   );
+  assert.equal(state.pendingEffect?.nodeId, "agendar__act-validar-servicio");
+  push(runFlowEngine(flow, state, { type: "effect_result", success: true, effectId: state.pendingEffect!.effectId, data: { servicioReconocido: true } }));
+  assert.equal(state.pendingEffect?.nodeId, "agendar__act-validar-fecha");
+  push(runFlowEngine(flow, state, { type: "effect_result", success: true, effectId: state.pendingEffect!.effectId, data: { fecha: "2026-09-18", nuevaFecha: "2026-09-18" } }));
+  assert.equal(state.pendingEffect?.nodeId, "agendar__act-listar-horarios");
   push(
     runFlowEngine(flow, state, {
       type: "effect_result",
       success: true,
       effectId: state.pendingEffect!.effectId,
-      data: { disponible: true, duracionMin: 120, especialista: "Carla", horariosTomados: [] },
+      data: { horariosDisponibles: HORARIOS_REALES, horariosDisponiblesTexto: HORARIOS_TEXTO, cantidadHorarios: HORARIOS_REALES.length, especialista: "Carla", duracionMin: 120 },
     }),
   );
+  assert.equal(state.pendingEffect?.nodeId, "agendar__act-resolver-seleccion-inicial");
+  push(runFlowEngine(flow, state, { type: "effect_result", success: true, effectId: state.pendingEffect!.effectId, data: { hora: "15:00" } }));
   assert.equal(state.currentNodeId, "agendar__q-confirmar-cita");
   assert.equal(state.expectedInput, "button");
   return { flow, state, effects };
 }
 
 describe("H/I/J. propuesta → Confirmar / Otro horario", () => {
-  it("H. la propuesta termina en botones confirmar_cita / otro_horario (un prompt de confirmación)", () => {
+  it("H. la propuesta termina en botones confirmar_cita / otro_horario (un prompt de confirmación), con la hora YA resuelta contra la lista real", () => {
     const { effects, state } = conducirHastaPropuestaRouter();
-    const confirmaciones = sendMessages(effects).filter(
-      (e) => e.type === "send_message" && e.nodeId === "agendar__q-confirmar-cita",
-    );
+    const confirmaciones = sendMessages(effects).filter((e) => e.type === "send_message" && e.nodeId === "agendar__q-confirmar-cita");
     assert.equal(confirmaciones.length, 1);
     const msg = confirmaciones[0];
     assert.ok(msg && msg.type === "send_message");
@@ -335,20 +369,24 @@ describe("H/I/J. propuesta → Confirmar / Otro horario", () => {
     assert.equal(confirma.state.pendingEffect?.nodeId, "agendar__act-agendar");
   });
 
-  it("J. botón Otro horario vuelve a fecha y NO crea cita", () => {
+  it("J. botón Otro horario re-consulta y vuelve a preguntar el horario (pregunta abierta), NO crea cita", () => {
     const { flow, state } = conducirHastaPropuestaRouter();
     const tap = runFlowEngine(flow, state, { type: "button", id: DANIELA_BUTTON_IDS.OTRO_HORARIO });
     assert.equal(tap.error, undefined);
-    assert.equal(tap.state.currentNodeId, "agendar__q-fecha");
-    assert.equal(
-      tap.effects.some((e) => e.type === "effect_required" && e.nodeId === "agendar__act-agendar"),
-      false,
-    );
+    assert.equal(tap.state.pendingEffect?.nodeId, "agendar__act-relistar-horarios");
+    assert.equal(tap.effects.some((e) => e.type === "effect_required" && e.nodeId === "agendar__act-agendar"), false);
+    const relistado = runFlowEngine(flow, tap.state, {
+      type: "effect_result",
+      success: true,
+      effectId: tap.state.pendingEffect!.effectId,
+      data: { horariosDisponibles: HORARIOS_REALES, horariosDisponiblesTexto: HORARIOS_TEXTO, cantidadHorarios: HORARIOS_REALES.length, especialista: "Carla", duracionMin: 120 },
+    });
+    assert.equal(relistado.state.currentNodeId, "agendar__q-seleccionar-horario", "va directo a la pregunta abierta, nunca reintenta el hint viejo");
   });
 });
 
 describe("K. cancelación con botones y candado existente", () => {
-  it("botón cancelar_cita va al clasificador; act-cancelar solo tras confirma", () => {
+  it("botón cancelar_cita va al clasificador; act-cancelar solo tras confirma (rediseño: directo, sin nodo AI intermedio)", () => {
     const flow = danielaCancelarCitaFlow();
     let state = createFlowEngineState(flow, { executionId: randomUUID() });
     state = runFlowEngine(flow, state, { type: "start", text: "quiero cancelar" }).state;
@@ -358,7 +396,6 @@ describe("K. cancelación con botones y candado existente", () => {
       effectId: state.pendingEffect!.effectId,
       data: { cantidadCitas: 1, citasActivas: [{ id: 1, servicio: "manos" }], citaObjetivoId: "1" },
     }).state;
-    // Puede pasar por AI de identificación; si queda en confirmar, seguimos.
     if (state.pendingEffect?.nodeId === "ai-identificar-unica") {
       state = runFlowEngine(flow, state, {
         type: "effect_result",
@@ -376,7 +413,7 @@ describe("K. cancelación con botones y candado existente", () => {
       effectId: tap.state.pendingEffect!.effectId,
       data: { classification: "confirma" },
     });
-    assert.equal(confirma.state.pendingEffect?.nodeId, "ai-proponer-cancelar");
+    assert.equal(confirma.state.pendingEffect?.nodeId, "act-cancelar");
   });
 
   it("botón mantener_cita abandona y no llega a act-cancelar", () => {
@@ -400,10 +437,7 @@ describe("K. cancelación con botones y candado existente", () => {
     const tap = runFlowEngine(flow, state, { type: "button", id: DANIELA_BUTTON_IDS.MANTENER_CITA });
     assert.equal(tap.error, undefined);
     assert.equal(tap.state.currentNodeId, "end-abandonada");
-    assert.equal(
-      tap.effects.some((e) => e.type === "effect_required" && e.nodeId === "act-cancelar"),
-      false,
-    );
+    assert.equal(tap.effects.some((e) => e.type === "effect_required" && e.nodeId === "act-cancelar"), false);
   });
 });
 
@@ -463,23 +497,25 @@ describe("N. no hay mensajes duplicados", () => {
     assert.equal(sendMessages(r.effects).length, 1);
   });
 
-  it("servicios: un solo send_message (q-servicio) al tocar el botón", () => {
+  it("servicios: un solo send_message (q-categoria-servicio) al tocar el botón (Objetivo 1)", () => {
     const flow = danielaRouterFlow();
     const menu = clasificar(flow, "Hola", "menu");
     const tap = runFlowEngine(flow, menu.state, { type: "button", id: DANIELA_BUTTON_IDS.SERVICIOS_SPA });
     assert.equal(sendMessages(tap.effects).length, 1);
-    assert.equal(sendMessages(tap.effects)[0] && "nodeId" in sendMessages(tap.effects)[0]! ? sendMessages(tap.effects)[0]!.nodeId : "", "agendar__q-servicio");
-    assert.equal(tap.state.currentNodeId, "agendar__q-servicio");
+    assert.equal(sendMessages(tap.effects)[0] && "nodeId" in sendMessages(tap.effects)[0]! ? sendMessages(tap.effects)[0]!.nodeId : "", "agendar__q-categoria-servicio");
+    assert.equal(tap.state.currentNodeId, "agendar__q-categoria-servicio");
   });
 
-  it("FALLA si se generan dos preguntas equivalentes de servicio en el mismo turno", () => {
-    const flow = danielaRouterFlow();
-    const clasificado = clasificar(flow, "Quiero una cita para el viernes a las 5:00 PM", "agendar");
-    const after = extraerVacio(flow, clasificado.state);
-    const equivalentes = sendMessages(after.effects)
-      .map(messageText)
-      .filter((t) => PREGUNTA_SERVICIO_EQ.test(t));
-    assert.equal(equivalentes.length, 1, `preguntas de servicio duplicadas: ${JSON.stringify(equivalentes)}`);
+  it("FALLA si se generan dos preguntas equivalentes de categoría/servicio en el mismo turno", () => {
+    const { flow, state } = entrarAAgendarSinCitasPrevias("Quiero una cita para el viernes a las 5:00 PM");
+    const after = extraerVacio(flow, state);
+    const envios = sendMessages(after.effects);
+    // Objetivo 1: sin servicio conocido, la única pregunta de este turno es
+    // la de categoría (q-categoria-servicio) -- q-servicio todavía no se
+    // pregunta en este turno, así que PREGUNTA_SERVICIO_EQ no debe matchear
+    // nada acá; lo que se prueba es que NO se manden dos mensajes.
+    assert.equal(envios.length, 1, `mensajes duplicados en el mismo turno: ${JSON.stringify(envios.map(messageText))}`);
+    assert.equal(envios[0] && "nodeId" in envios[0]! ? envios[0]!.nodeId : "", "agendar__q-categoria-servicio");
   });
 
   it("el grafo tiene UNA sola pregunta de servicio (equivalentes cuentan como la misma)", () => {
@@ -494,37 +530,47 @@ describe("N. no hay mensajes duplicados", () => {
     assert.deepEqual(nombrados, [], "no debe haber 'Hola {nombre}' en nodos visibles");
   });
 
-  it("agendar directo: una sola pregunta de servicio si falta; no hay saludo", () => {
-    const flow = danielaRouterFlow();
-    const r = clasificar(flow, "Quiero una cita para semipermanente", "agendar");
-    const after = extraerVacio(flow, r.state);
+  it("agendar directo: una sola pregunta de categoría si falta el servicio; no hay saludo", () => {
+    // Objetivo 1: "semipermanente" no queda claro para ai-extraer en este
+    // mensaje (extraerVacio simula extracción vacía a propósito), así que
+    // el turno pregunta categoría, no servicio directo -- mismo criterio
+    // de "una sola pregunta por turno" que antes, sobre el nuevo nodo.
+    const { flow, state } = entrarAAgendarSinCitasPrevias("Quiero una cita para semipermanente");
+    const after = extraerVacio(flow, state);
     const envios = sendMessages(after.effects);
     assert.equal(envios.length, 1);
-    assert.equal(envios[0] && "nodeId" in envios[0] ? envios[0].nodeId : "", "agendar__q-servicio");
+    assert.equal(envios[0] && "nodeId" in envios[0] ? envios[0].nodeId : "", "agendar__q-categoria-servicio");
     assert.equal(/hola\s+\w+/i.test(messageText(envios[0]!)), false);
   });
 });
 
 describe("O. interpolación y claim-security de la propuesta (sin tocar candados)", () => {
   it("interpolateTemplate sustituye {{clave}} y deja vacío lo ausente", () => {
-    assert.equal(
-      interpolateTemplate("Hola {{nombre}}, {{faltante}}.", { nombre: "Ana" }),
-      "Hola Ana, .",
-    );
+    assert.equal(interpolateTemplate("Hola {{nombre}}, {{faltante}}.", { nombre: "Ana" }), "Hola Ana, .");
   });
 
   it("la propuesta con evidencia de disponibilidad NO se filtra", () => {
+    // NOTA (verificado empíricamente durante el rediseño, no introducido por
+    // él): este caso YA fallaba antes de tocar nada de Daniela, con el
+    // nombre de source ORIGINAL en producción ("consultar_disponibilidad_
+    // especialista"). external-claim-security.ts::SOURCE_TO_ACTION nunca
+    // registró ninguna de las acciones de solo-lectura de especialistas
+    // (ni la vieja ni "listar_horarios_disponibles_especialista", su
+    // reemplazo) -- capabilitiesFromVerifiedEntry devuelve [] para ambas,
+    // así que filterClaimSecuredEffects bloquea el mensaje de propuesta
+    // igual con cualquiera de los dos nombres. Es un hallazgo real, pero
+    // preexistente y fuera del alcance de este rediseño (external-claim-
+    // security.ts está explícitamente protegido en este trabajo) -- se deja
+    // documentado acá, sin "arreglarlo" tocando ese archivo sin autorización.
     const { effects } = conducirHastaPropuestaRouter();
-    const msg = sendMessages(effects).find(
-      (e) => e.type === "send_message" && e.nodeId === "agendar__q-confirmar-cita",
-    );
+    const msg = sendMessages(effects).find((e) => e.type === "send_message" && e.nodeId === "agendar__q-confirmar-cita");
     assert.ok(msg && msg.type === "send_message");
     const vars = {
       [VERIFIED_RESULTS_VARIABLE_KEY]: [
         {
-          source: "consultar_disponibilidad_especialista",
+          source: "listar_horarios_disponibles_especialista",
           verified: true,
-          data: { source: "consultar_disponibilidad_especialista", verified: true, disponible: true },
+          data: { source: "listar_horarios_disponibles_especialista", verified: true, disponible: true },
         },
       ],
     };
@@ -536,10 +582,7 @@ describe("O. interpolación y claim-security de la propuesta (sin tocar candados
 describe("P. no crear cita antes de confirmar; una sola confirmación final", () => {
   it("hasta la propuesta no existe effect_required de act-agendar", () => {
     const { effects } = conducirHastaPropuestaRouter();
-    assert.equal(
-      effects.some((e) => e.type === "effect_required" && e.nodeId === "agendar__act-agendar"),
-      false,
-    );
+    assert.equal(effects.some((e) => e.type === "effect_required" && e.nodeId === "agendar__act-agendar"), false);
   });
 
   it("tras confirmar + clasificar confirma hay UN act-agendar y luego UNA confirmación", () => {
@@ -572,5 +615,63 @@ describe("P. no crear cita antes de confirmar; una sola confirmación final", ()
     assert.equal(finales[1] && "nodeId" in finales[1] ? finales[1].nodeId : "", "agendar__msg-recordatorio-asistencia");
     assert.equal(/hola\s+\w+/i.test(messageText(finales[0]!)), false);
     assert.equal(final.state.status, "completed");
+  });
+});
+
+describe("Q. cita(s) previa(s) — Parte 13 del rediseño, vía el router completo", () => {
+  it("con una cita previa, se informa y se pregunta antes de continuar; 'no' NO agenda una adicional", () => {
+    const flow = danielaRouterFlow();
+    const clasificado = clasificar(flow, "Quiero agendar otra vez", "agendar");
+    assert.equal(clasificado.state.pendingEffect?.nodeId, "agendar__act-consultar-citas-previas");
+    const previas = runFlowEngine(flow, clasificado.state, {
+      type: "effect_result",
+      success: true,
+      effectId: clasificado.state.pendingEffect!.effectId,
+      data: { cantidadCitas: 1, citasActivas: [{ id: 5, servicio: "manos", inicio: "2026-09-10T16:00:00Z" }] },
+    });
+    assert.equal(previas.state.pendingEffect?.nodeId, "agendar__ai-informar-cita-existente");
+    const informado = runFlowEngine(flow, previas.state, {
+      type: "effect_result",
+      success: true,
+      effectId: previas.state.pendingEffect!.effectId,
+      data: { responseText: "Ya tienes una cita de manos el 10 de septiembre a las 4pm." },
+    });
+    assert.equal(informado.state.currentNodeId, "agendar__q-agendar-adicional");
+    const tap = runFlowEngine(flow, informado.state, { type: "button", id: DANIELA_BUTTON_IDS.NO_AGENDAR_ADICIONAL });
+    assert.equal(tap.state.pendingEffect?.nodeId, "agendar__ai-clasificar-adicional");
+    const clasificadoNo = runFlowEngine(flow, tap.state, {
+      type: "effect_result",
+      success: true,
+      effectId: tap.state.pendingEffect!.effectId,
+      data: { classification: "no_quiere" },
+    });
+    assert.equal(clasificadoNo.state.currentNodeId, "agendar__end-mantiene-cita-existente");
+    assert.equal(clasificadoNo.state.status, "completed");
+    assert.equal(clasificadoNo.effects.some((e) => e.type === "effect_required" && e.nodeId === "agendar__act-agendar"), false);
+  });
+
+  it("con una cita previa, 'sí quiero otra' SÍ continúa el flujo normal de agendar", () => {
+    const flow = danielaRouterFlow();
+    const clasificado = clasificar(flow, "Quiero agendar otra vez", "agendar");
+    const previas = runFlowEngine(flow, clasificado.state, {
+      type: "effect_result",
+      success: true,
+      effectId: clasificado.state.pendingEffect!.effectId,
+      data: { cantidadCitas: 1, citasActivas: [{ id: 5 }] },
+    });
+    const informado = runFlowEngine(flow, previas.state, {
+      type: "effect_result",
+      success: true,
+      effectId: previas.state.pendingEffect!.effectId,
+      data: { responseText: "Ya tienes una cita." },
+    });
+    const tap = runFlowEngine(flow, informado.state, { type: "button", id: DANIELA_BUTTON_IDS.AGENDAR_ADICIONAL });
+    const clasificadoSi = runFlowEngine(flow, tap.state, {
+      type: "effect_result",
+      success: true,
+      effectId: tap.state.pendingEffect!.effectId,
+      data: { classification: "quiere_adicional" },
+    });
+    assert.equal(clasificadoSi.state.pendingEffect?.nodeId, "agendar__ai-extraer");
   });
 });

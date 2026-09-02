@@ -1,5 +1,7 @@
 /**
  * Regresión: mensaje estático de recordatorio tras act-agendar exitoso.
+ * Rediseño de agendamiento (autorizado) — helpers adaptados al nuevo camino
+ * (cita(s) previa(s) → servicio → fecha real → horarios reales → selección).
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -14,21 +16,17 @@ import { FLOW_EDGE_HANDLE } from "@/lib/flow/constants";
 import type { EngineEffect, FlowEngineState } from "@/lib/flow/engine-types";
 
 type RunResult = ReturnType<typeof runFlowEngine>;
+type AgendarFlow = ReturnType<typeof danielaAgendarCitaFlow>;
 
-function resolverEfecto(
-  flow: ReturnType<typeof danielaAgendarCitaFlow>,
-  state: FlowEngineState,
-  data: Record<string, unknown>,
-  success = true,
-): RunResult {
-  return runFlowEngine(flow, state, {
-    type: "effect_result",
-    success,
-    effectId: state.pendingEffect!.effectId,
-    data,
-  });
+const HORARIOS_REALES = ["16:00", "17:00", "18:00"];
+const HORARIOS_TEXTO = "1️⃣ 4:00 p. m.\n2️⃣ 5:00 p. m.\n3️⃣ 6:00 p. m.";
+
+function resolverEfecto(flow: AgendarFlow, state: FlowEngineState, data: Record<string, unknown>, success = true): RunResult {
+  return runFlowEngine(flow, state, { type: "effect_result", success, effectId: state.pendingEffect!.effectId, data });
 }
 
+/** Conduce start -> ... -> justo DESPUÉS de que act-agendar devolvió éxito
+ * (cita real creada), dejando el estado esperando el efecto de ai-confirmar. */
 function conducirHastaAgendarExitoso() {
   const flow = danielaAgendarCitaFlow();
   let state = createFlowEngineState(flow, {});
@@ -39,11 +37,33 @@ function conducirHastaAgendarExitoso() {
     return r.state;
   };
   state = push(runFlowEngine(flow, state, { type: "start", text: "Quiero semipermanente el 2026-09-02 a las 17:00 para Duvan" }));
+  assert.equal(state.pendingEffect?.nodeId, "act-consultar-citas-previas");
+  state = push(resolverEfecto(flow, state, { cantidadCitas: 0, citasActivas: [] }));
+  assert.equal(state.pendingEffect?.nodeId, "ai-extraer");
   state = push(resolverEfecto(flow, state, { servicio: "semipermanente", fecha: "2026-09-02", hora: "17:00", nombreCliente: "Duvan" }));
-  state = push(resolverEfecto(flow, state, { disponible: true, duracionMin: 120, especialista: "Carla", horariosTomados: [] }));
+  assert.equal(state.pendingEffect?.nodeId, "act-validar-servicio");
+  state = push(resolverEfecto(flow, state, { servicioReconocido: true }));
+  assert.equal(state.pendingEffect?.nodeId, "act-validar-fecha");
+  state = push(resolverEfecto(flow, state, { fecha: "2026-09-02", nuevaFecha: "2026-09-02" }));
+  assert.equal(state.pendingEffect?.nodeId, "act-listar-horarios");
+  state = push(
+    resolverEfecto(flow, state, {
+      horariosDisponibles: HORARIOS_REALES,
+      horariosDisponiblesTexto: HORARIOS_TEXTO,
+      cantidadHorarios: HORARIOS_REALES.length,
+      especialista: "Carla",
+      duracionMin: 120,
+    }),
+  );
+  assert.equal(state.pendingEffect?.nodeId, "act-resolver-seleccion-inicial");
+  state = push(resolverEfecto(flow, state, { hora: "17:00" })); // hint calza -> camino rápido
+  assert.equal(state.currentNodeId, "q-confirmar-cita");
   state = push(runFlowEngine(flow, state, { type: "text", text: "sí" }));
+  assert.equal(state.pendingEffect?.nodeId, "ai-clasificar-confirmacion");
   state = push(resolverEfecto(flow, state, { classification: "confirma" }));
+  assert.equal(state.pendingEffect?.nodeId, "act-agendar");
   state = push(resolverEfecto(flow, state, { citaId: 9001, status: "confirmada", especialista: "Carla" }));
+  assert.equal(state.pendingEffect?.nodeId, "ai-confirmar");
   return { flow, state, efectos };
 }
 
@@ -70,8 +90,18 @@ describe("Recordatorio post-confirmación de cita nueva", () => {
     let state = createFlowEngineState(flow, {});
     state.variables = { ...state.variables, hoy: "2026-08-30" };
     state = runFlowEngine(flow, state, { type: "start", text: "Quiero semipermanente el 2026-09-02 a las 17:00 para Duvan" }).state;
+    state = resolverEfecto(flow, state, { cantidadCitas: 0, citasActivas: [] }).state;
     state = resolverEfecto(flow, state, { servicio: "semipermanente", fecha: "2026-09-02", hora: "17:00", nombreCliente: "Duvan" }).state;
-    state = resolverEfecto(flow, state, { disponible: true, duracionMin: 120, especialista: "Carla", horariosTomados: [] }).state;
+    state = resolverEfecto(flow, state, { servicioReconocido: true }).state;
+    state = resolverEfecto(flow, state, { fecha: "2026-09-02", nuevaFecha: "2026-09-02" }).state;
+    state = resolverEfecto(flow, state, {
+      horariosDisponibles: HORARIOS_REALES,
+      horariosDisponiblesTexto: HORARIOS_TEXTO,
+      cantidadHorarios: HORARIOS_REALES.length,
+      especialista: "Carla",
+      duracionMin: 120,
+    }).state;
+    state = resolverEfecto(flow, state, { hora: "17:00" }).state;
     state = runFlowEngine(flow, state, { type: "text", text: "sí" }).state;
     state = resolverEfecto(flow, state, { classification: "confirma" }).state;
     const run = resolverEfecto(flow, state, { ocupado: true }, false);
@@ -89,8 +119,21 @@ describe("Recordatorio post-confirmación de cita nueva", () => {
       return r.state;
     };
     state = push(runFlowEngine(flow, state, { type: "start", text: "semipermanente 2026-09-02 17:00 Duvan" }));
+    state = push(resolverEfecto(flow, state, { cantidadCitas: 0, citasActivas: [] }));
     state = push(resolverEfecto(flow, state, { servicio: "semipermanente", fecha: "2026-09-02", hora: "17:00", nombreCliente: "Duvan" }));
-    state = push(resolverEfecto(flow, state, { disponible: true, duracionMin: 120, especialista: "Carla", horariosTomados: [] }));
+    state = push(resolverEfecto(flow, state, { servicioReconocido: true }));
+    state = push(resolverEfecto(flow, state, { fecha: "2026-09-02", nuevaFecha: "2026-09-02" }));
+    state = push(
+      resolverEfecto(flow, state, {
+        horariosDisponibles: HORARIOS_REALES,
+        horariosDisponiblesTexto: HORARIOS_TEXTO,
+        cantidadHorarios: HORARIOS_REALES.length,
+        especialista: "Carla",
+        duracionMin: 120,
+      }),
+    );
+    state = push(resolverEfecto(flow, state, { hora: "17:00" }));
+    assert.equal(state.currentNodeId, "q-confirmar-cita", "queda esperando confirmación, sin agendar todavía");
     assert.equal(
       efectos.some((e) => e.type === "send_message" && e.nodeId?.includes("recordatorio")),
       false,

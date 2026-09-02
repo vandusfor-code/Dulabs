@@ -33,6 +33,16 @@ import { executionRowToEngineState } from "@/lib/flow/flow-store-types";
 import type { FlowOrchestratorStore } from "@/lib/flow/orchestrator-types";
 import { registrarFalloIA } from "@/lib/alertas";
 import { resolverConfigAgente } from "@/lib/agentes";
+import { esInterrupcionEscapeHatch, MENSAJE_HABLAR_CON_DANI } from "@/lib/flow-escape-hatch";
+import { pareceLikelyPreguntaLateral } from "@/lib/flow-lateral-question";
+import { enviarWhatsApp } from "@/lib/whatsapp-outbound";
+import { activarPausaChat } from "@/lib/pausas-chat";
+import { parseFlowDefinition } from "@/lib/flow/schemas";
+import { interpolateTemplate } from "@/lib/flow/message-interpolation";
+import { ClaudeExecutor } from "@/lib/flow/executors/claude-executor";
+import { resolveAnthropicApiKeyFromEnv } from "@/lib/flow/claude/anthropic-client";
+import { validateTextClaimsAgainstVerified } from "@/lib/flow/external-claim-security";
+import type { EffectDispatchRequest } from "@/lib/flow/executor-types";
 
 /**
  * true si este mensaje debe atenderse por Flow. Delega en
@@ -162,7 +172,20 @@ export type MotivoIntentoFlow =
   // un end deliberadamente vacío). Distinto de "processed_ok" (que si
   // envió algo) y de "fallback_a_legacy" (que es un fallo real): acá Flow
   // no falló, decidió activamente que este mensaje no es para él.
-  | "sin_intencion_reconocida";
+  | "sin_intencion_reconocida"
+  // Rediseño de agendamiento (autorizado) — el texto entrante fue
+  // reconocido, de forma determinista y ANTES de tocar el engine, como una
+  // interrupción ("cancela", "espera", "quiero hablar con Dani"...) -- ver
+  // lib/flow-escape-hatch.ts. Nunca es un fallo: se transfiere a Daniela
+  // igual que el botón explícito del menú, sin pasar por el motor ni por
+  // ninguna clasificación de IA.
+  | "escape_hatch"
+  // Objetivo 2 (rediseño, autorizado) — el texto entrante fue identificado
+  // como una PREGUNTA LATERAL (precio, qué incluye, ubicación...) durante
+  // una pregunta abierta activa. Se respondió con información real
+  // (base_conocimiento) y se reenvió la MISMA pregunta pendiente, sin tocar
+  // el estado del engine -- ver intentarPreguntaLateral. Nunca es un fallo.
+  | "pregunta_lateral";
 
 export interface ResultadoIntentoFlow {
   /** true = Flow ya resolvió este mensaje (con éxito o sin que haga falta
@@ -332,6 +355,184 @@ async function marcarEjecucionRotaComoFallida(params: {
  *   pasar por acá -- fuera del alcance de este blocker, documentado como
  *   límite conocido.
  */
+/**
+ * Rediseño de agendamiento (autorizado) — escape hatch determinista.
+ *
+ * Se revisa ANTES de tocar el engine, y SOLO cuando la ejecución activa
+ * está esperando TEXTO libre (expected_input === "text" -- ver
+ * FlowExecutionRow). Ese alcance es deliberado, no un descuido: los nodos
+ * `buttons` de confirmación (q-confirmar-cita / q-confirmar-cancelacion /
+ * q-confirmar-reagendar) también aceptan texto libre como fallback, y ahí
+ * "cancela" es una respuesta de DOMINIO legítima (ya la interpreta
+ * ai-clasificar-confirmacion, con su propio default seguro a no_confirma)
+ * -- interceptarla ahí sería una regresión, no una mejora. Sobre una
+ * pregunta `question` (fecha/servicio/selección de horario) "cancela"
+ * nunca es una respuesta válida, así que ahí sí debe escapar siempre.
+ *
+ * Nunca corre para un botón tapeado (buttonId ya es un ID estable, no hay
+ * nada que interpretar) ni para el primer mensaje de una conversación
+ * (activeExecution null -- ese caso ya lo resuelve bien el clasificador de
+ * intención del router).
+ */
+async function intentarEscapeHatch(params: {
+  supabase: SupabaseClient;
+  cliente: ClienteConfig;
+  telefonoCliente: string;
+  texto: string;
+  buttonId?: string;
+  store: FlowOrchestratorStore;
+}): Promise<ResultadoIntentoFlow | null> {
+  if (params.buttonId || !params.texto || !esInterrupcionEscapeHatch(params.texto)) return null;
+
+  const activeExecution = await params.store.getActiveExecution(params.cliente.id_tenant, {
+    phoneNumberId: params.cliente.phone_number_id,
+    telefonoCliente: params.telefonoCliente,
+  });
+  if (!activeExecution || activeExecution.expected_input !== "text") return null;
+
+  await enviarWhatsApp(params.supabase, params.cliente, params.telefonoCliente, MENSAJE_HABLAR_CON_DANI);
+  await activarPausaChat(params.supabase, params.cliente.phone_number_id, params.telefonoCliente, 24 * 60 * 60 * 1000);
+  // La ejecución quedó a mitad de una pregunta que nunca se va a responder
+  // -- se cierra como "transferred" (mismo status ya modelado en
+  // FlowEngineStatus) para que el próximo mensaje de esta clienta, cuando
+  // la pausa termine, arranque una ejecución nueva y limpia en vez de
+  // reengancharse a esta pregunta vieja.
+  const state = executionRowToEngineState(activeExecution);
+  await params.store.saveExecutionState(
+    params.cliente.id_tenant,
+    activeExecution.id,
+    { ...state, status: "transferred" },
+    activeExecution.state_version,
+  ).catch(() => {
+    // Best-effort, mismo criterio que marcarEjecucionRotaComoFallida: un
+    // conflicto de concurrencia acá no debe tumbar la transferencia que ya
+    // se le mandó de verdad a la clienta.
+  });
+
+  return { handled: true, motivo: "escape_hatch" };
+}
+
+const RESPUESTA_SEGURA_SIN_INFORMACION =
+  "En este momento no tengo esa información disponible. Si quieres, puedo comunicarte con Dani.";
+
+/**
+ * Objetivo 2 (rediseño, autorizado) — preguntas laterales durante una
+ * pregunta abierta activa ("¿cuánto cuesta?" mientras se pide fecha/hora).
+ *
+ * Se revisa DESPUÉS del escape hatch (esInterrupcionEscapeHatch tiene
+ * prioridad: "cancela"/"hablar con Dani" nunca deben interpretarse como
+ * pregunta lateral) y ANTES de tocar el engine -- mismo patrón, mismo
+ * alcance (expected_input === "text").
+ *
+ * Alcance deliberado: SOLO nodos `question` (fecha/hora/servicio/selección
+ * de horario -- los casos SELECT_DATE/SELECT_TIME pedidos explícitamente).
+ * Un nodo `buttons` (ej. confirmación) queda fuera a propósito: reenviar
+ * botones reales de WhatsApp requeriría un mecanismo aparte no pedido acá;
+ * el motor sigue tratando el texto como respuesta normal ahí, sin cambios.
+ *
+ * NUNCA toca el estado del engine: no se llama a runFlowEngine, no se
+ * guarda ninguna ejecución. Solo lee (getActiveExecution/getFlowVersion,
+ * ambos de solo lectura) y manda 2 mensajes directos si de verdad es
+ * lateral. La lista de horarios (o cualquier otra variable) se re-renderiza
+ * con interpolateTemplate sobre las variables YA guardadas -- nunca se
+ * vuelve a consultar disponibilidad ni ninguna otra acción real.
+ *
+ * La IA solo INTERPRETA (¿es lateral? ¿qué responde, usando ÚNICAMENTE
+ * baseConocimiento?) -- nunca decide horarios/servicios/si una cita existe,
+ * eso sigue siendo responsabilidad exclusiva del Flow/backend en el resto
+ * del sistema, sin cambios.
+ */
+/** Inyectable solo para tests -- en producción siempre es dispatchAiReal (Claude real). */
+export type DispatchAiPreguntaLateral = (
+  req: EffectDispatchRequest,
+) => ReturnType<InstanceType<typeof ClaudeExecutor>["dispatch"]>;
+
+function dispatchAiReal(req: EffectDispatchRequest): ReturnType<InstanceType<typeof ClaudeExecutor>["dispatch"]> {
+  const executor = new ClaudeExecutor({ resolveApiKey: async () => resolveAnthropicApiKeyFromEnv() });
+  return executor.dispatch(req, { tenantId: req.tenantId, internal: true });
+}
+
+async function intentarPreguntaLateral(params: {
+  supabase: SupabaseClient;
+  cliente: ClienteConfig;
+  telefonoCliente: string;
+  texto: string;
+  buttonId?: string;
+  store: FlowOrchestratorStore;
+  /** Solo para tests -- inyecta el dispatch de IA sin tocar la red real. */
+  dispatchAiOverride?: DispatchAiPreguntaLateral;
+}): Promise<ResultadoIntentoFlow | null> {
+  if (params.buttonId || !params.texto || !pareceLikelyPreguntaLateral(params.texto)) return null;
+
+  const activeExecution = await params.store.getActiveExecution(params.cliente.id_tenant, {
+    phoneNumberId: params.cliente.phone_number_id,
+    telefonoCliente: params.telefonoCliente,
+  });
+  if (!activeExecution || activeExecution.expected_input !== "text" || !activeExecution.current_node_id) return null;
+
+  const versionRow = await params.store.getFlowVersion(params.cliente.id_tenant, activeExecution.flow_version_id);
+  if (!versionRow) return null;
+  const flow = parseFlowDefinition(versionRow.definition_json);
+  const nodoActual = flow.nodes.find((n) => n.id === activeExecution.current_node_id);
+  if (!nodoActual || nodoActual.type !== "question") return null;
+
+  // Re-renderiza la pregunta pendiente EXACTA con las variables YA guardadas
+  // (ej. horariosDisponiblesTexto) -- nunca se vuelve a consultar nada.
+  const textoPreguntaActual = interpolateTemplate(nodoActual.config.text, activeExecution.variables);
+
+  const dispatchAi = params.dispatchAiOverride ?? dispatchAiReal;
+  const dispatchReq: EffectDispatchRequest = {
+    effectId: randomUUID(),
+    executionRowId: activeExecution.id,
+    tenantId: params.cliente.id_tenant,
+    nodeId: "pregunta-lateral-off-graph",
+    attempt: 1,
+    kind: "ai",
+    payload: {
+      __userMessage: params.texto,
+      baseConocimiento: params.cliente.base_conocimiento ?? "",
+      textoPreguntaActual,
+    },
+    ai: {
+      mode: "extract",
+      instruction:
+        "La clienta está en medio de un flujo de agendamiento con un negocio real. El bot le acaba de preguntar, literalmente, lo que está en la variable textoPreguntaActual. Ella respondió lo que está en userMessage. Tu ÚNICA tarea es decidir si esa respuesta es un INTENTO RAZONABLE de contestar justo esa pregunta (una fecha, una hora, un servicio, una selección de horario como 'la segunda', un sí/no, etc.) o si es una PREGUNTA LATERAL sin relación directa con lo que se le preguntó (precio, qué incluye un servicio, ubicación, otro servicio distinto, horario de atención del negocio, etc.). " +
+        "Si es un intento razonable de responder la pregunta pendiente, devuelve 'esLateral'='no' y NO llenes 'respuestaLateral'. " +
+        "Si es una pregunta lateral, devuelve 'esLateral'='si' y en 'respuestaLateral' responde ÚNICAMENTE con información que esté LITERALMENTE en la variable baseConocimiento (precios, servicios, horarios de atención, ubicación) -- NUNCA inventes un precio, servicio, duración, promoción, ubicación, disponibilidad o especialista que no esté ahí. Si baseConocimiento no cubre lo que preguntó, escribe en 'respuestaLateral' EXACTAMENTE este texto, sin cambiar ni una palabra: " +
+        `"${RESPUESTA_SEGURA_SIN_INFORMACION}"`,
+      outputVariables: ["esLateral", "respuestaLateral"],
+    },
+  } as EffectDispatchRequest;
+
+  const result = await dispatchAi(dispatchReq);
+  // Si Claude no responde (error, budget, lo que sea), NO se bloquea nada:
+  // se deja que el mensaje siga su camino normal hacia el engine (que lo
+  // tratará como intento de respuesta -- puede fallar validación y volver a
+  // preguntar, pero nunca se pierde el turno de la clienta).
+  if (!result.success) return null;
+
+  const data = result.data as Record<string, unknown>;
+  if (data.esLateral !== "si") return null;
+
+  const respuestaCruda = typeof data.respuestaLateral === "string" ? data.respuestaLateral.trim() : "";
+
+  // Defensa en profundidad, SIN modificar external-claim-security: aunque
+  // la instrucción ya lo prohíbe, se revalida con el mismo mecanismo real
+  // de claim-security que protege el resto del flow. Acá no hay NINGUNA
+  // capability verificada (no corrió ninguna acción real de backend), así
+  // que cualquier afirmación externa (reserva, pago, cancelación...) que se
+  // haya colado en el texto queda bloqueada y se usa la respuesta segura.
+  const respuesta =
+    respuestaCruda && validateTextClaimsAgainstVerified(respuestaCruda, new Set(), { source: "ai_response" }).ok
+      ? respuestaCruda
+      : RESPUESTA_SEGURA_SIN_INFORMACION;
+
+  await enviarWhatsApp(params.supabase, params.cliente, params.telefonoCliente, respuesta);
+  await enviarWhatsApp(params.supabase, params.cliente, params.telefonoCliente, textoPreguntaActual);
+
+  return { handled: true, motivo: "pregunta_lateral" };
+}
+
 export async function atenderMensajeConFlowConFallback(params: {
   supabase: SupabaseClient;
   cliente: ClienteConfig & { flow_activo: true; flow_id: string };
@@ -340,7 +541,32 @@ export async function atenderMensajeConFlowConFallback(params: {
   wamid: string;
   buttonId?: string;
   sendMessageDepsOverride?: Partial<SendMessageDeps>;
+  /** Solo para tests — inyecta el dispatch de IA de preguntas laterales sin llamar a Claude real. */
+  dispatchAiPreguntaLateralOverride?: DispatchAiPreguntaLateral;
 }): Promise<ResultadoIntentoFlow> {
+  const store = createSupabaseFlowOrchestratorStore(params.supabase);
+
+  const escapado = await intentarEscapeHatch({
+    supabase: params.supabase,
+    cliente: params.cliente,
+    telefonoCliente: params.telefonoCliente,
+    texto: params.texto,
+    buttonId: params.buttonId,
+    store,
+  });
+  if (escapado) return escapado;
+
+  const lateral = await intentarPreguntaLateral({
+    supabase: params.supabase,
+    cliente: params.cliente,
+    telefonoCliente: params.telefonoCliente,
+    texto: params.texto,
+    buttonId: params.buttonId,
+    store,
+    dispatchAiOverride: params.dispatchAiPreguntaLateralOverride,
+  });
+  if (lateral) return lateral;
+
   let result: OrchestratorResult;
   try {
     result = await atenderMensajeConFlow(params);
@@ -388,7 +614,6 @@ export async function atenderMensajeConFlowConFallback(params: {
   });
 
   if (decision.requiereMarcarFallida && result.executionRowId) {
-    const store = createSupabaseFlowOrchestratorStore(params.supabase);
     await marcarEjecucionRotaComoFallida({
       store,
       tenantId: params.cliente.id_tenant,

@@ -17,6 +17,7 @@ import {
   cancelarCitaEspecialista,
   consultarCitasActivasEspecialista,
   moverCitaEspecialista,
+  listarHorariosDisponiblesEspecialista,
 } from "@/lib/especialistas-flow-adaptador";
 import { ExecutorRegistry } from "@/lib/flow/executor-registry";
 import { EffectExecutorFramework } from "@/lib/flow/executor-framework";
@@ -68,6 +69,7 @@ export function createDefaultExecutorRegistry(
     cancelarCitaEspecialista,
     consultarCitasActivasEspecialista,
     moverCitaEspecialista,
+    listarHorariosDisponiblesEspecialista,
     ...overrides?.internalActionDeps,
   };
   const sendMessageDeps: SendMessageDeps = { supabase, ...overrides?.sendMessageDeps };

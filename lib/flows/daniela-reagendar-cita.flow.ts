@@ -114,27 +114,45 @@ export function danielaReagendarCitaFlow(): FlowDefinition {
       },
 
       // Punto de convergencia: ya hay una cita objetivo identificada.
+      //
+      // Rediseño de agendamiento (autorizado) — misma disciplina que
+      // daniela-agendar-cita.flow.ts: la fecha en texto libre SIEMPRE pasa
+      // por el parser determinista (act-validar-nueva-fecha) antes de tocar
+      // disponibilidad; la hora usa la validación determinista nativa
+      // hora_colombia (mismo parseHoraColombia que ya usaba el q-hora
+      // original de agendar) en vez de aceptar texto libre sin validar
+      // (hallazgo 🟠 de la auditoría -- reagendar no tenía NINGUNA
+      // protección, ni siquiera la parcial que agendar sí tenía).
       {
         id: "q-nueva-fecha",
         type: "question",
-        config: { text: "¿Para qué día te gustaría moverla? (AAAA-MM-DD)", variableKey: "nuevaFechaTexto", required: true, validation: { kind: "text" } },
+        config: { text: "¿Para qué día te gustaría moverla? 📅 (por ejemplo: \"el sábado\", \"mañana\" o \"4 de septiembre\")", variableKey: "nuevaFechaTexto", required: true, validation: { kind: "text" } },
+      },
+      {
+        id: "act-validar-nueva-fecha",
+        type: "action",
+        config: { actionType: "validar_fecha_especialista" },
+      },
+      {
+        id: "msg-nueva-fecha-invalida",
+        type: "message",
+        config: {
+          text: "No logré identificar bien esa fecha 😅 ¿Me la puedes decir de otra forma? (por ejemplo: \"el sábado\", \"mañana\" o \"4 de septiembre\")",
+          messageRole: "informational",
+        },
       },
       {
         id: "q-nueva-hora",
         type: "question",
-        config: { text: "¿A qué hora te queda mejor? (HH:MM)", variableKey: "nuevaHoraTexto", required: true, validation: { kind: "text" } },
+        config: { text: "¿A qué hora te queda mejor? 🕓", variableKey: "nuevaHoraTexto", required: true, validation: { kind: "hora_colombia" } },
       },
 
-      {
-        id: "ai-proponer-consultar",
-        type: "ai",
-        config: {
-          instruction:
-            "Vas a consultar disponibilidad real para el mismo servicio de la cita (citaObjetivoServicio) en la nueva fecha que dio la clienta (nuevaFechaTexto). Propone la acción consultar_disponibilidad_especialista con esos datos. No afirmes nada sobre disponibilidad tú misma -- eso lo decide la herramienta.",
-          mode: "propose_action",
-          allowedTools: ["consultar_disponibilidad_especialista"],
-        },
-      },
+      // Rediseño de agendamiento (autorizado) — acción DIRECTA, sin nodo AI
+      // intermedio. ai-proponer-consultar (propose_action) era passthrough
+      // puro (solo copiaba citaObjetivoServicio/nuevaFechaTexto a
+      // servicio/fecha, sin ninguna interpretación real). El executor ahora
+      // acepta esos nombres directo (ver internal-action-executor.ts::
+      // consultarDisponibilidadEspecialistaAction).
       {
         id: "act-consultar-disponibilidad",
         type: "action",
@@ -185,20 +203,17 @@ export function danielaReagendarCitaFlow(): FlowDefinition {
         config: { text: "Perfecto, entonces dejo todo como estaba 💛", messageRole: "informational" },
       },
 
-      {
-        id: "ai-proponer-mover",
-        type: "ai",
-        config: {
-          instruction:
-            "La clienta YA confirmó que quiere mover la cita identificada en citaObjetivoId a la fecha nuevaFechaTexto y hora nuevaHoraTexto. Propone la acción mover_cita_especialista con citaId=citaObjetivoId, nuevaFecha=nuevaFechaTexto, nuevaHora=nuevaHoraTexto y confirmado=true. NUNCA le digas a la clienta que su cita quedó movida antes de que esta acción corra y tengas su resultado real.",
-          mode: "propose_action",
-          allowedTools: ["mover_cita_especialista"],
-        },
-      },
+      // Rediseño de agendamiento (autorizado) — acción DIRECTA, sin nodo AI
+      // intermedio. ai-proponer-mover (propose_action) era passthrough puro
+      // (solo copiaba citaObjetivoId/nuevaFechaTexto/nuevaHoraTexto a
+      // citaId/nuevaFecha/nuevaHora, sin ninguna interpretación real) --
+      // mismo criterio ya aplicado en agendar/cancelar. confirmado="true"
+      // fijo, solo alcanzable tras class:confirma, revalidado además por el
+      // adaptador (defense-in-depth, igual que en agendar/cancelar).
       {
         id: "act-mover-cita",
         type: "action",
-        config: { actionType: "mover_cita_especialista" },
+        config: { actionType: "mover_cita_especialista", params: { confirmado: "true" } },
       },
       {
         id: "msg-no-se-pudo-mover",
@@ -252,9 +267,11 @@ export function danielaReagendarCitaFlow(): FlowDefinition {
       { id: "e-seleccion-no-clara-end", source: "msg-seleccion-no-clara", target: "end-seleccion-no-clara" },
       { id: "e-seleccion-clara-a-fecha", source: "cond-seleccion-clara", target: "q-nueva-fecha", sourceHandle: FLOW_EDGE_HANDLE.conditionTrue },
 
-      { id: "e-fecha-a-hora", source: "q-nueva-fecha", target: "q-nueva-hora" },
-      { id: "e-hora-a-consultar-ai", source: "q-nueva-hora", target: "ai-proponer-consultar" },
-      { id: "e-consultar-ai-a-accion", source: "ai-proponer-consultar", target: "act-consultar-disponibilidad", sourceHandle: FLOW_EDGE_HANDLE.aiSuccess },
+      { id: "e-fecha-a-validar", source: "q-nueva-fecha", target: "act-validar-nueva-fecha" },
+      { id: "e-validar-fecha-ok", source: "act-validar-nueva-fecha", target: "q-nueva-hora", sourceHandle: FLOW_EDGE_HANDLE.aiSuccess },
+      { id: "e-validar-fecha-fail", source: "act-validar-nueva-fecha", target: "msg-nueva-fecha-invalida", sourceHandle: FLOW_EDGE_HANDLE.aiFailure },
+      { id: "e-fecha-invalida-reintentar", source: "msg-nueva-fecha-invalida", target: "q-nueva-fecha" },
+      { id: "e-hora-a-consultar", source: "q-nueva-hora", target: "act-consultar-disponibilidad" },
       { id: "e-consultar-a-cond", source: "act-consultar-disponibilidad", target: "cond-disponible", sourceHandle: FLOW_EDGE_HANDLE.aiSuccess },
 
       { id: "e-sin-disponibilidad", source: "cond-disponible", target: "msg-sin-disponibilidad", sourceHandle: FLOW_EDGE_HANDLE.conditionFalse },
@@ -268,8 +285,7 @@ export function danielaReagendarCitaFlow(): FlowDefinition {
       { id: "e-no-confirma-default", source: "ai-clasificar-confirmacion", target: "msg-reagendamiento-abandonado", sourceHandle: FLOW_EDGE_HANDLE.aiDefault },
       { id: "e-abandonado-end", source: "msg-reagendamiento-abandonado", target: "end-abandonado" },
 
-      { id: "e-confirma", source: "ai-clasificar-confirmacion", target: "ai-proponer-mover", sourceHandle: FLOW_EDGE_HANDLE.aiClass("confirma") },
-      { id: "e-proponer-a-mover", source: "ai-proponer-mover", target: "act-mover-cita", sourceHandle: FLOW_EDGE_HANDLE.aiSuccess },
+      { id: "e-confirma", source: "ai-clasificar-confirmacion", target: "act-mover-cita", sourceHandle: FLOW_EDGE_HANDLE.aiClass("confirma") },
 
       { id: "e-mover-exito", source: "act-mover-cita", target: "ai-confirmar-reagendamiento", sourceHandle: FLOW_EDGE_HANDLE.aiSuccess },
       { id: "e-mover-exito-end", source: "ai-confirmar-reagendamiento", target: "end-reagendado", sourceHandle: FLOW_EDGE_HANDLE.aiSuccess },
@@ -285,8 +301,10 @@ export function danielaReagendarCitaFlow(): FlowDefinition {
       { key: "citaObjetivoDescripcion", label: "Descripción de la cita a reagendar", type: "string" },
       { key: "citaObjetivoServicio", label: "Servicio real de la cita a reagendar", type: "string" },
       { key: "seleccionCitaTexto", label: "Respuesta de la clienta sobre cuál cita", type: "string" },
-      { key: "nuevaFechaTexto", label: "Nueva fecha solicitada", type: "string" },
-      { key: "nuevaHoraTexto", label: "Nueva hora solicitada", type: "string" },
+      { key: "nuevaFechaTexto", label: "Nueva fecha solicitada (texto crudo de la clienta)", type: "string" },
+      { key: "nuevaFecha", label: "Nueva fecha validada (YYYY-MM-DD real)", type: "string" },
+      { key: "hoy", label: "Fecha de hoy (Colombia), usada por act-validar-nueva-fecha", type: "string" },
+      { key: "nuevaHoraTexto", label: "Nueva hora solicitada (ya validada, hora_colombia)", type: "string" },
       { key: "disponible", label: "¿Hay disponibilidad en la nueva fecha?", type: "boolean" },
       { key: "respuestaConfirmacionTexto", label: "Respuesta de la clienta a la confirmación", type: "string" },
       { key: "citaId", label: "Id real de la cita movida", type: "string" },

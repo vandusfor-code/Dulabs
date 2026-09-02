@@ -142,20 +142,20 @@ export function danielaCancelarCitaFlow(): FlowDefinition {
         config: { text: "Perfecto, no cancelo nada entonces 💛 Todo sigue como estaba.", messageRole: "informational" },
       },
 
-      {
-        id: "ai-proponer-cancelar",
-        type: "ai",
-        config: {
-          instruction:
-            "La clienta YA confirmó que quiere cancelar la cita identificada en citaObjetivoId. Propone la acción cancelar_cita_especialista con citaId=citaObjetivoId y confirmado=true. NUNCA le digas a la clienta que su cita quedó cancelada antes de que esta acción corra y tengas su resultado real.",
-          mode: "propose_action",
-          allowedTools: ["cancelar_cita_especialista"],
-        },
-      },
+      // Rediseño de agendamiento (autorizado) — acción DIRECTA, sin nodo AI
+      // intermedio. ai-proponer-cancelar (propose_action) era passthrough
+      // puro (solo copiaba citaObjetivoId -> citaId, sin ninguna
+      // interpretación real): mismo criterio ya aplicado en
+      // daniela-agendar-cita.flow.ts tras el incidente real de presupuesto
+      // de IA (ver ese archivo para el detalle del bug). El executor ahora
+      // acepta `citaObjetivoId` directo (ver internal-action-executor.ts::
+      // cancelarCitaEspecialistaAction), sin perder el candado real de
+      // `confirmado` -- fijo en "true" acá, solo alcanzable tras
+      // class:confirma, revalidado además por el adaptador.
       {
         id: "act-cancelar",
         type: "action",
-        config: { actionType: "cancelar_cita_especialista" },
+        config: { actionType: "cancelar_cita_especialista", params: { confirmado: "true" } },
       },
       {
         id: "msg-no-se-pudo-cancelar",
@@ -222,8 +222,7 @@ export function danielaCancelarCitaFlow(): FlowDefinition {
       { id: "e-no-confirma-default", source: "ai-clasificar-confirmacion", target: "msg-cancelacion-abandonada", sourceHandle: FLOW_EDGE_HANDLE.aiDefault },
       { id: "e-abandonada-end", source: "msg-cancelacion-abandonada", target: "end-abandonada" },
 
-      { id: "e-confirma", source: "ai-clasificar-confirmacion", target: "ai-proponer-cancelar", sourceHandle: FLOW_EDGE_HANDLE.aiClass("confirma") },
-      { id: "e-proponer-a-cancelar", source: "ai-proponer-cancelar", target: "act-cancelar", sourceHandle: FLOW_EDGE_HANDLE.aiSuccess },
+      { id: "e-confirma", source: "ai-clasificar-confirmacion", target: "act-cancelar", sourceHandle: FLOW_EDGE_HANDLE.aiClass("confirma") },
 
       { id: "e-cancelar-exito", source: "act-cancelar", target: "ai-confirmar-cancelacion", sourceHandle: FLOW_EDGE_HANDLE.aiSuccess },
       { id: "e-cancelar-exito-end", source: "ai-confirmar-cancelacion", target: "end-cancelada", sourceHandle: FLOW_EDGE_HANDLE.aiSuccess },

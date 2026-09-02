@@ -25,6 +25,8 @@ import {
   cancelarCitaEspecialista,
   consultarCitasActivasEspecialista,
   moverCitaEspecialista,
+  validarServicioEspecialista,
+  listarHorariosDisponiblesEspecialista,
 } from "@/lib/especialistas-flow-adaptador";
 import { crearCitaEspecialista, cancelarCita, confirmarCita } from "@/lib/especialistas";
 import { InternalActionExecutor, type InternalActionDeps } from "@/lib/flow/executors/internal-action-executor";
@@ -199,6 +201,77 @@ describe("Fase 0 — especialistas-flow-adaptador (integración real, tenant de 
       assert.equal(r.especialista.nombre, "Carla");
       assert.equal(r.estado, "confirmada"); // Carla no requiere aprobación
     }
+  });
+
+  // ------------------------------------------------------------------------
+  // Objetivo 1 (rediseño de categorías, autorizado) — validarServicioEspecialista
+  // con categoriaEsperada, contra datos reales (Nicol/pestañas, Carla+Daniela/
+  // manos, Kelly/pies) sembrados arriba -- ningún dato inventado.
+  // ------------------------------------------------------------------------
+
+  it("Objetivo 1, caso 2 — categoría real 'manos' acepta un servicio real de manos", async () => {
+    const r = await validarServicioEspecialista(supabase, {
+      phoneNumberId: PHONE_NUMBER_ID,
+      servicio: "semipermanente en manos",
+      categoriaEsperada: "manos",
+    });
+    assert.equal(r.ok, true);
+  });
+
+  it("Objetivo 1, caso 3 — otra categoría real ('pies') acepta sus propios servicios", async () => {
+    const r = await validarServicioEspecialista(supabase, {
+      phoneNumberId: PHONE_NUMBER_ID,
+      servicio: "semipermanente en pies",
+      categoriaEsperada: "pies",
+    });
+    assert.equal(r.ok, true);
+  });
+
+  it("Objetivo 1, caso 3b — categoría real 'pestañas' (especialista exclusiva Nicol) acepta su propio servicio", async () => {
+    const r = await validarServicioEspecialista(supabase, {
+      phoneNumberId: PHONE_NUMBER_ID,
+      servicio: "pestañas volumen ruso",
+      categoriaEsperada: "pestanas",
+    });
+    assert.equal(r.ok, true);
+  });
+
+  it("Objetivo 1, caso 4 — servicio REAL pero de OTRA categoría se rechaza (categoria_no_coincide), nunca 'servicio_no_manejado'", async () => {
+    const r = await validarServicioEspecialista(supabase, {
+      phoneNumberId: PHONE_NUMBER_ID,
+      servicio: "pestañas volumen ruso",
+      categoriaEsperada: "manos",
+    });
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.equal(r.motivo, "categoria_no_coincide", "es un servicio real, solo de otra categoría -- no es que no lo manejemos");
+  });
+
+  it("Objetivo 1, caso 4b — mismo rechazo en la dirección inversa (pies pedido bajo categoría manos)", async () => {
+    const r = await validarServicioEspecialista(supabase, {
+      phoneNumberId: PHONE_NUMBER_ID,
+      servicio: "semipermanente en pies",
+      categoriaEsperada: "manos",
+    });
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.equal(r.motivo, "categoria_no_coincide");
+  });
+
+  it("Objetivo 1 — servicio que de verdad no existe en ningún lado sigue rechazado como 'servicio_no_manejado', incluso con categoría esperada", async () => {
+    const r = await validarServicioEspecialista(supabase, {
+      phoneNumberId: PHONE_NUMBER_ID,
+      servicio: "un masaje",
+      categoriaEsperada: "manos",
+    });
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.equal(r.motivo, "servicio_no_manejado");
+  });
+
+  it("Objetivo 1 — sin categoriaEsperada (compatibilidad), valida exactamente igual que antes del rediseño", async () => {
+    const r = await validarServicioEspecialista(supabase, {
+      phoneNumberId: PHONE_NUMBER_ID,
+      servicio: "pestañas volumen ruso",
+    });
+    assert.equal(r.ok, true);
   });
 
   it("3. horario ocupado — segunda solicitud al MISMO especialista/slot → ocupado + horariosTomados reales", async () => {
@@ -437,6 +510,8 @@ describe("Fase 0 — especialistas-flow-adaptador (integración real, tenant de 
       cancelarCitaEspecialista,
       consultarCitasActivasEspecialista,
       moverCitaEspecialista,
+      validarServicioEspecialista,
+      listarHorariosDisponiblesEspecialista,
     };
     const executor = new InternalActionExecutor(deps);
     const result = await executor.dispatch(
@@ -492,6 +567,8 @@ describe("Fase 0 — especialistas-flow-adaptador (integración real, tenant de 
       cancelarCitaEspecialista,
       consultarCitasActivasEspecialista,
       moverCitaEspecialista,
+      validarServicioEspecialista,
+      listarHorariosDisponiblesEspecialista,
     };
     const executor = new InternalActionExecutor(deps);
     const telefonoCliente = "573001110011-sin-confirmar";
@@ -543,6 +620,8 @@ describe("Fase 0 — especialistas-flow-adaptador (integración real, tenant de 
       cancelarCitaEspecialista,
       consultarCitasActivasEspecialista,
       moverCitaEspecialista,
+      validarServicioEspecialista,
+      listarHorariosDisponiblesEspecialista,
     };
     const executor = new InternalActionExecutor(deps);
     const result = await executor.dispatch(

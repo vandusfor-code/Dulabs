@@ -43,12 +43,48 @@ describe("Fase 1 — Flow de reagendamiento de Daniela pasa el validador real de
     assert.ok(nodeIds.indexOf("act-consultar-disponibilidad") < nodeIds.indexOf("act-mover-cita"));
   });
 
-  it("la propuesta de mover SOLO es alcanzable desde la rama 'confirma' de la clasificación", () => {
+  it("act-mover-cita SOLO es alcanzable desde la rama 'confirma' de la clasificación (rediseño: sin nodo AI intermedio)", () => {
     const flow = danielaReagendarCitaFlow();
-    const haciaProponer = flow.edges.filter((e) => e.target === "ai-proponer-mover");
-    assert.equal(haciaProponer.length, 1);
-    assert.equal(haciaProponer[0]?.source, "ai-clasificar-confirmacion");
-    assert.equal(haciaProponer[0]?.sourceHandle, "class:confirma");
+    const haciaMover = flow.edges.filter((e) => e.target === "act-mover-cita");
+    assert.equal(haciaMover.length, 1);
+    assert.equal(haciaMover[0]?.source, "ai-clasificar-confirmacion");
+    assert.equal(haciaMover[0]?.sourceHandle, "class:confirma");
+  });
+
+  it("act-mover-cita tiene confirmado=\"true\" fijo (defense-in-depth)", () => {
+    const flow = danielaReagendarCitaFlow();
+    const nodo = flow.nodes.find((n) => n.id === "act-mover-cita");
+    assert.equal(nodo?.type, "action");
+    if (nodo?.type === "action" && "params" in nodo.config) {
+      assert.equal(nodo.config.params?.confirmado, "true");
+    } else {
+      assert.fail("act-mover-cita debe tener params.confirmado fijo");
+    }
+  });
+
+  it("ya NO existe ningún nodo propose_action (ai-proponer-consultar/ai-proponer-mover eliminados -- Parte 19 del rediseño)", () => {
+    const flow = danielaReagendarCitaFlow();
+    const proposeActionNodes = flow.nodes.filter((n) => n.type === "ai" && n.config.mode === "propose_action");
+    assert.equal(proposeActionNodes.length, 0);
+  });
+
+  it("q-nueva-fecha SIEMPRE pasa por act-validar-nueva-fecha (parser determinista) antes de consultar disponibilidad", () => {
+    const flow = danielaReagendarCitaFlow();
+    const desdeFecha = flow.edges.find((e) => e.source === "q-nueva-fecha");
+    assert.equal(desdeFecha?.target, "act-validar-nueva-fecha");
+    const exito = flow.edges.find((e) => e.source === "act-validar-nueva-fecha" && e.sourceHandle === "success");
+    assert.equal(exito?.target, "q-nueva-hora");
+    const fallo = flow.edges.find((e) => e.source === "act-validar-nueva-fecha" && e.sourceHandle === "failure");
+    assert.equal(fallo?.target, "msg-nueva-fecha-invalida");
+  });
+
+  it("q-nueva-hora usa validación determinista hora_colombia, no texto libre sin validar", () => {
+    const flow = danielaReagendarCitaFlow();
+    const nodo = flow.nodes.find((n) => n.id === "q-nueva-hora");
+    assert.equal(nodo?.type, "question");
+    if (nodo?.type === "question") {
+      assert.equal(nodo.config.validation.kind, "hora_colombia");
+    }
   });
 
   it("ninguna rama de 'no confirma', 'sin disponibilidad' o 'selección no clara' llega a act-mover-cita", () => {

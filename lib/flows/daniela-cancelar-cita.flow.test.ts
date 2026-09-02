@@ -37,12 +37,29 @@ describe("Fase 1 — Flow de cancelación de Daniela pasa el validador real de p
     assert.ok(nodeIds.indexOf("act-consultar-citas") < nodeIds.indexOf("act-cancelar"));
   });
 
-  it("la propuesta de cancelar SOLO es alcanzable desde la rama 'confirma' de la clasificación -- nunca desde 'no_confirma' ni desde default", () => {
+  it("act-cancelar SOLO es alcanzable desde la rama 'confirma' de la clasificación -- nunca desde 'no_confirma' ni desde default (rediseño: sin nodo AI intermedio)", () => {
     const flow = danielaCancelarCitaFlow();
-    const haciaProponer = flow.edges.filter((e) => e.target === "ai-proponer-cancelar");
-    assert.equal(haciaProponer.length, 1);
-    assert.equal(haciaProponer[0]?.source, "ai-clasificar-confirmacion");
-    assert.equal(haciaProponer[0]?.sourceHandle, "class:confirma");
+    const haciaCancelar = flow.edges.filter((e) => e.target === "act-cancelar");
+    assert.equal(haciaCancelar.length, 1);
+    assert.equal(haciaCancelar[0]?.source, "ai-clasificar-confirmacion");
+    assert.equal(haciaCancelar[0]?.sourceHandle, "class:confirma");
+  });
+
+  it("act-cancelar tiene confirmado=\"true\" fijo en el nodo (defense-in-depth, revalidado además por el adaptador)", () => {
+    const flow = danielaCancelarCitaFlow();
+    const nodo = flow.nodes.find((n) => n.id === "act-cancelar");
+    assert.equal(nodo?.type, "action");
+    if (nodo?.type === "action" && "params" in nodo.config) {
+      assert.equal(nodo.config.params?.confirmado, "true");
+    } else {
+      assert.fail("act-cancelar debe tener params.confirmado fijo");
+    }
+  });
+
+  it("ya NO existe ningún nodo propose_action (ai-proponer-cancelar eliminado -- Parte 19 del rediseño)", () => {
+    const flow = danielaCancelarCitaFlow();
+    const proposeActionNodes = flow.nodes.filter((n) => n.type === "ai" && n.config.mode === "propose_action");
+    assert.equal(proposeActionNodes.length, 0);
   });
 
   it("ninguna rama de 'no confirma' o 'selección no clara' llega a act-cancelar", () => {
