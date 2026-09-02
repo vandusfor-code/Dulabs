@@ -124,6 +124,37 @@ describe("Claude Executor — Fase 4.2 modes", () => {
     assert.ok(result.data?.responseText === undefined, "jamás debe llegar responseText al engine para classify");
   });
 
+  it("2c. classify (Fix C, bug real de Daniela) -- el tool_use real que recibe Claude trae enum con las classifications del nodo, no un string libre", async () => {
+    let capturedParams: { tools?: { input_schema?: { properties?: { classification?: unknown } } }[] } | undefined;
+    const client: AnthropicMessagesClient = {
+      async createMessage(params) {
+        capturedParams = params as typeof capturedParams;
+        return {
+          content: [{ type: "tool_use", id: "tu-1", name: "structured_ai_output", input: { mode: "classify", classification: "agendar" } }],
+          usage: { input_tokens: 10, output_tokens: 5 },
+          model: "claude-sonnet-5",
+        };
+      },
+    };
+    const executor = claudeWithMock(client);
+    const result = await executor.dispatch(
+      baseAiRequest({
+        ai: {
+          instruction: "Clasifica",
+          mode: "classify",
+          classifications: ["agendar", "cancelar", "otro"],
+        },
+      }),
+      { tenantId: TENANT_A, internal: true },
+    );
+    assert.equal(result.success, true);
+    assert.deepEqual(
+      capturedParams?.tools?.[0]?.input_schema?.properties?.classification,
+      { type: "string", enum: ["agendar", "cancelar", "otro"] },
+      "antes del Fix C esto era { type: 'string' } sin enum -- Claude podía devolver cualquier variante y el engine caía siempre al edge default (handoff en el router real de Daniela)",
+    );
+  });
+
   it("3. extract", async () => {
     const executor = claudeWithMock(
       mockAnthropicClient({ mode: "extract", extracted: { nombre: "Ana", empresa: "ACME" } }),

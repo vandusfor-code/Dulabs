@@ -55,6 +55,14 @@ export interface NormalizedFlowEvent {
   payload: Record<string, unknown>;
   engineEvent: FlowEngineEvent;
   receivedAt: string;
+  /**
+   * dulabs_clientes_config.base_conocimiento del tenant (texto libre real:
+   * precios, horarios, servicios) -- opcional, solo se siembra en
+   * variables.baseConocimiento (mismo patrón que 'hoy') si CREATE la
+   * ejecución nueva. Un flow que no la referencia no cambia de
+   * comportamiento. Nunca reemplaza una consulta real de disponibilidad/citas.
+   */
+  baseConocimiento?: string;
 }
 
 // ---------------------------------------------------------------------------

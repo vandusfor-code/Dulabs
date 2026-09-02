@@ -58,7 +58,20 @@ export const aiOutputSchema = z.discriminatedUnion("mode", [
 
 export type ParsedAIOutput = z.infer<typeof aiOutputSchema>;
 
-export function buildAiOutputToolSchema(mode: ClaudeAiMode): Record<string, unknown> {
+/**
+ * Bug raíz real (Daniela, sept. 2026) — el schema de "classify" aceptaba
+ * `classification` como string libre, sin restringirlo a las categorías
+ * reales del nodo (node.config.classifications). Claude, guiado solo por el
+ * texto de la instrucción, a veces devolvía una variante que no calzaba
+ * carácter por carácter con ninguna (mayúscula, sinónimo, espacio) -- y
+ * flow-engine.ts hace match EXACTO de string contra `class:{valor}` (ver
+ * ese archivo, rama "classify"), así que cualquier variante caía al
+ * default -- que en el router de Daniela es SIEMPRE handoff a humano. Con
+ * `enum` en el tool schema, la API de Claude directamente no permite que el
+ * tool_use devuelva un valor fuera de la lista: no es una validación
+ * posterior, es una restricción real de la llamada.
+ */
+export function buildAiOutputToolSchema(mode: ClaudeAiMode, classifications?: string[]): Record<string, unknown> {
   switch (mode) {
     case "respond":
       return {
@@ -75,7 +88,10 @@ export function buildAiOutputToolSchema(mode: ClaudeAiMode): Record<string, unkn
         additionalProperties: false,
         properties: {
           mode: { type: "string", enum: ["classify"] },
-          classification: { type: "string" },
+          classification:
+            classifications && classifications.length > 0
+              ? { type: "string", enum: classifications }
+              : { type: "string" },
         },
         required: ["mode", "classification"],
       };

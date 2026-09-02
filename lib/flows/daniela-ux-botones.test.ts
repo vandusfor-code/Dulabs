@@ -223,15 +223,33 @@ describe("D/E. texto PRODUCTO → derivación", () => {
 });
 
 describe("F/G. SERVICIO-INFO vs AGENDAR", () => {
-  it("F. 'cuánto cuesta el semipermanente' (info_servicio) handoff a Daniela, NO crea cita", () => {
+  it("F. 'cuánto cuesta el semipermanente' (info_servicio) responde con baseConocimiento, NO pasa a un humano, NO crea cita (corrección real, chats de sept. 2026)", () => {
     const flow = danielaRouterFlow();
     const r = clasificar(flow, "Quiero saber cuánto cuesta el semipermanente", "info_servicio");
-    assert.equal(r.state.pendingEffect?.nodeId, "act-handoff-daniela");
-    assert.ok(sendMessages(r.effects).some((e) => "nodeId" in e && e.nodeId === "msg-handoff-tema"));
+    assert.equal(r.state.pendingEffect?.nodeId, "ai-responder-info-servicio");
+    assert.notEqual(r.state.pendingEffect?.nodeId, "act-handoff-daniela");
+    assert.equal(
+      r.effects.some((e) => e.type === "effect_required" && e.nodeId === "ai-responder-info-servicio"),
+      true,
+    );
+    assert.equal(sendMessages(r.effects).length, 0, "todavía no hay respuesta -- el nodo IA no se ha resuelto");
+
+    // El camino real (ExecutionOrchestrator.process) despacha ESTE efecto
+    // pendiente también, en la misma pasada, antes de devolver el control.
+    const respondido = runFlowEngine(flow, r.state, {
+      type: "effect_result",
+      success: true,
+      effectId: r.state.pendingEffect!.effectId,
+      data: { responseText: "El semipermanente en manos está en $45.000 💅" },
+    });
+    assert.equal(respondido.error, undefined);
+    const efectosCompletos = [...r.effects, ...respondido.effects];
+    assert.equal(sendMessages(efectosCompletos).length, 1);
+
     const decision = decidirFallbackDesdeResultado({
       outcome: "processed",
       executionRowId: "ux-info",
-      effects: r.effects,
+      effects: efectosCompletos,
       dispatchedEffectIds: [],
     });
     assert.equal(decision.handled, true);

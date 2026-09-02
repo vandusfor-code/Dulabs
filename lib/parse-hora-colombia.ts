@@ -8,6 +8,8 @@ export type ParseHoraColombiaFail = {
   ok: false;
   kind: "ambiguous" | "invalid";
   message: string;
+  /** Presente solo cuando kind === "ambiguous" -- la hora (1-12) que quedó pendiente de aclarar, para que el caller la recuerde y la combine si la siguiente respuesta es solo "tarde"/"mañana"/etc. */
+  horaAmbigua?: number;
 };
 export type ParseHoraColombiaResult = ParseHoraColombiaOk | ParseHoraColombiaFail;
 
@@ -67,10 +69,14 @@ function stripFiller(s: string): string {
 }
 
 function detectPeriodo(s: string): Periodo | null {
-  if (/\b(?:a\.?\s*m\.?)\b/.test(s) || /\bde la manana\b/.test(s) || /\ben la manana\b/.test(s)) return "manana";
-  if (/\b(?:p\.?\s*m\.?)\b/.test(s) || /\bde la tarde\b/.test(s) || /\ben la tarde\b/.test(s)) return "tarde";
-  if (/\bde la noche\b/.test(s) || /\ben la noche\b/.test(s) || /\bpor la noche\b/.test(s)) return "noche";
-  if (/\bde la madrugada\b/.test(s) || /\ben la madrugada\b/.test(s)) return "madrugada";
+  // Los patrones ^...$ (palabra sola, sin nada más) cubren la respuesta
+  // directa a la propia pregunta de desambiguación -- "¿de la tarde o de la
+  // mañana?" contestado solo con "tarde" o "mañana", que antes no se
+  // reconocía en absoluto (bug real, ver flow-engine.ts::handleTextInput).
+  if (/\b(?:a\.?\s*m\.?)\b/.test(s) || /\bde la manana\b/.test(s) || /\ben la manana\b/.test(s) || /^manana$/.test(s)) return "manana";
+  if (/\b(?:p\.?\s*m\.?)\b/.test(s) || /\bde la tarde\b/.test(s) || /\ben la tarde\b/.test(s) || /^tarde$/.test(s)) return "tarde";
+  if (/\bde la noche\b/.test(s) || /\ben la noche\b/.test(s) || /\bpor la noche\b/.test(s) || /^noche$/.test(s)) return "noche";
+  if (/\bde la madrugada\b/.test(s) || /\ben la madrugada\b/.test(s) || /^madrugada$/.test(s)) return "madrugada";
   return null;
 }
 
@@ -168,8 +174,16 @@ function extractHourMinute(
 /**
  * Convierte texto natural colombiano a HH:MM (24h).
  * No inventa mañana/tarde si la expresión es ambigua (ej. "a las 4").
+ *
+ * `horaPendiente` (1-12, opcional) es la hora que quedó ambigua en el
+ * intento ANTERIOR de esta misma pregunta (ver ParseHoraColombiaFail.
+ * horaAmbigua) -- si el mensaje actual es solo la aclaración ("tarde",
+ * "mañana", "pm"...), sin ninguna hora propia, se combina con esa hora
+ * pendiente en vez de pedir de nuevo el formato completo. Bug real: antes,
+ * la clienta contestaba exactamente lo que el bot preguntó ("tarde") y el
+ * bot no lo entendía, repitiendo el mensaje genérico de formato.
  */
-export function parseHoraColombia(raw: string): ParseHoraColombiaResult {
+export function parseHoraColombia(raw: string, horaPendiente?: number): ParseHoraColombiaResult {
   const normalized = stripFiller(normalizeInput(raw));
   if (!normalized) {
     return { ok: false, kind: "invalid", message: invalidMessage() };
@@ -178,6 +192,10 @@ export function parseHoraColombia(raw: string): ParseHoraColombiaResult {
   const periodo = detectPeriodo(normalized);
   const extracted = extractHourMinute(normalized);
   if (!extracted) {
+    if (periodo && horaPendiente !== undefined) {
+      const hhmm = applyPeriodo(horaPendiente, 0, periodo);
+      if (hhmm) return { ok: true, hhmm };
+    }
     return { ok: false, kind: "invalid", message: invalidMessage() };
   }
 
@@ -205,6 +223,7 @@ export function parseHoraColombia(raw: string): ParseHoraColombiaResult {
       ok: false,
       kind: "ambiguous",
       message: ambiguousMessage(hour, label),
+      horaAmbigua: hour,
     };
   }
 

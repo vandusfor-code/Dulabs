@@ -321,6 +321,11 @@ export class ExecutionOrchestrator {
     initialState.variables = {
       ...initialState.variables,
       hoy: new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" }),
+      // Mismo criterio que 'hoy' -- se siembra SOLO si el tenant tiene algo
+      // configurado, sin prefijo "__" a propósito (debe ser visible para
+      // Claude en el bloque VARIABLES). Un flow que no la lea no cambia de
+      // comportamiento.
+      ...(event.baseConocimiento ? { baseConocimiento: event.baseConocimiento } : {}),
     };
 
     const createResult = await this.deps.store.createExecution({

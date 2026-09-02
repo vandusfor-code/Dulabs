@@ -46,6 +46,18 @@ export const AUTOMATIC_NODE_TYPES: ReadonlySet<FlowNodeType> = new Set([
  */
 export const FIRST_MESSAGE_TEXT_VARIABLE_KEY = "__firstMessageText" as const;
 
+/**
+ * Bug real (Daniela, sept. 2026) — memoria de UN turno para la pregunta
+ * hora_colombia: cuando la hora dada es ambigua ("1" -> ¿de la tarde o de
+ * la mañana?), acá se guarda esa hora (1-12) hasta que la clienta conteste
+ * -- así, si la respuesta es solo "tarde"/"mañana" (exactamente lo que el
+ * bot preguntó), flow-engine.ts la puede combinar en vez de repetir el
+ * mensaje genérico de formato. Se limpia al resolverse. Mismo patrón que
+ * FIRST_MESSAGE_TEXT_VARIABLE_KEY: prefijo "__", nunca visible para la IA
+ * (stripInternalKeys ya filtra ese prefijo).
+ */
+export const HORA_AMBIGUA_VARIABLE_KEY = "__horaAmbigua" as const;
+
 export const FLOW_VALIDATION_CODES = {
   DUPLICATE_NODE_ID: "DUPLICATE_NODE_ID",
   DUPLICATE_EDGE_ID: "DUPLICATE_EDGE_ID",

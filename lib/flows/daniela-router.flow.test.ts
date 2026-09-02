@@ -46,19 +46,63 @@ describe("Fase 1 — Enrutador de Daniela pasa el validador real de publicación
     assert.ok(targets.has("msg-producto"));
   });
 
-  it("'otro', 'info_servicio' y el default pasan por handoff (mensaje + transferir_soporte)", () => {
+  it("'otro' y el default pasan por handoff (mensaje + transferir_soporte)", () => {
     const flow = danielaRouterFlow();
     const edgesOtro = flow.edges.filter(
       (e) =>
         e.source === "ai-clasificar-intencion" &&
-        (e.sourceHandle === "class:otro" || e.sourceHandle === "class:info_servicio" || e.sourceHandle === "default"),
+        (e.sourceHandle === "class:otro" || e.sourceHandle === "default"),
     );
+    assert.equal(edgesOtro.length, 2);
     for (const e of edgesOtro) {
-      assert.equal(e.target, e.sourceHandle === "class:info_servicio" ? "msg-handoff-tema" : "msg-handoff-duda");
+      assert.equal(e.target, "msg-handoff-duda");
     }
     const haciaHandoff = flow.edges.filter((e) => e.target === "act-handoff-daniela");
     assert.ok(haciaHandoff.length >= 3);
     const endHandoff = flow.nodes.find((n) => n.id === "end-handoff");
     assert.equal(endHandoff?.type, "end");
+  });
+
+  // Corrección real (chats reales, sept. 2026) — 'info_servicio' (precio/
+  // horario/info de servicio, sin pedir cita) YA NO pasa por handoff: debe
+  // responder con la información real del negocio, nunca inventarla.
+  describe("'info_servicio' responde con baseConocimiento, sin pasar por handoff", () => {
+    it("la rama info_servicio va a un nodo IA (respond), no a msg-handoff-tema", () => {
+      const flow = danielaRouterFlow();
+      const edge = flow.edges.find(
+        (e) => e.source === "ai-clasificar-intencion" && e.sourceHandle === "class:info_servicio",
+      );
+      assert.ok(edge);
+      assert.equal(edge!.target, "ai-responder-info-servicio");
+      const nodo = flow.nodes.find((n) => n.id === "ai-responder-info-servicio");
+      assert.equal(nodo?.type, "ai");
+      if (nodo?.type === "ai") assert.equal(nodo.config.mode, "respond");
+    });
+
+    it("la instrucción del nodo lee baseConocimiento y prohíbe inventar", () => {
+      const flow = danielaRouterFlow();
+      const nodo = flow.nodes.find((n) => n.id === "ai-responder-info-servicio");
+      assert.equal(nodo?.type, "ai");
+      if (nodo?.type === "ai") {
+        assert.match(nodo.config.instruction, /baseConocimiento/);
+        assert.match(nodo.config.instruction, /nunca invent/i);
+      }
+    });
+
+    it("termina en un nodo end propio (end-info-servicio), nunca en act-handoff-daniela", () => {
+      const flow = danielaRouterFlow();
+      const salida = flow.edges.find((e) => e.source === "ai-responder-info-servicio");
+      assert.ok(salida);
+      assert.equal(salida!.target, "end-info-servicio");
+      assert.equal(flow.nodes.find((n) => n.id === "end-info-servicio")?.type, "end");
+    });
+
+    it("handoff_tema (pagos/temas administrativos) sigue yendo a handoff -- no se tocó", () => {
+      const flow = danielaRouterFlow();
+      const edge = flow.edges.find(
+        (e) => e.source === "ai-clasificar-intencion" && e.sourceHandle === "class:handoff_tema",
+      );
+      assert.equal(edge?.target, "msg-handoff-tema");
+    });
   });
 });

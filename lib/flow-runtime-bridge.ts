@@ -32,6 +32,7 @@ import type { FlowEngineEvent } from "@/lib/flow/engine-types";
 import { executionRowToEngineState } from "@/lib/flow/flow-store-types";
 import type { FlowOrchestratorStore } from "@/lib/flow/orchestrator-types";
 import { registrarFalloIA } from "@/lib/alertas";
+import { resolverConfigAgente } from "@/lib/agentes";
 
 /**
  * true si este mensaje debe atenderse por Flow. Delega en
@@ -117,6 +118,13 @@ export async function atenderMensajeConFlow(params: {
         ? { type: "button", id: buttonId, eventId: params.wamid }
         : { type: "text", text: params.texto, eventId: params.wamid };
 
+  // Misma resolución que ya usa LEGACY (lib/agentes.ts::resolverConfigAgente)
+  // -- si el tenant tiene un Agente de IA asignado (agente_id), su base de
+  // conocimiento; si no, la que vive directo en la fila del número. Así el
+  // nodo de info_servicio del Flow responde con la MISMA información real
+  // que ya usa LEGACY, sin un segundo sistema de conocimiento paralelo.
+  const configAgente = await resolverConfigAgente(params.supabase, params.cliente);
+
   return orchestrator.process({
     tenantId: params.cliente.id_tenant,
     conversation: { phoneNumberId: params.cliente.phone_number_id, telefonoCliente: params.telefonoCliente },
@@ -126,6 +134,7 @@ export async function atenderMensajeConFlow(params: {
     payload: { text: params.texto },
     engineEvent,
     receivedAt: new Date().toISOString(),
+    baseConocimiento: configAgente.base_conocimiento || undefined,
   });
 }
 

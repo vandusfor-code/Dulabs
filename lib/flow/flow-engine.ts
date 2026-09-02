@@ -5,7 +5,7 @@
  * NO ejecuta WhatsApp, IA, Supabase ni acciones externas.
  */
 
-import { FIRST_MESSAGE_TEXT_VARIABLE_KEY, FLOW_EDGE_HANDLE } from "@/lib/flow/constants";
+import { FIRST_MESSAGE_TEXT_VARIABLE_KEY, FLOW_EDGE_HANDLE, HORA_AMBIGUA_VARIABLE_KEY } from "@/lib/flow/constants";
 import { parseHoraColombia } from "@/lib/parse-hora-colombia";
 import type {
   FlowEngineError,
@@ -142,7 +142,8 @@ export function validateQuestionValue(
   validation: QuestionValidation,
   raw: string,
   required: boolean,
-): { ok: true; value: unknown } | { ok: false; message: string } {
+  context?: { horaPendiente?: number },
+): { ok: true; value: unknown } | { ok: false; message: string; horaAmbigua?: number } {
   const text = raw.trim();
   if (!text) {
     if (required) return { ok: false, message: "Este campo es obligatorio." };
@@ -173,9 +174,9 @@ export function validateQuestionValue(
       }
     }
     case "hora_colombia": {
-      const parsed = parseHoraColombia(text);
+      const parsed = parseHoraColombia(text, context?.horaPendiente);
       if (parsed.ok) return { ok: true, value: parsed.hhmm };
-      return { ok: false, message: parsed.message };
+      return { ok: false, message: parsed.message, horaAmbigua: parsed.kind === "ambiguous" ? parsed.horaAmbigua : undefined };
     }
     default:
       return { ok: true, value: text };
@@ -626,11 +627,28 @@ function handleTextInput(
     };
   }
 
-  const validated = validateQuestionValue(node.config.validation, text, node.config.required);
+  // Bug real (Daniela) — memoria de UN turno para hora_colombia: si esta
+  // MISMA pregunta ya dejó una hora ambigua pendiente (ver
+  // HORA_AMBIGUA_VARIABLE_KEY), se pasa para que parseHoraColombia pueda
+  // combinarla con una respuesta que sea solo "tarde"/"mañana"/etc.
+  const horaPendiente =
+    node.config.validation.kind === "hora_colombia" && typeof state.variables[HORA_AMBIGUA_VARIABLE_KEY] === "number"
+      ? (state.variables[HORA_AMBIGUA_VARIABLE_KEY] as number)
+      : undefined;
+
+  const validated = validateQuestionValue(node.config.validation, text, node.config.required, { horaPendiente });
   if (!validated.ok) {
+    // Si esta respuesta también quedó ambigua, se recuerda (o se actualiza)
+    // la hora pendiente para el próximo intento; cualquier otro tipo de
+    // respuesta inválida no la toca -- sigue pendiente hasta que se
+    // resuelva o se dé una hora nueva.
+    const haltVariables =
+      validated.horaAmbigua !== undefined
+        ? { ...state.variables, [HORA_AMBIGUA_VARIABLE_KEY]: validated.horaAmbigua }
+        : state.variables;
     return {
       kind: "halt",
-      state,
+      state: { ...state, variables: haltVariables },
       effects: [
         {
           type: "invalid_input",
@@ -658,7 +676,10 @@ function handleTextInput(
     };
   }
 
-  const variables = { ...state.variables, [node.config.variableKey]: validated.value };
+  // Resuelta (o nunca hubo ambigüedad): nunca debe quedar colgada para la
+  // siguiente pregunta que use hora_colombia en el mismo flow.
+  const { [HORA_AMBIGUA_VARIABLE_KEY]: _horaAmbiguaResuelta, ...variablesSinHoraAmbigua } = state.variables;
+  const variables = { ...variablesSinHoraAmbigua, [node.config.variableKey]: validated.value };
   const next = resolveNextNodeId(ctx.flow, node.id);
   if (!next) {
     return {

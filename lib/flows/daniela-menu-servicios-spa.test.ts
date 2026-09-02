@@ -97,17 +97,32 @@ describe("Menú servicios_spa — separación menú vs servicio real", () => {
     );
   });
 
-  it("F. info de servicio sin cita → handoff a Daniela", () => {
+  it("F. info de servicio sin cita → responde con baseConocimiento, NO pasa a un humano (corrección real, chats de sept. 2026)", () => {
     const flow = danielaRouterFlow();
-    const r = clasificar(flow, "Quiero información sobre el semipermanente", "info_servicio");
-    assert.equal(r.state.pendingEffect?.nodeId, "act-handoff-daniela");
+    const clasificado = clasificar(flow, "Quiero información sobre el semipermanente", "info_servicio");
+    assert.equal(clasificado.state.pendingEffect?.nodeId, "ai-responder-info-servicio");
+    assert.notEqual(clasificado.state.pendingEffect?.nodeId, "act-handoff-daniela");
+
+    // El camino real (ExecutionOrchestrator.process) despacha ESTE efecto
+    // pendiente también, en la misma pasada, antes de devolver el control --
+    // se simula acá resolviéndolo con una respuesta real de negocio.
+    const respondido = runFlowEngine(flow, clasificado.state, {
+      type: "effect_result",
+      success: true,
+      effectId: clasificado.state.pendingEffect!.effectId,
+      data: { responseText: "El forrado en gel está en $70.000 💅" },
+    });
+    assert.equal(respondido.error, undefined);
+    const efectosCompletos = [...clasificado.effects, ...respondido.effects];
+
     const decision = decidirFallbackDesdeResultado({
       outcome: "processed",
       executionRowId: "menu-info",
-      effects: r.effects as EngineEffect[],
+      effects: efectosCompletos as EngineEffect[],
       dispatchedEffectIds: [],
     });
     assert.equal(decision.handled, true);
+    assert.equal(decision.motivo, "processed_ok");
   });
 
   it("6. tap servicios_spa no dispara act-agendar ni act-consultar", () => {

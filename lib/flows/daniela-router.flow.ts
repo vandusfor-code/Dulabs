@@ -22,12 +22,21 @@ import { DANIELA_BUTTON_IDS } from "@/lib/flows/daniela-button-ids";
  * servicios en la instrucción del clasificador sería repetir conocimiento
  * de negocio que ya vive, correctamente, en el adaptador.
  *
- * "info_servicio" / "otro" terminan SIN enviar ningún mensaje (end-otro)
- * para que LEGACY responda con base_conocimiento. "producto" envía el
- * mensaje de derivación (mismo criterio que LEGACY derivar_a_daniela_por_
- * producto: mensaje + terminar, SIN pausar el chat). "menu" muestra el
- * menú inicial con botones; no es obligatorio si el primer mensaje ya
- * trae una intención clara.
+ * "producto" envía el mensaje de derivación (mismo criterio que LEGACY
+ * derivar_a_daniela_por_producto: mensaje + terminar, SIN pausar el chat).
+ * "menu" muestra el menú inicial con botones; no es obligatorio si el
+ * primer mensaje ya trae una intención clara. "handoff_tema"/"otro"/default
+ * pasan la conversación a Daniela (pagos, temas administrativos, o mensaje
+ * sin intención clara -- nunca inventar nada ahí).
+ *
+ * Corrección real (revisión de chats reales, sept. 2026) — "info_servicio"
+ * (precio/horario/info de un servicio, SIN pedir cita) YA NO se traspasa a
+ * un humano: responde con la información REAL del negocio (variable
+ * baseConocimiento, sembrada por el orchestrator desde
+ * dulabs_clientes_config.base_conocimiento / dulabs_agentes.base_conocimiento
+ * -- ver flow-orchestrator.ts y lib/agentes.ts::resolverConfigAgente, MISMA
+ * fuente que ya usaba LEGACY). Si esa información no cubre lo preguntado, el
+ * propio nodo lo dice con honestidad -- nunca inventa un precio u horario.
  */
 
 function importarSubflow(
@@ -133,6 +142,20 @@ export function danielaRouterFlow(): FlowDefinition {
         messageRole: "informational",
       },
     },
+    // Corrección real (chats reales, sept. 2026) — precio/horario/info de un
+    // servicio SIN pedir cita ya no se traspasa a un humano: el negocio SÍ
+    // tiene esa información real (baseConocimiento), no hay motivo para no
+    // contestarla. mode:"respond" -- nunca afirma un hecho externo verificado
+    // (citas, disponibilidad), solo lee texto de negocio ya configurado.
+    {
+      id: "ai-responder-info-servicio",
+      type: "ai",
+      config: {
+        instruction:
+          "La clienta preguntó por precio, horario u otra información de un servicio del spa, SIN pedir cita. Tienes la información real del negocio en la variable baseConocimiento (precios, horarios, servicios que se manejan) -- respóndele con eso, con naturalidad y precisión, igual que lo diría Daniela. NUNCA inventes un precio, horario o dato que no esté en baseConocimiento. Si baseConocimiento no cubre lo que preguntó, dilo con honestidad (ej. 'esa información no la tengo a la mano, escríbele directo a Daniela y ella te cuenta') -- nunca improvises un dato que no tengas. No ofrezcas agendar cita ni le preguntes nada más, solo responde lo que preguntó.",
+        mode: "respond",
+      },
+    },
     {
       id: "msg-handoff-duda",
       type: "message",
@@ -147,6 +170,7 @@ export function danielaRouterFlow(): FlowDefinition {
       config: { actionType: "transferir_soporte", pauseDurationHours: 24 },
     },
     { id: "end-handoff", type: "end", config: {} },
+    { id: "end-info-servicio", type: "end", config: {} },
 
     // Rama CONSULTAR -- propia de este blocker, no importada de ningún
     // sub-flow existente.
@@ -200,7 +224,7 @@ export function danielaRouterFlow(): FlowDefinition {
     { id: "e-clasificar-reagendar", source: "ai-clasificar-intencion", target: reagendar.entryNodeId, sourceHandle: FLOW_EDGE_HANDLE.aiClass("reagendar") },
     { id: "e-clasificar-consultar", source: "ai-clasificar-intencion", target: "act-consultar-citas-router", sourceHandle: FLOW_EDGE_HANDLE.aiClass("consultar") },
     { id: "e-clasificar-producto", source: "ai-clasificar-intencion", target: "msg-producto", sourceHandle: FLOW_EDGE_HANDLE.aiClass("producto") },
-    { id: "e-clasificar-info-servicio", source: "ai-clasificar-intencion", target: "msg-handoff-tema", sourceHandle: FLOW_EDGE_HANDLE.aiClass("info_servicio") },
+    { id: "e-clasificar-info-servicio", source: "ai-clasificar-intencion", target: "ai-responder-info-servicio", sourceHandle: FLOW_EDGE_HANDLE.aiClass("info_servicio") },
     { id: "e-clasificar-handoff-tema", source: "ai-clasificar-intencion", target: "msg-handoff-tema", sourceHandle: FLOW_EDGE_HANDLE.aiClass("handoff_tema") },
     { id: "e-clasificar-menu", source: "ai-clasificar-intencion", target: "bt-menu-inicial", sourceHandle: FLOW_EDGE_HANDLE.aiClass("menu") },
 
@@ -218,6 +242,7 @@ export function danielaRouterFlow(): FlowDefinition {
     { id: "e-handoff-tema-act", source: "msg-handoff-tema", target: "act-handoff-daniela" },
     { id: "e-handoff-duda-act", source: "msg-handoff-duda", target: "act-handoff-daniela" },
     { id: "e-handoff-end", source: "act-handoff-daniela", target: "end-handoff", sourceHandle: FLOW_EDGE_HANDLE.aiSuccess },
+    { id: "e-info-servicio-end", source: "ai-responder-info-servicio", target: "end-info-servicio", sourceHandle: FLOW_EDGE_HANDLE.aiSuccess },
 
     { id: "e-consultar-cond", source: "act-consultar-citas-router", target: "cond-tiene-citas-router" },
     { id: "e-consultar-sin-cita", source: "cond-tiene-citas-router", target: "msg-sin-cita-router", sourceHandle: FLOW_EDGE_HANDLE.conditionFalse },
@@ -233,7 +258,7 @@ export function danielaRouterFlow(): FlowDefinition {
   return {
     name: "Daniela — Enrutador de intenciones (Fase 1, diseño)",
     description:
-      "Clasifica la intención del primer mensaje (agendar/producto/info_servicio/menu/cancelar/reagendar/consultar/otro) y enruta al sub-grafo correspondiente. 'otro' e 'info_servicio' terminan sin mensaje (LEGACY). NO activado para ningún tenant.",
+      "Clasifica la intención del primer mensaje (agendar/producto/info_servicio/menu/cancelar/reagendar/consultar/otro) y enruta al sub-grafo correspondiente. 'info_servicio' responde con la información real del negocio (baseConocimiento); 'otro'/'handoff_tema' pasan a Daniela.",
     nodes,
     edges,
     variables: combinarVariables(
