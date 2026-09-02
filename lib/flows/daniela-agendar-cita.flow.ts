@@ -186,7 +186,7 @@ export function danielaAgendarCitaFlow(): FlowDefinition {
         id: "q-seleccionar-servicio",
         type: "question",
         config: {
-          text: "💅 Servicios disponibles\nSelecciona el de tu interés:\n\n{{serviciosDisponiblesTexto}}",
+          text: "💅 Catálogo de servicios\nSelecciona el de tu interés:\n\n{{serviciosDisponiblesTexto}}",
           variableKey: "seleccionServicioTexto",
           required: true,
           validation: { kind: "text" },
