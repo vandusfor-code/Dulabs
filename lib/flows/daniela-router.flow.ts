@@ -124,7 +124,6 @@ export function danielaRouterFlow(): FlowDefinition {
         buttons: [
           { id: DANIELA_BUTTON_IDS.SERVICIOS_SPA, label: "Servicios de Spa" },
           { id: DANIELA_BUTTON_IDS.PRODUCTOS, label: "Productos" },
-          { id: DANIELA_BUTTON_IDS.HABLAR_CON_DANI, label: "Hablar con Dani" },
         ],
       },
     },

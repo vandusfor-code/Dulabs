@@ -109,13 +109,19 @@ describe("Fase 1 — Enrutador de Daniela pasa el validador real de publicación
   // Rediseño de agendamiento (autorizado, Parte 2) — botón "Hablar con Dani"
   // en el menú inicial: acción DIRECTA, nunca pasa por ai-clasificar-intencion.
   describe("'Hablar con Dani' — botón directo, sin clasificación de IA", () => {
-    it("bt-menu-inicial tiene 3 botones: Servicios de Spa, Productos, Hablar con Dani", () => {
+    // Cambio puntual (autorizado) — el botón "Hablar con Dani" se quitó del
+    // menú inicial. El nodo msg-hablar-con-dani y su edge quedan intactos
+    // en el grafo (ver tests siguientes), solo dejan de ser alcanzables
+    // desde este botón -- el escape hatch determinista por texto libre
+    // ("hablar con Dani") sigue funcionando exactamente igual (sin tocar),
+    // ver lib/flow-escape-hatch.ts / flow-runtime-bridge-escape-hatch.test.ts.
+    it("bt-menu-inicial tiene 2 botones: Servicios de Spa, Productos -- ya no incluye Hablar con Dani", () => {
       const flow = danielaRouterFlow();
       const nodo = flow.nodes.find((n) => n.id === "bt-menu-inicial");
       assert.equal(nodo?.type, "buttons");
       if (nodo?.type === "buttons") {
-        assert.equal(nodo.config.buttons.length, 3);
-        assert.ok(nodo.config.buttons.some((b) => b.id === "hablar_con_dani"));
+        assert.equal(nodo.config.buttons.length, 2);
+        assert.ok(!nodo.config.buttons.some((b) => b.id === "hablar_con_dani"));
       }
     });
 
