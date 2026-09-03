@@ -17,7 +17,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { randomUUID } from "node:crypto";
 import type { ClienteConfig } from "@/lib/supabase";
-import { debeUsarFlowParaRemitente } from "@/lib/flow-routing";
+import { debeUsarFlowParaRemitente, remitenteAutorizadoParaTriggerRouting } from "@/lib/flow-routing";
+import { resolveFlowForIncomingEvent } from "@/lib/flow/flow-store";
+import type { IncomingEvent } from "@/lib/flow-triggers/types";
 import {
   createExecutionOrchestrator,
   ORCHESTRATOR_OUTCOMES,
@@ -81,6 +83,15 @@ export async function atenderMensajeConFlow(params: {
   buttonId?: string;
   /** Solo para tests — inyecta el envío de WhatsApp sin tocar la red real. */
   sendMessageDepsOverride?: Partial<SendMessageDeps>;
+  /**
+   * Fase 4.A (Trigger Router → Runtime, autorizado) — flowId ya resuelto por
+   * el caller (atenderMensajeConFlowConFallback::resolverFlowIdConTriggerRouting,
+   * vía Trigger Router o fallback a cliente.flow_id). Si se omite
+   * (compatibilidad hacia atrás — callers directos, tests existentes), usa
+   * cliente.flow_id exactamente como antes de esta fase. Nunca se resuelve
+   * acá adentro: esta función no decide Trigger Router, solo ejecuta.
+   */
+  flowIdOverride?: string;
 }): Promise<OrchestratorResult> {
   const store = createSupabaseFlowOrchestratorStore(params.supabase);
   const orchestrator = createExecutionOrchestrator({
@@ -139,7 +150,7 @@ export async function atenderMensajeConFlow(params: {
   return orchestrator.process({
     tenantId: params.cliente.id_tenant,
     conversation: { phoneNumberId: params.cliente.phone_number_id, telefonoCliente: params.telefonoCliente },
-    flowId: params.cliente.flow_id,
+    flowId: params.flowIdOverride ?? params.cliente.flow_id,
     eventId: params.wamid || randomUUID(),
     eventType: "message",
     payload: { text: params.texto },
@@ -192,7 +203,17 @@ export type MotivoIntentoFlow =
   // mención de pestañas -- primer mensaje, pregunta lateral, o respuesta
   // libre a cualquier pregunta del flow -- transfiere de inmediato, SIN
   // pasar por ninguna clasificación de IA. Ver lib/flow-pestanas-hatch.ts.
-  | "transferencia_pestanas";
+  | "transferencia_pestanas"
+  // Fase 4.A (Trigger Router → Runtime, autorizado) — Decisión de producto 1.C:
+  // ni el Trigger Router encontró un trigger válido/coincidente NI existe un
+  // cliente.flow_id legacy para esta conversación NUEVA (activeExecution
+  // null). Igual que "sin_intencion_reconocida": Flow no falló, decidió
+  // activamente que no hay nada que ejecutar -- LEGACY responde normal, sin
+  // registrar esto como un fallo. Solo alcanzable para remitentes
+  // autorizados en TRIGGER_ROUTING_TEST_SENDERS (lib/flow-routing.ts) -- para
+  // cualquier otro remitente, cliente.flow_id sigue siendo la única fuente y
+  // este motivo nunca ocurre.
+  | "sin_flow_configurado";
 
 export interface ResultadoIntentoFlow {
   /** true = Flow ya resolvió este mensaje (con éxito o sin que haga falta
@@ -584,6 +605,85 @@ async function intentarPreguntaLateral(params: {
   return { handled: true, motivo: "pregunta_lateral" };
 }
 
+// ---------------------------------------------------------------------------
+// Fase 4.A (Trigger Router → Runtime, autorizado) — resolución CONSERVADORA
+// del flowId de una ejecución NUEVA. NUNCA toca el Engine ni el Orchestrator.
+// ---------------------------------------------------------------------------
+
+export type ResolucionFlowId =
+  | { kind: "usar_flow_id"; flowId: string }
+  | { kind: "sin_flow" };
+
+/**
+ * Decide qué flowId debe usar atenderMensajeConFlow, con la prioridad exacta
+ * de la Decisión de producto 1 (autorizada):
+ *   A. Trigger Router encuentra un match válido -> ese flowId.
+ *   B. Sin match (o sin autorización de prueba) -> cliente.flow_id legacy,
+ *      si existe.
+ *   C. Ni trigger ni flow_id legacy -> { kind: "sin_flow" } (el caller debe
+ *      cortar ANTES de tocar el Orchestrator, ver atenderMensajeConFlowConFallback).
+ *
+ * Decisión 3 (activeExecution, autorizada) — si ya existe una ejecución
+ * activa para esta conversación, el Trigger Router NUNCA se consulta: se
+ * devuelve cliente.flow_id tal cual (el Orchestrator lo ignora igual al
+ * resumir -- ver flow-orchestrator.ts::resolveExecution -- esto solo
+ * preserva el valor sin introducir ninguna diferencia de comportamiento
+ * sobre una ejecución en curso).
+ *
+ * Decisión 2 (rollout, autorizada) — el Trigger Router SOLO se consulta para
+ * remitentes en remitenteAutorizadoParaTriggerRouting (lib/flow-routing.ts).
+ * Para cualquier otro remitente (el 100% del tráfico real hoy, incluida
+ * Daniela fuera de la prueba) esta función es un `return` inmediato sin
+ * ninguna consulta nueva a Supabase -- cero cambio de comportamiento, cero
+ * costo adicional.
+ */
+export async function resolverFlowIdConTriggerRouting(params: {
+  supabase: SupabaseClient;
+  cliente: ClienteConfig & { flow_activo: true; flow_id: string };
+  telefonoCliente: string;
+  texto: string;
+  store: FlowOrchestratorStore;
+}): Promise<ResolucionFlowId> {
+  if (!remitenteAutorizadoParaTriggerRouting(params.cliente.phone_number_id, params.telefonoCliente)) {
+    return { kind: "usar_flow_id", flowId: params.cliente.flow_id };
+  }
+
+  const activeExecution = await params.store.getActiveExecution(params.cliente.id_tenant, {
+    phoneNumberId: params.cliente.phone_number_id,
+    telefonoCliente: params.telefonoCliente,
+  });
+  if (activeExecution) {
+    return { kind: "usar_flow_id", flowId: params.cliente.flow_id };
+  }
+
+  // MUY IMPORTANTE (instruido) — misma señal que el runtime YA usa para
+  // decidir "start" en atenderMensajeConFlow (!activeExecution), sin
+  // inventar una fuente de verdad histórica nueva para conversation_started.
+  const event: IncomingEvent = {
+    tenantId: params.cliente.id_tenant,
+    channel: "whatsapp",
+    channelAccountId: params.cliente.phone_number_id,
+    contactId: params.telefonoCliente,
+    eventType: "conversation_started",
+    timestamp: new Date().toISOString(),
+    message: { text: params.texto },
+  };
+
+  const selection = await resolveFlowForIncomingEvent(params.supabase, event);
+  if (selection.matched) {
+    return { kind: "usar_flow_id", flowId: selection.flowId };
+  }
+
+  // Decisión 1.B/2 -- sin candidato/match: fallback al flow_id legacy, sin
+  // crear ningún concepto de "default flow".
+  if (params.cliente.flow_id) {
+    return { kind: "usar_flow_id", flowId: params.cliente.flow_id };
+  }
+
+  // Decisión 1.C -- ni trigger válido ni flow_id legacy.
+  return { kind: "sin_flow" };
+}
+
 export async function atenderMensajeConFlowConFallback(params: {
   supabase: SupabaseClient;
   cliente: ClienteConfig & { flow_activo: true; flow_id: string };
@@ -628,9 +728,24 @@ export async function atenderMensajeConFlowConFallback(params: {
   });
   if (lateral) return lateral;
 
+  // Fase 4.A (Trigger Router → Runtime, autorizado) — resolución CONSERVADORA
+  // del flowId de una ejecución NUEVA (ver resolverFlowIdConTriggerRouting
+  // arriba). Corta ANTES de tocar el Orchestrator si no hay Flow que
+  // ejecutar (Decisión 1.C) -- nunca se registra como fallo.
+  const flowIdResuelto = await resolverFlowIdConTriggerRouting({
+    supabase: params.supabase,
+    cliente: params.cliente,
+    telefonoCliente: params.telefonoCliente,
+    texto: params.texto,
+    store,
+  });
+  if (flowIdResuelto.kind === "sin_flow") {
+    return { handled: false, motivo: "sin_flow_configurado" };
+  }
+
   let result: OrchestratorResult;
   try {
-    result = await atenderMensajeConFlow(params);
+    result = await atenderMensajeConFlow({ ...params, flowIdOverride: flowIdResuelto.flowId });
   } catch (error) {
     await registrarFalloIA({
       tipo: "otro",
