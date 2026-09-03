@@ -25,12 +25,27 @@ import type {
   ConditionRule,
   FlowDefinition,
   FlowNode,
+  MessageOrigin,
   QuestionValidation,
   SaveDataMapping,
 } from "@/lib/flow/types";
 import { interpolateTemplate } from "@/lib/flow/message-interpolation";
 
 export const DEFAULT_MAX_AUTO_STEPS = 64;
+
+// ---------------------------------------------------------------------------
+// Corrección Claim Security, Fase 2 (autorizada) — MessageOrigin calculado
+// EXCLUSIVAMENTE acá, server-side, a partir del texto crudo (pre-
+// interpolación) del propio node.config. Nunca es un input externo/del
+// Builder -- ver el diseño completo en el reporte de la fase.
+// ---------------------------------------------------------------------------
+
+const RAW_INTERPOLATION_PATTERN = /\{\{[a-zA-Z0-9_.]+\}\}/;
+
+/** "flow_static" u "flow_static_interpolated" según si el texto CRUDO del autor trae {{variable}}. */
+function staticMessageOrigin(rawText: string | undefined): MessageOrigin {
+  return rawText && RAW_INTERPOLATION_PATTERN.test(rawText) ? "flow_static_interpolated" : "flow_static";
+}
 
 let effectCounter = 0;
 
@@ -326,6 +341,7 @@ function processAutomaticNode(
             },
             executionId,
             effectId: nextEffectId("msg", idGen),
+            origin: staticMessageOrigin(node.config.text),
           },
         ],
       };
@@ -416,6 +432,7 @@ function processAutomaticNode(
           content: { text: node.config.message },
           executionId,
           effectId: nextEffectId("msg", idGen),
+          origin: staticMessageOrigin(node.config.message),
         });
       }
       effects.push({
@@ -445,6 +462,7 @@ function processAutomaticNode(
           content: { text: node.config.message },
           executionId,
           effectId: nextEffectId("msg", idGen),
+          origin: staticMessageOrigin(node.config.message),
         });
       }
       effects.push({
@@ -490,6 +508,7 @@ function enterInputNode(
       content: { text: interpolateTemplate(node.config.text, state.variables) },
       executionId,
       effectId: nextEffectId("msg", idGen),
+      origin: staticMessageOrigin(node.config.text),
     });
     effects.push({
       type: "wait_input",
@@ -518,6 +537,7 @@ function enterInputNode(
       buttons: node.config.buttons,
       executionId,
       effectId: nextEffectId("msg", idGen),
+      origin: staticMessageOrigin(node.config.text),
     });
     effects.push({
       type: "wait_input",
@@ -664,6 +684,9 @@ function handleTextInput(
           content: { text: validated.message },
           executionId: state.executionId,
           effectId: nextEffectId("msg", idGen),
+          // Corrección Claim Security, Fase 2 (autorizada) -- generado por el
+          // propio Engine (mensaje de error de validación), ni autor ni IA.
+          origin: "system",
         },
         {
           type: "wait_input",
@@ -853,6 +876,7 @@ function handleEffectResult(
           content: { text: String(data.responseText) },
           executionId: state.executionId,
           effectId: nextEffectId("msg", idGen),
+          origin: "ai_generated",
         });
       }
       return {
@@ -877,6 +901,7 @@ function handleEffectResult(
           content: { text: String(data.responseText) },
           executionId: state.executionId,
           effectId: nextEffectId("msg", idGen),
+          origin: "ai_generated",
         });
       }
     }

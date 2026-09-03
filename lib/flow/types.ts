@@ -88,6 +88,21 @@ export type AssertionCapability =
 /** Rol semántico del mensaje (Builder UX; no inferido del texto). */
 export type MessageRole = "informational" | "intent_offer" | "external_assertion";
 
+/**
+ * Corrección Claim Security, Fase 1/3 (autorizada) — CÓMO se produjo el
+ * texto de un send_message, calculado exclusivamente server-side por el
+ * Engine (lib/flow/flow-engine.ts). Nunca es un input del Builder/cliente --
+ * ver el diseño completo en el reporte de la fase: "flow_static"/
+ * "flow_static_interpolated" para nodos con texto literal del autor
+ * (sin/con {{variable}} respectivamente), "ai_generated" para texto
+ * producido en runtime por un nodo `ai`, "system" para texto generado por
+ * el propio Engine (ej. mensajes de error de validación). Distinto de
+ * MessageRole: origin es un hecho verificable por el sistema, MessageRole
+ * es una declaración de intención del autor -- ninguno de los dos, por sí
+ * solo, exime de Claim Security (ver ai-response-security.ts).
+ */
+export type MessageOrigin = "flow_static" | "flow_static_interpolated" | "ai_generated" | "system";
+
 export interface FlowMessageContent {
   text?: string;
   parts?: string[];
@@ -322,6 +337,8 @@ export interface QuestionNode extends FlowNodeBase {
     variableKey: string;
     required: boolean;
     validation: QuestionValidation;
+    /** Corrección Claim Security, Fase 1 (autorizada) -- ver MessageOrigin. Default: informational. */
+    messageRole?: MessageRole;
   };
 }
 
@@ -331,6 +348,8 @@ export interface ButtonsNode extends FlowNodeBase {
     text: string;
     buttons: FlowButton[];
     variableKey?: string;
+    /** Corrección Claim Security, Fase 1 (autorizada) -- ver MessageOrigin. Default: informational. */
+    messageRole?: MessageRole;
   };
 }
 
@@ -365,6 +384,8 @@ export interface HumanNode extends FlowNodeBase {
     message?: string;
     pauseDurationHours: number;
     assignTo?: string;
+    /** Corrección Claim Security, Fase 1 (autorizada) -- ver MessageOrigin. Default: informational. */
+    messageRole?: MessageRole;
   };
 }
 
@@ -373,6 +394,8 @@ export interface EndNode extends FlowNodeBase {
   config: {
     message?: string;
     tags?: string[];
+    /** Corrección Claim Security, Fase 1 (autorizada) -- ver MessageOrigin. Default: informational. */
+    messageRole?: MessageRole;
   };
 }
 

@@ -263,7 +263,7 @@ describe("Fase 4.4.15 — P. cross-capability + runtime", () => {
 
   it("filterClaimSecuredEffects elimina send_message", () => {
     const effects = filterClaimSecuredEffects(
-      [{ type: "send_message", nodeId: "msg-1", content: { text: "Perfecto, ya quedó; puedes verificar luego." }, executionId: "exec-1", effectId: "fx-1" }],
+      [{ type: "send_message", nodeId: "msg-1", content: { text: "Perfecto, ya quedó; puedes verificar luego." }, executionId: "exec-1", effectId: "fx-1", origin: "ai_generated" }],
       { __userMessage: TX },
     );
     assert.equal(effects.length, 0);

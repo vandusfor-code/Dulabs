@@ -150,6 +150,21 @@ const DOMAIN_CAPABILITY_RULES: Array<{ pattern: RegExp; capabilities: AssertionC
     pattern: /transf(?:er|i[eé]r|ir)\w*.*\b(soporte|humano|agente|asesor|especialista)\b|comunicad\w+|\b(soporte|humano|agente|asesor)\b/i,
     capabilities: ["support.transferred"],
   },
+  {
+    // Corrección Claim Security (autorizada) — recepción/toma de un caso por
+    // un humano SIN las palabras literales soporte/humano/agente/asesor (ej.
+    // "Nuestro equipo ya recibió tu caso."). Exige un verbo de recepción/toma
+    // en forma completada CERCA (hasta 4 palabras) de un sustantivo de
+    // caso/solicitud -- ninguna palabra sola ("equipo", "caso", "solicitud")
+    // dispara esto por separado, así que "Nuestro equipo está disponible" /
+    // "puede ayudarte", "Cuéntanos tu caso" y "Tenemos un equipo
+    // especializado" NO matchean: ninguna trae el verbo de recepción exigido.
+    // Genérico a propósito -- no depende de ningún tenant/flow/redacción
+    // concreta de Solotalento ni de ningún otro negocio.
+    pattern:
+      /(?<![a-záéíóúüñ])(?:recib(?:i[oó]|ido|imos)|tom[oó]|tomamos|tomad[oa]|asign[oó]|asignamos|asignad[oa]|atendi[oó]|atendid[oa])(?![a-záéíóúüñ])(?:\s+\S+){0,4}?\s*\b(?:caso|solicitud|consulta|mensaje|conversaci[oó]n)\b/i,
+    capabilities: ["support.transferred"],
+  },
   { pattern: /enviad\w+|\benvi\w*\b/i, capabilities: ["lead.created", "payment.completed"] },
 ];
 

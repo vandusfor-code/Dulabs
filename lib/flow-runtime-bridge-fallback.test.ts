@@ -42,6 +42,7 @@ const SEND_MESSAGE_EFFECT = {
   content: { text: "hola" },
   executionId: "exec-1",
   effectId: "eff-msg-1",
+  origin: "flow_static" as const,
 };
 
 describe("Fase 1 — decidirFallbackDesdeResultado (lógica pura, sin DB)", () => {

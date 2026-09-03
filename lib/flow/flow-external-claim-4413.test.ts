@@ -238,6 +238,7 @@ describe("Fase 4.4.13 — M. runtime send_message barrier", () => {
           content: { text: "De acuerdo, listo." },
           executionId: "exec-1",
           effectId: "fx-1",
+          origin: "ai_generated",
         },
       ],
       { __userMessage: TX_USER },

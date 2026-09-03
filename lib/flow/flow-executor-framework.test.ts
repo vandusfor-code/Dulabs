@@ -399,7 +399,7 @@ describe("Effect lifecycle — Fase 4.1", () => {
   });
 
   it("19. duplicate effect — idempotent skip at orchestrator layer", () => {
-    assert.ok(isDispatchableEffect({ type: "send_message", nodeId: "m", content: { text: "h" }, executionId: "e", effectId: "fx" }));
+    assert.ok(isDispatchableEffect({ type: "send_message", nodeId: "m", content: { text: "h" }, executionId: "e", effectId: "fx", origin: "flow_static" }));
   });
 
   it("20. succeeded effect replays stored result", () => {
@@ -555,6 +555,7 @@ describe("send_message lifecycle — Fase 4.1 / Fase 0 (I/O real)", () => {
       content: { text: "Hola" },
       executionId: "exec",
       effectId: "fx-send-dup",
+      origin: "flow_static" as const,
     };
     assert.ok(isDispatchableEffect(effect));
     const req = buildEffectDispatchRequest({

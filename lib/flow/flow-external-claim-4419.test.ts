@@ -337,6 +337,7 @@ describe("Fase 4.4.19 — filterClaimSecuredEffects", () => {
           executionId: "e1",
           effectId: "f1",
           content: { text: "Contamos con todo listo." },
+          origin: "ai_generated",
         },
       ],
       { __userMessage: TX },

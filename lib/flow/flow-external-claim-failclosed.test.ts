@@ -266,6 +266,7 @@ describe("Fase 4.4.3 — media y template", () => {
         },
         executionId: "exec-1",
         effectId: "fx-1",
+        origin: "ai_generated",
       }],
       {},
     );

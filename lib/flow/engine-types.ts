@@ -9,6 +9,7 @@ import type {
   FlowDefinition,
   FlowMessageContent,
   FlowVariableType,
+  MessageOrigin,
   QuestionValidation,
   SaveDataTarget,
 } from "@/lib/flow/types";
@@ -95,6 +96,12 @@ export type EngineEffect =
       buttons?: FlowButton[];
       executionId: string;
       effectId: string;
+      /**
+       * Corrección Claim Security, Fase 1/2 (autorizada) -- CÓMO se produjo
+       * este texto, calculado exclusivamente en flow-engine.ts (nunca un
+       * input externo). Ver MessageOrigin en lib/flow/types.ts.
+       */
+      origin: MessageOrigin;
     }
   | {
       type: "wait_input";

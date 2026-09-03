@@ -222,6 +222,7 @@ describe("Blocker A — AI responseText runtime", () => {
         content: { text: "Perfecto, tu cita quedó reservada" },
         executionId: "exec-1",
         effectId: "fx-msg-1",
+        origin: "ai_generated",
       }],
       {},
     );
