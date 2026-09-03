@@ -1,6 +1,6 @@
 "use client";
 
-import { forwardRef, useImperativeHandle, useMemo } from "react";
+import { forwardRef, useCallback, useImperativeHandle, useMemo } from "react";
 import {
   Background,
   Controls,
@@ -10,12 +10,15 @@ import {
   useReactFlow,
   type Connection,
   type Edge,
+  type EdgeChange,
   type IsValidConnection,
   type Node,
+  type NodeChange,
   type NodeTypes,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import type { CanvasEdge, CanvasNode } from "@/lib/flow-builder/canvas-adapter";
+import { applySelectChanges } from "@/lib/flow-builder/selection-changes";
 import type { FlowNodeType, NodePosition } from "@/lib/flow/types";
 import { FLOW_NODE_DRAG_MIME } from "./FlowNodePalette";
 import { FlowNodeCard } from "./FlowNodeCard";
@@ -116,16 +119,13 @@ const FlowCanvasInner = forwardRef<FlowCanvasHandle, FlowCanvasProps>(function F
     },
   }));
 
-  // Memoizado (parte del bugfix real de producción -- ver también el guard
-  // por VALOR en onSelectionChange, app/dashboard/flows/[id]/page.tsx). Sin
-  // esto, estos arrays se recreaban con una referencia nueva en CADA render
-  // aunque nada hubiera cambiado -- @xyflow/react trata `nodes`/`edges` como
-  // props controladas y resincroniza su store interno cuando la referencia
-  // cambia, lo que reafirma la selección hacia afuera. El guard de
-  // onSelectionChange es lo que realmente corta el ciclo (evita que un
-  // reporte de selección sin cambios reales dispare un nuevo setSelection);
-  // este useMemo reduce el trabajo de más y la cantidad de resincronizaciones
-  // espurias, pero no es por sí solo lo que impide el loop.
+  // Memoizado -- sin esto, estos arrays se recrean con una referencia nueva
+  // en CADA render aunque nada haya cambiado, y @xyflow/react trata
+  // `nodes`/`edges` como props controladas: resincroniza su store interno
+  // cada vez que la referencia cambia. Complementa a onNodesChange/
+  // onEdgesChange (más abajo, la corrección real del bucle de selección) --
+  // esto reduce cuántas veces se dispara esa resincronización, no es en sí
+  // mismo lo que evita el loop.
   const nodesWithSelection = useMemo(
     () =>
       nodes.map((n) => ({
@@ -149,6 +149,40 @@ const FlowCanvasInner = forwardRef<FlowCanvasHandle, FlowCanvasProps>(function F
     if (!connection.source || !connection.target) return;
     onConnect?.({ source: connection.source, target: connection.target, sourceHandle: connection.sourceHandle });
   };
+
+  // Bugfix real (producción) -- con `nodes`/`edges` controlados (props),
+  // React Flow mantiene su PROPIO store interno de selección, que solo se
+  // reconcilia con lo que le pasamos si le confirmamos sus NodeChange/
+  // EdgeChange vía onNodesChange/onEdgesChange. Sin esto, el `selected` que
+  // le mandamos en los props y el que React Flow cree tener internamente
+  // quedan permanentemente un ciclo desfasados -- cada resync "corrige" la
+  // selección al valor CONTRARIO del que le mandamos, lo que reportaba
+  // (antes) por onSelectionChange como una oscilación seleccionado <->
+  // vacío infinita ("Maximum update depth exceeded"). Nunca se manifestaba
+  // con el nodo Start original porque nunca se seleccionaba
+  // programáticamente al cargar -- solo aparece al agregar+seleccionar un
+  // nodo nuevo (handleNodeDrop -> selectNode). Solo se procesan los cambios
+  // "select" (lo único que este canvas necesita reflejar en su selección
+  // externa) -- position/dimensions/remove ya los maneja onNodesDragStop/
+  // onBeforeDelete+onNodesDelete/onEdgesDelete, aplicarlos AQUÍ también
+  // duplicaría esa lógica.
+  const handleNodesChange = useCallback(
+    (changes: NodeChange[]) => {
+      if (!changes.some((c) => c.type === "select")) return;
+      const nodeIds = applySelectChanges(selectedNodeIds ?? new Set(), changes);
+      onSelectionChange?.({ nodeIds, edgeIds: [...(selectedEdgeIds ?? [])] });
+    },
+    [selectedNodeIds, selectedEdgeIds, onSelectionChange],
+  );
+
+  const handleEdgesChange = useCallback(
+    (changes: EdgeChange[]) => {
+      if (!changes.some((c) => c.type === "select")) return;
+      const edgeIds = applySelectChanges(selectedEdgeIds ?? new Set(), changes);
+      onSelectionChange?.({ nodeIds: [...(selectedNodeIds ?? [])], edgeIds });
+    },
+    [selectedNodeIds, selectedEdgeIds, onSelectionChange],
+  );
 
   const handleIsValidConnection: IsValidConnection = (edgeOrConnection) => {
     if (!isValidConnection) return true;
@@ -204,6 +238,8 @@ const FlowCanvasInner = forwardRef<FlowCanvasHandle, FlowCanvasProps>(function F
         edges={edgesWithSelection}
         nodeTypes={nodeTypes}
         fitView
+        onNodesChange={handleNodesChange}
+        onEdgesChange={handleEdgesChange}
         proOptions={{ hideAttribution: true }}
         nodesDraggable
         nodesConnectable
@@ -215,9 +251,6 @@ const FlowCanvasInner = forwardRef<FlowCanvasHandle, FlowCanvasProps>(function F
         onBeforeDelete={handleBeforeDelete}
         onNodesDelete={(deleted) => onDeleteNodes?.(deleted.map((n) => n.id))}
         onEdgesDelete={(deleted) => onDeleteEdges?.(deleted.map((e) => e.id))}
-        onSelectionChange={({ nodes: selNodes, edges: selEdges }) =>
-          onSelectionChange?.({ nodeIds: selNodes.map((n) => n.id), edgeIds: selEdges.map((e) => e.id) })
-        }
         onPaneClick={() => onPaneClick?.()}
         onNodeDragStop={(_event, _node, draggedNodes) => onNodesDragStop?.(draggedNodes.map((n) => ({ id: n.id, position: n.position })))}
         onNodeContextMenu={(event, node) => {

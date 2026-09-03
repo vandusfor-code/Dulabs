@@ -797,16 +797,15 @@ export default function FlowBuilderPage() {
               selectedNodeIds={selection.nodeIds}
               selectedEdgeIds={selection.edgeIds}
               onSelectionChange={({ nodeIds, edgeIds }) => {
-                // Bugfix real (producción) -- React Flow re-reporta la
-                // selección cada vez que `nodes`/`edges` cambian de
-                // REFERENCIA (incluso sin cambio de contenido). Sin este
-                // guard, setSelection creaba Sets nuevos aunque el
-                // contenido fuera idéntico -> esa nueva referencia volvía a
-                // cambiar selectedNodeIds/selectedEdgeIds -> React Flow
-                // resincronizaba -> volvía a reportar la "misma" selección
-                // -> bucle infinito ("Maximum update depth exceeded",
-                // mataba la pestaña). Comparar por VALOR antes de actualizar
-                // el estado corta el ciclo en su origen.
+                // FlowCanvas.tsx deriva esto de los NodeChange/EdgeChange
+                // "select" reales que aplicó (onNodesChange/onEdgesChange) --
+                // ya no del onSelectionChange nativo de @xyflow/react, que
+                // resultó desincronizado de su propio store interno (ver el
+                // comentario de handleNodesChange en FlowCanvas.tsx). Este
+                // guard por VALOR se conserva como defensa en profundidad:
+                // nunca crea un Set nuevo si el contenido reportado es
+                // idéntico al actual, para no generar una referencia nueva
+                // sin necesidad.
                 setSelection((prev) => {
                   if (sameIds(prev.nodeIds, nodeIds) && sameIds(prev.edgeIds, edgeIds)) return prev;
                   return { nodeIds: new Set(nodeIds), edgeIds: new Set(edgeIds) };
