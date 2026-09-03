@@ -188,6 +188,100 @@ export async function getFlowById(
   return (data as FlowRow | null) ?? null;
 }
 
+// Fase 1 (API de autoría, autorizado) — 5 funciones NUEVAS, mismo patrón que
+// las de arriba (I/O puro, sin lógica de negocio, siempre .eq("tenant_id", ...)
+// primero). Ninguna función existente de este archivo se modificó.
+
+export async function listFlows(
+  supabase: SupabaseClient,
+  input: { tenantId: string; status?: FlowRow["status"]; limit?: number },
+): Promise<FlowRow[]> {
+  let query = supabase
+    .from("dulabs_flows")
+    .select("*")
+    .eq("tenant_id", input.tenantId)
+    .order("created_at", { ascending: false })
+    .limit(input.limit ?? 200);
+  if (input.status) query = query.eq("status", input.status);
+  const { data, error } = await query;
+  if (error) throw error;
+  return (data ?? []) as FlowRow[];
+}
+
+/** Metadata únicamente -- nunca status/published_version_id (esos solo cambian vía publishFlowVersion/archiveFlow). */
+export async function updateFlow(
+  supabase: SupabaseClient,
+  input: { tenantId: string; flowId: string; name?: string; description?: string; slug?: string },
+): Promise<FlowRow | null> {
+  const patch: Record<string, string> = { updated_at: new Date().toISOString() };
+  if (input.name !== undefined) patch.name = input.name;
+  if (input.description !== undefined) patch.description = input.description;
+  if (input.slug !== undefined) patch.slug = input.slug;
+
+  const { data, error } = await supabase
+    .from("dulabs_flows")
+    .update(patch)
+    .eq("tenant_id", input.tenantId)
+    .eq("id", input.flowId)
+    .select("*")
+    .maybeSingle();
+  if (error) throw error;
+  return (data as FlowRow | null) ?? null;
+}
+
+/**
+ * "Eliminar" un Flow = archivar (status='archived'), nunca DELETE físico --
+ * dulabs_flow_versions tiene FK ON DELETE RESTRICT hacia esta tabla, así que
+ * un DELETE real fallaría en cuanto exista cualquier versión. La protección
+ * de "Flow activo para algún cliente" (dulabs_clientes_config.flow_activo)
+ * vive en la capa de API (app/api/flows/[id]/route.ts), no acá -- esa tabla
+ * no es del dominio de Flow Store.
+ */
+export async function archiveFlow(
+  supabase: SupabaseClient,
+  input: { tenantId: string; flowId: string },
+): Promise<FlowRow | null> {
+  const { data, error } = await supabase
+    .from("dulabs_flows")
+    .update({ status: "archived", updated_at: new Date().toISOString() })
+    .eq("tenant_id", input.tenantId)
+    .eq("id", input.flowId)
+    .select("*")
+    .maybeSingle();
+  if (error) throw error;
+  return (data as FlowRow | null) ?? null;
+}
+
+export async function listFlowVersions(
+  supabase: SupabaseClient,
+  input: { tenantId: string; flowId: string; limit?: number },
+): Promise<FlowVersionRow[]> {
+  const { data, error } = await supabase
+    .from("dulabs_flow_versions")
+    .select("*")
+    .eq("tenant_id", input.tenantId)
+    .eq("flow_id", input.flowId)
+    .order("version_number", { ascending: false })
+    .limit(input.limit ?? 100);
+  if (error) throw error;
+  return (data ?? []) as FlowVersionRow[];
+}
+
+export async function listExecutionsForFlow(
+  supabase: SupabaseClient,
+  input: { tenantId: string; flowId: string; limit?: number },
+): Promise<FlowExecutionRow[]> {
+  const { data, error } = await supabase
+    .from("dulabs_flow_executions")
+    .select("*")
+    .eq("tenant_id", input.tenantId)
+    .eq("flow_id", input.flowId)
+    .order("last_activity_at", { ascending: false })
+    .limit(input.limit ?? 100);
+  if (error) throw error;
+  return (data ?? []) as FlowExecutionRow[];
+}
+
 // ---------------------------------------------------------------------------
 // Integrations & credentials
 // ---------------------------------------------------------------------------

@@ -11,6 +11,7 @@ import {
   Zap,
   ShoppingCart,
   ShieldCheck,
+  Workflow,
   type LucideIcon,
 } from "lucide-react";
 import type { Rol } from "@/lib/team";
@@ -55,6 +56,13 @@ export const navSections: NavSection[] = [
       { label: "Plantillas", labelEn: "Templates", href: "/dashboard/plantillas", icon: LayoutTemplate },
       { label: "Campañas", labelEn: "Campaigns", href: "/dashboard/campanas", icon: Send },
       { label: "Encuestas", labelEn: "Surveys", href: "/dashboard/surveys", icon: ClipboardList },
+      {
+        label: "Flows",
+        labelEn: "Flows",
+        href: "/dashboard/flows",
+        icon: Workflow,
+        rolesPermitidos: ["admin", "agente"],
+      },
       {
         label: "Marketplace",
         labelEn: "Marketplace",
