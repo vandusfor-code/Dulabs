@@ -6,6 +6,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { cifrarSecreto } from "@/lib/crypto";
 import { createInitialFlowDefinition } from "@/lib/flow-builder/node-factory";
+import { resolveFlowSelection } from "@/lib/flow-triggers/trigger-router";
+import { buildTriggerConfig, type FlowSelectionResult, type IncomingEvent, type RoutableTrigger, type TriggerConfig } from "@/lib/flow-triggers/types";
 import type { FlowDefinition } from "@/lib/flow/types";
 import type { FlowEngineState } from "@/lib/flow/engine-types";
 import { definitionContainsEmbeddedSecrets } from "@/lib/flow/detect-embedded-secrets";
@@ -26,6 +28,7 @@ import {
   type FlowIntegrationRow,
   type FlowCredentialRow,
   type FlowRow,
+  type FlowTriggerRow,
   type FlowVersionRow,
 } from "@/lib/flow/flow-store-types";
 
@@ -308,6 +311,193 @@ export async function listFlowVersions(
     .limit(input.limit ?? 100);
   if (error) throw error;
   return (data ?? []) as FlowVersionRow[];
+}
+
+// ---------------------------------------------------------------------------
+// Triggers + Event Routing (Fase 3) — persistencia pura, SIN reglas de
+// matching acá (eso vive en lib/flow-triggers/, código puro sin Supabase).
+// ---------------------------------------------------------------------------
+
+function serializeTriggerConfig(config: TriggerConfig): Record<string, unknown> {
+  // `type` NUNCA se duplica dentro de la columna config -- ya vive en la
+  // columna `type` de la fila. Se descompone el discriminated union a mano
+  // (en vez de `const { type, ...rest } = config`) porque TS no angosta la
+  // unión completa al desestructurar así.
+  switch (config.type) {
+    case "keyword":
+    case "message_contains":
+    case "message_starts_with":
+      return { keywords: config.keywords };
+    case "event":
+      return { eventName: config.eventName };
+    case "conversation_started":
+    case "user_message":
+    case "manual":
+      return {};
+  }
+}
+
+export async function createFlowTrigger(
+  supabase: SupabaseClient,
+  input: {
+    tenantId: string;
+    flowId: string;
+    config: TriggerConfig;
+    priority?: number;
+    enabled?: boolean;
+    createdBy?: string;
+  },
+): Promise<FlowTriggerRow> {
+  const { data, error } = await supabase
+    .from("dulabs_flow_triggers")
+    .insert({
+      tenant_id: input.tenantId,
+      flow_id: input.flowId,
+      type: input.config.type,
+      config: serializeTriggerConfig(input.config),
+      priority: input.priority ?? 0,
+      enabled: input.enabled ?? true,
+      created_by: input.createdBy ?? null,
+    })
+    .select("*")
+    .single();
+  if (error) throw error;
+  return data as FlowTriggerRow;
+}
+
+/** Autoría (Builder): TODOS los triggers de un Flow, sin importar enabled -- el Builder debe poder mostrar/editar los deshabilitados también. */
+export async function listFlowTriggers(
+  supabase: SupabaseClient,
+  input: { tenantId: string; flowId: string },
+): Promise<FlowTriggerRow[]> {
+  const { data, error } = await supabase
+    .from("dulabs_flow_triggers")
+    .select("*")
+    .eq("tenant_id", input.tenantId)
+    .eq("flow_id", input.flowId)
+    .order("priority", { ascending: false })
+    .order("created_at", { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as FlowTriggerRow[];
+}
+
+export async function getFlowTrigger(
+  supabase: SupabaseClient,
+  input: { tenantId: string; flowId: string; triggerId: string },
+): Promise<FlowTriggerRow | null> {
+  const { data, error } = await supabase
+    .from("dulabs_flow_triggers")
+    .select("*")
+    .eq("tenant_id", input.tenantId)
+    .eq("flow_id", input.flowId)
+    .eq("id", input.triggerId)
+    .maybeSingle();
+  if (error) throw error;
+  return (data as FlowTriggerRow | null) ?? null;
+}
+
+/**
+ * Actualiza SOLO config/priority/enabled -- `type` es inmutable tras
+ * creación (cambiar de tipo puede dejar `config` con una forma inválida
+ * para el nuevo tipo; la API exige borrar y crear de nuevo en ese caso, ver
+ * app/api/flows/[id]/triggers/[triggerId]/route.ts).
+ */
+export async function updateFlowTrigger(
+  supabase: SupabaseClient,
+  input: {
+    tenantId: string;
+    flowId: string;
+    triggerId: string;
+    config?: TriggerConfig;
+    priority?: number;
+    enabled?: boolean;
+  },
+): Promise<FlowTriggerRow | null> {
+  const patch: Record<string, unknown> = {};
+  if (input.config !== undefined) patch.config = serializeTriggerConfig(input.config);
+  if (input.priority !== undefined) patch.priority = input.priority;
+  if (input.enabled !== undefined) patch.enabled = input.enabled;
+
+  const { data, error } = await supabase
+    .from("dulabs_flow_triggers")
+    .update(patch)
+    .eq("tenant_id", input.tenantId)
+    .eq("flow_id", input.flowId)
+    .eq("id", input.triggerId)
+    .select("*")
+    .maybeSingle();
+  if (error) throw error;
+  return (data as FlowTriggerRow | null) ?? null;
+}
+
+export async function deleteFlowTrigger(
+  supabase: SupabaseClient,
+  input: { tenantId: string; flowId: string; triggerId: string },
+): Promise<boolean> {
+  const { data, error } = await supabase
+    .from("dulabs_flow_triggers")
+    .delete()
+    .eq("tenant_id", input.tenantId)
+    .eq("flow_id", input.flowId)
+    .eq("id", input.triggerId)
+    .select("id")
+    .maybeSingle();
+  if (error) throw error;
+  return data !== null;
+}
+
+/**
+ * Routing: TODOS los triggers habilitados de un tenant (cualquier Flow),
+ * con el status real de su Flow dueño ya incluido (join), listos para
+ * pasarle a resolveFlowSelection() -- que es quien decide, de forma pura,
+ * cuáles de estos realmente pueden ganar (enabled + Flow published + match).
+ * Filas con `config` corrupto/con forma inválida para su `type` se
+ * DESCARTAN acá (buildTriggerConfig devuelve null) en vez de romper el
+ * routing completo del tenant por una fila mal formada.
+ */
+export async function listRoutableTriggersForTenant(
+  supabase: SupabaseClient,
+  tenantId: string,
+): Promise<RoutableTrigger[]> {
+  const { data, error } = await supabase
+    .from("dulabs_flow_triggers")
+    .select("*, dulabs_flows!inner(status)")
+    .eq("tenant_id", tenantId)
+    .eq("enabled", true);
+  if (error) throw error;
+
+  const rows = (data ?? []) as (FlowTriggerRow & { dulabs_flows: { status: string } })[];
+  const result: RoutableTrigger[] = [];
+  for (const row of rows) {
+    const config = buildTriggerConfig(row.type, row.config);
+    if (!config) continue;
+    result.push({
+      id: row.id,
+      tenantId: row.tenant_id,
+      flowId: row.flow_id,
+      type: config.type,
+      config,
+      priority: row.priority,
+      enabled: row.enabled,
+      flowStatus: row.dulabs_flows.status as RoutableTrigger["flowStatus"],
+    });
+  }
+  return result;
+}
+
+/**
+ * Composición I/O + dominio puro: trae los candidatos reales del tenant del
+ * EVENTO (nunca de un tenantId externo -- ver IncomingEvent, siempre viene
+ * del contexto autenticado del caller) y delega la decisión determinista a
+ * resolveFlowSelection(). Este es el punto de integración que un futuro
+ * Flow Engine llamará -- NO ejecuta el Flow seleccionado, solo lo señala.
+ */
+export async function resolveFlowForIncomingEvent(
+  supabase: SupabaseClient,
+  event: IncomingEvent,
+): Promise<FlowSelectionResult> {
+  const candidates = await listRoutableTriggersForTenant(supabase, event.tenantId);
+  return resolveFlowSelection(candidates, event);
 }
 
 export async function listExecutionsForFlow(

@@ -1,7 +1,10 @@
 "use client";
 
+import { Plus, Trash2, ToggleLeft, ToggleRight } from "lucide-react";
 import { Field, cn, inputClass } from "@/components/spa-panel/ui";
 import { FLOW_EDGE_HANDLE } from "@/lib/flow/constants";
+import { describeTriggerConfig } from "@/lib/flow-triggers/describe-trigger";
+import type { FlowTrigger } from "@/lib/flow-triggers/types";
 import type {
   ActionNodeConfig,
   AiNodeConfig,
@@ -635,6 +638,95 @@ function ServerErrorsNotice({ errors }: { errors: FlowValidationError[] }) {
   );
 }
 
+/**
+ * Fase 3 (Triggers + Event Routing, autorizado) — reemplaza el viejo
+ * resumen estático "trigger: manual" del nodo Inicio por la lista REAL de
+ * triggers configurados (tabla dulabs_flow_triggers, ver lib/flow/flow-store.ts).
+ * Deliberadamente NO gestiona su propio fetch -- `triggers` y los callbacks
+ * vienen del padre ([id]/page.tsx, que ya tiene flowId/session), igual que
+ * el resto de este panel nunca mantiene estado propio de red. StartEditor
+ * (arriba) sigue intacto: StartNodeConfig.triggerType/keywords son un campo
+ * del schema de FlowDefinition que NO se toca ni se reemplaza -- este es un
+ * mecanismo nuevo y aparte, no una migración de aquel.
+ */
+function TriggersSection({
+  triggers,
+  onAdd,
+  onEdit,
+  onDelete,
+  onToggleEnabled,
+}: {
+  triggers: FlowTrigger[] | null;
+  onAdd: () => void;
+  onEdit: (trigger: FlowTrigger) => void;
+  onDelete: (trigger: FlowTrigger) => void;
+  onToggleEnabled: (trigger: FlowTrigger) => void;
+}) {
+  const activos = triggers?.filter((t) => t.enabled).length ?? 0;
+  return (
+    <div>
+      <div className="mb-2 flex items-center justify-between">
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-mist">
+          Triggers{triggers ? ` (${activos} activo${activos === 1 ? "" : "s"})` : ""}
+        </p>
+        <button
+          type="button"
+          onClick={onAdd}
+          className="flex items-center gap-1 rounded-lg border border-edge px-2 py-1 text-[11px] font-medium text-fg hover:bg-ink-2"
+        >
+          <Plus className="size-3" /> Agregar trigger
+        </button>
+      </div>
+      {triggers === null ? (
+        <p className="text-xs text-mist">Cargando triggers…</p>
+      ) : triggers.length === 0 ? (
+        <p className="text-xs leading-relaxed text-mist">
+          Sin triggers configurados todavía. Sin al menos uno activo, este Flow nunca se activará automáticamente para un
+          evento entrante.
+        </p>
+      ) : (
+        <div className="flex flex-col gap-1.5">
+          {triggers.map((trigger) => (
+            <div
+              key={trigger.id}
+              className={cn(
+                "flex items-center justify-between gap-2 rounded-[10px] border px-3 py-2",
+                trigger.enabled ? "border-edge bg-ink" : "border-edge/50 bg-ink/40 opacity-60",
+              )}
+            >
+              <button type="button" onClick={() => onEdit(trigger)} className="min-w-0 flex-1 text-left">
+                <p className="truncate text-xs text-fg">{describeTriggerConfig(trigger.config)}</p>
+                <p className="text-[10px] text-mist">
+                  prioridad {trigger.priority}
+                  {!trigger.enabled ? " · inactivo" : ""}
+                </p>
+              </button>
+              <div className="flex shrink-0 items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => onToggleEnabled(trigger)}
+                  className="rounded p-1 text-mist hover:bg-ink-2 hover:text-fg"
+                  title={trigger.enabled ? "Desactivar" : "Activar"}
+                >
+                  {trigger.enabled ? <ToggleRight className="size-4 text-lime-text" /> : <ToggleLeft className="size-4" />}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onDelete(trigger)}
+                  className="rounded p-1 text-mist hover:bg-red-500/10 hover:text-red-400"
+                  title="Eliminar"
+                >
+                  <Trash2 className="size-3.5" />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ConfigEditor({ node, onChange, errors }: { node: FlowNode; onChange: OnConfigChange; errors: NodeFieldError[] }) {
   switch (node.type) {
     case "start":
@@ -673,6 +765,11 @@ export function FlowInfoPanel({
   serverErrors,
   onLabelChange,
   onConfigChange,
+  triggers,
+  onAddTrigger,
+  onEditTrigger,
+  onDeleteTrigger,
+  onToggleTriggerEnabled,
 }: {
   node: FlowNode | null;
   /** Necesario solo para OrphanHandlesNotice (qué edges salientes ya existen). */
@@ -682,6 +779,12 @@ export function FlowInfoPanel({
   serverErrors: FlowValidationError[];
   onLabelChange: (label: string) => void;
   onConfigChange: OnConfigChange;
+  /** Fase 3 -- triggers del Flow completo (no solo del nodo seleccionado), null mientras cargan. Solo se muestran cuando el nodo seleccionado es "start". */
+  triggers: FlowTrigger[] | null;
+  onAddTrigger: () => void;
+  onEditTrigger: (trigger: FlowTrigger) => void;
+  onDeleteTrigger: (trigger: FlowTrigger) => void;
+  onToggleTriggerEnabled: (trigger: FlowTrigger) => void;
 }) {
   return (
     <aside className="w-80 shrink-0 overflow-y-auto border-l border-edge bg-card p-4">
@@ -704,6 +807,15 @@ export function FlowInfoPanel({
           </Field>
           <ServerErrorsNotice errors={serverErrors} />
           <OrphanHandlesNotice node={node} flow={flow} />
+          {node.type === "start" && (
+            <TriggersSection
+              triggers={triggers}
+              onAdd={onAddTrigger}
+              onEdit={onEditTrigger}
+              onDelete={onDeleteTrigger}
+              onToggleEnabled={onToggleTriggerEnabled}
+            />
+          )}
           <ConfigEditor node={node} onChange={onConfigChange} errors={errors} />
         </div>
       )}

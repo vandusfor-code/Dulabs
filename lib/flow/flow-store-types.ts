@@ -39,6 +39,20 @@ export interface FlowVersionRow {
   created_at: string;
 }
 
+/** Fase 3 (Triggers + Event Routing, autorizado) — fila cruda de dulabs_flow_triggers. `type`/`config` se reconstruyen a un TriggerConfig tipado vía buildTriggerConfig (lib/flow-triggers/types.ts), nunca acá. */
+export interface FlowTriggerRow {
+  tenant_id: string;
+  id: string;
+  flow_id: string;
+  type: string;
+  enabled: boolean;
+  priority: number;
+  config: Record<string, unknown>;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface FlowIntegrationRow {
   tenant_id: string;
   id: string;

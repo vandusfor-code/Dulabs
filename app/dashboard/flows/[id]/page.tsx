@@ -24,6 +24,7 @@ import { canRedo as historyCanRedo, canUndo as historyCanUndo, createHistory, pu
 import { useFlowKeyboardShortcuts } from "@/lib/flow-builder/keyboard-shortcuts";
 import { ensureInitialVersion } from "@/lib/flow-builder/create-flow";
 import { buildFlowLoadResult, findNodeById, type FlowLoadResult } from "@/lib/flow-builder/load-flow";
+import { createTrigger, deleteTrigger, listTriggers, updateTrigger } from "@/lib/flow-builder/triggers";
 import { createDefaultNode, generateEdgeId } from "@/lib/flow-builder/node-factory";
 import { canPublishFlow, canPublishNow, canSaveFlow, canValidateFlow, publishDisabledReason } from "@/lib/flow-builder/permissions";
 import { fetchFlowVersions, publishFlowVersion } from "@/lib/flow-builder/publish-flow";
@@ -32,6 +33,8 @@ import { searchNodes } from "@/lib/flow-builder/search-nodes";
 import { validateNodeEdit } from "@/lib/flow-builder/validate-node-edit";
 import { errorsForNode, globalErrors } from "@/lib/flow-builder/validation-markers";
 import { hasNewerDraftThanPublished } from "@/lib/flow-builder/version-history";
+import { describeTriggerConfig } from "@/lib/flow-triggers/describe-trigger";
+import type { FlowTrigger } from "@/lib/flow-triggers/types";
 import type { FlowValidationError } from "@/lib/flow/errors";
 import type { FlowRow, FlowVersionRow } from "@/lib/flow/flow-store-types";
 import type { FlowDefinition, FlowEdge, FlowNode, FlowNodeType, NodePosition } from "@/lib/flow/types";
@@ -45,6 +48,7 @@ import { FlowStateScreen, type FlowStateScreenKind } from "@/components/dashboar
 import { FlowTopbar, type PublishStatus, type SaveStatus, type ValidationStatus } from "@/components/dashboard/flows/FlowTopbar";
 import { FlowValidationPanel } from "@/components/dashboard/flows/FlowValidationPanel";
 import { FlowVersionHistory } from "@/components/dashboard/flows/FlowVersionHistory";
+import { TriggerModal, type TriggerModalSubmit } from "@/components/dashboard/flows/TriggerModal";
 
 interface Selection {
   nodeIds: ReadonlySet<string>;
@@ -236,6 +240,103 @@ export default function FlowBuilderPage() {
     if (!definition) return null;
     return flowDefinitionToCanvas(definition);
   }, [definition]);
+
+  // --- Fase 3 (Triggers + Event Routing, autorizado) ------------------------
+  // Estado y CRUD de triggers del Flow. Deliberadamente SEPARADO de
+  // FlowDefinition/BuilderState -- un trigger es una fila real en
+  // dulabs_flow_triggers (ver lib/flow/flow-store.ts), nunca parte del
+  // grafo, nunca pasa por edit()/applyEdit ni afecta isDirty/Guardar.
+  const [triggers, setTriggers] = useState<FlowTrigger[] | null>(null);
+  const [triggerModal, setTriggerModal] = useState<{ mode: "create" } | { mode: "edit"; trigger: FlowTrigger } | null>(null);
+  const [triggerSaving, setTriggerSaving] = useState(false);
+  const [triggerError, setTriggerError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!session || result.kind !== "loaded") return;
+    let cancelled = false;
+    listTriggers({ flowId, accessToken: session.access_token }).then((res) => {
+      if (cancelled) return;
+      setTriggers(res.ok ? res.triggers : []);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [session, flowId, result.kind]);
+
+  function handleAddTrigger() {
+    setTriggerError(null);
+    setTriggerModal({ mode: "create" });
+  }
+
+  function handleEditTrigger(trigger: FlowTrigger) {
+    setTriggerError(null);
+    setTriggerModal({ mode: "edit", trigger });
+  }
+
+  async function handleDeleteTrigger(trigger: FlowTrigger) {
+    if (!session) return;
+    const confirmado = window.confirm(`¿Eliminar este trigger?\n\n${describeTriggerConfig(trigger.config)}`);
+    if (!confirmado) return;
+    const result = await deleteTrigger({ flowId, triggerId: trigger.id, accessToken: session.access_token });
+    if (result.ok) setTriggers((prev) => prev?.filter((t) => t.id !== trigger.id) ?? prev);
+  }
+
+  async function handleToggleTriggerEnabled(trigger: FlowTrigger) {
+    if (!session) return;
+    const result = await updateTrigger({ flowId, triggerId: trigger.id, enabled: !trigger.enabled, accessToken: session.access_token });
+    if (result.ok) setTriggers((prev) => prev?.map((t) => (t.id === trigger.id ? result.trigger : t)) ?? prev);
+  }
+
+  async function handleSubmitTrigger(input: TriggerModalSubmit) {
+    if (!session || !triggerModal) return;
+    setTriggerSaving(true);
+    setTriggerError(null);
+    const result =
+      triggerModal.mode === "create"
+        ? await createTrigger({ flowId, config: input.config, priority: input.priority, enabled: input.enabled, accessToken: session.access_token })
+        : await updateTrigger({
+            flowId,
+            triggerId: triggerModal.trigger.id,
+            config: input.config,
+            priority: input.priority,
+            enabled: input.enabled,
+            accessToken: session.access_token,
+          });
+    setTriggerSaving(false);
+    if (result.ok) {
+      setTriggers((prev) => {
+        if (!prev) return [result.trigger];
+        const existe = prev.some((t) => t.id === result.trigger.id);
+        return existe ? prev.map((t) => (t.id === result.trigger.id ? result.trigger : t)) : [...prev, result.trigger];
+      });
+      setTriggerModal(null);
+    } else {
+      setTriggerError(result.error.message);
+    }
+  }
+
+  // El nodo Inicio en el CANVAS muestra el resumen de triggers REALES (no
+  // el viejo StartNodeConfig.triggerType) -- flowDefinitionToCanvas
+  // (canvas-adapter.ts) es puro y no sabe de triggers, así que esto es un
+  // post-procesamiento deliberado, solo sobre el nodo start, para no
+  // enseñarle async a esa función pura ni a FlowCanvas.tsx.
+  const canvasConTriggers = useMemo(() => {
+    if (!canvas || !definition) return canvas;
+    const startNode = definition.nodes.find((n) => n.type === "start");
+    if (!startNode || triggers === null) return canvas;
+    const activos = triggers.filter((t) => t.enabled);
+    const summary =
+      activos.length === 0
+        ? "Sin triggers activos"
+        : `${activos.length} trigger${activos.length === 1 ? "" : "s"} activo${activos.length === 1 ? "" : "s"}: ${activos
+            .slice(0, 2)
+            .map((t) => describeTriggerConfig(t.config))
+            .join(" · ")}${activos.length > 2 ? "…" : ""}`;
+    return {
+      ...canvas,
+      nodes: canvas.nodes.map((n) => (n.id === startNode.id ? { ...n, data: { ...n.data, summary } } : n)),
+    };
+  }, [canvas, definition, triggers]);
 
   // Un solo nodo/edge seleccionado (y nada más) es lo único que FlowInfoPanel
   // sabe editar -- selección múltiple simplemente no muestra nada en el
@@ -789,11 +890,11 @@ export default function FlowBuilderPage() {
       <div className="relative flex h-[75vh] min-h-[560px]">
         <FlowNodePalette />
         <div className="relative min-w-0 flex-1">
-          {canvas && (
+          {canvasConTriggers && (
             <FlowCanvas
               ref={canvasRef}
-              nodes={canvas.nodes}
-              edges={canvas.edges}
+              nodes={canvasConTriggers.nodes}
+              edges={canvasConTriggers.edges}
               selectedNodeIds={selection.nodeIds}
               selectedEdgeIds={selection.edgeIds}
               onSelectionChange={({ nodeIds, edgeIds }) => {
@@ -846,8 +947,21 @@ export default function FlowBuilderPage() {
           serverErrors={serverErrorsForSelectedNode}
           onLabelChange={(label) => selectedNodeId && edit((f) => updateNodeLabel(f, selectedNodeId, label), `node:${selectedNodeId}`)}
           onConfigChange={(config) => selectedNodeId && edit((f) => updateNodeConfig(f, selectedNodeId, config), `node:${selectedNodeId}`)}
+          triggers={triggers}
+          onAddTrigger={handleAddTrigger}
+          onEditTrigger={handleEditTrigger}
+          onDeleteTrigger={handleDeleteTrigger}
+          onToggleTriggerEnabled={handleToggleTriggerEnabled}
         />
       </div>
+      <TriggerModal
+        open={triggerModal !== null}
+        trigger={triggerModal?.mode === "edit" ? triggerModal.trigger : null}
+        saving={triggerSaving}
+        error={triggerError}
+        onClose={() => setTriggerModal(null)}
+        onSubmit={handleSubmitTrigger}
+      />
       <FlowVersionHistory
         open={versionsOpen}
         onClose={() => setVersionsOpen(false)}
