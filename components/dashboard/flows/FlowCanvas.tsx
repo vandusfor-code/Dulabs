@@ -238,6 +238,12 @@ const FlowCanvasInner = forwardRef<FlowCanvasHandle, FlowCanvasProps>(function F
         edges={edgesWithSelection}
         nodeTypes={nodeTypes}
         fitView
+        // Polish visual (autorizado) -- activa la clase `.react-flow.dark`
+        // que trae @xyflow/react (su propio mecanismo de theming), lo que
+        // habilita los overrides de app/globals.css (.dash-scope .react-flow.dark)
+        // que apuntan el minimapa/controles a los tokens de color de DuLabs
+        // en vez del fondo blanco por defecto de la librería.
+        colorMode="dark"
         onNodesChange={handleNodesChange}
         onEdgesChange={handleEdgesChange}
         proOptions={{ hideAttribution: true }}
