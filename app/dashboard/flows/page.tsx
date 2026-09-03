@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ChevronRight, Plus, Workflow } from "lucide-react";
 import { PageHeader, Pill } from "@/components/dashboard/shell/ui";
+import { CreateFlowModal } from "@/components/dashboard/flows/CreateFlowModal";
+import { createFlow as createFlowRequest } from "@/lib/flow-builder/create-flow";
 import { useDashboard } from "@/lib/dashboard-session";
 import { useI18n } from "@/lib/i18n";
 import type { FlowRow } from "@/lib/flow/flow-store-types";
@@ -15,19 +17,6 @@ function formatFecha(iso: string): string {
     month: "short",
     year: "numeric",
   });
-}
-
-/** Slug único derivado del nombre -- el sufijo evita el 409 de POST /api/flows
- * (constraint único tenant_id+slug) sin tener que pedirle un slug aparte al usuario. */
-function slugFromNombre(nombre: string): string {
-  const base = nombre
-    .trim()
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/\p{M}/gu, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  return `${base || "flow"}-${Date.now().toString(36)}`;
 }
 
 /**
@@ -44,6 +33,7 @@ export default function FlowsListPage() {
   const [error, setError] = useState<string | null>(null);
   const [creando, setCreando] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [modalOpen, setModalOpen] = useState(false);
 
   const cargar = useCallback(() => {
     if (!session) return;
@@ -66,27 +56,26 @@ export default function FlowsListPage() {
   // que nadie intente crear uno y se encuentre con un 403.
   const puedeCrear = rol === "admin";
 
-  const crearFlow = useCallback(async () => {
-    if (!session) return;
-    const nombre = window.prompt(t("Nombre del nuevo Flow:", "New Flow name:"));
-    if (!nombre || !nombre.trim()) return;
-
-    setCreando(true);
-    setCreateError(null);
-    try {
-      const res = await fetch("/api/flows", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
-        body: JSON.stringify({ slug: slugFromNombre(nombre), name: nombre.trim() }),
+  const crearFlow = useCallback(
+    async (nombre: string, descripcion: string) => {
+      if (!session) return;
+      setCreando(true);
+      setCreateError(null);
+      const result = await createFlowRequest({
+        name: nombre,
+        description: descripcion || undefined,
+        accessToken: session.access_token,
       });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error ?? t("Error creando el Flow", "Error creating the Flow"));
-      router.push(`/dashboard/flows/${json.flow.id}`);
-    } catch (err) {
-      setCreateError(err instanceof Error ? err.message : String(err));
+      if (result.ok) {
+        setModalOpen(false);
+        router.push(`/dashboard/flows/${result.flow.id}`);
+        return;
+      }
       setCreando(false);
-    }
-  }, [session, router, t]);
+      setCreateError(result.error.message);
+    },
+    [session, router],
+  );
 
   const header = (
     <PageHeader
@@ -100,14 +89,27 @@ export default function FlowsListPage() {
       {puedeCrear && (
         <button
           type="button"
-          onClick={crearFlow}
-          disabled={creando}
-          className="flex items-center gap-2 rounded-lg bg-lime px-3.5 py-2 text-sm font-medium text-lime-fg transition-opacity hover:opacity-90 disabled:opacity-60"
+          onClick={() => setModalOpen(true)}
+          className="flex items-center gap-2 rounded-lg bg-lime px-3.5 py-2 text-sm font-medium text-lime-fg transition-opacity hover:opacity-90"
         >
-          <Plus className="size-4" /> {creando ? t("Creando…", "Creating…") : t("Crear Flow", "Create Flow")}
+          <Plus className="size-4" /> {t("Crear Flow", "Create Flow")}
         </button>
       )}
     </PageHeader>
+  );
+
+  const modal = (
+    <CreateFlowModal
+      open={modalOpen}
+      creating={creando}
+      error={createError}
+      onClose={() => {
+        if (creando) return;
+        setModalOpen(false);
+        setCreateError(null);
+      }}
+      onSubmit={crearFlow}
+    />
   );
 
   if (error) {
@@ -117,6 +119,7 @@ export default function FlowsListPage() {
         <div className="px-4 pt-6 md:px-8">
           <p className="rounded-lg border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-400">{error}</p>
         </div>
+        {modal}
       </div>
     );
   }
@@ -128,6 +131,7 @@ export default function FlowsListPage() {
         <div className="px-4 pt-6 md:px-8">
           <p className="text-sm text-mist">{t("Cargando…", "Loading…")}</p>
         </div>
+        {modal}
       </div>
     );
   }
@@ -136,10 +140,6 @@ export default function FlowsListPage() {
     <div className="pb-12">
       {header}
       <div className="px-4 pt-6 md:px-8">
-        {createError && (
-          <p className="mb-4 rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-400">{createError}</p>
-        )}
-
         {flows.length === 0 ? (
           <div className="rounded-xl border border-edge bg-card p-10 text-center">
             <Workflow className="mx-auto size-10 text-mist/40" strokeWidth={1.2} />
@@ -155,11 +155,10 @@ export default function FlowsListPage() {
             {puedeCrear && (
               <button
                 type="button"
-                onClick={crearFlow}
-                disabled={creando}
-                className="mt-4 inline-flex items-center gap-2 rounded-lg bg-lime px-4 py-2 text-xs font-semibold text-lime-fg hover:bg-lime-hover disabled:opacity-60"
+                onClick={() => setModalOpen(true)}
+                className="mt-4 inline-flex items-center gap-2 rounded-lg bg-lime px-4 py-2 text-xs font-semibold text-lime-fg hover:bg-lime-hover"
               >
-                <Plus className="size-3.5" /> {creando ? t("Creando…", "Creating…") : t("Crear Flow →", "Create Flow →")}
+                <Plus className="size-3.5" /> {t("Crear Flow →", "Create Flow →")}
               </button>
             )}
           </div>
@@ -183,6 +182,7 @@ export default function FlowsListPage() {
           </div>
         )}
       </div>
+      {modal}
     </div>
   );
 }

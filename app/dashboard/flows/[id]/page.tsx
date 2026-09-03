@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { ArrowLeft, ClipboardPaste, Copy, Files, Maximize, Pencil, Plus, Trash2 } from "lucide-react";
@@ -22,6 +22,7 @@ import { copySelection, duplicateSelection, pasteIntoFlow, type ClipboardPayload
 import { addEdge, addNode, deleteEdges, deleteNodes, updateNodeConfig, updateNodeLabel } from "@/lib/flow-builder/edit-flow";
 import { canRedo as historyCanRedo, canUndo as historyCanUndo, createHistory, pushHistory, redo as historyRedo, resetHistory, undo as historyUndo, type EditHistory } from "@/lib/flow-builder/history";
 import { useFlowKeyboardShortcuts } from "@/lib/flow-builder/keyboard-shortcuts";
+import { ensureInitialVersion } from "@/lib/flow-builder/create-flow";
 import { buildFlowLoadResult, findNodeById, type FlowLoadResult } from "@/lib/flow-builder/load-flow";
 import { createDefaultNode, generateEdgeId } from "@/lib/flow-builder/node-factory";
 import { canPublishFlow, canPublishNow, canSaveFlow, canValidateFlow, publishDisabledReason } from "@/lib/flow-builder/permissions";
@@ -40,7 +41,7 @@ import { FlowInfoPanel } from "@/components/dashboard/flows/FlowInfoPanel";
 import { FlowNodePalette } from "@/components/dashboard/flows/FlowNodePalette";
 import { FlowQuickAddMenu } from "@/components/dashboard/flows/FlowQuickAddMenu";
 import { FlowSearchBar } from "@/components/dashboard/flows/FlowSearchBar";
-import { FlowStateScreen } from "@/components/dashboard/flows/FlowStateScreen";
+import { FlowStateScreen, type FlowStateScreenKind } from "@/components/dashboard/flows/FlowStateScreen";
 import { FlowTopbar, type PublishStatus, type SaveStatus, type ValidationStatus } from "@/components/dashboard/flows/FlowTopbar";
 import { FlowValidationPanel } from "@/components/dashboard/flows/FlowValidationPanel";
 import { FlowVersionHistory } from "@/components/dashboard/flows/FlowVersionHistory";
@@ -171,6 +172,45 @@ export default function FlowBuilderPage() {
       cancelled = true;
     };
   }, [session, flowId]);
+
+  // --- Flow sin versión (autorizado): auto-reparación -----------------------
+  // Recuperación para un Flow que existe pero no tiene ninguna versión (ver
+  // FlowLoadResult "no_versions" en load-flow.ts) -- ya sea porque quedó así
+  // de antes de este fix, o porque el paso automático de POST /api/flows
+  // falló a mitad de camino. Solo quien puede guardar (admin, mismo rol que
+  // ya exige el backend en /initial-version) dispara el intento, y solo UNA
+  // vez automáticamente (bootstrapAttemptedRef) -- reintentos siguientes son
+  // manuales (botón "Reintentar" de FlowStateScreen), nunca un loop. Como ya
+  // se tiene `result.flow` y la version que devuelve el endpoint trae la
+  // definición completa, no hace falta volver a pedir nada: se arma
+  // "loaded" directamente, sin una segunda ronda de fetch.
+  const [bootstrapError, setBootstrapError] = useState<string | null>(null);
+  const bootstrapAttemptedRef = useRef(false);
+
+  const intentarPrepararFlow = useCallback(async () => {
+    if (!session || result.kind !== "no_versions") return;
+    const flowSinVersion = result.flow;
+    setBootstrapError(null);
+    const res = await ensureInitialVersion({ flowId, accessToken: session.access_token });
+    if (res.ok) {
+      const definition = res.version.definition_json as unknown as FlowDefinition;
+      setResult({ kind: "loaded", flow: flowSinVersion, version: res.version });
+      setEditorState({ builder: createBuilderState(definition), history: createHistory(definition) });
+      setAllVersions([res.version]);
+    } else {
+      setBootstrapError(res.error.message);
+    }
+  }, [session, flowId, result]);
+
+  useEffect(() => {
+    if (result.kind !== "no_versions") {
+      bootstrapAttemptedRef.current = false;
+      return;
+    }
+    if (rol !== "admin" || bootstrapAttemptedRef.current) return;
+    bootstrapAttemptedRef.current = true;
+    void intentarPrepararFlow();
+  }, [result, rol, intentarPrepararFlow]);
 
   // Advierte antes de cerrar/recargar la pestaña si hay cambios locales sin
   // guardar -- no hay forma de interceptar la navegación interna de Next sin
@@ -628,6 +668,27 @@ export default function FlowBuilderPage() {
   const publishStatus: PublishStatus = publishing ? "publishing" : publishRequestError ? "error" : justPublished ? "published" : "idle";
 
   if (result.kind !== "loaded" || !builderState || !editorState) {
+    // "no_versions" tiene 3 sub-estados reales, nunca un detalle técnico:
+    // preparándose (spinner, intento automático en curso), sin permiso de
+    // edición (lectura/agente -- no se intenta nada, solo se informa), o el
+    // intento automático falló (mensaje real + botón Reintentar).
+    let screenKind: FlowStateScreenKind = result.kind === "loaded" ? "loading" : result.kind;
+    let screenMessage: string | undefined = result.kind === "error" ? result.message : undefined;
+    let onRetry: (() => void) | undefined;
+    if (result.kind === "no_versions") {
+      if (rol !== "admin") {
+        screenKind = "no_content";
+      } else if (bootstrapError) {
+        screenKind = "error";
+        screenMessage = bootstrapError;
+        onRetry = () => {
+          bootstrapAttemptedRef.current = false;
+          void intentarPrepararFlow();
+        };
+      } else {
+        screenKind = "no_versions";
+      }
+    }
     return (
       <div className="flex flex-col">
         <header className="flex items-center gap-4 border-b border-edge bg-card px-5 py-3">
@@ -639,7 +700,7 @@ export default function FlowBuilderPage() {
           <h1 className="text-sm font-semibold text-fg">Flow Builder</h1>
         </header>
         <div className="flex h-[75vh] min-h-[560px]">
-          <FlowStateScreen kind={result.kind === "loaded" ? "loading" : result.kind} message={result.kind === "error" ? result.message : undefined} />
+          <FlowStateScreen kind={screenKind} message={screenMessage} onRetry={onRetry} />
         </div>
       </div>
     );

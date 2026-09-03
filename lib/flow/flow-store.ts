@@ -5,6 +5,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { cifrarSecreto } from "@/lib/crypto";
+import { createInitialFlowDefinition } from "@/lib/flow-builder/node-factory";
 import type { FlowDefinition } from "@/lib/flow/types";
 import type { FlowEngineState } from "@/lib/flow/engine-types";
 import { definitionContainsEmbeddedSecrets } from "@/lib/flow/detect-embedded-secrets";
@@ -250,6 +251,48 @@ export async function archiveFlow(
     .maybeSingle();
   if (error) throw error;
   return (data as FlowRow | null) ?? null;
+}
+
+export type EnsureInitialVersionResult =
+  | { created: true; version: FlowVersionRow }
+  | { created: false; version: FlowVersionRow };
+
+/**
+ * Garantiza que el Flow tenga al menos una versión (v1, borrador, con la
+ * definición inicial mínima -- un nodo Start, ver createInitialFlowDefinition).
+ * Idempotente: si ya existe cualquier versión, la devuelve tal cual sin crear
+ * nada. Bajo carrera (dos llamadas concurrentes viendo "0 versiones" a la
+ * vez), el UNIQUE real de la tabla (tenant_id, flow_id, version_number) --
+ * dulabs_flow_versions_tenant_flow_version_key -- rechaza el segundo INSERT
+ * con 23505; se recupera releyendo la versión ganadora, nunca se inventa una
+ * segunda garantía que la base de datos no tenga.
+ */
+export async function ensureInitialFlowVersion(
+  supabase: SupabaseClient,
+  input: { tenantId: string; flowId: string; flowName: string; createdBy?: string },
+): Promise<EnsureInitialVersionResult> {
+  const existentes = await listFlowVersions(supabase, { tenantId: input.tenantId, flowId: input.flowId, limit: 1 });
+  if (existentes.length > 0) {
+    return { created: false, version: existentes[0] };
+  }
+
+  try {
+    const version = await createFlowVersion(supabase, {
+      tenantId: input.tenantId,
+      flowId: input.flowId,
+      versionNumber: 1,
+      definition: createInitialFlowDefinition(input.flowName),
+      createdBy: input.createdBy,
+    });
+    return { created: true, version };
+  } catch (error) {
+    if ((error as { code?: string })?.code === "23505") {
+      const carrera = await listFlowVersions(supabase, { tenantId: input.tenantId, flowId: input.flowId, limit: 1 });
+      const ganadora = carrera.find((v) => v.version_number === 1) ?? carrera[0];
+      if (ganadora) return { created: false, version: ganadora };
+    }
+    throw error;
+  }
 }
 
 export async function listFlowVersions(

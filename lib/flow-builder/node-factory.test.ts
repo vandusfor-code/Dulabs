@@ -5,8 +5,8 @@
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { createDefaultNode, generateUniqueId } from "@/lib/flow-builder/node-factory";
-import { flowNodeSchema } from "@/lib/flow/schemas";
+import { createDefaultNode, createInitialFlowDefinition, generateUniqueId } from "@/lib/flow-builder/node-factory";
+import { flowDefinitionSchema, flowNodeSchema } from "@/lib/flow/schemas";
 import type { FlowDefinition, FlowNodeType } from "@/lib/flow/types";
 
 const TYPES: FlowNodeType[] = ["start", "message", "question", "buttons", "condition", "ai", "save_data", "action", "human", "end"];
@@ -68,5 +68,32 @@ describe("generateUniqueId — reintenta si la factory produce una colisión", (
   it("sin colisión, devuelve el primer resultado de la factory", () => {
     const id = generateUniqueId(new Set(["otro"]), () => "nuevo");
     assert.equal(id, "nuevo");
+  });
+});
+
+describe("createInitialFlowDefinition — definición inicial de un Flow nuevo", () => {
+  it("pasa flowDefinitionSchema completo", () => {
+    const def = createInitialFlowDefinition("Mi Flow");
+    const result = flowDefinitionSchema.safeParse(def);
+    assert.equal(result.success, true, result.success ? undefined : JSON.stringify(result.error.issues));
+  });
+
+  it("tiene exactamente un nodo, tipo start, y ningún edge/variable", () => {
+    const def = createInitialFlowDefinition("Mi Flow");
+    assert.equal(def.nodes.length, 1);
+    assert.equal(def.nodes[0].type, "start");
+    assert.deepEqual(def.edges, []);
+    assert.deepEqual(def.variables, []);
+  });
+
+  it("el nodo start pasa flowNodeSchema (misma config mínima que createDefaultNode)", () => {
+    const def = createInitialFlowDefinition("Mi Flow");
+    const result = flowNodeSchema.safeParse(def.nodes[0]);
+    assert.equal(result.success, true, result.success ? undefined : JSON.stringify(result.error.issues));
+  });
+
+  it("usa el nombre pedido", () => {
+    const def = createInitialFlowDefinition("Bienvenida y agendamiento");
+    assert.equal(def.name, "Bienvenida y agendamiento");
   });
 });

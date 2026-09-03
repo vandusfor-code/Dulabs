@@ -30,11 +30,13 @@ import {
   createFlowVersion,
   createExecution,
   createIntegration,
+  ensureInitialFlowVersion,
   insertEventIdempotent,
   publishFlowVersion,
   getFlowVersion,
   getExecutionById,
   getActiveExecutionByConversation,
+  listFlowVersions,
   saveExecutionState,
   getExecutionEngineState,
   upsertCredential,
@@ -556,6 +558,84 @@ integrationDescribe(
         row!.state_version,
       );
       assert.ok(saved.stateVersion > row!.state_version);
+    });
+
+    describe("ensureInitialFlowVersion — idempotencia de la primera versión", () => {
+      it("Flow recién creado (0 versiones) -> crea v1 con un nodo Start", async () => {
+        const flow = await createFlow(supabase(), {
+          tenantId: tenantA,
+          slug: `ensure-v1-${Date.now()}`,
+          name: "Ensure V1",
+        });
+        const result = await ensureInitialFlowVersion(supabase(), {
+          tenantId: tenantA,
+          flowId: flow.id,
+          flowName: flow.name,
+        });
+        assert.equal(result.created, true);
+        assert.equal(result.version.version_number, 1);
+        assert.equal(result.version.published_at, null, "no debe publicarse automáticamente");
+        const nodes = (result.version.definition_json as { nodes: { type: string }[] }).nodes;
+        assert.equal(nodes.length, 1);
+        assert.equal(nodes[0].type, "start");
+      });
+
+      it("llamado dos veces seguidas -> la segunda NO crea v2, devuelve la misma v1", async () => {
+        const flow = await createFlow(supabase(), {
+          tenantId: tenantA,
+          slug: `ensure-idem-${Date.now()}`,
+          name: "Ensure Idempotente",
+        });
+        const primera = await ensureInitialFlowVersion(supabase(), {
+          tenantId: tenantA,
+          flowId: flow.id,
+          flowName: flow.name,
+        });
+        const segunda = await ensureInitialFlowVersion(supabase(), {
+          tenantId: tenantA,
+          flowId: flow.id,
+          flowName: flow.name,
+        });
+        assert.equal(primera.created, true);
+        assert.equal(segunda.created, false);
+        assert.equal(segunda.version.id, primera.version.id);
+
+        const todas = await listFlowVersions(supabase(), { tenantId: tenantA, flowId: flow.id });
+        assert.equal(todas.length, 1, "solo debe existir v1, nunca una v2 por el segundo llamado");
+      });
+
+      it("carrera -- 5 llamadas concurrentes sobre el mismo Flow -> solo 1 versión creada", async () => {
+        const flow = await createFlow(supabase(), {
+          tenantId: tenantA,
+          slug: `ensure-race-${Date.now()}`,
+          name: "Ensure Carrera",
+        });
+        const resultados = await Promise.all(
+          Array.from({ length: 5 }, () =>
+            ensureInitialFlowVersion(supabase(), { tenantId: tenantA, flowId: flow.id, flowName: flow.name }),
+          ),
+        );
+        const creadas = resultados.filter((r) => r.created);
+        assert.equal(creadas.length, 1, "de 5 llamadas concurrentes, exactamente una debe haber creado la v1");
+        const idsDevueltos = new Set(resultados.map((r) => r.version.id));
+        assert.equal(idsDevueltos.size, 1, "las 5 llamadas deben devolver la MISMA versión");
+
+        const todas = await listFlowVersions(supabase(), { tenantId: tenantA, flowId: flow.id });
+        assert.equal(todas.length, 1);
+      });
+
+      it("Flow que YA tenía versiones (flowAId, creado en before()) -> no crea nada, devuelve la más reciente", async () => {
+        const antes = await listFlowVersions(supabase(), { tenantId: tenantA, flowId: flowAId });
+        const result = await ensureInitialFlowVersion(supabase(), {
+          tenantId: tenantA,
+          flowId: flowAId,
+          flowName: "Test Flow A",
+        });
+        assert.equal(result.created, false);
+        assert.equal(result.version.version_number, antes[0].version_number);
+        const despues = await listFlowVersions(supabase(), { tenantId: tenantA, flowId: flowAId });
+        assert.equal(despues.length, antes.length, "no debe agregar ninguna versión nueva");
+      });
     });
   },
 );

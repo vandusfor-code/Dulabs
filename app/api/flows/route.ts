@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server";
 import { requireFlowAccess } from "@/lib/flow/api-auth";
-import { createFlow, listFlows } from "@/lib/flow/flow-store";
+import { createFlow, ensureInitialFlowVersion, listFlows } from "@/lib/flow/flow-store";
 import type { FlowRow } from "@/lib/flow/flow-store-types";
 
 export const runtime = "nodejs";
@@ -38,8 +38,12 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// Crea un Flow nuevo (solo metadata -- sin versión todavía). El primer
-// draft se crea aparte vía POST /api/flows/[id]/versions.
+// Crea un Flow nuevo Y su primera versión Draft (v1, un nodo Start) en el
+// mismo request -- ensureInitialFlowVersion() es la misma función idempotente
+// que usa POST /api/flows/[id]/initial-version para recuperar Flows viejos
+// sin versión, así que nunca hay una segunda lógica de "primera versión" en
+// paralelo. El frontend nunca necesita encadenar un segundo POST a
+// /versions para poder abrir el editor.
 export async function POST(request: NextRequest) {
   const access = await requireFlowAccess(request, ["admin"]);
   if (!access.ok) return access.response;
@@ -65,7 +69,13 @@ export async function POST(request: NextRequest) {
       description: body.description,
       createdBy: miembro.userId,
     });
-    return Response.json({ flow }, { status: 201 });
+    const { version } = await ensureInitialFlowVersion(supabase, {
+      tenantId: miembro.tenantId,
+      flowId: flow.id,
+      flowName: flow.name,
+      createdBy: miembro.userId,
+    });
+    return Response.json({ flow, version }, { status: 201 });
   } catch (error) {
     if (esConflictoDeSlug(error)) {
       return Response.json({ error: `Ya existe un Flow con el slug "${slug}"` }, { status: 409 });

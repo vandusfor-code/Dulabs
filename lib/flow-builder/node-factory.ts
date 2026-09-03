@@ -93,3 +93,18 @@ export function createDefaultNode(type: FlowNodeType, position: NodePosition, fl
       return { ...base, type, config: {} };
   }
 }
+
+/**
+ * Definición inicial de un Flow recién creado -- exactamente un nodo Start
+ * (misma config mínima que createDefaultNode, sin inventar un segundo
+ * esquema) y nada más. Es lo que ve la clienta la primera vez que entra al
+ * editor de un Flow nuevo: un canvas ya editable, nunca una pantalla técnica
+ * de "todavía no tiene versiones". No pretende pasar validateFlowForPublish
+ * (eso exige un camino start -> end, ver validate-publish.ts) -- es un
+ * borrador de partida, no algo listo para publicar.
+ */
+export function createInitialFlowDefinition(name: string): FlowDefinition {
+  const base: FlowDefinition = { name, nodes: [], edges: [], variables: [] };
+  const start = createDefaultNode("start", { x: 250, y: 150 }, base);
+  return { ...base, nodes: [start] };
+}

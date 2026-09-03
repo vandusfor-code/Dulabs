@@ -14,6 +14,7 @@ import { NextRequest } from "next/server";
 import { GET as flowsGET, POST as flowsPOST } from "./route";
 import { GET as flowGET, PATCH as flowPATCH, DELETE as flowDELETE } from "./[id]/route";
 import { GET as versionsGET, POST as versionsPOST } from "./[id]/versions/route";
+import { POST as initialVersionPOST } from "./[id]/initial-version/route";
 import { POST as validatePOST } from "./[id]/validate/route";
 import { POST as publishPOST } from "./[id]/publish/route";
 import { GET as executionsGET } from "./[id]/executions/route";
@@ -194,7 +195,7 @@ describe(
     const slugFlowPrincipal = `api-test-flow-${sufijo}`;
 
     describe("Crear / listar / obtener Flow", () => {
-      it("POST /api/flows (admin) -> 201, crea el Flow", async () => {
+      it("POST /api/flows (admin) -> 201, crea el Flow Y su primera versión Draft en el mismo request", async () => {
         const res = await flowsPOST(
           req("POST", BASE_URL, { token: adminA.token, body: { slug: slugFlowPrincipal, name: "Flow de prueba API" } }),
         );
@@ -204,6 +205,13 @@ describe(
         assert.equal(json.flow.tenant_id, TENANT_A);
         assert.equal(json.flow.status, "draft");
         flowId = json.flow.id;
+
+        assert.ok(json.version, "debe traer 'version' -- el editor no debe encontrarse con 'sin versiones'");
+        assert.equal(json.version.flow_id, flowId);
+        assert.equal(json.version.version_number, 1);
+        assert.equal(json.version.published_at, null, "la primera versión nunca se publica automáticamente");
+        assert.equal(json.version.definition_json.nodes.length, 1);
+        assert.equal(json.version.definition_json.nodes[0].type, "start");
       });
 
       it("POST /api/flows con slug duplicado -> 409", async () => {
@@ -304,19 +312,9 @@ describe(
     let versionId: string;
 
     describe("Versiones", () => {
-      it("POST /versions (admin) -> 201, crea v1 sin publicar", async () => {
-        const res = await versionsPOST(
-          req("POST", `${BASE_URL}/${flowId}/versions`, { token: adminA.token, body: { definition: flowValido() } }),
-          paramsFor(flowId),
-        );
-        assert.equal(res.status, 201);
-        const json = await res.json();
-        assert.equal(json.version.version_number, 1);
-        assert.equal(json.version.published_at, null, "no debe publicarse automáticamente");
-        versionId = json.version.id;
-      });
-
-      it("POST /versions otra vez (sin versionNumber explícito) -> auto-incrementa a 2", async () => {
+      // `flowId` ya trae v1 (auto-creada por POST /api/flows, ver arriba) --
+      // estas versiones explícitas encadenan a partir de v2.
+      it("POST /versions (admin) -> 201, crea v2 sin publicar", async () => {
         const res = await versionsPOST(
           req("POST", `${BASE_URL}/${flowId}/versions`, { token: adminA.token, body: { definition: flowValido() } }),
           paramsFor(flowId),
@@ -324,6 +322,18 @@ describe(
         assert.equal(res.status, 201);
         const json = await res.json();
         assert.equal(json.version.version_number, 2);
+        assert.equal(json.version.published_at, null, "no debe publicarse automáticamente");
+        versionId = json.version.id;
+      });
+
+      it("POST /versions otra vez (sin versionNumber explícito) -> auto-incrementa a 3", async () => {
+        const res = await versionsPOST(
+          req("POST", `${BASE_URL}/${flowId}/versions`, { token: adminA.token, body: { definition: flowValido() } }),
+          paramsFor(flowId),
+        );
+        assert.equal(res.status, 201);
+        const json = await res.json();
+        assert.equal(json.version.version_number, 3);
       });
 
       it("POST /versions con versionNumber duplicado explícito -> 409", async () => {
@@ -339,16 +349,88 @@ describe(
         assert.equal(res.status, 400);
       });
 
-      it("GET /versions (admin+agente) -> lista las 2 creadas, más reciente primero", async () => {
+      it("GET /versions (admin+agente) -> lista las 3 (v1 automática + 2 explícitas), más reciente primero", async () => {
         const res = await versionsGET(req("GET", `${BASE_URL}/${flowId}/versions`, { token: agenteA.token }), paramsFor(flowId));
         assert.equal(res.status, 200);
         const json = await res.json();
-        assert.equal(json.versions.length, 2);
-        assert.equal(json.versions[0].version_number, 2);
+        assert.equal(json.versions.length, 3);
+        assert.equal(json.versions[0].version_number, 3);
       });
 
       it("GET /versions desde tenant B -> 404", async () => {
         const res = await versionsGET(req("GET", `${BASE_URL}/${flowId}/versions`, { token: adminB.token }), paramsFor(flowId));
+        assert.equal(res.status, 404);
+      });
+    });
+
+    // -----------------------------------------------------------------
+    // Recuperación: POST /api/flows/[id]/initial-version
+    // -----------------------------------------------------------------
+    describe("POST /initial-version -- recuperación de un Flow sin ninguna versión", () => {
+      let flowSinVersionId: string;
+
+      before(async () => {
+        if (!HAS_SUPABASE) return;
+        // Se inserta directo (bypass de POST /api/flows) para simular un
+        // Flow real que quedó sin versión -- ya sea creado antes de este
+        // fix, o si el paso automático falló a mitad de camino.
+        const { data } = await admin
+          .from("dulabs_flows")
+          .insert({ tenant_id: TENANT_A, slug: `sin-version-${sufijo}`, name: "Sin versión" })
+          .select("id")
+          .single();
+        flowSinVersionId = data!.id;
+      });
+
+      it("agente -> 403 (escritura solo admin)", async () => {
+        const res = await initialVersionPOST(
+          req("POST", `${BASE_URL}/${flowSinVersionId}/initial-version`, { token: agenteA.token }),
+          paramsFor(flowSinVersionId),
+        );
+        assert.equal(res.status, 403);
+      });
+
+      it("admin, Flow sin versión -> 201, crea v1 con un nodo Start", async () => {
+        const res = await initialVersionPOST(
+          req("POST", `${BASE_URL}/${flowSinVersionId}/initial-version`, { token: adminA.token }),
+          paramsFor(flowSinVersionId),
+        );
+        assert.equal(res.status, 201);
+        const json = await res.json();
+        assert.equal(json.version.version_number, 1);
+        assert.equal(json.version.published_at, null);
+        assert.equal(json.version.definition_json.nodes.length, 1);
+        assert.equal(json.version.definition_json.nodes[0].type, "start");
+      });
+
+      it("llamado otra vez sobre el MISMO Flow -> 200 (no 201), misma versión, nunca crea v2", async () => {
+        const res = await initialVersionPOST(
+          req("POST", `${BASE_URL}/${flowSinVersionId}/initial-version`, { token: adminA.token }),
+          paramsFor(flowSinVersionId),
+        );
+        assert.equal(res.status, 200);
+        const json = await res.json();
+        assert.equal(json.version.version_number, 1);
+
+        const listRes = await versionsGET(
+          req("GET", `${BASE_URL}/${flowSinVersionId}/versions`, { token: adminA.token }),
+          paramsFor(flowSinVersionId),
+        );
+        const listJson = await listRes.json();
+        assert.equal(listJson.versions.length, 1, "el segundo llamado no debe haber creado una v2");
+      });
+
+      it("Flow de otro tenant -> 404 (no revela existencia)", async () => {
+        const res = await initialVersionPOST(
+          req("POST", `${BASE_URL}/${flowSinVersionId}/initial-version`, { token: adminB.token }),
+          paramsFor(flowSinVersionId),
+        );
+        assert.equal(res.status, 404);
+      });
+
+      it("Flow inexistente -> 404", async () => {
+        const id = randomUUID();
+        const res = await initialVersionPOST(req("POST", `${BASE_URL}/${id}/initial-version`, { token: adminA.token }), paramsFor(id));
         assert.equal(res.status, 404);
       });
     });
