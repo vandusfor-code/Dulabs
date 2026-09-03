@@ -1,6 +1,6 @@
 "use client";
 
-import { forwardRef, useImperativeHandle } from "react";
+import { forwardRef, useImperativeHandle, useMemo } from "react";
 import {
   Background,
   Controls,
@@ -116,16 +116,34 @@ const FlowCanvasInner = forwardRef<FlowCanvasHandle, FlowCanvasProps>(function F
     },
   }));
 
-  const nodesWithSelection = nodes.map((n) => ({
-    ...n,
-    selected: selectedNodeIds?.has(n.id) ?? false,
-    className: nodeIdsWithErrors?.has(n.id) ? "ring-2 ring-red-500 ring-offset-2 ring-offset-ink" : undefined,
-  }));
-  const edgesWithSelection = edges.map((e) => ({
-    ...e,
-    selected: selectedEdgeIds?.has(e.id) ?? false,
-    style: edgeIdsWithErrors?.has(e.id) ? { stroke: "#ef4444", strokeWidth: 2.5 } : undefined,
-  }));
+  // Memoizado (parte del bugfix real de producción -- ver también el guard
+  // por VALOR en onSelectionChange, app/dashboard/flows/[id]/page.tsx). Sin
+  // esto, estos arrays se recreaban con una referencia nueva en CADA render
+  // aunque nada hubiera cambiado -- @xyflow/react trata `nodes`/`edges` como
+  // props controladas y resincroniza su store interno cuando la referencia
+  // cambia, lo que reafirma la selección hacia afuera. El guard de
+  // onSelectionChange es lo que realmente corta el ciclo (evita que un
+  // reporte de selección sin cambios reales dispare un nuevo setSelection);
+  // este useMemo reduce el trabajo de más y la cantidad de resincronizaciones
+  // espurias, pero no es por sí solo lo que impide el loop.
+  const nodesWithSelection = useMemo(
+    () =>
+      nodes.map((n) => ({
+        ...n,
+        selected: selectedNodeIds?.has(n.id) ?? false,
+        className: nodeIdsWithErrors?.has(n.id) ? "ring-2 ring-red-500 ring-offset-2 ring-offset-ink" : undefined,
+      })),
+    [nodes, selectedNodeIds, nodeIdsWithErrors],
+  );
+  const edgesWithSelection = useMemo(
+    () =>
+      edges.map((e) => ({
+        ...e,
+        selected: selectedEdgeIds?.has(e.id) ?? false,
+        style: edgeIdsWithErrors?.has(e.id) ? { stroke: "#ef4444", strokeWidth: 2.5 } : undefined,
+      })),
+    [edges, selectedEdgeIds, edgeIdsWithErrors],
+  );
 
   const handleConnect = (connection: Connection) => {
     if (!connection.source || !connection.target) return;

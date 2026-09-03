@@ -53,6 +53,10 @@ interface Selection {
 
 const EMPTY_SELECTION: Selection = { nodeIds: new Set(), edgeIds: new Set() };
 
+function sameIds(a: ReadonlySet<string>, b: readonly string[]): boolean {
+  return a.size === b.length && b.every((id) => a.has(id));
+}
+
 /**
  * Etapa 2 (Flow Builder, autorizado) — el canvas de Etapa 1 más edición
  * LOCAL de propiedades de nodo. FlowDefinition (dentro de BuilderState) es
@@ -792,7 +796,22 @@ export default function FlowBuilderPage() {
               edges={canvas.edges}
               selectedNodeIds={selection.nodeIds}
               selectedEdgeIds={selection.edgeIds}
-              onSelectionChange={({ nodeIds, edgeIds }) => setSelection({ nodeIds: new Set(nodeIds), edgeIds: new Set(edgeIds) })}
+              onSelectionChange={({ nodeIds, edgeIds }) => {
+                // Bugfix real (producción) -- React Flow re-reporta la
+                // selección cada vez que `nodes`/`edges` cambian de
+                // REFERENCIA (incluso sin cambio de contenido). Sin este
+                // guard, setSelection creaba Sets nuevos aunque el
+                // contenido fuera idéntico -> esa nueva referencia volvía a
+                // cambiar selectedNodeIds/selectedEdgeIds -> React Flow
+                // resincronizaba -> volvía a reportar la "misma" selección
+                // -> bucle infinito ("Maximum update depth exceeded",
+                // mataba la pestaña). Comparar por VALOR antes de actualizar
+                // el estado corta el ciclo en su origen.
+                setSelection((prev) => {
+                  if (sameIds(prev.nodeIds, nodeIds) && sameIds(prev.edgeIds, edgeIds)) return prev;
+                  return { nodeIds: new Set(nodeIds), edgeIds: new Set(edgeIds) };
+                });
+              }}
               onPaneClick={() => setContextMenu(null)}
               onPaneDoubleClick={(x, y, flowPosition) => setQuickAdd({ x, y, flowPosition })}
               onNodesDragStop={handleNodesDragStop}
