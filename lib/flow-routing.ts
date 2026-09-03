@@ -77,6 +77,13 @@ const TRIGGER_ROUTING_TEST_SENDERS: Record<string, string[]> = {
     "573000009011", "573000009012", "573000009013", "573000009014", "573000009015",
     "573000009016", "573000009017", "573000009018", "573000009019", "573000009020",
   ],
+  // Fase 4.B (autorizado) — laboratorio real end-to-end: tenant propio de
+  // DuLabs (daf555ef-bda6-40d1-9833-bea40d69e38c), phone_number_id
+  // 1208346759032055, flow "trigger-router-lab" (start→message→end) con
+  // trigger keyword "hola" ya publicado. NO es Daniela ni ningún cliente
+  // real. Remitente 573148127388 = número propio de DuLabs usado como
+  // remitente de prueba.
+  "1208346759032055": ["573148127388"],
 };
 
 /**
