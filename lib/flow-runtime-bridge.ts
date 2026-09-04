@@ -37,6 +37,7 @@ import { registrarFalloIA } from "@/lib/alertas";
 import { resolverConfigAgente } from "@/lib/agentes";
 import { esInterrupcionEscapeHatch, MENSAJE_HABLAR_CON_DANI } from "@/lib/flow-escape-hatch";
 import { esMencionPestanas, MENSAJE_TRANSFERENCIA_PESTANAS } from "@/lib/flow-pestanas-hatch";
+import { esMensajeInicioSolotalento } from "@/lib/flow-solotalento-inicio-hatch";
 import { pareceLikelyPreguntaLateral } from "@/lib/flow-lateral-question";
 import { enviarWhatsApp } from "@/lib/whatsapp-outbound";
 import { activarPausaChat } from "@/lib/pausas-chat";
@@ -213,7 +214,14 @@ export type MotivoIntentoFlow =
   // autorizados en TRIGGER_ROUTING_TEST_SENDERS (lib/flow-routing.ts) -- para
   // cualquier otro remitente, cliente.flow_id sigue siendo la única fuente y
   // este motivo nunca ocurre.
-  | "sin_flow_configurado";
+  | "sin_flow_configurado"
+  // SOLOTALENTO (autorizado) — el mensaje automático de la página de
+  // WhatsApp Ads llegó reconocido determinísticamente (ver
+  // lib/flow-solotalento-inicio-hatch.ts) mientras ya había (o no) una
+  // ejecución activa. Se cerró esa ejecución si existía y se reinició el
+  // flow desde "start" -- nunca un fallo, exclusivo del phone_number_id de
+  // SOLOTALENTO, sin efecto en ningún otro tenant.
+  | "inicio_solotalento";
 
 export interface ResultadoIntentoFlow {
   /** true = Flow ya resolvió este mensaje (con éxito o sin que haga falta
@@ -425,6 +433,79 @@ async function intentarTransferenciaPestanas(params: {
   }
 
   return { handled: true, motivo: "transferencia_pestanas" };
+}
+
+// SOLOTALENTO SAS -- número real, exclusivo de este hatch (autorizado). NO es
+// una lista de prueba: es la identidad fija que garantiza que este
+// comportamiento nunca se dispare para ningún otro tenant.
+const SOLOTALENTO_PHONE_NUMBER_ID = "1321997104321708";
+
+/**
+ * SOLOTALENTO (autorizado) — reinicio determinista cuando llega el mensaje
+ * automático de la página de WhatsApp Ads ("Hola, Solotalento. Quiero
+ * conocer..."), sin importar en qué punto del menú/submenú estaba la
+ * conversación. Exclusivo de SOLOTALENTO_PHONE_NUMBER_ID -- para cualquier
+ * otro tenant, la primera línea ya corta sin tocar nada.
+ *
+ * Si hay una ejecución activa esperando texto, se cierra igual que el
+ * escape hatch (mismo mecanismo, "transferred") para que
+ * atenderMensajeConFlow, al volver a consultar getActiveExecution, la vea
+ * como inexistente y dispare un evento "start" real -- reenviando bienvenida
+ * + menú principal desde cero. Si NO había ejecución activa (conversación
+ * nueva de verdad), el resultado es idéntico al camino normal (el "start"
+ * ya funciona sin este hatch) -- interceptarla igual es inofensivo e
+ * idempotente.
+ *
+ * Nunca consulta ni modifica el Trigger Router (resolverFlowIdConTriggerRouting)
+ * -- usa flowIdOverride: cliente.flow_id directamente, igual que TODO
+ * remitente fuera de TRIGGER_ROUTING_TEST_SENDERS hoy.
+ */
+async function intentarInicioSolotalento(params: {
+  supabase: SupabaseClient;
+  cliente: ClienteConfig & { flow_activo: true; flow_id: string };
+  telefonoCliente: string;
+  texto: string;
+  wamid: string;
+  buttonId?: string;
+  store: FlowOrchestratorStore;
+  sendMessageDepsOverride?: Partial<SendMessageDeps>;
+}): Promise<ResultadoIntentoFlow | null> {
+  if (params.cliente.phone_number_id !== SOLOTALENTO_PHONE_NUMBER_ID) return null;
+  if (params.buttonId || !params.texto || !esMensajeInicioSolotalento(params.texto)) return null;
+
+  const activeExecution = await params.store.getActiveExecution(params.cliente.id_tenant, {
+    phoneNumberId: params.cliente.phone_number_id,
+    telefonoCliente: params.telefonoCliente,
+  });
+
+  if (activeExecution && activeExecution.expected_input === "text") {
+    const state = executionRowToEngineState(activeExecution);
+    await params.store
+      .saveExecutionState(
+        params.cliente.id_tenant,
+        activeExecution.id,
+        { ...state, status: "transferred" },
+        activeExecution.state_version,
+      )
+      .catch(() => {
+        // Best-effort, mismo criterio que intentarEscapeHatch: un conflicto
+        // de concurrencia acá no debe impedir el reinicio que sigue --
+        // atenderMensajeConFlow vuelve a consultar getActiveExecution de
+        // todas formas.
+      });
+  }
+
+  const result = await atenderMensajeConFlow({
+    supabase: params.supabase,
+    cliente: params.cliente,
+    telefonoCliente: params.telefonoCliente,
+    texto: params.texto,
+    wamid: params.wamid,
+    sendMessageDepsOverride: params.sendMessageDepsOverride,
+    flowIdOverride: params.cliente.flow_id,
+  });
+
+  return { handled: true, motivo: "inicio_solotalento", outcome: result.outcome, result };
 }
 
 /**
@@ -696,6 +777,18 @@ export async function atenderMensajeConFlowConFallback(params: {
   dispatchAiPreguntaLateralOverride?: DispatchAiPreguntaLateral;
 }): Promise<ResultadoIntentoFlow> {
   const store = createSupabaseFlowOrchestratorStore(params.supabase);
+
+  const inicioSolotalento = await intentarInicioSolotalento({
+    supabase: params.supabase,
+    cliente: params.cliente,
+    telefonoCliente: params.telefonoCliente,
+    texto: params.texto,
+    wamid: params.wamid,
+    buttonId: params.buttonId,
+    store,
+    sendMessageDepsOverride: params.sendMessageDepsOverride,
+  });
+  if (inicioSolotalento) return inicioSolotalento;
 
   const pestanas = await intentarTransferenciaPestanas({
     supabase: params.supabase,
