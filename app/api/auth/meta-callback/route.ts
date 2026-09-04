@@ -127,6 +127,7 @@ export async function POST(request: NextRequest) {
     // C. Persistencia multi-tenant (upsert por phone_number_id). La tabla tiene
     //    RLS activo sin políticas: solo este backend (service role) la toca.
     const supabase = supabaseAdmin();
+    const telefonoNormalizado = phone.display_phone_number.replace(/\D/g, "");
 
     // Un upsert por phone_number_id reasignaría silenciosamente id_tenant si
     // el número ya pertenece a OTRO tenant (ej. un admin malicioso completando
@@ -143,10 +144,30 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Reconexión tras una desconexión completa del lado de Meta (autorizado):
+    // Meta puede emitir un phone_number_id NUEVO para el MISMO número físico
+    // (el caso real de Soluciones Financieras/Charlotte) -- si no hay
+    // `existente` por phone_number_id pero SÍ hay una fila de este MISMO
+    // tenant con el mismo número físico (telefono_negocio) bajo un
+    // phone_number_id viejo/distinto, es una reconexión, no un número nuevo:
+    // se actualiza esa fila (incluido su phone_number_id) en vez de contar
+    // contra el límite del plan. Scoped a idTenant -- nunca reasigna una fila
+    // de otro tenant por coincidir el número.
+    const { data: filaMismoNumero } = existente
+      ? { data: null }
+      : await supabase
+          .from("dulabs_clientes_config")
+          .select("phone_number_id")
+          .eq("id_tenant", idTenant)
+          .eq("telefono_negocio", telefonoNormalizado)
+          .maybeSingle();
+
+    const esReconexion = Boolean(existente) || Boolean(filaMismoNumero);
+
     // Solo aplica el tope al conectar un número NUEVO para este tenant — una
-    // reconexión de un número que ya es suyo (`existente` con el mismo
-    // idTenant) no debe bloquearse por haber llegado al límite.
-    if (!existente) {
+    // reconexión (mismo phone_number_id o mismo número físico ya suyo) no
+    // debe bloquearse por haber llegado al límite.
+    if (!esReconexion) {
       const [plan, numerosActuales] = await Promise.all([
         planDelTenant(supabase, idTenant),
         contarNumeros(supabase, idTenant),
@@ -160,23 +181,30 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const { error: dbError } = await supabase
-      .from("dulabs_clientes_config")
-      .upsert(
-        {
-          id_tenant: idTenant,
-          phone_number_id: phone.id,
-          whatsapp_business_account_id: wabaId,
-          meta_permanent_token: cifrarSecreto(tenantToken),
-          nombre_negocio: nombreNegocio,
-          telefono_negocio: phone.display_phone_number.replace(/\D/g, ""),
-          updated_at: new Date().toISOString(),
-          // Solo se sobreescribe si el front mandó un plan elegido en esta
-          // conexión; si no, el upsert no toca la columna (conserva el actual).
-          ...(body.plan ? { plan: body.plan } : {}),
-        },
-        { onConflict: "phone_number_id" }
-      );
+    const datosConexion = {
+      id_tenant: idTenant,
+      phone_number_id: phone.id,
+      whatsapp_business_account_id: wabaId,
+      meta_permanent_token: cifrarSecreto(tenantToken),
+      nombre_negocio: nombreNegocio,
+      telefono_negocio: telefonoNormalizado,
+      updated_at: new Date().toISOString(),
+      // Solo se sobreescribe si el front mandó un plan elegido en esta
+      // conexión; si no, el upsert no toca la columna (conserva el actual).
+      ...(body.plan ? { plan: body.plan } : {}),
+    };
+
+    // Si el número físico ya era de este tenant bajo OTRO phone_number_id
+    // (viejo/desconectado), se actualiza ESA fila puntual -- nunca se inserta
+    // una segunda fila para el mismo número físico (eso sí contaría doble
+    // contra el límite del plan).
+    const { error: dbError } = filaMismoNumero
+      ? await supabase
+          .from("dulabs_clientes_config")
+          .update(datosConexion)
+          .eq("id_tenant", idTenant)
+          .eq("phone_number_id", filaMismoNumero.phone_number_id)
+      : await supabase.from("dulabs_clientes_config").upsert(datosConexion, { onConflict: "phone_number_id" });
     if (dbError) {
       throw new Error(`Error guardando en Supabase: ${dbError.message}`);
     }
