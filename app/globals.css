@@ -167,6 +167,35 @@
   --color-danger-text: #c94b4b;
 }
 
+/* ---------- AMORE panel palette (light, burgundy accent, scoped via .amore-scope) --- */
+/* Fase 5 (panel administrativo móvil de AMORE, autorizado) — MISMO patrón
+   que .spa-scope: reusa los mismos nombres de token (bg-ink, bg-card,
+   border-edge, text-mist, bg-lime, text-lime-text...) con valores propios de
+   AMORE, tomados directo del mockup aprobado para esta fase. Nunca se toca
+   .spa-scope (Daniela Manco Nails Spa) -- este bloque es aditivo y solo se
+   aplica quien renderiza dentro de .amore-scope. */
+.amore-scope {
+  --color-ink: #fcf8f9;
+  --color-ink-2: #f7eef1;
+  --color-card: #ffffff;
+  --color-mist: #777777;
+  --color-edge: #f0e6e9;
+  --color-fg: #171717;
+
+  --color-lime: #b85c78;
+  --color-lime-hover: #a24a65;
+  --color-lime-soft: #f9e9ee;
+  --color-lime-text: #b85c78;
+  --color-lime-fg: #ffffff;
+
+  --color-success: #eaf6ed;
+  --color-success-text: #4f9a68;
+  --color-warning: #fbf0dd;
+  --color-warning-text: #9c6b24;
+  --color-danger: #fbecec;
+  --color-danger-text: #c94b4b;
+}
+
 html {
   scroll-behavior: smooth;
 }

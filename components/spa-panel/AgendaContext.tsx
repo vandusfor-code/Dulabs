@@ -14,6 +14,7 @@ import { EditAppointmentModal } from "./modals/EditAppointmentModal";
 import { RescheduleModal } from "./modals/RescheduleModal";
 import { CancelAppointmentModal } from "./modals/CancelAppointmentModal";
 import { AppointmentDetailsModal } from "./modals/AppointmentDetailsModal";
+import { AmoreDashboardShell } from "./amore/AmoreDashboardShell";
 
 type AgendaCtx = {
   token: string;
@@ -21,6 +22,8 @@ type AgendaCtx = {
   procesandoId: number | null;
   confirmar: (c: Cita) => void;
   rechazar: (c: Cita) => void;
+  completar: (c: Cita) => void;
+  marcarNoShow: (c: Cita) => void;
   abrirEditar: (c: Cita) => void;
   abrirReagendar: (c: Cita) => void;
   abrirCancelar: (c: Cita) => void;
@@ -97,12 +100,37 @@ export function AgendaProvider({ token, children }: { token: string; children: R
       );
     },
     rechazar: (c) => setCancelando({ cita: c, modo: "rechazar" }),
+    completar: (c) => {
+      ejecutarAccion(c.id, { accion: "completar" }).catch((err) =>
+        setError(err instanceof Error ? err.message : "No se pudo marcar la cita como completada")
+      );
+    },
+    marcarNoShow: (c) => {
+      ejecutarAccion(c.id, { accion: "no_show" }).catch((err) =>
+        setError(err instanceof Error ? err.message : "No se pudo marcar la cita como no asistida")
+      );
+    },
     abrirEditar: setEditando,
     abrirReagendar: setReagendando,
     abrirCancelar: (c) => setCancelando({ cita: c, modo: "cancelar" }),
     abrirDetalles: setDetalle,
     abrirNueva: (fecha) => setMostrarNueva(fecha ?? null),
   };
+
+  // AMORE (Fase 5, panel administrativo móvil, autorizado) — SOLO este
+  // tenant recibe el chrome móvil nuevo (mockup propio, ver
+  // components/spa-panel/amore/). Mismo token, misma carga de datos, mismo
+  // useAgenda() de arriba -- lo único que cambia es qué se renderiza
+  // alrededor de `children`. Ningún modal de Daniela (Nueva/Editar/Reagendar/
+  // Cancelar cita) se monta en esta rama porque esos módulos de AMORE no
+  // existen todavía en esta fase.
+  if (datos.negocio === "AMORE") {
+    return (
+      <Ctx.Provider value={value}>
+        <AmoreDashboardShell nombreEspecialista={datos.especialista.nombre}>{children}</AmoreDashboardShell>
+      </Ctx.Provider>
+    );
+  }
 
   return (
     <Ctx.Provider value={value}>
@@ -134,8 +162,7 @@ export function AgendaProvider({ token, children }: { token: string; children: R
 
         {mostrarNueva !== undefined && (
           <NewAppointmentModal
-            duracionDefecto={datos.especialista.duracion_min}
-            servicioDefecto={datos.especialista.servicio}
+            token={token}
             fechaInicial={mostrarNueva ?? undefined}
             onClose={() => setMostrarNueva(undefined)}
             onCrear={crearCita}
