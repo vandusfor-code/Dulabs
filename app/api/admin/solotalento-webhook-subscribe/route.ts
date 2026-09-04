@@ -1,5 +1,7 @@
 import { timingSafeEqual, createHash } from "node:crypto";
 import type { NextRequest } from "next/server";
+import { supabaseAdmin } from "@/lib/supabase";
+import { cifrarSecreto } from "@/lib/crypto";
 
 export const runtime = "nodejs";
 
@@ -14,6 +16,7 @@ export const runtime = "nodejs";
 
 const GRAPH = `https://graph.facebook.com/${process.env.META_GRAPH_VERSION ?? "v23.0"}`;
 const SOLOTALENTO_WABA_ID = "251086998390445";
+const SOLOTALENTO_PHONE_NUMBER_ID = "1321997104321708";
 const DULABS_APP_ID = "1358539879780370";
 const DULABS_BUSINESS_ID = "364602210077972";
 const DULABS_SYSTEM_USER_ID = "122105370837402596";
@@ -176,5 +179,98 @@ export async function GET(request: NextRequest) {
     app_id: DULABS_APP_ID,
     suscrita: quedoSuscrita,
     accion: quedoSuscrita ? "suscripcion_ejecutada" : "suscripcion_fallida_tras_post",
+  });
+}
+
+/**
+ * Inyección manual de un token externo (autorizado, temporal): recibe un
+ * token EN EL BODY de la petición (nunca en query string, nunca logueado),
+ * verifica que de verdad tenga acceso al WABA de SOLOTALENTO ANTES de
+ * guardar nada, y solo si pasa esa verificación lo cifra y lo persiste en
+ * la fila de SOLOTALENTO (única, filtrada por su phone_number_id -- nunca
+ * toca Daniela ni el 314), y ejecuta la suscripción del webhook. Si la
+ * verificación previa falla, no se guarda ni se suscribe nada.
+ */
+export async function POST(request: NextRequest) {
+  const params = request.nextUrl.searchParams;
+  if (!claveValida(params.get("key"), process.env.SOLOTALENTO_SUBSCRIBE_KEY)) {
+    return new Response("Forbidden", { status: 403 });
+  }
+
+  let body: { token?: string };
+  try {
+    body = await request.json();
+  } catch {
+    return Response.json({ error: "JSON inválido" }, { status: 400 });
+  }
+  const token = body.token;
+  if (!token || typeof token !== "string") {
+    return Response.json({ error: "Falta 'token' en el body de la petición" }, { status: 400 });
+  }
+
+  // 1. Verificación previa -- nunca guardar un token sin confirmar acceso real.
+  const wabaRes = await fetch(`${GRAPH}/${SOLOTALENTO_WABA_ID}?fields=id,name,owner_business_info`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const wabaJson = (await wabaRes.json()) as { id?: string; name?: string; error?: { message?: string } };
+  if (!wabaRes.ok) {
+    return Response.json({
+      paso: "verificacion_previa",
+      ok: false,
+      guardado: false,
+      suscrito: false,
+      http_status: wabaRes.status,
+      error: wabaJson.error?.message ?? `HTTP ${wabaRes.status}`,
+    });
+  }
+
+  // 2. Guardar cifrado -- SOLO en la fila de SOLOTALENTO, filtrado por su
+  // propio phone_number_id (no toca ningún otro cliente).
+  const { error: dbError } = await supabaseAdmin()
+    .from("dulabs_clientes_config")
+    .update({ meta_permanent_token: cifrarSecreto(token), updated_at: new Date().toISOString() })
+    .eq("phone_number_id", SOLOTALENTO_PHONE_NUMBER_ID);
+  if (dbError) {
+    return Response.json({
+      paso: "guardado_bd",
+      ok: false,
+      guardado: false,
+      suscrito: false,
+      waba_verificado: { id: wabaJson.id, name: wabaJson.name },
+      error: dbError.message,
+    });
+  }
+
+  // 3. Suscribir la app al WABA.
+  const postRes = await fetch(`${GRAPH}/${SOLOTALENTO_WABA_ID}/subscribed_apps`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const postJson = (await postRes.json()) as { success?: boolean } & SubscribedAppsResponse;
+  if (!postRes.ok || !postJson.success) {
+    return Response.json({
+      paso: "suscripcion",
+      ok: false,
+      guardado: true,
+      suscrito: false,
+      error: postJson.error?.message ?? `HTTP ${postRes.status}`,
+    });
+  }
+
+  // 4. Verificar que quedó suscrita.
+  const verifyRes = await fetch(`${GRAPH}/${SOLOTALENTO_WABA_ID}/subscribed_apps`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const verifyJson = (await verifyRes.json()) as SubscribedAppsResponse;
+  const suscrita = verifyRes.ok && apliacionSuscrita(verifyJson);
+
+  return Response.json({
+    paso: "completo",
+    ok: true,
+    guardado: true,
+    suscrito: suscrita,
+    waba_id: SOLOTALENTO_WABA_ID,
+    phone_number_id: SOLOTALENTO_PHONE_NUMBER_ID,
+    waba_verificado: { id: wabaJson.id, name: wabaJson.name },
   });
 }
