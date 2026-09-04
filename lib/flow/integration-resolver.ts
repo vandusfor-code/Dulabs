@@ -78,6 +78,16 @@ const INTERNAL_ACTION_TYPES = new Set([
   // validar_servicio_especialista..." del mismo día).
   "listar_servicios_especialista",
   "resolver_seleccion_servicio",
+  // AMORE (Fase 2, autorizado) — mismo trato exacto: acciones nativas sobre
+  // el modelo estructurado (dulabs_servicios/dulabs_servicio_especialista),
+  // sin integración externa. Registradas DESDE EL PRIMER COMMIT que las
+  // introduce, precisamente para no repetir el bug real documentado arriba
+  // (acción nueva olvidada acá -> SECURITY_REJECTED/"integration_required"
+  // en todo dispatch real vía el orchestrator, invisible a tests que llaman
+  // runFlowEngine directo).
+  "listar_catalogo_servicios",
+  "resolver_servicio_catalogo",
+  "consultar_disponibilidad_catalogo",
 ]);
 
 const INTERNAL_WEBHOOK_TAGS = new Set(["consultar_disponibilidad"]);

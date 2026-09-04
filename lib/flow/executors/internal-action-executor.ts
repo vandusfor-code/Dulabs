@@ -32,6 +32,14 @@ import {
 import { parseFechaColombia } from "@/lib/parse-fecha-colombia";
 import { esMencionPestanas } from "@/lib/flow-pestanas-hatch";
 import {
+  listarCatalogoServiciosReal,
+  resolverServicioCatalogoReal,
+  consultarDisponibilidadCatalogoReal,
+  formatearCatalogoReal,
+  formatearDuracion,
+  type ServicioCatalogoReal,
+} from "@/lib/catalogo-servicios-flow-adaptador";
+import {
   EFFECT_RESULT_CLASSIFICATIONS,
   type EffectDispatchRequest,
   type EffectDispatchResult,
@@ -77,6 +85,16 @@ export interface InternalActionDeps {
   moverCitaEspecialista: typeof moverCitaEspecialista;
   // Rediseño de agendamiento (autorizado).
   listarHorariosDisponiblesEspecialista: typeof listarHorariosDisponiblesEspecialista;
+  // AMORE (Fase 2, autorizado) — modelo ESTRUCTURADO de catálogo
+  // (dulabs_servicios/dulabs_servicio_especialista), distinto del adaptador
+  // de arriba (dulabs_especialistas.servicio + base_conocimiento). Ver
+  // lib/catalogo-servicios-flow-adaptador.ts para el porqué. Opcionales
+  // (a diferencia de los demás deps de arriba) A PROPÓSITO -- así ningún
+  // fixture de test ya existente (Daniela/genéricos del Flow Engine) necesita
+  // tocarse para agregar estas dos funciones nuevas; si se omiten, los
+  // métodos de abajo llaman directo a la implementación real importada.
+  listarCatalogoServiciosReal?: typeof listarCatalogoServiciosReal;
+  consultarDisponibilidadCatalogoReal?: typeof consultarDisponibilidadCatalogoReal;
 }
 
 const OPERATION_CLASS: Partial<Record<string, InternalActionOperationClass>> = {
@@ -96,6 +114,10 @@ const OPERATION_CLASS: Partial<Record<string, InternalActionOperationClass>> = {
   resolver_seleccion_horario: "READ",
   listar_servicios_especialista: "READ",
   resolver_seleccion_servicio: "READ",
+  // AMORE (Fase 2, autorizado) — modelo estructurado (dulabs_servicios).
+  listar_catalogo_servicios: "READ",
+  resolver_servicio_catalogo: "READ",
+  consultar_disponibilidad_catalogo: "READ",
 };
 
 function resolveInternalActionKey(action: ActionNodeConfig): string {
@@ -236,6 +258,12 @@ export class InternalActionExecutor implements EffectExecutor {
         return this.listarServiciosEspecialistaAction(request, params);
       case "resolver_seleccion_servicio":
         return this.resolverSeleccionServicioAction(request, params);
+      case "listar_catalogo_servicios":
+        return this.listarCatalogoServiciosAction(request, signal);
+      case "resolver_servicio_catalogo":
+        return this.resolverServicioCatalogoAction(request, params);
+      case "consultar_disponibilidad_catalogo":
+        return this.consultarDisponibilidadCatalogoAction(request, params, signal);
       default:
         return {
           success: false,
@@ -1287,6 +1315,156 @@ export class InternalActionExecutor implements EffectExecutor {
       appliedResult: data,
       rawResult: data,
       metadata: { operationClass: OPERATION_CLASS.mover_cita_especialista },
+    };
+  }
+
+  // --- AMORE (Fase 2, autorizado): modelo estructurado de catálogo -------
+  // Ver lib/catalogo-servicios-flow-adaptador.ts para el porqué de un
+  // adaptador nuevo en vez de reutilizar listar_servicios_especialista/
+  // resolver_seleccion_servicio (esos leen dulabs_especialistas.servicio +
+  // base_conocimiento, un modelo distinto que no representa elegibilidad
+  // N:N por servicio). request.tenantId ya es la fuente de verdad de tenant
+  // -- a diferencia de las acciones de arriba, estas no reciben ni
+  // necesitan un phoneNumberId separado que autorizar.
+
+  private async listarCatalogoServiciosAction(
+    request: EffectDispatchRequest,
+    signal?: AbortSignal,
+  ): Promise<EffectDispatchResult> {
+    assertNotAborted(signal);
+    const servicios = await (this.deps.listarCatalogoServiciosReal ?? listarCatalogoServiciosReal)(this.deps.supabase, request.tenantId);
+    assertNotAborted(signal);
+
+    const data = {
+      catalogoDisponible: servicios,
+      catalogoTexto: formatearCatalogoReal(servicios),
+      cantidadCatalogo: servicios.length,
+      effectId: request.effectId,
+    };
+
+    return {
+      success: true,
+      classification: EFFECT_RESULT_CLASSIFICATIONS.SUCCESS,
+      data,
+      appliedResult: data,
+      rawResult: data,
+      metadata: { operationClass: OPERATION_CLASS.listar_catalogo_servicios },
+    };
+  }
+
+  /**
+   * ÚNICA función que decide qué servicio real quedó seleccionado -- lee
+   * `catalogoDisponible` de request.payload (no de params: mergeParams
+   * descarta arrays, mismo motivo exacto que resolverSeleccionServicioAction
+   * de arriba), y acepta tanto una selección explícita (índice/nombre, tras
+   * mostrar la lista) como el hint `servicio` del primer mensaje (camino
+   * rápido, mismo criterio que act-resolver-seleccion-inicial-servicio de
+   * Daniela).
+   */
+  private async resolverServicioCatalogoAction(
+    request: EffectDispatchRequest,
+    params: Record<string, string>,
+  ): Promise<EffectDispatchResult> {
+    const catalogoRaw = Array.isArray(request.payload.catalogoDisponible) ? request.payload.catalogoDisponible : [];
+    const catalogo = catalogoRaw.filter(
+      (s): s is ServicioCatalogoReal =>
+        typeof s === "object" && s !== null && typeof (s as { nombre?: unknown }).nombre === "string",
+    );
+
+    const tieneSeleccionExplicita =
+      params.seleccionTipo !== undefined || params.seleccionIndice !== undefined || params.seleccionNombre !== undefined;
+
+    const resultado = tieneSeleccionExplicita
+      ? resolverServicioCatalogoReal({
+          servicios: catalogo,
+          seleccionTipo: params.seleccionTipo,
+          seleccionIndice: params.seleccionIndice !== undefined ? num(params.seleccionIndice, NaN) : undefined,
+          seleccionNombre: params.seleccionNombre,
+        })
+      : params.servicio
+        ? resolverServicioCatalogoReal({ servicios: catalogo, seleccionTipo: "nombre", seleccionNombre: params.servicio })
+        : resolverServicioCatalogoReal({ servicios: catalogo });
+
+    if (!resultado.ok) {
+      return {
+        success: false,
+        classification: EFFECT_RESULT_CLASSIFICATIONS.NON_RETRYABLE,
+        error: resultado.motivo,
+        data: { detalle: resultado.detalle, catalogoTexto: formatearCatalogoReal(catalogo) },
+      };
+    }
+
+    const data = {
+      servicioId: resultado.servicio.id,
+      servicio: resultado.servicio.nombre,
+      precio: resultado.servicio.precio,
+      precioTexto: formatearPrecioCop(resultado.servicio.precio),
+      duracionMin: resultado.servicio.duracionMin,
+      duracionTexto: formatearDuracion(resultado.servicio.duracionMin),
+      effectId: request.effectId,
+    };
+
+    return {
+      success: true,
+      classification: EFFECT_RESULT_CLASSIFICATIONS.SUCCESS,
+      data,
+      appliedResult: data,
+      rawResult: data,
+      metadata: { operationClass: OPERATION_CLASS.resolver_servicio_catalogo },
+    };
+  }
+
+  /**
+   * Envoltorio del Flow Engine sobre listarHorariosDisponiblesPorServicio
+   * (EL MISMO resolver que ya usa el portal público de reservas) -- ninguna
+   * regla de horario/elegibilidad/bloqueo se reimplementa acá.
+   */
+  private async consultarDisponibilidadCatalogoAction(
+    request: EffectDispatchRequest,
+    params: Record<string, string>,
+    signal?: AbortSignal,
+  ): Promise<EffectDispatchResult> {
+    const servicioId = params.servicioId ?? "";
+    const fecha = params.fecha ?? "";
+    if (!servicioId || !fecha) {
+      return {
+        success: false,
+        classification: EFFECT_RESULT_CLASSIFICATIONS.VALIDATION_ERROR,
+        error: "missing_availability_params",
+      };
+    }
+
+    assertNotAborted(signal);
+    const resultado = await (this.deps.consultarDisponibilidadCatalogoReal ?? consultarDisponibilidadCatalogoReal)(this.deps.supabase, {
+      idTenant: request.tenantId,
+      servicioId,
+      fecha,
+    });
+    assertNotAborted(signal);
+
+    if (!resultado.ok) {
+      return {
+        success: false,
+        classification: EFFECT_RESULT_CLASSIFICATIONS.NON_RETRYABLE,
+        error: resultado.motivo,
+        data: { detalle: resultado.detalle },
+      };
+    }
+
+    const hayDisponibilidad = resultado.especialistas.some((e) => e.horarios.length > 0);
+    const data = {
+      disponibilidadTexto: resultado.texto,
+      hayDisponibilidad,
+      effectId: request.effectId,
+    };
+
+    return {
+      success: true,
+      classification: EFFECT_RESULT_CLASSIFICATIONS.SUCCESS,
+      data,
+      appliedResult: data,
+      rawResult: data,
+      metadata: { operationClass: OPERATION_CLASS.consultar_disponibilidad_catalogo },
     };
   }
 }

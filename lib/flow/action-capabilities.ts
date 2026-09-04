@@ -178,6 +178,28 @@ const BY_ACTION_TYPE: Partial<Record<FlowActionType, ActionCapabilitySpec>> = {
     actionType: "resolver_seleccion_servicio",
     criticality: "standard",
   },
+  // AMORE (Fase 2, autorizado) — modelo estructurado (dulabs_servicios),
+  // mismo criterio exacto que sus equivalentes de arriba (listar_servicios_especialista/
+  // resolver_seleccion_servicio/listar_horarios_disponibles_especialista):
+  // listar y resolver son solo lectura sin verifiesOnSuccess propio (el
+  // precio/duración que exponen vienen de la lista real, no de un hecho
+  // externo nuevo); consultar disponibilidad SÍ otorga appointment.available
+  // por éxito de la consulta real (exista o no cupo ese día).
+  listar_catalogo_servicios: {
+    actionType: "listar_catalogo_servicios",
+    criticality: "standard",
+    outputVariables: ["catalogoDisponible"],
+  },
+  resolver_servicio_catalogo: {
+    actionType: "resolver_servicio_catalogo",
+    criticality: "standard",
+  },
+  consultar_disponibilidad_catalogo: {
+    actionType: "consultar_disponibilidad_catalogo",
+    criticality: "standard",
+    verifiesOnSuccess: ["appointment.available"],
+    outputVariables: ["disponibilidadTexto"],
+  },
 };
 
 /** Specs por semanticTag de webhook (prioridad sobre actionType genérico). */

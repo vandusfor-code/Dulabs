@@ -525,7 +525,7 @@ export function formatearListaHorarios(horarios: string[]): string {
 }
 
 /** "16:00" -> "4:00 p. m." (español, sin depender de Intl para evitar diferencias de locale entre entornos). */
-function formatearHoraAmPm(hhmm: string): string {
+export function formatearHoraAmPm(hhmm: string): string {
   const [hStr, mStr] = hhmm.split(":");
   const h = Number(hStr);
   const m = Number(mStr);

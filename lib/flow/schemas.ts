@@ -225,6 +225,22 @@ const actionNodeConfigSchema = z.discriminatedUnion("actionType", [
     semanticTag: semanticTagSchema,
     params: z.record(z.string(), z.string()).optional(),
   }),
+  // AMORE (Fase 2, autorizado) — modelo estructurado de catálogo.
+  z.object({
+    actionType: z.literal("listar_catalogo_servicios"),
+    semanticTag: semanticTagSchema,
+    params: z.record(z.string(), z.string()).optional(),
+  }),
+  z.object({
+    actionType: z.literal("resolver_servicio_catalogo"),
+    semanticTag: semanticTagSchema,
+    params: z.record(z.string(), z.string()).optional(),
+  }),
+  z.object({
+    actionType: z.literal("consultar_disponibilidad_catalogo"),
+    semanticTag: semanticTagSchema,
+    params: z.record(z.string(), z.string()).optional(),
+  }),
   z.object({
     actionType: z.literal("webhook_http"),
     semanticTag: semanticTagSchema,

@@ -19,6 +19,10 @@ import {
   moverCitaEspecialista,
   listarHorariosDisponiblesEspecialista,
 } from "@/lib/especialistas-flow-adaptador";
+import {
+  listarCatalogoServiciosReal,
+  consultarDisponibilidadCatalogoReal,
+} from "@/lib/catalogo-servicios-flow-adaptador";
 import { ExecutorRegistry } from "@/lib/flow/executor-registry";
 import { EffectExecutorFramework } from "@/lib/flow/executor-framework";
 import {
@@ -70,6 +74,8 @@ export function createDefaultExecutorRegistry(
     consultarCitasActivasEspecialista,
     moverCitaEspecialista,
     listarHorariosDisponiblesEspecialista,
+    listarCatalogoServiciosReal,
+    consultarDisponibilidadCatalogoReal,
     ...overrides?.internalActionDeps,
   };
   const sendMessageDeps: SendMessageDeps = { supabase, ...overrides?.sendMessageDeps };

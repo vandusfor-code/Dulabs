@@ -233,6 +233,12 @@ export type FlowActionType =
   | "resolver_seleccion_horario"
   | "listar_servicios_especialista"
   | "resolver_seleccion_servicio"
+  // AMORE (Fase 2, autorizado) — modelo estructurado de catálogo
+  // (dulabs_servicios/dulabs_servicio_especialista), ver
+  // lib/catalogo-servicios-flow-adaptador.ts.
+  | "listar_catalogo_servicios"
+  | "resolver_servicio_catalogo"
+  | "consultar_disponibilidad_catalogo"
   | "webhook_http"
   | "enviar_plantilla";
 
@@ -290,7 +296,10 @@ export interface SimpleActionConfig extends ActionSemanticTag {
     | "listar_horarios_disponibles_especialista"
     | "resolver_seleccion_horario"
     | "listar_servicios_especialista"
-    | "resolver_seleccion_servicio";
+    | "resolver_seleccion_servicio"
+    | "listar_catalogo_servicios"
+    | "resolver_servicio_catalogo"
+    | "consultar_disponibilidad_catalogo";
   params?: ActionParams;
 }
 
