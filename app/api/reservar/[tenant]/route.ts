@@ -63,6 +63,12 @@ type BodyReserva = {
   nombreCliente?: string;
   telefonoCliente?: string;
   correoCliente?: string;
+  // AMORE (Fase 3 del portal, autorizado) — opcionales, día/mes de
+  // nacimiento SIN año (ver dulabs_clientes_conocidos.cumple_dia/cumple_mes).
+  // Ningún caller que no los mande (portal de Daniela) cambia su
+  // comportamiento -- mismo criterio que correoCliente.
+  fechaNacimientoDia?: number;
+  fechaNacimientoMes?: number;
   idempotencyKey?: string;
 };
 
@@ -117,6 +123,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const nombreCliente = body.nombreCliente?.trim();
   const telefonoCliente = body.telefonoCliente?.trim();
   const correoCliente = body.correoCliente?.trim() || undefined;
+  const fechaNacimientoDia = Number.isInteger(body.fechaNacimientoDia) ? body.fechaNacimientoDia : undefined;
+  const fechaNacimientoMes = Number.isInteger(body.fechaNacimientoMes) ? body.fechaNacimientoMes : undefined;
   const idempotencyKey = body.idempotencyKey?.trim();
 
   if (!servicioId || !Number.isInteger(especialistaId) || !fecha || !hora || !nombreCliente || !telefonoCliente) {
@@ -153,6 +161,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         telefonoCliente,
         nombreCliente,
         correoCliente,
+        fechaNacimientoDia,
+        fechaNacimientoMes,
         inicio,
         origen: "manual",
       });

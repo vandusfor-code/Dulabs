@@ -246,6 +246,11 @@ export async function reservarCitaPorServicio(
     telefonoCliente: string | null;
     nombreCliente: string;
     correoCliente?: string | null;
+    // AMORE (Fase 3 del portal, autorizado) — opcional y aditivo, mismo
+    // criterio exacto que correoCliente: ningún caller que no los mande
+    // (Daniela, LEGACY) cambia su comportamiento. Ver recordarNombreCliente.
+    fechaNacimientoDia?: number | null;
+    fechaNacimientoMes?: number | null;
     inicio: Date;
     origen?: "manual" | "whatsapp_ia";
   }
@@ -349,6 +354,8 @@ export async function reservarCitaPorServicio(
       telefonoCliente: params.telefonoCliente,
       nombre: params.nombreCliente,
       correo: params.correoCliente,
+      cumpleDia: params.fechaNacimientoDia,
+      cumpleMes: params.fechaNacimientoMes,
     });
   }
 

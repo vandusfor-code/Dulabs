@@ -26,14 +26,33 @@ export async function nombreConocido(
 // esa columna en el UPDATE, así que un correo ya guardado antes NUNCA se
 // borra por reservar sin él. No es CRM: solo se conserva si el canal que
 // crea la reserva de verdad lo tiene (ej. portal, Fase 4).
+//
+// AMORE (Fase 3 del portal, autorizado) — `cumpleDia`/`cumpleMes` (SOLO día
+// y mes, nunca año; ver dulabs_clientes_conocidos.cumple_dia/cumple_mes,
+// 20260904210000_clientes_conocidos_cumpleanos.sql) siguen EXACTAMENTE el
+// mismo criterio aditivo que `correo`: ningún caller existente (LEGACY,
+// portal de Daniela) los manda, así que su ausencia nunca borra un dato ya
+// guardado ni cambia el comportamiento de nadie que no los use. Preparado
+// para una fase futura de cumpleaños/fidelización -- este archivo NO
+// implementa ningún automatismo con el dato, solo lo guarda.
 export async function recordarNombreCliente(
   supabase: SupabaseClient,
-  params: { idTenant: string; phoneNumberId: string; telefonoCliente: string; nombre: string; correo?: string | null }
+  params: {
+    idTenant: string;
+    phoneNumberId: string;
+    telefonoCliente: string;
+    nombre: string;
+    correo?: string | null;
+    cumpleDia?: number | null;
+    cumpleMes?: number | null;
+  }
 ): Promise<void> {
   const nombre = params.nombre.trim();
   if (!nombre) return;
   try {
     const correo = params.correo?.trim();
+    const cumpleDia = params.cumpleDia && params.cumpleDia >= 1 && params.cumpleDia <= 31 ? params.cumpleDia : undefined;
+    const cumpleMes = params.cumpleMes && params.cumpleMes >= 1 && params.cumpleMes <= 12 ? params.cumpleMes : undefined;
     await supabase.from("dulabs_clientes_conocidos").upsert(
       {
         id_tenant: params.idTenant,
@@ -41,6 +60,8 @@ export async function recordarNombreCliente(
         telefono_cliente: params.telefonoCliente,
         nombre,
         ...(correo ? { correo } : {}),
+        ...(cumpleDia !== undefined ? { cumple_dia: cumpleDia } : {}),
+        ...(cumpleMes !== undefined ? { cumple_mes: cumpleMes } : {}),
         updated_at: new Date().toISOString(),
       },
       { onConflict: "phone_number_id,telefono_cliente" }
