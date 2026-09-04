@@ -3,6 +3,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { planDelTenant } from "@/lib/plan-limits";
 import { reservarCitaPorServicio } from "@/lib/disponibilidad-servicio";
 import { ejecutarConIdempotencia, huellaSolicitud } from "@/lib/idempotencia-reserva";
+import { enviarConfirmacionReservaWhatsApp } from "@/lib/reserva-notificaciones-whatsapp";
 
 export const runtime = "nodejs";
 
@@ -136,8 +137,16 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     idTenant: tenant,
     idempotencyKey,
     huella,
-    operacion: () =>
-      reservarCitaPorServicio(supabase, {
+    // Fase 8A.11 (autorizado) — el mensaje de WhatsApp va DENTRO de este
+    // mismo callback, después de que la cita quedó creada exitosamente --
+    // igual que la lección ya aplicada con confirmarCita+notificar (Fase
+    // 4): así, si esta misma solicitud se reintenta con la MISMA
+    // idempotencyKey, ejecutarConIdempotencia devuelve el resultado
+    // cacheado sin volver a llamar `operacion`, y el mensaje nunca se
+    // reenvía. No se creó ninguna columna/estado nuevo para esto -- la
+    // idempotencia real ya la da dulabs_idempotencia_reservas.
+    operacion: async () => {
+      const resultado = await reservarCitaPorServicio(supabase, {
         idTenant: tenant,
         especialistaId,
         servicioId,
@@ -146,7 +155,16 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         correoCliente,
         inicio,
         origen: "manual",
-      }),
+      });
+      if (resultado.ok) {
+        await enviarConfirmacionReservaWhatsApp(supabase, tenant, telefonoCliente, {
+          servicio: resultado.servicio.nombre,
+          profesional: resultado.especialista.nombre,
+          inicioISO: resultado.cita.inicio,
+        });
+      }
+      return resultado;
+    },
   });
 
   if (idempotente.estado === "conflicto") {

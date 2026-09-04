@@ -71,6 +71,21 @@ describe(
       // no es lo que estas pruebas quieren ejercitar).
       const enUnMes = new Date();
       enUnMes.setMonth(enUnMes.getMonth() + 1);
+      // Fase 8A.11: dulabs_clientes_config real para TENANT_A -- ninguna
+      // prueba anterior de este archivo lo necesitaba (bootstrap/disponibilidad/
+      // especialistas no lo consultan), pero enviarConfirmacionReservaWhatsApp
+      // (dentro del POST) sí lo resuelve por id_tenant. Sin token real de
+      // Meta -- ver nota de seguridad al inicio del archivo.
+      const { error: cfgErr } = await supabase.from("dulabs_clientes_config").insert({
+        id_tenant: TENANT_A,
+        phone_number_id: PHONE_A,
+        nombre_negocio: "TEST_PORTAL",
+        whatsapp_business_account_id: `test-waba-${PHONE_A}`,
+        telefono_negocio: "573000000000",
+        meta_permanent_token: null,
+      });
+      if (cfgErr) throw cfgErr;
+
       const { error: susErr } = await supabase.from("dulabs_suscripciones").insert({
         id_tenant: TENANT_A,
         plan: "starter",
@@ -155,6 +170,8 @@ describe(
       if (servicioIds.length) await supabase.from("dulabs_servicios").delete().in("id", servicioIds);
       if (especialistaIds.length) await supabase.from("dulabs_especialistas").delete().in("id", especialistaIds);
       await supabase.from("dulabs_suscripciones").delete().eq("id_tenant", TENANT_A);
+      await supabase.from("dulabs_mensajes_log").delete().eq("phone_number_id", PHONE_A);
+      await supabase.from("dulabs_clientes_config").delete().eq("id_tenant", TENANT_A);
     });
 
     it("A/B/C. GET bootstrap: solo servicios activos, del tenant correcto", async () => {
@@ -377,6 +394,71 @@ describe(
 
       const { data: filas } = await supabase.from("dulabs_citas_especialista").select("id").eq("nombre_cliente", "N distinto");
       assert.equal(filas?.length ?? 0, 0, "la segunda solicitud NUNCA debe haber creado una cita");
+    });
+
+    it("FASE FINAL — Q. reserva fallida -> CERO mensajes de WhatsApp (ni intento)", async () => {
+      const logs: string[] = [];
+      const original = console.error;
+      console.error = (...args: unknown[]) => {
+        logs.push(args.map(String).join(" "));
+      };
+      try {
+        const res = await reservarPOST(
+          req(`http://localhost/api/reservar/${TENANT_A}`, {
+            method: "POST",
+            // servicioId inexistente -- reservarCitaPorServicio siempre falla antes de llegar a la notificación.
+            body: { servicioId: randomUUID(), especialistaId, fecha: proximoMartes(4), hora: "09:00", nombreCliente: "Q falla", telefonoCliente: "573002220008", idempotencyKey: randomUUID() },
+          }),
+          paramsFor(TENANT_A)
+        );
+        const body = await res.json();
+        assert.equal(body.success, undefined);
+      } finally {
+        console.error = original;
+      }
+      assert.equal(
+        logs.some((l) => l.includes("sin token de Meta para TEST_PORTAL")),
+        false,
+        "una reserva fallida nunca debe intentar ningún envío de WhatsApp"
+      );
+    });
+
+    it("FASE FINAL — R. reserva exitosa envía EXACTAMENTE 2 mensajes, y un reintento con la MISMA idempotencyKey no vuelve a intentarlos", async () => {
+      const fecha = proximoMartes(4);
+      const key = randomUUID();
+      const body = {
+        servicioId: servicioActivoId, especialistaId, fecha, hora: "15:00",
+        nombreCliente: "Cliente Notificación R", telefonoCliente: "573002220009", idempotencyKey: key,
+      };
+
+      const logs: string[] = [];
+      const original = console.error;
+      console.error = (...args: unknown[]) => {
+        logs.push(args.map(String).join(" "));
+      };
+      let b1: { success?: boolean }, b2: { success?: boolean };
+      try {
+        const r1 = await reservarPOST(req(`http://localhost/api/reservar/${TENANT_A}`, { method: "POST", body }), paramsFor(TENANT_A));
+        b1 = await r1.json();
+        const r2 = await reservarPOST(req(`http://localhost/api/reservar/${TENANT_A}`, { method: "POST", body }), paramsFor(TENANT_A));
+        b2 = await r2.json();
+      } finally {
+        console.error = original;
+      }
+      assert.equal(b1.success, true);
+      assert.deepEqual(b1, b2);
+
+      // Sin token real de Meta (fixture de prueba), enviarWhatsApp registra
+      // "sin token de Meta" por cada intento real -- una reserva exitosa
+      // debe intentar EXACTAMENTE 2 envíos (mensaje 1 + mensaje 2). Si la
+      // idempotencia fallara (reintentando `operacion` en el segundo POST),
+      // este número sería 4, no 2.
+      const intentos = logs.filter((l) => l.includes("sin token de Meta para TEST_PORTAL")).length;
+      assert.equal(intentos, 2, "deben intentarse EXACTAMENTE 2 envíos en total, incluso llamando el POST dos veces");
+
+      const { data: filas } = await supabase.from("dulabs_citas_especialista").select("id").eq("nombre_cliente", "Cliente Notificación R");
+      assert.equal(filas?.length, 1);
+      citaIds.push(...(filas ?? []).map((f) => f.id as number));
     });
 
     it("O. cancelar una cita (cancelarCitaPorServicio) libera el slot en el portal", async () => {
