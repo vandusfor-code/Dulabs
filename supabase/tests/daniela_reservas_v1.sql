@@ -1,0 +1,98 @@
+-- Sistema de reservas de Daniela (Fase 1) — verificación manual.
+-- Ejecutar en Supabase SQL Editor DESPUÉS de
+-- 20260904030000_daniela_reservas_modelo_v1.sql. Mismo estilo que
+-- flow_store_rls.sql: cada bloque documenta la query y el resultado
+-- esperado; reemplaza los UUID/ids de ejemplo por datos reales de dos
+-- tenants distintos y un especialista de cada uno antes de correr.
+
+-- ---------------------------------------------------------------------------
+-- A. Servicio pertenece al tenant correcto (aislamiento básico)
+-- ---------------------------------------------------------------------------
+-- INSERT INTO dulabs_servicios (id_tenant, nombre, duracion_min)
+-- VALUES ('<tenant-A>', 'Semipermanente', 60) RETURNING id;
+-- SELECT id_tenant FROM dulabs_servicios WHERE id = '<id-devuelto>';
+-- Debe devolver exactamente '<tenant-A>'.
+
+-- ---------------------------------------------------------------------------
+-- B. servicio_especialista no acepta duplicados
+-- ---------------------------------------------------------------------------
+-- INSERT INTO dulabs_servicio_especialista (id_tenant, servicio_id, especialista_id)
+-- VALUES ('<tenant-A>', '<servicio-A>', <especialista-A-id>);
+-- Repetir la MISMA inserción:
+-- ERROR: duplicate key value violates unique constraint "dulabs_servicio_especialista_pkey"
+
+-- ---------------------------------------------------------------------------
+-- C. Horario inválido rechazado
+-- ---------------------------------------------------------------------------
+-- hora_fin <= hora_inicio:
+-- INSERT INTO dulabs_horario_especialista (id_tenant, especialista_id, dia_semana, hora_inicio, hora_fin)
+-- VALUES ('<tenant-A>', <especialista-A-id>, 1, '18:00', '09:00');
+-- ERROR: new row for relation "dulabs_horario_especialista" violates check constraint "dulabs_horario_especialista_rango_valido"
+--
+-- dia_semana fuera de 0-6:
+-- INSERT INTO dulabs_horario_especialista (id_tenant, especialista_id, dia_semana, hora_inicio, hora_fin)
+-- VALUES ('<tenant-A>', <especialista-A-id>, 7, '09:00', '18:00');
+-- ERROR: ... violates check constraint "dulabs_horario_especialista_dia_valido"
+
+-- ---------------------------------------------------------------------------
+-- D. Bloqueo inválido rechazado
+-- ---------------------------------------------------------------------------
+-- fin <= inicio:
+-- INSERT INTO dulabs_bloqueos (id_tenant, tipo, inicio, fin)
+-- VALUES ('<tenant-A>', 'almuerzo', now() + interval '2 hour', now() + interval '1 hour');
+-- ERROR: ... violates check constraint "dulabs_bloqueos_rango_valido"
+--
+-- tipo no permitido:
+-- INSERT INTO dulabs_bloqueos (id_tenant, tipo, inicio, fin)
+-- VALUES ('<tenant-A>', 'siesta', now(), now() + interval '1 hour');
+-- ERROR: ... violates check constraint "dulabs_bloqueos_tipo_valido"
+
+-- ---------------------------------------------------------------------------
+-- E. Especialista de OTRO tenant no puede asociarse (la garantía central de la Fase 1)
+-- ---------------------------------------------------------------------------
+-- Usando un servicio de tenant A pero un especialista real de tenant B:
+-- INSERT INTO dulabs_servicio_especialista (id_tenant, servicio_id, especialista_id)
+-- VALUES ('<tenant-A>', '<servicio-de-tenant-A>', <especialista-de-tenant-B-id>);
+-- ERROR: insert or update on table "dulabs_servicio_especialista" violates
+-- foreign key constraint "dulabs_servicio_especialista_especialista_fk"
+-- (no existe la fila (tenant-A, especialista-de-B) en dulabs_especialistas)
+--
+-- Mismo resultado esperado repitiendo la prueba contra
+-- dulabs_horario_especialista_especialista_fk y dulabs_bloqueos_especialista_fk.
+
+-- ---------------------------------------------------------------------------
+-- F. Los 5 estados existentes siguen funcionando exactamente igual
+-- ---------------------------------------------------------------------------
+-- INSERT INTO dulabs_citas_especialista (especialista_id, id_tenant, phone_number_id, nombre_cliente, servicio, inicio, fin, estado)
+-- VALUES (<especialista-A-id>, '<tenant-A>', '<phone-A>', 'Prueba', 'Manicure', now() + interval '1 day', now() + interval '1 day 1 hour', 'pendiente');
+-- Debe insertar sin error, igual que antes de esta migración. Repetir con
+-- 'confirmada', 'rechazada', 'cancelada', 'propuesta' (limpiar el rango de
+-- tiempo entre cada intento, o usar bloquea_horario=false, para no chocar
+-- con el EXCLUDE de la prueba H).
+
+-- ---------------------------------------------------------------------------
+-- G. completada / no_show quedan soportados sin romper nada existente
+-- ---------------------------------------------------------------------------
+-- INSERT INTO dulabs_citas_especialista (especialista_id, id_tenant, phone_number_id, nombre_cliente, servicio, inicio, fin, estado)
+-- VALUES (<especialista-A-id>, '<tenant-A>', '<phone-A>', 'Prueba', 'Manicure', now() - interval '2 day', now() - interval '2 day' + interval '1 hour', 'completada');
+-- Debe insertar sin error (antes de esta migración, este INSERT fallaba con
+-- "violates check constraint dulabs_citas_especialista_estado_valido").
+--
+-- Confirmar que NO bloquea horario (a diferencia de pendiente/confirmada/propuesta):
+-- insertar una SEGUNDA cita para el MISMO especialista en el rango EXACTO
+-- de arriba, con estado 'pendiente' -- debe insertar SIN error, porque
+-- 'completada' no está en la cláusula WHERE del EXCLUDE (correcto: una cita
+-- ya completada en el pasado no debe seguir "ocupando" el horario).
+
+-- ---------------------------------------------------------------------------
+-- H. La restricción anti-solapamiento EXISTENTE sigue intacta (no se tocó)
+-- ---------------------------------------------------------------------------
+-- INSERT INTO dulabs_citas_especialista (especialista_id, id_tenant, phone_number_id, nombre_cliente, servicio, inicio, fin, estado)
+-- VALUES (<especialista-A-id>, '<tenant-A>', '<phone-A>', 'Cliente 1', 'Manicure', '2026-09-10 10:00-05', '2026-09-10 11:00-05', 'confirmada');
+-- Segunda inserción, MISMO especialista, rango solapado, estado activo:
+-- INSERT INTO dulabs_citas_especialista (especialista_id, id_tenant, phone_number_id, nombre_cliente, servicio, inicio, fin, estado)
+-- VALUES (<especialista-A-id>, '<tenant-A>', '<phone-A>', 'Cliente 2', 'Pedicure', '2026-09-10 10:30-05', '2026-09-10 11:30-05', 'pendiente');
+-- ERROR: conflicting key value violates exclusion constraint "dulabs_citas_especialista_sin_solape"
+-- (exactamente el mismo comportamiento que antes de esta migración -- el
+-- constraint no fue tocado, solo se verifica que seguir agregando estados al
+-- CHECK general no lo afectó).

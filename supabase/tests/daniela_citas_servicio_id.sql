@@ -1,0 +1,31 @@
+-- Fase 3 del sistema de reservas de Daniela — verificación manual.
+-- Ejecutar en Supabase SQL Editor DESPUÉS de
+-- 20260904040000_daniela_citas_servicio_id.sql. Mismo estilo que
+-- daniela_reservas_v1.sql: reemplaza los ids de ejemplo por datos reales de
+-- dos tenants distintos antes de correr.
+
+-- ---------------------------------------------------------------------------
+-- A. La columna existe y es nullable -- una cita LEGACY (sin servicio_id)
+-- sigue insertando exactamente igual que antes de esta migración.
+-- ---------------------------------------------------------------------------
+-- INSERT INTO dulabs_citas_especialista
+--   (especialista_id, id_tenant, phone_number_id, nombre_cliente, servicio, inicio, fin, estado)
+-- VALUES (<especialista-A-id>, '<tenant-A>', '<phone-A>', 'Prueba', 'Manicure', now() + interval '1 day', now() + interval '1 day 1 hour', 'pendiente');
+-- Debe insertar sin error, servicio_id queda NULL.
+
+-- ---------------------------------------------------------------------------
+-- B. servicio_id de OTRO tenant es rechazado (FK compuesta)
+-- ---------------------------------------------------------------------------
+-- INSERT INTO dulabs_citas_especialista
+--   (especialista_id, id_tenant, phone_number_id, nombre_cliente, servicio, servicio_id, inicio, fin, estado)
+-- VALUES (<especialista-A-id>, '<tenant-A>', '<phone-A>', 'Prueba', 'Manicure', '<servicio-de-tenant-B>', now() + interval '2 day', now() + interval '2 day 1 hour', 'pendiente');
+-- ERROR: insert or update on table "dulabs_citas_especialista" violates
+-- foreign key constraint "dulabs_citas_especialista_servicio_fk"
+
+-- ---------------------------------------------------------------------------
+-- C. Borrar el servicio deja servicio_id en NULL (on delete set null), NUNCA
+-- borra ni bloquea el borrado de la cita.
+-- ---------------------------------------------------------------------------
+-- DELETE FROM dulabs_servicios WHERE id = '<servicio-usado-en-una-cita>';
+-- SELECT servicio_id FROM dulabs_citas_especialista WHERE id = '<esa-cita>';
+-- Debe devolver NULL, la cita sigue existiendo con su columna `servicio` (texto) intacta.

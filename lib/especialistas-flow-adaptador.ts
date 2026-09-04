@@ -11,7 +11,10 @@ import {
   citaActivaPara,
   cancelarCita,
   editarCitaConfirmada,
-  ventanaAtencion,
+  ventanasLaboralesEspecialista,
+  bloqueosDelDia,
+  restarBloqueos,
+  generarHorariosLibres,
   type Especialista,
   type CitaEspecialista,
   type CategoriaServicio,
@@ -347,15 +350,22 @@ export async function consultarDisponibilidadEspecialista(
 // mismo criterio de desborde), calculadas como una LISTA en vez de un
 // booleano -- nunca una segunda fuente de verdad de las reglas.
 
-/** Cada cuánto se ofrece un horario dentro de la ventana de atención. Ajustable sin tocar ninguna regla de negocio. */
-const GRANULARIDAD_HORARIOS_MIN = 30;
-
 /**
  * Enumera los horarios de inicio REALES (HH:MM, hora Colombia) libres de
- * ESTA especialista puntual ese día, dentro de su ventana de atención real
- * -- comprobando solape contra sus citas reales existentes, nunca "check
- * antes, insert después" (la creación real sigue protegida aparte por el
- * constraint EXCLUDE; esto es solo lectura para PROPONER opciones).
+ * ESTA especialista puntual ese día -- comprobando solape contra sus citas
+ * reales existentes, nunca "check antes, insert después" (la creación real
+ * sigue protegida aparte por el constraint EXCLUDE; esto es solo lectura
+ * para PROPONER opciones).
+ *
+ * Fase 2 (sistema de reservas de Daniela) — la ventana de atención y los
+ * bloqueos ya no se calculan aquí: se delega a las primitivas compartidas de
+ * lib/especialistas.ts (ventanasLaboralesEspecialista, bloqueosDelDia,
+ * restarBloqueos, generarHorariosLibres), la MISMA fuente que usa ahora
+ * hayHuecoLibreEseDia -- una sola fuente de verdad de disponibilidad, nunca
+ * un segundo motor paralelo. Mientras el especialista no tenga horarios
+ * configurados en dulabs_horario_especialista (el caso de todos hoy),
+ * ventanasLaboralesEspecialista respalda automáticamente en el horario
+ * general hardcodeado -- comportamiento idéntico al de antes de esta fase.
  */
 async function horariosLibresParaEspecialista(
   supabase: SupabaseClient,
@@ -364,36 +374,31 @@ async function horariosLibresParaEspecialista(
   duracionMin: number,
   filtroVentanaPropia?: (inicio: Date) => boolean,
 ): Promise<string[]> {
-  const ventana = ventanaAtencion(fechaISO);
-  if (!ventana) return [];
+  const [ventanasBase, bloqueos] = await Promise.all([
+    ventanasLaboralesEspecialista(supabase, especialista.id, especialista.id_tenant, fechaISO),
+    bloqueosDelDia(supabase, especialista.id, especialista.id_tenant, fechaISO),
+  ]);
+  const ventanas = restarBloqueos(ventanasBase, bloqueos);
+  if (ventanas.length === 0) return [];
 
+  const desde = ventanas[0]!.apertura.toISOString();
+  const hasta = ventanas[ventanas.length - 1]!.cierre.toISOString();
   const { data } = await supabase
     .from("dulabs_citas_especialista")
     .select("inicio, fin")
     .eq("especialista_id", especialista.id)
     .in("estado", ["pendiente", "confirmada", "propuesta"])
-    .gte("inicio", ventana.apertura.toISOString())
-    .lt("inicio", ventana.cierre.toISOString())
+    .gte("inicio", desde)
+    .lt("inicio", hasta)
     .order("inicio", { ascending: true });
-  const ocupadas = (data ?? []) as { inicio: string; fin: string }[];
+  const ocupadas = ((data ?? []) as { inicio: string; fin: string }[]).map((c) => ({
+    apertura: new Date(c.inicio),
+    cierre: new Date(c.fin),
+  }));
 
-  const necesarioMs = duracionMin * 60_000;
-  const pasoMs = GRANULARIDAD_HORARIOS_MIN * 60_000;
-  const horarios: string[] = [];
-
-  for (
-    let cursorMs = ventana.apertura.getTime();
-    cursorMs + necesarioMs <= ventana.cierre.getTime();
-    cursorMs += pasoMs
-  ) {
-    const inicioSlot = new Date(cursorMs);
-    const finSlot = new Date(cursorMs + necesarioMs);
-    const solapa = ocupadas.some((o) => inicioSlot < new Date(o.fin) && finSlot > new Date(o.inicio));
-    if (solapa) continue;
-    if (filtroVentanaPropia && !filtroVentanaPropia(inicioSlot)) continue;
-    horarios.push(horaColombiaDesdeIso(inicioSlot.toISOString()));
-  }
-  return horarios;
+  return generarHorariosLibres(ventanas, ocupadas, duracionMin)
+    .filter((inicioSlot) => !filtroVentanaPropia || filtroVentanaPropia(inicioSlot))
+    .map((inicioSlot) => horaColombiaDesdeIso(inicioSlot.toISOString()));
 }
 
 export type ResultadoHorariosDisponiblesEspecialista =
