@@ -7,6 +7,7 @@ import { Button, Field, inputClass } from "@/components/spa-panel/ui";
 import { formatearPrecioCop } from "@/lib/especialistas-flow-adaptador";
 import { PortalLandingDaniela } from "@/components/reservar/PortalLandingDaniela";
 import { PasoSeleccionServicio } from "@/components/reservar/PasoSeleccionServicio";
+import { PasoSeleccionHorario } from "@/components/reservar/PasoSeleccionHorario";
 
 // Portal público de reservas (Fase 4) — consumidor puro del núcleo de
 // reservas existente (lib/disponibilidad-servicio.ts vía las rutas de
@@ -301,6 +302,23 @@ export default function PortalReservasPage() {
     return <PasoSeleccionServicio servicios={servicios} onElegir={elegirServicio} onVolver={() => setPaso("inicio")} />;
   }
 
+  if ((paso === "fecha" || paso === "horario") && servicioElegido) {
+    return (
+      <PasoSeleccionHorario
+        servicio={servicioElegido}
+        especialistaNombre={seleccion.especialistaNombre}
+        fecha={seleccion.fecha}
+        fechaMinima={hoyISO()}
+        fechaMaxima={fechaMaxima()}
+        horarios={horarios}
+        cargandoHorarios={cargandoHorarios}
+        onSeleccionarFecha={elegirFecha}
+        onContinuar={elegirHora}
+        onVolver={() => irAtras("fecha", setPaso)}
+      />
+    );
+  }
+
   return (
     <div className="spa-scope min-h-screen bg-ink">
       <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-4 pb-10 pt-6 sm:max-w-lg">
@@ -326,17 +344,6 @@ export default function PortalReservasPage() {
             cargando={cargandoEspecialistas}
             especialistas={especialistas}
             onElegir={elegirEspecialista}
-          />
-        )}
-
-        {paso === "fecha" && <PasoFecha onElegir={elegirFecha} />}
-
-        {paso === "horario" && (
-          <PasoHorario
-            fecha={seleccion.fecha!}
-            cargando={cargandoHorarios}
-            horarios={horarios}
-            onElegir={elegirHora}
           />
         )}
 
@@ -419,64 +426,6 @@ function PasoProfesional({
   );
 }
 
-function PasoFecha({ onElegir }: { onElegir: (fecha: string) => void }) {
-  const [valor, setValor] = useState("");
-  return (
-    <div className="flex flex-col gap-4">
-      <p className="text-sm text-mist">¿Qué día te queda mejor?</p>
-      <Field label="Fecha">
-        <input
-          type="date"
-          className={inputClass}
-          min={hoyISO()}
-          max={fechaMaxima()}
-          value={valor}
-          onChange={(e) => setValor(e.target.value)}
-        />
-      </Field>
-      <Button disabled={!valor} onClick={() => onElegir(valor)}>
-        Continuar
-      </Button>
-    </div>
-  );
-}
-
-function PasoHorario({
-  fecha,
-  cargando,
-  horarios,
-  onElegir,
-}: {
-  fecha: string;
-  cargando: boolean;
-  horarios: string[];
-  onElegir: (hora: string) => void;
-}) {
-  return (
-    <div className="flex flex-col gap-4">
-      <p className="text-sm text-mist">{formatearFechaLarga(fecha)}</p>
-      {cargando ? (
-        <div className="flex justify-center py-10">
-          <Loader2 className="size-5 animate-spin text-mist" />
-        </div>
-      ) : horarios.length === 0 ? (
-        <p className="text-sm text-mist">No hay horarios disponibles ese día. Intenta con otra fecha.</p>
-      ) : (
-        <div className="grid grid-cols-3 gap-2">
-          {horarios.map((h) => (
-            <button
-              key={h}
-              onClick={() => onElegir(h)}
-              className="rounded-xl border border-edge bg-card px-2 py-2.5 text-center text-sm font-medium text-fg transition-colors hover:border-lime/50"
-            >
-              {formatearHora12h(h)}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
 
 function PasoDatos({
   datos,
