@@ -45,6 +45,31 @@ export async function GET(request: NextRequest) {
     return Response.json({ error: "META_SOLOTALENTO_TOKEN no está configurado en el servidor" }, { status: 500 });
   }
 
+  // Diagnóstico del token en sí (nunca su valor) -- mismo patrón que
+  // /api/diagnostics/token-status: solo si hay appId/appSecret para
+  // autenticar la llamada a debug_token.
+  const appId = process.env.NEXT_PUBLIC_META_APP_ID;
+  const appSecret = process.env.META_APP_SECRET;
+  let diagnosticoToken: unknown = null;
+  if (appId && appSecret) {
+    const dbgRes = await fetch(
+      `${GRAPH}/debug_token?input_token=${encodeURIComponent(token)}&access_token=${appId}|${appSecret}`,
+    );
+    const dbgJson = (await dbgRes.json()) as {
+      data?: { type?: string; app_id?: string; application?: string; is_valid?: boolean; scopes?: string[] };
+      error?: { message?: string };
+    };
+    diagnosticoToken = dbgRes.ok ? dbgJson.data : { error: dbgJson.error?.message };
+  }
+
+  // Acceso directo al objeto WABA (más permisivo que subscribed_apps -- a
+  // veces WABA-level GET funciona con menos permiso que gestionar apps).
+  const wabaRes = await fetch(`${GRAPH}/${SOLOTALENTO_WABA_ID}?fields=id,name,owner_business_info`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const wabaJson = (await wabaRes.json()) as { id?: string; name?: string; error?: { message?: string } };
+  const accesoWaba = wabaRes.ok ? { ok: true, id: wabaJson.id, name: wabaJson.name } : { ok: false, error: wabaJson.error?.message };
+
   const consultar = () =>
     fetch(`${GRAPH}/${SOLOTALENTO_WABA_ID}/subscribed_apps`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -54,7 +79,13 @@ export async function GET(request: NextRequest) {
   const antesJson = (await antesRes.json()) as SubscribedAppsResponse;
   if (!antesRes.ok) {
     return Response.json(
-      { paso: "GET_inicial", ok: false, error: antesJson.error?.message ?? `HTTP ${antesRes.status}` },
+      {
+        paso: "GET_inicial",
+        ok: false,
+        error: antesJson.error?.message ?? `HTTP ${antesRes.status}`,
+        diagnostico_token: diagnosticoToken,
+        acceso_waba_directo: accesoWaba,
+      },
       { status: 200 },
     );
   }
