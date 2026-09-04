@@ -15,6 +15,8 @@ export const runtime = "nodejs";
 const GRAPH = `https://graph.facebook.com/${process.env.META_GRAPH_VERSION ?? "v23.0"}`;
 const SOLOTALENTO_WABA_ID = "251086998390445";
 const DULABS_APP_ID = "1358539879780370";
+const DULABS_BUSINESS_ID = "364602210077972";
+const DULABS_SYSTEM_USER_ID = "122105370837402596";
 
 function claveValida(recibida: string | null, esperada: string | undefined): boolean {
   if (!recibida || !esperada) return false;
@@ -70,6 +72,41 @@ export async function GET(request: NextRequest) {
   const wabaJson = (await wabaRes.json()) as { id?: string; name?: string; error?: { message?: string } };
   const accesoWaba = wabaRes.ok ? { ok: true, id: wabaJson.id, name: wabaJson.name } : { ok: false, error: wabaJson.error?.message };
 
+  // Relación Business DuLabs <-> WABAs -- qué ve realmente el Business
+  // Manager de DuLabs, no solo el System User. `owned_` son los que
+  // DuLabs es dueño directo; `client_` son los compartidos por otros
+  // negocios como partner (si SOLOTALENTO alguna vez compartió el suyo,
+  // debería aparecer acá aunque el token no tenga permiso operativo).
+  type WabaListResponse = { data?: { id?: string; name?: string }[]; error?: { message?: string } };
+  const consultarLista = async (edge: string) => {
+    const res = await fetch(`${GRAPH}/${DULABS_BUSINESS_ID}/${edge}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const json = (await res.json()) as WabaListResponse;
+    return res.ok ? { ok: true, data: json.data ?? [] } : { ok: false, error: json.error?.message };
+  };
+  const wabasPropiosDeDulabs = await consultarLista("owned_whatsapp_business_accounts");
+  const wabasCompartidosADulabs = await consultarLista("client_whatsapp_business_accounts");
+
+  // Info del propio System User -- qué activos tiene asignados según el
+  // Business Manager (requiere business_management, que sabemos que este
+  // token NO tiene -- se incluye igual porque el error mismo es diagnóstico).
+  const systemUserRes = await fetch(
+    `${GRAPH}/${DULABS_SYSTEM_USER_ID}?fields=id,name,assigned_whatsapp_business_accounts`,
+    { headers: { Authorization: `Bearer ${token}` } },
+  );
+  const systemUserJson = (await systemUserRes.json()) as { id?: string; name?: string; error?: { message?: string } };
+  const infoSystemUser = systemUserRes.ok
+    ? { ok: true, ...systemUserJson }
+    : { ok: false, error: systemUserJson.error?.message };
+
+  const diagnosticoRelacionBusiness = {
+    business_dulabs: DULABS_BUSINESS_ID,
+    wabas_propios_de_dulabs: wabasPropiosDeDulabs,
+    wabas_compartidos_a_dulabs: wabasCompartidosADulabs,
+    system_user_info: infoSystemUser,
+  };
+
   const consultar = () =>
     fetch(`${GRAPH}/${SOLOTALENTO_WABA_ID}/subscribed_apps`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -85,6 +122,7 @@ export async function GET(request: NextRequest) {
         error: antesJson.error?.message ?? `HTTP ${antesRes.status}`,
         diagnostico_token: diagnosticoToken,
         acceso_waba_directo: accesoWaba,
+        diagnostico_relacion_business: diagnosticoRelacionBusiness,
       },
       { status: 200 },
     );
