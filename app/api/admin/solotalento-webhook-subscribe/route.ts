@@ -70,7 +70,22 @@ export async function GET(request: NextRequest) {
     headers: { Authorization: `Bearer ${token}` },
   });
   const wabaJson = (await wabaRes.json()) as { id?: string; name?: string; error?: { message?: string } };
-  const accesoWaba = wabaRes.ok ? { ok: true, id: wabaJson.id, name: wabaJson.name } : { ok: false, error: wabaJson.error?.message };
+  const accesoWaba = wabaRes.ok
+    ? { ok: true, http_status: wabaRes.status, id: wabaJson.id, name: wabaJson.name }
+    : { ok: false, http_status: wabaRes.status, error: wabaJson.error?.message };
+
+  // Números dentro del WABA (edge distinto de subscribed_apps -- puede
+  // responder distinto según qué permiso exactamente falte).
+  const phonesRes = await fetch(`${GRAPH}/${SOLOTALENTO_WABA_ID}/phone_numbers?fields=id,display_phone_number,verified_name`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const phonesJson = (await phonesRes.json()) as {
+    data?: { id?: string; display_phone_number?: string; verified_name?: string }[];
+    error?: { message?: string };
+  };
+  const accesoNumeros = phonesRes.ok
+    ? { ok: true, data: phonesJson.data ?? [] }
+    : { ok: false, http_status: phonesRes.status, error: phonesJson.error?.message };
 
   // Relación Business DuLabs <-> WABAs -- qué ve realmente el Business
   // Manager de DuLabs, no solo el System User. `owned_` son los que
@@ -119,9 +134,11 @@ export async function GET(request: NextRequest) {
       {
         paso: "GET_inicial",
         ok: false,
+        http_status: antesRes.status,
         error: antesJson.error?.message ?? `HTTP ${antesRes.status}`,
         diagnostico_token: diagnosticoToken,
         acceso_waba_directo: accesoWaba,
+        acceso_phone_numbers: accesoNumeros,
         diagnostico_relacion_business: diagnosticoRelacionBusiness,
       },
       { status: 200 },
