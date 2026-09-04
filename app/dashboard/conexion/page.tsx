@@ -724,31 +724,39 @@ export default function ConexionPage() {
                   {t("Conectar otro número →", "Connect another number →")}
                 </button>
               </div>
-            ) : enTope ? (
-              <div className="rounded-xl border border-edge bg-ink p-5 text-sm leading-relaxed text-mist">
-                {t(
-                  `Ya usas los ${limiteNumeros} números que permite tu plan ${plan.nombre}.`,
-                  `You're already using all ${limiteNumeros} numbers your ${plan.nombre} plan allows.`
-                )}{" "}
-                <Link href="/precios" className="font-semibold text-lime-text hover:text-fg">
-                  {t("Mejorar plan →", "Upgrade plan →")}
-                </Link>
-              </div>
             ) : (
-              <button
-                onClick={conectar}
-                disabled={estado.fase !== "listo"}
-                className="flex items-center justify-center gap-2 rounded-lg bg-[#1877F2] px-4 py-2.5 text-sm font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <svg viewBox="0 0 24 24" className="size-4 fill-white" aria-hidden>
-                  <path d="M24 12.073C24 5.405 18.627 0 12 0S0 5.405 0 12.073C0 18.1 4.388 23.094 10.125 24v-8.437H7.078v-3.49h3.047v-2.66c0-3.026 1.792-4.697 4.533-4.697 1.313 0 2.686.236 2.686.236v2.971H15.83c-1.491 0-1.956.93-1.956 1.886v2.264h3.328l-.532 3.49h-2.796V24C19.612 23.094 24 18.1 24 12.073z" />
-                </svg>
-                {estado.fase === "conectando"
-                  ? t("Conectando…", "Connecting…")
-                  : estado.fase === "cargando"
-                    ? t("Cargando…", "Loading…")
-                    : t("Conectar nuevo número con Facebook", "Connect a new number with Facebook")}
-              </button>
+              <>
+                {enTope && (
+                  // El backend (meta-callback) ya permite reconectar un número
+                  // que ya es tuyo aunque estés en el tope del plan -- el
+                  // límite solo aplica a un número NUEVO distinto (ver
+                  // app/api/auth/meta-callback/route.ts). Este aviso es
+                  // informativo, no bloquea el botón.
+                  <div className="mb-3 rounded-xl border border-edge bg-ink p-4 text-sm leading-relaxed text-mist">
+                    {t(
+                      `Ya usas los ${limiteNumeros} números que permite tu plan ${plan.nombre}. Si el número que vas a conectar ya es tuyo (por ejemplo, para renovar su conexión), no hay problema. Para agregar uno nuevo distinto, `,
+                      `You're already using all ${limiteNumeros} numbers your ${plan.nombre} plan allows. If the number you're about to connect is already yours (e.g. to refresh its connection), that's fine. To add a different new one, `
+                    )}
+                    <Link href="/precios" className="font-semibold text-lime-text hover:text-fg">
+                      {t("mejora tu plan →", "upgrade your plan →")}
+                    </Link>
+                  </div>
+                )}
+                <button
+                  onClick={conectar}
+                  disabled={estado.fase !== "listo"}
+                  className="flex items-center justify-center gap-2 rounded-lg bg-[#1877F2] px-4 py-2.5 text-sm font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <svg viewBox="0 0 24 24" className="size-4 fill-white" aria-hidden>
+                    <path d="M24 12.073C24 5.405 18.627 0 12 0S0 5.405 0 12.073C0 18.1 4.388 23.094 10.125 24v-8.437H7.078v-3.49h3.047v-2.66c0-3.026 1.792-4.697 4.533-4.697 1.313 0 2.686.236 2.686.236v2.971H15.83c-1.491 0-1.956.93-1.956 1.886v2.264h3.328l-.532 3.49h-2.796V24C19.612 23.094 24 18.1 24 12.073z" />
+                  </svg>
+                  {estado.fase === "conectando"
+                    ? t("Conectando…", "Connecting…")
+                    : estado.fase === "cargando"
+                      ? t("Cargando…", "Loading…")
+                      : t("Conectar número con Facebook", "Connect a number with Facebook")}
+                </button>
+              </>
             )}
 
             {configFaltante && (
