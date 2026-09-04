@@ -2,12 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
-import { Loader2, CalendarClock, Check, ChevronLeft, Clock, User } from "lucide-react";
-import { Button, Field, inputClass } from "@/components/spa-panel/ui";
-import { formatearPrecioCop } from "@/lib/especialistas-flow-adaptador";
+import { Loader2, CalendarClock, ChevronLeft, User } from "lucide-react";
 import { PortalLandingDaniela } from "@/components/reservar/PortalLandingDaniela";
 import { PasoSeleccionServicio } from "@/components/reservar/PasoSeleccionServicio";
 import { PasoSeleccionHorario } from "@/components/reservar/PasoSeleccionHorario";
+import { PasoDatosCliente } from "@/components/reservar/PasoDatosCliente";
+import { PasoConfirmacion } from "@/components/reservar/PasoConfirmacion";
+import { PasoExitoDaniela } from "@/components/reservar/PasoExitoDaniela";
 
 // Portal público de reservas (Fase 4) — consumidor puro del núcleo de
 // reservas existente (lib/disponibilidad-servicio.ts vía las rutas de
@@ -65,21 +66,6 @@ function fechaMaxima(): string {
   const d = new Date();
   d.setDate(d.getDate() + HORIZONTE_DIAS);
   return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bogota" }).format(d);
-}
-
-function formatearHora12h(hhmm: string): string {
-  const [hStr, mStr] = hhmm.split(":");
-  const h = Number(hStr);
-  const periodo = h >= 12 ? "p. m." : "a. m.";
-  const h12 = h % 12 === 0 ? 12 : h % 12;
-  return `${h12}:${mStr} ${periodo}`;
-}
-
-function formatearFechaLarga(fechaISO: string): string {
-  const [y, m, d] = fechaISO.split("-").map(Number);
-  return new Intl.DateTimeFormat("es-CO", { day: "numeric", month: "long", weekday: "long", timeZone: "America/Bogota" }).format(
-    new Date(Date.UTC(y, m - 1, d, 12))
-  );
 }
 
 function crearIdempotencyKey(): string {
@@ -299,12 +285,13 @@ export default function PortalReservasPage() {
   }
 
   if (paso === "servicio") {
-    return <PasoSeleccionServicio servicios={servicios} onElegir={elegirServicio} onVolver={() => setPaso("inicio")} />;
+    return <PasoSeleccionServicio negocio={negocio} servicios={servicios} onElegir={elegirServicio} onVolver={() => setPaso("inicio")} />;
   }
 
   if ((paso === "fecha" || paso === "horario") && servicioElegido) {
     return (
       <PasoSeleccionHorario
+        negocio={negocio}
         servicio={servicioElegido}
         especialistaNombre={seleccion.especialistaNombre}
         fecha={seleccion.fecha}
@@ -317,6 +304,41 @@ export default function PortalReservasPage() {
         onVolver={() => irAtras("fecha", setPaso)}
       />
     );
+  }
+
+  if (paso === "datos") {
+    return (
+      <PasoDatosCliente
+        negocio={negocio}
+        datos={datos}
+        onCambiar={setDatos}
+        onContinuar={irAConfirmar}
+        onVolver={() => irAtras("datos", setPaso)}
+      />
+    );
+  }
+
+  if (paso === "confirmar" && servicioElegido) {
+    return (
+      <PasoConfirmacion
+        negocio={negocio}
+        servicio={servicioElegido}
+        especialistaNombre={seleccion.especialistaNombre ?? ""}
+        fecha={seleccion.fecha!}
+        hora={seleccion.hora!}
+        datos={datos}
+        enviando={enviando}
+        error={errorReserva}
+        ocupado={errorReserva !== null && errorReserva.includes("acaba de ser reservado")}
+        onConfirmar={confirmarReserva}
+        onElegirOtroHorario={volverAHorarioTrasOcupado}
+        onVolver={() => irAtras("confirmar", setPaso)}
+      />
+    );
+  }
+
+  if (paso === "exito" && exito) {
+    return <PasoExitoDaniela resultado={exito} negocio={negocio} />;
   }
 
   return (
@@ -347,30 +369,6 @@ export default function PortalReservasPage() {
           />
         )}
 
-        {paso === "datos" && (
-          <PasoDatos
-            datos={datos}
-            onCambiar={setDatos}
-            onContinuar={irAConfirmar}
-          />
-        )}
-
-        {paso === "confirmar" && servicioElegido && (
-          <PasoConfirmar
-            servicio={servicioElegido}
-            especialistaNombre={seleccion.especialistaNombre ?? ""}
-            fecha={seleccion.fecha!}
-            hora={seleccion.hora!}
-            datos={datos}
-            enviando={enviando}
-            error={errorReserva}
-            ocupado={errorReserva !== null && errorReserva.includes("acaba de ser reservado")}
-            onConfirmar={confirmarReserva}
-            onElegirOtroHorario={volverAHorarioTrasOcupado}
-          />
-        )}
-
-        {paso === "exito" && exito && <PasoExito resultado={exito} negocio={negocio} />}
       </div>
     </div>
   );
@@ -427,140 +425,3 @@ function PasoProfesional({
 }
 
 
-function PasoDatos({
-  datos,
-  onCambiar,
-  onContinuar,
-}: {
-  datos: DatosCliente;
-  onCambiar: (d: DatosCliente) => void;
-  onContinuar: () => void;
-}) {
-  return (
-    <div className="flex flex-col gap-4">
-      <p className="text-sm text-mist">Tus datos</p>
-      <Field label="Nombre completo">
-        <input
-          className={inputClass}
-          value={datos.nombre}
-          onChange={(e) => onCambiar({ ...datos, nombre: e.target.value })}
-          placeholder="Ej. Laura Gómez"
-        />
-      </Field>
-      <Field label="WhatsApp">
-        <input
-          className={inputClass}
-          value={datos.telefono}
-          onChange={(e) => onCambiar({ ...datos, telefono: e.target.value })}
-          placeholder="Ej. 3001234567"
-          inputMode="tel"
-        />
-      </Field>
-      <Field label="Correo (opcional)">
-        <input
-          className={inputClass}
-          value={datos.correo}
-          onChange={(e) => onCambiar({ ...datos, correo: e.target.value })}
-          placeholder="tucorreo@ejemplo.com"
-          inputMode="email"
-        />
-      </Field>
-      <Button disabled={!datos.nombre.trim() || !datos.telefono.trim()} onClick={onContinuar}>
-        Continuar
-      </Button>
-    </div>
-  );
-}
-
-function PasoConfirmar({
-  servicio,
-  especialistaNombre,
-  fecha,
-  hora,
-  datos,
-  enviando,
-  error,
-  ocupado,
-  onConfirmar,
-  onElegirOtroHorario,
-}: {
-  servicio: Servicio;
-  especialistaNombre: string;
-  fecha: string;
-  hora: string;
-  datos: DatosCliente;
-  enviando: boolean;
-  error: string | null;
-  ocupado: boolean;
-  onConfirmar: () => void;
-  onElegirOtroHorario: () => void;
-}) {
-  return (
-    <div className="flex flex-col gap-4">
-      <p className="text-sm text-mist">Confirma tu cita</p>
-      <div className="flex flex-col gap-2 rounded-2xl border border-edge bg-card p-4 text-sm">
-        <Fila label="Servicio" valor={servicio.nombre} />
-        <Fila label="Profesional" valor={especialistaNombre} />
-        <Fila label="Fecha" valor={formatearFechaLarga(fecha)} />
-        <Fila label="Hora" valor={formatearHora12h(hora)} />
-        <Fila label="Duración" valor={`${servicio.duracion_min} min`} />
-        {servicio.precio != null && <Fila label="Precio" valor={formatearPrecioCop(servicio.precio)} />}
-        <Fila label="Nombre" valor={datos.nombre} />
-      </div>
-      {error && (
-        <div className="rounded-xl bg-danger px-3.5 py-2.5 text-sm text-danger-text">
-          {error}
-          {ocupado && (
-            <button onClick={onElegirOtroHorario} className="mt-1.5 block font-medium underline">
-              Elegir otro horario
-            </button>
-          )}
-        </div>
-      )}
-      <Button loading={enviando} onClick={onConfirmar}>
-        Confirmar reserva
-      </Button>
-    </div>
-  );
-}
-
-function Fila({ label, valor }: { label: string; valor: string }) {
-  return (
-    <div className="flex items-center justify-between gap-3">
-      <span className="text-mist">{label}</span>
-      <span className="font-medium text-fg">{valor}</span>
-    </div>
-  );
-}
-
-function PasoExito({ resultado, negocio }: { resultado: ResultadoExito; negocio: string }) {
-  return (
-    <div className="flex flex-col items-center gap-4 py-6 text-center">
-      <div className="flex size-16 items-center justify-center rounded-full bg-success text-success-text">
-        <Check className="size-8" />
-      </div>
-      <div>
-        <p className="text-lg font-semibold text-fg">¡Cita confirmada!</p>
-        <p className="mt-1 text-sm text-mist">Te esperamos en {negocio}</p>
-      </div>
-      <div className="flex w-full flex-col gap-2 rounded-2xl border border-edge bg-card p-4 text-left text-sm">
-        <Fila label="Servicio" valor={resultado.servicio} />
-        <Fila label="Profesional" valor={resultado.profesional} />
-        <Fila label="Fecha" valor={formatearFechaLarga(resultado.inicio.slice(0, 10))} />
-        <Fila
-          label="Hora"
-          valor={new Intl.DateTimeFormat("es-CO", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "America/Bogota" }).format(
-            new Date(resultado.inicio)
-          )}
-        />
-        <Fila label="Duración" valor={`${resultado.duracionMin} min`} />
-        <div className="mt-1 flex items-center justify-between gap-3 border-t border-edge pt-2">
-          <span className="flex items-center gap-1.5 text-mist">
-            <Clock className="size-3.5" /> Código
-          </span>
-          <span className="font-mono font-medium text-fg">{resultado.codigo}</span>
-        </div>
-      </div>
-    </div>
-  );
-}

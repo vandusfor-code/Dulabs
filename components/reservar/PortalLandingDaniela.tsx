@@ -106,16 +106,13 @@ export function PortalLandingDaniela({
       style={{ backgroundColor: ROSA_FONDO, backgroundImage: "url(/portal-background-828x1792.png)", backgroundPosition: "center top" }}
     >
       <div className="mx-auto flex min-h-screen w-full max-w-[430px] flex-col">
-        {/* Header */}
+        {/* Header -- `negocio` es el nombre real del tenant (nunca hardcodeado, ver /api/reservar/[tenant]) */}
         <header className="flex items-start justify-between px-7 pt-9">
           <Hamburguesa />
           <div className="flex flex-col items-center gap-1">
             <Sparkles className="size-3.5" style={{ color: ROSA }} strokeWidth={1.5} />
-            <p className="text-[19px] font-semibold uppercase tracking-tight" style={{ ...serif, color: TEXTO }}>
-              Daniela Manco
-            </p>
-            <p className="text-[10px] font-medium uppercase tracking-[0.25em]" style={{ color: TEXTO_SECUNDARIO }}>
-              Nails Spa
+            <p className="max-w-[220px] truncate text-[19px] font-semibold uppercase tracking-tight" style={{ ...serif, color: TEXTO }}>
+              {negocio}
             </p>
           </div>
           <span className="w-[26px]" />

@@ -1,9 +1,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { ArrowLeft, Check, ChevronRight, ChevronLeft, ShieldCheck, CalendarPlus, Clock, Heart } from "lucide-react";
+import { Check, ChevronRight, ChevronLeft, ShieldCheck, CalendarPlus, Clock, Heart } from "lucide-react";
 import { cormorantGaramond, parisienne } from "@/lib/fonts-portal-daniela";
 import { formatearPrecioCop } from "@/lib/especialistas-flow-adaptador";
+import { PortalHeader } from "@/components/reservar/PortalHeader";
 
 // Fase 8A.9 (autorizado) — SOLO esta pantalla ("Selecciona tu horario").
 // Puramente de presentación: consume EXACTAMENTE lo que ya devuelve el
@@ -79,6 +80,7 @@ function formatearDuracion(min: number): string {
 }
 
 export function PasoSeleccionHorario({
+  negocio,
   servicio,
   especialistaNombre,
   fecha,
@@ -90,6 +92,7 @@ export function PasoSeleccionHorario({
   onContinuar,
   onVolver,
 }: {
+  negocio: string;
   servicio: Servicio;
   especialistaNombre: string | null;
   fecha: string | null;
@@ -118,22 +121,7 @@ export function PasoSeleccionHorario({
   return (
     <div className={`relative min-h-screen w-full ${cormorantGaramond.variable} ${parisienne.variable}`} style={{ backgroundColor: ROSA_FONDO }}>
       <div className="mx-auto flex min-h-screen w-full max-w-[430px] flex-col px-6 pb-9 pt-9">
-        {/* Header */}
-        <header className="flex items-center justify-between">
-          <button type="button" onClick={onVolver} aria-label="Volver" className="flex size-9 items-center justify-center rounded-full" style={{ color: TEXTO }}>
-            <ArrowLeft className="size-5" strokeWidth={1.75} />
-          </button>
-          <div className="flex flex-col items-center gap-0.5">
-            <Heart className="size-3.5" style={{ color: ROSA }} strokeWidth={1.5} />
-            <p className="text-[17px] font-semibold uppercase tracking-tight" style={{ ...serif, color: TEXTO }}>
-              Daniela Manco
-            </p>
-            <p className="text-[9px] font-medium uppercase tracking-[0.25em]" style={{ color: TEXTO_SECUNDARIO }}>
-              Nails Spa
-            </p>
-          </div>
-          <span className="w-9" />
-        </header>
+        <PortalHeader negocio={negocio} onVolver={onVolver} />
 
         {/* Indicador de pasos -- refleja el estado REAL: 1 (servicio) completado, 2 (horario) activo */}
         <div className="mt-7 flex w-full items-start justify-between">
