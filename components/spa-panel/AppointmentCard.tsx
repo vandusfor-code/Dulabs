@@ -15,6 +15,8 @@ export function AppointmentCard({
   onReagendar,
   onCancelar,
   onDetalles,
+  onCompletar,
+  onNoShow,
 }: {
   cita: Cita;
   procesando: boolean;
@@ -24,6 +26,8 @@ export function AppointmentCard({
   onReagendar: () => void;
   onCancelar: () => void;
   onDetalles: () => void;
+  onCompletar?: () => void;
+  onNoShow?: () => void;
 }) {
   const duracion = minutosEntre(cita.inicio, cita.fin);
 
@@ -61,6 +65,8 @@ export function AppointmentCard({
           onReagendar={onReagendar}
           onCancelar={onCancelar}
           onDetalles={onDetalles}
+          onCompletar={onCompletar}
+          onNoShow={onNoShow}
         />
       </div>
     </div>

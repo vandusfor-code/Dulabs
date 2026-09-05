@@ -2,15 +2,19 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { CalendarDays, Calendar, Users, Sparkles, Tag, BarChart3, Settings } from "lucide-react";
+import { CalendarDays, Calendar, ListChecks, Users, Sparkles, UserRound, Clock3, Ban, Tag, BarChart3, Settings } from "lucide-react";
 import { cn } from "./ui";
 import { partesLogo } from "./format";
 
 const NAV = [
-  { label: "Agenda", icon: CalendarDays, href: (t: string) => `/agenda/${t}`, disponible: true },
-  { label: "Calendario", icon: Calendar, disponible: false },
-  { label: "Clientes", icon: Users, disponible: false },
-  { label: "Servicios", icon: Sparkles, disponible: false },
+  { label: "Inicio", icon: CalendarDays, href: (t: string) => `/agenda/${t}`, disponible: true },
+  { label: "Citas", icon: ListChecks, href: (t: string) => `/agenda/${t}/completa`, disponible: true },
+  { label: "Calendario", icon: Calendar, href: (t: string) => `/agenda/${t}/calendario`, disponible: true },
+  { label: "Clientes", icon: Users, href: (t: string) => `/agenda/${t}/clientes`, disponible: true },
+  { label: "Servicios", icon: Sparkles, href: (t: string) => `/agenda/${t}/servicios`, disponible: true },
+  { label: "Profesionales", icon: UserRound, href: (t: string) => `/agenda/${t}/profesionales`, disponible: true },
+  { label: "Horarios", icon: Clock3, href: (t: string) => `/agenda/${t}/horarios`, disponible: true },
+  { label: "Bloqueos", icon: Ban, href: (t: string) => `/agenda/${t}/bloqueos`, disponible: true },
   { label: "Promociones", icon: Tag, disponible: false },
   { label: "Reportes", icon: BarChart3, disponible: false },
   { label: "Configuración", icon: Settings, disponible: false },

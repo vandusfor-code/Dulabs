@@ -1,0 +1,25 @@
+{
+  "name": "dulabs-whatsapp-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/server.ts",
+    "dev": "tsx watch src/server.ts",
+    "test": "tsx --test src/whatsapp-qr/manager.test.ts src/whatsapp-qr/qr-imagen.test.ts src/server.test.ts src/logging.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.110.3",
+    "@whiskeysockets/baileys": "7.0.0-rc14",
+    "qrcode": "1.5.4",
+    "tsx": "^4.20.6"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/qrcode": "^1.5.5",
+    "eslint": "^9.39.5",
+    "typescript": "^5",
+    "typescript-eslint": "^8.69.0"
+  }
+}

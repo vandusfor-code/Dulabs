@@ -8,7 +8,8 @@ import { AppointmentCard } from "./AppointmentCard";
 import { useAgenda } from "./AgendaContext";
 
 export function UpcomingAppointments({ citas }: { citas: Cita[] }) {
-  const { token, procesandoId, confirmar, rechazar, abrirEditar, abrirReagendar, abrirCancelar, abrirDetalles } = useAgenda();
+  const { token, procesandoId, confirmar, rechazar, completar, marcarNoShow, abrirEditar, abrirReagendar, abrirCancelar, abrirDetalles } =
+    useAgenda();
 
   // Se fija una sola vez al montar -- no necesita re-evaluarse al segundo,
   // y llamar Date.now() directo en el cuerpo del render viola la regla de
@@ -49,6 +50,8 @@ export function UpcomingAppointments({ citas }: { citas: Cita[] }) {
               onReagendar={() => abrirReagendar(c)}
               onCancelar={() => abrirCancelar(c)}
               onDetalles={() => abrirDetalles(c)}
+              onCompletar={c.estado === "confirmada" ? () => completar(c) : undefined}
+              onNoShow={c.estado === "confirmada" ? () => marcarNoShow(c) : undefined}
             />
           ))}
         </div>

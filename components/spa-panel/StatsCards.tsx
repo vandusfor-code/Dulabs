@@ -1,7 +1,7 @@
 "use client";
 
-import { CalendarCheck2, CalendarClock, Clock3, Hourglass, type LucideIcon } from "lucide-react";
-import type { Cita } from "./types";
+import { CalendarCheck2, CalendarClock, Clock3, Hourglass, Users, Sparkles, UserRound, type LucideIcon } from "lucide-react";
+import type { Cita, ResumenNegocio } from "./types";
 import { esHoy, formatearDuracion, minutosEntre } from "./format";
 
 function StatCard({ label, value, hint, icon: Icon }: { label: string; value: string; hint: string; icon: LucideIcon }) {
@@ -19,7 +19,7 @@ function StatCard({ label, value, hint, icon: Icon }: { label: string; value: st
   );
 }
 
-export function StatsCards({ citas }: { citas: Cita[] }) {
+export function StatsCards({ citas, resumen }: { citas: Cita[]; resumen?: ResumenNegocio }) {
   const hoy = new Date();
   const ayer = new Date(hoy);
   ayer.setDate(ayer.getDate() - 1);
@@ -39,16 +39,25 @@ export function StatsCards({ citas }: { citas: Cita[] }) {
   const pendientes = citas.filter((c) => c.estado === "pendiente");
 
   return (
-    <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4 lg:gap-4">
-      <StatCard
-        label="Citas hoy"
-        value={String(citasHoy.length)}
-        hint={delta === 0 ? "Igual que ayer" : `${delta > 0 ? "+" : ""}${delta} vs. ayer`}
-        icon={CalendarCheck2}
-      />
-      <StatCard label="Citas confirmadas" value={String(confirmadas.length)} hint="En tu agenda" icon={CalendarClock} />
-      <StatCard label="Horas ocupadas" value={formatearDuracion(minutosOcupadosHoy)} hint="Hoy" icon={Clock3} />
-      <StatCard label="Por confirmar" value={String(pendientes.length)} hint="Necesitan tu respuesta" icon={Hourglass} />
+    <div className="flex flex-col gap-2.5 lg:gap-4">
+      <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4 lg:gap-4">
+        <StatCard
+          label="Citas hoy"
+          value={String(citasHoy.length)}
+          hint={delta === 0 ? "Igual que ayer" : `${delta > 0 ? "+" : ""}${delta} vs. ayer`}
+          icon={CalendarCheck2}
+        />
+        <StatCard label="Citas confirmadas" value={String(confirmadas.length)} hint="En tu agenda" icon={CalendarClock} />
+        <StatCard label="Horas ocupadas" value={formatearDuracion(minutosOcupadosHoy)} hint="Hoy" icon={Clock3} />
+        <StatCard label="Por confirmar" value={String(pendientes.length)} hint="Necesitan tu respuesta" icon={Hourglass} />
+      </div>
+      {resumen && (
+        <div className="grid grid-cols-3 gap-2.5 lg:gap-4">
+          <StatCard label="Clientes registrados" value={String(resumen.clientesRegistrados)} hint="En total" icon={Users} />
+          <StatCard label="Servicios activos" value={String(resumen.serviciosActivos)} hint="En tu catálogo" icon={Sparkles} />
+          <StatCard label="Profesionales activos" value={String(resumen.profesionalesActivos)} hint="En tu equipo" icon={UserRound} />
+        </div>
+      )}
     </div>
   );
 }

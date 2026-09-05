@@ -1,6 +1,6 @@
 "use client";
 
-import { MoreHorizontal, Pencil, CalendarClock, Trash2, Eye, Check, X, Loader2 } from "lucide-react";
+import { MoreHorizontal, Pencil, CalendarClock, Trash2, Eye, Check, X, Loader2, CheckCheck, UserX } from "lucide-react";
 import { Dropdown, DropdownItem } from "./ui";
 import type { Cita } from "./types";
 
@@ -13,6 +13,8 @@ export function AppointmentMenu({
   onReagendar,
   onCancelar,
   onDetalles,
+  onCompletar,
+  onNoShow,
 }: {
   cita: Cita;
   procesando: boolean;
@@ -22,6 +24,8 @@ export function AppointmentMenu({
   onReagendar: () => void;
   onCancelar: () => void;
   onDetalles: () => void;
+  onCompletar?: () => void;
+  onNoShow?: () => void;
 }) {
   if (procesando) {
     return (
@@ -100,6 +104,29 @@ export function AppointmentMenu({
               }}
             >
               Cancelar cita
+            </DropdownItem>
+          )}
+          {cita.estado === "confirmada" && onCompletar && (
+            <DropdownItem
+              icon={CheckCheck}
+              onClick={() => {
+                close();
+                onCompletar();
+              }}
+            >
+              Marcar completada
+            </DropdownItem>
+          )}
+          {cita.estado === "confirmada" && onNoShow && (
+            <DropdownItem
+              icon={UserX}
+              danger
+              onClick={() => {
+                close();
+                onNoShow();
+              }}
+            >
+              Marcar no asistió
             </DropdownItem>
           )}
           <DropdownItem

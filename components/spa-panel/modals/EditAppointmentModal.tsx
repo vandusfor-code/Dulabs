@@ -65,8 +65,16 @@ export function EditAppointmentModal({
         <Field label="Cliente">
           <input value={cita.nombre_cliente} disabled className={`${inputClass} opacity-60`} />
         </Field>
-        <Field label="Servicio">
-          <input value={servicio} onChange={(e) => setServicio(e.target.value)} className={inputClass} />
+        <Field
+          label="Servicio"
+          hint={cita.servicio_id ? "Servicio del catálogo -- no se puede renombrar desde aquí." : undefined}
+        >
+          <input
+            value={servicio}
+            onChange={(e) => setServicio(e.target.value)}
+            disabled={Boolean(cita.servicio_id)}
+            className={cita.servicio_id ? `${inputClass} opacity-60` : inputClass}
+          />
         </Field>
         {equipo.length > 1 && (
           <Field label="Profesional">
@@ -87,14 +95,18 @@ export function EditAppointmentModal({
             <input type="time" value={hora} onChange={(e) => setHora(e.target.value)} className={inputClass} />
           </Field>
         </div>
-        <Field label="Duración (minutos)">
+        <Field
+          label="Duración (minutos)"
+          hint={cita.servicio_id ? "Se toma automáticamente del servicio -- no se puede cambiar aquí." : undefined}
+        >
           <input
             type="number"
             min={5}
             step={5}
             value={duracion}
             onChange={(e) => setDuracion(e.target.value)}
-            className={inputClass}
+            disabled={Boolean(cita.servicio_id)}
+            className={cita.servicio_id ? `${inputClass} opacity-60` : inputClass}
           />
         </Field>
 

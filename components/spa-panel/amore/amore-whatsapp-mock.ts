@@ -1,10 +1,9 @@
-// AMORE (Fase 5, diseño visual completo, autorizado) — datos MOCK de la
-// pantalla WhatsApp. Conectar/desconectar de verdad (QR, Meta) es lógica
-// funcional, fuera de esta fase -- ver dulabs_clientes_config para el estado
-// real, que esta pantalla todavía no consulta.
+// AMORE (Fase 5, diseño visual completo) — el estado de conexión ya es real
+// desde la Fase 9A (ver app/agenda/[token]/whatsapp/page.tsx y
+// app/api/agenda/[token]/whatsapp-qr/*). Lo único que sigue siendo mock acá
+// es el conteo de uso por tipo de mensaje -- no se pidió construir esa
+// métrica real en esta fase.
 export const whatsappMock = {
-  conectado: true,
-  numero: "+57 XXX XXX XXXX",
   uso: [
     { label: "Confirmaciones", cantidad: 128 },
     { label: "Recordatorios", cantidad: 96 },

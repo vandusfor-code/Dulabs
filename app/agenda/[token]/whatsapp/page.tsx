@@ -1,15 +1,27 @@
 "use client";
 
-import { MessageCircle } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { MessageCircle, Loader2 } from "lucide-react";
+import { useAgenda } from "@/components/spa-panel/AgendaContext";
 import { AmoreOnlyScreen } from "@/components/spa-panel/amore/AmoreOnlyScreen";
 import { AmoreCard, AmoreScreenTitle, AmoreSectionTitle, AmoreSecondaryButton, AmoreDivider } from "@/components/spa-panel/amore/ui";
-import { useAmoreUi } from "@/components/spa-panel/amore/AmoreUiContext";
 import { whatsappMock } from "@/components/spa-panel/amore/amore-whatsapp-mock";
 
-// AMORE (Fase 5, diseño visual completo, autorizado) — SOLO diseño visual.
-// El estado mostrado es mock (ver amore-whatsapp-mock.ts) -- conectar/
-// desconectar de verdad (QR, Meta) es lógica funcional para una fase
-// posterior. Ningún mensaje se envía desde acá.
+type EstadoConexion = "desconectado" | "conectando" | "conectado";
+type EstadoPublico = {
+  estado: EstadoConexion;
+  numeroConectado: string | null;
+  conectadoEn: string | null;
+  qr: string | null;
+};
+
+// AMORE (Fase 9A, autorizado) — MISMO Design System de la Fase 5 (AmoreCard,
+// AmoreScreenTitle, AmoreSecondaryButton...), ahora conectado a la
+// infraestructura real de WhatsApp por QR (ver app/api/agenda/[token]/
+// whatsapp-qr/* y lib/whatsapp-qr/). No se rediseñó nada: se agregaron los
+// 3 estados reales (desconectado/conectando/conectado) sobre los mismos
+// componentes que ya existían. "Uso de WhatsApp" sigue siendo mock (ver
+// amore-whatsapp-mock.ts), fuera del alcance de esta fase.
 export default function WhatsappPage() {
   return (
     <AmoreOnlyScreen>
@@ -19,32 +31,130 @@ export default function WhatsappPage() {
 }
 
 function WhatsappContenido() {
-  const { avisarProximamente } = useAmoreUi();
+  const { token } = useAgenda();
+  const [estado, setEstado] = useState<EstadoPublico | null>(null);
+  const [cargando, setCargando] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const intervaloRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const consultarEstado = useCallback(() => {
+    fetch(`/api/agenda/${token}/whatsapp-qr`)
+      .then((r) => r.json())
+      .then((body) => (body.error ? setError(body.error) : setEstado(body)))
+      .catch(() => setError("No se pudo consultar el estado de WhatsApp"));
+  }, [token]);
+
+  useEffect(() => {
+    consultarEstado();
+  }, [consultarEstado]);
+
+  // Mientras se espera el escaneo del QR, refresca el estado cada 3s (el QR
+  // y la confirmación de conexión llegan de forma asíncrona del lado del
+  // servidor). Se detiene apenas deja de estar "conectando".
+  useEffect(() => {
+    if (estado?.estado === "conectando") {
+      intervaloRef.current = setInterval(consultarEstado, 3000);
+    } else if (intervaloRef.current) {
+      clearInterval(intervaloRef.current);
+      intervaloRef.current = null;
+    }
+    return () => {
+      if (intervaloRef.current) clearInterval(intervaloRef.current);
+    };
+  }, [estado?.estado, consultarEstado]);
+
+  async function conectar() {
+    setCargando(true);
+    setError(null);
+    try {
+      const r = await fetch(`/api/agenda/${token}/whatsapp-qr/iniciar`, { method: "POST" });
+      const body = await r.json();
+      if (body.error) setError(body.error);
+      else setEstado(body);
+    } catch {
+      setError("No se pudo iniciar la conexión");
+    } finally {
+      setCargando(false);
+    }
+  }
+
+  async function desconectar() {
+    setCargando(true);
+    setError(null);
+    try {
+      const r = await fetch(`/api/agenda/${token}/whatsapp-qr/desconectar`, { method: "POST" });
+      const body = await r.json();
+      if (body.error) setError(body.error);
+      else setEstado(body);
+    } catch {
+      setError("No se pudo desconectar");
+    } finally {
+      setCargando(false);
+    }
+  }
 
   return (
     <div className="flex flex-col gap-5">
       <AmoreScreenTitle title="WhatsApp" subtitle="Conexión con tus clientas" />
 
-      <AmoreCard className="flex items-center gap-3">
-        <div className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-success text-success-text">
-          <MessageCircle className="size-5" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <p className="flex items-center gap-1.5 text-sm font-medium text-fg">
-            <span className="size-2 rounded-full bg-success-text" /> Conectado
-          </p>
-          <p className="truncate text-xs text-mist">{whatsappMock.numero}</p>
-        </div>
-      </AmoreCard>
+      {error && <p className="text-sm text-danger-text">{error}</p>}
 
-      <div className="flex gap-2.5">
-        <AmoreSecondaryButton onClick={avisarProximamente} className="flex-1">
-          Conectar WhatsApp
-        </AmoreSecondaryButton>
-        <AmoreSecondaryButton onClick={avisarProximamente} className="flex-1 !bg-danger !text-danger-text">
-          Desconectar
-        </AmoreSecondaryButton>
-      </div>
+      {!estado ? (
+        <div className="flex justify-center py-6">
+          <Loader2 className="size-5 animate-spin text-mist" />
+        </div>
+      ) : estado.estado === "conectado" ? (
+        <>
+          <AmoreCard className="flex items-center gap-3">
+            <div className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-success text-success-text">
+              <MessageCircle className="size-5" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="flex items-center gap-1.5 text-sm font-medium text-fg">
+                <span className="size-2 rounded-full bg-success-text" /> 🟢 WhatsApp conectado
+              </p>
+              <p className="truncate text-xs text-mist">
+                {estado.numeroConectado ? `+${estado.numeroConectado}` : "Número no disponible"}
+                {estado.conectadoEn && ` · desde ${new Date(estado.conectadoEn).toLocaleString("es-CO")}`}
+              </p>
+            </div>
+          </AmoreCard>
+          <AmoreSecondaryButton onClick={desconectar} disabled={cargando} className="!bg-danger !text-danger-text">
+            Desconectar
+          </AmoreSecondaryButton>
+        </>
+      ) : estado.estado === "conectando" ? (
+        <AmoreCard className="flex flex-col items-center gap-3 text-center">
+          <p className="text-sm font-medium text-fg">Escanea el código QR con tu WhatsApp</p>
+          {estado.qr ? (
+            // eslint-disable-next-line @next/next/no-img-element -- data URL local, no aplica optimización de imagen
+            <img src={estado.qr} alt="Código QR para conectar WhatsApp" className="size-56 rounded-xl border border-edge" />
+          ) : (
+            <div className="flex size-56 items-center justify-center rounded-xl border border-edge">
+              <Loader2 className="size-6 animate-spin text-mist" />
+            </div>
+          )}
+          <p className="text-xs text-mist">WhatsApp &gt; Dispositivos vinculados &gt; Vincular un dispositivo</p>
+          <AmoreSecondaryButton onClick={conectar} disabled={cargando} className="w-full">
+            Actualizar código QR
+          </AmoreSecondaryButton>
+        </AmoreCard>
+      ) : (
+        <>
+          <AmoreCard className="flex items-center gap-3">
+            <div className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-ink-2 text-mist">
+              <MessageCircle className="size-5" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium text-fg">🔴 WhatsApp desconectado</p>
+              <p className="truncate text-xs text-mist">Conecta tu WhatsApp para enviar y recibir mensajes</p>
+            </div>
+          </AmoreCard>
+          <AmoreSecondaryButton onClick={conectar} disabled={cargando}>
+            Conectar WhatsApp
+          </AmoreSecondaryButton>
+        </>
+      )}
 
       <div>
         <AmoreSectionTitle title="Uso de WhatsApp" />

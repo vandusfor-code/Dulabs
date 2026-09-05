@@ -1,19 +1,11 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import {
-  especialistaPorRuta,
-  especialistaPorServicio,
-  especialistasDelMismaPersona,
-  categoriaDeServicio,
-  especialistasPorCategoria,
-  crearCitaEnCategoria,
-  citasDeEspecialista,
-  confirmarCita,
-  type Especialista,
-} from "@/lib/especialistas";
+import { especialistaPorRuta, especialistasDelMismaPersona, citasDeEspecialista, confirmarCita } from "@/lib/especialistas";
 import { clienteDeEspecialista, notificarCitaConfirmada } from "@/lib/especialistas-notificar";
-import { recordarNombreCliente } from "@/lib/clientes-conocidos";
 import { planDelTenant } from "@/lib/plan-limits";
+import { reservarCitaPorServicio } from "@/lib/disponibilidad-servicio";
+import { ejecutarConIdempotencia, huellaSolicitud } from "@/lib/idempotencia-reserva";
+import { mensajeAmigableReserva } from "@/lib/reservar-mensajes";
 
 export const runtime = "nodejs";
 
@@ -55,9 +47,26 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   // Desde hoy (00:00 local) en adelante -- no interesa el historial viejo en esta vista.
   const inicioHoy = new Date();
   inicioHoy.setHours(0, 0, 0, 0);
-  const [citasPorId, cliente] = await Promise.all([
+  const [citasPorId, cliente, clientesRegistrados, serviciosActivos, profesionalesActivos] = await Promise.all([
     Promise.all(ids.map((id) => citasDeEspecialista(supabase, id, { desde: inicioHoy.toISOString() }))),
     clienteDeEspecialista(supabase, especialista.phone_number_id),
+    // Fase 5 -- conteos reales del negocio para el resumen de inicio, todos
+    // filtrados por id_tenant (nunca por phone_number_id: un tenant puede
+    // tener más de un número, y estos conteos son del NEGOCIO completo).
+    supabase
+      .from("dulabs_clientes_conocidos")
+      .select("id", { count: "exact", head: true })
+      .eq("id_tenant", especialista.id_tenant),
+    supabase
+      .from("dulabs_servicios")
+      .select("id", { count: "exact", head: true })
+      .eq("id_tenant", especialista.id_tenant)
+      .eq("activo", true),
+    supabase
+      .from("dulabs_especialistas")
+      .select("id", { count: "exact", head: true })
+      .eq("id_tenant", especialista.id_tenant)
+      .eq("activo", true),
   ]);
   // Cada cita queda marcada con quién la atiende de verdad -- varias
   // especialidades comparten número de WhatsApp (ver especialistasDelMismaPersona),
@@ -77,13 +86,33 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     },
     equipo: equipoUnico,
     citas,
+    resumen: {
+      clientesRegistrados: clientesRegistrados.count ?? 0,
+      serviciosActivos: serviciosActivos.count ?? 0,
+      profesionalesActivos: profesionalesActivos.count ?? 0,
+    },
   });
 }
 
-// Crear una cita manualmente desde la propia pantalla de la especialista
-// (ej. una cita personal, o una que le llegó por fuera del bot). Pasa por el
-// MISMO camino atómico que usaría el bot -- ninguna cita se salta el
-// constraint que impide el solape.
+type BodyNuevaCita = {
+  servicioId?: string;
+  especialistaId?: number;
+  fecha?: string;
+  hora?: string;
+  nombreCliente?: string;
+  telefonoCliente?: string;
+  correoCliente?: string;
+  idempotencyKey?: string;
+};
+
+// Fase 6A (sistema de reservas de Daniela) — crea una cita manualmente desde
+// el panel usando el MISMO núcleo transaccional que el portal público
+// (reservarCitaPorServicio, Fase 3) en vez del camino LEGACY de texto libre
+// que usaba esta ruta antes. El backend determina servicio/duración/fin;
+// el frontend solo manda servicioId + especialistaId + fecha/hora + datos
+// del cliente. Protegido contra doble clic por la MISMA idempotencia del
+// portal (dulabs_idempotencia_reservas) -- ver lib/idempotencia-reserva.ts,
+// reutilizada tal cual, sin ningún cambio.
 export async function POST(request: NextRequest, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
   const supabase = supabaseAdmin();
@@ -95,78 +124,85 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     return Response.json({ error: "Plan pausado, pendiente de pago" }, { status: 403 });
   }
 
-  let body: {
-    nombre_cliente?: string;
-    telefono_cliente?: string;
-    servicio?: string;
-    inicio?: string;
-    duracion_min?: number;
-    con_quien?: string;
-  };
+  let body: BodyNuevaCita;
   try {
     body = await request.json();
   } catch {
     return Response.json({ error: "JSON inválido" }, { status: 400 });
   }
 
-  const nombreCliente = body.nombre_cliente?.trim();
-  const inicioTexto = body.inicio?.trim();
-  if (!nombreCliente || !inicioTexto) {
-    return Response.json({ error: "Faltan 'nombre_cliente' o 'inicio'" }, { status: 400 });
+  const servicioId = body.servicioId?.trim();
+  const especialistaId = Number(body.especialistaId);
+  const fecha = body.fecha?.trim();
+  const hora = body.hora?.trim();
+  const nombreCliente = body.nombreCliente?.trim();
+  const telefonoCliente = body.telefonoCliente?.trim() || null;
+  const correoCliente = body.correoCliente?.trim() || undefined;
+  const idempotencyKey = body.idempotencyKey?.trim();
+
+  if (!servicioId || !Number.isInteger(especialistaId) || !fecha || !hora || !nombreCliente) {
+    return Response.json({ error: "Faltan datos obligatorios" }, { status: 400 });
   }
-  const inicio = new Date(inicioTexto);
+  if (!idempotencyKey || idempotencyKey.length > 200) {
+    return Response.json({ error: "Falta identificador de solicitud" }, { status: 400 });
+  }
+
+  const inicio = new Date(`${fecha}T${hora}:00-05:00`);
   if (Number.isNaN(inicio.getTime())) {
-    return Response.json({ error: "Fecha/hora inválida" }, { status: 400 });
+    return Response.json({ error: "Fecha u hora inválida" }, { status: 400 });
   }
 
-  const servicio = body.servicio?.trim() || especialista.servicio;
-  const conQuien = body.con_quien?.trim().toLowerCase();
+  const idTenant = especialista.id_tenant;
+  const huella = huellaSolicitud([idTenant, servicioId, especialistaId, inicio.toISOString(), telefonoCliente, nombreCliente]);
 
-  // El servicio que escribió puede pertenecer a OTRA de sus especialidades
-  // (ej. abrió el link de "pestañas" pero está anotando una de "uñas") --
-  // se resuelve igual que cuando lo pide el bot: primero especialidad propia
-  // y exclusiva (pestañas), si no calza cae a la categoría compartida
-  // (manos/pies), filtrada a una persona si se pidió "con_quien".
-  const especialistaExclusiva = await especialistaPorServicio(supabase, especialista.phone_number_id, servicio);
-  let candidatas: Especialista[];
-  if (especialistaExclusiva) {
-    candidatas = [especialistaExclusiva];
-  } else {
-    const porCategoria = await especialistasPorCategoria(supabase, especialista.phone_number_id, categoriaDeServicio(servicio));
-    candidatas = conQuien ? porCategoria.filter((e) => e.nombre.toLowerCase().includes(conQuien)) : porCategoria;
-    if (candidatas.length === 0) candidatas = [especialista]; // respaldo: la del link, si nada más calzó
-  }
+  const idempotente = await ejecutarConIdempotencia(supabase, {
+    idTenant,
+    idempotencyKey,
+    huella,
+    // El auto-confirmar y la notificación de WhatsApp viven DENTRO de la
+    // operación cacheada -- así corren exactamente UNA vez. Si el confirmar
+    // quedara fuera (después de leer el resultado idempotente), un retry
+    // reintentaría confirmar una cita que ya quedó confirmada por el primer
+    // intento (la actualización fallaría por el guard de estado) y
+    // devolvería la foto vieja ("pendiente") guardada en la caché de
+    // idempotencia en vez del estado real -- exactamente el motivo por el
+    // que esto vive aquí adentro y no afuera.
+    operacion: async () => {
+      const resultado = await reservarCitaPorServicio(supabase, {
+        idTenant,
+        especialistaId,
+        servicioId,
+        telefonoCliente,
+        nombreCliente,
+        correoCliente,
+        inicio,
+        origen: "manual",
+      });
+      if (!resultado.ok) return resultado;
 
-  const resultado = await crearCitaEnCategoria(supabase, candidatas, {
-    telefonoCliente: body.telefono_cliente?.trim() || null,
-    nombreCliente,
-    servicio,
-    inicio,
-    duracionMin: body.duracion_min ?? candidatas[0].duracion_min,
-    origen: "manual",
+      const confirmada = (await confirmarCita(supabase, resultado.cita.id)) ?? resultado.cita;
+      if (confirmada.telefono_cliente) {
+        const cliente = await clienteDeEspecialista(supabase, especialista.phone_number_id);
+        if (cliente) await notificarCitaConfirmada(cliente, confirmada);
+      }
+      return { ...resultado, cita: confirmada };
+    },
   });
 
+  if (idempotente.estado === "conflicto") {
+    return Response.json({ error: "Esta solicitud ya se procesó con datos diferentes. Actualiza la página e intenta de nuevo." }, { status: 409 });
+  }
+  if (idempotente.estado === "en_progreso") {
+    return Response.json({ error: "Tu solicitud se está procesando, espera un momento." }, { status: 409 });
+  }
+
+  const resultado = idempotente.resultado;
   if (!resultado.ok) {
-    if (resultado.motivo === "ocupado") {
-      return Response.json({ error: "Ese horario ya está ocupado" }, { status: 409 });
+    if (resultado.motivo === "error") {
+      console.error("[agenda-nueva-cita] error creando cita:", resultado.detalle, { idTenant, servicioId, especialistaId });
     }
-    return Response.json({ error: resultado.detalle ?? "No se pudo crear la cita" }, { status: 500 });
+    return Response.json({ error: mensajeAmigableReserva(resultado.motivo) }, { status: 409 });
   }
 
-  // Una cita creada por la propia especialista queda directamente confirmada
-  // -- no tiene sentido que se apruebe a sí misma. Solo se avisa a la
-  // clienta si dejó un teléfono real (una cita "personal" bloqueada no lo trae).
-  const confirmada = (await confirmarCita(supabase, resultado.cita.id)) ?? resultado.cita;
-  if (confirmada.telefono_cliente) {
-    const cliente = await clienteDeEspecialista(supabase, especialista.phone_number_id);
-    if (cliente) await notificarCitaConfirmada(cliente, confirmada);
-    await recordarNombreCliente(supabase, {
-      idTenant: resultado.especialista.id_tenant,
-      phoneNumberId: resultado.especialista.phone_number_id,
-      telefonoCliente: confirmada.telefono_cliente,
-      nombre: confirmada.nombre_cliente,
-    });
-  }
-
-  return Response.json({ success: true, cita: confirmada, con: resultado.especialista.nombre });
+  return Response.json({ success: true, cita: resultado.cita, con: resultado.especialista.nombre });
 }

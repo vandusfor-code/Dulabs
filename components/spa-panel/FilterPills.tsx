@@ -3,13 +3,15 @@
 import { cn } from "./ui";
 import type { EstadoCita } from "./types";
 
-export type Filtro = "todas" | Extract<EstadoCita, "confirmada" | "pendiente" | "cancelada">;
+export type Filtro = "todas" | Extract<EstadoCita, "confirmada" | "pendiente" | "cancelada" | "completada" | "no_show">;
 
 const FILTROS: { key: Filtro; label: string }[] = [
   { key: "todas", label: "Todas" },
   { key: "confirmada", label: "Confirmadas" },
   { key: "pendiente", label: "Pendientes" },
   { key: "cancelada", label: "Canceladas" },
+  { key: "completada", label: "Completadas" },
+  { key: "no_show", label: "No asistió" },
 ];
 
 export function FilterPills({

@@ -71,12 +71,14 @@ export function useAgendaData(token: string) {
 
   const crearCita = useCallback(
     async (body: {
-      nombre_cliente: string;
-      telefono_cliente?: string;
-      servicio: string;
-      con_quien?: string;
-      inicio: string;
-      duracion_min?: number;
+      servicioId: string;
+      especialistaId: number;
+      fecha: string;
+      hora: string;
+      nombreCliente: string;
+      telefonoCliente?: string;
+      correoCliente?: string;
+      idempotencyKey: string;
     }) => {
       const res = await fetch(`/api/agenda/${token}`, {
         method: "POST",

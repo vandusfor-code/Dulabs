@@ -8,6 +8,8 @@ import { generarRespuestaConLeadIA } from "@/lib/lead-solicitud-ia";
 import { generarRespuestaAdminEspecialistaIA } from "@/lib/especialista-admin-ia";
 import { tieneEspecialistasActivas, especialistaPorNumero } from "@/lib/especialistas";
 import { debeAtenderConFlow, atenderMensajeConFlowConFallback } from "@/lib/flow-runtime-bridge";
+import { debeUsarAsistenteDanielaIA } from "@/lib/asistente-daniela-gate";
+import { atenderConAsistenteDanielaIA } from "@/lib/asistente-daniela-ia";
 import { resolverConfigAgente, type ConfigAgenteEfectiva } from "@/lib/agentes";
 import { planDelTenant, mensajesIAMesEfectivo } from "@/lib/plan-limits";
 import { agentePorSlug, INSTRUCCION_ADMIN } from "@/lib/marketplace";
@@ -831,7 +833,15 @@ async function atenderMensaje(
     // Ver lib/flow-runtime-bridge.ts::atenderMensajeConFlowConFallback para
     // las reglas completas (nunca corren Flow y LEGACY en paralelo: esto es
     // secuencial, dentro del mismo candado de conversación de abajo).
-    if (debeAtenderConFlow(cliente, telefonoRemitente)) {
+    // Fase 8A.1 (autorizado) — el piloto de la nueva IA de Daniela debe tener
+    // prioridad sobre Flow: si debeUsarAsistenteDanielaIA ya es true (las 4
+    // condiciones del gate, ver lib/asistente-daniela-gate.ts), este mensaje
+    // NO entra al bloque Flow -- sigue de largo hasta el gate de la línea de
+    // abajo. Para cualquier otro remitente/tenant (incluida cualquier otra
+    // clienta real de Daniela) debeUsarAsistenteDanielaIA es false y este
+    // `if` se comporta exactamente igual que antes: cero cambio de
+    // comportamiento para Flow fuera del piloto.
+    if (debeAtenderConFlow(cliente, telefonoRemitente) && !debeUsarAsistenteDanielaIA(cliente, telefonoRemitente)) {
       const buttonId =
         mensaje.interactive?.type === "button_reply"
           ? mensaje.interactive.button_reply?.id?.trim()
@@ -881,6 +891,24 @@ async function atenderMensaje(
     const textoParaIA = mensaje.referral?.headline
       ? `[Llega desde un anuncio de Meta: "${mensaje.referral.headline}"${mensaje.referral.body ? ` -- "${mensaje.referral.body}"` : ""}. No le preguntes esto, ya lo sabes.]\n\n${mensaje.text!.body}`
       : mensaje.text!.body;
+
+    // Fase 8A (piloto controlado, autorizado) — gate EXPLÍCITO y aislado:
+    // solo entra acá si TODAS las condiciones de debeUsarAsistenteDanielaIA
+    // se cumplen (piloto activo + tenant/número de Daniela reales + remitente
+    // en la lista autorizada, ver lib/asistente-daniela-gate.ts). Para
+    // cualquier otro tenant, número, o remitente -- incluida una clienta
+    // real de Daniela -- esto es un simple false y el resto del webhook
+    // sigue exactamente igual que siempre, sin ningún cambio.
+    if (debeUsarAsistenteDanielaIA(cliente, telefonoRemitente)) {
+      await atenderConAsistenteDanielaIA({
+        supabase: supabaseAdmin(),
+        cliente,
+        telefonoRemitente,
+        mensaje,
+        historial,
+      });
+      return;
+    }
 
     // Solo entra aquí si el número tiene alguna especialista configurada (ver
     // lib/especialistas.ts) -- para el resto de la plataforma este chequeo es

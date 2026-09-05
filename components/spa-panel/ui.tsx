@@ -54,6 +54,8 @@ const ESTADO_TONO: Record<EstadoCita, { bg: string; text: string; label: string 
   propuesta: { bg: "bg-warning", text: "text-warning-text", label: "Por confirmar" },
   cancelada: { bg: "bg-ink-2", text: "text-mist", label: "Cancelada" },
   rechazada: { bg: "bg-ink-2", text: "text-mist", label: "Rechazada" },
+  completada: { bg: "bg-success", text: "text-success-text", label: "Completada" },
+  no_show: { bg: "bg-danger", text: "text-danger-text", label: "No asistió" },
 };
 
 export function StatusBadge({ estado, className }: { estado: EstadoCita; className?: string }) {

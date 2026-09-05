@@ -8,6 +8,8 @@ import {
   proponerReagendamiento,
   editarCitaConfirmada,
   cancelarCita,
+  marcarCitaCompletada,
+  marcarCitaNoShow,
 } from "@/lib/especialistas";
 import {
   clienteDeEspecialista,
@@ -46,15 +48,30 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
   const { data: citaExistente } = await supabase
     .from("dulabs_citas_especialista")
-    .select("especialista_id")
+    .select("especialista_id, servicio_id")
     .eq("id", citaId)
     .maybeSingle();
   if (!citaExistente || !idsPermitidos.has(citaExistente.especialista_id)) {
     return Response.json({ error: "Cita no encontrada" }, { status: 404 });
   }
 
+  // Fase 6A — si la cita ya nació del modelo estructurado (servicio_id no
+  // nulo), su duración SIEMPRE se deriva del servicio real, nunca de lo que
+  // mande el frontend -- mismo principio que reservarCitaPorServicio (Fase
+  // 3). Una cita LEGACY (servicio_id null) sigue exactamente igual que antes.
+  let duracionForzadaMin: number | undefined;
+  if (citaExistente.servicio_id) {
+    const { data: servicio } = await supabase
+      .from("dulabs_servicios")
+      .select("duracion_min")
+      .eq("id_tenant", especialista.id_tenant)
+      .eq("id", citaExistente.servicio_id)
+      .maybeSingle();
+    if (servicio) duracionForzadaMin = servicio.duracion_min as number;
+  }
+
   let body: {
-    accion?: "confirmar" | "rechazar" | "reagendar" | "editar" | "cancelar";
+    accion?: "confirmar" | "rechazar" | "reagendar" | "editar" | "cancelar" | "completar" | "no_show";
     motivo?: string;
     nuevo_inicio?: string;
     duracion_min?: number;
@@ -66,7 +83,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   } catch {
     return Response.json({ error: "JSON inválido" }, { status: 400 });
   }
-  const ACCIONES = ["confirmar", "rechazar", "reagendar", "editar", "cancelar"];
+  const ACCIONES = ["confirmar", "rechazar", "reagendar", "editar", "cancelar", "completar", "no_show"];
   if (!body.accion || !ACCIONES.includes(body.accion)) {
     return Response.json({ error: `'accion' debe ser una de: ${ACCIONES.join(", ")}` }, { status: 400 });
   }
@@ -94,13 +111,26 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     return Response.json({ success: true, cita });
   }
 
+  if (body.accion === "completar") {
+    const cita = await marcarCitaCompletada(supabase, citaId);
+    if (!cita) return Response.json({ error: "Solo una cita confirmada se puede marcar como completada" }, { status: 409 });
+    return Response.json({ success: true, cita });
+  }
+
+  if (body.accion === "no_show") {
+    const cita = await marcarCitaNoShow(supabase, citaId);
+    if (!cita) return Response.json({ error: "Solo una cita confirmada se puede marcar como no asistida" }, { status: 409 });
+    return Response.json({ success: true, cita });
+  }
+
   if (body.accion === "reagendar") {
     const inicioTexto = body.nuevo_inicio?.trim();
     if (!inicioTexto) return Response.json({ error: "Falta 'nuevo_inicio'" }, { status: 400 });
     const nuevoInicio = new Date(inicioTexto);
     if (Number.isNaN(nuevoInicio.getTime())) return Response.json({ error: "Fecha/hora inválida" }, { status: 400 });
 
-    const resultado = await proponerReagendamiento(supabase, citaId, nuevoInicio, body.duracion_min ?? especialista.duracion_min);
+    const duracionMin = duracionForzadaMin ?? body.duracion_min ?? especialista.duracion_min;
+    const resultado = await proponerReagendamiento(supabase, citaId, nuevoInicio, duracionMin);
     if (!resultado.ok) {
       if (resultado.motivo === "ocupado") return Response.json({ error: "Ese horario ya está ocupado" }, { status: 409 });
       if (resultado.motivo === "no_encontrada") return Response.json({ error: "Esa solicitud ya fue procesada" }, { status: 409 });
@@ -126,8 +156,11 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
   const resultado = await editarCitaConfirmada(supabase, citaId, {
     nuevoInicio,
-    duracionMin: body.duracion_min,
-    servicio: body.servicio,
+    duracionMin: duracionForzadaMin ?? body.duracion_min,
+    // Una cita estructurada conserva su snapshot de servicio tal cual quedó
+    // al crearse (Fase 6A, Paso 3) -- solo una cita LEGACY (sin servicio_id)
+    // puede tener su texto libre editado desde acá.
+    servicio: citaExistente.servicio_id ? undefined : body.servicio,
     especialistaId: body.nuevo_especialista_id,
   });
   if (!resultado.ok) {
