@@ -105,7 +105,15 @@ export async function persistirMensajeEntrante(
   if (!jid || jid.endsWith("@g.us") || jid === "status@broadcast") return null; // grupos/estados fuera de alcance
   if (!msg.message) return null; // protocolMessage, reacciones, recibos, etc. -- nada que mostrar
 
-  const telefono = telefonoDesdeJid(jid);
+  // HALLAZGO REAL (verificado en producción) — el sistema "LID" de WhatsApp
+  // puede reportar remoteJid como un identificador opaco ("@lid", nunca un
+  // teléfono real) en vez del número real de la clienta. Cuando eso pasa,
+  // Baileys entrega el número real en remoteJidAlt (mismo campo que su
+  // propio getKeyAuthor usa para resolver la identidad real, ver
+  // node_modules/@whiskeysockets/baileys/lib/Utils/generics.js). Nunca se
+  // usa remoteJidAlt para decidir si es grupo/estado -- eso sigue mirando
+  // el remoteJid real de siempre.
+  const telefono = telefonoDesdeJid(msg.key.remoteJidAlt || jid);
   const entrante = !msg.key.fromMe;
   const contenido = await extraerContenido(msg);
   if (!contenido) return null;

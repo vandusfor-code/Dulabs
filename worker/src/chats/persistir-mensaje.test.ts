@@ -22,9 +22,9 @@ import { persistirMensajeEntrante } from "./persistir-mensaje.js";
 
 const HAS_SUPABASE = Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
 
-function mensajeTexto(params: { jid: string; texto: string; fromMe?: boolean; id?: string; pushName?: string }): WAMessage {
+function mensajeTexto(params: { jid: string; texto: string; fromMe?: boolean; id?: string; pushName?: string; remoteJidAlt?: string }): WAMessage {
   return {
-    key: { remoteJid: params.jid, fromMe: params.fromMe ?? false, id: params.id ?? randomUUID() },
+    key: { remoteJid: params.jid, remoteJidAlt: params.remoteJidAlt, fromMe: params.fromMe ?? false, id: params.id ?? randomUUID() },
     message: { conversation: params.texto },
     messageTimestamp: Math.floor(Date.now() / 1000),
     pushName: params.pushName,
@@ -102,6 +102,20 @@ describe(
       await persistirMensajeEntrante(supabase, idTenant, mensajeTexto({ jid: "573000000009:26@s.whatsapp.net", texto: "Hola" }));
       const conv = await conversacionDe(idTenant, "573000000009");
       assert.ok(conv, "debe guardar el teléfono real (573000000009), no uno con el id de dispositivo pegado");
+    });
+
+    it("bug real (sistema LID de WhatsApp): remoteJid es un @lid opaco -- se usa remoteJidAlt para guardar el teléfono real", async (t) => {
+      if (!migracionLista) return t.skip("falta la migración 20260911000000_chats_whatsapp.sql");
+      const idTenant = nuevoTenant();
+      await persistirMensajeEntrante(
+        supabase,
+        idTenant,
+        mensajeTexto({ jid: "108563905147109@lid", remoteJidAlt: "573000000099@s.whatsapp.net", texto: "Hola" })
+      );
+      const conv = await conversacionDe(idTenant, "573000000099");
+      assert.ok(conv, "debe guardar el teléfono real de remoteJidAlt, no el LID opaco de remoteJid");
+      const convLid = await conversacionDe(idTenant, "108563905147109");
+      assert.equal(convLid, null, "nunca debe guardar el LID como si fuera un teléfono");
     });
 
     it("un mensaje saliente (fromMe) nunca incrementa no_leidos", async (t) => {
