@@ -8,11 +8,10 @@ import { User, Lock, Eye, EyeOff, ArrowRight, Loader2 } from "lucide-react";
 // aprobado. NOTA IMPORTANTE: la ruta pedida originalmente era "/login",
 // pero esa ruta YA EXISTE y es el login del propio SaaS de DuLabs (email +
 // contraseña vía Supabase Auth, ver app/login/page.tsx) -- reutilizarla
-// habría roto el login real de los clientes de DuLabs. Se usa "/agenda/login"
-// en su lugar, consistente con que todo el panel de agenda vive bajo
-// /agenda/*. Llama a /api/agenda-auth/login (namespace propio, separado del
-// /api/auth/login del dashboard interno).
-export default function AgendaLoginPage() {
+// habría roto el login real de los clientes de DuLabs. Se usa "/amore/login"
+// en su lugar (a pedido explícito). Llama a /api/agenda-auth/login
+// (namespace propio, separado del /api/auth/login del dashboard interno).
+export default function AmoreLoginPage() {
   const router = useRouter();
   const [usuario, setUsuario] = useState("");
   const [password, setPassword] = useState("");

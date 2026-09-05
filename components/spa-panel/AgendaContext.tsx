@@ -70,7 +70,7 @@ export function AgendaProvider({ token, children }: { token: string; children: R
   // cuando no hay sesión válida (ver requireAuth); esto nunca ocurre para un
   // tenant legacy (Daniela, Solo Talento), que jamás recibe 401 de esta ruta.
   useEffect(() => {
-    if (noAutenticado) router.replace("/agenda/login");
+    if (noAutenticado) router.replace("/amore/login");
   }, [noAutenticado, router]);
 
   if (noAutenticado) {

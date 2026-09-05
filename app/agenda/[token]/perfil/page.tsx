@@ -31,7 +31,7 @@ function PerfilContenido() {
     try {
       await fetch("/api/agenda-auth/logout", { method: "POST" });
     } finally {
-      router.push("/agenda/login");
+      router.push("/amore/login");
     }
   }
 
