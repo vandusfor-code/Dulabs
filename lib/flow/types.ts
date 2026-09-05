@@ -239,6 +239,7 @@ export type FlowActionType =
   | "listar_catalogo_servicios"
   | "resolver_servicio_catalogo"
   | "consultar_disponibilidad_catalogo"
+  | "listar_profesionales_servicio"
   | "webhook_http"
   | "enviar_plantilla";
 
@@ -299,7 +300,8 @@ export interface SimpleActionConfig extends ActionSemanticTag {
     | "resolver_seleccion_servicio"
     | "listar_catalogo_servicios"
     | "resolver_servicio_catalogo"
-    | "consultar_disponibilidad_catalogo";
+    | "consultar_disponibilidad_catalogo"
+    | "listar_profesionales_servicio";
   params?: ActionParams;
 }
 

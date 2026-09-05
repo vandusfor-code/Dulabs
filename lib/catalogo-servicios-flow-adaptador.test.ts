@@ -10,6 +10,7 @@ import {
   listarCatalogoServiciosReal,
   resolverServicioCatalogoReal,
   consultarDisponibilidadCatalogoReal,
+  listarProfesionalesServicioReal,
   formatearDuracion,
   formatearCatalogoReal,
 } from "@/lib/catalogo-servicios-flow-adaptador";
@@ -123,6 +124,19 @@ describe(
         for (const e of resultado.especialistas) assert.equal(e.horarios.length, 0, `${e.nombre} no debería tener horarios el domingo`);
         assert.match(resultado.texto, /no encontré horarios/i);
       }
+    });
+
+    it("bot AMORE: listarProfesionalesServicioReal('Uña') -> las 4 elegibles reales", async () => {
+      const una = catalogo.find((s) => s.nombre === "Uña")!;
+      const resultado = await listarProfesionalesServicioReal(supabase, AMORE_TENANT_ID, una.id);
+      assert.deepEqual([...resultado.profesionales].sort(), ["Cristal", "Jessica", "Mary", "Nata"]);
+    });
+
+    it("bot AMORE: listarProfesionalesServicioReal('Maquillaje Suave') -> NUNCA incluye a Cristal", async () => {
+      const maquillaje = catalogo.find((s) => s.nombre === "Maquillaje Suave")!;
+      const resultado = await listarProfesionalesServicioReal(supabase, AMORE_TENANT_ID, maquillaje.id);
+      assert.ok(!resultado.profesionales.includes("Cristal"));
+      assert.deepEqual([...resultado.profesionales].sort(), ["Jessica", "Mary"]);
     });
 
     it("11. aislamiento: un servicio inexistente en OTRO tenant (Daniela) nunca se confunde con el de AMORE", async () => {

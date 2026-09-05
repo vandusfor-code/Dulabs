@@ -38,6 +38,7 @@ import {
   type EspecialistaConHorarios,
 } from "@/lib/disponibilidad-servicio";
 import { resolverSeleccionServicio, formatearPrecioCop, formatearHoraAmPm } from "@/lib/especialistas-flow-adaptador";
+import { resolverEspecialistasElegiblesParaServicio } from "@/lib/asignacion-categoria";
 
 export type ServicioCatalogoReal = {
   id: string;
@@ -45,6 +46,8 @@ export type ServicioCatalogoReal = {
   precio: number;
   duracionMin: number;
   categoria: string | null;
+  /** AMORE (autorizado) — texto real de dulabs_servicios.descripcion, o null si nunca se cargó una para este servicio. La IA nunca debe inventar una explicación cuando esto es null (ver ai-responder-info-servicio del flow). */
+  descripcion: string | null;
 };
 
 export async function listarCatalogoServiciosReal(
@@ -53,15 +56,32 @@ export async function listarCatalogoServiciosReal(
 ): Promise<ServicioCatalogoReal[]> {
   const { data } = await supabase
     .from("dulabs_servicios")
-    .select("id, nombre, precio, duracion_min, categoria")
+    .select("id, nombre, precio, duracion_min, categoria, descripcion")
     .eq("id_tenant", idTenant)
     .eq("activo", true)
     .order("categoria", { ascending: true, nullsFirst: true })
     .order("nombre", { ascending: true });
 
-  return ((data ?? []) as { id: string; nombre: string; precio: number | null; duracion_min: number; categoria: string | null }[]).map(
-    (s) => ({ id: s.id, nombre: s.nombre, precio: s.precio ?? 0, duracionMin: s.duracion_min, categoria: s.categoria }),
-  );
+  return (
+    (data ?? []) as { id: string; nombre: string; precio: number | null; duracion_min: number; categoria: string | null; descripcion: string | null }[]
+  ).map((s) => ({ id: s.id, nombre: s.nombre, precio: s.precio ?? 0, duracionMin: s.duracion_min, categoria: s.categoria, descripcion: s.descripcion }));
+}
+
+/**
+ * AMORE (autorizado) — profesionales reales elegibles para UN servicio ya
+ * resuelto, para responder "¿quién hace X?" sin convertir esto en un flujo
+ * de reserva. Envoltorio fino sobre resolverEspecialistasElegiblesParaServicio
+ * (lib/asignacion-categoria.ts) -- la MISMA función que ya usa el resto de
+ * la plataforma (reasignación de citas, elegibilidad real), nunca una
+ * segunda regla de elegibilidad inventada para el bot.
+ */
+export async function listarProfesionalesServicioReal(
+  supabase: SupabaseClient,
+  idTenant: string,
+  servicioId: string,
+): Promise<{ profesionales: string[] }> {
+  const resultado = await resolverEspecialistasElegiblesParaServicio(supabase, idTenant, servicioId);
+  return { profesionales: resultado.especialistas.map((e) => e.nombre) };
 }
 
 /** "15" -> "15 min"; "60" -> "1 h"; "90" -> "1 h 30 min". Determinista, nunca redactado por IA. */

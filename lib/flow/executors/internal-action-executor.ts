@@ -35,6 +35,7 @@ import {
   listarCatalogoServiciosReal,
   resolverServicioCatalogoReal,
   consultarDisponibilidadCatalogoReal,
+  listarProfesionalesServicioReal,
   formatearCatalogoReal,
   formatearDuracion,
   type ServicioCatalogoReal,
@@ -95,6 +96,7 @@ export interface InternalActionDeps {
   // métodos de abajo llaman directo a la implementación real importada.
   listarCatalogoServiciosReal?: typeof listarCatalogoServiciosReal;
   consultarDisponibilidadCatalogoReal?: typeof consultarDisponibilidadCatalogoReal;
+  listarProfesionalesServicioReal?: typeof listarProfesionalesServicioReal;
 }
 
 const OPERATION_CLASS: Partial<Record<string, InternalActionOperationClass>> = {
@@ -118,6 +120,7 @@ const OPERATION_CLASS: Partial<Record<string, InternalActionOperationClass>> = {
   listar_catalogo_servicios: "READ",
   resolver_servicio_catalogo: "READ",
   consultar_disponibilidad_catalogo: "READ",
+  listar_profesionales_servicio: "READ",
 };
 
 function resolveInternalActionKey(action: ActionNodeConfig): string {
@@ -264,6 +267,8 @@ export class InternalActionExecutor implements EffectExecutor {
         return this.resolverServicioCatalogoAction(request, params);
       case "consultar_disponibilidad_catalogo":
         return this.consultarDisponibilidadCatalogoAction(request, params, signal);
+      case "listar_profesionales_servicio":
+        return this.listarProfesionalesServicioAction(request, params, signal);
       default:
         return {
           success: false,
@@ -1465,6 +1470,51 @@ export class InternalActionExecutor implements EffectExecutor {
       appliedResult: data,
       rawResult: data,
       metadata: { operationClass: OPERATION_CLASS.consultar_disponibilidad_catalogo },
+    };
+  }
+
+  /**
+   * AMORE (autorizado) — profesionales reales elegibles para un servicio ya
+   * resuelto (params.servicioId, viene de resolver_servicio_catalogo).
+   * Envoltorio de solo lectura sobre resolverEspecialistasElegiblesParaServicio
+   * -- NUNCA se usa para reservar, solo para responder "¿quién hace X?".
+   */
+  private async listarProfesionalesServicioAction(
+    request: EffectDispatchRequest,
+    params: Record<string, string>,
+    signal?: AbortSignal,
+  ): Promise<EffectDispatchResult> {
+    const servicioId = params.servicioId ?? "";
+    if (!servicioId) {
+      return {
+        success: false,
+        classification: EFFECT_RESULT_CLASSIFICATIONS.VALIDATION_ERROR,
+        error: "missing_servicioId",
+      };
+    }
+
+    assertNotAborted(signal);
+    const resultado = await (this.deps.listarProfesionalesServicioReal ?? listarProfesionalesServicioReal)(
+      this.deps.supabase,
+      request.tenantId,
+      servicioId,
+    );
+    assertNotAborted(signal);
+
+    const data = {
+      profesionales: resultado.profesionales,
+      profesionalesTexto: resultado.profesionales.length > 0 ? resultado.profesionales.join(", ") : "",
+      cantidadProfesionales: resultado.profesionales.length,
+      effectId: request.effectId,
+    };
+
+    return {
+      success: true,
+      classification: EFFECT_RESULT_CLASSIFICATIONS.SUCCESS,
+      data,
+      appliedResult: data,
+      rawResult: data,
+      metadata: { operationClass: OPERATION_CLASS.listar_profesionales_servicio },
     };
   }
 }

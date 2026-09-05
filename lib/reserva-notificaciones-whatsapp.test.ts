@@ -61,6 +61,7 @@ describe(
     let supabase: SupabaseClient;
     const TENANT_A = randomUUID();
     const TENANT_B = randomUUID();
+    const TENANT_QR = randomUUID();
     const PHONE_A = `test-final-a-${Date.now()}`;
     const PHONE_B = `test-final-b-${Date.now()}`;
 
@@ -77,11 +78,17 @@ describe(
         whatsapp_business_account_id: "test-waba-final-b", telefono_negocio: "573000002222", meta_permanent_token: null,
       });
       if (e2) throw e2;
+      // AMORE (autorizado) — un tenant conectado por WhatsApp-QR (fila real
+      // en dulabs_whatsapp_qr_sesiones, SIN fila en dulabs_clientes_config)
+      // debe preferir ese canal, nunca caer a "sin_cliente" de Cloud API.
+      const { error: e3 } = await supabase.from("dulabs_whatsapp_qr_sesiones").insert({ id_tenant: TENANT_QR, estado: "desconectado" });
+      if (e3) throw e3;
     });
 
     after(async () => {
       if (!HAS_SUPABASE) return;
       await supabase.from("dulabs_clientes_config").delete().in("id_tenant", [TENANT_A, TENANT_B]);
+      await supabase.from("dulabs_whatsapp_qr_sesiones").delete().eq("id_tenant", TENANT_QR);
     });
 
     it("6/7. funciona de forma genérica: sin cliente para ese tenant -> 'sin_cliente' (nunca resuelve el de otro tenant)", async () => {
@@ -123,6 +130,19 @@ describe(
       }
       const intentos = logs.filter((l) => l.includes("sin token de Meta para TEST_FINAL_B")).length;
       assert.equal(intentos, 2);
+    });
+
+    it("hallazgo real: un tenant con sesión de WhatsApp-QR usa ese canal, nunca cae a 'sin_cliente' de Cloud API", async () => {
+      const resultado = await enviarConfirmacionReservaWhatsApp(supabase, TENANT_QR, "573000005555", {
+        servicio: "Dipping", profesional: "Mary", inicioISO: new Date().toISOString(),
+      });
+      // Sin WHATSAPP_WORKER_URL/SECRET configurados en este entorno de
+      // prueba, el envío real por el worker falla de forma controlada -- lo
+      // que importa es que el motivo sea "error" (canal QR intentado) y
+      // NUNCA "sin_cliente" (antes de este fix, TENANT_QR no tiene fila en
+      // dulabs_clientes_config, así que hubiera fallado ahí sin ni siquiera
+      // intentar el canal real).
+      assert.deepEqual(resultado, { enviado: false, motivo: "error" });
     });
   }
 );

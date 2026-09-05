@@ -88,6 +88,7 @@ const INTERNAL_ACTION_TYPES = new Set([
   "listar_catalogo_servicios",
   "resolver_servicio_catalogo",
   "consultar_disponibilidad_catalogo",
+  "listar_profesionales_servicio",
 ]);
 
 const INTERNAL_WEBHOOK_TAGS = new Set(["consultar_disponibilidad"]);

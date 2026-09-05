@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { enviarWhatsApp } from "@/lib/whatsapp-outbound";
 import { normalizarTelefono } from "@/lib/marketplace-store";
 import type { ClienteConfig } from "@/lib/supabase";
+import { enviarMensajeWhatsApp } from "@/lib/whatsapp-worker-client";
 
 /**
  * FASE FINAL (autorizado) — los dos mensajes de WhatsApp que siguen a una
@@ -62,11 +63,28 @@ export async function enviarConfirmacionReservaWhatsApp(
   cita: { servicio: string; profesional: string; inicioISO: string }
 ): Promise<ResultadoNotificacionReserva> {
   try {
-    const { data: cliente } = await supabase.from("dulabs_clientes_config").select("*").eq("id_tenant", idTenant).limit(1).maybeSingle();
-    if (!cliente) return { enviado: false, motivo: "sin_cliente" };
-
     const telefono = normalizarTelefono(telefonoClienteCrudo);
     if (!telefono) return { enviado: false, motivo: "sin_telefono" };
+
+    // HALLAZGO REAL (autorizado) — un tenant conectado por WhatsApp-QR (ej.
+    // AMORE) nunca tiene un phone_number_id/token real de Meta en
+    // dulabs_clientes_config (esa tabla es del modelo Cloud API); antes de
+    // este fix, la confirmación de reserva del portal intentaba mandarse
+    // igual por la Graph API y fallaba en silencio (catch de abajo). Un
+    // tenant con fila en dulabs_whatsapp_qr_sesiones usa ese canal real en
+    // vez de Cloud API -- mismo cliente de envío que ya usa Chats
+    // (lib/whatsapp-worker-client.ts), nunca un tercer canal nuevo.
+    const { data: sesionQr } = await supabase.from("dulabs_whatsapp_qr_sesiones").select("id_tenant").eq("id_tenant", idTenant).maybeSingle();
+    if (sesionQr) {
+      const r1 = await enviarMensajeWhatsApp({ tenantId: idTenant, telefono, mensaje: construirMensajeConfirmacionReserva(cita) });
+      if (!r1.ok) return { enviado: false, motivo: "error" };
+      const r2 = await enviarMensajeWhatsApp({ tenantId: idTenant, telefono, mensaje: MENSAJE_RECORDATORIO_INMEDIATO });
+      if (!r2.ok) return { enviado: false, motivo: "error" };
+      return { enviado: true };
+    }
+
+    const { data: cliente } = await supabase.from("dulabs_clientes_config").select("*").eq("id_tenant", idTenant).limit(1).maybeSingle();
+    if (!cliente) return { enviado: false, motivo: "sin_cliente" };
 
     await enviarWhatsApp(supabase, cliente as ClienteConfig, telefono, construirMensajeConfirmacionReserva(cita));
     await enviarWhatsApp(supabase, cliente as ClienteConfig, telefono, MENSAJE_RECORDATORIO_INMEDIATO);

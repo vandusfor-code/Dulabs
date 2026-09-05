@@ -200,6 +200,12 @@ const BY_ACTION_TYPE: Partial<Record<FlowActionType, ActionCapabilitySpec>> = {
     verifiesOnSuccess: ["appointment.available"],
     outputVariables: ["disponibilidadTexto"],
   },
+  // AMORE (autorizado) — profesionales reales elegibles para un servicio ya
+  // resuelto, solo lectura, mismo criterio que resolver_servicio_catalogo.
+  listar_profesionales_servicio: {
+    actionType: "listar_profesionales_servicio",
+    criticality: "standard",
+  },
 };
 
 /** Specs por semanticTag de webhook (prioridad sobre actionType genérico). */
