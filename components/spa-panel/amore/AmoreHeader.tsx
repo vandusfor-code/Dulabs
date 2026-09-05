@@ -1,16 +1,19 @@
 "use client";
 
-import { Menu, Bell, CalendarDays, ChevronDown } from "lucide-react";
-import { formatearFechaLarga } from "@/components/spa-panel/format";
+import { Menu, Bell } from "lucide-react";
 import { useAmoreUi } from "./AmoreUiContext";
 
-// AMORE (Fase 5, panel administrativo móvil, autorizado) — cabecera fiel al
-// mockup: hamburguesa + logo oficial centrado + notificaciones, luego el
-// saludo con la fecha real y un selector "Hoy" todavía visual/preparado (sin
-// selector de fechas real aún).
-export function AmoreHeader({ nombreEspecialista, onAbrirMenu }: { nombreEspecialista: string; onAbrirMenu: () => void }) {
+// AMORE (Fase 5, diseño visual completo, autorizado) — barra superior GLOBAL
+// (hamburguesa + logo oficial centrado + notificaciones), montada una sola
+// vez por AmoreDashboardShell y compartida por TODAS las pantallas del panel
+// -- así "Todas las pantallas deben utilizar un Header consistente" sin que
+// cada pantalla tenga que repetirlo. El saludo/fecha/selector "Hoy" del
+// mockup de Inicio (Fase anterior, ya desplegado) vive ahora en
+// AmoreDashboardHome, NO aquí -- es contenido de esa pantalla, no del chrome
+// global (las demás pantallas no lo llevan). El marcado del topbar en sí no
+// cambió ni un pixel respecto a la versión anterior.
+export function AmoreHeader({ onAbrirMenu }: { onAbrirMenu: () => void }) {
   const { avisarProximamente } = useAmoreUi();
-  const fecha = formatearFechaLarga(new Date());
 
   return (
     <header className="px-5 pt-5">
@@ -38,22 +41,6 @@ export function AmoreHeader({ nombreEspecialista, onAbrirMenu }: { nombreEspecia
         >
           <Bell className="size-6" />
           <span className="absolute right-1.5 top-1.5 size-2 rounded-full bg-lime" />
-        </button>
-      </div>
-
-      <div className="mt-6 flex items-end justify-between gap-3">
-        <div className="min-w-0">
-          <p className="truncate text-xl font-semibold text-fg">¡Hola, {nombreEspecialista}! 💕</p>
-          <p className="mt-1 text-sm text-mist">{fecha}</p>
-        </div>
-        <button
-          type="button"
-          onClick={avisarProximamente}
-          className="flex shrink-0 items-center gap-1.5 rounded-full border border-edge bg-card px-3.5 py-2 text-sm font-medium text-fg"
-        >
-          <CalendarDays className="size-4 text-lime-text" />
-          Hoy
-          <ChevronDown className="size-3.5 text-mist" />
         </button>
       </div>
     </header>

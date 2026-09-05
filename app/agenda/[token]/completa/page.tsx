@@ -8,10 +8,22 @@ import { AppointmentCard } from "@/components/spa-panel/AppointmentCard";
 import { DateStrip } from "@/components/spa-panel/DateStrip";
 import { FilterPills, type Filtro } from "@/components/spa-panel/FilterPills";
 import { mismoDia } from "@/components/spa-panel/format";
+import { AmoreCitasScreen } from "@/components/spa-panel/amore/AmoreCitasScreen";
 
 export default function AgendaCompletaPage() {
-  const { token, datos, procesandoId, confirmar, rechazar, abrirEditar, abrirReagendar, abrirCancelar, abrirDetalles } =
-    useAgenda();
+  const {
+    token,
+    datos,
+    procesandoId,
+    confirmar,
+    rechazar,
+    completar,
+    marcarNoShow,
+    abrirEditar,
+    abrirReagendar,
+    abrirCancelar,
+    abrirDetalles,
+  } = useAgenda();
   const [dia, setDia] = useState(() => new Date());
   const [filtro, setFiltro] = useState<Filtro>("todas");
 
@@ -28,6 +40,8 @@ export default function AgendaCompletaPage() {
     confirmada: delDia.filter((c) => c.estado === "confirmada").length,
     pendiente: delDia.filter((c) => c.estado === "pendiente" || c.estado === "propuesta").length,
     cancelada: delDia.filter((c) => c.estado === "cancelada").length,
+    completada: delDia.filter((c) => c.estado === "completada").length,
+    no_show: delDia.filter((c) => c.estado === "no_show").length,
   };
 
   const visibles = delDia.filter((c) => {
@@ -35,6 +49,15 @@ export default function AgendaCompletaPage() {
     if (filtro === "pendiente") return c.estado === "pendiente" || c.estado === "propuesta";
     return c.estado === filtro;
   });
+
+  // AMORE (Fase 5, diseño visual completo, autorizado) — SOLO este tenant ve
+  // la pantalla de Citas propia de su diseño móvil (mock, ver
+  // AmoreCitasScreen.tsx). Daniela conserva exactamente esta misma página tal
+  // cual estaba (todos los hooks de arriba ya se llamaron igual para ambos
+  // tenants, solo cambia qué se retorna).
+  if (datos.negocio === "AMORE") {
+    return <AmoreCitasScreen />;
+  }
 
   return (
     <div className="flex flex-col gap-5">
@@ -78,6 +101,8 @@ export default function AgendaCompletaPage() {
               onReagendar={() => abrirReagendar(c)}
               onCancelar={() => abrirCancelar(c)}
               onDetalles={() => abrirDetalles(c)}
+              onCompletar={c.estado === "confirmada" ? () => completar(c) : undefined}
+              onNoShow={c.estado === "confirmada" ? () => marcarNoShow(c) : undefined}
             />
           ))}
         </div>

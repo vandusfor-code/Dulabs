@@ -127,7 +127,7 @@ export function AgendaProvider({ token, children }: { token: string; children: R
   if (datos.negocio === "AMORE") {
     return (
       <Ctx.Provider value={value}>
-        <AmoreDashboardShell nombreEspecialista={datos.especialista.nombre}>{children}</AmoreDashboardShell>
+        <AmoreDashboardShell>{children}</AmoreDashboardShell>
       </Ctx.Provider>
     );
   }

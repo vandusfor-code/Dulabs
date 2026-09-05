@@ -4,12 +4,18 @@
 // visualmente el diseño. Separado del componente visual a propósito: cuando
 // esos módulos existan, solo hay que reemplazar este objeto por una consulta
 // real, sin tocar AmoreMetricCards/AmoreUpcomingAppointments.
+// Fase 5 (diseño visual completo, autorizado) — se amplía a los 4 estados
+// que pide el mockup de Citas (Confirmada/Pendiente/Cancelada/Completada).
+// Puramente de tipos: el mock de Inicio sigue usando solo confirmada/pendiente,
+// cero cambio visual ahí.
+export type EstadoCitaMock = "confirmada" | "pendiente" | "cancelada" | "completada";
+
 export type CitaMock = {
   id: string;
   hora: string;
   nombreCliente: string;
   servicio: string;
-  estado: "confirmada" | "pendiente";
+  estado: EstadoCitaMock;
 };
 
 export type DashboardDataMock = {

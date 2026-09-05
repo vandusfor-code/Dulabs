@@ -5,10 +5,10 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { Loader2, ArrowLeft, Phone, Mail, Cake, CalendarPlus } from "lucide-react";
 import { useAgenda } from "@/components/spa-panel/AgendaContext";
-import { inicialesDe, formatearFechaCorta, formatearHora } from "@/components/spa-panel/format";
+import { formatearFechaCorta, formatearHora } from "@/components/spa-panel/format";
 import { StatusBadge } from "@/components/spa-panel/ui";
 import type { EstadoCita } from "@/components/spa-panel/types";
-import { AmoreClienteDetalleScreen } from "@/components/spa-panel/amore/AmoreClienteDetalleScreen";
+import { AmoreCard, AmoreScreenTitle, AmoreSectionTitle, AmoreAvatar, AmoreEmptyState } from "./ui";
 
 type ClienteDetalle = {
   id: number;
@@ -32,13 +32,11 @@ function formatearCumpleanos(dia: number | null, mes: number | null): string | n
   return `${dia} de ${MESES[mes - 1]}`;
 }
 
-// AMORE (Fase 4, base de clientes, autorizado) — detalle de UN cliente:
-// sus datos + su historial real de reservas (servicio/profesional/fecha/
-// hora/estado), leído de app/api/agenda/[token]/clientes/[id]/route.ts
-// (mismas tablas ya existentes, sin ningún sistema paralelo). Genérico para
-// cualquier tenant que use este panel.
-export default function ClienteDetallePage() {
-  const { token, datos } = useAgenda();
+// AMORE (Fase 5, diseño visual completo, autorizado) — MISMA API real de
+// detalle de cliente ya existente (Fase 4), solo con la piel del design
+// system móvil de AMORE. Ningún dato ni ruta nueva.
+export function AmoreClienteDetalleScreen() {
+  const { token } = useAgenda();
   const { id } = useParams<{ id: string }>();
   const [cliente, setCliente] = useState<ClienteDetalle | null>(null);
   const [historial, setHistorial] = useState<ReservaHistorial[] | null>(null);
@@ -62,14 +60,6 @@ export default function ClienteDetallePage() {
     };
   }, [token, id]);
 
-  // AMORE (Fase 5, diseño visual completo, autorizado) — SOLO este tenant ve
-  // el detalle de cliente con el design system móvil (misma API/datos reales
-  // de arriba, ver AmoreClienteDetalleScreen.tsx). Daniela conserva
-  // exactamente esta misma página tal cual estaba.
-  if (datos.negocio === "AMORE") {
-    return <AmoreClienteDetalleScreen />;
-  }
-
   return (
     <div className="flex flex-col gap-5">
       <Link href={`/agenda/${token}/clientes`} className="flex items-center gap-1.5 text-xs font-medium text-mist hover:text-fg">
@@ -84,15 +74,12 @@ export default function ClienteDetallePage() {
         </div>
       ) : cliente ? (
         <>
-          <div className="flex items-center gap-3 rounded-2xl border border-edge bg-card p-4 shadow-[0_4px_20px_rgba(0,0,0,0.04)]">
-            <div className="flex size-12 shrink-0 items-center justify-center rounded-full bg-lime-soft text-sm font-semibold text-lime-text">
-              {inicialesDe(cliente.nombre)}
-            </div>
+          <AmoreCard className="flex items-center gap-3">
+            <AmoreAvatar nombre={cliente.nombre} size="lg" />
             <div className="min-w-0 flex-1">
-              <p className="truncate text-base font-semibold text-fg">{cliente.nombre}</p>
-              <p className="text-xs text-mist">Cliente desde {formatearFechaCorta(cliente.fechaRegistro)}</p>
+              <AmoreScreenTitle title={cliente.nombre} subtitle={`Cliente desde ${formatearFechaCorta(cliente.fechaRegistro)}`} />
             </div>
-          </div>
+          </AmoreCard>
 
           <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
             <div className="flex items-center gap-2 rounded-xl border border-edge bg-card p-3">
@@ -114,20 +101,19 @@ export default function ClienteDetallePage() {
           </div>
 
           <div>
-            <h2 className="mb-2.5 text-sm font-semibold text-fg">Historial de reservas</h2>
+            <AmoreSectionTitle title="Historial de reservas" />
             {!historial ? (
               <div className="flex justify-center py-8">
                 <Loader2 className="size-5 animate-spin text-mist" />
               </div>
             ) : historial.length === 0 ? (
-              <div className="flex flex-col items-center rounded-2xl border border-edge bg-card p-8 text-center">
-                <CalendarPlus className="size-6 text-mist" />
-                <p className="mt-2 text-sm text-mist">Todavía no tiene reservas registradas.</p>
+              <div className="mt-2.5">
+                <AmoreEmptyState icono={<CalendarPlus className="size-6 text-mist" />} mensaje="Todavía no tiene reservas registradas." />
               </div>
             ) : (
-              <div className="flex flex-col gap-2.5">
+              <div className="mt-2.5 flex flex-col gap-2.5">
                 {historial.map((r) => (
-                  <div key={r.id} className="flex items-center gap-3 rounded-2xl border border-edge bg-card p-3.5">
+                  <AmoreCard key={r.id} className="flex items-center gap-3 p-3.5">
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-medium text-fg">{r.servicio}</p>
                       <p className="truncate text-xs text-mist">
@@ -135,7 +121,7 @@ export default function ClienteDetallePage() {
                       </p>
                     </div>
                     <StatusBadge estado={r.estado} />
-                  </div>
+                  </AmoreCard>
                 ))}
               </div>
             )}

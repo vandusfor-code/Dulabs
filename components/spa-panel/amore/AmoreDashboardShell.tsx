@@ -14,14 +14,14 @@ import { AmoreMenuDrawer } from "./AmoreMenuDrawer";
 // renderiza alrededor de `children`. Fase mobile-only: el contenido se
 // clampa a un ancho de app móvil incluso en pantallas grandes -- el
 // dashboard de escritorio de AMORE no es parte de esta fase.
-export function AmoreDashboardShell({ nombreEspecialista, children }: { nombreEspecialista: string; children: ReactNode }) {
+export function AmoreDashboardShell({ children }: { children: ReactNode }) {
   const [menuAbierto, setMenuAbierto] = useState(false);
 
   return (
     <div className="amore-scope min-h-screen bg-ink">
       <AmoreUiProvider>
         <div className="mx-auto flex min-h-screen w-full max-w-[430px] flex-col">
-          <AmoreHeader nombreEspecialista={nombreEspecialista} onAbrirMenu={() => setMenuAbierto(true)} />
+          <AmoreHeader onAbrirMenu={() => setMenuAbierto(true)} />
           <main className="flex-1 overflow-x-hidden px-5 pb-28">{children}</main>
         </div>
         <AmoreBottomNav onAbrirMenu={() => setMenuAbierto(true)} />

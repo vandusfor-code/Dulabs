@@ -6,6 +6,7 @@ import { Loader2, Users, Search, Cake, ChevronRight } from "lucide-react";
 import { useAgenda } from "@/components/spa-panel/AgendaContext";
 import { inicialesDe, formatearFechaCorta } from "@/components/spa-panel/format";
 import { filtrarClientes } from "@/components/spa-panel/filtrar-clientes";
+import { AmoreClientesScreen } from "@/components/spa-panel/amore/AmoreClientesScreen";
 
 type ClienteVista = {
   id: number;
@@ -37,7 +38,7 @@ function formatearCumpleanos(dia: number | null, mes: number | null): string | n
 // (historial real de reservas). Genérico para cualquier tenant que use este
 // panel, no exclusivo de AMORE.
 export default function ClientesPage() {
-  const { token } = useAgenda();
+  const { token, datos } = useAgenda();
   const [clientes, setClientes] = useState<ClienteVista[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busqueda, setBusqueda] = useState("");
@@ -58,6 +59,14 @@ export default function ClientesPage() {
   }, [token]);
 
   const clientesFiltrados = useMemo(() => (clientes ? filtrarClientes(clientes, busqueda) : null), [clientes, busqueda]);
+
+  // AMORE (Fase 5, diseño visual completo, autorizado) — SOLO este tenant ve
+  // el módulo de clientes con el design system móvil (misma API/datos reales
+  // de arriba, ver AmoreClientesScreen.tsx). Daniela conserva exactamente
+  // esta misma página tal cual estaba.
+  if (datos.negocio === "AMORE") {
+    return <AmoreClientesScreen />;
+  }
 
   return (
     <div className="flex flex-col gap-5">
