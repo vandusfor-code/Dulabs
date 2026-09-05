@@ -23,15 +23,17 @@ function Tarjeta({
   colorSubtexto: string;
 }) {
   return (
-    <div className="rounded-[22px] border border-edge bg-card p-4 shadow-[0_2px_10px_rgba(0,0,0,0.03)]">
-      <div className={`flex size-11 items-center justify-center rounded-2xl ${bgIcono}`} style={{ color: colorIcono }}>
+    <div className="flex h-32 items-center gap-2 rounded-[22px] border border-edge bg-card p-4 shadow-[0_2px_10px_rgba(0,0,0,0.03)]">
+      <div className={`flex size-11 shrink-0 items-center justify-center rounded-2xl ${bgIcono}`} style={{ color: colorIcono }}>
         {icono}
       </div>
-      <p className="mt-3 text-2xl font-bold text-fg">{valor}</p>
-      <p className="text-sm text-fg">{etiqueta}</p>
-      <p className="mt-0.5 text-xs font-medium" style={{ color: colorSubtexto }}>
-        {subtexto}
-      </p>
+      <div className="flex min-w-0 flex-col">
+        <p className="text-[32px] font-bold leading-none text-fg">{valor}</p>
+        <p className="mt-[5px] truncate text-base text-fg">{etiqueta}</p>
+        <p className="mt-[5px] truncate text-[12px] font-medium" style={{ color: colorSubtexto }}>
+          {subtexto}
+        </p>
+      </div>
     </div>
   );
 }
@@ -53,7 +55,7 @@ export function AmoreMetricCards({ datos }: { datos: DashboardDataMock }) {
         bgIcono="bg-[#EEEAFB]"
         colorIcono="#7C6FC9"
         valor={String(datos.clientesActivos.total)}
-        etiqueta="Clientes activos"
+        etiqueta="Clientes"
         subtexto={`+${datos.clientesActivos.nuevosEsteMes} este mes`}
         colorSubtexto="var(--color-success-text)"
       />
@@ -62,7 +64,7 @@ export function AmoreMetricCards({ datos }: { datos: DashboardDataMock }) {
         bgIcono="bg-[#FDEEE1]"
         colorIcono="#D97B3F"
         valor={String(datos.serviciosHoy.total)}
-        etiqueta="Servicios hoy"
+        etiqueta="Servicios"
         subtexto={`${datos.serviciosHoy.diferentes} diferentes`}
         colorSubtexto="var(--color-mist)"
       />
@@ -71,8 +73,8 @@ export function AmoreMetricCards({ datos }: { datos: DashboardDataMock }) {
         bgIcono="bg-success"
         colorIcono="var(--color-success-text)"
         valor={formatearCOP(datos.ingresosMes.total)}
-        etiqueta="Ingresos del mes"
-        subtexto={`+${datos.ingresosMes.variacionPct}% vs mes anterior`}
+        etiqueta="Ingresos"
+        subtexto={`+${datos.ingresosMes.variacionPct}% anterior`}
         colorSubtexto="var(--color-success-text)"
       />
     </div>

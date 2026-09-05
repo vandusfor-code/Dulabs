@@ -33,18 +33,6 @@ export function AmoreBottomNav({ onAbrirMenu }: { onAbrirMenu: () => void }) {
         {item(<Home className="size-5" />, "Inicio", rutaInicio(token), pathname === rutaInicio(token))}
         {item(<CalendarDays className="size-5" />, "Citas", rutaCitas(token), esRutaActiva(pathname, rutaCitas(token)))}
         {item(<Users className="size-5" />, "Clientes", rutaClientes(token), esRutaActiva(pathname, rutaClientes(token)))}
-
-        <div className="flex flex-1 flex-col items-center">
-          <button
-            type="button"
-            onClick={() => abrirNueva()}
-            aria-label="Nueva cita"
-            className="-mt-6 flex size-14 items-center justify-center rounded-full bg-lime text-white shadow-[0_6px_16px_rgba(184,92,120,0.4)]"
-          >
-            <Plus className="size-6" />
-          </button>
-        </div>
-
         {item(<Sparkles className="size-5" />, "Servicios", rutaServicios(token), esRutaActiva(pathname, rutaServicios(token)))}
 
         <button
@@ -56,6 +44,15 @@ export function AmoreBottomNav({ onAbrirMenu }: { onAbrirMenu: () => void }) {
           Más
         </button>
       </div>
+
+      <button
+        type="button"
+        onClick={() => abrirNueva()}
+        aria-label="Nueva cita"
+        className="absolute left-1/2 -top-6 flex size-14 -translate-x-1/2 items-center justify-center rounded-full bg-lime text-white shadow-[0_6px_16px_rgba(184,92,120,0.4)]"
+      >
+        <Plus className="size-6" />
+      </button>
     </nav>
   );
 }
