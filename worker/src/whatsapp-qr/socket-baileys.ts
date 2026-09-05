@@ -103,9 +103,26 @@ export function crearFabricaSocketBaileys(supabase: SupabaseClient): FabricaSock
             // atención humana). msg.key.id es el wamid real de Baileys,
             // usado como eventId idempotente por el propio Flow Engine.
             if (resultado?.entrante && resultado.tipo === "texto" && resultado.texto && resultado.estadoConversacion === "automatico" && msg.key.id) {
-              invocarBotWhatsAppQR({ idTenant, telefono: resultado.telefono, texto: resultado.texto, wamid: msg.key.id }).catch(() => {
-                logErrorControlado(idTenant, "invocacion_bot_fallo");
-              });
+              // "Escribiendo..." real (autorizado) — el bot puede tardar
+              // varios segundos (varias llamadas reales a Claude en cadena:
+              // clasificar, extraer, responder). Un solo sendPresenceUpdate
+              // no alcanza: WhatsApp lo vence a los pocos segundos si no se
+              // refresca, así que se reenvía cada 8s mientras se espera.
+              // "paused" al final limpia el indicador si el bot falla sin
+              // llegar a mandar nada -- un envío real ya lo limpia solo.
+              const jidEntrante = `${soloDigitos(resultado.telefono)}@s.whatsapp.net`;
+              sock.sendPresenceUpdate("composing", jidEntrante).catch(() => {});
+              const refrescoTyping = setInterval(() => {
+                sock.sendPresenceUpdate("composing", jidEntrante).catch(() => {});
+              }, 8000);
+              invocarBotWhatsAppQR({ idTenant, telefono: resultado.telefono, texto: resultado.texto, wamid: msg.key.id })
+                .catch(() => {
+                  logErrorControlado(idTenant, "invocacion_bot_fallo");
+                })
+                .finally(() => {
+                  clearInterval(refrescoTyping);
+                  sock.sendPresenceUpdate("paused", jidEntrante).catch(() => {});
+                });
             }
           })
           .catch(() => {
