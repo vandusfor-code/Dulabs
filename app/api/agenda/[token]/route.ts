@@ -1,23 +1,36 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import { especialistaPorRuta, especialistasDelMismaPersona, citasDeEspecialista, confirmarCita } from "@/lib/especialistas";
+import {
+  especialistaPorRuta,
+  especialistasDelMismaPersona,
+  especialistasDelTenant,
+  citasDeEspecialista,
+  confirmarCita,
+  type Especialista,
+} from "@/lib/especialistas";
 import { clienteDeEspecialista, notificarCitaConfirmada } from "@/lib/especialistas-notificar";
 import { planDelTenant } from "@/lib/plan-limits";
 import { reservarCitaPorServicio } from "@/lib/disponibilidad-servicio";
 import { ejecutarConIdempotencia, huellaSolicitud } from "@/lib/idempotencia-reserva";
 import { mensajeAmigableReserva } from "@/lib/reservar-mensajes";
+import { requireAuth, requireRole } from "@/lib/auth/authz";
 
 export const runtime = "nodejs";
 
-// Sin sesión de usuario a propósito: el token de la URL ES la autenticación
-// -- quien tiene el link ve y gestiona SOLO la agenda de esa persona. Mismo
-// criterio de "simple, sin login" que pidió el negocio para que Nicol lo use
-// desde el celular sin fricción.
+// En un tenant SIN login (Daniela, Solo Talento) el token de la URL sigue
+// siendo TODA la autenticación -- ningún cambio de comportamiento. En un
+// tenant CON login habilitado (Login AMORE, autorizado), esta ruta además
+// exige una sesión real que pertenezca a este tenant, y el "equipo"/"citas"
+// que devuelve depende del ROL de esa sesión, no de con qué token se entró:
+//   - administrador: ve y gestiona el equipo COMPLETO del tenant.
+//   - colaboradora: ve SOLO su propia agenda (jamás la de otra persona,
+//     aunque conociera su token).
 //
 // Una misma persona puede tener más de una especialidad registrada (ej.
 // Daniela: "pestañas" + el catálogo "general" del resto de servicios) --
 // se muestran juntas bajo el link de cualquiera de las dos, para que no
-// tenga que abrir un link distinto por cada una.
+// tenga que abrir un link distinto por cada una. Esto sigue igual para
+// cualquier tenant sin login.
 export async function GET(request: NextRequest, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
   const supabase = supabaseAdmin();
@@ -35,8 +48,20 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     return Response.json({ planPausado: true, negocio: clientePausado?.nombre_negocio ?? "Du Labs" });
   }
 
-  const hermanas = await especialistasDelMismaPersona(supabase, especialista.phone_number_id, especialista.numero_whatsapp);
-  const equipo = hermanas.length > 0 ? hermanas : [especialista];
+  const auth = await requireAuth(supabase, request, especialista.id_tenant);
+  if (!auth.ok) return Response.json({ error: auth.error }, { status: auth.status });
+  const sesion = auth.sesion;
+
+  let equipo: Especialista[];
+  if (sesion && sesion.rol === "administrador") {
+    equipo = await especialistasDelTenant(supabase, especialista.id_tenant);
+  } else if (sesion && sesion.rol === "colaboradora") {
+    equipo = sesion.especialistaId ? [especialista].filter((e) => e.id === sesion.especialistaId) : [];
+    if (equipo.length === 0) equipo = [especialista];
+  } else {
+    const hermanas = await especialistasDelMismaPersona(supabase, especialista.phone_number_id, especialista.numero_whatsapp);
+    equipo = hermanas.length > 0 ? hermanas : [especialista];
+  }
   const ids = equipo.map((e) => e.id);
   // Varias especialidades pueden ser LA MISMA PERSONA (ej. Daniela: pestañas
   // + manos-daniela) -- el desplegable de "reasignar profesional" del panel
@@ -91,6 +116,9 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       serviciosActivos: serviciosActivos.count ?? 0,
       profesionalesActivos: profesionalesActivos.count ?? 0,
     },
+    sesion: sesion
+      ? { rol: sesion.rol, nombre: sesion.nombre, username: sesion.username, especialistaId: sesion.especialistaId }
+      : null,
   });
 }
 
@@ -123,6 +151,15 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   if (plan.id === "sin_plan") {
     return Response.json({ error: "Plan pausado, pendiente de pago" }, { status: 403 });
   }
+
+  const auth = await requireAuth(supabase, request, especialista.id_tenant);
+  if (!auth.ok) return Response.json({ error: auth.error }, { status: auth.status });
+  // Crear una cita manualmente desde el panel es una acción administrativa
+  // -- el flujo real de una colaboradora es "el cliente reserva por el
+  // portal/WhatsApp", nunca ella creando citas a mano (spec Fase 13, que no
+  // lista "crear cita" entre sus acciones permitidas).
+  const permiso = requireRole(auth.sesion, "administrador");
+  if (!permiso.ok) return Response.json({ error: permiso.error }, { status: permiso.status });
 
   let body: BodyNuevaCita;
   try {

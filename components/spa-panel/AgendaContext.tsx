@@ -1,6 +1,7 @@
 "use client";
 
-import { createContext, useContext, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
 import { Loader2, CalendarClock } from "lucide-react";
 import { useAgendaData } from "./useAgendaData";
 import type { Cita, DatosCargados } from "./types";
@@ -15,6 +16,7 @@ import { RescheduleModal } from "./modals/RescheduleModal";
 import { CancelAppointmentModal } from "./modals/CancelAppointmentModal";
 import { AppointmentDetailsModal } from "./modals/AppointmentDetailsModal";
 import { AmoreDashboardShell } from "./amore/AmoreDashboardShell";
+import { ColaboradoraShell } from "./amore/colaboradora/ColaboradoraShell";
 
 type AgendaCtx = {
   token: string;
@@ -37,6 +39,10 @@ type AgendaCtx = {
   cerrarNueva: () => void;
   /** Misma función real que ya usa NewAppointmentModal de Daniela -- expuesta para que la agenda propia de AMORE pueda montar ese mismo modal directamente. */
   crearCita: ReturnType<typeof useAgendaData>["crearCita"];
+  /** Cita en edición (null = modal cerrado) -- expuesto para que AMORE pueda montar EditAppointmentModal (reasignar/editar) desde el shell del administrador. */
+  editando: Cita | null;
+  cerrarEditar: () => void;
+  guardarEdicion: (body: { nuevo_inicio: string; servicio: string; duracion_min: number; nuevo_especialista_id?: number }) => Promise<void>;
 };
 
 const Ctx = createContext<AgendaCtx | null>(null);
@@ -51,13 +57,29 @@ export function useAgenda() {
 // vista "Agenda completa" (/agenda/[token]/completa) -- ambas páginas viven
 // bajo este layout y consumen el mismo contexto en vez de repetir el fetch.
 export function AgendaProvider({ token, children }: { token: string; children: ReactNode }) {
-  const { datos, error, setError, procesandoId, ejecutarAccion, crearCita } = useAgendaData(token);
+  const { datos, error, setError, noAutenticado, procesandoId, ejecutarAccion, crearCita } = useAgendaData(token);
+  const router = useRouter();
   const [mostrarNueva, setMostrarNueva] = useState<Date | null | undefined>(undefined);
   const [editando, setEditando] = useState<Cita | null>(null);
   const [reagendando, setReagendando] = useState<Cita | null>(null);
   const [cancelando, setCancelando] = useState<{ cita: Cita; modo: "cancelar" | "rechazar" } | null>(null);
   const [detalle, setDetalle] = useState<Cita | null>(null);
   const [menuAbierto, setMenuAbierto] = useState(false);
+
+  // Login AMORE (autorizado) — un tenant con login habilitado responde 401
+  // cuando no hay sesión válida (ver requireAuth); esto nunca ocurre para un
+  // tenant legacy (Daniela, Solo Talento), que jamás recibe 401 de esta ruta.
+  useEffect(() => {
+    if (noAutenticado) router.replace("/agenda/login");
+  }, [noAutenticado, router]);
+
+  if (noAutenticado) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#FBF3F1]">
+        <Loader2 className="size-6 animate-spin text-mist" />
+      </div>
+    );
+  }
 
   if (error && !datos) {
     return (
@@ -136,6 +158,12 @@ export function AgendaProvider({ token, children }: { token: string; children: R
     mostrarNueva,
     cerrarNueva: () => setMostrarNueva(undefined),
     crearCita,
+    editando,
+    cerrarEditar: () => setEditando(null),
+    guardarEdicion: async (body) => {
+      if (!editando) return;
+      await ejecutarAccion(editando.id, { accion: "editar", ...body });
+    },
   };
 
   // AMORE (Fase 5, panel administrativo móvil, autorizado) — SOLO este
@@ -146,6 +174,18 @@ export function AgendaProvider({ token, children }: { token: string; children: R
   // Cancelar cita) se monta en esta rama porque esos módulos de AMORE no
   // existen todavía en esta fase.
   if (datos.negocio === "AMORE") {
+    // Login AMORE (autorizado) — una colaboradora recibe el shell REDUCIDO
+    // (components/spa-panel/amore/colaboradora/), nunca el panel
+    // administrativo completo, sin importar qué token puso en la URL --
+    // esto es puramente cosmético/de navegación, la protección real ya
+    // ocurrió server-side (ver app/api/agenda/[token]/route.ts).
+    if (datos.sesion?.rol === "colaboradora") {
+      return (
+        <Ctx.Provider value={value}>
+          <ColaboradoraShell>{children}</ColaboradoraShell>
+        </Ctx.Provider>
+      );
+    }
     return (
       <Ctx.Provider value={value}>
         <AmoreDashboardShell>{children}</AmoreDashboardShell>

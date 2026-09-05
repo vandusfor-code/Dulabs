@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import { resolverTenantDesdeToken } from "@/lib/agenda-admin-auth";
+import { resolverTenantDesdeToken, requiereAdministrador } from "@/lib/agenda-admin-auth";
 
 export const runtime = "nodejs";
 
@@ -10,11 +10,13 @@ type ServicioFila = { id: string; nombre: string; categoria: string | null; desc
 // necesita ver ambos para poder reactivar uno), cada uno con los ids de los
 // especialistas ya habilitados (dulabs_servicio_especialista) para poblar
 // el checklist de "asociar profesionales" sin una segunda ida y vuelta.
-export async function GET(_request: NextRequest, { params }: { params: Promise<{ token: string }> }) {
+export async function GET(request: NextRequest, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
   const supabase = supabaseAdmin();
-  const tenant = await resolverTenantDesdeToken(supabase, token);
+  const tenant = await resolverTenantDesdeToken(supabase, token, request);
   if (!tenant.ok) return Response.json({ error: tenant.error }, { status: tenant.status });
+  const permiso = requiereAdministrador(tenant);
+  if (!permiso.ok) return Response.json({ error: permiso.error }, { status: permiso.status });
 
   const [{ data: servicios }, { data: relaciones }] = await Promise.all([
     supabase
@@ -57,8 +59,10 @@ type BodyServicio = {
 export async function POST(request: NextRequest, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
   const supabase = supabaseAdmin();
-  const tenant = await resolverTenantDesdeToken(supabase, token);
+  const tenant = await resolverTenantDesdeToken(supabase, token, request);
   if (!tenant.ok) return Response.json({ error: tenant.error }, { status: tenant.status });
+  const permiso = requiereAdministrador(tenant);
+  if (!permiso.ok) return Response.json({ error: permiso.error }, { status: permiso.status });
 
   let body: BodyServicio;
   try {

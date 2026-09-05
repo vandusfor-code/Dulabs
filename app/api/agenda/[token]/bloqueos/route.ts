@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import { resolverTenantDesdeToken } from "@/lib/agenda-admin-auth";
+import { resolverTenantDesdeToken, requiereAdministrador } from "@/lib/agenda-admin-auth";
 
 export const runtime = "nodejs";
 
@@ -9,11 +9,13 @@ export const runtime = "nodejs";
 // Estas son EXACTAMENTE las filas que lee bloqueosDelDia (lib/especialistas.ts):
 // crear uno aquí afecta de inmediato la disponibilidad real, sin ninguna
 // lógica duplicada en el frontend.
-export async function GET(_request: NextRequest, { params }: { params: Promise<{ token: string }> }) {
+export async function GET(request: NextRequest, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
   const supabase = supabaseAdmin();
-  const tenant = await resolverTenantDesdeToken(supabase, token);
+  const tenant = await resolverTenantDesdeToken(supabase, token, request);
   if (!tenant.ok) return Response.json({ error: tenant.error }, { status: tenant.status });
+  const permiso = requiereAdministrador(tenant);
+  if (!permiso.ok) return Response.json({ error: permiso.error }, { status: permiso.status });
 
   const desde = new Date();
   desde.setHours(0, 0, 0, 0);
@@ -31,8 +33,10 @@ type BodyBloqueo = { especialista_id?: number | null; tipo?: string; inicio?: st
 export async function POST(request: NextRequest, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
   const supabase = supabaseAdmin();
-  const tenant = await resolverTenantDesdeToken(supabase, token);
+  const tenant = await resolverTenantDesdeToken(supabase, token, request);
   if (!tenant.ok) return Response.json({ error: tenant.error }, { status: tenant.status });
+  const permiso = requiereAdministrador(tenant);
+  if (!permiso.ok) return Response.json({ error: permiso.error }, { status: permiso.status });
 
   let body: BodyBloqueo;
   try {

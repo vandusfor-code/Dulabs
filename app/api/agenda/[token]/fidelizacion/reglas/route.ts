@@ -9,11 +9,13 @@ export const runtime = "nodejs";
 // cantidad de oportunidades pendientes por regla. SIEMPRE filtrado por el
 // id_tenant que resuelve el token -- un tenant nunca ve reglas de otro.
 // Genérico: no hay nada específico de AMORE acá.
-export async function GET(_request: NextRequest, { params }: { params: Promise<{ token: string }> }) {
+export async function GET(request: NextRequest, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
   const supabase = supabaseAdmin();
-  const tenant = await resolverTenantDesdeToken(supabase, token);
+  const tenant = await resolverTenantDesdeToken(supabase, token, request);
   if (!tenant.ok) return Response.json({ error: tenant.error }, { status: tenant.status });
+  const permiso = requiereAdministrador(tenant);
+  if (!permiso.ok) return Response.json({ error: permiso.error }, { status: permiso.status });
 
   const { data: reglas, error } = await supabase
     .from("dulabs_fidelizacion_reglas")
@@ -57,7 +59,7 @@ type BodyRegla = { servicioId?: string; dias?: number; mensaje?: string };
 export async function POST(request: NextRequest, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
   const supabase = supabaseAdmin();
-  const tenant = await resolverTenantDesdeToken(supabase, token);
+  const tenant = await resolverTenantDesdeToken(supabase, token, request);
   if (!tenant.ok) return Response.json({ error: tenant.error }, { status: tenant.status });
   const permiso = requiereAdministrador(tenant);
   if (!permiso.ok) return Response.json({ error: permiso.error }, { status: permiso.status });

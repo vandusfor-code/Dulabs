@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Plus, CalendarX2, Check, X, Loader2 } from "lucide-react";
+import { Plus, CalendarX2, Check, X, Loader2, Pencil } from "lucide-react";
 import { useAgenda } from "@/components/spa-panel/AgendaContext";
 import { DateStrip } from "@/components/spa-panel/DateStrip";
 import { formatearHora, mismoDia } from "@/components/spa-panel/format";
@@ -36,10 +36,14 @@ const ESTADO_LABEL: Record<EstadoCita, string> = {
 // citas nueva, solo la piel visual de AMORE sobre el mismo estado
 // compartido. "Completar" es el enlace real hacia Contabilidad: una cita
 // completada acá es exactamente lo que lib/contabilidad/reporte.ts cuenta
-// como ingreso. Editar/reagendar quedan fuera de este alcance -- por eso no
-// hay botón para ellos (mejor sin botón que con uno que no hace nada).
+// como ingreso. "Editar" (Login AMORE, autorizado) abre el MISMO
+// EditAppointmentModal real de Daniela (montado en AmoreDashboardShell) --
+// permite reasignar a otra profesional ELEGIBLE para el servicio, cambiar
+// fecha/hora/servicio; el servidor valida elegibilidad real (ver
+// citas/[id]/route.ts), nunca confía en el dropdown. Reagendar (proponer
+// horario y esperar aceptación de la clienta) queda fuera de este alcance.
 export function AmoreCitasScreen() {
-  const { datos, procesandoId, confirmar, completar, marcarNoShow, abrirNueva } = useAgenda();
+  const { datos, procesandoId, confirmar, completar, marcarNoShow, abrirNueva, abrirEditar } = useAgenda();
   const [dia, setDia] = useState(() => new Date());
   const [vista, setVista] = useState<Vista>("dia");
   const [cancelando, setCancelando] = useState<Cita | null>(null);
@@ -146,6 +150,17 @@ export function AmoreCitasScreen() {
                         className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-warning py-2 text-xs font-medium text-warning-text disabled:opacity-50"
                       >
                         No asistió
+                      </button>
+                    )}
+                    {c.estado === "confirmada" && (
+                      <button
+                        type="button"
+                        disabled={procesandoId === c.id}
+                        onClick={() => abrirEditar(c)}
+                        aria-label="Editar cita"
+                        className="flex items-center justify-center gap-1.5 rounded-xl bg-ink-2 px-3 py-2 text-xs font-medium text-mist disabled:opacity-50"
+                      >
+                        <Pencil className="size-3.5" />
                       </button>
                     )}
                     <button

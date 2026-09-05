@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import { resolverTenantDesdeToken } from "@/lib/agenda-admin-auth";
+import { resolverTenantDesdeToken, requiereAdministrador } from "@/lib/agenda-admin-auth";
 import { fechaTenantHoy } from "@/lib/cumpleanos/fecha";
 
 export const runtime = "nodejs";
@@ -14,11 +14,13 @@ type ClienteFila = { id: number; nombre: string; cumple_dia: number | null; cump
 // con "días hasta" calculado en la zona horaria del tenant (mismo
 // lib/cumpleanos/fecha.ts que usa el motor real) -- ninguna fecha se
 // inventa ni se lee de la hora del servidor.
-export async function GET(_request: NextRequest, { params }: { params: Promise<{ token: string }> }) {
+export async function GET(request: NextRequest, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
   const supabase = supabaseAdmin();
-  const tenant = await resolverTenantDesdeToken(supabase, token);
+  const tenant = await resolverTenantDesdeToken(supabase, token, request);
   if (!tenant.ok) return Response.json({ error: tenant.error }, { status: tenant.status });
+  const permiso = requiereAdministrador(tenant);
+  if (!permiso.ok) return Response.json({ error: permiso.error }, { status: permiso.status });
 
   const { data } = await supabase
     .from("dulabs_clientes_conocidos")

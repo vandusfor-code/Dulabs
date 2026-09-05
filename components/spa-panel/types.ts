@@ -34,6 +34,16 @@ export type ResumenNegocio = {
   profesionalesActivos: number;
 };
 
+// Login AMORE (autorizado) — presente SOLO cuando el tenant tiene login
+// habilitado (ver lib/auth/authz.ts); undefined en cualquier tenant legacy
+// (Daniela, Solo Talento) sin ningún cambio de comportamiento para ellos.
+export type SesionAgenda = {
+  rol: "administrador" | "colaboradora";
+  nombre: string;
+  username: string;
+  especialistaId: number | null;
+};
+
 export type DatosCargados = {
   planPausado?: false;
   negocio: string;
@@ -41,6 +51,7 @@ export type DatosCargados = {
   equipo: MiembroEquipo[];
   citas: Cita[];
   resumen: ResumenNegocio;
+  sesion?: SesionAgenda | null;
 };
 
 export type Datos = DatosCargados | { planPausado: true; negocio: string };

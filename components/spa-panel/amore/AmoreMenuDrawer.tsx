@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { X, Home, CalendarDays, Users, Sparkles, Cake, Heart, Wallet, UserRound, MessageCircle, Settings } from "lucide-react";
+import { X, Home, CalendarDays, Users, Sparkles, Cake, Heart, Wallet, UserRound, MessageCircle, Settings, User } from "lucide-react";
 import { useAgenda } from "@/components/spa-panel/AgendaContext";
 import { cn } from "@/components/spa-panel/ui";
 import {
@@ -16,6 +16,7 @@ import {
   rutaEquipo,
   rutaWhatsapp,
   rutaConfiguracion,
+  rutaPerfil,
   esRutaActiva,
 } from "./amore-routes";
 
@@ -39,6 +40,7 @@ export function AmoreMenuDrawer({ onClose }: { onClose: () => void }) {
     { label: "Equipo", icon: UserRound, href: rutaEquipo(token), activo: esRutaActiva(pathname, rutaEquipo(token)) },
     { label: "WhatsApp", icon: MessageCircle, href: rutaWhatsapp(token), activo: esRutaActiva(pathname, rutaWhatsapp(token)) },
     { label: "Configuración", icon: Settings, href: rutaConfiguracion(token), activo: esRutaActiva(pathname, rutaConfiguracion(token)) },
+    { label: "Mi perfil", icon: User, href: rutaPerfil(token), activo: esRutaActiva(pathname, rutaPerfil(token)) },
   ] as const;
 
   return (

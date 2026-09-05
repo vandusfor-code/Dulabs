@@ -5,14 +5,17 @@ import { StatsCards } from "@/components/spa-panel/StatsCards";
 import { DailyAgenda } from "@/components/spa-panel/DailyAgenda";
 import { UpcomingAppointments } from "@/components/spa-panel/UpcomingAppointments";
 import { AmoreDashboardHome } from "@/components/spa-panel/amore/AmoreDashboardHome";
+import { ColaboradoraInicio } from "@/components/spa-panel/amore/colaboradora/ColaboradoraInicio";
 
 export default function AgendaDashboardPage() {
   const { datos } = useAgenda();
 
   // AMORE (Fase 5, panel administrativo móvil, autorizado) — únicamente la
   // pantalla Inicio/Dashboard de esta fase; el resto de rutas bajo
-  // /agenda/[token] siguen sin tocarse para este tenant.
+  // /agenda/[token] siguen sin tocarse para este tenant. Login AMORE
+  // (autorizado): una colaboradora recibe su propio Inicio reducido.
   if (datos.negocio === "AMORE") {
+    if (datos.sesion?.rol === "colaboradora") return <ColaboradoraInicio />;
     return <AmoreDashboardHome />;
   }
 

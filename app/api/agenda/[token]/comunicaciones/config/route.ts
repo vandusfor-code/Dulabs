@@ -8,11 +8,13 @@ export const runtime = "nodejs";
 // Confirmaciones y recordatorios (autorizado) — lee/escribe la MISMA
 // configuración que ya usa el motor real (lib/comunicaciones/*, Fase 8).
 // NO envía nada ni activa ningún cron -- solo persiste la configuración.
-export async function GET(_request: NextRequest, { params }: { params: Promise<{ token: string }> }) {
+export async function GET(request: NextRequest, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
   const supabase = supabaseAdmin();
-  const tenant = await resolverTenantDesdeToken(supabase, token);
+  const tenant = await resolverTenantDesdeToken(supabase, token, request);
   if (!tenant.ok) return Response.json({ error: tenant.error }, { status: tenant.status });
+  const permiso = requiereAdministrador(tenant);
+  if (!permiso.ok) return Response.json({ error: permiso.error }, { status: permiso.status });
 
   const config = await obtenerConfigComunicaciones(supabase, tenant.idTenant);
   return Response.json({ config });
@@ -29,7 +31,7 @@ type Body = {
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
   const supabase = supabaseAdmin();
-  const tenant = await resolverTenantDesdeToken(supabase, token);
+  const tenant = await resolverTenantDesdeToken(supabase, token, request);
   if (!tenant.ok) return Response.json({ error: tenant.error }, { status: tenant.status });
   const permiso = requiereAdministrador(tenant);
   if (!permiso.ok) return Response.json({ error: permiso.error }, { status: permiso.status });

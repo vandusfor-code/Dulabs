@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import { resolverTenantDesdeToken } from "@/lib/agenda-admin-auth";
+import { resolverTenantDesdeToken, requiereAdministrador } from "@/lib/agenda-admin-auth";
 
 export const runtime = "nodejs";
 
@@ -11,14 +11,16 @@ export const runtime = "nodejs";
 // consultarse desde acá, ni por adivinar el id. NO crea ningún sistema de
 // reservas paralelo: el historial se lee directo de dulabs_citas_especialista,
 // la misma tabla que ya usa toda la agenda.
-export async function GET(_request: NextRequest, { params }: { params: Promise<{ token: string; id: string }> }) {
+export async function GET(request: NextRequest, { params }: { params: Promise<{ token: string; id: string }> }) {
   const { token, id } = await params;
   const clienteId = Number(id);
   if (!Number.isInteger(clienteId)) return Response.json({ error: "ID inválido" }, { status: 400 });
 
   const supabase = supabaseAdmin();
-  const tenant = await resolverTenantDesdeToken(supabase, token);
+  const tenant = await resolverTenantDesdeToken(supabase, token, request);
   if (!tenant.ok) return Response.json({ error: tenant.error }, { status: tenant.status });
+  const permiso = requiereAdministrador(tenant);
+  if (!permiso.ok) return Response.json({ error: permiso.error }, { status: permiso.status });
 
   const { data: cliente } = await supabase
     .from("dulabs_clientes_conocidos")

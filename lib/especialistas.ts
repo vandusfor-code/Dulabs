@@ -91,6 +91,23 @@ export async function especialistaPorId(supabase: SupabaseClient, id: number): P
   return (data as Especialista) ?? null;
 }
 
+// Login AMORE (autorizado) — TODAS las especialistas activas del tenant
+// (no solo "las hermanas" de una persona, ver especialistasDelMismaPersona).
+// Es lo que necesita una ADMINISTRADORA para reasignar una cita a
+// cualquiera del equipo, algo que el mecanismo de "hermanas" (pensado para
+// que una misma persona vea sus propias especialidades) no cubre cuando
+// cada profesional es una persona distinta con su propio numero_whatsapp,
+// como en AMORE.
+export async function especialistasDelTenant(supabase: SupabaseClient, idTenant: string): Promise<Especialista[]> {
+  const { data } = await supabase
+    .from("dulabs_especialistas")
+    .select(COLUMNAS_ESPECIALISTA)
+    .eq("id_tenant", idTenant)
+    .eq("activo", true)
+    .order("nombre", { ascending: true });
+  return (data as Especialista[]) ?? [];
+}
+
 // Si quien escribe es una de las especialistas del negocio (por su número de
 // WhatsApp), para tratarla como administradora y no como clienta. Una misma
 // persona puede tener más de una fila (ej. Daniela: "pestañas" + "general"),

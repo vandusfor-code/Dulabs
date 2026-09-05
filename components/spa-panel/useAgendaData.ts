@@ -9,12 +9,21 @@ import type { Accion, Datos } from "./types";
 export function useAgendaData(token: string) {
   const [datos, setDatos] = useState<Datos | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Login AMORE (autorizado) — 401 significa "este tenant tiene login
+  // habilitado y no hay sesión válida" (ver requireAuth). Un tenant sin
+  // login (Daniela, Solo Talento) nunca recibe 401 de esta ruta, así que
+  // esto no les afecta en nada.
+  const [noAutenticado, setNoAutenticado] = useState(false);
   const [procesandoId, setProcesandoId] = useState<number | null>(null);
 
   const cargar = useCallback(async () => {
     try {
       const res = await fetch(`/api/agenda/${token}`);
       const data = await res.json();
+      if (res.status === 401) {
+        setNoAutenticado(true);
+        return;
+      }
       if (!res.ok) throw new Error(data.error ?? "No se pudo cargar tu agenda");
       setDatos(data);
       setError(null);
@@ -26,8 +35,12 @@ export function useAgendaData(token: string) {
   useEffect(() => {
     if (!token) return;
     fetch(`/api/agenda/${token}`)
-      .then(async (res) => ({ ok: res.ok, data: await res.json() }))
-      .then(({ ok, data }) => {
+      .then(async (res) => ({ status: res.status, ok: res.ok, data: await res.json() }))
+      .then(({ status, ok, data }) => {
+        if (status === 401) {
+          setNoAutenticado(true);
+          return;
+        }
         if (!ok) throw new Error(data.error ?? "No se pudo cargar tu agenda");
         setDatos(data);
         setError(null);
@@ -93,5 +106,5 @@ export function useAgendaData(token: string) {
     [token, cargar]
   );
 
-  return { datos, error, setError, procesandoId, cargar, ejecutarAccion, crearCita };
+  return { datos, error, setError, noAutenticado, procesandoId, cargar, ejecutarAccion, crearCita };
 }

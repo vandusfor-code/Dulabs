@@ -3,6 +3,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import {
   especialistaPorRuta,
   especialistasDelMismaPersona,
+  especialistasDelTenant,
   confirmarCita,
   rechazarCita,
   proponerReagendamiento,
@@ -20,15 +21,25 @@ import {
   notificarCitaCancelada,
 } from "@/lib/especialistas-notificar";
 import { planDelTenant } from "@/lib/plan-limits";
+import { requireAuth } from "@/lib/auth/authz";
+import { resolverEspecialistasElegiblesParaServicio } from "@/lib/asignacion-categoria";
 
 export const runtime = "nodejs";
 
-// Confirma, rechaza, o propone un nuevo horario para UNA solicitud. El token
-// en la URL debe pertenecer a la MISMA persona dueña de esa cita -- así el
-// link de una persona nunca puede tocar la agenda de otra, aunque adivine un
-// ID de cita ajeno. "La misma persona" incluye todas sus especialidades
-// (ej. el link de "pestañas" de Daniela también puede actuar sobre una cita
-// de su catálogo "general", porque ambas comparten su número de WhatsApp).
+// Confirma, rechaza, propone/edita horario, cancela o cierra UNA cita.
+//
+// Login AMORE (autorizado) — en un tenant SIN login (Daniela, Solo
+// Talento) el comportamiento es EXACTO al de siempre: el token de la URL
+// identifica a la persona, y solo puede tocar la agenda de "sus hermanas"
+// (misma persona, varias especialidades). En un tenant CON login
+// habilitado, quién puede tocar qué depende del ROL de la sesión real, no
+// del token en la URL:
+//   - administrador: puede tocar cualquier cita del tenant (todo el
+//     equipo), y puede reasignarla a cualquier especialista ELEGIBLE para
+//     el servicio de esa cita (ver resolverEspecialistasElegiblesParaServicio).
+//   - colaboradora: solo puede tocar SUS PROPIAS citas (especialista_id =
+//     su propio especialista_id, nunca el de otra) y nunca puede reasignar,
+//     cambiar servicio ni horario (accion 'editar'/'reagendar' bloqueadas).
 export async function POST(request: NextRequest, { params }: { params: Promise<{ token: string; id: string }> }) {
   const { token, id } = await params;
   const citaId = Number(id);
@@ -43,8 +54,19 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     return Response.json({ error: "Plan pausado, pendiente de pago" }, { status: 403 });
   }
 
-  const hermanas = await especialistasDelMismaPersona(supabase, especialista.phone_number_id, especialista.numero_whatsapp);
-  const idsPermitidos = new Set(hermanas.length > 0 ? hermanas.map((e) => e.id) : [especialista.id]);
+  const auth = await requireAuth(supabase, request, especialista.id_tenant);
+  if (!auth.ok) return Response.json({ error: auth.error }, { status: auth.status });
+  const sesion = auth.sesion;
+
+  let idsPermitidos: Set<number>;
+  if (sesion && sesion.rol === "administrador") {
+    idsPermitidos = new Set((await especialistasDelTenant(supabase, especialista.id_tenant)).map((e) => e.id));
+  } else if (sesion && sesion.rol === "colaboradora") {
+    idsPermitidos = new Set(sesion.especialistaId ? [sesion.especialistaId] : []);
+  } else {
+    const hermanas = await especialistasDelMismaPersona(supabase, especialista.phone_number_id, especialista.numero_whatsapp);
+    idsPermitidos = new Set(hermanas.length > 0 ? hermanas.map((e) => e.id) : [especialista.id]);
+  }
 
   const { data: citaExistente } = await supabase
     .from("dulabs_citas_especialista")
@@ -86,6 +108,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const ACCIONES = ["confirmar", "rechazar", "reagendar", "editar", "cancelar", "completar", "no_show"];
   if (!body.accion || !ACCIONES.includes(body.accion)) {
     return Response.json({ error: `'accion' debe ser una de: ${ACCIONES.join(", ")}` }, { status: 400 });
+  }
+
+  // Una colaboradora nunca reasigna, cambia servicio ni mueve el horario de
+  // una cita -- eso es exclusivo de administrador (spec Fase 13).
+  if (sesion && sesion.rol === "colaboradora" && (body.accion === "editar" || body.accion === "reagendar")) {
+    return Response.json({ error: "No tienes permiso para editar o reagendar citas" }, { status: 403 });
   }
 
   const cliente = await clienteDeEspecialista(supabase, especialista.phone_number_id);
@@ -146,12 +174,20 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const nuevoInicio = body.nuevo_inicio?.trim() ? new Date(body.nuevo_inicio.trim()) : undefined;
   if (nuevoInicio && Number.isNaN(nuevoInicio.getTime())) return Response.json({ error: "Fecha/hora inválida" }, { status: 400 });
 
-  // Reasignar a otra persona del equipo: solo se permite dentro del mismo
-  // grupo de "hermanas" (mismo negocio/persona) que este token ya puede
-  // tocar -- idsPermitidos ya se calculó arriba para autorizar la cita
-  // misma, así que sirve igual para validar a quién se le puede reasignar.
   if (body.nuevo_especialista_id !== undefined && !idsPermitidos.has(body.nuevo_especialista_id)) {
     return Response.json({ error: "Esa persona no pertenece a este equipo" }, { status: 400 });
+  }
+
+  // Reasignación (Fase "cierre integral", autorizado) — la nueva profesional
+  // debe estar ELEGIBLE para el servicio real de la cita (mismo resolver que
+  // ya usa el portal público, nunca una matriz de elegibilidad duplicada).
+  // Una cita LEGACY sin servicio_id no tiene forma de validar esto -- se
+  // permite tal cual (comportamiento de siempre).
+  if (body.nuevo_especialista_id !== undefined && citaExistente.servicio_id) {
+    const elegibles = await resolverEspecialistasElegiblesParaServicio(supabase, especialista.id_tenant, citaExistente.servicio_id);
+    if (elegibles.especialistas.length > 0 && !elegibles.especialistas.some((e) => e.especialistaId === body.nuevo_especialista_id)) {
+      return Response.json({ error: "Esa profesional no está autorizada para este servicio" }, { status: 400 });
+    }
   }
 
   const resultado = await editarCitaConfirmada(supabase, citaId, {

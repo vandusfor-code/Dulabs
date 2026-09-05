@@ -9,6 +9,7 @@ import { DateStrip } from "@/components/spa-panel/DateStrip";
 import { FilterPills, type Filtro } from "@/components/spa-panel/FilterPills";
 import { mismoDia } from "@/components/spa-panel/format";
 import { AmoreCitasScreen } from "@/components/spa-panel/amore/AmoreCitasScreen";
+import { ColaboradoraCitas } from "@/components/spa-panel/amore/colaboradora/ColaboradoraCitas";
 
 export default function AgendaCompletaPage() {
   const {
@@ -56,6 +57,7 @@ export default function AgendaCompletaPage() {
   // cual estaba (todos los hooks de arriba ya se llamaron igual para ambos
   // tenants, solo cambia qué se retorna).
   if (datos.negocio === "AMORE") {
+    if (datos.sesion?.rol === "colaboradora") return <ColaboradoraCitas />;
     return <AmoreCitasScreen />;
   }
 
