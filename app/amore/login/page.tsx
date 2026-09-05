@@ -11,6 +11,14 @@ import { User, Lock, Eye, EyeOff, ArrowRight, Loader2 } from "lucide-react";
 // habría roto el login real de los clientes de DuLabs. Se usa "/amore/login"
 // en su lugar (a pedido explícito). Llama a /api/agenda-auth/login
 // (namespace propio, separado del /api/auth/login del dashboard interno).
+//
+// Destino tras iniciar sesión (hallazgo real corregido): antes SIEMPRE
+// mandaba al panel móvil, sin importar por qué link llegó la persona --
+// quien entraba por el link de escritorio (o cuya sesión de escritorio
+// expiraba a mitad de uso, ver AdminWebContext.tsx) terminaba igual en
+// /agenda/[token]. Ahora "?destino=web" (leído directo de
+// window.location.search, sin useSearchParams -- esta página no necesita
+// Suspense para nada más) lo manda a /admin/amore en vez del móvil.
 export default function AmoreLoginPage() {
   const router = useRouter();
   const [usuario, setUsuario] = useState("");
@@ -36,7 +44,8 @@ export default function AmoreLoginPage() {
         setCargando(false);
         return;
       }
-      router.push(`/agenda/${data.token}`);
+      const destinoWeb = new URLSearchParams(window.location.search).get("destino") === "web";
+      router.push(destinoWeb ? "/admin/amore" : `/agenda/${data.token}`);
     } catch {
       setError("No se pudo conectar. Intenta de nuevo.");
       setCargando(false);

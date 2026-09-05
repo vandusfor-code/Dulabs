@@ -79,8 +79,12 @@ export function AdminWebProvider({ children }: { children: ReactNode }) {
   const [editando, setEditando] = useState<Cita | null>(null);
   const [mostrarNueva, setMostrarNueva] = useState<Date | null | undefined>(undefined);
 
+  // "?destino=web" (hallazgo real corregido) -- sin esto, volver a iniciar
+  // sesión desde acá (sesión sin cookie, o expirada mientras se usaba el
+  // panel de escritorio) mandaba siempre al panel móvil, nunca de vuelta a
+  // /admin/amore. Ver app/amore/login/page.tsx.
   useEffect(() => {
-    if (me === null || noAutenticado) router.replace("/amore/login");
+    if (me === null || noAutenticado) router.replace("/amore/login?destino=web");
   }, [me, noAutenticado, router]);
 
   if (me === undefined) return <PantallaCarga />;
