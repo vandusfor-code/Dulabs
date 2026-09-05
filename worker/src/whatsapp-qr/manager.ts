@@ -40,18 +40,24 @@ async function upsertEstado(
     claves: Record<string, never>;
   }>
 ): Promise<void> {
-  await supabase
+  const { error } = await supabase
     .from(TABLA)
     .upsert({ id_tenant: idTenant, ...campos, updated_at: new Date().toISOString() }, { onConflict: "id_tenant" });
+  if (error) {
+    logErrorControlado(idTenant, "upsert_estado_fallo");
+    return;
+  }
   if (campos.estado) logEstado(idTenant, campos.estado);
 }
 
 export async function obtenerEstadoPublico(supabase: SupabaseClient, idTenant: string): Promise<EstadoPublico> {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from(TABLA)
     .select("estado, numero_conectado, conectado_en, qr_actual")
     .eq("id_tenant", idTenant)
     .maybeSingle<FilaSesion>();
+
+  if (error) logErrorControlado(idTenant, "consulta_estado_fallo");
 
   if (!data) {
     return { idTenant, estado: "desconectado", numeroConectado: null, conectadoEn: null, qr: null };

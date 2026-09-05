@@ -5,7 +5,6 @@ import { MessageCircle, Loader2 } from "lucide-react";
 import { useAgenda } from "@/components/spa-panel/AgendaContext";
 import { AmoreOnlyScreen } from "@/components/spa-panel/amore/AmoreOnlyScreen";
 import { AmoreCard, AmoreScreenTitle, AmoreSectionTitle, AmoreSecondaryButton, AmoreDivider } from "@/components/spa-panel/amore/ui";
-import { whatsappMock } from "@/components/spa-panel/amore/amore-whatsapp-mock";
 
 type EstadoConexion = "desconectado" | "conectando" | "conectado";
 type EstadoPublico = {
@@ -14,14 +13,16 @@ type EstadoPublico = {
   conectadoEn: string | null;
   qr: string | null;
 };
+type UsoWhatsApp = { label: string; cantidad: number };
 
 // AMORE (Fase 9A, autorizado) — MISMO Design System de la Fase 5 (AmoreCard,
 // AmoreScreenTitle, AmoreSecondaryButton...), ahora conectado a la
 // infraestructura real de WhatsApp por QR (ver app/api/agenda/[token]/
 // whatsapp-qr/* y lib/whatsapp-qr/). No se rediseñó nada: se agregaron los
 // 3 estados reales (desconectado/conectando/conectado) sobre los mismos
-// componentes que ya existían. "Uso de WhatsApp" sigue siendo mock (ver
-// amore-whatsapp-mock.ts), fuera del alcance de esta fase.
+// componentes que ya existían. "Uso de WhatsApp" ahora es real (ver
+// app/api/agenda/[token]/whatsapp-qr/uso) -- cuenta filas reales de las
+// tablas de idempotencia de cada motor, nunca un número inventado.
 export default function WhatsappPage() {
   return (
     <AmoreOnlyScreen>
@@ -33,6 +34,7 @@ export default function WhatsappPage() {
 function WhatsappContenido() {
   const { token } = useAgenda();
   const [estado, setEstado] = useState<EstadoPublico | null>(null);
+  const [uso, setUso] = useState<UsoWhatsApp[] | null>(null);
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const intervaloRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -46,7 +48,11 @@ function WhatsappContenido() {
 
   useEffect(() => {
     consultarEstado();
-  }, [consultarEstado]);
+    fetch(`/api/agenda/${token}/whatsapp-qr/uso`)
+      .then((r) => r.json())
+      .then((body) => body.uso && setUso(body.uso))
+      .catch(() => {});
+  }, [token, consultarEstado]);
 
   // Mientras se espera el escaneo del QR, refresca el estado cada 3s (el QR
   // y la confirmación de conexión llegan de forma asíncrona del lado del
@@ -159,13 +165,13 @@ function WhatsappContenido() {
       <div>
         <AmoreSectionTitle title="Uso de WhatsApp" />
         <AmoreCard className="mt-2.5 !p-0">
-          {whatsappMock.uso.map((u, i) => (
+          {(uso ?? []).map((u, i) => (
             <div key={u.label}>
               <div className="flex items-center justify-between p-3.5">
                 <p className="text-sm text-fg">{u.label}</p>
                 <p className="text-sm font-semibold text-fg">{u.cantidad}</p>
               </div>
-              {i < whatsappMock.uso.length - 1 && <AmoreDivider />}
+              {i < (uso?.length ?? 0) - 1 && <AmoreDivider />}
             </div>
           ))}
         </AmoreCard>
