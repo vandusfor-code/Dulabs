@@ -4,18 +4,15 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Home, CalendarDays, Users, Sparkles, MoreHorizontal, Plus } from "lucide-react";
 import { useAgenda } from "@/components/spa-panel/AgendaContext";
-import { useAmoreUi } from "./AmoreUiContext";
 import { rutaInicio, rutaCitas, rutaClientes, rutaServicios, esRutaActiva } from "./amore-routes";
 
-// AMORE (Fase 5, diseño visual completo, autorizado) — navegación inferior
-// fija con el botón central "+" elevado. Inicio/Citas/Clientes/Servicios ya
-// navegan a pantallas reales (aunque su contenido interno siga siendo
-// visual/mock en esta fase); "Más" abre el mismo drawer que la hamburguesa
-// del header, y "+" avisa que la acción real todavía no existe (crear una
-// cita de verdad es lógica funcional, fuera de esta fase).
+// AMORE (Fase "sistema completo", autorizado) — navegación inferior fija
+// con el botón central "+" elevado. "+" abre el mismo NewAppointmentModal
+// real montado en AmoreDashboardShell (abrirNueva ya existe en
+// useAgenda(), reutilizado tal cual de Daniela) -- funciona desde
+// cualquier pantalla, no solo desde Citas.
 export function AmoreBottomNav({ onAbrirMenu }: { onAbrirMenu: () => void }) {
-  const { token } = useAgenda();
-  const { avisarProximamente } = useAmoreUi();
+  const { token, abrirNueva } = useAgenda();
   const pathname = usePathname();
 
   const item = (icono: React.ReactNode, label: string, href: string, activo: boolean) => (
@@ -40,7 +37,7 @@ export function AmoreBottomNav({ onAbrirMenu }: { onAbrirMenu: () => void }) {
         <div className="flex flex-1 flex-col items-center">
           <button
             type="button"
-            onClick={avisarProximamente}
+            onClick={() => abrirNueva()}
             aria-label="Nueva cita"
             className="-mt-6 flex size-14 items-center justify-center rounded-full bg-lime text-white shadow-[0_6px_16px_rgba(184,92,120,0.4)]"
           >

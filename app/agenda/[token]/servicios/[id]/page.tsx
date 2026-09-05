@@ -1,19 +1,19 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, Loader2, Clock3, Wallet, Users } from "lucide-react";
+import { ArrowLeft, Loader2, Clock3, Wallet, Users, Pencil } from "lucide-react";
 import { useAgenda } from "@/components/spa-panel/AgendaContext";
 import { formatearPrecioCop } from "@/lib/especialistas-flow-adaptador";
 import { AmoreOnlyScreen } from "@/components/spa-panel/amore/AmoreOnlyScreen";
 import { AmoreCard, AmoreScreenTitle, AmoreBadge, AmoreSectionTitle } from "@/components/spa-panel/amore/ui";
+import { ServicioModal } from "@/components/spa-panel/modals/ServicioModal";
 import type { Servicio } from "@/app/agenda/[token]/servicios/page";
 import type { Profesional } from "@/app/agenda/[token]/profesionales/page";
 
-// AMORE (Fase 5, diseño visual completo, autorizado) — detalle de solo
-// lectura de un servicio REAL del catálogo (misma API ya existente); editar
-// de verdad (ServicioModal) es lógica funcional, fuera de esta fase.
+// AMORE (Fase "sistema completo", autorizado) — detalle real de un
+// servicio; "Editar" abre ServicioModal (mismo CRUD real que Daniela).
 export default function ServicioDetallePage() {
   return (
     <AmoreOnlyScreen>
@@ -27,8 +27,9 @@ function Detalle() {
   const { id } = useParams<{ id: string }>();
   const [servicio, setServicio] = useState<Servicio | null | undefined>(undefined);
   const [profesionales, setProfesionales] = useState<Profesional[]>([]);
+  const [editando, setEditando] = useState(false);
 
-  useEffect(() => {
+  const cargar = useCallback(() => {
     fetch(`/api/agenda/${token}/servicios`)
       .then((r) => r.json())
       .then((body) => setServicio((body.servicios as Servicio[])?.find((s) => s.id === id) ?? null));
@@ -37,6 +38,10 @@ function Detalle() {
       .then((body) => setProfesionales(body.especialistas ?? []))
       .catch(() => {});
   }, [token, id]);
+
+  useEffect(() => {
+    cargar();
+  }, [cargar]);
 
   return (
     <div className="flex flex-col gap-5">
@@ -53,7 +58,22 @@ function Detalle() {
       ) : (
         <>
           <AmoreCard>
-            <AmoreScreenTitle title={servicio.nombre} action={<AmoreBadge tono={servicio.activo ? "success" : "neutral"}>{servicio.activo ? "Activo" : "Inactivo"}</AmoreBadge>} />
+            <AmoreScreenTitle
+              title={servicio.nombre}
+              action={
+                <div className="flex items-center gap-2">
+                  <AmoreBadge tono={servicio.activo ? "success" : "neutral"}>{servicio.activo ? "Activo" : "Inactivo"}</AmoreBadge>
+                  <button
+                    type="button"
+                    onClick={() => setEditando(true)}
+                    aria-label="Editar"
+                    className="flex size-8 shrink-0 items-center justify-center rounded-full text-mist active:bg-ink-2"
+                  >
+                    <Pencil className="size-4" />
+                  </button>
+                </div>
+              }
+            />
           </AmoreCard>
 
           <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
@@ -86,6 +106,19 @@ function Detalle() {
             </div>
           </div>
         </>
+      )}
+
+      {editando && servicio && (
+        <ServicioModal
+          token={token}
+          servicio={servicio}
+          profesionales={profesionales}
+          onClose={() => setEditando(false)}
+          onGuardado={() => {
+            setEditando(false);
+            cargar();
+          }}
+        />
       )}
     </div>
   );

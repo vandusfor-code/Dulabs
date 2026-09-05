@@ -225,19 +225,21 @@ export function amoreRouterFlow(): FlowDefinition {
       },
 
       // "Iniciar el proceso de reserva" (autorizado, alcance de esta fase):
-      // el portal de reservas de AMORE todavía no existe -- placeholder
-      // documentado, NUNCA un enlace inventado. Cuando exista (fase
-      // siguiente), este nodo se reemplaza por un mensaje con el enlace
-      // real al portal; el mecanismo de traspaso (transferir_soporte) es
-      // el mismo ya usado por Daniela/Solotalento, sin cambios.
+      // el portal de reservas de AMORE (/reservar/amore) YA existe y es
+      // real -- pero intenté enlazarlo directo desde este mensaje y
+      // Claim Security (lib/flow/external-claim-security.ts, regex de
+      // "reserv\w+|agend\w+|cita...") lo bloqueó de inmediato por
+      // appointment.reserved sin evidencia verificada (prueba real:
+      // "todos los mensajes estáticos pasan Claim Security", ver
+      // amore-router.flow.test.ts). Revertido a propósito -- conectar el
+      // enlace real requiere trabajar CON la lista de patrones "seguros"
+      // de ese motor (isPropositionClearlySafe), no forzarlo con un texto
+      // improvisado. Queda documentado como pendiente real, no arreglado.
       {
         id: "msg-camino-reserva",
         type: "message",
-        // "reservar"/"agendar" quedan bloqueados por Claim Security
-        // (afirmación externa appointment.reserved sin evidencia verificada
-        // -- ninguna cita se creó todavía en esta fase, correcto que no se
-        // pueda afirmar). Verificado con filterClaimSecuredEffects antes de
-        // fijar este texto, mismo criterio que solotalento.flow.ts.
+        // Verificado con filterClaimSecuredEffects antes de fijar este
+        // texto, mismo criterio que solotalento.flow.ts.
         config: {
           text: "💗 Perfecto. En un momento nuestro equipo se pondrá en contacto contigo para continuar. ¡Gracias por escribirnos!",
           messageRole: "informational",

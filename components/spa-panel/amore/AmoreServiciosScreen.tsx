@@ -1,28 +1,29 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Loader2, Search, Plus, Pencil, Sparkles } from "lucide-react";
 import { useAgenda } from "@/components/spa-panel/AgendaContext";
 import { formatearPrecioCop } from "@/lib/especialistas-flow-adaptador";
+import { ServicioModal } from "@/components/spa-panel/modals/ServicioModal";
 import { AmoreScreenTitle, AmoreCard, AmoreSearchInput, AmoreBadge, AmorePrimaryButton, AmoreEmptyState } from "./ui";
-import { useAmoreUi } from "./AmoreUiContext";
 import type { Servicio } from "@/app/agenda/[token]/servicios/page";
+import type { Profesional } from "@/app/agenda/[token]/profesionales/page";
 
-// AMORE (Fase 5, diseño visual completo, autorizado) — catálogo REAL de
-// AMORE (misma API de solo lectura ya existente, GET /api/agenda/[token]/
-// servicios), presentado con el design system móvil. "+ Nuevo servicio" y
-// "Editar" son solo visuales -- el CRUD (ServicioModal) es lógica funcional,
-// fuera de esta fase.
+// AMORE (Fase "sistema completo", autorizado) — catálogo REAL de AMORE.
+// "+ Nuevo" y "Editar" ahora abren ServicioModal (el mismo CRUD real que ya
+// usa Daniela, ver components/spa-panel/modals/ServicioModal.tsx) -- se
+// reskinea solo por estar dentro de .amore-scope, cero componente nuevo.
 export function AmoreServiciosScreen() {
   const { token } = useAgenda();
-  const { avisarProximamente } = useAmoreUi();
   const [servicios, setServicios] = useState<Servicio[] | null>(null);
+  const [profesionales, setProfesionales] = useState<Profesional[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busqueda, setBusqueda] = useState("");
   const [categoria, setCategoria] = useState<string | null>(null);
+  const [editando, setEditando] = useState<Servicio | null | "nuevo">(null);
 
-  useEffect(() => {
+  const cargarServicios = useCallback(() => {
     fetch(`/api/agenda/${token}/servicios`)
       .then((r) => r.json())
       .then((body) => {
@@ -31,6 +32,14 @@ export function AmoreServiciosScreen() {
       })
       .catch(() => setError("No se pudieron cargar los servicios"));
   }, [token]);
+
+  useEffect(() => {
+    cargarServicios();
+    fetch(`/api/agenda/${token}/especialistas`)
+      .then((r) => r.json())
+      .then((body) => setProfesionales(body.especialistas ?? []))
+      .catch(() => {});
+  }, [token, cargarServicios]);
 
   const categorias = useMemo(
     () => Array.from(new Set((servicios ?? []).map((s) => s.categoria).filter((c): c is string => Boolean(c)))),
@@ -53,7 +62,7 @@ export function AmoreServiciosScreen() {
         title="Servicios"
         subtitle="Catálogo real que verán tus clientas al reservar"
         action={
-          <AmorePrimaryButton onClick={avisarProximamente}>
+          <AmorePrimaryButton onClick={() => setEditando("nuevo")}>
             <Plus className="size-4" /> Nuevo
           </AmorePrimaryButton>
         }
@@ -110,7 +119,7 @@ export function AmoreServiciosScreen() {
               <AmoreBadge tono={s.activo ? "success" : "neutral"}>{s.activo ? "Activo" : "Inactivo"}</AmoreBadge>
               <button
                 type="button"
-                onClick={avisarProximamente}
+                onClick={() => setEditando(s)}
                 aria-label="Editar"
                 className="flex size-8 shrink-0 items-center justify-center rounded-full text-mist active:bg-ink-2"
               >
@@ -119,6 +128,19 @@ export function AmoreServiciosScreen() {
             </AmoreCard>
           ))}
         </div>
+      )}
+
+      {editando && (
+        <ServicioModal
+          token={token}
+          servicio={editando === "nuevo" ? null : editando}
+          profesionales={profesionales}
+          onClose={() => setEditando(null)}
+          onGuardado={() => {
+            setEditando(null);
+            cargarServicios();
+          }}
+        />
       )}
     </div>
   );

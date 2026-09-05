@@ -24,11 +24,19 @@ type AgendaCtx = {
   rechazar: (c: Cita) => void;
   completar: (c: Cita) => void;
   marcarNoShow: (c: Cita) => void;
+  /** Igual que rechazar/abrirCancelar pero sin pasar por el modal de Daniela -- usado por la agenda propia de AMORE, que ya muestra su propia confirmación inline. */
+  rechazarDirecto: (c: Cita, motivo?: string) => Promise<void>;
+  cancelarDirecto: (c: Cita, motivo?: string) => Promise<void>;
   abrirEditar: (c: Cita) => void;
   abrirReagendar: (c: Cita) => void;
   abrirCancelar: (c: Cita) => void;
   abrirDetalles: (c: Cita) => void;
   abrirNueva: (fecha?: Date) => void;
+  /** undefined = modal cerrado. Expuesto para que AMORE pueda montar su propio NewAppointmentModal (el mismo real de Daniela) desde el shell global. */
+  mostrarNueva: Date | null | undefined;
+  cerrarNueva: () => void;
+  /** Misma función real que ya usa NewAppointmentModal de Daniela -- expuesta para que la agenda propia de AMORE pueda montar ese mismo modal directamente. */
+  crearCita: ReturnType<typeof useAgendaData>["crearCita"];
 };
 
 const Ctx = createContext<AgendaCtx | null>(null);
@@ -110,11 +118,24 @@ export function AgendaProvider({ token, children }: { token: string; children: R
         setError(err instanceof Error ? err.message : "No se pudo marcar la cita como no asistida")
       );
     },
+    rechazarDirecto: (c, motivo) =>
+      ejecutarAccion(c.id, { accion: "rechazar", motivo }).catch((err) => {
+        setError(err instanceof Error ? err.message : "No se pudo rechazar la solicitud");
+        throw err;
+      }),
+    cancelarDirecto: (c, motivo) =>
+      ejecutarAccion(c.id, { accion: "cancelar", motivo }).catch((err) => {
+        setError(err instanceof Error ? err.message : "No se pudo cancelar la cita");
+        throw err;
+      }),
     abrirEditar: setEditando,
     abrirReagendar: setReagendando,
     abrirCancelar: (c) => setCancelando({ cita: c, modo: "cancelar" }),
     abrirDetalles: setDetalle,
     abrirNueva: (fecha) => setMostrarNueva(fecha ?? null),
+    mostrarNueva,
+    cerrarNueva: () => setMostrarNueva(undefined),
+    crearCita,
   };
 
   // AMORE (Fase 5, panel administrativo móvil, autorizado) — SOLO este

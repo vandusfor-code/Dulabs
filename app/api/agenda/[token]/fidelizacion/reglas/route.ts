@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import { resolverTenantDesdeToken } from "@/lib/agenda-admin-auth";
+import { resolverTenantDesdeToken, requiereAdministrador } from "@/lib/agenda-admin-auth";
 
 export const runtime = "nodejs";
 
@@ -46,4 +46,43 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
   }));
 
   return Response.json({ reglas: resultado });
+}
+
+type BodyRegla = { servicioId?: string; dias?: number; mensaje?: string };
+
+// Crea una regla nueva (autorizado) -- UNIQUE(id_tenant, servicio_id) en la
+// tabla es lo que impide dos reglas para el mismo servicio, no una
+// comprobación aparte acá. No inventa ningún mensaje: si no se manda uno,
+// rechaza -- la plantilla siempre la escribe el negocio.
+export async function POST(request: NextRequest, { params }: { params: Promise<{ token: string }> }) {
+  const { token } = await params;
+  const supabase = supabaseAdmin();
+  const tenant = await resolverTenantDesdeToken(supabase, token);
+  if (!tenant.ok) return Response.json({ error: tenant.error }, { status: tenant.status });
+  const permiso = requiereAdministrador(tenant);
+  if (!permiso.ok) return Response.json({ error: permiso.error }, { status: permiso.status });
+
+  let body: BodyRegla;
+  try {
+    body = await request.json();
+  } catch {
+    return Response.json({ error: "JSON inválido" }, { status: 400 });
+  }
+  if (!body.servicioId) return Response.json({ error: "Falta 'servicioId'" }, { status: 400 });
+  if (!Number.isInteger(body.dias) || (body.dias ?? 0) <= 0) {
+    return Response.json({ error: "'dias' debe ser un número entero mayor a 0" }, { status: 400 });
+  }
+  if (!body.mensaje?.trim()) return Response.json({ error: "Falta 'mensaje'" }, { status: 400 });
+
+  const { data, error } = await supabase
+    .from("dulabs_fidelizacion_reglas")
+    .insert({ id_tenant: tenant.idTenant, servicio_id: body.servicioId, dias: body.dias, mensaje: body.mensaje.trim() })
+    .select("id")
+    .single();
+
+  if (error) {
+    if (error.code === "23505") return Response.json({ error: "Ya existe una regla para ese servicio" }, { status: 409 });
+    return Response.json({ error: "No se pudo crear la regla" }, { status: 500 });
+  }
+  return Response.json({ ok: true, id: data!.id });
 }

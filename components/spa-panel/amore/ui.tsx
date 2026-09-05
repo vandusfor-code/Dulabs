@@ -198,14 +198,27 @@ export function AmoreDivider() {
   return <div className="h-px w-full bg-edge" />;
 }
 
-export function AmoreSwitch({ activo, onChange }: { activo: boolean; onChange: (v: boolean) => void }) {
+export function AmoreSwitch({
+  activo,
+  onChange,
+  disabled,
+}: {
+  activo: boolean;
+  onChange: (v: boolean) => void;
+  /** Evita doble envío mientras la persistencia real está en curso -- opcional, no cambia el aspecto visual. */
+  disabled?: boolean;
+}) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={activo}
+      disabled={disabled}
       onClick={() => onChange(!activo)}
-      className={cn("relative h-7 w-12 shrink-0 rounded-full transition-colors", activo ? "bg-lime" : "bg-ink-2")}
+      className={cn(
+        "relative h-7 w-12 shrink-0 rounded-full transition-colors disabled:opacity-50",
+        activo ? "bg-lime" : "bg-ink-2"
+      )}
     >
       <span
         className={cn(

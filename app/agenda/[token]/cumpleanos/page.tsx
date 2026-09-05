@@ -1,19 +1,22 @@
 "use client";
 
-import { useState } from "react";
-import { Cake, MessageCircle } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { Cake, Loader2 } from "lucide-react";
+import { useAgenda } from "@/components/spa-panel/AgendaContext";
 import { AmoreOnlyScreen } from "@/components/spa-panel/amore/AmoreOnlyScreen";
 import { AmoreCard, AmoreScreenTitle, AmoreSectionTitle, AmoreSegmentedTabs, AmoreAvatar, AmoreEmptyState, AmoreSwitch } from "@/components/spa-panel/amore/ui";
-import { useAmoreUi } from "@/components/spa-panel/amore/AmoreUiContext";
-import { birthdaysMock, cumpleanosConfigMock } from "@/components/spa-panel/amore/amore-cumpleanos-mock";
 
 type Filtro = "hoy" | "semana" | "mes";
 
-// AMORE (Fase 5, diseño visual completo, autorizado) — SOLO diseño visual.
-// Los cumpleaños mostrados son mock (ver amore-cumpleanos-mock.ts); el
-// día/mes real de cada clienta ya vive en dulabs_clientes_conocidos, pero
-// conectar esta pantalla a ese dato y automatizar el envío es lógica
-// funcional para una fase posterior. Ningún mensaje se envía aquí.
+type Cumple = { id: number; nombre: string; esHoy: boolean; diasHasta: number; fecha: string };
+type Config = { activo: boolean; mensaje: string; horaEnvio: string };
+
+// AMORE (Fase "sistema completo", autorizado) — cumpleaños REALES
+// (dulabs_clientes_conocidos) y configuración REAL (dulabs_cumpleanos_config,
+// el mismo motor de Fase 6A/6B). El switch persiste de verdad. NO se envía
+// ningún mensaje desde acá -- el envío real llega cuando el número dedicado
+// de AMORE esté conectado por QR; por eso no hay botón de "enviar" por
+// clienta (sería un botón sin acción real permitida todavía).
 export default function CumpleanosPage() {
   return (
     <AmoreOnlyScreen>
@@ -23,16 +26,52 @@ export default function CumpleanosPage() {
 }
 
 function CumpleanosContenido() {
-  const { avisarProximamente } = useAmoreUi();
+  const { token } = useAgenda();
   const [filtro, setFiltro] = useState<Filtro>("hoy");
-  const [activo, setActivo] = useState(cumpleanosConfigMock.activo);
+  const [cumpleanos, setCumpleanos] = useState<Cumple[] | null>(null);
+  const [config, setConfig] = useState<Config | null>(null);
+  const [guardando, setGuardando] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const deHoy = birthdaysMock.filter((c) => c.esHoy);
-  const proximos = birthdaysMock.filter((c) => !c.esHoy);
+  const cargar = useCallback(() => {
+    fetch(`/api/agenda/${token}/cumpleanos`)
+      .then((r) => r.json())
+      .then((body) => (body.error ? setError(body.error) : setCumpleanos(body.cumpleanos)))
+      .catch(() => setError("No se pudieron cargar los cumpleaños"));
+    fetch(`/api/agenda/${token}/cumpleanos/config`)
+      .then((r) => r.json())
+      .then((body) => setConfig(body.config))
+      .catch(() => {});
+  }, [token]);
+
+  useEffect(() => {
+    cargar();
+  }, [cargar]);
+
+  async function actualizarActivo(activo: boolean) {
+    setGuardando(true);
+    try {
+      const res = await fetch(`/api/agenda/${token}/cumpleanos/config`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ activo }),
+      });
+      const body = await res.json();
+      if (body.error) setError(body.error);
+      else setConfig(body.config);
+    } finally {
+      setGuardando(false);
+    }
+  }
+
+  const deHoy = (cumpleanos ?? []).filter((c) => c.esHoy);
+  const proximos = (cumpleanos ?? []).filter((c) => !c.esHoy && (filtro === "semana" ? c.diasHasta <= 7 : c.diasHasta <= 31));
 
   return (
     <div className="flex flex-col gap-5">
       <AmoreScreenTitle title="Cumpleaños" subtitle="Detecta los cumpleaños de tus clientas" />
+
+      {error && <p className="text-sm text-danger-text">{error}</p>}
 
       <AmoreSegmentedTabs
         opciones={[
@@ -44,76 +83,72 @@ function CumpleanosContenido() {
         onChange={setFiltro}
       />
 
-      <div>
-        <AmoreSectionTitle title="Cumpleaños de hoy" />
-        <div className="mt-2.5 flex flex-col gap-2.5">
-          {deHoy.length === 0 ? (
-            <AmoreEmptyState icono={<Cake className="size-6 text-mist" />} mensaje="Nadie cumple años hoy." />
-          ) : (
-            deHoy.map((c) => (
-              <AmoreCard key={c.id} className="flex items-center gap-3 p-3.5">
-                <AmoreAvatar nombre={c.nombre} />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium text-fg">{c.nombre}</p>
-                  <p className="truncate text-xs text-mist">{c.fecha}</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={avisarProximamente}
-                  aria-label="Enviar mensaje"
-                  className="flex size-9 shrink-0 items-center justify-center rounded-full bg-lime-soft text-lime-text"
-                >
-                  <MessageCircle className="size-4" />
-                </button>
-              </AmoreCard>
-            ))
-          )}
+      {!cumpleanos ? (
+        <div className="flex justify-center py-6">
+          <Loader2 className="size-5 animate-spin text-mist" />
         </div>
-      </div>
-
-      {(filtro === "semana" || filtro === "mes") && proximos.length > 0 && (
-        <div>
-          <AmoreSectionTitle title="Próximos cumpleaños" />
-          <div className="mt-2.5 flex flex-col gap-2.5">
-            {proximos.map((c) => (
-              <AmoreCard key={c.id} className="flex items-center gap-3 p-3.5">
-                <AmoreAvatar nombre={c.nombre} />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium text-fg">{c.nombre}</p>
-                  <p className="truncate text-xs text-mist">{c.fecha}</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={avisarProximamente}
-                  aria-label="Enviar mensaje"
-                  className="flex size-9 shrink-0 items-center justify-center rounded-full bg-lime-soft text-lime-text"
-                >
-                  <MessageCircle className="size-4" />
-                </button>
-              </AmoreCard>
-            ))}
+      ) : (
+        <>
+          <div>
+            <AmoreSectionTitle title="Cumpleaños de hoy" />
+            <div className="mt-2.5 flex flex-col gap-2.5">
+              {deHoy.length === 0 ? (
+                <AmoreEmptyState icono={<Cake className="size-6 text-mist" />} mensaje="Nadie cumple años hoy." />
+              ) : (
+                deHoy.map((c) => (
+                  <AmoreCard key={c.id} className="flex items-center gap-3 p-3.5">
+                    <AmoreAvatar nombre={c.nombre} />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium text-fg">{c.nombre}</p>
+                      <p className="truncate text-xs text-mist">Hoy</p>
+                    </div>
+                  </AmoreCard>
+                ))
+              )}
+            </div>
           </div>
-        </div>
+
+          {(filtro === "semana" || filtro === "mes") && proximos.length > 0 && (
+            <div>
+              <AmoreSectionTitle title="Próximos cumpleaños" />
+              <div className="mt-2.5 flex flex-col gap-2.5">
+                {proximos.map((c) => (
+                  <AmoreCard key={c.id} className="flex items-center gap-3 p-3.5">
+                    <AmoreAvatar nombre={c.nombre} />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium text-fg">{c.nombre}</p>
+                      <p className="truncate text-xs text-mist">{c.fecha}</p>
+                    </div>
+                  </AmoreCard>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
       )}
 
-      <AmoreCard>
-        <AmoreSectionTitle title="Configuración de cumpleaños" />
-        <div className="mt-3 flex items-center justify-between gap-3">
-          <div>
-            <p className="text-sm font-medium text-fg">Enviar mensaje automático</p>
-            <p className="text-xs text-mist">Próximamente se enviará por WhatsApp</p>
+      {config && (
+        <AmoreCard>
+          <AmoreSectionTitle title="Configuración de cumpleaños" />
+          <div className="mt-3 flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-medium text-fg">Enviar mensaje automático</p>
+              <p className="text-xs text-mist">Se activará el envío real cuando WhatsApp QR esté conectado</p>
+            </div>
+            <AmoreSwitch activo={config.activo} onChange={actualizarActivo} disabled={guardando} />
           </div>
-          <AmoreSwitch activo={activo} onChange={setActivo} />
-        </div>
-        <div className="mt-4">
-          <p className="mb-1.5 text-xs font-medium text-mist">Mensaje</p>
-          <p className="rounded-2xl border border-edge bg-ink px-3.5 py-2.5 text-sm text-fg">{cumpleanosConfigMock.mensaje}</p>
-        </div>
-        <div className="mt-3 flex items-center justify-between">
-          <p className="text-xs font-medium text-mist">Hora de envío</p>
-          <span className="rounded-full border border-edge bg-ink px-3 py-1.5 text-sm font-medium text-fg">{cumpleanosConfigMock.horaEnvio}</span>
-        </div>
-      </AmoreCard>
+          <div className="mt-4">
+            <p className="mb-1.5 text-xs font-medium text-mist">Mensaje</p>
+            <p className="whitespace-pre-line rounded-2xl border border-edge bg-ink px-3.5 py-2.5 text-sm text-fg">
+              {config.mensaje || "Sin mensaje configurado"}
+            </p>
+          </div>
+          <div className="mt-3 flex items-center justify-between">
+            <p className="text-xs font-medium text-mist">Hora de envío</p>
+            <span className="rounded-full border border-edge bg-ink px-3 py-1.5 text-sm font-medium text-fg">{config.horaEnvio}</span>
+          </div>
+        </AmoreCard>
+      )}
     </div>
   );
 }
