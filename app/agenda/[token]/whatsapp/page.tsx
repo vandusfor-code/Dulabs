@@ -185,6 +185,9 @@ function WhatsappContenido() {
           <AmoreSecondaryButton onClick={conectar} disabled={cargando} className="w-full">
             {estado.codigoVinculacion ? "Generar otro código" : "Actualizar código QR"}
           </AmoreSecondaryButton>
+          <AmoreSecondaryButton onClick={desconectar} disabled={cargando} className="w-full !bg-transparent !text-mist">
+            Cancelar
+          </AmoreSecondaryButton>
         </AmoreCard>
       ) : (
         <>

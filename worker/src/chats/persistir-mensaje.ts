@@ -62,15 +62,43 @@ function extensionPara(mimeType: string): string {
   return "bin";
 }
 
-export async function persistirMensajeEntrante(supabase: SupabaseClient, idTenant: string, msg: WAMessage): Promise<void> {
+// Bot real (autorizado) — si el tenant tiene un flow PUBLICADO, existe un
+// respondedor automático real (ver lib/whatsapp-qr-bot.ts en el repo de
+// Next, invocado desde socket-baileys.ts). Una conversación NUEVA nace
+// entonces en "automatico" -- ya no sería falso, hay un bot real que la va a
+// atender. Si el tenant NO tiene ningún flow publicado, sigue naciendo en
+// "requiere_atencion" (comportamiento original, honesto para ese caso).
+async function tenantTieneFlowPublicado(supabase: SupabaseClient, idTenant: string): Promise<boolean> {
+  const { data } = await supabase.from("dulabs_flows").select("id").eq("tenant_id", idTenant).eq("status", "published").limit(1);
+  return Boolean(data && data.length > 0);
+}
+
+export type ResultadoPersistencia = {
+  conversacionId: number;
+  telefono: string;
+  entrante: boolean;
+  tipo: "texto" | "audio";
+  texto: string | null;
+  estadoConversacion: string;
+} | null;
+
+/** Resuelve el origen real ("automatico" si lo mandó el bot) de un mensaje SALIENTE ya enviado, por su whatsapp_message_id -- ver socket-baileys.ts, que registra ahí los envíos del bot antes de que lleguen de vuelta por este mismo evento. Sin registro -- incluido cualquier envío manual de Jessica -- se asume "humano", el comportamiento de siempre. */
+export type ResolverOrigenSaliente = (whatsappMessageId: string) => "automatico" | undefined;
+
+export async function persistirMensajeEntrante(
+  supabase: SupabaseClient,
+  idTenant: string,
+  msg: WAMessage,
+  resolverOrigenSaliente?: ResolverOrigenSaliente
+): Promise<ResultadoPersistencia> {
   const jid = msg.key.remoteJid;
-  if (!jid || jid.endsWith("@g.us") || jid === "status@broadcast") return; // grupos/estados fuera de alcance
-  if (!msg.message) return; // protocolMessage, reacciones, recibos, etc. -- nada que mostrar
+  if (!jid || jid.endsWith("@g.us") || jid === "status@broadcast") return null; // grupos/estados fuera de alcance
+  if (!msg.message) return null; // protocolMessage, reacciones, recibos, etc. -- nada que mostrar
 
   const telefono = telefonoDesdeJid(jid);
   const entrante = !msg.key.fromMe;
   const contenido = await extraerContenido(msg);
-  if (!contenido) return;
+  if (!contenido) return null;
 
   const { data: conversacionExistente } = await supabase
     .from(TABLA_CONVERSACIONES)
@@ -80,26 +108,25 @@ export async function persistirMensajeEntrante(supabase: SupabaseClient, idTenan
     .maybeSingle();
 
   let conversacionId: number;
+  let estadoConversacion: string;
   if (conversacionExistente) {
     conversacionId = conversacionExistente.id as number;
-    // Un mensaje entrante nuevo sobre una conversación "automatico" pasa a
-    // "requiere_atencion" -- ningún respondedor automático real está
-    // conectado a este canal todavía (ver comentario de la migración), así
-    // que decir "automatico" seguiría siendo falso. "manual" y "archivada"
-    // no se tocan solas: Jessica ya tomó o cerró esa conversación a propósito.
-    const nuevoEstado =
-      entrante && conversacionExistente.estado === "automatico" ? "requiere_atencion" : conversacionExistente.estado;
+    // Un mensaje entrante nuevo sobre una conversación "automatico" se
+    // queda en "automatico" -- el bot real la sigue atendiendo. "manual",
+    // "requiere_atencion" y "archivada" no se tocan solas: Jessica ya tomó
+    // (o cerró, o está esperando tomar) esa conversación a propósito.
+    estadoConversacion = conversacionExistente.estado as string;
     await supabase
       .from(TABLA_CONVERSACIONES)
       .update({
         ultimo_mensaje: contenido.tipo === "texto" ? contenido.texto : "🎤 Audio",
         ultima_actividad: new Date().toISOString(),
-        estado: nuevoEstado,
         no_leidos: entrante ? (conversacionExistente.no_leidos as number) + 1 : conversacionExistente.no_leidos,
         updated_at: new Date().toISOString(),
       })
       .eq("id", conversacionId);
   } else {
+    estadoConversacion = (await tenantTieneFlowPublicado(supabase, idTenant)) ? "automatico" : "requiere_atencion";
     const { data: nueva } = await supabase
       .from(TABLA_CONVERSACIONES)
       .insert({
@@ -109,11 +136,11 @@ export async function persistirMensajeEntrante(supabase: SupabaseClient, idTenan
         ultimo_mensaje: contenido.tipo === "texto" ? contenido.texto : "🎤 Audio",
         ultima_actividad: new Date().toISOString(),
         no_leidos: entrante ? 1 : 0,
-        estado: "requiere_atencion",
+        estado: estadoConversacion,
       })
       .select("id")
       .single();
-    if (!nueva) return;
+    if (!nueva) return null;
     conversacionId = nueva.id as number;
   }
 
@@ -131,6 +158,7 @@ export async function persistirMensajeEntrante(supabase: SupabaseClient, idTenan
   }
 
   const timestampMs = msg.messageTimestamp ? Number(msg.messageTimestamp) * 1000 : Date.now();
+  const origen = !entrante && msg.key.id ? (resolverOrigenSaliente?.(msg.key.id) ?? "humano") : "humano";
   await supabase.from(TABLA_MENSAJES).insert({
     id_tenant: idTenant,
     conversacion_id: conversacionId,
@@ -141,8 +169,17 @@ export async function persistirMensajeEntrante(supabase: SupabaseClient, idTenan
     mime_type: contenido.tipo === "audio" ? contenido.mimeType : null,
     duracion_seg: contenido.tipo === "audio" ? contenido.duracionSeg : null,
     whatsapp_message_id: msg.key.id ?? null,
-    origen: "humano",
+    origen,
     estado: "enviado",
     enviado_en: new Date(timestampMs).toISOString(),
   });
+
+  return {
+    conversacionId,
+    telefono,
+    entrante,
+    tipo: contenido.tipo,
+    texto: contenido.tipo === "texto" ? contenido.texto : null,
+    estadoConversacion,
+  };
 }

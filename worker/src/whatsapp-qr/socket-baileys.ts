@@ -3,6 +3,7 @@ import makeWASocket, { Browsers, DisconnectReason, fetchLatestBaileysVersion, ma
 import { crearAuthStateSupabase } from "./auth-store.js";
 import type { EventoConexion, FabricaSocket, SocketWhatsApp } from "./tipos.js";
 import { persistirMensajeEntrante } from "../chats/persistir-mensaje.js";
+import { invocarBotWhatsAppQR } from "../bot/invocar-bot.js";
 import { logErrorControlado } from "../logging.js";
 
 function soloDigitos(valor: string): string {
@@ -35,6 +36,20 @@ export function crearFabricaSocketBaileys(supabase: SupabaseClient): FabricaSock
     });
 
     let handler: ((evento: EventoConexion) => void) | null = null;
+
+    // Bot real (autorizado) — el bot y Jessica mandan por el MISMO
+    // sock.sendMessage; Baileys reporta ambos envíos como "fromMe" por el
+    // mismo evento messages.upsert, sin ninguna marca que distinga quién lo
+    // mandó. Este registro efímero (solo en memoria, se autolimpia al
+    // consumirse) es lo único que permite que persistirMensajeEntrante
+    // grave el origen real del eco saliente -- nunca se persiste ni se lee
+    // de ningún lado más.
+    const origenPorMensajeId = new Map<string, "automatico">();
+    function resolverOrigenSaliente(id: string): "automatico" | undefined {
+      const origen = origenPorMensajeId.get(id);
+      if (origen) origenPorMensajeId.delete(id);
+      return origen;
+    }
 
     if (modoCodigoVinculacion && telefono) {
       // Deliberadamente SIN await: requestPairingCode hace I/O de red real
@@ -80,9 +95,22 @@ export function crearFabricaSocketBaileys(supabase: SupabaseClient): FabricaSock
     // registra con la etiqueta fija de siempre.
     sock.ev.on("messages.upsert", ({ messages }) => {
       for (const msg of messages) {
-        persistirMensajeEntrante(supabase, idTenant, msg).catch(() => {
-          logErrorControlado(idTenant, "persistir_mensaje_chat_fallo");
-        });
+        persistirMensajeEntrante(supabase, idTenant, msg, resolverOrigenSaliente)
+          .then((resultado) => {
+            // Bot real (autorizado) — solo se invoca para texto entrante
+            // real, y solo si la conversación está en "automatico" (nunca
+            // si Jessica ya la tomó a mano, ni si está archivada/esperando
+            // atención humana). msg.key.id es el wamid real de Baileys,
+            // usado como eventId idempotente por el propio Flow Engine.
+            if (resultado?.entrante && resultado.tipo === "texto" && resultado.texto && resultado.estadoConversacion === "automatico" && msg.key.id) {
+              invocarBotWhatsAppQR({ idTenant, telefono: resultado.telefono, texto: resultado.texto, wamid: msg.key.id }).catch(() => {
+                logErrorControlado(idTenant, "invocacion_bot_fallo");
+              });
+            }
+          })
+          .catch(() => {
+            logErrorControlado(idTenant, "persistir_mensaje_chat_fallo");
+          });
       }
     });
 
@@ -90,9 +118,10 @@ export function crearFabricaSocketBaileys(supabase: SupabaseClient): FabricaSock
       onEvento(cb) {
         handler = cb;
       },
-      async enviarMensaje(telefono, mensaje) {
+      async enviarMensaje(telefono, mensaje, origen) {
         const jid = `${soloDigitos(telefono)}@s.whatsapp.net`;
-        await sock.sendMessage(jid, { text: mensaje });
+        const enviado = await sock.sendMessage(jid, { text: mensaje });
+        if (origen === "automatico" && enviado?.key.id) origenPorMensajeId.set(enviado.key.id, "automatico");
       },
       async enviarAudio(telefono, audio, mimeType) {
         const jid = `${soloDigitos(telefono)}@s.whatsapp.net`;

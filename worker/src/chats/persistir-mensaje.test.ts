@@ -38,6 +38,7 @@ describe(
     let supabase: SupabaseClient;
     let migracionLista = false;
     const tenantsCreados: string[] = [];
+    const flowsCreados: string[] = [];
 
     before(async () => {
       if (!HAS_SUPABASE) return;
@@ -47,8 +48,9 @@ describe(
     });
 
     after(async () => {
-      if (!HAS_SUPABASE || !migracionLista || tenantsCreados.length === 0) return;
-      await supabase.from("dulabs_chat_conversaciones").delete().in("id_tenant", tenantsCreados);
+      if (!HAS_SUPABASE || !migracionLista) return;
+      if (tenantsCreados.length > 0) await supabase.from("dulabs_chat_conversaciones").delete().in("id_tenant", tenantsCreados);
+      if (flowsCreados.length > 0) await supabase.from("dulabs_flows").delete().in("id", flowsCreados);
     });
 
     function nuevoTenant(): string {
@@ -121,7 +123,7 @@ describe(
       assert.equal(data![0]!.telefono, "573000000005");
     });
 
-    it("una conversación en 'automatico' pasa a 'requiere_atencion' al recibir un mensaje nuevo", async (t) => {
+    it("una conversación en 'automatico' se queda en 'automatico' al recibir un mensaje nuevo (el bot real la sigue atendiendo)", async (t) => {
       if (!migracionLista) return t.skip("falta la migración 20260911000000_chats_whatsapp.sql");
       const idTenant = nuevoTenant();
       const jid = "573000000006@s.whatsapp.net";
@@ -130,6 +132,29 @@ describe(
 
       await persistirMensajeEntrante(supabase, idTenant, mensajeTexto({ jid, texto: "Segundo" }));
       const conv = await conversacionDe(idTenant, "573000000006");
+      assert.equal(conv!.estado, "automatico");
+    });
+
+    it("una conversación NUEVA nace en 'automatico' si el tenant tiene un flow publicado", async (t) => {
+      if (!migracionLista) return t.skip("falta la migración 20260911000000_chats_whatsapp.sql");
+      const idTenant = nuevoTenant();
+      const { data: flow } = await supabase
+        .from("dulabs_flows")
+        .insert({ tenant_id: idTenant, slug: `prueba-${idTenant}`, name: "Prueba", status: "published" })
+        .select("id")
+        .single();
+      flowsCreados.push(flow!.id as string);
+
+      await persistirMensajeEntrante(supabase, idTenant, mensajeTexto({ jid: "573000000010@s.whatsapp.net", texto: "Hola" }));
+      const conv = await conversacionDe(idTenant, "573000000010");
+      assert.equal(conv!.estado, "automatico");
+    });
+
+    it("una conversación NUEVA nace en 'requiere_atencion' si el tenant NO tiene ningún flow publicado", async (t) => {
+      if (!migracionLista) return t.skip("falta la migración 20260911000000_chats_whatsapp.sql");
+      const idTenant = nuevoTenant();
+      await persistirMensajeEntrante(supabase, idTenant, mensajeTexto({ jid: "573000000011@s.whatsapp.net", texto: "Hola" }));
+      const conv = await conversacionDe(idTenant, "573000000011");
       assert.equal(conv!.estado, "requiere_atencion");
     });
 

@@ -72,8 +72,14 @@ export async function enviarMensajeWhatsApp(params: {
   tenantId: string;
   telefono: string;
   mensaje: string;
+  /** Bot real (autorizado) — marca este envío como generado por el Flow Engine (ver lib/whatsapp-qr-bot.ts), para que el worker persista el eco saliente con el origen real en vez de "humano". Omitido = comportamiento de siempre (un envío manual real). */
+  origen?: "automatico";
 }): Promise<RespuestaWorker<{ ok: true }>> {
-  return llamarWorker<{ ok: true }>(params.tenantId, "enviar", "POST", { telefono: params.telefono, mensaje: params.mensaje });
+  return llamarWorker<{ ok: true }>(params.tenantId, "enviar", "POST", {
+    telefono: params.telefono,
+    mensaje: params.mensaje,
+    ...(params.origen ? { origen: params.origen } : {}),
+  });
 }
 
 // Chats AMORE (autorizado) — envía una nota de audio real. El mensaje

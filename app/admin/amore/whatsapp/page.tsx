@@ -180,6 +180,14 @@ function WhatsappContenido() {
             >
               {estado.codigoVinculacion ? "Generar otro código" : "Actualizar código QR"}
             </button>
+            <button
+              type="button"
+              onClick={desconectar}
+              disabled={cargando}
+              className="w-full rounded-xl py-2.5 text-sm font-medium text-mist disabled:opacity-50"
+            >
+              Cancelar
+            </button>
           </div>
         ) : (
           <div className="flex flex-col gap-4">

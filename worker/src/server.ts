@@ -88,7 +88,7 @@ export function crearServidor(deps: DependenciasServidor) {
       }
 
       if (accion === "enviar" && req.method === "POST") {
-        let cuerpo: { telefono?: string; mensaje?: string };
+        let cuerpo: { telefono?: string; mensaje?: string; origen?: "automatico" };
         try {
           cuerpo = JSON.parse(await leerCuerpo(req));
         } catch {
@@ -100,7 +100,7 @@ export function crearServidor(deps: DependenciasServidor) {
           return;
         }
         try {
-          await enviarPorWhatsAppQR(idTenant, cuerpo.telefono, cuerpo.mensaje);
+          await enviarPorWhatsAppQR(idTenant, cuerpo.telefono, cuerpo.mensaje, cuerpo.origen === "automatico" ? "automatico" : undefined);
           enviarJson(res, 200, { ok: true });
         } catch {
           logErrorControlado(idTenant, "envio_sin_sesion_activa");

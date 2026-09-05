@@ -27,7 +27,8 @@ export type EventoConexion =
 
 export interface SocketWhatsApp {
   onEvento(cb: (evento: EventoConexion) => void): void;
-  enviarMensaje(telefono: string, mensaje: string): Promise<void>;
+  /** `origen="automatico"` marca este envío como generado por el bot del Flow Engine (ver bot/invocar-bot.ts) -- se usa para que el eco de messages.upsert se persista con el origen real, no siempre "humano". */
+  enviarMensaje(telefono: string, mensaje: string, origen?: "automatico"): Promise<void>;
   /** Chats AMORE (autorizado) — envía una nota de audio real. El propio evento messages.upsert (ver socket-baileys.ts) persiste este mismo mensaje como saliente, así que esta función no inserta ninguna fila -- solo manda el audio real por WhatsApp. */
   enviarAudio(telefono: string, audio: Buffer, mimeType: string): Promise<void>;
   cerrar(): Promise<void>;

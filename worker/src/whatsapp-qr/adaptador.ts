@@ -10,12 +10,12 @@ import { obtenerConexionActiva } from "./manager.js";
 // adaptadores simulados/mock de las Fases 6-8. Expuesto vía POST
 // /tenants/:idTenant/enviar (ver server.ts), pero nada llama esa ruta desde
 // un cron ni desde ningún motor en esta fase.
-export async function enviarPorWhatsAppQR(idTenant: string, telefono: string, mensaje: string): Promise<void> {
+export async function enviarPorWhatsAppQR(idTenant: string, telefono: string, mensaje: string, origen?: "automatico"): Promise<void> {
   const socket = obtenerConexionActiva(idTenant);
   if (!socket) {
     throw new Error(`El tenant ${idTenant} no tiene una sesión de WhatsApp QR conectada`);
   }
-  await socket.enviarMensaje(telefono, mensaje);
+  await socket.enviarMensaje(telefono, mensaje, origen);
 }
 
 // Chats AMORE (autorizado) — mismo criterio exacto que enviarPorWhatsAppQR,
