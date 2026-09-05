@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { randomUUID } from "node:crypto";
-import { downloadMediaMessage, type WAMessage } from "@whiskeysockets/baileys";
+import { downloadMediaMessage, jidNormalizedUser, type WAMessage } from "@whiskeysockets/baileys";
 import { logErrorControlado } from "../logging.js";
 
 const BUCKET = "chats-media";
@@ -17,8 +17,18 @@ function soloDigitos(valor: string): string {
   return valor.replace(/\D/g, "");
 }
 
+// HALLAZGO REAL (verificado en producción, envío del bot con timeout de
+// 30s) — un JID real de multi-dispositivo viene como
+// "573148127388:26@s.whatsapp.net" (":26" es el id del dispositivo). El
+// código anterior (jid.split("@")[0] + soloDigitos) pegaba esos dígitos al
+// número real ("57314812738826"), guardando un teléfono inválido -- se
+// veía, se guardaba, pero nunca se le podía volver a enviar nada (Baileys
+// se quedaba esperando un ack que nunca llega). jidNormalizedUser (de
+// Baileys mismo) es la forma correcta de quitar el sufijo de dispositivo
+// antes de extraer los dígitos.
 function telefonoDesdeJid(jid: string): string {
-  return soloDigitos(jid.split("@")[0] ?? jid);
+  const normalizado = jidNormalizedUser(jid) || jid;
+  return soloDigitos(normalizado.split("@")[0] ?? normalizado);
 }
 
 type ContenidoExtraido =

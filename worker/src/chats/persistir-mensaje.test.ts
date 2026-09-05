@@ -96,6 +96,14 @@ describe(
       assert.equal(conv!.ultimo_mensaje, "Tres");
     });
 
+    it("bug real (envío del bot con timeout de 30s): un JID de multi-dispositivo (\":26\") guarda el teléfono limpio, sin el id de dispositivo pegado", async (t) => {
+      if (!migracionLista) return t.skip("falta la migración 20260911000000_chats_whatsapp.sql");
+      const idTenant = nuevoTenant();
+      await persistirMensajeEntrante(supabase, idTenant, mensajeTexto({ jid: "573000000009:26@s.whatsapp.net", texto: "Hola" }));
+      const conv = await conversacionDe(idTenant, "573000000009");
+      assert.ok(conv, "debe guardar el teléfono real (573000000009), no uno con el id de dispositivo pegado");
+    });
+
     it("un mensaje saliente (fromMe) nunca incrementa no_leidos", async (t) => {
       if (!migracionLista) return t.skip("falta la migración 20260911000000_chats_whatsapp.sql");
       const idTenant = nuevoTenant();
