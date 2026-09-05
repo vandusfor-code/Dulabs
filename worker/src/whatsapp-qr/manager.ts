@@ -24,6 +24,7 @@ type FilaSesion = {
   numero_conectado: string | null;
   conectado_en: string | null;
   qr_actual: string | null;
+  codigo_vinculacion: string | null;
 };
 
 async function upsertEstado(
@@ -35,6 +36,8 @@ async function upsertEstado(
     conectado_en: string | null;
     qr_actual: string | null;
     qr_generado_en: string | null;
+    codigo_vinculacion: string | null;
+    codigo_generado_en: string | null;
     ultimo_error: string | null;
     creds: null;
     claves: Record<string, never>;
@@ -53,14 +56,14 @@ async function upsertEstado(
 export async function obtenerEstadoPublico(supabase: SupabaseClient, idTenant: string): Promise<EstadoPublico> {
   const { data, error } = await supabase
     .from(TABLA)
-    .select("estado, numero_conectado, conectado_en, qr_actual")
+    .select("estado, numero_conectado, conectado_en, qr_actual, codigo_vinculacion")
     .eq("id_tenant", idTenant)
     .maybeSingle<FilaSesion>();
 
   if (error) logErrorControlado(idTenant, "consulta_estado_fallo");
 
   if (!data) {
-    return { idTenant, estado: "desconectado", numeroConectado: null, conectadoEn: null, qr: null };
+    return { idTenant, estado: "desconectado", numeroConectado: null, conectadoEn: null, qr: null, codigoVinculacion: null };
   }
   return {
     idTenant,
@@ -68,6 +71,7 @@ export async function obtenerEstadoPublico(supabase: SupabaseClient, idTenant: s
     numeroConectado: data.numero_conectado,
     conectadoEn: data.conectado_en,
     qr: data.qr_actual,
+    codigoVinculacion: data.codigo_vinculacion,
   };
 }
 
@@ -88,6 +92,19 @@ async function manejarEvento(
       estado: "conectando",
       qr_actual: qrImagen,
       qr_generado_en: new Date().toISOString(),
+      // Mutuamente excluyente con el código de vinculación -- una conexión
+      // en curso usa un solo mecanismo a la vez.
+      codigo_vinculacion: null,
+    });
+    return;
+  }
+
+  if (evento.tipo === "codigo_vinculacion") {
+    await upsertEstado(supabase, idTenant, {
+      estado: "conectando",
+      codigo_vinculacion: evento.codigo,
+      codigo_generado_en: new Date().toISOString(),
+      qr_actual: null,
     });
     return;
   }
@@ -98,6 +115,7 @@ async function manejarEvento(
       numero_conectado: evento.numero,
       conectado_en: new Date().toISOString(),
       qr_actual: null,
+      codigo_vinculacion: null,
       ultimo_error: null,
     });
     return;
@@ -113,6 +131,7 @@ async function manejarEvento(
       numero_conectado: null,
       conectado_en: null,
       qr_actual: null,
+      codigo_vinculacion: null,
       ultimo_error: evento.error ? "desconexion_no_recuperable" : null,
     });
     return;
@@ -127,19 +146,22 @@ async function manejarEvento(
 
 // Idempotente: si el tenant ya tiene una conexión activa en memoria
 // (conectando o conectada), no abre una segunda -- devuelve el estado actual.
+// `telefono` (opcional, solo dígitos con indicativo de país) pide el modo
+// "vincular con número" en vez de QR -- ver socket-baileys.ts.
 export async function iniciarConexion(
   supabase: SupabaseClient,
   idTenant: string,
-  fabricaSocket: FabricaSocket
+  fabricaSocket: FabricaSocket,
+  opciones?: { telefono?: string }
 ): Promise<EstadoPublico> {
   if (conexionesActivas.has(idTenant)) {
     return obtenerEstadoPublico(supabase, idTenant);
   }
 
-  await upsertEstado(supabase, idTenant, { estado: "conectando", qr_actual: null, ultimo_error: null });
+  await upsertEstado(supabase, idTenant, { estado: "conectando", qr_actual: null, codigo_vinculacion: null, ultimo_error: null });
 
   try {
-    const socket = await fabricaSocket({ idTenant });
+    const socket = await fabricaSocket({ idTenant, telefono: opciones?.telefono });
     conexionesActivas.set(idTenant, socket);
     socket.onEvento((evento) => {
       void manejarEvento(supabase, idTenant, evento, fabricaSocket);
@@ -172,6 +194,7 @@ export async function desconectar(supabase: SupabaseClient, idTenant: string): P
     numero_conectado: null,
     conectado_en: null,
     qr_actual: null,
+    codigo_vinculacion: null,
     ultimo_error: null,
     creds: null,
     claves: {},

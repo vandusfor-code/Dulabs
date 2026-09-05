@@ -29,11 +29,12 @@ type ControlSocketFalso = {
   emitir(evento: EventoConexion): void;
   mensajesEnviados: { telefono: string; mensaje: string }[];
   cerradoLlamado: boolean;
+  telefonoRecibido: string | undefined;
 };
 
 function crearFabricaSocketFalsa(): { fabrica: FabricaSocket; llamadas: ControlSocketFalso[] } {
   const llamadas: ControlSocketFalso[] = [];
-  const fabrica: FabricaSocket = async () => {
+  const fabrica: FabricaSocket = async ({ telefono }) => {
     let handler: ((evento: EventoConexion) => void) | null = null;
     const control: ControlSocketFalso = {
       emitir(evento) {
@@ -41,6 +42,7 @@ function crearFabricaSocketFalsa(): { fabrica: FabricaSocket; llamadas: ControlS
       },
       mensajesEnviados: [],
       cerradoLlamado: false,
+      telefonoRecibido: telefono,
     };
     llamadas.push(control);
     const socket: SocketWhatsApp = {
@@ -117,6 +119,46 @@ describe(
       const conQr = await obtenerEstadoPublico(supabase, TENANT);
       assert.equal(conQr.estado, "conectando");
       assert.ok(conQr.qr!.startsWith("data:image/png;base64,"));
+    });
+
+    it("'Vincular con número' (autorizado): iniciarConexion pasa el teléfono a la fábrica, y el código llega vía evento", async (t) => {
+      if (!migracionesListas) return t.skip("falta la migración dulabs_whatsapp_qr_sesiones");
+      const TENANT = nuevoTenant();
+      const { fabrica, llamadas } = crearFabricaSocketFalsa();
+      const inicial = await iniciarConexion(supabase, TENANT, fabrica, { telefono: "573001112233" });
+      assert.equal(inicial.estado, "conectando");
+      assert.equal(inicial.codigoVinculacion, null);
+      assert.equal(llamadas[0].telefonoRecibido, "573001112233");
+
+      llamadas[0].emitir({ tipo: "codigo_vinculacion", codigo: "ABCD1234" });
+      await esperarHasta(async () => (await obtenerEstadoPublico(supabase, TENANT)).codigoVinculacion !== null);
+
+      const conCodigo = await obtenerEstadoPublico(supabase, TENANT);
+      assert.equal(conCodigo.estado, "conectando");
+      assert.equal(conCodigo.codigoVinculacion, "ABCD1234");
+      assert.equal(conCodigo.qr, null, "el modo código nunca debe dejar un QR guardado a la vez");
+    });
+
+    it("QR y código de vinculación son mutuamente excluyentes: el que llega último limpia al otro", async (t) => {
+      if (!migracionesListas) return t.skip("falta la migración dulabs_whatsapp_qr_sesiones");
+      const TENANT = nuevoTenant();
+      const { fabrica, llamadas } = crearFabricaSocketFalsa();
+      await iniciarConexion(supabase, TENANT, fabrica);
+
+      llamadas[0].emitir({ tipo: "qr", qr: "2@fake-qr" });
+      await esperarHasta(async () => (await obtenerEstadoPublico(supabase, TENANT)).qr !== null);
+
+      llamadas[0].emitir({ tipo: "codigo_vinculacion", codigo: "WXYZ9999" });
+      await esperarHasta(async () => (await obtenerEstadoPublico(supabase, TENANT)).codigoVinculacion !== null);
+      let estado = await obtenerEstadoPublico(supabase, TENANT);
+      assert.equal(estado.codigoVinculacion, "WXYZ9999");
+      assert.equal(estado.qr, null);
+
+      llamadas[0].emitir({ tipo: "qr", qr: "2@fake-qr-2" });
+      await esperarHasta(async () => (await obtenerEstadoPublico(supabase, TENANT)).qr !== null);
+      estado = await obtenerEstadoPublico(supabase, TENANT);
+      assert.ok(estado.qr);
+      assert.equal(estado.codigoVinculacion, null);
     });
 
     it("el QR de un tenant nunca se mezcla con el de otro", async (t) => {

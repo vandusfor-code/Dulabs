@@ -41,14 +41,17 @@ export type EstadoWorker = {
   numeroConectado: string | null;
   conectadoEn: string | null;
   qr: string | null;
+  /** Código de 8 caracteres para "Vincular con número de teléfono" -- alternativa real al QR, mutuamente excluyente con `qr`. */
+  codigoVinculacion: string | null;
 };
 
 export function consultarEstadoWorker(idTenant: string) {
   return llamarWorker<EstadoWorker>(idTenant, "estado", "GET");
 }
 
-export function iniciarConexionWorker(idTenant: string) {
-  return llamarWorker<EstadoWorker>(idTenant, "iniciar", "POST");
+/** `telefono` (opcional, solo dígitos con indicativo de país) pide el modo "vincular con número" en vez de QR. */
+export function iniciarConexionWorker(idTenant: string, opciones?: { telefono?: string }) {
+  return llamarWorker<EstadoWorker>(idTenant, "iniciar", "POST", opciones?.telefono ? { telefono: opciones.telefono } : undefined);
 }
 
 export function desconectarWorker(idTenant: string) {

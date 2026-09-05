@@ -14,10 +14,13 @@ export type EstadoPublico = {
   conectadoEn: string | null;
   /** Data URL de la imagen del QR vigente, o null si no aplica. */
   qr: string | null;
+  /** Código de 8 caracteres para "Vincular con número de teléfono" (alternativa al QR), o null si no aplica. Mutuamente excluyente con `qr` -- una conexión usa uno u otro, nunca ambos a la vez. */
+  codigoVinculacion: string | null;
 };
 
 export type EventoConexion =
   | { tipo: "qr"; qr: string }
+  | { tipo: "codigo_vinculacion"; codigo: string }
   | { tipo: "conectado"; numero: string | null }
   /** motivoFinal=true (ej. logout real) => no reintentar, hace falta un QR nuevo. */
   | { tipo: "desconectado"; motivoFinal: boolean; error?: string };
@@ -28,5 +31,10 @@ export interface SocketWhatsApp {
   cerrar(): Promise<void>;
 }
 
-/** Construye la sesión real (o falsa, en pruebas) de un tenant específico. */
-export type FabricaSocket = (params: { idTenant: string }) => Promise<SocketWhatsApp>;
+/**
+ * Construye la sesión real (o falsa, en pruebas) de un tenant específico.
+ * `telefono` (opcional, solo dígitos con indicativo de país) activa el modo
+ * "vincular con número" -- si se omite, el flujo por defecto sigue siendo
+ * QR, exactamente como antes de esta fase.
+ */
+export type FabricaSocket = (params: { idTenant: string; telefono?: string }) => Promise<SocketWhatsApp>;

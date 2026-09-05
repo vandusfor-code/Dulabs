@@ -14,9 +14,16 @@ function soloDigitos(valor: string): string {
 // así que ninguna prueba automatizada abre una conexión real a los
 // servidores de WhatsApp.
 export function crearFabricaSocketBaileys(supabase: SupabaseClient): FabricaSocket {
-  return async ({ idTenant }) => {
+  return async ({ idTenant, telefono }) => {
     const { state, guardarCredenciales } = await crearAuthStateSupabase(supabase, idTenant);
     const { version } = await fetchLatestBaileysVersion();
+
+    // "Vincular con número" (autorizado) -- alternativa real al QR, misma
+    // API que ya expone Baileys (sock.requestPairingCode). Se pide una sola
+    // vez, solo si esta sesión todavía no tiene credenciales registradas
+    // (un socket que reconecta con creds ya guardadas nunca vuelve a pedir
+    // código ni QR).
+    const modoCodigoVinculacion = Boolean(telefono) && !state.creds.registered;
 
     const sock = makeWASocket({
       version,
@@ -27,11 +34,25 @@ export function crearFabricaSocketBaileys(supabase: SupabaseClient): FabricaSock
 
     let handler: ((evento: EventoConexion) => void) | null = null;
 
+    if (modoCodigoVinculacion && telefono) {
+      // Deliberadamente SIN await: requestPairingCode hace I/O de red real
+      // (varios round-trips), así que su promesa nunca resuelve antes de
+      // que este factory termine de retornar y el manager llame a
+      // onEvento(cb) más abajo -- mismo razonamiento de timing que ya
+      // aplica al evento "qr" (async, siempre después de que handler ya
+      // esté asignado). Nunca lanza sin control: un error de red al pedir
+      // el código queda igual que un fallo de fabricaSocket normal.
+      sock
+        .requestPairingCode(soloDigitos(telefono))
+        .then((codigo) => handler?.({ tipo: "codigo_vinculacion", codigo }))
+        .catch(() => handler?.({ tipo: "desconectado", motivoFinal: false, error: "fallo_solicitando_codigo" }));
+    }
+
     sock.ev.on("creds.update", guardarCredenciales);
     sock.ev.on("connection.update", (update) => {
       if (!handler) return;
 
-      if (update.qr) {
+      if (update.qr && !modoCodigoVinculacion) {
         handler({ tipo: "qr", qr: update.qr });
       }
 

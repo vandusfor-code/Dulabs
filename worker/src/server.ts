@@ -64,7 +64,21 @@ export function crearServidor(deps: DependenciasServidor) {
       }
 
       if (accion === "iniciar" && req.method === "POST") {
-        enviarJson(res, 200, await iniciarConexion(deps.supabase, idTenant, deps.fabricaSocket));
+        // "Vincular con número" (autorizado) -- cuerpo opcional {telefono}.
+        // Sin cuerpo o sin telefono, el comportamiento es EXACTO al de
+        // siempre (modo QR).
+        let telefono: string | undefined;
+        const crudo = await leerCuerpo(req);
+        if (crudo) {
+          try {
+            const cuerpo = JSON.parse(crudo) as { telefono?: string };
+            telefono = cuerpo.telefono?.trim() || undefined;
+          } catch {
+            enviarJson(res, 400, { error: "Cuerpo inválido" });
+            return;
+          }
+        }
+        enviarJson(res, 200, await iniciarConexion(deps.supabase, idTenant, deps.fabricaSocket, { telefono }));
         return;
       }
 

@@ -17,7 +17,20 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const permiso = requiereAdministrador(tenant);
   if (!permiso.ok) return Response.json({ error: permiso.error }, { status: permiso.status });
 
-  const resultado = await iniciarConexionWorker(tenant.idTenant);
+  // "Vincular con número" (autorizado) -- cuerpo opcional {telefono}. Sin
+  // cuerpo o sin telefono, sigue siendo el modo QR de siempre.
+  let telefono: string | undefined;
+  try {
+    const body = (await request.json()) as { telefono?: string };
+    telefono = body.telefono?.trim() || undefined;
+  } catch {
+    // sin cuerpo (o JSON vacío) -- modo QR, comportamiento de siempre.
+  }
+  if (telefono && !/^\d{8,15}$/.test(telefono)) {
+    return Response.json({ error: "El teléfono debe ser solo dígitos, con indicativo de país (8 a 15 dígitos)" }, { status: 400 });
+  }
+
+  const resultado = await iniciarConexionWorker(tenant.idTenant, { telefono });
   if (!resultado.ok) return Response.json({ error: resultado.error }, { status: resultado.status });
   return Response.json(resultado.data);
 }
