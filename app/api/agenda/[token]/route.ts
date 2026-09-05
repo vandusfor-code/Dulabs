@@ -52,12 +52,19 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   if (!auth.ok) return Response.json({ error: auth.error }, { status: auth.status });
   const sesion = auth.sesion;
 
+  // Login AMORE (autorizado) — una colaboradora solo puede usar el token
+  // que resuelve a su PROPIA especialista_id; nunca el de otra persona del
+  // mismo tenant (hallazgo real de verificación en producción, ver el mismo
+  // chequeo en resolverTenantDesdeToken).
+  if (sesion && sesion.rol === "colaboradora" && sesion.especialistaId !== especialista.id) {
+    return Response.json({ error: "No autorizado" }, { status: 403 });
+  }
+
   let equipo: Especialista[];
   if (sesion && sesion.rol === "administrador") {
     equipo = await especialistasDelTenant(supabase, especialista.id_tenant);
   } else if (sesion && sesion.rol === "colaboradora") {
-    equipo = sesion.especialistaId ? [especialista].filter((e) => e.id === sesion.especialistaId) : [];
-    if (equipo.length === 0) equipo = [especialista];
+    equipo = [especialista];
   } else {
     const hermanas = await especialistasDelMismaPersona(supabase, especialista.phone_number_id, especialista.numero_whatsapp);
     equipo = hermanas.length > 0 ? hermanas : [especialista];

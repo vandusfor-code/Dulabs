@@ -68,7 +68,7 @@ describe(
           id_tenant: idTenant,
           phone_number_id: `prueba-${idTenant}`,
           nombre: "Especialista de prueba",
-          numero_whatsapp: "0000000000",
+          numero_whatsapp: token, // único por llamada -- evita chocar con dulabs_especialistas_numero_unico cuando el mismo tenant crea más de una especialista de prueba
           servicio: "prueba",
           duracion_min: 60,
           token,
@@ -199,6 +199,36 @@ describe(
         assert.equal(resultado.sesion?.especialistaId, especialistaId);
         assert.equal(requiereAdministrador(resultado).ok, false);
       }
+    });
+
+    it("REGRESIÓN (hallazgo real en producción): una colaboradora NUNCA puede usar el token de OTRA especialista del mismo tenant -- 403", async (t) => {
+      if (!migracionLista) return t.skip("falta la migración 20260909000000_usuarios_login.sql");
+      const idTenant = randomUUID();
+      await activarPlanDescartable(idTenant);
+      const { id: especialistaIdPropia } = await crearEspecialista(idTenant);
+      const { token: tokenDeOtra } = await crearEspecialista(idTenant);
+
+      const { data: usuario } = await supabase
+        .from("dulabs_usuarios")
+        .insert({
+          id_tenant: idTenant,
+          especialista_id: especialistaIdPropia,
+          username: `prueba-${randomUUID()}`,
+          password_hash: await hashPassword("clave"),
+          nombre: "Colaboradora de prueba",
+          rol: "colaboradora",
+        })
+        .select("id")
+        .single();
+      usuariosCreados.push(usuario!.id as number);
+
+      const tokenSesion = await crearSesion(supabase, usuario!.id as number);
+      const cookie = construirSetCookie(tokenSesion).split(";")[0]!;
+
+      // Usa su cookie de sesión válida, pero con el TOKEN de otra especialista del mismo tenant.
+      const resultado = await resolverTenantDesdeToken(supabase, tokenDeOtra, requestConCookie(cookie));
+      assert.equal(resultado.ok, false);
+      if (!resultado.ok) assert.equal(resultado.status, 403);
     });
   }
 );

@@ -58,6 +58,13 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   if (!auth.ok) return Response.json({ error: auth.error }, { status: auth.status });
   const sesion = auth.sesion;
 
+  // Login AMORE (autorizado) — una colaboradora solo puede usar el token
+  // que resuelve a su PROPIA especialista_id (mismo chequeo que
+  // resolverTenantDesdeToken y el GET de esta misma agenda).
+  if (sesion && sesion.rol === "colaboradora" && sesion.especialistaId !== especialista.id) {
+    return Response.json({ error: "No autorizado" }, { status: 403 });
+  }
+
   let idsPermitidos: Set<number>;
   if (sesion && sesion.rol === "administrador") {
     idsPermitidos = new Set((await especialistasDelTenant(supabase, especialista.id_tenant)).map((e) => e.id));

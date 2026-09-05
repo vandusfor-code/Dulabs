@@ -42,6 +42,19 @@ export async function resolverTenantDesdeToken(
   const auth = await requireAuth(supabase, request, especialista.id_tenant);
   if (!auth.ok) return auth;
 
+  // Login AMORE (autorizado) — HALLAZGO REAL en verificación de producción:
+  // una colaboradora con sesión válida podía escribir en la URL el token de
+  // OTRA especialista del mismo tenant y ver su nombre/equipo (aunque las
+  // citas reales seguían aisladas por especialista_id más abajo en cada
+  // ruta, esto ya era una fuga real de "de quién es este token" -- spec
+  // "no permitir acceso administrativo/de otra persona mediante URL
+  // directa"). Una colaboradora SOLO puede usar el token que resuelve a su
+  // propia especialista_id; un administrador puede usar cualquier token del
+  // tenant (ya podía ver todo el equipo desde su propio panel).
+  if (auth.sesion && auth.sesion.rol === "colaboradora" && auth.sesion.especialistaId !== especialista.id) {
+    return { ok: false, status: 403, error: "No autorizado" };
+  }
+
   return {
     ok: true,
     idTenant: especialista.id_tenant,
