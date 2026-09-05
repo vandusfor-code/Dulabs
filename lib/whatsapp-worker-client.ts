@@ -75,3 +75,20 @@ export async function enviarMensajeWhatsApp(params: {
 }): Promise<RespuestaWorker<{ ok: true }>> {
   return llamarWorker<{ ok: true }>(params.tenantId, "enviar", "POST", { telefono: params.telefono, mensaje: params.mensaje });
 }
+
+// Chats AMORE (autorizado) — envía una nota de audio real. El mensaje
+// saliente se persiste solo por el evento real de Baileys (ver
+// worker/src/chats/persistir-mensaje.ts), nunca por acá -- esta función
+// únicamente pide al worker que lo mande de verdad.
+export async function enviarAudioWhatsApp(params: {
+  tenantId: string;
+  telefono: string;
+  audioBase64: string;
+  mimeType: string;
+}): Promise<RespuestaWorker<{ ok: true }>> {
+  return llamarWorker<{ ok: true }>(params.tenantId, "enviar-audio", "POST", {
+    telefono: params.telefono,
+    audioBase64: params.audioBase64,
+    mimeType: params.mimeType,
+  });
+}

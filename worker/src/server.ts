@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { FabricaSocket } from "./whatsapp-qr/tipos.js";
 import { iniciarConexion, obtenerEstadoPublico, desconectar, recuperarSesionesPersistidas } from "./whatsapp-qr/manager.js";
-import { enviarPorWhatsAppQR } from "./whatsapp-qr/adaptador.js";
+import { enviarPorWhatsAppQR, enviarAudioPorWhatsAppQR } from "./whatsapp-qr/adaptador.js";
 import { claveValida, extraerBearer } from "./auth.js";
 import { logInfo, logErrorControlado } from "./logging.js";
 
@@ -104,6 +104,34 @@ export function crearServidor(deps: DependenciasServidor) {
           enviarJson(res, 200, { ok: true });
         } catch {
           logErrorControlado(idTenant, "envio_sin_sesion_activa");
+          enviarJson(res, 409, { error: "El tenant no tiene una sesión de WhatsApp QR conectada" });
+        }
+        return;
+      }
+
+      if (accion === "enviar-audio" && req.method === "POST") {
+        let cuerpo: { telefono?: string; audioBase64?: string; mimeType?: string };
+        try {
+          cuerpo = JSON.parse(await leerCuerpo(req));
+        } catch {
+          enviarJson(res, 400, { error: "Cuerpo inválido" });
+          return;
+        }
+        if (!cuerpo.telefono || !cuerpo.audioBase64 || !cuerpo.mimeType) {
+          enviarJson(res, 400, { error: "Faltan telefono/audioBase64/mimeType" });
+          return;
+        }
+        const LIMITE_BYTES = 16 * 1024 * 1024; // mismo límite razonable que usa WhatsApp para medios
+        const audio = Buffer.from(cuerpo.audioBase64, "base64");
+        if (audio.byteLength === 0 || audio.byteLength > LIMITE_BYTES) {
+          enviarJson(res, 400, { error: "Tamaño de audio inválido" });
+          return;
+        }
+        try {
+          await enviarAudioPorWhatsAppQR(idTenant, cuerpo.telefono, audio, cuerpo.mimeType);
+          enviarJson(res, 200, { ok: true });
+        } catch {
+          logErrorControlado(idTenant, "envio_audio_sin_sesion_activa");
           enviarJson(res, 409, { error: "El tenant no tiene una sesión de WhatsApp QR conectada" });
         }
         return;

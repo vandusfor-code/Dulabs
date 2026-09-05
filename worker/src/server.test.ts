@@ -27,6 +27,7 @@ function crearFabricaSocketFalsa(): { fabrica: FabricaSocket; llamadas: { emitir
         handler = cb;
       },
       async enviarMensaje() {},
+      async enviarAudio() {},
       async cerrar() {
         handler?.({ tipo: "desconectado", motivoFinal: true });
       },

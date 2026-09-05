@@ -28,6 +28,8 @@ export type EventoConexion =
 export interface SocketWhatsApp {
   onEvento(cb: (evento: EventoConexion) => void): void;
   enviarMensaje(telefono: string, mensaje: string): Promise<void>;
+  /** Chats AMORE (autorizado) — envía una nota de audio real. El propio evento messages.upsert (ver socket-baileys.ts) persiste este mismo mensaje como saliente, así que esta función no inserta ninguna fila -- solo manda el audio real por WhatsApp. */
+  enviarAudio(telefono: string, audio: Buffer, mimeType: string): Promise<void>;
   cerrar(): Promise<void>;
 }
 

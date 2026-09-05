@@ -2,6 +2,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import makeWASocket, { Browsers, DisconnectReason, fetchLatestBaileysVersion, makeCacheableSignalKeyStore } from "@whiskeysockets/baileys";
 import { crearAuthStateSupabase } from "./auth-store.js";
 import type { EventoConexion, FabricaSocket, SocketWhatsApp } from "./tipos.js";
+import { persistirMensajeEntrante } from "../chats/persistir-mensaje.js";
+import { logErrorControlado } from "../logging.js";
 
 function soloDigitos(valor: string): string {
   return valor.replace(/\D/g, "");
@@ -69,6 +71,21 @@ export function crearFabricaSocketBaileys(supabase: SupabaseClient): FabricaSock
       }
     });
 
+    // Chats AMORE (autorizado) — ÚNICO listener real de mensajes entrantes
+    // Y salientes (fromMe incluido): persiste ambas direcciones por el
+    // mismo camino real, sin importar si el mensaje lo escribió la clienta
+    // o si lo mandó Jessica desde el panel (ver lib/whatsapp-worker-client.ts
+    // -> /enviar, que termina emitiendo este mismo evento). Un fallo de
+    // persistencia nunca debe tumbar la sesión de WhatsApp -- solo se
+    // registra con la etiqueta fija de siempre.
+    sock.ev.on("messages.upsert", ({ messages }) => {
+      for (const msg of messages) {
+        persistirMensajeEntrante(supabase, idTenant, msg).catch(() => {
+          logErrorControlado(idTenant, "persistir_mensaje_chat_fallo");
+        });
+      }
+    });
+
     const socketWhatsApp: SocketWhatsApp = {
       onEvento(cb) {
         handler = cb;
@@ -76,6 +93,19 @@ export function crearFabricaSocketBaileys(supabase: SupabaseClient): FabricaSock
       async enviarMensaje(telefono, mensaje) {
         const jid = `${soloDigitos(telefono)}@s.whatsapp.net`;
         await sock.sendMessage(jid, { text: mensaje });
+      },
+      async enviarAudio(telefono, audio, mimeType) {
+        const jid = `${soloDigitos(telefono)}@s.whatsapp.net`;
+        // ptt=true (nota de voz): WhatsApp espera nativamente OGG/Opus para
+        // esa burbuja -- un navegador real casi siempre entrega
+        // audio/webm;codecs=opus (mismo audio Opus, contenedor distinto).
+        // Sin ffmpeg disponible en este worker no se puede reempaquetar a
+        // OGG de forma estable, así que se envía tal cual con su mimetype
+        // real. HALLAZGO PENDIENTE DE VERIFICAR: no se ha podido confirmar
+        // contra un dispositivo real (esta fase prohíbe conectar el número
+        // WABA real) si WhatsApp reproduce esto como nota de voz normal o
+        // como archivo adjunto genérico -- documentado en el reporte final.
+        await sock.sendMessage(jid, { audio, mimetype: mimeType, ptt: true });
       },
       async cerrar() {
         try {

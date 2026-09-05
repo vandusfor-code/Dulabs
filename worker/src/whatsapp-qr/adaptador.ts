@@ -17,3 +17,13 @@ export async function enviarPorWhatsAppQR(idTenant: string, telefono: string, me
   }
   await socket.enviarMensaje(telefono, mensaje);
 }
+
+// Chats AMORE (autorizado) — mismo criterio exacto que enviarPorWhatsAppQR,
+// solo que para una nota de audio real.
+export async function enviarAudioPorWhatsAppQR(idTenant: string, telefono: string, audio: Buffer, mimeType: string): Promise<void> {
+  const socket = obtenerConexionActiva(idTenant);
+  if (!socket) {
+    throw new Error(`El tenant ${idTenant} no tiene una sesión de WhatsApp QR conectada`);
+  }
+  await socket.enviarAudio(telefono, audio, mimeType);
+}

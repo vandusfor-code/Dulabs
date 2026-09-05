@@ -52,6 +52,7 @@ function crearFabricaSocketFalsa(): { fabrica: FabricaSocket; llamadas: ControlS
       async enviarMensaje(telefono, mensaje) {
         control.mensajesEnviados.push({ telefono, mensaje });
       },
+      async enviarAudio() {},
       async cerrar() {
         control.cerradoLlamado = true;
         handler?.({ tipo: "desconectado", motivoFinal: true });

@@ -25,11 +25,16 @@ function crearIdempotencyKey(): string {
 export function NewAppointmentModal({
   token,
   fechaInicial,
+  nombreClienteInicial,
+  telefonoClienteInicial,
   onClose,
   onCrear,
 }: {
   token: string;
   fechaInicial?: Date;
+  /** Chats AMORE (autorizado) — precarga los datos del cliente cuando el modal se abre desde una conversación real. Opcional y aditivo: cualquier caller existente (el "+" de Daniela/AMORE) sigue arrancando con campos vacíos, exactamente como antes. */
+  nombreClienteInicial?: string;
+  telefonoClienteInicial?: string;
   onClose: () => void;
   onCrear: (body: {
     servicioId: string;
@@ -52,8 +57,8 @@ export function NewAppointmentModal({
   const [hora, setHora] = useState("");
   const [horarios, setHorarios] = useState<string[] | null>(null);
 
-  const [nombre, setNombre] = useState("");
-  const [telefono, setTelefono] = useState("");
+  const [nombre, setNombre] = useState(nombreClienteInicial ?? "");
+  const [telefono, setTelefono] = useState(telefonoClienteInicial ?? "");
   const [correo, setCorreo] = useState("");
 
   const [guardando, setGuardando] = useState(false);
