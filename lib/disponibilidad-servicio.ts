@@ -60,7 +60,14 @@ export type ResultadoHorariosPorServicio =
 // distinta inventada para esta fase.
 const ESTADOS_BLOQUEANTES = ["pendiente", "confirmada", "propuesta"] as const;
 
-async function citasOcupadasDelDia(
+/**
+ * PILOTO AMORE + Nylas (autorizado) — exportada tal cual (sin cambiar su
+ * comportamiento) para que lib/disponibilidad-servicio-nylas.ts reutilice
+ * exactamente esta misma consulta de citas YA ocupadas en DuLabs, en vez de
+ * duplicarla. listarHorariosDisponiblesPorServicio (portal, sin cambios)
+ * sigue siendo su único otro consumidor.
+ */
+export async function citasOcupadasDelDia(
   supabase: SupabaseClient,
   especialistaId: number,
   desdeISO: string,
