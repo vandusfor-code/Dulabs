@@ -55,7 +55,22 @@ async function readPausaUntil(
 
 export function createDefaultExecutorRegistry(
   supabase: SupabaseClient,
-  overrides?: Partial<{ internalActionDeps: Partial<InternalActionDeps>; sendMessageDeps: Partial<SendMessageDeps> }>,
+  overrides?: Partial<{
+    internalActionDeps: Partial<InternalActionDeps>;
+    sendMessageDeps: Partial<SendMessageDeps>;
+    /**
+     * FASE B (autorizado) — reemplazo ADITIVO del único executor kind="ai"
+     * (ExecutorRegistry.register sobre el mismo kind SIEMPRE reemplaza al
+     * anterior para TODOS los tenants que compartan este registry, ver
+     * lib/flow/executor-registry.ts). Por eso este override nunca se activa
+     * por defecto: solo el caller (hoy, únicamente
+     * lib/whatsapp-qr-bot.ts::ejecutarBotWhatsAppQR, gateado por tenant_id
+     * real de AMORE) puede pasar un executor distinto -- Daniela/Solo
+     * Talento, que nunca llaman esa función, siguen recibiendo exactamente
+     * ClaudeExecutor sin ningún cambio.
+     */
+    aiExecutor: EffectExecutor;
+  }>,
 ): ExecutorRegistry {
   const registry = new ExecutorRegistry();
   const internalDeps: InternalActionDeps = {
@@ -82,9 +97,10 @@ export function createDefaultExecutorRegistry(
   registry.register(new InternalActionExecutor(internalDeps));
   registry.register(new SendMessageExecutor(sendMessageDeps));
   registry.register(
-    new ClaudeExecutor({
-      resolveApiKey: async () => resolveAnthropicApiKeyFromEnv(),
-    }),
+    overrides?.aiExecutor ??
+      new ClaudeExecutor({
+        resolveApiKey: async () => resolveAnthropicApiKeyFromEnv(),
+      }),
   );
   return registry;
 }

@@ -6,7 +6,35 @@ import {
   decidirFallbackDesdeResultado,
 } from "@/lib/flow-runtime-bridge";
 import type { SendMessageDeps } from "@/lib/flow/executors/send-message-executor";
+import type { EffectExecutor } from "@/lib/flow/executor-types";
+import { GeminiExecutor } from "@/lib/flow/executors/gemini-executor";
+import { resolveGeminiApiKeyFromEnv } from "@/lib/flow/gemini/gemini-client";
 import { enviarMensajeWhatsApp } from "@/lib/whatsapp-worker-client";
+
+// FASE B (autorizado, prueba controlada) — Gemini como motor de redacción
+// SOLO para el tenant AMORE, nunca un rollout global (ver comentario en
+// createDefaultExecutorRegistry, lib/flow/executor-factory.ts, sobre por qué
+// un registry compartido nunca podría activarlo así). Ningún otro tenant de
+// WhatsApp-QR (hoy no existe ninguno más) recibiría este override aunque en
+// el futuro usara esta misma función, porque el chequeo es explícito por
+// tenant_id, no "todo lo que pasa por acá".
+const AMORE_TENANT_ID = "ed6ae77f-8a0c-483e-a5d9-8ede68eca50f";
+
+/**
+ * Resuelve qué executor de IA usar para este tenant en este mensaje.
+ * `undefined` dice "usa el default (Claude)" -- reversión instantánea sin
+ * tocar código: basta con poner `AMORE_IA_MOTOR=claude` en Vercel (o
+ * quitar/no configurar la variable en absoluto) y el próximo mensaje ya
+ * responde con Claude, exactamente como antes de esta fase. También cae a
+ * Claude solo si GEMINI_KEY no está disponible, en vez de romper la
+ * conversación real de una clienta.
+ */
+export function resolverAiExecutorOverride(idTenant: string): EffectExecutor | undefined {
+  if (idTenant !== AMORE_TENANT_ID) return undefined;
+  if (process.env.AMORE_IA_MOTOR === "claude") return undefined;
+  if (!resolveGeminiApiKeyFromEnv()) return undefined;
+  return new GeminiExecutor({ resolveApiKey: async () => resolveGeminiApiKeyFromEnv() });
+}
 
 // Hallazgo real (autorizado, incidente 573203803682) -- atenderMensajeConFlow
 // puede terminar sin mandar ningún mensaje real (ej. ai-conversar-catalogo
@@ -141,6 +169,7 @@ export async function ejecutarBotWhatsAppQR(params: {
         texto: params.texto,
         wamid: params.wamid,
         sendMessageDepsOverride,
+        aiExecutorOverride: resolverAiExecutorOverride(params.idTenant),
       });
 
       const decision = decidirFallbackDesdeResultado(result);

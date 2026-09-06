@@ -30,6 +30,7 @@ import { createSupabaseFlowOrchestratorStore } from "@/lib/flow/flow-orchestrato
 import { createDefaultEffectExecutorFramework } from "@/lib/flow/executor-factory";
 import { getIntegrationById, getIntegrationCredentials } from "@/lib/flow/flow-store";
 import type { SendMessageDeps } from "@/lib/flow/executors/send-message-executor";
+import type { EffectExecutor } from "@/lib/flow/executor-types";
 import type { FlowEngineEvent } from "@/lib/flow/engine-types";
 import { executionRowToEngineState } from "@/lib/flow/flow-store-types";
 import type { FlowOrchestratorStore } from "@/lib/flow/orchestrator-types";
@@ -85,6 +86,16 @@ export async function atenderMensajeConFlow(params: {
   /** Solo para tests — inyecta el envío de WhatsApp sin tocar la red real. */
   sendMessageDepsOverride?: Partial<SendMessageDeps>;
   /**
+   * FASE B (autorizado) — reemplazo ADITIVO del executor kind="ai" para ESTA
+   * llamada únicamente (nunca global: ver comentario en
+   * createDefaultExecutorRegistry, lib/flow/executor-factory.ts). El único
+   * caller real que lo usa hoy es lib/whatsapp-qr-bot.ts::ejecutarBotWhatsAppQR,
+   * gateado ahí mismo por tenant_id real de AMORE -- Daniela/Solo Talento
+   * (Cloud API, nunca llaman esta función con este parámetro) siguen en
+   * Claude sin ningún cambio.
+   */
+  aiExecutorOverride?: EffectExecutor;
+  /**
    * Fase 4.A (Trigger Router → Runtime, autorizado) — flowId ya resuelto por
    * el caller (atenderMensajeConFlowConFallback::resolverFlowIdConTriggerRouting,
    * vía Trigger Router o fallback a cliente.flow_id). Si se omite
@@ -106,9 +117,13 @@ export async function atenderMensajeConFlow(params: {
         getIntegrationCredentials: (tenantId, integrationId) =>
           getIntegrationCredentials(params.supabase, tenantId, integrationId),
       },
-      registryOverrides: params.sendMessageDepsOverride
-        ? { sendMessageDeps: params.sendMessageDepsOverride }
-        : undefined,
+      registryOverrides:
+        params.sendMessageDepsOverride || params.aiExecutorOverride
+          ? {
+              ...(params.sendMessageDepsOverride ? { sendMessageDeps: params.sendMessageDepsOverride } : {}),
+              ...(params.aiExecutorOverride ? { aiExecutor: params.aiExecutorOverride } : {}),
+            }
+          : undefined,
     }),
   });
 
