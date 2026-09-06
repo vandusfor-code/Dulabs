@@ -1,8 +1,30 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ClienteConfig } from "@/lib/supabase";
-import { atenderMensajeConFlow } from "@/lib/flow-runtime-bridge";
+import {
+  atenderMensajeConFlow,
+  cerrarEjecucionRotaParaReintento,
+  decidirFallbackDesdeResultado,
+} from "@/lib/flow-runtime-bridge";
 import type { SendMessageDeps } from "@/lib/flow/executors/send-message-executor";
 import { enviarMensajeWhatsApp } from "@/lib/whatsapp-worker-client";
+
+// Hallazgo real (autorizado, incidente 573203803682) -- atenderMensajeConFlow
+// puede terminar sin mandar ningún mensaje real (ej. ai-conversar-catalogo
+// rechazado por claim-security, o un empty_output residual): antes, esta
+// función devolvía {ok:true} SOLO porque no se lanzó ninguna excepción, sin
+// mirar si de verdad se envió algo -- la clienta se quedaba sin respuesta y
+// nadie se enteraba. Se reutiliza EXACTAMENTE la misma decisión que ya usa
+// el fallback Flow->LEGACY de Cloud API (decidirFallbackDesdeResultado,
+// lib/flow-runtime-bridge.ts) para detectar "no se envió nada" -- pero como
+// WhatsApp-QR no tiene ningún LEGACY al que caer, en vez de ceder el turno
+// se cierra la ejecución rota (cerrarEjecucionRotaParaReintento, mismo
+// mecanismo real que ya usa ese fallback) y se reintenta un número acotado
+// de veces con el MISMO texto/wamid -- getActiveExecution ya no ve la
+// ejecución cerrada, así que el reintento arranca un "start" limpio, y
+// insertEventIdempotent está indexado por flowExecutionId (no solo eventId),
+// así que reusar el mismo wamid contra la ejecución NUEVA nunca se lee como
+// evento duplicado.
+const MAX_INTENTOS = 2;
 
 /**
  * Bot real para WhatsApp-QR (autorizado) — conecta un flow YA PUBLICADO
@@ -109,16 +131,38 @@ export async function ejecutarBotWhatsAppQR(params: {
     registrarMensaje: async () => false, // ya registrado por el worker vía persistirMensajeEntrante
   };
 
+  let motivo = "sin_respuesta_tras_reintentos";
   try {
-    await atenderMensajeConFlow({
-      supabase: params.supabase,
-      cliente: clienteSintetico,
-      telefonoCliente: params.telefono,
-      texto: params.texto,
-      wamid: params.wamid,
-      sendMessageDepsOverride,
-    });
-    return { ok: true };
+    for (let intento = 1; intento <= MAX_INTENTOS; intento++) {
+      const result = await atenderMensajeConFlow({
+        supabase: params.supabase,
+        cliente: clienteSintetico,
+        telefonoCliente: params.telefono,
+        texto: params.texto,
+        wamid: params.wamid,
+        sendMessageDepsOverride,
+      });
+
+      const decision = decidirFallbackDesdeResultado(result);
+      if (decision.handled && decision.motivo !== "sin_intencion_reconocida") return { ok: true };
+
+      // "sin_intencion_reconocida" (el enrutador no reconoció ninguna
+      // intención y terminó sin decir nada a propósito) no es una ejecución
+      // rota -- reintentar no cambiaría nada, así que se rinde sin insistir.
+      motivo = decision.motivo;
+      if (decision.motivo === "sin_intencion_reconocida") break;
+
+      if (decision.requiereMarcarFallida && result.executionRowId && intento < MAX_INTENTOS) {
+        await cerrarEjecucionRotaParaReintento({
+          supabase: params.supabase,
+          tenantId: params.idTenant,
+          executionRowId: result.executionRowId,
+        });
+        continue;
+      }
+      break;
+    }
+    return { ok: false, motivo };
   } catch (err) {
     return { ok: false, motivo: err instanceof Error ? err.message : "error_desconocido" };
   }

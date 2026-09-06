@@ -328,7 +328,7 @@ export function decidirFallbackDesdeResultado(
  * ya la resolvió) o hay un conflicto de CAS, no reintenta ni lanza -- nunca
  * debe tumbar el fallback en curso por esto.
  */
-async function marcarEjecucionRotaComoFallida(params: {
+export async function marcarEjecucionRotaComoFallida(params: {
   store: FlowOrchestratorStore;
   tenantId: string;
   executionRowId: string;
@@ -347,6 +347,21 @@ async function marcarEjecucionRotaComoFallida(params: {
   } catch {
     // Best-effort -- ver docstring.
   }
+}
+
+/**
+ * Envuelve marcarEjecucionRotaComoFallida armando su propio Store real desde
+ * supabase -- para callers que no deben conocer FlowOrchestratorStore (ej.
+ * lib/whatsapp-qr-bot.ts), que solo necesitan "cerrar esta ejecución rota
+ * para que un reintento inmediato arranque una ejecución nueva y limpia".
+ */
+export async function cerrarEjecucionRotaParaReintento(params: {
+  supabase: SupabaseClient;
+  tenantId: string;
+  executionRowId: string;
+}): Promise<void> {
+  const store = createSupabaseFlowOrchestratorStore(params.supabase);
+  await marcarEjecucionRotaComoFallida({ store, tenantId: params.tenantId, executionRowId: params.executionRowId });
 }
 
 /**

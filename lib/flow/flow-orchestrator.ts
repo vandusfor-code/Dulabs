@@ -682,12 +682,22 @@ export class ExecutionOrchestrator {
     resultPayloadRaw?: Record<string, unknown>;
     resultPayloadApplied?: Record<string, unknown>;
   } {
+    const baseRaw = dispatchResult.rawResult ?? dispatchResult.metadata ?? {};
     return {
       success: dispatchResult.success,
+      // HALLAZGO REAL (autorizado) — cuando dispatchResult trae rawResult
+      // (ej. applyAiResponseClaimSecurity, que preserva el rawResult original
+      // de un dispatch que SÍ tuvo éxito antes de ser rechazado después) el
+      // `?? dispatchResult.error` de abajo nunca se alcanzaba: el motivo real
+      // del fallo (unverified_external_claim:..., etc.) se perdía por
+      // completo y quedaba invisible para siempre en dulabs_flow_effects,
+      // dejando una ejecución fallida sin ningún rastro diagnosticable. Ahora
+      // el error se añade siempre que el dispatch falló, sin pisar ninguna
+      // clave que el propio executor ya haya puesto en su rawResult.
       resultPayloadRaw:
-        dispatchResult.rawResult ??
-        dispatchResult.metadata ??
-        (dispatchResult.error ? { error: dispatchResult.error } : {}),
+        !dispatchResult.success && dispatchResult.error
+          ? { ...baseRaw, error: dispatchResult.error }
+          : baseRaw,
       resultPayloadApplied:
         dispatchResult.appliedResult ??
         dispatchResult.data ??
