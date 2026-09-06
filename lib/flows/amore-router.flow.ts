@@ -22,21 +22,50 @@ import type { FlowDefinition } from "@/lib/flow/types";
  * directos contra Supabase, ver scripts/_actualizar-flow-amore.mts y
  * siguientes). Publicar esta versión reconcilia ambos.
  *
- * NUNCA agenda por WhatsApp: agendar_cita_especialista/agendar_cita_marketplace
- * no aparecen en este grafo. El escenario reservado de intención de reserva
- * (código CODIGO_ESCENARIO_PORTAL, ver lib/bot-escenarios/tipos.ts) siempre
- * responde con el enlace real del portal (https://www.dulabs.co/reservar/amore),
- * nunca pide fecha/hora ni consulta disponibilidad.
+ * NUNCA usa agendar_cita_especialista/agendar_cita_marketplace (acciones de
+ * OTROS tenants) -- el escenario reservado de intención de reserva "directa
+ * al portal" (código CODIGO_ESCENARIO_PORTAL) sigue existiendo tal cual para
+ * cuando el agendamiento conversacional no aplica.
+ *
+ * FASE 1 -- Agendamiento conversacional (autorizado). resolver_escenario
+ * puede devolver modo="agendar_buscar_disponibilidad"/"agendar_crear_cita"
+ * (ver lib/bot-escenarios/tipos.ts) cuando decidirSiguientePasoAgendamiento
+ * ya validó datos reales -- dos ramas NUEVAS y aditivas, insertadas ANTES
+ * de la rama modo="ai" ya existente, ejecutan la acción real de Nylas
+ * correspondiente (buscar_disponibilidad_nylas/crear_cita_nylas, wrappers
+ * finos sobre lib/disponibilidad-servicio-nylas.ts/lib/reserva-servicio-nylas.ts,
+ * sin cambios) y REUTILIZAN el mismo nodo "ai-generar-respuesta" para
+ * redactar el resultado -- nunca un segundo nodo IA. Para cualquier otro
+ * modo, el comportamiento y el grafo son EXACTAMENTE los mismos de antes de
+ * esta fase.
  */
 export function amoreRouterFlow(): FlowDefinition {
   return {
     name: "AMORE — Asistente conversacional (Fase 3, banco de escenarios)",
     description:
-      "Responde con el banco de escenarios/FAQ/información real de AMORE (dulabs_bot_escenarios), 100% determinístico salvo cuando el escenario ganador requiere IA (recomendaciones). Nunca agenda por WhatsApp -- toda intención de reserva se resuelve enviando el enlace real del portal.",
+      "Responde con el banco de escenarios/FAQ/información real de AMORE (dulabs_bot_escenarios), 100% determinístico salvo cuando el escenario ganador requiere IA (recomendaciones), y agenda citas reales por el mismo chat (FASE 1, vía Nylas) cuando la clienta lo pide conversacionalmente.",
     nodes: [
       { id: "start", type: "start", config: { triggerType: "first_message" } },
 
       { id: "act-resolver-escenario", type: "action", config: { actionType: "resolver_escenario" } },
+
+      // FASE 1 -- Agendamiento conversacional (autorizado). Estas dos ramas
+      // se evalúan ANTES que cond-es-ai a propósito: son más específicas
+      // (piden una acción real de Nylas antes de redactar), mientras que
+      // modo="ai" es el caso general de siempre.
+      {
+        id: "cond-es-agendar-disponibilidad",
+        type: "condition",
+        config: { rules: [{ field: "modo", operator: "equals", value: "agendar_buscar_disponibilidad" }], match: "all" },
+      },
+      { id: "act-buscar-disponibilidad-nylas", type: "action", config: { actionType: "buscar_disponibilidad_nylas" } },
+
+      {
+        id: "cond-es-agendar-crear-cita",
+        type: "condition",
+        config: { rules: [{ field: "modo", operator: "equals", value: "agendar_crear_cita" }], match: "all" },
+      },
+      { id: "act-crear-cita-nylas", type: "action", config: { actionType: "crear_cita_nylas" } },
 
       {
         id: "cond-es-ai",
@@ -81,8 +110,12 @@ export function amoreRouterFlow(): FlowDefinition {
             "\n\n=== LARGO Y FORMATO ===\n" +
             "Responde de forma breve y natural, nunca listes más de 2-3 opciones de una vez salvo que te pidan explícitamente ver todas, nunca en viñetas de catálogo completo, nunca como ficha técnica. " +
             "Si tu respuesta tiene más de una idea separable (por ejemplo: una frase breve de apertura + una lista corta + una pregunta de cierre), separa esas ideas con una línea en blanco entre cada una -- un mecanismo aparte decide cuántos mensajes reales de WhatsApp enviar según esos bloques, tú no decides eso. Si tu respuesta es una sola idea corta, no uses líneas en blanco. " +
-            "\n\n=== RESERVAS ===\n" +
-            "NUNCA ofrezcas agendar directamente, nunca preguntes fecha/hora ni digas que hay disponibilidad -- si la clienta quiere agendar, eso lo maneja un mensaje aparte con el enlace real del portal.",
+            "\n\n=== AGENDAMIENTO REAL (FASE 1) ===\n" +
+            "AMORE ya puede agendar citas reales por este mismo chat, no solo por el portal. 'instruccionIA' te dirá exactamente qué hacer en cada paso del agendamiento (pedir un dato, presentar horarios reales, pedir confirmación, confirmar una reserva ya creada, o explicar que algo falló) -- síguelo al pie de la letra, con la misma calidez y naturalidad de siempre, UNA sola pregunta a la vez. " +
+            "Cuando te den horarios/profesionales reales en 'datosIA', preséntalos tal cual -- nunca inventes ni ofrezcas una hora, profesional, servicio o día que no esté ahí. " +
+            "NUNCA digas que una hora está disponible, que una profesional está libre, o que la cita quedó reservada/confirmada, salvo que 'instruccionIA' de ESE turno puntual te lo pida explícitamente (eso solo ocurre justo después de que el sistema ya la creó de verdad, nunca antes). " +
+            "Si la clienta ya eligió un horario, pide su confirmación explícita antes de dar nada por reservado -- una respuesta ambigua ('creo que sí', 'me gusta') nunca cuenta como confirmación. " +
+            "Si un intento de reservar falla (el horario se ocupó justo antes, o hubo un error técnico), explícalo con calidez y sin tecnicismos, sin decir en ningún momento que la cita quedó confirmada.",
         },
       },
       {
@@ -107,7 +140,19 @@ export function amoreRouterFlow(): FlowDefinition {
     ],
     edges: [
       { id: "e-start-resolver", source: "start", target: "act-resolver-escenario" },
-      { id: "e-resolver-cond-ai", source: "act-resolver-escenario", target: "cond-es-ai", sourceHandle: FLOW_EDGE_HANDLE.aiSuccess },
+      // FASE 1 -- Agendamiento conversacional (autorizado). El resultado de
+      // resolver_escenario ahora entra PRIMERO a las dos condiciones nuevas
+      // (más específicas); si ninguna aplica, sigue exactamente el mismo
+      // camino de siempre hacia cond-es-ai.
+      { id: "e-resolver-cond-agendar-disp", source: "act-resolver-escenario", target: "cond-es-agendar-disponibilidad", sourceHandle: FLOW_EDGE_HANDLE.aiSuccess },
+
+      { id: "e-cond-agendar-disp-si", source: "cond-es-agendar-disponibilidad", target: "act-buscar-disponibilidad-nylas", sourceHandle: FLOW_EDGE_HANDLE.conditionTrue },
+      { id: "e-cond-agendar-disp-no", source: "cond-es-agendar-disponibilidad", target: "cond-es-agendar-crear-cita", sourceHandle: FLOW_EDGE_HANDLE.conditionFalse },
+      { id: "e-buscar-disp-a-ia", source: "act-buscar-disponibilidad-nylas", target: "ai-generar-respuesta", sourceHandle: FLOW_EDGE_HANDLE.aiSuccess },
+
+      { id: "e-cond-agendar-crear-si", source: "cond-es-agendar-crear-cita", target: "act-crear-cita-nylas", sourceHandle: FLOW_EDGE_HANDLE.conditionTrue },
+      { id: "e-cond-agendar-crear-no", source: "cond-es-agendar-crear-cita", target: "cond-es-ai", sourceHandle: FLOW_EDGE_HANDLE.conditionFalse },
+      { id: "e-crear-cita-a-ia", source: "act-crear-cita-nylas", target: "ai-generar-respuesta", sourceHandle: FLOW_EDGE_HANDLE.aiSuccess },
 
       { id: "e-cond-ai-si", source: "cond-es-ai", target: "ai-generar-respuesta", sourceHandle: FLOW_EDGE_HANDLE.conditionTrue },
       { id: "e-cond-ai-no", source: "cond-es-ai", target: "cond-es-transfer", sourceHandle: FLOW_EDGE_HANDLE.conditionFalse },
@@ -132,6 +177,12 @@ export function amoreRouterFlow(): FlowDefinition {
       { key: "instruccionIA", label: "Instrucción acotada del escenario para el nodo IA", type: "string" },
       { key: "ultimoServicioId", label: "Último servicio real mencionado (contexto)", type: "string" },
       { key: "ultimaCategoria", label: "Última categoría real mencionada (contexto)", type: "string" },
+      {
+        key: "agendamiento",
+        label:
+          "FASE 1 -- acumulador completo del agendamiento conversacional en curso (servicio/fecha/hora/profesional/selección/confirmación), objeto anidado, ver AgendamientoEnCurso",
+        type: "string",
+      },
     ],
   };
 }

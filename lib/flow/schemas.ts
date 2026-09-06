@@ -254,6 +254,18 @@ const actionNodeConfigSchema = z.discriminatedUnion("actionType", [
     semanticTag: semanticTagSchema,
     params: z.record(z.string(), z.string()).optional(),
   }),
+  // FASE 1 -- Agendamiento conversacional (autorizado) -- mismo criterio de
+  // arriba: sin params, leen tenantId/conversation/payload.agendamiento.
+  z.object({
+    actionType: z.literal("buscar_disponibilidad_nylas"),
+    semanticTag: semanticTagSchema,
+    params: z.record(z.string(), z.string()).optional(),
+  }),
+  z.object({
+    actionType: z.literal("crear_cita_nylas"),
+    semanticTag: semanticTagSchema,
+    params: z.record(z.string(), z.string()).optional(),
+  }),
   z.object({
     actionType: z.literal("webhook_http"),
     semanticTag: semanticTagSchema,

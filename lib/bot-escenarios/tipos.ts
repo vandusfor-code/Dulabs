@@ -5,7 +5,24 @@
  * sola tabla genérica por tenant.
  */
 
-export type ModoEscenario = "deterministic" | "catalog" | "faq" | "ai" | "portal" | "transfer";
+export type ModoEscenario =
+  | "deterministic"
+  | "catalog"
+  | "faq"
+  | "ai"
+  | "portal"
+  | "transfer"
+  // FASE 1 -- Agendamiento conversacional (autorizado) -- emitidos SOLO por
+  // resolverAgendamiento (resolver.ts), nunca por la config estática de un
+  // escenario: le dicen al Flow Engine (amore-router.flow.ts, sin tocar su
+  // core) que debe ejecutar una acción real de Nylas ANTES de redactar con
+  // IA -- "agendar_buscar_disponibilidad" consulta el pool real de horarios,
+  // "agendar_crear_cita" ejecuta crearCitaConNylas() (con su propia
+  // revalidación/idempotencia/rollback, sin ningún cambio). El nodo IA
+  // existente (ai-generar-respuesta) redacta el resultado real en ambos
+  // casos -- nunca un segundo nodo IA nuevo.
+  | "agendar_buscar_disponibilidad"
+  | "agendar_crear_cita";
 
 /**
  * Códigos reservados que TODO tenant debe sembrar para usar este motor
@@ -16,6 +33,14 @@ export type ModoEscenario = "deterministic" | "catalog" | "faq" | "ai" | "portal
  */
 export const CODIGO_ESCENARIO_FALLBACK = "000_fallback";
 export const CODIGO_ESCENARIO_PORTAL = "061_intencion_reservar";
+/**
+ * FASE 1 -- Agendamiento conversacional (autorizado). Código reservado
+ * OPCIONAL: un tenant que no lo siembre simplemente nunca activa
+ * agendamiento conversacional (resolverEscenario sigue funcionando
+ * exactamente igual que antes de esta fase para cualquier tenant sin esta
+ * fila -- ver el guard explícito en resolver.ts).
+ */
+export const CODIGO_ESCENARIO_AGENDAMIENTO = "070_agendamiento";
 
 /**
  * Tipos de variante de activación. `contains`/`starts_with`/`exact` son
@@ -127,6 +152,46 @@ export interface EntidadesDetectadas {
   referenciaOpcion?: ReferenciaOpcionMostrada;
 }
 
+/**
+ * FASE 1 -- Agendamiento conversacional (autorizado). ACUMULADOR de datos
+ * reales, nunca una secuencia rígida de pasos obligatorios -- cada campo se
+ * llena de forma independiente, en cualquier orden, según lo que la clienta
+ * ya haya dado. Vive DENTRO de ContextoConversacional (mismo mecanismo de
+ * state.variables ya existente) -- NUNCA una tabla ni un motor de estado
+ * nuevo. `especialistaId`/`horarioSeleccionadoISO`/`servicioId` son siempre
+ * ids reales, nunca texto libre -- se re-validan contra el catálogo/
+ * elegibilidad real en cada paso, igual que `ultimasOpcionesIds` ya hace
+ * para las referencias a listas mostradas.
+ */
+export interface AgendamientoEnCurso {
+  servicioId?: string;
+  servicioNombre?: string;
+  duracionMin?: number;
+  /** Solo si la clienta mencionó una profesional puntual ("con Mary") -- si no, se consulta el pool completo de elegibles. */
+  especialistaId?: number;
+  especialistaNombre?: string;
+  fechaISO?: string;
+  bloquePreferido?: "manana" | "tarde" | "noche";
+  horaPreferidaHHMM?: string;
+  /**
+   * Últimas opciones REALES ofrecidas (mismo criterio que
+   * ContextoConversacional.ultimasOpcionesIds) -- para poder resolver "la de
+   * las 4" o "con Mary" contra lo que de verdad se mostró, nunca contra un
+   * valor inventado.
+   */
+  opcionesOfrecidas?: Array<{ especialistaId: number; especialistaNombre: string; horaTexto: string; horaISO: string }>;
+  horarioSeleccionadoISO?: string;
+  especialistaSeleccionadaId?: number;
+  especialistaSeleccionadaNombre?: string;
+  /** true SOLO entre el momento en que se ofrece un horario concreto y la clienta responde -- así una confirmación ambigua nunca se malinterpreta fuera de este momento puntual. */
+  esperandoConfirmacion?: boolean;
+  nombreCliente?: string;
+  /** true justo después de que el bot preguntó "¿a nombre de quién?" -- el próximo mensaje que no matchee ningún otro dato se interpreta como el nombre. */
+  nombrePendiente?: boolean;
+  /** true tras crear la cita real (éxito) -- el acumulador queda "cerrado", listo para limpiarse en el próximo turno sin intención de agendar. */
+  completado?: boolean;
+}
+
 /** Contexto conversacional leído/escrito en state.variables (mismo mecanismo ya existente, sin tabla nueva). */
 export interface ContextoConversacional {
   ultimoServicioId?: string;
@@ -144,6 +209,8 @@ export interface ContextoConversacional {
    * precio/nombre acá, solo el id, para no arrastrar datos desactualizados.
    */
   ultimasOpcionesIds?: string[];
+  /** FASE 1 -- Agendamiento conversacional (autorizado). Ver AgendamientoEnCurso. */
+  agendamiento?: AgendamientoEnCurso;
 }
 
 /**

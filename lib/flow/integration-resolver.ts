@@ -93,6 +93,12 @@ const INTERNAL_ACTION_TYPES = new Set([
   // DESDE EL PRIMER COMMIT, mismo criterio de arriba: acción nativa sin
   // integración externa (lib/bot-escenarios/resolver.ts).
   "resolver_escenario",
+  // FASE 1 -- Agendamiento conversacional (autorizado) -- mismo criterio:
+  // wrappers finos nativos sobre lib/disponibilidad-servicio-nylas.ts /
+  // lib/reserva-servicio-nylas.ts, sin integración externa. Registradas
+  // DESDE EL PRIMER COMMIT que las introduce.
+  "buscar_disponibilidad_nylas",
+  "crear_cita_nylas",
 ]);
 
 const INTERNAL_WEBHOOK_TAGS = new Set(["consultar_disponibilidad"]);

@@ -40,8 +40,21 @@ import {
   formatearDuracion,
   type ServicioCatalogoReal,
 } from "@/lib/catalogo-servicios-flow-adaptador";
-import { resolverEscenario } from "@/lib/bot-escenarios/resolver";
+import { resolverEscenario, type ResolverEscenarioDeps } from "@/lib/bot-escenarios/resolver";
 import { cargarConocimientoReal, cargarEscenariosReal } from "@/lib/bot-escenarios/store";
+import type { AgendamientoEnCurso } from "@/lib/bot-escenarios/tipos";
+import {
+  listarHorariosDisponiblesPorServicioConNylas,
+  type ResultadoHorariosConNylas,
+} from "@/lib/disponibilidad-servicio-nylas";
+import { crearCitaConNylas } from "@/lib/reserva-servicio-nylas";
+import { resolverNylasGrantIdParaTenant } from "@/lib/nylas/nylas-grant";
+import {
+  createNylasEventsClient,
+  createNylasEventsWriteClient,
+  resolveNylasApiKeyFromEnv,
+} from "@/lib/nylas/nylas-client";
+import { fechaColombiaDesdeIso, horaColombiaDesdeIso } from "@/lib/timezone-colombia";
 import {
   EFFECT_RESULT_CLASSIFICATIONS,
   type EffectDispatchRequest,
@@ -105,6 +118,22 @@ export interface InternalActionDeps {
   cargarEscenariosReal?: typeof cargarEscenariosReal;
   // Base de conocimiento (autorizado, AMORE primer tenant) -- mismo criterio.
   cargarConocimientoReal?: typeof cargarConocimientoReal;
+  // FASE 1 -- Agendamiento conversacional (autorizado). Mismo criterio de
+  // arriba (opcionales, real por default) -- resolver.ts los necesita SOLO
+  // mientras hay un agendamiento activo, para resolver especialistas reales
+  // y el nombre ya conocido de la clienta sin preguntarlo de nuevo.
+  cargarEspecialistas?: ResolverEscenarioDeps["cargarEspecialistas"];
+  buscarNombreConocido?: ResolverEscenarioDeps["buscarNombreConocido"];
+  // FASE 1 -- Agendamiento conversacional (autorizado). Todos opcionales,
+  // mismo criterio de arriba (real por default; solo se inyectan mocks en
+  // tests) -- NUNCA un segundo mecanismo de override para Nylas ya
+  // existente en lib/nylas/*.
+  listarHorariosDisponiblesPorServicioConNylas?: typeof listarHorariosDisponiblesPorServicioConNylas;
+  crearCitaConNylas?: typeof crearCitaConNylas;
+  resolverNylasGrantIdParaTenant?: typeof resolverNylasGrantIdParaTenant;
+  resolveNylasApiKeyFromEnv?: typeof resolveNylasApiKeyFromEnv;
+  createNylasEventsClient?: typeof createNylasEventsClient;
+  createNylasEventsWriteClient?: typeof createNylasEventsWriteClient;
 }
 
 const OPERATION_CLASS: Partial<Record<string, InternalActionOperationClass>> = {
@@ -130,6 +159,9 @@ const OPERATION_CLASS: Partial<Record<string, InternalActionOperationClass>> = {
   consultar_disponibilidad_catalogo: "READ",
   listar_profesionales_servicio: "READ",
   resolver_escenario: "READ",
+  // FASE 1 -- Agendamiento conversacional (autorizado).
+  buscar_disponibilidad_nylas: "READ",
+  crear_cita_nylas: "CRITICAL",
 };
 
 function resolveInternalActionKey(action: ActionNodeConfig): string {
@@ -162,6 +194,17 @@ function num(value: string | undefined, fallback: number): number {
   if (!value) return fallback;
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
+}
+
+/**
+ * FASE 1 -- Agendamiento conversacional (autorizado). Guard MÍNIMO: un
+ * objeto plano (nunca array/string/null) es aceptable -- resolver.ts ya
+ * revalida cada campo real (ids/fechas/horarios) contra catálogo/
+ * elegibilidad/Nylas en cada paso, así que este guard solo evita que un
+ * valor corrupto rompa el spread, nunca duplica esa validación.
+ */
+function esAgendamientoValido(value: unknown): value is AgendamientoEnCurso {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function criticalEvidenceMissing(
@@ -280,6 +323,10 @@ export class InternalActionExecutor implements EffectExecutor {
         return this.listarProfesionalesServicioAction(request, params, signal);
       case "resolver_escenario":
         return this.resolverEscenarioAction(request, params, signal);
+      case "buscar_disponibilidad_nylas":
+        return this.buscarDisponibilidadNylasAction(request, signal);
+      case "crear_cita_nylas":
+        return this.crearCitaNylasAction(request, signal);
       default:
         return {
           success: false,
@@ -1548,14 +1595,21 @@ export class InternalActionExecutor implements EffectExecutor {
     assertNotAborted(signal);
     const mensaje = params.mensajeActual?.trim() || params.__firstMessageText?.trim() || "";
     const turno = num(params.__turnoEscenario, 0);
-    // ultimasOpcionesIds es un array -- mergeParams (arriba) descarta
-    // arrays/objetos al armar `params`, mismo motivo exacto por el que
-    // catalogoDisponible se lee de request.payload directo en otras
+    // ultimasOpcionesIds/agendamiento son array/objeto -- mergeParams (arriba)
+    // descarta arrays/objetos al armar `params`, mismo motivo exacto por el
+    // que catalogoDisponible se lee de request.payload directo en otras
     // acciones de este archivo. Nunca de `params`.
     const ultimasOpcionesIdsRaw = request.payload.ultimasOpcionesIds;
     const ultimasOpcionesIds = Array.isArray(ultimasOpcionesIdsRaw)
       ? ultimasOpcionesIdsRaw.filter((v): v is string => typeof v === "string")
       : [];
+    // FASE 1 -- Agendamiento conversacional (autorizado). `agendamiento` es
+    // el acumulador completo (objeto anidado) -- viaja tal cual en
+    // state.variables (ver flow-engine.ts: un nodo "action" mergea
+    // event.data SIN allowlist, a diferencia de un nodo "ai" que solo copia
+    // outputVariables declaradas), así que se lee/escribe entero, nunca
+    // campo por campo.
+    const agendamiento = esAgendamientoValido(request.payload.agendamiento) ? request.payload.agendamiento : undefined;
 
     const resultado = await resolverEscenario({
       supabase: this.deps.supabase,
@@ -1569,8 +1623,10 @@ export class InternalActionExecutor implements EffectExecutor {
         ultimaCategoria: params.ultimaCategoria || undefined,
         ultimaAccionSugerida: params.ultimaAccionSugerida || undefined,
         ultimasOpcionesIds: ultimasOpcionesIds.length > 0 ? ultimasOpcionesIds : undefined,
+        agendamiento,
       },
       turno,
+      telefonoCliente: request.conversation?.telefonoCliente,
       deps: {
         cargarEscenarios: this.deps.cargarEscenariosReal ?? cargarEscenariosReal,
         // Reutiliza EXACTAMENTE los mismos deps opcionales inyectables que ya
@@ -1579,6 +1635,8 @@ export class InternalActionExecutor implements EffectExecutor {
         cargarCatalogo: this.deps.listarCatalogoServiciosReal,
         cargarProfesionales: this.deps.listarProfesionalesServicioReal,
         cargarConocimiento: this.deps.cargarConocimientoReal,
+        cargarEspecialistas: this.deps.cargarEspecialistas,
+        buscarNombreConocido: this.deps.buscarNombreConocido,
       },
     });
     assertNotAborted(signal);
@@ -1610,6 +1668,10 @@ export class InternalActionExecutor implements EffectExecutor {
       ultimaCategoria: resultado.contexto.ultimaCategoria ?? "",
       ultimaAccionSugerida: resultado.contexto.ultimaAccionSugerida ?? "",
       ultimasOpcionesIds: resultado.contexto.ultimasOpcionesIds ?? [],
+      // FASE 1 -- objeto anidado completo, ver comentario arriba sobre por
+      // qué un nodo "action" puede pasarlo tal cual (a diferencia de un
+      // outputVariable declarado en un nodo "ai").
+      agendamiento: resultado.contexto.agendamiento ?? null,
       __turnoEscenario: turno + 1,
       effectId: request.effectId,
     };
@@ -1622,5 +1684,303 @@ export class InternalActionExecutor implements EffectExecutor {
       rawResult: data,
       metadata: { operationClass: OPERATION_CLASS.resolver_escenario },
     };
+  }
+
+  /**
+   * FASE 1 -- Agendamiento conversacional (autorizado). Wrapper FINO: la
+   * lógica real vive en lib/disponibilidad-servicio-nylas.ts (sin cambios).
+   * Se llega acá SOLO cuando decidirSiguientePasoAgendamiento (resolver.ts)
+   * ya validó que hay servicio+fecha reales -- este nodo consulta Nylas y
+   * SIEMPRE devuelve success:true (nunca hace fallar la ejecución): el
+   * resultado (opciones reales, sin cupo, o error técnico) se comunica vía
+   * modo="ai" + instruccionIA/datosIA para que ai-generar-respuesta (el
+   * MISMO nodo IA de siempre) lo redacte con naturalidad -- sección 16 del
+   * pedido: nunca se corta la conversación por un fallo de disponibilidad.
+   */
+  private async buscarDisponibilidadNylasAction(
+    request: EffectDispatchRequest,
+    signal?: AbortSignal,
+  ): Promise<EffectDispatchResult> {
+    assertNotAborted(signal);
+    const agendamientoRaw = request.payload.agendamiento;
+    const agendamiento = esAgendamientoValido(agendamientoRaw) ? agendamientoRaw : undefined;
+
+    // `extra` lleva SOLO el flag plano que Claim Security necesita para
+    // reconocer que Nylas de verdad respondió esta consulta (ver
+    // action-capabilities.ts: verifiesOnSuccess: ["appointment.available"],
+    // outputVariables: ["disponibilidadConsultada"]) -- nunca afirma que hay
+    // cupo, solo que la consulta real se hizo; el propio datosIA (vacío o
+    // no) es lo que decide qué puede decir la IA con honestidad.
+    const responderNaturalmente = (
+      instruccionIA: string,
+      datosIA: unknown,
+      agendamientoActualizado: AgendamientoEnCurso | undefined,
+      extra?: Record<string, unknown>,
+    ): EffectDispatchResult => {
+      const data = {
+        modo: "ai",
+        instruccionIA,
+        datosIA,
+        conocimientoGeneral: [],
+        agendamiento: agendamientoActualizado ?? null,
+        effectId: request.effectId,
+        ...extra,
+      };
+      return {
+        success: true,
+        classification: EFFECT_RESULT_CLASSIFICATIONS.SUCCESS,
+        data,
+        appliedResult: data,
+        rawResult: data,
+        metadata: { operationClass: OPERATION_CLASS.buscar_disponibilidad_nylas },
+      };
+    };
+
+    // Defensivo -- decidirSiguientePasoAgendamiento solo emite este modo con
+    // ambos ya presentes; nunca debería ocurrir en producción.
+    if (!agendamiento || !agendamiento.servicioId || !agendamiento.fechaISO) {
+      return responderNaturalmente(
+        "Pregúntale de nuevo, de forma natural, qué servicio y para qué día desea la cita.",
+        [],
+        agendamiento,
+      );
+    }
+    const servicioId = agendamiento.servicioId;
+    const fechaISO = agendamiento.fechaISO;
+
+    const grantId = (this.deps.resolverNylasGrantIdParaTenant ?? resolverNylasGrantIdParaTenant)(request.tenantId);
+    const apiKey = (this.deps.resolveNylasApiKeyFromEnv ?? resolveNylasApiKeyFromEnv)();
+    if (!grantId || !apiKey) {
+      return responderNaturalmente(
+        "No puedes verificar la disponibilidad real en este momento (falta la conexión con el calendario). Explícaselo con naturalidad a la clienta y ofrécele intentarlo de nuevo en un momento, sin inventar ningún horario.",
+        [],
+        agendamiento,
+      );
+    }
+    const nylasClient = (this.deps.createNylasEventsClient ?? createNylasEventsClient)(apiKey);
+
+    let resultado: ResultadoHorariosConNylas;
+    try {
+      resultado = await (this.deps.listarHorariosDisponiblesPorServicioConNylas ?? listarHorariosDisponiblesPorServicioConNylas)(
+        this.deps.supabase,
+        { idTenant: request.tenantId, servicioId, fecha: fechaISO, especialistaId: agendamiento.especialistaId },
+        { nylasClient, grantId },
+      );
+    } catch {
+      return responderNaturalmente(
+        "No pudiste verificar la disponibilidad real en este momento (hubo un error técnico). Explícaselo con naturalidad a la clienta y ofrécele intentarlo de nuevo en un momento, sin inventar ningún horario.",
+        [],
+        agendamiento,
+      );
+    }
+    assertNotAborted(signal);
+
+    if (!resultado.ok) {
+      if (resultado.motivo === "sin_especialistas_habilitados") {
+        // La profesional mencionada no atiende este servicio (o ninguna
+        // está habilitada todavía) -- se limpia la selección puntual para
+        // que la clienta pueda elegir otra sin quedar atascada.
+        return responderNaturalmente(
+          "La profesional mencionada no atiende ese servicio (o ninguna profesional está habilitada todavía). Explícalo con naturalidad y pregunta si desea que busques con otra profesional o prefiere otro servicio.",
+          [],
+          { ...agendamiento, especialistaId: undefined, especialistaNombre: undefined },
+        );
+      }
+      return responderNaturalmente(
+        "Ese servicio ya no está disponible. Discúlpate con naturalidad y pregunta si desea otro servicio.",
+        [],
+        { ...agendamiento, servicioId: undefined, servicioNombre: undefined, duracionMin: undefined },
+      );
+    }
+
+    const disponibles = resultado.especialistas.filter((e) => e.estado === "ok" && e.horarios.length > 0);
+    const todosNoConfirmados = resultado.especialistas.length > 0 && resultado.especialistas.every((e) => e.estado === "no_confirmado");
+
+    const opciones = disponibles.flatMap((e) =>
+      e.horarios.map((hhmm) => ({
+        especialistaId: e.especialistaId,
+        especialistaNombre: e.nombre,
+        horaTexto: hhmm,
+        horaISO: `${fechaISO}T${hhmm}:00-05:00`,
+      })),
+    );
+
+    const agendamientoActualizado: AgendamientoEnCurso = {
+      ...agendamiento,
+      opcionesOfrecidas: opciones.length > 0 ? opciones : undefined,
+    };
+
+    if (opciones.length === 0) {
+      if (todosNoConfirmados) {
+        return responderNaturalmente(
+          "No pudiste confirmar la disponibilidad real en este momento para ninguna profesional. Explícaselo con naturalidad a la clienta y ofrécele intentarlo de nuevo en un momento, o darle el enlace del portal si prefiere revisar ella misma, sin inventar ningún horario.",
+          [{ servicio: agendamiento.servicioNombre ?? null, fecha: fechaISO }],
+          agendamientoActualizado,
+        );
+      }
+      return responderNaturalmente(
+        "No hay cupo real disponible para ese servicio ese día con ninguna profesional elegible. Explícaselo con naturalidad y pregúntale si quiere que busques otro día.",
+        [{ servicio: agendamiento.servicioNombre ?? null, fecha: fechaISO }],
+        agendamientoActualizado,
+        { disponibilidadConsultada: true },
+      );
+    }
+
+    return responderNaturalmente(
+      "Presenta con naturalidad las opciones REALES de datosIA (profesional + hora) para que la clienta elija -- nunca inventes ni ofrezcas una hora que no esté ahí. Si hay muchas, resume las más cercanas y ofrece contar el resto si quiere.",
+      opciones.map((o) => ({ profesional: o.especialistaNombre, hora: o.horaTexto })),
+      agendamientoActualizado,
+      { disponibilidadConsultada: true },
+    );
+  }
+
+  /**
+   * FASE 1 -- Agendamiento conversacional (autorizado). Wrapper FINO sobre
+   * crearCitaConNylas() (lib/reserva-servicio-nylas.ts, sin cambios): esa
+   * función YA hace toda la revalidación/idempotencia/rollback real. Se
+   * llega acá SOLO tras confirmación explícita ya verificada por
+   * decidirSiguientePasoAgendamiento -- este wrapper nunca decide si se
+   * confirma, solo ejecuta y redacta el resultado real. SIEMPRE devuelve
+   * success:true (igual que el buscador de disponibilidad, mismo motivo):
+   * un rechazo real (horario ocupado durante la revalidación, error
+   * técnico) se comunica con naturalidad vía IA, NUNCA como "tu cita está
+   * confirmada" -- sección 16 del pedido.
+   */
+  private async crearCitaNylasAction(
+    request: EffectDispatchRequest,
+    signal?: AbortSignal,
+  ): Promise<EffectDispatchResult> {
+    assertNotAborted(signal);
+    const agendamientoRaw = request.payload.agendamiento;
+    const agendamiento = esAgendamientoValido(agendamientoRaw) ? agendamientoRaw : undefined;
+
+    // `extra` lleva SOLO `citaId` (fila real ya insertada en
+    // dulabs_citas_especialista) -- ver action-capabilities.ts:
+    // verifiesOnSuccess: ["appointment.reserved"], outputVariables:
+    // ["citaId"], mismo campo/criterio exacto que ya usa
+    // agendar_cita_especialista. Sin esto, Claim Security bloquearía CUALQUIER
+    // confirmación real de AMORE por reservas nuevas (nunca se otorga en un
+    // rechazo, solo en el único branch de éxito real de abajo).
+    const responderNaturalmente = (
+      instruccionIA: string,
+      datosIA: unknown,
+      agendamientoActualizado: AgendamientoEnCurso | undefined,
+      extra?: Record<string, unknown>,
+    ): EffectDispatchResult => {
+      const data = {
+        modo: "ai",
+        instruccionIA,
+        datosIA,
+        conocimientoGeneral: [],
+        agendamiento: agendamientoActualizado ?? null,
+        effectId: request.effectId,
+        ...extra,
+      };
+      return {
+        success: true,
+        classification: EFFECT_RESULT_CLASSIFICATIONS.SUCCESS,
+        data,
+        appliedResult: data,
+        rawResult: data,
+        metadata: { operationClass: OPERATION_CLASS.crear_cita_nylas },
+      };
+    };
+
+    // Defensivo -- decidirSiguientePasoAgendamiento solo emite este modo con
+    // TODO esto ya presente y una confirmación explícita ya recibida.
+    if (
+      !agendamiento ||
+      !agendamiento.servicioId ||
+      !agendamiento.horarioSeleccionadoISO ||
+      !agendamiento.especialistaSeleccionadaId ||
+      !agendamiento.especialistaSeleccionadaNombre ||
+      !agendamiento.nombreCliente
+    ) {
+      return responderNaturalmente(
+        "Algo no quedó claro para completar la reserva. Pregúntale de nuevo con naturalidad el dato que falte, sin asumir nada.",
+        [],
+        agendamiento,
+      );
+    }
+    const servicioId = agendamiento.servicioId;
+    const especialistaId = agendamiento.especialistaSeleccionadaId;
+    const horarioSeleccionadoISO = agendamiento.horarioSeleccionadoISO;
+    const nombreCliente = agendamiento.nombreCliente;
+
+    const grantId = (this.deps.resolverNylasGrantIdParaTenant ?? resolverNylasGrantIdParaTenant)(request.tenantId);
+    const apiKey = (this.deps.resolveNylasApiKeyFromEnv ?? resolveNylasApiKeyFromEnv)();
+    if (!grantId || !apiKey) {
+      return responderNaturalmente(
+        "No pudiste completar la reserva real en este momento (no hay conexión con el calendario). Explícaselo con naturalidad y ofrécele intentarlo de nuevo en un momento o usar el portal -- NUNCA digas que la cita quedó confirmada.",
+        [],
+        agendamiento,
+      );
+    }
+    const nylasReadClient = (this.deps.createNylasEventsClient ?? createNylasEventsClient)(apiKey);
+    const nylasWriteClient = (this.deps.createNylasEventsWriteClient ?? createNylasEventsWriteClient)(apiKey);
+    const telefonoCliente = request.conversation?.telefonoCliente ?? null;
+
+    // Idempotencia real (lib/idempotencia-reserva.ts, reutilizada TAL CUAL
+    // dentro de crearCitaConNylas) -- atada a este effect puntual, así un
+    // reintento genuino del mismo efecto nunca duplica la cita.
+    const idempotencyKey = `agendamiento:${request.executionRowId}:${request.effectId}`;
+
+    let resultado;
+    try {
+      resultado = await (this.deps.crearCitaConNylas ?? crearCitaConNylas)(
+        this.deps.supabase,
+        {
+          idTenant: request.tenantId,
+          servicioId,
+          especialistaId,
+          inicio: new Date(horarioSeleccionadoISO),
+          nombreCliente,
+          telefonoCliente,
+          idempotencyKey,
+        },
+        { nylasReadClient, nylasWriteClient, grantId },
+      );
+    } catch {
+      return responderNaturalmente(
+        "Hubo un error técnico al intentar reservar. Explícaselo con naturalidad -- NUNCA digas que la cita quedó confirmada -- y ofrécele intentarlo de nuevo.",
+        [],
+        agendamiento,
+      );
+    }
+    assertNotAborted(signal);
+
+    if (!resultado.ok) {
+      // Nunca "tu cita está confirmada" -- se limpia la selección para que
+      // el siguiente turno vuelva a consultar disponibilidad real (sección
+      // 16), nunca se inventa una hora nueva.
+      const agendamientoTrasFallo: AgendamientoEnCurso = {
+        ...agendamiento,
+        opcionesOfrecidas: undefined,
+        horarioSeleccionadoISO: undefined,
+        especialistaSeleccionadaId: undefined,
+        especialistaSeleccionadaNombre: undefined,
+        esperandoConfirmacion: undefined,
+      };
+      const instruccionIA =
+        resultado.motivo === "ocupado" || resultado.motivo === "revalidacion_fallida"
+          ? "Justo cuando ibas a reservar, ese horario se ocupó. Explícaselo con naturalidad a la clienta -- NUNCA digas que la cita quedó confirmada -- y dile que vas a revisar de nuevo la disponibilidad real."
+          : "No se pudo completar la reserva real en este momento. Explícaselo con naturalidad a la clienta -- NUNCA digas que la cita quedó confirmada -- y ofrécele revisar de nuevo la disponibilidad o usar el portal.";
+      return responderNaturalmente(instruccionIA, [{ detalle: resultado.detalle }], agendamientoTrasFallo);
+    }
+
+    const agendamientoCompletado: AgendamientoEnCurso = { ...agendamiento, completado: true };
+    return responderNaturalmente(
+      "La reserva se completó de verdad -- confirma con naturalidad y calidez el servicio, la profesional, la fecha y la hora exactos de datosIA. Nunca inventes ningún otro dato.",
+      [
+        {
+          servicio: resultado.servicio.nombre,
+          profesional: resultado.especialista.nombre,
+          fecha: fechaColombiaDesdeIso(resultado.cita.inicio),
+          hora: horaColombiaDesdeIso(resultado.cita.inicio),
+        },
+      ],
+      agendamientoCompletado,
+      { citaId: resultado.cita.id },
+    );
   }
 }

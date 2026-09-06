@@ -58,6 +58,13 @@ async function resolver(
       cargarProfesionales: async (_s, _t, servicioId) =>
         servicioId === "s-dipping" ? { profesionales: ["Mary", "Jessica"] } : { profesionales: [] },
       cargarConocimiento: async () => conocimiento,
+      // FASE 1 -- Agendamiento conversacional (autorizado): ningún test de
+      // ESTE archivo prueba agendamiento (ver resolver-agendamiento.test.ts
+      // para esos) -- deps mínimos para que "quiero una cita" (que ahora
+      // también matchea 070_agendamiento, prioridad mayor que 061) no
+      // intente tocar Supabase real por accidente.
+      cargarEspecialistas: async () => [],
+      buscarNombreConocido: async () => null,
     },
   });
 }
@@ -176,12 +183,13 @@ describe("resolverEscenario — banco real de AMORE, sin IA en el camino determi
     assert.match(r.respuestaTexto!, /no tenemos el servicio de acrílicas/i);
   });
 
-  it("intención de agendar: modo=portal, enlace real, nunca pide fecha", async () => {
+  it("FASE 1 (autorizado) -- intención de agendar ahora INICIA el agendamiento conversacional (070), ya no salta directo al portal (061 sigue sembrado, pero 070 gana por prioridad)", async () => {
     const r = await resolver("quiero agendar una cita");
-    assert.equal(r.modo, "portal");
-    assert.equal(r.requiereIA, false);
-    assert.match(r.respuestaTexto!, /dulabs\.co\/reservar\/amore/);
-    assert.doesNotMatch(r.respuestaTexto ?? "", /fecha|qué día/i);
+    assert.equal(r.escenarioCodigo, "070_agendamiento");
+    assert.equal(r.modo, "ai");
+    assert.equal(r.requiereIA, true);
+    assert.ok(r.contexto.agendamiento, "debe quedar un acumulador de agendamiento activo en el contexto");
+    assert.equal(r.contexto.agendamiento?.servicioId, undefined, "todavía no mencionó ningún servicio");
   });
 
   it("continuidad contextual: 'sí' tras precio de Dipping salta directo al portal para ESE servicio, sin volver a preguntar", async () => {
@@ -258,9 +266,12 @@ describe("resolverEscenario — banco real de AMORE, sin IA en el camino determi
     assert.doesNotMatch(r.respuestaTexto ?? "", /qué servicio/i);
   });
 
-  it("intención de agendar SIEMPRE gana sobre 'servicio específico', aunque el mensaje nombre un servicio real", async () => {
+  it("FASE 1 (autorizado) -- intención de agendar SIEMPRE gana sobre 'servicio específico', y además el servicio mencionado en el MISMO mensaje ya queda capturado en el acumulador", async () => {
     const r = await resolver("quiero agendar el dipping");
-    assert.equal(r.modo, "portal");
+    assert.equal(r.escenarioCodigo, "070_agendamiento");
+    assert.equal(r.modo, "ai");
+    assert.equal(r.contexto.agendamiento?.servicioId, "s-dipping");
+    assert.equal(r.contexto.agendamiento?.fechaISO, undefined, "todavía falta la fecha -- debe preguntarla, no inventarla");
   });
 
   it("dos preguntas en un mensaje (precio + quién lo hace): el escenario de mayor prioridad configurada responde ambas si su plantilla las cubre", async () => {
@@ -368,7 +379,6 @@ describe("resolverEscenario — banco real de AMORE, sin IA en el camino determi
       "Hola",
       "quiero arreglarme las unas",
       "cuánto cuesta el dipping",
-      "quiero agendar una cita",
       "quiero hablar con una persona",
       "qué horario tienen",
       "hacen acrílicas?",

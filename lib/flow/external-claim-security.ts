@@ -122,6 +122,13 @@ const SOURCE_TO_ACTION: Record<string, ActionNodeConfig> = {
   crear_lead_campana: { actionType: "crear_lead_campana", params: {} },
   transferir_soporte: { actionType: "transferir_soporte" },
   consultar_pago: { actionType: "webhook_http", url: "", semanticTag: "consultar_pago" },
+  // FASE 1 -- Agendamiento conversacional (autorizado) -- mismo criterio
+  // exacto que las entradas de arriba: solo permite que
+  // capabilitiesFromVerifiedEntry reconozca el source real que produce
+  // InternalActionExecutor, para que verifiesOnSuccess/outputVariables
+  // declarados en action-capabilities.ts se otorguen en runtime.
+  buscar_disponibilidad_nylas: { actionType: "buscar_disponibilidad_nylas", params: {} },
+  crear_cita_nylas: { actionType: "crear_cita_nylas", params: {} },
 };
 
 const DOMAIN_CAPABILITY_RULES: Array<{ pattern: RegExp; capabilities: AssertionCapability[] }> = [

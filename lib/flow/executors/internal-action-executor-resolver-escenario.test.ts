@@ -75,6 +75,13 @@ function crearExecutor(overrides: Partial<ConstructorParameters<typeof InternalA
     listarCatalogoServiciosReal: async () => [],
     listarProfesionalesServicioReal: async () => ({ profesionales: [] }),
     cargarConocimientoReal: async () => [],
+    // FASE 1 -- Agendamiento conversacional (autorizado). Default seguro
+    // para este archivo (que no prueba agendamiento): AMORE_ESCENARIOS_SEED
+    // ya incluye 070_agendamiento, así que cualquier guion real que
+    // mencione "quiero una cita" activaría el wiring de resolver.ts que
+    // resuelve especialistas reales -- sin este default fallaría contra el
+    // supabase falso de este archivo.
+    cargarEspecialistas: async () => [],
     ...overrides,
   });
 }

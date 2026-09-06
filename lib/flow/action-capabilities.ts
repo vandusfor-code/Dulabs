@@ -217,6 +217,38 @@ const BY_ACTION_TYPE: Partial<Record<FlowActionType, ActionCapabilitySpec>> = {
     actionType: "resolver_escenario",
     criticality: "standard",
   },
+  // FASE 1 -- Agendamiento conversacional (autorizado). Solo lectura real
+  // (Nylas) -- SIEMPRE devuelve success:true (ver internal-action-executor.ts),
+  // así que nunca requiere rama de fallo dedicada; `disponibilidadConsultada`
+  // (true SOLO cuando Nylas de verdad respondió, nunca en la rama
+  // "no_confirmado") es lo único que otorga la capability -- nunca implica
+  // que HAY cupo, solo que la consulta real se hizo.
+  buscar_disponibilidad_nylas: {
+    actionType: "buscar_disponibilidad_nylas",
+    criticality: "standard",
+    verifiesOnSuccess: ["appointment.available"],
+    outputVariables: ["disponibilidadConsultada"],
+  },
+  // FASE 1 -- Agendamiento conversacional (autorizado). Mismo criterio EXACTO
+  // que agendar_cita_especialista: `citaId` es la fila real ya insertada en
+  // dulabs_citas_especialista (crearCitaConNylas hace INSERT atómico + evento
+  // Nylas primero) -- solo presente en el único branch de éxito real. Nunca
+  // requiere rama de fallo dedicada: un rechazo (horario ocupado, error
+  // técnico) también devuelve success:true, comunicado con naturalidad vía
+  // IA, nunca como confirmación (ver instruccionIA del rechazo).
+  crear_cita_nylas: {
+    actionType: "crear_cita_nylas",
+    criticality: "critical",
+    verifiesOnSuccess: ["appointment.reserved"],
+    outputVariables: ["citaId"],
+    // A diferencia de agendar_cita_especialista, esta acción SIEMPRE
+    // devuelve success:true (ver internal-action-executor.ts) -- un rechazo
+    // real (horario ocupado, error técnico) se comunica con naturalidad vía
+    // el mismo nodo IA (modo="ai" + instruccionIA), nunca por una rama
+    // failure separada del grafo. `citaId` (presente SOLO en el único
+    // branch de éxito real) sigue siendo lo único que otorga la capability.
+    requiresFailureBranch: false,
+  },
 };
 
 /** Specs por semanticTag de webhook (prioridad sobre actionType genérico). */

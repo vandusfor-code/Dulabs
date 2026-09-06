@@ -244,6 +244,11 @@ export type FlowActionType =
   // lib/bot-escenarios/resolver.ts. Genérico por tenant, ver
   // supabase/migrations/20260912000000_dulabs_bot_escenarios.sql.
   | "resolver_escenario"
+  // FASE 1 -- Agendamiento conversacional (autorizado) -- wrappers finos
+  // sobre lib/disponibilidad-servicio-nylas.ts/lib/reserva-servicio-nylas.ts
+  // (sin cambios), ver lib/flow/executors/internal-action-executor.ts.
+  | "buscar_disponibilidad_nylas"
+  | "crear_cita_nylas"
   | "webhook_http"
   | "enviar_plantilla";
 
@@ -306,7 +311,9 @@ export interface SimpleActionConfig extends ActionSemanticTag {
     | "resolver_servicio_catalogo"
     | "consultar_disponibilidad_catalogo"
     | "listar_profesionales_servicio"
-    | "resolver_escenario";
+    | "resolver_escenario"
+    | "buscar_disponibilidad_nylas"
+    | "crear_cita_nylas";
   params?: ActionParams;
 }
 

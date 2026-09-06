@@ -451,6 +451,34 @@ export const AMORE_ESCENARIOS_SEED: FilaSeed[] = [
     ],
     config: {},
   },
+  // FASE 1 -- Agendamiento conversacional (autorizado, piloto AMORE). Mismas
+  // frases de intención que 061 (que sigue existiendo tal cual, como
+  // respaldo del portal), pero con prioridad MAYOR -- así gana siempre para
+  // AMORE. resolver.ts intercepta este código ANTES del switch por modo
+  // (ver CODIGO_ESCENARIO_AGENDAMIENTO) y delega en resolverAgendamiento,
+  // que decide dinámicamente qué modo emitir turno a turno (nunca un modo
+  // fijo declarado acá) -- "ai" es solo la clasificación de activo, no el
+  // comportamiento real.
+  {
+    codigo: "070_agendamiento",
+    nombre: "Agendamiento conversacional (FASE 1)",
+    modo: "ai",
+    prioridad: 910,
+    activo: true,
+    variantes: [
+      { tipo: "contains", valor: "quiero agendar" },
+      { tipo: "contains", valor: "quiero reservar" },
+      { tipo: "contains", valor: "quiero una cita" },
+      { tipo: "contains", valor: "necesito cita" },
+      { tipo: "contains", valor: "quiero sacar cita" },
+      { tipo: "contains", valor: "quiero separar" },
+    ],
+    respuestas: [],
+    config: {
+      instruccionIA:
+        "No usado directamente -- resolverAgendamiento (resolver.ts) genera dinámicamente la instrucción real en cada paso del agendamiento (qué falta, opciones reales, confirmación).",
+    },
+  },
   {
     codigo: "066_proceso_portal",
     nombre: "Cómo funciona la reserva",
