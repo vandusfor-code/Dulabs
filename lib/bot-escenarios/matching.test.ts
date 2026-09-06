@@ -4,7 +4,14 @@ import { resolverEscenarioGanador } from "@/lib/bot-escenarios/matching";
 import type { EntidadesDetectadas, EscenarioRow } from "@/lib/bot-escenarios/tipos";
 
 function entidades(overrides: Partial<EntidadesDetectadas> = {}): EntidadesDetectadas {
-  return { esAfirmacionCorta: false, esNegacionCorta: false, serviciosDetectados: [], indicaGeneroMasculino: false, ...overrides };
+  return {
+    esAfirmacionCorta: false,
+    esNegacionCorta: false,
+    serviciosDetectados: [],
+    indicaGeneroMasculino: false,
+    pideVerOpcionesDeNuevo: false,
+    ...overrides,
+  };
 }
 
 function escenario(overrides: Partial<EscenarioRow>): EscenarioRow {

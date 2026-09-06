@@ -16,6 +16,27 @@ const AFIRMACIONES_CORTAS = [
 ];
 const NEGACIONES_CORTAS = ["no", "no gracias", "nel", "no por ahora", "todavia no", "no por el momento"];
 
+/**
+ * Corrección (autorizada, bug real "¿Cuáles?") — pedir ver de nuevo las
+ * opciones ya ofrecidas, nunca una pregunta nueva. Vocabulario cerrado,
+ * coincidencia EXACTA (mismo criterio que AFIRMACIONES_CORTAS) -- así
+ * "¿cuáles son los ingredientes?" o cualquier otra frase más larga con
+ * "cuales" adentro NUNCA dispara esto por accidente.
+ */
+const PIDE_VER_OPCIONES_DE_NUEVO = [
+  "cuales",
+  "cual",
+  "cuales son",
+  "cuales hay",
+  "cuales tienen",
+  "que opciones hay",
+  "que opciones tienen",
+  "cuales son las opciones",
+  "cuales son esas opciones",
+  "dime cuales",
+  "cuales serian",
+];
+
 const PRESUPUESTO_PATTERNS = [
   /(?:maximo|max\.?|hasta|menos de)\s*\$?\s*([\d.,]+)\s*(mil|k)?/i,
   /\$\s*([\d.,]+)\s*(mil|k)?/i,
@@ -107,6 +128,14 @@ const REFERENCIA_DURACION_HORAS_PATTERN = /\b(?:la|el|ese|esa)\s+de\s+(\d+)\s*ho
 const REFERENCIA_DURACION_UNA_HORA_PATTERN = /\b(?:la|el|ese|esa)\s+de\s+una\s+hora/;
 const REFERENCIA_DURACION_MIN_PATTERN = /\b(?:la|el|ese|esa)\s+de\s+(\d+)\s*min/;
 const REFERENCIA_DEMOSTRATIVO_BARE_PATTERN = /^(esa|ese|esta|este)\b/;
+// Corrección (autorizada, sección 13 del pedido) — "Bueno, quiero ese" tras
+// una pregunta informativa: el demostrativo NO está al inicio del mensaje
+// (por eso REFERENCIA_DEMOSTRATIVO_BARE_PATTERN, anclado con ^, no lo
+// reconoce), pero "quiero"/"quisiera" INMEDIATAMENTE antes de
+// eso/ese/esa/esta/este es una intención de selección clara y segura --
+// nunca se confunde con una negación real ("no quiero ese") gracias al
+// lookbehind negativo.
+const REFERENCIA_DEMOSTRATIVO_CON_INTENCION_PATTERN = /(?<!no\s)(?:quiero|quisiera)\s+(esa|ese|esto|eso|esta|este)\b/;
 
 function extraerReferenciaOpcion(textoNormalizado: string): ReferenciaOpcionMostrada | undefined {
   for (const { re, posicion } of ORDINAL_PATTERNS) {
@@ -130,6 +159,7 @@ function extraerReferenciaOpcion(textoNormalizado: string): ReferenciaOpcionMost
     if (Number.isFinite(monto) && monto > 0) return { tipo: "precio", monto };
   }
   if (REFERENCIA_DEMOSTRATIVO_BARE_PATTERN.test(textoNormalizado)) return { tipo: "demostrativo" };
+  if (REFERENCIA_DEMOSTRATIVO_CON_INTENCION_PATTERN.test(textoNormalizado)) return { tipo: "demostrativo" };
   return undefined;
 }
 
@@ -253,6 +283,14 @@ export function extraerEntidades(params: {
     duracionMaxMin: extraerDuracionMaxMin(textoNormalizado),
     esAfirmacionCorta: AFIRMACIONES_CORTAS.some((a) => textoNormalizado === normalizeText(a)),
     esNegacionCorta: NEGACIONES_CORTAS.some((n) => textoNormalizado === normalizeText(n)),
+    // normalizeText deliberadamente NO quita signos de interrogación (ver su
+    // propio comentario -- "¿vendes?" puede ser una intención distinta para
+    // un keyword trigger). Acá SÍ importa reconocer la forma natural con
+    // signos ("¿Cuáles?"), así que se quitan solo para ESTA comparación
+    // puntual, sin tocar textoNormalizado ni el normalizador compartido.
+    pideVerOpcionesDeNuevo: PIDE_VER_OPCIONES_DE_NUEVO.some(
+      (p) => textoNormalizado.replace(/[¿?¡!]/g, "").trim() === normalizeText(p),
+    ),
     indicaGeneroMasculino: mencionaGeneroMasculino(params.mensaje),
     // Solo tiene sentido buscar una referencia a "la lista mostrada" cuando
     // el propio mensaje no YA nombra un servicio/categoría real -- si dice

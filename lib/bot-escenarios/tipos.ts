@@ -150,6 +150,15 @@ export interface EntidadesDetectadas {
   indicaGeneroMasculino: boolean;
   /** Prueba real de WhatsApp (autorizado) — solo se calcula cuando el mensaje NO nombra ya un servicio/categoría real. */
   referenciaOpcion?: ReferenciaOpcionMostrada;
+  /**
+   * Corrección (autorizada, bug real "¿Cuáles?") — la clienta pide ver DE
+   * NUEVO las opciones ya ofrecidas ("¿Cuáles?", "¿Qué opciones hay?"),
+   * nunca una pregunta nueva sobre un servicio/categoría distinta.
+   * Vocabulario cerrado, coincidencia EXACTA (mismo criterio que
+   * esAfirmacionCorta/esNegacionCorta) -- la resolución contra
+   * ultimaCategoria/ultimasOpcionesIds vive en resolver.ts.
+   */
+  pideVerOpcionesDeNuevo: boolean;
 }
 
 /**

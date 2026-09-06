@@ -115,6 +115,62 @@ function aplicarFiltroGenero(items: ServicioCatalogoReal[], indicaGeneroMasculin
   return filtrados.length > 0 ? filtrados : items;
 }
 
+/**
+ * Corrección (autorizada) — límite CONVERSACIONAL (nunca "AMORE solo tiene 4
+ * servicios"): al explorar una categoría con muchos servicios reales, se
+ * presentan como máximo 4 por interacción -- la asesora humana no manda un
+ * catálogo completo de una vez. No hay ningún criterio real de "popularidad"
+ * en la base de datos (nunca se inventa uno) -- el orden es el mismo que ya
+ * devuelve el catálogo real (dulabs_servicios), determinista y estable.
+ */
+const MAX_OPCIONES_CATEGORIA = 4;
+
+/**
+ * Corrección (autorizada) — extraído de resolverModoCatalog para poder
+ * reutilizarlo TAL CUAL cuando la clienta pide ver de nuevo las opciones ya
+ * ofrecidas ("¿Cuáles?", ver más abajo en resolverEscenario) -- misma lógica
+ * exacta, sin duplicarla. Devuelve undefined solo cuando de verdad no hay
+ * ningún servicio real y activo en esa categoría (nunca promete una lista
+ * que no puede mostrar).
+ */
+function construirRespuestaCategoria(params: {
+  escenario: EscenarioRow;
+  catalogo: ServicioCatalogoReal[];
+  categoria: string;
+  indicaGeneroMasculino: boolean;
+  presupuestoMax?: number;
+  duracionMaxMin?: number;
+  tenantId: string;
+  turno: number;
+}): ResultadoResolucion | undefined {
+  const { escenario, catalogo, categoria, indicaGeneroMasculino, presupuestoMax, duracionMaxMin, tenantId, turno } = params;
+  const candidatos = filtrarCatalogo(catalogo, {
+    categoria,
+    nombreContiene: escenario.config.filtroNombreContiene,
+    nombreContieneTodas: escenario.config.filtroNombreContieneTodas,
+    presupuestoMax,
+    duracionMaxMin,
+  });
+  const opciones = aplicarFiltroGenero(candidatos, indicaGeneroMasculino).slice(0, MAX_OPCIONES_CATEGORIA);
+  if (opciones.length === 0) return undefined;
+
+  const opcionesTexto = opciones.map((s) => `${s.nombre} — ${formatearPrecioCop(s.precio)} (${formatearDuracion(s.duracionMin)})`).join("\n");
+  const respuestaTexto = elegirYRenderizarPlantilla({
+    respuestas: escenario.respuestas,
+    tenantId,
+    escenarioCodigo: escenario.codigo,
+    turno,
+    variables: { opcionesTexto, categoria },
+  });
+  return {
+    escenarioCodigo: escenario.codigo,
+    modo: "catalog",
+    respuestaTexto,
+    requiereIA: false,
+    contexto: { ultimaCategoria: categoria, ultimasOpcionesIds: opciones.map((o) => o.id) },
+  };
+}
+
 function contextoLimpio(): ContextoConversacional {
   return {};
 }
@@ -241,39 +297,23 @@ async function resolverModoCatalog(params: {
   }
 
   // Sin servicio puntual: si la categoría (propia o detectada) sí resuelve,
-  // se muestran 2-3 opciones reales de esa categoría -- NUNCA el catálogo
-  // completo (regla explícita del pedido). Prueba real de WhatsApp
+  // se muestran máximo 4 opciones reales de esa categoría -- NUNCA el
+  // catálogo completo (regla explícita del pedido). Prueba real de WhatsApp
   // (autorizado) -- nunca asume género: excluye servicios marcados de
   // caballero salvo evidencia explícita en el mensaje.
   const categoria = escenario.config.filtroCategoria ?? entidades.categoria ?? contexto.ultimaCategoria;
   if (categoria) {
-    const candidatos = filtrarCatalogo(catalogo, {
+    const respuestaCategoria = construirRespuestaCategoria({
+      escenario,
+      catalogo,
       categoria,
-      nombreContiene: escenario.config.filtroNombreContiene,
-      nombreContieneTodas: escenario.config.filtroNombreContieneTodas,
+      indicaGeneroMasculino: entidades.indicaGeneroMasculino,
       presupuestoMax: entidades.presupuestoMax,
       duracionMaxMin: entidades.duracionMaxMin,
+      tenantId,
+      turno,
     });
-    const opciones = aplicarFiltroGenero(candidatos, entidades.indicaGeneroMasculino).slice(0, 3);
-    if (opciones.length > 0) {
-      const opcionesTexto = opciones
-        .map((s) => `${s.nombre} — ${formatearPrecioCop(s.precio)} (${formatearDuracion(s.duracionMin)})`)
-        .join("\n");
-      const respuestaTexto = elegirYRenderizarPlantilla({
-        respuestas: escenario.respuestas,
-        tenantId,
-        escenarioCodigo: escenario.codigo,
-        turno,
-        variables: { opcionesTexto, categoria },
-      });
-      return {
-        escenarioCodigo: escenario.codigo,
-        modo: "catalog",
-        respuestaTexto,
-        requiereIA: false,
-        contexto: { ultimaCategoria: categoria, ultimasOpcionesIds: opciones.map((o) => o.id) },
-      };
-    }
+    if (respuestaCategoria) return respuestaCategoria;
   }
 
   return {
@@ -943,6 +983,50 @@ export async function resolverEscenario(params: {
         requiereIA: false,
         contexto: contextoLimpio(),
       };
+    }
+  }
+
+  // Corrección (autorizada, bug real "¿Cuáles?") — pedir ver de nuevo las
+  // opciones ya ofrecidas ("¿Cuáles?", "¿Qué opciones hay?") NUNCA debe
+  // perder el contexto ni volver a preguntar "¿qué servicio buscas?" -- el
+  // escenario ganador normal no reconoce esta frase (no matchea ningún
+  // variante real), así que se intercepta ANTES de la selección normal de
+  // escenario, mientras `ultimaCategoria` siga en contexto. Reutiliza el
+  // MISMO escenario/plantillas que originalmente presentó esa categoría
+  // (nunca un texto nuevo hardcodeado), así que suena exactamente igual que
+  // la primera vez. Funciona incluso si la respuesta anterior tuvo un fallo
+  // de visualización -- depende solo del contexto real, nunca de que la
+  // clienta haya "visto" el mensaje anterior.
+  if (
+    entidadesBase.pideVerOpcionesDeNuevo &&
+    !entidadesBase.servicioId &&
+    !entidadesBase.categoria &&
+    params.contexto.ultimaCategoria
+  ) {
+    // Varios escenarios pueden compartir el mismo filtroCategoria con un
+    // filtroNombreContiene/filtroNombreContieneTodas MÁS específico encima
+    // (ej. "solo manos"/"solo pies" dentro de la categoría "Uñas") --
+    // ultimaCategoria por sí sola no dice cuál de esos se usó originalmente,
+    // así que se prefiere SIEMPRE el escenario GENERAL de esa categoría
+    // (sin ningún filtro de nombre adicional), nunca uno más angosto al
+    // azar por orden del arreglo.
+    const escenarioCategoria = escenarios.find(
+      (e) =>
+        e.modo === "catalog" &&
+        e.config.filtroCategoria === params.contexto.ultimaCategoria &&
+        !e.config.filtroNombreContiene?.length &&
+        !e.config.filtroNombreContieneTodas?.length,
+    );
+    if (escenarioCategoria) {
+      const respuestaCategoria = construirRespuestaCategoria({
+        escenario: escenarioCategoria,
+        catalogo,
+        categoria: params.contexto.ultimaCategoria,
+        indicaGeneroMasculino: entidadesBase.indicaGeneroMasculino,
+        tenantId: params.tenantId,
+        turno: params.turno,
+      });
+      if (respuestaCategoria) return respuestaCategoria;
     }
   }
 
