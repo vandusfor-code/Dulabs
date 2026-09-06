@@ -78,11 +78,20 @@ describe("resolverEscenario — banco real de AMORE, sin IA en el camino determi
     assert.match(r.respuestaTexto!, /Jessica/);
   });
 
-  it("servicio inexistente (Acrílicas): NUNCA inventa -- cae a las opciones reales de uñas (sinónimo configurado)", async () => {
-    const r = await resolver("quiero acrílicas");
+  it("servicio inexistente (Acrílicas): declara PRIMERO que no existe, y solo entonces ofrece opciones reales de uñas -- nunca 'claro que sí'", async () => {
+    const r = await resolver("hacen acrílicas?");
     assert.equal(r.modo, "catalog");
-    assert.doesNotMatch(r.respuestaTexto ?? "", /[Aa]crílicas/);
+    assert.match(r.respuestaTexto!, /no tenemos el servicio de acrílicas/i);
+    assert.doesNotMatch(r.respuestaTexto ?? "", /^claro que sí/i);
     assert.match(r.respuestaTexto!, /Dipping|Uña|Press On|Retiro Semi/);
+  });
+
+  it("'Acrílicas' nunca aparece listado como si fuera un servicio real disponible", async () => {
+    const r = await resolver("hacen acrílicas?");
+    const nombresReales = CATALOGO.map((s) => s.nombre);
+    assert.ok(!nombresReales.includes("Acrílicas"));
+    // El propio texto de respuesta declara la ausencia, nunca la disponibilidad.
+    assert.match(r.respuestaTexto!, /no tenemos el servicio de acrílicas/i);
   });
 
   it("intención de agendar: modo=portal, enlace real, nunca pide fecha", async () => {
@@ -156,5 +165,92 @@ describe("resolverEscenario — banco real de AMORE, sin IA en el camino determi
     await resolver("quiero uñas");
     const r = await resolver("y cuánto cuesta el maquillaje suave");
     assert.match(r.respuestaTexto!, /Maquillaje Suave/);
+  });
+
+  describe("BUG REAL (prueba de WhatsApp): categoría 'uñas' NUNCA resuelve al servicio 'Uña'", () => {
+    it("'Quiero arreglarme las uñas' -> conversación/categoría, NUNCA el servicio puntual 'Uña'", async () => {
+      const r = await resolver("Quiero arreglarme las uñas");
+      assert.equal(r.escenarioCodigo, "020_categoria_unas", "debe resolver como categoría, nunca como 028_servicio_info (servicio puntual)");
+      // El bug real respondía "El Uña cuesta $8.000 y dura 15 min" (plantilla
+      // de servicio ÚNICO); la categoría, en cambio, LISTA varias opciones
+      // reales (Uña puede aparecer ahí, como una más entre varias -- eso es
+      // correcto). Lo que nunca debe pasar es la plantilla de servicio único.
+      assert.doesNotMatch(r.respuestaTexto ?? "", /^(Te cuento|¡Claro!).*El Uña /);
+      assert.match(r.respuestaTexto!, /opciones reales/i);
+    });
+
+    it("'Qué tienen para uñas' -> opciones de la categoría", async () => {
+      const r = await resolver("Qué tienen para uñas");
+      assert.equal(r.escenarioCodigo, "020_categoria_unas");
+      assert.equal(r.requiereIA, false);
+    });
+
+    it("'Quiero Uña' (mención inequívoca) SÍ resuelve como servicio puntual", async () => {
+      const r = await resolver("Quiero el servicio Uña");
+      assert.equal(r.modo, "catalog");
+      assert.match(r.respuestaTexto!, /\$8\.000/);
+    });
+  });
+
+  describe("BUG REAL (prueba de WhatsApp): comparación entre 2 servicios reales", () => {
+    it("'Qué diferencia hay entre el dipping y press On?' -> compara ambos, NUNCA responde solo de uno", async () => {
+      const r = await resolver("Qué diferencia hay entre el dipping y press On?");
+      assert.equal(r.escenarioCodigo, "051_comparacion");
+      assert.match(r.respuestaTexto!, /Dipping/);
+      assert.match(r.respuestaTexto!, /Press On/);
+      assert.match(r.respuestaTexto!, /\$60\.000/);
+      assert.match(r.respuestaTexto!, /\$80\.000/);
+    });
+
+    it("nunca inventa diferencias técnicas (materiales, resistencia, proceso) -- solo precio/duración + honestidad explícita", async () => {
+      const r = await resolver("Dipping vs Press On");
+      assert.doesNotMatch(r.respuestaTexto ?? "", /resistente|material|se aplica|se retira|cuidado/i);
+      assert.match(r.respuestaTexto!, /no tengo información verificada/i);
+    });
+
+    it("contexto: 'Me interesa el Dipping' + '¿Y el Press On?' -> reconoce comparación usando el contexto", async () => {
+      const t1 = await resolver("Me interesa el Dipping");
+      assert.equal(t1.contexto.ultimoServicioId, "s-dipping");
+
+      const t2 = await resolver("¿Y el Press On?", t1.contexto, 1);
+      assert.equal(t2.escenarioCodigo, "051_comparacion");
+      assert.match(t2.respuestaTexto!, /Dipping/);
+      assert.match(t2.respuestaTexto!, /Press On/);
+
+      const t3 = await resolver("¿Cuál me recomiendas?", t2.contexto, 2);
+      assert.equal(t3.modo, "ai");
+      assert.equal(t3.requiereIA, true);
+      const datos = t3.datosIA as Array<{ nombre: string }>;
+      assert.deepEqual(
+        datos.map((d) => d.nombre).sort(),
+        ["Dipping", "Press On"],
+        "la recomendación debe restringirse a los 2 servicios en comparación, nunca reabrir a todo el catálogo",
+      );
+    });
+
+    it("cambio de tema real (categoría distinta) NUNCA se trata como comparación, aunque empiece con 'y'", async () => {
+      const t1 = await resolver("Me interesa el Dipping");
+      const t2 = await resolver("y también cuánto cuesta el maquillaje suave", t1.contexto, 1);
+      assert.notEqual(t2.escenarioCodigo, "051_comparacion");
+      assert.match(t2.respuestaTexto!, /Maquillaje Suave/);
+      assert.doesNotMatch(t2.respuestaTexto ?? "", /Dipping/);
+    });
+  });
+
+  it("todo escenario determinístico (deterministic/catalog/faq/portal/transfer) nunca requiere IA", async () => {
+    const mensajes = [
+      "Hola",
+      "quiero arreglarme las unas",
+      "cuánto cuesta el dipping",
+      "quiero agendar una cita",
+      "quiero hablar con una persona",
+      "qué horario tienen",
+      "hacen acrílicas?",
+      "Qué diferencia hay entre el dipping y press On?",
+    ];
+    for (const mensaje of mensajes) {
+      const r = await resolver(mensaje);
+      assert.equal(r.requiereIA, false, `"${mensaje}" no debería requerir IA (escenario: ${r.escenarioCodigo})`);
+    }
   });
 });

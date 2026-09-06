@@ -30,6 +30,8 @@ function coincideVariante(
       return entidades.esAfirmacionCorta;
     case "negacion_corta":
       return entidades.esNegacionCorta;
+    case "dos_servicios_detectados":
+      return entidades.serviciosDetectados.length >= 2;
   }
 }
 

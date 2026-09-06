@@ -88,7 +88,7 @@ describe("InternalActionExecutor — resolver_escenario (cableado real)", () => 
     assert.equal((result.data as Record<string, unknown>).escenarioCodigo, "001_saludo");
   });
 
-  it("propaga y limpia el contexto conversacional correctamente (siempre emite las 4 claves)", async () => {
+  it("propaga y limpia el contexto conversacional correctamente (siempre emite las 6 claves)", async () => {
     const escenarioConContexto: EscenarioRow = {
       ...ESCENARIO_SALUDO,
       codigo: "999_test_transfer",
@@ -98,12 +98,20 @@ describe("InternalActionExecutor — resolver_escenario (cableado real)", () => 
     };
     const executor = crearExecutor({ cargarEscenariosReal: async () => [escenarioConContexto] });
     const result = await executor.dispatch(
-      baseRequest({ mensajeActual: "hablar con alguien", ultimoServicioId: "s-viejo", ultimoServicioNombre: "Servicio Viejo" }),
+      baseRequest({
+        mensajeActual: "hablar con alguien",
+        ultimoServicioId: "s-viejo",
+        ultimoServicioNombre: "Servicio Viejo",
+        ultimoServicioBId: "s-viejo-b",
+        ultimoServicioBNombre: "Servicio Viejo B",
+      }),
       { tenantId: "tenant-amore", internal: true },
     );
     const data = result.data as Record<string, unknown>;
     assert.equal(data.ultimoServicioId, "", "el contexto debe quedar limpio tras una transferencia");
     assert.equal(data.ultimoServicioNombre, "");
+    assert.equal(data.ultimoServicioBId, "", "el segundo servicio de una comparación también debe limpiarse");
+    assert.equal(data.ultimoServicioBNombre, "");
   });
 
   it("incrementa __turnoEscenario en cada llamada (usado para rotar plantillas)", async () => {

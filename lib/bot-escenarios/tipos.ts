@@ -37,7 +37,13 @@ export type TipoVariante =
   | "servicio_detectado"
   | "categoria_detectada"
   | "afirmacion_corta"
-  | "negacion_corta";
+  | "negacion_corta"
+  // Prueba real de WhatsApp (autorizado) — coincide cuando la extracción de
+  // entidades encontró DOS (o más) servicios reales distintos en el mismo
+  // mensaje (ej. "Dipping vs Press On"), o cuando el contexto conversacional
+  // los unió (ver resolver.ts). Nunca enumera nombres: depende 100% de
+  // entidades.serviciosDetectados, igual que servicio_detectado.
+  | "dos_servicios_detectados";
 
 export interface VarianteActivacion {
   tipo: TipoVariante;
@@ -76,8 +82,16 @@ export interface EscenarioRow {
 
 /** Entidades extraídas de forma determinista (nunca por IA) del mensaje actual. */
 export interface EntidadesDetectadas {
+  /** Solo presente cuando serviciosDetectados tiene EXACTAMENTE 1 elemento -- ver entidades.ts. */
   servicioId?: string;
   servicioNombre?: string;
+  /**
+   * TODOS los servicios reales del catálogo mencionados como palabra(s)
+   * completa(s) en el mensaje, en orden de aparición, sin duplicados.
+   * Longitud 0 = ninguno; 1 = servicio puntual (igual que servicioId/Nombre);
+   * 2+ = comparación (ver dos_servicios_detectados y resolverModoCatalog).
+   */
+  serviciosDetectados: Array<{ id: string; nombre: string; categoria: string | null }>;
   categoria?: string;
   presupuestoMax?: number;
   duracionMaxMin?: number;
@@ -89,6 +103,9 @@ export interface EntidadesDetectadas {
 export interface ContextoConversacional {
   ultimoServicioId?: string;
   ultimoServicioNombre?: string;
+  /** Segundo servicio de una comparación activa (ej. "Dipping" vs "Press On") -- ver resolver.ts. */
+  ultimoServicioBId?: string;
+  ultimoServicioBNombre?: string;
   ultimaCategoria?: string;
   ultimaAccionSugerida?: string;
 }

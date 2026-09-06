@@ -2,7 +2,8 @@
  * Extracción de entidades 100% determinista (nunca IA) para el banco de
  * escenarios -- ver lib/bot-escenarios/tipos.ts. Reutiliza normalizeText
  * (lib/flow-triggers/normalize-text.ts), la MISMA normalización que ya usa
- * el Trigger Router.
+ * el Trigger Router, para TODO excepto la detección de servicio puntual
+ * (ver nota en normalizarPreservandoEnie).
  */
 import { normalizeText } from "@/lib/flow-triggers/normalize-text";
 import type { ServicioCatalogoReal } from "@/lib/catalogo-servicios-flow-adaptador";
@@ -60,20 +61,79 @@ function extraerDuracionMaxMin(textoNormalizado: string): number | undefined {
   return undefined;
 }
 
-/** Servicio real más específico (nombre más largo) cuyo nombre aparece dentro del mensaje. */
-function detectarServicio(
-  textoNormalizado: string,
+/**
+ * BUG REAL encontrado (prueba real de WhatsApp, autorizado) — normalizeText
+ * (lib/flow-triggers/normalize-text.ts) descompone "ñ" en "n" (NFD +
+ * remoción de marcas combinantes), así que "Uña" y "uñas" normalizan a
+ * "una"/"unas" -- "una" además COLISIONA con el artículo indefinido español
+ * ("quiero una cita"). Detectar el servicio "Uña" por simple substring sobre
+ * ese texto hacía que CUALQUIER mención de la categoría "uñas" (plural)
+ * resolviera automáticamente al servicio puntual "Uña" (singular), porque
+ * "unas" contiene "una" como prefijo.
+ *
+ * Esta normalización alterna preserva "ñ" como letra propia (nunca la
+ * convierte en "n") y solo pliega los demás acentos vocálicos -- así "uña"
+ * y "unas"/"una" dejan de colisionar. Se usa EXCLUSIVAMENTE para resolver
+ * qué servicio puntual del catálogo aparece en el mensaje; el resto del
+ * motor (categorías, FAQ, escenarios generales) sigue usando normalizeText
+ * sin cambios, para no alterar ningún comportamiento ya probado.
+ */
+function normalizarPreservandoEnie(texto: string): string {
+  return texto
+    .trim()
+    .toLowerCase()
+    .replace(/[áàäâ]/g, "a")
+    .replace(/[éèëê]/g, "e")
+    .replace(/[íìïî]/g, "i")
+    .replace(/[óòöô]/g, "o")
+    .replace(/[úùüû]/g, "u")
+    .replace(/\s+/g, " ");
+}
+
+/** Tokeniza en palabras reales (letras + ñ), sin cortar "ñ" a la mitad como haría \b en JS (ASCII-only). */
+function tokenizarPalabras(texto: string): string[] {
+  return texto.match(/[a-z0-9ñ]+/g) ?? [];
+}
+
+/** true si `frase` (ya tokenizada) aparece como subsecuencia CONTIGUA dentro de `texto` (ya tokenizado). */
+function contieneSecuencia(tokensTexto: string[], tokensFrase: string[]): boolean {
+  if (tokensFrase.length === 0) return false;
+  for (let i = 0; i <= tokensTexto.length - tokensFrase.length; i++) {
+    if (tokensFrase.every((t, j) => tokensTexto[i + j] === t)) return true;
+  }
+  return false;
+}
+
+/**
+ * TODOS los servicios reales cuyo nombre aparece como palabra(s) completa(s)
+ * dentro del mensaje (nunca como substring de una palabra más larga -- ver
+ * normalizarPreservandoEnie arriba). Ordenados por aparición en el texto,
+ * sin duplicados. Necesario para detectar comparaciones ("Dipping vs Press
+ * On" debe encontrar AMBOS, no solo el de nombre más largo).
+ */
+function detectarTodosLosServicios(
+  mensaje: string,
   catalogo: ServicioCatalogoReal[],
-): { id: string; nombre: string; categoria: string | null } | undefined {
-  let mejor: ServicioCatalogoReal | undefined;
+): Array<{ id: string; nombre: string; categoria: string | null; posicion: number }> {
+  const tokensTexto = tokenizarPalabras(normalizarPreservandoEnie(mensaje));
+  const encontrados: Array<{ id: string; nombre: string; categoria: string | null; posicion: number }> = [];
+
   for (const servicio of catalogo) {
-    const nombreNormalizado = normalizeText(servicio.nombre);
-    if (!nombreNormalizado) continue;
-    if (textoNormalizado.includes(nombreNormalizado)) {
-      if (!mejor || nombreNormalizado.length > normalizeText(mejor.nombre).length) mejor = servicio;
+    const tokensNombre = tokenizarPalabras(normalizarPreservandoEnie(servicio.nombre));
+    if (tokensNombre.length === 0) continue;
+    if (contieneSecuencia(tokensTexto, tokensNombre)) {
+      const posicion = tokensTexto.findIndex((_, i) => tokensNombre.every((t, j) => tokensTexto[i + j] === t));
+      encontrados.push({ id: servicio.id, nombre: servicio.nombre, categoria: servicio.categoria, posicion });
     }
   }
-  return mejor ? { id: mejor.id, nombre: mejor.nombre, categoria: mejor.categoria } : undefined;
+
+  // Si un servicio es substring de nombres de OTRO servicio más largo YA
+  // encontrado en la MISMA posición (ej. catálogos con "Manos" y "Caballero
+  // Manos Semi"), se prefiere el más específico -- nunca se reporta el mismo
+  // fragmento de texto como dos servicios distintos.
+  const sinSolapados = encontrados.filter((a) => !encontrados.some((b) => b !== a && b.posicion === a.posicion && b.nombre.length > a.nombre.length));
+
+  return sinSolapados.sort((a, b) => a.posicion - b.posicion);
 }
 
 /** Categoría real (de las que existen en el catálogo) mencionada en el mensaje, vía sinónimos configurados por escenario. */
@@ -100,12 +160,22 @@ export function extraerEntidades(params: {
     params.catalogo.map((s) => s.categoria).filter((c): c is string => Boolean(c)),
   );
 
-  const servicio = detectarServicio(textoNormalizado, params.catalogo);
-  const categoria = detectarCategoria(textoNormalizado, categoriasReales, params.sinonimosPorCategoria) ?? servicio?.categoria ?? undefined;
+  const serviciosDetectados = detectarTodosLosServicios(params.mensaje, params.catalogo).map((s) => ({
+    id: s.id,
+    nombre: s.nombre,
+    categoria: s.categoria,
+  }));
+  // servicioId/servicioNombre solo se llenan cuando hay EXACTAMENTE un
+  // servicio puntual real en el mensaje -- con 0 (nada real mencionado) o 2+
+  // (comparación) queda vacío a propósito, para que resolver.ts nunca
+  // resuelva por accidente al primero como si fuera la única intención.
+  const servicioUnico = serviciosDetectados.length === 1 ? serviciosDetectados[0] : undefined;
+  const categoria = detectarCategoria(textoNormalizado, categoriasReales, params.sinonimosPorCategoria) ?? servicioUnico?.categoria ?? undefined;
 
   return {
-    servicioId: servicio?.id,
-    servicioNombre: servicio?.nombre,
+    servicioId: servicioUnico?.id,
+    servicioNombre: servicioUnico?.nombre,
+    serviciosDetectados,
     categoria: categoria ?? undefined,
     presupuestoMax: extraerPresupuestoMax(textoNormalizado),
     duracionMaxMin: extraerDuracionMaxMin(textoNormalizado),

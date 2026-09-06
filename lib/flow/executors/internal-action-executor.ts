@@ -1534,7 +1534,7 @@ export class InternalActionExecutor implements EffectExecutor {
    * (el mismo state.variables acumulado que el Engine ya auto-mergea, ver
    * mergeParams arriba) -- NUNCA de params estáticos del nodo, que no tienen
    * sentido para esta acción (siempre la misma, sin configuración por nodo).
-   * Siempre emite las 4 claves de contexto (aunque vengan vacías) para que
+   * Siempre emite las 6 claves de contexto (aunque vengan vacías) para que
    * el merge aditivo de variables del Engine pueda de verdad LIMPIAR un
    * contexto viejo (portal/transfer) en vez de dejarlo pegado para siempre.
    */
@@ -1554,6 +1554,8 @@ export class InternalActionExecutor implements EffectExecutor {
       contexto: {
         ultimoServicioId: params.ultimoServicioId || undefined,
         ultimoServicioNombre: params.ultimoServicioNombre || undefined,
+        ultimoServicioBId: params.ultimoServicioBId || undefined,
+        ultimoServicioBNombre: params.ultimoServicioBNombre || undefined,
         ultimaCategoria: params.ultimaCategoria || undefined,
         ultimaAccionSugerida: params.ultimaAccionSugerida || undefined,
       },
@@ -1578,6 +1580,8 @@ export class InternalActionExecutor implements EffectExecutor {
       datosIA: resultado.datosIA ?? [],
       ultimoServicioId: resultado.contexto.ultimoServicioId ?? "",
       ultimoServicioNombre: resultado.contexto.ultimoServicioNombre ?? "",
+      ultimoServicioBId: resultado.contexto.ultimoServicioBId ?? "",
+      ultimoServicioBNombre: resultado.contexto.ultimoServicioBNombre ?? "",
       ultimaCategoria: resultado.contexto.ultimaCategoria ?? "",
       ultimaAccionSugerida: resultado.contexto.ultimaAccionSugerida ?? "",
       __turnoEscenario: turno + 1,

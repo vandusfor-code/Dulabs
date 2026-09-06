@@ -162,7 +162,29 @@ export const AMORE_ESCENARIOS_SEED: FilaSeed[] = [
       "Claro que sí, amiga 💗 Estas son algunas opciones reales de uñas:\n\n{{opcionesTexto}}\n\n¿Cuál te llama la atención, o tienes algún servicio puntual en mente?",
       "Con gusto ✨ Estas son opciones reales que tenemos de uñas:\n\n{{opcionesTexto}}\n\n¿Cuál te gustaría?",
     ],
-    config: { filtroCategoria: "Uñas", sinonimos: ["unas", "manicure", "pedicure", "acrilicas", "acrilico", "semipermanente"] },
+    // Prueba real de WhatsApp (autorizado) — "acrilicas"/"acrilico" se
+    // sacaron de acá: ANTES caían silenciosamente a esta categoría y el bot
+    // ofrecía alternativas como si esa fuera la respuesta afirmativa (bug
+    // real). Ahora existe el escenario dedicado 037_servicio_inexistente_unas
+    // (prioridad mayor, ver abajo), que primero declara que el servicio
+    // pedido NO existe y solo entonces ofrece las opciones reales.
+    config: { filtroCategoria: "Uñas", sinonimos: ["unas", "manicure", "pedicure", "semipermanente"] },
+  },
+  {
+    codigo: "037_servicio_inexistente_unas",
+    nombre: "Servicio de uñas pedido que NO existe en el catálogo (ej. acrílicas)",
+    modo: "catalog",
+    prioridad: 450,
+    activo: true,
+    variantes: [
+      { tipo: "contains", valor: "acrilicas" },
+      { tipo: "contains", valor: "acrilico" },
+      { tipo: "contains", valor: "acrilica" },
+    ],
+    respuestas: [
+      "Por ahora no tenemos el servicio de acrílicas dentro de nuestro catálogo 💗 Pero sí contamos con otras opciones de uñas:\n\n{{opcionesTexto}}\n\nSi me cuentas qué resultado buscas, te ayudo a encontrar la opción que más se ajuste.",
+    ],
+    config: { filtroCategoria: "Uñas" },
   },
   {
     codigo: "026_categoria_cabello",
@@ -234,6 +256,27 @@ export const AMORE_ESCENARIOS_SEED: FilaSeed[] = [
     config: { filtroCategoria: "Depilación", sinonimos: ["depilacion", "depilar", "depilarme"], respuestaSinServicio: "Claro que sí 💗 ¿Qué zona te gustaría depilarte?" },
   },
 
+  // --- SERVICIOS: comparación entre dos servicios reales -------------------
+  {
+    codigo: "051_comparacion",
+    nombre: "Comparación entre 2 servicios reales",
+    modo: "catalog",
+    prioridad: 530,
+    activo: true,
+    // Sin variantes de texto propias a propósito -- el ÚNICO disparador real
+    // es dos_servicios_detectados (entidades.serviciosDetectados.length>=2),
+    // que ya cubre "Dipping vs Press On", "diferencia entre X y Y", "X o Y",
+    // "cuál me recomiendas entre X y Y", y la continuación contextual ("¿Y
+    // el Press On?" tras hablar de Dipping, ver resolver.ts). Nunca depende
+    // de la palabra exacta usada -- depende de que el catálogo real confirme
+    // los 2 nombres.
+    variantes: [{ tipo: "dos_servicios_detectados" }],
+    respuestas: [
+      "Te cuento ✨ El {{servicioA}} tiene un valor de {{precioTextoA}} y dura aproximadamente {{duracionTextoA}}, y el {{servicioB}} tiene un valor de {{precioTextoB}} y dura aproximadamente {{duracionTextoB}}. No tengo información verificada sobre la diferencia técnica entre ambos para explicarla sin inventar -- si me cuentas qué resultado buscas, te ayudo a elegir.",
+    ],
+    config: {},
+  },
+
   // --- SERVICIOS: profesional, servicio puntual, precio/duración ----------
   {
     codigo: "034_profesionales",
@@ -290,6 +333,7 @@ export const AMORE_ESCENARIOS_SEED: FilaSeed[] = [
     activo: true,
     variantes: [
       { tipo: "contains", valor: "que me recomiendas" },
+      { tipo: "contains", valor: "recomiendas" },
       { tipo: "contains", valor: "recomiendame" },
       { tipo: "contains", valor: "no se que hacerme" },
       { tipo: "contains", valor: "ni idea" },

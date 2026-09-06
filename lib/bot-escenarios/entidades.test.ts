@@ -7,6 +7,7 @@ const CATALOGO: ServicioCatalogoReal[] = [
   { id: "s1", nombre: "Dipping", precio: 60000, duracionMin: 120, categoria: "Uñas", descripcion: null },
   { id: "s2", nombre: "Uña", precio: 8000, duracionMin: 15, categoria: "Uñas", descripcion: null },
   { id: "s3", nombre: "Maquillaje Suave", precio: 60000, duracionMin: 60, categoria: "Maquillaje", descripcion: null },
+  { id: "s4", nombre: "Press On", precio: 80000, duracionMin: 120, categoria: "Uñas", descripcion: null },
 ];
 
 const SIN_SINONIMOS = new Map<string, string[]>();
@@ -17,11 +18,13 @@ describe("extraerEntidades — 100% determinista, sin IA", () => {
     const r = extraerEntidades({ mensaje: "cuánto cuesta el Dipping", catalogo: CATALOGO, sinonimosPorCategoria: SIN_SINONIMOS });
     assert.equal(r.servicioId, "s1");
     assert.equal(r.servicioNombre, "Dipping");
+    assert.deepEqual(r.serviciosDetectados.map((s) => s.id), ["s1"]);
   });
 
   it("nunca inventa un servicio que no está en el catálogo", () => {
     const r = extraerEntidades({ mensaje: "quiero acrílicas", catalogo: CATALOGO, sinonimosPorCategoria: SIN_SINONIMOS });
     assert.equal(r.servicioId, undefined);
+    assert.deepEqual(r.serviciosDetectados, []);
   });
 
   it("detecta categoría real vía sinónimos configurados", () => {
@@ -32,6 +35,47 @@ describe("extraerEntidades — 100% determinista, sin IA", () => {
   it("hereda la categoría del servicio detectado si no hubo match directo de sinónimo", () => {
     const r = extraerEntidades({ mensaje: "cuanto cuesta la Uña", catalogo: CATALOGO, sinonimosPorCategoria: SIN_SINONIMOS });
     assert.equal(r.categoria, "Uñas");
+  });
+
+  // Prueba real de WhatsApp (autorizado) — bug real encontrado: "uñas"
+  // (categoría, plural) normalizaba igual que "Uña" (servicio, singular) y
+  // colaba como substring, resolviendo por error al servicio puntual.
+  describe("BUG REAL: categoría 'uñas' (plural) NUNCA debe resolver al servicio 'Uña' (singular)", () => {
+    it("'quiero arreglarme las uñas' -- NO detecta el servicio Uña", () => {
+      const r = extraerEntidades({ mensaje: "quiero arreglarme las uñas", catalogo: CATALOGO, sinonimosPorCategoria: SIN_SINONIMOS });
+      assert.equal(r.servicioId, undefined, "no debe resolver ningún servicio puntual");
+    });
+
+    it("'qué tienen para uñas' -- NO detecta el servicio Uña", () => {
+      const r = extraerEntidades({ mensaje: "qué tienen para uñas", catalogo: CATALOGO, sinonimosPorCategoria: SIN_SINONIMOS });
+      assert.equal(r.servicioId, undefined);
+    });
+
+    it("'quiero Uña' (mención inequívoca, singular, servicio real) SÍ resuelve al servicio puntual", () => {
+      const r = extraerEntidades({ mensaje: "quiero Uña", catalogo: CATALOGO, sinonimosPorCategoria: SIN_SINONIMOS });
+      assert.equal(r.servicioId, "s2");
+      assert.equal(r.servicioNombre, "Uña");
+    });
+
+    it("el artículo indefinido 'una' (ej. 'quiero una cita') nunca se confunde con el servicio 'Uña'", () => {
+      const r = extraerEntidades({ mensaje: "quiero una cita", catalogo: CATALOGO, sinonimosPorCategoria: SIN_SINONIMOS });
+      assert.equal(r.servicioId, undefined);
+    });
+  });
+
+  describe("BUG REAL: comparación entre 2 servicios reales", () => {
+    it("detecta AMBOS servicios cuando se mencionan los dos, en orden de aparición", () => {
+      const r = extraerEntidades({ mensaje: "qué diferencia hay entre el dipping y press on", catalogo: CATALOGO, sinonimosPorCategoria: SIN_SINONIMOS });
+      assert.deepEqual(r.serviciosDetectados.map((s) => s.nombre), ["Dipping", "Press On"]);
+      // Con 2+ servicios detectados, servicioId queda vacío a propósito --
+      // nunca se resuelve unilateralmente al de nombre más largo (bug real).
+      assert.equal(r.servicioId, undefined);
+    });
+
+    it("'Press On vs Dipping' respeta el orden real del mensaje", () => {
+      const r = extraerEntidades({ mensaje: "Press On vs Dipping", catalogo: CATALOGO, sinonimosPorCategoria: SIN_SINONIMOS });
+      assert.deepEqual(r.serviciosDetectados.map((s) => s.nombre), ["Press On", "Dipping"]);
+    });
   });
 
   it("extrae presupuesto máximo (\"$X\", \"X mil\", \"máximo $X\")", () => {

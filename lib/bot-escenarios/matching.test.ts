@@ -4,7 +4,7 @@ import { resolverEscenarioGanador } from "@/lib/bot-escenarios/matching";
 import type { EntidadesDetectadas, EscenarioRow } from "@/lib/bot-escenarios/tipos";
 
 function entidades(overrides: Partial<EntidadesDetectadas> = {}): EntidadesDetectadas {
-  return { esAfirmacionCorta: false, esNegacionCorta: false, ...overrides };
+  return { esAfirmacionCorta: false, esNegacionCorta: false, serviciosDetectados: [], ...overrides };
 }
 
 function escenario(overrides: Partial<EscenarioRow>): EscenarioRow {
@@ -39,6 +39,17 @@ describe("resolverEscenarioGanador — matching + prioridad", () => {
     const especifico = escenario({ codigo: "especifico", variantes: [{ tipo: "servicio_detectado" }] });
     assert.equal(resolverEscenarioGanador([especifico], "dipping", entidades({ servicioId: "s1" }))?.codigo, "especifico");
     assert.equal(resolverEscenarioGanador([especifico], "algo random", entidades())?.codigo, undefined);
+  });
+
+  it("dos_servicios_detectados coincide solo cuando hay 2+ servicios reales detectados (comparación)", () => {
+    const comparacion = escenario({ codigo: "comparacion", prioridad: 530, variantes: [{ tipo: "dos_servicios_detectados" }] });
+    const info = escenario({ codigo: "info", prioridad: 500, variantes: [{ tipo: "servicio_detectado" }] });
+    const ganador = resolverEscenarioGanador(
+      [info, comparacion],
+      "dipping vs press on",
+      entidades({ serviciosDetectados: [{ id: "s1", nombre: "Dipping", categoria: "Uñas" }, { id: "s4", nombre: "Press On", categoria: "Uñas" }] }),
+    );
+    assert.equal(ganador?.codigo, "comparacion", "debe ganar comparación, nunca resolver como un solo servicio específico");
   });
 
   it("sin ningún escenario coincidente, devuelve undefined (el caller decide el fallback)", () => {

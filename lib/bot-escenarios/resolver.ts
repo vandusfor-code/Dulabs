@@ -15,6 +15,7 @@ import {
   type ServicioCatalogoReal,
 } from "@/lib/catalogo-servicios-flow-adaptador";
 import { formatearPrecioCop } from "@/lib/especialistas-flow-adaptador";
+import { normalizeText } from "@/lib/flow-triggers/normalize-text";
 import { extraerEntidades } from "@/lib/bot-escenarios/entidades";
 import { resolverEscenarioGanador } from "@/lib/bot-escenarios/matching";
 import { elegirYRenderizarPlantilla } from "@/lib/bot-escenarios/plantillas";
@@ -60,6 +61,17 @@ function contextoLimpio(): ContextoConversacional {
   return {};
 }
 
+/**
+ * Continuación comparativa corta (sección 5 del pedido, autorizado): "¿Y el
+ * Press On?" tras hablar de Dipping. Vocabulario cerrado de español (función
+ * gramatical, no dato de negocio), mismo criterio que
+ * AFIRMACIONES_CORTAS/NEGACIONES_CORTAS de entidades.ts.
+ */
+const PATRON_CONTINUACION_COMPARATIVA = /(^|[\s¿¡])(y|que tal|y que tal|y que hay de)\s/;
+function pareceContinuacionComparativa(mensaje: string): boolean {
+  return PATRON_CONTINUACION_COMPARATIVA.test(normalizeText(mensaje));
+}
+
 async function resolverModoCatalog(params: {
   escenario: EscenarioRow;
   entidades: EntidadesDetectadas;
@@ -71,6 +83,50 @@ async function resolverModoCatalog(params: {
   cargarProfesionales: typeof listarProfesionalesServicioReal;
 }): Promise<ResultadoResolucion> {
   const { escenario, entidades, contexto, catalogo, tenantId, turno } = params;
+
+  // Prueba real de WhatsApp (autorizado) — comparación entre 2 servicios
+  // reales SIEMPRE se resuelve ANTES que "servicio puntual": "¿Qué diferencia
+  // hay entre Dipping y Press On?" nunca debe responder solo del más
+  // específico de los dos (bug real encontrado). Nunca afirma diferencias
+  // técnicas que no existen en el catálogo real -- solo precio/duración de
+  // AMBOS + honestidad explícita sobre lo que no está confirmado (el propio
+  // texto de la plantilla, verificado con Claim Security antes de sembrarse).
+  if (entidades.serviciosDetectados.length >= 2) {
+    const [a, b] = entidades.serviciosDetectados;
+    const servicioA = catalogo.find((s) => s.id === a!.id);
+    const servicioB = catalogo.find((s) => s.id === b!.id);
+    if (servicioA && servicioB) {
+      const variables = {
+        servicioA: servicioA.nombre,
+        precioTextoA: formatearPrecioCop(servicioA.precio),
+        duracionTextoA: formatearDuracion(servicioA.duracionMin),
+        servicioB: servicioB.nombre,
+        precioTextoB: formatearPrecioCop(servicioB.precio),
+        duracionTextoB: formatearDuracion(servicioB.duracionMin),
+      };
+      const respuestaTexto = elegirYRenderizarPlantilla({
+        respuestas: escenario.respuestas,
+        tenantId,
+        escenarioCodigo: escenario.codigo,
+        turno,
+        variables,
+      });
+      return {
+        escenarioCodigo: escenario.codigo,
+        modo: "catalog",
+        respuestaTexto,
+        requiereIA: false,
+        contexto: {
+          ultimoServicioId: servicioA.id,
+          ultimoServicioNombre: servicioA.nombre,
+          ultimoServicioBId: servicioB.id,
+          ultimoServicioBNombre: servicioB.nombre,
+          ultimaCategoria: servicioA.categoria ?? undefined,
+          ultimaAccionSugerida: "comparando",
+        },
+      };
+    }
+  }
 
   const servicioId = entidades.servicioId ?? (entidades.esAfirmacionCorta ? undefined : contexto.ultimoServicioId);
   const servicio = servicioId ? catalogo.find((s) => s.id === servicioId) : undefined;
@@ -150,6 +206,18 @@ async function resolverModoCatalog(params: {
   };
 }
 
+function mapearServicioParaIA(s: ServicioCatalogoReal) {
+  return {
+    nombre: s.nombre,
+    precio: s.precio,
+    precioTexto: formatearPrecioCop(s.precio),
+    duracionMin: s.duracionMin,
+    duracionTexto: formatearDuracion(s.duracionMin),
+    categoria: s.categoria,
+    descripcion: s.descripcion,
+  };
+}
+
 function resolverModoAi(params: {
   escenario: EscenarioRow;
   entidades: EntidadesDetectadas;
@@ -157,6 +225,27 @@ function resolverModoAi(params: {
   catalogo: ServicioCatalogoReal[];
 }): ResultadoResolucion {
   const { escenario, entidades, contexto, catalogo } = params;
+
+  // Sección 5 del pedido (autorizado) — "¿Cuál me recomiendas?" después de
+  // una comparación activa ("Me interesa el Dipping" -> "¿Y el Press On?")
+  // debe recomendar ENTRE ESOS DOS, nunca reabrir a todo el catálogo. Solo
+  // aplica si el mensaje actual no trae una categoría/servicio nuevo que
+  // reemplace la comparación en curso.
+  if (contexto.ultimoServicioBId && !entidades.categoria && entidades.serviciosDetectados.length === 0) {
+    const a = catalogo.find((s) => s.id === contexto.ultimoServicioId);
+    const b = catalogo.find((s) => s.id === contexto.ultimoServicioBId);
+    if (a && b) {
+      return {
+        escenarioCodigo: escenario.codigo,
+        modo: "ai",
+        requiereIA: true,
+        instruccionIA: escenario.config.instruccionIA ?? "",
+        datosIA: [mapearServicioParaIA(a), mapearServicioParaIA(b)],
+        contexto,
+      };
+    }
+  }
+
   const categoria = entidades.categoria ?? contexto.ultimaCategoria;
   const datosFiltrados = filtrarCatalogo(catalogo, {
     categoria,
@@ -166,15 +255,7 @@ function resolverModoAi(params: {
   // Nunca se manda el catálogo completo a la IA si un filtro real ya lo
   // redujo -- si nada aplicó, se manda igual acotado a la categoría (o todo,
   // si tampoco hay categoría) para que la respuesta siga siendo honesta.
-  const datosIA = (datosFiltrados.length > 0 ? datosFiltrados : catalogo).map((s) => ({
-    nombre: s.nombre,
-    precio: s.precio,
-    precioTexto: formatearPrecioCop(s.precio),
-    duracionMin: s.duracionMin,
-    duracionTexto: formatearDuracion(s.duracionMin),
-    categoria: s.categoria,
-    descripcion: s.descripcion,
-  }));
+  const datosIA = (datosFiltrados.length > 0 ? datosFiltrados : catalogo).map(mapearServicioParaIA);
 
   return {
     escenarioCodigo: escenario.codigo,
@@ -207,14 +288,47 @@ export async function resolverEscenario(params: {
   const sinonimosPorCategoria = construirSinonimos(escenarios);
   const entidadesBase = extraerEntidades({ mensaje: params.mensaje, catalogo, sinonimosPorCategoria });
 
-  // Continuidad contextual (sección 32/74): una afirmación corta que no trae
-  // ninguna entidad propia hereda el último servicio/categoría mencionado --
-  // así "Sí" tras "¿Te cuento del Dipping?" responde sobre Dipping, nunca
-  // vuelve a preguntar "¿qué servicio?".
-  const entidades: EntidadesDetectadas =
-    entidadesBase.esAfirmacionCorta && !entidadesBase.servicioId && !entidadesBase.categoria
-      ? { ...entidadesBase, servicioId: params.contexto.ultimoServicioId, servicioNombre: params.contexto.ultimoServicioNombre, categoria: params.contexto.ultimaCategoria }
-      : entidadesBase;
+  // Sección 5 del pedido (autorizado) — continuación comparativa: un ÚNICO
+  // servicio real nuevo detectado + frase de continuación ("¿Y el Press
+  // On?") + un servicio DISTINTO ya en contexto, de la MISMA categoría, =
+  // comparación entre ambos, nunca "servicio específico" del nuevo aislado.
+  // La exigencia de MISMA categoría es lo que distingue esto de un cambio de
+  // tema real ("y también cuánto cuesta el maquillaje" tras hablar de
+  // Dipping -- Maquillaje es otra categoría, así que NUNCA se compara con
+  // Dipping, se resuelve como su propia pregunta de precio/duración, ver
+  // resolverModoCatalog). Tiene prioridad sobre la herencia de afirmación
+  // corta de abajo (son mutuamente excluyentes: esta exige un servicio nuevo
+  // real, esa exige que NO haya ninguno).
+  let entidades: EntidadesDetectadas = entidadesBase;
+  if (
+    entidadesBase.serviciosDetectados.length === 1 &&
+    params.contexto.ultimoServicioId &&
+    params.contexto.ultimoServicioId !== entidadesBase.serviciosDetectados[0]!.id &&
+    entidadesBase.serviciosDetectados[0]!.categoria !== null &&
+    entidadesBase.serviciosDetectados[0]!.categoria === params.contexto.ultimaCategoria &&
+    pareceContinuacionComparativa(params.mensaje)
+  ) {
+    entidades = {
+      ...entidadesBase,
+      servicioId: undefined,
+      servicioNombre: undefined,
+      serviciosDetectados: [
+        { id: params.contexto.ultimoServicioId, nombre: params.contexto.ultimoServicioNombre ?? "", categoria: params.contexto.ultimaCategoria ?? null },
+        entidadesBase.serviciosDetectados[0]!,
+      ],
+    };
+  } else if (entidadesBase.esAfirmacionCorta && !entidadesBase.servicioId && !entidadesBase.categoria) {
+    // Continuidad contextual (sección 32/74): una afirmación corta que no
+    // trae ninguna entidad propia hereda el último servicio/categoría
+    // mencionado -- así "Sí" tras "¿Te cuento del Dipping?" responde sobre
+    // Dipping, nunca vuelve a preguntar "¿qué servicio?".
+    entidades = {
+      ...entidadesBase,
+      servicioId: params.contexto.ultimoServicioId,
+      servicioNombre: params.contexto.ultimoServicioNombre,
+      categoria: params.contexto.ultimaCategoria,
+    };
+  }
 
   // Atajo determinista (sección 39/97): si el turno anterior ya ofreció
   // agendar un servicio puntual y esta respuesta es un "sí" corto, se salta
