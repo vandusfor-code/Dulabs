@@ -1,14 +1,28 @@
 /**
- * FASE 1 -- Agendamiento conversacional (autorizado). Cableado real entre
- * InternalActionExecutor y las dos acciones nuevas del Flow
+ * FASE 1 -- Agendamiento conversacional (autorizado, revisado). Cableado
+ * real entre InternalActionExecutor y las dos acciones nuevas del Flow
  * (buscar_disponibilidad_nylas/crear_cita_nylas) -- wrappers FINOS sobre
  * lib/disponibilidad-servicio-nylas.ts / lib/reserva-servicio-nylas.ts (sin
  * cambios, probados a fondo en sus propios archivos). Este archivo prueba
  * SOLO esta capa: que el executor lea `agendamiento` de request.payload
- * (objeto anidado, nunca aplanado), arme instruccionIA/datosIA correctos
- * para cada resultado real, y SIEMPRE devuelva success:true (nunca corta la
- * conversación) -- por eso las funciones de dominio se inyectan mockeadas
- * directamente (nunca un fake Supabase/Nylas de bajo nivel acá).
+ * (objeto anidado, nunca aplanado), y que arme instruccionIA/datosIA/success
+ * correctos para cada resultado real -- por eso las funciones de dominio se
+ * inyectan mockeadas directamente (nunca un fake Supabase/Nylas de bajo
+ * nivel acá).
+ *
+ * Contrato de cada acción (revisado -- distinto entre ambas, a propósito):
+ * - buscar_disponibilidad_nylas SIEMPRE devuelve success:true (una consulta
+ *   real que no encuentra cupo, o que no puede confirmar Nylas, sigue siendo
+ *   una consulta que SÍ se hizo -- se narra con naturalidad vía IA).
+ * - crear_cita_nylas devuelve success:false en CUALQUIER rechazo real
+ *   (horario ocupado, error técnico, datos incompletos, sin conexión) --
+ *   mismo contrato EXACTO que agendar_cita_especialista. Motivo: Claim
+ *   Security (capabilitiesFromVerifiedEntry) NO filtra en la práctica por
+ *   outputVariables -- el filtro real es que el propio orchestrator
+ *   (flow-orchestrator.ts) solo envuelve el resultado en __verifiedResults
+ *   cuando `success:true`. success:true solo ocurre en el único branch de
+ *   éxito real, con `citaId` presente. Un rechazo se narra vía la rama
+ *   aiFailure del grafo (ver amore-router.flow.ts).
  *
  * También cubre el threading de `telefonoCliente`/`agendamiento` en
  * resolverEscenarioAction (resolver_escenario), necesario para que el
@@ -25,6 +39,9 @@ import type { EscenarioRow, AgendamientoEnCurso } from "@/lib/bot-escenarios/tip
 import type { ResultadoHorariosConNylas } from "@/lib/disponibilidad-servicio-nylas";
 import type { ResultadoCrearCitaNylas } from "@/lib/reserva-servicio-nylas";
 import type { NylasEventsClient, NylasEventsWriteClient } from "@/lib/nylas/nylas-types";
+import { buildVerifiedActionEffectData } from "@/lib/flow/ai-runtime/verified-results";
+import { extractVerifiedCapabilitiesFromVariables, validateTextClaimsAgainstVerified } from "@/lib/flow/external-claim-security";
+import { isCriticalAction } from "@/lib/flow/action-capabilities";
 
 const AUTHORIZER: InternalActionAuthorizer = {
   assertActivacionOwnedByTenant: async () => true,
@@ -264,7 +281,7 @@ describe("InternalActionExecutor — crear_cita_nylas", () => {
     assert.match(idempotencyKeyRecibida, /^agendamiento:exec-1:eff-1$/);
   });
 
-  it("R/S. la revalidación descubre que el horario se ocupó -- NUNCA dice 'confirmada', limpia la selección para re-consultar", async () => {
+  it("R/S. la revalidación descubre que el horario se ocupó -- success:false (nunca puede pasar como confirmada), mismo contrato que agendar_cita_especialista", async () => {
     const executor = crearExecutor({
       crearCitaConNylas: async () => ({ ok: false, motivo: "ocupado", detalle: "otra clienta tomó ese horario" }),
     });
@@ -272,16 +289,28 @@ describe("InternalActionExecutor — crear_cita_nylas", () => {
       baseRequest("crear_cita_nylas", { agendamiento: AGENDA_LISTA_PARA_CONFIRMAR }),
       { tenantId: "tenant-amore", internal: true },
     );
-    const data = result.data as Record<string, unknown>;
-    assert.match(data.instruccionIA as string, /NUNCA digas que la cita qued(ó|o) confirmada/i);
-    const agendamiento = data.agendamiento as AgendamientoEnCurso;
-    assert.equal(agendamiento.horarioSeleccionadoISO, undefined);
-    assert.equal(agendamiento.especialistaSeleccionadaId, undefined);
-    assert.equal(agendamiento.esperandoConfirmacion, undefined);
-    assert.equal(agendamiento.servicioId, "s-dipping", "el servicio no se pierde, solo la selección puntual");
+    assert.equal(result.success, false, "un rechazo real NUNCA es success:true -- si lo fuera, Claim Security otorgaría appointment.reserved en cualquier dispatch");
+    assert.equal(result.error, "ocupado");
+    assert.equal((result.data as Record<string, unknown>).detalle, "otra clienta tomó ese horario");
   });
 
-  it("faltan datos reales para reservar (defensivo) -- nunca llama a crearCitaConNylas", async () => {
+  it("inconsistencia real (evento Nylas huérfano) -- también success:false, mismo motivo expuesto tal cual", async () => {
+    const executor = crearExecutor({
+      crearCitaConNylas: async () => ({
+        ok: false,
+        motivo: "inconsistencia_requiere_revision_manual",
+        detalle: "el evento de Nylas se creó pero el rollback también falló",
+      }),
+    });
+    const result = await executor.dispatch(
+      baseRequest("crear_cita_nylas", { agendamiento: AGENDA_LISTA_PARA_CONFIRMAR }),
+      { tenantId: "tenant-amore", internal: true },
+    );
+    assert.equal(result.success, false);
+    assert.equal(result.error, "inconsistencia_requiere_revision_manual");
+  });
+
+  it("faltan datos reales para reservar (defensivo) -- success:false, nunca llama a crearCitaConNylas", async () => {
     let llamado = false;
     const executor = crearExecutor({
       crearCitaConNylas: async () => {
@@ -293,22 +322,21 @@ describe("InternalActionExecutor — crear_cita_nylas", () => {
       baseRequest("crear_cita_nylas", { agendamiento: { servicioId: "s-dipping" } }),
       { tenantId: "tenant-amore", internal: true },
     );
-    assert.equal(result.success, true);
+    assert.equal(result.success, false);
     assert.equal(llamado, false);
   });
 
-  it("sin conexión configurada al calendario -- nunca confirma, responde con naturalidad", async () => {
+  it("sin conexión configurada al calendario -- success:false, nunca confirma", async () => {
     const executor = crearExecutor({ resolverNylasGrantIdParaTenant: () => null });
     const result = await executor.dispatch(
       baseRequest("crear_cita_nylas", { agendamiento: AGENDA_LISTA_PARA_CONFIRMAR }),
       { tenantId: "tenant-amore", internal: true },
     );
-    const data = result.data as Record<string, unknown>;
-    assert.match(data.instruccionIA as string, /NUNCA digas que la cita qued(ó|o) confirmada/i);
-    assert.equal((data.agendamiento as AgendamientoEnCurso).completado, undefined);
+    assert.equal(result.success, false);
+    assert.equal(result.error, "sin_conexion_nylas");
   });
 
-  it("error técnico real (excepción) -- nunca hace fallar la ejecución, nunca confirma", async () => {
+  it("error técnico real (excepción) -- success:false, nunca hace fallar la ejecución del executor en sí (la excepción se captura)", async () => {
     const executor = crearExecutor({
       crearCitaConNylas: async () => {
         throw new Error("fallo de red");
@@ -318,8 +346,8 @@ describe("InternalActionExecutor — crear_cita_nylas", () => {
       baseRequest("crear_cita_nylas", { agendamiento: AGENDA_LISTA_PARA_CONFIRMAR }),
       { tenantId: "tenant-amore", internal: true },
     );
-    assert.equal(result.success, true);
-    assert.match((result.data as Record<string, unknown>).instruccionIA as string, /NUNCA digas que la cita qued(ó|o) confirmada/i);
+    assert.equal(result.success, false);
+    assert.equal(result.error, "error_tecnico");
   });
 });
 
@@ -403,5 +431,99 @@ describe("InternalActionExecutor — resolver_escenario (FASE 1: threading real 
     const agendamiento = (result.data as Record<string, unknown>).agendamiento as AgendamientoEnCurso;
     assert.equal(agendamiento.servicioId, "s-dipping", "el servicio de un turno anterior sobrevive intacto");
     assert.ok(agendamiento.fechaISO, "la fecha de ESTE turno se fusionó correctamente");
+  });
+});
+
+/**
+ * Revisión (autorizada) -- verifica de punta a punta, con el mecanismo REAL
+ * de Claim Security (no una simulación), que un rechazo de crear_cita_nylas
+ * NUNCA puede habilitar a la IA a afirmar que la cita quedó reservada.
+ *
+ * Hallazgo real de esta revisión: capabilitiesFromVerifiedEntry
+ * (external-claim-security.ts) NO filtra en la práctica por
+ * outputVariables -- otorga verifiesOnSuccess con solo `verified:true`,
+ * sin mirar si `citaId` (o cualquier outputVariable declarado) está
+ * realmente presente en `data` (confirmado por el propio test suite
+ * existente: flow-external-claim-security.test.ts, "verified=true por sí
+ * solo YA otorga..."). El filtro real, documentado ahí mismo, es que el
+ * EXECUTOR nunca marque success sin evidencia real -- exactamente lo que
+ * agendar_cita_especialista ya hacía y que este wrapper ahora replica: un
+ * rechazo real devuelve success:false, así que
+ * flow-orchestrator.ts (`if (dispatchResult.success)
+ * buildVerifiedActionEffectData(...)`) JAMÁS envuelve ese resultado en
+ * __verifiedResults -- la capability ni siquiera entra en juego.
+ */
+describe("Claim Security -- un rechazo de crear_cita_nylas nunca puede autorizar 'tu cita está confirmada'", () => {
+  const ACTION_CONFIG = { actionType: "crear_cita_nylas" as const, params: {} };
+
+  it("un rechazo real (horario ocupado) -- success:false -- el orchestrator NUNCA envuelve esto en __verifiedResults", async () => {
+    const executor = crearExecutor({
+      crearCitaConNylas: async () => ({ ok: false, motivo: "ocupado", detalle: "otra clienta tomó ese horario" }),
+    });
+    const result = await executor.dispatch(
+      baseRequest("crear_cita_nylas", { agendamiento: AGENDA_LISTA_PARA_CONFIRMAR }),
+      { tenantId: "tenant-amore", internal: true },
+    );
+    // Este es el ÚNICO gate real (ver flow-orchestrator.ts): con
+    // success:false, buildVerifiedActionEffectData NUNCA se llama para este
+    // dispatch, así que ninguna capability puede otorgarse. NO hay una
+    // segunda capa de defensa vía outputVariables -- capabilitiesFromVerifiedEntry
+    // (external-claim-security.ts) otorga verifiesOnSuccess con solo
+    // verified:true, sin mirar si citaId está presente (confirmado abajo:
+    // si algo, al margen de este gate, igual llamara
+    // buildVerifiedActionEffectData sobre un rechazo, SÍ otorgaría la
+    // capability por error) -- por eso success:false en el dispatch mismo
+    // es la única protección real, no un detalle de implementación.
+    assert.equal(result.success, false, "un rechazo real NUNCA es success:true -- ese es el único gate real");
+
+    const variablesSiAlguienIgualLoEnvolviera = buildVerifiedActionEffectData({
+      action: ACTION_CONFIG,
+      effectId: "eff-1",
+      executionId: "exec-1",
+      rawData: (result.data ?? {}) as Record<string, unknown>,
+    });
+    const verificadasIndebidas = extractVerifiedCapabilitiesFromVariables(variablesSiAlguienIgualLoEnvolviera);
+    assert.equal(
+      verificadasIndebidas.has("appointment.reserved"),
+      true,
+      "confirma el hallazgo: SI algo llamara buildVerifiedActionEffectData sobre un rechazo (sin pasar por el gate real de arriba), SÍ otorgaría la capability por error -- por eso success:false en el dispatch es la única protección real",
+    );
+  });
+
+  it("una reserva real y exitosa -- success:true CON citaId -- SÍ otorga appointment.reserved (Gemini SÍ puede confirmar)", async () => {
+    const resultadoMock: ResultadoCrearCitaNylas = {
+      ok: true,
+      cita: { id: 999, inicio: "2026-09-11T21:00:00.000Z", fin: "2026-09-11T23:00:00.000Z" } as never,
+      nylasEventId: "evt-real-1",
+      especialista: { id: 1, nombre: "Mary" },
+      servicio: { id: "s-dipping", nombre: "Dipping", duracionMin: 120 },
+    };
+    const executor = crearExecutor({ crearCitaConNylas: async () => resultadoMock });
+    const result = await executor.dispatch(
+      baseRequest("crear_cita_nylas", { agendamiento: AGENDA_LISTA_PARA_CONFIRMAR }),
+      { tenantId: "tenant-amore", internal: true },
+    );
+    assert.equal(result.success, true);
+    assert.equal((result.data as Record<string, unknown>).citaId, 999);
+
+    const variables = buildVerifiedActionEffectData({
+      action: ACTION_CONFIG,
+      effectId: "eff-1",
+      executionId: "exec-1",
+      rawData: (result.appliedResult ?? result.data ?? {}) as Record<string, unknown>,
+    });
+    const verificadas = extractVerifiedCapabilitiesFromVariables(variables);
+    assert.equal(verificadas.has("appointment.reserved"), true, "una reserva real SÍ debe otorgar la capability");
+
+    const chequeo = validateTextClaimsAgainstVerified("¡Listo! Tu cita ya quedó confirmada 💗", verificadas);
+    assert.equal(chequeo.ok, true, "acá SÍ hay evidencia real -- Claim Security debe permitirlo");
+  });
+
+  // Revisión (autorizada) -- ahora que success:true implica una reserva
+  // real de verdad (igual que agendar_cita_especialista), marcar esta
+  // acción como "critical" es correcto y seguro: criticalActionExecuted
+  // (isCriticalAction) solo se dispara cuando de verdad se creó una fila.
+  it("crear_cita_nylas SÍ está marcada como acción crítica (correcto ahora que success:true implica una reserva real)", () => {
+    assert.equal(isCriticalAction(ACTION_CONFIG), true);
   });
 });

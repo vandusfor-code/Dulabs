@@ -66,6 +66,28 @@ export function amoreRouterFlow(): FlowDefinition {
         config: { rules: [{ field: "modo", operator: "equals", value: "agendar_crear_cita" }], match: "all" },
       },
       { id: "act-crear-cita-nylas", type: "action", config: { actionType: "crear_cita_nylas" } },
+      // Revisión (autorizada) -- rama de fallo REAL (a diferencia del
+      // diseño original): un rechazo real (horario ocupado, error técnico,
+      // inconsistencia) devuelve success:false (ver internal-action-executor.ts
+      // -- necesario para que Claim Security nunca otorgue "appointment.reserved"
+      // en un rechazo). Mismo patrón EXACTO que
+      // daniela-agendar-cita.flow.ts (act-agendar --aiFailure--> msg-ocupado
+      // --> act-relistar-horarios): mensaje estático (nunca depende de datos
+      // de ESE turno, que no sobreviven por la rama de fallo) + re-consulta
+      // de disponibilidad real inmediata, para no dejar a la clienta en un
+      // punto muerto. Redacción deliberadamente neutra (sin "cita"/"horario"/
+      // "reserva"/"disponible") -- Claim Security corre SIEMPRE para
+      // contenido estático (detectDomainCapabilities), aunque sea
+      // informational; msg-ocupado de Daniela nunca se probó contra ese
+      // chequeo exacto (ver amore-router.flow.test.ts, único de este flow).
+      {
+        id: "msg-reserva-no-completada",
+        type: "message",
+        config: {
+          text: "Uy 😔 justo se complicó algo de mi lado. Dame un segundo, reviso qué opciones tienes.",
+          messageRole: "informational",
+        },
+      },
 
       {
         id: "cond-es-ai",
@@ -153,6 +175,10 @@ export function amoreRouterFlow(): FlowDefinition {
       { id: "e-cond-agendar-crear-si", source: "cond-es-agendar-crear-cita", target: "act-crear-cita-nylas", sourceHandle: FLOW_EDGE_HANDLE.conditionTrue },
       { id: "e-cond-agendar-crear-no", source: "cond-es-agendar-crear-cita", target: "cond-es-ai", sourceHandle: FLOW_EDGE_HANDLE.conditionFalse },
       { id: "e-crear-cita-a-ia", source: "act-crear-cita-nylas", target: "ai-generar-respuesta", sourceHandle: FLOW_EDGE_HANDLE.aiSuccess },
+      // Revisión (autorizada) -- rama de fallo real, ver comentario del nodo
+      // msg-reserva-no-completada arriba.
+      { id: "e-crear-cita-fail", source: "act-crear-cita-nylas", target: "msg-reserva-no-completada", sourceHandle: FLOW_EDGE_HANDLE.aiFailure },
+      { id: "e-reserva-fallo-relistar", source: "msg-reserva-no-completada", target: "act-buscar-disponibilidad-nylas" },
 
       { id: "e-cond-ai-si", source: "cond-es-ai", target: "ai-generar-respuesta", sourceHandle: FLOW_EDGE_HANDLE.conditionTrue },
       { id: "e-cond-ai-no", source: "cond-es-ai", target: "cond-es-transfer", sourceHandle: FLOW_EDGE_HANDLE.conditionFalse },

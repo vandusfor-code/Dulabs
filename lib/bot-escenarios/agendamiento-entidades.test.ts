@@ -87,8 +87,24 @@ describe("confirmación/cancelación -- vocabulario cerrado, EXACTO", () => {
       assert.equal(esConfirmacionExplicitaDeReserva(msg), true, `"${msg}" debía contar como confirmación`);
     }
   });
+  // Revisión (autorizada) -- formas naturales adicionales dirigidas a una
+  // opción ya ofrecida ("esa"), pedidas explícitamente: deben reconocerse
+  // sin volver el vocabulario difuso (siguen siendo coincidencia EXACTA).
+  it("confirmaciones naturales dirigidas a una opción ya ofrecida ('esa')", () => {
+    for (const msg of ["Perfecto, esa", "Sí, esa me sirve", "Quiero esa"]) {
+      assert.equal(esConfirmacionExplicitaDeReserva(msg), true, `"${msg}" debía contar como confirmación`);
+    }
+  });
   it("NUNCA confirma con frases ambiguas (regla explícita del pedido)", () => {
-    for (const msg of ["creo que sí", "esa está bien", "me gusta", "cuánto cuesta"]) {
+    for (const msg of [
+      "creo que sí",
+      "esa está bien",
+      "me gusta",
+      "cuánto cuesta",
+      "Está bonita",
+      "¿Y esa cuánto cuesta?",
+      "Déjame pensarlo",
+    ]) {
       assert.equal(esConfirmacionExplicitaDeReserva(msg), false, `"${msg}" NO debía contar como confirmación`);
     }
   });

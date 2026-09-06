@@ -123,6 +123,12 @@ export function extraerHoraOBloqueMencionado(mensaje: string, horaPendiente?: nu
  * consulta cuando el contexto realmente está esperando confirmación
  * (agendamiento.esperandoConfirmacion===true) -- ver resolver.ts.
  */
+// Revisión (autorizada) -- ampliado con formas naturales reales de
+// confirmación DIRIGIDAS a una opción ya ofrecida ("esa"), sin volverse
+// difuso: sigue siendo coincidencia EXACTA tras normalizar (nunca
+// "contains"), así que agregar más formas nunca introduce un falso
+// positivo nuevo -- solo cubre frases que antes quedaban, injustamente,
+// fuera del vocabulario cerrado.
 const CONFIRMACIONES_RESERVA = new Set([
   "si",
   "si por favor",
@@ -137,6 +143,12 @@ const CONFIRMACIONES_RESERVA = new Set([
   "de una",
   "claro que si",
   "hazlo",
+  "perfecto esa",
+  "esa perfecto",
+  "si esa me sirve",
+  "esa me sirve",
+  "quiero esa",
+  "esa si",
 ]);
 
 export function esConfirmacionExplicitaDeReserva(mensaje: string): boolean {

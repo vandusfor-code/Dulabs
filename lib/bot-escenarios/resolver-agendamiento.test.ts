@@ -241,6 +241,55 @@ describe("Q. Respuesta ambigua NUNCA reserva", () => {
     const t2 = await resolver("sí, resérvala", conOpcion);
     assert.equal(t2.modo, "agendar_crear_cita");
   });
+
+  // Revisión (autorizada) -- confirmaciones naturales adicionales pedidas
+  // explícitamente, verificadas de punta a punta (no solo a nivel de
+  // extracción aislada) contra el resolver completo.
+  for (const confirmacionNatural of ["Perfecto, esa", "Sí, esa me sirve", "Quiero esa"]) {
+    it(`confirmación natural '${confirmacionNatural}' SÍ dispara la reserva real`, async () => {
+      const conOpcion: ContextoConversacional = {
+        agendamiento: {
+          servicioId: "s-dipping",
+          servicioNombre: "Dipping",
+          duracionMin: 120,
+          fechaISO: VIERNES,
+          opcionesOfrecidas: [{ especialistaId: 1, especialistaNombre: "Mary", horaTexto: "16:00", horaISO: `${VIERNES}T16:00:00-05:00` }],
+          horarioSeleccionadoISO: `${VIERNES}T16:00:00-05:00`,
+          especialistaSeleccionadaId: 1,
+          especialistaSeleccionadaNombre: "Mary",
+          nombreCliente: "Ana",
+          esperandoConfirmacion: true,
+        },
+      };
+      const t2 = await resolver(confirmacionNatural, conOpcion);
+      assert.equal(t2.modo, "agendar_crear_cita");
+    });
+  }
+
+  // Revisión (autorizada) -- frases ambiguas adicionales pedidas
+  // explícitamente: ninguna debe disparar la reserva real, aunque haya una
+  // opción concreta ya ofrecida y la clienta esté respondiendo justo a eso.
+  for (const fraseAmbigua of ["Me gusta", "Está bonita", "¿Y esa cuánto cuesta?", "Déjame pensarlo"]) {
+    it(`frase ambigua '${fraseAmbigua}' NUNCA dispara la reserva real`, async () => {
+      const conOpcion: ContextoConversacional = {
+        agendamiento: {
+          servicioId: "s-dipping",
+          servicioNombre: "Dipping",
+          duracionMin: 120,
+          fechaISO: VIERNES,
+          opcionesOfrecidas: [{ especialistaId: 1, especialistaNombre: "Mary", horaTexto: "16:00", horaISO: `${VIERNES}T16:00:00-05:00` }],
+          horarioSeleccionadoISO: `${VIERNES}T16:00:00-05:00`,
+          especialistaSeleccionadaId: 1,
+          especialistaSeleccionadaNombre: "Mary",
+          nombreCliente: "Ana",
+          esperandoConfirmacion: true,
+        },
+      };
+      const t2 = await resolver(fraseAmbigua, conOpcion, { nombreConocido: "Ana" });
+      assert.notEqual(t2.modo, "agendar_crear_cita", `"${fraseAmbigua}" NUNCA debe disparar la reserva real`);
+      assert.equal(t2.contexto.agendamiento?.esperandoConfirmacion, true, "sigue esperando una confirmación clara");
+    });
+  }
 });
 
 describe("Nombre del cliente -- reutiliza dulabs_clientes_conocidos antes de preguntar", () => {

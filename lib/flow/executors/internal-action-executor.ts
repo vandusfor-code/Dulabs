@@ -1703,7 +1703,26 @@ export class InternalActionExecutor implements EffectExecutor {
   ): Promise<EffectDispatchResult> {
     assertNotAborted(signal);
     const agendamientoRaw = request.payload.agendamiento;
-    const agendamiento = esAgendamientoValido(agendamientoRaw) ? agendamientoRaw : undefined;
+    const agendamientoEntrante = esAgendamientoValido(agendamientoRaw) ? agendamientoRaw : undefined;
+    // Revisión (autorizada) -- (re)consultar disponibilidad SIEMPRE limpia
+    // una selección puntual previa (horario/profesional ya elegidos,
+    // esperando confirmación): si esos campos llegan poblados es porque
+    // venimos de un intento de reserva que acaba de fallar (ver
+    // amore-router.flow.ts: act-crear-cita-nylas --aiFailure-->
+    // msg-reserva-no-completada --> este nodo) -- esa selección ya no es
+    // válida (el horario pudo ocuparse, o el intento fue rechazado por otro
+    // motivo real) y NUNCA debe sobrevivir junto a las opciones frescas de
+    // abajo, o decidirSiguientePasoAgendamiento quedaría atascado pidiendo
+    // confirmar un horario obsoleto en vez de mostrar las opciones nuevas.
+    const agendamiento: AgendamientoEnCurso | undefined = agendamientoEntrante
+      ? {
+          ...agendamientoEntrante,
+          horarioSeleccionadoISO: undefined,
+          especialistaSeleccionadaId: undefined,
+          especialistaSeleccionadaNombre: undefined,
+          esperandoConfirmacion: undefined,
+        }
+      : undefined;
 
     // `extra` lleva SOLO el flag plano que Claim Security necesita para
     // reconocer que Nylas de verdad respondió esta consulta (ver
@@ -1835,16 +1854,28 @@ export class InternalActionExecutor implements EffectExecutor {
   }
 
   /**
-   * FASE 1 -- Agendamiento conversacional (autorizado). Wrapper FINO sobre
-   * crearCitaConNylas() (lib/reserva-servicio-nylas.ts, sin cambios): esa
-   * función YA hace toda la revalidación/idempotencia/rollback real. Se
-   * llega acá SOLO tras confirmación explícita ya verificada por
+   * FASE 1 -- Agendamiento conversacional (autorizado, revisado). Wrapper
+   * FINO sobre crearCitaConNylas() (lib/reserva-servicio-nylas.ts, sin
+   * cambios): esa función YA hace toda la revalidación/idempotencia/rollback
+   * real. Se llega acá SOLO tras confirmación explícita ya verificada por
    * decidirSiguientePasoAgendamiento -- este wrapper nunca decide si se
-   * confirma, solo ejecuta y redacta el resultado real. SIEMPRE devuelve
-   * success:true (igual que el buscador de disponibilidad, mismo motivo):
-   * un rechazo real (horario ocupado durante la revalidación, error
-   * técnico) se comunica con naturalidad vía IA, NUNCA como "tu cita está
-   * confirmada" -- sección 16 del pedido.
+   * confirma, solo ejecuta.
+   *
+   * Revisión (autorizada): a diferencia del diseño original de esta fase,
+   * esta acción ya NO devuelve success:true en un rechazo real -- mismo
+   * contrato EXACTO que agendar_cita_especialista (success:false + rama
+   * aiFailure del grafo, ver amore-router.flow.ts: act-crear-cita-nylas
+   * --aiFailure--> msg-reserva-no-completada --> act-buscar-disponibilidad-nylas,
+   * mismo patrón que daniela-agendar-cita.flow.ts: act-agendar --aiFailure-->
+   * msg-ocupado --> act-relistar-horarios). Motivo real encontrado en
+   * revisión: Claim Security (capabilitiesFromVerifiedEntry,
+   * external-claim-security.ts) NO filtra por outputVariables en la
+   * práctica -- el filtro real y único es que el EXECUTOR nunca marque
+   * success sin evidencia real (ver criticalEvidenceMissing, y el propio
+   * comentario de flow-external-claim-security.test.ts). Devolver
+   * success:true en un rechazo (aunque sin citaId) habría permitido que
+   * CUALQUIER dispatch de esta acción, incluido un rechazo real, otorgara
+   * "appointment.reserved" -- justo lo que este wrapper existe para evitar.
    */
   private async crearCitaNylasAction(
     request: EffectDispatchRequest,
@@ -1854,37 +1885,12 @@ export class InternalActionExecutor implements EffectExecutor {
     const agendamientoRaw = request.payload.agendamiento;
     const agendamiento = esAgendamientoValido(agendamientoRaw) ? agendamientoRaw : undefined;
 
-    // `extra` lleva SOLO `citaId` (fila real ya insertada en
-    // dulabs_citas_especialista) -- ver action-capabilities.ts:
-    // verifiesOnSuccess: ["appointment.reserved"], outputVariables:
-    // ["citaId"], mismo campo/criterio exacto que ya usa
-    // agendar_cita_especialista. Sin esto, Claim Security bloquearía CUALQUIER
-    // confirmación real de AMORE por reservas nuevas (nunca se otorga en un
-    // rechazo, solo en el único branch de éxito real de abajo).
-    const responderNaturalmente = (
-      instruccionIA: string,
-      datosIA: unknown,
-      agendamientoActualizado: AgendamientoEnCurso | undefined,
-      extra?: Record<string, unknown>,
-    ): EffectDispatchResult => {
-      const data = {
-        modo: "ai",
-        instruccionIA,
-        datosIA,
-        conocimientoGeneral: [],
-        agendamiento: agendamientoActualizado ?? null,
-        effectId: request.effectId,
-        ...extra,
-      };
-      return {
-        success: true,
-        classification: EFFECT_RESULT_CLASSIFICATIONS.SUCCESS,
-        data,
-        appliedResult: data,
-        rawResult: data,
-        metadata: { operationClass: OPERATION_CLASS.crear_cita_nylas },
-      };
-    };
+    const rechazar = (motivo: string, detalle: string): EffectDispatchResult => ({
+      success: false,
+      classification: EFFECT_RESULT_CLASSIFICATIONS.NON_RETRYABLE,
+      error: motivo,
+      data: { detalle },
+    });
 
     // Defensivo -- decidirSiguientePasoAgendamiento solo emite este modo con
     // TODO esto ya presente y una confirmación explícita ya recibida.
@@ -1896,11 +1902,7 @@ export class InternalActionExecutor implements EffectExecutor {
       !agendamiento.especialistaSeleccionadaNombre ||
       !agendamiento.nombreCliente
     ) {
-      return responderNaturalmente(
-        "Algo no quedó claro para completar la reserva. Pregúntale de nuevo con naturalidad el dato que falte, sin asumir nada.",
-        [],
-        agendamiento,
-      );
+      return rechazar("datos_incompletos", "Faltan datos reales del agendamiento para poder reservar.");
     }
     const servicioId = agendamiento.servicioId;
     const especialistaId = agendamiento.especialistaSeleccionadaId;
@@ -1910,11 +1912,7 @@ export class InternalActionExecutor implements EffectExecutor {
     const grantId = (this.deps.resolverNylasGrantIdParaTenant ?? resolverNylasGrantIdParaTenant)(request.tenantId);
     const apiKey = (this.deps.resolveNylasApiKeyFromEnv ?? resolveNylasApiKeyFromEnv)();
     if (!grantId || !apiKey) {
-      return responderNaturalmente(
-        "No pudiste completar la reserva real en este momento (no hay conexión con el calendario). Explícaselo con naturalidad y ofrécele intentarlo de nuevo en un momento o usar el portal -- NUNCA digas que la cita quedó confirmada.",
-        [],
-        agendamiento,
-      );
+      return rechazar("sin_conexion_nylas", "No hay conexión configurada con el calendario en este momento.");
     }
     const nylasReadClient = (this.deps.createNylasEventsClient ?? createNylasEventsClient)(apiKey);
     const nylasWriteClient = (this.deps.createNylasEventsWriteClient ?? createNylasEventsWriteClient)(apiKey);
@@ -1941,37 +1939,20 @@ export class InternalActionExecutor implements EffectExecutor {
         { nylasReadClient, nylasWriteClient, grantId },
       );
     } catch {
-      return responderNaturalmente(
-        "Hubo un error técnico al intentar reservar. Explícaselo con naturalidad -- NUNCA digas que la cita quedó confirmada -- y ofrécele intentarlo de nuevo.",
-        [],
-        agendamiento,
-      );
+      return rechazar("error_tecnico", "Hubo un error técnico real al intentar reservar.");
     }
     assertNotAborted(signal);
 
     if (!resultado.ok) {
-      // Nunca "tu cita está confirmada" -- se limpia la selección para que
-      // el siguiente turno vuelva a consultar disponibilidad real (sección
-      // 16), nunca se inventa una hora nueva.
-      const agendamientoTrasFallo: AgendamientoEnCurso = {
-        ...agendamiento,
-        opcionesOfrecidas: undefined,
-        horarioSeleccionadoISO: undefined,
-        especialistaSeleccionadaId: undefined,
-        especialistaSeleccionadaNombre: undefined,
-        esperandoConfirmacion: undefined,
-      };
-      const instruccionIA =
-        resultado.motivo === "ocupado" || resultado.motivo === "revalidacion_fallida"
-          ? "Justo cuando ibas a reservar, ese horario se ocupó. Explícaselo con naturalidad a la clienta -- NUNCA digas que la cita quedó confirmada -- y dile que vas a revisar de nuevo la disponibilidad real."
-          : "No se pudo completar la reserva real en este momento. Explícaselo con naturalidad a la clienta -- NUNCA digas que la cita quedó confirmada -- y ofrécele revisar de nuevo la disponibilidad o usar el portal.";
-      return responderNaturalmente(instruccionIA, [{ detalle: resultado.detalle }], agendamientoTrasFallo);
+      return rechazar(resultado.motivo, resultado.detalle);
     }
 
     const agendamientoCompletado: AgendamientoEnCurso = { ...agendamiento, completado: true };
-    return responderNaturalmente(
-      "La reserva se completó de verdad -- confirma con naturalidad y calidez el servicio, la profesional, la fecha y la hora exactos de datosIA. Nunca inventes ningún otro dato.",
-      [
+    const data = {
+      modo: "ai",
+      instruccionIA:
+        "La reserva se completó de verdad -- confirma con naturalidad y calidez el servicio, la profesional, la fecha y la hora exactos de datosIA. Nunca inventes ningún otro dato.",
+      datosIA: [
         {
           servicio: resultado.servicio.nombre,
           profesional: resultado.especialista.nombre,
@@ -1979,8 +1960,22 @@ export class InternalActionExecutor implements EffectExecutor {
           hora: horaColombiaDesdeIso(resultado.cita.inicio),
         },
       ],
-      agendamientoCompletado,
-      { citaId: resultado.cita.id },
-    );
+      conocimientoGeneral: [],
+      agendamiento: agendamientoCompletado,
+      effectId: request.effectId,
+      // `citaId` es la fila real ya insertada en dulabs_citas_especialista
+      // -- ver action-capabilities.ts: verifiesOnSuccess:
+      // ["appointment.reserved"], outputVariables: ["citaId"]. Presente
+      // SOLO en esta única rama de éxito real.
+      citaId: resultado.cita.id,
+    };
+    return {
+      success: true,
+      classification: EFFECT_RESULT_CLASSIFICATIONS.SUCCESS,
+      data,
+      appliedResult: data,
+      rawResult: data,
+      metadata: { operationClass: OPERATION_CLASS.crear_cita_nylas },
+    };
   }
 }

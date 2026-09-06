@@ -229,25 +229,32 @@ const BY_ACTION_TYPE: Partial<Record<FlowActionType, ActionCapabilitySpec>> = {
     verifiesOnSuccess: ["appointment.available"],
     outputVariables: ["disponibilidadConsultada"],
   },
-  // FASE 1 -- Agendamiento conversacional (autorizado). Mismo criterio EXACTO
-  // que agendar_cita_especialista: `citaId` es la fila real ya insertada en
-  // dulabs_citas_especialista (crearCitaConNylas hace INSERT atómico + evento
-  // Nylas primero) -- solo presente en el único branch de éxito real. Nunca
-  // requiere rama de fallo dedicada: un rechazo (horario ocupado, error
-  // técnico) también devuelve success:true, comunicado con naturalidad vía
-  // IA, nunca como confirmación (ver instruccionIA del rechazo).
+  // FASE 1 -- Agendamiento conversacional (autorizado, revisado). Mismo
+  // contrato EXACTO que agendar_cita_especialista: `citaId` es la fila real
+  // ya insertada en dulabs_citas_especialista (crearCitaConNylas hace INSERT
+  // atómico + evento Nylas primero) -- solo presente en el único branch de
+  // éxito real.
+  //
+  // Revisión (autorizada): esta acción YA NO devuelve success:true en un
+  // rechazo real (diseño original corregido). Motivo: capabilitiesFromVerifiedEntry
+  // (external-claim-security.ts) NO filtra en la práctica por
+  // outputVariables -- el filtro real, según el propio test suite existente
+  // (flow-external-claim-security.test.ts), es que el EXECUTOR nunca marque
+  // success sin evidencia real (mismo criterio que criticalEvidenceMissing).
+  // Devolver success:true en un rechazo (aunque sin citaId) habría otorgado
+  // "appointment.reserved" en CUALQUIER dispatch, incluido un rechazo real
+  // -- justo lo que esta capability existe para impedir. Un rechazo real
+  // ahora se comunica vía una rama aiFailure real del grafo (ver
+  // amore-router.flow.ts: act-crear-cita-nylas --aiFailure-->
+  // msg-reserva-no-completada --> act-buscar-disponibilidad-nylas, mismo
+  // patrón que daniela-agendar-cita.flow.ts: act-agendar --aiFailure-->
+  // msg-ocupado --> act-relistar-horarios) -- por eso "critical" (con rama
+  // de fallo real) es ahora correcto, sin necesitar requiresFailureBranch:false.
   crear_cita_nylas: {
     actionType: "crear_cita_nylas",
     criticality: "critical",
     verifiesOnSuccess: ["appointment.reserved"],
     outputVariables: ["citaId"],
-    // A diferencia de agendar_cita_especialista, esta acción SIEMPRE
-    // devuelve success:true (ver internal-action-executor.ts) -- un rechazo
-    // real (horario ocupado, error técnico) se comunica con naturalidad vía
-    // el mismo nodo IA (modo="ai" + instruccionIA), nunca por una rama
-    // failure separada del grafo. `citaId` (presente SOLO en el único
-    // branch de éxito real) sigue siendo lo único que otorga la capability.
-    requiresFailureBranch: false,
   },
 };
 
