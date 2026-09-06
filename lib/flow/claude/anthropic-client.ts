@@ -26,6 +26,7 @@ export function createAnthropicMessagesClient(apiKey: string): AnthropicMessages
             description: t.description,
             input_schema: t.input_schema as Anthropic.Tool.InputSchema,
           })),
+          tool_choice: params.tool_choice,
         },
         signal ? { signal } : undefined,
       );

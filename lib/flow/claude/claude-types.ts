@@ -183,6 +183,17 @@ export interface AnthropicCreateMessageParams {
     description: string;
     input_schema: Record<string, unknown>;
   }>;
+  /**
+   * HALLAZGO REAL (autorizado) — sin esto, Claude puede responder en texto
+   * plano suelto en vez de llamar al tool estructurado (tool_choice "auto"
+   * por defecto), y el executor lo lee como empty_output (toolBlock nunca
+   * aparece), dejando la ejecución colgada para siempre en waiting_effect
+   * sin ninguna respuesta real para la clienta. { type: "tool", name }
+   * fuerza que SIEMPRE use el tool -- nunca cambia el contenido de la
+   * respuesta, solo garantiza que llegue en la forma que el executor ya
+   * sabe leer.
+   */
+  tool_choice?: { type: "tool"; name: string };
 }
 
 export interface AnthropicCreateMessageResult {

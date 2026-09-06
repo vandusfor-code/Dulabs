@@ -122,7 +122,13 @@ export class ClaudeExecutor implements EffectExecutor {
       response = await client.createMessage(
         {
           model: this.defaultModel,
-          max_tokens: 1024,
+          // HALLAZGO REAL (autorizado) — 1024 podía truncar una respuesta
+          // conversacional más larga (modo "respond") antes de que el tool
+          // call terminara de emitirse, produciendo empty_output y dejando
+          // la ejecución colgada sin ninguna respuesta real. 2048 da el
+          // doble de margen; classify/extract (que usan pocos tokens de
+          // sobra) no se ven afectados por el límite más alto.
+          max_tokens: 2048,
           system: buildClaudeSystemPrompt(execContext),
           messages: buildClaudeUserMessages(execContext),
           tools: [
@@ -132,6 +138,10 @@ export class ClaudeExecutor implements EffectExecutor {
               input_schema: buildAiOutputToolSchema(aiRequest.mode, aiRequest.classifications),
             },
           ],
+          // Fuerza que Claude SIEMPRE responda vía el tool estructurado --
+          // sin esto (tool_choice "auto" por defecto), podía responder en
+          // texto plano suelto y el executor lo leía como empty_output.
+          tool_choice: { type: "tool", name: STRUCTURED_TOOL_NAME },
         },
         signal,
       );
