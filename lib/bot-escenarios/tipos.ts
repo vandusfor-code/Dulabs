@@ -146,6 +146,25 @@ export interface ContextoConversacional {
   ultimasOpcionesIds?: string[];
 }
 
+/**
+ * Base de conocimiento (autorizado, AMORE primer tenant) — explicación
+ * profesional GENERAL por servicio, separada por construcción de los hechos
+ * confirmados de AMORE (dulabs_servicios). `fuente` viaja siempre junto al
+ * contenido para que la IA nunca presente conocimiento general como
+ * protocolo específico de AMORE. Ver
+ * supabase/migrations/20260913000000_dulabs_bot_conocimiento.sql.
+ */
+export type FuenteConocimiento = "confirmado_amore" | "conocimiento_general" | "no_confirmado";
+
+export interface ConocimientoServicio {
+  servicioId: string;
+  fuente: FuenteConocimiento;
+  queEs: string | null;
+  paraQueSirve: string | null;
+  /** Nunca se muestra a la clienta tal cual -- restricción para la IA sobre qué NO afirmar de este servicio. */
+  limites: string | null;
+}
+
 export interface ResultadoResolucion {
   escenarioCodigo: string;
   modo: ModoEscenario;
@@ -155,6 +174,13 @@ export interface ResultadoResolucion {
   /** Presente solo cuando modo === "ai". */
   instruccionIA?: string;
   datosIA?: unknown;
+  /**
+   * Presente solo cuando modo === "ai" y hay servicio(s) real(es)
+   * involucrados -- SIEMPRE una clave separada de datosIA, nunca fusionada
+   * (regla explícita del pedido: precio/duración/categoría son hechos
+   * confirmados; esto es explicación general, con su fuente declarada).
+   */
+  conocimientoGeneral?: unknown;
   /** Contexto actualizado para la PRÓXIMA vuelta (se fusiona en state.variables por el propio Engine). */
   contexto: ContextoConversacional;
 }

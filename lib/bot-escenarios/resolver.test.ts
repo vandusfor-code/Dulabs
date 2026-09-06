@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { resolverEscenario } from "@/lib/bot-escenarios/resolver";
 import { AMORE_ESCENARIOS_SEED } from "@/lib/bot-escenarios/seed-amore";
-import type { ContextoConversacional, EscenarioRow } from "@/lib/bot-escenarios/tipos";
+import type { ConocimientoServicio, ContextoConversacional, EscenarioRow } from "@/lib/bot-escenarios/tipos";
 import type { ServicioCatalogoReal } from "@/lib/catalogo-servicios-flow-adaptador";
 
 const FAKE_SUPABASE = {} as SupabaseClient;
@@ -40,7 +40,12 @@ function contexto(overrides: Partial<ContextoConversacional> = {}): ContextoConv
   return { ...overrides };
 }
 
-async function resolver(mensaje: string, ctx: ContextoConversacional = {}, turno = 0) {
+async function resolver(
+  mensaje: string,
+  ctx: ContextoConversacional = {},
+  turno = 0,
+  conocimiento: ConocimientoServicio[] = [],
+) {
   return resolverEscenario({
     supabase: FAKE_SUPABASE,
     tenantId: TENANT,
@@ -52,6 +57,7 @@ async function resolver(mensaje: string, ctx: ContextoConversacional = {}, turno
       cargarCatalogo: async () => CATALOGO,
       cargarProfesionales: async (_s, _t, servicioId) =>
         servicioId === "s-dipping" ? { profesionales: ["Mary", "Jessica"] } : { profesionales: [] },
+      cargarConocimiento: async () => conocimiento,
     },
   });
 }
@@ -295,23 +301,36 @@ describe("resolverEscenario — banco real de AMORE, sin IA en el camino determi
   });
 
   describe("BUG REAL (prueba de WhatsApp): comparación entre 2 servicios reales", () => {
-    it("'Qué diferencia hay entre el dipping y press On?' -> compara ambos, NUNCA responde solo de uno", async () => {
+    it("'Qué diferencia hay entre el dipping y press On?' -> compara ambos vía IA, NUNCA responde solo de uno", async () => {
       const r = await resolver("Qué diferencia hay entre el dipping y press On?");
       assert.equal(r.escenarioCodigo, "051_comparacion");
-      assert.match(r.respuestaTexto!, /Dipping/);
-      assert.match(r.respuestaTexto!, /Press On/);
-      assert.match(r.respuestaTexto!, /\$60\.000/);
-      assert.match(r.respuestaTexto!, /\$80\.000/);
+      assert.equal(r.modo, "ai");
+      assert.equal(r.requiereIA, true);
+      const datos = r.datosIA as Array<{ nombre: string; precio: number }>;
+      assert.deepEqual(
+        datos.map((d) => d.nombre).sort(),
+        ["Dipping", "Press On"],
+        "debe pasar AMBOS servicios reales a la IA, nunca solo el de nombre más largo",
+      );
+      assert.equal(datos.find((d) => d.nombre === "Dipping")?.precio, 60000);
+      assert.equal(datos.find((d) => d.nombre === "Press On")?.precio, 80000);
     });
 
-    it("nunca inventa diferencias técnicas (materiales, resistencia, proceso), y suena natural (no clínico/técnico)", async () => {
+    it("nunca inventa diferencias técnicas: la IA solo recibe datos reales del catálogo + conocimiento general marcado con su fuente, nunca prosa inventada por el resolver", async () => {
       const r = await resolver("Dipping vs Press On");
-      assert.doesNotMatch(r.respuestaTexto ?? "", /resistente|material|se aplica|se retira|cuidado/i);
-      // Honesto sobre la diferencia técnica, pero con lenguaje natural --
-      // nunca "información verificada"/"datos disponibles" (bug real de
-      // naturalidad encontrado en la prueba de WhatsApp).
-      assert.match(r.respuestaTexto!, /prefiero no inventar/i);
-      assert.doesNotMatch(r.respuestaTexto ?? "", /informaci[oó]n verificada|datos disponibles/i);
+      assert.equal(r.modo, "ai");
+      const conocimiento = r.conocimientoGeneral as Array<{ servicio: string; fuente: string }>;
+      assert.equal(conocimiento.length, 2, "debe llevar una entrada de conocimiento por cada servicio comparado");
+      for (const c of conocimiento) {
+        assert.ok(
+          ["confirmado_amore", "conocimiento_general", "no_confirmado"].includes(c.fuente),
+          `fuente de conocimiento inválida: ${c.fuente}`,
+        );
+      }
+      // El resolver mismo nunca debe redactar la comparación -- eso es
+      // exactamente lo que se delega a la IA (instruccionIA) para que nunca
+      // se invente texto técnico fuera del dato real.
+      assert.equal(r.respuestaTexto, undefined);
     });
 
     it("contexto: 'Me interesa el Dipping' + '¿Y el Press On?' -> reconoce comparación usando el contexto", async () => {
@@ -320,8 +339,9 @@ describe("resolverEscenario — banco real de AMORE, sin IA en el camino determi
 
       const t2 = await resolver("¿Y el Press On?", t1.contexto, 1);
       assert.equal(t2.escenarioCodigo, "051_comparacion");
-      assert.match(t2.respuestaTexto!, /Dipping/);
-      assert.match(t2.respuestaTexto!, /Press On/);
+      assert.equal(t2.modo, "ai");
+      const datosT2 = t2.datosIA as Array<{ nombre: string }>;
+      assert.deepEqual(datosT2.map((d) => d.nombre).sort(), ["Dipping", "Press On"]);
 
       const t3 = await resolver("¿Cuál me recomiendas?", t2.contexto, 2);
       assert.equal(t3.modo, "ai");
@@ -352,11 +372,86 @@ describe("resolverEscenario — banco real de AMORE, sin IA en el camino determi
       "quiero hablar con una persona",
       "qué horario tienen",
       "hacen acrílicas?",
-      "Qué diferencia hay entre el dipping y press On?",
     ];
     for (const mensaje of mensajes) {
       const r = await resolver(mensaje);
       assert.equal(r.requiereIA, false, `"${mensaje}" no debería requerir IA (escenario: ${r.escenarioCodigo})`);
     }
+  });
+
+  it("comparación (051) y explicación de servicio (029) SÍ requieren IA -- son las únicas 2 excepciones nuevas al camino determinístico", async () => {
+    const comparacion = await resolver("Qué diferencia hay entre el dipping y press On?");
+    assert.equal(comparacion.escenarioCodigo, "051_comparacion");
+    assert.equal(comparacion.requiereIA, true);
+
+    const explicacion = await resolver("¿Qué es el dipping?");
+    assert.equal(explicacion.escenarioCodigo, "029_explicacion_servicio");
+    assert.equal(explicacion.requiereIA, true);
+  });
+
+  describe("029_explicacion_servicio + conocimientoGeneral -- base de conocimiento (FASE B, integración)", () => {
+    const FICHA_DIPPING: ConocimientoServicio = {
+      servicioId: "s-dipping",
+      fuente: "conocimiento_general",
+      queEs: "El dipping es una técnica de esmaltado semipermanente con polvo.",
+      paraQueSirve: "Busca un acabado duradero y resistente.",
+      limites: "No afirmar marca, producto ni duración exacta del resultado.",
+    };
+
+    it("'¿Qué es el dipping?' con ficha sembrada: datosIA trae el hecho confirmado, conocimientoGeneral trae la ficha con su fuente real", async () => {
+      const r = await resolver("¿Qué es el dipping?", {}, 0, [FICHA_DIPPING]);
+      assert.equal(r.escenarioCodigo, "029_explicacion_servicio");
+      assert.equal(r.modo, "ai");
+      const datos = r.datosIA as Array<{ nombre: string; precio: number }>;
+      assert.equal(datos.length, 1);
+      assert.equal(datos[0]!.nombre, "Dipping");
+      assert.equal(datos[0]!.precio, 60000, "el precio SIEMPRE viene de datosIA (catálogo real), nunca de la ficha de conocimiento");
+      const conocimiento = r.conocimientoGeneral as Array<{ servicio: string; queEs: string | null; fuente: string }>;
+      assert.equal(conocimiento.length, 1);
+      assert.equal(conocimiento[0]!.servicio, "Dipping");
+      assert.equal(conocimiento[0]!.queEs, FICHA_DIPPING.queEs);
+      assert.equal(conocimiento[0]!.fuente, "conocimiento_general");
+    });
+
+    it("'¿Qué es el Press On?' SIN ficha sembrada: nunca inventa -- conocimientoGeneral queda honesto con fuente='no_confirmado' y todo null", async () => {
+      const r = await resolver("¿Qué es el Press On?", {}, 0, [FICHA_DIPPING]);
+      assert.equal(r.escenarioCodigo, "029_explicacion_servicio");
+      const conocimiento = r.conocimientoGeneral as Array<{ servicio: string; queEs: string | null; paraQueSirve: string | null; limites: string | null; fuente: string }>;
+      assert.equal(conocimiento.length, 1);
+      assert.equal(conocimiento[0]!.servicio, "Press On");
+      assert.equal(conocimiento[0]!.fuente, "no_confirmado");
+      assert.equal(conocimiento[0]!.queEs, null);
+      assert.equal(conocimiento[0]!.paraQueSirve, null);
+      assert.equal(conocimiento[0]!.limites, null);
+    });
+
+    it("recomendación general (040) también adjunta conocimientoGeneral por candidato, alineado 1 a 1 con datosIA", async () => {
+      const r = await resolver("no sé qué hacerme, ayúdame a escoger", {}, 0, [FICHA_DIPPING]);
+      assert.equal(r.escenarioCodigo, "040_recomendacion");
+      assert.equal(r.modo, "ai");
+      const datos = r.datosIA as Array<{ nombre: string }>;
+      const conocimiento = r.conocimientoGeneral as Array<{ servicio: string; fuente: string }>;
+      assert.equal(datos.length, conocimiento.length, "conocimientoGeneral debe tener una entrada por cada servicio en datosIA, nunca menos");
+      assert.deepEqual(datos.map((d) => d.nombre).sort(), conocimiento.map((c) => c.servicio).sort());
+      const dipping = conocimiento.find((c) => c.servicio === "Dipping");
+      assert.equal(dipping?.fuente, "conocimiento_general");
+      const sinFicha = conocimiento.find((c) => c.servicio === "Uña");
+      assert.equal(sinFicha?.fuente, "no_confirmado", "un servicio real sin ficha nunca inventa conocimiento, queda honesto");
+    });
+
+    it("conocimiento sembrado para un servicio_id que NO está en el catálogo cargado simplemente no se usa (nunca aparece, nunca rompe)", async () => {
+      const fichaHuerfana: ConocimientoServicio = {
+        servicioId: "s-no-existe-en-este-catalogo",
+        fuente: "conocimiento_general",
+        queEs: "nunca debería aparecer",
+        paraQueSirve: "nunca debería aparecer",
+        limites: "nunca debería aparecer",
+      };
+      const r = await resolver("¿Qué es el dipping?", {}, 0, [fichaHuerfana]);
+      const conocimiento = r.conocimientoGeneral as Array<{ servicio: string; queEs: string | null }>;
+      assert.equal(conocimiento[0]!.servicio, "Dipping");
+      assert.equal(conocimiento[0]!.queEs, null, "la ficha huérfana (de un servicio que no está en el catálogo) nunca contamina otro servicio");
+      assert.ok(!conocimiento.some((c) => c.queEs === "nunca debería aparecer"));
+    });
   });
 });

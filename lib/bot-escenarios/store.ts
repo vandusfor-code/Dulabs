@@ -1,10 +1,17 @@
 /**
- * Lectura real de dulabs_bot_escenarios (autorizado). Único punto que sabe
- * el nombre de columnas/tabla -- el resolver (resolver.ts) solo conoce
- * EscenarioRow, nunca SQL.
+ * Lectura real de dulabs_bot_escenarios/dulabs_bot_conocimiento (autorizado).
+ * Único punto que sabe el nombre de columnas/tabla -- el resolver
+ * (resolver.ts) solo conoce EscenarioRow/ConocimientoServicio, nunca SQL.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { ConfigEscenario, EscenarioRow, ModoEscenario, VarianteActivacion } from "@/lib/bot-escenarios/tipos";
+import type {
+  ConfigEscenario,
+  ConocimientoServicio,
+  EscenarioRow,
+  FuenteConocimiento,
+  ModoEscenario,
+  VarianteActivacion,
+} from "@/lib/bot-escenarios/tipos";
 
 interface FilaDb {
   tenant_id: string;
@@ -42,4 +49,33 @@ export async function cargarEscenariosReal(supabase: SupabaseClient, tenantId: s
     .eq("tenant_id", tenantId);
   if (error) throw error;
   return ((data ?? []) as FilaDb[]).map(mapearFila);
+}
+
+interface FilaConocimientoDb {
+  servicio_id: string;
+  fuente: string;
+  que_es: string | null;
+  para_que_sirve: string | null;
+  limites: string | null;
+}
+
+/**
+ * Conocimiento general REAL de un tenant, solo fichas activas -- ligado por
+ * FK real a dulabs_servicios (nunca puede existir para un servicio que no
+ * está en el catálogo real).
+ */
+export async function cargarConocimientoReal(supabase: SupabaseClient, tenantId: string): Promise<ConocimientoServicio[]> {
+  const { data, error } = await supabase
+    .from("dulabs_bot_conocimiento")
+    .select("servicio_id, fuente, que_es, para_que_sirve, limites")
+    .eq("tenant_id", tenantId)
+    .eq("activo", true);
+  if (error) throw error;
+  return ((data ?? []) as FilaConocimientoDb[]).map((fila) => ({
+    servicioId: fila.servicio_id,
+    fuente: fila.fuente as FuenteConocimiento,
+    queEs: fila.que_es,
+    paraQueSirve: fila.para_que_sirve,
+    limites: fila.limites,
+  }));
 }

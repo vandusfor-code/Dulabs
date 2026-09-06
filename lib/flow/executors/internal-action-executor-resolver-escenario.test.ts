@@ -66,6 +66,7 @@ function crearExecutor(overrides: Partial<ConstructorParameters<typeof InternalA
     cargarEscenariosReal: async () => [ESCENARIO_SALUDO],
     listarCatalogoServiciosReal: async () => [],
     listarProfesionalesServicioReal: async () => ({ profesionales: [] }),
+    cargarConocimientoReal: async () => [],
     ...overrides,
   });
 }

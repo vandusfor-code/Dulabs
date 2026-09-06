@@ -19,9 +19,11 @@ import { normalizeText } from "@/lib/flow-triggers/normalize-text";
 import { esServicioDeCaballero, extraerEntidades } from "@/lib/bot-escenarios/entidades";
 import { resolverEscenarioGanador } from "@/lib/bot-escenarios/matching";
 import { elegirYRenderizarPlantilla } from "@/lib/bot-escenarios/plantillas";
+import { cargarConocimientoReal } from "@/lib/bot-escenarios/store";
 import {
   CODIGO_ESCENARIO_FALLBACK,
   CODIGO_ESCENARIO_PORTAL,
+  type ConocimientoServicio,
   type ContextoConversacional,
   type EntidadesDetectadas,
   type EscenarioRow,
@@ -33,6 +35,7 @@ export interface ResolverEscenarioDeps {
   cargarEscenarios: (supabase: SupabaseClient, tenantId: string) => Promise<EscenarioRow[]>;
   cargarCatalogo?: typeof listarCatalogoServiciosReal;
   cargarProfesionales?: typeof listarProfesionalesServicioReal;
+  cargarConocimiento?: typeof cargarConocimientoReal;
 }
 
 function construirSinonimos(escenarios: EscenarioRow[]): Map<string, string[]> {
@@ -157,50 +160,12 @@ async function resolverModoCatalog(params: {
 }): Promise<ResultadoResolucion> {
   const { escenario, entidades, contexto, catalogo, tenantId, turno } = params;
 
-  // Prueba real de WhatsApp (autorizado) — comparación entre 2 servicios
-  // reales SIEMPRE se resuelve ANTES que "servicio puntual": "¿Qué diferencia
-  // hay entre Dipping y Press On?" nunca debe responder solo del más
-  // específico de los dos (bug real encontrado). Nunca afirma diferencias
-  // técnicas que no existen en el catálogo real -- solo precio/duración de
-  // AMBOS + honestidad explícita sobre lo que no está confirmado (el propio
-  // texto de la plantilla, verificado con Claim Security antes de sembrarse).
-  if (entidades.serviciosDetectados.length >= 2) {
-    const [a, b] = entidades.serviciosDetectados;
-    const servicioA = catalogo.find((s) => s.id === a!.id);
-    const servicioB = catalogo.find((s) => s.id === b!.id);
-    if (servicioA && servicioB) {
-      const variables = {
-        servicioA: servicioA.nombre,
-        precioTextoA: formatearPrecioCop(servicioA.precio),
-        duracionTextoA: formatearDuracion(servicioA.duracionMin),
-        servicioB: servicioB.nombre,
-        precioTextoB: formatearPrecioCop(servicioB.precio),
-        duracionTextoB: formatearDuracion(servicioB.duracionMin),
-      };
-      const respuestaTexto = elegirYRenderizarPlantilla({
-        respuestas: escenario.respuestas,
-        tenantId,
-        escenarioCodigo: escenario.codigo,
-        turno,
-        variables,
-      });
-      return {
-        escenarioCodigo: escenario.codigo,
-        modo: "catalog",
-        respuestaTexto,
-        requiereIA: false,
-        contexto: {
-          ultimoServicioId: servicioA.id,
-          ultimoServicioNombre: servicioA.nombre,
-          ultimoServicioBId: servicioB.id,
-          ultimoServicioBNombre: servicioB.nombre,
-          ultimaCategoria: servicioA.categoria ?? undefined,
-          ultimaAccionSugerida: "comparando",
-          ultimasOpcionesIds: [servicioA.id, servicioB.id],
-        },
-      };
-    }
-  }
+  // Nota (autorizado) — la comparación entre 2 servicios reales YA NO se
+  // resuelve acá: 051_comparacion pasa a modo=ai (ver resolverModoAi) para
+  // que la IA redacte naturalmente en vez de un disclaimer fijo. Esta
+  // función (modo=catalog) nunca recibe en la práctica
+  // entidades.serviciosDetectados.length>=2, porque el único escenario con
+  // la variante dos_servicios_detectados (051) siempre gana esa prioridad.
 
   const servicioId = entidades.servicioId ?? (entidades.esAfirmacionCorta ? undefined : contexto.ultimoServicioId);
   const servicio = servicioId ? catalogo.find((s) => s.id === servicioId) : undefined;
@@ -302,13 +267,67 @@ function mapearServicioParaIA(s: ServicioCatalogoReal) {
   };
 }
 
+/**
+ * Ficha de conocimiento GENERAL de un servicio -- SIEMPRE con su `fuente`
+ * declarada, para que la IA nunca la confunda con un hecho confirmado de
+ * AMORE (esos viven en mapearServicioParaIA/datosIA, nunca acá). Cuando el
+ * servicio no tiene ficha sembrada, se devuelve honesto (todo null,
+ * fuente="no_confirmado") -- nunca se omite la entrada ni se inventa texto.
+ */
+function mapearConocimientoParaIA(s: ServicioCatalogoReal, porServicio: Map<string, ConocimientoServicio>) {
+  const ficha = porServicio.get(s.id);
+  return {
+    servicio: s.nombre,
+    queEs: ficha?.queEs ?? null,
+    paraQueSirve: ficha?.paraQueSirve ?? null,
+    limites: ficha?.limites ?? null,
+    fuente: ficha?.fuente ?? "no_confirmado",
+  };
+}
+
 function resolverModoAi(params: {
   escenario: EscenarioRow;
   entidades: EntidadesDetectadas;
   contexto: ContextoConversacional;
   catalogo: ServicioCatalogoReal[];
+  conocimientoPorServicio: Map<string, ConocimientoServicio>;
 }): ResultadoResolucion {
-  const { escenario, entidades, contexto, catalogo } = params;
+  const { escenario, entidades, contexto, catalogo, conocimientoPorServicio } = params;
+
+  // Prueba real de WhatsApp (autorizado) — comparación entre 2 servicios
+  // reales SIEMPRE se resuelve ANTES que cualquier otra rama: "¿Qué
+  // diferencia hay entre Dipping y Press On?" nunca debe responder solo del
+  // más específico de los dos (bug real encontrado). Se le entrega a la IA
+  // el conocimiento general de AMBOS, por separado de los hechos
+  // confirmados -- 051_comparacion (modo=ai) redacta naturalmente, nunca un
+  // disclaimer fijo.
+  if (entidades.serviciosDetectados.length >= 2) {
+    const [a, b] = entidades.serviciosDetectados;
+    const servicioA = catalogo.find((s) => s.id === a!.id);
+    const servicioB = catalogo.find((s) => s.id === b!.id);
+    if (servicioA && servicioB) {
+      return {
+        escenarioCodigo: escenario.codigo,
+        modo: "ai",
+        requiereIA: true,
+        instruccionIA: escenario.config.instruccionIA ?? "",
+        datosIA: [mapearServicioParaIA(servicioA), mapearServicioParaIA(servicioB)],
+        conocimientoGeneral: [
+          mapearConocimientoParaIA(servicioA, conocimientoPorServicio),
+          mapearConocimientoParaIA(servicioB, conocimientoPorServicio),
+        ],
+        contexto: {
+          ultimoServicioId: servicioA.id,
+          ultimoServicioNombre: servicioA.nombre,
+          ultimoServicioBId: servicioB.id,
+          ultimoServicioBNombre: servicioB.nombre,
+          ultimaCategoria: servicioA.categoria ?? undefined,
+          ultimaAccionSugerida: "comparando",
+          ultimasOpcionesIds: [servicioA.id, servicioB.id],
+        },
+      };
+    }
+  }
 
   // Sección 5 del pedido (autorizado) — "¿Cuál me recomiendas?" después de
   // una comparación activa ("Me interesa el Dipping" -> "¿Y el Press On?")
@@ -325,9 +344,44 @@ function resolverModoAi(params: {
         requiereIA: true,
         instruccionIA: escenario.config.instruccionIA ?? "",
         datosIA: [mapearServicioParaIA(a), mapearServicioParaIA(b)],
+        conocimientoGeneral: [mapearConocimientoParaIA(a, conocimientoPorServicio), mapearConocimientoParaIA(b, conocimientoPorServicio)],
         contexto,
       };
     }
+  }
+
+  // Genérico (nunca depende del código del escenario) — un ÚNICO servicio
+  // real ya resuelto (nombrado en este mensaje o heredado del contexto) y
+  // sin una categoría nueva que lo reemplace: se trata como "explicación de
+  // un servicio puntual" (029_explicacion_servicio y cualquier otro
+  // escenario ai que reciba esta misma forma de entidades).
+  //
+  // OJO: `entidades.categoria` se autocompleta con la categoría del propio
+  // servicio cuando el mensaje nombra ESE único servicio (ver entidades.ts,
+  // servicioUnico?.categoria) -- así que nunca debe bloquear esta rama
+  // cuando el servicio viene DIRECTO del mensaje actual (entidades.servicioId).
+  // Solo bloquea heredar el servicio del CONTEXTO (turno anterior) cuando
+  // este turno sí trae una categoría nueva (cambio de tema real, ej. "qué
+  // tienen para uñas" tras haber hablado de un servicio de otra categoría) --
+  // mismo criterio, sin categoría propia, que resolverModoCatalog ya usa.
+  const servicioIdResuelto = entidades.servicioId ?? (entidades.categoria ? undefined : contexto.ultimoServicioId);
+  const servicioResuelto = servicioIdResuelto ? catalogo.find((s) => s.id === servicioIdResuelto) : undefined;
+  if (servicioResuelto) {
+    return {
+      escenarioCodigo: escenario.codigo,
+      modo: "ai",
+      requiereIA: true,
+      instruccionIA: escenario.config.instruccionIA ?? "",
+      datosIA: [mapearServicioParaIA(servicioResuelto)],
+      conocimientoGeneral: [mapearConocimientoParaIA(servicioResuelto, conocimientoPorServicio)],
+      contexto: {
+        ultimoServicioId: servicioResuelto.id,
+        ultimoServicioNombre: servicioResuelto.nombre,
+        ultimaCategoria: servicioResuelto.categoria ?? undefined,
+        ultimaAccionSugerida: "ofrecer_portal",
+        ultimasOpcionesIds: [servicioResuelto.id],
+      },
+    };
   }
 
   const categoria = entidades.categoria ?? contexto.ultimaCategoria;
@@ -343,7 +397,9 @@ function resolverModoAi(params: {
   // WhatsApp) -- la IA tampoco debe recomendar servicios de caballero sin
   // evidencia explícita.
   const base = datosFiltrados.length > 0 ? datosFiltrados : catalogo;
-  const datosIA = aplicarFiltroGenero(base, entidades.indicaGeneroMasculino).map(mapearServicioParaIA);
+  const candidatos = aplicarFiltroGenero(base, entidades.indicaGeneroMasculino);
+  const datosIA = candidatos.map(mapearServicioParaIA);
+  const conocimientoGeneral = candidatos.map((s) => mapearConocimientoParaIA(s, conocimientoPorServicio));
 
   return {
     escenarioCodigo: escenario.codigo,
@@ -351,6 +407,7 @@ function resolverModoAi(params: {
     requiereIA: true,
     instruccionIA: escenario.config.instruccionIA ?? "",
     datosIA,
+    conocimientoGeneral,
     contexto: { ...contexto, ultimaCategoria: categoria },
   };
 }
@@ -367,11 +424,14 @@ export async function resolverEscenario(params: {
   if (!cargarEscenarios) throw new Error("resolverEscenario requiere deps.cargarEscenarios");
   const cargarCatalogo = params.deps?.cargarCatalogo ?? listarCatalogoServiciosReal;
   const cargarProfesionales = params.deps?.cargarProfesionales ?? listarProfesionalesServicioReal;
+  const cargarConocimiento = params.deps?.cargarConocimiento ?? cargarConocimientoReal;
 
-  const [escenarios, catalogo] = await Promise.all([
+  const [escenarios, catalogo, conocimiento] = await Promise.all([
     cargarEscenarios(params.supabase, params.tenantId),
     cargarCatalogo(params.supabase, params.tenantId),
+    cargarConocimiento(params.supabase, params.tenantId),
   ]);
+  const conocimientoPorServicio = new Map(conocimiento.map((c) => [c.servicioId, c]));
 
   const sinonimosPorCategoria = construirSinonimos(escenarios);
   const entidadesBase = extraerEntidades({ mensaje: params.mensaje, catalogo, sinonimosPorCategoria });
@@ -488,7 +548,7 @@ export async function resolverEscenario(params: {
 
   switch (escenario.modo) {
     case "ai":
-      return resolverModoAi({ escenario, entidades, contexto: params.contexto, catalogo });
+      return resolverModoAi({ escenario, entidades, contexto: params.contexto, catalogo, conocimientoPorServicio });
 
     case "catalog":
       return resolverModoCatalog({

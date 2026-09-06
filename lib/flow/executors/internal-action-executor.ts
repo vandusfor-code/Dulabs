@@ -41,7 +41,7 @@ import {
   type ServicioCatalogoReal,
 } from "@/lib/catalogo-servicios-flow-adaptador";
 import { resolverEscenario } from "@/lib/bot-escenarios/resolver";
-import { cargarEscenariosReal } from "@/lib/bot-escenarios/store";
+import { cargarConocimientoReal, cargarEscenariosReal } from "@/lib/bot-escenarios/store";
 import {
   EFFECT_RESULT_CLASSIFICATIONS,
   type EffectDispatchRequest,
@@ -103,6 +103,8 @@ export interface InternalActionDeps {
   // criterio de arriba: si se omite, llama directo a la implementación real
   // (lib/bot-escenarios/store.ts).
   cargarEscenariosReal?: typeof cargarEscenariosReal;
+  // Base de conocimiento (autorizado, AMORE primer tenant) -- mismo criterio.
+  cargarConocimientoReal?: typeof cargarConocimientoReal;
 }
 
 const OPERATION_CLASS: Partial<Record<string, InternalActionOperationClass>> = {
@@ -1576,6 +1578,7 @@ export class InternalActionExecutor implements EffectExecutor {
         // -- nunca un segundo mecanismo de override para los mismos datos.
         cargarCatalogo: this.deps.listarCatalogoServiciosReal,
         cargarProfesionales: this.deps.listarProfesionalesServicioReal,
+        cargarConocimiento: this.deps.cargarConocimientoReal,
       },
     });
     assertNotAborted(signal);
@@ -1587,6 +1590,11 @@ export class InternalActionExecutor implements EffectExecutor {
       requiereIA: String(resultado.requiereIA),
       instruccionIA: resultado.instruccionIA ?? "",
       datosIA: resultado.datosIA ?? [],
+      // Base de conocimiento (autorizado) -- SIEMPRE una clave separada de
+      // datosIA, nunca fusionada (regla explícita: precio/duración/categoría
+      // son hechos confirmados; esto es explicación general, con su fuente
+      // declarada). Solo presente cuando modo=ai y hay servicio(s) involucrados.
+      conocimientoGeneral: resultado.conocimientoGeneral ?? [],
       ultimoServicioId: resultado.contexto.ultimoServicioId ?? "",
       ultimoServicioNombre: resultado.contexto.ultimoServicioNombre ?? "",
       ultimoServicioBId: resultado.contexto.ultimoServicioBId ?? "",

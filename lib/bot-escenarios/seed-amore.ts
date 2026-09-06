@@ -282,9 +282,15 @@ export const AMORE_ESCENARIOS_SEED: FilaSeed[] = [
 
   // --- SERVICIOS: comparación entre dos servicios reales -------------------
   {
+    // FASE B (integración base de conocimiento, autorizado) — pasa de
+    // catalog a ai: la comparación ahora la redacta la IA usando el
+    // conocimiento general REAL de ambos servicios (separado de los hechos
+    // confirmados), en vez de un disclaimer fijo. El backend sigue
+    // determinando qué servicios existen/precio/duración -- la IA solo
+    // redacta.
     codigo: "051_comparacion",
     nombre: "Comparación entre 2 servicios reales",
-    modo: "catalog",
+    modo: "ai",
     prioridad: 530,
     activo: true,
     // Sin variantes de texto propias a propósito -- el ÚNICO disparador real
@@ -295,11 +301,14 @@ export const AMORE_ESCENARIOS_SEED: FilaSeed[] = [
     // de la palabra exacta usada -- depende de que el catálogo real confirme
     // los 2 nombres.
     variantes: [{ tipo: "dos_servicios_detectados" }],
-    respuestas: [
-      "El {{servicioA}} cuesta {{precioTextoA}} y dura aproximadamente {{duracionTextoA}}, y el {{servicioB}} cuesta {{precioTextoB}} y dura aproximadamente {{duracionTextoB}} 💗 De la parte técnica entre los dos prefiero no inventarte un dato -- cuéntame qué resultado buscas y te ayudo a escoger.",
-      "Te cuento ✨ El {{servicioA}} cuesta {{precioTextoA}} (dura {{duracionTextoA}}) y el {{servicioB}} cuesta {{precioTextoB}} (dura {{duracionTextoB}}). La diferencia técnica puntual prefiero no inventarla -- si me dices qué resultado buscas, te ayudo a elegir entre los dos.",
-    ],
-    config: {},
+    respuestas: [],
+    config: {
+      instruccionIA:
+        "Compara los 2 servicios de datosIA usando también su conocimientoGeneral (queEs/paraQueSirve) cuando exista -- recuerda que " +
+        "conocimientoGeneral es explicación profesional general, nunca un protocolo confirmado de AMORE, y respeta siempre lo que 'limites' " +
+        "prohíbe afirmar de cada uno. Si algún servicio no tiene conocimientoGeneral (fuente='no_confirmado'), dilo con honestidad y natural, " +
+        "sin inventar. Responde cálida y breve (2-4 líneas), nunca listado técnico.",
+    },
   },
 
   // --- SERVICIOS: profesional, servicio puntual, precio/duración ----------
@@ -336,8 +345,6 @@ export const AMORE_ESCENARIOS_SEED: FilaSeed[] = [
       { tipo: "contains", valor: "cuanto dura" },
       { tipo: "contains", valor: "cuanto demora" },
       { tipo: "contains", valor: "cuanto tiempo toma" },
-      { tipo: "contains", valor: "que es el" },
-      { tipo: "contains", valor: "en que consiste" },
     ],
     respuestas: [
       "¡Claro! 💗 El {{servicio}} tiene un valor de {{precioTexto}} y una duración aproximada de {{duracionTexto}}.{{descripcionExtra}}",
@@ -346,6 +353,40 @@ export const AMORE_ESCENARIOS_SEED: FilaSeed[] = [
     config: {
       respuestaSinServicio:
         "En este momento no tengo esa opción dentro de los servicios reales de AMORE 💗 Puedo mostrarte otras opciones reales.",
+    },
+  },
+  {
+    // FASE B (integración base de conocimiento, autorizado) — "qué es"/"para
+    // qué sirve"/"cómo funciona" son preguntas EXPLICATIVAS, distintas de
+    // precio/duración (028, determinista): necesitan redacción natural
+    // usando el conocimiento general real del servicio, así que van a modo
+    // ai. Prioridad 505: apenas por encima de 028 (500) para que, ante un
+    // servicio real + frase explicativa, gane esta -- nunca captura
+    // preguntas puramente de precio/duración (esas siguen en 028, sin IA).
+    codigo: "029_explicacion_servicio",
+    nombre: "Qué es / para qué sirve / cómo funciona un servicio",
+    modo: "ai",
+    prioridad: 505,
+    activo: true,
+    variantes: [
+      { tipo: "contains", valor: "que es el" },
+      { tipo: "contains", valor: "que es la" },
+      { tipo: "contains", valor: "que es un" },
+      { tipo: "contains", valor: "en que consiste" },
+      { tipo: "contains", valor: "para que sirve" },
+      { tipo: "contains", valor: "como funciona" },
+      { tipo: "contains", valor: "como es ese servicio" },
+      { tipo: "contains", valor: "explicame" },
+      { tipo: "contains", valor: "cuentame sobre" },
+      { tipo: "contains", valor: "que me hacen" },
+    ],
+    respuestas: [],
+    config: {
+      instruccionIA:
+        "Explica el servicio de datosIA usando su conocimientoGeneral (queEs/paraQueSirve) -- recuerda que es explicación profesional " +
+        "general, nunca un protocolo confirmado de AMORE, y respeta siempre lo que 'limites' prohíbe afirmar. Si fuente='no_confirmado' " +
+        "(sin ficha), dilo con honestidad y natural, sin inventar una explicación. Responde cálida, breve y natural (2-4 líneas), nunca " +
+        "como ficha técnica ni listado.",
     },
   },
 
@@ -379,8 +420,10 @@ export const AMORE_ESCENARIOS_SEED: FilaSeed[] = [
       instruccionIA:
         "Si el mensaje es VAGO (ej. 'no sé qué hacerme'), NO recomiendes aún: responde corto y cálido, y haz UNA pregunta breve para orientar " +
         "(resultado natural vs duradero, ocasión, presupuesto o tiempo disponible). Si el mensaje ya da una preferencia clara o responde tu " +
-        "pregunta anterior, recomienda 2-3 opciones reales de datosIA con precio y duración. Si pide comparar servicios puntuales, compáralos " +
-        "usando solo datosIA (precio/duración/descripción), y si falta información dilo con honestidad.",
+        "pregunta anterior, recomienda 2-3 opciones reales de datosIA con precio y duración -- puedes apoyarte en conocimientoGeneral " +
+        "(queEs/paraQueSirve) cuando ayude a explicar por qué encaja, recordando que es explicación general, nunca un protocolo confirmado " +
+        "de AMORE, y respetando siempre 'limites'. Si pide comparar servicios puntuales, compáralos usando solo datosIA/conocimientoGeneral, " +
+        "y si falta información dilo con honestidad.",
     },
   },
 
