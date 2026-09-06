@@ -69,6 +69,16 @@ export type { EffectExecutorKind } from "@/lib/flow/executor-types";
 
 const TERMINAL_EXECUTION_STATUSES = new Set(["completed", "transferred", "failed"]);
 
+// Resiliencia AI (autorizada, AMORE Fase 1) — un fallo de un nodo "ai" en
+// effect_required (Claim Security, timeout, error recuperable del executor)
+// se reintenta con la MISMA petición (mismo effectId, mismo contexto de
+// variables) antes de dejar que el turno siga su camino normal de fallo
+// (rama aiFailure del grafo si existe, o engineError). 2 intentos en total
+// -- "retry controlado", nunca un reintento indefinido. Nunca reintenta
+// efectos "action" (Nylas/reservas): esta constante solo se usa dentro del
+// bloque effect.kind === "ai" de registerAndDispatchEffects.
+const MAX_AI_DISPATCH_ATTEMPTS = 2;
+
 function isTerminalExecutionStatus(status: string): boolean {
   return TERMINAL_EXECUTION_STATUSES.has(status);
 }
@@ -608,28 +618,52 @@ export class ExecutionOrchestrator {
       dispatchedEffectIds.push(effect.effectId);
 
       if (effect.type === "effect_required" && effect.kind === "ai") {
-        const fabricated = rejectFabricatedAiEvidence(
-          dispatchResult.appliedResult ?? dispatchResult.data ?? {},
-        );
-        if (fabricated) {
-          dispatchResult = fabricated;
-        } else {
+        const applyAiPostProcessing = (raw: EffectDispatchResult): EffectDispatchResult => {
+          const fabricated = rejectFabricatedAiEvidence(raw.appliedResult ?? raw.data ?? {});
+          if (fabricated) return fabricated;
           const bridged = bridgeAiDispatchResult({
             flow: params.flow,
             aiNodeId: effect.nodeId,
             aiConfig: effect.ai,
-            dispatchResult,
+            dispatchResult: raw,
             tenantId: params.tenantId,
           });
-          dispatchResult = bridged.dispatchResult;
           if (bridged.variablesPatch) {
             variablesPatch = { ...variablesPatch, ...bridged.variablesPatch };
           }
+          return applyAiResponseClaimSecurity({
+            dispatchResult: bridged.dispatchResult,
+            variables: params.executionRow.variables,
+          });
+        };
+
+        dispatchResult = applyAiPostProcessing(dispatchResult);
+
+        // Resiliencia (autorizada) — retry controlado: mismo effectId, mismo
+        // contexto (variables no cambian entre intentos), nunca vuelve a
+        // ejecutar Nylas/una acción crítica (viven en efectos "action"
+        // aparte, no en este bloque). Si el reintento también falla, sigue
+        // el camino de fallo normal sin cambios (aiFailure del grafo, o
+        // engineError si no existe esa rama).
+        for (
+          let attempt = 2;
+          !dispatchResult.success && attempt <= MAX_AI_DISPATCH_ATTEMPTS;
+          attempt += 1
+        ) {
+          const retryRequest = buildEffectDispatchRequest({
+            effect,
+            tenantId: params.tenantId,
+            executionRowId: params.executionRow.id,
+            conversation,
+            attempt,
+            flowId: params.executionRow.flow_id,
+            flowVersionId: params.executionRow.flow_version_id,
+            aiBudget: currentAiBudget,
+          });
+          const retryDispatch = await this.deps.effectFramework.execute(retryRequest);
+          dispatchResult = applyAiPostProcessing(retryDispatch);
         }
-        dispatchResult = applyAiResponseClaimSecurity({
-          dispatchResult,
-          variables: params.executionRow.variables,
-        });
+
         const budgetMeta = dispatchResult.metadata?.budgetAfter as AiBudgetState | undefined;
         if (budgetMeta) {
           aiBudgetAfter = budgetMeta;

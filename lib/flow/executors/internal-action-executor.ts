@@ -1865,8 +1865,22 @@ export class InternalActionExecutor implements EffectExecutor {
       );
     }
 
+    // Revisión (autorizada) — instrucción reforzada tras un bloqueo real de
+    // Claim Security en producción: la IA redactó estos horarios como si ya
+    // existiera una reserva, y appointment.available (lo único que esta
+    // acción verifica) nunca cubre esa afirmación. La instrucción original
+    // ("presenta con naturalidad las opciones") era correcta en intención
+    // pero no explícita sobre qué verbos/afirmaciones evitar -- esta versión
+    // nombra cada una (reservada/confirmada/agendada/creada/apartada) porque
+    // son exactamente los verbos de estado consumado que
+    // validateTextClaimsAgainstVerified (external-claim-security.ts) exige
+    // tener evidencia para afirmar.
     return responderNaturalmente(
-      "Presenta con naturalidad las opciones REALES de datosIA (profesional + hora) para que la clienta elija -- nunca inventes ni ofrezcas una hora que no esté ahí. Si hay muchas, resume las más cercanas y ofrece contar el resto si quiere.",
+      "Presenta con naturalidad las opciones REALES de datosIA (profesional + hora) para que la clienta ELIJA una -- nunca inventes ni ofrezcas una hora que no esté ahí. " +
+        "Estos horarios son DISPONIBILIDAD real, todavía NO existe ninguna cita creada: preséntalos como opciones para elegir (ej. '¿cuál de estas horas te queda mejor?'), nunca como algo ya resuelto. " +
+        "NUNCA digas que la cita quedó reservada, confirmada, agendada, creada o apartada, ni que un horario está 'separado' o 'guardado' para ella -- nada de eso ha pasado todavía, sea cual sea la palabra que uses. " +
+        "Cuando la clienta elija un horario, pide su confirmación explícita antes de dar nada por hecho -- la reserva real solo ocurre en un paso posterior, después de esa confirmación. " +
+        "Si hay muchas opciones, resume las más cercanas y ofrece contar el resto si quiere.",
       opciones.map((o) => ({ profesional: o.especialistaNombre, hora: o.horaTexto })),
       agendamientoActualizado,
       { disponibilidadConsultada: true },
