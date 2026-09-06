@@ -240,6 +240,10 @@ export type FlowActionType =
   | "resolver_servicio_catalogo"
   | "consultar_disponibilidad_catalogo"
   | "listar_profesionales_servicio"
+  // Banco de escenarios (autorizado, AMORE primer tenant) --
+  // lib/bot-escenarios/resolver.ts. Genérico por tenant, ver
+  // supabase/migrations/20260912000000_dulabs_bot_escenarios.sql.
+  | "resolver_escenario"
   | "webhook_http"
   | "enviar_plantilla";
 
@@ -301,7 +305,8 @@ export interface SimpleActionConfig extends ActionSemanticTag {
     | "listar_catalogo_servicios"
     | "resolver_servicio_catalogo"
     | "consultar_disponibilidad_catalogo"
-    | "listar_profesionales_servicio";
+    | "listar_profesionales_servicio"
+    | "resolver_escenario";
   params?: ActionParams;
 }
 

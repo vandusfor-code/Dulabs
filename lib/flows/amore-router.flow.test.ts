@@ -1,17 +1,21 @@
 /**
- * AMORE (Fase 2, autorizado) — el Flow del asistente pasa el validador real
- * de publicación (schema + grafo + Claim Security), y el GRAFO conecta
- * correctamente sus piezas -- corre con runFlowEngine directo (determinista,
- * sin Claude real, sin Supabase real). La correctitud contra datos REALES
- * de AMORE (catálogo/elegibilidad/horarios/domingo) ya está cubierta en
- * lib/catalogo-servicios-flow-adaptador.test.ts -- este archivo se
- * concentra en que el grafo llame a esas piezas en el orden correcto.
+ * AMORE (Fase 3, banco de escenarios, autorizado) — el Flow pasa el
+ * validador real de publicación (schema + grafo + Claim Security), y el
+ * GRAFO conecta correctamente sus piezas -- corre con runFlowEngine directo
+ * (determinista, sin Claude real, sin Supabase real, sin la tabla
+ * dulabs_bot_escenarios real). La correctitud del RESOLVER en sí
+ * (lib/bot-escenarios/resolver.ts, matching de prioridad, extracción de
+ * entidades, filtrado de catálogo) está cubierta en
+ * lib/bot-escenarios/resolver.test.ts -- este archivo se concentra en que
+ * el grafo despache al nodo correcto según el `modo` que produce ese
+ * resolver, y que el ciclo (responder -> esperar el siguiente mensaje ->
+ * volver a resolver) funcione de verdad a través de varios turnos.
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { validateFlowForPublish } from "@/lib/flow/validate-publish";
 import { filterClaimSecuredEffects } from "@/lib/flow/ai-runtime/ai-response-security";
-import { amoreRouterFlow, AMORE_MSG_BIENVENIDA } from "@/lib/flows/amore-router.flow";
+import { amoreRouterFlow } from "@/lib/flows/amore-router.flow";
 import { createFlowEngineState, runFlowEngine } from "@/lib/flow/flow-engine";
 import type { EngineEffect, FlowEngineRunResult, FlowEngineState } from "@/lib/flow/engine-types";
 
@@ -24,6 +28,23 @@ function sendMessages(effects: EngineEffect[]): Extract<EngineEffect, { type: "s
 function resolverEfecto(flow: AmoreFlow, state: FlowEngineState, data: Record<string, unknown>, success = true): FlowEngineRunResult {
   assert.equal(state.status, "waiting_effect", "se esperaba un efecto pendiente");
   return runFlowEngine(flow, state, { type: "effect_result", success, effectId: state.pendingEffect!.effectId, data });
+}
+
+/** Salida completa y realista de resolver_escenario (internal-action-executor.ts) para un turno determinístico. */
+function datosResolverDirecto(overrides: Partial<Record<string, unknown>>): Record<string, unknown> {
+  return {
+    escenarioCodigo: "001_saludo",
+    modo: "deterministic",
+    respuestaTexto: "¡Hola! 💗 Qué lindo tenerte por aquí. Cuéntame, ¿en qué puedo ayudarte?",
+    requiereIA: "false",
+    instruccionIA: "",
+    datosIA: [],
+    ultimoServicioId: "",
+    ultimoServicioNombre: "",
+    ultimaCategoria: "",
+    ultimaAccionSugerida: "",
+    ...overrides,
+  };
 }
 
 describe("AMORE — validación estructural (validateFlowForPublish)", () => {
@@ -40,11 +61,7 @@ describe("AMORE — validación estructural (validateFlowForPublish)", () => {
     assert.ok(!actionTypes.includes("agendar_cita_marketplace"));
   });
 
-  it("todos los mensajes estáticos pasan Claim Security real (filterClaimSecuredEffects, mismo origin que decide el Engine real)", () => {
-    // Mismo criterio EXACTO que flow-engine.ts::staticMessageOrigin (no
-    // exportada): un texto con {{variable}} real es "flow_static_interpolated"
-    // (pipeline morfológico completo -- puede cargar evidencia real como
-    // disponibilidadTexto/precioTexto), texto 100% literal es "flow_static".
+  it("todos los mensajes ESTÁTICOS del grafo pasan Claim Security real (filterClaimSecuredEffects) -- el contenido real vive en dulabs_bot_escenarios, verificado aparte", () => {
     const RAW_INTERPOLATION_PATTERN = /\{\{[a-zA-Z0-9_.]+\}\}/;
     const flow = amoreRouterFlow();
     for (const node of flow.nodes) {
@@ -59,136 +76,145 @@ describe("AMORE — validación estructural (validateFlowForPublish)", () => {
   });
 });
 
-describe("AMORE — recorrido completo del motor (determinista, sin Claude/Supabase reales)", () => {
-  it("Hola -> saludo exacto pedido, espera respuesta", () => {
+describe("AMORE — despacho por modo (determinista, sin Claude/Supabase reales)", () => {
+  it("modo=deterministic: responde directo con respuestaTexto y queda esperando el siguiente mensaje", () => {
     const flow = amoreRouterFlow();
     let state = createFlowEngineState(flow);
     let run = runFlowEngine(flow, state, { type: "start", text: "Hola" });
     state = run.state;
     assert.equal(state.status, "waiting_effect");
-    run = resolverEfecto(flow, state, { classification: "menu" });
+    assert.equal(state.currentNodeId, "act-resolver-escenario");
+
+    run = resolverEfecto(flow, state, datosResolverDirecto({}));
     state = run.state;
     assert.equal(state.status, "waiting_input");
-    assert.equal(state.currentNodeId, "q-bienvenida");
+    assert.equal(state.currentNodeId, "q-turno-directo");
     const msgs = sendMessages(run.effects);
     assert.equal(msgs.length, 1);
-    assert.equal(msgs[0]!.content.text, AMORE_MSG_BIENVENIDA);
+    assert.equal(msgs[0]!.content.text, "¡Hola! 💗 Qué lindo tenerte por aquí. Cuéntame, ¿en qué puedo ayudarte?");
   });
 
-  it("recorrido completo AGENDAR: uñas -> catálogo real -> selección -> precio/duración -> sí quiere -> fecha -> disponibilidad real -> traspaso (nunca crea una cita real)", () => {
+  it("modo=catalog (precio+duración): mismo camino determinístico que deterministic, sin IA", () => {
     const flow = amoreRouterFlow();
     let state = createFlowEngineState(flow);
-    let run: FlowEngineRunResult;
+    let run = runFlowEngine(flow, state, { type: "start", text: "cuánto cuesta el dipping" });
+    state = run.state;
 
-    run = runFlowEngine(flow, state, { type: "start", text: "quiero hacerme las uñas" });
-    state = run.state;
-    run = resolverEfecto(flow, state, { classification: "agendar" });
-    state = run.state;
-    assert.equal(state.currentNodeId, "act-listar-catalogo");
-
-    run = resolverEfecto(flow, state, { catalogoDisponible: [{ id: "s1", nombre: "Uña", precio: 8000, duracionMin: 15, categoria: "Uñas" }], catalogoTexto: "1️⃣ Uña — $8.000 (15 min)", cantidadCatalogo: 1 });
-    state = run.state;
-    assert.equal(state.currentNodeId, "ai-extraer-servicio");
-
-    // El primer mensaje ("quiero hacerme las uñas") no nombra un servicio
-    // EXACTO del catálogo -- ai-extraer-servicio omite 'servicio', y el
-    // camino rápido (resolver por hint) falla -> pasa a preguntar mostrando
-    // el catálogo real.
-    run = resolverEfecto(flow, state, {});
-    state = run.state;
-    assert.equal(state.currentNodeId, "act-resolver-servicio-inicial");
-    run = resolverEfecto(flow, state, {}, false);
+    run = resolverEfecto(
+      flow,
+      state,
+      datosResolverDirecto({
+        escenarioCodigo: "029_precio",
+        modo: "catalog",
+        respuestaTexto: "El Dipping tiene un valor de $60.000 y una duración aproximada de 2 h.",
+        ultimoServicioId: "s-dipping",
+        ultimoServicioNombre: "Dipping",
+        ultimaCategoria: "Uñas",
+        ultimaAccionSugerida: "ofrecer_portal",
+      }),
+    );
     state = run.state;
     assert.equal(state.status, "waiting_input");
-    assert.equal(state.currentNodeId, "q-seleccionar-servicio");
-    const catalogoMsg = sendMessages(run.effects);
-    assert.match(catalogoMsg[0]!.content.text!, /1️⃣ Uña — \$8\.000 \(15 min\)/);
+    assert.equal(state.currentNodeId, "q-turno-directo");
+    assert.equal(state.variables.ultimoServicioId, "s-dipping");
+    const msgs = sendMessages(run.effects);
+    assert.match(msgs[0]!.content.text!, /Dipping.*\$60\.000/);
+  });
 
-    run = runFlowEngine(flow, state, { type: "text", text: "la primera" });
+  it("modo=ai: pasa por el único nodo IA del flow y responde con responseText", () => {
+    const flow = amoreRouterFlow();
+    let state = createFlowEngineState(flow);
+    let run = runFlowEngine(flow, state, { type: "start", text: "no sé qué hacerme, quiero algo bonito" });
     state = run.state;
-    run = resolverEfecto(flow, state, { seleccionTipo: "index", seleccionIndice: 1 });
+
+    run = resolverEfecto(
+      flow,
+      state,
+      datosResolverDirecto({
+        escenarioCodigo: "041_recomendacion_unas",
+        modo: "ai",
+        respuestaTexto: undefined,
+        requiereIA: "true",
+        instruccionIA: "Recomienda 2-3 opciones reales de uñas, cálida y breve.",
+        datosIA: [{ nombre: "Dipping", precioTexto: "$60.000", duracionTexto: "2 h", categoria: "Uñas", descripcion: null }],
+      }),
+    );
     state = run.state;
-    assert.equal(state.currentNodeId, "act-resolver-servicio-elegido");
-    run = resolverEfecto(flow, state, { servicioId: "s1", servicio: "Uña", precio: 8000, precioTexto: "$8.000", duracionMin: 15, duracionTexto: "15 min" });
+    assert.equal(state.status, "waiting_effect");
+    assert.equal(state.currentNodeId, "ai-generar-respuesta");
+
+    run = resolverEfecto(flow, state, { responseText: "¡Claro que sí! 💗 Te cuento que el Dipping es una opción real y duradera por $60.000." });
     state = run.state;
     assert.equal(state.status, "waiting_input");
-    assert.equal(state.currentNodeId, "q-desea-agendar");
-    const precioMsg = sendMessages(run.effects);
-    assert.match(precioMsg[0]!.content.text!, /El servicio de Uña tiene un valor de \$8\.000 y una duración aproximada de 15 min/);
+    assert.equal(state.currentNodeId, "q-turno-ia");
+    const msgs = sendMessages(run.effects);
+    assert.equal(msgs[0]!.content.text, "¡Claro que sí! 💗 Te cuento que el Dipping es una opción real y duradera por $60.000.");
+  });
 
-    run = runFlowEngine(flow, state, { type: "text", text: "sí quiero" });
+  it("modo=transfer: manda el mensaje ANTES de transferir, transfiere, y termina (nunca crea ninguna cita)", () => {
+    const flow = amoreRouterFlow();
+    let state = createFlowEngineState(flow);
+    let run = runFlowEngine(flow, state, { type: "start", text: "quiero hablar con una persona" });
     state = run.state;
-    run = resolverEfecto(flow, state, { classification: "si" });
-    state = run.state;
-    assert.equal(state.status, "waiting_input");
-    assert.equal(state.currentNodeId, "q-fecha");
 
-    run = runFlowEngine(flow, state, { type: "text", text: "el martes" });
+    run = resolverEfecto(
+      flow,
+      state,
+      datosResolverDirecto({
+        escenarioCodigo: "110_hablar_con_persona",
+        modo: "transfer",
+        respuestaTexto: "Claro que sí 💗 Ya te comunico con nuestro equipo.",
+      }),
+    );
     state = run.state;
-    run = resolverEfecto(flow, state, { fecha: "2026-09-08" });
-    state = run.state;
-    assert.equal(state.currentNodeId, "act-validar-fecha");
-    run = resolverEfecto(flow, state, { fecha: "2026-09-08", nuevaFecha: "2026-09-08" });
-    state = run.state;
-    assert.equal(state.currentNodeId, "act-consultar-disponibilidad");
+    // msg-antes-transferir es automático (no espera input) -- avanza directo
+    // hasta el siguiente nodo que sí espera algo real: el efecto de transferir_soporte.
+    assert.equal(state.status, "waiting_effect");
+    assert.equal(state.currentNodeId, "act-transferir-soporte");
+    const msgs = sendMessages(run.effects);
+    assert.equal(msgs[0]!.content.text, "Claro que sí 💗 Ya te comunico con nuestro equipo.");
 
-    run = resolverEfecto(flow, state, {
-      disponibilidadTexto: "👩‍🦰 Cristal:\n  • 8:00 a. m.\n\n👩‍🦰 Mary:\n  • 9:00 a. m.\n\n👩‍🦰 Nata:\n  • 1:00 p. m.\n\n👩‍🦰 Jessica:\n  • 3:00 p. m.",
-      hayDisponibilidad: true,
-    });
-    state = run.state;
-    // Todo el camino hasta acá pasó por action nodes de solo LECTURA -- ver
-    // el test de arriba (agendar_cita_especialista nunca aparece en el
-    // grafo): ninguna cita real fue creada en ningún punto de este recorrido.
-    assert.equal(state.status, "waiting_effect", "debe seguir hacia el traspaso (transferir_soporte)");
-    assert.equal(state.currentNodeId, "act-transferir-reserva");
-
-    const disponibilidadMsgs = sendMessages(run.effects);
-    assert.match(disponibilidadMsgs[0]!.content.text!, /Cristal/);
-    assert.match(disponibilidadMsgs[0]!.content.text!, /Mary/);
-    assert.match(disponibilidadMsgs[0]!.content.text!, /Nata/);
-    assert.match(disponibilidadMsgs[0]!.content.text!, /Jessica/);
-
-    run = resolverEfecto(flow, state, { transferred: true, pausadoHasta: "2026-01-01T00:00:00Z", pauseDurationHours: 24 });
+    run = resolverEfecto(flow, state, { transferred: true, pausadoHasta: "2026-01-01T00:00:00Z" });
     assert.equal(run.state.status, "completed");
-    assert.equal(run.state.currentNodeId, "end-reserva-iniciada");
+    assert.equal(run.state.currentNodeId, "end-transferido");
   });
 
-  it("recorrido INFO_SERVICIO: solo pregunta precio -> responde y se detiene, NUNCA pide fecha ni consulta disponibilidad", () => {
+  it("modo=portal: mismo camino determinístico (portal es solo una etiqueta de observabilidad, no cambia el grafo)", () => {
     const flow = amoreRouterFlow();
     let state = createFlowEngineState(flow);
-    let run: FlowEngineRunResult;
+    let run = runFlowEngine(flow, state, { type: "start", text: "quiero agendar el dipping" });
+    state = run.state;
 
-    run = runFlowEngine(flow, state, { type: "start", text: "cuánto cuesta el maquillaje suave" });
-    state = run.state;
-    run = resolverEfecto(flow, state, { classification: "info_servicio" });
-    state = run.state;
-    run = resolverEfecto(flow, state, { catalogoDisponible: [{ id: "s2", nombre: "Maquillaje Suave", precio: 60000, duracionMin: 60, categoria: "Maquillaje" }], catalogoTexto: "1️⃣ Maquillaje Suave — $60.000 (1 h)", cantidadCatalogo: 1 });
-    state = run.state;
-    run = resolverEfecto(flow, state, { servicio: "Maquillaje Suave" });
-    state = run.state;
-    assert.equal(state.currentNodeId, "act-resolver-servicio-inicial");
-    run = resolverEfecto(flow, state, { servicioId: "s2", servicio: "Maquillaje Suave", precio: 60000, precioTexto: "$60.000", duracionMin: 60, duracionTexto: "1 h" });
+    run = resolverEfecto(
+      flow,
+      state,
+      datosResolverDirecto({
+        escenarioCodigo: "061_intencion_reservar",
+        modo: "portal",
+        respuestaTexto: "¡Claro que sí, amiga! 💗 Puedes agendar tu Dipping directamente aquí: https://www.dulabs.co/reservar/amore",
+      }),
+    );
     state = run.state;
     assert.equal(state.status, "waiting_input");
-    assert.equal(state.currentNodeId, "q-desea-agendar");
-
-    run = runFlowEngine(flow, state, { type: "text", text: "no gracias, solo preguntaba" });
-    state = run.state;
-    run = resolverEfecto(flow, state, { classification: "no" });
-    assert.equal(run.state.status, "completed");
-    assert.equal(run.state.currentNodeId, "end-info-servicio");
+    assert.equal(state.currentNodeId, "q-turno-directo");
+    const msgs = sendMessages(run.effects);
+    assert.match(msgs[0]!.content.text!, /dulabs\.co\/reservar\/amore/);
   });
 
-  it("catálogo vacío (defensivo) -> nunca inventa servicios, transfiere a un humano", () => {
+  it("el ciclo funciona a través de VARIOS turnos: responder -> esperar -> volver a resolver con el mensaje nuevo", () => {
     const flow = amoreRouterFlow();
     let state = createFlowEngineState(flow);
-    let run = runFlowEngine(flow, state, { type: "start", text: "quiero una cita" });
+    let run = runFlowEngine(flow, state, { type: "start", text: "Hola" });
     state = run.state;
-    run = resolverEfecto(flow, state, { classification: "agendar" });
+    run = resolverEfecto(flow, state, datosResolverDirecto({}));
     state = run.state;
-    run = resolverEfecto(flow, state, { catalogoDisponible: [], catalogoTexto: "", cantidadCatalogo: 0 });
+    assert.equal(state.currentNodeId, "q-turno-directo");
+
+    // Segundo mensaje real de la clienta -- debe volver a act-resolver-escenario.
+    run = runFlowEngine(flow, state, { type: "text", text: "quiero saber de uñas" });
     state = run.state;
-    assert.equal(state.currentNodeId, "act-handoff-sin-catalogo");
+    assert.equal(state.status, "waiting_effect");
+    assert.equal(state.currentNodeId, "act-resolver-escenario");
+    assert.equal(state.variables.mensajeActual, "quiero saber de uñas");
   });
 });

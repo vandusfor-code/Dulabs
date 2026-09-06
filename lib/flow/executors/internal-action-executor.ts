@@ -40,6 +40,8 @@ import {
   formatearDuracion,
   type ServicioCatalogoReal,
 } from "@/lib/catalogo-servicios-flow-adaptador";
+import { resolverEscenario } from "@/lib/bot-escenarios/resolver";
+import { cargarEscenariosReal } from "@/lib/bot-escenarios/store";
 import {
   EFFECT_RESULT_CLASSIFICATIONS,
   type EffectDispatchRequest,
@@ -97,6 +99,10 @@ export interface InternalActionDeps {
   listarCatalogoServiciosReal?: typeof listarCatalogoServiciosReal;
   consultarDisponibilidadCatalogoReal?: typeof consultarDisponibilidadCatalogoReal;
   listarProfesionalesServicioReal?: typeof listarProfesionalesServicioReal;
+  // Banco de escenarios (autorizado, AMORE primer tenant) -- opcional, mismo
+  // criterio de arriba: si se omite, llama directo a la implementación real
+  // (lib/bot-escenarios/store.ts).
+  cargarEscenariosReal?: typeof cargarEscenariosReal;
 }
 
 const OPERATION_CLASS: Partial<Record<string, InternalActionOperationClass>> = {
@@ -121,6 +127,7 @@ const OPERATION_CLASS: Partial<Record<string, InternalActionOperationClass>> = {
   resolver_servicio_catalogo: "READ",
   consultar_disponibilidad_catalogo: "READ",
   listar_profesionales_servicio: "READ",
+  resolver_escenario: "READ",
 };
 
 function resolveInternalActionKey(action: ActionNodeConfig): string {
@@ -269,6 +276,8 @@ export class InternalActionExecutor implements EffectExecutor {
         return this.consultarDisponibilidadCatalogoAction(request, params, signal);
       case "listar_profesionales_servicio":
         return this.listarProfesionalesServicioAction(request, params, signal);
+      case "resolver_escenario":
+        return this.resolverEscenarioAction(request, params, signal);
       default:
         return {
           success: false,
@@ -1515,6 +1524,73 @@ export class InternalActionExecutor implements EffectExecutor {
       appliedResult: data,
       rawResult: data,
       metadata: { operationClass: OPERATION_CLASS.listar_profesionales_servicio },
+    };
+  }
+
+  /**
+   * Banco de escenarios (autorizado, AMORE primer tenant) -- único punto de
+   * entrada al Flow Engine para lib/bot-escenarios/resolver.ts. Lee el
+   * mensaje actual y el contexto conversacional directo de request.payload
+   * (el mismo state.variables acumulado que el Engine ya auto-mergea, ver
+   * mergeParams arriba) -- NUNCA de params estáticos del nodo, que no tienen
+   * sentido para esta acción (siempre la misma, sin configuración por nodo).
+   * Siempre emite las 4 claves de contexto (aunque vengan vacías) para que
+   * el merge aditivo de variables del Engine pueda de verdad LIMPIAR un
+   * contexto viejo (portal/transfer) en vez de dejarlo pegado para siempre.
+   */
+  private async resolverEscenarioAction(
+    request: EffectDispatchRequest,
+    params: Record<string, string>,
+    signal?: AbortSignal,
+  ): Promise<EffectDispatchResult> {
+    assertNotAborted(signal);
+    const mensaje = params.mensajeActual?.trim() || params.__firstMessageText?.trim() || "";
+    const turno = num(params.__turnoEscenario, 0);
+
+    const resultado = await resolverEscenario({
+      supabase: this.deps.supabase,
+      tenantId: request.tenantId,
+      mensaje,
+      contexto: {
+        ultimoServicioId: params.ultimoServicioId || undefined,
+        ultimoServicioNombre: params.ultimoServicioNombre || undefined,
+        ultimaCategoria: params.ultimaCategoria || undefined,
+        ultimaAccionSugerida: params.ultimaAccionSugerida || undefined,
+      },
+      turno,
+      deps: {
+        cargarEscenarios: this.deps.cargarEscenariosReal ?? cargarEscenariosReal,
+        // Reutiliza EXACTAMENTE los mismos deps opcionales inyectables que ya
+        // usan listar_catalogo_servicios/listar_profesionales_servicio arriba
+        // -- nunca un segundo mecanismo de override para los mismos datos.
+        cargarCatalogo: this.deps.listarCatalogoServiciosReal,
+        cargarProfesionales: this.deps.listarProfesionalesServicioReal,
+      },
+    });
+    assertNotAborted(signal);
+
+    const data = {
+      escenarioCodigo: resultado.escenarioCodigo,
+      modo: resultado.modo,
+      respuestaTexto: resultado.respuestaTexto ?? "",
+      requiereIA: String(resultado.requiereIA),
+      instruccionIA: resultado.instruccionIA ?? "",
+      datosIA: resultado.datosIA ?? [],
+      ultimoServicioId: resultado.contexto.ultimoServicioId ?? "",
+      ultimoServicioNombre: resultado.contexto.ultimoServicioNombre ?? "",
+      ultimaCategoria: resultado.contexto.ultimaCategoria ?? "",
+      ultimaAccionSugerida: resultado.contexto.ultimaAccionSugerida ?? "",
+      __turnoEscenario: turno + 1,
+      effectId: request.effectId,
+    };
+
+    return {
+      success: true,
+      classification: EFFECT_RESULT_CLASSIFICATIONS.SUCCESS,
+      data,
+      appliedResult: data,
+      rawResult: data,
+      metadata: { operationClass: OPERATION_CLASS.resolver_escenario },
     };
   }
 }

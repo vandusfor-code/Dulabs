@@ -89,6 +89,10 @@ const INTERNAL_ACTION_TYPES = new Set([
   "resolver_servicio_catalogo",
   "consultar_disponibilidad_catalogo",
   "listar_profesionales_servicio",
+  // Banco de escenarios (autorizado, AMORE primer tenant) -- registrada
+  // DESDE EL PRIMER COMMIT, mismo criterio de arriba: acción nativa sin
+  // integración externa (lib/bot-escenarios/resolver.ts).
+  "resolver_escenario",
 ]);
 
 const INTERNAL_WEBHOOK_TAGS = new Set(["consultar_disponibilidad"]);

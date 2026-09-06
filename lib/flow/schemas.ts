@@ -246,6 +246,14 @@ const actionNodeConfigSchema = z.discriminatedUnion("actionType", [
     semanticTag: semanticTagSchema,
     params: z.record(z.string(), z.string()).optional(),
   }),
+  // Banco de escenarios (autorizado, AMORE primer tenant) -- sin params: lee
+  // tenantId de request.tenantId y el mensaje/contexto de request.payload,
+  // igual que el resto de acciones de catálogo de arriba.
+  z.object({
+    actionType: z.literal("resolver_escenario"),
+    semanticTag: semanticTagSchema,
+    params: z.record(z.string(), z.string()).optional(),
+  }),
   z.object({
     actionType: z.literal("webhook_http"),
     semanticTag: semanticTagSchema,

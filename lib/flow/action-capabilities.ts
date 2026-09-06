@@ -206,6 +206,17 @@ const BY_ACTION_TYPE: Partial<Record<FlowActionType, ActionCapabilitySpec>> = {
     actionType: "listar_profesionales_servicio",
     criticality: "standard",
   },
+  // Banco de escenarios (autorizado, AMORE primer tenant) -- solo lectura +
+  // decisión determinista de qué responder (lib/bot-escenarios/resolver.ts).
+  // Nunca otorga una capability propia: cuando el escenario ganador es
+  // modo=ai, el texto final SIGUE protegido por applyAiResponseClaimSecurity
+  // (sin cambios); cuando es catalog/faq/deterministic/portal, el texto
+  // nunca afirma una operación externa (ver seed real de AMORE, verificado
+  // con analyzeTextForExternalClaims antes de publicar).
+  resolver_escenario: {
+    actionType: "resolver_escenario",
+    criticality: "standard",
+  },
 };
 
 /** Specs por semanticTag de webhook (prioridad sobre actionType genérico). */
