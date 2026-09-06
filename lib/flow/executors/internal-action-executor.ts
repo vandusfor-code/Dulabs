@@ -41,6 +41,7 @@ import {
   type ServicioCatalogoReal,
 } from "@/lib/catalogo-servicios-flow-adaptador";
 import { resolverEscenario, type ResolverEscenarioDeps } from "@/lib/bot-escenarios/resolver";
+import { nombreConocido } from "@/lib/clientes-conocidos";
 import { cargarConocimientoReal, cargarEscenariosReal } from "@/lib/bot-escenarios/store";
 import type { AgendamientoEnCurso } from "@/lib/bot-escenarios/tipos";
 import {
@@ -1641,6 +1642,24 @@ export class InternalActionExecutor implements EffectExecutor {
     });
     assertNotAborted(signal);
 
+    // Revisión (autorizada, secciones 15/16/28-C) -- nombre YA conocido de
+    // la clienta (dulabs_clientes_conocidos), disponible para un saludo
+    // OCASIONAL y natural cuando vuelve a escribir ("Hola, Mariana, qué
+    // lindo volver a tenerte por aquí") -- nunca para usarlo en cada
+    // respuesta (eso lo decide el propio nodo IA vía su instrucción, ver
+    // amore-router.flow.ts). Solo se consulta en el PRIMER turno de la
+    // ejecución (evita una lectura de Supabase en cada mensaje) -- el
+    // propio agendamiento hace su PROPIA consulta, independiente, cuando
+    // de verdad necesita el nombre para reservar (mucho más adelante en la
+    // conversación, nunca en el turno 0). Genérico para cualquier tenant
+    // que use resolver_escenario, no solo AMORE.
+    let nombreClienteConocido = "";
+    if (turno === 0 && request.conversation?.telefonoCliente) {
+      const buscarNombreConocido = this.deps.buscarNombreConocido ?? nombreConocido;
+      nombreClienteConocido =
+        (await buscarNombreConocido(this.deps.supabase, `whatsapp-qr:${request.tenantId}`, request.conversation.telefonoCliente)) ?? "";
+    }
+
     const data = {
       escenarioCodigo: resultado.escenarioCodigo,
       modo: resultado.modo,
@@ -1661,6 +1680,7 @@ export class InternalActionExecutor implements EffectExecutor {
       // llega a un nodo end, ej. transferencia a humano). Genérico para
       // cualquier tenant que use resolver_escenario, no solo AMORE.
       esPrimerTurno: turno === 0,
+      nombreClienteConocido,
       ultimoServicioId: resultado.contexto.ultimoServicioId ?? "",
       ultimoServicioNombre: resultado.contexto.ultimoServicioNombre ?? "",
       ultimoServicioBId: resultado.contexto.ultimoServicioBId ?? "",

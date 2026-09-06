@@ -12,6 +12,8 @@ export type CitaMock = {
 
 export type DashboardDataMock = {
   citasHoy: { total: number; pendientes: number };
+  /** Conteo real de TODAS las citas del tenant (cualquier fecha/estado) -- ver ResumenNegocio.citasTotales. */
+  citasTotales: number;
   clientesActivos: { total: number; nuevosEsteMes: number };
   serviciosHoy: { total: number; diferentes: number };
   ingresosMes: { total: number; variacionPct: number };

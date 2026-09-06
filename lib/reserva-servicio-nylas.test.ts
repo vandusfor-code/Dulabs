@@ -214,16 +214,32 @@ async function reservar(
 }
 
 describe("1. Reserva exitosa", () => {
-  it("crea el evento en Nylas y la cita en DuLabs, en ese orden", async () => {
+  // Revisión (autorizada, sección 13 del pedido) -- la disponibilidad de
+  // este camino ya fue revalidada de verdad (jornada+bloqueos+DuLabs+Nylas)
+  // antes de crear el evento/la fila: la cita queda "confirmada" de una vez,
+  // sin esperar aprobación manual -- mismo criterio ya usado por
+  // finalizarCitaCreada para especialistas con requiere_aprobacion=false
+  // (el resto del equipo, agenda 100% dentro del spa).
+  it("crea el evento en Nylas y la cita en DuLabs, CONFIRMADA de una vez (requiere_aprobacion=false)", async () => {
     const { resultado, supabase } = await reservar();
     assert.equal(resultado.ok, true);
     if (!resultado.ok) return;
     assert.equal(resultado.nylasEventId, "evt-1");
-    assert.equal(resultado.cita.estado, "pendiente");
+    assert.equal(resultado.cita.estado, "confirmada");
     assert.equal(resultado.especialista.nombre, "Mary");
     assert.equal(resultado.servicio.duracionMin, 120);
     const citas = (supabase as unknown as { __tablas: Record<string, FilaGenerica[]> }).__tablas.dulabs_citas_especialista;
     assert.equal(citas.length, 1);
+  });
+
+  it("si la profesional SÍ requiere aprobación manual (requiere_aprobacion=true), la cita queda pendiente igual que antes", async () => {
+    const { resultado } = await reservar(
+      {},
+      { especialistas: ESPECIALISTAS.map((e) => (e.id === 1 ? { ...e, requiere_aprobacion: true } : e)) },
+    );
+    assert.equal(resultado.ok, true);
+    if (!resultado.ok) return;
+    assert.equal(resultado.cita.estado, "pendiente");
   });
 });
 

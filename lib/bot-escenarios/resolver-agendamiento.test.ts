@@ -58,7 +58,15 @@ function proximoDiaSemana(diaObjetivo: number): string {
 const VIERNES = proximoDiaSemana(5);
 const SABADO = proximoDiaSemana(6);
 
-async function resolver(mensaje: string, ctx: ContextoConversacional = {}, opts: { nombreConocido?: string | null } = {}) {
+/** Última llamada real a guardarNombreCliente en el test más reciente -- para verificar que el registro inicial (nombre + cumpleaños) se guarda con los datos correctos, sin tocar Supabase real. */
+let ultimoGuardarNombreClienteLlamado: Record<string, unknown> | undefined;
+
+async function resolver(
+  mensaje: string,
+  ctx: ContextoConversacional = {},
+  opts: { nombreConocido?: string | null } = {},
+  overrides: { guardarNombreCliente?: (supabase: unknown, params: Record<string, unknown>) => Promise<void> } = {},
+) {
   return resolverEscenario({
     supabase: FAKE_SUPABASE,
     tenantId: TENANT,
@@ -73,6 +81,11 @@ async function resolver(mensaje: string, ctx: ContextoConversacional = {}, opts:
       cargarConocimiento: async () => [],
       cargarEspecialistas: async () => ESPECIALISTAS,
       buscarNombreConocido: async () => opts.nombreConocido ?? null,
+      guardarNombreCliente:
+        overrides.guardarNombreCliente ??
+        (async (_supabase, params) => {
+          ultimoGuardarNombreClienteLlamado = params as never;
+        }),
     },
   });
 }
@@ -312,7 +325,11 @@ describe("Nombre del cliente -- reutiliza dulabs_clientes_conocidos antes de pre
     assert.doesNotMatch(r.instruccionIA ?? "", /nombre de quién/i);
   });
 
-  it("si NO se conoce, se pregunta de forma natural (una sola pregunta) antes de confirmar", async () => {
+  // Revisión (autorizada, sección 14 del pedido) -- un cliente GENUINAMENTE
+  // NUEVO (nombreConocido=null) debe registrarse: nombre + fecha de
+  // cumpleaños, UNA sola vez, ANTES de pedir confirmación de la reserva.
+  it("CASO A -- cliente nuevo: se pregunta el nombre, LUEGO el cumpleaños (una pregunta a la vez), y solo entonces se pide confirmar", async () => {
+    ultimoGuardarNombreClienteLlamado = undefined;
     const conOpcionSinNombre: ContextoConversacional = {
       agendamiento: {
         servicioId: "s-dipping",
@@ -328,12 +345,95 @@ describe("Nombre del cliente -- reutiliza dulabs_clientes_conocidos antes de pre
     const r = await resolver("perfecto, esa", conOpcionSinNombre, { nombreConocido: null });
     assert.equal(r.contexto.agendamiento?.nombreCliente, undefined);
     assert.equal(r.contexto.agendamiento?.nombrePendiente, true);
+    assert.equal(r.contexto.agendamiento?.esClienteNuevo, true);
     assert.equal(r.contexto.agendamiento?.esperandoConfirmacion, undefined, "no debe pedir confirmación todavía sin nombre");
     assert.match(r.instruccionIA ?? "", /nombre/i);
 
     const r2 = await resolver("Ana Pérez", r.contexto, { nombreConocido: null });
     assert.equal(r2.contexto.agendamiento?.nombreCliente, "Ana Pérez");
-    assert.equal(r2.contexto.agendamiento?.esperandoConfirmacion, true);
+    assert.equal(r2.contexto.agendamiento?.cumpleanosPendiente, true);
+    assert.equal(r2.contexto.agendamiento?.esperandoConfirmacion, undefined, "todavía no debe pedir confirmación -- falta el cumpleaños del registro inicial");
+    assert.match(r2.instruccionIA ?? "", /cumplea/i);
+    assert.match(r2.instruccionIA ?? "", /nunca.*pidas el año/i, "la instrucción interna debe decirle a Gemini explícitamente que nunca pida el año");
+
+    const r3 = await resolver("15 de marzo", r2.contexto, { nombreConocido: null });
+    assert.equal(r3.contexto.agendamiento?.cumpleanosCapturado, true);
+    assert.equal(r3.contexto.agendamiento?.cumpleanosPendiente, false);
+    assert.equal(r3.contexto.agendamiento?.esperandoConfirmacion, true, "ya con nombre + cumpleaños, ahora sí pide confirmar");
+    assert.deepEqual(ultimoGuardarNombreClienteLlamado, {
+      idTenant: TENANT,
+      phoneNumberId: `whatsapp-qr:${TENANT}`,
+      telefonoCliente: "573148127388",
+      nombre: "Ana Pérez",
+      cumpleDia: 15,
+      cumpleMes: 3,
+    });
+  });
+
+  it("una respuesta de cumpleaños no reconocible se vuelve a pedir, sin avanzar", async () => {
+    const t1 = await resolver("perfecto, esa", {
+      agendamiento: {
+        servicioId: "s-dipping",
+        servicioNombre: "Dipping",
+        duracionMin: 120,
+        fechaISO: VIERNES,
+        opcionesOfrecidas: [{ especialistaId: 1, especialistaNombre: "Mary", horaTexto: "16:00", horaISO: `${VIERNES}T16:00:00-05:00` }],
+        horarioSeleccionadoISO: `${VIERNES}T16:00:00-05:00`,
+        especialistaSeleccionadaId: 1,
+        especialistaSeleccionadaNombre: "Mary",
+      },
+    }, { nombreConocido: null });
+    const t2 = await resolver("Ana Pérez", t1.contexto, { nombreConocido: null });
+    const t3 = await resolver("prefiero no decir", t2.contexto, { nombreConocido: null });
+    assert.equal(t3.contexto.agendamiento?.cumpleanosPendiente, true, "sigue pendiente -- no se entendió como fecha real");
+    assert.equal(t3.contexto.agendamiento?.esperandoConfirmacion, undefined);
+    assert.match(t3.instruccionIA ?? "", /no se entendi/i);
+  });
+
+  // Revisión (autorizada) -- "el viernes entonces"/fechas de CITA nunca se
+  // confunden con la pregunta de cumpleaños pendiente -- fusionarDatosAgendamiento
+  // difiere 100% la interpretación mientras cumpleanosPendiente=true (ver
+  // resolver.ts), así que ni siquiera una fecha con "de mes" pisa fechaISO.
+  it("mientras se espera el cumpleaños, el mensaje NUNCA se interpreta como una nueva fecha de la CITA", async () => {
+    const t1 = await resolver("perfecto, esa", {
+      agendamiento: {
+        servicioId: "s-dipping",
+        servicioNombre: "Dipping",
+        duracionMin: 120,
+        fechaISO: VIERNES,
+        opcionesOfrecidas: [{ especialistaId: 1, especialistaNombre: "Mary", horaTexto: "16:00", horaISO: `${VIERNES}T16:00:00-05:00` }],
+        horarioSeleccionadoISO: `${VIERNES}T16:00:00-05:00`,
+        especialistaSeleccionadaId: 1,
+        especialistaSeleccionadaNombre: "Mary",
+      },
+    }, { nombreConocido: null });
+    const t2 = await resolver("Ana Pérez", t1.contexto, { nombreConocido: null });
+    const t3 = await resolver("15 de marzo", t2.contexto, { nombreConocido: null });
+    assert.equal(t3.contexto.agendamiento?.fechaISO, VIERNES, "la fecha de la CITA nunca cambia por la respuesta del cumpleaños");
+  });
+
+  // Revisión (autorizada, sección 14) -- CASO B: cliente EXISTENTE nunca
+  // vuelve a pasar por el registro (nombre YA conocido -> directo a
+  // confirmar, sin ninguna pregunta de cumpleaños).
+  it("CASO B -- cliente existente: nunca se le pregunta el cumpleaños", async () => {
+    const conOpcionSinNombre: ContextoConversacional = {
+      agendamiento: {
+        servicioId: "s-dipping",
+        servicioNombre: "Dipping",
+        duracionMin: 120,
+        fechaISO: VIERNES,
+        opcionesOfrecidas: [{ especialistaId: 1, especialistaNombre: "Mary", horaTexto: "16:00", horaISO: `${VIERNES}T16:00:00-05:00` }],
+        horarioSeleccionadoISO: `${VIERNES}T16:00:00-05:00`,
+        especialistaSeleccionadaId: 1,
+        especialistaSeleccionadaNombre: "Mary",
+      },
+    };
+    const r = await resolver("perfecto, esa", conOpcionSinNombre, { nombreConocido: "Ana Pérez" });
+    assert.equal(r.contexto.agendamiento?.nombreCliente, "Ana Pérez");
+    assert.equal(r.contexto.agendamiento?.esClienteNuevo, undefined);
+    assert.equal(r.contexto.agendamiento?.cumpleanosCapturado, true, "un cliente existente nunca queda pendiente de cumpleaños");
+    assert.equal(r.contexto.agendamiento?.esperandoConfirmacion, true, "va directo a confirmar, sin pasar por ningún registro");
+    assert.doesNotMatch(r.instruccionIA ?? "", /cumplea/i);
   });
 });
 

@@ -1,22 +1,39 @@
+import { fechaColombiaDesdeIso } from "@/lib/timezone-colombia";
+
+// Revisión (autorizada) -- timeZone explícito en las tres: sin esto,
+// toLocaleTimeString/toLocaleDateString usan la zona LOCAL del entorno que
+// renderiza (navegador o servidor), no la del negocio. Todos los tenants de
+// DuLabs operan en Colombia -- la hora/fecha mostrada debe ser siempre la
+// de America/Bogota, sin importar en qué huso horario esté quien mira la
+// pantalla (mismo bug real que mismoDia/esHoy de abajo).
 export function formatearHora(iso: string) {
-  return new Date(iso).toLocaleTimeString("es-CO", { hour: "numeric", minute: "2-digit", hour12: true });
+  return new Date(iso).toLocaleTimeString("es-CO", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "America/Bogota" });
 }
 
 export function formatearFechaCorta(iso: string) {
-  return new Date(iso).toLocaleDateString("es-CO", { weekday: "short", day: "numeric", month: "short" });
+  return new Date(iso).toLocaleDateString("es-CO", { weekday: "short", day: "numeric", month: "short", timeZone: "America/Bogota" });
 }
 
 export function formatearFechaLarga(d: Date) {
-  const texto = d.toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  const texto = d.toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "America/Bogota" });
   return texto.charAt(0).toUpperCase() + texto.slice(1);
 }
 
+// Revisión (autorizada) -- comparar por toDateString() usa la zona horaria
+// LOCAL del dispositivo/entorno que ejecuta el código (navegador o proceso
+// de servidor), no la del negocio. Todos los tenants de DuLabs operan en
+// Colombia -- "hoy"/"mismo día" debe significar siempre el día calendario
+// real en America/Bogota, sin importar en qué huso horario esté el
+// navegador de quien mira la pantalla o el servidor que renderiza. Bug real
+// encontrado: el dashboard de AMORE mostraba un día distinto al de la
+// pantalla de citas cuando ambos corrían en entornos con hora local
+// distinta a Bogotá.
 export function esHoy(iso: string, referencia = new Date()) {
-  return new Date(iso).toDateString() === referencia.toDateString();
+  return fechaColombiaDesdeIso(iso) === fechaColombiaDesdeIso(referencia.toISOString());
 }
 
 export function mismoDia(iso: string, d: Date) {
-  return new Date(iso).toDateString() === d.toDateString();
+  return fechaColombiaDesdeIso(iso) === fechaColombiaDesdeIso(d.toISOString());
 }
 
 export function minutosEntre(inicioIso: string, finIso: string) {

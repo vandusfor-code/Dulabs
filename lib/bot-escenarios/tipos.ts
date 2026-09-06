@@ -188,6 +188,20 @@ export interface AgendamientoEnCurso {
   nombreCliente?: string;
   /** true justo después de que el bot preguntó "¿a nombre de quién?" -- el próximo mensaje que no matchee ningún otro dato se interpreta como el nombre. */
   nombrePendiente?: boolean;
+  /**
+   * Revisión (autorizada, sección 14 del pedido) -- true SOLO cuando
+   * dulabs_clientes_conocidos no tenía ningún registro para este número al
+   * momento de pedir el nombre (cliente genuinamente nuevo). Es la señal
+   * que distingue "hay que completar su registro inicial" (incluye
+   * cumpleaños) de un cliente ya existente (nunca se le vuelve a pedir
+   * nada de esto). Se fija UNA sola vez y se conserva durante toda la
+   * conversación de agendamiento -- nunca se recalcula a mitad de camino.
+   */
+  esClienteNuevo?: boolean;
+  /** true justo después de preguntarle su fecha de cumpleaños a un cliente nuevo -- el próximo mensaje se interpreta con parseCumpleanosNatural. */
+  cumpleanosPendiente?: boolean;
+  /** true una vez guardado el cumpleaños (o si ya existía uno guardado) -- evita volver a pedirlo dentro de la MISMA conversación aunque algo dispare de nuevo la rama de "cliente nuevo". */
+  cumpleanosCapturado?: boolean;
   /** true tras crear la cita real (éxito) -- el acumulador queda "cerrado", listo para limpiarse en el próximo turno sin intención de agendar. */
   completado?: boolean;
 }

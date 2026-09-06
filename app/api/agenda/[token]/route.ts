@@ -14,6 +14,7 @@ import { reservarCitaPorServicio } from "@/lib/disponibilidad-servicio";
 import { ejecutarConIdempotencia, huellaSolicitud } from "@/lib/idempotencia-reserva";
 import { mensajeAmigableReserva } from "@/lib/reservar-mensajes";
 import { requireAuth, requireRole } from "@/lib/auth/authz";
+import { fechaColombiaDesdeIso } from "@/lib/timezone-colombia";
 
 export const runtime = "nodejs";
 
@@ -76,10 +77,14 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   const nombrePorId = new Map(equipo.map((e) => [e.id, e.nombre] as const));
   const equipoUnico = [...new Map(equipo.map((e) => [e.nombre, { id: e.id, nombre: e.nombre }])).values()];
 
-  // Desde hoy (00:00 local) en adelante -- no interesa el historial viejo en esta vista.
-  const inicioHoy = new Date();
-  inicioHoy.setHours(0, 0, 0, 0);
-  const [citasPorId, cliente, clientesRegistrados, serviciosActivos, profesionalesActivos] = await Promise.all([
+  // Desde hoy (00:00 America/Bogota) en adelante -- no interesa el historial
+  // viejo en esta vista. Revisión (autorizada): antes usaba
+  // new Date().setHours(0,0,0,0), que es "medianoche" en la zona LOCAL del
+  // proceso (en Vercel, UTC) -- hasta 5 horas desfasada de la medianoche
+  // real en Bogotá. Todos los tenants de DuLabs operan en Colombia.
+  const fechaHoyColombia = fechaColombiaDesdeIso(new Date().toISOString());
+  const inicioHoy = new Date(`${fechaHoyColombia}T00:00:00-05:00`);
+  const [citasPorId, cliente, clientesRegistrados, serviciosActivos, profesionalesActivos, citasTotales] = await Promise.all([
     Promise.all(ids.map((id) => citasDeEspecialista(supabase, id, { desde: inicioHoy.toISOString() }))),
     clienteDeEspecialista(supabase, especialista.phone_number_id),
     // Fase 5 -- conteos reales del negocio para el resumen de inicio, todos
@@ -99,6 +104,14 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       .select("id", { count: "exact", head: true })
       .eq("id_tenant", especialista.id_tenant)
       .eq("activo", true),
+    // Revisión (autorizada) -- "Citas totales" del dashboard de AMORE:
+    // conteo real de TODAS las citas del tenant (cualquier fecha/estado),
+    // nunca limitado por el filtro `desde` de arriba (ese es solo para la
+    // vista de agenda próxima). Mismo patrón que los conteos de arriba.
+    supabase
+      .from("dulabs_citas_especialista")
+      .select("id", { count: "exact", head: true })
+      .eq("id_tenant", especialista.id_tenant),
   ]);
   // Cada cita queda marcada con quién la atiende de verdad -- varias
   // especialidades comparten número de WhatsApp (ver especialistasDelMismaPersona),
@@ -122,6 +135,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       clientesRegistrados: clientesRegistrados.count ?? 0,
       serviciosActivos: serviciosActivos.count ?? 0,
       profesionalesActivos: profesionalesActivos.count ?? 0,
+      citasTotales: citasTotales.count ?? 0,
     },
     sesion: sesion
       ? { rol: sesion.rol, nombre: sesion.nombre, username: sesion.username, especialistaId: sesion.especialistaId }

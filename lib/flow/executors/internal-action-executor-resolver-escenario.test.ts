@@ -28,7 +28,10 @@ const AUTHORIZER: InternalActionAuthorizer = {
   assertPhoneNumberOwnedByTenant: async () => true,
 };
 
-function baseRequest(payload: Record<string, unknown>): EffectDispatchRequest {
+function baseRequest(
+  payload: Record<string, unknown>,
+  conversation?: { phoneNumberId: string; telefonoCliente: string },
+): EffectDispatchRequest {
   return {
     effectId: "eff-1",
     executionRowId: "exec-1",
@@ -38,6 +41,7 @@ function baseRequest(payload: Record<string, unknown>): EffectDispatchRequest {
     kind: "action",
     action: { actionType: "resolver_escenario" },
     payload,
+    conversation,
   } as EffectDispatchRequest;
 }
 
@@ -196,6 +200,65 @@ describe("InternalActionExecutor — resolver_escenario (cableado real)", () => 
         [true, false, false, false, false, false],
         `esPrimerTurno debía ser [true, false, false, false, false, false] para el guion completo, fue ${JSON.stringify(esPrimerTurnoPorMensaje)}`,
       );
+    });
+  });
+
+  // Revisión (autorizada, secciones 15/16/28-C) -- saludo ocasional
+  // personalizado por nombre para una clienta que regresa, SOLO en el
+  // primer turno de la ejecución (nunca consulta Supabase en cada mensaje).
+  describe("nombreClienteConocido -- saludo ocasional por nombre (revisión, autorizada)", () => {
+    it("turno=0 con telefonoCliente real -> consulta y expone el nombre ya registrado", async () => {
+      let telefonoRecibido: string | undefined;
+      const executor = crearExecutor({
+        buscarNombreConocido: async (_supabase, _phoneNumberId, telefonoCliente) => {
+          telefonoRecibido = telefonoCliente;
+          return "Mariana";
+        },
+      });
+      const result = await executor.dispatch(
+        baseRequest({ mensajeActual: "hola" }, { phoneNumberId: "pn-1", telefonoCliente: "573148127388" }),
+        { tenantId: "tenant-amore", internal: true },
+      );
+      assert.equal((result.data as Record<string, unknown>).nombreClienteConocido, "Mariana");
+      assert.equal(telefonoRecibido, "573148127388", "nunca debe inventar o dejar vacío el teléfono real de la conversación");
+    });
+
+    it("turno=0 sin registro conocido (cliente nueva) -> string vacío, nunca inventa un nombre", async () => {
+      const executor = crearExecutor({ buscarNombreConocido: async () => null });
+      const result = await executor.dispatch(
+        baseRequest({ mensajeActual: "hola" }, { phoneNumberId: "pn-1", telefonoCliente: "573148127388" }),
+        { tenantId: "tenant-amore", internal: true },
+      );
+      assert.equal((result.data as Record<string, unknown>).nombreClienteConocido, "");
+    });
+
+    it("turno>0 -- NUNCA vuelve a consultar (evita una lectura de Supabase en cada mensaje)", async () => {
+      let llamadas = 0;
+      const executor = crearExecutor({
+        buscarNombreConocido: async () => {
+          llamadas += 1;
+          return "Mariana";
+        },
+      });
+      const result = await executor.dispatch(
+        baseRequest({ mensajeActual: "hola", __turnoEscenario: 3 }, { phoneNumberId: "pn-1", telefonoCliente: "573148127388" }),
+        { tenantId: "tenant-amore", internal: true },
+      );
+      assert.equal((result.data as Record<string, unknown>).nombreClienteConocido, "");
+      assert.equal(llamadas, 0);
+    });
+
+    it("sin telefonoCliente real en la conversación -> nunca llama a buscarNombreConocido", async () => {
+      let llamadas = 0;
+      const executor = crearExecutor({
+        buscarNombreConocido: async () => {
+          llamadas += 1;
+          return "Mariana";
+        },
+      });
+      const result = await executor.dispatch(baseRequest({ mensajeActual: "hola" }), { tenantId: "tenant-amore", internal: true });
+      assert.equal((result.data as Record<string, unknown>).nombreClienteConocido, "");
+      assert.equal(llamadas, 0);
     });
   });
 });

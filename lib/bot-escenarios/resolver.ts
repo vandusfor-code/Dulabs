@@ -29,7 +29,8 @@ import {
   extraerHoraOBloqueMencionado,
 } from "@/lib/bot-escenarios/agendamiento-entidades";
 import { especialistasDelTenant } from "@/lib/especialistas";
-import { nombreConocido } from "@/lib/clientes-conocidos";
+import { nombreConocido, recordarNombreCliente } from "@/lib/clientes-conocidos";
+import { parseCumpleanosNatural } from "@/lib/cumpleanos/parse-cumpleanos-natural";
 import {
   CODIGO_ESCENARIO_AGENDAMIENTO,
   CODIGO_ESCENARIO_FALLBACK,
@@ -63,6 +64,8 @@ export interface ResolverEscenarioDeps {
   cargarEspecialistas?: (supabase: SupabaseClient, tenantId: string) => Promise<EspecialistaBasico[]>;
   /** FASE 1 -- inyectable para tests, default real: nombreConocido (lib/clientes-conocidos.ts). */
   buscarNombreConocido?: typeof nombreConocido;
+  /** Revisión (autorizada, sección 14) -- inyectable para tests, default real: recordarNombreCliente (lib/clientes-conocidos.ts). Guarda el registro inicial (nombre + cumpleaños) de un cliente genuinamente nuevo. */
+  guardarNombreCliente?: typeof recordarNombreCliente;
 }
 
 function construirSinonimos(escenarios: EscenarioRow[]): Map<string, string[]> {
@@ -537,6 +540,18 @@ function fusionarDatosAgendamiento(params: {
     },
   });
 
+  // Revisión (autorizada, sección 14) -- mientras se espera la respuesta a
+  // "¿cuál es tu fecha de cumpleaños?", el mensaje entrante NUNCA debe
+  // pasar por la extracción normal de servicio/fecha/hora/profesional: una
+  // fecha como "15 de marzo" matchea el mismo patrón que una fecha de
+  // CITA (extraerFechaMencionada) y podría pisar fechaISO ya elegido. Se
+  // difiere 100% la interpretación de este mensaje a
+  // decidirSiguientePasoAgendamiento (que sí tiene acceso a Supabase para
+  // guardar el dato), sin tocar ningún otro campo del acumulador.
+  if (actual.cumpleanosPendiente) {
+    return { tipo: "actualizado", actual };
+  }
+
   const servicioDetectado = params.entidades.servicioId ? params.catalogo.find((s) => s.id === params.entidades.servicioId) : undefined;
   let huboCambioQueInvalidaSeleccion = false;
 
@@ -654,6 +669,7 @@ async function decidirSiguientePasoAgendamiento(params: {
   tenantId: string;
   telefonoCliente?: string;
   buscarNombreConocido: typeof nombreConocido;
+  guardarNombreCliente: typeof recordarNombreCliente;
 }): Promise<ResultadoResolucion> {
   const actual: AgendamientoEnCurso = { ...params.actual };
   const responder = (resto: Partial<ResultadoResolucion> & { modo: ResultadoResolucion["modo"] }): ResultadoResolucion => ({
@@ -707,8 +723,12 @@ async function decidirSiguientePasoAgendamiento(params: {
         : null;
       if (nombreYaConocido) {
         actual.nombreCliente = nombreYaConocido;
+        // Cliente YA existente -- nunca pedir cumpleaños de nuevo (sección
+        // 14 del pedido), sin importar si alguna vez lo dio o no.
+        actual.cumpleanosCapturado = true;
       } else {
         actual.nombrePendiente = true;
+        actual.esClienteNuevo = true;
         return responder({
           modo: "ai",
           instruccionIA: "Ya se eligió el horario. Pregunta de forma natural a nombre de quién se deja la reserva, UNA sola pregunta.",
@@ -716,6 +736,50 @@ async function decidirSiguientePasoAgendamiento(params: {
           conocimientoGeneral: [],
         });
       }
+    }
+
+    // Revisión (autorizada, sección 14 del pedido) -- registro inicial de
+    // un cliente genuinamente NUEVO: se pide su fecha de cumpleaños UNA
+    // sola vez, como parte de crear su registro (nunca a un cliente ya
+    // existente). `esClienteNuevo` solo queda true cuando recién se
+    // determinó, arriba, que dulabs_clientes_conocidos no tenía nada para
+    // este número -- por eso alcanza como única condición acá.
+    if (actual.esClienteNuevo && !actual.cumpleanosCapturado) {
+      if (!actual.cumpleanosPendiente) {
+        actual.cumpleanosPendiente = true;
+        return responder({
+          modo: "ai",
+          instruccionIA: `Es la primera vez que ${actual.nombreCliente} agenda -- como parte de registrarla, pregúntale de forma natural y breve su fecha de cumpleaños (día y mes), explicando en una frase que es para saludarla ese día especial. UNA sola pregunta, nunca le pidas el año.`,
+          datosIA: [{ nombreCliente: actual.nombreCliente }],
+          conocimientoGeneral: [],
+        });
+      }
+
+      const cumpleanos = parseCumpleanosNatural(params.mensaje);
+      if (!cumpleanos.ok) {
+        return responder({
+          modo: "ai",
+          instruccionIA:
+            "No se entendió la fecha de cumpleaños. Pídesela de nuevo con calidez, dando un ejemplo claro de formato (ej. \"15 de marzo\" o \"15/03\"), UNA sola pregunta. Nunca le pidas el año.",
+          datosIA: [],
+          conocimientoGeneral: [],
+        });
+      }
+
+      if (params.telefonoCliente) {
+        await params.guardarNombreCliente(params.supabase, {
+          idTenant: params.tenantId,
+          phoneNumberId: `whatsapp-qr:${params.tenantId}`,
+          telefonoCliente: params.telefonoCliente,
+          nombre: actual.nombreCliente,
+          cumpleDia: cumpleanos.dia,
+          cumpleMes: cumpleanos.mes,
+        });
+      }
+      actual.cumpleanosPendiente = false;
+      actual.cumpleanosCapturado = true;
+      // Cae al siguiente paso (pedir confirmación) en el MISMO turno --
+      // nunca hace falta un mensaje aparte solo para agradecer el dato.
     }
 
     if (!actual.esperandoConfirmacion) {
@@ -903,6 +967,7 @@ export async function resolverEscenario(params: {
   if (agendamientoActivo || esEscenarioAgendamiento) {
     const cargarEspecialistas = params.deps?.cargarEspecialistas ?? cargarEspecialistasReal;
     const buscarNombreConocido = params.deps?.buscarNombreConocido ?? nombreConocido;
+    const guardarNombreCliente = params.deps?.guardarNombreCliente ?? recordarNombreCliente;
     const especialistasReales = await cargarEspecialistas(params.supabase, params.tenantId);
     const hoyISO = fechaColombiaDesdeIso(new Date().toISOString());
 
@@ -948,6 +1013,7 @@ export async function resolverEscenario(params: {
         tenantId: params.tenantId,
         telefonoCliente: params.telefonoCliente,
         buscarNombreConocido,
+        guardarNombreCliente,
       });
     }
     // Informativo permitido: el switch normal de abajo responde (precio,

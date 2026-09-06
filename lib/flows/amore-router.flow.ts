@@ -115,6 +115,10 @@ export function amoreRouterFlow(): FlowDefinition {
             "Si esPrimerTurno es false, la clienta YA fue saludada -- NUNCA vuelvas a decir '¡Hola!', 'Qué gusto saludarte' ni ninguna variante de saludo inicial; responde directo, como si continuaras la misma charla. " +
             "Solo saluda así cuando esPrimerTurno sea true. " +
             "Usa 'ultimoServicioId'/'ultimoServicioNombre'/'ultimaCategoria'/'ultimasOpcionesIds' (mismo contexto que ya trae el motor) para no repetir explicaciones que ya diste -- si ya explicaste qué es un servicio y ahora solo preguntan el precio, responde SOLO el precio, no repitas la explicación completa. " +
+            "\n\n=== NOMBRE DE LA CLIENTA: con naturalidad, nunca mecánico (revisión, autorizada) ===\n" +
+            "'nombreClienteConocido' viene con el nombre real ya registrado de la clienta SOLO en el primer turno (vacío si es nueva o no lo tienes) -- nunca lo inventes ni lo infieras de otro lado. " +
+            "Úsalo en el saludo inicial cuando esPrimerTurno sea true y tengas el nombre -- ej. \"Hola, Mariana, qué lindo volver a tenerte por aquí 💗 ¿En qué te puedo ayudar hoy?\" -- pero NUNCA lo repitas en los turnos siguientes de la misma conversación: \"Claro 💗 Tenemos estas opciones...\" está bien, \"Claro, Mariana...\" no. " +
+            "No empieces cada respuesta con su nombre ni lo uses como muletilla -- se siente mecánico, no humano. " +
             "\n\n=== ESTILO: variar, nunca sonar a plantilla ===\n" +
             "No repitas mecánicamente las mismas muletillas en cada respuesta ('¡Hola!', '¡Claro que sí!', 'Con todo el gusto', 'Qué gusto saludarte', 'Perfecto', 'Excelente', o cerrar siempre con '¿te gustaría saber algo más?'/'¿en qué más te ayudo?'). Pueden aparecer de vez en cuando, nunca como fórmula fija. " +
             "'Amiga' está bien para dar cercanía, pero con moderación -- no en cada mensaje. " +
@@ -200,6 +204,12 @@ export function amoreRouterFlow(): FlowDefinition {
       { key: "datosIA", label: "Datos reales (confirmados) filtrados para el nodo IA", type: "string" },
       { key: "conocimientoGeneral", label: "Conocimiento general (queEs/paraQueSirve/limites) por servicio, separado de datosIA, cada uno con su 'fuente'", type: "string" },
       { key: "esPrimerTurno", label: "true solo en el primer mensaje de la conversación -- evita que el nodo IA vuelva a saludar en turnos posteriores", type: "boolean" },
+      {
+        key: "nombreClienteConocido",
+        label:
+          "Revisión (autorizada) -- nombre real ya registrado de la clienta (dulabs_clientes_conocidos), presente SOLO en el primer turno; vacío si es nueva o desconocida. Nunca inventar/inferir un nombre distinto.",
+        type: "string",
+      },
       { key: "instruccionIA", label: "Instrucción acotada del escenario para el nodo IA", type: "string" },
       { key: "ultimoServicioId", label: "Último servicio real mencionado (contexto)", type: "string" },
       { key: "ultimaCategoria", label: "Última categoría real mencionada (contexto)", type: "string" },

@@ -65,12 +65,13 @@ export function AmoreDashboardHome() {
 
     return {
       citasHoy: { total: citasHoy.length, pendientes },
+      citasTotales: datos.resumen.citasTotales,
       clientesActivos: { total: datos.resumen.clientesRegistrados, nuevosEsteMes: clientesNuevosEsteMes },
       serviciosHoy: { total: citasHoy.length, diferentes: serviciosDistintos },
       ingresosMes,
       proximasCitas,
     };
-  }, [citasHoy, datos.resumen.clientesRegistrados, clientesNuevosEsteMes, ingresosMes]);
+  }, [citasHoy, datos.resumen.clientesRegistrados, datos.resumen.citasTotales, clientesNuevosEsteMes, ingresosMes]);
 
   return (
     <>

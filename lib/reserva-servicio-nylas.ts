@@ -29,6 +29,7 @@ import {
   bloqueosDelDia,
   restarBloqueos,
   crearCitaEspecialista,
+  confirmarCita,
   type CitaEspecialista,
 } from "@/lib/especialistas";
 import { citasOcupadasDelDia } from "@/lib/disponibilidad-servicio";
@@ -119,7 +120,7 @@ async function ejecutarCreacionReal(
 
   const { data: especialista } = await supabase
     .from("dulabs_especialistas")
-    .select("id, nombre, phone_number_id, bloquea_horario")
+    .select("id, nombre, phone_number_id, bloquea_horario, requiere_aprobacion")
     .eq("id_tenant", params.idTenant)
     .eq("id", params.especialistaId)
     .eq("activo", true)
@@ -236,9 +237,26 @@ async function ejecutarCreacionReal(
     return { ok: false, motivo: "error_de_base_de_datos", detalle: resultadoDb.detalle ?? "Error desconocido creando la cita en DuLabs." };
   }
 
+  // Revisión (autorizada, sección 13 del pedido) — la disponibilidad de ESTE
+  // camino ya fue revalidada de verdad (jornada + bloqueos + citas DuLabs +
+  // eventos reales de Nylas/Google Calendar, arriba) y el evento/la fila ya
+  // se crearon los dos con éxito: la cita YA está reservada, no necesita
+  // aprobación administrativa. Mismo criterio EXACTO que ya usa
+  // finalizarCitaCreada (lib/especialista-solicitud-ia.ts) para el resto del
+  // equipo que agenda 100% dentro del spa -- requiere_aprobacion=false
+  // confirma sola; requiere_aprobacion=true (el default más seguro para
+  // cualquier especialista sin configurar explícitamente, ej. alguien que
+  // también trabaja por fuera y cuya disponibilidad real el sistema no
+  // conoce) se deja tal cual en "pendiente", sin ningún cambio de
+  // comportamiento. Nunca se toca el flag acá -- se configura aparte, por
+  // especialista, en dulabs_especialistas.
+  const citaFinal = especialista.requiere_aprobacion
+    ? resultadoDb.cita
+    : ((await confirmarCita(supabase, resultadoDb.cita.id)) ?? resultadoDb.cita);
+
   return {
     ok: true,
-    cita: resultadoDb.cita,
+    cita: citaFinal,
     nylasEventId,
     especialista: { id: especialista.id as number, nombre: especialista.nombre as string },
     servicio: { id: servicio.id as string, nombre: servicio.nombre as string, duracionMin },

@@ -1,10 +1,13 @@
-import { CalendarCheck, Users, Flower2, TrendingUp } from "lucide-react";
+import { CalendarCheck, CalendarRange, Users, Flower2, TrendingUp } from "lucide-react";
 import type { DashboardDataMock } from "./amore-dashboard-mock";
 import { formatearCOP } from "./amore-dashboard-mock";
 
-// AMORE (Fase 5, panel administrativo móvil, autorizado) — 4 métricas
-// compactas en grid 2x2, fiel al mockup. Solo estas cuatro -- sin gráficos,
-// desempeño, cumpleaños ni comisiones en esta fase.
+// AMORE (Fase 5, panel administrativo móvil, autorizado) — 5 métricas
+// compactas en grid 2x2 (la última queda sola en su fila, mismo estilo de
+// tarjeta, sin rediseño) -- sin gráficos, desempeño, cumpleaños ni
+// comisiones en esta fase. "Citas totales" (revisión, autorizada) se agregó
+// junto a "Citas hoy": el conteo real de TODAS las citas del tenant, nunca
+// limitado a la fecha seleccionada en la pantalla de Citas.
 function Tarjeta({
   icono,
   bgIcono,
@@ -49,6 +52,15 @@ export function AmoreMetricCards({ datos }: { datos: DashboardDataMock }) {
         etiqueta="Citas hoy"
         subtexto={`${datos.citasHoy.pendientes} pendientes`}
         colorSubtexto="var(--color-lime-text)"
+      />
+      <Tarjeta
+        icono={<CalendarRange className="size-5" />}
+        bgIcono="bg-[#E4EEF9]"
+        colorIcono="#3D7AB8"
+        valor={String(datos.citasTotales)}
+        etiqueta="Citas totales"
+        subtexto="Todas las citas"
+        colorSubtexto="var(--color-mist)"
       />
       <Tarjeta
         icono={<Users className="size-5" />}

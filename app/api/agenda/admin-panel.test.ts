@@ -326,6 +326,45 @@ describe(
       assert.ok(body.resumen.clientesRegistrados >= 1);
       assert.ok(body.resumen.serviciosActivos >= 0);
       assert.ok(body.resumen.profesionalesActivos >= 1);
+      // Revisión (autorizada, sección 23 del pedido -- dashboard "Citas
+      // totales") -- conteo real de TODAS las citas del tenant, sin el
+      // filtro `desde hoy` que sí aplica a la lista `citas` de la
+      // respuesta. Se crea una cita real del PASADO (fuera de ese filtro) y
+      // se confirma que igual cuenta -- así se prueba que de verdad es un
+      // total, no una repetición del mismo conteo ya filtrado.
+      assert.equal(typeof body.resumen.citasTotales, "number");
+      const totalAntes = body.resumen.citasTotales as number;
+
+      const { data: citaVieja, error: errorCitaVieja } = await supabase
+        .from("dulabs_citas_especialista")
+        .insert({
+          especialista_id: especialistaAId,
+          id_tenant: TENANT_A,
+          phone_number_id: PHONE_A,
+          telefono_cliente: "573009996666",
+          nombre_cliente: "TEST_PANEL_citas_totales",
+          servicio: "manos",
+          inicio: "2020-01-01T10:00:00-05:00",
+          fin: "2020-01-01T11:00:00-05:00",
+          estado: "confirmada",
+          bloquea_horario: true,
+        })
+        .select("id")
+        .single();
+      if (errorCitaVieja) throw errorCitaVieja;
+      citaIds.push(citaVieja!.id as number);
+
+      const resDespues = await bootstrapGET(req(`http://x/api/agenda/${tokenA}`), paramsFor({ token: tokenA }));
+      const bodyDespues = await resDespues.json();
+      assert.equal(
+        bodyDespues.resumen.citasTotales,
+        totalAntes + 1,
+        "citasTotales debe incluir una cita del pasado -- nunca limitado al filtro 'desde hoy' que sí aplica a la lista `citas`",
+      );
+      assert.ok(
+        !bodyDespues.citas.some((c: { id: number }) => c.id === citaVieja!.id),
+        "esa misma cita del pasado NUNCA debe aparecer en la lista `citas` (esa sí respeta el filtro 'desde hoy')",
+      );
     });
 
     it("CITAS: completar/no_show solo desde 'confirmada', y liberan/mantienen disponibilidad correctamente", async () => {
