@@ -476,10 +476,19 @@ export const AMORE_ESCENARIOS_SEED: FilaSeed[] = [
     activo: true,
     variantes: [
       { tipo: "contains", valor: "que horario" },
+      // Prueba real (FASE B, autorizado) — "¿Cuál es el horario?" caía al
+      // fallback genérico: "es el horario" no contenía "que horario" como
+      // substring. Se amplían las variantes con formulaciones naturales
+      // equivalentes, sin cambiar el catálogo/Flow Engine/QR/portal.
+      { tipo: "contains", valor: "es el horario" },
       { tipo: "contains", valor: "horario de atencion" },
       { tipo: "contains", valor: "a que hora abren" },
+      { tipo: "contains", valor: "a que hora cierran" },
       { tipo: "contains", valor: "hasta que hora" },
-      { tipo: "contains", valor: "atienden domingo" },
+      // "domingo" (sin más calificador) cubre "atienden domingo", "atienden
+      // los domingos", "trabajan domingo", etc. -- antes "atienden domingo"
+      // exigía esas dos palabras exactamente contiguas, sin "los" en medio.
+      { tipo: "contains", valor: "domingo" },
       { tipo: "contains", valor: "festivo" },
     ],
     respuestas: [

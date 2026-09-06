@@ -220,6 +220,25 @@ describe("resolverEscenario — banco real de AMORE, sin IA en el camino determi
     assert.match(r.respuestaTexto!, /8:00 a\. m\. a 8:00 p\. m\./);
   });
 
+  describe("BUG REAL (FASE B, prueba aislada Gemini): formulaciones naturales de horario que caían al fallback", () => {
+    const formulaciones = [
+      "¿Cuál es el horario?",
+      "Cuál es el horario",
+      "en qué horario atienden",
+      "a qué hora cierran",
+      "¿Atienden los domingos?",
+      "atienden festivos",
+    ];
+    for (const mensaje of formulaciones) {
+      it(`'${mensaje}' -> escenario 080_horario, nunca el fallback genérico`, async () => {
+        const r = await resolver(mensaje);
+        assert.equal(r.escenarioCodigo, "080_horario", `"${mensaje}" debería reconocerse como intención de horario`);
+        assert.equal(r.requiereIA, false);
+        assert.match(r.respuestaTexto!, /8:00 a\. m\. a 8:00 p\. m\./);
+      });
+    }
+  });
+
   it("pregunta de dirección (dato NO configurado): intención propia, honesta, nunca cae al fallback de catálogo ni inventa una dirección", async () => {
     const r = await resolver("cuál es la dirección del salón");
     assert.equal(r.escenarioCodigo, "084_direccion", "debe reconocer la intención de dirección como propia, nunca el fallback genérico");
