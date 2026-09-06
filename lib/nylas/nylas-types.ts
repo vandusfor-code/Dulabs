@@ -29,3 +29,36 @@ export interface NylasListEventsParams {
 export interface NylasEventsClient {
   listEvents(params: NylasListEventsParams, signal?: AbortSignal): Promise<NylasEvent[]>;
 }
+
+/**
+ * FASE C (autorizado) — boundary de ESCRITURA, separado a propósito de
+ * NylasEventsClient (solo lectura, FASE B): así ningún mock existente de
+ * FASE B necesita implementar createEvent/deleteEvent, y ningún caller de
+ * solo-disponibilidad puede crear/borrar un evento por accidente.
+ */
+export interface NylasCreateEventParams {
+  grantId: string;
+  calendarId: string;
+  title: string;
+  description?: string;
+  /** Unix seconds. */
+  startUnix: number;
+  endUnix: number;
+  /** IANA, ej. "America/Bogota". */
+  timezone: string;
+}
+
+export interface NylasCreatedEvent {
+  id: string;
+}
+
+export interface NylasDeleteEventParams {
+  grantId: string;
+  calendarId: string;
+  eventId: string;
+}
+
+export interface NylasEventsWriteClient {
+  createEvent(params: NylasCreateEventParams, signal?: AbortSignal): Promise<NylasCreatedEvent>;
+  deleteEvent(params: NylasDeleteEventParams, signal?: AbortSignal): Promise<void>;
+}

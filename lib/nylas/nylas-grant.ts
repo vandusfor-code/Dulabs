@@ -6,7 +6,7 @@
  * recibe. Cualquier otro tenant (incluido uno futuro) recibe `null` --
  * ningún calendario de otro tenant puede terminar consultado por error.
  */
-const AMORE_TENANT_ID = "ed6ae77f-8a0c-483e-a5d9-8ede68eca50f";
+export const AMORE_TENANT_ID = "ed6ae77f-8a0c-483e-a5d9-8ede68eca50f";
 
 export function resolverNylasGrantIdParaTenant(idTenant: string): string | null {
   if (idTenant !== AMORE_TENANT_ID) return null;
