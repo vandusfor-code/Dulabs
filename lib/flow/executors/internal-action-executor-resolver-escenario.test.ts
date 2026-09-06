@@ -14,6 +14,14 @@ import { InternalActionExecutor } from "@/lib/flow/executors/internal-action-exe
 import type { InternalActionAuthorizer } from "@/lib/flow/internal-action-authorizer";
 import type { EffectDispatchRequest } from "@/lib/flow/executor-types";
 import type { EscenarioRow } from "@/lib/bot-escenarios/tipos";
+import { AMORE_ESCENARIOS_SEED } from "@/lib/bot-escenarios/seed-amore";
+import type { ServicioCatalogoReal } from "@/lib/catalogo-servicios-flow-adaptador";
+
+const CATALOGO_UNAS: ServicioCatalogoReal[] = [
+  { id: "s-dipping", nombre: "Dipping", precio: 60000, duracionMin: 120, categoria: "Uñas", descripcion: null },
+  { id: "s-pressón", nombre: "Press On", precio: 80000, duracionMin: 120, categoria: "Uñas", descripcion: null },
+  { id: "s-una", nombre: "Uña", precio: 8000, duracionMin: 15, categoria: "Uñas", descripcion: null },
+];
 
 const AUTHORIZER: InternalActionAuthorizer = {
   assertActivacionOwnedByTenant: async () => true,
@@ -131,5 +139,56 @@ describe("InternalActionExecutor — resolver_escenario (cableado real)", () => 
     const result = await executor.dispatch(baseRequest({ mensajeActual: "hola" }), { tenantId: "tenant-amore", internal: false });
     assert.equal(result.success, false);
     assert.equal(result.error, "external_action_not_routed");
+  });
+
+  describe("esPrimerTurno -- señal mínima de continuidad (FASE, refinamiento conversacional)", () => {
+    it("turno=0 (primer mensaje real de la conversación) -> esPrimerTurno=true", async () => {
+      const executor = crearExecutor();
+      const result = await executor.dispatch(baseRequest({ mensajeActual: "hola" }), { tenantId: "tenant-amore", internal: true });
+      assert.equal((result.data as Record<string, unknown>).esPrimerTurno, true);
+    });
+
+    it("turno>0 (conversación ya en curso) -> esPrimerTurno=false, sin importar qué escenario gane", async () => {
+      const executor = crearExecutor();
+      const result = await executor.dispatch(
+        baseRequest({ mensajeActual: "hola", __turnoEscenario: 1 }),
+        { tenantId: "tenant-amore", internal: true },
+      );
+      assert.equal((result.data as Record<string, unknown>).esPrimerTurno, false);
+    });
+
+    it("sección 24 A-G del pedido: guion completo de conversación real -- solo el turno 1 es esPrimerTurno=true, todos los siguientes false", async () => {
+      const executor = crearExecutor({
+        cargarEscenariosReal: async () => AMORE_ESCENARIOS_SEED.map((e, i) => ({ ...e, id: `e${i}`, tenantId: "tenant-amore" })),
+        listarCatalogoServiciosReal: async () => CATALOGO_UNAS,
+      });
+
+      const guion = [
+        "Hola",
+        "Quiero arreglarme las uñas",
+        "No sé qué hacerme",
+        "¿Qué es el Dipping?",
+        "¿Y cuánto cuesta?",
+        "Quiero una cita",
+      ];
+
+      let turno: unknown = undefined;
+      const esPrimerTurnoPorMensaje: boolean[] = [];
+      for (const mensaje of guion) {
+        const result = await executor.dispatch(
+          baseRequest({ mensajeActual: mensaje, ...(turno !== undefined ? { __turnoEscenario: turno } : {}) }),
+          { tenantId: "tenant-amore", internal: true },
+        );
+        const data = result.data as Record<string, unknown>;
+        esPrimerTurnoPorMensaje.push(data.esPrimerTurno as boolean);
+        turno = data.__turnoEscenario;
+      }
+
+      assert.deepEqual(
+        esPrimerTurnoPorMensaje,
+        [true, false, false, false, false, false],
+        `esPrimerTurno debía ser [true, false, false, false, false, false] para el guion completo, fue ${JSON.stringify(esPrimerTurnoPorMensaje)}`,
+      );
+    });
   });
 });

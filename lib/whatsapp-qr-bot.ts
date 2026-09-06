@@ -9,7 +9,13 @@ import type { SendMessageDeps } from "@/lib/flow/executors/send-message-executor
 import type { EffectExecutor } from "@/lib/flow/executor-types";
 import { GeminiExecutor } from "@/lib/flow/executors/gemini-executor";
 import { resolveGeminiApiKeyFromEnv } from "@/lib/flow/gemini/gemini-client";
+import { segmentarRespuestaWhatsApp } from "@/lib/whatsapp-mensaje-segmentador";
 import { enviarMensajeWhatsApp } from "@/lib/whatsapp-worker-client";
+
+// FASE — refinamiento conversacional (autorizado, sección 22 del pedido):
+// intervalo natural entre mensajes de una misma respuesta dividida -- corto
+// a propósito, nunca un tiempo artificial largo que sacrifique velocidad.
+const PAUSA_ENTRE_MENSAJES_MS = 500;
 
 // FASE B (autorizado, prueba controlada) — Gemini como motor de redacción
 // SOLO para el tenant AMORE, nunca un rollout global (ver comentario en
@@ -140,11 +146,20 @@ export async function ejecutarBotWhatsAppQR(params: {
   };
 
   const enviarComoBot = async (telefono: string, texto: string): Promise<{ wamid: string | null }> => {
-    const resultado = await enviarMensajeWhatsApp({ tenantId: params.idTenant, telefono, mensaje: texto, origen: "automatico" });
-    if (!resultado.ok) throw new Error(resultado.error);
-    // El worker no devuelve el wamid real de Baileys en esta llamada (solo
-    // {ok:true}) -- no hace falta: el propio worker ya persiste este mismo
-    // mensaje saliente cuando le llega su propio eco de messages.upsert.
+    // FASE — refinamiento conversacional (autorizado): una respuesta
+    // conversacional con varias ideas separables llega como VARIOS mensajes
+    // reales de WhatsApp en vez de un único bloque enorme -- segmentarRespuestaWhatsApp
+    // decide esto por bloques semánticos reales, nunca por conteo de
+    // caracteres (ver lib/whatsapp-mensaje-segmentador.ts). El worker sigue
+    // sin devolver wamid real en esta llamada (mismo comportamiento de
+    // siempre); se envían en orden, con una pequeña pausa entre cada uno
+    // para que no lleguen todos exactamente al mismo instante.
+    const mensajes = segmentarRespuestaWhatsApp(texto);
+    for (let i = 0; i < mensajes.length; i++) {
+      const resultado = await enviarMensajeWhatsApp({ tenantId: params.idTenant, telefono, mensaje: mensajes[i]!, origen: "automatico" });
+      if (!resultado.ok) throw new Error(resultado.error);
+      if (i < mensajes.length - 1) await new Promise((resolve) => setTimeout(resolve, PAUSA_ENTRE_MENSAJES_MS));
+    }
     return { wamid: null };
   };
 

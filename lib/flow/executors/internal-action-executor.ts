@@ -1595,6 +1595,14 @@ export class InternalActionExecutor implements EffectExecutor {
       // son hechos confirmados; esto es explicación general, con su fuente
       // declarada). Solo presente cuando modo=ai y hay servicio(s) involucrados.
       conocimientoGeneral: resultado.conocimientoGeneral ?? [],
+      // FASE — refinamiento conversacional (autorizado) -- señal MÍNIMA para
+      // que el nodo IA sepa si ya saludó, sin ninguna arquitectura de memoria
+      // nueva: `turno` YA es el contador real de vueltas de esta MISMA
+      // ejecución activa (dulabs_flow_executions -- una ejecución nueva
+      // siempre arranca en turno=0; solo termina/reinicia cuando el flow
+      // llega a un nodo end, ej. transferencia a humano). Genérico para
+      // cualquier tenant que use resolver_escenario, no solo AMORE.
+      esPrimerTurno: turno === 0,
       ultimoServicioId: resultado.contexto.ultimoServicioId ?? "",
       ultimoServicioNombre: resultado.contexto.ultimoServicioNombre ?? "",
       ultimoServicioBId: resultado.contexto.ultimoServicioBId ?? "",
