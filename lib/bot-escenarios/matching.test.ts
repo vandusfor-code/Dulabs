@@ -4,7 +4,7 @@ import { resolverEscenarioGanador } from "@/lib/bot-escenarios/matching";
 import type { EntidadesDetectadas, EscenarioRow } from "@/lib/bot-escenarios/tipos";
 
 function entidades(overrides: Partial<EntidadesDetectadas> = {}): EntidadesDetectadas {
-  return { esAfirmacionCorta: false, esNegacionCorta: false, serviciosDetectados: [], ...overrides };
+  return { esAfirmacionCorta: false, esNegacionCorta: false, serviciosDetectados: [], indicaGeneroMasculino: false, ...overrides };
 }
 
 function escenario(overrides: Partial<EscenarioRow>): EscenarioRow {
@@ -50,6 +50,13 @@ describe("resolverEscenarioGanador — matching + prioridad", () => {
       entidades({ serviciosDetectados: [{ id: "s1", nombre: "Dipping", categoria: "Uñas" }, { id: "s4", nombre: "Press On", categoria: "Uñas" }] }),
     );
     assert.equal(ganador?.codigo, "comparacion", "debe ganar comparación, nunca resolver como un solo servicio específico");
+  });
+
+  it("contains_todas coincide solo cuando TODAS las palabras aparecen (intención combinada, prueba real de WhatsApp)", () => {
+    const combinado = escenario({ codigo: "manos_y_pies", prioridad: 420, variantes: [{ tipo: "contains_todas", valores: ["manos", "pies"] }] });
+    const soloManos = escenario({ codigo: "manos", prioridad: 410, variantes: [{ tipo: "starts_with", valor: "manos" }] });
+    assert.equal(resolverEscenarioGanador([soloManos, combinado], "manos y pies", entidades())?.codigo, "manos_y_pies");
+    assert.equal(resolverEscenarioGanador([soloManos, combinado], "manos", entidades())?.codigo, "manos");
   });
 
   it("sin ningún escenario coincidente, devuelve undefined (el caller decide el fallback)", () => {

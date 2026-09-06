@@ -32,6 +32,8 @@ function coincideVariante(
       return entidades.esNegacionCorta;
     case "dos_servicios_detectados":
       return entidades.serviciosDetectados.length >= 2;
+    case "contains_todas":
+      return Boolean(variante.valores?.length) && variante.valores!.every((v) => textoNormalizado.includes(normalizeText(v)));
   }
 }
 

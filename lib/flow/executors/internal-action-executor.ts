@@ -1546,6 +1546,14 @@ export class InternalActionExecutor implements EffectExecutor {
     assertNotAborted(signal);
     const mensaje = params.mensajeActual?.trim() || params.__firstMessageText?.trim() || "";
     const turno = num(params.__turnoEscenario, 0);
+    // ultimasOpcionesIds es un array -- mergeParams (arriba) descarta
+    // arrays/objetos al armar `params`, mismo motivo exacto por el que
+    // catalogoDisponible se lee de request.payload directo en otras
+    // acciones de este archivo. Nunca de `params`.
+    const ultimasOpcionesIdsRaw = request.payload.ultimasOpcionesIds;
+    const ultimasOpcionesIds = Array.isArray(ultimasOpcionesIdsRaw)
+      ? ultimasOpcionesIdsRaw.filter((v): v is string => typeof v === "string")
+      : [];
 
     const resultado = await resolverEscenario({
       supabase: this.deps.supabase,
@@ -1558,6 +1566,7 @@ export class InternalActionExecutor implements EffectExecutor {
         ultimoServicioBNombre: params.ultimoServicioBNombre || undefined,
         ultimaCategoria: params.ultimaCategoria || undefined,
         ultimaAccionSugerida: params.ultimaAccionSugerida || undefined,
+        ultimasOpcionesIds: ultimasOpcionesIds.length > 0 ? ultimasOpcionesIds : undefined,
       },
       turno,
       deps: {
@@ -1584,6 +1593,7 @@ export class InternalActionExecutor implements EffectExecutor {
       ultimoServicioBNombre: resultado.contexto.ultimoServicioBNombre ?? "",
       ultimaCategoria: resultado.contexto.ultimaCategoria ?? "",
       ultimaAccionSugerida: resultado.contexto.ultimaAccionSugerida ?? "",
+      ultimasOpcionesIds: resultado.contexto.ultimasOpcionesIds ?? [],
       __turnoEscenario: turno + 1,
       effectId: request.effectId,
     };

@@ -16,7 +16,7 @@ import {
 } from "@/lib/catalogo-servicios-flow-adaptador";
 import { formatearPrecioCop } from "@/lib/especialistas-flow-adaptador";
 import { normalizeText } from "@/lib/flow-triggers/normalize-text";
-import { extraerEntidades } from "@/lib/bot-escenarios/entidades";
+import { esServicioDeCaballero, extraerEntidades } from "@/lib/bot-escenarios/entidades";
 import { resolverEscenarioGanador } from "@/lib/bot-escenarios/matching";
 import { elegirYRenderizarPlantilla } from "@/lib/bot-escenarios/plantillas";
 import {
@@ -25,6 +25,7 @@ import {
   type ContextoConversacional,
   type EntidadesDetectadas,
   type EscenarioRow,
+  type ReferenciaOpcionMostrada,
   type ResultadoResolucion,
 } from "@/lib/bot-escenarios/tipos";
 
@@ -46,19 +47,91 @@ function construirSinonimos(escenarios: EscenarioRow[]): Map<string, string[]> {
 
 function filtrarCatalogo(
   catalogo: ServicioCatalogoReal[],
-  params: { categoria?: string; nombreContiene?: string[]; presupuestoMax?: number; duracionMaxMin?: number },
+  params: {
+    categoria?: string;
+    /** OR: cualquiera de estas palabras en el nombre. */
+    nombreContiene?: string[];
+    /** AND: TODAS estas palabras deben aparecer en el nombre (ej. "manos y pies" -- prueba real de WhatsApp). */
+    nombreContieneTodas?: string[];
+    presupuestoMax?: number;
+    duracionMaxMin?: number;
+  },
 ): ServicioCatalogoReal[] {
   return catalogo.filter((s) => {
     if (params.categoria && s.categoria !== params.categoria) return false;
     if (params.nombreContiene?.length && !params.nombreContiene.some((n) => s.nombre.toLowerCase().includes(n.toLowerCase()))) return false;
+    if (params.nombreContieneTodas?.length && !params.nombreContieneTodas.every((n) => s.nombre.toLowerCase().includes(n.toLowerCase()))) return false;
     if (params.presupuestoMax !== undefined && s.precio > params.presupuestoMax) return false;
     if (params.duracionMaxMin !== undefined && s.duracionMin > params.duracionMaxMin) return false;
     return true;
   });
 }
 
+/**
+ * Prueba real de WhatsApp (autorizado) — "Quiero arreglarme las uñas" NUNCA
+ * debe asumir un servicio de caballero sin evidencia explícita ("caballero",
+ * "hombre", "masculino") en el propio mensaje. Se aplica SIEMPRE que se
+ * listan opciones reales de una categoría (nunca al resolver un servicio
+ * puntual ya nombrado explícitamente, ni a la comparación entre 2 servicios
+ * ya identificados) -- si el filtro deja la lista vacía (categoría que solo
+ * tiene servicios marcados), se muestra igual la lista sin filtrar, en vez
+ * de dejar a la clienta sin ninguna opción real.
+ */
+function aplicarFiltroGenero(items: ServicioCatalogoReal[], indicaGeneroMasculino: boolean): ServicioCatalogoReal[] {
+  const filtrados = items.filter((s) => esServicioDeCaballero(s.nombre) === indicaGeneroMasculino);
+  return filtrados.length > 0 ? filtrados : items;
+}
+
 function contextoLimpio(): ContextoConversacional {
   return {};
+}
+
+/**
+ * Prueba real de WhatsApp (autorizado) — resuelve una referencia ("la de 30
+ * mil", "la segunda", "la más barata"...) contra las opciones REALES que el
+ * bot ya mostró (nunca contra el catálogo completo). Ambigüedad real (dos
+ * opciones con el mismo precio/duración) nunca se adivina -- se pide
+ * aclaración explícita.
+ */
+type ResultadoReferenciaOpcion =
+  | { tipo: "resuelto"; servicio: ServicioCatalogoReal }
+  | { tipo: "ambiguo"; empatados: ServicioCatalogoReal[] }
+  | { tipo: "no_encontrado" };
+
+function resolverReferenciaOpcion(
+  referencia: ReferenciaOpcionMostrada,
+  opciones: ServicioCatalogoReal[],
+): ResultadoReferenciaOpcion {
+  if (opciones.length === 0) return { tipo: "no_encontrado" };
+
+  switch (referencia.tipo) {
+    case "ordinal": {
+      const indice = referencia.posicion === -1 ? opciones.length - 1 : referencia.posicion - 1;
+      const servicio = opciones[indice];
+      return servicio ? { tipo: "resuelto", servicio } : { tipo: "no_encontrado" };
+    }
+    case "precio": {
+      const coincidencias = opciones.filter((s) => s.precio === referencia.monto);
+      if (coincidencias.length === 0) return { tipo: "no_encontrado" };
+      if (coincidencias.length > 1) return { tipo: "ambiguo", empatados: coincidencias };
+      return { tipo: "resuelto", servicio: coincidencias[0]! };
+    }
+    case "duracion": {
+      const coincidencias = opciones.filter((s) => s.duracionMin === referencia.minutos);
+      if (coincidencias.length === 0) return { tipo: "no_encontrado" };
+      if (coincidencias.length > 1) return { tipo: "ambiguo", empatados: coincidencias };
+      return { tipo: "resuelto", servicio: coincidencias[0]! };
+    }
+    case "extremo": {
+      const ordenados = [...opciones].sort((a, b) => (referencia.cual === "barata" ? a.precio - b.precio : b.precio - a.precio));
+      const mejorPrecio = ordenados[0]!.precio;
+      const empatados = ordenados.filter((s) => s.precio === mejorPrecio);
+      if (empatados.length > 1) return { tipo: "ambiguo", empatados };
+      return { tipo: "resuelto", servicio: ordenados[0]! };
+    }
+    case "demostrativo":
+      return opciones.length === 1 ? { tipo: "resuelto", servicio: opciones[0]! } : { tipo: "no_encontrado" };
+  }
 }
 
 /**
@@ -123,6 +196,7 @@ async function resolverModoCatalog(params: {
           ultimoServicioBNombre: servicioB.nombre,
           ultimaCategoria: servicioA.categoria ?? undefined,
           ultimaAccionSugerida: "comparando",
+          ultimasOpcionesIds: [servicioA.id, servicioB.id],
         },
       };
     }
@@ -161,21 +235,31 @@ async function resolverModoCatalog(params: {
       modo: "catalog",
       respuestaTexto,
       requiereIA: false,
-      contexto: { ultimoServicioId: servicio.id, ultimoServicioNombre: servicio.nombre, ultimaCategoria: servicio.categoria ?? undefined, ultimaAccionSugerida: "ofrecer_portal" },
+      contexto: {
+        ultimoServicioId: servicio.id,
+        ultimoServicioNombre: servicio.nombre,
+        ultimaCategoria: servicio.categoria ?? undefined,
+        ultimaAccionSugerida: "ofrecer_portal",
+        ultimasOpcionesIds: [servicio.id],
+      },
     };
   }
 
   // Sin servicio puntual: si la categoría (propia o detectada) sí resuelve,
   // se muestran 2-3 opciones reales de esa categoría -- NUNCA el catálogo
-  // completo (regla explícita del pedido).
+  // completo (regla explícita del pedido). Prueba real de WhatsApp
+  // (autorizado) -- nunca asume género: excluye servicios marcados de
+  // caballero salvo evidencia explícita en el mensaje.
   const categoria = escenario.config.filtroCategoria ?? entidades.categoria ?? contexto.ultimaCategoria;
   if (categoria) {
-    const opciones = filtrarCatalogo(catalogo, {
+    const candidatos = filtrarCatalogo(catalogo, {
       categoria,
       nombreContiene: escenario.config.filtroNombreContiene,
+      nombreContieneTodas: escenario.config.filtroNombreContieneTodas,
       presupuestoMax: entidades.presupuestoMax,
       duracionMaxMin: entidades.duracionMaxMin,
-    }).slice(0, 3);
+    });
+    const opciones = aplicarFiltroGenero(candidatos, entidades.indicaGeneroMasculino).slice(0, 3);
     if (opciones.length > 0) {
       const opcionesTexto = opciones
         .map((s) => `${s.nombre} — ${formatearPrecioCop(s.precio)} (${formatearDuracion(s.duracionMin)})`)
@@ -192,7 +276,7 @@ async function resolverModoCatalog(params: {
         modo: "catalog",
         respuestaTexto,
         requiereIA: false,
-        contexto: { ultimaCategoria: categoria },
+        contexto: { ultimaCategoria: categoria, ultimasOpcionesIds: opciones.map((o) => o.id) },
       };
     }
   }
@@ -255,7 +339,11 @@ function resolverModoAi(params: {
   // Nunca se manda el catálogo completo a la IA si un filtro real ya lo
   // redujo -- si nada aplicó, se manda igual acotado a la categoría (o todo,
   // si tampoco hay categoría) para que la respuesta siga siendo honesta.
-  const datosIA = (datosFiltrados.length > 0 ? datosFiltrados : catalogo).map(mapearServicioParaIA);
+  // Mismo filtro de género que el camino determinista (prueba real de
+  // WhatsApp) -- la IA tampoco debe recomendar servicios de caballero sin
+  // evidencia explícita.
+  const base = datosFiltrados.length > 0 ? datosFiltrados : catalogo;
+  const datosIA = aplicarFiltroGenero(base, entidades.indicaGeneroMasculino).map(mapearServicioParaIA);
 
   return {
     escenarioCodigo: escenario.codigo,
@@ -328,6 +416,44 @@ export async function resolverEscenario(params: {
       servicioNombre: params.contexto.ultimoServicioNombre,
       categoria: params.contexto.ultimaCategoria,
     };
+  }
+
+  // Prueba real de WhatsApp (autorizado) — referencia a una opción de la
+  // ÚLTIMA lista real mostrada ("la de 30 mil", "la segunda", "la más
+  // barata"...). Se resuelve contra esos ids reales (nunca el catálogo
+  // completo); un empate real (mismo precio/duración en 2+ opciones) nunca
+  // se adivina -- se pide aclaración explícita y se conserva la MISMA lista
+  // para que la respuesta a esa aclaración ("la primera") siga resolviendo.
+  if (entidadesBase.referenciaOpcion && params.contexto.ultimasOpcionesIds?.length) {
+    const opcionesMostradas = catalogo.filter((s) => params.contexto.ultimasOpcionesIds!.includes(s.id));
+    const resultadoReferencia = resolverReferenciaOpcion(entidadesBase.referenciaOpcion, opcionesMostradas);
+    if (resultadoReferencia.tipo === "resuelto") {
+      entidades = {
+        ...entidadesBase,
+        servicioId: resultadoReferencia.servicio.id,
+        servicioNombre: resultadoReferencia.servicio.nombre,
+        serviciosDetectados: [
+          { id: resultadoReferencia.servicio.id, nombre: resultadoReferencia.servicio.nombre, categoria: resultadoReferencia.servicio.categoria },
+        ],
+      };
+    } else if (resultadoReferencia.tipo === "ambiguo") {
+      const nombres = resultadoReferencia.empatados.map((s) => s.nombre);
+      const referencia = entidadesBase.referenciaOpcion;
+      const calificador = referencia.tipo === "precio" ? ` de ${formatearPrecioCop(referencia.monto)}` : "";
+      const respuestaTexto =
+        nombres.length === 2
+          ? `Veo dos opciones${calificador} 💗 ¿Te refieres a ${nombres[0]} o a ${nombres[1]}?`
+          : `Veo varias opciones${calificador} 💗 ¿Cuál de estas: ${nombres.join(", ")}?`;
+      return {
+        escenarioCodigo: "referencia_ambigua",
+        modo: "deterministic",
+        respuestaTexto,
+        requiereIA: false,
+        contexto: params.contexto,
+      };
+    }
+    // "no_encontrado": no se pudo resolver contra la lista mostrada -- se
+    // deja `entidades` tal cual y el flujo normal decide (honestamente).
   }
 
   // Atajo determinista (sección 39/97): si el turno anterior ya ofreció

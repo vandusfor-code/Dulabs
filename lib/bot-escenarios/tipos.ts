@@ -43,20 +43,31 @@ export type TipoVariante =
   // mensaje (ej. "Dipping vs Press On"), o cuando el contexto conversacional
   // los unió (ver resolver.ts). Nunca enumera nombres: depende 100% de
   // entidades.serviciosDetectados, igual que servicio_detectado.
-  | "dos_servicios_detectados";
+  | "dos_servicios_detectados"
+  // Prueba real de WhatsApp (autorizado) — variante genérica y reutilizable
+  // para "intención combinada": coincide solo si TODAS las palabras de
+  // `valores` aparecen en el mensaje (a diferencia de `contains`, que
+  // coincide si CUALQUIER escenario con esa palabra suelta matchea). Nunca
+  // texto hardcodeado en el motor -- las palabras vienen de la fila del
+  // tenant (ej. ["manos","pies"] para "manos y pies").
+  | "contains_todas";
 
 export interface VarianteActivacion {
   tipo: TipoVariante;
   /** Requerido para contains/starts_with/exact; ignorado para el resto. */
   valor?: string;
+  /** Requerido para contains_todas (2+ palabras, TODAS deben aparecer). */
+  valores?: string[];
 }
 
 /** Config específica del modo -- nunca contiene datos inventados, solo referencias/instrucciones. */
 export interface ConfigEscenario {
   /** modo=catalog: filtra listarCatalogoServiciosReal por categoría real exacta. */
   filtroCategoria?: string;
-  /** modo=catalog: filtra por substring del nombre real (ej. ["Manos", "Pies"]). */
+  /** modo=catalog: filtra por substring del nombre real -- OR (cualquiera), ej. ["Manos", "Pies"] muestra items con Manos O Pies. */
   filtroNombreContiene?: string[];
+  /** modo=catalog: filtra por substring del nombre real -- AND (todas), ej. ["Manos", "Pies"] muestra SOLO items con Manos Y Pies juntos ("manos y pies" combinado). */
+  filtroNombreContieneTodas?: string[];
   /** Palabras que activan `categoria_detectada` para `filtroCategoria` (ej. ["uñas","manicure"] -> "Uñas"). */
   sinonimos?: string[];
   /** modo=catalog: si no hay servicio/categoría resuelto, usar este texto en vez de las `respuestas` del escenario. */
@@ -80,6 +91,19 @@ export interface EscenarioRow {
   config: ConfigEscenario;
 }
 
+/**
+ * Prueba real de WhatsApp (autorizado) — referencia a UNA opción de la
+ * ÚLTIMA lista real que el bot mostró (ver ContextoConversacional.
+ * ultimasOpcionesIds). La resolución contra las opciones REALES vive en
+ * resolver.ts -- esto solo describe QUÉ TIPO de referencia hizo la clienta.
+ */
+export type ReferenciaOpcionMostrada =
+  | { tipo: "ordinal"; posicion: number } // 1-based; -1 = última
+  | { tipo: "precio"; monto: number }
+  | { tipo: "duracion"; minutos: number }
+  | { tipo: "extremo"; cual: "barata" | "cara" }
+  | { tipo: "demostrativo" }; // "esa"/"esta" sin más calificador -- solo resuelve si la lista mostrada tiene 1 sola opción.
+
 /** Entidades extraídas de forma determinista (nunca por IA) del mensaje actual. */
 export interface EntidadesDetectadas {
   /** Solo presente cuando serviciosDetectados tiene EXACTAMENTE 1 elemento -- ver entidades.ts. */
@@ -97,6 +121,10 @@ export interface EntidadesDetectadas {
   duracionMaxMin?: number;
   esAfirmacionCorta: boolean;
   esNegacionCorta: boolean;
+  /** Prueba real de WhatsApp (autorizado) — "caballero"/"hombre"/"masculino" mencionado explícitamente en ESTE mensaje. */
+  indicaGeneroMasculino: boolean;
+  /** Prueba real de WhatsApp (autorizado) — solo se calcula cuando el mensaje NO nombra ya un servicio/categoría real. */
+  referenciaOpcion?: ReferenciaOpcionMostrada;
 }
 
 /** Contexto conversacional leído/escrito en state.variables (mismo mecanismo ya existente, sin tabla nueva). */
@@ -108,6 +136,14 @@ export interface ContextoConversacional {
   ultimoServicioBNombre?: string;
   ultimaCategoria?: string;
   ultimaAccionSugerida?: string;
+  /**
+   * Prueba real de WhatsApp (autorizado) — ids reales (nunca inventados) de
+   * la ÚLTIMA lista de opciones que el bot mostró (categoría o comparación),
+   * para resolver referencias como "la de 30 mil"/"la segunda"/"la más
+   * barata". Se re-consulta el catálogo real cada vez -- nunca se guarda
+   * precio/nombre acá, solo el id, para no arrastrar datos desactualizados.
+   */
+  ultimasOpcionesIds?: string[];
 }
 
 export interface ResultadoResolucion {

@@ -18,11 +18,20 @@ const TENANT = "amore-test";
 
 const ESCENARIOS: EscenarioRow[] = AMORE_ESCENARIOS_SEED.map((s, i) => ({ ...s, id: `e${i}`, tenantId: TENANT }));
 
+// Prueba real de WhatsApp (autorizado) — orden alfabético REAL de la
+// columna `nombre`, tal como devuelve listarCatalogoServiciosReal (order by
+// categoria, nombre). Los "Caballero..." quedan primeros a propósito -- es
+// exactamente el orden que causó el bug real (.slice(0,3) sin filtro de
+// género devolvía solo esos 3).
 const CATALOGO: ServicioCatalogoReal[] = [
+  { id: "s-caballero-manos", nombre: "Caballero Manos Semi", precio: 30000, duracionMin: 60, categoria: "Uñas", descripcion: null },
+  { id: "s-caballero-manospies", nombre: "Caballero Manos y Pies", precio: 30000, duracionMin: 120, categoria: "Uñas", descripcion: null },
+  { id: "s-esmalte", nombre: "Cambio De Esmalte", precio: 10000, duracionMin: 20, categoria: "Uñas", descripcion: null },
   { id: "s-dipping", nombre: "Dipping", precio: 60000, duracionMin: 120, categoria: "Uñas", descripcion: null },
-  { id: "s-una", nombre: "Uña", precio: 8000, duracionMin: 15, categoria: "Uñas", descripcion: null },
+  { id: "s-manospies", nombre: "Manos y Pies Semi", precio: 80000, duracionMin: 120, categoria: "Uñas", descripcion: null },
   { id: "s-pressón", nombre: "Press On", precio: 80000, duracionMin: 120, categoria: "Uñas", descripcion: null },
   { id: "s-retiro", nombre: "Retiro Semi", precio: 5000, duracionMin: 15, categoria: "Uñas", descripcion: null },
+  { id: "s-una", nombre: "Uña", precio: 8000, duracionMin: 15, categoria: "Uñas", descripcion: null },
   { id: "s-maquillajesuave", nombre: "Maquillaje Suave", precio: 60000, duracionMin: 60, categoria: "Maquillaje", descripcion: null },
   { id: "s-cejascera", nombre: "Cejas con Cera", precio: 15000, duracionMin: 10, categoria: "Cejas", descripcion: null },
 ];
@@ -60,6 +69,73 @@ describe("resolverEscenario — banco real de AMORE, sin IA en el camino determi
     assert.equal(r.modo, "catalog");
     assert.equal(r.requiereIA, false);
     assert.doesNotMatch(r.respuestaTexto ?? "", /Maquillaje Suave|Cejas con Cera/);
+  });
+
+  describe("BUG REAL (prueba de WhatsApp): categoría uñas NUNCA asume género de caballero", () => {
+    it("'Quiero arreglarme las uñas' -> excluye servicios de caballero aunque sean alfabéticamente los primeros 3", async () => {
+      const r = await resolver("Quiero arreglarme las uñas");
+      assert.doesNotMatch(r.respuestaTexto ?? "", /Caballero/i);
+      assert.match(r.respuestaTexto!, /Cambio De Esmalte|Dipping|Manos y Pies Semi/);
+    });
+
+    it("'quiero algo de caballero para las uñas' -> SÍ muestra opciones de caballero (evidencia explícita)", async () => {
+      const r = await resolver("quiero algo de caballero para las uñas");
+      assert.match(r.respuestaTexto!, /Caballero/i);
+    });
+
+    it("'hombre' también cuenta como evidencia explícita de género", async () => {
+      const r = await resolver("uñas para hombre");
+      assert.match(r.respuestaTexto!, /Caballero/i);
+    });
+  });
+
+  describe("BUG REAL (prueba de WhatsApp): 'Manos y pies' es intención COMBINADA, nunca solo 'manos' ni asume caballero", () => {
+    it("'Manos y pies' -> busca items con AMBAS palabras, excluye caballero, nunca cae a la categoría genérica de uñas", async () => {
+      const r = await resolver("Manos y pies");
+      assert.equal(r.escenarioCodigo, "029_categoria_manos_y_pies");
+      assert.match(r.respuestaTexto!, /Manos y Pies Semi/);
+      assert.doesNotMatch(r.respuestaTexto ?? "", /Caballero/i);
+    });
+
+    it("'Manos' sola (sin 'pies') sigue resolviendo como antes -- solo intención de manos", async () => {
+      const r = await resolver("quiero arreglarme las manos");
+      assert.notEqual(r.escenarioCodigo, "029_categoria_manos_y_pies");
+    });
+
+    it("'Manos y pies de caballero' -> combinado + caballero explícito", async () => {
+      const r = await resolver("manos y pies de caballero");
+      assert.equal(r.escenarioCodigo, "029_categoria_manos_y_pies");
+      assert.match(r.respuestaTexto!, /Caballero Manos y Pies/);
+    });
+  });
+
+  describe("BUG REAL (prueba de WhatsApp): referencias a la última lista de opciones mostrada", () => {
+    it("'la de 30 mil' tras una lista ambigua (2 empatadas) -> pide aclaración, nunca adivina", async () => {
+      const t1 = await resolver("quiero algo de caballero para las uñas"); // Caballero Manos Semi Y Caballero Manos y Pies, ambos $30.000
+      const t2 = await resolver("la de 30 mil", t1.contexto, 1);
+      assert.match(t2.respuestaTexto!, /dos opciones/i);
+      assert.match(t2.respuestaTexto!, /Caballero Manos Semi/);
+      assert.match(t2.respuestaTexto!, /Caballero Manos y Pies/);
+    });
+
+    it("'la segunda' resuelve por posición contra la lista real mostrada", async () => {
+      const t1 = await resolver("quiero arreglarme las uñas"); // Cambio De Esmalte, Dipping, Manos y Pies Semi (en ese orden)
+      const t2 = await resolver("la segunda", t1.contexto, 1);
+      assert.match(t2.respuestaTexto!, /Dipping/);
+      assert.match(t2.respuestaTexto!, /\$60\.000/);
+    });
+
+    it("'la más barata' resuelve por precio real, nunca arbitrario", async () => {
+      const t1 = await resolver("quiero arreglarme las uñas");
+      const t2 = await resolver("la más barata", t1.contexto, 1);
+      assert.match(t2.respuestaTexto!, /Cambio De Esmalte/);
+    });
+
+    it("'la de 2 horas' resuelve por duración cuando es inequívoco", async () => {
+      const t1 = await resolver("manos y pies"); // solo Manos y Pies Semi (2h) tras excluir caballero
+      const t2 = await resolver("la de 2 horas", t1.contexto, 1);
+      assert.match(t2.respuestaTexto!, /Manos y Pies Semi/);
+    });
   });
 
   it("Dipping: precio + duración reales, sin IA, contexto queda listo para agendar", async () => {
@@ -144,10 +220,17 @@ describe("resolverEscenario — banco real de AMORE, sin IA en el camino determi
     assert.match(r.respuestaTexto!, /8:00 a\. m\. a 8:00 p\. m\./);
   });
 
-  it("pregunta sobre algo NO configurado (ubicación): fallback honesto, nunca inventa una dirección", async () => {
+  it("pregunta de dirección (dato NO configurado): intención propia, honesta, nunca cae al fallback de catálogo ni inventa una dirección", async () => {
     const r = await resolver("cuál es la dirección del salón");
-    assert.equal(r.escenarioCodigo, "000_fallback");
+    assert.equal(r.escenarioCodigo, "084_direccion", "debe reconocer la intención de dirección como propia, nunca el fallback genérico");
     assert.doesNotMatch(r.respuestaTexto ?? "", /calle|carrera|avenida/i);
+    assert.doesNotMatch(r.respuestaTexto ?? "", /qué servicio/i, "nunca debe cambiar de tema hacia el catálogo");
+  });
+
+  it("otra información general no confirmada (redes/pagos/promociones): intención propia, honesta, nunca fallback de catálogo", async () => {
+    const r = await resolver("tienen instagram?");
+    assert.equal(r.escenarioCodigo, "090_info_general_no_disponible");
+    assert.doesNotMatch(r.respuestaTexto ?? "", /qué servicio/i);
   });
 
   it("intención de agendar SIEMPRE gana sobre 'servicio específico', aunque el mensaje nombre un servicio real", async () => {
@@ -202,10 +285,14 @@ describe("resolverEscenario — banco real de AMORE, sin IA en el camino determi
       assert.match(r.respuestaTexto!, /\$80\.000/);
     });
 
-    it("nunca inventa diferencias técnicas (materiales, resistencia, proceso) -- solo precio/duración + honestidad explícita", async () => {
+    it("nunca inventa diferencias técnicas (materiales, resistencia, proceso), y suena natural (no clínico/técnico)", async () => {
       const r = await resolver("Dipping vs Press On");
       assert.doesNotMatch(r.respuestaTexto ?? "", /resistente|material|se aplica|se retira|cuidado/i);
-      assert.match(r.respuestaTexto!, /no tengo información verificada/i);
+      // Honesto sobre la diferencia técnica, pero con lenguaje natural --
+      // nunca "información verificada"/"datos disponibles" (bug real de
+      // naturalidad encontrado en la prueba de WhatsApp).
+      assert.match(r.respuestaTexto!, /prefiero no inventar/i);
+      assert.doesNotMatch(r.respuestaTexto ?? "", /informaci[oó]n verificada|datos disponibles/i);
     });
 
     it("contexto: 'Me interesa el Dipping' + '¿Y el Press On?' -> reconoce comparación usando el contexto", async () => {

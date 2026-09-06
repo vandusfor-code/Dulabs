@@ -7,7 +7,7 @@
  */
 import { normalizeText } from "@/lib/flow-triggers/normalize-text";
 import type { ServicioCatalogoReal } from "@/lib/catalogo-servicios-flow-adaptador";
-import type { EntidadesDetectadas } from "@/lib/bot-escenarios/tipos";
+import type { EntidadesDetectadas, ReferenciaOpcionMostrada } from "@/lib/bot-escenarios/tipos";
 
 /** Vocabulario cerrado de español (función gramatical, no dato de negocio -- por eso vive en código). */
 const AFIRMACIONES_CORTAS = [
@@ -58,6 +58,78 @@ function extraerDuracionMaxMin(textoNormalizado: string): number | undefined {
       if (Number.isFinite(valor) && valor > 0) return valor;
     }
   }
+  return undefined;
+}
+
+/**
+ * Prueba real de WhatsApp (autorizado) — vocabulario cerrado de género en
+ * español para nombres de servicio (dato lingüístico genérico, reutilizable
+ * por cualquier tenant cuyo catálogo distinga "Caballero"/general -- nunca
+ * un dato de negocio de AMORE en particular, por eso vive en código).
+ * "Quiero arreglarme las uñas" NUNCA debe asumir un servicio de caballero
+ * sin evidencia explícita de género en el propio mensaje.
+ */
+const MARCADORES_GENERO_MASCULINO = ["caballero", "hombre", "masculino"];
+
+export function mencionaGeneroMasculino(mensaje: string): boolean {
+  const normalizado = normalizeText(mensaje);
+  return MARCADORES_GENERO_MASCULINO.some((m) => normalizado.includes(m));
+}
+
+/** true si el NOMBRE del servicio (dato real del catálogo) está marcado como de caballero. */
+export function esServicioDeCaballero(nombreServicio: string): boolean {
+  const normalizado = normalizeText(nombreServicio);
+  return MARCADORES_GENERO_MASCULINO.some((m) => normalizado.includes(m));
+}
+
+/**
+ * Prueba real de WhatsApp (autorizado) — referencia a UNA opción de la
+ * ÚLTIMA lista real que el bot ya mostró (ver ContextoConversacional.
+ * ultimasOpcionesIds). Vocabulario cerrado de español (ordinales/extremos),
+ * nunca dato de negocio. La resolución contra las opciones REALES vive en
+ * resolver.ts -- acá solo se reconoce QUÉ TIPO de referencia es.
+ */
+const ORDINAL_PATTERNS: Array<{ re: RegExp; posicion: number }> = [
+  { re: /\b(primera|primero)\b/, posicion: 1 },
+  { re: /\b(segunda|segundo)\b/, posicion: 2 },
+  { re: /\b(tercera|tercero)\b/, posicion: 3 },
+  { re: /\b(cuarta|cuarto)\b/, posicion: 4 },
+  { re: /\b(ultima|ultimo|anterior)\b/, posicion: -1 },
+];
+
+const EXTREMO_PATTERNS: Array<{ re: RegExp; cual: "barata" | "cara" }> = [
+  { re: /mas (barata|economica|barato|economico)/, cual: "barata" },
+  { re: /mas (cara|costosa|caro|costoso)/, cual: "cara" },
+];
+
+const REFERENCIA_PRECIO_PATTERN = /\b(?:la|el|ese|esa)\s+de\s+\$?\s*([\d.,]+)\s*(mil|k)?/;
+const REFERENCIA_DURACION_HORAS_PATTERN = /\b(?:la|el|ese|esa)\s+de\s+(\d+)\s*hora/;
+const REFERENCIA_DURACION_UNA_HORA_PATTERN = /\b(?:la|el|ese|esa)\s+de\s+una\s+hora/;
+const REFERENCIA_DURACION_MIN_PATTERN = /\b(?:la|el|ese|esa)\s+de\s+(\d+)\s*min/;
+const REFERENCIA_DEMOSTRATIVO_BARE_PATTERN = /^(esa|ese|esta|este)\b/;
+
+function extraerReferenciaOpcion(textoNormalizado: string): ReferenciaOpcionMostrada | undefined {
+  for (const { re, posicion } of ORDINAL_PATTERNS) {
+    if (re.test(textoNormalizado)) return { tipo: "ordinal", posicion };
+  }
+  for (const { re, cual } of EXTREMO_PATTERNS) {
+    if (re.test(textoNormalizado)) return { tipo: "extremo", cual };
+  }
+  // Duración ANTES que precio (autorizado, bug real encontrado en pruebas):
+  // "la de 2 horas" también matchea el patrón de precio genérico ("la de 2")
+  // si se revisa primero -- "2 horas" nunca es un precio real, así que la
+  // forma más específica (con "hora"/"min" después del número) debe ganar.
+  if (REFERENCIA_DURACION_UNA_HORA_PATTERN.test(textoNormalizado)) return { tipo: "duracion", minutos: 60 };
+  const horasMatch = textoNormalizado.match(REFERENCIA_DURACION_HORAS_PATTERN);
+  if (horasMatch) return { tipo: "duracion", minutos: Number(horasMatch[1]) * 60 };
+  const minMatch = textoNormalizado.match(REFERENCIA_DURACION_MIN_PATTERN);
+  if (minMatch) return { tipo: "duracion", minutos: Number(minMatch[1]) };
+  const precioMatch = textoNormalizado.match(REFERENCIA_PRECIO_PATTERN);
+  if (precioMatch) {
+    const monto = parseMontoCop(precioMatch[1]!, precioMatch[2]);
+    if (Number.isFinite(monto) && monto > 0) return { tipo: "precio", monto };
+  }
+  if (REFERENCIA_DEMOSTRATIVO_BARE_PATTERN.test(textoNormalizado)) return { tipo: "demostrativo" };
   return undefined;
 }
 
@@ -181,5 +253,10 @@ export function extraerEntidades(params: {
     duracionMaxMin: extraerDuracionMaxMin(textoNormalizado),
     esAfirmacionCorta: AFIRMACIONES_CORTAS.some((a) => textoNormalizado === normalizeText(a)),
     esNegacionCorta: NEGACIONES_CORTAS.some((n) => textoNormalizado === normalizeText(n)),
+    indicaGeneroMasculino: mencionaGeneroMasculino(params.mensaje),
+    // Solo tiene sentido buscar una referencia a "la lista mostrada" cuando
+    // el propio mensaje no YA nombra un servicio/categoría real -- si dice
+    // "quiero Dipping", eso gana siempre sobre cualquier lectura de "la de...".
+    referenciaOpcion: servicioUnico || serviciosDetectados.length > 0 ? undefined : extraerReferenciaOpcion(textoNormalizado),
   };
 }

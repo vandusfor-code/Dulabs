@@ -113,6 +113,30 @@ export const AMORE_ESCENARIOS_SEED: FilaSeed[] = [
 
   // --- SERVICIOS: categorías reales ----------------------------------------
   {
+    // Prueba real de WhatsApp (autorizado) — "manos y pies" es una intención
+    // COMBINADA (nunca "manos" solamente): prioridad mayor que
+    // 021_categoria_manos/022_categoria_pies para que gane cuando se
+    // mencionan ambas palabras juntas. contains_todas es genérico y
+    // reutilizable (nunca una regla especial solo para este texto) --
+    // cualquier escenario futuro puede usar el mismo mecanismo para
+    // cualquier otra combinación de palabras.
+    codigo: "029_categoria_manos_y_pies",
+    nombre: "Categoría manos y pies combinado (sub-filtro real de Uñas)",
+    modo: "catalog",
+    prioridad: 420,
+    activo: true,
+    variantes: [{ tipo: "contains_todas", valores: ["manos", "pies"] }],
+    respuestas: [
+      "Claro que sí, amiga 💗 Estas son nuestras opciones reales de manos y pies:\n\n{{opcionesTexto}}\n\n¿Cuál te gustaría?",
+      "Con gusto ✨ Estas son opciones combinadas de manos y pies:\n\n{{opcionesTexto}}\n\n¿Cuál te llama la atención?",
+    ],
+    config: {
+      filtroCategoria: "Uñas",
+      filtroNombreContieneTodas: ["Manos", "Pies"],
+      respuestaSinServicio: "Claro que sí 💗 ¿Tienes algo puntual en mente para manos y pies, o te cuento las opciones que tenemos?",
+    },
+  },
+  {
     codigo: "021_categoria_manos",
     nombre: "Categoría manos (sub-filtro real de Uñas)",
     modo: "catalog",
@@ -272,7 +296,8 @@ export const AMORE_ESCENARIOS_SEED: FilaSeed[] = [
     // los 2 nombres.
     variantes: [{ tipo: "dos_servicios_detectados" }],
     respuestas: [
-      "Te cuento ✨ El {{servicioA}} tiene un valor de {{precioTextoA}} y dura aproximadamente {{duracionTextoA}}, y el {{servicioB}} tiene un valor de {{precioTextoB}} y dura aproximadamente {{duracionTextoB}}. No tengo información verificada sobre la diferencia técnica entre ambos para explicarla sin inventar -- si me cuentas qué resultado buscas, te ayudo a elegir.",
+      "El {{servicioA}} cuesta {{precioTextoA}} y dura aproximadamente {{duracionTextoA}}, y el {{servicioB}} cuesta {{precioTextoB}} y dura aproximadamente {{duracionTextoB}} 💗 De la parte técnica entre los dos prefiero no inventarte un dato -- cuéntame qué resultado buscas y te ayudo a escoger.",
+      "Te cuento ✨ El {{servicioA}} cuesta {{precioTextoA}} (dura {{duracionTextoA}}) y el {{servicioB}} cuesta {{precioTextoB}} (dura {{duracionTextoB}}). La diferencia técnica puntual prefiero no inventarla -- si me dices qué resultado buscas, te ayudo a elegir entre los dos.",
     ],
     config: {},
   },
@@ -455,9 +480,64 @@ export const AMORE_ESCENARIOS_SEED: FilaSeed[] = [
       { tipo: "contains", valor: "a que hora abren" },
       { tipo: "contains", valor: "hasta que hora" },
       { tipo: "contains", valor: "atienden domingo" },
+      { tipo: "contains", valor: "festivo" },
     ],
     respuestas: [
       "Nuestro horario es de lunes a viernes de 8:00 a. m. a 8:00 p. m., y sábados de 9:00 a. m. a 8:00 p. m. 💗 Domingos y festivos permanecemos cerrados.",
+    ],
+    config: {},
+  },
+  {
+    // Prueba real de WhatsApp (autorizado) — antes caía al fallback de
+    // catálogo ("cuéntame qué servicio buscas"), ignorando por completo la
+    // pregunta real. Sin dato real de dirección confirmado (auditado en
+    // dulabs_clientes_config) -- honesto, nunca inventa.
+    codigo: "084_direccion",
+    nombre: "Dirección / ubicación / cómo llegar",
+    modo: "faq",
+    prioridad: 270,
+    activo: true,
+    variantes: [
+      { tipo: "contains", valor: "direccion" },
+      { tipo: "contains", valor: "ubicacion" },
+      { tipo: "contains", valor: "donde estan" },
+      { tipo: "contains", valor: "donde quedan" },
+      { tipo: "contains", valor: "como llego" },
+      { tipo: "contains", valor: "como llegar" },
+      { tipo: "contains", valor: "parqueadero" },
+    ],
+    respuestas: [
+      "Por ahora no tengo la dirección de AMORE en la información que manejo 💗 Puedo ayudarte con servicios, horarios, o dejarte en contacto con el equipo para ese dato.",
+      "Esa parte todavía no la tengo a la mano 💗 Puedo ayudarte con servicios y horarios, o comunicarte con el equipo para confirmar la ubicación.",
+    ],
+    config: {},
+  },
+  {
+    // Prueba real de WhatsApp (autorizado) — bandeja honesta para todo lo
+    // que AMORE aún no tiene registrado (redes, contacto, pagos, promos,
+    // políticas) -- nunca inventa, nunca cae al fallback de catálogo.
+    codigo: "090_info_general_no_disponible",
+    nombre: "Información general no confirmada (redes, pagos, promociones, políticas...)",
+    modo: "faq",
+    prioridad: 265,
+    activo: true,
+    variantes: [
+      { tipo: "contains", valor: "instagram" },
+      { tipo: "contains", valor: "redes sociales" },
+      { tipo: "contains", valor: "facebook" },
+      { tipo: "contains", valor: "telefono" },
+      { tipo: "contains", valor: "numero de contacto" },
+      { tipo: "contains", valor: "medios de pago" },
+      { tipo: "contains", valor: "como pago" },
+      { tipo: "contains", valor: "aceptan tarjeta" },
+      { tipo: "contains", valor: "promocion" },
+      { tipo: "contains", valor: "descuento" },
+      { tipo: "contains", valor: "paquete" },
+      { tipo: "contains", valor: "politica" },
+    ],
+    respuestas: [
+      "Por ahora no tengo ese dato en la información de AMORE 💗 Puedo ayudarte con nuestros servicios, horarios, o comunicarte con el equipo.",
+      "Esa información todavía no la tengo a la mano 💗 Puedo contarte de nuestros servicios y horarios, o dejarte en contacto con el equipo.",
     ],
     config: {},
   },

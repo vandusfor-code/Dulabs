@@ -94,4 +94,48 @@ describe("extraerEntidades — 100% determinista, sin IA", () => {
     assert.equal(extraerEntidades({ mensaje: "no", catalogo: [], sinonimosPorCategoria: SIN_SINONIMOS }).esNegacionCorta, true);
     assert.equal(extraerEntidades({ mensaje: "no sé qué hacerme", catalogo: [], sinonimosPorCategoria: SIN_SINONIMOS }).esNegacionCorta, false);
   });
+
+  describe("BUG REAL: género de servicio nunca se asume sin evidencia explícita", () => {
+    it("mensaje sin marcador de género -> indicaGeneroMasculino=false", () => {
+      assert.equal(extraerEntidades({ mensaje: "quiero arreglarme las uñas", catalogo: CATALOGO, sinonimosPorCategoria: SIN_SINONIMOS }).indicaGeneroMasculino, false);
+    });
+    it("'caballero'/'hombre'/'masculino' -> indicaGeneroMasculino=true", () => {
+      assert.equal(extraerEntidades({ mensaje: "algo de caballero", catalogo: [], sinonimosPorCategoria: SIN_SINONIMOS }).indicaGeneroMasculino, true);
+      assert.equal(extraerEntidades({ mensaje: "uñas para hombre", catalogo: [], sinonimosPorCategoria: SIN_SINONIMOS }).indicaGeneroMasculino, true);
+      assert.equal(extraerEntidades({ mensaje: "algo masculino", catalogo: [], sinonimosPorCategoria: SIN_SINONIMOS }).indicaGeneroMasculino, true);
+    });
+  });
+
+  describe("BUG REAL: referencia a opción de una lista ya mostrada (solo se calcula sin servicio/categoría propios)", () => {
+    it("'la de 30 mil' -> referencia de tipo precio", () => {
+      const r = extraerEntidades({ mensaje: "la de 30 mil", catalogo: [], sinonimosPorCategoria: SIN_SINONIMOS });
+      assert.deepEqual(r.referenciaOpcion, { tipo: "precio", monto: 30000 });
+    });
+    it("'la segunda' -> referencia ordinal, posición 2", () => {
+      const r = extraerEntidades({ mensaje: "la segunda", catalogo: [], sinonimosPorCategoria: SIN_SINONIMOS });
+      assert.deepEqual(r.referenciaOpcion, { tipo: "ordinal", posicion: 2 });
+    });
+    it("'la última' -> referencia ordinal, posición -1", () => {
+      const r = extraerEntidades({ mensaje: "la última", catalogo: [], sinonimosPorCategoria: SIN_SINONIMOS });
+      assert.deepEqual(r.referenciaOpcion, { tipo: "ordinal", posicion: -1 });
+    });
+    it("'la más barata'/'la más cara' -> referencia de tipo extremo", () => {
+      assert.deepEqual(extraerEntidades({ mensaje: "la más barata", catalogo: [], sinonimosPorCategoria: SIN_SINONIMOS }).referenciaOpcion, { tipo: "extremo", cual: "barata" });
+      assert.deepEqual(extraerEntidades({ mensaje: "la más cara", catalogo: [], sinonimosPorCategoria: SIN_SINONIMOS }).referenciaOpcion, { tipo: "extremo", cual: "cara" });
+    });
+    it("'la de 2 horas' -> referencia de duración, NUNCA se confunde con precio (bug real encontrado)", () => {
+      const r = extraerEntidades({ mensaje: "la de 2 horas", catalogo: [], sinonimosPorCategoria: SIN_SINONIMOS });
+      assert.deepEqual(r.referenciaOpcion, { tipo: "duracion", minutos: 120 });
+    });
+    it("'la de una hora' -> 60 minutos", () => {
+      assert.deepEqual(extraerEntidades({ mensaje: "la de una hora", catalogo: [], sinonimosPorCategoria: SIN_SINONIMOS }).referenciaOpcion, { tipo: "duracion", minutos: 60 });
+    });
+    it("'esa' sola -> referencia demostrativa", () => {
+      assert.deepEqual(extraerEntidades({ mensaje: "esa", catalogo: [], sinonimosPorCategoria: SIN_SINONIMOS }).referenciaOpcion, { tipo: "demostrativo" });
+    });
+    it("si el mensaje YA nombra un servicio/categoría real, nunca calcula referenciaOpcion (ese servicio gana siempre)", () => {
+      const r = extraerEntidades({ mensaje: "quiero el Dipping", catalogo: CATALOGO, sinonimosPorCategoria: SIN_SINONIMOS });
+      assert.equal(r.referenciaOpcion, undefined);
+    });
+  });
 });
