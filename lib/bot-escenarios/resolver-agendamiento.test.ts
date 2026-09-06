@@ -504,3 +504,71 @@ describe("Fecha ambigua -- nunca inventa", () => {
     assert.equal(t2.contexto.agendamiento?.servicioId, "s-dipping", "el servicio ya dado no se pierde por una fecha ambigua");
   });
 });
+
+/**
+ * Corrección (autorizada) — bug real reportado en producción: tras "Quiero
+ * una cita" -> "Quiero dipping" (dentro de un AgendamientoEnCurso ya
+ * activo), el 028_servicio_info que responde el precio deja
+ * `ultimaAccionSugerida: "ofrecer_portal"` en el contexto (comportamiento
+ * YA existente y protegido, sin cambios -- ver test B arriba). El atajo
+ * determinista de resolver.ts (pre-Fase 1) no distinguía si había un
+ * agendamiento activo: una afirmación corta ("Ok"/"Sí"/"Vale") disparaba
+ * el atajo, devolvía el link del portal, y ejecutaba contextoLimpio(),
+ * borrando por completo el AgendamientoEnCurso real -- confirmado en una
+ * prueba real de WhatsApp (Dipping, viernes). La corrección agrega
+ * `!agendamientoActivo` a la condición del atajo: mientras haya un
+ * agendamiento en curso, es SIEMPRE decidirSiguientePasoAgendamiento quien
+ * decide qué hacer con la afirmación corta, nunca este atajo más viejo.
+ */
+describe("Corrección -- el atajo 'ofrecer_portal' nunca dispara mientras hay un AgendamientoEnCurso activo", () => {
+  it("SIN AgendamientoEnCurso: 'Ok' tras un servicio puntual sigue funcionando como antes (salta al portal) -- comportamiento preexistente intacto", async () => {
+    const previo = await resolver("cuánto cuesta el dipping");
+    assert.equal(previo.contexto.agendamiento, undefined, "sin 'quiero una cita' de por medio, nunca hay agendamiento activo");
+    const r = await resolver("Ok", previo.contexto, {}, {});
+    assert.equal(r.modo, "portal");
+    assert.match(r.respuestaTexto ?? "", /dulabs\.co\/reservar\/amore/);
+  });
+
+  it("CON AgendamientoEnCurso activo: 'Ok' NO dispara el portal ni borra el agendamiento", async () => {
+    const t1 = await conversar(["quiero una cita", "quiero dipping"]);
+    assert.ok(t1.contexto.agendamiento, "precondición: agendamiento activo tras 'quiero dipping'");
+    assert.equal(t1.contexto.ultimaAccionSugerida, "ofrecer_portal", "precondición: 028_servicio_info dejó la bandera vieja activa");
+
+    const t2 = await resolver("Ok", t1.contexto);
+    assert.notEqual(t2.modo, "portal", "el atajo NUNCA debe disparar con un agendamiento activo");
+    assert.ok(t2.contexto.agendamiento, "el AgendamientoEnCurso NUNCA debe borrarse por esta afirmación corta");
+    assert.equal(t2.contexto.agendamiento?.servicioId, "s-dipping", "el servicio ya elegido se conserva intacto");
+  });
+
+  it("CON AgendamientoEnCurso activo: 'Sí' NO dispara el portal ni borra el agendamiento", async () => {
+    const t1 = await conversar(["quiero una cita", "quiero dipping"]);
+    const t2 = await resolver("Sí", t1.contexto);
+    assert.notEqual(t2.modo, "portal");
+    assert.ok(t2.contexto.agendamiento);
+    assert.equal(t2.contexto.agendamiento?.servicioId, "s-dipping");
+  });
+
+  it("CON AgendamientoEnCurso activo: 'Vale' NO dispara el portal ni borra el agendamiento", async () => {
+    const t1 = await conversar(["quiero una cita", "quiero dipping"]);
+    const t2 = await resolver("Vale", t1.contexto);
+    assert.notEqual(t2.modo, "portal");
+    assert.ok(t2.contexto.agendamiento);
+    assert.equal(t2.contexto.agendamiento?.servicioId, "s-dipping");
+  });
+
+  it("el contexto de agendamiento permanece intacto (servicio + fecha ya dados) tras la afirmación corta, incluso si el turno anterior fue un fallo real de disponibilidad", async () => {
+    // Reproduce exactamente la secuencia real de WhatsApp: servicio + fecha
+    // ya acumulados, disponibilidad falló (sin opcionesOfrecidas), y el
+    // cliente responde con una afirmación corta -- el agendamiento NUNCA
+    // debe perderse acá, sea cual sea la causa técnica del fallo previo.
+    const t1 = await conversar(["quiero una cita", "quiero dipping"]);
+    const contextoTrasFalloDisponibilidad: ContextoConversacional = {
+      ...t1.contexto,
+      agendamiento: { ...t1.contexto.agendamiento, fechaISO: VIERNES },
+    };
+    const t2 = await resolver("Ok", contextoTrasFalloDisponibilidad);
+    assert.notEqual(t2.modo, "portal");
+    assert.equal(t2.contexto.agendamiento?.servicioId, "s-dipping");
+    assert.equal(t2.contexto.agendamiento?.fechaISO, VIERNES, "la fecha ya dada tampoco se pierde");
+  });
+});

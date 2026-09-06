@@ -962,11 +962,28 @@ export async function resolverEscenario(params: {
     // deja `entidades` tal cual y el flujo normal decide (honestamente).
   }
 
+  // Corrección (autorizada, bug real "Ok" -> portal + agendamiento borrado) --
+  // `agendamientoActivo` se calcula acá (antes se calculaba más abajo,
+  // reutilizado tal cual) porque el atajo de "ofrecer_portal" de abajo
+  // también lo necesita: 028_servicio_info deja ultimaAccionSugerida=
+  // "ofrecer_portal" al informar precio/duración de un servicio puntual
+  // (comportamiento correcto, sin cambios), pero esa bandera puede seguir
+  // viva mientras un AgendamientoEnCurso de Fase 1 sigue su curso (ej. tras
+  // "Quiero dipping" dentro de un agendamiento ya iniciado). Sin esta
+  // guarda, una afirmación corta ("Ok"/"Sí"/"Vale") disparaba el atajo,
+  // devolvía el link del portal y ejecutaba contextoLimpio(), borrando el
+  // agendamiento real en curso -- causa raíz confirmada del fallback al
+  // portal reportado en la prueba real de WhatsApp.
+  const agendamientoActivo = Boolean(params.contexto.agendamiento) && !params.contexto.agendamiento?.completado;
+
   // Atajo determinista (sección 39/97): si el turno anterior ya ofreció
   // agendar un servicio puntual y esta respuesta es un "sí" corto, se salta
   // directo al portal para ESE servicio -- nunca se vuelve a evaluar como
   // "servicio específico" (que repetiría precio/duración en vez de agendar).
-  if (entidadesBase.esAfirmacionCorta && params.contexto.ultimaAccionSugerida === "ofrecer_portal") {
+  // NUNCA se dispara mientras un AgendamientoEnCurso siga activo -- ahí es
+  // AgendamientoEnCurso (decidirSiguientePasoAgendamiento) quien decide qué
+  // hacer con la afirmación corta, nunca este atajo más viejo.
+  if (entidadesBase.esAfirmacionCorta && params.contexto.ultimaAccionSugerida === "ofrecer_portal" && !agendamientoActivo) {
     const escenarioPortal = escenarios.find((e) => e.codigo === CODIGO_ESCENARIO_PORTAL);
     if (escenarioPortal) {
       const respuestaTexto = elegirYRenderizarPlantilla({
@@ -1046,7 +1063,6 @@ export async function resolverEscenario(params: {
   // permitidos (o es el propio 070_agendamiento) se le cede el turno
   // completo a decidirSiguientePasoAgendamiento.
   let agendamientoParaCarryForward = params.contexto.agendamiento;
-  const agendamientoActivo = Boolean(params.contexto.agendamiento) && !params.contexto.agendamiento?.completado;
   const esEscenarioAgendamiento = escenario.codigo === CODIGO_ESCENARIO_AGENDAMIENTO;
   if (agendamientoActivo || esEscenarioAgendamiento) {
     const cargarEspecialistas = params.deps?.cargarEspecialistas ?? cargarEspecialistasReal;
