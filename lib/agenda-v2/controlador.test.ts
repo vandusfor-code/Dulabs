@@ -5,6 +5,8 @@ import type { SesionAgendaV2 } from "@/lib/agenda-v2/sesiones";
 import type { OpcionServicioAgendaV2 } from "@/lib/agenda-v2/servicios";
 import type { OpcionCategoriaAgendaV2 } from "@/lib/agenda-v2/categorias";
 import type { OpcionProfesionalAgendaV2 } from "@/lib/agenda-v2/profesionales";
+import type { OpcionFechaAgendaV2 } from "@/lib/agenda-v2/fechas";
+import type { OpcionHoraAgendaV2 } from "@/lib/agenda-v2/horas";
 
 const OPCIONES: OpcionServicioAgendaV2[] = [
   { numero: 1, servicioId: "s-dipping-real", nombre: "Dipping", precio: 60000, duracionMin: 120 },
@@ -20,6 +22,17 @@ const CATEGORIAS: OpcionCategoriaAgendaV2[] = [
 const OPCIONES_PROFESIONAL: OpcionProfesionalAgendaV2[] = [
   { numero: 1, profesionalId: 1262, nombre: "Mary" },
   { numero: 2, profesionalId: 1265, nombre: "Jessica" },
+];
+
+const OPCIONES_FECHA: OpcionFechaAgendaV2[] = [
+  { numero: 1, fechaIso: "2026-09-08", etiqueta: "Martes 8 de septiembre" },
+  { numero: 2, fechaIso: "2026-09-09", etiqueta: "Miércoles 9 de septiembre" },
+];
+
+const OPCIONES_HORA: OpcionHoraAgendaV2[] = [
+  { numero: 1, fechaIso: "2026-09-08", hora: "09:00" },
+  { numero: 2, fechaIso: "2026-09-08", hora: "10:30" },
+  { numero: 3, fechaIso: "2026-09-08", hora: "14:00" },
 ];
 
 function sesionEnServicio(overrides: Partial<SesionAgendaV2> = {}): SesionAgendaV2 {
@@ -176,21 +189,14 @@ describe("FASE 3 (autorizado) -- manejarMensajeAgendaV2 en S2_PROFESIONAL", () =
     });
   }
 
-  it("Test 3/7: '1' resuelve contra las opciones reales guardadas -- guarda un profesional_id REAL y avanza a S3_DIA", () => {
+  it("Test 3/7: '1' resuelve contra las opciones reales guardadas -- devuelve accion:'profesional_seleccionado' con el profesional_id REAL (router.ts arma el menú de días, ver FASE 4)", () => {
     const r = manejarMensajeAgendaV2(sesionEnProfesional(), "1");
-    assert.equal(r.accion, "continuar");
-    assert.equal(r.respuesta, "Profesional seleccionado correctamente.");
-    if (r.accion !== "continuar") return;
-    assert.equal(r.cambios?.step, "S3_DIA");
-    assert.equal(r.cambios?.profesionalId, 1262);
-    assert.equal(r.cambios?.opcionesMostradas, null, "Test 8: las opciones de profesional ya no corresponden al paso siguiente");
+    assert.deepEqual(r, { accion: "profesional_seleccionado", profesionalId: 1262 });
   });
 
   it("otra opción también resuelve correctamente (nunca asume que sigue siendo la posición 1)", () => {
     const r = manejarMensajeAgendaV2(sesionEnProfesional(), "2");
-    assert.equal(r.accion, "continuar");
-    if (r.accion !== "continuar") return;
-    assert.equal(r.cambios?.profesionalId, 1265);
+    assert.deepEqual(r, { accion: "profesional_seleccionado", profesionalId: 1265 });
   });
 
   it("Test 4: número inválido (fuera de rango) -- permanece en S2_PROFESIONAL, sin cambios de profesional", () => {
@@ -243,12 +249,155 @@ describe("FASE 3 (autorizado) -- manejarMensajeAgendaV2 en S2_PROFESIONAL", () =
   });
 });
 
-describe("Pasos posteriores a S2_PROFESIONAL -- todavía sin implementar (fases futuras)", () => {
-  it("cualquier mensaje en S3_DIA recibe el placeholder, sin tocar profesionalId ni step", () => {
-    const sesion = sesionEnServicio({
+describe("FASE 4 (autorizado) -- manejarMensajeAgendaV2 en S3_DIA", () => {
+  function sesionEnFecha(overrides: Partial<SesionAgendaV2> = {}): SesionAgendaV2 {
+    return sesionEnServicio({
       step: "S3_DIA",
       servicioId: "s-cejas-cuchilla-real",
       profesionalId: 1262,
+      opcionesMostradas: OPCIONES_FECHA,
+      ...overrides,
+    });
+  }
+
+  it("Test 9: '1' resuelve contra las opciones reales guardadas -- devuelve accion:'fecha_seleccionada' con la fecha real (router.ts arma el menú de horas, ver FASE 5)", () => {
+    const r = manejarMensajeAgendaV2(sesionEnFecha(), "1");
+    assert.deepEqual(r, { accion: "fecha_seleccionada", fechaIso: "2026-09-08" });
+  });
+
+  it("otra opción también resuelve correctamente (nunca asume que sigue siendo la posición 1)", () => {
+    const r = manejarMensajeAgendaV2(sesionEnFecha(), "2");
+    assert.deepEqual(r, { accion: "fecha_seleccionada", fechaIso: "2026-09-09" });
+  });
+
+  it("Test 10: número inválido (fuera de rango) -- permanece en S3_DIA, sin cambiar fechaIso ni step", () => {
+    const r = manejarMensajeAgendaV2(sesionEnFecha(), "999");
+    assert.equal(r.accion, "continuar");
+    if (r.accion !== "continuar") return;
+    assert.equal(r.cambios, undefined);
+    assert.match(r.respuesta, /No reconocí esa opción/);
+    assert.match(r.respuesta, /1\. Martes 8 de septiembre/, "vuelve a mostrar las mismas opciones reales");
+  });
+
+  it("Test 10: texto ambiguo/no numérico ('el sábado', 'mañana') -- permanece en S3_DIA, nunca lo interpreta como fecha", () => {
+    for (const mensaje of ["hola", "el sábado", "mañana", "no sé"]) {
+      const r = manejarMensajeAgendaV2(sesionEnFecha(), mensaje);
+      assert.equal(r.accion, "continuar", `"${mensaje}" nunca debe cerrar la sesión`);
+      if (r.accion !== "continuar") continue;
+      assert.equal(r.cambios, undefined, `"${mensaje}" nunca debe avanzar el step`);
+      assert.match(r.respuesta, /No reconocí esa opción/, `"${mensaje}" debe repetir el menú, nunca aproximar`);
+    }
+  });
+
+  it("Test 23: la opción reenviada tras un error corresponde EXACTAMENTE a las opciones guardadas en la sesión", () => {
+    const r = manejarMensajeAgendaV2(sesionEnFecha(), "no sé");
+    assert.equal(r.accion, "continuar");
+    if (r.accion !== "continuar") return;
+    for (const o of OPCIONES_FECHA) {
+      assert.match(r.respuesta, new RegExp(`${o.numero}\\. ${o.etiqueta}`));
+    }
+  });
+
+  it("'cancelar' cierra la sesión también estando en S3_DIA", () => {
+    const r = manejarMensajeAgendaV2(sesionEnFecha(), "cancelar");
+    assert.equal(r.accion, "cerrar_sesion");
+  });
+
+  it("Test 19: 'cumpleaños' (coincide con un escenario del Flow Engine) -- se trata como selección inválida, nunca invoca Flow Engine", () => {
+    const r = manejarMensajeAgendaV2(sesionEnFecha(), "cumpleaños");
+    assert.equal(r.accion, "continuar");
+    if (r.accion !== "continuar") return;
+    assert.match(r.respuesta, /No reconocí esa opción/);
+    assert.equal(r.cambios, undefined);
+  });
+
+  it("defensivo: sesión en S3_DIA sin opciones guardadas -- nunca inventa, pide reiniciar", () => {
+    const r = manejarMensajeAgendaV2(sesionEnFecha({ opcionesMostradas: null }), "1");
+    assert.equal(r.accion, "continuar");
+    if (r.accion !== "continuar") return;
+    assert.equal(r.cambios, undefined);
+    assert.match(r.respuesta, /Se perdió el menú/);
+  });
+});
+
+describe("FASE 5 (autorizado) -- manejarMensajeAgendaV2 en S4_HORA", () => {
+  function sesionEnHora(overrides: Partial<SesionAgendaV2> = {}): SesionAgendaV2 {
+    return sesionEnServicio({
+      step: "S4_HORA",
+      servicioId: "s-cejas-cuchilla-real",
+      profesionalId: 1262,
+      fechaIso: "2026-09-08",
+      opcionesMostradas: OPCIONES_HORA,
+      ...overrides,
+    });
+  }
+
+  it("Test 16/17: '1' resuelve contra las opciones reales guardadas -- guarda el slot elegido y avanza a S5_CONFIRMAR", () => {
+    const r = manejarMensajeAgendaV2(sesionEnHora(), "1");
+    assert.equal(r.accion, "continuar");
+    assert.equal(r.respuesta, "Horario seleccionado correctamente.");
+    if (r.accion !== "continuar") return;
+    assert.equal(r.cambios?.step, "S5_CONFIRMAR");
+    assert.deepEqual(r.cambios?.slotSeleccionado, { fechaIso: "2026-09-08", hora: "09:00" });
+    assert.equal(r.cambios?.opcionesMostradas, null, "las opciones de hora ya no corresponden al paso siguiente");
+  });
+
+  it("otra opción también resuelve correctamente (nunca asume que sigue siendo la posición 1)", () => {
+    const r = manejarMensajeAgendaV2(sesionEnHora(), "3");
+    assert.equal(r.accion, "continuar");
+    if (r.accion !== "continuar") return;
+    assert.deepEqual(r.cambios?.slotSeleccionado, { fechaIso: "2026-09-08", hora: "14:00" });
+  });
+
+  it("Test 17: número inválido (fuera de rango) -- permanece en S4_HORA, sin guardar ningún slot", () => {
+    const r = manejarMensajeAgendaV2(sesionEnHora(), "999");
+    assert.equal(r.accion, "continuar");
+    if (r.accion !== "continuar") return;
+    assert.equal(r.cambios, undefined);
+    assert.match(r.respuesta, /No reconocí esa opción/);
+    assert.match(r.respuesta, /1\. 9:00 a\. m\./, "vuelve a mostrar las mismas opciones reales");
+  });
+
+  it("Test 17: texto ambiguo/no numérico -- permanece en S4_HORA", () => {
+    for (const mensaje of ["hola", "9 am", "la de las 2", "no sé"]) {
+      const r = manejarMensajeAgendaV2(sesionEnHora(), mensaje);
+      assert.equal(r.accion, "continuar", `"${mensaje}" nunca debe cerrar la sesión`);
+      if (r.accion !== "continuar") continue;
+      assert.equal(r.cambios, undefined, `"${mensaje}" nunca debe avanzar el step`);
+      assert.match(r.respuesta, /No reconocí esa opción/, `"${mensaje}" debe repetir el menú, nunca aproximar`);
+    }
+  });
+
+  it("'cancelar' cierra la sesión también estando en S4_HORA", () => {
+    const r = manejarMensajeAgendaV2(sesionEnHora(), "cancelar");
+    assert.equal(r.accion, "cerrar_sesion");
+  });
+
+  it("Test 20: 'cumpleaños' (coincide con un escenario del Flow Engine) -- se trata como selección inválida, nunca invoca Flow Engine", () => {
+    const r = manejarMensajeAgendaV2(sesionEnHora(), "cumpleaños");
+    assert.equal(r.accion, "continuar");
+    if (r.accion !== "continuar") return;
+    assert.match(r.respuesta, /No reconocí esa opción/);
+    assert.equal(r.cambios, undefined);
+  });
+
+  it("defensivo: sesión en S4_HORA sin opciones guardadas -- nunca inventa, pide reiniciar", () => {
+    const r = manejarMensajeAgendaV2(sesionEnHora({ opcionesMostradas: null }), "1");
+    assert.equal(r.accion, "continuar");
+    if (r.accion !== "continuar") return;
+    assert.equal(r.cambios, undefined);
+    assert.match(r.respuesta, /Se perdió el menú/);
+  });
+});
+
+describe("Pasos posteriores a S4_HORA -- todavía sin implementar (fases futuras)", () => {
+  it("cualquier mensaje en S5_CONFIRMAR recibe el placeholder, sin tocar slotSeleccionado ni step", () => {
+    const sesion = sesionEnServicio({
+      step: "S5_CONFIRMAR",
+      servicioId: "s-cejas-cuchilla-real",
+      profesionalId: 1262,
+      fechaIso: "2026-09-08",
+      slotSeleccionado: { fechaIso: "2026-09-08", hora: "09:00" },
       opcionesMostradas: null,
     });
     for (const mensaje of ["1", "cualquier cosa", "cumpleaños"]) {

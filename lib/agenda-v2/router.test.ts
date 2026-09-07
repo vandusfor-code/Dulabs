@@ -29,6 +29,8 @@ import type { EspecialistaElegible } from "@/lib/asignacion-categoria";
 import { construirOpcionesServicio } from "@/lib/agenda-v2/servicios";
 import { construirOpcionesCategoria } from "@/lib/agenda-v2/categorias";
 import { construirOpcionesProfesional } from "@/lib/agenda-v2/profesionales";
+import { construirOpcionesFecha } from "@/lib/agenda-v2/fechas";
+import { construirOpcionesHora } from "@/lib/agenda-v2/horas";
 
 const FAKE_SUPABASE = {} as SupabaseClient;
 
@@ -59,6 +61,35 @@ const ESPECIALISTAS_POR_SERVICIO: Record<string, EspecialistaElegible[]> = {
 
 async function resolverEspecialistasFixture(_s: unknown, _idTenant: string, servicioId: string) {
   return { modo: "explicita" as const, especialistas: ESPECIALISTAS_POR_SERVICIO[servicioId] ?? [] };
+}
+
+/**
+ * FASE 4/5 (autorizado) -- fixtures de disponibilidad real. Mary/Cristal/Nata
+ * tienen días reales disponibles; Jessica se deja deliberadamente SIN
+ * ninguno para poder probar el caso "sin días disponibles" sin inventar un
+ * profesional nuevo (mismo criterio que "s-retoques-real" sin elegibles en
+ * la Fase 3). "2026-09-08"/"2026-09-09" son martes/miércoles reales.
+ */
+const DIAS_POR_PROFESIONAL_FIXTURE: Record<number, string[]> = {
+  1262: ["2026-09-08", "2026-09-09"], // Mary
+  1263: ["2026-09-08"], // Cristal
+  1264: ["2026-09-08", "2026-09-09"], // Nata
+  1265: [], // Jessica -- SIN días disponibles
+};
+
+async function calcularDiasCandidatosFixture(_s: unknown, params: { profesionalId: number }) {
+  return { ok: true as const, opciones: construirOpcionesFecha(DIAS_POR_PROFESIONAL_FIXTURE[params.profesionalId] ?? []) };
+}
+
+const HORAS_POR_FECHA_FIXTURE: Record<string, string[]> = {
+  "2026-09-08": ["09:00", "10:30", "14:00"],
+  "2026-09-09": ["11:00"],
+};
+
+async function calcularHorariosFechaFixture(_s: unknown, params: { fechaIso: string }) {
+  const horarios = HORAS_POR_FECHA_FIXTURE[params.fechaIso] ?? [];
+  if (horarios.length === 0) return { ok: false as const, motivo: "sin_horarios_ese_dia" as const };
+  return { ok: true as const, horarios };
 }
 
 function escenariosDe(tenantId: string): EscenarioRow[] {
@@ -133,6 +164,13 @@ async function cargarEscenariosNuncaDebeLlamarse(): Promise<EscenarioRow[]> {
   throw new Error("cargarEscenariosReal NO debía llamarse -- había una sesión activa de Agenda V2");
 }
 
+/** Lleva la sesión hasta el menú real de profesionales para Dipping (Uñas) -- Mary, Cristal, Nata, Jessica. Nivel de módulo -- reutilizada por las FASES 3, 4 y 5. */
+async function llegarAMenuProfesionalDipping(deps: AgendaV2RouterDeps, telefono = "573148127388") {
+  await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono, texto: "quiero una cita", wamid: "w1" }, deps);
+  await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono, texto: NUMERO_CATEGORIA_UNAS, wamid: "w2" }, deps);
+  await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono, texto: "1", wamid: "w3" }, deps); // Dipping
+}
+
 function armarDeps(overrides: Partial<AgendaV2RouterDeps> = {}): {
   deps: AgendaV2RouterDeps;
   sesiones: ReturnType<typeof crearFakeSesiones>;
@@ -152,6 +190,8 @@ function armarDeps(overrides: Partial<AgendaV2RouterDeps> = {}): {
     cargarEscenariosReal: async (_s, tenantId) => escenariosDe(tenantId),
     cargarCatalogoReal: async () => CATALOGO_FIXTURE,
     resolverEspecialistas: resolverEspecialistasFixture,
+    calcularDiasCandidatos: calcularDiasCandidatosFixture,
+    calcularHorariosFecha: calcularHorariosFechaFixture,
     enviarMensajeWhatsApp: envios.enviarMensajeWhatsApp,
     ...overrides,
   };
@@ -684,13 +724,6 @@ describe("Ajuste de UX (autorizado) -- menú jerárquico categoría -> servicio"
 });
 
 describe("FASE 3 (autorizado) -- selección de profesional vía router real", () => {
-  /** Lleva la sesión hasta el menú real de profesionales para Dipping (Uñas) -- Mary, Cristal, Nata, Jessica. */
-  async function llegarAMenuProfesionalDipping(deps: AgendaV2RouterDeps, telefono = "573148127388") {
-    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono, texto: "quiero una cita", wamid: "w1" }, deps);
-    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono, texto: NUMERO_CATEGORIA_UNAS, wamid: "w2" }, deps);
-    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono, texto: "1", wamid: "w3" }, deps); // Dipping
-  }
-
   it("Test 1: una sesión en S2_PROFESIONAL con servicio_id real obtiene los profesionales elegibles reales", async () => {
     const { deps, sesiones } = armarDeps();
     await llegarAMenuProfesionalDipping(deps);
@@ -709,7 +742,7 @@ describe("FASE 3 (autorizado) -- selección de profesional vía router real", ()
     assert.doesNotMatch(envios.enviados[2]!.mensaje, /Cristal|Nata/, "Cristal y Nata solo atienden Uñas -- nunca deben aparecer para un servicio de Cabello");
   });
 
-  it("Test 3/6/7: la opción '1' guarda el profesional_id correcto y avanza a S3_DIA", async () => {
+  it("Test 3/6/7: la opción '1' guarda el profesional_id correcto y avanza a S3_DIA con el menú REAL de días candidatos de ESE profesional (FASE 4)", async () => {
     const { deps, sesiones, envios } = armarDeps();
     await llegarAMenuProfesionalDipping(deps);
     const r = await procesarMensajeConAgendaV2(
@@ -719,17 +752,20 @@ describe("FASE 3 (autorizado) -- selección de profesional vía router real", ()
     assert.equal(r.manejado, true);
     assert.equal(sesiones.filas[0]!.step, "S3_DIA");
     assert.equal(sesiones.filas[0]!.profesionalId, 1262, "1 = Mary en el menú real de Dipping");
-    assert.equal(envios.enviados[3]!.mensaje, "Profesional seleccionado correctamente.");
+    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, construirOpcionesFecha(DIAS_POR_PROFESIONAL_FIXTURE[1262]!));
+    assert.match(envios.enviados[3]!.mensaje, /¿Qué día deseas agendar\?/);
   });
 
-  it("Test 8: opciones_mostradas se limpia después de seleccionar un profesional", async () => {
+  it("Test 8: opciones_mostradas pasa de profesionales a los DÍAS reales de ese profesional (FASE 4) -- nunca conserva las opciones del paso anterior", async () => {
     const { deps, sesiones } = armarDeps();
     await llegarAMenuProfesionalDipping(deps);
     await procesarMensajeConAgendaV2(
       { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "w4" },
       deps,
     );
-    assert.equal(sesiones.filas[0]!.opcionesMostradas, null);
+    const opciones = sesiones.filas[0]!.opcionesMostradas as { nombre?: string }[];
+    assert.ok(!opciones.some((o) => o.nombre === "Mary"), "ya no deben quedar opciones de profesional, solo de fecha");
+    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, construirOpcionesFecha(["2026-09-08", "2026-09-09"]));
   });
 
   it("otra opción también resuelve correctamente (nunca asume que sigue siendo la posición 1) -- '3' guarda a Nata", async () => {
@@ -882,5 +918,269 @@ describe("FASE 3 (autorizado) -- selección de profesional vía router real", ()
     assert.match(envios.enviados[2]!.mensaje, /¿Con quién deseas realizarte el servicio\?/);
     assert.equal(sesiones.filas[0]!.step, "S2_PROFESIONAL");
     assert.equal(sesiones.filas[0]!.servicioId, "s-dipping-real");
+  });
+});
+
+describe("FASE 4 (autorizado) -- selección de fecha vía router real", () => {
+  /** Lleva la sesión hasta S3_DIA con el menú real de días de Mary para Dipping. */
+  async function llegarAMenuFechaMary(deps: AgendaV2RouterDeps, telefono = "573148127388") {
+    await llegarAMenuProfesionalDipping(deps, telefono);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono, texto: "1", wamid: "w4" }, deps); // Mary
+  }
+
+  it("Test 1/6: sesión en S3_DIA con servicio+profesional reales obtiene los días candidatos REALES de ESE profesional", async () => {
+    const { deps, sesiones } = armarDeps();
+    await llegarAMenuFechaMary(deps);
+    assert.equal(sesiones.filas[0]!.step, "S3_DIA");
+    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, construirOpcionesFecha(DIAS_POR_PROFESIONAL_FIXTURE[1262]!));
+  });
+
+  it("Test 9: '1' guarda la fecha_iso correcta y avanza a S4_HORA con el menú REAL de horas de esa fecha (FASE 5)", async () => {
+    const { deps, sesiones, envios } = armarDeps();
+    await llegarAMenuFechaMary(deps);
+    const r = await procesarMensajeConAgendaV2(
+      { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "w5" },
+      deps,
+    );
+    assert.equal(r.manejado, true);
+    assert.equal(sesiones.filas[0]!.step, "S4_HORA");
+    assert.equal(sesiones.filas[0]!.fechaIso, "2026-09-08");
+    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, construirOpcionesHora("2026-09-08", HORAS_POR_FECHA_FIXTURE["2026-09-08"]!));
+    assert.match(envios.enviados[4]!.mensaje, /Estos son los horarios disponibles/);
+  });
+
+  it("Test 10: número inválido (fuera de rango) en S3_DIA no cambia el estado", async () => {
+    const { deps, sesiones, envios } = armarDeps();
+    await llegarAMenuFechaMary(deps);
+    const r = await procesarMensajeConAgendaV2(
+      { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "999", wamid: "w5" },
+      deps,
+    );
+    assert.equal(r.manejado, true);
+    assert.equal(sesiones.filas[0]!.step, "S3_DIA");
+    assert.equal(sesiones.filas[0]!.fechaIso, null);
+    assert.match(envios.enviados[4]!.mensaje, /No reconocí esa opción/);
+  });
+
+  it("Test 10: texto ambiguo ('el sábado'/'mañana') en S3_DIA no cambia el estado -- nunca se interpreta como fecha", async () => {
+    const { deps, sesiones, envios } = armarDeps();
+    await llegarAMenuFechaMary(deps);
+    for (const [i, mensaje] of ["hola", "el sábado", "mañana"].entries()) {
+      const r = await procesarMensajeConAgendaV2(
+        { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: mensaje, wamid: `w-inv-${i}` },
+        deps,
+      );
+      assert.equal(r.manejado, true);
+      assert.equal(sesiones.filas[0]!.step, "S3_DIA", `"${mensaje}" no debía avanzar el step`);
+      assert.equal(sesiones.filas[0]!.fechaIso, null, `"${mensaje}" no debía fijar ninguna fecha`);
+    }
+    assert.match(envios.enviados.at(-1)!.mensaje, /No reconocí esa opción/);
+  });
+
+  it("Test 7: sin días disponibles (Jessica) -- NUNCA avanza a S3_DIA, revierte a S2_PROFESIONAL mostrando profesionales reales de nuevo", async () => {
+    const { deps, sesiones, envios } = armarDeps();
+    await llegarAMenuProfesionalDipping(deps);
+    const r = await procesarMensajeConAgendaV2(
+      { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "4", wamid: "w4" }, // Jessica -- sin días en el fixture
+      deps,
+    );
+    assert.equal(r.manejado, true);
+    assert.equal(sesiones.filas[0]!.step, "S2_PROFESIONAL", "nunca avanza a S3_DIA sin días candidatos reales");
+    assert.equal(sesiones.filas[0]!.profesionalId, null, "nunca guarda un profesional sin días disponibles");
+    assert.deepEqual(
+      sesiones.filas[0]!.opcionesMostradas,
+      construirOpcionesProfesional(ESPECIALISTAS_POR_SERVICIO["s-dipping-real"]!),
+      "vuelve a mostrar los profesionales reales, nunca deja la sesión inconsistente",
+    );
+    assert.match(envios.enviados[3]!.mensaje, /No encontramos días disponibles/);
+  });
+
+  it("Test 19: 'cumpleaños' (coincide con un escenario del Flow Engine) en S3_DIA -- se trata como selección inválida, NUNCA invoca Flow Engine", async () => {
+    const { deps, sesiones, envios } = armarDeps({ cargarEscenariosReal: cargarEscenariosNuncaDebeLlamarse });
+    await sesiones.crearSesion(FAKE_SUPABASE, {
+      tenantId: "amore-test",
+      telefonoCliente: "573148127388",
+      wamid: "w0",
+      opcionesMostradas: construirOpcionesFecha(["2026-09-08", "2026-09-09"]),
+    });
+    await sesiones.actualizarSesion(FAKE_SUPABASE, sesiones.filas[0]!.id, { step: "S3_DIA", servicioId: "s-dipping-real", profesionalId: 1262 });
+
+    const r = await procesarMensajeConAgendaV2(
+      { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "cumpleaños", wamid: "w1" },
+      deps,
+    );
+    assert.equal(r.manejado, true, "no lanzó -- nunca llegó a cargarEscenariosReal/Flow Engine");
+    assert.match(envios.enviados[0]!.mensaje, /No reconocí esa opción/);
+    assert.equal(sesiones.filas[0]!.step, "S3_DIA", "cumpleaños nunca debe avanzar el step");
+  });
+
+  it("'cancelar' cierra la sesión también estando en S3_DIA", async () => {
+    const { deps, sesiones } = armarDeps();
+    await llegarAMenuFechaMary(deps);
+    const r = await procesarMensajeConAgendaV2(
+      { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "cancelar", wamid: "w5" },
+      deps,
+    );
+    assert.equal(r.manejado, true);
+    assert.equal(sesiones.filas[0]!.activo, false);
+  });
+});
+
+describe("FASE 5 (autorizado) -- selección de hora vía router real", () => {
+  async function llegarAMenuFechaMary(deps: AgendaV2RouterDeps, telefono = "573148127388") {
+    await llegarAMenuProfesionalDipping(deps, telefono);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono, texto: "1", wamid: "w4" }, deps); // Mary
+  }
+  /** Lleva la sesión hasta S4_HORA con el menú real de horas del 2026-09-08. */
+  async function llegarAMenuHora(deps: AgendaV2RouterDeps, telefono = "573148127388") {
+    await llegarAMenuFechaMary(deps, telefono);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono, texto: "1", wamid: "w5" }, deps); // 2026-09-08
+  }
+
+  it("Test 11: sesión en S4_HORA con fecha real obtiene los horarios REALES de esa fecha", async () => {
+    const { deps, sesiones } = armarDeps();
+    await llegarAMenuHora(deps);
+    assert.equal(sesiones.filas[0]!.step, "S4_HORA");
+    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, construirOpcionesHora("2026-09-08", HORAS_POR_FECHA_FIXTURE["2026-09-08"]!));
+  });
+
+  it("Test 16/17: '1' guarda el slot elegido (fecha+hora reales) y avanza a S5_CONFIRMAR -- responde el texto pedido, sin construir ningún menú nuevo", async () => {
+    const { deps, sesiones, envios } = armarDeps();
+    await llegarAMenuHora(deps);
+    const r = await procesarMensajeConAgendaV2(
+      { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "w6" },
+      deps,
+    );
+    assert.equal(r.manejado, true);
+    assert.equal(sesiones.filas[0]!.step, "S5_CONFIRMAR");
+    assert.deepEqual(sesiones.filas[0]!.slotSeleccionado, { fechaIso: "2026-09-08", hora: "09:00" });
+    assert.equal(sesiones.filas[0]!.opcionesMostradas, null);
+    assert.equal(envios.enviados[5]!.mensaje, "Horario seleccionado correctamente.");
+  });
+
+  it("otra opción también resuelve correctamente (nunca asume que sigue siendo la posición 1)", async () => {
+    const { deps, sesiones } = armarDeps();
+    await llegarAMenuHora(deps);
+    await procesarMensajeConAgendaV2(
+      { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "3", wamid: "w6" },
+      deps,
+    );
+    assert.deepEqual(sesiones.filas[0]!.slotSeleccionado, { fechaIso: "2026-09-08", hora: "14:00" });
+  });
+
+  it("Test 17: número inválido (fuera de rango) en S4_HORA no cambia el estado", async () => {
+    const { deps, sesiones, envios } = armarDeps();
+    await llegarAMenuHora(deps);
+    const r = await procesarMensajeConAgendaV2(
+      { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "999", wamid: "w6" },
+      deps,
+    );
+    assert.equal(r.manejado, true);
+    assert.equal(sesiones.filas[0]!.step, "S4_HORA");
+    assert.equal(sesiones.filas[0]!.slotSeleccionado, null);
+    assert.match(envios.enviados[5]!.mensaje, /No reconocí esa opción/);
+  });
+
+  it("Test 18: la fecha dejó de tener horarios reales justo antes de confirmarla -- protección: NUNCA crea nada, vuelve a S3_DIA con días recalculados", async () => {
+    const horasVacias = async () => ({ ok: false as const, motivo: "sin_horarios_ese_dia" as const });
+    const { deps, sesiones, envios } = armarDeps({ calcularHorariosFecha: horasVacias });
+    await llegarAMenuFechaMary(deps); // llega a S3_DIA con días reales (usa el calcularDiasCandidatos normal del fixture)
+    const r = await procesarMensajeConAgendaV2(
+      { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "w5" },
+      deps,
+    );
+    assert.equal(r.manejado, true);
+    assert.equal(sesiones.filas[0]!.step, "S3_DIA", "nunca avanza a S4_HORA sin horarios reales");
+    assert.equal(sesiones.filas[0]!.fechaIso, null);
+    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, construirOpcionesFecha(DIAS_POR_PROFESIONAL_FIXTURE[1262]!), "recalcula y vuelve a mostrar días reales actualizados");
+    assert.match(envios.enviados[4]!.mensaje, /ya no tiene horarios disponibles/);
+  });
+
+  it("Test 20: 'cumpleaños' (coincide con un escenario del Flow Engine) en S4_HORA -- se trata como selección inválida, NUNCA invoca Flow Engine", async () => {
+    const { deps, sesiones, envios } = armarDeps({ cargarEscenariosReal: cargarEscenariosNuncaDebeLlamarse });
+    await sesiones.crearSesion(FAKE_SUPABASE, {
+      tenantId: "amore-test",
+      telefonoCliente: "573148127388",
+      wamid: "w0",
+      opcionesMostradas: construirOpcionesHora("2026-09-08", ["09:00", "10:30"]),
+    });
+    await sesiones.actualizarSesion(FAKE_SUPABASE, sesiones.filas[0]!.id, {
+      step: "S4_HORA",
+      servicioId: "s-dipping-real",
+      profesionalId: 1262,
+      fechaIso: "2026-09-08",
+    });
+
+    const r = await procesarMensajeConAgendaV2(
+      { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "cumpleaños", wamid: "w1" },
+      deps,
+    );
+    assert.equal(r.manejado, true, "no lanzó -- nunca llegó a cargarEscenariosReal/Flow Engine");
+    assert.match(envios.enviados[0]!.mensaje, /No reconocí esa opción/);
+    assert.equal(sesiones.filas[0]!.step, "S4_HORA", "cumpleaños nunca debe avanzar el step");
+  });
+
+  it("Test 21: aislamiento por tenant -- dos tenants avanzan de forma completamente independiente hasta S5_CONFIRMAR", async () => {
+    const { deps, sesiones } = armarDeps();
+    const TELEFONO = "573148127388";
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "tenant-a", telefono: TELEFONO, texto: "quiero una cita", wamid: "wA1" }, deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "tenant-b", telefono: TELEFONO, texto: "quiero una cita", wamid: "wB1" }, deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "tenant-a", telefono: TELEFONO, texto: NUMERO_CATEGORIA_UNAS, wamid: "wA2" }, deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "tenant-b", telefono: TELEFONO, texto: NUMERO_CATEGORIA_UNAS, wamid: "wB2" }, deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "tenant-a", telefono: TELEFONO, texto: "1", wamid: "wA3" }, deps); // Dipping
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "tenant-b", telefono: TELEFONO, texto: "1", wamid: "wB3" }, deps); // Dipping
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "tenant-a", telefono: TELEFONO, texto: "1", wamid: "wA4" }, deps); // Mary
+    // tenant-b se queda en S2_PROFESIONAL a propósito -- nunca debe avanzar por las acciones de tenant-a.
+
+    const filaA = sesiones.filas.find((f) => f.tenantId === "tenant-a")!;
+    const filaB = sesiones.filas.find((f) => f.tenantId === "tenant-b")!;
+    assert.equal(filaA.step, "S3_DIA");
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "tenant-a", telefono: TELEFONO, texto: "1", wamid: "wA5" }, deps); // 2026-09-08
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "tenant-a", telefono: TELEFONO, texto: "1", wamid: "wA6" }, deps); // 09:00
+    assert.equal(filaA.step, "S5_CONFIRMAR");
+    assert.equal(filaB.step, "S2_PROFESIONAL", "tenant-b nunca avanza por ninguna acción de tenant-a");
+  });
+
+  it("Test 22: aislamiento por teléfono/sesión -- dos teléfonos del mismo tenant avanzan de forma independiente hasta S5_CONFIRMAR", async () => {
+    const { deps, sesiones } = armarDeps();
+    await llegarAMenuHora(deps, "573148127388");
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573000000000", texto: "quiero una cita", wamid: "wB1" }, deps);
+
+    await procesarMensajeConAgendaV2(
+      { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "w6" },
+      deps,
+    );
+    const filaA = sesiones.filas.find((f) => f.telefonoCliente === "573148127388")!;
+    const filaB = sesiones.filas.find((f) => f.telefonoCliente === "573000000000")!;
+    assert.equal(filaA.step, "S5_CONFIRMAR");
+    assert.equal(filaB.step, "S1_SERVICIO", "B nunca avanza por una acción de A");
+  });
+
+  it("Test 23: opciones_mostradas coincide EXACTAMENTE con lo enviado en el menú de horas", async () => {
+    const { deps, sesiones, envios } = armarDeps();
+    await llegarAMenuHora(deps);
+    const opcionesGuardadas = sesiones.filas[0]!.opcionesMostradas as ReturnType<typeof construirOpcionesHora>;
+    for (const o of opcionesGuardadas) {
+      assert.match(envios.enviados[4]!.mensaje, new RegExp(`${o.numero}\\.`));
+    }
+    assert.equal(opcionesGuardadas.length, 3);
+  });
+
+  it("Test 24: regresión -- Fases 1-3 siguen funcionando y ahora fluyen correctamente hasta el menú de horas, punta a punta", async () => {
+    const { deps, sesiones, envios } = armarDeps();
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "quiero una cita", wamid: "w1" }, deps);
+    assert.match(envios.enviados[0]!.mensaje, /¿Qué tipo de servicio te gustaría agendar\?/);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: NUMERO_CATEGORIA_UNAS, wamid: "w2" }, deps);
+    assert.match(envios.enviados[1]!.mensaje, /¿Qué servicio deseas realizarte\?/);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "w3" }, deps);
+    assert.match(envios.enviados[2]!.mensaje, /¿Con quién deseas realizarte el servicio\?/);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "w4" }, deps);
+    assert.match(envios.enviados[3]!.mensaje, /¿Qué día deseas agendar\?/);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "w5" }, deps);
+    assert.match(envios.enviados[4]!.mensaje, /Estos son los horarios disponibles/);
+    assert.equal(sesiones.filas[0]!.step, "S4_HORA");
+    assert.equal(sesiones.filas[0]!.servicioId, "s-dipping-real");
+    assert.equal(sesiones.filas[0]!.profesionalId, 1262);
+    assert.equal(sesiones.filas[0]!.fechaIso, "2026-09-08");
   });
 });
