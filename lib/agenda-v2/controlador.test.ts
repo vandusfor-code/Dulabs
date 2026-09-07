@@ -1,12 +1,13 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { manejarMensajeAgendaV2, RESPUESTA_PLACEHOLDER_AGENDA_V2 } from "@/lib/agenda-v2/controlador";
+import { manejarMensajeAgendaV2 } from "@/lib/agenda-v2/controlador";
 import type { SesionAgendaV2 } from "@/lib/agenda-v2/sesiones";
 import type { OpcionServicioAgendaV2 } from "@/lib/agenda-v2/servicios";
 import type { OpcionCategoriaAgendaV2 } from "@/lib/agenda-v2/categorias";
 import type { OpcionProfesionalAgendaV2 } from "@/lib/agenda-v2/profesionales";
 import type { OpcionFechaAgendaV2 } from "@/lib/agenda-v2/fechas";
 import type { OpcionHoraAgendaV2 } from "@/lib/agenda-v2/horas";
+import { OPCIONES_CONFIRMACION } from "@/lib/agenda-v2/confirmacion";
 
 const OPCIONES: OpcionServicioAgendaV2[] = [
   { numero: 1, servicioId: "s-dipping-real", nombre: "Dipping", precio: 60000, duracionMin: 120 },
@@ -332,21 +333,14 @@ describe("FASE 5 (autorizado) -- manejarMensajeAgendaV2 en S4_HORA", () => {
     });
   }
 
-  it("Test 16/17: '1' resuelve contra las opciones reales guardadas -- guarda el slot elegido y avanza a S5_CONFIRMAR", () => {
+  it("Test 16/17: '1' resuelve contra las opciones reales guardadas -- devuelve accion:'hora_seleccionada' con fecha+hora reales (router.ts arma el resumen, ver FASE 6)", () => {
     const r = manejarMensajeAgendaV2(sesionEnHora(), "1");
-    assert.equal(r.accion, "continuar");
-    assert.equal(r.respuesta, "Horario seleccionado correctamente.");
-    if (r.accion !== "continuar") return;
-    assert.equal(r.cambios?.step, "S5_CONFIRMAR");
-    assert.deepEqual(r.cambios?.slotSeleccionado, { fechaIso: "2026-09-08", hora: "09:00" });
-    assert.equal(r.cambios?.opcionesMostradas, null, "las opciones de hora ya no corresponden al paso siguiente");
+    assert.deepEqual(r, { accion: "hora_seleccionada", fechaIso: "2026-09-08", hora: "09:00" });
   });
 
   it("otra opción también resuelve correctamente (nunca asume que sigue siendo la posición 1)", () => {
     const r = manejarMensajeAgendaV2(sesionEnHora(), "3");
-    assert.equal(r.accion, "continuar");
-    if (r.accion !== "continuar") return;
-    assert.deepEqual(r.cambios?.slotSeleccionado, { fechaIso: "2026-09-08", hora: "14:00" });
+    assert.deepEqual(r, { accion: "hora_seleccionada", fechaIso: "2026-09-08", hora: "14:00" });
   });
 
   it("Test 17: número inválido (fuera de rango) -- permanece en S4_HORA, sin guardar ningún slot", () => {
@@ -390,22 +384,81 @@ describe("FASE 5 (autorizado) -- manejarMensajeAgendaV2 en S4_HORA", () => {
   });
 });
 
-describe("Pasos posteriores a S4_HORA -- todavía sin implementar (fases futuras)", () => {
-  it("cualquier mensaje en S5_CONFIRMAR recibe el placeholder, sin tocar slotSeleccionado ni step", () => {
-    const sesion = sesionEnServicio({
+describe("FASE 6 (autorizado) -- manejarMensajeAgendaV2 en S5_CONFIRMAR", () => {
+  function sesionEnConfirmacion(overrides: Partial<SesionAgendaV2> = {}): SesionAgendaV2 {
+    return sesionEnServicio({
       step: "S5_CONFIRMAR",
       servicioId: "s-cejas-cuchilla-real",
       profesionalId: 1262,
       fechaIso: "2026-09-08",
       slotSeleccionado: { fechaIso: "2026-09-08", hora: "09:00" },
-      opcionesMostradas: null,
+      opcionesMostradas: OPCIONES_CONFIRMACION,
+      ...overrides,
     });
-    for (const mensaje of ["1", "cualquier cosa", "cumpleaños"]) {
-      const r = manejarMensajeAgendaV2(sesion, mensaje);
-      assert.equal(r.accion, "continuar");
+  }
+
+  it("Opción 1 (confirmar): responde el mensaje de 'lista para confirmar' -- NUNCA crea la cita ni cambia el step (Fase 7 todavía no existe)", () => {
+    const r = manejarMensajeAgendaV2(sesionEnConfirmacion(), "1");
+    assert.equal(r.accion, "continuar");
+    if (r.accion !== "continuar") return;
+    assert.match(r.respuesta, /lista para confirmar/i);
+    assert.match(r.respuesta, /todavía no se ha reservado|aún no se ha reservado/i, "debe dejar claro que la reserva real todavía no se ejecutó");
+    assert.equal(r.cambios, undefined, "nunca cambia el step ni ningún dato -- Fase 7 no existe todavía");
+  });
+
+  it("Opción 2 (cambiar fecha): devuelve accion:'confirmacion_cambiar_fecha' (router.ts reutiliza la Fase 4 tal cual)", () => {
+    const r = manejarMensajeAgendaV2(sesionEnConfirmacion(), "2");
+    assert.deepEqual(r, { accion: "confirmacion_cambiar_fecha" });
+  });
+
+  it("Opción 3 (cambiar horario): devuelve accion:'confirmacion_cambiar_hora' (router.ts reutiliza la Fase 5 tal cual)", () => {
+    const r = manejarMensajeAgendaV2(sesionEnConfirmacion(), "3");
+    assert.deepEqual(r, { accion: "confirmacion_cambiar_hora" });
+  });
+
+  it("Opción 4 (cancelar): cierra la sesión -- mismo resultado EXACTO que el comando global 'cancelar', nunca modifica ninguna cita existente", () => {
+    const r = manejarMensajeAgendaV2(sesionEnConfirmacion(), "4");
+    assert.equal(r.accion, "cerrar_sesion");
+    assert.match(r.respuesta, /cancel/i);
+  });
+
+  it("número inválido (fuera de rango) -- permanece en S5_CONFIRMAR, reenvía el mismo menú de control", () => {
+    const r = manejarMensajeAgendaV2(sesionEnConfirmacion(), "5");
+    assert.equal(r.accion, "continuar");
+    if (r.accion !== "continuar") return;
+    assert.equal(r.cambios, undefined);
+    assert.match(r.respuesta, /No reconocí esa opción/);
+    assert.match(r.respuesta, /1\. Confirmar cita/);
+  });
+
+  it("texto no numérico o interpretación semántica ('sí'/'dale'/'confirmo') -- permanece en S5_CONFIRMAR, nunca se infiere", () => {
+    for (const mensaje of ["hola", "sí", "dale", "confirmo", "no sé"]) {
+      const r = manejarMensajeAgendaV2(sesionEnConfirmacion(), mensaje);
+      assert.equal(r.accion, "continuar", `"${mensaje}" nunca debe cerrar la sesión ni confirmar nada`);
       if (r.accion !== "continuar") continue;
-      assert.equal(r.respuesta, RESPUESTA_PLACEHOLDER_AGENDA_V2);
-      assert.equal(r.cambios, undefined);
+      assert.equal(r.cambios, undefined, `"${mensaje}" nunca debe avanzar/retroceder el step`);
+      assert.match(r.respuesta, /No reconocí esa opción/, `"${mensaje}" debe repetir el menú, nunca inferir la intención`);
     }
+  });
+
+  it("'cumpleaños' (coincide con un escenario del Flow Engine) -- se trata como selección inválida, nunca invoca Flow Engine", () => {
+    const r = manejarMensajeAgendaV2(sesionEnConfirmacion(), "cumpleaños");
+    assert.equal(r.accion, "continuar");
+    if (r.accion !== "continuar") return;
+    assert.match(r.respuesta, /No reconocí esa opción/);
+    assert.equal(r.cambios, undefined);
+  });
+
+  it("'cancelar' (comando global de texto) también cierra la sesión estando en S5_CONFIRMAR", () => {
+    const r = manejarMensajeAgendaV2(sesionEnConfirmacion(), "cancelar");
+    assert.equal(r.accion, "cerrar_sesion");
+  });
+
+  it("defensivo: sesión en S5_CONFIRMAR sin opciones guardadas -- nunca inventa, pide reiniciar", () => {
+    const r = manejarMensajeAgendaV2(sesionEnConfirmacion({ opcionesMostradas: null }), "1");
+    assert.equal(r.accion, "continuar");
+    if (r.accion !== "continuar") return;
+    assert.equal(r.cambios, undefined);
+    assert.match(r.respuesta, /Se perdió el menú/);
   });
 });

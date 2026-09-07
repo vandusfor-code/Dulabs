@@ -1,0 +1,82 @@
+/**
+ * AGENDA V2 (autorizado) — FASE 6: S5_CONFIRMAR. Lógica de presentación PURA,
+ * mismo patrón que fechas.ts/horas.ts/profesionales.ts. A diferencia de los
+ * pasos anteriores, las 4 opciones NO salen de un catálogo real (nunca hay
+ * "más o menos" confirmaciones posibles) -- son un menú de control FIJO,
+ * pero se resuelven exactamente igual (número exacto contra lo guardado en
+ * `opcionesMostradas`), para mantener un único mecanismo de resolución en
+ * toda Agenda V2.
+ *
+ * El RESUMEN sí sale exclusivamente de datos reales ya resueltos por
+ * router.ts (servicio, profesional, fecha, hora) -- este archivo nunca
+ * inventa ni cachea nada, solo formatea lo que recibe.
+ *
+ * Reutiliza (nunca duplica):
+ * - formatearPrecioCop (lib/especialistas-flow-adaptador.ts) -- ya usado en
+ *   lib/agenda-v2/servicios.ts.
+ * - formatearDuracion (lib/catalogo-servicios-flow-adaptador.ts) -- "15" ->
+ *   "15 min", "90" -> "1 h 30 min".
+ */
+import { formatearPrecioCop } from "@/lib/especialistas-flow-adaptador";
+import { formatearDuracion } from "@/lib/catalogo-servicios-flow-adaptador";
+
+export type AccionConfirmacionAgendaV2 = "confirmar" | "cambiar_fecha" | "cambiar_hora" | "cancelar";
+
+export interface OpcionConfirmacionAgendaV2 {
+  numero: number;
+  accion: AccionConfirmacionAgendaV2;
+}
+
+/** Menú de control fijo -- siempre las mismas 4 opciones, en el mismo orden. Nunca varía por tenant ni por cita. */
+export const OPCIONES_CONFIRMACION: OpcionConfirmacionAgendaV2[] = [
+  { numero: 1, accion: "confirmar" },
+  { numero: 2, accion: "cambiar_fecha" },
+  { numero: 3, accion: "cambiar_hora" },
+  { numero: 4, accion: "cancelar" },
+];
+
+export interface ResumenCitaAgendaV2 {
+  servicioNombre: string;
+  servicioPrecio: number;
+  servicioDuracionMin: number;
+  profesionalNombre: string;
+  /** Ya formateada, ej. "Miércoles 9 de septiembre" (ver formatearFechaLarga en fechas.ts). */
+  fechaEtiqueta: string;
+  /** Ya formateada, ej. "3:00 p. m." (ver formatearHoraAmPm en especialistas-flow-adaptador.ts). */
+  horaTexto: string;
+}
+
+function listaOpcionesTexto(): string {
+  return "1. Confirmar cita\n2. Cambiar fecha\n3. Cambiar horario\n4. Cancelar";
+}
+
+/** Resumen real de la cita + el menú de control -- EXCLUSIVAMENTE con los datos recibidos, nunca inventa ni hardcodea ninguno. */
+export function renderizarResumenConfirmacion(resumen: ResumenCitaAgendaV2): string {
+  return (
+    `Perfecto 💗 Estos son los datos de tu cita:\n\n` +
+    `Servicio: ${resumen.servicioNombre}\n` +
+    `Profesional: ${resumen.profesionalNombre}\n` +
+    `Fecha: ${resumen.fechaEtiqueta}\n` +
+    `Hora: ${resumen.horaTexto}\n` +
+    `Duración: ${formatearDuracion(resumen.servicioDuracionMin)}\n` +
+    `Valor: ${formatearPrecioCop(resumen.servicioPrecio)}\n\n` +
+    `¿Deseas confirmar tu cita?\n\n${listaOpcionesTexto()}`
+  );
+}
+
+export function textoSeleccionInvalidaConfirmacion(): string {
+  return `No reconocí esa opción 💗 Por favor responde con el número de una de estas:\n\n${listaOpcionesTexto()}`;
+}
+
+/**
+ * Resuelve la respuesta del cliente CONTRA las opciones guardadas -- mismo
+ * criterio EXACTO que el resto de Agenda V2: nunca fuzzy matching, nunca
+ * parseInt libre, nunca interpretación semántica ("sí", "dale", "confirmo").
+ * Solo número exacto (1-4) es válido.
+ */
+export function resolverSeleccionConfirmacion(mensaje: string, opciones: OpcionConfirmacionAgendaV2[]): OpcionConfirmacionAgendaV2 | undefined {
+  const texto = mensaje.trim();
+  if (!/^\d+$/.test(texto)) return undefined;
+  const numero = Number(texto);
+  return opciones.find((o) => o.numero === numero);
+}

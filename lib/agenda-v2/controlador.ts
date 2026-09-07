@@ -3,9 +3,9 @@
  * activa. S1_SERVICIO tiene dos sub-fases (ver lib/agenda-v2/categorias.ts
  * para el porqué de no agregar un `step` nuevo): primero categoría, luego
  * servicio de esa categoría. FASE 3 implementa S2_PROFESIONAL. FASES 4/5
- * implementan S3_DIA y S4_HORA. S5_CONFIRMAR en adelante se agrega en fases
- * posteriores, cada una con su propia autorización -- por ahora, cualquier
- * mensaje en ese paso recibe la misma respuesta temporal de la Fase 1.
+ * implementan S3_DIA y S4_HORA. FASE 6 implementa S5_CONFIRMAR (resumen +
+ * confirmar/cambiar fecha/cambiar hora/cancelar -- NUNCA crea la cita real
+ * todavía, eso es la Fase 7).
  */
 import { normalizeText } from "@/lib/flow-triggers/normalize-text";
 import type { CambiosSesionAgendaV2, SesionAgendaV2 } from "@/lib/agenda-v2/sesiones";
@@ -14,11 +14,16 @@ import { esOpcionCategoria, resolverSeleccionCategoria, textoSeleccionInvalidaCa
 import { resolverSeleccionProfesional, textoSeleccionInvalidaProfesional, type OpcionProfesionalAgendaV2 } from "@/lib/agenda-v2/profesionales";
 import { resolverSeleccionFecha, textoSeleccionInvalidaFecha, type OpcionFechaAgendaV2 } from "@/lib/agenda-v2/fechas";
 import { resolverSeleccionHora, textoSeleccionInvalidaHora, type OpcionHoraAgendaV2 } from "@/lib/agenda-v2/horas";
+import { resolverSeleccionConfirmacion, textoSeleccionInvalidaConfirmacion, type OpcionConfirmacionAgendaV2 } from "@/lib/agenda-v2/confirmacion";
 
 export const RESPUESTA_PLACEHOLDER_AGENDA_V2 = "Agenda V2 activa. Selecciona una opción.";
 const RESPUESTA_CANCELACION = "Listo, cancelé tu proceso de agenda 💗 Escríbeme cuando quieras retomarlo.";
-const RESPUESTA_HORA_SELECCIONADA = "Horario seleccionado correctamente.";
 const RESPUESTA_MENU_PERDIDO = "Se perdió el menú 😅 Escribe *cancelar* y vuelve a intentarlo.";
+// FASE 6 -- deja explícito que la reserva real todavía NO se ejecutó (esa es
+// la Fase 7: creación real vía crearCitaConNylas). Nunca sugerir que la cita
+// ya quedó agendada de verdad.
+const RESPUESTA_CITA_LISTA_PARA_CONFIRMAR =
+  "Perfecto 💗 Tu cita está lista para confirmar. Todavía no se ha reservado de forma definitiva -- muy pronto podrás completar este paso.";
 
 /** Vocabulario cerrado, coincidencia EXACTA tras normalizar -- nunca "contains", mismo criterio que el resto del proyecto para comandos de control (ver esCancelacionExplicitaDeReserva). */
 const COMANDO_CANCELAR = "cancelar";
@@ -40,7 +45,16 @@ export type ResultadoControladorAgendaV2 =
   | { accion: "profesional_seleccionado"; profesionalId: number }
   // FASE 5 -- la fecha fue elegida, pero calcular los horarios reales de ESE
   // día exige el mismo motor async. Ver lib/agenda-v2/disponibilidad.ts.
-  | { accion: "fecha_seleccionada"; fechaIso: string };
+  | { accion: "fecha_seleccionada"; fechaIso: string }
+  // FASE 6 -- la hora fue elegida, pero armar el resumen real (nombre del
+  // servicio/profesional, precio, duración) exige datos async -- router.ts
+  // termina la transición a S5_CONFIRMAR con el resumen ya armado.
+  | { accion: "hora_seleccionada"; fechaIso: string; hora: string }
+  // FASE 6 -- desde S5_CONFIRMAR, "cambiar fecha"/"cambiar hora" exigen
+  // recalcular disponibilidad real (async, reutilizando el mismo motor de
+  // las Fases 4/5) -- router.ts resuelve ambas transiciones.
+  | { accion: "confirmacion_cambiar_fecha" }
+  | { accion: "confirmacion_cambiar_hora" };
 
 /**
  * Procesa UN mensaje ya sabido perteneciente a una sesión activa. Nunca
@@ -69,10 +83,14 @@ export function manejarMensajeAgendaV2(sesion: SesionAgendaV2, mensaje: string):
     return manejarSeleccionHora(sesion, mensaje);
   }
 
-  // Sección "NO implementes todavía" del pedido -- S5_CONFIRMAR en adelante
-  // no tiene lógica real todavía; cualquier mensaje en ese paso recibe la
-  // misma respuesta temporal que ya usaba la Fase 1, sin avanzar ni
-  // retroceder el step.
+  if (sesion.step === "S5_CONFIRMAR") {
+    return manejarConfirmacion(sesion, mensaje);
+  }
+
+  // Defensivo -- S5_CONFIRMAR es el último step del CHECK constraint hoy;
+  // esta rama nunca debería alcanzarse en producción, pero se deja como red
+  // de seguridad (mismo criterio que el resto de Agenda V2: nunca inventar,
+  // nunca romper).
   return { accion: "continuar", respuesta: RESPUESTA_PLACEHOLDER_AGENDA_V2 };
 }
 
@@ -172,11 +190,7 @@ function manejarSeleccionFecha(sesion: SesionAgendaV2, mensaje: string): Resulta
 }
 
 /**
- * FASE 5 -- S4_HORA. Mismo patrón EXACTO. Guarda el slot elegido
- * (fecha_iso + hora) en slot_seleccionado y avanza a S5_CONFIRMAR -- esa
- * fase todavía no existe (autorizado explícitamente a no implementarla
- * acá), así que por ahora sí responde con el texto de confirmación pedido,
- * sin construir ningún menú nuevo.
+ * FASE 5 -- S4_HORA. Mismo patrón EXACTO que los pasos anteriores.
  */
 function manejarSeleccionHora(sesion: SesionAgendaV2, mensaje: string): ResultadoControladorAgendaV2 {
   const opciones = (sesion.opcionesMostradas as OpcionHoraAgendaV2[] | null) ?? [];
@@ -189,15 +203,54 @@ function manejarSeleccionHora(sesion: SesionAgendaV2, mensaje: string): Resultad
     return { accion: "continuar", respuesta: textoSeleccionInvalidaHora(opciones) };
   }
 
-  return {
-    accion: "continuar",
-    respuesta: RESPUESTA_HORA_SELECCIONADA,
-    cambios: {
-      step: "S5_CONFIRMAR",
-      slotSeleccionado: { fechaIso: seleccion.fechaIso, hora: seleccion.hora },
-      // Se limpia -- esas opciones eran del paso de hora, ya no
-      // corresponden al paso siguiente (todavía sin implementar).
-      opcionesMostradas: null,
-    },
-  };
+  // FASE 6 -- ya no se responde con un texto temporal: el siguiente mensaje
+  // real es el resumen de la cita (servicio/profesional/fecha/hora reales).
+  // Eso exige datos async (nombre del servicio, precio, duración, nombre
+  // del profesional), así que router.ts termina la transición a
+  // S5_CONFIRMAR con el resumen ya armado.
+  return { accion: "hora_seleccionada", fechaIso: seleccion.fechaIso, hora: seleccion.hora };
+}
+
+/**
+ * FASE 6 -- S5_CONFIRMAR. Mismo patrón EXACTO: solo número exacto (1-4)
+ * contra el menú de control guardado en la sesión (ver
+ * lib/agenda-v2/confirmacion.ts) -- nunca fuzzy matching, nunca "sí"/"dale"/
+ * "confirmo", nunca interpretación semántica.
+ */
+function manejarConfirmacion(sesion: SesionAgendaV2, mensaje: string): ResultadoControladorAgendaV2 {
+  const opciones = (sesion.opcionesMostradas as OpcionConfirmacionAgendaV2[] | null) ?? [];
+  if (opciones.length === 0) {
+    return { accion: "continuar", respuesta: RESPUESTA_MENU_PERDIDO };
+  }
+
+  const seleccion = resolverSeleccionConfirmacion(mensaje, opciones);
+  if (!seleccion) {
+    // Sección "VALIDACIONES" del pedido -- número inválido: se mantiene en
+    // S5_CONFIRMAR y se reenvía EXACTAMENTE el mismo menú de control.
+    return { accion: "continuar", respuesta: textoSeleccionInvalidaConfirmacion() };
+  }
+
+  switch (seleccion.accion) {
+    case "confirmar":
+      // Sección "COMPORTAMIENTO -- Opción 1" del pedido -- NUNCA crea la
+      // cita, NUNCA llama a Nylas ni a crearCitaConNylas acá. Solo deja
+      // claro que falta un paso real (Fase 7, todavía sin implementar). El
+      // menú de control se mantiene tal cual -- la clienta puede seguir
+      // cambiando de opinión (fecha/hora/cancelar) mientras la Fase 7 no
+      // exista, sin quedar en un callejón sin salida.
+      return { accion: "continuar", respuesta: RESPUESTA_CITA_LISTA_PARA_CONFIRMAR };
+    case "cambiar_fecha":
+      // Opción 2 -- exige recalcular días candidatos reales (async,
+      // reutilizando la Fase 4 tal cual) -- router.ts lo resuelve.
+      return { accion: "confirmacion_cambiar_fecha" };
+    case "cambiar_hora":
+      // Opción 3 -- exige recalcular horarios reales para la fecha YA
+      // elegida (async, reutilizando la Fase 5 tal cual) -- router.ts lo resuelve.
+      return { accion: "confirmacion_cambiar_hora" };
+    case "cancelar":
+      // Opción 4 -- mismo cierre EXACTO que el comando global "cancelar"
+      // (sección COMPORTAMIENTO -- Opción 4: nunca modifica ninguna cita
+      // existente, solo cierra esta sesión de Agenda V2).
+      return { accion: "cerrar_sesion", respuesta: RESPUESTA_CANCELACION };
+  }
 }

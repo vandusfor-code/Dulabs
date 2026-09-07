@@ -31,9 +31,11 @@ import { manejarMensajeAgendaV2 } from "@/lib/agenda-v2/controlador";
 import { construirOpcionesServicio, renderizarMenuServicio } from "@/lib/agenda-v2/servicios";
 import { construirOpcionesCategoria, renderizarMenuCategoria } from "@/lib/agenda-v2/categorias";
 import { construirOpcionesProfesional, renderizarMenuProfesional } from "@/lib/agenda-v2/profesionales";
-import { renderizarMenuFecha } from "@/lib/agenda-v2/fechas";
+import { renderizarMenuFecha, formatearFechaLarga } from "@/lib/agenda-v2/fechas";
 import { construirOpcionesHora, renderizarMenuHora } from "@/lib/agenda-v2/horas";
+import { OPCIONES_CONFIRMACION, renderizarResumenConfirmacion, type ResumenCitaAgendaV2 } from "@/lib/agenda-v2/confirmacion";
 import { calcularDiasCandidatosReales, calcularHorariosParaFecha } from "@/lib/agenda-v2/disponibilidad";
+import { formatearHoraAmPm } from "@/lib/especialistas-flow-adaptador";
 import { buscarSesionActivaAgendaV2, crearSesionAgendaV2, cerrarSesionAgendaV2, actualizarSesionAgendaV2 } from "@/lib/agenda-v2/sesiones";
 
 /** Mismo prefijo sintético que ya usa lib/whatsapp-qr-bot.ts para el candado/estado de este canal -- nunca un phone_number_id real de Meta. */
@@ -169,6 +171,96 @@ export async function procesarMensajeConAgendaV2(
         return { manejado: true };
       }
 
+      // FASE 4 (autorizado) -- reutilizada TAL CUAL tanto para avanzar
+      // (profesional_seleccionado) como para retroceder desde S5_CONFIRMAR
+      // (confirmacion_cambiar_fecha, FASE 6) -- "no duplicar lógica" del
+      // pedido de la Fase 6. Calcula los días candidatos REALES para
+      // `profesionalId` y, si no hay ninguno, revierte a S2_PROFESIONAL
+      // mostrando los profesionales reales de nuevo (mismo criterio en
+      // ambos casos de uso).
+      async function mostrarMenuFechaOVolverAProfesional(servicioId: string, profesionalId: number): Promise<ResultadoRouterAgendaV2> {
+        const nylasDeps = construirNylasDeps();
+        const diasResultado = await calcularDias(params.supabase, { idTenant: params.idTenant, servicioId, profesionalId }, nylasDeps);
+
+        if (!diasResultado.ok || diasResultado.opciones.length === 0) {
+          const resolucion = await resolverEspecialistas(params.supabase, params.idTenant, servicioId);
+          const opcionesProfesional = construirOpcionesProfesional(resolucion.especialistas);
+          await actualizarSesion(params.supabase, sesion!.id, {
+            step: "S2_PROFESIONAL",
+            profesionalId: null,
+            fechaIso: null,
+            slotSeleccionado: null,
+            opcionesMostradas: opcionesProfesional,
+            ultimoWamidProcesado: params.wamid,
+          });
+          await enviarMensaje({
+            tenantId: params.idTenant,
+            telefono: params.telefono,
+            mensaje:
+              opcionesProfesional.length > 0
+                ? `No encontramos días disponibles con esa profesional en los próximos días 😔 Elige otra:\n\n${renderizarMenuProfesional(opcionesProfesional)}`
+                : "No encontramos días disponibles en este momento 😔 Escribe *cancelar* y vuelve a intentarlo más tarde.",
+            origen: "automatico",
+          });
+          return { manejado: true };
+        }
+
+        await actualizarSesion(params.supabase, sesion!.id, {
+          step: "S3_DIA",
+          profesionalId,
+          fechaIso: null,
+          slotSeleccionado: null,
+          opcionesMostradas: diasResultado.opciones,
+          ultimoWamidProcesado: params.wamid,
+        });
+        await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: renderizarMenuFecha(diasResultado.opciones), origen: "automatico" });
+        return { manejado: true };
+      }
+
+      // FASE 5 (autorizado) -- reutilizada TAL CUAL tanto para avanzar
+      // (fecha_seleccionada) como para retroceder desde S5_CONFIRMAR
+      // (confirmacion_cambiar_hora, FASE 6). Si la fecha ya no tiene ningún
+      // horario real (protección, sección CASOS IMPORTANTES #8), recalcula
+      // los días candidatos reales y vuelve a S3_DIA -- reutilizando
+      // mostrarMenuFechaOVolverAProfesional en vez de duplicar ese cálculo.
+      async function mostrarMenuHoraOVolverAFecha(servicioId: string, profesionalId: number, fechaIso: string): Promise<ResultadoRouterAgendaV2> {
+        const nylasDeps = construirNylasDeps();
+        const horariosResultado = await calcularHoras(params.supabase, { idTenant: params.idTenant, servicioId, profesionalId, fechaIso }, nylasDeps);
+
+        if (!horariosResultado.ok) {
+          const diasResultado = await calcularDias(params.supabase, { idTenant: params.idTenant, servicioId, profesionalId }, nylasDeps);
+          const opcionesFecha = diasResultado.ok ? diasResultado.opciones : [];
+          await actualizarSesion(params.supabase, sesion!.id, {
+            step: "S3_DIA",
+            fechaIso: null,
+            slotSeleccionado: null,
+            opcionesMostradas: opcionesFecha,
+            ultimoWamidProcesado: params.wamid,
+          });
+          await enviarMensaje({
+            tenantId: params.idTenant,
+            telefono: params.telefono,
+            mensaje:
+              opcionesFecha.length > 0
+                ? `Ese día ya no tiene horarios disponibles 😔 Elige otro:\n\n${renderizarMenuFecha(opcionesFecha)}`
+                : "Ese día ya no tiene horarios disponibles y no encontramos otro con cupo por ahora 😔 Escribe *cancelar* y vuelve a intentarlo más tarde.",
+            origen: "automatico",
+          });
+          return { manejado: true };
+        }
+
+        const opcionesHora = construirOpcionesHora(fechaIso, horariosResultado.horarios);
+        await actualizarSesion(params.supabase, sesion!.id, {
+          step: "S4_HORA",
+          fechaIso,
+          slotSeleccionado: null,
+          opcionesMostradas: opcionesHora,
+          ultimoWamidProcesado: params.wamid,
+        });
+        await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: renderizarMenuHora(opcionesHora), origen: "automatico" });
+        return { manejado: true };
+      }
+
       const resultado = manejarMensajeAgendaV2(sesion, params.texto);
 
       if (resultado.accion === "categoria_seleccionada") {
@@ -240,118 +332,78 @@ export async function procesarMensajeConAgendaV2(
 
       if (resultado.accion === "profesional_seleccionado") {
         // FASE 4 (autorizado) -- el profesional ya fue elegido; se calculan
-        // los días candidatos REALES (horario real + bloqueos + huecos
-        // reales de Nylas, ver lib/agenda-v2/disponibilidad.ts) para ESE
-        // profesional y el servicio ya elegido en la Fase 3.
+        // los días candidatos REALES para ESE profesional y el servicio ya
+        // elegido en la Fase 3 (ver mostrarMenuFechaOVolverAProfesional).
         if (!sesion.servicioId) return await reiniciarPorEstadoInconsistente("S2_PROFESIONAL sin servicioId");
-
-        const nylasDeps = construirNylasDeps();
-        const diasResultado = await calcularDias(
-          params.supabase,
-          { idTenant: params.idTenant, servicioId: sesion.servicioId, profesionalId: resultado.profesionalId },
-          nylasDeps,
-        );
-
-        if (!diasResultado.ok || diasResultado.opciones.length === 0) {
-          // Caso "sin días disponibles" (sección CASOS IMPORTANTES #7 del
-          // pedido) -- NUNCA avanza a S3_DIA con un menú vacío. Se revierte
-          // UN nivel (mismo criterio que "sin profesionales elegibles" de la
-          // Fase 3): se vuelve a mostrar los profesionales reales elegibles
-          // para este servicio, para que la clienta intente con otra persona.
-          const resolucion = await resolverEspecialistas(params.supabase, params.idTenant, sesion.servicioId);
-          const opcionesProfesional = construirOpcionesProfesional(resolucion.especialistas);
-          await actualizarSesion(params.supabase, sesion.id, {
-            step: "S2_PROFESIONAL",
-            profesionalId: null,
-            opcionesMostradas: opcionesProfesional,
-            ultimoWamidProcesado: params.wamid,
-          });
-          await enviarMensaje({
-            tenantId: params.idTenant,
-            telefono: params.telefono,
-            mensaje:
-              opcionesProfesional.length > 0
-                ? `No encontramos días disponibles con esa profesional en los próximos días 😔 Elige otra:\n\n${renderizarMenuProfesional(opcionesProfesional)}`
-                : "No encontramos días disponibles en este momento 😔 Escribe *cancelar* y vuelve a intentarlo más tarde.",
-            origen: "automatico",
-          });
-          return { manejado: true };
-        }
-
-        await actualizarSesion(params.supabase, sesion.id, {
-          step: "S3_DIA",
-          profesionalId: resultado.profesionalId,
-          opcionesMostradas: diasResultado.opciones,
-          ultimoWamidProcesado: params.wamid,
-        });
-        await enviarMensaje({
-          tenantId: params.idTenant,
-          telefono: params.telefono,
-          mensaje: renderizarMenuFecha(diasResultado.opciones),
-          origen: "automatico",
-        });
-        return { manejado: true };
+        return await mostrarMenuFechaOVolverAProfesional(sesion.servicioId, resultado.profesionalId);
       }
 
       if (resultado.accion === "fecha_seleccionada") {
         // FASE 5 (autorizado) -- la fecha ya fue elegida; se calculan los
-        // horarios REALES disponibles con UNA sola consulta (el loop de
-        // días candidatos ya se hizo en la Fase 4, nunca se repite acá).
+        // horarios REALES disponibles con UNA sola consulta (ver
+        // mostrarMenuHoraOVolverAFecha).
         if (!sesion.servicioId || !sesion.profesionalId) {
           return await reiniciarPorEstadoInconsistente("S3_DIA sin servicioId/profesionalId");
         }
+        return await mostrarMenuHoraOVolverAFecha(sesion.servicioId, sesion.profesionalId, resultado.fechaIso);
+      }
 
-        const nylasDeps = construirNylasDeps();
-        const horariosResultado = await calcularHoras(
-          params.supabase,
-          { idTenant: params.idTenant, servicioId: sesion.servicioId, profesionalId: sesion.profesionalId, fechaIso: resultado.fechaIso },
-          nylasDeps,
-        );
-
-        if (!horariosResultado.ok) {
-          // Caso "protección" (sección CASOS IMPORTANTES #8 del pedido) --
-          // esta fecha nunca debió mostrarse sin horarios reales; si igual
-          // ocurre (huecos que se llenaron justo entre construir el menú de
-          // días y elegir uno), nunca se rompe: se recalculan los días
-          // candidatos reales y se vuelve a mostrar S3_DIA actualizado.
-          const diasResultado = await calcularDias(
-            params.supabase,
-            { idTenant: params.idTenant, servicioId: sesion.servicioId, profesionalId: sesion.profesionalId },
-            nylasDeps,
-          );
-          const opcionesFecha = diasResultado.ok ? diasResultado.opciones : [];
-          await actualizarSesion(params.supabase, sesion.id, {
-            step: "S3_DIA",
-            fechaIso: null,
-            opcionesMostradas: opcionesFecha,
-            ultimoWamidProcesado: params.wamid,
-          });
-          await enviarMensaje({
-            tenantId: params.idTenant,
-            telefono: params.telefono,
-            mensaje:
-              opcionesFecha.length > 0
-                ? `Ese día ya no tiene horarios disponibles 😔 Elige otro:\n\n${renderizarMenuFecha(opcionesFecha)}`
-                : "Ese día ya no tiene horarios disponibles y no encontramos otro con cupo por ahora 😔 Escribe *cancelar* y vuelve a intentarlo más tarde.",
-            origen: "automatico",
-          });
-          return { manejado: true };
+      if (resultado.accion === "hora_seleccionada") {
+        // FASE 6 (autorizado) -- la hora ya fue elegida; se arma el resumen
+        // REAL (nombre del servicio, precio, duración, nombre del
+        // profesional, fecha y hora ya formateadas) -- reutiliza
+        // `cargarCatalogo` y `resolverEspecialistas`, ya inyectados, en vez
+        // de crear una consulta nueva (sección "no duplicar lógica" del
+        // pedido). NUNCA crea la cita todavía (eso es la Fase 7).
+        if (!sesion.servicioId || !sesion.profesionalId) {
+          return await reiniciarPorEstadoInconsistente("S4_HORA sin servicioId/profesionalId");
+        }
+        const catalogo = await cargarCatalogo(params.supabase, params.idTenant);
+        const servicio = catalogo.find((s) => s.id === sesion.servicioId);
+        const resolucion = await resolverEspecialistas(params.supabase, params.idTenant, sesion.servicioId);
+        const profesional = resolucion.especialistas.find((e) => e.especialistaId === sesion.profesionalId);
+        if (!servicio || !profesional) {
+          // Defensivo -- el servicio se desactivó o el profesional dejó de
+          // estar habilitado justo entre elegir la hora y armar el resumen.
+          // Nunca se inventa un nombre/precio: se reinicia la sesión.
+          return await reiniciarPorEstadoInconsistente("S4_HORA con servicio/profesional ya no válidos al armar el resumen");
         }
 
-        const opcionesHora = construirOpcionesHora(resultado.fechaIso, horariosResultado.horarios);
+        const resumen: ResumenCitaAgendaV2 = {
+          servicioNombre: servicio.nombre,
+          servicioPrecio: servicio.precio,
+          servicioDuracionMin: servicio.duracionMin,
+          profesionalNombre: profesional.nombre,
+          fechaEtiqueta: formatearFechaLarga(resultado.fechaIso),
+          horaTexto: formatearHoraAmPm(resultado.hora),
+        };
         await actualizarSesion(params.supabase, sesion.id, {
-          step: "S4_HORA",
+          step: "S5_CONFIRMAR",
           fechaIso: resultado.fechaIso,
-          opcionesMostradas: opcionesHora,
+          slotSeleccionado: { fechaIso: resultado.fechaIso, hora: resultado.hora },
+          opcionesMostradas: OPCIONES_CONFIRMACION,
           ultimoWamidProcesado: params.wamid,
         });
-        await enviarMensaje({
-          tenantId: params.idTenant,
-          telefono: params.telefono,
-          mensaje: renderizarMenuHora(opcionesHora),
-          origen: "automatico",
-        });
+        await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: renderizarResumenConfirmacion(resumen), origen: "automatico" });
         return { manejado: true };
+      }
+
+      if (resultado.accion === "confirmacion_cambiar_fecha") {
+        // FASE 6, Opción 2 (autorizado) -- reutiliza la Fase 4 TAL CUAL.
+        if (!sesion.servicioId || !sesion.profesionalId) {
+          return await reiniciarPorEstadoInconsistente("S5_CONFIRMAR sin servicioId/profesionalId (cambiar fecha)");
+        }
+        return await mostrarMenuFechaOVolverAProfesional(sesion.servicioId, sesion.profesionalId);
+      }
+
+      if (resultado.accion === "confirmacion_cambiar_hora") {
+        // FASE 6, Opción 3 (autorizado) -- reutiliza la Fase 5 TAL CUAL,
+        // manteniendo servicio/profesional/fecha ya elegidos (nunca vuelve a
+        // pedir categoría/servicio/profesional).
+        if (!sesion.servicioId || !sesion.profesionalId || !sesion.fechaIso) {
+          return await reiniciarPorEstadoInconsistente("S5_CONFIRMAR sin servicioId/profesionalId/fechaIso (cambiar hora)");
+        }
+        return await mostrarMenuHoraOVolverAFecha(sesion.servicioId, sesion.profesionalId, sesion.fechaIso);
       }
 
       if (resultado.accion === "cerrar_sesion") {
