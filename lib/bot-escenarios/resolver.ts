@@ -680,16 +680,43 @@ function fusionarDatosAgendamiento(params: {
   }
 
   // Selección de una opción ya ofrecida (hora y/o profesional).
+  //
+  // Corrección (autorizada, diagnóstico forense AMORE 2026-09-07) — bug real
+  // confirmado en producción: con especialistaId Y horaPreferidaHHMM ya
+  // definidos ("Con Cristal" -> "A las 9:00"), la rama original buscaba
+  // `elegida` SOLO por especialistaId (`.find` devuelve la PRIMERA hora
+  // libre de esa profesional, ej. 08:00), sin llegar nunca a comparar contra
+  // horaPreferidaHHMM (quedaba detrás de un `!elegida &&` que ya era falso).
+  // Resultado real: horarioSeleccionadoISO quedó en 08:00 aunque la clienta
+  // pidió "las 9:00". Cuando AMBOS datos están presentes, ahora se exige la
+  // combinación EXACTA (especialista + hora); si esa hora exacta no está en
+  // opcionesOfrecidas, `elegida` queda sin asignar A PROPÓSITO -- nunca cae
+  // a "la primera hora de esa profesional" ni a "la única opción total" --
+  // y el flujo ya existente más abajo (sin cambios: "Presenta de nuevo...
+  // nunca inventes otra hora distinta") vuelve a ofrecer las opciones reales
+  // para que la clienta elija de nuevo. Cuando solo uno de los dos datos
+  // está presente, el comportamiento es EXACTAMENTE el de siempre.
   if (actual.opcionesOfrecidas?.length && !actual.horarioSeleccionadoISO) {
-    let elegida = actual.especialistaId ? actual.opcionesOfrecidas.find((o) => o.especialistaId === actual.especialistaId) : undefined;
-    if (!elegida && actual.horaPreferidaHHMM) {
-      const candidatas = actual.opcionesOfrecidas.filter((o) => o.horaTexto === actual.horaPreferidaHHMM);
-      if (candidatas.length === 1) elegida = candidatas[0];
-      else if (candidatas.length > 1) {
-        return responderAqui(`Tengo un par de opciones a esa hora 💗 ¿Con ${candidatas.map((c) => c.especialistaNombre).join(" o ")}?`);
+    let elegida: (typeof actual.opcionesOfrecidas)[number] | undefined;
+
+    if (actual.especialistaId && actual.horaPreferidaHHMM) {
+      elegida = actual.opcionesOfrecidas.find(
+        (o) => o.especialistaId === actual.especialistaId && o.horaTexto === actual.horaPreferidaHHMM,
+      );
+    } else {
+      elegida = actual.especialistaId
+        ? actual.opcionesOfrecidas.find((o) => o.especialistaId === actual.especialistaId)
+        : undefined;
+      if (!elegida && actual.horaPreferidaHHMM) {
+        const candidatas = actual.opcionesOfrecidas.filter((o) => o.horaTexto === actual.horaPreferidaHHMM);
+        if (candidatas.length === 1) elegida = candidatas[0];
+        else if (candidatas.length > 1) {
+          return responderAqui(`Tengo un par de opciones a esa hora 💗 ¿Con ${candidatas.map((c) => c.especialistaNombre).join(" o ")}?`);
+        }
       }
+      if (!elegida && actual.opcionesOfrecidas.length === 1) elegida = actual.opcionesOfrecidas[0];
     }
-    if (!elegida && actual.opcionesOfrecidas.length === 1) elegida = actual.opcionesOfrecidas[0];
+
     if (elegida) {
       actual.horarioSeleccionadoISO = elegida.horaISO;
       actual.especialistaSeleccionadaId = elegida.especialistaId;

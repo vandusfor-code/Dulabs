@@ -486,6 +486,97 @@ describe("Z. 'la que sea' cuando hay varias profesionales -- nunca adivina, pide
   });
 });
 
+/**
+ * Corrección (autorizada, diagnóstico forense AMORE 2026-09-07) — bug real
+ * confirmado en producción: con especialistaId Y horaPreferidaHHMM ya
+ * definidos ("Con Cristal" -> "A las 9:00"), el resolver seleccionaba la
+ * PRIMERA hora libre de esa profesional (08:00) en vez de la hora
+ * exactamente pedida (09:00), porque la búsqueda por especialistaId nunca
+ * llegaba a comparar contra horaPreferidaHHMM. Estos tests reproducen
+ * exactamente ese escenario (mismos datos que la ejecución real) y
+ * confirman que, cuando ambos datos ya están presentes, se exige la
+ * combinación EXACTA -- nunca otra hora silenciosa.
+ */
+describe("Corrección -- con especialista Y hora preferida ya definidos, se exige la combinación EXACTA (nunca otra hora silenciosa)", () => {
+  const OPCIONES_CRISTAL: NonNullable<ContextoConversacional["agendamiento"]>["opcionesOfrecidas"] = [
+    { especialistaId: 2, especialistaNombre: "Cristal", horaTexto: "08:00", horaISO: `${VIERNES}T08:00:00-05:00` },
+    { especialistaId: 2, especialistaNombre: "Cristal", horaTexto: "09:00", horaISO: `${VIERNES}T09:00:00-05:00` },
+    { especialistaId: 2, especialistaNombre: "Cristal", horaTexto: "10:00", horaISO: `${VIERNES}T10:00:00-05:00` },
+  ];
+
+  it("Caso A: Cristal + 09:00 disponible -> selecciona EXACTAMENTE 09:00 (no 08:00)", async () => {
+    const ctx: ContextoConversacional = {
+      agendamiento: {
+        servicioId: "s-dipping",
+        servicioNombre: "Dipping",
+        duracionMin: 120,
+        fechaISO: VIERNES,
+        especialistaId: 2,
+        especialistaNombre: "Cristal",
+        horaPreferidaHHMM: "09:00",
+        opcionesOfrecidas: OPCIONES_CRISTAL,
+      },
+    };
+    // Mensaje neutro (sin mencionar otra hora/profesional) -- igual que en
+    // el test "Z" de arriba, para probar la SELECCIÓN sobre el acumulador
+    // ya inyectado, sin que la extracción de entidades de ESTE mensaje
+    // invalide/reemplace horaPreferidaHHMM/opcionesOfrecidas.
+    const r = await resolver("dale, esa está bien", ctx);
+    assert.equal(r.contexto.agendamiento?.horarioSeleccionadoISO, `${VIERNES}T09:00:00-05:00`);
+    assert.equal(r.contexto.agendamiento?.especialistaSeleccionadaId, 2);
+  });
+
+  it("Caso B: Cristal + 09:30 NO disponible -> NO selecciona 08:00 ni 10:00, deja la hora sin seleccionar", async () => {
+    const ctx: ContextoConversacional = {
+      agendamiento: {
+        servicioId: "s-dipping",
+        servicioNombre: "Dipping",
+        duracionMin: 120,
+        fechaISO: VIERNES,
+        especialistaId: 2,
+        especialistaNombre: "Cristal",
+        horaPreferidaHHMM: "09:30",
+        opcionesOfrecidas: OPCIONES_CRISTAL,
+      },
+    };
+    const r = await resolver("dale, esa está bien", ctx);
+    assert.equal(r.contexto.agendamiento?.horarioSeleccionadoISO, undefined, "nunca debe caer en 08:00 ni en 10:00 silenciosamente");
+    assert.equal(r.modo, "ai");
+    assert.match(r.instruccionIA ?? "", /opciones/i, "debe volver a presentar las opciones reales para que la clienta elija");
+  });
+
+  it("Caso C: especialista NO definido + hora preferida -- comportamiento anterior intacto (matchea solo por hora)", async () => {
+    const ctx: ContextoConversacional = {
+      agendamiento: {
+        servicioId: "s-dipping",
+        servicioNombre: "Dipping",
+        duracionMin: 120,
+        fechaISO: VIERNES,
+        horaPreferidaHHMM: "09:00",
+        opcionesOfrecidas: OPCIONES_CRISTAL,
+      },
+    };
+    const r = await resolver("dale, esa está bien", ctx);
+    assert.equal(r.contexto.agendamiento?.horarioSeleccionadoISO, `${VIERNES}T09:00:00-05:00`);
+  });
+
+  it("Caso D: horaPreferidaHHMM ausente -- comportamiento anterior intacto (matchea solo por especialista, primera hora libre)", async () => {
+    const ctx: ContextoConversacional = {
+      agendamiento: {
+        servicioId: "s-dipping",
+        servicioNombre: "Dipping",
+        duracionMin: 120,
+        fechaISO: VIERNES,
+        especialistaId: 2,
+        especialistaNombre: "Cristal",
+        opcionesOfrecidas: OPCIONES_CRISTAL,
+      },
+    };
+    const r = await resolver("dale, esa está bien", ctx);
+    assert.equal(r.contexto.agendamiento?.horarioSeleccionadoISO, `${VIERNES}T08:00:00-05:00`, "sin hora preferida, sigue tomando la primera libre de esa profesional -- comportamiento YA existente, sin cambios");
+  });
+});
+
 describe("Cancelación explícita", () => {
   it("'cancela' limpia el agendamiento en curso por completo", async () => {
     const t1 = await conversar(["quiero una cita", "quiero dipping el viernes con mary"]);

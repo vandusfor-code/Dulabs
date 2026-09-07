@@ -230,7 +230,13 @@ function createMockStore(opts: MockStoreOptions = {}): {
 
     async getFlow(_tenantId, _flowId) {
       metrics.callOrder.push("getFlow");
-      return opts.flow ?? flowRow();
+      if (opts.flow !== undefined) return opts.flow;
+      // Diagnóstico forense (autorizado, Fix #1) -- por defecto, "publicado"
+      // coincide con la ejecución activa (si la hay), para que los tests
+      // existentes que no prueban versionado del Flow no disparen sin
+      // querer la migración a versión publicada. Los tests que sí quieren
+      // probar un desfase real de versión pasan `flow` explícitamente.
+      return flowRow({ published_version_id: opts.activeExecution?.flow_version_id ?? "version-published" });
     },
 
     async getFlowVersion(_tenantId, versionId) {
@@ -948,10 +954,11 @@ describe("Execution Orchestrator — Fase 4.0", () => {
     assert.equal(result.rejectReason, "tenant_mismatch");
   });
 
-  it("18. pinned flow version — usa flow_version_id de la ejecución", async () => {
+  it("18. flow_version_id obsoleto — migra a la versión publicada actual en vez de seguir usando la vieja (Fix #1)", async () => {
     const row = baseExecutionRow({ flow_version_id: "version-pinned-old" });
     const { store, state } = createMockStore({
       activeExecution: row,
+      flow: flowRow({ published_version_id: "version-published" }),
       versions: {
         "version-pinned-old": versionRow(linearFlow(), { id: "version-pinned-old" }),
         "version-published": versionRow(linearFlow(), { id: "version-published" }),
@@ -959,8 +966,8 @@ describe("Execution Orchestrator — Fase 4.0", () => {
     });
     const orch = buildOrchestrator(store);
     await orch.process(normalizedEvent({ eventId: "evt-pinned" }));
-    assert.ok(state.getFlowVersionCalls.includes("version-pinned-old"));
-    assert.ok(!state.getFlowVersionCalls.includes("version-published"));
+    assert.ok(state.getFlowVersionCalls.includes("version-published"), "debe usar la versión publicada actual");
+    assert.ok(!state.getFlowVersionCalls.includes("version-pinned-old"), "nunca debe llegar a ejecutar el grafo viejo");
   });
 
   it("19. orphan effect_result — rejected", async () => {

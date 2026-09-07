@@ -23,6 +23,7 @@ import { isCriticalAction } from "@/lib/flow/action-capabilities";
 import type {
   FlowEffectRow,
   FlowExecutionRow,
+  FlowVersionRow,
 } from "@/lib/flow/flow-store-types";
 import type {
   EffectDispatchResult,
@@ -85,6 +86,19 @@ function isTerminalExecutionStatus(status: string): boolean {
 
 function isLegitimateStartTrigger(event: FlowEngineEvent): boolean {
   return event.type === "start" || event.type === "text" || event.type === "button";
+}
+
+// Ajuste de seguridad (autorizado) — el texto/valor real que representa
+// "el mensaje actual" según el tipo de evento entrante: `text` para
+// start/text, `id` para un click de botón (mismo campo que ya usa
+// handleButtonInput en flow-engine.ts para volcarlo a variableKey -- no se
+// inventa un criterio nuevo). "effect_result" y cualquier tipo futuro sin
+// texto/valor disponible devuelven undefined a propósito, para que el
+// llamador conserve el valor anterior en vez de inventar uno.
+function extraerTextoDelEvento(event: FlowEngineEvent): string | undefined {
+  if (event.type === "start" || event.type === "text") return event.text;
+  if (event.type === "button") return event.id;
+  return undefined;
 }
 
 function casBackoffMs(attempt: number): number {
@@ -290,6 +304,53 @@ export class ExecutionOrchestrator {
     const active = await this.deps.store.getActiveExecution(event.tenantId, event.conversation);
 
     if (active) {
+      // Diagnóstico forense (autorizado, incidente AMORE 2026-09-07 00:44) —
+      // flow_version_id queda fijado al CREAR la ejecución y nunca migra
+      // automáticamente (supabase/migrations/20260828100000_dulabs_flow_store.sql,
+      // comentario de columna). Si mientras la ejecución sigue activa se
+      // publica una versión nueva del Flow, esa ejecución sigue corriendo
+      // la versión VIEJA indefinidamente -- confirmado con evidencia real:
+      // una corrección de grafo (rama aiFailure) publicada como v10 nunca
+      // llegó a aplicarse porque la ejecución real seguía anclada a v9.
+      // Antes de procesar el mensaje sobre una ejecución activa, se compara
+      // su flow_version_id contra la versión PUBLICADA actual (mismo
+      // mecanismo ya usado más abajo para crear una ejecución nueva,
+      // this.deps.store.getFlow). Si coincide, comportamiento intacto. Si
+      // no coincide, se cierra esa ejecución vieja (mismo patrón exacto que
+      // marcarEjecucionRotaComoFallida en flow-runtime-bridge.ts) y se crea
+      // una ejecución nueva sobre el Flow publicado actual, conservando
+      // TODO el `variables` real de la ejecución vieja (agendamiento,
+      // servicio, fecha, etc.) -- nunca se trata como una conversación
+      // nueva. Todo esto ocurre ANTES de insertEventIdempotent, así que
+      // este mensaje se procesa una sola vez, sobre una sola ejecución.
+      // El chequeo de tenant_mismatch real vive en process() (compara
+      // executionRow.tenant_id contra event.tenantId DESPUÉS de resolver la
+      // ejecución) -- si esta `active` es de OTRO tenant (nunca debería
+      // pasar en producción, getActiveExecution ya filtra por tenant; solo
+      // ocurre en pruebas adversariales), NUNCA se migra usando el flow del
+      // tenant del EVENTO: se deja tal cual para que ese chequeo posterior
+      // la rechace, exactamente como antes de este fix.
+      //
+      // Ajuste de seguridad (autorizado) -- si la ejecución tiene un efecto
+      // externo REAL en vuelo (status="waiting_effect": Nylas, IA, etc.),
+      // NUNCA se migra. Cerrarla dejaría el eventual effect_result huérfano
+      // contra una ejecución ya cerrada -- inaceptable para una reserva que
+      // Nylas puede terminar creando de todos modos del otro lado. La
+      // migración de versión solo aplica a una ejecución que está
+      // esperando un mensaje NUEVO del cliente (waiting_input/running),
+      // nunca a una con un efecto ya despachado. No se inventa ningún
+      // estado nuevo: "waiting_effect" ya es uno de los estados reales de
+      // dulabs_flow_executions (ver ACTIVE_EXECUTION_STATUSES en flow-store.ts).
+      const flowActual =
+        active.status !== "waiting_effect" && active.tenant_id === event.tenantId
+          ? await this.deps.store.getFlow(event.tenantId, active.flow_id)
+          : null;
+      if (flowActual?.published_version_id && flowActual.published_version_id !== active.flow_version_id) {
+        const versionActual = await this.deps.store.getFlowVersion(event.tenantId, flowActual.published_version_id);
+        if (versionActual) {
+          return this.migrateToPublishedVersion(event, active, flowActual.id, versionActual);
+        }
+      }
       return { kind: "ok", executionRow: active, engineEvent: event.engineEvent };
     }
 
@@ -313,40 +374,7 @@ export class ExecutionOrchestrator {
       return { kind: "reject", result: rejected("version_not_found") };
     }
 
-    const definition = parseFlowDefinition(versionRow.definition_json);
-    const executionId = this.deps.ids.executionId();
-    const initialState = this.deps.engine.createFlowEngineState(definition, {
-      flowId: flowRow.id,
-      flowVersionId: versionRow.id,
-      executionId,
-    });
-    // Bug raíz #4 (slot-filling) — se siembra la fecha de HOY (hora de
-    // Colombia, YYYY-MM-DD) al CREAR la ejecución. Un nodo AI de extracción
-    // (ej. agendar__ai-extraer) puede así resolver referencias relativas
-    // ("el viernes") a una fecha concreta. Variable SIN prefijo "__" a
-    // propósito: debe ser visible para Claude en el bloque VARIABLES (los
-    // "__" se filtran vía stripInternalKeys). Es un dato inocuo y general:
-    // los flows que no lo lean simplemente lo ignoran. NO reemplaza ninguna
-    // consulta real -- solo ayuda a interpretar el primer mensaje.
-    initialState.variables = {
-      ...initialState.variables,
-      hoy: new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" }),
-      // Mismo criterio que 'hoy' -- se siembra SOLO si el tenant tiene algo
-      // configurado, sin prefijo "__" a propósito (debe ser visible para
-      // Claude en el bloque VARIABLES). Un flow que no la lea no cambia de
-      // comportamiento.
-      ...(event.baseConocimiento ? { baseConocimiento: event.baseConocimiento } : {}),
-    };
-
-    const createResult = await this.deps.store.createExecution({
-      tenantId: event.tenantId,
-      flowId: flowRow.id,
-      flowVersionId: versionRow.id,
-      executionId,
-      phoneNumberId: event.conversation.phoneNumberId,
-      telefonoCliente: event.conversation.telefonoCliente,
-      initialState,
-    });
+    const createResult = await this.createExecutionRow(event, flowRow.id, versionRow, {});
 
     if (createResult.created) {
       return { kind: "ok", executionRow: createResult.row, engineEvent: event.engineEvent };
@@ -378,6 +406,126 @@ export class ExecutionOrchestrator {
         : event.engineEvent;
 
     return { kind: "ok", executionRow: createResult.existing, engineEvent };
+  }
+
+  /**
+   * Diagnóstico forense (autorizado) — ver comentario en resolveExecution.
+   * Cierra la ejecución vieja (mismo patrón exacto que
+   * marcarEjecucionRotaComoFallida en flow-runtime-bridge.ts: leer la fila
+   * fresca, nunca tocar una ya terminal, guardar status:"failed" con su
+   * propio state_version) y crea una ejecución nueva sobre el Flow
+   * publicado actual, con el mensaje que disparó la migración como
+   * mensajeActual del primer turno y TODO el `variables` real de la
+   * ejecución vieja copiado encima -- nunca se trata como una conversación
+   * nueva. No se importa marcarEjecucionRotaComoFallida directamente
+   * (crearía un ciclo: flow-runtime-bridge.ts ya importa de este archivo)
+   * -- se reimplementa el mismo cierre best-effort acá, con this.deps.store
+   * (ya disponible en esta clase).
+   */
+  private async migrateToPublishedVersion(
+    event: NormalizedFlowEvent,
+    oldRow: FlowExecutionRow,
+    flowId: string,
+    versionRow: FlowVersionRow,
+  ): Promise<
+    | { kind: "ok"; executionRow: FlowExecutionRow; engineEvent: FlowEngineEvent }
+    | { kind: "reject"; result: OrchestratorResult }
+  > {
+    // Ajuste de seguridad (autorizado) -- relectura fresca justo antes de
+    // cerrar: `oldRow` puede haber quedado desactualizada (otra invocación
+    // concurrente pudo haber despachado un efecto real, dejándola
+    // waiting_effect, o haberla cerrado/completado ya) en el tiempo entre
+    // leer `active` y llegar acá. Si ahora tiene un efecto en vuelo o ya es
+    // terminal, se aborta la migración por completo -- NUNCA se cierra, NUNCA
+    // se crea una ejecución nueva -- y se sigue procesando este mensaje
+    // exactamente como si nunca se hubiera detectado un desfase de versión
+    // (mismo camino que el guard de arriba en resolveExecution).
+    const fresh = await this.deps.store.getExecutionById(event.tenantId, oldRow.id);
+    if (!fresh || fresh.status === "waiting_effect" || isTerminalExecutionStatus(fresh.status)) {
+      return { kind: "ok", executionRow: fresh ?? oldRow, engineEvent: event.engineEvent };
+    }
+
+    try {
+      await this.deps.store.saveExecutionState(
+        event.tenantId,
+        fresh.id,
+        { ...executionRowToEngineState(fresh), status: "failed" },
+        fresh.state_version,
+      );
+    } catch {
+      // Best-effort -- un conflicto de CAS (otra invocación concurrente ya
+      // la cerró o la avanzó) no debe impedir que la ejecución nueva se
+      // cree igual.
+    }
+
+    const textoActual = extraerTextoDelEvento(event.engineEvent);
+
+    const presetVariables: Record<string, unknown> = { ...oldRow.variables };
+    if (typeof textoActual === "string" && textoActual.trim()) {
+      // El mensaje que disparó esta migración es el que la ejecución nueva
+      // debe procesar en su primer turno -- nunca el que haya quedado
+      // guardado en mensajeActual de la ejecución vieja (sería un turno
+      // anterior). resolverEscenarioAction (internal-action-executor.ts)
+      // ya prioriza mensajeActual sobre __firstMessageText.
+      presetVariables.mensajeActual = textoActual;
+    }
+
+    const createResult = await this.createExecutionRow(event, flowId, versionRow, { presetVariables });
+    const engineEvent: FlowEngineEvent = { type: "start", text: textoActual, eventId: event.engineEvent.eventId };
+
+    if (createResult.created) {
+      return { kind: "ok", executionRow: createResult.row, engineEvent };
+    }
+    // Best-effort -- colisión de UUID prácticamente imposible (executionId
+    // es un UUID nuevo generado acá, no reutiliza ninguno existente).
+    return { kind: "ok", executionRow: createResult.existing, engineEvent };
+  }
+
+  private async createExecutionRow(
+    event: NormalizedFlowEvent,
+    flowId: string,
+    versionRow: FlowVersionRow,
+    options: { presetVariables?: Record<string, unknown> },
+  ) {
+    const definition = parseFlowDefinition(versionRow.definition_json);
+    const executionId = this.deps.ids.executionId();
+    const initialState = this.deps.engine.createFlowEngineState(definition, {
+      flowId,
+      flowVersionId: versionRow.id,
+      executionId,
+    });
+    // Bug raíz #4 (slot-filling) — se siembra la fecha de HOY (hora de
+    // Colombia, YYYY-MM-DD) al CREAR la ejecución. Un nodo AI de extracción
+    // (ej. agendar__ai-extraer) puede así resolver referencias relativas
+    // ("el viernes") a una fecha concreta. Variable SIN prefijo "__" a
+    // propósito: debe ser visible para Claude en el bloque VARIABLES (los
+    // "__" se filtran vía stripInternalKeys). Es un dato inocuo y general:
+    // los flows que no lo lean simplemente lo ignoran. NO reemplaza ninguna
+    // consulta real -- solo ayuda a interpretar el primer mensaje.
+    initialState.variables = {
+      ...initialState.variables,
+      hoy: new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" }),
+      // Mismo criterio que 'hoy' -- se siembra SOLO si el tenant tiene algo
+      // configurado, sin prefijo "__" a propósito (debe ser visible para
+      // Claude en el bloque VARIABLES). Un flow que no la lea no cambia de
+      // comportamiento.
+      ...(event.baseConocimiento ? { baseConocimiento: event.baseConocimiento } : {}),
+      // Migración de versión (autorizada) -- copia explícita y mínima del
+      // estado conversacional real de una ejecución vieja (agendamiento,
+      // servicio, fecha, etc.) por encima de los valores por defecto del
+      // Flow nuevo. Vacío (comportamiento de siempre) cuando no aplica.
+      ...(options.presetVariables ?? {}),
+    };
+
+    return this.deps.store.createExecution({
+      tenantId: event.tenantId,
+      flowId,
+      flowVersionId: versionRow.id,
+      executionId,
+      phoneNumberId: event.conversation.phoneNumberId,
+      telefonoCliente: event.conversation.telefonoCliente,
+      initialState,
+    });
   }
 
   private async runEngineIterationWithCas(params: {
