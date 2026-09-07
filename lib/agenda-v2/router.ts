@@ -20,9 +20,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { adquirirCandadoChat, liberarCandadoChat } from "@/lib/chat-lock";
 import { cargarEscenariosReal } from "@/lib/bot-escenarios/store";
+import { listarCatalogoServiciosReal } from "@/lib/catalogo-servicios-flow-adaptador";
 import { enviarMensajeWhatsApp } from "@/lib/whatsapp-worker-client";
 import { esInicioDeAgendaV2 } from "@/lib/agenda-v2/entrada";
-import { manejarMensajeAgendaV2, RESPUESTA_PLACEHOLDER_AGENDA_V2 } from "@/lib/agenda-v2/controlador";
+import { manejarMensajeAgendaV2 } from "@/lib/agenda-v2/controlador";
+import { construirOpcionesServicio, renderizarMenuServicio } from "@/lib/agenda-v2/servicios";
 import { buscarSesionActivaAgendaV2, crearSesionAgendaV2, cerrarSesionAgendaV2, actualizarSesionAgendaV2 } from "@/lib/agenda-v2/sesiones";
 
 /** Mismo prefijo sintético que ya usa lib/whatsapp-qr-bot.ts para el candado/estado de este canal -- nunca un phone_number_id real de Meta. */
@@ -34,6 +36,7 @@ export interface AgendaV2RouterDeps {
   adquirirCandadoChat?: typeof adquirirCandadoChat;
   liberarCandadoChat?: typeof liberarCandadoChat;
   cargarEscenariosReal?: typeof cargarEscenariosReal;
+  cargarCatalogoReal?: typeof listarCatalogoServiciosReal;
   enviarMensajeWhatsApp?: typeof enviarMensajeWhatsApp;
   buscarSesionActiva?: typeof buscarSesionActivaAgendaV2;
   crearSesion?: typeof crearSesionAgendaV2;
@@ -64,6 +67,7 @@ export async function procesarMensajeConAgendaV2(
   const adquirir = deps.adquirirCandadoChat ?? adquirirCandadoChat;
   const liberar = deps.liberarCandadoChat ?? liberarCandadoChat;
   const cargarEscenarios = deps.cargarEscenariosReal ?? cargarEscenariosReal;
+  const cargarCatalogo = deps.cargarCatalogoReal ?? listarCatalogoServiciosReal;
   const enviarMensaje = deps.enviarMensajeWhatsApp ?? enviarMensajeWhatsApp;
   const buscarSesionActiva = deps.buscarSesionActiva ?? buscarSesionActivaAgendaV2;
   const crearSesion = deps.crearSesion ?? crearSesionAgendaV2;
@@ -105,7 +109,10 @@ export async function procesarMensajeConAgendaV2(
       if (resultado.accion === "cerrar_sesion") {
         await cerrarSesion(params.supabase, sesion.id);
       } else {
-        await actualizarSesion(params.supabase, sesion.id, { ultimoWamidProcesado: params.wamid });
+        // FASE 2 -- aplica los cambios reales que decidió el controlador
+        // (ej. servicioId + step="S2_PROFESIONAL" al seleccionar un
+        // servicio válido), siempre junto con el wamid ya procesado.
+        await actualizarSesion(params.supabase, sesion.id, { ...resultado.cambios, ultimoWamidProcesado: params.wamid });
       }
       await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: resultado.respuesta, origen: "automatico" });
       return { manejado: true };
@@ -119,8 +126,19 @@ export async function procesarMensajeConAgendaV2(
       return { manejado: false };
     }
 
-    await crearSesion(params.supabase, { tenantId: params.idTenant, telefonoCliente: params.telefono, wamid: params.wamid });
-    await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: RESPUESTA_PLACEHOLDER_AGENDA_V2, origen: "automatico" });
+    // FASE 2 -- el primer paso real es SIEMPRE el menú de servicios,
+    // construido a partir del catálogo REAL del tenant (nunca inventado,
+    // nunca hardcodeado) -- las opciones mostradas se guardan tal cual en
+    // la sesión para resolver la próxima respuesta determinísticamente.
+    const catalogo = await cargarCatalogo(params.supabase, params.idTenant);
+    const opciones = construirOpcionesServicio(catalogo);
+    await crearSesion(params.supabase, {
+      tenantId: params.idTenant,
+      telefonoCliente: params.telefono,
+      wamid: params.wamid,
+      opcionesMostradas: opciones,
+    });
+    await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: renderizarMenuServicio(opciones), origen: "automatico" });
     return { manejado: true };
   } finally {
     await liberar(phoneNumberId, params.telefono, params.wamid);

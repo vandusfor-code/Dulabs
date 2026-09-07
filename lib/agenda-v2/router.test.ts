@@ -1,7 +1,7 @@
 /**
  * AGENDA V2 (autorizado) — pruebas del router de aislamiento. Todas las
- * dependencias reales (candado, sesiones, escenarios, envío real de
- * WhatsApp) están inyectadas con fakes en memoria -- ningún test toca
+ * dependencias reales (candado, sesiones, escenarios, catálogo, envío real
+ * de WhatsApp) están inyectadas con fakes en memoria -- ningún test toca
  * Supabase real, Nylas, ni envía un mensaje real.
  */
 import { describe, it } from "node:test";
@@ -11,9 +11,16 @@ import { procesarMensajeConAgendaV2, type AgendaV2RouterDeps } from "@/lib/agend
 import type { SesionAgendaV2, CambiosSesionAgendaV2 } from "@/lib/agenda-v2/sesiones";
 import { AMORE_ESCENARIOS_SEED } from "@/lib/bot-escenarios/seed-amore";
 import type { EscenarioRow } from "@/lib/bot-escenarios/tipos";
-import { RESPUESTA_PLACEHOLDER_AGENDA_V2 } from "@/lib/agenda-v2/controlador";
+import type { ServicioCatalogoReal } from "@/lib/catalogo-servicios-flow-adaptador";
+import { construirOpcionesServicio } from "@/lib/agenda-v2/servicios";
 
 const FAKE_SUPABASE = {} as SupabaseClient;
+
+const CATALOGO_FIXTURE: ServicioCatalogoReal[] = [
+  { id: "s-dipping-real", nombre: "Dipping", precio: 60000, duracionMin: 120, categoria: "Uñas", descripcion: null },
+  { id: "s-presson-real", nombre: "Press On", precio: 80000, duracionMin: 120, categoria: "Uñas", descripcion: null },
+  { id: "s-retoques-real", nombre: "Retoques", precio: 60000, duracionMin: 120, categoria: "Uñas", descripcion: null },
+];
 
 function escenariosDe(tenantId: string): EscenarioRow[] {
   return AMORE_ESCENARIOS_SEED.map((s, i) => ({ ...s, id: `${tenantId}-e${i}`, tenantId }));
@@ -27,7 +34,7 @@ function crearFakeSesiones() {
     filas,
     buscarSesionActiva: async (_s: unknown, tenantId: string, telefono: string) =>
       filas.find((f) => f.tenantId === tenantId && f.telefonoCliente === telefono && f.activo) ?? null,
-    crearSesion: async (_s: unknown, params: { tenantId: string; telefonoCliente: string; wamid: string }) => {
+    crearSesion: async (_s: unknown, params: { tenantId: string; telefonoCliente: string; wamid: string; opcionesMostradas?: unknown }) => {
       const nueva: SesionAgendaV2 = {
         id: siguienteId++,
         tenantId: params.tenantId,
@@ -38,7 +45,7 @@ function crearFakeSesiones() {
         profesionalId: null,
         fechaIso: null,
         slotSeleccionado: null,
-        opcionesMostradas: null,
+        opcionesMostradas: params.opcionesMostradas ?? null,
         ultimoWamidProcesado: params.wamid,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
@@ -104,6 +111,7 @@ function armarDeps(overrides: Partial<AgendaV2RouterDeps> = {}): {
     cerrarSesion: sesiones.cerrarSesion,
     actualizarSesion: sesiones.actualizarSesion,
     cargarEscenariosReal: async (_s, tenantId) => escenariosDe(tenantId),
+    cargarCatalogoReal: async () => CATALOGO_FIXTURE,
     enviarMensajeWhatsApp: envios.enviarMensajeWhatsApp,
     ...overrides,
   };
@@ -123,8 +131,8 @@ describe("A. Sin sesión Agenda V2, mensaje que NO dispara inicio -> comportamie
   });
 });
 
-describe("B. 'Quiero una cita' sin sesión previa -> crea sesión Agenda V2 y responde por su cuenta", () => {
-  it("crea la sesión en S1_SERVICIO y responde el placeholder, sin tocar Flow Engine", async () => {
+describe("B. 'Quiero una cita' sin sesión previa -> FASE 2: crea la sesión y muestra el menú REAL de servicios", () => {
+  it("crea la sesión en S1_SERVICIO con las opciones reales guardadas, y envía el menú real (nunca inventado)", async () => {
     const { deps, sesiones, envios } = armarDeps();
     const r = await procesarMensajeConAgendaV2(
       { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "Quiero una cita", wamid: "wamid-1" },
@@ -136,8 +144,17 @@ describe("B. 'Quiero una cita' sin sesión previa -> crea sesión Agenda V2 y re
     assert.equal(sesiones.filas[0]!.step, "S1_SERVICIO");
     assert.equal(sesiones.filas[0]!.tenantId, "amore-test");
     assert.equal(sesiones.filas[0]!.telefonoCliente, "573148127388");
+
+    // Test 8 -- las opciones guardadas en la sesión corresponden EXACTAMENTE
+    // a las opciones reales del catálogo mockeado (nunca inventadas).
+    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, construirOpcionesServicio(CATALOGO_FIXTURE));
+
     assert.equal(envios.enviados.length, 1);
-    assert.equal(envios.enviados[0]!.mensaje, RESPUESTA_PLACEHOLDER_AGENDA_V2);
+    assert.match(envios.enviados[0]!.mensaje, /¿Qué servicio deseas realizarte\?/);
+    assert.match(envios.enviados[0]!.mensaje, /1\. Dipping — \$60\.000/);
+    assert.match(envios.enviados[0]!.mensaje, /2\. Press On — \$80\.000/);
+    assert.match(envios.enviados[0]!.mensaje, /3\. Retoques — \$60\.000/);
+    assert.doesNotMatch(envios.enviados[0]!.mensaje, /Acrílicas|Secado Rápido|Base Ruber/, "nunca servicios inventados o no-reservables");
   });
 
   it("funciona con la frase completa del ejemplo real ('...necesito hacerme las uñas')", async () => {
@@ -156,32 +173,104 @@ describe("B. 'Quiero una cita' sin sesión previa -> crea sesión Agenda V2 y re
   });
 });
 
-describe("C. CRÍTICO -- con sesión activa, un mensaje de 'cumpleaños' NUNCA llega a escenarios/Flow Engine", () => {
-  it("'cumpleaños' con sesión activa -> Agenda V2 responde, cargarEscenariosReal JAMÁS se invoca", async () => {
+describe("Test 1 -- seleccionar '1' guarda un service_id REAL y avanza a S2_PROFESIONAL", () => {
+  it("de punta a punta vía el router real (creación + selección)", async () => {
+    const { deps, sesiones, envios } = armarDeps();
+    await procesarMensajeConAgendaV2(
+      { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "quiero una cita", wamid: "w1" },
+      deps,
+    );
+    const r2 = await procesarMensajeConAgendaV2(
+      { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "w2" },
+      deps,
+    );
+    assert.equal(r2.manejado, true);
+    assert.equal(sesiones.filas[0]!.step, "S2_PROFESIONAL");
+    assert.equal(sesiones.filas[0]!.servicioId, "s-dipping-real");
+    assert.equal(sesiones.filas[0]!.opcionesMostradas, null, "las opciones de servicio ya no corresponden al paso siguiente");
+    assert.equal(envios.enviados[1]!.mensaje, "Servicio seleccionado correctamente.");
+  });
+});
+
+describe("Test 2/3 -- entradas inválidas durante S1_SERVICIO permanecen en S1_SERVICIO, sin tocar Flow Engine", () => {
+  it("Test 2: número fuera de rango ('999') no avanza ni cambia el servicio", async () => {
+    const { deps, sesiones, envios } = armarDeps();
+    await procesarMensajeConAgendaV2(
+      { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "quiero una cita", wamid: "w1" },
+      deps,
+    );
+    const r2 = await procesarMensajeConAgendaV2(
+      { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "999", wamid: "w2" },
+      deps,
+    );
+    assert.equal(r2.manejado, true);
+    assert.equal(sesiones.filas[0]!.step, "S1_SERVICIO");
+    assert.equal(sesiones.filas[0]!.servicioId, null);
+    assert.match(envios.enviados[1]!.mensaje, /No reconocí esa opción/);
+  });
+
+  it("Test 3: texto ambiguo ('hola'/'quiero el dipping'/'no sé') no avanza -- NUNCA usa Gemini ni Flow Engine para decidir", async () => {
     const { deps, sesiones, envios } = armarDeps({ cargarEscenariosReal: cargarEscenariosNuncaDebeLlamarse });
-    await sesiones.crearSesion(FAKE_SUPABASE, { tenantId: "amore-test", telefonoCliente: "573148127388", wamid: "wamid-0" });
+    // La sesión ya existe (creada directamente, sin pasar por el router) --
+    // así se puede probar, con la MISMA garantía dura de "esto NUNCA se
+    // llama", que ninguno de los 3 mensajes ambiguos siguientes se acerca a
+    // cargarEscenariosReal/resolverEscenario.
+    await sesiones.crearSesion(FAKE_SUPABASE, {
+      tenantId: "amore-test",
+      telefonoCliente: "573148127388",
+      wamid: "w1",
+      opcionesMostradas: construirOpcionesServicio(CATALOGO_FIXTURE),
+    });
+    for (const [i, mensaje] of ["hola", "quiero el dipping", "no sé"].entries()) {
+      const r = await procesarMensajeConAgendaV2(
+        { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: mensaje, wamid: `w-inv-${i}` },
+        deps,
+      );
+      assert.equal(r.manejado, true);
+      assert.equal(sesiones.filas[0]!.step, "S1_SERVICIO", `"${mensaje}" no debía avanzar el step`);
+      assert.equal(sesiones.filas[0]!.servicioId, null, `"${mensaje}" no debía fijar ningún servicio`);
+    }
+    assert.equal(envios.enviados.length, 3); // 3 reintentos (la sesión se creó directamente, sin pasar por el router)
+  });
+});
+
+describe("Test 4/5 -- un mensaje que coincide con un escenario del Flow Engine sigue siendo Agenda V2", () => {
+  it("'cumpleaños' con sesión activa en S1_SERVICIO -> Agenda V2 la trata como selección inválida, cargarEscenariosReal JAMÁS se invoca", async () => {
+    const { deps, sesiones, envios } = armarDeps({ cargarEscenariosReal: cargarEscenariosNuncaDebeLlamarse });
+    await sesiones.crearSesion(FAKE_SUPABASE, {
+      tenantId: "amore-test",
+      telefonoCliente: "573148127388",
+      wamid: "wamid-0",
+      opcionesMostradas: construirOpcionesServicio(CATALOGO_FIXTURE),
+    });
 
     const r = await procesarMensajeConAgendaV2(
       { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "cumpleaños", wamid: "wamid-1" },
       deps,
     );
     assert.deepEqual(r, { manejado: true });
-    assert.equal(envios.enviados[0]!.mensaje, RESPUESTA_PLACEHOLDER_AGENDA_V2, "responde Agenda V2, nunca el flujo de cumpleaños");
+    assert.match(envios.enviados[0]!.mensaje, /No reconocí esa opción/, "Agenda V2 responde por su cuenta, nunca el flujo de cumpleaños");
+    assert.equal(sesiones.filas[0]!.step, "S1_SERVICIO");
   });
 
   it("'cualquier cosa' con sesión activa -> mismo resultado, Agenda V2 sigue teniendo el control", async () => {
     const { deps, sesiones, envios } = armarDeps({ cargarEscenariosReal: cargarEscenariosNuncaDebeLlamarse });
-    await sesiones.crearSesion(FAKE_SUPABASE, { tenantId: "amore-test", telefonoCliente: "573148127388", wamid: "wamid-0" });
+    await sesiones.crearSesion(FAKE_SUPABASE, {
+      tenantId: "amore-test",
+      telefonoCliente: "573148127388",
+      wamid: "wamid-0",
+      opcionesMostradas: construirOpcionesServicio(CATALOGO_FIXTURE),
+    });
 
     const r = await procesarMensajeConAgendaV2(
       { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "cualquier cosa", wamid: "wamid-1" },
       deps,
     );
     assert.deepEqual(r, { manejado: true });
-    assert.equal(envios.enviados[0]!.mensaje, RESPUESTA_PLACEHOLDER_AGENDA_V2);
+    assert.match(envios.enviados[0]!.mensaje, /No reconocí esa opción/);
   });
 
-  it("secuencia completa del pedido: quiero una cita -> cumpleaños -> cualquier cosa -> cancelar -> vuelve a la normalidad", async () => {
+  it("secuencia completa: quiero una cita -> cumpleaños (inválido) -> '1' (válido) -> cancelar -> vuelve a la normalidad", async () => {
     const { deps, sesiones, envios } = armarDeps();
 
     const r1 = await procesarMensajeConAgendaV2(
@@ -197,14 +286,16 @@ describe("C. CRÍTICO -- con sesión activa, un mensaje de 'cumpleaños' NUNCA l
       deps,
     );
     assert.equal(r2.manejado, true);
-    assert.equal(envios.enviados[1]!.mensaje, RESPUESTA_PLACEHOLDER_AGENDA_V2);
+    assert.match(envios.enviados[1]!.mensaje, /No reconocí esa opción/);
+    assert.equal(sesiones.filas[0]!.step, "S1_SERVICIO", "cumpleaños nunca debe avanzar el step");
 
     const r3 = await procesarMensajeConAgendaV2(
-      { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "cualquier cosa", wamid: "w3" },
+      { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "w3" },
       deps,
     );
     assert.equal(r3.manejado, true);
-    assert.equal(envios.enviados[2]!.mensaje, RESPUESTA_PLACEHOLDER_AGENDA_V2);
+    assert.equal(sesiones.filas[0]!.step, "S2_PROFESIONAL");
+    assert.equal(sesiones.filas[0]!.servicioId, "s-dipping-real");
 
     const r4 = await procesarMensajeConAgendaV2(
       { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "cancelar", wamid: "w4" },
@@ -213,8 +304,7 @@ describe("C. CRÍTICO -- con sesión activa, un mensaje de 'cumpleaños' NUNCA l
     assert.equal(r4.manejado, true);
     assert.equal(sesiones.filas[0]!.activo, false, "la sesión debe quedar cerrada");
 
-    // Sección 5 del pedido -- "y solamente DESPUÉS de eso" un nuevo mensaje
-    // vuelve al comportamiento normal.
+    // "y solamente DESPUÉS de eso" un nuevo mensaje vuelve al comportamiento normal.
     const r5 = await procesarMensajeConAgendaV2(
       { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "¿Qué es el Dipping?", wamid: "w5" },
       deps,
@@ -223,8 +313,8 @@ describe("C. CRÍTICO -- con sesión activa, un mensaje de 'cumpleaños' NUNCA l
   });
 });
 
-describe("D. Dos teléfonos distintos -> sesiones completamente independientes", () => {
-  it("nunca mezcla el estado entre dos clientas del mismo tenant", async () => {
+describe("Test 6 -- Dos teléfonos distintos -> mappings de opciones completamente independientes", () => {
+  it("nunca mezcla el estado ni las opciones entre dos clientas del mismo tenant", async () => {
     const { deps, sesiones } = armarDeps();
     await procesarMensajeConAgendaV2(
       { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "quiero una cita", wamid: "wA1" },
@@ -238,9 +328,18 @@ describe("D. Dos teléfonos distintos -> sesiones completamente independientes",
     assert.equal(sesiones.filas[0]!.telefonoCliente, "573148127388");
     assert.equal(sesiones.filas[1]!.telefonoCliente, "573000000000");
 
+    // A selecciona "2" (Press On) -- nunca debe afectar el mapping de B.
+    await procesarMensajeConAgendaV2(
+      { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "2", wamid: "wA2" },
+      deps,
+    );
+    assert.equal(sesiones.filas[0]!.servicioId, "s-presson-real");
+    assert.equal(sesiones.filas[1]!.step, "S1_SERVICIO", "B nunca avanza por una acción de A");
+    assert.equal(sesiones.filas[1]!.servicioId, null);
+
     // Cancelar la de A nunca debe afectar a B.
     await procesarMensajeConAgendaV2(
-      { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "cancelar", wamid: "wA2" },
+      { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "cancelar", wamid: "wA3" },
       deps,
     );
     assert.equal(sesiones.filas[0]!.activo, false);
@@ -248,7 +347,7 @@ describe("D. Dos teléfonos distintos -> sesiones completamente independientes",
   });
 });
 
-describe("E. Dos tenants distintos con el MISMO teléfono -> aislamiento total", () => {
+describe("Test 7 -- Dos tenants distintos con el MISMO teléfono -> aislamiento total", () => {
   it("nunca mezcla sesiones de tenants distintos aunque el teléfono real coincida", async () => {
     const { deps, sesiones } = armarDeps();
     const TELEFONO = "573148127388";
@@ -287,25 +386,27 @@ describe("F. Mismo wamid recibido dos veces -> nunca se duplica ni se reprocesa"
     assert.equal(envios.enviados.length, 1, "nunca debe reenviar el mensaje");
   });
 
-  it("mismo wamid, ahora con una sesión ya en curso -- tampoco reprocesa", async () => {
+  it("mismo wamid, ahora con una selección real ya procesada -- tampoco reprocesa ni vuelve a cambiar el servicio", async () => {
     const { deps, sesiones, envios } = armarDeps();
     await procesarMensajeConAgendaV2(
       { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "quiero una cita", wamid: "w1" },
       deps,
     );
     await procesarMensajeConAgendaV2(
-      { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "cumpleaños", wamid: "w2" },
+      { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "w2" },
       deps,
     );
     assert.equal(envios.enviados.length, 2);
+    assert.equal(sesiones.filas[0]!.step, "S2_PROFESIONAL");
 
     const r = await procesarMensajeConAgendaV2(
-      { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "cumpleaños", wamid: "w2" },
+      { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "w2" },
       deps,
     );
     assert.equal(r.manejado, true);
     assert.equal(envios.enviados.length, 2, "el wamid w2 ya se procesó -- nunca se reenvía una tercera vez");
     assert.equal(sesiones.filas.length, 1);
+    assert.equal(sesiones.filas[0]!.step, "S2_PROFESIONAL", "nunca se vuelve a procesar la selección");
   });
 });
 

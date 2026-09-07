@@ -89,7 +89,7 @@ export async function buscarSesionActivaAgendaV2(
  */
 export async function crearSesionAgendaV2(
   supabase: SupabaseClient,
-  params: { tenantId: string; telefonoCliente: string; wamid: string },
+  params: { tenantId: string; telefonoCliente: string; wamid: string; opcionesMostradas?: unknown },
 ): Promise<SesionAgendaV2> {
   const { data, error } = await supabase
     .from(TABLA)
@@ -99,6 +99,7 @@ export async function crearSesionAgendaV2(
       activo: true,
       step: "S1_SERVICIO",
       ultimo_wamid_procesado: params.wamid,
+      opciones_mostradas: params.opcionesMostradas ?? null,
     })
     .select("*")
     .single();
