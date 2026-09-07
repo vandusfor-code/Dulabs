@@ -4,6 +4,7 @@ import { manejarMensajeAgendaV2, RESPUESTA_PLACEHOLDER_AGENDA_V2 } from "@/lib/a
 import type { SesionAgendaV2 } from "@/lib/agenda-v2/sesiones";
 import type { OpcionServicioAgendaV2 } from "@/lib/agenda-v2/servicios";
 import type { OpcionCategoriaAgendaV2 } from "@/lib/agenda-v2/categorias";
+import type { OpcionProfesionalAgendaV2 } from "@/lib/agenda-v2/profesionales";
 
 const OPCIONES: OpcionServicioAgendaV2[] = [
   { numero: 1, servicioId: "s-dipping-real", nombre: "Dipping", precio: 60000, duracionMin: 120 },
@@ -14,6 +15,11 @@ const OPCIONES: OpcionServicioAgendaV2[] = [
 const CATEGORIAS: OpcionCategoriaAgendaV2[] = [
   { numero: 1, categoria: "Cabello" },
   { numero: 2, categoria: "Uñas" },
+];
+
+const OPCIONES_PROFESIONAL: OpcionProfesionalAgendaV2[] = [
+  { numero: 1, profesionalId: 1262, nombre: "Mary" },
+  { numero: 2, profesionalId: 1265, nombre: "Jessica" },
 ];
 
 function sesionEnServicio(overrides: Partial<SesionAgendaV2> = {}): SesionAgendaV2 {
@@ -54,24 +60,16 @@ describe("manejarMensajeAgendaV2 -- 'cancelar' cierra la sesión sea cual sea el
 });
 
 describe("FASE 2 -- manejarMensajeAgendaV2 en S1_SERVICIO", () => {
-  it("Test 1: '1' resuelve contra las opciones reales guardadas -- guarda un servicio_id REAL y avanza a S2_PROFESIONAL", () => {
+  it("Test 1: '1' resuelve contra las opciones reales guardadas -- devuelve accion:'servicio_seleccionado' con el servicio_id REAL (router.ts arma el menú de profesionales, ver FASE 3)", () => {
     const r = manejarMensajeAgendaV2(sesionEnServicio(), "1");
-    assert.equal(r.accion, "continuar");
-    assert.equal(r.respuesta, "Servicio seleccionado correctamente.");
-    assert.equal(r.accion, "continuar");
-    if (r.accion !== "continuar") return;
-    assert.equal(r.cambios?.step, "S2_PROFESIONAL");
-    assert.equal(r.cambios?.servicioId, "s-dipping-real");
-    assert.equal(r.cambios?.opcionesMostradas, null, "las opciones de servicio ya no corresponden al paso siguiente");
+    assert.deepEqual(r, { accion: "servicio_seleccionado", servicioId: "s-dipping-real" });
   });
 
   it("selecciona correctamente la opción 2 y 3 (nunca asume que sigue siendo la posición 1)", () => {
     const r2 = manejarMensajeAgendaV2(sesionEnServicio(), "2");
-    assert.equal(r2.accion, "continuar");
-    if (r2.accion === "continuar") assert.equal(r2.cambios?.servicioId, "s-presson-real");
+    assert.deepEqual(r2, { accion: "servicio_seleccionado", servicioId: "s-presson-real" });
     const r3 = manejarMensajeAgendaV2(sesionEnServicio(), "3");
-    assert.equal(r3.accion, "continuar");
-    if (r3.accion === "continuar") assert.equal(r3.cambios?.servicioId, "s-retoques-real");
+    assert.deepEqual(r3, { accion: "servicio_seleccionado", servicioId: "s-retoques-real" });
   });
 
   it("Test 2: número inválido (fuera de rango) -- permanece en S1_SERVICIO, sin cambios de servicio", () => {
@@ -168,9 +166,91 @@ describe("Ajuste de UX (autorizado) -- manejarMensajeAgendaV2 en la sub-fase de 
   });
 });
 
-describe("Pasos posteriores a S1_SERVICIO -- todavía sin implementar (fases futuras)", () => {
-  it("cualquier mensaje en S2_PROFESIONAL recibe el placeholder, sin tocar servicioId ni step", () => {
-    const sesion = sesionEnServicio({ step: "S2_PROFESIONAL", servicioId: "s-dipping-real", opcionesMostradas: null });
+describe("FASE 3 (autorizado) -- manejarMensajeAgendaV2 en S2_PROFESIONAL", () => {
+  function sesionEnProfesional(overrides: Partial<SesionAgendaV2> = {}): SesionAgendaV2 {
+    return sesionEnServicio({
+      step: "S2_PROFESIONAL",
+      servicioId: "s-cejas-cuchilla-real",
+      opcionesMostradas: OPCIONES_PROFESIONAL,
+      ...overrides,
+    });
+  }
+
+  it("Test 3/7: '1' resuelve contra las opciones reales guardadas -- guarda un profesional_id REAL y avanza a S3_DIA", () => {
+    const r = manejarMensajeAgendaV2(sesionEnProfesional(), "1");
+    assert.equal(r.accion, "continuar");
+    assert.equal(r.respuesta, "Profesional seleccionado correctamente.");
+    if (r.accion !== "continuar") return;
+    assert.equal(r.cambios?.step, "S3_DIA");
+    assert.equal(r.cambios?.profesionalId, 1262);
+    assert.equal(r.cambios?.opcionesMostradas, null, "Test 8: las opciones de profesional ya no corresponden al paso siguiente");
+  });
+
+  it("otra opción también resuelve correctamente (nunca asume que sigue siendo la posición 1)", () => {
+    const r = manejarMensajeAgendaV2(sesionEnProfesional(), "2");
+    assert.equal(r.accion, "continuar");
+    if (r.accion !== "continuar") return;
+    assert.equal(r.cambios?.profesionalId, 1265);
+  });
+
+  it("Test 4: número inválido (fuera de rango) -- permanece en S2_PROFESIONAL, sin cambios de profesional", () => {
+    const r = manejarMensajeAgendaV2(sesionEnProfesional(), "999");
+    assert.equal(r.accion, "continuar");
+    if (r.accion !== "continuar") return;
+    assert.equal(r.cambios, undefined, "nunca debe avanzar de step ni tocar profesionalId");
+    assert.match(r.respuesta, /No reconocí esa opción/);
+    assert.match(r.respuesta, /1\. Mary/, "vuelve a mostrar las mismas opciones reales");
+  });
+
+  it("Test 5: texto ambiguo/no numérico -- permanece en S2_PROFESIONAL", () => {
+    for (const mensaje of ["hola", "quiero cualquiera", "mary", "no sé"]) {
+      const r = manejarMensajeAgendaV2(sesionEnProfesional(), mensaje);
+      assert.equal(r.accion, "continuar", `"${mensaje}" nunca debe cerrar la sesión`);
+      if (r.accion !== "continuar") continue;
+      assert.equal(r.cambios, undefined, `"${mensaje}" nunca debe avanzar el step`);
+      assert.match(r.respuesta, /No reconocí esa opción/, `"${mensaje}" debe repetir el menú, nunca aproximar`);
+    }
+  });
+
+  it("Test 13: la opción reenviada tras un error corresponde EXACTAMENTE a las opciones guardadas en la sesión", () => {
+    const r = manejarMensajeAgendaV2(sesionEnProfesional(), "no sé");
+    assert.equal(r.accion, "continuar");
+    if (r.accion !== "continuar") return;
+    for (const o of OPCIONES_PROFESIONAL) {
+      assert.match(r.respuesta, new RegExp(`${o.numero}\\. ${o.nombre}`));
+    }
+  });
+
+  it("'cancelar' cierra la sesión también estando en S2_PROFESIONAL", () => {
+    const r = manejarMensajeAgendaV2(sesionEnProfesional(), "cancelar");
+    assert.equal(r.accion, "cerrar_sesion");
+  });
+
+  it("'cumpleaños' (coincide con un escenario del Flow Engine) -- se trata como selección inválida, nunca invoca Flow Engine", () => {
+    const r = manejarMensajeAgendaV2(sesionEnProfesional(), "cumpleaños");
+    assert.equal(r.accion, "continuar");
+    if (r.accion !== "continuar") return;
+    assert.match(r.respuesta, /No reconocí esa opción/);
+    assert.equal(r.cambios, undefined);
+  });
+
+  it("defensivo: sesión en S2_PROFESIONAL sin opciones guardadas -- nunca inventa, pide reiniciar", () => {
+    const r = manejarMensajeAgendaV2(sesionEnProfesional({ opcionesMostradas: null }), "1");
+    assert.equal(r.accion, "continuar");
+    if (r.accion !== "continuar") return;
+    assert.equal(r.cambios, undefined);
+    assert.match(r.respuesta, /Se perdió el menú/);
+  });
+});
+
+describe("Pasos posteriores a S2_PROFESIONAL -- todavía sin implementar (fases futuras)", () => {
+  it("cualquier mensaje en S3_DIA recibe el placeholder, sin tocar profesionalId ni step", () => {
+    const sesion = sesionEnServicio({
+      step: "S3_DIA",
+      servicioId: "s-cejas-cuchilla-real",
+      profesionalId: 1262,
+      opcionesMostradas: null,
+    });
     for (const mensaje of ["1", "cualquier cosa", "cumpleaños"]) {
       const r = manejarMensajeAgendaV2(sesion, mensaje);
       assert.equal(r.accion, "continuar");

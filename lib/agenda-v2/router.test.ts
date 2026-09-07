@@ -1,13 +1,21 @@
 /**
  * AGENDA V2 (autorizado) — pruebas del router de aislamiento. Todas las
- * dependencias reales (candado, sesiones, escenarios, catálogo, envío real
- * de WhatsApp) están inyectadas con fakes en memoria -- ningún test toca
- * Supabase real, Nylas, ni envía un mensaje real.
+ * dependencias reales (candado, sesiones, escenarios, catálogo,
+ * elegibilidad de profesionales, envío real de WhatsApp) están inyectadas
+ * con fakes en memoria -- ningún test toca Supabase real, Nylas, ni envía
+ * un mensaje real.
  *
- * Ajuste de UX (autorizado) -- el catálogo de prueba ahora tiene DOS
- * categorías reales (Cabello, Uñas) para poder probar que el menú
- * jerárquico (categoría -> servicios de esa categoría) nunca mezcla
- * servicios de una categoría con otra.
+ * Ajuste de UX (autorizado) -- el catálogo de prueba tiene DOS categorías
+ * reales (Cabello, Uñas) para poder probar que el menú jerárquico
+ * (categoría -> servicios de esa categoría) nunca mezcla servicios de una
+ * categoría con otra.
+ *
+ * FASE 3 (autorizado) -- el fixture de profesionales elegibles
+ * (ESPECIALISTAS_POR_SERVICIO) refleja la MISMA estructura real verificada
+ * en AMORE antes de implementar: Mary/Jessica atienden TODO, Cristal/Nata
+ * SOLO Uñas -- y "s-retoques-real" se deja deliberadamente SIN ningún
+ * profesional elegible para poder probar el caso "sin profesionales" sin
+ * inventar un servicio nuevo.
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -17,8 +25,10 @@ import type { SesionAgendaV2, CambiosSesionAgendaV2 } from "@/lib/agenda-v2/sesi
 import { AMORE_ESCENARIOS_SEED } from "@/lib/bot-escenarios/seed-amore";
 import type { EscenarioRow } from "@/lib/bot-escenarios/tipos";
 import type { ServicioCatalogoReal } from "@/lib/catalogo-servicios-flow-adaptador";
+import type { EspecialistaElegible } from "@/lib/asignacion-categoria";
 import { construirOpcionesServicio } from "@/lib/agenda-v2/servicios";
 import { construirOpcionesCategoria } from "@/lib/agenda-v2/categorias";
+import { construirOpcionesProfesional } from "@/lib/agenda-v2/profesionales";
 
 const FAKE_SUPABASE = {} as SupabaseClient;
 
@@ -33,6 +43,23 @@ const SERVICIOS_UNAS = CATALOGO_FIXTURE.filter((s) => s.categoria === "Uñas");
 
 /** numero 1 = Cabello, numero 2 = Uñas (mismo orden del catálogo, ver construirOpcionesCategoria). */
 const NUMERO_CATEGORIA_UNAS = "2";
+
+const MARY: EspecialistaElegible = { especialistaId: 1262, nombre: "Mary" };
+const CRISTAL: EspecialistaElegible = { especialistaId: 1263, nombre: "Cristal" };
+const NATA: EspecialistaElegible = { especialistaId: 1264, nombre: "Nata" };
+const JESSICA: EspecialistaElegible = { especialistaId: 1265, nombre: "Jessica" };
+
+/** Fixture de elegibilidad -- espeja la estructura real de dulabs_servicio_especialista verificada en AMORE (todos los servicios de Uñas: las 4; el resto: solo Mary/Jessica), salvo "s-retoques-real" que se deja SIN elegibles a propósito para el caso "sin profesionales". */
+const ESPECIALISTAS_POR_SERVICIO: Record<string, EspecialistaElegible[]> = {
+  "s-peinado-real": [MARY, JESSICA],
+  "s-dipping-real": [MARY, CRISTAL, NATA, JESSICA],
+  "s-presson-real": [MARY, CRISTAL, NATA, JESSICA],
+  "s-retoques-real": [],
+};
+
+async function resolverEspecialistasFixture(_s: unknown, _idTenant: string, servicioId: string) {
+  return { modo: "explicita" as const, especialistas: ESPECIALISTAS_POR_SERVICIO[servicioId] ?? [] };
+}
 
 function escenariosDe(tenantId: string): EscenarioRow[] {
   return AMORE_ESCENARIOS_SEED.map((s, i) => ({ ...s, id: `${tenantId}-e${i}`, tenantId }));
@@ -124,6 +151,7 @@ function armarDeps(overrides: Partial<AgendaV2RouterDeps> = {}): {
     actualizarSesion: sesiones.actualizarSesion,
     cargarEscenariosReal: async (_s, tenantId) => escenariosDe(tenantId),
     cargarCatalogoReal: async () => CATALOGO_FIXTURE,
+    resolverEspecialistas: resolverEspecialistasFixture,
     enviarMensajeWhatsApp: envios.enviarMensajeWhatsApp,
     ...overrides,
   };
@@ -206,8 +234,8 @@ describe("B. 'Quiero una cita' sin sesión previa -> ajuste UX: crea la sesión 
   });
 });
 
-describe("Test 1 -- seleccionar categoría y luego servicio guarda un servicio_id REAL y avanza a S2_PROFESIONAL", () => {
-  it("de punta a punta vía el router real (creación -> categoría -> servicio)", async () => {
+describe("Test 1 -- seleccionar categoría y luego servicio guarda un servicio_id REAL y avanza a S2_PROFESIONAL con el menú de profesionales elegibles", () => {
+  it("de punta a punta vía el router real (creación -> categoría -> servicio -> menú de profesionales)", async () => {
     const { deps, sesiones, envios } = armarDeps();
     await procesarMensajeConAgendaV2(
       { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "quiero una cita", wamid: "w1" },
@@ -224,8 +252,13 @@ describe("Test 1 -- seleccionar categoría y luego servicio guarda un servicio_i
     assert.equal(r3.manejado, true);
     assert.equal(sesiones.filas[0]!.step, "S2_PROFESIONAL");
     assert.equal(sesiones.filas[0]!.servicioId, "s-dipping-real");
-    assert.equal(sesiones.filas[0]!.opcionesMostradas, null, "las opciones de servicio ya no corresponden al paso siguiente");
-    assert.equal(envios.enviados[2]!.mensaje, "Servicio seleccionado correctamente.");
+    // FASE 3 -- las opciones ya NO son null: son el menú real de profesionales elegibles para Dipping.
+    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, construirOpcionesProfesional(ESPECIALISTAS_POR_SERVICIO["s-dipping-real"]!));
+    assert.match(envios.enviados[2]!.mensaje, /¿Con quién deseas realizarte el servicio\?/);
+    assert.match(envios.enviados[2]!.mensaje, /1\. Mary/);
+    assert.match(envios.enviados[2]!.mensaje, /2\. Cristal/);
+    assert.match(envios.enviados[2]!.mensaje, /3\. Nata/);
+    assert.match(envios.enviados[2]!.mensaje, /4\. Jessica/);
   });
 });
 
@@ -577,10 +610,10 @@ describe("Ajuste de UX (autorizado) -- menú jerárquico categoría -> servicio"
       depsUnas,
     );
     await procesarMensajeConAgendaV2(
-      { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "3", wamid: "w3" }, // Retoques
+      { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "2", wamid: "w3" }, // Press On (nunca Retoques -- ese se reserva para el caso "sin profesionales" de la Fase 3)
       depsUnas,
     );
-    assert.equal(sesionesUnas.filas[0]!.servicioId, "s-retoques-real");
+    assert.equal(sesionesUnas.filas[0]!.servicioId, "s-presson-real");
   });
 
   it("Test 10: número de categoría fuera de rango o texto no numérico -- permanece mostrando categorías, nunca inventa ni avanza", async () => {
@@ -647,5 +680,207 @@ describe("Ajuste de UX (autorizado) -- menú jerárquico categoría -> servicio"
     assert.equal(sesiones.filas[0]!.step, "S1_SERVICIO", "nunca rompe ni avanza sobre datos inconsistentes");
     assert.match(envios.enviados[1]!.mensaje, /Esa categoría ya no tiene servicios disponibles/);
     assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, construirOpcionesCategoria(catalogoActual), "las categorías reenviadas ya no incluyen Cabello");
+  });
+});
+
+describe("FASE 3 (autorizado) -- selección de profesional vía router real", () => {
+  /** Lleva la sesión hasta el menú real de profesionales para Dipping (Uñas) -- Mary, Cristal, Nata, Jessica. */
+  async function llegarAMenuProfesionalDipping(deps: AgendaV2RouterDeps, telefono = "573148127388") {
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono, texto: "quiero una cita", wamid: "w1" }, deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono, texto: NUMERO_CATEGORIA_UNAS, wamid: "w2" }, deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono, texto: "1", wamid: "w3" }, deps); // Dipping
+  }
+
+  it("Test 1: una sesión en S2_PROFESIONAL con servicio_id real obtiene los profesionales elegibles reales", async () => {
+    const { deps, sesiones } = armarDeps();
+    await llegarAMenuProfesionalDipping(deps);
+    assert.equal(sesiones.filas[0]!.step, "S2_PROFESIONAL");
+    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, construirOpcionesProfesional(ESPECIALISTAS_POR_SERVICIO["s-dipping-real"]!));
+  });
+
+  it("Test 2: los profesionales mostrados son EXACTAMENTE los permitidos para ese servicio -- Peinado (Cabello) nunca muestra a Cristal/Nata (solo atienden Uñas)", async () => {
+    const { deps, sesiones, envios } = armarDeps();
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "quiero una cita", wamid: "w1" }, deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "w2" }, deps); // Cabello
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "w3" }, deps); // Peinado (único servicio de Cabello)
+    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, construirOpcionesProfesional(ESPECIALISTAS_POR_SERVICIO["s-peinado-real"]!));
+    assert.match(envios.enviados[2]!.mensaje, /1\. Mary/);
+    assert.match(envios.enviados[2]!.mensaje, /2\. Jessica/);
+    assert.doesNotMatch(envios.enviados[2]!.mensaje, /Cristal|Nata/, "Cristal y Nata solo atienden Uñas -- nunca deben aparecer para un servicio de Cabello");
+  });
+
+  it("Test 3/6/7: la opción '1' guarda el profesional_id correcto y avanza a S3_DIA", async () => {
+    const { deps, sesiones, envios } = armarDeps();
+    await llegarAMenuProfesionalDipping(deps);
+    const r = await procesarMensajeConAgendaV2(
+      { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "w4" },
+      deps,
+    );
+    assert.equal(r.manejado, true);
+    assert.equal(sesiones.filas[0]!.step, "S3_DIA");
+    assert.equal(sesiones.filas[0]!.profesionalId, 1262, "1 = Mary en el menú real de Dipping");
+    assert.equal(envios.enviados[3]!.mensaje, "Profesional seleccionado correctamente.");
+  });
+
+  it("Test 8: opciones_mostradas se limpia después de seleccionar un profesional", async () => {
+    const { deps, sesiones } = armarDeps();
+    await llegarAMenuProfesionalDipping(deps);
+    await procesarMensajeConAgendaV2(
+      { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "w4" },
+      deps,
+    );
+    assert.equal(sesiones.filas[0]!.opcionesMostradas, null);
+  });
+
+  it("otra opción también resuelve correctamente (nunca asume que sigue siendo la posición 1) -- '3' guarda a Nata", async () => {
+    const { deps, sesiones } = armarDeps();
+    await llegarAMenuProfesionalDipping(deps);
+    await procesarMensajeConAgendaV2(
+      { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "3", wamid: "w4" },
+      deps,
+    );
+    assert.equal(sesiones.filas[0]!.profesionalId, 1264, "3 = Nata en el menú real de Dipping");
+  });
+
+  it("Test 4: una selección inválida (fuera de rango) no cambia el estado", async () => {
+    const { deps, sesiones, envios } = armarDeps();
+    await llegarAMenuProfesionalDipping(deps);
+    const r = await procesarMensajeConAgendaV2(
+      { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "999", wamid: "w4" },
+      deps,
+    );
+    assert.equal(r.manejado, true);
+    assert.equal(sesiones.filas[0]!.step, "S2_PROFESIONAL");
+    assert.equal(sesiones.filas[0]!.profesionalId, null);
+    assert.match(envios.enviados[3]!.mensaje, /No reconocí esa opción/);
+  });
+
+  it("Test 5: texto ambiguo ('hola'/'quiero a mary'/'no sé') no cambia el estado", async () => {
+    const { deps, sesiones, envios } = armarDeps();
+    await llegarAMenuProfesionalDipping(deps);
+    for (const [i, mensaje] of ["hola", "quiero a mary", "no sé"].entries()) {
+      const r = await procesarMensajeConAgendaV2(
+        { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: mensaje, wamid: `w-inv-${i}` },
+        deps,
+      );
+      assert.equal(r.manejado, true);
+      assert.equal(sesiones.filas[0]!.step, "S2_PROFESIONAL", `"${mensaje}" no debía avanzar el step`);
+      assert.equal(sesiones.filas[0]!.profesionalId, null, `"${mensaje}" no debía fijar ningún profesional`);
+    }
+    assert.match(envios.enviados.at(-1)!.mensaje, /No reconocí esa opción/);
+  });
+
+  it("Test 9: un servicio SIN profesionales elegibles no avanza a S2_PROFESIONAL -- la sesión vuelve a categorías, nunca queda inconsistente", async () => {
+    const { deps, sesiones, envios } = armarDeps();
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "quiero una cita", wamid: "w1" }, deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: NUMERO_CATEGORIA_UNAS, wamid: "w2" }, deps);
+    const r = await procesarMensajeConAgendaV2(
+      { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "3", wamid: "w3" }, // Retoques -- SIN elegibles en el fixture
+      deps,
+    );
+    assert.equal(r.manejado, true);
+    assert.equal(sesiones.filas[0]!.step, "S1_SERVICIO", "nunca queda en S2_PROFESIONAL con un menú vacío");
+    assert.equal(sesiones.filas[0]!.servicioId, null, "nunca guarda un servicio sin profesionales elegibles");
+    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, construirOpcionesCategoria(CATALOGO_FIXTURE), "vuelve a mostrar categorías reales, nunca deja la sesión inconsistente");
+    assert.match(envios.enviados[2]!.mensaje, /ninguna profesional está habilitada/i);
+  });
+
+  it("Test 10: aislamiento por tenant -- dos tenants avanzan de forma completamente independiente hasta S2_PROFESIONAL", async () => {
+    const { deps, sesiones } = armarDeps();
+    const TELEFONO = "573148127388";
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "tenant-a", telefono: TELEFONO, texto: "quiero una cita", wamid: "wA1" }, deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "tenant-b", telefono: TELEFONO, texto: "quiero una cita", wamid: "wB1" }, deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "tenant-a", telefono: TELEFONO, texto: NUMERO_CATEGORIA_UNAS, wamid: "wA2" }, deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "tenant-b", telefono: TELEFONO, texto: NUMERO_CATEGORIA_UNAS, wamid: "wB2" }, deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "tenant-a", telefono: TELEFONO, texto: "1", wamid: "wA3" }, deps); // A: Dipping
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "tenant-b", telefono: TELEFONO, texto: "2", wamid: "wB3" }, deps); // B: Press On
+
+    const filaA = sesiones.filas.find((f) => f.tenantId === "tenant-a")!;
+    const filaB = sesiones.filas.find((f) => f.tenantId === "tenant-b")!;
+    assert.equal(filaA.step, "S2_PROFESIONAL");
+    assert.equal(filaA.servicioId, "s-dipping-real");
+    assert.equal(filaB.step, "S2_PROFESIONAL");
+    assert.equal(filaB.servicioId, "s-presson-real");
+
+    // Elegir profesional en tenant-a nunca debe afectar la sesión de tenant-b (mismo teléfono real).
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "tenant-a", telefono: TELEFONO, texto: "1", wamid: "wA4" }, deps); // Mary
+    assert.equal(filaA.step, "S3_DIA");
+    assert.equal(filaA.profesionalId, 1262);
+    assert.equal(filaB.step, "S2_PROFESIONAL", "tenant-b nunca avanza por una acción de tenant-a");
+    assert.equal(filaB.profesionalId, null);
+  });
+
+  it("Test 11: aislamiento por teléfono/sesión -- dos teléfonos del mismo tenant avanzan de forma independiente hasta profesional", async () => {
+    const { deps, sesiones } = armarDeps();
+    await llegarAMenuProfesionalDipping(deps, "573148127388");
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573000000000", texto: "quiero una cita", wamid: "wB1" }, deps);
+
+    await procesarMensajeConAgendaV2(
+      { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "w4" },
+      deps,
+    );
+    const filaA = sesiones.filas.find((f) => f.telefonoCliente === "573148127388")!;
+    const filaB = sesiones.filas.find((f) => f.telefonoCliente === "573000000000")!;
+    assert.equal(filaA.step, "S3_DIA");
+    assert.equal(filaA.profesionalId, 1262);
+    assert.equal(filaB.step, "S1_SERVICIO", "B nunca avanza por una acción de A");
+    assert.equal(filaB.profesionalId, null);
+  });
+
+  it("Test 12: un mensaje que coincide con un escenario del Flow Engine ('cumpleaños') durante S2_PROFESIONAL NUNCA invoca Flow Engine", async () => {
+    const { deps, sesiones, envios } = armarDeps({ cargarEscenariosReal: cargarEscenariosNuncaDebeLlamarse });
+    await sesiones.crearSesion(FAKE_SUPABASE, {
+      tenantId: "amore-test",
+      telefonoCliente: "573148127388",
+      wamid: "w0",
+      opcionesMostradas: construirOpcionesProfesional(ESPECIALISTAS_POR_SERVICIO["s-dipping-real"]!),
+    });
+    await sesiones.actualizarSesion(FAKE_SUPABASE, sesiones.filas[0]!.id, { step: "S2_PROFESIONAL", servicioId: "s-dipping-real" });
+
+    const r = await procesarMensajeConAgendaV2(
+      { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "cumpleaños", wamid: "w1" },
+      deps,
+    );
+    assert.equal(r.manejado, true, "no lanzó -- nunca llegó a cargarEscenariosReal/Flow Engine");
+    assert.match(envios.enviados[0]!.mensaje, /No reconocí esa opción/);
+    assert.equal(sesiones.filas[0]!.step, "S2_PROFESIONAL", "cumpleaños nunca debe avanzar el step");
+  });
+
+  it("Test 13: las opciones guardadas en la sesión son EXACTAMENTE las mismas que las enviadas al usuario", async () => {
+    const { deps, sesiones, envios } = armarDeps();
+    await llegarAMenuProfesionalDipping(deps);
+    const opcionesGuardadas = sesiones.filas[0]!.opcionesMostradas as ReturnType<typeof construirOpcionesProfesional>;
+    for (const o of opcionesGuardadas) {
+      assert.match(envios.enviados[2]!.mensaje, new RegExp(`${o.numero}\\. ${o.nombre}`));
+    }
+    assert.equal(opcionesGuardadas.length, 4);
+  });
+
+  it("Test 14: una sesión existente de S1_SERVICIO (sub-fase servicio) sigue funcionando exactamente como antes de la Fase 3", async () => {
+    const { deps, sesiones, envios } = armarDeps();
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "quiero una cita", wamid: "w1" }, deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: NUMERO_CATEGORIA_UNAS, wamid: "w2" }, deps);
+    const r = await procesarMensajeConAgendaV2(
+      { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "999", wamid: "w3" },
+      deps,
+    );
+    assert.equal(r.manejado, true);
+    assert.equal(sesiones.filas[0]!.step, "S1_SERVICIO");
+    assert.equal(sesiones.filas[0]!.servicioId, null);
+    assert.match(envios.enviados[2]!.mensaje, /No reconocí esa opción/);
+  });
+
+  it("Test 15: la selección categoría -> servicio de la Fase 2A sigue funcionando y ahora fluye correctamente hacia el menú de profesionales", async () => {
+    const { deps, sesiones, envios } = armarDeps();
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "quiero una cita", wamid: "w1" }, deps);
+    assert.match(envios.enviados[0]!.mensaje, /¿Qué tipo de servicio te gustaría agendar\?/);
+
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: NUMERO_CATEGORIA_UNAS, wamid: "w2" }, deps);
+    assert.match(envios.enviados[1]!.mensaje, /¿Qué servicio deseas realizarte\?/);
+
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "w3" }, deps);
+    assert.match(envios.enviados[2]!.mensaje, /¿Con quién deseas realizarte el servicio\?/);
+    assert.equal(sesiones.filas[0]!.step, "S2_PROFESIONAL");
+    assert.equal(sesiones.filas[0]!.servicioId, "s-dipping-real");
   });
 });

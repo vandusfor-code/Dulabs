@@ -21,11 +21,13 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { adquirirCandadoChat, liberarCandadoChat } from "@/lib/chat-lock";
 import { cargarEscenariosReal } from "@/lib/bot-escenarios/store";
 import { listarCatalogoServiciosReal } from "@/lib/catalogo-servicios-flow-adaptador";
+import { resolverEspecialistasElegiblesParaServicio } from "@/lib/asignacion-categoria";
 import { enviarMensajeWhatsApp } from "@/lib/whatsapp-worker-client";
 import { esInicioDeAgendaV2 } from "@/lib/agenda-v2/entrada";
 import { manejarMensajeAgendaV2 } from "@/lib/agenda-v2/controlador";
 import { construirOpcionesServicio, renderizarMenuServicio } from "@/lib/agenda-v2/servicios";
 import { construirOpcionesCategoria, renderizarMenuCategoria } from "@/lib/agenda-v2/categorias";
+import { construirOpcionesProfesional, renderizarMenuProfesional } from "@/lib/agenda-v2/profesionales";
 import { buscarSesionActivaAgendaV2, crearSesionAgendaV2, cerrarSesionAgendaV2, actualizarSesionAgendaV2 } from "@/lib/agenda-v2/sesiones";
 
 /** Mismo prefijo sintético que ya usa lib/whatsapp-qr-bot.ts para el candado/estado de este canal -- nunca un phone_number_id real de Meta. */
@@ -38,6 +40,7 @@ export interface AgendaV2RouterDeps {
   liberarCandadoChat?: typeof liberarCandadoChat;
   cargarEscenariosReal?: typeof cargarEscenariosReal;
   cargarCatalogoReal?: typeof listarCatalogoServiciosReal;
+  resolverEspecialistas?: typeof resolverEspecialistasElegiblesParaServicio;
   enviarMensajeWhatsApp?: typeof enviarMensajeWhatsApp;
   buscarSesionActiva?: typeof buscarSesionActivaAgendaV2;
   crearSesion?: typeof crearSesionAgendaV2;
@@ -69,6 +72,7 @@ export async function procesarMensajeConAgendaV2(
   const liberar = deps.liberarCandadoChat ?? liberarCandadoChat;
   const cargarEscenarios = deps.cargarEscenariosReal ?? cargarEscenariosReal;
   const cargarCatalogo = deps.cargarCatalogoReal ?? listarCatalogoServiciosReal;
+  const resolverEspecialistas = deps.resolverEspecialistas ?? resolverEspecialistasElegiblesParaServicio;
   const enviarMensaje = deps.enviarMensajeWhatsApp ?? enviarMensajeWhatsApp;
   const buscarSesionActiva = deps.buscarSesionActiva ?? buscarSesionActivaAgendaV2;
   const crearSesion = deps.crearSesion ?? crearSesionAgendaV2;
@@ -136,12 +140,54 @@ export async function procesarMensajeConAgendaV2(
         return { manejado: true };
       }
 
+      if (resultado.accion === "servicio_seleccionado") {
+        // FASE 3 (autorizado) -- el servicio ya fue elegido; se resuelven
+        // los profesionales REALMENTE elegibles para ESE servicio con el
+        // ÚNICO resolver real de elegibilidad (lib/asignacion-categoria.ts),
+        // el mismo que ya usa el resto de la plataforma -- nunca una segunda
+        // fuente de verdad. El step avanza a S2_PROFESIONAL en el mismo
+        // update que guarda el menú (nunca dos escrituras separadas).
+        const resolucion = await resolverEspecialistas(params.supabase, params.idTenant, resultado.servicioId);
+        if (resolucion.especialistas.length === 0) {
+          // Caso sin profesionales elegibles (sección "CASO SIN
+          // PROFESIONALES" del pedido) -- NUNCA avanza a S2_PROFESIONAL con
+          // un menú vacío ni deja la sesión en un estado inconsistente.
+          // Mismo criterio de recuperación que "categoría sin servicios" de
+          // la Fase 2A: se vuelve a mostrar el catálogo real desde
+          // categorías, el step permanece en S1_SERVICIO (donde ya estaba).
+          // Terminología reutilizada de internal-action-executor.ts (mismo
+          // caso real, "ninguna profesional está habilitada todavía").
+          const catalogo = await cargarCatalogo(params.supabase, params.idTenant);
+          const categoriasActualizadas = construirOpcionesCategoria(catalogo);
+          await actualizarSesion(params.supabase, sesion.id, { opcionesMostradas: categoriasActualizadas, ultimoWamidProcesado: params.wamid });
+          await enviarMensaje({
+            tenantId: params.idTenant,
+            telefono: params.telefono,
+            mensaje: `En este momento ninguna profesional está habilitada para ese servicio 😔 Elige otro:\n\n${renderizarMenuCategoria(categoriasActualizadas)}`,
+            origen: "automatico",
+          });
+          return { manejado: true };
+        }
+        const opcionesProfesional = construirOpcionesProfesional(resolucion.especialistas);
+        await actualizarSesion(params.supabase, sesion.id, {
+          step: "S2_PROFESIONAL",
+          servicioId: resultado.servicioId,
+          opcionesMostradas: opcionesProfesional,
+          ultimoWamidProcesado: params.wamid,
+        });
+        await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: renderizarMenuProfesional(opcionesProfesional), origen: "automatico" });
+        return { manejado: true };
+      }
+
       if (resultado.accion === "cerrar_sesion") {
         await cerrarSesion(params.supabase, sesion.id);
       } else {
-        // FASE 2 -- aplica los cambios reales que decidió el controlador
-        // (ej. servicioId + step="S2_PROFESIONAL" al seleccionar un
-        // servicio válido), siempre junto con el wamid ya procesado.
+        // Aplica los cambios reales que decidió el controlador de forma
+        // síncrona (ej. profesionalId + step="S3_DIA" al seleccionar un
+        // profesional válido, sección "SELECCIÓN" de la Fase 3), siempre
+        // junto con el wamid ya procesado. Las transiciones que exigen datos
+        // reales async (categoría->servicios, servicio->profesionales) se
+        // resuelven arriba, antes de llegar acá.
         await actualizarSesion(params.supabase, sesion.id, { ...resultado.cambios, ultimoWamidProcesado: params.wamid });
       }
       await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: resultado.respuesta, origen: "automatico" });
