@@ -165,6 +165,14 @@ const OPERATION_CLASS: Partial<Record<string, InternalActionOperationClass>> = {
   crear_cita_nylas: "CRITICAL",
 };
 
+/**
+ * Sección 9 (autorizado, rediseño arquitectónico agendamiento) -- el BACKEND
+ * decide cuántos horarios reales se muestran por interacción, nunca Gemini
+ * ("resume las que quieras" era, en la práctica, delegarle la decisión a la
+ * IA). Ver buscarDisponibilidadNylasAction.
+ */
+const MAX_OPCIONES_HORARIOS_OFRECIDOS = 4;
+
 function resolveInternalActionKey(action: ActionNodeConfig): string {
   if (action.actionType === "webhook_http") {
     return action.semanticTag ?? "webhook_http";
@@ -1835,13 +1843,38 @@ export class InternalActionExecutor implements EffectExecutor {
     const disponibles = resultado.especialistas.filter((e) => e.estado === "ok" && e.horarios.length > 0);
     const todosNoConfirmados = resultado.especialistas.length > 0 && resultado.especialistas.every((e) => e.estado === "no_confirmado");
 
-    const opciones = disponibles.flatMap((e) =>
-      e.horarios.map((hhmm) => ({
-        especialistaId: e.especialistaId,
-        especialistaNombre: e.nombre,
-        horaTexto: hhmm,
-        horaISO: `${fechaISO}T${hhmm}:00-05:00`,
-      })),
+    const opcionesReales = disponibles
+      .flatMap((e) =>
+        e.horarios.map((hhmm) => ({
+          especialistaId: e.especialistaId,
+          especialistaNombre: e.nombre,
+          horaTexto: hhmm,
+          horaISO: `${fechaISO}T${hhmm}:00-05:00`,
+        })),
+      )
+      // Orden cronológico real (nunca el orden de iteración por especialista)
+      // -- horaISO tiene formato fijo YYYY-MM-DDTHH:MM:00-05:00, así que el
+      // orden lexicográfico ya es el orden cronológico real.
+      .sort((a, b) => (a.horaISO < b.horaISO ? -1 : a.horaISO > b.horaISO ? 1 : 0));
+
+    // Sección 8/9 (autorizado, rediseño arquitectónico agendamiento) -- el
+    // BACKEND decide qué horarios mostrar, nunca Gemini: máximo
+    // MAX_OPCIONES_HORARIOS_OFRECIDOS reales por interacción, elegidas de
+    // forma determinista (nunca "resume las que quieras" dejado a la IA).
+    // Si ya hay una hora preferida real (ej. "con Cristal a las 9"), esa
+    // hora exacta SIEMPRE se prioriza -- nunca puede quedar afuera del corte
+    // de 4 solo por casualidad de orden (mismo espíritu que la corrección ya
+    // existente en resolver.ts para especialista+hora exacta: la selección
+    // posterior solo puede elegir contra lo que de verdad se ofreció acá).
+    // Si la hora pedida no está disponible con nadie, se muestran las
+    // alternativas reales más cercanas para que la clienta elija otra cosa
+    // -- nunca se le oculta que esa hora puntual no hay.
+    const coincidenHoraPreferida = agendamiento.horaPreferidaHHMM
+      ? opcionesReales.filter((o) => o.horaTexto === agendamiento.horaPreferidaHHMM)
+      : [];
+    const opciones = (coincidenHoraPreferida.length > 0 ? coincidenHoraPreferida : opcionesReales).slice(
+      0,
+      MAX_OPCIONES_HORARIOS_OFRECIDOS,
     );
 
     const agendamientoActualizado: AgendamientoEnCurso = {
@@ -1879,8 +1912,7 @@ export class InternalActionExecutor implements EffectExecutor {
       "Presenta con naturalidad las opciones REALES de datosIA (profesional + hora) para que la clienta ELIJA una -- nunca inventes ni ofrezcas una hora que no esté ahí. " +
         "Estos horarios son DISPONIBILIDAD real, todavía NO existe ninguna cita creada: preséntalos como opciones para elegir (ej. '¿cuál de estas horas te queda mejor?'), nunca como algo ya resuelto. " +
         "NUNCA digas que la cita quedó reservada, confirmada, agendada, creada o apartada, ni que un horario está 'separado' o 'guardado' para ella -- nada de eso ha pasado todavía, sea cual sea la palabra que uses. " +
-        "Cuando la clienta elija un horario, pide su confirmación explícita antes de dar nada por hecho -- la reserva real solo ocurre en un paso posterior, después de esa confirmación. " +
-        "Si hay muchas opciones, resume las más cercanas y ofrece contar el resto si quiere.",
+        "Cuando la clienta elija un horario, pide su confirmación explícita antes de dar nada por hecho -- la reserva real solo ocurre en un paso posterior, después de esa confirmación.",
       opciones.map((o) => ({ profesional: o.especialistaNombre, hora: o.horaTexto })),
       agendamientoActualizado,
       { disponibilidadConsultada: true },

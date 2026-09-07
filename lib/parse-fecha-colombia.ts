@@ -112,9 +112,16 @@ export function parseFechaColombia(raw: string, hoyISO: string): ParseFechaColom
   const s = normalizeInput(raw);
   if (!s) return fail("invalid", MSG_INVALIDA);
 
-  if (s === "hoy") return ok(hoyISO);
-  if (s === "manana" || s === "mañana") return ok(sumarDias(hoyISO, 1));
-  if (s === "pasado manana" || s === "pasado mañana") return ok(sumarDias(hoyISO, 2));
+  // Corrección (autorizada, rediseño arquitectónico agendamiento) — "hoy"/
+  // "mañana"/"pasado mañana" antes exigían coincidencia EXACTA de todo el
+  // string, así que un mensaje real con la fecha Y la hora juntas ("mañana a
+  // las 8 am") nunca resolvía la fecha (caía a "invalid" aunque la fecha
+  // fuera perfectamente clara). Mismo criterio que ya existía para los días
+  // de la semana (ver mEsteOSolo más abajo, "tolera texto adicional después
+  // del día") -- ahora estas tres formas son consistentes entre sí.
+  if (/^hoy\b/.test(s)) return ok(hoyISO);
+  if (/^pasado manana\b/.test(s)) return ok(sumarDias(hoyISO, 2));
+  if (/^manana\b/.test(s)) return ok(sumarDias(hoyISO, 1));
 
   // "el sábado" / "este sábado" / "próximo sábado" / "el próximo sábado" / "sábado"
   const diaAlt = Object.keys(DIAS_SEMANA).join("|");

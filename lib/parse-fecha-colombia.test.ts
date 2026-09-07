@@ -30,6 +30,29 @@ describe("parseFechaColombia — relativas simples", () => {
     assert.equal(r.ok, true);
     if (r.ok) assert.equal(r.fecha, "2026-09-04");
   });
+
+  // Corrección (autorizada, rediseño arquitectónico agendamiento) -- antes
+  // "hoy"/"mañana"/"pasado mañana" exigían coincidencia EXACTA de todo el
+  // string, así que un mensaje real con fecha Y hora juntas ("mañana a las 8
+  // am") nunca resolvía la fecha. Mismo criterio que ya existía para los
+  // días de la semana ("tolera texto adicional después del día").
+  it("'mañana a las 8 am' -- tolera texto adicional después de la palabra de fecha", () => {
+    const r = parseFechaColombia("mañana a las 8 am", HOY);
+    assert.equal(r.ok, true);
+    if (r.ok) assert.equal(r.fecha, "2026-09-03");
+  });
+
+  it("'hoy en la tarde' -- tolera texto adicional después de 'hoy'", () => {
+    const r = parseFechaColombia("hoy en la tarde", HOY);
+    assert.equal(r.ok, true);
+    if (r.ok) assert.equal(r.fecha, "2026-09-02");
+  });
+
+  it("'pasado mañana temprano' -- tolera texto adicional después de 'pasado mañana'", () => {
+    const r = parseFechaColombia("pasado mañana temprano", HOY);
+    assert.equal(r.ok, true);
+    if (r.ok) assert.equal(r.fecha, "2026-09-04");
+  });
 });
 
 describe("parseFechaColombia — días de la semana", () => {

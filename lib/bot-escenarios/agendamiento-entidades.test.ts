@@ -46,6 +46,33 @@ describe("extraerFechaMencionada", () => {
     assert.ok(r?.ok);
     if (r?.ok) assert.equal(r.fecha, "2026-09-04");
   });
+
+  // Corrección (autorizada, rediseño arquitectónico agendamiento) -- bug
+  // real: "manana" está declarada antes que los días de la semana en
+  // PALABRAS_FECHA_DIRECTAS, así que un mensaje con AMBAS ("el sábado en la
+  // mañana") resolvía a MAÑANA (día siguiente) en vez de a SÁBADO, sin
+  // importar cuál aparecía primero en el mensaje real de la clienta.
+  it("'el sábado en la mañana' -- resuelve SÁBADO, nunca 'mañana' (bug real corregido)", () => {
+    const r = extraerFechaMencionada("el sábado en la mañana", HOY); // HOY=lunes 2026-09-07
+    assert.ok(r?.ok);
+    if (r?.ok) assert.equal(r.fecha, "2026-09-12"); // próximo sábado real
+  });
+
+  it("'mañana' seguida de una hora en el MISMO mensaje sigue resolviendo 'mañana' (día siguiente)", () => {
+    const r = extraerFechaMencionada("quiero dipping mañana a las 8 am", HOY);
+    assert.ok(r?.ok);
+    if (r?.ok) assert.equal(r.fecha, "2026-09-08"); // día siguiente a HOY=2026-09-07
+  });
+
+  it("'en la mañana' SOLA (sin ningún otro dato de fecha) -- nunca se confunde con 'mañana' (bloque horario, no fecha)", () => {
+    assert.equal(extraerFechaMencionada("en la mañana", HOY), undefined);
+  });
+
+  it("'el viernes' aparece ANTES que 'mañana' en el mensaje -- gana el viernes (orden real del mensaje, no el orden fijo de la lista)", () => {
+    const r = extraerFechaMencionada("el viernes por la mañana estaría perfecto", HOY);
+    assert.ok(r?.ok);
+    if (r?.ok) assert.equal(r.fecha, "2026-09-11"); // próximo viernes real desde lunes 2026-09-07
+  });
 });
 
 describe("extraerHoraOBloqueMencionado", () => {

@@ -108,7 +108,7 @@ const AGENDA_LISTA_PARA_BUSCAR: AgendamientoEnCurso = {
 };
 
 describe("InternalActionExecutor — buscar_disponibilidad_nylas", () => {
-  it("con opciones reales -> arma opcionesOfrecidas y datosIA a partir de datos reales, nunca inventados", async () => {
+  it("con opciones reales -> arma opcionesOfrecidas y datosIA a partir de datos reales, nunca inventados, en orden cronológico real", async () => {
     const resultadoMock: ResultadoHorariosConNylas = {
       ok: true,
       servicio: { id: "s-dipping", nombre: "Dipping", duracionMin: 120 },
@@ -129,13 +129,87 @@ describe("InternalActionExecutor — buscar_disponibilidad_nylas", () => {
     assert.equal(data.modo, "ai");
     const agendamiento = data.agendamiento as AgendamientoEnCurso;
     assert.equal(agendamiento.opcionesOfrecidas?.length, 3);
+    // Orden cronológico real (10:00 de Cristal antes que 14:00/16:00 de
+    // Mary) -- el backend decide el orden, nunca el orden de iteración por
+    // especialista (corrección, rediseño arquitectónico agendamiento).
     assert.deepEqual(agendamiento.opcionesOfrecidas?.[0], {
-      especialistaId: 1,
-      especialistaNombre: "Mary",
-      horaTexto: "14:00",
-      horaISO: "2026-09-11T14:00:00-05:00",
+      especialistaId: 2,
+      especialistaNombre: "Cristal",
+      horaTexto: "10:00",
+      horaISO: "2026-09-11T10:00:00-05:00",
     });
     assert.match(data.instruccionIA as string, /opciones/i);
+  });
+
+  it("sección 9 (autorizado) -- nunca ofrece más de 4 horarios reales, el backend decide, no Gemini", async () => {
+    const resultadoMock: ResultadoHorariosConNylas = {
+      ok: true,
+      servicio: { id: "s-dipping", nombre: "Dipping", duracionMin: 120 },
+      especialistas: [
+        { especialistaId: 1, nombre: "Mary", estado: "ok", horarios: ["08:00", "09:00", "10:00"] },
+        { especialistaId: 2, nombre: "Cristal", estado: "ok", horarios: ["08:30", "11:00", "13:00"] },
+      ],
+    };
+    const executor = crearExecutor({ listarHorariosDisponiblesPorServicioConNylas: async () => resultadoMock });
+    const result = await executor.dispatch(
+      baseRequest("buscar_disponibilidad_nylas", { agendamiento: AGENDA_LISTA_PARA_BUSCAR }),
+      { tenantId: "tenant-amore", internal: true },
+    );
+    const data = result.data as Record<string, unknown>;
+    const agendamiento = data.agendamiento as AgendamientoEnCurso;
+    assert.equal(agendamiento.opcionesOfrecidas?.length, 4, "máximo 4 opciones, sin importar cuántos horarios reales existan");
+    // Las 4 más cercanas cronológicamente: 08:00, 08:30, 09:00, 10:00.
+    assert.deepEqual(
+      agendamiento.opcionesOfrecidas?.map((o) => o.horaTexto),
+      ["08:00", "08:30", "09:00", "10:00"],
+    );
+  });
+
+  it("sección 8/9 (autorizado) -- con hora preferida, el corte de 4 NUNCA descarta la hora exacta que la clienta pidió", async () => {
+    const resultadoMock: ResultadoHorariosConNylas = {
+      ok: true,
+      servicio: { id: "s-dipping", nombre: "Dipping", duracionMin: 120 },
+      especialistas: [{ especialistaId: 2, nombre: "Cristal", estado: "ok", horarios: ["08:00", "08:30", "09:00", "10:00", "16:00"] }],
+    };
+    const executor = crearExecutor({ listarHorariosDisponiblesPorServicioConNylas: async () => resultadoMock });
+    const result = await executor.dispatch(
+      baseRequest("buscar_disponibilidad_nylas", {
+        agendamiento: { ...AGENDA_LISTA_PARA_BUSCAR, especialistaId: 2, especialistaNombre: "Cristal", horaPreferidaHHMM: "16:00" },
+      }),
+      { tenantId: "tenant-amore", internal: true },
+    );
+    const data = result.data as Record<string, unknown>;
+    const agendamiento = data.agendamiento as AgendamientoEnCurso;
+    // 16:00 es la 5ta y última cronológicamente -- un corte ciego de "las
+    // primeras 4" la habría descartado en silencio (justo el bug real ya
+    // corregido en resolver.ts para especialista+hora exacta).
+    assert.deepEqual(
+      agendamiento.opcionesOfrecidas?.map((o) => o.horaTexto),
+      ["16:00"],
+      "la hora exacta pedida se prioriza -- nunca se descarta por el corte de 4",
+    );
+  });
+
+  it("sección 8 (autorizado) -- hora preferida sin cupo real -- ofrece alternativas reales, nunca la oculta ni la inventa", async () => {
+    const resultadoMock: ResultadoHorariosConNylas = {
+      ok: true,
+      servicio: { id: "s-dipping", nombre: "Dipping", duracionMin: 120 },
+      especialistas: [{ especialistaId: 2, nombre: "Cristal", estado: "ok", horarios: ["08:00", "10:00"] }],
+    };
+    const executor = crearExecutor({ listarHorariosDisponiblesPorServicioConNylas: async () => resultadoMock });
+    const result = await executor.dispatch(
+      baseRequest("buscar_disponibilidad_nylas", {
+        agendamiento: { ...AGENDA_LISTA_PARA_BUSCAR, especialistaId: 2, especialistaNombre: "Cristal", horaPreferidaHHMM: "09:00" },
+      }),
+      { tenantId: "tenant-amore", internal: true },
+    );
+    const data = result.data as Record<string, unknown>;
+    const agendamiento = data.agendamiento as AgendamientoEnCurso;
+    assert.deepEqual(
+      agendamiento.opcionesOfrecidas?.map((o) => o.horaTexto),
+      ["08:00", "10:00"],
+      "09:00 no existe -- se ofrecen las alternativas reales, nunca se inventa ni se oculta que esa hora no hay",
+    );
   });
 
   it("sin cupo real (estado ok pero sin horarios) -> nunca inventa una hora, agendamiento sin opciones", async () => {

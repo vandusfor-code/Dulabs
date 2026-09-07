@@ -51,29 +51,64 @@ const PALABRAS_FECHA_DIRECTAS = ["hoy", "pasado manana", "manana", "proximo domi
 // genérico, rompiendo la detección (bug real encontrado con este mensaje).
 const MESES_TEXTO = "enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre|ene|feb|mar|abr|may|jun|jul|ago|sep|set|oct|nov|dic";
 
+/**
+ * Corrección (autorizada, rediseño arquitectónico agendamiento) — bug real:
+ * cuando el mensaje trae DOS palabras de fecha ("el sábado en la mañana",
+ * "el viernes... mañana"), la versión anterior devolvía la que aparece
+ * PRIMERO en PALABRAS_FECHA_DIRECTAS (orden fijo del arreglo), sin importar
+ * en qué posición real del mensaje aparecía cada una -- como "manana" está
+ * declarada antes que los días de la semana, "el sábado en la mañana"
+ * resolvía a MAÑANA (día siguiente) en vez de a SÁBADO. Ahora se recogen
+ * TODAS las apariciones reales y gana la que aparece más temprano en el
+ * mensaje, igual que ya se hace entre los 3 formatos (número+mes, número+
+ * barra, palabra directa) más abajo.
+ */
+function esBloqueHorarioDeManana(normalizado: string, idx: number): boolean {
+  // "en la mañana"/"por la mañana"/"de la mañana" es un BLOQUE HORARIO (ver
+  // extraerHoraOBloqueMencionado/PATRON_BLOQUE_SUELTO), nunca una fecha --
+  // ahí "mañana" significa "morning", no "tomorrow". Se excluye SOLO esta
+  // aparición puntual de la palabra, nunca otra mención real de fecha en el
+  // mismo mensaje.
+  return /\b(?:en|por|de) la\s*$/.test(normalizado.slice(0, idx));
+}
+
 export function extraerFechaMencionada(mensaje: string, hoyISO: string): ParseFechaColombiaResult | undefined {
   const normalizado = normalizarBasico(mensaje);
 
   const mNumericaMes = normalizado.match(new RegExp(`\\b\\d{1,2}\\s+de\\s+(?:${MESES_TEXTO})\\w*\\b`));
-  if (mNumericaMes) return parseFechaColombia(mNumericaMes[0], hoyISO);
-
   const mNumericaBarra = normalizado.match(/\b\d{1,2}[/-]\d{1,2}\b/);
-  if (mNumericaBarra) return parseFechaColombia(mNumericaBarra[0], hoyISO);
 
+  let mejorPalabra: { idx: number; texto: string } | undefined;
   for (const palabra of PALABRAS_FECHA_DIRECTAS) {
     const idx = normalizado.indexOf(palabra);
     if (idx === -1) continue;
+    if (palabra === "manana" && esBloqueHorarioDeManana(normalizado, idx)) continue;
+    if (mejorPalabra && idx >= mejorPalabra.idx) continue;
+
     // Nunca recortar perdiendo un calificador inmediatamente anterior real
     // ("otro sábado" vs "el sábado" cambian el significado -- parseFechaColombia
     // distingue explícitamente "otro"/"otra" como ambiguo) -- se incluye si
-    // está justo antes.
+    // está justo antes. El resto del mensaje se conserva tal cual (nunca se
+    // recorta al final) porque parseFechaColombia ya tolera texto adicional
+    // después de la palabra de fecha (mañana/hoy/día de la semana).
     const antes = normalizado.slice(0, idx).trimEnd();
     const palabraAnterior = antes.split(" ").at(-1) ?? "";
     const incluirAnterior = ["el", "este", "otro", "otra"].includes(palabraAnterior);
     const inicio = incluirAnterior ? idx - palabraAnterior.length - 1 : idx;
-    return parseFechaColombia(normalizado.slice(Math.max(0, inicio)), hoyISO);
+    mejorPalabra = { idx, texto: normalizado.slice(Math.max(0, inicio)) };
   }
-  return undefined;
+
+  const candidatos = [
+    mNumericaMes ? { idx: mNumericaMes.index!, texto: mNumericaMes[0] } : undefined,
+    mNumericaBarra ? { idx: mNumericaBarra.index!, texto: mNumericaBarra[0] } : undefined,
+    mejorPalabra,
+  ].filter((c): c is { idx: number; texto: string } => c !== undefined);
+  if (candidatos.length === 0) return undefined;
+
+  // Entre los 3 formatos, gana el que aparece MÁS TEMPRANO en el mensaje
+  // real -- nunca una prioridad fija arbitraria entre formatos.
+  candidatos.sort((a, b) => a.idx - b.idx);
+  return parseFechaColombia(candidatos[0]!.texto, hoyISO);
 }
 
 export type ExtraccionHora = { tipo: "hora"; resultado: ParseHoraColombiaResult } | { tipo: "bloque"; bloque: "manana" | "tarde" | "noche" };
