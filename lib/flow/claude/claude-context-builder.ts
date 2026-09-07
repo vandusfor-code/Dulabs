@@ -87,6 +87,22 @@ export function buildAIRequest(input: {
     (typeof payload.userMessage === "string" ? payload.userMessage : undefined) ??
     (typeof payload.lastUserMessage === "string" ? payload.lastUserMessage : undefined) ??
     (typeof payload.text === "string" ? payload.text : undefined) ??
+    // Diagnóstico forense (autorizado, incidente AMORE 2026-09-06 18:43) —
+    // "mensajeActual" es el mismo campo que ya usa resolverEscenarioAction
+    // (internal-action-executor.ts: `params.mensajeActual?.trim() ||
+    // params.__firstMessageText?.trim()`) para saber qué dijo la clienta en
+    // ESTE turno -- lo llena el nodo "question" (variableKey: "mensajeActual")
+    // en cada ciclo responder->esperar->resolver. Sin este campo en la
+    // prioridad, cualquier nodo ai en modo "respond" (ej. AMORE
+    // ai-generar-respuesta) caía directo al fallback __firstMessageText de
+    // abajo en TODOS los turnos después del primero, exponiendo a Gemini el
+    // primer mensaje de la ejecución (a veces de una conversación de prueba
+    // anterior, minutos u horas atrás) como si fuera el mensaje actual. Se
+    // agrega en esta posición (después de "text", antes del fallback final)
+    // para no cambiar la prioridad de ningún campo ya existente.
+    (typeof payload.mensajeActual === "string" && payload.mensajeActual.trim()
+      ? payload.mensajeActual
+      : undefined) ??
     // Blocker #7 (Fix B, autorizado) — fallback FINAL, solo si ninguno de los
     // campos anteriores existe. __firstMessageText (Blocker #1) se siembra en
     // el evento "start" y stripInternalKeys() lo quita del bloque VARIABLES

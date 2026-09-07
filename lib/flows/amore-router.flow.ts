@@ -149,6 +149,32 @@ export function amoreRouterFlow(): FlowDefinition {
         type: "question",
         config: { text: "{{responseText}}", variableKey: "mensajeActual", required: false, validation: { kind: "text" } },
       },
+      // Diagnóstico forense (autorizado, incidente AMORE 2026-09-06 18:43) --
+      // ai-generar-respuesta NO tenía ninguna rama aiFailure: un rechazo de
+      // Claim Security (ej. Gemini afirmando una reserva sin evidencia, ver
+      // buscarDisponibilidadNylasAction) terminaba en engineError SIN enviar
+      // ningún mensaje. Como el canal WhatsApp-QR de AMORE no tiene ningún
+      // LEGACY al que ceder el turno (ver ejecutarBotWhatsAppQR), eso hacía
+      // que se cerrara la ejecución y se reintentara el mismo mensaje con un
+      // "start" limpio -- perdiendo agendamiento/servicio/fecha/datosIA por
+      // completo. Mismo patrón EXACTO que act-crear-cita-nylas --aiFailure-->
+      // msg-reserva-no-completada: mensaje estático, honesto, deliberadamente
+      // neutro (sin "cita"/"reservad"/"confirmad"/"agendad", ver
+      // amore-router.flow.test.ts que corre Claim Security real sobre todo
+      // texto estático del grafo), que espera el siguiente mensaje real y
+      // vuelve a act-resolver-escenario SIN tocar ninguna variable -- el
+      // turno SIEMPRE termina enviando algo, así que ejecutarBotWhatsAppQR
+      // nunca ve "no se envió nada" y nunca reintenta con una ejecución nueva.
+      {
+        id: "q-ia-fallback",
+        type: "question",
+        config: {
+          text: "Uy 😔 se me complicó un poco por acá. ¿Me lo puedes repetir, por favor?",
+          variableKey: "mensajeActual",
+          required: false,
+          validation: { kind: "text" },
+        },
+      },
 
       {
         id: "q-turno-directo",
@@ -191,6 +217,9 @@ export function amoreRouterFlow(): FlowDefinition {
       { id: "e-cond-transfer-no", source: "cond-es-transfer", target: "q-turno-directo", sourceHandle: FLOW_EDGE_HANDLE.conditionFalse },
 
       { id: "e-ia-a-turno", source: "ai-generar-respuesta", target: "q-turno-ia", sourceHandle: FLOW_EDGE_HANDLE.aiSuccess },
+      // Diagnóstico forense (autorizado) -- ver comentario del nodo q-ia-fallback arriba.
+      { id: "e-ia-fail", source: "ai-generar-respuesta", target: "q-ia-fallback", sourceHandle: FLOW_EDGE_HANDLE.aiFailure },
+      { id: "e-ia-fallback-loop", source: "q-ia-fallback", target: "act-resolver-escenario" },
       { id: "e-turno-ia-loop", source: "q-turno-ia", target: "act-resolver-escenario" },
       { id: "e-turno-directo-loop", source: "q-turno-directo", target: "act-resolver-escenario" },
 
