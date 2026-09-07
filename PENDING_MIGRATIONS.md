@@ -41,6 +41,31 @@ ninguna migración pendiente).
 > y el CHECK de `step` ya acepta los 3 valores nuevos de Fase 8. La sección
 > que la daba por pendiente se eliminó.
 
+---
+
+## `20260919000000_amore_entrada_conversacional.sql` — PENDIENTE
+
+AMORE, Fase 9 (entrada conversacional bienvenida 1/2 + puente Gemini ->
+Agenda V2). Agrega la tabla nueva `dulabs_amore_entrada` (modo `inicio`/
+`gemini` por conversación real, exclusiva de AMORE).
+
+**Cómo aplicarla:**
+1. Entra a tu proyecto en [supabase.com](https://supabase.com/dashboard) → **SQL Editor**.
+2. Pega el contenido de `supabase/migrations/20260919000000_amore_entrada_conversacional.sql`.
+3. Ejecuta (**Run**).
+
+**Es seguro desplegar el código antes de correr esto**, con una salvedad: hasta
+que se aplique, cualquier mensaje real de un cliente de AMORE hará que el
+puente intente leer `dulabs_amore_entrada`, que todavía no existe -- el
+router captura ese error y deja pasar el mensaje al comportamiento normal
+anterior (Flow Engine + Gemini de siempre, sin bienvenida 1/2 ni
+clasificación CONSULTA/TRIGGER_AGENDA), sin romper el canal. Agenda V2
+(Fases 1-8) y otros tenants no se ven afectados en absoluto.
+
+Después de aplicarla, borra esta sección.
+
+---
+
 ## Variables de entorno que también son paso manual
 
 | Variable | Para qué | Dónde |

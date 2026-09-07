@@ -3,6 +3,7 @@ import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { ejecutarBotWhatsAppQR } from "@/lib/whatsapp-qr-bot";
 import { procesarMensajeConAgendaV2 } from "@/lib/agenda-v2/router";
+import { procesarEntradaAmore } from "@/lib/amore-entrada-router";
 
 export const runtime = "nodejs";
 
@@ -56,6 +57,22 @@ export async function POST(request: NextRequest) {
     wamid: body.wamid,
   });
   if (resultadoAgendaV2.manejado) {
+    return Response.json({ success: true });
+  }
+
+  // AMORE (autorizado, Fase 9) -- puente bienvenida/Gemini -> Agenda V2:
+  // se evalúa DESPUÉS de Agenda V2 (que sigue teniendo prioridad absoluta
+  // mientras haya una sesión activa) y ANTES de ejecutarBotWhatsAppQR.
+  // EXCLUSIVO de AMORE -- ver lib/amore-entrada-router.ts: cualquier otro
+  // tenant devuelve manejado:false de inmediato, sin ningún cambio.
+  const resultadoEntradaAmore = await procesarEntradaAmore({
+    supabase,
+    idTenant: body.idTenant,
+    telefono: body.telefono,
+    texto: body.texto,
+    wamid: body.wamid,
+  });
+  if (resultadoEntradaAmore.manejado) {
     return Response.json({ success: true });
   }
 

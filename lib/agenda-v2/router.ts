@@ -135,6 +135,40 @@ export type ResultadoRouterAgendaV2 =
   | { manejado: false };
 
 /**
+ * FASE 9 (autorizado) -- crea una sesión Agenda V2 nueva DIRECTAMENTE con el
+ * menú real de categorías (mismo resultado EXACTO que cuando
+ * esInicioDeAgendaV2 detecta un trigger real de texto libre, ver más abajo)
+ * -- extraída a función propia para que lib/amore-entrada-router.ts (el
+ * puente bienvenida/Gemini -> Agenda V2) pueda entregar el control sin
+ * duplicar esta lógica. Deliberadamente NUNCA adquiere su propio candado --
+ * el caller ya debe tenerlo tomado (mismo phoneNumberId sintético), para
+ * evitar candados anidados/reentrantes.
+ */
+export async function iniciarNuevaSesionAgendaV2(
+  params: { supabase: SupabaseClient; idTenant: string; telefono: string; wamid: string },
+  deps: AgendaV2RouterDeps = {},
+): Promise<void> {
+  const cargarCatalogo = deps.cargarCatalogoReal ?? listarCatalogoServiciosReal;
+  const crearSesion = deps.crearSesion ?? crearSesionAgendaV2;
+  const enviarMensaje = deps.enviarMensajeWhatsApp ?? enviarMensajeWhatsApp;
+
+  // Ajuste de UX (autorizado) -- el primer paso real es SIEMPRE el menú de
+  // CATEGORÍAS reales (nunca los 28 servicios de un jalón), construido a
+  // partir del catálogo REAL del tenant -- las opciones mostradas se
+  // guardan tal cual en la sesión para resolver la próxima respuesta
+  // determinísticamente (ver lib/agenda-v2/categorias.ts).
+  const catalogo = await cargarCatalogo(params.supabase, params.idTenant);
+  const opciones = construirOpcionesCategoria(catalogo);
+  await crearSesion(params.supabase, {
+    tenantId: params.idTenant,
+    telefonoCliente: params.telefono,
+    wamid: params.wamid,
+    opcionesMostradas: opciones,
+  });
+  await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: renderizarMenuCategoria(opciones), origen: "automatico" });
+}
+
+/**
  * Único punto de entrada. Devuelve `manejado:false` SOLO cuando de verdad
  * no hay ninguna sesión activa Y el mensaje tampoco dispara el inicio --
  * en ese caso, y SOLO en ese caso, el caller (route.ts) sigue con
@@ -1003,20 +1037,7 @@ export async function procesarMensajeConAgendaV2(
       return { manejado: false };
     }
 
-    // Ajuste de UX (autorizado) -- el primer paso real es SIEMPRE el menú de
-    // CATEGORÍAS reales (nunca los 28 servicios de un jalón), construido a
-    // partir del catálogo REAL del tenant -- las opciones mostradas se
-    // guardan tal cual en la sesión para resolver la próxima respuesta
-    // determinísticamente (ver lib/agenda-v2/categorias.ts).
-    const catalogo = await cargarCatalogo(params.supabase, params.idTenant);
-    const opciones = construirOpcionesCategoria(catalogo);
-    await crearSesion(params.supabase, {
-      tenantId: params.idTenant,
-      telefonoCliente: params.telefono,
-      wamid: params.wamid,
-      opcionesMostradas: opciones,
-    });
-    await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: renderizarMenuCategoria(opciones), origen: "automatico" });
+    await iniciarNuevaSesionAgendaV2(params, deps);
     return { manejado: true };
   } finally {
     await liberar(phoneNumberId, params.telefono, params.wamid);
