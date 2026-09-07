@@ -7,7 +7,8 @@
 import { normalizeText } from "@/lib/flow-triggers/normalize-text";
 import type { EntidadesDetectadas, EscenarioRow, VarianteActivacion } from "@/lib/bot-escenarios/tipos";
 
-function coincideVariante(
+/** Exportada (autorizado, AGENDA V2) -- reutilizada tal cual por lib/agenda-v2/entrada.ts para detectar la intención de inicio contra las MISMAS variantes reales de 070_agendamiento, sin duplicar el criterio de matching ni inventar un vocabulario nuevo. */
+export function coincideVariante(
   variante: VarianteActivacion,
   textoNormalizado: string,
   entidades: EntidadesDetectadas,

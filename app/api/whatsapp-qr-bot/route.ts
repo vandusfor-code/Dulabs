@@ -2,6 +2,7 @@ import { timingSafeEqual, createHash } from "node:crypto";
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { ejecutarBotWhatsAppQR } from "@/lib/whatsapp-qr-bot";
+import { procesarMensajeConAgendaV2 } from "@/lib/agenda-v2/router";
 
 export const runtime = "nodejs";
 
@@ -40,6 +41,24 @@ export async function POST(request: NextRequest) {
   }
 
   const supabase = supabaseAdmin();
+
+  // AGENDA V2 (autorizado) -- router de aislamiento: se evalúa ANTES de
+  // ejecutarBotWhatsAppQR (Flow Engine). Mientras exista una sesión activa
+  // (o este mensaje la inicie), Agenda V2 responde por su cuenta y ESTE
+  // mensaje nunca llega al Flow Engine -- ver lib/agenda-v2/router.ts.
+  // Cuando no aplica (comportamiento normal de AMORE), sigue exactamente
+  // igual que siempre, sin ningún cambio.
+  const resultadoAgendaV2 = await procesarMensajeConAgendaV2({
+    supabase,
+    idTenant: body.idTenant,
+    telefono: body.telefono,
+    texto: body.texto,
+    wamid: body.wamid,
+  });
+  if (resultadoAgendaV2.manejado) {
+    return Response.json({ success: true });
+  }
+
   const resultado = await ejecutarBotWhatsAppQR({
     supabase,
     idTenant: body.idTenant,
