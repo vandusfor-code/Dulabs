@@ -312,6 +312,77 @@ describe("InternalActionExecutor — buscar_disponibilidad_nylas", () => {
   });
 });
 
+describe("InternalActionExecutor — buscar_disponibilidad_nylas — MODO AGENDA GUIADA (autorizado)", () => {
+  const AGENDA_GUIADA_LISTA_PARA_BUSCAR: AgendamientoEnCurso = {
+    ...AGENDA_LISTA_PARA_BUSCAR,
+    modo: "guiado",
+    paso: "SELECCION_HORARIO",
+  };
+
+  it("con opciones reales -> devuelve modo=deterministic con un menú de horarios ya redactado, nunca instruccionIA para Gemini", async () => {
+    const resultadoMock: ResultadoHorariosConNylas = {
+      ok: true,
+      servicio: { id: "s-dipping", nombre: "Dipping", duracionMin: 120 },
+      especialistas: [
+        { especialistaId: 1, nombre: "Mary", estado: "ok", horarios: ["14:00"] },
+        { especialistaId: 2, nombre: "Cristal", estado: "ok", horarios: ["10:00"] },
+      ],
+    };
+    const executor = crearExecutor({ listarHorariosDisponiblesPorServicioConNylas: async () => resultadoMock });
+    const result = await executor.dispatch(
+      baseRequest("buscar_disponibilidad_nylas", { agendamiento: AGENDA_GUIADA_LISTA_PARA_BUSCAR }),
+      { tenantId: "tenant-amore", internal: true },
+    );
+    assert.equal(result.success, true);
+    const data = result.data as Record<string, unknown>;
+    assert.equal(data.modo, "deterministic");
+    assert.equal(data.instruccionIA, undefined, "nunca debe generar una instrucción para Gemini en modo guiado");
+    assert.match(data.respuestaTexto as string, /1\. Cristal — 10:00 AM/);
+    assert.match(data.respuestaTexto as string, /2\. Mary — 2:00 PM/);
+    const agendamiento = data.agendamiento as AgendamientoEnCurso;
+    assert.equal(agendamiento.paso, "SELECCION_HORARIO");
+    assert.equal(agendamiento.menuActual?.tipo, "horario");
+    assert.equal(agendamiento.menuActual?.opciones.length, 2);
+  });
+
+  it("sin cupo real -> vuelve determinísticamente al menú de fechas (nunca al fallback genérico de Gemini)", async () => {
+    const resultadoMock: ResultadoHorariosConNylas = {
+      ok: true,
+      servicio: { id: "s-dipping", nombre: "Dipping", duracionMin: 120 },
+      especialistas: [{ especialistaId: 1, nombre: "Mary", estado: "ok", horarios: [] }],
+    };
+    const executor = crearExecutor({ listarHorariosDisponiblesPorServicioConNylas: async () => resultadoMock });
+    const result = await executor.dispatch(
+      baseRequest("buscar_disponibilidad_nylas", { agendamiento: AGENDA_GUIADA_LISTA_PARA_BUSCAR }),
+      { tenantId: "tenant-amore", internal: true },
+    );
+    const data = result.data as Record<string, unknown>;
+    assert.equal(data.modo, "deterministic");
+    assert.match(data.respuestaTexto as string, /No hay cupo real disponible/);
+    const agendamiento = data.agendamiento as AgendamientoEnCurso;
+    assert.equal(agendamiento.paso, "SELECCION_FECHA");
+    assert.equal(agendamiento.fechaISO, undefined, "se limpia para que la clienta elija otra fecha real del menú");
+    assert.equal(agendamiento.menuActual?.tipo, "fecha");
+  });
+
+  it("más de 4 horarios reales -> el menú guiado pagina con 'Ver más horarios' (nunca corta silenciosamente lo que hay más allá de 4)", async () => {
+    const resultadoMock: ResultadoHorariosConNylas = {
+      ok: true,
+      servicio: { id: "s-dipping", nombre: "Dipping", duracionMin: 120 },
+      especialistas: [{ especialistaId: 1, nombre: "Mary", estado: "ok", horarios: ["08:00", "09:00", "10:00", "11:00", "12:00"] }],
+    };
+    const executor = crearExecutor({ listarHorariosDisponiblesPorServicioConNylas: async () => resultadoMock });
+    const result = await executor.dispatch(
+      baseRequest("buscar_disponibilidad_nylas", { agendamiento: AGENDA_GUIADA_LISTA_PARA_BUSCAR }),
+      { tenantId: "tenant-amore", internal: true },
+    );
+    const data = result.data as Record<string, unknown>;
+    const agendamiento = data.agendamiento as AgendamientoEnCurso;
+    assert.equal(agendamiento.menuActual?.opciones.length, 5); // 4 reales + "Ver más horarios"
+    assert.ok(agendamiento.menuActual?.pendientes?.length === 1);
+  });
+});
+
 const AGENDA_LISTA_PARA_CONFIRMAR: AgendamientoEnCurso = {
   servicioId: "s-dipping",
   servicioNombre: "Dipping",
@@ -422,6 +493,48 @@ describe("InternalActionExecutor — crear_cita_nylas", () => {
     );
     assert.equal(result.success, false);
     assert.equal(result.error, "error_tecnico");
+  });
+});
+
+describe("InternalActionExecutor — crear_cita_nylas — MODO AGENDA GUIADA (autorizado)", () => {
+  const AGENDA_GUIADA_PARA_CONFIRMAR: AgendamientoEnCurso = { ...AGENDA_LISTA_PARA_CONFIRMAR, modo: "guiado", paso: "CONFIRMACION" };
+
+  it("reserva real exitosa en modo guiado -- confirma con texto determinístico, nunca instruccionIA para Gemini", async () => {
+    const resultadoMock: ResultadoCrearCitaNylas = {
+      ok: true,
+      cita: { id: 999, inicio: "2026-09-11T21:00:00.000Z", fin: "2026-09-11T23:00:00.000Z" } as never,
+      nylasEventId: "evt-real-1",
+      especialista: { id: 1, nombre: "Mary" },
+      servicio: { id: "s-dipping", nombre: "Dipping", duracionMin: 120 },
+    };
+    const executor = crearExecutor({ crearCitaConNylas: async () => resultadoMock });
+    const result = await executor.dispatch(
+      baseRequest("crear_cita_nylas", { agendamiento: AGENDA_GUIADA_PARA_CONFIRMAR }),
+      { tenantId: "tenant-amore", internal: true },
+    );
+    assert.equal(result.success, true);
+    const data = result.data as Record<string, unknown>;
+    assert.equal(data.modo, "deterministic");
+    assert.equal(data.instruccionIA, undefined, "nunca debe generar una instrucción para Gemini en modo guiado");
+    assert.match(data.respuestaTexto as string, /¡Listo! Tu cita quedó confirmada/);
+    assert.match(data.respuestaTexto as string, /Servicio: Dipping/);
+    assert.match(data.respuestaTexto as string, /Profesional: Mary/);
+    assert.equal(data.citaId, 999);
+    const agendamiento = data.agendamiento as AgendamientoEnCurso;
+    assert.equal(agendamiento.completado, true);
+    assert.equal(agendamiento.paso, "COMPLETADO");
+  });
+
+  it("un rechazo real en modo guiado sigue siendo success:false -- nunca confirma sin evidencia, sea cual sea el modo", async () => {
+    const executor = crearExecutor({
+      crearCitaConNylas: async () => ({ ok: false, motivo: "ocupado", detalle: "otra clienta tomó ese horario" }),
+    });
+    const result = await executor.dispatch(
+      baseRequest("crear_cita_nylas", { agendamiento: AGENDA_GUIADA_PARA_CONFIRMAR }),
+      { tenantId: "tenant-amore", internal: true },
+    );
+    assert.equal(result.success, false);
+    assert.equal(result.error, "ocupado");
   });
 });
 

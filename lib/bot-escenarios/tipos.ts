@@ -172,10 +172,72 @@ export interface EntidadesDetectadas {
  * elegibilidad real en cada paso, igual que `ultimasOpcionesIds` ya hace
  * para las referencias a listas mostradas.
  */
+/**
+ * MODO AGENDA GUIADA (autorizado) -- selección por menú de texto numerado,
+ * nunca por interpretación libre de Gemini. Ver lib/bot-escenarios/agendamiento-guiado.ts.
+ */
+export type PasoAgendamientoGuiado =
+  | "SELECCION_SERVICIO"
+  | "SELECCION_PROFESIONAL"
+  | "SELECCION_FECHA"
+  | "SELECCION_HORARIO"
+  | "CONFIRMACION"
+  | "COMPLETADO";
+
+export type TipoMenuAgendamiento = "servicio" | "profesional" | "fecha" | "horario" | "confirmacion";
+
+/**
+ * Una opción real de un menú guiado. `id` es SIEMPRE un valor estructurado
+ * real (UUID de servicio, especialista_id como texto, fechaISO real, o un id
+ * de control cerrado: "ANY", "VER_MAS_SERVICIOS", "VER_MAS_FECHAS",
+ * "VER_MAS_PROFESIONALES", "CONFIRM_APPOINTMENT", "CAMBIAR_HORARIO",
+ * "CANCELAR") -- NUNCA texto libre inventado. `sinonimos` son formas
+ * normalizadas (ver normalizarBasico) contra las que se compara una
+ * respuesta ESCRITA -- coincidencia EXACTA, nunca "contains" ni difusa.
+ */
+export interface MenuOpcionAgendamiento {
+  numero: number;
+  id: string;
+  label: string;
+  sinonimos: string[];
+}
+
+/**
+ * Menú real actualmente mostrado -- única fuente de verdad para resolver la
+ * PRÓXIMA respuesta del cliente (número o texto) contra IDs reales, nunca
+ * contra una interpretación de Gemini. Se conserva TAL CUAL a través de
+ * interrupciones informativas (sección 21 del pedido), igual que
+ * `opcionesOfrecidas` ya se conservaba en el modo anterior.
+ */
+export interface MenuAgendamiento {
+  tipo: TipoMenuAgendamiento;
+  opciones: MenuOpcionAgendamiento[];
+  /**
+   * SOLO tipo="servicio"|"profesional"|"horario": entradas reales aún no
+   * mostradas (mismo shape que una opción, sin `numero`) para "Ver más..."
+   * sin repetir la consulta real (catálogo/especialistas/Nylas).
+   */
+  pendientes?: Array<{ id: string; label: string; sinonimos: string[] }>;
+  /**
+   * SOLO tipo="fecha": próximo offset de días (desde hoy) para "Ver más
+   * fechas" -- las fechas se generan bajo demanda (America/Bogota), nunca se
+   * precomputa una lista "infinita".
+   */
+  offsetFechas?: number;
+}
+
 export interface AgendamientoEnCurso {
   servicioId?: string;
   servicioNombre?: string;
   duracionMin?: number;
+  /** MODO AGENDA GUIADA (autorizado) -- precio real del servicio elegido, capturado al seleccionarlo para poder armar el resumen de confirmación sin volver a consultar el catálogo. */
+  precio?: number;
+  /** MODO AGENDA GUIADA (autorizado) -- presente SOLO mientras el agendamiento usa la nueva modalidad de menús de texto numerados; ausente/undefined = modalidad anterior (conversación libre), sin ningún cambio de comportamiento. */
+  modo?: "guiado";
+  /** MODO AGENDA GUIADA (autorizado) -- paso determinístico actual; nunca lo decide Gemini. */
+  paso?: PasoAgendamientoGuiado;
+  /** MODO AGENDA GUIADA (autorizado) -- el menú real que se le acaba de mostrar al cliente. */
+  menuActual?: MenuAgendamiento;
   /** Solo si la clienta mencionó una profesional puntual ("con Mary") -- si no, se consulta el pool completo de elegibles. */
   especialistaId?: number;
   especialistaNombre?: string;

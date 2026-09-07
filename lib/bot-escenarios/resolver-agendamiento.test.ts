@@ -61,9 +61,22 @@ const SABADO = proximoDiaSemana(6);
 /** Última llamada real a guardarNombreCliente en el test más reciente -- para verificar que el registro inicial (nombre + cumpleaños) se guarda con los datos correctos, sin tocar Supabase real. */
 let ultimoGuardarNombreClienteLlamado: Record<string, unknown> | undefined;
 
+/**
+ * MODO AGENDA GUIADA (autorizado) -- esta suite prueba específicamente la
+ * modalidad ANTERIOR (acumulador por texto libre): un agendamiento SIN
+ * `modo` (el campo no existía antes de esta fase). Un contexto realmente
+ * vacío (`{}`) ahora arranca la nueva modalidad guiada (ver
+ * resolver-agendamiento-guiado.test.ts) -- para seguir probando el camino
+ * de compatibilidad hacia atrás (una ejecución que ya tenía un
+ * AgendamientoEnCurso desde ANTES de esta fase, sin `modo`, sigue su curso
+ * de siempre), estos tests arrancan con un acumulador YA EXISTENTE (vacío,
+ * porque nada se había capturado todavía) en vez de un contexto vacío.
+ */
+const CONTEXTO_INICIAL_LEGACY: ContextoConversacional = { agendamiento: {} };
+
 async function resolver(
   mensaje: string,
-  ctx: ContextoConversacional = {},
+  ctx: ContextoConversacional = CONTEXTO_INICIAL_LEGACY,
   opts: { nombreConocido?: string | null } = {},
   overrides: { guardarNombreCliente?: (supabase: unknown, params: Record<string, unknown>) => Promise<void> } = {},
 ) {
@@ -92,7 +105,7 @@ async function resolver(
 
 /** Encadena una serie de mensajes desde cero, devolviendo el resultado del ÚLTIMO. */
 async function conversar(mensajes: string[], opts: { nombreConocido?: string | null } = {}) {
-  let ctx: ContextoConversacional = {};
+  let ctx: ContextoConversacional = CONTEXTO_INICIAL_LEGACY;
   let r;
   for (const m of mensajes) {
     r = await resolver(m, ctx, opts);
@@ -613,7 +626,7 @@ describe("Fecha ambigua -- nunca inventa", () => {
  */
 describe("Corrección -- el atajo 'ofrecer_portal' nunca dispara mientras hay un AgendamientoEnCurso activo", () => {
   it("SIN AgendamientoEnCurso: 'Ok' tras un servicio puntual sigue funcionando como antes (salta al portal) -- comportamiento preexistente intacto", async () => {
-    const previo = await resolver("cuánto cuesta el dipping");
+    const previo = await resolver("cuánto cuesta el dipping", {});
     assert.equal(previo.contexto.agendamiento, undefined, "sin 'quiero una cita' de por medio, nunca hay agendamiento activo");
     const r = await resolver("Ok", previo.contexto, {}, {});
     assert.equal(r.modo, "portal");

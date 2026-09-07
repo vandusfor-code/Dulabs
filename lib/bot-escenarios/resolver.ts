@@ -29,8 +29,24 @@ import {
   extraerHoraOBloqueMencionado,
 } from "@/lib/bot-escenarios/agendamiento-entidades";
 import { especialistasDelTenant } from "@/lib/especialistas";
+import { resolverEspecialistasElegiblesParaServicio } from "@/lib/asignacion-categoria";
 import { nombreConocido, recordarNombreCliente } from "@/lib/clientes-conocidos";
 import { parseCumpleanosNatural } from "@/lib/cumpleanos/parse-cumpleanos-natural";
+import {
+  construirMenuServicios,
+  continuarMenuServicios,
+  construirMenuProfesionales,
+  continuarMenuProfesionales,
+  construirMenuFechas,
+  continuarMenuHorarios,
+  construirMenuConfirmacion,
+  resolverSeleccionMenu,
+  renderizarMenu,
+  textoSeleccionInvalida,
+  parseSlotHorarioId,
+  ID_CAMBIAR_HORARIO,
+  ID_CANCELAR,
+} from "@/lib/bot-escenarios/agendamiento-guiado";
 import {
   CODIGO_ESCENARIO_AGENDAMIENTO,
   CODIGO_ESCENARIO_FALLBACK,
@@ -66,6 +82,8 @@ export interface ResolverEscenarioDeps {
   buscarNombreConocido?: typeof nombreConocido;
   /** Revisión (autorizada, sección 14) -- inyectable para tests, default real: recordarNombreCliente (lib/clientes-conocidos.ts). Guarda el registro inicial (nombre + cumpleaños) de un cliente genuinamente nuevo. */
   guardarNombreCliente?: typeof recordarNombreCliente;
+  /** MODO AGENDA GUIADA (autorizado) -- inyectable para tests, default real: resolverEspecialistasElegiblesParaServicio (lib/asignacion-categoria.ts). Elegibilidad real para el menú de profesionales, nunca hardcodeada. */
+  resolverEspecialistasElegibles?: typeof resolverEspecialistasElegiblesParaServicio;
 }
 
 function construirSinonimos(escenarios: EscenarioRow[]): Map<string, string[]> {
@@ -592,79 +610,103 @@ function fusionarDatosAgendamiento(params: {
     return { tipo: "actualizado", actual };
   }
 
-  const servicioDetectado = params.entidades.servicioId ? params.catalogo.find((s) => s.id === params.entidades.servicioId) : undefined;
-  let huboCambioQueInvalidaSeleccion = false;
+  // MODO AGENDA GUIADA (autorizado) -- estas 4 detecciones de texto libre
+  // (servicio/especialista/fecha/hora) y la selección contra
+  // `opcionesOfrecidas` más abajo son EXCLUSIVAS de la modalidad anterior
+  // (conversación libre): en modo guiado, TODO campo estructurado se resuelve
+  // contra el menú real ya mostrado (ver decidirPasoGuiado/resolverSeleccionMenu),
+  // nunca por una mención libre detectada de paso -- así una pregunta
+  // informativa ("¿y qué es el Press On?") durante un menú guiado nunca pisa
+  // en silencio una selección ya hecha por número. Se declaran igual acá
+  // afuera (siempre undefined en modo guiado) porque el bloque de
+  // nombrePendiente, más abajo, sigue aplicando a ambos modos (el nombre de
+  // la clienta es texto libre genuino, nunca una lista finita de opciones).
+  let servicioDetectado: ServicioCatalogoReal | undefined;
+  let especialistaDetectada: { id: number; nombre: string } | undefined;
+  let fechaDetectada: ReturnType<typeof extraerFechaMencionada>;
+  let horaDetectada: ReturnType<typeof extraerHoraOBloqueMencionado>;
 
-  if (servicioDetectado) {
-    const cambioDeServicio = actual.servicioId !== undefined && actual.servicioId !== servicioDetectado.id;
-    // Sección 11 del pedido: preguntar POR otro servicio ("¿y qué es el
-    // Press On?") es una interrupción informativa, nunca un cambio de
-    // opinión -- solo una frase de cambio real ("no, mejor Press On", que ni
-    // siquiera matchea estos escenarios informativos) debe reemplazar el
-    // servicio ya elegido (sección 12). Si YA había un servicio elegido y el
-    // escenario ganador es uno de los puramente informativos, se ignora la
-    // mención para el acumulador (pero 028/029/051 igual responden la
-    // pregunta con normalidad). Si todavía no había servicio elegido
-    // (arranque del agendamiento), cualquier mención sí lo fija -- test B.
-    const esSoloUnaPreguntaSobreOtroServicio =
-      cambioDeServicio &&
-      ESCENARIOS_INFORMATIVOS_PERMITIDOS_DURANTE_AGENDAMIENTO.has(params.escenarioCodigo) &&
-      !pareceCambioDeOpinionDeServicio(params.mensaje);
-    if (!esSoloUnaPreguntaSobreOtroServicio) {
-      actual.servicioId = servicioDetectado.id;
-      actual.servicioNombre = servicioDetectado.nombre;
-      actual.duracionMin = servicioDetectado.duracionMin;
-      if (cambioDeServicio) {
-        actual.especialistaId = undefined;
-        actual.especialistaNombre = undefined;
-        huboCambioQueInvalidaSeleccion = true;
+  if (actual.modo !== "guiado") {
+    servicioDetectado = params.entidades.servicioId ? params.catalogo.find((s) => s.id === params.entidades.servicioId) : undefined;
+    let huboCambioQueInvalidaSeleccion = false;
+
+    if (servicioDetectado) {
+      const cambioDeServicio = actual.servicioId !== undefined && actual.servicioId !== servicioDetectado.id;
+      // Sección 11 del pedido: preguntar POR otro servicio ("¿y qué es el
+      // Press On?") es una interrupción informativa, nunca un cambio de
+      // opinión -- solo una frase de cambio real ("no, mejor Press On", que ni
+      // siquiera matchea estos escenarios informativos) debe reemplazar el
+      // servicio ya elegido (sección 12). Si YA había un servicio elegido y el
+      // escenario ganador es uno de los puramente informativos, se ignora la
+      // mención para el acumulador (pero 028/029/051 igual responden la
+      // pregunta con normalidad). Si todavía no había servicio elegido
+      // (arranque del agendamiento), cualquier mención sí lo fija -- test B.
+      const esSoloUnaPreguntaSobreOtroServicio =
+        cambioDeServicio &&
+        ESCENARIOS_INFORMATIVOS_PERMITIDOS_DURANTE_AGENDAMIENTO.has(params.escenarioCodigo) &&
+        !pareceCambioDeOpinionDeServicio(params.mensaje);
+      if (!esSoloUnaPreguntaSobreOtroServicio) {
+        actual.servicioId = servicioDetectado.id;
+        actual.servicioNombre = servicioDetectado.nombre;
+        actual.duracionMin = servicioDetectado.duracionMin;
+        if (cambioDeServicio) {
+          actual.especialistaId = undefined;
+          actual.especialistaNombre = undefined;
+          huboCambioQueInvalidaSeleccion = true;
+        }
       }
     }
-  }
 
-  const especialistaDetectada = detectarEspecialistaMencionada(params.mensaje, params.especialistasReales);
-  if (especialistaDetectada && especialistaDetectada.id !== actual.especialistaId) {
-    actual.especialistaId = especialistaDetectada.id;
-    actual.especialistaNombre = especialistaDetectada.nombre;
-    huboCambioQueInvalidaSeleccion = true;
-  }
-
-  const fechaDetectada = extraerFechaMencionada(params.mensaje, params.hoyISO);
-  if (fechaDetectada && !fechaDetectada.ok) {
-    return responderAqui(fechaDetectada.message);
-  }
-  if (fechaDetectada?.ok && fechaDetectada.fecha !== actual.fechaISO) {
-    if (actual.fechaISO) huboCambioQueInvalidaSeleccion = true;
-    actual.fechaISO = fechaDetectada.fecha;
-  }
-
-  const horaDetectada = extraerHoraOBloqueMencionado(params.mensaje);
-  if (horaDetectada?.tipo === "hora" && !horaDetectada.resultado.ok && horaDetectada.resultado.kind === "ambiguous") {
-    return responderAqui(horaDetectada.resultado.message);
-  }
-  if (horaDetectada) {
-    if (horaDetectada.tipo === "bloque") {
-      actual.bloquePreferido = horaDetectada.bloque;
-      actual.horaPreferidaHHMM = undefined;
-    } else if (horaDetectada.resultado.ok) {
-      actual.horaPreferidaHHMM = horaDetectada.resultado.hhmm;
-      actual.bloquePreferido = undefined;
+    especialistaDetectada = detectarEspecialistaMencionada(params.mensaje, params.especialistasReales);
+    if (especialistaDetectada && especialistaDetectada.id !== actual.especialistaId) {
+      actual.especialistaId = especialistaDetectada.id;
+      actual.especialistaNombre = especialistaDetectada.nombre;
+      huboCambioQueInvalidaSeleccion = true;
     }
-    huboCambioQueInvalidaSeleccion = true;
-  }
 
-  if (huboCambioQueInvalidaSeleccion) {
-    actual.opcionesOfrecidas = undefined;
-    actual.horarioSeleccionadoISO = undefined;
-    actual.especialistaSeleccionadaId = undefined;
-    actual.especialistaSeleccionadaNombre = undefined;
-    actual.esperandoConfirmacion = undefined;
+    fechaDetectada = extraerFechaMencionada(params.mensaje, params.hoyISO);
+    if (fechaDetectada && !fechaDetectada.ok) {
+      return responderAqui(fechaDetectada.message);
+    }
+    if (fechaDetectada?.ok && fechaDetectada.fecha !== actual.fechaISO) {
+      if (actual.fechaISO) huboCambioQueInvalidaSeleccion = true;
+      actual.fechaISO = fechaDetectada.fecha;
+    }
+
+    horaDetectada = extraerHoraOBloqueMencionado(params.mensaje);
+    if (horaDetectada?.tipo === "hora" && !horaDetectada.resultado.ok && horaDetectada.resultado.kind === "ambiguous") {
+      return responderAqui(horaDetectada.resultado.message);
+    }
+    if (horaDetectada) {
+      if (horaDetectada.tipo === "bloque") {
+        actual.bloquePreferido = horaDetectada.bloque;
+        actual.horaPreferidaHHMM = undefined;
+      } else if (horaDetectada.resultado.ok) {
+        actual.horaPreferidaHHMM = horaDetectada.resultado.hhmm;
+        actual.bloquePreferido = undefined;
+      }
+      huboCambioQueInvalidaSeleccion = true;
+    }
+
+    if (huboCambioQueInvalidaSeleccion) {
+      actual.opcionesOfrecidas = undefined;
+      actual.horarioSeleccionadoISO = undefined;
+      actual.especialistaSeleccionadaId = undefined;
+      actual.especialistaSeleccionadaNombre = undefined;
+      actual.esperandoConfirmacion = undefined;
+    }
   }
 
   // Nombre pendiente: si el bot ya preguntó "¿a nombre de quién?" y este
   // mensaje no aportó ningún otro dato reconocible, se toma tal cual como
   // el nombre -- nunca se asume un nombre que la clienta no haya escrito.
+  // MODO AGENDA GUIADA (autorizado) -- exclusivo de la modalidad anterior:
+  // el modo guiado tiene su propio manejo de nombre pendiente en
+  // decidirSiguientePasoAgendamiento (que además decide si sigue a
+  // cumpleaños o directo a CONFIRMACION) -- capturarlo acá también
+  // duplicaría la lógica y el guiado nunca llegaría a esa decisión.
   if (
+    actual.modo !== "guiado" &&
     actual.nombrePendiente &&
     !servicioDetectado &&
     !especialistaDetectada &&
@@ -696,7 +738,7 @@ function fusionarDatosAgendamiento(params: {
   // nunca inventes otra hora distinta") vuelve a ofrecer las opciones reales
   // para que la clienta elija de nuevo. Cuando solo uno de los dos datos
   // está presente, el comportamiento es EXACTAMENTE el de siempre.
-  if (actual.opcionesOfrecidas?.length && !actual.horarioSeleccionadoISO) {
+  if (actual.modo !== "guiado" && actual.opcionesOfrecidas?.length && !actual.horarioSeleccionadoISO) {
     let elegida: (typeof actual.opcionesOfrecidas)[number] | undefined;
 
     if (actual.especialistaId && actual.horaPreferidaHHMM) {
@@ -727,6 +769,192 @@ function fusionarDatosAgendamiento(params: {
   return { tipo: "actualizado", actual };
 }
 
+/** Mismo texto en los 2 lugares donde una cancelación (top-level o desde el menú de confirmación) limpia el agendamiento -- nunca duplicado. */
+function respuestaCancelacion(escenarioCodigo: string, contextoBase: ContextoConversacional): ResultadoResolucion {
+  return {
+    escenarioCodigo,
+    modo: "deterministic",
+    respuestaTexto: "Listo, no reservo nada por ahora 💗 Cuando quieras retomarlo, aquí estoy.",
+    requiereIA: false,
+    contexto: { ...contextoBase, agendamiento: undefined },
+  };
+}
+
+/**
+ * MODO AGENDA GUIADA (autorizado) -- resuelve UN paso del flujo guiado
+ * contra el menú REALMENTE mostrado (`actual.menuActual`), nunca contra una
+ * interpretación de Gemini. Reutiliza TAL CUAL resolverEspecialistasElegiblesParaServicio
+ * (elegibilidad real), listarHorariosDisponiblesPorServicioConNylas (vía el
+ * mismo modo="agendar_buscar_disponibilidad" de siempre) y crearCitaConNylas
+ * (vía modo="agendar_crear_cita") -- nunca duplica Nylas ni la creación de
+ * la reserva. El texto de cada paso se redacta acá mismo, determinístico,
+ * SIN pasar nunca por ai-generar-respuesta -- ver la rama correspondiente en
+ * internal-action-executor.ts (buscarDisponibilidadNylasAction/crearCitaNylasAction)
+ * que hace lo mismo para las 2 acciones reales.
+ */
+async function decidirPasoGuiado(params: {
+  escenario: EscenarioRow;
+  mensaje: string;
+  actual: AgendamientoEnCurso;
+  contextoBase: ContextoConversacional;
+  supabase: SupabaseClient;
+  tenantId: string;
+  telefonoCliente?: string;
+  catalogo: ServicioCatalogoReal[];
+  especialistasReales: EspecialistaBasico[];
+  hoyISO: string;
+  buscarNombreConocido: typeof nombreConocido;
+  guardarNombreCliente: typeof recordarNombreCliente;
+  resolverEspecialistasElegibles: typeof resolverEspecialistasElegiblesParaServicio;
+}): Promise<ResultadoResolucion> {
+  const actual: AgendamientoEnCurso = { ...params.actual };
+
+  const responderTexto = (texto: string): ResultadoResolucion => ({
+    escenarioCodigo: params.escenario.codigo,
+    modo: "deterministic",
+    respuestaTexto: texto,
+    requiereIA: false,
+    contexto: { ...params.contextoBase, agendamiento: actual },
+  });
+  const responderAccion = (modo: "agendar_buscar_disponibilidad" | "agendar_crear_cita"): ResultadoResolucion => ({
+    escenarioCodigo: params.escenario.codigo,
+    modo,
+    requiereIA: false,
+    contexto: { ...params.contextoBase, agendamiento: actual },
+  });
+  const irAMenu = (menu: AgendamientoEnCurso["menuActual"], paso: AgendamientoEnCurso["paso"]): ResultadoResolucion => {
+    actual.menuActual = menu;
+    actual.paso = paso;
+    return responderTexto(renderizarMenu(menu!, actual));
+  };
+
+  const menu = actual.menuActual;
+  if (!menu) {
+    // Defensivo -- todo paso guiado deja un menú pendiente; si faltara (dato
+    // corrupto/ejecución vieja), se reinicia al primer paso real sin perder
+    // el resto del acumulador.
+    return irAMenu(construirMenuServicios(params.catalogo), "SELECCION_SERVICIO");
+  }
+
+  const seleccion = resolverSeleccionMenu(params.mensaje, menu);
+  if (!seleccion) {
+    return responderTexto(textoSeleccionInvalida(menu, actual));
+  }
+
+  switch (menu.tipo) {
+    case "servicio": {
+      if (seleccion.id === "VER_MAS_SERVICIOS") {
+        return irAMenu(continuarMenuServicios(menu.pendientes ?? []), "SELECCION_SERVICIO");
+      }
+      const servicio = params.catalogo.find((s) => s.id === seleccion.id);
+      if (!servicio) {
+        // Defensivo -- el catálogo cambió entre el menú mostrado y la respuesta.
+        return irAMenu(construirMenuServicios(params.catalogo), "SELECCION_SERVICIO");
+      }
+      actual.servicioId = servicio.id;
+      actual.servicioNombre = servicio.nombre;
+      actual.duracionMin = servicio.duracionMin;
+      actual.precio = servicio.precio;
+
+      const resolucion = await params.resolverEspecialistasElegibles(params.supabase, params.tenantId, servicio.id);
+      const elegibles = resolucion.especialistas.map((e) => ({ id: e.especialistaId, nombre: e.nombre }));
+      return irAMenu(construirMenuProfesionales(elegibles), "SELECCION_PROFESIONAL");
+    }
+
+    case "profesional": {
+      if (seleccion.id === "VER_MAS_PROFESIONALES") {
+        return irAMenu(continuarMenuProfesionales(menu.pendientes ?? []), "SELECCION_PROFESIONAL");
+      }
+      if (seleccion.id === "ANY") {
+        actual.especialistaId = undefined;
+        actual.especialistaNombre = undefined;
+      } else {
+        actual.especialistaId = Number(seleccion.id);
+        actual.especialistaNombre = seleccion.label;
+      }
+      return irAMenu(construirMenuFechas(params.hoyISO), "SELECCION_FECHA");
+    }
+
+    case "fecha": {
+      if (seleccion.id === "VER_MAS_FECHAS") {
+        return irAMenu(construirMenuFechas(params.hoyISO, menu.offsetFechas), "SELECCION_FECHA");
+      }
+      actual.fechaISO = seleccion.id;
+      actual.paso = "SELECCION_HORARIO";
+      actual.menuActual = undefined;
+      return responderAccion("agendar_buscar_disponibilidad");
+    }
+
+    case "horario": {
+      if (seleccion.id === "VER_MAS_HORARIOS") {
+        return irAMenu(continuarMenuHorarios(menu.pendientes ?? []), "SELECCION_HORARIO");
+      }
+      const slot = parseSlotHorarioId(seleccion.id);
+      if (!slot) {
+        // Defensivo -- id de control inesperado en un menú de horario.
+        return responderTexto(textoSeleccionInvalida(menu, actual));
+      }
+      actual.horarioSeleccionadoISO = slot.horaISO;
+      actual.especialistaSeleccionadaId = slot.especialistaId;
+      actual.especialistaSeleccionadaNombre =
+        params.especialistasReales.find((e) => e.id === slot.especialistaId)?.nombre ?? actual.especialistaNombre ?? "";
+
+      // Sección 15 (autorizado) -- solo se pide el nombre si de verdad falta
+      // (nunca una nueva base de clientes: reutiliza dulabs_clientes_conocidos
+      // tal cual ya hacía la modalidad anterior).
+      if (!actual.nombreCliente) {
+        const nombreYaConocido = params.telefonoCliente
+          ? await params.buscarNombreConocido(params.supabase, `whatsapp-qr:${params.tenantId}`, params.telefonoCliente)
+          : null;
+        if (nombreYaConocido) {
+          actual.nombreCliente = nombreYaConocido;
+          actual.cumpleanosCapturado = true;
+        } else {
+          actual.nombrePendiente = true;
+          actual.esClienteNuevo = true;
+          actual.menuActual = undefined;
+          return responderTexto("¿A nombre de quién dejamos la reserva? 💗");
+        }
+      }
+
+      return irAMenu(construirMenuConfirmacion(), "CONFIRMACION");
+    }
+
+    case "confirmacion": {
+      if (seleccion.id === ID_CANCELAR) {
+        return respuestaCancelacion(params.escenario.codigo, params.contextoBase);
+      }
+      if (seleccion.id === ID_CAMBIAR_HORARIO) {
+        actual.horarioSeleccionadoISO = undefined;
+        actual.especialistaSeleccionadaId = undefined;
+        actual.especialistaSeleccionadaNombre = undefined;
+        actual.paso = "SELECCION_HORARIO";
+        actual.menuActual = undefined;
+        return responderAccion("agendar_buscar_disponibilidad");
+      }
+      // ID_CONFIRMAR_CITA
+      actual.paso = "COMPLETADO";
+      return responderAccion("agendar_crear_cita");
+    }
+  }
+}
+
+/**
+ * Sección 15/17 (autorizado) -- justo después de que el bot preguntó "¿a
+ * nombre de quién?" en modo guiado, el próximo mensaje es texto libre
+ * genuino (nunca un menú: no hay una lista finita de nombres posibles) --
+ * se toma tal cual si tiene forma razonable de nombre, igual que ya hacía la
+ * modalidad anterior (fusionarDatosAgendamiento), sin duplicar esa regla.
+ */
+function capturarNombrePendienteGuiado(actual: AgendamientoEnCurso, mensaje: string): boolean {
+  if (!actual.nombrePendiente) return false;
+  const posibleNombre = mensaje.trim();
+  if (posibleNombre.length < 2 || posibleNombre.length > 60) return false;
+  actual.nombreCliente = posibleNombre;
+  actual.nombrePendiente = false;
+  return true;
+}
+
 async function decidirSiguientePasoAgendamiento(params: {
   escenario: EscenarioRow;
   mensaje: string;
@@ -735,8 +963,14 @@ async function decidirSiguientePasoAgendamiento(params: {
   supabase: SupabaseClient;
   tenantId: string;
   telefonoCliente?: string;
+  catalogo: ServicioCatalogoReal[];
+  especialistasReales: EspecialistaBasico[];
+  hoyISO: string;
+  /** false = agendamiento recién arrancado este mismo turno (nunca hubo uno antes) -- SIEMPRE la modalidad guiada. true = ya existía un agendamiento de un turno anterior -- respeta el `modo` que ya traía (compatibilidad: una conversación en curso desde ANTES de esta fase, con modo indefinido, sigue su camino de siempre hasta terminar). */
+  agendamientoYaExistente: boolean;
   buscarNombreConocido: typeof nombreConocido;
   guardarNombreCliente: typeof recordarNombreCliente;
+  resolverEspecialistasElegibles: typeof resolverEspecialistasElegiblesParaServicio;
 }): Promise<ResultadoResolucion> {
   const actual: AgendamientoEnCurso = { ...params.actual };
   const responder = (resto: Partial<ResultadoResolucion> & { modo: ResultadoResolucion["modo"] }): ResultadoResolucion => ({
@@ -747,15 +981,101 @@ async function decidirSiguientePasoAgendamiento(params: {
   });
 
   // Cancelación explícita -- nunca "contains", vocabulario cerrado exacto.
+  // Se evalúa ANTES de decidir el modo -- "Cancelar"/"no" siempre funciona,
+  // sea cual sea la modalidad o el paso.
   if (esCancelacionExplicitaDeReserva(params.mensaje)) {
+    return respuestaCancelacion(params.escenario.codigo, params.contextoBase);
+  }
+
+  // MODO AGENDA GUIADA (autorizado) -- un agendamiento que NUNCA existió
+  // antes de este mismo turno SIEMPRE arranca en la modalidad guiada
+  // (sección 26 del pedido: la IA queda fuera del camino crítico desde el
+  // primer mensaje). El menú de servicios es SIEMPRE el primer paso real,
+  // ignorando cualquier servicio/fecha/hora que se haya podido mencionar en
+  // ESTE MISMO mensaje ("Quiero una cita para un dipping" -> igual empieza
+  // por el menú, nunca salta un paso por una mención libre).
+  if (!params.agendamientoYaExistente) {
+    const menu = construirMenuServicios(params.catalogo);
+    const nuevo: AgendamientoEnCurso = { modo: "guiado", paso: "SELECCION_SERVICIO", menuActual: menu };
     return {
       escenarioCodigo: params.escenario.codigo,
       modo: "deterministic",
-      respuestaTexto: "Listo, no reservo nada por ahora 💗 Cuando quieras retomarlo, aquí estoy.",
+      respuestaTexto: renderizarMenu(menu, nuevo),
       requiereIA: false,
-      contexto: { ...params.contextoBase, agendamiento: undefined },
+      contexto: { ...params.contextoBase, agendamiento: nuevo },
     };
   }
+
+  if (actual.modo === "guiado") {
+    // El nombre (texto libre genuino) se resuelve ANTES de intentar
+    // matchear contra un menú -- mientras se espera el nombre no hay ningún
+    // `menuActual` real, así que resolverSeleccionMenu no aplicaría de
+    // todos modos, pero esto deja la intención explícita.
+    if (actual.nombrePendiente) {
+      if (capturarNombrePendienteGuiado(actual, params.mensaje)) {
+        if (actual.esClienteNuevo && !actual.cumpleanosCapturado) {
+          actual.cumpleanosPendiente = true;
+          return responder({ modo: "deterministic", respuestaTexto: `Un gusto, ${actual.nombreCliente} 💗 ¿Cuál es tu fecha de cumpleaños? (día y mes, ej. "15 de marzo")` });
+        }
+        return responder({
+          modo: "deterministic",
+          respuestaTexto: (() => {
+            actual.menuActual = construirMenuConfirmacion();
+            actual.paso = "CONFIRMACION";
+            return renderizarMenu(actual.menuActual, actual);
+          })(),
+        });
+      }
+      return responder({ modo: "deterministic", respuestaTexto: "¿A nombre de quién dejamos la reserva? 💗" });
+    }
+    if (actual.cumpleanosPendiente) {
+      const cumpleanos = parseCumpleanosNatural(params.mensaje);
+      if (!cumpleanos.ok) {
+        return responder({
+          modo: "deterministic",
+          respuestaTexto: 'No logré entender esa fecha 😅 ¿Me la repites? (ej. "15 de marzo" o "15/03", sin el año).',
+        });
+      }
+      if (params.telefonoCliente) {
+        await params.guardarNombreCliente(params.supabase, {
+          idTenant: params.tenantId,
+          phoneNumberId: `whatsapp-qr:${params.tenantId}`,
+          telefonoCliente: params.telefonoCliente,
+          nombre: actual.nombreCliente ?? "",
+          cumpleDia: cumpleanos.dia,
+          cumpleMes: cumpleanos.mes,
+        });
+      }
+      actual.cumpleanosPendiente = false;
+      actual.cumpleanosCapturado = true;
+      actual.menuActual = construirMenuConfirmacion();
+      actual.paso = "CONFIRMACION";
+      return responder({ modo: "deterministic", respuestaTexto: renderizarMenu(actual.menuActual, actual) });
+    }
+
+    return decidirPasoGuiado({
+      escenario: params.escenario,
+      mensaje: params.mensaje,
+      actual,
+      contextoBase: params.contextoBase,
+      supabase: params.supabase,
+      tenantId: params.tenantId,
+      telefonoCliente: params.telefonoCliente,
+      catalogo: params.catalogo,
+      especialistasReales: params.especialistasReales,
+      hoyISO: params.hoyISO,
+      buscarNombreConocido: params.buscarNombreConocido,
+      guardarNombreCliente: params.guardarNombreCliente,
+      resolverEspecialistasElegibles: params.resolverEspecialistasElegibles,
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // Modalidad anterior (conversación libre) -- SIN CAMBIOS, para que una
+  // conversación ya en curso desde antes de esta fase (agendamiento sin
+  // `modo`, ej. mid-flow al momento del deploy) termine exactamente igual
+  // que siempre, en vez de saltar a mitad de un modo guiado que nunca vio.
+  // ---------------------------------------------------------------------
 
   // Confirmación explícita -- SOLO cuenta si de verdad se está esperando una
   // (nunca fuera de ese momento puntual, para no reservar por accidente).
@@ -1095,6 +1415,7 @@ export async function resolverEscenario(params: {
     const cargarEspecialistas = params.deps?.cargarEspecialistas ?? cargarEspecialistasReal;
     const buscarNombreConocido = params.deps?.buscarNombreConocido ?? nombreConocido;
     const guardarNombreCliente = params.deps?.guardarNombreCliente ?? recordarNombreCliente;
+    const resolverEspecialistasElegibles = params.deps?.resolverEspecialistasElegibles ?? resolverEspecialistasElegiblesParaServicio;
     const especialistasReales = await cargarEspecialistas(params.supabase, params.tenantId);
     const hoyISO = fechaColombiaDesdeIso(new Date().toISOString());
 
@@ -1126,7 +1447,22 @@ export async function resolverEscenario(params: {
       Boolean(extraerHoraOBloqueMencionado(params.mensaje)) ||
       Boolean(detectarEspecialistaMencionada(params.mensaje, especialistasReales));
 
+    // MODO AGENDA GUIADA (autorizado) -- si hay un menú real pendiente y el
+    // mensaje resuelve determinísticamente contra ÉL (número o texto EXACTO
+    // de una opción, ver resolverSeleccionMenu), es SIEMPRE una selección,
+    // nunca una interrupción informativa -- aunque el texto también matchee
+    // un escenario informativo (ej. el cliente responde "Dipping" al menú de
+    // servicios, y "Dipping" es also la variante servicio_detectado de
+    // 028_servicio_info). Sin esta prioridad, la selección se perdía en
+    // silencio (bug real encontrado al probar el modo guiado de punta a
+    // punta): 028 respondía el precio y el menú nunca avanzaba.
+    const menuGuiadoResuelveEsteMensaje =
+      fusion.actual.modo === "guiado" &&
+      fusion.actual.menuActual !== undefined &&
+      resolverSeleccionMenu(params.mensaje, fusion.actual.menuActual) !== undefined;
+
     const esInformativoPermitido =
+      !menuGuiadoResuelveEsteMensaje &&
       !esEscenarioAgendamiento &&
       ESCENARIOS_INFORMATIVOS_PERMITIDOS_DURANTE_AGENDAMIENTO.has(escenario.codigo) &&
       !(escenario.codigo === "028_servicio_info" && mencionaFechaHoraOProfesionalEsteMensaje);
@@ -1139,8 +1475,13 @@ export async function resolverEscenario(params: {
         supabase: params.supabase,
         tenantId: params.tenantId,
         telefonoCliente: params.telefonoCliente,
+        catalogo,
+        especialistasReales,
+        hoyISO,
+        agendamientoYaExistente: agendamientoActivo,
         buscarNombreConocido,
         guardarNombreCliente,
+        resolverEspecialistasElegibles,
       });
     }
     // Informativo permitido: el switch normal de abajo responde (precio,

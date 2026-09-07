@@ -9,7 +9,8 @@
 import { parseFechaColombia, type ParseFechaColombiaResult } from "@/lib/parse-fecha-colombia";
 import { parseHoraColombia, type ParseHoraColombiaResult } from "@/lib/parse-hora-colombia";
 
-function normalizarBasico(mensaje: string): string {
+/** Exportada (autorizado, MODO AGENDA GUIADA) -- misma normalización reutilizada por el menú guiado para comparar la respuesta del cliente contra las opciones reales mostradas. */
+export function normalizarBasico(mensaje: string): string {
   return mensaje
     .toLowerCase()
     .normalize("NFD")

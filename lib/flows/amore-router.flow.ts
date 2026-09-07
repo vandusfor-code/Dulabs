@@ -66,6 +66,25 @@ export function amoreRouterFlow(): FlowDefinition {
         config: { rules: [{ field: "modo", operator: "equals", value: "agendar_crear_cita" }], match: "all" },
       },
       { id: "act-crear-cita-nylas", type: "action", config: { actionType: "crear_cita_nylas" } },
+
+      // MODO AGENDA GUIADA (autorizado, v11 aditiva) -- buscar_disponibilidad_nylas/
+      // crear_cita_nylas ya redactan su propio texto determinístico (sin
+      // Gemini) cuando el agendamiento está en modo="guiado" (ver
+      // internal-action-executor.ts) -- estas 2 condiciones nuevas leen ESE
+      // resultado (modo="deterministic") y lo mandan directo a
+      // q-turno-directo, sin pasar nunca por ai-generar-respuesta. Cuando el
+      // agendamiento sigue en la modalidad anterior (modo="ai"), el camino es
+      // EXACTAMENTE el mismo de siempre (rama "false" de cada condición).
+      {
+        id: "cond-es-deterministic-tras-disponibilidad",
+        type: "condition",
+        config: { rules: [{ field: "modo", operator: "equals", value: "deterministic" }], match: "all" },
+      },
+      {
+        id: "cond-es-deterministic-tras-crear-cita",
+        type: "condition",
+        config: { rules: [{ field: "modo", operator: "equals", value: "deterministic" }], match: "all" },
+      },
       // Revisión (autorizada) -- rama de fallo REAL (a diferencia del
       // diseño original): un rechazo real (horario ocupado, error técnico,
       // inconsistencia) devuelve success:false (ver internal-action-executor.ts
@@ -200,11 +219,47 @@ export function amoreRouterFlow(): FlowDefinition {
 
       { id: "e-cond-agendar-disp-si", source: "cond-es-agendar-disponibilidad", target: "act-buscar-disponibilidad-nylas", sourceHandle: FLOW_EDGE_HANDLE.conditionTrue },
       { id: "e-cond-agendar-disp-no", source: "cond-es-agendar-disponibilidad", target: "cond-es-agendar-crear-cita", sourceHandle: FLOW_EDGE_HANDLE.conditionFalse },
-      { id: "e-buscar-disp-a-ia", source: "act-buscar-disponibilidad-nylas", target: "ai-generar-respuesta", sourceHandle: FLOW_EDGE_HANDLE.aiSuccess },
+      // MODO AGENDA GUIADA (autorizado, v11 aditiva) -- ver comentario de los
+      // 2 nodos cond-es-deterministic-tras-* arriba.
+      {
+        id: "e-buscar-disp-cond-deterministic",
+        source: "act-buscar-disponibilidad-nylas",
+        target: "cond-es-deterministic-tras-disponibilidad",
+        sourceHandle: FLOW_EDGE_HANDLE.aiSuccess,
+      },
+      {
+        id: "e-buscar-disp-deterministic-si",
+        source: "cond-es-deterministic-tras-disponibilidad",
+        target: "q-turno-directo",
+        sourceHandle: FLOW_EDGE_HANDLE.conditionTrue,
+      },
+      {
+        id: "e-buscar-disp-deterministic-no",
+        source: "cond-es-deterministic-tras-disponibilidad",
+        target: "ai-generar-respuesta",
+        sourceHandle: FLOW_EDGE_HANDLE.conditionFalse,
+      },
 
       { id: "e-cond-agendar-crear-si", source: "cond-es-agendar-crear-cita", target: "act-crear-cita-nylas", sourceHandle: FLOW_EDGE_HANDLE.conditionTrue },
       { id: "e-cond-agendar-crear-no", source: "cond-es-agendar-crear-cita", target: "cond-es-ai", sourceHandle: FLOW_EDGE_HANDLE.conditionFalse },
-      { id: "e-crear-cita-a-ia", source: "act-crear-cita-nylas", target: "ai-generar-respuesta", sourceHandle: FLOW_EDGE_HANDLE.aiSuccess },
+      {
+        id: "e-crear-cita-cond-deterministic",
+        source: "act-crear-cita-nylas",
+        target: "cond-es-deterministic-tras-crear-cita",
+        sourceHandle: FLOW_EDGE_HANDLE.aiSuccess,
+      },
+      {
+        id: "e-crear-cita-deterministic-si",
+        source: "cond-es-deterministic-tras-crear-cita",
+        target: "q-turno-directo",
+        sourceHandle: FLOW_EDGE_HANDLE.conditionTrue,
+      },
+      {
+        id: "e-crear-cita-deterministic-no",
+        source: "cond-es-deterministic-tras-crear-cita",
+        target: "ai-generar-respuesta",
+        sourceHandle: FLOW_EDGE_HANDLE.conditionFalse,
+      },
       // Revisión (autorizada) -- rama de fallo real, ver comentario del nodo
       // msg-reserva-no-completada arriba.
       { id: "e-crear-cita-fail", source: "act-crear-cita-nylas", target: "msg-reserva-no-completada", sourceHandle: FLOW_EDGE_HANDLE.aiFailure },

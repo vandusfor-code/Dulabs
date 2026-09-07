@@ -186,10 +186,18 @@ describe("resolverEscenario — banco real de AMORE, sin IA en el camino determi
   it("FASE 1 (autorizado) -- intención de agendar ahora INICIA el agendamiento conversacional (070), ya no salta directo al portal (061 sigue sembrado, pero 070 gana por prioridad)", async () => {
     const r = await resolver("quiero agendar una cita");
     assert.equal(r.escenarioCodigo, "070_agendamiento");
-    assert.equal(r.modo, "ai");
-    assert.equal(r.requiereIA, true);
+    // MODO AGENDA GUIADA (autorizado) -- una entrada fresca a agendamiento
+    // ahora arranca SIEMPRE en modo guiado (menú de servicios determinista),
+    // nunca con una pregunta redactada por Gemini -- ver
+    // resolver-agendamiento-guiado.test.ts para la cobertura completa.
+    assert.equal(r.modo, "deterministic");
+    assert.equal(r.requiereIA, false);
     assert.ok(r.contexto.agendamiento, "debe quedar un acumulador de agendamiento activo en el contexto");
+    assert.equal(r.contexto.agendamiento?.modo, "guiado");
+    assert.equal(r.contexto.agendamiento?.paso, "SELECCION_SERVICIO");
     assert.equal(r.contexto.agendamiento?.servicioId, undefined, "todavía no mencionó ningún servicio");
+    assert.match(r.respuestaTexto ?? "", /¿Qué servicio deseas realizarte\?/);
+    assert.match(r.respuestaTexto ?? "", /1\. /);
   });
 
   it("continuidad contextual: 'sí' tras precio de Dipping salta directo al portal para ESE servicio, sin volver a preguntar", async () => {
@@ -266,12 +274,17 @@ describe("resolverEscenario — banco real de AMORE, sin IA en el camino determi
     assert.doesNotMatch(r.respuestaTexto ?? "", /qué servicio/i);
   });
 
-  it("FASE 1 (autorizado) -- intención de agendar SIEMPRE gana sobre 'servicio específico', y además el servicio mencionado en el MISMO mensaje ya queda capturado en el acumulador", async () => {
+  it("FASE 1 (autorizado) -- intención de agendar SIEMPRE gana sobre 'servicio específico'; MODO AGENDA GUIADA (autorizado) -- el menú de servicios es SIEMPRE el primer paso real, incluso si el mensaje ya nombró un servicio", async () => {
     const r = await resolver("quiero agendar el dipping");
     assert.equal(r.escenarioCodigo, "070_agendamiento");
-    assert.equal(r.modo, "ai");
-    assert.equal(r.contexto.agendamiento?.servicioId, "s-dipping");
-    assert.equal(r.contexto.agendamiento?.fechaISO, undefined, "todavía falta la fecha -- debe preguntarla, no inventarla");
+    assert.equal(r.modo, "deterministic");
+    assert.equal(r.contexto.agendamiento?.modo, "guiado");
+    // Sección "1. ENTRADA AL MODO AGENDA" del pedido (autorizado) -- nunca
+    // se salta el menú de servicios por una mención libre en el mismo
+    // mensaje que activó el agendamiento; la clienta elige explícitamente
+    // del menú real, nunca por interpretación de texto libre.
+    assert.equal(r.contexto.agendamiento?.servicioId, undefined, "el menú de servicios siempre se muestra primero, nunca se salta por una mención libre");
+    assert.equal(r.contexto.agendamiento?.paso, "SELECCION_SERVICIO");
   });
 
   it("dos preguntas en un mensaje (precio + quién lo hace): el escenario de mayor prioridad configurada responde ambas si su plantilla las cubre", async () => {

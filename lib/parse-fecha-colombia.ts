@@ -72,7 +72,13 @@ function diaSemanaDe(iso: string): number {
   return anclaMediodia(iso).getDay();
 }
 
-function sumarDias(iso: string, dias: number): string {
+/**
+ * Exportada (autorizado, MODO AGENDA GUIADA) -- mismo cálculo puro que ya
+ * usaba internamente este archivo para "mañana"/"pasado mañana"/días de la
+ * semana, reutilizado tal cual por el menú de fechas guiado en vez de
+ * reimplementar la suma de días con huso horario.
+ */
+export function sumarDias(iso: string, dias: number): string {
   const base = anclaMediodia(iso);
   base.setDate(base.getDate() + dias);
   return fmt(base.getFullYear(), base.getMonth() + 1, base.getDate());

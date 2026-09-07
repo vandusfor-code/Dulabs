@@ -44,6 +44,7 @@ import { resolverEscenario, type ResolverEscenarioDeps } from "@/lib/bot-escenar
 import { nombreConocido } from "@/lib/clientes-conocidos";
 import { cargarConocimientoReal, cargarEscenariosReal } from "@/lib/bot-escenarios/store";
 import type { AgendamientoEnCurso } from "@/lib/bot-escenarios/tipos";
+import { construirMenuFechas, construirMenuHorarios, renderizarMenu, formatearFechaLarga, formatearHora12 } from "@/lib/bot-escenarios/agendamiento-guiado";
 import {
   listarHorariosDisponiblesPorServicioConNylas,
   type ResultadoHorariosConNylas,
@@ -1783,11 +1784,51 @@ export class InternalActionExecutor implements EffectExecutor {
       };
     };
 
-    // Defensivo -- decidirSiguientePasoAgendamiento solo emite este modo con
-    // ambos ya presentes; nunca debería ocurrir en producción.
+    // MODO AGENDA GUIADA (autorizado) -- mismo wrapper de resultado que
+    // responderNaturalmente, pero con texto YA redactado determinísticamente
+    // acá mismo (nunca instruccionIA para Gemini) -- ver la rama
+    // `modo==="deterministic"` del grafo (amore-router.flow.ts, Flow v11),
+    // que la envía directo a q-turno-directo, sin pasar por ai-generar-respuesta.
+    const responderGuiado = (
+      respuestaTexto: string,
+      agendamientoActualizado: AgendamientoEnCurso | undefined,
+      extra?: Record<string, unknown>,
+    ): EffectDispatchResult => {
+      const data = {
+        modo: "deterministic",
+        respuestaTexto,
+        agendamiento: agendamientoActualizado ?? null,
+        effectId: request.effectId,
+        ...extra,
+      };
+      return {
+        success: true,
+        classification: EFFECT_RESULT_CLASSIFICATIONS.SUCCESS,
+        data,
+        appliedResult: data,
+        rawResult: data,
+        metadata: { operationClass: OPERATION_CLASS.buscar_disponibilidad_nylas },
+      };
+    };
+
+    const esGuiado = agendamiento?.modo === "guiado";
+    /** Único punto de despacho ai-vs-guiado para esta acción -- nunca hace falta acordarse en cada rama cuál de los dos wrappers llamar. */
+    const responder = (
+      instruccionIA: string,
+      textoGuiado: string,
+      datosIA: unknown,
+      agendamientoActualizado: AgendamientoEnCurso | undefined,
+      extra?: Record<string, unknown>,
+    ): EffectDispatchResult =>
+      esGuiado ? responderGuiado(textoGuiado, agendamientoActualizado, extra) : responderNaturalmente(instruccionIA, datosIA, agendamientoActualizado, extra);
+
+    // Defensivo -- decidirSiguientePasoAgendamiento/decidirPasoGuiado solo
+    // emiten este modo con ambos ya presentes; nunca debería ocurrir en
+    // producción.
     if (!agendamiento || !agendamiento.servicioId || !agendamiento.fechaISO) {
-      return responderNaturalmente(
+      return responder(
         "Pregúntale de nuevo, de forma natural, qué servicio y para qué día desea la cita.",
+        "Se perdió parte de la información 😅 ¿Podemos empezar de nuevo? Escribe *quiero una cita* para volver a intentarlo.",
         [],
         agendamiento,
       );
@@ -1798,8 +1839,9 @@ export class InternalActionExecutor implements EffectExecutor {
     const grantId = (this.deps.resolverNylasGrantIdParaTenant ?? resolverNylasGrantIdParaTenant)(request.tenantId);
     const apiKey = (this.deps.resolveNylasApiKeyFromEnv ?? resolveNylasApiKeyFromEnv)();
     if (!grantId || !apiKey) {
-      return responderNaturalmente(
+      return responder(
         "No puedes verificar la disponibilidad real en este momento (falta la conexión con el calendario). Explícaselo con naturalidad a la clienta y ofrécele intentarlo de nuevo en un momento, sin inventar ningún horario.",
+        "No puedo verificar la disponibilidad real en este momento 😅 ¿Puedes intentarlo de nuevo en un momento?",
         [],
         agendamiento,
       );
@@ -1814,8 +1856,9 @@ export class InternalActionExecutor implements EffectExecutor {
         { nylasClient, grantId },
       );
     } catch {
-      return responderNaturalmente(
+      return responder(
         "No pudiste verificar la disponibilidad real en este momento (hubo un error técnico). Explícaselo con naturalidad a la clienta y ofrécele intentarlo de nuevo en un momento, sin inventar ningún horario.",
+        "Tuve un error técnico verificando la disponibilidad real 😅 ¿Puedes intentarlo de nuevo en un momento?",
         [],
         agendamiento,
       );
@@ -1827,14 +1870,16 @@ export class InternalActionExecutor implements EffectExecutor {
         // La profesional mencionada no atiende este servicio (o ninguna
         // está habilitada todavía) -- se limpia la selección puntual para
         // que la clienta pueda elegir otra sin quedar atascada.
-        return responderNaturalmente(
+        return responder(
           "La profesional mencionada no atiende ese servicio (o ninguna profesional está habilitada todavía). Explícalo con naturalidad y pregunta si desea que busques con otra profesional o prefiere otro servicio.",
+          "Esa profesional no atiende este servicio (o ninguna está habilitada todavía) 😅 Escribe *quiero una cita* para elegir de nuevo.",
           [],
           { ...agendamiento, especialistaId: undefined, especialistaNombre: undefined },
         );
       }
-      return responderNaturalmente(
+      return responder(
         "Ese servicio ya no está disponible. Discúlpate con naturalidad y pregunta si desea otro servicio.",
+        "Ese servicio ya no está disponible 😅 Escribe *quiero una cita* para elegir otro.",
         [],
         { ...agendamiento, servicioId: undefined, servicioNombre: undefined, duracionMin: undefined },
       );
@@ -1876,6 +1921,31 @@ export class InternalActionExecutor implements EffectExecutor {
       0,
       MAX_OPCIONES_HORARIOS_OFRECIDOS,
     );
+
+    // MODO AGENDA GUIADA (autorizado) -- el menú de horarios ya pagina y
+    // corta a lo sumo MAX_OPCIONES_MENU internamente (agendamiento-guiado.ts)
+    // y necesita la lista COMPLETA (nunca ya pre-cortada) para poder armar
+    // "Ver más horarios" con lo que sobra -- por eso NUNCA usa `opciones`
+    // (el corte de la modalidad anterior), sino `opcionesReales` tal cual.
+    // Tampoco existe `horaPreferidaHHMM` en modo guiado (esa extracción de
+    // texto libre está desactivada -- ver fusionarDatosAgendamiento), así
+    // que la priorización por hora exacta es exclusiva de la modalidad
+    // anterior.
+    if (esGuiado) {
+      if (opcionesReales.length === 0) {
+        const menuFechasDeNuevo = construirMenuFechas(fechaColombiaDesdeIso(new Date().toISOString()));
+        const actualizadoSinCupo: AgendamientoEnCurso = { ...agendamiento, fechaISO: undefined, menuActual: menuFechasDeNuevo, paso: "SELECCION_FECHA" };
+        const motivo = todosNoConfirmados
+          ? "No pude confirmar la disponibilidad real en este momento"
+          : "No hay cupo real disponible para ese servicio ese día";
+        return responderGuiado(`${motivo} 😅 ¿Qué otro día prefieres?\n\n${renderizarMenu(menuFechasDeNuevo, actualizadoSinCupo)}`, actualizadoSinCupo, {
+          disponibilidadConsultada: !todosNoConfirmados,
+        });
+      }
+      const menuHorarios = construirMenuHorarios(opcionesReales);
+      const actualizadoConMenu: AgendamientoEnCurso = { ...agendamiento, menuActual: menuHorarios, paso: "SELECCION_HORARIO" };
+      return responderGuiado(renderizarMenu(menuHorarios, actualizadoConMenu), actualizadoConMenu, { disponibilidadConsultada: true });
+    }
 
     const agendamientoActualizado: AgendamientoEnCurso = {
       ...agendamiento,
@@ -2013,28 +2083,53 @@ export class InternalActionExecutor implements EffectExecutor {
       return rechazar(resultado.motivo, resultado.detalle);
     }
 
-    const agendamientoCompletado: AgendamientoEnCurso = { ...agendamiento, completado: true };
-    const data = {
-      modo: "ai",
-      instruccionIA:
-        "La reserva se completó de verdad -- confirma con naturalidad y calidez el servicio, la profesional, la fecha y la hora exactos de datosIA. Nunca inventes ningún otro dato.",
-      datosIA: [
-        {
-          servicio: resultado.servicio.nombre,
-          profesional: resultado.especialista.nombre,
-          fecha: fechaColombiaDesdeIso(resultado.cita.inicio),
-          hora: horaColombiaDesdeIso(resultado.cita.inicio),
-        },
-      ],
-      conocimientoGeneral: [],
-      agendamiento: agendamientoCompletado,
-      effectId: request.effectId,
-      // `citaId` es la fila real ya insertada en dulabs_citas_especialista
-      // -- ver action-capabilities.ts: verifiesOnSuccess:
-      // ["appointment.reserved"], outputVariables: ["citaId"]. Presente
-      // SOLO en esta única rama de éxito real.
-      citaId: resultado.cita.id,
-    };
+    const agendamientoCompletado: AgendamientoEnCurso = { ...agendamiento, completado: true, menuActual: undefined, paso: "COMPLETADO" };
+    const fechaConfirmada = fechaColombiaDesdeIso(resultado.cita.inicio);
+    const horaConfirmada = horaColombiaDesdeIso(resultado.cita.inicio);
+
+    // MODO AGENDA GUIADA (autorizado) -- la confirmación real NUNCA pasa por
+    // Gemini: se redacta acá mismo, determinística, a partir de los datos
+    // REALES que devolvió crearCitaConNylas (nunca del acumulador, que podría
+    // estar desactualizado) -- mismo criterio de honestidad que ya exigía la
+    // instrucción para la IA en la modalidad anterior.
+    const data = agendamiento.modo === "guiado"
+      ? {
+          modo: "deterministic",
+          respuestaTexto: [
+            "¡Listo! Tu cita quedó confirmada 💗",
+            "",
+            `Servicio: ${resultado.servicio.nombre}`,
+            `Profesional: ${resultado.especialista.nombre}`,
+            `Fecha: ${formatearFechaLarga(fechaConfirmada)}`,
+            `Hora: ${formatearHora12(horaConfirmada)}`,
+            "",
+            "Te esperamos en AMORE ✨",
+          ].join("\n"),
+          agendamiento: agendamientoCompletado,
+          effectId: request.effectId,
+          citaId: resultado.cita.id,
+        }
+      : {
+          modo: "ai",
+          instruccionIA:
+            "La reserva se completó de verdad -- confirma con naturalidad y calidez el servicio, la profesional, la fecha y la hora exactos de datosIA. Nunca inventes ningún otro dato.",
+          datosIA: [
+            {
+              servicio: resultado.servicio.nombre,
+              profesional: resultado.especialista.nombre,
+              fecha: fechaConfirmada,
+              hora: horaConfirmada,
+            },
+          ],
+          conocimientoGeneral: [],
+          agendamiento: agendamientoCompletado,
+          effectId: request.effectId,
+          // `citaId` es la fila real ya insertada en dulabs_citas_especialista
+          // -- ver action-capabilities.ts: verifiesOnSuccess:
+          // ["appointment.reserved"], outputVariables: ["citaId"]. Presente
+          // SOLO en esta única rama de éxito real.
+          citaId: resultado.cita.id,
+        };
     return {
       success: true,
       classification: EFFECT_RESULT_CLASSIFICATIONS.SUCCESS,
