@@ -3,11 +3,17 @@ import assert from "node:assert/strict";
 import { manejarMensajeAgendaV2, RESPUESTA_PLACEHOLDER_AGENDA_V2 } from "@/lib/agenda-v2/controlador";
 import type { SesionAgendaV2 } from "@/lib/agenda-v2/sesiones";
 import type { OpcionServicioAgendaV2 } from "@/lib/agenda-v2/servicios";
+import type { OpcionCategoriaAgendaV2 } from "@/lib/agenda-v2/categorias";
 
 const OPCIONES: OpcionServicioAgendaV2[] = [
   { numero: 1, servicioId: "s-dipping-real", nombre: "Dipping", precio: 60000, duracionMin: 120 },
   { numero: 2, servicioId: "s-presson-real", nombre: "Press On", precio: 80000, duracionMin: 120 },
   { numero: 3, servicioId: "s-retoques-real", nombre: "Retoques", precio: 60000, duracionMin: 120 },
+];
+
+const CATEGORIAS: OpcionCategoriaAgendaV2[] = [
+  { numero: 1, categoria: "Cabello" },
+  { numero: 2, categoria: "Uñas" },
 ];
 
 function sesionEnServicio(overrides: Partial<SesionAgendaV2> = {}): SesionAgendaV2 {
@@ -97,6 +103,8 @@ describe("FASE 2 -- manejarMensajeAgendaV2 en S1_SERVICIO", () => {
 
   it("Test 8: la opción reenviada tras un error corresponde EXACTAMENTE a las opciones guardadas en la sesión", () => {
     const r = manejarMensajeAgendaV2(sesionEnServicio(), "no sé");
+    assert.equal(r.accion, "continuar");
+    if (r.accion !== "continuar") return;
     for (const o of OPCIONES) {
       assert.match(r.respuesta, new RegExp(`${o.numero}\\. ${o.nombre}`));
     }
@@ -104,6 +112,55 @@ describe("FASE 2 -- manejarMensajeAgendaV2 en S1_SERVICIO", () => {
 
   it("defensivo: sesión en S1_SERVICIO sin opciones guardadas -- nunca inventa, pide reiniciar", () => {
     const r = manejarMensajeAgendaV2(sesionEnServicio({ opcionesMostradas: null }), "1");
+    assert.equal(r.accion, "continuar");
+    if (r.accion !== "continuar") return;
+    assert.equal(r.cambios, undefined);
+    assert.match(r.respuesta, /Se perdió el menú/);
+  });
+});
+
+describe("Ajuste de UX (autorizado) -- manejarMensajeAgendaV2 en la sub-fase de CATEGORÍA", () => {
+  function sesionEnCategoria(overrides: Partial<SesionAgendaV2> = {}): SesionAgendaV2 {
+    return sesionEnServicio({ opcionesMostradas: CATEGORIAS, ...overrides });
+  }
+
+  it("número válido -> devuelve accion:'categoria_seleccionada' con la categoría real, sin tocar la sesión todavía (eso lo hace router.ts con el catálogo real)", () => {
+    const r = manejarMensajeAgendaV2(sesionEnCategoria(), "2");
+    assert.deepEqual(r, { accion: "categoria_seleccionada", categoria: "Uñas" });
+  });
+
+  it("otra categoría también resuelve correctamente (nunca asume que sigue siendo la posición 1)", () => {
+    const r = manejarMensajeAgendaV2(sesionEnCategoria(), "1");
+    assert.deepEqual(r, { accion: "categoria_seleccionada", categoria: "Cabello" });
+  });
+
+  it("número fuera de rango -- permanece mostrando categorías, nunca avanza", () => {
+    const r = manejarMensajeAgendaV2(sesionEnCategoria(), "99");
+    assert.equal(r.accion, "continuar");
+    if (r.accion !== "continuar") return;
+    assert.equal(r.cambios, undefined);
+    assert.match(r.respuesta, /No reconocí esa opción/);
+    assert.match(r.respuesta, /1\. Cabello/);
+    assert.match(r.respuesta, /2\. Uñas/);
+  });
+
+  it("texto no numérico (incluido el nombre real de la categoría) -- nunca resuelve por texto libre, solo número exacto", () => {
+    for (const mensaje of ["hola", "uñas", "quiero uñas", "no sé"]) {
+      const r = manejarMensajeAgendaV2(sesionEnCategoria(), mensaje);
+      assert.equal(r.accion, "continuar", `"${mensaje}" nunca debe resolver una categoría por texto libre`);
+      if (r.accion !== "continuar") continue;
+      assert.equal(r.cambios, undefined);
+      assert.match(r.respuesta, /No reconocí esa opción/);
+    }
+  });
+
+  it("'cancelar' cierra la sesión también estando en la sub-fase de categoría", () => {
+    const r = manejarMensajeAgendaV2(sesionEnCategoria(), "cancelar");
+    assert.equal(r.accion, "cerrar_sesion");
+  });
+
+  it("sesión en S1_SERVICIO sin opciones guardadas -- nunca inventa, pide reiniciar (igual que en la sub-fase de servicio)", () => {
+    const r = manejarMensajeAgendaV2(sesionEnCategoria({ opcionesMostradas: null }), "1");
     assert.equal(r.accion, "continuar");
     if (r.accion !== "continuar") return;
     assert.equal(r.cambios, undefined);

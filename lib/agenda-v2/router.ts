@@ -25,6 +25,7 @@ import { enviarMensajeWhatsApp } from "@/lib/whatsapp-worker-client";
 import { esInicioDeAgendaV2 } from "@/lib/agenda-v2/entrada";
 import { manejarMensajeAgendaV2 } from "@/lib/agenda-v2/controlador";
 import { construirOpcionesServicio, renderizarMenuServicio } from "@/lib/agenda-v2/servicios";
+import { construirOpcionesCategoria, renderizarMenuCategoria } from "@/lib/agenda-v2/categorias";
 import { buscarSesionActivaAgendaV2, crearSesionAgendaV2, cerrarSesionAgendaV2, actualizarSesionAgendaV2 } from "@/lib/agenda-v2/sesiones";
 
 /** Mismo prefijo sintético que ya usa lib/whatsapp-qr-bot.ts para el candado/estado de este canal -- nunca un phone_number_id real de Meta. */
@@ -106,6 +107,35 @@ export async function procesarMensajeConAgendaV2(
 
     if (sesion) {
       const resultado = manejarMensajeAgendaV2(sesion, params.texto);
+
+      if (resultado.accion === "categoria_seleccionada") {
+        // Ajuste de UX (autorizado) -- la categoría ya fue elegida; se
+        // construye el menú de servicios de ESA categoría con el catálogo
+        // REAL del tenant (nunca inventado), y ese menú reemplaza a
+        // `opcionesMostradas` -- el step sigue siendo S1_SERVICIO (ver
+        // lib/agenda-v2/categorias.ts).
+        const catalogo = await cargarCatalogo(params.supabase, params.idTenant);
+        const serviciosDeCategoria = catalogo.filter((s) => s.categoria === resultado.categoria);
+        if (serviciosDeCategoria.length === 0) {
+          // Defensivo -- un servicio pudo desactivarse justo entre mostrar
+          // las categorías y esta selección. Nunca se rompe ni se inventa un
+          // servicio: se vuelve a mostrar categorías reales y actualizadas.
+          const categoriasActualizadas = construirOpcionesCategoria(catalogo);
+          await actualizarSesion(params.supabase, sesion.id, { opcionesMostradas: categoriasActualizadas, ultimoWamidProcesado: params.wamid });
+          await enviarMensaje({
+            tenantId: params.idTenant,
+            telefono: params.telefono,
+            mensaje: `Esa categoría ya no tiene servicios disponibles 😔 Elige otra:\n\n${renderizarMenuCategoria(categoriasActualizadas)}`,
+            origen: "automatico",
+          });
+          return { manejado: true };
+        }
+        const opcionesServicio = construirOpcionesServicio(serviciosDeCategoria);
+        await actualizarSesion(params.supabase, sesion.id, { opcionesMostradas: opcionesServicio, ultimoWamidProcesado: params.wamid });
+        await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: renderizarMenuServicio(opcionesServicio), origen: "automatico" });
+        return { manejado: true };
+      }
+
       if (resultado.accion === "cerrar_sesion") {
         await cerrarSesion(params.supabase, sesion.id);
       } else {
@@ -126,19 +156,20 @@ export async function procesarMensajeConAgendaV2(
       return { manejado: false };
     }
 
-    // FASE 2 -- el primer paso real es SIEMPRE el menú de servicios,
-    // construido a partir del catálogo REAL del tenant (nunca inventado,
-    // nunca hardcodeado) -- las opciones mostradas se guardan tal cual en
-    // la sesión para resolver la próxima respuesta determinísticamente.
+    // Ajuste de UX (autorizado) -- el primer paso real es SIEMPRE el menú de
+    // CATEGORÍAS reales (nunca los 28 servicios de un jalón), construido a
+    // partir del catálogo REAL del tenant -- las opciones mostradas se
+    // guardan tal cual en la sesión para resolver la próxima respuesta
+    // determinísticamente (ver lib/agenda-v2/categorias.ts).
     const catalogo = await cargarCatalogo(params.supabase, params.idTenant);
-    const opciones = construirOpcionesServicio(catalogo);
+    const opciones = construirOpcionesCategoria(catalogo);
     await crearSesion(params.supabase, {
       tenantId: params.idTenant,
       telefonoCliente: params.telefono,
       wamid: params.wamid,
       opcionesMostradas: opciones,
     });
-    await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: renderizarMenuServicio(opciones), origen: "automatico" });
+    await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: renderizarMenuCategoria(opciones), origen: "automatico" });
     return { manejado: true };
   } finally {
     await liberar(phoneNumberId, params.telefono, params.wamid);
