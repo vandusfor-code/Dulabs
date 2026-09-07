@@ -64,6 +64,26 @@ export function renderizarResumenConfirmacion(resumen: ResumenCitaAgendaV2): str
   );
 }
 
+/**
+ * FASE 8 (autorizado) -- mismo resumen y MISMO menú de control de 4
+ * opciones (confirmar/cambiar fecha/cambiar hora/cancelar), pero con la
+ * introducción propia de una reprogramación ("vas a cambiar tu cita" en vez
+ * de "estos son los datos de tu cita") -- nunca duplica el menú, solo la
+ * primera línea.
+ */
+export function renderizarResumenCambio(resumen: ResumenCitaAgendaV2): string {
+  return (
+    `💗 Vas a cambiar tu cita a:\n\n` +
+    `Servicio: ${resumen.servicioNombre}\n` +
+    `Profesional: ${resumen.profesionalNombre}\n` +
+    `Fecha: ${resumen.fechaEtiqueta}\n` +
+    `Hora: ${resumen.horaTexto}\n` +
+    `Duración: ${formatearDuracion(resumen.servicioDuracionMin)}\n` +
+    `Valor: ${formatearPrecioCop(resumen.servicioPrecio)}\n\n` +
+    `¿Confirmas el cambio?\n\n${listaOpcionesTexto()}`
+  );
+}
+
 export function textoSeleccionInvalidaConfirmacion(): string {
   return `No reconocí esa opción 💗 Por favor responde con el número de una de estas:\n\n${listaOpcionesTexto()}`;
 }

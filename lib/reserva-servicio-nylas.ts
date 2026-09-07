@@ -30,6 +30,7 @@ import {
   restarBloqueos,
   crearCitaEspecialista,
   confirmarCita,
+  editarCitaConfirmada,
   type CitaEspecialista,
 } from "@/lib/especialistas";
 import { citasOcupadasDelDia } from "@/lib/disponibilidad-servicio";
@@ -261,6 +262,250 @@ async function ejecutarCreacionReal(
     especialista: { id: especialista.id as number, nombre: especialista.nombre as string },
     servicio: { id: servicio.id as string, nombre: servicio.nombre as string, duracionMin },
   };
+}
+
+// ---------------------------------------------------------------------------
+// FASE 8 (Agenda V2, autorizado) — reprogramar (mover) una cita EXISTENTE a
+// una nueva fecha/hora, EXACTAMENTE con el mismo rigor de revalidación real
+// que crearCitaConNylas (jornada + bloqueos + citas DuLabs + eventos reales
+// de Nylas), reutilizando TAL CUAL:
+// - editarCitaConfirmada (lib/especialistas.ts) -- UPDATE atómico sobre la
+//   MISMA fila (nunca crea una fila nueva, nunca cancela-y-crea): el
+//   constraint EXCLUDE de Postgres es la ÚLTIMA autoridad real, igual que en
+//   una creación nueva.
+// - ejecutarConIdempotencia/huellaSolicitud -- mismo mecanismo exacto.
+//
+// Limitación conocida y aceptada (documentada, nunca oculta): el chequeo
+// previo de "¿ya está ocupado?" (citasOcupadasDelDia/consultarEventosOcupadosNylas)
+// no puede excluir la cita/el evento PROPIO de esta misma reserva (esas
+// funciones compartidas no devuelven el id de cada ocupación) -- en el caso
+// límite de reprogramar a un horario que se solapa con el horario ACTUAL de
+// la misma cita, este chequeo puede rechazarlo como "ocupado" por error. El
+// resultado de ese falso positivo es siempre seguro (un rechazo educado,
+// nunca una corrupción ni una doble reserva) y la autoridad real final sigue
+// siendo el UPDATE atómico protegido por el EXCLUDE de Postgres.
+// ---------------------------------------------------------------------------
+
+export type MotivoRechazoActualizarCitaNylas =
+  | "tenant_no_autorizado"
+  | "cita_no_encontrada"
+  | "no_reagendable"
+  | "servicio_no_encontrado"
+  | "duracion_invalida"
+  | "especialista_no_encontrado"
+  | "sin_calendario_nylas"
+  | "fuera_de_horario"
+  | "bloqueado"
+  | "ocupado"
+  | "revalidacion_fallida"
+  | "error_creando_evento_nylas"
+  | "error_de_base_de_datos"
+  | "solicitud_en_progreso"
+  | "solicitud_en_conflicto"
+  | "inconsistencia_requiere_revision_manual";
+
+export type ResultadoActualizarCitaNylas =
+  | {
+      ok: true;
+      cita: CitaEspecialista;
+      nylasEventId: string;
+      nylasEventIdAnterior: string | null;
+      especialista: { id: number; nombre: string };
+      servicio: { id: string; nombre: string; duracionMin: number };
+    }
+  | { ok: false; motivo: MotivoRechazoActualizarCitaNylas; detalle: string };
+
+export interface DepsActualizarCitaNylas extends DepsCrearCitaNylas {
+  /** id del evento de Nylas YA asociado a esta cita (tabla dulabs_agenda_v2_citas_nylas) -- null si no hay mapeo (cita creada antes de que existiera, o de otro canal). Nunca bloquea la reprogramación: sin él, simplemente no hay evento viejo que borrar. */
+  nylasEventIdActual: string | null;
+}
+
+async function ejecutarActualizacionReal(
+  supabase: SupabaseClient,
+  params: { idTenant: string; citaId: number; nuevoInicio: Date },
+  deps: DepsActualizarCitaNylas,
+): Promise<ResultadoActualizarCitaNylas> {
+  const { data: citaActual } = await supabase
+    .from("dulabs_citas_especialista")
+    .select("id, especialista_id, servicio_id, inicio, fin, estado")
+    .eq("id_tenant", params.idTenant)
+    .eq("id", params.citaId)
+    .maybeSingle();
+  if (!citaActual) {
+    return { ok: false, motivo: "cita_no_encontrada", detalle: "Esa cita no existe para este negocio." };
+  }
+  if (citaActual.estado !== "confirmada") {
+    // Mismo criterio EXACTO que moverCitaEspecialista (especialistas-flow-adaptador.ts,
+    // sin cambios) -- una cita pendiente de aprobación no se reprograma sola.
+    return { ok: false, motivo: "no_reagendable", detalle: "Esta cita todavía está pendiente de aprobación y no se puede reprogramar todavía." };
+  }
+  if (!citaActual.servicio_id) {
+    return { ok: false, motivo: "servicio_no_encontrado", detalle: "Esta cita no tiene un servicio real asociado -- no se puede revalidar su disponibilidad." };
+  }
+
+  const { data: servicio } = await supabase
+    .from("dulabs_servicios")
+    .select("id, nombre, duracion_min")
+    .eq("id_tenant", params.idTenant)
+    .eq("id", citaActual.servicio_id as string)
+    .eq("activo", true)
+    .maybeSingle();
+  if (!servicio) {
+    return { ok: false, motivo: "servicio_no_encontrado", detalle: "Ese servicio ya no existe o no está activo." };
+  }
+  const duracionMin = servicio.duracion_min as number | null;
+  if (!duracionMin || duracionMin <= 0) {
+    return { ok: false, motivo: "duracion_invalida", detalle: "El servicio no tiene una duración real configurada." };
+  }
+
+  const especialistaId = citaActual.especialista_id as number;
+  const { data: especialista } = await supabase
+    .from("dulabs_especialistas")
+    .select("id, nombre, requiere_aprobacion")
+    .eq("id_tenant", params.idTenant)
+    .eq("id", especialistaId)
+    .eq("activo", true)
+    .maybeSingle();
+  if (!especialista) {
+    return { ok: false, motivo: "especialista_no_encontrado", detalle: "Esa profesional ya no existe o no está activa." };
+  }
+
+  const resolverCalendarId = deps.resolverCalendarId ?? resolverCalendarIdNylasDeEspecialista;
+  const calendarId = await resolverCalendarId(supabase, params.idTenant, especialistaId);
+  if (!calendarId) {
+    return { ok: false, motivo: "sin_calendario_nylas", detalle: "Esta profesional no tiene un calendario de Nylas asociado todavía." };
+  }
+
+  const nuevoFin = new Date(params.nuevoInicio.getTime() + duracionMin * 60_000);
+  const fechaISO = fechaColombiaDesdeIso(params.nuevoInicio.toISOString());
+
+  // --- REVALIDACIÓN REAL para el NUEVO horario (nunca se confía en lo ya mostrado) ---
+  const ventanasBase = await ventanasLaboralesEspecialista(supabase, especialistaId, params.idTenant, fechaISO);
+  const cabeEnJornadaBase = ventanasBase.some((v) => params.nuevoInicio >= v.apertura && nuevoFin <= v.cierre);
+  if (!cabeEnJornadaBase) {
+    return { ok: false, motivo: "fuera_de_horario", detalle: "Ese horario está fuera de la jornada laboral de la profesional." };
+  }
+
+  const bloqueos = await bloqueosDelDia(supabase, especialistaId, params.idTenant, fechaISO);
+  const ventanasLibres = restarBloqueos(ventanasBase, bloqueos);
+  const cabeSinBloqueo = ventanasLibres.some((v) => params.nuevoInicio >= v.apertura && nuevoFin <= v.cierre);
+  if (!cabeSinBloqueo) {
+    return { ok: false, motivo: "bloqueado", detalle: "Ese horario cae dentro de un bloqueo (almuerzo, vacaciones, etc.)." };
+  }
+
+  const desde = ventanasLibres[0]!.apertura;
+  const hasta = ventanasLibres[ventanasLibres.length - 1]!.cierre;
+
+  const ocupadasDulabs = await citasOcupadasDelDia(supabase, especialistaId, desde.toISOString(), hasta.toISOString());
+  const seSolapaDulabs = ocupadasDulabs.some((o) => params.nuevoInicio < o.cierre && nuevoFin > o.apertura);
+  if (seSolapaDulabs) {
+    return { ok: false, motivo: "ocupado", detalle: "Ese horario ya fue tomado por otra cita en DuLabs." };
+  }
+
+  const resultadoNylas = await consultarEventosOcupadosNylas(deps.nylasReadClient, {
+    grantId: deps.grantId,
+    calendarId,
+    fechaISO,
+    desde,
+    hasta,
+  });
+  if (!resultadoNylas.ok) {
+    return { ok: false, motivo: "revalidacion_fallida", detalle: "No se pudo confirmar la disponibilidad real contra Google Calendar." };
+  }
+  const seSolapaNylas = resultadoNylas.ocupadas.some((o) => params.nuevoInicio < o.cierre && nuevoFin > o.apertura);
+  if (seSolapaNylas) {
+    return { ok: false, motivo: "ocupado", detalle: "Ese horario ya fue tomado en Google Calendar." };
+  }
+
+  // --- Todo libre: crear el NUEVO evento real en Nylas primero (mismo orden que crearCitaConNylas) ---
+  let nylasEventIdNuevo: string;
+  try {
+    const creado = await deps.nylasWriteClient.createEvent({
+      grantId: deps.grantId,
+      calendarId,
+      title: `AMORE — ${servicio.nombre as string} (reprogramada)`,
+      startUnix: Math.floor(params.nuevoInicio.getTime() / 1000),
+      endUnix: Math.floor(nuevoFin.getTime() / 1000),
+      timezone: "America/Bogota",
+    });
+    nylasEventIdNuevo = creado.id;
+  } catch (err) {
+    return { ok: false, motivo: "error_creando_evento_nylas", detalle: err instanceof Error ? err.message : "Error desconocido creando el evento en Nylas." };
+  }
+
+  // --- Segunda protección: el UPDATE atómico de DuLabs (EXCLUDE de Postgres), MISMA fila, nunca una nueva ---
+  const resultadoDb = await editarCitaConfirmada(supabase, params.citaId, { nuevoInicio: params.nuevoInicio });
+
+  if (!resultadoDb.ok) {
+    // La cita original NUNCA se toca si el UPDATE falla -- Postgres deja la
+    // fila intacta en su horario anterior. El evento NUEVO de Nylas ya
+    // creado nunca debe quedar huérfano: se intenta revertir (borrar) antes
+    // de responder -- mismo criterio exacto que crearCitaConNylas.
+    try {
+      await deps.nylasWriteClient.deleteEvent({ grantId: deps.grantId, calendarId, eventId: nylasEventIdNuevo });
+    } catch {
+      return {
+        ok: false,
+        motivo: "inconsistencia_requiere_revision_manual",
+        detalle: `El evento de Nylas ${nylasEventIdNuevo} quedó creado, pero DuLabs no pudo confirmar el cambio (${resultadoDb.motivo}) y el intento de revertirlo también falló. La cita original sigue intacta en su horario anterior. Requiere revisión manual del calendario de ${especialista.nombre as string}.`,
+      };
+    }
+    if (resultadoDb.motivo === "ocupado") {
+      return { ok: false, motivo: "ocupado", detalle: "Ese horario ya fue tomado (protección final de PostgreSQL). Tu cita original sigue intacta." };
+    }
+    if (resultadoDb.motivo === "no_encontrada") {
+      return { ok: false, motivo: "cita_no_encontrada", detalle: "Esa cita ya no está disponible para reprogramar (pudo haber sido cancelada)." };
+    }
+    return { ok: false, motivo: "error_de_base_de_datos", detalle: resultadoDb.detalle ?? "Error desconocido actualizando la cita en DuLabs." };
+  }
+
+  // --- Éxito: la cita YA quedó movida de forma segura. Borrar el evento VIEJO de Nylas es best-effort (nunca deshace el éxito ya logrado). ---
+  if (deps.nylasEventIdActual) {
+    try {
+      await deps.nylasWriteClient.deleteEvent({ grantId: deps.grantId, calendarId, eventId: deps.nylasEventIdActual });
+    } catch (err) {
+      console.error(
+        `[reserva-servicio-nylas] no se pudo borrar el evento anterior de Nylas (${deps.nylasEventIdActual}) tras reprogramar la cita ${params.citaId} -- puede quedar un evento duplicado en el calendario, requiere revisión manual:`,
+        err instanceof Error ? err.message : "error desconocido",
+      );
+    }
+  }
+
+  return {
+    ok: true,
+    cita: resultadoDb.cita,
+    nylasEventId: nylasEventIdNuevo,
+    nylasEventIdAnterior: deps.nylasEventIdActual,
+    especialista: { id: especialista.id as number, nombre: especialista.nombre as string },
+    servicio: { id: servicio.id as string, nombre: servicio.nombre as string, duracionMin },
+  };
+}
+
+export async function actualizarCitaConNylas(
+  supabase: SupabaseClient,
+  params: { idTenant: string; citaId: number; nuevoInicio: Date; idempotencyKey: string },
+  deps: DepsActualizarCitaNylas,
+): Promise<ResultadoActualizarCitaNylas> {
+  if (params.idTenant !== AMORE_TENANT_ID) {
+    return { ok: false, motivo: "tenant_no_autorizado", detalle: "Esta capacidad está limitada al tenant AMORE." };
+  }
+
+  const huella = huellaSolicitud([params.idTenant, params.citaId, params.nuevoInicio.toISOString()]);
+
+  const idempotente = await ejecutarConIdempotencia<ResultadoActualizarCitaNylas>(supabase, {
+    idTenant: params.idTenant,
+    idempotencyKey: params.idempotencyKey,
+    huella,
+    operacion: () => ejecutarActualizacionReal(supabase, params, deps),
+  });
+
+  if (idempotente.estado === "conflicto") {
+    return { ok: false, motivo: "solicitud_en_conflicto", detalle: "Esta idempotency_key ya se usó con parámetros distintos." };
+  }
+  if (idempotente.estado === "en_progreso") {
+    return { ok: false, motivo: "solicitud_en_progreso", detalle: "Esta misma solicitud ya se está procesando." };
+  }
+  return idempotente.resultado;
 }
 
 export async function crearCitaConNylas(

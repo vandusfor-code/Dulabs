@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { esInicioDeAgendaV2 } from "@/lib/agenda-v2/entrada";
+import { esInicioDeAgendaV2, detectarIntencionGestionCitas } from "@/lib/agenda-v2/entrada";
 import { CODIGO_ESCENARIO_AGENDAMIENTO, type EscenarioRow } from "@/lib/bot-escenarios/tipos";
 import { AMORE_ESCENARIOS_SEED } from "@/lib/bot-escenarios/seed-amore";
 
@@ -38,5 +38,37 @@ describe("esInicioDeAgendaV2 -- reutiliza EXACTAMENTE las variantes reales de 07
   it("si el escenario de agendamiento existe pero está inactivo, nunca activa Agenda V2", () => {
     const inactivo = ESCENARIOS.map((e) => (e.codigo === CODIGO_ESCENARIO_AGENDAMIENTO ? { ...e, activo: false } : e));
     assert.equal(esInicioDeAgendaV2("quiero una cita", inactivo), false);
+  });
+});
+
+describe("FASE 8 (autorizado) -- detectarIntencionGestionCitas: triggers FIJOS y controlados, nunca IA/fuzzy", () => {
+  it("reconoce las 5 frases reales de ejemplo para CONSULTAR", () => {
+    for (const frase of ["consultar mi cita", "ver mi cita", "qué cita tengo", "cuando tengo mi cita", "quiero ver mi cita"]) {
+      assert.equal(detectarIntencionGestionCitas(frase), "consultar", `"${frase}" debía detectar consultar`);
+    }
+  });
+
+  it("reconoce las 3 frases reales de ejemplo para CANCELAR", () => {
+    for (const frase of ["cancelar mi cita", "quiero cancelar mi cita", "cancelar cita"]) {
+      assert.equal(detectarIntencionGestionCitas(frase), "cancelar", `"${frase}" debía detectar cancelar`);
+    }
+  });
+
+  it("reconoce las 5 frases reales de ejemplo para REPROGRAMAR", () => {
+    for (const frase of ["reprogramar mi cita", "quiero cambiar mi cita", "cambiar mi cita", "quiero cambiar la fecha", "quiero cambiar el horario"]) {
+      assert.equal(detectarIntencionGestionCitas(frase), "reprogramar", `"${frase}" debía detectar reprogramar`);
+    }
+  });
+
+  it("coincide en medio de una frase real (contains), insensible a mayúsculas/acentos", () => {
+    assert.equal(detectarIntencionGestionCitas("Hola, quiero cancelar mi cita porfa"), "cancelar");
+    assert.equal(detectarIntencionGestionCitas("QUIERO VER MI CITA"), "consultar");
+    assert.equal(detectarIntencionGestionCitas("Buenas, quiero cambiar la fecha de mi cita"), "reprogramar");
+  });
+
+  it("nunca usa IA semántica ni fuzzy: un mensaje que NO calza con ninguna frase controlada -> null", () => {
+    for (const frase of ["Hola", "¿Cuánto cuesta?", "quiero una cita", "sí", "no sé", "gracias", "cumpleaños"]) {
+      assert.equal(detectarIntencionGestionCitas(frase), null, `"${frase}" NUNCA debía disparar gestión de citas`);
+    }
   });
 });

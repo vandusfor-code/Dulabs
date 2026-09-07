@@ -49,13 +49,45 @@ import { buscarSesionActivaAgendaV2, crearSesionAgendaV2, cerrarSesionAgendaV2, 
 // Postgres) + idempotencia (dulabs_idempotencia_reservas) ya viven ahí,
 // mismo mecanismo EXACTO que ya usa lib/flow/executors/internal-action-executor.ts
 // para Daniela -- nunca una segunda implementación de reservas.
-import { crearCitaConNylas } from "@/lib/reserva-servicio-nylas";
+import { crearCitaConNylas, actualizarCitaConNylas } from "@/lib/reserva-servicio-nylas";
 // Mismo criterio que el resto de Agenda V2 (nunca pedir de nuevo un dato que
 // el sistema ya conoce): resuelve un nombre real ya dado antes por esta
 // clienta bajo el MISMO phone_number_id sintético; si nunca lo dio, se usa
 // su teléfono como identificación (Agenda V2 no agrega un paso nuevo para
 // pedir el nombre -- fuera del alcance autorizado de esta fase).
 import { nombreConocido } from "@/lib/clientes-conocidos";
+// FASE 8 (autorizado) -- gestión de citas existentes. Reutiliza TAL CUAL:
+// - consultarCitasActivasEspecialista/cancelarCitaEspecialista
+//   (lib/especialistas-flow-adaptador.ts) -- MISMO mecanismo exacto que ya
+//   usa Daniela (internal-action-executor.ts) para listar/cancelar citas
+//   reales, incluida la validación de propiedad (citaPorIdYCliente) antes de
+//   tocar nada.
+// - especialistaPorId (lib/especialistas.ts) -- mismo lookup ya usado en
+//   toda la plataforma.
+// - resolverCalendarIdNylasDeEspecialista (lib/nylas/nylas-calendario-especialista.ts)
+//   -- mismo resolver exacto que ya usa crearCitaConNylas.
+import { consultarCitasActivasEspecialista, cancelarCitaEspecialista } from "@/lib/especialistas-flow-adaptador";
+import { especialistaPorId, type CitaEspecialista } from "@/lib/especialistas";
+import { resolverCalendarIdNylasDeEspecialista } from "@/lib/nylas/nylas-calendario-especialista";
+import { fechaColombiaDesdeIso, horaColombiaDesdeIso } from "@/lib/timezone-colombia";
+import { detectarIntencionGestionCitas, type AccionGestionCitasDetectada } from "@/lib/agenda-v2/entrada";
+import {
+  construirOpcionesCita,
+  renderizarMenuCitas,
+  renderizarConsultaCita,
+  renderizarConfirmacionCancelar,
+  renderizarConfirmacionReprogramarInicio,
+  renderizarReprogramacionExitosa,
+  OPCIONES_SI_NO,
+  MENSAJE_SIN_CITAS_FUTURAS,
+  MENSAJE_CITA_CANCELADA,
+  MENSAJE_ERROR_CANCELACION,
+  MENSAJE_ERROR_REPROGRAMACION,
+  MENSAJE_ERROR_TECNICO_GESTION,
+  type CitaParaMenu,
+} from "@/lib/agenda-v2/gestion-citas";
+import { renderizarResumenCambio } from "@/lib/agenda-v2/confirmacion";
+import { guardarNylasEventIdDeCita, obtenerNylasEventIdDeCita, borrarNylasEventIdDeCita } from "@/lib/agenda-v2/citas-nylas";
 
 /** Mismo prefijo sintético que ya usa lib/whatsapp-qr-bot.ts para el candado/estado de este canal -- nunca un phone_number_id real de Meta. */
 function phoneNumberIdSintetico(tenantId: string): string {
@@ -87,6 +119,15 @@ export interface AgendaV2RouterDeps {
   createNylasEventsWriteClient?: typeof createNylasEventsWriteClient;
   crearCitaConNylas?: typeof crearCitaConNylas;
   buscarNombreConocido?: typeof nombreConocido;
+  // FASE 8 -- inyectables para tests, mismo criterio exacto de arriba.
+  consultarCitasActivas?: typeof consultarCitasActivasEspecialista;
+  cancelarCitaEspecialista?: typeof cancelarCitaEspecialista;
+  especialistaPorId?: typeof especialistaPorId;
+  resolverCalendarIdNylasDeEspecialista?: typeof resolverCalendarIdNylasDeEspecialista;
+  actualizarCitaConNylas?: typeof actualizarCitaConNylas;
+  guardarNylasEventIdDeCita?: typeof guardarNylasEventIdDeCita;
+  obtenerNylasEventIdDeCita?: typeof obtenerNylasEventIdDeCita;
+  borrarNylasEventIdDeCita?: typeof borrarNylasEventIdDeCita;
 }
 
 export type ResultadoRouterAgendaV2 =
@@ -127,8 +168,177 @@ export async function procesarMensajeConAgendaV2(
   const crearNylasWriteClient = deps.createNylasEventsWriteClient ?? createNylasEventsWriteClient;
   const crearCitaReal = deps.crearCitaConNylas ?? crearCitaConNylas;
   const buscarNombreConocidoDep = deps.buscarNombreConocido ?? nombreConocido;
+  const consultarCitasActivas = deps.consultarCitasActivas ?? consultarCitasActivasEspecialista;
+  const cancelarCitaEspecialistaDep = deps.cancelarCitaEspecialista ?? cancelarCitaEspecialista;
+  const especialistaPorIdDep = deps.especialistaPorId ?? especialistaPorId;
+  const resolverCalendarIdDep = deps.resolverCalendarIdNylasDeEspecialista ?? resolverCalendarIdNylasDeEspecialista;
+  const actualizarCitaReal = deps.actualizarCitaConNylas ?? actualizarCitaConNylas;
+  const guardarNylasEventIdDep = deps.guardarNylasEventIdDeCita ?? guardarNylasEventIdDeCita;
+  const obtenerNylasEventIdDep = deps.obtenerNylasEventIdDeCita ?? obtenerNylasEventIdDeCita;
+  const borrarNylasEventIdDep = deps.borrarNylasEventIdDeCita ?? borrarNylasEventIdDeCita;
 
   const phoneNumberId = phoneNumberIdSintetico(params.idTenant);
+
+  // FASE 8 (autorizado) -- helpers de gestión de citas, compartidos tanto
+  // por el punto de entrada (sin sesión activa, trigger detectado) como por
+  // la resolución de SG_SELECCIONAR_CITA/SG_CANCELAR_CONFIRMAR/
+  // SG_REPROGRAMAR_CONFIRMAR_INICIO (sesión ya activa) -- nunca dos
+  // implementaciones distintas de lo mismo.
+
+  /** Datos cortos reales de una cita (servicio/profesional/fecha/hora), para los resúmenes de consultar/cancelar/reprogramar. `null` si el especialista ya no existe (nunca inventa). */
+  async function datosCortosCita(
+    cita: CitaEspecialista,
+  ): Promise<{ servicioNombre: string; profesionalNombre: string; fechaEtiqueta: string; horaTexto: string; fechaIso: string; hora: string } | null> {
+    const especialista = await especialistaPorIdDep(params.supabase, cita.especialista_id);
+    if (!especialista) return null;
+    const fechaIso = fechaColombiaDesdeIso(cita.inicio);
+    const hora = horaColombiaDesdeIso(cita.inicio);
+    return {
+      servicioNombre: cita.servicio,
+      profesionalNombre: especialista.nombre,
+      fechaEtiqueta: formatearFechaLarga(fechaIso),
+      horaTexto: formatearHoraAmPm(hora),
+      fechaIso,
+      hora,
+    };
+  }
+
+  /** Arma el menú "encontré estas citas" para varias citas reales. `null` si algún especialista ya no existe (defensivo, nunca inventa). */
+  async function construirMenuVariasCitas(citas: CitaEspecialista[]): Promise<CitaParaMenu[] | null> {
+    const items: CitaParaMenu[] = [];
+    for (const cita of citas) {
+      const datos = await datosCortosCita(cita);
+      if (!datos) return null;
+      items.push({ citaId: cita.id, servicioNombre: datos.servicioNombre, profesionalNombre: datos.profesionalNombre, fechaEtiqueta: datos.fechaEtiqueta, horaTexto: datos.horaTexto });
+    }
+    return items;
+  }
+
+  /**
+   * Ya se sabe CUÁL cita real y QUÉ acción (consultar/cancelar/reprogramar)
+   * -- arma la respuesta/transición correspondiente. `sesionExistente` es la
+   * sesión SG_SELECCIONAR_CITA ya creada (si venía de un menú de varias
+   * citas) o `null` (camino rápido de una sola cita, sección
+   * "IDENTIFICACIÓN DE LA CITA" del pedido: "Si existe una única cita
+   * futura -> utilizarla directamente").
+   */
+  async function continuarGestionCita(
+    cita: CitaEspecialista,
+    accion: AccionGestionCitasDetectada,
+    sesionExistente: { id: number } | null,
+  ): Promise<ResultadoRouterAgendaV2> {
+    const datos = await datosCortosCita(cita);
+    if (!datos) {
+      if (sesionExistente) await cerrarSesion(params.supabase, sesionExistente.id);
+      await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_ERROR_TECNICO_GESTION, origen: "automatico" });
+      return { manejado: true };
+    }
+
+    if (accion === "consultar") {
+      // Sección "CONSULTAR CITA" del pedido -- nunca crea sesión innecesaria:
+      // si venía de SG_SELECCIONAR_CITA, se cierra (la consulta ya se resolvió).
+      if (sesionExistente) await cerrarSesion(params.supabase, sesionExistente.id);
+      const catalogo = await cargarCatalogo(params.supabase, params.idTenant);
+      const servicioCatalogo = cita.servicio_id ? catalogo.find((s) => s.id === cita.servicio_id) : undefined;
+      if (!servicioCatalogo || (cita.estado !== "pendiente" && cita.estado !== "confirmada")) {
+        await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_ERROR_TECNICO_GESTION, origen: "automatico" });
+        return { manejado: true };
+      }
+      const duracionMin = Math.round((new Date(cita.fin).getTime() - new Date(cita.inicio).getTime()) / 60_000);
+      await enviarMensaje({
+        tenantId: params.idTenant,
+        telefono: params.telefono,
+        mensaje: renderizarConsultaCita({
+          servicioNombre: datos.servicioNombre,
+          profesionalNombre: datos.profesionalNombre,
+          fechaEtiqueta: datos.fechaEtiqueta,
+          horaTexto: datos.horaTexto,
+          duracionMin,
+          precio: servicioCatalogo.precio,
+          estado: cita.estado,
+        }),
+        origen: "automatico",
+      });
+      return { manejado: true };
+    }
+
+    if (accion === "cancelar") {
+      const opciones = OPCIONES_SI_NO;
+      if (sesionExistente) {
+        await actualizarSesion(params.supabase, sesionExistente.id, {
+          step: "SG_CANCELAR_CONFIRMAR",
+          citaObjetivoId: cita.id,
+          opcionesMostradas: opciones,
+          ultimoWamidProcesado: params.wamid,
+        });
+      } else {
+        await crearSesion(params.supabase, {
+          tenantId: params.idTenant,
+          telefonoCliente: params.telefono,
+          wamid: params.wamid,
+          step: "SG_CANCELAR_CONFIRMAR",
+          citaObjetivoId: cita.id,
+          opcionesMostradas: opciones,
+        });
+      }
+      await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: renderizarConfirmacionCancelar(datos), origen: "automatico" });
+      return { manejado: true };
+    }
+
+    // accion === "reprogramar"
+    const opcionesReprogramar = OPCIONES_SI_NO;
+    if (sesionExistente) {
+      await actualizarSesion(params.supabase, sesionExistente.id, {
+        step: "SG_REPROGRAMAR_CONFIRMAR_INICIO",
+        citaObjetivoId: cita.id,
+        opcionesMostradas: opcionesReprogramar,
+        ultimoWamidProcesado: params.wamid,
+      });
+    } else {
+      await crearSesion(params.supabase, {
+        tenantId: params.idTenant,
+        telefonoCliente: params.telefono,
+        wamid: params.wamid,
+        step: "SG_REPROGRAMAR_CONFIRMAR_INICIO",
+        citaObjetivoId: cita.id,
+        opcionesMostradas: opcionesReprogramar,
+      });
+    }
+    await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: renderizarConfirmacionReprogramarInicio(datos), origen: "automatico" });
+    return { manejado: true };
+  }
+
+  /** Punto de entrada de un trigger de gestión SIN sesión activa (sección "IDENTIFICACIÓN DE LA CITA" del pedido). */
+  async function iniciarGestionCitas(accion: AccionGestionCitasDetectada): Promise<ResultadoRouterAgendaV2> {
+    const resultadoCitas = await consultarCitasActivas(params.supabase, { phoneNumberId, telefonoCliente: params.telefono });
+    const citas = resultadoCitas.citas;
+
+    if (citas.length === 0) {
+      await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_SIN_CITAS_FUTURAS, origen: "automatico" });
+      return { manejado: true };
+    }
+
+    if (citas.length === 1) {
+      return await continuarGestionCita(citas[0]!, accion, null);
+    }
+
+    const items = await construirMenuVariasCitas(citas);
+    if (!items) {
+      await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_ERROR_TECNICO_GESTION, origen: "automatico" });
+      return { manejado: true };
+    }
+    const opciones = construirOpcionesCita(items);
+    await crearSesion(params.supabase, {
+      tenantId: params.idTenant,
+      telefonoCliente: params.telefono,
+      wamid: params.wamid,
+      step: "SG_SELECCIONAR_CITA",
+      accionGestion: accion,
+      opcionesMostradas: opciones,
+    });
+    await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: renderizarMenuCitas(opciones), origen: "automatico" });
+    return { manejado: true };
+  }
 
   // Sección 7 del pedido -- el candado cubre EXACTAMENTE la lectura +
   // decisión + escritura de la sesión (nunca más que eso: si el mensaje NO
@@ -188,6 +398,14 @@ export async function procesarMensajeConAgendaV2(
           slotSeleccionado: null,
           opcionesMostradas: categoriasActualizadas,
           ultimoWamidProcesado: params.wamid,
+          // FASE 8 -- un reinicio defensivo es un reinicio COMPLETO: nunca
+          // debe dejar un citaObjetivoId/accionGestion de una gestión de
+          // citas a medias colgando de una sesión que ahora vuelve a ser una
+          // reserva nueva desde cero (evitaría, por ejemplo, que un
+          // confirmar posterior intente "reprogramar" una cita ajena a esta
+          // nueva selección).
+          citaObjetivoId: null,
+          accionGestion: null,
         });
         await enviarMensaje({
           tenantId: params.idTenant,
@@ -210,6 +428,26 @@ export async function procesarMensajeConAgendaV2(
         const diasResultado = await calcularDias(params.supabase, { idTenant: params.idTenant, servicioId, profesionalId }, nylasDeps);
 
         if (!diasResultado.ok || diasResultado.opciones.length === 0) {
+          if (sesion!.citaObjetivoId) {
+            // FASE 8 (sección "CAMBIO DE PROFESIONAL" del pedido) -- una
+            // reprogramación NUNCA cambia de profesional. Si no hay más días
+            // reales disponibles con ESTA profesional, se informa y se deja
+            // un punto muerto seguro -- la cita ORIGINAL nunca se toca.
+            await actualizarSesion(params.supabase, sesion!.id, {
+              step: "S3_DIA",
+              fechaIso: null,
+              slotSeleccionado: null,
+              opcionesMostradas: [],
+              ultimoWamidProcesado: params.wamid,
+            });
+            await enviarMensaje({
+              tenantId: params.idTenant,
+              telefono: params.telefono,
+              mensaje: "No encontramos más días disponibles para reprogramar con esta profesional en este momento 😔 Tu cita original sigue intacta. Escribe *cancelar* y vuelve a intentarlo más tarde.",
+              origen: "automatico",
+            });
+            return { manejado: true };
+          }
           const resolucion = await resolverEspecialistas(params.supabase, params.idTenant, servicioId);
           const opcionesProfesional = construirOpcionesProfesional(resolucion.especialistas);
           await actualizarSesion(params.supabase, sesion!.id, {
@@ -417,7 +655,12 @@ export async function procesarMensajeConAgendaV2(
           opcionesMostradas: OPCIONES_CONFIRMACION,
           ultimoWamidProcesado: params.wamid,
         });
-        await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: renderizarResumenConfirmacion(resumen), origen: "automatico" });
+        // FASE 8 -- si esto es una reprogramación (citaObjetivoId ya
+        // fijado), el resumen se enmarca como "vas a cambiar tu cita",
+        // reutilizando el MISMO menú de control de 4 opciones -- nunca un
+        // mecanismo de confirmación nuevo.
+        const mensajeResumen = sesion.citaObjetivoId ? renderizarResumenCambio(resumen) : renderizarResumenConfirmacion(resumen);
+        await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: mensajeResumen, origen: "automatico" });
         return { manejado: true };
       }
 
@@ -471,8 +714,69 @@ export async function procesarMensajeConAgendaV2(
         }
         const nylasReadClient = crearNylasClient(apiKey);
         const nylasWriteClient = crearNylasWriteClient(apiKey);
-        const nombreCliente = (await buscarNombreConocidoDep(params.supabase, phoneNumberId, params.telefono)) ?? params.telefono;
         const inicio = new Date(`${slot.fechaIso}T${slot.hora}:00-05:00`);
+
+        if (sesion.citaObjetivoId) {
+          // FASE 8 (autorizado) -- esto es una REPROGRAMACIÓN: actualiza la
+          // cita EXISTENTE (mismo id, nunca crea una fila nueva), vía
+          // actualizarCitaConNylas -- MISMA revalidación real (jornada +
+          // bloqueos + citas DuLabs + Nylas) que crearCitaConNylas, sin
+          // duplicar ninguna lógica.
+          const citaObjetivoId = sesion.citaObjetivoId;
+          const nylasEventIdActual = await obtenerNylasEventIdDep(params.supabase, citaObjetivoId);
+          const idempotencyKeyReprogramar = `agenda-v2:reprogramar:${sesion.id}:${params.wamid}`;
+
+          let resultadoActualizar;
+          try {
+            resultadoActualizar = await actualizarCitaReal(
+              params.supabase,
+              { idTenant: params.idTenant, citaId: citaObjetivoId, nuevoInicio: inicio, idempotencyKey: idempotencyKeyReprogramar },
+              { nylasReadClient, nylasWriteClient, grantId, nylasEventIdActual },
+            );
+          } catch (err) {
+            console.error("[agenda-v2] error técnico reprogramando la cita real -- sesión NO se cierra, se permite reintentar:", err instanceof Error ? err.message : "error desconocido");
+            await actualizarSesion(params.supabase, sesion.id, { ultimoWamidProcesado: params.wamid });
+            await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_ERROR_REPROGRAMACION, origen: "automatico" });
+            return { manejado: true };
+          }
+
+          if (!resultadoActualizar.ok) {
+            if (resultadoActualizar.motivo === "ocupado" || resultadoActualizar.motivo === "fuera_de_horario" || resultadoActualizar.motivo === "bloqueado") {
+              // Revalidación real: el horario ya no está disponible -- NUNCA
+              // se toca la cita original. Vuelve a S4_HORA reutilizando la
+              // Fase 5 tal cual, sin perder servicio/profesional/fecha.
+              return await mostrarMenuHoraOVolverAFecha(sesion.servicioId, sesion.profesionalId, sesion.fechaIso, MENSAJE_HORARIO_RECIEN_OCUPADO);
+            }
+            // Cualquier otro motivo -- la cita ORIGINAL sigue intacta
+            // (actualizarCitaConNylas nunca la toca si algo falla). NUNCA se
+            // marca éxito, NUNCA se cierra la sesión: se informa y se
+            // permite reintentar.
+            console.error(`[agenda-v2] no se pudo reprogramar la cita real (${resultadoActualizar.motivo}): ${resultadoActualizar.detalle}`);
+            await actualizarSesion(params.supabase, sesion.id, { ultimoWamidProcesado: params.wamid });
+            await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_ERROR_REPROGRAMACION, origen: "automatico" });
+            return { manejado: true };
+          }
+
+          // Éxito real -- la MISMA cita quedó movida (nunca una nueva).
+          // Guardar el mapeo del NUEVO evento de Nylas es best-effort (nunca
+          // deshace el éxito ya logrado en DuLabs/Nylas).
+          await guardarNylasEventIdDep(params.supabase, resultadoActualizar.cita.id, resultadoActualizar.nylasEventId);
+          await cerrarSesion(params.supabase, sesion.id);
+          await enviarMensaje({
+            tenantId: params.idTenant,
+            telefono: params.telefono,
+            mensaje: renderizarReprogramacionExitosa({
+              servicioNombre: resultadoActualizar.servicio.nombre,
+              profesionalNombre: resultadoActualizar.especialista.nombre,
+              fechaEtiqueta: formatearFechaLarga(slot.fechaIso),
+              horaTexto: formatearHoraAmPm(slot.hora),
+            }),
+            origen: "automatico",
+          });
+          return { manejado: true };
+        }
+
+        const nombreCliente = (await buscarNombreConocidoDep(params.supabase, phoneNumberId, params.telefono)) ?? params.telefono;
         // Idempotencia real (lib/idempotencia-reserva.ts, reutilizada TAL
         // CUAL dentro de crearCitaConNylas) -- atada a (sesión, wamid): el
         // wamid ya es único por mensaje entrante (el router nunca reprocesa
@@ -527,6 +831,10 @@ export async function procesarMensajeConAgendaV2(
         // evento real ya existe en el calendario. Recién ACÁ se cierra la
         // sesión (nunca antes de confirmar éxito real), para que el
         // siguiente mensaje del cliente jamás continúe en S5_CONFIRMAR.
+        // FASE 8 -- guarda el mapeo cita->evento real de Nylas (best-effort,
+        // nunca bloquea el éxito ya logrado): sin esto, cancelar/reprogramar
+        // esta cita más adelante no podría tocar su evento real de calendario.
+        await guardarNylasEventIdDep(params.supabase, resultadoCita.cita.id, resultadoCita.nylasEventId);
         await cerrarSesion(params.supabase, sesion.id);
         await enviarMensaje({
           tenantId: params.idTenant,
@@ -543,6 +851,113 @@ export async function procesarMensajeConAgendaV2(
         return { manejado: true };
       }
 
+      if (resultado.accion === "cita_seleccionada_para_gestion") {
+        // FASE 8 -- se resolvió cuál cita real (número exacto contra el menú
+        // ya mostrado). Se revalida ownership de nuevo, FRESCA, contra la
+        // MISMA fuente real (consultarCitasActivasEspecialista) -- nunca se
+        // confía ciegamente en el citaId ya guardado en la sesión (sección
+        // "SEGURIDAD" del pedido: "validar propiedad de la cita en servidor").
+        if (!sesion.accionGestion) {
+          return await reiniciarPorEstadoInconsistente("SG_SELECCIONAR_CITA sin accionGestion");
+        }
+        const resultadoCitas = await consultarCitasActivas(params.supabase, { phoneNumberId, telefonoCliente: params.telefono });
+        const cita = resultadoCitas.citas.find((c) => c.id === resultado.citaId);
+        if (!cita) {
+          // La cita ya no está entre las activas de ESTE cliente (se
+          // canceló mientras decidía, o el id ya no le pertenece) -- nunca
+          // se actúa sobre ella. Se reinicia de forma segura.
+          return await reiniciarPorEstadoInconsistente("SG_SELECCIONAR_CITA con citaId ya no válido/propio");
+        }
+        return await continuarGestionCita(cita, sesion.accionGestion, sesion);
+      }
+
+      if (resultado.accion === "cancelacion_confirmada") {
+        // FASE 8 -- "Sí, cancelar". Reutiliza cancelarCitaEspecialista TAL
+        // CUAL (especialistas-flow-adaptador.ts) -- ya revalida ownership
+        // (citaPorIdYCliente) antes de tocar nada, mismo mecanismo EXACTO
+        // que ya usa Daniela.
+        if (!sesion.citaObjetivoId) {
+          return await reiniciarPorEstadoInconsistente("SG_CANCELAR_CONFIRMAR sin citaObjetivoId");
+        }
+        const citaObjetivoId = sesion.citaObjetivoId;
+
+        let resultadoCancelar;
+        try {
+          resultadoCancelar = await cancelarCitaEspecialistaDep(params.supabase, {
+            phoneNumberId,
+            telefonoCliente: params.telefono,
+            confirmado: true,
+            citaId: citaObjetivoId,
+          });
+        } catch (err) {
+          console.error("[agenda-v2] error técnico cancelando la cita real:", err instanceof Error ? err.message : "error desconocido");
+          resultadoCancelar = { ok: false as const, motivo: "error" as const, detalle: "excepción no capturada" };
+        }
+
+        if (!resultadoCancelar.ok) {
+          console.error(`[agenda-v2] no se pudo cancelar la cita real (${resultadoCancelar.motivo}): ${resultadoCancelar.detalle}`);
+          await cerrarSesion(params.supabase, sesion.id);
+          await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_ERROR_CANCELACION, origen: "automatico" });
+          return { manejado: true };
+        }
+
+        // Éxito real en DuLabs (estado "cancelada", el horario ya quedó
+        // libre para el constraint EXCLUDE) -- borrar el evento de Nylas
+        // real es best-effort: la cancelación en DuLabs YA es el resultado
+        // que importa, un evento huérfano en el calendario es una
+        // inconsistencia menor y recuperable, nunca motivo para reportar un
+        // fallo que no ocurrió.
+        const nylasEventId = await obtenerNylasEventIdDep(params.supabase, citaObjetivoId);
+        if (nylasEventId) {
+          const grantId = resolverGrantId(params.idTenant);
+          const apiKey = resolverApiKey();
+          if (grantId && apiKey) {
+            try {
+              const calendarId = await resolverCalendarIdDep(params.supabase, params.idTenant, resultadoCancelar.cita.especialista_id);
+              if (calendarId) {
+                await crearNylasWriteClient(apiKey).deleteEvent({ grantId, calendarId, eventId: nylasEventId });
+              }
+            } catch (err) {
+              console.error(
+                `[agenda-v2] cita cancelada en DuLabs pero no se pudo borrar el evento de Nylas (${nylasEventId}) -- requiere revisión manual:`,
+                err instanceof Error ? err.message : "error desconocido",
+              );
+            }
+          }
+          await borrarNylasEventIdDep(params.supabase, citaObjetivoId);
+        }
+
+        await cerrarSesion(params.supabase, sesion.id);
+        await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_CITA_CANCELADA, origen: "automatico" });
+        return { manejado: true };
+      }
+
+      if (resultado.accion === "reprogramar_confirmado_inicio") {
+        // FASE 8 -- "Sí, reprogramar". Reutiliza la Fase 4 TAL CUAL para el
+        // MISMO servicio/profesional de la cita actual (sección "CAMBIO DE
+        // PROFESIONAL" del pedido: la reprogramación nunca cambia de
+        // profesional). Se revalida ownership de nuevo, fresca.
+        if (!sesion.citaObjetivoId) {
+          return await reiniciarPorEstadoInconsistente("SG_REPROGRAMAR_CONFIRMAR_INICIO sin citaObjetivoId");
+        }
+        const resultadoCitas = await consultarCitasActivas(params.supabase, { phoneNumberId, telefonoCliente: params.telefono });
+        const cita = resultadoCitas.citas.find((c) => c.id === sesion.citaObjetivoId);
+        if (!cita || !cita.servicio_id) {
+          // La cita ya no existe (se canceló mientras decidía) o no tiene un
+          // servicio_id real asociado (no se puede revalidar su
+          // disponibilidad real) -- nunca se inventa, se informa y se cierra.
+          await cerrarSesion(params.supabase, sesion.id);
+          await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_ERROR_REPROGRAMACION, origen: "automatico" });
+          return { manejado: true };
+        }
+        await actualizarSesion(params.supabase, sesion.id, {
+          servicioId: cita.servicio_id,
+          profesionalId: cita.especialista_id,
+          ultimoWamidProcesado: params.wamid,
+        });
+        return await mostrarMenuFechaOVolverAProfesional(cita.servicio_id, cita.especialista_id);
+      }
+
       if (resultado.accion === "cerrar_sesion") {
         await cerrarSesion(params.supabase, sesion.id);
       } else {
@@ -556,6 +971,28 @@ export async function procesarMensajeConAgendaV2(
       }
       await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: resultado.respuesta, origen: "automatico" });
       return { manejado: true };
+    }
+
+    // FASE 8 -- sin sesión activa, ¿este mensaje dispara GESTIONAR una cita
+    // existente (consultar/cancelar/reprogramar)? Frases FIJAS y controladas
+    // (sección "DETECCIÓN DE INTENCIÓN" del pedido), revisado ANTES que el
+    // inicio de una reserva nueva -- una sesión activa (verificado arriba)
+    // ya tiene prioridad sobre esto, per la sección 1 del pedido.
+    const intencionGestion = detectarIntencionGestionCitas(params.texto);
+    if (intencionGestion) {
+      try {
+        return await iniciarGestionCitas(intencionGestion);
+      } catch (err) {
+        // Defensivo (mismo criterio EXACTO que buscarSesionActiva arriba) --
+        // la migración de Fase 8 (columnas/step nuevos de
+        // dulabs_agenda_v2_sesiones, tabla dulabs_agenda_v2_citas_nylas)
+        // puede no estar aplicada todavía en producción: nunca se deja al
+        // cliente sin respuesta, se informa un problema técnico real en vez
+        // de dejar la excepción sin capturar.
+        console.error("[agenda-v2] error técnico iniciando gestión de citas (¿migración de Fase 8 pendiente?):", err instanceof Error ? err.message : "error desconocido");
+        await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_ERROR_TECNICO_GESTION, origen: "automatico" });
+        return { manejado: true };
+      }
     }
 
     // Sin sesión activa -- ¿este mensaje dispara el inicio? (mismas

@@ -39,3 +39,46 @@ export function esInicioDeAgendaV2(mensaje: string, escenarios: EscenarioRow[]):
   const textoNormalizado = normalizeText(mensaje);
   return escenario.variantes.some((v) => coincideVariante(v, textoNormalizado, ENTIDADES_VACIAS));
 }
+
+/**
+ * FASE 8 (autorizado) — detección de intención de GESTIONAR una cita
+ * existente (consultar/cancelar/reprogramar). A diferencia de
+ * esInicioDeAgendaV2 (escenario sembrado, configurable por tenant), esta es
+ * deliberadamente una lista FIJA y NO configurable de frases "contains"
+ * literales (sección "DETECCIÓN DE INTENCIÓN" del pedido: "triggers
+ * explícitos y controlados", "NO usar IA semántica, embeddings ni fuzzy
+ * matching") -- funciona igual para cualquier tenant, sin depender de que
+ * alguien siembre un escenario nuevo. Mismo mecanismo de comparación
+ * (normalizeText + substring) que ya usa el resto de Agenda V2 para
+ * comandos de control (ver COMANDO_CANCELAR en controlador.ts).
+ */
+export type AccionGestionCitasDetectada = "consultar" | "cancelar" | "reprogramar";
+
+const FRASES_CANCELAR = ["cancelar mi cita", "quiero cancelar mi cita", "cancelar cita"];
+const FRASES_REPROGRAMAR = [
+  "reprogramar mi cita",
+  "quiero cambiar mi cita",
+  "cambiar mi cita",
+  "quiero cambiar la fecha",
+  "quiero cambiar el horario",
+];
+const FRASES_CONSULTAR = ["consultar mi cita", "ver mi cita", "que cita tengo", "cuando tengo mi cita", "quiero ver mi cita"];
+
+function coincideAlgunaFrase(textoNormalizado: string, frases: string[]): boolean {
+  return frases.some((f) => textoNormalizado.includes(normalizeText(f)));
+}
+
+/**
+ * Devuelve la acción detectada, o `null` si el mensaje no calza con NINGUNA
+ * de las frases controladas. Se revisa cancelar/reprogramar ANTES que
+ * consultar a propósito (aunque hoy no hay superposición real entre las
+ * listas) para que un futuro ajuste de frases nunca deje que "cancelar"/
+ * "cambiar" se interprete por error como una simple consulta.
+ */
+export function detectarIntencionGestionCitas(mensaje: string): AccionGestionCitasDetectada | null {
+  const textoNormalizado = normalizeText(mensaje);
+  if (coincideAlgunaFrase(textoNormalizado, FRASES_CANCELAR)) return "cancelar";
+  if (coincideAlgunaFrase(textoNormalizado, FRASES_REPROGRAMAR)) return "reprogramar";
+  if (coincideAlgunaFrase(textoNormalizado, FRASES_CONSULTAR)) return "consultar";
+  return null;
+}

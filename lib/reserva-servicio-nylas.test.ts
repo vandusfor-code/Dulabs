@@ -7,7 +7,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { crearCitaConNylas } from "@/lib/reserva-servicio-nylas";
+import { crearCitaConNylas, actualizarCitaConNylas } from "@/lib/reserva-servicio-nylas";
 import { AMORE_TENANT_ID } from "@/lib/nylas/nylas-grant";
 import type { NylasEvent, NylasEventsClient, NylasEventsWriteClient } from "@/lib/nylas/nylas-types";
 
@@ -56,10 +56,37 @@ function crearSupabaseFalso(estadoInicial: Record<string, FilaGenerica[]>) {
         return { data: [filaCompleta], error: null };
       }
       if (modoUpdate) {
-        for (const f of filas) {
-          if (filtros.every((fn) => fn(f))) Object.assign(f, modoUpdate);
+        // FASE 8 -- simula el MISMO constraint EXCLUDE real también para un
+        // UPDATE (editarCitaConfirmada), no solo para un INSERT: si el nuevo
+        // horario/especialista choca con OTRA cita viva, Postgres rechaza
+        // el UPDATE completo (23P01) y la fila objetivo queda intacta.
+        if (tabla === "dulabs_citas_especialista") {
+          const candidatos = filas.filter((f) => filtros.every((fn) => fn(f)));
+          if (candidatos.length === 0) return { data: [], error: null };
+          const objetivo = candidatos[0]!;
+          const nuevoInicio = new Date((modoUpdate.inicio as string | undefined) ?? (objetivo.inicio as string));
+          const nuevoFin = new Date((modoUpdate.fin as string | undefined) ?? (objetivo.fin as string));
+          const especialistaId = modoUpdate.especialista_id ?? objetivo.especialista_id;
+          const solapa = filas.some(
+            (f) =>
+              f !== objetivo &&
+              f.especialista_id === especialistaId &&
+              ["pendiente", "confirmada"].includes(f.estado as string) &&
+              nuevoInicio < new Date(f.fin as string) &&
+              nuevoFin > new Date(f.inicio as string),
+          );
+          if (solapa) return { data: [], error: { code: "23P01", message: "exclusion violation" } };
+          Object.assign(objetivo, modoUpdate);
+          return { data: [objetivo], error: null };
         }
-        return { data: [], error: null };
+        const coincidentes: FilaGenerica[] = [];
+        for (const f of filas) {
+          if (filtros.every((fn) => fn(f))) {
+            Object.assign(f, modoUpdate);
+            coincidentes.push(f);
+          }
+        }
+        return { data: coincidentes, error: null };
       }
       if (modoDelete) {
         tablas[tabla] = filas.filter((f) => !filtros.every((fn) => fn(f)));
@@ -540,5 +567,203 @@ describe("29. Fuera de jornada", () => {
     assert.equal(resultado.ok, false);
     if (resultado.ok) return;
     assert.equal(resultado.motivo, "fuera_de_horario");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FASE 8 (Agenda V2, autorizado) -- actualizarCitaConNylas (reprogramar).
+// Reutiliza el MISMO fake Supabase multi-tabla de arriba (ya soporta el
+// EXCLUDE simulado también para UPDATE, ver ejecutar() -- sección agregada
+// para esta fase).
+// ---------------------------------------------------------------------------
+
+const CITA_EXISTENTE_BASE: FilaGenerica = {
+  id: 500,
+  id_tenant: AMORE_TENANT_ID,
+  especialista_id: 1,
+  servicio_id: "s-dipping",
+  servicio: "Dipping",
+  telefono_cliente: "573001234567",
+  nombre_cliente: "Ana Pérez",
+  phone_number_id: "wa-amore",
+  bloquea_horario: true,
+  inicio: `${LUNES}T10:00:00-05:00`,
+  fin: `${LUNES}T12:00:00-05:00`,
+  estado: "confirmada",
+  motivo_rechazo: null,
+  origen: "manual",
+};
+
+async function reprogramar(
+  params: Partial<{ idTenant: string; citaId: number; nuevoInicioISO: string; idempotencyKey: string; nylasEventIdActual: string | null }> = {},
+  tablasOverrides: Parameters<typeof construirTablas>[0] & { citaExistente?: FilaGenerica } = {},
+  nylasReadOverride: Record<string, NylasEvent[] | "error" | "timeout"> = {},
+  nylasWriteOpts: Parameters<typeof mockNylasWrite>[0] = {},
+) {
+  const { citaExistente, ...resto } = tablasOverrides;
+  // Clon fresco SIEMPRE -- crearSupabaseFalso solo copia el ARRAY (no sus
+  // filas), así que reutilizar el mismo objeto entre tests haría que un
+  // UPDATE de un test mutara el fixture compartido y corrompiera el
+  // siguiente test.
+  const supabase = crearSupabaseFalso(construirTablas({ citas: [{ ...(citaExistente ?? CITA_EXISTENTE_BASE) }], ...resto }));
+  const resultado = await actualizarCitaConNylas(
+    supabase,
+    {
+      idTenant: params.idTenant ?? AMORE_TENANT_ID,
+      citaId: params.citaId ?? (CITA_EXISTENTE_BASE.id as number),
+      nuevoInicio: new Date(params.nuevoInicioISO ?? `${LUNES}T14:00:00-05:00`),
+      idempotencyKey: params.idempotencyKey ?? nuevaClave(),
+    },
+    {
+      nylasReadClient: mockNylasRead(nylasReadOverride),
+      nylasWriteClient: mockNylasWrite(nylasWriteOpts),
+      grantId: "grant-amore",
+      nylasEventIdActual: params.nylasEventIdActual === undefined ? "evt-viejo-1" : params.nylasEventIdActual,
+    },
+  );
+  return { resultado, supabase };
+}
+
+describe("FASE 8 -- 1. Reprogramación exitosa", () => {
+  it("actualiza la MISMA fila (mismo id), nunca crea una cita nueva", async () => {
+    const { resultado, supabase } = await reprogramar();
+    assert.equal(resultado.ok, true);
+    if (!resultado.ok) return;
+    assert.equal(resultado.cita.id, 500);
+    assert.equal(new Date(resultado.cita.inicio).getTime(), new Date(`${LUNES}T14:00:00-05:00`).getTime());
+    assert.equal(resultado.especialista.nombre, "Mary");
+    assert.equal(resultado.servicio.nombre, "Dipping");
+    const citas = (supabase as unknown as { __tablas: Record<string, FilaGenerica[]> }).__tablas.dulabs_citas_especialista;
+    assert.equal(citas.length, 1, "nunca debe existir una segunda cita");
+    assert.equal(citas[0]!.id, 500);
+  });
+
+  it("borra el evento VIEJO de Nylas (best-effort) y devuelve el id del NUEVO evento", async () => {
+    let eventoBorrado: string | undefined;
+    const { resultado } = await reprogramar({ nylasEventIdActual: "evt-viejo-1" }, {}, {}, { onDelete: () => (eventoBorrado = "evt-viejo-1") });
+    assert.equal(resultado.ok, true);
+    if (!resultado.ok) return;
+    assert.equal(resultado.nylasEventIdAnterior, "evt-viejo-1");
+    assert.notEqual(resultado.nylasEventId, "evt-viejo-1", "el nuevo evento nunca reutiliza el id del anterior");
+    assert.equal(eventoBorrado, "evt-viejo-1");
+  });
+
+  it("sin mapeo de evento anterior (nylasEventIdActual null) -- igual reprograma, nunca intenta borrar nada", async () => {
+    let seLlamoDelete = false;
+    const { resultado } = await reprogramar({ nylasEventIdActual: null }, {}, {}, { onDelete: () => (seLlamoDelete = true) });
+    assert.equal(resultado.ok, true);
+    assert.equal(seLlamoDelete, false);
+  });
+});
+
+describe("FASE 8 -- 2. Cita no confirmada (pendiente)", () => {
+  it("una cita 'pendiente' -> no_reagendable, nunca se toca", async () => {
+    const { resultado } = await reprogramar({}, { citaExistente: { ...CITA_EXISTENTE_BASE, estado: "pendiente" } });
+    assert.equal(resultado.ok, false);
+    if (resultado.ok) return;
+    assert.equal(resultado.motivo, "no_reagendable");
+  });
+});
+
+describe("FASE 8 -- 3. Cita inexistente", () => {
+  it("citaId que no existe para este tenant -> cita_no_encontrada", async () => {
+    const { resultado } = await reprogramar({ citaId: 999999 });
+    assert.equal(resultado.ok, false);
+    if (resultado.ok) return;
+    assert.equal(resultado.motivo, "cita_no_encontrada");
+  });
+});
+
+describe("FASE 8 -- 4. Servicio/calendario ya no válidos", () => {
+  it("servicio_id ya no existe en el catálogo -> servicio_no_encontrado", async () => {
+    const { resultado } = await reprogramar({}, { servicios: [] });
+    assert.equal(resultado.ok, false);
+    if (resultado.ok) return;
+    assert.equal(resultado.motivo, "servicio_no_encontrado");
+  });
+
+  it("especialista sin nylas_calendar_id -> sin_calendario_nylas", async () => {
+    const { resultado } = await reprogramar({}, { especialistas: ESPECIALISTAS.map((e) => (e.id === 1 ? { ...e, nylas_calendar_id: null } : e)) });
+    assert.equal(resultado.ok, false);
+    if (resultado.ok) return;
+    assert.equal(resultado.motivo, "sin_calendario_nylas");
+  });
+});
+
+describe("FASE 8 -- 5. Revalidación real del NUEVO horario", () => {
+  it("el nuevo horario ya está ocupado en Google Calendar -> ocupado, NUNCA actualiza la cita original", async () => {
+    const nuevoInicio = `${LUNES}T14:00:00-05:00`;
+    const ocupado = {
+      "cal-mary": [{ id: "x", when: { object: "timespan" as const, start_time: Math.floor(new Date(nuevoInicio).getTime() / 1000), end_time: Math.floor(new Date(`${LUNES}T15:00:00-05:00`).getTime() / 1000) } }],
+    };
+    let creo = false;
+    const { resultado, supabase } = await reprogramar({ nuevoInicioISO: nuevoInicio }, {}, ocupado, { onCreate: () => (creo = true) });
+    assert.equal(resultado.ok, false);
+    if (resultado.ok) return;
+    assert.equal(resultado.motivo, "ocupado");
+    assert.equal(creo, false, "nunca debe crear el evento nuevo si la revalidación ya rechazó el horario");
+    const cita = (supabase as unknown as { __tablas: Record<string, FilaGenerica[]> }).__tablas.dulabs_citas_especialista[0]!;
+    assert.equal(new Date(cita.inicio as string).getTime(), new Date(`${LUNES}T10:00:00-05:00`).getTime(), "la cita ORIGINAL sigue intacta en su horario anterior");
+  });
+
+  it("el nuevo horario cae fuera de jornada -> fuera_de_horario, cita original intacta", async () => {
+    const { resultado, supabase } = await reprogramar({ nuevoInicioISO: `${LUNES}T20:00:00-05:00` });
+    assert.equal(resultado.ok, false);
+    if (resultado.ok) return;
+    assert.equal(resultado.motivo, "fuera_de_horario");
+    const cita = (supabase as unknown as { __tablas: Record<string, FilaGenerica[]> }).__tablas.dulabs_citas_especialista[0]!;
+    assert.equal(new Date(cita.inicio as string).getTime(), new Date(`${LUNES}T10:00:00-05:00`).getTime());
+  });
+});
+
+describe("FASE 8 -- 6. Condición de carrera real (EXCLUDE de Postgres en el UPDATE)", () => {
+  it("otra cita confirmada ya ocupa el nuevo horario en DuLabs -> ocupado, la cita original NUNCA se toca, el evento NUEVO de Nylas se revierte", async () => {
+    const otraCitaYaEnEseHorario: FilaGenerica = {
+      ...CITA_EXISTENTE_BASE,
+      id: 501,
+      inicio: `${LUNES}T14:00:00-05:00`,
+      fin: `${LUNES}T15:00:00-05:00`,
+    };
+    let borrados = 0;
+    const { resultado, supabase } = await reprogramar(
+      {},
+      { citas: [{ ...CITA_EXISTENTE_BASE }, otraCitaYaEnEseHorario] } as unknown as Parameters<typeof construirTablas>[0] & { citaExistente?: FilaGenerica },
+      {},
+      { onDelete: () => borrados++ },
+    );
+    assert.equal(resultado.ok, false);
+    if (resultado.ok) return;
+    assert.equal(resultado.motivo, "ocupado");
+    assert.equal(borrados, 1, "el evento NUEVO de Nylas ya creado se revierte");
+    const citas = (supabase as unknown as { __tablas: Record<string, FilaGenerica[]> }).__tablas.dulabs_citas_especialista;
+    assert.equal(citas.length, 2, "nunca se crea una tercera cita");
+    const original = citas.find((c) => c.id === 500)!;
+    assert.equal(new Date(original.inicio as string).getTime(), new Date(`${LUNES}T10:00:00-05:00`).getTime(), "la cita original permanece EXACTAMENTE intacta");
+  });
+});
+
+describe("FASE 8 -- 7. Tenant incorrecto", () => {
+  it("un tenant distinto de AMORE se rechaza de forma segura, sin tocar Supabase/Nylas", async () => {
+    const { resultado } = await reprogramar({ idTenant: "otro-tenant-cualquiera" });
+    assert.equal(resultado.ok, false);
+    if (resultado.ok) return;
+    assert.equal(resultado.motivo, "tenant_no_autorizado");
+  });
+});
+
+describe("FASE 8 -- 8. Idempotencia", () => {
+  it("la MISMA solicitud repetida con la misma idempotency_key nunca reprograma dos veces", async () => {
+    let llamadasCreate = 0;
+    const clave = nuevaClave();
+    const supabase = crearSupabaseFalso(construirTablas({ citas: [{ ...CITA_EXISTENTE_BASE }] }));
+    const deps = { nylasReadClient: mockNylasRead(), nylasWriteClient: mockNylasWrite({ onCreate: () => llamadasCreate++ }), grantId: "grant-amore", nylasEventIdActual: "evt-viejo-1" };
+    const paramsBase = { idTenant: AMORE_TENANT_ID, citaId: 500, nuevoInicio: new Date(`${LUNES}T14:00:00-05:00`), idempotencyKey: clave };
+
+    const r1 = await actualizarCitaConNylas(supabase, paramsBase, deps);
+    const r2 = await actualizarCitaConNylas(supabase, paramsBase, deps);
+
+    assert.equal(r1.ok, true);
+    assert.deepEqual(r1, r2, "el reintento debe devolver EXACTAMENTE el mismo resultado, sin volver a ejecutar la operación");
+    assert.equal(llamadasCreate, 1, "Nylas solo debió llamarse UNA vez, nunca dos");
   });
 });

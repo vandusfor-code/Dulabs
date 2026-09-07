@@ -32,8 +32,10 @@ import { construirOpcionesProfesional } from "@/lib/agenda-v2/profesionales";
 import { construirOpcionesFecha } from "@/lib/agenda-v2/fechas";
 import { construirOpcionesHora } from "@/lib/agenda-v2/horas";
 import { OPCIONES_CONFIRMACION } from "@/lib/agenda-v2/confirmacion";
-import type { ResultadoCrearCitaNylas, DepsCrearCitaNylas } from "@/lib/reserva-servicio-nylas";
-import type { CitaEspecialista } from "@/lib/especialistas";
+import type { ResultadoCrearCitaNylas, DepsCrearCitaNylas, ResultadoActualizarCitaNylas } from "@/lib/reserva-servicio-nylas";
+import type { CitaEspecialista, Especialista } from "@/lib/especialistas";
+import type { ResultadoCancelarCitaEspecialista, ResultadoCitasActivasEspecialista } from "@/lib/especialistas-flow-adaptador";
+import { construirOpcionesCita } from "@/lib/agenda-v2/gestion-citas";
 
 const FAKE_SUPABASE = {} as SupabaseClient;
 
@@ -107,19 +109,35 @@ function crearFakeSesiones() {
     filas,
     buscarSesionActiva: async (_s: unknown, tenantId: string, telefono: string) =>
       filas.find((f) => f.tenantId === tenantId && f.telefonoCliente === telefono && f.activo) ?? null,
-    crearSesion: async (_s: unknown, params: { tenantId: string; telefonoCliente: string; wamid: string; opcionesMostradas?: unknown }) => {
+    crearSesion: async (
+      _s: unknown,
+      params: {
+        tenantId: string;
+        telefonoCliente: string;
+        wamid: string;
+        opcionesMostradas?: unknown;
+        step?: SesionAgendaV2["step"];
+        citaObjetivoId?: number | null;
+        accionGestion?: SesionAgendaV2["accionGestion"];
+        servicioId?: string | null;
+        profesionalId?: number | null;
+        fechaIso?: string | null;
+      },
+    ) => {
       const nueva: SesionAgendaV2 = {
         id: siguienteId++,
         tenantId: params.tenantId,
         telefonoCliente: params.telefonoCliente,
         activo: true,
-        step: "S1_SERVICIO",
-        servicioId: null,
-        profesionalId: null,
-        fechaIso: null,
+        step: params.step ?? "S1_SERVICIO",
+        servicioId: params.servicioId ?? null,
+        profesionalId: params.profesionalId ?? null,
+        fechaIso: params.fechaIso ?? null,
         slotSeleccionado: null,
         opcionesMostradas: params.opcionesMostradas ?? null,
         ultimoWamidProcesado: params.wamid,
+        citaObjetivoId: params.citaObjetivoId ?? null,
+        accionGestion: params.accionGestion ?? null,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
@@ -1756,5 +1774,475 @@ describe("FASE 7 (autorizado) -- confirmar la cita crea la reserva REAL (S5_CONF
     assert.equal(sesiones.filas[0]!.activo, true);
     assert.equal(sesiones.filas[0]!.step, "S5_CONFIRMAR");
     assert.match(envios.enviados.at(-1)!.mensaje, /problema técnico/i);
+  });
+});
+
+/**
+ * FASE 8 (autorizado) -- gestión de citas existentes (consultar/cancelar/
+ * reprogramar). Reutiliza el mismo criterio de fixtures de todo este
+ * archivo -- nunca toca Supabase/Nylas reales. Fechas elegidas para que
+ * fechaColombiaDesdeIso/horaColombiaDesdeIso (reales, sin mockear) den
+ * EXACTAMENTE los mismos textos del ejemplo del pedido: "2026-09-08" es
+ * martes (confirmado arriba, FASE 4), "2026-09-10" es jueves.
+ */
+const PN_AMORE = "whatsapp-qr:amore-test";
+const PN_OTRO_TENANT = "whatsapp-qr:otro-tenant-test";
+
+const ESPECIALISTA_COMPLETO: Record<number, Especialista> = Object.fromEntries(
+  [
+    [1262, "Mary"],
+    [1263, "Cristal"],
+    [1264, "Nata"],
+    [1265, "Jessica"],
+  ].map(([id, nombre]) => [
+    id,
+    { id: id as number, id_tenant: "amore-test", phone_number_id: PN_AMORE, nombre: nombre as string, numero_whatsapp: "", servicio: "", duracion_min: 0, token: "", activo: true, bloquea_horario: true, es_general: false, requiere_aprobacion: false },
+  ]),
+);
+async function especialistaPorIdFixture(_s: unknown, id: number): Promise<Especialista | null> {
+  return ESPECIALISTA_COMPLETO[id] ?? null;
+}
+
+const CITA_CELULAS_MADRES: CitaEspecialista = {
+  id: 501,
+  especialista_id: 1265, // Jessica
+  telefono_cliente: "573148127388",
+  nombre_cliente: "Ana Pérez",
+  servicio: "Células Madres",
+  servicio_id: "s-dipping-real", // 60.000 / 120 min en CATALOGO_FIXTURE
+  inicio: "2026-09-08T21:00:00.000Z", // 4:00 p.m. Colombia, martes 8
+  fin: "2026-09-08T23:00:00.000Z",
+  estado: "confirmada",
+  motivo_rechazo: null,
+  origen: "manual",
+};
+const CITA_CEJAS_CERA: CitaEspecialista = {
+  id: 502,
+  especialista_id: 1262, // Mary
+  telefono_cliente: "573148127388",
+  nombre_cliente: "Ana Pérez",
+  servicio: "Cejas con Cera",
+  servicio_id: "s-presson-real", // 80.000 / 120 min en CATALOGO_FIXTURE
+  inicio: "2026-09-10T19:00:00.000Z", // 2:00 p.m. Colombia, jueves 10
+  fin: "2026-09-10T21:00:00.000Z",
+  estado: "confirmada",
+  motivo_rechazo: null,
+  origen: "manual",
+};
+
+/** `porPhoneNumberId` -- simula el filtro real (phone_number_id + telefono_cliente) de consultarCitasActivasEspecialista. */
+function crearFakeConsultarCitasActivas(porPhoneNumberId: Record<string, CitaEspecialista[]>) {
+  const llamadas: Array<{ phoneNumberId: string; telefonoCliente: string }> = [];
+  const consultarCitasActivas = async (_s: unknown, params: { phoneNumberId: string; telefonoCliente: string }): Promise<ResultadoCitasActivasEspecialista> => {
+    llamadas.push(params);
+    const citas = (porPhoneNumberId[params.phoneNumberId] ?? []).filter((c) => c.telefono_cliente === params.telefonoCliente);
+    return { cantidad: citas.length, citas };
+  };
+  return { llamadas, consultarCitasActivas };
+}
+
+function crearFakeCancelarCitaEspecialista(resultado: ResultadoCancelarCitaEspecialista | ((p: { citaId?: number }) => ResultadoCancelarCitaEspecialista)) {
+  const llamadas: Array<{ phoneNumberId: string; telefonoCliente: string; confirmado: boolean; citaId?: number }> = [];
+  const cancelarCitaEspecialista = async (_s: unknown, params: { phoneNumberId: string; telefonoCliente: string; confirmado: boolean; citaId?: number }): Promise<ResultadoCancelarCitaEspecialista> => {
+    llamadas.push(params);
+    return typeof resultado === "function" ? resultado(params) : resultado;
+  };
+  return { llamadas, cancelarCitaEspecialista };
+}
+
+type ParamsActualizarCitaFixture = { idTenant: string; citaId: number; nuevoInicio: Date; idempotencyKey: string };
+function crearFakeActualizarCitaConNylas(resultado: ResultadoActualizarCitaNylas | ((p: ParamsActualizarCitaFixture) => ResultadoActualizarCitaNylas)) {
+  const llamadas: Array<{ params: ParamsActualizarCitaFixture }> = [];
+  const actualizarCitaConNylas = async (_s: unknown, params: ParamsActualizarCitaFixture): Promise<ResultadoActualizarCitaNylas> => {
+    llamadas.push({ params });
+    return typeof resultado === "function" ? resultado(params) : resultado;
+  };
+  return { llamadas, actualizarCitaConNylas };
+}
+
+/** Mapeo cita->evento de Nylas en memoria -- reemplaza dulabs_agenda_v2_citas_nylas. */
+function crearFakeMapeoNylas(inicial: Record<number, string> = {}) {
+  const mapa: Record<number, string> = { ...inicial };
+  return {
+    mapa,
+    guardarNylasEventIdDeCita: async (_s: unknown, citaId: number, nylasEventId: string) => {
+      mapa[citaId] = nylasEventId;
+    },
+    obtenerNylasEventIdDeCita: async (_s: unknown, citaId: number) => mapa[citaId] ?? null,
+    borrarNylasEventIdDeCita: async (_s: unknown, citaId: number) => {
+      delete mapa[citaId];
+    },
+  };
+}
+
+const RESULTADO_REPROGRAMAR_EXITO: ResultadoActualizarCitaNylas = {
+  ok: true,
+  cita: { ...CITA_CEJAS_CERA, inicio: "2026-09-08T14:00:00.000Z", fin: "2026-09-08T15:00:00.000Z" }, // 09:00 Colombia, martes 8
+  nylasEventId: "evt-nuevo-1",
+  nylasEventIdAnterior: "evt-viejo-1",
+  especialista: { id: 1262, nombre: "Mary" },
+  servicio: { id: "s-presson-real", nombre: "Press On", duracionMin: 120 },
+};
+
+describe("FASE 8 (autorizado) -- gestión de citas existentes (consultar/cancelar/reprogramar)", () => {
+  describe("CONSULTAR", () => {
+    it("Test 1 -- cliente con una cita futura: responde directo, NUNCA crea sesión", async () => {
+      const fakeCitas = crearFakeConsultarCitasActivas({ [PN_AMORE]: [CITA_CELULAS_MADRES] });
+      const { deps, sesiones, envios } = armarDeps({ consultarCitasActivas: fakeCitas.consultarCitasActivas, especialistaPorId: especialistaPorIdFixture });
+      const r = await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "quiero ver mi cita", wamid: "g1" }, deps);
+      assert.equal(r.manejado, true);
+      assert.equal(sesiones.filas.length, 0, "consultar con una sola cita NUNCA crea sesión innecesaria");
+      const mensaje = envios.enviados[0]!.mensaje;
+      assert.match(mensaje, /Esta es tu próxima cita/);
+      assert.match(mensaje, /Servicio: Células Madres/);
+      assert.match(mensaje, /Profesional: Jessica/);
+      assert.match(mensaje, /Fecha: Martes 8 de septiembre/);
+      assert.match(mensaje, /Hora: 4:00 p\. m\./);
+      assert.match(mensaje, /Duración: 2 h/);
+      assert.match(mensaje, /Valor: \$60\.000/);
+      assert.match(mensaje, /Estado: Confirmada/);
+    });
+
+    it("Test 2 -- cliente sin citas futuras: mensaje exacto, NUNCA crea sesión", async () => {
+      const fakeCitas = crearFakeConsultarCitasActivas({});
+      const { deps, sesiones, envios } = armarDeps({ consultarCitasActivas: fakeCitas.consultarCitasActivas });
+      const r = await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "consultar mi cita", wamid: "g1" }, deps);
+      assert.equal(r.manejado, true);
+      assert.equal(sesiones.filas.length, 0);
+      assert.equal(envios.enviados[0]!.mensaje, "No encontramos citas futuras a tu nombre. 💗");
+    });
+
+    it("Test 3 -- cliente con varias citas: muestra menú numerado, luego resuelve y consulta la elegida (y cierra la sesión temporal)", async () => {
+      const fakeCitas = crearFakeConsultarCitasActivas({ [PN_AMORE]: [CITA_CELULAS_MADRES, CITA_CEJAS_CERA] });
+      const { deps, sesiones, envios } = armarDeps({ consultarCitasActivas: fakeCitas.consultarCitasActivas, especialistaPorId: especialistaPorIdFixture });
+      await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "quiero ver mi cita", wamid: "g1" }, deps);
+      assert.equal(sesiones.filas.length, 1);
+      assert.equal(sesiones.filas[0]!.step, "SG_SELECCIONAR_CITA");
+      assert.equal(sesiones.filas[0]!.accionGestion, "consultar");
+      assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, construirOpcionesCita([
+        { citaId: 501, servicioNombre: "Células Madres", profesionalNombre: "Jessica", fechaEtiqueta: "Martes 8 de septiembre", horaTexto: "4:00 p. m." },
+        { citaId: 502, servicioNombre: "Cejas con Cera", profesionalNombre: "Mary", fechaEtiqueta: "Jueves 10 de septiembre", horaTexto: "2:00 p. m." },
+      ]));
+      assert.match(envios.enviados[0]!.mensaje, /1\. Células Madres — Jessica/);
+      assert.match(envios.enviados[0]!.mensaje, /2\. Cejas con Cera — Mary/);
+
+      await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "2", wamid: "g2" }, deps);
+      assert.equal(sesiones.filas[0]!.activo, false, "la sesión temporal se cierra tras resolver la consulta");
+      assert.match(envios.enviados[1]!.mensaje, /Servicio: Cejas con Cera/);
+      assert.match(envios.enviados[1]!.mensaje, /Profesional: Mary/);
+    });
+
+    it("Test 4 -- aislamiento por tenant: nunca ve las citas de otro tenant, aunque el teléfono real coincida", async () => {
+      const fakeCitas = crearFakeConsultarCitasActivas({
+        [PN_AMORE]: [CITA_CELULAS_MADRES],
+        [PN_OTRO_TENANT]: [{ ...CITA_CEJAS_CERA, id: 999 }],
+      });
+      const { deps, envios } = armarDeps({ consultarCitasActivas: fakeCitas.consultarCitasActivas, especialistaPorId: especialistaPorIdFixture });
+      await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "quiero ver mi cita", wamid: "g1" }, deps);
+      assert.match(envios.enviados[0]!.mensaje, /Células Madres/);
+      assert.doesNotMatch(envios.enviados[0]!.mensaje, /Cejas con Cera/, "nunca debe mostrar una cita de otro tenant");
+    });
+
+    it("Test 5 -- aislamiento por teléfono: dos clientas del mismo tenant nunca ven la cita de la otra", async () => {
+      const fakeCitas = crearFakeConsultarCitasActivas({
+        [PN_AMORE]: [CITA_CELULAS_MADRES, { ...CITA_CEJAS_CERA, telefono_cliente: "573000000000" }],
+      });
+      const { deps, envios } = armarDeps({ consultarCitasActivas: fakeCitas.consultarCitasActivas, especialistaPorId: especialistaPorIdFixture });
+      await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "quiero ver mi cita", wamid: "g1" }, deps);
+      assert.match(envios.enviados[0]!.mensaje, /Células Madres/);
+      assert.doesNotMatch(envios.enviados[0]!.mensaje, /Cejas con Cera/, "nunca debe mostrar la cita de otra clienta");
+    });
+  });
+
+  describe("CANCELAR", () => {
+    it("Test 6 -- muestra la confirmación ANTES de cancelar nada", async () => {
+      const fakeCitas = crearFakeConsultarCitasActivas({ [PN_AMORE]: [CITA_CELULAS_MADRES] });
+      const fakeCancelar = crearFakeCancelarCitaEspecialista({ ok: true, cita: CITA_CELULAS_MADRES });
+      const { deps, sesiones, envios } = armarDeps({ consultarCitasActivas: fakeCitas.consultarCitasActivas, especialistaPorId: especialistaPorIdFixture, cancelarCitaEspecialista: fakeCancelar.cancelarCitaEspecialista });
+      await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "cancelar mi cita", wamid: "g1" }, deps);
+      assert.equal(fakeCancelar.llamadas.length, 0, "NUNCA cancela antes de la confirmación");
+      assert.equal(sesiones.filas.length, 1);
+      assert.equal(sesiones.filas[0]!.step, "SG_CANCELAR_CONFIRMAR");
+      assert.equal(sesiones.filas[0]!.citaObjetivoId, 501);
+      const mensaje = envios.enviados[0]!.mensaje;
+      assert.match(mensaje, /Vas a cancelar esta cita/);
+      assert.match(mensaje, /Servicio: Células Madres/);
+      assert.match(mensaje, /1\. Sí, cancelar/);
+      assert.match(mensaje, /2\. No, conservar cita/);
+    });
+
+    it("Test 7 -- confirmación positiva ('1') ejecuta la cancelación real", async () => {
+      const fakeCitas = crearFakeConsultarCitasActivas({ [PN_AMORE]: [CITA_CELULAS_MADRES] });
+      const fakeCancelar = crearFakeCancelarCitaEspecialista({ ok: true, cita: { ...CITA_CELULAS_MADRES, estado: "cancelada" } });
+      const { deps, sesiones, envios } = armarDeps({ consultarCitasActivas: fakeCitas.consultarCitasActivas, especialistaPorId: especialistaPorIdFixture, cancelarCitaEspecialista: fakeCancelar.cancelarCitaEspecialista });
+      await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "cancelar mi cita", wamid: "g1" }, deps);
+      await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "g2" }, deps);
+      assert.equal(fakeCancelar.llamadas.length, 1);
+      assert.equal(fakeCancelar.llamadas[0]!.citaId, 501);
+      assert.equal(fakeCancelar.llamadas[0]!.confirmado, true);
+      assert.equal(sesiones.filas[0]!.activo, false);
+      assert.equal(envios.enviados.at(-1)!.mensaje, "Tu cita fue cancelada correctamente. 💗");
+    });
+
+    it("Test 8 -- cancelación real mockeada además borra (best-effort) el evento real de Nylas si existe mapeo", async () => {
+      const fakeCitas = crearFakeConsultarCitasActivas({ [PN_AMORE]: [CITA_CELULAS_MADRES] });
+      const fakeCancelar = crearFakeCancelarCitaEspecialista({ ok: true, cita: { ...CITA_CELULAS_MADRES, estado: "cancelada" } });
+      const fakeMapeo = crearFakeMapeoNylas({ 501: "evt-a-borrar" });
+      let eventoBorrado: string | undefined;
+      const { deps } = armarDeps({
+        consultarCitasActivas: fakeCitas.consultarCitasActivas,
+        especialistaPorId: especialistaPorIdFixture,
+        cancelarCitaEspecialista: fakeCancelar.cancelarCitaEspecialista,
+        obtenerNylasEventIdDeCita: fakeMapeo.obtenerNylasEventIdDeCita,
+        borrarNylasEventIdDeCita: fakeMapeo.borrarNylasEventIdDeCita,
+        resolverNylasGrantIdParaTenant: () => "grant-fake",
+        resolveNylasApiKeyFromEnv: () => "api-key-fake",
+        createNylasEventsWriteClient: () => ({ createEvent: async () => ({ id: "no-usado" }), deleteEvent: async (p) => void (eventoBorrado = p.eventId) }),
+        resolverCalendarIdNylasDeEspecialista: async () => "cal-mary",
+      });
+      await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "cancelar mi cita", wamid: "g1" }, deps);
+      await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "g2" }, deps);
+      assert.equal(eventoBorrado, "evt-a-borrar");
+      assert.equal(fakeMapeo.mapa[501], undefined, "el mapeo se borra tras cancelar");
+    });
+
+    it("Test 9 -- rechazo de cancelación: NUNCA envía éxito si la operación falló", async () => {
+      const fakeCitas = crearFakeConsultarCitasActivas({ [PN_AMORE]: [CITA_CELULAS_MADRES] });
+      const fakeCancelar = crearFakeCancelarCitaEspecialista({ ok: false, motivo: "error", detalle: "fallo simulado" });
+      const { deps, sesiones, envios } = armarDeps({ consultarCitasActivas: fakeCitas.consultarCitasActivas, especialistaPorId: especialistaPorIdFixture, cancelarCitaEspecialista: fakeCancelar.cancelarCitaEspecialista });
+      await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "cancelar mi cita", wamid: "g1" }, deps);
+      await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "g2" }, deps);
+      assert.doesNotMatch(envios.enviados.at(-1)!.mensaje, /cancelada correctamente/);
+      assert.equal(envios.enviados.at(-1)!.mensaje, "No pudimos cancelar tu cita en este momento. Por favor intenta nuevamente.");
+      assert.equal(sesiones.filas[0]!.activo, false);
+    });
+
+    it("Test 10 -- mensaje duplicado (mismo wamid) al confirmar cancelación: NUNCA cancela dos veces", async () => {
+      const fakeCitas = crearFakeConsultarCitasActivas({ [PN_AMORE]: [CITA_CELULAS_MADRES] });
+      const fakeCancelar = crearFakeCancelarCitaEspecialista({ ok: true, cita: { ...CITA_CELULAS_MADRES, estado: "cancelada" } });
+      const { deps } = armarDeps({ consultarCitasActivas: fakeCitas.consultarCitasActivas, especialistaPorId: especialistaPorIdFixture, cancelarCitaEspecialista: fakeCancelar.cancelarCitaEspecialista });
+      await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "cancelar mi cita", wamid: "g1" }, deps);
+      await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "g2" }, deps);
+      await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "g2" }, deps); // mismo wamid exacto
+      assert.equal(fakeCancelar.llamadas.length, 1);
+    });
+
+    it("Test 11 -- NUNCA modifica otra cita: cancelarCitaEspecialista se invoca EXCLUSIVAMENTE con el citaId real de esta clienta", async () => {
+      const fakeCitas = crearFakeConsultarCitasActivas({ [PN_AMORE]: [CITA_CELULAS_MADRES, CITA_CEJAS_CERA] });
+      const fakeCancelar = crearFakeCancelarCitaEspecialista({ ok: true, cita: CITA_CELULAS_MADRES });
+      const { deps } = armarDeps({ consultarCitasActivas: fakeCitas.consultarCitasActivas, especialistaPorId: especialistaPorIdFixture, cancelarCitaEspecialista: fakeCancelar.cancelarCitaEspecialista });
+      await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "cancelar mi cita", wamid: "g1" }, deps);
+      await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "g2" }, deps); // elige la cita 501 (menú de varias -- ver Test 3)
+      await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "g3" }, deps); // confirma la cancelación de ESA cita
+      assert.equal(fakeCancelar.llamadas.length, 1);
+      assert.equal(fakeCancelar.llamadas[0]!.citaId, 501, "solo toca la cita elegida, nunca la 502");
+    });
+  });
+
+  describe("REPROGRAMAR", () => {
+    /** Lleva la sesión hasta S5_CONFIRMAR reprogramando CITA_CEJAS_CERA (Mary, Press On) a 2026-09-08 09:00. */
+    async function llegarAConfirmarCambio(deps: AgendaV2RouterDeps, telefono = "573148127388") {
+      await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono, texto: "quiero cambiar mi cita", wamid: "r1" }, deps);
+      await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono, texto: "1", wamid: "r2" }, deps); // sí, reprogramar
+      await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono, texto: "1", wamid: "r3" }, deps); // 2026-09-08
+      await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono, texto: "1", wamid: "r4" }, deps); // 09:00
+    }
+    function armarDepsReprogramar(overrides: Partial<AgendaV2RouterDeps> = {}) {
+      const fakeCitas = crearFakeConsultarCitasActivas({ [PN_AMORE]: [CITA_CEJAS_CERA] });
+      return armarDeps({
+        consultarCitasActivas: fakeCitas.consultarCitasActivas,
+        especialistaPorId: especialistaPorIdFixture,
+        ...NYLAS_DEPS_FAKE_OVERRIDES,
+        ...overrides,
+      });
+    }
+
+    it("Test 12 -- selección de la cita (una sola): muestra la cita ACTUAL y pide confirmar reprogramar", async () => {
+      const { deps, sesiones, envios } = armarDepsReprogramar();
+      await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "quiero cambiar mi cita", wamid: "r1" }, deps);
+      assert.equal(sesiones.filas[0]!.step, "SG_REPROGRAMAR_CONFIRMAR_INICIO");
+      assert.equal(sesiones.filas[0]!.citaObjetivoId, 502);
+      const mensaje = envios.enviados[0]!.mensaje;
+      assert.match(mensaje, /Esta es tu cita actual/);
+      assert.match(mensaje, /Servicio: Cejas con Cera/);
+      assert.match(mensaje, /Profesional: Mary/);
+      assert.match(mensaje, /1\. Sí, reprogramar/);
+    });
+
+    it("Test 13/14 -- 'sí' avanza a S3_DIA con los días REALES del MISMO servicio/profesional (disponibilidad real, Fases 4/5 reutilizadas)", async () => {
+      const { deps, sesiones, envios } = armarDepsReprogramar();
+      await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "quiero cambiar mi cita", wamid: "r1" }, deps);
+      await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "r2" }, deps);
+      assert.equal(sesiones.filas[0]!.step, "S3_DIA");
+      assert.equal(sesiones.filas[0]!.servicioId, "s-presson-real", "conserva el MISMO servicio, nunca pide uno nuevo");
+      assert.equal(sesiones.filas[0]!.profesionalId, 1262, "conserva la MISMA profesional, nunca cambia (sección CAMBIO DE PROFESIONAL)");
+      assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, construirOpcionesFecha(DIAS_POR_PROFESIONAL_FIXTURE[1262]!));
+      assert.match(envios.enviados.at(-1)!.mensaje, /¿Qué día deseas agendar\?/);
+    });
+
+    it("Test 15 -- selección de nueva hora: horarios REALES de la fecha elegida", async () => {
+      const { deps, sesiones, envios } = armarDepsReprogramar();
+      await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "quiero cambiar mi cita", wamid: "r1" }, deps);
+      await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "r2" }, deps);
+      await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "r3" }, deps); // 2026-09-08
+      assert.equal(sesiones.filas[0]!.step, "S4_HORA");
+      assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, construirOpcionesHora("2026-09-08", HORAS_POR_FECHA_FIXTURE["2026-09-08"]!));
+      assert.match(envios.enviados.at(-1)!.mensaje, /Estos son los horarios disponibles/);
+    });
+
+    it("Test 16 -- confirmación: resumen de CAMBIO (nunca el de una cita nueva), con el MISMO menú de control", async () => {
+      const { deps, sesiones, envios } = armarDepsReprogramar();
+      await llegarAConfirmarCambio(deps);
+      assert.equal(sesiones.filas[0]!.step, "S5_CONFIRMAR");
+      const mensaje = envios.enviados.at(-1)!.mensaje;
+      assert.match(mensaje, /Vas a cambiar tu cita a/);
+      assert.match(mensaje, /Profesional: Mary/);
+      assert.match(mensaje, /¿Confirmas el cambio\?/);
+      assert.match(mensaje, /1\. Confirmar cita/);
+      assert.doesNotMatch(mensaje, /Estos son los datos de tu cita/, "nunca usa el encabezado de una reserva nueva");
+    });
+
+    it("Test 17 -- revalidación antes de aplicar el cambio: actualizarCitaConNylas se llama con el NUEVO horario exacto", async () => {
+      const fake = crearFakeActualizarCitaConNylas(RESULTADO_REPROGRAMAR_EXITO);
+      const { deps } = armarDepsReprogramar({ actualizarCitaConNylas: fake.actualizarCitaConNylas });
+      await llegarAConfirmarCambio(deps);
+      await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "r5" }, deps);
+      assert.equal(fake.llamadas.length, 1);
+      assert.equal(fake.llamadas[0]!.params.citaId, 502);
+      assert.equal(fake.llamadas[0]!.params.nuevoInicio.toISOString(), new Date("2026-09-08T09:00:00-05:00").toISOString());
+    });
+
+    it("Test 18 -- horario recién ocupado en la revalidación: NUNCA aplica el cambio, vuelve a S4_HORA manteniendo servicio/profesional/fecha", async () => {
+      const fake = crearFakeActualizarCitaConNylas({ ok: false, motivo: "ocupado", detalle: "Ese horario ya fue tomado en Google Calendar." });
+      const { deps, sesiones, envios } = armarDepsReprogramar({ actualizarCitaConNylas: fake.actualizarCitaConNylas });
+      await llegarAConfirmarCambio(deps);
+      await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "r5" }, deps);
+      assert.equal(sesiones.filas[0]!.activo, true, "la cita ORIGINAL nunca se pierde -- la sesión sigue viva");
+      assert.equal(sesiones.filas[0]!.step, "S4_HORA");
+      assert.equal(sesiones.filas[0]!.servicioId, "s-presson-real");
+      assert.equal(sesiones.filas[0]!.profesionalId, 1262);
+      assert.equal(sesiones.filas[0]!.fechaIso, "2026-09-08");
+      const mensaje = envios.enviados.at(-1)!.mensaje;
+      assert.match(mensaje, /Lo siento 💗 Ese horario acaba de ser ocupado\./);
+      assert.match(mensaje, /Estos son los horarios disponibles/);
+    });
+
+    it("Test 19 -- error al actualizar (config/DB/excepción): NUNCA marca éxito, conserva la sesión para reintentar", async () => {
+      const fake = crearFakeActualizarCitaConNylas({ ok: false, motivo: "error_de_base_de_datos", detalle: "error simulado" });
+      const { deps, sesiones, envios } = armarDepsReprogramar({ actualizarCitaConNylas: fake.actualizarCitaConNylas });
+      await llegarAConfirmarCambio(deps);
+      await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "r5" }, deps);
+      assert.equal(sesiones.filas[0]!.activo, true);
+      assert.equal(sesiones.filas[0]!.step, "S5_CONFIRMAR");
+      assert.doesNotMatch(envios.enviados.at(-1)!.mensaje, /¡Listo!/);
+      assert.equal(envios.enviados.at(-1)!.mensaje, "No pudimos reprogramar tu cita en este momento. Por favor intenta nuevamente.");
+    });
+
+    it("Test 20 -- idempotencia: mismo wamid duplicado NUNCA reprograma dos veces", async () => {
+      const fake = crearFakeActualizarCitaConNylas(RESULTADO_REPROGRAMAR_EXITO);
+      const { deps } = armarDepsReprogramar({ actualizarCitaConNylas: fake.actualizarCitaConNylas });
+      await llegarAConfirmarCambio(deps);
+      await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "r5" }, deps);
+      await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "r5" }, deps); // mismo wamid
+      assert.equal(fake.llamadas.length, 1);
+    });
+
+    it("Test 21/22 -- condición de carrera (EXCLUDE detecta doble reserva): NUNCA crea una segunda cita, informa y vuelve a horarios", async () => {
+      const fake = crearFakeActualizarCitaConNylas({ ok: false, motivo: "ocupado", detalle: "Ese horario ya fue tomado (protección final de PostgreSQL). Tu cita original sigue intacta." });
+      const { deps, sesiones } = armarDepsReprogramar({ actualizarCitaConNylas: fake.actualizarCitaConNylas });
+      await llegarAConfirmarCambio(deps);
+      await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "r5" }, deps);
+      assert.equal(fake.llamadas.length, 1, "un solo intento -- la protección real la da la base de datos, nunca un reintento automático");
+      assert.equal(sesiones.filas[0]!.step, "S4_HORA");
+    });
+
+    it("Test 23 -- la cita reprogramada conserva su identidad: éxito real usa el MISMO citaId, nunca crea uno nuevo", async () => {
+      const fake = crearFakeActualizarCitaConNylas(RESULTADO_REPROGRAMAR_EXITO);
+      const { deps } = armarDepsReprogramar({ actualizarCitaConNylas: fake.actualizarCitaConNylas });
+      await llegarAConfirmarCambio(deps);
+      await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "r5" }, deps);
+      assert.equal(fake.llamadas[0]!.params.citaId, 502, "actualiza la MISMA cita, identificada por su id real");
+    });
+
+    it("éxito real: cierra la sesión y el mensaje final usa datos DINÁMICOS de la nueva fecha/hora", async () => {
+      const fake = crearFakeActualizarCitaConNylas(RESULTADO_REPROGRAMAR_EXITO);
+      const { deps, sesiones, envios } = armarDepsReprogramar({ actualizarCitaConNylas: fake.actualizarCitaConNylas });
+      await llegarAConfirmarCambio(deps);
+      await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "r5" }, deps);
+      assert.equal(sesiones.filas[0]!.activo, false);
+      const mensaje = envios.enviados.at(-1)!.mensaje;
+      assert.match(mensaje, /¡Listo! 💗 Tu cita fue reprogramada/);
+      assert.match(mensaje, /Profesional: Mary/);
+      assert.match(mensaje, /Nueva fecha: Martes 8 de septiembre/);
+      assert.match(mensaje, /Nueva hora: 9:00 a\. m\./);
+    });
+
+    it("Test 24 -- aislamiento multi-tenant: reprogramar en un tenant nunca toca la sesión/cita de otro", async () => {
+      const fakeCitasA = crearFakeConsultarCitasActivas({ [PN_AMORE]: [CITA_CEJAS_CERA], [PN_OTRO_TENANT]: [{ ...CITA_CEJAS_CERA, id: 777 }] });
+      const fake = crearFakeActualizarCitaConNylas(RESULTADO_REPROGRAMAR_EXITO);
+      const { deps, sesiones } = armarDeps({
+        consultarCitasActivas: fakeCitasA.consultarCitasActivas,
+        especialistaPorId: especialistaPorIdFixture,
+        ...NYLAS_DEPS_FAKE_OVERRIDES,
+        actualizarCitaConNylas: fake.actualizarCitaConNylas,
+      });
+      const telefono = "573148127388";
+      await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "otro-tenant-test", telefono, texto: "quiero cambiar mi cita", wamid: "b1" }, deps);
+      await llegarAConfirmarCambio(deps, telefono);
+      await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono, texto: "1", wamid: "r5" }, deps);
+
+      assert.equal(fake.llamadas.length, 1);
+      assert.equal(fake.llamadas[0]!.params.citaId, 502, "nunca toca la cita 777 del otro tenant");
+      assert.equal(fake.llamadas[0]!.params.idTenant, "amore-test");
+      const filaOtroTenant = sesiones.filas.find((f) => f.tenantId === "otro-tenant-test")!;
+      assert.equal(filaOtroTenant.activo, true, "el otro tenant NUNCA se toca por una reprogramación en amore-test");
+    });
+  });
+
+  describe("SEGURIDAD", () => {
+    it("TEST DE SEGURIDAD -- la cita R-2CX / ID 3057 NUNCA es referenciada, modificada, cancelada, reprogramada ni eliminada por ningún flujo de Fase 8", async () => {
+      // Estructural: cancelarCitaEspecialista/actualizarCitaConNylas (sin
+      // cambios) solo actúan sobre el citaId que router.ts resuelve --
+      // SIEMPRE proveniente de consultarCitasActivasEspecialista filtrado
+      // por (phone_number_id, telefono_cliente) reales de ESTA conversación,
+      // nunca de un dato enviado directamente por el cliente. Este test
+      // verifica, con datos reales de esta clienta, que ningún citaId/código
+      // ajeno (como "3057"/"R-2CX") aparece en ninguna llamada real.
+      // Cancelar una cita real de esta clienta (camino de una sola cita).
+      const fakeCancelar = crearFakeCancelarCitaEspecialista({ ok: true, cita: CITA_CELULAS_MADRES });
+      const depsCancelar = armarDeps({
+        consultarCitasActivas: crearFakeConsultarCitasActivas({ [PN_AMORE]: [CITA_CELULAS_MADRES] }).consultarCitasActivas,
+        especialistaPorId: especialistaPorIdFixture,
+        cancelarCitaEspecialista: fakeCancelar.cancelarCitaEspecialista,
+      }).deps;
+      await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "cancelar mi cita", wamid: "s1" }, depsCancelar);
+      await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "s2" }, depsCancelar); // confirma cancelar
+
+      assert.equal(fakeCancelar.llamadas.length, 1);
+      const paramsCancelar = JSON.stringify(fakeCancelar.llamadas[0]);
+      assert.doesNotMatch(paramsCancelar, /3057/, "jamás referencia el id de la cita real R-2CX al cancelar");
+      assert.doesNotMatch(paramsCancelar, /R-2CX/i, "jamás referencia el código de la cita real R-2CX al cancelar");
+      assert.equal(fakeCancelar.llamadas[0]!.citaId, 501);
+
+      // Reprogramar la otra cita real de esta clienta, en una sesión nueva e independiente.
+      const fakeActualizar = crearFakeActualizarCitaConNylas(RESULTADO_REPROGRAMAR_EXITO);
+      const depsReprogramar = armarDeps({
+        consultarCitasActivas: crearFakeConsultarCitasActivas({ [PN_AMORE]: [CITA_CEJAS_CERA] }).consultarCitasActivas,
+        especialistaPorId: especialistaPorIdFixture,
+        ...NYLAS_DEPS_FAKE_OVERRIDES,
+        actualizarCitaConNylas: fakeActualizar.actualizarCitaConNylas,
+      }).deps;
+      await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "quiero cambiar mi cita", wamid: "s3" }, depsReprogramar);
+      await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "s4" }, depsReprogramar);
+      await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "s5" }, depsReprogramar);
+      await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "s6" }, depsReprogramar);
+      await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "s7" }, depsReprogramar);
+
+      assert.equal(fakeActualizar.llamadas.length, 1);
+      const paramsActualizar = JSON.stringify(fakeActualizar.llamadas[0]!.params);
+      assert.doesNotMatch(paramsActualizar, /3057/, "jamás referencia el id de la cita real R-2CX al reprogramar");
+      assert.doesNotMatch(paramsActualizar, /R-2CX/i, "jamás referencia el código de la cita real R-2CX al reprogramar");
+      assert.equal(fakeActualizar.llamadas[0]!.params.citaId, 502);
+    });
   });
 });

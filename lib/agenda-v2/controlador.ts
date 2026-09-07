@@ -15,6 +15,16 @@ import { resolverSeleccionProfesional, textoSeleccionInvalidaProfesional, type O
 import { resolverSeleccionFecha, textoSeleccionInvalidaFecha, type OpcionFechaAgendaV2 } from "@/lib/agenda-v2/fechas";
 import { resolverSeleccionHora, textoSeleccionInvalidaHora, type OpcionHoraAgendaV2 } from "@/lib/agenda-v2/horas";
 import { resolverSeleccionConfirmacion, textoSeleccionInvalidaConfirmacion, type OpcionConfirmacionAgendaV2 } from "@/lib/agenda-v2/confirmacion";
+import {
+  resolverSeleccionCita,
+  textoSeleccionInvalidaCitas,
+  resolverSeleccionSiNo,
+  textoSeleccionInvalidaSiNo,
+  MENSAJE_CANCELACION_ABANDONADA,
+  MENSAJE_REPROGRAMACION_ABANDONADA,
+  type OpcionCitaAgendaV2,
+  type OpcionSiNoAgendaV2,
+} from "@/lib/agenda-v2/gestion-citas";
 
 export const RESPUESTA_PLACEHOLDER_AGENDA_V2 = "Agenda V2 activa. Selecciona una opción.";
 const RESPUESTA_CANCELACION = "Listo, cancelé tu proceso de agenda 💗 Escríbeme cuando quieras retomarlo.";
@@ -52,8 +62,23 @@ export type ResultadoControladorAgendaV2 =
   | { accion: "confirmacion_cambiar_hora" }
   // FASE 7 -- "Confirmar cita" fue elegido; crear la reserva real exige
   // revalidar disponibilidad + crearCitaConNylas (async, Supabase + Nylas
-  // reales) -- router.ts resuelve toda esta transición.
-  | { accion: "confirmacion_confirmar" };
+  // reales) -- router.ts resuelve toda esta transición. FASE 8 reutiliza
+  // ESTA MISMA acción para el paso final de una reprogramación (si
+  // sesion.citaObjetivoId está fijado, router.ts llama actualizarCitaConNylas
+  // en vez de crearCitaConNylas -- el controlador nunca lo decide).
+  | { accion: "confirmacion_confirmar" }
+  // FASE 8 -- se eligió (número exacto) cuál de varias citas gestionar;
+  // según sesion.accionGestion, router.ts decide si consulta/pide confirmar
+  // cancelación/pide confirmar inicio de reprogramación (async, requiere los
+  // datos reales de servicio/profesional de esa cita).
+  | { accion: "cita_seleccionada_para_gestion"; citaId: number }
+  // FASE 8 -- "Sí, cancelar" fue elegido; ejecutar la cancelación real
+  // (async, Supabase + best-effort Nylas) vive en router.ts.
+  | { accion: "cancelacion_confirmada" }
+  // FASE 8 -- "Sí, reprogramar" fue elegido; calcular los días candidatos
+  // reales para el MISMO servicio/profesional de la cita (async, reutiliza
+  // la Fase 4 tal cual) vive en router.ts.
+  | { accion: "reprogramar_confirmado_inicio" };
 
 /**
  * Procesa UN mensaje ya sabido perteneciente a una sesión activa. Nunca
@@ -86,10 +111,22 @@ export function manejarMensajeAgendaV2(sesion: SesionAgendaV2, mensaje: string):
     return manejarConfirmacion(sesion, mensaje);
   }
 
-  // Defensivo -- S5_CONFIRMAR es el último step del CHECK constraint hoy;
-  // esta rama nunca debería alcanzarse en producción, pero se deja como red
-  // de seguridad (mismo criterio que el resto de Agenda V2: nunca inventar,
-  // nunca romper).
+  // FASE 8 -- gestión de citas existentes.
+  if (sesion.step === "SG_SELECCIONAR_CITA") {
+    return manejarSeleccionCitaGestion(sesion, mensaje);
+  }
+
+  if (sesion.step === "SG_CANCELAR_CONFIRMAR") {
+    return manejarConfirmacionCancelar(sesion, mensaje);
+  }
+
+  if (sesion.step === "SG_REPROGRAMAR_CONFIRMAR_INICIO") {
+    return manejarConfirmacionReprogramarInicio(sesion, mensaje);
+  }
+
+  // Defensivo -- red de seguridad exhaustiva (mismo criterio que el resto de
+  // Agenda V2: nunca inventar, nunca romper) para cualquier step futuro que
+  // todavía no tenga manejador propio.
   return { accion: "continuar", respuesta: RESPUESTA_PLACEHOLDER_AGENDA_V2 };
 }
 
@@ -250,4 +287,73 @@ function manejarConfirmacion(sesion: SesionAgendaV2, mensaje: string): Resultado
       // existente, solo cierra esta sesión de Agenda V2).
       return { accion: "cerrar_sesion", respuesta: RESPUESTA_CANCELACION };
   }
+}
+
+/**
+ * FASE 8 -- SG_SELECCIONAR_CITA. La clienta tenía varias citas activas; se
+ * resuelve cuál, contra las opciones REALES ya guardadas (ver
+ * lib/agenda-v2/gestion-citas.ts) -- mismo patrón EXACTO de todo Agenda V2:
+ * solo número exacto, nunca fuzzy.
+ */
+function manejarSeleccionCitaGestion(sesion: SesionAgendaV2, mensaje: string): ResultadoControladorAgendaV2 {
+  const opciones = (sesion.opcionesMostradas as OpcionCitaAgendaV2[] | null) ?? [];
+  if (opciones.length === 0) {
+    return { accion: "continuar", respuesta: RESPUESTA_MENU_PERDIDO };
+  }
+
+  const seleccion = resolverSeleccionCita(mensaje, opciones);
+  if (!seleccion) {
+    return { accion: "continuar", respuesta: textoSeleccionInvalidaCitas(opciones) };
+  }
+
+  // router.ts decide qué hacer con esta cita (consultar/pedir confirmación de
+  // cancelar/pedir confirmación de reprogramar) según sesion.accionGestion --
+  // exige datos reales async (servicio/profesional de ESA cita puntual).
+  return { accion: "cita_seleccionada_para_gestion", citaId: seleccion.citaId };
+}
+
+/**
+ * FASE 8 -- SG_CANCELAR_CONFIRMAR. Resolución estricta 1 (sí)/2 (no) contra
+ * el menú binario ya guardado -- nunca "sí"/"dale"/interpretación semántica.
+ */
+function manejarConfirmacionCancelar(sesion: SesionAgendaV2, mensaje: string): ResultadoControladorAgendaV2 {
+  const opciones = (sesion.opcionesMostradas as OpcionSiNoAgendaV2[] | null) ?? [];
+  if (opciones.length === 0) {
+    return { accion: "continuar", respuesta: RESPUESTA_MENU_PERDIDO };
+  }
+
+  const seleccion = resolverSeleccionSiNo(mensaje, opciones);
+  if (!seleccion) {
+    return { accion: "continuar", respuesta: textoSeleccionInvalidaSiNo() };
+  }
+
+  if (seleccion.accion === "no") {
+    // Nunca modifica ninguna cita existente -- solo cierra esta sesión de gestión.
+    return { accion: "cerrar_sesion", respuesta: MENSAJE_CANCELACION_ABANDONADA };
+  }
+  // "sí" -- ejecutar la cancelación real (async, Supabase + best-effort Nylas) vive en router.ts.
+  return { accion: "cancelacion_confirmada" };
+}
+
+/**
+ * FASE 8 -- SG_REPROGRAMAR_CONFIRMAR_INICIO. Mismo patrón EXACTO que
+ * manejarConfirmacionCancelar -- resolución estricta 1 (sí)/2 (no).
+ */
+function manejarConfirmacionReprogramarInicio(sesion: SesionAgendaV2, mensaje: string): ResultadoControladorAgendaV2 {
+  const opciones = (sesion.opcionesMostradas as OpcionSiNoAgendaV2[] | null) ?? [];
+  if (opciones.length === 0) {
+    return { accion: "continuar", respuesta: RESPUESTA_MENU_PERDIDO };
+  }
+
+  const seleccion = resolverSeleccionSiNo(mensaje, opciones);
+  if (!seleccion) {
+    return { accion: "continuar", respuesta: textoSeleccionInvalidaSiNo() };
+  }
+
+  if (seleccion.accion === "no") {
+    // Nunca modifica ninguna cita existente -- solo cierra esta sesión de gestión.
+    return { accion: "cerrar_sesion", respuesta: MENSAJE_REPROGRAMACION_ABANDONADA };
+  }
+  // "sí" -- calcular los días candidatos reales para el MISMO servicio/profesional (async) vive en router.ts.
+  return { accion: "reprogramar_confirmado_inicio" };
 }

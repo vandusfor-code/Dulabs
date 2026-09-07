@@ -8,6 +8,7 @@ import type { OpcionProfesionalAgendaV2 } from "@/lib/agenda-v2/profesionales";
 import type { OpcionFechaAgendaV2 } from "@/lib/agenda-v2/fechas";
 import type { OpcionHoraAgendaV2 } from "@/lib/agenda-v2/horas";
 import { OPCIONES_CONFIRMACION } from "@/lib/agenda-v2/confirmacion";
+import { construirOpcionesCita, OPCIONES_SI_NO, type CitaParaMenu } from "@/lib/agenda-v2/gestion-citas";
 
 const OPCIONES: OpcionServicioAgendaV2[] = [
   { numero: 1, servicioId: "s-dipping-real", nombre: "Dipping", precio: 60000, duracionMin: 120 },
@@ -49,6 +50,8 @@ function sesionEnServicio(overrides: Partial<SesionAgendaV2> = {}): SesionAgenda
     slotSeleccionado: null,
     opcionesMostradas: OPCIONES,
     ultimoWamidProcesado: "wamid-anterior",
+    citaObjetivoId: null,
+    accionGestion: null,
     createdAt: "2026-09-07T00:00:00.000Z",
     updatedAt: "2026-09-07T00:00:00.000Z",
     ...overrides,
@@ -456,5 +459,126 @@ describe("FASE 6 (autorizado) -- manejarMensajeAgendaV2 en S5_CONFIRMAR", () => 
     if (r.accion !== "continuar") return;
     assert.equal(r.cambios, undefined);
     assert.match(r.respuesta, /Se perdió el menú/);
+  });
+});
+
+const CITAS_MENU: CitaParaMenu[] = [
+  { citaId: 101, servicioNombre: "Células Madres", profesionalNombre: "Jessica", fechaEtiqueta: "Martes 8 de septiembre", horaTexto: "4:00 p. m." },
+  { citaId: 102, servicioNombre: "Cejas con Cera", profesionalNombre: "Mary", fechaEtiqueta: "Jueves 10 de septiembre", horaTexto: "2:00 p. m." },
+];
+
+describe("FASE 8 (autorizado) -- manejarMensajeAgendaV2 en SG_SELECCIONAR_CITA", () => {
+  function sesionSeleccionandoCita(overrides: Partial<SesionAgendaV2> = {}): SesionAgendaV2 {
+    return sesionEnServicio({
+      step: "SG_SELECCIONAR_CITA",
+      servicioId: null,
+      profesionalId: null,
+      accionGestion: "cancelar",
+      opcionesMostradas: construirOpcionesCita(CITAS_MENU),
+      ...overrides,
+    });
+  }
+
+  it("número exacto devuelve accion:'cita_seleccionada_para_gestion' con el citaId real correspondiente", () => {
+    const r = manejarMensajeAgendaV2(sesionSeleccionandoCita(), "2");
+    assert.deepEqual(r, { accion: "cita_seleccionada_para_gestion", citaId: 102 });
+  });
+
+  it("otra posición también resuelve correctamente (nunca asume la posición 1)", () => {
+    const r = manejarMensajeAgendaV2(sesionSeleccionandoCita(), "1");
+    assert.deepEqual(r, { accion: "cita_seleccionada_para_gestion", citaId: 101 });
+  });
+
+  it("número fuera de rango o texto no numérico -- permanece en SG_SELECCIONAR_CITA, nunca fuzzy por servicio/profesional", () => {
+    for (const mensaje of ["3", "0", "Jessica", "la de células madres", "sí"]) {
+      const r = manejarMensajeAgendaV2(sesionSeleccionandoCita(), mensaje);
+      assert.equal(r.accion, "continuar", `"${mensaje}" nunca debía resolver una cita`);
+      if (r.accion !== "continuar") continue;
+      assert.equal(r.cambios, undefined);
+      assert.match(r.respuesta, /No reconocí esa opción/);
+    }
+  });
+
+  it("'cancelar' (comando global) cierra la sesión sin gestionar ninguna cita", () => {
+    const r = manejarMensajeAgendaV2(sesionSeleccionandoCita(), "cancelar");
+    assert.equal(r.accion, "cerrar_sesion");
+  });
+
+  it("defensivo: sin opciones guardadas -- nunca inventa, pide reiniciar", () => {
+    const r = manejarMensajeAgendaV2(sesionSeleccionandoCita({ opcionesMostradas: null }), "1");
+    assert.equal(r.accion, "continuar");
+    if (r.accion !== "continuar") return;
+    assert.match(r.respuesta, /Se perdió el menú/);
+  });
+});
+
+describe("FASE 8 (autorizado) -- manejarMensajeAgendaV2 en SG_CANCELAR_CONFIRMAR", () => {
+  function sesionCancelarConfirmar(overrides: Partial<SesionAgendaV2> = {}): SesionAgendaV2 {
+    return sesionEnServicio({
+      step: "SG_CANCELAR_CONFIRMAR",
+      servicioId: null,
+      profesionalId: null,
+      citaObjetivoId: 101,
+      opcionesMostradas: OPCIONES_SI_NO,
+      ...overrides,
+    });
+  }
+
+  it("Opción 1 (sí): devuelve accion:'cancelacion_confirmada' -- el controlador nunca cancela él mismo", () => {
+    const r = manejarMensajeAgendaV2(sesionCancelarConfirmar(), "1");
+    assert.deepEqual(r, { accion: "cancelacion_confirmada" });
+  });
+
+  it("Opción 2 (no): cierra la sesión, NUNCA modifica ninguna cita existente", () => {
+    const r = manejarMensajeAgendaV2(sesionCancelarConfirmar(), "2");
+    assert.equal(r.accion, "cerrar_sesion");
+  });
+
+  it("número inválido o texto libre ('sí'/'dale') -- permanece en SG_CANCELAR_CONFIRMAR, nunca se infiere", () => {
+    for (const mensaje of ["3", "0", "sí", "dale", "obvio que sí"]) {
+      const r = manejarMensajeAgendaV2(sesionCancelarConfirmar(), mensaje);
+      assert.equal(r.accion, "continuar", `"${mensaje}" nunca debía cancelar ni cerrar`);
+      if (r.accion !== "continuar") continue;
+      assert.match(r.respuesta, /No reconocí esa opción/);
+    }
+  });
+
+  it("defensivo: sin opciones guardadas -- nunca inventa, pide reiniciar", () => {
+    const r = manejarMensajeAgendaV2(sesionCancelarConfirmar({ opcionesMostradas: null }), "1");
+    assert.equal(r.accion, "continuar");
+    if (r.accion !== "continuar") return;
+    assert.match(r.respuesta, /Se perdió el menú/);
+  });
+});
+
+describe("FASE 8 (autorizado) -- manejarMensajeAgendaV2 en SG_REPROGRAMAR_CONFIRMAR_INICIO", () => {
+  function sesionReprogramarInicio(overrides: Partial<SesionAgendaV2> = {}): SesionAgendaV2 {
+    return sesionEnServicio({
+      step: "SG_REPROGRAMAR_CONFIRMAR_INICIO",
+      servicioId: null,
+      profesionalId: null,
+      citaObjetivoId: 102,
+      opcionesMostradas: OPCIONES_SI_NO,
+      ...overrides,
+    });
+  }
+
+  it("Opción 1 (sí): devuelve accion:'reprogramar_confirmado_inicio' -- el controlador nunca calcula disponibilidad él mismo", () => {
+    const r = manejarMensajeAgendaV2(sesionReprogramarInicio(), "1");
+    assert.deepEqual(r, { accion: "reprogramar_confirmado_inicio" });
+  });
+
+  it("Opción 2 (no): cierra la sesión, NUNCA modifica ninguna cita existente", () => {
+    const r = manejarMensajeAgendaV2(sesionReprogramarInicio(), "2");
+    assert.equal(r.accion, "cerrar_sesion");
+  });
+
+  it("número inválido o texto libre -- permanece en SG_REPROGRAMAR_CONFIRMAR_INICIO, nunca se infiere", () => {
+    for (const mensaje of ["3", "sí", "dale"]) {
+      const r = manejarMensajeAgendaV2(sesionReprogramarInicio(), mensaje);
+      assert.equal(r.accion, "continuar", `"${mensaje}" nunca debía avanzar`);
+      if (r.accion !== "continuar") continue;
+      assert.match(r.respuesta, /No reconocí esa opción/);
+    }
   });
 });

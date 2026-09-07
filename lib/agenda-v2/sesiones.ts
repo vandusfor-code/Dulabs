@@ -6,7 +6,21 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-export type PasoAgendaV2 = "S1_SERVICIO" | "S2_PROFESIONAL" | "S3_DIA" | "S4_HORA" | "S5_CONFIRMAR";
+export type PasoAgendaV2 =
+  | "S1_SERVICIO"
+  | "S2_PROFESIONAL"
+  | "S3_DIA"
+  | "S4_HORA"
+  | "S5_CONFIRMAR"
+  // FASE 8 -- gestión de citas existentes. S3_DIA/S4_HORA/S5_CONFIRMAR se
+  // REUTILIZAN tal cual para la porción "elegir nueva fecha/hora" de una
+  // reprogramación (ver cita_objetivo_id) -- nunca se duplican esos steps.
+  | "SG_SELECCIONAR_CITA"
+  | "SG_CANCELAR_CONFIRMAR"
+  | "SG_REPROGRAMAR_CONFIRMAR_INICIO";
+
+/** FASE 8 -- qué gestión se pidió, mientras se resuelve cuál cita (SG_SELECCIONAR_CITA). */
+export type AccionGestionAgendaV2 = "consultar" | "cancelar" | "reprogramar";
 
 export interface SesionAgendaV2 {
   id: number;
@@ -20,6 +34,10 @@ export interface SesionAgendaV2 {
   slotSeleccionado: unknown | null;
   opcionesMostradas: unknown | null;
   ultimoWamidProcesado: string | null;
+  /** FASE 8 -- la cita real (dulabs_citas_especialista) sobre la que se está consultando/cancelando/reprogramando. Nunca viene de un dato enviado por el cliente. */
+  citaObjetivoId: number | null;
+  /** FASE 8 -- qué gestión se pidió, mientras se espera que el cliente elija cuál de sus varias citas (SG_SELECCIONAR_CITA). */
+  accionGestion: AccionGestionAgendaV2 | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -36,6 +54,8 @@ interface FilaDb {
   slot_seleccionado: unknown | null;
   opciones_mostradas: unknown | null;
   ultimo_wamid_procesado: string | null;
+  cita_objetivo_id: number | null;
+  accion_gestion: AccionGestionAgendaV2 | null;
   created_at: string;
   updated_at: string;
 }
@@ -55,6 +75,8 @@ function mapearFila(fila: FilaDb): SesionAgendaV2 {
     slotSeleccionado: fila.slot_seleccionado,
     opcionesMostradas: fila.opciones_mostradas,
     ultimoWamidProcesado: fila.ultimo_wamid_procesado,
+    citaObjetivoId: fila.cita_objetivo_id,
+    accionGestion: fila.accion_gestion,
     createdAt: fila.created_at,
     updatedAt: fila.updated_at,
   };
@@ -89,7 +111,21 @@ export async function buscarSesionActivaAgendaV2(
  */
 export async function crearSesionAgendaV2(
   supabase: SupabaseClient,
-  params: { tenantId: string; telefonoCliente: string; wamid: string; opcionesMostradas?: unknown },
+  params: {
+    tenantId: string;
+    telefonoCliente: string;
+    wamid: string;
+    opcionesMostradas?: unknown;
+    // FASE 8 -- una sesión de gestión de citas nace directamente en un step
+    // SG_* (nunca en S1_SERVICIO, que es exclusivo de "agendar una cita
+    // nueva"), con la cita real y/o la acción pedida ya resueltas.
+    step?: PasoAgendaV2;
+    citaObjetivoId?: number | null;
+    accionGestion?: AccionGestionAgendaV2 | null;
+    servicioId?: string | null;
+    profesionalId?: number | null;
+    fechaIso?: string | null;
+  },
 ): Promise<SesionAgendaV2> {
   const { data, error } = await supabase
     .from(TABLA)
@@ -97,9 +133,14 @@ export async function crearSesionAgendaV2(
       tenant_id: params.tenantId,
       telefono_cliente: params.telefonoCliente,
       activo: true,
-      step: "S1_SERVICIO",
+      step: params.step ?? "S1_SERVICIO",
       ultimo_wamid_procesado: params.wamid,
       opciones_mostradas: params.opcionesMostradas ?? null,
+      cita_objetivo_id: params.citaObjetivoId ?? null,
+      accion_gestion: params.accionGestion ?? null,
+      servicio_id: params.servicioId ?? null,
+      profesional_id: params.profesionalId ?? null,
+      fecha_iso: params.fechaIso ?? null,
     })
     .select("*")
     .single();
@@ -116,6 +157,8 @@ export interface CambiosSesionAgendaV2 {
   slotSeleccionado?: unknown;
   opcionesMostradas?: unknown;
   ultimoWamidProcesado?: string;
+  citaObjetivoId?: number | null;
+  accionGestion?: AccionGestionAgendaV2 | null;
 }
 
 export async function actualizarSesionAgendaV2(
@@ -131,6 +174,8 @@ export async function actualizarSesionAgendaV2(
   if (cambios.slotSeleccionado !== undefined) payload.slot_seleccionado = cambios.slotSeleccionado;
   if (cambios.opcionesMostradas !== undefined) payload.opciones_mostradas = cambios.opcionesMostradas;
   if (cambios.ultimoWamidProcesado !== undefined) payload.ultimo_wamid_procesado = cambios.ultimoWamidProcesado;
+  if (cambios.citaObjetivoId !== undefined) payload.cita_objetivo_id = cambios.citaObjetivoId;
+  if (cambios.accionGestion !== undefined) payload.accion_gestion = cambios.accionGestion;
 
   const { error } = await supabase.from(TABLA).update(payload).eq("id", sesionId);
   if (error) throw error;
