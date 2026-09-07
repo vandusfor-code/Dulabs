@@ -34,35 +34,12 @@ ninguna migración pendiente).
 
 ---
 
-## `20260918000000_agenda_v2_gestion_citas.sql` — PENDIENTE
-
-Agenda V2, Fase 8 (gestión de citas existentes: consultar/cancelar/reprogramar
-desde WhatsApp). Agrega:
-- 3 valores nuevos al CHECK de `dulabs_agenda_v2_sesiones.step`
-  (`SG_SELECCIONAR_CITA`, `SG_CANCELAR_CONFIRMAR`, `SG_REPROGRAMAR_CONFIRMAR_INICIO`).
-- 2 columnas nuevas a esa misma tabla (`cita_objetivo_id`, `accion_gestion`).
-- Tabla nueva `dulabs_agenda_v2_citas_nylas` (mapeo cita → evento real de
-  Nylas, necesario para que cancelar/reprogramar puedan tocar el evento de
-  calendario correcto).
-
-**Cómo aplicarla:**
-1. Entra a tu proyecto en [supabase.com](https://supabase.com/dashboard) → **SQL Editor**.
-2. Pega el contenido de `supabase/migrations/20260918000000_agenda_v2_gestion_citas.sql`.
-3. Ejecuta (**Run**).
-
-**Es seguro desplegar el código antes de correr esto**, con una salvedad: hasta
-que se aplique, un cliente que escriba "cancelar mi cita"/"reprogramar mi
-cita"/"consultar mi cita" hará que Agenda V2 intente guardar una sesión con un
-`step`/columna que la base de datos todavía no acepta -- el router captura ese
-error y responde con el mensaje normal de "problema técnico" sin romper el
-resto del bot (mismo comportamiento defensivo que ya protege el resto de
-Agenda V2 ante una migración no aplicada), pero la funcionalidad de Fase 8 no
-queda operativa hasta correr esta migración. Las Fases 1-7 (agendar una cita
-nueva) no se ven afectadas.
-
-Después de aplicarla, borra esta sección.
-
----
+> Verificado el 07-sep-2026 consultando la base real: la migración
+> `20260918000000_agenda_v2_gestion_citas.sql` (Agenda V2, Fase 8 — gestión de
+> citas existentes) ya está aplicada. `dulabs_agenda_v2_citas_nylas` existe,
+> `cita_objetivo_id`/`accion_gestion` existen en `dulabs_agenda_v2_sesiones`,
+> y el CHECK de `step` ya acepta los 3 valores nuevos de Fase 8. La sección
+> que la daba por pendiente se eliminó.
 
 ## Variables de entorno que también son paso manual
 
