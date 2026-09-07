@@ -69,6 +69,42 @@ export function textoSeleccionInvalidaConfirmacion(): string {
 }
 
 /**
+ * FASE 7 (autorizado) -- datos de la cita YA creada de verdad (devueltos por
+ * crearCitaConNylas + el precio real del catálogo, ver router.ts). Mismo
+ * criterio que ResumenCitaAgendaV2: EXCLUSIVAMENTE datos reales recibidos,
+ * nunca inventados ni hardcodeados.
+ */
+export interface ResumenCitaConfirmada {
+  servicioNombre: string;
+  profesionalNombre: string;
+  /** Ya formateada, ej. "Miércoles 9 de septiembre" (ver formatearFechaLarga en fechas.ts). */
+  fechaEtiqueta: string;
+  /** Ya formateada, ej. "3:00 p. m." (ver formatearHoraAmPm en especialistas-flow-adaptador.ts). */
+  horaTexto: string;
+  valor: number;
+}
+
+/** Mensaje de éxito real (la cita YA quedó persistida) -- EXCLUSIVAMENTE con los datos recibidos. */
+export function renderizarConfirmacionExitosa(resumen: ResumenCitaConfirmada): string {
+  return (
+    `¡Listo! 💗 Tu cita quedó agendada.\n\n` +
+    `Servicio: ${resumen.servicioNombre}\n` +
+    `Profesional: ${resumen.profesionalNombre}\n` +
+    `Fecha: ${resumen.fechaEtiqueta}\n` +
+    `Hora: ${resumen.horaTexto}\n` +
+    `Valor: ${formatearPrecioCop(resumen.valor)}\n\n` +
+    `Te esperamos.`
+  );
+}
+
+/** FASE 7 -- la revalidación inmediatamente antes de crear encontró el horario ya ocupado. Nunca se crea nada. */
+export const MENSAJE_HORARIO_RECIEN_OCUPADO = "Lo siento 💗 Ese horario acaba de ser ocupado.\n\nPor favor selecciona otro horario disponible.";
+
+/** FASE 7 -- cualquier error técnico/de configuración al intentar crear la reserva real. Nunca se marca éxito ni se cierra la sesión. */
+export const MENSAJE_ERROR_TECNICO_CONFIRMACION =
+  "Ups 😔 Tuvimos un problema técnico confirmando tu cita. Por favor intenta de nuevo respondiendo 1, o escribe *cancelar* si prefieres salir.";
+
+/**
  * Resuelve la respuesta del cliente CONTRA las opciones guardadas -- mismo
  * criterio EXACTO que el resto de Agenda V2: nunca fuzzy matching, nunca
  * parseInt libre, nunca interpretación semántica ("sí", "dale", "confirmo").

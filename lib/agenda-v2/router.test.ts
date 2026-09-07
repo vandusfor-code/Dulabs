@@ -32,6 +32,8 @@ import { construirOpcionesProfesional } from "@/lib/agenda-v2/profesionales";
 import { construirOpcionesFecha } from "@/lib/agenda-v2/fechas";
 import { construirOpcionesHora } from "@/lib/agenda-v2/horas";
 import { OPCIONES_CONFIRMACION } from "@/lib/agenda-v2/confirmacion";
+import type { ResultadoCrearCitaNylas, DepsCrearCitaNylas } from "@/lib/reserva-servicio-nylas";
+import type { CitaEspecialista } from "@/lib/especialistas";
 
 const FAKE_SUPABASE = {} as SupabaseClient;
 
@@ -1191,13 +1193,104 @@ describe("FASE 5 (autorizado) -- selección de hora vía router real", () => {
 });
 
 /**
- * FASE 6 (autorizado) -- S5_CONFIRMAR. IMPORTANTE: este describe (y todo
- * router.test.ts) NUNCA importa ni mockea crearCitaConNylas ni
- * createNylasEventsWriteClient -- router.ts tampoco los importa (verificado
- * antes de escribir esta fase). Es decir, no existe NINGÚN camino de código
- * en Agenda V2 hoy capaz de crear una cita real ni un evento real de Nylas;
- * ninguna prueba de este archivo puede, ni por accidente, disparar una
- * reserva real (Test obligatorio 10 del pedido).
+ * FASE 7 (autorizado) -- fixtures de creación REAL de la reserva. Nunca
+ * tocan Supabase/Nylas reales: `crearFakeCrearCitaConNylas` reemplaza por
+ * completo la función real (mismo criterio que el resto de fixtures de este
+ * archivo), y los resolvers de grant/apiKey/clientes de Nylas también se
+ * inyectan falsos -- así ningún test de esta sección depende de variables de
+ * entorno reales ni golpea la red.
+ */
+const CITA_FAKE_BASE: CitaEspecialista = {
+  id: 9001,
+  especialista_id: 1262,
+  telefono_cliente: "573148127388",
+  nombre_cliente: "Ana Pérez",
+  servicio: "Dipping",
+  servicio_id: "s-dipping-real",
+  inicio: "2026-09-08T14:00:00.000Z", // 09:00 Colombia (-05:00)
+  fin: "2026-09-08T16:00:00.000Z",
+  estado: "confirmada",
+  motivo_rechazo: null,
+  origen: "manual",
+};
+
+const RESULTADO_EXITO_DIPPING_MARY: ResultadoCrearCitaNylas = {
+  ok: true,
+  cita: CITA_FAKE_BASE,
+  nylasEventId: "evt-fake-1",
+  especialista: { id: 1262, nombre: "Mary" },
+  servicio: { id: "s-dipping-real", nombre: "Dipping", duracionMin: 120 },
+};
+
+const RESULTADO_OCUPADO: ResultadoCrearCitaNylas = {
+  ok: false,
+  motivo: "ocupado",
+  detalle: "Ese horario ya fue tomado en Google Calendar.",
+};
+
+/** Mismo motivo ("ocupado") que arriba, pero con el detalle EXACTO que crearCitaConNylas real usa cuando el EXCLUDE de Postgres detecta una carrera real -- ver reserva-servicio-nylas.ts. */
+const RESULTADO_OCUPADO_POR_CARRERA: ResultadoCrearCitaNylas = {
+  ok: false,
+  motivo: "ocupado",
+  detalle: "Ese horario ya fue tomado (protección final de PostgreSQL).",
+};
+
+const RESULTADO_ERROR_DB: ResultadoCrearCitaNylas = {
+  ok: false,
+  motivo: "error_de_base_de_datos",
+  detalle: "Error simulado de base de datos.",
+};
+
+type ParamsCrearCitaFixture = {
+  idTenant: string;
+  servicioId: string;
+  especialistaId: number;
+  inicio: Date;
+  nombreCliente: string;
+  telefonoCliente: string | null;
+  idempotencyKey: string;
+};
+
+/** Reemplaza POR COMPLETO crearCitaConNylas -- nunca toca Supabase/Nylas reales. Registra cada llamada para poder probar cuántas veces (y con qué datos) se intentó crear. */
+function crearFakeCrearCitaConNylas(resultado: ResultadoCrearCitaNylas | ((p: ParamsCrearCitaFixture) => ResultadoCrearCitaNylas)) {
+  const llamadas: Array<{ params: ParamsCrearCitaFixture; deps: DepsCrearCitaNylas }> = [];
+  const crearCitaConNylas = async (_s: unknown, params: ParamsCrearCitaFixture, deps: DepsCrearCitaNylas): Promise<ResultadoCrearCitaNylas> => {
+    llamadas.push({ params, deps });
+    return typeof resultado === "function" ? resultado(params) : resultado;
+  };
+  return { llamadas, crearCitaConNylas };
+}
+
+/** Fake lanzador -- prueba que, en los casos defensivos, crearCitaConNylas JAMÁS se invoca. */
+async function crearCitaConNylasNuncaDebeLlamarse(): Promise<ResultadoCrearCitaNylas> {
+  throw new Error("crearCitaConNylas NO debía llamarse -- la sesión estaba incompleta/inconsistente");
+}
+
+function crearFakeBuscarNombreConocido(nombre: string | null) {
+  return async (): Promise<string | null> => nombre;
+}
+
+/** Deps de Nylas FALSOS de conexión -- grant/apiKey/clientes siempre "disponibles" (nunca red real; crearCitaConNylas también está siempre fakeado en estos tests). */
+const NYLAS_DEPS_FAKE_OVERRIDES: Partial<AgendaV2RouterDeps> = {
+  resolverNylasGrantIdParaTenant: () => "grant-fake",
+  resolveNylasApiKeyFromEnv: () => "api-key-fake",
+  createNylasEventsClient: () => ({ listEvents: async () => [] }),
+  createNylasEventsWriteClient: () => ({ createEvent: async () => ({ id: "evt-fake" }), deleteEvent: async () => {} }),
+  buscarNombreConocido: crearFakeBuscarNombreConocido("Ana Pérez"),
+};
+
+/**
+ * FASE 6 (autorizado) -- S5_CONFIRMAR: resumen + menú de control
+ * (confirmar/cambiar fecha/cambiar hora/cancelar). Desde la FASE 7, "1"
+ * (confirmar) sí intenta crear la reserva real -- por eso, a partir de acá,
+ * CUALQUIER test de este archivo que envíe "1" estando en S5_CONFIRMAR debe
+ * inyectar un `crearCitaConNylas` FALSO (ver crearFakeCrearCitaConNylas más
+ * abajo, sección FASE 7): armarDeps() por sí solo NUNCA inyecta la función
+ * real, así que un test que la omita simplemente usaría la real -- por eso
+ * los Tests 3 y 8 de este describe ya la inyectan explícitamente. Ninguna
+ * prueba de este archivo puede, ni por accidente, disparar una reserva real
+ * ni un evento real de Nylas (Test obligatorio del pedido de la FASE 7:
+ * "usar mocks/stubs para la creación de la reserva en las pruebas").
  */
 describe("FASE 6 (autorizado) -- confirmación de la cita vía router real (S5_CONFIRMAR)", () => {
   async function llegarAMenuFechaMary(deps: AgendaV2RouterDeps, telefono = "573148127388") {
@@ -1239,20 +1332,18 @@ describe("FASE 6 (autorizado) -- confirmación de la cita vía router real (S5_C
     assert.match(resumen, /4\. Cancelar/);
   });
 
-  it("Test 3 -- Opción 1 (confirmar): responde el mensaje pedido, NUNCA crea la cita, NUNCA cambia servicio/profesional/fecha/hora", async () => {
-    const { deps, sesiones, envios } = armarDeps();
+  it("Test 3 -- Opción 1 (confirmar): FASE 7 -- crea la reserva real (fakeada) y cierra la sesión", async () => {
+    const fake = crearFakeCrearCitaConNylas(RESULTADO_EXITO_DIPPING_MARY);
+    const { deps, sesiones, envios } = armarDeps({ ...NYLAS_DEPS_FAKE_OVERRIDES, crearCitaConNylas: fake.crearCitaConNylas });
     await llegarAConfirmacion(deps);
     const r = await procesarMensajeConAgendaV2(
       { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "w7" },
       deps,
     );
     assert.equal(r.manejado, true);
-    assert.match(envios.enviados.at(-1)!.mensaje, /lista para confirmar/i);
-    assert.match(envios.enviados.at(-1)!.mensaje, /todavía no se ha reservado/i);
-    assert.equal(sesiones.filas[0]!.step, "S5_CONFIRMAR", "sin Fase 7 todavía, se queda en S5_CONFIRMAR");
-    assert.equal(sesiones.filas[0]!.servicioId, "s-dipping-real");
-    assert.equal(sesiones.filas[0]!.profesionalId, 1262);
-    assert.deepEqual(sesiones.filas[0]!.slotSeleccionado, { fechaIso: "2026-09-08", hora: "09:00" }, "nunca se toca el slot elegido");
+    assert.equal(fake.llamadas.length, 1, "crearCitaConNylas se invoca exactamente una vez");
+    assert.match(envios.enviados.at(-1)!.mensaje, /¡Listo! 💗 Tu cita quedó agendada/);
+    assert.equal(sesiones.filas[0]!.activo, false, "la sesión se cierra tras el éxito real (Fase 7)");
   });
 
   it("Test 4 -- Opción 2 (cambiar fecha): vuelve a S3_DIA con los días REALES recalculados, manteniendo servicio y profesional", async () => {
@@ -1313,8 +1404,9 @@ describe("FASE 6 (autorizado) -- confirmación de la cita vía router real (S5_C
     assert.match(envios.enviados.at(-1)!.mensaje, /No reconocí esa opción/);
   });
 
-  it("Test 8: mensaje duplicado (mismo wamid) -- nunca reprocesa, nunca reenvía dos veces", async () => {
-    const { deps, envios } = armarDeps();
+  it("Test 8: mensaje duplicado (mismo wamid) -- nunca reprocesa, nunca reenvía dos veces, nunca crea la reserva dos veces", async () => {
+    const fake = crearFakeCrearCitaConNylas(RESULTADO_EXITO_DIPPING_MARY);
+    const { deps, envios } = armarDeps({ ...NYLAS_DEPS_FAKE_OVERRIDES, crearCitaConNylas: fake.crearCitaConNylas });
     await llegarAConfirmacion(deps);
     const totalAntes = envios.enviados.length;
     await procesarMensajeConAgendaV2(
@@ -1322,13 +1414,21 @@ describe("FASE 6 (autorizado) -- confirmación de la cita vía router real (S5_C
       deps,
     );
     assert.equal(envios.enviados.length, totalAntes + 1);
+    assert.equal(fake.llamadas.length, 1);
 
+    // La sesión ya se cerró tras el éxito real (Fase 7) -- un reintento del
+    // MISMO wamid ya no encuentra ninguna sesión activa contra la cual
+    // reprocesar (buscarSesionActiva solo busca activo:true), así que cae a
+    // "sin sesión" (manejado:false) en vez de reprocesar. Lo que realmente
+    // importa -- y lo que este test prueba -- es que crearCitaConNylas
+    // JAMÁS se invoca una segunda vez ni se reenvía un segundo mensaje.
     const r = await procesarMensajeConAgendaV2(
       { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "w7" }, // mismo wamid exacto
       deps,
     );
-    assert.equal(r.manejado, true);
+    assert.equal(r.manejado, false, "la sesión ya se cerró tras confirmar -- ya no hay nada que reprocesar");
     assert.equal(envios.enviados.length, totalAntes + 1, "el wamid w7 ya se procesó -- nunca se reenvía una vez más");
+    assert.equal(fake.llamadas.length, 1, "el wamid w7 ya se procesó -- crearCitaConNylas NUNCA se vuelve a invocar");
   });
 
   it("Test 9: sesión inconsistente (S5_CONFIRMAR sin servicioId/profesionalId) -- nunca rompe, se reinicia a categorías reales", async () => {
@@ -1403,5 +1503,258 @@ describe("FASE 6 (autorizado) -- confirmación de la cita vía router real (S5_C
     await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "w6" }, deps);
     assert.match(envios.enviados.at(-1)!.mensaje, /Estos son los datos de tu cita/);
     assert.equal(sesiones.filas[0]!.step, "S5_CONFIRMAR");
+  });
+});
+
+/**
+ * FASE 7 (autorizado) -- creación REAL de la reserva al elegir "1" en
+ * S5_CONFIRMAR. Reutiliza crearCitaConNylas TAL CUAL (sin ningún cambio,
+ * ver lib/reserva-servicio-nylas.ts) -- por eso este archivo SIEMPRE la
+ * reemplaza con crearFakeCrearCitaConNylas: ninguna prueba de esta sección
+ * puede, ni por accidente, crear una cita real ni un evento real de Nylas.
+ */
+describe("FASE 7 (autorizado) -- confirmar la cita crea la reserva REAL (S5_CONFIRMAR, opción 1)", () => {
+  async function llegarAConfirmacion(deps: AgendaV2RouterDeps, telefono = "573148127388") {
+    await llegarAMenuProfesionalDipping(deps, telefono);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono, texto: "1", wamid: "w4" }, deps); // Mary
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono, texto: "1", wamid: "w5" }, deps); // 2026-09-08
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono, texto: "1", wamid: "w6" }, deps); // 09:00
+  }
+
+  it("Test 1/7 -- confirmación válida: crea la reserva (fakeada) con los datos REALES de la sesión y cierra la sesión", async () => {
+    const fake = crearFakeCrearCitaConNylas(RESULTADO_EXITO_DIPPING_MARY);
+    const { deps, sesiones, envios } = armarDeps({ ...NYLAS_DEPS_FAKE_OVERRIDES, crearCitaConNylas: fake.crearCitaConNylas });
+    await llegarAConfirmacion(deps);
+    const r = await procesarMensajeConAgendaV2(
+      { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "w7" },
+      deps,
+    );
+    assert.equal(r.manejado, true);
+    assert.equal(fake.llamadas.length, 1);
+    const llamada = fake.llamadas[0]!;
+    assert.equal(llamada.params.idTenant, "amore-test");
+    assert.equal(llamada.params.servicioId, "s-dipping-real");
+    assert.equal(llamada.params.especialistaId, 1262);
+    assert.equal(llamada.params.telefonoCliente, "573148127388");
+    assert.equal(llamada.params.nombreCliente, "Ana Pérez", "usa el nombre ya conocido de esta clienta (nunca pide uno nuevo)");
+    assert.equal(llamada.params.inicio.toISOString(), new Date("2026-09-08T09:00:00-05:00").toISOString());
+    assert.equal(typeof llamada.params.idempotencyKey, "string");
+    assert.ok(llamada.params.idempotencyKey.length > 0);
+
+    assert.equal(sesiones.filas[0]!.activo, false, "la sesión se cierra SOLO tras confirmar el éxito real");
+    const mensaje = envios.enviados.at(-1)!.mensaje;
+    assert.match(mensaje, /¡Listo! 💗 Tu cita quedó agendada/);
+    assert.match(mensaje, /Servicio: Dipping/);
+    assert.match(mensaje, /Profesional: Mary/);
+    assert.match(mensaje, /Fecha: Martes 8 de septiembre/);
+    assert.match(mensaje, /Hora: 9:00 a\. m\./);
+    assert.match(mensaje, /Valor: \$60\.000/);
+  });
+
+  it("Test 2 -- sesión incompleta (sin profesionalId) al confirmar: NUNCA invoca crearCitaConNylas, se reinicia de forma segura", async () => {
+    const { deps, sesiones, envios } = armarDeps({ crearCitaConNylas: crearCitaConNylasNuncaDebeLlamarse });
+    await sesiones.crearSesion(FAKE_SUPABASE, {
+      tenantId: "amore-test",
+      telefonoCliente: "573148127388",
+      wamid: "w0",
+      opcionesMostradas: OPCIONES_CONFIRMACION,
+    });
+    // Estado inconsistente a propósito: S5_CONFIRMAR con servicioId pero SIN profesionalId/fechaIso/slotSeleccionado.
+    await sesiones.actualizarSesion(FAKE_SUPABASE, sesiones.filas[0]!.id, { step: "S5_CONFIRMAR", servicioId: "s-dipping-real" });
+
+    const r = await procesarMensajeConAgendaV2(
+      { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "w1" },
+      deps,
+    );
+    assert.equal(r.manejado, true, "nunca rompe ni lanza una excepción sin capturar (crearCitaConNylasNuncaDebeLlamarse habría lanzado si se hubiera llamado)");
+    assert.equal(sesiones.filas[0]!.step, "S1_SERVICIO", "se reinicia a categorías reales, nunca queda en un estado roto");
+    assert.match(envios.enviados[0]!.mensaje, /Ocurrió un problema con tu selección/);
+  });
+
+  it("Test 3 -- revalidación: el horario ya no está disponible ('ocupado') -- NUNCA crea nada, informa y vuelve a S4_HORA manteniendo servicio/profesional/fecha", async () => {
+    const fake = crearFakeCrearCitaConNylas(RESULTADO_OCUPADO);
+    const { deps, sesiones, envios } = armarDeps({ ...NYLAS_DEPS_FAKE_OVERRIDES, crearCitaConNylas: fake.crearCitaConNylas });
+    await llegarAConfirmacion(deps);
+    const r = await procesarMensajeConAgendaV2(
+      { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "w7" },
+      deps,
+    );
+    assert.equal(r.manejado, true);
+    assert.equal(fake.llamadas.length, 1);
+    assert.equal(sesiones.filas[0]!.activo, true, "la sesión NUNCA se cierra si no se creó la cita");
+    assert.equal(sesiones.filas[0]!.step, "S4_HORA", "vuelve a horas -- reutiliza la Fase 5 tal cual");
+    assert.equal(sesiones.filas[0]!.servicioId, "s-dipping-real", "nunca pierde el servicio");
+    assert.equal(sesiones.filas[0]!.profesionalId, 1262, "nunca pierde el profesional");
+    assert.equal(sesiones.filas[0]!.fechaIso, "2026-09-08", "nunca pierde la fecha");
+    const mensaje = envios.enviados.at(-1)!.mensaje;
+    assert.match(mensaje, /Lo siento 💗 Ese horario acaba de ser ocupado\./);
+    assert.match(mensaje, /Estos son los horarios disponibles/, "muestra de nuevo los horarios reales de esa misma fecha");
+  });
+
+  it("Test 4/8 -- error de negocio al crear (config/DB): NUNCA marca éxito, conserva la sesión en S5_CONFIRMAR para poder reintentar", async () => {
+    const fake = crearFakeCrearCitaConNylas(RESULTADO_ERROR_DB);
+    const { deps, sesiones, envios } = armarDeps({ ...NYLAS_DEPS_FAKE_OVERRIDES, crearCitaConNylas: fake.crearCitaConNylas });
+    await llegarAConfirmacion(deps);
+    const r = await procesarMensajeConAgendaV2(
+      { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "w7" },
+      deps,
+    );
+    assert.equal(r.manejado, true);
+    assert.equal(sesiones.filas[0]!.activo, true, "nunca se cierra en un fallo");
+    assert.equal(sesiones.filas[0]!.step, "S5_CONFIRMAR", "se mantiene para poder reintentar sin perder nada");
+    const mensaje = envios.enviados.at(-1)!.mensaje;
+    assert.doesNotMatch(mensaje, /¡Listo!/, "nunca dice que la cita quedó agendada si no fue así");
+    assert.match(mensaje, /problema técnico/i);
+  });
+
+  it("Test 4b -- crearCitaConNylas lanza una excepción real (ej. red/Nylas caído): se captura, NUNCA se marca éxito, se conserva la sesión", async () => {
+    const crearCitaConNylasQueLanza = async (): Promise<ResultadoCrearCitaNylas> => {
+      throw new Error("network error simulado");
+    };
+    const { deps, sesiones, envios } = armarDeps({ ...NYLAS_DEPS_FAKE_OVERRIDES, crearCitaConNylas: crearCitaConNylasQueLanza });
+    await llegarAConfirmacion(deps);
+    const r = await procesarMensajeConAgendaV2(
+      { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "w7" },
+      deps,
+    );
+    assert.equal(r.manejado, true, "la excepción se captura -- nunca tumba el canal completo");
+    assert.equal(sesiones.filas[0]!.activo, true);
+    assert.equal(sesiones.filas[0]!.step, "S5_CONFIRMAR");
+    assert.match(envios.enviados.at(-1)!.mensaje, /problema técnico/i);
+  });
+
+  it("Test 5/12 -- mismo wamid duplicado al confirmar: crearCitaConNylas se invoca EXACTAMENTE una vez, nunca una segunda reserva", async () => {
+    const fake = crearFakeCrearCitaConNylas(RESULTADO_EXITO_DIPPING_MARY);
+    const { deps, envios } = armarDeps({ ...NYLAS_DEPS_FAKE_OVERRIDES, crearCitaConNylas: fake.crearCitaConNylas });
+    await llegarAConfirmacion(deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "w7" }, deps);
+    const totalEnviosTrasPrimeraVez = envios.enviados.length;
+    assert.equal(fake.llamadas.length, 1);
+
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "w7" }, deps); // mismo wamid exacto
+    assert.equal(fake.llamadas.length, 1, "el wamid ya se procesó -- crearCitaConNylas NUNCA se invoca una segunda vez");
+    assert.equal(envios.enviados.length, totalEnviosTrasPrimeraVez, "tampoco se reenvía un segundo mensaje de éxito");
+  });
+
+  it("Test 6 -- condición de carrera real (EXCLUDE de Postgres detecta doble reserva): NUNCA se crea un duplicado, se informa y vuelve a horarios", async () => {
+    const fake = crearFakeCrearCitaConNylas(RESULTADO_OCUPADO_POR_CARRERA);
+    const { deps, sesiones, envios } = armarDeps({ ...NYLAS_DEPS_FAKE_OVERRIDES, crearCitaConNylas: fake.crearCitaConNylas });
+    await llegarAConfirmacion(deps);
+    const r = await procesarMensajeConAgendaV2(
+      { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "w7" },
+      deps,
+    );
+    assert.equal(r.manejado, true);
+    assert.equal(fake.llamadas.length, 1, "un solo intento real -- la protección final la da la base de datos, nunca un reintento automático de este router");
+    assert.equal(sesiones.filas[0]!.activo, true);
+    assert.equal(sesiones.filas[0]!.step, "S4_HORA");
+    assert.doesNotMatch(envios.enviados.at(-1)!.mensaje, /¡Listo!/, "la base de datos rechazó la creación -- nunca se informa éxito");
+  });
+
+  it("Test 9 -- el mensaje de éxito usa datos DINÁMICOS: con otro servicio/profesional/fecha/hora reales, el mensaje cambia en consecuencia (nunca queda fijo)", async () => {
+    const resultadoPressOnNata: ResultadoCrearCitaNylas = {
+      ok: true,
+      cita: { ...CITA_FAKE_BASE, id: 9002, especialista_id: 1264, servicio: "Press On", servicio_id: "s-presson-real", inicio: "2026-09-09T16:00:00.000Z", fin: "2026-09-09T18:00:00.000Z" },
+      nylasEventId: "evt-fake-2",
+      especialista: { id: 1264, nombre: "Nata" },
+      servicio: { id: "s-presson-real", nombre: "Press On", duracionMin: 120 },
+    };
+    const fake = crearFakeCrearCitaConNylas(resultadoPressOnNata);
+    const { deps, envios } = armarDeps({ ...NYLAS_DEPS_FAKE_OVERRIDES, crearCitaConNylas: fake.crearCitaConNylas });
+    const telefono = "573148127388";
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono, texto: "quiero una cita", wamid: "w1" }, deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono, texto: NUMERO_CATEGORIA_UNAS, wamid: "w2" }, deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono, texto: "2", wamid: "w3" }, deps); // Press On
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono, texto: "3", wamid: "w4" }, deps); // Nata
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono, texto: "2", wamid: "w5" }, deps); // 2026-09-09
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono, texto: "1", wamid: "w6" }, deps); // 11:00
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono, texto: "1", wamid: "w7" }, deps); // confirmar
+
+    const mensaje = envios.enviados.at(-1)!.mensaje;
+    assert.match(mensaje, /Servicio: Press On/);
+    assert.match(mensaje, /Profesional: Nata/);
+    assert.match(mensaje, /Fecha: Miércoles 9 de septiembre/);
+    assert.match(mensaje, /Hora: 11:00 a\. m\./);
+    assert.match(mensaje, /Valor: \$80\.000/);
+    assert.doesNotMatch(mensaje, /Dipping|Mary/, "nunca mezcla datos de otra reserva/servicio");
+  });
+
+  it("Test 10 -- no afecta otros tenants: confirmar en un tenant nunca crea ni toca la reserva/sesión de otro tenant", async () => {
+    const fake = crearFakeCrearCitaConNylas(RESULTADO_EXITO_DIPPING_MARY);
+    const { deps, sesiones, envios } = armarDeps({ ...NYLAS_DEPS_FAKE_OVERRIDES, crearCitaConNylas: fake.crearCitaConNylas });
+    const telefono = "573148127388";
+
+    // Tenant A hasta S5_CONFIRMAR.
+    await llegarAConfirmacion(deps, telefono);
+    // Tenant B (MISMO teléfono real, tenant distinto) también hasta S5_CONFIRMAR -- aislamiento real por (tenant, teléfono).
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "otro-tenant-test", telefono, texto: "quiero una cita", wamid: "b1" }, deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "otro-tenant-test", telefono, texto: NUMERO_CATEGORIA_UNAS, wamid: "b2" }, deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "otro-tenant-test", telefono, texto: "1", wamid: "b3" }, deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "otro-tenant-test", telefono, texto: "1", wamid: "b4" }, deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "otro-tenant-test", telefono, texto: "1", wamid: "b5" }, deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "otro-tenant-test", telefono, texto: "1", wamid: "b6" }, deps);
+
+    const filaB = sesiones.filas.find((f) => f.tenantId === "otro-tenant-test")!;
+    assert.equal(filaB.step, "S5_CONFIRMAR");
+    const enviosATrasLlegar = envios.enviados.length;
+
+    // Solo el tenant A confirma.
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono, texto: "1", wamid: "w7" }, deps);
+
+    assert.equal(fake.llamadas.length, 1, "crearCitaConNylas se invoca UNA sola vez, nunca para el otro tenant");
+    assert.equal(fake.llamadas[0]!.params.idTenant, "amore-test");
+    const filaA = sesiones.filas.find((f) => f.tenantId === "amore-test")!;
+    assert.equal(filaA.activo, false, "A se cierra tras confirmar");
+    const filaBDespues = sesiones.filas.find((f) => f.tenantId === "otro-tenant-test")!;
+    assert.equal(filaBDespues.activo, true, "B NUNCA se toca por una confirmación de A");
+    assert.equal(filaBDespues.step, "S5_CONFIRMAR", "B sigue exactamente donde estaba");
+    assert.ok(envios.enviados.length > enviosATrasLlegar, "solo se envió el mensaje de éxito de A, nada nuevo para B");
+  });
+
+  it("TEST DE SEGURIDAD -- la cita R-2CX / ID 3057 NUNCA es referenciada, modificada, actualizada ni usada como objetivo de ninguna operación de esta fase", async () => {
+    // Estructural, no solo por este test puntual: crearCitaConNylas (lib/reserva-servicio-nylas.ts,
+    // SIN NINGÚN CAMBIO en esta fase) únicamente INSERTA una fila nueva vía
+    // crearCitaEspecialista -- nunca recibe ni acepta el id de una cita
+    // existente, y jamás actualiza/borra una cita por id (salvo, en el único
+    // camino de rollback, el evento de NYLAS que ÉL MISMO acaba de crear en
+    // esa misma llamada -- nunca uno preexistente). router.ts (Fase 7) no
+    // importa ninguna función de "actualizar/eliminar cita por id" -- el
+    // único import de creación es crearCitaConNylas. Por lo tanto ninguna
+    // cita existente (incluida R-2CX/3057) puede ser alcanzada por este
+    // código, con o sin fake. Este test verifica, además, que los datos REALES
+    // enviados en la llamada son exclusivamente los de la sesión actual.
+    const fake = crearFakeCrearCitaConNylas(RESULTADO_EXITO_DIPPING_MARY);
+    const { deps } = armarDeps({ ...NYLAS_DEPS_FAKE_OVERRIDES, crearCitaConNylas: fake.crearCitaConNylas });
+    await llegarAConfirmacion(deps);
+    await procesarMensajeConAgendaV2(
+      { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "w7" },
+      deps,
+    );
+    assert.equal(fake.llamadas.length, 1);
+    const paramsSerializados = JSON.stringify(fake.llamadas[0]!.params);
+    assert.doesNotMatch(paramsSerializados, /3057/, "jamás referencia el id de la cita real R-2CX");
+    assert.doesNotMatch(paramsSerializados, /R-2CX/i, "jamás referencia el código de la cita real R-2CX");
+    // Los únicos datos usados son los REALES de ESTA sesión (Dipping/Mary/2026-09-08 09:00), nunca un id ajeno.
+    assert.equal(fake.llamadas[0]!.params.servicioId, "s-dipping-real");
+    assert.equal(fake.llamadas[0]!.params.especialistaId, 1262);
+  });
+
+  it("defensivo -- sin conexión con Nylas (sin grant_id/API key): NUNCA intenta crear, informa el problema y conserva la sesión", async () => {
+    const fake = crearFakeCrearCitaConNylas(RESULTADO_EXITO_DIPPING_MARY);
+    const { deps, sesiones, envios } = armarDeps({
+      crearCitaConNylas: fake.crearCitaConNylas,
+      resolverNylasGrantIdParaTenant: () => null,
+      resolveNylasApiKeyFromEnv: () => null,
+    });
+    await llegarAConfirmacion(deps);
+    const r = await procesarMensajeConAgendaV2(
+      { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "w7" },
+      deps,
+    );
+    assert.equal(r.manejado, true);
+    assert.equal(fake.llamadas.length, 0, "sin grant/API key nunca se intenta crear nada");
+    assert.equal(sesiones.filas[0]!.activo, true);
+    assert.equal(sesiones.filas[0]!.step, "S5_CONFIRMAR");
+    assert.match(envios.enviados.at(-1)!.mensaje, /problema técnico/i);
   });
 });

@@ -19,11 +19,6 @@ import { resolverSeleccionConfirmacion, textoSeleccionInvalidaConfirmacion, type
 export const RESPUESTA_PLACEHOLDER_AGENDA_V2 = "Agenda V2 activa. Selecciona una opción.";
 const RESPUESTA_CANCELACION = "Listo, cancelé tu proceso de agenda 💗 Escríbeme cuando quieras retomarlo.";
 const RESPUESTA_MENU_PERDIDO = "Se perdió el menú 😅 Escribe *cancelar* y vuelve a intentarlo.";
-// FASE 6 -- deja explícito que la reserva real todavía NO se ejecutó (esa es
-// la Fase 7: creación real vía crearCitaConNylas). Nunca sugerir que la cita
-// ya quedó agendada de verdad.
-const RESPUESTA_CITA_LISTA_PARA_CONFIRMAR =
-  "Perfecto 💗 Tu cita está lista para confirmar. Todavía no se ha reservado de forma definitiva -- muy pronto podrás completar este paso.";
 
 /** Vocabulario cerrado, coincidencia EXACTA tras normalizar -- nunca "contains", mismo criterio que el resto del proyecto para comandos de control (ver esCancelacionExplicitaDeReserva). */
 const COMANDO_CANCELAR = "cancelar";
@@ -54,7 +49,11 @@ export type ResultadoControladorAgendaV2 =
   // recalcular disponibilidad real (async, reutilizando el mismo motor de
   // las Fases 4/5) -- router.ts resuelve ambas transiciones.
   | { accion: "confirmacion_cambiar_fecha" }
-  | { accion: "confirmacion_cambiar_hora" };
+  | { accion: "confirmacion_cambiar_hora" }
+  // FASE 7 -- "Confirmar cita" fue elegido; crear la reserva real exige
+  // revalidar disponibilidad + crearCitaConNylas (async, Supabase + Nylas
+  // reales) -- router.ts resuelve toda esta transición.
+  | { accion: "confirmacion_confirmar" };
 
 /**
  * Procesa UN mensaje ya sabido perteneciente a una sesión activa. Nunca
@@ -232,13 +231,11 @@ function manejarConfirmacion(sesion: SesionAgendaV2, mensaje: string): Resultado
 
   switch (seleccion.accion) {
     case "confirmar":
-      // Sección "COMPORTAMIENTO -- Opción 1" del pedido -- NUNCA crea la
-      // cita, NUNCA llama a Nylas ni a crearCitaConNylas acá. Solo deja
-      // claro que falta un paso real (Fase 7, todavía sin implementar). El
-      // menú de control se mantiene tal cual -- la clienta puede seguir
-      // cambiando de opinión (fecha/hora/cancelar) mientras la Fase 7 no
-      // exista, sin quedar en un callejón sin salida.
-      return { accion: "continuar", respuesta: RESPUESTA_CITA_LISTA_PARA_CONFIRMAR };
+      // FASE 7 (autorizado) -- ya NO es un placeholder: la creación real
+      // (revalidación + crearCitaConNylas + idempotencia) vive en router.ts,
+      // el único lugar con acceso a Supabase/Nylas reales. El controlador
+      // sigue puro/síncrono, nunca decide él mismo si la cita se crea.
+      return { accion: "confirmacion_confirmar" };
     case "cambiar_fecha":
       // Opción 2 -- exige recalcular días candidatos reales (async,
       // reutilizando la Fase 4 tal cual) -- router.ts lo resuelve.

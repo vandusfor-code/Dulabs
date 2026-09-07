@@ -23,7 +23,7 @@ import { cargarEscenariosReal } from "@/lib/bot-escenarios/store";
 import { listarCatalogoServiciosReal } from "@/lib/catalogo-servicios-flow-adaptador";
 import { resolverEspecialistasElegiblesParaServicio } from "@/lib/asignacion-categoria";
 import { resolverNylasGrantIdParaTenant } from "@/lib/nylas/nylas-grant";
-import { createNylasEventsClient, resolveNylasApiKeyFromEnv } from "@/lib/nylas/nylas-client";
+import { createNylasEventsClient, createNylasEventsWriteClient, resolveNylasApiKeyFromEnv } from "@/lib/nylas/nylas-client";
 import type { DepsDisponibilidadNylas } from "@/lib/disponibilidad-servicio-nylas";
 import { enviarMensajeWhatsApp } from "@/lib/whatsapp-worker-client";
 import { esInicioDeAgendaV2 } from "@/lib/agenda-v2/entrada";
@@ -33,10 +33,29 @@ import { construirOpcionesCategoria, renderizarMenuCategoria } from "@/lib/agend
 import { construirOpcionesProfesional, renderizarMenuProfesional } from "@/lib/agenda-v2/profesionales";
 import { renderizarMenuFecha, formatearFechaLarga } from "@/lib/agenda-v2/fechas";
 import { construirOpcionesHora, renderizarMenuHora } from "@/lib/agenda-v2/horas";
-import { OPCIONES_CONFIRMACION, renderizarResumenConfirmacion, type ResumenCitaAgendaV2 } from "@/lib/agenda-v2/confirmacion";
+import {
+  OPCIONES_CONFIRMACION,
+  renderizarResumenConfirmacion,
+  renderizarConfirmacionExitosa,
+  MENSAJE_HORARIO_RECIEN_OCUPADO,
+  MENSAJE_ERROR_TECNICO_CONFIRMACION,
+  type ResumenCitaAgendaV2,
+} from "@/lib/agenda-v2/confirmacion";
 import { calcularDiasCandidatosReales, calcularHorariosParaFecha } from "@/lib/agenda-v2/disponibilidad";
 import { formatearHoraAmPm } from "@/lib/especialistas-flow-adaptador";
 import { buscarSesionActivaAgendaV2, crearSesionAgendaV2, cerrarSesionAgendaV2, actualizarSesionAgendaV2 } from "@/lib/agenda-v2/sesiones";
+// FASE 7 (autorizado) -- creación REAL de la reserva. Reutilizada TAL CUAL
+// (sin ningún cambio): revalidación + crearCitaEspecialista (EXCLUDE de
+// Postgres) + idempotencia (dulabs_idempotencia_reservas) ya viven ahí,
+// mismo mecanismo EXACTO que ya usa lib/flow/executors/internal-action-executor.ts
+// para Daniela -- nunca una segunda implementación de reservas.
+import { crearCitaConNylas } from "@/lib/reserva-servicio-nylas";
+// Mismo criterio que el resto de Agenda V2 (nunca pedir de nuevo un dato que
+// el sistema ya conoce): resuelve un nombre real ya dado antes por esta
+// clienta bajo el MISMO phone_number_id sintético; si nunca lo dio, se usa
+// su teléfono como identificación (Agenda V2 no agrega un paso nuevo para
+// pedir el nombre -- fuera del alcance autorizado de esta fase).
+import { nombreConocido } from "@/lib/clientes-conocidos";
 
 /** Mismo prefijo sintético que ya usa lib/whatsapp-qr-bot.ts para el candado/estado de este canal -- nunca un phone_number_id real de Meta. */
 function phoneNumberIdSintetico(tenantId: string): string {
@@ -63,6 +82,11 @@ export interface AgendaV2RouterDeps {
   crearSesion?: typeof crearSesionAgendaV2;
   cerrarSesion?: typeof cerrarSesionAgendaV2;
   actualizarSesion?: typeof actualizarSesionAgendaV2;
+  // FASE 7 -- inyectables para tests (nunca reservas/Nylas reales fuera de
+  // producción real), mismo criterio exacto de arriba.
+  createNylasEventsWriteClient?: typeof createNylasEventsWriteClient;
+  crearCitaConNylas?: typeof crearCitaConNylas;
+  buscarNombreConocido?: typeof nombreConocido;
 }
 
 export type ResultadoRouterAgendaV2 =
@@ -100,6 +124,9 @@ export async function procesarMensajeConAgendaV2(
   const crearSesion = deps.crearSesion ?? crearSesionAgendaV2;
   const cerrarSesion = deps.cerrarSesion ?? cerrarSesionAgendaV2;
   const actualizarSesion = deps.actualizarSesion ?? actualizarSesionAgendaV2;
+  const crearNylasWriteClient = deps.createNylasEventsWriteClient ?? createNylasEventsWriteClient;
+  const crearCitaReal = deps.crearCitaConNylas ?? crearCitaConNylas;
+  const buscarNombreConocidoDep = deps.buscarNombreConocido ?? nombreConocido;
 
   const phoneNumberId = phoneNumberIdSintetico(params.idTenant);
 
@@ -223,7 +250,13 @@ export async function procesarMensajeConAgendaV2(
       // horario real (protección, sección CASOS IMPORTANTES #8), recalcula
       // los días candidatos reales y vuelve a S3_DIA -- reutilizando
       // mostrarMenuFechaOVolverAProfesional en vez de duplicar ese cálculo.
-      async function mostrarMenuHoraOVolverAFecha(servicioId: string, profesionalId: number, fechaIso: string): Promise<ResultadoRouterAgendaV2> {
+      async function mostrarMenuHoraOVolverAFecha(
+        servicioId: string,
+        profesionalId: number,
+        fechaIso: string,
+        mensajePrevio?: string,
+      ): Promise<ResultadoRouterAgendaV2> {
+        const prefijo = mensajePrevio ? `${mensajePrevio}\n\n` : "";
         const nylasDeps = construirNylasDeps();
         const horariosResultado = await calcularHoras(params.supabase, { idTenant: params.idTenant, servicioId, profesionalId, fechaIso }, nylasDeps);
 
@@ -242,8 +275,8 @@ export async function procesarMensajeConAgendaV2(
             telefono: params.telefono,
             mensaje:
               opcionesFecha.length > 0
-                ? `Ese día ya no tiene horarios disponibles 😔 Elige otro:\n\n${renderizarMenuFecha(opcionesFecha)}`
-                : "Ese día ya no tiene horarios disponibles y no encontramos otro con cupo por ahora 😔 Escribe *cancelar* y vuelve a intentarlo más tarde.",
+                ? `${prefijo}Ese día ya no tiene horarios disponibles 😔 Elige otro:\n\n${renderizarMenuFecha(opcionesFecha)}`
+                : `${prefijo}Ese día ya no tiene horarios disponibles y no encontramos otro con cupo por ahora 😔 Escribe *cancelar* y vuelve a intentarlo más tarde.`,
             origen: "automatico",
           });
           return { manejado: true };
@@ -257,7 +290,7 @@ export async function procesarMensajeConAgendaV2(
           opcionesMostradas: opcionesHora,
           ultimoWamidProcesado: params.wamid,
         });
-        await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: renderizarMenuHora(opcionesHora), origen: "automatico" });
+        await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: `${prefijo}${renderizarMenuHora(opcionesHora)}`, origen: "automatico" });
         return { manejado: true };
       }
 
@@ -404,6 +437,110 @@ export async function procesarMensajeConAgendaV2(
           return await reiniciarPorEstadoInconsistente("S5_CONFIRMAR sin servicioId/profesionalId/fechaIso (cambiar hora)");
         }
         return await mostrarMenuHoraOVolverAFecha(sesion.servicioId, sesion.profesionalId, sesion.fechaIso);
+      }
+
+      if (resultado.accion === "confirmacion_confirmar") {
+        // FASE 7 (autorizado) -- crear la reserva REAL. Reutiliza
+        // crearCitaConNylas TAL CUAL: esa función YA revalida disponibilidad
+        // real (jornada + bloqueos + citas DuLabs + Nylas) inmediatamente
+        // antes de crear, y el constraint EXCLUDE de Postgres sigue siendo
+        // la ÚLTIMA autoridad real contra doble reserva -- nada de eso se
+        // duplica acá. Nunca cierra la sesión antes de confirmar éxito real.
+        if (!sesion.servicioId || !sesion.profesionalId || !sesion.fechaIso || !sesion.slotSeleccionado) {
+          return await reiniciarPorEstadoInconsistente("S5_CONFIRMAR sin servicioId/profesionalId/fechaIso/slotSeleccionado al confirmar");
+        }
+        const slot = sesion.slotSeleccionado as { fechaIso: string; hora: string };
+
+        // El precio real se necesita para el mensaje de éxito (nunca se
+        // inventa) -- se resuelve ANTES de intentar crear nada; si el
+        // servicio ya no es válido, se reinicia sin tocar Nylas/DB (mismo
+        // criterio defensivo que hora_seleccionada).
+        const catalogo = await cargarCatalogo(params.supabase, params.idTenant);
+        const servicio = catalogo.find((s) => s.id === sesion.servicioId);
+        if (!servicio) {
+          return await reiniciarPorEstadoInconsistente("S5_CONFIRMAR con servicio ya no válido al confirmar");
+        }
+
+        const grantId = resolverGrantId(params.idTenant);
+        const apiKey = resolverApiKey();
+        if (!grantId || !apiKey) {
+          console.error("[agenda-v2] sin conexión Nylas al intentar confirmar la reserva -- se informa sin cerrar la sesión");
+          await actualizarSesion(params.supabase, sesion.id, { ultimoWamidProcesado: params.wamid });
+          await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_ERROR_TECNICO_CONFIRMACION, origen: "automatico" });
+          return { manejado: true };
+        }
+        const nylasReadClient = crearNylasClient(apiKey);
+        const nylasWriteClient = crearNylasWriteClient(apiKey);
+        const nombreCliente = (await buscarNombreConocidoDep(params.supabase, phoneNumberId, params.telefono)) ?? params.telefono;
+        const inicio = new Date(`${slot.fechaIso}T${slot.hora}:00-05:00`);
+        // Idempotencia real (lib/idempotencia-reserva.ts, reutilizada TAL
+        // CUAL dentro de crearCitaConNylas) -- atada a (sesión, wamid): el
+        // wamid ya es único por mensaje entrante (el router nunca reprocesa
+        // el MISMO wamid, ver la comprobación de arriba), así que cada
+        // intento de confirmación real tiene su propia clave, y un
+        // reintento genuino tras un error técnico (wamid nuevo) sí vuelve a
+        // ejecutar la operación en vez de devolver un resultado cacheado.
+        const idempotencyKey = `agenda-v2:confirmar:${sesion.id}:${params.wamid}`;
+
+        let resultadoCita;
+        try {
+          resultadoCita = await crearCitaReal(
+            params.supabase,
+            {
+              idTenant: params.idTenant,
+              servicioId: sesion.servicioId,
+              especialistaId: sesion.profesionalId,
+              inicio,
+              nombreCliente,
+              telefonoCliente: params.telefono,
+              idempotencyKey,
+            },
+            { nylasReadClient, nylasWriteClient, grantId },
+          );
+        } catch (err) {
+          // Nunca imprime tokens/API keys/grants -- solo el mensaje de error.
+          console.error("[agenda-v2] error técnico creando la cita real -- sesión NO se cierra, se permite reintentar:", err instanceof Error ? err.message : "error desconocido");
+          await actualizarSesion(params.supabase, sesion.id, { ultimoWamidProcesado: params.wamid });
+          await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_ERROR_TECNICO_CONFIRMACION, origen: "automatico" });
+          return { manejado: true };
+        }
+
+        if (!resultadoCita.ok) {
+          if (resultadoCita.motivo === "ocupado" || resultadoCita.motivo === "fuera_de_horario" || resultadoCita.motivo === "bloqueado") {
+            // Revalidación real: el horario ya no está disponible (recién
+            // tomado, o cambió la jornada/un bloqueo) -- NUNCA se crea nada.
+            // Vuelve a S4_HORA reutilizando la Fase 5 tal cual, sin perder
+            // servicio/profesional/fecha.
+            return await mostrarMenuHoraOVolverAFecha(sesion.servicioId, sesion.profesionalId, sesion.fechaIso, MENSAJE_HORARIO_RECIEN_OCUPADO);
+          }
+          // Cualquier otro motivo (config/técnico/idempotencia en conflicto)
+          // -- NUNCA se marca éxito, NUNCA se cierra la sesión: se informa y
+          // se permite reintentar (la idempotencyKey ya protege ESTE intento
+          // puntual contra una doble creación).
+          console.error(`[agenda-v2] no se pudo crear la cita real (${resultadoCita.motivo}): ${resultadoCita.detalle}`);
+          await actualizarSesion(params.supabase, sesion.id, { ultimoWamidProcesado: params.wamid });
+          await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_ERROR_TECNICO_CONFIRMACION, origen: "automatico" });
+          return { manejado: true };
+        }
+
+        // Éxito real -- la cita YA quedó persistida (crearCitaConNylas) y el
+        // evento real ya existe en el calendario. Recién ACÁ se cierra la
+        // sesión (nunca antes de confirmar éxito real), para que el
+        // siguiente mensaje del cliente jamás continúe en S5_CONFIRMAR.
+        await cerrarSesion(params.supabase, sesion.id);
+        await enviarMensaje({
+          tenantId: params.idTenant,
+          telefono: params.telefono,
+          mensaje: renderizarConfirmacionExitosa({
+            servicioNombre: resultadoCita.servicio.nombre,
+            profesionalNombre: resultadoCita.especialista.nombre,
+            fechaEtiqueta: formatearFechaLarga(slot.fechaIso),
+            horaTexto: formatearHoraAmPm(slot.hora),
+            valor: servicio.precio,
+          }),
+          origen: "automatico",
+        });
+        return { manejado: true };
       }
 
       if (resultado.accion === "cerrar_sesion") {

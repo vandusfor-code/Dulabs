@@ -397,13 +397,9 @@ describe("FASE 6 (autorizado) -- manejarMensajeAgendaV2 en S5_CONFIRMAR", () => 
     });
   }
 
-  it("Opción 1 (confirmar): responde el mensaje de 'lista para confirmar' -- NUNCA crea la cita ni cambia el step (Fase 7 todavía no existe)", () => {
+  it("Opción 1 (confirmar): devuelve accion:'confirmacion_confirmar' (router.ts crea la reserva real, FASE 7) -- el controlador nunca decide él mismo si se crea", () => {
     const r = manejarMensajeAgendaV2(sesionEnConfirmacion(), "1");
-    assert.equal(r.accion, "continuar");
-    if (r.accion !== "continuar") return;
-    assert.match(r.respuesta, /lista para confirmar/i);
-    assert.match(r.respuesta, /todavía no se ha reservado|aún no se ha reservado/i, "debe dejar claro que la reserva real todavía no se ejecutó");
-    assert.equal(r.cambios, undefined, "nunca cambia el step ni ningún dato -- Fase 7 no existe todavía");
+    assert.deepEqual(r, { accion: "confirmacion_confirmar" });
   });
 
   it("Opción 2 (cambiar fecha): devuelve accion:'confirmacion_cambiar_fecha' (router.ts reutiliza la Fase 4 tal cual)", () => {
