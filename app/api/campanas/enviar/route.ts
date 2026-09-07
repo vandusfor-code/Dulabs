@@ -8,6 +8,7 @@ import { esSinPlan, MENSAJE_SIN_PLAN } from "@/lib/planes";
 import { parseDestinatario } from "@/lib/destinatarios";
 import { getCampaignBotConfig, crearCampaignLeadRow } from "@/lib/campaign-lead-store";
 import { obtenerCreditosMasivos, consumirCreditosMasivos, reembolsarCreditosMasivos, mensajeSaldoInsuficiente } from "@/lib/campanas-creditos";
+import { resolverClienteDeNumero, MENSAJE_PLANTILLA_DESCONECTADA } from "@/lib/plantilla-conexion";
 
 export const runtime = "nodejs";
 // El envío es secuencial (una llamada real a Meta por destinatario) y una
@@ -63,6 +64,30 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: "JSON inválido" }, { status: 400 });
   }
 
+  // A partir de acá, CUALQUIER excepción no prevista (una RPC que falla, un
+  // descifrado de token corrupto, cualquier cosa) queda convertida en un
+  // JSON limpio -- nunca debe escapar sin control y terminar en la página de
+  // error HTML de Vercel (bug real reportado: "Unexpected token '<'").
+  try {
+    return await procesarEnvioCampana(supabase, miembro, body);
+  } catch (err) {
+    console.error("[campanas/enviar] error inesperado", err);
+    return Response.json({ error: "Error interno al procesar la campaña." }, { status: 500 });
+  }
+}
+
+async function procesarEnvioCampana(
+  supabase: ReturnType<typeof supabaseAdmin>,
+  miembro: NonNullable<Awaited<ReturnType<typeof resolverMiembroEquipo>>>,
+  body: {
+    plantilla_id?: number;
+    destinatarios?: string[];
+    header_media_id?: string;
+    campana_id?: number;
+    destinatarios_total?: number;
+    es_ultimo_lote?: boolean;
+  },
+) {
   const { plantilla_id, destinatarios, header_media_id, campana_id, es_ultimo_lote = true } = body;
   if (!plantilla_id || !destinatarios?.length) {
     return Response.json({ error: "Faltan campos requeridos" }, { status: 400 });
@@ -149,14 +174,15 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const { data: cliente, error: clienteError } = await supabase
-    .from("dulabs_clientes_config")
-    .select("*")
-    .eq("phone_number_id", plantilla.phone_number_id)
-    .eq("id_tenant", miembro.tenantId)
-    .maybeSingle();
-  if (clienteError) return Response.json({ error: clienteError.message }, { status: 500 });
-  if (!cliente) return Response.json({ error: "Número no encontrado" }, { status: 404 });
+  // Protección contra plantillas huérfanas (autorizado, caso Soluciones
+  // Financieras/Charlotte): el phone_number_id de la plantilla debe seguir
+  // teniendo una fila de configuración real para ESTE tenant. Si el número
+  // se reconectó y Meta le asignó un phone_number_id nuevo, esta plantilla
+  // vieja ya no puede usarse -- nunca se reasigna sola, se rechaza con un
+  // mensaje claro (nunca el genérico "Número no encontrado", que confundía
+  // con un problema de los destinatarios).
+  const cliente = await resolverClienteDeNumero(supabase, { phoneNumberId: plantilla.phone_number_id, idTenant: miembro.tenantId });
+  if (!cliente) return Response.json({ error: MENSAJE_PLANTILLA_DESCONECTADA }, { status: 409 });
 
   const metaToken = cliente.meta_permanent_token ? descifrarSecreto(cliente.meta_permanent_token) : process.env.META_ACCESS_TOKEN;
   if (!metaToken) {

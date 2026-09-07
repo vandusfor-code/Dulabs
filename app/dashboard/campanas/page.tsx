@@ -30,6 +30,11 @@ type Plantilla = {
   cuerpo: string;
   estado: string;
   header_formato: string | null;
+  // false si el phone_number_id de esta plantilla ya no tiene configuración
+  // real en dulabs_clientes_config para este tenant (número reconectado --
+  // ver lib/plantilla-conexion.ts, caso Soluciones Financieras/Charlotte).
+  // Una plantilla así nunca debe ofrecerse como utilizable en el selector.
+  conectada: boolean;
 };
 
 type Campana = {
@@ -59,6 +64,31 @@ type DatosCampanas = {
 
 function pct(valor: number): string {
   return `${(valor * 100).toFixed(1)}%`;
+}
+
+/**
+ * Lectura robusta de la respuesta de un endpoint de campañas -- nunca hace
+ * `res.json()` a ciegas. Si el body no es JSON (ej. la página de error HTML
+ * de Vercel ante una excepción no capturada -- bug real reportado:
+ * "Unexpected token '<'"), lanza `mensajeGenerico` en vez de dejar escapar
+ * el SyntaxError crudo. Si es JSON pero la respuesta no fue exitosa, lanza
+ * el `error` del backend si vino, o el mensaje genérico si no.
+ */
+async function leerRespuestaCampana<T>(res: Response, mensajeGenerico: string): Promise<T> {
+  let data: unknown;
+  try {
+    data = await res.json();
+  } catch {
+    throw new Error(mensajeGenerico);
+  }
+  if (!res.ok) {
+    const mensaje =
+      data && typeof data === "object" && "error" in data && typeof (data as { error?: unknown }).error === "string"
+        ? (data as { error: string }).error
+        : mensajeGenerico;
+    throw new Error(mensaje);
+  }
+  return data as T;
 }
 
 export default function CampanasPage() {
@@ -210,6 +240,7 @@ export default function CampanasPage() {
         .map((d) => d.trim())
         .filter(Boolean);
       setProgresoCampana({ hecho: 0, total: lista.length });
+      const mensajeErrorGenerico = t("Error al procesar la campaña. Intenta nuevamente.", "Error processing the campaign. Please try again.");
       try {
         let headerMediaId: string | undefined;
         if (plantillaElegida.header_formato && headerArchivo) {
@@ -221,8 +252,7 @@ export default function CampanasPage() {
             headers: { Authorization: `Bearer ${session.access_token}` },
             body: form,
           });
-          const dataMedia = await resMedia.json();
-          if (!resMedia.ok) throw new Error(dataMedia.error ?? t("Error subiendo el archivo de encabezado", "Error uploading the header file"));
+          const dataMedia = await leerRespuestaCampana<{ media_id: string }>(resMedia, mensajeErrorGenerico);
           headerMediaId = dataMedia.media_id;
         }
 
@@ -247,8 +277,7 @@ export default function CampanasPage() {
               es_ultimo_lote: esUltimoLote,
             }),
           });
-          const data = await res.json();
-          if (!res.ok) throw new Error(data.error ?? t("Error enviando la campaña", "Error sending the campaign"));
+          const data = await leerRespuestaCampana<{ campana_id: number; enviados: number; fallidos?: unknown[] }>(res, mensajeErrorGenerico);
           campanaId = data.campana_id;
           totalEnviados += data.enviados;
           totalFallidos += data.fallidos?.length ?? 0;
@@ -271,7 +300,11 @@ export default function CampanasPage() {
     [session, plantillaCampana, plantillaElegida, headerArchivo, destinatarios, creditosMasivos, cargarDatos, cargarCreditosMasivos, t]
   );
 
-  const aprobadas = (plantillas ?? []).filter((p) => p.estado === "APPROVED");
+  // Nunca ofrecer una plantilla huérfana (phone_number_id ya reconectado a
+  // otro número, ver lib/plantilla-conexion.ts) -- el selector de campañas
+  // solo debe recibir plantillas realmente utilizables. Funciona igual para
+  // cualquier tenant: no depende de qué plantilla/número sean.
+  const aprobadas = (plantillas ?? []).filter((p) => p.estado === "APPROVED" && p.conectada);
   const conteoDestinatarios = destinatarios.split("\n").map((d) => d.trim()).filter(Boolean).length;
   const sinCreditosDisponibles = creditosMasivos !== null && creditosMasivos.disponibles <= 0;
   const campanaSuperaElSaldo = creditosMasivos !== null && conteoDestinatarios > creditosMasivos.disponibles;

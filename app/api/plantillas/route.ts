@@ -13,6 +13,7 @@ import {
 } from "@/lib/meta-templates";
 import { resolverMiembroEquipo, requireRol } from "@/lib/team";
 import { descifrarSecreto } from "@/lib/crypto";
+import { phoneNumberIdsConectados } from "@/lib/plantilla-conexion";
 
 export const runtime = "nodejs";
 
@@ -40,6 +41,14 @@ export async function GET(request: NextRequest) {
     .eq("id_tenant", miembro.tenantId)
     .order("created_at", { ascending: false });
   if (error) return Response.json({ error: error.message }, { status: 500 });
+
+  // Números realmente conectados a este tenant HOY -- una plantilla cuyo
+  // phone_number_id no está en este set quedó huérfana (ver
+  // lib/plantilla-conexion.ts, caso real Soluciones Financieras/Charlotte:
+  // reconectar WhatsApp puede emitir un phone_number_id nuevo, y las
+  // plantillas viejas nunca se reasignan automáticamente). El selector de
+  // campañas (app/dashboard/campanas/page.tsx) usa este campo para excluirlas.
+  const conectados = (plantillas ?? []).length > 0 ? await phoneNumberIdsConectados(supabase, miembro.tenantId) : new Set<string>();
 
   const pendientes = (plantillas ?? []).filter((p) => p.estado === "pendiente" || p.estado === "PENDING");
   if (pendientes.length > 0) {
@@ -102,6 +111,7 @@ export async function GET(request: NextRequest) {
       ...p,
       enviados: stats.enviados,
       tasaLectura: stats.enviados > 0 ? stats.leidos / stats.enviados : 0,
+      conectada: conectados.has(p.phone_number_id),
     };
   });
 

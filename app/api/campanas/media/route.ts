@@ -3,6 +3,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { subirMediaMeta } from "@/lib/meta-templates";
 import { resolverMiembroEquipo, requireRol } from "@/lib/team";
 import { descifrarSecreto } from "@/lib/crypto";
+import { resolverClienteDeNumero, MENSAJE_PLANTILLA_DESCONECTADA } from "@/lib/plantilla-conexion";
 
 export const runtime = "nodejs";
 
@@ -26,36 +27,41 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: "No tienes permiso para esta acción" }, { status: 403 });
   }
 
-  const form = await request.formData();
-  const phoneNumberId = form.get("phone_number_id");
-  const archivo = form.get("archivo");
-  if (typeof phoneNumberId !== "string" || !(archivo instanceof File)) {
-    return Response.json({ error: "Falta 'phone_number_id' o 'archivo'" }, { status: 400 });
-  }
-
-  const supabase = supabaseAdmin();
-  const { data: cliente, error: clienteError } = await supabase
-    .from("dulabs_clientes_config")
-    .select("meta_permanent_token")
-    .eq("phone_number_id", phoneNumberId)
-    .eq("id_tenant", miembro.tenantId)
-    .maybeSingle();
-  if (clienteError) return Response.json({ error: clienteError.message }, { status: 500 });
-  if (!cliente) return Response.json({ error: "Número no encontrado" }, { status: 404 });
-
-  const token = cliente.meta_permanent_token ? descifrarSecreto(cliente.meta_permanent_token) : process.env.META_ACCESS_TOKEN;
-  if (!token) return Response.json({ error: "Sin token de Meta configurado para este número" }, { status: 500 });
-
+  // Cualquier excepción no prevista de acá en adelante (descifrado de token
+  // corrupto, un error real de Supabase, lo que sea) queda convertida en un
+  // JSON limpio -- nunca debe escapar sin control y terminar en la página de
+  // error HTML de Vercel (bug real reportado: "Unexpected token '<'").
   try {
-    const mediaId = await subirMediaMeta({
-      phoneNumberId,
-      token,
-      archivo,
-      mimeType: archivo.type || "application/octet-stream",
-      nombreArchivo: archivo.name || "archivo",
-    });
-    return Response.json({ media_id: mediaId });
+    const form = await request.formData();
+    const phoneNumberId = form.get("phone_number_id");
+    const archivo = form.get("archivo");
+    if (typeof phoneNumberId !== "string" || !(archivo instanceof File)) {
+      return Response.json({ error: "Falta 'phone_number_id' o 'archivo'" }, { status: 400 });
+    }
+
+    const supabase = supabaseAdmin();
+    // Misma protección contra números huérfanos que /api/campanas/enviar --
+    // ver lib/plantilla-conexion.ts.
+    const cliente = await resolverClienteDeNumero(supabase, { phoneNumberId, idTenant: miembro.tenantId });
+    if (!cliente) return Response.json({ error: MENSAJE_PLANTILLA_DESCONECTADA }, { status: 409 });
+
+    const token = cliente.meta_permanent_token ? descifrarSecreto(cliente.meta_permanent_token) : process.env.META_ACCESS_TOKEN;
+    if (!token) return Response.json({ error: "Sin token de Meta configurado para este número" }, { status: 500 });
+
+    try {
+      const mediaId = await subirMediaMeta({
+        phoneNumberId,
+        token,
+        archivo,
+        mimeType: archivo.type || "application/octet-stream",
+        nombreArchivo: archivo.name || "archivo",
+      });
+      return Response.json({ media_id: mediaId });
+    } catch (err) {
+      return Response.json({ error: err instanceof Error ? err.message : "Error subiendo el archivo a Meta" }, { status: 500 });
+    }
   } catch (err) {
-    return Response.json({ error: err instanceof Error ? err.message : "Error subiendo el archivo a Meta" }, { status: 500 });
+    console.error("[campanas/media] error inesperado", err);
+    return Response.json({ error: "Error interno al procesar la campaña." }, { status: 500 });
   }
 }
