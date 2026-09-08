@@ -34,6 +34,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { ventanasLaboralesEspecialista, bloqueosDelDia, restarBloqueos } from "@/lib/especialistas";
 import {
   listarHorariosDisponiblesPorServicioConNylas,
+  calcularHorariosDeEspecialista,
   type DepsDisponibilidadNylas,
 } from "@/lib/disponibilidad-servicio-nylas";
 import { sumarDias } from "@/lib/parse-fecha-colombia";
@@ -169,4 +170,108 @@ export async function calcularHorariosParaFecha(
     return { ok: false, motivo: "sin_horarios_ese_dia" };
   }
   return { ok: true, horarios: especialista.horarios };
+}
+
+// ---------------------------------------------------------------------------
+// FASE 3 (autorizado, multi-servicio) -- disponibilidad para una DURACIÓN
+// TOTAL combinada (suma de los servicios elegidos), nunca atada a un
+// servicioId único. Reutiliza TAL CUAL calcularHorariosDeEspecialista
+// (lib/disponibilidad-servicio-nylas.ts, recién exportada, sin ningún cambio
+// de comportamiento) -- el mismo motor real (jornada + bloqueos + citas
+// DuLabs + eventos Nylas + generarHorariosLibres) que ya usan
+// calcularDiasCandidatosReales/calcularHorariosParaFecha para un solo
+// servicio. generarHorariosLibres (lib/especialistas.ts) YA rechaza un
+// horario si CUALQUIER parte del bloque [inicio, inicio+duracionTotal) se
+// solapa con algo ocupado -- por eso un hueco a mitad del bloque combinado
+// (ej. 150 min con una cita ocupando el medio) nunca se ofrece como
+// candidato, sin necesitar ninguna lógica nueva de "bloque continuo".
+//
+// Deliberadamente NO llama a resolverEspecialistasElegiblesParaServicio ni a
+// ningún resolver de elegibilidad -- el profesional y la validez de la
+// combinación de servicios ya se resolvieron ANTES (ver
+// lib/agenda-v2/multi-servicio.ts, Bloque 3), así que estas funciones solo
+// necesitan {idTenant, especialista, duracionTotalMin}.
+// ---------------------------------------------------------------------------
+
+export interface DepsDisponibilidadMultiServicio {
+  ventanasLaboralesEspecialista: typeof ventanasLaboralesEspecialista;
+  bloqueosDelDia: typeof bloqueosDelDia;
+  restarBloqueos: typeof restarBloqueos;
+  calcularHorariosDeEspecialista: typeof calcularHorariosDeEspecialista;
+  sumarDias: typeof sumarDias;
+  hoyIso: () => string;
+}
+
+/**
+ * Mismo criterio EXACTO que calcularDiasCandidatosReales (mismo
+ * MAX_DIAS_CANDIDATOS/HORIZONTE_DIAS_A_EVALUAR, mismos dos filtros rápidos
+ * sin red antes de tocar Nylas) -- la única diferencia real es que la
+ * duración viene ya sumada, nunca de un catálogo.
+ */
+export async function calcularDiasCandidatosMultiServicio(
+  supabase: SupabaseClient,
+  params: { idTenant: string; especialista: { id: number; nombre: string }; duracionTotalMin: number },
+  nylasDeps: DepsDisponibilidadNylas | null,
+  deps: Partial<DepsDisponibilidadMultiServicio> = {},
+): Promise<{ opciones: OpcionFechaAgendaV2[] }> {
+  if (!nylasDeps) {
+    return { opciones: [] };
+  }
+
+  const _ventanasLaborales = deps.ventanasLaboralesEspecialista ?? ventanasLaboralesEspecialista;
+  const _bloqueosDelDia = deps.bloqueosDelDia ?? bloqueosDelDia;
+  const _restarBloqueos = deps.restarBloqueos ?? restarBloqueos;
+  const _calcularHorarios = deps.calcularHorariosDeEspecialista ?? calcularHorariosDeEspecialista;
+  const _sumarDias = deps.sumarDias ?? sumarDias;
+  const _hoyIso = deps.hoyIso ?? (() => fechaColombiaDesdeIso(new Date().toISOString()));
+
+  const hoy = _hoyIso();
+  const fechasCandidatas: string[] = [];
+
+  for (let offset = 1; offset <= HORIZONTE_DIAS_A_EVALUAR && fechasCandidatas.length < MAX_DIAS_CANDIDATOS; offset++) {
+    const fechaIso = _sumarDias(hoy, offset);
+
+    const ventanasBase = await _ventanasLaborales(supabase, params.especialista.id, params.idTenant, fechaIso);
+    if (ventanasBase.length === 0) continue;
+
+    const bloqueos = await _bloqueosDelDia(supabase, params.especialista.id, params.idTenant, fechaIso);
+    const ventanas = _restarBloqueos(ventanasBase, bloqueos);
+    if (ventanas.length === 0) continue;
+
+    const resultado = await _calcularHorarios(
+      supabase,
+      { idTenant: params.idTenant, especialista: params.especialista, fecha: fechaIso, duracionMin: params.duracionTotalMin },
+      nylasDeps,
+    );
+    if (resultado.estado !== "ok" || resultado.horarios.length === 0) continue;
+
+    fechasCandidatas.push(fechaIso);
+  }
+
+  return { opciones: construirOpcionesFecha(fechasCandidatas) };
+}
+
+export type ResultadoHorariosFechaMultiServicio = { ok: true; horarios: string[] } | { ok: false; motivo: "sin_horarios_ese_dia" };
+
+/** Mismo criterio EXACTO que calcularHorariosParaFecha -- UNA sola consulta real, ya con la fecha decidida. */
+export async function calcularHorariosParaFechaMultiServicio(
+  supabase: SupabaseClient,
+  params: { idTenant: string; especialista: { id: number; nombre: string }; fechaIso: string; duracionTotalMin: number },
+  nylasDeps: DepsDisponibilidadNylas | null,
+  deps: Partial<Pick<DepsDisponibilidadMultiServicio, "calcularHorariosDeEspecialista">> = {},
+): Promise<ResultadoHorariosFechaMultiServicio> {
+  if (!nylasDeps) {
+    return { ok: false, motivo: "sin_horarios_ese_dia" };
+  }
+  const _calcularHorarios = deps.calcularHorariosDeEspecialista ?? calcularHorariosDeEspecialista;
+
+  const resultado = await _calcularHorarios(
+    supabase,
+    { idTenant: params.idTenant, especialista: params.especialista, fecha: params.fechaIso, duracionMin: params.duracionTotalMin },
+    nylasDeps,
+  );
+  if (resultado.estado !== "ok" || resultado.horarios.length === 0) {
+    return { ok: false, motivo: "sin_horarios_ese_dia" };
+  }
+  return { ok: true, horarios: resultado.horarios };
 }

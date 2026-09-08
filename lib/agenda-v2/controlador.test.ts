@@ -45,6 +45,7 @@ function sesionEnServicio(overrides: Partial<SesionAgendaV2> = {}): SesionAgenda
     activo: true,
     step: "S1_SERVICIO",
     servicioId: null,
+    serviciosIds: null,
     profesionalId: null,
     fechaIso: null,
     slotSeleccionado: null,
@@ -79,14 +80,17 @@ describe("manejarMensajeAgendaV2 -- 'cancelar' cierra la sesión sea cual sea el
 describe("FASE 2 -- manejarMensajeAgendaV2 en S1_SERVICIO", () => {
   it("Test 1: '1' resuelve contra las opciones reales guardadas -- devuelve accion:'servicio_seleccionado' con el servicio_id REAL (router.ts arma el menú de profesionales, ver FASE 3)", () => {
     const r = manejarMensajeAgendaV2(sesionEnServicio(), "1");
-    assert.deepEqual(r, { accion: "servicio_seleccionado", servicioId: "s-dipping-real" });
+    // FASE 3 (autorizado, multi-servicio) -- servicioIds SIEMPRE un arreglo,
+    // incluso para una selección de un solo servicio (comportamiento 100%
+    // equivalente al servicioId anterior, ver resolverSeleccionMultiServicio).
+    assert.deepEqual(r, { accion: "servicio_seleccionado", servicioIds: ["s-dipping-real"] });
   });
 
   it("selecciona correctamente la opción 2 y 3 (nunca asume que sigue siendo la posición 1)", () => {
     const r2 = manejarMensajeAgendaV2(sesionEnServicio(), "2");
-    assert.deepEqual(r2, { accion: "servicio_seleccionado", servicioId: "s-presson-real" });
+    assert.deepEqual(r2, { accion: "servicio_seleccionado", servicioIds: ["s-presson-real"] });
     const r3 = manejarMensajeAgendaV2(sesionEnServicio(), "3");
-    assert.deepEqual(r3, { accion: "servicio_seleccionado", servicioId: "s-retoques-real" });
+    assert.deepEqual(r3, { accion: "servicio_seleccionado", servicioIds: ["s-retoques-real"] });
   });
 
   it("Test 2: número inválido (fuera de rango) -- permanece en S1_SERVICIO, sin cambios de servicio", () => {

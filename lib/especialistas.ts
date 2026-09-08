@@ -37,6 +37,13 @@ export type CitaEspecialista = {
   // texto libre `servicio` se sigue llenando SIEMPRE, para no romper nada
   // que ya lo lea.
   servicio_id: string | null;
+  // Fase 3 (autorizado, multi-servicio AMORE) — suma real de precios SOLO
+  // cuando la cita tiene más de un servicio (ver dulabs_cita_servicios,
+  // lib/agenda-v2/multi-servicio.ts). Opcional a propósito (a diferencia de
+  // servicio_id) para no obligar a los fixtures de test existentes a
+  // declararlo -- ausente/undefined se trata exactamente igual que NULL
+  // (cita de un solo servicio, comportamiento sin cambios).
+  precio_total?: number | null;
   inicio: string;
   fin: string;
   // "completada"/"no_show" agregados en la Fase 1 del sistema de reservas
@@ -50,7 +57,7 @@ export type CitaEspecialista = {
 const COLUMNAS_ESPECIALISTA =
   "id, id_tenant, phone_number_id, nombre, numero_whatsapp, servicio, duracion_min, token, activo, bloquea_horario, es_general, requiere_aprobacion";
 const COLUMNAS_CITA =
-  "id, especialista_id, telefono_cliente, nombre_cliente, servicio, servicio_id, inicio, fin, estado, motivo_rechazo, origen";
+  "id, especialista_id, telefono_cliente, nombre_cliente, servicio, servicio_id, precio_total, inicio, fin, estado, motivo_rechazo, origen";
 
 // Código de error de Postgres para una violación de constraint EXCLUDE
 // (choque de rango de tiempo) -- distinto del 23505 de un UNIQUE normal.
@@ -575,6 +582,11 @@ export async function crearCitaEspecialista(
     // null en la fila, comportamiento idéntico al de antes de esta fase).
     // Solo reservarCitaPorServicio (lib/disponibilidad-servicio.ts) la pasa.
     servicioId?: string | null;
+    // Fase 3 (autorizado, multi-servicio AMORE) — suma real de precios,
+    // SOLO cuando hay más de un servicio. Ningún caller existente la pasa
+    // (queda undefined -> NULL en la fila, comportamiento idéntico al de
+    // antes de esta fase).
+    precioTotal?: number | null;
     inicio: Date;
     duracionMin: number;
     // Si esta cita en particular participa en el candado de choque de
@@ -595,6 +607,7 @@ export async function crearCitaEspecialista(
       nombre_cliente: params.nombreCliente,
       servicio: params.servicio,
       servicio_id: params.servicioId ?? null,
+      precio_total: params.precioTotal ?? null,
       bloquea_horario: params.bloqueaHorario,
       inicio: params.inicio.toISOString(),
       fin: fin.toISOString(),

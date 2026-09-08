@@ -14,21 +14,33 @@ import type { NylasEvent, NylasEventsClient, NylasEventsWriteClient } from "@/li
 type FilaGenerica = Record<string, unknown>;
 type ResultadoConsulta = { data: FilaGenerica[]; error: { code: string; message: string } | null };
 
-function crearSupabaseFalso(estadoInicial: Record<string, FilaGenerica[]>) {
+function crearSupabaseFalso(estadoInicial: Record<string, FilaGenerica[]>, opciones: { fallarInsertPuente?: boolean } = {}) {
   const tablas: Record<string, FilaGenerica[]> = Object.fromEntries(Object.entries(estadoInicial).map(([k, v]) => [k, [...v]]));
   let siguienteId = 10_000;
 
   const from = (tabla: string) => {
     if (!tablas[tabla]) tablas[tabla] = [];
     const filtros: Array<(f: FilaGenerica) => boolean> = [];
-    let modoInsert: FilaGenerica | undefined;
+    let modoInsert: FilaGenerica | FilaGenerica[] | undefined;
     let modoUpdate: FilaGenerica | undefined;
     let modoDelete = false;
 
     function ejecutar(): ResultadoConsulta {
       const filas = tablas[tabla]!;
       if (modoInsert) {
-        const nueva = modoInsert;
+        // FASE 3 (autorizado, multi-servicio) -- dulabs_cita_servicios
+        // siempre se inserta como un ARRAY de 2-3 filas (una por servicio,
+        // ver reserva-servicio-nylas.ts) -- caso aparte del resto de esta
+        // fábrica (que siempre inserta un solo objeto). `fallarInsertPuente`
+        // simula el escenario "best-effort" documentado: cita + evento Nylas
+        // YA reales, pero este INSERT puntual falla.
+        if (tabla === "dulabs_cita_servicios") {
+          if (opciones.fallarInsertPuente) return { data: [], error: { code: "XXERR", message: "error simulado insertando dulabs_cita_servicios" } };
+          const nuevas = Array.isArray(modoInsert) ? modoInsert : [modoInsert];
+          filas.push(...nuevas);
+          return { data: nuevas, error: null };
+        }
+        const nueva = modoInsert as FilaGenerica;
         if (tabla === "dulabs_citas_especialista") {
           const inicio = new Date(nueva.inicio as string);
           const fin = new Date(nueva.fin as string);
@@ -125,7 +137,7 @@ function crearSupabaseFalso(estadoInicial: Record<string, FilaGenerica[]>) {
       or() {
         return builder;
       },
-      insert(fila: FilaGenerica) {
+      insert(fila: FilaGenerica | FilaGenerica[]) {
         modoInsert = fila;
         return builder;
       },
@@ -172,6 +184,22 @@ const ESPECIALISTAS = [
 ];
 const ASOCIACIONES = ESPECIALISTAS.map((e) => ({ id_tenant: AMORE_TENANT_ID, servicio_id: "s-dipping", especialista_id: e.id }));
 
+// FASE 3 (autorizado, multi-servicio) -- catálogo/asociaciones EXTRA para
+// combinaciones de 2-3 servicios. "s-presson"/"s-retoques" están asociados a
+// AMBAS profesionales (mismo criterio que s-dipping); "s-exclusivo-cristal"
+// deliberadamente SOLO a Cristal, para poder probar el caso "una combinación
+// que ninguna profesional puede hacer TODA junta".
+const SERVICIO_PRESSON = { id: "s-presson", id_tenant: AMORE_TENANT_ID, nombre: "Press On", precio: 80000, duracion_min: 90, activo: true };
+const SERVICIO_RETOQUES = { id: "s-retoques", id_tenant: AMORE_TENANT_ID, nombre: "Retoques", precio: 60000, duracion_min: 30, activo: true };
+const SERVICIO_DIPPING_CON_PRECIO = { ...SERVICIO_DIPPING, precio: 60000 };
+const SERVICIO_EXCLUSIVO_CRISTAL = { id: "s-exclusivo-cristal", id_tenant: AMORE_TENANT_ID, nombre: "Exclusivo Cristal", precio: 50000, duracion_min: 45, activo: true };
+const ASOCIACIONES_MULTI = [
+  ...ESPECIALISTAS.map((e) => ({ id_tenant: AMORE_TENANT_ID, servicio_id: "s-dipping", especialista_id: e.id })),
+  ...ESPECIALISTAS.map((e) => ({ id_tenant: AMORE_TENANT_ID, servicio_id: "s-presson", especialista_id: e.id })),
+  ...ESPECIALISTAS.map((e) => ({ id_tenant: AMORE_TENANT_ID, servicio_id: "s-retoques", especialista_id: e.id })),
+  { id_tenant: AMORE_TENANT_ID, servicio_id: "s-exclusivo-cristal", especialista_id: 2 },
+];
+
 function mockNylasRead(eventosPorCalendario: Record<string, NylasEvent[] | "error" | "timeout"> = {}): NylasEventsClient {
   return {
     async listEvents(params) {
@@ -199,7 +227,9 @@ function mockNylasWrite(opts: { fallaCreando?: boolean; fallaBorrando?: boolean;
   };
 }
 
-function construirTablas(overrides: Partial<{ servicios: FilaGenerica[]; asociaciones: FilaGenerica[]; especialistas: FilaGenerica[]; horarios: FilaGenerica[]; bloqueos: FilaGenerica[]; citas: FilaGenerica[] }> = {}) {
+function construirTablas(
+  overrides: Partial<{ servicios: FilaGenerica[]; asociaciones: FilaGenerica[]; especialistas: FilaGenerica[]; horarios: FilaGenerica[]; bloqueos: FilaGenerica[]; citas: FilaGenerica[]; citaServicios: FilaGenerica[] }> = {},
+) {
   return {
     dulabs_servicios: overrides.servicios ?? [SERVICIO_DIPPING],
     dulabs_servicio_especialista: overrides.asociaciones ?? ASOCIACIONES,
@@ -207,6 +237,11 @@ function construirTablas(overrides: Partial<{ servicios: FilaGenerica[]; asociac
     dulabs_horario_especialista: overrides.horarios ?? [],
     dulabs_bloqueos: overrides.bloqueos ?? [],
     dulabs_citas_especialista: overrides.citas ?? [],
+    // FASE 3 (autorizado, multi-servicio) -- vacía por defecto: una cita sin
+    // ninguna fila acá es, por definición, de un solo servicio (mismo
+    // criterio EXACTO que usa el código real, ver esMultiServicio en
+    // reserva-servicio-nylas.ts).
+    dulabs_cita_servicios: overrides.citaServicios ?? [],
     dulabs_idempotencia_reservas: [],
   };
 }
@@ -218,17 +253,19 @@ function nuevaClave(): string {
 }
 
 async function reservar(
-  params: Partial<{ idTenant: string; servicioId: string; especialistaId: number; horaISO: string; nombreCliente: string; telefonoCliente: string | null; idempotencyKey: string }> = {},
+  params: Partial<{ idTenant: string; servicioId: string; serviciosIdsAdicionales: string[]; especialistaId: number; horaISO: string; nombreCliente: string; telefonoCliente: string | null; idempotencyKey: string }> = {},
   tablasOverrides: Parameters<typeof construirTablas>[0] = {},
   nylasReadOverride: Record<string, NylasEvent[] | "error" | "timeout"> = {},
   nylasWriteOpts: Parameters<typeof mockNylasWrite>[0] = {},
+  opcionesSupabase: Parameters<typeof crearSupabaseFalso>[1] = {},
 ) {
-  const supabase = crearSupabaseFalso(construirTablas(tablasOverrides));
+  const supabase = crearSupabaseFalso(construirTablas(tablasOverrides), opcionesSupabase);
   const resultado = await crearCitaConNylas(
     supabase,
     {
       idTenant: params.idTenant ?? AMORE_TENANT_ID,
       servicioId: params.servicioId ?? "s-dipping",
+      serviciosIdsAdicionales: params.serviciosIdsAdicionales,
       especialistaId: params.especialistaId ?? 1,
       inicio: new Date(params.horaISO ?? `${LUNES}T10:00:00-05:00`),
       nombreCliente: params.nombreCliente ?? "Ana Pérez",
@@ -765,5 +802,160 @@ describe("FASE 8 -- 8. Idempotencia", () => {
     assert.equal(r1.ok, true);
     assert.deepEqual(r1, r2, "el reintento debe devolver EXACTAMENTE el mismo resultado, sin volver a ejecutar la operación");
     assert.equal(llamadasCreate, 1, "Nylas solo debió llamarse UNA vez, nunca dos");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FASE 3 (autorizado, multi-servicio) -- crearCitaConNylas con
+// `serviciosIdsAdicionales`. Reutiliza el MISMO fake Supabase multi-tabla de
+// arriba (ya soporta el INSERT array de dulabs_cita_servicios, ver
+// crearSupabaseFalso). Ningún caller pasa `serviciosIdsAdicionales` con un
+// solo servicio -- por eso TODOS los tests de un solo servicio de arriba
+// (1-29) siguen siendo la prueba de regresión de que el comportamiento
+// original queda 100% intacto.
+// ---------------------------------------------------------------------------
+describe("FASE 3 -- creación con 2 servicios (120+90=210min, 60.000+80.000=140.000)", () => {
+  it("Test 14 (obligatorio) -- una sola cita, DOS filas en dulabs_cita_servicios (orden 1/2), precio_total y duración correctos, UN solo evento de Nylas", async () => {
+    let llamadasCreate = 0;
+    const { resultado, supabase } = await reservar(
+      { servicioId: "s-dipping", serviciosIdsAdicionales: ["s-presson"] },
+      { servicios: [SERVICIO_DIPPING_CON_PRECIO, SERVICIO_PRESSON], asociaciones: ASOCIACIONES_MULTI },
+      {},
+      { onCreate: () => llamadasCreate++ },
+    );
+    assert.equal(resultado.ok, true);
+    if (!resultado.ok) return;
+    assert.equal(llamadasCreate, 1, "UN solo evento real de Nylas para toda la combinación, nunca uno por servicio");
+    assert.equal(resultado.servicio.duracionMin, 210, "120 (Dipping) + 90 (Press On) = 210");
+    assert.equal(new Date(resultado.cita.fin).getTime() - new Date(resultado.cita.inicio).getTime(), 210 * 60_000);
+
+    const citas = (supabase as unknown as { __tablas: Record<string, FilaGenerica[]> }).__tablas.dulabs_citas_especialista;
+    assert.equal(citas.length, 1, "una sola cita, nunca dos filas separadas");
+    assert.equal(citas[0]!.precio_total, 140000, "60.000 + 80.000 = 140.000");
+    // Compatibilidad histórica (sección MUY IMPORTANTE del pedido) --
+    // servicio/servicio_id de dulabs_citas_especialista SIEMPRE el PRIMERO.
+    assert.equal(citas[0]!.servicio, "Dipping");
+    assert.equal(citas[0]!.servicio_id, "s-dipping");
+
+    const puente = (supabase as unknown as { __tablas: Record<string, FilaGenerica[]> }).__tablas.dulabs_cita_servicios;
+    assert.equal(puente.length, 2);
+    assert.deepEqual(
+      puente.map((f) => [f.servicio_id, f.orden]),
+      [
+        ["s-dipping", 1],
+        ["s-presson", 2],
+      ],
+    );
+    assert.ok(puente.every((f) => f.cita_id === citas[0]!.id), "las filas del puente apuntan a la cita real recién creada");
+  });
+
+  it("Test 15 (obligatorio) -- 3 servicios: 120+90+30=240min, precio 60.000+80.000+60.000=200.000, TRES filas en el puente en orden", async () => {
+    const { resultado, supabase } = await reservar(
+      { servicioId: "s-dipping", serviciosIdsAdicionales: ["s-presson", "s-retoques"] },
+      { servicios: [SERVICIO_DIPPING_CON_PRECIO, SERVICIO_PRESSON, SERVICIO_RETOQUES], asociaciones: ASOCIACIONES_MULTI },
+    );
+    assert.equal(resultado.ok, true);
+    if (!resultado.ok) return;
+    assert.equal(resultado.servicio.duracionMin, 240);
+    const citas = (supabase as unknown as { __tablas: Record<string, FilaGenerica[]> }).__tablas.dulabs_citas_especialista;
+    assert.equal(citas[0]!.precio_total, 200000);
+    const puente = (supabase as unknown as { __tablas: Record<string, FilaGenerica[]> }).__tablas.dulabs_cita_servicios;
+    assert.deepEqual(
+      puente.map((f) => [f.servicio_id, f.orden]),
+      [
+        ["s-dipping", 1],
+        ["s-presson", 2],
+        ["s-retoques", 3],
+      ],
+    );
+  });
+
+  it("nunca inventa un precio_total si algún servicio de la combinación no tiene precio fijo (sección PRECIO -- 'NO inventar descuentos')", async () => {
+    const { resultado, supabase } = await reservar(
+      { servicioId: "s-dipping", serviciosIdsAdicionales: ["s-presson"] },
+      { servicios: [{ ...SERVICIO_DIPPING, precio: null }, SERVICIO_PRESSON], asociaciones: ASOCIACIONES_MULTI },
+    );
+    assert.equal(resultado.ok, true);
+    if (!resultado.ok) return;
+    const citas = (supabase as unknown as { __tablas: Record<string, FilaGenerica[]> }).__tablas.dulabs_citas_especialista;
+    assert.equal(citas[0]!.precio_total, null, "nunca suma un 0 falso cuando un servicio de la combinación no tiene precio fijo");
+  });
+
+  it("una combinación que NINGUNA profesional puede hacer TODA junta -> especialista_no_habilitado, NUNCA crea nada", async () => {
+    let llamadasCreate = 0;
+    const { resultado, supabase } = await reservar(
+      { servicioId: "s-dipping", serviciosIdsAdicionales: ["s-exclusivo-cristal"], especialistaId: 1 }, // Mary no puede hacer "s-exclusivo-cristal"
+      { servicios: [SERVICIO_DIPPING_CON_PRECIO, SERVICIO_EXCLUSIVO_CRISTAL], asociaciones: ASOCIACIONES_MULTI },
+      {},
+      { onCreate: () => llamadasCreate++ },
+    );
+    assert.equal(resultado.ok, false);
+    if (resultado.ok) return;
+    assert.equal(resultado.motivo, "especialista_no_habilitado");
+    assert.equal(llamadasCreate, 0, "nunca crea el evento de Nylas si la profesional elegida no puede hacer TODA la combinación");
+    const citas = (supabase as unknown as { __tablas: Record<string, FilaGenerica[]> }).__tablas.dulabs_citas_especialista;
+    assert.equal(citas.length, 0);
+  });
+
+  it("si dulabs_cita_servicios falla al insertar, la cita y el evento de Nylas YA reales NUNCA se revierten -- se informa 'inconsistencia_requiere_revision_manual' (mismo criterio best-effort de guardarNylasEventIdDeCita)", async () => {
+    let borrados = 0;
+    const { resultado, supabase } = await reservar(
+      { servicioId: "s-dipping", serviciosIdsAdicionales: ["s-presson"] },
+      { servicios: [SERVICIO_DIPPING_CON_PRECIO, SERVICIO_PRESSON], asociaciones: ASOCIACIONES_MULTI },
+      {},
+      { onDelete: () => borrados++ },
+      { fallarInsertPuente: true },
+    );
+    assert.equal(resultado.ok, false);
+    if (resultado.ok) return;
+    assert.equal(resultado.motivo, "inconsistencia_requiere_revision_manual");
+    assert.equal(borrados, 0, "NUNCA intenta revertir el evento de Nylas ya real -- el horario ya quedó correctamente reservado");
+    const citas = (supabase as unknown as { __tablas: Record<string, FilaGenerica[]> }).__tablas.dulabs_citas_especialista;
+    assert.equal(citas.length, 1, "la cita real YA creada nunca se borra, aunque el detalle de servicios haya fallado");
+  });
+
+  it("regresión -- una selección de UN solo servicio (sin serviciosIdsAdicionales) nunca escribe ninguna fila en dulabs_cita_servicios ni fija precio_total", async () => {
+    const { resultado, supabase } = await reservar();
+    assert.equal(resultado.ok, true);
+    if (!resultado.ok) return;
+    const citas = (supabase as unknown as { __tablas: Record<string, FilaGenerica[]> }).__tablas.dulabs_citas_especialista;
+    assert.equal(citas[0]!.precio_total, null, "un solo servicio nunca fija precio_total (compatibilidad histórica)");
+    const puente = (supabase as unknown as { __tablas: Record<string, FilaGenerica[]> }).__tablas.dulabs_cita_servicios;
+    assert.equal(puente.length, 0, "el camino de un solo servicio queda 100% idéntico al de antes de esta fase");
+  });
+});
+
+describe("FASE 3 -- reprogramación (Fase 8) de una cita multi-servicio conserva TODOS sus servicios", () => {
+  it("Test 16 (obligatorio) -- cita original con 2 servicios en el puente -> la duración revalidada es la SUMA real de ambos, nunca solo la del primero", async () => {
+    const { resultado } = await reprogramar(
+      {},
+      {
+        citas: [{ ...CITA_EXISTENTE_BASE, servicio_id: "s-dipping" }],
+        servicios: [SERVICIO_DIPPING_CON_PRECIO, SERVICIO_PRESSON],
+        asociaciones: ASOCIACIONES_MULTI,
+        citaServicios: [
+          { cita_id: 500, servicio_id: "s-dipping", orden: 1 },
+          { cita_id: 500, servicio_id: "s-presson", orden: 2 },
+        ],
+      },
+    );
+    assert.equal(resultado.ok, true);
+    if (!resultado.ok) return;
+    assert.equal(resultado.servicio.duracionMin, 210, "120 (Dipping) + 90 (Press On) -- conserva AMBOS servicios, nunca solo servicio_id");
+    assert.equal(new Date(resultado.cita.fin).getTime() - new Date(resultado.cita.inicio).getTime(), 210 * 60_000);
+  });
+
+  it("regresión -- una cita de un solo servicio (sin filas en el puente) sigue usando EXCLUSIVAMENTE servicio_id, comportamiento 100% idéntico al de antes de esta fase", async () => {
+    const { resultado } = await reprogramar({}, { citaServicios: [] });
+    assert.equal(resultado.ok, true);
+    if (!resultado.ok) return;
+    assert.equal(resultado.servicio.duracionMin, 120, "duración real de s-dipping en CITA_EXISTENTE_BASE, sin ninguna suma");
+  });
+
+  it("una sola fila en el puente (nunca debería ocurrir, pero defensivo) se trata igual que 'sin puente' -- usa servicio_id tal cual, nunca una suma de un solo elemento", async () => {
+    const { resultado } = await reprogramar({}, { citaServicios: [{ cita_id: 500, servicio_id: "s-dipping", orden: 1 }] });
+    assert.equal(resultado.ok, true);
+    if (!resultado.ok) return;
+    assert.equal(resultado.servicio.duracionMin, 120);
   });
 });

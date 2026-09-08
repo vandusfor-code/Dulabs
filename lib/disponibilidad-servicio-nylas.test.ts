@@ -7,7 +7,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { listarHorariosDisponiblesPorServicioConNylas } from "@/lib/disponibilidad-servicio-nylas";
+import { listarHorariosDisponiblesPorServicioConNylas, calcularHorariosDeEspecialista } from "@/lib/disponibilidad-servicio-nylas";
 import type { NylasEvent, NylasEventsClient } from "@/lib/nylas/nylas-types";
 
 const TENANT = "amore-test";
@@ -390,5 +390,37 @@ describe("Especialista sin calendario de Nylas asociado -- nunca rompe, cae a so
     assert.equal(mary.estado, "ok");
     assert.ok(mary.horarios.length > 0);
     assert.equal(llamadas, 3, "Nylas se llama para las otras 3, nunca para Mary");
+  });
+});
+
+// FASE 3 (autorizado, multi-servicio) -- calcularHorariosDeEspecialista
+// EXPORTADA sin ningún cambio de comportamiento (ver comentario en
+// lib/disponibilidad-servicio-nylas.ts). Estos tests prueban directamente esa
+// función con una duración TOTAL combinada (150min = 60+90, ej. real del
+// pedido) para confirmar que el bloque continuo se resuelve con el MISMO
+// generarHorariosLibres reutilizado -- nunca una segunda implementación de
+// "bloque continuo".
+describe("FASE 3 (autorizado, multi-servicio) -- calcularHorariosDeEspecialista con duración TOTAL combinada (150min = 60+90)", () => {
+  it("Test 12 (obligatorio) -- bloque de 150min completamente libre -> se ofrece como horario válido", async () => {
+    const supabase = crearSupabaseFalso(construirTablas());
+    const r = await calcularHorariosDeEspecialista(
+      supabase,
+      { idTenant: TENANT, especialista: { id: 1, nombre: "Mary" }, fecha: LUNES, duracionMin: 150 },
+      { nylasClient: mockNylasClient({}), grantId: "grant-amore" },
+    );
+    assert.equal(r.estado, "ok");
+    assert.ok(r.horarios.includes("09:00"), "150 min libres desde la apertura deben ofrecerse como un bloque continuo real");
+  });
+
+  it("Test 13 (obligatorio) -- un compromiso a mitad del bloque de 150min lo rechaza COMPLETO, nunca ofrece un bloque interrumpido", async () => {
+    const supabase = crearSupabaseFalso(construirTablas());
+    const r = await calcularHorariosDeEspecialista(
+      supabase,
+      { idTenant: TENANT, especialista: { id: 1, nombre: "Mary" }, fecha: LUNES, duracionMin: 150 },
+      { nylasClient: mockNylasClient({ "cal-mary": [evento(`${LUNES}T10:00:00-05:00`, `${LUNES}T10:30:00-05:00`)] }), grantId: "grant-amore" },
+    );
+    assert.equal(r.estado, "ok");
+    assert.ok(!r.horarios.includes("09:00"), "09:00-11:30 se solapa con el compromiso de 10:00-10:30 -- el bloque de 150min completo se rechaza, NUNCA se ofrece partido");
+    assert.ok(r.horarios.includes("10:30"), "10:30-13:00 sigue libre después del compromiso, sí se ofrece");
   });
 });

@@ -29,6 +29,8 @@ export interface SesionAgendaV2 {
   activo: boolean;
   step: PasoAgendaV2;
   servicioId: string | null;
+  /** Fase 3 (autorizado, multi-servicio) -- lista ordenada de servicio_id cuando hay 2 o 3 servicios seleccionados. `null` para una selección de un solo servicio (comportamiento anterior a Fase 3, sin ningún cambio) -- en ese caso `servicioId` sigue siendo la única fuente de verdad. */
+  serviciosIds: string[] | null;
   profesionalId: number | null;
   fechaIso: string | null;
   slotSeleccionado: unknown | null;
@@ -49,6 +51,7 @@ interface FilaDb {
   activo: boolean;
   step: PasoAgendaV2;
   servicio_id: string | null;
+  servicios_ids: string[] | null;
   profesional_id: number | null;
   fecha_iso: string | null;
   slot_seleccionado: unknown | null;
@@ -70,6 +73,7 @@ function mapearFila(fila: FilaDb): SesionAgendaV2 {
     activo: fila.activo,
     step: fila.step,
     servicioId: fila.servicio_id,
+    serviciosIds: fila.servicios_ids,
     profesionalId: fila.profesional_id,
     fechaIso: fila.fecha_iso,
     slotSeleccionado: fila.slot_seleccionado,
@@ -123,6 +127,7 @@ export async function crearSesionAgendaV2(
     citaObjetivoId?: number | null;
     accionGestion?: AccionGestionAgendaV2 | null;
     servicioId?: string | null;
+    serviciosIds?: string[] | null;
     profesionalId?: number | null;
     fechaIso?: string | null;
   },
@@ -139,6 +144,7 @@ export async function crearSesionAgendaV2(
       cita_objetivo_id: params.citaObjetivoId ?? null,
       accion_gestion: params.accionGestion ?? null,
       servicio_id: params.servicioId ?? null,
+      servicios_ids: params.serviciosIds ?? null,
       profesional_id: params.profesionalId ?? null,
       fecha_iso: params.fechaIso ?? null,
     })
@@ -152,6 +158,7 @@ export async function crearSesionAgendaV2(
 export interface CambiosSesionAgendaV2 {
   step?: PasoAgendaV2;
   servicioId?: string | null;
+  serviciosIds?: string[] | null;
   profesionalId?: number | null;
   fechaIso?: string | null;
   slotSeleccionado?: unknown;
@@ -169,6 +176,7 @@ export async function actualizarSesionAgendaV2(
   const payload: Record<string, unknown> = { updated_at: new Date().toISOString() };
   if (cambios.step !== undefined) payload.step = cambios.step;
   if (cambios.servicioId !== undefined) payload.servicio_id = cambios.servicioId;
+  if (cambios.serviciosIds !== undefined) payload.servicios_ids = cambios.serviciosIds;
   if (cambios.profesionalId !== undefined) payload.profesional_id = cambios.profesionalId;
   if (cambios.fechaIso !== undefined) payload.fecha_iso = cambios.fechaIso;
   if (cambios.slotSeleccionado !== undefined) payload.slot_seleccionado = cambios.slotSeleccionado;

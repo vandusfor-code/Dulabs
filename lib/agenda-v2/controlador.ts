@@ -9,7 +9,7 @@
  */
 import { normalizeText } from "@/lib/flow-triggers/normalize-text";
 import type { CambiosSesionAgendaV2, SesionAgendaV2 } from "@/lib/agenda-v2/sesiones";
-import { resolverSeleccionServicio, textoSeleccionInvalidaServicio, type OpcionServicioAgendaV2 } from "@/lib/agenda-v2/servicios";
+import { resolverSeleccionMultiServicio, textoSeleccionInvalidaServicio, type OpcionServicioAgendaV2 } from "@/lib/agenda-v2/servicios";
 import { esOpcionCategoria, resolverSeleccionCategoria, textoSeleccionInvalidaCategoria, type OpcionCategoriaAgendaV2 } from "@/lib/agenda-v2/categorias";
 import { resolverSeleccionProfesional, textoSeleccionInvalidaProfesional, type OpcionProfesionalAgendaV2 } from "@/lib/agenda-v2/profesionales";
 import { resolverSeleccionFecha, textoSeleccionInvalidaFecha, type OpcionFechaAgendaV2 } from "@/lib/agenda-v2/fechas";
@@ -43,7 +43,10 @@ export type ResultadoControladorAgendaV2 =
   // FASE 3 -- el servicio fue elegido, pero construir el menú de
   // profesionales elegibles exige resolverEspecialistasElegiblesParaServicio
   // (async, Supabase real) -- misma razón que categoria_seleccionada.
-  | { accion: "servicio_seleccionado"; servicioId: string }
+  // FASE 3 (multi-servicio, autorizado) -- `servicioIds` siempre es un
+  // array de 1 a 3 elementos (nunca vacío) -- una selección de un solo
+  // servicio es simplemente un array de un elemento, mismo dato que antes.
+  | { accion: "servicio_seleccionado"; servicioIds: string[] }
   // FASE 4 -- el profesional fue elegido, pero calcular los días candidatos
   // reales exige el motor de disponibilidad + Nylas (async) -- misma razón
   // que las dos anteriores. Ver lib/agenda-v2/disponibilidad.ts.
@@ -159,7 +162,12 @@ function manejarSeleccionServicioOCategoria(sesion: SesionAgendaV2, mensaje: str
   }
 
   const opcionesServicio = opciones as OpcionServicioAgendaV2[];
-  const seleccion = resolverSeleccionServicio(mensaje, opcionesServicio);
+  // FASE 3 (multi-servicio, autorizado) -- resolverSeleccionMultiServicio
+  // acepta "1", "1 y 2", "1,2", "1 + 2", "1 y 2 y 3" (máximo 3, sin
+  // duplicados, solo números que existan en las opciones ya mostradas). Con
+  // un solo número el resultado es un array de un elemento -- el
+  // comportamiento de un solo servicio queda idéntico en la práctica.
+  const seleccion = resolverSeleccionMultiServicio(mensaje, opcionesServicio);
   if (!seleccion) {
     // Sección "ENTRADAS INVÁLIDAS" del pedido -- NUNCA avanza, NUNCA cambia
     // el servicio, NUNCA llama a nada externo. Vuelve a mostrar EXACTAMENTE
@@ -168,10 +176,10 @@ function manejarSeleccionServicioOCategoria(sesion: SesionAgendaV2, mensaje: str
   }
 
   // FASE 3 -- ya no se responde con un texto temporal: el siguiente mensaje
-  // real es el menú de profesionales elegibles para ESTE servicio. Eso
-  // exige resolverEspecialistasElegiblesParaServicio (async), así que
-  // router.ts termina la transición (step, servicioId, opcionesMostradas).
-  return { accion: "servicio_seleccionado", servicioId: seleccion.servicioId };
+  // real es el menú de profesionales elegibles para ESTOS servicios. Eso
+  // exige resolverEspecialistasElegiblesParaServicio/resolverEspecialistasParaMultiServicio
+  // (async), así que router.ts termina la transición (step, servicioId(s), opcionesMostradas).
+  return { accion: "servicio_seleccionado", servicioIds: seleccion.map((s) => s.servicioId) };
 }
 
 /**

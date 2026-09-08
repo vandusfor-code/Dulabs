@@ -35,6 +35,10 @@ import {
 } from "@/lib/especialistas";
 import { citasOcupadasDelDia } from "@/lib/disponibilidad-servicio";
 import { resolverEspecialistasElegiblesParaServicio } from "@/lib/asignacion-categoria";
+// Fase 3 (autorizado, multi-servicio) -- intersección real de elegibilidad
+// para 2 o 3 servicios (lib/agenda-v2/multi-servicio.ts, reutiliza TAL CUAL
+// resolverEspecialistasElegiblesParaServicio, nunca una segunda regla).
+import { resolverEspecialistasParaMultiServicio } from "@/lib/agenda-v2/multi-servicio";
 import { fechaColombiaDesdeIso } from "@/lib/timezone-colombia";
 import { ejecutarConIdempotencia, huellaSolicitud } from "@/lib/idempotencia-reserva";
 import { consultarEventosOcupadosNylas } from "@/lib/nylas/nylas-eventos-ocupados";
@@ -80,14 +84,15 @@ export interface DepsCrearCitaNylas {
   resolverCalendarId?: typeof resolverCalendarIdNylasDeEspecialista;
 }
 
-function construirDescripcionEvento(datos: { servicio: string; especialista: string; cliente: string; telefono: string | null }): string {
-  return [
-    `Servicio: ${datos.servicio}`,
-    `Profesional: ${datos.especialista}`,
-    `Cliente: ${datos.cliente}`,
-    datos.telefono ? `Teléfono: ${datos.telefono}` : null,
-    "Origen: Piloto AMORE (DuLabs + Nylas)",
-  ]
+/**
+ * Fase 3 (autorizado, multi-servicio) — `servicios` con 1 elemento produce
+ * EXACTAMENTE el mismo texto de siempre ("Servicio: {nombre}\n..."). Con más
+ * de uno, la primera línea pasa a ser una lista -- el resto (profesional,
+ * cliente, teléfono, origen) no cambia.
+ */
+function construirDescripcionEvento(datos: { servicios: string[]; especialista: string; cliente: string; telefono: string | null }): string {
+  const lineaServicios = datos.servicios.length === 1 ? `Servicio: ${datos.servicios[0]}` : `Servicios:\n${datos.servicios.map((s) => `- ${s}`).join("\n")}`;
+  return [lineaServicios, `Profesional: ${datos.especialista}`, `Cliente: ${datos.cliente}`, datos.telefono ? `Teléfono: ${datos.telefono}` : null, "Origen: Piloto AMORE (DuLabs + Nylas)"]
     .filter(Boolean)
     .join("\n");
 }
@@ -97,6 +102,12 @@ async function ejecutarCreacionReal(
   params: {
     idTenant: string;
     servicioId: string;
+    // Fase 3 (autorizado, multi-servicio) -- 0 a 2 servicios EXTRA, además de
+    // servicioId (máximo 3 en total, validado por el caller en
+    // lib/agenda-v2/servicios.ts). Ningún caller existente la pasa -- queda
+    // undefined y el comportamiento de un solo servicio es 100% idéntico al
+    // de antes de esta fase (ver esMultiServicio abajo).
+    serviciosIdsAdicionales?: string[];
     especialistaId: number;
     inicio: Date;
     nombreCliente: string;
@@ -104,20 +115,32 @@ async function ejecutarCreacionReal(
   },
   deps: DepsCrearCitaNylas,
 ): Promise<ResultadoCrearCitaNylas> {
-  const { data: servicio } = await supabase
+  const todosLosServicioIds = [params.servicioId, ...(params.serviciosIdsAdicionales ?? [])];
+  const esMultiServicio = todosLosServicioIds.length > 1;
+
+  const { data: serviciosData } = await supabase
     .from("dulabs_servicios")
-    .select("id, nombre, duracion_min")
+    .select("id, nombre, precio, duracion_min")
     .eq("id_tenant", params.idTenant)
-    .eq("id", params.servicioId)
-    .eq("activo", true)
-    .maybeSingle();
-  if (!servicio) {
-    return { ok: false, motivo: "servicio_no_encontrado", detalle: "Ese servicio no existe o no está activo." };
+    .in("id", todosLosServicioIds)
+    .eq("activo", true);
+  const serviciosEncontrados = (serviciosData ?? []) as { id: string; nombre: string; precio: number | null; duracion_min: number | null }[];
+  if (serviciosEncontrados.length !== todosLosServicioIds.length) {
+    return { ok: false, motivo: "servicio_no_encontrado", detalle: "Uno o más servicios ya no existen o no están activos." };
   }
-  const duracionMin = servicio.duracion_min as number | null;
-  if (!duracionMin || duracionMin <= 0) {
-    return { ok: false, motivo: "duracion_invalida", detalle: "El servicio no tiene una duración real configurada." };
+  // Preserva el orden pedido -- el .in() de Postgres no lo garantiza.
+  const servicios = todosLosServicioIds.map((id) => serviciosEncontrados.find((s) => s.id === id)!);
+
+  if (servicios.some((s) => !s.duracion_min || s.duracion_min <= 0)) {
+    return { ok: false, motivo: "duracion_invalida", detalle: "Uno o más servicios no tienen una duración real configurada." };
   }
+  const duracionMin = servicios.reduce((total, s) => total + (s.duracion_min as number), 0);
+  const servicioPrincipal = servicios[0]!;
+  const nombreParaEvento = servicios.map((s) => s.nombre).join(" + ");
+  // Nunca inventa un total si algún servicio de la combinación no tiene
+  // precio fijo (sección PRECIO del pedido: "NO inventar descuentos ni
+  // promociones") -- se deja sin precio_total en vez de sumar un 0 falso.
+  const precioTotal = esMultiServicio && servicios.every((s) => s.precio !== null) ? servicios.reduce((total, s) => total + (s.precio as number), 0) : null;
 
   const { data: especialista } = await supabase
     .from("dulabs_especialistas")
@@ -130,8 +153,14 @@ async function ejecutarCreacionReal(
     return { ok: false, motivo: "especialista_no_encontrado", detalle: "Ese especialista no existe o no está activo." };
   }
 
-  const resolucion = await resolverEspecialistasElegiblesParaServicio(supabase, params.idTenant, servicio.id as string);
-  if (!resolucion.especialistas.some((e) => e.especialistaId === especialista.id)) {
+  // Fase 3 (autorizado) -- con un solo servicio, resolverEspecialistasElegiblesParaServicio
+  // TAL CUAL (comportamiento idéntico al de antes de esta fase). Con varios,
+  // la intersección real (lib/agenda-v2/multi-servicio.ts) -- nunca confía
+  // ciegamente en que el paso anterior de Agenda V2 ya lo validó.
+  const especialistasElegibles = esMultiServicio
+    ? (await resolverEspecialistasParaMultiServicio(supabase, params.idTenant, todosLosServicioIds)).especialistas
+    : (await resolverEspecialistasElegiblesParaServicio(supabase, params.idTenant, servicioPrincipal.id)).especialistas;
+  if (!especialistasElegibles.some((e) => e.especialistaId === especialista.id)) {
     return { ok: false, motivo: "especialista_no_habilitado", detalle: "Ese especialista no está habilitado para este servicio." };
   }
 
@@ -188,9 +217,9 @@ async function ejecutarCreacionReal(
     const creado = await deps.nylasWriteClient.createEvent({
       grantId: deps.grantId,
       calendarId,
-      title: `AMORE — ${servicio.nombre as string} (${params.nombreCliente})`,
+      title: `AMORE — ${nombreParaEvento} (${params.nombreCliente})`,
       description: construirDescripcionEvento({
-        servicio: servicio.nombre as string,
+        servicios: servicios.map((s) => s.nombre),
         especialista: especialista.nombre as string,
         cliente: params.nombreCliente,
         telefono: params.telefonoCliente,
@@ -205,14 +234,19 @@ async function ejecutarCreacionReal(
   }
 
   // --- Segunda protección: el INSERT atómico de DuLabs (EXCLUDE de Postgres) ---
+  // servicio/servicioId SIEMPRE el PRIMER servicio (sección MUY IMPORTANTE
+  // del pedido: compatibilidad histórica total) -- nunca el combinado, para
+  // que cualquier lector existente (recordatorios, dashboard, contabilidad)
+  // siga viendo un servicio real y válido sin ningún cambio de contrato.
   const resultadoDb = await crearCitaEspecialista(supabase, {
     especialistaId: especialista.id,
     idTenant: params.idTenant,
     phoneNumberId: especialista.phone_number_id as string,
     telefonoCliente: params.telefonoCliente,
     nombreCliente: params.nombreCliente,
-    servicio: servicio.nombre as string,
-    servicioId: servicio.id as string,
+    servicio: servicioPrincipal.nombre,
+    servicioId: servicioPrincipal.id,
+    precioTotal,
     inicio: params.inicio,
     duracionMin,
     bloqueaHorario: especialista.bloquea_horario as boolean,
@@ -238,6 +272,35 @@ async function ejecutarCreacionReal(
     return { ok: false, motivo: "error_de_base_de_datos", detalle: resultadoDb.detalle ?? "Error desconocido creando la cita en DuLabs." };
   }
 
+  // --- FASE 3 (autorizado, multi-servicio) --------------------------------
+  // La cita YA existe (protegida por el EXCLUDE) y el evento de Nylas YA es
+  // real -- ambos son el éxito que de verdad importa (el horario quedó
+  // bloqueado correctamente). Guardar la lista de servicios en
+  // dulabs_cita_servicios es la ÚLTIMA escritura: no hay transacción real
+  // posible entre esto y el INSERT anterior (Supabase-js no ofrece
+  // transacciones multi-tabla desde el cliente), así que se documenta
+  // explícitamente el mismo patrón "best-effort pero NUNCA silencioso" que
+  // ya usa guardarNylasEventIdDeCita (lib/agenda-v2/citas-nylas.ts) para el
+  // mapeo cita->evento: si este INSERT falla, la cita y el evento reales NO
+  // se revierten (revertir una reserva ya protegida por el EXCLUDE sería más
+  // riesgoso que dejarla con su registro de servicios incompleto -- alguien
+  // más podría tomar ese horario mientras tanto), pero el caller se entera
+  // con un motivo explícito para revisión manual, nunca un éxito silencioso
+  // con datos incompletos.
+  if (esMultiServicio) {
+    const { error: errorPuente } = await supabase.from("dulabs_cita_servicios").insert(
+      servicios.map((s, i) => ({ cita_id: resultadoDb.cita.id, id_tenant: params.idTenant, servicio_id: s.id, orden: i + 1 })),
+    );
+    if (errorPuente) {
+      console.error(`[reserva-servicio-nylas] cita ${resultadoDb.cita.id} y evento Nylas ${nylasEventId} creados con éxito, pero dulabs_cita_servicios falló:`, errorPuente.message);
+      return {
+        ok: false,
+        motivo: "inconsistencia_requiere_revision_manual",
+        detalle: `La cita ${resultadoDb.cita.id} y el evento de Nylas ${nylasEventId} se crearon con éxito, pero no se pudo guardar el detalle de sus ${servicios.length} servicios (${errorPuente.message}). El horario quedó reservado correctamente -- requiere completar dulabs_cita_servicios manualmente.`,
+      };
+    }
+  }
+
   // Revisión (autorizada, sección 13 del pedido) — la disponibilidad de ESTE
   // camino ya fue revalidada de verdad (jornada + bloqueos + citas DuLabs +
   // eventos reales de Nylas/Google Calendar, arriba) y el evento/la fila ya
@@ -260,7 +323,7 @@ async function ejecutarCreacionReal(
     cita: citaFinal,
     nylasEventId,
     especialista: { id: especialista.id as number, nombre: especialista.nombre as string },
-    servicio: { id: servicio.id as string, nombre: servicio.nombre as string, duracionMin },
+    servicio: { id: servicioPrincipal.id, nombre: nombreParaEvento, duracionMin },
   };
 }
 
@@ -343,20 +406,31 @@ async function ejecutarActualizacionReal(
     return { ok: false, motivo: "servicio_no_encontrado", detalle: "Esta cita no tiene un servicio real asociado -- no se puede revalidar su disponibilidad." };
   }
 
-  const { data: servicio } = await supabase
+  // Fase 3 (autorizado, multi-servicio) -- si esta cita tiene fila(s) en
+  // dulabs_cita_servicios, es la fuente de verdad de TODOS sus servicios
+  // (mismo profesional, un solo bloque); si no tiene ninguna, es una cita de
+  // un solo servicio y el camino queda IDÉNTICO al de antes de esta fase
+  // (una sola consulta a dulabs_servicios por servicio_id).
+  const { data: filasPuente } = await supabase.from("dulabs_cita_servicios").select("servicio_id, orden").eq("cita_id", params.citaId).order("orden", { ascending: true });
+  const esMultiServicio = Boolean(filasPuente && filasPuente.length > 1);
+  const idsAValidar = esMultiServicio ? (filasPuente as { servicio_id: string }[]).map((f) => f.servicio_id) : [citaActual.servicio_id as string];
+
+  const { data: serviciosData } = await supabase
     .from("dulabs_servicios")
     .select("id, nombre, duracion_min")
     .eq("id_tenant", params.idTenant)
-    .eq("id", citaActual.servicio_id as string)
-    .eq("activo", true)
-    .maybeSingle();
-  if (!servicio) {
-    return { ok: false, motivo: "servicio_no_encontrado", detalle: "Ese servicio ya no existe o no está activo." };
+    .in("id", idsAValidar)
+    .eq("activo", true);
+  const serviciosEncontrados = (serviciosData ?? []) as { id: string; nombre: string; duracion_min: number | null }[];
+  if (serviciosEncontrados.length !== idsAValidar.length) {
+    return { ok: false, motivo: "servicio_no_encontrado", detalle: "Uno o más servicios de esta cita ya no existen o no están activos." };
   }
-  const duracionMin = servicio.duracion_min as number | null;
-  if (!duracionMin || duracionMin <= 0) {
-    return { ok: false, motivo: "duracion_invalida", detalle: "El servicio no tiene una duración real configurada." };
+  const servicios = idsAValidar.map((id) => serviciosEncontrados.find((s) => s.id === id)!);
+  if (servicios.some((s) => !s.duracion_min || s.duracion_min <= 0)) {
+    return { ok: false, motivo: "duracion_invalida", detalle: "Uno o más servicios no tienen una duración real configurada." };
   }
+  const duracionMin = servicios.reduce((total, s) => total + (s.duracion_min as number), 0);
+  const nombreParaEvento = servicios.map((s) => s.nombre).join(" + ");
 
   const especialistaId = citaActual.especialista_id as number;
   const { data: especialista } = await supabase
@@ -423,7 +497,7 @@ async function ejecutarActualizacionReal(
     const creado = await deps.nylasWriteClient.createEvent({
       grantId: deps.grantId,
       calendarId,
-      title: `AMORE — ${servicio.nombre as string} (reprogramada)`,
+      title: `AMORE — ${nombreParaEvento} (reprogramada)`,
       startUnix: Math.floor(params.nuevoInicio.getTime() / 1000),
       endUnix: Math.floor(nuevoFin.getTime() / 1000),
       timezone: "America/Bogota",
@@ -434,7 +508,10 @@ async function ejecutarActualizacionReal(
   }
 
   // --- Segunda protección: el UPDATE atómico de DuLabs (EXCLUDE de Postgres), MISMA fila, nunca una nueva ---
-  const resultadoDb = await editarCitaConfirmada(supabase, params.citaId, { nuevoInicio: params.nuevoInicio });
+  // duracionMin explícito SIEMPRE (ya es la suma real de todos los
+  // servicios de la cita, sea 1 o varios) -- nunca se confía en que
+  // fin-inicio de la fila ya guardada siga siendo correcto.
+  const resultadoDb = await editarCitaConfirmada(supabase, params.citaId, { nuevoInicio: params.nuevoInicio, duracionMin });
 
   if (!resultadoDb.ok) {
     // La cita original NUNCA se toca si el UPDATE falla -- Postgres deja la
@@ -477,7 +554,7 @@ async function ejecutarActualizacionReal(
     nylasEventId: nylasEventIdNuevo,
     nylasEventIdAnterior: deps.nylasEventIdActual,
     especialista: { id: especialista.id as number, nombre: especialista.nombre as string },
-    servicio: { id: servicio.id as string, nombre: servicio.nombre as string, duracionMin },
+    servicio: { id: citaActual.servicio_id as string, nombre: nombreParaEvento, duracionMin },
   };
 }
 
@@ -513,6 +590,10 @@ export async function crearCitaConNylas(
   params: {
     idTenant: string;
     servicioId: string;
+    // Fase 3 (autorizado, multi-servicio) -- 0 a 2 servicios EXTRA, además de
+    // servicioId (máximo 3 en total). Ningún caller existente la pasa -- la
+    // firma/comportamiento de un solo servicio quedan 100% intactos.
+    serviciosIdsAdicionales?: string[];
     especialistaId: number;
     inicio: Date;
     nombreCliente: string;
@@ -528,6 +609,7 @@ export async function crearCitaConNylas(
   const huella = huellaSolicitud([
     params.idTenant,
     params.servicioId,
+    (params.serviciosIdsAdicionales ?? []).join(","),
     params.especialistaId,
     params.inicio.toISOString(),
     params.telefonoCliente,

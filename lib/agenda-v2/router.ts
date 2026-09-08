@@ -20,7 +20,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { adquirirCandadoChat, liberarCandadoChat } from "@/lib/chat-lock";
 import { cargarEscenariosReal } from "@/lib/bot-escenarios/store";
-import { listarCatalogoServiciosReal } from "@/lib/catalogo-servicios-flow-adaptador";
+import { listarCatalogoServiciosReal, type ServicioCatalogoReal } from "@/lib/catalogo-servicios-flow-adaptador";
 import { resolverEspecialistasElegiblesParaServicio } from "@/lib/asignacion-categoria";
 import { resolverNylasGrantIdParaTenant, AMORE_TENANT_ID } from "@/lib/nylas/nylas-grant";
 import { createNylasEventsClient, createNylasEventsWriteClient, resolveNylasApiKeyFromEnv } from "@/lib/nylas/nylas-client";
@@ -40,8 +40,23 @@ import {
   MENSAJE_HORARIO_RECIEN_OCUPADO,
   MENSAJE_ERROR_TECNICO_CONFIRMACION,
   type ResumenCitaAgendaV2,
+  renderizarResumenConfirmacionMultiServicio,
+  renderizarResumenCambioMultiServicio,
+  renderizarConfirmacionExitosaMultiServicio,
+  type ResumenCitaMultiServicioAgendaV2,
 } from "@/lib/agenda-v2/confirmacion";
-import { calcularDiasCandidatosReales, calcularHorariosParaFecha } from "@/lib/agenda-v2/disponibilidad";
+import {
+  calcularDiasCandidatosReales,
+  calcularHorariosParaFecha,
+  calcularDiasCandidatosMultiServicio,
+  calcularHorariosParaFechaMultiServicio,
+  type ResultadoDiasCandidatos,
+  type ResultadoHorariosFecha,
+  type ResultadoHorariosFechaMultiServicio,
+} from "@/lib/agenda-v2/disponibilidad";
+// FASE 3 (autorizado, multi-servicio) -- intersección real de elegibilidad
+// para 2 o 3 servicios (reutiliza TAL CUAL resolverEspecialistasElegiblesParaServicio).
+import { resolverEspecialistasParaMultiServicio as resolverEspecialistasMultiServicio, obtenerServiciosDeCita } from "@/lib/agenda-v2/multi-servicio";
 import { formatearHoraAmPm } from "@/lib/especialistas-flow-adaptador";
 import { buscarSesionActivaAgendaV2, crearSesionAgendaV2, cerrarSesionAgendaV2, actualizarSesionAgendaV2 } from "@/lib/agenda-v2/sesiones";
 // FASE 7 (autorizado) -- creación REAL de la reserva. Reutilizada TAL CUAL
@@ -120,6 +135,11 @@ export interface AgendaV2RouterDeps {
   createNylasEventsClient?: typeof createNylasEventsClient;
   calcularDiasCandidatos?: typeof calcularDiasCandidatosReales;
   calcularHorariosFecha?: typeof calcularHorariosParaFecha;
+  // FASE 3 -- inyectables para tests, mismo criterio exacto de arriba.
+  resolverEspecialistasMultiServicio?: typeof resolverEspecialistasMultiServicio;
+  calcularDiasMultiServicio?: typeof calcularDiasCandidatosMultiServicio;
+  calcularHorariosFechaMultiServicio?: typeof calcularHorariosParaFechaMultiServicio;
+  obtenerServiciosDeCita?: typeof obtenerServiciosDeCita;
   enviarMensajeWhatsApp?: typeof enviarMensajeWhatsApp;
   buscarSesionActiva?: typeof buscarSesionActivaAgendaV2;
   crearSesion?: typeof crearSesionAgendaV2;
@@ -265,6 +285,11 @@ export async function procesarMensajeConAgendaV2(
   const crearNylasClient = deps.createNylasEventsClient ?? createNylasEventsClient;
   const calcularDias = deps.calcularDiasCandidatos ?? calcularDiasCandidatosReales;
   const calcularHoras = deps.calcularHorariosFecha ?? calcularHorariosParaFecha;
+  // FASE 3 (autorizado, multi-servicio) -- mismo criterio exacto de arriba.
+  const resolverEspecialistasMulti = deps.resolverEspecialistasMultiServicio ?? resolverEspecialistasMultiServicio;
+  const calcularDiasMulti = deps.calcularDiasMultiServicio ?? calcularDiasCandidatosMultiServicio;
+  const calcularHorasMulti = deps.calcularHorariosFechaMultiServicio ?? calcularHorariosParaFechaMultiServicio;
+  const obtenerServiciosDeCitaDep = deps.obtenerServiciosDeCita ?? obtenerServiciosDeCita;
   const enviarMensaje = deps.enviarMensajeWhatsApp ?? enviarMensajeWhatsApp;
   const buscarSesionActiva = deps.buscarSesionActiva ?? buscarSesionActivaAgendaV2;
   const crearSesion = deps.crearSesion ?? crearSesionAgendaV2;
@@ -498,6 +523,7 @@ export async function procesarMensajeConAgendaV2(
         await actualizarSesion(params.supabase, sesion!.id, {
           step: "S1_SERVICIO",
           servicioId: null,
+          serviciosIds: null,
           profesionalId: null,
           fechaIso: null,
           slotSeleccionado: null,
@@ -521,6 +547,42 @@ export async function procesarMensajeConAgendaV2(
         return { manejado: true };
       }
 
+      // FASE 3 (autorizado, multi-servicio) -- si la sesión tiene 2 o 3
+      // servicios (sesion.serviciosIds), calcula la duración total real
+      // sumando el catálogo y usa el motor de disponibilidad multi-servicio
+      // (lib/agenda-v2/disponibilidad.ts) -- nunca inventa, nunca asume 1
+      // servicio. `null` si algún servicio ya no es válido o la profesional
+      // ya no existe (defensivo, el caller decide qué hacer).
+      async function calcularDiasComoCorresponda(servicioId: string, profesionalId: number): Promise<ResultadoDiasCandidatos | null> {
+        const serviciosIdsMulti = sesion!.serviciosIds;
+        if (!serviciosIdsMulti || serviciosIdsMulti.length <= 1) {
+          return await calcularDias(params.supabase, { idTenant: params.idTenant, servicioId, profesionalId }, construirNylasDeps());
+        }
+        const catalogo = await cargarCatalogo(params.supabase, params.idTenant);
+        const serviciosSeleccionados: (ServicioCatalogoReal | undefined)[] = serviciosIdsMulti.map((id: string) => catalogo.find((s: ServicioCatalogoReal) => s.id === id));
+        if (serviciosSeleccionados.some((s) => !s)) return null;
+        const duracionTotalMin = (serviciosSeleccionados as { duracionMin: number }[]).reduce((acc, s) => acc + s.duracionMin, 0);
+        const especialista = await especialistaPorIdDep(params.supabase, profesionalId);
+        if (!especialista) return null;
+        const resultadoMulti = await calcularDiasMulti(params.supabase, { idTenant: params.idTenant, especialista: { id: profesionalId, nombre: especialista.nombre }, duracionTotalMin }, construirNylasDeps());
+        return { ok: true, opciones: resultadoMulti.opciones };
+      }
+
+      /** Mismo criterio EXACTO que calcularDiasComoCorresponda -- multi-servicio usa la duración total real, un solo servicio queda idéntico a antes. */
+      async function calcularHorasComoCorresponda(servicioId: string, profesionalId: number, fechaIso: string): Promise<ResultadoHorariosFecha | ResultadoHorariosFechaMultiServicio> {
+        const serviciosIdsMulti = sesion!.serviciosIds;
+        if (!serviciosIdsMulti || serviciosIdsMulti.length <= 1) {
+          return await calcularHoras(params.supabase, { idTenant: params.idTenant, servicioId, profesionalId, fechaIso }, construirNylasDeps());
+        }
+        const catalogo = await cargarCatalogo(params.supabase, params.idTenant);
+        const serviciosSeleccionados: (ServicioCatalogoReal | undefined)[] = serviciosIdsMulti.map((id: string) => catalogo.find((s: ServicioCatalogoReal) => s.id === id));
+        if (serviciosSeleccionados.some((s) => !s)) return { ok: false, motivo: "sin_horarios_ese_dia" };
+        const duracionTotalMin = (serviciosSeleccionados as { duracionMin: number }[]).reduce((acc, s) => acc + s.duracionMin, 0);
+        const especialista = await especialistaPorIdDep(params.supabase, profesionalId);
+        if (!especialista) return { ok: false, motivo: "sin_horarios_ese_dia" };
+        return await calcularHorasMulti(params.supabase, { idTenant: params.idTenant, especialista: { id: profesionalId, nombre: especialista.nombre }, fechaIso, duracionTotalMin }, construirNylasDeps());
+      }
+
       // FASE 4 (autorizado) -- reutilizada TAL CUAL tanto para avanzar
       // (profesional_seleccionado) como para retroceder desde S5_CONFIRMAR
       // (confirmacion_cambiar_fecha, FASE 6) -- "no duplicar lógica" del
@@ -529,8 +591,8 @@ export async function procesarMensajeConAgendaV2(
       // mostrando los profesionales reales de nuevo (mismo criterio en
       // ambos casos de uso).
       async function mostrarMenuFechaOVolverAProfesional(servicioId: string, profesionalId: number): Promise<ResultadoRouterAgendaV2> {
-        const nylasDeps = construirNylasDeps();
-        const diasResultado = await calcularDias(params.supabase, { idTenant: params.idTenant, servicioId, profesionalId }, nylasDeps);
+        const diasResultado = await calcularDiasComoCorresponda(servicioId, profesionalId);
+        if (!diasResultado) return await reiniciarPorEstadoInconsistente("multi-servicio con un servicio o profesional ya no válido");
 
         if (!diasResultado.ok || diasResultado.opciones.length === 0) {
           if (sesion!.citaObjetivoId) {
@@ -553,7 +615,11 @@ export async function procesarMensajeConAgendaV2(
             });
             return { manejado: true };
           }
-          const resolucion = await resolverEspecialistas(params.supabase, params.idTenant, servicioId);
+          const serviciosIdsMultiFallback = sesion!.serviciosIds;
+          const resolucion =
+            serviciosIdsMultiFallback && serviciosIdsMultiFallback.length > 1
+              ? await resolverEspecialistasMulti(params.supabase, params.idTenant, serviciosIdsMultiFallback)
+              : await resolverEspecialistas(params.supabase, params.idTenant, servicioId);
           const opcionesProfesional = construirOpcionesProfesional(resolucion.especialistas);
           await actualizarSesion(params.supabase, sesion!.id, {
             step: "S2_PROFESIONAL",
@@ -600,12 +666,11 @@ export async function procesarMensajeConAgendaV2(
         mensajePrevio?: string,
       ): Promise<ResultadoRouterAgendaV2> {
         const prefijo = mensajePrevio ? `${mensajePrevio}\n\n` : "";
-        const nylasDeps = construirNylasDeps();
-        const horariosResultado = await calcularHoras(params.supabase, { idTenant: params.idTenant, servicioId, profesionalId, fechaIso }, nylasDeps);
+        const horariosResultado = await calcularHorasComoCorresponda(servicioId, profesionalId, fechaIso);
 
         if (!horariosResultado.ok) {
-          const diasResultado = await calcularDias(params.supabase, { idTenant: params.idTenant, servicioId, profesionalId }, nylasDeps);
-          const opcionesFecha = diasResultado.ok ? diasResultado.opciones : [];
+          const diasResultado = await calcularDiasComoCorresponda(servicioId, profesionalId);
+          const opcionesFecha = diasResultado?.ok ? diasResultado.opciones : [];
           await actualizarSesion(params.supabase, sesion!.id, {
             step: "S3_DIA",
             fechaIso: null,
@@ -668,13 +733,17 @@ export async function procesarMensajeConAgendaV2(
       }
 
       if (resultado.accion === "servicio_seleccionado") {
-        // FASE 3 (autorizado) -- el servicio ya fue elegido; se resuelven
-        // los profesionales REALMENTE elegibles para ESE servicio con el
-        // ÚNICO resolver real de elegibilidad (lib/asignacion-categoria.ts),
-        // el mismo que ya usa el resto de la plataforma -- nunca una segunda
-        // fuente de verdad. El step avanza a S2_PROFESIONAL en el mismo
-        // update que guarda el menú (nunca dos escrituras separadas).
-        const resolucion = await resolverEspecialistas(params.supabase, params.idTenant, resultado.servicioId);
+        // FASE 3 (autorizado) -- el/los servicio(s) ya fueron elegidos; se
+        // resuelven los profesionales REALMENTE elegibles con el ÚNICO
+        // resolver real de elegibilidad -- nunca una segunda fuente de
+        // verdad. Con un solo servicio, resolverEspecialistas (sin cambios);
+        // con 2 o 3, la intersección real (lib/agenda-v2/multi-servicio.ts,
+        // Bloque 3). El step avanza a S2_PROFESIONAL en el mismo update que
+        // guarda el menú (nunca dos escrituras separadas).
+        const esMultiServicio = resultado.servicioIds.length > 1;
+        const resolucion = esMultiServicio
+          ? await resolverEspecialistasMulti(params.supabase, params.idTenant, resultado.servicioIds)
+          : await resolverEspecialistas(params.supabase, params.idTenant, resultado.servicioIds[0]!);
         if (resolucion.especialistas.length === 0) {
           // Caso sin profesionales elegibles (sección "CASO SIN
           // PROFESIONALES" del pedido) -- NUNCA avanza a S2_PROFESIONAL con
@@ -684,13 +753,18 @@ export async function procesarMensajeConAgendaV2(
           // categorías, el step permanece en S1_SERVICIO (donde ya estaba).
           // Terminología reutilizada de internal-action-executor.ts (mismo
           // caso real, "ninguna profesional está habilitada todavía").
+          // FASE 3 -- si eran varios servicios, el mensaje deja explícito
+          // que nadie puede realizarlos TODOS juntos (Bloque 3 del pedido),
+          // nunca ofrece una combinación imposible.
           const catalogo = await cargarCatalogo(params.supabase, params.idTenant);
           const categoriasActualizadas = construirOpcionesCategoria(catalogo);
           await actualizarSesion(params.supabase, sesion.id, { opcionesMostradas: categoriasActualizadas, ultimoWamidProcesado: params.wamid });
           await enviarMensaje({
             tenantId: params.idTenant,
             telefono: params.telefono,
-            mensaje: `En este momento ninguna profesional está habilitada para ese servicio 😔 Elige otro:\n\n${renderizarMenuCategoria(categoriasActualizadas)}`,
+            mensaje: esMultiServicio
+              ? `No encontramos ninguna profesional que pueda realizar todos esos servicios juntos 😔 Elige de nuevo:\n\n${renderizarMenuCategoria(categoriasActualizadas)}`
+              : `En este momento ninguna profesional está habilitada para ese servicio 😔 Elige otro:\n\n${renderizarMenuCategoria(categoriasActualizadas)}`,
             origen: "automatico",
           });
           return { manejado: true };
@@ -698,7 +772,11 @@ export async function procesarMensajeConAgendaV2(
         const opcionesProfesional = construirOpcionesProfesional(resolucion.especialistas);
         await actualizarSesion(params.supabase, sesion.id, {
           step: "S2_PROFESIONAL",
-          servicioId: resultado.servicioId,
+          // servicioId SIEMPRE el primero (compatibilidad, mismo criterio
+          // que la cita real) -- serviciosIds solo se llena si hay más de
+          // uno, nunca para una selección de un solo servicio.
+          servicioId: resultado.servicioIds[0]!,
+          serviciosIds: esMultiServicio ? resultado.servicioIds : null,
           opcionesMostradas: opcionesProfesional,
           ultimoWamidProcesado: params.wamid,
         });
@@ -735,6 +813,38 @@ export async function procesarMensajeConAgendaV2(
           return await reiniciarPorEstadoInconsistente("S4_HORA sin servicioId/profesionalId");
         }
         const catalogo = await cargarCatalogo(params.supabase, params.idTenant);
+
+        // FASE 3 (autorizado, multi-servicio) -- con 2 o 3 servicios, el
+        // resumen lista todos, suma precio/duración -- reutiliza el MISMO
+        // resolver multi de elegibilidad, nunca una segunda fuente de verdad.
+        if (sesion.serviciosIds && sesion.serviciosIds.length > 1) {
+          const serviciosSeleccionados = sesion.serviciosIds.map((id) => catalogo.find((s) => s.id === id));
+          const resolucionMulti = await resolverEspecialistasMulti(params.supabase, params.idTenant, sesion.serviciosIds);
+          const profesionalMulti = resolucionMulti.especialistas.find((e) => e.especialistaId === sesion.profesionalId);
+          if (serviciosSeleccionados.some((s) => !s) || !profesionalMulti) {
+            return await reiniciarPorEstadoInconsistente("S4_HORA multi-servicio con servicio/profesional ya no válidos al armar el resumen");
+          }
+          const servicios = serviciosSeleccionados as { nombre: string; precio: number; duracionMin: number }[];
+          const resumenMulti: ResumenCitaMultiServicioAgendaV2 = {
+            servicios: servicios.map((s) => ({ nombre: s.nombre, precio: s.precio })),
+            duracionTotalMin: servicios.reduce((total, s) => total + s.duracionMin, 0),
+            precioTotal: servicios.reduce((total, s) => total + s.precio, 0),
+            profesionalNombre: profesionalMulti.nombre,
+            fechaEtiqueta: formatearFechaLarga(resultado.fechaIso),
+            horaTexto: formatearHoraAmPm(resultado.hora),
+          };
+          await actualizarSesion(params.supabase, sesion.id, {
+            step: "S5_CONFIRMAR",
+            fechaIso: resultado.fechaIso,
+            slotSeleccionado: { fechaIso: resultado.fechaIso, hora: resultado.hora },
+            opcionesMostradas: OPCIONES_CONFIRMACION,
+            ultimoWamidProcesado: params.wamid,
+          });
+          const mensajeResumenMulti = sesion.citaObjetivoId ? renderizarResumenCambioMultiServicio(resumenMulti) : renderizarResumenConfirmacionMultiServicio(resumenMulti);
+          await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: mensajeResumenMulti, origen: "automatico" });
+          return { manejado: true };
+        }
+
         const servicio = catalogo.find((s) => s.id === sesion.servicioId);
         const resolucion = await resolverEspecialistas(params.supabase, params.idTenant, sesion.servicioId);
         const profesional = resolucion.especialistas.find((e) => e.especialistaId === sesion.profesionalId);
@@ -807,6 +917,14 @@ export async function procesarMensajeConAgendaV2(
         const servicio = catalogo.find((s) => s.id === sesion.servicioId);
         if (!servicio) {
           return await reiniciarPorEstadoInconsistente("S5_CONFIRMAR con servicio ya no válido al confirmar");
+        }
+        // FASE 3 (autorizado, multi-servicio) -- valida TODOS los servicios
+        // de la combinación antes de intentar crear nada (mismo criterio
+        // defensivo de arriba, extendido a la lista completa).
+        const esMultiServicioConfirmar = Boolean(sesion.serviciosIds && sesion.serviciosIds.length > 1);
+        const serviciosSeleccionadosConfirmar = esMultiServicioConfirmar ? sesion.serviciosIds!.map((id) => catalogo.find((s) => s.id === id)) : null;
+        if (serviciosSeleccionadosConfirmar?.some((s) => !s)) {
+          return await reiniciarPorEstadoInconsistente("S5_CONFIRMAR multi-servicio con un servicio ya no válido al confirmar");
         }
 
         const grantId = resolverGrantId(params.idTenant);
@@ -898,6 +1016,11 @@ export async function procesarMensajeConAgendaV2(
             {
               idTenant: params.idTenant,
               servicioId: sesion.servicioId,
+              // FASE 3 (autorizado, multi-servicio) -- servicioId sigue
+              // siendo SIEMPRE el primero (mismo orden ya elegido); el resto
+              // (0 a 2 servicios) va acá. Con una sola selección, esto queda
+              // `undefined` -- comportamiento 100% idéntico al de antes.
+              serviciosIdsAdicionales: esMultiServicioConfirmar ? sesion.serviciosIds!.slice(1) : undefined,
               especialistaId: sesion.profesionalId,
               inicio,
               nombreCliente,
@@ -941,6 +1064,23 @@ export async function procesarMensajeConAgendaV2(
         // esta cita más adelante no podría tocar su evento real de calendario.
         await guardarNylasEventIdDep(params.supabase, resultadoCita.cita.id, resultadoCita.nylasEventId);
         await cerrarSesion(params.supabase, sesion.id);
+        if (esMultiServicioConfirmar) {
+          const serviciosConfirmados = serviciosSeleccionadosConfirmar as { nombre: string; precio: number }[];
+          const valorTotal = serviciosConfirmados.every((s) => s.precio !== null) ? serviciosConfirmados.reduce((total, s) => total + s.precio, 0) : null;
+          await enviarMensaje({
+            tenantId: params.idTenant,
+            telefono: params.telefono,
+            mensaje: renderizarConfirmacionExitosaMultiServicio({
+              servicios: serviciosConfirmados.map((s) => s.nombre),
+              profesionalNombre: resultadoCita.especialista.nombre,
+              fechaEtiqueta: formatearFechaLarga(slot.fechaIso),
+              horaTexto: formatearHoraAmPm(slot.hora),
+              valorTotal,
+            }),
+            origen: "automatico",
+          });
+          return { manejado: true };
+        }
         await enviarMensaje({
           tenantId: params.idTenant,
           telefono: params.telefono,
@@ -1055,8 +1195,16 @@ export async function procesarMensajeConAgendaV2(
           await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_ERROR_REPROGRAMACION, origen: "automatico" });
           return { manejado: true };
         }
+        // FASE 3 (autorizado, multi-servicio) -- si la cita original tiene
+        // más de un servicio (dulabs_cita_servicios), la reprogramación
+        // debe conservarlos TODOS -- nunca solo el primero. Una cita de un
+        // solo servicio devuelve [] acá y el camino queda 100% idéntico al
+        // de antes de esta fase.
+        const serviciosDeCitaOriginal = await obtenerServiciosDeCitaDep(params.supabase, cita.id);
+        sesion.serviciosIds = serviciosDeCitaOriginal.length > 1 ? serviciosDeCitaOriginal : null;
         await actualizarSesion(params.supabase, sesion.id, {
           servicioId: cita.servicio_id,
+          serviciosIds: sesion.serviciosIds,
           profesionalId: cita.especialista_id,
           ultimoWamidProcesado: params.wamid,
         });

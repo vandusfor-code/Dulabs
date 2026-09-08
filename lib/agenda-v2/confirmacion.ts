@@ -88,6 +88,81 @@ export function textoSeleccionInvalidaConfirmacion(): string {
   return `No reconocí esa opción 💗 Por favor responde con el número de una de estas:\n\n${listaOpcionesTexto()}`;
 }
 
+// --- FASE 3 (autorizado, multi-servicio) -----------------------------------
+// Resumen para 2 o 3 servicios (mismo profesional, un solo bloque continuo).
+// Mismo criterio EXACTO que ResumenCitaAgendaV2: EXCLUSIVAMENTE datos reales
+// ya resueltos por router.ts (nunca inventa ni recalcula nada acá). Para un
+// solo servicio, router.ts sigue usando ResumenCitaAgendaV2/renderizarResumenConfirmacion
+// TAL CUAL -- estas funciones son un camino nuevo y aparte, nunca un
+// reemplazo.
+
+export interface ItemServicioResumen {
+  nombre: string;
+  precio: number;
+}
+
+export interface ResumenCitaMultiServicioAgendaV2 {
+  servicios: ItemServicioResumen[];
+  duracionTotalMin: number;
+  precioTotal: number;
+  profesionalNombre: string;
+  fechaEtiqueta: string;
+  horaTexto: string;
+}
+
+function listaServiciosTexto(servicios: ItemServicioResumen[]): string {
+  return servicios.map((s) => `• ${s.nombre} — ${formatearPrecioCop(s.precio)}`).join("\n");
+}
+
+/** Mismo formato pedido explícitamente (Bloque 5): lista de servicios, profesional, fecha, hora, duración total, valor total. */
+export function renderizarResumenConfirmacionMultiServicio(resumen: ResumenCitaMultiServicioAgendaV2): string {
+  return (
+    `Perfecto 💗 Estos son los datos de tu cita:\n\n` +
+    `Servicios:\n${listaServiciosTexto(resumen.servicios)}\n\n` +
+    `Profesional: ${resumen.profesionalNombre}\n` +
+    `Fecha: ${resumen.fechaEtiqueta}\n` +
+    `Hora: ${resumen.horaTexto}\n` +
+    `Duración: ${formatearDuracion(resumen.duracionTotalMin)}\n` +
+    `Valor total: ${formatearPrecioCop(resumen.precioTotal)}\n\n` +
+    `¿Deseas confirmar tu cita?\n\n${listaOpcionesTexto()}`
+  );
+}
+
+/** Mismo criterio EXACTO que renderizarResumenCambio (Fase 8) -- misma información, solo cambia la introducción. */
+export function renderizarResumenCambioMultiServicio(resumen: ResumenCitaMultiServicioAgendaV2): string {
+  return (
+    `💗 Vas a cambiar tu cita a:\n\n` +
+    `Servicios:\n${listaServiciosTexto(resumen.servicios)}\n\n` +
+    `Profesional: ${resumen.profesionalNombre}\n` +
+    `Fecha: ${resumen.fechaEtiqueta}\n` +
+    `Hora: ${resumen.horaTexto}\n` +
+    `Duración: ${formatearDuracion(resumen.duracionTotalMin)}\n` +
+    `Valor total: ${formatearPrecioCop(resumen.precioTotal)}\n\n` +
+    `¿Confirmas el cambio?\n\n${listaOpcionesTexto()}`
+  );
+}
+
+export interface ResumenCitaConfirmadaMultiServicio {
+  servicios: string[];
+  profesionalNombre: string;
+  fechaEtiqueta: string;
+  horaTexto: string;
+  valorTotal: number | null;
+}
+
+/** Mismo criterio EXACTO que renderizarConfirmacionExitosa -- si valorTotal es null (algún servicio sin precio fijo), nunca inventa un total, lo omite. */
+export function renderizarConfirmacionExitosaMultiServicio(resumen: ResumenCitaConfirmadaMultiServicio): string {
+  const lineaValor = resumen.valorTotal !== null ? `Valor total: ${formatearPrecioCop(resumen.valorTotal)}\n\n` : "";
+  return (
+    `¡Listo! 💗 Tu cita quedó agendada.\n\n` +
+    `Servicios:\n${resumen.servicios.map((s) => `• ${s}`).join("\n")}\n\n` +
+    `Profesional: ${resumen.profesionalNombre}\n` +
+    `Fecha: ${resumen.fechaEtiqueta}\n` +
+    `Hora: ${resumen.horaTexto}\n\n` +
+    `${lineaValor}Te esperamos.`
+  );
+}
+
 /**
  * FASE 7 (autorizado) -- datos de la cita YA creada de verdad (devueltos por
  * crearCitaConNylas + el precio real del catálogo, ver router.ts). Mismo

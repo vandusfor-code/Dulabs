@@ -36,6 +36,11 @@ import { especialistaPorId } from "@/lib/especialistas";
 import { fechaColombiaDesdeIso, horaColombiaDesdeIso } from "@/lib/timezone-colombia";
 import { formatearFechaLarga } from "@/lib/agenda-v2/fechas";
 import { formatearHoraAmPm } from "@/lib/especialistas-flow-adaptador";
+// Fase 3 (autorizado, multi-servicio) -- lista real de servicios de esta
+// cita (dulabs_cita_servicios, lib/agenda-v2/multi-servicio.ts). Devuelve
+// [] para una cita de un solo servicio -- en ese caso el recordatorio sigue
+// usando cita.servicio TAL CUAL, comportamiento 100% idéntico al de antes.
+import { obtenerNombresServiciosDeCita } from "@/lib/agenda-v2/multi-servicio";
 
 export interface CitaParaRecordatorioAmore {
   id: number;
@@ -49,19 +54,26 @@ export interface CitaParaRecordatorioAmore {
 export interface DepsRecordatorioAmore {
   especialistaPorId?: typeof especialistaPorId;
   enviarMensajeWhatsApp?: typeof enviarMensajeWhatsApp;
+  obtenerNombresServiciosDeCita?: typeof obtenerNombresServiciosDeCita;
 }
 
-/** EXCLUSIVAMENTE los datos reales recibidos -- nunca inventa un profesional/fecha/hora/servicio. */
+/**
+ * EXCLUSIVAMENTE los datos reales recibidos -- nunca inventa un
+ * profesional/fecha/hora/servicio. `servicios` con 1 elemento produce el
+ * MISMO texto exacto de siempre ("Servicio: {nombre}"); con más de uno,
+ * pasa a una lista -- el resto del mensaje no cambia.
+ */
 export function construirTextoRecordatorioAmore(params: {
   nombreCliente: string;
-  servicio: string;
+  servicios: string[];
   profesionalNombre: string;
   fechaEtiqueta: string;
   horaTexto: string;
 }): string {
+  const lineaServicios = params.servicios.length === 1 ? `Servicio: ${params.servicios[0]}` : `Servicios:\n${params.servicios.map((s) => `- ${s}`).join("\n")}`;
   return (
     `¡Hola ${params.nombreCliente}! 💗 Te recordamos tu cita en AMORE:\n\n` +
-    `Servicio: ${params.servicio}\n` +
+    `${lineaServicios}\n` +
     `Profesional: ${params.profesionalNombre}\n` +
     `Fecha: ${params.fechaEtiqueta}\n` +
     `Hora: ${params.horaTexto}\n\n` +
@@ -85,6 +97,7 @@ export async function enviarRecordatorioAmore(
   if (!cita.telefono_cliente) return false;
   const buscarEspecialista = deps.especialistaPorId ?? especialistaPorId;
   const enviar = deps.enviarMensajeWhatsApp ?? enviarMensajeWhatsApp;
+  const buscarNombresServicios = deps.obtenerNombresServiciosDeCita ?? obtenerNombresServiciosDeCita;
 
   let especialista;
   try {
@@ -98,11 +111,24 @@ export async function enviarRecordatorioAmore(
     return false;
   }
 
+  // Fase 3 (autorizado, multi-servicio) -- si la cita tiene más de un
+  // servicio real (dulabs_cita_servicios), se listan todos; si no (o si la
+  // consulta falla), se usa cita.servicio TAL CUAL -- comportamiento 100%
+  // idéntico al de antes de esta fase. Nunca bloquea el recordatorio por un
+  // problema leyendo la lista de servicios.
+  let nombresServicios: string[] = [];
+  try {
+    nombresServicios = await buscarNombresServicios(supabase, cita.id);
+  } catch (err) {
+    console.error(`[amore-recordatorio] cita ${cita.id}: error técnico leyendo servicios múltiples -- se usa el servicio único de la cita:`, err instanceof Error ? err.message : "error desconocido");
+  }
+  const servicios = nombresServicios.length > 0 ? nombresServicios : [cita.servicio];
+
   const fechaIso = fechaColombiaDesdeIso(cita.inicio);
   const hora = horaColombiaDesdeIso(cita.inicio);
   const texto = construirTextoRecordatorioAmore({
     nombreCliente: cita.nombre_cliente,
-    servicio: cita.servicio,
+    servicios,
     profesionalNombre: especialista.nombre,
     fechaEtiqueta: formatearFechaLarga(fechaIso),
     horaTexto: formatearHoraAmPm(hora),

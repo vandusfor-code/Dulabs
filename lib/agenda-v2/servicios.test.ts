@@ -5,6 +5,7 @@ import {
   renderizarMenuServicio,
   textoSeleccionInvalidaServicio,
   resolverSeleccionServicio,
+  resolverSeleccionMultiServicio,
 } from "@/lib/agenda-v2/servicios";
 import type { ServicioCatalogoReal } from "@/lib/catalogo-servicios-flow-adaptador";
 
@@ -75,6 +76,50 @@ describe("resolverSeleccionServicio -- SOLO número exacto contra las opciones y
   it("nunca usa parseInt(text.replace(/\\D/g, \"\")) -- '999abc' NUNCA se interpreta como '999' ni como ningún número", () => {
     assert.equal(resolverSeleccionServicio("999abc", OPCIONES), undefined);
     assert.equal(resolverSeleccionServicio("opción 1", OPCIONES), undefined, "debe ser el mensaje completo, nunca extraer dígitos de en medio");
+  });
+});
+
+describe("FASE 3 (autorizado, multi-servicio) -- resolverSeleccionMultiServicio", () => {
+  const OPCIONES = construirOpcionesServicio(CATALOGO);
+
+  it("Test 1 (obligatorio) -- '1' sigue funcionando EXACTAMENTE igual (un solo elemento)", () => {
+    const seleccion = resolverSeleccionMultiServicio("1", OPCIONES);
+    assert.deepEqual(seleccion?.map((s) => s.servicioId), ["s-dipping"]);
+  });
+
+  it("Test 2/3/4/5 (obligatorios) -- '1 y 2', '1,2', '1 + 2', '1 y 2 y 3'", () => {
+    assert.deepEqual(resolverSeleccionMultiServicio("1 y 2", OPCIONES)?.map((s) => s.servicioId), ["s-dipping", "s-presson"]);
+    assert.deepEqual(resolverSeleccionMultiServicio("1,2", OPCIONES)?.map((s) => s.servicioId), ["s-dipping", "s-presson"]);
+    assert.deepEqual(resolverSeleccionMultiServicio("1 + 2", OPCIONES)?.map((s) => s.servicioId), ["s-dipping", "s-presson"]);
+    assert.deepEqual(resolverSeleccionMultiServicio("1 y 2 y 3", OPCIONES)?.map((s) => s.servicioId), ["s-dipping", "s-presson", "s-retoques"]);
+  });
+
+  it("acepta espacios variados y mayúsculas ('4 Y 5' estilo)", () => {
+    assert.deepEqual(resolverSeleccionMultiServicio("1   y   2", OPCIONES)?.map((s) => s.servicioId), ["s-dipping", "s-presson"]);
+  });
+
+  it("Test 6 (obligatorio) -- más de 3 servicios -> rechazado", () => {
+    // Con solo 3 opciones reales en este catálogo, se prueba con un cuarto número inventado -- igual debe rechazarse por exceder el máximo ANTES de validar existencia.
+    assert.equal(resolverSeleccionMultiServicio("1 y 2 y 3 y 1", OPCIONES), undefined);
+  });
+
+  it("Test 7 (obligatorio) -- número duplicado ('1 y 1') -> rechazado", () => {
+    assert.equal(resolverSeleccionMultiServicio("1 y 1", OPCIONES), undefined);
+  });
+
+  it("Test 8 (obligatorio) -- número inexistente ('99 y 2') -> rechazado, NUNCA inventa una opción", () => {
+    assert.equal(resolverSeleccionMultiServicio("99 y 2", OPCIONES), undefined);
+    assert.equal(resolverSeleccionMultiServicio("999", OPCIONES), undefined);
+  });
+
+  it("texto no numérico en la combinación -> rechazado (nunca nombres de servicio en esta fase)", () => {
+    assert.equal(resolverSeleccionMultiServicio("dipping y press on", OPCIONES), undefined);
+    assert.equal(resolverSeleccionMultiServicio("1 y dipping", OPCIONES), undefined);
+  });
+
+  it("mensaje vacío o solo separadores -> rechazado", () => {
+    assert.equal(resolverSeleccionMultiServicio("", OPCIONES), undefined);
+    assert.equal(resolverSeleccionMultiServicio("y", OPCIONES), undefined);
   });
 });
 

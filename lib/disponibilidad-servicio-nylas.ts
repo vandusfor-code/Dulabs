@@ -67,7 +67,15 @@ export interface DepsDisponibilidadNylas {
   grantId: string;
 }
 
-async function calcularHorariosDeEspecialista(
+/**
+ * Fase 3 (autorizado, multi-servicio) — EXPORTADA sin ningún cambio de
+ * comportamiento (auditado: ya recibía `duracionMin` como número plano, sin
+ * ninguna dependencia de "servicio" -- nunca reimplementada, reutilizada TAL
+ * CUAL por lib/agenda-v2/disponibilidad.ts para calcular disponibilidad
+ * continua de una duración total combinada). El único cambio es la
+ * visibilidad del símbolo.
+ */
+export async function calcularHorariosDeEspecialista(
   supabase: SupabaseClient,
   params: { idTenant: string; especialista: { id: number; nombre: string }; fecha: string; duracionMin: number },
   deps: DepsDisponibilidadNylas,

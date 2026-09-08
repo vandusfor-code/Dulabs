@@ -7,6 +7,11 @@ type FilaCruda = {
   nombre_cliente: string;
   servicio: string;
   servicio_id: string | null;
+  // Fase 3 (autorizado, multi-servicio AMORE) — suma real de precios cuando
+  // la cita tiene más de un servicio (dulabs_cita_servicios). NULL para
+  // toda cita de un solo servicio (histórica o nueva) -- comportamiento sin
+  // ningún cambio en ese caso.
+  precio_total: number | null;
   especialista_id: number;
   estado: string;
   dulabs_servicios: { nombre: string; precio: number | null } | null;
@@ -31,7 +36,7 @@ export async function buscarCitasCompletadas(
   let consulta = supabase
     .from("dulabs_citas_especialista")
     .select(
-      "id, inicio, nombre_cliente, servicio, servicio_id, especialista_id, estado, dulabs_servicios(nombre, precio), dulabs_especialistas(nombre)"
+      "id, inicio, nombre_cliente, servicio, servicio_id, precio_total, especialista_id, estado, dulabs_servicios(nombre, precio), dulabs_especialistas(nombre)"
     )
     .eq("id_tenant", params.idTenant)
     .eq("estado", "completada")
@@ -52,7 +57,12 @@ export async function buscarCitasCompletadas(
     servicioTexto: fila.servicio,
     servicioId: fila.servicio_id,
     servicioNombre: fila.dulabs_servicios?.nombre ?? null,
-    precio: fila.dulabs_servicios?.precio ?? null,
+    // Fase 3 (autorizado, multi-servicio) -- regla exacta pedida: si
+    // precio_total existe (cita multi-servicio real), se usa; si no,
+    // comportamiento histórico sin ningún cambio (precio del único
+    // servicio vía la FK ya existente). Nunca suma dos veces: precio_total
+    // YA es la suma completa, nunca se combina con dulabs_servicios.precio.
+    precio: fila.precio_total ?? fila.dulabs_servicios?.precio ?? null,
     especialistaId: fila.especialista_id,
     profesionalNombre: fila.dulabs_especialistas?.nombre ?? "(especialista eliminado)",
     estado: fila.estado,

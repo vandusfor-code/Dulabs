@@ -122,6 +122,7 @@ function crearFakeSesiones() {
         citaObjetivoId?: number | null;
         accionGestion?: SesionAgendaV2["accionGestion"];
         servicioId?: string | null;
+        serviciosIds?: string[] | null;
         profesionalId?: number | null;
         fechaIso?: string | null;
       },
@@ -133,6 +134,7 @@ function crearFakeSesiones() {
         activo: true,
         step: params.step ?? "S1_SERVICIO",
         servicioId: params.servicioId ?? null,
+        serviciosIds: params.serviciosIds ?? null,
         profesionalId: params.profesionalId ?? null,
         fechaIso: params.fechaIso ?? null,
         slotSeleccionado: null,
@@ -215,6 +217,13 @@ function armarDeps(overrides: Partial<AgendaV2RouterDeps> = {}): {
     resolverEspecialistas: resolverEspecialistasFixture,
     calcularDiasCandidatos: calcularDiasCandidatosFixture,
     calcularHorariosFecha: calcularHorariosFechaFixture,
+    // FASE 3 (autorizado, multi-servicio) -- default real: `[]` (mismo
+    // comportamiento que una cita SIN filas en dulabs_cita_servicios, la
+    // inmensa mayoría de las citas -- un solo servicio). Reprogramar
+    // (FASE 8) SIEMPRE consulta esto, multi-servicio o no -- sin este
+    // default, cualquier test de reprogramación que no lo inyecte
+    // explícitamente tocaría el FAKE_SUPABASE real (`{}`) y rompería.
+    obtenerServiciosDeCita: async () => [],
     enviarMensajeWhatsApp: envios.enviarMensajeWhatsApp,
     ...overrides,
   };
@@ -2371,5 +2380,192 @@ describe("FASE 2 -- Test D/E: iniciarNuevaSesionAgendaV2 llamada directa (mismo 
     await iniciarNuevaSesionAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", wamid: "w1" }, deps);
     assert.equal(sesiones.filas.length, 1, "cualquier tenant que no sea AMORE sigue creando la sesión directo, como siempre");
     assert.match(envios.enviados.at(-1)!.mensaje, /¿Qué tipo de servicio te gustaría agendar\?/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FASE 3 (autorizado, multi-servicio) -- 2 servicios reales del mismo
+// catálogo de fixture (Dipping + Press On, ambos Uñas, ambos elegibles para
+// Mary/Cristal/Nata/Jessica): "1 y 2" dentro del submenú de Uñas. Duración
+// real combinada 120+120=240min, precio real combinado 60.000+80.000=140.000
+// -- prueba la SUMA real, sin importar que en este catálogo de fixture
+// coincidan las duraciones individuales.
+// ---------------------------------------------------------------------------
+describe("FASE 3 (autorizado, multi-servicio) -- selección y disponibilidad combinada vía router real", () => {
+  /** Intersección real usando el MISMO fixture de elegibilidad de arriba (ESPECIALISTAS_POR_SERVICIO) -- nunca una segunda fuente de verdad. */
+  async function resolverEspecialistasMultiFixture(_s: unknown, _idTenant: string, servicioIds: string[]) {
+    const conjuntos = servicioIds.map((id) => new Set((ESPECIALISTAS_POR_SERVICIO[id] ?? []).map((e) => e.especialistaId)));
+    const primero = ESPECIALISTAS_POR_SERVICIO[servicioIds[0]!] ?? [];
+    return { especialistas: primero.filter((e) => conjuntos.every((set) => set.has(e.especialistaId))) };
+  }
+
+  function crearFakeMultiDisponibilidad() {
+    const llamadasDias: Array<{ duracionTotalMin: number; especialistaId: number }> = [];
+    const llamadasHoras: Array<{ duracionTotalMin: number; fechaIso: string }> = [];
+    return {
+      llamadasDias,
+      llamadasHoras,
+      calcularDiasMultiServicio: async (_s: unknown, params: { especialista: { id: number }; duracionTotalMin: number }) => {
+        llamadasDias.push({ duracionTotalMin: params.duracionTotalMin, especialistaId: params.especialista.id });
+        return { opciones: construirOpcionesFecha(DIAS_POR_PROFESIONAL_FIXTURE[params.especialista.id] ?? []) };
+      },
+      calcularHorariosFechaMultiServicio: async (_s: unknown, params: { fechaIso: string; duracionTotalMin: number }) => {
+        llamadasHoras.push({ duracionTotalMin: params.duracionTotalMin, fechaIso: params.fechaIso });
+        const horarios = HORAS_POR_FECHA_FIXTURE[params.fechaIso] ?? [];
+        if (horarios.length === 0) return { ok: false as const, motivo: "sin_horarios_ese_dia" as const };
+        return { ok: true as const, horarios };
+      },
+    };
+  }
+
+  function armarDepsMulti(overrides: Partial<AgendaV2RouterDeps> = {}) {
+    const multi = crearFakeMultiDisponibilidad();
+    const base = armarDeps({
+      resolverEspecialistasMultiServicio: resolverEspecialistasMultiFixture,
+      calcularDiasMultiServicio: multi.calcularDiasMultiServicio,
+      calcularHorariosFechaMultiServicio: multi.calcularHorariosFechaMultiServicio,
+      especialistaPorId: especialistaPorIdFixture,
+      ...overrides,
+    });
+    return { ...base, multi };
+  }
+
+  async function llegarAMenuProfesionalMulti(deps: AgendaV2RouterDeps, telefono = "573148127388") {
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono, texto: "quiero una cita", wamid: "m1" }, deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono, texto: NUMERO_CATEGORIA_UNAS, wamid: "m2" }, deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono, texto: "1 y 2", wamid: "m3" }, deps); // Dipping + Press On
+  }
+  async function llegarAMenuFechaMulti(deps: AgendaV2RouterDeps, telefono = "573148127388") {
+    await llegarAMenuProfesionalMulti(deps, telefono);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono, texto: "1", wamid: "m4" }, deps); // Mary
+  }
+  async function llegarAMenuHoraMulti(deps: AgendaV2RouterDeps, telefono = "573148127388") {
+    await llegarAMenuFechaMulti(deps, telefono);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono, texto: "1", wamid: "m5" }, deps); // 2026-09-08
+  }
+  async function llegarAConfirmacionMulti(deps: AgendaV2RouterDeps, telefono = "573148127388") {
+    await llegarAMenuHoraMulti(deps, telefono);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono, texto: "1", wamid: "m6" }, deps); // 09:00
+  }
+
+  it("'1 y 2' avanza a S2_PROFESIONAL con la intersección real -- servicioId SIEMPRE el primero, serviciosIds con los 2", async () => {
+    const { deps, sesiones } = armarDepsMulti();
+    await llegarAMenuProfesionalMulti(deps);
+    assert.equal(sesiones.filas[0]!.step, "S2_PROFESIONAL");
+    assert.equal(sesiones.filas[0]!.servicioId, "s-dipping-real", "compatibilidad histórica -- SIEMPRE el primero elegido");
+    assert.deepEqual(sesiones.filas[0]!.serviciosIds, ["s-dipping-real", "s-presson-real"]);
+  });
+
+  it("Test 10 (obligatorio) -- al elegir profesional, la disponibilidad se calcula con la duración TOTAL real (120+120=240min), nunca la de un solo servicio", async () => {
+    const { deps, sesiones, multi } = armarDepsMulti();
+    await llegarAMenuFechaMulti(deps);
+    assert.equal(sesiones.filas[0]!.step, "S3_DIA");
+    assert.equal(multi.llamadasDias.length, 1);
+    assert.equal(multi.llamadasDias[0]!.duracionTotalMin, 240, "120 (Dipping) + 120 (Press On) = 240 -- nunca solo la del primero");
+    assert.equal(multi.llamadasDias[0]!.especialistaId, 1262);
+  });
+
+  it("al elegir fecha, los horarios también se calculan con la duración TOTAL real", async () => {
+    const { deps, multi } = armarDepsMulti();
+    await llegarAMenuHoraMulti(deps);
+    assert.equal(multi.llamadasHoras.length, 1);
+    assert.equal(multi.llamadasHoras[0]!.duracionTotalMin, 240);
+    assert.equal(multi.llamadasHoras[0]!.fechaIso, "2026-09-08");
+  });
+
+  it("el resumen de confirmación lista AMBOS servicios, con duración y valor TOTAL reales (60.000+80.000=140.000)", async () => {
+    const { deps, envios } = armarDepsMulti();
+    await llegarAConfirmacionMulti(deps);
+    const resumen = envios.enviados.at(-1)!.mensaje;
+    assert.match(resumen, /Servicios:/);
+    assert.match(resumen, /Dipping — \$60\.000/);
+    assert.match(resumen, /Press On — \$80\.000/);
+    assert.match(resumen, /Profesional: Mary/);
+    assert.match(resumen, /Duración: 4 h/); // 240min
+    assert.match(resumen, /Valor total: \$140\.000/);
+  });
+
+  it("Test 14 (obligatorio, vía router) -- confirmar crea la reserva real pasando serviciosIdsAdicionales, y el mensaje de éxito lista ambos servicios con el valor total", async () => {
+    const RESULTADO_EXITO_MULTI: ResultadoCrearCitaNylas = {
+      ok: true,
+      cita: { ...CITA_FAKE_BASE, servicio: "Dipping", servicio_id: "s-dipping-real" },
+      nylasEventId: "evt-multi-1",
+      especialista: { id: 1262, nombre: "Mary" },
+      servicio: { id: "s-dipping-real", nombre: "Dipping + Press On", duracionMin: 240 },
+    };
+    const fake = crearFakeCrearCitaConNylas(RESULTADO_EXITO_MULTI);
+    const { deps, sesiones, envios } = armarDepsMulti({ ...NYLAS_DEPS_FAKE_OVERRIDES, crearCitaConNylas: fake.crearCitaConNylas });
+    await llegarAConfirmacionMulti(deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "m7" }, deps);
+    assert.equal(fake.llamadas.length, 1);
+    assert.equal(fake.llamadas[0]!.params.servicioId, "s-dipping-real");
+    assert.deepEqual((fake.llamadas[0]!.params as unknown as { serviciosIdsAdicionales?: string[] }).serviciosIdsAdicionales, ["s-presson-real"]);
+    assert.equal(sesiones.filas[0]!.activo, false);
+    const mensaje = envios.enviados.at(-1)!.mensaje;
+    assert.match(mensaje, /¡Listo! 💗 Tu cita quedó agendada/);
+    assert.match(mensaje, /Dipping/);
+    assert.match(mensaje, /Press On/);
+    assert.match(mensaje, /Valor total: \$140\.000/);
+  });
+
+  it("regresión -- una selección de UN solo servicio ('1') NUNCA pasa serviciosIdsAdicionales, comportamiento 100% idéntico al de antes de esta fase", async () => {
+    const fake = crearFakeCrearCitaConNylas(RESULTADO_EXITO_DIPPING_MARY);
+    const { deps, sesiones } = armarDeps({ ...NYLAS_DEPS_FAKE_OVERRIDES, crearCitaConNylas: fake.crearCitaConNylas });
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "quiero una cita", wamid: "u1" }, deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: NUMERO_CATEGORIA_UNAS, wamid: "u2" }, deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "u3" }, deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "u4" }, deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "u5" }, deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "u6" }, deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "u7" }, deps); // confirmar
+    assert.equal(sesiones.filas[0]!.serviciosIds, null);
+    assert.equal(fake.llamadas[0]!.params.servicioId, "s-dipping-real");
+    assert.equal((fake.llamadas[0]!.params as unknown as { serviciosIdsAdicionales?: string[] }).serviciosIdsAdicionales, undefined);
+  });
+
+  it("idempotencia -- mismo wamid duplicado al confirmar NUNCA crea la reserva multi-servicio dos veces", async () => {
+    const fake = crearFakeCrearCitaConNylas(RESULTADO_EXITO_DIPPING_MARY);
+    const { deps, envios } = armarDepsMulti({ ...NYLAS_DEPS_FAKE_OVERRIDES, crearCitaConNylas: fake.crearCitaConNylas });
+    await llegarAConfirmacionMulti(deps);
+    const totalAntes = envios.enviados.length;
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "m7" }, deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "m7" }, deps); // mismo wamid
+    assert.equal(fake.llamadas.length, 1);
+    assert.equal(envios.enviados.length, totalAntes + 1);
+  });
+
+  it("cancelación (opción 4) en S5_CONFIRMAR multi-servicio: cierra la sesión, nunca llega al camino de crear la reserva", async () => {
+    const { deps, sesiones } = armarDepsMulti();
+    await llegarAConfirmacionMulti(deps);
+    const r = await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "4", wamid: "m7" }, deps);
+    assert.equal(r.manejado, true);
+    assert.equal(sesiones.filas[0]!.activo, false);
+  });
+
+  it("Test 16 (obligatorio, vía router) -- reprogramar una cita CON 2 servicios en el puente conserva AMBOS, calcula la disponibilidad con la duración TOTAL", async () => {
+    const citaMultiExistente: CitaEspecialista = { ...CITA_CEJAS_CERA, servicio_id: "s-dipping-real" };
+    const fakeCitas = crearFakeConsultarCitasActivas({ [PN_AMORE]: [citaMultiExistente] });
+    const { deps, sesiones, multi } = armarDepsMulti({
+      consultarCitasActivas: fakeCitas.consultarCitasActivas,
+      obtenerServiciosDeCita: async (_s: unknown, citaId: number) => (citaId === citaMultiExistente.id ? ["s-dipping-real", "s-presson-real"] : []),
+      ...NYLAS_DEPS_FAKE_OVERRIDES,
+    });
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "quiero cambiar mi cita", wamid: "rp1" }, deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "rp2" }, deps); // sí, reprogramar
+    assert.deepEqual(sesiones.filas[0]!.serviciosIds, ["s-dipping-real", "s-presson-real"], "conserva AMBOS servicios de la cita original, nunca solo el primero");
+    assert.equal(sesiones.filas[0]!.step, "S3_DIA");
+    assert.equal(multi.llamadasDias[0]!.duracionTotalMin, 240, "revalida con la duración TOTAL real de los 2 servicios originales");
+  });
+
+  it("regresión -- reprogramar una cita de UN solo servicio (sin filas en el puente) nunca fija serviciosIds, comportamiento 100% idéntico al de antes de esta fase", async () => {
+    const fakeCitas = crearFakeConsultarCitasActivas({ [PN_AMORE]: [CITA_CEJAS_CERA] });
+    const { deps, sesiones } = armarDepsMulti({
+      consultarCitasActivas: fakeCitas.consultarCitasActivas,
+      obtenerServiciosDeCita: async () => [],
+      ...NYLAS_DEPS_FAKE_OVERRIDES,
+    });
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "quiero cambiar mi cita", wamid: "rp1" }, deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "rp2" }, deps);
+    assert.equal(sesiones.filas[0]!.serviciosIds, null);
   });
 });
