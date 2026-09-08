@@ -53,6 +53,17 @@ export function construirMensajeNotificacionJessica(params: { nombre: string | n
  * maquillaje?"/"¿Qué profesionales tienen?" NUNCA deben calzar acá (no
  * expresan intención de hablar con alguien, solo mencionan a Jessica o
  * preguntan por el equipo).
+ *
+ * Corrección post-deploy (auditoría real, autorizado) -- las frases largas
+ * originales ("quiero hablar con jessica", etc.) exigían que el MENSAJE del
+ * cliente las contuviera completas; un mensaje real corto y sin verbo
+ * ("Hablar con Jessica") es MÁS CORTO que esas frases y por lo tanto nunca
+ * las contiene como subcadena, así que el detector nunca se activaba (caso
+ * real observado en producción con el teléfono de pruebas autorizado). Se
+ * agregan los núcleos cortos reales sin verbo inicial -- el mecanismo de
+ * coincidencia ("contains", nunca IA) NO cambia, y las frases largas
+ * existentes siguen coincidiendo igual porque cada núcleo corto es también
+ * subcadena de ellas.
  */
 const FRASES_ATENCION_HUMANA_DETERMINISTA = [
   "quiero hablar con jessica",
@@ -66,6 +77,10 @@ const FRASES_ATENCION_HUMANA_DETERMINISTA = [
   "necesito que jessica me atienda",
   "quiero hablar directamente con alguien",
   "quiero hablar directamente con jessica",
+  "hablar con jessica",
+  "hablar con una persona",
+  "hablar con alguien",
+  "hablar con alguien de amore",
 ];
 
 export function detectarSolicitudAtencionHumana(mensaje: string): boolean {

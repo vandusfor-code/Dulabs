@@ -69,6 +69,34 @@ describe("Detección determinística de atención humana -- detectarSolicitudAte
       assert.equal(detectarSolicitudAtencionHumana(frase), false, `"${frase}" NUNCA debía activar atención humana`);
     }
   });
+
+  it("Corrección post-deploy (auditoría real) -- reconoce las formas cortas SIN verbo inicial, tal como las escribe un cliente real", () => {
+    const positivos = [
+      "Hablar con Jessica",
+      "quiero hablar con Jessica",
+      "Hablar con una persona",
+      "quiero hablar con una persona",
+      "Hablar con alguien",
+      "Necesito hablar con alguien",
+      "Hablar con alguien de AMORE",
+    ];
+    for (const frase of positivos) {
+      assert.equal(detectarSolicitudAtencionHumana(frase), true, `"${frase}" debía activar atención humana`);
+    }
+  });
+
+  it("Corrección post-deploy (auditoría real) -- los negativos importantes siguen sin activar atención humana", () => {
+    const negativos = [
+      "¿Jessica hace maquillaje?",
+      "¿Qué profesionales tienen?",
+      "¿Jessica atiende uñas?",
+      "¿Tienen a Jessica disponible?",
+      "Quiero información sobre Jessica",
+    ];
+    for (const frase of negativos) {
+      assert.equal(detectarSolicitudAtencionHumana(frase), false, `"${frase}" NUNCA debía activar atención humana`);
+    }
+  });
 });
 
 describe("construirMensajeNotificacionJessica", () => {
