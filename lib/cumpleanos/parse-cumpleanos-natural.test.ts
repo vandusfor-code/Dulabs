@@ -6,6 +6,13 @@ describe("parseCumpleanosNatural", () => {
   it("'15 de marzo' -> día 15, mes 3", () => {
     assert.deepEqual(parseCumpleanosNatural("15 de marzo"), { ok: true, dia: 15, mes: 3 });
   });
+  // CORRECCIÓN (autorizada, bug real de registro) -- "3 de enero" es
+  // exactamente el mensaje real que un cliente envió durante registro_dia
+  // (ver lib/amore-entrada-router.ts) y que parseDiaCumpleanos (solo
+  // dígitos) rechazaba; este parser combinado SÍ lo reconoce sin cambios.
+  it("'3 de enero' -> día 3, mes 1 (caso real reportado en producción)", () => {
+    assert.deepEqual(parseCumpleanosNatural("3 de enero"), { ok: true, dia: 3, mes: 1 });
+  });
   it("es insensible a mayúsculas/acentos y tolera texto alrededor", () => {
     assert.deepEqual(parseCumpleanosNatural("Es el 3 de Julio, gracias"), { ok: true, dia: 3, mes: 7 });
   });

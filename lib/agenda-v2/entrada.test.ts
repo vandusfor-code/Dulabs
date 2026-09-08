@@ -72,3 +72,35 @@ describe("FASE 8 (autorizado) -- detectarIntencionGestionCitas: triggers FIJOS y
     }
   });
 });
+
+describe("CORRECCIÓN (autorizada) -- frases reales con artículo 'la cita' (bug real: 'quiero cancelar la cita' caía a Gemini)", () => {
+  it("'Quiero cancelar la cita' -> cancelar", () => {
+    assert.equal(detectarIntencionGestionCitas("Quiero cancelar la cita"), "cancelar");
+  });
+
+  it("'quiero cambiar la cita' -> reprogramar", () => {
+    assert.equal(detectarIntencionGestionCitas("quiero cambiar la cita"), "reprogramar");
+  });
+
+  it("'quiero reprogramar la cita' -> reprogramar", () => {
+    assert.equal(detectarIntencionGestionCitas("quiero reprogramar la cita"), "reprogramar");
+  });
+
+  it("'quiero consultar la cita' -> consultar", () => {
+    assert.equal(detectarIntencionGestionCitas("quiero consultar la cita"), "consultar");
+  });
+
+  it("'ver la cita' -> consultar", () => {
+    assert.equal(detectarIntencionGestionCitas("ver la cita"), "consultar");
+  });
+
+  it("'cita' sola NUNCA se convierte en intención de gestión", () => {
+    assert.equal(detectarIntencionGestionCitas("cita"), null);
+  });
+
+  it("las frases con 'mi cita' preexistentes siguen funcionando idénticas (regresión)", () => {
+    assert.equal(detectarIntencionGestionCitas("cancelar mi cita"), "cancelar");
+    assert.equal(detectarIntencionGestionCitas("cambiar mi cita"), "reprogramar");
+    assert.equal(detectarIntencionGestionCitas("ver mi cita"), "consultar");
+  });
+});

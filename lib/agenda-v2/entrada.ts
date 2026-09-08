@@ -54,15 +54,40 @@ export function esInicioDeAgendaV2(mensaje: string, escenarios: EscenarioRow[]):
  */
 export type AccionGestionCitasDetectada = "consultar" | "cancelar" | "reprogramar";
 
-const FRASES_CANCELAR = ["cancelar mi cita", "quiero cancelar mi cita", "cancelar cita"];
+// Corrección post-deploy (auditoría real, autorizado) -- las frases
+// originales solo cubrían "mi cita" ("cancelar mi cita"); un mensaje real
+// con artículo "la" ("quiero cancelar la cita") no las contiene como
+// subcadena, así que el detector nunca se activaba (caso real observado en
+// producción con el teléfono de pruebas autorizado, cita ya creada y
+// sesión Agenda V2 ya cerrada). Se agregan las variantes reales con "la
+// cita" -- el mecanismo de coincidencia ("contains", nunca fuzzy/IA) NO
+// cambia. Deliberadamente "cita" sola NUNCA se agrega a ninguna lista --
+// seguiría sin ser intención de gestión (ver detectarIntencionGestionCitas).
+const FRASES_CANCELAR = ["cancelar mi cita", "quiero cancelar mi cita", "cancelar la cita", "quiero cancelar la cita", "cancelar cita"];
 const FRASES_REPROGRAMAR = [
   "reprogramar mi cita",
+  "quiero reprogramar mi cita",
+  "reprogramar la cita",
+  "quiero reprogramar la cita",
   "quiero cambiar mi cita",
   "cambiar mi cita",
+  "quiero cambiar la cita",
+  "cambiar la cita",
   "quiero cambiar la fecha",
   "quiero cambiar el horario",
 ];
-const FRASES_CONSULTAR = ["consultar mi cita", "ver mi cita", "que cita tengo", "cuando tengo mi cita", "quiero ver mi cita"];
+const FRASES_CONSULTAR = [
+  "consultar mi cita",
+  "quiero consultar mi cita",
+  "consultar la cita",
+  "quiero consultar la cita",
+  "ver mi cita",
+  "quiero ver mi cita",
+  "ver la cita",
+  "quiero ver la cita",
+  "que cita tengo",
+  "cuando tengo mi cita",
+];
 
 function coincideAlgunaFrase(textoNormalizado: string, frases: string[]): boolean {
   return frases.some((f) => textoNormalizado.includes(normalizeText(f)));

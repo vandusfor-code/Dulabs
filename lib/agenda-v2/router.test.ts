@@ -2303,6 +2303,90 @@ describe("FASE 8 (autorizado) -- gestión de citas existentes (consultar/cancela
   });
 });
 
+// ---------------------------------------------------------------------------
+// CORRECCIÓN (autorizada) -- caso real reportado: clienta con una reserva ya
+// confirmada y CERRADA (sesión Agenda V2 inactiva) escribe "Quiero cancelar
+// la cita" -- antes de la corrección de lib/agenda-v2/entrada.ts, esa frase
+// (con artículo "la", no "mi") nunca coincidía con FRASES_CANCELAR y el
+// mensaje terminaba cayendo hasta Gemini (que no tiene ninguna categoría de
+// "cancelar"). Este bloque prueba el camino REAL de principio a fin vía
+// procesarMensajeConAgendaV2 -- sin sesión activa, sin tocar Nylas/WhatsApp
+// reales -- y prueba estructuralmente que, con el mensaje ya manejado acá,
+// Gemini NUNCA se alcanza (mismo orden exacto de app/api/whatsapp-qr-bot/route.ts).
+// ---------------------------------------------------------------------------
+describe("CORRECCIÓN (autorizada) -- 'Quiero cancelar la cita' con una única cita real y sin sesión activa", () => {
+  it("detecta CANCELAR, selecciona automáticamente la única cita, pasa a SG_CANCELAR_CONFIRMAR y pide confirmación -- NUNCA cancela todavía", async () => {
+    const fakeCitas = crearFakeConsultarCitasActivas({ [PN_AMORE]: [CITA_CELULAS_MADRES] });
+    const fakeCancelar = crearFakeCancelarCitaEspecialista({ ok: true, cita: { ...CITA_CELULAS_MADRES, estado: "cancelada" } });
+    const { deps, sesiones, envios } = armarDeps({ consultarCitasActivas: fakeCitas.consultarCitasActivas, especialistaPorId: especialistaPorIdFixture, cancelarCitaEspecialista: fakeCancelar.cancelarCitaEspecialista });
+
+    const resultado = await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "Quiero cancelar la cita", wamid: "c1" }, deps);
+
+    assert.equal(resultado.manejado, true, "Agenda V2 maneja el mensaje por completo -- nunca cae a manejado:false");
+    assert.equal(sesiones.filas.length, 1);
+    assert.equal(sesiones.filas[0]!.step, "SG_CANCELAR_CONFIRMAR");
+    assert.equal(sesiones.filas[0]!.citaObjetivoId, 501, "selecciona automáticamente la única cita real de esta clienta, sin pedirle que elija");
+    assert.equal(fakeCancelar.llamadas.length, 0, "NUNCA cancela solo porque el cliente escribió 'cancelar' -- primero pide confirmación real");
+    const mensaje = envios.enviados.at(-1)!.mensaje;
+    assert.match(mensaje, /Vas a cancelar esta cita/);
+    assert.match(mensaje, /1\. Sí, cancelar/);
+    assert.match(mensaje, /2\. No, conservar cita/);
+  });
+
+  it("tras pedir confirmación, '1' SÍ ejecuta la cancelación real (flujo completo, mismo mecanismo ya probado en FASE 8)", async () => {
+    const fakeCitas = crearFakeConsultarCitasActivas({ [PN_AMORE]: [CITA_CELULAS_MADRES] });
+    const fakeCancelar = crearFakeCancelarCitaEspecialista({ ok: true, cita: { ...CITA_CELULAS_MADRES, estado: "cancelada" } });
+    const { deps, sesiones } = armarDeps({ consultarCitasActivas: fakeCitas.consultarCitasActivas, especialistaPorId: especialistaPorIdFixture, cancelarCitaEspecialista: fakeCancelar.cancelarCitaEspecialista });
+
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "Quiero cancelar la cita", wamid: "c1" }, deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "c2" }, deps);
+
+    assert.equal(fakeCancelar.llamadas.length, 1);
+    assert.equal(fakeCancelar.llamadas[0]!.citaId, 501);
+    assert.equal(sesiones.filas[0]!.activo, false);
+  });
+
+  it("el '4' de la conversación real original NUNCA funciona acá -- el menú de SG_CANCELAR_CONFIRMAR es 1/2, no el 1-4 de una confirmación de reserva nueva ya cerrada", async () => {
+    const fakeCitas = crearFakeConsultarCitasActivas({ [PN_AMORE]: [CITA_CELULAS_MADRES] });
+    const fakeCancelar = crearFakeCancelarCitaEspecialista({ ok: true, cita: CITA_CELULAS_MADRES });
+    const { deps, sesiones, envios } = armarDeps({ consultarCitasActivas: fakeCitas.consultarCitasActivas, especialistaPorId: especialistaPorIdFixture, cancelarCitaEspecialista: fakeCancelar.cancelarCitaEspecialista });
+
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "Quiero cancelar la cita", wamid: "c1" }, deps);
+    const r = await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "4", wamid: "c2" }, deps);
+
+    assert.equal(r.manejado, true, "Agenda V2 sigue manejando el mensaje (nunca cae a Gemini) aunque '4' no sea una opción válida acá");
+    assert.equal(fakeCancelar.llamadas.length, 0, "'4' nunca cancela nada -- no es una opción reconocida del menú Sí/No");
+    assert.equal(sesiones.filas[0]!.step, "SG_CANCELAR_CONFIRMAR", "permanece pidiendo confirmación real, nunca avanza con una opción inválida");
+    assert.match(envios.enviados.at(-1)!.mensaje, /No reconocí esa opción/);
+  });
+
+  it("PRUEBA ESTRUCTURAL -- con manejado:true, Gemini NUNCA se alcanza (mismo orden exacto de app/api/whatsapp-qr-bot/route.ts: procesarMensajeConAgendaV2 corta ANTES de procesarEntradaAmore)", async () => {
+    const fakeCitas = crearFakeConsultarCitasActivas({ [PN_AMORE]: [CITA_CELULAS_MADRES] });
+    const { deps } = armarDeps({ consultarCitasActivas: fakeCitas.consultarCitasActivas, especialistaPorId: especialistaPorIdFixture });
+
+    let geminiAlcanzado = false;
+    async function procesarEntradaAmoreFalso() {
+      geminiAlcanzado = true;
+      return { manejado: true };
+    }
+
+    // Mismo orden EXACTO que app/api/whatsapp-qr-bot/route.ts:
+    // procesarMensajeConAgendaV2 primero; procesarEntradaAmore (único lugar
+    // real que llama a Gemini, ver lib/amore-entrada-router.ts) SOLO se
+    // invoca si Agenda V2 devolvió manejado:false.
+    const resultadoAgendaV2 = await procesarMensajeConAgendaV2(
+      { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "Quiero cancelar la cita", wamid: "c1" },
+      deps,
+    );
+    if (!resultadoAgendaV2.manejado) {
+      await procesarEntradaAmoreFalso();
+    }
+
+    assert.equal(resultadoAgendaV2.manejado, true);
+    assert.equal(geminiAlcanzado, false, "Gemini NUNCA debe alcanzarse -- Agenda V2 ya manejó el mensaje por completo");
+  });
+});
+
 // --- FASE 2 (autorizado, registro de clientes nuevos) ----------------------
 //
 // Estos tests usan el AMORE_TENANT_ID real (nunca "amore-test", el tenant de

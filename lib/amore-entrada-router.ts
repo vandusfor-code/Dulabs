@@ -25,7 +25,7 @@ import { enviarMensajeWhatsApp } from "@/lib/whatsapp-worker-client";
 import { AMORE_TENANT_ID } from "@/lib/nylas/nylas-grant";
 import { iniciarNuevaSesionAgendaV2 } from "@/lib/agenda-v2/router";
 import { nombreConocido, recordarNombreCliente, clienteConocidoCompleto } from "@/lib/clientes-conocidos";
-import { parseDiaCumpleanos, parseMesCumpleanos } from "@/lib/cumpleanos/parse-cumpleanos-natural";
+import { parseDiaCumpleanos, parseMesCumpleanos, parseCumpleanosNatural } from "@/lib/cumpleanos/parse-cumpleanos-natural";
 import { obtenerHistorialRecienteChat } from "@/lib/chats/historial-reciente";
 import { normalizeText } from "@/lib/flow-triggers/normalize-text";
 import {
@@ -467,6 +467,43 @@ export async function interceptarRegistroClienteAmore(
     }
 
     if (fila.modo === "registro_dia") {
+      // Corrección post-deploy (auditoría real, autorizado) -- un mensaje
+      // real puede traer día Y mes juntos ("3 de enero"), en vez de solo el
+      // día que este paso espera; parseDiaCumpleanos (solo dígitos puros,
+      // ver lib/cumpleanos/parse-cumpleanos-natural.ts) rechazaba eso por
+      // completo, dejando a la clienta atascada pidiendo un "día válido" a
+      // pesar de haber respondido correctamente. Se intenta PRIMERO el
+      // parser combinado ya existente (parseCumpleanosNatural, sin ningún
+      // cambio) -- si reconoce una fecha real, completa el registro de una
+      // sola vez (nunca pide el mes de nuevo). Si no reconoce nada
+      // combinado, cae EXACTAMENTE al comportamiento anterior (solo día).
+      const fechaNatural = parseCumpleanosNatural(texto);
+      if (fechaNatural.ok) {
+        const clienteConDiaYMes = await buscarCliente(params.supabase, phoneNumberId, params.telefono);
+        if (!clienteConDiaYMes) {
+          // Mismo defensivo EXACTO que el resto de este flujo -- nunca
+          // inventa un nombre si por algún error real no quedó persistido.
+          await actualizarEntrada(params.supabase, fila.id, { modo: "registro_nombre", ultimoWamidProcesado: params.wamid });
+          await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_REGISTRO_NOMBRE, origen: "automatico" });
+          return { manejado: true };
+        }
+        await recordarNombre(params.supabase, {
+          idTenant: params.idTenant,
+          phoneNumberId,
+          telefonoCliente: params.telefono,
+          nombre: clienteConDiaYMes.nombre,
+          cumpleDia: fechaNatural.dia,
+          cumpleMes: fechaNatural.mes,
+        });
+        // Registro completo -- MISMO camino exacto que el cierre normal de
+        // registro_mes (vuelve a modo "gemini" y entrega el control a
+        // Agenda V2 vía iniciarNuevaSesionAgendaV2), solo que sin haber
+        // pasado por el paso intermedio de pedir el mes.
+        await actualizarEntrada(params.supabase, fila.id, { modo: "gemini", ultimoWamidProcesado: params.wamid });
+        await iniciarAgendaV2({ supabase: params.supabase, idTenant: params.idTenant, telefono: params.telefono, wamid: params.wamid });
+        return { manejado: true };
+      }
+
       const dia = parseDiaCumpleanos(texto);
       if (dia === null) {
         await actualizarEntrada(params.supabase, fila.id, { ultimoWamidProcesado: params.wamid });
