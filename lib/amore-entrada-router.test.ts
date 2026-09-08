@@ -6,17 +6,19 @@
  * ninguno crea una reserva real (iniciarAgendaV2 es un fake que solo
  * registra la llamada, nunca ejecuta lib/agenda-v2/router.ts de verdad).
  */
-import { describe, it } from "node:test";
+import { describe, it, after } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import type { SupabaseClient } from "@supabase/supabase-js";
-import { procesarEntradaAmore, type AmoreEntradaDeps } from "@/lib/amore-entrada-router";
+import { randomUUID } from "node:crypto";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { procesarEntradaAmore, interceptarAtencionHumanaAmore, type AmoreEntradaDeps, type InterceptarAtencionHumanaDeps } from "@/lib/amore-entrada-router";
 import type { EntradaAmore, ModoEntradaAmore } from "@/lib/amore-entrada-sesiones";
 import type { ResultadoClasificacionGemini } from "@/lib/amore-entrada-gemini";
 import { AMORE_TENANT_ID } from "@/lib/nylas/nylas-grant";
 
 const FAKE_SUPABASE = {} as SupabaseClient;
 const OTRO_TENANT = "otro-tenant-cualquiera";
+const HAS_SUPABASE = Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
 
 function crearFakeEntradas() {
   const filas: EntradaAmore[] = [];
@@ -24,14 +26,32 @@ function crearFakeEntradas() {
   return {
     filas,
     buscarEntrada: async (_s: unknown, tenantId: string, telefono: string) => filas.find((f) => f.tenantId === tenantId && f.telefonoCliente === telefono) ?? null,
-    crearEntrada: async (_s: unknown, params: { tenantId: string; telefonoCliente: string; wamid: string; modo: ModoEntradaAmore }) => {
-      const nueva: EntradaAmore = { id: siguienteId++, tenantId: params.tenantId, telefonoCliente: params.telefonoCliente, modo: params.modo, ultimoWamidProcesado: params.wamid };
+    crearEntrada: async (_s: unknown, params: { tenantId: string; telefonoCliente: string; wamid: string; modo: ModoEntradaAmore; notificadoAJessica?: boolean }) => {
+      const nueva: EntradaAmore = {
+        id: siguienteId++,
+        tenantId: params.tenantId,
+        telefonoCliente: params.telefonoCliente,
+        modo: params.modo,
+        ultimoWamidProcesado: params.wamid,
+        notificadoAJessica: params.notificadoAJessica ?? false,
+      };
       filas.push(nueva);
       return nueva;
     },
-    actualizarEntrada: async (_s: unknown, id: number, cambios: { modo?: ModoEntradaAmore; ultimoWamidProcesado?: string }) => {
+    actualizarEntrada: async (_s: unknown, id: number, cambios: { modo?: ModoEntradaAmore; ultimoWamidProcesado?: string; notificadoAJessica?: boolean }) => {
       const f = filas.find((x) => x.id === id);
       if (f) Object.assign(f, cambios);
+    },
+  };
+}
+
+function crearFakeNombreConocido(nombre: string | null = null) {
+  const llamadas: string[] = [];
+  return {
+    llamadas,
+    buscarNombreConocido: async (_s: unknown, _phoneNumberId: string, telefono: string) => {
+      llamadas.push(telefono);
+      return nombre;
     },
   };
 }
@@ -87,6 +107,7 @@ function armarDeps(overrides: Partial<AmoreEntradaDeps> = {}) {
   const envios = crearFakeEnvios();
   const candado = crearFakeCandado();
   const iniciarAgenda = crearFakeIniciarAgendaV2();
+  const nombreConocido = crearFakeNombreConocido();
   const deps: AmoreEntradaDeps = {
     adquirirCandadoChat: candado.adquirir,
     liberarCandadoChat: candado.liberar,
@@ -94,10 +115,29 @@ function armarDeps(overrides: Partial<AmoreEntradaDeps> = {}) {
     crearEntrada: entradas.crearEntrada,
     actualizarEntrada: entradas.actualizarEntrada,
     enviarMensajeWhatsApp: envios.enviarMensajeWhatsApp,
+    buscarNombreConocido: nombreConocido.buscarNombreConocido,
     iniciarAgendaV2: iniciarAgenda.iniciarAgendaV2,
     ...overrides,
   };
-  return { deps, entradas, envios, candado, iniciarAgenda };
+  return { deps, entradas, envios, candado, iniciarAgenda, nombreConocido };
+}
+
+function armarDepsGate(overrides: Partial<InterceptarAtencionHumanaDeps> = {}, entradasCompartidas?: ReturnType<typeof crearFakeEntradas>) {
+  const entradas = entradasCompartidas ?? crearFakeEntradas();
+  const envios = crearFakeEnvios();
+  const candado = crearFakeCandado();
+  const nombreConocido = crearFakeNombreConocido();
+  const deps: InterceptarAtencionHumanaDeps = {
+    adquirirCandadoChat: candado.adquirir,
+    liberarCandadoChat: candado.liberar,
+    buscarEntrada: entradas.buscarEntrada,
+    crearEntrada: entradas.crearEntrada,
+    actualizarEntrada: entradas.actualizarEntrada,
+    enviarMensajeWhatsApp: envios.enviarMensajeWhatsApp,
+    buscarNombreConocido: nombreConocido.buscarNombreConocido,
+    ...overrides,
+  };
+  return { deps, entradas, envios, candado, nombreConocido };
 }
 
 const TELEFONO = "573148127388";
@@ -312,12 +352,183 @@ describe("Defensivo -- si leer el estado falla (migración no aplicada todavía)
 });
 
 describe("Opción inválida en modo 'inicio' -- nunca fuzzy, reenvía el mismo menú", () => {
-  it("un texto que no es exactamente '1' o '2' no avanza", async () => {
+  it("un texto que no es exactamente '1', '2' o '3' no avanza", async () => {
     const { deps, entradas, envios } = armarDeps();
     await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "hola", wamid: "w1" }, deps);
     const r = await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "quiero una cita", wamid: "w2" }, deps);
     assert.equal(r.manejado, true);
-    assert.equal(entradas.filas[0]!.modo, "inicio", "nunca infiere la intención en el menú 1/2 -- solo número exacto");
+    assert.equal(entradas.filas[0]!.modo, "inicio", "nunca infiere la intención en el menú 1/2/3 -- solo número exacto");
     assert.match(envios.enviados.at(-1)!.mensaje, /No reconocí esa opción/);
+  });
+});
+
+// --- Fase 1 (atención humana, autorizado) ----------------------------------
+
+describe("Test D -- Opción '3' del menú inicial activa atención humana", () => {
+  it("notifica a Jessica, responde al cliente con el mensaje exacto, y queda en modo 'atencion_humana'", async () => {
+    const { deps, entradas, envios, nombreConocido } = armarDeps();
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "hola", wamid: "w1" }, deps);
+    const r = await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "3", wamid: "w2" }, deps);
+    assert.equal(r.manejado, true);
+    assert.equal(entradas.filas[0]!.modo, "atencion_humana");
+    assert.equal(entradas.filas[0]!.notificadoAJessica, true);
+    assert.equal(nombreConocido.llamadas.length, 1, "se consulta el nombre real conocido de la clienta para la notificación");
+
+    const notificacionJessica = envios.enviados.find((e) => e.telefono === "573227298600");
+    assert.ok(notificacionJessica, "debe existir una notificación real al número normalizado de Jessica");
+    assert.match(notificacionJessica!.mensaje, /AMORE – Cliente requiere atención/);
+
+    const mensajeCliente = envios.enviados.at(-1)!;
+    assert.equal(mensajeCliente.telefono, TELEFONO);
+    assert.equal(
+      mensajeCliente.mensaje,
+      "Entiendo que quieres hablar directamente con Jessica. 💗\nYa le notifiqué que deseas comunicarte con ella. En un momento te responderá directamente.",
+    );
+  });
+});
+
+describe("Test E -- idempotencia de notificación: solo la primera vez notifica a Jessica", () => {
+  it("mensajes posteriores en modo atencion_humana nunca vuelven a notificar", async () => {
+    const entradasCompartidas = crearFakeEntradas();
+    const { deps, envios } = armarDeps({ crearEntrada: entradasCompartidas.crearEntrada, buscarEntrada: entradasCompartidas.buscarEntrada, actualizarEntrada: entradasCompartidas.actualizarEntrada });
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "hola", wamid: "w1" }, deps);
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "3", wamid: "w2" }, deps);
+    const notificacionesTrasActivar = envios.enviados.filter((e) => e.telefono === "573227298600").length;
+    assert.equal(notificacionesTrasActivar, 1);
+
+    // Mensajes siguientes (vía el gate global, que es quien de verdad
+    // intercepta una conversación ya en atencion_humana) -- "Hola"/"Jessica"/
+    // "¿Me responde?" nunca deben generar una segunda notificación.
+    const gate = armarDepsGate({}, entradasCompartidas);
+    for (const [i, texto] of ["Hola", "Jessica", "¿Me responde?"].entries()) {
+      const r = await interceptarAtencionHumanaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto, wamid: `w${3 + i}` }, gate.deps);
+      assert.equal(r.manejado, true);
+    }
+    const totalNotificaciones = [...envios.enviados, ...gate.envios.enviados].filter((e) => e.telefono === "573227298600").length;
+    assert.equal(totalNotificaciones, 1, "NUNCA debe generarse una segunda notificación mientras siga en atencion_humana");
+  });
+});
+
+describe("Test F -- corte total en modo atencion_humana: ni Gemini ni Agenda V2 se invocan", () => {
+  it("interceptarAtencionHumanaAmore silencia el mensaje sin llamar a ningún otro sistema", async () => {
+    const entradasCompartidas = crearFakeEntradas();
+    await entradasCompartidas.crearEntrada(FAKE_SUPABASE, { tenantId: AMORE_TENANT_ID, telefonoCliente: TELEFONO, wamid: "w0", modo: "atencion_humana", notificadoAJessica: true });
+    const { deps, envios } = armarDepsGate({}, entradasCompartidas);
+
+    const r = await interceptarAtencionHumanaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "quiero agendar", wamid: "w1" }, deps);
+    assert.equal(r.manejado, true, "el gate se queda con el mensaje -- Agenda V2/Gemini/Flow Engine nunca deben ni siquiera evaluarlo");
+    assert.equal(envios.enviados.length, 0, "ninguna respuesta automática mientras está en atención humana");
+  });
+});
+
+describe("Test G/C -- gate global: solicitud explícita de humano, y frases que NO deben activarlo", () => {
+  it("'quiero hablar con Jessica' activa atención humana desde el gate, incluso sin fila previa (primer contacto)", async () => {
+    const { deps, entradas, envios } = armarDepsGate();
+    const r = await interceptarAtencionHumanaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "quiero hablar con Jessica", wamid: "w1" }, deps);
+    assert.equal(r.manejado, true);
+    assert.equal(entradas.filas.length, 1);
+    assert.equal(entradas.filas[0]!.modo, "atencion_humana");
+    assert.ok(envios.enviados.some((e) => e.telefono === "573227298600"));
+  });
+
+  it("'quiero hablar con una persona' / 'pásame con alguien' activan atención humana", async () => {
+    for (const texto of ["quiero hablar con una persona", "pásame con Jessica"]) {
+      const { deps, entradas } = armarDepsGate();
+      const r = await interceptarAtencionHumanaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto, wamid: "w1" }, deps);
+      assert.equal(r.manejado, true, `"${texto}" debía activar atención humana`);
+      assert.equal(entradas.filas[0]!.modo, "atencion_humana");
+    }
+  });
+
+  it("'¿Jessica hace maquillaje?' / '¿Qué servicios hace Jessica?' -- NUNCA activan atención humana, dejan pasar el mensaje", async () => {
+    for (const texto of ["¿Jessica hace maquillaje?", "¿Qué servicios hace Jessica?", "¿Qué profesionales tienen?"]) {
+      const { deps, entradas, envios } = armarDepsGate();
+      const r = await interceptarAtencionHumanaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto, wamid: "w1" }, deps);
+      assert.equal(r.manejado, false, `"${texto}" NUNCA debía interceptarse acá`);
+      assert.equal(entradas.filas.length, 0, "no debe crear ni tocar ningún estado");
+      assert.equal(envios.enviados.length, 0);
+    }
+  });
+
+  it("otro tenant -- el gate nunca actúa, ni siquiera con la frase explícita", async () => {
+    const { deps, candado, entradas } = armarDepsGate();
+    const r = await interceptarAtencionHumanaAmore({ supabase: FAKE_SUPABASE, idTenant: OTRO_TENANT, telefono: TELEFONO, texto: "quiero hablar con Jessica", wamid: "w1" }, deps);
+    assert.deepEqual(r, { manejado: false });
+    assert.equal(candado.llamadas.length, 0);
+    assert.equal(entradas.filas.length, 0);
+  });
+
+  it("mensaje normal sin fila previa y sin solicitud humana -- deja pasar SIN escribir ultimo_wamid_procesado (no interfiere con procesarEntradaAmore)", async () => {
+    const { deps, entradas } = armarDepsGate();
+    const r = await interceptarAtencionHumanaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "hola", wamid: "w1" }, deps);
+    assert.deepEqual(r, { manejado: false });
+    assert.equal(entradas.filas.length, 0, "el gate nunca crea la fila de primer contacto -- eso sigue siendo responsabilidad de procesarEntradaAmore");
+  });
+});
+
+// --- Test 21-G (sección del pedido): Agenda V2 activa + solicitud humana --
+// integración REAL contra Supabase (requiere que la migración
+// 20260920000000_amore_atencion_humana.sql ya esté aplicada). Usa el
+// AMORE_TENANT_ID real (necesario -- el gate es exclusivo de AMORE) pero un
+// teléfono de prueba DESCARTABLE (nunca un cliente real, nunca el 3057/R-2CX)
+// y `enviarMensajeWhatsApp` SIEMPRE inyectado como fake -- esta prueba NUNCA
+// puede enviar un WhatsApp real, sea cual sea la configuración del entorno
+// donde se ejecute.
+describe("Test 21-G -- integración real: la sesión Agenda V2 activa NUNCA se pierde al activar atención humana", { skip: !HAS_SUPABASE && "requiere SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY" }, () => {
+  const supabase = HAS_SUPABASE ? createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!) : (null as never);
+  const telefonoPrueba = `57300${Math.floor(Math.random() * 10_000_000)}`; // descartable, nunca un cliente real
+  let sesionAgendaId: number | undefined;
+  let entradaId: number | undefined;
+
+  after(async () => {
+    if (!HAS_SUPABASE) return;
+    if (sesionAgendaId) await supabase.from("dulabs_agenda_v2_sesiones").delete().eq("id", sesionAgendaId);
+    if (entradaId) await supabase.from("dulabs_amore_entrada").delete().eq("id", entradaId);
+  });
+
+  it("activa atencion_humana sin tocar la sesión Agenda V2 real (step/opciones/activo intactos)", async () => {
+    const opcionesOriginales = [{ numero: 1, fechaIso: "2027-01-15", etiqueta: "Viernes 15 de enero" }];
+    const { data: sesion, error: errorSesion } = await supabase
+      .from("dulabs_agenda_v2_sesiones")
+      .insert({
+        tenant_id: AMORE_TENANT_ID,
+        telefono_cliente: telefonoPrueba,
+        activo: true,
+        step: "S4_HORA",
+        servicio_id: null,
+        profesional_id: null,
+        opciones_mostradas: opcionesOriginales,
+      })
+      .select("id")
+      .single();
+    assert.equal(errorSesion, null, errorSesion?.message);
+    sesionAgendaId = sesion!.id as number;
+
+    const envios: Array<{ telefono: string; mensaje: string }> = [];
+    const r = await interceptarAtencionHumanaAmore(
+      { supabase, idTenant: AMORE_TENANT_ID, telefono: telefonoPrueba, texto: "Quiero hablar con Jessica", wamid: randomUUID() },
+      {
+        enviarMensajeWhatsApp: async (params) => {
+          envios.push({ telefono: params.telefono, mensaje: params.mensaje });
+          return { ok: true, data: { ok: true } } as const;
+        },
+      },
+    );
+    assert.equal(r.manejado, true);
+    assert.ok(envios.some((e) => e.telefono === "573227298600"), "debe existir la notificación real a Jessica (mockeada, nunca enviada de verdad en este test)");
+
+    const { data: entradaFila } = await supabase.from("dulabs_amore_entrada").select("id, modo, notificado_a_jessica").eq("tenant_id", AMORE_TENANT_ID).eq("telefono_cliente", telefonoPrueba).single();
+    entradaId = entradaFila!.id as number;
+    assert.equal(entradaFila!.modo, "atencion_humana");
+    assert.equal(entradaFila!.notificado_a_jessica, true);
+
+    // La prueba real de la sección 16 del pedido: la sesión Agenda V2 sigue
+    // EXACTAMENTE como estaba -- activa, mismo step, mismas opciones -- porque
+    // el gate corre ANTES de procesarMensajeConAgendaV2 en app/api/whatsapp-qr-bot/route.ts
+    // y nunca lo llama cuando ya interceptó el mensaje.
+    const { data: sesionTrasHumano } = await supabase.from("dulabs_agenda_v2_sesiones").select("activo, step, opciones_mostradas").eq("id", sesionAgendaId).single();
+    assert.equal(sesionTrasHumano!.activo, true, "la sesión Agenda V2 NUNCA se elimina/desactiva por pedir atención humana");
+    assert.equal(sesionTrasHumano!.step, "S4_HORA", "el progreso de Agenda V2 se preserva intacto");
+    assert.deepEqual(sesionTrasHumano!.opciones_mostradas, opcionesOriginales);
   });
 });

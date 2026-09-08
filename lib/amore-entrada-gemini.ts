@@ -20,11 +20,58 @@ import {
 import type { GeminiGenerateContentClient } from "@/lib/flow/gemini/gemini-types";
 
 export const MENSAJE_BIENVENIDA_1 = "¡Hola! 💗 Bienvenido/a a AMORE.\n\nEstoy aquí para ayudarte a encontrar el servicio ideal o reservar tu cita.";
-export const MENSAJE_BIENVENIDA_2 = "¿Qué deseas hacer?\n\n1. Quiero una cita\n2. Quiero hacer una consulta";
-export const MENSAJE_MENU_INICIO_INVALIDO = "No reconocí esa opción 💗 Por favor responde con el número de una de estas:\n\n1. Quiero una cita\n2. Quiero hacer una consulta";
+export const MENSAJE_BIENVENIDA_2 = "¿Qué deseas hacer?\n\n1. Quiero una cita\n2. Quiero hacer una consulta\n3. Hablar con una persona";
+export const MENSAJE_MENU_INICIO_INVALIDO =
+  "No reconocí esa opción 💗 Por favor responde con el número de una de estas:\n\n1. Quiero una cita\n2. Quiero hacer una consulta\n3. Hablar con una persona";
 export const MENSAJE_GEMINI_BIENVENIDA = "Claro 💗 Cuéntame, ¿qué te gustaría saber?";
 export const MENSAJE_TRANSICION_AGENDA = "Perfecto 💗 Vamos a agendar tu cita.";
 export const MENSAJE_ERROR_GEMINI = "Disculpa, tuve un problema entendiendo tu mensaje 💗 ¿Puedes reformularlo?";
+
+// --- Fase 1 (atención humana, autorizado) -------------------------------
+
+/** Único número real al que se notifica -- ya normalizado con indicativo de país (auditado: soloDigitos del worker NO agrega el 57, ver worker/src/whatsapp-qr/socket-baileys.ts). */
+export const NUMERO_JESSICA = "573227298600";
+
+export const MENSAJE_ATENCION_HUMANA_CLIENTE =
+  "Entiendo que quieres hablar directamente con Jessica. 💗\nYa le notifiqué que deseas comunicarte con ella. En un momento te responderá directamente.";
+
+/** Único motivo real disponible en esta fase -- deliberadamente NO se llama a Gemini para resumir un motivo (sección PRIORIZAMOS CONFIABILIDAD del pedido). */
+export const MOTIVO_ATENCION_HUMANA_DEFECTO = "Solicita atención directa.";
+
+export function construirMensajeNotificacionJessica(params: { nombre: string | null; telefono: string; motivo?: string }): string {
+  const nombre = params.nombre?.trim() || "Cliente Nuevo";
+  const motivo = params.motivo?.trim() || MOTIVO_ATENCION_HUMANA_DEFECTO;
+  return `AMORE – Cliente requiere atención\n\nCliente: ${nombre}\nWhatsApp: ${params.telefono}\nMotivo: ${motivo}\n\nLa clienta solicita atención directa. Por favor, revisa la conversación.`;
+}
+
+/**
+ * Detector determinístico de solicitud EXPLÍCITA de hablar con una persona
+ * -- mismo criterio EXACTO que FRASES_TRIGGER_AGENDA_DETERMINISTA/
+ * detectarIntencionGestionCitas (lib/agenda-v2/entrada.ts): normalizeText +
+ * coincidencia "contains" contra una lista FIJA y controlada, nunca IA.
+ * Deliberadamente acotado a las frases reales dadas -- "¿Jessica hace
+ * maquillaje?"/"¿Qué profesionales tienen?" NUNCA deben calzar acá (no
+ * expresan intención de hablar con alguien, solo mencionan a Jessica o
+ * preguntan por el equipo).
+ */
+const FRASES_ATENCION_HUMANA_DETERMINISTA = [
+  "quiero hablar con jessica",
+  "me gustaria hablar con jessica",
+  "necesito hablar con jessica",
+  "pasame con jessica",
+  "quiero hablar con una persona",
+  "necesito hablar con alguien",
+  "quiero hablar con alguien de amore",
+  "prefiero hablar con una persona",
+  "necesito que jessica me atienda",
+  "quiero hablar directamente con alguien",
+  "quiero hablar directamente con jessica",
+];
+
+export function detectarSolicitudAtencionHumana(mensaje: string): boolean {
+  const textoNormalizado = normalizeText(mensaje);
+  return FRASES_ATENCION_HUMANA_DETERMINISTA.some((f) => textoNormalizado.includes(normalizeText(f)));
+}
 
 /**
  * FAST TRACK DETERMINISTA (sección del pedido) -- frases FIJAS e
@@ -81,7 +128,38 @@ Reglas estrictas:
 - Cuando intent=CONSULTA, "reply_text" debe ser una respuesta natural, cálida y breve a la duda del cliente (información general del salón; si no conoces un dato exacto como un precio, sé honesta y sugiere que lo puede confirmar al agendar, nunca inventes una cifra).
 - Cuando intent=TRIGGER_AGENDA, igual completa "reply_text" con cualquier texto breve (será ignorado por el sistema).
 - "detected_service_mention": si el cliente mencionó un servicio concreto (ej. "sombreado", "manicure"), pon ese texto tal cual; si no mencionó ninguno, usa null.
-- Nunca actives TRIGGER_AGENDA solo porque la palabra "cita" aparece en el mensaje -- una pregunta sobre citas (precio, horarios, disponibilidad general) sigue siendo CONSULTA.`;
+- Nunca actives TRIGGER_AGENDA solo porque la palabra "cita" aparece en el mensaje -- una pregunta sobre citas (precio, horarios, disponibilidad general) sigue siendo CONSULTA.
+
+[REGLA CRÍTICA DE INTENCIÓN]
+TRIGGER_AGENDA significa que el usuario desea iniciar EXPLÍCITAMENTE un proceso de reserva/agendamiento. Tienes acceso al historial reciente de esta conversación (turnos anteriores) --úsalo siempre que el mensaje actual sea corto o ambiguo.
+
+No debes inferir TRIGGER_AGENDA solamente porque el usuario:
+- diga "sí";
+- diga "sí porfa";
+- diga "claro";
+- diga "dale";
+- diga "bueno";
+- diga "por favor";
+- muestre interés en un servicio.
+
+Un afirmativo corto ("sí", "sí porfa", "claro", "dale", "bueno", "por favor") SOLO puede ser TRIGGER_AGENDA si tu ÚLTIMO mensaje en el historial fue una pregunta explícita cuya intención era confirmar el INICIO de una reserva (ej. "¿Quieres que te ayude a reservar una cita?", "¿Te gustaría agendar?"). Si tu último mensaje preguntaba otra cosa (mostrar opciones, dar información, recomendar un servicio, confirmar una fecha de evento), el mismo afirmativo corto es CONSULTA.
+
+Ejemplo:
+ASISTENTE: "¿Quieres que te ayude a reservar una cita?"
+USUARIO: "Sí por favor."
+→ TRIGGER_AGENDA
+
+Pero:
+ASISTENTE: "¿Quieres conocer nuestras opciones de maquillaje?"
+USUARIO: "Sí por favor."
+→ CONSULTA
+
+También:
+ASISTENTE: "¿Quieres que te recomiende una opción para tu graduación?"
+USUARIO: "Sí."
+→ CONSULTA
+
+Nunca asumas una reserva por el tema general de la conversación (hablar de un evento, una fecha o un servicio no es lo mismo que pedir agendar). Si existe duda real entre CONSULTA y TRIGGER_AGENDA, responde CONSULTA.`;
 
 export interface DepsClasificarGemini {
   geminiClient?: GeminiGenerateContentClient;

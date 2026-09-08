@@ -3,7 +3,7 @@ import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { ejecutarBotWhatsAppQR } from "@/lib/whatsapp-qr-bot";
 import { procesarMensajeConAgendaV2 } from "@/lib/agenda-v2/router";
-import { procesarEntradaAmore } from "@/lib/amore-entrada-router";
+import { procesarEntradaAmore, interceptarAtencionHumanaAmore } from "@/lib/amore-entrada-router";
 
 export const runtime = "nodejs";
 
@@ -42,6 +42,25 @@ export async function POST(request: NextRequest) {
   }
 
   const supabase = supabaseAdmin();
+
+  // ATENCIÓN HUMANA (autorizado, Fase 1) -- gate global, EXCLUSIVO de AMORE,
+  // evaluado ANTES que Agenda V2: es la única forma de que (a) una
+  // conversación ya en atencion_humana quede en silencio total y (b) una
+  // solicitud explícita de hablar con una persona le gane a una sesión
+  // Agenda V2 ya activa, sin reordenar ni tocar lib/agenda-v2/router.ts.
+  // Cualquier otro tenant, o cualquier mensaje que no aplique, devuelve
+  // manejado:false de inmediato -- sigue exactamente el comportamiento de
+  // siempre (Agenda V2 -> entrada AMORE -> Flow Engine).
+  const resultadoAtencionHumana = await interceptarAtencionHumanaAmore({
+    supabase,
+    idTenant: body.idTenant,
+    telefono: body.telefono,
+    texto: body.texto,
+    wamid: body.wamid,
+  });
+  if (resultadoAtencionHumana.manejado) {
+    return Response.json({ success: true });
+  }
 
   // AGENDA V2 (autorizado) -- router de aislamiento: se evalúa ANTES de
   // ejecutarBotWhatsAppQR (Flow Engine). Mientras exista una sesión activa
