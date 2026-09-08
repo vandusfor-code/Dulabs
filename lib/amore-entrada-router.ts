@@ -24,8 +24,10 @@ import { adquirirCandadoChat, liberarCandadoChat } from "@/lib/chat-lock";
 import { enviarMensajeWhatsApp } from "@/lib/whatsapp-worker-client";
 import { AMORE_TENANT_ID } from "@/lib/nylas/nylas-grant";
 import { iniciarNuevaSesionAgendaV2 } from "@/lib/agenda-v2/router";
-import { nombreConocido } from "@/lib/clientes-conocidos";
+import { nombreConocido, recordarNombreCliente, clienteConocidoCompleto } from "@/lib/clientes-conocidos";
+import { parseDiaCumpleanos, parseMesCumpleanos } from "@/lib/cumpleanos/parse-cumpleanos-natural";
 import { obtenerHistorialRecienteChat } from "@/lib/chats/historial-reciente";
+import { normalizeText } from "@/lib/flow-triggers/normalize-text";
 import {
   buscarEntradaAmore,
   crearEntradaAmore,
@@ -40,6 +42,12 @@ import {
   MENSAJE_TRANSICION_AGENDA,
   MENSAJE_ATENCION_HUMANA_CLIENTE,
   NUMERO_JESSICA,
+  MENSAJE_REGISTRO_NOMBRE,
+  MENSAJE_REGISTRO_DIA,
+  MENSAJE_REGISTRO_MES,
+  MENSAJE_DIA_INVALIDO,
+  MENSAJE_MES_INVALIDO,
+  MENSAJE_REGISTRO_CANCELADO,
   detectarTriggerAgendaDeterminista,
   detectarSolicitudAtencionHumana,
   construirMensajeNotificacionJessica,
@@ -351,6 +359,158 @@ export async function interceptarAtencionHumanaAmore(
     }
 
     return { manejado: false };
+  } finally {
+    await liberar(phoneNumberId, params.telefono, params.wamid);
+  }
+}
+
+const MODOS_REGISTRO = new Set<string>(["registro_nombre", "registro_dia", "registro_mes"]);
+
+export interface InterceptarRegistroClienteDeps {
+  adquirirCandadoChat?: typeof adquirirCandadoChat;
+  liberarCandadoChat?: typeof liberarCandadoChat;
+  buscarEntrada?: typeof buscarEntradaAmore;
+  actualizarEntrada?: typeof actualizarEntradaAmore;
+  enviarMensajeWhatsApp?: typeof enviarMensajeWhatsApp;
+  recordarNombreCliente?: typeof recordarNombreCliente;
+  buscarClienteConocido?: typeof clienteConocidoCompleto;
+  /** Inyectable para tests -- default real: iniciarNuevaSesionAgendaV2 (lib/agenda-v2/router.ts), sin deps custom. */
+  iniciarAgendaV2?: (params: { supabase: SupabaseClient; idTenant: string; telefono: string; wamid: string }) => Promise<void>;
+}
+
+/**
+ * FASE 2 (autorizado, registro de clientes nuevos) — GATE GLOBAL, exclusivo
+ * de AMORE, que debe llamarse DESPUÉS de interceptarAtencionHumanaAmore
+ * (esa conserva prioridad absoluta -- "Hablar con Jessica" en cualquier paso
+ * del registro sigue funcionando exactamente igual, sin ningún código
+ * adicional acá) y ANTES de procesarMensajeConAgendaV2 -- es la ÚNICA forma
+ * real de que el registro no pueda saltarse por ninguna de las 3 vías de
+ * inicio de Agenda V2: mientras `dulabs_amore_entrada.modo` esté en
+ * registro_nombre/dia/mes, este gate se queda con el mensaje ANTES de que
+ * esInicioDeAgendaV2 (trigger directo) o la clasificación de Gemini
+ * (TRIGGER_AGENDA) puedan verlo.
+ *
+ * Determinístico de punta a punta -- NUNCA llama a Gemini. Guarda de forma
+ * progresiva sobre dulabs_clientes_conocidos (recordarNombreCliente, mismo
+ * mecanismo aditivo ya existente) -- nunca una tabla ni un estado paralelo.
+ *
+ * Devuelve manejado:false SIN escribir nada cuando no hay ningún registro en
+ * curso -- así procesarMensajeConAgendaV2/procesarEntradaAmore siguen
+ * exactamente igual que hoy para cualquier conversación que no esté
+ * registrándose.
+ */
+export async function interceptarRegistroClienteAmore(
+  params: { supabase: SupabaseClient; idTenant: string; telefono: string; texto: string; wamid: string },
+  deps: InterceptarRegistroClienteDeps = {},
+): Promise<ResultadoEntradaAmore> {
+  if (params.idTenant !== AMORE_TENANT_ID) {
+    return { manejado: false };
+  }
+
+  const adquirir = deps.adquirirCandadoChat ?? adquirirCandadoChat;
+  const liberar = deps.liberarCandadoChat ?? liberarCandadoChat;
+  const buscarEntrada = deps.buscarEntrada ?? buscarEntradaAmore;
+  const actualizarEntrada = deps.actualizarEntrada ?? actualizarEntradaAmore;
+  const enviarMensaje = deps.enviarMensajeWhatsApp ?? enviarMensajeWhatsApp;
+  const recordarNombre = deps.recordarNombreCliente ?? recordarNombreCliente;
+  const buscarCliente = deps.buscarClienteConocido ?? clienteConocidoCompleto;
+  const iniciarAgendaV2 = deps.iniciarAgendaV2 ?? ((p) => iniciarNuevaSesionAgendaV2(p));
+
+  const phoneNumberId = phoneNumberIdSintetico(params.idTenant);
+
+  await adquirir(phoneNumberId, params.telefono, params.wamid);
+  try {
+    let fila: EntradaAmore | null;
+    try {
+      fila = await buscarEntrada(params.supabase, params.idTenant, params.telefono);
+    } catch (err) {
+      // Defensivo (mismo criterio EXACTO que el resto del puente) -- si la
+      // migración todavía no se aplicó en producción, nunca debe romper el
+      // canal: se deja pasar al comportamiento normal.
+      console.error("[amore-entrada] error buscando estado (gate registro cliente) -- se deja pasar al comportamiento normal", err);
+      return { manejado: false };
+    }
+
+    if (!fila || !MODOS_REGISTRO.has(fila.modo)) {
+      // Sin registro en curso -- deja pasar SIN escribir nada, para no
+      // interferir con la idempotencia de wamid de los pasos siguientes.
+      return { manejado: false };
+    }
+
+    // Mismo wamid ya procesado -- nunca se reenvía nada ni se reprocesa.
+    if (fila.ultimoWamidProcesado === params.wamid) {
+      return { manejado: true };
+    }
+
+    const texto = params.texto.trim();
+
+    if (normalizeText(texto) === "cancelar") {
+      // Mismo comando global EXACTO ya usado por Agenda V2 (COMANDO_CANCELAR,
+      // lib/agenda-v2/controlador.ts): coincidencia EXACTA tras normalizar,
+      // nunca "contains", nunca "cancelar cita"/"no quiero" (esas frases no
+      // están cubiertas por el mecanismo real que se está reutilizando).
+      // Nunca crea una sesión de Agenda V2 -- solo vuelve al estado de
+      // conversación normal.
+      await actualizarEntrada(params.supabase, fila.id, { modo: "gemini", ultimoWamidProcesado: params.wamid });
+      await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_REGISTRO_CANCELADO, origen: "automatico" });
+      return { manejado: true };
+    }
+
+    if (fila.modo === "registro_nombre") {
+      // Sección NOMBRE del pedido -- sin validación rígida, se acepta el
+      // texto tal cual (mismo criterio que recordarNombreCliente, que ya
+      // recorta espacios y descarta solo una cadena vacía).
+      await recordarNombre(params.supabase, { idTenant: params.idTenant, phoneNumberId, telefonoCliente: params.telefono, nombre: texto });
+      await actualizarEntrada(params.supabase, fila.id, { modo: "registro_dia", ultimoWamidProcesado: params.wamid });
+      await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_REGISTRO_DIA, origen: "automatico" });
+      return { manejado: true };
+    }
+
+    if (fila.modo === "registro_dia") {
+      const dia = parseDiaCumpleanos(texto);
+      if (dia === null) {
+        await actualizarEntrada(params.supabase, fila.id, { ultimoWamidProcesado: params.wamid });
+        await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_DIA_INVALIDO, origen: "automatico" });
+        return { manejado: true };
+      }
+      const clienteActual = await buscarCliente(params.supabase, phoneNumberId, params.telefono);
+      if (!clienteActual) {
+        // Defensivo -- el nombre debió guardarse en el paso anterior; si por
+        // algún error real no quedó persistido, nunca se inventa un nombre:
+        // se reinicia el registro desde el principio.
+        await actualizarEntrada(params.supabase, fila.id, { modo: "registro_nombre", ultimoWamidProcesado: params.wamid });
+        await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_REGISTRO_NOMBRE, origen: "automatico" });
+        return { manejado: true };
+      }
+      await recordarNombre(params.supabase, { idTenant: params.idTenant, phoneNumberId, telefonoCliente: params.telefono, nombre: clienteActual.nombre, cumpleDia: dia });
+      await actualizarEntrada(params.supabase, fila.id, { modo: "registro_mes", ultimoWamidProcesado: params.wamid });
+      await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_REGISTRO_MES, origen: "automatico" });
+      return { manejado: true };
+    }
+
+    // fila.modo === "registro_mes"
+    const mes = parseMesCumpleanos(texto);
+    if (mes === null) {
+      await actualizarEntrada(params.supabase, fila.id, { ultimoWamidProcesado: params.wamid });
+      await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_MES_INVALIDO, origen: "automatico" });
+      return { manejado: true };
+    }
+    const clienteActual = await buscarCliente(params.supabase, phoneNumberId, params.telefono);
+    if (!clienteActual) {
+      // Mismo defensivo de arriba -- nunca inventa datos faltantes.
+      await actualizarEntrada(params.supabase, fila.id, { modo: "registro_nombre", ultimoWamidProcesado: params.wamid });
+      await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_REGISTRO_NOMBRE, origen: "automatico" });
+      return { manejado: true };
+    }
+    await recordarNombre(params.supabase, { idTenant: params.idTenant, phoneNumberId, telefonoCliente: params.telefono, nombre: clienteActual.nombre, cumpleMes: mes });
+    // Registro completo -- vuelve al estado de conversación normal y entrega
+    // el control a Agenda V2 vía el MISMO mecanismo existente
+    // (iniciarNuevaSesionAgendaV2): la clienta ya existe en
+    // dulabs_clientes_conocidos, así que esta vez sigue directo a categorías
+    // reales, nunca una segunda lógica de creación de sesión.
+    await actualizarEntrada(params.supabase, fila.id, { modo: "gemini", ultimoWamidProcesado: params.wamid });
+    await iniciarAgendaV2({ supabase: params.supabase, idTenant: params.idTenant, telefono: params.telefono, wamid: params.wamid });
+    return { manejado: true };
   } finally {
     await liberar(phoneNumberId, params.telefono, params.wamid);
   }

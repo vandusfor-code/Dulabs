@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { parseCumpleanosNatural } from "@/lib/cumpleanos/parse-cumpleanos-natural";
+import { parseCumpleanosNatural, parseDiaCumpleanos, parseMesCumpleanos } from "@/lib/cumpleanos/parse-cumpleanos-natural";
 
 describe("parseCumpleanosNatural", () => {
   it("'15 de marzo' -> día 15, mes 3", () => {
@@ -37,5 +37,40 @@ describe("parseCumpleanosNatural", () => {
   it("sin ninguna fecha reconocible -> ok:false, nunca inventa", () => {
     assert.deepEqual(parseCumpleanosNatural("prefiero no decir"), { ok: false });
     assert.deepEqual(parseCumpleanosNatural("mañana"), { ok: false });
+  });
+});
+
+describe("Fase 2 AMORE (registro de clientes nuevos) -- parseDiaCumpleanos", () => {
+  it("acepta números naturales razonables (1, 01, 15, 28, 31)", () => {
+    assert.equal(parseDiaCumpleanos("1"), 1);
+    assert.equal(parseDiaCumpleanos("01"), 1);
+    assert.equal(parseDiaCumpleanos("15"), 15);
+    assert.equal(parseDiaCumpleanos("28"), 28);
+    assert.equal(parseDiaCumpleanos("31"), 31);
+  });
+  it("rechaza 0, 32 y texto no numérico -- nunca inventa", () => {
+    assert.equal(parseDiaCumpleanos("0"), null);
+    assert.equal(parseDiaCumpleanos("32"), null);
+    assert.equal(parseDiaCumpleanos("hola"), null);
+  });
+});
+
+describe("Fase 2 AMORE (registro de clientes nuevos) -- parseMesCumpleanos (reutiliza MESES/resolverMesPorPrefijo, nunca duplica la tabla)", () => {
+  it("acepta 1-12 numérico", () => {
+    for (let mes = 1; mes <= 12; mes++) {
+      assert.equal(parseMesCumpleanos(String(mes)), mes);
+    }
+  });
+  it("acepta el nombre completo del mes", () => {
+    assert.equal(parseMesCumpleanos("marzo"), 3);
+    assert.equal(parseMesCumpleanos("Marzo"), 3);
+  });
+  it("acepta el prefijo real del mes (mínimo 3 letras, mismo criterio que resolverMesPorPrefijo)", () => {
+    assert.equal(parseMesCumpleanos("mar"), 3);
+  });
+  it("rechaza 0, 13 y texto no reconocible -- nunca inventa", () => {
+    assert.equal(parseMesCumpleanos("0"), null);
+    assert.equal(parseMesCumpleanos("13"), null);
+    assert.equal(parseMesCumpleanos("invierno"), null);
   });
 });

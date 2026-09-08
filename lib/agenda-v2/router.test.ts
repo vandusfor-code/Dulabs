@@ -20,7 +20,9 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { procesarMensajeConAgendaV2, type AgendaV2RouterDeps } from "@/lib/agenda-v2/router";
+import { procesarMensajeConAgendaV2, iniciarNuevaSesionAgendaV2, type AgendaV2RouterDeps } from "@/lib/agenda-v2/router";
+import { AMORE_TENANT_ID } from "@/lib/nylas/nylas-grant";
+import type { EntradaAmore, ModoEntradaAmore } from "@/lib/amore-entrada-sesiones";
 import type { SesionAgendaV2, CambiosSesionAgendaV2 } from "@/lib/agenda-v2/sesiones";
 import { AMORE_ESCENARIOS_SEED } from "@/lib/bot-escenarios/seed-amore";
 import type { EscenarioRow } from "@/lib/bot-escenarios/tipos";
@@ -217,6 +219,51 @@ function armarDeps(overrides: Partial<AgendaV2RouterDeps> = {}): {
     ...overrides,
   };
   return { deps, sesiones, candado, envios };
+}
+
+// --- FASE 2 (autorizado, registro de clientes nuevos) -- fakes exclusivos de AMORE ---
+
+function crearFakeClientesConocidos(clientePreexistente?: { nombre: string; cumpleDia: number | null; cumpleMes: number | null }) {
+  const clientes = new Map<string, { nombre: string; cumpleDia: number | null; cumpleMes: number | null }>();
+  if (clientePreexistente) clientes.set(`whatsapp-qr:${AMORE_TENANT_ID}|573148127388`, clientePreexistente);
+  return {
+    clientes,
+    buscarClienteConocido: async (_s: unknown, phoneNumberId: string, telefono: string) => clientes.get(`${phoneNumberId}|${telefono}`) ?? null,
+  };
+}
+
+function crearFakeEntradasAmore() {
+  const filas: EntradaAmore[] = [];
+  let siguienteId = 1;
+  return {
+    filas,
+    buscarEntradaAmoreDeps: async (_s: unknown, tenantId: string, telefono: string) => filas.find((f) => f.tenantId === tenantId && f.telefonoCliente === telefono) ?? null,
+    crearEntradaAmoreDeps: async (_s: unknown, params: { tenantId: string; telefonoCliente: string; wamid: string; modo: ModoEntradaAmore }) => {
+      const nueva: EntradaAmore = { id: siguienteId++, tenantId: params.tenantId, telefonoCliente: params.telefonoCliente, modo: params.modo, ultimoWamidProcesado: params.wamid, notificadoAJessica: false };
+      filas.push(nueva);
+      return nueva;
+    },
+    actualizarEntradaAmoreDeps: async (_s: unknown, id: number, cambios: { modo?: ModoEntradaAmore; ultimoWamidProcesado?: string }) => {
+      const f = filas.find((x) => x.id === id);
+      if (f) Object.assign(f, cambios);
+    },
+  };
+}
+
+/** Mismo armarDeps de arriba, pero con el tenant real de AMORE y los fakes de cliente-conocido/entrada -- necesarios porque el chequeo nuevo de iniciarNuevaSesionAgendaV2 (Fase 2) está gateado exclusivamente por AMORE_TENANT_ID (nunca por "amore-test", el tenant de fixture que usa el resto de este archivo). */
+function armarDepsAmore(overrides: Partial<AgendaV2RouterDeps> = {}, clientePreexistente?: { nombre: string; cumpleDia: number | null; cumpleMes: number | null }) {
+  const base = armarDeps();
+  const clientes = crearFakeClientesConocidos(clientePreexistente);
+  const entradasAmore = crearFakeEntradasAmore();
+  const deps: AgendaV2RouterDeps = {
+    ...base.deps,
+    buscarClienteConocido: clientes.buscarClienteConocido,
+    buscarEntradaAmoreDeps: entradasAmore.buscarEntradaAmoreDeps,
+    crearEntradaAmoreDeps: entradasAmore.crearEntradaAmoreDeps,
+    actualizarEntradaAmoreDeps: entradasAmore.actualizarEntradaAmoreDeps,
+    ...overrides,
+  };
+  return { deps, sesiones: base.sesiones, candado: base.candado, envios: base.envios, clientes, entradasAmore };
 }
 
 describe("A. Sin sesión Agenda V2, mensaje que NO dispara inicio -> comportamiento normal (Flow Engine)", () => {
@@ -2244,5 +2291,85 @@ describe("FASE 8 (autorizado) -- gestión de citas existentes (consultar/cancela
       assert.doesNotMatch(paramsActualizar, /R-2CX/i, "jamás referencia el código de la cita real R-2CX al reprogramar");
       assert.equal(fakeActualizar.llamadas[0]!.params.citaId, 502);
     });
+  });
+});
+
+// --- FASE 2 (autorizado, registro de clientes nuevos) ----------------------
+//
+// Estos tests usan el AMORE_TENANT_ID real (nunca "amore-test", el tenant de
+// fixture que usa el resto de este archivo) porque el chequeo nuevo de
+// iniciarNuevaSesionAgendaV2 está gateado EXCLUSIVAMENTE por ese tenant --
+// con "amore-test" el chequeo nunca se activa, que es exactamente lo que ya
+// prueban TODOS los tests de arriba (comportamiento intacto, cero cambios).
+//
+// Tests C/D/E del pedido (primer mensaje directo, TRIGGER_AGENDA de Gemini,
+// opción "1") comparten las 3 el MISMO choke point real:
+// iniciarNuevaSesionAgendaV2. amore-entrada-router.test.ts ya prueba que "1"
+// y TRIGGER_AGENDA llaman a esa función con los mismos parámetros -- acá se
+// prueba directamente esa función (una vez vía el trigger real de
+// esInicioDeAgendaV2 para C, y de forma directa para el resto), sin volver a
+// tejer todo el puente de entrada.
+
+describe("FASE 2 -- Test C: primer mensaje directo ('quiero agendar') respeta el registro de cliente nuevo", () => {
+  it("cliente NO conocido -- inicia registro_nombre, NUNCA crea sesión de Agenda V2", async () => {
+    const { deps, sesiones, envios, entradasAmore } = armarDepsAmore();
+    const r = await procesarMensajeConAgendaV2(
+      { supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: "573148127388", texto: "quiero agendar", wamid: "w1" },
+      deps,
+    );
+    assert.equal(r.manejado, true);
+    assert.equal(sesiones.filas.length, 0, "NUNCA crea una sesión de dulabs_agenda_v2_sesiones mientras el registro está pendiente");
+    assert.equal(entradasAmore.filas.length, 1);
+    assert.equal(entradasAmore.filas[0]!.modo, "registro_nombre");
+    assert.equal(envios.enviados.at(-1)!.mensaje, "Antes de continuar, necesito registrarte en AMORE. 💗\n\n¿Me regalas tu nombre?");
+  });
+});
+
+describe("FASE 2 -- Test N (a nivel Agenda V2): cliente existente entra directo, sin registro", () => {
+  it("cliente YA conocido -- muestra categorías reales de inmediato, cero mensajes de registro", async () => {
+    const { deps, sesiones, envios, entradasAmore } = armarDepsAmore({}, { nombre: "Ana Pérez", cumpleDia: 10, cumpleMes: 5 });
+    const r = await procesarMensajeConAgendaV2(
+      { supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: "573148127388", texto: "quiero agendar", wamid: "w1" },
+      deps,
+    );
+    assert.equal(r.manejado, true);
+    assert.equal(sesiones.filas.length, 1, "crea la sesión de Agenda V2 exactamente como siempre");
+    assert.equal(sesiones.filas[0]!.step, "S1_SERVICIO");
+    assert.match(envios.enviados.at(-1)!.mensaje, /¿Qué tipo de servicio te gustaría agendar\?/);
+    assert.doesNotMatch(envios.enviados.at(-1)!.mensaje, /registrarte en AMORE/);
+    assert.equal(entradasAmore.filas.length, 0, "nunca toca dulabs_amore_entrada para un cliente ya conocido");
+  });
+});
+
+describe("FASE 2 -- Test D/E: iniciarNuevaSesionAgendaV2 llamada directa (mismo choke point real que usan la opción '1' y TRIGGER_AGENDA de Gemini)", () => {
+  it("cliente NO conocido -- inicia registro_nombre en vez de armar el menú de categorías", async () => {
+    const { deps, sesiones, envios, entradasAmore } = armarDepsAmore();
+    await iniciarNuevaSesionAgendaV2({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: "573148127388", wamid: "w1" }, deps);
+    assert.equal(sesiones.filas.length, 0);
+    assert.equal(entradasAmore.filas[0]!.modo, "registro_nombre");
+    assert.equal(envios.enviados.at(-1)!.mensaje, "Antes de continuar, necesito registrarte en AMORE. 💗\n\n¿Me regalas tu nombre?");
+  });
+
+  it("cliente NO conocido, pero ya tenía una fila de entrada (ej. venía de modo 'gemini') -- reutiliza la fila, no crea una segunda", async () => {
+    const { deps, entradasAmore } = armarDepsAmore();
+    await entradasAmore.crearEntradaAmoreDeps(FAKE_SUPABASE, { tenantId: AMORE_TENANT_ID, telefonoCliente: "573148127388", wamid: "w0", modo: "gemini" });
+    await iniciarNuevaSesionAgendaV2({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: "573148127388", wamid: "w1" }, deps);
+    assert.equal(entradasAmore.filas.length, 1, "actualiza la fila existente, nunca crea una segunda");
+    assert.equal(entradasAmore.filas[0]!.modo, "registro_nombre");
+  });
+
+  it("cliente YA conocido -- crea la sesión de Agenda V2 exactamente igual que antes de Fase 2", async () => {
+    const { deps, sesiones, envios } = armarDepsAmore({}, { nombre: "Laura", cumpleDia: null, cumpleMes: null });
+    await iniciarNuevaSesionAgendaV2({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: "573148127388", wamid: "w1" }, deps);
+    assert.equal(sesiones.filas.length, 1);
+    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, construirOpcionesCategoria(CATALOGO_FIXTURE));
+    assert.match(envios.enviados.at(-1)!.mensaje, /¿Qué tipo de servicio te gustaría agendar\?/);
+  });
+
+  it("otro tenant (nunca AMORE_TENANT_ID) -- el chequeo de cliente conocido NUNCA se evalúa, comportamiento 100% intacto", async () => {
+    const { deps, sesiones, envios } = armarDeps();
+    await iniciarNuevaSesionAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", wamid: "w1" }, deps);
+    assert.equal(sesiones.filas.length, 1, "cualquier tenant que no sea AMORE sigue creando la sesión directo, como siempre");
+    assert.match(envios.enviados.at(-1)!.mensaje, /¿Qué tipo de servicio te gustaría agendar\?/);
   });
 });

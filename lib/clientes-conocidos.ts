@@ -16,6 +16,27 @@ export async function nombreConocido(
   return data?.nombre ?? null;
 }
 
+// AMORE (Fase 2 -- registro de clientes nuevos, autorizado) — lectura
+// completa (nombre + cumpleaños) de una clienta ya conocida, para decidir si
+// el registro determinístico debe iniciarse (ver lib/agenda-v2/router.ts::iniciarNuevaSesionAgendaV2)
+// y para recuperar los datos ya guardados en los pasos intermedios del
+// registro (día/mes) sin volver a pedirlos. Mismo criterio de identificación
+// EXACTO que nombreConocido -- (phone_number_id, telefono_cliente).
+export async function clienteConocidoCompleto(
+  supabase: SupabaseClient,
+  phoneNumberId: string,
+  telefonoCliente: string
+): Promise<{ nombre: string; cumpleDia: number | null; cumpleMes: number | null } | null> {
+  const { data } = await supabase
+    .from("dulabs_clientes_conocidos")
+    .select("nombre, cumple_dia, cumple_mes")
+    .eq("phone_number_id", phoneNumberId)
+    .eq("telefono_cliente", telefonoCliente)
+    .maybeSingle();
+  if (!data) return null;
+  return { nombre: data.nombre as string, cumpleDia: (data.cumple_dia as number | null) ?? null, cumpleMes: (data.cumple_mes as number | null) ?? null };
+}
+
 // Guarda o actualiza el nombre de esta clienta. Nunca lanza: recordar un
 // nombre es un extra de cortesía, no puede tumbar el flujo que lo dispara
 // (crear una cita, etc.) si falla.

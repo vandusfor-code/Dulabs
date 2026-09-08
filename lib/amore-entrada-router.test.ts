@@ -11,7 +11,14 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { procesarEntradaAmore, interceptarAtencionHumanaAmore, type AmoreEntradaDeps, type InterceptarAtencionHumanaDeps } from "@/lib/amore-entrada-router";
+import {
+  procesarEntradaAmore,
+  interceptarAtencionHumanaAmore,
+  interceptarRegistroClienteAmore,
+  type AmoreEntradaDeps,
+  type InterceptarAtencionHumanaDeps,
+  type InterceptarRegistroClienteDeps,
+} from "@/lib/amore-entrada-router";
 import type { EntradaAmore, ModoEntradaAmore } from "@/lib/amore-entrada-sesiones";
 import type { ResultadoClasificacionGemini } from "@/lib/amore-entrada-gemini";
 import { AMORE_TENANT_ID } from "@/lib/nylas/nylas-grant";
@@ -120,6 +127,51 @@ function armarDeps(overrides: Partial<AmoreEntradaDeps> = {}) {
     ...overrides,
   };
   return { deps, entradas, envios, candado, iniciarAgenda, nombreConocido };
+}
+
+function crearFakeClientesConocidos() {
+  const clientes = new Map<string, { nombre: string; cumpleDia: number | null; cumpleMes: number | null }>();
+  const clave = (phoneNumberId: string, telefono: string) => `${phoneNumberId}|${telefono}`;
+  return {
+    clientes,
+    buscarClienteConocido: async (_s: unknown, phoneNumberId: string, telefono: string) => clientes.get(clave(phoneNumberId, telefono)) ?? null,
+    recordarNombreCliente: async (
+      _s: unknown,
+      params: { phoneNumberId: string; telefonoCliente: string; nombre: string; cumpleDia?: number | null; cumpleMes?: number | null },
+    ) => {
+      const k = clave(params.phoneNumberId, params.telefonoCliente);
+      const actual = clientes.get(k) ?? { nombre: params.nombre, cumpleDia: null, cumpleMes: null };
+      clientes.set(k, {
+        nombre: params.nombre,
+        cumpleDia: params.cumpleDia !== undefined && params.cumpleDia !== null ? params.cumpleDia : actual.cumpleDia,
+        cumpleMes: params.cumpleMes !== undefined && params.cumpleMes !== null ? params.cumpleMes : actual.cumpleMes,
+      });
+    },
+  };
+}
+
+function armarDepsRegistro(
+  overrides: Partial<InterceptarRegistroClienteDeps> = {},
+  entradasCompartidas?: ReturnType<typeof crearFakeEntradas>,
+  clientesCompartidos?: ReturnType<typeof crearFakeClientesConocidos>,
+) {
+  const entradas = entradasCompartidas ?? crearFakeEntradas();
+  const clientes = clientesCompartidos ?? crearFakeClientesConocidos();
+  const envios = crearFakeEnvios();
+  const candado = crearFakeCandado();
+  const iniciarAgenda = crearFakeIniciarAgendaV2();
+  const deps: InterceptarRegistroClienteDeps = {
+    adquirirCandadoChat: candado.adquirir,
+    liberarCandadoChat: candado.liberar,
+    buscarEntrada: entradas.buscarEntrada,
+    actualizarEntrada: entradas.actualizarEntrada,
+    enviarMensajeWhatsApp: envios.enviarMensajeWhatsApp,
+    recordarNombreCliente: clientes.recordarNombreCliente,
+    buscarClienteConocido: clientes.buscarClienteConocido,
+    iniciarAgendaV2: iniciarAgenda.iniciarAgendaV2,
+    ...overrides,
+  };
+  return { deps, entradas, clientes, envios, candado, iniciarAgenda };
 }
 
 function armarDepsGate(overrides: Partial<InterceptarAtencionHumanaDeps> = {}, entradasCompartidas?: ReturnType<typeof crearFakeEntradas>) {
@@ -530,5 +582,186 @@ describe("Test 21-G -- integración real: la sesión Agenda V2 activa NUNCA se p
     assert.equal(sesionTrasHumano!.activo, true, "la sesión Agenda V2 NUNCA se elimina/desactiva por pedir atención humana");
     assert.equal(sesionTrasHumano!.step, "S4_HORA", "el progreso de Agenda V2 se preserva intacto");
     assert.deepEqual(sesionTrasHumano!.opciones_mostradas, opcionesOriginales);
+  });
+});
+
+// --- FASE 2 (autorizado, registro de clientes nuevos) ----------------------
+
+const TEL_REGISTRO = "573148127388";
+
+async function crearFilaEnRegistro(entradas: ReturnType<typeof crearFakeEntradas>, modo: ModoEntradaAmore, wamid = "w0") {
+  return entradas.crearEntrada(FAKE_SUPABASE, { tenantId: AMORE_TENANT_ID, telefonoCliente: TEL_REGISTRO, wamid, modo });
+}
+
+describe("Test A -- flujo completo nombre -> día -> mes -> Agenda V2", () => {
+  it("guarda progresivamente en dulabs_clientes_conocidos y al terminar llama a iniciarAgendaV2 (nunca una segunda lógica de creación)", async () => {
+    const entradas = crearFakeEntradas();
+    const clientes = crearFakeClientesConocidos();
+    const { deps, iniciarAgenda } = armarDepsRegistro({}, entradas, clientes);
+    const fila = await crearFilaEnRegistro(entradas, "registro_nombre");
+
+    const r1 = await interceptarRegistroClienteAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL_REGISTRO, texto: "María José", wamid: "w1" }, deps);
+    assert.equal(r1.manejado, true);
+    assert.equal(fila.modo, "registro_dia");
+    assert.equal(clientes.clientes.get(`whatsapp-qr:${AMORE_TENANT_ID}|${TEL_REGISTRO}`)?.nombre, "María José", "el nombre se guarda de inmediato, antes de pedir el cumpleaños");
+
+    const r2 = await interceptarRegistroClienteAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL_REGISTRO, texto: "15", wamid: "w2" }, deps);
+    assert.equal(r2.manejado, true);
+    assert.equal(fila.modo, "registro_mes");
+    assert.equal(clientes.clientes.get(`whatsapp-qr:${AMORE_TENANT_ID}|${TEL_REGISTRO}`)?.cumpleDia, 15);
+
+    const r3 = await interceptarRegistroClienteAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL_REGISTRO, texto: "marzo", wamid: "w3" }, deps);
+    assert.equal(r3.manejado, true);
+    assert.equal(fila.modo, "gemini", "al terminar vuelve al estado de conversación normal, nunca se queda en registro_mes");
+    const clienteFinal = clientes.clientes.get(`whatsapp-qr:${AMORE_TENANT_ID}|${TEL_REGISTRO}`);
+    assert.deepEqual(clienteFinal, { nombre: "María José", cumpleDia: 15, cumpleMes: 3 });
+    assert.equal(iniciarAgenda.llamadas.length, 1, "el registro completo entrega el control a Agenda V2 vía el mecanismo existente");
+    assert.equal(iniciarAgenda.llamadas[0]!.telefono, TEL_REGISTRO);
+  });
+});
+
+describe("Test B/N -- sin registro en curso: deja pasar sin tocar nada", () => {
+  it("modo 'gemini' (cliente ya en conversación normal) -> manejado:false, recordarNombreCliente nunca se ejecuta", async () => {
+    const entradas = crearFakeEntradas();
+    const clientes = crearFakeClientesConocidos();
+    await crearFilaEnRegistro(entradas, "gemini");
+    const { deps } = armarDepsRegistro({}, entradas, clientes);
+    const r = await interceptarRegistroClienteAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL_REGISTRO, texto: "hola", wamid: "w1" }, deps);
+    assert.deepEqual(r, { manejado: false });
+    assert.equal(clientes.clientes.size, 0, "N -- recordarNombreCliente NO se ejecuta durante el ingreso normal");
+  });
+
+  it("sin fila de entrada -- manejado:false, nunca crea nada", async () => {
+    const { deps, entradas } = armarDepsRegistro();
+    const r = await interceptarRegistroClienteAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL_REGISTRO, texto: "hola", wamid: "w1" }, deps);
+    assert.deepEqual(r, { manejado: false });
+    assert.equal(entradas.filas.length, 0);
+  });
+});
+
+describe("Test F -- día inválido (0, 32, 'hola')", () => {
+  for (const texto of ["0", "32", "hola"]) {
+    it(`"${texto}" -> mensaje de error exacto, se mantiene en registro_dia`, async () => {
+      const entradas = crearFakeEntradas();
+      const fila = await crearFilaEnRegistro(entradas, "registro_dia");
+      const { deps, envios, iniciarAgenda } = armarDepsRegistro({}, entradas);
+      const r = await interceptarRegistroClienteAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL_REGISTRO, texto, wamid: "w1" }, deps);
+      assert.equal(r.manejado, true);
+      assert.equal(fila.modo, "registro_dia", "nunca avanza con un día inválido");
+      assert.equal(envios.enviados.at(-1)!.mensaje, "Necesito un día válido entre 1 y 31. 💗 ¿Cuál es el día de tu cumpleaños?");
+      assert.equal(iniciarAgenda.llamadas.length, 0);
+    });
+  }
+});
+
+describe("Test G -- mes inválido (0, 13, 'invierno')", () => {
+  for (const texto of ["0", "13", "invierno"]) {
+    it(`"${texto}" -> mensaje de error exacto, se mantiene en registro_mes`, async () => {
+      const entradas = crearFakeEntradas();
+      const clientes = crearFakeClientesConocidos();
+      clientes.clientes.set(`whatsapp-qr:${AMORE_TENANT_ID}|${TEL_REGISTRO}`, { nombre: "Laura", cumpleDia: 10, cumpleMes: null });
+      const fila = await crearFilaEnRegistro(entradas, "registro_mes");
+      const { deps, envios, iniciarAgenda } = armarDepsRegistro({}, entradas, clientes);
+      const r = await interceptarRegistroClienteAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL_REGISTRO, texto, wamid: "w1" }, deps);
+      assert.equal(r.manejado, true);
+      assert.equal(fila.modo, "registro_mes", "nunca avanza con un mes inválido");
+      assert.equal(envios.enviados.at(-1)!.mensaje, "Necesito un mes válido entre 1 y 12. 💗 ¿En qué mes cumples años?");
+      assert.equal(iniciarAgenda.llamadas.length, 0);
+    });
+  }
+});
+
+describe("Test H/I -- mes por número y por nombre completan el registro", () => {
+  for (const texto of ["3", "marzo", "mar"]) {
+    it(`"${texto}" -> registro completo, iniciarAgendaV2 llamado una vez`, async () => {
+      const entradas = crearFakeEntradas();
+      const clientes = crearFakeClientesConocidos();
+      clientes.clientes.set(`whatsapp-qr:${AMORE_TENANT_ID}|${TEL_REGISTRO}`, { nombre: "Laura", cumpleDia: 10, cumpleMes: null });
+      const fila = await crearFilaEnRegistro(entradas, "registro_mes");
+      const { deps, iniciarAgenda } = armarDepsRegistro({}, entradas, clientes);
+      const r = await interceptarRegistroClienteAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL_REGISTRO, texto, wamid: "w1" }, deps);
+      assert.equal(r.manejado, true);
+      assert.equal(fila.modo, "gemini");
+      assert.equal(clientes.clientes.get(`whatsapp-qr:${AMORE_TENANT_ID}|${TEL_REGISTRO}`)?.cumpleMes, 3);
+      assert.equal(iniciarAgenda.llamadas.length, 1);
+    });
+  }
+});
+
+describe("Test J -- 'cancelar' durante cada paso aborta el registro sin crear sesión Agenda V2", () => {
+  for (const modo of ["registro_nombre", "registro_dia", "registro_mes"] as const) {
+    it(`modo ${modo}: "cancelar" -> vuelve a modo 'gemini', mensaje de cancelación, iniciarAgendaV2 nunca se llama`, async () => {
+      const entradas = crearFakeEntradas();
+      const fila = await crearFilaEnRegistro(entradas, modo);
+      const { deps, envios, iniciarAgenda } = armarDepsRegistro({}, entradas);
+      const r = await interceptarRegistroClienteAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL_REGISTRO, texto: "cancelar", wamid: "w1" }, deps);
+      assert.equal(r.manejado, true);
+      assert.equal(fila.modo, "gemini");
+      assert.equal(envios.enviados.at(-1)!.mensaje, "Listo, cancelé el registro 💗 Escríbeme cuando quieras retomarlo.");
+      assert.equal(iniciarAgenda.llamadas.length, 0);
+    });
+  }
+
+  it("es insensible a mayúsculas/acentos pero exige coincidencia EXACTA (mismo criterio que COMANDO_CANCELAR de Agenda V2) -- 'CANCELAR' sí, 'cancelar cita'/'no quiero' NO", async () => {
+    const entradas = crearFakeEntradas();
+    const fila = await crearFilaEnRegistro(entradas, "registro_nombre");
+    const { deps } = armarDepsRegistro({}, entradas);
+    const r1 = await interceptarRegistroClienteAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL_REGISTRO, texto: "CANCELAR", wamid: "w1" }, deps);
+    assert.equal(r1.manejado, true);
+    assert.equal(fila.modo, "gemini");
+
+    // "cancelar cita"/"no quiero" nunca se tratan como el nombre de la clienta EN ESTE test porque ya se canceló arriba;
+    // se re-arma el escenario para probar que esas frases se aceptan como NOMBRE literal (mismo criterio "no rígido" del pedido).
+    const entradas2 = crearFakeEntradas();
+    const clientes2 = crearFakeClientesConocidos();
+    const fila2 = await crearFilaEnRegistro(entradas2, "registro_nombre");
+    const { deps: deps2 } = armarDepsRegistro({}, entradas2, clientes2);
+    const r2 = await interceptarRegistroClienteAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL_REGISTRO, texto: "no quiero", wamid: "w2" }, deps2);
+    assert.equal(r2.manejado, true);
+    assert.equal(fila2.modo, "registro_dia", "'no quiero' no es el comando exacto 'cancelar' -- el mecanismo real de Agenda V2 tampoco lo reconoce, así que acá se toma como el nombre dado");
+  });
+});
+
+describe("Test K -- atención humana durante el registro conserva prioridad (Fase 1 intacta)", () => {
+  for (const texto of ["Quiero hablar con Jessica", "Hablar con una persona"]) {
+    it(`"${texto}" durante registro_nombre -- interceptarAtencionHumanaAmore (Fase 1) lo captura ANTES, el gate de registro nunca lo ve`, async () => {
+      // Reproduce el orden real de app/api/whatsapp-qr-bot/route.ts: primero
+      // el gate de atención humana, luego el de registro -- si el primero ya
+      // manejó el mensaje, el segundo nunca se llama.
+      const entradas = crearFakeEntradas();
+      await crearFilaEnRegistro(entradas, "registro_nombre");
+      const gateHumano = armarDepsGate({}, entradas);
+      const resultadoHumano = await interceptarAtencionHumanaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL_REGISTRO, texto, wamid: "w1" }, gateHumano.deps);
+      assert.equal(resultadoHumano.manejado, true, "Fase 1 debe capturar la solicitud de atención humana ANTES del gate de registro");
+      assert.equal(gateHumano.entradas.filas[0]!.modo, "atencion_humana");
+    });
+  }
+});
+
+describe("Test L -- idempotencia de wamid", () => {
+  it("mismo wamid repetido durante registro_nombre -- nunca guarda dos veces ni reenvía", async () => {
+    const entradas = crearFakeEntradas();
+    const clientes = crearFakeClientesConocidos();
+    const fila = await crearFilaEnRegistro(entradas, "registro_nombre");
+    const { deps, envios } = armarDepsRegistro({}, entradas, clientes);
+    await interceptarRegistroClienteAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL_REGISTRO, texto: "María", wamid: "w1" }, deps);
+    const totalEnvios = envios.enviados.length;
+    const totalClientes = clientes.clientes.size;
+    const r = await interceptarRegistroClienteAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL_REGISTRO, texto: "María", wamid: "w1" }, deps);
+    assert.equal(r.manejado, true);
+    assert.equal(fila.modo, "registro_dia", "no retrocede ni reprocesa");
+    assert.equal(envios.enviados.length, totalEnvios, "nunca reenvía nada");
+    assert.equal(clientes.clientes.size, totalClientes);
+  });
+});
+
+describe("Test M -- otro tenant: comportamiento intacto", () => {
+  it("devuelve manejado:false de inmediato, sin candado, sin leer/escribir nada", async () => {
+    const { deps, candado, entradas, clientes } = armarDepsRegistro();
+    const r = await interceptarRegistroClienteAmore({ supabase: FAKE_SUPABASE, idTenant: OTRO_TENANT, telefono: TEL_REGISTRO, texto: "cualquier cosa", wamid: "w1" }, deps);
+    assert.deepEqual(r, { manejado: false });
+    assert.equal(candado.llamadas.length, 0);
+    assert.equal(entradas.filas.length, 0);
+    assert.equal(clientes.clientes.size, 0);
   });
 });

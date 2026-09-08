@@ -44,6 +44,17 @@ export function construirMensajeNotificacionJessica(params: { nombre: string | n
   return `AMORE – Cliente requiere atención\n\nCliente: ${nombre}\nWhatsApp: ${params.telefono}\nMotivo: ${motivo}\n\nLa clienta solicita atención directa. Por favor, revisa la conversación.`;
 }
 
+// --- Fase 2 (registro de clientes nuevos, autorizado) -------------------
+
+export const MENSAJE_REGISTRO_NOMBRE = "Antes de continuar, necesito registrarte en AMORE. 💗\n\n¿Me regalas tu nombre?";
+export const MENSAJE_REGISTRO_DIA = "Para completar tu registro, ¿me regalas el día de tu cumpleaños?";
+export const MENSAJE_REGISTRO_MES =
+  "¿Y en qué mes cumples años?\n\nTranquila 💗 Esta información la usamos para conocer tus fechas especiales y brindarte una atención más personalizada.";
+export const MENSAJE_DIA_INVALIDO = "Necesito un día válido entre 1 y 31. 💗 ¿Cuál es el día de tu cumpleaños?";
+export const MENSAJE_MES_INVALIDO = "Necesito un mes válido entre 1 y 12. 💗 ¿En qué mes cumples años?";
+/** Mismo criterio de texto que RESPUESTA_CANCELACION de Agenda V2 (lib/agenda-v2/controlador.ts) -- nunca una segunda redacción divergente para el mismo concepto ("cancelaste, escríbeme cuando quieras retomarlo"). */
+export const MENSAJE_REGISTRO_CANCELADO = "Listo, cancelé el registro 💗 Escríbeme cuando quieras retomarlo.";
+
 /**
  * Detector determinístico de solicitud EXPLÍCITA de hablar con una persona
  * -- mismo criterio EXACTO que FRASES_TRIGGER_AGENDA_DETERMINISTA/

@@ -9,7 +9,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-export type ModoEntradaAmore = "inicio" | "gemini" | "atencion_humana";
+export type ModoEntradaAmore = "inicio" | "gemini" | "atencion_humana" | "registro_nombre" | "registro_dia" | "registro_mes";
 
 export interface EntradaAmore {
   id: number;

@@ -22,7 +22,7 @@ import { adquirirCandadoChat, liberarCandadoChat } from "@/lib/chat-lock";
 import { cargarEscenariosReal } from "@/lib/bot-escenarios/store";
 import { listarCatalogoServiciosReal } from "@/lib/catalogo-servicios-flow-adaptador";
 import { resolverEspecialistasElegiblesParaServicio } from "@/lib/asignacion-categoria";
-import { resolverNylasGrantIdParaTenant } from "@/lib/nylas/nylas-grant";
+import { resolverNylasGrantIdParaTenant, AMORE_TENANT_ID } from "@/lib/nylas/nylas-grant";
 import { createNylasEventsClient, createNylasEventsWriteClient, resolveNylasApiKeyFromEnv } from "@/lib/nylas/nylas-client";
 import type { DepsDisponibilidadNylas } from "@/lib/disponibilidad-servicio-nylas";
 import { enviarMensajeWhatsApp } from "@/lib/whatsapp-worker-client";
@@ -55,7 +55,18 @@ import { crearCitaConNylas, actualizarCitaConNylas } from "@/lib/reserva-servici
 // clienta bajo el MISMO phone_number_id sintético; si nunca lo dio, se usa
 // su teléfono como identificación (Agenda V2 no agrega un paso nuevo para
 // pedir el nombre -- fuera del alcance autorizado de esta fase).
-import { nombreConocido } from "@/lib/clientes-conocidos";
+import { nombreConocido, clienteConocidoCompleto } from "@/lib/clientes-conocidos";
+// FASE 2 (autorizado, registro de clientes nuevos) -- EXCLUSIVO de AMORE:
+// dulabs_amore_entrada (lib/amore-entrada-sesiones.ts) es la MISMA tabla que
+// ya usa el puente de Fases 9/1 -- iniciarNuevaSesionAgendaV2 la reutiliza
+// para dejar la conversación en modo 'registro_nombre' cuando la clienta
+// todavía no existe en dulabs_clientes_conocidos, en vez de inventar un
+// estado nuevo o una tabla paralela. lib/amore-entrada-router.ts es quien
+// procesa después los 3 pasos determinísticos del registro y, al terminar,
+// llama a ESTA MISMA función de nuevo (nunca una segunda forma de arrancar
+// Agenda V2).
+import { buscarEntradaAmore, crearEntradaAmore, actualizarEntradaAmore } from "@/lib/amore-entrada-sesiones";
+import { MENSAJE_REGISTRO_NOMBRE } from "@/lib/amore-entrada-gemini";
 // FASE 8 (autorizado) -- gestión de citas existentes. Reutiliza TAL CUAL:
 // - consultarCitasActivasEspecialista/cancelarCitaEspecialista
 //   (lib/especialistas-flow-adaptador.ts) -- MISMO mecanismo exacto que ya
@@ -119,6 +130,11 @@ export interface AgendaV2RouterDeps {
   createNylasEventsWriteClient?: typeof createNylasEventsWriteClient;
   crearCitaConNylas?: typeof crearCitaConNylas;
   buscarNombreConocido?: typeof nombreConocido;
+  // FASE 2 -- inyectables para tests, mismo criterio exacto de arriba.
+  buscarClienteConocido?: typeof clienteConocidoCompleto;
+  buscarEntradaAmoreDeps?: typeof buscarEntradaAmore;
+  crearEntradaAmoreDeps?: typeof crearEntradaAmore;
+  actualizarEntradaAmoreDeps?: typeof actualizarEntradaAmore;
   // FASE 8 -- inyectables para tests, mismo criterio exacto de arriba.
   consultarCitasActivas?: typeof consultarCitasActivasEspecialista;
   cancelarCitaEspecialista?: typeof cancelarCitaEspecialista;
@@ -152,6 +168,31 @@ export async function iniciarNuevaSesionAgendaV2(
   const crearSesion = deps.crearSesion ?? crearSesionAgendaV2;
   const enviarMensaje = deps.enviarMensajeWhatsApp ?? enviarMensajeWhatsApp;
 
+  // FASE 2 (autorizado, registro de clientes nuevos) -- EXCLUSIVO de AMORE:
+  // antes de mostrar categorías, comprueba si esta clienta ya existe en
+  // dulabs_clientes_conocidos (phone_number_id + telefono_cliente, MISMO
+  // criterio de identificación que ya usa nombreConocido/recordarNombreCliente,
+  // lib/clientes-conocidos.ts). Si no existe, esta función NUNCA crea la
+  // sesión de Agenda V2 todavía -- deja la conversación en modo
+  // 'registro_nombre' (dulabs_amore_entrada) y el flujo determinístico de
+  // lib/amore-entrada-router.ts la retoma cuando el registro termine,
+  // llamando a ESTA MISMA función de nuevo (nunca una segunda forma de
+  // arrancar Agenda V2). Cubre las 3 vías reales de entrada a Agenda V2
+  // (opción "1", TRIGGER_AGENDA de Gemini, y el trigger directo de
+  // esInicioDeAgendaV2 más abajo en este archivo) porque las tres terminan
+  // llamando a esta función -- nunca se duplica la detección de "esto es un
+  // intento de agendar". Ningún otro tenant activa este chequeo -- ningún
+  // cambio de comportamiento para Daniela, Solo Talento, ni futuros tenants.
+  if (params.idTenant === AMORE_TENANT_ID) {
+    const buscarCliente = deps.buscarClienteConocido ?? clienteConocidoCompleto;
+    const phoneNumberId = phoneNumberIdSintetico(params.idTenant);
+    const cliente = await buscarCliente(params.supabase, phoneNumberId, params.telefono);
+    if (!cliente) {
+      await iniciarRegistroCliente(params, deps);
+      return;
+    }
+  }
+
   // Ajuste de UX (autorizado) -- el primer paso real es SIEMPRE el menú de
   // CATEGORÍAS reales (nunca los 28 servicios de un jalón), construido a
   // partir del catálogo REAL del tenant -- las opciones mostradas se
@@ -166,6 +207,36 @@ export async function iniciarNuevaSesionAgendaV2(
     opcionesMostradas: opciones,
   });
   await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: renderizarMenuCategoria(opciones), origen: "automatico" });
+}
+
+/**
+ * FASE 2 (autorizado, registro de clientes nuevos) -- deja la conversación
+ * en modo 'registro_nombre' y manda el primer mensaje del registro. Nunca
+ * crea una sesión de dulabs_agenda_v2_sesiones -- eso solo ocurre cuando
+ * iniciarNuevaSesionAgendaV2 se vuelve a llamar (desde
+ * lib/amore-entrada-router.ts) una vez el registro termina y la clienta ya
+ * existe en dulabs_clientes_conocidos.
+ */
+async function iniciarRegistroCliente(
+  params: { supabase: SupabaseClient; idTenant: string; telefono: string; wamid: string },
+  deps: AgendaV2RouterDeps,
+): Promise<void> {
+  const buscarEntrada = deps.buscarEntradaAmoreDeps ?? buscarEntradaAmore;
+  const crearEntrada = deps.crearEntradaAmoreDeps ?? crearEntradaAmore;
+  const actualizarEntrada = deps.actualizarEntradaAmoreDeps ?? actualizarEntradaAmore;
+  const enviarMensaje = deps.enviarMensajeWhatsApp ?? enviarMensajeWhatsApp;
+
+  const fila = await buscarEntrada(params.supabase, params.idTenant, params.telefono);
+  if (fila) {
+    await actualizarEntrada(params.supabase, fila.id, { modo: "registro_nombre", ultimoWamidProcesado: params.wamid });
+  } else {
+    // Caso límite real -- primer contacto CON AMORE y el primerísimo mensaje
+    // ya dispara Agenda V2 directo (esInicioDeAgendaV2, más abajo en este
+    // archivo), sin haber pasado nunca por el puente de bienvenida. Se crea
+    // la fila directamente en registro_nombre.
+    await crearEntrada(params.supabase, { tenantId: params.idTenant, telefonoCliente: params.telefono, wamid: params.wamid, modo: "registro_nombre" });
+  }
+  await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_REGISTRO_NOMBRE, origen: "automatico" });
 }
 
 /**

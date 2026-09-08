@@ -3,7 +3,7 @@ import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { ejecutarBotWhatsAppQR } from "@/lib/whatsapp-qr-bot";
 import { procesarMensajeConAgendaV2 } from "@/lib/agenda-v2/router";
-import { procesarEntradaAmore, interceptarAtencionHumanaAmore } from "@/lib/amore-entrada-router";
+import { procesarEntradaAmore, interceptarAtencionHumanaAmore, interceptarRegistroClienteAmore } from "@/lib/amore-entrada-router";
 
 export const runtime = "nodejs";
 
@@ -59,6 +59,26 @@ export async function POST(request: NextRequest) {
     wamid: body.wamid,
   });
   if (resultadoAtencionHumana.manejado) {
+    return Response.json({ success: true });
+  }
+
+  // REGISTRO DE CLIENTE NUEVO (autorizado, Fase 2) -- gate global, EXCLUSIVO
+  // de AMORE, evaluado DESPUÉS de atención humana (que conserva prioridad
+  // absoluta) y ANTES de Agenda V2: es la única forma de que un registro ya
+  // en curso no pueda saltarse por ninguna de las 3 vías reales de inicio de
+  // Agenda V2 (opción "1", TRIGGER_AGENDA de Gemini, o el trigger directo de
+  // esInicioDeAgendaV2 dentro de procesarMensajeConAgendaV2). Cualquier otro
+  // tenant, o cualquier conversación sin registro en curso, devuelve
+  // manejado:false de inmediato -- sigue exactamente el comportamiento de
+  // siempre.
+  const resultadoRegistroCliente = await interceptarRegistroClienteAmore({
+    supabase,
+    idTenant: body.idTenant,
+    telefono: body.telefono,
+    texto: body.texto,
+    wamid: body.wamid,
+  });
+  if (resultadoRegistroCliente.manejado) {
     return Response.json({ success: true });
   }
 

@@ -12,7 +12,7 @@
  * pequeño, no una reutilización forzada del otro (que sí resuelve fechas
  * completas relativas a una fecha de referencia, un problema distinto).
  */
-const MESES: Record<string, number> = {
+export const MESES: Record<string, number> = {
   enero: 1,
   febrero: 2,
   marzo: 3,
@@ -28,7 +28,7 @@ const MESES: Record<string, number> = {
   diciembre: 12,
 };
 /** Prefijo real (mínimo 3 letras, como "mar"/"ene") -- mismo criterio de abreviatura que ya usa parseFechaColombia para meses. */
-function resolverMesPorPrefijo(texto: string): number | undefined {
+export function resolverMesPorPrefijo(texto: string): number | undefined {
   if (texto.length < 3) return undefined;
   const encontrado = Object.entries(MESES).find(([nombre]) => nombre.startsWith(texto));
   return encontrado?.[1];
@@ -77,4 +77,35 @@ export function parseCumpleanosNatural(mensaje: string): ResultadoCumpleanosNatu
   }
 
   return { ok: false };
+}
+
+/**
+ * AMORE (Fase 2 -- registro de clientes nuevos, autorizado) — el registro
+ * pregunta día y mes por SEPARADO (dos mensajes distintos), a diferencia de
+ * parseCumpleanosNatural (un solo mensaje combinado) -- por eso son
+ * funciones propias y pequeñas, pero reutilizan TAL CUAL diasEnMes y (para
+ * el mes) la MISMA tabla MESES/resolverMesPorPrefijo -- nunca una segunda
+ * tabla de nombres de mes. Nunca inventan: un valor fuera de rango o no
+ * reconocible devuelve null, sin adivinar.
+ *
+ * Acepta "1", "01", "15", "28", "31" -- solo dígitos, rango 1-31 (mismo
+ * rango que ya valida el CHECK real de dulabs_clientes_conocidos.cumple_dia,
+ * nunca validado contra el mes porque en este paso el mes todavía no se
+ * conoce).
+ */
+export function parseDiaCumpleanos(mensaje: string): number | null {
+  const normalizado = normalizarBasico(mensaje);
+  if (!/^\d{1,2}$/.test(normalizado)) return null;
+  const dia = Number(normalizado);
+  return dia >= 1 && dia <= 31 ? dia : null;
+}
+
+/** Acepta "1"-"12" numérico, o el nombre/prefijo real del mes (mismo criterio de abreviatura de 3+ letras que resolverMesPorPrefijo ya usa). */
+export function parseMesCumpleanos(mensaje: string): number | null {
+  const normalizado = normalizarBasico(mensaje);
+  if (/^\d{1,2}$/.test(normalizado)) {
+    const mes = Number(normalizado);
+    return mes >= 1 && mes <= 12 ? mes : null;
+  }
+  return resolverMesPorPrefijo(normalizado) ?? null;
 }
