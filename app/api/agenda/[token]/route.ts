@@ -84,7 +84,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   // real en Bogotá. Todos los tenants de DuLabs operan en Colombia.
   const fechaHoyColombia = fechaColombiaDesdeIso(new Date().toISOString());
   const inicioHoy = new Date(`${fechaHoyColombia}T00:00:00-05:00`);
-  const [citasPorId, cliente, clientesRegistrados, serviciosActivos, profesionalesActivos, citasTotales] = await Promise.all([
+  const [citasPorId, cliente, clientesRegistrados, serviciosActivos, profesionalesActivos, citasTotales, citasPendientes] = await Promise.all([
     Promise.all(ids.map((id) => citasDeEspecialista(supabase, id, { desde: inicioHoy.toISOString() }))),
     clienteDeEspecialista(supabase, especialista.phone_number_id),
     // Fase 5 -- conteos reales del negocio para el resumen de inicio, todos
@@ -112,6 +112,17 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       .from("dulabs_citas_especialista")
       .select("id", { count: "exact", head: true })
       .eq("id_tenant", especialista.id_tenant),
+    // Ajuste final (autorizado) -- "Citas pendientes" del dashboard de
+    // AMORE: MISMO patrón exacto que "citasTotales" de arriba (conteo real,
+    // scoped SOLO por id_tenant), agregando únicamente el filtro de estado
+    // real `pendiente` -- deliberadamente SIN ningún filtro de fecha (ni
+    // `desde`, ni "hoy", ni una ventana de horas): cuenta TODA cita
+    // pendiente del tenant, sin importar cuándo sea.
+    supabase
+      .from("dulabs_citas_especialista")
+      .select("id", { count: "exact", head: true })
+      .eq("id_tenant", especialista.id_tenant)
+      .eq("estado", "pendiente"),
   ]);
   // Cada cita queda marcada con quién la atiende de verdad -- varias
   // especialidades comparten número de WhatsApp (ver especialistasDelMismaPersona),
@@ -136,6 +147,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       serviciosActivos: serviciosActivos.count ?? 0,
       profesionalesActivos: profesionalesActivos.count ?? 0,
       citasTotales: citasTotales.count ?? 0,
+      citasPendientes: citasPendientes.count ?? 0,
     },
     sesion: sesion
       ? { rol: sesion.rol, nombre: sesion.nombre, username: sesion.username, especialistaId: sesion.especialistaId }

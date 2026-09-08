@@ -99,17 +99,15 @@ function Contenido() {
               <Switch activo={config.recordatorioActivo} disabled={guardando} onChange={(v) => guardar({ recordatorioActivo: v })} />
             </div>
             <div className="mt-3 flex items-center justify-between">
-              <p className="text-xs font-medium text-mist">Anticipación (horas)</p>
-              <input
-                type="number"
-                min={1}
-                defaultValue={config.recordatorioAnticipacionHoras}
-                onBlur={(e) => {
-                  const v = Number(e.target.value);
-                  if (Number.isInteger(v) && v > 0) guardar({ recordatorioAnticipacionHoras: v });
-                }}
-                className="w-20 rounded-full border border-edge bg-ink px-3 py-1.5 text-right text-sm font-medium text-fg"
-              />
+              <p className="text-xs font-medium text-mist">Anticipación</p>
+              {/* Ajuste final (autorizado) -- este dato ya NO es editable:
+                  la ventana real que ejecuta el cron (app/api/cron/recordatorios-citas)
+                  es fija (55-65 min antes de la cita, "1 hora antes"), y un
+                  número editable acá implicaría un control que en la
+                  práctica no tiene ningún efecto real. Se muestra fijo para
+                  que la interfaz nunca contradiga lo que el sistema
+                  realmente ejecuta. */}
+              <span className="rounded-full border border-edge bg-ink px-3 py-1.5 text-sm font-medium text-fg">1 hora antes</span>
             </div>
             <div className="mt-3">
               <p className="mb-1.5 text-xs font-medium text-mist">

@@ -34,6 +34,8 @@ export type ResumenNegocio = {
   profesionalesActivos: number;
   /** Conteo real de TODAS las citas del tenant (cualquier fecha/estado) -- nunca limitado al filtro "desde hoy" de `citas`. */
   citasTotales: number;
+  /** Conteo real de citas con estado='pendiente' del tenant -- SIN ningún filtro de fecha (ni "hoy" ni una ventana). */
+  citasPendientes: number;
 };
 
 // Login AMORE (autorizado) — presente SOLO cuando el tenant tiene login

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { CalendarDays, Users, Sparkles, TrendingUp, Cake, Bell, ChevronRight } from "lucide-react";
+import { CalendarDays, CalendarClock, Users, Sparkles, TrendingUp, Cake, Bell, ChevronRight } from "lucide-react";
 import { useAdminWeb } from "@/components/admin-web/AdminWebContext";
 import { ColaboradoraDesktopInicio } from "@/components/admin-web/colaboradora/ColaboradoraDesktopInicio";
 import { DonutChart, type SegmentoDonut } from "@/components/admin-web/DonutChart";
@@ -88,7 +88,7 @@ function AdminInicioContenido() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-5 gap-4">
         <CardMetrica
           icono={<CalendarDays className="size-5" />}
           bg="bg-lime-soft"
@@ -96,6 +96,14 @@ function AdminInicioContenido() {
           titulo="Citas de hoy"
           valor={String(citasHoy.length)}
           subtexto={pendientesHoy > 0 ? `${pendientesHoy} pendientes` : "Sin pendientes"}
+        />
+        <CardMetrica
+          icono={<CalendarClock className="size-5" />}
+          bg="bg-warning"
+          color="var(--color-warning-text)"
+          titulo="Citas pendientes"
+          valor={String(datos.resumen.citasPendientes)}
+          subtexto="Total de citas pendientes"
         />
         <CardMetrica
           icono={<Users className="size-5" />}
