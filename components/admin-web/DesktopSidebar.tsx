@@ -19,6 +19,7 @@ import {
   ChevronDown,
   LogOut,
   User,
+  Boxes,
 } from "lucide-react";
 import { useAdminWeb } from "./AdminWebContext";
 import {
@@ -27,6 +28,7 @@ import {
   RUTA_CLIENTES,
   RUTA_CHATS,
   RUTA_SERVICIOS,
+  RUTA_INVENTARIO,
   RUTA_EQUIPO,
   RUTA_CONTABILIDAD,
   RUTA_CUMPLEANOS,
@@ -53,6 +55,7 @@ const ITEMS_ADMIN: ItemNav[] = [
   { label: "Clientes", icon: Users, href: RUTA_CLIENTES, exact: false },
   { label: "Chats", icon: Inbox, href: RUTA_CHATS, exact: false },
   { label: "Servicios", icon: Sparkles, href: RUTA_SERVICIOS, exact: false },
+  { label: "Inventario", icon: Boxes, href: RUTA_INVENTARIO, exact: false },
   { label: "Trabajadoras", icon: UserRound, href: RUTA_EQUIPO, exact: false },
   { label: "Contabilidad", icon: Wallet, href: RUTA_CONTABILIDAD, exact: false },
   { label: "Cumpleaños", icon: Cake, href: RUTA_CUMPLEANOS, exact: false },

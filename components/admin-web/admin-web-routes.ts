@@ -6,6 +6,7 @@ export const RUTA_CITAS = "/admin/amore/citas";
 export const RUTA_CLIENTES = "/admin/amore/clientes";
 export const RUTA_CHATS = "/admin/amore/chats";
 export const RUTA_SERVICIOS = "/admin/amore/servicios";
+export const RUTA_INVENTARIO = "/admin/amore/inventario";
 export const RUTA_EQUIPO = "/admin/amore/equipo";
 export const RUTA_EQUIPO_USUARIOS = "/admin/amore/equipo/usuarios";
 export const RUTA_CONTABILIDAD = "/admin/amore/contabilidad";

@@ -3,7 +3,12 @@ import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { ejecutarBotWhatsAppQR } from "@/lib/whatsapp-qr-bot";
 import { procesarMensajeConAgendaV2 } from "@/lib/agenda-v2/router";
-import { procesarEntradaAmore, interceptarAtencionHumanaAmore, interceptarRegistroClienteAmore } from "@/lib/amore-entrada-router";
+import {
+  procesarEntradaAmore,
+  interceptarAtencionHumanaAmore,
+  interceptarRegistroClienteAmore,
+  interceptarCompraProductoAmore,
+} from "@/lib/amore-entrada-router";
 
 export const runtime = "nodejs";
 
@@ -79,6 +84,26 @@ export async function POST(request: NextRequest) {
     wamid: body.wamid,
   });
   if (resultadoRegistroCliente.manejado) {
+    return Response.json({ success: true });
+  }
+
+  // COMPRA DE PRODUCTO (autorizado, Fase 3 -- módulo Inventario) -- gate
+  // global, EXCLUSIVO de AMORE, evaluado DESPUÉS de registro (que conserva
+  // prioridad) y ANTES de Agenda V2: decisión aprobada explícitamente, una
+  // intención INEQUÍVOCA de compra (link de la tienda, o texto libre con
+  // verbo de compra + nombre de producto real) debe poder interrumpir una
+  // sesión de Agenda V2 ya activa -- mismo precedente que "hablar con
+  // Jessica". Nunca se activa por palabras sueltas ("producto"/"comprar"/
+  // "pago"), así que cualquier conversación normal de Agenda V2 sigue
+  // exactamente igual. Ver lib/amore-entrada-router.ts.
+  const resultadoCompraProducto = await interceptarCompraProductoAmore({
+    supabase,
+    idTenant: body.idTenant,
+    telefono: body.telefono,
+    texto: body.texto,
+    wamid: body.wamid,
+  });
+  if (resultadoCompraProducto.manejado) {
     return Response.json({ success: true });
   }
 

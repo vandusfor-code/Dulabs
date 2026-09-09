@@ -99,6 +99,93 @@ export function detectarSolicitudAtencionHumana(mensaje: string): boolean {
   return FRASES_ATENCION_HUMANA_DETERMINISTA.some((f) => textoNormalizado.includes(normalizeText(f)));
 }
 
+// --- Fase 3 (compra de producto, autorizado) -----------------------------
+
+export const MENSAJE_COMPRA_MENU = "¿Qué deseas hacer?\n\n1. Pagar producto\n2. Hablar con un asesor";
+export const MENSAJE_COMPRA_OPCION_INVALIDA =
+  "No reconocí esa opción 💗 Por favor responde con el número:\n\n1. Pagar producto\n2. Hablar con un asesor";
+export const MENSAJE_COMPRA_ASESOR_CLIENTE = "Con gusto 💗 Ya te transfiero el chat para que una asesora pueda atenderte personalmente.";
+export const MENSAJE_COMPRA_PAGO_REGISTRADO_CLIENTE =
+  "Perfecto 💗 Ya pasé la información a nuestro equipo. Una asesora se comunicará contigo pronto para continuar con tu compra.";
+export const MENSAJE_COMPRA_RECORDATORIO_PAGO =
+  'Cuando realices el pago, escríbeme "Ya pagué" 💗\n\nSi prefieres, también puedes escribir "hablar con Jessica" para que te atienda una asesora.';
+
+export function construirMensajeCompraSaludo(nombreProducto: string): string {
+  return `Claro que sí 💗 Veo que estás interesada en ${nombreProducto}.`;
+}
+
+// TODO: métodos de pago AMORE -- pendiente de definir con el negocio
+// (sección 16 del pedido: no inventar cuentas, números, bancos ni links).
+// Este mensaje es el punto de integración: cuando el negocio defina los
+// métodos reales, se reemplaza el texto acá -- el resto del flujo (modo
+// compra_esperando_pago, detección de "Ya pagué") no necesita cambiar.
+export const MENSAJE_COMPRA_METODOS_PAGO_PENDIENTE =
+  '💗 En un momento una asesora te compartirá los métodos de pago disponibles.\n\nCuando realices el pago, escríbeme "Ya pagué" 💗';
+
+export function construirMensajeJessicaCompraAsesor(nombreProducto: string): string {
+  return `Una cliente requiere tu atención. Está interesada en un producto.\n\nProducto: ${nombreProducto}\n\nRevisa el chat para continuar la atención.`;
+}
+
+export function construirMensajeJessicaPagoReportado(nombreProducto: string): string {
+  return `Una cliente reporta pago de producto.\n\nProducto: ${nombreProducto}\n\nRevisa el chat para validar el pago y continuar con la compra.`;
+}
+
+/** Texto EXACTO que arma el botón "Comprar" de la tienda (ver lib/amore-tienda.ts) para el link wa.me -- debe coincidir con el prefijo reconocido acá carácter a carácter (salvo mayúsculas/acentos) para poder detectar con certeza que el mensaje viene de la tienda. */
+export const PREFIJO_MENSAJE_TIENDA = "Hola, estoy interesada en este producto:";
+
+/**
+ * Extrae el nombre del producto de un mensaje generado por el botón
+ * "Comprar" de la tienda -- coincidencia por PREFIJO (normalizado), nunca
+ * por "contains" de palabras sueltas ("producto"/"comprar"), para que la
+ * entrada real de la tienda tenga prioridad inequívoca sobre cualquier
+ * conversación genérica (sección PRIORIDAD DE COMPRA del pedido, aprobada).
+ * Devuelve `null` si el mensaje no viene de ahí.
+ */
+export function extraerProductoDeLinkTienda(mensaje: string): string | null {
+  const normalizado = normalizeText(mensaje);
+  const prefijoNormalizado = normalizeText(PREFIJO_MENSAJE_TIENDA);
+  if (!normalizado.startsWith(prefijoNormalizado)) return null;
+  // Se recorta del texto ORIGINAL (no normalizado) para conservar
+  // mayúsculas/acentos reales del nombre del producto al mostrarlo de
+  // vuelta a la clienta ("Veo que estás interesada en ...").
+  const indice = mensaje.toLowerCase().indexOf("producto:");
+  if (indice === -1) return null;
+  const nombre = mensaje.slice(indice + "producto:".length).trim();
+  return nombre.length > 0 ? nombre : null;
+}
+
+/**
+ * Intención de compra en texto LIBRE (fuera del link de la tienda) -- exige
+ * un verbo de compra explícito Y que el mensaje mencione el nombre de un
+ * producto ACTIVO real del tenant. Aprobado explícitamente: "no quiero que
+ * palabras genéricas como 'producto', 'comprar' o 'pago' por sí solas
+ * interrumpan" una sesión de Agenda V2 -- por eso NUNCA basta con el verbo
+ * solo, siempre debe calzar además con un producto real.
+ */
+const FRASES_COMPRA_EXPLICITA = ["quiero comprar", "deseo comprar", "me interesa comprar", "quiero pagar por"];
+
+export function detectarIntencionCompraLibre(mensaje: string, nombresProductosActivos: string[]): string | null {
+  const normalizado = normalizeText(mensaje);
+  const tieneVerboCompra = FRASES_COMPRA_EXPLICITA.some((f) => normalizado.includes(normalizeText(f)));
+  if (!tieneVerboCompra) return null;
+  const producto = nombresProductosActivos.find((nombre) => normalizado.includes(normalizeText(nombre)));
+  return producto ?? null;
+}
+
+/**
+ * Confirmación de "Ya pagué" -- el LLAMADOR (interceptarCompraProductoAmore)
+ * es responsable de exigir que la conversación ya esté en modo
+ * compra_esperando_pago antes de invocar esto; esta función solo reconoce el
+ * texto. Aprobado explícitamente: "NO convertir 'Ya pagué' en un trigger
+ * global" -- por diseño, este detector NUNCA se evalúa fuera de ese estado.
+ */
+const FRASES_PAGO_CONFIRMADO = ["ya pague", "ya hice el pago", "pago realizado", "ya realice el pago", "ya pague el producto", "listo ya pague"];
+
+export function detectarConfirmacionPago(mensaje: string): boolean {
+  const normalizado = normalizeText(mensaje);
+  return FRASES_PAGO_CONFIRMADO.some((f) => normalizado.includes(normalizeText(f)));
+}
+
 /**
  * FAST TRACK DETERMINISTA (sección del pedido) -- frases FIJAS e
  * inequívocas, revisadas ANTES de llamar a Gemini (evita latencia y evita

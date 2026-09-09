@@ -9,7 +9,15 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-export type ModoEntradaAmore = "inicio" | "gemini" | "atencion_humana" | "registro_nombre" | "registro_dia" | "registro_mes";
+export type ModoEntradaAmore =
+  | "inicio"
+  | "gemini"
+  | "atencion_humana"
+  | "registro_nombre"
+  | "registro_dia"
+  | "registro_mes"
+  | "compra_producto_opcion"
+  | "compra_esperando_pago";
 
 export interface EntradaAmore {
   id: number;
@@ -19,6 +27,8 @@ export interface EntradaAmore {
   ultimoWamidProcesado: string | null;
   /** Fase 1 (atención humana) -- true en cuanto ya se notificó realmente a Jessica para esta conversación. */
   notificadoAJessica: boolean;
+  /** Fase 3 (compra de producto) -- nombre del producto detectado mientras modo está en compra_producto_opcion/compra_esperando_pago. null fuera de ese flujo. */
+  productoInteresNombre: string | null;
 }
 
 interface FilaDb {
@@ -28,10 +38,11 @@ interface FilaDb {
   modo: ModoEntradaAmore;
   ultimo_wamid_procesado: string | null;
   notificado_a_jessica: boolean;
+  producto_interes_nombre: string | null;
 }
 
 const TABLA = "dulabs_amore_entrada";
-const COLUMNAS = "id, tenant_id, telefono_cliente, modo, ultimo_wamid_procesado, notificado_a_jessica";
+const COLUMNAS = "id, tenant_id, telefono_cliente, modo, ultimo_wamid_procesado, notificado_a_jessica, producto_interes_nombre";
 
 function mapearFila(fila: FilaDb): EntradaAmore {
   return {
@@ -41,6 +52,7 @@ function mapearFila(fila: FilaDb): EntradaAmore {
     modo: fila.modo,
     ultimoWamidProcesado: fila.ultimo_wamid_procesado,
     notificadoAJessica: fila.notificado_a_jessica,
+    productoInteresNombre: fila.producto_interes_nombre ?? null,
   };
 }
 
@@ -57,7 +69,14 @@ export async function buscarEntradaAmore(supabase: SupabaseClient, tenantId: str
 
 export async function crearEntradaAmore(
   supabase: SupabaseClient,
-  params: { tenantId: string; telefonoCliente: string; wamid: string; modo: ModoEntradaAmore; notificadoAJessica?: boolean },
+  params: {
+    tenantId: string;
+    telefonoCliente: string;
+    wamid: string;
+    modo: ModoEntradaAmore;
+    notificadoAJessica?: boolean;
+    productoInteresNombre?: string | null;
+  },
 ): Promise<EntradaAmore> {
   const { data, error } = await supabase
     .from(TABLA)
@@ -67,6 +86,7 @@ export async function crearEntradaAmore(
       modo: params.modo,
       ultimo_wamid_procesado: params.wamid,
       ...(params.notificadoAJessica !== undefined ? { notificado_a_jessica: params.notificadoAJessica } : {}),
+      ...(params.productoInteresNombre !== undefined ? { producto_interes_nombre: params.productoInteresNombre } : {}),
     })
     .select(COLUMNAS)
     .single();
@@ -77,12 +97,13 @@ export async function crearEntradaAmore(
 export async function actualizarEntradaAmore(
   supabase: SupabaseClient,
   id: number,
-  cambios: { modo?: ModoEntradaAmore; ultimoWamidProcesado?: string; notificadoAJessica?: boolean },
+  cambios: { modo?: ModoEntradaAmore; ultimoWamidProcesado?: string; notificadoAJessica?: boolean; productoInteresNombre?: string | null },
 ): Promise<void> {
   const payload: Record<string, unknown> = { updated_at: new Date().toISOString() };
   if (cambios.modo !== undefined) payload.modo = cambios.modo;
   if (cambios.ultimoWamidProcesado !== undefined) payload.ultimo_wamid_procesado = cambios.ultimoWamidProcesado;
   if (cambios.notificadoAJessica !== undefined) payload.notificado_a_jessica = cambios.notificadoAJessica;
+  if (cambios.productoInteresNombre !== undefined) payload.producto_interes_nombre = cambios.productoInteresNombre;
   const { error } = await supabase.from(TABLA).update(payload).eq("id", id);
   if (error) throw error;
 }

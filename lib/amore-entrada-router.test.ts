@@ -15,10 +15,13 @@ import {
   procesarEntradaAmore,
   interceptarAtencionHumanaAmore,
   interceptarRegistroClienteAmore,
+  interceptarCompraProductoAmore,
   type AmoreEntradaDeps,
   type InterceptarAtencionHumanaDeps,
   type InterceptarRegistroClienteDeps,
+  type InterceptarCompraProductoDeps,
 } from "@/lib/amore-entrada-router";
+import type { ProductoInventario } from "@/lib/amore-inventario";
 import type { EntradaAmore, ModoEntradaAmore } from "@/lib/amore-entrada-sesiones";
 import type { ResultadoClasificacionGemini } from "@/lib/amore-entrada-gemini";
 import { AMORE_TENANT_ID } from "@/lib/nylas/nylas-grant";
@@ -33,7 +36,10 @@ function crearFakeEntradas() {
   return {
     filas,
     buscarEntrada: async (_s: unknown, tenantId: string, telefono: string) => filas.find((f) => f.tenantId === tenantId && f.telefonoCliente === telefono) ?? null,
-    crearEntrada: async (_s: unknown, params: { tenantId: string; telefonoCliente: string; wamid: string; modo: ModoEntradaAmore; notificadoAJessica?: boolean }) => {
+    crearEntrada: async (
+      _s: unknown,
+      params: { tenantId: string; telefonoCliente: string; wamid: string; modo: ModoEntradaAmore; notificadoAJessica?: boolean; productoInteresNombre?: string | null },
+    ) => {
       const nueva: EntradaAmore = {
         id: siguienteId++,
         tenantId: params.tenantId,
@@ -41,11 +47,16 @@ function crearFakeEntradas() {
         modo: params.modo,
         ultimoWamidProcesado: params.wamid,
         notificadoAJessica: params.notificadoAJessica ?? false,
+        productoInteresNombre: params.productoInteresNombre ?? null,
       };
       filas.push(nueva);
       return nueva;
     },
-    actualizarEntrada: async (_s: unknown, id: number, cambios: { modo?: ModoEntradaAmore; ultimoWamidProcesado?: string; notificadoAJessica?: boolean }) => {
+    actualizarEntrada: async (
+      _s: unknown,
+      id: number,
+      cambios: { modo?: ModoEntradaAmore; ultimoWamidProcesado?: string; notificadoAJessica?: boolean; productoInteresNombre?: string | null },
+    ) => {
       const f = filas.find((x) => x.id === id);
       if (f) Object.assign(f, cambios);
     },
@@ -824,5 +835,232 @@ describe("Test M -- otro tenant: comportamiento intacto", () => {
     assert.equal(candado.llamadas.length, 0);
     assert.equal(entradas.filas.length, 0);
     assert.equal(clientes.clientes.size, 0);
+  });
+});
+
+// --- Fase 3 (compra de producto, autorizado) -----------------------------
+
+const NUMERO_JESSICA_TEST = "573227298600";
+
+function crearFakeProductosActivos(productos: { nombre: string }[]) {
+  const llamadas: string[] = [];
+  return {
+    llamadas,
+    listarProductosActivos: async (_s: unknown, idTenant: string): Promise<ProductoInventario[]> => {
+      llamadas.push(idTenant);
+      return productos.map((p, i) => ({
+        id: `prod-${i}`,
+        idTenant,
+        nombre: p.nombre,
+        descripcion: null,
+        precio: 10000,
+        stock: 5,
+        categoria: null,
+        fotoUrl: null,
+        activo: true,
+        createdAt: "",
+        updatedAt: "",
+      }));
+    },
+  };
+}
+
+function armarDepsCompra(
+  overrides: Partial<InterceptarCompraProductoDeps> = {},
+  entradasCompartidas?: ReturnType<typeof crearFakeEntradas>,
+  productosActivos: { nombre: string }[] = [],
+) {
+  const entradas = entradasCompartidas ?? crearFakeEntradas();
+  const envios = crearFakeEnvios();
+  const candado = crearFakeCandado();
+  const nombreConocido = crearFakeNombreConocido();
+  const productos = crearFakeProductosActivos(productosActivos);
+  const deps: InterceptarCompraProductoDeps = {
+    adquirirCandadoChat: candado.adquirir,
+    liberarCandadoChat: candado.liberar,
+    buscarEntrada: entradas.buscarEntrada,
+    crearEntrada: entradas.crearEntrada,
+    actualizarEntrada: entradas.actualizarEntrada,
+    enviarMensajeWhatsApp: envios.enviarMensajeWhatsApp,
+    buscarNombreConocido: nombreConocido.buscarNombreConocido,
+    listarProductosActivos: productos.listarProductosActivos,
+    ...overrides,
+  };
+  return { deps, entradas, envios, candado, nombreConocido, productos };
+}
+
+const TEL_COMPRA = "573001112233";
+
+describe("Compra de producto -- link de la tienda (prioridad absoluta, aprobado)", () => {
+  it("detecta el mensaje del botón Comprar, saluda con el nombre EXACTO del producto y muestra el menú 1/2", async () => {
+    const { deps, entradas, envios } = armarDepsCompra();
+    const r = await interceptarCompraProductoAmore(
+      { supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL_COMPRA, texto: "Hola, estoy interesada en este producto: Kit de Cuidado Capilar", wamid: "w1" },
+      deps,
+    );
+    assert.equal(r.manejado, true);
+    assert.equal(entradas.filas[0]!.modo, "compra_producto_opcion");
+    assert.equal(entradas.filas[0]!.productoInteresNombre, "Kit de Cuidado Capilar");
+    assert.equal(envios.enviados.length, 2);
+    assert.match(envios.enviados[0]!.mensaje, /Claro que sí 💗 Veo que estás interesada en Kit de Cuidado Capilar\./);
+    assert.match(envios.enviados[1]!.mensaje, /1\. Pagar producto/);
+    assert.match(envios.enviados[1]!.mensaje, /2\. Hablar con un asesor/);
+  });
+
+  it("funciona como primer contacto real (sin fila previa)", async () => {
+    const { deps, entradas } = armarDepsCompra();
+    const r = await interceptarCompraProductoAmore(
+      { supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL_COMPRA, texto: "Hola, estoy interesada en este producto: Aretes de plata", wamid: "w1" },
+      deps,
+    );
+    assert.equal(r.manejado, true);
+    assert.equal(entradas.filas.length, 1);
+    assert.equal(entradas.filas[0]!.modo, "compra_producto_opcion");
+  });
+
+  it("NUNCA consulta el catálogo real cuando el mensaje viene del link (el nombre ya viene en el propio texto)", async () => {
+    const { deps, productos } = armarDepsCompra();
+    await interceptarCompraProductoAmore(
+      { supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL_COMPRA, texto: "Hola, estoy interesada en este producto: Cualquier cosa", wamid: "w1" },
+      deps,
+    );
+    assert.equal(productos.llamadas.length, 0);
+  });
+});
+
+describe("Compra de producto -- palabras genéricas sueltas NUNCA activan el flujo (aprobado explícitamente)", () => {
+  for (const texto of ["producto", "quiero un producto", "comprar", "pago", "el pago ya está listo"]) {
+    it(`"${texto}" no dispara el flujo de compra`, async () => {
+      const { deps } = armarDepsCompra({}, undefined, [{ nombre: "Kit de Cuidado Capilar" }]);
+      const r = await interceptarCompraProductoAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL_COMPRA, texto, wamid: "w1" }, deps);
+      assert.deepEqual(r, { manejado: false });
+    });
+  }
+
+  it('"quiero comprar" SIN mencionar un producto real tampoco activa nada', async () => {
+    const { deps } = armarDepsCompra({}, undefined, [{ nombre: "Kit de Cuidado Capilar" }]);
+    const r = await interceptarCompraProductoAmore(
+      { supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL_COMPRA, texto: "quiero comprar algo bonito", wamid: "w1" },
+      deps,
+    );
+    assert.deepEqual(r, { manejado: false });
+  });
+
+  it('"quiero comprar" + el nombre de un producto ACTIVO real SÍ activa el flujo', async () => {
+    const { deps, entradas } = armarDepsCompra({}, undefined, [{ nombre: "Kit de Cuidado Capilar" }]);
+    const r = await interceptarCompraProductoAmore(
+      { supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL_COMPRA, texto: "quiero comprar el Kit de Cuidado Capilar", wamid: "w1" },
+      deps,
+    );
+    assert.equal(r.manejado, true);
+    assert.equal(entradas.filas[0]!.productoInteresNombre, "Kit de Cuidado Capilar");
+  });
+});
+
+describe("Compra de producto -- opción 1: Pagar producto", () => {
+  it("responde con el mensaje de métodos de pago (TODO, sin inventar cuentas) y pide 'Ya pagué', pasa a compra_esperando_pago", async () => {
+    const entradas = crearFakeEntradas();
+    const fila = await entradas.crearEntrada(FAKE_SUPABASE, { tenantId: AMORE_TENANT_ID, telefonoCliente: TEL_COMPRA, wamid: "w1", modo: "compra_producto_opcion", productoInteresNombre: "Aretes de plata" });
+    const { deps, envios } = armarDepsCompra({}, entradas);
+    const r = await interceptarCompraProductoAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL_COMPRA, texto: "1", wamid: "w2" }, deps);
+    assert.equal(r.manejado, true);
+    assert.equal(fila.modo, "compra_esperando_pago");
+    assert.match(envios.enviados[0]!.mensaje, /Ya pagué/);
+    assert.doesNotMatch(envios.enviados[0]!.mensaje, /Nequi|Bancolombia|Daviplata/i, "no debe inventar ningún método de pago real");
+  });
+});
+
+describe("Compra de producto -- opción 2: Hablar con un asesor", () => {
+  it("envía el mensaje de transferencia al cliente y notifica a Jessica con el producto correcto", async () => {
+    const entradas = crearFakeEntradas();
+    const fila = await entradas.crearEntrada(FAKE_SUPABASE, { tenantId: AMORE_TENANT_ID, telefonoCliente: TEL_COMPRA, wamid: "w1", modo: "compra_producto_opcion", productoInteresNombre: "Aretes de plata" });
+    const { deps, envios } = armarDepsCompra({}, entradas);
+    const r = await interceptarCompraProductoAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL_COMPRA, texto: "2", wamid: "w2" }, deps);
+    assert.equal(r.manejado, true);
+    assert.equal(fila.modo, "atencion_humana");
+    assert.equal(fila.notificadoAJessica, true);
+
+    const mensajeCliente = envios.enviados.find((e) => e.telefono === TEL_COMPRA);
+    assert.match(mensajeCliente!.mensaje, /Con gusto 💗 Ya te transfiero el chat/);
+
+    const mensajeJessica = envios.enviados.find((e) => e.telefono === NUMERO_JESSICA_TEST);
+    assert.ok(mensajeJessica, "debe notificar a Jessica");
+    assert.match(mensajeJessica!.mensaje, /Una cliente requiere tu atención\. Está interesada en un producto\./);
+    assert.match(mensajeJessica!.mensaje, /Producto: Aretes de plata/);
+  });
+
+  it("opción inválida (ni 1 ni 2) reenvía el mismo menú sin avanzar", async () => {
+    const entradas = crearFakeEntradas();
+    await entradas.crearEntrada(FAKE_SUPABASE, { tenantId: AMORE_TENANT_ID, telefonoCliente: TEL_COMPRA, wamid: "w1", modo: "compra_producto_opcion", productoInteresNombre: "X" });
+    const { deps, envios, entradas: entradasResultado } = armarDepsCompra({}, entradas);
+    const r = await interceptarCompraProductoAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL_COMPRA, texto: "hola", wamid: "w2" }, deps);
+    assert.equal(r.manejado, true);
+    assert.equal(entradasResultado.filas[0]!.modo, "compra_producto_opcion", "no avanza de estado");
+    assert.match(envios.enviados[0]!.mensaje, /No reconocí esa opción/);
+  });
+});
+
+describe('Compra de producto -- "Ya pagué" (SOLO dentro de compra_esperando_pago, nunca global -- aprobado)', () => {
+  for (const variante of ["Ya pagué", "ya pague", "ya hice el pago", "pago realizado"]) {
+    it(`reconoce la variante "${variante}" cuando ya está esperando el pago`, async () => {
+      const entradas = crearFakeEntradas();
+      const fila = await entradas.crearEntrada(FAKE_SUPABASE, { tenantId: AMORE_TENANT_ID, telefonoCliente: TEL_COMPRA, wamid: "w1", modo: "compra_esperando_pago", productoInteresNombre: "Aretes de plata" });
+      const { deps, envios } = armarDepsCompra({}, entradas);
+      const r = await interceptarCompraProductoAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL_COMPRA, texto: variante, wamid: "w2" }, deps);
+      assert.equal(r.manejado, true);
+      assert.equal(fila.modo, "atencion_humana", "transfiere a atención humana");
+      assert.equal(fila.notificadoAJessica, true);
+
+      const mensajeCliente = envios.enviados.find((e) => e.telefono === TEL_COMPRA);
+      assert.match(mensajeCliente!.mensaje, /Perfecto 💗 Ya pasé la información a nuestro equipo/);
+
+      const mensajeJessica = envios.enviados.find((e) => e.telefono === NUMERO_JESSICA_TEST);
+      assert.match(mensajeJessica!.mensaje, /Una cliente reporta pago de producto\./);
+      assert.match(mensajeJessica!.mensaje, /Producto: Aretes de plata/);
+    });
+  }
+
+  it('"Ya pagué" JAMÁS es un trigger global -- fuera de compra_esperando_pago no hace nada', async () => {
+    const { deps } = armarDepsCompra({}, undefined, [{ nombre: "Kit de Cuidado Capilar" }]);
+    const r = await interceptarCompraProductoAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL_COMPRA, texto: "Ya pagué", wamid: "w1" }, deps);
+    assert.deepEqual(r, { manejado: false }, "sin fila/flujo de compra en curso, 'Ya pagué' no dispara nada por sí solo");
+  });
+
+  it("mensaje que NO es confirmación de pago, mientras se espera el pago -- recordatorio, nunca deja pasar a Gemini/Agenda V2", async () => {
+    const entradas = crearFakeEntradas();
+    const fila = await entradas.crearEntrada(FAKE_SUPABASE, { tenantId: AMORE_TENANT_ID, telefonoCliente: TEL_COMPRA, wamid: "w1", modo: "compra_esperando_pago", productoInteresNombre: "X" });
+    const { deps, envios } = armarDepsCompra({}, entradas);
+    const r = await interceptarCompraProductoAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL_COMPRA, texto: "hola de nuevo", wamid: "w2" }, deps);
+    assert.equal(r.manejado, true);
+    assert.equal(fila.modo, "compra_esperando_pago", "se queda en el mismo estado, nunca se filtra a otro flujo");
+    assert.match(envios.enviados[0]!.mensaje, /Ya pagué/);
+  });
+});
+
+describe("Compra de producto -- idempotencia y tenant", () => {
+  it("mismo wamid repetido -- nunca reenvía nada", async () => {
+    const { deps, envios } = armarDepsCompra();
+    await interceptarCompraProductoAmore(
+      { supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL_COMPRA, texto: "Hola, estoy interesada en este producto: X", wamid: "w1" },
+      deps,
+    );
+    const total = envios.enviados.length;
+    const r = await interceptarCompraProductoAmore(
+      { supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL_COMPRA, texto: "Hola, estoy interesada en este producto: X", wamid: "w1" },
+      deps,
+    );
+    assert.equal(r.manejado, true);
+    assert.equal(envios.enviados.length, total, "nunca reenvía nada por el mismo wamid");
+  });
+
+  it("otro tenant: manejado:false de inmediato, sin candado, sin leer/escribir nada", async () => {
+    const { deps, candado, entradas } = armarDepsCompra();
+    const r = await interceptarCompraProductoAmore(
+      { supabase: FAKE_SUPABASE, idTenant: OTRO_TENANT, telefono: TEL_COMPRA, texto: "Hola, estoy interesada en este producto: X", wamid: "w1" },
+      deps,
+    );
+    assert.deepEqual(r, { manejado: false });
+    assert.equal(candado.llamadas.length, 0);
+    assert.equal(entradas.filas.length, 0);
   });
 });

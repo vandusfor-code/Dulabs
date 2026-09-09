@@ -48,12 +48,25 @@ import {
   MENSAJE_DIA_INVALIDO,
   MENSAJE_MES_INVALIDO,
   MENSAJE_REGISTRO_CANCELADO,
+  MENSAJE_COMPRA_MENU,
+  MENSAJE_COMPRA_OPCION_INVALIDA,
+  MENSAJE_COMPRA_ASESOR_CLIENTE,
+  MENSAJE_COMPRA_PAGO_REGISTRADO_CLIENTE,
+  MENSAJE_COMPRA_RECORDATORIO_PAGO,
+  MENSAJE_COMPRA_METODOS_PAGO_PENDIENTE,
+  construirMensajeCompraSaludo,
+  construirMensajeJessicaCompraAsesor,
+  construirMensajeJessicaPagoReportado,
+  extraerProductoDeLinkTienda,
+  detectarIntencionCompraLibre,
+  detectarConfirmacionPago,
   detectarTriggerAgendaDeterminista,
   detectarSolicitudAtencionHumana,
   construirMensajeNotificacionJessica,
   clasificarMensajeConGemini,
   type IntentGemini,
 } from "@/lib/amore-entrada-gemini";
+import { listarProductosActivos } from "@/lib/amore-inventario";
 
 /** Mismo prefijo sintético EXACTO que ya usa lib/agenda-v2/router.ts (nunca un phone_number_id real de Meta). */
 function phoneNumberIdSintetico(tenantId: string): string {
@@ -228,8 +241,18 @@ export async function procesarEntradaAmore(
  * candado (whatsapp-qr:<tenantId>, telefono) que ya serializa cualquier
  * mensaje de esta conversación, no hay ventana de carrera real entre leer
  * el flag y escribirlo.
+ *
+ * Fase 3 (compra de producto, autorizado) -- se EXPORTA y admite
+ * `mensajeJessica`/`mensajeCliente` opcionales para que
+ * interceptarCompraProductoAmore reutilice tal cual toda la lógica real
+ * (transición de modo, notificación idempotente a Jessica, candado) sin
+ * duplicarla, cambiando únicamente el texto de los dos mensajes cuando el
+ * motivo no es la solicitud genérica de "hablar con Jessica" (ej. "está
+ * interesada en un producto" / "reporta pago de producto"). Sin overrides,
+ * el comportamiento es IDÉNTICO al de siempre (opción "3" del menú inicial e
+ * interceptarAtencionHumanaAmore).
  */
-async function activarAtencionHumana(
+export async function activarAtencionHumana(
   params: { supabase: SupabaseClient; idTenant: string; telefono: string; wamid: string },
   ctx: {
     fila: EntradaAmore | null;
@@ -237,6 +260,8 @@ async function activarAtencionHumana(
     crearEntrada: typeof crearEntradaAmore;
     actualizarEntrada: typeof actualizarEntradaAmore;
     buscarNombreConocidoDep: typeof nombreConocido;
+    mensajeJessica?: string;
+    mensajeCliente?: string;
   },
 ): Promise<{ manejado: true }> {
   const yaNotificado = ctx.fila?.notificadoAJessica ?? false;
@@ -252,7 +277,7 @@ async function activarAtencionHumana(
     await ctx.enviarMensaje({
       tenantId: params.idTenant,
       telefono: NUMERO_JESSICA,
-      mensaje: construirMensajeNotificacionJessica({ nombre, telefono: params.telefono }),
+      mensaje: ctx.mensajeJessica ?? construirMensajeNotificacionJessica({ nombre, telefono: params.telefono }),
       origen: "automatico",
     });
   }
@@ -273,7 +298,7 @@ async function activarAtencionHumana(
     });
   }
 
-  await ctx.enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_ATENCION_HUMANA_CLIENTE, origen: "automatico" });
+  await ctx.enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: ctx.mensajeCliente ?? MENSAJE_ATENCION_HUMANA_CLIENTE, origen: "automatico" });
   return { manejado: true };
 }
 
@@ -547,6 +572,186 @@ export async function interceptarRegistroClienteAmore(
     // reales, nunca una segunda lógica de creación de sesión.
     await actualizarEntrada(params.supabase, fila.id, { modo: "gemini", ultimoWamidProcesado: params.wamid });
     await iniciarAgendaV2({ supabase: params.supabase, idTenant: params.idTenant, telefono: params.telefono, wamid: params.wamid });
+    return { manejado: true };
+  } finally {
+    await liberar(phoneNumberId, params.telefono, params.wamid);
+  }
+}
+
+const MODOS_COMPRA = new Set<string>(["compra_producto_opcion", "compra_esperando_pago"]);
+
+export interface InterceptarCompraProductoDeps {
+  adquirirCandadoChat?: typeof adquirirCandadoChat;
+  liberarCandadoChat?: typeof liberarCandadoChat;
+  buscarEntrada?: typeof buscarEntradaAmore;
+  crearEntrada?: typeof crearEntradaAmore;
+  actualizarEntrada?: typeof actualizarEntradaAmore;
+  enviarMensajeWhatsApp?: typeof enviarMensajeWhatsApp;
+  buscarNombreConocido?: typeof nombreConocido;
+  /** Inyectable para tests -- default real: listarProductosActivos (lib/amore-inventario.ts). Solo se consulta cuando el mensaje NO viene del link de la tienda (ver extraerProductoDeLinkTienda), para el reconocimiento de texto libre. */
+  listarProductosActivos?: typeof listarProductosActivos;
+}
+
+/**
+ * FASE 3 (autorizado, compra de producto) — GATE GLOBAL, exclusivo de AMORE,
+ * que debe llamarse DESPUÉS de interceptarRegistroClienteAmore y ANTES de
+ * procesarMensajeConAgendaV2 (ver app/api/whatsapp-qr-bot/route.ts) --
+ * decisión aprobada explícitamente: una intención INEQUÍVOCA de compra debe
+ * poder interrumpir una sesión de Agenda V2 ya activa (mismo precedente que
+ * "hablar con Jessica" en interceptarAtencionHumanaAmore), pero SOLO cuando
+ * la intención es realmente clara -- nunca por palabras sueltas como
+ * "producto"/"comprar"/"pago" (ver detectarIntencionCompraLibre y
+ * extraerProductoDeLinkTienda en lib/amore-entrada-gemini.ts).
+ *
+ * Dos responsabilidades, igual que interceptarAtencionHumanaAmore:
+ * (a) CONTINUAR un flujo de compra ya en curso (fila.modo en
+ *     compra_producto_opcion/compra_esperando_pago) -- mientras dure, este
+ *     gate se queda con TODOS los mensajes (nunca deja pasar al Flow
+ *     Engine/Gemini con un modo que no sabrían interpretar).
+ * (b) DETECTAR una intención nueva cuando no hay flujo en curso -- por el
+ *     link de la tienda (prioridad absoluta, aprobado) o por texto libre
+ *     explícito que además mencione un producto activo real.
+ *
+ * "Ya pagué" se reconoce ÚNICAMENTE dentro de compra_esperando_pago -- nunca
+ * como trigger global (aprobado explícitamente).
+ *
+ * Devuelve manejado:false SIN escribir nada cuando no hay flujo en curso ni
+ * intención detectada -- así procesarMensajeConAgendaV2/procesarEntradaAmore
+ * siguen exactamente igual que hoy para cualquier conversación ajena a este
+ * flujo.
+ */
+export async function interceptarCompraProductoAmore(
+  params: { supabase: SupabaseClient; idTenant: string; telefono: string; texto: string; wamid: string },
+  deps: InterceptarCompraProductoDeps = {},
+): Promise<ResultadoEntradaAmore> {
+  if (params.idTenant !== AMORE_TENANT_ID) {
+    return { manejado: false };
+  }
+
+  const adquirir = deps.adquirirCandadoChat ?? adquirirCandadoChat;
+  const liberar = deps.liberarCandadoChat ?? liberarCandadoChat;
+  const buscarEntrada = deps.buscarEntrada ?? buscarEntradaAmore;
+  const crearEntrada = deps.crearEntrada ?? crearEntradaAmore;
+  const actualizarEntrada = deps.actualizarEntrada ?? actualizarEntradaAmore;
+  const enviarMensaje = deps.enviarMensajeWhatsApp ?? enviarMensajeWhatsApp;
+  const buscarNombreConocidoDep = deps.buscarNombreConocido ?? nombreConocido;
+  const obtenerProductosActivos = deps.listarProductosActivos ?? listarProductosActivos;
+
+  const phoneNumberId = phoneNumberIdSintetico(params.idTenant);
+
+  await adquirir(phoneNumberId, params.telefono, params.wamid);
+  try {
+    let fila: EntradaAmore | null;
+    try {
+      fila = await buscarEntrada(params.supabase, params.idTenant, params.telefono);
+    } catch (err) {
+      // Defensivo (mismo criterio EXACTO que el resto del puente) -- si la
+      // migración todavía no se aplicó en producción, nunca debe romper el
+      // canal: se deja pasar al comportamiento normal.
+      console.error("[amore-entrada] error buscando estado (gate compra producto) -- se deja pasar al comportamiento normal", err);
+      return { manejado: false };
+    }
+
+    // Mismo wamid ya procesado por ESTE gate o por cualquier otro paso del
+    // puente -- nunca se reenvía ni se reprocesa.
+    if (fila && fila.ultimoWamidProcesado === params.wamid) {
+      return { manejado: true };
+    }
+
+    const texto = params.texto.trim();
+
+    if (fila && MODOS_COMPRA.has(fila.modo)) {
+      // (a) Continuación de un flujo de compra ya en curso.
+      if (fila.modo === "compra_producto_opcion") {
+        if (texto === "1") {
+          await actualizarEntrada(params.supabase, fila.id, { modo: "compra_esperando_pago", ultimoWamidProcesado: params.wamid });
+          await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_COMPRA_METODOS_PAGO_PENDIENTE, origen: "automatico" });
+          return { manejado: true };
+        }
+        if (texto === "2") {
+          const producto = fila.productoInteresNombre ?? "un producto";
+          return await activarAtencionHumana(params, {
+            fila,
+            enviarMensaje,
+            crearEntrada,
+            actualizarEntrada,
+            buscarNombreConocidoDep,
+            mensajeJessica: construirMensajeJessicaCompraAsesor(producto),
+            mensajeCliente: MENSAJE_COMPRA_ASESOR_CLIENTE,
+          });
+        }
+        // Mismo criterio EXACTO que el resto del puente: solo número exacto
+        // (1-2), nunca fuzzy -- se reenvía el mismo menú, sin avanzar.
+        await actualizarEntrada(params.supabase, fila.id, { ultimoWamidProcesado: params.wamid });
+        await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_COMPRA_OPCION_INVALIDA, origen: "automatico" });
+        return { manejado: true };
+      }
+
+      // fila.modo === "compra_esperando_pago"
+      if (detectarConfirmacionPago(texto)) {
+        const producto = fila.productoInteresNombre ?? "un producto";
+        await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_COMPRA_PAGO_REGISTRADO_CLIENTE, origen: "automatico" });
+        // Reutiliza tal cual activarAtencionHumana -- pero el mensaje al
+        // cliente YA se envió arriba con el texto exacto pedido para "Ya
+        // pagué" (distinto del de "hablar con un asesor"), así que acá se
+        // pasa un mensajeCliente vacío-no-aplica: en vez de reenviar un
+        // segundo mensaje, se reutiliza únicamente la parte de
+        // notificación/transición de modo pasando el mismo texto ya
+        // enviado (idempotente si algún día se reintenta).
+        return await activarAtencionHumana(params, {
+          fila,
+          enviarMensaje,
+          crearEntrada,
+          actualizarEntrada,
+          buscarNombreConocidoDep,
+          mensajeJessica: construirMensajeJessicaPagoReportado(producto),
+          mensajeCliente: MENSAJE_COMPRA_PAGO_REGISTRADO_CLIENTE,
+        });
+      }
+      // No es "Ya pagué" -- nunca se deja pasar a Gemini/Agenda V2 mientras
+      // se espera el pago (el gate de atención humana, evaluado ANTES que
+      // este, ya intercepta "hablar con Jessica" en cualquier momento).
+      await actualizarEntrada(params.supabase, fila.id, { ultimoWamidProcesado: params.wamid });
+      await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_COMPRA_RECORDATORIO_PAGO, origen: "automatico" });
+      return { manejado: true };
+    }
+
+    // (b) Sin flujo de compra en curso -- ¿es una intención NUEVA?
+    // 1) Link de la tienda: prioridad absoluta, aprobado -- ni siquiera
+    //    necesita consultar el catálogo real (el nombre viene del propio
+    //    mensaje, generado por nuestra propia tienda).
+    let productoDetectado = extraerProductoDeLinkTienda(params.texto);
+    if (!productoDetectado) {
+      // 2) Texto libre -- exige verbo de compra explícito Y que mencione un
+      //    producto activo real (nunca "producto"/"comprar" sueltos).
+      const productos = await obtenerProductosActivos(params.supabase, params.idTenant);
+      productoDetectado = detectarIntencionCompraLibre(params.texto, productos.map((p) => p.nombre));
+    }
+    if (!productoDetectado) {
+      return { manejado: false };
+    }
+
+    const saludo = construirMensajeCompraSaludo(productoDetectado);
+    if (fila) {
+      await actualizarEntrada(params.supabase, fila.id, {
+        modo: "compra_producto_opcion",
+        ultimoWamidProcesado: params.wamid,
+        productoInteresNombre: productoDetectado,
+      });
+    } else {
+      // Primer contacto real y el primerísimo mensaje ya es un "Comprar" de
+      // la tienda -- mismo criterio EXACTO que activarAtencionHumana: nunca
+      // se fuerza el menú de bienvenida antes de atender lo que se pidió.
+      await crearEntrada(params.supabase, {
+        tenantId: params.idTenant,
+        telefonoCliente: params.telefono,
+        wamid: params.wamid,
+        modo: "compra_producto_opcion",
+        productoInteresNombre: productoDetectado,
+      });
+    }
+    await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: saludo, origen: "automatico" });
+    await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_COMPRA_MENU, origen: "automatico" });
     return { manejado: true };
   } finally {
     await liberar(phoneNumberId, params.telefono, params.wamid);
