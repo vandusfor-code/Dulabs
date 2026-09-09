@@ -1,6 +1,7 @@
 import { supabaseAdmin } from "@/lib/supabase";
 import { AMORE_TENANT_ID } from "@/lib/nylas/nylas-grant";
 import { listarProductosActivos, mapearProductosParaTienda } from "@/lib/amore-inventario";
+import { obtenerNumeroWhatsappAmore } from "@/lib/amore-tienda";
 
 export const runtime = "nodejs";
 
@@ -12,8 +13,9 @@ export const runtime = "nodejs";
 export async function GET() {
   const supabase = supabaseAdmin();
 
-  const [{ data: config }, productos] = await Promise.all([
-    supabase.from("dulabs_clientes_config").select("nombre_negocio, telefono_negocio").eq("id_tenant", AMORE_TENANT_ID).maybeSingle(),
+  const [{ data: config }, telefonoNegocio, productos] = await Promise.all([
+    supabase.from("dulabs_clientes_config").select("nombre_negocio").eq("id_tenant", AMORE_TENANT_ID).maybeSingle(),
+    obtenerNumeroWhatsappAmore(supabase, AMORE_TENANT_ID),
     listarProductosActivos(supabase, AMORE_TENANT_ID),
   ]);
 
@@ -21,7 +23,7 @@ export async function GET() {
 
   return Response.json({
     negocio: config?.nombre_negocio ?? "AMORE",
-    telefonoNegocio: config?.telefono_negocio ?? null,
+    telefonoNegocio,
     productos: productosPublicos,
   });
 }
