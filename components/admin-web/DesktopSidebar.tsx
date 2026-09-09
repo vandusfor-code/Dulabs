@@ -83,8 +83,9 @@ export function DesktopSidebar() {
   return (
     <aside className="flex h-screen w-64 shrink-0 flex-col border-r border-edge bg-card">
       <div className="flex flex-col items-center gap-1 px-6 pb-5 pt-7">
+        {/* Cambio de logo (autorizado) -- mismo archivo real /amore/logo.png. Nuevo logo vertical (1187x1326) -- se ancla por ALTURA para conservar el espacio que ya ocupaba, sin distorsionar ni recortar. */}
         {/* eslint-disable-next-line @next/next/no-img-element -- logo de marca, no aplica optimización */}
-        <img src="/amore/logo.png" alt="AMORE Salón de Belleza" width={2067} height={761} className="h-auto w-[150px] object-contain" />
+        <img src="/amore/logo.png" alt="AMORE Salón de Belleza" width={1187} height={1326} className="h-[55px] w-auto object-contain" />
       </div>
 
       <nav className="flex-1 overflow-y-auto px-3">

@@ -28,12 +28,13 @@ export function AmoreHeader({ onAbrirMenu }: { onAbrirMenu: () => void }) {
         >
           <Menu className="size-6" />
         </button>
+        {/* Cambio de logo (autorizado) -- logo real reemplazado (mismo archivo /amore/logo.png). El nuevo logo es vertical (1187x1326, antes 2067x761 horizontal) -- se ancla por ALTURA (no ancho) para conservar el espacio vertical que ya ocupaba en este header, sin distorsionar ni recortar la imagen real. */}
         <img
           src="/amore/logo.png"
           alt="AMORE Salón de Belleza"
-          width={2067}
-          height={761}
-          className="h-auto w-[min(230px,54vw)] object-contain"
+          width={1187}
+          height={1326}
+          className="h-[85px] w-auto object-contain"
         />
         <button
           type="button"

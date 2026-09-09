@@ -56,7 +56,8 @@ export default function AmoreLoginPage() {
     <div className="amore-scope relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-ink px-6 py-12">
       <div className="w-full max-w-[380px]">
         <div className="flex flex-col items-center">
-          <img src="/amore/logo.png" alt="AMORE Salón de Belleza" width={2067} height={761} className="h-auto w-[min(260px,70vw)] object-contain" />
+          {/* Cambio de logo (autorizado) -- mismo archivo real /amore/logo.png. Nuevo logo vertical (1187x1326) -- se ancla por ALTURA para conservar el espacio que ya ocupaba, sin distorsionar ni recortar. */}
+          <img src="/amore/logo.png" alt="AMORE Salón de Belleza" width={1187} height={1326} className="h-[96px] w-auto object-contain" />
         </div>
 
         <div className="mt-8 text-center">

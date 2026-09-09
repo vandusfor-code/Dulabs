@@ -32,7 +32,8 @@ export function ColaboradoraShell({ children }: { children: ReactNode }) {
       <div className="mx-auto flex min-h-screen w-full max-w-[430px] flex-col">
         <header className="px-5 pt-5">
           <div className="flex items-center justify-between">
-            <img src="/amore/logo.png" alt="AMORE Salón de Belleza" width={2067} height={761} className="h-auto w-[min(180px,44vw)] object-contain" />
+            {/* Cambio de logo (autorizado) -- mismo archivo real /amore/logo.png. Nuevo logo vertical (1187x1326) -- se ancla por ALTURA para conservar el espacio que ya ocupaba, sin distorsionar ni recortar. */}
+            <img src="/amore/logo.png" alt="AMORE Salón de Belleza" width={1187} height={1326} className="h-[66px] w-auto object-contain" />
             <p className="truncate text-sm font-medium text-fg">{nombre}</p>
           </div>
         </header>
