@@ -10,6 +10,22 @@ function soloDigitos(valor: string): string {
   return valor.replace(/\D/g, "");
 }
 
+/**
+ * Construye el JID de destino real para un "telefono" ya resuelto por
+ * persistirMensajeEntrante (ver chats/persistir-mensaje.ts::resolverTelefono).
+ * HALLAZGO REAL (verificado en producción, autorizado) — un identificador
+ * marcado "lid:<dígitos>" (contacto LID cuyo número real no se pudo
+ * resolver) NUNCA debe enviarse a "<dígitos>@s.whatsapp.net": esos dígitos
+ * son un LID opaco, no un teléfono real, así que ese JID no corresponde a
+ * ningún usuario de WhatsApp y el envío se pierde en silencio (bug real:
+ * "escribo y el bot no me responde"). Ese caso se envía al dominio @lid
+ * real en su lugar -- WhatsApp sí entrega mensajes a un JID @lid válido.
+ */
+function jidParaTelefono(telefono: string): string {
+  if (telefono.startsWith("lid:")) return `${telefono.slice(4)}@lid`;
+  return `${soloDigitos(telefono)}@s.whatsapp.net`;
+}
+
 // WhatsApp QR (Fase 9A/9B, autorizado) — única implementación REAL de
 // FabricaSocket (ver tipos.ts). El manager (manager.ts) no importa este
 // archivo; lo recibe inyectado quien arma el servidor (server.ts). Las
@@ -93,9 +109,22 @@ export function crearFabricaSocketBaileys(supabase: SupabaseClient): FabricaSock
     // -> /enviar, que termina emitiendo este mismo evento). Un fallo de
     // persistencia nunca debe tumbar la sesión de WhatsApp -- solo se
     // registra con la etiqueta fija de siempre.
+    // Mapeo LID↔PN que el propio Baileys mantiene (aprendido de
+    // interacciones/contactos previos) -- se intenta ANTES de rendirse a
+    // guardar un identificador "lid:..." (ver persistir-mensaje.ts). Nunca
+    // lanza sin control: si el mapeo aún no existe o falla, se resuelve a
+    // null y persistirMensajeEntrante cae a su fallback marcado de siempre.
+    async function resolverPnDesdeLid(lidJid: string): Promise<string | null> {
+      try {
+        return await sock.signalRepository.lidMapping.getPNForLID(lidJid);
+      } catch {
+        return null;
+      }
+    }
+
     sock.ev.on("messages.upsert", ({ messages }) => {
       for (const msg of messages) {
-        persistirMensajeEntrante(supabase, idTenant, msg, resolverOrigenSaliente)
+        persistirMensajeEntrante(supabase, idTenant, msg, resolverOrigenSaliente, resolverPnDesdeLid)
           .then((resultado) => {
             // Bot real (autorizado) — solo se invoca para texto entrante
             // real, y solo si la conversación está en "automatico" (nunca
@@ -110,7 +139,7 @@ export function crearFabricaSocketBaileys(supabase: SupabaseClient): FabricaSock
               // refresca, así que se reenvía cada 8s mientras se espera.
               // "paused" al final limpia el indicador si el bot falla sin
               // llegar a mandar nada -- un envío real ya lo limpia solo.
-              const jidEntrante = `${soloDigitos(resultado.telefono)}@s.whatsapp.net`;
+              const jidEntrante = jidParaTelefono(resultado.telefono);
               sock.sendPresenceUpdate("composing", jidEntrante).catch(() => {});
               const refrescoTyping = setInterval(() => {
                 sock.sendPresenceUpdate("composing", jidEntrante).catch(() => {});
@@ -136,12 +165,12 @@ export function crearFabricaSocketBaileys(supabase: SupabaseClient): FabricaSock
         handler = cb;
       },
       async enviarMensaje(telefono, mensaje, origen) {
-        const jid = `${soloDigitos(telefono)}@s.whatsapp.net`;
+        const jid = jidParaTelefono(telefono);
         const enviado = await sock.sendMessage(jid, { text: mensaje });
         if (origen === "automatico" && enviado?.key.id) origenPorMensajeId.set(enviado.key.id, "automatico");
       },
       async enviarAudio(telefono, audio, mimeType) {
-        const jid = `${soloDigitos(telefono)}@s.whatsapp.net`;
+        const jid = jidParaTelefono(telefono);
         // ptt=true (nota de voz): WhatsApp espera nativamente OGG/Opus para
         // esa burbuja -- un navegador real casi siempre entrega
         // audio/webm;codecs=opus (mismo audio Opus, contenedor distinto).

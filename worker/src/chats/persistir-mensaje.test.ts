@@ -118,6 +118,38 @@ describe(
       assert.equal(convLid, null, "nunca debe guardar el LID como si fuera un teléfono");
     });
 
+    it("bug real (LID sin remoteJidAlt): sin mapeo resoluble, se guarda 'lid:<dígitos>' -- NUNCA los dígitos del LID como si fueran un teléfono real", async (t) => {
+      if (!migracionLista) return t.skip("falta la migración 20260911000000_chats_whatsapp.sql");
+      const idTenant = nuevoTenant();
+      const resultado = await persistirMensajeEntrante(
+        supabase,
+        idTenant,
+        mensajeTexto({ jid: "277507215511779@lid", texto: "Hola" }),
+        undefined,
+        async () => null // el mapeo LID->PN de Baileys tampoco lo conoce todavía
+      );
+      assert.equal(resultado?.telefono, "lid:277507215511779");
+      const convDigitosCrudos = await conversacionDe(idTenant, "277507215511779");
+      assert.equal(convDigitosCrudos, null, "nunca debe guardar los dígitos del LID como si fueran un teléfono real (rompía el envío de respuestas)");
+      const convMarcada = await conversacionDe(idTenant, "lid:277507215511779");
+      assert.ok(convMarcada, "debe guardar el identificador marcado, para que socket-baileys.ts sepa responder por @lid");
+    });
+
+    it("LID sin remoteJidAlt, pero SÍ resoluble vía el mapeo propio de Baileys (lidMapping.getPNForLID): usa el teléfono real", async (t) => {
+      if (!migracionLista) return t.skip("falta la migración 20260911000000_chats_whatsapp.sql");
+      const idTenant = nuevoTenant();
+      const resultado = await persistirMensajeEntrante(
+        supabase,
+        idTenant,
+        mensajeTexto({ jid: "999888777666555@lid", texto: "Hola" }),
+        undefined,
+        async (lidJid) => (lidJid === "999888777666555@lid" ? "573000000077:0@s.whatsapp.net" : null)
+      );
+      assert.equal(resultado?.telefono, "573000000077");
+      const conv = await conversacionDe(idTenant, "573000000077");
+      assert.ok(conv, "debe guardar el teléfono real resuelto por el mapeo de Baileys, no un identificador lid:");
+    });
+
     it("un mensaje saliente (fromMe) nunca incrementa no_leidos", async (t) => {
       if (!migracionLista) return t.skip("falta la migración 20260911000000_chats_whatsapp.sql");
       const idTenant = nuevoTenant();

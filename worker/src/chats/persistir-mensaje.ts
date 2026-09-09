@@ -31,6 +31,44 @@ function telefonoDesdeJid(jid: string): string {
   return soloDigitos(normalizado.split("@")[0] ?? normalizado);
 }
 
+function esLid(jid: string): boolean {
+  return jid.endsWith("@lid");
+}
+
+function digitosDeLid(jid: string): string {
+  return soloDigitos(jid.split("@")[0]?.split(":")[0] ?? jid);
+}
+
+/**
+ * HALLAZGO REAL (verificado en producción, autorizado) — cuando WhatsApp
+ * reporta remoteJid como un "@lid" opaco Y remoteJidAlt NO viene (caso
+ * distinto al ya documentado arriba, donde remoteJidAlt sí llega): el código
+ * anterior trataba los dígitos del LID como si fueran un número de teléfono
+ * real, los guardaba tal cual, y CUALQUIER respuesta posterior se enviaba a
+ * "<dígitosDelLID>@s.whatsapp.net" -- un JID que no corresponde a ningún
+ * usuario real de WhatsApp, así que Baileys lo aceptaba pero WhatsApp nunca
+ * lo entregaba (bug real: "escribo y el bot no me responde", sin ningún
+ * error visible del lado del negocio). Antes de rendirse, se intenta
+ * resolver el número real vía el propio mapeo LID↔PN que Baileys ya
+ * mantiene internamente (sock.signalRepository.lidMapping.getPNForLID,
+ * aprendido de interacciones previas); solo si de verdad no hay forma de
+ * saberlo, se guarda un identificador marcado "lid:<dígitos>" -- NUNCA
+ * dígitos de teléfono inventados -- para que quien arma el JID de salida
+ * (ver worker/src/whatsapp-qr/socket-baileys.ts::jidParaTelefono) sepa
+ * responder por el dominio @lid real en vez de fabricar un teléfono falso.
+ */
+async function resolverTelefono(
+  jid: string,
+  remoteJidAlt: string | null | undefined,
+  resolverPnDesdeLid?: (lidJid: string) => Promise<string | null>
+): Promise<string> {
+  if (remoteJidAlt) return telefonoDesdeJid(remoteJidAlt);
+  if (!esLid(jid)) return telefonoDesdeJid(jid);
+  const pnResuelto = resolverPnDesdeLid ? await resolverPnDesdeLid(jid).catch(() => null) : null;
+  if (pnResuelto) return telefonoDesdeJid(pnResuelto);
+  return `lid:${digitosDeLid(jid)}`;
+}
+
 type ContenidoExtraido =
   | { tipo: "texto"; texto: string }
   | { tipo: "audio"; mimeType: string; duracionSeg: number | null; buffer: Buffer }
@@ -95,11 +133,15 @@ export type ResultadoPersistencia = {
 /** Resuelve el origen real ("automatico" si lo mandó el bot) de un mensaje SALIENTE ya enviado, por su whatsapp_message_id -- ver socket-baileys.ts, que registra ahí los envíos del bot antes de que lleguen de vuelta por este mismo evento. Sin registro -- incluido cualquier envío manual de Jessica -- se asume "humano", el comportamiento de siempre. */
 export type ResolverOrigenSaliente = (whatsappMessageId: string) => "automatico" | undefined;
 
+/** Consulta el mapeo LID↔PN que Baileys ya mantiene (ver resolverTelefono arriba) -- inyectable para pruebas, default real: sock.signalRepository.lidMapping.getPNForLID en socket-baileys.ts. */
+export type ResolverPnDesdeLid = (lidJid: string) => Promise<string | null>;
+
 export async function persistirMensajeEntrante(
   supabase: SupabaseClient,
   idTenant: string,
   msg: WAMessage,
-  resolverOrigenSaliente?: ResolverOrigenSaliente
+  resolverOrigenSaliente?: ResolverOrigenSaliente,
+  resolverPnDesdeLid?: ResolverPnDesdeLid
 ): Promise<ResultadoPersistencia> {
   const jid = msg.key.remoteJid;
   if (!jid || jid.endsWith("@g.us") || jid === "status@broadcast") return null; // grupos/estados fuera de alcance
@@ -112,8 +154,9 @@ export async function persistirMensajeEntrante(
   // propio getKeyAuthor usa para resolver la identidad real, ver
   // node_modules/@whiskeysockets/baileys/lib/Utils/generics.js). Nunca se
   // usa remoteJidAlt para decidir si es grupo/estado -- eso sigue mirando
-  // el remoteJid real de siempre.
-  const telefono = telefonoDesdeJid(msg.key.remoteJidAlt || jid);
+  // el remoteJid real de siempre. Si remoteJidAlt tampoco viene, ver
+  // resolverTelefono arriba (segundo hallazgo real, distinto de este).
+  const telefono = await resolverTelefono(jid, msg.key.remoteJidAlt, resolverPnDesdeLid);
   const entrante = !msg.key.fromMe;
   const contenido = await extraerContenido(msg);
   if (!contenido) return null;
