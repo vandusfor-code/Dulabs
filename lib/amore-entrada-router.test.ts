@@ -233,6 +233,48 @@ describe("Test 2 -- Opción 1: entrega inmediata a Agenda V2, NUNCA pasa por Gem
   });
 });
 
+describe("Fase 3b (autorizado) -- interés general en productos: responde con el link de la tienda", () => {
+  it("desde modo 'inicio' (antes de elegir 1/2/3), responde con el link y NO avanza de modo", async () => {
+    const { deps, entradas, envios } = armarDeps();
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "hola", wamid: "w1" }, deps);
+    const r = await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "¿tienen productos de belleza?", wamid: "w2" }, deps);
+    assert.equal(r.manejado, true);
+    assert.match(envios.enviados.at(-1)!.mensaje, /https:\/\/www\.dulabs\.co\/amore\/tienda/);
+    assert.equal(entradas.filas[0]!.modo, "inicio", "no fuerza ningún flujo, se queda disponible para elegir 1/2/3 después");
+  });
+
+  it("desde modo 'gemini', responde con el link SIN llamar a Gemini ni a Agenda V2 (fast-track determinista)", async () => {
+    const fakeClasificador = crearFakeClasificador({ intent: "CONSULTA", replyText: "no debía llamarse", detectedServiceMention: null });
+    const { deps, entradas, envios, iniciarAgenda } = armarDeps({ clasificarConGemini: fakeClasificador.clasificarConGemini });
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "hola", wamid: "w1" }, deps);
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "2", wamid: "w2" }, deps);
+    const r = await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "quiero ver los productos que venden", wamid: "w3" }, deps);
+    assert.equal(r.manejado, true);
+    assert.match(envios.enviados.at(-1)!.mensaje, /https:\/\/www\.dulabs\.co\/amore\/tienda/);
+    assert.equal(fakeClasificador.llamadas.length, 0, "nunca debe llamar a Gemini para esto");
+    assert.equal(iniciarAgenda.llamadas.length, 0);
+    assert.equal(entradas.filas[0]!.modo, "gemini");
+  });
+
+  it("variantes reales reconocidas: 'venden productos', 'catalogo de productos', 'productos amore'", async () => {
+    for (const frase of ["venden productos", "catalogo de productos", "productos amore"]) {
+      const { deps, envios } = armarDeps();
+      await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "hola", wamid: "w1" }, deps);
+      const r = await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: frase, wamid: "w2" }, deps);
+      assert.equal(r.manejado, true, `frase: "${frase}"`);
+      assert.match(envios.enviados.at(-1)!.mensaje, /amore\/tienda/, `frase: "${frase}"`);
+    }
+  });
+
+  it("NUNCA inicia el flujo de compra (modo sigue en gemini, nunca compra_producto_opcion)", async () => {
+    const { deps, entradas } = armarDeps();
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "hola", wamid: "w1" }, deps);
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "2", wamid: "w2" }, deps);
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "tienen productos?", wamid: "w3" }, deps);
+    assert.equal(entradas.filas[0]!.modo, "gemini");
+  });
+});
+
 describe("Test 3/4 -- Opción 2: entra a Gemini y sigue conversando en consultas posteriores", () => {
   it("'2' envía el saludo de Gemini y pasa a modo 'gemini'", async () => {
     const { deps, entradas, envios } = armarDeps();

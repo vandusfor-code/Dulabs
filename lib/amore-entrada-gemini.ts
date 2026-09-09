@@ -99,6 +99,41 @@ export function detectarSolicitudAtencionHumana(mensaje: string): boolean {
   return FRASES_ATENCION_HUMANA_DETERMINISTA.some((f) => textoNormalizado.includes(normalizeText(f)));
 }
 
+// --- Fase 3b (interés general en productos, autorizado) -------------------
+
+/** Único link real de la tienda -- nunca inventado, coincide con app/amore/tienda/page.tsx. */
+export const URL_TIENDA_AMORE = "https://www.dulabs.co/amore/tienda";
+
+export const MENSAJE_INTERES_PRODUCTOS =
+  `¡Claro que sí! 💗 Aquí puedes ver todos nuestros productos:\n\n${URL_TIENDA_AMORE}\n\nCuando encuentres el que te guste, toca "Comprar" y seguimos por aquí mismo. 🛍️`;
+
+/**
+ * Detector determinístico (mismo criterio "contains" de siempre, nunca IA)
+ * para una pregunta GENERAL sobre productos ("¿tienen productos de
+ * belleza?"), distinto de detectarIntencionCompraLibre (que exige un verbo
+ * de compra explícito + el nombre de un producto real). Este es más amplio a
+ * propósito -- el peor caso posible es enviar el link de la tienda cuando no
+ * hacía falta, nunca inicia el flujo de compra ni escribe ningún estado
+ * nuevo (a diferencia de interceptarCompraProductoAmore).
+ */
+const FRASES_INTERES_PRODUCTOS_GENERAL = [
+  "productos de belleza",
+  "tienen productos",
+  "venden productos",
+  "que productos tienen",
+  "que productos venden",
+  "quiero ver los productos",
+  "quiero ver productos",
+  "catalogo de productos",
+  "tienda de productos",
+  "productos amore",
+];
+
+export function detectarInteresGeneralProductos(mensaje: string): boolean {
+  const textoNormalizado = normalizeText(mensaje);
+  return FRASES_INTERES_PRODUCTOS_GENERAL.some((f) => textoNormalizado.includes(normalizeText(f)));
+}
+
 // --- Fase 3 (compra de producto, autorizado) -----------------------------
 
 export const MENSAJE_COMPRA_MENU = "¿Qué deseas hacer?\n\n1. Pagar producto\n2. Hablar con un asesor";

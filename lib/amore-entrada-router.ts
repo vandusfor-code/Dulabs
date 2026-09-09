@@ -59,6 +59,8 @@ import {
   construirMensajeJessicaPagoReportado,
   extraerProductoDeLinkTienda,
   detectarIntencionCompraLibre,
+  MENSAJE_INTERES_PRODUCTOS,
+  detectarInteresGeneralProductos,
   detectarConfirmacionPago,
   detectarTriggerAgendaDeterminista,
   detectarSolicitudAtencionHumana,
@@ -146,6 +148,16 @@ export async function procesarEntradaAmore(
     if (fila.modo === "inicio") {
       const texto = params.texto.trim();
 
+      // FASE 3b (interés general en productos, autorizado) -- si la
+      // primerísima respuesta ya pregunta por productos de belleza, se
+      // resuelve de inmediato con el link de la tienda, sin forzar a elegir
+      // 1/2/3 primero. Nunca avanza de modo (se queda en "inicio").
+      if (detectarInteresGeneralProductos(texto)) {
+        await actualizarEntrada(params.supabase, fila.id, { ultimoWamidProcesado: params.wamid });
+        await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_INTERES_PRODUCTOS, origen: "automatico" });
+        return { manejado: true };
+      }
+
       if (texto === "1") {
         // OPCIÓN 1 -- entrega inmediata a Agenda V2. NUNCA pasa por Gemini,
         // NUNCA hace clasificación de intención, NUNCA conversación
@@ -181,6 +193,18 @@ export async function procesarEntradaAmore(
       // (1-3), nunca fuzzy -- se reenvía el mismo menú, sin avanzar.
       await actualizarEntrada(params.supabase, fila.id, { ultimoWamidProcesado: params.wamid });
       await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_MENU_INICIO_INVALIDO, origen: "automatico" });
+      return { manejado: true };
+    }
+
+    // FASE 3b (interés general en productos, autorizado) -- fast-track
+    // determinista, evaluado ANTES que el resto (Gemini nunca necesita
+    // clasificar esto): responde con el link real de la tienda y nunca
+    // avanza de modo ni inicia el flujo de compra (eso sigue siendo
+    // exclusivo de interceptarCompraProductoAmore, cuando hay un producto
+    // concreto identificado).
+    if (detectarInteresGeneralProductos(params.texto)) {
+      await actualizarEntrada(params.supabase, fila.id, { ultimoWamidProcesado: params.wamid });
+      await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_INTERES_PRODUCTOS, origen: "automatico" });
       return { manejado: true };
     }
 
