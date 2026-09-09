@@ -233,6 +233,21 @@ async function ejecutarCreacionReal(
     return { ok: false, motivo: "error_creando_evento_nylas", detalle: err instanceof Error ? err.message : "Error desconocido creando el evento en Nylas." };
   }
 
+  // Corrección post-deploy (auditoría real, autorizado) -- especialista.phone_number_id
+  // trae para AMORE el valor LEGACY de Meta ("pendiente-amore-<tenant>",
+  // nunca actualizado cuando el canal pasó a WhatsApp-QR/Baileys), mientras
+  // que TODO el resto del canal (candado, sesiones de Agenda V2, búsqueda de
+  // cliente conocido) identifica a AMORE con el prefijo sintético real
+  // "whatsapp-qr:<tenant_id>" (ver phoneNumberIdSintetico en
+  // lib/agenda-v2/router.ts/lib/amore-entrada-router.ts). Guardar el valor
+  // legacy en la cita hacía que gestión de citas (consultarCitasActivasEspecialista,
+  // que filtra por phone_number_id) NUNCA encontrara ninguna cita real de
+  // AMORE, sin importar la fecha. Esta función es exclusiva de AMORE (tenant
+  // ya validado arriba en crearCitaConNylas/actualizarCitaConNylas), así que
+  // siempre usa el prefijo sintético real -- nunca toca dulabs_especialistas
+  // ni afecta a ningún otro tenant (que nunca pasa por este archivo).
+  const phoneNumberIdParaCita = params.idTenant === AMORE_TENANT_ID ? `whatsapp-qr:${params.idTenant}` : (especialista.phone_number_id as string);
+
   // --- Segunda protección: el INSERT atómico de DuLabs (EXCLUDE de Postgres) ---
   // servicio/servicioId SIEMPRE el PRIMER servicio (sección MUY IMPORTANTE
   // del pedido: compatibilidad histórica total) -- nunca el combinado, para
@@ -241,7 +256,7 @@ async function ejecutarCreacionReal(
   const resultadoDb = await crearCitaEspecialista(supabase, {
     especialistaId: especialista.id,
     idTenant: params.idTenant,
-    phoneNumberId: especialista.phone_number_id as string,
+    phoneNumberId: phoneNumberIdParaCita,
     telefonoCliente: params.telefonoCliente,
     nombreCliente: params.nombreCliente,
     servicio: servicioPrincipal.nombre,

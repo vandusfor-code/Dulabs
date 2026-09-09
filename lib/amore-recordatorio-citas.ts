@@ -41,6 +41,13 @@ import { formatearHoraAmPm } from "@/lib/especialistas-flow-adaptador";
 // [] para una cita de un solo servicio -- en ese caso el recordatorio sigue
 // usando cita.servicio TAL CUAL, comportamiento 100% idéntico al de antes.
 import { obtenerNombresServiciosDeCita } from "@/lib/agenda-v2/multi-servicio";
+// Corrección post-deploy (auditoría real, autorizado) -- nombre ACTUAL del
+// cliente, para nunca quedarse con el valor de nombre_cliente congelado en
+// el momento de crear la cita (que puede ser el teléfono crudo si en ese
+// instante el nombre real todavía no era conocido). Misma clave EXACTA que
+// usa el resto del canal WhatsApp-QR de AMORE (whatsapp-qr:<tenant_id>, ver
+// phoneNumberIdSintetico en lib/agenda-v2/router.ts/lib/amore-entrada-router.ts).
+import { nombreConocido } from "@/lib/clientes-conocidos";
 
 export interface CitaParaRecordatorioAmore {
   id: number;
@@ -55,13 +62,22 @@ export interface DepsRecordatorioAmore {
   especialistaPorId?: typeof especialistaPorId;
   enviarMensajeWhatsApp?: typeof enviarMensajeWhatsApp;
   obtenerNombresServiciosDeCita?: typeof obtenerNombresServiciosDeCita;
+  buscarNombreConocido?: typeof nombreConocido;
+}
+
+/** Un valor que son solo dígitos (con o sin "+" inicial) de longitud real de teléfono -- nunca se muestra como si fuera el nombre de una clienta. */
+function pareceTelefono(valor: string): boolean {
+  return /^\+?\d{7,}$/.test(valor.trim());
 }
 
 /**
  * EXCLUSIVAMENTE los datos reales recibidos -- nunca inventa un
  * profesional/fecha/hora/servicio. `servicios` con 1 elemento produce el
  * MISMO texto exacto de siempre ("Servicio: {nombre}"); con más de uno,
- * pasa a una lista -- el resto del mensaje no cambia.
+ * pasa a una lista -- el resto del mensaje no cambia. `nombreCliente` vacío
+ * (nunca se pudo resolver un nombre real, ni siquiera el congelado en la
+ * cita, sección NOMBRE del pedido de corrección) usa un saludo genérico --
+ * NUNCA muestra un teléfono como si fuera un nombre.
  */
 export function construirTextoRecordatorioAmore(params: {
   nombreCliente: string;
@@ -71,8 +87,9 @@ export function construirTextoRecordatorioAmore(params: {
   horaTexto: string;
 }): string {
   const lineaServicios = params.servicios.length === 1 ? `Servicio: ${params.servicios[0]}` : `Servicios:\n${params.servicios.map((s) => `- ${s}`).join("\n")}`;
+  const saludo = params.nombreCliente.trim() ? `¡Hola ${params.nombreCliente}! 💗` : `¡Hola! 💗`;
   return (
-    `¡Hola ${params.nombreCliente}! 💗 Te recordamos tu cita en AMORE:\n\n` +
+    `${saludo} Te recordamos tu cita en AMORE:\n\n` +
     `${lineaServicios}\n` +
     `Profesional: ${params.profesionalNombre}\n` +
     `Fecha: ${params.fechaEtiqueta}\n` +
@@ -98,6 +115,7 @@ export async function enviarRecordatorioAmore(
   const buscarEspecialista = deps.especialistaPorId ?? especialistaPorId;
   const enviar = deps.enviarMensajeWhatsApp ?? enviarMensajeWhatsApp;
   const buscarNombresServicios = deps.obtenerNombresServiciosDeCita ?? obtenerNombresServiciosDeCita;
+  const buscarNombreActual = deps.buscarNombreConocido ?? nombreConocido;
 
   let especialista;
   try {
@@ -124,10 +142,25 @@ export async function enviarRecordatorioAmore(
   }
   const servicios = nombresServicios.length > 0 ? nombresServicios : [cita.servicio];
 
+  // Corrección post-deploy (autorizado) -- nombre ACTUAL y real, nunca el
+  // valor congelado en nombre_cliente si es mejorable. Prioridad: (1) nombre
+  // vivo en dulabs_clientes_conocidos bajo la clave sintética real de AMORE;
+  // (2) nombre_cliente de la cita, SOLO si claramente no es un teléfono; (3)
+  // saludo genérico -- NUNCA se muestra un número de teléfono como nombre.
+  // Best-effort: un fallo consultando el nombre actual nunca bloquea el
+  // envío, cae al mismo criterio (2)/(3) de arriba.
+  let nombreActual: string | null = null;
+  try {
+    nombreActual = await buscarNombreActual(supabase, `whatsapp-qr:${idTenant}`, cita.telefono_cliente);
+  } catch (err) {
+    console.error(`[amore-recordatorio] cita ${cita.id}: error técnico consultando el nombre actual del cliente -- se usa el fallback disponible:`, err instanceof Error ? err.message : "error desconocido");
+  }
+  const nombreParaSaludo = nombreActual ?? (pareceTelefono(cita.nombre_cliente) ? "" : cita.nombre_cliente);
+
   const fechaIso = fechaColombiaDesdeIso(cita.inicio);
   const hora = horaColombiaDesdeIso(cita.inicio);
   const texto = construirTextoRecordatorioAmore({
-    nombreCliente: cita.nombre_cliente,
+    nombreCliente: nombreParaSaludo,
     servicios,
     profesionalNombre: especialista.nombre,
     fechaEtiqueta: formatearFechaLarga(fechaIso),

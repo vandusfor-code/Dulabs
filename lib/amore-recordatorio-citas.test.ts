@@ -126,3 +126,111 @@ describe("enviarRecordatorioAmore -- integra obtenerNombresServiciosDeCita", () 
     assert.equal(llamado, false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// CORRECCIÓN (autorizada) -- nombre REAL y ACTUAL del cliente en el
+// recordatorio, nunca el valor congelado en nombre_cliente si ese valor
+// resulta ser un teléfono (caso real observado en producción: cita 4307,
+// nombre_cliente="573148127388", recordatorio mostró "¡Hola 573148127388!").
+// ---------------------------------------------------------------------------
+describe("CORRECCIÓN (autorizada) -- nombre actual desde dulabs_clientes_conocidos, nunca un teléfono como nombre", () => {
+  const CITA_CON_TELEFONO_CONGELADO: CitaParaRecordatorioAmore = { ...CITA_BASE, nombre_cliente: "573148127388" };
+
+  it("Test 5 (obligatorio) -- nombre ACTUAL disponible ('Camila') -- se usa SIEMPRE, aunque nombre_cliente sea el teléfono congelado", async () => {
+    let mensajeEnviado = "";
+    let llamadaBuscarNombre: { phoneNumberId: string; telefono: string } | undefined;
+    const ok = await enviarRecordatorioAmore(FAKE_SUPABASE, "amore-test", CITA_CON_TELEFONO_CONGELADO, {
+      especialistaPorId: async () => MARY,
+      obtenerNombresServiciosDeCita: async () => [],
+      buscarNombreConocido: async (_s, phoneNumberId, telefono) => {
+        llamadaBuscarNombre = { phoneNumberId, telefono };
+        return "Camila";
+      },
+      enviarMensajeWhatsApp: async (params) => {
+        mensajeEnviado = params.mensaje;
+        return { ok: true, data: { ok: true } } as const;
+      },
+    });
+    assert.equal(ok, true);
+    assert.match(mensajeEnviado, /¡Hola Camila! 💗/);
+    assert.doesNotMatch(mensajeEnviado, /573148127388/, "NUNCA debe mostrar el teléfono como si fuera el nombre");
+    assert.deepEqual(llamadaBuscarNombre, { phoneNumberId: "whatsapp-qr:amore-test", telefono: "573148127388" }, "consulta con la MISMA clave sintética real que usa el resto del canal WhatsApp-QR");
+  });
+
+  it("Test 6 (obligatorio) -- sin nombre actual (null), pero nombre_cliente YA es un nombre real ('Camila') -- se usa tal cual", async () => {
+    let mensajeEnviado = "";
+    const ok = await enviarRecordatorioAmore(FAKE_SUPABASE, "amore-test", { ...CITA_BASE, nombre_cliente: "Camila" }, {
+      especialistaPorId: async () => MARY,
+      obtenerNombresServiciosDeCita: async () => [],
+      buscarNombreConocido: async () => null,
+      enviarMensajeWhatsApp: async (params) => {
+        mensajeEnviado = params.mensaje;
+        return { ok: true, data: { ok: true } } as const;
+      },
+    });
+    assert.equal(ok, true);
+    assert.match(mensajeEnviado, /¡Hola Camila! 💗/);
+  });
+
+  it("Test 7 (obligatorio) -- sin nombre actual Y nombre_cliente es un teléfono -- saludo genérico, NUNCA muestra el número", async () => {
+    let mensajeEnviado = "";
+    const ok = await enviarRecordatorioAmore(FAKE_SUPABASE, "amore-test", CITA_CON_TELEFONO_CONGELADO, {
+      especialistaPorId: async () => MARY,
+      obtenerNombresServiciosDeCita: async () => [],
+      buscarNombreConocido: async () => null,
+      enviarMensajeWhatsApp: async (params) => {
+        mensajeEnviado = params.mensaje;
+        return { ok: true, data: { ok: true } } as const;
+      },
+    });
+    assert.equal(ok, true);
+    assert.match(mensajeEnviado, /^¡Hola! 💗/, "saludo genérico, sin ningún nombre insertado");
+    assert.doesNotMatch(mensajeEnviado, /573148127388/, "NUNCA muestra el teléfono como nombre");
+  });
+
+  it("Test 8 (regresión) -- nombre actual y nombre_cliente coinciden ('Camila' en ambos) -- sigue funcionando normal", async () => {
+    let mensajeEnviado = "";
+    const ok = await enviarRecordatorioAmore(FAKE_SUPABASE, "amore-test", { ...CITA_BASE, nombre_cliente: "Camila" }, {
+      especialistaPorId: async () => MARY,
+      obtenerNombresServiciosDeCita: async () => [],
+      buscarNombreConocido: async () => "Camila",
+      enviarMensajeWhatsApp: async (params) => {
+        mensajeEnviado = params.mensaje;
+        return { ok: true, data: { ok: true } } as const;
+      },
+    });
+    assert.equal(ok, true);
+    assert.match(mensajeEnviado, /¡Hola Camila! 💗/);
+  });
+
+  it("Test 9 (obligatorio) -- si falla la consulta del nombre actual, el recordatorio SIGUE enviándose (fallback a nombre_cliente), nunca falla por completo", async () => {
+    let mensajeEnviado = "";
+    const ok = await enviarRecordatorioAmore(FAKE_SUPABASE, "amore-test", { ...CITA_BASE, nombre_cliente: "Camila" }, {
+      especialistaPorId: async () => MARY,
+      obtenerNombresServiciosDeCita: async () => [],
+      buscarNombreConocido: async () => {
+        throw new Error("error técnico simulado consultando dulabs_clientes_conocidos");
+      },
+      enviarMensajeWhatsApp: async (params) => {
+        mensajeEnviado = params.mensaje;
+        return { ok: true, data: { ok: true } } as const;
+      },
+    });
+    assert.equal(ok, true, "un error consultando el nombre actual NUNCA debe impedir el envío del recordatorio");
+    assert.match(mensajeEnviado, /¡Hola Camila! 💗/, "cae al fallback disponible (nombre_cliente, que en este caso ya es un nombre real)");
+  });
+
+  it("regresión -- sin inyectar buscarNombreConocido (Supabase real no disponible en este fake), cae a nombre_cliente cuando NO parece un teléfono", async () => {
+    let mensajeEnviado = "";
+    const ok = await enviarRecordatorioAmore(FAKE_SUPABASE, "amore-test", CITA_BASE, {
+      especialistaPorId: async () => MARY,
+      obtenerNombresServiciosDeCita: async () => [],
+      enviarMensajeWhatsApp: async (params) => {
+        mensajeEnviado = params.mensaje;
+        return { ok: true, data: { ok: true } } as const;
+      },
+    });
+    assert.equal(ok, true);
+    assert.match(mensajeEnviado, /¡Hola Ana Pérez! 💗/);
+  });
+});

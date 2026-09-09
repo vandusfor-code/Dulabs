@@ -9,6 +9,10 @@ import assert from "node:assert/strict";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { crearCitaConNylas, actualizarCitaConNylas } from "@/lib/reserva-servicio-nylas";
 import { AMORE_TENANT_ID } from "@/lib/nylas/nylas-grant";
+// Corrección post-deploy (autorizado) -- prueba de round-trip real: la cita
+// que crearCitaConNylas acaba de crear debe ser encontrable por gestión de
+// citas (mismo mecanismo real que usa lib/agenda-v2/router.ts).
+import { consultarCitasActivasEspecialista } from "@/lib/especialistas-flow-adaptador";
 import type { NylasEvent, NylasEventsClient, NylasEventsWriteClient } from "@/lib/nylas/nylas-types";
 
 type FilaGenerica = Record<string, unknown>;
@@ -957,5 +961,77 @@ describe("FASE 3 -- reprogramación (Fase 8) de una cita multi-servicio conserva
     assert.equal(resultado.ok, true);
     if (!resultado.ok) return;
     assert.equal(resultado.servicio.duracionMin, 120);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CORRECCIÓN (autorizada) -- toda cita NUEVA de AMORE debe guardar el prefijo
+// sintético real de WhatsApp-QR ("whatsapp-qr:<tenant_id>") como
+// phone_number_id, NUNCA el valor legacy de especialista.phone_number_id
+// ("pendiente-amore-<tenant_id>" en producción real) -- ese mismatch es
+// exactamente lo que hacía que gestión de citas (consultarCitasActivasEspecialista,
+// lib/especialistas-flow-adaptador.ts) NUNCA encontrara ninguna cita real de
+// AMORE. NO se hace backfill acá -- solo se prueba el camino de creación
+// nueva, tal como autorizado.
+// ---------------------------------------------------------------------------
+describe("CORRECCIÓN (autorizada) -- phone_number_id sintético en citas NUEVAS de AMORE", () => {
+  it("Test 1 (obligatorio) -- la cita nueva se guarda con 'whatsapp-qr:<AMORE_TENANT_ID>', NUNCA con especialista.phone_number_id ('wa-amore' en este fixture)", async () => {
+    const { resultado, supabase } = await reservar();
+    assert.equal(resultado.ok, true);
+    if (!resultado.ok) return;
+    const citas = (supabase as unknown as { __tablas: Record<string, FilaGenerica[]> }).__tablas.dulabs_citas_especialista;
+    assert.equal(citas[0]!.phone_number_id, `whatsapp-qr:${AMORE_TENANT_ID}`);
+    assert.notEqual(citas[0]!.phone_number_id, "wa-amore", "nunca el valor legacy del especialista (ESPECIALISTAS fixture)");
+  });
+
+  it("Test 2 (regresión) -- un tenant distinto de AMORE sigue rechazado exactamente igual (tenant_no_autorizado) -- esta corrección nunca abre una vía nueva para otros tenants", async () => {
+    const { resultado } = await reservar({ idTenant: "otro-tenant-cualquiera" });
+    assert.equal(resultado.ok, false);
+    if (resultado.ok) return;
+    assert.equal(resultado.motivo, "tenant_no_autorizado");
+  });
+
+  it("Test 3 (obligatorio) -- gestión de citas SÍ encuentra la cita recién creada, usando el MISMO prefijo sintético real (whatsapp-qr:<tenant>)", async () => {
+    // Fecha claramente futura respecto al reloj real de ejecución de tests
+    // (nunca la fecha fija LUNES de este archivo, que ya quedó en el pasado).
+    const { resultado, supabase } = await reservar({ horaISO: "2027-01-15T10:00:00-05:00" });
+    assert.equal(resultado.ok, true);
+    if (!resultado.ok) return;
+
+    const gestion = await consultarCitasActivasEspecialista(supabase, {
+      phoneNumberId: `whatsapp-qr:${AMORE_TENANT_ID}`,
+      telefonoCliente: "573001234567",
+    });
+    assert.equal(gestion.cantidad, 1, "gestión de citas debe encontrar la cita real recién creada");
+    assert.equal(gestion.citas[0]!.id, resultado.cita.id);
+  });
+
+  it("Test 4 (obligatorio) -- documenta el bug histórico: si el phone_number_id de la cita fuera el valor LEGACY, gestión de citas NUNCA la encuentra (nunca se corrige con datos reales, solo se documenta)", async () => {
+    const supabase = crearSupabaseFalso(
+      construirTablas({
+        citas: [
+          {
+            id: 555001,
+            id_tenant: AMORE_TENANT_ID,
+            especialista_id: 1,
+            phone_number_id: "pendiente-amore-ed6ae77f", // valor LEGACY real observado en producción (auditoría)
+            servicio: "Dipping",
+            servicio_id: "s-dipping",
+            telefono_cliente: "573001234567",
+            nombre_cliente: "Ana Pérez",
+            inicio: "2027-01-15T15:00:00+00:00",
+            fin: "2027-01-15T17:00:00+00:00",
+            estado: "confirmada",
+            motivo_rechazo: null,
+            origen: "manual",
+          },
+        ],
+      }),
+    );
+    const gestion = await consultarCitasActivasEspecialista(supabase, {
+      phoneNumberId: `whatsapp-qr:${AMORE_TENANT_ID}`, // el prefijo sintético real que gestión de citas siempre usa
+      telefonoCliente: "573001234567",
+    });
+    assert.equal(gestion.cantidad, 0, "reproduce el bug histórico -- una cita real, futura y confirmada, pero con el phone_number_id legacy, es invisible para gestión de citas");
   });
 });
