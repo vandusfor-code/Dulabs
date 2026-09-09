@@ -64,13 +64,31 @@ export interface DepsDiasCandidatos {
 }
 
 export type ResultadoDiasCandidatos =
-  | { ok: true; opciones: OpcionFechaAgendaV2[] }
+  | { ok: true; opciones: OpcionFechaAgendaV2[]; hayMasFechas: boolean }
   | { ok: false; motivo: "servicio_no_encontrado" | "sin_especialistas_habilitados" };
 
 /**
- * Calcula hasta MAX_DIAS_CANDIDATOS fechas reales, evaluando desde MAÑANA
- * (nunca el mismo día -- necesita margen real para agendar) y avanzando día
- * por día hasta HORIZONTE_DIAS_A_EVALUAR. Cada día candidato debe:
+ * Corrección post-deploy (autorizada, "Ver más fechas") -- días de
+ * calendario reales entre dos fechas YYYY-MM-DD (positivo si `hasta` es
+ * posterior a `desde`). Misma ancla de mediodía Bogotá (T12:00:00-05:00) que
+ * ya usa formatearFechaLarga (lib/agenda-v2/fechas.ts) -- Colombia no tiene
+ * horario de verano, así que la resta de milisegundos siempre da un número
+ * entero exacto de días, sin redondeo defensivo.
+ */
+function diasEntreFechas(desdeIso: string, hastaIso: string): number {
+  const MS_POR_DIA = 24 * 60 * 60 * 1000;
+  const desde = new Date(`${desdeIso}T12:00:00-05:00`).getTime();
+  const hasta = new Date(`${hastaIso}T12:00:00-05:00`).getTime();
+  return Math.round((hasta - desde) / MS_POR_DIA);
+}
+
+/**
+ * Calcula hasta MAX_DIAS_CANDIDATOS fechas reales, evaluando desde HOY
+ * (corrección post-deploy, autorizado -- "agendar hoy": antes empezaba
+ * SIEMPRE desde mañana, sin importar si todavía quedaba tiempo real hoy) y
+ * avanzando día por día hasta HORIZONTE_DIAS_A_EVALUAR (mismo horizonte
+ * TOTAL siempre, medido desde HOY -- "Ver más fechas" nunca lo amplía, solo
+ * continúa evaluando dentro de la misma ventana). Cada día candidato debe:
  *   1. Tener alguna ventana laboral real ese día de la semana (si no
  *      trabaja, ej. domingo, se descarta SIN tocar Nylas).
  *   2. Sobrevivir a los bloqueos reales de ese día (propios o generales del
@@ -81,6 +99,16 @@ export type ResultadoDiasCandidatos =
  *      llamada cara (red) de todo el cálculo, y solo se hace para los días
  *      que ya sobrevivieron los dos filtros anteriores.
  *
+ * `params.continuarDesdeFechaIso` (corrección post-deploy, autorizada, "Ver
+ * más fechas") -- si se da, la búsqueda arranca el día INMEDIATAMENTE
+ * posterior a esa fecha (nunca reinicia desde HOY, nunca repite una fecha ya
+ * mostrada), pero el horizonte de evaluación sigue siendo el mismo total
+ * (HORIZONTE_DIAS_A_EVALUAR días desde HOY, no desde el cursor). Para
+ * detectar si hay una página siguiente, se evalúa un candidato EXTRA más
+ * allá de MAX_DIAS_CANDIDATOS (mismo costo real de red que ya pagaría el
+ * intento de "Ver más fechas" de todas formas) -- `hayMasFechas` es ese
+ * resultado; `opciones` nunca incluye ese candidato extra.
+ *
  * `nylasDeps === null` significa que este tenant no tiene grant_id/API key
  * de Nylas configurados (mismo criterio de "sin conexión con el calendario"
  * ya usado en lib/flow/executors/internal-action-executor.ts) -- nunca se
@@ -90,12 +118,12 @@ export type ResultadoDiasCandidatos =
  */
 export async function calcularDiasCandidatosReales(
   supabase: SupabaseClient,
-  params: { idTenant: string; servicioId: string; profesionalId: number },
+  params: { idTenant: string; servicioId: string; profesionalId: number; continuarDesdeFechaIso?: string },
   nylasDeps: DepsDisponibilidadNylas | null,
   deps: Partial<DepsDiasCandidatos> = {},
 ): Promise<ResultadoDiasCandidatos> {
   if (!nylasDeps) {
-    return { ok: true, opciones: [] };
+    return { ok: true, opciones: [], hayMasFechas: false };
   }
 
   const _ventanasLaborales = deps.ventanasLaboralesEspecialista ?? ventanasLaboralesEspecialista;
@@ -108,7 +136,14 @@ export async function calcularDiasCandidatosReales(
   const hoy = _hoyIso();
   const fechasCandidatas: string[] = [];
 
-  for (let offset = 1; offset <= HORIZONTE_DIAS_A_EVALUAR && fechasCandidatas.length < MAX_DIAS_CANDIDATOS; offset++) {
+  // Corrección post-deploy (autorizado, "agendar hoy") -- offset arranca en
+  // 0 (hoy) por defecto, nunca en 1: si hoy ya no tiene ningún horario real
+  // (jornada cerrada, sin hueco libre, Nylas sin confirmar), el filtro #3 de
+  // abajo lo descarta exactamente igual que cualquier otro día -- no hace
+  // falta ninguna regla especial de "es hoy" acá. Con `continuarDesdeFechaIso`
+  // (corrección "Ver más fechas"), arranca justo después de esa fecha.
+  const offsetInicial = params.continuarDesdeFechaIso ? diasEntreFechas(hoy, params.continuarDesdeFechaIso) + 1 : 0;
+  for (let offset = offsetInicial; offset <= HORIZONTE_DIAS_A_EVALUAR && fechasCandidatas.length < MAX_DIAS_CANDIDATOS + 1; offset++) {
     const fechaIso = _sumarDias(hoy, offset);
 
     const ventanasBase = await _ventanasLaborales(supabase, params.profesionalId, params.idTenant, fechaIso);
@@ -135,7 +170,8 @@ export async function calcularDiasCandidatosReales(
     fechasCandidatas.push(fechaIso);
   }
 
-  return { ok: true, opciones: construirOpcionesFecha(fechasCandidatas) };
+  const hayMasFechas = fechasCandidatas.length > MAX_DIAS_CANDIDATOS;
+  return { ok: true, opciones: construirOpcionesFecha(fechasCandidatas.slice(0, MAX_DIAS_CANDIDATOS)), hayMasFechas };
 }
 
 export type ResultadoHorariosFecha =
@@ -205,17 +241,18 @@ export interface DepsDisponibilidadMultiServicio {
 /**
  * Mismo criterio EXACTO que calcularDiasCandidatosReales (mismo
  * MAX_DIAS_CANDIDATOS/HORIZONTE_DIAS_A_EVALUAR, mismos dos filtros rápidos
- * sin red antes de tocar Nylas) -- la única diferencia real es que la
- * duración viene ya sumada, nunca de un catálogo.
+ * sin red antes de tocar Nylas, mismo soporte de `continuarDesdeFechaIso` +
+ * `hayMasFechas` para "Ver más fechas") -- la única diferencia real es que
+ * la duración viene ya sumada, nunca de un catálogo.
  */
 export async function calcularDiasCandidatosMultiServicio(
   supabase: SupabaseClient,
-  params: { idTenant: string; especialista: { id: number; nombre: string }; duracionTotalMin: number },
+  params: { idTenant: string; especialista: { id: number; nombre: string }; duracionTotalMin: number; continuarDesdeFechaIso?: string },
   nylasDeps: DepsDisponibilidadNylas | null,
   deps: Partial<DepsDisponibilidadMultiServicio> = {},
-): Promise<{ opciones: OpcionFechaAgendaV2[] }> {
+): Promise<{ opciones: OpcionFechaAgendaV2[]; hayMasFechas: boolean }> {
   if (!nylasDeps) {
-    return { opciones: [] };
+    return { opciones: [], hayMasFechas: false };
   }
 
   const _ventanasLaborales = deps.ventanasLaboralesEspecialista ?? ventanasLaboralesEspecialista;
@@ -228,7 +265,12 @@ export async function calcularDiasCandidatosMultiServicio(
   const hoy = _hoyIso();
   const fechasCandidatas: string[] = [];
 
-  for (let offset = 1; offset <= HORIZONTE_DIAS_A_EVALUAR && fechasCandidatas.length < MAX_DIAS_CANDIDATOS; offset++) {
+  // Corrección post-deploy (autorizado, "agendar hoy" + "Ver más fechas") --
+  // mismo criterio EXACTO que calcularDiasCandidatosReales: offset arranca
+  // en 0 (hoy) por defecto, o justo después de `continuarDesdeFechaIso`
+  // cuando se pide continuar -- nunca reinicia, nunca repite.
+  const offsetInicial = params.continuarDesdeFechaIso ? diasEntreFechas(hoy, params.continuarDesdeFechaIso) + 1 : 0;
+  for (let offset = offsetInicial; offset <= HORIZONTE_DIAS_A_EVALUAR && fechasCandidatas.length < MAX_DIAS_CANDIDATOS + 1; offset++) {
     const fechaIso = _sumarDias(hoy, offset);
 
     const ventanasBase = await _ventanasLaborales(supabase, params.especialista.id, params.idTenant, fechaIso);
@@ -248,7 +290,8 @@ export async function calcularDiasCandidatosMultiServicio(
     fechasCandidatas.push(fechaIso);
   }
 
-  return { opciones: construirOpcionesFecha(fechasCandidatas) };
+  const hayMasFechas = fechasCandidatas.length > MAX_DIAS_CANDIDATOS;
+  return { opciones: construirOpcionesFecha(fechasCandidatas.slice(0, MAX_DIAS_CANDIDATOS)), hayMasFechas };
 }
 
 export type ResultadoHorariosFechaMultiServicio = { ok: true; horarios: string[] } | { ok: false; motivo: "sin_horarios_ese_dia" };

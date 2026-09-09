@@ -124,7 +124,12 @@ async function consultar(
   return listarHorariosDisponiblesPorServicioConNylas(
     supabase,
     { idTenant: TENANT, servicioId: params.servicioId ?? "s-dipping", fecha: params.fecha ?? LUNES, especialistaId: params.especialistaId },
-    { nylasClient: mockNylasClient(eventosPorCalendario, onCall), grantId: "grant-amore" },
+    // "ahora" fijo y muy anterior a LUNES (corrección post-deploy, "agendar
+    // hoy") -- estos tests prueban disponibilidad de un día ENTERO, nunca el
+    // filtro de "ya pasó" (eso lo prueba la nueva sección de este archivo
+    // más abajo); sin este ancla, el filtro real usaría el reloj real de
+    // ejecución y descartaría horarios de una fecha de fixture ya vieja.
+    { nylasClient: mockNylasClient(eventosPorCalendario, onCall), grantId: "grant-amore", ahora: () => new Date("2026-08-25T00:00:00-05:00") },
   );
 }
 
@@ -406,7 +411,7 @@ describe("FASE 3 (autorizado, multi-servicio) -- calcularHorariosDeEspecialista 
     const r = await calcularHorariosDeEspecialista(
       supabase,
       { idTenant: TENANT, especialista: { id: 1, nombre: "Mary" }, fecha: LUNES, duracionMin: 150 },
-      { nylasClient: mockNylasClient({}), grantId: "grant-amore" },
+      { nylasClient: mockNylasClient({}), grantId: "grant-amore", ahora: () => new Date("2026-08-25T00:00:00-05:00") },
     );
     assert.equal(r.estado, "ok");
     assert.ok(r.horarios.includes("09:00"), "150 min libres desde la apertura deben ofrecerse como un bloque continuo real");
@@ -417,10 +422,70 @@ describe("FASE 3 (autorizado, multi-servicio) -- calcularHorariosDeEspecialista 
     const r = await calcularHorariosDeEspecialista(
       supabase,
       { idTenant: TENANT, especialista: { id: 1, nombre: "Mary" }, fecha: LUNES, duracionMin: 150 },
-      { nylasClient: mockNylasClient({ "cal-mary": [evento(`${LUNES}T10:00:00-05:00`, `${LUNES}T10:30:00-05:00`)] }), grantId: "grant-amore" },
+      {
+        nylasClient: mockNylasClient({ "cal-mary": [evento(`${LUNES}T10:00:00-05:00`, `${LUNES}T10:30:00-05:00`)] }),
+        grantId: "grant-amore",
+        ahora: () => new Date("2026-08-25T00:00:00-05:00"),
+      },
     );
     assert.equal(r.estado, "ok");
     assert.ok(!r.horarios.includes("09:00"), "09:00-11:30 se solapa con el compromiso de 10:00-10:30 -- el bloque de 150min completo se rechaza, NUNCA se ofrece partido");
     assert.ok(r.horarios.includes("10:30"), "10:30-13:00 sigue libre después del compromiso, sí se ofrece");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CORRECCIÓN (autorizada, "agendar hoy") -- calcularHorariosDeEspecialista
+// nunca ofrece un horario cuyo instante real ya pasó. Comparación Date vs
+// Date (nunca strings/horas locales) -- "ahora" inyectable para tests
+// deterministas. Para cualquier día que NO sea "hoy" esto es un no-op real
+// (ver todos los tests de arriba, que fijan "ahora" muy anterior a LUNES y
+// siguen pasando sin ningún cambio de comportamiento).
+// ---------------------------------------------------------------------------
+describe("CORRECCIÓN (autorizada, 'agendar hoy') -- filtro de horarios ya pasados", () => {
+  it("Test 3 (obligatorio) -- horarios mezclados (algunos ya pasaron, otros no) -- SOLO los futuros se ofrecen", async () => {
+    const r = await calcularHorariosDeEspecialista(
+      crearSupabaseFalso(construirTablas({ servicios: [{ ...SERVICIO_DIPPING, duracion_min: 60 }] })),
+      { idTenant: TENANT, especialista: { id: 1, nombre: "Mary" }, fecha: LUNES, duracionMin: 60 },
+      { nylasClient: mockNylasClient({}), grantId: "grant-amore", ahora: () => new Date(`${LUNES}T10:15:00-05:00`) },
+    );
+    assert.equal(r.estado, "ok");
+    assert.ok(!r.horarios.includes("09:00") && !r.horarios.includes("09:30") && !r.horarios.includes("10:00"), "09:00/09:30/10:00 ya pasaron (son anteriores a las 10:15) -- NUNCA deben ofrecerse");
+    assert.ok(r.horarios.includes("10:30") && r.horarios.includes("11:00"), "10:30 en adelante sigue siendo futuro real -- sí debe ofrecerse");
+  });
+
+  it("Test 4 (obligatorio) -- 'ahora' después del cierre de la jornada -- NINGÚN horario de hoy, aunque el día en sí esté completamente libre", async () => {
+    const r = await calcularHorariosDeEspecialista(
+      crearSupabaseFalso(construirTablas({ servicios: [{ ...SERVICIO_DIPPING, duracion_min: 60 }] })),
+      { idTenant: TENANT, especialista: { id: 1, nombre: "Mary" }, fecha: LUNES, duracionMin: 60 },
+      { nylasClient: mockNylasClient({}), grantId: "grant-amore", ahora: () => new Date(`${LUNES}T19:00:00-05:00`) }, // jornada real de Mary cierra a las 18:00
+    );
+    assert.equal(r.estado, "ok");
+    assert.deepEqual(r.horarios, [], "la jornada real ya cerró -- ningún horario de hoy, nunca uno inventado o ya pasado");
+  });
+
+  it("un horario que empieza EXACTAMENTE a la misma hora que 'ahora' se excluye (comparación estricta '>', nunca '>=')", async () => {
+    const r = await calcularHorariosDeEspecialista(
+      crearSupabaseFalso(construirTablas({ servicios: [{ ...SERVICIO_DIPPING, duracion_min: 60 }] })),
+      { idTenant: TENANT, especialista: { id: 1, nombre: "Mary" }, fecha: LUNES, duracionMin: 60 },
+      { nylasClient: mockNylasClient({}), grantId: "grant-amore", ahora: () => new Date(`${LUNES}T10:00:00-05:00`) },
+    );
+    assert.equal(r.estado, "ok");
+    assert.ok(!r.horarios.includes("10:00"), "un horario que arranca justo 'ahora' nunca se ofrece -- no queda tiempo real para reservarlo antes de que empiece");
+    assert.ok(r.horarios.includes("10:30"), "el siguiente slot real (después de 'ahora') sí se ofrece");
+  });
+
+  it("regresión -- para una fecha futura real, el filtro nunca elimina nada (comportamiento 100% idéntico al de antes de esta corrección)", async () => {
+    // "ahora" muy anterior a LUNES -- todo horario real de LUNES es, por definición, posterior a "ahora": la jornada completa (09:00 a 17:00 cada 30min) debe seguir intacta.
+    const r = await calcularHorariosDeEspecialista(
+      crearSupabaseFalso(construirTablas({ servicios: [{ ...SERVICIO_DIPPING, duracion_min: 60 }] })),
+      { idTenant: TENANT, especialista: { id: 1, nombre: "Mary" }, fecha: LUNES, duracionMin: 60 },
+      { nylasClient: mockNylasClient({}), grantId: "grant-amore", ahora: () => new Date("2026-08-25T10:15:00-05:00") },
+    );
+    assert.equal(r.estado, "ok");
+    assert.deepEqual(r.horarios, [
+      "09:00", "09:30", "10:00", "10:30", "11:00", "11:30", "12:00", "12:30", "13:00", "13:30",
+      "14:00", "14:30", "15:00", "15:30", "16:00", "16:30", "17:00", "17:30", "18:00",
+    ]);
   });
 });

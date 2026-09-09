@@ -12,7 +12,7 @@ import type { CambiosSesionAgendaV2, SesionAgendaV2 } from "@/lib/agenda-v2/sesi
 import { resolverSeleccionMultiServicio, textoSeleccionInvalidaServicio, type OpcionServicioAgendaV2 } from "@/lib/agenda-v2/servicios";
 import { esOpcionCategoria, resolverSeleccionCategoria, textoSeleccionInvalidaCategoria, type OpcionCategoriaAgendaV2 } from "@/lib/agenda-v2/categorias";
 import { resolverSeleccionProfesional, textoSeleccionInvalidaProfesional, type OpcionProfesionalAgendaV2 } from "@/lib/agenda-v2/profesionales";
-import { resolverSeleccionFecha, textoSeleccionInvalidaFecha, type OpcionFechaAgendaV2 } from "@/lib/agenda-v2/fechas";
+import { resolverSeleccionFecha, textoSeleccionInvalidaFecha, esSeleccionVerMasFechas, type OpcionFechaAgendaV2 } from "@/lib/agenda-v2/fechas";
 import { resolverSeleccionHora, textoSeleccionInvalidaHora, type OpcionHoraAgendaV2 } from "@/lib/agenda-v2/horas";
 import { resolverSeleccionConfirmacion, textoSeleccionInvalidaConfirmacion, type OpcionConfirmacionAgendaV2 } from "@/lib/agenda-v2/confirmacion";
 import {
@@ -54,6 +54,12 @@ export type ResultadoControladorAgendaV2 =
   // FASE 5 -- la fecha fue elegida, pero calcular los horarios reales de ESE
   // día exige el mismo motor async. Ver lib/agenda-v2/disponibilidad.ts.
   | { accion: "fecha_seleccionada"; fechaIso: string }
+  // Corrección post-deploy (autorizada, "Ver más fechas") -- se pidió ver
+  // fechas posteriores a las ya mostradas, para el MISMO servicio(s)/
+  // profesional ya elegidos. Calcular esas fechas exige el mismo motor
+  // async de disponibilidad (Fase 4) -- router.ts resuelve la transición,
+  // el controlador se queda puro/síncrono.
+  | { accion: "ver_mas_fechas_solicitado" }
   // FASE 6 -- la hora fue elegida, pero armar el resumen real (nombre del
   // servicio/profesional, precio, duración) exige datos async -- router.ts
   // termina la transición a S5_CONFIRMAR con el resumen ya armado.
@@ -215,16 +221,31 @@ function manejarSeleccionProfesional(sesion: SesionAgendaV2, mensaje: string): R
  * construyó router.ts con el motor real de disponibilidad + Nylas, ver
  * lib/agenda-v2/disponibilidad.ts -- nunca inventadas ni hardcodeadas acá,
  * nunca se parsea texto libre como "el sábado" o "mañana").
+ *
+ * Corrección post-deploy (autorizada, "Ver más fechas") -- `opcionesMostradas`
+ * para este paso ya no es un arreglo plano, sino
+ * `{ opciones, numeroVerMasFechas }` -- las fechas reales ya mostradas más,
+ * si corresponde, el número real de "Ver más fechas" (`null` si no hay más
+ * fechas dentro del horizonte). Los demás pasos de Agenda V2 conservan su
+ * propio arreglo plano tal cual, sin ningún cambio.
  */
 function manejarSeleccionFecha(sesion: SesionAgendaV2, mensaje: string): ResultadoControladorAgendaV2 {
-  const opciones = (sesion.opcionesMostradas as OpcionFechaAgendaV2[] | null) ?? [];
-  if (opciones.length === 0) {
+  const datos = sesion.opcionesMostradas as { opciones: OpcionFechaAgendaV2[]; numeroVerMasFechas: number | null } | null;
+  if (!datos || !Array.isArray(datos.opciones) || datos.opciones.length === 0) {
     return { accion: "continuar", respuesta: RESPUESTA_MENU_PERDIDO };
   }
 
-  const seleccion = resolverSeleccionFecha(mensaje, opciones);
+  if (esSeleccionVerMasFechas(mensaje, datos.numeroVerMasFechas)) {
+    // Corrección post-deploy (autorizada) -- "Ver más fechas" exige volver a
+    // consultar el motor real de disponibilidad (nunca inventa fechas), así
+    // que router.ts resuelve la transición -- el controlador se queda
+    // puro/síncrono, mismo patrón EXACTO que el resto de Agenda V2.
+    return { accion: "ver_mas_fechas_solicitado" };
+  }
+
+  const seleccion = resolverSeleccionFecha(mensaje, datos.opciones);
   if (!seleccion) {
-    return { accion: "continuar", respuesta: textoSeleccionInvalidaFecha(opciones) };
+    return { accion: "continuar", respuesta: textoSeleccionInvalidaFecha(datos.opciones, datos.numeroVerMasFechas) };
   }
 
   // FASE 5 -- la fecha fue elegida, pero calcular los horarios reales de ESE

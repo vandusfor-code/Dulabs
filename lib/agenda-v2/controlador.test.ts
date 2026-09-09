@@ -263,7 +263,10 @@ describe("FASE 4 (autorizado) -- manejarMensajeAgendaV2 en S3_DIA", () => {
       step: "S3_DIA",
       servicioId: "s-cejas-cuchilla-real",
       profesionalId: 1262,
-      opcionesMostradas: OPCIONES_FECHA,
+      // Corrección post-deploy (autorizada, "Ver más fechas") --
+      // opcionesMostradas para S3_DIA ya no es un arreglo plano, ver
+      // lib/agenda-v2/controlador.ts::manejarSeleccionFecha.
+      opcionesMostradas: { opciones: OPCIONES_FECHA, numeroVerMasFechas: null },
       ...overrides,
     });
   }
@@ -325,6 +328,33 @@ describe("FASE 4 (autorizado) -- manejarMensajeAgendaV2 en S3_DIA", () => {
     if (r.accion !== "continuar") return;
     assert.equal(r.cambios, undefined);
     assert.match(r.respuesta, /Se perdió el menú/);
+  });
+
+  describe("CORRECCIÓN (autorizada, 'Ver más fechas')", () => {
+    it("Test 6/8 (obligatorios) -- '3' con numeroVerMasFechas=3 -> accion:'ver_mas_fechas_solicitado', NUNCA se interpreta como una fecha real", () => {
+      const r = manejarMensajeAgendaV2(sesionEnFecha({ opcionesMostradas: { opciones: OPCIONES_FECHA, numeroVerMasFechas: 3 } }), "3");
+      assert.deepEqual(r, { accion: "ver_mas_fechas_solicitado" });
+    });
+
+    it("Test 15 (obligatorio) -- '3' cuando NO hay 'Ver más fechas' (numeroVerMasFechas=null) sigue siendo una selección inválida, NUNCA activa la acción especial", () => {
+      const r = manejarMensajeAgendaV2(sesionEnFecha({ opcionesMostradas: { opciones: OPCIONES_FECHA, numeroVerMasFechas: null } }), "3");
+      assert.equal(r.accion, "continuar");
+      if (r.accion !== "continuar") return;
+      assert.match(r.respuesta, /No reconocí esa opción/);
+      assert.doesNotMatch(r.respuesta, /Ver más fechas/);
+    });
+
+    it("con 'Ver más fechas' presente, un número real (ej. '1') sigue resolviendo la fecha normalmente -- ambos caminos conviven sin pisarse", () => {
+      const r = manejarMensajeAgendaV2(sesionEnFecha({ opcionesMostradas: { opciones: OPCIONES_FECHA, numeroVerMasFechas: 3 } }), "1");
+      assert.deepEqual(r, { accion: "fecha_seleccionada", fechaIso: "2026-09-08" });
+    });
+
+    it("defensivo: opcionesMostradas en el formato ANTERIOR (arreglo plano, sesión creada antes de esta corrección) -- nunca rompe, pide reiniciar de forma segura", () => {
+      const r = manejarMensajeAgendaV2(sesionEnFecha({ opcionesMostradas: OPCIONES_FECHA as unknown as SesionAgendaV2["opcionesMostradas"] }), "1");
+      assert.equal(r.accion, "continuar");
+      if (r.accion !== "continuar") return;
+      assert.match(r.respuesta, /Se perdió el menú/);
+    });
   });
 });
 

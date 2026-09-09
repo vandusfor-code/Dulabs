@@ -31,7 +31,7 @@ import { manejarMensajeAgendaV2 } from "@/lib/agenda-v2/controlador";
 import { construirOpcionesServicio, renderizarMenuServicio } from "@/lib/agenda-v2/servicios";
 import { construirOpcionesCategoria, renderizarMenuCategoria } from "@/lib/agenda-v2/categorias";
 import { construirOpcionesProfesional, renderizarMenuProfesional } from "@/lib/agenda-v2/profesionales";
-import { renderizarMenuFecha, formatearFechaLarga } from "@/lib/agenda-v2/fechas";
+import { renderizarMenuFecha, formatearFechaLarga, type OpcionFechaAgendaV2 } from "@/lib/agenda-v2/fechas";
 import { construirOpcionesHora, renderizarMenuHora } from "@/lib/agenda-v2/horas";
 import {
   OPCIONES_CONFIRMACION,
@@ -553,10 +553,10 @@ export async function procesarMensajeConAgendaV2(
       // (lib/agenda-v2/disponibilidad.ts) -- nunca inventa, nunca asume 1
       // servicio. `null` si algún servicio ya no es válido o la profesional
       // ya no existe (defensivo, el caller decide qué hacer).
-      async function calcularDiasComoCorresponda(servicioId: string, profesionalId: number): Promise<ResultadoDiasCandidatos | null> {
+      async function calcularDiasComoCorresponda(servicioId: string, profesionalId: number, continuarDesdeFechaIso?: string): Promise<ResultadoDiasCandidatos | null> {
         const serviciosIdsMulti = sesion!.serviciosIds;
         if (!serviciosIdsMulti || serviciosIdsMulti.length <= 1) {
-          return await calcularDias(params.supabase, { idTenant: params.idTenant, servicioId, profesionalId }, construirNylasDeps());
+          return await calcularDias(params.supabase, { idTenant: params.idTenant, servicioId, profesionalId, continuarDesdeFechaIso }, construirNylasDeps());
         }
         const catalogo = await cargarCatalogo(params.supabase, params.idTenant);
         const serviciosSeleccionados: (ServicioCatalogoReal | undefined)[] = serviciosIdsMulti.map((id: string) => catalogo.find((s: ServicioCatalogoReal) => s.id === id));
@@ -564,8 +564,12 @@ export async function procesarMensajeConAgendaV2(
         const duracionTotalMin = (serviciosSeleccionados as { duracionMin: number }[]).reduce((acc, s) => acc + s.duracionMin, 0);
         const especialista = await especialistaPorIdDep(params.supabase, profesionalId);
         if (!especialista) return null;
-        const resultadoMulti = await calcularDiasMulti(params.supabase, { idTenant: params.idTenant, especialista: { id: profesionalId, nombre: especialista.nombre }, duracionTotalMin }, construirNylasDeps());
-        return { ok: true, opciones: resultadoMulti.opciones };
+        const resultadoMulti = await calcularDiasMulti(
+          params.supabase,
+          { idTenant: params.idTenant, especialista: { id: profesionalId, nombre: especialista.nombre }, duracionTotalMin, continuarDesdeFechaIso },
+          construirNylasDeps(),
+        );
+        return { ok: true, opciones: resultadoMulti.opciones, hayMasFechas: resultadoMulti.hayMasFechas };
       }
 
       /** Mismo criterio EXACTO que calcularDiasComoCorresponda -- multi-servicio usa la duración total real, un solo servicio queda idéntico a antes. */
@@ -590,8 +594,8 @@ export async function procesarMensajeConAgendaV2(
       // `profesionalId` y, si no hay ninguno, revierte a S2_PROFESIONAL
       // mostrando los profesionales reales de nuevo (mismo criterio en
       // ambos casos de uso).
-      async function mostrarMenuFechaOVolverAProfesional(servicioId: string, profesionalId: number): Promise<ResultadoRouterAgendaV2> {
-        const diasResultado = await calcularDiasComoCorresponda(servicioId, profesionalId);
+      async function mostrarMenuFechaOVolverAProfesional(servicioId: string, profesionalId: number, continuarDesdeFechaIso?: string): Promise<ResultadoRouterAgendaV2> {
+        const diasResultado = await calcularDiasComoCorresponda(servicioId, profesionalId, continuarDesdeFechaIso);
         if (!diasResultado) return await reiniciarPorEstadoInconsistente("multi-servicio con un servicio o profesional ya no válido");
 
         if (!diasResultado.ok || diasResultado.opciones.length === 0) {
@@ -641,15 +645,23 @@ export async function procesarMensajeConAgendaV2(
           return { manejado: true };
         }
 
+        // Corrección post-deploy (autorizada, "Ver más fechas") --
+        // opcionesMostradas para S3_DIA guarda también si hay más fechas
+        // reales dentro del horizonte (numeroVerMasFechas), para poder
+        // ofrecer "Ver más fechas" y para que el controlador sepa si un
+        // número más allá de las fechas mostradas es una selección válida.
+        // Ningún otro paso de Agenda V2 cambia -- cada uno sigue guardando
+        // su propio arreglo plano tal cual.
+        const numeroVerMasFechas = diasResultado.hayMasFechas ? diasResultado.opciones.length + 1 : null;
         await actualizarSesion(params.supabase, sesion!.id, {
           step: "S3_DIA",
           profesionalId,
           fechaIso: null,
           slotSeleccionado: null,
-          opcionesMostradas: diasResultado.opciones,
+          opcionesMostradas: { opciones: diasResultado.opciones, numeroVerMasFechas },
           ultimoWamidProcesado: params.wamid,
         });
-        await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: renderizarMenuFecha(diasResultado.opciones), origen: "automatico" });
+        await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: renderizarMenuFecha(diasResultado.opciones, numeroVerMasFechas), origen: "automatico" });
         return { manejado: true };
       }
 
@@ -671,11 +683,12 @@ export async function procesarMensajeConAgendaV2(
         if (!horariosResultado.ok) {
           const diasResultado = await calcularDiasComoCorresponda(servicioId, profesionalId);
           const opcionesFecha = diasResultado?.ok ? diasResultado.opciones : [];
+          const numeroVerMasFechasFallback = diasResultado?.ok && diasResultado.hayMasFechas ? opcionesFecha.length + 1 : null;
           await actualizarSesion(params.supabase, sesion!.id, {
             step: "S3_DIA",
             fechaIso: null,
             slotSeleccionado: null,
-            opcionesMostradas: opcionesFecha,
+            opcionesMostradas: { opciones: opcionesFecha, numeroVerMasFechas: numeroVerMasFechasFallback },
             ultimoWamidProcesado: params.wamid,
           });
           await enviarMensaje({
@@ -683,7 +696,7 @@ export async function procesarMensajeConAgendaV2(
             telefono: params.telefono,
             mensaje:
               opcionesFecha.length > 0
-                ? `${prefijo}Ese día ya no tiene horarios disponibles 😔 Elige otro:\n\n${renderizarMenuFecha(opcionesFecha)}`
+                ? `${prefijo}Ese día ya no tiene horarios disponibles 😔 Elige otro:\n\n${renderizarMenuFecha(opcionesFecha, numeroVerMasFechasFallback)}`
                 : `${prefijo}Ese día ya no tiene horarios disponibles y no encontramos otro con cupo por ahora 😔 Escribe *cancelar* y vuelve a intentarlo más tarde.`,
             origen: "automatico",
           });
@@ -800,6 +813,24 @@ export async function procesarMensajeConAgendaV2(
           return await reiniciarPorEstadoInconsistente("S3_DIA sin servicioId/profesionalId");
         }
         return await mostrarMenuHoraOVolverAFecha(sesion.servicioId, sesion.profesionalId, resultado.fechaIso);
+      }
+
+      if (resultado.accion === "ver_mas_fechas_solicitado") {
+        // Corrección post-deploy (autorizada, "Ver más fechas") -- se pidió
+        // ver fechas posteriores a las ya mostradas, para el MISMO
+        // servicio(s)/profesional ya elegidos (nunca reinicia la selección).
+        // Reutiliza mostrarMenuFechaOVolverAProfesional TAL CUAL, pasando
+        // como cursor la ÚLTIMA fecha real ya mostrada -- nunca reinicia
+        // desde hoy, nunca repite una fecha.
+        if (!sesion.servicioId || !sesion.profesionalId) {
+          return await reiniciarPorEstadoInconsistente("S3_DIA sin servicioId/profesionalId al pedir más fechas");
+        }
+        const datosFechaActual = sesion.opcionesMostradas as { opciones: OpcionFechaAgendaV2[] } | null;
+        const ultimaFechaMostrada = datosFechaActual?.opciones.at(-1)?.fechaIso;
+        if (!ultimaFechaMostrada) {
+          return await reiniciarPorEstadoInconsistente("S3_DIA sin fechas previas al pedir más fechas");
+        }
+        return await mostrarMenuFechaOVolverAProfesional(sesion.servicioId, sesion.profesionalId, ultimaFechaMostrada);
       }
 
       if (resultado.accion === "hora_seleccionada") {

@@ -65,6 +65,17 @@ export interface DepsDisponibilidadNylas {
   nylasClient: NylasEventsClient;
   /** grant_id de Nylas ya resuelto por el caller (ver lib/nylas/nylas-grant.ts) -- nunca hardcodeado acá. */
   grantId: string;
+  /**
+   * Corrección post-deploy (autorizado, "agendar hoy") -- instante real
+   * "ahora", inyectable para tests deterministas -- default real: `new
+   * Date()`. Se usa EXCLUSIVAMENTE para descartar horarios ya pasados
+   * (comparación Date vs Date, nunca strings ni horas locales -- un instante
+   * es un instante, sin importar zona horaria). Para cualquier día distinto
+   * de hoy esto es un no-op real (todo horario de un día futuro ya es, por
+   * definición, posterior a "ahora"): nunca cambia el comportamiento de
+   * fechas futuras.
+   */
+  ahora?: () => Date;
 }
 
 /**
@@ -118,8 +129,18 @@ export async function calcularHorariosDeEspecialista(
     }
   }
 
+  // Corrección post-deploy (autorizado, "agendar hoy") -- nunca se ofrece un
+  // horario cuyo instante real ya pasó. Comparación Date vs Date (nunca
+  // strings/horas locales) -- para un día futuro real esto nunca filtra
+  // nada (todo instante de un día futuro es posterior a "ahora"), así que el
+  // comportamiento de cualquier fecha que no sea hoy queda 100% intacto.
+  const ahora = deps.ahora ?? (() => new Date());
   const horarios =
-    estado === "ok" ? generarHorariosLibres(ventanas, ocupadas, params.duracionMin).map((d) => horaColombiaDesdeIso(d.toISOString())) : [];
+    estado === "ok"
+      ? generarHorariosLibres(ventanas, ocupadas, params.duracionMin)
+          .filter((d) => d.getTime() > ahora().getTime())
+          .map((d) => horaColombiaDesdeIso(d.toISOString()))
+      : [];
 
   return { especialistaId: especialista.id, nombre: especialista.nombre, estado, horarios };
 }

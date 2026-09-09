@@ -85,7 +85,10 @@ const DIAS_POR_PROFESIONAL_FIXTURE: Record<number, string[]> = {
 };
 
 async function calcularDiasCandidatosFixture(_s: unknown, params: { profesionalId: number }) {
-  return { ok: true as const, opciones: construirOpcionesFecha(DIAS_POR_PROFESIONAL_FIXTURE[params.profesionalId] ?? []) };
+  // hayMasFechas: false -- este fixture fijo nunca tiene más fechas reales
+  // más allá de las que ya lista DIAS_POR_PROFESIONAL_FIXTURE (los tests de
+  // "Ver más fechas" usan su propio fixture dedicado, ver más abajo).
+  return { ok: true as const, opciones: construirOpcionesFecha(DIAS_POR_PROFESIONAL_FIXTURE[params.profesionalId] ?? []), hayMasFechas: false };
 }
 
 const HORAS_POR_FECHA_FIXTURE: Record<string, string[]> = {
@@ -829,7 +832,7 @@ describe("FASE 3 (autorizado) -- selección de profesional vía router real", ()
     assert.equal(r.manejado, true);
     assert.equal(sesiones.filas[0]!.step, "S3_DIA");
     assert.equal(sesiones.filas[0]!.profesionalId, 1262, "1 = Mary en el menú real de Dipping");
-    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, construirOpcionesFecha(DIAS_POR_PROFESIONAL_FIXTURE[1262]!));
+    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, { opciones: construirOpcionesFecha(DIAS_POR_PROFESIONAL_FIXTURE[1262]!), numeroVerMasFechas: null });
     assert.match(envios.enviados[3]!.mensaje, /¿Qué día deseas agendar\?/);
   });
 
@@ -840,9 +843,9 @@ describe("FASE 3 (autorizado) -- selección de profesional vía router real", ()
       { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "w4" },
       deps,
     );
-    const opciones = sesiones.filas[0]!.opcionesMostradas as { nombre?: string }[];
-    assert.ok(!opciones.some((o) => o.nombre === "Mary"), "ya no deben quedar opciones de profesional, solo de fecha");
-    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, construirOpcionesFecha(["2026-09-08", "2026-09-09"]));
+    const datos = sesiones.filas[0]!.opcionesMostradas as { opciones: { nombre?: string }[] };
+    assert.ok(!datos.opciones.some((o) => o.nombre === "Mary"), "ya no deben quedar opciones de profesional, solo de fecha");
+    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, { opciones: construirOpcionesFecha(["2026-09-08", "2026-09-09"]), numeroVerMasFechas: null });
   });
 
   it("otra opción también resuelve correctamente (nunca asume que sigue siendo la posición 1) -- '3' guarda a Nata", async () => {
@@ -1009,7 +1012,7 @@ describe("FASE 4 (autorizado) -- selección de fecha vía router real", () => {
     const { deps, sesiones } = armarDeps();
     await llegarAMenuFechaMary(deps);
     assert.equal(sesiones.filas[0]!.step, "S3_DIA");
-    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, construirOpcionesFecha(DIAS_POR_PROFESIONAL_FIXTURE[1262]!));
+    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, { opciones: construirOpcionesFecha(DIAS_POR_PROFESIONAL_FIXTURE[1262]!), numeroVerMasFechas: null });
   });
 
   it("Test 9: '1' guarda la fecha_iso correcta y avanza a S4_HORA con el menú REAL de horas de esa fecha (FASE 5)", async () => {
@@ -1078,7 +1081,7 @@ describe("FASE 4 (autorizado) -- selección de fecha vía router real", () => {
       tenantId: "amore-test",
       telefonoCliente: "573148127388",
       wamid: "w0",
-      opcionesMostradas: construirOpcionesFecha(["2026-09-08", "2026-09-09"]),
+      opcionesMostradas: { opciones: construirOpcionesFecha(["2026-09-08", "2026-09-09"]), numeroVerMasFechas: null },
     });
     await sesiones.actualizarSesion(FAKE_SUPABASE, sesiones.filas[0]!.id, { step: "S3_DIA", servicioId: "s-dipping-real", profesionalId: 1262 });
 
@@ -1100,6 +1103,94 @@ describe("FASE 4 (autorizado) -- selección de fecha vía router real", () => {
     );
     assert.equal(r.manejado, true);
     assert.equal(sesiones.filas[0]!.activo, false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CORRECCIÓN (autorizada, "Ver más fechas") -- EXCLUSIVA de S3_DIA, nunca de
+// S4_HORA. `calcularDiasConMas` simula bloques SUCESIVOS reales devueltos por
+// el motor de disponibilidad (cada llamada = un bloque, mismo criterio que
+// "continuarDesdeFechaIso" ya probado a fondo en disponibilidad.test.ts) --
+// acá se prueba la ORQUESTACIÓN real vía router.ts/controlador.ts, no el
+// cálculo de fechas en sí.
+// ---------------------------------------------------------------------------
+describe("CORRECCIÓN (autorizada, 'Ver más fechas') -- flujo real vía router", () => {
+  function calcularDiasConMas(bloques: string[][]) {
+    const llamadas: Array<{ continuarDesdeFechaIso?: string }> = [];
+    let indice = 0;
+    return {
+      llamadas,
+      fn: async (_s: unknown, params: { continuarDesdeFechaIso?: string }) => {
+        llamadas.push({ continuarDesdeFechaIso: params.continuarDesdeFechaIso });
+        const fechas = bloques[indice] ?? [];
+        indice++;
+        return { ok: true as const, opciones: construirOpcionesFecha(fechas), hayMasFechas: indice < bloques.length };
+      },
+    };
+  }
+
+  it("Test 7 (obligatorio) -- con más de 4 fechas reales, el menú agrega '5. Ver más fechas'", async () => {
+    const diasFake = calcularDiasConMas([["2026-09-08", "2026-09-09", "2026-09-10", "2026-09-11"], ["2026-09-14"]]);
+    const { deps, sesiones, envios } = armarDeps({ calcularDiasCandidatos: diasFake.fn });
+    await llegarAMenuProfesionalDipping(deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "w4" }, deps); // Mary
+    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, {
+      opciones: construirOpcionesFecha(["2026-09-08", "2026-09-09", "2026-09-10", "2026-09-11"]),
+      numeroVerMasFechas: 5,
+    });
+    assert.match(envios.enviados.at(-1)!.mensaje, /4\. Sábado 12 de septiembre|4\. Viernes 11 de septiembre/); // 4ª fecha real, cualquiera que sea
+    assert.match(envios.enviados.at(-1)!.mensaje, /5\. Ver más fechas/);
+  });
+
+  it("Test 14 (regresión, obligatorio) -- con 4 o menos fechas y ninguna más, el menú NUNCA agrega 'Ver más fechas' -- comportamiento 100% idéntico al de antes de esta corrección", async () => {
+    const { deps, sesiones, envios } = armarDeps(); // fixture normal, 2 fechas reales para Mary, sin más
+    await llegarAMenuProfesionalDipping(deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "w4" }, deps); // Mary
+    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, { opciones: construirOpcionesFecha(DIAS_POR_PROFESIONAL_FIXTURE[1262]!), numeroVerMasFechas: null });
+    assert.doesNotMatch(envios.enviados.at(-1)!.mensaje, /Ver más fechas/);
+  });
+
+  it("Test 8 (obligatorio) -- seleccionar 'Ver más fechas' permanece en S3_DIA, conserva servicio/profesional, y muestra el bloque REAL siguiente (continuando desde la última fecha, nunca desde hoy)", async () => {
+    const diasFake = calcularDiasConMas([["2026-09-08", "2026-09-09", "2026-09-10", "2026-09-11"], ["2026-09-14", "2026-09-15"]]);
+    const { deps, sesiones, envios } = armarDeps({ calcularDiasCandidatos: diasFake.fn });
+    await llegarAMenuProfesionalDipping(deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "w4" }, deps); // Mary -> bloque 1
+    const r = await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "5", wamid: "w5" }, deps); // Ver más fechas
+
+    assert.equal(r.manejado, true);
+    assert.equal(sesiones.filas[0]!.step, "S3_DIA", "permanece en S3_DIA, nunca reinicia la sesión");
+    assert.equal(sesiones.filas[0]!.servicioId, "s-dipping-real", "conserva el MISMO servicio");
+    assert.equal(sesiones.filas[0]!.profesionalId, 1262, "conserva el MISMO profesional");
+    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, { opciones: construirOpcionesFecha(["2026-09-14", "2026-09-15"]), numeroVerMasFechas: null });
+    assert.match(envios.enviados.at(-1)!.mensaje, /Lunes 14 de septiembre/);
+    assert.doesNotMatch(envios.enviados.at(-1)!.mensaje, /Ver más fechas/, "el segundo bloque no tiene más -- nunca la ofrece de nuevo");
+
+    // Test 8/9/10 -- continuó DESPUÉS de la última fecha real ya mostrada, nunca desde hoy ni repitiendo.
+    assert.equal(diasFake.llamadas[0]!.continuarDesdeFechaIso, undefined, "el primer bloque nunca lleva cursor");
+    assert.equal(diasFake.llamadas[1]!.continuarDesdeFechaIso, "2026-09-11", "el segundo bloque continúa justo después de la última fecha del primero");
+  });
+
+  it("Test 15 (obligatorio, vía router) -- '5' cuando NO hay 'Ver más fechas' (4 fechas exactas, sin más) sigue siendo una selección inválida, NUNCA activa la búsqueda de más fechas", async () => {
+    const diasFake = calcularDiasConMas([["2026-09-08", "2026-09-09", "2026-09-10", "2026-09-11"]]); // exactamente 4, sin más bloques configurados
+    const { deps, sesiones, envios } = armarDeps({ calcularDiasCandidatos: diasFake.fn });
+    await llegarAMenuProfesionalDipping(deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "w4" }, deps);
+    const r = await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "5", wamid: "w5" }, deps);
+
+    assert.equal(r.manejado, true);
+    assert.equal(sesiones.filas[0]!.step, "S3_DIA", "nunca avanza con una selección inválida");
+    assert.match(envios.enviados.at(-1)!.mensaje, /No reconocí esa opción/);
+    assert.equal(diasFake.llamadas.length, 1, "'5' inválido NUNCA dispara una segunda consulta de disponibilidad");
+  });
+
+  it("Test 17 (obligatorio, regresión) -- S4_HORA NUNCA recibe 'Otro horario': sigue mostrando máximo 6 horarios reales, sin ninguna opción adicional", async () => {
+    const { deps, sesiones, envios } = armarDeps();
+    await llegarAMenuProfesionalDipping(deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "w4" }, deps); // Mary
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "w5" }, deps); // 2026-09-08
+    assert.equal(sesiones.filas[0]!.step, "S4_HORA");
+    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, construirOpcionesHora("2026-09-08", HORAS_POR_FECHA_FIXTURE["2026-09-08"]!), "sigue siendo el arreglo plano de siempre, NUNCA {horariosCompletos, pagina}");
+    assert.doesNotMatch(envios.enviados.at(-1)!.mensaje, /Otro horario/);
   });
 });
 
@@ -1173,7 +1264,7 @@ describe("FASE 5 (autorizado) -- selección de hora vía router real", () => {
     assert.equal(r.manejado, true);
     assert.equal(sesiones.filas[0]!.step, "S3_DIA", "nunca avanza a S4_HORA sin horarios reales");
     assert.equal(sesiones.filas[0]!.fechaIso, null);
-    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, construirOpcionesFecha(DIAS_POR_PROFESIONAL_FIXTURE[1262]!), "recalcula y vuelve a mostrar días reales actualizados");
+    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, { opciones: construirOpcionesFecha(DIAS_POR_PROFESIONAL_FIXTURE[1262]!), numeroVerMasFechas: null }, "recalcula y vuelve a mostrar días reales actualizados");
     assert.match(envios.enviados[4]!.mensaje, /ya no tiene horarios disponibles/);
   });
 
@@ -1433,7 +1524,7 @@ describe("FASE 6 (autorizado) -- confirmación de la cita vía router real (S5_C
     assert.equal(sesiones.filas[0]!.profesionalId, 1262, "nunca vuelve a pedir profesional");
     assert.equal(sesiones.filas[0]!.fechaIso, null);
     assert.equal(sesiones.filas[0]!.slotSeleccionado, null);
-    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, construirOpcionesFecha(DIAS_POR_PROFESIONAL_FIXTURE[1262]!));
+    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, { opciones: construirOpcionesFecha(DIAS_POR_PROFESIONAL_FIXTURE[1262]!), numeroVerMasFechas: null });
     assert.match(envios.enviados.at(-1)!.mensaje, /¿Qué día deseas agendar\?/);
   });
 
@@ -2132,7 +2223,7 @@ describe("FASE 8 (autorizado) -- gestión de citas existentes (consultar/cancela
       assert.equal(sesiones.filas[0]!.step, "S3_DIA");
       assert.equal(sesiones.filas[0]!.servicioId, "s-presson-real", "conserva el MISMO servicio, nunca pide uno nuevo");
       assert.equal(sesiones.filas[0]!.profesionalId, 1262, "conserva la MISMA profesional, nunca cambia (sección CAMBIO DE PROFESIONAL)");
-      assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, construirOpcionesFecha(DIAS_POR_PROFESIONAL_FIXTURE[1262]!));
+      assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, { opciones: construirOpcionesFecha(DIAS_POR_PROFESIONAL_FIXTURE[1262]!), numeroVerMasFechas: null });
       assert.match(envios.enviados.at(-1)!.mensaje, /¿Qué día deseas agendar\?/);
     });
 
@@ -2491,7 +2582,7 @@ describe("FASE 3 (autorizado, multi-servicio) -- selección y disponibilidad com
       llamadasHoras,
       calcularDiasMultiServicio: async (_s: unknown, params: { especialista: { id: number }; duracionTotalMin: number }) => {
         llamadasDias.push({ duracionTotalMin: params.duracionTotalMin, especialistaId: params.especialista.id });
-        return { opciones: construirOpcionesFecha(DIAS_POR_PROFESIONAL_FIXTURE[params.especialista.id] ?? []) };
+        return { opciones: construirOpcionesFecha(DIAS_POR_PROFESIONAL_FIXTURE[params.especialista.id] ?? []), hayMasFechas: false };
       },
       calcularHorariosFechaMultiServicio: async (_s: unknown, params: { fechaIso: string; duracionTotalMin: number }) => {
         llamadasHoras.push({ duracionTotalMin: params.duracionTotalMin, fechaIso: params.fechaIso });
@@ -2651,5 +2742,28 @@ describe("FASE 3 (autorizado, multi-servicio) -- selección y disponibilidad com
     await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "quiero cambiar mi cita", wamid: "rp1" }, deps);
     await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "rp2" }, deps);
     assert.equal(sesiones.filas[0]!.serviciosIds, null);
+  });
+
+  it("CORRECCIÓN (autorizada, 'Ver más fechas') -- Test 16 obligatorio: conserva AMBOS servicios y el profesional, calcula con la duración TOTAL real", async () => {
+    const llamadasMulti: Array<{ continuarDesdeFechaIso?: string; duracionTotalMin: number }> = [];
+    const bloques = [["2026-09-08", "2026-09-09", "2026-09-10", "2026-09-11"], ["2026-09-14"]];
+    let indice = 0;
+    const calcularDiasMultiConMas = async (_s: unknown, params: { continuarDesdeFechaIso?: string; duracionTotalMin: number }) => {
+      llamadasMulti.push({ continuarDesdeFechaIso: params.continuarDesdeFechaIso, duracionTotalMin: params.duracionTotalMin });
+      const fechas = bloques[indice] ?? [];
+      indice++;
+      return { opciones: construirOpcionesFecha(fechas), hayMasFechas: indice < bloques.length };
+    };
+    const { deps, sesiones } = armarDepsMulti({ calcularDiasMultiServicio: calcularDiasMultiConMas });
+    await llegarAMenuProfesionalMulti(deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "mm4" }, deps); // Mary -> bloque 1
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "5", wamid: "mm5" }, deps); // Ver más fechas
+
+    assert.deepEqual(sesiones.filas[0]!.serviciosIds, ["s-dipping-real", "s-presson-real"], "conserva AMBOS servicios al pedir más fechas");
+    assert.equal(sesiones.filas[0]!.profesionalId, 1262, "conserva el MISMO profesional, nunca lo cambia");
+    assert.equal(sesiones.filas[0]!.step, "S3_DIA");
+    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, { opciones: construirOpcionesFecha(["2026-09-14"]), numeroVerMasFechas: null });
+    assert.equal(llamadasMulti[1]!.duracionTotalMin, 240, "la segunda consulta también usa la duración TOTAL real, nunca la de un solo servicio");
+    assert.equal(llamadasMulti[1]!.continuarDesdeFechaIso, "2026-09-11");
   });
 });

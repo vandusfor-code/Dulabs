@@ -37,16 +37,30 @@ export function construirOpcionesFecha(fechasIso: string[]): OpcionFechaAgendaV2
   return fechasIso.map((fechaIso, i) => ({ numero: i + 1, fechaIso, etiqueta: formatearFechaLarga(fechaIso) }));
 }
 
-function listaOpciones(opciones: OpcionFechaAgendaV2[]): string {
-  return opciones.map((o) => `${o.numero}. ${o.etiqueta}`).join("\n");
+function listaOpciones(opciones: OpcionFechaAgendaV2[], numeroVerMasFechas: number | null = null): string {
+  const lineaVerMas = numeroVerMasFechas !== null ? `\n${numeroVerMasFechas}. Ver más fechas` : "";
+  return `${opciones.map((o) => `${o.numero}. ${o.etiqueta}`).join("\n")}${lineaVerMas}`;
 }
 
-export function renderizarMenuFecha(opciones: OpcionFechaAgendaV2[]): string {
-  return `Perfecto 💗 ¿Qué día deseas agendar?\n\n${listaOpciones(opciones)}`;
+// Corrección post-deploy (autorizada, "Ver más fechas") -- `numeroVerMasFechas`
+// es el número asignado a "Ver más fechas" en ESTE menú (calculado por
+// lib/agenda-v2/disponibilidad.ts/router.ts a partir de la disponibilidad
+// real restante dentro del horizonte) -- `null` cuando no hay ninguna fecha
+// real más allá de las ya mostradas (nunca se ofrece una opción que no
+// llevaría a ningún resultado). Comportamiento 100% idéntico al de antes de
+// esta corrección cuando se omite (default `null`).
+export function renderizarMenuFecha(opciones: OpcionFechaAgendaV2[], numeroVerMasFechas: number | null = null): string {
+  return `Perfecto 💗 ¿Qué día deseas agendar?\n\n${listaOpciones(opciones, numeroVerMasFechas)}`;
 }
 
-export function textoSeleccionInvalidaFecha(opciones: OpcionFechaAgendaV2[]): string {
-  return `No reconocí esa opción 💗 Por favor responde con el número de una de estas:\n\n${listaOpciones(opciones)}`;
+export function textoSeleccionInvalidaFecha(opciones: OpcionFechaAgendaV2[], numeroVerMasFechas: number | null = null): string {
+  return `No reconocí esa opción 💗 Por favor responde con el número de una de estas:\n\n${listaOpciones(opciones, numeroVerMasFechas)}`;
+}
+
+/** `mensaje` calza EXACTAMENTE el número de "Ver más fechas" de este menú (nunca fuzzy, mismo criterio "solo número exacto" de todo Agenda V2). `numeroVerMasFechas === null` (no hay más fechas dentro del horizonte) siempre devuelve `false`. */
+export function esSeleccionVerMasFechas(mensaje: string, numeroVerMasFechas: number | null): boolean {
+  if (numeroVerMasFechas === null) return false;
+  return mensaje.trim() === String(numeroVerMasFechas);
 }
 
 /**
