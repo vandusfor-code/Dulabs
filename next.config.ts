@@ -26,7 +26,14 @@ const nextConfig: NextConfig = {
               // eso sigue completamente bloqueado.
               "script-src 'self' 'unsafe-inline' https://connect.facebook.net",
               "style-src 'self' 'unsafe-inline'",
-              "img-src 'self' data:",
+              // https://*.supabase.co (autorizado) -- fotos de productos de
+              // AMORE (bucket público inventario-productos, ver
+              // lib/amore-inventario.ts::subirFotoProducto): sin este origen
+              // el navegador bloquea la imagen aunque su URL pública
+              // funcione perfecto por fuera del sitio (hallazgo real:
+              // "subí una imagen y no carga"). Mismo dominio ya confiado
+              // para connect-src, nunca un origen nuevo/no auditado.
+              "img-src 'self' data: https://*.supabase.co",
               "font-src 'self'",
               // connect.facebook.net (Embedded Signup), Supabase (auth), y
               // Wompi (tokenización de tarjeta directo desde el navegador en
