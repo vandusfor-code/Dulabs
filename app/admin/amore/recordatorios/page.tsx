@@ -4,12 +4,13 @@ import { useCallback, useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { useAdminWeb } from "@/components/admin-web/AdminWebContext";
 import { AdminOnlyDesktop } from "@/components/admin-web/AdminOnlyDesktop";
+import { ANTICIPACIONES_RECORDATORIO_MINUTOS, ETIQUETAS_ANTICIPACION_MINUTOS } from "@/lib/comunicaciones/tipos";
 
 type Config = {
   confirmacionActiva: boolean;
   confirmacionMensaje: string;
   recordatorioActivo: boolean;
-  recordatorioAnticipacionHoras: number;
+  recordatorioAnticipacionMinutos: number;
   recordatorioMensaje: string;
 };
 
@@ -98,16 +99,24 @@ function Contenido() {
               <p className="text-sm text-fg">Enviar recordatorio automático</p>
               <Switch activo={config.recordatorioActivo} disabled={guardando} onChange={(v) => guardar({ recordatorioActivo: v })} />
             </div>
-            <div className="mt-3 flex items-center justify-between">
+            <div className="mt-3 flex items-center justify-between gap-3">
               <p className="text-xs font-medium text-mist">Anticipación</p>
-              {/* Ajuste final (autorizado) -- este dato ya NO es editable:
-                  la ventana real que ejecuta el cron (app/api/cron/recordatorios-citas)
-                  es fija (55-65 min antes de la cita, "1 hora antes"), y un
-                  número editable acá implicaría un control que en la
-                  práctica no tiene ningún efecto real. Se muestra fijo para
-                  que la interfaz nunca contradiga lo que el sistema
-                  realmente ejecuta. */}
-              <span className="rounded-full border border-edge bg-ink px-3 py-1.5 text-sm font-medium text-fg">1 hora antes</span>
+              {/* Mejora Recordatorios (autorizado) -- ahora SÍ editable y SÍ
+                  usada por el motor real (app/api/cron/recordatorios-citas
+                  ya lee recordatorio_anticipacion_minutos de esta misma
+                  configuración, ver lib/comunicaciones/config.ts). */}
+              <select
+                value={config.recordatorioAnticipacionMinutos}
+                disabled={guardando}
+                onChange={(e) => guardar({ recordatorioAnticipacionMinutos: Number(e.target.value) })}
+                className="rounded-full border border-edge bg-ink px-3 py-1.5 text-sm font-medium text-fg disabled:opacity-50"
+              >
+                {ANTICIPACIONES_RECORDATORIO_MINUTOS.map((minutos) => (
+                  <option key={minutos} value={minutos}>
+                    {ETIQUETAS_ANTICIPACION_MINUTOS[minutos]}
+                  </option>
+                ))}
+              </select>
             </div>
             <div className="mt-3">
               <p className="mb-1.5 text-xs font-medium text-mist">
@@ -118,7 +127,7 @@ function Contenido() {
           </div>
 
           <p className="text-xs text-mist">
-            El envío real se activará cuando el WhatsApp QR de AMORE esté conectado. Por ahora esta configuración queda guardada y lista.
+            El mensaje y la anticipación configurados aquí son los que realmente se envían por WhatsApp a tus clientas.
           </p>
         </>
       )}

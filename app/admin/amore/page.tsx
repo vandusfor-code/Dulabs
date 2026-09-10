@@ -10,9 +10,10 @@ import { formatearHora, mismoDia } from "@/components/spa-panel/format";
 import { formatearCOP } from "@/components/spa-panel/amore/amore-dashboard-mock";
 import { RUTA_CITAS, RUTA_CUMPLEANOS, RUTA_COMUNICACIONES } from "@/components/admin-web/admin-web-routes";
 import type { ReporteContabilidad } from "@/lib/contabilidad/tipos";
+import { ETIQUETAS_ANTICIPACION_MINUTOS, type AnticipacionRecordatorioMinutos } from "@/lib/comunicaciones/tipos";
 
 type Cumpleanos = { id: number; nombre: string; esHoy: boolean; diasHasta: number; fecha: string };
-type ConfigComunicaciones = { confirmacionActiva: boolean; recordatorioActivo: boolean; recordatorioAnticipacionHoras: number };
+type ConfigComunicaciones = { confirmacionActiva: boolean; recordatorioActivo: boolean; recordatorioAnticipacionMinutos: AnticipacionRecordatorioMinutos };
 
 const COLORES_DONUT = ["#b85c78", "#8f7cc9", "#e0a85c", "#5cae82", "#5c9ecf", "#c96b6b"];
 
@@ -288,7 +289,7 @@ function AdminInicioContenido() {
               <FilaRecordatorio activo={comunicaciones.confirmacionActiva} texto="Confirmaciones de cita" />
               <FilaRecordatorio
                 activo={comunicaciones.recordatorioActivo}
-                texto={`Recordatorio (${comunicaciones.recordatorioAnticipacionHoras}h antes)`}
+                texto={`Recordatorio (${ETIQUETAS_ANTICIPACION_MINUTOS[comunicaciones.recordatorioAnticipacionMinutos]})`}
               />
             </div>
           )}

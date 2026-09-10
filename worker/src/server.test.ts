@@ -162,5 +162,80 @@ describe(
         await cerrar();
       }
     });
+
+    // WhatsApp multi-cuenta (autorizado, Fase Final) — `?slot=1|2` en la
+    // query string, opcional. Mismo criterio de seguridad de siempre:
+    // FabricaSocket falsa, Supabase con tenants descartables, ningún
+    // WhatsApp real.
+    describe("WhatsApp multi-cuenta -- parámetro ?slot", () => {
+      it("sin ?slot en la URL, se comporta EXACTO a slot=1 (compatibilidad total con todo llamador existente)", async () => {
+        const TENANT = nuevoTenant();
+        const { fabrica } = crearFabricaSocketFalsa();
+        const { url, cerrar } = await levantarServidor(supabase, fabrica);
+        const auth = { Authorization: `Bearer ${SECRETO}` };
+        try {
+          const sinSlot = (await (await fetch(`${url}/tenants/${TENANT}/estado`, { headers: auth })).json()) as { slot: number };
+          const conSlot1 = (await (await fetch(`${url}/tenants/${TENANT}/estado?slot=1`, { headers: auth })).json()) as { slot: number };
+          assert.equal(sinSlot.slot, 1);
+          assert.deepEqual(sinSlot, conSlot1);
+        } finally {
+          await cerrar();
+        }
+      });
+
+      it("slot=1 y slot=2 del mismo tenant son conexiones independientes por HTTP", async (t) => {
+        if (!migracionesListas) return t.skip("falta la migración dulabs_whatsapp_qr_sesiones");
+        const TENANT = nuevoTenant();
+        const { fabrica, llamadas } = crearFabricaSocketFalsa();
+        const { url, cerrar } = await levantarServidor(supabase, fabrica);
+        const auth = { Authorization: `Bearer ${SECRETO}` };
+        try {
+          await fetch(`${url}/tenants/${TENANT}/iniciar?slot=1`, { method: "POST", headers: auth });
+          await fetch(`${url}/tenants/${TENANT}/iniciar?slot=2`, { method: "POST", headers: auth });
+          assert.equal(llamadas.length, 2, "cada slot debe crear su propia sesión, nunca reutilizar la del otro");
+
+          llamadas[0].emitir({ tipo: "conectado", numero: "573000000020" });
+          llamadas[1].emitir({ tipo: "conectado", numero: "573000000021" });
+
+          let estado1: { estado: string; numeroConectado: string | null } = { estado: "", numeroConectado: null };
+          for (let i = 0; i < 50 && estado1.estado !== "conectado"; i++) {
+            await new Promise((r) => setTimeout(r, 40));
+            estado1 = (await (await fetch(`${url}/tenants/${TENANT}/estado?slot=1`, { headers: auth })).json()) as typeof estado1;
+          }
+          const estado2 = (await (await fetch(`${url}/tenants/${TENANT}/estado?slot=2`, { headers: auth })).json()) as typeof estado1;
+
+          assert.equal(estado1.estado, "conectado");
+          assert.equal(estado1.numeroConectado, "573000000020");
+          assert.equal(estado2.numeroConectado, "573000000021");
+
+          const desconectar2 = (await (
+            await fetch(`${url}/tenants/${TENANT}/desconectar?slot=2`, { method: "POST", headers: auth })
+          ).json()) as { estado: string };
+          assert.equal(desconectar2.estado, "desconectado");
+
+          const estado1TrasDesconectar2 = (await (
+            await fetch(`${url}/tenants/${TENANT}/estado?slot=1`, { headers: auth })
+          ).json()) as { estado: string };
+          assert.equal(estado1TrasDesconectar2.estado, "conectado", "desconectar el slot 2 nunca debe tocar el slot 1");
+        } finally {
+          await cerrar();
+        }
+      });
+
+      it("un valor de slot fuera de {1,2} (ej. una 3ra cuenta) se rechaza con 400 -- el backend nunca depende solo de ocultar un botón", async () => {
+        const TENANT = nuevoTenant();
+        const { fabrica } = crearFabricaSocketFalsa();
+        const { url, cerrar } = await levantarServidor(supabase, fabrica);
+        const auth = { Authorization: `Bearer ${SECRETO}` };
+        try {
+          const r = await fetch(`${url}/tenants/${TENANT}/estado?slot=3`, { headers: auth });
+          assert.equal(r.status, 400);
+          const rIniciar = await fetch(`${url}/tenants/${TENANT}/iniciar?slot=3`, { method: "POST", headers: auth });
+          assert.equal(rIniciar.status, 400);
+        } finally {
+          await cerrar();
+        }
+      });
+    });
   }
 );

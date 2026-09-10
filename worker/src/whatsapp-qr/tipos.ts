@@ -6,9 +6,13 @@
 
 export type EstadoConexion = "desconectado" | "conectando" | "conectado";
 
+/** WhatsApp multi-cuenta (autorizado) -- hasta 2 cuentas independientes por tenant. 1 = "WhatsApp principal" (única que usa el bot/Flow Engine/recordatorios/cumpleaños/fidelización, ver socket-baileys.ts). 2 = cuenta adicional, solo atención manual desde Chats. */
+export type SlotWhatsApp = 1 | 2;
+
 /** Forma segura para el navegador -- nunca incluye creds/claves. */
 export type EstadoPublico = {
   idTenant: string;
+  slot: SlotWhatsApp;
   estado: EstadoConexion;
   numeroConectado: string | null;
   conectadoEn: string | null;
@@ -38,6 +42,8 @@ export interface SocketWhatsApp {
  * Construye la sesión real (o falsa, en pruebas) de un tenant específico.
  * `telefono` (opcional, solo dígitos con indicativo de país) activa el modo
  * "vincular con número" -- si se omite, el flujo por defecto sigue siendo
- * QR, exactamente como antes de esta fase.
+ * QR, exactamente como antes de esta fase. `slot` (WhatsApp multi-cuenta,
+ * autorizado) identifica cuál de las hasta 2 cuentas del tenant es esta --
+ * ver SlotWhatsApp.
  */
-export type FabricaSocket = (params: { idTenant: string; telefono?: string }) => Promise<SocketWhatsApp>;
+export type FabricaSocket = (params: { idTenant: string; slot: SlotWhatsApp; telefono?: string }) => Promise<SocketWhatsApp>;

@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { ConfigComunicaciones } from "./tipos";
+import type { AnticipacionRecordatorioMinutos, ConfigComunicaciones } from "./tipos";
+import { ANTICIPACIONES_RECORDATORIO_MINUTOS } from "./tipos";
 
 // Ajuste final (autorizado) -- mensajes predeterminados reales, EXACTOS al
 // pedido: se muestran automáticamente en el campo cuando el tenant nunca
@@ -18,6 +19,13 @@ export const MENSAJE_RECORDATORIO_PREDETERMINADO =
 // ahora lo muestra como dato fijo, ver app/admin/amore/recordatorios/page.tsx).
 export const RECORDATORIO_ANTICIPACION_HORAS_REAL = 1;
 
+/** Mejora Recordatorios (autorizado) -- ahora SÍ editable y SÍ usada por el motor real (ver app/api/cron/recordatorios-citas/route.ts). 60 min = "1 hora antes", mismo comportamiento de siempre cuando no hay configuración guardada. */
+export const RECORDATORIO_ANTICIPACION_MINUTOS_PREDETERMINADA: AnticipacionRecordatorioMinutos = 60;
+
+function anticipacionMinutosValida(valor: unknown): valor is AnticipacionRecordatorioMinutos {
+  return ANTICIPACIONES_RECORDATORIO_MINUTOS.includes(valor as AnticipacionRecordatorioMinutos);
+}
+
 // Confirmaciones y recordatorios (Fase 8, genérico, autorizado) —
 // configuración del módulo, un tenant a la vez. Nunca asume "activo por
 // defecto": un negocio que nunca configuró esto se trata como desactivado
@@ -27,7 +35,9 @@ export const RECORDATORIO_ANTICIPACION_HORAS_REAL = 1;
 export async function obtenerConfigComunicaciones(supabase: SupabaseClient, idTenant: string): Promise<ConfigComunicaciones> {
   const { data } = await supabase
     .from("dulabs_comunicaciones_config")
-    .select("id_tenant, confirmacion_activa, confirmacion_mensaje, recordatorio_activo, recordatorio_anticipacion_horas, recordatorio_mensaje")
+    .select(
+      "id_tenant, confirmacion_activa, confirmacion_mensaje, recordatorio_activo, recordatorio_anticipacion_horas, recordatorio_anticipacion_minutos, recordatorio_mensaje"
+    )
     .eq("id_tenant", idTenant)
     .maybeSingle();
 
@@ -38,7 +48,9 @@ export async function obtenerConfigComunicaciones(supabase: SupabaseClient, idTe
       confirmacionMensaje: MENSAJE_CONFIRMACION_PREDETERMINADO,
       recordatorioActivo: false,
       recordatorioAnticipacionHoras: RECORDATORIO_ANTICIPACION_HORAS_REAL,
+      recordatorioAnticipacionMinutos: RECORDATORIO_ANTICIPACION_MINUTOS_PREDETERMINADA,
       recordatorioMensaje: MENSAJE_RECORDATORIO_PREDETERMINADO,
+      tieneConfiguracionGuardada: false,
     };
   }
 
@@ -52,7 +64,14 @@ export async function obtenerConfigComunicaciones(supabase: SupabaseClient, idTe
     confirmacionMensaje: data.confirmacion_mensaje || MENSAJE_CONFIRMACION_PREDETERMINADO,
     recordatorioActivo: data.recordatorio_activo,
     recordatorioAnticipacionHoras: data.recordatorio_anticipacion_horas,
+    // Defensivo: si por algún motivo llega un valor fuera de las 9 opciones
+    // reales (ej. dato viejo/corrupto), nunca se lo pasa tal cual al motor
+    // -- cae al predeterminado real (60 min = "1 hora antes").
+    recordatorioAnticipacionMinutos: anticipacionMinutosValida(data.recordatorio_anticipacion_minutos)
+      ? data.recordatorio_anticipacion_minutos
+      : RECORDATORIO_ANTICIPACION_MINUTOS_PREDETERMINADA,
     recordatorioMensaje: data.recordatorio_mensaje || MENSAJE_RECORDATORIO_PREDETERMINADO,
+    tieneConfiguracionGuardada: true,
   };
 }
 

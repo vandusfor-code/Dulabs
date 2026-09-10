@@ -1,25 +1,32 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { initAuthCreds, BufferJSON, type AuthenticationCreds, type AuthenticationState, type SignalDataTypeMap } from "@whiskeysockets/baileys";
+import type { SlotWhatsApp } from "./tipos.js";
 
 // WhatsApp QR (Fase 9A/9B, autorizado) — auth-state de Baileys respaldado en
 // Supabase, mismo rol que useMultiFileAuthState (que la propia librería
 // documenta como solo apto para pruebas/un bot, recomendando explícitamente
 // "escribir un auth state para una DB real" -- esto es exactamente eso).
-// Una fila por tenant en dulabs_whatsapp_qr_sesiones (creds/claves) -- nunca
-// un archivo en disco, necesario porque el worker puede reiniciarse
-// (redeploy, crash) y no debe depender de filesystem local para conservar
-// la sesión.
+// Una fila por (tenant, slot) en dulabs_whatsapp_qr_sesiones (creds/claves)
+// -- nunca un archivo en disco, necesario porque el worker puede
+// reiniciarse (redeploy, crash) y no debe depender de filesystem local para
+// conservar la sesión.
+//
+// WhatsApp multi-cuenta (autorizado) -- `slot` aísla las credenciales de
+// cada una de las hasta 2 cuentas de un tenant: nunca se leen ni se
+// sobrescriben entre sí.
 
 type FilaCredenciales = { creds: unknown | null; claves: Record<string, Record<string, unknown>> | null };
 
 export async function crearAuthStateSupabase(
   supabase: SupabaseClient,
-  idTenant: string
+  idTenant: string,
+  slot: SlotWhatsApp
 ): Promise<{ state: AuthenticationState; guardarCredenciales: () => Promise<void> }> {
   const { data } = await supabase
     .from("dulabs_whatsapp_qr_sesiones")
     .select("creds, claves")
     .eq("id_tenant", idTenant)
+    .eq("slot", slot)
     .maybeSingle<FilaCredenciales>();
 
   const creds: AuthenticationCreds = data?.creds
@@ -34,10 +41,11 @@ export async function crearAuthStateSupabase(
     await supabase.from("dulabs_whatsapp_qr_sesiones").upsert(
       {
         id_tenant: idTenant,
+        slot,
         claves: JSON.parse(JSON.stringify(claves, BufferJSON.replacer)),
         updated_at: new Date().toISOString(),
       },
-      { onConflict: "id_tenant" }
+      { onConflict: "id_tenant,slot" }
     );
   }
 
@@ -74,10 +82,11 @@ export async function crearAuthStateSupabase(
     await supabase.from("dulabs_whatsapp_qr_sesiones").upsert(
       {
         id_tenant: idTenant,
+        slot,
         creds: JSON.parse(JSON.stringify(creds, BufferJSON.replacer)),
         updated_at: new Date().toISOString(),
       },
-      { onConflict: "id_tenant" }
+      { onConflict: "id_tenant,slot" }
     );
   }
 

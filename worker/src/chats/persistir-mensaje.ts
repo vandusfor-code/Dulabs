@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { randomUUID } from "node:crypto";
 import { downloadMediaMessage, jidNormalizedUser, type WAMessage } from "@whiskeysockets/baileys";
 import { logErrorControlado } from "../logging.js";
+import type { SlotWhatsApp } from "../whatsapp-qr/tipos.js";
 
 const BUCKET = "chats-media";
 const TABLA_CONVERSACIONES = "dulabs_chat_conversaciones";
@@ -139,6 +140,7 @@ export type ResolverPnDesdeLid = (lidJid: string) => Promise<string | null>;
 export async function persistirMensajeEntrante(
   supabase: SupabaseClient,
   idTenant: string,
+  slot: SlotWhatsApp,
   msg: WAMessage,
   resolverOrigenSaliente?: ResolverOrigenSaliente,
   resolverPnDesdeLid?: ResolverPnDesdeLid
@@ -166,6 +168,7 @@ export async function persistirMensajeEntrante(
     .select("id, estado, no_leidos")
     .eq("id_tenant", idTenant)
     .eq("telefono", telefono)
+    .eq("slot", slot)
     .maybeSingle();
 
   let conversacionId: number;
@@ -187,12 +190,19 @@ export async function persistirMensajeEntrante(
       })
       .eq("id", conversacionId);
   } else {
-    estadoConversacion = (await tenantTieneFlowPublicado(supabase, idTenant)) ? "automatico" : "requiere_atencion";
+    // WhatsApp multi-cuenta (autorizado) — una conversación NUEVA solo
+    // puede nacer "automatico" en el slot 1 ("WhatsApp principal"). El
+    // slot 2 SIEMPRE nace en "requiere_atencion", sin importar si el tenant
+    // tiene un flow publicado -- el bot nunca debe responder por esa
+    // cuenta (ver socket-baileys.ts, que además valida slot===1 antes de
+    // invocarlo, como segunda barrera).
+    estadoConversacion = slot === 1 && (await tenantTieneFlowPublicado(supabase, idTenant)) ? "automatico" : "requiere_atencion";
     const { data: nueva } = await supabase
       .from(TABLA_CONVERSACIONES)
       .insert({
         id_tenant: idTenant,
         telefono,
+        slot,
         nombre_visible: msg.pushName?.trim() || telefono,
         ultimo_mensaje: contenido.tipo === "texto" ? contenido.texto : "🎤 Audio",
         ultima_actividad: new Date().toISOString(),

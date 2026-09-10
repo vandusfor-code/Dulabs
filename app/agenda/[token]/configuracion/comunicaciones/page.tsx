@@ -6,12 +6,13 @@ import { ArrowLeft, Loader2 } from "lucide-react";
 import { useAgenda } from "@/components/spa-panel/AgendaContext";
 import { AmoreOnlyScreen } from "@/components/spa-panel/amore/AmoreOnlyScreen";
 import { AmoreCard, AmoreScreenTitle, AmoreSectionTitle, AmoreSwitch, AmorePrimaryButton } from "@/components/spa-panel/amore/ui";
+import { ANTICIPACIONES_RECORDATORIO_MINUTOS, ETIQUETAS_ANTICIPACION_MINUTOS } from "@/lib/comunicaciones/tipos";
 
 type Config = {
   confirmacionActiva: boolean;
   confirmacionMensaje: string;
   recordatorioActivo: boolean;
-  recordatorioAnticipacionHoras: number;
+  recordatorioAnticipacionMinutos: number;
   recordatorioMensaje: string;
 };
 
@@ -105,18 +106,20 @@ function Contenido() {
               <p className="text-sm text-fg">Enviar recordatorio automático</p>
               <AmoreSwitch activo={config.recordatorioActivo} disabled={guardando} onChange={(v) => guardar({ recordatorioActivo: v })} />
             </div>
-            <div className="mt-3 flex items-center justify-between">
-              <p className="text-xs font-medium text-mist">Anticipación (horas)</p>
-              <input
-                type="number"
-                min={1}
-                defaultValue={config.recordatorioAnticipacionHoras}
-                onBlur={(e) => {
-                  const v = Number(e.target.value);
-                  if (Number.isInteger(v) && v > 0) guardar({ recordatorioAnticipacionHoras: v });
-                }}
-                className="w-20 rounded-full border border-edge bg-ink px-3 py-1.5 text-right text-sm font-medium text-fg"
-              />
+            <div className="mt-3 flex items-center justify-between gap-3">
+              <p className="text-xs font-medium text-mist">Anticipación</p>
+              <select
+                value={config.recordatorioAnticipacionMinutos}
+                disabled={guardando}
+                onChange={(e) => guardar({ recordatorioAnticipacionMinutos: Number(e.target.value) })}
+                className="rounded-full border border-edge bg-ink px-3 py-1.5 text-sm font-medium text-fg disabled:opacity-50"
+              >
+                {ANTICIPACIONES_RECORDATORIO_MINUTOS.map((minutos) => (
+                  <option key={minutos} value={minutos}>
+                    {ETIQUETAS_ANTICIPACION_MINUTOS[minutos]}
+                  </option>
+                ))}
+              </select>
             </div>
             <div className="mt-3">
               <p className="mb-1.5 text-xs font-medium text-mist">Mensaje ({"{{nombre}}"}, {"{{servicio}}"}, {"{{profesional}}"}, {"{{fecha}}"}, {"{{hora}}"})</p>
@@ -125,8 +128,7 @@ function Contenido() {
           </AmoreCard>
 
           <p className="text-xs text-mist">
-            El envío real se activará cuando el WhatsApp QR de AMORE esté conectado. Por ahora esta configuración queda
-            guardada y lista.
+            El mensaje y la anticipación configurados aquí son los que realmente se envían por WhatsApp a tus clientas.
           </p>
         </>
       )}

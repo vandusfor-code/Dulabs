@@ -16,8 +16,10 @@ import {
   MENSAJE_CONFIRMACION_PREDETERMINADO,
   MENSAJE_RECORDATORIO_PREDETERMINADO,
   RECORDATORIO_ANTICIPACION_HORAS_REAL,
+  RECORDATORIO_ANTICIPACION_MINUTOS_PREDETERMINADA,
 } from "./config";
 import { renderizarMensajeComunicacion } from "./mensaje";
+import { ANTICIPACIONES_RECORDATORIO_MINUTOS } from "./tipos";
 
 const HAS_SUPABASE = Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
 
@@ -27,6 +29,7 @@ type FilaConfig = {
   confirmacion_mensaje: string;
   recordatorio_activo: boolean;
   recordatorio_anticipacion_horas: number;
+  recordatorio_anticipacion_minutos?: number;
   recordatorio_mensaje: string;
 };
 
@@ -113,6 +116,62 @@ describe("obtenerConfigComunicaciones -- mensajes predeterminados (Test 1/2 del 
     assert.equal(config.confirmacionMensaje, "Confirmación personalizada de AMORE");
     assert.equal(config.recordatorioMensaje, "Recordatorio personalizado de AMORE");
     assert.equal(config.recordatorioAnticipacionHoras, 3, "una anticipación ya guardada explícitamente nunca se pisa con el default");
+  });
+
+  it("tieneConfiguracionGuardada -- false cuando nunca existió una fila (caso real de AMORE hoy)", async () => {
+    const supabase = crearFakeSupabaseConfig(null);
+    const config = await obtenerConfigComunicaciones(supabase, randomUUID());
+    assert.equal(config.tieneConfiguracionGuardada, false);
+  });
+
+  it("tieneConfiguracionGuardada -- true en cuanto existe una fila real, aunque sea con valores predeterminados", async () => {
+    const supabase = crearFakeSupabaseConfig({
+      id_tenant: "t1",
+      confirmacion_activa: false,
+      confirmacion_mensaje: "",
+      recordatorio_activo: false,
+      recordatorio_anticipacion_horas: 1,
+      recordatorio_mensaje: "",
+    });
+    const config = await obtenerConfigComunicaciones(supabase, "t1");
+    assert.equal(config.tieneConfiguracionGuardada, true);
+  });
+
+  it("Mejora Recordatorios -- sin fila guardada, recordatorioAnticipacionMinutos usa el predeterminado real (60 min = 1 hora antes)", async () => {
+    const supabase = crearFakeSupabaseConfig(null);
+    const config = await obtenerConfigComunicaciones(supabase, randomUUID());
+    assert.equal(config.recordatorioAnticipacionMinutos, RECORDATORIO_ANTICIPACION_MINUTOS_PREDETERMINADA);
+    assert.equal(config.recordatorioAnticipacionMinutos, 60);
+  });
+
+  for (const minutos of ANTICIPACIONES_RECORDATORIO_MINUTOS) {
+    it(`Mejora Recordatorios -- una anticipación guardada de ${minutos} minutos se lee EXACTA, nunca se cae al predeterminado`, async () => {
+      const supabase = crearFakeSupabaseConfig({
+        id_tenant: "t1",
+        confirmacion_activa: false,
+        confirmacion_mensaje: "",
+        recordatorio_activo: true,
+        recordatorio_anticipacion_horas: 1,
+        recordatorio_anticipacion_minutos: minutos,
+        recordatorio_mensaje: "Recordatorio real",
+      });
+      const config = await obtenerConfigComunicaciones(supabase, "t1");
+      assert.equal(config.recordatorioAnticipacionMinutos, minutos);
+    });
+  }
+
+  it("Mejora Recordatorios -- defensivo: un valor guardado fuera de las 9 opciones reales (dato viejo/corrupto) cae al predeterminado, nunca se pasa tal cual al motor", async () => {
+    const supabase = crearFakeSupabaseConfig({
+      id_tenant: "t1",
+      confirmacion_activa: false,
+      confirmacion_mensaje: "",
+      recordatorio_activo: true,
+      recordatorio_anticipacion_horas: 1,
+      recordatorio_anticipacion_minutos: 999,
+      recordatorio_mensaje: "Recordatorio real",
+    });
+    const config = await obtenerConfigComunicaciones(supabase, "t1");
+    assert.equal(config.recordatorioAnticipacionMinutos, RECORDATORIO_ANTICIPACION_MINUTOS_PREDETERMINADA);
   });
 });
 

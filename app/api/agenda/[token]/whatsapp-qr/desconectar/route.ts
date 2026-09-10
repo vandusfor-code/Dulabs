@@ -1,7 +1,7 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { resolverTenantDesdeToken, requiereAdministrador } from "@/lib/agenda-admin-auth";
-import { desconectarWorker } from "@/lib/whatsapp-worker-client";
+import { desconectarWorker, resolverSlotDesdeQuery } from "@/lib/whatsapp-worker-client";
 
 export const runtime = "nodejs";
 
@@ -16,7 +16,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const permiso = requiereAdministrador(tenant);
   if (!permiso.ok) return Response.json({ error: permiso.error }, { status: permiso.status });
 
-  const resultado = await desconectarWorker(tenant.idTenant);
+  // WhatsApp multi-cuenta (autorizado) -- `?slot=1|2` opcional (default 1).
+  // Desconectar un slot nunca toca el otro (ver worker/src/whatsapp-qr/manager.ts).
+  const slot = resolverSlotDesdeQuery(request);
+  if (slot === null) return Response.json({ error: "El parámetro 'slot' debe ser 1 o 2" }, { status: 400 });
+
+  const resultado = await desconectarWorker(tenant.idTenant, slot);
   if (!resultado.ok) return Response.json({ error: resultado.error }, { status: resultado.status });
   return Response.json(resultado.data);
 }

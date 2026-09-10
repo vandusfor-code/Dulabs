@@ -12,8 +12,12 @@ type Config = { activo: boolean; mensaje: string; horaEnvio: string };
 
 // Panel web AMORE (autorizado) — Cumpleaños desktop: MISMO endpoint y
 // MISMA configuración reales (dulabs_cumpleanos_config, Fase 6A/6B) que ya
-// usa el móvil. Sin envío real desde acá (mismo motivo que el móvil: el
-// canal QR aún no tiene número dedicado conectado). Admin-only.
+// usa el móvil. Mejora Cumpleaños (autorizado) -- mensaje y hora de envío
+// ahora editables acá también (el PATCH ya los aceptaba, ver
+// app/api/agenda/[token]/cumpleanos/config/route.ts); el motor real
+// (lib/cumpleanos/motor.ts) ahora envía por WhatsApp-QR/Baileys (mismo
+// canal que Recordatorios), y hora_envio ya no es un campo muerto (ver
+// lib/cumpleanos/fecha.ts::estaEnVentanaDeEnvio). Admin-only.
 export default function AdminAmoreCumpleanosPage() {
   return (
     <AdminOnlyDesktop>
@@ -43,13 +47,14 @@ function CumpleanosContenido() {
 
   useEffect(() => cargar(), [cargar]);
 
-  async function actualizarActivo(activo: boolean) {
+  async function guardar(cambios: Partial<Config>) {
     setGuardando(true);
+    setError(null);
     try {
       const res = await fetch(`/api/agenda/${token}/cumpleanos/config`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ activo }),
+        body: JSON.stringify(cambios),
       });
       const body = await res.json();
       if (body.error) setError(body.error);
@@ -137,30 +142,59 @@ function CumpleanosContenido() {
           <div className="mt-3 flex items-center justify-between gap-3">
             <div>
               <p className="text-sm font-medium text-fg">Envío automático</p>
-              <p className="text-xs text-mist">Se activa cuando WhatsApp QR esté conectado</p>
+              <p className="text-xs text-mist">Felicita por WhatsApp a cada clienta el día de su cumpleaños</p>
             </div>
             <button
               type="button"
               role="switch"
               aria-checked={config.activo}
               disabled={guardando}
-              onClick={() => actualizarActivo(!config.activo)}
+              onClick={() => guardar({ activo: !config.activo })}
               className={`relative h-6 w-11 shrink-0 rounded-full transition-colors disabled:opacity-50 ${config.activo ? "bg-lime" : "bg-ink-2"}`}
             >
               <span className={`absolute top-1 size-4 rounded-full bg-white transition-transform ${config.activo ? "translate-x-6" : "translate-x-1"}`} />
             </button>
           </div>
           <div className="mt-4">
-            <p className="mb-1.5 text-xs font-medium text-mist">Mensaje</p>
-            <p className="whitespace-pre-line rounded-xl border border-edge bg-ink px-3.5 py-2.5 text-sm text-fg">
-              {config.mensaje || "Sin mensaje configurado"}
-            </p>
+            <p className="mb-1.5 text-xs font-medium text-mist">Mensaje ({"{{nombre}}"}, {"{{negocio}}"})</p>
+            <EditorMensajeCumpleanos key={config.mensaje} valor={config.mensaje} onGuardar={(v) => guardar({ mensaje: v })} />
           </div>
-          <div className="mt-3 flex items-center justify-between">
+          <div className="mt-3 flex items-center justify-between gap-3">
             <p className="text-xs font-medium text-mist">Hora de envío</p>
-            <span className="rounded-full border border-edge bg-ink px-3 py-1 text-sm font-medium text-fg">{config.horaEnvio}</span>
+            <input
+              type="time"
+              value={config.horaEnvio}
+              disabled={guardando}
+              onChange={(e) => guardar({ horaEnvio: e.target.value })}
+              className="rounded-full border border-edge bg-ink px-3 py-1.5 text-sm font-medium text-fg disabled:opacity-50"
+            />
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+function EditorMensajeCumpleanos({ valor, onGuardar }: { valor: string; onGuardar: (v: string) => void }) {
+  const [texto, setTexto] = useState(valor);
+  const cambio = texto !== valor;
+
+  return (
+    <div className="flex flex-col gap-2">
+      <textarea
+        value={texto}
+        onChange={(e) => setTexto(e.target.value)}
+        rows={5}
+        className="w-full rounded-xl border border-edge bg-ink px-3.5 py-2.5 text-sm text-fg"
+      />
+      {cambio && (
+        <button
+          type="button"
+          onClick={() => onGuardar(texto)}
+          className="self-start rounded-lg bg-lime px-4 py-2 text-xs font-medium text-lime-fg"
+        >
+          Guardar mensaje
+        </button>
       )}
     </div>
   );

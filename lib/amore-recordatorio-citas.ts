@@ -48,6 +48,12 @@ import { obtenerNombresServiciosDeCita } from "@/lib/agenda-v2/multi-servicio";
 // usa el resto del canal WhatsApp-QR de AMORE (whatsapp-qr:<tenant_id>, ver
 // phoneNumberIdSintetico en lib/agenda-v2/router.ts/lib/amore-entrada-router.ts).
 import { nombreConocido } from "@/lib/clientes-conocidos";
+// Mejora Recordatorios (autorizado) -- el mensaje real de AMORE ahora usa la
+// MISMA plantilla configurable y el MISMO renderizador de variables
+// {{nombre}}/{{servicio}}/{{profesional}}/{{fecha}}/{{hora}} que ya existían
+// para el módulo genérico de comunicaciones (lib/comunicaciones/*), en vez
+// de un texto fijo -- nunca una segunda función de reemplazo de variables.
+import { renderizarMensajeComunicacion } from "@/lib/comunicaciones/mensaje";
 
 export interface CitaParaRecordatorioAmore {
   id: number;
@@ -104,12 +110,25 @@ export function construirTextoRecordatorioAmore(params: {
  * un nombre) o si el worker no pudo enviar; el caller (route.ts) decide qué
  * hacer (nunca marca recordatorio_enviado en ese caso, así la siguiente
  * pasada del cron puede reintentar sin duplicar nada).
+ *
+ * Mejora Recordatorios (autorizado) -- `mensajePlantilla` es OPCIONAL y va
+ * al final a propósito (nunca se reordenan los 4 parámetros ya existentes,
+ * así ningún llamador/prueba existente se rompe): cuando el caller (hoy,
+ * route.ts) pasa la plantilla real configurada por el negocio
+ * (dulabs_comunicaciones_config.recordatorio_mensaje), se usa ESA con
+ * renderizarMensajeComunicacion (mismo reemplazo real de
+ * {{nombre}}/{{servicio}}/{{profesional}}/{{fecha}}/{{hora}} que ya usa el
+ * módulo genérico de comunicaciones). Sin plantilla (como en todas las
+ * pruebas existentes, que no la pasan), cae a construirTextoRecordatorioAmore
+ * -- el texto fijo de siempre, comportamiento 100% idéntico a antes de esta
+ * mejora.
  */
 export async function enviarRecordatorioAmore(
   supabase: SupabaseClient,
   idTenant: string,
   cita: CitaParaRecordatorioAmore,
   deps: DepsRecordatorioAmore = {},
+  mensajePlantilla?: string,
 ): Promise<boolean> {
   if (!cita.telefono_cliente) return false;
   const buscarEspecialista = deps.especialistaPorId ?? especialistaPorId;
@@ -159,13 +178,23 @@ export async function enviarRecordatorioAmore(
 
   const fechaIso = fechaColombiaDesdeIso(cita.inicio);
   const hora = horaColombiaDesdeIso(cita.inicio);
-  const texto = construirTextoRecordatorioAmore({
-    nombreCliente: nombreParaSaludo,
-    servicios,
-    profesionalNombre: especialista.nombre,
-    fechaEtiqueta: formatearFechaLarga(fechaIso),
-    horaTexto: formatearHoraAmPm(hora),
-  });
+  const fechaEtiqueta = formatearFechaLarga(fechaIso);
+  const horaTexto = formatearHoraAmPm(hora);
+  const texto = mensajePlantilla
+    ? renderizarMensajeComunicacion(mensajePlantilla, {
+        nombre: nombreParaSaludo,
+        servicio: servicios.join(", "),
+        profesional: especialista.nombre,
+        fecha: fechaEtiqueta,
+        hora: horaTexto,
+      })
+    : construirTextoRecordatorioAmore({
+        nombreCliente: nombreParaSaludo,
+        servicios,
+        profesionalNombre: especialista.nombre,
+        fechaEtiqueta,
+        horaTexto,
+      });
 
   try {
     const resultado = await enviar({ tenantId: idTenant, telefono: cita.telefono_cliente, mensaje: texto, origen: "automatico" });

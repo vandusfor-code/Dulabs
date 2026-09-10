@@ -149,13 +149,15 @@ export function construirMensajeCompraSaludo(nombreProducto: string): string {
   return `Claro que sí 💗 Veo que estás interesada en ${nombreProducto}.`;
 }
 
-// TODO: métodos de pago AMORE -- pendiente de definir con el negocio
-// (sección 16 del pedido: no inventar cuentas, números, bancos ni links).
-// Este mensaje es el punto de integración: cuando el negocio defina los
-// métodos reales, se reemplaza el texto acá -- el resto del flujo (modo
+// Método de pago real de AMORE para productos (autorizado) -- única llave
+// definida por el negocio, nunca inventar otra (Nequi/Daviplata/banco/link).
+// Punto de integración único: si el negocio define OTRO método más adelante,
+// se reemplaza únicamente este texto -- el resto del flujo (modo
 // compra_esperando_pago, detección de "Ya pagué") no necesita cambiar.
+export const LLAVE_PAGO_PRODUCTOS_AMORE = "@urrego3948";
+
 export const MENSAJE_COMPRA_METODOS_PAGO_PENDIENTE =
-  '💗 En un momento una asesora te compartirá los métodos de pago disponibles.\n\nCuando realices el pago, escríbeme "Ya pagué" 💗';
+  `💗 Puedes realizar el pago a la siguiente llave:\n\n${LLAVE_PAGO_PRODUCTOS_AMORE}\n\nCuando realices el pago, escríbeme "Ya pagué" 💗`;
 
 export function construirMensajeJessicaCompraAsesor(nombreProducto: string): string {
   return `Una cliente requiere tu atención. Está interesada en un producto.\n\nProducto: ${nombreProducto}\n\nRevisa el chat para continuar la atención.`;

@@ -5,7 +5,9 @@ import { fechaTenantHoy } from "./fecha";
 import { renderizarMensajeCumpleanos } from "./mensaje";
 import { reclamarProcesamiento, registrarResultadoProcesamiento } from "./idempotencia";
 import { enviarWhatsApp } from "@/lib/whatsapp-outbound";
+import { enviarMensajeWhatsApp } from "@/lib/whatsapp-worker-client";
 import { normalizarTelefono } from "@/lib/marketplace-store";
+import { AMORE_TENANT_ID } from "@/lib/nylas/nylas-grant";
 import type { ClienteConfig } from "@/lib/supabase";
 
 // Cumpleaños automáticos (Fase 6A, genérico, autorizado) — 5) ejecución:
@@ -18,8 +20,19 @@ import type { ClienteConfig } from "@/lib/supabase";
 // se llama a enviarWhatsApp real (ni se consulta dulabs_clientes_config) --
 // así ninguna prueba automatizada puede, ni por accidente, mandar un
 // WhatsApp de verdad. En producción (sin `enviador`) se usa la
-// infraestructura ya existente (lib/whatsapp-outbound.ts), sin duplicarla.
-
+// infraestructura ya existente (lib/whatsapp-outbound.ts para Meta Cloud
+// API, o lib/whatsapp-worker-client.ts para AMORE -- ver más abajo), sin
+// duplicarla.
+//
+// Corrección de canal (autorizado, Fase Final) -- AMORE nunca tuvo un token
+// real de Meta (mismo hallazgo ya documentado en
+// lib/amore-recordatorio-citas.ts), así que un cumpleaños de AMORE que
+// pasara por enviarWhatsApp (Meta) jamás llegaba a la clienta real, aunque
+// el proceso terminara "sin error" (enviarWhatsApp solo loguea y retorna
+// void si falta el token). Ahora AMORE usa el mismo canal real que ya usan
+// sus recordatorios: WhatsApp-QR/Baileys vía el worker
+// (enviarMensajeWhatsApp). Cualquier otro tenant sigue exactamente el mismo
+// camino de Meta de siempre, sin ningún cambio.
 export type EnviadorWhatsApp = (params: { clienteId: number; telefono: string; mensaje: string }) => Promise<void>;
 
 export type ResultadoClienteCumpleanos =
@@ -31,7 +44,14 @@ export type ResultadoProcesarCumpleanos = { idTenant: string; candidatos: number
 
 export async function procesarCumpleanosDelTenant(
   supabase: SupabaseClient,
-  params: { idTenant: string; ahora?: Date; enviador?: EnviadorWhatsApp; soloTelefono?: string }
+  params: {
+    idTenant: string;
+    ahora?: Date;
+    enviador?: EnviadorWhatsApp;
+    soloTelefono?: string;
+    /** SOLO para pruebas -- inyectable en vez de enviarMensajeWhatsApp real (worker Baileys), nunca usado si `enviador` ya está presente. */
+    enviarMensajeWhatsAppAmore?: typeof enviarMensajeWhatsApp;
+  }
 ): Promise<ResultadoProcesarCumpleanos> {
   const config = await obtenerConfigCumpleanos(supabase, params.idTenant);
   if (!config.activo) return { idTenant: params.idTenant, candidatos: 0, procesados: [] };
@@ -39,8 +59,9 @@ export async function procesarCumpleanosDelTenant(
   const { dia, mes, anio } = fechaTenantHoy(config.zonaHoraria, params.ahora);
   const candidatos = await buscarCumpleanosDelDia(supabase, params.idTenant, { dia, mes }, { soloTelefono: params.soloTelefono });
 
+  const esAmore = params.idTenant === AMORE_TENANT_ID;
   let clienteConfig: ClienteConfig | null = null;
-  if (!params.enviador && candidatos.length > 0) {
+  if (!params.enviador && !esAmore && candidatos.length > 0) {
     const { data } = await supabase.from("dulabs_clientes_config").select("*").eq("id_tenant", params.idTenant).limit(1).maybeSingle();
     clienteConfig = data as ClienteConfig | null;
   }
@@ -69,6 +90,13 @@ export async function procesarCumpleanosDelTenant(
       if (params.enviador) {
         await params.enviador({ clienteId: cliente.id, telefono, mensaje });
         estado = "simulado";
+      } else if (esAmore) {
+        // Canal REAL de AMORE -- WhatsApp-QR/Baileys vía el worker, NUNCA
+        // Meta (ver el comentario de corrección de canal más arriba).
+        const enviarAmore = params.enviarMensajeWhatsAppAmore ?? enviarMensajeWhatsApp;
+        const resultado = await enviarAmore({ tenantId: params.idTenant, telefono, mensaje });
+        if (!resultado.ok) throw new Error(`No se pudo enviar por WhatsApp-QR: ${resultado.error}`);
+        estado = "enviado";
       } else if (clienteConfig) {
         // Límite conocido (Fase 6B): enviarWhatsApp no devuelve si de verdad
         // llegó a Meta o si solo no-opeó por falta de token (retorna void en

@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { resolverTenantDesdeToken, requiereAdministrador } from "@/lib/agenda-admin-auth";
 import { obtenerConfigComunicaciones } from "@/lib/comunicaciones/config";
+import { ANTICIPACIONES_RECORDATORIO_MINUTOS, type AnticipacionRecordatorioMinutos } from "@/lib/comunicaciones/tipos";
 
 export const runtime = "nodejs";
 
@@ -24,7 +25,7 @@ type Body = {
   confirmacionActiva?: boolean;
   confirmacionMensaje?: string;
   recordatorioActivo?: boolean;
-  recordatorioAnticipacionHoras?: number;
+  recordatorioAnticipacionMinutos?: number;
   recordatorioMensaje?: string;
 };
 
@@ -55,9 +56,12 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   if (recordatorioActivo && !recordatorioMensaje) {
     return Response.json({ error: "Configura el mensaje de recordatorio antes de activarlo" }, { status: 400 });
   }
-  const anticipacion = body.recordatorioAnticipacionHoras ?? actual.recordatorioAnticipacionHoras;
-  if (!Number.isInteger(anticipacion) || anticipacion <= 0) {
-    return Response.json({ error: "'recordatorioAnticipacionHoras' debe ser un número entero mayor a 0" }, { status: 400 });
+  const anticipacionMinutos = body.recordatorioAnticipacionMinutos ?? actual.recordatorioAnticipacionMinutos;
+  if (!ANTICIPACIONES_RECORDATORIO_MINUTOS.includes(anticipacionMinutos as AnticipacionRecordatorioMinutos)) {
+    return Response.json(
+      { error: `'recordatorioAnticipacionMinutos' debe ser uno de: ${ANTICIPACIONES_RECORDATORIO_MINUTOS.join(", ")}` },
+      { status: 400 }
+    );
   }
 
   const { error } = await supabase.from("dulabs_comunicaciones_config").upsert(
@@ -66,7 +70,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       confirmacion_activa: confirmacionActiva,
       confirmacion_mensaje: confirmacionMensaje,
       recordatorio_activo: recordatorioActivo,
-      recordatorio_anticipacion_horas: anticipacion,
+      recordatorio_anticipacion_minutos: anticipacionMinutos,
       recordatorio_mensaje: recordatorioMensaje,
       updated_at: new Date().toISOString(),
     },

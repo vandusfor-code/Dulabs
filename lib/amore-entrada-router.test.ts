@@ -1000,7 +1000,7 @@ describe("Compra de producto -- palabras genéricas sueltas NUNCA activan el flu
 });
 
 describe("Compra de producto -- opción 1: Pagar producto", () => {
-  it("responde con el mensaje de métodos de pago (TODO, sin inventar cuentas) y pide 'Ya pagué', pasa a compra_esperando_pago", async () => {
+  it("responde con la llave de pago real (@urrego3948) y pide 'Ya pagué', pasa a compra_esperando_pago", async () => {
     const entradas = crearFakeEntradas();
     const fila = await entradas.crearEntrada(FAKE_SUPABASE, { tenantId: AMORE_TENANT_ID, telefonoCliente: TEL_COMPRA, wamid: "w1", modo: "compra_producto_opcion", productoInteresNombre: "Aretes de plata" });
     const { deps, envios } = armarDepsCompra({}, entradas);
@@ -1008,7 +1008,8 @@ describe("Compra de producto -- opción 1: Pagar producto", () => {
     assert.equal(r.manejado, true);
     assert.equal(fila.modo, "compra_esperando_pago");
     assert.match(envios.enviados[0]!.mensaje, /Ya pagué/);
-    assert.doesNotMatch(envios.enviados[0]!.mensaje, /Nequi|Bancolombia|Daviplata/i, "no debe inventar ningún método de pago real");
+    assert.match(envios.enviados[0]!.mensaje, /@urrego3948/, "debe mostrar exactamente la llave de pago real definida por el negocio");
+    assert.doesNotMatch(envios.enviados[0]!.mensaje, /Nequi|Bancolombia|Daviplata/i, "no debe inventar ningún otro método de pago");
   });
 });
 

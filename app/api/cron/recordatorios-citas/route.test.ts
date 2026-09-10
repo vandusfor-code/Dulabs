@@ -16,6 +16,7 @@ import { ejecutarRecordatoriosCitas, GET, type DepsEjecutarRecordatorios } from 
 import { AMORE_TENANT_ID } from "@/lib/nylas/nylas-grant";
 import type { Especialista } from "@/lib/especialistas";
 import type { ClienteConfig } from "@/lib/supabase";
+import { ANTICIPACIONES_RECORDATORIO_MINUTOS, type AnticipacionRecordatorioMinutos } from "@/lib/comunicaciones/tipos";
 
 const OTRO_TENANT = "otro-tenant-cualquiera";
 
@@ -37,6 +38,24 @@ function crearFakeSupabaseCitas(filasIniciales: FilaCita[]) {
   const filas: FilaCita[] = filasIniciales.map((f) => ({ ...f }));
 
   function from(tabla: string) {
+    if (tabla === "dulabs_comunicaciones_config") {
+      // Refleja el estado REAL de producción verificado (tabla vacía para
+      // todo tenant, incluido AMORE): ninguna fila guardada -- obtenerConfig
+      // cae a los predeterminados (60 min, mensaje/anticipación de siempre),
+      // preservando el comportamiento histórico exacto de esta suite.
+      const configBuilder = {
+        select() {
+          return configBuilder;
+        },
+        eq() {
+          return configBuilder;
+        },
+        async maybeSingle() {
+          return { data: null, error: null };
+        },
+      };
+      return configBuilder;
+    }
     if (tabla !== "dulabs_citas_especialista") {
       throw new Error(`fake de prueba: tabla inesperada "${tabla}"`);
     }
@@ -385,5 +404,89 @@ describe("TEST DE SEGURIDAD -- la cita R-2CX / ID 3057 nunca puede ser tocada po
     const idsProcesados = filas.filter((f) => f.recordatorio_enviado).map((f) => f.id);
     assert.ok(!idsProcesados.includes(3057), "el id real 3057 nunca debe aparecer procesado");
     assert.equal(resultado.enviados, 1);
+  });
+});
+
+// Mejora Recordatorios (autorizado) -- anticipación y mensaje REALMENTE
+// configurables, ahora usados por el motor real (ya no decoración de UI).
+function fakeObtenerConfig(config: {
+  recordatorioAnticipacionMinutos: AnticipacionRecordatorioMinutos;
+  recordatorioMensaje: string;
+  tieneConfiguracionGuardada: boolean;
+}) {
+  return async () => ({
+    idTenant: AMORE_TENANT_ID,
+    confirmacionActiva: false,
+    confirmacionMensaje: "",
+    recordatorioActivo: true,
+    recordatorioAnticipacionHoras: 1,
+    recordatorioAnticipacionMinutos: config.recordatorioAnticipacionMinutos,
+    recordatorioMensaje: config.recordatorioMensaje,
+    tieneConfiguracionGuardada: config.tieneConfiguracionGuardada,
+  });
+}
+
+describe("Mejora Recordatorios -- anticipación configurada por tenant (ya no fija en 55-65 min)", () => {
+  it("un tenant con anticipación de 120 min (2 horas) NO se envía a los 60 min, SÍ se envía a los 120 min", async () => {
+    const citaA60 = { ...CITA_AMORE_BASE, id: 9101, inicio: dentroDeLaVentana(60) };
+    const { deps: depsA, fakeEnviarAmore: enviarA } = armarDeps({ citas: [citaA60] });
+    depsA.obtenerConfigComunicaciones = fakeObtenerConfig({ recordatorioAnticipacionMinutos: 120, recordatorioMensaje: "", tieneConfiguracionGuardada: false });
+    const resultadoA = await ejecutarRecordatoriosCitas(depsA);
+    assert.equal(resultadoA.enviados, 0, "a 60 min de la cita, un tenant configurado a 120 min todavía NO debe enviar");
+    assert.equal(enviarA.llamadas.length, 0);
+
+    const citaA120 = { ...CITA_AMORE_BASE, id: 9102, inicio: dentroDeLaVentana(120) };
+    const { deps: depsB, fakeEnviarAmore: enviarB } = armarDeps({ citas: [citaA120] });
+    depsB.obtenerConfigComunicaciones = fakeObtenerConfig({ recordatorioAnticipacionMinutos: 120, recordatorioMensaje: "", tieneConfiguracionGuardada: false });
+    const resultadoB = await ejecutarRecordatoriosCitas(depsB);
+    assert.equal(resultadoB.enviados, 1, "a 120 min de la cita, un tenant configurado a 120 min SÍ debe enviar");
+    assert.equal(enviarB.llamadas.length, 1);
+  });
+
+  it("un tenant SIN configuración guardada sigue con el comportamiento histórico EXACTO (60 min, ±5 min)", async () => {
+    const { deps, fakeEnviarAmore } = armarDeps({ citas: [{ ...CITA_AMORE_BASE, inicio: dentroDeLaVentana(60) }] });
+    const resultado = await ejecutarRecordatoriosCitas(deps);
+    assert.equal(resultado.enviados, 1);
+    assert.equal(fakeEnviarAmore.llamadas.length, 1);
+  });
+
+  it("las 9 anticipaciones válidas (15 min a 2 días) disparan el envío exactamente en su propia ventana", async () => {
+    for (const minutos of ANTICIPACIONES_RECORDATORIO_MINUTOS) {
+      const cita = { ...CITA_AMORE_BASE, id: 9200 + minutos, inicio: dentroDeLaVentana(minutos) };
+      const { deps, fakeEnviarAmore } = armarDeps({ citas: [cita] });
+      deps.obtenerConfigComunicaciones = fakeObtenerConfig({ recordatorioAnticipacionMinutos: minutos, recordatorioMensaje: "", tieneConfiguracionGuardada: false });
+      const resultado = await ejecutarRecordatoriosCitas(deps);
+      assert.equal(resultado.enviados, 1, `anticipación de ${minutos} min debe enviar dentro de su propia ventana`);
+      assert.equal(fakeEnviarAmore.llamadas.length, 1);
+    }
+  });
+});
+
+describe("Mejora Recordatorios -- el mensaje configurado (con variables) es el que REALMENTE envía el motor", () => {
+  it("con una fila guardada, usa la plantilla configurada vía {{variables}}, no el texto histórico hardcodeado", async () => {
+    const citaReal = { ...CITA_AMORE_BASE, servicio: "Sombreado de Cejas", nombre_cliente: "Carla Gómez", inicio: dentroDeLaVentana(60) };
+    const { deps, fakeEnviarAmore } = armarDeps({ citas: [citaReal] });
+    deps.obtenerConfigComunicaciones = fakeObtenerConfig({
+      recordatorioAnticipacionMinutos: 60,
+      recordatorioMensaje: "Hola {{nombre}}, tu cita de {{servicio}} con {{profesional}} es el {{fecha}} a las {{hora}}. ¡Te esperamos!",
+      tieneConfiguracionGuardada: true,
+    });
+    const resultado = await ejecutarRecordatoriosCitas(deps);
+    assert.equal(resultado.enviados, 1);
+    const mensaje = fakeEnviarAmore.llamadas[0]!.mensaje;
+    assert.match(mensaje, /Hola Carla Gómez, tu cita de Sombreado de Cejas con Jessica es el/);
+    assert.doesNotMatch(mensaje, /\{\{/, "nunca debe quedar una variable sin sustituir");
+    assert.doesNotMatch(mensaje, /Te recordamos tu cita en AMORE/, "ya NO debe usar el texto histórico hardcodeado cuando hay una plantilla guardada");
+  });
+
+  it("sin fila guardada (caso real de AMORE hoy), sigue usando construirTextoRecordatorioAmore de siempre (incluye el formato especial de multi-servicio)", async () => {
+    const citaReal = { ...CITA_AMORE_BASE, servicio: "Sombreado de Cejas", nombre_cliente: "Carla Gómez", inicio: dentroDeLaVentana(60) };
+    const { deps, fakeEnviarAmore } = armarDeps({ citas: [citaReal] });
+    deps.obtenerConfigComunicaciones = fakeObtenerConfig({ recordatorioAnticipacionMinutos: 60, recordatorioMensaje: "esto nunca debe usarse", tieneConfiguracionGuardada: false });
+    const resultado = await ejecutarRecordatoriosCitas(deps);
+    assert.equal(resultado.enviados, 1);
+    const mensaje = fakeEnviarAmore.llamadas[0]!.mensaje;
+    assert.match(mensaje, /Te recordamos tu cita en AMORE/, "sin fila guardada, el texto histórico exacto de siempre sigue intacto");
+    assert.doesNotMatch(mensaje, /esto nunca debe usarse/);
   });
 });

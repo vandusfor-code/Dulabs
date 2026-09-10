@@ -33,8 +33,8 @@ function jidParaTelefono(telefono: string): string {
 // así que ninguna prueba automatizada abre una conexión real a los
 // servidores de WhatsApp.
 export function crearFabricaSocketBaileys(supabase: SupabaseClient): FabricaSocket {
-  return async ({ idTenant, telefono }) => {
-    const { state, guardarCredenciales } = await crearAuthStateSupabase(supabase, idTenant);
+  return async ({ idTenant, slot, telefono }) => {
+    const { state, guardarCredenciales } = await crearAuthStateSupabase(supabase, idTenant, slot);
     const { version } = await fetchLatestBaileysVersion();
 
     // "Vincular con número" (autorizado) -- alternativa real al QR, misma
@@ -124,14 +124,23 @@ export function crearFabricaSocketBaileys(supabase: SupabaseClient): FabricaSock
 
     sock.ev.on("messages.upsert", ({ messages }) => {
       for (const msg of messages) {
-        persistirMensajeEntrante(supabase, idTenant, msg, resolverOrigenSaliente, resolverPnDesdeLid)
+        persistirMensajeEntrante(supabase, idTenant, slot, msg, resolverOrigenSaliente, resolverPnDesdeLid)
           .then((resultado) => {
             // Bot real (autorizado) — solo se invoca para texto entrante
             // real, y solo si la conversación está en "automatico" (nunca
             // si Jessica ya la tomó a mano, ni si está archivada/esperando
             // atención humana). msg.key.id es el wamid real de Baileys,
             // usado como eventId idempotente por el propio Flow Engine.
-            if (resultado?.entrante && resultado.tipo === "texto" && resultado.texto && resultado.estadoConversacion === "automatico" && msg.key.id) {
+            //
+            // WhatsApp multi-cuenta (autorizado) — el bot/Flow Engine SOLO
+            // se invoca para el slot 1 ("WhatsApp principal"). El slot 2
+            // nunca dispara ninguna automatización: persistirMensajeEntrante
+            // ya garantiza que una conversación nueva en slot 2 nace en
+            // "requiere_atencion" (nunca "automatico"), así que esta
+            // condición es, en la práctica, una segunda barrera explícita
+            // -- nunca se depende de una sola capa para algo tan importante
+            // como "no inventar una lógica de distribución entre cuentas".
+            if (slot === 1 && resultado?.entrante && resultado.tipo === "texto" && resultado.texto && resultado.estadoConversacion === "automatico" && msg.key.id) {
               // "Escribiendo..." real (autorizado) — el bot puede tardar
               // varios segundos (varias llamadas reales a Claude en cadena:
               // clasificar, extraer, responder). Un solo sendPresenceUpdate

@@ -6,6 +6,8 @@ import { clienteDeEspecialista, notificarRecordatorioCita } from "@/lib/especial
 import { enviarRecordatorioAmore, type DepsRecordatorioAmore } from "@/lib/amore-recordatorio-citas";
 import { AMORE_TENANT_ID } from "@/lib/nylas/nylas-grant";
 import type { ClienteConfig } from "@/lib/supabase";
+import { obtenerConfigComunicaciones } from "@/lib/comunicaciones/config";
+import { ANTICIPACIONES_RECORDATORIO_MINUTOS } from "@/lib/comunicaciones/tipos";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -27,6 +29,8 @@ export interface DepsEjecutarRecordatorios {
   clienteDeEspecialista?: typeof clienteDeEspecialista;
   notificarRecordatorioCita?: typeof notificarRecordatorioCita;
   amoreDeps?: DepsRecordatorioAmore;
+  /** Inyectable para pruebas -- default real: obtenerConfigComunicaciones (lib/comunicaciones/config.ts). */
+  obtenerConfigComunicaciones?: typeof obtenerConfigComunicaciones;
   /**
    * SOLO para pruebas -- JAMÁS se usa en producción real (route.ts nunca lo
    * pasa). Restringe la consulta a un único tenant desechable, para que un
@@ -43,13 +47,20 @@ export interface DepsEjecutarRecordatorios {
  * dependencias falsas (WhatsApp/Meta nunca reales), sin pasar por HTTP ni
  * por la tabla completa de producción.
  *
- * Busca citas confirmadas cuyo inicio cae en la ventana de 55 a 65 minutos
- * desde ahora (MISMA ventana ya establecida, sin cambios) y les manda el
- * recordatorio una sola vez -- `recordatorio_enviado` (ya existente en
- * producción, ver 20260825230000_recordatorio_citas.sql) evita reenviarlo
- * en la siguiente pasada, y solo se marca DESPUÉS de un envío exitoso real
- * (un fallo de envío nunca lo marca, así el siguiente intento reintenta sin
- * duplicar nada).
+ * Busca citas confirmadas cuyo inicio cae dentro de una ventana AMPLIA
+ * (10 min a 2885 min desde ahora -- cubre las 9 anticipaciones reales
+ * posibles, 15 min a 2 días, con el mismo margen ±5 min de siempre) y para
+ * cada cita evalúa, según la anticipación REAL configurada por su tenant
+ * (dulabs_comunicaciones_config.recordatorio_anticipacion_minutos, mejora
+ * autorizada -- antes esto era fijo/no leído, ver
+ * lib/comunicaciones/config.ts), si YA es su momento exacto de enviarse
+ * (objetivo = inicio - anticipación, con el mismo margen ±5 min de siempre
+ * -- un tenant sin configuración guardada usa 60 min, IDÉNTICO al
+ * comportamiento anterior sin ningún cambio). `recordatorio_enviado` (ya
+ * existente en producción, ver 20260825230000_recordatorio_citas.sql) evita
+ * reenviarlo en la siguiente pasada, y solo se marca DESPUÉS de un envío
+ * exitoso real (un fallo de envío nunca lo marca, así el siguiente intento
+ * reintenta sin duplicar nada).
  *
  * AMORE (autorizado, Fase Final) -- único cambio de comportamiento real:
  * sus citas se envían por el canal WhatsApp-QR/Baileys (enviarRecordatorioAmore)
@@ -57,16 +68,31 @@ export interface DepsEjecutarRecordatorios {
  * (notificarRecordatorioCita) -- AMORE no tiene un token real de Meta, ver
  * lib/amore-recordatorio-citas.ts. Cualquier otro tenant sigue EXACTAMENTE
  * el mismo camino de siempre, sin ningún cambio.
+ *
+ * Mejora Recordatorios (autorizado) -- el TEXTO del mensaje de AMORE ahora
+ * también viene de esa misma configuración (recordatorio_mensaje, con las
+ * variables {{nombre}}/{{servicio}}/{{profesional}}/{{fecha}}/{{hora}}
+ * reemplazadas de verdad), en vez del texto fijo de siempre. Deliberadamente
+ * NO se toca el interruptor "activo" (recordatorio_activo): hoy el envío es
+ * incondicional para todos los tenants (nunca lo filtró), y como la tabla
+ * está vacía en producción (ninguna fila para AMORE todavía), conectar ese
+ * interruptor apagaría de inmediato los recordatorios reales de AMORE que
+ * SÍ están funcionando -- queda documentado como hallazgo aparte, no como
+ * parte de este cambio.
  */
 export async function ejecutarRecordatoriosCitas(deps: DepsEjecutarRecordatorios = {}): Promise<{ enviados: number; errores: string[] }> {
   const supabase = deps.supabase ?? supabaseAdmin();
   const ahoraFn = deps.ahora ?? (() => new Date());
   const buscarCliente = deps.clienteDeEspecialista ?? clienteDeEspecialista;
   const notificarMeta = deps.notificarRecordatorioCita ?? notificarRecordatorioCita;
+  const obtenerConfig = deps.obtenerConfigComunicaciones ?? obtenerConfigComunicaciones;
 
   const ahora = ahoraFn();
-  const desde = new Date(ahora.getTime() + 55 * 60_000);
-  const hasta = new Date(ahora.getTime() + 65 * 60_000);
+  const TOLERANCIA_MIN = 5;
+  const minAnticipacion = Math.min(...ANTICIPACIONES_RECORDATORIO_MINUTOS);
+  const maxAnticipacion = Math.max(...ANTICIPACIONES_RECORDATORIO_MINUTOS);
+  const desde = new Date(ahora.getTime() + (minAnticipacion - TOLERANCIA_MIN) * 60_000);
+  const hasta = new Date(ahora.getTime() + (maxAnticipacion + TOLERANCIA_MIN) * 60_000);
 
   let consulta = supabase
     .from("dulabs_citas_especialista")
@@ -90,13 +116,35 @@ export async function ejecutarRecordatoriosCitas(deps: DepsEjecutarRecordatorios
   let enviados = 0;
   const errores: string[] = [];
   const clientesCache = new Map<string, ClienteConfig | null>();
+  const configCache = new Map<string, Awaited<ReturnType<typeof obtenerConfigComunicaciones>>>();
 
   for (const cita of (citas ?? []) as CitaPendienteRecordatorio[]) {
     try {
+      // Momento exacto de esta cita según la anticipación REAL configurada
+      // por su tenant (60 min = comportamiento idéntico al de siempre si el
+      // tenant nunca guardó nada). Mismo margen ±5 min de siempre -- todavía
+      // no es su momento -> se omite en ESTA pasada, la siguiente (cada
+      // ~10 min) la vuelve a evaluar sin perderla (recordatorio_enviado
+      // sigue en false).
+      if (!configCache.has(cita.id_tenant)) {
+        configCache.set(cita.id_tenant, await obtenerConfig(supabase, cita.id_tenant));
+      }
+      const config = configCache.get(cita.id_tenant)!;
+      const objetivoMs = new Date(cita.inicio).getTime() - config.recordatorioAnticipacionMinutos * 60_000;
+      const dentroDeVentana = ahora.getTime() > objetivoMs - TOLERANCIA_MIN * 60_000 && ahora.getTime() <= objetivoMs + TOLERANCIA_MIN * 60_000;
+      if (!dentroDeVentana) continue;
+
       let ok: boolean;
 
       if (cita.id_tenant === AMORE_TENANT_ID) {
-        ok = await enviarRecordatorioAmore(supabase, cita.id_tenant, cita, deps.amoreDeps);
+        // Solo se pasa la plantilla cuando el tenant YA tiene una fila real
+        // guardada -- si nunca configuró nada (caso de AMORE hoy, tabla
+        // vacía), el motor sigue usando construirTextoRecordatorioAmore
+        // EXACTO de siempre (incluye el formato especial de multi-servicio),
+        // para que el día del deploy ningún recordatorio cambie de texto sin
+        // que el admin haya guardado nada todavía.
+        const mensajePlantilla = config.tieneConfiguracionGuardada ? config.recordatorioMensaje : undefined;
+        ok = await enviarRecordatorioAmore(supabase, cita.id_tenant, cita, deps.amoreDeps, mensajePlantilla);
       } else {
         if (!clientesCache.has(cita.phone_number_id)) {
           clientesCache.set(cita.phone_number_id, await buscarCliente(supabase, cita.phone_number_id));

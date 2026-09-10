@@ -6,6 +6,7 @@ import { useAdminWeb } from "@/components/admin-web/AdminWebContext";
 import { AdminOnlyDesktop } from "@/components/admin-web/AdminOnlyDesktop";
 
 type EstadoConexion = "desconectado" | "conectando" | "conectado";
+type SlotWhatsApp = 1 | 2;
 type EstadoPublico = {
   estado: EstadoConexion;
   numeroConectado: string | null;
@@ -31,10 +32,13 @@ export default function AdminAmoreWhatsappPage() {
   );
 }
 
-function WhatsappContenido() {
-  const { token } = useAdminWeb();
+// WhatsApp multi-cuenta (autorizado) — cada slot (1 o 2) es una conexión
+// 100% independiente (ver worker/src/whatsapp-qr/manager.ts): este hook
+// mantiene su propio estado/polling/errores por slot, así que desconectar o
+// actualizar el QR de uno nunca toca al otro. Solo se instancia para slot 1
+// y slot 2 -- nunca existe una forma de pedir un 3er slot desde esta UI.
+function useWhatsappSlot(token: string, slot: SlotWhatsApp) {
   const [estado, setEstado] = useState<EstadoPublico | null>(null);
-  const [uso, setUso] = useState<UsoWhatsApp[] | null>(null);
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [modo, setModo] = useState<ModoConexion>("qr");
@@ -42,19 +46,15 @@ function WhatsappContenido() {
   const intervaloRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const consultarEstado = useCallback(() => {
-    fetch(`/api/agenda/${token}/whatsapp-qr`)
+    fetch(`/api/agenda/${token}/whatsapp-qr?slot=${slot}`)
       .then((r) => r.json())
       .then((body) => (body.error ? setError(body.error) : setEstado(body)))
       .catch(() => setError("No se pudo consultar el estado de WhatsApp"));
-  }, [token]);
+  }, [token, slot]);
 
   useEffect(() => {
     consultarEstado();
-    fetch(`/api/agenda/${token}/whatsapp-qr/uso`)
-      .then((r) => r.json())
-      .then((body) => body.uso && setUso(body.uso))
-      .catch(() => {});
-  }, [token, consultarEstado]);
+  }, [consultarEstado]);
 
   useEffect(() => {
     if (estado?.estado === "conectando") {
@@ -76,7 +76,7 @@ function WhatsappContenido() {
     setCargando(true);
     setError(null);
     try {
-      const r = await fetch(`/api/agenda/${token}/whatsapp-qr/iniciar`, {
+      const r = await fetch(`/api/agenda/${token}/whatsapp-qr/iniciar?slot=${slot}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(modo === "codigo" ? { telefono: telefono.replace(/\D/g, "") } : {}),
@@ -95,7 +95,7 @@ function WhatsappContenido() {
     setCargando(true);
     setError(null);
     try {
-      const r = await fetch(`/api/agenda/${token}/whatsapp-qr/desconectar`, { method: "POST" });
+      const r = await fetch(`/api/agenda/${token}/whatsapp-qr/desconectar?slot=${slot}`, { method: "POST" });
       const body = await r.json();
       if (body.error) setError(body.error);
       else setEstado(body);
@@ -106,138 +106,187 @@ function WhatsappContenido() {
     }
   }
 
+  return { estado, cargando, error, modo, setModo, telefono, setTelefono, conectar, desconectar };
+}
+
+function WhatsappSlotCard({
+  token,
+  slot,
+  titulo,
+  descripcion,
+}: {
+  token: string;
+  slot: SlotWhatsApp;
+  titulo: string;
+  descripcion: string;
+}) {
+  const { estado, cargando, error, modo, setModo, telefono, setTelefono, conectar, desconectar } = useWhatsappSlot(token, slot);
+
+  return (
+    <div className="rounded-2xl border border-edge bg-card p-5 shadow-sm">
+      <div className="mb-4">
+        <h3 className="text-sm font-semibold text-fg">{titulo}</h3>
+        <p className="text-xs text-mist">{descripcion}</p>
+      </div>
+
+      {error && <p className="mb-3 text-sm text-danger-text">{error}</p>}
+
+      {!estado ? (
+        <div className="flex justify-center py-6">
+          <Loader2 className="size-5 animate-spin text-mist" />
+        </div>
+      ) : estado.estado === "conectado" ? (
+        <div className="flex flex-col gap-4">
+          <div className="flex items-center gap-3">
+            <div className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-success text-success-text">
+              <MessageCircle className="size-5" />
+            </div>
+            <div>
+              <p className="flex items-center gap-1.5 text-sm font-medium text-fg">
+                <span className="size-2 rounded-full bg-success-text" /> 🟢 Conectado
+              </p>
+              <p className="text-xs text-mist">
+                {estado.numeroConectado ? `+${estado.numeroConectado}` : "Número no disponible"}
+                {estado.conectadoEn && ` · desde ${new Date(estado.conectadoEn).toLocaleString("es-CO")}`}
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={desconectar}
+            disabled={cargando}
+            className="rounded-xl bg-danger py-2.5 text-sm font-medium text-danger-text disabled:opacity-50"
+          >
+            Desconectar
+          </button>
+        </div>
+      ) : estado.estado === "conectando" ? (
+        <div className="flex flex-col items-center gap-3 text-center">
+          {estado.codigoVinculacion ? (
+            <>
+              <p className="text-sm font-medium text-fg">Escribe este código en tu WhatsApp</p>
+              <p className="rounded-xl border border-edge bg-ink px-6 py-4 text-3xl font-bold tracking-[0.2em] text-fg">
+                {formatearCodigo(estado.codigoVinculacion)}
+              </p>
+              <p className="text-xs text-mist">
+                WhatsApp &gt; Dispositivos vinculados &gt; Vincular un dispositivo &gt; Vincular con número de teléfono
+              </p>
+            </>
+          ) : estado.qr ? (
+            <>
+              <p className="text-sm font-medium text-fg">Escanea el código QR con tu WhatsApp</p>
+              {/* eslint-disable-next-line @next/next/no-img-element -- data URL local, no aplica optimización */}
+              <img src={estado.qr} alt={`Código QR para conectar ${titulo}`} className="size-56 rounded-xl border border-edge" />
+              <p className="text-xs text-mist">WhatsApp &gt; Dispositivos vinculados &gt; Vincular un dispositivo</p>
+            </>
+          ) : (
+            <>
+              <p className="text-sm font-medium text-fg">{modo === "codigo" ? "Generando tu código..." : "Generando el código QR..."}</p>
+              <div className="flex size-56 items-center justify-center rounded-xl border border-edge">
+                <Loader2 className="size-6 animate-spin text-mist" />
+              </div>
+            </>
+          )}
+          <button
+            type="button"
+            onClick={conectar}
+            disabled={cargando}
+            className="w-full rounded-xl bg-lime-soft py-2.5 text-sm font-medium text-lime-text disabled:opacity-50"
+          >
+            {estado.codigoVinculacion ? "Generar otro código" : "Actualizar código QR"}
+          </button>
+          <button
+            type="button"
+            onClick={desconectar}
+            disabled={cargando}
+            className="w-full rounded-xl py-2.5 text-sm font-medium text-mist disabled:opacity-50"
+          >
+            Cancelar
+          </button>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-4">
+          <div className="flex items-center gap-3">
+            <div className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-ink-2 text-mist">
+              <MessageCircle className="size-5" />
+            </div>
+            <div>
+              <p className="text-sm font-medium text-fg">🔴 No conectado</p>
+            </div>
+          </div>
+
+          <div className="flex rounded-xl border border-edge bg-ink p-1">
+            {(["qr", "codigo"] as ModoConexion[]).map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => setModo(m)}
+                className={`flex-1 rounded-lg py-2 text-sm font-medium ${modo === m ? "bg-lime text-lime-fg" : "text-mist"}`}
+              >
+                {m === "qr" ? "Código QR" : "Vincular con número"}
+              </button>
+            ))}
+          </div>
+
+          {modo === "codigo" && (
+            <label className="flex items-center gap-2.5 rounded-xl border border-edge bg-ink px-4 py-2.5">
+              <span className="text-sm text-mist">+</span>
+              <input
+                value={telefono}
+                onChange={(e) => setTelefono(e.target.value)}
+                placeholder="Ej. 573001234567"
+                inputMode="tel"
+                className="w-full bg-transparent text-sm text-fg outline-none placeholder:text-mist"
+              />
+            </label>
+          )}
+
+          <button
+            type="button"
+            onClick={conectar}
+            disabled={cargando}
+            className="rounded-xl bg-lime-soft py-2.5 text-sm font-medium text-lime-text disabled:opacity-50"
+          >
+            Conectar WhatsApp
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function WhatsappContenido() {
+  const { token } = useAdminWeb();
+  const [uso, setUso] = useState<UsoWhatsApp[] | null>(null);
+
+  useEffect(() => {
+    fetch(`/api/agenda/${token}/whatsapp-qr/uso`)
+      .then((r) => r.json())
+      .then((body) => body.uso && setUso(body.uso))
+      .catch(() => {});
+  }, [token]);
+
   return (
     <div className="flex max-w-2xl flex-col gap-5">
       <div>
         <h1 className="text-xl font-semibold text-fg">WhatsApp</h1>
-        <p className="text-sm text-mist">Conexión con tus clientas</p>
+        <p className="text-sm text-mist">Conecta las cuentas de WhatsApp que utilizará AMORE.</p>
       </div>
 
-      {error && <p className="text-sm text-danger-text">{error}</p>}
+      <WhatsappSlotCard
+        token={token}
+        slot={1}
+        titulo="WhatsApp 1 · Principal"
+        descripcion="Cuenta usada por el bot, recordatorios de citas y cumpleaños"
+      />
+      <WhatsappSlotCard
+        token={token}
+        slot={2}
+        titulo="WhatsApp 2"
+        descripcion="Cuenta adicional, solo para atención manual desde Chats"
+      />
 
-      <div className="rounded-2xl border border-edge bg-card p-5 shadow-sm">
-        {!estado ? (
-          <div className="flex justify-center py-6">
-            <Loader2 className="size-5 animate-spin text-mist" />
-          </div>
-        ) : estado.estado === "conectado" ? (
-          <div className="flex flex-col gap-4">
-            <div className="flex items-center gap-3">
-              <div className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-success text-success-text">
-                <MessageCircle className="size-5" />
-              </div>
-              <div>
-                <p className="flex items-center gap-1.5 text-sm font-medium text-fg">
-                  <span className="size-2 rounded-full bg-success-text" /> 🟢 WhatsApp conectado
-                </p>
-                <p className="text-xs text-mist">
-                  {estado.numeroConectado ? `+${estado.numeroConectado}` : "Número no disponible"}
-                  {estado.conectadoEn && ` · desde ${new Date(estado.conectadoEn).toLocaleString("es-CO")}`}
-                </p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={desconectar}
-              disabled={cargando}
-              className="rounded-xl bg-danger py-2.5 text-sm font-medium text-danger-text disabled:opacity-50"
-            >
-              Desconectar
-            </button>
-          </div>
-        ) : estado.estado === "conectando" ? (
-          <div className="flex flex-col items-center gap-3 text-center">
-            {estado.codigoVinculacion ? (
-              <>
-                <p className="text-sm font-medium text-fg">Escribe este código en tu WhatsApp</p>
-                <p className="rounded-xl border border-edge bg-ink px-6 py-4 text-3xl font-bold tracking-[0.2em] text-fg">
-                  {formatearCodigo(estado.codigoVinculacion)}
-                </p>
-                <p className="text-xs text-mist">
-                  WhatsApp &gt; Dispositivos vinculados &gt; Vincular un dispositivo &gt; Vincular con número de teléfono
-                </p>
-              </>
-            ) : estado.qr ? (
-              <>
-                <p className="text-sm font-medium text-fg">Escanea el código QR con tu WhatsApp</p>
-                {/* eslint-disable-next-line @next/next/no-img-element -- data URL local, no aplica optimización */}
-                <img src={estado.qr} alt="Código QR para conectar WhatsApp" className="size-64 rounded-xl border border-edge" />
-                <p className="text-xs text-mist">WhatsApp &gt; Dispositivos vinculados &gt; Vincular un dispositivo</p>
-              </>
-            ) : (
-              <>
-                <p className="text-sm font-medium text-fg">{modo === "codigo" ? "Generando tu código..." : "Generando el código QR..."}</p>
-                <div className="flex size-64 items-center justify-center rounded-xl border border-edge">
-                  <Loader2 className="size-6 animate-spin text-mist" />
-                </div>
-              </>
-            )}
-            <button
-              type="button"
-              onClick={conectar}
-              disabled={cargando}
-              className="w-full rounded-xl bg-lime-soft py-2.5 text-sm font-medium text-lime-text disabled:opacity-50"
-            >
-              {estado.codigoVinculacion ? "Generar otro código" : "Actualizar código QR"}
-            </button>
-            <button
-              type="button"
-              onClick={desconectar}
-              disabled={cargando}
-              className="w-full rounded-xl py-2.5 text-sm font-medium text-mist disabled:opacity-50"
-            >
-              Cancelar
-            </button>
-          </div>
-        ) : (
-          <div className="flex flex-col gap-4">
-            <div className="flex items-center gap-3">
-              <div className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-ink-2 text-mist">
-                <MessageCircle className="size-5" />
-              </div>
-              <div>
-                <p className="text-sm font-medium text-fg">🔴 WhatsApp desconectado</p>
-                <p className="text-xs text-mist">Conecta tu WhatsApp para enviar y recibir mensajes</p>
-              </div>
-            </div>
-
-            <div className="flex rounded-xl border border-edge bg-ink p-1">
-              {(["qr", "codigo"] as ModoConexion[]).map((m) => (
-                <button
-                  key={m}
-                  type="button"
-                  onClick={() => setModo(m)}
-                  className={`flex-1 rounded-lg py-2 text-sm font-medium ${modo === m ? "bg-lime text-lime-fg" : "text-mist"}`}
-                >
-                  {m === "qr" ? "Código QR" : "Vincular con número"}
-                </button>
-              ))}
-            </div>
-
-            {modo === "codigo" && (
-              <label className="flex items-center gap-2.5 rounded-xl border border-edge bg-ink px-4 py-2.5">
-                <span className="text-sm text-mist">+</span>
-                <input
-                  value={telefono}
-                  onChange={(e) => setTelefono(e.target.value)}
-                  placeholder="Ej. 573001234567"
-                  inputMode="tel"
-                  className="w-full bg-transparent text-sm text-fg outline-none placeholder:text-mist"
-                />
-              </label>
-            )}
-
-            <button
-              type="button"
-              onClick={conectar}
-              disabled={cargando}
-              className="rounded-xl bg-lime-soft py-2.5 text-sm font-medium text-lime-text disabled:opacity-50"
-            >
-              Conectar WhatsApp
-            </button>
-          </div>
-        )}
-      </div>
+      <p className="text-center text-xs text-mist">AMORE permite conectar máximo 2 cuentas de WhatsApp.</p>
 
       <div className="rounded-2xl border border-edge bg-card shadow-sm">
         <h2 className="p-5 pb-2 text-base font-semibold text-fg">Uso de WhatsApp</h2>

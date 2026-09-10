@@ -14,6 +14,7 @@ import {
 } from "@/components/spa-panel/amore/ui";
 
 type EstadoConexion = "desconectado" | "conectando" | "conectado";
+type SlotWhatsApp = 1 | 2;
 type EstadoPublico = {
   estado: EstadoConexion;
   numeroConectado: string | null;
@@ -32,11 +33,14 @@ function formatearCodigo(codigo: string): string {
 // AMORE (Fase 9A, autorizado) — MISMO Design System de la Fase 5 (AmoreCard,
 // AmoreScreenTitle, AmoreSecondaryButton...), ahora conectado a la
 // infraestructura real de WhatsApp por QR (ver app/api/agenda/[token]/
-// whatsapp-qr/* y lib/whatsapp-qr/). No se rediseñó nada: se agregaron los
-// 3 estados reales (desconectado/conectando/conectado) sobre los mismos
-// componentes que ya existían. "Uso de WhatsApp" ahora es real (ver
+// whatsapp-qr/* y lib/whatsapp-qr/). "Uso de WhatsApp" es real (ver
 // app/api/agenda/[token]/whatsapp-qr/uso) -- cuenta filas reales de las
 // tablas de idempotencia de cada motor, nunca un número inventado.
+//
+// WhatsApp multi-cuenta (autorizado) -- AMORE permite hasta 2 cuentas de
+// WhatsApp independientes por tenant. Slot 1 ("principal") es la única que
+// usa el bot/recordatorios/cumpleaños; slot 2 es una segunda cuenta real,
+// solo para atención manual desde Chats -- nunca automática.
 export default function WhatsappPage() {
   return (
     <AmoreOnlyScreen>
@@ -45,10 +49,8 @@ export default function WhatsappPage() {
   );
 }
 
-function WhatsappContenido() {
-  const { token } = useAgenda();
+function useWhatsappSlot(token: string, slot: SlotWhatsApp) {
   const [estado, setEstado] = useState<EstadoPublico | null>(null);
-  const [uso, setUso] = useState<UsoWhatsApp[] | null>(null);
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [modo, setModo] = useState<ModoConexion>("qr");
@@ -56,19 +58,15 @@ function WhatsappContenido() {
   const intervaloRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const consultarEstado = useCallback(() => {
-    fetch(`/api/agenda/${token}/whatsapp-qr`)
+    fetch(`/api/agenda/${token}/whatsapp-qr?slot=${slot}`)
       .then((r) => r.json())
       .then((body) => (body.error ? setError(body.error) : setEstado(body)))
       .catch(() => setError("No se pudo consultar el estado de WhatsApp"));
-  }, [token]);
+  }, [token, slot]);
 
   useEffect(() => {
     consultarEstado();
-    fetch(`/api/agenda/${token}/whatsapp-qr/uso`)
-      .then((r) => r.json())
-      .then((body) => body.uso && setUso(body.uso))
-      .catch(() => {});
-  }, [token, consultarEstado]);
+  }, [consultarEstado]);
 
   // Mientras se espera el escaneo del QR, refresca el estado cada 3s (el QR
   // y la confirmación de conexión llegan de forma asíncrona del lado del
@@ -93,7 +91,7 @@ function WhatsappContenido() {
     setCargando(true);
     setError(null);
     try {
-      const r = await fetch(`/api/agenda/${token}/whatsapp-qr/iniciar`, {
+      const r = await fetch(`/api/agenda/${token}/whatsapp-qr/iniciar?slot=${slot}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(modo === "codigo" ? { telefono: telefono.replace(/\D/g, "") } : {}),
@@ -112,7 +110,7 @@ function WhatsappContenido() {
     setCargando(true);
     setError(null);
     try {
-      const r = await fetch(`/api/agenda/${token}/whatsapp-qr/desconectar`, { method: "POST" });
+      const r = await fetch(`/api/agenda/${token}/whatsapp-qr/desconectar?slot=${slot}`, { method: "POST" });
       const body = await r.json();
       if (body.error) setError(body.error);
       else setEstado(body);
@@ -123,9 +121,28 @@ function WhatsappContenido() {
     }
   }
 
+  return { estado, cargando, error, modo, setModo, telefono, setTelefono, conectar, desconectar };
+}
+
+function WhatsappSlotBlock({
+  token,
+  slot,
+  titulo,
+  descripcion,
+}: {
+  token: string;
+  slot: SlotWhatsApp;
+  titulo: string;
+  descripcion: string;
+}) {
+  const { estado, cargando, error, modo, setModo, telefono, setTelefono, conectar, desconectar } = useWhatsappSlot(token, slot);
+
   return (
-    <div className="flex flex-col gap-5">
-      <AmoreScreenTitle title="WhatsApp" subtitle="Conexión con tus clientas" />
+    <div className="flex flex-col gap-3">
+      <div>
+        <AmoreSectionTitle title={titulo} />
+        <p className="text-xs text-mist">{descripcion}</p>
+      </div>
 
       {error && <p className="text-sm text-danger-text">{error}</p>}
 
@@ -141,7 +158,7 @@ function WhatsappContenido() {
             </div>
             <div className="min-w-0 flex-1">
               <p className="flex items-center gap-1.5 text-sm font-medium text-fg">
-                <span className="size-2 rounded-full bg-success-text" /> 🟢 WhatsApp conectado
+                <span className="size-2 rounded-full bg-success-text" /> 🟢 Conectado
               </p>
               <p className="truncate text-xs text-mist">
                 {estado.numeroConectado ? `+${estado.numeroConectado}` : "Número no disponible"}
@@ -169,7 +186,7 @@ function WhatsappContenido() {
             <>
               <p className="text-sm font-medium text-fg">Escanea el código QR con tu WhatsApp</p>
               {/* eslint-disable-next-line @next/next/no-img-element -- data URL local, no aplica optimización de imagen */}
-              <img src={estado.qr} alt="Código QR para conectar WhatsApp" className="size-56 rounded-xl border border-edge" />
+              <img src={estado.qr} alt={`Código QR para conectar ${titulo}`} className="size-56 rounded-xl border border-edge" />
               <p className="text-xs text-mist">WhatsApp &gt; Dispositivos vinculados &gt; Vincular un dispositivo</p>
             </>
           ) : (
@@ -196,8 +213,7 @@ function WhatsappContenido() {
               <MessageCircle className="size-5" />
             </div>
             <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium text-fg">🔴 WhatsApp desconectado</p>
-              <p className="truncate text-xs text-mist">Conecta tu WhatsApp para enviar y recibir mensajes</p>
+              <p className="text-sm font-medium text-fg">🔴 No conectado</p>
             </div>
           </AmoreCard>
 
@@ -228,6 +244,37 @@ function WhatsappContenido() {
           </AmoreSecondaryButton>
         </>
       )}
+    </div>
+  );
+}
+
+function WhatsappContenido() {
+  const { token } = useAgenda();
+  const [uso, setUso] = useState<UsoWhatsApp[] | null>(null);
+
+  useEffect(() => {
+    fetch(`/api/agenda/${token}/whatsapp-qr/uso`)
+      .then((r) => r.json())
+      .then((body) => body.uso && setUso(body.uso))
+      .catch(() => {});
+  }, [token]);
+
+  return (
+    <div className="flex flex-col gap-6">
+      <AmoreScreenTitle title="WhatsApp" subtitle="Conecta las cuentas de WhatsApp que utilizará AMORE" />
+
+      <WhatsappSlotBlock
+        token={token}
+        slot={1}
+        titulo="WhatsApp 1 · Principal"
+        descripcion="Usada por el bot, recordatorios de citas y cumpleaños"
+      />
+
+      <AmoreDivider />
+
+      <WhatsappSlotBlock token={token} slot={2} titulo="WhatsApp 2" descripcion="Cuenta adicional, solo para atención manual desde Chats" />
+
+      <p className="text-center text-xs text-mist">AMORE permite conectar máximo 2 cuentas de WhatsApp.</p>
 
       <div>
         <AmoreSectionTitle title="Uso de WhatsApp" />

@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { FabricaSocket } from "./whatsapp-qr/tipos.js";
+import type { FabricaSocket, SlotWhatsApp } from "./whatsapp-qr/tipos.js";
 import { iniciarConexion, obtenerEstadoPublico, desconectar, recuperarSesionesPersistidas } from "./whatsapp-qr/manager.js";
 import { enviarPorWhatsAppQR, enviarAudioPorWhatsAppQR } from "./whatsapp-qr/adaptador.js";
 import { claveValida, extraerBearer } from "./auth.js";
@@ -26,6 +26,19 @@ async function leerCuerpo(req: IncomingMessage): Promise<string> {
   const trozos: Buffer[] = [];
   for await (const trozo of req) trozos.push(trozo as Buffer);
   return Buffer.concat(trozos).toString("utf8");
+}
+
+// WhatsApp multi-cuenta (autorizado) — `?slot=1|2` en la query string,
+// opcional (default 1 = "WhatsApp principal", EXACTO comportamiento de
+// siempre para todo llamador que nunca lo pase). Cualquier otro valor
+// (incluida una 3ra cuenta) se rechaza acá, en el propio servidor -- nunca
+// se depende solo de que el frontend oculte un botón para un 3er slot.
+function resolverSlot(url: URL): SlotWhatsApp | null {
+  const crudo = url.searchParams.get("slot");
+  if (crudo === null) return 1;
+  if (crudo === "1") return 1;
+  if (crudo === "2") return 2;
+  return null;
 }
 
 export type DependenciasServidor = {
@@ -57,9 +70,14 @@ export function crearServidor(deps: DependenciasServidor) {
       }
       const idTenant = partes[1];
       const accion = partes[2];
+      const slot = resolverSlot(url);
+      if (slot === null) {
+        enviarJson(res, 400, { error: "El parámetro 'slot' debe ser 1 o 2" });
+        return;
+      }
 
       if (accion === "estado" && req.method === "GET") {
-        enviarJson(res, 200, await obtenerEstadoPublico(deps.supabase, idTenant));
+        enviarJson(res, 200, await obtenerEstadoPublico(deps.supabase, idTenant, slot));
         return;
       }
 
@@ -78,12 +96,12 @@ export function crearServidor(deps: DependenciasServidor) {
             return;
           }
         }
-        enviarJson(res, 200, await iniciarConexion(deps.supabase, idTenant, deps.fabricaSocket, { telefono }));
+        enviarJson(res, 200, await iniciarConexion(deps.supabase, idTenant, slot, deps.fabricaSocket, { telefono }));
         return;
       }
 
       if (accion === "desconectar" && req.method === "POST") {
-        enviarJson(res, 200, await desconectar(deps.supabase, idTenant));
+        enviarJson(res, 200, await desconectar(deps.supabase, idTenant, slot));
         return;
       }
 
@@ -100,7 +118,7 @@ export function crearServidor(deps: DependenciasServidor) {
           return;
         }
         try {
-          await enviarPorWhatsAppQR(idTenant, cuerpo.telefono, cuerpo.mensaje, cuerpo.origen === "automatico" ? "automatico" : undefined);
+          await enviarPorWhatsAppQR(idTenant, cuerpo.telefono, cuerpo.mensaje, cuerpo.origen === "automatico" ? "automatico" : undefined, slot);
           enviarJson(res, 200, { ok: true });
         } catch {
           logErrorControlado(idTenant, "envio_sin_sesion_activa");
@@ -128,7 +146,7 @@ export function crearServidor(deps: DependenciasServidor) {
           return;
         }
         try {
-          await enviarAudioPorWhatsAppQR(idTenant, cuerpo.telefono, audio, cuerpo.mimeType);
+          await enviarAudioPorWhatsAppQR(idTenant, cuerpo.telefono, audio, cuerpo.mimeType, slot);
           enviarJson(res, 200, { ok: true });
         } catch {
           logErrorControlado(idTenant, "envio_audio_sin_sesion_activa");
