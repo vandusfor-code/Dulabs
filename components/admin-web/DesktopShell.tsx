@@ -18,7 +18,7 @@ export function DesktopShell({ children }: { children: ReactNode }) {
   const { token, datos, mostrarNueva, cerrarNueva, crearCita, editando, cerrarEditar, guardarEdicion } = useAdminWeb();
 
   return (
-    <div className="amore-scope flex min-h-screen min-w-[1024px] bg-ink">
+    <div className="amore-scope flex h-screen min-w-[1024px] overflow-hidden bg-ink">
       <DesktopSidebar />
       <div className="flex min-w-0 flex-1 flex-col">
         <DesktopHeader />
