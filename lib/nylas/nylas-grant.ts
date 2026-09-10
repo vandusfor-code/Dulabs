@@ -12,3 +12,18 @@ export function resolverNylasGrantIdParaTenant(idTenant: string): string | null 
   if (idTenant !== AMORE_TENANT_ID) return null;
   return process.env.NYLAS_GRANT_ID_AMORE ?? null;
 }
+
+/**
+ * NUEVA FASE (autorizado, comisiones/clientes/citas manuales) — mismo
+ * prefijo sintético que ya usan por su cuenta lib/agenda-v2/router.ts
+ * (phoneNumberIdSintetico) y lib/reserva-servicio-nylas.ts (inline): la
+ * identidad real de un cliente/una cita de AMORE en todo el sistema
+ * (dulabs_clientes_conocidos, dulabs_citas_especialista.phone_number_id)
+ * NUNCA es el phone_number_id legacy de Meta -- siempre "whatsapp-qr:<tenant>".
+ * Exportada acá (junto a AMORE_TENANT_ID, el otro dato de identidad de este
+ * tenant) para que código NUEVO la reutilice en vez de reimplementar el
+ * mismo prefijo una tercera vez.
+ */
+export function phoneNumberIdWhatsappQr(idTenant: string): string {
+  return `whatsapp-qr:${idTenant}`;
+}

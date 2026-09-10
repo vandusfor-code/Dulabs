@@ -8,7 +8,7 @@
  * seguridad ya usado en lib/asistente-daniela-gate.test.ts y
  * app/api/cron/seguimiento-traspaso/route.test.ts.
  */
-import { describe, it, before, after } from "node:test";
+import { describe, it, before, after, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
@@ -17,6 +17,7 @@ import {
   formatearFechaHoraColombia,
   MENSAJE_RECORDATORIO_INMEDIATO,
   enviarConfirmacionReservaWhatsApp,
+  notificarNuevaCitaProfesional,
 } from "@/lib/reserva-notificaciones-whatsapp";
 
 describe("construirMensajeConfirmacionReserva / formatearFechaHoraColombia — funciones puras", () => {
@@ -49,6 +50,45 @@ describe("MENSAJE_RECORDATORIO_INMEDIATO — texto fijo de política", () => {
       MENSAJE_RECORDATORIO_INMEDIATO,
       "💗 Recuerda que toda cita debe ser confirmada 1 hora antes de la hora programada.\n\nDe lo contrario, la cita se cancelará automáticamente.\n\nSi ya confirmaste tu cita, puedes ignorar este mensaje. ✨"
     );
+  });
+});
+
+// NUEVA FASE (autorizado, citas manuales desde admin) -- notificarNuevaCitaProfesional
+// no toca Supabase (solo llama a enviarMensajeWhatsApp, un fetch HTTP puro al
+// worker), así que estas pruebas nunca necesitan SUPABASE_URL -- controlan
+// WHATSAPP_WORKER_URL/SECRET explícitamente para que el "envío" real nunca
+// intente una llamada de red (sin esas variables, enviarMensajeWhatsApp
+// responde 503 de forma controlada -- ver lib/whatsapp-worker-client.ts).
+describe("notificarNuevaCitaProfesional — no falla la cita si la profesional no tiene WhatsApp", () => {
+  const ORIGINAL_ENV = { ...process.env };
+  const CITA = { nombreProfesional: "Jessica", servicio: "Manicure Tradicional", inicioISO: "2026-09-10T21:00:00.000Z", nombreCliente: "María Camila", telefonoCliente: "573001112233" };
+
+  beforeEach(() => {
+    delete process.env.WHATSAPP_WORKER_URL;
+    delete process.env.WHATSAPP_WORKER_SECRET;
+  });
+  afterEach(() => {
+    process.env = { ...ORIGINAL_ENV };
+  });
+
+  it("numero_whatsapp null -> 'sin_whatsapp', nunca intenta enviar nada", async () => {
+    const resultado = await notificarNuevaCitaProfesional("tenant-1", null, CITA);
+    assert.deepEqual(resultado, { enviado: false, motivo: "sin_whatsapp" });
+  });
+
+  it("numero_whatsapp vacío ('') -> 'sin_whatsapp', mismo criterio que null/undefined", async () => {
+    const resultado = await notificarNuevaCitaProfesional("tenant-1", "", CITA);
+    assert.deepEqual(resultado, { enviado: false, motivo: "sin_whatsapp" });
+  });
+
+  it("numero_whatsapp undefined -> 'sin_whatsapp'", async () => {
+    const resultado = await notificarNuevaCitaProfesional("tenant-1", undefined, CITA);
+    assert.deepEqual(resultado, { enviado: false, motivo: "sin_whatsapp" });
+  });
+
+  it("con numero_whatsapp real pero el worker no está configurado -> 'error' controlado, NUNCA lanza (la cita ya se creó, esto es solo la notificación)", async () => {
+    const resultado = await notificarNuevaCitaProfesional("tenant-1", "573009998877", CITA);
+    assert.deepEqual(resultado, { enviado: false, motivo: "error" });
   });
 });
 

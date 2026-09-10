@@ -1,10 +1,21 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { resolverTenantDesdeToken, requiereAdministrador } from "@/lib/agenda-admin-auth";
+import { validarComision } from "./comision";
 
 export const runtime = "nodejs";
 
-type ServicioFila = { id: string; nombre: string; categoria: string | null; descripcion: string | null; duracion_min: number; precio: number | null; activo: boolean };
+type ServicioFila = {
+  id: string;
+  nombre: string;
+  categoria: string | null;
+  descripcion: string | null;
+  duracion_min: number;
+  precio: number | null;
+  activo: boolean;
+  comision_tipo: "porcentaje" | "valor_fijo" | null;
+  comision_valor: number | null;
+};
 
 // Lista TODOS los servicios del tenant (activos e inactivos -- el panel
 // necesita ver ambos para poder reactivar uno), cada uno con los ids de los
@@ -21,7 +32,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   const [{ data: servicios }, { data: relaciones }] = await Promise.all([
     supabase
       .from("dulabs_servicios")
-      .select("id, nombre, categoria, descripcion, duracion_min, precio, activo")
+      .select("id, nombre, categoria, descripcion, duracion_min, precio, activo, comision_tipo, comision_valor")
       .eq("id_tenant", tenant.idTenant)
       .order("nombre", { ascending: true }),
     supabase.from("dulabs_servicio_especialista").select("servicio_id, especialista_id").eq("id_tenant", tenant.idTenant),
@@ -48,6 +59,8 @@ type BodyServicio = {
   descripcion?: string;
   duracion_min?: number;
   precio?: number | null;
+  comision_tipo?: "porcentaje" | "valor_fijo" | null;
+  comision_valor?: number | null;
   especialistaIds?: number[];
 };
 
@@ -81,6 +94,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   if (precio !== null && (!Number.isFinite(precio) || precio < 0)) {
     return Response.json({ error: "El precio no es válido" }, { status: 400 });
   }
+  const comision = validarComision(body.comision_tipo, body.comision_valor);
+  if (!comision.ok) return Response.json({ error: comision.error }, { status: 400 });
 
   const { data: servicio, error } = await supabase
     .from("dulabs_servicios")
@@ -91,8 +106,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       descripcion: body.descripcion?.trim() || null,
       duracion_min: duracionMin,
       precio,
+      comision_tipo: comision.comision.tipo,
+      comision_valor: comision.comision.valor,
     })
-    .select("id, nombre, categoria, descripcion, duracion_min, precio, activo")
+    .select("id, nombre, categoria, descripcion, duracion_min, precio, activo, comision_tipo, comision_valor")
     .single();
   if (error || !servicio) {
     console.error("[servicios] error creando:", error?.message);

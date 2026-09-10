@@ -3,7 +3,7 @@ import type { ReporteContabilidad, TipoPeriodo } from "./tipos";
 import { resolverRango, rangoAnteriorDe } from "./periodo";
 import { buscarCitasCompletadas } from "./consultas";
 import { calcularIngresoTotal, agruparPorServicio, compararConAnterior, construirMovimientos } from "./metricas";
-import { obtenerComisionesActivas, agruparPorProfesional } from "./comisiones";
+import { obtenerComisionesPorServicio, obtenerLineasMultiServicioPorCita, agruparPorProfesional } from "./comisiones";
 
 export type ParametrosReporte = {
   idTenant: string;
@@ -29,7 +29,7 @@ export async function generarReporteContabilidad(
   const rango = resolverRango(params.periodo, ahora, params.personalizado);
   if (!rango) return { ok: false, error: "Rango de fechas inválido" };
 
-  const [filasActual, filasAnterior, comisiones] = await Promise.all([
+  const [filasActual, filasAnterior, comisionesPorServicio] = await Promise.all([
     buscarCitasCompletadas(supabase, {
       idTenant: params.idTenant,
       rango,
@@ -42,8 +42,13 @@ export async function generarReporteContabilidad(
       especialistaId: params.especialistaId,
       servicioId: params.servicioId,
     }),
-    obtenerComisionesActivas(supabase, params.idTenant),
+    obtenerComisionesPorServicio(supabase, params.idTenant),
   ]);
+  const lineasMultiServicio = await obtenerLineasMultiServicioPorCita(
+    supabase,
+    params.idTenant,
+    filasActual.map((f) => f.id)
+  );
 
   const ingresoActual = calcularIngresoTotal(filasActual);
   const ingresoAnterior = calcularIngresoTotal(filasAnterior);
@@ -55,7 +60,7 @@ export async function generarReporteContabilidad(
       ingresos: compararConAnterior(ingresoActual, ingresoAnterior),
       citasCompletadas: filasActual.length,
       porServicio: agruparPorServicio(filasActual),
-      porProfesional: agruparPorProfesional(filasActual, comisiones),
+      porProfesional: agruparPorProfesional(filasActual, comisionesPorServicio, lineasMultiServicio),
       movimientos: construirMovimientos(filasActual),
     },
   };

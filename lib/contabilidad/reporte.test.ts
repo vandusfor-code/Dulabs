@@ -9,9 +9,10 @@
  * llama generarReporteContabilidad de forma directa, mismo criterio que
  * cumpleaños/fidelización/comunicaciones/whatsapp-qr en este proyecto.
  *
- * Requiere que la migración de esta fase ya se haya corrido
- * (dulabs_comisiones_especialista) -- si no, el `before()` lo detecta y
- * todo el archivo se salta con un mensaje claro.
+ * Requiere que la migración de comisión por servicio ya se haya corrido
+ * (dulabs_servicios.comision_tipo/comision_valor, ver
+ * 20260924000000_amore_comision_servicio.sql) -- si no, el `before()` lo
+ * detecta y todo el archivo se salta con un mensaje claro.
  */
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
@@ -43,14 +44,16 @@ describe(
     before(async () => {
       if (!HAS_SUPABASE) return;
       supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
-      const sonda = await supabase.from("dulabs_comisiones_especialista").select("id_tenant").limit(1);
+      const sonda = await supabase.from("dulabs_servicios").select("comision_tipo").limit(1);
       migracionesListas = !sonda.error;
     });
 
     after(async () => {
       if (!HAS_SUPABASE || !migracionesListas) return;
-      if (citaIds.length) await supabase.from("dulabs_citas_especialista").delete().in("id", citaIds);
-      if (tenantsCreados.length) await supabase.from("dulabs_comisiones_especialista").delete().in("id_tenant", tenantsCreados);
+      if (citaIds.length) {
+        await supabase.from("dulabs_cita_servicios").delete().in("cita_id", citaIds);
+        await supabase.from("dulabs_citas_especialista").delete().in("id", citaIds);
+      }
       if (especialistaIds.length) await supabase.from("dulabs_especialistas").delete().in("id", especialistaIds);
       if (servicioIds.length) await supabase.from("dulabs_servicios").delete().in("id", servicioIds);
     });
@@ -78,10 +81,15 @@ describe(
       return data!.id as number;
     }
 
-    async function crearServicio(idTenant: string, nombre: string, precio: number | null): Promise<string> {
+    async function crearServicio(
+      idTenant: string,
+      nombre: string,
+      precio: number | null,
+      comision?: { tipo: "porcentaje" | "valor_fijo"; valor: number }
+    ): Promise<string> {
       const { data, error } = await supabase
         .from("dulabs_servicios")
-        .insert({ id_tenant: idTenant, nombre, precio, duracion_min: 30 })
+        .insert({ id_tenant: idTenant, nombre, precio, duracion_min: 30, comision_tipo: comision?.tipo ?? null, comision_valor: comision?.valor ?? null })
         .select("id")
         .single();
       if (error) throw error;
@@ -116,6 +124,34 @@ describe(
       if (error) throw error;
       citaIds.push(data!.id as number);
       return data!.id as number;
+    }
+
+    // Fase 3 (multi-servicio, ya existente) -- misma tabla puente real que
+    // usa reserva-servicio-nylas.ts (dulabs_cita_servicios): la cita en sí
+    // sigue guardando servicio/servicio_id/precio_total del PRIMER servicio
+    // (compatibilidad histórica), y el detalle real de los 2-3 servicios
+    // vive en el puente -- exactamente lo que lee obtenerLineasMultiServicioPorCita.
+    async function crearCitaMultiServicio(params: {
+      idTenant: string;
+      especialistaId: number;
+      servicios: { id: string; nombre: string; precio: number }[];
+      inicio: Date;
+    }): Promise<number> {
+      const precioTotal = params.servicios.reduce((total, s) => total + s.precio, 0);
+      const citaId = await crearCita({
+        idTenant: params.idTenant,
+        especialistaId: params.especialistaId,
+        servicioId: params.servicios[0]!.id,
+        servicioTexto: params.servicios.map((s) => s.nombre).join(" + "),
+        inicio: params.inicio,
+        estado: "completada",
+      });
+      await supabase.from("dulabs_citas_especialista").update({ precio_total: precioTotal }).eq("id", citaId);
+      const { error } = await supabase.from("dulabs_cita_servicios").insert(
+        params.servicios.map((s, i) => ({ cita_id: citaId, id_tenant: params.idTenant, servicio_id: s.id, orden: i + 1 }))
+      );
+      if (error) throw error;
+      return citaId;
     }
 
     // ------------------------------------------------------------------
@@ -223,12 +259,16 @@ describe(
     });
 
     // ------------------------------------------------------------------
-    // Grupo 2: escenarios 15-17 (comisiones).
+    // Grupo 2: escenarios 15-17 (comisiones) -- NUEVA FASE: la comisión ahora
+    // se configura POR SERVICIO (dulabs_servicios.comision_tipo/comision_valor),
+    // no por especialista -- cada profesional puede comisionar distinto según
+    // qué servicio real completó.
     // ------------------------------------------------------------------
-    describe("comisiones", () => {
+    describe("comisiones (por servicio)", () => {
       const TENANT = randomUUID();
-      let especialistaPorcentaje: number, especialistaValorFijo: number, especialistaSinComision: number;
-      let servicio: string;
+      let especialistaPorcentaje: number, especialistaValorFijo: number, especialistaSinComision: number, especialistaMultiServicio: number;
+      let servicioPorcentaje: string, servicioValorFijo: string, servicioSinComision: string;
+      let manicure: string, pedicure: string, cejas: string;
 
       before(async () => {
         if (!migracionesListas) return;
@@ -236,44 +276,68 @@ describe(
         especialistaPorcentaje = await crearEspecialista(TENANT, "Comisión Porcentaje");
         especialistaValorFijo = await crearEspecialista(TENANT, "Comisión Fija");
         especialistaSinComision = await crearEspecialista(TENANT, "Sin Comisión");
-        servicio = await crearServicio(TENANT, "Servicio Comisionable", 50000);
+        especialistaMultiServicio = await crearEspecialista(TENANT, "Mary (multi-servicio)");
 
-        await supabase.from("dulabs_comisiones_especialista").insert([
-          { id_tenant: TENANT, especialista_id: especialistaPorcentaje, tipo: "porcentaje", valor: 40 },
-          { id_tenant: TENANT, especialista_id: especialistaValorFijo, tipo: "valor_fijo", valor: 20000 },
-        ]);
+        servicioPorcentaje = await crearServicio(TENANT, "Servicio 40%", 50000, { tipo: "porcentaje", valor: 40 });
+        servicioValorFijo = await crearServicio(TENANT, "Servicio Fijo", 50000, { tipo: "valor_fijo", valor: 20000 });
+        servicioSinComision = await crearServicio(TENANT, "Servicio Sin Comisión", 50000);
+        // Ejemplo real pedido por el negocio: Manicure $30.000 (20%),
+        // Pedicure $40.000 (10%), Cejas $20.000 (valor fijo $5.000).
+        manicure = await crearServicio(TENANT, "Manicure", 30000, { tipo: "porcentaje", valor: 20 });
+        pedicure = await crearServicio(TENANT, "Pedicure", 40000, { tipo: "porcentaje", valor: 10 });
+        cejas = await crearServicio(TENANT, "Cejas", 20000, { tipo: "valor_fijo", valor: 5000 });
 
-        await crearCita({ idTenant: TENANT, especialistaId: especialistaPorcentaje, servicioId: servicio, servicioTexto: "Servicio Comisionable", inicio: AHORA, estado: "completada" });
-        await crearCita({ idTenant: TENANT, especialistaId: especialistaValorFijo, servicioId: servicio, servicioTexto: "Servicio Comisionable", inicio: AHORA, estado: "completada" });
-        await crearCita({ idTenant: TENANT, especialistaId: especialistaValorFijo, servicioId: servicio, servicioTexto: "Servicio Comisionable", inicio: AHORA, estado: "completada" });
-        await crearCita({ idTenant: TENANT, especialistaId: especialistaSinComision, servicioId: servicio, servicioTexto: "Servicio Comisionable", inicio: AHORA, estado: "completada" });
+        await crearCita({ idTenant: TENANT, especialistaId: especialistaPorcentaje, servicioId: servicioPorcentaje, servicioTexto: "Servicio 40%", inicio: AHORA, estado: "completada" });
+        await crearCita({ idTenant: TENANT, especialistaId: especialistaValorFijo, servicioId: servicioValorFijo, servicioTexto: "Servicio Fijo", inicio: AHORA, estado: "completada" });
+        await crearCita({ idTenant: TENANT, especialistaId: especialistaValorFijo, servicioId: servicioValorFijo, servicioTexto: "Servicio Fijo", inicio: AHORA, estado: "completada" });
+        await crearCita({ idTenant: TENANT, especialistaId: especialistaSinComision, servicioId: servicioSinComision, servicioTexto: "Servicio Sin Comisión", inicio: AHORA, estado: "completada" });
       });
 
-      it("15. comisión por porcentaje: ingreso_generado * valor / 100", async (t) => {
+      it("15. comisión por porcentaje: precio_del_servicio * valor / 100", async (t) => {
         if (!migracionesListas) return t.skip("falta la migración");
         const resultado = await generarReporteContabilidad(supabase, { idTenant: TENANT, periodo: "hoy", ahora: AHORA });
         assert.ok(resultado.ok);
         const fila = resultado.reporte.porProfesional.find((p) => p.especialistaId === especialistaPorcentaje);
         assert.equal(fila?.ingresos, 50000);
-        assert.deepEqual(fila?.comision, { estado: "configurada", tipo: "porcentaje", valor: 40, monto: 20000 });
+        assert.deepEqual(fila?.comision, { estado: "configurada", monto: 20000 }); // 50000 * 40%
       });
 
-      it("16. comisión por valor fijo: valor * cantidad de servicios completados", async (t) => {
+      it("16. comisión por valor fijo: un monto fijo por CADA servicio completado (no por cita)", async (t) => {
         if (!migracionesListas) return t.skip("falta la migración");
         const resultado = await generarReporteContabilidad(supabase, { idTenant: TENANT, periodo: "hoy", ahora: AHORA });
         assert.ok(resultado.ok);
         const fila = resultado.reporte.porProfesional.find((p) => p.especialistaId === especialistaValorFijo);
         assert.equal(fila?.cantidad, 2);
         assert.equal(fila?.ingresos, 100000);
-        assert.deepEqual(fila?.comision, { estado: "configurada", tipo: "valor_fijo", valor: 20000, monto: 40000 });
+        assert.deepEqual(fila?.comision, { estado: "configurada", monto: 40000 }); // 20000 + 20000
       });
 
-      it("17. profesional sin comisión configurada -> 'no_configurada', nunca un porcentaje inventado", async (t) => {
+      it("17. servicio sin comisión configurada -> 'no_configurada', nunca un porcentaje inventado", async (t) => {
         if (!migracionesListas) return t.skip("falta la migración");
         const resultado = await generarReporteContabilidad(supabase, { idTenant: TENANT, periodo: "hoy", ahora: AHORA });
         assert.ok(resultado.ok);
         const fila = resultado.reporte.porProfesional.find((p) => p.especialistaId === especialistaSinComision);
         assert.deepEqual(fila?.comision, { estado: "no_configurada" });
+      });
+
+      it("15b. cita multi-servicio: cada servicio real se comisiona con SU PROPIA configuración (ejemplo real del negocio)", async (t) => {
+        if (!migracionesListas) return t.skip("falta la migración");
+        await crearCitaMultiServicio({
+          idTenant: TENANT,
+          especialistaId: especialistaMultiServicio,
+          servicios: [
+            { id: manicure, nombre: "Manicure", precio: 30000 },
+            { id: pedicure, nombre: "Pedicure", precio: 40000 },
+            { id: cejas, nombre: "Cejas", precio: 20000 },
+          ],
+          inicio: AHORA,
+        });
+        const resultado = await generarReporteContabilidad(supabase, { idTenant: TENANT, periodo: "hoy", ahora: AHORA });
+        assert.ok(resultado.ok);
+        const fila = resultado.reporte.porProfesional.find((p) => p.especialistaId === especialistaMultiServicio);
+        assert.equal(fila?.ingresos, 90000); // 30000 + 40000 + 20000 (precio_total real)
+        // 30000*20% + 40000*10% + 5000 fijo = 6000 + 4000 + 5000 = 15000
+        assert.deepEqual(fila?.comision, { estado: "configurada", monto: 15000 });
       });
     });
 
@@ -281,7 +345,7 @@ describe(
     // Grupo 3: escenario 18 (aislamiento entre tenants).
     // ------------------------------------------------------------------
     it("18. aislamiento entre tenants: el ingreso de un tenant nunca aparece en el reporte de otro", async (t) => {
-      if (!migracionesListas) return t.skip("falta la migración dulabs_comisiones_especialista");
+      if (!migracionesListas) return t.skip("falta la migración de comisión por servicio");
       const TENANT_X = nuevoTenant();
       const TENANT_Y = nuevoTenant();
       const espX = await crearEspecialista(TENANT_X, "Especialista X");

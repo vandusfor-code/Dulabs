@@ -2,8 +2,11 @@
 
 import { useState } from "react";
 import { Button, Field, inputClass, Modal } from "../ui";
+import { formatearPrecioCop } from "@/lib/especialistas-flow-adaptador";
 import type { Servicio } from "@/app/agenda/[token]/servicios/page";
 import type { Profesional } from "@/app/agenda/[token]/profesionales/page";
+
+type TipoComision = "porcentaje" | "valor_fijo";
 
 export function ServicioModal({
   token,
@@ -23,6 +26,9 @@ export function ServicioModal({
   const [descripcion, setDescripcion] = useState(servicio?.descripcion ?? "");
   const [duracion, setDuracion] = useState(String(servicio?.duracion_min ?? 60));
   const [precio, setPrecio] = useState(servicio?.precio != null ? String(servicio.precio) : "");
+  const [comisionActiva, setComisionActiva] = useState(servicio?.comision_tipo != null);
+  const [comisionTipo, setComisionTipo] = useState<TipoComision>(servicio?.comision_tipo ?? "porcentaje");
+  const [comisionValor, setComisionValor] = useState(servicio?.comision_valor != null ? String(servicio.comision_valor) : "");
   const [activo, setActivo] = useState(servicio?.activo ?? true);
   const [especialistaIds, setEspecialistaIds] = useState<number[]>(servicio?.especialistaIds ?? []);
   const [guardando, setGuardando] = useState(false);
@@ -31,6 +37,15 @@ export function ServicioModal({
   const alternar = (id: number) => {
     setEspecialistaIds((actual) => (actual.includes(id) ? actual.filter((x) => x !== id) : [...actual, id]));
   };
+
+  const comisionValorNum = comisionValor.trim() ? Number(comisionValor) : NaN;
+  const precioNum = precio.trim() ? Number(precio) : null;
+  const previewComision =
+    comisionActiva && Number.isFinite(comisionValorNum) && precioNum != null
+      ? comisionTipo === "porcentaje"
+        ? formatearPrecioCop((precioNum * comisionValorNum) / 100)
+        : formatearPrecioCop(comisionValorNum)
+      : null;
 
   const guardar = async () => {
     const duracionNum = Number(duracion);
@@ -41,6 +56,16 @@ export function ServicioModal({
     if (!Number.isInteger(duracionNum) || duracionNum <= 0) {
       setError("La duración debe ser un número entero mayor a 0");
       return;
+    }
+    if (comisionActiva) {
+      if (!Number.isFinite(comisionValorNum) || comisionValorNum < 0) {
+        setError("El valor de la comisión no es válido");
+        return;
+      }
+      if (comisionTipo === "porcentaje" && comisionValorNum > 100) {
+        setError("El porcentaje de comisión debe estar entre 0 y 100");
+        return;
+      }
     }
     setGuardando(true);
     setError(null);
@@ -54,7 +79,9 @@ export function ServicioModal({
           categoria: categoria.trim() || null,
           descripcion: descripcion.trim() || null,
           duracion_min: duracionNum,
-          precio: precio.trim() ? Number(precio) : null,
+          precio: precioNum,
+          comision_tipo: comisionActiva ? comisionTipo : null,
+          comision_valor: comisionActiva ? comisionValorNum : null,
           activo,
           especialistaIds,
         }),
@@ -96,6 +123,53 @@ export function ServicioModal({
           <input type="checkbox" checked={activo} onChange={(e) => setActivo(e.target.checked)} className="size-4 accent-lime" />
           Activo
         </label>
+
+        <Field label="Comisión (opcional)">
+          <label className="flex items-center gap-2.5 text-sm text-fg">
+            <input type="checkbox" checked={comisionActiva} onChange={(e) => setComisionActiva(e.target.checked)} className="size-4 accent-lime" />
+            Configurar comisión para este servicio
+          </label>
+          {comisionActiva && (
+            <div className="mt-2.5 flex flex-col gap-2">
+              <div className="flex gap-2">
+                <label className="flex items-center gap-1.5 text-sm text-fg">
+                  <input
+                    type="radio"
+                    name="comision-tipo"
+                    checked={comisionTipo === "porcentaje"}
+                    onChange={() => setComisionTipo("porcentaje")}
+                    className="size-4 accent-lime"
+                  />
+                  Porcentaje
+                </label>
+                <label className="flex items-center gap-1.5 text-sm text-fg">
+                  <input
+                    type="radio"
+                    name="comision-tipo"
+                    checked={comisionTipo === "valor_fijo"}
+                    onChange={() => setComisionTipo("valor_fijo")}
+                    className="size-4 accent-lime"
+                  />
+                  Valor fijo
+                </label>
+              </div>
+              <input
+                type="number"
+                min={0}
+                max={comisionTipo === "porcentaje" ? 100 : undefined}
+                value={comisionValor}
+                onChange={(e) => setComisionValor(e.target.value)}
+                placeholder={comisionTipo === "porcentaje" ? "Ej. 20" : "Ej. 5000"}
+                className={inputClass}
+              />
+              {previewComision && (
+                <p className="text-xs text-mist">
+                  {comisionTipo === "porcentaje" ? `${comisionValorNum}% de ${formatearPrecioCop(precioNum!)}` : "Valor fijo"} = {previewComision} de comisión
+                </p>
+              )}
+            </div>
+          )}
+        </Field>
 
         <Field label="Profesionales que pueden realizarlo">
           {profesionales.length === 0 ? (

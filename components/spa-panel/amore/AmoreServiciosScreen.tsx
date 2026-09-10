@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Loader2, Search, Plus, Pencil, Sparkles } from "lucide-react";
 import { useAgenda } from "@/components/spa-panel/AgendaContext";
-import { formatearPrecioCop } from "@/lib/especialistas-flow-adaptador";
+import { formatearPrecioCop, formatearComision } from "@/lib/especialistas-flow-adaptador";
 import { ServicioModal } from "@/components/spa-panel/modals/ServicioModal";
 import { AmoreScreenTitle, AmoreCard, AmoreSearchInput, AmoreBadge, AmorePrimaryButton, AmoreEmptyState } from "./ui";
 import type { Servicio } from "@/app/agenda/[token]/servicios/page";
@@ -114,6 +114,7 @@ export function AmoreServiciosScreen() {
                 <p className="truncate text-sm font-medium text-fg">{s.nombre}</p>
                 <p className="truncate text-xs text-mist">
                   {s.duracion_min} min{s.precio != null ? ` · ${formatearPrecioCop(s.precio)}` : ""}
+                  {formatearComision(s.comision_tipo, s.comision_valor) ? ` · ${formatearComision(s.comision_tipo, s.comision_valor)} comisión` : ""}
                 </p>
               </Link>
               <AmoreBadge tono={s.activo ? "success" : "neutral"}>{s.activo ? "Activo" : "Inactivo"}</AmoreBadge>

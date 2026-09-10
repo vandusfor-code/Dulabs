@@ -596,6 +596,12 @@ export function formatearPrecioCop(precio: number): string {
   return `$${conSeparadores}`;
 }
 
+/** Comisión por servicio (autorizado, genérico) -- "20%" o "$5.000" (reutiliza formatearPrecioCop). null/null = sin configurar, nunca se muestra un valor inventado. */
+export function formatearComision(tipo: "porcentaje" | "valor_fijo" | null, valor: number | null): string | null {
+  if (!tipo || valor === null) return null;
+  return tipo === "porcentaje" ? `${valor}%` : formatearPrecioCop(valor);
+}
+
 /** Texto legible determinista (nunca redactado por IA) para mostrar el catálogo real, ej. "1️⃣ Press on\n2️⃣ Semipermanente en manos". */
 export function formatearListaServicios(servicios: ServicioCatalogo[]): string {
   const NUMEROS_EMOJI = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"];

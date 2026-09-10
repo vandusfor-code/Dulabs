@@ -2,11 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { Loader2, ArrowLeft, Phone, Mail, Cake, CalendarPlus } from "lucide-react";
+import { Loader2, ArrowLeft, Phone, Mail, Cake, CalendarPlus, Pencil } from "lucide-react";
 import { useAdminWeb } from "@/components/admin-web/AdminWebContext";
 import { AdminOnlyDesktop } from "@/components/admin-web/AdminOnlyDesktop";
 import { inicialesDe, formatearFechaCorta, formatearHora } from "@/components/spa-panel/format";
 import { StatusBadge } from "@/components/spa-panel/ui";
+import { ClienteModal } from "@/components/spa-panel/modals/ClienteModal";
 import type { EstadoCita } from "@/components/spa-panel/types";
 import { RUTA_CLIENTES } from "@/components/admin-web/admin-web-routes";
 
@@ -44,6 +45,7 @@ function ClienteDetalleContenido() {
   const [cliente, setCliente] = useState<ClienteDetalle | null>(null);
   const [historial, setHistorial] = useState<ReservaHistorial[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [editando, setEditando] = useState(false);
 
   useEffect(() => {
     fetch(`/api/agenda/${token}/clientes/${id}`)
@@ -84,6 +86,14 @@ function ClienteDetalleContenido() {
               <p className="truncate text-lg font-semibold text-fg">{cliente.nombre}</p>
               <p className="text-sm text-mist">Cliente desde {formatearFechaCorta(cliente.fechaRegistro)}</p>
             </div>
+            <button
+              type="button"
+              onClick={() => setEditando(true)}
+              aria-label="Editar"
+              className="flex size-9 shrink-0 items-center justify-center rounded-lg text-mist hover:bg-ink-2 hover:text-fg"
+            >
+              <Pencil className="size-4" />
+            </button>
           </div>
 
           <div className="grid grid-cols-3 gap-3">
@@ -141,6 +151,18 @@ function ClienteDetalleContenido() {
               </div>
             )}
           </div>
+
+          {editando && (
+            <ClienteModal
+              token={token}
+              cliente={{ id: cliente.id, nombre: cliente.nombre, telefono: cliente.telefono, correo: cliente.correo, cumpleDia: cliente.cumpleDia, cumpleMes: cliente.cumpleMes }}
+              onClose={() => setEditando(false)}
+              onGuardado={(actualizado) => {
+                setCliente({ ...cliente, ...actualizado });
+                setEditando(false);
+              }}
+            />
+          )}
         </>
       ) : null}
     </div>

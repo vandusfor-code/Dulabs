@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Loader2, Sparkles, Plus, Pencil } from "lucide-react";
 import { useAdminWeb } from "@/components/admin-web/AdminWebContext";
 import { AdminOnlyDesktop } from "@/components/admin-web/AdminOnlyDesktop";
-import { formatearPrecioCop } from "@/lib/especialistas-flow-adaptador";
+import { formatearPrecioCop, formatearComision } from "@/lib/especialistas-flow-adaptador";
 import { ServicioModal } from "@/components/spa-panel/modals/ServicioModal";
 import type { Profesional } from "@/app/agenda/[token]/profesionales/page";
 import type { Servicio } from "@/app/agenda/[token]/servicios/page";
@@ -76,6 +76,7 @@ function ServiciosContenido() {
                 <th className="px-5 py-3 font-medium">Servicio</th>
                 <th className="px-5 py-3 font-medium">Duración</th>
                 <th className="px-5 py-3 font-medium">Precio</th>
+                <th className="px-5 py-3 font-medium">Comisión</th>
                 <th className="px-5 py-3 font-medium">Profesionales</th>
                 <th className="px-5 py-3 font-medium">Estado</th>
                 <th className="px-5 py-3 font-medium" />
@@ -87,6 +88,7 @@ function ServiciosContenido() {
                   <td className="px-5 py-3 font-medium text-fg">{s.nombre}</td>
                   <td className="px-5 py-3 text-fg">{s.duracion_min} min</td>
                   <td className="px-5 py-3 text-fg">{s.precio != null ? formatearPrecioCop(s.precio) : "—"}</td>
+                  <td className="px-5 py-3 text-fg">{formatearComision(s.comision_tipo, s.comision_valor) ?? "—"}</td>
                   <td className="px-5 py-3 text-fg">{s.especialistaIds.length}</td>
                   <td className="px-5 py-3">
                     <span

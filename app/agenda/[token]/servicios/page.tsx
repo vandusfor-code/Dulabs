@@ -18,6 +18,9 @@ export type Servicio = {
   precio: number | null;
   activo: boolean;
   especialistaIds: number[];
+  /** Comisión (autorizado, genérico) -- null = no configurada, nunca se asume un valor. */
+  comision_tipo: "porcentaje" | "valor_fijo" | null;
+  comision_valor: number | null;
 };
 
 export default function ServiciosPage() {

@@ -2,6 +2,9 @@ import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { resolverTenantDesdeToken, requiereAdministrador } from "@/lib/agenda-admin-auth";
 import { listarHorariosDisponiblesPorServicio } from "@/lib/disponibilidad-servicio";
+import { listarHorariosDisponiblesPorServicioConNylas } from "@/lib/disponibilidad-servicio-nylas";
+import { AMORE_TENANT_ID, resolverNylasGrantIdParaTenant } from "@/lib/nylas/nylas-grant";
+import { createNylasEventsClient, resolveNylasApiKeyFromEnv } from "@/lib/nylas/nylas-client";
 
 export const runtime = "nodejs";
 
@@ -28,6 +31,28 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   const especialistaId = especialistaIdRaw ? Number(especialistaIdRaw) : undefined;
   if (especialistaIdRaw && !Number.isInteger(especialistaId)) {
     return Response.json({ error: "especialistaId inválido" }, { status: 400 });
+  }
+
+  // AMORE (autorizado) -- misma cita que se crearía de verdad
+  // (crearCitaConNylas, ver app/api/agenda/[token]/route.ts) también debe
+  // mostrarse con disponibilidad real contra Nylas/Google Calendar, para que
+  // un horario que el admin ve como "libre" no se rechace después en la
+  // revalidación real al crear. Cualquier otro tenant sigue con el motor
+  // genérico de siempre, sin ningún cambio.
+  if (tenant.idTenant === AMORE_TENANT_ID) {
+    const grantId = resolverNylasGrantIdParaTenant(tenant.idTenant);
+    const apiKey = resolveNylasApiKeyFromEnv();
+    if (grantId && apiKey) {
+      const resultadoNylas = await listarHorariosDisponiblesPorServicioConNylas(
+        supabase,
+        { idTenant: tenant.idTenant, servicioId, fecha, especialistaId },
+        { nylasClient: createNylasEventsClient(apiKey), grantId }
+      );
+      if (!resultadoNylas.ok) return Response.json({ especialistas: [] });
+      return Response.json({ servicio: resultadoNylas.servicio, especialistas: resultadoNylas.especialistas });
+    }
+    // Sin Nylas configurado en este entorno -- cae al motor genérico en vez
+    // de dejar la pantalla sin ningún horario.
   }
 
   const resultado = await listarHorariosDisponiblesPorServicio(supabase, {

@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { resolverTenantDesdeToken, requiereAdministrador } from "@/lib/agenda-admin-auth";
+import { validarComision } from "../comision";
 
 export const runtime = "nodejs";
 
@@ -10,6 +11,8 @@ type BodyServicio = {
   descripcion?: string | null;
   duracion_min?: number;
   precio?: number | null;
+  comision_tipo?: "porcentaje" | "valor_fijo" | null;
+  comision_valor?: number | null;
   activo?: boolean;
   especialistaIds?: number[];
 };
@@ -66,6 +69,15 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     cambios.precio = precio;
   }
   if (body.activo !== undefined) cambios.activo = Boolean(body.activo);
+  // Comisión (autorizado, genérico) -- tipo/valor se editan siempre juntos
+  // (nunca un tipo sin valor ni viceversa); {tipo: null, valor: null} borra
+  // la comisión de vuelta a "no configurada".
+  if (body.comision_tipo !== undefined || body.comision_valor !== undefined) {
+    const comision = validarComision(body.comision_tipo, body.comision_valor);
+    if (!comision.ok) return Response.json({ error: comision.error }, { status: 400 });
+    cambios.comision_tipo = comision.comision.tipo;
+    cambios.comision_valor = comision.comision.valor;
+  }
 
   if (Object.keys(cambios).length > 0) {
     cambios.updated_at = new Date().toISOString();
@@ -100,7 +112,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 
   const { data: actualizado } = await supabase
     .from("dulabs_servicios")
-    .select("id, nombre, categoria, descripcion, duracion_min, precio, activo")
+    .select("id, nombre, categoria, descripcion, duracion_min, precio, activo, comision_tipo, comision_valor")
     .eq("id_tenant", tenant.idTenant)
     .eq("id", id)
     .single();

@@ -15,8 +15,11 @@ import { NextRequest } from "next/server";
 import { POST as crearCitaPOST } from "./[token]/route";
 import { POST as citaAccionPOST } from "./[token]/citas/[id]/route";
 import { PATCH as servicioPATCH } from "./[token]/servicios/[id]/route";
+import { GET as disponibilidadGET } from "./[token]/disponibilidad/route";
 
 const HAS_SUPABASE = Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
+const AMORE_TENANT_ID = "ed6ae77f-8a0c-483e-a5d9-8ede68eca50f";
+const AMORE_TOKEN_MARY = "31730a67"; // token real de Mary, ver dulabs_especialistas
 
 function paramsFor<T extends Record<string, string>>(vals: T) {
   return { params: Promise.resolve(vals) };
@@ -340,6 +343,75 @@ describe(
         req(`http://x/api/agenda/${tokenA}/servicios/${servicioId}`, { method: "PATCH", body: { activo: true } }),
         paramsFor({ token: tokenA, id: servicioId })
       );
+    });
+  }
+);
+
+// ---------------------------------------------------------------------------
+// NUEVA FASE (autorizado, citas manuales desde admin) — AMORE usa un motor
+// DISTINTO (crearCitaConNylas, real con Google Calendar) del resto de
+// tenants de arriba. Este bloque usa el token REAL de Mary (misma
+// convención segura que app/api/agenda/[token]/clientes/clientes-admin.test.ts)
+// pero SOLO ejercita el camino que nunca escribe nada: sin
+// NYLAS_API_KEY/NYLAS_GRANT_ID_AMORE configurados, la ruta responde 503 antes
+// de tocar Supabase/Nylas/WhatsApp -- se borran esas variables explícitamente
+// al empezar, sin importar qué haya cargado el entorno real, para que esta
+// prueba JAMÁS pueda crear una cita/evento/WhatsApp real de AMORE.
+describe(
+  "POST /api/agenda/[token] — AMORE entra por el motor real con Nylas, nunca por el genérico",
+  { skip: !HAS_SUPABASE && "requiere SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY" },
+  () => {
+    const ENV_ORIGINAL = { ...process.env };
+    let sesionRequerida = false;
+
+    before(async () => {
+      delete process.env.NYLAS_API_KEY;
+      delete process.env.NYLAS_GRANT_ID_AMORE;
+      const { count } = await createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!)
+        .from("dulabs_usuarios")
+        .select("id", { count: "exact", head: true })
+        .eq("id_tenant", AMORE_TENANT_ID);
+      sesionRequerida = (count ?? 0) > 0;
+    });
+    after(() => {
+      process.env = { ...ENV_ORIGINAL };
+    });
+
+    it("sin Nylas configurado -> 503 controlado, nunca crea nada ni cae al motor genérico", async (t) => {
+      if (sesionRequerida) return t.skip("AMORE ya tiene Login habilitado -- esta prueba llama la ruta HTTP sin cookie de sesión");
+      const res = await crearCitaPOST(
+        req(`http://x/api/agenda/${AMORE_TOKEN_MARY}`, {
+          method: "POST",
+          body: {
+            servicioId: randomUUID(),
+            especialistaId: 1,
+            fecha: "2026-01-01",
+            hora: "10:00",
+            nombreCliente: "TEST AMORE sin Nylas",
+            idempotencyKey: randomUUID(),
+          },
+        }),
+        paramsFor({ token: AMORE_TOKEN_MARY })
+      );
+      const body = await res.json();
+      assert.equal(res.status, 503, JSON.stringify(body));
+      assert.match(body.error, /integración de calendario/i);
+    });
+
+    it("GET disponibilidad sin Nylas configurado -> cae al motor genérico (nunca deja la pantalla sin horarios)", async (t) => {
+      if (sesionRequerida) return t.skip("AMORE ya tiene Login habilitado -- esta prueba llama la ruta HTTP sin cookie de sesión");
+      const { data: servicios } = await createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!)
+        .from("dulabs_servicios")
+        .select("id")
+        .eq("id_tenant", AMORE_TENANT_ID)
+        .eq("activo", true)
+        .limit(1);
+      if (!servicios?.length) return; // defensivo -- no se asume catálogo fijo en este entorno
+      const res = await disponibilidadGET(
+        req(`http://x/api/agenda/${AMORE_TOKEN_MARY}/disponibilidad?servicioId=${servicios[0]!.id}&fecha=2026-01-01`),
+        paramsFor({ token: AMORE_TOKEN_MARY })
+      );
+      assert.equal(res.status, 200);
     });
   }
 );

@@ -36,9 +36,11 @@ export type IngresoPorServicio = {
   ingresos: number;
 };
 
-export type ConfigComision =
-  | { estado: "configurada"; tipo: "porcentaje" | "valor_fijo"; valor: number; monto: number }
-  | { estado: "no_configurada" };
+// NUEVA FASE (autorizado) -- la comisión ahora se calcula sumando línea por
+// línea (cada servicio real de cada cita puede tener su propio tipo/valor,
+// ver lib/contabilidad/comisiones.ts), así que un profesional ya no tiene UN
+// solo tipo/valor -- solo el monto total resultante tiene sentido acá.
+export type ConfigComision = { estado: "configurada"; monto: number } | { estado: "no_configurada" };
 
 export type IngresoPorProfesional = {
   especialistaId: number;

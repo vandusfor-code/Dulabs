@@ -94,3 +94,48 @@ export async function enviarConfirmacionReservaWhatsApp(
     return { enviado: false, motivo: "error" };
   }
 }
+
+/**
+ * NUEVA FASE (autorizado, citas manuales desde admin) — avisa a la
+ * profesional que le acaban de crear una cita nueva (misma idea que
+ * notificarCitaAutoConfirmada en lib/especialistas-notificar.ts, pero por el
+ * canal real de WhatsApp-QR/Baileys en vez de Meta Cloud API). Función
+ * reutilizable ÚNICA para esto -- se integra al flujo de creación de citas
+ * (ver app/api/agenda/[token]/route.ts), nunca se duplica el envío en otro
+ * lugar.
+ *
+ * Si la profesional no tiene WhatsApp registrado (dulabs_especialistas.numero_whatsapp
+ * vacío), NUNCA falla la creación de la cita: solo informa que no se pudo
+ * notificar (motivo "sin_whatsapp") para que el caller lo registre, sin
+ * bloquear nada.
+ */
+export type ResultadoNotificacionProfesional = { enviado: true } | { enviado: false; motivo: "sin_whatsapp" | "error" };
+
+function construirMensajeNuevaCitaProfesional(params: {
+  nombreProfesional: string;
+  servicio: string;
+  inicioISO: string;
+  nombreCliente: string;
+  telefonoCliente: string | null;
+}): string {
+  const fechaHora = formatearFechaHoraColombia(params.inicioISO);
+  const lineaTelefono = params.telefonoCliente ? `\nWhatsApp cliente: ${params.telefonoCliente}` : "";
+  return `Hola, ${params.nombreProfesional}. 💗\n\nTienes una nueva cita programada.\n\nServicio: ${params.servicio}\nFecha: ${fechaHora}\nCliente: ${params.nombreCliente}${lineaTelefono}\n\nTe esperamos. ✨`;
+}
+
+export async function notificarNuevaCitaProfesional(
+  idTenant: string,
+  numeroWhatsappProfesional: string | null | undefined,
+  cita: { nombreProfesional: string; servicio: string; inicioISO: string; nombreCliente: string; telefonoCliente: string | null }
+): Promise<ResultadoNotificacionProfesional> {
+  try {
+    const telefono = normalizarTelefono(numeroWhatsappProfesional ?? undefined);
+    if (!telefono) return { enviado: false, motivo: "sin_whatsapp" };
+    const resultado = await enviarMensajeWhatsApp({ tenantId: idTenant, telefono, mensaje: construirMensajeNuevaCitaProfesional(cita) });
+    if (!resultado.ok) return { enviado: false, motivo: "error" };
+    return { enviado: true };
+  } catch (err) {
+    console.error("[reserva-notificaciones-whatsapp] error notificando a la profesional:", err instanceof Error ? err.message : err);
+    return { enviado: false, motivo: "error" };
+  }
+}

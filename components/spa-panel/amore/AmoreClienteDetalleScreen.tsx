@@ -3,10 +3,11 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { Loader2, ArrowLeft, Phone, Mail, Cake, CalendarPlus } from "lucide-react";
+import { Loader2, ArrowLeft, Phone, Mail, Cake, CalendarPlus, Pencil } from "lucide-react";
 import { useAgenda } from "@/components/spa-panel/AgendaContext";
 import { formatearFechaCorta, formatearHora } from "@/components/spa-panel/format";
 import { StatusBadge } from "@/components/spa-panel/ui";
+import { ClienteModal } from "@/components/spa-panel/modals/ClienteModal";
 import type { EstadoCita } from "@/components/spa-panel/types";
 import { AmoreCard, AmoreScreenTitle, AmoreSectionTitle, AmoreAvatar, AmoreEmptyState } from "./ui";
 
@@ -41,6 +42,7 @@ export function AmoreClienteDetalleScreen() {
   const [cliente, setCliente] = useState<ClienteDetalle | null>(null);
   const [historial, setHistorial] = useState<ReservaHistorial[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [editando, setEditando] = useState(false);
 
   useEffect(() => {
     let cancelado = false;
@@ -79,6 +81,14 @@ export function AmoreClienteDetalleScreen() {
             <div className="min-w-0 flex-1">
               <AmoreScreenTitle title={cliente.nombre} subtitle={`Cliente desde ${formatearFechaCorta(cliente.fechaRegistro)}`} />
             </div>
+            <button
+              type="button"
+              onClick={() => setEditando(true)}
+              aria-label="Editar"
+              className="flex size-9 shrink-0 items-center justify-center rounded-full text-mist active:bg-ink-2"
+            >
+              <Pencil className="size-4" />
+            </button>
           </AmoreCard>
 
           <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
@@ -126,6 +136,18 @@ export function AmoreClienteDetalleScreen() {
               </div>
             )}
           </div>
+
+          {editando && (
+            <ClienteModal
+              token={token}
+              cliente={{ id: cliente.id, nombre: cliente.nombre, telefono: cliente.telefono, correo: cliente.correo, cumpleDia: cliente.cumpleDia, cumpleMes: cliente.cumpleMes }}
+              onClose={() => setEditando(false)}
+              onGuardado={(actualizado) => {
+                setCliente({ ...cliente, ...actualizado });
+                setEditando(false);
+              }}
+            />
+          )}
         </>
       ) : null}
     </div>

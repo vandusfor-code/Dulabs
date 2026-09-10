@@ -15,6 +15,18 @@ import { ejecutarConIdempotencia, huellaSolicitud } from "@/lib/idempotencia-res
 import { mensajeAmigableReserva } from "@/lib/reservar-mensajes";
 import { requireAuth, requireRole } from "@/lib/auth/authz";
 import { fechaColombiaDesdeIso } from "@/lib/timezone-colombia";
+// NUEVA FASE (autorizado, citas manuales desde admin) -- AMORE usa el MISMO
+// motor real que ya usa el bot de WhatsApp (Agenda V2, ver lib/agenda-v2/router.ts):
+// crearCitaConNylas revalida jornada/bloqueos/citas/Nylas y crea el evento
+// real de Google Calendar -- una cita creada a mano desde el admin nunca se
+// salta esas reglas. reservarCitaPorServicio (arriba) sigue siendo el motor
+// para todo tenant que NO sea AMORE, sin ningún cambio.
+import { AMORE_TENANT_ID, resolverNylasGrantIdParaTenant, phoneNumberIdWhatsappQr } from "@/lib/nylas/nylas-grant";
+import { createNylasEventsClient, createNylasEventsWriteClient, resolveNylasApiKeyFromEnv } from "@/lib/nylas/nylas-client";
+import { crearCitaConNylas } from "@/lib/reserva-servicio-nylas";
+import { guardarNylasEventIdDeCita } from "@/lib/agenda-v2/citas-nylas";
+import { recordarNombreCliente } from "@/lib/clientes-conocidos";
+import { enviarConfirmacionReservaWhatsApp, notificarNuevaCitaProfesional } from "@/lib/reserva-notificaciones-whatsapp";
 
 export const runtime = "nodejs";
 
@@ -223,6 +235,87 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   }
 
   const idTenant = especialista.id_tenant;
+
+  // NUEVA FASE (autorizado, citas manuales desde admin) -- AMORE: motor real
+  // con Nylas (crearCitaConNylas YA hace su propia idempotencia interna, ver
+  // lib/reserva-servicio-nylas.ts -- nunca se envuelve una segunda vez acá).
+  // Tras crear, se notifica a la clienta (mismo canal real que ya usa el
+  // portal, ver enviarConfirmacionReservaWhatsApp) y a la profesional
+  // (notificarNuevaCitaProfesional) -- ninguna de las dos notificaciones
+  // puede tumbar la respuesta: la cita YA quedó creada antes de intentarlas.
+  if (idTenant === AMORE_TENANT_ID) {
+    const grantId = resolverNylasGrantIdParaTenant(idTenant);
+    const apiKey = resolveNylasApiKeyFromEnv();
+    if (!grantId || !apiKey) {
+      return Response.json({ error: "La integración de calendario no está configurada" }, { status: 503 });
+    }
+
+    const resultado = await crearCitaConNylas(
+      supabase,
+      { idTenant, servicioId, especialistaId, inicio, nombreCliente, telefonoCliente, idempotencyKey },
+      { nylasReadClient: createNylasEventsClient(apiKey), nylasWriteClient: createNylasEventsWriteClient(apiKey), grantId }
+    );
+
+    if (!resultado.ok) {
+      if (resultado.motivo === "solicitud_en_conflicto") {
+        return Response.json({ error: "Esta solicitud ya se procesó con datos diferentes. Actualiza la página e intenta de nuevo." }, { status: 409 });
+      }
+      if (resultado.motivo === "solicitud_en_progreso") {
+        return Response.json({ error: "Tu solicitud se está procesando, espera un momento." }, { status: 409 });
+      }
+      console.error("[agenda-nueva-cita] AMORE: error creando cita real", resultado.motivo, resultado.detalle, { idTenant, servicioId, especialistaId });
+      return Response.json({ error: mensajeAmigableReserva(resultado.motivo) }, { status: 409 });
+    }
+
+    // Best-effort (nunca tumba la respuesta si falla) -- mismo criterio
+    // exacto que router.ts para el mapeo cita->evento de Nylas.
+    await guardarNylasEventIdDeCita(supabase, resultado.cita.id, resultado.nylasEventId);
+
+    if (telefonoCliente) {
+      // Una clienta creada a mano queda EXACTAMENTE igual que una que
+      // escribió por WhatsApp (misma identidad, ver
+      // app/api/agenda/[token]/clientes/identidad.ts) -- así el bot ya la
+      // reconoce si después escribe para cancelar/reprogramar/consultar.
+      await recordarNombreCliente(supabase, {
+        idTenant,
+        phoneNumberId: phoneNumberIdWhatsappQr(idTenant),
+        telefonoCliente,
+        nombre: nombreCliente,
+        correo: correoCliente,
+      });
+    }
+
+    // El mensaje de confirmación dice explícitamente "tu cita ha sido
+    // confirmada" -- si el especialista tiene requiere_aprobacion=true
+    // (default real de la tabla, ver 20260826020000_requiere_aprobacion.sql),
+    // crearCitaConNylas deja la cita en "pendiente" a propósito, y mandarle
+    // ese mensaje a la clienta sería FALSO. Solo se envía cuando la cita
+    // quedó de verdad confirmada -- nunca se inventa una confirmación.
+    if (telefonoCliente && resultado.cita.estado === "confirmada") {
+      await enviarConfirmacionReservaWhatsApp(supabase, idTenant, telefonoCliente, {
+        servicio: resultado.servicio.nombre,
+        profesional: resultado.especialista.nombre,
+        inicioISO: resultado.cita.inicio,
+      });
+    }
+
+    const { data: especialistaCompleto } = await supabase
+      .from("dulabs_especialistas")
+      .select("numero_whatsapp")
+      .eq("id_tenant", idTenant)
+      .eq("id", resultado.especialista.id)
+      .maybeSingle();
+    await notificarNuevaCitaProfesional(idTenant, especialistaCompleto?.numero_whatsapp as string | null | undefined, {
+      nombreProfesional: resultado.especialista.nombre,
+      servicio: resultado.servicio.nombre,
+      inicioISO: resultado.cita.inicio,
+      nombreCliente,
+      telefonoCliente,
+    });
+
+    return Response.json({ success: true, cita: resultado.cita, con: resultado.especialista.nombre });
+  }
+
   const huella = huellaSolicitud([idTenant, servicioId, especialistaId, inicio.toISOString(), telefonoCliente, nombreCliente]);
 
   const idempotente = await ejecutarConIdempotencia(supabase, {
