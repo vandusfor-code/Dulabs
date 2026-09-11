@@ -91,6 +91,13 @@ export function createNylasEventsWriteClient(apiKey: string): NylasEventsWriteCl
             start_timezone: params.timezone,
             end_timezone: params.timezone,
           },
+          // Invitados reales del evento (autorizado) -- mismo campo real que
+          // documenta la API de Nylas v3 para agregar participantes/guests a
+          // un evento (Google Calendar los notifica e incluye el evento en
+          // su calendario de inmediato, sin depender de que respondan la
+          // invitación). Omitido = comportamiento idéntico al de siempre
+          // (ningún invitado, ningún caller existente lo pasa).
+          ...(params.participants ? { participants: params.participants } : {}),
         }),
         signal,
       });

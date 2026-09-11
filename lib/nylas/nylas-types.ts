@@ -46,6 +46,8 @@ export interface NylasCreateEventParams {
   endUnix: number;
   /** IANA, ej. "America/Bogota". */
   timezone: string;
+  /** Invitados reales del evento (autorizado) -- Google Calendar les manda una invitación real por correo. Omitido = comportamiento idéntico al de siempre (ningún invitado). */
+  participants?: { email: string; name?: string }[];
 }
 
 export interface NylasCreatedEvent {

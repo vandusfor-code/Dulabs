@@ -538,6 +538,46 @@ describe("22. Evento creado en el calendar_id correcto", () => {
   });
 });
 
+describe("Invitado fijo de AMORE (autorizado) -- Amoresalon34@gmail.com SIEMPRE como participante real del evento", () => {
+  it("toda cita NUEVA incluye a Amoresalon34@gmail.com como invitado, sin excepción", async () => {
+    let participantesCapturados: { email: string; name?: string }[] | undefined;
+    const supabase = crearSupabaseFalso(construirTablas());
+    const write: NylasEventsWriteClient = {
+      async createEvent(params) {
+        participantesCapturados = params.participants;
+        return { id: "evt-1" };
+      },
+      async deleteEvent() {},
+    };
+    const resultado = await crearCitaConNylas(
+      supabase,
+      { idTenant: AMORE_TENANT_ID, servicioId: "s-dipping", especialistaId: 1, inicio: new Date(`${LUNES}T10:00:00-05:00`), nombreCliente: "Ana", telefonoCliente: null, idempotencyKey: nuevaClave() },
+      { nylasReadClient: mockNylasRead(), nylasWriteClient: write, grantId: "grant-amore" },
+    );
+    assert.equal(resultado.ok, true);
+    assert.deepEqual(participantesCapturados, [{ email: "Amoresalon34@gmail.com" }]);
+  });
+
+  it("una cita REPROGRAMADA (crea evento nuevo + borra el viejo) también incluye el correo fijo en el evento NUEVO", async () => {
+    let participantesCapturados: { email: string; name?: string }[] | undefined;
+    const supabase = crearSupabaseFalso(construirTablas({ citas: [{ ...CITA_EXISTENTE_BASE }] }));
+    const write: NylasEventsWriteClient = {
+      async createEvent(params) {
+        participantesCapturados = params.participants;
+        return { id: "evt-nuevo-1" };
+      },
+      async deleteEvent() {},
+    };
+    const resultado = await actualizarCitaConNylas(
+      supabase,
+      { idTenant: AMORE_TENANT_ID, citaId: CITA_EXISTENTE_BASE.id as number, nuevoInicio: new Date(`${LUNES}T14:00:00-05:00`), idempotencyKey: nuevaClave() },
+      { nylasReadClient: mockNylasRead(), nylasWriteClient: write, grantId: "grant-amore", nylasEventIdActual: "evt-viejo-1" },
+    );
+    assert.equal(resultado.ok, true);
+    assert.deepEqual(participantesCapturados, [{ email: "Amoresalon34@gmail.com" }]);
+  });
+});
+
 describe("23. Start/end correctos (repite 21 con otra duración)", () => {
   it("un servicio de 60 min produce end = start + 60min exactos", async () => {
     const { resultado } = await reservar({}, { servicios: [{ ...SERVICIO_DIPPING, duracion_min: 60 }] });
