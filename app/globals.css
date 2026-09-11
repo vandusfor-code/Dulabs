@@ -890,13 +890,27 @@ body {
   transform-origin: top left;
 }
 
-/* Planta desenfocada detrás del producto — profundidad, no protagonismo.
-   Sin foto: cluster de formas verdes muy difusas (regla 19). */
+/* Planta/follaje detrás del producto (asset SVG propio, public/v2/plant.svg)
+   — profundidad ambiental, desenfocada y a baja opacidad, nunca protagonista
+   (regla 9/19). El blur conserva la forma de hoja sin que se lea "vectorial". */
 .v2-plant {
-  background:
-    radial-gradient(38% 46% at 62% 40%, rgba(74, 124, 66, 0.55) 0%, rgba(74, 124, 66, 0) 70%),
-    radial-gradient(30% 40% at 44% 58%, rgba(96, 148, 84, 0.5) 0%, rgba(96, 148, 84, 0) 72%),
-    radial-gradient(34% 44% at 72% 66%, rgba(58, 104, 58, 0.5) 0%, rgba(58, 104, 58, 0) 72%),
-    radial-gradient(26% 34% at 54% 26%, rgba(120, 168, 96, 0.45) 0%, rgba(120, 168, 96, 0) 74%);
-  filter: blur(26px);
+  filter: blur(8px) saturate(0.95);
+}
+
+/* Sombra de contacto: elipse difusa bajo el producto para "apoyarlo" en la
+   escena y darle peso físico sin un laptop 3D exagerado. */
+.v2-contact-shadow {
+  background: radial-gradient(50% 50% at 50% 50%, rgba(17, 17, 17, 0.16) 0%, rgba(17, 17, 17, 0) 70%);
+  filter: blur(6px);
+}
+
+/* Profundidad de "dispositivo" sobre el mockup: luz suave en el borde
+   superior + reborde clarísimo + sombra amplia y grounded. Solo box-shadow,
+   así compone con el fondo blanco del app. Sigue siendo una interfaz real. */
+.v2-device {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    inset 0 0 0 1px rgba(17, 17, 17, 0.04),
+    0 48px 100px -40px rgba(17, 17, 17, 0.16),
+    0 16px 44px -28px rgba(17, 17, 17, 0.08);
 }

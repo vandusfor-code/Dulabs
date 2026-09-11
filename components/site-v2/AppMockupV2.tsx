@@ -69,7 +69,7 @@ function ChannelBadge({ channel }: { channel: Channel }) {
 
 export function AppMockupV2() {
   return (
-    <div className="v2-shadow-product flex h-[540px] w-[860px] overflow-hidden rounded-[16px] border border-sitev2-border bg-sitev2-bg text-left">
+    <div className="v2-device flex h-[540px] w-[860px] overflow-hidden rounded-[18px] border border-sitev2-border bg-sitev2-bg text-left">
       {/* ---------------- Sidebar ---------------- */}
       <aside className="flex w-[176px] shrink-0 flex-col border-r border-sitev2-border bg-sitev2-surface/60 px-3 py-4">
         <div className="mb-6 flex items-center px-2">

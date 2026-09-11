@@ -1,0 +1,56 @@
+<svg width="440" height="500" viewBox="0 0 440 500" fill="none" xmlns="http://www.w3.org/2000/svg" role="presentation">
+  <defs>
+    <linearGradient id="lf-d" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4f7d3e"/>
+      <stop offset="1" stop-color="#2f5226"/>
+    </linearGradient>
+    <linearGradient id="lf-m" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#6fa054"/>
+      <stop offset="1" stop-color="#43713a"/>
+    </linearGradient>
+    <linearGradient id="lf-l" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8fbf6e"/>
+      <stop offset="1" stop-color="#5c9048"/>
+    </linearGradient>
+  </defs>
+  <!-- Cada hoja se dibuja desde la base (0,0) hacia arriba; se rota y escala
+       alrededor del punto base para formar un follaje en abanico. Pensada
+       para verse desenfocada y a baja opacidad como fondo ambiental. -->
+  <g>
+    <!-- capa trasera (oscura, más grande) -->
+    <g transform="translate(215,470) rotate(-52) scale(1.12)">
+      <path d="M0,0 C44,-46 44,-172 0,-236 C-44,-172 -44,-46 0,0 Z" fill="url(#lf-d)"/>
+    </g>
+    <g transform="translate(215,470) rotate(50) scale(1.12)">
+      <path d="M0,0 C44,-46 44,-172 0,-236 C-44,-172 -44,-46 0,0 Z" fill="url(#lf-d)"/>
+    </g>
+    <g transform="translate(215,470) rotate(-26) scale(1.2)">
+      <path d="M0,0 C46,-48 46,-184 0,-250 C-46,-184 -46,-48 0,0 Z" fill="url(#lf-d)"/>
+    </g>
+    <!-- capa media -->
+    <g transform="translate(215,470) rotate(-38) scale(1)">
+      <path d="M0,0 C40,-42 40,-158 0,-216 C-40,-158 -40,-42 0,0 Z" fill="url(#lf-m)"/>
+      <path d="M0,-6 L0,-200" stroke="#2f5226" stroke-width="2.5" opacity="0.5"/>
+    </g>
+    <g transform="translate(215,470) rotate(34) scale(1.02)">
+      <path d="M0,0 C40,-42 40,-158 0,-216 C-40,-158 -40,-42 0,0 Z" fill="url(#lf-m)"/>
+      <path d="M0,-6 L0,-200" stroke="#2f5226" stroke-width="2.5" opacity="0.5"/>
+    </g>
+    <g transform="translate(215,470) rotate(-8) scale(1.08)">
+      <path d="M0,0 C42,-44 42,-166 0,-228 C-42,-166 -42,-44 0,0 Z" fill="url(#lf-m)"/>
+      <path d="M0,-6 L0,-210" stroke="#2f5226" stroke-width="2.5" opacity="0.5"/>
+    </g>
+    <!-- capa frontal (clara, más pequeña) -->
+    <g transform="translate(215,470) rotate(16) scale(0.9)">
+      <path d="M0,0 C36,-38 36,-140 0,-192 C-36,-140 -36,-38 0,0 Z" fill="url(#lf-l)"/>
+      <path d="M0,-6 L0,-176" stroke="#3c6330" stroke-width="2.5" opacity="0.45"/>
+    </g>
+    <g transform="translate(215,470) rotate(-18) scale(0.82)">
+      <path d="M0,0 C34,-36 34,-132 0,-180 C-34,-132 -34,-36 0,0 Z" fill="url(#lf-l)"/>
+      <path d="M0,-6 L0,-166" stroke="#3c6330" stroke-width="2.5" opacity="0.45"/>
+    </g>
+    <g transform="translate(215,470) rotate(6) scale(0.7)">
+      <path d="M0,0 C32,-34 32,-120 0,-166 C-32,-120 -32,-34 0,0 Z" fill="url(#lf-l)"/>
+    </g>
+  </g>
+</svg>

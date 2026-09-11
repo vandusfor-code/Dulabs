@@ -92,6 +92,23 @@ export function HeroV2() {
           </div>
         </div>
       </div>
+
+      {/* Elementos inferiores del mockup (solo xl, donde la composición a dos
+          columnas coincide con la referencia): marca abajo-izq y cue de scroll
+          abajo-der. Discretos, sin agregar nada más. */}
+      <div className="pointer-events-none absolute inset-x-0 bottom-7 z-10 hidden xl:block">
+        <div className="mx-auto flex max-w-[1280px] items-center justify-between px-8">
+          <span className="font-mono text-[10.5px] uppercase tracking-[0.22em] text-sitev2-subtle-fg">
+            dulabs.co — Tecnología con propósito
+          </span>
+          <span className="flex items-center gap-2.5 font-mono text-[10.5px] uppercase tracking-[0.22em] text-sitev2-subtle-fg">
+            <span className="flex h-8 w-8 items-center justify-center rounded-full border border-sitev2-border-strong">
+              <span aria-hidden className="animate-bounce text-[12px] leading-none">↓</span>
+            </span>
+            Desliza para explorar
+          </span>
+        </div>
+      </div>
     </section>
   );
 }

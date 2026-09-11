@@ -18,12 +18,15 @@ export function ProductVisualV2() {
         className="pointer-events-none absolute -inset-16 -z-20 rounded-[80px] bg-[radial-gradient(60%_55%_at_55%_45%,rgba(255,255,255,0.9)_0%,rgba(255,255,255,0)_70%)]"
       />
 
-      {/* Planta desenfocada, DETRÁS y arriba del laptop (regla 19/9):
-          profundidad, parcialmente oculta por el producto, muy difusa,
-          integrada con el blanco, nunca protagonista. */}
-      <div
+      {/* Follaje real (asset SVG propio) DETRÁS y arriba-derecha del laptop,
+          como en el mockup (regla 9/19): desenfocado, baja opacidad, ambiental,
+          nunca protagonista ni compitiendo con el texto. */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src="/v2/plant.svg"
+        alt=""
         aria-hidden
-        className="v2-plant pointer-events-none absolute -top-16 right-2 left-1/3 -z-10 h-[280px] opacity-65 sm:-top-20 md:h-[340px]"
+        className="v2-plant pointer-events-none absolute -top-20 -right-14 -z-10 h-[320px] w-auto opacity-70 sm:-right-20 sm:h-[380px] md:h-[440px]"
       />
 
       {/* Caption sutil arriba a la derecha */}
@@ -37,6 +40,11 @@ export function ProductVisualV2() {
 
       {/* Producto escalado */}
       <div className="v2-product-box [--s:0.4] min-[420px]:[--s:0.46] sm:[--s:0.58] md:[--s:0.66] lg:[--s:0.7] xl:[--s:0.68] 2xl:[--s:0.74]">
+        {/* Sombra de contacto: apoya el producto en la escena (peso físico) */}
+        <div
+          aria-hidden
+          className="v2-contact-shadow pointer-events-none absolute inset-x-[8%] -bottom-5 -z-10 h-10"
+        />
         <div className="v2-product-scaler">
           <AppMockupV2 />
         </div>
