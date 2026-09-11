@@ -229,7 +229,11 @@ export default function ResumenPage() {
       .catch(() => setCampanas([]));
   }, [session]);
 
-  const nombre = nombreDesdeEmail(session?.user.email);
+  // Prefiere el nombre real guardado (user_metadata.nombre, el mismo que ya
+  // usa app/api/dashboard/resumen/route.ts) -- nombreDesdeEmail() es solo un
+  // respaldo cuando todavía no hay nombre guardado, nunca la fuente primaria.
+  const nombreGuardado = (session?.user.user_metadata?.nombre as string | undefined)?.trim();
+  const nombre = nombreGuardado || nombreDesdeEmail(session?.user.email);
 
   if (negocios === null && errorNegocios) {
     return (
