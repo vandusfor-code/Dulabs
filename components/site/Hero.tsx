@@ -45,10 +45,10 @@ export function Hero() {
             </div>
 
             <h1 className="mx-auto mt-8 max-w-2xl font-display text-[38px] font-medium leading-[1.05] tracking-[-0.03em] text-site-fg sm:text-[46px] md:text-[56px] xl:mx-0 xl:max-w-3xl xl:text-[54px] 2xl:text-[60px]">
-              <SplitText text={t("Tu WhatsApp con IA,", "Your WhatsApp with AI,")} className="site-text-gradient" />
+              <SplitText text={t("Cuéntanos qué necesitas automatizar.", "Tell us what you need to automate.")} className="site-text-gradient" />
               <br />
               <SplitText
-                text={t("configurado por nosotros.", "set up by us.")}
+                text={t("Nosotros lo hacemos realidad.", "We make it happen.")}
                 className="site-text-gradient-primary"
                 startDelay={320}
               />
@@ -56,8 +56,8 @@ export function Hero() {
 
             <p className="mx-auto mt-7 max-w-md text-[16px] leading-relaxed text-site-muted-fg md:max-w-lg md:text-[17px] xl:mx-0">
               {t(
-                "Nos cuentas de tu negocio y nosotros conectamos, entrenamos y entregamos tu asistente de WhatsApp funcionando — sin que tengas que configurar nada. Sobre la API Oficial de Meta.",
-                "You tell us about your business and we connect, train and deliver your working WhatsApp assistant — with nothing for you to configure. On Meta's official API."
+                "Automatizamos procesos, conectamos tus sistemas y construimos soluciones con IA para que tu negocio atienda, venda y opere de forma más eficiente.",
+                "We automate processes, connect your systems and build AI-powered solutions so your business can serve, sell and operate more efficiently."
               )}
             </p>
 
@@ -69,7 +69,7 @@ export function Hero() {
                 onClick={() => trackConversion("cta_whatsapp", { source: "hero" })}
                 className="group inline-flex h-11 items-center rounded-full bg-site-fg px-5 text-[13.5px] font-medium text-site-bg transition-all hover:-translate-y-0.5 hover:bg-site-fg/90 hover:shadow-[0_10px_30px_-8px_rgba(255,255,255,0.25)]"
               >
-                {t("Cuéntanos de tu negocio", "Tell us about your business")}
+                {t("Cuéntanos qué necesitas automatizar", "Tell us what you need to automate")}
                 <ArrowRight className="ml-1.5 h-4 w-4 transition-transform group-hover:translate-x-0.5" />
               </a>
               <a

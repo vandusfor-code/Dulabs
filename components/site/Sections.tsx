@@ -262,7 +262,7 @@ export function FeaturesGridSection() {
       <div className="mx-auto max-w-[1440px] px-6">
         <SectionHeading
           eyebrow={t("Qué incluye", "What's included")}
-          title={<>{t("Todo lo que necesitas para operar", "Everything you need to run")} <br className="hidden md:block" />{t("WhatsApp con IA, en un solo panel.", "WhatsApp with AI, in a single panel.")}</>}
+          title={<>{t("Todo lo que necesitas para operar", "Everything you need to run")} <br className="hidden md:block" />{t("conversaciones, clientes y procesos, en un solo panel.", "conversations, customers and processes, in a single panel.")}</>}
           align="center"
         />
         <div className="mt-12 grid grid-cols-1 gap-px overflow-hidden rounded-2xl border border-site-border bg-white/5 sm:grid-cols-2 lg:grid-cols-4">
