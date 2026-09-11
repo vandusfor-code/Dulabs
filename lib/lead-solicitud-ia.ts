@@ -250,13 +250,21 @@ export async function ejecutarAccion(
     // A diferencia de la versión Anthropic original (antes de la corrección
     // previa), esto sigue notificando activamente al equipo -- Fase 1
     // exige explícitamente NO revertir esa corrección en la migración.
-    await enviarAlertaWhatsApp(
+    const notificado = await enviarAlertaWhatsApp(
       `🙋 Traspaso a soporte -- DuLabs (314)\n\n` +
         `Cliente: ${telefonoRemitente}\n` +
         `Motivo: ${motivo}\n\n` +
         `La IA queda en pausa para este chat puntual (no para todo el número).`
     );
-    return { success: true, resumen: "transferir_a_soporte se ejecutó correctamente: el chat quedó en pausa y el equipo ya fue notificado." };
+    // El chat SÍ quedó pausado (eso ya se confirmó arriba) independientemente
+    // de si la alerta salió -- pero el resumen que llega al modelo nunca debe
+    // afirmar que el equipo fue notificado si enviarAlertaWhatsApp() falló.
+    return {
+      success: true,
+      resumen: notificado
+        ? "transferir_a_soporte se ejecutó correctamente: el chat quedó en pausa y el equipo ya fue notificado."
+        : "transferir_a_soporte se ejecutó: el chat quedó en pausa, pero la notificación al equipo NO se pudo enviar (revisar canal de alertas).",
+    };
   }
 
   if (salida.guardar_lead_interesado) {
