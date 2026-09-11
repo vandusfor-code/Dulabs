@@ -14,6 +14,8 @@ import {
   Puzzle,
   ArrowRight,
   ArrowUpRight,
+  Database,
+  Bot,
 } from "lucide-react";
 import { LogoV2 } from "./LogoV2";
 import { trackConversion } from "@/lib/site-analytics";
@@ -70,11 +72,14 @@ export function CapacidadesSection() {
           </h2>
         </div>
 
-        <div className="mt-16 grid gap-px overflow-hidden rounded-2xl border border-sitev2-border bg-sitev2-border md:grid-cols-3">
+        {/* Composición editorial (sin caja): 3 columnas con hairline superior,
+            como el lenguaje sin-cards del hero. Iconos neutros = naranja solo
+            como acento en el resto de la página. */}
+        <div className="mt-14 grid gap-10 border-t border-sitev2-border pt-12 md:grid-cols-3 md:gap-10">
           {CAPACIDADES.map((c) => (
-            <div key={c.title} className="bg-sitev2-card p-8">
-              <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-sitev2-primary-soft">
-                <c.icon className="h-5 w-5 text-sitev2-primary" strokeWidth={1.8} />
+            <div key={c.title}>
+              <span className="flex h-11 w-11 items-center justify-center rounded-xl border border-sitev2-border bg-sitev2-card">
+                <c.icon className="h-5 w-5 text-sitev2-fg" strokeWidth={1.8} />
               </span>
               <h3 className="mt-6 font-display text-[22px] font-semibold tracking-tight text-sitev2-fg">
                 {c.title}
@@ -120,8 +125,8 @@ export function PlataformaSection() {
         <div className="mt-14 grid gap-x-10 gap-y-10 sm:grid-cols-2 lg:grid-cols-3">
           {MODULOS.map((m) => (
             <div key={m.title} className="flex gap-4">
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-sitev2-border bg-sitev2-surface">
-                <m.icon className="h-[18px] w-[18px] text-sitev2-fg" strokeWidth={1.8} />
+              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-sitev2-border bg-sitev2-card">
+                <m.icon className="h-5 w-5 text-sitev2-fg" strokeWidth={1.8} />
               </span>
               <div>
                 <h3 className="text-[15px] font-semibold text-sitev2-fg">{m.title}</h3>
@@ -136,6 +141,31 @@ export function PlataformaSection() {
 }
 
 /* ============================== 05 · Casos ============================== */
+// Casos REALES (mismos que /casos, componente de producción). Sin inventar
+// resultados ni métricas: solo problema, qué construimos y tecnología.
+const CASOS = [
+  {
+    icon: Database,
+    nombre: "DuMo",
+    tagline: "CRM para gestión de leads, conversaciones y ventas.",
+    problema:
+      "Leads y conversaciones de WhatsApp dispersos entre chats, hojas de cálculo y la memoria del equipo, sin visibilidad del embudo.",
+    solucion:
+      "Un CRM propio con bandeja centralizada, asignación de leads al vendedor correcto y seguimiento de la venta en un solo lugar.",
+    tecnologia: ["Next.js", "Supabase", "WhatsApp Business Platform"],
+  },
+  {
+    icon: Bot,
+    nombre: "Spa de belleza — Montería",
+    tagline: "Asistente de WhatsApp con IA para atención y citas.",
+    problema:
+      "Solicitudes de cita atendidas de forma 100% manual, con riesgo de choques de horario y respuestas lentas fuera de horario.",
+    solucion:
+      "Un asistente de WhatsApp con IA que resuelve dudas de servicios y precios y recibe solicitudes de cita para que el equipo las confirme.",
+    tecnologia: ["WhatsApp Business Platform", "Claude (Anthropic)", "Supabase"],
+  },
+];
+
 const LOGOS = [
   { src: "/logos-clientes/icontec.png", alt: "ICONTEC" },
   { src: "/logos-clientes/ur.png", alt: "Universidad del Rosario" },
@@ -156,30 +186,84 @@ export function CasosSection() {
               Casos
             </p>
             <h2 className="mt-4 font-display text-[clamp(1.9rem,4vw,2.75rem)] font-semibold leading-[1.08] tracking-[-0.03em] text-sitev2-fg">
-              Empresas que ya trabajan con DuLabs
+              Proyectos reales, no ejemplos
             </h2>
           </div>
           <Link
             href="/casos"
             className="group inline-flex items-center gap-1.5 text-[14px] font-medium text-sitev2-fg"
           >
-            Ver casos
+            Ver todos los casos
             <ArrowUpRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
           </Link>
         </div>
 
-        <div className="mt-14 grid grid-cols-2 items-center gap-x-8 gap-y-10 sm:grid-cols-3 lg:grid-cols-7">
-          {LOGOS.map((l) => (
-            <div key={l.src} className="flex items-center justify-center">
+        {/* Casos editoriales (pocos, bien presentados) */}
+        <div className="mt-14 flex flex-col">
+          {CASOS.map((c, i) => (
+            <article
+              key={c.nombre}
+              className={`grid gap-8 py-10 lg:grid-cols-[0.85fr_1.15fr] lg:gap-14 ${
+                i > 0 ? "border-t border-sitev2-border" : ""
+              }`}
+            >
+              <div>
+                <span className="flex h-11 w-11 items-center justify-center rounded-xl border border-sitev2-border bg-sitev2-card">
+                  <c.icon className="h-5 w-5 text-sitev2-fg" strokeWidth={1.8} />
+                </span>
+                <h3 className="mt-5 font-display text-[24px] font-semibold tracking-tight text-sitev2-fg">
+                  {c.nombre}
+                </h3>
+                <p className="mt-2 max-w-xs text-[14px] leading-relaxed text-sitev2-muted-fg">
+                  {c.tagline}
+                </p>
+                <div className="mt-5 flex flex-wrap gap-1.5">
+                  {c.tecnologia.map((t) => (
+                    <span
+                      key={t}
+                      className="rounded-full border border-sitev2-border px-2.5 py-1 font-mono text-[10.5px] text-sitev2-muted-fg"
+                    >
+                      {t}
+                    </span>
+                  ))}
+                </div>
+              </div>
+              <div className="grid gap-8 sm:grid-cols-2">
+                <div>
+                  <p className="font-mono text-[10px] uppercase tracking-widest text-sitev2-subtle-fg">
+                    Problema
+                  </p>
+                  <p className="mt-2.5 text-[14px] leading-relaxed text-sitev2-fg">{c.problema}</p>
+                </div>
+                <div>
+                  <p className="font-mono text-[10px] uppercase tracking-widest text-sitev2-subtle-fg">
+                    Qué construimos
+                  </p>
+                  <p className="mt-2.5 text-[14px] leading-relaxed text-sitev2-fg">{c.solucion}</p>
+                </div>
+              </div>
+            </article>
+          ))}
+        </div>
+
+        {/* Señal de confianza secundaria — tira discreta de logos reales,
+            no una pared: caption pequeño + una sola fila tenue. */}
+        <div className="mt-8 border-t border-sitev2-border pt-10">
+          <p className="text-center font-mono text-[10.5px] uppercase tracking-[0.22em] text-sitev2-subtle-fg">
+            Con la confianza de
+          </p>
+          <div className="mt-7 flex flex-wrap items-center justify-center gap-x-10 gap-y-6">
+            {LOGOS.map((l) => (
               <Image
+                key={l.src}
                 src={l.src}
                 alt={l.alt}
-                width={120}
-                height={40}
-                className="h-8 w-auto object-contain opacity-60 grayscale transition-all hover:opacity-100 hover:grayscale-0"
+                width={104}
+                height={28}
+                className="h-6 w-auto object-contain opacity-45 grayscale transition-all hover:opacity-80"
               />
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
       </div>
     </section>
@@ -190,39 +274,38 @@ export function CasosSection() {
 export function EnterpriseSection() {
   const href = whatsappVentasUrl(MENSAJE_WHATSAPP_ENTERPRISE_ES);
   return (
-    <section id="empresa" className="border-t border-sitev2-border">
+    <section id="empresa" className="border-t border-sitev2-border bg-sitev2-surface">
       <div className="mx-auto max-w-[1280px] px-5 py-24 sm:px-8 md:py-32">
-        <div className="grid gap-12 lg:grid-cols-[1fr_auto] lg:items-center lg:gap-16">
-          <div className="max-w-2xl">
-            <p className="font-mono text-[11px] font-medium uppercase tracking-[0.24em] text-sitev2-subtle-fg">
-              Desarrollo a medida
-            </p>
-            <h2 className="mt-4 font-display text-[clamp(2rem,4.4vw,3.25rem)] font-semibold leading-[1.06] tracking-[-0.03em] text-sitev2-fg">
-              Cuando el problema no cabe en un software estándar,
-              <span className="text-sitev2-primary"> construimos la solución.</span>
-            </h2>
-            <p className="mt-6 max-w-lg text-[16px] leading-relaxed text-sitev2-muted-fg">
-              Para empresas con procesos propios: IA, automatización, software e integraciones
-              diseñados alrededor de cómo trabaja tu operación.
-            </p>
-            <div className="mt-8 flex flex-wrap gap-2.5">
-              {["IA", "Automatización", "Software", "Integraciones"].map((t) => (
-                <span
-                  key={t}
-                  className="rounded-full border border-sitev2-border bg-sitev2-surface px-4 py-1.5 text-[13px] text-sitev2-fg"
-                >
-                  {t}
-                </span>
-              ))}
-            </div>
+        {/* Composición editorial en una sola columna: el CTA queda agrupado
+            con su contenido (no flotando en un vacío a la derecha). */}
+        <div className="max-w-2xl">
+          <p className="font-mono text-[11px] font-medium uppercase tracking-[0.24em] text-sitev2-subtle-fg">
+            Desarrollo a medida
+          </p>
+          <h2 className="mt-4 font-display text-[clamp(2rem,4.4vw,3.25rem)] font-semibold leading-[1.06] tracking-[-0.03em] text-sitev2-fg">
+            Cuando el problema no cabe en un software estándar,
+            <span className="text-sitev2-primary"> construimos la solución.</span>
+          </h2>
+          <p className="mt-6 max-w-lg text-[16px] leading-relaxed text-sitev2-muted-fg">
+            Para empresas con procesos propios: IA, automatización, software e integraciones
+            diseñados alrededor de cómo trabaja tu operación.
+          </p>
+          <div className="mt-8 flex flex-wrap gap-2.5">
+            {["IA", "Automatización", "Software", "Integraciones"].map((t) => (
+              <span
+                key={t}
+                className="rounded-full border border-sitev2-border bg-sitev2-card px-4 py-1.5 text-[13px] text-sitev2-fg"
+              >
+                {t}
+              </span>
+            ))}
           </div>
-
           <a
             href={href}
             target="_blank"
             rel="noopener noreferrer"
             onClick={() => trackConversion("cta_whatsapp", { source: "enterprise_v2" })}
-            className="group inline-flex h-12 shrink-0 items-center justify-center gap-2 rounded-full bg-sitev2-fg px-6 text-[14.5px] font-medium text-sitev2-bg transition-all hover:-translate-y-0.5 hover:bg-black"
+            className="group mt-10 inline-flex h-12 items-center justify-center gap-2 rounded-full bg-sitev2-fg px-6 text-[14.5px] font-medium text-sitev2-bg transition-all hover:-translate-y-0.5 hover:bg-black"
           >
             Hablar con DuLabs
             <span aria-hidden className="transition-transform group-hover:translate-x-0.5">→</span>
@@ -237,7 +320,7 @@ export function EnterpriseSection() {
 export function FinalCtaSection() {
   const href = whatsappVentasUrl(MENSAJE_WHATSAPP_GENERICO_ES);
   return (
-    <section className="border-t border-sitev2-border bg-sitev2-surface">
+    <section className="border-t border-sitev2-border bg-sitev2-bg">
       <div className="mx-auto max-w-[1280px] px-5 py-28 text-center sm:px-8 md:py-36">
         <h2 className="mx-auto max-w-3xl font-display text-[clamp(2.25rem,5.5vw,4rem)] font-semibold leading-[1.02] tracking-[-0.035em] text-sitev2-fg">
           ¿Qué podemos construir juntos
@@ -297,7 +380,7 @@ const FOOTER_COLS: { title: string; links: { label: string; href: string }[] }[]
 
 export function FooterV2() {
   return (
-    <footer className="border-t border-sitev2-border bg-sitev2-bg">
+    <footer className="border-t border-sitev2-border bg-sitev2-surface">
       <div className="mx-auto max-w-[1280px] px-5 py-16 sm:px-8">
         <div className="grid gap-10 md:grid-cols-[1.4fr_repeat(4,1fr)]">
           <div>

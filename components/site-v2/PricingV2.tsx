@@ -15,7 +15,7 @@ const POPULAR: PlanId = "growth";
 
 export function PricingV2() {
   return (
-    <section id="precios" className="border-t border-sitev2-border bg-sitev2-surface">
+    <section id="precios" className="border-t border-sitev2-border bg-sitev2-bg">
       <div className="mx-auto max-w-[1280px] px-5 py-24 sm:px-8">
         <div className="mx-auto max-w-2xl text-center">
           <p className="font-mono text-[11px] font-medium uppercase tracking-[0.24em] text-sitev2-subtle-fg">
@@ -37,10 +37,10 @@ export function PricingV2() {
             return (
               <div
                 key={id}
-                className={`relative flex flex-col rounded-2xl border bg-sitev2-card p-6 ${
+                className={`relative flex flex-col rounded-2xl border p-6 ${
                   popular
-                    ? "border-sitev2-primary/40 v2-shadow-card"
-                    : "border-sitev2-border"
+                    ? "border-sitev2-primary/40 bg-sitev2-card v2-shadow-card"
+                    : "border-sitev2-border bg-sitev2-surface"
                 }`}
               >
                 {popular && (
