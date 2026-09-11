@@ -783,3 +783,120 @@ body {
     display: none;
   }
 }
+
+/* ============================================================================
+   DULABS V2 — REDISEÑO (blanco · negro · naranja)
+   ----------------------------------------------------------------------------
+   AISLADO A PROPÓSITO. Todo lo de abajo lo consume únicamente la ruta /v2 y
+   los componentes en components/site-v2/*. Es 100% ADITIVO:
+     - NO modifica los tokens --color-site-* (sitio de producción, dark+lima),
+     - NO modifica el dashboard (.dash-scope) ni el tema del panel,
+     - NO cambia nada que ya renderice dulabs.co.
+   Cuando la V2 se apruebe y migre, este bloque pasa a ser el sistema base.
+   ========================================================================== */
+@theme {
+  /* Superficies — blanco dominante con ambiente de estudio */
+  --color-sitev2-bg: #ffffff;
+  --color-sitev2-surface: #fafaf9;   /* off-white para bandas suaves */
+  --color-sitev2-surface-2: #f5f5f4; /* off-white un paso más marcado */
+  --color-sitev2-card: #ffffff;
+
+  /* Tinta — negro para titulares y texto principal, grises muy limpios */
+  --color-sitev2-fg: #111111;
+  --color-sitev2-muted-fg: #6b7280;  /* texto secundario */
+  --color-sitev2-subtle-fg: #9ca3af; /* eyebrow / caption */
+
+  /* Bordes / divisores — sutiles, nunca cajas pesadas */
+  --color-sitev2-border: rgb(17 17 17 / 8%);
+  --color-sitev2-border-strong: rgb(17 17 17 / 12%);
+
+  /* Naranja — SOLO acento. Nunca grandes áreas. */
+  --color-sitev2-primary: #ff5c1a;
+  --color-sitev2-primary-hover: #ec4d10;
+  --color-sitev2-primary-fg: #ffffff;
+  --color-sitev2-primary-soft: #fff2ec; /* fondo naranja lavado para chips */
+}
+
+/* Contenedor raíz de la V2 — fija fondo/tinta e ilumina el ambiente sin
+   depender del tema del dashboard. */
+.v2-scope {
+  background: var(--color-sitev2-bg);
+  color: var(--color-sitev2-fg);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Iluminación de estudio: blancos ligeramente diferenciados, luz difusa
+   arriba a la derecha (detrás del producto), sin blobs de color. */
+.v2-studio-light {
+  background:
+    radial-gradient(120% 80% at 78% 8%, rgba(255, 92, 26, 0.05) 0%, rgba(255, 92, 26, 0) 42%),
+    radial-gradient(90% 70% at 62% 0%, #ffffff 0%, rgba(255, 255, 255, 0) 60%),
+    linear-gradient(180deg, #ffffff 0%, #fbfbfa 55%, #f7f7f5 100%);
+}
+
+/* Rejilla técnica apenas perceptible (profundidad, no textura) */
+.v2-grid {
+  background-image:
+    linear-gradient(to right, rgba(17, 17, 17, 0.035) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(17, 17, 17, 0.035) 1px, transparent 1px);
+  background-size: 64px 64px;
+}
+
+/* Sombras difusas y clarísimas — separan del fondo sin parecer flotante */
+.v2-shadow-soft {
+  box-shadow:
+    0 2px 6px -2px rgba(17, 17, 17, 0.04),
+    0 24px 48px -20px rgba(17, 17, 17, 0.12);
+}
+.v2-shadow-card {
+  box-shadow:
+    0 1px 2px rgba(17, 17, 17, 0.04),
+    0 12px 32px -16px rgba(17, 17, 17, 0.10);
+}
+.v2-shadow-float {
+  box-shadow:
+    0 1px 3px rgba(17, 17, 17, 0.06),
+    0 10px 30px -12px rgba(17, 17, 17, 0.14);
+}
+/* Sombra amplia bajo el producto (laptop) — muy amplia, muy clara */
+.v2-shadow-product {
+  box-shadow:
+    0 40px 90px -30px rgba(17, 17, 17, 0.22),
+    0 12px 40px -20px rgba(17, 17, 17, 0.10);
+}
+
+/* Punto naranja del logo con un leve halo */
+.v2-logo-dot {
+  box-shadow: 0 0 0 3px rgba(255, 92, 26, 0.12);
+}
+
+/* Escalado fiel del mockup del producto (860×540) sin romper el flujo:
+   la caja ocupa el tamaño ESCALADO y el contenido se dibuja a tamaño real
+   y se escala con transform. El factor --s se ajusta por breakpoint desde
+   utilidades Tailwind ([--s:...] / xl:[--s:...]). */
+.v2-product-box {
+  position: relative;
+  width: calc(860px * var(--s, 0.7));
+  height: calc(540px * var(--s, 0.7));
+}
+.v2-product-scaler {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 860px;
+  height: 540px;
+  transform: scale(var(--s, 0.7));
+  transform-origin: top left;
+}
+
+/* Planta desenfocada detrás del producto — profundidad, no protagonismo.
+   Sin foto: cluster de formas verdes muy difusas (regla 19). */
+.v2-plant {
+  background:
+    radial-gradient(38% 46% at 62% 40%, rgba(74, 124, 66, 0.55) 0%, rgba(74, 124, 66, 0) 70%),
+    radial-gradient(30% 40% at 44% 58%, rgba(96, 148, 84, 0.5) 0%, rgba(96, 148, 84, 0) 72%),
+    radial-gradient(34% 44% at 72% 66%, rgba(58, 104, 58, 0.5) 0%, rgba(58, 104, 58, 0) 72%),
+    radial-gradient(26% 34% at 54% 26%, rgba(120, 168, 96, 0.45) 0%, rgba(120, 168, 96, 0) 74%);
+  filter: blur(18px);
+}
