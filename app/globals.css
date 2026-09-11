@@ -787,7 +787,7 @@ body {
 /* ============================================================================
    DULABS V2 — REDISEÑO (blanco · negro · naranja)
    ----------------------------------------------------------------------------
-   AISLADO A PROPÓSITO. Todo lo de abajo lo consume únicamente la ruta /v2 y
+   AISLADO A PROPÓSITO. Todo lo de abajo lo consume únicamente la ruta /newversion y
    los componentes en components/site-v2/*. Es 100% ADITIVO:
      - NO modifica los tokens --color-site-* (sitio de producción, dark+lima),
      - NO modifica el dashboard (.dash-scope) ni el tema del panel,
@@ -890,7 +890,7 @@ body {
   transform-origin: top left;
 }
 
-/* Planta/follaje detrás del producto (asset SVG propio, public/v2/plant.svg)
+/* Planta/follaje detrás del producto (asset SVG propio, public/newversion/plant.svg)
    — profundidad ambiental, desenfocada y a baja opacidad, nunca protagonista
    (regla 9/19). El blur conserva la forma de hoja sin que se lea "vectorial". */
 .v2-plant {

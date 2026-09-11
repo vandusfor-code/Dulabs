@@ -12,11 +12,12 @@ import {
   FooterV2,
 } from "@/components/site-v2/SectionsV2";
 
-// Preview aislado del rediseño (DuLabs V2). NO debe indexarse ni aparecer
-// públicamente como la home hasta que se apruebe la migración (regla 53/54).
+// Versión de revisión del rediseño (DuLabs V2), servida en /newversion.
+// NO debe indexarse ni reemplazar la home hasta autorización explícita de
+// migración. noindex/nofollow para que Google no la indexe antes de aprobar.
 export const metadata: Metadata = {
-  title: "DuLabs V2 — Preview",
-  robots: { index: false, follow: false },
+  title: "DuLabs — Nueva versión (revisión)",
+  robots: { index: false, follow: false, googleBot: { index: false, follow: false } },
   alternates: { canonical: undefined },
 };
 

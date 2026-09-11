@@ -23,7 +23,7 @@ export function ProductVisualV2() {
           nunca protagonista ni compitiendo con el texto. */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
-        src="/v2/plant.svg"
+        src="/newversion/plant.svg"
         alt=""
         aria-hidden
         className="v2-plant pointer-events-none absolute -top-28 -right-20 -z-10 h-[320px] w-auto opacity-70 sm:-right-24 sm:h-[380px] md:h-[440px]"
