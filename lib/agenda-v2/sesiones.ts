@@ -130,6 +130,15 @@ export async function crearSesionAgendaV2(
     serviciosIds?: string[] | null;
     profesionalId?: number | null;
     fechaIso?: string | null;
+    // NUEVA FASE (autorizado, extracción de datos para RESERVAR_CITA) -- una
+    // sesión puede nacer directamente en S5_CONFIRMAR (cuando Gemini extrajo
+    // servicio+profesional+fecha+hora y los 4 se validaron contra
+    // disponibilidad real, ver lib/agenda-v2/router.ts::intentarPreLlenarSesion).
+    // manejarConfirmacion (router.ts) EXIGE slotSeleccionado real para poder
+    // confirmar -- sin este campo aquí, una sesión creada directo en
+    // S5_CONFIRMAR quedaría inconsistente (mismo motivo por el que S5_CONFIRMAR
+    // siempre lo fija vía actualizarSesionAgendaV2 en el flujo normal).
+    slotSeleccionado?: unknown;
   },
 ): Promise<SesionAgendaV2> {
   const { data, error } = await supabase
@@ -147,6 +156,7 @@ export async function crearSesionAgendaV2(
       servicios_ids: params.serviciosIds ?? null,
       profesional_id: params.profesionalId ?? null,
       fecha_iso: params.fechaIso ?? null,
+      slot_seleccionado: params.slotSeleccionado ?? null,
     })
     .select("*")
     .single();

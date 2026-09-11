@@ -34,6 +34,15 @@ export interface GeminiGenerateContentParams {
   responseSchema: Record<string, unknown>;
   maxOutputTokens: number;
   temperature?: number;
+  /**
+   * Opcional -- generationConfig.thinkingConfig.thinkingLevel (Gemini 3.x).
+   * Verificado contra la documentación oficial (ai.google.dev/gemini-api/docs/generate-content/thinking
+   * y .../gemini-3) antes de agregarlo, no inventado. Si se omite, el
+   * request queda BYTE A BYTE igual a como estaba antes de este campo --
+   * los llamadores existentes (AMORE, GeminiExecutor del Flow Engine) no
+   * cambian de comportamiento.
+   */
+  thinkingLevel?: "minimal" | "low" | "medium" | "high";
 }
 
 export interface GeminiGenerateContentResult {

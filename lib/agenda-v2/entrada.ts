@@ -63,7 +63,48 @@ export type AccionGestionCitasDetectada = "consultar" | "cancelar" | "reprograma
 // cita" -- el mecanismo de coincidencia ("contains", nunca fuzzy/IA) NO
 // cambia. Deliberadamente "cita" sola NUNCA se agrega a ninguna lista --
 // seguiría sin ser intención de gestión (ver detectarIntencionGestionCitas).
-const FRASES_CANCELAR = ["cancelar mi cita", "quiero cancelar mi cita", "cancelar la cita", "quiero cancelar la cita", "cancelar cita"];
+// Glosario de intenciones AMORE (autorizado) -- ampliación real de las
+// secciones CANCELAR_CITA/REPROGRAMAR_CITA/CONSULTAR_CITA, mismo mecanismo
+// "contains" de siempre. Deliberadamente NO se agregan las frases
+// ambiguas del glosario tipo "no puedo ir"/"se me complicó"/"me salió un
+// compromiso": el propio glosario reconoce que su intención real depende
+// de si la misma clienta propone una fecha alterna en el mismo mensaje
+// ("no puedo ir" -> cancelar, pero "no puedo ir, ¿la pasamos para el
+// viernes?" -> reprogramar) -- un match "contains" literal no puede
+// distinguir eso (agregarlas a FRASES_CANCELAR clasificaría MAL el
+// segundo caso, porque cancelar se evalúa primero). Esa clase de frases
+// queda sin detector determinista por ahora; requiere razonamiento
+// contextual real (ver detectarIntencionGestionCitas más abajo).
+const FRASES_CANCELAR = [
+  "cancelar mi cita",
+  "quiero cancelar mi cita",
+  "cancelar la cita",
+  "quiero cancelar la cita",
+  "cancelar cita",
+  "ya no quiero la cita",
+  "ya no quiero mi cita",
+  "ya no necesito la cita",
+  "ya no necesito mi cita",
+  "ya no deseo la cita",
+  "ya no deseo mi cita",
+  "ya no me interesa la cita",
+  "quiero anular mi cita",
+  "quiero anular la cita",
+  "quiero eliminar mi cita",
+  "quiero eliminar la cita",
+  "quiero quitar mi cita",
+  "quiero quitar la cita",
+  "quiero borrar mi cita",
+  "quiero borrar la cita",
+  "cancelame la cita",
+  "cancelame mi cita",
+  "mejor cancela la cita",
+  "mejor cancela mi cita",
+  "como cancelo la cita",
+  "como puedo cancelar la cita",
+  "me pueden cancelar la cita",
+  "me pueden anular la cita",
+];
 const FRASES_REPROGRAMAR = [
   "reprogramar mi cita",
   "quiero reprogramar mi cita",
@@ -75,6 +116,22 @@ const FRASES_REPROGRAMAR = [
   "cambiar la cita",
   "quiero cambiar la fecha",
   "quiero cambiar el horario",
+  "quiero mover mi cita",
+  "quiero mover la cita",
+  "quiero modificar mi cita",
+  "quiero modificar la cita",
+  "quiero reprogramar",
+  "necesito reprogramar",
+  "necesito reprogramar mi cita",
+  "esa hora no me sirve",
+  "ese horario no me sirve",
+  "prefiero otro horario",
+  "prefiero otro dia",
+  "quiero otra fecha",
+  "quiero otra hora",
+  "quiero otro horario",
+  "me pueden cambiar la cita",
+  "me pueden mover la cita",
 ];
 const FRASES_CONSULTAR = [
   "consultar mi cita",
@@ -87,6 +144,20 @@ const FRASES_CONSULTAR = [
   "quiero ver la cita",
   "que cita tengo",
   "cuando tengo mi cita",
+  "cuando es mi cita",
+  "a que hora tengo mi cita",
+  "a que hora es mi cita",
+  "que dia tengo mi cita",
+  "con quien tengo la cita",
+  "quien me atiende",
+  "quien me va a atender",
+  "que tengo agendado",
+  "que tengo reservado",
+  "que tengo programado",
+  "quiero saber mi cita",
+  "quiero revisar mi cita",
+  "donde tengo la cita",
+  "me confirmas la cita",
 ];
 
 function coincideAlgunaFrase(textoNormalizado: string, frases: string[]): boolean {

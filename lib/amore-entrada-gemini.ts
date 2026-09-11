@@ -76,6 +76,11 @@ export const MENSAJE_REGISTRO_CANCELADO = "Listo, cancelé el registro 💗 Escr
  * existentes siguen coincidiendo igual porque cada núcleo corto es también
  * subcadena de ellas.
  */
+// Glosario de intenciones AMORE (autorizado) -- ampliación real de la
+// sección HABLAR_CON_ASESOR: mismo mecanismo "contains" de siempre, solo
+// más frases reales cubiertas. Se excluyen a propósito frases que solo
+// MENCIONAN a una profesional sin pedir hablar con ella ("¿Jessica hace
+// maquillaje?"), igual que ya documentaba este archivo.
 const FRASES_ATENCION_HUMANA_DETERMINISTA = [
   "quiero hablar con jessica",
   "me gustaria hablar con jessica",
@@ -92,6 +97,39 @@ const FRASES_ATENCION_HUMANA_DETERMINISTA = [
   "hablar con una persona",
   "hablar con alguien",
   "hablar con alguien de amore",
+  "quiero atencion humana",
+  "necesito atencion humana",
+  "quiero atencion personalizada",
+  "quiero que me atienda una persona",
+  "quiero que me atienda alguien",
+  "necesito una asesora",
+  "necesito un asesor",
+  "quiero una asesora",
+  "quiero un asesor",
+  "puedo hablar con alguien",
+  "puedo hablar con una persona",
+  "puedo hablar con una asesora",
+  "comuniquenme con alguien",
+  "pasame con alguien",
+  "pasame con una persona",
+  "pasame con una asesora",
+  "pasame con un asesor",
+  "quiero que me pasen con alguien",
+  "quiero que me comuniquen con alguien",
+  "no quiero hablar con el bot",
+  "no quiero hablar con un robot",
+  "no quiero hablar con una maquina",
+  "quiero una persona no un bot",
+  "quiero hablar con alguien de verdad",
+  "necesito una persona real",
+  "pasame con alguien real",
+  "quiero hablar con la encargada",
+  "quiero hablar con la responsable",
+  "quiero hablar con la administradora",
+  "quiero hablar con recepcion",
+  "quiero hablar con atencion al cliente",
+  "quiero servicio al cliente",
+  "necesito servicio al cliente",
 ];
 
 export function detectarSolicitudAtencionHumana(mensaje: string): boolean {
@@ -232,6 +270,13 @@ export function detectarConfirmacionPago(mensaje: string): boolean {
  * nunca IA/fuzzy. Deliberadamente NO incluye "cita" sola -- "¿cuánto cuesta
  * una cita?"/"¿atienden citas los sábados?" deben seguir siendo CONSULTA.
  */
+// Glosario de intenciones AMORE (autorizado) -- ampliación real de la
+// sección RESERVAR_CITA: mismo mecanismo "contains" de siempre. Se excluyen
+// a propósito las frases de "disponibilidad" ("tienen espacio mañana?",
+// "hay dispo?") -- el propio glosario reconoce que esas dependen de
+// contexto (pueden ser una pregunta puramente informativa), así que se
+// dejan para que Gemini las razone semánticamente (ver SYSTEM_INSTRUCTION
+// más abajo), nunca un match literal ciego.
 const FRASES_TRIGGER_AGENDA_DETERMINISTA = [
   "quiero una cita",
   "quiero agendar",
@@ -240,6 +285,47 @@ const FRASES_TRIGGER_AGENDA_DETERMINISTA = [
   "me puedes agendar",
   "quiero reservarlo",
   "quiero agendarlo",
+  "quiero sacar una cita",
+  "quiero sacar cita",
+  "quiero pedir una cita",
+  "quiero pedir cita",
+  "quiero programar una cita",
+  "quiero programar cita",
+  "quiero separar una cita",
+  "quiero separar cita",
+  "quiero apartar cita",
+  "necesito una cita",
+  "necesito sacar una cita",
+  "necesito agendar una cita",
+  "necesito reservar una cita",
+  "necesito pedir una cita",
+  "necesito programar una cita",
+  "necesito separar una cita",
+  "necesito apartar una cita",
+  "me gustaria agendar una cita",
+  "me gustaria reservar una cita",
+  "me gustaria sacar una cita",
+  "me gustaria tener una cita",
+  "quisiera agendar una cita",
+  "quisiera reservar una cita",
+  "quisiera sacar una cita",
+  "quisiera tener una cita",
+  "me ayudas a sacar una cita",
+  "me ayudas a agendar",
+  "me ayudas a reservar",
+  "me colaboras con una cita",
+  "me colaboras agendando",
+  "me pueden ayudar a agendar",
+  "me pueden sacar una cita",
+  "me pueden agendar",
+  "me pueden reservar una cita",
+  "qiero una cita",
+  "kiero una cita",
+  "qiero agendar",
+  "kiero agendar",
+  "quiero agendar una sita",
+  "quiero reservar una sita",
+  "quiero sacar una sita",
 ];
 
 export function detectarTriggerAgendaDeterminista(mensaje: string): boolean {
@@ -247,38 +333,171 @@ export function detectarTriggerAgendaDeterminista(mensaje: string): boolean {
   return FRASES_TRIGGER_AGENDA_DETERMINISTA.some((f) => textoNormalizado.includes(normalizeText(f)));
 }
 
-export type IntentGemini = "CONSULTA" | "TRIGGER_AGENDA";
+// --- NUEVA FASE (autorizado, DESPEDIDA / NO_ENTENDI_REPETIR) --------------
+// Glosario AMORE (AMORE_GLOSARIO_INTENCIONES.md secciones 19/20 +
+// AMORE_REGLAS_TECNICAS_INTENCIONES.md secciones 23/24), implementadas de
+// forma aislada y de bajo riesgo (pedido explícito): solo responden un
+// texto fijo y cordial, NUNCA cambian el modo de la conversación, NUNCA
+// tocan una sesión de Agenda V2 ni llaman a Gemini (ver el punto de
+// llamada en lib/amore-entrada-router.ts).
+//
+// A diferencia de los detectores "contains" ya existentes arriba (atención
+// humana, fast-track de agenda), acá se exige coincidencia EXACTA del
+// mensaje completo (tras quitar signos ¿?¡! sobrantes) -- varias de estas
+// frases son palabras sueltas muy comunes ("gracias", "que", "como") que SÍ
+// podrían aparecer dentro de un mensaje con otra intención real ("gracias,
+// ¿cuánto cuesta el manicure?"); exigir el mensaje COMPLETO evita ese falso
+// positivo.
+
+export const MENSAJE_DESPEDIDA = "¡Con mucho gusto! 💗 Cualquier cosa que necesites, aquí estoy. ¡Que tengas un lindo día!";
+export const MENSAJE_NO_ENTENDI_REPETIR =
+  "Claro 💗 Te explico de nuevo, más sencillo: puedo darte información de nuestros servicios, precios y horarios, o ayudarte a agendar tu cita. ¿Qué te gustaría hacer?";
+
+function normalizarParaCoincidenciaExacta(mensaje: string): string {
+  return normalizeText(mensaje)
+    .replace(/^[¿¡]+/, "")
+    .replace(/[?!.,]+$/, "")
+    .trim();
+}
+
+const FRASES_DESPEDIDA = [
+  "gracias",
+  "muchas gracias",
+  "mil gracias",
+  "te agradezco",
+  "les agradezco",
+  "gracias por la informacion",
+  "gracias por todo",
+  "eso era todo",
+  "eso es todo",
+  "listo gracias",
+  "perfecto gracias",
+  "bueno gracias",
+  "ok gracias",
+  "vale gracias",
+  "hasta luego",
+  "hasta pronto",
+  "chao",
+  "chau",
+  "nos vemos",
+  "que estes bien",
+  "que esten bien",
+  "feliz dia",
+  "feliz tarde",
+  "feliz noche",
+  "bendiciones",
+  "dios les bendiga",
+  "muchas gracias por la atencion",
+];
+
+export function detectarDespedida(mensaje: string): boolean {
+  const normalizado = normalizarParaCoincidenciaExacta(mensaje);
+  if (!normalizado) return false;
+  return FRASES_DESPEDIDA.some((f) => normalizado === normalizeText(f));
+}
+
+const FRASES_NO_ENTENDI_REPETIR = [
+  "no entendi",
+  "no entiendo",
+  "no entendi nada",
+  "no entiendo nada",
+  "que",
+  "como",
+  "como asi",
+  "que quieres decir",
+  "que significa",
+  "explicame",
+  "me puedes explicar",
+  "me puede explicar",
+  "no comprendi",
+  "no me quedo claro",
+  "no se",
+  "repiteme",
+  "me lo repites",
+  "puedes repetir",
+  "puede repetir",
+  "otra vez",
+  "de nuevo",
+  "me puedes explicar mejor",
+  "explicame mejor",
+  "no te entendi",
+  "no le entendi",
+];
+
+export function detectarNoEntendiRepetir(mensaje: string): boolean {
+  const normalizado = normalizarParaCoincidenciaExacta(mensaje);
+  if (!normalizado) return false;
+  return FRASES_NO_ENTENDI_REPETIR.some((f) => normalizado === normalizeText(f));
+}
+
+// NUEVA FASE (autorizado, reconocimiento semántico/contextual de
+// CANCELAR_CITA/REPROGRAMAR_CITA) -- cierra el gap de las variantes
+// AMBIGUAS/indirectas del glosario ("me salió una vuelta y no voy a poder
+// ir", "no puedo ir mañana, ¿la pasamos para el viernes?") que el detector
+// determinista de frases fijas (detectarIntencionGestionCitas,
+// lib/agenda-v2/entrada.ts) NUNCA puede resolver por diseño -- un match
+// "contains" no puede distinguir "no puedo ir" (cancelar) de "no puedo ir,
+// ¿la pasamos para el viernes?" (reprogramar) sin razonar el mensaje
+// completo. Gemini SOLO clasifica -- nunca cancela ni reprograma nada; el
+// backend (lib/agenda-v2/router.ts::iniciarGestionCitasAgendaV2) reutiliza
+// la MISMA gestión de citas de FASE 8 (buscar cita real -> mostrar -> pedir
+// confirmación -> ejecutar solo tras confirmar). El detector determinista
+// sigue evaluándose PRIMERO (antes de llegar a Gemini, ver
+// lib/agenda-v2/router.ts::procesarMensajeConAgendaV2) -- estas dos
+// categorías nuevas solo se alcanzan para frases que ese detector no cubrió.
+export type IntentGemini = "CONSULTA" | "TRIGGER_AGENDA" | "CANCELAR_CITA" | "REPROGRAMAR_CITA";
 
 export interface ResultadoClasificacionGemini {
   intent: IntentGemini;
   /** Ignorado por el caller cuando intent=TRIGGER_AGENDA (sección STRUCTURED OUTPUT del pedido). */
   replyText: string;
   detectedServiceMention: string | null;
+  // NUEVA FASE (autorizado, extracción de datos para RESERVAR_CITA) --
+  // MISMO criterio EXACTO que detectedServiceMention: Gemini SOLO extrae el
+  // texto crudo tal cual lo dijo la clienta ("Mary", "el viernes", "a las
+  // 4") -- NUNCA resuelve un id real, NUNCA calcula una fecha/hora final.
+  // Quien de verdad valida/resuelve estos textos contra datos reales
+  // (catálogo, elegibilidad, disponibilidad real con Nylas) es
+  // iniciarNuevaSesionAgendaV2 (lib/agenda-v2/router.ts) -- la IA nunca crea
+  // ni asume una cita.
+  detectedProfessionalMention: string | null;
+  detectedDateMention: string | null;
+  detectedTimeMention: string | null;
 }
 
 const RESPONSE_SCHEMA = {
   type: "object",
   properties: {
-    intent: { type: "string", enum: ["CONSULTA", "TRIGGER_AGENDA"] },
+    intent: { type: "string", enum: ["CONSULTA", "TRIGGER_AGENDA", "CANCELAR_CITA", "REPROGRAMAR_CITA"] },
     reply_text: { type: "string" },
     detected_service_mention: { type: "string", nullable: true },
+    detected_professional_mention: { type: "string", nullable: true },
+    detected_date_mention: { type: "string", nullable: true },
+    detected_time_mention: { type: "string", nullable: true },
   },
   required: ["intent", "reply_text"],
 };
 
 const SYSTEM_INSTRUCTION = `Eres la asistente virtual de AMORE, un salón de belleza/estética. Tu ÚNICO trabajo en este turno es CLASIFICAR la intención del mensaje del cliente y, si aplica, redactar una respuesta natural y cálida a su duda.
 
-Debes responder EXCLUSIVAMENTE en el JSON pedido, con "intent" siendo una de estas dos categorías:
+Debes responder EXCLUSIVAMENTE en el JSON pedido, con "intent" siendo una de estas cuatro categorías:
 
 - CONSULTA: el cliente busca información (precios, servicios, duración, recomendaciones, horarios generales, información del salón) y TODAVÍA NO decidió iniciar una reserva. Ejemplos: "¿Cuánto cuesta?", "¿Qué servicios tienen?", "¿Qué me recomiendas?", "¿Cuánto dura?", "¿Atienden los domingos?", "¿Qué horarios manejan?", "¿Cuánto cuesta una cita?", "¿Qué horarios tienen para citas?", "¿Atienden citas los sábados?".
-- TRIGGER_AGENDA: el cliente expresa CLARAMENTE que quiere iniciar el proceso de reserva. Ejemplos: "Quiero una cita.", "Quiero agendar.", "Me gustaría reservar.", "Me interesa, quiero agendarlo.", "Sí, quiero reservar.", "Quiero hacerlo el sábado.", "Me puedes separar un espacio." También aplica si el cliente responde afirmativamente a una pregunta tuya sobre si quiere agendar.
+- TRIGGER_AGENDA: el cliente expresa CLARAMENTE que quiere iniciar el proceso de reserva de una cita NUEVA. Ejemplos: "Quiero una cita.", "Quiero agendar.", "Me gustaría reservar.", "Me interesa, quiero agendarlo.", "Sí, quiero reservar.", "Quiero hacerlo el sábado.", "Me puedes separar un espacio.", "¿Tienen disponibilidad para mañana?", "¿Me pueden atender el viernes?", "¿Será que me hacen un espacio?", "¿Tendrán un campito para mí?", "¿Me regalan un espacio esta semana?". También aplica si el cliente responde afirmativamente a una pregunta tuya sobre si quiere agendar.
+  - Cuidado: una pregunta sobre disponibilidad puede ser puramente informativa según el contexto ("¿manejan turnos los domingos, en general?" sin mencionar una fecha propia sigue siendo CONSULTA_HORARIO). Si el cliente pregunta por SU propia disponibilidad para ir ("¿tienen espacio para mí mañana?", "¿me pueden atender el viernes?"), es TRIGGER_AGENDA; si pregunta por el horario general del negocio sin intención personal de ir ("¿a qué hora abren?", "¿qué días trabajan?"), sigue siendo CONSULTA.
+- CANCELAR_CITA: el cliente habla de una cita que YA TIENE (nunca una nueva) y expresa que no va a poder asistir, SIN proponer ni aceptar una fecha/hora alternativa. Ejemplos: "ya no quiero la cita", "me salió una vuelta y no voy a poder ir", "vea que no alcanzo a llegar", "se me presentó un compromiso", "no puedo ir" (sola, sin mencionar otro día ni querer cambiarla).
+- REPROGRAMAR_CITA: el cliente habla de una cita que YA TIENE y expresa que no puede asistir COMO ESTABA, pero SÍ quiere ir en otro momento -- propone, pide o acepta otra fecha/hora, o deja claro que prefiere cambiarla en vez de cancelarla. Ejemplos: "no puedo ir mañana, ¿la pasamos para el viernes?", "no puedo ese día, ¿me la pueden cambiar?", "esa hora no me sirve, ¿puedo ir más tarde?", "me salió un compromiso pero quiero ir otro día", "no puedo ir, pero quiero otra fecha".
+
+[REGLA DE AMBIGÜEDAD CANCELAR vs REPROGRAMAR -- MUY IMPORTANTE]
+"No puedo ir" (o equivalentes) por sí solo, SIN ninguna mención de otro día/hora ni de querer cambiar/mover la cita, es CANCELAR_CITA. Si el mismo mensaje además pide, sugiere o acepta otra fecha/hora, es REPROGRAMAR_CITA -- nunca canceles cuando el cliente en realidad quiere mantener la cita en otro momento. Si el mensaje es TAN corto o ambiguo que de verdad no puedes decidir con confianza entre cancelar/reprogramar/otra cosa (y NO tienes contexto previo en el historial que lo aclare), NUNCA elijas una al azar: responde intent=CONSULTA con un "reply_text" breve y natural preguntando cuál prefiere, ej.: "Claro 💗 ¿Quieres cancelar tu cita o prefieres cambiarla para otro día?". Pero si el contexto ya deja clara la intención, no hagas una pregunta innecesaria.
 
 Reglas estrictas:
-- NUNCA inventes que ya creaste, modificaste o cancelaste una cita -- tú NO tienes esa capacidad, solo clasificas. La reserva real la hace otro sistema después de tu clasificación.
+- NUNCA inventes que ya creaste, modificaste o cancelaste una cita -- tú NO tienes esa capacidad, solo clasificas. La cancelación/reprogramación/reserva real las hace otro sistema después de tu clasificación, y SIEMPRE le pedirá confirmación al cliente antes de ejecutar nada.
 - Cuando intent=CONSULTA, "reply_text" debe ser una respuesta natural, cálida y breve a la duda del cliente (información general del salón; si no conoces un dato exacto como un precio, sé honesta y sugiere que lo puede confirmar al agendar, nunca inventes una cifra).
-- Cuando intent=TRIGGER_AGENDA, igual completa "reply_text" con cualquier texto breve (será ignorado por el sistema).
+- Cuando intent=TRIGGER_AGENDA/CANCELAR_CITA/REPROGRAMAR_CITA, igual completa "reply_text" con cualquier texto breve (será ignorado por el sistema).
 - "detected_service_mention": si el cliente mencionó un servicio concreto (ej. "sombreado", "manicure"), pon ese texto tal cual; si no mencionó ninguno, usa null.
 - Nunca actives TRIGGER_AGENDA solo porque la palabra "cita" aparece en el mensaje -- una pregunta sobre citas (precio, horarios, disponibilidad general) sigue siendo CONSULTA.
+- Nunca confundas CANCELAR_CITA/REPROGRAMAR_CITA con TRIGGER_AGENDA -- son sobre una cita que el cliente YA TIENE reservada, nunca sobre agendar una cita nueva.
 
 [REGLA CRÍTICA DE INTENCIÓN]
 TRIGGER_AGENDA significa que el usuario desea iniciar EXPLÍCITAMENTE un proceso de reserva/agendamiento. Tienes acceso al historial reciente de esta conversación (turnos anteriores) --úsalo siempre que el mensaje actual sea corto o ambiguo.
@@ -309,7 +528,22 @@ ASISTENTE: "¿Quieres que te recomiende una opción para tu graduación?"
 USUARIO: "Sí."
 → CONSULTA
 
-Nunca asumas una reserva por el tema general de la conversación (hablar de un evento, una fecha o un servicio no es lo mismo que pedir agendar). Si existe duda real entre CONSULTA y TRIGGER_AGENDA, responde CONSULTA.`;
+Nunca asumas una reserva por el tema general de la conversación (hablar de un evento, una fecha o un servicio no es lo mismo que pedir agendar). Si existe duda real entre CONSULTA y TRIGGER_AGENDA, responde CONSULTA.
+
+Además de "intent" y "reply_text", extrae estos 4 campos SOLO cuando intent=TRIGGER_AGENDA y la clienta mencionó ese dato en su mensaje (o en el historial reciente, si sigue siendo relevante para esta reserva). Extrae ÚNICAMENTE el texto TAL CUAL lo dijo la clienta -- NUNCA calcules una fecha exacta, NUNCA conviertas una hora a formato 24h, NUNCA valides si el servicio/profesional existe de verdad: eso lo hace otro sistema después. Si no mencionó un dato, ese campo debe ser null (nunca inventar ni asumir un valor por defecto).
+
+- "detected_service_mention": el servicio que quiere (ej. "las uñas", "sombreado de cejas", "un manicure"). Ya lo hacías, sin cambios.
+- "detected_professional_mention": el nombre de la profesional, SOLO si la clienta pidió específicamente a alguien (ej. "con Mary", "que me atienda Jessica"). null si no mencionó a nadie en particular.
+- "detected_date_mention": la fecha tal cual la dijo (ej. "mañana", "el viernes", "el 15 de diciembre"). null si no mencionó ninguna fecha.
+- "detected_time_mention": la hora tal cual la dijo (ej. "a las 4", "4pm", "en la tarde"). null si no mencionó ninguna hora.
+
+Ejemplo:
+"Quiero hacerme las uñas con Mary el viernes a las 4"
+→ intent=TRIGGER_AGENDA, detected_service_mention="las uñas", detected_professional_mention="Mary", detected_date_mention="el viernes", detected_time_mention="a las 4"
+
+Ejemplo (dato parcial, el resto queda null):
+"Quiero una cita con Mary el viernes"
+→ detected_professional_mention="Mary", detected_date_mention="el viernes", detected_service_mention=null, detected_time_mention=null`;
 
 export interface DepsClasificarGemini {
   geminiClient?: GeminiGenerateContentClient;
@@ -332,7 +566,14 @@ export async function clasificarMensajeConGemini(
   const apiKey = resolveApiKey();
   if (!apiKey) {
     console.error("[amore-entrada] sin GEMINI_KEY configurada -- se responde CONSULTA con mensaje de error genérico");
-    return { intent: "CONSULTA", replyText: MENSAJE_ERROR_GEMINI, detectedServiceMention: null };
+    return {
+      intent: "CONSULTA",
+      replyText: MENSAJE_ERROR_GEMINI,
+      detectedServiceMention: null,
+      detectedProfessionalMention: null,
+      detectedDateMention: null,
+      detectedTimeMention: null,
+    };
   }
   const client = deps.geminiClient ?? createGeminiGenerateContentClient(apiKey);
 
@@ -348,15 +589,34 @@ export async function clasificarMensajeConGemini(
     });
   } catch (err) {
     console.error("[amore-entrada] error técnico llamando a Gemini -- se responde CONSULTA con mensaje de error genérico:", err instanceof Error ? err.message : "error desconocido");
-    return { intent: "CONSULTA", replyText: MENSAJE_ERROR_GEMINI, detectedServiceMention: null };
+    return {
+      intent: "CONSULTA",
+      replyText: MENSAJE_ERROR_GEMINI,
+      detectedServiceMention: null,
+      detectedProfessionalMention: null,
+      detectedDateMention: null,
+      detectedTimeMention: null,
+    };
   }
 
   const parseado = parsearSalidaGemini(resultado.text);
   if (!parseado) {
     console.error("[amore-entrada] salida de Gemini fuera del schema esperado -- se responde CONSULTA con mensaje de error genérico");
-    return { intent: "CONSULTA", replyText: MENSAJE_ERROR_GEMINI, detectedServiceMention: null };
+    return {
+      intent: "CONSULTA",
+      replyText: MENSAJE_ERROR_GEMINI,
+      detectedServiceMention: null,
+      detectedProfessionalMention: null,
+      detectedDateMention: null,
+      detectedTimeMention: null,
+    };
   }
   return parseado;
+}
+
+/** `undefined`/`null`/no-string -> null (nunca inventa un texto ni deja `undefined` pasar como si fuera un dato real). */
+function comoTextoOpcional(valor: unknown): string | null {
+  return typeof valor === "string" ? valor : null;
 }
 
 function parsearSalidaGemini(texto: string | null): ResultadoClasificacionGemini | null {
@@ -369,9 +629,16 @@ function parsearSalidaGemini(texto: string | null): ResultadoClasificacionGemini
   }
   if (typeof data !== "object" || data === null) return null;
   const obj = data as Record<string, unknown>;
-  if (obj.intent !== "CONSULTA" && obj.intent !== "TRIGGER_AGENDA") return null;
+  if (obj.intent !== "CONSULTA" && obj.intent !== "TRIGGER_AGENDA" && obj.intent !== "CANCELAR_CITA" && obj.intent !== "REPROGRAMAR_CITA") return null;
   if (typeof obj.reply_text !== "string") return null;
-  const mencion = obj.detected_service_mention;
-  if (mencion !== null && mencion !== undefined && typeof mencion !== "string") return null;
-  return { intent: obj.intent, replyText: obj.reply_text, detectedServiceMention: typeof mencion === "string" ? mencion : null };
+  const camposTexto = [obj.detected_service_mention, obj.detected_professional_mention, obj.detected_date_mention, obj.detected_time_mention];
+  if (camposTexto.some((v) => v !== null && v !== undefined && typeof v !== "string")) return null;
+  return {
+    intent: obj.intent,
+    replyText: obj.reply_text,
+    detectedServiceMention: comoTextoOpcional(obj.detected_service_mention),
+    detectedProfessionalMention: comoTextoOpcional(obj.detected_professional_mention),
+    detectedDateMention: comoTextoOpcional(obj.detected_date_mention),
+    detectedTimeMention: comoTextoOpcional(obj.detected_time_mention),
+  };
 }

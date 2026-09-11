@@ -699,6 +699,16 @@ async function atenderMensaje(
     return;
   }
 
+  // AMORE — migración de número (autorizado): este número de Meta Cloud API
+  // se está retirando, así que CUALQUIER remitente recibe únicamente el
+  // aviso de migración hacia el nuevo número real de AMORE (WhatsApp-QR) --
+  // nunca la IA, nunca Agenda V2, nunca ningún otro flujo. Se revisa ANTES
+  // de ia_pausada/ia_restringida_a a propósito: debe aplicar sin excepción a
+  // todo el que escriba, sin importar ninguna restricción vieja que haya
+  // quedado configurada. Gateado EXCLUSIVAMENTE por phone_number_id -- ningún
+  // otro tenant/número se ve afectado.
+  if (await atenderMensajeMigracionAmore(cliente, telefonoRemitente, destinoWhatsApp)) return;
+
   // Bot de encuestas: SOLO toma el turno si este contacto ya tiene una sesión
   // de encuesta activa (fue invitado explícitamente vía /dashboard/surveys).
   // Cualquier otro mensaje sigue el flujo normal del asistente de IA de abajo.
@@ -1174,7 +1184,54 @@ async function atenderMensajeCampaña(
 // ningún otro tenant, y para este tenant es dueño de TODA la conversación (no
 // deja caer nada a la IA general -- ver los dos filtros de tipo/texto
 // relajados para este número más arriba, en procesarCambio).
-const PHONE_NUMBER_ID_SOLUCIONES_FINANCIERAS = "1275440315656562";
+//
+// CORRECCIÓN (autorizada, auditoría de masivos de Charlotte) -- Charlotte
+// desconectó y volvió a conectar WhatsApp; Meta le asignó un phone_number_id
+// NUEVO (1248901801649972). dulabs_clientes_config ya se actualizó
+// correctamente en ese momento (ver lib/plantilla-conexion.ts), pero esta
+// constante estaba hardcodeada y quedó apuntando al número VIEJO
+// ("1275440315656562"), así que este bot de traspaso llevaba desactivado en
+// silencio desde la reconexión -- nunca se detectaba como error porque
+// `atenderMensajeSolucionesFinancieras` simplemente devuelve `false` y el
+// mensaje cae al flujo de IA general, sin lanzar ni loguear nada. Verificado
+// contra Meta Graph API (GET /{WABA}/phone_numbers) que 1248901801649972 es
+// el ÚNICO número activo del WABA real de Charlotte hoy.
+const PHONE_NUMBER_ID_SOLUCIONES_FINANCIERAS = "1248901801649972";
+
+// AMORE — migración de número (autorizado). Este phone_number_id de Meta
+// Cloud API corresponde al número viejo (573132612141) que AMORE está
+// retirando en favor de su nuevo número real por WhatsApp-QR (573012276334).
+const PHONE_NUMBER_ID_AMORE_MIGRACION = "305754644951780";
+
+// Texto EXACTO aprobado -- nunca reformular. Los saltos de línea dobles
+// (párrafos) son a propósito: enviarWhatsAppPartes (abajo) parte el primer
+// párrafo como mensaje 1 y une el resto como mensaje 2, tal como se pidió.
+const MENSAJE_MIGRACION_AMORE =
+  "👋 ¡Hola! Queremos contarte algo importante.\n\n" +
+  "Estamos migrando nuestro servicio a un nuevo número de WhatsApp 📲\n\n" +
+  "Para agendar tu próxima cita, por favor escríbenos directamente a nuestro nuevo número:\n\n" +
+  "👉 301 227 6334\n\n" +
+  "🔗 Haz clic aquí para abrir el chat directamente:\nhttps://wa.me/573012276334\n\n" +
+  "⭐ Guárdanos en tus contactos para que puedas recibir nuestras próximas promociones, novedades y beneficios.\n\n" +
+  "💙 ¡Te esperamos en nuestro nuevo WhatsApp!";
+
+/**
+ * AMORE — migración de número (autorizado, gate global exclusivo de este
+ * phone_number_id). Se envía UNA sola vez por contacto (esPrimerContacto,
+ * mismo mecanismo ya usado para la bienvenida de Soluciones Financieras) --
+ * si la misma persona vuelve a escribir después, no se repite el aviso.
+ * Nunca deja pasar el mensaje a ningún otro flujo (IA/Agenda V2/encuestas/
+ * campañas): siempre devuelve true para este número, incluso en los
+ * reintentos donde ya no es "primer contacto" -- el punto es que este
+ * número YA NO debe responder nada más que esto.
+ */
+async function atenderMensajeMigracionAmore(cliente: ClienteConfig, telefonoRemitente: string, destinoWhatsApp: string): Promise<boolean> {
+  if (cliente.phone_number_id !== PHONE_NUMBER_ID_AMORE_MIGRACION) return false;
+  if (await esPrimerContacto(cliente.phone_number_id, telefonoRemitente)) {
+    await enviarWhatsAppPartes(cliente, destinoWhatsApp, MENSAJE_MIGRACION_AMORE);
+  }
+  return true;
+}
 
 /** true si este es el primer mensaje que este contacto le escribe a este número (nunca antes quedó registrado en dulabs_mensajes_log). */
 async function esPrimerContacto(phoneNumberId: string, telefonoCliente: string): Promise<boolean> {

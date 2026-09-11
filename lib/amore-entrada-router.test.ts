@@ -32,13 +32,28 @@ const HAS_SUPABASE = Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SE
 
 function crearFakeEntradas() {
   const filas: EntradaAmore[] = [];
+  // Expiración de atención humana (autorizado) -- se guarda APARTE de
+  // EntradaAmore a propósito, mismo criterio que la producción real
+  // (lib/amore-entrada-sesiones.ts): una lectura aislada
+  // (obtenerAtencionHumanaDesde), nunca parte del objeto/select genérico.
+  const atencionHumanaDesdePorId = new Map<number, string | null>();
   let siguienteId = 1;
   return {
     filas,
+    atencionHumanaDesdePorId,
     buscarEntrada: async (_s: unknown, tenantId: string, telefono: string) => filas.find((f) => f.tenantId === tenantId && f.telefonoCliente === telefono) ?? null,
+    obtenerAtencionHumanaDesde: async (_s: unknown, id: number) => atencionHumanaDesdePorId.get(id) ?? null,
     crearEntrada: async (
       _s: unknown,
-      params: { tenantId: string; telefonoCliente: string; wamid: string; modo: ModoEntradaAmore; notificadoAJessica?: boolean; productoInteresNombre?: string | null },
+      params: {
+        tenantId: string;
+        telefonoCliente: string;
+        wamid: string;
+        modo: ModoEntradaAmore;
+        notificadoAJessica?: boolean;
+        productoInteresNombre?: string | null;
+        atencionHumanaDesde?: string | null;
+      },
     ) => {
       const nueva: EntradaAmore = {
         id: siguienteId++,
@@ -50,15 +65,23 @@ function crearFakeEntradas() {
         productoInteresNombre: params.productoInteresNombre ?? null,
       };
       filas.push(nueva);
+      if (params.atencionHumanaDesde !== undefined) atencionHumanaDesdePorId.set(nueva.id, params.atencionHumanaDesde);
       return nueva;
     },
     actualizarEntrada: async (
       _s: unknown,
       id: number,
-      cambios: { modo?: ModoEntradaAmore; ultimoWamidProcesado?: string; notificadoAJessica?: boolean; productoInteresNombre?: string | null },
+      cambios: {
+        modo?: ModoEntradaAmore;
+        ultimoWamidProcesado?: string;
+        notificadoAJessica?: boolean;
+        productoInteresNombre?: string | null;
+        atencionHumanaDesde?: string | null;
+      },
     ) => {
       const f = filas.find((x) => x.id === id);
       if (f) Object.assign(f, cambios);
+      if (cambios.atencionHumanaDesde !== undefined) atencionHumanaDesdePorId.set(id, cambios.atencionHumanaDesde);
     },
   };
 }
@@ -109,13 +132,39 @@ function crearFakeIniciarAgendaV2() {
   };
 }
 
-function crearFakeClasificador(resultado: ResultadoClasificacionGemini | ((mensaje: string) => ResultadoClasificacionGemini)) {
+// NUEVA FASE (autorizado, reconocimiento semántico/contextual de
+// CANCELAR_CITA/REPROGRAMAR_CITA) -- mismo criterio EXACTO que
+// crearFakeIniciarAgendaV2: un fake que SOLO registra la llamada, nunca
+// ejecuta lib/agenda-v2/router.ts de verdad (esa lógica ya tiene su propia
+// suite de tests real, ver lib/agenda-v2/router.test.ts).
+function crearFakeIniciarGestionCitasAgendaV2() {
+  const llamadas: Array<{ idTenant: string; telefono: string; wamid: string; accion: "consultar" | "cancelar" | "reprogramar" }> = [];
+  return {
+    llamadas,
+    iniciarGestionCitasAgendaV2: async (params: { supabase: SupabaseClient; idTenant: string; telefono: string; wamid: string; accion: "consultar" | "cancelar" | "reprogramar" }) => {
+      llamadas.push({ idTenant: params.idTenant, telefono: params.telefono, wamid: params.wamid, accion: params.accion });
+    },
+  };
+}
+
+// NUEVA FASE (autorizado, extracción de datos para RESERVAR_CITA) -- los
+// tests existentes de este archivo nunca ejercitan los 3 campos nuevos
+// (detectedProfessionalMention/detectedDateMention/detectedTimeMention), así
+// que el helper los completa con null por defecto -- ningún caso de prueba
+// existente necesita tocarse.
+type ResultadoClasificacionGeminiParcial = Omit<ResultadoClasificacionGemini, "detectedProfessionalMention" | "detectedDateMention" | "detectedTimeMention"> &
+  Partial<Pick<ResultadoClasificacionGemini, "detectedProfessionalMention" | "detectedDateMention" | "detectedTimeMention">>;
+
+function crearFakeClasificador(resultado: ResultadoClasificacionGeminiParcial | ((mensaje: string) => ResultadoClasificacionGeminiParcial)) {
   const llamadas: string[] = [];
+  function completar(r: ResultadoClasificacionGeminiParcial): ResultadoClasificacionGemini {
+    return { detectedProfessionalMention: null, detectedDateMention: null, detectedTimeMention: null, ...r };
+  }
   return {
     llamadas,
     clasificarConGemini: async (params: { mensaje: string }) => {
       llamadas.push(params.mensaje);
-      return typeof resultado === "function" ? resultado(params.mensaje) : resultado;
+      return completar(typeof resultado === "function" ? resultado(params.mensaje) : resultado);
     },
   };
 }
@@ -125,6 +174,7 @@ function armarDeps(overrides: Partial<AmoreEntradaDeps> = {}) {
   const envios = crearFakeEnvios();
   const candado = crearFakeCandado();
   const iniciarAgenda = crearFakeIniciarAgendaV2();
+  const iniciarGestionCitas = crearFakeIniciarGestionCitasAgendaV2();
   const nombreConocido = crearFakeNombreConocido();
   const deps: AmoreEntradaDeps = {
     adquirirCandadoChat: candado.adquirir,
@@ -135,9 +185,10 @@ function armarDeps(overrides: Partial<AmoreEntradaDeps> = {}) {
     enviarMensajeWhatsApp: envios.enviarMensajeWhatsApp,
     buscarNombreConocido: nombreConocido.buscarNombreConocido,
     iniciarAgendaV2: iniciarAgenda.iniciarAgendaV2,
+    iniciarGestionCitasAgendaV2: iniciarGestionCitas.iniciarGestionCitasAgendaV2,
     ...overrides,
   };
-  return { deps, entradas, envios, candado, iniciarAgenda, nombreConocido };
+  return { deps, entradas, envios, candado, iniciarAgenda, iniciarGestionCitas, nombreConocido };
 }
 
 function crearFakeClientesConocidos() {
@@ -198,6 +249,7 @@ function armarDepsGate(overrides: Partial<InterceptarAtencionHumanaDeps> = {}, e
     actualizarEntrada: entradas.actualizarEntrada,
     enviarMensajeWhatsApp: envios.enviarMensajeWhatsApp,
     buscarNombreConocido: nombreConocido.buscarNombreConocido,
+    obtenerAtencionHumanaDesde: entradas.obtenerAtencionHumanaDesde,
     ...overrides,
   };
   return { deps, entradas, envios, candado, nombreConocido };
@@ -523,6 +575,120 @@ describe("Test F -- corte total en modo atencion_humana: ni Gemini ni Agenda V2 
     const r = await interceptarAtencionHumanaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "quiero agendar", wamid: "w1" }, deps);
     assert.equal(r.manejado, true, "el gate se queda con el mensaje -- Agenda V2/Gemini/Flow Engine nunca deben ni siquiera evaluarlo");
     assert.equal(envios.enviados.length, 0, "ninguna respuesta automática mientras está en atención humana");
+  });
+});
+
+describe("Expiración de atención humana (autorizado) -- 24h sin intervención humana, el bot recupera el turno solo", () => {
+  it("activarAtencionHumana guarda un atencionHumanaDesde real (nunca null) al activarse", async () => {
+    const { deps, entradas } = armarDeps();
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "hola", wamid: "w1" }, deps);
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "3", wamid: "w2" }, deps);
+    assert.equal(entradas.filas[0]!.modo, "atencion_humana");
+    assert.ok(entradas.atencionHumanaDesdePorId.get(entradas.filas[0]!.id), "debe guardar el momento real de activación");
+  });
+
+  it("antes de las 24h, sigue en silencio total (comportamiento de siempre)", async () => {
+    const entradasCompartidas = crearFakeEntradas();
+    const hace23h = new Date(Date.now() - 23 * 60 * 60 * 1000).toISOString();
+    await entradasCompartidas.crearEntrada(FAKE_SUPABASE, {
+      tenantId: AMORE_TENANT_ID,
+      telefonoCliente: TELEFONO,
+      wamid: "w0",
+      modo: "atencion_humana",
+      notificadoAJessica: true,
+      atencionHumanaDesde: hace23h,
+    });
+    const { deps, envios } = armarDepsGate({}, entradasCompartidas);
+    const r = await interceptarAtencionHumanaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "Hola", wamid: "w1" }, deps);
+    assert.equal(r.manejado, true, "todavía dentro de la ventana de 24h -- sigue silenciado");
+    assert.equal(envios.enviados.length, 0);
+    assert.equal(entradasCompartidas.filas[0]!.modo, "atencion_humana", "no debe revertirse antes de tiempo");
+  });
+
+  it("pasadas las 24h sin que un humano la resuelva, el bot recupera el turno (deja pasar el mensaje y vuelve a modo 'gemini')", async () => {
+    const entradasCompartidas = crearFakeEntradas();
+    const hace25h = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
+    await entradasCompartidas.crearEntrada(FAKE_SUPABASE, {
+      tenantId: AMORE_TENANT_ID,
+      telefonoCliente: TELEFONO,
+      wamid: "w0",
+      modo: "atencion_humana",
+      notificadoAJessica: true,
+      atencionHumanaDesde: hace25h,
+    });
+    const { deps } = armarDepsGate({}, entradasCompartidas);
+    const r = await interceptarAtencionHumanaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "Hola", wamid: "w1" }, deps);
+    assert.equal(r.manejado, false, "ya expiró -- debe dejar pasar ESTE mismo mensaje al resto del puente (Agenda V2/Gemini)");
+    assert.equal(entradasCompartidas.filas[0]!.modo, "gemini", "vuelve a modo normal, ya no atencion_humana");
+    assert.equal(
+      entradasCompartidas.atencionHumanaDesdePorId.get(entradasCompartidas.filas[0]!.id),
+      null,
+      "se limpia -- una futura reactivación real vuelve a empezar su propia ventana de 24h",
+    );
+  });
+
+  it("un mensaje del cliente MIENTRAS espera nunca reinicia la ventana de 24h (atencionHumanaDesde no se toca en updates normales)", async () => {
+    const entradasCompartidas = crearFakeEntradas();
+    const hace23h = new Date(Date.now() - 23 * 60 * 60 * 1000).toISOString();
+    await entradasCompartidas.crearEntrada(FAKE_SUPABASE, {
+      tenantId: AMORE_TENANT_ID,
+      telefonoCliente: TELEFONO,
+      wamid: "w0",
+      modo: "atencion_humana",
+      notificadoAJessica: true,
+      atencionHumanaDesde: hace23h,
+    });
+    const { deps } = armarDepsGate({}, entradasCompartidas);
+    await interceptarAtencionHumanaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "¿Alguien me responde?", wamid: "w1" }, deps);
+    assert.equal(
+      entradasCompartidas.atencionHumanaDesdePorId.get(entradasCompartidas.filas[0]!.id),
+      hace23h,
+      "el timestamp de activación real nunca cambia solo porque el cliente siga escribiendo",
+    );
+  });
+
+  it("una fila legacy (activada antes de esta mejora, atencionHumanaDesde=null) recibe un punto de partida real, sin expirarla de golpe", async () => {
+    const entradasCompartidas = crearFakeEntradas();
+    await entradasCompartidas.crearEntrada(FAKE_SUPABASE, {
+      tenantId: AMORE_TENANT_ID,
+      telefonoCliente: TELEFONO,
+      wamid: "w0",
+      modo: "atencion_humana",
+      notificadoAJessica: true,
+    });
+    assert.equal(entradasCompartidas.atencionHumanaDesdePorId.get(entradasCompartidas.filas[0]!.id) ?? null, null);
+    const { deps, envios } = armarDepsGate({}, entradasCompartidas);
+    const r = await interceptarAtencionHumanaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "Hola", wamid: "w1" }, deps);
+    assert.equal(r.manejado, true, "una fila legacy nunca se expira de inmediato solo por no tener el campo -- empieza a contar desde ahora");
+    assert.equal(envios.enviados.length, 0);
+    assert.ok(
+      entradasCompartidas.atencionHumanaDesdePorId.get(entradasCompartidas.filas[0]!.id),
+      "debe quedar con un punto de partida real para poder expirar en el futuro",
+    );
+  });
+
+  it("si obtenerAtencionHumanaDesde falla (migración 20260924010000 aún no aplicada), NUNCA rompe el gate -- se comporta como fila legacy", async () => {
+    const entradasCompartidas = crearFakeEntradas();
+    await entradasCompartidas.crearEntrada(FAKE_SUPABASE, {
+      tenantId: AMORE_TENANT_ID,
+      telefonoCliente: TELEFONO,
+      wamid: "w0",
+      modo: "atencion_humana",
+      notificadoAJessica: true,
+    });
+    const { deps, envios } = armarDepsGate(
+      { obtenerAtencionHumanaDesde: async () => { throw new Error("column dulabs_amore_entrada.atencion_humana_desde does not exist"); } },
+      entradasCompartidas,
+    );
+    // La función real (lib/amore-entrada-sesiones.ts::obtenerAtencionHumanaDesde)
+    // ya atrapa este error y devuelve null -- este fake simula justamente
+    // ESO (nunca debería lanzar hacia el gate), para probar que el propio
+    // gate tampoco depende de que la función real haga ese try/catch: si
+    // por cualquier motivo SÍ llegara a lanzar, no debe tumbar el canal.
+    await assert.doesNotReject(() =>
+      interceptarAtencionHumanaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "Hola", wamid: "w1" }, deps),
+    );
+    assert.equal(envios.enviados.length, 0, "mientras tanto, sigue silenciada -- nunca responde de más solo porque la lectura falló");
   });
 });
 
@@ -1105,5 +1271,181 @@ describe("Compra de producto -- idempotencia y tenant", () => {
     assert.deepEqual(r, { manejado: false });
     assert.equal(candado.llamadas.length, 0);
     assert.equal(entradas.filas.length, 0);
+  });
+});
+
+describe("NUEVA FASE (autorizado) -- DESPEDIDA (glosario AMORE): aislado, de bajo riesgo, nunca toca Agenda V2 ni el modo de la conversación", () => {
+  it("'gracias' responde el mensaje de despedida, sin llamar a Gemini ni a Agenda V2, y se queda en modo 'gemini'", async () => {
+    const fakeClasificador = crearFakeClasificador({ intent: "CONSULTA", replyText: "no debía llamarse", detectedServiceMention: null });
+    const { deps, entradas, envios, iniciarAgenda } = armarDeps({ clasificarConGemini: fakeClasificador.clasificarConGemini });
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "hola", wamid: "w1" }, deps);
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "2", wamid: "w2" }, deps);
+    const r = await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "gracias", wamid: "w3" }, deps);
+    assert.equal(r.manejado, true);
+    assert.match(envios.enviados.at(-1)!.mensaje, /Con mucho gusto/);
+    assert.equal(fakeClasificador.llamadas.length, 0, "nunca debe llamar a Gemini para esto");
+    assert.equal(iniciarAgenda.llamadas.length, 0, "una despedida nunca inicia ni toca Agenda V2");
+    assert.equal(entradas.filas[0]!.modo, "gemini", "nunca cambia el modo de la conversación");
+  });
+
+  it("variantes reales reconocidas: 'muchas gracias', 'hasta luego', 'chao', 'eso era todo'", async () => {
+    for (const frase of ["muchas gracias", "hasta luego", "chao", "eso era todo"]) {
+      const { deps, envios } = armarDeps();
+      await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "hola", wamid: "w1" }, deps);
+      await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "2", wamid: "w2" }, deps);
+      const r = await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: frase, wamid: "w3" }, deps);
+      assert.equal(r.manejado, true, `frase: "${frase}"`);
+      assert.match(envios.enviados.at(-1)!.mensaje, /Con mucho gusto/, `frase: "${frase}"`);
+    }
+  });
+
+  it("exige coincidencia del mensaje COMPLETO -- 'gracias, ¿cuánto cuesta el manicure?' NUNCA se confunde con una despedida, sigue siendo CONSULTA", async () => {
+    const fakeClasificador = crearFakeClasificador({ intent: "CONSULTA", replyText: "El manicure cuesta $30.000.", detectedServiceMention: "manicure" });
+    const { deps, envios } = armarDeps({ clasificarConGemini: fakeClasificador.clasificarConGemini });
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "hola", wamid: "w1" }, deps);
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "2", wamid: "w2" }, deps);
+    const r = await procesarEntradaAmore(
+      { supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "gracias, ¿cuánto cuesta el manicure?", wamid: "w3" },
+      deps,
+    );
+    assert.equal(r.manejado, true);
+    assert.equal(fakeClasificador.llamadas.length, 1, "un mensaje con contenido real además de 'gracias' SÍ debe llegar a Gemini");
+    assert.equal(envios.enviados.at(-1)!.mensaje, "El manicure cuesta $30.000.");
+  });
+
+  it("mismo wamid repetido -- nunca reenvía nada", async () => {
+    const { deps, envios } = armarDeps();
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "hola", wamid: "w1" }, deps);
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "2", wamid: "w2" }, deps);
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "gracias", wamid: "w3" }, deps);
+    const total = envios.enviados.length;
+    const r = await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "gracias", wamid: "w3" }, deps);
+    assert.equal(r.manejado, true);
+    assert.equal(envios.enviados.length, total, "nunca reenvía nada por el mismo wamid");
+  });
+});
+
+describe("NUEVA FASE (autorizado) -- NO_ENTENDI_REPETIR (glosario AMORE): explica de nuevo, más sencillo, sin reiniciar el flujo", () => {
+  it("'no entendí' responde el mensaje de re-explicación, sin llamar a Gemini ni a Agenda V2, y se queda en modo 'gemini'", async () => {
+    const fakeClasificador = crearFakeClasificador({ intent: "CONSULTA", replyText: "no debía llamarse", detectedServiceMention: null });
+    const { deps, entradas, envios, iniciarAgenda } = armarDeps({ clasificarConGemini: fakeClasificador.clasificarConGemini });
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "hola", wamid: "w1" }, deps);
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "2", wamid: "w2" }, deps);
+    const r = await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "no entendí", wamid: "w3" }, deps);
+    assert.equal(r.manejado, true);
+    assert.match(envios.enviados.at(-1)!.mensaje, /Te explico de nuevo/);
+    assert.equal(fakeClasificador.llamadas.length, 0, "nunca debe llamar a Gemini para esto");
+    assert.equal(iniciarAgenda.llamadas.length, 0, "nunca inicia ni toca Agenda V2 -- 'no reiniciar el flujo'");
+    assert.equal(entradas.filas[0]!.modo, "gemini", "nunca reinicia ni cambia el modo de la conversación");
+  });
+
+  it("variantes reales reconocidas: 'no entiendo', 'como asi', 'explicame', 'que', 'como'", async () => {
+    for (const frase of ["no entiendo", "como asi", "explicame", "que", "como"]) {
+      const { deps, envios } = armarDeps();
+      await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "hola", wamid: "w1" }, deps);
+      await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "2", wamid: "w2" }, deps);
+      const r = await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: frase, wamid: "w3" }, deps);
+      assert.equal(r.manejado, true, `frase: "${frase}"`);
+      assert.match(envios.enviados.at(-1)!.mensaje, /Te explico de nuevo/, `frase: "${frase}"`);
+    }
+  });
+
+  it("exige coincidencia del mensaje COMPLETO -- '¿qué precio tiene el manicure?' NUNCA se confunde, sigue siendo CONSULTA", async () => {
+    const fakeClasificador = crearFakeClasificador({ intent: "CONSULTA", replyText: "El manicure cuesta $30.000.", detectedServiceMention: "manicure" });
+    const { deps, envios } = armarDeps({ clasificarConGemini: fakeClasificador.clasificarConGemini });
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "hola", wamid: "w1" }, deps);
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "2", wamid: "w2" }, deps);
+    const r = await procesarEntradaAmore(
+      { supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "¿qué precio tiene el manicure?", wamid: "w3" },
+      deps,
+    );
+    assert.equal(r.manejado, true);
+    assert.equal(fakeClasificador.llamadas.length, 1, "una pregunta real que solo contiene 'qué' SÍ debe llegar a Gemini");
+    assert.equal(envios.enviados.at(-1)!.mensaje, "El manicure cuesta $30.000.");
+  });
+
+  it("mismo wamid repetido -- nunca reenvía nada", async () => {
+    const { deps, envios } = armarDeps();
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "hola", wamid: "w1" }, deps);
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "2", wamid: "w2" }, deps);
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "no entendí", wamid: "w3" }, deps);
+    const total = envios.enviados.length;
+    const r = await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "no entendí", wamid: "w3" }, deps);
+    assert.equal(r.manejado, true);
+    assert.equal(envios.enviados.length, total, "nunca reenvía nada por el mismo wamid");
+  });
+});
+
+describe("NUEVA FASE (autorizado) -- CANCELAR_CITA/REPROGRAMAR_CITA detectados por Gemini (variantes ambiguas/indirectas del glosario)", () => {
+  it("Caso 2 -- 'me salió una vuelta y no voy a poder ir' (Gemini clasifica CANCELAR_CITA) -> entrega el control a iniciarGestionCitasAgendaV2 con accion='cancelar', NUNCA cancela acá, NUNCA llama a Agenda V2 de reserva", async () => {
+    const fakeClasificador = crearFakeClasificador({ intent: "CANCELAR_CITA", replyText: "no debía usarse", detectedServiceMention: null });
+    const { deps, entradas, envios, iniciarAgenda, iniciarGestionCitas } = armarDeps({ clasificarConGemini: fakeClasificador.clasificarConGemini });
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "hola", wamid: "w1" }, deps);
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "2", wamid: "w2" }, deps);
+    const r = await procesarEntradaAmore(
+      { supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "me salió una vuelta y no voy a poder ir", wamid: "w3" },
+      deps,
+    );
+    assert.equal(r.manejado, true);
+    assert.equal(iniciarGestionCitas.llamadas.length, 1);
+    assert.equal(iniciarGestionCitas.llamadas[0]!.accion, "cancelar");
+    assert.equal(iniciarGestionCitas.llamadas[0]!.telefono, TELEFONO);
+    assert.equal(iniciarAgenda.llamadas.length, 0, "NUNCA debe iniciar una reserva nueva");
+    assert.equal(entradas.filas[0]!.modo, "gemini", "nunca cambia el modo de la conversación");
+    // Ningún mensaje de transición extra -- iniciarGestionCitasAgendaV2 (fake) es quien envía la respuesta real.
+    // 2 mensajes de bienvenida ("hola") + 1 de MENSAJE_GEMINI_BIENVENIDA ("2"), ninguno adicional por la gestión de citas acá.
+    assert.equal(envios.enviados.length, 3, "sin mensaje de transición extra para CANCELAR_CITA/REPROGRAMAR_CITA");
+  });
+
+  it("Caso 5 -- 'no puedo ir mañana, ¿la pasamos para el viernes?' (Gemini clasifica REPROGRAMAR_CITA) -> accion='reprogramar'", async () => {
+    const fakeClasificador = crearFakeClasificador({ intent: "REPROGRAMAR_CITA", replyText: "no debía usarse", detectedServiceMention: null });
+    const { deps, iniciarGestionCitas } = armarDeps({ clasificarConGemini: fakeClasificador.clasificarConGemini });
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "hola", wamid: "w1" }, deps);
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "2", wamid: "w2" }, deps);
+    const r = await procesarEntradaAmore(
+      { supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "no puedo ir mañana, ¿la pasamos para el viernes?", wamid: "w3" },
+      deps,
+    );
+    assert.equal(r.manejado, true);
+    assert.equal(iniciarGestionCitas.llamadas.length, 1);
+    assert.equal(iniciarGestionCitas.llamadas[0]!.accion, "reprogramar");
+  });
+
+  it("caso ambiguo -- Gemini responde CONSULTA con una pregunta aclaratoria en vez de adivinar -- nunca toca gestión de citas ni Agenda V2", async () => {
+    const fakeClasificador = crearFakeClasificador({
+      intent: "CONSULTA",
+      replyText: "Claro 💗 ¿Quieres cancelar tu cita o prefieres cambiarla para otro día?",
+      detectedServiceMention: null,
+    });
+    const { deps, envios, iniciarGestionCitas, iniciarAgenda } = armarDeps({ clasificarConGemini: fakeClasificador.clasificarConGemini });
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "hola", wamid: "w1" }, deps);
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "2", wamid: "w2" }, deps);
+    const r = await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "no puedo ir", wamid: "w3" }, deps);
+    assert.equal(r.manejado, true);
+    assert.equal(envios.enviados.at(-1)!.mensaje, "Claro 💗 ¿Quieres cancelar tu cita o prefieres cambiarla para otro día?");
+    assert.equal(iniciarGestionCitas.llamadas.length, 0);
+    assert.equal(iniciarAgenda.llamadas.length, 0);
+  });
+
+  it("el fast-track determinista de RESERVAR_CITA sigue teniendo prioridad -- nunca llama a Gemini para frases que ya calzan ahí", async () => {
+    const fakeClasificador = crearFakeClasificador({ intent: "CANCELAR_CITA", replyText: "no debía llamarse", detectedServiceMention: null });
+    const { deps, iniciarAgenda, iniciarGestionCitas } = armarDeps({ clasificarConGemini: fakeClasificador.clasificarConGemini });
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "hola", wamid: "w1" }, deps);
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "2", wamid: "w2" }, deps);
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "quiero una cita", wamid: "w3" }, deps);
+    assert.equal(fakeClasificador.llamadas.length, 0);
+    assert.equal(iniciarAgenda.llamadas.length, 1);
+    assert.equal(iniciarGestionCitas.llamadas.length, 0);
+  });
+
+  it("mismo wamid repetido -- nunca vuelve a llamar a iniciarGestionCitasAgendaV2", async () => {
+    const fakeClasificador = crearFakeClasificador({ intent: "CANCELAR_CITA", replyText: "no debía usarse", detectedServiceMention: null });
+    const { deps, iniciarGestionCitas } = armarDeps({ clasificarConGemini: fakeClasificador.clasificarConGemini });
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "hola", wamid: "w1" }, deps);
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "2", wamid: "w2" }, deps);
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "no puedo ir, ya no quiero la cita", wamid: "w3" }, deps);
+    const r = await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "no puedo ir, ya no quiero la cita", wamid: "w3" }, deps);
+    assert.equal(r.manejado, true);
+    assert.equal(iniciarGestionCitas.llamadas.length, 1, "nunca reprocesa el mismo wamid");
   });
 });

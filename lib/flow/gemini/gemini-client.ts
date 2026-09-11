@@ -29,6 +29,10 @@ export function createGeminiGenerateContentClient(apiKey: string): GeminiGenerat
               maxOutputTokens: params.maxOutputTokens,
               responseMimeType: "application/json",
               responseSchema: params.responseSchema,
+              // Solo se agrega si se pidió explícitamente -- sin este
+              // campo, el body queda idéntico al de antes de esta opción
+              // (AMORE y GeminiExecutor no la pasan, cero cambio para ellos).
+              ...(params.thinkingLevel ? { thinkingConfig: { thinkingLevel: params.thinkingLevel } } : {}),
             },
           }),
           signal,

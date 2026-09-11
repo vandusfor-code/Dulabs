@@ -23,7 +23,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { adquirirCandadoChat, liberarCandadoChat } from "@/lib/chat-lock";
 import { enviarMensajeWhatsApp } from "@/lib/whatsapp-worker-client";
 import { AMORE_TENANT_ID } from "@/lib/nylas/nylas-grant";
-import { iniciarNuevaSesionAgendaV2 } from "@/lib/agenda-v2/router";
+import { iniciarNuevaSesionAgendaV2, iniciarGestionCitasAgendaV2, type EntidadesExtraidasReserva } from "@/lib/agenda-v2/router";
+import type { AccionGestionCitasDetectada } from "@/lib/agenda-v2/entrada";
 import { nombreConocido, recordarNombreCliente, clienteConocidoCompleto } from "@/lib/clientes-conocidos";
 import { parseDiaCumpleanos, parseMesCumpleanos, parseCumpleanosNatural } from "@/lib/cumpleanos/parse-cumpleanos-natural";
 import { obtenerHistorialRecienteChat } from "@/lib/chats/historial-reciente";
@@ -32,6 +33,7 @@ import {
   buscarEntradaAmore,
   crearEntradaAmore,
   actualizarEntradaAmore,
+  obtenerAtencionHumanaDesde,
   type EntradaAmore,
 } from "@/lib/amore-entrada-sesiones";
 import {
@@ -63,12 +65,19 @@ import {
   detectarInteresGeneralProductos,
   detectarConfirmacionPago,
   detectarTriggerAgendaDeterminista,
+  MENSAJE_DESPEDIDA,
+  MENSAJE_NO_ENTENDI_REPETIR,
+  detectarDespedida,
+  detectarNoEntendiRepetir,
   detectarSolicitudAtencionHumana,
   construirMensajeNotificacionJessica,
   clasificarMensajeConGemini,
   type IntentGemini,
 } from "@/lib/amore-entrada-gemini";
 import { listarProductosActivos } from "@/lib/amore-inventario";
+
+/** Expiración de atención humana (autorizado) -- tras esto sin que un humano marque la conversación como resuelta, el bot recupera el turno solo. Ver interceptarAtencionHumanaAmore. */
+export const VENTANA_ATENCION_HUMANA_MS = 24 * 60 * 60 * 1000;
 
 /** Mismo prefijo sintético EXACTO que ya usa lib/agenda-v2/router.ts (nunca un phone_number_id real de Meta). */
 function phoneNumberIdSintetico(tenantId: string): string {
@@ -88,7 +97,9 @@ export interface AmoreEntradaDeps {
   /** Fase 1 (atención humana, autorizado) -- nombre real ya conocido de la clienta, para la notificación a Jessica. */
   buscarNombreConocido?: typeof nombreConocido;
   /** Inyectable para tests -- default real: iniciarNuevaSesionAgendaV2 (lib/agenda-v2/router.ts), sin deps custom. */
-  iniciarAgendaV2?: (params: { supabase: SupabaseClient; idTenant: string; telefono: string; wamid: string }) => Promise<void>;
+  iniciarAgendaV2?: (params: { supabase: SupabaseClient; idTenant: string; telefono: string; wamid: string; entidades?: EntidadesExtraidasReserva }) => Promise<void>;
+  /** NUEVA FASE (autorizado, reconocimiento semántico de CANCELAR_CITA/REPROGRAMAR_CITA) -- inyectable para tests, default real: iniciarGestionCitasAgendaV2 (lib/agenda-v2/router.ts), sin deps custom. */
+  iniciarGestionCitasAgendaV2?: (params: { supabase: SupabaseClient; idTenant: string; telefono: string; wamid: string; accion: AccionGestionCitasDetectada }) => Promise<void>;
 }
 
 export type ResultadoEntradaAmore = { manejado: boolean };
@@ -114,6 +125,7 @@ export async function procesarEntradaAmore(
   const enviarMensaje = deps.enviarMensajeWhatsApp ?? enviarMensajeWhatsApp;
   const clasificar = deps.clasificarConGemini ?? clasificarMensajeConGemini;
   const iniciarAgendaV2 = deps.iniciarAgendaV2 ?? ((p) => iniciarNuevaSesionAgendaV2(p));
+  const iniciarGestionCitas = deps.iniciarGestionCitasAgendaV2 ?? ((p) => iniciarGestionCitasAgendaV2(p));
 
   const phoneNumberId = phoneNumberIdSintetico(params.idTenant);
 
@@ -208,10 +220,31 @@ export async function procesarEntradaAmore(
       return { manejado: true };
     }
 
+    // NUEVA FASE (autorizado, DESPEDIDA / NO_ENTENDI_REPETIR, glosario
+    // AMORE) -- evaluadas ANTES que el resto del fast-track determinista:
+    // mismo criterio de siempre, nunca llaman a Gemini, nunca cambian el
+    // modo de la conversación ni tocan Agenda V2 -- solo responden un texto
+    // fijo y cordial (ver lib/amore-entrada-gemini.ts).
+    if (detectarDespedida(params.texto)) {
+      await actualizarEntrada(params.supabase, fila.id, { ultimoWamidProcesado: params.wamid });
+      await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_DESPEDIDA, origen: "automatico" });
+      return { manejado: true };
+    }
+    if (detectarNoEntendiRepetir(params.texto)) {
+      await actualizarEntrada(params.supabase, fila.id, { ultimoWamidProcesado: params.wamid });
+      await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_NO_ENTENDI_REPETIR, origen: "automatico" });
+      return { manejado: true };
+    }
+
     // fila.modo === "gemini" -- FAST TRACK DETERMINISTA primero (evita
     // latencia y evita que un mensaje obvio quede atrapado en Gemini).
     let intent: IntentGemini;
     let replyText = "";
+    // NUEVA FASE (autorizado, extracción de datos para RESERVAR_CITA) --
+    // `undefined` para el camino de fast track determinista (nunca llama a
+    // Gemini, así que no hay ningún dato extraído -- iniciarNuevaSesionAgendaV2
+    // simplemente arranca desde categorías, comportamiento de siempre).
+    let entidades: EntidadesExtraidasReserva | undefined;
     if (detectarTriggerAgendaDeterminista(params.texto)) {
       intent = "TRIGGER_AGENDA";
     } else {
@@ -226,11 +259,16 @@ export async function procesarEntradaAmore(
       const resultado = await clasificar({ mensaje: params.texto, historial });
       intent = resultado.intent;
       replyText = resultado.replyText;
-      // detectedServiceMention se recibe pero deliberadamente NO se usa
-      // todavía (sección CONTEXTO DEL SERVICIO del pedido: "si integrar el
-      // servicio directamente complica la arquitectura actual, NO hacerlo
-      // todavía" -- Agenda V2 siempre arranca desde su flujo normal, nunca
-      // con una selección de servicio asumida silenciosamente).
+      // NUEVA FASE (autorizado) -- los 4 datos extraídos por Gemini (texto
+      // crudo, nunca resuelto) se entregan tal cual a iniciarNuevaSesionAgendaV2,
+      // que es quien de verdad los valida contra el catálogo/disponibilidad
+      // real antes de usarlos para algo (ver lib/agenda-v2/router.ts).
+      entidades = {
+        servicioMencion: resultado.detectedServiceMention,
+        profesionalMencion: resultado.detectedProfessionalMention,
+        fechaMencion: resultado.detectedDateMention,
+        horaMencion: resultado.detectedTimeMention,
+      };
     }
 
     if (intent === "TRIGGER_AGENDA") {
@@ -239,7 +277,27 @@ export async function procesarEntradaAmore(
       // backend entrega el control a Agenda V2 usando el mecanismo existente.
       await actualizarEntrada(params.supabase, fila.id, { ultimoWamidProcesado: params.wamid });
       await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_TRANSICION_AGENDA, origen: "automatico" });
-      await iniciarAgendaV2({ supabase: params.supabase, idTenant: params.idTenant, telefono: params.telefono, wamid: params.wamid });
+      await iniciarAgendaV2({ supabase: params.supabase, idTenant: params.idTenant, telefono: params.telefono, wamid: params.wamid, entidades });
+      return { manejado: true };
+    }
+
+    if (intent === "CANCELAR_CITA" || intent === "REPROGRAMAR_CITA") {
+      // NUEVA FASE (autorizado, reconocimiento semántico/contextual) --
+      // "reply_text" se IGNORA igual que en TRIGGER_AGENDA (Gemini solo
+      // clasificó, nunca redactó la respuesta real). El backend entrega el
+      // control a la MISMA gestión de citas de FASE 8 (buscar cita real,
+      // mostrar, pedir confirmación 1/2) -- nunca cancela/reprograma acá.
+      // Sin mensaje de transición extra: iniciarGestionCitasAgendaV2 ya envía
+      // exactamente un mensaje (la cita + la pregunta de confirmación, o "sin
+      // citas futuras"), igual que el camino determinista.
+      await actualizarEntrada(params.supabase, fila.id, { ultimoWamidProcesado: params.wamid });
+      await iniciarGestionCitas({
+        supabase: params.supabase,
+        idTenant: params.idTenant,
+        telefono: params.telefono,
+        wamid: params.wamid,
+        accion: intent === "CANCELAR_CITA" ? "cancelar" : "reprogramar",
+      });
       return { manejado: true };
     }
 
@@ -306,8 +364,18 @@ export async function activarAtencionHumana(
     });
   }
 
+  // Expiración de atención humana (autorizado) -- se guarda el momento EXACTO
+  // de esta activación (nunca el de un mensaje posterior mientras se espera,
+  // ver interceptarAtencionHumanaAmore) para poder expirarla sola a las 24h.
+  const activadaEn = new Date().toISOString();
+
   if (ctx.fila) {
-    await ctx.actualizarEntrada(params.supabase, ctx.fila.id, { modo: "atencion_humana", notificadoAJessica: true, ultimoWamidProcesado: params.wamid });
+    await ctx.actualizarEntrada(params.supabase, ctx.fila.id, {
+      modo: "atencion_humana",
+      notificadoAJessica: true,
+      ultimoWamidProcesado: params.wamid,
+      atencionHumanaDesde: activadaEn,
+    });
   } else {
     // Caso límite real (sección 1 del pedido): primer contacto CON AMORE y el
     // primerísimo mensaje ya es "quiero hablar con Jessica" -- nunca se
@@ -319,6 +387,7 @@ export async function activarAtencionHumana(
       wamid: params.wamid,
       modo: "atencion_humana",
       notificadoAJessica: true,
+      atencionHumanaDesde: activadaEn,
     });
   }
 
@@ -334,6 +403,8 @@ export interface InterceptarAtencionHumanaDeps {
   actualizarEntrada?: typeof actualizarEntradaAmore;
   enviarMensajeWhatsApp?: typeof enviarMensajeWhatsApp;
   buscarNombreConocido?: typeof nombreConocido;
+  /** Expiración de atención humana (autorizado) -- ver lib/amore-entrada-sesiones.ts::obtenerAtencionHumanaDesde. */
+  obtenerAtencionHumanaDesde?: typeof obtenerAtencionHumanaDesde;
 }
 
 /**
@@ -372,6 +443,7 @@ export async function interceptarAtencionHumanaAmore(
   const actualizarEntrada = deps.actualizarEntrada ?? actualizarEntradaAmore;
   const enviarMensaje = deps.enviarMensajeWhatsApp ?? enviarMensajeWhatsApp;
   const buscarNombreConocidoDep = deps.buscarNombreConocido ?? nombreConocido;
+  const obtenerDesde = deps.obtenerAtencionHumanaDesde ?? obtenerAtencionHumanaDesde;
 
   const phoneNumberId = phoneNumberIdSintetico(params.idTenant);
 
@@ -395,12 +467,55 @@ export async function interceptarAtencionHumanaAmore(
     }
 
     if (fila?.modo === "atencion_humana") {
-      // Corte absoluto -- ni Gemini, ni Agenda V2, ni Flow Engine. El mensaje
-      // real ya queda registrado por el worker en dulabs_chat_mensajes (Chats
-      // AMORE); acá solo se avanza ultimo_wamid_procesado para no reprocesar
-      // este mismo wamid si Baileys lo reintenta.
-      await actualizarEntrada(params.supabase, fila.id, { ultimoWamidProcesado: params.wamid });
-      return { manejado: true };
+      // Expiración de atención humana (autorizado, incidente real: una
+      // conversación de prueba quedó en silencio total desde el 2026-09-08
+      // sin ninguna forma automática de volver a responder). Tras
+      // VENTANA_ATENCION_HUMANA_MS sin que nadie la reciba manualmente, el
+      // bot recupera el turno solo -- nunca deja a un cliente real
+      // abandonado para siempre solo porque nadie marcó la conversación
+      // como resuelta. atencionHumanaDesde es el momento en que se ACTIVÓ
+      // este modo (activarAtencionHumana), nunca el de un mensaje posterior
+      // mientras se espera -- así la ventana no se reinicia solo porque el
+      // cliente siga escribiendo mientras aguarda. Lectura AISLADA y
+      // defensiva (obtenerAtencionHumanaDesde) -- si la migración
+      // 20260924010000 todavía no corrió en este entorno, esto devuelve
+      // null (tratado igual que una fila legacy, nunca rompe el gate). El
+      // try/catch de acá es una segunda capa a propósito (mismo criterio
+      // exacto que buscarEntrada arriba): nunca depende SOLO de que la
+      // función inyectada haga su propio manejo defensivo.
+      let desdeCrudo: string | null;
+      try {
+        desdeCrudo = await obtenerDesde(params.supabase, fila.id);
+      } catch (err) {
+        console.error("[amore-entrada] error leyendo atencion_humana_desde -- se trata como fila legacy", err);
+        desdeCrudo = null;
+      }
+      const desde = desdeCrudo ? new Date(desdeCrudo).getTime() : null;
+      const expirada = desde !== null && Date.now() - desde >= VENTANA_ATENCION_HUMANA_MS;
+
+      if (!expirada) {
+        // Fila legacy sin atencionHumanaDesde (activada antes de esta
+        // mejora, o migración aún pendiente) -- se le da un punto de
+        // partida real ahora mismo, en vez de dejarla sin ninguna fecha de
+        // la que calcular una expiración futura, o expirarla de golpe sin
+        // haber esperado nunca.
+        if (desde === null) {
+          await actualizarEntrada(params.supabase, fila.id, { atencionHumanaDesde: new Date().toISOString(), ultimoWamidProcesado: params.wamid });
+        } else {
+          // Corte absoluto -- ni Gemini, ni Agenda V2, ni Flow Engine. El
+          // mensaje real ya queda registrado por el worker en
+          // dulabs_chat_mensajes (Chats AMORE); acá solo se avanza
+          // ultimo_wamid_procesado para no reprocesar este mismo wamid si
+          // Baileys lo reintenta.
+          await actualizarEntrada(params.supabase, fila.id, { ultimoWamidProcesado: params.wamid });
+        }
+        return { manejado: true };
+      }
+
+      // Ventana vencida -- vuelve a modo normal y deja pasar ESTE mismo
+      // mensaje al resto del puente (Agenda V2/Gemini), en vez de exigirle
+      // al cliente un mensaje extra solo para "despertar" al bot.
+      await actualizarEntrada(params.supabase, fila.id, { modo: "gemini", atencionHumanaDesde: null });
     }
 
     if (detectarSolicitudAtencionHumana(params.texto)) {

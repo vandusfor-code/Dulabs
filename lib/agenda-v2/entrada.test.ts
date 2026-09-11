@@ -104,3 +104,67 @@ describe("CORRECCIÓN (autorizada) -- frases reales con artículo 'la cita' (bug
     assert.equal(detectarIntencionGestionCitas("ver mi cita"), "consultar");
   });
 });
+
+describe("Glosario de intenciones AMORE (autorizado) -- ampliación real de CANCELAR_CITA/REPROGRAMAR_CITA/CONSULTAR_CITA", () => {
+  it("nuevas frases inequívocas de CANCELAR_CITA", () => {
+    for (const frase of [
+      "ya no quiero la cita",
+      "ya no necesito mi cita",
+      "quiero anular mi cita",
+      "quiero eliminar la cita",
+      "quiero quitar mi cita",
+      "quiero borrar la cita",
+      "cancelame la cita",
+      "mejor cancela mi cita",
+      "como cancelo la cita",
+      "me pueden anular la cita",
+    ]) {
+      assert.equal(detectarIntencionGestionCitas(frase), "cancelar", `"${frase}" debía detectar cancelar`);
+    }
+  });
+
+  it("nuevas frases inequívocas de REPROGRAMAR_CITA", () => {
+    for (const frase of [
+      "quiero mover mi cita",
+      "quiero modificar la cita",
+      "quiero reprogramar",
+      "necesito reprogramar mi cita",
+      "esa hora no me sirve",
+      "ese horario no me sirve",
+      "prefiero otro dia",
+      "quiero otra fecha",
+      "quiero otro horario",
+      "me pueden mover la cita",
+    ]) {
+      assert.equal(detectarIntencionGestionCitas(frase), "reprogramar", `"${frase}" debía detectar reprogramar`);
+    }
+  });
+
+  it("nuevas frases inequívocas de CONSULTAR_CITA", () => {
+    for (const frase of [
+      "cuando es mi cita",
+      "a que hora tengo mi cita",
+      "que dia tengo mi cita",
+      "con quien tengo la cita",
+      "quien me atiende",
+      "que tengo agendado",
+      "quiero saber mi cita",
+      "donde tengo la cita",
+      "me confirmas la cita",
+    ]) {
+      assert.equal(detectarIntencionGestionCitas(frase), "consultar", `"${frase}" debía detectar consultar`);
+    }
+  });
+
+  // Regla crítica documentada en el glosario: "no puedo ir" es CANCELAR
+  // solo si no propone alternativa; "no puedo ir, ¿la pasamos para el
+  // viernes?" es REPROGRAMAR. Un match "contains" no puede distinguir esos
+  // dos casos con la misma frase corta, así que NINGUNA variante de "no
+  // puedo ir" se agregó a las listas -- se documenta acá para que quede
+  // claro que es un gap consciente, no un olvido.
+  it("frases ambiguas del glosario ('no puedo ir' y similares) siguen sin detector determinista a propósito", () => {
+    for (const frase of ["no puedo ir", "no puedo asistir", "se me complicó", "me salió un compromiso", "ya no puedo"]) {
+      assert.equal(detectarIntencionGestionCitas(frase), null, `"${frase}" no debía tener detector determinista todavía`);
+    }
+  });
+});

@@ -114,6 +114,17 @@ import {
 } from "@/lib/agenda-v2/gestion-citas";
 import { renderizarResumenCambio } from "@/lib/agenda-v2/confirmacion";
 import { guardarNylasEventIdDeCita, obtenerNylasEventIdDeCita, borrarNylasEventIdDeCita } from "@/lib/agenda-v2/citas-nylas";
+// NUEVA FASE (autorizado, extracción de datos para RESERVAR_CITA) -- la IA
+// (lib/amore-entrada-gemini.ts) solo extrae texto crudo de lo que dijo la
+// clienta; parseFechaColombia/parseHoraColombia (deterministas, YA
+// existentes y usados por el modo guiado de Daniela) son quienes de verdad
+// convierten ese texto a fecha/hora reales -- nunca la IA calcula una fecha
+// ni redondea una hora. resolverMencionUnica (nuevo, puro) valida
+// servicio/profesional contra el catálogo/elegibilidad reales.
+import { parseFechaColombia } from "@/lib/parse-fecha-colombia";
+import { parseHoraColombia } from "@/lib/parse-hora-colombia";
+import { resolverMencionUnica, type EntidadesExtraidasReserva } from "@/lib/agenda-v2/entidades-extraidas";
+export type { EntidadesExtraidasReserva } from "@/lib/agenda-v2/entidades-extraidas";
 
 /** Mismo prefijo sintético que ya usa lib/whatsapp-qr-bot.ts para el candado/estado de este canal -- nunca un phone_number_id real de Meta. */
 function phoneNumberIdSintetico(tenantId: string): string {
@@ -140,6 +151,8 @@ export interface AgendaV2RouterDeps {
   calcularDiasMultiServicio?: typeof calcularDiasCandidatosMultiServicio;
   calcularHorariosFechaMultiServicio?: typeof calcularHorariosParaFechaMultiServicio;
   obtenerServiciosDeCita?: typeof obtenerServiciosDeCita;
+  /** NUEVA FASE (autorizado, extracción de datos para RESERVAR_CITA) -- "hoy" real en Colombia, inyectable para tests deterministas (mismo criterio EXACTO que DepsDiasCandidatos.hoyIso, lib/agenda-v2/disponibilidad.ts). Default real: fechaColombiaDesdeIso(new Date().toISOString()). */
+  hoyIsoParaExtraccion?: () => string;
   enviarMensajeWhatsApp?: typeof enviarMensajeWhatsApp;
   buscarSesionActiva?: typeof buscarSesionActivaAgendaV2;
   crearSesion?: typeof crearSesionAgendaV2;
@@ -181,7 +194,7 @@ export type ResultadoRouterAgendaV2 =
  * evitar candados anidados/reentrantes.
  */
 export async function iniciarNuevaSesionAgendaV2(
-  params: { supabase: SupabaseClient; idTenant: string; telefono: string; wamid: string },
+  params: { supabase: SupabaseClient; idTenant: string; telefono: string; wamid: string; entidades?: EntidadesExtraidasReserva },
   deps: AgendaV2RouterDeps = {},
 ): Promise<void> {
   const cargarCatalogo = deps.cargarCatalogoReal ?? listarCatalogoServiciosReal;
@@ -213,12 +226,25 @@ export async function iniciarNuevaSesionAgendaV2(
     }
   }
 
+  const catalogo = await cargarCatalogo(params.supabase, params.idTenant);
+
+  // NUEVA FASE (autorizado, extracción de datos para RESERVAR_CITA) -- si
+  // Gemini extrajo algún dato real del mensaje ("Quiero las uñas con Mary el
+  // viernes a las 4"), se intenta saltar los pasos ya resueltos --
+  // reutilizando EXACTAMENTE los mismos validadores reales que ya usa el
+  // flujo por menús (resolverEspecialistasElegiblesParaServicio,
+  // calcularDiasCandidatosReales, calcularHorariosParaFecha). La IA solo
+  // entrega texto crudo; este bloque NUNCA confía en él sin validarlo contra
+  // datos reales -- cualquier dato ambiguo/no válido/sin cupo real detiene
+  // el salto en ese punto exacto y muestra el menú normal de esa opción
+  // (nunca fuerza una selección inválida, nunca inventa disponibilidad).
+  if (await intentarPreLlenarSesion(params, deps, catalogo)) return;
+
   // Ajuste de UX (autorizado) -- el primer paso real es SIEMPRE el menú de
   // CATEGORÍAS reales (nunca los 28 servicios de un jalón), construido a
   // partir del catálogo REAL del tenant -- las opciones mostradas se
   // guardan tal cual en la sesión para resolver la próxima respuesta
   // determinísticamente (ver lib/agenda-v2/categorias.ts).
-  const catalogo = await cargarCatalogo(params.supabase, params.idTenant);
   const opciones = construirOpcionesCategoria(catalogo);
   await crearSesion(params.supabase, {
     tenantId: params.idTenant,
@@ -227,6 +253,198 @@ export async function iniciarNuevaSesionAgendaV2(
     opcionesMostradas: opciones,
   });
   await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: renderizarMenuCategoria(opciones), origen: "automatico" });
+}
+
+/**
+ * NUEVA FASE (autorizado, extracción de datos para RESERVAR_CITA) -- intenta
+ * crear la sesión YA en el paso que corresponda según qué datos reales se
+ * pudieron validar (servicio -> profesional -> fecha -> hora), reutilizando
+ * los MISMOS validadores/formatters reales que ya usa el flujo por menús
+ * (nunca una segunda implementación de disponibilidad/elegibilidad). Nunca
+ * crea la cita -- como máximo llega a S5_CONFIRMAR (mismo resumen real que
+ * ya usa el flujo normal), donde la clienta sigue teniendo que responder "1.
+ * Confirmar" para que router.ts (más abajo en este archivo) cree la cita de
+ * verdad. Devuelve `false` (y no escribe nada) en cuanto el primer dato
+ * (servicio) no se pudo resolver de forma inequívoca -- el caller entonces
+ * sigue con el menú de categorías de siempre, comportamiento 100% idéntico
+ * al de antes de esta fase para cualquier mensaje sin datos extraídos.
+ */
+async function intentarPreLlenarSesion(
+  params: { supabase: SupabaseClient; idTenant: string; telefono: string; wamid: string; entidades?: EntidadesExtraidasReserva },
+  deps: AgendaV2RouterDeps,
+  catalogo: ServicioCatalogoReal[],
+): Promise<boolean> {
+  const entidades = params.entidades;
+  if (!entidades?.servicioMencion) return false;
+
+  const crearSesion = deps.crearSesion ?? crearSesionAgendaV2;
+  const enviarMensaje = deps.enviarMensajeWhatsApp ?? enviarMensajeWhatsApp;
+  const resolverEspecialistas = deps.resolverEspecialistas ?? resolverEspecialistasElegiblesParaServicio;
+  const resolverGrantId = deps.resolverNylasGrantIdParaTenant ?? resolverNylasGrantIdParaTenant;
+  const resolverApiKey = deps.resolveNylasApiKeyFromEnv ?? resolveNylasApiKeyFromEnv;
+  const crearNylasClient = deps.createNylasEventsClient ?? createNylasEventsClient;
+  const calcularDias = deps.calcularDiasCandidatos ?? calcularDiasCandidatosReales;
+  const calcularHoras = deps.calcularHorariosFecha ?? calcularHorariosParaFecha;
+
+  // 1) SERVICIO -- contra el catálogo real activo (mismo catálogo que ya se
+  // usaría para el menú de categorías/servicios normal).
+  const servicio = resolverMencionUnica(entidades.servicioMencion, catalogo, (s) => s.nombre);
+  if (!servicio) return false;
+
+  // 2) PROFESIONALES ELEGIBLES -- el ÚNICO resolver real de elegibilidad
+  // (lib/asignacion-categoria.ts), mismo que usa "servicio_seleccionado" en
+  // el flujo normal más abajo en este archivo.
+  const resolucion = await resolverEspecialistas(params.supabase, params.idTenant, servicio.id);
+  if (resolucion.especialistas.length === 0) return false; // mismo caso "sin profesionales elegibles" -- cae al flujo normal, nunca a un menú vacío.
+
+  async function detenerEnProfesional(mensajePrevio?: string): Promise<boolean> {
+    const opcionesProfesional = construirOpcionesProfesional(resolucion.especialistas);
+    await crearSesion(params.supabase, {
+      tenantId: params.idTenant,
+      telefonoCliente: params.telefono,
+      wamid: params.wamid,
+      step: "S2_PROFESIONAL",
+      servicioId: servicio!.id,
+      opcionesMostradas: opcionesProfesional,
+    });
+    const prefijo = mensajePrevio ? `${mensajePrevio}\n\n` : "";
+    await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: `${prefijo}${renderizarMenuProfesional(opcionesProfesional)}`, origen: "automatico" });
+    return true;
+  }
+
+  if (!entidades.profesionalMencion) return await detenerEnProfesional();
+
+  // 3) PROFESIONAL -- contra la lista de elegibles YA resuelta arriba (nunca
+  // contra todas las especialistas del tenant -- una mención que exista pero
+  // no sea elegible para ESTE servicio nunca se acepta a ciegas).
+  const profesional = resolverMencionUnica(entidades.profesionalMencion, resolucion.especialistas, (e) => e.nombre);
+  if (!profesional) return await detenerEnProfesional();
+
+  // Mismo criterio "sin conexión con el calendario" que el resto de Agenda
+  // V2 (lib/agenda-v2/disponibilidad.ts) -- sin Nylas configurado, nunca se
+  // ofrece un día/hora a ciegas.
+  const grantId = resolverGrantId(params.idTenant);
+  const apiKey = resolverApiKey();
+  const nylasDeps = grantId && apiKey ? { nylasClient: crearNylasClient(apiKey), grantId } : null;
+
+  async function detenerEnFecha(mensajePrevio?: string): Promise<boolean> {
+    const diasResultado = await calcularDias(params.supabase, { idTenant: params.idTenant, servicioId: servicio!.id, profesionalId: profesional!.especialistaId }, nylasDeps);
+    const opcionesFecha = diasResultado.ok ? diasResultado.opciones : [];
+    const numeroVerMasFechas = diasResultado.ok && diasResultado.hayMasFechas ? opcionesFecha.length + 1 : null;
+    await crearSesion(params.supabase, {
+      tenantId: params.idTenant,
+      telefonoCliente: params.telefono,
+      wamid: params.wamid,
+      step: "S3_DIA",
+      servicioId: servicio!.id,
+      profesionalId: profesional!.especialistaId,
+      opcionesMostradas: { opciones: opcionesFecha, numeroVerMasFechas },
+    });
+    const prefijo = mensajePrevio ? `${mensajePrevio}\n\n` : "";
+    await enviarMensaje({
+      tenantId: params.idTenant,
+      telefono: params.telefono,
+      mensaje:
+        opcionesFecha.length > 0
+          ? `${prefijo}${renderizarMenuFecha(opcionesFecha, numeroVerMasFechas)}`
+          : `${prefijo}No encontramos días disponibles con esa profesional en este momento 😔 Escribe *cancelar* y vuelve a intentarlo más tarde.`,
+      origen: "automatico",
+    });
+    return true;
+  }
+
+  if (!entidades.fechaMencion) return await detenerEnFecha();
+
+  // 4) FECHA -- parseFechaColombia (determinista, ya existente) convierte el
+  // texto crudo a YYYY-MM-DD; NUNCA se acepta sin además confirmar que ESE
+  // día tiene cupo real con esta profesional (calcularDiasCandidatosReales,
+  // el mismo motor con Nylas que usa el resto de Agenda V2) -- una fecha
+  // calendario válida pero sin disponibilidad real NUNCA se fuerza.
+  const hoyIso = (deps.hoyIsoParaExtraccion ?? (() => fechaColombiaDesdeIso(new Date().toISOString())))();
+  const fechaParseada = parseFechaColombia(entidades.fechaMencion, hoyIso);
+  if (!fechaParseada.ok) return await detenerEnFecha();
+
+  const diasResultado = await calcularDias(params.supabase, { idTenant: params.idTenant, servicioId: servicio.id, profesionalId: profesional.especialistaId }, nylasDeps);
+  if (!diasResultado.ok || !diasResultado.opciones.some((o) => o.fechaIso === fechaParseada.fecha)) {
+    return await detenerEnFecha("Ese día no tiene cupo disponible con esa profesional 😔");
+  }
+
+  async function detenerEnHora(mensajePrevio?: string): Promise<boolean> {
+    const horariosResultado = await calcularHoras(
+      params.supabase,
+      { idTenant: params.idTenant, servicioId: servicio!.id, profesionalId: profesional!.especialistaId, fechaIso: fechaParseada.ok ? fechaParseada.fecha : "" },
+      nylasDeps,
+    );
+    const horarios = horariosResultado.ok ? horariosResultado.horarios : [];
+    const opcionesHora = construirOpcionesHora(fechaParseada.ok ? fechaParseada.fecha : "", horarios);
+    await crearSesion(params.supabase, {
+      tenantId: params.idTenant,
+      telefonoCliente: params.telefono,
+      wamid: params.wamid,
+      step: "S4_HORA",
+      servicioId: servicio!.id,
+      profesionalId: profesional!.especialistaId,
+      fechaIso: fechaParseada.ok ? fechaParseada.fecha : null,
+      opcionesMostradas: opcionesHora,
+    });
+    const prefijo = mensajePrevio ? `${mensajePrevio}\n\n` : "";
+    await enviarMensaje({
+      tenantId: params.idTenant,
+      telefono: params.telefono,
+      mensaje:
+        opcionesHora.length > 0
+          ? `${prefijo}${renderizarMenuHora(opcionesHora)}`
+          : `${prefijo}Ese día ya no tiene horarios disponibles 😔 Escribe *cancelar* y vuelve a intentarlo más tarde.`,
+      origen: "automatico",
+    });
+    return true;
+  }
+
+  if (!entidades.horaMencion) return await detenerEnHora();
+
+  // 5) HORA -- parseHoraColombia (determinista, ya existente) convierte el
+  // texto crudo a HH:MM 24h; NUNCA se acepta sin además confirmar que ESE
+  // horario exacto está en la lista real de horarios libres de ese día
+  // (calcularHorariosParaFecha, UNA sola consulta real, mismo motor que el
+  // resto de Agenda V2) -- una hora bien formada pero ya ocupada NUNCA se
+  // fuerza como si estuviera libre.
+  const horaParseada = parseHoraColombia(entidades.horaMencion);
+  if (!horaParseada.ok) return await detenerEnHora();
+
+  const horariosResultado = await calcularHoras(params.supabase, { idTenant: params.idTenant, servicioId: servicio.id, profesionalId: profesional.especialistaId, fechaIso: fechaParseada.fecha }, nylasDeps);
+  if (!horariosResultado.ok || !horariosResultado.horarios.includes(horaParseada.hhmm)) {
+    return await detenerEnHora("Esa hora ya no está disponible ese día 😔");
+  }
+
+  // Todo (servicio + profesional + fecha + hora) quedó resuelto Y validado
+  // contra disponibilidad real -- salta directo al resumen real (S5_CONFIRMAR,
+  // MISMO renderizarResumenConfirmacion/formatearFechaLarga/formatearHoraAmPm
+  // que ya usa "hora_seleccionada" más abajo en este archivo). NUNCA crea la
+  // cita acá: la clienta sigue teniendo que responder "1. Confirmar" -- ese
+  // paso final (crearCitaConNylas) es exactamente el mismo código de siempre,
+  // sin ningún cambio, sin importar si la sesión llegó aquí por menús o por
+  // este atajo.
+  const resumen: ResumenCitaAgendaV2 = {
+    servicioNombre: servicio.nombre,
+    servicioPrecio: servicio.precio,
+    servicioDuracionMin: servicio.duracionMin,
+    profesionalNombre: profesional.nombre,
+    fechaEtiqueta: formatearFechaLarga(fechaParseada.fecha),
+    horaTexto: formatearHoraAmPm(horaParseada.hhmm),
+  };
+  await crearSesion(params.supabase, {
+    tenantId: params.idTenant,
+    telefonoCliente: params.telefono,
+    wamid: params.wamid,
+    step: "S5_CONFIRMAR",
+    servicioId: servicio.id,
+    profesionalId: profesional.especialistaId,
+    fechaIso: fechaParseada.fecha,
+    slotSeleccionado: { fechaIso: fechaParseada.fecha, hora: horaParseada.hhmm },
+    opcionesMostradas: OPCIONES_CONFIRMACION,
+  });
+  await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: renderizarResumenConfirmacion(resumen), origen: "automatico" });
+  return true;
 }
 
 /**
@@ -257,6 +475,179 @@ async function iniciarRegistroCliente(
     await crearEntrada(params.supabase, { tenantId: params.idTenant, telefonoCliente: params.telefono, wamid: params.wamid, modo: "registro_nombre" });
   }
   await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_REGISTRO_NOMBRE, origen: "automatico" });
+}
+
+/**
+ * NUEVA FASE (autorizado, reconocimiento semántico/contextual de
+ * CANCELAR_CITA/REPROGRAMAR_CITA) -- entrega el control a la MISMA gestión
+ * de citas existentes de FASE 8 (buscar cita(s) real(es) -> mostrar -> pedir
+ * confirmación -> SOLO tras confirmar, cancelar/reprogramar de verdad),
+ * cuando quien detectó la intención fue Gemini (lib/amore-entrada-gemini.ts,
+ * variantes ambiguas/indirectas del glosario) en vez del detector
+ * determinista de frases fijas (detectarIntencionGestionCitas,
+ * lib/agenda-v2/entrada.ts, que sigue evaluándose primero -- si ya detectó
+ * algo, esto nunca llega a llamarse).
+ *
+ * Reutiliza TAL CUAL las mismas funciones/tablas reales que ya usa el camino
+ * determinista de más abajo (consultarCitasActivasEspecialista,
+ * especialistaPorId, construirOpcionesCita,
+ * renderizarMenuCitas/renderizarConfirmacionCancelar/renderizarConfirmacionReprogramarInicio,
+ * crearSesionAgendaV2) -- nunca una segunda implementación de "buscar y
+ * mostrar la cita". La IA NUNCA cancela ni reprograma nada acá: esta función
+ * llega, como máximo, hasta pedir confirmación (1/2) -- exactamente lo mismo
+ * que el camino determinista. La ejecución real de la cancelación/
+ * reprogramación sigue viviendo EXCLUSIVAMENTE en
+ * manejarConfirmacion/SG_CANCELAR_CONFIRMAR/SG_REPROGRAMAR_CONFIRMAR_INICIO
+ * más abajo en este archivo, sin ningún cambio.
+ *
+ * Deliberadamente NUNCA adquiere su propio candado -- el caller
+ * (lib/amore-entrada-router.ts) ya debe tenerlo tomado, mismo criterio
+ * EXACTO que iniciarNuevaSesionAgendaV2 arriba (evita candados anidados).
+ */
+export async function iniciarGestionCitasAgendaV2(
+  params: { supabase: SupabaseClient; idTenant: string; telefono: string; wamid: string; accion: AccionGestionCitasDetectada },
+  deps: AgendaV2RouterDeps = {},
+): Promise<void> {
+  const consultarCitasActivas = deps.consultarCitasActivas ?? consultarCitasActivasEspecialista;
+  const crearSesion = deps.crearSesion ?? crearSesionAgendaV2;
+  const actualizarSesion = deps.actualizarSesion ?? actualizarSesionAgendaV2;
+  const cerrarSesion = deps.cerrarSesion ?? cerrarSesionAgendaV2;
+  const enviarMensajeDep = deps.enviarMensajeWhatsApp ?? enviarMensajeWhatsApp;
+  const cargarCatalogo = deps.cargarCatalogoReal ?? listarCatalogoServiciosReal;
+  const especialistaPorIdDep = deps.especialistaPorId ?? especialistaPorId;
+
+  const phoneNumberId = phoneNumberIdSintetico(params.idTenant);
+
+  async function datosCortosCita(
+    cita: CitaEspecialista,
+  ): Promise<{ servicioNombre: string; profesionalNombre: string; fechaEtiqueta: string; horaTexto: string } | null> {
+    const especialista = await especialistaPorIdDep(params.supabase, cita.especialista_id);
+    if (!especialista) return null;
+    const fechaIso = fechaColombiaDesdeIso(cita.inicio);
+    const hora = horaColombiaDesdeIso(cita.inicio);
+    return { servicioNombre: cita.servicio, profesionalNombre: especialista.nombre, fechaEtiqueta: formatearFechaLarga(fechaIso), horaTexto: formatearHoraAmPm(hora) };
+  }
+
+  async function construirMenuVariasCitas(citas: CitaEspecialista[]): Promise<CitaParaMenu[] | null> {
+    const items: CitaParaMenu[] = [];
+    for (const cita of citas) {
+      const datos = await datosCortosCita(cita);
+      if (!datos) return null;
+      items.push({ citaId: cita.id, ...datos });
+    }
+    return items;
+  }
+
+  async function continuarGestionCita(cita: CitaEspecialista, accion: AccionGestionCitasDetectada, sesionExistente: { id: number } | null): Promise<void> {
+    const datos = await datosCortosCita(cita);
+    if (!datos) {
+      if (sesionExistente) await cerrarSesion(params.supabase, sesionExistente.id);
+      await enviarMensajeDep({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_ERROR_TECNICO_GESTION, origen: "automatico" });
+      return;
+    }
+
+    if (accion === "consultar") {
+      if (sesionExistente) await cerrarSesion(params.supabase, sesionExistente.id);
+      const catalogo = await cargarCatalogo(params.supabase, params.idTenant);
+      const servicioCatalogo = cita.servicio_id ? catalogo.find((s) => s.id === cita.servicio_id) : undefined;
+      if (!servicioCatalogo || (cita.estado !== "pendiente" && cita.estado !== "confirmada")) {
+        await enviarMensajeDep({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_ERROR_TECNICO_GESTION, origen: "automatico" });
+        return;
+      }
+      const duracionMin = Math.round((new Date(cita.fin).getTime() - new Date(cita.inicio).getTime()) / 60_000);
+      await enviarMensajeDep({
+        tenantId: params.idTenant,
+        telefono: params.telefono,
+        mensaje: renderizarConsultaCita({ ...datos, duracionMin, precio: servicioCatalogo.precio, estado: cita.estado }),
+        origen: "automatico",
+      });
+      return;
+    }
+
+    if (accion === "cancelar") {
+      const opciones = OPCIONES_SI_NO;
+      if (sesionExistente) {
+        await actualizarSesion(params.supabase, sesionExistente.id, {
+          step: "SG_CANCELAR_CONFIRMAR",
+          citaObjetivoId: cita.id,
+          opcionesMostradas: opciones,
+          ultimoWamidProcesado: params.wamid,
+        });
+      } else {
+        await crearSesion(params.supabase, {
+          tenantId: params.idTenant,
+          telefonoCliente: params.telefono,
+          wamid: params.wamid,
+          step: "SG_CANCELAR_CONFIRMAR",
+          citaObjetivoId: cita.id,
+          opcionesMostradas: opciones,
+        });
+      }
+      await enviarMensajeDep({ tenantId: params.idTenant, telefono: params.telefono, mensaje: renderizarConfirmacionCancelar(datos), origen: "automatico" });
+      return;
+    }
+
+    // accion === "reprogramar"
+    const opcionesReprogramar = OPCIONES_SI_NO;
+    if (sesionExistente) {
+      await actualizarSesion(params.supabase, sesionExistente.id, {
+        step: "SG_REPROGRAMAR_CONFIRMAR_INICIO",
+        citaObjetivoId: cita.id,
+        opcionesMostradas: opcionesReprogramar,
+        ultimoWamidProcesado: params.wamid,
+      });
+    } else {
+      await crearSesion(params.supabase, {
+        tenantId: params.idTenant,
+        telefonoCliente: params.telefono,
+        wamid: params.wamid,
+        step: "SG_REPROGRAMAR_CONFIRMAR_INICIO",
+        citaObjetivoId: cita.id,
+        opcionesMostradas: opcionesReprogramar,
+      });
+    }
+    await enviarMensajeDep({ tenantId: params.idTenant, telefono: params.telefono, mensaje: renderizarConfirmacionReprogramarInicio(datos), origen: "automatico" });
+  }
+
+  async function iniciarGestionCitas(accion: AccionGestionCitasDetectada): Promise<void> {
+    const resultadoCitas = await consultarCitasActivas(params.supabase, { phoneNumberId, telefonoCliente: params.telefono });
+    const citas = resultadoCitas.citas;
+
+    if (citas.length === 0) {
+      await enviarMensajeDep({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_SIN_CITAS_FUTURAS, origen: "automatico" });
+      return;
+    }
+
+    if (citas.length === 1) {
+      await continuarGestionCita(citas[0]!, accion, null);
+      return;
+    }
+
+    const items = await construirMenuVariasCitas(citas);
+    if (!items) {
+      await enviarMensajeDep({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_ERROR_TECNICO_GESTION, origen: "automatico" });
+      return;
+    }
+    const opciones = construirOpcionesCita(items);
+    await crearSesion(params.supabase, {
+      tenantId: params.idTenant,
+      telefonoCliente: params.telefono,
+      wamid: params.wamid,
+      step: "SG_SELECCIONAR_CITA",
+      accionGestion: accion,
+      opcionesMostradas: opciones,
+    });
+    await enviarMensajeDep({ tenantId: params.idTenant, telefono: params.telefono, mensaje: renderizarMenuCitas(opciones), origen: "automatico" });
+  }
+
+  try {
+    await iniciarGestionCitas(params.accion);
+  } catch (err) {
+    // Defensivo, mismo criterio EXACTO que el camino determinista de más
+    // abajo -- nunca deja a la clienta sin respuesta.
+    console.error("[agenda-v2] error técnico iniciando gestión de citas (vía clasificación semántica de Gemini):", err instanceof Error ? err.message : "error desconocido");
+    await enviarMensajeDep({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_ERROR_TECNICO_GESTION, origen: "automatico" });
+  }
 }
 
 /**

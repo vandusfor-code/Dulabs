@@ -20,7 +20,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { procesarMensajeConAgendaV2, iniciarNuevaSesionAgendaV2, type AgendaV2RouterDeps } from "@/lib/agenda-v2/router";
+import { procesarMensajeConAgendaV2, iniciarNuevaSesionAgendaV2, iniciarGestionCitasAgendaV2, type AgendaV2RouterDeps } from "@/lib/agenda-v2/router";
 import { AMORE_TENANT_ID } from "@/lib/nylas/nylas-grant";
 import type { EntradaAmore, ModoEntradaAmore } from "@/lib/amore-entrada-sesiones";
 import type { SesionAgendaV2, CambiosSesionAgendaV2 } from "@/lib/agenda-v2/sesiones";
@@ -128,6 +128,12 @@ function crearFakeSesiones() {
         serviciosIds?: string[] | null;
         profesionalId?: number | null;
         fechaIso?: string | null;
+        // NUEVA FASE (autorizado, extracción de datos para RESERVAR_CITA) --
+        // una sesión puede nacer directo en S5_CONFIRMAR (ver
+        // intentarPreLlenarSesion, lib/agenda-v2/router.ts); sin este campo
+        // acá, el fixture simulaba mal la escritura real (sesiones.ts) y
+        // dejaba slotSeleccionado en null por más que el caller lo pasara.
+        slotSeleccionado?: unknown;
       },
     ) => {
       const nueva: SesionAgendaV2 = {
@@ -140,7 +146,7 @@ function crearFakeSesiones() {
         serviciosIds: params.serviciosIds ?? null,
         profesionalId: params.profesionalId ?? null,
         fechaIso: params.fechaIso ?? null,
-        slotSeleccionado: null,
+        slotSeleccionado: params.slotSeleccionado ?? null,
         opcionesMostradas: params.opcionesMostradas ?? null,
         ultimoWamidProcesado: params.wamid,
         citaObjetivoId: params.citaObjetivoId ?? null,
@@ -2765,5 +2771,291 @@ describe("FASE 3 (autorizado, multi-servicio) -- selección y disponibilidad com
     assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, { opciones: construirOpcionesFecha(["2026-09-14"]), numeroVerMasFechas: null });
     assert.equal(llamadasMulti[1]!.duracionTotalMin, 240, "la segunda consulta también usa la duración TOTAL real, nunca la de un solo servicio");
     assert.equal(llamadasMulti[1]!.continuarDesdeFechaIso, "2026-09-11");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// NUEVA FASE (autorizado, extracción de datos para RESERVAR_CITA) --
+// iniciarNuevaSesionAgendaV2 con `entidades` (texto crudo extraído por
+// Gemini, ver lib/amore-entrada-gemini.ts). NUNCA confía en el texto sin
+// validarlo contra el catálogo/elegibilidad/disponibilidad REALES (mismos
+// fixtures que el resto de este archivo) -- cualquier dato ambiguo/inválido/
+// sin cupo real detiene el salto en ese punto exacto y muestra el menú
+// normal de esa opción, nunca fuerza una selección inválida.
+// ---------------------------------------------------------------------------
+describe("NUEVA FASE (autorizado) -- iniciarNuevaSesionAgendaV2 con entidades extraídas (salta pasos ya resueltos)", () => {
+  const HOY_FIJO = "2026-09-07"; // lunes -- "manana" siempre resuelve a 2026-09-08 (martes real del fixture).
+  function armarDepsExtraccion(overrides: Partial<AgendaV2RouterDeps> = {}) {
+    return armarDeps({ hoyIsoParaExtraccion: () => HOY_FIJO, ...NYLAS_DEPS_FAKE_OVERRIDES, ...overrides });
+  }
+
+  it("sin entidades -> comportamiento 100% identico al de siempre (menu de categorias)", async () => {
+    const { deps, sesiones, envios } = armarDepsExtraccion();
+    await iniciarNuevaSesionAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", wamid: "e1" }, deps);
+    assert.equal(sesiones.filas[0]!.step, "S1_SERVICIO");
+    assert.equal(sesiones.filas[0]!.servicioId, null);
+    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, construirOpcionesCategoria(CATALOGO_FIXTURE));
+    assert.match(envios.enviados[0]!.mensaje, /Cabello/);
+  });
+
+  it("servicio valido y unico ('Dipping'), sin mas datos -> salta directo a S2_PROFESIONAL con las elegibles reales", async () => {
+    const { deps, sesiones, envios } = armarDepsExtraccion();
+    await iniciarNuevaSesionAgendaV2(
+      { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", wamid: "e2", entidades: { servicioMencion: "Dipping" } },
+      deps,
+    );
+    assert.equal(sesiones.filas[0]!.step, "S2_PROFESIONAL");
+    assert.equal(sesiones.filas[0]!.servicioId, "s-dipping-real");
+    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, construirOpcionesProfesional([MARY, CRISTAL, NATA, JESSICA]));
+    assert.match(envios.enviados[0]!.mensaje, /Con quién/);
+  });
+
+  it("mencion de servicio ambigua/que no existe -> NUNCA inventa, cae al menu de categorias normal", async () => {
+    const { deps, sesiones } = armarDepsExtraccion();
+    await iniciarNuevaSesionAgendaV2(
+      { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", wamid: "e3", entidades: { servicioMencion: "un tratamiento facial que no existe" } },
+      deps,
+    );
+    assert.equal(sesiones.filas[0]!.step, "S1_SERVICIO");
+    assert.equal(sesiones.filas[0]!.servicioId, null);
+  });
+
+  it("servicio + profesional elegible ('Dipping' + 'Mary') -> salta directo a S3_DIA con los dias reales de Mary", async () => {
+    const { deps, sesiones } = armarDepsExtraccion();
+    await iniciarNuevaSesionAgendaV2(
+      { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", wamid: "e4", entidades: { servicioMencion: "Dipping", profesionalMencion: "Mary" } },
+      deps,
+    );
+    assert.equal(sesiones.filas[0]!.step, "S3_DIA");
+    assert.equal(sesiones.filas[0]!.profesionalId, 1262);
+    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, { opciones: construirOpcionesFecha(["2026-09-08", "2026-09-09"]), numeroVerMasFechas: null });
+  });
+
+  it("profesional mencionada NO elegible para ese servicio ('Peinado' + 'Cristal') -> nunca la fuerza, cae a S2_PROFESIONAL con las elegibles reales", async () => {
+    const { deps, sesiones, envios } = armarDepsExtraccion();
+    await iniciarNuevaSesionAgendaV2(
+      { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", wamid: "e5", entidades: { servicioMencion: "Peinado", profesionalMencion: "Cristal" } },
+      deps,
+    );
+    assert.equal(sesiones.filas[0]!.step, "S2_PROFESIONAL");
+    assert.equal(sesiones.filas[0]!.profesionalId, null);
+    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, construirOpcionesProfesional([MARY, JESSICA]));
+    assert.doesNotMatch(envios.enviados[0]!.mensaje, /Cristal/);
+  });
+
+  it("servicio + profesional + fecha real disponible ('Dipping' + 'Mary' + 'manana') -> salta directo a S4_HORA con los horarios reales", async () => {
+    const { deps, sesiones } = armarDepsExtraccion();
+    await iniciarNuevaSesionAgendaV2(
+      {
+        supabase: FAKE_SUPABASE,
+        idTenant: "amore-test",
+        telefono: "573148127388",
+        wamid: "e6",
+        entidades: { servicioMencion: "Dipping", profesionalMencion: "Mary", fechaMencion: "manana" },
+      },
+      deps,
+    );
+    assert.equal(sesiones.filas[0]!.step, "S4_HORA");
+    assert.equal(sesiones.filas[0]!.fechaIso, "2026-09-08");
+    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, construirOpcionesHora("2026-09-08", ["09:00", "10:30", "14:00"]));
+  });
+
+  it("fecha mencionada SIN cupo real con esa profesional (Jessica no tiene ningun dia disponible) -> nunca la fuerza, cae a S3_DIA con aviso real", async () => {
+    const { deps, sesiones, envios } = armarDepsExtraccion();
+    await iniciarNuevaSesionAgendaV2(
+      {
+        supabase: FAKE_SUPABASE,
+        idTenant: "amore-test",
+        telefono: "573148127388",
+        wamid: "e7",
+        entidades: { servicioMencion: "Dipping", profesionalMencion: "Jessica", fechaMencion: "manana" },
+      },
+      deps,
+    );
+    assert.equal(sesiones.filas[0]!.step, "S3_DIA");
+    assert.equal(sesiones.filas[0]!.profesionalId, 1265);
+    assert.match(envios.enviados[0]!.mensaje, /No encontramos días disponibles/);
+  });
+
+  it("fecha mencionada invalida/ambigua ('cualquier dia') -> parseFechaColombia la rechaza, cae a S3_DIA con los dias reales (nunca inventa una fecha)", async () => {
+    const { deps, sesiones } = armarDepsExtraccion();
+    await iniciarNuevaSesionAgendaV2(
+      {
+        supabase: FAKE_SUPABASE,
+        idTenant: "amore-test",
+        telefono: "573148127388",
+        wamid: "e8",
+        entidades: { servicioMencion: "Dipping", profesionalMencion: "Mary", fechaMencion: "cualquier dia" },
+      },
+      deps,
+    );
+    assert.equal(sesiones.filas[0]!.step, "S3_DIA");
+    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, { opciones: construirOpcionesFecha(["2026-09-08", "2026-09-09"]), numeroVerMasFechas: null });
+  });
+
+  it("los 4 datos resueltos y validados ('Dipping' + 'Mary' + 'manana' + '9 am') -> salta directo al resumen real S5_CONFIRMAR, NUNCA crea la cita todavia", async () => {
+    const { deps, sesiones, envios } = armarDepsExtraccion();
+    await iniciarNuevaSesionAgendaV2(
+      {
+        supabase: FAKE_SUPABASE,
+        idTenant: "amore-test",
+        telefono: "573148127388",
+        wamid: "e9",
+        entidades: { servicioMencion: "Dipping", profesionalMencion: "Mary", fechaMencion: "manana", horaMencion: "9 am" },
+      },
+      deps,
+    );
+    assert.equal(sesiones.filas[0]!.step, "S5_CONFIRMAR");
+    assert.equal(sesiones.filas[0]!.servicioId, "s-dipping-real");
+    assert.equal(sesiones.filas[0]!.profesionalId, 1262);
+    assert.equal(sesiones.filas[0]!.fechaIso, "2026-09-08");
+    assert.deepEqual(sesiones.filas[0]!.slotSeleccionado, { fechaIso: "2026-09-08", hora: "09:00" }, "slotSeleccionado real -- sin esto, confirmar reiniciaria la sesion por inconsistente");
+    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, OPCIONES_CONFIRMACION);
+    assert.match(envios.enviados[0]!.mensaje, /Dipping/);
+    assert.match(envios.enviados[0]!.mensaje, /Mary/);
+  });
+
+  it("hora mencionada YA NO disponible ('Dipping' + 'Mary' + 'manana' + '11 am', que no esta en los horarios reales de Mary ese dia) -> nunca la fuerza, cae a S4_HORA con aviso real", async () => {
+    const { deps, sesiones, envios } = armarDepsExtraccion();
+    await iniciarNuevaSesionAgendaV2(
+      {
+        supabase: FAKE_SUPABASE,
+        idTenant: "amore-test",
+        telefono: "573148127388",
+        wamid: "e10",
+        entidades: { servicioMencion: "Dipping", profesionalMencion: "Mary", fechaMencion: "manana", horaMencion: "11 am" },
+      },
+      deps,
+    );
+    assert.equal(sesiones.filas[0]!.step, "S4_HORA");
+    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, construirOpcionesHora("2026-09-08", ["09:00", "10:30", "14:00"]));
+    assert.match(envios.enviados[0]!.mensaje, /Esa hora ya no está disponible/);
+  });
+
+  it("INTEGRACION -- tras saltar a S5_CONFIRMAR por entidades, responder '1' SI crea la cita real (prueba directa del fix de slotSeleccionado)", async () => {
+    const { llamadas, crearCitaConNylas } = crearFakeCrearCitaConNylas({
+      ok: true,
+      cita: {
+        id: 999,
+        especialista_id: 1262,
+        telefono_cliente: "573148127388",
+        nombre_cliente: "Ana Perez",
+        servicio: "Dipping",
+        servicio_id: "s-dipping-real",
+        inicio: "2026-09-08T09:00:00-05:00",
+        fin: "2026-09-08T11:00:00-05:00",
+        estado: "confirmada",
+        motivo_rechazo: null,
+        origen: "manual",
+      },
+      nylasEventId: "evt-fake",
+      especialista: { id: 1262, nombre: "Mary" },
+      servicio: { id: "s-dipping-real", nombre: "Dipping", duracionMin: 120 },
+    });
+    const { deps, sesiones } = armarDepsExtraccion({ crearCitaConNylas });
+    await iniciarNuevaSesionAgendaV2(
+      {
+        supabase: FAKE_SUPABASE,
+        idTenant: "amore-test",
+        telefono: "573148127388",
+        wamid: "e11",
+        entidades: { servicioMencion: "Dipping", profesionalMencion: "Mary", fechaMencion: "manana", horaMencion: "9 am" },
+      },
+      deps,
+    );
+    assert.equal(sesiones.filas[0]!.step, "S5_CONFIRMAR");
+
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "e12" }, deps);
+
+    assert.equal(llamadas.length, 1, "crearCitaConNylas SI debia llamarse -- la sesion llego completa y consistente a S5_CONFIRMAR");
+    assert.equal(llamadas[0]!.params.servicioId, "s-dipping-real");
+    assert.equal(llamadas[0]!.params.especialistaId, 1262);
+  });
+});
+
+describe("NUEVA FASE (autorizado) -- iniciarGestionCitasAgendaV2 (CANCELAR_CITA/REPROGRAMAR_CITA detectados por Gemini, variantes ambiguas del glosario)", () => {
+  it("accion='cancelar', una sola cita real -> crea SG_CANCELAR_CONFIRMAR y pide confirmación, NUNCA cancela todavía", async () => {
+    const fakeCitas = crearFakeConsultarCitasActivas({ [PN_AMORE]: [CITA_CELULAS_MADRES] });
+    const fakeCancelar = crearFakeCancelarCitaEspecialista({ ok: true, cita: CITA_CELULAS_MADRES });
+    const { deps, sesiones, envios } = armarDeps({ consultarCitasActivas: fakeCitas.consultarCitasActivas, especialistaPorId: especialistaPorIdFixture, cancelarCitaEspecialista: fakeCancelar.cancelarCitaEspecialista });
+    await iniciarGestionCitasAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", wamid: "sem1", accion: "cancelar" }, deps);
+    assert.equal(fakeCancelar.llamadas.length, 0, "NUNCA cancela antes de la confirmación");
+    assert.equal(sesiones.filas.length, 1);
+    assert.equal(sesiones.filas[0]!.step, "SG_CANCELAR_CONFIRMAR");
+    assert.equal(sesiones.filas[0]!.citaObjetivoId, 501);
+    assert.match(envios.enviados[0]!.mensaje, /Vas a cancelar esta cita/);
+    assert.match(envios.enviados[0]!.mensaje, /1\. Sí, cancelar/);
+  });
+
+  it("accion='reprogramar', una sola cita real -> crea SG_REPROGRAMAR_CONFIRMAR_INICIO y pide confirmación, NUNCA reprograma todavía", async () => {
+    const fakeCitas = crearFakeConsultarCitasActivas({ [PN_AMORE]: [CITA_CEJAS_CERA] });
+    const { deps, sesiones, envios } = armarDeps({ consultarCitasActivas: fakeCitas.consultarCitasActivas, especialistaPorId: especialistaPorIdFixture });
+    await iniciarGestionCitasAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", wamid: "sem1", accion: "reprogramar" }, deps);
+    assert.equal(sesiones.filas.length, 1);
+    assert.equal(sesiones.filas[0]!.step, "SG_REPROGRAMAR_CONFIRMAR_INICIO");
+    assert.equal(sesiones.filas[0]!.citaObjetivoId, 502);
+    assert.match(envios.enviados[0]!.mensaje, /Esta es tu cita actual/);
+  });
+
+  it("sin citas futuras -> mensaje exacto, NUNCA crea sesión (mismo mensaje que el camino determinista)", async () => {
+    const fakeCitas = crearFakeConsultarCitasActivas({});
+    const { deps, sesiones, envios } = armarDeps({ consultarCitasActivas: fakeCitas.consultarCitasActivas });
+    await iniciarGestionCitasAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", wamid: "sem1", accion: "cancelar" }, deps);
+    assert.equal(sesiones.filas.length, 0);
+    assert.equal(envios.enviados[0]!.mensaje, "No encontramos citas futuras a tu nombre. 💗");
+  });
+
+  it("varias citas reales -> crea SG_SELECCIONAR_CITA con la accion correcta y muestra el menú numerado", async () => {
+    const fakeCitas = crearFakeConsultarCitasActivas({ [PN_AMORE]: [CITA_CELULAS_MADRES, CITA_CEJAS_CERA] });
+    const { deps, sesiones, envios } = armarDeps({ consultarCitasActivas: fakeCitas.consultarCitasActivas, especialistaPorId: especialistaPorIdFixture });
+    await iniciarGestionCitasAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", wamid: "sem1", accion: "cancelar" }, deps);
+    assert.equal(sesiones.filas[0]!.step, "SG_SELECCIONAR_CITA");
+    assert.equal(sesiones.filas[0]!.accionGestion, "cancelar");
+    assert.match(envios.enviados[0]!.mensaje, /1\. Células Madres — Jessica/);
+    assert.match(envios.enviados[0]!.mensaje, /2\. Cejas con Cera — Mary/);
+  });
+
+  it("INTEGRACIÓN -- tras iniciar por Gemini (cancelar), responder '1' vía el router determinista SÍ ejecuta la cancelación real (misma sesión, mismo mecanismo)", async () => {
+    const fakeCitas = crearFakeConsultarCitasActivas({ [PN_AMORE]: [CITA_CELULAS_MADRES] });
+    const fakeCancelar = crearFakeCancelarCitaEspecialista({ ok: true, cita: { ...CITA_CELULAS_MADRES, estado: "cancelada" } });
+    const { deps, sesiones, envios } = armarDeps({ consultarCitasActivas: fakeCitas.consultarCitasActivas, especialistaPorId: especialistaPorIdFixture, cancelarCitaEspecialista: fakeCancelar.cancelarCitaEspecialista });
+    await iniciarGestionCitasAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", wamid: "sem1", accion: "cancelar" }, deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "sem2" }, deps);
+    assert.equal(fakeCancelar.llamadas.length, 1);
+    assert.equal(fakeCancelar.llamadas[0]!.citaId, 501);
+    assert.equal(sesiones.filas[0]!.activo, false);
+    assert.equal(envios.enviados.at(-1)!.mensaje, "Tu cita fue cancelada correctamente. 💗");
+  });
+
+  it("INTEGRACIÓN -- tras iniciar por Gemini (reprogramar), responder '1' vía el router determinista avanza al MISMO flujo real de fecha/hora (Fases 4/5 reutilizadas)", async () => {
+    const fakeCitas = crearFakeConsultarCitasActivas({ [PN_AMORE]: [CITA_CEJAS_CERA] });
+    const { deps, sesiones, envios } = armarDeps({ consultarCitasActivas: fakeCitas.consultarCitasActivas, especialistaPorId: especialistaPorIdFixture, ...NYLAS_DEPS_FAKE_OVERRIDES });
+    await iniciarGestionCitasAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", wamid: "sem1", accion: "reprogramar" }, deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "sem2" }, deps);
+    assert.equal(sesiones.filas[0]!.step, "S3_DIA", "misma transición real que el camino determinista (Test 13/14 de FASE 8)");
+    assert.equal(sesiones.filas[0]!.servicioId, "s-presson-real");
+    assert.equal(sesiones.filas[0]!.profesionalId, 1262);
+    assert.match(envios.enviados.at(-1)!.mensaje, /Martes 8 de septiembre|Miércoles 9 de septiembre/);
+  });
+
+  it("defensivo -- error técnico consultando citas: nunca lanza, informa un problema real (mismo mensaje que el camino determinista)", async () => {
+    const consultarCitasActivas = async () => {
+      throw new Error("falla simulada de Supabase");
+    };
+    const { deps, sesiones, envios } = armarDeps({ consultarCitasActivas });
+    await iniciarGestionCitasAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", wamid: "sem1", accion: "cancelar" }, deps);
+    assert.equal(sesiones.filas.length, 0);
+    assert.equal(envios.enviados[0]!.mensaje, "Ups 😔 Tuvimos un problema técnico procesando tu solicitud. Por favor intenta de nuevo en un momento.");
+  });
+
+  it("aislamiento por tenant/teléfono -- nunca ve citas de otro tenant ni de otra clienta", async () => {
+    const fakeCitas = crearFakeConsultarCitasActivas({
+      [PN_AMORE]: [CITA_CELULAS_MADRES],
+      [PN_OTRO_TENANT]: [{ ...CITA_CEJAS_CERA, id: 999 }],
+    });
+    const { deps, envios } = armarDeps({ consultarCitasActivas: fakeCitas.consultarCitasActivas, especialistaPorId: especialistaPorIdFixture });
+    await iniciarGestionCitasAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", wamid: "sem1", accion: "cancelar" }, deps);
+    assert.match(envios.enviados[0]!.mensaje, /Células Madres/);
+    assert.doesNotMatch(envios.enviados[0]!.mensaje, /Cejas con Cera/);
   });
 });

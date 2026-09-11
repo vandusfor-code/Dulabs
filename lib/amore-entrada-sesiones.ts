@@ -42,7 +42,23 @@ interface FilaDb {
 }
 
 const TABLA = "dulabs_amore_entrada";
+// Deliberadamente SIN atencion_humana_desde (migración 20260924010000,
+// autorizado): este SELECT lo usan los 4 gates del puente en CADA mensaje
+// (ver amore-entrada-router.ts) -- si esa columna todavía no existe en un
+// entorno donde este código ya se desplegó, este select NUNCA debe fallar
+// para los otros 3 gates (registro/compra/entrada principal) solo porque
+// atención humana quiera un campo nuevo. Ver obtenerAtencionHumanaDesde
+// más abajo -- lectura AISLADA y defensiva, solo para quien de verdad la usa.
 const COLUMNAS = "id, tenant_id, telefono_cliente, modo, ultimo_wamid_procesado, notificado_a_jessica, producto_interes_nombre";
+
+// Códigos reales confirmados contra Supabase real (autorizado, verificado
+// empíricamente): un INSERT/UPDATE con una columna que el schema cache de
+// PostgREST todavía no conoce responde "PGRST204" (Could not find the
+// column ... in the schema cache) -- NUNCA el "42703" (undefined_column) de
+// Postgres crudo, que solo aparece en un SELECT/WHERE directo sobre SQL.
+// Se comprueban ambos por robustez (distintas rutas de Supabase-js podrían
+// reportar uno u otro), nunca asumido de memoria.
+const CODIGOS_COLUMNA_INEXISTENTE = new Set(["PGRST204", "42703"]);
 
 function mapearFila(fila: FilaDb): EntradaAmore {
   return {
@@ -67,6 +83,26 @@ export async function buscarEntradaAmore(supabase: SupabaseClient, tenantId: str
   return data ? mapearFila(data as FilaDb) : null;
 }
 
+/**
+ * Expiración de atención humana (autorizado) -- lectura AISLADA y defensiva
+ * de atencion_humana_desde, separada del select genérico de arriba a
+ * propósito: si la migración 20260924010000 todavía no se aplicó en este
+ * entorno, esto devuelve null (mismo efecto que "fila legacy, nunca ha
+ * tenido este campo" -- ver interceptarAtencionHumanaAmore, que ante null
+ * simplemente le da un punto de partida nuevo, JAMÁS expira nada de golpe)
+ * en vez de romper el select principal que los otros 3 gates del puente
+ * necesitan en cada mensaje.
+ */
+export async function obtenerAtencionHumanaDesde(supabase: SupabaseClient, id: number): Promise<string | null> {
+  try {
+    const { data, error } = await supabase.from(TABLA).select("atencion_humana_desde").eq("id", id).maybeSingle();
+    if (error) throw error;
+    return (data as { atencion_humana_desde: string | null } | null)?.atencion_humana_desde ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function crearEntradaAmore(
   supabase: SupabaseClient,
   params: {
@@ -76,20 +112,28 @@ export async function crearEntradaAmore(
     modo: ModoEntradaAmore;
     notificadoAJessica?: boolean;
     productoInteresNombre?: string | null;
+    /** Expiración de atención humana (autorizado) -- ver obtenerAtencionHumanaDesde. Si la migración aún no corrió, se reintenta sin este campo (nunca rompe la creación real de la fila). */
+    atencionHumanaDesde?: string | null;
   },
 ): Promise<EntradaAmore> {
-  const { data, error } = await supabase
-    .from(TABLA)
-    .insert({
-      tenant_id: params.tenantId,
-      telefono_cliente: params.telefonoCliente,
-      modo: params.modo,
-      ultimo_wamid_procesado: params.wamid,
-      ...(params.notificadoAJessica !== undefined ? { notificado_a_jessica: params.notificadoAJessica } : {}),
-      ...(params.productoInteresNombre !== undefined ? { producto_interes_nombre: params.productoInteresNombre } : {}),
-    })
-    .select(COLUMNAS)
-    .single();
+  const base = {
+    tenant_id: params.tenantId,
+    telefono_cliente: params.telefonoCliente,
+    modo: params.modo,
+    ultimo_wamid_procesado: params.wamid,
+    ...(params.notificadoAJessica !== undefined ? { notificado_a_jessica: params.notificadoAJessica } : {}),
+    ...(params.productoInteresNombre !== undefined ? { producto_interes_nombre: params.productoInteresNombre } : {}),
+  };
+  const conAtencion = params.atencionHumanaDesde !== undefined ? { ...base, atencion_humana_desde: params.atencionHumanaDesde } : base;
+
+  let { data, error } = await supabase.from(TABLA).insert(conAtencion).select(COLUMNAS).single();
+  if (error && CODIGOS_COLUMNA_INEXISTENTE.has(error.code) && conAtencion !== base) {
+    // Migración 20260924010000 (expiración de atención humana) todavía no
+    // aplicada -- reintenta sin ese campo. activarAtencionHumana (el único
+    // llamador real) sigue funcionando exactamente igual que antes de esta
+    // mejora hasta que la migración corra.
+    ({ data, error } = await supabase.from(TABLA).insert(base).select(COLUMNAS).single());
+  }
   if (error) throw error;
   return mapearFila(data as FilaDb);
 }
@@ -97,13 +141,27 @@ export async function crearEntradaAmore(
 export async function actualizarEntradaAmore(
   supabase: SupabaseClient,
   id: number,
-  cambios: { modo?: ModoEntradaAmore; ultimoWamidProcesado?: string; notificadoAJessica?: boolean; productoInteresNombre?: string | null },
+  cambios: {
+    modo?: ModoEntradaAmore;
+    ultimoWamidProcesado?: string;
+    notificadoAJessica?: boolean;
+    productoInteresNombre?: string | null;
+    /** Expiración de atención humana (autorizado) -- ver obtenerAtencionHumanaDesde. Si la migración aún no corrió, se reintenta sin este campo (nunca rompe la actualización real de la fila). */
+    atencionHumanaDesde?: string | null;
+  },
 ): Promise<void> {
-  const payload: Record<string, unknown> = { updated_at: new Date().toISOString() };
-  if (cambios.modo !== undefined) payload.modo = cambios.modo;
-  if (cambios.ultimoWamidProcesado !== undefined) payload.ultimo_wamid_procesado = cambios.ultimoWamidProcesado;
-  if (cambios.notificadoAJessica !== undefined) payload.notificado_a_jessica = cambios.notificadoAJessica;
-  if (cambios.productoInteresNombre !== undefined) payload.producto_interes_nombre = cambios.productoInteresNombre;
-  const { error } = await supabase.from(TABLA).update(payload).eq("id", id);
+  const base: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  if (cambios.modo !== undefined) base.modo = cambios.modo;
+  if (cambios.ultimoWamidProcesado !== undefined) base.ultimo_wamid_procesado = cambios.ultimoWamidProcesado;
+  if (cambios.notificadoAJessica !== undefined) base.notificado_a_jessica = cambios.notificadoAJessica;
+  if (cambios.productoInteresNombre !== undefined) base.producto_interes_nombre = cambios.productoInteresNombre;
+  const conAtencion =
+    cambios.atencionHumanaDesde !== undefined ? { ...base, atencion_humana_desde: cambios.atencionHumanaDesde } : base;
+
+  let { error } = await supabase.from(TABLA).update(conAtencion).eq("id", id);
+  if (error && CODIGOS_COLUMNA_INEXISTENTE.has(error.code) && conAtencion !== base) {
+    // Mismo criterio que crearEntradaAmore -- reintenta sin el campo nuevo.
+    ({ error } = await supabase.from(TABLA).update(base).eq("id", id));
+  }
   if (error) throw error;
 }

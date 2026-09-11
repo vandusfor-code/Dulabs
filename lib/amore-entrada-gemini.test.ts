@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import {
   detectarTriggerAgendaDeterminista,
   detectarSolicitudAtencionHumana,
+  detectarDespedida,
+  detectarNoEntendiRepetir,
   construirMensajeNotificacionJessica,
   clasificarMensajeConGemini,
   MENSAJE_BIENVENIDA_1,
@@ -13,6 +15,8 @@ import {
   MENSAJE_ERROR_GEMINI,
   MENSAJE_ATENCION_HUMANA_CLIENTE,
   MOTIVO_ATENCION_HUMANA_DEFECTO,
+  MENSAJE_DESPEDIDA,
+  MENSAJE_NO_ENTENDI_REPETIR,
   NUMERO_JESSICA,
 } from "@/lib/amore-entrada-gemini";
 import type { GeminiGenerateContentClient } from "@/lib/flow/gemini/gemini-types";
@@ -97,6 +101,24 @@ describe("Detección determinística de atención humana -- detectarSolicitudAte
       assert.equal(detectarSolicitudAtencionHumana(frase), false, `"${frase}" NUNCA debía activar atención humana`);
     }
   });
+
+  it("Glosario de intenciones AMORE (autorizado) -- nuevas frases reales de HABLAR_CON_ASESOR", () => {
+    const frases = [
+      "quiero atención humana",
+      "necesito una asesora",
+      "puedo hablar con alguien",
+      "comuníquenme con alguien",
+      "pásame con una persona",
+      "no quiero hablar con el bot",
+      "no quiero hablar con un robot",
+      "quiero hablar con la encargada",
+      "quiero hablar con recepción",
+      "quiero servicio al cliente",
+    ];
+    for (const frase of frases) {
+      assert.equal(detectarSolicitudAtencionHumana(frase), true, `"${frase}" debía activar atención humana`);
+    }
+  });
 });
 
 describe("construirMensajeNotificacionJessica", () => {
@@ -134,6 +156,93 @@ describe("FAST TRACK DETERMINISTA -- detectarTriggerAgendaDeterminista", () => {
   it("Test 9/10/11 -- NUNCA activa por la palabra 'cita' sola -- estos siguen siendo CONSULTA", () => {
     for (const frase of ["¿Cuánto cuesta una cita?", "¿Qué horarios tienen para citas?", "¿Atienden citas los sábados?", "Hola", "¿qué servicios tienen?"]) {
       assert.equal(detectarTriggerAgendaDeterminista(frase), false, `"${frase}" NUNCA debía disparar el fast track`);
+    }
+  });
+
+  it("Glosario de intenciones AMORE (autorizado) -- nuevas frases reales de RESERVAR_CITA, incluidos errores/abreviaciones", () => {
+    const frases = [
+      "quiero sacar una cita",
+      "quiero pedir cita",
+      "necesito una cita",
+      "me gustaría tener una cita",
+      "quisiera reservar una cita",
+      "me ayudas a sacar una cita",
+      "me colaboras con una cita",
+      "me pueden agendar",
+      "qiero una cita",
+      "kiero agendar",
+      "quiero agendar una sita",
+    ];
+    for (const frase of frases) {
+      assert.equal(detectarTriggerAgendaDeterminista(frase), true, `"${frase}" debía disparar TRIGGER_AGENDA determinista`);
+    }
+  });
+});
+
+describe("NUEVA FASE (autorizado) -- detectarDespedida / detectarNoEntendiRepetir (glosario AMORE, secciones 19/20)", () => {
+  it("MENSAJE_DESPEDIDA / MENSAJE_NO_ENTENDI_REPETIR son cordiales y nunca vacíos", () => {
+    assert.match(MENSAJE_DESPEDIDA, /💗/);
+    assert.match(MENSAJE_NO_ENTENDI_REPETIR, /💗/);
+  });
+
+  it("detectarDespedida reconoce frases reales del glosario, insensible a mayúsculas/acentos/signos", () => {
+    const frases = [
+      "gracias",
+      "Gracias",
+      "GRACIAS!",
+      "muchas gracias",
+      "mil gracias",
+      "te agradezco",
+      "gracias por todo",
+      "eso era todo",
+      "listo gracias",
+      "hasta luego",
+      "hasta pronto",
+      "chao",
+      "chau",
+      "nos vemos",
+      "feliz día",
+      "bendiciones",
+      "¡Dios les bendiga!",
+    ];
+    for (const frase of frases) {
+      assert.equal(detectarDespedida(frase), true, `"${frase}" debía reconocerse como DESPEDIDA`);
+    }
+  });
+
+  it("detectarDespedida exige el mensaje COMPLETO -- nunca 'contains' -- para evitar falsos positivos con otra intención real", () => {
+    const frases = [
+      "gracias, ¿cuánto cuesta el manicure?",
+      "gracias, pero antes quiero saber los horarios",
+      "hola",
+      "quiero agendar una cita",
+      "listo, quiero una cita para mañana",
+      "",
+      "   ",
+    ];
+    for (const frase of frases) {
+      assert.equal(detectarDespedida(frase), false, `"${frase}" NUNCA debía reconocerse como DESPEDIDA`);
+    }
+  });
+
+  it("detectarNoEntendiRepetir reconoce frases reales del glosario, insensible a mayúsculas/acentos/signos", () => {
+    const frases = ["no entendí", "No Entiendo", "¿Cómo así?", "que?", "como", "explícame", "no comprendí", "no me quedó claro", "otra vez", "de nuevo", "¿repíteme?"];
+    for (const frase of frases) {
+      assert.equal(detectarNoEntendiRepetir(frase), true, `"${frase}" debía reconocerse como NO_ENTENDI_REPETIR`);
+    }
+  });
+
+  it("detectarNoEntendiRepetir exige el mensaje COMPLETO -- nunca 'contains' -- para evitar falsos positivos con otra intención real", () => {
+    const frases = [
+      "¿qué precio tiene el manicure?",
+      "¿cómo puedo pagar?",
+      "hola, ¿qué servicios tienen?",
+      "quiero agendar",
+      "",
+      "   ",
+    ];
+    for (const frase of frases) {
+      assert.equal(detectarNoEntendiRepetir(frase), false, `"${frase}" NUNCA debía reconocerse como NO_ENTENDI_REPETIR`);
     }
   });
 });
@@ -216,6 +325,45 @@ describe("clasificarMensajeConGemini -- salida estructurada, nunca crea/modifica
     );
     assert.equal(resultado.intent, "CONSULTA");
     assert.equal(resultado.replyText, MENSAJE_ERROR_GEMINI);
+  });
+
+  // NUEVA FASE (autorizado, reconocimiento semántico/contextual de
+  // CANCELAR_CITA/REPROGRAMAR_CITA) -- clasificarMensajeConGemini es un
+  // boundary puro (parsea/valida lo que Gemini responda); el razonamiento
+  // semántico real ("¿propone otra fecha o no?") lo hace el modelo, no
+  // testeable sin red real. Acá se prueba que el CONTRATO (enum, parseo,
+  // fail-safe) acepta las 2 categorías nuevas igual que ya hacía con
+  // TRIGGER_AGENDA, y que el prompt real que se envía SÍ documenta la regla
+  // de ambigüedad del pedido (ver también los tests de router/entrada-router
+  // para la integración end-to-end con fakes deterministas).
+  it("intent=CANCELAR_CITA se acepta y se devuelve tal cual (Gemini detectó una variante ambigua/indirecta)", async () => {
+    const resultado = await clasificarMensajeConGemini(
+      { mensaje: "vea que no alcanzo a llegar" },
+      { geminiClient: crearFakeGeminiClient({ intent: "CANCELAR_CITA", reply_text: "texto ignorado" }), resolveApiKey: () => "fake-key" },
+    );
+    assert.equal(resultado.intent, "CANCELAR_CITA");
+  });
+
+  it("intent=REPROGRAMAR_CITA se acepta y se devuelve tal cual (Gemini detectó que SÍ propone otra fecha/hora)", async () => {
+    const resultado = await clasificarMensajeConGemini(
+      { mensaje: "no puedo ir mañana, ¿la pasamos para el viernes?" },
+      { geminiClient: crearFakeGeminiClient({ intent: "REPROGRAMAR_CITA", reply_text: "texto ignorado" }), resolveApiKey: () => "fake-key" },
+    );
+    assert.equal(resultado.intent, "REPROGRAMAR_CITA");
+  });
+
+  it("el system prompt real enviado a Gemini documenta la regla de ambigüedad cancelar vs reprogramar", async () => {
+    let systemInstructionRecibido: string | undefined;
+    const cliente: GeminiGenerateContentClient = {
+      async generateContent(req) {
+        systemInstructionRecibido = req.systemInstruction;
+        return { text: JSON.stringify({ intent: "CONSULTA", reply_text: "ok" }) };
+      },
+    };
+    await clasificarMensajeConGemini({ mensaje: "no puedo ir" }, { geminiClient: cliente, resolveApiKey: () => "fake-key" });
+    assert.match(systemInstructionRecibido ?? "", /CANCELAR_CITA/);
+    assert.match(systemInstructionRecibido ?? "", /REPROGRAMAR_CITA/);
+    assert.match(systemInstructionRecibido ?? "", /¿Quieres cancelar tu cita o prefieres cambiarla para otro día\?/);
   });
 });
 
