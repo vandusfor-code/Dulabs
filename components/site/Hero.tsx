@@ -14,7 +14,7 @@ export function Hero() {
     { icon: Infinity, label: t("API Oficial\nde Meta", "Official Meta\nAPI") },
     { icon: ShieldCheck, label: t("Sin herramientas\nno oficiales", "No unofficial\ntools") },
     { icon: Share2, label: t("Modo\nCoexistencia", "Coexistence\nMode") },
-    { icon: BrainCircuit, label: t("Entrenado con\nClaude (Anthropic)", "Trained with\nClaude (Anthropic)") },
+    { icon: BrainCircuit, label: t("Agente propio\nentrenado con tu negocio", "Own agent\ntrained on your business") },
   ];
 
   return (

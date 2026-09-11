@@ -6,9 +6,9 @@ import { JsonLd } from "@/components/site/JsonLd";
 import { breadcrumbSchema } from "@/lib/schema";
 
 export const metadata: Metadata = {
-  title: "Precios | WhatsApp con IA — DuLabs",
+  title: "Precios | DuLabs — Automatización, IA y Software",
   description:
-    "Planes de WhatsApp con IA para empresas: Start, Growth y Scale. Nosotros configuramos tu asistente, tú solo nos cuentas cómo funciona tu negocio.",
+    "Planes de DuLabs para automatizar tu empresa con IA, WhatsApp Business Platform, CRM e integraciones: Essential, Business, Pro y Enterprise.",
   alternates: { canonical: "https://www.dulabs.co/precios" },
 };
 

@@ -1,0 +1,164 @@
+# DULABS BRAIN v1 -- 04_CASES
+# REGLA CRITICA (instruccion explicita de esta ronda de implementacion):
+# ningun caso migrado tenia autorizacion explicita confirmada por el
+# negocio para nombrarse. Por tanto TODOS quedan con
+# autorizado_para_mencionar: false. Esto es una decision deliberada, NO un
+# olvido -- ver el reporte de implementacion, seccion L (Decisiones
+# pendientes), para la lista de casos que requieren decision del negocio.
+#
+# Consecuencia esperada: mientras ningun caso tenga
+# autorizado_para_mencionar: true, el build NO incluye ningun nombre de
+# empresa en el texto final -- solo un reconocimiento generico de la
+# experiencia de People BPO (ver fallback_sin_casos_autorizados abajo).
+module: 04_CASES
+fallback_sin_casos_autorizados: >-
+  Contamos con la experiencia de People BPO, la empresa de la que hacemos
+  parte, en varios sectores -- pero no tengo casos especificos autorizados
+  para nombrar en este momento.
+entries:
+  - id: cases.wom
+    empresa: "WOM"
+    sector: "Telecomunicaciones"
+    pais: "Chile"
+    problema: null
+    solucion: null
+    resultado: null
+    tecnologias: null
+    descripcion: "Experiencia de People BPO en el sector telecomunicaciones."
+    relacion: people_bpo
+    confidencialidad: mencionar_si_preguntan
+    autorizado_para_mencionar: false
+    que_puede_decir_du: "Nada especifico -- sin autorizacion confirmada, no se nombra."
+    que_no_puede_decir_du: "El nombre de la empresa, cualquier resultado, cualquier detalle de proyecto."
+    governance:
+      source: "_conocimiento-314.txt (migracion Brain v1)"
+      status: por_confirmar
+      last_updated: "2026-09-10"
+      version: 1
+      authority: unconfirmed
+
+  - id: cases.claro
+    empresa: "Claro"
+    sector: "Telecomunicaciones"
+    pais: null
+    problema: null
+    solucion: null
+    resultado: null
+    tecnologias: null
+    descripcion: "Experiencia de People BPO en el sector telecomunicaciones."
+    relacion: people_bpo
+    confidencialidad: mencionar_si_preguntan
+    autorizado_para_mencionar: false
+    que_puede_decir_du: "Nada especifico -- sin autorizacion confirmada, no se nombra."
+    que_no_puede_decir_du: "El nombre de la empresa, cualquier resultado, cualquier detalle de proyecto."
+    governance:
+      source: "_conocimiento-314.txt (migracion Brain v1)"
+      status: por_confirmar
+      last_updated: "2026-09-10"
+      version: 1
+      authority: unconfirmed
+
+  - id: cases.icontec
+    empresa: "ICONTEC"
+    sector: "Certificacion"
+    pais: null
+    problema: null
+    solucion: null
+    resultado: null
+    tecnologias: null
+    descripcion: "Experiencia de People BPO en el sector certificacion."
+    relacion: people_bpo
+    confidencialidad: mencionar_si_preguntan
+    autorizado_para_mencionar: false
+    que_puede_decir_du: "Nada especifico -- sin autorizacion confirmada, no se nombra."
+    que_no_puede_decir_du: "El nombre de la empresa, cualquier resultado, cualquier detalle de proyecto."
+    governance:
+      source: "_conocimiento-314.txt (migracion Brain v1)"
+      status: por_confirmar
+      last_updated: "2026-09-10"
+      version: 1
+      authority: unconfirmed
+
+  - id: cases.universidad_del_rosario
+    empresa: "Universidad del Rosario"
+    sector: "Educacion"
+    pais: null
+    problema: null
+    solucion: null
+    resultado: null
+    tecnologias: null
+    descripcion: "Experiencia de People BPO en el sector educacion."
+    relacion: people_bpo
+    confidencialidad: mencionar_si_preguntan
+    autorizado_para_mencionar: false
+    que_puede_decir_du: "Nada especifico -- sin autorizacion confirmada, no se nombra."
+    que_no_puede_decir_du: "El nombre de la empresa, cualquier resultado, cualquier detalle de proyecto."
+    governance:
+      source: "_conocimiento-314.txt (migracion Brain v1)"
+      status: por_confirmar
+      last_updated: "2026-09-10"
+      version: 1
+      authority: unconfirmed
+
+  - id: cases.farmasi
+    empresa: "Farmasi"
+    sector: "Cosmetica y belleza"
+    pais: null
+    problema: null
+    solucion: null
+    resultado: null
+    tecnologias: null
+    descripcion: "Experiencia de People BPO en el sector cosmetica y belleza."
+    relacion: people_bpo
+    confidencialidad: mencionar_si_preguntan
+    autorizado_para_mencionar: false
+    que_puede_decir_du: "Nada especifico -- sin autorizacion confirmada, no se nombra."
+    que_no_puede_decir_du: "El nombre de la empresa, cualquier resultado, cualquier detalle de proyecto."
+    governance:
+      source: "_conocimiento-314.txt (migracion Brain v1)"
+      status: por_confirmar
+      last_updated: "2026-09-10"
+      version: 1
+      authority: unconfirmed
+
+  - id: cases.cofrem
+    empresa: "Cofrem"
+    sector: "Caja de compensacion"
+    pais: null
+    problema: null
+    solucion: null
+    resultado: null
+    tecnologias: null
+    descripcion: "Experiencia de People BPO en el sector cajas de compensacion."
+    relacion: people_bpo
+    confidencialidad: mencionar_si_preguntan
+    autorizado_para_mencionar: false
+    que_puede_decir_du: "Nada especifico -- sin autorizacion confirmada, no se nombra."
+    que_no_puede_decir_du: "El nombre de la empresa, cualquier resultado, cualquier detalle de proyecto."
+    governance:
+      source: "_conocimiento-314.txt (migracion Brain v1)"
+      status: por_confirmar
+      last_updated: "2026-09-10"
+      version: 1
+      authority: unconfirmed
+
+  - id: cases.entidades_salud_eps
+    empresa: "Entidades del sector salud / EPS"
+    sector: "Salud"
+    pais: null
+    problema: null
+    solucion: null
+    resultado: null
+    tecnologias: null
+    descripcion: "Experiencia de People BPO en el sector salud."
+    relacion: people_bpo
+    confidencialidad: mencionar_si_preguntan
+    autorizado_para_mencionar: false
+    que_puede_decir_du: "Nada especifico -- sin autorizacion confirmada, no se nombra."
+    que_no_puede_decir_du: "El nombre de las entidades, cualquier resultado, cualquier detalle de proyecto."
+    governance:
+      source: "_conocimiento-314.txt (migracion Brain v1)"
+      status: por_confirmar
+      last_updated: "2026-09-10"
+      version: 1
+      authority: unconfirmed

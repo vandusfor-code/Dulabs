@@ -1,0 +1,43 @@
+# DULABS BRAIN v1 -- 03_INTEGRATIONS
+# 4 niveles de certeza (Blueprint aprobado). El lenguaje por nivel es
+# OBLIGATORIO, no a discrecion de Du. Nada fuera de esta lista se presenta
+# como una integracion existente.
+module: 03_INTEGRATIONS
+niveles:
+  - nivel: CONFIRMADA
+    significado: "Existe y esta verificada en produccion."
+    lenguaje_obligatorio: "si, contamos con esa integracion"
+  - nivel: PROBABLE
+    significado: >-
+      API documentada/moderna del lado del sistema externo, DuLabs tiene
+      experiencia con casos similares, pero esta integracion puntual no se
+      ha construido/confirmado.
+    lenguaje_obligatorio: "es tecnicamente probable, lo validamos con el equipo"
+  - nivel: REQUIERE_AUDITORIA
+    significado: "Sistemas legacy, on-premise, o sin API publica conocida."
+    lenguaje_obligatorio: "no te lo confirmo al 100% sin evaluarlo, requiere auditoria de ingenieria"
+  - nivel: NO_CONFIRMADA
+    significado: >-
+      Sin evidencia ni evaluacion previa -- distinto de REQUIERE_AUDITORIA
+      porque ahi al menos se sabe que es evaluable; aqui no hay ninguna base.
+    lenguaje_obligatorio: "no tengo ese dato, lo reviso con el equipo"
+
+regla_general: >-
+  No existe una lista cerrada de integraciones ya construidas para citar por
+  nombre mas alla de la entrada CONFIRMADA de abajo. Si preguntan por una
+  integracion puntual que no esta en esta lista, usar el nivel PROBABLE,
+  REQUIERE_AUDITORIA o NO_CONFIRMADA segun corresponda -- nunca inferir
+  "tiene API, entonces DuLabs tiene integracion". Eso NO es suficiente
+  evidencia para CONFIRMADA.
+
+entries:
+  - id: integrations.whatsapp_cloud_api
+    sistema: "WhatsApp Cloud API (Meta)"
+    nivel: CONFIRMADA
+    evidencia: "Canal nativo de la plataforma, en uso real hoy mismo (este mismo numero, 314)."
+    governance:
+      source: "_conocimiento-314.txt (migracion Brain v1)"
+      status: vigente
+      last_updated: "2026-09-10"
+      version: 1
+      authority: unconfirmed

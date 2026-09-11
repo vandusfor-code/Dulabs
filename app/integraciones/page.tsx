@@ -15,7 +15,7 @@ export const metadata: Metadata = {
   alternates: { canonical: "https://www.dulabs.co/integraciones" },
 };
 
-const TECNOLOGIAS = ["WhatsApp Business Platform", "Meta Cloud API", "Supabase", "Claude (Anthropic)", "APIs REST"];
+const TECNOLOGIAS = ["WhatsApp Business Platform", "Meta Cloud API", "Supabase", "Inteligencia artificial", "APIs REST"];
 
 const CAPACIDADES = [
   "Conexión entre tu WhatsApp Business y tu CRM u otras herramientas.",

@@ -5,7 +5,7 @@ import Link from "next/link";
 import { Search } from "lucide-react";
 import { useDashboard } from "@/lib/dashboard-session";
 import { PageHeader, Pill } from "@/components/dashboard/shell/ui";
-import { PLANES, ORDEN_PLANES, resolverPlanId } from "@/lib/planes";
+import { PLANES, ORDEN_PLANES_ADMIN, resolverPlanId } from "@/lib/planes";
 import { formatearTelefono } from "@/lib/format";
 import {
   labelEstadoImplementacion,
@@ -112,7 +112,7 @@ export default function AdminClientesPage() {
           </select>
           <select className={selectClass} value={filtroPlan} onChange={(e) => setFiltroPlan(e.target.value)}>
             <option value="">Plan</option>
-            {ORDEN_PLANES.map((p) => (
+            {ORDEN_PLANES_ADMIN.map((p) => (
               <option key={p} value={p}>
                 {PLANES[p].nombre}
               </option>

@@ -88,7 +88,7 @@ export function DashboardMockup() {
               </div>
               <div className="rounded-lg border border-white/5 bg-black/30 p-2">
                 <div className="font-mono text-[7.5px] uppercase tracking-wider text-site-muted-fg">{t("Modelo IA", "AI model")}</div>
-                <div className="mt-1 truncate text-[10px] text-white">Claude (Anthropic)</div>
+                <div className="mt-1 truncate text-[10px] text-white">Agente de IA</div>
               </div>
             </div>
           </div>

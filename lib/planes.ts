@@ -1,8 +1,17 @@
-// Fuente única de verdad para los 4 planes de Du Labs (Start/Growth/Scale/
-// Enterprise): precio y límites duros. Todo el enforcement (frontend y
-// backend) y toda la copy de precios se derivan de aquí — nunca se
-// hardcodea un nombre o límite de plan en otro archivo.
-export type PlanId = "start" | "growth" | "scale" | "enterprise";
+// Fuente única de verdad para los planes de Du Labs: precio y límites duros.
+// Todo el enforcement (frontend y backend) y toda la copy de precios se
+// derivan de aquí — nunca se hardcodea un nombre o límite de plan en otro
+// archivo.
+//
+// start/growth/scale son los planes LEGACY (propuesta comercial anterior) --
+// quedan intactos, sin vender, EXCLUSIVAMENTE para no romper a los tenants
+// que ya los tienen activos (dulabs_suscripciones.plan sigue guardando ese
+// string; lib/plan-limits.ts:planDelTenant lo resuelve en vivo contra este
+// objeto en cada request, así que borrar/renombrar estas llaves rompería a
+// esos tenants de inmediato -- ver auditoría de la migración de pricing).
+// essential/business/pro son los planes NUEVOS (propuesta comercial DuLabs
+// v2) -- son los únicos que se ofrecen a clientes nuevos desde /newversion.
+export type PlanId = "start" | "growth" | "scale" | "essential" | "business" | "pro" | "enterprise";
 
 export interface PlanLimites {
   numeros: number | null; // null = ilimitado
@@ -81,6 +90,61 @@ export const PLANES: Record<PlanId, PlanDef> = {
       insightsIA: true,
     },
   },
+  // --- Planes nuevos (propuesta comercial DuLabs v2, aprobada) ---
+  essential: {
+    id: "essential",
+    nombre: "Essential",
+    precioCop: 79990,
+    implementacionCop: 149900,
+    limites: {
+      numeros: 1,
+      usuarios: 2,
+      agentesIA: 1,
+      contactosPorCampana: 500,
+      campanasSimultaneas: 1,
+      mensajesIAMes: 800,
+      campanasPorMes: 8,
+      encuestas: false,
+      insightsIA: false,
+    },
+  },
+  business: {
+    id: "business",
+    nombre: "Business",
+    precioCop: 159990,
+    implementacionCop: 299900,
+    limites: {
+      numeros: 2,
+      usuarios: 5,
+      agentesIA: 3,
+      contactosPorCampana: 5000,
+      campanasSimultaneas: 3,
+      mensajesIAMes: 2000,
+      campanasPorMes: 15,
+      encuestas: true,
+      insightsIA: false,
+    },
+  },
+  pro: {
+    id: "pro",
+    nombre: "Pro",
+    precioCop: 299990,
+    // "Desde" -- el equipo comercial puede cotizar más alto según alcance,
+    // pero el checkout siempre cobra este valor de referencia (mismo patrón
+    // que ya usan start/growth/scale, ninguno tiene lógica de "desde X").
+    implementacionCop: 499900,
+    limites: {
+      numeros: 5,
+      usuarios: 15,
+      agentesIA: 10,
+      contactosPorCampana: 50000,
+      campanasSimultaneas: 10,
+      mensajesIAMes: 4000,
+      campanasPorMes: null, // "Campañas ilimitadas": sin cupo comercial de creación mensual, ver 08_pricing/copy
+      encuestas: true,
+      insightsIA: true,
+    },
+  },
   enterprise: {
     id: "enterprise",
     nombre: "Enterprise",
@@ -100,7 +164,32 @@ export const PLANES: Record<PlanId, PlanDef> = {
   },
 };
 
+// Orden de la pagina de precios EN PRODUCCION (/precios, PricingSection) --
+// NUNCA se toca para incluir los planes nuevos: la web real sigue vendiendo
+// exactamente start/growth/scale/enterprise hasta que se autorice migrarla.
 export const ORDEN_PLANES: PlanId[] = ["start", "growth", "scale", "enterprise"];
+
+// Orden de la nueva propuesta comercial (usado SOLO por /newversion,
+// components/site-v2/PricingV2.tsx) -- los 3 planes nuevos + Enterprise,
+// nunca los legacy.
+export const ORDEN_PLANES_V2: PlanId[] = ["essential", "business", "pro", "enterprise"];
+
+// Union completa (legacy + nueva) SOLO para herramientas internas de admin:
+// a diferencia de ORDEN_PLANES (lo que /precios vende hoy) y ORDEN_PLANES_V2
+// (lo que /newversion vende), el equipo de DuLabs necesita listar/filtrar/
+// activar manualmente un tenant sin importar en qué era se suscribió -- un
+// cliente Growth de hace meses y uno Business de hoy conviven en la misma
+// pantalla de admin. NO usar esta constante para nada que decida qué le
+// ofrece la web pública a un visitante nuevo.
+export const ORDEN_PLANES_ADMIN: PlanId[] = [
+  "start",
+  "growth",
+  "scale",
+  "essential",
+  "business",
+  "pro",
+  "enterprise",
+];
 // Fallback SOLO para resolverPlanId: normaliza un nombre de plan viejo o
 // desconocido guardado en una suscripción que YA está activa (alguien que
 // sí pagó). NUNCA se usa para "sin suscripción" -- ver SIN_PLAN más abajo,

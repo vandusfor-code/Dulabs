@@ -1,0 +1,39 @@
+# DULABS BRAIN v1 -- 05_COMMERCIAL
+# SOLO hechos de apoyo para el descubrimiento/calificacion que ya decide
+# AIM-O en _prompt-314.txt. Nunca estrategia, nunca CUANDO/COMO preguntar --
+# eso vive exclusivamente en el prompt. Regla de test aplicada: si algo le
+# dice a Du COMO sentir el ritmo de la conversacion, no va aqui.
+module: 05_COMMERCIAL
+entries:
+  - id: commercial.preguntas_descubrimiento_ejemplo
+    tipo: preguntas_descubrimiento
+    texto: >-
+      Ejemplos de preguntas de descubrimiento utiles para DuLabs (material
+      de apoyo, AIM-O decide cuando usarlas, nunca una lista fija a seguir
+      en orden): cuantos mensajes reciben al mes por WhatsApp, si ya usan
+      WhatsApp Business o algun bot hoy, como manejan hoy el proceso que
+      quieren mejorar (manual, Excel, algun software), cuantas personas
+      atienden hoy ese canal.
+    governance:
+      source: "Nuevo (Brain v1) -- no existia en _conocimiento-314.txt"
+      status: vigente
+      last_updated: "2026-09-10"
+      version: 1
+      authority: unconfirmed
+
+  - id: commercial.mapeo_necesidad_producto
+    tipo: mapeo_necesidad_producto
+    texto: >-
+      Mapeo orientativo entre necesidad expresada y producto del catalogo
+      (02_CATALOG) -- nunca reemplaza el criterio de AIM-O, es solo un
+      insumo: "reservas/citas" -> catalog.agendamiento_citas; "enviar
+      promociones/avisos masivos" -> catalog.campanas_masivas; "medir
+      satisfaccion" -> catalog.encuestas_automatizadas (solo Business+ en la oferta vigente; ver 08_PRICING para clientes legacy);
+      "responder clientes automaticamente" -> catalog.atencion_whatsapp_ia;
+      "no perder prospectos" -> catalog.captacion_calificacion_leads.
+    governance:
+      source: "Nuevo (Brain v1) -- derivado de 02_CATALOG, no inventado"
+      status: vigente
+      last_updated: "2026-09-10"
+      version: 1
+      authority: unconfirmed

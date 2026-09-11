@@ -1,7 +1,7 @@
 import type { NextRequest } from "next/server";
 import crypto from "node:crypto";
 import { supabaseAdmin } from "@/lib/supabase";
-import { PLANES, ORDEN_PLANES, type PlanId } from "@/lib/planes";
+import { PLANES, ORDEN_PLANES_ADMIN, type PlanId } from "@/lib/planes";
 
 export const runtime = "nodejs";
 
@@ -45,8 +45,8 @@ export async function POST(request: NextRequest) {
   if (!tenant_email || !plan || precio_cop === undefined) {
     return Response.json({ error: "Faltan 'tenant_email', 'plan' o 'precio_cop'" }, { status: 400 });
   }
-  if (!ORDEN_PLANES.includes(plan as PlanId)) {
-    return Response.json({ error: `Plan inválido. Debe ser uno de: ${ORDEN_PLANES.join(", ")}` }, { status: 400 });
+  if (!ORDEN_PLANES_ADMIN.includes(plan as PlanId)) {
+    return Response.json({ error: `Plan inválido. Debe ser uno de: ${ORDEN_PLANES_ADMIN.join(", ")}` }, { status: 400 });
   }
   if (!Number.isInteger(precio_cop) || precio_cop < 0) {
     return Response.json({ error: "precio_cop debe ser un entero >= 0" }, { status: 400 });

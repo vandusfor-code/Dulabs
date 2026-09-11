@@ -323,9 +323,12 @@ export function MetricsSection() {
 ========================================================= */
 
 // Enterprise NO es un plan más de esta grilla -- es un proyecto a medida,
-// con su propia sección (ver EnterpriseSections.tsx) y sin precio fijo. Esta
-// grilla es exclusivamente "WhatsApp + IA" (Start/Growth/Scale).
-const PLANES_WHATSAPP: PlanId[] = ["start", "growth", "scale", "enterprise"];
+// con su propia sección (ver EnterpriseSections.tsx) y sin precio fijo.
+// Migración Fase 6: la oferta comercial vigente pasa de Start/Growth/Scale a
+// Essential/Business/Pro -- esos 3 siguen existiendo en PLANES (lib/planes.ts)
+// exactamente igual para los tenants que ya los tienen, pero esta grilla
+// pública deja de ofrecerlos a partir de ahora.
+const PLANES_WHATSAPP: PlanId[] = ["essential", "business", "pro", "enterprise"];
 
 type TierData = {
   id: PlanId;
@@ -475,7 +478,10 @@ export function PricingSection({ showComparisonLink = false }: { showComparisonL
         destinatarios: lang === "en" ? copy.campanas.destinatarios.en : copy.campanas.destinatarios.es,
       },
       boton: lang === "en" ? copy.boton.en : copy.boton.es,
-      featured: id === "growth",
+      // Migración Fase 6: el plan destacado pasa de "growth" (legacy) a
+      // "business" (oferta vigente) -- sin este cambio ningún plan quedaría
+      // marcado como destacado, porque "growth" ya no está en PLANES_WHATSAPP.
+      featured: id === "business",
     };
   });
   return (
@@ -508,7 +514,7 @@ export function PricingSection({ showComparisonLink = false }: { showComparisonL
         <div className="mt-6 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-[12px] text-site-muted-fg">
           <span className="inline-flex items-center gap-1.5"><ShieldCheck className="h-3.5 w-3.5 text-site-primary" /> {t("API Oficial de Meta", "Official Meta API")}</span>
           <span className="inline-flex items-center gap-1.5"><Globe className="h-3.5 w-3.5 text-site-primary" /> {t("Datos alojados de forma segura", "Data hosted securely")}</span>
-          <span className="inline-flex items-center gap-1.5"><Sparkles className="h-3.5 w-3.5 text-site-primary" /> {t("IA con Claude (Anthropic)", "AI powered by Claude (Anthropic)")}</span>
+          <span className="inline-flex items-center gap-1.5"><Sparkles className="h-3.5 w-3.5 text-site-primary" /> {t("Agente de IA propio", "Own AI agent")}</span>
         </div>
 
         {showComparisonLink && (
@@ -695,8 +701,8 @@ export function FaqSection({ ids, showMoreLink = false }: { ids?: string[]; show
       id: "modelo-ia",
       q: t("¿Qué modelo de IA usan?", "Which AI model do you use?"),
       a: t(
-        "Usamos Claude, de Anthropic, entrenado con el prompt específico de tu negocio: precios, horarios y tono de atención.",
-        "We use Claude, by Anthropic, trained with your business-specific prompt: prices, hours and tone of service."
+        "Usamos un modelo de inteligencia artificial configurado específicamente para tu negocio: precios, horarios y tono de atención.",
+        "We use an AI model configured specifically for your business: prices, hours and tone of service."
       ),
     },
     {

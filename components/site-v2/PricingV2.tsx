@@ -1,17 +1,32 @@
 "use client";
 
-import { Check } from "lucide-react";
+import { Check, ShieldCheck, Zap, Clock } from "lucide-react";
 import PlanButton from "@/components/PlanButton";
-import { PLANES, ORDEN_PLANES, type PlanId } from "@/lib/planes";
+import { PLANES, ORDEN_PLANES_V2, type PlanId } from "@/lib/planes";
 import { PRICING_COPY } from "@/components/site/pricing-copy";
 
-// Formato COP real: 39900 -> "$39.900". Precios reales desde lib/planes.ts
-// (fuente única de verdad) — nunca inventados.
+// Formato COP real: 79990 -> "$79.990". Precios reales desde lib/planes.ts
+// (fuente única de verdad) — nunca inventados. Usa ORDEN_PLANES_V2 (planes
+// nuevos: essential/business/pro/enterprise) -- nunca ORDEN_PLANES, que es
+// el de la web en producción (start/growth/scale/enterprise) y no debe
+// tocarse desde /newversion.
 function cop(n: number) {
   return "$" + n.toLocaleString("es-CO");
 }
 
-const POPULAR: PlanId = "growth";
+const POPULAR: PlanId = "business";
+
+// PRICING_COPY.enterprise es compartido con /precios (producción) y ahí
+// dice "Todo lo de Scale" -- correcto en ese contexto (Scale es el plan justo
+// debajo). En /newversion Scale no existe (el plan justo debajo es Pro), así
+// que se sobreescribe SOLO esta lista localmente, sin tocar el archivo
+// compartido ni afectar la página real.
+const ENTERPRISE_FEATURES_V2 = [
+  { es: "Todo lo de Pro", en: "Everything in Pro" },
+  { es: "Números, usuarios y agentes ilimitados", en: "Unlimited numbers, users and agents" },
+  { es: "Respuestas de IA y campañas a medida", en: "Custom AI replies and campaigns" },
+  { es: "Soporte dedicado", en: "Dedicated support" },
+];
 
 export function PricingV2() {
   return (
@@ -30,9 +45,10 @@ export function PricingV2() {
         </div>
 
         <div className="mt-14 grid gap-5 lg:grid-cols-4">
-          {ORDEN_PLANES.map((id) => {
+          {ORDEN_PLANES_V2.map((id) => {
             const plan = PLANES[id];
             const copy = PRICING_COPY[id];
+            const features = id === "enterprise" ? ENTERPRISE_FEATURES_V2 : copy.features;
             const popular = id === POPULAR;
             return (
               <div
@@ -44,7 +60,13 @@ export function PricingV2() {
                 }`}
               >
                 {popular && (
-                  <span className="absolute -top-3 left-6 rounded-full bg-sitev2-primary px-2.5 py-1 text-[10.5px] font-semibold uppercase tracking-wider text-white">
+                  /* Fondo bg-[#d23c00] en vez de bg-sitev2-primary SOLO en este
+                     badge: texto blanco sobre el naranja de marca (#ff5c1a) da
+                     3.09:1, no alcanza AA (4.5:1) para texto pequeño. Este tono
+                     es el mismo naranja, ~14% más oscuro en luminosidad (misma
+                     tonalidad H=17.3°), y sube el contraste a 4.79:1. No es un
+                     color nuevo del sistema -- exclusivo de este badge. */
+                  <span className="absolute -top-3 left-6 rounded-full bg-[#d23c00] px-2.5 py-1 text-[10.5px] font-semibold uppercase tracking-wider text-white">
                     Más elegido
                   </span>
                 )}
@@ -67,7 +89,7 @@ export function PricingV2() {
                       <span className="text-[13px] text-sitev2-muted-fg">/mes</span>
                     </div>
                   )}
-                  <p className="mt-1 text-[11.5px] text-sitev2-subtle-fg">
+                  <p className="mt-1 text-[11.5px] text-sitev2-muted-fg">
                     {plan.implementacionCop === null
                       ? "Configuración a medida"
                       : `+ ${cop(plan.implementacionCop)} configuración inicial`}
@@ -85,7 +107,7 @@ export function PricingV2() {
                 />
 
                 <ul className="mt-6 flex flex-col gap-2.5 border-t border-sitev2-border pt-6">
-                  {copy.features.map((f) => (
+                  {features.map((f) => (
                     <li key={f.es} className="flex items-start gap-2 text-[12.5px] text-sitev2-fg">
                       <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-sitev2-primary" strokeWidth={2.5} />
                       <span>{f.es}</span>
@@ -103,9 +125,27 @@ export function PricingV2() {
           })}
         </div>
 
-        <p className="mt-8 text-center text-[12px] text-sitev2-subtle-fg">
+        <p className="mt-8 text-center text-[12px] text-sitev2-muted-fg">
           El costo de envío de campañas lo cobra Meta directamente según sus tarifas — no está incluido en el plan.
         </p>
+
+        {/* Evidencia/confianza absorbida de MetricsSection (Home actual) --
+            mismas 3 afirmaciones verificadas, sin cifra inventada, en línea
+            compacta junto al pricing en vez de una sección propia de "4
+            números" (fase 6.2, punto 4 del brief). "Sin herramientas no
+            oficiales" se omite acá por ser redundante con "API Oficial de
+            Meta" -- misma afirmación dicha dos veces en el original. */}
+        <div className="mx-auto mt-10 flex max-w-2xl flex-wrap items-center justify-center gap-x-8 gap-y-3 border-t border-sitev2-border pt-8 text-[12.5px] text-sitev2-muted-fg">
+          <span className="inline-flex items-center gap-1.5">
+            <ShieldCheck className="h-3.5 w-3.5 text-sitev2-primary" strokeWidth={1.8} /> 100% API Oficial de Meta
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <Zap className="h-3.5 w-3.5 text-sitev2-primary" strokeWidth={1.8} /> IA respondiendo 24/7
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <Clock className="h-3.5 w-3.5 text-sitev2-primary" strokeWidth={1.8} /> Tiempo de respuesta &lt;2s
+          </span>
+        </div>
       </div>
     </section>
   );

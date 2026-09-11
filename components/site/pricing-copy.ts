@@ -70,6 +70,64 @@ export const PRICING_COPY: Record<
     },
     boton: { es: "Hablar con DuLabs →", en: "Talk to DuLabs →" },
   },
+  // --- Planes nuevos (propuesta comercial DuLabs v2) -- copy para
+  // components/site-v2/PricingV2.tsx. No se renderizan en /precios (la web
+  // en producción), que sigue iterando ORDEN_PLANES (start/growth/scale/
+  // enterprise) sin tocar. Cada bullet describe algo que el producto
+  // REALMENTE hace hoy -- ninguna funcionalidad sin enforcement (CRM,
+  // automatizaciones, integraciones, analytics) se presenta con un número o
+  // límite, solo como capacidad disponible (ver auditoría de límites).
+  essential: {
+    tag: { es: "Para empezar a automatizar tu atención.", en: "To start automating your customer service." },
+    features: [
+      { es: "1 número de WhatsApp", en: "1 WhatsApp number" },
+      { es: "1 agente de IA", en: "1 AI agent" },
+      { es: "Base de conocimiento", en: "Knowledge base" },
+      { es: "Configuración personalizada del agente", en: "Custom agent configuration" },
+      { es: "CRM y automatizaciones básicas", en: "Basic CRM and automations" },
+      { es: "Soporte por correo", en: "Email support" },
+    ],
+    campanas: {
+      porMes: { es: "Hasta 8 campañas configurables al mes", en: "Up to 8 configurable campaigns per month" },
+      destinatarios: { es: "Hasta 500 contactos por campaña", en: "Up to 500 contacts per campaign" },
+    },
+    boton: { es: "Comenzar con DuLabs →", en: "Start with DuLabs →" },
+  },
+  business: {
+    tag: { es: "Para negocios que automatizan gran parte de su operación.", en: "For businesses automating a significant part of their operation." },
+    features: [
+      { es: "Hasta 2 números de WhatsApp", en: "Up to 2 WhatsApp numbers" },
+      { es: "Hasta 3 agentes de IA", en: "Up to 3 AI agents" },
+      { es: "Hasta 5 usuarios", en: "Up to 5 users" },
+      { es: "CRM completo", en: "Full CRM" },
+      { es: "Automatizaciones avanzadas", en: "Advanced automations" },
+      { es: "Encuestas por WhatsApp", en: "WhatsApp surveys" },
+      { es: "Soporte prioritario", en: "Priority support" },
+    ],
+    campanas: {
+      porMes: { es: "Hasta 15 campañas configurables al mes", en: "Up to 15 configurable campaigns per month" },
+      destinatarios: { es: "Hasta 5.000 contactos por campaña", en: "Up to 5,000 contacts per campaign" },
+    },
+    boton: { es: "Elegir Business →", en: "Choose Business →" },
+  },
+  pro: {
+    tag: { es: "Para operaciones con mayor volumen y varios equipos.", en: "For higher-volume operations with multiple teams." },
+    features: [
+      { es: "Hasta 5 números de WhatsApp", en: "Up to 5 WhatsApp numbers" },
+      { es: "Hasta 10 agentes de IA", en: "Up to 10 AI agents" },
+      { es: "Hasta 15 usuarios", en: "Up to 15 users" },
+      { es: "CRM avanzado", en: "Advanced CRM" },
+      { es: "Automatizaciones complejas", en: "Complex automations" },
+      { es: "Insights de IA", en: "AI insights" },
+      { es: "Soporte prioritario", en: "Priority support" },
+      { es: "Onboarding personalizado", en: "Personalized onboarding" },
+    ],
+    campanas: {
+      porMes: { es: "Campañas configurables sin límite", en: "Unlimited configurable campaigns" },
+      destinatarios: { es: "Hasta 50.000 contactos por campaña", en: "Up to 50,000 contacts per campaign" },
+    },
+    boton: { es: "Hablar con DuLabs →", en: "Talk to DuLabs →" },
+  },
   enterprise: {
     tag: { es: "Empresas con necesidades a la medida.", en: "Companies with custom needs." },
     features: [

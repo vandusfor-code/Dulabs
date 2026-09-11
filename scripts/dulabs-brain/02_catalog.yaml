@@ -1,0 +1,389 @@
+# DULABS BRAIN v1 -- 02_CATALOG
+# Productos oficiales y servicios a medida en un solo catalogo, distinguidos
+# por "tipo" y "madurez" (Blueprint aprobado, seccion C.2). Regla de lenguaje
+# obligatorio por madurez (aplicada por el build al renderizar, no repetida
+# aqui en cada entrada):
+#   disponible                  -> "si, contamos con..."
+#   configurable                -> "tenemos una base que se personaliza a tu..."
+#   desarrollo_a_medida         -> "podemos desarrollarlo/evaluarlo"
+#   requiere_evaluacion_tecnica -> "es tecnicamente probable, lo valida el equipo"
+#   en_desarrollo_interno       -> "esta en desarrollo, todavia no disponible"
+module: 02_CATALOG
+entries:
+  - id: catalog.atencion_whatsapp_ia
+    tipo: producto_oficial
+    madurez: disponible
+    nombre: "Atencion automatizada por WhatsApp con IA"
+    categoria: "Atencion al cliente"
+    descripcion: >-
+      Atencion automatizada por WhatsApp con IA, sobre la API oficial de
+      Meta (WhatsApp Cloud API).
+    problema_que_resuelve: "Responder clientes por WhatsApp de forma automatica y consistente."
+    cliente_ideal: "Cualquier negocio que ya recibe o quiere recibir clientes por WhatsApp."
+    funcionalidades:
+      - "Agente de IA propio por negocio, entrenado con la informacion real de ese negocio -- no es un bot generico igual para todos."
+    integraciones: "Ver 03_INTEGRATIONS."
+    requisitos: "Numero de WhatsApp conectable via API oficial de Meta."
+    limitaciones: "Ninguna documentada mas alla de las Lineas Rojas del prompt (precios/tiempos/factibilidad/garantias)."
+    disponible_desde_plan: "essential"
+    claims_permitidos:
+      - "DuLabs ofrece atencion automatizada por WhatsApp con IA."
+    claims_prohibidos:
+      - "Prometer tiempos de respuesta especificos no confirmados."
+    governance:
+      source: "_conocimiento-314.txt (migracion Brain v1)"
+      status: vigente
+      last_updated: "2026-09-10"
+      version: 1
+      authority: unconfirmed
+
+  - id: catalog.agentes_ia
+    tipo: producto_oficial
+    madurez: disponible
+    nombre: "Agentes de inteligencia artificial"
+    categoria: "IA / automatizacion"
+    descripcion: "Agentes de IA para atencion, calificacion de leads y agendamiento."
+    problema_que_resuelve: "Calificar y atender prospectos sin intervencion manual constante."
+    cliente_ideal: "Negocios con volumen de conversaciones que hoy se atienden a mano."
+    funcionalidades:
+      - "Atencion conversacional."
+      - "Calificacion de leads."
+      - "Agendamiento (ver catalog.agendamiento_citas)."
+    integraciones: "Ver 03_INTEGRATIONS."
+    requisitos: "Base de conocimiento del negocio (ver catalog.bases_conocimiento_personalizadas)."
+    limitaciones: "No garantiza resultados de ventas/conversion (Linea Roja 4 del prompt)."
+    disponible_desde_plan: "essential"
+    claims_permitidos:
+      - "DuLabs ofrece agentes de IA para atencion, calificacion y agendamiento."
+    claims_prohibidos:
+      - "Prometer una cifra de conversion o resultado de ventas."
+    governance:
+      source: "_conocimiento-314.txt (migracion Brain v1)"
+      status: vigente
+      last_updated: "2026-09-10"
+      version: 1
+      authority: unconfirmed
+
+  - id: catalog.captacion_calificacion_leads
+    tipo: producto_oficial
+    madurez: disponible
+    nombre: "Captacion y calificacion de leads"
+    categoria: "Comercial"
+    descripcion: >-
+      Agentes que conversan con quien escribe, entienden que necesita y
+      registran el contacto como oportunidad comercial para que un humano le
+      de seguimiento. Este mismo numero (314) funciona asi.
+    problema_que_resuelve: "Que ningun prospecto interesado se pierda sin quedar registrado."
+    cliente_ideal: "Negocios con equipo comercial que necesita leads calificados, no solo mensajes sueltos."
+    funcionalidades:
+      - "Registro de lead con seguimiento humano real (no una promesa vacia)."
+    integraciones: "N/A"
+    requisitos: "N/A"
+    limitaciones: "N/A"
+    disponible_desde_plan: "essential"
+    claims_permitidos:
+      - "DuLabs puede registrar leads calificados para seguimiento comercial."
+    claims_prohibidos:
+      - "Decir 'ya quedaste registrado' antes de que el backend confirme el registro."
+    governance:
+      source: "_conocimiento-314.txt (migracion Brain v1)"
+      status: vigente
+      last_updated: "2026-09-10"
+      version: 1
+      authority: unconfirmed
+
+  - id: catalog.agendamiento_citas
+    tipo: producto_oficial
+    madurez: disponible
+    nombre: "Agendamiento de citas real"
+    categoria: "Agenda / operaciones"
+    descripcion: >-
+      El bot revisa la disponibilidad real antes de ofrecer un horario -- no
+      propone ni confirma nada que no este libre de verdad. Puede recibir la
+      solicitud de una cita, agendarla, confirmarla, proponer un horario
+      alternativo si el pedido choca con otro, reagendar y cancelar.
+    problema_que_resuelve: "Agendar citas sin choques de horario ni intervencion manual."
+    cliente_ideal: "Negocios con servicios por cita (salones, clinicas, consultorios, restaurantes con reservas)."
+    funcionalidades:
+      - "Consulta de disponibilidad real."
+      - "Agendar, confirmar, reagendar, cancelar."
+      - "Varios especialistas con agenda independiente dentro del mismo numero."
+    integraciones: "N/A (motor propio de agenda)."
+    requisitos: "Configuracion de servicios/especialistas del negocio."
+    limitaciones: "La confirmacion que recibe el cliente siempre corresponde a algo guardado de verdad -- nunca un texto suelto sin respaldo."
+    disponible_desde_plan: "essential"
+    claims_permitidos:
+      - "El bot agenda citas de verdad, revisando disponibilidad real."
+    claims_prohibidos:
+      - "Confirmar una cita sin que el sistema la haya guardado."
+    governance:
+      source: "_conocimiento-314.txt (migracion Brain v1)"
+      status: vigente
+      last_updated: "2026-09-10"
+      version: 1
+      authority: unconfirmed
+
+  - id: catalog.campanas_masivas
+    tipo: producto_oficial
+    madurez: disponible
+    nombre: "Campanas y comunicaciones masivas"
+    categoria: "Marketing / campanas"
+    descripcion: >-
+      Se arman desde el Panel de Operaciones. Para escribirle primero a
+      alguien fuera de la ventana normal de conversacion de WhatsApp (24
+      horas desde su ultimo mensaje), el envio usa una plantilla de mensaje
+      que Meta revisa y aprueba antes de poder usarse -- DuLabs maneja ese
+      proceso de aprobacion, el negocio no lidia con Meta directamente. Una
+      vez aprobada, se envia a la lista de contactos y el sistema hace
+      seguimiento de quien respondio.
+    problema_que_resuelve: "Enviar mensajes masivos cumpliendo las reglas de Meta sin gestionarlas manualmente."
+    cliente_ideal: "Negocios que quieren avisar/promocionar a una base de contactos existente."
+    funcionalidades:
+      - "Gestion de aprobacion de plantillas ante Meta."
+      - "Envio a lista de contactos con seguimiento de respuestas."
+    integraciones: "API oficial de Meta (plantillas de WhatsApp)."
+    requisitos: "Lista de contactos del negocio."
+    limitaciones: "Limite de contactos por campana y de campanas simultaneas/mensuales segun el plan (ver 08_PRICING). Los mensajes de campana consumen del cupo mensual de mensajes de IA del plan."
+    disponible_desde_plan: "essential"
+    claims_permitidos:
+      - "DuLabs gestiona el envio de campanas masivas y la aprobacion de plantillas ante Meta."
+    claims_prohibidos:
+      - "Prometer que una plantilla sera aprobada por Meta en un tiempo especifico."
+    governance:
+      source: "_conocimiento-314.txt (migracion Brain v1)"
+      status: vigente
+      last_updated: "2026-09-10"
+      version: 1
+      authority: unconfirmed
+
+  - id: catalog.encuestas_automatizadas
+    tipo: producto_oficial
+    madurez: disponible
+    nombre: "Encuestas automatizadas"
+    categoria: "Satisfaccion / insights"
+    descripcion: >-
+      Modulo separado para encuestas de satisfaccion u otro tipo de encuesta
+      corta. Se define una secuencia de preguntas, se invita a los contactos
+      por WhatsApp, y un bot dedicado conduce la conversacion pregunta por
+      pregunta, recolectando las respuestas de forma ordenada. Las
+      respuestas quedan centralizadas para revision.
+    problema_que_resuelve: "Medir satisfaccion sin depender de revisar respuestas manualmente."
+    cliente_ideal: "Negocios que ya tienen plan Business o superior y quieren medir satisfaccion."
+    funcionalidades:
+      - "Secuencia de preguntas conducida por bot dedicado."
+      - "En planes Pro/Enterprise: analisis de sentimiento automatico sobre las respuestas."
+    integraciones: "N/A"
+    requisitos: "N/A"
+    limitaciones: >-
+      No incluido en el plan Essential. Los planes legacy Start/Growth/Scale
+      (descontinuados, ver 08_PRICING) tienen su propia regla historica:
+      Start nunca la incluyo, Growth/Scale si -- si un cliente YA activo en
+      uno de esos planes pregunta, responder segun lo que su plan realmente
+      incluye (ver 08_PRICING), no segun esta regla nueva.
+    disponible_desde_plan: "business"
+    claims_permitidos:
+      - "Las encuestas automatizadas estan disponibles desde el plan Business."
+    claims_prohibidos:
+      - "Decir que el plan Essential incluye encuestas."
+    governance:
+      source: "_conocimiento-314.txt (migracion Brain v1)"
+      status: vigente
+      last_updated: "2026-09-10"
+      version: 1
+      authority: unconfirmed
+
+  - id: catalog.marketplace_agentes
+    tipo: producto_oficial
+    madurez: configurable
+    nombre: "Marketplace de agentes"
+    categoria: "Agentes preconfigurados"
+    descripcion: >-
+      Catalogo de agentes de IA preconfigurados para rubros especificos (por
+      ejemplo, spas y salones de belleza, con agenda de citas ya integrada).
+      En vez de armar el agente desde cero, el negocio activa uno de estos y
+      solo personaliza los datos puntuales de su negocio (precios,
+      especialistas, horarios, servicios).
+    problema_que_resuelve: "Poner un negocio en marcha mas rapido cuando su rubro ya tiene un agente disponible."
+    cliente_ideal: "Negocios en rubros con agente ya preconfigurado (ej. salones de belleza)."
+    funcionalidades:
+      - "Personalizacion de datos puntuales sobre una base ya construida."
+    integraciones: "N/A"
+    requisitos: "Que el rubro del negocio tenga un agente preconfigurado disponible."
+    limitaciones: "No todos los rubros tienen un agente preconfigurado -- confirmar disponibilidad puntual antes de prometerlo."
+    disponible_desde_plan: "essential"
+    claims_permitidos:
+      - "DuLabs tiene una base preconfigurada para algunos rubros que se personaliza rapido."
+    claims_prohibidos:
+      - "Afirmar que existe un agente preconfigurado para un rubro sin confirmarlo."
+    governance:
+      source: "_conocimiento-314.txt (migracion Brain v1)"
+      status: vigente
+      last_updated: "2026-09-10"
+      version: 1
+      authority: unconfirmed
+
+  - id: catalog.panel_operaciones
+    tipo: producto_oficial
+    madurez: disponible
+    nombre: "Panel de Operaciones"
+    categoria: "Administracion"
+    descripcion: >-
+      Panel web donde el negocio administra todo sin tocar codigo: resumen
+      con metricas de conversaciones y mensajes, conversaciones en tiempo
+      real, configuracion del agente de IA y su base de conocimiento,
+      campanas, encuestas, numeros de WhatsApp conectados, y equipo
+      (usuarios con acceso al panel).
+    problema_que_resuelve: "Administrar todo el negocio en DuLabs sin depender de un desarrollador."
+    cliente_ideal: "Cualquier cliente de DuLabs."
+    funcionalidades:
+      - "Metricas en tiempo real."
+      - "Configuracion del agente y su base de conocimiento."
+      - "Gestion de campanas, encuestas, numeros y equipo."
+    integraciones: "N/A"
+    requisitos: "N/A"
+    limitaciones: "N/A"
+    disponible_desde_plan: "essential"
+    claims_permitidos:
+      - "DuLabs incluye un panel de administracion sin necesidad de tocar codigo."
+    claims_prohibidos: []
+    governance:
+      source: "_conocimiento-314.txt (migracion Brain v1)"
+      status: vigente
+      last_updated: "2026-09-10"
+      version: 1
+      authority: unconfirmed
+
+  - id: catalog.conexion_whatsapp_coexistencia
+    tipo: producto_oficial
+    madurez: disponible
+    nombre: "Conexion de WhatsApp y modo Coexistencia"
+    categoria: "Conexion / onboarding"
+    descripcion: >-
+      Conexion via API oficial de Meta (WhatsApp Cloud API), registro guiado
+      (Embedded Signup), en menos de 24 horas. Modo Coexistencia: el negocio
+      sigue usando su app normal de WhatsApp Business en el celular AL MISMO
+      TIEMPO que el bot responde por el mismo numero, sin perder historial ni
+      contactos. Segun el plan, un mismo negocio puede tener varios numeros
+      de WhatsApp conectados y varias personas de su equipo con acceso al
+      panel. DuLabs configura, conecta y entrena el bot con la informacion
+      que el negocio comparte -- el cliente no programa nada.
+    problema_que_resuelve: "Conectar WhatsApp sin perder lo que ya se tenia ni depender de un tecnico del negocio."
+    cliente_ideal: "Cualquier negocio que ya usa o quiere usar WhatsApp Business."
+    funcionalidades:
+      - "Conexion via Embedded Signup en menos de 24 horas."
+      - "Modo Coexistencia (app + bot al mismo tiempo, sin perder historial/contactos)."
+      - "Varios numeros/usuarios segun el plan."
+      - "Implementacion sin codigo de parte del cliente."
+    integraciones: "API oficial de Meta (WhatsApp Cloud API)."
+    requisitos: "Numero de WhatsApp Business."
+    limitaciones: "La cantidad de numeros/usuarios esta limitada por el plan (ver 08_PRICING)."
+    disponible_desde_plan: "essential"
+    claims_permitidos:
+      - "La conexion via Embedded Signup toma menos de 24 horas."
+      - "El modo Coexistencia permite usar la app normal y el bot al mismo tiempo sin perder historial ni contactos."
+    claims_prohibidos:
+      - "Prometer una cantidad de numeros/usuarios distinta a la que declara el plan del cliente."
+    governance:
+      source: "_conocimiento-314.txt (migracion Brain v1)"
+      status: vigente
+      last_updated: "2026-09-10"
+      version: 1
+      authority: unconfirmed
+
+  - id: catalog.bases_conocimiento_personalizadas
+    tipo: producto_oficial
+    madurez: disponible
+    nombre: "Bases de conocimiento personalizadas por negocio"
+    categoria: "IA / personalizacion"
+    descripcion: >-
+      Cada cliente tiene su agente entrenado con la informacion real de SU
+      negocio -- no es un bot generico igual para todos.
+    problema_que_resuelve: "Que el agente responda con informacion real del negocio, no generica."
+    cliente_ideal: "Cualquier cliente de DuLabs."
+    funcionalidades:
+      - "Entrenamiento del agente con informacion propia del negocio, editable desde el Panel de Operaciones."
+    integraciones: "N/A"
+    requisitos: "El negocio comparte su informacion (catalogo, precios, procesos) con DuLabs."
+    limitaciones: "N/A"
+    disponible_desde_plan: "essential"
+    claims_permitidos:
+      - "Cada negocio tiene su propia base de conocimiento, no un bot generico compartido."
+    claims_prohibidos: []
+    governance:
+      source: "_conocimiento-314.txt (migracion Brain v1)"
+      status: vigente
+      last_updated: "2026-09-10"
+      version: 1
+      authority: unconfirmed
+
+  - id: catalog.automatizacion_procesos_empresariales
+    tipo: servicio_a_medida
+    madurez: desarrollo_a_medida
+    nombre: "Automatizacion de procesos empresariales"
+    categoria: "Automatizacion"
+    descripcion: "Automatizacion de procesos empresariales mas alla de la atencion por WhatsApp."
+    problema_que_resuelve: "Procesos manuales repetitivos que el negocio quiere automatizar."
+    cliente_ideal: "Negocios con procesos internos especificos a automatizar."
+    funcionalidades: []
+    integraciones: "Depende del alcance -- ver 03_INTEGRATIONS."
+    requisitos: "Definir el proceso puntual a automatizar."
+    limitaciones: "No es un producto empaquetado -- se evalua caso a caso."
+    disponible_desde_plan: null
+    claims_permitidos:
+      - "Podemos evaluar y desarrollar automatizaciones de procesos a medida."
+    claims_prohibidos:
+      - "Decir que un proceso especifico ya esta automatizado sin haberlo confirmado."
+    governance:
+      source: "_conocimiento-314.txt (migracion Brain v1)"
+      status: vigente
+      last_updated: "2026-09-10"
+      version: 1
+      authority: unconfirmed
+
+  - id: catalog.integraciones_sistemas_empresariales
+    tipo: servicio_a_medida
+    madurez: requiere_evaluacion_tecnica
+    nombre: "Integraciones con sistemas empresariales"
+    categoria: "Integraciones"
+    descripcion: "Integraciones con sistemas empresariales (CRM, ERP, herramientas internas)."
+    problema_que_resuelve: "Conectar DuLabs con sistemas que el negocio ya usa."
+    cliente_ideal: "Negocios con CRM/ERP/sistemas internos que quieren conectar con DuLabs."
+    funcionalidades: []
+    integraciones: "Ver niveles de certeza reales en 03_INTEGRATIONS -- este catalogo nunca afirma una integracion especifica por si solo."
+    requisitos: "Depende del sistema puntual."
+    limitaciones: "Nivel de certeza real definido por 03_INTEGRATIONS, nunca 'si, ya la tenemos' sin ficha que lo respalde."
+    disponible_desde_plan: null
+    claims_permitidos:
+      - "Podemos evaluar integraciones con sistemas empresariales."
+    claims_prohibidos:
+      - "Afirmar que una integracion puntual ya existe sin una ficha CONFIRMADA en 03_INTEGRATIONS."
+    governance:
+      source: "_conocimiento-314.txt (migracion Brain v1)"
+      status: vigente
+      last_updated: "2026-09-10"
+      version: 1
+      authority: unconfirmed
+
+  - id: catalog.software_desarrollo_a_medida
+    tipo: servicio_a_medida
+    madurez: desarrollo_a_medida
+    nombre: "Software y desarrollo a la medida"
+    categoria: "Desarrollo"
+    descripcion: "Software y desarrollo a la medida para necesidades especificas del negocio."
+    problema_que_resuelve: "Necesidades que no cubre el catalogo estandar."
+    cliente_ideal: "Negocios con requerimientos especificos fuera del catalogo estandar."
+    funcionalidades: []
+    integraciones: "Depende del alcance."
+    requisitos: "Definir alcance con el equipo."
+    limitaciones: "Se cotiza segun alcance (ver 08_PRICING, plan Enterprise)."
+    disponible_desde_plan: null
+    claims_permitidos:
+      - "Podemos evaluar y desarrollar software a la medida."
+    claims_prohibidos:
+      - "Dar un precio o tiempo de desarrollo sin evaluar el alcance."
+    governance:
+      source: "_conocimiento-314.txt (migracion Brain v1)"
+      status: vigente
+      last_updated: "2026-09-10"
+      version: 1
+      authority: unconfirmed

@@ -1,4 +1,4 @@
-import { TrendingUp, Zap } from "lucide-react";
+import { MessageCircle, ArrowRight, Bot, Database, Zap } from "lucide-react";
 import { AppMockupV2 } from "./AppMockupV2";
 
 /**
@@ -29,15 +29,6 @@ export function ProductVisualV2() {
         className="v2-plant pointer-events-none absolute -top-28 -right-20 -z-10 h-[320px] w-auto opacity-70 sm:-right-24 sm:h-[380px] md:h-[440px]"
       />
 
-      {/* Caption sutil arriba a la derecha */}
-      <div className="pointer-events-none absolute -top-8 right-1 hidden text-right md:block">
-        <p className="text-[12px] leading-tight text-sitev2-subtle-fg">
-          Ideas de hoy.
-          <br />
-          Resultados de mañana.
-        </p>
-      </div>
-
       {/* Producto escalado */}
       <div className="v2-product-box [--s:0.4] min-[420px]:[--s:0.46] sm:[--s:0.58] md:[--s:0.66] lg:[--s:0.7] xl:[--s:0.68] 2xl:[--s:0.74]">
         {/* Sombra de contacto: apoya el producto en la escena (peso físico) */}
@@ -50,21 +41,22 @@ export function ProductVisualV2() {
         </div>
       </div>
 
-      {/* Tarjeta flotante: Conversaciones atendidas — flota SOBRE el borde
-          superior del laptop (como la referencia), despejada del header. */}
-      <div className="v2-shadow-float absolute -left-2 -top-12 flex items-center gap-3 rounded-2xl border border-sitev2-border bg-sitev2-bg px-3.5 py-2.5 sm:-left-6 sm:-top-14">
-        <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-sitev2-surface-2">
-          <TrendingUp className="h-4 w-4 text-sitev2-fg" strokeWidth={2} />
+      {/* Tarjeta flotante: el flujo Cliente -> Agente IA -> CRM (regla 16 del
+          brief), cualitativa a propósito -- SIN ninguna cifra o porcentaje
+          inventado (antes decía "248 · +32%", una métrica sin fuente real,
+          ver regla de veracidad). Flota SOBRE el borde superior del laptop. */}
+      <div className="v2-shadow-float absolute -left-2 -top-12 flex items-center gap-2.5 rounded-2xl border border-sitev2-border bg-sitev2-bg px-3.5 py-2.5 sm:-left-6 sm:-top-14">
+        <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-sitev2-surface-2">
+          <MessageCircle className="h-3.5 w-3.5 text-sitev2-fg" strokeWidth={2} />
         </span>
-        <div className="leading-tight">
-          <p className="text-[10.5px] text-sitev2-muted-fg">Conversaciones atendidas</p>
-          <p className="flex items-center gap-1.5">
-            <span className="font-display text-[18px] font-semibold text-sitev2-fg">248</span>
-            <span className="flex items-center gap-0.5 text-[11px] font-medium text-sitev2-primary">
-              ▲ +32%
-            </span>
-          </p>
-        </div>
+        <ArrowRight className="h-3 w-3 shrink-0 text-sitev2-subtle-fg" strokeWidth={2} />
+        <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-sitev2-primary-soft">
+          <Bot className="h-3.5 w-3.5 text-sitev2-primary" strokeWidth={2} />
+        </span>
+        <ArrowRight className="h-3 w-3 shrink-0 text-sitev2-subtle-fg" strokeWidth={2} />
+        <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-sitev2-surface-2">
+          <Database className="h-3.5 w-3.5 text-sitev2-fg" strokeWidth={2} />
+        </span>
       </div>
 
       {/* Tarjeta flotante: Automatización activa */}

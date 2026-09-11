@@ -1,0 +1,79 @@
+# DULABS BRAIN v1 -- 06_GLOSSARY
+# Una "esencia" por termino (correcta en cualquier nivel) + "detalle_tecnico"
+# opcional. La Capa 4 de AIM-O (profundidad, ya existente en el prompt, sin
+# tocar) decide cuanto de esto usar y como fraseario -- el Brain nunca decide
+# el nivel, solo aporta el material. Conjunto minimo: terminos que ya
+# aparecieron en conversaciones reales de la bateria de 26 casos.
+module: 06_GLOSSARY
+entries:
+  - id: glossary.webhook
+    termino: "Webhook"
+    esencia: "Una forma de que un sistema le avise automaticamente a otro cuando ocurre algo, sin que nadie lo revise a mano."
+    detalle_tecnico: "Un endpoint HTTP que recibe eventos, normalmente mediante requests POST."
+    contexto_dulabs: "Es como Meta le avisa a DuLabs que llego un mensaje nuevo de WhatsApp."
+    governance:
+      source: "Nuevo (Brain v1) -- no existia en _conocimiento-314.txt"
+      status: vigente
+      last_updated: "2026-09-10"
+      version: 1
+      authority: unconfirmed
+
+  - id: glossary.api
+    termino: "API"
+    esencia: "La forma en que dos sistemas distintos se conectan e intercambian informacion entre si."
+    detalle_tecnico: "Interfaz de programacion que expone operaciones/datos de un sistema para que otro los use de forma controlada."
+    contexto_dulabs: "DuLabs se conecta a WhatsApp (y potencialmente a otros sistemas del cliente) a traves de una API."
+    governance:
+      source: "Nuevo (Brain v1) -- no existia en _conocimiento-314.txt"
+      status: vigente
+      last_updated: "2026-09-10"
+      version: 1
+      authority: unconfirmed
+
+  - id: glossary.crm
+    termino: "CRM"
+    esencia: "El sistema donde un negocio guarda la informacion de sus clientes y su historial de contacto."
+    detalle_tecnico: "Customer Relationship Management -- software de gestion de relacion con clientes."
+    contexto_dulabs: "Una integracion con el CRM del cliente entra en el nivel PROBABLE o REQUIERE_AUDITORIA de 03_INTEGRATIONS, segun el caso -- nunca CONFIRMADA por defecto."
+    governance:
+      source: "Nuevo (Brain v1) -- no existia en _conocimiento-314.txt"
+      status: vigente
+      last_updated: "2026-09-10"
+      version: 1
+      authority: unconfirmed
+
+  - id: glossary.plantilla_aprobada_whatsapp
+    termino: "Plantilla aprobada (WhatsApp)"
+    esencia: "Un mensaje pre-aprobado por WhatsApp que permite escribirle primero a alguien que no ha escrito en las ultimas 24 horas."
+    detalle_tecnico: "Meta exige revisar y aprobar el contenido de cualquier mensaje que inicie una conversacion fuera de la ventana de servicio de 24 horas."
+    contexto_dulabs: "DuLabs gestiona esa aprobacion por el negocio (ver catalog.campanas_masivas)."
+    governance:
+      source: "Nuevo (Brain v1) -- no existia en _conocimiento-314.txt"
+      status: vigente
+      last_updated: "2026-09-10"
+      version: 1
+      authority: unconfirmed
+
+  - id: glossary.coexistencia
+    termino: "Coexistencia"
+    esencia: "El negocio sigue usando la app normal de WhatsApp Business en el celular al mismo tiempo que el bot responde por el mismo numero."
+    detalle_tecnico: "Modo de la WhatsApp Cloud API que mantiene sincronizados el cliente movil oficial y la API, sin perder historial ni contactos."
+    contexto_dulabs: "Ver catalog.conexion_whatsapp_coexistencia para el detalle completo."
+    governance:
+      source: "Nuevo (Brain v1) -- no existia en _conocimiento-314.txt"
+      status: vigente
+      last_updated: "2026-09-10"
+      version: 1
+      authority: unconfirmed
+
+  - id: glossary.agente_de_ia
+    termino: "Agente de IA"
+    esencia: "El asistente automatico que atiende WhatsApp en nombre del negocio, entrenado con su informacion real."
+    detalle_tecnico: "Modelo de lenguaje configurado con un system prompt e informacion de referencia propia del negocio, ejecutado sobre cada mensaje entrante."
+    contexto_dulabs: "Cada negocio tiene el suyo, nunca uno generico compartido (ver catalog.bases_conocimiento_personalizadas)."
+    governance:
+      source: "Nuevo (Brain v1) -- no existia en _conocimiento-314.txt"
+      status: vigente
+      last_updated: "2026-09-10"
+      version: 1
+      authority: unconfirmed

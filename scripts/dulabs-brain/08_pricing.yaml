@@ -1,0 +1,225 @@
+# DULABS BRAIN v1 -- 08_PRICING
+# Unica fuente de cualquier cifra que Du puede citar. Solo status: vigente
+# genera una cifra utilizable -- ver regla en el build. "negociable" declara
+# EXPLICITAMENTE que solo alcance/fases son ajustables, nunca el precio
+# (Linea Roja 1 del prompt sigue siendo la autoridad sobre eso).
+#
+# Migracion Fase 6 (DuLabs v2): la oferta comercial vigente para clientes
+# NUEVOS pasa de Start/Growth/Scale a Essential/Business/Pro. Las 3 entradas
+# legacy NO se eliminan ni se marcan deprecado/por_confirmar -- el build.mts
+# actual (procesarPricing) solo tiene 2 estados utiles: excluido por completo
+# (deprecado/deprecated) o vigente con cifra real citable; no existe un
+# tercer estado "legacy pero citable". Como Du SI debe poder confirmarle su
+# precio real a un cliente que YA tiene uno de estos planes, quedan en
+# status: vigente, pero con el campo "producto" aclarando explicitamente que
+# estan descontinuados -- ese texto queda embebido en la linea que arma el
+# build, sin tocar build.mts. El comportamiento de "no ofrecer a clientes
+# nuevos" lo refuerza policies.planes_legacy_no_ofrecer en 07_policies.yaml.
+#
+# Nota de gobierno: estas 3 cifras legacy son la configuracion HISTORICA real
+# (nunca alteradas desde que se migraron) -- siguen con authority=unconfirmed
+# porque nadie hizo una revision de negocio formal especificamente para esta
+# migracion de Fase 6, exactamente igual que la migracion anterior.
+module: 08_PRICING
+entries:
+  # --- LEGACY (descontinuados, NO ofrecer a clientes nuevos -- solo para
+  # reconocer y confirmar datos a quien YA los tiene activos) ---
+  - id: pricing.start
+    producto: "Plan Start (descontinuado -- ya no se ofrece a clientes nuevos, solo aplica a quien ya lo tenia activo)"
+    plan: "start"
+    tipo_precio: fijo
+    precio: 39900
+    moneda: COP
+    periodicidad: mensual
+    que_incluye:
+      - "1 numero de WhatsApp"
+      - "1 usuario"
+      - "1 agente de IA"
+      - "500 contactos por campana"
+      - "1000 mensajes de IA al mes"
+    que_no_incluye:
+      - "Encuestas"
+    precio_implementacion: 99900
+    precio_implementacion_moneda: COP
+    precio_implementacion_nota: >-
+      Valor de referencia, NO obligatorio -- se puede aplicar descuento u
+      omitir segun decida el equipo comercial, nunca Du.
+    precio_personalizado: false
+    negociable: [alcance, fases]
+    governance:
+      source: "_conocimiento-314.txt (migracion Brain v1)"
+      status: vigente
+      last_updated: "2026-09-11"
+      version: 2
+      authority: unconfirmed
+
+  - id: pricing.growth
+    producto: "Plan Growth (descontinuado -- ya no se ofrece a clientes nuevos, solo aplica a quien ya lo tenia activo)"
+    plan: "growth"
+    tipo_precio: fijo
+    precio: 89900
+    moneda: COP
+    periodicidad: mensual
+    que_incluye:
+      - "2 numeros de WhatsApp"
+      - "5 usuarios"
+      - "3 agentes de IA"
+      - "5.000 contactos por campana"
+      - "Encuestas incluidas"
+    que_no_incluye: []
+    precio_implementacion: 149900
+    precio_implementacion_moneda: COP
+    precio_implementacion_nota: >-
+      Valor de referencia, NO obligatorio -- se puede aplicar descuento u
+      omitir segun decida el equipo comercial, nunca Du.
+    precio_personalizado: false
+    negociable: [alcance, fases]
+    governance:
+      source: "_conocimiento-314.txt (migracion Brain v1)"
+      status: vigente
+      last_updated: "2026-09-11"
+      version: 2
+      authority: unconfirmed
+
+  - id: pricing.scale
+    producto: "Plan Scale (descontinuado -- ya no se ofrece a clientes nuevos, solo aplica a quien ya lo tenia activo)"
+    plan: "scale"
+    tipo_precio: fijo
+    precio: 179900
+    moneda: COP
+    periodicidad: mensual
+    que_incluye:
+      - "5 numeros de WhatsApp"
+      - "20 usuarios"
+      - "Agentes de IA ilimitados"
+      - "50.000 contactos por campana"
+      - "Insights de IA incluidos (analisis de sentimiento en encuestas)"
+    que_no_incluye: []
+    precio_implementacion: 249900
+    precio_implementacion_moneda: COP
+    precio_implementacion_nota: >-
+      Valor de referencia, NO obligatorio -- se puede aplicar descuento u
+      omitir segun decida el equipo comercial, nunca Du.
+    precio_personalizado: false
+    negociable: [alcance, fases]
+    governance:
+      source: "_conocimiento-314.txt (migracion Brain v1)"
+      status: vigente
+      last_updated: "2026-09-11"
+      version: 2
+      authority: unconfirmed
+
+  # --- OFERTA COMERCIAL VIGENTE (DuLabs v2, Fase 6) ---
+  - id: pricing.essential
+    producto: "Plan Essential"
+    plan: "essential"
+    tipo_precio: fijo
+    precio: 79990
+    moneda: COP
+    periodicidad: mensual
+    que_incluye:
+      - "1 numero de WhatsApp"
+      - "2 usuarios"
+      - "1 agente de IA"
+      - "500 contactos por campana"
+      - "800 mensajes de IA al mes"
+    que_no_incluye:
+      - "Encuestas"
+      - "Insights de IA"
+    precio_implementacion: 149900
+    precio_implementacion_moneda: COP
+    precio_implementacion_nota: >-
+      Valor de referencia, NO obligatorio -- se puede aplicar descuento u
+      omitir segun decida el equipo comercial, nunca Du.
+    precio_personalizado: false
+    negociable: [alcance, fases]
+    governance:
+      source: "Fase 6 -- propuesta comercial DuLabs v2 (aprobada)"
+      status: vigente
+      last_updated: "2026-09-11"
+      version: 1
+      authority: unconfirmed
+
+  - id: pricing.business
+    producto: "Plan Business"
+    plan: "business"
+    tipo_precio: fijo
+    precio: 159990
+    moneda: COP
+    periodicidad: mensual
+    que_incluye:
+      - "2 numeros de WhatsApp"
+      - "5 usuarios"
+      - "3 agentes de IA"
+      - "5.000 contactos por campana"
+      - "2.000 mensajes de IA al mes"
+      - "Encuestas incluidas"
+    que_no_incluye:
+      - "Insights de IA"
+    precio_implementacion: 299900
+    precio_implementacion_moneda: COP
+    precio_implementacion_nota: >-
+      Valor de referencia, NO obligatorio -- se puede aplicar descuento u
+      omitir segun decida el equipo comercial, nunca Du.
+    precio_personalizado: false
+    negociable: [alcance, fases]
+    governance:
+      source: "Fase 6 -- propuesta comercial DuLabs v2 (aprobada)"
+      status: vigente
+      last_updated: "2026-09-11"
+      version: 1
+      authority: unconfirmed
+
+  - id: pricing.pro
+    producto: "Plan Pro"
+    plan: "pro"
+    tipo_precio: fijo
+    precio: 299990
+    moneda: COP
+    periodicidad: mensual
+    que_incluye:
+      - "5 numeros de WhatsApp"
+      - "15 usuarios"
+      - "10 agentes de IA"
+      - "50.000 contactos por campana"
+      - "4.000 mensajes de IA al mes"
+      - "Campanas configurables sin limite comercial"
+      - "Encuestas incluidas"
+      - "Insights de IA incluidos"
+    que_no_incluye: []
+    precio_implementacion: 499900
+    precio_implementacion_moneda: COP
+    precio_implementacion_nota: >-
+      Valor de referencia DESDE el cual se cotiza la implementacion segun el
+      alcance del proyecto -- el costo real puede ser mayor. No es un monto
+      fijo obligatorio; el equipo comercial decide condiciones, nunca Du.
+    precio_personalizado: false
+    negociable: [alcance, fases]
+    governance:
+      source: "Fase 6 -- propuesta comercial DuLabs v2 (aprobada)"
+      status: vigente
+      last_updated: "2026-09-11"
+      version: 1
+      authority: unconfirmed
+
+  - id: pricing.enterprise
+    producto: "Plan Enterprise"
+    plan: "enterprise"
+    tipo_precio: cotizado_a_medida
+    precio: null
+    moneda: COP
+    periodicidad: mensual
+    que_incluye:
+      - "Proyectos a medida, integraciones, volumen alto -- alcance definido caso a caso"
+    que_no_incluye: []
+    precio_implementacion: null
+    precio_implementacion_moneda: null
+    precio_implementacion_nota: null
+    precio_personalizado: true
+    negociable: [alcance, fases]
+    governance:
+      source: "_conocimiento-314.txt (migracion Brain v1)"
+      status: vigente
+      last_updated: "2026-09-10"
+      version: 1
+      authority: unconfirmed

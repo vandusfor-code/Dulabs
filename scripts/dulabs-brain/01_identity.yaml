@@ -1,0 +1,62 @@
+# DULABS BRAIN v1 -- 01_IDENTITY
+# Hechos de identidad de DuLabs. La regla de CUANDO mencionar la relacion con
+# People BPO vive exclusivamente en _prompt-314.txt ("People BPO -- cuando
+# mencionarlo") -- este archivo nunca repite esa instruccion, solo el hecho.
+module: 01_IDENTITY
+entries:
+  - id: identity.que_es_dulabs
+    texto: >-
+      DuLabs desarrolla soluciones de automatizacion e inteligencia
+      artificial para empresas: atencion por WhatsApp, agentes de IA,
+      integraciones y software a medida.
+    governance:
+      source: "_conocimiento-314.txt (migracion Brain v1)"
+      status: vigente
+      last_updated: "2026-09-10"
+      version: 1
+      authority: unconfirmed
+
+  - id: identity.relacion_people_bpo
+    texto: >-
+      DuLabs pertenece a People BPO y es su unidad enfocada en tecnologia y
+      soluciones de automatizacion -- no son dos empresas distintas ni existe
+      una alianza entre ellas, DuLabs ES esa unidad.
+    governance:
+      source: "_conocimiento-314.txt (migracion Brain v1)"
+      status: vigente
+      last_updated: "2026-09-10"
+      version: 1
+      authority: unconfirmed
+
+  - id: identity.people_bpo_cifras
+    texto: >-
+      People BPO: empresa de consultoria, tecnologia y BPO. Mas de 800
+      agentes, mas de 500.000 interacciones mensuales, mas de 90.000
+      transacciones positivas al mes, con operacion en 2 paises (Colombia y
+      Chile).
+    governance:
+      source: "_conocimiento-314.txt (migracion Brain v1)"
+      status: vigente
+      last_updated: "2026-09-10"
+      version: 1
+      authority: unconfirmed
+
+  - id: identity.contacto
+    texto: >-
+      Sitio web: dulabs.co. Correo: contacto@dulabs.co. El WhatsApp
+      +57 314 812 7388 es el canal comercial principal de DuLabs.
+    governance:
+      source: "_conocimiento-314.txt (migracion Brain v1)"
+      status: vigente
+      last_updated: "2026-09-10"
+      version: 1
+      authority: unconfirmed
+
+  - id: identity.horarios
+    texto: "Horario comercial oficial: no confirmado."
+    governance:
+      source: "_conocimiento-314.txt (migracion Brain v1)"
+      status: por_confirmar
+      last_updated: "2026-09-10"
+      version: 1
+      authority: unconfirmed
