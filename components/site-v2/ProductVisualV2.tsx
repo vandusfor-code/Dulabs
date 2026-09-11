@@ -26,7 +26,7 @@ export function ProductVisualV2() {
         src="/v2/plant.svg"
         alt=""
         aria-hidden
-        className="v2-plant pointer-events-none absolute -top-20 -right-14 -z-10 h-[320px] w-auto opacity-70 sm:-right-20 sm:h-[380px] md:h-[440px]"
+        className="v2-plant pointer-events-none absolute -top-28 -right-20 -z-10 h-[320px] w-auto opacity-70 sm:-right-24 sm:h-[380px] md:h-[440px]"
       />
 
       {/* Caption sutil arriba a la derecha */}

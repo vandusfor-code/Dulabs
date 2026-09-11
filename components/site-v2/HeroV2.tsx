@@ -87,7 +87,9 @@ export function HeroV2() {
           </div>
 
           {/* ---------- Derecha: producto ---------- */}
-          <div id="producto" className="animate-site-fade-up flex justify-center xl:justify-end">
+          {/* xl:translate-x sangra el producto un poco más hacia el borde
+              derecho, como el mockup (solo encuadre, sin cambiar tamaño). */}
+          <div id="producto" className="animate-site-fade-up flex justify-center xl:translate-x-10 xl:justify-end">
             <ProductVisualV2 />
           </div>
         </div>
