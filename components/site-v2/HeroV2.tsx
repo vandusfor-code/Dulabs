@@ -8,9 +8,9 @@ import { MENSAJE_WHATSAPP_GENERICO_ES, whatsappVentasUrl } from "@/lib/site-cont
 // y verificables de DuLabs (placeholders neutros, regla 29). Se reemplazan por
 // cifras cuando el propietario confirme datos auditados.
 const PROOF = [
-  { value: "24 h", label: "Puesta en marcha del asistente" },
-  { value: "API oficial", label: "WhatsApp sobre la API de Meta" },
-  { value: "Claude", label: "IA de Anthropic, entrenada por nosotros" },
+  { value: "24 h", label: "Puesta en marcha" },
+  { value: "API oficial", label: "de WhatsApp · Meta" },
+  { value: "Claude", label: "IA de Anthropic" },
 ];
 
 export function HeroV2() {
@@ -25,7 +25,7 @@ export function HeroV2() {
         className="v2-grid pointer-events-none absolute inset-0 -z-10 [mask-image:radial-gradient(ellipse_at_center,black_5%,transparent_70%)]"
       />
 
-      <div className="mx-auto max-w-[1280px] px-5 pb-20 pt-28 sm:px-8 md:pt-32 xl:pb-28 xl:pt-40">
+      <div className="mx-auto max-w-[1280px] px-5 pb-20 pt-32 sm:px-8 md:pt-36 xl:pb-28 xl:pt-44">
         <div className="grid items-center gap-14 xl:grid-cols-[minmax(0,1fr)_minmax(0,auto)] xl:gap-8">
           {/* ---------- Izquierda: contenido ---------- */}
           <div className="min-w-0 text-center xl:text-left">
@@ -34,8 +34,8 @@ export function HeroV2() {
               IA · Automatización · Software
             </p>
 
-            {/* Headline */}
-            <h1 className="mx-auto mt-6 max-w-[16ch] font-display text-[clamp(2.75rem,7vw,4.25rem)] font-semibold leading-[0.98] tracking-[-0.035em] text-sitev2-fg xl:mx-0">
+            {/* Headline — peso alto (bold) y line-height apretado como el mockup */}
+            <h1 className="mx-auto mt-8 max-w-[15ch] font-display text-[clamp(2.9rem,7.2vw,4.6rem)] font-bold leading-[0.94] tracking-[-0.04em] text-sitev2-fg xl:mx-0">
               Tecnología <br className="hidden xl:block" />
               que trabaja por <br className="hidden xl:block" />
               tu empresa
@@ -55,29 +55,29 @@ export function HeroV2() {
                 target="_blank"
                 rel="noopener noreferrer"
                 onClick={() => trackConversion("cta_whatsapp", { source: "hero_v2" })}
-                className="group inline-flex h-12 items-center justify-center gap-2 rounded-full bg-sitev2-fg px-6 text-[14.5px] font-medium text-sitev2-bg transition-all hover:-translate-y-0.5 hover:bg-black hover:shadow-[0_14px_34px_-12px_rgba(17,17,17,0.4)]"
+                className="group inline-flex h-11 items-center justify-center gap-2 rounded-full bg-sitev2-fg px-6 text-[14px] font-medium text-sitev2-bg transition-all hover:-translate-y-0.5 hover:bg-black hover:shadow-[0_14px_34px_-12px_rgba(17,17,17,0.4)]"
               >
                 Hablar con DuLabs
                 <span aria-hidden className="transition-transform group-hover:translate-x-0.5">→</span>
               </a>
               <a
                 href="#soluciones"
-                className="inline-flex h-12 items-center justify-center rounded-full border border-sitev2-border-strong bg-sitev2-bg px-6 text-[14.5px] font-medium text-sitev2-fg transition-all hover:border-sitev2-fg/30 hover:bg-sitev2-surface"
+                className="inline-flex h-11 items-center justify-center rounded-full border border-sitev2-border-strong bg-sitev2-bg px-6 text-[14px] font-medium text-sitev2-fg transition-all hover:border-sitev2-fg/30 hover:bg-sitev2-surface"
               >
                 Conocer soluciones
               </a>
             </div>
 
-            {/* Franja de credibilidad */}
-            <div className="mx-auto mt-14 flex max-w-md flex-wrap justify-center gap-x-8 gap-y-6 sm:flex-nowrap sm:justify-between xl:mx-0 xl:justify-start xl:gap-x-10">
+            {/* Franja de credibilidad — empujada hacia abajo, ritmo de stat strip */}
+            <div className="mx-auto mt-16 flex max-w-md flex-wrap justify-center gap-x-8 gap-y-6 sm:flex-nowrap sm:justify-between xl:mx-0 xl:mt-20 xl:justify-start xl:gap-x-12">
               {PROOF.map((p, i) => (
                 <div key={p.value} className="flex items-start">
-                  {i > 0 && <span className="mr-8 hidden h-10 w-px bg-sitev2-border sm:block xl:mr-10" />}
+                  {i > 0 && <span className="mr-8 hidden h-9 w-px bg-sitev2-border sm:block xl:mr-12" />}
                   <div className="text-center xl:text-left">
-                    <div className="font-display text-[22px] font-semibold leading-none tracking-tight text-sitev2-fg">
+                    <div className="whitespace-nowrap font-display text-[20px] font-bold leading-none tracking-[-0.02em] text-sitev2-fg">
                       {p.value}
                     </div>
-                    <div className="mt-2 max-w-[16ch] text-[12px] leading-snug text-sitev2-muted-fg">
+                    <div className="mt-2 whitespace-nowrap text-[11.5px] leading-snug text-sitev2-muted-fg">
                       {p.label}
                     </div>
                   </div>

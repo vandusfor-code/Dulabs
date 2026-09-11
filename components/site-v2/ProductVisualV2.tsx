@@ -10,11 +10,20 @@ import { AppMockupV2 } from "./AppMockupV2";
 export function ProductVisualV2() {
   return (
     <div className="relative mx-auto w-fit">
-      {/* Planta desenfocada, detrás y a la derecha (regla 19): profundidad,
-          parcialmente oculta por el producto, nunca protagonista. */}
+      {/* Glow ambiental muy suave detrás del producto: funde los bordes con
+          el fondo para que el mockup NO parezca pegado (se integra a la
+          escena). Blanco cálido, sin color. */}
       <div
         aria-hidden
-        className="v2-plant pointer-events-none absolute -right-4 top-1/2 -z-10 h-[360px] w-[240px] -translate-y-1/2 opacity-80 sm:-right-8 md:h-[420px] md:w-[300px]"
+        className="pointer-events-none absolute -inset-16 -z-20 rounded-[80px] bg-[radial-gradient(60%_55%_at_55%_45%,rgba(255,255,255,0.9)_0%,rgba(255,255,255,0)_70%)]"
+      />
+
+      {/* Planta desenfocada, DETRÁS y arriba del laptop (regla 19/9):
+          profundidad, parcialmente oculta por el producto, muy difusa,
+          integrada con el blanco, nunca protagonista. */}
+      <div
+        aria-hidden
+        className="v2-plant pointer-events-none absolute -top-16 right-2 left-1/3 -z-10 h-[280px] opacity-65 sm:-top-20 md:h-[340px]"
       />
 
       {/* Caption sutil arriba a la derecha */}
@@ -27,7 +36,7 @@ export function ProductVisualV2() {
       </div>
 
       {/* Producto escalado */}
-      <div className="v2-product-box [--s:0.4] min-[420px]:[--s:0.46] sm:[--s:0.58] md:[--s:0.66] lg:[--s:0.7] xl:[--s:0.64] 2xl:[--s:0.72]">
+      <div className="v2-product-box [--s:0.4] min-[420px]:[--s:0.46] sm:[--s:0.58] md:[--s:0.66] lg:[--s:0.7] xl:[--s:0.68] 2xl:[--s:0.74]">
         <div className="v2-product-scaler">
           <AppMockupV2 />
         </div>
