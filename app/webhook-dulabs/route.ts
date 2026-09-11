@@ -25,6 +25,7 @@ import {
   registrarMensaje as libRegistrarMensaje,
 } from "@/lib/whatsapp-outbound";
 import { descifrarSecreto } from "@/lib/crypto";
+import { esTelefonoBloqueado } from "@/lib/blacklist-du";
 import { getSurveyBot, getSession, saveSession } from "@/lib/survey-bot-store";
 import { handleMessage, questionPrompt } from "@/lib/survey-engine";
 import { interpretarRespuestaEncuesta, redactarPreguntaCalida, fraseEmpatica, type Sentimiento } from "@/lib/survey-agent-ia";
@@ -691,12 +692,11 @@ async function atenderMensaje(
   // Lista negra: estos números NUNCA reciben respuesta, sin importar nada
   // más -- se revisa antes que cualquier otro flujo (encuestas, campañas,
   // IA normal), a propósito. El mensaje queda igual registrado arriba.
-  if (cliente.ia_numeros_bloqueados) {
-    const bloqueados = cliente.ia_numeros_bloqueados.split(",").map((n) => n.trim()).filter(Boolean);
-    if (bloqueados.includes(telefonoRemitente)) {
-      console.log(`[webhook-dulabs] número en lista negra para "${cliente.nombre_negocio}", ignorando`);
-      return;
-    }
+  // Regla pura en lib/blacklist-du.ts (testeada sin tocar Supabase/Gemini/
+  // WhatsApp reales) -- nunca depende del prompt ni del Brain.
+  if (esTelefonoBloqueado(cliente.ia_numeros_bloqueados, telefonoRemitente)) {
+    console.log(`[webhook-dulabs] número en lista negra para "${cliente.nombre_negocio}", ignorando`);
+    return;
   }
 
   // Bot de encuestas: SOLO toma el turno si este contacto ya tiene una sesión
