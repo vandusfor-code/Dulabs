@@ -1217,19 +1217,17 @@ const MENSAJE_MIGRACION_AMORE =
 
 /**
  * AMORE — migración de número (autorizado, gate global exclusivo de este
- * phone_number_id). Se envía UNA sola vez por contacto (esPrimerContacto,
- * mismo mecanismo ya usado para la bienvenida de Soluciones Financieras) --
- * si la misma persona vuelve a escribir después, no se repite el aviso.
- * Nunca deja pasar el mensaje a ningún otro flujo (IA/Agenda V2/encuestas/
- * campañas): siempre devuelve true para este número, incluso en los
- * reintentos donde ya no es "primer contacto" -- el punto es que este
- * número YA NO debe responder nada más que esto.
+ * phone_number_id). Se envía SIEMPRE que alguien escriba (instrucción
+ * explícita: "siempre que alguien escriba debe de enviar esto"), sin
+ * importar si ya había escrito antes -- a diferencia de una bienvenida
+ * normal, el punto de este aviso es insistir en la migración mientras
+ * sigan escribiéndole al número viejo. Nunca deja pasar el mensaje a ningún
+ * otro flujo (IA/Agenda V2/encuestas/campañas): siempre devuelve true para
+ * este número.
  */
 async function atenderMensajeMigracionAmore(cliente: ClienteConfig, telefonoRemitente: string, destinoWhatsApp: string): Promise<boolean> {
   if (cliente.phone_number_id !== PHONE_NUMBER_ID_AMORE_MIGRACION) return false;
-  if (await esPrimerContacto(cliente.phone_number_id, telefonoRemitente)) {
-    await enviarWhatsAppPartes(cliente, destinoWhatsApp, MENSAJE_MIGRACION_AMORE);
-  }
+  await enviarWhatsAppPartes(cliente, destinoWhatsApp, MENSAJE_MIGRACION_AMORE);
   return true;
 }
 
