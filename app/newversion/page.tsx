@@ -18,24 +18,20 @@ import {
   FooterV2,
 } from "@/components/site-v2/SectionsV2";
 
-// Versión de revisión del rediseño (DuLabs V2), servida en /newversion.
-// NO debe indexarse ni reemplazar la home hasta autorización explícita de
-// migración. noindex/nofollow para que Google no la indexe antes de aprobar.
+// V2 pasó de Home principal a preview -- se promovió el diseño oscuro (con
+// la información comercial actual) a "/" en su lugar. Este archivo conserva
+// exactamente la misma V2 que estuvo en producción, sin ningún cambio de
+// contenido, solo de metadata (noindex/nofollow, ruta propia en el
+// breadcrumb) para que siga existiendo como revisión, no pública.
 export const metadata: Metadata = {
-  title: "DuLabs — Nueva versión (revisión)",
+  title: "DuLabs — V2 (revisión)",
   robots: { index: false, follow: false, googleBot: { index: false, follow: false } },
   alternates: { canonical: undefined },
 };
 
-export default function V2Home() {
+export default function V2HomePreview() {
   return (
     <div className="v2-scope relative min-h-screen">
-      {/* Organization + WebSite ya se publican una sola vez en el layout raíz
-          (app/layout.tsx) -- acá solo se agrega el Breadcrumb específico de
-          esta página, para no duplicar los schemas globales. El path queda
-          en "/newversion" mientras sigue siendo la vista de revisión; debe
-          actualizarse a "/" el día que se promueva (ver lista de cambios
-          pendientes del swap). */}
       <JsonLd data={breadcrumbSchema([{ name: "Inicio", path: "/newversion" }])} />
       <NavV2 />
       <main>
