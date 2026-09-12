@@ -116,6 +116,13 @@ const INTERNAL_ACTION_TYPES = new Set([
   // InternalActionExecutor vía el camino real (solo funcionaba en tests que
   // llaman al executor directo).
   "get_contact",
+  // FASE F8.1 (Flow Engine <-> WhatsApp Cloud API, autorizado) -- MISMO
+  // patrón de bug ya documentado arriba varias veces (F7 Bloque 2,
+  // etiquetar_conversacion): esta acción existe y funciona en
+  // InternalActionExecutor desde F8.1, pero por el mismo error recurrente
+  // casi se omite de nuevo acá. Registrada DESDE EL PRIMER COMMIT que la
+  // introduce, precisamente para no repetirlo una tercera vez.
+  "enviar_plantilla",
 ]);
 
 const INTERNAL_WEBHOOK_TAGS = new Set(["consultar_disponibilidad"]);
