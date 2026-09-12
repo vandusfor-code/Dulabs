@@ -99,6 +99,23 @@ const INTERNAL_ACTION_TYPES = new Set([
   // DESDE EL PRIMER COMMIT que las introduce.
   "buscar_disponibilidad_nylas",
   "crear_cita_nylas",
+  // FASE F7 Bloque 2 (autorizado) -- BUG REAL preexistente encontrado durante
+  // la validación E2E de F7.3 (autorizado): esta acción existe y funciona en
+  // InternalActionExecutor desde F7 Bloque 2, pero NUNCA se agregó acá --
+  // mismo síntoma exacto ya documentado arriba varias veces
+  // (SECURITY_REJECTED/"integration_required" en TODO dispatch real vía el
+  // orchestrator, invisible a los tests que llaman runFlowEngine/el executor
+  // directo). No es parte de F7.3 -- F7.3 solo lo descubrió al ejercitar por
+  // primera vez el camino real completo (AI -> propose_action ->
+  // EffectExecutorFramework -> IntegrationResolver -> InternalActionExecutor).
+  "etiquetar_conversacion",
+  // FASE F7.3 (Contacto + Tags + IA, autorizado) -- BUG NUEVO introducido por
+  // F7.3: registrada en FlowActionType/OPERATION_CLASS/SimpleActionConfig/
+  // schemas.ts/SAAS_ACTION_TYPES, pero se omitió acá por el mismo error ya
+  // documentado en este archivo. Sin esto, get_contact nunca podía llegar a
+  // InternalActionExecutor vía el camino real (solo funcionaba en tests que
+  // llaman al executor directo).
+  "get_contact",
 ]);
 
 const INTERNAL_WEBHOOK_TAGS = new Set(["consultar_disponibilidad"]);
