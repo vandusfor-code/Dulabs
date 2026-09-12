@@ -65,6 +65,11 @@ export function buildEffectDispatchRequest(input: {
     kind: input.effect.kind,
     payload: input.effect.context,
     action: input.effect.action,
+    // Fase 5 (Actions + Integrations, autorizado) -- integrationId vive en
+    // la config de la Action (ver ActionSemanticTag en lib/flow/types.ts),
+    // nunca en el propio EngineEffect: IntegrationResolver.resolve() ya lo
+    // exige para cualquier acción no interna.
+    integrationId: input.effect.action?.integrationId,
     ai: input.effect.ai,
     aiContext: {
       flowId: input.flowId,

@@ -273,6 +273,9 @@ const actionNodeConfigSchema = z.discriminatedUnion("actionType", [
     method: z.enum(["GET", "POST", "PUT", "PATCH"]).optional(),
     headers: z.record(z.string(), z.string()).optional(),
     bodyVariableKeys: z.array(z.string().trim().min(1)).optional(),
+    // Fase 5 (Actions + Integrations, autorizado).
+    integrationId: z.string().trim().min(1).optional(),
+    outputVariables: z.array(z.string().trim().min(1)).optional(),
   }),
   z.object({
     actionType: z.literal("enviar_plantilla"),

@@ -522,6 +522,66 @@ describe("Flow Engine — acciones, IA, humano", () => {
     assert.equal(r.state.status, "completed");
   });
 
+  it("16b. Fase 5 (autorizado) -- sin outputVariables, TODAS las claves de event.data se escriben (comportamiento preexistente, sin cambios)", () => {
+    const flow: FlowDefinition = {
+      name: "Effect sin outputVariables",
+      nodes: [
+        { id: "start", type: "start", config: { triggerType: "manual" } },
+        { id: "act", type: "action", config: { actionType: "agendar_cita_marketplace" } },
+        { id: "end", type: "end", config: {} },
+      ],
+      edges: [
+        { id: "e1", source: "start", target: "act" },
+        { id: "e2", source: "act", target: "end" },
+      ],
+      variables: [],
+    };
+    const state = runFlowEngine(flow, createFlowEngineState(flow), { type: "start" }).state;
+    const r = runFlowEngine(flow, state, {
+      type: "effect_result",
+      success: true,
+      effectId: state.pendingEffect!.effectId,
+      data: { citaId: "abc-123", interno_debug: "no debería filtrarse pero hoy sí, sin cambios" },
+    });
+    assert.equal(r.state.variables.citaId, "abc-123");
+    assert.equal(r.state.variables.interno_debug, "no debería filtrarse pero hoy sí, sin cambios");
+  });
+
+  it("16c. Fase 5 (autorizado) -- CON outputVariables, SOLO esas claves se escriben (whitelist explícita)", () => {
+    const flow: FlowDefinition = {
+      name: "Effect con outputVariables",
+      nodes: [
+        { id: "start", type: "start", config: { triggerType: "manual" } },
+        {
+          id: "act",
+          type: "action",
+          config: {
+            actionType: "webhook_http",
+            url: "https://api.ejemplo.com/x",
+            semanticTag: "notificar_externo",
+            integrationId: "int-1",
+            outputVariables: ["citaId"],
+          },
+        },
+        { id: "end", type: "end", config: {} },
+      ],
+      edges: [
+        { id: "e1", source: "start", target: "act" },
+        { id: "e2", source: "act", target: "end" },
+      ],
+      variables: [],
+    };
+    const state = runFlowEngine(flow, createFlowEngineState(flow), { type: "start" }).state;
+    const r = runFlowEngine(flow, state, {
+      type: "effect_result",
+      success: true,
+      effectId: state.pendingEffect!.effectId,
+      data: { citaId: "abc-123", campoNoWhitelisteado: "nunca debe llegar a variables" },
+    });
+    assert.equal(r.state.variables.citaId, "abc-123");
+    assert.equal(r.state.variables.campoNoWhitelisteado, undefined);
+  });
+
   it("17. EFFECT_RESULT fallido", () => {
     const flow: FlowDefinition = {
       name: "Effect fail",

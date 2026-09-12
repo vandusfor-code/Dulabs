@@ -226,6 +226,12 @@ export class IntegrationResolver {
         internal: false,
         integrationId: integration.id,
         capability: integration.capability,
+        // Fase 5 (Actions + Integrations, autorizado) -- snapshot de la
+        // integración ya aprobada, para que el executor externo nunca
+        // vuelva a leer dulabs_flow_integrations por su cuenta.
+        integrationUrl: integration.url,
+        integrationHttpMethod: integration.http_method as "GET" | "POST" | "PUT" | "PATCH",
+        integrationHeadersTemplate: integration.headers_template as Record<string, string>,
         credentials,
       },
     };

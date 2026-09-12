@@ -17,6 +17,32 @@ export interface ActionCapabilitySpec {
   requiresFailureBranch?: boolean;
 }
 
+/**
+ * Fase 5 (Actions + Integrations, autorizado) — whitelist de actionTypes
+ * que el SELECTOR del Builder puede ofrecer a un tenant SaaS cualquiera
+ * (sin lógica de cliente). El resto de actionTypes existentes
+ * (*_especialista, *_catalogo, *_nylas, resolver_escenario, etc.) siguen
+ * siendo válidos en runtime -- un Flow YA publicado con ellos sigue
+ * funcionando exactamente igual -- pero NUNCA aparecen en el selector como
+ * opción nueva, porque dependen de infraestructura específica de
+ * AMORE/Daniela/Solo Talento que un tenant SaaS nuevo no tiene.
+ */
+export const SAAS_ACTION_TYPES = [
+  "webhook_http",
+  "enviar_plantilla",
+  "etiquetar_conversacion",
+  "asignar_miembro",
+  "transferir_soporte",
+  "crear_lead_enterprise",
+  "crear_lead_campana",
+] as const satisfies readonly FlowActionType[];
+
+export type SaasActionType = (typeof SAAS_ACTION_TYPES)[number];
+
+export function isSaasActionType(actionType: string): actionType is SaasActionType {
+  return (SAAS_ACTION_TYPES as readonly string[]).includes(actionType);
+}
+
 /** Tags de webhook permitidos en publicación (mock estático; reemplazar por tenant registry). */
 export const WEBHOOK_SEMANTIC_ALLOWLIST = new Set<string>([
   "consultar_disponibilidad",

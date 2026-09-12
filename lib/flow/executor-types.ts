@@ -102,6 +102,16 @@ export interface EffectExecutionContext {
   capability?: string;
   /** Credenciales descifradas — NUNCA serializar fuera del boundary. */
   credentials?: Readonly<Record<string, string>>;
+  /**
+   * Fase 5 (Actions + Integrations, autorizado) — snapshot de la
+   * integración YA resuelta y aprobada (IntegrationResolver.resolve()),
+   * para que un executor externo (ej. HttpIntegrationExecutor) nunca
+   * necesite volver a consultar dulabs_flow_integrations por su cuenta.
+   * Ausente cuando internal=true.
+   */
+  integrationUrl?: string;
+  integrationHttpMethod?: "GET" | "POST" | "PUT" | "PATCH";
+  integrationHeadersTemplate?: Readonly<Record<string, string>>;
 }
 
 // ---------------------------------------------------------------------------

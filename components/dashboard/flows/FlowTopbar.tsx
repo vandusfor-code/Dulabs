@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Activity, ArrowLeft, Check, History, Loader2, Map, Play, Redo2, Search, ShieldAlert, Smartphone, TriangleAlert, Undo2 } from "lucide-react";
+import { Activity, ArrowLeft, Check, History, Loader2, Map, Play, Plug, Redo2, Search, ShieldAlert, Smartphone, TriangleAlert, Undo2 } from "lucide-react";
 import { Pill } from "@/components/dashboard/shell/ui";
 import type { FlowRecordStatus } from "@/lib/flow/flow-store-types";
 
@@ -156,6 +156,7 @@ export function FlowTopbar({
   onOpenExecutions,
   canActivate,
   onOpenActivation,
+  onOpenIntegrations,
 }: {
   flowName: string;
   status: FlowRecordStatus;
@@ -200,6 +201,8 @@ export function FlowTopbar({
   /** Fase 4 (Self-Service Flow Activation, autorizado) -- mismo rol estricto que Publicar (solo admin). */
   canActivate: boolean;
   onOpenActivation: () => void;
+  /** Fase 5 (Actions + Integrations, autorizado) -- mismo rol que canActivate (solo admin); gestiona dulabs_flow_integrations del tenant. */
+  onOpenIntegrations: () => void;
 }) {
   return (
     <header className="flex flex-wrap items-center gap-3 border-b border-edge bg-card px-5 py-3">
@@ -311,6 +314,15 @@ export function FlowTopbar({
           className="shrink-0 flex items-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-lime/40"
         >
           <Smartphone className="size-3.5" /> Activar en WhatsApp
+        </button>
+      )}
+      {canActivate && (
+        <button
+          type="button"
+          onClick={onOpenIntegrations}
+          className="shrink-0 flex items-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-lime/40"
+        >
+          <Plug className="size-3.5" /> Integraciones
         </button>
       )}
       {canSave && (

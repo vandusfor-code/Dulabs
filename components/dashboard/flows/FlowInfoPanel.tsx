@@ -27,6 +27,8 @@ import type {
 import { errorsForPath, type NodeFieldError } from "@/lib/flow-builder/validate-node-edit";
 import { orphanHandles } from "@/lib/flow-builder/connection-rules";
 import type { FlowValidationError } from "@/lib/flow/errors";
+import { SAAS_ACTION_TYPES, type SaasActionType } from "@/lib/flow/action-capabilities";
+import type { FlowIntegrationRow } from "@/lib/flow/flow-store-types";
 
 const TYPE_LABEL: Record<FlowNode["type"], string> = {
   start: "Inicio",
@@ -463,37 +465,143 @@ function SaveDataEditor({ node, onChange }: { node: SaveDataNode; onChange: OnCo
   );
 }
 
-function ActionEditor({ node, onChange }: { node: FlowNode & { type: "action" }; onChange: OnConfigChange }) {
+const SAAS_ACTION_LABEL: Record<SaasActionType, string> = {
+  webhook_http: "HTTP Request / Integración externa",
+  enviar_plantilla: "Enviar plantilla de WhatsApp",
+  etiquetar_conversacion: "Etiquetar conversación",
+  asignar_miembro: "Asignar a miembro del equipo",
+  transferir_soporte: "Transferir a humano",
+  crear_lead_enterprise: "Crear lead (empresarial)",
+  crear_lead_campana: "Crear lead (campaña)",
+};
+
+/** Config por defecto al CAMBIAR a este actionType desde el selector -- Fase 5 (autorizado). */
+function defaultConfigForSaasActionType(actionType: SaasActionType): ActionNodeConfig {
+  switch (actionType) {
+    case "webhook_http":
+      return { actionType, url: "", method: "POST", integrationId: undefined };
+    case "enviar_plantilla":
+      return { actionType, templateName: "" };
+    case "etiquetar_conversacion":
+      return { actionType, tagId: "" };
+    case "asignar_miembro":
+      return { actionType, memberId: "" };
+    case "transferir_soporte":
+      return { actionType, pauseDurationHours: 1 };
+    case "crear_lead_enterprise":
+    case "crear_lead_campana":
+      return { actionType };
+  }
+}
+
+/** Fase 5 (Actions + Integrations, autorizado) -- lista simple de nombres de variable, agregar/quitar. */
+function OutputVariablesEditor({ config, onChange }: { config: ActionNodeConfig; onChange: OnConfigChange }) {
+  const values = config.outputVariables ?? [];
+  return (
+    <div>
+      <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-mist">
+        Variables de salida <span className="font-normal normal-case text-mist/70">(vacío = usa todo el resultado)</span>
+      </p>
+      <div className="flex flex-col gap-1.5">
+        {values.map((name, i) => (
+          <div key={i} className="flex items-center gap-1.5">
+            <input
+              className={inputClass}
+              value={name}
+              onChange={(e) => {
+                const next = [...values];
+                next[i] = e.target.value;
+                onChange({ ...config, outputVariables: next } as ActionNodeConfig);
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => onChange({ ...config, outputVariables: values.filter((_, j) => j !== i) } as ActionNodeConfig)}
+              className="shrink-0 rounded p-1 text-mist hover:bg-red-500/10 hover:text-red-400"
+              title="Quitar"
+            >
+              <Trash2 className="size-3.5" />
+            </button>
+          </div>
+        ))}
+      </div>
+      <button
+        type="button"
+        onClick={() => onChange({ ...config, outputVariables: [...values, ""] } as ActionNodeConfig)}
+        className="mt-2 flex items-center gap-1 text-xs font-medium text-lime-text hover:opacity-80"
+      >
+        <Plus className="size-3.5" /> Agregar variable
+      </button>
+    </div>
+  );
+}
+
+function ActionEditor({
+  node,
+  onChange,
+  integrations,
+}: {
+  node: FlowNode & { type: "action" };
+  onChange: OnConfigChange;
+  /** Fase 5 (Actions + Integrations, autorizado) -- integraciones del tenant (todas, no solo aprobadas: se muestra el estado). */
+  integrations: FlowIntegrationRow[];
+}) {
   const config = node.config;
+  const isSaasType = SAAS_ACTION_TYPES.includes(config.actionType as SaasActionType);
+  const selectedIntegration = "integrationId" in config ? integrations.find((i) => i.id === config.integrationId) : undefined;
+
   return (
     <>
-      <ReadOnlyField label="Tipo de acción" value={config.actionType} hint="No editable en esta etapa." />
-      {"semanticTag" in config && (
-        <Field label="Tag semántico (opcional)">
-          <input
-            className={inputClass}
-            value={config.semanticTag ?? ""}
-            onChange={(e) => onChange({ ...config, semanticTag: e.target.value || undefined } as ActionNodeConfig)}
-          />
-        </Field>
-      )}
+      <Field label="Tipo de acción">
+        <select
+          className={inputClass}
+          value={config.actionType}
+          onChange={(e) => onChange(defaultConfigForSaasActionType(e.target.value as SaasActionType))}
+        >
+          {!isSaasType && (
+            <option value={config.actionType} disabled>
+              {config.actionType} (tipo interno, no seleccionable como nuevo)
+            </option>
+          )}
+          {SAAS_ACTION_TYPES.map((t) => (
+            <option key={t} value={t}>
+              {SAAS_ACTION_LABEL[t]}
+            </option>
+          ))}
+        </select>
+      </Field>
       {config.actionType === "webhook_http" && (
         <>
-          <Field label="URL">
-            <input className={inputClass} value={config.url} onChange={(e) => onChange({ ...config, url: e.target.value })} />
-          </Field>
-          <Field label="Método">
+          <Field label="Integración">
             <select
               className={inputClass}
-              value={config.method ?? "POST"}
-              onChange={(e) => onChange({ ...config, method: e.target.value as "GET" | "POST" | "PUT" | "PATCH" })}
+              value={config.integrationId ?? ""}
+              onChange={(e) => {
+                const integ = integrations.find((i) => i.id === e.target.value);
+                onChange({
+                  ...config,
+                  integrationId: e.target.value || undefined,
+                  semanticTag: integ?.capability,
+                  url: integ?.url ?? config.url,
+                  method: (integ?.http_method as "GET" | "POST" | "PUT" | "PATCH" | undefined) ?? config.method,
+                } as ActionNodeConfig);
+              }}
             >
-              <option value="GET">GET</option>
-              <option value="POST">POST</option>
-              <option value="PUT">PUT</option>
-              <option value="PATCH">PATCH</option>
+              <option value="">(ninguna seleccionada)</option>
+              {integrations.map((integ) => (
+                <option key={integ.id} value={integ.id}>
+                  {integ.display_name} {integ.status !== "approved" ? `(${integ.status})` : ""}
+                </option>
+              ))}
             </select>
           </Field>
+          {config.integrationId && selectedIntegration?.status !== "approved" && (
+            <p className="rounded-lg border border-amber-400/30 bg-amber-400/10 p-2 text-xs text-amber-400">
+              Esta integración todavía no está aprobada -- la Action fallará hasta que se apruebe.
+            </p>
+          )}
+          <ReadOnlyField label="URL (de la integración)" value={config.url || "(elige una integración)"} />
+          <ReadOnlyField label="Método (de la integración)" value={config.method ?? "POST"} />
         </>
       )}
       {config.actionType === "enviar_plantilla" && (
@@ -537,6 +645,7 @@ function ActionEditor({ node, onChange }: { node: FlowNode & { type: "action" };
           </div>
         </div>
       )}
+      {config.actionType === "webhook_http" && <OutputVariablesEditor config={config} onChange={onChange} />}
     </>
   );
 }
@@ -727,7 +836,17 @@ function TriggersSection({
   );
 }
 
-function ConfigEditor({ node, onChange, errors }: { node: FlowNode; onChange: OnConfigChange; errors: NodeFieldError[] }) {
+function ConfigEditor({
+  node,
+  onChange,
+  errors,
+  integrations,
+}: {
+  node: FlowNode;
+  onChange: OnConfigChange;
+  errors: NodeFieldError[];
+  integrations: FlowIntegrationRow[];
+}) {
   switch (node.type) {
     case "start":
       return <StartEditor node={node} onChange={onChange} />;
@@ -744,7 +863,7 @@ function ConfigEditor({ node, onChange, errors }: { node: FlowNode; onChange: On
     case "save_data":
       return <SaveDataEditor node={node} onChange={onChange} />;
     case "action":
-      return <ActionEditor node={node} onChange={onChange} />;
+      return <ActionEditor node={node} onChange={onChange} integrations={integrations} />;
     case "human":
       return <HumanEditor node={node} onChange={onChange} />;
     case "end":
@@ -770,6 +889,7 @@ export function FlowInfoPanel({
   onEditTrigger,
   onDeleteTrigger,
   onToggleTriggerEnabled,
+  integrations,
 }: {
   node: FlowNode | null;
   /** Necesario solo para OrphanHandlesNotice (qué edges salientes ya existen). */
@@ -785,6 +905,8 @@ export function FlowInfoPanel({
   onEditTrigger: (trigger: FlowTrigger) => void;
   onDeleteTrigger: (trigger: FlowTrigger) => void;
   onToggleTriggerEnabled: (trigger: FlowTrigger) => void;
+  /** Fase 5 (Actions + Integrations, autorizado) -- integraciones del tenant, para el selector de Action HTTP. */
+  integrations: FlowIntegrationRow[];
 }) {
   return (
     <aside className="w-80 shrink-0 overflow-y-auto border-l border-edge bg-card p-4">
@@ -816,7 +938,7 @@ export function FlowInfoPanel({
               onToggleEnabled={onToggleTriggerEnabled}
             />
           )}
-          <ConfigEditor node={node} onChange={onConfigChange} errors={errors} />
+          <ConfigEditor node={node} onChange={onConfigChange} errors={errors} integrations={integrations} />
         </div>
       )}
     </aside>

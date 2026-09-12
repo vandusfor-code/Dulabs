@@ -530,6 +530,10 @@ export async function createIntegration(
     criticality?: string;
     createdBy?: string;
     approve?: boolean;
+    // Fase 5 (Actions + Integrations, autorizado).
+    httpMethod?: string;
+    headersTemplate?: Record<string, string>;
+    description?: string;
   },
 ): Promise<FlowIntegrationRow> {
   const now = new Date().toISOString();
@@ -539,8 +543,11 @@ export async function createIntegration(
       tenant_id: input.tenantId,
       slug: input.slug,
       display_name: input.displayName,
+      description: input.description ?? null,
       capability: input.capability,
       url: input.url,
+      http_method: input.httpMethod ?? "POST",
+      headers_template: input.headersTemplate ?? {},
       criticality: input.criticality ?? "critical",
       status: input.approve ? "approved" : "pending",
       approved_at: input.approve ? now : null,
@@ -551,6 +558,107 @@ export async function createIntegration(
     .single();
   if (error) throw error;
   return data as FlowIntegrationRow;
+}
+
+/**
+ * Fase 5 (Actions + Integrations, autorizado) -- listado propio del tenant,
+ * SIN credenciales (esa tabla ni se toca acá). Mismo patrón que listFlows().
+ */
+export async function listIntegrations(
+  supabase: SupabaseClient,
+  input: { tenantId: string; status?: FlowIntegrationRow["status"] },
+): Promise<FlowIntegrationRow[]> {
+  let query = supabase
+    .from("dulabs_flow_integrations")
+    .select("*")
+    .eq("tenant_id", input.tenantId)
+    .order("created_at", { ascending: false });
+  if (input.status) query = query.eq("status", input.status);
+  const { data, error } = await query;
+  if (error) throw error;
+  return (data ?? []) as FlowIntegrationRow[];
+}
+
+/** Metadata editable de una integración YA creada -- nunca status (eso solo cambia vía approveIntegration/revokeIntegration). */
+export async function updateIntegration(
+  supabase: SupabaseClient,
+  input: {
+    tenantId: string;
+    integrationId: string;
+    displayName?: string;
+    description?: string;
+    url?: string;
+    httpMethod?: string;
+    headersTemplate?: Record<string, string>;
+  },
+): Promise<FlowIntegrationRow | null> {
+  const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  if (input.displayName !== undefined) patch.display_name = input.displayName;
+  if (input.description !== undefined) patch.description = input.description;
+  if (input.url !== undefined) patch.url = input.url;
+  if (input.httpMethod !== undefined) patch.http_method = input.httpMethod;
+  if (input.headersTemplate !== undefined) patch.headers_template = input.headersTemplate;
+
+  const { data, error } = await supabase
+    .from("dulabs_flow_integrations")
+    .update(patch)
+    .eq("tenant_id", input.tenantId)
+    .eq("id", input.integrationId)
+    .select("*")
+    .maybeSingle();
+  if (error) throw error;
+  return (data as FlowIntegrationRow | null) ?? null;
+}
+
+/** pending -> approved. Idempotente: aprobar una ya aprobada simplemente reconfirma approved_by/approved_at. */
+export async function approveIntegration(
+  supabase: SupabaseClient,
+  input: { tenantId: string; integrationId: string; approvedBy: string },
+): Promise<FlowIntegrationRow | null> {
+  const { data, error } = await supabase
+    .from("dulabs_flow_integrations")
+    .update({ status: "approved", approved_by: input.approvedBy, approved_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+    .eq("tenant_id", input.tenantId)
+    .eq("id", input.integrationId)
+    .select("*")
+    .maybeSingle();
+  if (error) throw error;
+  return (data as FlowIntegrationRow | null) ?? null;
+}
+
+/** approved -> revoked. Reversible (revokeIntegration/approveIntegration), nunca borra la fila ni sus credenciales. */
+export async function revokeIntegration(
+  supabase: SupabaseClient,
+  input: { tenantId: string; integrationId: string },
+): Promise<FlowIntegrationRow | null> {
+  const { data, error } = await supabase
+    .from("dulabs_flow_integrations")
+    .update({ status: "revoked", updated_at: new Date().toISOString() })
+    .eq("tenant_id", input.tenantId)
+    .eq("id", input.integrationId)
+    .select("*")
+    .maybeSingle();
+  if (error) throw error;
+  return (data as FlowIntegrationRow | null) ?? null;
+}
+
+/**
+ * Fase 5 (Actions + Integrations, autorizado) -- SOLO los credential_key
+ * configurados (ej. "Authorization", "X-Api-Key"), NUNCA encrypted_value ni
+ * el valor descifrado. Para que el Builder pueda mostrar "ya tienes
+ * configurado: Authorization" sin exponer el secreto.
+ */
+export async function listCredentialKeys(
+  supabase: SupabaseClient,
+  input: { tenantId: string; integrationId: string },
+): Promise<{ credentialKey: string; rotatedAt: string | null; updatedAt: string }[]> {
+  const { data, error } = await supabase
+    .from("dulabs_flow_credentials")
+    .select("credential_key, rotated_at, updated_at")
+    .eq("tenant_id", input.tenantId)
+    .eq("integration_id", input.integrationId);
+  if (error) throw error;
+  return (data ?? []).map((row) => ({ credentialKey: row.credential_key, rotatedAt: row.rotated_at, updatedAt: row.updated_at }));
 }
 
 export async function upsertCredential(

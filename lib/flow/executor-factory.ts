@@ -37,6 +37,10 @@ import {
   type InternalActionDeps,
 } from "@/lib/flow/executors/internal-action-executor";
 import { SendMessageExecutor, type SendMessageDeps } from "@/lib/flow/executors/send-message-executor";
+import {
+  createActionExecutorWithHttpIntegration,
+  type HttpIntegrationDeps,
+} from "@/lib/flow/executors/http-integration-executor";
 import type { EffectExecutor } from "@/lib/flow/executor-types";
 
 async function readPausaUntil(
@@ -70,6 +74,8 @@ export function createDefaultExecutorRegistry(
      * ClaudeExecutor sin ningún cambio.
      */
     aiExecutor: EffectExecutor;
+    /** Fase 5 (Actions + Integrations, autorizado) -- solo para tests (fetchImpl inyectable). */
+    httpIntegrationDeps: HttpIntegrationDeps;
   }>,
 ): ExecutorRegistry {
   const registry = new ExecutorRegistry();
@@ -94,7 +100,13 @@ export function createDefaultExecutorRegistry(
     ...overrides?.internalActionDeps,
   };
   const sendMessageDeps: SendMessageDeps = { supabase, ...overrides?.sendMessageDeps };
-  registry.register(new InternalActionExecutor(internalDeps));
+  // Fase 5 (Actions + Integrations, autorizado) -- InternalActionExecutor
+  // NUNCA se modifica; se envuelve tal cual dentro del router de
+  // composición, que solo intercepta el caso puntual de webhook_http
+  // externo (antes un callejón sin salida: "external_action_not_routed").
+  registry.register(
+    createActionExecutorWithHttpIntegration(new InternalActionExecutor(internalDeps), overrides?.httpIntegrationDeps),
+  );
   registry.register(new SendMessageExecutor(sendMessageDeps));
   registry.register(
     overrides?.aiExecutor ??

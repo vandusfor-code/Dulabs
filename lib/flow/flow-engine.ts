@@ -906,8 +906,22 @@ function handleEffectResult(
       }
     }
   } else if (node.type === "action" && event.data) {
-    for (const [key, value] of Object.entries(event.data)) {
-      variables[key] = value;
+    // Fase 5 (Actions + Integrations, autorizado) -- outputVariables es
+    // OPT-IN: si el autor del Flow lo configura, SOLO esas claves se
+    // escriben (mismo patrón que AiNodeConfig.outputVariables arriba). Si
+    // no lo configura (todas las Actions internas ya publicadas hoy,
+    // AMORE/Daniela/etc., que nunca tienen este campo), se conserva EXACTO
+    // el comportamiento preexistente: todas las claves del resultado se
+    // escriben tal cual -- cero cambio de comportamiento para ellas.
+    const outputVariables = "outputVariables" in node.config ? node.config.outputVariables : undefined;
+    if (outputVariables?.length) {
+      for (const key of outputVariables) {
+        if (event.data[key] !== undefined) variables[key] = event.data[key];
+      }
+    } else {
+      for (const [key, value] of Object.entries(event.data)) {
+        variables[key] = value;
+      }
     }
   }
 
