@@ -187,6 +187,41 @@ export interface FlowOrchestratorStore {
     toNodeId: string;
     sourceHandle?: string;
   }): Promise<void>;
+
+  // ---------------------------------------------------------------------
+  // FASE F7 (Contacts + Variables + Tags, autorizado) -- OPCIONALES a
+  // propósito, mismo criterio ya usado en toda esta interfaz para
+  // dependencias añadidas después de F1 (ver AiProviderRouterDeps/Fase 6):
+  // cualquier fake/store de test ya existente que implemente
+  // FlowOrchestratorStore sin estos 3 métodos sigue compilando y
+  // comportándose EXACTAMENTE igual (undefined = sin contacto/tags, el
+  // Orchestrator ya guarda con `?.()`). Solo
+  // createSupabaseFlowOrchestratorStore (producción real) los implementa.
+  // ---------------------------------------------------------------------
+
+  /**
+   * Resuelve (o crea, si es la primera vez) el contacto real de esta
+   * conversación y devuelve sus custom_fields -- para sembrarlos en
+   * state.variables al CREAR una ejecución nueva (mismo patrón que 'hoy').
+   */
+  resolveOrCreateContact?(
+    tenantId: string,
+    conversation: ConversationKey,
+  ): Promise<{ customFields: Record<string, unknown> }>;
+
+  /** Nombres de las etiquetas YA asignadas a esta conversación (para sembrar `tag:<nombre>`). */
+  getConversationTagNames?(tenantId: string, conversation: ConversationKey): Promise<string[]>;
+
+  /**
+   * Persiste (merge, nunca replace) custom_fields en el contacto real --
+   * usado tras save_data(target="custom_field") para que deje de ser un
+   * balde muerto (ver FlowExportBucket.custom_fields).
+   */
+  persistContactCustomFields?(
+    tenantId: string,
+    conversation: ConversationKey,
+    customFields: Record<string, unknown>,
+  ): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------

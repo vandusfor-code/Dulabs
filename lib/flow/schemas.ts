@@ -167,6 +167,7 @@ const actionNodeConfigSchema = z.discriminatedUnion("actionType", [
     actionType: z.literal("etiquetar_conversacion"),
     semanticTag: semanticTagSchema,
     tagId: z.string().trim().min(1),
+    operacion: z.enum(["agregar", "quitar"]).optional(),
   }),
   z.object({
     actionType: z.literal("asignar_miembro"),
