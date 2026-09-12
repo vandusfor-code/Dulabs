@@ -150,6 +150,31 @@ export async function resolverOCrearContacto(
   }
 }
 
+// FASE F7.3 (Contacto + Tags + IA, autorizado) — lectura PURA del contacto
+// actual (custom_fields), a diferencia de resolverOCrearContacto: nunca
+// inserta una fila. Existe para el tool "get_contact" del nodo AI (una
+// acción clasificada READ) -- no tiene sentido que una operación de solo
+// lectura tenga como efecto secundario crear un contacto que no existía.
+// Nunca lanza: mismo criterio que el resto del archivo, degrada a {} si el
+// contacto no existe o si la consulta falla.
+export async function leerContactoActual(
+  supabase: SupabaseClient,
+  params: { phoneNumberId: string; telefonoCliente: string }
+): Promise<{ customFields: Record<string, unknown> }> {
+  try {
+    const { data } = await supabase
+      .from("dulabs_clientes_conocidos")
+      .select("custom_fields")
+      .eq("phone_number_id", params.phoneNumberId)
+      .eq("telefono_cliente", params.telefonoCliente)
+      .maybeSingle();
+    return { customFields: (data?.custom_fields as Record<string, unknown> | null) ?? {} };
+  } catch (err) {
+    console.error("[clientes-conocidos] error leyendo contacto:", err instanceof Error ? err.message : err);
+    return { customFields: {} };
+  }
+}
+
 // FASE F7 (Contacts + Variables + Tags, autorizado) — persiste en el
 // contacto real los campos que save_data(target="custom_field") dejó en
 // state.exports.custom_fields (antes un balde muerto, ver flow-engine.ts::

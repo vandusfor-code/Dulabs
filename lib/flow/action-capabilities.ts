@@ -35,6 +35,9 @@ export const SAAS_ACTION_TYPES = [
   "transferir_soporte",
   "crear_lead_enterprise",
   "crear_lead_campana",
+  // FASE F7.3 (Contacto + Tags + IA, autorizado) -- genérico, sin lógica de
+  // ningún tenant particular (lee custom_fields/tags del contacto actual).
+  "get_contact",
 ] as const satisfies readonly FlowActionType[];
 
 export type SaasActionType = (typeof SAAS_ACTION_TYPES)[number];
@@ -84,6 +87,14 @@ const BY_ACTION_TYPE: Partial<Record<FlowActionType, ActionCapabilitySpec>> = {
   },
   etiquetar_conversacion: {
     actionType: "etiquetar_conversacion",
+    criticality: "standard",
+  },
+  // FASE F7.3 (Contacto + Tags + IA, autorizado) -- solo lectura del
+  // contacto de ESTA ejecución; no afirma ningún hecho externo nuevo (no
+  // declara verifiesOnSuccess), así que nunca puede usarse para colar una
+  // afirmación tipo "cita confirmada"/"lead creado" vía claim-security.
+  get_contact: {
+    actionType: "get_contact",
     criticality: "standard",
   },
   asignar_miembro: {

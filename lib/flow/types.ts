@@ -171,6 +171,22 @@ export type AiNodeMode = "classify" | "extract" | "respond" | "hybrid" | "propos
 /** Fase 6 (IA configurable, autorizado) — whitelist de proveedores soportados. */
 export type AiNodeProvider = "claude" | "gemini";
 
+/**
+ * FASE F7.3 (Contacto + Tags + IA, autorizado) — qué contexto adicional
+ * recibe el nodo AI, además de la instrucción/agente ya existentes. Todos
+ * opcionales y retrocompatibles: un AiNodeConfig sin `contextConfig` (TODO
+ * Flow publicado hoy) se comporta exactamente igual que antes de F7.3
+ * (variables del Flow sí, custom_fields/tags del contacto no).
+ */
+export interface AiContextConfig {
+  /** Default true (comportamiento preexistente) -- false oculta las variables del Flow del prompt. */
+  includeVariables?: boolean;
+  /** Default false -- expone contact.custom_fields (del contacto de ESTA ejecución) como DATA en el prompt. */
+  includeContactFields?: boolean;
+  /** Default false -- expone las tags ya asignadas a esta conversación como DATA en el prompt. */
+  includeContactTags?: boolean;
+}
+
 export interface AiNodeConfig {
   /** Referencia opcional a dulabs_agentes.id (perfil prompt existente). */
   agentId?: string;
@@ -193,6 +209,8 @@ export interface AiNodeConfig {
    * sourceHandle `class:{value}` o un edge `default`.
    */
   classifications?: string[];
+  /** FASE F7.3 (Contacto + Tags + IA, autorizado) -- ver AiContextConfig. */
+  contextConfig?: AiContextConfig;
 }
 
 // ---------------------------------------------------------------------------
@@ -261,7 +279,12 @@ export type FlowActionType =
   | "buscar_disponibilidad_nylas"
   | "crear_cita_nylas"
   | "webhook_http"
-  | "enviar_plantilla";
+  | "enviar_plantilla"
+  // FASE F7.3 (Contacto + Tags + IA, autorizado) -- lee SOLO el contacto de
+  // ESTA ejecución (tenant + phone_number_id + telefono_cliente de
+  // request.conversation, nunca elegido por la IA), ver
+  // lib/flow/executors/internal-action-executor.ts. Solo lectura.
+  | "get_contact";
 
 /** Params genéricos mapeados desde variables en runtime. */
 export type ActionParams = Record<string, string>;
@@ -309,8 +332,16 @@ export interface EnviarPlantillaActionConfig extends ActionSemanticTag {
 
 export interface EtiquetarConversacionActionConfig extends ActionSemanticTag {
   actionType: "etiquetar_conversacion";
-  /** dulabs_etiquetas.id (como string) -- el executor verifica que pertenezca al tenant. */
-  tagId: string;
+  /**
+   * dulabs_etiquetas.id (como string) -- el executor verifica que pertenezca
+   * al tenant. FASE F7.3 (autorizado): ahora OPCIONAL -- si se omite, el
+   * executor busca en su lugar `tagName` entre los argumentos que la IA
+   * propuso (nunca un id/tenant arbitrario, solo un NOMBRE resuelto contra
+   * las etiquetas del propio tenant, ver resolverEtiquetaPorNombre en
+   * lib/etiquetas.ts). Retrocompatible: todo Flow ya publicado siempre trae
+   * `tagId`, así que nunca entra a esa ruta nueva.
+   */
+  tagId?: string;
   /**
    * FASE F7 (Contacts + Variables + Tags, autorizado) -- opcional y
    * retrocompatible: se omite en todo Flow existente (nadie tenía un
@@ -353,7 +384,8 @@ export interface SimpleActionConfig extends ActionSemanticTag {
     | "listar_profesionales_servicio"
     | "resolver_escenario"
     | "buscar_disponibilidad_nylas"
-    | "crear_cita_nylas";
+    | "crear_cita_nylas"
+    | "get_contact";
   params?: ActionParams;
 }
 

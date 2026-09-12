@@ -9,6 +9,7 @@
  */
 import type { AiBudgetLimits } from "@/lib/flow/claude/claude-types";
 import type { ConversationKey } from "@/lib/flow/orchestrator-types";
+import type { LoadAiContactContext } from "@/lib/flow/ai-runtime/contact-context";
 
 export interface GeminiExecutorDeps {
   defaultModel?: string;
@@ -18,6 +19,8 @@ export interface GeminiExecutorDeps {
   loadConversationHistory?: (
     conversation: ConversationKey,
   ) => Promise<Array<{ role: "user" | "assistant"; content: string }>>;
+  /** FASE F7.3 (Contacto + Tags + IA, autorizado) -- ver lib/flow/ai-runtime/contact-context.ts. */
+  loadContactContext?: LoadAiContactContext;
   geminiClient?: GeminiGenerateContentClient;
 }
 

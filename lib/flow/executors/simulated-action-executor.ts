@@ -63,7 +63,12 @@ function defaultSummary(action: ActionNodeConfig): string {
     case "transferir_soporte":
       return "✓ Transferencia a soporte simulada (la conversación no se movió realmente)";
     case "etiquetar_conversacion":
-      return `✓ Etiqueta simulada — tagId=${action.tagId}`;
+      // FASE F7.3 (autorizado): tagId ahora es opcional (resolución dinámica
+      // por nombre vía IA, ver internal-action-executor.ts) -- el simulador
+      // solo describe la intención, nunca resuelve el nombre real.
+      return action.tagId
+        ? `✓ Etiqueta simulada — tagId=${action.tagId}`
+        : "✓ Etiqueta simulada — tag elegido dinámicamente por la IA (tagName)";
     case "asignar_miembro":
       return `✓ Asignación simulada — memberId=${action.memberId}`;
     default:

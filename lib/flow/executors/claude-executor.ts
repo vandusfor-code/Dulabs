@@ -10,6 +10,7 @@ import {
 } from "@/lib/flow/claude/anthropic-client";
 import { applyAiUsage, checkAiBudget } from "@/lib/flow/claude/claude-budget";
 import { buildAIExecutionContext, buildAIRequest } from "@/lib/flow/claude/claude-context-builder";
+import { applyContactContextFlags, shouldLoadContactContext } from "@/lib/flow/ai-runtime/contact-context";
 import { classifyAnthropicError } from "@/lib/flow/claude/claude-error-classifier";
 import { buildObservabilityMetadata, mapAiOutputToEngineData } from "@/lib/flow/claude/claude-engine-mapper";
 import { buildAiOutputToolSchema, parseAiOutputJson } from "@/lib/flow/claude/claude-output-schema";
@@ -89,6 +90,15 @@ export class ClaudeExecutor implements EffectExecutor {
 
     if (aiRequest.conversation && this.deps.loadConversationHistory) {
       aiRequest.conversationHistory = await this.deps.loadConversationHistory(aiRequest.conversation);
+    }
+
+    // FASE F7.3 (Contacto + Tags + IA, autorizado) -- solo si el nodo pidió
+    // explícitamente contexto de contacto/tags Y hay conversation real (nunca
+    // un tenantId/contactId propuesto por la IA). Ningún Flow existente
+    // configura `contextConfig`, así que esto nunca se ejecuta para ellos.
+    if (aiRequest.conversation && shouldLoadContactContext(ai) && this.deps.loadContactContext) {
+      const loaded = await this.deps.loadContactContext(aiRequest.conversation);
+      aiRequest.contact = applyContactContextFlags(ai, loaded);
     }
 
     const budgetCheck = checkAiBudget(aiRequest.budget, aiRequest.budgetLimits);
