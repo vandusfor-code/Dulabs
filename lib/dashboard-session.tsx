@@ -35,6 +35,9 @@ export type Negocio = {
   forward_to_dumo: boolean;
   enviados_30d: number;
   enviados_hoy: number;
+  /** Fase 4 (Self-Service Flow Activation, autorizado) -- qué Flow (si alguno) atiende hoy este número. */
+  flow_activo: boolean;
+  flow_id: string | null;
 };
 
 export type Suscripcion = {

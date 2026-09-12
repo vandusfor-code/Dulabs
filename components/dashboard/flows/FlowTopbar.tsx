@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Activity, ArrowLeft, Check, History, Loader2, Map, Play, Redo2, Search, ShieldAlert, TriangleAlert, Undo2 } from "lucide-react";
+import { Activity, ArrowLeft, Check, History, Loader2, Map, Play, Redo2, Search, ShieldAlert, Smartphone, TriangleAlert, Undo2 } from "lucide-react";
 import { Pill } from "@/components/dashboard/shell/ui";
 import type { FlowRecordStatus } from "@/lib/flow/flow-store-types";
 
@@ -154,6 +154,8 @@ export function FlowTopbar({
   simulateDisabledReason,
   canViewExecutions,
   onOpenExecutions,
+  canActivate,
+  onOpenActivation,
 }: {
   flowName: string;
   status: FlowRecordStatus;
@@ -195,6 +197,9 @@ export function FlowTopbar({
   /** Fase 2 (Execution Inspector, autorizado) -- mismo rol que Validar/Probar (admin + agente), es 100% de solo lectura. */
   canViewExecutions: boolean;
   onOpenExecutions: () => void;
+  /** Fase 4 (Self-Service Flow Activation, autorizado) -- mismo rol estricto que Publicar (solo admin). */
+  canActivate: boolean;
+  onOpenActivation: () => void;
 }) {
   return (
     <header className="flex flex-wrap items-center gap-3 border-b border-edge bg-card px-5 py-3">
@@ -297,6 +302,15 @@ export function FlowTopbar({
           className="shrink-0 flex items-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-lime/40"
         >
           <Activity className="size-3.5" /> Ejecuciones
+        </button>
+      )}
+      {canActivate && (
+        <button
+          type="button"
+          onClick={onOpenActivation}
+          className="shrink-0 flex items-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-lime/40"
+        >
+          <Smartphone className="size-3.5" /> Activar en WhatsApp
         </button>
       )}
       {canSave && (

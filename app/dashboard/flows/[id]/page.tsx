@@ -26,7 +26,7 @@ import { ensureInitialVersion } from "@/lib/flow-builder/create-flow";
 import { buildFlowLoadResult, findNodeById, type FlowLoadResult } from "@/lib/flow-builder/load-flow";
 import { createTrigger, deleteTrigger, listTriggers, updateTrigger } from "@/lib/flow-builder/triggers";
 import { createDefaultNode, generateEdgeId } from "@/lib/flow-builder/node-factory";
-import { canPublishFlow, canPublishNow, canSaveFlow, canValidateFlow, publishDisabledReason } from "@/lib/flow-builder/permissions";
+import { canActivateFlow, canPublishFlow, canPublishNow, canSaveFlow, canValidateFlow, publishDisabledReason } from "@/lib/flow-builder/permissions";
 import { fetchFlowVersions, publishFlowVersion } from "@/lib/flow-builder/publish-flow";
 import { saveFlowVersion, validateFlowDefinition } from "@/lib/flow-builder/save-flow";
 import { searchNodes } from "@/lib/flow-builder/search-nodes";
@@ -43,6 +43,7 @@ import { FlowContextMenu, type FlowContextMenuState } from "@/components/dashboa
 import { FlowInfoPanel } from "@/components/dashboard/flows/FlowInfoPanel";
 import { FlowNodePalette } from "@/components/dashboard/flows/FlowNodePalette";
 import { FlowQuickAddMenu } from "@/components/dashboard/flows/FlowQuickAddMenu";
+import { FlowActivationPanel } from "@/components/dashboard/flows/FlowActivationPanel";
 import { FlowExecutionsPanel } from "@/components/dashboard/flows/FlowExecutionsPanel";
 import { FlowSearchBar } from "@/components/dashboard/flows/FlowSearchBar";
 import { FlowSimulatorPanel } from "@/components/dashboard/flows/FlowSimulatorPanel";
@@ -114,6 +115,12 @@ export default function FlowBuilderPage() {
   // independientes del canvas sin interferirse).
   const [executionsOpen, setExecutionsOpen] = useState(false);
   const [executionPath, setExecutionPath] = useState<{ nodeIds: ReadonlySet<string>; edgeIds: ReadonlySet<string> } | null>(null);
+
+  // --- Fase 4 (Self-Service Flow Activation, autorizado) -- mismo criterio:
+  // estado puramente de UI (si el panel está abierto), nunca persiste nada
+  // acá -- toda la escritura real vive en POST /api/flows/[id]/activate y
+  // /deactivate, ver FlowActivationPanel.
+  const [activationOpen, setActivationOpen] = useState(false);
 
   // --- Etapa 4 (autorizado): Guardar y Validar -----------------------------
   // Dos ejes de estado INDEPENDIENTES (decisión aprobada #3): saving/validating
@@ -792,6 +799,10 @@ export default function FlowBuilderPage() {
   const canPublish = canPublishFlow(rol);
   const publishReadyReason = publishDisabledReason(builderState, rol);
   const publishStatus: PublishStatus = publishing ? "publishing" : publishRequestError ? "error" : justPublished ? "published" : "idle";
+  // Fase 4 (Self-Service Flow Activation, autorizado) -- mismo rol estricto
+  // que Publicar; el botón se muestra siempre que el rol lo permita (el
+  // panel explica adentro si el Flow todavía no está publicado).
+  const canActivate = canActivateFlow(rol);
 
   if (result.kind !== "loaded" || !builderState || !editorState) {
     // "no_versions" tiene 3 sub-estados reales, nunca un detalle técnico:
@@ -897,6 +908,8 @@ export default function FlowBuilderPage() {
         simulateDisabledReason={simulateReadyReason}
         canViewExecutions={canValidate}
         onOpenExecutions={() => setExecutionsOpen(true)}
+        canActivate={canActivate}
+        onOpenActivation={() => setActivationOpen(true)}
       />
       {showNewerDraftBanner && (
         <div className="flex items-center justify-between gap-3 border-b border-edge bg-amber-400/10 px-5 py-2 text-xs text-amber-400">
@@ -1038,6 +1051,15 @@ export default function FlowBuilderPage() {
           accessToken={session.access_token}
           onPathChange={setExecutionPath}
           onCenterNode={selectNodeAndCenter}
+        />
+      )}
+      {session && (
+        <FlowActivationPanel
+          open={activationOpen}
+          onClose={() => setActivationOpen(false)}
+          flowId={flowId}
+          flowName={flow.name}
+          flowStatus={flow.status}
         />
       )}
     </div>

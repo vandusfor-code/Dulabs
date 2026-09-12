@@ -26,7 +26,7 @@ function formatFecha(iso: string): string {
  * (PageHeader + Pill + tabla con fila-a-detalle).
  */
 export default function FlowsListPage() {
-  const { session, rol } = useDashboard();
+  const { session, rol, negocios } = useDashboard();
   const { t } = useI18n();
   const router = useRouter();
   const [flows, setFlows] = useState<FlowRow[] | null>(null);
@@ -169,13 +169,19 @@ export default function FlowsListPage() {
                 <tr>
                   <th className="px-5 py-3 font-medium">{t("Nombre", "Name")}</th>
                   <th className="hidden px-3 py-3 font-medium sm:table-cell">{t("Estado", "Status")}</th>
+                  <th className="hidden px-3 py-3 font-medium lg:table-cell">{t("Activo en", "Active on")}</th>
                   <th className="hidden px-3 py-3 font-medium md:table-cell">{t("Actualizado", "Updated")}</th>
                   <th className="px-5 py-3 font-medium" />
                 </tr>
               </thead>
               <tbody>
                 {flows.map((flow) => (
-                  <FilaFlow key={flow.id} flow={flow} t={t} />
+                  <FilaFlow
+                    key={flow.id}
+                    flow={flow}
+                    t={t}
+                    numerosActivos={(negocios ?? []).filter((n) => n.flow_activo && n.flow_id === flow.id)}
+                  />
                 ))}
               </tbody>
             </table>
@@ -187,7 +193,16 @@ export default function FlowsListPage() {
   );
 }
 
-function FilaFlow({ flow, t }: { flow: FlowRow; t: (es: string, en: string) => string }) {
+function FilaFlow({
+  flow,
+  t,
+  numerosActivos,
+}: {
+  flow: FlowRow;
+  t: (es: string, en: string) => string;
+  /** Fase 4 (Self-Service Flow Activation, autorizado) -- negocios con flow_activo=true y flow_id===flow.id. */
+  numerosActivos: { phone_number_id: string; nombre_negocio: string }[];
+}) {
   const publicado = Boolean(flow.published_version_id);
   return (
     <tr className="border-t border-edge transition-colors hover:bg-card/50">
@@ -208,6 +223,19 @@ function FilaFlow({ flow, t }: { flow: FlowRow; t: (es: string, en: string) => s
               ? t("Publicado", "Published")
               : t("Borrador", "Draft")}
         </Pill>
+      </td>
+      <td className="hidden px-3 py-4 lg:table-cell">
+        {numerosActivos.length === 0 ? (
+          <span className="text-sm text-mist">{t("Ningún número", "No number")}</span>
+        ) : (
+          <div className="flex flex-col gap-1">
+            {numerosActivos.map((n) => (
+              <Pill key={n.phone_number_id} tone="success">
+                {n.nombre_negocio}
+              </Pill>
+            ))}
+          </div>
+        )}
       </td>
       <td className="hidden px-3 py-4 text-sm text-mist md:table-cell">{formatFecha(flow.updated_at)}</td>
       <td className="px-5 py-4 text-right">
