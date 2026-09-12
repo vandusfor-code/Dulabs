@@ -258,6 +258,26 @@ export type ActionParams = Record<string, string>;
 /** Tag semántico opcional para identificar el contrato de una acción (webhooks). */
 export interface ActionSemanticTag {
   semanticTag?: string;
+  /**
+   * Fase 5 (Actions + Integrations, autorizado) — referencia a
+   * dulabs_flow_integrations.id (IntegrationResolver ya exige que
+   * pertenezca al mismo tenant y esté "approved"). Solo aplica a acciones
+   * que requieren una integración externa (hoy, únicamente webhook_http);
+   * el resto de actionTypes (internos, ya resueltos como
+   * context.internal=true) la ignoran por completo.
+   */
+  integrationId?: string;
+  /**
+   * Fase 5 (Actions + Integrations, autorizado) — mismo mecanismo que
+   * AiNodeConfig.outputVariables (ver flow-engine.ts::handleEffectResult):
+   * si se especifica, SOLO estas claves del resultado de la Action se
+   * escriben en state.variables. Si se omite, se conserva el
+   * comportamiento preexistente (todas las claves del resultado se
+   * escriben tal cual) -- así ninguna Action interna ya publicada
+   * (AMORE/Daniela/etc., que nunca configuran este campo) cambia de
+   * comportamiento.
+   */
+  outputVariables?: string[];
 }
 
 export interface WebhookHttpActionConfig extends ActionSemanticTag {

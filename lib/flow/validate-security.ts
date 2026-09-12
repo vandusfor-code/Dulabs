@@ -424,7 +424,14 @@ function isPrivateOrLocalHost(hostname: string): boolean {
   return false;
 }
 
-function validateWebhookUrl(url: string): string | null {
+/**
+ * Fase 5 (Actions + Integrations, autorizado) — exportada para reutilizarse
+ * OBLIGATORIAMENTE fuera de este archivo (API de integraciones + el nuevo
+ * HttpIntegrationExecutor, ver lib/flow/executors/http-integration-executor.ts),
+ * sin duplicar la lógica SSRF en un segundo lugar. Comportamiento sin
+ * ningún cambio: HTTPS obligatorio, localhost/IP privada rechazados.
+ */
+export function validateWebhookUrl(url: string): string | null {
   let parsed: URL;
   try {
     parsed = new URL(url);
@@ -466,13 +473,27 @@ function validateWebhooks(flow: FlowDefinition): FlowValidationError[] {
     }
 
     if (!isWebhookSemanticTagAllowed(config.semanticTag)) {
-      errors.push(
-        flowValidationError(
-          FLOW_VALIDATION_CODES.WEBHOOK_NOT_ALLOWLISTED,
-          `semanticTag "${config.semanticTag}" no está en la allowlist de publicación`,
-          { nodeId: node.id },
-        ),
-      );
+      // Fase 5 (Actions + Integrations, autorizado) — un semanticTag fuera
+      // de la allowlist ESTÁTICA (las 3 internas preexistentes:
+      // consultar_disponibilidad/reservar_cita/consultar_pago) es válido
+      // SI referencia una integración propia del tenant (integrationId).
+      // Esta función es pura (sin acceso a Supabase): la verificación REAL
+      // de que esa integración exista/pertenezca al tenant/esté aprobada/
+      // coincida en capability ya la hace IntegrationResolver en runtime
+      // (fail-closed) -- acá solo se exige que el campo esté presente, para
+      // no dejar publicar un Flow que fallaría siempre con
+      // "integration_required". Ver comentario histórico sobre
+      // WEBHOOK_SEMANTIC_ALLOWLIST en action-capabilities.ts.
+      const integrationId = "integrationId" in config ? config.integrationId : undefined;
+      if (!integrationId?.trim()) {
+        errors.push(
+          flowValidationError(
+            FLOW_VALIDATION_CODES.WEBHOOK_INTEGRATION_REQUIRED,
+            `semanticTag "${config.semanticTag}" no está en la allowlist interna -- requiere 'integrationId' de una integración propia del tenant`,
+            { nodeId: node.id },
+          ),
+        );
+      }
     }
   }
 

@@ -44,6 +44,9 @@ import { FlowInfoPanel } from "@/components/dashboard/flows/FlowInfoPanel";
 import { FlowNodePalette } from "@/components/dashboard/flows/FlowNodePalette";
 import { FlowQuickAddMenu } from "@/components/dashboard/flows/FlowQuickAddMenu";
 import { FlowActivationPanel } from "@/components/dashboard/flows/FlowActivationPanel";
+import { IntegrationsPanel } from "@/components/dashboard/flows/IntegrationsPanel";
+import { listIntegrations } from "@/lib/flow-builder/integrations-client";
+import type { FlowIntegrationRow } from "@/lib/flow/flow-store-types";
 import { FlowExecutionsPanel } from "@/components/dashboard/flows/FlowExecutionsPanel";
 import { FlowSearchBar } from "@/components/dashboard/flows/FlowSearchBar";
 import { FlowSimulatorPanel } from "@/components/dashboard/flows/FlowSimulatorPanel";
@@ -121,6 +124,13 @@ export default function FlowBuilderPage() {
   // acá -- toda la escritura real vive en POST /api/flows/[id]/activate y
   // /deactivate, ver FlowActivationPanel.
   const [activationOpen, setActivationOpen] = useState(false);
+
+  // --- Fase 5 (Actions + Integrations, autorizado) -- integraciones del
+  // tenant, cargadas una vez para alimentar el selector de Action HTTP en
+  // FlowInfoPanel; integrationsPanelOpen es puramente de UI (el panel de
+  // gestión), igual que el resto de paneles de esta página.
+  const [integrations, setIntegrations] = useState<FlowIntegrationRow[]>([]);
+  const [integrationsPanelOpen, setIntegrationsPanelOpen] = useState(false);
 
   // --- Etapa 4 (autorizado): Guardar y Validar -----------------------------
   // Dos ejes de estado INDEPENDIENTES (decisión aprobada #3): saving/validating
@@ -242,6 +252,20 @@ export default function FlowBuilderPage() {
     bootstrapAttemptedRef.current = true;
     void intentarPrepararFlow();
   }, [result, rol, intentarPrepararFlow]);
+
+  // Fase 5 (Actions + Integrations, autorizado) -- carga las integraciones
+  // del tenant para el selector de Action HTTP; se recarga al cerrar el
+  // panel de gestión (por si se creó/aprobó una nueva).
+  const cargarIntegraciones = useCallback(() => {
+    if (!session) return;
+    listIntegrations({ accessToken: session.access_token }).then((resultado) => {
+      if (resultado.ok) setIntegrations(resultado.integrations);
+    });
+  }, [session]);
+
+  useEffect(() => {
+    cargarIntegraciones();
+  }, [cargarIntegraciones]);
 
   // Advierte antes de cerrar/recargar la pestaña si hay cambios locales sin
   // guardar -- no hay forma de interceptar la navegación interna de Next sin
@@ -910,6 +934,7 @@ export default function FlowBuilderPage() {
         onOpenExecutions={() => setExecutionsOpen(true)}
         canActivate={canActivate}
         onOpenActivation={() => setActivationOpen(true)}
+        onOpenIntegrations={() => setIntegrationsPanelOpen(true)}
       />
       {showNewerDraftBanner && (
         <div className="flex items-center justify-between gap-3 border-b border-edge bg-amber-400/10 px-5 py-2 text-xs text-amber-400">
@@ -999,6 +1024,7 @@ export default function FlowBuilderPage() {
           onEditTrigger={handleEditTrigger}
           onDeleteTrigger={handleDeleteTrigger}
           onToggleTriggerEnabled={handleToggleTriggerEnabled}
+          integrations={integrations}
         />
       </div>
       <TriggerModal
@@ -1060,6 +1086,16 @@ export default function FlowBuilderPage() {
           flowId={flowId}
           flowName={flow.name}
           flowStatus={flow.status}
+        />
+      )}
+      {session && (
+        <IntegrationsPanel
+          open={integrationsPanelOpen}
+          onClose={() => {
+            setIntegrationsPanelOpen(false);
+            void cargarIntegraciones();
+          }}
+          accessToken={session.access_token}
         />
       )}
     </div>

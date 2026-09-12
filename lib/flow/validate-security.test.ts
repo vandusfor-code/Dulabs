@@ -407,6 +407,41 @@ describe("validate-security — publicación", () => {
     assertSecurityValid(flow);
   });
 
+  it("12b. Fase 5 (autorizado) -- semanticTag NO allowlisted + integrationId presente → válido (integración propia del tenant)", () => {
+    const flow = baseFlow({
+      nodes: [
+        { id: "start", type: "start", config: { triggerType: "manual" } },
+        {
+          id: "wh",
+          type: "action",
+          config: {
+            actionType: "webhook_http",
+            semanticTag: "tag_de_integracion_propia_del_tenant",
+            url: "https://api.example.com/hook",
+            integrationId: "int-tenant-propio",
+          },
+        },
+        { id: "end", type: "end", config: {} },
+        { id: "fail", type: "message", config: { text: "x" } },
+      ],
+      edges: [{ id: "e1", source: "start", target: "wh" }, ...withFailureAndSuccess("wh", "end", "fail")],
+    });
+    assertSecurityValid(flow);
+  });
+
+  it("12c. Fase 5 (autorizado) -- semanticTag NO allowlisted SIN integrationId → inválido (WEBHOOK_INTEGRATION_REQUIRED)", () => {
+    const flow = baseFlow({
+      nodes: [
+        { id: "start", type: "start", config: { triggerType: "manual" } },
+        webhookAction("wh", "tag_de_integracion_propia_del_tenant"),
+        { id: "end", type: "end", config: {} },
+        { id: "fail", type: "message", config: { text: "x" } },
+      ],
+      edges: [{ id: "e1", source: "start", target: "wh" }, ...withFailureAndSuccess("wh", "end", "fail")],
+    });
+    assertSecurityInvalid(flow, FLOW_VALIDATION_CODES.WEBHOOK_INTEGRATION_REQUIRED);
+  });
+
   it("13. critical action sin failure → inválido", () => {
     const flow = baseFlow({
       nodes: [
