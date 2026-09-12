@@ -63,6 +63,15 @@ import {
   resolveNylasApiKeyFromEnv,
 } from "@/lib/nylas/nylas-client";
 import { fechaColombiaDesdeIso, horaColombiaDesdeIso } from "@/lib/timezone-colombia";
+// FASE F8.1 (Flow Engine <-> WhatsApp Cloud API, autorizado) -- reutiliza TAL
+// CUAL las mismas piezas que ya usa SendMessageExecutor/el webhook LEGACY
+// para enviar plantillas reales: nunca se reimplementa la llamada a la Graph
+// API de Meta ni el cifrado/descifrado del token.
+import { enviarPlantilla } from "@/lib/meta-templates";
+import { resolverTokenMeta, incrementarUsoMensajes, registrarMensaje } from "@/lib/whatsapp-outbound";
+import { resolverPlantillaAprobadaDelTenant } from "@/lib/plantillas";
+import { interpolateTemplate } from "@/lib/flow/message-interpolation";
+import { resolverClienteDefault } from "@/lib/flow/executors/send-message-executor";
 import {
   EFFECT_RESULT_CLASSIFICATIONS,
   type EffectDispatchRequest,
@@ -153,6 +162,17 @@ export interface InternalActionDeps {
   leerContactoActual?: typeof leerContactoActual;
   listarEtiquetasDeConversacion?: typeof listarEtiquetasDeConversacion;
   resolverEtiquetaPorNombre?: typeof resolverEtiquetaPorNombre;
+  // FASE F8.1 (Flow Engine <-> WhatsApp Cloud API, autorizado) -- mismo
+  // criterio de arriba (opcionales, reales por default; solo se inyectan
+  // mocks en tests). `resolverClienteWhatsapp` reutiliza TAL CUAL
+  // resolverClienteDefault de SendMessageExecutor (ver import arriba) --
+  // ambos executors resuelven la config de un número de la misma función.
+  resolverClienteWhatsapp?: typeof resolverClienteDefault;
+  resolverPlantillaAprobadaDelTenant?: typeof resolverPlantillaAprobadaDelTenant;
+  resolverTokenMeta?: typeof resolverTokenMeta;
+  enviarPlantilla?: typeof enviarPlantilla;
+  incrementarUsoMensajes?: typeof incrementarUsoMensajes;
+  registrarMensaje?: typeof registrarMensaje;
 }
 
 const OPERATION_CLASS: Partial<Record<string, InternalActionOperationClass>> = {
@@ -184,6 +204,10 @@ const OPERATION_CLASS: Partial<Record<string, InternalActionOperationClass>> = {
   crear_cita_nylas: "CRITICAL",
   // FASE F7.3 (Contacto + Tags + IA, autorizado) -- solo lectura.
   get_contact: "READ",
+  // FASE F8.1 (Flow Engine <-> WhatsApp Cloud API, autorizado) -- envía un
+  // mensaje real e irreversible a la clienta, mismo nivel que
+  // agendar_cita_marketplace/crear_cita_nylas.
+  enviar_plantilla: "CRITICAL",
 };
 
 /**
@@ -361,6 +385,8 @@ export class InternalActionExecutor implements EffectExecutor {
         return this.crearCitaNylasAction(request, signal);
       case "get_contact":
         return this.getContactAction(request, signal);
+      case "enviar_plantilla":
+        return this.enviarPlantillaAction(request, action, signal);
       default:
         return {
           success: false,
@@ -872,6 +898,167 @@ export class InternalActionExecutor implements EffectExecutor {
       appliedResult: data,
       rawResult: data,
       metadata: { operationClass: OPERATION_CLASS.get_contact },
+    };
+  }
+
+  /**
+   * FASE F8.1 (Flow Engine <-> WhatsApp Cloud API, autorizado) -- envía una
+   * plantilla real de WhatsApp aprobada por Meta. Reutiliza TAL CUAL las
+   * mismas piezas que ya usa SendMessageExecutor/el webhook LEGACY
+   * (resolverTokenMeta, enviarPlantilla, incrementarUsoMensajes,
+   * registrarMensaje) -- no se reimplementa ninguna llamada a la Graph API
+   * de Meta ni el cifrado/descifrado del token.
+   *
+   * Seguridad: `phoneNumberId`/`token`/`tenantId` se derivan EXCLUSIVAMENTE
+   * de request.conversation/request.tenantId (motor), nunca de un argumento
+   * propuesto por la IA -- este método no lee ningún campo de
+   * request.payload para decidir a quién ni desde qué número enviar. El
+   * nombre de la plantilla es estático (config del nodo, puesto por quien
+   * construye el Flow), y se resuelve contra dulabs_plantillas ACOTADO al
+   * propio tenant (resolverPlantillaAprobadaDelTenant) -- igual que
+   * resolverEtiquetaPorNombre para tags en F7.3.
+   */
+  private async enviarPlantillaAction(
+    request: EffectDispatchRequest,
+    action: ActionNodeConfig,
+    signal?: AbortSignal,
+  ): Promise<EffectDispatchResult> {
+    if (action.actionType !== "enviar_plantilla") {
+      return {
+        success: false,
+        classification: EFFECT_RESULT_CLASSIFICATIONS.VALIDATION_ERROR,
+        error: "invalid_action_config",
+      };
+    }
+
+    const conversation = request.conversation;
+    if (!conversation) {
+      return {
+        success: false,
+        classification: EFFECT_RESULT_CLASSIFICATIONS.VALIDATION_ERROR,
+        error: "conversation_required",
+      };
+    }
+
+    const templateName = action.templateName?.trim();
+    if (!templateName) {
+      return {
+        success: false,
+        classification: EFFECT_RESULT_CLASSIFICATIONS.VALIDATION_ERROR,
+        error: "invalid_template_name",
+      };
+    }
+
+    assertNotAborted(signal);
+    const phoneOwned = await this.deps.authorizer.assertPhoneNumberOwnedByTenant(
+      request.tenantId,
+      conversation.phoneNumberId,
+    );
+    if (!phoneOwned) return this.tenantRejected();
+    assertNotAborted(signal);
+
+    const resolverCliente = this.deps.resolverClienteWhatsapp ?? resolverClienteDefault;
+    const cliente = await resolverCliente(this.deps.supabase, conversation.phoneNumberId);
+    if (!cliente) {
+      return {
+        success: false,
+        classification: EFFECT_RESULT_CLASSIFICATIONS.NON_RETRYABLE,
+        error: "cliente_config_not_found",
+      };
+    }
+    // Defensa en profundidad (mismo criterio que SendMessageExecutor): el
+    // authorizer ya validó ownership arriba, esto cubre además el caso de
+    // que la fila resuelta por phone_number_id pertenezca a otro tenant.
+    if (cliente.id_tenant !== request.tenantId) {
+      return this.tenantRejected();
+    }
+
+    const resolverToken = this.deps.resolverTokenMeta ?? resolverTokenMeta;
+    const token = resolverToken(cliente);
+    if (!token) {
+      return {
+        success: false,
+        classification: EFFECT_RESULT_CLASSIFICATIONS.AUTH_ERROR,
+        error: "meta_token_unavailable",
+      };
+    }
+
+    const resolverPlantilla = this.deps.resolverPlantillaAprobadaDelTenant ?? resolverPlantillaAprobadaDelTenant;
+    const plantilla = await resolverPlantilla(this.deps.supabase, request.tenantId, templateName);
+    assertNotAborted(signal);
+    if (!plantilla) {
+      return {
+        success: false,
+        classification: EFFECT_RESULT_CLASSIFICATIONS.VALIDATION_ERROR,
+        error: "plantilla_no_encontrada_o_no_aprobada",
+      };
+    }
+
+    // Variables NOMBRADAS del contrato existente (EnviarPlantillaActionConfig.variables:
+    // Record<string,string>) -- cada valor se interpola contra las variables
+    // de ESTA ejecución (mismo mecanismo genérico ya usado por los nodos
+    // message, lib/flow/message-interpolation.ts), nunca datos arbitrarios
+    // del modelo: si un valor no trae "{{...}}" queda tal cual (literal),
+    // igual que hoy.
+    const variables = Object.entries(action.variables ?? {}).map(([nombre, valor]) => ({
+      nombre,
+      valor: interpolateTemplate(valor, request.payload),
+    }));
+
+    const enviar = this.deps.enviarPlantilla ?? enviarPlantilla;
+    let wamid: string | null = null;
+    try {
+      ({ wamid } = await enviar({
+        phoneNumberId: conversation.phoneNumberId,
+        token,
+        para: conversation.telefonoCliente,
+        nombrePlantilla: plantilla.nombre,
+        idioma: plantilla.idioma,
+        variables: variables.length > 0 ? variables : undefined,
+      }));
+    } catch (err) {
+      return {
+        success: false,
+        classification: EFFECT_RESULT_CLASSIFICATIONS.RETRYABLE,
+        error: err instanceof Error ? err.message : "meta_send_failed",
+      };
+    }
+
+    assertNotAborted(signal);
+
+    const incrementarUso = this.deps.incrementarUsoMensajes ?? incrementarUsoMensajes;
+    const registrar = this.deps.registrarMensaje ?? registrarMensaje;
+    await incrementarUso(this.deps.supabase, cliente);
+    // FASE F8.3 (integración posterior, fuera de alcance de F8.1): este
+    // registro en dulabs_mensajes_log es lo que ya permite que
+    // actualizarEstadoEntrega (app/webhook-dulabs/route.ts) correlacione un
+    // futuro sent/delivered/read/failed de Meta con este envío por wamid --
+    // F8.1 no implementa esa lectura, solo deja la fila lista para ella.
+    await registrar(
+      this.deps.supabase,
+      conversation.phoneNumberId,
+      conversation.telefonoCliente,
+      "saliente",
+      `[plantilla:${plantilla.nombre}]`,
+      "ia",
+      wamid ?? undefined,
+    );
+
+    const data: Record<string, unknown> = {
+      delivered: true,
+      wamid,
+      templateName: plantilla.nombre,
+      effectId: request.effectId,
+    };
+
+    return {
+      success: true,
+      classification: EFFECT_RESULT_CLASSIFICATIONS.SUCCESS,
+      data,
+      appliedResult: data,
+      rawResult: data,
+      externalReference: wamid ? `wamid:${wamid}` : undefined,
+      metadata: { operationClass: OPERATION_CLASS.enviar_plantilla },
     };
   }
 

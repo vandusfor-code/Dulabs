@@ -39,7 +39,12 @@ export interface SendMessageDeps {
   registrarMensaje?: typeof registrarMensaje;
 }
 
-async function resolverClienteDefault(supabase: SupabaseClient, phoneNumberId: string): Promise<ClienteConfig | null> {
+// FASE F8.1 (autorizado) -- exportada para que InternalActionExecutor
+// (lib/flow/executors/internal-action-executor.ts, acción enviar_plantilla)
+// reutilice EXACTAMENTE esta misma resolución en vez de duplicarla: ambos
+// executors resuelven "la config de un número de WhatsApp" de la MISMA
+// forma, por diseño, para no poder divergir en silencio.
+export async function resolverClienteDefault(supabase: SupabaseClient, phoneNumberId: string): Promise<ClienteConfig | null> {
   const { data } = await supabase
     .from("dulabs_clientes_config")
     .select("*")
