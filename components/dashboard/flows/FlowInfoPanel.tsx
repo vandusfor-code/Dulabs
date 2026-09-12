@@ -23,12 +23,14 @@ import type {
   SaveDataMapping,
   SaveDataNode,
   StartNode,
+  VariableDefinition,
 } from "@/lib/flow/types";
 import { errorsForPath, type NodeFieldError } from "@/lib/flow-builder/validate-node-edit";
 import { orphanHandles } from "@/lib/flow-builder/connection-rules";
 import type { FlowValidationError } from "@/lib/flow/errors";
 import { SAAS_ACTION_TYPES, type SaasActionType } from "@/lib/flow/action-capabilities";
 import type { FlowIntegrationRow } from "@/lib/flow/flow-store-types";
+import type { AgenteResumen } from "@/lib/flow-builder/agentes-client";
 
 const TYPE_LABEL: Record<FlowNode["type"], string> = {
   start: "Inicio",
@@ -351,7 +353,30 @@ function ConditionEditor({ node, onChange, errors }: { node: ConditionNode; onCh
   );
 }
 
-function AiEditor({ node, onChange, errors }: { node: FlowNode & { type: "ai" }; onChange: OnConfigChange; errors: NodeFieldError[] }) {
+/** Fase 6 (IA configurable, autorizado) -- display-only, nunca editable: el modelo real lo decide el servidor (ver lib/flow/claude/anthropic-client.ts / lib/flow/gemini/gemini-client.ts). Un string duplicado acá es intencional para no importar esos módulos (SDKs) al bundle del cliente. */
+const AI_PROVIDER_MODEL_LABEL: Record<"claude" | "gemini", string> = {
+  claude: "claude-sonnet-5",
+  gemini: "gemini-3.6-flash",
+};
+
+function AiEditor({
+  node,
+  onChange,
+  errors,
+  agentes,
+  flowVariables,
+}: {
+  node: FlowNode & { type: "ai" };
+  onChange: OnConfigChange;
+  errors: NodeFieldError[];
+  /** Fase 6 (IA configurable, autorizado) -- agentes del tenant, de GET /api/dashboard/agentes (ya existente). */
+  agentes: { id: number; nombre: string; prompt_sistema: string | null; base_conocimiento_nombre_archivo: string | null }[];
+  /** Fase 6 (IA configurable, autorizado) -- variables declaradas del Flow, solo informativo (ya llegan TODAS automáticamente al contexto de la IA). */
+  flowVariables: { key: string; label: string }[];
+}) {
+  const agenteSeleccionado = node.config.agentId ? agentes.find((a) => String(a.id) === node.config.agentId) : undefined;
+  const provider = node.config.provider ?? "claude";
+
   return (
     <>
       <Field
@@ -370,21 +395,75 @@ function AiEditor({ node, onChange, errors }: { node: FlowNode & { type: "ai" };
           <option value="propose_action">propose_action</option>
         </select>
       </Field>
+
+      <Field label="Proveedor de IA" hint="Si no eliges ninguno, se usa Claude -- el mismo comportamiento de siempre.">
+        <select
+          className={inputClass}
+          value={provider}
+          onChange={(e) => onChange({ ...node.config, provider: e.target.value as AiNodeConfig["provider"] } satisfies AiNodeConfig)}
+        >
+          <option value="claude">Claude (Anthropic)</option>
+          <option value="gemini">Gemini (Google)</option>
+        </select>
+      </Field>
+      <ReadOnlyField label="Modelo" value={AI_PROVIDER_MODEL_LABEL[provider]} hint="El modelo exacto lo fija el servidor -- no es un valor libre." />
+
+      <Field label="Agente" hint="Reutiliza un agente ya configurado en Ajustes → Agentes de IA (prompt del sistema + conocimiento). Opcional.">
+        <select
+          className={inputClass}
+          value={node.config.agentId ?? ""}
+          onChange={(e) => onChange({ ...node.config, agentId: e.target.value || undefined } satisfies AiNodeConfig)}
+        >
+          <option value="">(ninguno -- solo la instrucción de este nodo)</option>
+          {agentes.map((a) => (
+            <option key={a.id} value={String(a.id)}>
+              {a.nombre}
+            </option>
+          ))}
+        </select>
+      </Field>
+      {agenteSeleccionado && (
+        <div className="rounded-lg border border-edge bg-ink p-3 text-xs text-mist">
+          <p className="mb-1 font-semibold text-fg">Agente seleccionado: {agenteSeleccionado.nombre}</p>
+          {agenteSeleccionado.prompt_sistema ? (
+            <p className="mb-1 line-clamp-3 whitespace-pre-wrap">{agenteSeleccionado.prompt_sistema}</p>
+          ) : (
+            <p className="mb-1 italic">Sin prompt de sistema configurado.</p>
+          )}
+          <p>
+            Conocimiento disponible:{" "}
+            {agenteSeleccionado.base_conocimiento_nombre_archivo ? `sí (${agenteSeleccionado.base_conocimiento_nombre_archivo})` : "no"}
+          </p>
+        </div>
+      )}
+
       <Field label="Instrucción">
         <textarea
           className={cn(inputClass, "min-h-28 resize-y")}
           value={node.config.instruction}
           onChange={(e) => onChange({ ...node.config, instruction: e.target.value } satisfies AiNodeConfig)}
+          placeholder="Ej: Eres un asistente amable y directo. Tu objetivo es resolver la duda del cliente en pocas frases. Si no sabes la respuesta, dilo con honestidad y ofrece transferir con un humano."
         />
       </Field>
+      <p className="-mt-2 text-[11px] leading-relaxed text-mist/70">
+        Personalidad, tono y objetivo se escriben aquí, en texto libre -- no hay campos separados para eso.
+      </p>
       <ErrorText errors={errorsForPath(errors, "config.instruction")} />
-      <Field label="Agent ID (opcional)">
-        <input
-          className={inputClass}
-          value={node.config.agentId ?? ""}
-          onChange={(e) => onChange({ ...node.config, agentId: e.target.value || undefined } satisfies AiNodeConfig)}
-        />
-      </Field>
+
+      {flowVariables.length > 0 && (
+        <div>
+          <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-mist">Variables de entrada disponibles</p>
+          <p className="mb-1.5 text-[11px] text-mist/70">Ya llegan automáticamente a la IA -- no hace falta configurarlas.</p>
+          <div className="flex flex-wrap gap-1.5">
+            {flowVariables.map((v) => (
+              <span key={v.key} className="rounded-full bg-ink px-2 py-0.5 font-mono text-[10.5px] text-mist">
+                {v.key}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
       <Field
         label="Variables de salida (separadas por coma)"
         hint={node.config.mode === "extract" || node.config.mode === "hybrid" ? "Relevante en modo extract/hybrid." : undefined}
@@ -395,6 +474,26 @@ function AiEditor({ node, onChange, errors }: { node: FlowNode & { type: "ai" };
           onChange={(e) => onChange({ ...node.config, outputVariables: csvOrUndefined(e.target.value) } satisfies AiNodeConfig)}
         />
       </Field>
+
+      <div className="rounded-lg border border-edge bg-ink p-3 text-[11px] leading-relaxed text-mist">
+        <p className="mb-1 font-semibold text-fg">Fallback (cuando la IA no sabe qué responder)</p>
+        <p>
+          Usa modo <span className="font-mono">classify</span> con una clasificación tipo{" "}
+          <span className="font-mono">no_se</span>/<span className="font-mono">otro</span>, y conecta ese handle a un
+          nodo que ofrezca ayuda alternativa o transferencia a humano. En modo <span className="font-mono">respond</span>,
+          basta con indicarlo en la Instrucción (ej. &quot;si no sabes la respuesta, dilo con honestidad&quot;).
+        </p>
+      </div>
+
+      <div className="rounded-lg border border-edge bg-ink p-3 text-[11px] leading-relaxed text-mist">
+        <p className="mb-1 font-semibold text-fg">Transferencia a humano</p>
+        <p>
+          Agrega <span className="font-mono">transferir_soporte</span> en &quot;Herramientas permitidas&quot; abajo, y
+          conecta este nodo (rama de éxito) a un nodo Acción con ese tipo (o a un nodo Humano). La IA solo puede
+          proponer transferir si esa conexión ya existe en el Flow -- nunca lo hace por su cuenta.
+        </p>
+      </div>
+
       <Field label="Herramientas permitidas (separadas por coma)">
         <input
           className={inputClass}
@@ -841,11 +940,16 @@ function ConfigEditor({
   onChange,
   errors,
   integrations,
+  agentes,
+  flowVariables,
 }: {
   node: FlowNode;
   onChange: OnConfigChange;
   errors: NodeFieldError[];
   integrations: FlowIntegrationRow[];
+  /** Fase 6 (IA configurable, autorizado). */
+  agentes: AgenteResumen[];
+  flowVariables: VariableDefinition[];
 }) {
   switch (node.type) {
     case "start":
@@ -859,7 +963,7 @@ function ConfigEditor({
     case "condition":
       return <ConditionEditor node={node} onChange={onChange} errors={errors} />;
     case "ai":
-      return <AiEditor node={node} onChange={onChange} errors={errors} />;
+      return <AiEditor node={node} onChange={onChange} errors={errors} agentes={agentes} flowVariables={flowVariables} />;
     case "save_data":
       return <SaveDataEditor node={node} onChange={onChange} />;
     case "action":
@@ -890,6 +994,7 @@ export function FlowInfoPanel({
   onDeleteTrigger,
   onToggleTriggerEnabled,
   integrations,
+  agentes,
 }: {
   node: FlowNode | null;
   /** Necesario solo para OrphanHandlesNotice (qué edges salientes ya existen). */
@@ -907,6 +1012,8 @@ export function FlowInfoPanel({
   onToggleTriggerEnabled: (trigger: FlowTrigger) => void;
   /** Fase 5 (Actions + Integrations, autorizado) -- integraciones del tenant, para el selector de Action HTTP. */
   integrations: FlowIntegrationRow[];
+  /** Fase 6 (IA configurable, autorizado) -- agentes del tenant (GET /api/dashboard/agentes), para el selector del nodo IA. */
+  agentes: AgenteResumen[];
 }) {
   return (
     <aside className="w-80 shrink-0 overflow-y-auto border-l border-edge bg-card p-4">
@@ -938,7 +1045,14 @@ export function FlowInfoPanel({
               onToggleEnabled={onToggleTriggerEnabled}
             />
           )}
-          <ConfigEditor node={node} onChange={onConfigChange} errors={errors} integrations={integrations} />
+          <ConfigEditor
+            node={node}
+            onChange={onConfigChange}
+            errors={errors}
+            integrations={integrations}
+            agentes={agentes}
+            flowVariables={flow.variables}
+          />
         </div>
       )}
     </aside>

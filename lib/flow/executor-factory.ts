@@ -30,8 +30,6 @@ import {
   type IntegrationResolverStore,
 } from "@/lib/flow/integration-resolver";
 import { createSupabaseInternalActionAuthorizer } from "@/lib/flow/internal-action-authorizer";
-import { ClaudeExecutor } from "@/lib/flow/executors/claude-executor";
-import { resolveAnthropicApiKeyFromEnv } from "@/lib/flow/claude/anthropic-client";
 import {
   InternalActionExecutor,
   type InternalActionDeps,
@@ -41,6 +39,7 @@ import {
   createActionExecutorWithHttpIntegration,
   type HttpIntegrationDeps,
 } from "@/lib/flow/executors/http-integration-executor";
+import { createAiProviderRouter, type AiProviderRouterDeps } from "@/lib/flow/executors/ai-provider-router";
 import type { EffectExecutor } from "@/lib/flow/executor-types";
 
 async function readPausaUntil(
@@ -76,6 +75,8 @@ export function createDefaultExecutorRegistry(
     aiExecutor: EffectExecutor;
     /** Fase 5 (Actions + Integrations, autorizado) -- solo para tests (fetchImpl inyectable). */
     httpIntegrationDeps: HttpIntegrationDeps;
+    /** Fase 6 (IA configurable, autorizado) -- deps propias de Claude/Gemini (ej. clientes inyectados en tests); resolveApiKey/assertAgentOwnedByTenant los pone SIEMPRE el router, nunca aquí. */
+    aiProviderRouterDeps: Pick<AiProviderRouterDeps, "claudeDeps" | "geminiDeps">;
   }>,
 ): ExecutorRegistry {
   const registry = new ExecutorRegistry();
@@ -108,10 +109,19 @@ export function createDefaultExecutorRegistry(
     createActionExecutorWithHttpIntegration(new InternalActionExecutor(internalDeps), overrides?.httpIntegrationDeps),
   );
   registry.register(new SendMessageExecutor(sendMessageDeps));
+  // Fase 6 (IA configurable, autorizado) -- ClaudeExecutor/GeminiExecutor
+  // NUNCA se modifican; el router elige entre ambos por dispatch (según
+  // ai.provider, opcional/retrocompatible) e inyecta el perfil de
+  // dulabs_agentes ya resuelto con aislamiento tenant. `overrides.aiExecutor`
+  // sigue teniendo prioridad absoluta -- AMORE (whatsapp-qr-bot.ts) sigue
+  // construyendo su propio registry con GeminiExecutor directo, sin pasar
+  // NUNCA por este router.
   registry.register(
     overrides?.aiExecutor ??
-      new ClaudeExecutor({
-        resolveApiKey: async () => resolveAnthropicApiKeyFromEnv(),
+      createAiProviderRouter({
+        supabase,
+        claudeDeps: overrides?.aiProviderRouterDeps?.claudeDeps,
+        geminiDeps: overrides?.aiProviderRouterDeps?.geminiDeps,
       }),
   );
   return registry;
