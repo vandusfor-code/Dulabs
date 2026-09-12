@@ -43,7 +43,9 @@ import { FlowContextMenu, type FlowContextMenuState } from "@/components/dashboa
 import { FlowInfoPanel } from "@/components/dashboard/flows/FlowInfoPanel";
 import { FlowNodePalette } from "@/components/dashboard/flows/FlowNodePalette";
 import { FlowQuickAddMenu } from "@/components/dashboard/flows/FlowQuickAddMenu";
+import { FlowExecutionsPanel } from "@/components/dashboard/flows/FlowExecutionsPanel";
 import { FlowSearchBar } from "@/components/dashboard/flows/FlowSearchBar";
+import { FlowSimulatorPanel } from "@/components/dashboard/flows/FlowSimulatorPanel";
 import { FlowStateScreen, type FlowStateScreenKind } from "@/components/dashboard/flows/FlowStateScreen";
 import { FlowTopbar, type PublishStatus, type SaveStatus, type ValidationStatus } from "@/components/dashboard/flows/FlowTopbar";
 import { FlowValidationPanel } from "@/components/dashboard/flows/FlowValidationPanel";
@@ -98,6 +100,20 @@ export default function FlowBuilderPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [minimapVisible, setMinimapVisible] = useState(true);
   const canvasRef = useRef<FlowCanvasHandle>(null);
+
+  // --- Fase 1 (Flow Simulator, autorizado) -- estado puramente de UI del
+  // Builder: qué nodo resaltar en el canvas mientras corre una simulación
+  // (spec §11, nunca persiste nada) y si el panel está abierto.
+  const [simulatorOpen, setSimulatorOpen] = useState(false);
+  const [activeSimulationNodeId, setActiveSimulationNodeId] = useState<string | null>(null);
+
+  // --- Fase 2 (Execution Inspector, autorizado) -- mismo criterio: estado
+  // puramente de UI, nunca persiste nada. `executionPath` resalta sobre
+  // FlowCanvas el camino de una ejecución REAL ya terminada -- distinto y
+  // aislado de `activeSimulationNodeId` (ambos pueden coexistir como props
+  // independientes del canvas sin interferirse).
+  const [executionsOpen, setExecutionsOpen] = useState(false);
+  const [executionPath, setExecutionPath] = useState<{ nodeIds: ReadonlySet<string>; edgeIds: ReadonlySet<string> } | null>(null);
 
   // --- Etapa 4 (autorizado): Guardar y Validar -----------------------------
   // Dos ejes de estado INDEPENDIENTES (decisión aprobada #3): saving/validating
@@ -754,6 +770,11 @@ export default function FlowBuilderPage() {
   // rol correcto en cada request) y estados combinados para el Topbar.
   const canSave = canSaveFlow(rol);
   const canValidate = canValidateFlow(rol);
+  // Fase 1 (Flow Simulator, autorizado) -- mismo rol que Validar (admin +
+  // agente): simular nunca escribe nada, así que no exige el rol estricto de
+  // Guardar/Publicar. Mismo criterio de "reflejo visual" que el resto de
+  // esta sección -- la autorización real vuelve a exigirse en POST /simulate.
+  const canSimulate = canValidateFlow(rol);
 
   const saveStatus: SaveStatus = saving ? "saving" : saveRequestError ? "error" : justSaved ? "saved" : "idle";
   const validationStatus: ValidationStatus = validating
@@ -835,6 +856,11 @@ export default function FlowBuilderPage() {
   // reutiliza canValidateFlow por ser exactamente el mismo predicado, no
   // porque "ver historial" y "validar" sean la misma acción.
   const canViewHistory = canValidate;
+  // Fase 1 (Flow Simulator, autorizado) -- simular corre SIEMPRE la última
+  // versión GUARDADA (prioridad draft, spec §8), nunca `state.definition` en
+  // memoria -- mismo criterio que Publicar. Si nunca se guardó, no hay nada
+  // que probar todavía.
+  const simulateReadyReason = builderState.lastSavedVersion ? null : "Guarda primero para poder probar el flow";
 
   return (
     <div className="flex flex-col">
@@ -866,6 +892,11 @@ export default function FlowBuilderPage() {
         onToggleSearch={() => setSearchOpen((v) => !v)}
         minimapVisible={minimapVisible}
         onToggleMinimap={() => setMinimapVisible((v) => !v)}
+        canSimulate={canSimulate}
+        onSimulate={() => setSimulatorOpen(true)}
+        simulateDisabledReason={simulateReadyReason}
+        canViewExecutions={canValidate}
+        onOpenExecutions={() => setExecutionsOpen(true)}
       />
       {showNewerDraftBanner && (
         <div className="flex items-center justify-between gap-3 border-b border-edge bg-amber-400/10 px-5 py-2 text-xs text-amber-400">
@@ -926,6 +957,9 @@ export default function FlowBuilderPage() {
               nodeIdsWithErrors={nodeIdsWithErrors}
               edgeIdsWithErrors={edgeIdsWithErrors}
               minimapVisible={minimapVisible}
+              activeSimulationNodeId={activeSimulationNodeId}
+              executionPathNodeIds={executionPath?.nodeIds}
+              executionPathEdgeIds={executionPath?.edgeIds}
             />
           )}
           <FlowSearchBar
@@ -978,6 +1012,34 @@ export default function FlowBuilderPage() {
         onPick={handleQuickAddPick}
         onClose={() => setQuickAdd(null)}
       />
+      {session && (
+        <FlowSimulatorPanel
+          open={simulatorOpen}
+          onClose={() => {
+            setSimulatorOpen(false);
+            setActiveSimulationNodeId(null);
+          }}
+          flowId={flowId}
+          accessToken={session.access_token}
+          flowVariables={definition?.variables ?? []}
+          nodeLabel={nodeLabelById}
+          onCenterNode={selectNodeAndCenter}
+          onActiveNodeChange={setActiveSimulationNodeId}
+        />
+      )}
+      {session && (
+        <FlowExecutionsPanel
+          open={executionsOpen}
+          onClose={() => {
+            setExecutionsOpen(false);
+            setExecutionPath(null);
+          }}
+          flowId={flowId}
+          accessToken={session.access_token}
+          onPathChange={setExecutionPath}
+          onCenterNode={selectNodeAndCenter}
+        />
+      )}
     </div>
   );
 }

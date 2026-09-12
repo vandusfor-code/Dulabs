@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowLeft, Check, History, Loader2, Map, Redo2, Search, ShieldAlert, TriangleAlert, Undo2 } from "lucide-react";
+import { Activity, ArrowLeft, Check, History, Loader2, Map, Play, Redo2, Search, ShieldAlert, TriangleAlert, Undo2 } from "lucide-react";
 import { Pill } from "@/components/dashboard/shell/ui";
 import type { FlowRecordStatus } from "@/lib/flow/flow-store-types";
 
@@ -149,6 +149,11 @@ export function FlowTopbar({
   onToggleSearch,
   minimapVisible,
   onToggleMinimap,
+  canSimulate,
+  onSimulate,
+  simulateDisabledReason,
+  canViewExecutions,
+  onOpenExecutions,
 }: {
   flowName: string;
   status: FlowRecordStatus;
@@ -182,6 +187,14 @@ export function FlowTopbar({
   onToggleSearch: () => void;
   minimapVisible: boolean;
   onToggleMinimap: () => void;
+  /** Fase 1 (Flow Simulator, autorizado) -- admin + agente pueden probar (mismo rol que Validar; simular nunca escribe nada). */
+  canSimulate: boolean;
+  onSimulate: () => void;
+  /** null = listo para probar. Si no es null, explica por qué el botón está deshabilitado (título del botón). */
+  simulateDisabledReason: string | null;
+  /** Fase 2 (Execution Inspector, autorizado) -- mismo rol que Validar/Probar (admin + agente), es 100% de solo lectura. */
+  canViewExecutions: boolean;
+  onOpenExecutions: () => void;
 }) {
   return (
     <header className="flex flex-wrap items-center gap-3 border-b border-edge bg-card px-5 py-3">
@@ -264,6 +277,26 @@ export function FlowTopbar({
           className="shrink-0 rounded-lg border border-edge px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-lime/40 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {validationStatus === "validating" ? "Validando…" : "Validar"}
+        </button>
+      )}
+      {canSimulate && (
+        <button
+          type="button"
+          onClick={onSimulate}
+          disabled={simulateDisabledReason !== null}
+          title={simulateDisabledReason ?? undefined}
+          className="shrink-0 flex items-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-lime/40 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <Play className="size-3.5" /> Probar
+        </button>
+      )}
+      {canViewExecutions && (
+        <button
+          type="button"
+          onClick={onOpenExecutions}
+          className="shrink-0 flex items-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-lime/40"
+        >
+          <Activity className="size-3.5" /> Ejecuciones
         </button>
       )}
       {canSave && (

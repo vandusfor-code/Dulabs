@@ -71,6 +71,28 @@ interface FlowCanvasProps {
   edgeIdsWithErrors?: ReadonlySet<string>;
   /** Professional Editor UX (autorizado) -- toggle del minimap desde el toolbar. Por defecto visible. */
   minimapVisible?: boolean;
+  /**
+   * Fase 1 (Flow Simulator, autorizado) — id del nodo actualmente activo en
+   * una simulación en curso (spec §11). SOLO resalta visualmente con un
+   * className adicional, igual mecanismo que `nodeIdsWithErrors` -- nunca
+   * toca `nodes`/`edges` ni ningún estado persistido del flow. `undefined`/
+   * `null` (comportamiento por defecto) no cambia nada respecto de antes de
+   * este campo existir.
+   */
+  activeSimulationNodeId?: string | null;
+  /**
+   * Fase 2 (Execution Inspector, autorizado) — nodos/edges que forman el
+   * camino REALMENTE recorrido por una ejecución de producción ya
+   * terminada (spec: "Visualización sobre el canvas"). Distinto del
+   * resaltado de simulación (`activeSimulationNodeId`, un solo nodo EN
+   * VIVO): esto pinta TODO un camino ya recorrido, con su propio estilo
+   * visual, y ambos pueden coexistir como props independientes sin
+   * interferirse. Igual que `nodeIdsWithErrors`/`activeSimulationNodeId`:
+   * solo post-procesa className/style, nunca toca `nodes`/`edges` ni
+   * persiste nada.
+   */
+  executionPathNodeIds?: ReadonlySet<string>;
+  executionPathEdgeIds?: ReadonlySet<string>;
 }
 
 /**
@@ -100,6 +122,9 @@ const FlowCanvasInner = forwardRef<FlowCanvasHandle, FlowCanvasProps>(function F
     nodeIdsWithErrors,
     edgeIdsWithErrors,
     minimapVisible = true,
+    activeSimulationNodeId,
+    executionPathNodeIds,
+    executionPathEdgeIds,
   },
   ref,
 ) {
@@ -131,18 +156,29 @@ const FlowCanvasInner = forwardRef<FlowCanvasHandle, FlowCanvasProps>(function F
       nodes.map((n) => ({
         ...n,
         selected: selectedNodeIds?.has(n.id) ?? false,
-        className: nodeIdsWithErrors?.has(n.id) ? "ring-2 ring-red-500 ring-offset-2 ring-offset-ink" : undefined,
+        className: nodeIdsWithErrors?.has(n.id)
+          ? "ring-2 ring-red-500 ring-offset-2 ring-offset-ink"
+          : activeSimulationNodeId === n.id
+            ? "ring-2 ring-lime ring-offset-2 ring-offset-ink animate-pulse"
+            : executionPathNodeIds?.has(n.id)
+              ? "ring-2 ring-sky-400 ring-offset-2 ring-offset-ink"
+              : undefined,
       })),
-    [nodes, selectedNodeIds, nodeIdsWithErrors],
+    [nodes, selectedNodeIds, nodeIdsWithErrors, activeSimulationNodeId, executionPathNodeIds],
   );
   const edgesWithSelection = useMemo(
     () =>
       edges.map((e) => ({
         ...e,
         selected: selectedEdgeIds?.has(e.id) ?? false,
-        style: edgeIdsWithErrors?.has(e.id) ? { stroke: "#ef4444", strokeWidth: 2.5 } : undefined,
+        style: edgeIdsWithErrors?.has(e.id)
+          ? { stroke: "#ef4444", strokeWidth: 2.5 }
+          : executionPathEdgeIds?.has(e.id)
+            ? { stroke: "#38bdf8", strokeWidth: 2.5 }
+            : undefined,
+        animated: executionPathEdgeIds?.has(e.id) ? true : e.animated,
       })),
-    [edges, selectedEdgeIds, edgeIdsWithErrors],
+    [edges, selectedEdgeIds, edgeIdsWithErrors, executionPathEdgeIds],
   );
 
   const handleConnect = (connection: Connection) => {
