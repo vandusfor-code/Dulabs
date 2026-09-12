@@ -90,7 +90,7 @@ describe(
     }): Promise<{ error: { message: string; code?: string } | null }> {
       const { error } = await admin.from("dulabs_clientes_config").insert({
         nombre_negocio: `Fase3B test ${input.phoneNumberId}`,
-        waba_id: `waba-${input.phoneNumberId}`,
+        whatsapp_business_account_id: `waba-${input.phoneNumberId}`,
         phone_number_id: input.phoneNumberId,
         telefono_negocio: "0000000000",
         id_tenant: input.tenantId,
@@ -285,11 +285,36 @@ describe(
   },
 );
 
-describe("Aislamiento estructural -- el mecanismo nuevo NO está conectado a ningún camino real de producción", () => {
-  it("lib/flow-runtime-bridge.ts no importa flow-trigger-router-activacion", () => {
+// Actualizado (autorizado, Fase 3C) -- este bloque verificaba que
+// lib/flow-runtime-bridge.ts NO importara este módulo, correcto mientras la
+// Fase 3B lo dejó deliberadamente desconectado. Fase 3C conectó
+// resolverActivacionTriggerRouter() al runtime real (dentro de
+// resolverFlowIdConTriggerRouting), así que esa aserción quedó obsoleta por
+// diseño -- se reemplaza por la aserción positiva equivalente: SÍ está
+// conectado, y esa conexión está protegida por try/catch (fail-closed). La
+// cobertura de comportamiento completa del fail-closed (una excepción real
+// nunca rompe el mensaje ni cambia el flow) vive en
+// lib/flow-runtime-bridge-trigger-router-saas.test.ts (test E) -- este
+// bloque se mantiene enfocado en la verificación estructural de la conexión.
+describe("Fase 3C — conexión real al runtime: flow-runtime-bridge SÍ utiliza resolverActivacionTriggerRouter, de forma fail-closed", () => {
+  it("lib/flow-runtime-bridge.ts importa resolverActivacionTriggerRouter desde su módulo real (conectado, autorizado en Fase 3C)", () => {
     const repoRoot = path.resolve(import.meta.dirname, "..");
     const source = readFileSync(path.resolve(repoRoot, "lib/flow-runtime-bridge.ts"), "utf8");
-    assert.ok(!source.includes("flow-trigger-router-activacion"));
+    assert.ok(source.includes("resolverActivacionTriggerRouter"), "Fase 3C debe conectar el resolver SaaS al runtime real");
+    assert.ok(
+      source.includes('from "@/lib/flow-trigger-router-activacion"'),
+      "debe importarlo desde su módulo real, nunca reimplementar la lógica de activación en flow-runtime-bridge.ts",
+    );
+  });
+
+  it("la invocación real (no el import) está protegida por un try/catch -- fail-closed obligatorio", () => {
+    const repoRoot = path.resolve(import.meta.dirname, "..");
+    const source = readFileSync(path.resolve(repoRoot, "lib/flow-runtime-bridge.ts"), "utf8");
+    const indiceImport = source.indexOf("resolverActivacionTriggerRouter");
+    const indiceInvocacion = source.indexOf("resolverActivacionTriggerRouter(", indiceImport + 1);
+    assert.ok(indiceInvocacion > -1, "debe existir una invocación real de la función, no solo el import");
+    const bloqueAntes = source.slice(Math.max(0, indiceInvocacion - 200), indiceInvocacion);
+    assert.ok(bloqueAntes.includes("try"), "la invocación debe estar dentro de un try -- una excepción nunca debe propagarse sin control");
   });
 });
 
