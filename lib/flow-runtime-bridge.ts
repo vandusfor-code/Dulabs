@@ -18,6 +18,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { randomUUID } from "node:crypto";
 import type { ClienteConfig } from "@/lib/supabase";
 import { debeUsarFlowParaRemitente, remitenteAutorizadoParaTriggerRouting } from "@/lib/flow-routing";
+import { resolverActivacionTriggerRouter } from "@/lib/flow-trigger-router-activacion";
 import { resolveFlowForIncomingEvent } from "@/lib/flow/flow-store";
 import type { IncomingEvent } from "@/lib/flow-triggers/types";
 import {
@@ -742,11 +743,51 @@ export type ResolucionFlowId =
  * sobre una ejecución en curso).
  *
  * Decisión 2 (rollout, autorizada) — el Trigger Router SOLO se consulta para
- * remitentes en remitenteAutorizadoParaTriggerRouting (lib/flow-routing.ts).
- * Para cualquier otro remitente (el 100% del tráfico real hoy, incluida
- * Daniela fuera de la prueba) esta función es un `return` inmediato sin
- * ninguna consulta nueva a Supabase -- cero cambio de comportamiento, cero
- * costo adicional.
+ * remitentes en remitenteAutorizadoParaTriggerRouting (lib/flow-routing.ts)
+ * O para números con el Router SaaS activado (Fase 3C, ver más abajo). Para
+ * cualquier otro remitente (el 100% del tráfico real hoy, incluida Daniela
+ * fuera de la prueba) esta función sigue devolviendo cliente.flow_id sin
+ * cambio de comportamiento.
+ *
+ * Fase 3C (Trigger Router SaaS, autorizado) — segunda vía de autorización,
+ * EN PARALELO al allowlist de arriba (nunca lo reemplaza, nunca lo elimina):
+ * un tenant real puede habilitar el Router para SU PROPIO número activando
+ * `trigger_routing_activo` (dulabs_clientes_config), vía
+ * resolverActivacionTriggerRouter (lib/flow-trigger-router-activacion.ts) --
+ * esa función ya valida flow_activo/flow_id/kill switch por sí sola, así que
+ * nunca se duplica esa consulta ni esa lógica acá.
+ *
+ * Fail-closed estricto: si el allowlist ya autorizó, la resolución SaaS ni
+ * siquiera se consulta (evita una consulta redundante para el número de
+ * laboratorio/suite de pruebas, sin cambio de comportamiento respecto a
+ * antes de esta fase). Si el allowlist NO autorizó, PRIMERO se revisa si ya
+ * existe una ejecución activa (Decisión 3, sin ningún cambio -- ese
+ * resultado siempre es cliente.flow_id, con o sin SaaS) -- solo cuando NO
+ * hay ejecución activa (conversación genuinamente NUEVA) se consulta la
+ * activación SaaS, SIEMPRE dentro de un try/catch: cualquier excepción
+ * (columna inexistente, error de red, timeout, error inesperado de
+ * Supabase) se trata como "no autorizado", nunca deja que un fallo de esta
+ * resolución interrumpa el mensaje, elija otro Flow, o cambie el
+ * comportamiento LEGACY de cliente.flow_id. Para el 100% de los tenants
+ * reales hoy (trigger_routing_activo=false, ver migración) esto agrega
+ * exactamente una consulta de solo lectura por conversación NUEVA -- nunca
+ * por mensaje de una conversación ya en curso, nunca si el allowlist ya
+ * autorizó.
+ *
+ * Corrección (autorizada, Opción C de la micro-auditoría) — la consulta de
+ * activeExecution de arriba tampoco puede propagar una excepción sin
+ * control: si getActiveExecution falla acá (ej. id_tenant inválido, error
+ * de red), esta función NO lo captura como un motivo propio ni registra
+ * nada nuevo -- simplemente devuelve cliente.flow_id de inmediato (fail-
+ * closed temporal, sin intentar el Router SaaS). atenderMensajeConFlow
+ * (el caller, sin modificar) YA vuelve a ejecutar exactamente la misma
+ * consulta con el mismo tenantId de forma incondicional, y esa segunda
+ * llamada SÍ está protegida por el try/catch existente de
+ * atenderMensajeConFlowConFallback -- si el fallo es determinístico
+ * (como un tenantId inválido), se repite ahí y produce el mismo
+ * "excepcion_fallback_a_legacy" de siempre, sin que esta función necesite
+ * un segundo mecanismo de observabilidad. No es una garantía nueva: es la
+ * misma protección de siempre, ahora alcanzada un paso más tarde.
  */
 export async function resolverFlowIdConTriggerRouting(params: {
   supabase: SupabaseClient;
@@ -755,15 +796,34 @@ export async function resolverFlowIdConTriggerRouting(params: {
   texto: string;
   store: FlowOrchestratorStore;
 }): Promise<ResolucionFlowId> {
-  if (!remitenteAutorizadoParaTriggerRouting(params.cliente.phone_number_id, params.telefonoCliente)) {
+  const autorizadoPorAllowlist = remitenteAutorizadoParaTriggerRouting(params.cliente.phone_number_id, params.telefonoCliente);
+
+  try {
+    const activeExecution = await params.store.getActiveExecution(params.cliente.id_tenant, {
+      phoneNumberId: params.cliente.phone_number_id,
+      telefonoCliente: params.telefonoCliente,
+    });
+    if (activeExecution) {
+      return { kind: "usar_flow_id", flowId: params.cliente.flow_id };
+    }
+  } catch {
+    // No propagar: atenderMensajeConFlow (más abajo, sin modificar) repite
+    // esta misma consulta de forma incondicional, protegida por el
+    // try/catch ya existente de atenderMensajeConFlowConFallback.
     return { kind: "usar_flow_id", flowId: params.cliente.flow_id };
   }
 
-  const activeExecution = await params.store.getActiveExecution(params.cliente.id_tenant, {
-    phoneNumberId: params.cliente.phone_number_id,
-    telefonoCliente: params.telefonoCliente,
-  });
-  if (activeExecution) {
+  let autorizadoPorSaaS = false;
+  if (!autorizadoPorAllowlist) {
+    try {
+      const activacion = await resolverActivacionTriggerRouter(params.supabase, params.cliente.phone_number_id);
+      autorizadoPorSaaS = activacion.kind === "activo";
+    } catch {
+      autorizadoPorSaaS = false;
+    }
+  }
+
+  if (!autorizadoPorAllowlist && !autorizadoPorSaaS) {
     return { kind: "usar_flow_id", flowId: params.cliente.flow_id };
   }
 
