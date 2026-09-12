@@ -24,6 +24,11 @@ export function canPublishFlow(rol: Rol | null): boolean {
   return rol === "admin";
 }
 
+/** POST /api/flows/[id]/activate y /deactivate exigen admin estricto (Fase 4) -- refleja eso, nada más. */
+export function canActivateFlow(rol: Rol | null): boolean {
+  return rol === "admin";
+}
+
 /**
  * Etapa 5 (autorizado) — gate PURO de "¿se puede publicar AHORA?": combina
  * el rol con el estado del editor, sin llamar red ni reimplementar ninguna

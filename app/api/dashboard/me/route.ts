@@ -56,7 +56,7 @@ export async function GET(request: NextRequest) {
   const { data, error } = await supabase
     .from("dulabs_clientes_config")
     .select(
-      "nombre_negocio, telefono_negocio, phone_number_id, whatsapp_business_account_id, meta_permanent_token, updated_at, plan, mensajes_usados_mes, mes_actual, prompt_sistema, base_conocimiento, base_conocimiento_nombre_archivo, base_conocimiento_actualizado_at, calidad, limite_mensajeria, estado_verificacion, estado_nombre_visible, ultima_sincronizacion_meta, nombre_agente, ia_pausada, forward_to_dumo, agente_id"
+      "nombre_negocio, telefono_negocio, phone_number_id, whatsapp_business_account_id, meta_permanent_token, updated_at, plan, mensajes_usados_mes, mes_actual, prompt_sistema, base_conocimiento, base_conocimiento_nombre_archivo, base_conocimiento_actualizado_at, calidad, limite_mensajeria, estado_verificacion, estado_nombre_visible, ultima_sincronizacion_meta, nombre_agente, ia_pausada, forward_to_dumo, agente_id, flow_activo, flow_id"
     )
     .eq("id_tenant", tenantId)
     .order("updated_at", { ascending: false });
@@ -170,6 +170,8 @@ export async function GET(request: NextRequest) {
       forward_to_dumo: n.forward_to_dumo,
       enviados_30d: enviados30dPorNumero.get(n.phone_number_id) ?? 0,
       enviados_hoy: enviadosHoyPorNumero.get(n.phone_number_id) ?? 0,
+      flow_activo: Boolean(n.flow_activo),
+      flow_id: n.flow_id ?? null,
     };
   });
 
