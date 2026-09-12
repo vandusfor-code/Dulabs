@@ -127,6 +127,15 @@ export const aiNodeConfigSchema = z.object({
   outputVariables: z.array(z.string().trim().min(1)).optional(),
   allowedTools: z.array(z.string().trim().min(1)).optional(),
   classifications: z.array(z.string().trim().min(1)).optional(),
+  // FASE F7.3 (Contacto + Tags + IA, autorizado) -- opcional y
+  // retrocompatible, ver AiContextConfig en lib/flow/types.ts.
+  contextConfig: z
+    .object({
+      includeVariables: z.boolean().optional(),
+      includeContactFields: z.boolean().optional(),
+      includeContactTags: z.boolean().optional(),
+    })
+    .optional(),
 });
 
 export const saveDataMappingSchema = z
@@ -166,7 +175,8 @@ const actionNodeConfigSchema = z.discriminatedUnion("actionType", [
   z.object({
     actionType: z.literal("etiquetar_conversacion"),
     semanticTag: semanticTagSchema,
-    tagId: z.string().trim().min(1),
+    // FASE F7.3 (autorizado): opcional -- ver EtiquetarConversacionActionConfig.tagId.
+    tagId: z.string().trim().min(1).optional(),
     operacion: z.enum(["agregar", "quitar"]).optional(),
   }),
   z.object({
@@ -273,6 +283,14 @@ const actionNodeConfigSchema = z.discriminatedUnion("actionType", [
   }),
   z.object({
     actionType: z.literal("crear_cita_nylas"),
+    semanticTag: semanticTagSchema,
+    params: z.record(z.string(), z.string()).optional(),
+  }),
+  // FASE F7.3 (Contacto + Tags + IA, autorizado) -- sin params: lee
+  // exclusivamente el contacto de request.conversation, igual que
+  // resolver_escenario/buscar_disponibilidad_nylas de arriba.
+  z.object({
+    actionType: z.literal("get_contact"),
     semanticTag: semanticTagSchema,
     params: z.record(z.string(), z.string()).optional(),
   }),

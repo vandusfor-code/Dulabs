@@ -41,10 +41,12 @@ import {
   type ServicioCatalogoReal,
 } from "@/lib/catalogo-servicios-flow-adaptador";
 import { resolverEscenario, type ResolverEscenarioDeps } from "@/lib/bot-escenarios/resolver";
-import { nombreConocido } from "@/lib/clientes-conocidos";
+import { nombreConocido, leerContactoActual } from "@/lib/clientes-conocidos";
 import {
   agregarEtiquetaAConversacion,
   quitarEtiquetaDeConversacion,
+  listarEtiquetasDeConversacion,
+  resolverEtiquetaPorNombre,
 } from "@/lib/etiquetas";
 import { cargarConocimientoReal, cargarEscenariosReal } from "@/lib/bot-escenarios/store";
 import type { AgendamientoEnCurso } from "@/lib/bot-escenarios/tipos";
@@ -146,6 +148,11 @@ export interface InternalActionDeps {
   // absoluta que F7 puede modificar, precisamente para implementar esto.
   agregarEtiquetaAConversacion?: typeof agregarEtiquetaAConversacion;
   quitarEtiquetaDeConversacion?: typeof quitarEtiquetaDeConversacion;
+  // FASE F7.3 (Contacto + Tags + IA, autorizado) -- mismo criterio de arriba
+  // (opcionales, reales por default; solo se inyectan mocks en tests).
+  leerContactoActual?: typeof leerContactoActual;
+  listarEtiquetasDeConversacion?: typeof listarEtiquetasDeConversacion;
+  resolverEtiquetaPorNombre?: typeof resolverEtiquetaPorNombre;
 }
 
 const OPERATION_CLASS: Partial<Record<string, InternalActionOperationClass>> = {
@@ -175,6 +182,8 @@ const OPERATION_CLASS: Partial<Record<string, InternalActionOperationClass>> = {
   // FASE 1 -- Agendamiento conversacional (autorizado).
   buscar_disponibilidad_nylas: "READ",
   crear_cita_nylas: "CRITICAL",
+  // FASE F7.3 (Contacto + Tags + IA, autorizado) -- solo lectura.
+  get_contact: "READ",
 };
 
 /**
@@ -350,6 +359,8 @@ export class InternalActionExecutor implements EffectExecutor {
         return this.buscarDisponibilidadNylasAction(request, signal);
       case "crear_cita_nylas":
         return this.crearCitaNylasAction(request, signal);
+      case "get_contact":
+        return this.getContactAction(request, signal);
       default:
         return {
           success: false,
@@ -702,15 +713,6 @@ export class InternalActionExecutor implements EffectExecutor {
       };
     }
 
-    const etiquetaId = Number(action.tagId);
-    if (!Number.isFinite(etiquetaId) || etiquetaId <= 0) {
-      return {
-        success: false,
-        classification: EFFECT_RESULT_CLASSIFICATIONS.VALIDATION_ERROR,
-        error: "invalid_tag_id",
-      };
-    }
-
     const operacion = action.operacion ?? "agregar";
 
     assertNotAborted(signal);
@@ -720,6 +722,44 @@ export class InternalActionExecutor implements EffectExecutor {
     );
     if (!phoneOwned) return this.tenantRejected();
     assertNotAborted(signal);
+
+    let etiquetaId = Number(action.tagId);
+    if (!action.tagId) {
+      // FASE F7.3 (autorizado) -- tagId estático ausente: el nodo delega en
+      // que la IA proponga QUÉ etiqueta aplicar, por NOMBRE, vía
+      // propose_action.arguments.tagName (ya sanitizado/aplanado por
+      // sanitizeProposalArguments antes de llegar aquí como
+      // request.payload.tagName). resolverEtiquetaPorNombre busca ese
+      // nombre EXCLUSIVAMENTE dentro de las etiquetas de request.tenantId --
+      // la IA nunca puede nombrar un id ni un tenant, solo un nombre que se
+      // resuelve contra el propio tenant de la ejecución.
+      const tagName = typeof request.payload.tagName === "string" ? request.payload.tagName.trim() : "";
+      if (!tagName) {
+        return {
+          success: false,
+          classification: EFFECT_RESULT_CLASSIFICATIONS.VALIDATION_ERROR,
+          error: "invalid_tag_id",
+        };
+      }
+      const resolverPorNombre = this.deps.resolverEtiquetaPorNombre ?? resolverEtiquetaPorNombre;
+      const etiquetaPorNombre = await resolverPorNombre(this.deps.supabase, request.tenantId, tagName);
+      assertNotAborted(signal);
+      if (!etiquetaPorNombre) {
+        return {
+          success: false,
+          classification: EFFECT_RESULT_CLASSIFICATIONS.SECURITY_REJECTED,
+          error: "tag_not_found",
+        };
+      }
+      etiquetaId = etiquetaPorNombre.id;
+    }
+    if (!Number.isFinite(etiquetaId) || etiquetaId <= 0) {
+      return {
+        success: false,
+        classification: EFFECT_RESULT_CLASSIFICATIONS.VALIDATION_ERROR,
+        error: "invalid_tag_id",
+      };
+    }
 
     const agregar = this.deps.agregarEtiquetaAConversacion ?? agregarEtiquetaAConversacion;
     const quitar = this.deps.quitarEtiquetaDeConversacion ?? quitarEtiquetaDeConversacion;
@@ -757,6 +797,12 @@ export class InternalActionExecutor implements EffectExecutor {
       etiquetaId,
       operacion,
       effectId: request.effectId,
+      // FASE F7.3 (autorizado) -- forma estándar que el nodo AI ve en
+      // VERIFIED RESULTS (add_tag/remove_tag), adicional a las claves de
+      // arriba (preexistentes, usadas por Condiciones del propio Flow).
+      success: true,
+      tag: resultado.nombre,
+      operation: operacion === "quitar" ? "removed" : "added",
     };
 
     return {
@@ -766,6 +812,66 @@ export class InternalActionExecutor implements EffectExecutor {
       appliedResult: data,
       rawResult: data,
       metadata: { operationClass: OPERATION_CLASS.etiquetar_conversacion },
+    };
+  }
+
+  /**
+   * FASE F7.3 (Contacto + Tags + IA, autorizado) -- tool "get_contact":
+   * solo lectura del contacto de ESTA ejecución. El contacto se deriva
+   * EXCLUSIVAMENTE de request.conversation (motor), nunca de un argumento
+   * propuesto por la IA -- este método ni siquiera lee request.payload, así
+   * que no hay ningún campo por el que la IA pudiera intentar pedir otro
+   * contacto/tenant.
+   */
+  private async getContactAction(
+    request: EffectDispatchRequest,
+    signal?: AbortSignal,
+  ): Promise<EffectDispatchResult> {
+    const conversation = request.conversation;
+    if (!conversation) {
+      return {
+        success: false,
+        classification: EFFECT_RESULT_CLASSIFICATIONS.VALIDATION_ERROR,
+        error: "conversation_required",
+      };
+    }
+
+    assertNotAborted(signal);
+    const phoneOwned = await this.deps.authorizer.assertPhoneNumberOwnedByTenant(
+      request.tenantId,
+      conversation.phoneNumberId,
+    );
+    if (!phoneOwned) return this.tenantRejected();
+    assertNotAborted(signal);
+
+    const leer = this.deps.leerContactoActual ?? leerContactoActual;
+    const listarTags = this.deps.listarEtiquetasDeConversacion ?? listarEtiquetasDeConversacion;
+    const [contacto, tags] = await Promise.all([
+      leer(this.deps.supabase, {
+        phoneNumberId: conversation.phoneNumberId,
+        telefonoCliente: conversation.telefonoCliente,
+      }),
+      listarTags(this.deps.supabase, {
+        phoneNumberId: conversation.phoneNumberId,
+        telefonoCliente: conversation.telefonoCliente,
+      }),
+    ]);
+
+    assertNotAborted(signal);
+
+    const data: Record<string, unknown> = {
+      success: true,
+      contact: { customFields: contacto.customFields, tags },
+      effectId: request.effectId,
+    };
+
+    return {
+      success: true,
+      classification: EFFECT_RESULT_CLASSIFICATIONS.SUCCESS,
+      data,
+      appliedResult: data,
+      rawResult: data,
+      metadata: { operationClass: OPERATION_CLASS.get_contact },
     };
   }
 

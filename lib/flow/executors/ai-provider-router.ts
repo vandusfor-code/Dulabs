@@ -22,6 +22,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { ClaudeExecutor } from "@/lib/flow/executors/claude-executor";
 import { GeminiExecutor } from "@/lib/flow/executors/gemini-executor";
 import { mergeAgentInstructions, resolveAgentProfileForTenant } from "@/lib/flow/ai-runtime/agent-profile-resolver";
+import { createSupabaseAiContactContextLoader } from "@/lib/flow/ai-runtime/contact-context";
 import type { ClaudeExecutorDeps } from "@/lib/flow/claude/claude-types";
 import type { GeminiExecutorDeps } from "@/lib/flow/gemini/gemini-types";
 import {
@@ -45,6 +46,11 @@ export function createAiProviderRouter(deps: AiProviderRouterDeps): EffectExecut
     (await resolveAgentProfileForTenant(deps.supabase, { tenantId, agentId })).ok;
 
   const capabilities: EffectExecutorCapabilities = { supportsIntegration: false, supportsAsync: true, operationClasses: [] };
+  // FASE F7.3 (Contacto + Tags + IA, autorizado) -- mismo hook YA EXISTENTE
+  // que resolveApiKey/assertAgentOwnedByTenant: el router es el ÚNICO lugar
+  // que arma esta dependencia (tiene deps.supabase) e inyecta la MISMA
+  // instancia en cualquiera de los dos providers, según cuál se use.
+  const loadContactContext = createSupabaseAiContactContextLoader(deps.supabase);
 
   return {
     kind: "ai",
@@ -98,8 +104,8 @@ export function createAiProviderRouter(deps: AiProviderRouterDeps): EffectExecut
 
       const executor: EffectExecutor =
         provider === "gemini"
-          ? new GeminiExecutor({ ...deps.geminiDeps, resolveApiKey, assertAgentOwnedByTenant })
-          : new ClaudeExecutor({ ...deps.claudeDeps, resolveApiKey, assertAgentOwnedByTenant });
+          ? new GeminiExecutor({ ...deps.geminiDeps, resolveApiKey, assertAgentOwnedByTenant, loadContactContext })
+          : new ClaudeExecutor({ ...deps.claudeDeps, resolveApiKey, assertAgentOwnedByTenant, loadContactContext });
 
       return executor.dispatch(effectiveRequest, context, signal);
     },

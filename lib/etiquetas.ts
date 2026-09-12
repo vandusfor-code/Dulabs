@@ -32,6 +32,31 @@ async function resolverEtiquetaDelTenant(
   return { id: data.id as number, nombre: data.nombre as string };
 }
 
+// FASE F7.3 (Contacto + Tags + IA, autorizado) -- resuelve una etiqueta por
+// NOMBRE (en vez de id), siempre acotado al tenant_id de la ejecución --
+// mismo criterio de aislamiento exacto que resolverEtiquetaDelTenant. Existe
+// para que un nodo etiquetar_conversacion pueda dejar que la IA elija QUÉ
+// etiqueta aplicar (por nombre, vía propose_action.arguments.tagName) sin
+// que el modelo pueda nombrar un id/tenant arbitrario -- el nombre solo se
+// busca DENTRO de las etiquetas del propio tenant, igual que cualquier otra
+// lectura de este archivo.
+export async function resolverEtiquetaPorNombre(
+  supabase: SupabaseClient,
+  tenantId: string,
+  nombre: string
+): Promise<{ id: number; nombre: string } | null> {
+  const nombreLimpio = nombre.trim();
+  if (!nombreLimpio) return null;
+  const { data } = await supabase
+    .from("dulabs_etiquetas")
+    .select("id, nombre")
+    .eq("tenant_id", tenantId)
+    .ilike("nombre", nombreLimpio)
+    .maybeSingle();
+  if (!data) return null;
+  return { id: data.id as number, nombre: data.nombre as string };
+}
+
 // Agrega una etiqueta a una conversación. Dedup: el unique existente
 // (phone_number_id, telefono_cliente, etiqueta_id) hace que un 23505 se
 // trate como éxito idempotente -- mismo criterio exacto que ya usa

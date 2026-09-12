@@ -137,7 +137,14 @@ export function buildAIRequest(input: {
     mode: resolveClaudeMode(input.ai),
     nodeInstructions: input.ai.instruction,
     conversation: input.request.conversation,
-    variables: presentarFechaHoraColombia(stripInternalKeys(payload)) as Record<string, unknown>,
+    // FASE F7.3 (autorizado) -- includeVariables default true (preexistente,
+    // ver AiContextConfig): solo un nodo que lo desactive EXPLÍCITAMENTE dejar
+    // de ver las variables del Flow. Ningún Flow ya publicado configura este
+    // campo, así que su comportamiento no cambia.
+    variables:
+      input.ai.contextConfig?.includeVariables === false
+        ? {}
+        : (presentarFechaHoraColombia(stripInternalKeys(payload)) as Record<string, unknown>),
     verifiedResults: extractVerifiedResults(payload).map((entry) => ({
       ...entry,
       data: presentarFechaHoraColombia(entry.data) as Record<string, unknown>,
@@ -172,6 +179,7 @@ export function buildAIExecutionContext(aiRequest: AIRequest): AIExecutionContex
       allowedActionTypes: aiRequest.allowedActionTypes,
       variables: aiRequest.variables,
       budget: aiRequest.budget,
+      contact: aiRequest.contact,
     },
     untrusted: {
       userMessage: aiRequest.userMessage,

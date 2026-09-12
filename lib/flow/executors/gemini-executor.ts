@@ -20,6 +20,7 @@
 import { assertNotAborted } from "@/lib/flow/executor-framework";
 import { applyAiUsage, checkAiBudget } from "@/lib/flow/claude/claude-budget";
 import { buildAIExecutionContext, buildAIRequest } from "@/lib/flow/claude/claude-context-builder";
+import { applyContactContextFlags, shouldLoadContactContext } from "@/lib/flow/ai-runtime/contact-context";
 import { buildObservabilityMetadata, mapAiOutputToEngineData } from "@/lib/flow/claude/claude-engine-mapper";
 import { buildAiOutputToolSchema, parseAiOutputJson } from "@/lib/flow/claude/claude-output-schema";
 import { buildClaudeSystemPrompt, buildClaudeUserMessages } from "@/lib/flow/claude/claude-prompt-builder";
@@ -100,6 +101,16 @@ export class GeminiExecutor implements EffectExecutor {
 
     if (aiRequest.conversation && this.deps.loadConversationHistory) {
       aiRequest.conversationHistory = await this.deps.loadConversationHistory(aiRequest.conversation);
+    }
+
+    // FASE F7.3 (Contacto + Tags + IA, autorizado) -- mismo criterio EXACTO
+    // que ClaudeExecutor (composition: ambos reutilizan
+    // shouldLoadContactContext/applyContactContextFlags, cero lógica
+    // duplicada). Ningún Flow existente configura `contextConfig`, así que
+    // esto nunca se ejecuta para AMORE/Daniela/Solo Talento/Charlotte.
+    if (aiRequest.conversation && shouldLoadContactContext(ai) && this.deps.loadContactContext) {
+      const loaded = await this.deps.loadContactContext(aiRequest.conversation);
+      aiRequest.contact = applyContactContextFlags(ai, loaded);
     }
 
     const budgetCheck = checkAiBudget(aiRequest.budget, aiRequest.budgetLimits);

@@ -475,6 +475,57 @@ function AiEditor({
         />
       </Field>
 
+      <div>
+        <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-mist">
+          Contexto para la IA (FASE F7.3)
+        </p>
+        <div className="flex flex-col gap-1.5">
+          <label className="flex items-center gap-2 text-xs text-mist">
+            <input
+              type="checkbox"
+              checked={node.config.contextConfig?.includeVariables ?? true}
+              onChange={(e) =>
+                onChange({
+                  ...node.config,
+                  contextConfig: { ...node.config.contextConfig, includeVariables: e.target.checked },
+                } satisfies AiNodeConfig)
+              }
+            />
+            Variables del Flow (activado por defecto)
+          </label>
+          <label className="flex items-center gap-2 text-xs text-mist">
+            <input
+              type="checkbox"
+              checked={node.config.contextConfig?.includeContactFields ?? false}
+              onChange={(e) =>
+                onChange({
+                  ...node.config,
+                  contextConfig: { ...node.config.contextConfig, includeContactFields: e.target.checked },
+                } satisfies AiNodeConfig)
+              }
+            />
+            Datos del contacto (custom_fields guardados)
+          </label>
+          <label className="flex items-center gap-2 text-xs text-mist">
+            <input
+              type="checkbox"
+              checked={node.config.contextConfig?.includeContactTags ?? false}
+              onChange={(e) =>
+                onChange({
+                  ...node.config,
+                  contextConfig: { ...node.config.contextConfig, includeContactTags: e.target.checked },
+                } satisfies AiNodeConfig)
+              }
+            />
+            Tags ya asignadas a esta conversación
+          </label>
+        </div>
+        <p className="mt-1.5 text-[11px] leading-relaxed text-mist/70">
+          Solo del contacto de ESTA conversación -- nunca de otro contacto ni de otro tenant. Se le pasa a la IA como
+          dato, no como instrucción.
+        </p>
+      </div>
+
       <div className="rounded-lg border border-edge bg-ink p-3 text-[11px] leading-relaxed text-mist">
         <p className="mb-1 font-semibold text-fg">Fallback (cuando la IA no sabe qué responder)</p>
         <p>
@@ -494,7 +545,10 @@ function AiEditor({
         </p>
       </div>
 
-      <Field label="Herramientas permitidas (separadas por coma)">
+      <Field
+        label="Herramientas permitidas (separadas por coma)"
+        hint="FASE F7.3: incluye 'get_contact' para que la IA pueda consultar el contacto actual, o 'etiquetar_conversacion' para agregar/quitar una tag -- en ambos casos, conecta este nodo (rama de éxito) a un nodo Acción de ese tipo, igual que con transferir_soporte."
+      >
         <input
           className={inputClass}
           value={node.config.allowedTools?.join(", ") ?? ""}
@@ -572,6 +626,8 @@ const SAAS_ACTION_LABEL: Record<SaasActionType, string> = {
   transferir_soporte: "Transferir a humano",
   crear_lead_enterprise: "Crear lead (empresarial)",
   crear_lead_campana: "Crear lead (campaña)",
+  // FASE F7.3 (Contacto + Tags + IA, autorizado).
+  get_contact: "Consultar contacto (tool de IA)",
 };
 
 /** Config por defecto al CAMBIAR a este actionType desde el selector -- Fase 5 (autorizado). */
@@ -589,6 +645,7 @@ function defaultConfigForSaasActionType(actionType: SaasActionType): ActionNodeC
       return { actionType, pauseDurationHours: 1 };
     case "crear_lead_enterprise":
     case "crear_lead_campana":
+    case "get_contact":
       return { actionType };
   }
 }
@@ -709,8 +766,15 @@ function ActionEditor({
         </Field>
       )}
       {config.actionType === "etiquetar_conversacion" && (
-        <Field label="Tag ID">
-          <input className={inputClass} value={config.tagId} onChange={(e) => onChange({ ...config, tagId: e.target.value })} />
+        <Field
+          label="Tag ID"
+          hint="Déjalo vacío para que la IA elija la etiqueta por nombre en tiempo de ejecución (propose_action con argumento tagName) -- requiere que el nodo AI de origen tenga 'etiquetar_conversacion' en Herramientas permitidas."
+        >
+          <input
+            className={inputClass}
+            value={config.tagId ?? ""}
+            onChange={(e) => onChange({ ...config, tagId: e.target.value || undefined })}
+          />
         </Field>
       )}
       {config.actionType === "asignar_miembro" && (

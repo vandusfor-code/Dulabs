@@ -5,6 +5,7 @@
 
 import type { AiNodeConfig } from "@/lib/flow/types";
 import type { ConversationKey } from "@/lib/flow/orchestrator-types";
+import type { AiContactContext, LoadAiContactContext } from "@/lib/flow/ai-runtime/contact-context";
 
 /** Modos soportados por Claude Executor (incluye propose_action; Flow schema puede usar hybrid como alias). */
 export type ClaudeAiMode = "respond" | "classify" | "extract" | "propose_action";
@@ -49,6 +50,16 @@ export interface AIExecutionContextTrusted {
   allowedActionTypes: string[];
   variables: Record<string, unknown>;
   budget: AiBudgetState;
+  /**
+   * FASE F7.3 (Contacto + Tags + IA, autorizado) -- presente SOLO cuando
+   * ai.contextConfig habilitó explícitamente contact fields y/o tags para
+   * este nodo (ver resolveContactContextFlags/claude-context-builder.ts).
+   * Ausente en TODO nodo AI existente hoy -- ningún Flow ya publicado
+   * cambia de comportamiento. Es DATA del contacto de esta ejecución, nunca
+   * instrucciones -- ver buildClaudeSystemPrompt (sección separada,
+   * etiquetada explícitamente como no confiable/no instrucción).
+   */
+  contact?: AiContactContext;
 }
 
 /** Datos no confiables — nunca mezclados con system instructions. */
@@ -128,6 +139,8 @@ export interface AIRequest {
   conversationHistory?: Array<{ role: "user" | "assistant"; content: string }>;
   classifications?: string[];
   outputVariables?: string[];
+  /** FASE F7.3 (autorizado) -- ver AIExecutionContextTrusted.contact. */
+  contact?: AiContactContext;
 }
 
 export interface AIActionProposal {
@@ -169,6 +182,8 @@ export interface ClaudeExecutorDeps {
   loadConversationHistory?: (
     conversation: ConversationKey,
   ) => Promise<Array<{ role: "user" | "assistant"; content: string }>>;
+  /** FASE F7.3 (Contacto + Tags + IA, autorizado) -- ver lib/flow/ai-runtime/contact-context.ts. */
+  loadContactContext?: LoadAiContactContext;
   anthropicClient?: AnthropicMessagesClient;
 }
 
