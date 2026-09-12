@@ -168,11 +168,22 @@ export interface ConditionRule {
 
 export type AiNodeMode = "classify" | "extract" | "respond" | "hybrid" | "propose_action";
 
+/** Fase 6 (IA configurable, autorizado) — whitelist de proveedores soportados. */
+export type AiNodeProvider = "claude" | "gemini";
+
 export interface AiNodeConfig {
   /** Referencia opcional a dulabs_agentes.id (perfil prompt existente). */
   agentId?: string;
   instruction: string;
   mode: AiNodeMode;
+  /**
+   * Fase 6 (IA configurable, autorizado) — proveedor/modelo permitido para
+   * este nodo. OPCIONAL y retrocompatible: si se omite (todo Flow existente
+   * hoy, incluido AMORE/Daniela/etc.), el runtime usa exactamente el mismo
+   * comportamiento de siempre (Claude, salvo el override de código de AMORE
+   * en whatsapp-qr-bot.ts, que NO pasa por este campo y sigue igual).
+   */
+  provider?: AiNodeProvider;
   /** Variables que la IA puede poblar (extract/hybrid). */
   outputVariables?: string[];
   /** Registry de tools permitidos en runtime (fase posterior). */

@@ -112,9 +112,18 @@ export const conditionRuleSchema = z
   });
 
 export const aiNodeConfigSchema = z.object({
-  agentId: z.string().uuid().optional(),
+  // Fase 6 (IA configurable, autorizado) -- dulabs_agentes.id es `bigint`
+  // (identity), NUNCA un UUID -- `.uuid()` habría rechazado cualquier
+  // agentId real desde el primer Flow que lo usara. Se corrige a un string
+  // no vacío (el id llega serializado como string desde el picker del
+  // Builder); la validación de existencia/pertenencia real al tenant la
+  // hace el resolver server-side (lib/flow/ai-runtime/agent-profile-resolver.ts),
+  // nunca este schema.
+  agentId: z.string().trim().min(1).optional(),
   instruction: z.string().trim().min(1),
   mode: z.enum(["classify", "extract", "respond", "hybrid", "propose_action"]),
+  // Fase 6 (IA configurable, autorizado) -- opcional, retrocompatible.
+  provider: z.enum(["claude", "gemini"]).optional(),
   outputVariables: z.array(z.string().trim().min(1)).optional(),
   allowedTools: z.array(z.string().trim().min(1)).optional(),
   classifications: z.array(z.string().trim().min(1)).optional(),

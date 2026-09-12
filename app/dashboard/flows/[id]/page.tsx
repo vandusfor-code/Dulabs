@@ -46,6 +46,7 @@ import { FlowQuickAddMenu } from "@/components/dashboard/flows/FlowQuickAddMenu"
 import { FlowActivationPanel } from "@/components/dashboard/flows/FlowActivationPanel";
 import { IntegrationsPanel } from "@/components/dashboard/flows/IntegrationsPanel";
 import { listIntegrations } from "@/lib/flow-builder/integrations-client";
+import { listAgentesDelTenant, type AgenteResumen } from "@/lib/flow-builder/agentes-client";
 import type { FlowIntegrationRow } from "@/lib/flow/flow-store-types";
 import { FlowExecutionsPanel } from "@/components/dashboard/flows/FlowExecutionsPanel";
 import { FlowSearchBar } from "@/components/dashboard/flows/FlowSearchBar";
@@ -131,6 +132,10 @@ export default function FlowBuilderPage() {
   // gestión), igual que el resto de paneles de esta página.
   const [integrations, setIntegrations] = useState<FlowIntegrationRow[]>([]);
   const [integrationsPanelOpen, setIntegrationsPanelOpen] = useState(false);
+
+  // --- Fase 6 (IA configurable, autorizado) -- agentes del tenant (GET
+  // /api/dashboard/agentes, YA EXISTENTE), para el selector del nodo IA.
+  const [agentes, setAgentes] = useState<AgenteResumen[]>([]);
 
   // --- Etapa 4 (autorizado): Guardar y Validar -----------------------------
   // Dos ejes de estado INDEPENDIENTES (decisión aprobada #3): saving/validating
@@ -266,6 +271,16 @@ export default function FlowBuilderPage() {
   useEffect(() => {
     cargarIntegraciones();
   }, [cargarIntegraciones]);
+
+  // Fase 6 (IA configurable, autorizado) -- una sola carga (no necesita
+  // recargarse tras cerrar ningún panel: gestionar agentes vive en
+  // /dashboard/agentes, ya existente, no en esta página).
+  useEffect(() => {
+    if (!session) return;
+    listAgentesDelTenant({ accessToken: session.access_token }).then((resultado) => {
+      if (resultado.ok) setAgentes(resultado.agentes);
+    });
+  }, [session]);
 
   // Advierte antes de cerrar/recargar la pestaña si hay cambios locales sin
   // guardar -- no hay forma de interceptar la navegación interna de Next sin
@@ -1025,6 +1040,7 @@ export default function FlowBuilderPage() {
           onDeleteTrigger={handleDeleteTrigger}
           onToggleTriggerEnabled={handleToggleTriggerEnabled}
           integrations={integrations}
+          agentes={agentes}
         />
       </div>
       <TriggerModal
