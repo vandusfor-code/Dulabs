@@ -502,6 +502,26 @@ export class ExecutionOrchestrator {
     // "__" se filtran vía stripInternalKeys). Es un dato inocuo y general:
     // los flows que no lo lean simplemente lo ignoran. NO reemplaza ninguna
     // consulta real -- solo ayuda a interpretar el primer mensaje.
+    // FASE F7 (Contacts + Variables + Tags, autorizado) -- mismo patrón
+    // exacto que 'hoy'/'baseConocimiento': se resuelve (o crea) el contacto
+    // real y se listan sus etiquetas YA asignadas, y ambos se siembran SIN
+    // prefijo en variables. Ninguno de los dos métodos existe en un
+    // FlowOrchestratorStore de test que no los implemente (quedan
+    // undefined, `?.()` los saltea) -- ningún fixture F1-F6 existente
+    // cambia de comportamiento. `tag:<nombre>` usa "1" (nunca boolean true)
+    // -- mismo criterio de evaluateRule que usa el executor de
+    // etiquetar_conversacion (ver internal-action-executor.ts).
+    const [contactResolved, tagNames] = await Promise.all([
+      this.deps.store.resolveOrCreateContact?.(event.tenantId, event.conversation) ??
+        Promise.resolve(undefined),
+      this.deps.store.getConversationTagNames?.(event.tenantId, event.conversation) ??
+        Promise.resolve([]),
+    ]);
+    const tagVariables: Record<string, unknown> = {};
+    for (const nombre of tagNames) {
+      tagVariables[`tag:${nombre}`] = "1";
+    }
+
     initialState.variables = {
       ...initialState.variables,
       hoy: new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" }),
@@ -510,6 +530,8 @@ export class ExecutionOrchestrator {
       // Claude en el bloque VARIABLES). Un flow que no la lea no cambia de
       // comportamiento.
       ...(event.baseConocimiento ? { baseConocimiento: event.baseConocimiento } : {}),
+      ...(contactResolved?.customFields ?? {}),
+      ...tagVariables,
       // Migración de versión (autorizada) -- copia explícita y mínima del
       // estado conversacional real de una ejecución vieja (agendamiento,
       // servicio, fecha, etc.) por encima de los valores por defecto del
@@ -598,6 +620,35 @@ export class ExecutionOrchestrator {
             fromNodeId: previousNodeId,
             toNodeId: runResult.state.currentNodeId,
           });
+        }
+
+        // FASE F7 (Contacts + Variables + Tags, autorizado) -- cierra el
+        // balde muerto de save_data(target="custom_field") (ver
+        // FlowExportBucket.custom_fields / flow-engine.ts::
+        // applySaveDataMappings): si ESTA iteración cambió los custom_fields
+        // exportados, se persisten en el contacto real. Comparación contra
+        // el snapshot de INICIO de la iteración (engineState, antes de
+        // correr el motor) para no escribir en cada turno si save_data no
+        // corrió. Best-effort y con su propio try/catch -- nunca debe
+        // convertir un guardado exitoso del estado del Flow en un error de
+        // turno, ni disparar un reintento de CAS espurio.
+        if (this.deps.store.persistContactCustomFields) {
+          const prevCustomFields = engineState.exports.custom_fields;
+          const nextCustomFields = runResult.state.exports.custom_fields;
+          if (
+            Object.keys(nextCustomFields).length > 0 &&
+            JSON.stringify(prevCustomFields) !== JSON.stringify(nextCustomFields)
+          ) {
+            try {
+              await this.deps.store.persistContactCustomFields(
+                params.tenantId,
+                { phoneNumberId: row.phone_number_id, telefonoCliente: row.telefono_cliente },
+                nextCustomFields,
+              );
+            } catch {
+              // Best-effort -- ver comentario arriba.
+            }
+          }
         }
 
         const effectOutcome = await this.registerAndDispatchEffects({

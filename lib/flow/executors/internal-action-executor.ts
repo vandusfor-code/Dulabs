@@ -42,6 +42,10 @@ import {
 } from "@/lib/catalogo-servicios-flow-adaptador";
 import { resolverEscenario, type ResolverEscenarioDeps } from "@/lib/bot-escenarios/resolver";
 import { nombreConocido } from "@/lib/clientes-conocidos";
+import {
+  agregarEtiquetaAConversacion,
+  quitarEtiquetaDeConversacion,
+} from "@/lib/etiquetas";
 import { cargarConocimientoReal, cargarEscenariosReal } from "@/lib/bot-escenarios/store";
 import type { AgendamientoEnCurso } from "@/lib/bot-escenarios/tipos";
 import { construirMenuFechas, construirMenuHorarios, renderizarMenu, formatearFechaLarga, formatearHora12 } from "@/lib/bot-escenarios/agendamiento-guiado";
@@ -136,6 +140,12 @@ export interface InternalActionDeps {
   resolveNylasApiKeyFromEnv?: typeof resolveNylasApiKeyFromEnv;
   createNylasEventsClient?: typeof createNylasEventsClient;
   createNylasEventsWriteClient?: typeof createNylasEventsWriteClient;
+  // FASE F7 (Contacts + Variables + Tags, autorizado) -- opcionales, mismo
+  // criterio de arriba (real por default vía lib/etiquetas.ts; solo se
+  // inyectan mocks en tests). Único archivo de la lista de protección
+  // absoluta que F7 puede modificar, precisamente para implementar esto.
+  agregarEtiquetaAConversacion?: typeof agregarEtiquetaAConversacion;
+  quitarEtiquetaDeConversacion?: typeof quitarEtiquetaDeConversacion;
 }
 
 const OPERATION_CLASS: Partial<Record<string, InternalActionOperationClass>> = {
@@ -144,6 +154,7 @@ const OPERATION_CLASS: Partial<Record<string, InternalActionOperationClass>> = {
   crear_lead_campana: "WRITE",
   agendar_cita_marketplace: "CRITICAL",
   transferir_soporte: "CRITICAL",
+  etiquetar_conversacion: "WRITE",
   consultar_disponibilidad_especialista: "READ",
   validar_servicio_especialista: "READ",
   agendar_cita_especialista: "CRITICAL",
@@ -301,6 +312,8 @@ export class InternalActionExecutor implements EffectExecutor {
         return this.agendarCita(request, params, signal);
       case "transferir_soporte":
         return this.transferirSoporte(request, action, signal);
+      case "etiquetar_conversacion":
+        return this.etiquetarConversacionAction(request, action, signal);
       case "consultar_disponibilidad_especialista":
         return this.consultarDisponibilidadEspecialistaAction(request, params, signal);
       case "validar_servicio_especialista":
@@ -647,6 +660,112 @@ export class InternalActionExecutor implements EffectExecutor {
       appliedResult: data,
       rawResult: data,
       metadata: { operationClass: OPERATION_CLASS.transferir_soporte },
+    };
+  }
+
+  /**
+   * FASE F7 (Contacts + Variables + Tags, autorizado) -- ÚNICA excepción a
+   * la lista de protección absoluta: este archivo puede modificarse
+   * deliberadamente para implementar etiquetar_conversacion por primera vez
+   * (antes un callejón sin salida: "internal_action_not_supported"). Reutiliza
+   * dulabs_etiquetas/dulabs_conversacion_etiquetas tal cual (ver
+   * lib/etiquetas.ts) -- no crea tablas ni catálogos paralelos.
+   *
+   * El resultado expone `tag:<nombre>` en `data` -- el mismo mecanismo
+   * genérico de flow-engine.ts::handleEffectResult (rama action, sin
+   * outputVariables configurado) copia TODAS las claves de `data` a
+   * state.variables, así que una Condición en el MISMO turno ya puede leer
+   * `tag:<nombre>` con operator "exists"/"not_exists" sin ningún cambio al
+   * engine. Se usa "1"/"" (nunca true/false) porque evaluateRule considera
+   * "" como ausente -- un booleano `false` seguiría siendo "exists" (valor
+   * definido, no null, no ""), lo cual rompería la semántica de "quitar".
+   */
+  private async etiquetarConversacionAction(
+    request: EffectDispatchRequest,
+    action: ActionNodeConfig,
+    signal?: AbortSignal,
+  ): Promise<EffectDispatchResult> {
+    if (action.actionType !== "etiquetar_conversacion") {
+      return {
+        success: false,
+        classification: EFFECT_RESULT_CLASSIFICATIONS.VALIDATION_ERROR,
+        error: "invalid_action_config",
+      };
+    }
+
+    const conversation = request.conversation;
+    if (!conversation) {
+      return {
+        success: false,
+        classification: EFFECT_RESULT_CLASSIFICATIONS.VALIDATION_ERROR,
+        error: "conversation_required",
+      };
+    }
+
+    const etiquetaId = Number(action.tagId);
+    if (!Number.isFinite(etiquetaId) || etiquetaId <= 0) {
+      return {
+        success: false,
+        classification: EFFECT_RESULT_CLASSIFICATIONS.VALIDATION_ERROR,
+        error: "invalid_tag_id",
+      };
+    }
+
+    const operacion = action.operacion ?? "agregar";
+
+    assertNotAborted(signal);
+    const phoneOwned = await this.deps.authorizer.assertPhoneNumberOwnedByTenant(
+      request.tenantId,
+      conversation.phoneNumberId,
+    );
+    if (!phoneOwned) return this.tenantRejected();
+    assertNotAborted(signal);
+
+    const agregar = this.deps.agregarEtiquetaAConversacion ?? agregarEtiquetaAConversacion;
+    const quitar = this.deps.quitarEtiquetaDeConversacion ?? quitarEtiquetaDeConversacion;
+
+    const resultado =
+      operacion === "quitar"
+        ? await quitar(this.deps.supabase, {
+            tenantId: request.tenantId,
+            phoneNumberId: conversation.phoneNumberId,
+            telefonoCliente: conversation.telefonoCliente,
+            etiquetaId,
+          })
+        : await agregar(this.deps.supabase, {
+            tenantId: request.tenantId,
+            phoneNumberId: conversation.phoneNumberId,
+            telefonoCliente: conversation.telefonoCliente,
+            etiquetaId,
+          });
+
+    assertNotAborted(signal);
+
+    if (!resultado.ok) {
+      return {
+        success: false,
+        classification:
+          resultado.motivo === "tag_not_found"
+            ? EFFECT_RESULT_CLASSIFICATIONS.SECURITY_REJECTED
+            : EFFECT_RESULT_CLASSIFICATIONS.NON_RETRYABLE,
+        error: resultado.motivo,
+      };
+    }
+
+    const data: Record<string, unknown> = {
+      [`tag:${resultado.nombre}`]: operacion === "quitar" ? "" : "1",
+      etiquetaId,
+      operacion,
+      effectId: request.effectId,
+    };
+
+    return {
+      success: true,
+      classification: EFFECT_RESULT_CLASSIFICATIONS.SUCCESS,
+      data,
+      appliedResult: data,
+      rawResult: data,
+      metadata: { operationClass: OPERATION_CLASS.etiquetar_conversacion },
     };
   }
 

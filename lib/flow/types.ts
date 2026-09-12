@@ -309,7 +309,16 @@ export interface EnviarPlantillaActionConfig extends ActionSemanticTag {
 
 export interface EtiquetarConversacionActionConfig extends ActionSemanticTag {
   actionType: "etiquetar_conversacion";
+  /** dulabs_etiquetas.id (como string) -- el executor verifica que pertenezca al tenant. */
   tagId: string;
+  /**
+   * FASE F7 (Contacts + Variables + Tags, autorizado) -- opcional y
+   * retrocompatible: se omite en todo Flow existente (nadie tenía un
+   * executor real para este actionType hasta F7), por lo que su ausencia
+   * (default "agregar") no cambia ningún comportamiento previamente
+   * publicado.
+   */
+  operacion?: "agregar" | "quitar";
 }
 
 export interface AsignarMiembroActionConfig extends ActionSemanticTag {

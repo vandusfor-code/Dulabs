@@ -91,3 +91,122 @@ export async function recordarNombreCliente(
     console.error("[clientes-conocidos] error guardando nombre:", err instanceof Error ? err.message : err);
   }
 }
+
+// FASE F7 (Contacts + Variables + Tags, autorizado) — resuelve el contacto
+// real (phone_number_id, telefono_cliente) al iniciar una ejecución del Flow
+// Engine, o lo crea si es la primera vez que se ve este par. Nunca lanza:
+// igual que recordarNombreCliente, resolver/crear el contacto es un paso de
+// enriquecimiento -- un error acá NUNCA debe impedir que la ejecución del
+// Flow se cree (se degrada a customFields:{}).
+//
+// Concurrencia: `nombre` es NOT NULL en la tabla real, así que la creación
+// usa telefonoCliente como placeholder seguro (nunca vacío; se sobrescribe
+// solo si algo llama recordarNombreCliente con un nombre real después,
+// exactamente igual que hoy). La seguridad real contra duplicados bajo
+// carrera NO vive acá: la viola el unique (phone_number_id, telefono_cliente)
+// ya existente (20260825250000_clientes_conocidos.sql) -- si dos invocaciones
+// concurrentes intentan crear el mismo contacto, Postgres rechaza la
+// perdedora con 23505 y esta función simplemente vuelve a leer la fila
+// (ya creada por la ganadora) en vez de tratarlo como un error.
+export async function resolverOCrearContacto(
+  supabase: SupabaseClient,
+  params: { idTenant: string; phoneNumberId: string; telefonoCliente: string }
+): Promise<{ customFields: Record<string, unknown> }> {
+  try {
+    const { data: existing } = await supabase
+      .from("dulabs_clientes_conocidos")
+      .select("custom_fields")
+      .eq("phone_number_id", params.phoneNumberId)
+      .eq("telefono_cliente", params.telefonoCliente)
+      .maybeSingle();
+    if (existing) {
+      return { customFields: (existing.custom_fields as Record<string, unknown> | null) ?? {} };
+    }
+
+    const { error } = await supabase.from("dulabs_clientes_conocidos").insert({
+      id_tenant: params.idTenant,
+      phone_number_id: params.phoneNumberId,
+      telefono_cliente: params.telefonoCliente,
+      nombre: params.telefonoCliente,
+    });
+    if (error && error.code !== "23505") {
+      console.error("[clientes-conocidos] error creando contacto:", error.message);
+      return { customFields: {} };
+    }
+
+    // Ganadora de la creación (o perdedora de la carrera, 23505): en ambos
+    // casos la fila ya existe -- se relee para devolver custom_fields real
+    // (nunca '{}' asumido, por si otra invocación ya la había poblado).
+    const { data: fresh } = await supabase
+      .from("dulabs_clientes_conocidos")
+      .select("custom_fields")
+      .eq("phone_number_id", params.phoneNumberId)
+      .eq("telefono_cliente", params.telefonoCliente)
+      .maybeSingle();
+    return { customFields: (fresh?.custom_fields as Record<string, unknown> | null) ?? {} };
+  } catch (err) {
+    console.error("[clientes-conocidos] error resolviendo contacto:", err instanceof Error ? err.message : err);
+    return { customFields: {} };
+  }
+}
+
+// FASE F7 (Contacts + Variables + Tags, autorizado) — persiste en el
+// contacto real los campos que save_data(target="custom_field") dejó en
+// state.exports.custom_fields (antes un balde muerto, ver flow-engine.ts::
+// applySaveDataMappings). MERGE, nunca replace: campos ya guardados en
+// turnos anteriores (o por otro canal) que esta ejecución no vuelve a
+// mandar NUNCA se borran. Nunca lanza -- mismo criterio que
+// recordarNombreCliente/resolverOCrearContacto (persistir un custom_field es
+// un enriquecimiento, no puede tumbar el turno del Flow que lo generó).
+export async function actualizarCampoPersonalizado(
+  supabase: SupabaseClient,
+  params: {
+    idTenant: string;
+    phoneNumberId: string;
+    telefonoCliente: string;
+    customFields: Record<string, unknown>;
+  }
+): Promise<void> {
+  if (Object.keys(params.customFields).length === 0) return;
+  try {
+    const { data: existing } = await supabase
+      .from("dulabs_clientes_conocidos")
+      .select("custom_fields")
+      .eq("phone_number_id", params.phoneNumberId)
+      .eq("telefono_cliente", params.telefonoCliente)
+      .maybeSingle();
+
+    const merged = {
+      ...((existing?.custom_fields as Record<string, unknown> | null) ?? {}),
+      ...params.customFields,
+    };
+
+    if (existing) {
+      await supabase
+        .from("dulabs_clientes_conocidos")
+        .update({ custom_fields: merged, updated_at: new Date().toISOString() })
+        .eq("phone_number_id", params.phoneNumberId)
+        .eq("telefono_cliente", params.telefonoCliente);
+      return;
+    }
+
+    // No debería ocurrir en la práctica (la ejecución ya llamó
+    // resolverOCrearContacto al iniciar) -- cubierto de todos modos para que
+    // esta función nunca dependa de un orden de llamadas implícito.
+    await supabase.from("dulabs_clientes_conocidos").upsert(
+      {
+        id_tenant: params.idTenant,
+        phone_number_id: params.phoneNumberId,
+        telefono_cliente: params.telefonoCliente,
+        nombre: params.telefonoCliente,
+        custom_fields: merged,
+      },
+      { onConflict: "phone_number_id,telefono_cliente" }
+    );
+  } catch (err) {
+    console.error(
+      "[clientes-conocidos] error guardando custom_fields:",
+      err instanceof Error ? err.message : err
+    );
+  }
+}

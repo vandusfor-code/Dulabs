@@ -24,6 +24,8 @@ import {
   resolveEffectResult,
   recordNodeTransition,
 } from "@/lib/flow/flow-store";
+import { resolverOCrearContacto, actualizarCampoPersonalizado } from "@/lib/clientes-conocidos";
+import { listarEtiquetasDeConversacion } from "@/lib/etiquetas";
 
 export function createSupabaseFlowOrchestratorStore(supabase: SupabaseClient): FlowOrchestratorStore {
   return {
@@ -73,6 +75,32 @@ export function createSupabaseFlowOrchestratorStore(supabase: SupabaseClient): F
 
     async recordNodeTransition(input) {
       await recordNodeTransition(supabase, input);
+    },
+
+    // FASE F7 (Contacts + Variables + Tags, autorizado) -- único store real
+    // que implementa estos 3 métodos opcionales (ver orchestrator-types.ts).
+    async resolveOrCreateContact(tenantId, conversation) {
+      return resolverOCrearContacto(supabase, {
+        idTenant: tenantId,
+        phoneNumberId: conversation.phoneNumberId,
+        telefonoCliente: conversation.telefonoCliente,
+      });
+    },
+
+    async getConversationTagNames(_tenantId, conversation) {
+      return listarEtiquetasDeConversacion(supabase, {
+        phoneNumberId: conversation.phoneNumberId,
+        telefonoCliente: conversation.telefonoCliente,
+      });
+    },
+
+    async persistContactCustomFields(tenantId, conversation, customFields) {
+      await actualizarCampoPersonalizado(supabase, {
+        idTenant: tenantId,
+        phoneNumberId: conversation.phoneNumberId,
+        telefonoCliente: conversation.telefonoCliente,
+        customFields,
+      });
     },
   };
 }
