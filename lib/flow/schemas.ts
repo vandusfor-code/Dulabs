@@ -19,12 +19,44 @@ export const flowTemplateRefSchema = z.object({
   variables: z.record(z.string(), z.string()).optional(),
 });
 
-export const flowMediaRefSchema = z.object({
-  type: z.enum(["image", "video", "document", "audio"]),
-  url: z.string().url().optional(),
-  mediaId: z.string().trim().min(1).optional(),
-  caption: z.string().optional(),
-});
+// FASE F8.4 (WhatsApp Media, autorizado) -- "sticker" agregado, filename
+// (solo document), y reglas reales de Meta: exactamente uno de url/mediaId;
+// caption nunca en audio/sticker (Meta los rechaza); filename solo en
+// document. `url` exige https:// explícitamente -- Meta la descarga por su
+// cuenta (nunca este servidor), pero un esquema no-http(s) (file://, etc.)
+// no tiene sentido acá y se rechaza en el origen.
+export const flowMediaRefSchema = z
+  .object({
+    type: z.enum(["image", "video", "document", "audio", "sticker"]),
+    url: z.string().url().startsWith("https://", "media.url debe ser https://").optional(),
+    mediaId: z.string().trim().min(1).optional(),
+    caption: z.string().optional(),
+    filename: z.string().trim().min(1).optional(),
+  })
+  .superRefine((val, ctx) => {
+    const hasUrl = Boolean(val.url);
+    const hasMediaId = Boolean(val.mediaId);
+    if (hasUrl === hasMediaId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "media requiere exactamente uno de url o mediaId (nunca ambos, nunca ninguno)",
+      });
+    }
+    if (val.caption && (val.type === "audio" || val.type === "sticker")) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Meta no admite caption en media de tipo "${val.type}"`,
+        path: ["caption"],
+      });
+    }
+    if (val.filename && val.type !== "document") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'filename solo aplica a media de tipo "document"',
+        path: ["filename"],
+      });
+    }
+  });
 
 export const assertionCapabilitySchema = z.enum([
   "appointment.reserved",
@@ -342,11 +374,26 @@ export const flowNodeSchema = z.discriminatedUnion("type", [
   }),
   nodeBaseSchema.extend({
     type: z.literal("buttons"),
-    config: z.object({
-      text: z.string().trim().min(1),
-      buttons: z.array(flowButtonSchema).min(1).max(3),
-      variableKey: z.string().trim().min(1).optional(),
-    }),
+    config: z
+      .object({
+        text: z.string().trim().min(1),
+        buttons: z.array(flowButtonSchema).min(1).max(3),
+        variableKey: z.string().trim().min(1).optional(),
+        messageRole: messageRoleSchema.optional(),
+        // FASE F8.4 (WhatsApp Media, autorizado) -- solo image: es el único
+        // header de media que Meta admite en un mensaje interactivo de
+        // botones (video/audio/document/sticker no tienen equivalente ahí).
+        media: flowMediaRefSchema.optional(),
+      })
+      .superRefine((val, ctx) => {
+        if (val.media && val.media.type !== "image") {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: 'un nodo "buttons" solo admite media de tipo "image" (Meta no soporta otro header en mensajes interactivos)',
+            path: ["media", "type"],
+          });
+        }
+      }),
   }),
   nodeBaseSchema.extend({
     type: z.literal("condition"),

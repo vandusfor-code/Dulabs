@@ -12,10 +12,17 @@
  * saber si falló). Esto NO toca ni cambia el webhook LEGACY: es un
  * segundo, independiente lector/escritor de las mismas tablas
  * (dulabs_clientes_config, dulabs_mensajes_log) que LEGACY ya usa.
+ *
+ * FASE F8.4 (WhatsApp Media, autorizado) -- reemplaza el stub
+ * "media_send_not_implemented" con envío real de los 5 tipos de media de
+ * Meta (image/video/audio/document/sticker), vía enviarMedia (lib/whatsapp.ts).
+ * Solo OUTBOUND -- la recepción de media entrante queda fuera de esta fase
+ * (requiere modificar app/webhook-dulabs/route.ts, archivo protegido; ver
+ * F8.4 IMPLEMENTATION REPORT sección "Bloqueo: recepción de media").
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { enviarTexto } from "@/lib/whatsapp";
+import { enviarTexto, enviarMedia } from "@/lib/whatsapp";
 import { enviarBotones, resolverTokenMeta, incrementarUsoMensajes, registrarMensaje } from "@/lib/whatsapp-outbound";
 import type { ClienteConfig } from "@/lib/supabase";
 import {
@@ -28,7 +35,7 @@ import {
   type InternalActionOperationClass,
 } from "@/lib/flow/executor-types";
 import { classifyMetaSendError } from "@/lib/flow/executors/send-message-error-classifier";
-import type { FlowMessageContent } from "@/lib/flow/types";
+import type { FlowMediaRef, FlowMediaType, FlowMessageContent } from "@/lib/flow/types";
 
 export interface SendMessageDeps {
   supabase: SupabaseClient;
@@ -37,6 +44,7 @@ export interface SendMessageDeps {
   /** Inyectables para tests — default: llamadas reales a la Graph API de Meta. */
   enviarTexto?: typeof enviarTexto;
   enviarBotones?: typeof enviarBotones;
+  enviarMedia?: typeof enviarMedia;
   incrementarUsoMensajes?: typeof incrementarUsoMensajes;
   registrarMensaje?: typeof registrarMensaje;
 }
@@ -71,9 +79,21 @@ function resolverTextoPlano(content: FlowMessageContent): string | null {
   return null;
 }
 
+// FASE F8.4 (autorizado) -- placeholder para dulabs_mensajes_log.contenido
+// (NOT NULL) cuando el media no trae caption -- mismo criterio que ya usaba
+// enviarImagenWhatsApp (lib/whatsapp-outbound.ts) para "[imagen]", ahora
+// generalizado a los 5 tipos.
+const PLACEHOLDER_POR_TIPO: Record<FlowMediaType, string> = {
+  image: "[imagen]",
+  video: "[video]",
+  audio: "[audio]",
+  document: "[documento]",
+  sticker: "[sticker]",
+};
+
 export class SendMessageExecutor implements EffectExecutor {
   readonly kind = "send_message" as const;
-  readonly version = "2.0.0";
+  readonly version = "3.0.0";
   readonly capabilities = {
     supportsIntegration: false,
     supportsAsync: false,
@@ -98,18 +118,45 @@ export class SendMessageExecutor implements EffectExecutor {
       return { success: false, classification: EFFECT_RESULT_CLASSIFICATIONS.VALIDATION_ERROR, error: "conversation_required" };
     }
 
-    // Media y plantillas Meta: fuera de alcance de este corte (blocker
-    // documentado, no un parche a medias) -- solo texto y botones, que es
-    // todo lo que necesita el Flow de Daniela diseñado en esta fase.
+    // Plantillas Meta vía nodo "message": fuera de alcance (F8.1 ya resuelve
+    // templates por un camino distinto, internal_action "enviar_plantilla" --
+    // ver InternalActionExecutor. Este stub queda igual, sin tocar.
     if (request.message.content.template) {
       return { success: false, classification: EFFECT_RESULT_CLASSIFICATIONS.NON_RETRYABLE, error: "template_send_not_implemented" };
     }
-    if (request.message.content.media && !resolverTextoPlano(request.message.content)) {
-      return { success: false, classification: EFFECT_RESULT_CLASSIFICATIONS.NON_RETRYABLE, error: "media_send_not_implemented" };
+
+    const media: FlowMediaRef | undefined = request.message.content.media;
+    const buttons = request.message.buttons;
+
+    // Meta solo permite un header de MEDIA en un mensaje interactivo de
+    // botones cuando ese header es una imagen (ver enviarBotones/
+    // headerMediaId/headerMediaLink) -- video/audio/document/sticker no
+    // tienen equivalente de header interactivo en la Cloud API real. No se
+    // inventa un fallback silencioso: se rechaza explícito.
+    if (media && buttons?.length && media.type !== "image") {
+      return {
+        success: false,
+        classification: EFFECT_RESULT_CLASSIFICATIONS.VALIDATION_ERROR,
+        error: "media_buttons_unsupported_type",
+      };
+    }
+    if (media && !media.url && !media.mediaId) {
+      return {
+        success: false,
+        classification: EFFECT_RESULT_CLASSIFICATIONS.VALIDATION_ERROR,
+        error: "media_reference_required",
+      };
     }
 
     const texto = resolverTextoPlano(request.message.content);
-    if (!texto) {
+    // Sin media: se necesita texto (comportamiento LEGACY sin cambios). Con
+    // media pero CON botones: Meta exige body.text en todo mensaje
+    // interactivo, media o no -- mismo requisito. Con media SIN botones: el
+    // media es el contenido, no hace falta texto (placeholder al loguear).
+    if (!media && !texto) {
+      return { success: false, classification: EFFECT_RESULT_CLASSIFICATIONS.VALIDATION_ERROR, error: "empty_message_content" };
+    }
+    if (media && buttons?.length && !texto) {
       return { success: false, classification: EFFECT_RESULT_CLASSIFICATIONS.VALIDATION_ERROR, error: "empty_message_content" };
     }
 
@@ -131,28 +178,58 @@ export class SendMessageExecutor implements EffectExecutor {
 
     const enviarTextoFn = this.deps.enviarTexto ?? enviarTexto;
     const enviarBotonesFn = this.deps.enviarBotones ?? enviarBotones;
+    const enviarMediaFn = this.deps.enviarMedia ?? enviarMedia;
     const incrementarUsoMensajesFn = this.deps.incrementarUsoMensajes ?? incrementarUsoMensajes;
     const registrarMensajeFn = this.deps.registrarMensaje ?? registrarMensaje;
 
     let wamid: string | null = null;
+    let contentType: string;
     try {
-      if (request.message.buttons?.length) {
+      if (media && buttons?.length) {
+        // media.type === "image", garantizado por el rechazo de arriba.
         ({ wamid } = await enviarBotonesFn({
           phoneNumberId: cliente.phone_number_id,
           token,
           para: conversation.telefonoCliente,
-          cuerpo: texto,
-          botones: request.message.buttons.map((b) => ({ id: b.id, titulo: b.label })),
+          cuerpo: texto as string,
+          botones: buttons.map((b) => ({ id: b.id, titulo: b.label })),
+          headerMediaId: media.mediaId,
+          headerMediaLink: media.url,
           signal,
         }));
+        contentType = "buttons_with_media";
+      } else if (media) {
+        ({ wamid } = await enviarMediaFn({
+          phoneNumberId: cliente.phone_number_id,
+          token,
+          para: conversation.telefonoCliente,
+          tipo: media.type,
+          link: media.url,
+          mediaId: media.mediaId,
+          caption: media.caption,
+          filename: media.filename,
+          signal,
+        }));
+        contentType = media.type;
+      } else if (buttons?.length) {
+        ({ wamid } = await enviarBotonesFn({
+          phoneNumberId: cliente.phone_number_id,
+          token,
+          para: conversation.telefonoCliente,
+          cuerpo: texto as string,
+          botones: buttons.map((b) => ({ id: b.id, titulo: b.label })),
+          signal,
+        }));
+        contentType = "buttons";
       } else {
         ({ wamid } = await enviarTextoFn({
           phoneNumberId: cliente.phone_number_id,
           token,
           para: conversation.telefonoCliente,
-          texto,
+          texto: texto as string,
           signal,
         }));
+        contentType = "text";
       }
     } catch (err) {
       // FASE F8.3 (Meta Send Reliability, autorizado) -- clasificación real
@@ -171,6 +248,7 @@ export class SendMessageExecutor implements EffectExecutor {
         httpStatus: clasificado.httpStatus,
         metaErrorCode: clasificado.metaErrorCode,
         metaErrorMessage: clasificado.metaErrorMessage,
+        mediaType: media?.type,
         error: err instanceof Error ? err.message : "meta_send_failed",
       };
       return {
@@ -183,27 +261,31 @@ export class SendMessageExecutor implements EffectExecutor {
     }
 
     await incrementarUsoMensajesFn(this.deps.supabase, cliente);
+    const contenidoLog = media ? (media.caption?.trim() || PLACEHOLDER_POR_TIPO[media.type]) : (texto as string);
     await registrarMensajeFn(
       this.deps.supabase,
       cliente.phone_number_id,
       conversation.telefonoCliente,
       "saliente",
-      texto,
+      contenidoLog,
       "ia",
       wamid ?? undefined,
     );
 
-    const data = { delivered: true, wamid, nodeId: request.nodeId, attempt: request.attempt };
+    const data = {
+      delivered: true,
+      wamid,
+      nodeId: request.nodeId,
+      attempt: request.attempt,
+      ...(media ? { mediaType: media.type } : {}),
+    };
     return {
       success: true,
       classification: EFFECT_RESULT_CLASSIFICATIONS.SUCCESS,
       data,
       appliedResult: data,
       rawResult: data,
-      metadata: {
-        channel: "whatsapp",
-        contentType: request.message.buttons?.length ? "buttons" : "text",
-      },
+      metadata: { channel: "whatsapp", contentType },
       externalReference: wamid ? `wamid:${wamid}` : undefined,
     };
   }

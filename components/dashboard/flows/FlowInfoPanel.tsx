@@ -14,6 +14,8 @@ import type {
   ConditionRule,
   EndNode,
   FlowDefinition,
+  FlowMediaRef,
+  FlowMediaType,
   FlowNode,
   HumanNode,
   MessageNode,
@@ -44,6 +46,17 @@ const TYPE_LABEL: Record<FlowNode["type"], string> = {
   human: "Humano",
   end: "Final",
 };
+
+// FASE F8.4 (WhatsApp Media, autorizado) -- los 5 tipos reales que Meta
+// Cloud API acepta en outbound (ver lib/flow/types.ts::FlowMediaType).
+const MEDIA_TYPE_LABEL: Record<FlowMediaType, string> = {
+  image: "Imagen",
+  video: "Video",
+  audio: "Audio",
+  document: "Documento",
+  sticker: "Sticker",
+};
+const MEDIA_TYPES_CON_CAPTION = new Set<FlowMediaType>(["image", "video", "document"]);
 
 const ASSERTION_CAPABILITIES = [
   "appointment.reserved",
@@ -125,8 +138,132 @@ function StartEditor({ node, onChange }: { node: StartNode; onChange: OnConfigCh
   );
 }
 
+// FASE F8.4 (WhatsApp Media, autorizado) -- editor de FlowMediaRef dentro de
+// un nodo "message" (único nodo cuyo config es FlowMessageContent completo
+// -- ver flow-engine.ts, "case message" hace `content: {...node.config}`).
+// Fuente mutuamente excluyente (URL pública que Meta descarga por su
+// cuenta, o un mediaId ya subido) -- mismo criterio que
+// flowMediaRefSchema.superRefine (lib/flow/schemas.ts): exactamente uno de
+// los dos, nunca ambos.
+function MediaEditor({
+  media,
+  onChange,
+  errors,
+  allowedTypes,
+  label = "Media adjunta",
+}: {
+  media: FlowMediaRef;
+  onChange: (media: FlowMediaRef | undefined) => void;
+  errors: NodeFieldError[];
+  /** FASE F8.4 (autorizado) -- restringe el selector de tipo (ej. nodo "buttons": Meta solo admite header de imagen). Default: los 5 tipos. */
+  allowedTypes?: FlowMediaType[];
+  label?: string;
+}) {
+  const fuente: "url" | "mediaId" = media.mediaId ? "mediaId" : "url";
+  const soportaCaption = MEDIA_TYPES_CON_CAPTION.has(media.type);
+  const tipos = allowedTypes ?? (Object.keys(MEDIA_TYPE_LABEL) as FlowMediaType[]);
+  return (
+    <div className="flex flex-col gap-2 rounded-[10px] border border-edge/60 bg-ink/40 p-3">
+      <div className="flex items-center justify-between">
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-mist">{label}</p>
+        <button
+          type="button"
+          className="text-[11px] text-danger-text hover:underline"
+          onClick={() => onChange(undefined)}
+        >
+          Quitar
+        </button>
+      </div>
+      {tipos.length > 1 && (
+        <Field label="Tipo">
+          <select
+            className={inputClass}
+            value={media.type}
+            onChange={(e) => {
+              const type = e.target.value as FlowMediaType;
+              onChange({
+                ...media,
+                type,
+                caption: MEDIA_TYPES_CON_CAPTION.has(type) ? media.caption : undefined,
+                filename: type === "document" ? media.filename : undefined,
+              });
+            }}
+          >
+            {tipos.map((t) => (
+              <option key={t} value={t}>
+                {MEDIA_TYPE_LABEL[t]}
+              </option>
+            ))}
+          </select>
+        </Field>
+      )}
+      <ErrorText errors={errorsForPath(errors, "config.media.type")} />
+      <Field label="Origen">
+        <select
+          className={inputClass}
+          value={fuente}
+          onChange={(e) => {
+            if (e.target.value === "url") onChange({ ...media, url: media.url ?? "", mediaId: undefined });
+            else onChange({ ...media, mediaId: media.mediaId ?? "", url: undefined });
+          }}
+        >
+          <option value="url">URL pública</option>
+          <option value="mediaId">Media ID (ya subido a Meta)</option>
+        </select>
+      </Field>
+      {fuente === "url" ? (
+        <>
+          <Field label="URL (https://...)">
+            <input
+              className={inputClass}
+              value={media.url ?? ""}
+              placeholder="https://..."
+              onChange={(e) => onChange({ ...media, url: e.target.value, mediaId: undefined })}
+            />
+          </Field>
+          <ErrorText errors={errorsForPath(errors, "config.media.url")} />
+        </>
+      ) : (
+        <>
+          <Field label="Media ID">
+            <input
+              className={inputClass}
+              value={media.mediaId ?? ""}
+              onChange={(e) => onChange({ ...media, mediaId: e.target.value, url: undefined })}
+            />
+          </Field>
+          <ErrorText errors={errorsForPath(errors, "config.media.mediaId")} />
+        </>
+      )}
+      {soportaCaption && (
+        <>
+          <Field label="Caption (opcional)">
+            <input className={inputClass} value={media.caption ?? ""} onChange={(e) => onChange({ ...media, caption: e.target.value || undefined })} />
+          </Field>
+          <ErrorText errors={errorsForPath(errors, "config.media.caption")} />
+        </>
+      )}
+      {media.type === "document" && (
+        <>
+          <Field label="Nombre de archivo (opcional)">
+            <input
+              className={inputClass}
+              value={media.filename ?? ""}
+              placeholder="factura.pdf"
+              onChange={(e) => onChange({ ...media, filename: e.target.value || undefined })}
+            />
+          </Field>
+          <ErrorText errors={errorsForPath(errors, "config.media.filename")} />
+        </>
+      )}
+      <ErrorText errors={errorsForPath(errors, "config.media")} />
+    </div>
+  );
+}
+
 function MessageEditor({ node, onChange, errors }: { node: MessageNode; onChange: OnConfigChange; errors: NodeFieldError[] }) {
   const role = node.config.messageRole ?? "informational";
+  const media = node.config.media;
   return (
     <>
       <Field label="Texto">
@@ -138,6 +275,21 @@ function MessageEditor({ node, onChange, errors }: { node: MessageNode; onChange
       </Field>
       <ErrorText errors={errorsForPath(errors, "config.text")} />
       <ErrorText errors={errorsForPath(errors, "config")} />
+      {media ? (
+        <MediaEditor
+          media={media}
+          onChange={(next) => onChange({ ...node.config, media: next })}
+          errors={errors}
+        />
+      ) : (
+        <button
+          type="button"
+          className="self-start rounded-[10px] border border-edge/60 px-3 py-1.5 text-[11px] font-medium text-fg hover:bg-ink/40"
+          onClick={() => onChange({ ...node.config, media: { type: "image", url: "" } })}
+        >
+          + Adjuntar media
+        </button>
+      )}
       <Field label="Rol">
         <select
           className={inputClass}
@@ -258,6 +410,26 @@ function ButtonsEditor({ node, onChange, errors }: { node: ButtonsNode; onChange
           onChange={(e) => onChange({ ...node.config, variableKey: e.target.value || undefined })}
         />
       </Field>
+      {/* FASE F8.4 (WhatsApp Media, autorizado) -- solo imagen: es el único
+          header de media que Meta admite en un mensaje interactivo de
+          botones (ver flowNodeSchema/SendMessageExecutor). */}
+      {node.config.media ? (
+        <MediaEditor
+          media={node.config.media}
+          onChange={(next) => onChange({ ...node.config, media: next })}
+          errors={errors}
+          allowedTypes={["image"]}
+          label="Imagen del encabezado"
+        />
+      ) : (
+        <button
+          type="button"
+          className="self-start rounded-[10px] border border-edge/60 px-3 py-1.5 text-[11px] font-medium text-fg hover:bg-ink/40"
+          onClick={() => onChange({ ...node.config, media: { type: "image", url: "" } })}
+        >
+          + Agregar imagen al encabezado
+        </button>
+      )}
       <div>
         <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-mist">Botones</p>
         <div className="flex flex-col gap-2">

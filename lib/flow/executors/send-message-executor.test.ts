@@ -185,14 +185,21 @@ describe("SendMessageExecutor — clasificación y campos estructurados (F8.3)",
     assert.equal(result.classification, EFFECT_RESULT_CLASSIFICATIONS.NON_RETRYABLE);
   });
 
-  it("12. media_send_not_implemented sigue NON_RETRYABLE (F8.4 fuera de alcance, regresión)", async () => {
-    const executor = buildExecutor();
+  it("12. FASE F8.4: media real (antes stub media_send_not_implemented) -- envía por enviarMedia, preserva wamid y mediaType", async () => {
+    const executor = buildExecutor({
+      enviarMedia: async (p) => {
+        assert.equal(p.tipo, "image");
+        assert.equal(p.link, "https://x/y.jpg");
+        return { wamid: "wamid-media-1" };
+      },
+    });
     const result = await executor.dispatch(
       buildRequest({ message: { content: { media: { type: "image", url: "https://x/y.jpg" } } } }),
       { tenantId: TENANT, internal: true },
     );
-    assert.equal(result.classification, EFFECT_RESULT_CLASSIFICATIONS.NON_RETRYABLE);
-    assert.equal(result.error, "media_send_not_implemented");
+    assert.equal(result.success, true);
+    assert.equal((result.data as Record<string, unknown>).wamid, "wamid-media-1");
+    assert.equal((result.data as Record<string, unknown>).mediaType, "image");
   });
 
   it("13. TypeError de red (fetch failed) -> RETRYABLE", async () => {
@@ -203,5 +210,247 @@ describe("SendMessageExecutor — clasificación y campos estructurados (F8.3)",
     });
     const result = await executor.dispatch(buildRequest(), { tenantId: TENANT, internal: true });
     assert.equal(result.classification, EFFECT_RESULT_CLASSIFICATIONS.RETRYABLE);
+  });
+});
+
+describe("SendMessageExecutor — media (F8.4)", () => {
+  let prevToken: string | undefined;
+  before(() => {
+    prevToken = process.env.META_ACCESS_TOKEN;
+    process.env.META_ACCESS_TOKEN = "token-fake-test";
+  });
+  after(() => {
+    if (prevToken === undefined) delete process.env.META_ACCESS_TOKEN;
+    else process.env.META_ACCESS_TOKEN = prevToken;
+  });
+
+  it("1. video por mediaId (sin caption) -> success, contentType=video", async () => {
+    const executor = buildExecutor({
+      enviarMedia: async (p) => {
+        assert.equal(p.tipo, "video");
+        assert.equal(p.mediaId, "media-abc");
+        assert.equal(p.link, undefined);
+        return { wamid: "w-video" };
+      },
+    });
+    const result = await executor.dispatch(
+      buildRequest({ message: { content: { media: { type: "video", mediaId: "media-abc" } } } }),
+      { tenantId: TENANT, internal: true },
+    );
+    assert.equal(result.success, true);
+    assert.equal((result.metadata as Record<string, unknown>).contentType, "video");
+  });
+
+  it("2. audio -> success, nunca envía caption (Meta no lo admite)", async () => {
+    const executor = buildExecutor({
+      enviarMedia: async (p) => {
+        assert.equal(p.tipo, "audio");
+        return { wamid: "w-audio" };
+      },
+    });
+    const result = await executor.dispatch(
+      buildRequest({ message: { content: { media: { type: "audio", url: "https://x/a.ogg" } } } }),
+      { tenantId: TENANT, internal: true },
+    );
+    assert.equal(result.success, true);
+  });
+
+  it("3. document con filename y caption -> se pasan ambos a enviarMedia", async () => {
+    const executor = buildExecutor({
+      enviarMedia: async (p) => {
+        assert.equal(p.tipo, "document");
+        assert.equal(p.filename, "factura.pdf");
+        assert.equal(p.caption, "Aquí tienes tu factura");
+        return { wamid: "w-doc" };
+      },
+    });
+    const result = await executor.dispatch(
+      buildRequest({
+        message: {
+          content: { media: { type: "document", url: "https://x/f.pdf", filename: "factura.pdf", caption: "Aquí tienes tu factura" } },
+        },
+      }),
+      { tenantId: TENANT, internal: true },
+    );
+    assert.equal(result.success, true);
+  });
+
+  it("4. sticker -> success, contentType=sticker", async () => {
+    const executor = buildExecutor({
+      enviarMedia: async () => ({ wamid: "w-sticker" }),
+    });
+    const result = await executor.dispatch(
+      buildRequest({ message: { content: { media: { type: "sticker", mediaId: "media-sticker" } } } }),
+      { tenantId: TENANT, internal: true },
+    );
+    assert.equal(result.success, true);
+    assert.equal((result.metadata as Record<string, unknown>).contentType, "sticker");
+  });
+
+  it("5. imagen sin caption -> success, dulabs_mensajes_log recibe el placeholder '[imagen]', NUNCA descarta el media silenciosamente", async () => {
+    let contenidoRegistrado: string | undefined;
+    const executor = buildExecutor({
+      enviarMedia: async () => ({ wamid: "w-img" }),
+      registrarMensaje: async (_s, _p, _t, _d, contenido) => {
+        contenidoRegistrado = contenido;
+        return false;
+      },
+    });
+    const result = await executor.dispatch(
+      buildRequest({ message: { content: { media: { type: "image", url: "https://x/y.jpg" } } } }),
+      { tenantId: TENANT, internal: true },
+    );
+    assert.equal(result.success, true);
+    assert.equal(contenidoRegistrado, "[imagen]", "el bug de F8 (enviar solo el caption y descartar el media) no debe reaparecer -- acá el media SÍ se envía");
+  });
+
+  it("6. imagen con caption -> dulabs_mensajes_log recibe el caption real, no el placeholder", async () => {
+    let contenidoRegistrado: string | undefined;
+    const executor = buildExecutor({
+      enviarMedia: async () => ({ wamid: "w-img-cap" }),
+      registrarMensaje: async (_s, _p, _t, _d, contenido) => {
+        contenidoRegistrado = contenido;
+        return false;
+      },
+    });
+    await executor.dispatch(
+      buildRequest({ message: { content: { media: { type: "image", url: "https://x/y.jpg", caption: "Mira esto" } } } }),
+      { tenantId: TENANT, internal: true },
+    );
+    assert.equal(contenidoRegistrado, "Mira esto");
+  });
+
+  it("7. media + botones + type=image -> usa enviarBotones con headerMediaLink, nunca enviarMedia", async () => {
+    let enviarMediaLlamado = false;
+    const executor = buildExecutor({
+      enviarMedia: async () => {
+        enviarMediaLlamado = true;
+        return { wamid: "no-deberia" };
+      },
+      enviarBotones: async (p) => {
+        assert.equal(p.headerMediaLink, "https://x/y.jpg");
+        assert.equal(p.headerMediaId, undefined);
+        assert.equal(p.cuerpo, "elige una opción");
+        return { wamid: "w-botones-media" };
+      },
+    });
+    const result = await executor.dispatch(
+      buildRequest({
+        message: {
+          content: { text: "elige una opción", media: { type: "image", url: "https://x/y.jpg" } },
+          buttons: [{ id: "b1", label: "Sí" }],
+        },
+      }),
+      { tenantId: TENANT, internal: true },
+    );
+    assert.equal(result.success, true);
+    assert.equal(enviarMediaLlamado, false);
+    assert.equal((result.metadata as Record<string, unknown>).contentType, "buttons_with_media");
+  });
+
+  it("8. media + botones + type=video -> VALIDATION_ERROR media_buttons_unsupported_type, nunca llama a Meta", async () => {
+    let llamadoAlgo = false;
+    const executor = buildExecutor({
+      enviarMedia: async () => {
+        llamadoAlgo = true;
+        return { wamid: "x" };
+      },
+      enviarBotones: async () => {
+        llamadoAlgo = true;
+        return { wamid: "x" };
+      },
+    });
+    const result = await executor.dispatch(
+      buildRequest({
+        message: {
+          content: { text: "elige", media: { type: "video", url: "https://x/v.mp4" } },
+          buttons: [{ id: "b1", label: "Sí" }],
+        },
+      }),
+      { tenantId: TENANT, internal: true },
+    );
+    assert.equal(result.classification, EFFECT_RESULT_CLASSIFICATIONS.VALIDATION_ERROR);
+    assert.equal(result.error, "media_buttons_unsupported_type");
+    assert.equal(llamadoAlgo, false);
+  });
+
+  it("9. media sin url NI mediaId -> VALIDATION_ERROR media_reference_required, nunca llama a Meta", async () => {
+    let llamado = false;
+    const executor = buildExecutor({ enviarMedia: async () => { llamado = true; return { wamid: "x" }; } });
+    const result = await executor.dispatch(
+      buildRequest({ message: { content: { media: { type: "image" } } } }),
+      { tenantId: TENANT, internal: true },
+    );
+    assert.equal(result.classification, EFFECT_RESULT_CLASSIFICATIONS.VALIDATION_ERROR);
+    assert.equal(result.error, "media_reference_required");
+    assert.equal(llamado, false);
+  });
+
+  it("10. media + botones sin ningún texto/caption -> VALIDATION_ERROR empty_message_content", async () => {
+    const executor = buildExecutor();
+    const result = await executor.dispatch(
+      buildRequest({
+        message: { content: { media: { type: "image", url: "https://x/y.jpg" } }, buttons: [{ id: "b1", label: "Sí" }] },
+      }),
+      { tenantId: TENANT, internal: true },
+    );
+    assert.equal(result.classification, EFFECT_RESULT_CLASSIFICATIONS.VALIDATION_ERROR);
+    assert.equal(result.error, "empty_message_content");
+  });
+
+  it("11. HTTP 400 (payload/link inválido) al enviar media -> NON_RETRYABLE, sin retry (regla F8.3 aplicada a media)", async () => {
+    const executor = buildExecutor({
+      enviarMedia: async () => {
+        throw new MetaGraphApiError({ httpStatus: 400, metaErrorMessage: "Invalid media url" });
+      },
+    });
+    const result = await executor.dispatch(
+      buildRequest({ message: { content: { media: { type: "image", url: "https://x/y.jpg" } } } }),
+      { tenantId: TENANT, internal: true },
+    );
+    assert.equal(result.classification, EFFECT_RESULT_CLASSIFICATIONS.NON_RETRYABLE);
+    const raw = result.rawResult as Record<string, unknown>;
+    assert.equal(raw.mediaType, "image");
+  });
+
+  it("12. HTTP 503 al enviar media -> RETRYABLE (misma clasificación F8.3, reutilizada sin duplicar)", async () => {
+    const executor = buildExecutor({
+      enviarMedia: async () => {
+        throw new MetaGraphApiError({ httpStatus: 503 });
+      },
+    });
+    const result = await executor.dispatch(
+      buildRequest({ message: { content: { media: { type: "image", url: "https://x/y.jpg" } } } }),
+      { tenantId: TENANT, internal: true },
+    );
+    assert.equal(result.classification, EFFECT_RESULT_CLASSIFICATIONS.RETRYABLE);
+  });
+
+  it("13. token de Meta ausente -> AUTH_ERROR incluso para media (mismo gate que texto, sin duplicar)", async () => {
+    const withoutToken = new SendMessageExecutor({
+      supabase: {} as never,
+      resolverCliente: async () => ({ ...CLIENTE, meta_permanent_token: null } as ClienteConfig),
+    });
+    const prev = process.env.META_ACCESS_TOKEN;
+    delete process.env.META_ACCESS_TOKEN;
+    try {
+      const result = await withoutToken.dispatch(
+        buildRequest({ message: { content: { media: { type: "image", url: "https://x/y.jpg" } } } }),
+        { tenantId: TENANT, internal: true },
+      );
+      assert.equal(result.classification, EFFECT_RESULT_CLASSIFICATIONS.AUTH_ERROR);
+    } finally {
+      if (prev === undefined) delete process.env.META_ACCESS_TOKEN;
+      else process.env.META_ACCESS_TOKEN = prev;
+    }
+  });
+
+  it("14. cross-tenant sigue rechazando aunque el efecto sea media (regresión, sin cambios)", async () => {
+    const executor = buildExecutor({ resolverCliente: async () => ({ ...CLIENTE, id_tenant: "otro-tenant" }) as ClienteConfig });
+    const result = await executor.dispatch(
+      buildRequest({ message: { content: { media: { type: "image", url: "https://x/y.jpg" } } } }),
+      { tenantId: TENANT, internal: true },
+    );
+    assert.equal(result.classification, EFFECT_RESULT_CLASSIFICATIONS.SECURITY_REJECTED);
   });
 });

@@ -144,9 +144,16 @@ export async function enviarBotones(params: {
   botones: { id: string; titulo: string }[];
   /** Imagen opcional en el encabezado (id ya subido, ver subirMedia) -- mismo mensaje interactivo, no un segundo envío. */
   headerMediaId?: string;
+  /** FASE F8.4 (WhatsApp Media, autorizado) -- alternativa a headerMediaId cuando el Flow configuró una URL pública en vez de un mediaId ya subido; exactamente uno de los dos, nunca ambos (SendMessageExecutor ya lo garantiza). Meta la descarga por su cuenta -- este servidor nunca la toca. */
+  headerMediaLink?: string;
   /** FASE F8.3 (autorizado) -- ver enviarTexto en lib/whatsapp.ts: opcional, sin default, comportamiento LEGACY sin cambio. */
   signal?: AbortSignal;
 }): Promise<{ wamid: string | null }> {
+  const header = params.headerMediaId
+    ? { header: { type: "image", image: { id: params.headerMediaId } } }
+    : params.headerMediaLink
+      ? { header: { type: "image", image: { link: params.headerMediaLink } } }
+      : {};
   const res = await fetch(`${GRAPH}/${params.phoneNumberId}/messages`, {
     method: "POST",
     headers: { Authorization: `Bearer ${params.token}`, "Content-Type": "application/json" },
@@ -156,7 +163,7 @@ export async function enviarBotones(params: {
       type: "interactive",
       interactive: {
         type: "button",
-        ...(params.headerMediaId ? { header: { type: "image", image: { id: params.headerMediaId } } } : {}),
+        ...header,
         body: { text: params.cuerpo },
         action: {
           buttons: params.botones.map((b) => ({ type: "reply", reply: { id: b.id, title: b.titulo.slice(0, 20) } })),

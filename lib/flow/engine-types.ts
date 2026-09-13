@@ -60,6 +60,26 @@ export interface PendingEffect {
 // Eventos de entrada
 // ---------------------------------------------------------------------------
 
+/**
+ * FASE F8.4 (WhatsApp Media inbound, autorizado) — media entrante ya
+ * normalizada por el webhook (ver app/webhook-dulabs/route.ts::normalizarMediaEntrante),
+ * ANTES de llegar al Engine. Deliberadamente NUNCA carga el binario ni una
+ * URL de descarga firmada de Meta (esas expiran en minutos y son datos de
+ * infraestructura, no algo que deba viajar por variables de Flow) -- solo
+ * `mediaId` + metadata, suficiente para: mostrarla en variables/condiciones,
+ * reenviarla (mediaId ya es válido para un envío outbound), o pedir la
+ * descarga real bajo demanda más adelante si un nodo la necesita (ver
+ * lib/whatsapp-media-download.ts).
+ */
+export interface NormalizedInboundMedia {
+  type: "image" | "video" | "audio" | "document" | "sticker";
+  mediaId: string;
+  mimeType?: string;
+  sha256?: string;
+  caption?: string;
+  filename?: string;
+}
+
 export type FlowEngineEvent =
   | {
       type: "start";
@@ -72,8 +92,10 @@ export type FlowEngineEvent =
        * comportamiento exacto de antes.
        */
       text?: string;
+      /** FASE F8.4 (autorizado) -- ver NormalizedInboundMedia. Opcional: omitirlo mantiene el comportamiento exacto de antes. */
+      media?: NormalizedInboundMedia;
     }
-  | { type: "text"; text: string; eventId?: string }
+  | { type: "text"; text: string; eventId?: string; media?: NormalizedInboundMedia }
   | { type: "button"; id: string; eventId?: string }
   | {
       type: "effect_result";
