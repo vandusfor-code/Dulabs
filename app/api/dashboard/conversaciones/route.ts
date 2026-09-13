@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { resolverMiembroEquipo } from "@/lib/team";
+import { leerEstadosConversacion, estadoEfectivo } from "@/lib/conversacion-estado";
 
 export const runtime = "nodejs";
 
@@ -102,8 +103,27 @@ export async function GET(request: NextRequest) {
     etiquetasPorClave.set(clave, lista);
   }
 
-  const filtro = request.nextUrl.searchParams.get("filtro") ?? "todas"; // "mias" | "sin_asignar" | "todas"
+  // Fase 9 (Human Inbox, autorizado) — estado explícito (open/pending/closed)
+  // + no leídos. Tolera la migración 20260929000000 sin aplicar (ver
+  // lib/conversacion-estado.ts): sin tabla, toda conversación cae al
+  // default seguro (open, no leída) -- el Inbox YA desplegado nunca se
+  // rompe por esto.
+  const estadosPorClave = await leerEstadosConversacion(supabase, phoneNumberIds);
+  const noLeidosPorClave = new Map<string, number>();
+  for (const m of mensajes ?? []) {
+    if (m.direccion !== "entrante") continue;
+    const clave = `${m.phone_number_id}:${m.telefono_cliente}`;
+    const fila = estadosPorClave.get(clave);
+    const leidoHasta = fila?.leido_hasta ?? "1970-01-01T00:00:00.000Z";
+    if (m.created_at > leidoHasta) {
+      noLeidosPorClave.set(clave, (noLeidosPorClave.get(clave) ?? 0) + 1);
+    }
+  }
+
+  const filtro = request.nextUrl.searchParams.get("filtro") ?? "todas"; // "mias" | "sin_asignar" | "todas" | "abiertas" | "pendientes" | "cerradas" | "ia" | "humano"
   const etiquetaIdFiltro = request.nextUrl.searchParams.get("etiqueta_id");
+  const busqueda = request.nextUrl.searchParams.get("q")?.trim().toLowerCase() || null;
+  const limite = Math.min(Number(request.nextUrl.searchParams.get("limite")) || 100, 200);
 
   let resultado = conversaciones.map((c) => {
     const clave = `${c.phone_number_id}:${c.telefono_cliente}`;
@@ -114,6 +134,8 @@ export async function GET(request: NextRequest) {
       pausado: pausadas.has(clave),
       asignado_a: asignado ? { miembro_id: asignado.id, nombre: asignado.nombre || asignado.email } : null,
       etiquetas: etiquetasPorClave.get(clave) ?? [],
+      estado: estadoEfectivo(estadosPorClave.get(clave), c.ultima_fecha),
+      no_leidos: noLeidosPorClave.get(clave) ?? 0,
     };
   });
 
@@ -121,11 +143,34 @@ export async function GET(request: NextRequest) {
     resultado = resultado.filter((c) => c.asignado_a?.miembro_id === miembro.miembroId);
   } else if (filtro === "sin_asignar") {
     resultado = resultado.filter((c) => !c.asignado_a);
+  } else if (filtro === "abiertas") {
+    resultado = resultado.filter((c) => c.estado === "open");
+  } else if (filtro === "pendientes") {
+    resultado = resultado.filter((c) => c.estado === "pending");
+  } else if (filtro === "cerradas") {
+    resultado = resultado.filter((c) => c.estado === "closed");
+  } else if (filtro === "ia") {
+    resultado = resultado.filter((c) => !c.pausado);
+  } else if (filtro === "humano") {
+    resultado = resultado.filter((c) => c.pausado);
   }
   if (etiquetaIdFiltro) {
     const idNum = Number(etiquetaIdFiltro);
     resultado = resultado.filter((c) => c.etiquetas.some((e) => e.id === idNum));
   }
+  if (busqueda) {
+    resultado = resultado.filter(
+      (c) =>
+        c.telefono_cliente.includes(busqueda) ||
+        c.nombre_negocio.toLowerCase().includes(busqueda) ||
+        (c.ultimo_mensaje ?? "").toLowerCase().includes(busqueda),
+    );
+  }
+
+  // Ya viene ordenado por última actividad descendente (el orden del select
+  // de dulabs_mensajes_log de arriba) -- el límite solo evita mandar al
+  // browser una lista sin techo en un tenant con muchísima actividad.
+  resultado = resultado.slice(0, limite);
 
   return Response.json({ conversaciones: resultado });
 }

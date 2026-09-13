@@ -64,6 +64,8 @@ type DashboardContextValue = {
   errorNegocios: string | null;
   suscripcion: Suscripcion;
   rol: Rol | null;
+  /** Fase 9 (Human Inbox, autorizado) — id de dulabs_miembros_equipo del usuario actual (para "¿esta conversación está asignada a mí?"). */
+  miembroId: number | null;
   /** DuMo es una integración interna del operador, no una función del producto. */
   puedeUsarDumo: boolean;
   /** Solo para mostrar/ocultar el link del Panel de Operaciones -- la autorización real vive en el backend. */
@@ -88,6 +90,7 @@ export function DashboardSessionProvider({ children }: { children: ReactNode }) 
   const [errorNegocios, setErrorNegocios] = useState<string | null>(null);
   const [suscripcion, setSuscripcion] = useState<Suscripcion>(null);
   const [rol, setRol] = useState<Rol | null>(null);
+  const [miembroId, setMiembroId] = useState<number | null>(null);
   const [puedeUsarDumo, setPuedeUsarDumo] = useState(false);
   const [esAdminDulabs, setEsAdminDulabs] = useState(false);
   // Se hidrata una sola vez desde localStorage (lazy initializer, no efecto)
@@ -124,6 +127,7 @@ export function DashboardSessionProvider({ children }: { children: ReactNode }) 
       setNegocios(data.negocios ?? []);
       setSuscripcion(data.suscripcion ?? null);
       setRol(data.rol ?? null);
+      setMiembroId(data.miembro_id ?? null);
       setPuedeUsarDumo(Boolean(data.puede_usar_dumo));
       setEsAdminDulabs(Boolean(data.es_admin_dulabs));
     } catch (err) {
@@ -181,6 +185,7 @@ export function DashboardSessionProvider({ children }: { children: ReactNode }) 
         errorNegocios,
         suscripcion,
         rol,
+        miembroId,
         puedeUsarDumo,
         esAdminDulabs,
         cargarNegocios: () => cargarNegocios(),
