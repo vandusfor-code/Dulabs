@@ -57,6 +57,17 @@ export type ClienteConfig = {
    * creación inmediata. NUNCA activar a mano sin autorización explícita.
    */
   requiere_confirmacion_cita?: boolean;
+  /**
+   * Fase 8.5 (Connection Lifecycle, autorizado; migración
+   * 20260928000000_dulabs_estado_conexion.sql, NO aplicada todavía --
+   * llega `undefined` hasta entonces, igual que flow_activo antes de su
+   * propia migración). Ciclo de vida de la conexión con Meta, INDEPENDIENTE
+   * de flow_activo/flow_id/trigger_routing_activo/ia_pausada: desconectar
+   * WhatsApp nunca implica desactivar el Flow. Ver lib/whatsapp-connection-lifecycle.ts.
+   */
+  estado_conexion?: "conectado" | "desconectado" | "reconectando" | "error";
+  /** Fase 8.5 -- timestamp del último disconnect explícito, o null. */
+  desconectado_en?: string | null;
   created_at: string;
   updated_at: string;
 };

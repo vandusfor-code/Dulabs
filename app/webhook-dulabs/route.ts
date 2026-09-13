@@ -584,6 +584,19 @@ async function procesarCambio(phoneNumberId: string, value: MetaChangeValue) {
     return;
   }
 
+  // FASE 8.5 (Connection Lifecycle, autorizado) -- número desconectado a
+  // propósito (ver lib/whatsapp-connection-lifecycle.ts): Meta normalmente
+  // deja de enviarnos webhooks de este número al desuscribirlo, pero esto es
+  // un respaldo explícito por si algo ya estaba en tránsito. INDEPENDIENTE
+  // de flow_activo/ia_pausada -- desconectar WhatsApp nunca reactiva ni
+  // desactiva el Flow, solo corta el procesamiento de ESTE mensaje.
+  // `undefined` (columna sin la migración aplicada todavía, o número nunca
+  // desconectado) se comporta EXACTO a como era antes de esta fase.
+  if (cliente.estado_conexion === "desconectado") {
+    console.log(`[webhook-dulabs] número desconectado ("${cliente.nombre_negocio}"), ignorando mensaje entrante`);
+    return;
+  }
+
   const displayPhone = soloDigitos(value.metadata?.display_phone_number ?? "");
 
   // Ecos de coexistencia: el dueño respondió desde el teclado de su celular.

@@ -57,10 +57,13 @@ function NumeroCard({
   negocio,
   accessToken,
   onActualizado,
+  onReconectar,
 }: {
   negocio: Negocio;
   accessToken: string;
   onActualizado: () => void;
+  /** Fase 8.5 (autorizado) — reabre el mismo flujo de Embedded Signup (meta-callback ya reconoce este número como reconexión). */
+  onReconectar: () => void;
 }) {
   const { t } = useI18n();
   const LIMITE_INFO: Record<string, string> = {
@@ -185,6 +188,31 @@ function NumeroCard({
       setErrorDumo(err instanceof Error ? err.message : t("Error desconocido", "Unknown error"));
     } finally {
       setConectandoDumo(false);
+    }
+  }, [accessToken, negocio.phone_number_id, onActualizado, t]);
+
+  // Fase 8.5 (Connection Lifecycle, autorizado) — disconnect REVERSIBLE,
+  // distinto de "Eliminar mis datos" (irreversible, más abajo): invalida
+  // solo la credencial de Meta, el Flow y la configuración se conservan.
+  const [desconectando, setDesconectando] = useState(false);
+  const [errorDesconectar, setErrorDesconectar] = useState<string | null>(null);
+
+  const desconectarWhatsapp = useCallback(async () => {
+    setDesconectando(true);
+    setErrorDesconectar(null);
+    try {
+      const res = await fetch("/api/dashboard/negocio/desconectar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ phone_number_id: negocio.phone_number_id }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? t("No se pudo desconectar el número.", "Couldn't disconnect the number."));
+      onActualizado();
+    } catch (err) {
+      setErrorDesconectar(err instanceof Error ? err.message : t("No se pudo desconectar el número.", "Couldn't disconnect the number."));
+    } finally {
+      setDesconectando(false);
     }
   }, [accessToken, negocio.phone_number_id, onActualizado, t]);
 
@@ -414,6 +442,38 @@ function NumeroCard({
           )}
         </div>
       </div>
+      )}
+
+      {negocio.estado_conexion === "desconectado" ? (
+        <div className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
+          <p className="text-xs font-semibold text-amber-500">{t("WhatsApp desconectado", "WhatsApp disconnected")}</p>
+          <p className="mt-1 text-xs leading-relaxed text-mist">
+            {t(
+              "Tu Flow y configuración siguen guardados. Reconecta cuando quieras para volver a recibir mensajes.",
+              "Your Flow and settings are still saved. Reconnect whenever you want to start receiving messages again.",
+            )}
+          </p>
+          <button
+            type="button"
+            onClick={onReconectar}
+            className="mt-2 flex items-center gap-1.5 rounded-lg border border-lime/40 bg-lime/10 px-3 py-1.5 text-xs font-semibold text-lime-text transition-colors hover:bg-lime/15"
+          >
+            <Link2 className="size-3.5" /> {t("Reconectar", "Reconnect")}
+          </button>
+        </div>
+      ) : (
+        <div className="mt-4 border-t border-edge pt-4">
+          {errorDesconectar && <p className="mb-2 text-xs text-red-400">{errorDesconectar}</p>}
+          <button
+            type="button"
+            onClick={desconectarWhatsapp}
+            disabled={desconectando}
+            className="flex items-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-xs font-semibold text-fg transition-colors hover:border-mist hover:bg-ink disabled:opacity-50"
+          >
+            {desconectando ? <Loader2 className="size-3.5 animate-spin" /> : <Link2 className="size-3.5" />}
+            {desconectando ? t("Desconectando…", "Disconnecting…") : t("Desconectar WhatsApp", "Disconnect WhatsApp")}
+          </button>
+        </div>
       )}
 
       <div className="mt-4 border-t border-edge pt-4">
@@ -691,6 +751,7 @@ export default function ConexionPage() {
                 negocio={n}
                 accessToken={session.access_token}
                 onActualizado={cargarNegocios}
+                onReconectar={conectar}
               />
             ))}
           </div>

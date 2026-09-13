@@ -5,6 +5,7 @@ import { cifrarSecreto } from "@/lib/crypto";
 import { planDelTenant, contarNumeros } from "@/lib/plan-limits";
 import { esSinPlan, MENSAJE_SIN_PLAN } from "@/lib/planes";
 import { iniciarSyncCoexistencia } from "@/lib/coexistence-sync";
+import { escribirToleranteAColumnaFaltante } from "@/lib/whatsapp-connection-lifecycle";
 
 export const runtime = "nodejs";
 
@@ -181,7 +182,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const datosConexion = {
+    const datosConexionBase = {
       id_tenant: idTenant,
       phone_number_id: phone.id,
       whatsapp_business_account_id: wabaId,
@@ -193,20 +194,33 @@ export async function POST(request: NextRequest) {
       // conexión; si no, el upsert no toca la columna (conserva el actual).
       ...(body.plan ? { plan: body.plan } : {}),
     };
+    // Fase 8.5 (Connection Lifecycle, autorizado) -- conectar/reconectar por
+    // Embedded Signup siempre deja la conexión en 'conectado', sin importar
+    // si el estado previo era 'desconectado'/'error'/'reconectando'. Ver
+    // escribirToleranteAColumnaFaltante: si la migración 20260928000000
+    // todavía no se aplicó, reintenta sin esta columna -- connect/reconnect
+    // real nunca se rompe por eso.
+    const datosConexion = { ...datosConexionBase, estado_conexion: "conectado" as const };
+    const datosConexionSinEstado = datosConexionBase;
 
     // Si el número físico ya era de este tenant bajo OTRO phone_number_id
     // (viejo/desconectado), se actualiza ESA fila puntual -- nunca se inserta
     // una segunda fila para el mismo número físico (eso sí contaría doble
     // contra el límite del plan).
-    const { error: dbError } = filaMismoNumero
-      ? await supabase
-          .from("dulabs_clientes_config")
-          .update(datosConexion)
-          .eq("id_tenant", idTenant)
-          .eq("phone_number_id", filaMismoNumero.phone_number_id)
-      : await supabase.from("dulabs_clientes_config").upsert(datosConexion, { onConflict: "phone_number_id" });
-    if (dbError) {
-      throw new Error(`Error guardando en Supabase: ${dbError.message}`);
+    const { resultado } = await escribirToleranteAColumnaFaltante(
+      (datos) =>
+        filaMismoNumero
+          ? supabase
+              .from("dulabs_clientes_config")
+              .update(datos)
+              .eq("id_tenant", idTenant)
+              .eq("phone_number_id", filaMismoNumero.phone_number_id)
+          : supabase.from("dulabs_clientes_config").upsert(datos, { onConflict: "phone_number_id" }),
+      datosConexion,
+      datosConexionSinEstado,
+    );
+    if (resultado.error) {
+      throw new Error(`Error guardando en Supabase: ${resultado.error.message}`);
     }
 
     // D. Suscribir nuestra app a los webhooks de este WABA para que Meta
