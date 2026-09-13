@@ -42,7 +42,7 @@ export async function GET(request: NextRequest) {
   if (!filaMiembro) {
     // Usuario autenticado que todavía no conectó un número ni se suscribió:
     // sin equipo, sin negocios — mismo comportamiento vacío de hoy.
-    return Response.json({ email: userData.user.email, negocios: [], suscripcion: null, rol: null, es_admin_dulabs: false });
+    return Response.json({ email: userData.user.email, negocios: [], suscripcion: null, rol: null, miembro_id: null, es_admin_dulabs: false });
   }
   if (filaMiembro.estado === "suspendido") {
     return Response.json({ error: "Tu acceso a este equipo fue suspendido" }, { status: 403 });
@@ -219,6 +219,10 @@ export async function GET(request: NextRequest) {
     negocios,
     suscripcion,
     rol,
+    // Fase 9 (Human Inbox, autorizado) — el propio id de dulabs_miembros_equipo,
+    // para que el Inbox pueda comparar "¿esta conversación está asignada A MÍ?"
+    // sin otra llamada (ya se seleccionó filaMiembro.id arriba, para es_admin_dulabs).
+    miembro_id: filaMiembro.id,
     puede_usar_dumo: puedeUsarDumo(userData.user.email),
     // Solo para mostrar/ocultar el link del Panel de Operaciones en el nav
     // -- la autorización REAL vive en cada endpoint /api/dashboard/admin/*

@@ -42,3 +42,26 @@ export async function activarPausaChat(
   }
   return { ok: true, pausadoHasta };
 }
+
+// Fase 9 (Human Inbox, autorizado) — "Devolver a IA": libera la pausa de
+// ESTE chat puntual antes de que expire sola. Simplemente borra la fila
+// (sin fila = sin pausa = la IA vuelve a responder en el próximo mensaje,
+// mismo criterio que ya usa atenderMensaje al consultar esta tabla) -- no
+// toca flow_activo/flow_id/trigger_routing_activo/contactos/tags/custom
+// fields/historial, nada de eso vive en dulabs_pausas_chat.
+export async function liberarPausaChat(
+  supabase: SupabaseClient,
+  phoneNumberId: string,
+  telefonoCliente: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const { error } = await supabase
+    .from("dulabs_pausas_chat")
+    .delete()
+    .eq("phone_number_id", phoneNumberId)
+    .eq("telefono_cliente", telefonoCliente);
+  if (error) {
+    console.error("[pausas-chat] error liberando pausa:", error.message);
+    return { ok: false, error: error.message };
+  }
+  return { ok: true };
+}

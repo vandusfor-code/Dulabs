@@ -11,6 +11,8 @@ import { useI18n } from "@/lib/i18n";
 
 type Etiqueta = { id: number; nombre: string; color: string };
 
+type EstadoConversacion = "open" | "pending" | "closed";
+
 type Conversacion = {
   phone_number_id: string;
   telefono_cliente: string;
@@ -21,11 +23,14 @@ type Conversacion = {
   pausado: boolean;
   asignado_a: { miembro_id: number; nombre: string } | null;
   etiquetas: Etiqueta[];
+  /** Fase 9 (Human Inbox, autorizado) — puede faltar si la migración de estado no está aplicada (el backend ya cae a 'open' por defecto, pero se tolera undefined igual por robustez). */
+  estado?: EstadoConversacion;
+  no_leidos?: number;
 };
 
 type RespuestaRapida = { id: number; atajo: string; mensaje: string };
 
-type Filtro = "todas" | "mias" | "sin_asignar";
+type Filtro = "todas" | "mias" | "sin_asignar" | "abiertas" | "pendientes" | "cerradas" | "ia" | "humano";
 
 type MensajeHilo = {
   direccion: "entrante" | "saliente";
@@ -53,7 +58,7 @@ export default function MensajesPage() {
 }
 
 function MensajesPageInterna() {
-  const { session, negocios, rol } = useDashboard();
+  const { session, negocios, rol, miembroId } = useDashboard();
   const { t } = useI18n();
   const searchParams = useSearchParams();
   const [conversaciones, setConversaciones] = useState<Conversacion[] | null>(null);
@@ -114,6 +119,20 @@ function MensajesPageInterna() {
       .then((data) => setRespuestasRapidas(data.respuestas ?? []))
       .catch(() => setRespuestasRapidas([]));
   }, [session, rol]);
+
+  // Fase 9 (Human Inbox, autorizado) — marcar como leída al abrir. Best
+  // effort a propósito (no bloquea ni muestra error): si la migración de
+  // estado todavía no está aplicada, el endpoint responde 503 y acá se
+  // ignora en silencio -- el resto del Inbox sigue funcionando igual.
+  useEffect(() => {
+    if (!session || !seleccionadaClave) return;
+    const [phoneNumberId, telefonoCliente] = seleccionadaClave.split(":");
+    fetch("/api/dashboard/conversaciones/leido", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+      body: JSON.stringify({ phone_number_id: phoneNumberId, telefono_cliente: telefonoCliente }),
+    }).catch(() => {});
+  }, [session, seleccionadaClave]);
 
   useEffect(() => {
     if (!session || !seleccionada) return;
@@ -237,6 +256,80 @@ function MensajesPageInterna() {
     [session, nuevaEtiquetaNombre, nuevaEtiquetaColor, cargarEtiquetas, t]
   );
 
+  // Fase 9 (Human Inbox, autorizado) — handoff explícito (tomar/devolver a
+  // IA), asignación (a mí/quitar) y cambio de estado (open/pending/closed).
+  const [accionEnCurso, setAccionEnCurso] = useState<string | null>(null);
+  const [errorAccion, setErrorAccion] = useState<string | null>(null);
+
+  const ejecutarHandoff = useCallback(
+    async (accion: "tomar" | "devolver_a_ia") => {
+      if (!session || !seleccionada) return;
+      setAccionEnCurso(accion);
+      setErrorAccion(null);
+      try {
+        const res = await fetch("/api/dashboard/conversaciones/handoff", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+          body: JSON.stringify({ phone_number_id: seleccionada.phone_number_id, telefono_cliente: seleccionada.telefono_cliente, accion }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error ?? t("No se pudo completar la acción.", "Couldn't complete the action."));
+        cargarConversaciones();
+      } catch (err) {
+        setErrorAccion(err instanceof Error ? err.message : String(err));
+      } finally {
+        setAccionEnCurso(null);
+      }
+    },
+    [session, seleccionada, cargarConversaciones, t]
+  );
+
+  const cambiarAsignacion = useCallback(
+    async (miembroId: number | null) => {
+      if (!session || !seleccionada) return;
+      setAccionEnCurso("asignar");
+      setErrorAccion(null);
+      try {
+        const res = await fetch("/api/dashboard/conversaciones/asignar", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+          body: JSON.stringify({ phone_number_id: seleccionada.phone_number_id, telefono_cliente: seleccionada.telefono_cliente, miembro_id: miembroId }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error ?? t("No se pudo actualizar la asignación.", "Couldn't update the assignment."));
+        cargarConversaciones();
+      } catch (err) {
+        setErrorAccion(err instanceof Error ? err.message : String(err));
+      } finally {
+        setAccionEnCurso(null);
+      }
+    },
+    [session, seleccionada, cargarConversaciones, t]
+  );
+
+  const cambiarEstado = useCallback(
+    async (estado: EstadoConversacion) => {
+      if (!session || !seleccionada) return;
+      setAccionEnCurso("estado");
+      setErrorAccion(null);
+      try {
+        const res = await fetch("/api/dashboard/conversaciones/estado", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+          body: JSON.stringify({ phone_number_id: seleccionada.phone_number_id, telefono_cliente: seleccionada.telefono_cliente, estado }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error ?? t("No se pudo cambiar el estado.", "Couldn't change the status."));
+        cargarConversaciones();
+      } catch (err) {
+        setErrorAccion(err instanceof Error ? err.message : String(err));
+      } finally {
+        setAccionEnCurso(null);
+      }
+    },
+    [session, seleccionada, cargarConversaciones, t]
+  );
+
   const conversacionesFiltradas =
     conversaciones?.filter(
       (c) =>
@@ -269,6 +362,11 @@ function MensajesPageInterna() {
               <option value="todas">{t("Todas", "All")}</option>
               <option value="mias">{t("Mías", "Mine")}</option>
               <option value="sin_asignar">{t("Sin asignar", "Unassigned")}</option>
+              <option value="abiertas">{t("Abiertas", "Open")}</option>
+              <option value="pendientes">{t("Pendientes", "Pending")}</option>
+              <option value="cerradas">{t("Cerradas", "Closed")}</option>
+              <option value="ia">{t("IA", "AI")}</option>
+              <option value="humano">{t("Humano", "Human")}</option>
             </select>
             <select
               value={etiquetaFiltro ?? ""}
@@ -329,7 +427,14 @@ function MensajesPageInterna() {
                   <span className="truncate text-sm font-medium text-fg">
                     {formatearTelefono(c.telefono_cliente)}
                   </span>
-                  <span className="shrink-0 text-[11px] text-mist">{horaCorta(c.ultima_fecha, t)}</span>
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    {!!c.no_leidos && (
+                      <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-lime px-1 text-[10px] font-semibold text-lime-fg">
+                        {c.no_leidos > 99 ? "99+" : c.no_leidos}
+                      </span>
+                    )}
+                    <span className="text-[11px] text-mist">{horaCorta(c.ultima_fecha, t)}</span>
+                  </div>
                 </div>
                 <p className="mt-0.5 truncate text-sm text-mist">{c.ultimo_mensaje}</p>
                 <div className="mt-1 flex items-center gap-1.5">
@@ -399,6 +504,16 @@ function MensajesPageInterna() {
                   <Pill tone={seleccionada.pausado ? "neutral" : "success"}>
                     {seleccionada.pausado ? t("Pausado", "Paused") : t("IA activa", "AI active")}
                   </Pill>
+                  {seleccionada.estado && seleccionada.estado !== "open" && (
+                    <Pill tone={seleccionada.estado === "closed" ? "neutral" : "warning"}>
+                      {seleccionada.estado === "closed" ? t("Cerrada", "Closed") : t("Pendiente", "Pending")}
+                    </Pill>
+                  )}
+                  {seleccionada.asignado_a && (
+                    <span className="text-[11px] text-mist">
+                      {t("Asignada a", "Assigned to")} <span className="text-fg">{seleccionada.asignado_a.nombre}</span>
+                    </span>
+                  )}
                   {seleccionada.etiquetas.map((et) => (
                     <span
                       key={et.id}
@@ -414,7 +529,52 @@ function MensajesPageInterna() {
                 </p>
               </div>
               {rol !== "lectura" && (
-                <div className="relative shrink-0">
+                <div className="flex shrink-0 items-center gap-2">
+                  <select
+                    value={seleccionada.estado ?? "open"}
+                    onChange={(e) => cambiarEstado(e.target.value as EstadoConversacion)}
+                    disabled={accionEnCurso === "estado"}
+                    className="rounded-lg border border-edge bg-card px-2 py-1.5 text-xs text-fg outline-none focus:border-lime/50 disabled:opacity-50"
+                  >
+                    <option value="open">{t("Abierta", "Open")}</option>
+                    <option value="pending">{t("Pendiente", "Pending")}</option>
+                    <option value="closed">{t("Cerrada", "Closed")}</option>
+                  </select>
+                  {seleccionada.asignado_a?.miembro_id === miembroId ? (
+                    <button
+                      onClick={() => cambiarAsignacion(null)}
+                      disabled={accionEnCurso === "asignar"}
+                      className="rounded-lg border border-edge px-2.5 py-1.5 text-xs text-fg transition-colors hover:bg-ink disabled:opacity-50"
+                    >
+                      {t("Quitarme", "Unassign me")}
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => cambiarAsignacion(miembroId)}
+                      disabled={accionEnCurso === "asignar" || !miembroId}
+                      className="rounded-lg border border-edge px-2.5 py-1.5 text-xs text-fg transition-colors hover:bg-ink disabled:opacity-50"
+                    >
+                      {t("Asignarme", "Assign to me")}
+                    </button>
+                  )}
+                  {seleccionada.pausado ? (
+                    <button
+                      onClick={() => ejecutarHandoff("devolver_a_ia")}
+                      disabled={accionEnCurso === "devolver_a_ia"}
+                      className="rounded-lg border border-lime/40 bg-lime/10 px-2.5 py-1.5 text-xs font-semibold text-lime-text transition-colors hover:bg-lime/15 disabled:opacity-50"
+                    >
+                      {accionEnCurso === "devolver_a_ia" ? t("Devolviendo…", "Returning…") : t("Devolver a IA", "Return to AI")}
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => ejecutarHandoff("tomar")}
+                      disabled={accionEnCurso === "tomar"}
+                      className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5 text-xs font-semibold text-amber-500 transition-colors hover:bg-amber-500/15 disabled:opacity-50"
+                    >
+                      {accionEnCurso === "tomar" ? t("Tomando…", "Taking…") : t("Tomar conversación", "Take conversation")}
+                    </button>
+                  )}
+                  <div className="relative">
                   <button
                     onClick={() => setPopoverEtiquetasAbierto((v) => !v)}
                     className="flex items-center gap-1.5 rounded-lg border border-edge px-2.5 py-1.5 text-xs text-fg transition-colors hover:bg-ink"
@@ -473,9 +633,11 @@ function MensajesPageInterna() {
                       </div>
                     </>
                   )}
+                  </div>
                 </div>
               )}
             </div>
+            {errorAccion && <p className="border-b border-edge bg-red-500/5 px-5 py-2 text-xs text-red-400">{errorAccion}</p>}
             <div className="flex-1 space-y-3 overflow-y-auto bg-ink/40 p-5">
               {hilo === null && <p className="text-xs text-mist">{t("Cargando…", "Loading…")}</p>}
               {hilo?.map((m, i) => (
