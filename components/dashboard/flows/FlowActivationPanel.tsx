@@ -18,6 +18,7 @@ import { useMemo, useState } from "react";
 import { CheckCircle2, Smartphone, TriangleAlert, X } from "lucide-react";
 import { useDashboard } from "@/lib/dashboard-session";
 import { activateFlow, deactivateFlow } from "@/lib/flow-builder/activate-flow";
+import { activateTriggerRouter, deactivateTriggerRouter } from "@/lib/flow-builder/trigger-router-activation";
 import { Pill } from "@/components/dashboard/shell/ui";
 import type { FlowRecordStatus } from "@/lib/flow/flow-store-types";
 
@@ -36,6 +37,11 @@ export function FlowActivationPanel({ open, onClose, flowId, flowName, flowStatu
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  // FASE F8.2 (Trigger Router SaaS -- Self-Service Activation, autorizado) --
+  // estado propio, separado del de arriba: activar/desactivar el Router
+  // nunca debe pisar un mensaje de error/éxito de activar/desactivar el Flow.
+  const [triggerRouterBusy, setTriggerRouterBusy] = useState(false);
+  const [triggerRouterError, setTriggerRouterError] = useState<string | null>(null);
 
   const seleccionado = useMemo(
     () => negocios?.find((n) => n.phone_number_id === selectedPhoneNumberId) ?? null,
@@ -89,6 +95,24 @@ export function FlowActivationPanel({ open, onClose, flowId, flowName, flowStatu
 
   const estaActivoAqui = Boolean(seleccionado?.flow_activo && seleccionado.flow_id === flowId);
   const yaTieneOtroFlowActivo = Boolean(seleccionado?.flow_activo && seleccionado.flow_id !== flowId);
+
+  // FASE F8.2 (Trigger Router SaaS -- Self-Service Activation, autorizado) --
+  // solo tiene sentido mostrarlo/tocarlo cuando ESTE Flow ya está activo en
+  // el número elegido (mismo requisito que exige la API real).
+  async function handleToggleTriggerRouter(): Promise<void> {
+    if (!session || !selectedPhoneNumberId || !seleccionado) return;
+    setTriggerRouterBusy(true);
+    setTriggerRouterError(null);
+    const result = seleccionado.trigger_routing_activo
+      ? await deactivateTriggerRouter({ flowId, phoneNumberId: selectedPhoneNumberId, accessToken: session.access_token })
+      : await activateTriggerRouter({ flowId, phoneNumberId: selectedPhoneNumberId, accessToken: session.access_token });
+    setTriggerRouterBusy(false);
+    if (result.ok) {
+      await cargarNegocios();
+    } else {
+      setTriggerRouterError(result.error.message);
+    }
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-stretch justify-end bg-black/50" role="dialog" aria-modal="true">
@@ -208,6 +232,52 @@ export function FlowActivationPanel({ open, onClose, flowId, flowName, flowStatu
                       {busy ? "Activando…" : "Activar en este número"}
                     </button>
                   )}
+                </div>
+              )}
+
+              {/* FASE F8.2 (Trigger Router SaaS -- Self-Service Activation,
+                  autorizado) -- solo visible cuando ESTE Flow ya está activo
+                  en el número elegido (mismo requisito que la API real). */}
+              {estaActivoAqui && (
+                <div className="rounded-xl border border-edge bg-ink p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-fg">Trigger Router</p>
+                      <p className="mt-0.5 text-xs text-mist">
+                        Cuando está activo, un mensaje nuevo puede disparar otro Flow según sus triggers configurados
+                        (keyword, etc.) antes de caer en este Flow por defecto.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void handleToggleTriggerRouter()}
+                      disabled={triggerRouterBusy}
+                      className={`shrink-0 rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-50 ${
+                        seleccionado?.trigger_routing_activo
+                          ? "border-red-500/40 text-red-400 hover:bg-red-500/10"
+                          : "border-lime/40 text-lime-text hover:bg-lime/10"
+                      }`}
+                    >
+                      {triggerRouterBusy
+                        ? "…"
+                        : seleccionado?.trigger_routing_activo
+                          ? "Desactivar"
+                          : "Activar"}
+                    </button>
+                  </div>
+                  {triggerRouterError && (
+                    <div className="mt-3 flex items-center gap-2 rounded-lg border border-red-500/30 bg-red-500/10 p-2.5 text-xs text-red-400">
+                      <TriangleAlert className="size-3.5 shrink-0" /> {triggerRouterError}
+                    </div>
+                  )}
+                </div>
+              )}
+              {!estaActivoAqui && selectedPhoneNumberId && !confirmingReplace && (
+                <div className="rounded-xl border border-edge bg-ink/50 p-4">
+                  <p className="text-sm font-medium text-mist">Trigger Router</p>
+                  <p className="mt-0.5 text-xs text-mist/70">
+                    Activa este Flow en este número antes de poder usar el Trigger Router.
+                  </p>
                 </div>
               )}
             </div>

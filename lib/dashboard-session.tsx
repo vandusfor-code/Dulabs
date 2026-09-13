@@ -38,6 +38,8 @@ export type Negocio = {
   /** Fase 4 (Self-Service Flow Activation, autorizado) -- qué Flow (si alguno) atiende hoy este número. */
   flow_activo: boolean;
   flow_id: string | null;
+  /** FASE F8.2 (Trigger Router SaaS -- Self-Service Activation, autorizado). */
+  trigger_routing_activo: boolean;
 };
 
 export type Suscripcion = {
