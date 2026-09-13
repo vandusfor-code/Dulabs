@@ -26,6 +26,22 @@ export const EFFECT_RESULT_CLASSIFICATIONS = {
 export type EffectResultClassification =
   (typeof EFFECT_RESULT_CLASSIFICATIONS)[keyof typeof EFFECT_RESULT_CLASSIFICATIONS];
 
+/**
+ * FASE F8.3 (Meta Send Reliability, autorizado) — constantes de retry para
+ * efectos `send_message`. Viven acá (no en flow-orchestrator.ts) para que
+ * lib/flow/executors/send-message-executor.ts pueda leer
+ * MAX_SEND_MESSAGE_ATTEMPTS sin depender de orchestrator-types.ts (evita un
+ * ciclo de imports: orchestrator-types.ts ya importa de acá) y para no
+ * duplicar el número mágico "3" en dos archivos. Mismo criterio que
+ * MAX_AI_DISPATCH_ATTEMPTS (flow-orchestrator.ts): retry acotado, nunca
+ * indefinido -- 3 intentos totales (1 inicial + 2 reintentos).
+ */
+export const MAX_SEND_MESSAGE_ATTEMPTS = 3;
+/** Base del backoff exponencial con jitter entre intentos de send_message (ver flow-orchestrator.ts::sendMessageBackoffMs). */
+export const SEND_MESSAGE_BACKOFF_BASE_MS = 400;
+/** Techo absoluto del backoff -- incluso honrando un Retry-After de Meta, nunca se espera más que esto. */
+export const SEND_MESSAGE_BACKOFF_MAX_MS = 8000;
+
 /** Clasificación de operación para acciones internas (mapping desde criticality). */
 export type InternalActionOperationClass = "READ" | "WRITE" | "CRITICAL";
 

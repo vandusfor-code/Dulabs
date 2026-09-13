@@ -44,6 +44,8 @@ import {
   DEFAULT_MAX_INTERNAL_EVENTS,
   ORCHESTRATOR_OUTCOMES,
 } from "@/lib/flow/orchestrator-types";
+import { MAX_SEND_MESSAGE_ATTEMPTS, SEND_MESSAGE_BACKOFF_BASE_MS, SEND_MESSAGE_BACKOFF_MAX_MS } from "@/lib/flow/executor-types";
+import { isSendMessageRetryableClassification } from "@/lib/flow/executors/send-message-error-classifier";
 
 export { sanitizePayloadForObservability, sanitizeEventPayloadForObservability } from "@/lib/flow/sanitize-observability-payload";
 
@@ -105,6 +107,27 @@ function casBackoffMs(attempt: number): number {
   const base = CAS_BACKOFF_BASE_MS * 2 ** attempt;
   const jitter = Math.floor(Math.random() * CAS_BACKOFF_BASE_MS);
   return base + jitter;
+}
+
+// FASE F8.3 (Meta Send Reliability, autorizado) -- backoff exponencial con
+// jitter para reintentos de send_message, acotado por
+// SEND_MESSAGE_BACKOFF_MAX_MS (a diferencia de casBackoffMs, que no tiene
+// techo -- CAS_BACKOFF_BASE_MS es tan chico que nunca lo necesitó). Función
+// NUEVA e independiente de casBackoffMs a propósito: casBackoffMs queda
+// intacto, cero riesgo de alterar el timing de los reintentos de
+// concurrencia optimista ya existentes. `attempt` acá es 0-indexado
+// (0 = primer reintento, es decir el segundo intento total).
+function sendMessageBackoffMs(attempt: number, retryAfterMsHint?: number): number {
+  const base = SEND_MESSAGE_BACKOFF_BASE_MS * 2 ** attempt;
+  const jitter = Math.floor(Math.random() * SEND_MESSAGE_BACKOFF_BASE_MS);
+  const exponencial = Math.min(base + jitter, SEND_MESSAGE_BACKOFF_MAX_MS);
+  if (typeof retryAfterMsHint === "number" && retryAfterMsHint > 0) {
+    // Honra el Retry-After de Meta (429) si es mayor que el backoff
+    // calculado, pero nunca más allá del techo absoluto -- "no obedecer
+    // valores absurdamente altos sin límite" (spec F8.3 §18).
+    return Math.min(Math.max(exponencial, retryAfterMsHint), SEND_MESSAGE_BACKOFF_MAX_MS);
+  }
+  return exponencial;
 }
 
 function effectResultFromRow(row: FlowEffectRow): FlowEngineEvent {
@@ -815,6 +838,38 @@ export class ExecutionOrchestrator {
 
       let dispatchResult = await this.deps.effectFramework.execute(request);
       dispatchedEffectIds.push(effect.effectId);
+
+      if (effect.type === "send_message") {
+        // FASE F8.3 (Meta Send Reliability, autorizado) -- retry controlado:
+        // mismo effectId, misma petición (buildEffectDispatchRequest usa el
+        // mismo `effect`), solo con `attempt` incrementado y una espera de
+        // backoff entre intentos (a diferencia del retry de IA de abajo, que
+        // no tiene backoff -- Meta sí se beneficia de uno real por 429/5xx).
+        // Nunca reintenta si la clasificación no lo justifica (AUTH_ERROR,
+        // NON_RETRYABLE, VALIDATION_ERROR, SECURITY_REJECTED cortan acá
+        // mismo, en el primer intento) -- ver
+        // isSendMessageRetryableClassification.
+        for (
+          let attempt = 2;
+          !dispatchResult.success &&
+          isSendMessageRetryableClassification(dispatchResult.classification) &&
+          attempt <= MAX_SEND_MESSAGE_ATTEMPTS;
+          attempt += 1
+        ) {
+          const retryAfterHint = dispatchResult.metadata?.retryAfterMs as number | undefined;
+          await this.deps.clock.sleepMs(sendMessageBackoffMs(attempt - 2, retryAfterHint));
+          const retryRequest = buildEffectDispatchRequest({
+            effect,
+            tenantId: params.tenantId,
+            executionRowId: params.executionRow.id,
+            conversation,
+            attempt,
+            flowId: params.executionRow.flow_id,
+            flowVersionId: params.executionRow.flow_version_id,
+          });
+          dispatchResult = await this.deps.effectFramework.execute(retryRequest);
+        }
+      }
 
       if (effect.type === "effect_required" && effect.kind === "ai") {
         const applyAiPostProcessing = (raw: EffectDispatchResult): EffectDispatchResult => {
