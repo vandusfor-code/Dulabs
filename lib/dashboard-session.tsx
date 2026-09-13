@@ -40,6 +40,13 @@ export type Negocio = {
   flow_id: string | null;
   /** FASE F8.2 (Trigger Router SaaS -- Self-Service Activation, autorizado). */
   trigger_routing_activo: boolean;
+  /**
+   * FASE 8.5 (Connection Lifecycle, autorizado) -- ciclo de vida de la
+   * conexión con Meta, INDEPENDIENTE de flow_activo/ia_pausada. Distinto de
+   * `conectado` arriba (ese es un indicador más viejo, "tiene algún token
+   * válido incluido el de plataforma", no refleja un disconnect explícito).
+   */
+  estado_conexion: "conectado" | "desconectado" | "reconectando" | "error";
 };
 
 export type Suscripcion = {

@@ -143,6 +143,31 @@ export async function GET(request: NextRequest) {
     }
   }
 
+  // FASE 8.5 (Connection Lifecycle, autorizado) — consulta AISLADA y
+  // best-effort de `estado_conexion`, a propósito separada del select
+  // principal de arriba: la migración 20260928000000_dulabs_estado_conexion
+  // todavía no se aplicó (ver reporte de Fase 8.5), y ese select principal
+  // es lo que alimenta TODO el dashboard de cada tenant real -- si
+  // `estado_conexion` estuviera en esa misma lista de columnas, Postgres
+  // rechazaría la consulta ENTERA con "column does not exist" y ROMPERÍA el
+  // dashboard de Daniela/Charlotte/AMORE/Solo Talento en cuanto se
+  // desplegara este código. Aislada así, un error acá (columna inexistente)
+  // se ignora en silencio y cada número simplemente se ve 'conectado' (el
+  // valor real de todo tenant hoy) -- se autoactiva solo, sin otro deploy,
+  // en cuanto se aplique la migración.
+  const estadoConexionPorNumero = new Map<string, string>();
+  if (phoneNumberIds.length > 0) {
+    const { data: estados, error: estadosError } = await supabase
+      .from("dulabs_clientes_config")
+      .select("phone_number_id, estado_conexion")
+      .in("phone_number_id", phoneNumberIds);
+    if (!estadosError) {
+      for (const e of estados ?? []) {
+        if (e.estado_conexion) estadoConexionPorNumero.set(e.phone_number_id, e.estado_conexion);
+      }
+    }
+  }
+
   const mesHoy = mesActualISO();
   const negocios = (data ?? []).map((n) => {
     // El contador se reinicia en el primer envío del mes (webhook); si ya
@@ -154,6 +179,12 @@ export async function GET(request: NextRequest) {
       phone_number_id: n.phone_number_id,
       whatsapp_business_account_id: n.whatsapp_business_account_id,
       conectado: Boolean(n.meta_permanent_token || process.env.META_ACCESS_TOKEN),
+      // FASE 8.5 (autorizado) -- distinto de `conectado` arriba (ese incluye
+      // el fallback del token de plataforma, no refleja si ESTE número se
+      // desconectó a propósito). Default 'conectado': el valor real de todo
+      // tenant hoy, y lo que corresponde mientras la migración no esté
+      // aplicada (ver estadoConexionPorNumero arriba).
+      estado_conexion: estadoConexionPorNumero.get(n.phone_number_id) ?? "conectado",
       updated_at: n.updated_at,
       mensajes_usados: usados,
       prompt_sistema: n.prompt_sistema,
