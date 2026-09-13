@@ -32,6 +32,6 @@
     "eslint-config-next": "16.2.10",
     "js-yaml": "^4.3.0",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^7"
   }
 }
