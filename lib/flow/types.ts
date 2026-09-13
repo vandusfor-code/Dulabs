@@ -53,14 +53,26 @@ export interface FlowTemplateRef {
   variables?: Record<string, string>;
 }
 
-export type FlowMediaType = "image" | "video" | "document" | "audio";
+// FASE F8.4 (WhatsApp Media, autorizado) -- "sticker" agregado (antes solo
+// image/video/document/audio). Los 5 son exactamente los tipos que Meta
+// Cloud API soporta en outbound (POST /messages).
+export type FlowMediaType = "image" | "video" | "document" | "audio" | "sticker";
 
 export interface FlowMediaRef {
   type: FlowMediaType;
-  /** URL accesible en runtime o media id de Meta. */
+  /**
+   * Exactamente uno de `url`/`mediaId` debe estar presente (validado en Zod,
+   * ver flowMediaRefSchema) -- Meta acepta cualquiera de los dos, nunca
+   * ambos: `url` es una URL pública que META descarga por su cuenta (nunca
+   * la descarga este servidor -- cero superficie de SSRF acá), `mediaId` es
+   * un media id YA subido a Meta (ver subirMedia en lib/whatsapp.ts).
+   */
   url?: string;
   mediaId?: string;
+  /** Meta solo acepta caption en image/video/document -- nunca en audio/sticker (validado en Zod). */
   caption?: string;
+  /** Solo aplica a type:"document" -- nombre de archivo mostrado al destinatario (validado en Zod). */
+  filename?: string;
 }
 
 /**
@@ -445,6 +457,13 @@ export interface ButtonsNode extends FlowNodeBase {
     variableKey?: string;
     /** Corrección Claim Security, Fase 1 (autorizada) -- ver MessageOrigin. Default: informational. */
     messageRole?: MessageRole;
+    /**
+     * FASE F8.4 (WhatsApp Media, autorizado) -- header de imagen del mensaje
+     * interactivo de botones. Solo `type: "image"` (único header de media
+     * que Meta admite en un mensaje interactivo de botones) -- validado en
+     * Zod (flowNodeSchema) y reforzado en SendMessageExecutor.
+     */
+    media?: FlowMediaRef;
   };
 }
 

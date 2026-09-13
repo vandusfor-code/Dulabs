@@ -58,6 +58,18 @@ export const FIRST_MESSAGE_TEXT_VARIABLE_KEY = "__firstMessageText" as const;
  */
 export const HORA_AMBIGUA_VARIABLE_KEY = "__horaAmbigua" as const;
 
+/**
+ * FASE F8.4 (WhatsApp Media inbound, autorizado) — media entrante
+ * normalizada del mensaje que disparó/continuó esta ejecución (evento
+ * "start"/"text" con `media` presente, ver flow-engine.ts). Mismo patrón
+ * exacto que FIRST_MESSAGE_TEXT_VARIABLE_KEY: prefijo "__" (nunca visible
+ * para la IA, stripInternalKeys ya lo filtra), sembrado por el Engine, NUNCA
+ * decide nada por sí solo -- un flow que no la lee no cambia de
+ * comportamiento. Nunca contiene el binario ni una URL de descarga firmada,
+ * solo metadata (ver NormalizedInboundMedia en lib/flow/engine-types.ts).
+ */
+export const INCOMING_MEDIA_VARIABLE_KEY = "__incomingMedia" as const;
+
 export const FLOW_VALIDATION_CODES = {
   DUPLICATE_NODE_ID: "DUPLICATE_NODE_ID",
   DUPLICATE_EDGE_ID: "DUPLICATE_EDGE_ID",

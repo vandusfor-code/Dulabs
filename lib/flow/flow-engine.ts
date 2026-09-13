@@ -5,7 +5,7 @@
  * NO ejecuta WhatsApp, IA, Supabase ni acciones externas.
  */
 
-import { FIRST_MESSAGE_TEXT_VARIABLE_KEY, FLOW_EDGE_HANDLE, HORA_AMBIGUA_VARIABLE_KEY } from "@/lib/flow/constants";
+import { FIRST_MESSAGE_TEXT_VARIABLE_KEY, FLOW_EDGE_HANDLE, HORA_AMBIGUA_VARIABLE_KEY, INCOMING_MEDIA_VARIABLE_KEY } from "@/lib/flow/constants";
 import { parseHoraColombia } from "@/lib/parse-hora-colombia";
 import type {
   FlowEngineError,
@@ -533,7 +533,14 @@ function enterInputNode(
     effects.push({
       type: "send_message",
       nodeId: node.id,
-      content: { text: interpolateTemplate(node.config.text, state.variables) },
+      content: {
+        text: interpolateTemplate(node.config.text, state.variables),
+        // FASE F8.4 (WhatsApp Media, autorizado) -- header de imagen del
+        // mensaje interactivo (validado a type:"image" por Zod). Antes de
+        // esta fase, node.config.media no existía y este campo era siempre
+        // undefined -- comportamiento idéntico para todo Flow existente.
+        media: node.config.media,
+      },
       buttons: node.config.buttons,
       executionId,
       effectId: nextEffectId("msg", idGen),
@@ -1073,6 +1080,12 @@ export function runFlowEngine(
           ? { ...working.variables, [FIRST_MESSAGE_TEXT_VARIABLE_KEY]: event.text }
           : working.variables,
     };
+    // FASE F8.4 (WhatsApp Media inbound, autorizado) -- mismo patrón exacto
+    // que arriba: solo siembra, nunca decide por sí solo. Un flow que no lee
+    // INCOMING_MEDIA_VARIABLE_KEY no cambia de comportamiento. Se asigna
+    // explícitamente incluso cuando NO hay media (undefined) para que un
+    // flow nunca vea la media de un turno anterior por error.
+    working = { ...working, variables: { ...working.variables, [INCOMING_MEDIA_VARIABLE_KEY]: event.media } };
     return runAutoLoop(ctx, working, [], maxSteps, idGen);
   }
 
@@ -1103,6 +1116,11 @@ export function runFlowEngine(
         idGen,
       );
     }
+    // FASE F8.4 (WhatsApp Media inbound, autorizado) -- mismo patrón que el
+    // evento "start": solo siembra la media de ESTE turno, nunca decide por
+    // sí sola. Se asigna explícitamente incluso sin media (undefined) para
+    // que un flow nunca vea la media de un turno anterior por error.
+    working = { ...working, variables: { ...working.variables, [INCOMING_MEDIA_VARIABLE_KEY]: event.media } };
     const outcome = handleTextInput(ctx, working, node, event.text, idGen);
     if (outcome.kind === "fail") {
       return fail(

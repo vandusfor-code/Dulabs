@@ -63,11 +63,18 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
-function messageText(content: { text?: string; parts?: string[]; media?: { caption?: string } }): string {
-  if (content.text) return content.text;
-  if (content.parts?.length) return content.parts.join("\n\n");
-  if (content.media?.caption) return content.media.caption;
-  return "(mensaje sin texto)";
+// FASE F8.4 (WhatsApp Media, autorizado) -- el simulador ya anticipaba
+// media.caption como texto (Fase 0); ahora que el envío es real (ver
+// SendMessageExecutor), la preview marca explícitamente que hay un adjunto
+// -- antes un mensaje con media pero sin caption se veía como "(mensaje sin
+// texto)", indistinguible de un bug real.
+function messageText(content: { text?: string; parts?: string[]; media?: { type?: string; caption?: string } }): string {
+  const base = content.text ? content.text : content.parts?.length ? content.parts.join("\n\n") : content.media?.caption ?? null;
+  if (content.media) {
+    const etiqueta = `📎 [${content.media.type ?? "media"}]`;
+    return base ? `${etiqueta} ${base}` : etiqueta;
+  }
+  return base ?? "(mensaje sin texto)";
 }
 
 function coerceInitialValue(def: VariableDefinition, raw: string): unknown {

@@ -138,6 +138,65 @@ export async function enviarImagen(params: {
   return { wamid: json.messages?.[0]?.id ?? null };
 }
 
+// FASE F8.4 (WhatsApp Media, autorizado) -- envío genérico de los 5 tipos de
+// media reales de Meta Cloud API (image/video/audio/document/sticker),
+// generalizando enviarImagen de arriba (que queda intacta, sin caller nuevo,
+// por compatibilidad -- LEGACY es el único que la usa hoy vía
+// enviarImagenWhatsApp). Acepta `link` (URL pública -- la descarga Meta por
+// su cuenta, este servidor NUNCA la toca, cero superficie de SSRF acá) O
+// `mediaId` (ya subido, ver subirMedia) -- exactamente uno de los dos,
+// exigido por FlowMediaRef/flowMediaRefSchema antes de llegar acá. Reglas
+// reales de Meta respetadas explícitamente (no inventadas): caption solo en
+// image/video/document, filename solo en document, audio/sticker sin
+// caption ni filename.
+export type WhatsAppMediaType = "image" | "video" | "audio" | "document" | "sticker";
+
+export async function enviarMedia(params: {
+  phoneNumberId: string;
+  token: string;
+  para: string;
+  tipo: WhatsAppMediaType;
+  link?: string;
+  mediaId?: string;
+  caption?: string;
+  filename?: string;
+  signal?: AbortSignal;
+}): Promise<{ wamid: string | null }> {
+  const referencia: Record<string, string> = params.mediaId ? { id: params.mediaId } : { link: params.link ?? "" };
+  // Meta rechaza el campo si no aplica al tipo -- nunca se envían de más.
+  if (params.caption && (params.tipo === "image" || params.tipo === "video" || params.tipo === "document")) {
+    referencia.caption = params.caption;
+  }
+  if (params.filename && params.tipo === "document") {
+    referencia.filename = params.filename;
+  }
+
+  const res = await fetch(`${GRAPH}/${params.phoneNumberId}/messages`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${params.token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      messaging_product: "whatsapp",
+      to: params.para,
+      type: params.tipo,
+      [params.tipo]: referencia,
+    }),
+    signal: params.signal,
+  });
+  const json = (await res.json()) as { messages?: { id?: string }[] } & GraphError;
+  if (!res.ok) {
+    throw new MetaGraphApiError({
+      httpStatus: res.status,
+      metaErrorCode: json.error?.code,
+      metaErrorMessage: json.error?.message,
+      retryAfterMs: parseRetryAfterMs(res),
+    });
+  }
+  return { wamid: json.messages?.[0]?.id ?? null };
+}
+
 // Marca el mensaje entrante como leído (doble check azul) y activa el
 // indicador "escribiendo..." de WhatsApp -- Meta lo apaga solo a los ~25s o
 // en cuanto le llega el siguiente mensaje real, lo que pase primero. Se

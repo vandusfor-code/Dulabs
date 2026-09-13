@@ -8,6 +8,7 @@ import { generarRespuestaConLeadIA } from "@/lib/lead-solicitud-ia";
 import { generarRespuestaAdminEspecialistaIA } from "@/lib/especialista-admin-ia";
 import { tieneEspecialistasActivas, especialistaPorNumero } from "@/lib/especialistas";
 import { debeAtenderConFlow, atenderMensajeConFlowConFallback } from "@/lib/flow-runtime-bridge";
+import type { NormalizedInboundMedia } from "@/lib/flow/engine-types";
 import { debeUsarAsistenteDanielaIA } from "@/lib/asistente-daniela-gate";
 import { atenderConAsistenteDanielaIA } from "@/lib/asistente-daniela-ia";
 import { resolverConfigAgente, type ConfigAgenteEfectiva } from "@/lib/agentes";
@@ -69,7 +70,7 @@ const PAUSA_HUMANA_MS = 30 * 60 * 1000;
 // chat; 5 años = efectivamente "hasta que un humano lo resuelva".
 const PAUSA_ONBOARDING_MS = 5 * 365 * 24 * 60 * 60 * 1000;
 
-type MetaMessage = {
+export type MetaMessage = {
   from: string;
   to?: string;
   id: string;
@@ -90,7 +91,66 @@ type MetaMessage = {
   // este proyecto no tiene). Se usa para no volver a preguntar lo que el
   // anuncio ya dice (ver construirTextoConContextoAnuncio).
   referral?: { source_type?: string; headline?: string; body?: string };
+  // FASE F8.4 (WhatsApp Media inbound, autorizado) -- estructura real de
+  // Meta Cloud API para cada tipo de media (ver docs de Meta, "Media
+  // Messages" / payload de webhook). Nunca se inventa un campo que Meta no
+  // entregue: id/mime_type/sha256 están en los 5 tipos, caption solo en
+  // image/video/document, filename solo en document, animated solo en sticker.
+  image?: { id: string; mime_type?: string; sha256?: string; caption?: string };
+  video?: { id: string; mime_type?: string; sha256?: string; caption?: string };
+  audio?: { id: string; mime_type?: string; sha256?: string };
+  document?: { id: string; mime_type?: string; sha256?: string; filename?: string; caption?: string };
+  sticker?: { id: string; mime_type?: string; sha256?: string; animated?: boolean };
 };
+
+// FASE F8.4 (WhatsApp Media inbound, autorizado) -- los 5 tipos reales de
+// media que Meta Cloud API entrega inbound (ver MetaMessage arriba).
+export const TIPOS_MEDIA_ENTRANTE = new Set(["image", "video", "audio", "document", "sticker"]);
+
+// FASE F8.4 (WhatsApp Media inbound, autorizado) -- normaliza los 5 tipos de
+// media reales de Meta a NormalizedInboundMedia (lib/flow/engine-types.ts),
+// la forma que consume el Flow Engine (ver flow-engine.ts). Deliberadamente
+// NUNCA descarga el binario ni resuelve una URL firmada acá -- solo
+// mediaId + metadata (ver docstring de NormalizedInboundMedia). undefined
+// para cualquier mensaje sin media real (texto, botón, interactivo, etc.).
+export function normalizarMediaEntrante(mensaje: MetaMessage): NormalizedInboundMedia | undefined {
+  if (mensaje.type === "image" && mensaje.image?.id) {
+    return { type: "image", mediaId: mensaje.image.id, mimeType: mensaje.image.mime_type, sha256: mensaje.image.sha256, caption: mensaje.image.caption };
+  }
+  if (mensaje.type === "video" && mensaje.video?.id) {
+    return { type: "video", mediaId: mensaje.video.id, mimeType: mensaje.video.mime_type, sha256: mensaje.video.sha256, caption: mensaje.video.caption };
+  }
+  if (mensaje.type === "audio" && mensaje.audio?.id) {
+    return { type: "audio", mediaId: mensaje.audio.id, mimeType: mensaje.audio.mime_type, sha256: mensaje.audio.sha256 };
+  }
+  if (mensaje.type === "document" && mensaje.document?.id) {
+    return {
+      type: "document",
+      mediaId: mensaje.document.id,
+      mimeType: mensaje.document.mime_type,
+      sha256: mensaje.document.sha256,
+      caption: mensaje.document.caption,
+      filename: mensaje.document.filename,
+    };
+  }
+  if (mensaje.type === "sticker" && mensaje.sticker?.id) {
+    return { type: "sticker", mediaId: mensaje.sticker.id, mimeType: mensaje.sticker.mime_type, sha256: mensaje.sticker.sha256 };
+  }
+  return undefined;
+}
+
+// FASE F8.4 (autorizado) -- placeholder SOLO para dulabs_mensajes_log/Inbox
+// (compatibilidad/logging) cuando el media entrante no trae caption -- la
+// media real (mediaId+metadata) sigue intacta y llega al Flow Engine por un
+// camino aparte (normalizarMediaEntrante), NUNCA sustituida por este texto.
+export function placeholderMediaEntrante(mensaje: MetaMessage): string | null {
+  if (mensaje.type === "image") return mensaje.image?.caption?.trim() || "[imagen]";
+  if (mensaje.type === "video") return mensaje.video?.caption?.trim() || "[video]";
+  if (mensaje.type === "audio") return "[audio]";
+  if (mensaje.type === "document") return mensaje.document?.caption?.trim() || "[documento]";
+  if (mensaje.type === "sticker") return "[sticker]";
+  return null;
+}
 
 type MetaStatus = {
   id: string;
@@ -429,6 +489,33 @@ export async function POST(request: NextRequest) {
 async function registrarMensajesEntrantesSincrono(phoneNumberId: string, value: MetaChangeValue): Promise<void> {
   const displayPhone = soloDigitos(value.metadata?.display_phone_number ?? "");
   const supabase = supabaseAdmin();
+
+  // FASE F8.4 (WhatsApp Media inbound, autorizado) -- lookup liviano (NO
+  // select("*"): procesarCambio ya hace esa consulta completa aparte, esto
+  // solo necesita lo mínimo para decidir si la media de este número se va a
+  // procesar) SOLO si hay al menos un mensaje de media en este batch --
+  // evita una consulta extra en el caso normal de solo texto/botón.
+  //
+  // Por qué hace falta: si acá se registrara SIEMPRE un placeholder para
+  // media (aunque procesarCambio la vaya a descartar más abajo para tenants
+  // sin Flow), el freno de ráfaga de atenderMensaje (masReciente, que
+  // consulta esta misma tabla) vería esa media como "el mensaje más
+  // reciente" y dejaría sin responder al mensaje de TEXTO anterior de la
+  // misma clienta -- aunque la media nunca vaya a procesarse. Por eso el
+  // gate acá es EXACTAMENTE el mismo que en procesarCambio: solo se registra
+  // (y por lo tanto solo "cuenta" para el freno de ráfaga) la media que SÍ
+  // va a atenderse.
+  const hayMedia = (value.messages ?? []).some((m) => TIPOS_MEDIA_ENTRANTE.has(m.type));
+  const clienteParaGateMedia = hayMedia
+    ? ((
+        await supabase
+          .from("dulabs_clientes_config")
+          .select("id_tenant, phone_number_id, flow_activo, flow_id")
+          .eq("phone_number_id", phoneNumberId)
+          .maybeSingle()
+      ).data as { id_tenant: string; phone_number_id: string; flow_activo: boolean; flow_id: string | null } | null)
+    : null;
+
   for (const mensaje of value.messages ?? []) {
     const telefonoRemitente = resolverTelefonoRemitenteMeta(mensaje, value.contacts);
     if (!telefonoRemitente) {
@@ -436,8 +523,12 @@ async function registrarMensajesEntrantesSincrono(phoneNumberId: string, value: 
       continue;
     }
     if (telefonoRemitente === displayPhone) continue; // eco de coexistencia, no un mensaje de cliente
-    const contenido = extraerTextoMensajeCrudo(mensaje);
-    if (!contenido) continue; // tipo no soportado (imagen, audio...) -- procesarCambio decide si lo ignora
+    const procesaraMediaFlow =
+      clienteParaGateMedia != null &&
+      debeAtenderConFlow(clienteParaGateMedia, telefonoRemitente) &&
+      !debeUsarAsistenteDanielaIA(clienteParaGateMedia, telefonoRemitente);
+    const contenido = extraerTextoMensajeCrudo(mensaje, procesaraMediaFlow);
+    if (!contenido) continue; // tipo no soportado, o media que este número no procesa -- procesarCambio decide si lo ignora
     try {
       const { error } = await supabase.from("dulabs_mensajes_log").insert({
         phone_number_id: phoneNumberId,
@@ -460,12 +551,15 @@ async function registrarMensajesEntrantesSincrono(phoneNumberId: string, value: 
 // plantilla / botón interactivo -> el texto que representan), duplicado acá
 // a propósito porque este registro corre ANTES y de forma independiente --
 // así el contenido guardado es el mismo que verá un humano en el Inbox.
-function extraerTextoMensajeCrudo(mensaje: MetaMessage): string | null {
+export function extraerTextoMensajeCrudo(mensaje: MetaMessage, incluirPlaceholderMedia = false): string | null {
   if (mensaje.type === "button" && mensaje.button?.text) return normalizarTextoBoton(mensaje.button.text);
   if (mensaje.type === "interactive" && mensaje.interactive?.type === "button_reply" && mensaje.interactive.button_reply?.title) {
     return mensaje.interactive.button_reply.title;
   }
   if (mensaje.type === "text" && mensaje.text?.body) return mensaje.text.body;
+  // FASE F8.4 (WhatsApp Media inbound, autorizado) -- ver placeholderMediaEntrante
+  // y el gate de registrarMensajesEntrantesSincrono (incluirPlaceholderMedia).
+  if (incluirPlaceholderMedia) return placeholderMediaEntrante(mensaje);
   return null;
 }
 
@@ -561,13 +655,30 @@ async function procesarCambio(phoneNumberId: string, value: MetaChangeValue) {
     // ESTE número puntual no se descartan los tipos sin texto como en el
     // resto de tenants (esqueleto genérico: solo texto/botón).
     const esSolucionesFinancieras = phoneNumberId === PHONE_NUMBER_ID_SOLUCIONES_FINANCIERAS;
-    if (mensaje.type !== "text" && mensaje.type !== "button" && mensaje.type !== "interactive" && !esSolucionesFinancieras) continue;
-    if (!mensaje.text?.body && !esSolucionesFinancieras) continue;
+    // FASE F8.4 (WhatsApp Media inbound, autorizado) -- necesitamos el
+    // remitente ANTES del filtro de tipos para decidir si la media de este
+    // mensaje va a procesarse (ver esMediaHaciaFlow abajo); resolverTelefonoRemitenteMeta
+    // no depende del tipo de mensaje, así que adelantar esta resolución no
+    // cambia nada para texto/botón/interactivo.
     const telefonoRemitente = resolverTelefonoRemitenteMeta(mensaje, value.contacts);
     if (!telefonoRemitente) {
       advertirMensajeSinRemitente(mensaje);
       continue;
     }
+    // FASE F8.4 (WhatsApp Media inbound, autorizado) -- image/video/audio/
+    // document/sticker solo continúan hacia atenderMensaje cuando ESTE
+    // remitente/número va a usar el motor Flow (MISMO gate exacto que
+    // atenderMensaje más abajo: debeAtenderConFlow + !debeUsarAsistenteDanielaIA).
+    // Para cualquier otro tenant (AMORE, Daniela IA, LEGACY general,
+    // encuestas, campañas, onboarding) el comportamiento queda IDÉNTICO a
+    // antes de esta fase: media descartada acá, sin tocar ninguno de esos
+    // caminos ni su freno de ráfaga (ver registrarMensajesEntrantesSincrono).
+    const esMediaHaciaFlow =
+      TIPOS_MEDIA_ENTRANTE.has(mensaje.type) &&
+      debeAtenderConFlow(cliente, telefonoRemitente) &&
+      !debeUsarAsistenteDanielaIA(cliente, telefonoRemitente);
+    if (mensaje.type !== "text" && mensaje.type !== "button" && mensaje.type !== "interactive" && !esSolucionesFinancieras && !esMediaHaciaFlow) continue;
+    if (!mensaje.text?.body && !esSolucionesFinancieras && !esMediaHaciaFlow) continue;
     const nombreContacto =
       (value.contacts ?? []).find((c) => soloDigitos(c.wa_id ?? "") === telefonoRemitente)?.profile?.name ?? null;
     await atenderMensaje(cliente, mensaje, nombreContacto, telefonoRemitente);
@@ -669,12 +780,15 @@ async function atenderMensaje(
       return;
     }
     // Respaldo: el registro síncrono no llegó a completarse -- se crea aquí
-    // mismo, ya marcada como procesada, para no perder el mensaje.
+    // mismo, ya marcada como procesada, para no perder el mensaje. FASE F8.4
+    // (autorizado): a este punto ya puede tratarse de media (procesarCambio
+    // ya decidió que sí se atiende), así que usa el mismo extractor con
+    // placeholder en vez de asumir texto.
     const { error: errorRespaldo } = await supabaseAdmin().from("dulabs_mensajes_log").insert({
       phone_number_id: cliente.phone_number_id,
       telefono_cliente: telefonoRemitente,
       direccion: "entrante",
-      contenido: mensaje.text!.body,
+      contenido: extraerTextoMensajeCrudo(mensaje, true) ?? "",
       origen: "entrante",
       wamid: mensaje.id,
       procesado_at: new Date().toISOString(),
@@ -856,15 +970,35 @@ async function atenderMensaje(
         mensaje.interactive?.type === "button_reply"
           ? mensaje.interactive.button_reply?.id?.trim()
           : undefined;
+      // FASE F8.4 (WhatsApp Media inbound, autorizado) -- ver
+      // NormalizedInboundMedia (lib/flow/engine-types.ts): undefined para
+      // todo mensaje que no sea media real, comportamiento idéntico a antes.
+      const media = normalizarMediaEntrante(mensaje);
       const intentoFlow = await atenderMensajeConFlowConFallback({
         supabase: supabaseAdmin(),
         cliente: cliente as typeof cliente & { flow_activo: true; flow_id: string },
         telefonoCliente: telefonoRemitente,
-        texto: mensaje.text!.body,
+        texto: mensaje.text?.body ?? "",
         wamid: mensaje.id,
         buttonId: buttonId || undefined,
+        media,
       });
       if (intentoFlow.handled) return;
+      // FASE F8.4 (autorizado) -- LEGACY (todo lo que sigue debajo en esta
+      // función) nunca soportó media: usa mensaje.text!.body sin chequeo, a
+      // propósito, porque hasta esta fase nunca podía recibir otra cosa (ver
+      // el filtro de procesarCambio). El fallback de seguridad de Fase 1
+      // (Blocker #2, comentario de arriba) fue diseñado para reintentar
+      // TEXTO real por LEGACY cuando Flow falla -- nunca para media, que
+      // LEGACY no sabe procesar. Si Flow no atendió un mensaje de media, se
+      // corta acá (en vez de dejar que LEGACY reviente contra texto
+      // inexistente) -- sin respuesta, pero sin excepción.
+      if (media) {
+        console.warn(
+          `[webhook-dulabs] Flow no atendió un mensaje de media (tenant ${cliente.id_tenant}, tipo ${media.type}) y LEGACY no soporta media -- sin respuesta`,
+        );
+        return;
+      }
     }
 
     const contexto = await resolverContextoMensaje(cliente, destinoWhatsApp);
@@ -1064,7 +1198,13 @@ async function atenderMensajeEncuesta(
     return false; // encuesta ya cerrada para este participante: que hable con el asistente normal
   }
 
-  const textoUsuario = mensaje.text!.body;
+  // FASE F8.4 (WhatsApp Media inbound, autorizado) -- defensa en profundidad:
+  // este bot nunca soportó media, pero ahora un remitente en sesión de
+  // encuesta activa PODRÍA en teoría enviar una (antes era estructuralmente
+  // imposible que llegara acá con otro tipo). Sin texto, no hay nada que
+  // interpretar -- se ignora, la sesión de encuesta sigue intacta.
+  const textoUsuario = mensaje.text?.body ?? "";
+  if (!textoUsuario) return false;
   const apiKey = cliente.api_key_ia ? descifrarSecreto(cliente.api_key_ia) : process.env.ANTHROPIC_API_KEY;
 
   // 1) Intento determinístico directo (rápido, sin costo): cubre respuestas

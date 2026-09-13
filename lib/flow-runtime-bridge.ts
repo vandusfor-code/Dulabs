@@ -32,7 +32,7 @@ import { createDefaultEffectExecutorFramework } from "@/lib/flow/executor-factor
 import { getIntegrationById, getIntegrationCredentials } from "@/lib/flow/flow-store";
 import type { SendMessageDeps } from "@/lib/flow/executors/send-message-executor";
 import type { EffectExecutor } from "@/lib/flow/executor-types";
-import type { FlowEngineEvent } from "@/lib/flow/engine-types";
+import type { FlowEngineEvent, NormalizedInboundMedia } from "@/lib/flow/engine-types";
 import { executionRowToEngineState } from "@/lib/flow/flow-store-types";
 import type { FlowOrchestratorStore } from "@/lib/flow/orchestrator-types";
 import { registrarFalloIA } from "@/lib/alertas";
@@ -105,6 +105,15 @@ export async function atenderMensajeConFlow(params: {
    * acá adentro: esta función no decide Trigger Router, solo ejecuta.
    */
   flowIdOverride?: string;
+  /**
+   * FASE F8.4 (WhatsApp Media inbound, autorizado) — media entrante ya
+   * normalizada por el webhook (ver app/webhook-dulabs/route.ts::normalizarMediaEntrante).
+   * Opcional: omitirla (el caso de TODO caller anterior a esta fase, y todo
+   * mensaje de texto/botón) deja el comportamiento EXACTO de antes -- solo
+   * se siembra en variables[INCOMING_MEDIA_VARIABLE_KEY] (ver flow-engine.ts),
+   * nunca decide nada por sí sola.
+   */
+  media?: NormalizedInboundMedia;
 }): Promise<OrchestratorResult> {
   const store = createSupabaseFlowOrchestratorStore(params.supabase);
   const orchestrator = createExecutionOrchestrator({
@@ -152,10 +161,10 @@ export async function atenderMensajeConFlow(params: {
   const textoInicio = buttonId || params.texto;
   const engineEvent: FlowEngineEvent =
     !activeExecution
-      ? { type: "start", text: textoInicio, eventId: params.wamid }
+      ? { type: "start", text: textoInicio, eventId: params.wamid, media: params.media }
       : buttonId && activeExecution.expected_input === "button"
         ? { type: "button", id: buttonId, eventId: params.wamid }
-        : { type: "text", text: params.texto, eventId: params.wamid };
+        : { type: "text", text: params.texto, eventId: params.wamid, media: params.media };
 
   // Misma resolución que ya usa LEGACY (lib/agentes.ts::resolverConfigAgente)
   // -- si el tenant tiene un Agente de IA asignado (agente_id), su base de
@@ -865,6 +874,14 @@ export async function atenderMensajeConFlowConFallback(params: {
   sendMessageDepsOverride?: Partial<SendMessageDeps>;
   /** Solo para tests — inyecta el dispatch de IA de preguntas laterales sin llamar a Claude real. */
   dispatchAiPreguntaLateralOverride?: DispatchAiPreguntaLateral;
+  /**
+   * FASE F8.4 (WhatsApp Media inbound, autorizado) — ver el mismo campo en
+   * atenderMensajeConFlow. Solo se usa en la llamada final a
+   * atenderMensajeConFlow (más abajo, vía `...params`) -- Solo Talento,
+   * pestañas, escape hatch, pregunta lateral y Trigger Router deciden todos
+   * por `texto`/`buttonId`, nunca por media, así que no la necesitan.
+   */
+  media?: NormalizedInboundMedia;
 }): Promise<ResultadoIntentoFlow> {
   const store = createSupabaseFlowOrchestratorStore(params.supabase);
 
