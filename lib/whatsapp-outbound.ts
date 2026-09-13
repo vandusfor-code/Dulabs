@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { descifrarSecreto } from "@/lib/crypto";
-import { enviarTexto, enviarImagen, subirMedia } from "@/lib/whatsapp";
+import { enviarTexto, enviarImagen, subirMedia, MetaGraphApiError } from "@/lib/whatsapp";
 import type { ClienteConfig } from "@/lib/supabase";
 
 const GRAPH = `https://graph.facebook.com/${process.env.META_GRAPH_VERSION ?? "v23.0"}`;
@@ -144,6 +144,8 @@ export async function enviarBotones(params: {
   botones: { id: string; titulo: string }[];
   /** Imagen opcional en el encabezado (id ya subido, ver subirMedia) -- mismo mensaje interactivo, no un segundo envío. */
   headerMediaId?: string;
+  /** FASE F8.3 (autorizado) -- ver enviarTexto en lib/whatsapp.ts: opcional, sin default, comportamiento LEGACY sin cambio. */
+  signal?: AbortSignal;
 }): Promise<{ wamid: string | null }> {
   const res = await fetch(`${GRAPH}/${params.phoneNumberId}/messages`, {
     method: "POST",
@@ -161,10 +163,18 @@ export async function enviarBotones(params: {
         },
       },
     }),
+    signal: params.signal,
   });
-  const json = (await res.json()) as { messages?: { id?: string }[]; error?: { message?: string } };
+  const json = (await res.json()) as { messages?: { id?: string }[] } & { error?: { message?: string; code?: number } };
   if (!res.ok) {
-    throw new Error(`Meta respondió ${res.status}: ${json.error?.message ?? "sin detalle"}`);
+    const header = res.headers.get("retry-after");
+    const segundos = header ? Number(header) : NaN;
+    throw new MetaGraphApiError({
+      httpStatus: res.status,
+      metaErrorCode: json.error?.code,
+      metaErrorMessage: json.error?.message,
+      retryAfterMs: Number.isFinite(segundos) && segundos >= 0 ? segundos * 1000 : undefined,
+    });
   }
   return { wamid: json.messages?.[0]?.id ?? null };
 }

@@ -5,6 +5,37 @@ const VENTANA_24H_MS = 24 * 60 * 60 * 1000;
 
 type GraphError = { error?: { message?: string; code?: number } };
 
+// FASE F8.3 (Meta Send Reliability, autorizado) -- error estructurado de un
+// fallo de la Graph API, para que quien lo captura (SendMessageExecutor)
+// pueda clasificarlo (retryable/permanente/auth) sin tener que parsear un
+// string. Mantiene `.message` con el mismo texto que antes (compatibilidad:
+// todo caller existente que solo hacía `err.message`/`console.error(err)`
+// seguirá viendo exactamente lo mismo).
+export class MetaGraphApiError extends Error {
+  readonly httpStatus: number;
+  readonly metaErrorCode?: number;
+  readonly metaErrorMessage?: string;
+  /** Del header Retry-After de Meta (429), en ms -- undefined si Meta no lo envió. */
+  readonly retryAfterMs?: number;
+
+  constructor(params: { httpStatus: number; metaErrorCode?: number; metaErrorMessage?: string; retryAfterMs?: number }) {
+    super(`Meta respondió ${params.httpStatus}: ${params.metaErrorMessage ?? "sin detalle"}`);
+    this.name = "MetaGraphApiError";
+    this.httpStatus = params.httpStatus;
+    this.metaErrorCode = params.metaErrorCode;
+    this.metaErrorMessage = params.metaErrorMessage;
+    this.retryAfterMs = params.retryAfterMs;
+  }
+}
+
+function parseRetryAfterMs(res: Response): number | undefined {
+  const header = res.headers.get("retry-after");
+  if (!header) return undefined;
+  const segundos = Number(header);
+  if (!Number.isFinite(segundos) || segundos < 0) return undefined;
+  return segundos * 1000;
+}
+
 // Envío de texto libre (free-form) por la API de WhatsApp de Meta. Solo
 // funciona dentro de la ventana de servicio al cliente de 24h — fuera de
 // ella Meta responde con error y hay que usar una plantilla aprobada.
@@ -15,6 +46,15 @@ export async function enviarTexto(params: {
   token: string;
   para: string;
   texto: string;
+  /**
+   * FASE F8.3 (autorizado) -- permite al caller (SendMessageExecutor)
+   * cancelar el fetch cuando el EffectExecutorFramework ya decidió abortar
+   * por timeout (ver executor-framework.ts), en vez de dejar la conexión
+   * HTTP colgada en segundo plano. Opcional, sin default: ningún caller
+   * existente (LEGACY, campañas) pasa esto hoy, así que su comportamiento
+   * queda IDÉNTICO -- fetch() con signal:undefined nunca aborta.
+   */
+  signal?: AbortSignal;
 }): Promise<{ wamid: string | null }> {
   const res = await fetch(`${GRAPH}/${params.phoneNumberId}/messages`, {
     method: "POST",
@@ -28,10 +68,16 @@ export async function enviarTexto(params: {
       type: "text",
       text: { body: params.texto },
     }),
+    signal: params.signal,
   });
   const json = (await res.json()) as { messages?: { id?: string }[] } & GraphError;
   if (!res.ok) {
-    throw new Error(`Meta respondió ${res.status}: ${json.error?.message ?? "sin detalle"}`);
+    throw new MetaGraphApiError({
+      httpStatus: res.status,
+      metaErrorCode: json.error?.code,
+      metaErrorMessage: json.error?.message,
+      retryAfterMs: parseRetryAfterMs(res),
+    });
   }
   return { wamid: json.messages?.[0]?.id ?? null };
 }

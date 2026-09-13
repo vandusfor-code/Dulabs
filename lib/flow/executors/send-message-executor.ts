@@ -20,12 +20,14 @@ import { enviarBotones, resolverTokenMeta, incrementarUsoMensajes, registrarMens
 import type { ClienteConfig } from "@/lib/supabase";
 import {
   EFFECT_RESULT_CLASSIFICATIONS,
+  MAX_SEND_MESSAGE_ATTEMPTS,
   type EffectDispatchRequest,
   type EffectDispatchResult,
   type EffectExecutionContext,
   type EffectExecutor,
   type InternalActionOperationClass,
 } from "@/lib/flow/executor-types";
+import { classifyMetaSendError } from "@/lib/flow/executors/send-message-error-classifier";
 import type { FlowMessageContent } from "@/lib/flow/types";
 
 export interface SendMessageDeps {
@@ -141,6 +143,7 @@ export class SendMessageExecutor implements EffectExecutor {
           para: conversation.telefonoCliente,
           cuerpo: texto,
           botones: request.message.buttons.map((b) => ({ id: b.id, titulo: b.label })),
+          signal,
         }));
       } else {
         ({ wamid } = await enviarTextoFn({
@@ -148,13 +151,34 @@ export class SendMessageExecutor implements EffectExecutor {
           token,
           para: conversation.telefonoCliente,
           texto,
+          signal,
         }));
       }
     } catch (err) {
+      // FASE F8.3 (Meta Send Reliability, autorizado) -- clasificación real
+      // por tipo de error (antes: RETRYABLE ciego para CUALQUIER excepción,
+      // lo que habría hecho reintentar hasta un token vencido). El objeto
+      // completo queda en `rawResult`/`metadata`, nunca solo en `error`
+      // (string plano), para que quede trazable en dulabs_flow_effects
+      // (resolveEffectResult ya sanitiza este payload -- ver
+      // sanitizePayloadForObservability -- así que nunca se persiste un
+      // token ni un header Authorization, solo lo que viene de acá).
+      const clasificado = classifyMetaSendError(err);
+      const detalle = {
+        phoneNumberId: cliente.phone_number_id,
+        attempt: request.attempt,
+        maxAttempts: MAX_SEND_MESSAGE_ATTEMPTS,
+        httpStatus: clasificado.httpStatus,
+        metaErrorCode: clasificado.metaErrorCode,
+        metaErrorMessage: clasificado.metaErrorMessage,
+        error: err instanceof Error ? err.message : "meta_send_failed",
+      };
       return {
         success: false,
-        classification: EFFECT_RESULT_CLASSIFICATIONS.RETRYABLE,
+        classification: clasificado.classification,
         error: err instanceof Error ? err.message : "meta_send_failed",
+        rawResult: detalle,
+        metadata: clasificado.retryAfterMs !== undefined ? { retryAfterMs: clasificado.retryAfterMs } : undefined,
       };
     }
 
@@ -169,7 +193,7 @@ export class SendMessageExecutor implements EffectExecutor {
       wamid ?? undefined,
     );
 
-    const data = { delivered: true, wamid, nodeId: request.nodeId };
+    const data = { delivered: true, wamid, nodeId: request.nodeId, attempt: request.attempt };
     return {
       success: true,
       classification: EFFECT_RESULT_CLASSIFICATIONS.SUCCESS,
