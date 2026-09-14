@@ -102,6 +102,13 @@ function MensajesPageInterna() {
   // necesitar un efecto que la sincronice.
   const seleccionada = conversaciones?.find((c) => `${c.phone_number_id}:${c.telefono_cliente}` === seleccionadaClave) ?? null;
 
+  // FASE F12 (Debt Zero, autorizado) — paginación real (keyset por
+  // `ultima_fecha`, ver app/api/dashboard/conversaciones/route.ts): antes,
+  // esta lista siempre traía la misma primera página sin forma de pedir la
+  // siguiente. `siguienteCursor` viene del backend (null = no hay más).
+  const [siguienteCursor, setSiguienteCursor] = useState<string | null>(null);
+  const [cargandoMas, setCargandoMas] = useState(false);
+
   const cargarConversaciones = useCallback(() => {
     if (!session) return;
     const params = new URLSearchParams({ filtro });
@@ -113,9 +120,28 @@ function MensajesPageInterna() {
       .then((data) => {
         if (data.error) throw new Error(data.error);
         setConversaciones(data.conversaciones ?? []);
+        setSiguienteCursor(data.siguiente_cursor ?? null);
       })
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
   }, [session, filtro, etiquetaFiltro]);
+
+  const cargarMasConversaciones = useCallback(() => {
+    if (!session || !siguienteCursor || cargandoMas) return;
+    setCargandoMas(true);
+    const params = new URLSearchParams({ filtro, cursor: siguienteCursor });
+    if (etiquetaFiltro) params.set("etiqueta_id", String(etiquetaFiltro));
+    fetch(`/api/dashboard/conversaciones?${params}`, {
+      headers: { Authorization: `Bearer ${session.access_token}` },
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.error) throw new Error(data.error);
+        setConversaciones((prev) => [...(prev ?? []), ...(data.conversaciones ?? [])]);
+        setSiguienteCursor(data.siguiente_cursor ?? null);
+      })
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setCargandoMas(false));
+  }, [session, filtro, etiquetaFiltro, siguienteCursor, cargandoMas]);
 
   useEffect(() => {
     cargarConversaciones();
@@ -701,6 +727,15 @@ function MensajesPageInterna() {
               </div>
             </button>
           ))}
+          {siguienteCursor && (
+            <button
+              onClick={cargarMasConversaciones}
+              disabled={cargandoMas}
+              className="w-full py-3 text-center text-xs font-medium text-mist transition-colors hover:text-fg disabled:opacity-50"
+            >
+              {cargandoMas ? t("Cargando…", "Loading…") : t("Cargar más", "Load more")}
+            </button>
+          )}
         </div>
       </div>
 

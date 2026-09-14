@@ -141,6 +141,16 @@ export async function GET(request: NextRequest) {
   const etiquetaIdFiltro = request.nextUrl.searchParams.get("etiqueta_id");
   const busqueda = request.nextUrl.searchParams.get("q")?.trim().toLowerCase() || null;
   const limite = Math.min(Number(request.nextUrl.searchParams.get("limite")) || 100, 200);
+  // FASE F12 (Debt Zero, autorizado) — hallazgo real: antes de esto, la
+  // lista siempre devolvía la MISMA página (los `limite` más recientes,
+  // sin forma de pedir los siguientes) -- un tenant con más conversaciones
+  // activas que `limite` nunca podía ver las más antiguas de esa lista,
+  // sin ningún error visible (mismo tipo de pérdida silenciosa que F10-B ya
+  // corrigió para el corte de mensajes). `cursor` = `ultima_fecha` ISO de
+  // la última conversación ya vista por el cliente -- keyset real sobre la
+  // lista ya ordenada por actividad descendente, no un OFFSET (que se
+  // rompe si entra un mensaje nuevo entre páginas).
+  const cursor = request.nextUrl.searchParams.get("cursor");
 
   let resultado = conversaciones.map((c) => {
     const clave = `${c.phone_number_id}:${c.telefono_cliente}`;
@@ -185,9 +195,20 @@ export async function GET(request: NextRequest) {
   }
 
   // Ya viene ordenado por última actividad descendente (el orden que ya
-  // trae resolverUltimoMensajePorConversacion) -- el límite solo evita
-  // mandar al browser una lista sin techo en un tenant con muchísima actividad.
-  resultado = resultado.slice(0, limite);
+  // trae resolverUltimoMensajePorConversacion). Con cursor: se salta todo
+  // lo que ya es >= a esa fecha (ya visto en una página anterior) antes de
+  // aplicar el límite -- así una página 2 real nunca repite ni pierde
+  // conversaciones aunque llegue actividad nueva entre una página y la
+  // siguiente (a diferencia de un OFFSET numérico, que sí se desalinea).
+  if (cursor) {
+    const cursorMs = new Date(cursor).getTime();
+    if (Number.isFinite(cursorMs)) {
+      resultado = resultado.filter((c) => new Date(c.ultima_fecha).getTime() < cursorMs);
+    }
+  }
+  const hayMas = resultado.length > limite;
+  const pagina = resultado.slice(0, limite);
+  const siguienteCursor = hayMas ? pagina[pagina.length - 1]?.ultima_fecha ?? null : null;
 
-  return Response.json({ conversaciones: resultado });
+  return Response.json({ conversaciones: pagina, siguiente_cursor: siguienteCursor });
 }

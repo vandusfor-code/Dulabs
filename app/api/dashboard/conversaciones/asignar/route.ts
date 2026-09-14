@@ -90,6 +90,18 @@ export async function POST(request: NextRequest) {
     .maybeSingle();
   if (existenteError) return Response.json({ error: existenteError.message }, { status: 500 });
 
+  // FASE F12 (Debt Zero, autorizado) — hallazgo real: dos peticiones
+  // concurrentes de "asignarme" sobre la MISMA conversación sin asignación
+  // previa (ambas leyendo asignacionExistente=null) podían chocar en este
+  // INSERT -- el unique (phone_number_id, telefono_cliente) ya existente
+  // (20260718090200_conversacion_asignaciones_y_eventos.sql) lo resuelve de
+  // forma determinista (gana el primero), pero antes de esta corrección la
+  // perdedora recibía un 500 crudo con el mensaje de Postgres, y el evento
+  // igual quedaba logueado a su nombre aunque no se hubiera quedado con la
+  // conversación -- mismo criterio ya usado en handoff/route.ts (F10): un
+  // 23505 acá NUNCA es un error real, es la señal de que alguien más ganó
+  // la carrera justo antes.
+  let gano = true;
   if (asignacionExistente) {
     const { error: updateError } = await supabase
       .from("dulabs_conversacion_asignaciones")
@@ -103,18 +115,28 @@ export async function POST(request: NextRequest) {
       miembro_id: miembroIdDestino,
       asignado_por: miembro.miembroId,
     });
-    if (insertError) return Response.json({ error: insertError.message }, { status: 500 });
+    if (insertError) {
+      if (insertError.code !== "23505") {
+        return Response.json({ error: insertError.message }, { status: 500 });
+      }
+      gano = false;
+    }
   }
   // miembroIdDestino === null Y no existía asignación -> ya estaba sin
   // asignar, no hay nada que hacer (idempotente).
 
-  await supabase.from("dulabs_conversacion_eventos").insert({
-    phone_number_id,
-    telefono_cliente,
-    tipo: miembroIdDestino === null ? "liberado" : asignacionExistente ? "reasignado" : "asignado",
-    miembro_id: miembro.miembroId,
-    detalle: { miembro_id_destino: miembroIdDestino },
-  });
+  // El evento de auditoría solo se registra a nombre de quien realmente
+  // ganó la carrera -- registrar también a la perdedora daría dos
+  // "asignado" para la misma conversación cuando solo una fila real existe.
+  if (gano) {
+    await supabase.from("dulabs_conversacion_eventos").insert({
+      phone_number_id,
+      telefono_cliente,
+      tipo: miembroIdDestino === null ? "liberado" : asignacionExistente ? "reasignado" : "asignado",
+      miembro_id: miembro.miembroId,
+      detalle: { miembro_id_destino: miembroIdDestino },
+    });
+  }
 
-  return Response.json({ success: true });
+  return Response.json({ success: true, gano });
 }
