@@ -61,9 +61,20 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const operadorEmail = (await supabase.auth.admin.getUserById(acceso.miembro.userId)).data.user?.email ?? null;
 
   // F15.2 (Operations Center, cierre) -- ver mismo criterio en
-  // app/api/dashboard/admin/clientes/nuevo/route.ts (categoría "costosa",
-  // escalado por operador, fail-open).
-  const limite = await respuestaSiLimiteTasaExcedido(supabase, { recurso: "admin_suscripcion", tenantId: acceso.miembro.userId, categoria: "costosa" });
+  // app/api/dashboard/admin/clientes/nuevo/route.ts (escalado por operador,
+  // fail-open).
+  // F16.1 (Dunning, autorizado) -- hallazgo real durante la validación de
+  // esta fase: categoría "costosa" (10/60s) es DEMASIADO estricta acá -- a
+  // diferencia de admin_crear_cliente/admin_reset_password (que sí disparan
+  // un efecto externo real: crean un usuario de Auth o mandan un correo),
+  // activar/cambiar_plan/cancelar/reactivar son solo escrituras en
+  // dulabs_suscripciones, sin ningún efecto externo. Confirmado con el
+  // propio suite de F15 (lib/flow/f15-admin-operations-center.e2e.test.ts):
+  // un operador legítimo haciendo ~12 acciones de suscripción en <80s
+  // (patrón real de un día de soporte/onboarding) ya chocaba con el límite
+  // de 10 y quedaba silenciosamente bloqueado. "escritura" (60/60s) sigue
+  // protegiendo contra un loop real sin bloquear el uso normal.
+  const limite = await respuestaSiLimiteTasaExcedido(supabase, { recurso: "admin_suscripcion", tenantId: acceso.miembro.userId, categoria: "escritura" });
   if (limite) return limite;
 
   let body: Body;

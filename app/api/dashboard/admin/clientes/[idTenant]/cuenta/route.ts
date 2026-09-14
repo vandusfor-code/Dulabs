@@ -31,7 +31,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const supabase = acceso.supabase;
 
   // F15.2 (Operations Center, cierre) -- ver criterio en .../clientes/nuevo/route.ts.
-  const limite = await respuestaSiLimiteTasaExcedido(supabase, { recurso: "admin_cuenta", tenantId: acceso.miembro.userId, categoria: "costosa" });
+  // F16.1 (Dunning, autorizado) -- mismo hallazgo/fix que .../suscripcion/route.ts:
+  // bloquear/desbloquear es solo una escritura en dulabs_miembros_equipo,
+  // sin efecto externo (a diferencia de crear cliente/reset de contraseña,
+  // que sí mandan un correo real) -- "escritura" (60/60s) es la categoría
+  // correcta, no "costosa" (10/60s).
+  const limite = await respuestaSiLimiteTasaExcedido(supabase, { recurso: "admin_cuenta", tenantId: acceso.miembro.userId, categoria: "escritura" });
   if (limite) return limite;
 
   let body: { accion?: "bloquear" | "desbloquear"; motivo?: string };
