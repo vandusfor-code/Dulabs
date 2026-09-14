@@ -15,7 +15,7 @@
     "@upstash/qstash": "^2.11.3",
     "@xyflow/react": "12.11.6",
     "exceljs": "^4.4.0",
-    "lucide-react": "^1.24.0",
+    "lucide-react": "^1.28.0",
     "next": "16.2.10",
     "pdf-parse": "^2.4.5",
     "react": "19.2.4",
