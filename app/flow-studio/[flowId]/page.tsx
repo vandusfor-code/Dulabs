@@ -5,16 +5,23 @@ import { useParams, useSearchParams } from "next/navigation";
 import { FlowBuilder } from "@/components/dashboard/flows/FlowBuilder";
 import { useDashboard } from "@/lib/dashboard-session";
 
-// F15.1 (Admin Flow Studio, autorizado) -- único consumidor admin del
-// FlowBuilder reusable (components/dashboard/flows/FlowBuilder.tsx, el
-// MISMO componente que /dashboard/flows/[id] usa para clientes editando su
-// propio Flow -- nunca un segundo builder). `?tenant=` es obligatorio acá:
-// esta ruta SOLO existe para que un admin de DuLabs opere el Flow de un
-// cliente (ver lib/flow/api-auth.ts::requireFlowAccess/allowAdminOverride) --
-// el nombre del cliente se resuelve server-side (GET .../admin/clientes/
-// [idTenant], YA EXISTENTE, misma llamada que ya hace /admin/clientes/
-// [idTenant]) solo para el breadcrumb visible del header, nunca para
-// decidir autorización (eso lo hace el backend con el Bearer token real).
+// F15.1/F16.1 (Flow Studio, autorizado) -- único consumidor del FlowBuilder
+// reusable (components/dashboard/flows/FlowBuilder.tsx -- nunca un segundo
+// builder), para AMBOS casos:
+//   - con `?tenant=` -- un admin de DuLabs operando el Flow de un cliente
+//     (ver lib/flow/api-auth.ts::requireFlowAccess/allowAdminOverride); el
+//     nombre del cliente se resuelve server-side solo para el breadcrumb,
+//     nunca para decidir autorización (eso lo hace el backend con el Bearer
+//     token real).
+//   - sin `?tenant=` -- cualquier usuario (cliente o admin) editando SU
+//     PROPIO Flow. adminTenantId queda undefined y FlowBuilder/las rutas de
+//     /api/flows/* usan el tenant de la sesión real, exactamente el mismo
+//     camino que ya usaban antes de esta fase -- nunca se inventa un
+//     segundo mecanismo de autorización.
+// F16.1 -- /dashboard/flows/[id] (decisión de negocio: "todos ven el
+// editor nuevo, sin importar por dónde entren") ahora REDIRIGE acá sin
+// tenant -- ver ese archivo. colorMode es SIEMPRE "light" en esta ruta,
+// para ambos casos.
 export default function FlowStudioPage() {
   const params = useParams<{ flowId: string }>();
   const searchParams = useSearchParams();
@@ -38,23 +45,13 @@ export default function FlowStudioPage() {
     };
   }, [session, tenant]);
 
-  if (!tenant) {
-    return (
-      <main className="flex min-h-screen items-center justify-center px-5 text-fg">
-        <p className="max-w-md rounded-lg border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-500">
-          Falta el parámetro &quot;tenant&quot; -- Flow Studio solo se abre desde el Panel de Operaciones (Admin → Cliente → Flows).
-        </p>
-      </main>
-    );
-  }
-
   return (
     <FlowBuilder
       flowId={params.flowId}
-      adminTenantId={tenant}
-      adminTenantName={tenantName ?? tenant}
+      adminTenantId={tenant ?? undefined}
+      adminTenantName={tenant ? (tenantName ?? tenant) : undefined}
       colorMode="light"
-      backHref={`/admin/clientes/${tenant}`}
+      backHref={tenant ? `/admin/clientes/${tenant}` : "/dashboard/flows"}
     />
   );
 }

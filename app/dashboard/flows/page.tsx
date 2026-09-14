@@ -68,7 +68,10 @@ export default function FlowsListPage() {
       });
       if (result.ok) {
         setModalOpen(false);
-        router.push(`/dashboard/flows/${result.flow.id}`);
+        // F16.1 -- directo a Flow Studio (mismo destino final de
+        // /dashboard/flows/[id], que ahora solo redirige ahí -- se evita el
+        // salto extra).
+        router.push(`/flow-studio/${result.flow.id}`);
         return;
       }
       setCreando(false);
@@ -240,7 +243,7 @@ function FilaFlow({
       <td className="hidden px-3 py-4 text-sm text-mist md:table-cell">{formatFecha(flow.updated_at)}</td>
       <td className="px-5 py-4 text-right">
         <Link
-          href={`/dashboard/flows/${flow.id}`}
+          href={`/flow-studio/${flow.id}`}
           className="inline-flex items-center gap-1 rounded-lg border border-lime/50 px-4 py-2 text-sm font-medium text-lime-text transition-colors hover:bg-lime/10"
         >
           {t("Abrir", "Open")}

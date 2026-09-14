@@ -151,13 +151,20 @@ export interface FlowBuilderProps {
   adminTenantId?: string;
   /** Nombre visible del negocio del cliente, solo para el breadcrumb del header cuando adminTenantId está presente. */
   adminTenantName?: string;
-  /** default "dark" -- comportamiento IDÉNTICO al de antes de F15.1 para /dashboard/flows/[id], que nunca pasa este prop. */
+  /**
+   * F16.1 -- default "light": desde esta fase, TODO Flow (cliente o admin
+   * operando por un cliente) se edita en Flow Studio, sin importar por
+   * dónde se entre -- el único consumidor real hoy es
+   * app/flow-studio/[flowId]/page.tsx, que siempre pasa "light" de forma
+   * explícita. El valor "dark" del tipo se conserva por compatibilidad de
+   * la prop en sí, no porque algo lo use hoy.
+   */
   colorMode?: "dark" | "light";
   /** href al que vuelve "Flows" en el header -- default "/dashboard/flows" (comportamiento previo). */
   backHref?: string;
 }
 
-export function FlowBuilder({ flowId, adminTenantId, adminTenantName, colorMode = "dark", backHref = "/dashboard/flows" }: FlowBuilderProps) {
+export function FlowBuilder({ flowId, adminTenantId, adminTenantName, colorMode = "light", backHref = "/dashboard/flows" }: FlowBuilderProps) {
   const { session, rol } = useDashboard();
   const router = useRouter();
 
@@ -760,7 +767,9 @@ export function FlowBuilder({ flowId, adminTenantId, adminTenantName, colorMode 
     const result = await duplicateFlowRequest({ flowId, name: nombre.trim(), accessToken: session.access_token, adminTenantId });
     setDuplicating(false);
     if (result.ok) {
-      const destino = adminTenantId ? `/flow-studio/${result.flow.id}?tenant=${adminTenantId}` : `/dashboard/flows/${result.flow.id}`;
+      // F16.1 -- siempre a Flow Studio (con ?tenant= solo en el caso admin);
+      // /dashboard/flows/[id] ya no renderiza nada propio, solo redirige acá.
+      const destino = adminTenantId ? `/flow-studio/${result.flow.id}?tenant=${adminTenantId}` : `/flow-studio/${result.flow.id}`;
       router.push(destino);
     } else {
       setDuplicateError(result.error.message);
