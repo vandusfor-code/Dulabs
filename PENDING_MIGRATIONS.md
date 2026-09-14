@@ -1,13 +1,11 @@
 # Pasos manuales pendientes en producción
 
-> **F16.1 (Dunning, autorizado) -- pendiente de aplicar**: la migración
+> Verificado el 14-sep-2026 (F16.1, Dunning): la migración
 > `20261004000000_dulabs_dunning.sql` (tablas `dulabs_dunning_ciclos` /
 > `dulabs_dunning_eventos` + función `dulabs_dunning_reclamar_reintento`)
-> todavía NO está aplicada -- este entorno no tiene acceso a una conexión
-> Postgres directa ni a la Management API de Supabase (solo a
-> SUPABASE_SERVICE_ROLE_KEY, que no ejecuta DDL). Aplicarla vía el SQL
-> Editor de Supabase antes de habilitar F16.1 en producción -- es 100%
-> aditiva (`create table if not exists`), no toca ninguna tabla existente.
+> ya está aplicada -- el suite completo `lib/flow/f16-1-dunning.e2e.test.ts`
+> (14/14) corrió contra ella y pasó real. La sección que la daba por
+> pendiente se eliminó.
 
 Los archivos en `supabase/migrations/` son la fuente de verdad del esquema,
 pero aplicarlos a la base de datos real de producción es un paso manual
