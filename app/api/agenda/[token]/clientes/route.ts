@@ -38,11 +38,19 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 
   const q = request.nextUrl.searchParams.get("q")?.trim();
 
+  // Fase 11 (Debt Zero, autorizado) — tope defensivo: sin esto, un negocio
+  // con miles de clientes reales (crecimiento normal con el tiempo)
+  // devolvería la lista completa sin límite en cada carga del panel. El
+  // buscador (`q`) ya existe para encontrar un cliente puntual más allá de
+  // este tope -- una paginación real de UI queda para cuando de verdad haga
+  // falta, no se construye especulativamente acá.
+  const TOPE_CLIENTES = 500;
   let consultaClientes = supabase
     .from("dulabs_clientes_conocidos")
     .select("id, telefono_cliente, nombre, correo, created_at, cumple_dia, cumple_mes")
     .eq("id_tenant", tenant.idTenant)
-    .order("nombre", { ascending: true });
+    .order("nombre", { ascending: true })
+    .limit(TOPE_CLIENTES);
   if (q) {
     const escapado = q.replace(/[%_]/g, "\\$&");
     consultaClientes = consultaClientes.or(`nombre.ilike.%${escapado}%,telefono_cliente.ilike.%${escapado}%`);

@@ -4,12 +4,14 @@
  * (`TRIGGER_ROUTING_TEST_SENDERS`, lib/flow-routing.ts), que sigue
  * exactamente como está, sin ninguna línea tocada.
  *
- * ESTADO DE INTEGRACIÓN (léase antes de conectar nada): este archivo NO
- * está importado por `lib/flow-runtime-bridge.ts` ni por ningún camino real
- * de producción todavía -- existe en paralelo, sin estar activo, tal como
- * pidió el usuario. Conectarlo (reemplazando o complementando
- * `remitenteAutorizadoParaTriggerRouting`) es explícitamente Fase 3C, no
- * esta fase.
+ * ESTADO DE INTEGRACIÓN (actualizado en Fase 11, Debt Zero): este archivo SÍ
+ * está conectado a producción desde la Fase 3C, vía
+ * `lib/flow-runtime-bridge.ts::resolverFlowIdConTriggerRouting`
+ * (COMPLEMENTA a `remitenteAutorizadoParaTriggerRouting`, nunca lo
+ * reemplaza -- ver Decisión 2/Fase 3C en ese archivo). El camino de
+ * escritura self-service (activar/desactivar `trigger_routing_activo` desde
+ * el dashboard) vive en `lib/flow/trigger-router-activation.ts` (F8.2),
+ * consumido por `app/api/flows/[id]/trigger-router/{activate,deactivate}`.
  *
  * PASO 0 — verificación de la Opción B (evidencia real de schema, no
  * asumida): `dulabs_clientes_config.phone_number_id` tiene un UNIQUE INDEX

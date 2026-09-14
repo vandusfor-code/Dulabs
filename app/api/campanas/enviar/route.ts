@@ -8,6 +8,7 @@ import { esSinPlan, MENSAJE_SIN_PLAN } from "@/lib/planes";
 import { parseDestinatario } from "@/lib/destinatarios";
 import { getCampaignBotConfig, crearCampaignLeadRow } from "@/lib/campaign-lead-store";
 import { obtenerCreditosMasivos, consumirCreditosMasivos, reembolsarCreditosMasivos, mensajeSaldoInsuficiente } from "@/lib/campanas-creditos";
+import { respuestaSiLimiteTasaExcedido } from "@/lib/rate-limit";
 import { resolverClienteDeNumero, MENSAJE_PLANTILLA_DESCONECTADA } from "@/lib/plantilla-conexion";
 
 export const runtime = "nodejs";
@@ -40,6 +41,15 @@ export async function POST(request: NextRequest) {
   if (!requireRol(miembro, ["admin"])) {
     return Response.json({ error: "No tienes permiso para esta acción" }, { status: 403 });
   }
+
+  // Fase 11 (Debt Zero, autorizado) — "costosa": dispara un envío masivo
+  // real a Meta por destinatario, el tipo de operación más cara del sistema.
+  const limiteExcedido = await respuestaSiLimiteTasaExcedido(supabase, {
+    recurso: "campanas-enviar",
+    tenantId: miembro.tenantId,
+    categoria: "costosa",
+  });
+  if (limiteExcedido) return limiteExcedido;
 
   let body: {
     plantilla_id?: number;
