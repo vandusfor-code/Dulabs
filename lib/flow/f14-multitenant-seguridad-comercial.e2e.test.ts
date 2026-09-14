@@ -134,9 +134,9 @@ describe(
       }
 
       // A (autenticado como sí mismo) intenta cancelar mandando el tenant_id de B en el body.
-      const res = await suscripcionDELETE(
+      const res = (await suscripcionDELETE(
         reqJson("http://test/api/dashboard/suscripcion", "DELETE", { tenant_id: b.tenantId, id_tenant: b.tenantId }, a.token),
-      );
+      ))!;
       assert.equal(res.status, 200);
 
       const { data: subA } = await admin.from("dulabs_suscripciones").select("cancelar_al_vencer").eq("id_tenant", a.tenantId).single();

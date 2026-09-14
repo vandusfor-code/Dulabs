@@ -37,7 +37,27 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 
   const creditosMasivos = await obtenerCreditosMasivos(supabase, idTenant);
 
+  // FASE F14.2 (Billing / Monetización completa, autorizado) -- Fase 16 del
+  // pedido: el Panel de Operaciones debe poder ver pagos recientes y
+  // cambios de plan sin consultar la base a mano. Ambas son fail-safe
+  // (arrays vacíos) si sus migraciones/tablas todavía no existen -- nunca
+  // tumban el detalle del cliente, que ya funcionaba sin esto.
+  const { data: pagosRecientes } = await supabase
+    .from("dulabs_pagos")
+    .select("id, monto_cop, estado, tipo, created_at")
+    .eq("id_tenant", idTenant)
+    .order("created_at", { ascending: false })
+    .limit(10);
+  const { data: cambiosPlan } = await supabase
+    .from("dulabs_historial_planes")
+    .select("plan_anterior, plan_nuevo, precio_nuevo_cop, motivo, created_at")
+    .eq("id_tenant", idTenant)
+    .order("id", { ascending: false })
+    .limit(10);
+
   return Response.json({
+    pagosRecientes: pagosRecientes ?? [],
+    cambiosPlan: cambiosPlan ?? [],
     cliente: {
       idTenant: suscripcion.id_tenant,
       nombre,
