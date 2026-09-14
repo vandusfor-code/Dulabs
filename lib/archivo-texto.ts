@@ -1,4 +1,5 @@
 import ExcelJS from "exceljs";
+import { MAX_UPLOAD_BYTES } from "@/lib/upload-validacion";
 
 // Extractor de texto compartido para archivos subidos (base de conocimiento
 // de agentes, importación de encuestas, etc.): Excel/CSV se aplana a texto
@@ -9,7 +10,34 @@ import ExcelJS from "exceljs";
 // evaluarse, que no existe en el runtime serverless de Vercel (es una API de
 // navegador) — un import estático tumba con un ReferenceError CUALQUIER ruta
 // que solo importe este archivo, incluso si nunca procesa un PDF.
-export const TAMANO_MAXIMO_BYTES = 4 * 1024 * 1024; // 4 MB
+//
+// Fuente única de verdad del límite de tamaño: MAX_UPLOAD_BYTES vive en
+// lib/upload-validacion.ts (módulo ligero, compartido con el cliente).
+export const TAMANO_MAXIMO_BYTES = MAX_UPLOAD_BYTES; // 4 MB
+
+// Cota dura para la extracción de PDF EN EL SERVIDOR. pdf-parse (pdfjs) puede
+// tardar muchísimo o, con un PDF corrupto, no resolver nunca: sin esta cota la
+// función quedaría colgada hasta el maxDuration de Vercel y el cliente vería un
+// spinner eterno. Con la cota, un PDF problemático devuelve un error CLARO y
+// accionable dentro del tiempo de la función.
+const PDF_TIMEOUT_MS = 45_000;
+
+// Corre `promesa` con un tope de tiempo; si lo supera, rechaza con `mensaje`.
+// Exportada para poder probar el comportamiento de timeout de forma
+// determinista.
+export async function conTimeout<T>(promesa: Promise<T>, ms: number, mensaje: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promesa,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(mensaje)), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 // .xls (binario legacy) ya no se soporta — exceljs no lo lee. Cualquiera con
 // un .xls real lo puede volver a guardar como .xlsx en un clic.
 export const EXTENSIONES_PLANILLA = ["xlsx", "csv"];
@@ -95,14 +123,35 @@ export async function cargarLibroExcel(nombreArchivo: string, buffer: Buffer): P
 export async function extraerTexto(archivo: File, buffer: Buffer): Promise<string> {
   const ext = extension(archivo.name);
   if (ext === "pdf") {
+    // Verifica la firma real (%PDF-) ANTES de cargar pdf-parse: un archivo con
+    // extensión .pdf pero otro contenido (renombrado, corrupto, descarga a
+    // medias) haría que pdfjs lance un error genérico o se cuelgue. Mejor un
+    // mensaje claro y barato.
+    if (buffer.length < 5 || buffer.subarray(0, 5).toString("latin1") !== "%PDF-") {
+      throw new Error("El archivo no es un PDF válido (firma incorrecta). Vuelve a exportarlo o súbelo de nuevo.");
+    }
     const { PDFParse } = await import("pdf-parse");
     const parser = new PDFParse({ data: buffer });
+    let texto: string;
     try {
-      const resultado = await parser.getText();
-      return resultado.text;
+      const resultado = await conTimeout(
+        parser.getText(),
+        PDF_TIMEOUT_MS,
+        "El PDF tardó demasiado en procesarse. Prueba con un archivo más liviano o con menos páginas."
+      );
+      texto = resultado.text ?? "";
     } finally {
       await parser.destroy();
     }
+    // Un PDF escaneado o solo-imágenes extrae cadena vacía: antes se guardaba
+    // como "éxito" con 0 caracteres (el bot no aprendía nada). Ahora es un
+    // error terminal explícito.
+    if (!texto.trim()) {
+      throw new Error(
+        "Este PDF no contiene texto extraíble (parece escaneado o solo imágenes). Sube un PDF con texto seleccionable, o el contenido en Excel/CSV."
+      );
+    }
+    return texto;
   }
   if (EXTENSIONES_PLANILLA.includes(ext)) {
     if (ext === "csv") {

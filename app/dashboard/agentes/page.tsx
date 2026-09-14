@@ -28,6 +28,25 @@ import { formatearTelefono, nombreDelAgente } from "@/lib/format";
 import { PageHeader, Pill } from "@/components/dashboard/shell/ui";
 import { useI18n } from "@/lib/i18n";
 import { PLANES, resolverPlanId } from "@/lib/planes";
+import { validarArchivoConocimiento, MAX_UPLOAD_MB } from "@/lib/upload-validacion";
+
+// Tope duro del lado del cliente para la subida. Debe SIEMPRE terminar el
+// spinner: aunque la plataforma bufee o cuelgue un cuerpo grande, el
+// AbortController garantiza una salida (timeout) en vez de carga infinita.
+const UPLOAD_TIMEOUT_MS = 75_000;
+
+// Lee la respuesta sin asumir que es JSON: un 413/504/500 de la plataforma
+// (Vercel) llega como HTML o vacío, y `res.json()` reventaría con un
+// SyntaxError opaco en vez de dejarnos mapear el status a un mensaje claro.
+async function leerRespuesta(res: Response): Promise<{ error?: string; caracteres?: number; truncado?: boolean }> {
+  const cuerpo = await res.text().catch(() => "");
+  if (!cuerpo) return {};
+  try {
+    return JSON.parse(cuerpo) as { error?: string; caracteres?: number; truncado?: boolean };
+  } catch {
+    return {};
+  }
+}
 
 type AgentePerfil = {
   id: number;
@@ -76,8 +95,20 @@ function BaseConocimiento({
 
   const subirArchivo = useCallback(
     async (archivo: File) => {
+      // Validación previa: un archivo demasiado grande o de tipo no soportado
+      // se rechaza AL INSTANTE, sin gastar una request que la plataforma
+      // rechazaría (evita el spinner colgado por un cuerpo > límite de Vercel).
+      const validacion = validarArchivoConocimiento(archivo);
+      if (!validacion.ok) {
+        setMensaje(validacion.error);
+        if (inputRef.current) inputRef.current.value = "";
+        return;
+      }
+
       setSubiendo(true);
       setMensaje(null);
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), UPLOAD_TIMEOUT_MS);
       try {
         const form = new FormData();
         if ("agenteId" in target) form.append("agente_id", String(target.agenteId));
@@ -87,19 +118,44 @@ function BaseConocimiento({
           method: "POST",
           headers: { Authorization: `Bearer ${accessToken}` },
           body: form,
+          signal: controller.signal,
         });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error ?? t("Error subiendo el archivo", "Error uploading the file"));
+        const data = await leerRespuesta(res);
+        if (!res.ok) {
+          if (res.status === 413) {
+            throw new Error(
+              t(
+                `El archivo es demasiado grande para el servidor (máx. ${MAX_UPLOAD_MB} MB).`,
+                `The file is too large for the server (max. ${MAX_UPLOAD_MB} MB).`
+              )
+            );
+          }
+          throw new Error(
+            data.error ??
+              t(`No se pudo procesar el archivo (error ${res.status}).`, `Could not process the file (error ${res.status}).`)
+          );
+        }
+        const caracteres = data.caracteres ?? 0;
         setMensaje(
           t(
-            `Cargado: ${data.caracteres.toLocaleString("es-CO")} caracteres${data.truncado ? " (se recortó por tamaño)" : ""}.`,
-            `Loaded: ${data.caracteres.toLocaleString("en-US")} characters${data.truncado ? " (trimmed for size)" : ""}.`
+            `Cargado: ${caracteres.toLocaleString("es-CO")} caracteres${data.truncado ? " (se recortó por tamaño)" : ""}.`,
+            `Loaded: ${caracteres.toLocaleString("en-US")} characters${data.truncado ? " (trimmed for size)" : ""}.`
           )
         );
         onActualizado();
       } catch (err) {
-        setMensaje(err instanceof Error ? err.message : String(err));
+        if (err instanceof DOMException && err.name === "AbortError") {
+          setMensaje(
+            t(
+              "El procesamiento está tardando más de lo esperado. Puedes reintentar.",
+              "Processing is taking longer than expected. You can retry."
+            )
+          );
+        } else {
+          setMensaje(err instanceof Error ? err.message : String(err));
+        }
       } finally {
+        clearTimeout(timeout);
         setSubiendo(false);
         if (inputRef.current) inputRef.current.value = "";
       }
@@ -161,7 +217,7 @@ function BaseConocimiento({
       <input
         ref={inputRef}
         type="file"
-        accept=".xlsx,.xls,.csv,.pdf"
+        accept=".pdf,.xlsx,.csv"
         className="hidden"
         onChange={(e) => {
           const archivo = e.target.files?.[0];

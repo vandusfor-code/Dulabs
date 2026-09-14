@@ -4,7 +4,24 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { FileUp, FileText, X, Pencil, Check, Send, MessageSquareText, Plus, ArrowRightLeft, Phone, Bot } from "lucide-react";
 import { Pill } from "@/components/dashboard/shell/ui";
 import { formatearTelefono } from "@/lib/format";
+import { validarArchivoConocimiento, MAX_UPLOAD_MB } from "@/lib/upload-validacion";
 import { Seccion } from "./AdminClienteUI";
+
+// Tope duro del lado del cliente para la subida: el AbortController garantiza
+// que el spinner SIEMPRE termine, aunque la plataforma cuelgue un cuerpo grande.
+const UPLOAD_TIMEOUT_MS = 75_000;
+
+// Lee la respuesta sin asumir JSON: un 413/504/500 de Vercel llega como HTML o
+// vacío y `res.json()` reventaría con un SyntaxError opaco.
+async function leerRespuestaSubida(res: Response): Promise<{ error?: string; caracteres?: number; truncado?: boolean }> {
+  const cuerpo = await res.text().catch(() => "");
+  if (!cuerpo) return {};
+  try {
+    return JSON.parse(cuerpo) as { error?: string; caracteres?: number; truncado?: boolean };
+  } catch {
+    return {};
+  }
+}
 
 // F15.2 (Operations Center, cierre) -- portado del admin legacy (ver
 // SeccionImplementacion.tsx). Gestión completa del agente de IA de un
@@ -114,8 +131,17 @@ function BaseConocimientoAdmin({
 
   const subirArchivo = useCallback(
     async (archivo: File) => {
+      const validacion = validarArchivoConocimiento(archivo);
+      if (!validacion.ok) {
+        setMensaje(validacion.error);
+        if (inputRef.current) inputRef.current.value = "";
+        return;
+      }
+
       setSubiendo(true);
       setMensaje(null);
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), UPLOAD_TIMEOUT_MS);
       try {
         const form = new FormData();
         form.append("agente_id", String(agenteId));
@@ -124,14 +150,24 @@ function BaseConocimientoAdmin({
           method: "POST",
           headers: { Authorization: `Bearer ${accessToken}` },
           body: form,
+          signal: controller.signal,
         });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error ?? "Error subiendo el archivo");
-        setMensaje(`Cargado: ${data.caracteres.toLocaleString("es-CO")} caracteres${data.truncado ? " (se recortó por tamaño)" : ""}.`);
+        const data = await leerRespuestaSubida(res);
+        if (!res.ok) {
+          if (res.status === 413) throw new Error(`El archivo es demasiado grande para el servidor (máx. ${MAX_UPLOAD_MB} MB).`);
+          throw new Error(data.error ?? `No se pudo procesar el archivo (error ${res.status}).`);
+        }
+        const caracteres = data.caracteres ?? 0;
+        setMensaje(`Cargado: ${caracteres.toLocaleString("es-CO")} caracteres${data.truncado ? " (se recortó por tamaño)" : ""}.`);
         onActualizado();
       } catch (err) {
-        setMensaje(err instanceof Error ? err.message : String(err));
+        if (err instanceof DOMException && err.name === "AbortError") {
+          setMensaje("El procesamiento está tardando más de lo esperado. Puedes reintentar.");
+        } else {
+          setMensaje(err instanceof Error ? err.message : String(err));
+        }
       } finally {
+        clearTimeout(timeout);
         setSubiendo(false);
         if (inputRef.current) inputRef.current.value = "";
       }
@@ -180,7 +216,7 @@ function BaseConocimientoAdmin({
       <input
         ref={inputRef}
         type="file"
-        accept=".xlsx,.xls,.csv,.pdf"
+        accept=".pdf,.xlsx,.csv"
         className="hidden"
         onChange={(e) => {
           const archivo = e.target.files?.[0];
