@@ -2,12 +2,10 @@ import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { resolverMiembroEquipo, requireRol } from "@/lib/team";
 import { extraerTexto } from "@/lib/archivo-texto";
-import { validarArchivoConocimiento } from "@/lib/upload-validacion";
+import { validarArchivoConocimiento, MAX_KNOWLEDGE_CHARS } from "@/lib/upload-validacion";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
-
-const LIMITE_CARACTERES = 100_000; // suficiente para ~200 productos o un PDF de estatutos típico
 
 // Sube y extrae el texto de un listado de precios/productos (Excel/CSV) o un
 // documento (PDF) para que la IA lo use como contexto adicional al responder.
@@ -54,8 +52,8 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const truncado = texto.length > LIMITE_CARACTERES;
-  if (truncado) texto = texto.slice(0, LIMITE_CARACTERES);
+  const truncado = texto.length > MAX_KNOWLEDGE_CHARS;
+  if (truncado) texto = texto.slice(0, MAX_KNOWLEDGE_CHARS);
 
   const cambios = {
     base_conocimiento: texto,
