@@ -1,5 +1,55 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+// --- Human takeover: fuente de verdad de "¿la IA puede responder?" ----------
+//
+// Una fila en dulabs_pausas_chat con pausado_hasta > ahora significa que un
+// HUMANO tomó ESTA conversación (handoff explícito del Inbox, eco del dueño
+// respondiendo desde su celular, o traspaso que el propio Flow decidió) y la
+// IA NO debe responder por ninguna vía automática. Es EXACTAMENTE el mismo
+// criterio que ya usaban, por separado, el gate de recepción del webhook
+// (app/webhook-dulabs/route.ts) y readPausaUntil del executor-factory --
+// centralizado acá para que TODAS las barreras (el gate de recepción y la
+// última barrera justo antes de enviar) consulten la MISMA verdad y no puedan
+// divergir en silencio. "Humano tiene prioridad absoluta sobre la IA."
+export async function chatEnPausaHumana(
+  supabase: SupabaseClient,
+  phoneNumberId: string,
+  telefonoCliente: string,
+): Promise<boolean> {
+  const { data, error } = await supabase
+    .from("dulabs_pausas_chat")
+    .select("pausado_hasta")
+    .eq("phone_number_id", phoneNumberId)
+    .eq("telefono_cliente", telefonoCliente)
+    .maybeSingle();
+  if (error) {
+    // Fail-open DELIBERADO ante un error de lectura: mismo comportamiento que
+    // ya tenía el gate de recepción (loguea y sigue), para no introducir una
+    // regresión nueva donde un error transitorio de DB silencie a la IA. La
+    // carrera real que este guard cierra es una LECTURA EXITOSA que devuelve
+    // la fila de pausa recién escrita por el takeover -- no un error de red.
+    console.error("[pausas-chat] error consultando pausa (chatEnPausaHumana):", error.message);
+    return false;
+  }
+  return !!data && new Date(data.pausado_hasta as string).getTime() > Date.now();
+}
+
+// Observabilidad: se registra cuando una respuesta automática de la IA se
+// cancela porque un humano tomó la conversación. Sin prompts, sin secretos,
+// sin tokens, sin contenido del mensaje -- solo lo mínimo para diagnosticar
+// (tenant, conversación, etapa donde se bloqueó, referencia del mensaje/nodo).
+export function logIaBloqueadaPorHumano(info: {
+  etapa: string;
+  phoneNumberId: string;
+  telefonoCliente: string;
+  tenantId?: string;
+  referencia?: string;
+}): void {
+  console.log(
+    `[pausas-chat] AI_RESPONSE_BLOCKED_HUMAN_TAKEOVER etapa=${info.etapa} tenant=${info.tenantId ?? "?"} phone=${info.phoneNumberId} chat=${info.telefonoCliente}${info.referencia ? ` ref=${info.referencia}` : ""} at=${new Date().toISOString()}`,
+  );
+}
+
 export type ActivarPausaChatResult =
   | { ok: true; pausadoHasta: string }
   | { ok: false; error: string };

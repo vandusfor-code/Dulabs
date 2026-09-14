@@ -4,7 +4,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { guardarLeadEnterprise } from "@/lib/enterprise-leads";
-import { activarPausaChat } from "@/lib/pausas-chat";
+import { activarPausaChat, chatEnPausaHumana } from "@/lib/pausas-chat";
 import {
   crearCita,
   sugerirHorariosLibres,
@@ -100,7 +100,11 @@ export function createDefaultExecutorRegistry(
     consultarDisponibilidadCatalogoReal,
     ...overrides?.internalActionDeps,
   };
-  const sendMessageDeps: SendMessageDeps = { supabase, ...overrides?.sendMessageDeps };
+  // Última barrera "humano tiene prioridad" SIEMPRE activa en producción: el
+  // SendMessageExecutor re-verifica el estado de la conversación justo antes
+  // de enviar (ver send-message-executor.ts). Un override de test puede
+  // reemplazarla, pero por defecto queda cableada la implementación real.
+  const sendMessageDeps: SendMessageDeps = { supabase, chatEnPausaHumana, ...overrides?.sendMessageDeps };
   // Fase 5 (Actions + Integrations, autorizado) -- InternalActionExecutor
   // NUNCA se modifica; se envuelve tal cual dentro del router de
   // composición, que solo intercepta el caso puntual de webhook_http

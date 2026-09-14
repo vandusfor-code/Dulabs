@@ -44,7 +44,7 @@ import {
   procesarRespuestaProducto,
 } from "@/lib/soluciones-financieras-bot";
 import { adquirirCandadoChat, liberarCandadoChat } from "@/lib/chat-lock";
-import { activarPausaChat } from "@/lib/pausas-chat";
+import { activarPausaChat, chatEnPausaHumana, logIaBloqueadaPorHumano } from "@/lib/pausas-chat";
 import { obtenerOnboardingSesionActivaPorTelefono, guardarOnboardingSesion, marcarBienvenidaEnviada, filaASesion } from "@/lib/onboarding-store";
 import { procesarMensajeOnboarding, textoBienvenida, BOTON_CONFIGURAR, BOTON_SOPORTE } from "@/lib/onboarding-engine";
 import {
@@ -891,18 +891,11 @@ async function atenderMensaje(
     }
   }
 
-  // Control de pausa por chat: si el humano intervino en ESTA conversación y
-  // la ventana sigue vigente, la IA guarda silencio (filas vencidas se ignoran).
-  const { data: pausa, error } = await supabaseAdmin()
-    .from("dulabs_pausas_chat")
-    .select("pausado_hasta")
-    .eq("phone_number_id", cliente.phone_number_id)
-    .eq("telefono_cliente", telefonoRemitente)
-    .maybeSingle();
-  if (error) {
-    console.error("[webhook-dulabs] error consultando pausa:", error.message);
-  }
-  if (pausa && new Date(pausa.pausado_hasta).getTime() > Date.now()) {
+  // Control de pausa por chat (gate de RECEPCIÓN): si el humano ya intervino
+  // en ESTA conversación y la ventana sigue vigente, la IA guarda silencio.
+  // Fuente de verdad única compartida con la última barrera de más abajo
+  // (chatEnPausaHumana, lib/pausas-chat.ts). Filas vencidas se ignoran.
+  if (await chatEnPausaHumana(supabaseAdmin(), cliente.phone_number_id, telefonoRemitente)) {
     console.log(`[webhook-dulabs] IA en silencio para "${cliente.nombre_negocio}" (pausa vigente)`);
     return;
   }
@@ -960,8 +953,42 @@ async function atenderMensaje(
   // Este candado serializa el tramo real de IA + agenda por chat -- si ya
   // hay otro mensaje de esta misma clienta procesándose, este espera turno
   // (nunca lo abandona) y cuando le toca, ya ve el resultado del anterior.
+  // Última barrera reutilizable: re-consulta el estado de la conversación
+  // JUSTO antes de un envío automático de la IA. Aunque el gate de recepción
+  // y el gate post-candado ya pasaron, un asesor pudo TOMAR la conversación
+  // mientras la IA generaba la respuesta (segundos). Si eso pasó, no se envía
+  // nada y queda registrado (AI_RESPONSE_BLOCKED_HUMAN_TAKEOVER).
+  const bloqueadaPorTakeover = async (etapa: string): Promise<boolean> => {
+    if (!(await chatEnPausaHumana(supabaseAdmin(), cliente.phone_number_id, telefonoRemitente))) return false;
+    logIaBloqueadaPorHumano({
+      etapa,
+      phoneNumberId: cliente.phone_number_id,
+      telefonoCliente: telefonoRemitente,
+      tenantId: cliente.id_tenant,
+      referencia: mensaje.id,
+    });
+    return true;
+  };
+
   const yaTengoCandado = await adquirirCandadoChat(cliente.phone_number_id, telefonoRemitente, mensaje.id);
   try {
+    // BARRERA "humano tiene prioridad" tras adquirir el candado: entre el gate
+    // de recepción y este punto pudo pasar tiempo real -- los ~2.5s del freno
+    // de ráfaga y, sobre todo, la espera de turno del candado (si otro mensaje
+    // se estaba procesando). Si un asesor tomó la conversación en esa ventana,
+    // la IA no arranca ninguna vía (Flow, agenda, Daniela, especialista o
+    // legacy). Misma verdad que el gate de recepción (chatEnPausaHumana).
+    if (await chatEnPausaHumana(supabaseAdmin(), cliente.phone_number_id, telefonoRemitente)) {
+      logIaBloqueadaPorHumano({
+        etapa: "post_candado",
+        phoneNumberId: cliente.phone_number_id,
+        telefonoCliente: telefonoRemitente,
+        tenantId: cliente.id_tenant,
+        referencia: mensaje.id,
+      });
+      return;
+    }
+
     // Fase 0 (migración a Flow) — puerta EXPLÍCITA y opt-in, ver
     // lib/flow-routing.ts. flow_activo=false (default de TODO tenant
     // existente, incluida Daniela) dejaba esto sin efecto: el mensaje sigue
@@ -1038,7 +1065,9 @@ async function atenderMensaje(
         recursosDisponibles: contexto.activacion.recursos_disponibles,
         duracionEstandarMin: contexto.activacion.duracion_estandar_min,
       });
-      if (resultado.texto) await enviarWhatsApp(cliente, destinoWhatsApp, resultado.texto);
+      if (resultado.texto && !(await bloqueadaPorTakeover("legacy_send_agenda"))) {
+        await enviarWhatsApp(cliente, destinoWhatsApp, resultado.texto);
+      }
       return;
     }
 
@@ -1119,7 +1148,7 @@ async function atenderMensaje(
           { idTenant: cliente.id_tenant, phoneNumberId: cliente.phone_number_id },
           historial
         );
-    if (respuesta) {
+    if (respuesta && !(await bloqueadaPorTakeover("legacy_send"))) {
       // Con especialistas activas se permite que la IA parta su respuesta en
       // dos mensajes (separados por línea en blanco) para sonar más humana --
       // el resto de la plataforma sigue mandando un solo mensaje por turno,
