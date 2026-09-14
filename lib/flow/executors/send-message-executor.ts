@@ -24,6 +24,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { enviarTexto, enviarMedia } from "@/lib/whatsapp";
 import { enviarBotones, resolverTokenMeta, incrementarUsoMensajes, registrarMensaje } from "@/lib/whatsapp-outbound";
+import { logIaBloqueadaPorHumano } from "@/lib/pausas-chat";
 import type { ClienteConfig } from "@/lib/supabase";
 import {
   EFFECT_RESULT_CLASSIFICATIONS,
@@ -47,6 +48,17 @@ export interface SendMessageDeps {
   enviarMedia?: typeof enviarMedia;
   incrementarUsoMensajes?: typeof incrementarUsoMensajes;
   registrarMensaje?: typeof registrarMensaje;
+  /**
+   * Última barrera "humano tiene prioridad": si esta función devuelve true,
+   * la conversación pasó a atención humana y el envío automático se ABORTA
+   * justo antes de tocar la Graph API. Opcional a propósito -- cuando NO se
+   * inyecta, el executor se comporta EXACTAMENTE como antes (los tests
+   * unitarios existentes, que construyen el executor sin esta dep y con un
+   * supabase de mentira, no se ven afectados). El wiring de producción
+   * (lib/flow/executor-factory.ts) SÍ la inyecta con la implementación real
+   * (chatEnPausaHumana), así que la protección está siempre activa en runtime.
+   */
+  chatEnPausaHumana?: (supabase: SupabaseClient, phoneNumberId: string, telefonoCliente: string) => Promise<boolean>;
 }
 
 // FASE F8.1 (autorizado) -- exportada para que InternalActionExecutor
@@ -174,6 +186,36 @@ export class SendMessageExecutor implements EffectExecutor {
     const token = resolverTokenMeta(cliente);
     if (!token) {
       return { success: false, classification: EFFECT_RESULT_CLASSIFICATIONS.AUTH_ERROR, error: "meta_token_unavailable" };
+    }
+
+    // ÚLTIMA BARRERA (humano tiene prioridad absoluta): se re-consulta el
+    // estado de la conversación JUSTO antes de tocar la Graph API. Aunque el
+    // gate de recepción del webhook haya dejado pasar este mensaje, un asesor
+    // pudo TOMAR la conversación mientras el Flow generaba la respuesta (o
+    // mientras esperaba turno en el candado / los ~2.5s del freno de ráfaga).
+    // Si eso pasó, el envío automático se aborta acá y NO se reintenta
+    // (NON_RETRYABLE: el takeover humano gana, no es un fallo transitorio).
+    // Opt-in por dep: sin inyectar, no cambia nada (ver SendMessageDeps).
+    if (this.deps.chatEnPausaHumana) {
+      const enPausa = await this.deps.chatEnPausaHumana(
+        this.deps.supabase,
+        cliente.phone_number_id,
+        conversation.telefonoCliente,
+      );
+      if (enPausa) {
+        logIaBloqueadaPorHumano({
+          etapa: "flow_send",
+          phoneNumberId: cliente.phone_number_id,
+          telefonoCliente: conversation.telefonoCliente,
+          tenantId: request.tenantId,
+          referencia: request.nodeId,
+        });
+        return {
+          success: false,
+          classification: EFFECT_RESULT_CLASSIFICATIONS.NON_RETRYABLE,
+          error: "ai_blocked_human_takeover",
+        };
+      }
     }
 
     const enviarTextoFn = this.deps.enviarTexto ?? enviarTexto;
