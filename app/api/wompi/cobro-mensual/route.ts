@@ -3,6 +3,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { crearTransaccion, resolverEstadoPago } from "@/lib/wompi";
 import { debeOmitirCobroPorPagoPendiente } from "@/lib/wompi-webhook";
 import { desactivarActivacion } from "@/lib/marketplace-store";
+import { insertarPagoConPlan } from "@/lib/planes-historial";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -75,13 +76,17 @@ export async function GET(request: NextRequest) {
         recurrent: true,
       });
 
-      const { error: pagoInsertError } = await supabase.from("dulabs_pagos").insert({
-        id_tenant: sub.id_tenant,
-        wompi_transaction_id: transaccion.id,
-        monto_cop: sub.precio_cop,
-        estado: transaccion.status,
-        tipo: "suscripcion",
-      });
+      const { error: pagoInsertError } = await insertarPagoConPlan(
+        supabase,
+        {
+          id_tenant: sub.id_tenant,
+          wompi_transaction_id: transaccion.id,
+          monto_cop: sub.precio_cop,
+          estado: transaccion.status,
+          tipo: "suscripcion",
+        },
+        sub.plan,
+      );
       if (pagoInsertError) {
         console.error(
           `[cobro-mensual] ALERTA: se cobró a Wompi (transacción ${transaccion.id}, tenant ${sub.id_tenant}, $${sub.precio_cop} COP) pero no se pudo registrar en dulabs_pagos — revisar si falta correr la migración de tipo/marketplace_activacion_id:`,

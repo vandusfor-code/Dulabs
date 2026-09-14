@@ -48,13 +48,32 @@ export async function registrarMensaje(
   return false;
 }
 
+// FASE F14.2 (Billing / Monetización completa, autorizado) -- hallazgo real:
+// esta función hacía leer-decidir-escribir en JavaScript (leía
+// cliente.mensajes_usados_mes ya potencialmente desactualizado, le sumaba 1,
+// y escribía ese valor) -- dos envíos salientes concurrentes para el mismo
+// número podían partir del mismo valor leído y pisarse al escribir,
+// perdiendo un incremento real. Ahora usa una función SQL atómica (ver
+// migración 20260914100000_upgrade_downgrade_historial.sql). Fail-safe: si
+// la migración todavía no corrió (42883, función no existe), cae al cálculo
+// anterior en JavaScript -- vulnerable a la misma carrera, pero nunca rompe
+// el envío de mensajes mientras el operador aplica la migración.
 export async function incrementarUsoMensajes(supabase: SupabaseClient, cliente: ClienteConfig) {
   const mesHoy = new Date().toISOString().slice(0, 7); // "YYYY-MM"
-  const nuevoUsados = cliente.mes_actual === mesHoy ? cliente.mensajes_usados_mes + 1 : 1;
-  const { error } = await supabase
-    .from("dulabs_clientes_config")
-    .update({ mensajes_usados_mes: nuevoUsados, mes_actual: mesHoy })
-    .eq("id", cliente.id);
+  const { error } = await supabase.rpc("dulabs_incrementar_uso_mensajes", {
+    p_cliente_id: cliente.id,
+    p_mes_actual: mesHoy,
+  });
+  if (error?.code === "PGRST202" || error?.code === "42883") {
+    console.error("[whatsapp-outbound] dulabs_incrementar_uso_mensajes no existe todavía (falta correr la migración 20260914100000), usando el cálculo anterior no atómico:", error.message);
+    const nuevoUsados = cliente.mes_actual === mesHoy ? cliente.mensajes_usados_mes + 1 : 1;
+    const { error: fallbackError } = await supabase
+      .from("dulabs_clientes_config")
+      .update({ mensajes_usados_mes: nuevoUsados, mes_actual: mesHoy })
+      .eq("id", cliente.id);
+    if (fallbackError) console.error("[whatsapp-outbound] error incrementando uso de mensajes (fallback):", fallbackError.message);
+    return;
+  }
   if (error) {
     console.error("[whatsapp-outbound] error incrementando uso de mensajes:", error.message);
   }

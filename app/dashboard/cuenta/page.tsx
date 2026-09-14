@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useDashboard } from "@/lib/dashboard-session";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import { useI18n } from "@/lib/i18n";
-import { PLANES, resolverPlanId } from "@/lib/planes";
+import { PLANES, resolverPlanId, familiaDePlan, type PlanId } from "@/lib/planes";
 
 export default function CuentaPage() {
   const router = useRouter();
@@ -280,6 +280,10 @@ export default function CuentaPage() {
           </p>
         )}
 
+        {suscripcion && suscripcion.estado === "activa" && !suscripcion.cancelar_al_vencer && (
+          <CambiarPlanSection suscripcion={suscripcion} session={session} cargarNegocios={cargarNegocios} t={t} />
+        )}
+
         {suscripcion && suscripcion.estado === "activa" && (
           <div className="mt-6 border-t border-edge/60 pt-5">
             {suscripcion.cancelar_al_vencer ? (
@@ -428,6 +432,101 @@ export default function CuentaPage() {
           </div>
         )}
       </section>
+    </div>
+  );
+}
+
+// FASE F14.2 (Billing / Monetización completa, autorizado) -- componente
+// aparte a propósito: React Compiler dejaba de poder preservar la
+// memoización manual de otros hooks pre-existentes de CuentaPage
+// (cambiarPassword, eliminarCuenta) en cuanto este bloque vivía dentro del
+// mismo componente -- un componente propio aísla el análisis del compilador
+// sin tocar código ajeno que ya funcionaba bien.
+function CambiarPlanSection({
+  suscripcion,
+  session,
+  cargarNegocios,
+  t,
+}: {
+  suscripcion: NonNullable<ReturnType<typeof useDashboard>["suscripcion"]>;
+  session: ReturnType<typeof useDashboard>["session"];
+  cargarNegocios: ReturnType<typeof useDashboard>["cargarNegocios"];
+  t: ReturnType<typeof useI18n>["t"];
+}) {
+  const planActualId = resolverPlanId(suscripcion.plan);
+  const familia = familiaDePlan(planActualId);
+  const opcionesDePlan = (familia ?? []).filter((id) => id !== planActualId);
+  const [planSeleccionado, setPlanSeleccionado] = useState<PlanId | "">("");
+  const [cambiandoDePlan, setCambiandoDePlan] = useState(false);
+  const [mensajeCambioPlan, setMensajeCambioPlan] = useState<string | null>(null);
+  const [errorCambioPlan, setErrorCambioPlan] = useState<string | null>(null);
+
+  const confirmarCambioPlan = useCallback(async () => {
+    if (!session || !planSeleccionado) return;
+    setErrorCambioPlan(null);
+    setMensajeCambioPlan(null);
+    setCambiandoDePlan(true);
+    try {
+      const res = await fetch("/api/dashboard/suscripcion", {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${session.access_token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ plan: planSeleccionado }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setErrorCambioPlan(data.error ?? t("No se pudo cambiar de plan.", "Couldn't change plan."));
+        return;
+      }
+      setMensajeCambioPlan(
+        data.direccion === "upgrade"
+          ? t("¡Listo! Tu plan mejoró de inmediato.", "Done! Your plan was upgraded right away.")
+          : t("Listo, tu plan cambió. El nuevo precio aplica desde el próximo cobro.", "Done, your plan changed. The new price applies from your next charge.")
+      );
+      setPlanSeleccionado("");
+      await cargarNegocios();
+    } catch (err) {
+      setErrorCambioPlan(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCambiandoDePlan(false);
+    }
+  }, [session, planSeleccionado, cargarNegocios, t]);
+
+  if (opcionesDePlan.length === 0) return null;
+
+  return (
+    <div className="mt-6 border-t border-edge/60 pt-5">
+      <h3 className="text-xs font-semibold uppercase tracking-widest text-mist">
+        {t("Cambiar de plan", "Change plan")}
+      </h3>
+      <p className="mt-2 text-sm leading-relaxed text-mist">
+        {t(
+          "Un upgrade aplica de inmediato. Un downgrade también aplica de inmediato, pero nunca borra tus datos existentes -- solo limita lo nuevo que puedas crear. El precio nuevo se cobra en tu próximo ciclo, no ahora.",
+          "An upgrade applies right away. A downgrade also applies right away, but never deletes your existing data -- it only limits what new things you can create. The new price is charged on your next cycle, not now."
+        )}
+      </p>
+      <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center">
+        <select
+          value={planSeleccionado}
+          onChange={(e) => setPlanSeleccionado(e.target.value as PlanId | "")}
+          className="w-full rounded-lg border border-edge bg-ink-2 px-4 py-2.5 text-sm text-fg outline-none focus:border-lime/50 sm:max-w-xs"
+        >
+          <option value="">{t("Elige un plan nuevo…", "Choose a new plan…")}</option>
+          {opcionesDePlan.map((id) => (
+            <option key={id} value={id}>
+              {PLANES[id].nombre} — ${PLANES[id].precioCop?.toLocaleString("es-CO")} {t("COP/mes", "COP/mo")}
+            </option>
+          ))}
+        </select>
+        <button
+          onClick={confirmarCambioPlan}
+          disabled={!planSeleccionado || cambiandoDePlan}
+          className="shrink-0 rounded-lg bg-lime px-4 py-2.5 text-sm font-semibold text-lime-fg transition-colors hover:bg-lime-hover disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {cambiandoDePlan ? t("Cambiando…", "Changing…") : t("Confirmar cambio", "Confirm change")}
+        </button>
+      </div>
+      {mensajeCambioPlan && <p className="mt-3 text-xs leading-relaxed text-lime-text">{mensajeCambioPlan}</p>}
+      {errorCambioPlan && <p className="mt-3 text-xs leading-relaxed text-red-600">{errorCambioPlan}</p>}
     </div>
   );
 }

@@ -99,11 +99,16 @@ export async function POST(request: NextRequest) {
     .select("*")
     .single();
   // Fail-safe: si la migración 20260914090000_activacion_manual_auditoria.sql
-  // todavía no corrió en Supabase, las columnas nuevas no existen (42703) --
-  // se reintenta sin ellas para no tumbar la única ruta de activación manual
+  // todavía no corrió en Supabase, las columnas nuevas no existen -- se
+  // reintenta sin ellas para no tumbar la única ruta de activación manual
   // (mismo criterio defensivo que app/api/wompi/webhook/route.ts con
-  // tipo/marketplace_activacion_id).
-  if (upsertError?.code === "42703") {
+  // tipo/marketplace_activacion_id). PostgREST reporta esto como "PGRST204"
+  // (columna fuera del schema cache), NUNCA como el "42703" crudo de
+  // Postgres -- confirmado empíricamente esta fase, ver
+  // lib/amore-entrada-sesiones.ts para el mismo hallazgo documentado antes.
+  // Corrige un bug real de la fase F14 anterior: ese fix comprobaba
+  // "42703", que nunca iba a coincidir en un INSERT/UPDATE vía PostgREST.
+  if (upsertError?.code === "PGRST204" || upsertError?.code === "42703") {
     console.error("[activar-suscripcion] columnas de auditoría no existen todavía (falta correr la migración), reintentando sin ellas:", upsertError.message);
     ({ data: suscripcion, error: upsertError } = await supabase
       .from("dulabs_suscripciones")

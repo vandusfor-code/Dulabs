@@ -174,6 +174,23 @@ export const ORDEN_PLANES: PlanId[] = ["start", "growth", "scale", "enterprise"]
 // nunca los legacy.
 export const ORDEN_PLANES_V2: PlanId[] = ["essential", "business", "pro", "enterprise"];
 
+// FASE F14.2 (Billing / Monetización completa, autorizado) -- las 2
+// "familias" comerciales usadas para decidir qué upgrade/downgrade de plan
+// es válido (ver app/api/dashboard/suscripcion.ts PATCH). No existe hoy
+// ninguna regla comercial de DuLabs para migrar un tenant de una familia a
+// otra automáticamente (legacy -> nueva o viceversa), así que el
+// autoservicio de cambio de plan solo se permite DENTRO de la misma
+// familia -- migrar de familia sigue siendo una decisión manual de un
+// admin de DuLabs vía /api/admin/activar-suscripcion.
+export const FAMILIA_LEGACY: PlanId[] = ["start", "growth", "scale"];
+export const FAMILIA_NUEVA: PlanId[] = ["essential", "business", "pro"];
+
+export function familiaDePlan(plan: PlanId): PlanId[] | null {
+  if (FAMILIA_LEGACY.includes(plan)) return FAMILIA_LEGACY;
+  if (FAMILIA_NUEVA.includes(plan)) return FAMILIA_NUEVA;
+  return null; // enterprise: fuera de autoservicio, se activa por cotización
+}
+
 // Union completa (legacy + nueva) SOLO para herramientas internas de admin:
 // a diferencia de ORDEN_PLANES (lo que /precios vende hoy) y ORDEN_PLANES_V2
 // (lo que /newversion vende), el equipo de DuLabs necesita listar/filtrar/

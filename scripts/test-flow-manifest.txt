@@ -204,3 +204,6 @@ lib/flow/f12-e2e-continuo.e2e.test.ts
 lib/flow/f13-e2e-onboarding.e2e.test.ts
 lib/flow/f14-billing-idempotencia.e2e.test.ts
 lib/flow/f14-multitenant-seguridad-comercial.e2e.test.ts
+lib/flow/f14-upgrade-downgrade.e2e.test.ts
+lib/flow/f14-consumo-limits.e2e.test.ts
+lib/flow/f14-facturacion-historial.e2e.test.ts
