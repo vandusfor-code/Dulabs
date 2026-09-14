@@ -10,7 +10,7 @@
     "test:flow": "node scripts/run-test-flow.mjs"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.111.0",
+    "@anthropic-ai/sdk": "^0.112.3",
     "@supabase/supabase-js": "^2.110.3",
     "@upstash/qstash": "^2.11.3",
     "@xyflow/react": "12.11.6",
