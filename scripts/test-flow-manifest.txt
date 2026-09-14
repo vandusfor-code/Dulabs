@@ -210,3 +210,5 @@ lib/flow/f14-facturacion-historial.e2e.test.ts
 lib/flow/f15-admin-operations-center.e2e.test.ts
 lib/flow/f15-1-admin-flow-studio.e2e.test.ts
 lib/flow/f15-2-operations-center-cierre.e2e.test.ts
+lib/dunning/politica.test.ts
+lib/flow/f16-1-dunning.e2e.test.ts

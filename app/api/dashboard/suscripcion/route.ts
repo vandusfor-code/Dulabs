@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { resolverMiembroEquipo, requireRol } from "@/lib/team";
 import { cancelarSuscripcion, reactivarSuscripcion, cambiarPlanSuscripcion } from "@/lib/suscripcion-domain";
+import { obtenerCicloActivo } from "@/lib/dunning/dunning-domain";
 
 export const runtime = "nodejs";
 
@@ -43,10 +44,18 @@ export async function GET(request: NextRequest) {
     .eq("id_tenant", idTenant)
     .maybeSingle();
 
+  // F16.1 (Commercial Scale -- Dunning, autorizado) -- mientras un ciclo de
+  // dunning está activo, `estado` sigue siendo 'activa' a propósito
+  // (período de gracia), así que /dashboard/cuenta necesita esta señal
+  // aparte para no mostrar "todo bien" cuando en realidad hay un pago
+  // pendiente de regularizar.
+  const ciclo = await obtenerCicloActivo(supabase, idTenant);
+
   return Response.json({
     precio_negociado_cop: suscripcion?.precio_negociado_cop ?? null,
     estado: suscripcion?.estado ?? null,
     plan: suscripcion?.plan ?? null,
+    dunning: ciclo ? { intentos: ciclo.intentos, proximoIntentoEn: ciclo.proximo_intento_at, motivoUltimoFallo: ciclo.motivo_ultimo_fallo } : null,
   });
 }
 

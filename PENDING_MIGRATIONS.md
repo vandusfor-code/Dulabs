@@ -1,5 +1,12 @@
 # Pasos manuales pendientes en producción
 
+> Verificado el 14-sep-2026 (F16.1, Dunning): la migración
+> `20261004000000_dulabs_dunning.sql` (tablas `dulabs_dunning_ciclos` /
+> `dulabs_dunning_eventos` + función `dulabs_dunning_reclamar_reintento`)
+> ya está aplicada -- el suite completo `lib/flow/f16-1-dunning.e2e.test.ts`
+> (14/14) corrió contra ella y pasó real. La sección que la daba por
+> pendiente se eliminó.
+
 Los archivos en `supabase/migrations/` son la fuente de verdad del esquema,
 pero aplicarlos a la base de datos real de producción es un paso manual
 aparte (vía el SQL Editor de Supabase) — no ocurre automáticamente al hacer

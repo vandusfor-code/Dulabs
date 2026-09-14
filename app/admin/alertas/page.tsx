@@ -14,6 +14,8 @@ type Alerta = {
   severidad: "critica" | "advertencia";
   creadaEn: string;
   estado: "nueva" | "vista" | "resuelta";
+  /** F16.1 (Dunning, autorizado) -- solo presente en tipo="dunning_en_curso". */
+  dunning?: { intentos: number; proximoIntentoEn: string | null; motivoUltimoFallo: string | null };
 };
 
 export default function AdminAlertasPage() {
@@ -44,6 +46,29 @@ export default function AdminAlertasPage() {
     cargar();
   }
 
+  // F16.1 (Commercial Scale -- Dunning, autorizado) -- acciones directas
+  // sobre el ciclo de dunning de un cliente, sin salir de /admin/alertas
+  // (no se crea un panel admin nuevo, per el pedido).
+  const [accionando, setAccionando] = useState<string | null>(null);
+  async function accionDunning(idTenant: string, body: { accion: string; tipo_notificacion?: string }) {
+    if (!session || accionando) return;
+    setAccionando(idTenant);
+    try {
+      const res = await fetch(`/api/dashboard/admin/clientes/${idTenant}/dunning`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${session.access_token}`, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "No se pudo completar la acción");
+      await cargar();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err));
+    } finally {
+      setAccionando(null);
+    }
+  }
+
   const activas = (alertas ?? []).filter((a) => a.estado !== "resuelta");
 
   return (
@@ -61,9 +86,30 @@ export default function AdminAlertasPage() {
                     {a.nombre ?? "Sin nombre"}
                   </Link>
                   <p className="text-xs text-mist">{a.detalle}</p>
+                  {a.tipo === "dunning_en_curso" && a.dunning?.proximoIntentoEn && (
+                    <p className="text-xs text-mist">Próximo reintento automático: {new Date(a.dunning.proximoIntentoEn).toLocaleString("es-CO")}</p>
+                  )}
                 </div>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                {a.tipo === "dunning_en_curso" && (
+                  <>
+                    <button
+                      onClick={() => accionDunning(a.idTenant, { accion: "reintentar" })}
+                      disabled={accionando === a.idTenant}
+                      className="rounded-lg border border-lime/40 bg-lime/10 px-3 py-1.5 text-xs font-medium text-lime-text hover:bg-lime/15 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {accionando === a.idTenant ? "Procesando…" : "Reintentar cobro"}
+                    </button>
+                    <button
+                      onClick={() => accionDunning(a.idTenant, { accion: "reenviar_notificacion", tipo_notificacion: "payment_failed" })}
+                      disabled={accionando === a.idTenant}
+                      className="rounded-lg border border-edge px-3 py-1.5 text-xs text-fg hover:bg-ink disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Reenviar aviso
+                    </button>
+                  </>
+                )}
                 {a.estado === "nueva" && (
                   <button onClick={() => marcar(a.clave, "vista")} className="rounded-lg border border-edge px-3 py-1.5 text-xs text-fg hover:bg-ink">
                     Marcar vista

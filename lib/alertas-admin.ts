@@ -11,7 +11,8 @@ export type TipoAlerta =
   | "suscripcion_vencida"
   | "whatsapp_desconectado"
   | "bot_pausado"
-  | "flow_con_errores";
+  | "flow_con_errores"
+  | "dunning_en_curso";
 
 export type Alerta = {
   clave: string;
@@ -23,12 +24,14 @@ export type Alerta = {
   severidad: "critica" | "advertencia";
   creadaEn: string;
   estado: "nueva" | "vista" | "resuelta";
+  /** F16.1 (Dunning, autorizado) -- solo presente en tipo="dunning_en_curso". */
+  dunning?: { intentos: number; proximoIntentoEn: string | null; motivoUltimoFallo: string | null };
 };
 
 export async function calcularAlertas(supabase: SupabaseClient): Promise<Alerta[]> {
   const alertas: Alerta[] = [];
 
-  const [{ data: suscripciones }, { data: numeros }, { data: pagosFallidos }, { data: ejecucionesFallidas }] = await Promise.all([
+  const [{ data: suscripciones }, { data: numeros }, { data: pagosFallidos }, { data: ejecucionesFallidas }, ciclosDunning] = await Promise.all([
     supabase.from("dulabs_suscripciones").select("id_tenant, estado, updated_at").in("estado", ["vencida", "pendiente_pago"]),
     supabase.from("dulabs_clientes_config").select("id_tenant, phone_number_id, nombre_negocio, ia_pausada, estado_conexion, meta_permanent_token, updated_at"),
     supabase.from("dulabs_pagos").select("id, id_tenant, estado, created_at").eq("tipo", "suscripcion").eq("estado", "DECLINED").order("created_at", { ascending: false }).limit(100),
@@ -37,7 +40,15 @@ export async function calcularAlertas(supabase: SupabaseClient): Promise<Alerta[
     // diferencia de dulabs_clientes_config/dulabs_suscripciones/dulabs_pagos/
     // dulabs_fallos_ia, que sí usan "id_tenant").
     supabase.from("dulabs_flow_executions").select("tenant_id, phone_number_id, status, last_activity_at").eq("status", "failed").order("last_activity_at", { ascending: false }).limit(200),
+    // F16.1 (Dunning, autorizado) -- fail-safe si la migración
+    // 20261004000000 todavía no corrió (la tabla no existe todavía):
+    // simplemente no hay alertas de dunning, el resto de /admin/alertas
+    // sigue funcionando igual que antes de esta fase (mismo criterio que
+    // dulabs_alertas_estado más abajo: error -> se ignora, nunca tumba el
+    // resto de las alertas).
+    supabase.from("dulabs_dunning_ciclos").select("id_tenant, intentos, motivo_ultimo_fallo, proximo_intento_at, updated_at").eq("estado", "activo"),
   ]);
+  const ciclosActivos = ciclosDunning.error ? [] : (ciclosDunning.data ?? []);
 
   const { data: usuarios } = await supabase.auth.admin.listUsers({ page: 1, perPage: 200 });
   const nombrePorTenant = new Map((usuarios?.users ?? []).map((u) => [u.id, (u.user_metadata?.nombre as string | undefined) ?? u.email ?? null]));
@@ -111,6 +122,27 @@ export async function calcularAlertas(supabase: SupabaseClient): Promise<Alerta[
       severidad: "advertencia",
       creadaEn: p.created_at,
       estado: "nueva",
+    });
+  }
+
+  // F16.1 (Dunning, autorizado) -- señal PRINCIPAL para "este cliente tiene
+  // un problema de pago en curso": mientras el ciclo está activo, la
+  // suscripción sigue estado='activa' a propósito (período de gracia), así
+  // que ya NO aparece en el bloque de "vencida"/"pendiente_pago" de arriba
+  // -- sin esto, un cliente en dunning se volvería invisible para el
+  // operador hasta el vencimiento final.
+  for (const c of ciclosActivos) {
+    alertas.push({
+      clave: `dunning_en_curso:${c.id_tenant}`,
+      tipo: "dunning_en_curso",
+      idTenant: c.id_tenant,
+      nombre: nombrePorTenant.get(c.id_tenant) ?? null,
+      recurso: null,
+      detalle: `Pago fallido en recuperación -- intento ${c.intentos}, motivo: ${c.motivo_ultimo_fallo ?? "desconocido"}.`,
+      severidad: c.intentos >= 2 ? "critica" : "advertencia",
+      creadaEn: c.updated_at,
+      estado: "nueva",
+      dunning: { intentos: c.intentos, proximoIntentoEn: c.proximo_intento_at, motivoUltimoFallo: c.motivo_ultimo_fallo },
     });
   }
 
