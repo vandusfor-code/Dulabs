@@ -1,9 +1,16 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { resolverMiembroEquipo, requireRol } from "@/lib/team";
+import { planDelTenant } from "@/lib/plan-limits";
 import { detailFromConfig, questionsDataFromConfig, type SurveyConfigRow, type SurveySessionRow } from "@/lib/survey-stats";
 
 export const runtime = "nodejs";
+
+// FASE F14 -- ver el mismo hallazgo en app/api/dashboard/surveys/route.ts: el
+// módulo de Encuestas solo se validaba en el PATCH de configuración, nunca en
+// lectura/borrado. Mismo mensaje que usa survey-bot-config/route.ts.
+const MENSAJE_ENCUESTAS_BLOQUEADAS =
+  "El módulo de Encuestas está disponible desde el plan Growth. Mejora tu plan para crear y publicar encuestas por WhatsApp.";
 
 // Detalle real de la encuesta de un número: resumen, análisis por pregunta
 // y lista de participantes — todo derivado de dulabs_survey_bot_config +
@@ -20,6 +27,9 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   if (userError || !userData.user) return Response.json({ error: "Sesión inválida" }, { status: 401 });
   const miembro = await resolverMiembroEquipo(supabase, userData.user.id);
   if (!miembro) return Response.json({ error: "No perteneces a ningún equipo activo" }, { status: 403 });
+
+  const plan = await planDelTenant(supabase, miembro.tenantId);
+  if (!plan.limites.encuestas) return Response.json({ error: MENSAJE_ENCUESTAS_BLOQUEADAS }, { status: 403 });
 
   const { data: cliente } = await supabase
     .from("dulabs_clientes_config")
@@ -93,6 +103,11 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
   if (!requireRol(miembro, ["admin"])) {
     return Response.json({ error: "No tienes permiso para esta acción" }, { status: 403 });
   }
+
+  // A propósito SIN gate de plan.limites.encuestas aquí: borrar su propia
+  // encuesta/datos vieja es una acción de limpieza, no un uso del feature de
+  // pago -- bloquear el DELETE dejaría a un tenant que bajó de plan sin forma
+  // de borrar sus datos viejos sin volver a pagar por encuestas primero.
 
   const { data: cliente } = await supabase
     .from("dulabs_clientes_config")

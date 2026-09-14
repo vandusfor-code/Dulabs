@@ -202,3 +202,5 @@ lib/flow/f12-contacts-tags-ataques.e2e.test.ts
 lib/flow/f12-analytics-dataset-controlado.e2e.test.ts
 lib/flow/f12-e2e-continuo.e2e.test.ts
 lib/flow/f13-e2e-onboarding.e2e.test.ts
+lib/flow/f14-billing-idempotencia.e2e.test.ts
+lib/flow/f14-multitenant-seguridad-comercial.e2e.test.ts

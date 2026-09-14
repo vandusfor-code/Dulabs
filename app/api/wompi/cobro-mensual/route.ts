@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { crearTransaccion, resolverEstadoPago } from "@/lib/wompi";
+import { debeOmitirCobroPorPagoPendiente } from "@/lib/wompi-webhook";
 import { desactivarActivacion } from "@/lib/marketplace-store";
 
 export const runtime = "nodejs";
@@ -43,6 +44,25 @@ export async function GET(request: NextRequest) {
           .eq("id_tenant", sub.id_tenant);
         console.log(`[cobro-mensual] suscripción de ${sub.id_tenant} cerrada por cancelación del cliente (no se cobra).`);
         resultados.push({ id_tenant: sub.id_tenant, ok: true, detalle: "cancelada por el cliente, no se cobró" });
+        continue;
+      }
+
+      // FASE F14 -- ver debeOmitirCobroPorPagoPendiente en lib/wompi-webhook.ts:
+      // si el intento de cobro anterior de este tenant sigue PENDING (3DS sin
+      // resolver todavía por el webhook), no se crea una segunda transacción
+      // hoy -- evita el doble cobro real que producía este cron antes de este
+      // fix cuando el webhook tardaba más de un día en confirmar.
+      const { data: ultimoPago } = await supabase
+        .from("dulabs_pagos")
+        .select("estado")
+        .eq("id_tenant", sub.id_tenant)
+        .eq("tipo", "suscripcion")
+        .order("id", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (debeOmitirCobroPorPagoPendiente(ultimoPago)) {
+        console.log(`[cobro-mensual] tenant ${sub.id_tenant}: cobro anterior sigue PENDING, se omite el reintento de hoy hasta que el webhook lo resuelva.`);
+        resultados.push({ id_tenant: sub.id_tenant, ok: true, detalle: "omitido: cobro anterior sigue PENDING" });
         continue;
       }
 

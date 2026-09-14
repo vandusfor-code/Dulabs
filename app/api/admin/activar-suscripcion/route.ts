@@ -27,6 +27,12 @@ type Body = {
   plan?: string;
   precio_cop?: number;
   fecha_proximo_cobro?: string; // YYYY-MM-DD, opcional -- default +1 año (ciclo típico de un trato Enterprise)
+  // FASE F14 -- ver migración 20260914090000_activacion_manual_auditoria.sql:
+  // esta ruta no tiene sesión de usuario (gateada por secreto compartido), así
+  // que el rastro de auditoría depende de que quien la llame se identifique.
+  // Opcionales para no romper llamadas existentes que todavía no los manden.
+  operador?: string;
+  motivo?: string;
 };
 
 export async function POST(request: NextRequest) {
@@ -72,24 +78,39 @@ export async function POST(request: NextRequest) {
       return d.toISOString().slice(0, 10);
     })();
 
-  const { data: suscripcion, error: upsertError } = await supabase
+  const filaBase = {
+    id_tenant: miembro.tenant_id,
+    plan,
+    precio_cop,
+    wompi_payment_source_id: null, // facturación manual/negociada, fuera de Wompi
+    wompi_customer_email: tenant_email,
+    estado: "activa",
+    cortesia: false,
+    fecha_proximo_cobro: fechaProximoCobro,
+    updated_at: new Date().toISOString(),
+  };
+
+  let { data: suscripcion, error: upsertError } = await supabase
     .from("dulabs_suscripciones")
     .upsert(
-      {
-        id_tenant: miembro.tenant_id,
-        plan,
-        precio_cop,
-        wompi_payment_source_id: null, // facturación manual/negociada, fuera de Wompi
-        wompi_customer_email: tenant_email,
-        estado: "activa",
-        cortesia: false,
-        fecha_proximo_cobro: fechaProximoCobro,
-        updated_at: new Date().toISOString(),
-      },
+      { ...filaBase, activada_manualmente_por: body.operador ?? null, activada_manualmente_motivo: body.motivo ?? null },
       { onConflict: "id_tenant" }
     )
     .select("*")
     .single();
+  // Fail-safe: si la migración 20260914090000_activacion_manual_auditoria.sql
+  // todavía no corrió en Supabase, las columnas nuevas no existen (42703) --
+  // se reintenta sin ellas para no tumbar la única ruta de activación manual
+  // (mismo criterio defensivo que app/api/wompi/webhook/route.ts con
+  // tipo/marketplace_activacion_id).
+  if (upsertError?.code === "42703") {
+    console.error("[activar-suscripcion] columnas de auditoría no existen todavía (falta correr la migración), reintentando sin ellas:", upsertError.message);
+    ({ data: suscripcion, error: upsertError } = await supabase
+      .from("dulabs_suscripciones")
+      .upsert(filaBase, { onConflict: "id_tenant" })
+      .select("*")
+      .single());
+  }
   if (upsertError) return Response.json({ error: upsertError.message }, { status: 500 });
 
   return Response.json({

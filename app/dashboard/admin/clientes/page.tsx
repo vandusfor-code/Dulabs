@@ -28,7 +28,7 @@ type ClienteFila = {
 
 const ESTADOS_IMPLEMENTACION = ["PENDIENTE", "EN_CONFIGURACION", "EN_PRUEBAS", "ACTIVO", "REQUIERE_ATENCION"];
 const ESTADOS_ONBOARDING = ["menu_enviado", "esperando_negocio", "esperando_idea", "esperando_adicional", "completado", "soporte_solicitado"];
-const ESTADOS_PAGO = ["activa", "pendiente_pago", "vencida"];
+const ESTADOS_PAGO = ["activa", "pendiente_pago", "vencida", "cancelada"];
 const ORDENES = [
   { value: "reciente", label: "Más reciente" },
   { value: "antiguo", label: "Más antiguo" },
