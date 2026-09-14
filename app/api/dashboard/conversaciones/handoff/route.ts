@@ -77,12 +77,26 @@ export async function POST(request: NextRequest) {
       .eq("telefono_cliente", telefono_cliente)
       .maybeSingle();
     if (!asignacionExistente) {
-      await supabase.from("dulabs_conversacion_asignaciones").insert({
+      // Fase 10 (Concurrencia, autorizado) -- hallazgo: dos agentes pueden
+      // tocar "Tomar" casi al mismo tiempo sobre la misma conversación sin
+      // asignación previa; ambos leen asignacionExistente=null y ambos
+      // intentan este INSERT. El UNIQUE (phone_number_id, telefono_cliente)
+      // de la tabla ya lo resuelve de forma determinista (gana el primero),
+      // pero antes de esta fase el error de esa carrera se ignoraba en
+      // silencio -- el agente que perdía la carrera igual recibía
+      // {success:true}, dando a entender que la conversación quedó suya
+      // cuando en realidad la tiene su compañero. La pausa de IA queda
+      // activa de cualquier forma (activarPausaChat es idempotente), así
+      // que lo único que corregimos es no mentir sobre quién quedó asignado.
+      const { error: insertError } = await supabase.from("dulabs_conversacion_asignaciones").insert({
         phone_number_id,
         telefono_cliente,
         miembro_id: miembro.miembroId,
         asignado_por: miembro.miembroId,
       });
+      if (insertError && insertError.code !== "23505") {
+        return Response.json({ error: "No se pudo asignar la conversación" }, { status: 500 });
+      }
     } else if (!asignacionExistente.miembro_id) {
       await supabase
         .from("dulabs_conversacion_asignaciones")
