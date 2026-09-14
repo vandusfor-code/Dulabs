@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { verificarAccesoAdminDulabs } from "@/lib/admin-tenant";
-import { extraerTexto, TAMANO_MAXIMO_BYTES } from "@/lib/archivo-texto";
+import { extraerTexto } from "@/lib/archivo-texto";
+import { validarArchivoConocimiento } from "@/lib/upload-validacion";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -23,11 +24,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   if (typeof agenteId !== "string" || !agenteId) {
     return Response.json({ error: "Falta 'agente_id'" }, { status: 400 });
   }
-  if (!(archivo instanceof File) || archivo.size === 0) {
+  if (!(archivo instanceof File)) {
     return Response.json({ error: "Falta el archivo" }, { status: 400 });
   }
-  if (archivo.size > TAMANO_MAXIMO_BYTES) {
-    return Response.json({ error: "El archivo supera el límite de 4 MB" }, { status: 400 });
+  const validacion = validarArchivoConocimiento(archivo);
+  if (!validacion.ok) {
+    return Response.json({ error: validacion.error }, { status: 400 });
   }
 
   const { data: agente, error: agenteError } = await supabase

@@ -1,7 +1,8 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { resolverMiembroEquipo, requireRol } from "@/lib/team";
-import { extraerTexto, TAMANO_MAXIMO_BYTES } from "@/lib/archivo-texto";
+import { extraerTexto } from "@/lib/archivo-texto";
+import { validarArchivoConocimiento } from "@/lib/upload-validacion";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -32,11 +33,14 @@ export async function POST(request: NextRequest) {
   if ((typeof phoneNumberId !== "string" || !phoneNumberId) && (typeof agenteId !== "string" || !agenteId)) {
     return Response.json({ error: "Falta 'phone_number_id' o 'agente_id'" }, { status: 400 });
   }
-  if (!(archivo instanceof File) || archivo.size === 0) {
+  if (!(archivo instanceof File)) {
     return Response.json({ error: "Falta el archivo" }, { status: 400 });
   }
-  if (archivo.size > TAMANO_MAXIMO_BYTES) {
-    return Response.json({ error: "El archivo supera el límite de 4 MB" }, { status: 400 });
+  // Validación real en el servidor (nunca se confía en el chequeo del cliente):
+  // extensión permitida + tamaño, con el mismo mensaje claro que ve la UI.
+  const validacion = validarArchivoConocimiento(archivo);
+  if (!validacion.ok) {
+    return Response.json({ error: validacion.error }, { status: 400 });
   }
 
   let texto: string;
