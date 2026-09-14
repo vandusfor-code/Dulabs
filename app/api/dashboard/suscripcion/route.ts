@@ -24,13 +24,29 @@ export async function GET(request: NextRequest) {
   const miembro = await resolverMiembroEquipo(supabase, userData.user.id);
   const idTenant = miembro?.tenantId ?? userData.user.id;
 
+  // FASE F13 (Go-Live Onboarding, autorizado) -- hallazgo real (caso real de
+  // Daniel): /checkout siempre mostraba el formulario de pago desde cero,
+  // sin importar si ya existía una suscripción en curso. Un pago que quedó
+  // en "pendiente_pago" (challenge 3DS sin confirmar por el webhook, ver
+  // pagos/suscribir/route.ts) hacía que el cliente viera "paga de nuevo"
+  // en vez de un estado claro -- y un segundo intento real choca con
+  // dulabs_reservar_suscripcion (409, "ya tienes un pago en proceso"), una
+  // respuesta confusa sin contexto. `estado`/`plan` se agregan para que el
+  // checkout pueda mostrar el estado real ANTES de ofrecer pagar de nuevo.
+  // Aditivo: cualquier consumidor existente que solo lea
+  // `precio_negociado_cop` (como este mismo endpoint hacía hasta ahora)
+  // sigue funcionando exactamente igual.
   const { data: suscripcion } = await supabase
     .from("dulabs_suscripciones")
-    .select("precio_negociado_cop")
+    .select("precio_negociado_cop, estado, plan")
     .eq("id_tenant", idTenant)
     .maybeSingle();
 
-  return Response.json({ precio_negociado_cop: suscripcion?.precio_negociado_cop ?? null });
+  return Response.json({
+    precio_negociado_cop: suscripcion?.precio_negociado_cop ?? null,
+    estado: suscripcion?.estado ?? null,
+    plan: suscripcion?.plan ?? null,
+  });
 }
 
 async function autenticarAdmin(request: NextRequest) {

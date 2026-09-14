@@ -84,43 +84,57 @@ export async function POST(request: NextRequest) {
       .eq("phone_number_id", phone_number_id)
       .eq("telefono_cliente", telefono_cliente)
       .maybeSingle();
+    // FASE F12 (Debt Zero, autorizado) -- se completa el hallazgo de F10:
+    // ya no se mentía sobre el ÉXITO del insert (el 23505 no rompía la
+    // petición), pero el evento de auditoría de más abajo se seguía
+    // registrando incondicionalmente a nombre de CUALQUIERA que llamara
+    // este endpoint -- dos "asignado"/handoff_tomado en el log para la
+    // misma conversación cuando solo una fila de asignación real existe.
+    // `gano` distingue exactamente lo mismo que ya distingue
+    // app/api/dashboard/conversaciones/asignar/route.ts para el mismo caso.
+    let gano = true;
     if (!asignacionExistente) {
       // Fase 10 (Concurrencia, autorizado) -- hallazgo: dos agentes pueden
       // tocar "Tomar" casi al mismo tiempo sobre la misma conversación sin
       // asignación previa; ambos leen asignacionExistente=null y ambos
       // intentan este INSERT. El UNIQUE (phone_number_id, telefono_cliente)
-      // de la tabla ya lo resuelve de forma determinista (gana el primero),
-      // pero antes de esta fase el error de esa carrera se ignoraba en
-      // silencio -- el agente que perdía la carrera igual recibía
-      // {success:true}, dando a entender que la conversación quedó suya
-      // cuando en realidad la tiene su compañero. La pausa de IA queda
-      // activa de cualquier forma (activarPausaChat es idempotente), así
-      // que lo único que corregimos es no mentir sobre quién quedó asignado.
+      // de la tabla ya lo resuelve de forma determinista (gana el primero).
       const { error: insertError } = await supabase.from("dulabs_conversacion_asignaciones").insert({
         phone_number_id,
         telefono_cliente,
         miembro_id: miembro.miembroId,
         asignado_por: miembro.miembroId,
       });
-      if (insertError && insertError.code !== "23505") {
-        return Response.json({ error: "No se pudo asignar la conversación" }, { status: 500 });
+      if (insertError) {
+        if (insertError.code !== "23505") {
+          return Response.json({ error: "No se pudo asignar la conversación" }, { status: 500 });
+        }
+        gano = false;
       }
     } else if (!asignacionExistente.miembro_id) {
       await supabase
         .from("dulabs_conversacion_asignaciones")
         .update({ miembro_id: miembro.miembroId, asignado_por: miembro.miembroId, updated_at: new Date().toISOString() })
         .eq("id", asignacionExistente.id);
+    } else if (asignacionExistente.miembro_id !== miembro.miembroId) {
+      // Ya asignada a OTRO miembro real -- "Tomar" no le arrebata la
+      // conversación (mismo criterio que asignar/route.ts para no-admin);
+      // la IA sí queda pausada igual (activarPausaChat ya corrió arriba),
+      // pero el evento de auditoría no debe acreditárselo a quien no la tomó.
+      gano = false;
     }
 
-    await supabase.from("dulabs_conversacion_eventos").insert({
-      phone_number_id,
-      telefono_cliente,
-      tipo: "asignado",
-      miembro_id: miembro.miembroId,
-      detalle: { motivo: "handoff_tomado" },
-    });
+    if (gano) {
+      await supabase.from("dulabs_conversacion_eventos").insert({
+        phone_number_id,
+        telefono_cliente,
+        tipo: "asignado",
+        miembro_id: miembro.miembroId,
+        detalle: { motivo: "handoff_tomado" },
+      });
+    }
 
-    return Response.json({ success: true, modo: "human" });
+    return Response.json({ success: true, modo: "human", gano });
   }
 
   // accion === "devolver_a_ia"

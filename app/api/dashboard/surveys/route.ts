@@ -48,6 +48,17 @@ export async function GET(request: NextRequest) {
   const miembro = await resolverMiembroEquipo(supabase, userData.user.id);
   if (!miembro) return Response.json({ error: "No perteneces a ningún equipo activo" }, { status: 403 });
 
+  // FASE F14 -- hallazgo real: este GET nunca revisaba el plan vigente, así
+  // que un tenant que bajó de un plan con Encuestas a uno sin ella (o que
+  // nunca la tuvo pero conserva configuración vieja) seguía viendo el
+  // tablero completo con datos reales -- la única puerta de este módulo
+  // estaba en el PATCH de configuración (survey-bot-config/route.ts), nunca
+  // en la lectura. Tablero vacío (mismo shape que "sin ninguna encuesta
+  // configurada") en vez de un error, para no romper la pantalla de un
+  // tenant que solo está viendo su dashboard.
+  const planVigente = await planDelTenant(supabase, miembro.tenantId);
+  if (!planVigente.limites.encuestas) return Response.json(tableroVacio());
+
   const { data: numeros } = await supabase
     .from("dulabs_clientes_config")
     .select("phone_number_id, nombre_negocio, api_key_ia")
@@ -110,9 +121,8 @@ export async function GET(request: NextRequest) {
   // Insights de IA (análisis de sentimiento) solo desde el plan Scale — en
   // planes sin la feature se omite el análisis (queda null: el panel muestra
   // su estado "sin suficientes datos / no disponible" honesto, sin llamar a Claude).
-  const plan = await planDelTenant(supabase, miembro.tenantId);
   const apiKeyDelTenant = configRows.map((c) => apiKeyPorNumero.get(c.phone_number_id)).find((k) => k) ?? null;
-  const insights = plan.limites.insightsIA
+  const insights = planVigente.limites.insightsIA
     ? await analizarRespuestasTexto(respuestasTexto, apiKeyDelTenant ? apiKeyDelTenant : null)
     : null;
 

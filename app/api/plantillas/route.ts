@@ -79,13 +79,25 @@ export async function GET(request: NextRequest) {
 
   // Consumo real por plantilla (enviados y % de lectura), a partir de las
   // campañas que la usaron y el estado de entrega real de esos mensajes.
+  //
+  // FASE F12 (Debt Zero, autorizado) — hallazgo real (mismo patrón que se
+  // corrigió en app/api/dashboard/campanas/route.ts): esta consulta no
+  // tenía NINGÚN tope, ni en cantidad de campañas ni en mensajes -- un
+  // tenant con mucho historial podía traer TODA su vida de campañas de una
+  // sola vez. `MAX_CAMPANAS_POR_CONSULTA`/`MAX_MENSAJES_POR_CONSULTA` son
+  // topes defensivos explícitos (las campañas más recientes primero, que es
+  // lo que de verdad le importa a "consumo reciente" de una plantilla).
+  const MAX_CAMPANAS_POR_CONSULTA = 200;
+  const MAX_MENSAJES_POR_CONSULTA = 200_000;
   const idsPlantillas = (plantillas ?? []).map((p) => p.id);
   const estadisticas = new Map<number, { enviados: number; leidos: number }>();
   if (idsPlantillas.length > 0) {
     const { data: campanas } = await supabase
       .from("dulabs_campanas")
       .select("id, plantilla_id")
-      .in("plantilla_id", idsPlantillas);
+      .in("plantilla_id", idsPlantillas)
+      .order("created_at", { ascending: false })
+      .limit(MAX_CAMPANAS_POR_CONSULTA);
     const plantillaPorCampana = new Map((campanas ?? []).map((c) => [c.id, c.plantilla_id as number]));
     const idsCampanas = (campanas ?? []).map((c) => c.id);
 
@@ -93,7 +105,9 @@ export async function GET(request: NextRequest) {
       const { data: mensajes } = await supabase
         .from("dulabs_mensajes_log")
         .select("campana_id, estado_entrega")
-        .in("campana_id", idsCampanas);
+        .in("campana_id", idsCampanas)
+        .order("created_at", { ascending: false })
+        .limit(MAX_MENSAJES_POR_CONSULTA);
       for (const m of mensajes ?? []) {
         const plantillaId = plantillaPorCampana.get(m.campana_id);
         if (!plantillaId) continue;

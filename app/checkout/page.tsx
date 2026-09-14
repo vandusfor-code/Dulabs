@@ -44,6 +44,13 @@ function CheckoutPageInterna() {
   const [plan, setPlan] = useState<PlanId>(PLAN_POR_DEFECTO);
   const [precioNegociadoCop, setPrecioNegociadoCop] = useState<number | null>(null);
   const [estado, setEstado] = useState<Estado>({ fase: "cargando" });
+  // FASE F13 (Go-Live Onboarding, autorizado) -- hallazgo real (caso de
+  // Daniel): sin esto, un pago que quedó "pendiente_pago" (challenge 3DS
+  // sin confirmar) hacía que /checkout mostrara el MISMO formulario de pago
+  // de siempre, sin ningún indicio de que ya había un intento en curso --
+  // el cliente veía "paga de nuevo" en un negocio que, para él, ya había
+  // pagado. Null = sin suscripción todavía (caso normal de un cliente nuevo).
+  const [estadoSuscripcionActual, setEstadoSuscripcionActual] = useState<string | null>(null);
 
   const [telefono, setTelefono] = useState("");
   const [numero, setNumero] = useState("");
@@ -77,9 +84,12 @@ function CheckoutPageInterna() {
       // precio de LISTA por esa fracción de segundo, no el negociado.
       fetch("/api/dashboard/suscripcion", { headers: { Authorization: `Bearer ${data.session.access_token}` } })
         .then((res) => res.json())
-        .then((json) => setPrecioNegociadoCop(json.precio_negociado_cop ?? null))
+        .then((json) => {
+          setPrecioNegociadoCop(json.precio_negociado_cop ?? null);
+          setEstadoSuscripcionActual(json.estado ?? null);
+        })
         .catch((err) => {
-          console.error("[checkout] no se pudo consultar el precio negociado:", err);
+          console.error("[checkout] no se pudo consultar el estado de la suscripción:", err);
           setPrecioNegociadoCop(null);
         })
         .finally(() => setEstado({ fase: "listo" }));
@@ -205,7 +215,33 @@ function CheckoutPageInterna() {
           {t("Se te cobrará automáticamente cada mes con esta tarjeta.", "You'll be charged automatically every month with this card.")}
         </p>
 
-        {estado.fase === "exito" ? (
+        {estado.fase !== "exito" && estadoSuscripcionActual === "pendiente_pago" ? (
+          <div className="mt-8 rounded-xl border border-amber-500/40 bg-amber-500/10 p-5 text-sm leading-relaxed text-amber-100">
+            {t(
+              "Ya recibimos tu intento de pago y lo estamos verificando con el banco -- esto puede tardar unos minutos. No necesitas pagar de nuevo.",
+              "We already received your payment attempt and we're verifying it with the bank -- this can take a few minutes. You don't need to pay again."
+            )}
+            <p className="mt-3 text-xs text-amber-100/70">
+              {t(
+                "Si después de un rato sigue igual, escríbenos por WhatsApp y lo revisamos contigo.",
+                "If it's still the same after a while, message us on WhatsApp and we'll check it with you."
+              )}
+            </p>
+            <a
+              href={whatsappVentasUrl(t("Hola, hice un pago en DuLabs y quedó pendiente de verificación.", "Hi, I made a payment on DuLabs and it's pending verification."))}
+              className="mt-4 block rounded-lg border border-amber-500/40 px-6 py-3 text-center text-sm font-semibold text-amber-100 transition-colors duration-200 hover:bg-amber-500/10"
+            >
+              {t("Escribir a soporte →", "Message support →")}
+            </a>
+          </div>
+        ) : estado.fase !== "exito" && estadoSuscripcionActual === "activa" ? (
+          <div className="mt-8 rounded-xl border border-lime/40 bg-lime/10 p-5 text-sm leading-relaxed">
+            {t("Ya tienes una suscripción activa -- no hace falta pagar de nuevo.", "You already have an active subscription -- no need to pay again.")}
+            <Link href="/dashboard/conexion" className="mt-4 block font-semibold text-lime-text hover:text-fg">
+              {t("Ir al panel →", "Go to dashboard →")}
+            </Link>
+          </div>
+        ) : estado.fase === "exito" ? (
           <div className="mt-8 rounded-xl border border-lime/40 bg-lime/10 p-5 text-sm leading-relaxed">
             {t("✅ Suscripción activada. Te estamos llevando a WhatsApp para empezar la configuración.", "✅ Subscription activated. We're taking you to WhatsApp to start setup.")}
             <a
