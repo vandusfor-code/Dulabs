@@ -47,7 +47,7 @@ comment on column public.dulabs_pagos.plan is
 -- Esta función hace el mismo cálculo (reinicia a 1 si mes_actual cambió)
 -- pero DENTRO de un solo UPDATE atómico de Postgres.
 create or replace function public.dulabs_incrementar_uso_mensajes(
-  p_cliente_id bigint,
+  p_cliente_id uuid,
   p_mes_actual text
 ) returns void
 language sql
@@ -60,8 +60,8 @@ as $$
   where id = p_cliente_id;
 $$;
 
-revoke all on function public.dulabs_incrementar_uso_mensajes(bigint, text) from public;
-grant execute on function public.dulabs_incrementar_uso_mensajes(bigint, text) to service_role;
+revoke all on function public.dulabs_incrementar_uso_mensajes(uuid, text) from public;
+grant execute on function public.dulabs_incrementar_uso_mensajes(uuid, text) to service_role;
 
 comment on function public.dulabs_incrementar_uso_mensajes is
   'Incremento atómico de dulabs_clientes_config.mensajes_usados_mes (reinicia a 1 si mes_actual cambió). Reemplaza el patrón leer-decidir-escribir vulnerable a condición de carrera que tenía lib/whatsapp-outbound.ts::incrementarUsoMensajes antes de F14.2.';

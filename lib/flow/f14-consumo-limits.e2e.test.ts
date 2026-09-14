@@ -92,7 +92,7 @@ describe(
       // demostración en cada corrida de regresión no aporta nada nuevo una
       // vez que el hallazgo ya quedó documentado -- solo ensuciaría el
       // resultado como si fuera una regresión de este código.
-      const { error: probeError } = await admin.rpc("dulabs_incrementar_uso_mensajes", { p_cliente_id: -1, p_mes_actual: "1900-01" });
+      const { error: probeError } = await admin.rpc("dulabs_incrementar_uso_mensajes", { p_cliente_id: "00000000-0000-0000-0000-000000000000", p_mes_actual: "1900-01" });
       if (probeError?.code === "PGRST202" || probeError?.code === "42883") {
         t.skip("requiere la migración 20260914100000 (función dulabs_incrementar_uso_mensajes) aplicada en Supabase -- ver reporte F14.2 para la demostración real de la pérdida de incrementos sin ella");
         return;
