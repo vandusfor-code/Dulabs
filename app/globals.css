@@ -138,6 +138,91 @@
   border-bottom-color: var(--color-edge);
 }
 
+/* ---------- Flow Studio palette (light, scoped via .flow-studio-scope) ---- */
+/* F15.1 (Admin Flow Studio, autorizado) -- MISMO patrón que .spa-scope/
+   .amore-scope: reusa los mismos nombres de token (bg-ink, bg-card,
+   border-edge, text-mist, bg-lime, text-lime-text...) así que FlowTopbar,
+   FlowCanvas, FlowNodePalette, los paneles laterales, etc. se reskinean
+   completos SOLO con este bloque, sin tocar ni un className de esos
+   componentes -- el resto del dashboard (.dash-scope) sigue oscuro, sin
+   cambios. Aplicado en app/flow-studio/layout.tsx, nunca en /dashboard/flows
+   (ese sigue con colorMode="dark", el default de FlowBuilder).
+   Verde MÁS FUERTE/contrastado que el lima pastel del resto de la app
+   (--color-lime del tema claro por defecto, #c6ff3d, es deliberadamente
+   pastel/neón) -- acá el verde es el color de marca/selección/estados
+   activos/publicado/acciones positivas, así que necesita leerse como texto y
+   como borde de selección sobre blanco, no solo como fondo de botón. */
+.flow-studio-scope {
+  --color-ink: #fbfcfa;
+  --color-ink-2: #f4f6f2;
+  --color-card: #ffffff;
+  --color-mist: #6b7280;
+  --color-edge: #e2e5e0;
+  --color-fg: #16191c;
+
+  --color-lime: #6fae00;
+  --color-lime-hover: #5f9600;
+  --color-lime-soft: #e9f6d6;
+  --color-lime-text: #3f6b00;
+  --color-lime-fg: #ffffff;
+
+  --color-success: #eaf7ec;
+  --color-success-text: #2f7a41;
+  --color-warning: #fff5d9;
+  --color-warning-text: #92620a;
+  --color-danger: #fdecec;
+  --color-danger-text: #c23434;
+
+  /* Naranja de las conexiones del Flow (ver override de --xy-edge-* abajo) --
+     token propio (no reusa --color-lime) porque naranja acá es "conexión de
+     flujo", una categoría visual distinta del verde de marca/selección. */
+  --color-flow-edge: #ea7c1f;
+}
+
+/* Grid punteada sutil del canvas + minimapa/controles/edges de React Flow en
+   el tema claro de Flow Studio -- mismo mecanismo que ya usa
+   .dash-scope .react-flow.dark más abajo (redirige las variables --xy-* de
+   @xyflow/react a los tokens de arriba), pero sin la clase ".dark" porque
+   colorMode="light" no la agrega (ver FlowCanvas.tsx). */
+.flow-studio-scope .react-flow {
+  --xy-background-pattern-dots-color-default: color-mix(in oklab, var(--color-fg) 12%, transparent);
+  --xy-edge-stroke-default: var(--color-flow-edge);
+  --xy-edge-stroke-width-default: 1.75;
+  --xy-edge-stroke-selected-default: var(--color-lime);
+  --xy-node-border-default: 1px solid var(--color-edge);
+  --xy-node-background-color-default: var(--color-card);
+  --xy-node-color-default: var(--color-fg);
+  --xy-edge-label-background-color-default: var(--color-card);
+  --xy-edge-label-color-default: var(--color-fg);
+
+  --xy-minimap-background-color: var(--color-card);
+  --xy-minimap-mask-background-color: rgb(0 0 0 / 6%);
+  --xy-minimap-mask-stroke-color: var(--color-lime);
+  --xy-minimap-mask-stroke-width: 1.5;
+  --xy-minimap-node-background-color: var(--color-mist);
+  --xy-minimap-node-stroke-color: transparent;
+
+  --xy-controls-button-background-color: var(--color-card);
+  --xy-controls-button-background-color-hover: var(--color-ink-2);
+  --xy-controls-button-color: var(--color-mist);
+  --xy-controls-button-color-hover: var(--color-lime-text);
+  --xy-controls-button-border-color: var(--color-edge);
+  --xy-controls-box-shadow: 0 4px 16px rgb(17 17 17 / 8%);
+}
+.flow-studio-scope .react-flow__minimap,
+.flow-studio-scope .react-flow__controls {
+  border-radius: 0.75rem;
+  overflow: hidden;
+  border: 1px solid var(--color-edge);
+  box-shadow: 0 4px 16px rgb(17 17 17 / 6%);
+}
+.flow-studio-scope .react-flow__controls-button {
+  border-bottom-color: var(--color-edge);
+}
+.flow-studio-scope .react-flow__node {
+  box-shadow: 0 1px 2px rgb(17 17 17 / 4%), 0 4px 12px -4px rgb(17 17 17 / 8%);
+}
+
 /* ---------- Spa panel palette (light, pink accent, scoped via .spa-scope) --- */
 /* Applied on the redesigned /agenda/[token] panel only — reuses the SAME
    token names as the rest of the app (bg-ink, bg-card, border-edge,

@@ -34,8 +34,8 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
     return Response.json({ disponible: false });
   }
 
-  const [{ data: clienteConfig }, { data: servicios }] = await Promise.all([
-    supabase.from("dulabs_clientes_config").select("nombre_negocio, telefono_negocio").eq("id_tenant", tenant).limit(1).maybeSingle(),
+  const [{ data: configsDelTenant }, { data: servicios }] = await Promise.all([
+    supabase.from("dulabs_clientes_config").select("nombre_negocio, telefono_negocio, meta_permanent_token").eq("id_tenant", tenant),
     supabase
       .from("dulabs_servicios")
       .select("id, nombre, categoria, descripcion, duracion_min, precio, imagen_url")
@@ -44,6 +44,18 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
       .order("categoria", { ascending: true, nullsFirst: true })
       .order("nombre", { ascending: true }),
   ]);
+
+  // Fase 11 (Debt Zero, autorizado) — hallazgo real: un tenant puede tener
+  // más de una fila en dulabs_clientes_config (ej. AMORE, que conserva un
+  // número "pendiente-<tenant>" legacy de Meta -- nunca conectado, sin
+  // token -- junto al número realmente activo). Sin este criterio, la fila
+  // que respondía `.limit(1)` dependía del orden físico de Postgres, así
+  // que el nombre/teléfono mostrados en el portal público podían cambiar
+  // de forma impredecible. Se prioriza determinísticamente la fila con un
+  // token real de Meta (la conexión efectivamente activa); si ninguna lo
+  // tiene, se usa la primera como antes.
+  const clienteConfig =
+    (configsDelTenant ?? []).find((c) => c.meta_permanent_token) ?? (configsDelTenant ?? [])[0] ?? null;
 
   return Response.json({
     disponible: true,

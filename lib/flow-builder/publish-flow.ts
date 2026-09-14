@@ -9,6 +9,7 @@
  */
 
 import type { FlowRow, FlowVersionRow } from "@/lib/flow/flow-store-types";
+import { flowApiHeaders } from "@/lib/flow-builder/flow-api-headers";
 
 export type FetchLike = typeof fetch;
 
@@ -51,6 +52,7 @@ export async function publishFlowVersion(params: {
   flowId: string;
   versionId: string;
   accessToken: string;
+  adminTenantId?: string;
   fetchImpl?: FetchLike;
 }): Promise<PublishFlowResult> {
   const doFetch = params.fetchImpl ?? fetch;
@@ -59,7 +61,7 @@ export async function publishFlowVersion(params: {
   try {
     response = await doFetch(`/api/flows/${params.flowId}/publish`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${params.accessToken}` },
+      headers: flowApiHeaders(params.accessToken, { json: true, adminTenantId: params.adminTenantId }),
       body: JSON.stringify({ versionId: params.versionId }),
     });
   } catch (err) {
@@ -91,6 +93,7 @@ export async function publishFlowVersion(params: {
 export async function fetchFlowVersions(params: {
   flowId: string;
   accessToken: string;
+  adminTenantId?: string;
   fetchImpl?: FetchLike;
 }): Promise<FetchVersionsResult> {
   const doFetch = params.fetchImpl ?? fetch;
@@ -98,7 +101,7 @@ export async function fetchFlowVersions(params: {
   let response: Response;
   try {
     response = await doFetch(`/api/flows/${params.flowId}/versions`, {
-      headers: { Authorization: `Bearer ${params.accessToken}` },
+      headers: flowApiHeaders(params.accessToken, { adminTenantId: params.adminTenantId }),
     });
   } catch (err) {
     return { ok: false, error: { kind: "network", message: err instanceof Error ? err.message : "Error de red" } };

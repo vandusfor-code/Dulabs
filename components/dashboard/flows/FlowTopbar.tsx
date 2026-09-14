@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Activity, ArrowLeft, Check, History, Loader2, Map, Play, Plug, Redo2, Search, ShieldAlert, Smartphone, TriangleAlert, Undo2 } from "lucide-react";
+import { Activity, ArrowLeft, Check, Files, History, Loader2, Map, Play, Plug, Redo2, Search, ShieldAlert, Smartphone, TriangleAlert, Undo2 } from "lucide-react";
 import { Pill } from "@/components/dashboard/shell/ui";
 import type { FlowRecordStatus } from "@/lib/flow/flow-store-types";
 
@@ -157,6 +157,11 @@ export function FlowTopbar({
   canActivate,
   onOpenActivation,
   onOpenIntegrations,
+  backHref = "/dashboard/flows",
+  contextLabel,
+  canDuplicate,
+  onDuplicate,
+  duplicating,
 }: {
   flowName: string;
   status: FlowRecordStatus;
@@ -203,13 +208,29 @@ export function FlowTopbar({
   onOpenActivation: () => void;
   /** Fase 5 (Actions + Integrations, autorizado) -- mismo rol que canActivate (solo admin); gestiona dulabs_flow_integrations del tenant. */
   onOpenIntegrations: () => void;
+  /** F15.1 (Admin Flow Studio, autorizado) -- a dónde vuelve "Flows"; default "/dashboard/flows" (comportamiento previo, sin cambios). */
+  backHref?: string;
+  /** F15.1 -- nombre del cliente, visible SOLO cuando un admin de DuLabs está operando el Flow de otro tenant -- contexto obligatorio para no editar el negocio equivocado por accidente. */
+  contextLabel?: string;
+  /** F15.1 -- Duplicar Flow (lib/flow/flow-store.ts::duplicateFlow vía POST /api/flows/[id]/duplicate). Mismo rol que Guardar (admin). */
+  canDuplicate?: boolean;
+  onDuplicate?: () => void;
+  duplicating?: boolean;
 }) {
   return (
     <header className="flex flex-wrap items-center gap-3 border-b border-edge bg-card px-5 py-3">
-      <Link href="/dashboard/flows" className="flex shrink-0 items-center gap-1.5 text-sm text-mist hover:text-fg">
+      <Link href={backHref} className="flex shrink-0 items-center gap-1.5 text-sm text-mist hover:text-fg">
         <ArrowLeft className="size-4" />
         Flows
       </Link>
+      {contextLabel && (
+        <>
+          <span className="shrink-0 text-sm text-mist">/</span>
+          <span className="shrink-0 rounded-full border border-lime/30 bg-lime/10 px-2.5 py-1 text-xs font-medium text-lime-text">
+            {contextLabel}
+          </span>
+        </>
+      )}
       <div className="h-5 w-px shrink-0 bg-edge" />
       <h1 className="min-w-0 flex-1 truncate text-sm font-semibold text-fg">{flowName}</h1>
 
@@ -264,6 +285,17 @@ export function FlowTopbar({
           className="shrink-0 flex items-center gap-1.5 rounded-full border border-edge px-3 py-1.5 text-xs font-medium text-mist transition-colors hover:border-lime/40 hover:text-fg"
         >
           <History className="size-3.5" /> Historial
+        </button>
+      )}
+
+      {canDuplicate && onDuplicate && (
+        <button
+          type="button"
+          onClick={onDuplicate}
+          disabled={duplicating}
+          className="shrink-0 flex items-center gap-1.5 rounded-full border border-edge px-3 py-1.5 text-xs font-medium text-mist transition-colors hover:border-lime/40 hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <Files className="size-3.5" /> {duplicating ? "Duplicando…" : "Duplicar"}
         </button>
       )}
 

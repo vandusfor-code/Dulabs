@@ -86,8 +86,11 @@ export const navSections: NavSection[] = [
     titleEn: "DuLabs Operations",
     soloAdminDulabs: true,
     items: [
-      { label: "Panel Admin", labelEn: "Admin panel", href: "/dashboard/admin", icon: ShieldCheck },
-      { label: "Clientes", labelEn: "Clients", href: "/dashboard/admin/clientes", icon: Users },
+      // F15.2 (Operations Center, cierre) -- apuntaba al admin legacy
+      // (/dashboard/admin/*, eliminado esta fase); /admin es el único
+      // Centro de Operaciones desde F15.
+      { label: "Panel Admin", labelEn: "Admin panel", href: "/admin", icon: ShieldCheck },
+      { label: "Clientes", labelEn: "Clients", href: "/admin/clientes", icon: Users },
     ],
   },
 ];

@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { resolverMiembroEquipo, requireRol } from "@/lib/team";
+import { cancelarSuscripcion, reactivarSuscripcion, cambiarPlanSuscripcion } from "@/lib/suscripcion-domain";
 
 export const runtime = "nodejs";
 
@@ -24,13 +25,29 @@ export async function GET(request: NextRequest) {
   const miembro = await resolverMiembroEquipo(supabase, userData.user.id);
   const idTenant = miembro?.tenantId ?? userData.user.id;
 
+  // FASE F13 (Go-Live Onboarding, autorizado) -- hallazgo real (caso real de
+  // Daniel): /checkout siempre mostraba el formulario de pago desde cero,
+  // sin importar si ya existía una suscripción en curso. Un pago que quedó
+  // en "pendiente_pago" (challenge 3DS sin confirmar por el webhook, ver
+  // pagos/suscribir/route.ts) hacía que el cliente viera "paga de nuevo"
+  // en vez de un estado claro -- y un segundo intento real choca con
+  // dulabs_reservar_suscripcion (409, "ya tienes un pago en proceso"), una
+  // respuesta confusa sin contexto. `estado`/`plan` se agregan para que el
+  // checkout pueda mostrar el estado real ANTES de ofrecer pagar de nuevo.
+  // Aditivo: cualquier consumidor existente que solo lea
+  // `precio_negociado_cop` (como este mismo endpoint hacía hasta ahora)
+  // sigue funcionando exactamente igual.
   const { data: suscripcion } = await supabase
     .from("dulabs_suscripciones")
-    .select("precio_negociado_cop")
+    .select("precio_negociado_cop, estado, plan")
     .eq("id_tenant", idTenant)
     .maybeSingle();
 
-  return Response.json({ precio_negociado_cop: suscripcion?.precio_negociado_cop ?? null });
+  return Response.json({
+    precio_negociado_cop: suscripcion?.precio_negociado_cop ?? null,
+    estado: suscripcion?.estado ?? null,
+    plan: suscripcion?.plan ?? null,
+  });
 }
 
 async function autenticarAdmin(request: NextRequest) {
@@ -59,32 +76,9 @@ export async function DELETE(request: NextRequest) {
   if ("error" in ctx) return ctx.error;
   const { supabase, miembro } = ctx;
 
-  const { data: suscripcion, error: leerError } = await supabase
-    .from("dulabs_suscripciones")
-    .select("estado, cancelar_al_vencer, fecha_proximo_cobro, plan")
-    .eq("id_tenant", miembro.tenantId)
-    .maybeSingle();
-  if (leerError) return Response.json({ error: leerError.message }, { status: 500 });
-  if (!suscripcion) return Response.json({ error: "No tienes ninguna suscripción activa" }, { status: 404 });
-  if (suscripcion.estado === "cancelada") {
-    return Response.json({ error: "Tu suscripción ya está cancelada" }, { status: 400 });
-  }
-  if (suscripcion.cancelar_al_vencer) {
-    return Response.json({
-      success: true,
-      ya_estaba: true,
-      activo_hasta: suscripcion.fecha_proximo_cobro,
-    });
-  }
-
-  const { error: updateError } = await supabase
-    .from("dulabs_suscripciones")
-    .update({ cancelar_al_vencer: true, updated_at: new Date().toISOString() })
-    .eq("id_tenant", miembro.tenantId);
-  if (updateError) return Response.json({ error: updateError.message }, { status: 500 });
-
-  console.log(`[suscripcion] tenant ${miembro.tenantId} canceló su plan ${suscripcion.plan} (vigente hasta ${suscripcion.fecha_proximo_cobro})`);
-  return Response.json({ success: true, activo_hasta: suscripcion.fecha_proximo_cobro });
+  const r = await cancelarSuscripcion(supabase, miembro.tenantId);
+  if (!r.ok) return Response.json({ error: r.error }, { status: r.status });
+  return Response.json({ success: true, ya_estaba: r.data.ya_estaba, activo_hasta: r.data.activo_hasta });
 }
 
 // Reactiva una suscripción cancelada que todavía no ha vencido: simplemente
@@ -95,28 +89,37 @@ export async function POST(request: NextRequest) {
   if ("error" in ctx) return ctx.error;
   const { supabase, miembro } = ctx;
 
-  const { data: suscripcion, error: leerError } = await supabase
-    .from("dulabs_suscripciones")
-    .select("estado, cancelar_al_vencer, fecha_proximo_cobro")
-    .eq("id_tenant", miembro.tenantId)
-    .maybeSingle();
-  if (leerError) return Response.json({ error: leerError.message }, { status: 500 });
-  if (!suscripcion) return Response.json({ error: "No tienes ninguna suscripción" }, { status: 404 });
-  if (suscripcion.estado !== "activa") {
-    return Response.json(
-      { error: "Tu suscripción ya venció. Vuelve a activarla desde la página de planes." },
-      { status: 400 }
-    );
-  }
-  if (!suscripcion.cancelar_al_vencer) {
-    return Response.json({ success: true, ya_estaba: true });
+  const r = await reactivarSuscripcion(supabase, miembro.tenantId);
+  if (!r.ok) return Response.json({ error: r.error }, { status: r.status });
+  return Response.json({ success: true, ya_estaba: r.data.ya_estaba, proximo_cobro: r.data.proximo_cobro });
+}
+
+// Upgrade/downgrade de plan (Fase F14.2). Decisión comercial explícita,
+// documentada en el reporte de esa fase: el cambio de plan (límites y
+// precio) aplica DE INMEDIATO, sin cobrar nada en este momento -- el cobro
+// de la diferencia solo llega en el próximo ciclo normal
+// (app/api/wompi/cobro-mensual/route.ts, que ya lee `precio_cop` en vivo de
+// esta misma fila). No existe ningún prorrateo hoy en la arquitectura, así
+// que no se inventa uno acá.
+export async function PATCH(request: NextRequest) {
+  const ctx = await autenticarAdmin(request);
+  if ("error" in ctx) return ctx.error;
+  const { supabase, miembro } = ctx;
+
+  let body: { plan?: string };
+  try {
+    body = await request.json();
+  } catch {
+    return Response.json({ error: "JSON inválido" }, { status: 400 });
   }
 
-  const { error: updateError } = await supabase
-    .from("dulabs_suscripciones")
-    .update({ cancelar_al_vencer: false, updated_at: new Date().toISOString() })
-    .eq("id_tenant", miembro.tenantId);
-  if (updateError) return Response.json({ error: updateError.message }, { status: 500 });
-
-  return Response.json({ success: true, proximo_cobro: suscripcion.fecha_proximo_cobro });
+  const r = await cambiarPlanSuscripcion(supabase, {
+    idTenant: miembro.tenantId,
+    planDestino: body.plan ?? "",
+    actorUserId: miembro.userId,
+    motivo: "Cambio de plan (autoservicio)",
+  });
+  if (!r.ok) return Response.json({ error: r.error }, { status: r.status });
+  if (r.data.ya_estaba) return Response.json({ success: true, ya_estaba: true, plan: r.data.plan });
+  return Response.json({ success: true, direccion: r.data.direccion, plan: r.data.plan, precio_cop: r.data.precio_cop });
 }

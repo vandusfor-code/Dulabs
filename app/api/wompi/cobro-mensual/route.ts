@@ -1,7 +1,9 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { crearTransaccion, resolverEstadoPago } from "@/lib/wompi";
+import { debeOmitirCobroPorPagoPendiente } from "@/lib/wompi-webhook";
 import { desactivarActivacion } from "@/lib/marketplace-store";
+import { insertarPagoConPlan } from "@/lib/planes-historial";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -46,6 +48,25 @@ export async function GET(request: NextRequest) {
         continue;
       }
 
+      // FASE F14 -- ver debeOmitirCobroPorPagoPendiente en lib/wompi-webhook.ts:
+      // si el intento de cobro anterior de este tenant sigue PENDING (3DS sin
+      // resolver todavía por el webhook), no se crea una segunda transacción
+      // hoy -- evita el doble cobro real que producía este cron antes de este
+      // fix cuando el webhook tardaba más de un día en confirmar.
+      const { data: ultimoPago } = await supabase
+        .from("dulabs_pagos")
+        .select("estado")
+        .eq("id_tenant", sub.id_tenant)
+        .eq("tipo", "suscripcion")
+        .order("id", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (debeOmitirCobroPorPagoPendiente(ultimoPago)) {
+        console.log(`[cobro-mensual] tenant ${sub.id_tenant}: cobro anterior sigue PENDING, se omite el reintento de hoy hasta que el webhook lo resuelva.`);
+        resultados.push({ id_tenant: sub.id_tenant, ok: true, detalle: "omitido: cobro anterior sigue PENDING" });
+        continue;
+      }
+
       const referencia = `dulabs-recurrente-${sub.id_tenant}-${Date.now()}`;
       const transaccion = await crearTransaccion({
         amount_in_cents: sub.precio_cop * 100,
@@ -55,13 +76,17 @@ export async function GET(request: NextRequest) {
         recurrent: true,
       });
 
-      const { error: pagoInsertError } = await supabase.from("dulabs_pagos").insert({
-        id_tenant: sub.id_tenant,
-        wompi_transaction_id: transaccion.id,
-        monto_cop: sub.precio_cop,
-        estado: transaccion.status,
-        tipo: "suscripcion",
-      });
+      const { error: pagoInsertError } = await insertarPagoConPlan(
+        supabase,
+        {
+          id_tenant: sub.id_tenant,
+          wompi_transaction_id: transaccion.id,
+          monto_cop: sub.precio_cop,
+          estado: transaccion.status,
+          tipo: "suscripcion",
+        },
+        sub.plan,
+      );
       if (pagoInsertError) {
         console.error(
           `[cobro-mensual] ALERTA: se cobró a Wompi (transacción ${transaccion.id}, tenant ${sub.id_tenant}, $${sub.precio_cop} COP) pero no se pudo registrar en dulabs_pagos — revisar si falta correr la migración de tipo/marketplace_activacion_id:`,

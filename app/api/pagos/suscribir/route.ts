@@ -5,6 +5,7 @@ import { PLANES, resolverPrecioSuscripcion, type PlanId } from "@/lib/planes";
 import { resolverMiembroEquipo, requireRol } from "@/lib/team";
 import { normalizarTelefono } from "@/lib/marketplace-store";
 import { dispararOnboardingSiAplica } from "@/lib/onboarding-trigger";
+import { insertarPagoConPlan, registrarCambioPlan } from "@/lib/planes-historial";
 
 export const runtime = "nodejs";
 
@@ -83,7 +84,7 @@ export async function POST(request: NextRequest) {
   // es null y se usa el precio de lista normal.
   const { data: suscripcionExistente } = await supabase
     .from("dulabs_suscripciones")
-    .select("precio_negociado_cop")
+    .select("plan, precio_cop, precio_negociado_cop")
     .eq("id_tenant", idTenant)
     .maybeSingle();
   const precioCop = resolverPrecioSuscripcion(planDef.precioCop, suscripcionExistente?.precio_negociado_cop ?? null);
@@ -112,6 +113,16 @@ export async function POST(request: NextRequest) {
       { status: 409 }
     );
   }
+
+  await registrarCambioPlan(supabase, {
+    idTenant,
+    planAnterior: suscripcionExistente?.plan ?? null,
+    planNuevo: plan,
+    precioAnteriorCop: suscripcionExistente?.precio_cop ?? null,
+    precioNuevoCop: precioCop,
+    actorUserId: userData.user.id,
+    motivo: suscripcionExistente ? "Re-suscripción" : "Alta inicial",
+  });
 
   // Se resuelve dentro del try y se lee en el catch para saber si la
   // liberación de la reserva está pisando un cobro que Wompi ya aprobó.
@@ -156,13 +167,17 @@ export async function POST(request: NextRequest) {
       .eq("id_tenant", idTenant);
     if (dbError) throw new Error(`Error guardando suscripción: ${dbError.message}`);
 
-    const { error: pagoInsertError } = await supabase.from("dulabs_pagos").insert({
-      id_tenant: idTenant,
-      wompi_transaction_id: transaccion.id,
-      monto_cop: precioCop,
-      estado: transaccion.status,
-      tipo: "suscripcion",
-    });
+    const { error: pagoInsertError } = await insertarPagoConPlan(
+      supabase,
+      {
+        id_tenant: idTenant,
+        wompi_transaction_id: transaccion.id,
+        monto_cop: precioCop,
+        estado: transaccion.status,
+        tipo: "suscripcion",
+      },
+      plan,
+    );
     if (pagoInsertError) {
       console.error(
         `[pagos/suscribir] ALERTA: se cobró a Wompi (transacción ${transaccion.id}, tenant ${idTenant}, $${precioCop} COP) pero no se pudo registrar en dulabs_pagos — revisar si falta correr la migración de tipo/marketplace_activacion_id:`,

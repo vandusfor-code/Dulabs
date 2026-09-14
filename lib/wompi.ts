@@ -111,8 +111,23 @@ export function verificarChecksumEvento(payload: {
   const eventsKey = process.env.WOMPI_EVENTS_KEY;
   if (!eventsKey) return false;
 
+  // FASE F14 (SaaS Commercial Readiness, autorizado) -- hallazgo real y
+  // crítico de esta fase: esta función tenía un `.slice(1)` que descartaba
+  // el primer segmento de la ruta (p.ej. "transaction.id" -> ["id"]) pero
+  // seguía navegando desde `payload.data` (no desde `payload.data.transaction`)
+  // -- el resultado real era buscar `payload.data.id`, que NUNCA existe en
+  // el payload real de Wompi (los datos están en `payload.data.transaction.id`).
+  // Cada valor resuelto salía `undefined` -> "" para TODAS las propiedades,
+  // así que el checksum calculado NUNCA coincidía con el real y esta función
+  // devolvía `false` para CUALQUIER evento real de Wompi -- confirmado con un
+  // test real que reconstruye un evento firmado de verdad (ver
+  // lib/flow/f14-billing-idempotencia.e2e.test.ts). Sin ningún test previo
+  // que ejercitara esta función con un payload realista, el webhook de Wompi
+  // descartaba (403, log "checksum inválido") absolutamente todos los
+  // eventos reales desde que existe -- ninguna confirmación de pago 3DS
+  // (PENDING) ni renovación mensual pudo resolverse nunca vía webhook.
   const valores = payload.signature.properties.map((ruta) => {
-    const partes = ruta.split(".").slice(1); // "transaction.id" -> ["id"]
+    const partes = ruta.split("."); // "transaction.id" -> ["transaction", "id"], resuelto desde payload.data
     let valor: unknown = payload.data;
     for (const parte of partes) {
       valor = (valor as Record<string, unknown> | undefined)?.[parte];

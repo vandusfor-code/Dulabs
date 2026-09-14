@@ -46,7 +46,7 @@ export async function POST(request: NextRequest) {
     .from("dulabs_pagos")
     .update({ estado: status })
     .eq("wompi_transaction_id", transactionId)
-    .select("id_tenant, tipo, marketplace_activacion_id")
+    .select("id, id_tenant, tipo, marketplace_activacion_id")
     .maybeSingle();
 
   if (pagoError) {
@@ -60,7 +60,26 @@ export async function POST(request: NextRequest) {
     return new Response("EVENT_RECEIVED", { status: 200 });
   }
 
-  const accion = resolverAccionWebhookPago(pago, status);
+  // FASE F14 -- protección real contra eventos fuera de orden (ver comentario
+  // en lib/wompi-webhook.ts): solo se aplica el evento si esta es la
+  // transacción más reciente registrada para este tenant+tipo. Para
+  // marketplace, "más reciente" se compara dentro de la misma activación
+  // (dos tenants distintos nunca comparten activacion_id), no del tenant
+  // entero -- un tenant puede tener varias activaciones de marketplace en
+  // paralelo, cada una con su propio historial de cobro.
+  let masRecienteQuery = supabase
+    .from("dulabs_pagos")
+    .select("id")
+    .eq("id_tenant", pago.id_tenant)
+    .eq("tipo", pago.tipo);
+  masRecienteQuery =
+    pago.tipo === "marketplace"
+      ? masRecienteQuery.eq("marketplace_activacion_id", pago.marketplace_activacion_id)
+      : masRecienteQuery;
+  const { data: masReciente } = await masRecienteQuery.order("id", { ascending: false }).limit(1).maybeSingle();
+  const esTransaccionMasReciente = !masReciente || masReciente.id <= pago.id;
+
+  const accion = resolverAccionWebhookPago(pago, status, esTransaccionMasReciente);
 
   switch (accion.tipo) {
     case "actualizar_suscripcion": {

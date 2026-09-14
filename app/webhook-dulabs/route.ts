@@ -160,7 +160,7 @@ type MetaStatus = {
   errors?: { code?: number; title?: string; message?: string; error_data?: { details?: string } }[];
 };
 
-type MetaChangeValue = {
+export type MetaChangeValue = {
   messaging_product?: string;
   metadata?: { display_phone_number?: string; phone_number_id?: string };
   contacts?: { wa_id?: string; profile?: { name?: string } }[];
@@ -565,7 +565,15 @@ export function extraerTextoMensajeCrudo(mensaje: MetaMessage, incluirPlaceholde
 
 // --- Lógica multi-tenant + coexistencia --------------------------------------
 
-async function procesarCambio(phoneNumberId: string, value: MetaChangeValue) {
+// FASE F8.6 (Final Hardening, autorizado) -- exportada SOLO para
+// testabilidad directa (ver app/webhook-dulabs/procesar-cambio-hardening.test.ts):
+// POST() envuelve la llamada real a esta función en after(), que exige un
+// contexto de request real de Next.js y lanza fuera de él -- exportar esta
+// función deja probar el cascade multi-tenant completo (tenant desconocido,
+// número desconectado, aislamiento cross-tenant, dedup de eventos)
+// directamente contra Supabase real, sin ese obstáculo. Ningún cambio de
+// comportamiento: mismo código, mismas firmas, solo visibilidad del módulo.
+export async function procesarCambio(phoneNumberId: string, value: MetaChangeValue) {
   const supabase = supabaseAdmin();
 
   const { data, error } = await supabase

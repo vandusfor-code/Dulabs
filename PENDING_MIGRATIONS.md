@@ -10,27 +10,10 @@ aparte (vía el SQL Editor de Supabase) — no ocurre automáticamente al hacer
 > `dulabs_fallos_ia` ya existen. Las secciones que las daban por pendientes
 > estaban desactualizadas y se eliminaron.
 
-## `20260825150000_cancelar_suscripcion.sql` — PENDIENTE
-
-Agrega la columna `cancelar_al_vencer` (boolean, default false) a
-`dulabs_suscripciones`. Es lo que permite cancelar un plan desde
-**Cuenta → Plan y facturación**: la cancelación es diferida (el cliente
-conserva el servicio hasta `fecha_proximo_cobro` y el cron cierra la
-suscripción en vez de volver a cobrar).
-
-**Cómo aplicarla:**
-1. Entra a tu proyecto en [supabase.com](https://supabase.com/dashboard) → **SQL Editor**.
-2. Pega el contenido de `supabase/migrations/20260825150000_cancelar_suscripcion.sql`.
-3. Ejecuta (**Run**).
-
-**Es seguro desplegar el código antes de correr esto**, con una salvedad: hasta
-que la columna exista, el botón "Cancelar suscripción" devolverá un error de
-Postgres al pulsarlo, y el cron de cobro mensual fallará su consulta diaria
-(no cobrará de más — simplemente no procesará). Corre la migración el mismo
-día del despliegue.
-
-Después de aplicarla, borra esta sección (o el archivo completo si no queda
-ninguna migración pendiente).
+> Verificado el 14-sep-2026 (Fase 11, Debt Zero) consultando la base real:
+> `cancelar_al_vencer` en `dulabs_suscripciones` (de
+> `20260825150000_cancelar_suscripcion.sql`) ya existe. La sección que la
+> daba por pendiente estaba desactualizada y se eliminó.
 
 ---
 

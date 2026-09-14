@@ -21,7 +21,7 @@ export const runtime = "nodejs";
  * limpia flow_id).
  */
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const access = await requireFlowAccess(request, ["admin"]);
+  const access = await requireFlowAccess(request, ["admin"], { allowAdminOverride: true });
   if (!access.ok) return access.response;
   const { supabase, miembro } = access.ctx;
   const { id } = await params;

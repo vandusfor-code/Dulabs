@@ -1,8 +1,7 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { resolverMiembroEquipo, requireRol, type Miembro } from "@/lib/team";
-import { planDelTenant, contarUsuarios } from "@/lib/plan-limits";
-import { esSinPlan, MENSAJE_SIN_PLAN } from "@/lib/planes";
+import { listarEquipo, invitarMiembro, cambiarMiembro } from "@/lib/equipo-domain";
 
 export const runtime = "nodejs";
 
@@ -26,14 +25,10 @@ export async function GET(request: NextRequest) {
   if ("error" in ctx) return ctx.error;
   const { supabase, miembro } = ctx;
 
-  const { data, error } = await supabase
-    .from("dulabs_miembros_equipo")
-    .select("id, email, nombre, rol, estado, created_at")
-    .eq("tenant_id", miembro.tenantId)
-    .order("created_at", { ascending: true });
-  if (error) return Response.json({ error: error.message }, { status: 500 });
-
-  return Response.json({ miembros: data ?? [] });
+  const miembros = await listarEquipo(supabase, miembro.tenantId).catch((e: Error) => {
+    throw e;
+  });
+  return Response.json({ miembros });
 }
 
 // Invita a un nuevo miembro (admin únicamente).
@@ -51,67 +46,16 @@ export async function POST(request: NextRequest) {
   } catch {
     return Response.json({ error: "JSON inválido" }, { status: 400 });
   }
-  const email = body.email?.trim().toLowerCase();
-  const rol = body.rol;
-  if (!email || !["admin", "agente", "lectura"].includes(rol ?? "")) {
-    return Response.json({ error: "Faltan 'email' o 'rol' válido" }, { status: 400 });
-  }
 
-  const { data: yaExiste } = await supabase
-    .from("dulabs_miembros_equipo")
-    .select("id, tenant_id")
-    .eq("email", email)
-    .maybeSingle();
-  if (yaExiste) {
-    return Response.json(
-      {
-        error:
-          yaExiste.tenant_id === miembro.tenantId
-            ? "Ese correo ya es miembro de tu equipo"
-            : "Ese correo ya pertenece a otra cuenta",
-      },
-      { status: 409 }
-    );
-  }
-
-  const [plan, usuariosActuales] = await Promise.all([
-    planDelTenant(supabase, miembro.tenantId),
-    contarUsuarios(supabase, miembro.tenantId),
-  ]);
-  if (plan.limites.usuarios !== null && usuariosActuales >= plan.limites.usuarios) {
-    return Response.json(
-      {
-        error: esSinPlan(plan)
-          ? MENSAJE_SIN_PLAN
-          : `Tu plan ${plan.nombre} permite máximo ${plan.limites.usuarios} usuario${plan.limites.usuarios === 1 ? "" : "s"} en el equipo. Mejora tu plan para invitar a más personas.`,
-      },
-      { status: 400 }
-    );
-  }
-
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL;
-  const { data: invitado, error: inviteError } = await supabase.auth.admin.inviteUserByEmail(email, {
-    redirectTo: siteUrl ? `${siteUrl}/login` : undefined,
+  const r = await invitarMiembro(supabase, {
+    idTenant: miembro.tenantId,
+    email: body.email ?? "",
+    rol: body.rol ?? "",
+    invitadoPor: miembro.userId,
+    siteUrl: process.env.NEXT_PUBLIC_SITE_URL,
   });
-  if (inviteError || !invitado.user) {
-    return Response.json({ error: inviteError?.message ?? "No se pudo enviar la invitación" }, { status: 500 });
-  }
-
-  const { data: fila, error: insertError } = await supabase
-    .from("dulabs_miembros_equipo")
-    .insert({
-      tenant_id: miembro.tenantId,
-      user_id: invitado.user.id,
-      email,
-      rol,
-      estado: "invitado",
-      invitado_por: miembro.userId,
-    })
-    .select("id, email, rol, estado, created_at")
-    .single();
-  if (insertError) return Response.json({ error: insertError.message }, { status: 500 });
-
-  return Response.json({ miembro: fila });
+  if (!r.ok) return Response.json({ error: r.error }, { status: r.status });
+  return Response.json({ miembro: r.data.miembro });
 }
 
 // Cambia rol o estado de un miembro (admin únicamente). No permite dejar el
@@ -130,41 +74,8 @@ export async function PATCH(request: NextRequest) {
   } catch {
     return Response.json({ error: "JSON inválido" }, { status: 400 });
   }
-  const { miembro_id } = body;
-  if (!miembro_id || (!body.rol && !body.estado)) {
-    return Response.json({ error: "Falta 'miembro_id' y al menos 'rol' o 'estado'" }, { status: 400 });
-  }
-  if (body.rol && !["admin", "agente", "lectura"].includes(body.rol)) {
-    return Response.json({ error: "Rol inválido" }, { status: 400 });
-  }
-  if (body.estado && !["activo", "suspendido"].includes(body.estado)) {
-    return Response.json({ error: "Estado inválido" }, { status: 400 });
-  }
 
-  // Evita que el equipo se quede sin ningún admin activo.
-  if ((body.rol && body.rol !== "admin") || body.estado === "suspendido") {
-    const { count } = await supabase
-      .from("dulabs_miembros_equipo")
-      .select("id", { count: "exact", head: true })
-      .eq("tenant_id", miembro.tenantId)
-      .eq("rol", "admin")
-      .eq("estado", "activo")
-      .neq("id", miembro_id);
-    if (!count || count === 0) {
-      return Response.json({ error: "El equipo debe conservar al menos un administrador activo" }, { status: 400 });
-    }
-  }
-
-  const cambios: Record<string, string> = {};
-  if (body.rol) cambios.rol = body.rol;
-  if (body.estado) cambios.estado = body.estado;
-
-  const { error } = await supabase
-    .from("dulabs_miembros_equipo")
-    .update(cambios)
-    .eq("id", miembro_id)
-    .eq("tenant_id", miembro.tenantId);
-  if (error) return Response.json({ error: error.message }, { status: 500 });
-
+  const r = await cambiarMiembro(supabase, { idTenant: miembro.tenantId, miembroId: body.miembro_id ?? 0, rol: body.rol, estado: body.estado });
+  if (!r.ok) return Response.json({ error: r.error }, { status: r.status });
   return Response.json({ success: true });
 }

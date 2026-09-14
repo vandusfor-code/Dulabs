@@ -56,13 +56,20 @@ export async function ejecutarSeguimientoInactividadSolotalento(
 ): Promise<{ enviados: number; errores: string[] }> {
   const limite = new Date(Date.now() - opts.duracionMs).toISOString();
 
+  // Fase 11 (Debt Zero, autorizado) — tope defensivo. Este cron ya está
+  // acotado a UN tenant/número fijo (Solo Talento), así que en volumen real
+  // nunca se acerca a esto -- es solo un límite duro contra un escenario
+  // patológico (ej. un bug en otra parte dejando cientos de ejecuciones
+  // waiting_input sin resolver), nunca pensado para recortar tráfico normal.
+  const TOPE_EJECUCIONES_POR_BARRIDO = 200;
   const { data: ejecuciones, error } = await supabase
     .from("dulabs_flow_executions")
     .select("*")
     .eq("tenant_id", opts.tenantId)
     .eq("phone_number_id", opts.phoneNumberId)
     .eq("status", "waiting_input")
-    .lte("last_activity_at", limite);
+    .lte("last_activity_at", limite)
+    .limit(TOPE_EJECUCIONES_POR_BARRIDO);
 
   if (error) {
     return { enviados: 0, errores: [`consulta dulabs_flow_executions: ${error.message}`] };

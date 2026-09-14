@@ -11,6 +11,7 @@
 import type { FlowDefinition } from "@/lib/flow/types";
 import type { FlowValidationResult } from "@/lib/flow/errors";
 import type { FlowVersionRow } from "@/lib/flow/flow-store-types";
+import { flowApiHeaders } from "@/lib/flow-builder/flow-api-headers";
 
 export type FetchLike = typeof fetch;
 
@@ -52,6 +53,7 @@ export async function saveFlowVersion(params: {
   flowId: string;
   definition: FlowDefinition;
   accessToken: string;
+  adminTenantId?: string;
   fetchImpl?: FetchLike;
 }): Promise<SaveFlowResult> {
   const doFetch = params.fetchImpl ?? fetch;
@@ -60,7 +62,7 @@ export async function saveFlowVersion(params: {
   try {
     response = await doFetch(`/api/flows/${params.flowId}/versions`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${params.accessToken}` },
+      headers: flowApiHeaders(params.accessToken, { json: true, adminTenantId: params.adminTenantId }),
       body: JSON.stringify({ definition: params.definition }),
     });
   } catch (err) {
@@ -93,6 +95,7 @@ export async function validateFlowDefinition(params: {
   flowId: string;
   definition: FlowDefinition;
   accessToken: string;
+  adminTenantId?: string;
   fetchImpl?: FetchLike;
 }): Promise<ValidateFlowResult> {
   const doFetch = params.fetchImpl ?? fetch;
@@ -101,7 +104,7 @@ export async function validateFlowDefinition(params: {
   try {
     response = await doFetch(`/api/flows/${params.flowId}/validate`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${params.accessToken}` },
+      headers: flowApiHeaders(params.accessToken, { json: true, adminTenantId: params.adminTenantId }),
       body: JSON.stringify({ definition: params.definition }),
     });
   } catch (err) {

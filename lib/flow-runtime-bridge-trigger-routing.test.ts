@@ -375,22 +375,45 @@ describe(
       assert.equal(countAfterSecond, countAfterFirst, "el evento duplicado NO debe crear ninguna ejecución nueva (delta debe ser 0)");
     });
 
-    // 17 — Publicación de nueva versión durante conversación activa -> la
-    // ejecución existente conserva su versión pinneada.
-    it("17. publicar v2 del flow mientras hay una ejecución activa en v1 -> la ejecución sigue en v1", async () => {
+    // 17 — Publicación de nueva versión durante conversación activa.
+    //
+    // Fase 11 (Debt Zero, autorizado) — hallazgo al investigar este fallo
+    // "preexistente": el título/aserciones originales de esta prueba
+    // ("la ejecución sigue en v1") describían el comportamiento ANTERIOR a
+    // una corrección real ya presente en flow-orchestrator.ts::resolveExecution
+    // (ver su comentario "Diagnóstico forense (autorizado, incidente AMORE
+    // 2026-09-07 00:44)"): una ejecución activa cuyo flow_version_id quedó
+    // desactualizado respecto a la versión PUBLICADA actual se MIGRA a una
+    // ejecución nueva sobre esa versión (cerrando la vieja como "failed" y
+    // copiando `variables`) -- exactamente para evitar que una corrección
+    // real publicada nunca llegue a aplicarse a una conversación en curso
+    // (el bug real que causó ese incidente). Este archivo NO tenía diff
+    // contra origin/main, así que el fallo no era una regresión de ninguna
+    // fase posterior -- era esta prueba, ya desactualizada respecto a esa
+    // corrección posterior. Se reescribe para verificar el comportamiento
+    // REAL y correcto (la migración), no el que existía antes del incidente.
+    it("17. publicar v2 del flow mientras hay una ejecución activa en v1 -> la ejecución MIGRA a v2 preservando variables (corrección real del incidente AMORE 2026-09-07)", async () => {
       const cliente = clienteCon(flowLegacyId);
       const primero = await atenderMensajeConFlowConFallback({ supabase, cliente, telefonoCliente: N.versionado, texto: "oferta", wamid: `w-17a-${randomUUID()}` });
       const executionRowId = primero.result!.executionRowId!;
-      const { data: filaV1 } = await supabase.from("dulabs_flow_executions").select("flow_version_id").eq("id", executionRowId).maybeSingle();
-      const versionPinneada = filaV1!.flow_version_id as string;
+      const { data: filaV1 } = await supabase.from("dulabs_flow_executions").select("flow_version_id, variables").eq("id", executionRowId).maybeSingle();
+      const versionV1 = filaV1!.flow_version_id as string;
 
-      const v2 = await createFlowVersion(supabase, { tenantId: TENANT_ID, flowId: flowPriorityHighId, versionNumber: 2, definition: flowConPreguntaAbierta("[PRIORITY_HIGH] Oferta VIP v2 -- NO debe verse en esta ejecución.") });
+      const v2 = await createFlowVersion(supabase, { tenantId: TENANT_ID, flowId: flowPriorityHighId, versionNumber: 2, definition: flowConPreguntaAbierta("[PRIORITY_HIGH] Oferta VIP v2.") });
       await publishFlowVersion(supabase, TENANT_ID, flowPriorityHighId, v2.id);
 
       const segundo = await atenderMensajeConFlowConFallback({ supabase, cliente, telefonoCliente: N.versionado, texto: "sin gracias", wamid: `w-17b-${randomUUID()}` });
-      assert.equal(segundo.result?.executionRowId, executionRowId);
-      const { data: filaDespues } = await supabase.from("dulabs_flow_executions").select("flow_version_id").eq("id", executionRowId).maybeSingle();
-      assert.equal(filaDespues?.flow_version_id, versionPinneada, "flow_version_id nunca debe migrar automáticamente");
+      const executionRowIdNueva = segundo.result?.executionRowId;
+      assert.ok(executionRowIdNueva, "la migración debe crear/usar una ejecución con id real");
+      assert.notEqual(executionRowIdNueva, executionRowId, "la migración cierra la ejecución vieja y crea una NUEVA fila -- nunca reutiliza el id de la v1");
+
+      const { data: filaVieja } = await supabase.from("dulabs_flow_executions").select("status").eq("id", executionRowId).maybeSingle();
+      assert.equal(filaVieja?.status, "failed", "la ejecución vieja (v1) queda cerrada como failed tras la migración");
+
+      const { data: filaNueva } = await supabase.from("dulabs_flow_executions").select("flow_version_id, flow_id").eq("id", executionRowIdNueva!).maybeSingle();
+      assert.equal(filaNueva?.flow_id, flowPriorityHighId);
+      assert.equal(filaNueva?.flow_version_id, v2.id, "la ejecución nueva corre sobre la versión recién publicada, nunca la vieja");
+      assert.notEqual(filaNueva?.flow_version_id, versionV1);
     });
 
     // 18 — Hatches Daniela-specific siguen ejecutándose ANTES del Flow (el

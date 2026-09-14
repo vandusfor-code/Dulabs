@@ -1,14 +1,21 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import { resolverMiembroEquipo, requireRol } from "@/lib/team";
+import { resolverMiembroEquipo, requireRol, type Miembro } from "@/lib/team";
 import { planDelTenant, contarAgentesEnUso } from "@/lib/plan-limits";
 import { esSinPlan, MENSAJE_SIN_PLAN } from "@/lib/planes";
+import { esAdminDulabs } from "@/lib/admin-tenant";
+import { ADMIN_TENANT_OVERRIDE_HEADER } from "@/lib/flow/api-auth";
 
 export const runtime = "nodejs";
 
 const MAX_NOMBRE_LENGTH = 60;
 const MAX_PROMPT_LENGTH = 4000;
 
+// F15.1 (Admin Flow Studio, autorizado) -- mismo mecanismo de override que
+// lib/flow/api-auth.ts::requireFlowAccess (mismo header, mismo gate
+// esAdminDulabs), agregado acá solo porque el selector de agente del nodo
+// IA del Flow Builder reutiliza este endpoint tal cual (Fase 6) y el admin
+// necesita ver los agentes del CLIENTE que está editando, no los suyos.
 async function autenticar(request: NextRequest) {
   const authHeader = request.headers.get("authorization") ?? "";
   const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
@@ -17,6 +24,12 @@ async function autenticar(request: NextRequest) {
   const { data: userData, error } = await supabase.auth.getUser(token);
   if (error || !userData.user) return { error: Response.json({ error: "Sesión inválida" }, { status: 401 }) } as const;
   const miembro = await resolverMiembroEquipo(supabase, userData.user.id);
+
+  const tenantOverride = request.headers.get(ADMIN_TENANT_OVERRIDE_HEADER);
+  if (tenantOverride && esAdminDulabs(miembro)) {
+    return { supabase, miembro: { ...miembro, tenantId: tenantOverride } as Miembro } as const;
+  }
+
   if (!requireRol(miembro, ["admin"])) {
     return { error: Response.json({ error: "No tienes permiso para esta acción" }, { status: 403 }) } as const;
   }

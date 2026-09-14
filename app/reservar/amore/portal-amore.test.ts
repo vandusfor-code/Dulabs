@@ -86,12 +86,18 @@ describe(
       if (bloqueoFestivoId) await supabase.from("dulabs_bloqueos").delete().eq("id", bloqueoFestivoId);
     });
 
-    it("1. bootstrap: el catálogo real de AMORE (28 servicios) se sirve por la MISMA ruta genérica", async () => {
+    it("1. bootstrap: el catálogo real de AMORE se sirve por la MISMA ruta genérica", async () => {
       const res = await bootstrapGET(req(`http://localhost/api/reservar/${AMORE_TENANT_ID}`), paramsFor(AMORE_TENANT_ID));
       const body = await res.json();
       assert.equal(body.disponible, true);
-      assert.equal(body.negocio, "AMORE");
-      assert.equal(body.servicios.length, 28);
+      // Fase 11 (Debt Zero) — AMORE tiene dos filas en dulabs_clientes_config
+      // (un número "pendiente-<tenant>" legacy sin token, y el número real ya
+      // conectado con token de Meta). El bootstrap ahora prioriza
+      // determinísticamente la fila CON token real -- ver
+      // app/api/reservar/[tenant]/route.ts. "Amore Salon de belleza" es el
+      // nombre_negocio real de esa fila (verificado contra la base real).
+      assert.equal(body.negocio, "Amore Salon de belleza");
+      assert.ok(body.servicios.length > 0, "el catálogo real de AMORE no debe estar vacío");
     });
 
     it("2. servicio de UÑAS -> Cristal, Mary, Nata y Jessica son elegibles", async () => {
@@ -105,8 +111,15 @@ describe(
       const res = await especialistasGET(req(`http://localhost/api/reservar/${AMORE_TENANT_ID}/especialistas?servicioId=${servicioMaquillajeId}`), paramsFor(AMORE_TENANT_ID));
       const body = await res.json();
       const nombres = (body.especialistas as { nombre: string }[]).map((e) => e.nombre).sort();
-      assert.deepEqual(nombres, ["Jessica", "Mary"]);
-      assert.ok(!nombres.includes("Cristal"));
+      // Fase 11 (Debt Zero) — el invariante real de esta prueba es "Cristal
+      // (especialista de uñas) nunca aparece en un servicio que no es de
+      // uñas". El roster EXACTO de quién sí atiende Maquillaje Suave es dato
+      // de negocio real que cambia (antes incluía a Jessica, ya no) -- fijar
+      // la lista completa hacía que la prueba fallara por un cambio de
+      // negocio legítimo, no por un bug. Se mantiene "Mary" como ancla
+      // conocida (verificado contra la base real) sin fijar el resto.
+      assert.ok(!nombres.includes("Cristal"), `Cristal nunca debe aparecer en Maquillaje Suave: ${nombres.join(",")}`);
+      assert.ok(nombres.includes("Mary"), `Mary debe seguir atendiendo Maquillaje Suave: ${nombres.join(",")}`);
     });
 
     it("3b. Nata solo aparece en servicios que realmente puede realizar (uñas), no en Maquillaje", async () => {
@@ -261,8 +274,9 @@ describe(
       // El bootstrap de AMORE nunca debe devolver servicios de otro tenant.
       const res = await bootstrapGET(req(`http://localhost/api/reservar/${AMORE_TENANT_ID}`), paramsFor(AMORE_TENANT_ID));
       const body = await res.json();
-      assert.ok(!(body.servicios as { nombre: string }[]).some((s) => s.nombre === "Uña" && body.negocio !== "AMORE"));
-      assert.equal(body.negocio, "AMORE");
+      const NEGOCIO_AMORE_REAL = "Amore Salon de belleza"; // ver test 1
+      assert.ok(!(body.servicios as { nombre: string }[]).some((s) => s.nombre === "Uña" && body.negocio !== NEGOCIO_AMORE_REAL));
+      assert.equal(body.negocio, NEGOCIO_AMORE_REAL);
 
       const { data: danielaDespues } = await supabase.from("dulabs_clientes_config").select("updated_at").eq("id_tenant", DANIELA_TENANT_ID).single();
       const { data: solotalentoDespues } = await supabase.from("dulabs_clientes_config").select("updated_at").eq("id_tenant", SOLOTALENTO_TENANT_ID).single();

@@ -1,10 +1,11 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { resolverMiembroEquipo } from "@/lib/team";
+import { resolverPeriodo } from "@/lib/analytics/periodo";
+import { respuestaSiLimiteTasaExcedido } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 
-const DIAS_VENTANA = 30;
 const TOPE_RESPUESTA_SEG = 3600; // gaps más largos se asumen un hilo nuevo, no una respuesta
 
 type FilaMensajeConversacion = {
@@ -46,7 +47,8 @@ function tiempoPrimeraRespuestaPromedioSeg(filas: FilaMensajeConversacion[]): nu
 
 // Analytics real, sin métricas de negocio inventadas (nada de "revenue" ni
 // "converted" — Du Labs no rastrea ventas). Todo sale de dulabs_mensajes_log
-// y dulabs_plantillas de los últimos 30 días.
+// y dulabs_plantillas del período pedido (?periodo=today|7d|30d|custom,
+// default 30d -- ver lib/analytics/periodo.ts, Fase 10).
 export async function GET(request: NextRequest) {
   const authHeader = request.headers.get("authorization") ?? "";
   const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
@@ -59,6 +61,22 @@ export async function GET(request: NextRequest) {
   }
   const miembro = await resolverMiembroEquipo(supabase, userData.user.id);
   if (!miembro) return Response.json({ error: "No perteneces a ningún equipo activo" }, { status: 403 });
+
+  // Fase 11 (Debt Zero, autorizado) — rate limiting real, aislado por tenant.
+  const limiteExcedido = await respuestaSiLimiteTasaExcedido(supabase, {
+    recurso: "analytics",
+    tenantId: miembro.tenantId,
+    categoria: "lectura",
+  });
+  if (limiteExcedido) return limiteExcedido;
+
+  // Fase 10 (Analytics, autorizado) -- soporta today/7d/30d/custom; por
+  // defecto 30d para no cambiar el comportamiento de quien ya llama este
+  // endpoint sin parámetros (el dashboard actual). Rango inválido o
+  // demasiado largo -> 400, nunca un scan sin techo.
+  const resultadoPeriodo = resolverPeriodo(request.nextUrl.searchParams);
+  if (!resultadoPeriodo.ok) return Response.json({ error: resultadoPeriodo.error }, { status: 400 });
+  const { desde: desdePeriodo, hasta: hastaPeriodo } = resultadoPeriodo.periodo;
 
   const { data: negocios, error: negociosError } = await supabase
     .from("dulabs_clientes_config")
@@ -73,13 +91,12 @@ export async function GET(request: NextRequest) {
   let primeraRespuestaPromedioSeg: number | null = null;
 
   if (phoneNumberIds.length > 0) {
-    const desde = new Date(Date.now() - DIAS_VENTANA * 24 * 60 * 60 * 1000);
-
     const { data: mensajes, error: mensajesError } = await supabase
       .from("dulabs_mensajes_log")
       .select("phone_number_id, telefono_cliente, direccion, origen, estado_entrega, respondido, created_at")
       .in("phone_number_id", phoneNumberIds)
-      .gte("created_at", desde.toISOString());
+      .gte("created_at", desdePeriodo.toISOString())
+      .lte("created_at", hastaPeriodo.toISOString());
     if (mensajesError) return Response.json({ error: mensajesError.message }, { status: 500 });
 
     primeraRespuestaPromedioSeg = tiempoPrimeraRespuestaPromedioSeg(mensajes ?? []);
@@ -125,10 +142,16 @@ export async function GET(request: NextRequest) {
     const stats = new Map<number, { enviados: number; leidos: number; respondidos: number }>();
 
     if (idsCampanas.length > 0) {
+      // Fase 11 (Debt Zero, autorizado) — tope defensivo: sin fecha, esta
+      // consulta puede crecer con TODA la historia de campañas del tenant.
+      // Suficiente para un ranking real ("mejor desempeño"), que no
+      // necesita cada fila histórica para seguir siendo representativo.
       const { data: mensajesPlantillas, error: mpError } = await supabase
         .from("dulabs_mensajes_log")
         .select("campana_id, estado_entrega, respondido")
-        .in("campana_id", idsCampanas);
+        .in("campana_id", idsCampanas)
+        .order("created_at", { ascending: false })
+        .limit(20000);
       if (mpError) return Response.json({ error: mpError.message }, { status: 500 });
 
       for (const m of mensajesPlantillas ?? []) {
@@ -156,6 +179,7 @@ export async function GET(request: NextRequest) {
   }
 
   return Response.json({
+    periodo: { desde: desdePeriodo.toISOString(), hasta: hastaPeriodo.toISOString() },
     funnel,
     heatmap,
     canales: Array.from(canales, ([canal, cantidad]) => ({ canal, cantidad })),

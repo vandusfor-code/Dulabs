@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { requireFlowAccess } from "@/lib/flow/api-auth";
 import { createFlow, ensureInitialFlowVersion, listFlows } from "@/lib/flow/flow-store";
 import type { FlowRow } from "@/lib/flow/flow-store-types";
+import { registrarAuditoriaAdmin } from "@/lib/auditoria-admin";
 
 export const runtime = "nodejs";
 
@@ -15,7 +16,7 @@ function esConflictoDeSlug(error: unknown): boolean {
 
 // Lista los Flows del tenant autenticado. Filtro opcional ?status=draft|published|archived.
 export async function GET(request: NextRequest) {
-  const access = await requireFlowAccess(request, ["admin", "agente"]);
+  const access = await requireFlowAccess(request, ["admin", "agente"], { allowAdminOverride: true });
   if (!access.ok) return access.response;
   const { supabase, miembro } = access.ctx;
 
@@ -45,9 +46,9 @@ export async function GET(request: NextRequest) {
 // paralelo. El frontend nunca necesita encadenar un segundo POST a
 // /versions para poder abrir el editor.
 export async function POST(request: NextRequest) {
-  const access = await requireFlowAccess(request, ["admin"]);
+  const access = await requireFlowAccess(request, ["admin"], { allowAdminOverride: true });
   if (!access.ok) return access.response;
-  const { supabase, miembro } = access.ctx;
+  const { supabase, miembro, esAdminOverride } = access.ctx;
 
   let body: { slug?: string; name?: string; description?: string };
   try {
@@ -75,6 +76,15 @@ export async function POST(request: NextRequest) {
       flowName: flow.name,
       createdBy: miembro.userId,
     });
+    if (esAdminOverride) {
+      await registrarAuditoriaAdmin(supabase, {
+        operador: miembro,
+        accion: "CREATE_FLOW",
+        idTenant: miembro.tenantId,
+        recurso: flow.id,
+        metadata: { slug: flow.slug, name: flow.name },
+      });
+    }
     return Response.json({ flow, version }, { status: 201 });
   } catch (error) {
     if (esConflictoDeSlug(error)) {

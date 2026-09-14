@@ -44,6 +44,13 @@ const LABELS_PAGO: Record<string, string> = {
   activa: "Pagado",
   pendiente_pago: "Pendiente",
   vencida: "Vencida",
+  // FASE F14 -- hallazgo real: "cancelada" (cliente que canceló, ver DELETE
+  // /api/dashboard/suscripcion) caía al fallback (mostraba el string crudo
+  // "cancelada" y el mismo tono "danger" que un pago vencido/rechazado) y no
+  // aparecía en el filtro de la tabla de clientes (ESTADOS_PAGO en
+  // app/dashboard/admin/clientes/page.tsx) -- un cliente cancelado era
+  // invisible al filtrar por estado de pago.
+  cancelada: "Cancelada",
 };
 
 export function labelEstadoPago(estado: string): string {
@@ -53,5 +60,6 @@ export function labelEstadoPago(estado: string): string {
 export function toneEstadoPago(estado: string): PillTone {
   if (estado === "activa") return "success";
   if (estado === "pendiente_pago") return "warning";
+  if (estado === "cancelada") return "neutral"; // cancelación es una decisión del cliente, no un fallo de cobro como "vencida"
   return "danger";
 }

@@ -11,7 +11,7 @@ const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH"] as const;
 // secretos": FlowIntegrationRow nunca tiene columnas de credenciales
 // (viven en dulabs_flow_credentials, tabla separada, nunca leída acá).
 export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const access = await requireFlowAccess(request, ["admin", "agente"]);
+  const access = await requireFlowAccess(request, ["admin", "agente"], { allowAdminOverride: true });
   if (!access.ok) return access.response;
   const { supabase, miembro } = access.ctx;
   const { id } = await params;
@@ -28,7 +28,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 // Metadata editable: nunca status/tenant_id/created_by -- status cambia
 // exclusivamente vía /approve o /revoke.
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const access = await requireFlowAccess(request, ["admin"]);
+  const access = await requireFlowAccess(request, ["admin"], { allowAdminOverride: true });
   if (!access.ok) return access.response;
   const { supabase, miembro } = access.ctx;
   const { id } = await params;

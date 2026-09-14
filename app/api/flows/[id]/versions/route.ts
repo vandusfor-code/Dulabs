@@ -3,6 +3,7 @@ import { requireFlowAccess } from "@/lib/flow/api-auth";
 import { createFlowVersion, getFlowById, listFlowVersions } from "@/lib/flow/flow-store";
 import { FlowEmbeddedSecretsError } from "@/lib/flow/flow-store-errors";
 import type { FlowDefinition } from "@/lib/flow/types";
+import { registrarAuditoriaAdmin } from "@/lib/auditoria-admin";
 
 export const runtime = "nodejs";
 
@@ -11,7 +12,7 @@ function esConflictoDeVersionNumber(error: unknown): boolean {
 }
 
 export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const access = await requireFlowAccess(request, ["admin", "agente"]);
+  const access = await requireFlowAccess(request, ["admin", "agente"], { allowAdminOverride: true });
   if (!access.ok) return access.response;
   const { supabase, miembro } = access.ctx;
   const { id } = await params;
@@ -35,9 +36,9 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 // "crear y publicar en un solo paso"; sin ese flag, la versión queda como
 // borrador (nunca se publica automáticamente).
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const access = await requireFlowAccess(request, ["admin"]);
+  const access = await requireFlowAccess(request, ["admin"], { allowAdminOverride: true });
   if (!access.ok) return access.response;
-  const { supabase, miembro } = access.ctx;
+  const { supabase, miembro, esAdminOverride } = access.ctx;
   const { id } = await params;
 
   let body: { definition?: unknown; versionNumber?: unknown; publish?: unknown };
@@ -72,6 +73,15 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       createdBy: miembro.userId,
       publish: body.publish === true,
     });
+    if (esAdminOverride) {
+      await registrarAuditoriaAdmin(supabase, {
+        operador: miembro,
+        accion: "SAVE_FLOW",
+        idTenant: miembro.tenantId,
+        recurso: id,
+        metadata: { versionNumber, published: body.publish === true },
+      });
+    }
     return Response.json({ version }, { status: 201 });
   } catch (error) {
     if (error instanceof FlowEmbeddedSecretsError) {

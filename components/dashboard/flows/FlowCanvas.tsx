@@ -93,6 +93,14 @@ interface FlowCanvasProps {
    */
   executionPathNodeIds?: ReadonlySet<string>;
   executionPathEdgeIds?: ReadonlySet<string>;
+  /**
+   * F15.1 (Admin Flow Studio, autorizado) -- antes hardcodeado a "dark".
+   * Por defecto sigue siendo "dark" (comportamiento IDÉNTICO para
+   * /dashboard/flows/[id], que nunca pasa este prop) -- el Flow Studio
+   * administrado (/flow-studio/*) pasa "light" para reusar exactamente este
+   * mismo canvas bajo el tema claro (ver .flow-studio-scope en globals.css).
+   */
+  colorMode?: "dark" | "light";
 }
 
 /**
@@ -125,6 +133,7 @@ const FlowCanvasInner = forwardRef<FlowCanvasHandle, FlowCanvasProps>(function F
     activeSimulationNodeId,
     executionPathNodeIds,
     executionPathEdgeIds,
+    colorMode = "dark",
   },
   ref,
 ) {
@@ -279,7 +288,7 @@ const FlowCanvasInner = forwardRef<FlowCanvasHandle, FlowCanvasProps>(function F
         // habilita los overrides de app/globals.css (.dash-scope .react-flow.dark)
         // que apuntan el minimapa/controles a los tokens de color de DuLabs
         // en vez del fondo blanco por defecto de la librería.
-        colorMode="dark"
+        colorMode={colorMode}
         onNodesChange={handleNodesChange}
         onEdgesChange={handleEdgesChange}
         proOptions={{ hideAttribution: true }}
