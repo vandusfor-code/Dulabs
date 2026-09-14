@@ -8,6 +8,7 @@ import {
   activarSuscripcionManual,
 } from "@/lib/suscripcion-domain";
 import { PLANES } from "@/lib/planes";
+import { respuestaSiLimiteTasaExcedido } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 
@@ -49,7 +50,6 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 type Body = {
   accion?: "activar" | "cancelar" | "reactivar" | "cambiar_plan";
   plan?: string;
-  precio_cop?: number;
   motivo?: string;
 };
 
@@ -59,6 +59,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const { idTenant } = await params;
   const supabase = acceso.supabase;
   const operadorEmail = (await supabase.auth.admin.getUserById(acceso.miembro.userId)).data.user?.email ?? null;
+
+  // F15.2 (Operations Center, cierre) -- ver mismo criterio en
+  // app/api/dashboard/admin/clientes/nuevo/route.ts (categoría "costosa",
+  // escalado por operador, fail-open).
+  const limite = await respuestaSiLimiteTasaExcedido(supabase, { recurso: "admin_suscripcion", tenantId: acceso.miembro.userId, categoria: "costosa" });
+  if (limite) return limite;
 
   let body: Body;
   try {
@@ -106,7 +112,14 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const { data: authUser } = await supabase.auth.admin.getUserById(idTenant);
     const correo = authUser?.user?.email;
     if (!correo) return Response.json({ error: "No se encontró el correo del cliente" }, { status: 404 });
-    const precioCop = body.precio_cop ?? PLANES[body.plan as keyof typeof PLANES].precioCop ?? 0;
+    // F15.2 (Operations Center, cierre) -- hallazgo de seguridad real: hasta
+    // acá, un `precio_cop` en el body pisaba el precio real del plan. NINGÚN
+    // frontend lo enviaba nunca (auditado: /admin/clientes/nuevo y el
+    // detalle de cliente solo mandan `plan`), pero la propia API lo
+    // aceptaba -- un request crafteado con un token admin real podía activar
+    // una suscripción a cualquier precio. El precio SIEMPRE sale del plan,
+    // resuelto acá, nunca del cliente.
+    const precioCop = PLANES[body.plan as keyof typeof PLANES].precioCop ?? 0;
     const r = await activarSuscripcionManual(supabase, {
       idTenant,
       plan: body.plan,

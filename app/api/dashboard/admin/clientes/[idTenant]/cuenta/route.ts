@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { verificarAccesoAdminDulabs } from "@/lib/admin-tenant";
 import { registrarAuditoriaAdmin } from "@/lib/auditoria-admin";
+import { respuestaSiLimiteTasaExcedido } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 
@@ -28,6 +29,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   if (!acceso.ok) return acceso.response;
   const { idTenant } = await params;
   const supabase = acceso.supabase;
+
+  // F15.2 (Operations Center, cierre) -- ver criterio en .../clientes/nuevo/route.ts.
+  const limite = await respuestaSiLimiteTasaExcedido(supabase, { recurso: "admin_cuenta", tenantId: acceso.miembro.userId, categoria: "costosa" });
+  if (limite) return limite;
 
   let body: { accion?: "bloquear" | "desbloquear"; motivo?: string };
   try {

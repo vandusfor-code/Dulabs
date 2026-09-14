@@ -7,7 +7,7 @@ import { useDashboard } from "@/lib/dashboard-session";
 import { PageHeader, Pill } from "@/components/dashboard/shell/ui";
 import { PLANES, ORDEN_PLANES_ADMIN, resolverPlanId } from "@/lib/planes";
 import { formatearTelefono } from "@/lib/format";
-import { labelEstadoPago, toneEstadoPago } from "@/lib/admin-ui";
+import { labelEstadoPago, toneEstadoPago, labelEstadoImplementacion, toneEstadoImplementacion, labelEstadoOnboarding } from "@/lib/admin-ui";
 
 type ClienteFila = {
   idTenant: string;
@@ -17,10 +17,21 @@ type ClienteFila = {
   plan: string;
   fechaCompra: string;
   estadoPago: string;
-  onboarding: { estadoImplementacion: string; actualizadoAt: string } | null;
+  onboarding: { estado: string; estadoImplementacion: string; actualizadoAt: string } | null;
 };
 
 const ESTADOS_PAGO = ["activa", "pendiente_pago", "vencida", "cancelada"];
+// F15.2 (Operations Center, cierre) -- portado desde el admin legacy
+// (app/dashboard/admin/clientes/page.tsx, eliminado esta fase): el backend
+// (GET /api/dashboard/admin/clientes) ya soportaba estos 3 filtros desde
+// F15, la pantalla nueva simplemente no los exponía todavía.
+const ESTADOS_IMPLEMENTACION = ["PENDIENTE", "EN_CONFIGURACION", "EN_PRUEBAS", "ACTIVO", "REQUIERE_ATENCION"];
+const ESTADOS_ONBOARDING = ["menu_enviado", "esperando_negocio", "esperando_idea", "esperando_adicional", "completado", "soporte_solicitado"];
+const ORDENES = [
+  { value: "reciente", label: "Más reciente" },
+  { value: "antiguo", label: "Más antiguo" },
+  { value: "actualizado", label: "Última actualización" },
+];
 
 function fechaCorta(fecha: string): string {
   return new Date(fecha).toLocaleDateString("es-CO", { day: "numeric", month: "short", year: "numeric" });
@@ -37,6 +48,9 @@ export default function AdminClientesPage() {
     typeof window === "undefined" ? "" : new URLSearchParams(window.location.search).get("estado_pago") ?? ""
   );
   const [filtroPlan, setFiltroPlan] = useState("");
+  const [filtroImplementacion, setFiltroImplementacion] = useState("");
+  const [filtroOnboarding, setFiltroOnboarding] = useState("");
+  const [orden, setOrden] = useState("reciente");
   const [pagina, setPagina] = useState(1);
 
   useEffect(() => {
@@ -45,6 +59,9 @@ export default function AdminClientesPage() {
     if (q) params.set("q", q);
     if (filtroPago) params.set("estado_pago", filtroPago);
     if (filtroPlan) params.set("plan", filtroPlan);
+    if (filtroImplementacion) params.set("estado_implementacion", filtroImplementacion);
+    if (filtroOnboarding) params.set("estado_onboarding", filtroOnboarding);
+    params.set("orden", orden);
     params.set("pagina", String(pagina));
     params.set("por_pagina", "25");
 
@@ -60,7 +77,7 @@ export default function AdminClientesPage() {
         .catch((err) => setError(err instanceof Error ? err.message : String(err)));
     }, 250);
     return () => clearTimeout(timeout);
-  }, [session, q, filtroPago, filtroPlan, pagina]);
+  }, [session, q, filtroPago, filtroPlan, filtroImplementacion, filtroOnboarding, orden, pagina]);
 
   const selectClass = "rounded-lg border border-edge bg-ink-2 px-3 py-2 text-sm text-fg outline-none focus:border-lime/50";
 
@@ -117,10 +134,51 @@ export default function AdminClientesPage() {
               </option>
             ))}
           </select>
+          <select
+            className={selectClass}
+            value={filtroImplementacion}
+            onChange={(e) => {
+              setFiltroImplementacion(e.target.value);
+              setPagina(1);
+            }}
+          >
+            <option value="">Estado de implementación</option>
+            {ESTADOS_IMPLEMENTACION.map((e) => (
+              <option key={e} value={e}>
+                {labelEstadoImplementacion(e)}
+              </option>
+            ))}
+          </select>
+          <select
+            className={selectClass}
+            value={filtroOnboarding}
+            onChange={(e) => {
+              setFiltroOnboarding(e.target.value);
+              setPagina(1);
+            }}
+          >
+            <option value="">Estado de onboarding</option>
+            {ESTADOS_ONBOARDING.map((e) => (
+              <option key={e} value={e}>
+                {labelEstadoOnboarding(e)}
+              </option>
+            ))}
+          </select>
+          <select
+            className={selectClass}
+            value={orden}
+            onChange={(e) => setOrden(e.target.value)}
+          >
+            {ORDENES.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
         </div>
 
         <div className="overflow-x-auto rounded-xl border border-edge bg-card">
-          <table className="w-full min-w-[860px] text-sm">
+          <table className="w-full min-w-[1080px] text-sm">
             <thead>
               <tr className="border-b border-edge text-left font-mono text-[10.5px] uppercase tracking-widest text-mist">
                 <th className="px-5 py-3">Cliente</th>
@@ -128,6 +186,8 @@ export default function AdminClientesPage() {
                 <th className="px-5 py-3">Teléfono</th>
                 <th className="px-5 py-3">Fecha de compra</th>
                 <th className="px-5 py-3">Estado</th>
+                <th className="px-5 py-3">Onboarding</th>
+                <th className="px-5 py-3">Implementación</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-edge">
@@ -144,6 +204,10 @@ export default function AdminClientesPage() {
                   <td className="px-5 py-3 text-mist">{fechaCorta(c.fechaCompra)}</td>
                   <td className="px-5 py-3">
                     <Pill tone={toneEstadoPago(c.estadoPago)}>{labelEstadoPago(c.estadoPago)}</Pill>
+                  </td>
+                  <td className="px-5 py-3 text-mist">{c.onboarding ? labelEstadoOnboarding(c.onboarding.estado) : "Sin bienvenida enviada"}</td>
+                  <td className="px-5 py-3">
+                    {c.onboarding && <Pill tone={toneEstadoImplementacion(c.onboarding.estadoImplementacion)}>{labelEstadoImplementacion(c.onboarding.estadoImplementacion)}</Pill>}
                   </td>
                 </tr>
               ))}

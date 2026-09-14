@@ -11,11 +11,18 @@ import { labelEstadoPago, toneEstadoPago } from "@/lib/admin-ui";
 import { formatearTelefono } from "@/lib/format";
 import { CreateFlowModal } from "@/components/dashboard/flows/CreateFlowModal";
 import { createFlow as createFlowRequest, duplicateFlow as duplicateFlowRequest } from "@/lib/flow-builder/create-flow";
+import { Seccion, Boton } from "@/components/admin/cliente/AdminClienteUI";
+import { SeccionImplementacion } from "@/components/admin/cliente/SeccionImplementacion";
+import { SeccionOnboarding, type OnboardingDetalle } from "@/components/admin/cliente/SeccionOnboarding";
+import { SeccionMensajesMasivos, type CreditosMasivos } from "@/components/admin/cliente/SeccionMensajesMasivos";
+import { SeccionSoluciones } from "@/components/admin/cliente/SeccionSoluciones";
+import { SeccionAgente } from "@/components/admin/cliente/SeccionAgente";
 
 type Detalle = {
   cliente: { idTenant: string; nombre: string | null; correo: string | null; telefono: string | null; plan: string; fechaCompra: string; estadoPago: string };
-  onboarding: { estado: string } | null;
-  implementacion: { estado: string } | null;
+  onboarding: OnboardingDetalle;
+  implementacion: { estado: string; iniciadaAt: string | null; activadaAt: string | null; actualizadoAt: string } | null;
+  creditosMasivos: CreditosMasivos;
 };
 
 type Suscripcion = { plan: string; estado: string; precio_cop: number; fecha_proximo_cobro: string; cancelar_al_vencer: boolean } | null;
@@ -40,32 +47,6 @@ type AdminFlow = {
   createdAt: string;
   publishedAt: string | null;
 };
-
-function Seccion({ titulo, children, accion }: { titulo: string; children: React.ReactNode; accion?: React.ReactNode }) {
-  return (
-    <div className="rounded-xl border border-edge bg-card p-5">
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-fg">{titulo}</h2>
-        {accion}
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function Boton({ onClick, children, variante = "default", disabled }: { onClick: () => void; children: React.ReactNode; variante?: "default" | "peligro"; disabled?: boolean }) {
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-        variante === "peligro" ? "border-red-500/40 text-red-400 hover:bg-red-500/10" : "border-edge text-fg hover:bg-ink"
-      }`}
-    >
-      {children}
-    </button>
-  );
-}
 
 export default function AdminClienteDetallePage() {
   const { session } = useDashboard();
@@ -96,6 +77,12 @@ export default function AdminClienteDetallePage() {
   const [creatingFlow, setCreatingFlow] = useState(false);
   const [createFlowError, setCreateFlowError] = useState<string | null>(null);
   const [duplicatingFlowId, setDuplicatingFlowId] = useState<string | null>(null);
+
+  // F15.2 (Operations Center, cierre) -- "usar como base para configurar"
+  // (SeccionOnboarding -> SeccionAgente): puramente estado de UI de esta
+  // página, nunca persiste nada por sí mismo (ver AdminClienteUI/SeccionAgente).
+  const [hayAgente, setHayAgente] = useState(false);
+  const [plantillaPropuesta, setPlantillaPropuesta] = useState<string | null>(null);
 
   const auth = useCallback((): Record<string, string> => (session ? { Authorization: `Bearer ${session.access_token}` } : {}), [session]);
 
@@ -235,6 +222,35 @@ export default function AdminClienteDetallePage() {
             <div><dt className="text-xs text-mist">Alta</dt><dd className="text-fg">{new Date(cliente.fechaCompra).toLocaleDateString("es-CO")}</dd></div>
           </dl>
         </Seccion>
+
+        {/* F15.2 (Operations Center, cierre) -- portado del admin legacy
+            (app/dashboard/admin/clientes/[idTenant]/page.tsx, eliminado esta
+            fase): pipeline de implementación, info de onboarding, agente de
+            IA (prompt/base de conocimiento/playground/asignación),
+            Marketplace en cortesía y saldo de mensajes masivos. Ninguna de
+            estas 5 secciones existía en esta página antes -- sin esto, el
+            pipeline de onboarding que alimenta "necesita tu atención" en
+            /admin (resumen) no tenía forma de avanzar desde ningún lado del
+            Panel de Operaciones nuevo. */}
+        <div className="md:col-span-2">
+          <SeccionImplementacion idTenant={idTenant} accessToken={session?.access_token ?? ""} implementacion={detalle.implementacion} onboarding={detalle.onboarding} onCambio={cargarTodo} />
+        </div>
+        <div className="md:col-span-2">
+          <SeccionOnboarding onboarding={detalle.onboarding} hayAgenteSeleccionado={hayAgente} onUsarComoBase={setPlantillaPropuesta} />
+        </div>
+        <div className="md:col-span-2">
+          <SeccionAgente
+            idTenant={idTenant}
+            accessToken={session?.access_token ?? ""}
+            plantillaPropuesta={plantillaPropuesta}
+            onConsumirPlantilla={() => setPlantillaPropuesta(null)}
+            onHayAgenteChange={setHayAgente}
+          />
+        </div>
+        <div className="md:col-span-2">
+          <SeccionSoluciones idTenant={idTenant} accessToken={session?.access_token ?? ""} />
+        </div>
+        <SeccionMensajesMasivos creditosMasivos={detalle.creditosMasivos} />
 
         <Seccion
           titulo="Cuenta"

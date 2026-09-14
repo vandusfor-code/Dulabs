@@ -13,6 +13,7 @@ export default function AdminLogsPage() {
   const [soloErrores, setSoloErrores] = useState(true);
   const [eventosFlow, setEventosFlow] = useState<EventoFlow[]>([]);
   const [eventosIA, setEventosIA] = useState<EventoIA[]>([]);
+  const [cursor, setCursor] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -25,9 +26,26 @@ export default function AdminLogsPage() {
         if (!res.ok) throw new Error(data.error ?? "Error cargando logs");
         if (modulo === "flow") setEventosFlow(data.eventos);
         else setEventosIA(data.eventos);
+        setCursor(data.siguienteCursor);
       })
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
   }, [session, modulo, soloErrores]);
+
+  // F15.2 (Operations Center, cierre) -- la API (GET /api/dashboard/admin/logs)
+  // ya soportaba paginación por cursor desde F15, pero esta pantalla nunca
+  // exponía forma de pedir la página siguiente -- con más de 50/100 eventos
+  // quedaba truncado en silencio. Mismo patrón que /admin/auditoria.
+  async function cargarMas() {
+    if (!session || !cursor) return;
+    const params = new URLSearchParams({ modulo, cursor });
+    if (modulo === "flow" && soloErrores) params.set("solo_errores", "1");
+    const res = await fetch(`/api/dashboard/admin/logs?${params.toString()}`, { headers: { Authorization: `Bearer ${session.access_token}` } });
+    const data = await res.json();
+    if (!res.ok) return;
+    if (modulo === "flow") setEventosFlow((prev) => [...prev, ...data.eventos]);
+    else setEventosIA((prev) => [...prev, ...data.eventos]);
+    setCursor(data.siguienteCursor);
+  }
 
   return (
     <div>
@@ -92,6 +110,11 @@ export default function AdminLogsPage() {
             </table>
             {eventosIA.length === 0 && <p className="px-5 py-8 text-center text-sm text-mist">Sin eventos.</p>}
           </div>
+        )}
+        {cursor && (
+          <button onClick={cargarMas} className="mt-4 rounded-lg border border-edge px-4 py-2 text-sm text-fg hover:bg-ink">
+            Cargar más
+          </button>
         )}
       </div>
     </div>

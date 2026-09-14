@@ -4,6 +4,7 @@ import { registrarAuditoriaAdmin } from "@/lib/auditoria-admin";
 import { activarSuscripcionManual } from "@/lib/suscripcion-domain";
 import { PLANES, type PlanId } from "@/lib/planes";
 import { normalizarTelefono } from "@/lib/marketplace-store";
+import { respuestaSiLimiteTasaExcedido } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 
@@ -27,6 +28,18 @@ export async function POST(request: NextRequest) {
   const acceso = await verificarAccesoAdminDulabs(request);
   if (!acceso.ok) return acceso.response;
   const supabase = acceso.supabase;
+
+  // F15.2 (Operations Center, cierre) -- categoría "costosa" (crea un
+  // usuario real de Auth + manda un correo de invitación real): protege
+  // contra un script/loop del propio operador, no contra un actor anónimo
+  // (esta ruta ya exige sesión admin de DuLabs válida antes de llegar acá).
+  // Se escala por OPERADOR (userId), no por tenant -- todo admin de DuLabs
+  // comparte el mismo tenant_id (TENANT_DULABS_ID), así que escalar por
+  // tenant compartiría el cupo entre todo el equipo en vez de aislar una
+  // sesión individual que se desboque. Fail-open si la RPC no está
+  // disponible (ver lib/rate-limit.ts) -- nunca bloquea el alta real por sí solo.
+  const limite = await respuestaSiLimiteTasaExcedido(supabase, { recurso: "admin_crear_cliente", tenantId: acceso.miembro.userId, categoria: "costosa" });
+  if (limite) return limite;
 
   let body: Body;
   try {
