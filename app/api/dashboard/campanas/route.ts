@@ -53,27 +53,54 @@ export async function GET(request: NextRequest) {
     return Response.json({ kpis: kpisVacios(), tendencia: tendenciaVacia(), campanas: [] });
   }
 
-  const { data: mensajes, error: mensajesError } = await supabase
-    .from("dulabs_mensajes_log")
-    .select("campana_id, estado_entrega, respondido, created_at")
-    .in("campana_id", idsCampanas);
-  if (mensajesError) return Response.json({ error: mensajesError.message }, { status: 500 });
-
-  const filas = (mensajes ?? []) as FilaMensaje[];
-
-  // --- KPIs globales + variación semana vs semana anterior --------------
+  // FASE F12 (Debt Zero, autorizado) — corrige el hallazgo real de F11
+  // ("consulta sin límite conocida"): esta ruta traía TODO el historial de
+  // dulabs_mensajes_log de hasta 50 campañas sin ningún filtro de fecha ni
+  // tope, cuando la tendencia/KPIs de abajo solo necesitan las últimas 7
+  // semanas (6 de tendencia + 1 extra para el delta semana-vs-semana
+  // anterior). Con eso acotado, un tenant con meses/años de campañas ya no
+  // hace crecer esta consulta indefinidamente con el tiempo -- el volumen
+  // que sí queda (hasta 50 campañas recientes × su propio tope de
+  // destinatarios por plan) es el que se usa para el funnel por campaña,
+  // acotado por `LIMITE_DEFENSIVO_FUNNEL` como respaldo explícito.
   const ahora = new Date();
   const inicioEstaSemana = inicioSemana(ahora);
   const inicioSemanaPasada = new Date(inicioEstaSemana);
   inicioSemanaPasada.setDate(inicioSemanaPasada.getDate() - 7);
+  const inicioVentanaTendencia = new Date(inicioEstaSemana);
+  inicioVentanaTendencia.setDate(inicioVentanaTendencia.getDate() - 5 * 7);
 
+  const { data: mensajesTendencia, error: tendenciaError } = await supabase
+    .from("dulabs_mensajes_log")
+    .select("campana_id, estado_entrega, respondido, created_at")
+    .in("campana_id", idsCampanas)
+    .gte("created_at", inicioVentanaTendencia.toISOString());
+  if (tendenciaError) return Response.json({ error: tendenciaError.message }, { status: 500 });
+
+  // Respaldo defensivo explícito para el funnel por campaña (destinatarios
+  // ya está topado por plan al crear la campaña, y campañas ya está topado
+  // a 50 arriba -- este LIMIT es defensa en profundidad, no la protección
+  // real contra crecimiento).
+  const LIMITE_DEFENSIVO_FUNNEL = 200_000;
+  const { data: mensajesFunnel, error: funnelError } = await supabase
+    .from("dulabs_mensajes_log")
+    .select("campana_id, estado_entrega, respondido, created_at")
+    .in("campana_id", idsCampanas)
+    .order("created_at", { ascending: false })
+    .limit(LIMITE_DEFENSIVO_FUNNEL);
+  if (funnelError) return Response.json({ error: funnelError.message }, { status: 500 });
+
+  const filasTendencia = (mensajesTendencia ?? []) as FilaMensaje[];
+  const filas = (mensajesFunnel ?? []) as FilaMensaje[];
+
+  // --- KPIs globales + variación semana vs semana anterior --------------
   const enRango = (f: FilaMensaje, desde: Date, hasta: Date) => {
     const t = new Date(f.created_at).getTime();
     return t >= desde.getTime() && t < hasta.getTime();
   };
 
-  const estaSemana = filas.filter((f) => enRango(f, inicioEstaSemana, ahora));
-  const semanaPasada = filas.filter((f) => enRango(f, inicioSemanaPasada, inicioEstaSemana));
+  const estaSemana = filasTendencia.filter((f) => enRango(f, inicioEstaSemana, ahora));
+  const semanaPasada = filasTendencia.filter((f) => enRango(f, inicioSemanaPasada, inicioEstaSemana));
 
   const resumen = (grupo: FilaMensaje[]) => {
     const enviados = grupo.length;
@@ -88,6 +115,11 @@ export async function GET(request: NextRequest) {
     };
   };
 
+  // KPIs globales ("mensajesEnviados" total, tasas totales): igual que
+  // antes, sobre TODO el historial disponible (acotado por
+  // LIMITE_DEFENSIVO_FUNNEL) -- solo la tendencia semanal y su delta usan
+  // la ventana de 7 semanas, que es lo único para lo que el diseño de este
+  // endpoint necesita esa ventana.
   const totalActual = resumen(filas);
   const rActual = resumen(estaSemana);
   const rAnterior = resumen(semanaPasada);
@@ -116,7 +148,7 @@ export async function GET(request: NextRequest) {
     inicio.setDate(inicio.getDate() - i * 7);
     semanas.push({ inicio, enviados: 0, entregados: 0, leidos: 0 });
   }
-  for (const f of filas) {
+  for (const f of filasTendencia) {
     const t = new Date(f.created_at).getTime();
     const semana = [...semanas].reverse().find((s) => t >= s.inicio.getTime());
     if (!semana) continue;
