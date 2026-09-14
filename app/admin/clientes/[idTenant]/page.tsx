@@ -1,12 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
+import Link from "next/link";
+import { ChevronRight, Plus, Workflow } from "lucide-react";
 import { PageHeader, Pill } from "@/components/dashboard/shell/ui";
 import { useDashboard } from "@/lib/dashboard-session";
 import { PLANES, ORDEN_PLANES_ADMIN, resolverPlanId, familiaDePlan } from "@/lib/planes";
 import { labelEstadoPago, toneEstadoPago } from "@/lib/admin-ui";
 import { formatearTelefono } from "@/lib/format";
+import { CreateFlowModal } from "@/components/dashboard/flows/CreateFlowModal";
+import { createFlow as createFlowRequest, duplicateFlow as duplicateFlowRequest } from "@/lib/flow-builder/create-flow";
 
 type Detalle = {
   cliente: { idTenant: string; nombre: string | null; correo: string | null; telefono: string | null; plan: string; fechaCompra: string; estadoPago: string };
@@ -20,6 +24,22 @@ type CambioPlan = { plan_anterior: string | null; plan_nuevo: string; precio_nue
 type NumeroWA = { phoneNumberId: string; nombreNegocio: string; telefonoNegocio: string; estadoConexion: string };
 type NumeroFlow = { phoneNumberId: string; nombreNegocio: string; flowActivo: boolean; flowId: string | null; flow: { name: string; status: string } | null; ultimaEjecucion: { status: string; last_activity_at: string } | null; iaPausada: boolean };
 type Miembro = { id: number; email: string; nombre: string | null; rol: string; estado: string };
+// F15.1 (Admin Flow Studio, autorizado) -- misma forma que devuelve
+// GET /api/dashboard/admin/clientes/[idTenant]/flows (ver ese route.ts).
+type AdminFlow = {
+  id: string;
+  slug: string;
+  name: string;
+  status: string;
+  activo: boolean;
+  tieneVersionDraftSinPublicar: boolean;
+  versionNumber: number | null;
+  nodeCount: number;
+  triggerCount: number;
+  updatedAt: string;
+  createdAt: string;
+  publishedAt: string | null;
+};
 
 function Seccion({ titulo, children, accion }: { titulo: string; children: React.ReactNode; accion?: React.ReactNode }) {
   return (
@@ -49,6 +69,7 @@ function Boton({ onClick, children, variante = "default", disabled }: { onClick:
 
 export default function AdminClienteDetallePage() {
   const { session } = useDashboard();
+  const router = useRouter();
   const params = useParams<{ idTenant: string }>();
   const idTenant = params.idTenant;
 
@@ -63,7 +84,32 @@ export default function AdminClienteDetallePage() {
   const [error, setError] = useState<string | null>(null);
   const [planSeleccionado, setPlanSeleccionado] = useState("");
 
+  // F15.1 (Admin Flow Studio, autorizado) -- "Flows" (plural): TODOS los
+  // Flows del tenant, distinto de la sección "Bot & Flow" de arriba (esa es
+  // por NÚMERO de WhatsApp, ver numerosFlow). Solo lectura vía GET .../flows
+  // (YA EXISTENTE) + acciones que redirigen a Flow Studio, que es donde
+  // vive de verdad crear/editar/publicar/activar (FlowTopbar) -- acá no se
+  // reimplementa ESA lógica, solo listar y entrar.
+  const [flows, setFlows] = useState<AdminFlow[] | null>(null);
+  const [flowsError, setFlowsError] = useState<string | null>(null);
+  const [createFlowModalOpen, setCreateFlowModalOpen] = useState(false);
+  const [creatingFlow, setCreatingFlow] = useState(false);
+  const [createFlowError, setCreateFlowError] = useState<string | null>(null);
+  const [duplicatingFlowId, setDuplicatingFlowId] = useState<string | null>(null);
+
   const auth = useCallback((): Record<string, string> => (session ? { Authorization: `Bearer ${session.access_token}` } : {}), [session]);
+
+  const cargarFlows = useCallback(async () => {
+    if (!session) return;
+    const res = await fetch(`/api/dashboard/admin/clientes/${idTenant}/flows`, { headers: auth() });
+    const data = await res.json();
+    if (res.ok) {
+      setFlows(data.flows ?? []);
+      setFlowsError(null);
+    } else {
+      setFlowsError(data.error ?? "Error cargando los Flows");
+    }
+  }, [session, idTenant, auth]);
 
   const cargarTodo = useCallback(async () => {
     if (!session) return;
@@ -85,7 +131,47 @@ export default function AdminClienteDetallePage() {
     if (waRes.ok) setNumerosWA(waData.numeros ?? []);
     if (flowRes.ok) setNumerosFlow(flowData.numeros ?? []);
     if (equipoRes.ok) setEquipo(equipoData.miembros ?? []);
-  }, [session, idTenant, auth]);
+    await cargarFlows();
+  }, [session, idTenant, auth, cargarFlows]);
+
+  async function crearFlow(nombre: string, descripcion: string) {
+    if (!session) return;
+    setCreatingFlow(true);
+    setCreateFlowError(null);
+    const result = await createFlowRequest({
+      name: nombre,
+      description: descripcion || undefined,
+      accessToken: session.access_token,
+      adminTenantId: idTenant,
+    });
+    setCreatingFlow(false);
+    if (result.ok) {
+      setCreateFlowModalOpen(false);
+      router.push(`/flow-studio/${result.flow.id}?tenant=${idTenant}`);
+      return;
+    }
+    setCreateFlowError(result.error.message);
+  }
+
+  async function duplicarFlow(flow: AdminFlow) {
+    if (!session || duplicatingFlowId) return;
+    const nombre = window.prompt("Nombre del Flow duplicado:", `${flow.name} (copia)`);
+    if (!nombre || !nombre.trim()) return;
+    setDuplicatingFlowId(flow.id);
+    const result = await duplicateFlowRequest({
+      flowId: flow.id,
+      name: nombre.trim(),
+      accessToken: session.access_token,
+      adminTenantId: idTenant,
+    });
+    setDuplicatingFlowId(null);
+    if (result.ok) {
+      setMensaje(`Flow "${result.flow.name}" duplicado.`);
+      await cargarFlows();
+    } else {
+      setError(result.error.message);
+    }
+  }
 
   useEffect(() => {
     let cancelado = false;
@@ -252,6 +338,56 @@ export default function AdminClienteDetallePage() {
           </div>
         </Seccion>
 
+        <Seccion
+          titulo="Flows"
+          accion={
+            <Boton onClick={() => setCreateFlowModalOpen(true)}>
+              <span className="inline-flex items-center gap-1.5">
+                <Plus className="size-3.5" /> Crear Flow
+              </span>
+            </Boton>
+          }
+        >
+          {flowsError && <p className="text-sm text-red-400">{flowsError}</p>}
+          {!flowsError && flows === null && <p className="text-sm text-mist">Cargando…</p>}
+          {!flowsError && flows !== null && flows.length === 0 && (
+            <p className="text-sm text-mist">Este cliente todavía no tiene ningún Flow.</p>
+          )}
+          {!flowsError && flows !== null && flows.length > 0 && (
+            <div className="flex flex-col gap-3">
+              {flows.map((flow) => (
+                <div key={flow.id} className="border-b border-edge pb-3 last:border-0 last:pb-0">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <Workflow className="size-4 shrink-0 text-mist" />
+                      <span className="truncate text-sm font-medium text-fg">{flow.name}</span>
+                      {flow.activo && <Pill tone="success">activo</Pill>}
+                      <Pill tone={flow.status === "archived" ? "danger" : flow.publishedAt ? "success" : "neutral"}>
+                        {flow.status === "archived" ? "Archivado" : flow.publishedAt ? "Publicado" : "Borrador"}
+                      </Pill>
+                      {flow.tieneVersionDraftSinPublicar && <Pill tone="warning">cambios sin publicar</Pill>}
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <Boton onClick={() => duplicarFlow(flow)} disabled={duplicatingFlowId === flow.id}>
+                        {duplicatingFlowId === flow.id ? "Duplicando…" : "Duplicar"}
+                      </Boton>
+                      <Link
+                        href={`/flow-studio/${flow.id}?tenant=${idTenant}`}
+                        className="inline-flex items-center gap-1 rounded-lg border border-lime/50 px-3 py-1.5 text-xs font-medium text-lime-text transition-colors hover:bg-lime/10"
+                      >
+                        Abrir <ChevronRight className="size-3.5" />
+                      </Link>
+                    </div>
+                  </div>
+                  <div className="mt-1.5 text-xs text-mist">
+                    v{flow.versionNumber ?? "—"} · {flow.nodeCount} nodos · {flow.triggerCount} triggers · actualizado {new Date(flow.updatedAt).toLocaleDateString("es-CO")}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </Seccion>
+
         <Seccion titulo="Bot & Flow">
           {numerosFlow.length === 0 && <p className="text-sm text-mist">Sin números configurados.</p>}
           <div className="flex flex-col gap-3">
@@ -338,6 +474,17 @@ export default function AdminClienteDetallePage() {
           </div>
         </Seccion>
       </div>
+      <CreateFlowModal
+        open={createFlowModalOpen}
+        creating={creatingFlow}
+        error={createFlowError}
+        onClose={() => {
+          if (creatingFlow) return;
+          setCreateFlowModalOpen(false);
+          setCreateFlowError(null);
+        }}
+        onSubmit={crearFlow}
+      />
     </div>
   );
 }

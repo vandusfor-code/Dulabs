@@ -8,7 +8,7 @@ export const runtime = "nodejs";
 // Lista TODOS los triggers del Flow (incluye deshabilitados -- el Builder
 // debe poder mostrarlos/editarlos). Mismo rol que GET /versions (admin+agente).
 export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const access = await requireFlowAccess(request, ["admin", "agente"]);
+  const access = await requireFlowAccess(request, ["admin", "agente"], { allowAdminOverride: true });
   if (!access.ok) return access.response;
   const { supabase, miembro } = access.ctx;
   const { id } = await params;
@@ -29,7 +29,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 // fila real (lib/flow-triggers/types.ts) -- nunca dos validaciones distintas
 // para la misma forma de dato. Mismo rol que POST /versions (solo admin).
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const access = await requireFlowAccess(request, ["admin"]);
+  const access = await requireFlowAccess(request, ["admin"], { allowAdminOverride: true });
   if (!access.ok) return access.response;
   const { supabase, miembro } = access.ctx;
   const { id } = await params;

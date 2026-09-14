@@ -1,5 +1,7 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { resolverMiembroEquipo } from "@/lib/team";
+import { esAdminDulabs } from "@/lib/admin-tenant";
 
 export const runtime = "nodejs";
 
@@ -52,10 +54,20 @@ export async function POST(request: NextRequest) {
   // Login correcto: limpia el historial de intentos fallidos de este correo.
   await supabase.from("dulabs_intentos_login_fallidos").delete().eq("email", email);
 
+  // F15.1 (Admin Flow Studio, autorizado) -- mismo gate que ya usa
+  // verificarAccesoAdminDulabs (lib/admin-tenant.ts): resolverMiembroEquipo +
+  // esAdminDulabs, calculado acá server-side (nunca confiado del cliente)
+  // para que el front sepa a dónde redirigir sin inventar un segundo
+  // sistema de roles. No es una segunda autorización -- cada endpoint
+  // /admin/* sigue validando esto por su cuenta de todas formas.
+  const miembro = await resolverMiembroEquipo(supabase, data.session.user.id);
+  const esAdmin = esAdminDulabs(miembro);
+
   return Response.json({
     session: {
       access_token: data.session.access_token,
       refresh_token: data.session.refresh_token,
     },
+    esAdmin,
   });
 }

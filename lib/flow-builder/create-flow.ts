@@ -8,6 +8,7 @@
  */
 
 import type { FlowRow, FlowVersionRow } from "@/lib/flow/flow-store-types";
+import { flowApiHeaders } from "@/lib/flow-builder/flow-api-headers";
 
 export type FetchLike = typeof fetch;
 
@@ -49,6 +50,7 @@ export async function createFlow(params: {
   name: string;
   description?: string;
   accessToken: string;
+  adminTenantId?: string;
   fetchImpl?: FetchLike;
 }): Promise<CreateFlowResult> {
   const nombre = params.name.trim();
@@ -61,7 +63,7 @@ export async function createFlow(params: {
   try {
     response = await doFetch("/api/flows", {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${params.accessToken}` },
+      headers: flowApiHeaders(params.accessToken, { json: true, adminTenantId: params.adminTenantId }),
       body: JSON.stringify({
         slug: slugFromNombre(nombre),
         name: nombre,
@@ -105,6 +107,7 @@ export type EnsureInitialVersionResult = { ok: true; version: FlowVersionRow } |
 export async function ensureInitialVersion(params: {
   flowId: string;
   accessToken: string;
+  adminTenantId?: string;
   fetchImpl?: FetchLike;
 }): Promise<EnsureInitialVersionResult> {
   const doFetch = params.fetchImpl ?? fetch;
@@ -112,7 +115,7 @@ export async function ensureInitialVersion(params: {
   try {
     response = await doFetch(`/api/flows/${params.flowId}/initial-version`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${params.accessToken}` },
+      headers: flowApiHeaders(params.accessToken, { adminTenantId: params.adminTenantId }),
     });
   } catch (err) {
     return { ok: false, error: { kind: "network", message: err instanceof Error ? err.message : "Error de red" } };
@@ -138,4 +141,50 @@ export async function ensureInitialVersion(params: {
           ? "not_found"
           : "unknown";
   return { ok: false, error: { kind, message: body.error ?? "Error preparando el Flow", status: response.status } };
+}
+
+/**
+ * F15.1 (Admin Flow Studio, autorizado) -- wrapper delgado sobre
+ * POST /api/flows/[id]/duplicate (lib/flow/flow-store.ts::duplicateFlow).
+ * Mismo patrón que createFlow -- ninguna regla de negocio acá.
+ */
+export async function duplicateFlow(params: {
+  flowId: string;
+  name: string;
+  accessToken: string;
+  adminTenantId?: string;
+  fetchImpl?: FetchLike;
+}): Promise<CreateFlowResult> {
+  const nombre = params.name.trim();
+  if (!nombre) {
+    return { ok: false, error: { kind: "invalid_name", message: "El nombre del Flow no puede estar vacío" } };
+  }
+
+  const doFetch = params.fetchImpl ?? fetch;
+  let response: Response;
+  try {
+    response = await doFetch(`/api/flows/${params.flowId}/duplicate`, {
+      method: "POST",
+      headers: flowApiHeaders(params.accessToken, { json: true, adminTenantId: params.adminTenantId }),
+      body: JSON.stringify({ slug: slugFromNombre(nombre), name: nombre }),
+    });
+  } catch (err) {
+    return { ok: false, error: { kind: "network", message: err instanceof Error ? err.message : "Error de red" } };
+  }
+
+  let body: { flow?: FlowRow; version?: FlowVersionRow; error?: string } = {};
+  try {
+    body = await response.json();
+  } catch {
+    // respuesta sin cuerpo JSON válido -- error genérico abajo
+  }
+
+  if (response.ok && body.flow && body.version) {
+    return { ok: true, flow: body.flow, version: body.version };
+  }
+
+  return {
+    ok: false,
+    error: { kind: createErrorKindForStatus(response.status), message: body.error ?? "Error duplicando el Flow", status: response.status },
+  };
 }

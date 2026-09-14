@@ -5,6 +5,7 @@
  */
 
 import type { FlowIntegrationRow } from "@/lib/flow/flow-store-types";
+import { flowApiHeaders } from "@/lib/flow-builder/flow-api-headers";
 
 export type FetchLike = typeof fetch;
 
@@ -25,14 +26,14 @@ function errorKindForStatus(status: number): IntegrationsErrorKind {
 
 async function call<T>(
   path: string,
-  opts: { method: string; body?: unknown; accessToken: string; fetchImpl?: FetchLike },
+  opts: { method: string; body?: unknown; accessToken: string; adminTenantId?: string; fetchImpl?: FetchLike },
 ): Promise<{ ok: true; body: T } | { ok: false; error: IntegrationsError }> {
   const doFetch = opts.fetchImpl ?? fetch;
   let response: Response;
   try {
     response = await doFetch(path, {
       method: opts.method,
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${opts.accessToken}` },
+      headers: flowApiHeaders(opts.accessToken, { json: true, adminTenantId: opts.adminTenantId }),
       body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
     });
   } catch (err) {
@@ -55,6 +56,7 @@ async function call<T>(
 
 export async function listIntegrations(params: {
   accessToken: string;
+  adminTenantId?: string;
   fetchImpl?: FetchLike;
 }): Promise<{ ok: true; integrations: FlowIntegrationRow[] } | { ok: false; error: IntegrationsError }> {
   const result = await call<{ integrations: FlowIntegrationRow[] }>("/api/flows/integrations", { method: "GET", ...params });
@@ -70,10 +72,11 @@ export async function createIntegration(params: {
   httpMethod?: string;
   headersTemplate?: Record<string, string>;
   accessToken: string;
+  adminTenantId?: string;
   fetchImpl?: FetchLike;
 }): Promise<{ ok: true; integration: FlowIntegrationRow } | { ok: false; error: IntegrationsError }> {
-  const { accessToken, fetchImpl, ...body } = params;
-  const result = await call<{ integration: FlowIntegrationRow }>("/api/flows/integrations", { method: "POST", body, accessToken, fetchImpl });
+  const { accessToken, adminTenantId, fetchImpl, ...body } = params;
+  const result = await call<{ integration: FlowIntegrationRow }>("/api/flows/integrations", { method: "POST", body, accessToken, adminTenantId, fetchImpl });
   if (!result.ok) return result;
   return { ok: true, integration: result.body.integration };
 }
@@ -81,11 +84,13 @@ export async function createIntegration(params: {
 export async function approveIntegration(params: {
   integrationId: string;
   accessToken: string;
+  adminTenantId?: string;
   fetchImpl?: FetchLike;
 }): Promise<{ ok: true; integration: FlowIntegrationRow } | { ok: false; error: IntegrationsError }> {
   const result = await call<{ integration: FlowIntegrationRow }>(`/api/flows/integrations/${params.integrationId}/approve`, {
     method: "POST",
     accessToken: params.accessToken,
+    adminTenantId: params.adminTenantId,
     fetchImpl: params.fetchImpl,
   });
   if (!result.ok) return result;
@@ -95,11 +100,13 @@ export async function approveIntegration(params: {
 export async function revokeIntegration(params: {
   integrationId: string;
   accessToken: string;
+  adminTenantId?: string;
   fetchImpl?: FetchLike;
 }): Promise<{ ok: true; integration: FlowIntegrationRow } | { ok: false; error: IntegrationsError }> {
   const result = await call<{ integration: FlowIntegrationRow }>(`/api/flows/integrations/${params.integrationId}/revoke`, {
     method: "POST",
     accessToken: params.accessToken,
+    adminTenantId: params.adminTenantId,
     fetchImpl: params.fetchImpl,
   });
   if (!result.ok) return result;
@@ -111,12 +118,14 @@ export async function saveIntegrationCredential(params: {
   credentialKey: string;
   plaintext: string;
   accessToken: string;
+  adminTenantId?: string;
   fetchImpl?: FetchLike;
 }): Promise<{ ok: true } | { ok: false; error: IntegrationsError }> {
   const result = await call<{ saved: boolean }>(`/api/flows/integrations/${params.integrationId}/credentials`, {
     method: "POST",
     body: { credentialKey: params.credentialKey, plaintext: params.plaintext },
     accessToken: params.accessToken,
+    adminTenantId: params.adminTenantId,
     fetchImpl: params.fetchImpl,
   });
   if (!result.ok) return result;
@@ -126,11 +135,12 @@ export async function saveIntegrationCredential(params: {
 export async function listIntegrationCredentialKeys(params: {
   integrationId: string;
   accessToken: string;
+  adminTenantId?: string;
   fetchImpl?: FetchLike;
 }): Promise<{ ok: true; credentials: { credentialKey: string; rotatedAt: string | null; updatedAt: string }[] } | { ok: false; error: IntegrationsError }> {
   const result = await call<{ credentials: { credentialKey: string; rotatedAt: string | null; updatedAt: string }[] }>(
     `/api/flows/integrations/${params.integrationId}/credentials`,
-    { method: "GET", accessToken: params.accessToken, fetchImpl: params.fetchImpl },
+    { method: "GET", accessToken: params.accessToken, adminTenantId: params.adminTenantId, fetchImpl: params.fetchImpl },
   );
   if (!result.ok) return result;
   return { ok: true, credentials: result.body.credentials };

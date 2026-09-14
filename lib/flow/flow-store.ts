@@ -6,6 +6,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { cifrarSecreto } from "@/lib/crypto";
 import { createInitialFlowDefinition } from "@/lib/flow-builder/node-factory";
+import { parseFlowDefinition } from "@/lib/flow/schemas";
 import { resolveFlowSelection } from "@/lib/flow-triggers/trigger-router";
 import { buildTriggerConfig, type FlowSelectionResult, type IncomingEvent, type RoutableTrigger, type TriggerConfig } from "@/lib/flow-triggers/types";
 import type { FlowDefinition } from "@/lib/flow/types";
@@ -254,6 +255,58 @@ export async function archiveFlow(
     .maybeSingle();
   if (error) throw error;
   return (data as FlowRow | null) ?? null;
+}
+
+/**
+ * F15.1 (Admin Flow Studio, autorizado) -- duplica un Flow dentro del MISMO
+ * tenant: Flow nuevo (id/slug propios, generados por createFlow) + v1 con
+ * la definición de la ÚLTIMA versión del original (draft o publicada,
+ * prioridad draft -- mismo criterio "más reciente por version_number" que
+ * ya usa el resto del código, ver hasNewerDraftThanPublished). Reusa
+ * createFlow/createFlowVersion tal cual, sin segunda lógica de creación.
+ *
+ * Deliberadamente NO copia triggers (dulabs_flow_triggers) ni ningún estado
+ * de activación (dulabs_clientes_config.flow_id/flow_activo) -- eso es lo
+ * que el pedido llama "cross-link accidental": si el duplicado heredara
+ * triggers habilitados, ambos Flows empezarían a competir por el mismo
+ * tráfico real. El Flow duplicado nace sin triggers y sin activar en
+ * ningún número; el operador los agrega explícitamente si los quiere. Los
+ * `id` de nodos/edges dentro de `definition_json` SÍ se copian tal cual --
+ * son locales a esa definición (solo se referencian entre sí dentro del
+ * mismo documento), nunca apuntan a otra fila de dulabs_flows/versions.
+ */
+export async function duplicateFlow(
+  supabase: SupabaseClient,
+  input: { tenantId: string; sourceFlowId: string; newSlug: string; newName: string; createdBy?: string },
+): Promise<{ flow: FlowRow; version: FlowVersionRow } | null> {
+  const source = await getFlowById(supabase, input.tenantId, input.sourceFlowId);
+  if (!source) return null;
+
+  const sourceVersions = await listFlowVersions(supabase, {
+    tenantId: input.tenantId,
+    flowId: input.sourceFlowId,
+    limit: 1,
+  });
+  const sourceDefinition = sourceVersions[0]
+    ? parseFlowDefinition(sourceVersions[0].definition_json)
+    : createInitialFlowDefinition(input.newName);
+
+  const flow = await createFlow(supabase, {
+    tenantId: input.tenantId,
+    slug: input.newSlug,
+    name: input.newName,
+    description: source.description ?? undefined,
+    createdBy: input.createdBy,
+  });
+  const version = await createFlowVersion(supabase, {
+    tenantId: input.tenantId,
+    flowId: flow.id,
+    versionNumber: 1,
+    definition: sourceDefinition,
+    createdBy: input.createdBy,
+  });
+
+  return { flow, version };
 }
 
 export type EnsureInitialVersionResult =

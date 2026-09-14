@@ -7,6 +7,7 @@
  */
 
 import type { FlowTrigger, TriggerConfig } from "@/lib/flow-triggers/types";
+import { flowApiHeaders } from "@/lib/flow-builder/flow-api-headers";
 
 export type FetchLike = typeof fetch;
 
@@ -53,12 +54,12 @@ function rowToFlowTrigger(row: FlowTriggerApiRow): FlowTrigger {
 
 export type ListTriggersResult = { ok: true; triggers: FlowTrigger[] } | { ok: false; error: TriggersError };
 
-export async function listTriggers(params: { flowId: string; accessToken: string; fetchImpl?: FetchLike }): Promise<ListTriggersResult> {
+export async function listTriggers(params: { flowId: string; accessToken: string; adminTenantId?: string; fetchImpl?: FetchLike }): Promise<ListTriggersResult> {
   const doFetch = params.fetchImpl ?? fetch;
   let response: Response;
   try {
     response = await doFetch(`/api/flows/${params.flowId}/triggers`, {
-      headers: { Authorization: `Bearer ${params.accessToken}` },
+      headers: flowApiHeaders(params.accessToken, { adminTenantId: params.adminTenantId }),
     });
   } catch (err) {
     return { ok: false, error: { kind: "network", message: err instanceof Error ? err.message : "Error de red" } };
@@ -83,6 +84,7 @@ export async function createTrigger(params: {
   priority?: number;
   enabled?: boolean;
   accessToken: string;
+  adminTenantId?: string;
   fetchImpl?: FetchLike;
 }): Promise<TriggerResult> {
   const doFetch = params.fetchImpl ?? fetch;
@@ -91,7 +93,7 @@ export async function createTrigger(params: {
   try {
     response = await doFetch(`/api/flows/${params.flowId}/triggers`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${params.accessToken}` },
+      headers: flowApiHeaders(params.accessToken, { json: true, adminTenantId: params.adminTenantId }),
       body: JSON.stringify({ type, config, priority: params.priority, enabled: params.enabled }),
     });
   } catch (err) {
@@ -114,6 +116,7 @@ export async function updateTrigger(params: {
   priority?: number;
   enabled?: boolean;
   accessToken: string;
+  adminTenantId?: string;
   fetchImpl?: FetchLike;
 }): Promise<TriggerResult> {
   const doFetch = params.fetchImpl ?? fetch;
@@ -128,7 +131,7 @@ export async function updateTrigger(params: {
   try {
     response = await doFetch(`/api/flows/${params.flowId}/triggers/${params.triggerId}`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${params.accessToken}` },
+      headers: flowApiHeaders(params.accessToken, { json: true, adminTenantId: params.adminTenantId }),
       body: JSON.stringify(patch),
     });
   } catch (err) {
@@ -146,13 +149,13 @@ export async function updateTrigger(params: {
 
 export type DeleteTriggerResult = { ok: true } | { ok: false; error: TriggersError };
 
-export async function deleteTrigger(params: { flowId: string; triggerId: string; accessToken: string; fetchImpl?: FetchLike }): Promise<DeleteTriggerResult> {
+export async function deleteTrigger(params: { flowId: string; triggerId: string; accessToken: string; adminTenantId?: string; fetchImpl?: FetchLike }): Promise<DeleteTriggerResult> {
   const doFetch = params.fetchImpl ?? fetch;
   let response: Response;
   try {
     response = await doFetch(`/api/flows/${params.flowId}/triggers/${params.triggerId}`, {
       method: "DELETE",
-      headers: { Authorization: `Bearer ${params.accessToken}` },
+      headers: flowApiHeaders(params.accessToken, { adminTenantId: params.adminTenantId }),
     });
   } catch (err) {
     return { ok: false, error: { kind: "network", message: err instanceof Error ? err.message : "Error de red" } };

@@ -26,6 +26,8 @@ export interface IntegrationsPanelProps {
   open: boolean;
   onClose: () => void;
   accessToken: string;
+  /** F15.1 (Admin Flow Studio, autorizado) -- tenant del cliente cuando lo opera un admin de DuLabs vía Flow Studio (ver lib/flow/api-auth.ts). */
+  adminTenantId?: string;
 }
 
 const STATUS_TONE: Record<FlowIntegrationRow["status"], "success" | "warning" | "danger"> = {
@@ -40,7 +42,7 @@ const STATUS_LABEL: Record<FlowIntegrationRow["status"], string> = {
   revoked: "Revocada",
 };
 
-function CredentialsEditor({ integration, accessToken }: { integration: FlowIntegrationRow; accessToken: string }) {
+function CredentialsEditor({ integration, accessToken, adminTenantId }: { integration: FlowIntegrationRow; accessToken: string; adminTenantId?: string }) {
   const [keys, setKeys] = useState<string[] | null>(null);
   const [nuevaClave, setNuevaClave] = useState("Authorization");
   const [nuevoValor, setNuevoValor] = useState("");
@@ -49,10 +51,10 @@ function CredentialsEditor({ integration, accessToken }: { integration: FlowInte
   const [success, setSuccess] = useState(false);
 
   const cargar = useCallback(() => {
-    listIntegrationCredentialKeys({ integrationId: integration.id, accessToken }).then((result) => {
+    listIntegrationCredentialKeys({ integrationId: integration.id, accessToken, adminTenantId }).then((result) => {
       if (result.ok) setKeys(result.credentials.map((c) => c.credentialKey));
     });
-  }, [integration.id, accessToken]);
+  }, [integration.id, accessToken, adminTenantId]);
 
   useEffect(() => {
     cargar();
@@ -63,7 +65,7 @@ function CredentialsEditor({ integration, accessToken }: { integration: FlowInte
     setSaving(true);
     setError(null);
     setSuccess(false);
-    const result = await saveIntegrationCredential({ integrationId: integration.id, credentialKey: nuevaClave.trim(), plaintext: nuevoValor, accessToken });
+    const result = await saveIntegrationCredential({ integrationId: integration.id, credentialKey: nuevaClave.trim(), plaintext: nuevoValor, accessToken, adminTenantId });
     setSaving(false);
     if (result.ok) {
       setSuccess(true);
@@ -117,7 +119,7 @@ function CredentialsEditor({ integration, accessToken }: { integration: FlowInte
   );
 }
 
-export function IntegrationsPanel({ open, onClose, accessToken }: IntegrationsPanelProps) {
+export function IntegrationsPanel({ open, onClose, accessToken, adminTenantId }: IntegrationsPanelProps) {
   const [integrations, setIntegrations] = useState<FlowIntegrationRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -128,7 +130,7 @@ export function IntegrationsPanel({ open, onClose, accessToken }: IntegrationsPa
   const [createError, setCreateError] = useState<string | null>(null);
 
   const cargar = useCallback(() => {
-    listIntegrations({ accessToken }).then((result) => {
+    listIntegrations({ accessToken, adminTenantId }).then((result) => {
       if (result.ok) {
         setIntegrations(result.integrations);
         setError(null);
@@ -136,7 +138,7 @@ export function IntegrationsPanel({ open, onClose, accessToken }: IntegrationsPa
         setError(result.error.message);
       }
     });
-  }, [accessToken]);
+  }, [accessToken, adminTenantId]);
 
   useEffect(() => {
     if (open) cargar();
@@ -147,7 +149,7 @@ export function IntegrationsPanel({ open, onClose, accessToken }: IntegrationsPa
   async function handleCrear() {
     setCreating(true);
     setCreateError(null);
-    const result = await createIntegration({ ...form, accessToken });
+    const result = await createIntegration({ ...form, accessToken, adminTenantId });
     setCreating(false);
     if (result.ok) {
       setForm({ slug: "", displayName: "", capability: "", url: "", httpMethod: "POST" });
@@ -159,14 +161,14 @@ export function IntegrationsPanel({ open, onClose, accessToken }: IntegrationsPa
 
   async function handleAprobar(id: string) {
     setBusyId(id);
-    await approveIntegration({ integrationId: id, accessToken });
+    await approveIntegration({ integrationId: id, accessToken, adminTenantId });
     setBusyId(null);
     cargar();
   }
 
   async function handleRevocar(id: string) {
     setBusyId(id);
-    await revokeIntegration({ integrationId: id, accessToken });
+    await revokeIntegration({ integrationId: id, accessToken, adminTenantId });
     setBusyId(null);
     cargar();
   }
@@ -283,7 +285,7 @@ export function IntegrationsPanel({ open, onClose, accessToken }: IntegrationsPa
                       </button>
                     )}
                   </div>
-                  {expandedId === integ.id && <CredentialsEditor integration={integ} accessToken={accessToken} />}
+                  {expandedId === integ.id && <CredentialsEditor integration={integ} accessToken={accessToken} adminTenantId={adminTenantId} />}
                 </div>
               ))}
             </div>

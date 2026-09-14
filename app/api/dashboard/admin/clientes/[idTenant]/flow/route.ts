@@ -19,7 +19,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 
   const { data: numeros, error } = await supabase
     .from("dulabs_clientes_config")
-    .select("phone_number_id, nombre_negocio, flow_activo, flow_id, ia_pausada")
+    .select("phone_number_id, nombre_negocio, telefono_negocio, flow_activo, flow_id, trigger_routing_activo, ia_pausada")
     .eq("id_tenant", idTenant);
   if (error) return Response.json({ error: error.message }, { status: 500 });
 
@@ -54,8 +54,10 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     numeros: (numeros ?? []).map((n) => ({
       phoneNumberId: n.phone_number_id,
       nombreNegocio: n.nombre_negocio,
+      telefonoNegocio: n.telefono_negocio,
       flowActivo: n.flow_activo,
       flowId: n.flow_id,
+      triggerRoutingActivo: n.trigger_routing_activo,
       iaPausada: n.ia_pausada,
       flow: n.flow_id ? flowsPorId.get(n.flow_id) ?? null : null,
       ultimaEjecucion: ultimaEjecucionPorNumero.get(n.phone_number_id) ?? null,

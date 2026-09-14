@@ -48,14 +48,29 @@ function LoginPageInterna() {
     if (planPorUrl) localStorage.setItem(PLAN_PENDIENTE_KEY, resolverPlanId(planPorUrl));
   }, [searchParams]);
 
-  const destinoTrasIniciarSesion = () => (localStorage.getItem(PLAN_PENDIENTE_KEY) ? "/checkout" : "/dashboard/conexion");
+  const destinoTrasIniciarSesion = (esAdmin?: boolean) =>
+    esAdmin ? "/admin" : localStorage.getItem(PLAN_PENDIENTE_KEY) ? "/checkout" : "/dashboard/conexion";
 
+  // Si ya hay sesión (recargó /login, o volvió con una pestaña vieja
+  // abierta), se consulta /api/dashboard/me -- ÚNICA fuente de verdad de
+  // es_admin_dulabs (server-side, misma columna que ya usa el resto del
+  // dashboard vía useDashboard()) -- para no mandar al admin de DuLabs a
+  // /dashboard por error.
   useEffect(() => {
     if (supabaseConfigFaltante) return;
     supabaseBrowser()
       .auth.getSession()
-      .then(({ data }) => {
-        if (data.session) router.replace(destinoTrasIniciarSesion());
+      .then(async ({ data }) => {
+        if (!data.session) return;
+        try {
+          const res = await fetch("/api/dashboard/me", {
+            headers: { Authorization: `Bearer ${data.session.access_token}` },
+          });
+          const me = res.ok ? await res.json() : null;
+          router.replace(destinoTrasIniciarSesion(Boolean(me?.es_admin_dulabs)));
+        } catch {
+          router.replace(destinoTrasIniciarSesion());
+        }
       });
   }, [router]);
 
@@ -100,7 +115,7 @@ function LoginPageInterna() {
           access_token: data.session.access_token,
           refresh_token: data.session.refresh_token,
         });
-        router.push(destinoTrasIniciarSesion());
+        router.push(destinoTrasIniciarSesion(Boolean(data.esAdmin)));
       } catch (err) {
         setCargando(false);
         setError(err instanceof Error ? err.message : String(err));

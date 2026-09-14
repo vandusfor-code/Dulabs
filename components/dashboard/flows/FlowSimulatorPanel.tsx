@@ -110,6 +110,8 @@ export interface FlowSimulatorPanelProps {
   onClose: () => void;
   flowId: string;
   accessToken: string;
+  /** F15.1 (Admin Flow Studio, autorizado) -- tenant del cliente cuando lo opera un admin de DuLabs vía Flow Studio (ver lib/flow/api-auth.ts). */
+  adminTenantId?: string;
   /** Variables declaradas del flow -- fuente de los campos del formulario "Variables de prueba" (spec §13). */
   flowVariables: VariableDefinition[];
   nodeLabel: (nodeId: string) => string;
@@ -124,6 +126,7 @@ export function FlowSimulatorPanel({
   onClose,
   flowId,
   accessToken,
+  adminTenantId,
   flowVariables,
   nodeLabel,
   onCenterNode,
@@ -227,6 +230,7 @@ export function FlowSimulatorPanel({
       event,
       engineState: opts?.fresh ? null : engineState,
       accessToken,
+      adminTenantId,
       initialVariables: opts?.fresh ? initialVariablesMerged : undefined,
     });
     setLoading(false);

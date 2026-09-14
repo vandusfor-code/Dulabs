@@ -10,7 +10,7 @@ export const runtime = "nodejs";
 // 200: {valid, errors[]} tal cual lo devuelve esa función, sin severity (no
 // existe hoy en FlowValidationError -- ver lib/flow/errors.ts).
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const access = await requireFlowAccess(request, ["admin", "agente"]);
+  const access = await requireFlowAccess(request, ["admin", "agente"], { allowAdminOverride: true });
   if (!access.ok) return access.response;
   const { supabase, miembro } = access.ctx;
   const { id } = await params;

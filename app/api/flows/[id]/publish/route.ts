@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { requireFlowAccess } from "@/lib/flow/api-auth";
 import { getFlowById, publishFlowVersion } from "@/lib/flow/flow-store";
 import { FLOW_STORE_ERROR_CODES, FlowStoreError } from "@/lib/flow/flow-store-errors";
+import { registrarAuditoriaAdmin } from "@/lib/auditoria-admin";
 
 export const runtime = "nodejs";
 
@@ -11,9 +12,9 @@ export const runtime = "nodejs";
 // llamar antes) -- la RPC en sí ya rechaza version_id inexistente o de otro
 // tenant/flow, es la misma garantía que ya tenía el runtime.
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const access = await requireFlowAccess(request, ["admin"]);
+  const access = await requireFlowAccess(request, ["admin"], { allowAdminOverride: true });
   if (!access.ok) return access.response;
-  const { supabase, miembro } = access.ctx;
+  const { supabase, miembro, esAdminOverride } = access.ctx;
   const { id } = await params;
 
   let body: { versionId?: unknown };
@@ -33,6 +34,15 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     await publishFlowVersion(supabase, miembro.tenantId, id, body.versionId);
 
     const actualizado = await getFlowById(supabase, miembro.tenantId, id);
+    if (esAdminOverride) {
+      await registrarAuditoriaAdmin(supabase, {
+        operador: miembro,
+        accion: "PUBLISH_FLOW",
+        idTenant: miembro.tenantId,
+        recurso: id,
+        metadata: { versionId: body.versionId },
+      });
+    }
     return Response.json({ flow: actualizado });
   } catch (error) {
     if (error instanceof FlowStoreError) {
