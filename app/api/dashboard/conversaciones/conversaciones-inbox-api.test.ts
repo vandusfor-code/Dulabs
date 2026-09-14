@@ -78,6 +78,31 @@ describe(
       return { tenantId, token: sesion.session.access_token, miembroId: miembroFila.id, phoneNumberId };
     }
 
+    // Fase 11 (Debt Zero) — agrega un SEGUNDO miembro a un tenant ya creado
+    // por crearTenantConAgente, para probar reasignación real (admin mueve
+    // la conversación de un agente a OTRO, no solo asignar/desasignar).
+    // Devuelve también su propio token de sesión real, para probar sus
+    // restricciones de rol directamente (no solo desde el admin).
+    async function agregarMiembroAlTenant(tenantId: string, rol: "admin" | "agente" | "lectura"): Promise<{ miembroId: number; token: string }> {
+      const email = `f9-inbox-${sufijo}-${tenantId.slice(0, 8)}-extra-${randomUUID().slice(0, 6)}@example.com`;
+      const password = `F9Test-${randomUUID()}`;
+      const { data: userData, error: userErr } = await admin.auth.admin.createUser({ email, password, email_confirm: true });
+      if (userErr) throw userErr;
+      userIds.push(userData.user.id);
+      const { data: miembroFila, error: miembroErr } = await admin
+        .from("dulabs_miembros_equipo")
+        .insert({ tenant_id: tenantId, user_id: userData.user.id, email, rol, estado: "activo" })
+        .select("id")
+        .single();
+      if (miembroErr) throw miembroErr;
+
+      const anon = createClient(process.env.SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, { auth: { persistSession: false } });
+      const { data: sesion, error: signInErr } = await anon.auth.signInWithPassword({ email, password });
+      if (signInErr || !sesion.session) throw signInErr ?? new Error("sin sesión");
+
+      return { miembroId: miembroFila.id as number, token: sesion.session.access_token };
+    }
+
     after(async () => {
       if (!HAS_SUPABASE) return;
       for (const phoneNumberId of phoneNumberIds) {
@@ -171,6 +196,63 @@ describe(
       assert.equal(res1.status, 200);
       const res2 = await asignarPOST(req("/api/dashboard/conversaciones/asignar", { phone_number_id: phoneNumberId, telefono_cliente: telefonoCliente, miembro_id: null }, token));
       assert.equal(res2.status, 200);
+    });
+
+    // Fase 11 (Debt Zero, autorizado) — ciclo completo de reasignación real:
+    // admin asigna a A, admin reasigna a B, admin quita la asignación. F9 ya
+    // tenía esto probado a nivel de "asignar a mí mismo"/"quitar", pero
+    // nunca "mover de un agente a OTRO agente real" -- el escenario que
+    // faltaba en la lista explícita de F11.
+    it("10. admin asigna a agente A, reasigna a agente B, y quita la asignación -- ciclo completo real", async () => {
+      const { token: tokenAdmin, tenantId, phoneNumberId, miembroId: miembroAdmin } = await crearTenantConAgente({ rol: "admin" });
+      const { miembroId: miembroA } = await agregarMiembroAlTenant(tenantId, "agente");
+      const { miembroId: miembroB } = await agregarMiembroAlTenant(tenantId, "agente");
+      const telefonoCliente = "573000000018";
+
+      const res1 = await asignarPOST(req("/api/dashboard/conversaciones/asignar", { phone_number_id: phoneNumberId, telefono_cliente: telefonoCliente, miembro_id: miembroA }, tokenAdmin));
+      assert.equal(res1.status, 200);
+      const { data: filaA } = await admin.from("dulabs_conversacion_asignaciones").select("miembro_id").eq("phone_number_id", phoneNumberId).eq("telefono_cliente", telefonoCliente).maybeSingle();
+      assert.equal(filaA?.miembro_id, miembroA);
+
+      const res2 = await asignarPOST(req("/api/dashboard/conversaciones/asignar", { phone_number_id: phoneNumberId, telefono_cliente: telefonoCliente, miembro_id: miembroB }, tokenAdmin));
+      assert.equal(res2.status, 200);
+      const { data: filaB } = await admin.from("dulabs_conversacion_asignaciones").select("miembro_id").eq("phone_number_id", phoneNumberId).eq("telefono_cliente", telefonoCliente).maybeSingle();
+      assert.equal(filaB?.miembro_id, miembroB, "la reasignación real debe mover la fila de A a B, no crear una segunda");
+
+      const eventos = await admin.from("dulabs_conversacion_eventos").select("tipo, miembro_id").eq("phone_number_id", phoneNumberId).eq("telefono_cliente", telefonoCliente).order("id", { ascending: true });
+      assert.equal(eventos.data?.[0]?.tipo, "asignado");
+      assert.equal(eventos.data?.[1]?.tipo, "reasignado", "el segundo evento debe registrarse como reasignación, no como una asignación nueva");
+      assert.equal(eventos.data?.[1]?.miembro_id, miembroAdmin, "el evento registra QUIÉN hizo la reasignación (el admin), no a quién se asignó");
+
+      const res3 = await asignarPOST(req("/api/dashboard/conversaciones/asignar", { phone_number_id: phoneNumberId, telefono_cliente: telefonoCliente, miembro_id: null }, tokenAdmin));
+      assert.equal(res3.status, 200);
+      const { data: filaFinal } = await admin.from("dulabs_conversacion_asignaciones").select("miembro_id").eq("phone_number_id", phoneNumberId).eq("telefono_cliente", telefonoCliente).maybeSingle();
+      assert.equal(filaFinal?.miembro_id, null);
+    });
+
+    // Complemento del test 7: un agente no-admin tampoco puede REASIGNAR
+    // (mover de otro agente a sí mismo pasando por el mismo endpoint, en
+    // una conversación que YA tiene dueño) sin que sea su propio
+    // autoasignado -- ya cubierto por 6/7, pero acá se prueba explícitamente
+    // el caso "ya tiene otro dueño real" en vez de "sin asignar".
+    it("11. agente no-admin no puede reasignarle a OTRO agente una conversación que ya tiene dueño", async () => {
+      const { token: tokenAdmin, tenantId, phoneNumberId } = await crearTenantConAgente({ rol: "admin" });
+      const { token: tokenAgenteNoAdmin } = await agregarMiembroAlTenant(tenantId, "agente");
+      const { miembroId: miembroOtro } = await agregarMiembroAlTenant(tenantId, "agente");
+      const telefonoCliente = "573000000019";
+
+      const asignacionInicial = await asignarPOST(
+        req("/api/dashboard/conversaciones/asignar", { phone_number_id: phoneNumberId, telefono_cliente: telefonoCliente, miembro_id: miembroOtro }, tokenAdmin),
+      );
+      assert.equal(asignacionInicial.status, 200);
+
+      const intento = await asignarPOST(
+        req("/api/dashboard/conversaciones/asignar", { phone_number_id: phoneNumberId, telefono_cliente: telefonoCliente, miembro_id: miembroOtro }, tokenAgenteNoAdmin),
+      );
+      assert.equal(intento.status, 403, "un agente no-admin no puede tocar la asignación de una conversación ajena, ni siquiera 'reafirmándola'");
+
+      const { data: filaSinCambios } = await admin.from("dulabs_conversacion_asignaciones").select("miembro_id").eq("phone_number_id", phoneNumberId).eq("telefono_cliente", telefonoCliente).maybeSingle();
+      assert.equal(filaSinCambios?.miembro_id, miembroOtro, "la asignación real no debe cambiar tras el intento rechazado");
     });
 
     it("10. estado: valor inválido -> 400", async () => {

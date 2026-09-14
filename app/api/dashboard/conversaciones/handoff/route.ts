@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { resolverMiembroEquipo, requireRol } from "@/lib/team";
 import { activarPausaChat, liberarPausaChat } from "@/lib/pausas-chat";
+import { respuestaSiLimiteTasaExcedido } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 
@@ -36,6 +37,13 @@ export async function POST(request: NextRequest) {
   if (!requireRol(miembro, ["admin", "agente"])) {
     return Response.json({ error: "No tienes permiso para esta acción" }, { status: 403 });
   }
+
+  const limiteExcedido = await respuestaSiLimiteTasaExcedido(supabase, {
+    recurso: "conversaciones-handoff",
+    tenantId: miembro.tenantId,
+    categoria: "escritura",
+  });
+  if (limiteExcedido) return limiteExcedido;
 
   let body: { phone_number_id?: string; telefono_cliente?: string; accion?: string };
   try {

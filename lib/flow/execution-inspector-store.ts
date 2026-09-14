@@ -114,25 +114,33 @@ export async function getExecutionDetailBundle(
   const execution = executionData as FlowExecutionRow | null;
   if (!execution || execution.flow_id !== input.flowId) return null;
 
+  // Fase 11 (Debt Zero, autorizado) — tope defensivo. Bajo uso normal, una
+  // sola ejecución nunca se acerca a esto (acotada por los pasos reales del
+  // Flow); el límite solo protege el Execution Inspector contra el caso
+  // patológico de una ejecución atascada en loop durante mucho tiempo.
+  const TOPE_FILAS_EJECUCION = 2000;
   const [eventsRes, effectsRes, transitionsRes] = await Promise.all([
     supabase
       .from("dulabs_flow_events")
       .select("*")
       .eq("tenant_id", input.tenantId)
       .eq("flow_execution_id", execution.id)
-      .order("created_at", { ascending: true }),
+      .order("created_at", { ascending: true })
+      .limit(TOPE_FILAS_EJECUCION),
     supabase
       .from("dulabs_flow_effects")
       .select("*")
       .eq("tenant_id", input.tenantId)
       .eq("flow_execution_id", execution.id)
-      .order("requested_at", { ascending: true }),
+      .order("requested_at", { ascending: true })
+      .limit(TOPE_FILAS_EJECUCION),
     supabase
       .from("dulabs_flow_node_transitions")
       .select("*")
       .eq("tenant_id", input.tenantId)
       .eq("flow_execution_id", execution.id)
-      .order("occurred_at", { ascending: true }),
+      .order("occurred_at", { ascending: true })
+      .limit(TOPE_FILAS_EJECUCION),
   ]);
   if (eventsRes.error) throw eventsRes.error;
   if (effectsRes.error) throw effectsRes.error;

@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { resolverMiembroEquipo } from "@/lib/team";
 import { resolverPeriodo } from "@/lib/analytics/periodo";
+import { respuestaSiLimiteTasaExcedido } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 
@@ -36,6 +37,13 @@ export async function GET(request: NextRequest) {
   }
   const miembro = await resolverMiembroEquipo(supabase, userData.user.id);
   if (!miembro) return Response.json({ error: "No perteneces a ningún equipo activo" }, { status: 403 });
+
+  const limiteExcedido = await respuestaSiLimiteTasaExcedido(supabase, {
+    recurso: "analytics-inbox",
+    tenantId: miembro.tenantId,
+    categoria: "lectura",
+  });
+  if (limiteExcedido) return limiteExcedido;
 
   const resultadoPeriodo = resolverPeriodo(request.nextUrl.searchParams);
   if (!resultadoPeriodo.ok) return Response.json({ error: resultadoPeriodo.error }, { status: 400 });
@@ -117,9 +125,34 @@ export async function GET(request: NextRequest) {
   });
   resultadoPorAgente.sort((a, b) => b.mensajesEnviadosEnPeriodo - a.mensajesEnviadosEnPeriodo);
 
+  // Fase 11 (Debt Zero, autorizado) — cierra la limitación documentada en
+  // F10 ("tiempo hasta toma no implementado"). Definición exacta y por qué
+  // no requirió instrumentación nueva: ver el comentario de la función SQL
+  // en 20261003000000_dulabs_tiempo_hasta_toma.sql. Tolerante a que esa
+  // migración no esté aplicada todavía (mismo criterio que el resto de RPCs
+  // de F10/F11): si falla, viaja null en vez de romper el resto del endpoint.
+  let tiempoHastaTomaPromedioSeg: number | null = null;
+  let tiempoHastaTomaMuestras = 0;
+  const { data: tiempoData, error: tiempoError } = await supabase.rpc("dulabs_tiempo_hasta_toma_promedio_seg", {
+    p_phone_number_ids: phoneNumberIds,
+    p_desde: desde.toISOString(),
+    p_hasta: hasta.toISOString(),
+  });
+  if (tiempoError) {
+    console.error(
+      "[analytics/inbox] RPC dulabs_tiempo_hasta_toma_promedio_seg no disponible (¿falta aplicar la migración de F11?):",
+      tiempoError.message,
+    );
+  } else if (Array.isArray(tiempoData) && tiempoData.length > 0) {
+    const fila = tiempoData[0] as { promedio_seg: number | null; muestras: number };
+    tiempoHastaTomaPromedioSeg = fila.promedio_seg;
+    tiempoHastaTomaMuestras = Number(fila.muestras ?? 0);
+  }
+
   return Response.json({
     periodo: basePeriodo,
     handoffs: { aHumano: handoffsAHumano, aIA: handoffsAIA },
+    tiempoHastaToma: { promedioSeg: tiempoHastaTomaPromedioSeg, muestras: tiempoHastaTomaMuestras },
     porAgente: resultadoPorAgente,
   });
 }

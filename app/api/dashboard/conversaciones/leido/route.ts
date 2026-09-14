@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { resolverMiembroEquipo, requireRol } from "@/lib/team";
 import { marcarConversacionLeida } from "@/lib/conversacion-estado";
+import { respuestaSiLimiteTasaExcedido } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 
@@ -23,6 +24,17 @@ export async function POST(request: NextRequest) {
   if (!requireRol(miembro, ["admin", "agente", "lectura"])) {
     return Response.json({ error: "No tienes permiso para esta acción" }, { status: 403 });
   }
+
+  // Categoría "lectura" a propósito, aunque sea POST -- se dispara en cada
+  // apertura de conversación (navegación normal del Inbox), no una escritura
+  // de negocio; un límite estricto de "escritura" generaría 429 falsos
+  // positivos en un uso normal y rápido del Inbox.
+  const limiteExcedido = await respuestaSiLimiteTasaExcedido(supabase, {
+    recurso: "conversaciones-leido",
+    tenantId: miembro.tenantId,
+    categoria: "lectura",
+  });
+  if (limiteExcedido) return limiteExcedido;
 
   let body: { phone_number_id?: string; telefono_cliente?: string };
   try {

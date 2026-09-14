@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { resolverMiembroEquipo } from "@/lib/team";
 import { resolverPeriodo } from "@/lib/analytics/periodo";
+import { respuestaSiLimiteTasaExcedido } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 
@@ -49,6 +50,13 @@ export async function GET(request: NextRequest) {
   }
   const miembro = await resolverMiembroEquipo(supabase, userData.user.id);
   if (!miembro) return Response.json({ error: "No perteneces a ningún equipo activo" }, { status: 403 });
+
+  const limiteExcedido = await respuestaSiLimiteTasaExcedido(supabase, {
+    recurso: "analytics-flows",
+    tenantId: miembro.tenantId,
+    categoria: "lectura",
+  });
+  if (limiteExcedido) return limiteExcedido;
 
   const resultadoPeriodo = resolverPeriodo(request.nextUrl.searchParams);
   if (!resultadoPeriodo.ok) return Response.json({ error: resultadoPeriodo.error }, { status: 400 });

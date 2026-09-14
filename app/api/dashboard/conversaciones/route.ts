@@ -3,6 +3,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { resolverMiembroEquipo } from "@/lib/team";
 import { leerEstadosConversacion, estadoEfectivo } from "@/lib/conversacion-estado";
 import { resolverUltimoMensajePorConversacion } from "@/lib/conversaciones-inbox";
+import { respuestaSiLimiteTasaExcedido } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 
@@ -20,6 +21,13 @@ export async function GET(request: NextRequest) {
   }
   const miembro = await resolverMiembroEquipo(supabase, userData.user.id);
   if (!miembro) return Response.json({ error: "No perteneces a ningún equipo activo" }, { status: 403 });
+
+  const limiteExcedido = await respuestaSiLimiteTasaExcedido(supabase, {
+    recurso: "conversaciones-lista",
+    tenantId: miembro.tenantId,
+    categoria: "lectura",
+  });
+  if (limiteExcedido) return limiteExcedido;
 
   const { data: negocios, error: negociosError } = await supabase
     .from("dulabs_clientes_config")

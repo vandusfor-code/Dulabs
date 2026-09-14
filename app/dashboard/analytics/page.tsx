@@ -52,6 +52,7 @@ type FlowsAnalytics = {
 
 type InboxAnalytics = {
   handoffs: { aHumano: number; aIA: number };
+  tiempoHastaToma?: { promedioSeg: number | null; muestras: number };
   porAgente: { miembroId: number; nombre: string; asignacionesEnPeriodo: number; mensajesEnviadosEnPeriodo: number; conversacionesActuales: number }[];
 };
 
@@ -470,6 +471,15 @@ export default function AnalyticsPage() {
               <Pill tone="warning">{t("IA → Humano", "AI → Human")} {inboxAnalytics?.handoffs.aHumano ?? 0}</Pill>
               <Pill tone="info">{t("Humano → IA", "Human → AI")} {inboxAnalytics?.handoffs.aIA ?? 0}</Pill>
             </div>
+            {inboxAnalytics?.tiempoHastaToma && inboxAnalytics.tiempoHastaToma.muestras > 0 && (
+              <p className="mt-3 text-xs text-mist">
+                {t("Tiempo promedio hasta tomar", "Average time to take")}:{" "}
+                <span className="font-medium text-fg">
+                  {inboxAnalytics.tiempoHastaToma.promedioSeg != null ? formatearDuracion(inboxAnalytics.tiempoHastaToma.promedioSeg, t) : "—"}
+                </span>{" "}
+                ({inboxAnalytics.tiempoHastaToma.muestras} {t("traspasos", "handoffs")})
+              </p>
+            )}
           </div>
           <div className="rounded-xl border border-edge bg-card p-5">
             <h3 className="text-sm font-medium text-fg">{t("Por agente", "By agent")}</h3>

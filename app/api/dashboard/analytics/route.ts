@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { resolverMiembroEquipo } from "@/lib/team";
 import { resolverPeriodo } from "@/lib/analytics/periodo";
+import { respuestaSiLimiteTasaExcedido } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 
@@ -60,6 +61,14 @@ export async function GET(request: NextRequest) {
   }
   const miembro = await resolverMiembroEquipo(supabase, userData.user.id);
   if (!miembro) return Response.json({ error: "No perteneces a ningún equipo activo" }, { status: 403 });
+
+  // Fase 11 (Debt Zero, autorizado) — rate limiting real, aislado por tenant.
+  const limiteExcedido = await respuestaSiLimiteTasaExcedido(supabase, {
+    recurso: "analytics",
+    tenantId: miembro.tenantId,
+    categoria: "lectura",
+  });
+  if (limiteExcedido) return limiteExcedido;
 
   // Fase 10 (Analytics, autorizado) -- soporta today/7d/30d/custom; por
   // defecto 30d para no cambiar el comportamiento de quien ya llama este
@@ -133,10 +142,16 @@ export async function GET(request: NextRequest) {
     const stats = new Map<number, { enviados: number; leidos: number; respondidos: number }>();
 
     if (idsCampanas.length > 0) {
+      // Fase 11 (Debt Zero, autorizado) — tope defensivo: sin fecha, esta
+      // consulta puede crecer con TODA la historia de campañas del tenant.
+      // Suficiente para un ranking real ("mejor desempeño"), que no
+      // necesita cada fila histórica para seguir siendo representativo.
       const { data: mensajesPlantillas, error: mpError } = await supabase
         .from("dulabs_mensajes_log")
         .select("campana_id, estado_entrega, respondido")
-        .in("campana_id", idsCampanas);
+        .in("campana_id", idsCampanas)
+        .order("created_at", { ascending: false })
+        .limit(20000);
       if (mpError) return Response.json({ error: mpError.message }, { status: 500 });
 
       for (const m of mensajesPlantillas ?? []) {

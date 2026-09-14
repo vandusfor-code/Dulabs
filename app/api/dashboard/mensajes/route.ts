@@ -1,8 +1,9 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { resolverMiembroEquipo, requireRol } from "@/lib/team";
-import { enviarTexto, dentroVentana24h } from "@/lib/whatsapp";
+import { enviarTexto, enviarMedia, dentroVentana24h, type WhatsAppMediaType } from "@/lib/whatsapp";
 import { descifrarSecreto } from "@/lib/crypto";
+import { respuestaSiLimiteTasaExcedido } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 
@@ -92,18 +93,49 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: "No tienes permiso para enviar mensajes" }, { status: 403 });
   }
 
-  let body: { phone_number_id?: string; telefono_cliente?: string; texto?: string };
+  // Fase 11 (Debt Zero, autorizado) — "costosa": cada envío es una llamada
+  // real a la API de Meta, no solo una escritura en Supabase.
+  const limiteExcedido = await respuestaSiLimiteTasaExcedido(supabase, {
+    recurso: "mensajes-enviar",
+    tenantId: miembro.tenantId,
+    categoria: "costosa",
+  });
+  if (limiteExcedido) return limiteExcedido;
+
+  // Fase 11 (Completion & Debt Zero, autorizado) — `media` es opcional: un
+  // envío del Inbox ahora puede ser texto puro (como siempre) O un archivo ya
+  // subido a Meta vía POST /api/dashboard/mensajes/media (media_id real, ver
+  // ese endpoint) con un caption opcional. Nunca ambos caminos a la vez
+  // -- reutiliza EXACTAMENTE enviarMedia (lib/whatsapp.ts, Fase F8.4), sin
+  // segundo pipeline.
+  let body: {
+    phone_number_id?: string;
+    telefono_cliente?: string;
+    texto?: string;
+    media?: { tipo?: string; media_id?: string; caption?: string; filename?: string; mime_type?: string; tamano_bytes?: number };
+  };
   try {
     body = await request.json();
   } catch {
     return Response.json({ error: "JSON inválido" }, { status: 400 });
   }
-  const { phone_number_id, telefono_cliente } = body;
+  const { phone_number_id, telefono_cliente, media } = body;
   const texto = body.texto?.trim();
-  if (!phone_number_id || !telefono_cliente || !texto) {
-    return Response.json({ error: "Faltan 'phone_number_id', 'telefono_cliente' o 'texto'" }, { status: 400 });
+  if (!phone_number_id || !telefono_cliente) {
+    return Response.json({ error: "Faltan 'phone_number_id' o 'telefono_cliente'" }, { status: 400 });
   }
-  if (texto.length > MAX_TEXTO) {
+  const TIPOS_MEDIA_VALIDOS: WhatsAppMediaType[] = ["image", "video", "audio", "document", "sticker"];
+  if (media) {
+    if (!media.media_id || !media.tipo || !TIPOS_MEDIA_VALIDOS.includes(media.tipo as WhatsAppMediaType)) {
+      return Response.json({ error: "'media' requiere 'media_id' y un 'tipo' válido" }, { status: 400 });
+    }
+    if (media.tipo === "document" && !media.filename) {
+      return Response.json({ error: "Un documento requiere 'filename'" }, { status: 400 });
+    }
+  } else if (!texto) {
+    return Response.json({ error: "Falta 'texto' (o 'media')" }, { status: 400 });
+  }
+  if (texto && texto.length > MAX_TEXTO) {
     return Response.json({ error: `El mensaje no puede superar ${MAX_TEXTO} caracteres` }, { status: 400 });
   }
 
@@ -132,7 +164,24 @@ export async function POST(request: NextRequest) {
 
   let wamid: string | null = null;
   try {
-    ({ wamid } = await enviarTexto({ phoneNumberId: phone_number_id, token: metaToken, para: telefono_cliente, texto }));
+    if (media) {
+      const tipo = media.tipo as WhatsAppMediaType;
+      // caption solo aplica a image/video/document -- enviarMedia ya lo
+      // filtra internamente, pero se evita mandar un caption a audio/sticker
+      // desde acá también, mismo criterio que flowMediaRefSchema.
+      const caption = tipo === "image" || tipo === "video" || tipo === "document" ? media.caption?.trim() || undefined : undefined;
+      ({ wamid } = await enviarMedia({
+        phoneNumberId: phone_number_id,
+        token: metaToken,
+        para: telefono_cliente,
+        tipo,
+        mediaId: media.media_id,
+        caption,
+        filename: tipo === "document" ? media.filename : undefined,
+      }));
+    } else {
+      ({ wamid } = await enviarTexto({ phoneNumberId: phone_number_id, token: metaToken, para: telefono_cliente, texto: texto! }));
+    }
   } catch (err) {
     return Response.json({ error: err instanceof Error ? err.message : String(err) }, { status: 502 });
   }
@@ -141,9 +190,22 @@ export async function POST(request: NextRequest) {
     phone_number_id,
     telefono_cliente,
     direccion: "saliente",
-    contenido: texto,
+    // Fase F8.4 nunca definió qué guardar en `contenido` para un mensaje de
+    // media puro (sin caption) -- se usa una etiqueta legible en vez de
+    // dejarlo vacío, mismo criterio que usan las campañas para su propio
+    // `contenido` resumen (nunca NULL en una columna NOT NULL).
+    contenido: media ? media.caption?.trim() || `[${media.tipo}]${media.filename ? ` ${media.filename}` : ""}` : texto,
     origen: "agente",
     wamid,
+    ...(media
+      ? {
+          media_tipo: media.tipo,
+          media_id: media.media_id,
+          media_mime_type: media.mime_type ?? null,
+          media_filename: media.tipo === "document" ? media.filename ?? null : null,
+          media_tamano_bytes: media.tamano_bytes ?? null,
+        }
+      : {}),
   });
 
   const mesHoy = new Date().toISOString().slice(0, 7);
@@ -163,18 +225,32 @@ export async function POST(request: NextRequest) {
     .maybeSingle();
 
   if (!asignacionExistente) {
-    await supabase.from("dulabs_conversacion_asignaciones").insert({
+    // Fase 11 (Debt Zero, autorizado) — mismo hallazgo/corrección de
+    // concurrencia que F10 aplicó en handoff/route.ts: dos agentes
+    // respondiendo casi simultáneamente a una conversación SIN asignar
+    // pueden chocar en este INSERT (UNIQUE real de la tabla). Antes, el
+    // error se ignoraba en silencio -- ambos mensajes se enviaban bien
+    // (nunca se bloqueó el envío real), pero el evento "asignado" se
+    // registraba igual aunque el INSERT hubiera fallado, dejando un evento
+    // sin efecto real detrás.
+    const { error: insertError } = await supabase.from("dulabs_conversacion_asignaciones").insert({
       phone_number_id,
       telefono_cliente,
       miembro_id: miembro.miembroId,
       asignado_por: miembro.miembroId,
     });
-    await supabase.from("dulabs_conversacion_eventos").insert({
-      phone_number_id,
-      telefono_cliente,
-      tipo: "asignado",
-      miembro_id: miembro.miembroId,
-    });
+    // 23505 = otro agente ganó la carrera justo antes -- el envío del
+    // mensaje YA ocurrió (nunca se bloquea por esto) y esa conversación
+    // quedó asignada a ese otro agente, no a este; el evento "asignado" ya
+    // lo registró esa otra solicitud, así que acá no se duplica.
+    if (!insertError) {
+      await supabase.from("dulabs_conversacion_eventos").insert({
+        phone_number_id,
+        telefono_cliente,
+        tipo: "asignado",
+        miembro_id: miembro.miembroId,
+      });
+    }
   } else if (!asignacionExistente.miembro_id) {
     await supabase
       .from("dulabs_conversacion_asignaciones")
@@ -193,7 +269,7 @@ export async function POST(request: NextRequest) {
     telefono_cliente,
     tipo: "mensaje_enviado",
     miembro_id: miembro.miembroId,
-    detalle: { wamid, longitud: texto.length },
+    detalle: media ? { wamid, media_tipo: media.tipo } : { wamid, longitud: texto!.length },
   });
 
   return Response.json({ success: true, wamid });
