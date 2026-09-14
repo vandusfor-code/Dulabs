@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useDashboard } from "@/lib/dashboard-session";
 import { supabaseBrowser } from "@/lib/supabase-browser";
@@ -11,6 +11,53 @@ export default function CuentaPage() {
   const router = useRouter();
   const { session, suscripcion, cargarNegocios } = useDashboard();
   const { t } = useI18n();
+
+  // F16.1 (Commercial Scale -- Dunning, autorizado) -- mientras un ciclo de
+  // dunning está activo, `suscripcion.estado` (del contexto global) sigue
+  // mostrando "activa" a propósito (período de gracia) -- este fetch
+  // dedicado es la única forma de saber si hay un pago pendiente de
+  // regularizar, igual que ya hace /checkout con este mismo endpoint.
+  const [dunning, setDunning] = useState<{ intentos: number; proximoIntentoEn: string | null } | null>(null);
+  const [reintentando, setReintentando] = useState(false);
+  const [mensajeDunning, setMensajeDunning] = useState<string | null>(null);
+  const [errorDunning, setErrorDunning] = useState<string | null>(null);
+
+  const cargarDunning = useCallback(async () => {
+    if (!session) return;
+    try {
+      const res = await fetch("/api/dashboard/suscripcion", { headers: { Authorization: `Bearer ${session.access_token}` } });
+      const data = await res.json();
+      setDunning(data.dunning ?? null);
+    } catch {
+      // silencioso -- esto es un aviso adicional, nunca debe bloquear el resto de la página.
+    }
+  }, [session]);
+
+  useEffect(() => {
+    void (async () => {
+      await cargarDunning();
+    })();
+  }, [cargarDunning]);
+
+  async function reintentarPago() {
+    if (!session || reintentando) return;
+    setReintentando(true);
+    setErrorDunning(null);
+    setMensajeDunning(null);
+    try {
+      const res = await fetch("/api/dashboard/suscripcion/reintentar-pago", { method: "POST", headers: { Authorization: `Bearer ${session.access_token}` } });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? t("No se pudo procesar el pago.", "Couldn't process the payment."));
+      if (data.estado === "recuperado") setMensajeDunning(t("¡Pago confirmado! Tu suscripción sigue activa con normalidad.", "Payment confirmed! Your subscription remains active as usual."));
+      else if (data.estado === "pendiente") setMensajeDunning(data.mensaje ?? t("Tu banco está confirmando el pago.", "Your bank is confirming the payment."));
+      else setErrorDunning(data.error ?? t("El pago fue rechazado nuevamente.", "The payment was declined again."));
+      await Promise.all([cargarDunning(), cargarNegocios()]);
+    } catch (err) {
+      setErrorDunning(err instanceof Error ? err.message : String(err));
+    } finally {
+      setReintentando(false);
+    }
+  }
 
   // --- Cancelar / reactivar la suscripción ---
   const [cambiandoPlan, setCambiandoPlan] = useState(false);
@@ -241,6 +288,31 @@ export default function CuentaPage() {
         <h2 className="text-sm font-semibold uppercase tracking-widest text-mist">
           {t("Plan y facturación", "Plan & billing")}
         </h2>
+
+        {dunning && (
+          <div className="mt-4 rounded-xl border border-amber-500/40 bg-amber-500/10 p-4">
+            <p className="text-sm font-medium text-amber-600">
+              {t("No pudimos procesar tu último pago", "We couldn't process your last payment")}
+            </p>
+            <p className="mt-1 text-xs leading-relaxed text-mist">
+              {t(
+                "Tu servicio sigue activo por ahora, pero necesitamos que regularices tu método de pago para evitar una interrupción.",
+                "Your service is still active for now, but we need you to update your payment method to avoid an interruption.",
+              )}
+            </p>
+            {errorDunning && <p className="mt-2 text-xs text-red-600">{errorDunning}</p>}
+            {mensajeDunning && <p className="mt-2 text-xs text-lime-text">{mensajeDunning}</p>}
+            <button
+              type="button"
+              onClick={reintentarPago}
+              disabled={reintentando}
+              className="mt-3 rounded-lg bg-amber-500 px-4 py-2 text-xs font-semibold text-black transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {reintentando ? t("Procesando…", "Processing…") : t("Reintentar pago ahora", "Retry payment now")}
+            </button>
+          </div>
+        )}
+
         {suscripcion ? (
           <dl className="mt-4 grid gap-4 sm:grid-cols-2">
             <div>

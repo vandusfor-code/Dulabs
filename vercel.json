@@ -4,6 +4,10 @@
     {
       "path": "/api/wompi/cobro-mensual",
       "schedule": "0 13 * * *"
+    },
+    {
+      "path": "/api/wompi/dunning-reintentos",
+      "schedule": "0 14 * * *"
     }
   ]
 }

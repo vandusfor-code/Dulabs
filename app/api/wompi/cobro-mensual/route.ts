@@ -4,6 +4,8 @@ import { crearTransaccion, resolverEstadoPago } from "@/lib/wompi";
 import { debeOmitirCobroPorPagoPendiente } from "@/lib/wompi-webhook";
 import { desactivarActivacion } from "@/lib/marketplace-store";
 import { insertarPagoConPlan } from "@/lib/planes-historial";
+import { obtenerCicloActivo, iniciarCicloDunning } from "@/lib/dunning/dunning-domain";
+import { enviarNotificacionDunning } from "@/lib/dunning/notificaciones";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -45,6 +47,19 @@ export async function GET(request: NextRequest) {
           .eq("id_tenant", sub.id_tenant);
         console.log(`[cobro-mensual] suscripción de ${sub.id_tenant} cerrada por cancelación del cliente (no se cobra).`);
         resultados.push({ id_tenant: sub.id_tenant, ok: true, detalle: "cancelada por el cliente, no se cobró" });
+        continue;
+      }
+
+      // FASE F16.1 (Dunning, autorizado) -- un tenant con un ciclo de
+      // dunning activo NO se cobra acá: lo maneja el cron dedicado
+      // app/api/wompi/dunning-reintentos/route.ts, que reclama el ciclo de
+      // forma atómica (dulabs_dunning_reclamar_reintento) según su PROPIO
+      // calendario de reintentos (lib/dunning/politica.ts), no el calendario
+      // mensual normal. Sin este guard, este cron y el de dunning podrían
+      // cobrar al mismo tenant el mismo día.
+      const cicloActivo = await obtenerCicloActivo(supabase, sub.id_tenant);
+      if (cicloActivo) {
+        resultados.push({ id_tenant: sub.id_tenant, ok: true, detalle: "omitido: ciclo de dunning activo, lo maneja el cron de reintentos" });
         continue;
       }
 
@@ -111,6 +126,27 @@ export async function GET(request: NextRequest) {
           `[cobro-mensual] transacción ${transaccion.id} quedó PENDING (tenant ${sub.id_tenant}) — se deja sin tocar, esperando confirmación del webhook.`
         );
         resultados.push({ id_tenant: sub.id_tenant, ok: true, detalle: "PENDING (esperando webhook)" });
+        continue;
+      }
+
+      if (estadoResultado === "vencida") {
+        // FASE F16.1 (Dunning, autorizado) -- antes de esta fase, esto
+        // marcaba la suscripción como 'vencida' de inmediato (mismo día del
+        // rechazo, sin aviso al cliente). Ahora abre un ciclo de dunning:
+        // la suscripción queda tal cual (sigue 'activa', el cliente
+        // conserva el servicio durante el período de gracia) y
+        // app/api/wompi/dunning-reintentos/route.ts se encarga de los
+        // reintentos/avisos/vencimiento final según la política.
+        const ciclo = await iniciarCicloDunning(supabase, { idTenant: sub.id_tenant, motivoFallo: transaccion.status });
+        const { data: authUser } = await supabase.auth.admin.getUserById(sub.id_tenant);
+        await enviarNotificacionDunning(supabase, {
+          idTenant: sub.id_tenant,
+          cicloId: ciclo.id,
+          tipo: "payment_failed",
+          destinatario: sub.wompi_customer_email ?? authUser?.user?.email ?? null,
+          nombreNegocio: (authUser?.user?.user_metadata?.nombre as string | undefined) ?? null,
+        });
+        resultados.push({ id_tenant: sub.id_tenant, ok: true, detalle: `dunning iniciado (${transaccion.status})` });
         continue;
       }
 
