@@ -59,6 +59,12 @@ export default function AdminClientesPage() {
     if (filtroOnboarding) params.set("estado_onboarding", filtroOnboarding);
     if (filtroPago) params.set("estado_pago", filtroPago);
     params.set("orden", orden);
+    // FASE F15 -- /api/dashboard/admin/clientes ahora pagina de verdad
+    // (default 25/página). Esta pantalla vieja no tiene controles de
+    // paginación todavía (el Panel de Operaciones nuevo en /admin/clientes
+    // sí) -- se pide una página grande para conservar el comportamiento de
+    // "verlos todos" que ya tenía, sin regresión, mientras ambas convivan.
+    params.set("por_pagina", "500");
 
     const timeout = setTimeout(() => {
       fetch(`/api/dashboard/admin/clientes?${params.toString()}`, {
