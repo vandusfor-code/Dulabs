@@ -5,6 +5,7 @@ import { planDelTenant, contarAgentesEnUso } from "@/lib/plan-limits";
 import { esSinPlan, MENSAJE_SIN_PLAN } from "@/lib/planes";
 import { esAdminDulabs } from "@/lib/admin-tenant";
 import { ADMIN_TENANT_OVERRIDE_HEADER } from "@/lib/flow/api-auth";
+import { MAX_KNOWLEDGE_CHARS } from "@/lib/upload-validacion";
 
 export const runtime = "nodejs";
 
@@ -46,7 +47,7 @@ export async function GET(request: NextRequest) {
   const [{ data: agentes, error }, plan, enUso] = await Promise.all([
     supabase
       .from("dulabs_agentes")
-      .select("id, nombre, prompt_sistema, base_conocimiento_nombre_archivo, base_conocimiento_actualizado_at, created_at")
+      .select("id, nombre, prompt_sistema, base_conocimiento, base_conocimiento_nombre_archivo, base_conocimiento_actualizado_at, created_at")
       .eq("id_tenant", miembro.tenantId)
       .order("created_at", { ascending: true }),
     planDelTenant(supabase, miembro.tenantId),
@@ -145,13 +146,17 @@ export async function POST(request: NextRequest) {
   return Response.json({ agente });
 }
 
-// Edita nombre y/o prompt de un agente existente.
+// Edita nombre, prompt y/o base de conocimiento (como texto directo, sin
+// pasar por archivo) de un agente existente. base_conocimiento acá es el
+// mismo campo que llena la subida de PDF/Excel/CSV en
+// /api/dashboard/base-conocimiento -- esta ruta es la vía para que el
+// cliente la escriba o edite a mano, sin necesidad de un archivo.
 export async function PATCH(request: NextRequest) {
   const ctx = await autenticar(request);
   if ("error" in ctx) return ctx.error;
   const { supabase, miembro } = ctx;
 
-  let body: { id?: number; nombre?: string; prompt_sistema?: string };
+  let body: { id?: number; nombre?: string; prompt_sistema?: string; base_conocimiento?: string };
   try {
     body = await request.json();
   } catch {
@@ -167,10 +172,17 @@ export async function PATCH(request: NextRequest) {
   if (body.prompt_sistema !== undefined && body.prompt_sistema.length > MAX_PROMPT_LENGTH) {
     return Response.json({ error: `El prompt no puede superar ${MAX_PROMPT_LENGTH} caracteres` }, { status: 400 });
   }
+  if (body.base_conocimiento !== undefined && body.base_conocimiento.length > MAX_KNOWLEDGE_CHARS) {
+    return Response.json({ error: `La base de conocimiento no puede superar ${MAX_KNOWLEDGE_CHARS.toLocaleString("es-CO")} caracteres` }, { status: 400 });
+  }
 
   const cambios: Record<string, string> = { updated_at: new Date().toISOString() };
   if (nombre) cambios.nombre = nombre;
   if (body.prompt_sistema !== undefined) cambios.prompt_sistema = body.prompt_sistema;
+  if (body.base_conocimiento !== undefined) {
+    cambios.base_conocimiento = body.base_conocimiento;
+    cambios.base_conocimiento_actualizado_at = new Date().toISOString();
+  }
 
   const { error } = await supabase.from("dulabs_agentes").update(cambios).eq("id", id).eq("id_tenant", miembro.tenantId);
   if (error) return Response.json({ error: error.message }, { status: 500 });

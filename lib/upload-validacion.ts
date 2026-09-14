@@ -16,6 +16,12 @@
 export const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
 export const MAX_UPLOAD_MB = 4;
 
+// Tope de caracteres de la base de conocimiento -- ya sea que llegue extraída
+// de un archivo subido o escrita/pegada directamente en el textarea del
+// dashboard. Única fuente de verdad para que ambos caminos (subida y edición
+// de texto) validen exactamente el mismo límite.
+export const MAX_KNOWLEDGE_CHARS = 100_000;
+
 // Extensiones aceptadas por la base de conocimiento. `.xls` (binario legacy) NO
 // está: exceljs no lo lee y el backend lo rechaza — incluirlo en el `accept`
 // del input solo produce un error confuso tras subirlo.

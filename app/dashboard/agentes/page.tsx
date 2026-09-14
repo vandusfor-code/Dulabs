@@ -28,7 +28,7 @@ import { formatearTelefono, nombreDelAgente } from "@/lib/format";
 import { PageHeader, Pill } from "@/components/dashboard/shell/ui";
 import { useI18n } from "@/lib/i18n";
 import { PLANES, resolverPlanId } from "@/lib/planes";
-import { validarArchivoConocimiento, MAX_UPLOAD_MB } from "@/lib/upload-validacion";
+import { validarArchivoConocimiento, MAX_UPLOAD_MB, MAX_KNOWLEDGE_CHARS } from "@/lib/upload-validacion";
 
 // Tope duro del lado del cliente para la subida. Debe SIEMPRE terminar el
 // spinner: aunque la plataforma bufee o cuelgue un cuerpo grande, el
@@ -52,6 +52,7 @@ type AgentePerfil = {
   id: number;
   nombre: string;
   prompt_sistema: string | null;
+  base_conocimiento: string | null;
   base_conocimiento_nombre_archivo: string | null;
   base_conocimiento_actualizado_at: string | null;
   created_at: string;
@@ -74,24 +75,57 @@ function formatearDuracion(seg: number): string {
 }
 
 // Base de conocimiento reutilizable: apunta a un agente nuevo (agenteId) o,
-// en la ruta legada, directo a un número (phoneNumberId).
+// en la ruta legada, directo a un número (phoneNumberId). Cuando se recibe
+// `onGuardarTexto` (solo la ruta de agente nuevo, ver AgentePerfilDetail) se
+// muestra un textarea editable además de la subida de archivo -- así el
+// cliente puede escribir o pegar la información directamente, sin depender
+// de que un PDF logre extraerse. La ruta legada sigue mostrando solo la
+// tarjeta de archivo, igual que siempre (backend legado aún no expone el
+// texto completo en /api/dashboard/me, ver lib/dashboard-session.tsx).
 function BaseConocimiento({
   target,
+  texto,
   nombreArchivo,
   accessToken,
   onActualizado,
+  onGuardarTexto,
 }: {
   target: { agenteId: number } | { phoneNumberId: string };
+  texto?: string | null;
   nombreArchivo: string | null;
   accessToken: string;
   onActualizado: () => void;
+  onGuardarTexto?: (texto: string) => Promise<{ error?: string } | void>;
 }) {
   const { t } = useI18n();
   const inputRef = useRef<HTMLInputElement>(null);
   const [subiendo, setSubiendo] = useState(false);
   const [mensaje, setMensaje] = useState<string | null>(null);
+  const [valor, setValor] = useState(texto ?? "");
+  const [guardando, setGuardando] = useState(false);
 
   const tieneArchivo = Boolean(nombreArchivo);
+
+  const guardarTexto = useCallback(async () => {
+    if (!onGuardarTexto) return;
+    setGuardando(true);
+    setMensaje(null);
+    try {
+      const resultado = await onGuardarTexto(valor);
+      if (resultado && "error" in resultado && resultado.error) throw new Error(resultado.error);
+      setMensaje(
+        t(
+          "Guardado. La IA usará esta información desde el próximo mensaje.",
+          "Saved. The AI will use this information from the next message on."
+        )
+      );
+      onActualizado();
+    } catch (err) {
+      setMensaje(err instanceof Error ? err.message : String(err));
+    } finally {
+      setGuardando(false);
+    }
+  }, [onGuardarTexto, valor, onActualizado, t]);
 
   const subirArchivo = useCallback(
     async (archivo: File) => {
@@ -189,13 +223,44 @@ function BaseConocimiento({
         <h3 className="text-sm font-semibold text-fg">{t("Base de conocimiento", "Knowledge base")}</h3>
       </div>
       <p className="text-xs leading-relaxed text-mist">
-        {t(
-          "Sube tu listado de precios (Excel/CSV) o un documento (PDF, como estatutos o políticas). La IA lo usará como referencia además de las instrucciones de arriba.",
-          "Upload your price list (Excel/CSV) or a document (PDF, such as bylaws or policies). The AI will use it as a reference in addition to the instructions above."
-        )}
+        {onGuardarTexto
+          ? t(
+              "Escribe o pega aquí precios, catálogo, políticas o cualquier información que la IA deba usar como referencia. También puedes subir un PDF, Excel o CSV abajo y su texto aparecerá acá para que lo edites o completes.",
+              "Type or paste prices, catalog, policies or any information the AI should use as reference here. You can also upload a PDF, Excel or CSV below and its text will appear here for you to edit or extend."
+            )
+          : t(
+              "Sube tu listado de precios (Excel/CSV) o un documento (PDF, como estatutos o políticas). La IA lo usará como referencia además de las instrucciones de arriba.",
+              "Upload your price list (Excel/CSV) or a document (PDF, such as bylaws or policies). The AI will use it as a reference in addition to the instructions above."
+            )}
       </p>
 
-      {tieneArchivo ? (
+      {onGuardarTexto ? (
+        <>
+          <textarea
+            value={valor}
+            onChange={(e) => setValor(e.target.value)}
+            rows={10}
+            maxLength={MAX_KNOWLEDGE_CHARS}
+            placeholder={t(
+              "Ej: Nuestros precios son... Atendemos de... a... Nuestra dirección es...",
+              "E.g: Our prices are... We're open from... to... Our address is..."
+            )}
+            className="mt-3 w-full rounded-lg border border-edge bg-ink px-4 py-3 text-sm leading-relaxed text-fg outline-none transition-colors duration-200 focus:border-lime/50"
+          />
+          <div className="mt-3 flex items-center justify-between gap-3">
+            <button
+              onClick={guardarTexto}
+              disabled={guardando}
+              className="rounded-lg bg-lime px-5 py-2.5 text-sm font-semibold text-lime-fg transition-colors hover:bg-lime-hover disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {guardando ? t("Guardando…", "Saving…") : t("Guardar", "Save")}
+            </button>
+            <span className="text-xs text-mist">
+              {valor.length.toLocaleString("es-CO")} / {MAX_KNOWLEDGE_CHARS.toLocaleString("es-CO")}
+            </span>
+          </div>
+        </>
+      ) : tieneArchivo ? (
         <div className="mt-4 flex items-center justify-between gap-3 rounded-lg border border-edge bg-ink p-3">
           <div className="flex min-w-0 items-center gap-2.5">
             <FileText className="size-4 shrink-0 text-lime-text" />
@@ -229,8 +294,17 @@ function BaseConocimiento({
         disabled={subiendo}
         className="mt-3 rounded-lg border border-edge px-4 py-2 text-xs font-semibold text-fg transition-colors hover:border-lime/40 disabled:cursor-not-allowed disabled:opacity-50"
       >
-        {subiendo ? t("Procesando…", "Processing…") : tieneArchivo ? t("Reemplazar archivo", "Replace file") : t("Subir archivo", "Upload file")}
+        {subiendo
+          ? t("Procesando…", "Processing…")
+          : onGuardarTexto
+            ? t("O sube un archivo (PDF, Excel o CSV)", "Or upload a file (PDF, Excel or CSV)")
+            : tieneArchivo
+              ? t("Reemplazar archivo", "Replace file")
+              : t("Subir archivo", "Upload file")}
       </button>
+      {onGuardarTexto && tieneArchivo && (
+        <p className="mt-2 text-[11px] text-mist">{t(`Cargado originalmente desde: ${nombreArchivo}`, `Originally loaded from: ${nombreArchivo}`)}</p>
+      )}
       {mensaje && <p className="mt-3 text-xs leading-relaxed text-mist">{mensaje}</p>}
     </div>
   );
@@ -444,6 +518,19 @@ function AgentePerfilDetail({
     [agente.id, accessToken, onActualizado, t]
   );
 
+  const guardarConocimiento = useCallback(
+    async (texto: string) => {
+      const res = await fetch("/api/dashboard/agentes", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ id: agente.id, base_conocimiento: texto }),
+      });
+      const data = await res.json();
+      if (!res.ok) return { error: data.error ?? t("Error guardando", "Error saving") };
+    },
+    [agente.id, accessToken, t]
+  );
+
   const numerosAsignados = negocios.filter((n) => n.agente_id === agente.id);
 
   return (
@@ -539,10 +626,13 @@ function AgentePerfilDetail({
       </div>
 
       <BaseConocimiento
+        key={agente.base_conocimiento_actualizado_at ?? "sin-actualizar"}
         target={{ agenteId: agente.id }}
+        texto={agente.base_conocimiento}
         nombreArchivo={agente.base_conocimiento_nombre_archivo}
         accessToken={accessToken}
         onActualizado={onActualizado}
+        onGuardarTexto={guardarConocimiento}
       />
 
       <div className="rounded-xl border border-edge bg-card p-5">
