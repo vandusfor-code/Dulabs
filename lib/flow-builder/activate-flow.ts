@@ -7,6 +7,7 @@
  */
 
 import type { ClienteConfig } from "@/lib/supabase";
+import { flowApiHeaders } from "@/lib/flow-builder/flow-api-headers";
 
 export type FetchLike = typeof fetch;
 
@@ -31,6 +32,7 @@ async function postActivation(params: {
   flowId: string;
   phoneNumberId: string;
   accessToken: string;
+  adminTenantId?: string;
   fetchImpl?: FetchLike;
 }): Promise<ActivateFlowResult> {
   const doFetch = params.fetchImpl ?? fetch;
@@ -39,7 +41,7 @@ async function postActivation(params: {
   try {
     response = await doFetch(`/api/flows/${params.flowId}/${params.path}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${params.accessToken}` },
+      headers: flowApiHeaders(params.accessToken, { json: true, adminTenantId: params.adminTenantId }),
       body: JSON.stringify({ phoneNumberId: params.phoneNumberId }),
     });
   } catch (err) {
@@ -72,6 +74,7 @@ export async function activateFlow(params: {
   flowId: string;
   phoneNumberId: string;
   accessToken: string;
+  adminTenantId?: string;
   fetchImpl?: FetchLike;
 }): Promise<ActivateFlowResult> {
   return postActivation({ path: "activate", ...params });
@@ -82,6 +85,7 @@ export async function deactivateFlow(params: {
   flowId: string;
   phoneNumberId: string;
   accessToken: string;
+  adminTenantId?: string;
   fetchImpl?: FetchLike;
 }): Promise<ActivateFlowResult> {
   return postActivation({ path: "deactivate", ...params });

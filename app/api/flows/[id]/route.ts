@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireFlowAccess } from "@/lib/flow/api-auth";
 import { archiveFlow, getFlowById, updateFlow } from "@/lib/flow/flow-store";
+import { registrarAuditoriaAdmin } from "@/lib/auditoria-admin";
 
 export const runtime = "nodejs";
 
@@ -35,7 +36,7 @@ async function tieneClienteActivo(
 }
 
 export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const access = await requireFlowAccess(request, ["admin", "agente"]);
+  const access = await requireFlowAccess(request, ["admin", "agente"], { allowAdminOverride: true });
   if (!access.ok) return access.response;
   const { supabase, miembro } = access.ctx;
   const { id } = await params;
@@ -53,9 +54,9 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 // se tocan acá -- cambian únicamente vía publishFlowVersion()/archiveFlow().
 // La definición del Flow tampoco: eso se hace creando una versión nueva.
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const access = await requireFlowAccess(request, ["admin"]);
+  const access = await requireFlowAccess(request, ["admin"], { allowAdminOverride: true });
   if (!access.ok) return access.response;
-  const { supabase, miembro } = access.ctx;
+  const { supabase, miembro, esAdminOverride } = access.ctx;
   const { id } = await params;
 
   let body: Record<string, unknown>;
@@ -98,6 +99,15 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       slug: slug as string | undefined,
     });
     if (!flow) return Response.json({ error: "Flow no encontrado" }, { status: 404 });
+    if (esAdminOverride) {
+      await registrarAuditoriaAdmin(supabase, {
+        operador: miembro,
+        accion: "EDIT_FLOW",
+        idTenant: miembro.tenantId,
+        recurso: id,
+        metadata: { name, description, slug },
+      });
+    }
     return Response.json({ flow });
   } catch (error) {
     if (esConflictoDeSlug(error)) {
@@ -112,9 +122,9 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 // tiene este Flow activo (dulabs_clientes_config.flow_activo=true) -- no se
 // toca esa fila, solo se rechaza el archivado.
 export async function DELETE(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const access = await requireFlowAccess(request, ["admin"]);
+  const access = await requireFlowAccess(request, ["admin"], { allowAdminOverride: true });
   if (!access.ok) return access.response;
-  const { supabase, miembro } = access.ctx;
+  const { supabase, miembro, esAdminOverride } = access.ctx;
   const { id } = await params;
 
   try {
@@ -131,6 +141,14 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
 
     const flow = await archiveFlow(supabase, { tenantId: miembro.tenantId, flowId: id });
     if (!flow) return Response.json({ error: "Flow no encontrado" }, { status: 404 });
+    if (esAdminOverride) {
+      await registrarAuditoriaAdmin(supabase, {
+        operador: miembro,
+        accion: "DELETE_FLOW",
+        idTenant: miembro.tenantId,
+        recurso: id,
+      });
+    }
     return Response.json({ flow });
   } catch (error) {
     return Response.json({ error: (error as Error).message ?? "Error inesperado" }, { status: 500 });

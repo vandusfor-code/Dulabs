@@ -6,6 +6,8 @@
  * API es la única autoridad (rol, ownership, Flow activo/publicado).
  */
 
+import { flowApiHeaders } from "@/lib/flow-builder/flow-api-headers";
+
 export type FetchLike = typeof fetch;
 
 export type TriggerRouterErrorKind = "unauthorized" | "forbidden" | "not_found" | "conflict" | "network" | "unknown";
@@ -31,6 +33,7 @@ async function postTriggerRouter(params: {
   flowId: string;
   phoneNumberId: string;
   accessToken: string;
+  adminTenantId?: string;
   fetchImpl?: FetchLike;
 }): Promise<TriggerRouterResult> {
   const doFetch = params.fetchImpl ?? fetch;
@@ -39,7 +42,7 @@ async function postTriggerRouter(params: {
   try {
     response = await doFetch(`/api/flows/${params.flowId}/trigger-router/${params.path}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${params.accessToken}` },
+      headers: flowApiHeaders(params.accessToken, { json: true, adminTenantId: params.adminTenantId }),
       body: JSON.stringify({ phoneNumberId: params.phoneNumberId }),
     });
   } catch (err) {
@@ -72,6 +75,7 @@ export async function activateTriggerRouter(params: {
   flowId: string;
   phoneNumberId: string;
   accessToken: string;
+  adminTenantId?: string;
   fetchImpl?: FetchLike;
 }): Promise<TriggerRouterResult> {
   return postTriggerRouter({ path: "activate", ...params });
@@ -82,6 +86,7 @@ export async function deactivateTriggerRouter(params: {
   flowId: string;
   phoneNumberId: string;
   accessToken: string;
+  adminTenantId?: string;
   fetchImpl?: FetchLike;
 }): Promise<TriggerRouterResult> {
   return postTriggerRouter({ path: "deactivate", ...params });

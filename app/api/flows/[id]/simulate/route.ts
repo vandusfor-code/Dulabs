@@ -79,7 +79,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   // Mismos roles que POST /validate (admin + agente) -- simular no escribe
   // nada, así que no exige el rol estricto de admin que sí exige
   // guardar/publicar.
-  const access = await requireFlowAccess(request, ["admin", "agente"]);
+  const access = await requireFlowAccess(request, ["admin", "agente"], { allowAdminOverride: true });
   if (!access.ok) return access.response;
   const { supabase, miembro } = access.ctx;
   const { id: flowId } = await params;

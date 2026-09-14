@@ -5,6 +5,8 @@
  * del Flow Builder -- NUNCA se crea una API paralela.
  */
 
+import { flowApiHeaders } from "@/lib/flow-builder/flow-api-headers";
+
 export type FetchLike = typeof fetch;
 
 export interface AgenteResumen {
@@ -20,11 +22,11 @@ export type ListAgentesResult =
   | { ok: true; agentes: AgenteResumen[] }
   | { ok: false; error: string };
 
-export async function listAgentesDelTenant(params: { accessToken: string; fetchImpl?: FetchLike }): Promise<ListAgentesResult> {
+export async function listAgentesDelTenant(params: { accessToken: string; adminTenantId?: string; fetchImpl?: FetchLike }): Promise<ListAgentesResult> {
   const doFetch = params.fetchImpl ?? fetch;
   let response: Response;
   try {
-    response = await doFetch("/api/dashboard/agentes", { headers: { Authorization: `Bearer ${params.accessToken}` } });
+    response = await doFetch("/api/dashboard/agentes", { headers: flowApiHeaders(params.accessToken, { adminTenantId: params.adminTenantId }) });
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : "Error de red" };
   }

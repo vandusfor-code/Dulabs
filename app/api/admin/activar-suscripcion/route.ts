@@ -1,7 +1,8 @@
 import type { NextRequest } from "next/server";
 import crypto from "node:crypto";
 import { supabaseAdmin } from "@/lib/supabase";
-import { PLANES, ORDEN_PLANES_ADMIN, type PlanId } from "@/lib/planes";
+import { PLANES, type PlanId } from "@/lib/planes";
+import { activarSuscripcionManual } from "@/lib/suscripcion-domain";
 
 export const runtime = "nodejs";
 
@@ -12,6 +13,10 @@ export const runtime = "nodejs";
 // negocio, no solo el propio), algo que el modelo de roles normal
 // (admin/agente de un tenant) no contempla -- mismo criterio que
 // /api/wompi/cobro-mensual (CRON_SECRET) o el /api/system/migrate de DuMo.
+// FASE F15: la lógica real vive en lib/suscripcion-domain.ts
+// (activarSuscripcionManual), compartida con la acción equivalente del
+// Panel de Operaciones (gateada por sesión real, no por secreto) -- esta
+// ruta sigue existiendo para uso server-to-server/manual.
 function autorizado(request: NextRequest): boolean {
   const secreto = process.env.PLATFORM_ADMIN_SECRET;
   if (!secreto) return false;
@@ -27,10 +32,6 @@ type Body = {
   plan?: string;
   precio_cop?: number;
   fecha_proximo_cobro?: string; // YYYY-MM-DD, opcional -- default +1 año (ciclo típico de un trato Enterprise)
-  // FASE F14 -- ver migración 20260914090000_activacion_manual_auditoria.sql:
-  // esta ruta no tiene sesión de usuario (gateada por secreto compartido), así
-  // que el rastro de auditoría depende de que quien la llame se identifique.
-  // Opcionales para no romper llamadas existentes que todavía no los manden.
   operador?: string;
   motivo?: string;
 };
@@ -51,12 +52,6 @@ export async function POST(request: NextRequest) {
   if (!tenant_email || !plan || precio_cop === undefined) {
     return Response.json({ error: "Faltan 'tenant_email', 'plan' o 'precio_cop'" }, { status: 400 });
   }
-  if (!ORDEN_PLANES_ADMIN.includes(plan as PlanId)) {
-    return Response.json({ error: `Plan inválido. Debe ser uno de: ${ORDEN_PLANES_ADMIN.join(", ")}` }, { status: 400 });
-  }
-  if (!Number.isInteger(precio_cop) || precio_cop < 0) {
-    return Response.json({ error: "precio_cop debe ser un entero >= 0" }, { status: 400 });
-  }
 
   const supabase = supabaseAdmin();
 
@@ -70,57 +65,20 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: `No existe ningún miembro de equipo con el correo '${tenant_email}'` }, { status: 404 });
   }
 
-  const fechaProximoCobro =
-    body.fecha_proximo_cobro ||
-    (() => {
-      const d = new Date();
-      d.setFullYear(d.getFullYear() + 1);
-      return d.toISOString().slice(0, 10);
-    })();
-
-  const filaBase = {
-    id_tenant: miembro.tenant_id,
+  const r = await activarSuscripcionManual(supabase, {
+    idTenant: miembro.tenant_id,
     plan,
-    precio_cop,
-    wompi_payment_source_id: null, // facturación manual/negociada, fuera de Wompi
-    wompi_customer_email: tenant_email,
-    estado: "activa",
-    cortesia: false,
-    fecha_proximo_cobro: fechaProximoCobro,
-    updated_at: new Date().toISOString(),
-  };
-
-  let { data: suscripcion, error: upsertError } = await supabase
-    .from("dulabs_suscripciones")
-    .upsert(
-      { ...filaBase, activada_manualmente_por: body.operador ?? null, activada_manualmente_motivo: body.motivo ?? null },
-      { onConflict: "id_tenant" }
-    )
-    .select("*")
-    .single();
-  // Fail-safe: si la migración 20260914090000_activacion_manual_auditoria.sql
-  // todavía no corrió en Supabase, las columnas nuevas no existen -- se
-  // reintenta sin ellas para no tumbar la única ruta de activación manual
-  // (mismo criterio defensivo que app/api/wompi/webhook/route.ts con
-  // tipo/marketplace_activacion_id). PostgREST reporta esto como "PGRST204"
-  // (columna fuera del schema cache), NUNCA como el "42703" crudo de
-  // Postgres -- confirmado empíricamente esta fase, ver
-  // lib/amore-entrada-sesiones.ts para el mismo hallazgo documentado antes.
-  // Corrige un bug real de la fase F14 anterior: ese fix comprobaba
-  // "42703", que nunca iba a coincidir en un INSERT/UPDATE vía PostgREST.
-  if (upsertError?.code === "PGRST204" || upsertError?.code === "42703") {
-    console.error("[activar-suscripcion] columnas de auditoría no existen todavía (falta correr la migración), reintentando sin ellas:", upsertError.message);
-    ({ data: suscripcion, error: upsertError } = await supabase
-      .from("dulabs_suscripciones")
-      .upsert(filaBase, { onConflict: "id_tenant" })
-      .select("*")
-      .single());
-  }
-  if (upsertError) return Response.json({ error: upsertError.message }, { status: 500 });
+    precioCop: precio_cop,
+    fechaProximoCobro: body.fecha_proximo_cobro,
+    correo: tenant_email,
+    operador: body.operador,
+    motivo: body.motivo,
+  });
+  if (!r.ok) return Response.json({ error: r.error }, { status: r.status });
 
   return Response.json({
     success: true,
-    suscripcion,
+    suscripcion: r.data.suscripcion,
     limites: PLANES[plan as PlanId].limites,
   });
 }

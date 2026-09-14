@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { verificarAccesoAdminDulabs } from "@/lib/admin-tenant";
 import { obtenerClientesAdmin, type EstadoImplementacion } from "@/lib/admin-clientes";
+import { calcularAlertas } from "@/lib/alertas-admin";
 
 export const runtime = "nodejs";
 
@@ -94,6 +95,26 @@ export async function GET(request: NextRequest) {
     estadoImplementacion: c.onboarding?.estadoImplementacion ?? null,
   }));
 
+  // FASE F15 -- señales operativas reales que pide la Fase 4 del pedido
+  // ("¿cómo están TODOS mis clientes?"): estado de pago real (no solo
+  // implementación), conexión de WhatsApp, IA pausada, Flow con errores.
+  // Ningún dato se inventa -- todo viene de columnas/tablas reales ya
+  // auditadas esta fase.
+  const clientesPorEstadoPago = { activa: 0, pendiente_pago: 0, vencida: 0, cancelada: 0 } as Record<string, number>;
+  for (const c of clientes) clientesPorEstadoPago[c.estadoPago] = (clientesPorEstadoPago[c.estadoPago] ?? 0) + 1;
+
+  const { data: numeros } = await acceso.supabase
+    .from("dulabs_clientes_config")
+    .select("id_tenant, ia_pausada, estado_conexion, meta_permanent_token");
+  const whatsappConectados = (numeros ?? []).filter((n) => n.estado_conexion === "conectado" || (!n.estado_conexion && n.meta_permanent_token)).length;
+  const whatsappDesconectados = (numeros ?? []).length - whatsappConectados;
+  const botsActivos = (numeros ?? []).filter((n) => !n.ia_pausada).length;
+  const botsPausados = (numeros ?? []).filter((n) => n.ia_pausada).length;
+
+  const alertas = await calcularAlertas(acceso.supabase);
+  const alertasCriticas = alertas.filter((a) => a.severidad === "critica" && a.estado !== "resuelta").length;
+  const flowsConErrores = new Set(alertas.filter((a) => a.tipo === "flow_con_errores").map((a) => a.idTenant)).size;
+
   return Response.json({
     totalClientes,
     clientesActivos,
@@ -106,5 +127,12 @@ export async function GET(request: NextRequest) {
     atencion,
     metricas: { tiempoPagoAConfiguracionHoras: tiempoPagoAConfiguracion, tiempoPagoAActivacionHoras: tiempoPagoAActivacion },
     clientesRecientes,
+    clientesPorEstadoPago,
+    whatsapp: { conectados: whatsappConectados, desconectados: whatsappDesconectados },
+    bots: { activos: botsActivos, pausados: botsPausados },
+    flowsConErrores,
+    alertasCriticas,
+    pagosPendientes: clientesPorEstadoPago.pendiente_pago,
+    pagosFallidos: (pagosRecientesData ?? []).filter((p) => p.estado === "DECLINED").length,
   });
 }

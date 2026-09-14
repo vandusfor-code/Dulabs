@@ -58,5 +58,18 @@ export async function GET(request: NextRequest) {
     clientes = [...clientes].sort((a, b) => new Date(b.fechaCompra).getTime() - new Date(a.fechaCompra).getTime());
   }
 
-  return Response.json({ clientes });
+  // FASE F15 -- paginación real (Fase 5/28 del pedido: "no cargar todos los
+  // clientes de golpe"). obtenerClientesAdmin sigue trayendo todas las
+  // suscripciones de la base en una sola consulta (limitación real y
+  // documentada de esta fase, ver reporte F15 -- a la escala actual de
+  // clientes de DuLabs es aceptable; paginar también a nivel de consulta
+  // SQL es la primera optimización a hacer cuando el volumen lo justifique)
+  // pero la RESPUESTA al navegador sí queda acotada, con metadata de total.
+  const pagina = Math.max(1, Number(request.nextUrl.searchParams.get("pagina") ?? "1") || 1);
+  const porPagina = Math.min(100, Math.max(1, Number(request.nextUrl.searchParams.get("por_pagina") ?? "25") || 25));
+  const total = clientes.length;
+  const inicio = (pagina - 1) * porPagina;
+  const paginaDeClientes = clientes.slice(inicio, inicio + porPagina);
+
+  return Response.json({ clientes: paginaDeClientes, total, pagina, porPagina, totalPaginas: Math.max(1, Math.ceil(total / porPagina)) });
 }

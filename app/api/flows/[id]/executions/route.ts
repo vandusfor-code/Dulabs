@@ -28,7 +28,7 @@ const VALID_STATUSES: ReadonlySet<string> = new Set([
 // (lib/flow/execution-inspector-store.ts, capa de lectura NUEVA y separada)
 // en vez de reimplementar el filtrado acá.
 export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const access = await requireFlowAccess(request, ["admin", "agente"]);
+  const access = await requireFlowAccess(request, ["admin", "agente"], { allowAdminOverride: true });
   if (!access.ok) return access.response;
   const { supabase, miembro } = access.ctx;
   const { id } = await params;

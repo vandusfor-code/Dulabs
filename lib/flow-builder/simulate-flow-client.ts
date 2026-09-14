@@ -10,6 +10,7 @@ import type { SimulationInputEvent, SimulationTurnResult } from "@/lib/flow/simu
 import type { SimulationOverrides } from "@/lib/flow/executors/simulated-executor-registry";
 import type { FlowEngineState } from "@/lib/flow/engine-types";
 import type { FlowValidationResult } from "@/lib/flow/errors";
+import { flowApiHeaders } from "@/lib/flow-builder/flow-api-headers";
 
 export type FetchLike = typeof fetch;
 
@@ -44,6 +45,7 @@ export async function simulateFlowTurn(params: {
   event: SimulationInputEvent;
   engineState: FlowEngineState | null;
   accessToken: string;
+  adminTenantId?: string;
   versionId?: string;
   initialVariables?: Record<string, unknown>;
   overrides?: SimulationOverrides;
@@ -55,7 +57,7 @@ export async function simulateFlowTurn(params: {
   try {
     response = await doFetch(`/api/flows/${params.flowId}/simulate`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${params.accessToken}` },
+      headers: flowApiHeaders(params.accessToken, { json: true, adminTenantId: params.adminTenantId }),
       body: JSON.stringify({
         event: params.event,
         engineState: params.engineState,

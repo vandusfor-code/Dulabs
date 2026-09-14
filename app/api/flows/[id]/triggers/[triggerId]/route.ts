@@ -9,7 +9,7 @@ export const runtime = "nodejs";
 // (ej. keyword -> event) dejaría `config` con forma inválida para el tipo
 // nuevo; el flujo correcto es DELETE + POST de un trigger nuevo.
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string; triggerId: string }> }) {
-  const access = await requireFlowAccess(request, ["admin"]);
+  const access = await requireFlowAccess(request, ["admin"], { allowAdminOverride: true });
   if (!access.ok) return access.response;
   const { supabase, miembro } = access.ctx;
   const { id, triggerId } = await params;
@@ -59,7 +59,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 }
 
 export async function DELETE(request: NextRequest, { params }: { params: Promise<{ id: string; triggerId: string }> }) {
-  const access = await requireFlowAccess(request, ["admin"]);
+  const access = await requireFlowAccess(request, ["admin"], { allowAdminOverride: true });
   if (!access.ok) return access.response;
   const { supabase, miembro } = access.ctx;
   const { id, triggerId } = await params;

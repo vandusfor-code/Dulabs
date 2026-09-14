@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { requireFlowAccess } from "@/lib/flow/api-auth";
 import { getFlowById } from "@/lib/flow/flow-store";
 import { desactivarFlowParaNumero, FlowActivationCheckViolationError } from "@/lib/flow/flow-activation";
+import { registrarAuditoriaAdmin } from "@/lib/auditoria-admin";
 
 export const runtime = "nodejs";
 
@@ -16,9 +17,9 @@ export const runtime = "nodejs";
  * apague por error la activación de un Flow distinto en ese número).
  */
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const access = await requireFlowAccess(request, ["admin"]);
+  const access = await requireFlowAccess(request, ["admin"], { allowAdminOverride: true });
   if (!access.ok) return access.response;
-  const { supabase, miembro } = access.ctx;
+  const { supabase, miembro, esAdminOverride } = access.ctx;
   const { id } = await params;
 
   let body: { phoneNumberId?: unknown };
@@ -45,6 +46,15 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         return Response.json({ error: "Este Flow no está activo en ese número" }, { status: 409 });
       }
       return Response.json({ error: "Número no encontrado" }, { status: 404 });
+    }
+    if (esAdminOverride) {
+      await registrarAuditoriaAdmin(supabase, {
+        operador: miembro,
+        accion: "DEACTIVATE_FLOW",
+        idTenant: miembro.tenantId,
+        recurso: body.phoneNumberId,
+        metadata: { flowId: id },
+      });
     }
     return Response.json({ negocio: resultado.row });
   } catch (error) {

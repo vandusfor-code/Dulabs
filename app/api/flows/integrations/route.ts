@@ -14,7 +14,7 @@ const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH"] as const;
  * ruta ni siquiera toca dulabs_flow_credentials).
  */
 export async function GET(request: NextRequest) {
-  const access = await requireFlowAccess(request, ["admin", "agente"]);
+  const access = await requireFlowAccess(request, ["admin", "agente"], { allowAdminOverride: true });
   if (!access.ok) return access.response;
   const { supabase, miembro } = access.ctx;
 
@@ -30,7 +30,7 @@ export async function GET(request: NextRequest) {
 // separado (POST /api/flows/integrations/[id]/approve), nunca implícito en
 // la creación, para que quede un registro de quién aprobó y cuándo.
 export async function POST(request: NextRequest) {
-  const access = await requireFlowAccess(request, ["admin"]);
+  const access = await requireFlowAccess(request, ["admin"], { allowAdminOverride: true });
   if (!access.ok) return access.response;
   const { supabase, miembro } = access.ctx;
 

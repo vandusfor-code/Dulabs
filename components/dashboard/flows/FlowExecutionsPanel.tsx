@@ -66,6 +66,8 @@ export interface FlowExecutionsPanelProps {
   onClose: () => void;
   flowId: string;
   accessToken: string;
+  /** F15.1 (Admin Flow Studio, autorizado) -- tenant del cliente cuando lo opera un admin de DuLabs vía Flow Studio (ver lib/flow/api-auth.ts). */
+  adminTenantId?: string;
   /** El Builder resalta este camino sobre FlowCanvas (spec: "Visualización sobre el canvas") -- null cuando no hay ejecución seleccionada. */
   onPathChange: (path: { nodeIds: ReadonlySet<string>; edgeIds: ReadonlySet<string> } | null) => void;
   onCenterNode: (nodeId: string) => void;
@@ -73,7 +75,7 @@ export interface FlowExecutionsPanelProps {
 
 const PAGE_SIZE = 20;
 
-export function FlowExecutionsPanel({ open, onClose, flowId, accessToken, onPathChange, onCenterNode }: FlowExecutionsPanelProps) {
+export function FlowExecutionsPanel({ open, onClose, flowId, accessToken, adminTenantId, onPathChange, onCenterNode }: FlowExecutionsPanelProps) {
   const [executions, setExecutions] = useState<FlowExecutionRow[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -93,6 +95,7 @@ export function FlowExecutionsPanel({ open, onClose, flowId, accessToken, onPath
     const result = await listExecutions({
       flowId,
       accessToken,
+      adminTenantId,
       status: statusFilter || undefined,
       telefono: telefonoFilter || undefined,
       page,
@@ -122,6 +125,7 @@ export function FlowExecutionsPanel({ open, onClose, flowId, accessToken, onPath
       const result = await listExecutions({
         flowId,
         accessToken,
+        adminTenantId,
         status: statusFilter || undefined,
         telefono: telefonoFilter || undefined,
         page,
@@ -141,13 +145,13 @@ export function FlowExecutionsPanel({ open, onClose, flowId, accessToken, onPath
     return () => {
       cancelled = true;
     };
-  }, [open, page, statusFilter, telefonoFilter, flowId, accessToken]);
+  }, [open, page, statusFilter, telefonoFilter, flowId, accessToken, adminTenantId]);
 
   async function openDetail(execution: FlowExecutionRow) {
     setLoadingDetail(true);
     setDetailError(null);
     setSelected(null);
-    const result = await getExecutionDetail({ flowId, executionId: execution.id, accessToken });
+    const result = await getExecutionDetail({ flowId, executionId: execution.id, accessToken, adminTenantId });
     setLoadingDetail(false);
     if (result.ok) {
       setSelected(result.execution);

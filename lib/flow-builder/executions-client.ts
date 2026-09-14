@@ -8,6 +8,7 @@
 
 import type { FlowExecutionRow } from "@/lib/flow/flow-store-types";
 import type { ExecutionInspectorDetail } from "@/lib/flow/execution-inspector";
+import { flowApiHeaders } from "@/lib/flow-builder/flow-api-headers";
 
 export type FetchLike = typeof fetch;
 
@@ -28,6 +29,7 @@ function errorKindForStatus(status: number): ExecutionsErrorKind {
 export interface ListExecutionsParams {
   flowId: string;
   accessToken: string;
+  adminTenantId?: string;
   status?: FlowExecutionRow["status"];
   telefono?: string;
   page?: number;
@@ -51,7 +53,7 @@ export async function listExecutions(params: ListExecutionsParams): Promise<List
   let response: Response;
   try {
     response = await doFetch(`/api/flows/${params.flowId}/executions${qs ? `?${qs}` : ""}`, {
-      headers: { Authorization: `Bearer ${params.accessToken}` },
+      headers: flowApiHeaders(params.accessToken, { adminTenantId: params.adminTenantId }),
     });
   } catch (err) {
     return { ok: false, error: { kind: "network", message: err instanceof Error ? err.message : "Error de red" } };
@@ -74,6 +76,7 @@ export interface GetExecutionDetailParams {
   flowId: string;
   executionId: string;
   accessToken: string;
+  adminTenantId?: string;
   fetchImpl?: FetchLike;
 }
 
@@ -85,7 +88,7 @@ export async function getExecutionDetail(params: GetExecutionDetailParams): Prom
   let response: Response;
   try {
     response = await doFetch(`/api/flows/${params.flowId}/executions/${params.executionId}`, {
-      headers: { Authorization: `Bearer ${params.accessToken}` },
+      headers: flowApiHeaders(params.accessToken, { adminTenantId: params.adminTenantId }),
     });
   } catch (err) {
     return { ok: false, error: { kind: "network", message: err instanceof Error ? err.message : "Error de red" } };
