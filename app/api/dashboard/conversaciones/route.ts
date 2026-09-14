@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { resolverMiembroEquipo } from "@/lib/team";
 import { leerEstadosConversacion, estadoEfectivo } from "@/lib/conversacion-estado";
+import { resolverUltimoMensajePorConversacion } from "@/lib/conversaciones-inbox";
 
 export const runtime = "nodejs";
 
@@ -29,9 +30,25 @@ export async function GET(request: NextRequest) {
   const phoneNumberIds = (negocios ?? []).map((n) => n.phone_number_id);
   if (phoneNumberIds.length === 0) return Response.json({ conversaciones: [] });
 
-  const { data: mensajes, error } = await supabase
+  // Fase 10 (Scalability, autorizado) -- hallazgo F10-B: esta lista ya NO
+  // se construye recortando los 500 mensajes más recientes de todo el
+  // tenant (eso podía hacer desaparecer conversaciones reales pero poco
+  // activas bajo tráfico alto y desparejo). Ver lib/conversaciones-inbox.ts.
+  let ultimos;
+  try {
+    ultimos = await resolverUltimoMensajePorConversacion(supabase, phoneNumberIds);
+  } catch (err) {
+    return Response.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
+  }
+
+  // Ventana acotada de mensajes recientes SOLO para aproximar el conteo de
+  // "no leídos" por conversación (ver más abajo) -- no leído es, por
+  // definición, algo cercano en el tiempo, así que un tope razonable acá no
+  // pierde información práctica del mismo modo en que perder la conversación
+  // completa de la lista sí lo hacía.
+  const { data: mensajesRecientes, error } = await supabase
     .from("dulabs_mensajes_log")
-    .select("phone_number_id, telefono_cliente, direccion, contenido, created_at")
+    .select("phone_number_id, telefono_cliente, direccion, created_at")
     .in("phone_number_id", phoneNumberIds)
     .order("created_at", { ascending: false })
     .limit(500);
@@ -39,22 +56,14 @@ export async function GET(request: NextRequest) {
 
   const nombrePorNumero = new Map((negocios ?? []).map((n) => [n.phone_number_id, n.nombre_negocio]));
 
-  // Nos quedamos con el mensaje más reciente por (phone_number_id, telefono_cliente).
-  const vistos = new Set<string>();
-  const conversaciones = [];
-  for (const m of mensajes ?? []) {
-    const clave = `${m.phone_number_id}:${m.telefono_cliente}`;
-    if (vistos.has(clave)) continue;
-    vistos.add(clave);
-    conversaciones.push({
-      phone_number_id: m.phone_number_id,
-      telefono_cliente: m.telefono_cliente,
-      nombre_negocio: nombrePorNumero.get(m.phone_number_id) ?? m.phone_number_id,
-      ultimo_mensaje: m.contenido,
-      ultima_direccion: m.direccion,
-      ultima_fecha: m.created_at,
-    });
-  }
+  const conversaciones = ultimos.map((m) => ({
+    phone_number_id: m.phone_number_id,
+    telefono_cliente: m.telefono_cliente,
+    nombre_negocio: nombrePorNumero.get(m.phone_number_id) ?? m.phone_number_id,
+    ultimo_mensaje: m.contenido,
+    ultima_direccion: m.direccion,
+    ultima_fecha: m.created_at,
+  }));
 
   // Estado de pausa humana por conversación.
   const { data: pausas } = await supabase
@@ -110,7 +119,7 @@ export async function GET(request: NextRequest) {
   // rompe por esto.
   const estadosPorClave = await leerEstadosConversacion(supabase, phoneNumberIds);
   const noLeidosPorClave = new Map<string, number>();
-  for (const m of mensajes ?? []) {
+  for (const m of mensajesRecientes ?? []) {
     if (m.direccion !== "entrante") continue;
     const clave = `${m.phone_number_id}:${m.telefono_cliente}`;
     const fila = estadosPorClave.get(clave);
@@ -167,9 +176,9 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  // Ya viene ordenado por última actividad descendente (el orden del select
-  // de dulabs_mensajes_log de arriba) -- el límite solo evita mandar al
-  // browser una lista sin techo en un tenant con muchísima actividad.
+  // Ya viene ordenado por última actividad descendente (el orden que ya
+  // trae resolverUltimoMensajePorConversacion) -- el límite solo evita
+  // mandar al browser una lista sin techo en un tenant con muchísima actividad.
   resultado = resultado.slice(0, limite);
 
   return Response.json({ conversaciones: resultado });
