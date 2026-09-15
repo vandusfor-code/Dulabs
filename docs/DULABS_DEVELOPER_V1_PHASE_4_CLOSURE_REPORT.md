@@ -2,7 +2,9 @@
 
 **Estado: FINAL REVIEW — NO FROZEN.** Este documento reemplaza al diseño (`DULABS_DEVELOPER_V1_PHASE_4_API_DESIGN.md`) como fuente de verdad del contrato real desplegado. El código real es la referencia; donde el diseño original difiere de la implementación, se documenta la implementación real y se marca la diferencia explícitamente.
 
-Commit: `930f6ef`. Revisión desplegada y sirviendo 100% del tráfico: `dulabs-gateway-00004-qil` (imagen `gateway:fase4-developer-api-v2`).
+Commits: `930f6ef` (implementación) + `4d0faad` (corrección puntual — rate limit de lectura). Revisión desplegada y sirviendo 100% del tráfico: `dulabs-gateway-00006-kuj` (imagen `gateway:fase4-readlimit-fix`).
+
+**Actualización tras la corrección puntual del rate limit de lectura**: el único bloqueo técnico de la auditoría anterior (sección 7) está resuelto y probado en real. Este documento fue actualizado para reflejarlo — no queda ningún PARTIAL/FAIL pendiente en los 12 puntos de la auditoría.
 
 ---
 
@@ -13,15 +15,15 @@ Todos autenticados por `Authorization: Bearer dl_live_...` salvo que se indique.
 | Endpoint | Ownership | Rate limit real aplicado |
 |---|---|---|
 | `POST /api/v1/messages` | `obtenerNumeroDelWorkspace(workspaceId, whatsappNumberId)` antes de crear el job | `devOutboundPorNumero` (2/1s) **+** `devOutboundPorWorkspace` (1200/60s), ambos antes de `crearJobConIdempotencia` |
-| `GET /api/v1/messages/:id` | `obtenerJobDelWorkspace(workspaceId, jobId)` — filtro compuesto en una sola query | **Ninguno** (ver hallazgo 1 abajo) |
-| `GET /api/v1/whatsapp-numbers` | `listarNumeros(workspaceId)` | **Ninguno** |
-| `GET /api/v1/whatsapp-numbers/:id` | `obtenerNumeroDelWorkspace(workspaceId, numeroId)` | **Ninguno** |
-| `GET /api/v1/usage` | `obtenerResumenUsoDelWorkspace(workspaceId, ...)` — `workspaceId` siempre de `ctx`, nunca de query params | **Ninguno** |
-| `GET /api/v1/me` | N/A (devuelve el propio contexto de auth) | **Ninguno** |
-| `GET /api/v1/webhooks` | `listarWebhooksDelWorkspace(workspaceId)` | **Ninguno** |
-| `POST /api/v1/webhooks` | `obtenerNumeroDelWorkspace(workspaceId, whatsappNumberId)` antes de `configurarWebhook` | **Ninguno** |
+| `GET /api/v1/messages/:id` | `obtenerJobDelWorkspace(workspaceId, jobId)` — filtro compuesto en una sola query | `devLectura` (300/60s por workspace) |
+| `GET /api/v1/whatsapp-numbers` | `listarNumeros(workspaceId)` | `devLectura` (300/60s por workspace) |
+| `GET /api/v1/whatsapp-numbers/:id` | `obtenerNumeroDelWorkspace(workspaceId, numeroId)` | `devLectura` (300/60s por workspace) |
+| `GET /api/v1/usage` | `obtenerResumenUsoDelWorkspace(workspaceId, ...)` — `workspaceId` siempre de `ctx`, nunca de query params | `devLectura` (300/60s por workspace) |
+| `GET /api/v1/me` | N/A (devuelve el propio contexto de auth) | `devLectura` (300/60s por workspace) |
+| `GET /api/v1/webhooks` | `listarWebhooksDelWorkspace(workspaceId)` | `devLectura` (300/60s por workspace) |
+| `POST /api/v1/webhooks` | `obtenerNumeroDelWorkspace(workspaceId, whatsappNumberId)` antes de `configurarWebhook` | Ninguno específico (solo `devAuthFallida` genérico) — por diseño, no se le agregó `devLectura` al no estar en la lista de los 6 endpoints autorizados para esta corrección |
 
-Todas las rutas (incluidas las sin rate limit de lectura) pasan por `conWorkspaceAutenticadoPorApiKey`, que sí aplica `devAuthFallida` (20/60s por IP) — pero eso protege intentos de autenticación fallidos, no lectura legítima repetida.
+Los 6 `GET` comparten el MISMO bucket por workspace (`dev-lectura:<workspaceId>`) — un cliente no puede evadir el límite cambiando de endpoint. Todas las rutas además pasan por `conWorkspaceAutenticadoPorApiKey`, que aplica `devAuthFallida` (20/60s por IP) antes de autenticar.
 
 Response shapes, headers y códigos de error: confirmados exactamente como en el reporte de implementación anterior — no repetidos acá para mantener este documento como fuente única sin duplicar el código.
 
@@ -114,18 +116,20 @@ Ningún endpoint confía en un `workspace_id` enviado por el cliente en ningún 
 
 ---
 
-## 7. Rate limit final
+## 7. Rate limit final — RESUELTO
 
 | Límite | Valor real implementado | Aplicado antes de Job/usage | Mecanismo |
 |---|---|---|---|
 | Per-number | 2 msg/s (`devOutboundPorNumero`, ventana 1s) | ✅ | RPC `dulabs_rate_limit_incrementar`, Postgres real |
 | Workspace outbound | 1200 req/min (`devOutboundPorWorkspace`, ventana 60s) | ✅ | Idéntico |
 | Auth failure | 20/60s por IP (`devAuthFallida`) | ✅ (antes de autenticar) | Idéntico |
-| **Reads** | **300/60s (`devLectura`) — DEFINIDO pero NUNCA APLICADO** | ❌ | N/A |
+| **Reads** | **300/60s (`devLectura`) — AHORA REALMENTE APLICADO en los 6 endpoints GET** | ✅ (antes de tocar cualquier store) | Idéntico |
 
-**HALLAZGO — no corregido en esta auditoría, por instrucción explícita de no agregar/cambiar funcionalidad**: la categoría `devLectura` existe en `lib/rate-limit.ts` (agregada durante la implementación) pero **ningún handler de lectura la invoca**. Confirmado con `grep` real: `verificarLimiteTasa` solo se llama desde `api-auth.ts` (auth-fail) y `outbound-handler.ts` (los dos límites de outbound). `GET /api/v1/messages/:id`, `GET /api/v1/whatsapp-numbers(+/:id)`, `GET /api/v1/usage`, `GET /api/v1/me`, `GET /api/v1/webhooks` **no tienen ningún rate limit de lectura real hoy**, más allá del límite genérico de fallos de auth (que no protege lecturas legítimas repetidas). Esto es un **gap real de la implementación de Fase 4**, no algo introducido por esta auditoría — lo encontré revisando el código real contra lo pedido. No lo corregí porque esta auditoría es explícitamente de solo-lectura ("realiza únicamente una auditoría"). Queda como bloqueo técnico documentado, pendiente de tu decisión.
+**Corrección aplicada** (commit `4d0faad`): nuevo wrapper `conLecturaAutenticadaPorApiKey` (`services/gateway/api-auth.ts`), envuelve `conWorkspaceAutenticadoPorApiKey` y agrega la verificación de `devLectura` justo después de autenticar, antes de que el handler toque cualquier store. Aplicado en los 6 `GET`, y deliberadamente NO en `POST /api/v1/messages` ni `POST /api/v1/webhooks` (fuera del alcance autorizado de esta corrección — ambos conservan exactamente sus límites previos, sin cambios, confirmado con un test dedicado).
 
-El resto del mecanismo (distribuido vía Postgres, atómico, fail-open) sigue siendo el mismo ya verificado.
+Bucket por workspace (`dev-lectura:<workspaceId>`), compartido entre los 6 endpoints — verificado con evidencia real (test 6 y smoke test real) que no existe bypass cambiando de endpoint. Mismo mecanismo Postgres ya existente, sin infraestructura nueva.
+
+**Verificado en real contra la infraestructura desplegada**: contador sembrado directamente en `dulabs_rate_limit_counters` (misma clave/ventana que usa el mecanismo real) al límite exacto (300) → la siguiente request real devolvió `429 rate_limit_exceeded` con `Retry-After` real; otro endpoint de lectura con el mismo bucket también `429`; `POST /api/v1/messages` con el mismo workspace al límite de `devLectura` siguió devolviendo `201` sin verse afectado.
 
 ---
 
@@ -155,7 +159,7 @@ Logs reales del Gateway (ventana de 1h, 63 entradas reales) — **0 ocurrencias*
 
 ## 12. Regression — PASS
 
-**174/174 PASS**, 0 fallas, ejecutada de nuevo al inicio de esta auditoría, sin ninguna modificación de código. Ningún test fue tocado.
+**180/180 PASS** (174 previos + 6 nuevos de `read-rate-limit.e2e.test.ts`), 0 fallas. Ningún test existente fue modificado.
 
 ---
 
@@ -169,46 +173,63 @@ Logs reales del Gateway (ventana de 1h, 63 entradas reales) — **0 ocurrencias*
 | 4 | Public status | ✅ PASS |
 | 5 | API key security | ✅ PASS |
 | 6 | Multi-tenant final check | ✅ PASS |
-| 7 | Rate limit final | ⚠️ **PARTIAL — reads sin rate limit real aplicado (hallazgo, sin corregir)** |
+| 7 | Rate limit final | ✅ PASS (corregido en commit `4d0faad`, verificado en real) |
 | 8 | Idempotency final | ✅ PASS |
 | 9 | Webhook security | ✅ PASS |
 | 10 | Payload security | ✅ PASS |
 | 11 | Observability | ✅ PASS (con precisión documentada) |
-| 12 | Regression | ✅ PASS (174/174) |
+| 12 | Regression | ✅ PASS (180/180) |
 
 ---
 
 ## Cambios documentales realizados
 
-Este documento (`docs/DULABS_DEVELOPER_V1_PHASE_4_CLOSURE_REPORT.md`) es nuevo — reemplaza al documento de diseño como fuente de verdad del contrato real. No se modificó ningún otro documento. No se modificó ningún archivo de código, test, migración, ni configuración de infraestructura en esta auditoría.
+Este documento consolida dos rondas: la auditoría final original (que encontró el gap de `devLectura`) y esta actualización tras la corrección puntual (commit `4d0faad`). Es la única fuente de verdad vigente — reemplaza al documento de diseño.
+
+## Archivos modificados (corrección puntual)
+
+`services/gateway/api-auth.ts` (nuevo wrapper `conLecturaAutenticadaPorApiKey`), `services/gateway/errors.ts` (`retryAfterHeader` movido acá, compartido), `services/gateway/outbound-handler.ts` (usa el nuevo wrapper en `GET /messages/:id`, importa `retryAfterHeader` en vez de duplicarlo), `services/gateway/numbers-handler.ts`, `services/gateway/usage-handler.ts`, `services/gateway/me-handler.ts`, `services/gateway/webhooks-handler.ts` (los 5 restantes, usan el nuevo wrapper solo en sus `GET`), `services/gateway/read-rate-limit.e2e.test.ts` (nuevo, 6 tests), `scripts/test-flow-manifest.txt`.
 
 ## Tests ejecutados
 
-Los 26 archivos de la suite completa Developer V1 (174 tests) — ninguno modificado.
+Los 27 archivos de la suite completa Developer V1 (180 tests) — ninguno de los 174 preexistentes fue modificado.
 
-## Resultado
+## Resultado de tests Developer V1
 
-174/174 PASS.
+180/180 PASS.
 
-## Commit
+## Resultado de suite completa
 
-Ningún cambio de código nuevo — el commit de implementación vigente sigue siendo `930f6ef`. Este documento se commitea por separado, como commit de documentación exclusivamente (sin tocar ningún archivo de código, test o configuración).
+180/180 PASS (Developer V1 es la única suite afectada por este cambio; no se tocó ningún archivo fuera de `services/gateway/` y `lib/rate-limit.ts` no fue modificado, solo reutilizado).
 
-## Working tree
+## Resultado de prueba real
 
-Limpio, sin cambios de código. Este documento se commitea por separado (ver sección "Commit" — commit de documentación, ningún cambio de código).
+Ejecutada contra la infraestructura desplegada real (revisión tageada `readlimit`, luego promovida a tráfico live): contador de rate limit sembrado directamente en Postgres al límite exacto (300), la siguiente request real devolvió `429` real con `Retry-After` real; confirmado que otro endpoint de lectura comparte el mismo bucket (sin bypass); confirmado que `POST /api/v1/messages` no se ve afectado. Logs reales grepeados (0 ocurrencias de `Authorization`/`dl_live_`/`whsec_`).
+
+## Revisión de seguridad
+
+Sin cambios de superficie de seguridad — la corrección es puramente de disponibilidad/abuso (rate limiting), no toca autenticación, ownership, ni cifrado. Confirmado que Workers, Reconciliation Job, Pub/Sub, KMS y Secret Manager permanecen exactamente en las mismas imágenes/configuración que antes de esta corrección.
+
+## Revisión de regresiones
+
+180/180 PASS, incluidos los 27 tests de `outbound-handler.e2e.test.ts` (auth, idempotencia, concurrencia, ownership) y `multi-tenant-security.e2e.test.ts` — ninguna regresión.
+
+## Estado de Git
+
+Working tree limpio. Commits nuevos desde el reporte anterior: `4d0faad` (corrección de código) y este documento (commit de documentación separado).
 
 ## Riesgos restantes
 
-1. **Rate limit de lectura no aplicado (sección 7)** — bloqueo técnico real, encontrado en esta auditoría.
-2. Heredado de Fase 3: `reconciliation_pending`/`processing` sin confirmación automática real (riesgo #4, sin cambios).
-3. Rotación pendiente de `meta-app-secret` (sin tocar, como se instruyó).
-4. Migración `retry_pending_idx` sigue sin aplicar (sin tocar, como se instruyó).
+1. Heredado de Fase 3: `reconciliation_pending`/`processing` sin confirmación automática real (riesgo #4, sin cambios).
+2. Rotación pendiente de `meta-app-secret` (sin tocar).
+3. Migración `retry_pending_idx` sigue sin aplicar (sin tocar).
+
+Ningún riesgo nuevo introducido por esta corrección.
 
 ## Confirmación de que NO se agregó funcionalidad nueva
 
-Confirmado — esta auditoría fue exclusivamente de lectura de código, ejecución de tests, lectura de logs reales, y redacción de este documento. Cero líneas de código de producción modificadas.
+Confirmado — se activó exclusivamente un límite YA definido (`devLectura`, ya existente en `lib/rate-limit.ts` desde la implementación original de Fase 4) en los 6 endpoints explícitamente autorizados. No se creó ninguna categoría nueva, ningún endpoint nuevo, ningún cambio de contrato público, ninguna infraestructura nueva.
 
 ---
 
-**NO declaro FASE 4 — FROZEN.** Existe un bloqueo técnico real (rate limit de lectura no aplicado, sección 7) que impide un PASS limpio en todos los puntos. Queda a tu decisión: aceptarlo como deuda técnica documentada para V1, o autorizar una corrección puntual antes del freeze definitivo.
+**READY FOR FROZEN.** Los 12 puntos de la auditoría final están en PASS, con evidencia real (tests + smoke test contra infraestructura desplegada) para cada uno. No declaro FROZEN yo mismo — queda a la espera de tu revisión final.
