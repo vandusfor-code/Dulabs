@@ -229,3 +229,6 @@ lib/developer/jobs-store.e2e.test.ts
 lib/developer/usage-ledger.e2e.test.ts
 lib/developer/events-store.e2e.test.ts
 lib/developer/rls-isolation.e2e.test.ts
+services/gateway/inbound-handler.e2e.test.ts
+services/worker-outbound/handler.e2e.test.ts
+services/worker-inbound/handler.e2e.test.ts
