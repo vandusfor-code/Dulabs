@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { verificarAccesoAdminDulabs } from "@/lib/admin-tenant";
 import { obtenerCreditosMasivos } from "@/lib/campanas-creditos";
+import { dispararBienvenidaMetaSiAplica } from "@/lib/onboarding-meta-template";
 
 export const runtime = "nodejs";
 
@@ -83,6 +84,11 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
           iniciadaAt: sesion.implementacion_iniciada_at,
           activadaAt: sesion.activado_at,
           actualizadoAt: sesion.updated_at,
+          // F16.2 (Onboarding comercial, autorizado) -- estado real del envío
+          // de la plantilla bienvenida_dulabs (sección 20/24 del brief).
+          bienvenidaMetaEnviadaAt: sesion.bienvenida_meta_enviada_at,
+          bienvenidaMetaError: sesion.bienvenida_meta_error,
+          bienvenidaMetaIntentadoAt: sesion.bienvenida_meta_intentado_at,
         }
       : null,
     creditosMasivos,
@@ -99,12 +105,24 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   const { idTenant } = await params;
   const supabase = acceso.supabase;
 
-  let body: { estado_implementacion?: string };
+  let body: { estado_implementacion?: string; reintentar_bienvenida_meta?: boolean };
   try {
     body = await request.json();
   } catch {
     return Response.json({ error: "JSON inválido" }, { status: 400 });
   }
+
+  // F16.2 (Onboarding comercial, autorizado) -- sección 19 del brief:
+  // reintento seguro desde /admin cuando el envío de bienvenida_dulabs
+  // falló (plantilla no aprobada en su momento, error de red, etc.). Reusa
+  // exactamente el mismo camino idempotente que meta-callback -- si ya se
+  // había enviado con éxito, esto es un no-op (reclamarEnvioBienvenidaMeta
+  // no vuelve a reclamar una fila con bienvenida_meta_enviada_at ya lleno).
+  if (body.reintentar_bienvenida_meta) {
+    const resultado = await dispararBienvenidaMetaSiAplica(supabase, idTenant);
+    return Response.json({ success: true, reintento: resultado });
+  }
+
   const nuevoEstado = body.estado_implementacion;
   if (!nuevoEstado || !ESTADOS_VALIDOS.includes(nuevoEstado)) {
     return Response.json({ error: `estado_implementacion debe ser uno de: ${ESTADOS_VALIDOS.join(", ")}` }, { status: 400 });

@@ -212,3 +212,4 @@ lib/flow/f15-1-admin-flow-studio.e2e.test.ts
 lib/flow/f15-2-operations-center-cierre.e2e.test.ts
 lib/dunning/politica.test.ts
 lib/flow/f16-1-dunning.e2e.test.ts
+lib/onboarding-meta-template.e2e.test.ts

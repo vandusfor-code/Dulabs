@@ -6,6 +6,7 @@ import { planDelTenant, contarNumeros } from "@/lib/plan-limits";
 import { esSinPlan, MENSAJE_SIN_PLAN } from "@/lib/planes";
 import { iniciarSyncCoexistencia } from "@/lib/coexistence-sync";
 import { escribirToleranteAColumnaFaltante } from "@/lib/whatsapp-connection-lifecycle";
+import { dispararBienvenidaMetaSiAplica } from "@/lib/onboarding-meta-template";
 
 export const runtime = "nodejs";
 
@@ -251,6 +252,24 @@ export async function POST(request: NextRequest) {
       console.log(`[meta-callback] sync history solicitado (request_id=${historySync.requestId ?? "?"})`);
     } else {
       console.warn(`[meta-callback] sync history no iniciado (no fatal): ${historySync.error}`);
+    }
+
+    // F16.2 (Onboarding comercial, autorizado) -- ESTE es el punto real de
+    // "Meta confirmó ACTIVE" del brief: la conexión ya pasó por el
+    // intercambio de token, el descubrimiento del WABA/número y la
+    // suscripción real al webhook (nada de esto se confía porque el
+    // frontend dijo "listo"). Dispara la plantilla bienvenida_dulabs si
+    // corresponde (pago ya confirmado, teléfono de contacto disponible,
+    // plantilla aprobada) -- nunca bloquea ni revierte la conexión de
+    // WhatsApp si falla: el número queda conectado igual, el fallo solo se
+    // registra (ver lib/onboarding-meta-template.ts). AWAIT a propósito
+    // (mismo motivo que historySync arriba): una función serverless puede
+    // congelarse apenas se manda la respuesta, así que un "fire and forget"
+    // sin await podría no llegar a ejecutarse nunca.
+    try {
+      await dispararBienvenidaMetaSiAplica(supabase, idTenant);
+    } catch (err) {
+      console.error("[meta-callback] error disparando bienvenida Meta (no fatal):", err instanceof Error ? err.message : err);
     }
 
     return Response.json({

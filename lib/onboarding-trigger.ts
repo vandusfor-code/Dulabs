@@ -10,7 +10,7 @@ const GRAPH = `https://graph.facebook.com/${process.env.META_GRAPH_VERSION ?? "v
 // alertas de fallos de IA (ALERTAS_PHONE_NUMBER_ID/ALERTAS_META_TOKEN/
 // ALERTAS_DESTINO, ver lib/alertas.ts) -- cero credenciales nuevas. Nunca
 // lanza: un aviso que falla no puede tumbar el flujo de onboarding real.
-async function avisarNuevoClienteDulabs(texto: string): Promise<void> {
+export async function avisarNuevoClienteDulabs(texto: string): Promise<void> {
   const phoneNumberId = process.env.ALERTAS_PHONE_NUMBER_ID;
   const token = process.env.ALERTAS_META_TOKEN;
   const destino = process.env.ALERTAS_DESTINO;
@@ -36,12 +36,14 @@ async function avisarNuevoClienteDulabs(texto: string): Promise<void> {
 // que una renovación mensual del mismo tenant nunca vuelve a crear otra --
 // crearOnboardingSesionIdempotente solo devuelve una fila la PRIMERA vez.
 //
-// A propósito NO manda ningún mensaje de WhatsApp aquí: el checkout redirige
-// al cliente a un link wa.me para que ÉL escriba primero (ver
-// app/checkout/page.tsx) -- eso abre la ventana de servicio de 24h de
-// verdad, sin depender de una plantilla aprobada por Meta. La bienvenida
-// real se manda cuando llega ese primer mensaje (ver
-// app/webhook-dulabs/route.ts, atenderMensajeOnboarding).
+// F16.2 (Onboarding comercial, autorizado) -- a propósito NO manda ningún
+// mensaje de WhatsApp aquí: después de pagar, el cliente ve la pantalla
+// post-pago con el botón "Conectar WhatsApp con Meta" (ver
+// app/checkout/conectar-whatsapp/page.tsx). La bienvenida real
+// (`bienvenida_dulabs`, una plantilla aprobada por Meta) se manda cuando
+// Meta confirma la conexión, no antes -- ver
+// lib/onboarding-meta-template.ts::dispararBienvenidaMetaSiAplica, llamado
+// desde app/api/auth/meta-callback/route.ts.
 export async function dispararOnboardingSiAplica(supabase: SupabaseClient, idTenant: string): Promise<void> {
   const { data: suscripcion, error: susError } = await supabase
     .from("dulabs_suscripciones")
@@ -88,9 +90,10 @@ export async function dispararOnboardingSiAplica(supabase: SupabaseClient, idTen
   const { data: authUser } = await supabase.auth.admin.getUserById(idTenant);
   const nombre = (authUser?.user?.user_metadata?.nombre as string | undefined) ?? null;
 
-  // Nada de WhatsApp aquí -- queda esperando a que el cliente escriba
-  // primero desde el link wa.me del checkout (ver comentario arriba).
+  // Nada de plantilla todavía -- queda esperando a que el cliente conecte su
+  // WhatsApp con Meta (ver comentario arriba); ese evento dispara la
+  // bienvenida real.
   await avisarNuevoClienteDulabs(
-    `🎉 Nuevo cliente DuLabs — plan ${planNombre}\n${nombre ?? correo}\nEsperando a que escriba por WhatsApp para iniciar el onboarding.`
+    `🎉 Nuevo cliente DuLabs — plan ${planNombre}\n${nombre ?? correo}\nPago confirmado. Esperando a que conecte su WhatsApp con Meta.`
   );
 }

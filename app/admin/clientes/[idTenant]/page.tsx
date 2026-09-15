@@ -12,7 +12,7 @@ import { formatearTelefono } from "@/lib/format";
 import { CreateFlowModal } from "@/components/dashboard/flows/CreateFlowModal";
 import { createFlow as createFlowRequest, duplicateFlow as duplicateFlowRequest } from "@/lib/flow-builder/create-flow";
 import { Seccion, Boton } from "@/components/admin/cliente/AdminClienteUI";
-import { SeccionImplementacion } from "@/components/admin/cliente/SeccionImplementacion";
+import { SeccionImplementacion, type ImplementacionDetalle } from "@/components/admin/cliente/SeccionImplementacion";
 import { SeccionOnboarding, type OnboardingDetalle } from "@/components/admin/cliente/SeccionOnboarding";
 import { SeccionMensajesMasivos, type CreditosMasivos } from "@/components/admin/cliente/SeccionMensajesMasivos";
 import { SeccionSoluciones } from "@/components/admin/cliente/SeccionSoluciones";
@@ -21,7 +21,7 @@ import { SeccionAgente } from "@/components/admin/cliente/SeccionAgente";
 type Detalle = {
   cliente: { idTenant: string; nombre: string | null; correo: string | null; telefono: string | null; plan: string; fechaCompra: string; estadoPago: string };
   onboarding: OnboardingDetalle;
-  implementacion: { estado: string; iniciadaAt: string | null; activadaAt: string | null; actualizadoAt: string } | null;
+  implementacion: ImplementacionDetalle;
   creditosMasivos: CreditosMasivos;
 };
 

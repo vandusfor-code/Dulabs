@@ -88,6 +88,15 @@ export async function POST(request: NextRequest) {
     .eq("id_tenant", idTenant)
     .maybeSingle();
   const precioCop = resolverPrecioSuscripcion(planDef.precioCop, suscripcionExistente?.precio_negociado_cop ?? null);
+  // F16.2 (Onboarding comercial, autorizado) -- el primer cobro (el que pasa
+  // por ESTA ruta, siempre un checkout manual con tarjeta) incluye la cuota
+  // de implementación ADEMÁS de la mensualidad. `precio_cop` en
+  // dulabs_suscripciones sigue guardando SOLO la mensualidad (nunca se le
+  // suma esto) -- eso es lo que usan las renovaciones automáticas
+  // (app/api/wompi/cobro-mensual/route.ts, F16.1 dunning), que nunca pasan
+  // por esta ruta y por lo tanto nunca vuelven a cobrar la implementación.
+  const implementacionCop = planDef.implementacionCop ?? 0;
+  const montoPrimerCobroCop = precioCop + implementacionCop;
 
   const proximoMes = new Date();
   proximoMes.setMonth(proximoMes.getMonth() + 1);
@@ -141,7 +150,7 @@ export async function POST(request: NextRequest) {
 
     const referencia = `dulabs-${idTenant}-${Date.now()}`;
     transaccion = await crearTransaccion({
-      amount_in_cents: precioCop * 100,
+      amount_in_cents: montoPrimerCobroCop * 100,
       customer_email,
       reference: referencia,
       payment_source_id: fuente.id,
@@ -172,7 +181,7 @@ export async function POST(request: NextRequest) {
       {
         id_tenant: idTenant,
         wompi_transaction_id: transaccion.id,
-        monto_cop: precioCop,
+        monto_cop: montoPrimerCobroCop,
         estado: transaccion.status,
         tipo: "suscripcion",
       },
@@ -180,7 +189,7 @@ export async function POST(request: NextRequest) {
     );
     if (pagoInsertError) {
       console.error(
-        `[pagos/suscribir] ALERTA: se cobró a Wompi (transacción ${transaccion.id}, tenant ${idTenant}, $${precioCop} COP) pero no se pudo registrar en dulabs_pagos — revisar si falta correr la migración de tipo/marketplace_activacion_id:`,
+        `[pagos/suscribir] ALERTA: se cobró a Wompi (transacción ${transaccion.id}, tenant ${idTenant}, $${montoPrimerCobroCop} COP = $${precioCop} mensualidad + $${implementacionCop} implementación) pero no se pudo registrar en dulabs_pagos — revisar si falta correr la migración de tipo/marketplace_activacion_id:`,
         pagoInsertError.message
       );
     }
@@ -218,7 +227,7 @@ export async function POST(request: NextRequest) {
     const estadoAlCaer = transaccion ? resolverEstadoPago(transaccion.status) : null;
     if (estadoAlCaer === "activa" || estadoAlCaer === "pendiente_pago") {
       console.error(
-        `[pagos/suscribir] ALERTA: transacción ${transaccion!.id} quedó en estado Wompi "${transaccion!.status}" (tenant ${idTenant}, $${precioCop} COP) pero falló el paso posterior — la reserva se libera a 'vencida' y requiere arreglo manual:`,
+        `[pagos/suscribir] ALERTA: transacción ${transaccion!.id} quedó en estado Wompi "${transaccion!.status}" (tenant ${idTenant}, $${montoPrimerCobroCop} COP) pero falló el paso posterior — la reserva se libera a 'vencida' y requiere arreglo manual:`,
         err instanceof Error ? err.message : err
       );
     }

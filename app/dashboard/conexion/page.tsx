@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import Link from "next/link";
 import { Phone as PhoneIcon, BadgeCheck, Pencil, Check, X, Bot, MessagesSquare, Trash2, Link2, Loader2 } from "lucide-react";
 import { useDashboard, type Negocio } from "@/lib/dashboard-session";
@@ -8,6 +8,7 @@ import { formatearTelefono, nombreDelAgente, CALIDAD_INFO } from "@/lib/format";
 import { PageHeader, Pill, StatTile } from "@/components/dashboard/shell/ui";
 import { useI18n } from "@/lib/i18n";
 import { PLANES, resolverPlanId } from "@/lib/planes";
+import { useMetaEmbeddedSignup } from "@/lib/hooks/use-meta-embedded-signup";
 
 const LIMITE_NUMERICO: Record<string, number> = {
   TIER_50: 50,
@@ -16,40 +17,6 @@ const LIMITE_NUMERICO: Record<string, number> = {
   TIER_10K: 10000,
   TIER_100K: 100000,
 };
-
-const GRAPH_VERSION = "v23.0";
-
-type FBLoginResponse = {
-  authResponse?: { code?: string } | null;
-  status?: string;
-};
-
-declare global {
-  interface Window {
-    FB?: {
-      init(opts: {
-        appId: string;
-        autoLogAppEvents: boolean;
-        xfbml: boolean;
-        version: string;
-      }): void;
-      login(
-        cb: (response: FBLoginResponse) => void,
-        opts: Record<string, unknown>
-      ): void;
-    };
-    fbAsyncInit?: () => void;
-  }
-}
-
-type EstadoConexion =
-  | { fase: "cargando" }
-  | { fase: "listo" }
-  | { fase: "conectando" }
-  | { fase: "exito"; negocio: string; telefono: string }
-  | { fase: "error"; mensaje: string };
-
-type SessionInfo = { waba_id?: string; phone_number_id?: string };
 
 const PLAN_PENDIENTE_KEY = "du_labs_plan_elegido";
 
@@ -548,124 +515,19 @@ export default function ConexionPage() {
   const plan = PLANES[resolverPlanId(suscripcion?.plan)];
   const limiteNumeros = plan.limites.numeros;
   const enTope = limiteNumeros !== null && (negocios?.length ?? 0) >= limiteNumeros;
-  const appId = process.env.NEXT_PUBLIC_META_APP_ID;
-  const configId = process.env.NEXT_PUBLIC_META_CONFIG_ID;
-  const configFaltante = !appId || !configId;
 
   const [planPendiente] = useState<string | null>(() =>
     typeof window === "undefined" ? null : localStorage.getItem(PLAN_PENDIENTE_KEY)
   );
-  const [estado, setEstado] = useState<EstadoConexion>({ fase: "cargando" });
-  const sessionInfo = useRef<SessionInfo>({});
 
-  useEffect(() => {
-    if (configFaltante) return;
-
-    const onMessage = (event: MessageEvent) => {
-      if (!event.origin.endsWith("facebook.com")) return;
-      try {
-        const data = JSON.parse(event.data as string);
-        if (data?.type === "WA_EMBEDDED_SIGNUP" && data?.data) {
-          sessionInfo.current = {
-            waba_id: data.data.waba_id,
-            phone_number_id: data.data.phone_number_id,
-          };
-        }
-      } catch {
-        // mensajes de otros orígenes/formatos se ignoran
-      }
-    };
-    window.addEventListener("message", onMessage);
-
-    window.fbAsyncInit = () => {
-      window.FB!.init({
-        appId: appId!,
-        autoLogAppEvents: true,
-        xfbml: true,
-        version: GRAPH_VERSION,
-      });
-      setEstado({ fase: "listo" });
-    };
-
-    if (!document.getElementById("facebook-jssdk")) {
-      const script = document.createElement("script");
-      script.id = "facebook-jssdk";
-      script.src = "https://connect.facebook.net/es_LA/sdk.js";
-      script.async = true;
-      script.defer = true;
-      script.crossOrigin = "anonymous";
-      document.body.appendChild(script);
-    } else if (window.FB) {
-      queueMicrotask(() => setEstado({ fase: "listo" }));
-    }
-
-    return () => window.removeEventListener("message", onMessage);
-  }, [appId, configId, configFaltante]);
-
-  const conectar = useCallback(() => {
-    if (!window.FB || !session) return;
-    setEstado({ fase: "conectando" });
-    const accessToken = session.access_token;
-
-    window.FB.login(
-      (response: FBLoginResponse) => {
-        const code = response.authResponse?.code;
-        if (!code) {
-          setEstado({
-            fase: "error",
-            mensaje: t("El flujo fue cancelado o Meta no generó el código de autorización.", "The flow was cancelled or Meta didn't generate the authorization code."),
-          });
-          return;
-        }
-
-        const planElegido = localStorage.getItem(PLAN_PENDIENTE_KEY);
-
-        fetch("/api/auth/meta-callback", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${accessToken}`,
-          },
-          body: JSON.stringify({
-            code,
-            ...sessionInfo.current,
-            plan: planElegido,
-          }),
-        })
-          .then((res) => res.json())
-          .then((data) => {
-            if (data.success) {
-              localStorage.removeItem(PLAN_PENDIENTE_KEY);
-              setEstado({
-                fase: "exito",
-                negocio: data.negocio ?? t("tu negocio", "your business"),
-                telefono: data.telefono ?? "",
-              });
-              cargarNegocios();
-            } else {
-              setEstado({
-                fase: "error",
-                mensaje: data.error ?? t("Error desconocido en la vinculación.", "Unknown error while linking."),
-              });
-            }
-          })
-          .catch((err) => {
-            setEstado({ fase: "error", mensaje: String(err) });
-          });
-      },
-      {
-        config_id: configId,
-        response_type: "code",
-        override_default_response_type: true,
-        scope: "whatsapp_business_management,whatsapp_business_messaging",
-        extras: {
-          setup: {},
-          featureType: "whatsapp_business_app_onboarding",
-          sessionInfoVersion: "3",
-        },
-      }
-    );
-  }, [configId, session, cargarNegocios, t]);
+  const { estado, setEstado, conectar, configFaltante } = useMetaEmbeddedSignup({
+    session,
+    plan: planPendiente,
+    onExito: () => {
+      localStorage.removeItem(PLAN_PENDIENTE_KEY);
+      cargarNegocios();
+    },
+  });
 
   const numerosConectados = negocios?.filter((n) => n.conectado).length ?? 0;
   const negociosConTier = (negocios ?? []).filter((n) => n.limite_mensajeria && LIMITE_NUMERICO[n.limite_mensajeria]);
