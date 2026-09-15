@@ -1,14 +1,21 @@
 # Pasos manuales pendientes en producción
 
-## PENDIENTE — DuLabs Developer V1, Fase 1 (arquitectura y contratos)
+## PENDIENTE — DuLabs Developer V1, Fase 2 (data model + security)
 
-La migración `20261006000000_dulabs_developer_v1_fase1.sql` (tabla
-`dulabs_dev_idempotency_keys`, aislada del esquema de Business) **todavía
-no se ha corrido**. Sin ella, `lib/developer/idempotency.e2e.test.ts` falla
-con un error claro de Postgres ("no existe la tabla"), no silenciosamente
--- confirmado corriendo la suite contra producción. El resto de los tests
-de Fase 1 (API keys, SSRF, HMAC, state machine, crash recovery) son puros
-y ya pasan 40/40 sin necesitar esta migración.
+La migración `20261007000000_dulabs_developer_v1_fase2_data_model.sql`
+(6 tablas nuevas: `dulabs_dev_api_keys`, `dulabs_dev_whatsapp_numbers`,
+`dulabs_dev_webhook_configs`, `dulabs_dev_jobs`, `dulabs_dev_usage_ledger`,
+`dulabs_dev_events` -- todas aisladas del esquema de Business) **todavía no
+se ha corrido**. Sin ella, toda la suite E2E de Fase 2
+(`lib/developer/*-store.e2e.test.ts`, `lib/developer/rls-isolation.e2e.test.ts`)
+falla con un error claro de Postgres ("no existe la tabla"), no
+silenciosamente. Correr el archivo completo en el SQL Editor de Supabase
+antes de dar Fase 2 por cerrada.
+
+> Verificado el 14-sep-2026: la migración `20261006000000_dulabs_developer_v1_fase1.sql`
+> (Fase 1, tabla `dulabs_dev_idempotency_keys`) ya está aplicada -- el
+> suite completo `lib/developer/idempotency.e2e.test.ts` (7/7) corrió
+> contra ella y pasó real. La sección que la daba por pendiente se eliminó.
 
 ## PENDIENTE — F16.2 (Onboarding comercial: pago → conectar WhatsApp con Meta → plantilla)
 

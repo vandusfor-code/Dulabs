@@ -220,3 +220,10 @@ lib/developer/outbound-state-machine.test.ts
 lib/developer/crash-recovery.test.ts
 lib/developer/secure-crypto.test.ts
 lib/developer/idempotency.e2e.test.ts
+lib/developer/api-keys-store.e2e.test.ts
+lib/developer/whatsapp-numbers-store.e2e.test.ts
+lib/developer/webhook-config-store.e2e.test.ts
+lib/developer/jobs-store.e2e.test.ts
+lib/developer/usage-ledger.e2e.test.ts
+lib/developer/events-store.e2e.test.ts
+lib/developer/rls-isolation.e2e.test.ts
