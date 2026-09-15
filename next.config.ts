@@ -4,6 +4,22 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: __dirname,
   },
+  // Migración de namespace AMORE (autorizado): /admin/amore/* -> /amoreweb/*.
+  // Redirect de COMPATIBILIDAD transicional (307, no permanente -- puede
+  // retirarse más adelante sin dejar un 308 cacheado agresivamente por
+  // navegadores/buscadores). Verificado antes de agregar esto: /admin/*
+  // no hospeda ninguna otra funcionalidad de DuLabs Business (esa vive en
+  // /dashboard/admin/*, un árbol de rutas completamente distinto) -- así
+  // que este redirect no puede chocar con el Admin real de DuLabs.
+  async redirects() {
+    return [
+      {
+        source: "/admin/amore/:path*",
+        destination: "/amoreweb/:path*",
+        permanent: false,
+      },
+    ];
+  },
   async headers() {
     return [
       {

@@ -4,8 +4,9 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAdminWeb } from "./AdminWebContext";
 
-// Panel web AMORE (autorizado, spec Fase 34) — /admin/amore es SOLO
-// escritorio; en una pantalla angosta (<1024px, el mismo punto de corte
+// Panel web AMORE (autorizado, spec Fase 34) — /amoreweb (migrado desde
+// /admin/amore, autorizado) es SOLO escritorio; en una pantalla angosta
+// (<1024px, el mismo punto de corte
 // que min-w del shell) redirige a la experiencia móvil YA existente y
 // probada (/agenda/[token]) en vez de intentar mantener dos layouts
 // responsive para el mismo panel -- la opción más segura de no romper

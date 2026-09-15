@@ -19,7 +19,7 @@ export default function AdminAmorePerfilPage() {
     try {
       await fetch("/api/agenda-auth/logout", { method: "POST" });
     } finally {
-      router.push("/amore/login");
+      router.push("/amoreweb/login");
     }
   }
 
