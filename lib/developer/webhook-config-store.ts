@@ -44,7 +44,7 @@ export async function configurarWebhook(
         workspace_id: params.workspaceId,
         whatsapp_number_id: params.whatsappNumberId,
         url: params.url,
-        secret_cifrado: cifrarSecretoDev(secreto),
+        secret_cifrado: await cifrarSecretoDev(secreto),
         estado: "activo",
         updated_at: new Date().toISOString(),
         rotated_at: new Date().toISOString(),

@@ -47,7 +47,7 @@ export async function registrarNumero(
     estado: "conectado",
     updated_at: new Date().toISOString(),
   };
-  if (params.metaToken) cambios.meta_token_cifrado = cifrarSecretoDev(params.metaToken);
+  if (params.metaToken) cambios.meta_token_cifrado = await cifrarSecretoDev(params.metaToken);
 
   const { data, error } = await supabase
     .from("dulabs_dev_whatsapp_numbers")
@@ -90,5 +90,5 @@ export async function obtenerTokenMetaDelNumero(supabase: SupabaseClient, params
     .maybeSingle();
   if (error) throw new Error(`[developer/whatsapp-numbers-store] error obteniendo token: ${error.message}`);
   if (!data?.meta_token_cifrado) return null;
-  return descifrarSecretoDev(data.meta_token_cifrado);
+  return await descifrarSecretoDev(data.meta_token_cifrado);
 }

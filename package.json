@@ -11,6 +11,9 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.111.0",
+    "@google-cloud/kms": "^6.1.0",
+    "@google-cloud/pubsub": "^6.0.1",
+    "@google-cloud/secret-manager": "^7.1.0",
     "@supabase/supabase-js": "^2.110.3",
     "@upstash/qstash": "^2.11.3",
     "@xyflow/react": "12.11.6",
