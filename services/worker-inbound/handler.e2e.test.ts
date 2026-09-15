@@ -4,9 +4,9 @@
  * evento dos veces (redelivery de Pub/Sub) no reenvía dos veces al
  * Developer Webhook (idempotencia real, no solo dedupe de persistencia).
  */
-import { describe, it, after } from "node:test";
+import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { randomUUID, randomBytes } from "node:crypto";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { procesarMensajeInbound } from "./handler";
 import { registrarNumero } from "@/lib/developer/whatsapp-numbers-store";
@@ -21,6 +21,15 @@ describe(
   () => {
     const admin: SupabaseClient = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false } });
     const workspacesUsados: string[] = [];
+
+    const claveOriginal = process.env.DEVELOPER_TOKEN_ENCRYPTION_KEY;
+    before(() => {
+      process.env.DEVELOPER_TOKEN_ENCRYPTION_KEY = randomBytes(32).toString("base64");
+    });
+    after(() => {
+      if (claveOriginal === undefined) delete process.env.DEVELOPER_TOKEN_ENCRYPTION_KEY;
+      else process.env.DEVELOPER_TOKEN_ENCRYPTION_KEY = claveOriginal;
+    });
 
     after(async () => {
       for (const workspaceId of workspacesUsados) {

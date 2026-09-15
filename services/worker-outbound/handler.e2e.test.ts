@@ -8,9 +8,9 @@
  * REQUIERE la migración 20261007000000 (Fase 2) Y 20261008000000 (Fase 3,
  * published_at/intentos_publicacion/payload/procesado_en) aplicadas.
  */
-import { describe, it, after } from "node:test";
+import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { randomUUID, randomBytes } from "node:crypto";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { procesarMensajeOutbound } from "./handler";
 import { registrarNumero } from "@/lib/developer/whatsapp-numbers-store";
@@ -23,6 +23,19 @@ describe(
   "DuLabs Developer V1 — worker-outbound handler real contra Postgres (Fase 3)",
   { skip: !HAS_SUPABASE && "requiere SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY" },
   () => {
+    // registrarNumero cifra el token de Meta vía secure-crypto.ts -- en
+    // Cloud Run real usa KMS (KMS_KEY_NAME); en este entorno de test local
+    // ni eso ni DEVELOPER_TOKEN_ENCRYPTION_KEY están configurados, así que
+    // se fija una clave de prueba real para la duración de la suite (mismo
+    // patrón ya usado en secure-crypto.test.ts / whatsapp-numbers-store.e2e.test.ts).
+    const claveOriginal = process.env.DEVELOPER_TOKEN_ENCRYPTION_KEY;
+    before(() => {
+      process.env.DEVELOPER_TOKEN_ENCRYPTION_KEY = randomBytes(32).toString("base64");
+    });
+    after(() => {
+      if (claveOriginal === undefined) delete process.env.DEVELOPER_TOKEN_ENCRYPTION_KEY;
+      else process.env.DEVELOPER_TOKEN_ENCRYPTION_KEY = claveOriginal;
+    });
     const admin: SupabaseClient = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false } });
     const workspacesUsados: string[] = [];
 
