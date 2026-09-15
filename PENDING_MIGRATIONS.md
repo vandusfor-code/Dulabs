@@ -1,5 +1,15 @@
 # Pasos manuales pendientes en producción
 
+## PENDIENTE — DuLabs Developer V1, Fase 1 (arquitectura y contratos)
+
+La migración `20261006000000_dulabs_developer_v1_fase1.sql` (tabla
+`dulabs_dev_idempotency_keys`, aislada del esquema de Business) **todavía
+no se ha corrido**. Sin ella, `lib/developer/idempotency.e2e.test.ts` falla
+con un error claro de Postgres ("no existe la tabla"), no silenciosamente
+-- confirmado corriendo la suite contra producción. El resto de los tests
+de Fase 1 (API keys, SSRF, HMAC, state machine, crash recovery) son puros
+y ya pasan 40/40 sin necesitar esta migración.
+
 ## PENDIENTE — F16.2 (Onboarding comercial: pago → conectar WhatsApp con Meta → plantilla)
 
 La migración `20261005000000_dulabs_onboarding_meta_bienvenida.sql`

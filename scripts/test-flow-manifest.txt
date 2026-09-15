@@ -213,3 +213,9 @@ lib/flow/f15-2-operations-center-cierre.e2e.test.ts
 lib/dunning/politica.test.ts
 lib/flow/f16-1-dunning.e2e.test.ts
 lib/onboarding-meta-template.e2e.test.ts
+lib/developer/api-keys.test.ts
+lib/developer/ssrf-guard.test.ts
+lib/developer/webhook-signature.test.ts
+lib/developer/outbound-state-machine.test.ts
+lib/developer/crash-recovery.test.ts
+lib/developer/idempotency.e2e.test.ts
