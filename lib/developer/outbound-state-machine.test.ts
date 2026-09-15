@@ -143,4 +143,32 @@ describe("DuLabs Developer V1 — outbound state machine (Fase 1, secciones 10/1
     assert.equal(estado.physicalOutcome, "success_confirmed");
     assert.equal(estado.networkAttempts, 1, "un solo intento físico real -- la reconciliación solo confirmó certeza tardía, nunca hizo un segundo POST");
   });
+
+  it("Fase 5 (decisión D5) -- meta_rechazo con permanente:true va DIRECTO a failed_by_meta aunque sea el PRIMER intento (quedan intentos disponibles)", () => {
+    const primerIntento: EstadoCompletoJob = { status: "sending", physicalOutcome: "pre_send", networkAttempts: 1 };
+    const r = transicionar(primerIntento, { tipo: "meta_rechazo", codigoError: "131026", permanente: true });
+    assert.equal(r.permitida, true);
+    if (r.permitida) {
+      assert.equal(r.siguiente.status, "failed_by_meta", "un error permanente nunca debe pasar por retry_pending, sin importar los intentos restantes");
+      assert.equal(r.siguiente.networkAttempts, 1, "no se gastó ningún intento adicional -- solo se detuvo el reintento");
+    }
+  });
+
+  it("Fase 5 (D5) -- meta_rechazo SIN permanente (o permanente:false) preserva EXACTAMENTE el comportamiento anterior a Fase 5: retry_pending si quedan intentos", () => {
+    const primerIntento: EstadoCompletoJob = { status: "sending", physicalOutcome: "pre_send", networkAttempts: 1 };
+    const r1 = transicionar(primerIntento, { tipo: "meta_rechazo", permanente: false });
+    assert.equal(r1.permitida, true);
+    if (r1.permitida) assert.equal(r1.siguiente.status, "retry_pending");
+
+    const r2 = transicionar(primerIntento, { tipo: "meta_rechazo" }); // sin el campo en absoluto -- mismo resultado
+    assert.equal(r2.permitida, true);
+    if (r2.permitida) assert.equal(r2.siguiente.status, "retry_pending");
+  });
+
+  it("Fase 5 (D5) -- permanente:true en el ÚLTIMO intento también termina en failed_by_meta (mismo destino, sin cambio de comportamiento observable)", () => {
+    const ultimoIntento: EstadoCompletoJob = { status: "sending", physicalOutcome: "pre_send", networkAttempts: MAX_INTENTOS_FISICOS };
+    const r = transicionar(ultimoIntento, { tipo: "meta_rechazo", permanente: true });
+    assert.equal(r.permitida, true);
+    if (r.permitida) assert.equal(r.siguiente.status, "failed_by_meta");
+  });
 });

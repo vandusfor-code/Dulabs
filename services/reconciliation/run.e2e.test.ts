@@ -54,7 +54,15 @@ describe(
     async function prepararJob(workspaceId: string) {
       const numero = await registrarNumero(admin, { workspaceId, phoneNumberId: `phn-${randomUUID()}`, metaToken: "EAAtoken-de-prueba" });
       if (!numero.ok) throw new Error("no se pudo crear número de prueba");
-      const job = await crearJobConIdempotencia(admin, { workspaceId, whatsappNumberId: numero.fila.id, idempotencyKey: `idem-${randomUUID()}`, payload: { to: "573000000000" } });
+      // Fase 5 -- payload REAL y completo (type:"text", text:{body}) --
+      // requerido por la validación defensiva nueva del Worker outbound
+      // (parecePayloadValido) antes de mapear al shape real de Meta.
+      const job = await crearJobConIdempotencia(admin, {
+        workspaceId,
+        whatsappNumberId: numero.fila.id,
+        idempotencyKey: `idem-${randomUUID()}`,
+        payload: { whatsappNumberId: numero.fila.id, to: "573000000000", type: "text", text: { body: "hola" } },
+      });
       if (job.resultado === "conflicto_payload_distinto") throw new Error("no debería haber conflicto");
       // Fase 3, cierre (hallazgo del usage_ledger) -- crearJobConIdempotencia
       // ya reserva internamente, no hace falta reservar acá aparte.
@@ -77,6 +85,12 @@ describe(
 
       let jobTrasPrimerIntento = await obtenerJobDelWorkspace(admin, { workspaceId, jobId });
       assert.equal(jobTrasPrimerIntento!.status, "retry_pending", "con intentos disponibles, un rechazo cierto debe dejarlo en retry_pending");
+      assert.ok(jobTrasPrimerIntento!.next_attempt_at, "Fase 5 (D6) -- debe quedar un backoff real fijado");
+
+      // Fase 5 (D6) -- el backoff real (BACKOFF_REINTENTO_MS) todavía no
+      // venció -- se simula que sí venció (mismo patrón ya usado para
+      // locked_at/lease) en vez de esperar el tiempo real en el test.
+      await admin.from("dulabs_dev_jobs").update({ next_attempt_at: new Date(Date.now() - 1_000).toISOString() }).eq("id", jobId);
 
       // Barrido real de reconciliación -- ANTES de esta corrección, nada
       // republicaba este job; ahora reintentarOutbound() debe encontrarlo y
@@ -114,7 +128,12 @@ describe(
       }) as typeof fetch;
       const segundoIntento = await procesarMensajeOutbound({ supabase: admin, metaGraphApiBaseUrl: "https://fixture.invalido", fetchImpl: fetchExito }, { workspaceId, jobId });
       assert.equal(segundoIntento.httpStatus, 200);
-      assert.equal(segundoIntento.motivo, "meta_confirmo_exito");
+      // Fase 5 -- el fixture usa un wamid corto de prueba ("wamid.OK"),
+      // que no cumple el formato real mínimo -- el motivo queda como
+      // meta_confirmo_exito_sin_wamid (no es lo que se prueba acá; esta
+      // prueba es sobre el ciclo de reintento, no sobre captura de wamid,
+      // ver worker-outbound/handler.e2e.test.ts para eso).
+      assert.match(segundoIntento.motivo, /^meta_confirmo_exito/);
 
       const jobFinal = await obtenerJobDelWorkspace(admin, { workspaceId, jobId });
       assert.equal(jobFinal!.status, "success_confirmed");

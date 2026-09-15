@@ -10,7 +10,7 @@ import { describe, it, after } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { crearJobConIdempotencia, obtenerJobDelWorkspace, adquirirLease, liberarLease, aplicarEventoJob } from "@/lib/developer/jobs-store";
+import { crearJobConIdempotencia, obtenerJobDelWorkspace, adquirirLease, liberarLease, aplicarEventoJob, obtenerJobsListosParaReintento, BACKOFF_REINTENTO_MS } from "@/lib/developer/jobs-store";
 import { registrarNumero } from "@/lib/developer/whatsapp-numbers-store";
 
 const HAS_SUPABASE = Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
@@ -260,6 +260,77 @@ describe(
       ]);
       const aplicadas = [a, b].filter((r) => r.aplicada).length;
       assert.equal(aplicadas, 1, "de dos 'encolar' concurrentes sobre el mismo job, exactamente UNA debe aplicarse -- la otra debe fallar por CAS de version_token, nunca duplicar el avance de estado");
+    });
+
+    it("Fase 5 (decisión D6) -- al entrar en retry_pending, next_attempt_at queda fijado en el futuro (backoff real)", async () => {
+      const workspaceId = randomUUID();
+      workspacesUsados.push(workspaceId);
+      const numeroId = await crearNumeroDePrueba(workspaceId);
+      const jobId = await crearJobDePrueba(workspaceId, numeroId);
+      const lease = await adquirirLease(admin, { workspaceId, jobId });
+      assert.equal(lease.adquirido, true);
+      if (!lease.adquirido) return;
+
+      await aplicarEventoJob(admin, { workspaceId, jobId, leaseId: lease.leaseId, evento: { tipo: "encolar" } });
+      await aplicarEventoJob(admin, { workspaceId, jobId, leaseId: lease.leaseId, evento: { tipo: "iniciar_envio" } });
+      const rechazo = await aplicarEventoJob(admin, { workspaceId, jobId, leaseId: lease.leaseId, evento: { tipo: "meta_rechazo" } });
+      assert.equal(rechazo.aplicada, true);
+      if (rechazo.aplicada) {
+        assert.equal(rechazo.job.status, "retry_pending");
+        assert.ok(rechazo.job.next_attempt_at, "debe fijarse next_attempt_at");
+        const delta = new Date(rechazo.job.next_attempt_at!).getTime() - Date.now();
+        assert.ok(delta > 0 && delta <= BACKOFF_REINTENTO_MS + 2000, `next_attempt_at debe estar ~BACKOFF_REINTENTO_MS (${BACKOFF_REINTENTO_MS}ms) en el futuro, delta real: ${delta}ms`);
+      }
+    });
+
+    it("Fase 5 (D6) -- next_attempt_at se limpia (null) al salir de retry_pending hacia sending", async () => {
+      const workspaceId = randomUUID();
+      workspacesUsados.push(workspaceId);
+      const numeroId = await crearNumeroDePrueba(workspaceId);
+      const jobId = await crearJobDePrueba(workspaceId, numeroId);
+      const lease = await adquirirLease(admin, { workspaceId, jobId });
+      assert.equal(lease.adquirido, true);
+      if (!lease.adquirido) return;
+
+      await aplicarEventoJob(admin, { workspaceId, jobId, leaseId: lease.leaseId, evento: { tipo: "encolar" } });
+      await aplicarEventoJob(admin, { workspaceId, jobId, leaseId: lease.leaseId, evento: { tipo: "iniciar_envio" } });
+      await aplicarEventoJob(admin, { workspaceId, jobId, leaseId: lease.leaseId, evento: { tipo: "meta_rechazo" } });
+      let job = await obtenerJobDelWorkspace(admin, { workspaceId, jobId });
+      assert.ok(job!.next_attempt_at);
+
+      const reintento = await aplicarEventoJob(admin, { workspaceId, jobId, leaseId: lease.leaseId, evento: { tipo: "iniciar_envio" } });
+      assert.equal(reintento.aplicada, true);
+      if (reintento.aplicada) assert.equal(reintento.job.next_attempt_at, null, "al volver a 'sending' ya no debe quedar un next_attempt_at viejo");
+    });
+
+    it("Fase 5 (D6) -- obtenerJobsListosParaReintento SOLO devuelve jobs cuyo next_attempt_at ya pasó (o nunca se fijó), nunca uno todavía en backoff", async () => {
+      const workspaceId = randomUUID();
+      workspacesUsados.push(workspaceId);
+      const numeroId = await crearNumeroDePrueba(workspaceId);
+
+      // Job A: recién rechazado -- next_attempt_at en el futuro (~30s), NO debe aparecer todavía.
+      const jobIdFuturo = await crearJobDePrueba(workspaceId, numeroId);
+      const leaseFuturo = await adquirirLease(admin, { workspaceId, jobId: jobIdFuturo });
+      if (leaseFuturo.adquirido) {
+        await aplicarEventoJob(admin, { workspaceId, jobId: jobIdFuturo, leaseId: leaseFuturo.leaseId, evento: { tipo: "encolar" } });
+        await aplicarEventoJob(admin, { workspaceId, jobId: jobIdFuturo, leaseId: leaseFuturo.leaseId, evento: { tipo: "iniciar_envio" } });
+        await aplicarEventoJob(admin, { workspaceId, jobId: jobIdFuturo, leaseId: leaseFuturo.leaseId, evento: { tipo: "meta_rechazo" } });
+      }
+
+      // Job B: mismo camino, pero se fuerza next_attempt_at al pasado (simulando que el backoff ya venció) -- manipulación directa, mismo patrón ya usado para locked_at.
+      const jobIdListo = await crearJobDePrueba(workspaceId, numeroId);
+      const leaseListo = await adquirirLease(admin, { workspaceId, jobId: jobIdListo });
+      if (leaseListo.adquirido) {
+        await aplicarEventoJob(admin, { workspaceId, jobId: jobIdListo, leaseId: leaseListo.leaseId, evento: { tipo: "encolar" } });
+        await aplicarEventoJob(admin, { workspaceId, jobId: jobIdListo, leaseId: leaseListo.leaseId, evento: { tipo: "iniciar_envio" } });
+        await aplicarEventoJob(admin, { workspaceId, jobId: jobIdListo, leaseId: leaseListo.leaseId, evento: { tipo: "meta_rechazo" } });
+      }
+      await admin.from("dulabs_dev_jobs").update({ next_attempt_at: new Date(Date.now() - 5_000).toISOString() }).eq("id", jobIdListo);
+
+      const listos = await obtenerJobsListosParaReintento(admin, { limite: 1000 });
+      const ids = listos.map((j) => j.id);
+      assert.ok(ids.includes(jobIdListo), "el job con next_attempt_at ya vencido debe aparecer como listo");
+      assert.ok(!ids.includes(jobIdFuturo), "el job todavía en backoff (next_attempt_at futuro) NUNCA debe aparecer como listo");
     });
   }
 );

@@ -19,7 +19,15 @@ export type EventoJob =
   | { tipo: "meta_confirmo_exito" }
   // Meta respondió con un error identificable (4xx/5xx CON cuerpo de
   // respuesta legible) -- certeza de que el mensaje NO se envió.
-  | { tipo: "meta_rechazo"; codigoError?: string }
+  // Fase 5 (autorizado, decisión D5) -- `permanente: true` viene de
+  // lib/developer/meta-error-classifier.ts cuando el error.code real de
+  // Meta es una falla de validación/negocio definitiva (ej. número
+  // inválido) -- en ese caso SIEMPRE se va a failed_by_meta, sin importar
+  // cuántos intentos físicos queden, para no gastar el único reintento
+  // disponible en algo que nunca puede funcionar. Sin el flag (default
+  // false/ausente), el comportamiento es EXACTAMENTE el mismo que antes
+  // de Fase 5: retry_pending si quedan intentos, failed_by_meta si no.
+  | { tipo: "meta_rechazo"; codigoError?: string; permanente?: boolean }
   // No hay certeza de si Meta recibió el POST (timeout de red, conexión
   // cortada, crash del proceso a mitad de la llamada). Regla crítica del
   // brief (sección 11): esto NUNCA se trata como "no enviado".
@@ -81,7 +89,10 @@ export function transicionar(actual: EstadoCompletoJob, evento: EventoJob): Resu
       // Un rechazo CIERTO de Meta (no una duda de red) -- el mensaje
       // definitivamente no llegó al usuario final, así que sí es seguro
       // decidir si reintentar (a diferencia de la incertidumbre de red).
-      if (actual.networkAttempts >= MAX_INTENTOS_FISICOS) {
+      // Fase 5 (D5): un error PERMANENTE nunca reintenta, sin importar
+      // cuántos intentos queden -- reintentar algo que estructuralmente
+      // nunca puede funcionar solo gastaría el único intento disponible.
+      if (evento.permanente || actual.networkAttempts >= MAX_INTENTOS_FISICOS) {
         return { permitida: true, siguiente: { status: "failed_by_meta", physicalOutcome: "pre_send", networkAttempts: actual.networkAttempts } };
       }
       return { permitida: true, siguiente: { status: "retry_pending", physicalOutcome: "pre_send", networkAttempts: actual.networkAttempts } };

@@ -24,6 +24,7 @@ export type JobFila = {
   locked_at: string | null;
   version_token: number;
   payload: Record<string, unknown>;
+  wamid: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -117,6 +118,16 @@ export type ResultadoLease = { adquirido: true; leaseId: string; job: JobFila } 
 // otro Worker puede recuperar el ownership").
 export const LEASE_DURACION_MS = 60_000;
 
+// Fase 5 (autorizado, decisión D6) -- backoff real antes de que
+// reintentarOutbound() (services/reconciliation/run.ts) vuelva a
+// republicar un job en retry_pending. Con MAX_INTENTOS_FISICOS=2 (Fase 1,
+// sin tocar) nunca hay más de UN reintento posible en toda la vida de un
+// job, así que un backoff exponencial no aporta nada real -- un valor
+// fijo, corto respecto al ciclo de 5 minutos de Cloud Scheduler, alcanza
+// el objetivo real (evitar que una ráfaga de reconciliación redispare el
+// mismo job de inmediato) sin inventar un sistema paralelo.
+export const BACKOFF_REINTENTO_MS = 30_000;
+
 /**
  * CAS real de adquisición de lease (sección 10/13 del brief): el UPDATE
  * solo aplica si el job está SIN lease, o su lease ya venció -- Postgres
@@ -177,7 +188,11 @@ export type ResultadoActualizacionJob = { aplicada: true; job: JobFila } | { apl
  */
 export async function aplicarEventoJob(
   supabase: SupabaseClient,
-  params: { workspaceId: string; jobId: string; leaseId: string; evento: EventoJob }
+  // Fase 5 (autorizado, decisión D4) -- `wamid` es opcional y se persiste
+  // en la MISMA mutación protegida por CAS cuando el caller lo trae (solo
+  // el Worker, solo en meta_confirmo_exito con un wamid real capturado) --
+  // nunca se agrega un segundo punto de escritura desprotegido para esto.
+  params: { workspaceId: string; jobId: string; leaseId: string; evento: EventoJob; wamid?: string }
 ): Promise<ResultadoActualizacionJob> {
   const actual = await obtenerJobDelWorkspace(supabase, { workspaceId: params.workspaceId, jobId: params.jobId });
   if (!actual) return { aplicada: false, motivo: "sin_ownership", detalle: "job no encontrado en este workspace" };
@@ -186,6 +201,13 @@ export async function aplicarEventoJob(
   const estadoActual: EstadoCompletoJob = { status: actual.status, physicalOutcome: actual.physical_outcome, networkAttempts: actual.network_attempts };
   const transicion = transicionar(estadoActual, params.evento);
   if (!transicion.permitida) return { aplicada: false, motivo: "transicion_invalida", detalle: transicion.motivo };
+
+  // Fase 5 (autorizado, decisión D6) -- next_attempt_at se fija SOLO al
+  // aterrizar en retry_pending (backoff real antes de que reconciliation
+  // vuelva a republicarlo); en cualquier otro estado se limpia -- nunca
+  // debe quedar un valor viejo confundiendo una consulta futura si el job
+  // vuelve a pasar por retry_pending más adelante.
+  const proximoIntentoEn = transicion.siguiente.status === "retry_pending" ? new Date(Date.now() + BACKOFF_REINTENTO_MS).toISOString() : null;
 
   // CAS real sobre version_token, ADEMÁS del chequeo de lease de arriba --
   // cubre la carrera entre "leí el job" y "hago el UPDATE" (otro proceso
@@ -198,8 +220,10 @@ export async function aplicarEventoJob(
       status: transicion.siguiente.status,
       physical_outcome: transicion.siguiente.physicalOutcome,
       network_attempts: transicion.siguiente.networkAttempts,
+      next_attempt_at: proximoIntentoEn,
       version_token: actual.version_token + 1,
       updated_at: new Date().toISOString(),
+      ...(params.wamid ? { wamid: params.wamid } : {}),
     })
     .eq("id", params.jobId)
     .eq("workspace_id", params.workspaceId)
@@ -231,20 +255,27 @@ export async function obtenerJobsPendientesDeReconciliacion(supabase: SupabaseCl
 }
 
 /**
- * Fase 3, cierre (riesgo #3 del reporte de Fase 3). Jobs en retry_pending,
+ * Fase 3, cierre (riesgo #3 del reporte de Fase 3), extendido en Fase 5
+ * (decisión D6, backoff real). Jobs en retry_pending Y con
+ * next_attempt_at ya alcanzado (o nunca fijado -- filas legacy de antes
+ * de D6, tratadas como listas de inmediato para no dejarlas atascadas),
  * a través de TODOS los workspaces -- usa el índice parcial
  * dulabs_dev_jobs_retry_pending_idx. Solo lo llama dulabs-reconciliation,
  * mismo criterio que obtenerJobsPendientesDeReconciliacion: es la única
  * identidad con motivo legítimo para barrer jobs de más de un workspace.
  * Republicar es seguro de repetir -- el propio lease/CAS del Worker
  * outbound (ver services/worker-outbound/handler.ts) protege contra un
- * segundo POST físico si dos republicaciones del mismo job se solapan.
+ * segundo POST físico si dos republicaciones del mismo job se solapan,
+ * incluso si dos ejecuciones concurrentes de reconciliation seleccionan
+ * el mismo job.
  */
 export async function obtenerJobsListosParaReintento(supabase: SupabaseClient, params: { limite?: number } = {}): Promise<JobFila[]> {
+  const ahora = new Date().toISOString();
   const { data, error } = await supabase
     .from("dulabs_dev_jobs")
     .select("*")
     .eq("status", "retry_pending")
+    .or(`next_attempt_at.is.null,next_attempt_at.lte.${ahora}`)
     .order("updated_at", { ascending: true })
     .limit(params.limite ?? 200);
   if (error) throw new Error(`[developer/jobs-store] error obteniendo jobs listos para reintento: ${error.message}`);
