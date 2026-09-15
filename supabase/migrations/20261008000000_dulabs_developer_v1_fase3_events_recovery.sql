@@ -13,7 +13,14 @@
 
 alter table public.dulabs_dev_events
   add column if not exists published_at timestamptz null,
-  add column if not exists intentos_publicacion int not null default 0;
+  add column if not exists intentos_publicacion int not null default 0,
+  add column if not exists payload jsonb null,
+  add column if not exists procesado_en timestamptz null;
+
+comment on column public.dulabs_dev_events.payload is
+  'Payload crudo del webhook de Meta ya validado (firma + dedupe), para que el Worker inbound tenga contenido real que reenviar al Developer Webhook. NULL para eventos que no lo necesitan (ej. los de Fase 2 sin payload). Completa el diseño de Fase 3, que asumía "el Gateway persiste el evento crudo" sin que el esquema de Fase 2 tuviera dónde guardarlo.';
+comment on column public.dulabs_dev_events.procesado_en is
+  'NULL = el Worker inbound todavía no confirmó haber reenviado este evento al Developer Webhook. No nulo = ya procesado -- protege contra efectos secundarios duplicados si Pub/Sub reentrega el mismo mensaje (idempotencia del Worker inbound, no solo del Gateway).';
 
 alter table public.dulabs_dev_events
   add constraint dulabs_dev_events_intentos_publicacion_check check (intentos_publicacion >= 0);

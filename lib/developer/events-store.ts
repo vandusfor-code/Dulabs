@@ -19,6 +19,8 @@ export type EventoFila = {
   created_at: string;
   published_at: string | null;
   intentos_publicacion: number;
+  payload: Record<string, unknown> | null;
+  procesado_en: string | null;
 };
 
 export type ResultadoRegistroEvento = { registrado: true; fila: EventoFila } | { registrado: false; motivo: "evento_duplicado" };
@@ -32,7 +34,15 @@ export type ResultadoRegistroEvento = { registrado: true; fila: EventoFila } | {
  */
 export async function registrarEvento(
   supabase: SupabaseClient,
-  params: { eventId: string; workspaceId: string; tipo: TipoEvento; jobId?: string | null; requestId?: string | null; correlationId?: string | null }
+  params: {
+    eventId: string;
+    workspaceId: string;
+    tipo: TipoEvento;
+    jobId?: string | null;
+    requestId?: string | null;
+    correlationId?: string | null;
+    payload?: Record<string, unknown> | null;
+  }
 ): Promise<ResultadoRegistroEvento> {
   const { data, error } = await supabase
     .from("dulabs_dev_events")
@@ -43,6 +53,7 @@ export async function registrarEvento(
       job_id: params.jobId ?? null,
       request_id: params.requestId ?? null,
       correlation_id: params.correlationId ?? null,
+      payload: params.payload ?? null,
     })
     .select("*")
     .maybeSingle();
@@ -106,6 +117,32 @@ export async function incrementarIntentoPublicacion(supabase: SupabaseClient, pa
  * síncrono original antes de considerarlo atascado), y por debajo del tope
  * de intentos -- usa el índice parcial `dulabs_dev_events_pendiente_publicacion_idx`.
  */
+export async function obtenerEventoPorId(supabase: SupabaseClient, params: { id: number }): Promise<EventoFila | null> {
+  const { data, error } = await supabase.from("dulabs_dev_events").select("*").eq("id", params.id).maybeSingle();
+  if (error) throw new Error(`[developer/events-store] error obteniendo evento por id: ${error.message}`);
+  return (data as EventoFila) ?? null;
+}
+
+/**
+ * Marca un evento como PROCESADO por el Worker inbound -- CAS real: solo
+ * aplica si `procesado_en` seguía NULL. Es lo que hace que "recibir dos
+ * veces el mismo evento" (redelivery de Pub/Sub, o del propio barrido de
+ * recuperación) nunca produzca un segundo efecto secundario (ej. un
+ * segundo reenvío al Developer Webhook) -- el Worker debe llamar a esto
+ * ANTES de reenviar, y solo reenviar si `marcado` es true.
+ */
+export async function marcarEventoProcesado(supabase: SupabaseClient, params: { id: number }): Promise<{ marcado: boolean }> {
+  const { data, error } = await supabase
+    .from("dulabs_dev_events")
+    .update({ procesado_en: new Date().toISOString() })
+    .eq("id", params.id)
+    .is("procesado_en", null)
+    .select("id")
+    .maybeSingle();
+  if (error) throw new Error(`[developer/events-store] error marcando evento procesado: ${error.message}`);
+  return { marcado: Boolean(data) };
+}
+
 export async function obtenerEventosPendientesDePublicar(
   supabase: SupabaseClient,
   params: { minutosAntiguedad: number; maximoIntentos: number; limite?: number }

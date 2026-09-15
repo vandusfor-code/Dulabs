@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { randomBytes } from "node:crypto";
-import { cifrarSecretoDev } from "@/lib/developer/secure-crypto";
+import { cifrarSecretoDev, descifrarSecretoDev } from "@/lib/developer/secure-crypto";
 import { validarUrlWebhookSegura } from "@/lib/developer/ssrf-guard";
 
 // DuLabs Developer V1 -- Fase 2 (autorizado, sección 8 del brief). La URL
@@ -67,4 +67,17 @@ export async function obtenerWebhookDelNumero(supabase: SupabaseClient, params: 
     .maybeSingle();
   if (error) throw new Error(`[developer/webhook-config-store] error obteniendo webhook: ${error.message}`);
   return (data as WebhookConfigFila) ?? null;
+}
+
+/** Descifra el secreto HMAC de un webhook -- función separada a propósito (nunca se devuelve por defecto en obtenerWebhookDelNumero), mismo patrón que obtenerTokenMetaDelNumero. */
+export async function obtenerSecretoWebhookDelNumero(supabase: SupabaseClient, params: { workspaceId: string; whatsappNumberId: string }): Promise<string | null> {
+  const { data, error } = await supabase
+    .from("dulabs_dev_webhook_configs")
+    .select("secret_cifrado")
+    .eq("whatsapp_number_id", params.whatsappNumberId)
+    .eq("workspace_id", params.workspaceId)
+    .maybeSingle();
+  if (error) throw new Error(`[developer/webhook-config-store] error obteniendo secreto de webhook: ${error.message}`);
+  if (!data?.secret_cifrado) return null;
+  return await descifrarSecretoDev(data.secret_cifrado);
 }

@@ -68,6 +68,19 @@ export async function listarNumeros(supabase: SupabaseClient, workspaceId: strin
   return (data ?? []) as NumeroWhatsAppFila[];
 }
 
+/**
+ * Resuelve a qué workspace pertenece un phone_number_id -- usado por el
+ * Gateway (Fase 3) para saber en nombre de qué workspace persistir un
+ * webhook entrante de Meta (Meta no manda el workspace_id, solo su propio
+ * phone_number_id, único globalmente -- ver migración). No expone el token
+ * de Meta.
+ */
+export async function obtenerNumeroPorPhoneNumberId(supabase: SupabaseClient, phoneNumberId: string): Promise<NumeroWhatsAppFila | null> {
+  const { data, error } = await supabase.from("dulabs_dev_whatsapp_numbers").select(CAMPOS_PUBLICOS).eq("phone_number_id", phoneNumberId).maybeSingle();
+  if (error) throw new Error(`[developer/whatsapp-numbers-store] error resolviendo número por phone_number_id: ${error.message}`);
+  return (data as NumeroWhatsAppFila) ?? null;
+}
+
 /** Obtiene el número YA VERIFICADO como perteneciente a ese workspace exacto -- nunca resuelve un número sin el workspace_id como parte del filtro. */
 export async function obtenerNumeroDelWorkspace(supabase: SupabaseClient, params: { workspaceId: string; numeroId: string }): Promise<NumeroWhatsAppFila | null> {
   const { data, error } = await supabase

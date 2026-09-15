@@ -176,4 +176,21 @@ export async function aplicarEventoJob(
   return { aplicada: true, job: data as JobFila };
 }
 
+/**
+ * Jobs en reconciliation_pending, a través de TODOS los workspaces -- usa
+ * el índice parcial dulabs_dev_jobs_reconciliation_idx (Fase 2). Solo lo
+ * llama dulabs-reconciliation (Fase 3): es la única identidad con motivo
+ * legítimo para barrer jobs de más de un workspace a la vez.
+ */
+export async function obtenerJobsPendientesDeReconciliacion(supabase: SupabaseClient, params: { limite?: number } = {}): Promise<JobFila[]> {
+  const { data, error } = await supabase
+    .from("dulabs_dev_jobs")
+    .select("*")
+    .eq("status", "reconciliation_pending")
+    .order("updated_at", { ascending: true })
+    .limit(params.limite ?? 200);
+  if (error) throw new Error(`[developer/jobs-store] error obteniendo jobs pendientes de reconciliación: ${error.message}`);
+  return (data ?? []) as JobFila[];
+}
+
 export { estadoInicial };
