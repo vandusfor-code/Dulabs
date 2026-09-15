@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { esInicioDeAgendaV2, detectarIntencionGestionCitas } from "@/lib/agenda-v2/entrada";
+import { esInicioDeAgendaV2, detectarIntencionGestionCitas, detectarRechazoDeHorarioActual, detectarSolicitudOtraProfesional } from "@/lib/agenda-v2/entrada";
 import { CODIGO_ESCENARIO_AGENDAMIENTO, type EscenarioRow } from "@/lib/bot-escenarios/tipos";
 import { AMORE_ESCENARIOS_SEED } from "@/lib/bot-escenarios/seed-amore";
 
@@ -165,6 +165,49 @@ describe("Glosario de intenciones AMORE (autorizado) -- ampliación real de CANC
   it("frases ambiguas del glosario ('no puedo ir' y similares) siguen sin detector determinista a propósito", () => {
     for (const frase of ["no puedo ir", "no puedo asistir", "se me complicó", "me salió un compromiso", "ya no puedo"]) {
       assert.equal(detectarIntencionGestionCitas(frase), null, `"${frase}" no debía tener detector determinista todavía`);
+    }
+  });
+});
+
+describe("CASO 3 (autorizado, 'el cliente rechaza el horario') -- detectarRechazoDeHorarioActual: frases FIJAS y controladas, nunca IA/fuzzy", () => {
+  it("TEST E (obligatorio) -- reconoce las frases reales del pedido", () => {
+    for (const frase of ["No puedo a esa hora", "No me sirve", "No puedo", "Esa hora no"]) {
+      assert.equal(detectarRechazoDeHorarioActual(frase), true, `"${frase}" debía reconocerse como rechazo`);
+    }
+  });
+
+  it("coincide en medio de una frase real (contains), insensible a mayúsculas/acentos", () => {
+    assert.equal(detectarRechazoDeHorarioActual("Uy no, esa hora no me sirve"), true);
+    assert.equal(detectarRechazoDeHorarioActual("NO PUEDO A ESA HORA"), true);
+  });
+
+  it("un mensaje sin ninguna frase de rechazo -> false", () => {
+    for (const frase of ["1", "hola", "quiero las 3", "sí", "cancelar"]) {
+      assert.equal(detectarRechazoDeHorarioActual(frase), false, `"${frase}" NUNCA debía reconocerse como rechazo`);
+    }
+  });
+});
+
+describe("CASO 4 (autorizado, 'el cliente pide otra profesional') -- detectarSolicitudOtraProfesional: frases FIJAS y controladas, nunca IA/fuzzy", () => {
+  it("TEST F (obligatorio) -- reconoce la frase real del pedido", () => {
+    assert.equal(detectarSolicitudOtraProfesional("Mira los horarios de las otras chicas"), true);
+  });
+
+  it("reconoce las demás frases reales de ejemplo del pedido", () => {
+    for (const frase of ["Qué horarios tienen las otras chicas", "Busca con otra chica", "Con otra profesional"]) {
+      assert.equal(detectarSolicitudOtraProfesional(frase), true, `"${frase}" debía reconocerse como solicitud de otra profesional`);
+    }
+  });
+
+  it("nunca dispara solo con la palabra 'otra' sin mencionar a una persona (evita falsos positivos con 'otra fecha'/'otro horario')", () => {
+    for (const frase of ["quiero otra fecha", "quiero otro horario", "prefiero otro dia", "otra cosa"]) {
+      assert.equal(detectarSolicitudOtraProfesional(frase), false, `"${frase}" NUNCA debía confundirse con pedir otra profesional`);
+    }
+  });
+
+  it("un mensaje sin ninguna frase real -> false", () => {
+    for (const frase of ["1", "hola", "sí", "cancelar", "Jessica"]) {
+      assert.equal(detectarSolicitudOtraProfesional(frase), false);
     }
   });
 });

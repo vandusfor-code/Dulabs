@@ -32,7 +32,7 @@ import { construirOpcionesServicio } from "@/lib/agenda-v2/servicios";
 import { construirOpcionesCategoria } from "@/lib/agenda-v2/categorias";
 import { construirOpcionesProfesional } from "@/lib/agenda-v2/profesionales";
 import { construirOpcionesFecha } from "@/lib/agenda-v2/fechas";
-import { construirOpcionesHora } from "@/lib/agenda-v2/horas";
+import { construirBloqueHora } from "@/lib/agenda-v2/horas";
 import { OPCIONES_CONFIRMACION } from "@/lib/agenda-v2/confirmacion";
 import type { ResultadoCrearCitaNylas, DepsCrearCitaNylas, ResultadoActualizarCitaNylas } from "@/lib/reserva-servicio-nylas";
 import type { CitaEspecialista, Especialista } from "@/lib/especialistas";
@@ -151,6 +151,7 @@ function crearFakeSesiones() {
         ultimoWamidProcesado: params.wamid,
         citaObjetivoId: params.citaObjetivoId ?? null,
         accionGestion: params.accionGestion ?? null,
+        intentosFallidosConsecutivos: 0,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
@@ -161,9 +162,22 @@ function crearFakeSesiones() {
       const f = filas.find((x) => x.id === id);
       if (f) f.activo = false;
     },
+    // CASO 5 (autorizado, "evitar bucles") -- reproduce EXACTAMENTE el mismo
+    // reinicio automático de actualizarSesionAgendaV2 real (sesiones.ts):
+    // un valor explícito de intentosFallidosConsecutivos siempre gana; si no
+    // viene explícito pero sí cambia opcionesMostradas (progreso real), se
+    // reinicia a 0 -- para que las pruebas de anti-bucle ejerciten el mismo
+    // comportamiento que producción, nunca uno inventado solo para el fake.
     actualizarSesion: async (_s: unknown, id: number, cambios: CambiosSesionAgendaV2) => {
       const f = filas.find((x) => x.id === id);
-      if (f) Object.assign(f, { ...cambios, updatedAt: new Date().toISOString() });
+      if (!f) return;
+      const intentosFallidosConsecutivos =
+        cambios.intentosFallidosConsecutivos !== undefined
+          ? cambios.intentosFallidosConsecutivos
+          : cambios.opcionesMostradas !== undefined
+            ? 0
+            : f.intentosFallidosConsecutivos;
+      Object.assign(f, { ...cambios, intentosFallidosConsecutivos, updatedAt: new Date().toISOString() });
     },
   };
 }
@@ -1031,7 +1045,7 @@ describe("FASE 4 (autorizado) -- selección de fecha vía router real", () => {
     assert.equal(r.manejado, true);
     assert.equal(sesiones.filas[0]!.step, "S4_HORA");
     assert.equal(sesiones.filas[0]!.fechaIso, "2026-09-08");
-    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, construirOpcionesHora("2026-09-08", HORAS_POR_FECHA_FIXTURE["2026-09-08"]!));
+    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, construirBloqueHora("2026-09-08", HORAS_POR_FECHA_FIXTURE["2026-09-08"]!));
     assert.match(envios.enviados[4]!.mensaje, /Estos son los horarios disponibles/);
   });
 
@@ -1195,7 +1209,7 @@ describe("CORRECCIÓN (autorizada, 'Ver más fechas') -- flujo real vía router"
     await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "w4" }, deps); // Mary
     await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "w5" }, deps); // 2026-09-08
     assert.equal(sesiones.filas[0]!.step, "S4_HORA");
-    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, construirOpcionesHora("2026-09-08", HORAS_POR_FECHA_FIXTURE["2026-09-08"]!), "sigue siendo el arreglo plano de siempre, NUNCA {horariosCompletos, pagina}");
+    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, construirBloqueHora("2026-09-08", HORAS_POR_FECHA_FIXTURE["2026-09-08"]!), "sigue siendo el arreglo plano de siempre, NUNCA {horariosCompletos, pagina}");
     assert.doesNotMatch(envios.enviados.at(-1)!.mensaje, /Otro horario/);
   });
 });
@@ -1215,7 +1229,7 @@ describe("FASE 5 (autorizado) -- selección de hora vía router real", () => {
     const { deps, sesiones } = armarDeps();
     await llegarAMenuHora(deps);
     assert.equal(sesiones.filas[0]!.step, "S4_HORA");
-    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, construirOpcionesHora("2026-09-08", HORAS_POR_FECHA_FIXTURE["2026-09-08"]!));
+    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, construirBloqueHora("2026-09-08", HORAS_POR_FECHA_FIXTURE["2026-09-08"]!));
   });
 
   it("Test 16/17: '1' guarda el slot elegido (fecha+hora reales) y avanza a S5_CONFIRMAR con el resumen REAL de la cita (FASE 6)", async () => {
@@ -1280,7 +1294,7 @@ describe("FASE 5 (autorizado) -- selección de hora vía router real", () => {
       tenantId: "amore-test",
       telefonoCliente: "573148127388",
       wamid: "w0",
-      opcionesMostradas: construirOpcionesHora("2026-09-08", ["09:00", "10:30"]),
+      opcionesMostradas: construirBloqueHora("2026-09-08", ["09:00", "10:30"]),
     });
     await sesiones.actualizarSesion(FAKE_SUPABASE, sesiones.filas[0]!.id, {
       step: "S4_HORA",
@@ -1337,11 +1351,11 @@ describe("FASE 5 (autorizado) -- selección de hora vía router real", () => {
   it("Test 23: opciones_mostradas coincide EXACTAMENTE con lo enviado en el menú de horas", async () => {
     const { deps, sesiones, envios } = armarDeps();
     await llegarAMenuHora(deps);
-    const opcionesGuardadas = sesiones.filas[0]!.opcionesMostradas as ReturnType<typeof construirOpcionesHora>;
-    for (const o of opcionesGuardadas) {
+    const bloqueGuardado = sesiones.filas[0]!.opcionesMostradas as ReturnType<typeof construirBloqueHora>;
+    for (const o of bloqueGuardado.opciones) {
       assert.match(envios.enviados[4]!.mensaje, new RegExp(`${o.numero}\\.`));
     }
-    assert.equal(opcionesGuardadas.length, 3);
+    assert.equal(bloqueGuardado.opciones.length, 3);
   });
 
   it("Test 24: regresión -- Fases 1-3 siguen funcionando y ahora fluyen correctamente hasta el menú de horas, punta a punta", async () => {
@@ -1360,6 +1374,201 @@ describe("FASE 5 (autorizado) -- selección de hora vía router real", () => {
     assert.equal(sesiones.filas[0]!.servicioId, "s-dipping-real");
     assert.equal(sesiones.filas[0]!.profesionalId, 1262);
     assert.equal(sesiones.filas[0]!.fechaIso, "2026-09-08");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CASO 2 (autorizado, "Ver más horarios") -- EXCLUSIVO de S4_HORA, mismo
+// concepto de paginación que "Ver más fechas" (S3_DIA), pero sin ninguna
+// segunda consulta a Nylas: los horarios restantes ya vienen de la MISMA
+// consulta que trajo el primer bloque (ver lib/agenda-v2/horas.ts).
+// ---------------------------------------------------------------------------
+describe("CASO 2 (autorizado, 'Ver más horarios') -- flujo real vía router", () => {
+  async function llegarAMenuFechaMary(deps: AgendaV2RouterDeps, telefono = "573148127388") {
+    await llegarAMenuProfesionalDipping(deps, telefono);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono, texto: "1", wamid: "w4" }, deps); // Mary
+  }
+
+  const OCHO_HORARIOS = ["08:00", "09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00"];
+  async function calcularHorariosOcho() {
+    return { ok: true as const, horarios: OCHO_HORARIOS };
+  }
+
+  it("TEST C (obligatorio) -- con más de 6 horarios reales, el menú agrega '7. Ver más horarios' (dinámico, nunca fijo)", async () => {
+    const { deps, sesiones, envios } = armarDeps({ calcularHorariosFecha: calcularHorariosOcho });
+    await llegarAMenuFechaMary(deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "w5" }, deps); // 2026-09-08
+    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, construirBloqueHora("2026-09-08", OCHO_HORARIOS));
+    assert.match(envios.enviados.at(-1)!.mensaje, /6\. 1:00 p\. m\./);
+    assert.match(envios.enviados.at(-1)!.mensaje, /7\. Ver más horarios/);
+  });
+
+  it("TEST D (obligatorio, regresión) -- con 6 o menos horarios reales, el menú NUNCA agrega 'Ver más horarios'", async () => {
+    const { deps, sesiones, envios } = armarDeps(); // fixture normal: 3 horarios reales para 2026-09-08
+    await llegarAMenuFechaMary(deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "w5" }, deps);
+    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, construirBloqueHora("2026-09-08", HORAS_POR_FECHA_FIXTURE["2026-09-08"]!));
+    assert.doesNotMatch(envios.enviados.at(-1)!.mensaje, /Ver más horarios/);
+  });
+
+  it("TEST C (obligatorio) -- seleccionar 'Ver más horarios' permanece en S4_HORA, conserva servicio/profesional/día, y muestra el bloque REAL siguiente SIN volver a consultar Nylas", async () => {
+    let llamadas = 0;
+    const calcularHorariosContado = async () => {
+      llamadas++;
+      return { ok: true as const, horarios: OCHO_HORARIOS };
+    };
+    const { deps, sesiones, envios } = armarDeps({ calcularHorariosFecha: calcularHorariosContado });
+    await llegarAMenuFechaMary(deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "w5" }, deps); // bloque 1
+    assert.equal(llamadas, 1);
+
+    const r = await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "7", wamid: "w6" }, deps); // Ver más horarios
+
+    assert.equal(r.manejado, true);
+    assert.equal(llamadas, 1, "'Ver más horarios' NUNCA vuelve a consultar Nylas -- los horarios restantes ya estaban calculados");
+    assert.equal(sesiones.filas[0]!.step, "S4_HORA", "permanece en S4_HORA");
+    assert.equal(sesiones.filas[0]!.servicioId, "s-dipping-real");
+    assert.equal(sesiones.filas[0]!.profesionalId, 1262);
+    assert.equal(sesiones.filas[0]!.fechaIso, "2026-09-08");
+    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, construirBloqueHora("2026-09-08", ["14:00", "15:00"]));
+    assert.match(envios.enviados.at(-1)!.mensaje, /1\. 2:00 p\. m\./, "el segundo bloque vuelve a numerar desde 1");
+    assert.doesNotMatch(envios.enviados.at(-1)!.mensaje, /Ver más horarios/, "el segundo bloque no tiene más -- nunca la ofrece de nuevo");
+  });
+
+  it("TEST C/CASO 1 (obligatorios) -- 'Ver más horarios' también se reconoce con '7.' (normalización centralizada)", async () => {
+    const { deps, sesiones } = armarDeps({ calcularHorariosFecha: calcularHorariosOcho });
+    await llegarAMenuFechaMary(deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "w5" }, deps);
+    const r = await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "7.", wamid: "w6" }, deps);
+    assert.equal(r.manejado, true);
+    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, construirBloqueHora("2026-09-08", ["14:00", "15:00"]));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CASO 3/4 (autorizados, "rechaza el horario" / "pide otra profesional") --
+// reconocimiento determinista de lenguaje natural DURANTE S3_DIA/S4_HORA,
+// SIN pasar por el motor de opciones numérico (nunca IA semántica/fuzzy).
+// ---------------------------------------------------------------------------
+describe("CASO 3/4 (autorizados) -- reconocimiento de lenguaje natural durante S3_DIA/S4_HORA vía router real", () => {
+  async function llegarAMenuFechaMary(deps: AgendaV2RouterDeps, telefono = "573148127388") {
+    await llegarAMenuProfesionalDipping(deps, telefono);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono, texto: "1", wamid: "w4" }, deps); // Mary
+  }
+  async function llegarAMenuHora(deps: AgendaV2RouterDeps, telefono = "573148127388") {
+    await llegarAMenuFechaMary(deps, telefono);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono, texto: "1", wamid: "w5" }, deps); // 2026-09-08
+  }
+
+  it("TEST E (obligatorio) -- 'No puedo a esa hora' en S4_HORA ofrece una alternativa real (más horarios del mismo día si quedan), sin repetir el mismo menú", async () => {
+    const ocho = ["08:00", "09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00"];
+    const { deps, sesiones, envios } = armarDeps({ calcularHorariosFecha: async () => ({ ok: true as const, horarios: ocho }) });
+    await llegarAMenuFechaMary(deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "w5" }, deps); // bloque 1 (6 horarios + Ver más)
+
+    const r = await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "No puedo a esa hora", wamid: "w6" }, deps);
+
+    assert.equal(r.manejado, true);
+    assert.equal(sesiones.filas[0]!.step, "S4_HORA", "permanece en S4_HORA, conserva el contexto");
+    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, construirBloqueHora("2026-09-08", ["14:00", "15:00"]), "ofrece el bloque REAL siguiente, nunca repite los horarios ya rechazados");
+    assert.match(envios.enviados.at(-1)!.mensaje, /Aquí tienes otros horarios/);
+  });
+
+  it("TEST E (obligatorio) -- 'No me sirve' sin más horarios ese día busca otro día real, conservando servicio/profesional", async () => {
+    const { deps, sesiones, envios } = armarDeps(); // 3 horarios reales para 2026-09-08, sin más
+    await llegarAMenuHora(deps);
+
+    const r = await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "No me sirve", wamid: "w6" }, deps);
+
+    assert.equal(r.manejado, true);
+    assert.equal(sesiones.filas[0]!.step, "S3_DIA", "sin más horarios ese día, busca otro día real -- nunca queda atascado");
+    assert.equal(sesiones.filas[0]!.servicioId, "s-dipping-real", "conserva el MISMO servicio");
+    assert.equal(sesiones.filas[0]!.profesionalId, 1262, "conserva la MISMA profesional -- nunca cambia por un rechazo de horario");
+    assert.match(envios.enviados.at(-1)!.mensaje, /¿Qué día deseas agendar\?/);
+  });
+
+  it("TEST F (obligatorio) -- 'Mira los horarios de las otras chicas' durante S4_HORA regresa a S2_PROFESIONAL con el menú REAL de elegibles, conservando el servicio", async () => {
+    const { deps, sesiones, envios } = armarDeps();
+    await llegarAMenuHora(deps);
+
+    const r = await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "Mira los horarios de las otras chicas", wamid: "w6" }, deps);
+
+    assert.equal(r.manejado, true);
+    assert.equal(sesiones.filas[0]!.step, "S2_PROFESIONAL");
+    assert.equal(sesiones.filas[0]!.servicioId, "s-dipping-real", "conserva el MISMO servicio -- nunca reinicia la selección");
+    assert.equal(sesiones.filas[0]!.fechaIso, null, "descarta la fecha/hora ya elegidas -- van a cambiar de profesional");
+    assert.match(envios.enviados.at(-1)!.mensaje, /¿Con quién deseas realizarte el servicio\?/);
+    assert.doesNotMatch(envios.enviados.at(-1)!.mensaje, /No reconocí esa opción/, "nunca responde 'no reconocí esa opción' cuando la intención es comprensible");
+  });
+
+  it("TEST F (obligatorio) -- 'Con otra profesional' también funciona durante S3_DIA (antes de llegar a horas)", async () => {
+    const { deps, sesiones, envios } = armarDeps();
+    await llegarAMenuFechaMary(deps);
+
+    const r = await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "Con otra profesional", wamid: "w5" }, deps);
+
+    assert.equal(r.manejado, true);
+    assert.equal(sesiones.filas[0]!.step, "S2_PROFESIONAL");
+    assert.match(envios.enviados.at(-1)!.mensaje, /¿Con quién deseas realizarte el servicio\?/);
+  });
+
+  it("'quiero otro horario' NUNCA se confunde con pedir otra profesional (sigue resolviéndose como selección inválida de horario)", async () => {
+    const { deps, sesiones } = armarDeps();
+    await llegarAMenuHora(deps);
+    const r = await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "quiero otro horario", wamid: "w6" }, deps);
+    assert.equal(r.manejado, true);
+    assert.equal(sesiones.filas[0]!.step, "S4_HORA", "nunca cambia de profesional por esta frase");
+    assert.equal(sesiones.filas[0]!.profesionalId, 1262);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CASO 5 (autorizado, "evitar bucles") -- después de varios fallos SEGUIDOS
+// de interpretación, se agrega una orientación clara ADEMÁS del mismo menú;
+// cualquier progreso real reinicia el contador.
+// ---------------------------------------------------------------------------
+describe("CASO 5 (autorizado, 'evitar bucles') -- protección anti-loop vía router real", () => {
+  async function llegarAMenuProfesional(deps: AgendaV2RouterDeps, telefono = "573148127388") {
+    await llegarAMenuProfesionalDipping(deps, telefono);
+  }
+
+  it("TEST H (obligatorio) -- tras varios fallos SEGUIDOS, se agrega una orientación clara (nunca reemplaza el menú, nunca inventa un escalamiento)", async () => {
+    const { deps, sesiones, envios } = armarDeps();
+    await llegarAMenuProfesional(deps);
+
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "hola", wamid: "w5" }, deps);
+    assert.doesNotMatch(envios.enviados.at(-1)!.mensaje, /escríbenos directamente/, "1er fallo -- todavía sin orientación extra");
+
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "no sé", wamid: "w6" }, deps);
+    assert.doesNotMatch(envios.enviados.at(-1)!.mensaje, /escríbenos directamente/, "2do fallo -- todavía sin orientación extra");
+
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "cualquier cosa", wamid: "w7" }, deps);
+    assert.match(envios.enviados.at(-1)!.mensaje, /No reconocí esa opción/, "sigue mostrando el mismo menú -- nunca lo reemplaza");
+    assert.match(envios.enviados.at(-1)!.mensaje, /escríbenos directamente/, "3er fallo SEGUIDO -- ahora sí orienta");
+    assert.equal(sesiones.filas[0]!.step, "S2_PROFESIONAL", "nunca cierra la sesión ni fuerza un reinicio");
+  });
+
+  it("TEST H (obligatorio) -- un avance real ENTRE fallos reinicia el contador (nunca acumula fallos de un paso anterior)", async () => {
+    const { deps, sesiones, envios } = armarDeps();
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "quiero una cita", wamid: "w1" }, deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "hola", wamid: "w2" }, deps); // fallo 1 en S1_SERVICIO
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "no sé", wamid: "w3" }, deps); // fallo 2 en S1_SERVICIO
+
+    // Avanza de verdad (categoría real) -- debe reiniciar el contador a 0.
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: NUMERO_CATEGORIA_UNAS, wamid: "w4" }, deps);
+    assert.equal(sesiones.filas[0]!.intentosFallidosConsecutivos, 0, "el avance real reinicia el contador");
+
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "otro fallo", wamid: "w5" }, deps); // fallo 1 (nuevo conteo) en S1_SERVICIO
+    assert.doesNotMatch(envios.enviados.at(-1)!.mensaje, /escríbenos directamente/, "solo lleva 1 fallo tras el reinicio -- nunca escala de inmediato");
+  });
+
+  it("responder correctamente cierra el ciclo sin ningún mensaje de orientación", async () => {
+    const { deps, sesiones, envios } = armarDeps();
+    await llegarAMenuProfesional(deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "w5" }, deps); // Mary -- avanza de verdad
+    assert.equal(sesiones.filas[0]!.step, "S3_DIA");
+    assert.equal(sesiones.filas[0]!.intentosFallidosConsecutivos, 0);
+    assert.doesNotMatch(envios.enviados.at(-1)!.mensaje, /escríbenos directamente/);
   });
 });
 
@@ -1547,7 +1756,7 @@ describe("FASE 6 (autorizado) -- confirmación de la cita vía router real (S5_C
     assert.equal(sesiones.filas[0]!.profesionalId, 1262);
     assert.equal(sesiones.filas[0]!.fechaIso, "2026-09-08", "mantiene la MISMA fecha ya elegida");
     assert.equal(sesiones.filas[0]!.slotSeleccionado, null);
-    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, construirOpcionesHora("2026-09-08", HORAS_POR_FECHA_FIXTURE["2026-09-08"]!));
+    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, construirBloqueHora("2026-09-08", HORAS_POR_FECHA_FIXTURE["2026-09-08"]!));
     assert.match(envios.enviados.at(-1)!.mensaje, /Estos son los horarios disponibles/);
   });
 
@@ -2239,7 +2448,7 @@ describe("FASE 8 (autorizado) -- gestión de citas existentes (consultar/cancela
       await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "r2" }, deps);
       await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "1", wamid: "r3" }, deps); // 2026-09-08
       assert.equal(sesiones.filas[0]!.step, "S4_HORA");
-      assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, construirOpcionesHora("2026-09-08", HORAS_POR_FECHA_FIXTURE["2026-09-08"]!));
+      assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, construirBloqueHora("2026-09-08", HORAS_POR_FECHA_FIXTURE["2026-09-08"]!));
       assert.match(envios.enviados.at(-1)!.mensaje, /Estos son los horarios disponibles/);
     });
 
@@ -2857,7 +3066,7 @@ describe("NUEVA FASE (autorizado) -- iniciarNuevaSesionAgendaV2 con entidades ex
     );
     assert.equal(sesiones.filas[0]!.step, "S4_HORA");
     assert.equal(sesiones.filas[0]!.fechaIso, "2026-09-08");
-    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, construirOpcionesHora("2026-09-08", ["09:00", "10:30", "14:00"]));
+    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, construirBloqueHora("2026-09-08", ["09:00", "10:30", "14:00"]));
   });
 
   it("fecha mencionada SIN cupo real con esa profesional (Jessica no tiene ningun dia disponible) -> nunca la fuerza, cae a S3_DIA con aviso real", async () => {
@@ -2928,7 +3137,7 @@ describe("NUEVA FASE (autorizado) -- iniciarNuevaSesionAgendaV2 con entidades ex
       deps,
     );
     assert.equal(sesiones.filas[0]!.step, "S4_HORA");
-    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, construirOpcionesHora("2026-09-08", ["09:00", "10:30", "14:00"]));
+    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, construirBloqueHora("2026-09-08", ["09:00", "10:30", "14:00"]));
     assert.match(envios.enviados[0]!.mensaje, /Esa hora ya no está disponible/);
   });
 

@@ -40,6 +40,15 @@ export interface SesionAgendaV2 {
   citaObjetivoId: number | null;
   /** FASE 8 -- qué gestión se pidió, mientras se espera que el cliente elija cuál de sus varias citas (SG_SELECCIONAR_CITA). */
   accionGestion: AccionGestionAgendaV2 | null;
+  /**
+   * Corrección post-deploy (autorizada, CASO 5 -- "evitar bucles") --
+   * cuántos mensajes SEGUIDOS no se pudieron interpretar (misma sesión,
+   * sin ningún avance real desde el último). Se reinicia a 0 automáticamente
+   * en actualizarSesionAgendaV2 cada vez que `opcionesMostradas` cambia de
+   * verdad (una menú nuevo = progreso real, ver el comentario ahí) -- nunca
+   * hace falta que cada punto de progreso de router.ts lo reinicie a mano.
+   */
+  intentosFallidosConsecutivos: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -59,6 +68,8 @@ interface FilaDb {
   ultimo_wamid_procesado: string | null;
   cita_objetivo_id: number | null;
   accion_gestion: AccionGestionAgendaV2 | null;
+  /** Corrección post-deploy (autorizada, CASO 5) -- puede no existir todavía en producción si la migración no se ha aplicado; ver mapearFila. */
+  intentos_fallidos_consecutivos?: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -81,6 +92,12 @@ function mapearFila(fila: FilaDb): SesionAgendaV2 {
     ultimoWamidProcesado: fila.ultimo_wamid_procesado,
     citaObjetivoId: fila.cita_objetivo_id,
     accionGestion: fila.accion_gestion,
+    // Defensivo (mismo criterio que el resto de Agenda V2 para columnas de
+    // una migración reciente que puede no estar aplicada todavía en
+    // producción) -- si la columna no existe aún, `fila` ni siquiera trae
+    // esta clave (undefined, nunca null); se trata igual que "sin fallos
+    // todavía" en vez de romper la sesión completa.
+    intentosFallidosConsecutivos: fila.intentos_fallidos_consecutivos ?? 0,
     createdAt: fila.created_at,
     updatedAt: fila.updated_at,
   };
@@ -176,6 +193,8 @@ export interface CambiosSesionAgendaV2 {
   ultimoWamidProcesado?: string;
   citaObjetivoId?: number | null;
   accionGestion?: AccionGestionAgendaV2 | null;
+  /** Corrección post-deploy (autorizada, CASO 5) -- explícito SIEMPRE gana sobre el reinicio automático (ver actualizarSesionAgendaV2). */
+  intentosFallidosConsecutivos?: number;
 }
 
 export async function actualizarSesionAgendaV2(
@@ -195,8 +214,38 @@ export async function actualizarSesionAgendaV2(
   if (cambios.citaObjetivoId !== undefined) payload.cita_objetivo_id = cambios.citaObjetivoId;
   if (cambios.accionGestion !== undefined) payload.accion_gestion = cambios.accionGestion;
 
+  // Corrección post-deploy (autorizada, CASO 5 -- "evitar bucles") -- un
+  // menú NUEVO (`opcionesMostradas` cambia) significa progreso real: se
+  // reinicia el contador de fallos consecutivos automáticamente acá, en el
+  // ÚNICO lugar que centraliza todas las actualizaciones de sesión -- así
+  // ningún punto de progreso de router.ts (categoría, servicio,
+  // profesional, fecha, hora, confirmación, gestión de citas...) necesita
+  // reiniciarlo a mano, y es imposible olvidar alguno. Un valor explícito
+  // (el manejador de "continuar" en router.ts, que incrementa) SIEMPRE gana
+  // sobre este reinicio automático.
+  if (cambios.intentosFallidosConsecutivos !== undefined) {
+    payload.intentos_fallidos_consecutivos = cambios.intentosFallidosConsecutivos;
+  } else if (cambios.opcionesMostradas !== undefined) {
+    payload.intentos_fallidos_consecutivos = 0;
+  }
+
   const { error } = await supabase.from(TABLA).update(payload).eq("id", sesionId);
-  if (error) throw error;
+  if (error) {
+    // Defensivo (mismo criterio EXACTO que buscarSesionActivaAgendaV2 y la
+    // Fase 8 -- la migración de `intentos_fallidos_consecutivos` puede no
+    // estar aplicada todavía en producción). Un error real de "la columna
+    // no existe" (Postgres 42703) NUNCA debe romper una actualización de
+    // sesión que además está avanzando el flujo real de agenda -- se
+    // reintenta UNA vez sin ese campo. Cualquier otro error se propaga tal
+    // cual (nunca se traga un error real).
+    if ((error.code === "42703" || error.code === "PGRST204") && "intentos_fallidos_consecutivos" in payload) {
+      const payloadSinContador = Object.fromEntries(Object.entries(payload).filter(([clave]) => clave !== "intentos_fallidos_consecutivos"));
+      const reintento = await supabase.from(TABLA).update(payloadSinContador).eq("id", sesionId);
+      if (reintento.error) throw reintento.error;
+      return;
+    }
+    throw error;
+  }
 }
 
 /** Cierra la sesión (cancelar/completar) -- nunca la borra, para no dejar historial huérfano ni perder auditoría real. */

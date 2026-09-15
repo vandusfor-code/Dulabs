@@ -162,6 +162,7 @@ lib/bot-escenarios/store-conocimiento.test.ts
 lib/flow/executors/internal-action-executor-resolver-escenario.test.ts
 lib/whatsapp-mensaje-segmentador.test.ts
 lib/agenda-v2/entrada.test.ts
+lib/agenda-v2/normalizar-opcion.test.ts
 lib/agenda-v2/controlador.test.ts
 lib/agenda-v2/servicios.test.ts
 lib/agenda-v2/categorias.test.ts

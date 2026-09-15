@@ -12,6 +12,7 @@
  */
 import { formatearPrecioCop } from "@/lib/especialistas-flow-adaptador";
 import { formatearDuracion } from "@/lib/catalogo-servicios-flow-adaptador";
+import { normalizarNumeroDeOpcion } from "@/lib/agenda-v2/normalizar-opcion";
 
 export const MENSAJE_SIN_CITAS_FUTURAS = "No encontramos citas futuras a tu nombre. 💗";
 
@@ -56,9 +57,8 @@ export function textoSeleccionInvalidaCitas(opciones: OpcionCitaAgendaV2[]): str
 
 /** Mismo criterio EXACTO que el resto de Agenda V2: solo número exacto contra las opciones ya mostradas. */
 export function resolverSeleccionCita(mensaje: string, opciones: OpcionCitaAgendaV2[]): OpcionCitaAgendaV2 | undefined {
-  const texto = mensaje.trim();
-  if (!/^\d+$/.test(texto)) return undefined;
-  const numero = Number(texto);
+  const numero = normalizarNumeroDeOpcion(mensaje);
+  if (numero === null) return undefined;
   return opciones.find((o) => o.numero === numero);
 }
 
@@ -113,9 +113,8 @@ export function textoSeleccionInvalidaSiNo(): string {
 
 /** Mismo criterio EXACTO del resto de Agenda V2: solo número exacto (1-2), nunca "sí"/"no"/"dale" en texto libre. */
 export function resolverSeleccionSiNo(mensaje: string, opciones: OpcionSiNoAgendaV2[]): OpcionSiNoAgendaV2 | undefined {
-  const texto = mensaje.trim();
-  if (!/^\d+$/.test(texto)) return undefined;
-  const numero = Number(texto);
+  const numero = normalizarNumeroDeOpcion(mensaje);
+  if (numero === null) return undefined;
   return opciones.find((o) => o.numero === numero);
 }
 

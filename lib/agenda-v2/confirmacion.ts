@@ -19,6 +19,7 @@
  */
 import { formatearPrecioCop } from "@/lib/especialistas-flow-adaptador";
 import { formatearDuracion } from "@/lib/catalogo-servicios-flow-adaptador";
+import { normalizarNumeroDeOpcion } from "@/lib/agenda-v2/normalizar-opcion";
 
 export type AccionConfirmacionAgendaV2 = "confirmar" | "cambiar_fecha" | "cambiar_hora" | "cancelar";
 
@@ -206,8 +207,7 @@ export const MENSAJE_ERROR_TECNICO_CONFIRMACION =
  * Solo número exacto (1-4) es válido.
  */
 export function resolverSeleccionConfirmacion(mensaje: string, opciones: OpcionConfirmacionAgendaV2[]): OpcionConfirmacionAgendaV2 | undefined {
-  const texto = mensaje.trim();
-  if (!/^\d+$/.test(texto)) return undefined;
-  const numero = Number(texto);
+  const numero = normalizarNumeroDeOpcion(mensaje);
+  if (numero === null) return undefined;
   return opciones.find((o) => o.numero === numero);
 }

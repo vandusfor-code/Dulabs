@@ -79,9 +79,18 @@ describe("resolverSeleccionProfesional -- SOLO número exacto contra las opcione
     }
   });
 
-  it("nunca extrae dígitos de en medio de un texto ('999abc', 'opción 1')", () => {
+  it("nunca extrae dígitos de en medio de un texto que no es un prefijo/sufijo reconocido ('999abc')", () => {
     assert.equal(resolverSeleccionProfesional("999abc", OPCIONES), undefined);
-    assert.equal(resolverSeleccionProfesional("opción 1", OPCIONES), undefined);
+  });
+
+  it("CASO 1 / TEST A (obligatorio) -- '1.', '1)', ' 1', 'opción 1', 'opcion 1', 'la 1' resuelven TODOS la misma profesional que '1'", () => {
+    for (const texto of ["1.", "1)", " 1", "opción 1", "opcion 1", "la 1"]) {
+      assert.equal(resolverSeleccionProfesional(texto, OPCIONES)?.profesionalId, 1262, `"${texto}" debe resolver el mismo profesional que "1"`);
+    }
+  });
+
+  it("CASO 1 (obligatorio) -- un número dentro de una frase libre NUNCA se interpreta como opción", () => {
+    assert.equal(resolverSeleccionProfesional("tengo una cita a la 1", OPCIONES), undefined);
   });
 });
 

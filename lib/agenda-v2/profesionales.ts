@@ -16,6 +16,7 @@
  * patrón numerado que ya usan categorias.ts/servicios.ts.
  */
 import type { EspecialistaElegible } from "@/lib/asignacion-categoria";
+import { normalizarNumeroDeOpcion } from "@/lib/agenda-v2/normalizar-opcion";
 
 export interface OpcionProfesionalAgendaV2 {
   numero: number;
@@ -48,9 +49,8 @@ export function textoSeleccionInvalidaProfesional(opciones: OpcionProfesionalAge
  * ambiguo. Solo número exacto es válido.
  */
 export function resolverSeleccionProfesional(mensaje: string, opciones: OpcionProfesionalAgendaV2[]): OpcionProfesionalAgendaV2 | undefined {
-  const texto = mensaje.trim();
-  if (!/^\d+$/.test(texto)) return undefined;
-  const numero = Number(texto);
+  const numero = normalizarNumeroDeOpcion(mensaje);
+  if (numero === null) return undefined;
   return opciones.find((o) => o.numero === numero);
 }
 
