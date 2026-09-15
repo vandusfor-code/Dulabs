@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { configurarWebhook, listarWebhooksDelWorkspace } from "@/lib/developer/webhook-config-store";
 import { obtenerNumeroDelWorkspace } from "@/lib/developer/whatsapp-numbers-store";
-import { conWorkspaceAutenticadoPorApiKey } from "./api-auth";
+import { conWorkspaceAutenticadoPorApiKey, conLecturaAutenticadaPorApiKey } from "./api-auth";
 import { errorApi, exitoApi, type RespuestaApi } from "./errors";
 import { pareceUuid } from "./validation";
 
@@ -26,7 +26,7 @@ function proyeccionPublica(fila: Awaited<ReturnType<typeof listarWebhooksDelWork
 }
 
 export async function manejarListaWebhooksPublica(deps: { supabase: SupabaseClient }, req: RequestListaWebhooks): Promise<RespuestaApi> {
-  return conWorkspaceAutenticadoPorApiKey(deps, req.autorizacion, req.requestId, req.ipRemota, async (ctx) => {
+  return conLecturaAutenticadaPorApiKey(deps, req.autorizacion, req.requestId, req.ipRemota, async (ctx) => {
     const filas = await listarWebhooksDelWorkspace(deps.supabase, ctx.workspaceId);
     return exitoApi(200, { webhooks: filas.map(proyeccionPublica) }, req.requestId);
   });

@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { listarNumeros, obtenerNumeroDelWorkspace } from "@/lib/developer/whatsapp-numbers-store";
-import { conWorkspaceAutenticadoPorApiKey } from "./api-auth";
+import { conLecturaAutenticadaPorApiKey } from "./api-auth";
 import { errorApi, exitoApi, type RespuestaApi } from "./errors";
 
 // DuLabs Developer V1 -- Fase 4 (autorizado). GET /api/v1/whatsapp-numbers
@@ -24,14 +24,14 @@ function proyeccionPublica(fila: Awaited<ReturnType<typeof listarNumeros>>[numbe
 }
 
 export async function manejarListaNumerosPublica(deps: { supabase: SupabaseClient }, req: RequestListaNumeros): Promise<RespuestaApi> {
-  return conWorkspaceAutenticadoPorApiKey(deps, req.autorizacion, req.requestId, req.ipRemota, async (ctx) => {
+  return conLecturaAutenticadaPorApiKey(deps, req.autorizacion, req.requestId, req.ipRemota, async (ctx) => {
     const filas = await listarNumeros(deps.supabase, ctx.workspaceId);
     return exitoApi(200, { numbers: filas.map(proyeccionPublica) }, req.requestId);
   });
 }
 
 export async function manejarObtenerNumeroPublico(deps: { supabase: SupabaseClient }, req: RequestObtenerNumero): Promise<RespuestaApi> {
-  return conWorkspaceAutenticadoPorApiKey(deps, req.autorizacion, req.requestId, req.ipRemota, async (ctx) => {
+  return conLecturaAutenticadaPorApiKey(deps, req.autorizacion, req.requestId, req.ipRemota, async (ctx) => {
     const fila = await obtenerNumeroDelWorkspace(deps.supabase, { workspaceId: ctx.workspaceId, numeroId: req.numeroId });
     if (!fila) return errorApi(404, "not_found", "Número no encontrado", req.requestId);
     return exitoApi(200, proyeccionPublica(fila), req.requestId);

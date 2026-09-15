@@ -32,3 +32,15 @@ export function errorApi(status: number, code: CodigoErrorApi, message: string, 
 export function exitoApi(status: number, cuerpo: Record<string, unknown>, requestId: string): RespuestaApi {
   return { status, cuerpo, headers: { "X-Request-Id": requestId } };
 }
+
+/**
+ * Construye el header Retry-After real a partir de `reiniciaEn` (que ya
+ * devuelve el propio rate limiter -- lib/rate-limit.ts). Compartido entre
+ * todos los límites de la Developer API (outbound por número/workspace,
+ * lectura) para no repetir el mismo cálculo en cada handler.
+ */
+export function retryAfterHeader(reiniciaEn: string | null): Record<string, string> | undefined {
+  if (!reiniciaEn) return undefined;
+  const segundos = Math.max(1, Math.ceil((new Date(reiniciaEn).getTime() - Date.now()) / 1000));
+  return { "Retry-After": String(segundos) };
+}

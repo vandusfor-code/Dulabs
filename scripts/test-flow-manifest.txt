@@ -236,6 +236,7 @@ services/gateway/usage-handler.e2e.test.ts
 services/gateway/me-handler.e2e.test.ts
 services/gateway/webhooks-handler.e2e.test.ts
 services/gateway/multi-tenant-security.e2e.test.ts
+services/gateway/read-rate-limit.e2e.test.ts
 services/worker-outbound/handler.e2e.test.ts
 services/worker-inbound/handler.e2e.test.ts
 services/reconciliation/run.e2e.test.ts

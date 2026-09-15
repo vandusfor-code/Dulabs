@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { obtenerResumenUsoDelWorkspace } from "@/lib/developer/usage-ledger";
-import { conWorkspaceAutenticadoPorApiKey } from "./api-auth";
+import { conLecturaAutenticadaPorApiKey } from "./api-auth";
 import { errorApi, exitoApi, type RespuestaApi } from "./errors";
 
 // DuLabs Developer V1 -- Fase 4 (autorizado). GET /api/v1/usage --
@@ -16,7 +16,7 @@ function fechaValida(valor: string | undefined): boolean {
 }
 
 export async function manejarObtenerUso(deps: { supabase: SupabaseClient }, req: RequestUso): Promise<RespuestaApi> {
-  return conWorkspaceAutenticadoPorApiKey(deps, req.autorizacion, req.requestId, req.ipRemota, async (ctx) => {
+  return conLecturaAutenticadaPorApiKey(deps, req.autorizacion, req.requestId, req.ipRemota, async (ctx) => {
     if (!fechaValida(req.desde) || !fechaValida(req.hasta)) {
       return errorApi(400, "invalid_request", "Los parámetros 'from'/'to' deben ser fechas ISO 8601 válidas", req.requestId);
     }

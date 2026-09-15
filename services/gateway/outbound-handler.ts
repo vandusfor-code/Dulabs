@@ -3,8 +3,8 @@ import { crearJobConIdempotencia, obtenerJobDelWorkspace } from "@/lib/developer
 import { obtenerNumeroDelWorkspace } from "@/lib/developer/whatsapp-numbers-store";
 import { verificarLimiteTasa } from "@/lib/rate-limit";
 import { publicarMensaje } from "../shared/pubsub";
-import { conWorkspaceAutenticadoPorApiKey } from "./api-auth";
-import { errorApi, exitoApi, type RespuestaApi } from "./errors";
+import { conWorkspaceAutenticadoPorApiKey, conLecturaAutenticadaPorApiKey } from "./api-auth";
+import { errorApi, exitoApi, retryAfterHeader, type RespuestaApi } from "./errors";
 import { validarIdempotencyKey, validarCuerpoMensajeSaliente } from "./validation";
 import { estadoPublicoDelJob } from "./job-status";
 
@@ -90,12 +90,6 @@ export async function manejarMensajeSaliente(deps: DependenciasOutbound, req: Re
   });
 }
 
-function retryAfterHeader(reiniciaEn: string | null): Record<string, string> | undefined {
-  if (!reiniciaEn) return undefined;
-  const segundos = Math.max(1, Math.ceil((new Date(reiniciaEn).getTime() - Date.now()) / 1000));
-  return { "Retry-After": String(segundos) };
-}
-
 // ============================================================
 // GET /api/v1/messages/:id -- Fase 4 (autorizado)
 // ============================================================
@@ -103,7 +97,7 @@ function retryAfterHeader(reiniciaEn: string | null): Record<string, string> | u
 export type RequestObtenerMensaje = { autorizacion: string | undefined; jobId: string; requestId: string; ipRemota?: string };
 
 export async function manejarObtenerMensaje(deps: { supabase: SupabaseClient }, req: RequestObtenerMensaje): Promise<RespuestaApi> {
-  return conWorkspaceAutenticadoPorApiKey(deps, req.autorizacion, req.requestId, req.ipRemota, async (ctx) => {
+  return conLecturaAutenticadaPorApiKey(deps, req.autorizacion, req.requestId, req.ipRemota, async (ctx) => {
     // Nunca "obtener por id y comparar workspace después" -- la misma
     // query ya filtra por (id, workspace_id) -- ver decisión D5.
     const job = await obtenerJobDelWorkspace(deps.supabase, { workspaceId: ctx.workspaceId, jobId: req.jobId });

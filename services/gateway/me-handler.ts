@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { conWorkspaceAutenticadoPorApiKey } from "./api-auth";
+import { conLecturaAutenticadaPorApiKey } from "./api-auth";
 import { exitoApi, type RespuestaApi } from "./errors";
 
 // DuLabs Developer V1 -- Fase 4 (autorizado). GET /api/v1/me -- confirma
@@ -10,7 +10,7 @@ import { exitoApi, type RespuestaApi } from "./errors";
 export type RequestMe = { autorizacion: string | undefined; requestId: string; ipRemota?: string };
 
 export async function manejarObtenerMe(deps: { supabase: SupabaseClient }, req: RequestMe): Promise<RespuestaApi> {
-  return conWorkspaceAutenticadoPorApiKey(deps, req.autorizacion, req.requestId, req.ipRemota, async (ctx) => {
+  return conLecturaAutenticadaPorApiKey(deps, req.autorizacion, req.requestId, req.ipRemota, async (ctx) => {
     return exitoApi(
       200,
       { workspaceId: ctx.workspaceId, apiKeyId: ctx.apiKeyId, apiKeyPrefix: ctx.apiKeyPrefix, apiKeyName: ctx.apiKeyName },

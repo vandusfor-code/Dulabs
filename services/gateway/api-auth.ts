@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { autenticarApiKey } from "@/lib/developer/api-keys-store";
-import { errorApi, type RespuestaApi } from "./errors";
+import { errorApi, retryAfterHeader, type RespuestaApi } from "./errors";
 import { verificarLimiteTasa } from "@/lib/rate-limit";
 
 // DuLabs Developer V1 -- Fase 4 (autorizado, sección "AUTHENTICATION").
@@ -57,4 +57,32 @@ export async function conWorkspaceAutenticadoPorApiKey(
   }
 
   return fn({ workspaceId: auth.workspaceId, apiKeyId: auth.apiKeyId, apiKeyPrefix: auth.apiKeyPrefix, apiKeyName: auth.apiKeyName });
+}
+
+/**
+ * Fase 4, corrección puntual (auditoría final -- categoría devLectura ya
+ * existía en lib/rate-limit.ts pero ningún handler de lectura la
+ * invocaba). Envuelve conWorkspaceAutenticadoPorApiKey SOLO para los 6
+ * endpoints GET de la Developer API -- nunca para POST /api/v1/messages
+ * ni POST /api/v1/webhooks, que ya tienen sus propios límites específicos
+ * y no deben ganar un límite adicional no pedido. Mismo mecanismo Postgres
+ * real ya usado (dulabs_rate_limit_incrementar), sin inventar nada nuevo.
+ * Bucket por workspace (mismo criterio de aislamiento que
+ * devOutboundPorWorkspace) -- dos workspaces distintos nunca comparten
+ * contador, sin importar cuántas API keys tenga cada uno.
+ */
+export async function conLecturaAutenticadaPorApiKey(
+  deps: { supabase: SupabaseClient },
+  autorizacion: string | undefined,
+  requestId: string,
+  ipRemota: string | undefined,
+  fn: (ctx: ContextoApiKey) => Promise<RespuestaApi>
+): Promise<RespuestaApi> {
+  return conWorkspaceAutenticadoPorApiKey(deps, autorizacion, requestId, ipRemota, async (ctx) => {
+    const limite = await verificarLimiteTasa(deps.supabase, { recurso: "dev-lectura", tenantId: ctx.workspaceId, categoria: "devLectura" });
+    if (!limite.permitido) {
+      return errorApi(429, "rate_limit_exceeded", "Límite de 300 lecturas/minuto por workspace excedido", requestId, retryAfterHeader(limite.reiniciaEn));
+    }
+    return fn(ctx);
+  });
 }
