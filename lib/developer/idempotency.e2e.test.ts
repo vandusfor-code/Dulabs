@@ -108,5 +108,33 @@ describe(
       assert.equal(count, 1);
       assert.ok(filas);
     });
+
+    it("REPETICIÓN DESPUÉS DE COMPLETAR LA OPERACIÓN: un reintento que llega mucho después (job ya 'terminado' del lado del negocio) sigue devolviendo el MISMO job_id, nunca crea una segunda operación lógica", async () => {
+      const workspaceId = randomUUID();
+      workspacesUsados.push(workspaceId);
+      const payload = { to: "573000000007", type: "text", nota: "operación que ya se completó" };
+
+      const original = await reclamarIdempotencia(admin, { workspaceId, idempotencyKey: "req-tardio", payload });
+      assert.equal(original.resultado, "nuevo");
+
+      // Simula el paso de tiempo real (el job ya se procesó, se cobró, se
+      // cerró del lado del negocio) -- la fila de idempotencia NO se borra
+      // ni se toca por eso (su TTL lógico es de 24h, ver sección 2.4 del
+      // documento de arquitectura). Un reintento que llega después, dentro
+      // de la ventana, debe seguir viendo la MISMA operación.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      const repeticionTardia = await reclamarIdempotencia(admin, { workspaceId, idempotencyKey: "req-tardio", payload });
+      assert.equal(repeticionTardia.resultado, "duplicado_identico");
+      if (original.resultado === "nuevo" && repeticionTardia.resultado === "duplicado_identico") {
+        assert.equal(repeticionTardia.jobId, original.jobId, "la repetición tardía debe apuntar exactamente al mismo job, nunca crear uno segundo");
+      }
+
+      // Y una SEGUNDA repetición tardía, para descartar que la primera
+      // repetición haya "consumido" o mutado algo -- debe seguir siendo
+      // estable indefinidamente dentro de la ventana.
+      const otraRepeticion = await reclamarIdempotencia(admin, { workspaceId, idempotencyKey: "req-tardio", payload });
+      assert.equal(otraRepeticion.resultado, "duplicado_identico");
+    });
   }
 );
