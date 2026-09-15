@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { adquirirLease, liberarLease, aplicarEventoJob, obtenerJobDelWorkspace } from "@/lib/developer/jobs-store";
-import { obtenerTokenMetaDelNumero } from "@/lib/developer/whatsapp-numbers-store";
+import { obtenerNumeroParaEnvioMeta } from "@/lib/developer/whatsapp-numbers-store";
 import { confirmarUso, liberarUso } from "@/lib/developer/usage-ledger";
 import { mapearPayloadAMeta, extraerWamid, type PayloadDeveloperV1 } from "@/lib/developer/meta-message-mapper";
 import { clasificarErrorMeta } from "@/lib/developer/meta-error-classifier";
@@ -98,8 +98,16 @@ export async function procesarMensajeOutbound(deps: DependenciasWorkerOutbound, 
       return { httpStatus: 200, motivo: `no_se_pudo_iniciar_envio:${iniciar.motivo}` };
     }
 
-    const tokenMeta = await obtenerTokenMetaDelNumero(supabase, { workspaceId: mensaje.workspaceId, numeroId: iniciar.job.whatsapp_number_id });
-    if (!tokenMeta) {
+    // Corrección crítica de Fase 5 (autorizada) -- se resuelve el registro
+    // REAL del número (phone_number_id + token cifrado) en una sola consulta
+    // scoped por workspace. El phone_number_id es lo que Meta exige en la
+    // URL (/{phone_number_id}/messages); el UUID interno
+    // (iniciar.job.whatsapp_number_id) NUNCA debe usarse como path de Meta --
+    // solo sirve para resolver este registro. Devuelve null si el número no
+    // existe en el workspace o si aún no tiene token (número 'pendiente'):
+    // en ambos casos el envío es estructuralmente imposible -> permanente.
+    const numeroEnvio = await obtenerNumeroParaEnvioMeta(supabase, { workspaceId: mensaje.workspaceId, numeroId: iniciar.job.whatsapp_number_id });
+    if (!numeroEnvio) {
       const resultado = await aplicarEventoJob(supabase, { workspaceId: mensaje.workspaceId, jobId: mensaje.jobId, leaseId: lease.leaseId, evento: { tipo: "meta_rechazo", codigoError: "sin_token_meta", permanente: true } });
       // D3: sin token de Meta nunca puede funcionar reintentando -- es
       // estructuralmente permanente (permanente:true fuerza failed_by_meta
@@ -124,9 +132,12 @@ export async function procesarMensajeOutbound(deps: DependenciasWorkerOutbound, 
 
     let respuestaMeta: Response;
     try {
-      respuestaMeta = await fetchFn(`${metaGraphApiBaseUrl}/${version}/${iniciar.job.whatsapp_number_id}/messages`, {
+      // La URL usa EXCLUSIVAMENTE el phone_number_id real de Meta -- nunca el
+      // UUID interno. El token viaja solo en el header Authorization, jamás se
+      // loguea.
+      respuestaMeta = await fetchFn(`${metaGraphApiBaseUrl}/${version}/${numeroEnvio.phoneNumberId}/messages`, {
         method: "POST",
-        headers: { Authorization: `Bearer ${tokenMeta}`, "Content-Type": "application/json" },
+        headers: { Authorization: `Bearer ${numeroEnvio.tokenMeta}`, "Content-Type": "application/json" },
         body: JSON.stringify(payloadMeta),
         signal: AbortSignal.timeout(15_000),
       });

@@ -93,6 +93,44 @@ export async function obtenerNumeroDelWorkspace(supabase: SupabaseClient, params
   return (data as NumeroWhatsAppFila) ?? null;
 }
 
+export type NumeroParaEnvioMeta = { id: string; phoneNumberId: string; tokenMeta: string };
+
+/**
+ * Resuelve en UNA sola consulta lo que el Worker outbound necesita para
+ * hacer el POST real a Meta: el `phone_number_id` REAL (el identificador
+ * numérico que Meta exige en `/{phone_number_id}/messages` -- NUNCA el UUID
+ * interno `id`) y el token descifrado. Scoped por workspace_id + id interno
+ * (mismo criterio de ownership que el resto del store: jamás resuelve un
+ * número sin el workspace_id como parte del filtro).
+ *
+ * Corrección crítica de Fase 5 (autorizada): antes, el Worker construía la
+ * URL de Meta con `job.whatsapp_number_id` (el UUID interno) directamente,
+ * porque solo recuperaba el token (obtenerTokenMetaDelNumero) y nunca el
+ * phone_number_id -- un envío real habría ido a `/{uuid-interno}/messages`,
+ * que Meta rechaza. Esta función expone ambos datos juntos para que la URL
+ * use EXCLUSIVAMENTE el phone_number_id.
+ *
+ * Devuelve null si el número no existe en ese workspace o si todavía no
+ * tiene token cifrado (número en 'pendiente' -- no se puede enviar). Nunca
+ * proyecta el cifrado hacia afuera: descifra internamente y devuelve solo
+ * el valor en claro al caller que lo necesita en ese instante.
+ */
+export async function obtenerNumeroParaEnvioMeta(
+  supabase: SupabaseClient,
+  params: { workspaceId: string; numeroId: string }
+): Promise<NumeroParaEnvioMeta | null> {
+  const { data, error } = await supabase
+    .from("dulabs_dev_whatsapp_numbers")
+    .select("id, phone_number_id, meta_token_cifrado")
+    .eq("id", params.numeroId)
+    .eq("workspace_id", params.workspaceId)
+    .maybeSingle();
+  if (error) throw new Error(`[developer/whatsapp-numbers-store] error resolviendo número para envío: ${error.message}`);
+  if (!data || !data.phone_number_id || !data.meta_token_cifrado) return null;
+  const tokenMeta = await descifrarSecretoDev(data.meta_token_cifrado);
+  return { id: data.id as string, phoneNumberId: data.phone_number_id as string, tokenMeta };
+}
+
 /** Descifra el token de Meta de un número -- función separada a propósito (nunca se devuelve por defecto en las consultas de arriba, solo cuando el caller explícitamente lo necesita para llamar a la Graph API). */
 export async function obtenerTokenMetaDelNumero(supabase: SupabaseClient, params: { workspaceId: string; numeroId: string }): Promise<string | null> {
   const { data, error } = await supabase

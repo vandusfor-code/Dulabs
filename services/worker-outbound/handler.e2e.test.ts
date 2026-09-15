@@ -50,7 +50,11 @@ describe(
     // contra Meta. La validación defensiva nueva del Worker
     // (parecePayloadValido) lo rechazaría correctamente como corrupto.
     async function prepararJob(workspaceId: string, tokenMeta = "EAAtoken-de-prueba") {
-      const numero = await registrarNumero(admin, { workspaceId, phoneNumberId: `phn-${randomUUID()}`, metaToken: tokenMeta });
+      // phone_number_id REAL de Meta (numérico en la vida real) -- a propósito
+      // DISTINTO del UUID interno (numero.fila.id) para poder demostrar que la
+      // URL de Meta usa el phone_number_id y nunca el UUID.
+      const phoneNumberId = `1055500${Math.floor(Math.random() * 1_000_000)}`;
+      const numero = await registrarNumero(admin, { workspaceId, phoneNumberId, metaToken: tokenMeta });
       if (!numero.ok) throw new Error("no se pudo crear número de prueba");
       const job = await crearJobConIdempotencia(admin, {
         workspaceId,
@@ -59,18 +63,20 @@ describe(
         payload: { whatsappNumberId: numero.fila.id, to: "573000000000", type: "text", text: { body: "hola" } },
       });
       if (job.resultado === "conflicto_payload_distinto") throw new Error("no debería haber conflicto");
-      return { numeroId: numero.fila.id, jobId: job.jobId };
+      return { numeroId: numero.fila.id, jobId: job.jobId, phoneNumberId };
     }
 
     it("éxito confirmado: un solo POST físico real, payload REAL de Meta (messaging_product, sin whatsappNumberId), wamid capturado, usage_ledger confirmado", async () => {
       const workspaceId = randomUUID();
       workspacesUsados.push(workspaceId);
-      const { jobId } = await prepararJob(workspaceId);
+      const { jobId, numeroId, phoneNumberId } = await prepararJob(workspaceId);
 
       let llamadasFisicasAMeta = 0;
       let cuerpoEnviadoAMeta: unknown = null;
-      const fetchFixture = (async (_url: string, init?: RequestInit) => {
+      let urlEnviadaAMeta = "";
+      const fetchFixture = (async (url: string, init?: RequestInit) => {
         llamadasFisicasAMeta++;
+        urlEnviadaAMeta = String(url);
         cuerpoEnviadoAMeta = JSON.parse(init!.body as string);
         return new Response(JSON.stringify({ messaging_product: "whatsapp", messages: [{ id: "wamid.HBgLNTczMDAwMDAwMDAVAgARGBI1QUQ5RTQ4RjQ0RjQ0RjQ0RjQA" }] }), { status: 200 });
       }) as typeof fetch;
@@ -79,6 +85,10 @@ describe(
       assert.equal(resultado.httpStatus, 200);
       assert.equal(llamadasFisicasAMeta, 1, "debe haber exactamente 1 POST físico real");
       assert.equal(resultado.motivo, "meta_confirmo_exito");
+
+      // Corrección crítica Fase 5 -- la URL de Meta usa el phone_number_id real, NUNCA el UUID interno.
+      assert.ok(urlEnviadaAMeta.endsWith(`/${phoneNumberId}/messages`), `la URL de Meta debe terminar en /<phone_number_id>/messages -- fue: ${urlEnviadaAMeta}`);
+      assert.ok(!urlEnviadaAMeta.includes(numeroId), `la URL de Meta NUNCA debe contener el UUID interno (${numeroId})`);
 
       // Fase 5, D2 -- el body REAL enviado a Meta debe tener el shape correcto.
       assert.deepEqual(cuerpoEnviadoAMeta, { messaging_product: "whatsapp", to: "573000000000", type: "text", text: { body: "hola" } });
@@ -91,6 +101,39 @@ describe(
 
       const ledger = await obtenerLedgerDelJob(admin, { workspaceId, jobId });
       assert.equal(ledger!.estado, "confirmado");
+    });
+
+    it("CORRECCIÓN CRÍTICA (Fase 5) -- job.whatsapp_number_id = UUID interno -> lookup del número -> la URL de Meta usa el phone_number_id REAL, jamás el UUID interno", async () => {
+      const workspaceId = randomUUID();
+      workspacesUsados.push(workspaceId);
+      const { jobId, numeroId, phoneNumberId } = await prepararJob(workspaceId);
+
+      // Confirma la PREMISA del bug: el job efectivamente persiste el UUID
+      // interno, y ese UUID es distinto del phone_number_id de Meta.
+      const jobPre = await obtenerJobDelWorkspace(admin, { workspaceId, jobId });
+      assert.equal(jobPre!.whatsapp_number_id, numeroId, "premisa: el job guarda el UUID interno como whatsapp_number_id");
+      assert.notEqual(numeroId, phoneNumberId, "premisa: UUID interno y phone_number_id son valores distintos");
+
+      let urlEnviadaAMeta = "";
+      const fetchFixture = (async (url: string) => {
+        urlEnviadaAMeta = String(url);
+        return new Response(JSON.stringify({ messages: [{ id: "wamid.URLCHECKOKOKOKOKOKOKOKOK" }] }), { status: 200 });
+      }) as typeof fetch;
+
+      const resultado = await procesarMensajeOutbound({ supabase: admin, metaGraphApiBaseUrl: "https://graph.facebook.test", fetchImpl: fetchFixture }, { workspaceId, jobId });
+      assert.equal(resultado.httpStatus, 200);
+
+      // LA aserción central de la corrección -- FALLA si la URL contiene el UUID interno.
+      assert.equal(
+        urlEnviadaAMeta,
+        `https://graph.facebook.test/v21.0/${phoneNumberId}/messages`,
+        `la URL de Meta debe construirse EXCLUSIVAMENTE con el phone_number_id real -- fue: ${urlEnviadaAMeta}`
+      );
+      assert.ok(!urlEnviadaAMeta.includes(numeroId), `la URL de Meta NUNCA debe contener el UUID interno (${numeroId}) -- fue: ${urlEnviadaAMeta}`);
+
+      // El envío completó con éxito real usando el phone_number_id correcto.
+      const job = await obtenerJobDelWorkspace(admin, { workspaceId, jobId });
+      assert.equal(job!.status, "success_confirmed");
     });
 
     it("Fase 5, D4 -- Meta responde 2xx pero SIN wamid válido: se confirma igual (2xx real sigue siendo certeza), wamid queda null, motivo distinguible -- nunca se inventa un id", async () => {
