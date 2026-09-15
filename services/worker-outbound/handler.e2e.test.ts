@@ -15,7 +15,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { procesarMensajeOutbound } from "./handler";
 import { registrarNumero } from "@/lib/developer/whatsapp-numbers-store";
 import { crearJobConIdempotencia, obtenerJobDelWorkspace } from "@/lib/developer/jobs-store";
-import { reservarUso, obtenerLedgerDelJob } from "@/lib/developer/usage-ledger";
+import { obtenerLedgerDelJob } from "@/lib/developer/usage-ledger";
 
 const HAS_SUPABASE = Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
 
@@ -53,7 +53,8 @@ describe(
       if (!numero.ok) throw new Error("no se pudo crear número de prueba");
       const job = await crearJobConIdempotencia(admin, { workspaceId, whatsappNumberId: numero.fila.id, idempotencyKey: `idem-${randomUUID()}`, payload: { to: "573000000000" } });
       if (job.resultado === "conflicto_payload_distinto") throw new Error("no debería haber conflicto");
-      await reservarUso(admin, { workspaceId, jobId: job.jobId });
+      // Fase 3, cierre (hallazgo del usage_ledger) -- crearJobConIdempotencia
+      // ya reserva internamente, no hace falta reservar acá aparte.
       return { numeroId: numero.fila.id, jobId: job.jobId };
     }
 

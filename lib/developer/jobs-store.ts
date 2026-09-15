@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { randomUUID } from "node:crypto";
 import { reclamarIdempotencia } from "@/lib/developer/idempotency";
 import { transicionar, estadoInicial, type EventoJob, type EstadoCompletoJob } from "@/lib/developer/outbound-state-machine";
+import { reservarUso } from "@/lib/developer/usage-ledger";
 
 // DuLabs Developer V1 -- Fase 2 (autorizado, secciones 9/10/11 del brief).
 // Persistencia real del job saliente + ownership/lease con CAS real
@@ -33,6 +34,28 @@ export type JobFila = {
  * migración de Fase 2 documenta explícitamente que NO se hace vía foreign
  * key (para no romper el contrato ya probado de Fase 1), sino acá, en el
  * único punto de entrada real de un job nuevo.
+ *
+ * Fase 3, cierre (hallazgo del usage_ledger) -- este es también el ÚNICO
+ * punto real donde se llama a reservarUso() (Fase 2, lib/developer/usage-ledger.ts,
+ * ya existía pero nunca se invocaba desde código de producción). Se
+ * reserva acá, no en el Gateway ni en el Worker, porque:
+ *   - es el único lugar donde el job_id ya está atómicamente decidido
+ *     (viene del propio reclamo de idempotencia, UNIQUE(workspace_id,
+ *     idempotency_key) real de Postgres) ANTES de reservar -- nunca se
+ *     reserva "adivinando" un id que después podría no persistir;
+ *   - una solicitud rechazada ANTES de llegar acá (auth inválida, falta
+ *     Idempotency-Key, payload inválido, o un conflicto de idempotencia
+ *     con payload distinto -- sección "conflicto_payload_distinto" arriba)
+ *     nunca ejecuta esta función, así que nunca reserva;
+ *   - "duplicado_identico" (réplica exacta de un request ya procesado)
+ *     NUNCA crea una fila de job nueva ni debe crear una reserva nueva --
+ *     reservarUso() ya es idempotente por su propio UNIQUE(job_id), así
+ *     que reintentarla acá es un no-op seguro, y sirve como auto-sanación
+ *     real ante el único caso borde posible: una ejecución anterior creó
+ *     la fila de job pero se cayó (crash/timeout) antes de reservar -- un
+ *     reintento real del desarrollador con la MISMA Idempotency-Key (el
+ *     comportamiento esperado tras un error) completa la reserva que
+ *     había quedado pendiente, sin inventar ninguna transacción nueva.
  */
 export async function crearJobConIdempotencia(
   supabase: SupabaseClient,
@@ -44,7 +67,14 @@ export async function crearJobConIdempotencia(
     payload: params.payload,
   });
   if (reclamo.resultado === "conflicto_payload_distinto") return reclamo;
-  if (reclamo.resultado === "duplicado_identico") return { resultado: "duplicado_identico", jobId: reclamo.jobId };
+  if (reclamo.resultado === "duplicado_identico") {
+    // Auto-sanación idempotente -- ver comentario de la función. Nunca debe
+    // romper una réplica que de otro modo sería exitosa: si esto falla de
+    // nuevo (ej. Postgres momentáneamente inalcanzable), se ignora y el
+    // caller igual recibe su "duplicado_identico" normal.
+    await reservarUso(supabase, { workspaceId: params.workspaceId, jobId: reclamo.jobId }).catch(() => {});
+    return { resultado: "duplicado_identico", jobId: reclamo.jobId };
+  }
 
   // "nuevo": inserta la fila de job real con ESE mismo id. onConflict
   // do-nothing por si dos requests concurrentes llegaran a pasar el
@@ -63,6 +93,13 @@ export async function crearJobConIdempotencia(
   if (error && error.code !== "23505") {
     throw new Error(`[developer/jobs-store] error creando fila de job: ${error.message}`);
   }
+
+  // Reserva real de uso -- job_id ya atómicamente decidido arriba. Se deja
+  // propagar un error real (nunca se traga silenciosamente): si falla acá,
+  // el caller (Gateway) responde error real, y el reintento del
+  // desarrollador con la MISMA Idempotency-Key cae en la rama
+  // "duplicado_identico" de arriba, que reintenta la reserva.
+  await reservarUso(supabase, { workspaceId: params.workspaceId, jobId: reclamo.jobId });
   return { resultado: "nuevo", jobId: reclamo.jobId };
 }
 

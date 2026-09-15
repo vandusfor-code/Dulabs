@@ -36,6 +36,10 @@ describe(
 
     after(async () => {
       for (const workspaceId of workspacesUsados) {
+        // Fase 3, cierre (hallazgo del usage_ledger) -- crearJobConIdempotencia
+        // ahora también reserva, así que cada job de prueba deja una fila
+        // real de ledger que hay que limpiar.
+        await admin.from("dulabs_dev_usage_ledger").delete().eq("workspace_id", workspaceId).then(() => {}, () => {});
         await admin.from("dulabs_dev_jobs").delete().eq("workspace_id", workspaceId).then(() => {}, () => {});
         await admin.from("dulabs_dev_idempotency_keys").delete().eq("workspace_id", workspaceId).then(() => {}, () => {});
         await admin.from("dulabs_dev_whatsapp_numbers").delete().eq("workspace_id", workspaceId).then(() => {}, () => {});
