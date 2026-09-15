@@ -108,4 +108,39 @@ describe("DuLabs Developer V1 — outbound state machine (Fase 1, secciones 10/1
     assert.equal(estado.status, "success_confirmed");
     assert.equal(estado.networkAttempts, 2); // dos intentos físicos reales, dentro del máximo permitido
   });
+
+  it("Fase 3 cierre (riesgo #4) -- reconciliación confirma que Meta SÍ envió: reconciliation_pending -> success_confirmed, physicalOutcome success_confirmed", () => {
+    const pendienteDeReconciliar: EstadoCompletoJob = { status: "reconciliation_pending", physicalOutcome: "uncertain", networkAttempts: 1 };
+    const r = transicionar(pendienteDeReconciliar, { tipo: "reconciliacion_confirmo_enviado" });
+    assert.equal(r.permitida, true);
+    if (r.permitida) {
+      assert.equal(r.siguiente.status, "success_confirmed");
+      assert.equal(r.siguiente.physicalOutcome, "success_confirmed");
+      assert.equal(r.siguiente.networkAttempts, 1, "no se hizo un intento físico nuevo -- solo se confirmó el que ya estaba incierto");
+    }
+  });
+
+  it("reconciliacion_confirmo_enviado solo aplica desde reconciliation_pending -- nunca desde sending directo (esa es meta_confirmo_exito)", () => {
+    const enviando: EstadoCompletoJob = { status: "sending", physicalOutcome: "pre_send", networkAttempts: 1 };
+    const r = transicionar(enviando, { tipo: "reconciliacion_confirmo_enviado" });
+    assert.equal(r.permitida, false);
+  });
+
+  it("ciclo completo real (riesgo #4): created -> queued -> sending -> incertidumbre -> reconciliation_pending -> reconciliación confirma envío real -> success_confirmed", () => {
+    let estado = estadoInicial();
+    const pasos: Array<Parameters<typeof transicionar>[1]> = [
+      { tipo: "encolar" },
+      { tipo: "iniciar_envio" },
+      { tipo: "incertidumbre_de_red" },
+      { tipo: "reconciliacion_confirmo_enviado" },
+    ];
+    for (const evento of pasos) {
+      const r = transicionar(estado, evento);
+      assert.equal(r.permitida, true, `paso "${evento.tipo}" debería ser válido desde "${estado.status}"`);
+      if (r.permitida) estado = r.siguiente;
+    }
+    assert.equal(estado.status, "success_confirmed");
+    assert.equal(estado.physicalOutcome, "success_confirmed");
+    assert.equal(estado.networkAttempts, 1, "un solo intento físico real -- la reconciliación solo confirmó certeza tardía, nunca hizo un segundo POST");
+  });
 });

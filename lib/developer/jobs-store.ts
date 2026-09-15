@@ -193,4 +193,25 @@ export async function obtenerJobsPendientesDeReconciliacion(supabase: SupabaseCl
   return (data ?? []) as JobFila[];
 }
 
+/**
+ * Fase 3, cierre (riesgo #3 del reporte de Fase 3). Jobs en retry_pending,
+ * a través de TODOS los workspaces -- usa el índice parcial
+ * dulabs_dev_jobs_retry_pending_idx. Solo lo llama dulabs-reconciliation,
+ * mismo criterio que obtenerJobsPendientesDeReconciliacion: es la única
+ * identidad con motivo legítimo para barrer jobs de más de un workspace.
+ * Republicar es seguro de repetir -- el propio lease/CAS del Worker
+ * outbound (ver services/worker-outbound/handler.ts) protege contra un
+ * segundo POST físico si dos republicaciones del mismo job se solapan.
+ */
+export async function obtenerJobsListosParaReintento(supabase: SupabaseClient, params: { limite?: number } = {}): Promise<JobFila[]> {
+  const { data, error } = await supabase
+    .from("dulabs_dev_jobs")
+    .select("*")
+    .eq("status", "retry_pending")
+    .order("updated_at", { ascending: true })
+    .limit(params.limite ?? 200);
+  if (error) throw new Error(`[developer/jobs-store] error obteniendo jobs listos para reintento: ${error.message}`);
+  return (data ?? []) as JobFila[];
+}
+
 export { estadoInicial };

@@ -232,3 +232,4 @@ lib/developer/rls-isolation.e2e.test.ts
 services/gateway/inbound-handler.e2e.test.ts
 services/worker-outbound/handler.e2e.test.ts
 services/worker-inbound/handler.e2e.test.ts
+services/reconciliation/run.e2e.test.ts

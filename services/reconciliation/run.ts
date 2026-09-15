@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { obtenerJobsPendientesDeReconciliacion, adquirirLease, liberarLease, aplicarEventoJob } from "@/lib/developer/jobs-store";
+import { obtenerJobsPendientesDeReconciliacion, obtenerJobsListosParaReintento, adquirirLease, liberarLease, aplicarEventoJob } from "@/lib/developer/jobs-store";
 import { obtenerEventosPendientesDePublicar, marcarEventoPublicado, incrementarIntentoPublicacion } from "@/lib/developer/events-store";
+import { confirmarUso } from "@/lib/developer/usage-ledger";
 import { publicarMensaje } from "../shared/pubsub";
 
 // DuLabs Developer V1 -- Fase 3 (autorizado, sección G del documento de
@@ -18,6 +19,7 @@ export type DependenciasReconciliation = {
   supabase: SupabaseClient;
   metaGraphApiBaseUrl: string;
   topicInbound: string;
+  topicOutbound: string;
   fetchImpl?: typeof fetch;
   publicar?: typeof publicarMensaje;
   minutosAntiguedadRecovery?: number;
@@ -32,9 +34,13 @@ export type ResultadoReconciliacionOutbound = {
 
 export type ResultadoRecoveryInbound = { eventoId: number; resultado: "republicado" | "tope_de_intentos_alcanzado" | "error"; detalle?: string };
 
+// Fase 3, cierre (riesgo #3 del reporte de Fase 3).
+export type ResultadoReintentoOutbound = { jobId: string; resultado: "republicado" | "error"; detalle?: string };
+
 export type ResumenEjecucion = {
   reconciliacionOutbound: ResultadoReconciliacionOutbound[];
   recoveryInbound: ResultadoRecoveryInbound[];
+  reintentoOutbound: ResultadoReintentoOutbound[];
 };
 
 /**
@@ -86,12 +92,14 @@ async function reconciliarOutbound(deps: DependenciasReconciliation): Promise<Re
         await aplicarEventoJob(deps.supabase, { workspaceId: job.workspace_id, jobId: job.id, leaseId: lease.leaseId, evento: { tipo: "reconciliacion_confirmo_no_enviado" } });
         resultados.push({ jobId: job.id, resultado: "confirmado_no_enviado" });
       } else if (estado === "enviado") {
-        // Meta confirma que sí llegó -- el job queda como estaba
-        // (reconciliation_pending con physical_outcome=uncertain no tiene
-        // una transición directa a success_confirmed en la máquina de
-        // estados de Fase 1; esto se deja marcado para decisión de
-        // producto explícita, ver reporte de Fase 3).
-        resultados.push({ jobId: job.id, resultado: "confirmado_enviado", detalle: "sin transición definida en la máquina de estados de Fase 1 -- no se muta el job" });
+        // Fase 3, cierre (riesgo #4) -- Meta confirma que sí llegó pese a
+        // la incertidumbre original. Certeza total tardía, mismo destino
+        // final que una confirmación síncrona del Worker
+        // (meta_confirmo_exito): success_confirmed. No se hace NINGÚN
+        // POST físico nuevo -- solo se confirma el que ya se había hecho.
+        await aplicarEventoJob(deps.supabase, { workspaceId: job.workspace_id, jobId: job.id, leaseId: lease.leaseId, evento: { tipo: "reconciliacion_confirmo_enviado" } });
+        await confirmarUso(deps.supabase, { workspaceId: job.workspace_id, jobId: job.id }).catch(() => {});
+        resultados.push({ jobId: job.id, resultado: "confirmado_enviado" });
       } else {
         resultados.push({ jobId: job.id, resultado: "sin_certeza_todavia" });
       }
@@ -127,7 +135,36 @@ async function recuperarInbound(deps: DependenciasReconciliation): Promise<Resul
   return resultados;
 }
 
+/**
+ * Fase 3, cierre (riesgo #3 del reporte de Fase 3). Barrido de jobs en
+ * retry_pending -- sin esto, un job que un rechazo cierto de Meta (con
+ * intentos disponibles) o una reconciliación con "no enviado" dejó en
+ * retry_pending quedaba atascado para siempre, porque el Worker outbound
+ * deliberadamente nunca se auto-publica (ver GAP documentado en
+ * services/worker-outbound/handler.ts, ahora resuelto acá). Republicar
+ * {workspaceId, jobId} es EXACTAMENTE el mismo mensaje que publica el
+ * Gateway al crear un job -- el Worker outbound reusa su lógica real sin
+ * cambios (lease/CAS ya protege contra una republicación duplicada
+ * mientras la anterior sigue en curso).
+ */
+async function reintentarOutbound(deps: DependenciasReconciliation): Promise<ResultadoReintentoOutbound[]> {
+  const publicar = deps.publicar ?? publicarMensaje;
+  const jobs = await obtenerJobsListosParaReintento(deps.supabase);
+  const resultados: ResultadoReintentoOutbound[] = [];
+
+  for (const job of jobs) {
+    try {
+      await publicar(deps.topicOutbound, { workspaceId: job.workspace_id, jobId: job.id });
+      resultados.push({ jobId: job.id, resultado: "republicado" });
+    } catch (err) {
+      resultados.push({ jobId: job.id, resultado: "error", detalle: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  return resultados;
+}
+
 export async function ejecutarReconciliacion(deps: DependenciasReconciliation): Promise<ResumenEjecucion> {
-  const [reconciliacionOutbound, recoveryInbound] = await Promise.all([reconciliarOutbound(deps), recuperarInbound(deps)]);
-  return { reconciliacionOutbound, recoveryInbound };
+  const [reconciliacionOutbound, recoveryInbound, reintentoOutbound] = await Promise.all([reconciliarOutbound(deps), recuperarInbound(deps), reintentarOutbound(deps)]);
+  return { reconciliacionOutbound, recoveryInbound, reintentoOutbound };
 }

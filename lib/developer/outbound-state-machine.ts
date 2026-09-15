@@ -27,7 +27,14 @@ export type EventoJob =
   // Un proceso de reconciliación (fuera de esta máquina de estados)
   // confirmó, consultando a Meta, que el POST anterior NO llegó a
   // ejecutarse del lado de Meta -- solo entonces es seguro reintentar.
-  | { tipo: "reconciliacion_confirmo_no_enviado" };
+  | { tipo: "reconciliacion_confirmo_no_enviado" }
+  // Fase 3, cierre (riesgo #4) -- un proceso de reconciliación confirmó,
+  // consultando a Meta, que el POST anterior SÍ llegó a procesarse del
+  // lado de Meta pese a la incertidumbre de red original -- certeza total
+  // tardía, mismo destino final que una confirmación síncrona
+  // (meta_confirmo_exito), pero llegando desde reconciliation_pending en
+  // vez de desde sending.
+  | { tipo: "reconciliacion_confirmo_enviado" };
 
 export type EstadoCompletoJob = {
   status: EstadoJob;
@@ -97,6 +104,13 @@ export function transicionar(actual: EstadoCompletoJob, evento: EventoJob): Resu
         return { permitida: true, siguiente: { status: "failed_by_meta", physicalOutcome: "pre_send", networkAttempts: actual.networkAttempts } };
       }
       return { permitida: true, siguiente: { status: "retry_pending", physicalOutcome: "pre_send", networkAttempts: actual.networkAttempts } };
+    }
+
+    case "reconciliacion_confirmo_enviado": {
+      if (actual.status !== "reconciliation_pending") {
+        return { permitida: false, motivo: `solo aplica reconciliación desde "reconciliation_pending", no desde "${actual.status}"` };
+      }
+      return { permitida: true, siguiente: { status: "success_confirmed", physicalOutcome: "success_confirmed", networkAttempts: actual.networkAttempts } };
     }
   }
 }
