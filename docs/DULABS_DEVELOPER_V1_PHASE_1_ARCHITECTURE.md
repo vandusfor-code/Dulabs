@@ -1,6 +1,8 @@
 # DuLabs Developer V1 — Fase 1: Arquitectura y Contratos Técnicos
 
-**Estado de esta fase: IN PROGRESS** (ver sección "Gate de cierre" al final — NO se declara FROZEN ni READY FOR AUDIT).
+**Estado de esta fase: READY FOR AUDIT** (ver sección "Gate de cierre" al final — NO se declara FROZEN; la siguiente etapa es auditoría adversarial, no producción).
+
+**Decisión de plataforma (confirmada):** la arquitectura de cómputo queda **Google Cloud Run + Pub/Sub + PostgreSQL + Cloud Run Jobs (reconciliación) + Google Cloud KMS**, tal como estaba en el brief original de Fase 1. Se evaluó la alternativa de Vercel + QStash (sección 8.2 de una versión anterior de este documento) y se descartó explícitamente: el diseño ya está construido alrededor de ownership/leases, CAS, `physical_outcome`, reconciliación y semántica at-least-once de Pub/Sub — cambiar el backbone de ejecución ahora reabriría la arquitectura sin necesidad. Esta sección ya no es una decisión pendiente.
 
 Basado en `DuLabs_Developer_V1_Fase_0_FROZEN_Definicion_Final.pdf` (leído completo antes de escribir este documento). Fase 0 se trata como FROZEN — este documento no reinterpreta el producto, solo lo traduce a contratos técnicos.
 
@@ -189,6 +191,7 @@ Todo el código nuevo vive bajo `lib/developer/` — deliberadamente aislado del
 3. **`lib/developer/webhook-signature.ts`** — firma/verificación HMAC-SHA256 de los eventos salientes hacia el desarrollador (`X-DuLabs-Signature`, `X-DuLabs-Timestamp`, `X-DuLabs-Event-ID`), comparación en tiempo constante, tolerancia temporal configurable (protección contra replay).
 4. **`lib/developer/outbound-state-machine.ts`** — tipos + función pura `transicionValida(estadoActual, evento)` para el ciclo de vida del job saliente (sección 4 de este documento).
 5. **`lib/developer/idempotency.ts`** — contrato de idempotencia contra Postgres (Supabase) usando el mismo patrón CAS ya validado en producción (`INSERT ... ON CONFLICT`), con hash de payload para detectar conflictos reales.
+6. **`lib/developer/secure-crypto.ts`** — cifrado AES-256-GCM estricto, fail-closed, para credenciales de Developer V1 (sección 8.1).
 
 Todo lo anterior tiene tests reales en `lib/developer/*.test.ts` (ver reporte de tests, sección 8) — nunca `expect(true).toBe(true)`.
 
@@ -202,27 +205,42 @@ Todo lo anterior tiene tests reales en `lib/developer/*.test.ts` (ver reporte de
 
 ## 7. Evidencia de tests (regla de evidencia, sección 27 del brief)
 
-Ver reporte completo al final de la respuesta de esta sesión (no repetido aquí para no duplicar). Resumen: pruebas reales de SSRF (localhost, RFC1918, metadata endpoint, IPv6, DNS rebinding con un resolver controlado), HMAC (firma válida, firma inválida, timestamp expirado, replay), state machine (las transiciones que el brief exige, incluida la prohibición de POST automático tras `uncertain`), e idempotencia con 5 inserciones concurrentes reales contra Supabase (Postgres real, no simulado).
+**Suite completa de Developer V1: 56/56 tests en verde**, corrida real (`node --test`), no `expect(true).toBe(true)`:
+
+| Archivo | Tests | Qué prueba, con evidencia real |
+|---|---|---|
+| `api-keys.test.ts` | 7 | Generación, hash SHA-256, verificación en tiempo constante, rechazo de clave incorrecta |
+| `ssrf-guard.test.ts` | 13 | localhost, RFC1918, metadata endpoint (169.254.169.254), multicast, reservado, IPv6 (`::1`, `fe80::`, `fd00::`, `::ffff:127.0.0.1`), **DNS rebinding real** (resolver inyectado que hace que un hostname con apariencia pública resuelva a `10.0.0.99` -- se bloquea igual, verificado también con múltiples IPs candidatas) |
+| `webhook-signature.test.ts` | 9 | Firma válida/inválida, cuerpo alterado, timestamp expirado, **replay real simulado** (evento capturado y reenviado con el reloj avanzado), tolerancia configurable |
+| `outbound-state-machine.test.ts` | 9 | Ciclo completo de transiciones, **la regla crítica de la sección 11 probada explícitamente dos veces** (incertidumbre nunca va a retry_pending, sin importar intentos restantes), máximo de intentos físicos respetado |
+| `crash-recovery.test.ts` | 1 | Servidor HTTP **real** (fixture), POST **real**, contador incrementado por el servidor (no por el código bajo prueba), crash simulado tras el POST, recovery, **cero segundo POST físico**. Evidencia impresa: `physical POST count before recovery: 1` / `after recovery attempt: 1` / `final job state: reconciliation_pending` / `second POST: NOT EXECUTED` |
+| `secure-crypto.test.ts` | 10 | Roundtrip real, fail-closed sin clave (cifrar Y descifrar), clave de longitud inválida, **prohibición de plaintext fallback** (formato inválido, formato legado de Business, string vacío -- todos lanzan), **dato manipulado** (byte corrompido en el ciphertext real, falla la autenticación GCM), nonce único por operación |
+| `idempotency.e2e.test.ts` | 7 | **Postgres real (Supabase)**: primera vez = nuevo job; misma clave + mismo payload = mismo job_id; misma clave + payload distinto = conflicto; aislamiento real entre 2 workspaces; **5 reclamos concurrentes reales con `Promise.all` → exactamente 1 gana, confirmado también contra la tabla directamente (`count === 1`)**; repetición tardía tras "completarse" la operación → mismo job_id, dos veces seguidas |
+
+Corrido también: `npx tsc --noEmit` (0 errores), `npx eslint lib/developer/` (0 errores/warnings), y la suite completa del manifiesto del repo (`scripts/run-test-flow.mjs`) para confirmar que nada de DuLabs Business se rompió.
 
 ---
 
 ## 8. Contradicciones encontradas entre el código actual y el Fase 0/1 (sección 1 del brief: documentar, no resolver en silencio)
 
-### 8.1 KMS — CONTRADICCIÓN REAL
+### 8.1 KMS — CONTRADICCIÓN REAL, CORREGIDA para Developer V1
 
 **Fase 1 exige (sección 17):** clave maestra protegida por KMS, `FAIL CLOSED` si KMS no está disponible, nunca un fallback criptográfico.
 
-**Código actual (`lib/crypto.ts`):** `TOKEN_ENCRYPTION_KEY` es un env var plano (aunque cifrado en reposo por Vercel, no es KMS con auditoría/rotación/HSM), y `descifrarSecreto` tiene un **fallback explícito a texto plano** para valores legacy sin el prefijo `v1:` — es decir, hoy el sistema hace exactamente lo opuesto a "fail closed": si algo no está cifrado, lo acepta igual.
+**Código de Business (`lib/crypto.ts`, sin modificar):** `TOKEN_ENCRYPTION_KEY` es un env var plano (cifrado en reposo por Vercel, pero no es KMS con auditoría/rotación/HSM), y `descifrarSecreto` tiene un **fallback explícito a texto plano** para valores legacy sin el prefijo `v1:`. Esto sigue siendo correcto para Business (datos ya migrados dependen de ese fallback) — **no se tocó**, no era el pedido.
 
-**Propuesta técnica:** para Developer V1 específicamente (no se toca el comportamiento legacy de Business, que depende de ese fallback para no romper datos ya migrados), las credenciales de desarrollador (API keys de IA de terceros que el desarrollador pudiera guardar, secretos de webhook) deben cifrarse con una ruta que **no tenga fallback a texto plano** — si `TOKEN_ENCRYPTION_KEY` falta, la operación de guardar/leer debe fallar con error explícito, nunca degradar. Implementado así en `lib/developer/` (no reutiliza `descifrarSecreto` tal cual, usa una variante estricta). El uso de un KMS real (Google Cloud KMS / AWS KMS) para la clave maestra en sí queda como **PRODUCT DECISION REQUIRED** — depende de qué nube se decida para Fase 3.
+**Corrección implementada para Developer V1:** `lib/developer/secure-crypto.ts` (ruta completamente separada, aislada, greenfield):
+- `DEVELOPER_TOKEN_ENCRYPTION_KEY` — variable de entorno propia, nunca comparte ni reemplaza `TOKEN_ENCRYPTION_KEY` de Business.
+- Clave ausente o de longitud inválida → `ClaveNoDisponibleError`, tanto al cifrar como al descifrar. Sin excepciones, sin clave por defecto, sin clave cero.
+- Valor a descifrar mal formado (incluido el formato legado `v1:...` de Business, que se rechaza a propósito — no hay compatibilidad cruzada) → `DescifradoFallidoError`. **Nunca** se devuelve el valor de entrada como si fuera texto plano.
+- Autenticación GCM fallida (ciphertext manipulado) → `DescifradoFallidoError`. Probado corrompiendo un byte real del ciphertext y confirmando el rechazo.
+- 10 tests reales en `lib/developer/secure-crypto.test.ts`, incluida la garantía de nonce único por operación (dos cifrados del mismo texto producen IVs distintos).
 
-### 8.2 Infraestructura de cómputo — DECISIÓN DE PRODUCTO REQUERIDA
+**Lo que sigue pendiente, honestamente (no resuelto ni simulado):** `obtenerClaveMaestra()` hoy lee la clave de una variable de entorno, no de una llamada real a Google Cloud KMS. Está marcado con un comentario `TODO(Fase 3, infraestructura real)` explícito en el código — es el único punto que habría que cambiar cuando exista una cuenta GCP con KMS provisionado (envelope encryption: KMS desenvolvería la clave real). La *regla de negocio* ("sin clave válida, fail closed, siempre") está implementada y probada ahora; la *fuente* de esa clave (env var vs. KMS real) es intercambiable sin tocar el resto del sistema, y depende del bloqueador de infraestructura de la sección 9.
 
-El Fase 0 no menciona GCP en ningún punto (habla de "infraestructura oficial de Meta", no de nube específica). El diagrama de Cloud Run/Pub/Sub/KMS aparece **por primera vez en el brief de Fase 1**, como arquitectura objetivo aprobada. Dado que:
-- No hay cuenta GCP accesible desde este entorno.
-- Vercel (donde corre hoy el 100% de DuLabs) también podría sostener la Fase 1 de forma más simple (funciones serverless + una cola gestionada tipo QStash, que **ya está en las dependencias del proyecto**: `@upstash/qstash` — usado hoy en producción para otra cosa, pero es literalmente una cola de mensajes con reintentos y firma, el mismo rol que cumpliría Pub/Sub).
+### 8.2 Infraestructura de cómputo — DECISIÓN TOMADA
 
-**Pregunta que requiere decisión de negocio, no técnica:** ¿se provisiona una cuenta GCP nueva para Developer V1 (arquitectura tal como está en el brief), o se evalúa reusar QStash/Vercel para no duplicar plataformas de infraestructura? Ambas son válidas técnicamente; ninguna la puedo decidir por mi cuenta (cambiaría el diagrama aprobado de la sección 4 del brief de Fase 1, así que si se elige la segunda, debe registrarse y aprobarse como cambio, tal como pide la sección 1).
+~~Pendiente~~ **Resuelto por decisión explícita del negocio:** se mantiene la arquitectura Google Cloud Run + Pub/Sub + PostgreSQL + Cloud Run Jobs + Google Cloud KMS, tal como estaba aprobada en el brief original. Se evaluó la alternativa Vercel + QStash y se descartó a propósito para no reabrir un diseño ya construido alrededor de ownership/leases/CAS/reconciliación. Ver el encabezado de este documento.
 
 ### 8.3 Worker de WhatsApp por QR (AMORE) — no es una contradicción, es scope
 
@@ -230,22 +248,40 @@ El repo tiene un mecanismo de conexión "no oficial" (Baileys/QR, `worker/`) usa
 
 ---
 
-## 9. Bloqueadores (sección "F" del reporte)
+## 9. Bloqueadores reales de infraestructura (sección "F" del reporte — actualizado tras la decisión de plataforma)
 
-1. **Sin acceso a GCP** (Cloud Run, Pub/Sub, KMS) desde este entorno — bloqueador de infraestructura real, no de código.
-2. **Decisión de plataforma de cómputo** (GCP vs. Vercel+QStash) — PRODUCT DECISION REQUIRED, sección 8.2.
-3. **KMS real para la clave maestra** — depende de la decisión anterior.
-4. Los tests de "crash recovery" con Cloud Run Job real y los de Pub/Sub (DLQ, ack, retry) de la sección 26 del brief **no se pueden ejercitar sin la infraestructura del punto 1** — lo que sí se probó (idempotencia real con Postgres, SSRF real, HMAC real) se detalla en la sección 7.
+La decisión de plataforma (sección 8.2) ya no es un bloqueador — el diagrama queda fijo en GCP. Lo que sigue bloqueado es el **acceso real** a esa infraestructura desde este entorno de trabajo, algo que ninguna decisión de arquitectura resuelve por sí sola:
+
+1. **Sin cuenta/credenciales GCP ni `gcloud` CLI en este entorno** (confirmado con `which gcloud` → no encontrado, `gcloud config list` → comando no existe). No se puede provisionar ni invocar Cloud Run, Pub/Sub ni Cloud KMS reales desde acá.
+2. **Google Cloud KMS real** — `lib/developer/secure-crypto.ts` implementa y prueba la regla "fail closed" (sección 8.1), pero la fuente de la clave sigue siendo una variable de entorno, no una llamada real a KMS. Requiere el punto 1 resuelto.
+3. Los tests de Pub/Sub (DLQ, ack, redelivery at-least-once real) y de Cloud Run Job de reconciliación de la sección 26 del brief **no se pueden ejercitar sin infraestructura real** — no se simulan como si lo fueran. Lo que sí se probó de verdad, sin necesitar esa infraestructura, se detalla en la sección 7 (actualizada).
+
+**Qué puede validarse localmente vs. qué requiere GCP (instrucción explícita de documentar esto sin ambigüedad):**
+
+| Validable ahora, sin GCP (hecho) | Requiere GCP real (pendiente de infraestructura) |
+|---|---|
+| Contratos de API (forma de request/response) | El Gateway HTTP desplegado en Cloud Run |
+| Idempotencia -- Postgres real (Supabase hoy, mismo motor que el Postgres final) | Pub/Sub real (topics, ack, DLQ, retención, at-least-once real) |
+| SSRF guard -- resolución DNS real, IPs reales | Cloud Run Jobs de reconciliación ejecutándose de verdad |
+| Firma/verificación HMAC | Cloud KMS real protegiendo la clave maestra |
+| Máquina de estados del job saliente (lógica pura) | Autoscaling / networking real de Cloud Run |
+| Fail-closed del cifrado (regla de negocio) | Observabilidad/tracing real en el entorno de nube |
+| Crash recovery -- servidor HTTP fixture real, POST real, contador real | Crash recovery de un Cloud Run Job real (el fixture prueba la LÓGICA, no el entorno de ejecución real) |
 
 ---
 
 ## 10. Gate de cierre
 
-**Estado de Fase 1: IN PROGRESS.**
+**Estado de Fase 1: READY FOR AUDIT.**
 
-No se declara `READY FOR AUDIT` ni `FROZEN` porque:
-- Los contratos de API, idempotencia, state machine, SSRF y HMAC están definidos y **probados**.
-- La arquitectura de cómputo real (Cloud Run/Pub/Sub/KMS) sigue bloqueada por falta de infraestructura provisionada — sección 9.
-- Hay una decisión de producto pendiente (sección 8.2) que puede cambiar el diagrama aprobado.
+Por qué ya no es `IN PROGRESS`:
+- Los contratos de API, idempotencia, state machine, SSRF y HMAC están definidos y **probados con evidencia real** (sección 7).
+- La decisión de plataforma de cómputo está **tomada y documentada** (GCP Cloud Run/Pub/Sub/KMS, sección 8.2) -- ya no es una pregunta abierta.
+- La contradicción de KMS/fail-closed está **corregida e implementada** para Developer V1 (sección 8.1), con la parte pendiente (conexión real a KMS) marcada explícitamente como dependencia de infraestructura, no como algo simulado o ignorado.
+- La prueba de idempotencia con concurrencia real, payload distinto, y repetición post-completado está **hecha contra Postgres real**, no pendiente.
 
-Cuando se resuelvan los bloqueadores de la sección 9, esta fase puede pasar a `READY FOR AUDIT` sin necesidad de rehacer los contratos ya definidos aquí — el trabajo de esta ronda no se pierde, solo falta el Gateway/Workers reales que invoquen esta lógica ya construida.
+Por qué NO es `FROZEN`:
+- Sigue bloqueado el acceso real a GCP (sección 9) -- el Gateway, los Workers, Pub/Sub y KMS reales no existen desplegados todavía, solo la lógica que los va a respaldar.
+- La siguiente etapa, según tu instrucción, es **auditoría adversarial** -- Fase 1 se congela después de esa revisión, no antes.
+
+No se avanzó a checkout, billing, pricing UI, landing, Agency, Enterprise, dashboard completo ni V2 -- fuera de alcance de esta fase, tal como se pidió explícitamente.
