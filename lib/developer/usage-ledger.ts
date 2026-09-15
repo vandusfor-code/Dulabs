@@ -70,3 +70,29 @@ export async function obtenerLedgerDelJob(supabase: SupabaseClient, params: { wo
   if (error) throw new Error(`[developer/usage-ledger] error obteniendo ledger: ${error.message}`);
   return (data as LedgerFila) ?? null;
 }
+
+export type ResumenUso = { reserved: number; confirmed: number; released: number };
+
+/**
+ * Fase 4 (autorizado, GET /api/v1/usage) -- lectura agregada sobre la
+ * MISMA tabla que reservarUso/confirmarUso/liberarUso ya usan, activada en
+ * el cierre de Fase 3. No es un sistema de billing nuevo: es un count por
+ * estado, opcionalmente acotado por fecha. Sin dinero, sin plan, sin
+ * límites -- eso queda fuera de alcance explícitamente.
+ */
+export async function obtenerResumenUsoDelWorkspace(supabase: SupabaseClient, params: { workspaceId: string; desde?: string; hasta?: string }): Promise<ResumenUso> {
+  let query = supabase.from("dulabs_dev_usage_ledger").select("estado").eq("workspace_id", params.workspaceId);
+  if (params.desde) query = query.gte("created_at", params.desde);
+  if (params.hasta) query = query.lt("created_at", params.hasta);
+
+  const { data, error } = await query;
+  if (error) throw new Error(`[developer/usage-ledger] error obteniendo resumen de uso: ${error.message}`);
+
+  const resumen: ResumenUso = { reserved: 0, confirmed: 0, released: 0 };
+  for (const fila of data ?? []) {
+    if (fila.estado === "reservado") resumen.reserved++;
+    else if (fila.estado === "confirmado") resumen.confirmed++;
+    else if (fila.estado === "liberado") resumen.released++;
+  }
+  return resumen;
+}

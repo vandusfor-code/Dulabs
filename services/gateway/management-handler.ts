@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { crearApiKey, listarApiKeys, revocarApiKey } from "@/lib/developer/api-keys-store";
-import { registrarNumero, listarNumeros } from "@/lib/developer/whatsapp-numbers-store";
+import { registrarNumero, listarNumeros, obtenerNumeroDelWorkspace } from "@/lib/developer/whatsapp-numbers-store";
 import { configurarWebhook } from "@/lib/developer/webhook-config-store";
 
 // DuLabs Developer V1 -- Fase 3 (autorizado, sección A/N del documento de
@@ -81,6 +81,19 @@ export async function manejarListarNumeros(deps: DependenciasManagement, workspa
 export async function manejarConfigurarWebhook(deps: DependenciasManagement, workspaceId: string, cuerpo: unknown): Promise<RespuestaManagement> {
   const body = cuerpo as { whatsappNumberId?: string; url?: string } | null;
   if (!body?.whatsappNumberId || !body.url) return { status: 400, cuerpo: { error: "Faltan 'whatsappNumberId' y/o 'url'" } };
+
+  // Fase 4 (autorizado, hallazgo de seguridad encontrado al diseñar la
+  // superficie de webhooks por API key) -- configurarWebhook() nunca
+  // verificó por su cuenta que whatsappNumberId pertenece a workspaceId
+  // antes de hacer upsert. Como UNIQUE(whatsapp_number_id) NO es compuesto
+  // con workspace_id, un workspaceId real + un whatsappNumberId de OTRO
+  // workspace sobrescribía silenciosamente la configuración de webhook de
+  // ese otro workspace (secuestro/DoS del webhook ajeno). Se corrige acá,
+  // en el punto de entrada -- nunca se llega a tocar la tabla de webhooks
+  // sin haber confirmado ownership real primero.
+  const numero = await obtenerNumeroDelWorkspace(deps.supabase, { workspaceId, numeroId: body.whatsappNumberId });
+  if (!numero) return { status: 404, cuerpo: { error: "whatsapp_number_not_found" } };
+
   const resultado = await configurarWebhook(deps.supabase, { workspaceId, whatsappNumberId: body.whatsappNumberId, url: body.url });
   if (!resultado.ok) return { status: 400, cuerpo: { error: resultado.motivo, detalle: resultado.detalle } };
   return { status: 201, cuerpo: { webhook: resultado.fila, secret: resultado.secreto } };

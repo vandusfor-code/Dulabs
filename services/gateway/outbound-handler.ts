@@ -1,11 +1,19 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { autenticarApiKey } from "@/lib/developer/api-keys-store";
-import { crearJobConIdempotencia } from "@/lib/developer/jobs-store";
+import { crearJobConIdempotencia, obtenerJobDelWorkspace } from "@/lib/developer/jobs-store";
+import { obtenerNumeroDelWorkspace } from "@/lib/developer/whatsapp-numbers-store";
+import { verificarLimiteTasa } from "@/lib/rate-limit";
 import { publicarMensaje } from "../shared/pubsub";
+import { conWorkspaceAutenticadoPorApiKey } from "./api-auth";
+import { errorApi, exitoApi, type RespuestaApi } from "./errors";
+import { validarIdempotencyKey, validarCuerpoMensajeSaliente } from "./validation";
+import { estadoPublicoDelJob } from "./job-status";
 
 // DuLabs Developer V1 -- Fase 3 (autorizado, sección A/B del documento de
-// infraestructura). Handler de POST /api/v1/messages -- el contrato
-// original de Fase 1 (sección 2). Reusa sin modificar: api-keys-store.ts,
+// infraestructura), extendido en Fase 4 (autorizado, decisión D1: se
+// preserva EXACTAMENTE el contrato real de éxito -- camelCase, 201/200,
+// {jobId, status} -- solo se agrega el modelo de error uniforme, rate
+// limiting, validación de payload y ownership de whatsappNumberId, que
+// antes NO se verificaba antes de crear el job). Reusa sin modificar:
 // jobs-store.ts (que a su vez reusa idempotency.ts, Fase 1).
 
 export type DependenciasOutbound = {
@@ -15,54 +23,104 @@ export type DependenciasOutbound = {
 };
 
 export type RequestMensajeSaliente = {
-  autorizacion: string | undefined; // header Authorization completo
-  idempotencyKey: string | undefined; // header Idempotency-Key
+  autorizacion: string | undefined;
+  idempotencyKey: string | undefined;
   cuerpo: unknown;
+  requestId: string;
+  ipRemota?: string;
 };
 
-export type RespuestaMensajeSaliente = { status: number; cuerpo: Record<string, unknown> };
-
-function extraerBearer(header: string | undefined): string | null {
-  if (!header || !header.startsWith("Bearer ")) return null;
-  return header.slice("Bearer ".length).trim();
-}
-
-export async function manejarMensajeSaliente(deps: DependenciasOutbound, req: RequestMensajeSaliente): Promise<RespuestaMensajeSaliente> {
+export async function manejarMensajeSaliente(deps: DependenciasOutbound, req: RequestMensajeSaliente): Promise<RespuestaApi> {
   const publicar = deps.publicar ?? publicarMensaje;
 
-  const claveApi = extraerBearer(req.autorizacion);
-  if (!claveApi) return { status: 401, cuerpo: { error: "Falta Authorization: Bearer dl_live_..." } };
+  return conWorkspaceAutenticadoPorApiKey(deps, req.autorizacion, req.requestId, req.ipRemota, async (ctx) => {
+    const idemValidacion = validarIdempotencyKey(req.idempotencyKey);
+    if (!idemValidacion.valido) return errorApi(400, "invalid_request", idemValidacion.motivo, req.requestId);
 
-  const auth = await autenticarApiKey(deps.supabase, claveApi);
-  if (!auth.autenticado) return { status: 401, cuerpo: { error: `API key inválida (${auth.motivo})` } };
+    const cuerpoValidacion = validarCuerpoMensajeSaliente(req.cuerpo);
+    if (!cuerpoValidacion.valido) return errorApi(400, "invalid_request", cuerpoValidacion.motivo, req.requestId);
+    const { datos } = cuerpoValidacion;
 
-  if (!req.idempotencyKey) return { status: 400, cuerpo: { error: "Falta la cabecera Idempotency-Key" } };
+    // Fase 4 (autorizado) -- ownership de whatsappNumberId ANTES de crear
+    // nada. Antes de esta corrección, crearJobConIdempotencia aceptaba
+    // cualquier whatsappNumberId sin verificar que perteneciera al
+    // workspace autenticado -- el Worker outbound sí lo verificaba después
+    // (obtenerTokenMetaDelNumero filtra por workspace_id), así que nunca
+    // se enviaba un mensaje real por el número de otro workspace, pero sí
+    // se creaban job/idempotency/usage-ledger "huérfanos" innecesariamente.
+    // Se cierra acá, en el punto de entrada -- mismo criterio que el fix
+    // de ownership de webhooks.
+    const numero = await obtenerNumeroDelWorkspace(deps.supabase, { workspaceId: ctx.workspaceId, numeroId: datos.whatsappNumberId });
+    if (!numero) return errorApi(400, "invalid_whatsapp_number", "whatsappNumberId no encontrado en este workspace", req.requestId);
 
-  const cuerpo = req.cuerpo as { whatsappNumberId?: string; to?: string } | null;
-  if (!cuerpo || typeof cuerpo !== "object" || !cuerpo.whatsappNumberId || !cuerpo.to) {
-    return { status: 400, cuerpo: { error: "El cuerpo debe incluir al menos whatsappNumberId y to" } };
-  }
+    // Rate limiting -- Fase 0 (2 msg/s por número) + Fase 4 decisión D8
+    // (1200 req/min por workspace). Se evalúan AMBOS, el más restrictivo
+    // aplica; ninguno sustituye al otro. Se verifica ANTES de
+    // crearJobConIdempotencia -- una request limitada nunca reserva usage
+    // ni crea idempotencia.
+    const limitePorNumero = await verificarLimiteTasa(deps.supabase, { recurso: "dev-outbound-numero", tenantId: datos.whatsappNumberId, categoria: "devOutboundPorNumero" });
+    if (!limitePorNumero.permitido) {
+      return errorApi(429, "rate_limit_exceeded", "Límite de 2 mensajes/segundo por número excedido", req.requestId, retryAfterHeader(limitePorNumero.reiniciaEn));
+    }
+    const limitePorWorkspace = await verificarLimiteTasa(deps.supabase, { recurso: "dev-outbound-workspace", tenantId: ctx.workspaceId, categoria: "devOutboundPorWorkspace" });
+    if (!limitePorWorkspace.permitido) {
+      return errorApi(429, "rate_limit_exceeded", "Límite de 1200 mensajes/minuto por workspace excedido", req.requestId, retryAfterHeader(limitePorWorkspace.reiniciaEn));
+    }
 
-  const resultado = await crearJobConIdempotencia(deps.supabase, {
-    workspaceId: auth.workspaceId,
-    whatsappNumberId: cuerpo.whatsappNumberId,
-    idempotencyKey: req.idempotencyKey,
-    payload: cuerpo as Record<string, unknown>,
+    const resultado = await crearJobConIdempotencia(deps.supabase, {
+      workspaceId: ctx.workspaceId,
+      whatsappNumberId: datos.whatsappNumberId,
+      idempotencyKey: req.idempotencyKey!,
+      payload: datos as unknown as Record<string, unknown>,
+    });
+
+    if (resultado.resultado === "conflicto_payload_distinto") {
+      return errorApi(409, "idempotency_conflict", "Ya existe una operación con esa Idempotency-Key pero con un payload distinto", req.requestId);
+    }
+
+    if (resultado.resultado === "duplicado_identico") {
+      // Réplica exacta de un request ya procesado -- el job original ya fue
+      // (o está siendo) publicado a Pub/Sub la primera vez; NO se vuelve a
+      // publicar acá.
+      return exitoApi(200, { jobId: resultado.jobId, status: "duplicado_identico" }, req.requestId);
+    }
+
+    await publicar(deps.topicOutbound, { workspaceId: ctx.workspaceId, jobId: resultado.jobId, requestId: req.requestId });
+    return exitoApi(201, { jobId: resultado.jobId, status: "created" }, req.requestId);
   });
+}
 
-  if (resultado.resultado === "conflicto_payload_distinto") {
-    return { status: 409, cuerpo: { error: "Ya existe una operación con esa Idempotency-Key pero con un payload distinto" } };
-  }
+function retryAfterHeader(reiniciaEn: string | null): Record<string, string> | undefined {
+  if (!reiniciaEn) return undefined;
+  const segundos = Math.max(1, Math.ceil((new Date(reiniciaEn).getTime() - Date.now()) / 1000));
+  return { "Retry-After": String(segundos) };
+}
 
-  if (resultado.resultado === "duplicado_identico") {
-    // Réplica exacta de un request ya procesado -- el job original ya fue
-    // (o está siendo) publicado a Pub/Sub la primera vez; NO se vuelve a
-    // publicar acá (evitaría un segundo mensaje para el mismo job sin
-    // necesidad -- el lease/CAS del Worker ya lo protegería igual, pero no
-    // hay ninguna razón de negocio para generar el mensaje duplicado).
-    return { status: 200, cuerpo: { jobId: resultado.jobId, status: "duplicado_identico" } };
-  }
+// ============================================================
+// GET /api/v1/messages/:id -- Fase 4 (autorizado)
+// ============================================================
 
-  await publicar(deps.topicOutbound, { workspaceId: auth.workspaceId, jobId: resultado.jobId });
-  return { status: 201, cuerpo: { jobId: resultado.jobId, status: "created" } };
+export type RequestObtenerMensaje = { autorizacion: string | undefined; jobId: string; requestId: string; ipRemota?: string };
+
+export async function manejarObtenerMensaje(deps: { supabase: SupabaseClient }, req: RequestObtenerMensaje): Promise<RespuestaApi> {
+  return conWorkspaceAutenticadoPorApiKey(deps, req.autorizacion, req.requestId, req.ipRemota, async (ctx) => {
+    // Nunca "obtener por id y comparar workspace después" -- la misma
+    // query ya filtra por (id, workspace_id) -- ver decisión D5.
+    const job = await obtenerJobDelWorkspace(deps.supabase, { workspaceId: ctx.workspaceId, jobId: req.jobId });
+    if (!job) return errorApi(404, "not_found", "Mensaje no encontrado", req.requestId);
+
+    const payload = job.payload as { to?: string } | null;
+    return exitoApi(
+      200,
+      {
+        id: job.id,
+        status: estadoPublicoDelJob(job.status),
+        to: payload?.to ?? null,
+        whatsappNumberId: job.whatsapp_number_id,
+        createdAt: job.created_at,
+        updatedAt: job.updated_at,
+      },
+      req.requestId
+    );
+  });
 }

@@ -34,7 +34,9 @@ export async function crearApiKey(
   return { fila: data as ApiKeyFila, claveEnClaro: generada.claveEnClaro };
 }
 
-export type ResultadoAutenticacion = { autenticado: true; workspaceId: string; apiKeyId: string } | { autenticado: false; motivo: "no_encontrada" | "revocada" };
+export type ResultadoAutenticacion =
+  | { autenticado: true; workspaceId: string; apiKeyId: string; apiKeyPrefix: string; apiKeyName: string }
+  | { autenticado: false; motivo: "no_encontrada" | "revocada" };
 
 /**
  * Autentica una request entrante por su API key. Busca por key_hash
@@ -43,12 +45,18 @@ export type ResultadoAutenticacion = { autenticado: true; workspaceId: string; a
  * expondría timing entre filas). Registra last_used_at como efecto
  * secundario -- best effort, un fallo ahí nunca bloquea la autenticación
  * real.
+ *
+ * Fase 4 (autorizado, capa de autenticación de la Developer API) -- ahora
+ * también devuelve `prefix`/`name` (ya se seleccionaban implícitamente por
+ * columna, solo faltaba incluirlos en el resultado) para que
+ * GET /api/v1/me pueda identificar la key sin exponer nunca el secreto --
+ * la lógica criptográfica/de comparación no cambia en absoluto.
  */
 export async function autenticarApiKey(supabase: SupabaseClient, claveRecibida: string): Promise<ResultadoAutenticacion> {
   const hash = hashearApiKey(claveRecibida);
   const { data, error } = await supabase
     .from("dulabs_dev_api_keys")
-    .select("id, workspace_id, key_hash, revoked_at")
+    .select("id, workspace_id, key_hash, revoked_at, prefix, name")
     .eq("key_hash", hash)
     .maybeSingle();
   if (error || !data) return { autenticado: false, motivo: "no_encontrada" };
@@ -68,7 +76,13 @@ export async function autenticarApiKey(supabase: SupabaseClient, claveRecibida: 
       () => {}
     );
 
-  return { autenticado: true, workspaceId: data.workspace_id as string, apiKeyId: data.id as string };
+  return {
+    autenticado: true,
+    workspaceId: data.workspace_id as string,
+    apiKeyId: data.id as string,
+    apiKeyPrefix: data.prefix as string,
+    apiKeyName: data.name as string,
+  };
 }
 
 /** Revoca una key -- SIEMPRE scoped por workspace_id (nunca confía en que el caller ya validó ownership por fuera). */

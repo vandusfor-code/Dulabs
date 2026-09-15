@@ -27,6 +27,15 @@ export const LIMITES_TASA = {
   lectura: { ventanaSeg: 60, limite: 120 },
   escritura: { ventanaSeg: 60, limite: 60 },
   costosa: { ventanaSeg: 60, limite: 10 },
+  // Fase 4 (Developer API, autorizado, decisión D8) -- mismo mecanismo
+  // genérico (RPC dulabs_rate_limit_incrementar, ya real y distribuido vía
+  // Postgres), nuevas categorías. Límite de Fase 0: 2 mensajes/segundo por
+  // whatsapp_number_id. No sustituye al límite de workspace -- ambos se
+  // verifican, el más restrictivo de los dos aplica.
+  devOutboundPorNumero: { ventanaSeg: 1, limite: 2 },
+  devOutboundPorWorkspace: { ventanaSeg: 60, limite: 1200 },
+  devAuthFallida: { ventanaSeg: 60, limite: 20 },
+  devLectura: { ventanaSeg: 60, limite: 300 },
 } as const;
 
 export type CategoriaLimiteTasa = keyof typeof LIMITES_TASA;

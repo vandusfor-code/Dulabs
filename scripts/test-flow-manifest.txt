@@ -231,6 +231,11 @@ lib/developer/events-store.e2e.test.ts
 lib/developer/rls-isolation.e2e.test.ts
 services/gateway/inbound-handler.e2e.test.ts
 services/gateway/outbound-handler.e2e.test.ts
+services/gateway/numbers-handler.e2e.test.ts
+services/gateway/usage-handler.e2e.test.ts
+services/gateway/me-handler.e2e.test.ts
+services/gateway/webhooks-handler.e2e.test.ts
+services/gateway/multi-tenant-security.e2e.test.ts
 services/worker-outbound/handler.e2e.test.ts
 services/worker-inbound/handler.e2e.test.ts
 services/reconciliation/run.e2e.test.ts

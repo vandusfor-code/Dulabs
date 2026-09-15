@@ -58,6 +58,13 @@ export async function configurarWebhook(
   return { ok: true, fila: data as WebhookConfigFila, secreto };
 }
 
+/** Fase 4 (autorizado, GET /api/v1/webhooks) -- lista todas las configuraciones de webhook del workspace, mismo patrón que listarNumeros/listarApiKeys. Nunca proyecta secret_cifrado. */
+export async function listarWebhooksDelWorkspace(supabase: SupabaseClient, workspaceId: string): Promise<WebhookConfigFila[]> {
+  const { data, error } = await supabase.from("dulabs_dev_webhook_configs").select(CAMPOS_PUBLICOS).eq("workspace_id", workspaceId).order("created_at", { ascending: true });
+  if (error) throw new Error(`[developer/webhook-config-store] error listando webhooks: ${error.message}`);
+  return (data ?? []) as WebhookConfigFila[];
+}
+
 export async function obtenerWebhookDelNumero(supabase: SupabaseClient, params: { workspaceId: string; whatsappNumberId: string }): Promise<WebhookConfigFila | null> {
   const { data, error } = await supabase
     .from("dulabs_dev_webhook_configs")

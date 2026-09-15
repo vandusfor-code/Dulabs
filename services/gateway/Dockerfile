@@ -6,6 +6,11 @@ WORKDIR /app
 COPY package.json package-lock.json tsconfig.json ./
 RUN npm ci
 COPY lib/developer ./lib/developer
+# Fase 4 (autorizado, RATE LIMITING) -- lib/rate-limit.ts vive fuera de
+# lib/developer/ (es el mecanismo genérico ya usado por Business, Fase 11)
+# -- el Gateway lo reusa sin duplicarlo, así que necesita copiarse acá
+# también. Ningún otro servicio (Workers/Reconciliation) lo necesita.
+COPY lib/rate-limit.ts ./lib/rate-limit.ts
 COPY services ./services
 ENV NODE_ENV=production
 EXPOSE 8080
