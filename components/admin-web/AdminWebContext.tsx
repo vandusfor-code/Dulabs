@@ -8,7 +8,7 @@ import type { Cita, DatosCargados } from "@/components/spa-panel/types";
 
 /**
  * Panel web AMORE (autorizado) — provider EXCLUSIVO de la experiencia
- * desktop (/admin/amore/*). Reutiliza el MISMO useAgendaData que ya usa el
+ * desktop (/amoreweb/*, migrado desde /admin/amore/*, autorizado). Reutiliza el MISMO useAgendaData que ya usa el
  * panel móvil (components/spa-panel/useAgendaData.ts) -- cero lógica de
  * negocio duplicada, cero endpoint nuevo para cargar datos. La única
  * diferencia real es CÓMO se obtiene el `token`: el móvil lo lee de la URL
@@ -79,12 +79,14 @@ export function AdminWebProvider({ children }: { children: ReactNode }) {
   const [editando, setEditando] = useState<Cita | null>(null);
   const [mostrarNueva, setMostrarNueva] = useState<Date | null | undefined>(undefined);
 
-  // "?destino=web" (hallazgo real corregido) -- sin esto, volver a iniciar
-  // sesión desde acá (sesión sin cookie, o expirada mientras se usaba el
-  // panel de escritorio) mandaba siempre al panel móvil, nunca de vuelta a
-  // /admin/amore. Ver app/amore/login/page.tsx.
+  // Namespace migrado (autorizado) -- /amoreweb/login es la entrada de login
+  // DEDICADA de escritorio (nunca /amore/login, que sigue siendo el login
+  // compartido del panel móvil /agenda/[token], sin tocar). Antes de la
+  // migración esto usaba "/amore/login?destino=web" -- ver app/amore/login/page.tsx
+  // para el hallazgo real que motivó ese query param, ya no necesario acá
+  // porque /amoreweb/login siempre redirige a /amoreweb tras iniciar sesión.
   useEffect(() => {
-    if (me === null || noAutenticado) router.replace("/amore/login?destino=web");
+    if (me === null || noAutenticado) router.replace("/amoreweb/login");
   }, [me, noAutenticado, router]);
 
   if (me === undefined) return <PantallaCarga />;

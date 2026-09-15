@@ -3,6 +3,7 @@
 import { Search, Users } from "lucide-react";
 import type { ConversacionResumen } from "@/lib/chats/tipos";
 import { cn } from "@/components/spa-panel/ui";
+import { RUTA_WHATSAPP } from "@/components/admin-web/admin-web-routes";
 import type { TabChats } from "./useChats";
 
 const TABS: { id: TabChats; label: string }[] = [
@@ -68,7 +69,7 @@ export function ConversationList({
           </span>
         </div>
         {!whatsappConectado && (
-          <a href="/admin/amore/whatsapp" className="mt-1.5 block text-xs font-medium text-lime-text hover:underline">
+          <a href={RUTA_WHATSAPP} className="mt-1.5 block text-xs font-medium text-lime-text hover:underline">
             Conectar WhatsApp →
           </a>
         )}

@@ -1,8 +1,7 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import { User, Lock, Eye, EyeOff, ArrowRight, Loader2 } from "lucide-react";
+import { AmoreLoginForm } from "@/components/amore/AmoreLoginForm";
 
 // Login AMORE (autorizado) — pantalla de login real, fiel al mockup
 // aprobado. NOTA IMPORTANTE: la ruta pedida originalmente era "/login",
@@ -12,118 +11,31 @@ import { User, Lock, Eye, EyeOff, ArrowRight, Loader2 } from "lucide-react";
 // en su lugar (a pedido explícito). Llama a /api/agenda-auth/login
 // (namespace propio, separado del /api/auth/login del dashboard interno).
 //
-// Destino tras iniciar sesión (hallazgo real corregido): antes SIEMPRE
-// mandaba al panel móvil, sin importar por qué link llegó la persona --
-// quien entraba por el link de escritorio (o cuya sesión de escritorio
-// expiraba a mitad de uso, ver AdminWebContext.tsx) terminaba igual en
-// /agenda/[token]. Ahora "?destino=web" (leído directo de
-// window.location.search, sin useSearchParams -- esta página no necesita
-// Suspense para nada más) lo manda a /admin/amore en vez del móvil.
+// SIGUE SIENDO el login del panel MÓVIL (/agenda/[token], sin tocar) --
+// NUNCA se movió a /amoreweb, precisamente para no romper ese flujo
+// existente y probado. El formulario en sí vive en components/amore/AmoreLoginForm.tsx,
+// compartido con app/amoreweb/login/page.tsx (el nuevo login DEDICADO de
+// escritorio) para no duplicar el formulario/llamada a la API dos veces.
+//
+// Destino tras iniciar sesión (hallazgo real corregido, y namespace migrado
+// de /admin/amore -> /amoreweb, autorizado): antes SIEMPRE mandaba al panel
+// móvil, sin importar por qué link llegó la persona -- quien entraba por el
+// link de escritorio (o cuya sesión de escritorio expiraba a mitad de uso,
+// ver AdminWebContext.tsx) terminaba igual en /agenda/[token]. "?destino=web"
+// (leído directo de window.location.search, sin useSearchParams -- esta
+// página no necesita Suspense para nada más) lo manda a /amoreweb en vez
+// del móvil -- mantenido acá solo por compatibilidad con links viejos;
+// AdminWebContext.tsx ya no genera este query param, apunta directo a
+// /amoreweb/login.
 export default function AmoreLoginPage() {
   const router = useRouter();
-  const [usuario, setUsuario] = useState("");
-  const [password, setPassword] = useState("");
-  const [verPassword, setVerPassword] = useState(false);
-  const [cargando, setCargando] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [avisoOlvido, setAvisoOlvido] = useState(false);
-
-  async function enviar(e: FormEvent) {
-    e.preventDefault();
-    setError(null);
-    setCargando(true);
-    try {
-      const res = await fetch("/api/agenda-auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: usuario, password }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error ?? "No se pudo iniciar sesión");
-        setCargando(false);
-        return;
-      }
-      const destinoWeb = new URLSearchParams(window.location.search).get("destino") === "web";
-      router.push(destinoWeb ? "/admin/amore" : `/agenda/${data.token}`);
-    } catch {
-      setError("No se pudo conectar. Intenta de nuevo.");
-      setCargando(false);
-    }
-  }
 
   return (
-    <div className="amore-scope relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-ink px-6 py-12">
-      <div className="w-full max-w-[380px]">
-        <div className="flex flex-col items-center">
-          {/* Cambio de logo (autorizado) -- mismo archivo real /amore/logo.png. Nuevo logo vertical (1187x1326) -- se ancla por ALTURA para conservar el espacio que ya ocupaba, sin distorsionar ni recortar. */}
-          <img src="/amore/logo.png" alt="AMORE Salón de Belleza" width={1187} height={1326} className="h-[96px] w-auto object-contain" />
-        </div>
-
-        <div className="mt-8 text-center">
-          <h1 className="text-2xl font-semibold text-fg">Bienvenida</h1>
-          <p className="mt-1.5 text-sm text-mist">Ingresa a tu cuenta para continuar</p>
-        </div>
-
-        <form onSubmit={enviar} className="mt-8 flex flex-col gap-3.5">
-          <label className="flex items-center gap-3 rounded-2xl border border-edge bg-card px-4 py-3.5">
-            <User className="size-5 shrink-0 text-mist" />
-            <input
-              value={usuario}
-              onChange={(e) => setUsuario(e.target.value)}
-              placeholder="Usuario"
-              autoComplete="username"
-              required
-              className="w-full bg-transparent text-sm text-fg outline-none placeholder:text-mist"
-            />
-          </label>
-
-          <label className="flex items-center gap-3 rounded-2xl border border-edge bg-card px-4 py-3.5">
-            <Lock className="size-5 shrink-0 text-mist" />
-            <input
-              type={verPassword ? "text" : "password"}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Contraseña"
-              autoComplete="current-password"
-              required
-              className="w-full bg-transparent text-sm text-fg outline-none placeholder:text-mist"
-            />
-            <button
-              type="button"
-              onClick={() => setVerPassword((v) => !v)}
-              aria-label={verPassword ? "Ocultar contraseña" : "Mostrar contraseña"}
-              className="shrink-0 text-mist"
-            >
-              {verPassword ? <EyeOff className="size-5" /> : <Eye className="size-5" />}
-            </button>
-          </label>
-
-          {error && <p className="text-center text-sm text-danger-text">{error}</p>}
-
-          <button
-            type="submit"
-            disabled={cargando}
-            className="mt-1.5 flex items-center justify-center gap-2 rounded-2xl bg-lime py-3.5 text-sm font-semibold text-lime-fg transition-colors hover:bg-lime-hover disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {cargando ? <Loader2 className="size-4 animate-spin" /> : "Iniciar sesión"}
-            {!cargando && <ArrowRight className="size-4" />}
-          </button>
-        </form>
-
-        <div className="mt-4 text-center">
-          <button type="button" onClick={() => setAvisoOlvido(true)} className="text-sm font-medium text-lime-text underline-offset-2 hover:underline">
-            ¿Olvidaste tu contraseña?
-          </button>
-          {avisoOlvido && (
-            <p className="mt-2 text-xs text-mist">Contacta a tu administradora para restablecer tu contraseña.</p>
-          )}
-        </div>
-
-        <p className="mt-10 text-center text-xs text-mist">
-          Desarrollado por <span className="font-semibold">Dulabs</span>
-        </p>
-      </div>
-    </div>
+    <AmoreLoginForm
+      onSuccess={(token) => {
+        const destinoWeb = new URLSearchParams(window.location.search).get("destino") === "web";
+        router.push(destinoWeb ? "/amoreweb" : `/agenda/${token}`);
+      }}
+    />
   );
 }

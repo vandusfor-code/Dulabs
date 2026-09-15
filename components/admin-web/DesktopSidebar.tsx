@@ -155,7 +155,7 @@ export function DesktopSidebar() {
               type="button"
               onClick={async () => {
                 await fetch("/api/agenda-auth/logout", { method: "POST" });
-                router.push("/amore/login");
+                router.push("/amoreweb/login");
               }}
               className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm text-danger-text hover:bg-danger"
             >
