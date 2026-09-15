@@ -116,5 +116,57 @@ describe(
       assert.equal(resultado.httpStatus, 200);
       assert.equal(resultado.motivo, "evento_no_encontrado");
     });
+
+    it("REGRESIÓN (Fase 3, cierre) -- un fallo ANTES del relay real (ej. sin webhook configurado todavía) NUNCA deja procesado_en marcado, y una entrega posterior SÍ puede completar el relay real", async () => {
+      const workspaceId = randomUUID();
+      workspacesUsados.push(workspaceId);
+      const phoneNumberId = `phn-${randomUUID()}`;
+      const numero = await registrarNumero(admin, { workspaceId, phoneNumberId });
+      if (!numero.ok) throw new Error("no se pudo crear número");
+
+      // A propósito: SIN configurar webhook todavía -- exactamente la
+      // misma forma de "no se puede completar el relay todavía" que
+      // representaba el gap real de KMS del Worker inbound (riesgo #1)
+      // antes de otorgar el permiso -- ambos casos fallan DESPUÉS de lo
+      // que antes era el punto del CAS.
+      const payload = { entry: [{ changes: [{ value: { metadata: { phone_number_id: phoneNumberId } } }] }] };
+      const registro = await registrarEvento(admin, { eventId: randomUUID(), workspaceId, tipo: "received", payload });
+      if (!registro.registrado) throw new Error("no se pudo registrar evento");
+      const eventoId = registro.fila.id;
+
+      let reenvios = 0;
+      const fetchFixture = (async () => {
+        reenvios++;
+        return new Response("ok", { status: 200 });
+      }) as typeof fetch;
+      const deps = { supabase: admin, fetchImpl: fetchFixture };
+
+      const r1 = await procesarMensajeInbound(deps, { eventoId });
+      assert.equal(r1.httpStatus, 200);
+      assert.equal(r1.motivo, "sin_webhook_configurado_o_pausado");
+
+      const trasR1 = await admin.from("dulabs_dev_events").select("procesado_en").eq("id", eventoId).single();
+      assert.equal(trasR1.data!.procesado_en, null, "un fallo ANTES del relay real nunca debe marcar procesado_en -- si lo marcara, esto se perdería para siempre");
+
+      // Redelivery real de Pub/Sub -- misma conclusión, sigue sin marcar.
+      const r2 = await procesarMensajeInbound(deps, { eventoId });
+      assert.equal(r2.motivo, "sin_webhook_configurado_o_pausado");
+      const trasR2 = await admin.from("dulabs_dev_events").select("procesado_en").eq("id", eventoId).single();
+      assert.equal(trasR2.data!.procesado_en, null);
+
+      // Ahora sí se configura el webhook (equivalente a que el gap real se
+      // resuelva, ej. el permiso de KMS ya otorgado) -- una entrega
+      // posterior del MISMO evento debe poder completar el relay real.
+      const webhook = await configurarWebhook(admin, { workspaceId, whatsappNumberId: numero.fila.id, url: "https://example.com/developer-webhook" });
+      if (!webhook.ok) throw new Error("no se pudo configurar webhook");
+
+      const r3 = await procesarMensajeInbound(deps, { eventoId });
+      assert.equal(r3.httpStatus, 200);
+      assert.equal(r3.motivo, "reenviado_a_developer_webhook");
+      assert.equal(reenvios, 1, "exactamente 1 reenvío real, una vez que el relay finalmente pudo completarse");
+
+      const trasR3 = await admin.from("dulabs_dev_events").select("procesado_en").eq("id", eventoId).single();
+      assert.ok(trasR3.data!.procesado_en, "ahora sí debe quedar marcado, justo cuando el relay real ocurrió");
+    });
   }
 );

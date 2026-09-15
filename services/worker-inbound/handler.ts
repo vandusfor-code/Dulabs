@@ -30,12 +30,26 @@ function extraerPhoneNumberId(payload: unknown): string | null {
 }
 
 /**
- * Procesa un mensaje de dulabs-inbound. Idempotente por diseño: si el
- * evento ya fue marcado `procesado_en` (por una entrega anterior, real o
- * por el barrido de recuperación republicando de más -- ver sección A del
- * documento), esta llamada es un no-op seguro -- SIEMPRE ACK (200), nunca
- * hay "efecto secundario duplicado" posible porque el reenvío al Developer
- * Webhook solo ocurre si `marcarEventoProcesado` de verdad ganó la carrera.
+ * Procesa un mensaje de dulabs-inbound. Idempotente por diseño: el único
+ * efecto secundario real es el POST al Developer Webhook, así que el CAS
+ * de `marcarEventoProcesado` protege ESE punto específicamente -- no toda
+ * la función. Resolver el evento/número/webhook/secreto y firmar son
+ * operaciones de solo lectura + cómputo local, sin efecto secundario, por
+ * lo que son seguras de repetir en cada entrega/redelivery sin necesidad
+ * de CAS.
+ *
+ * CORRECCIÓN (Fase 3, cierre): originalmente el CAS corría ANTES de
+ * resolver número/webhook/secreto -- cualquier fallo transitorio en esa
+ * ventana (ej. el gap real de IAM de KMS documentado como riesgo #1, o
+ * cualquier error pasajero de Postgres) dejaba `procesado_en` marcado
+ * permanentemente sin que el relay real hubiera ocurrido nunca, y todo
+ * reintento de Pub/Sub encontraba el evento "ya procesado" y respondía 200
+ * sin volver a intentar -- el evento nunca llegaba a DLQ, el relay nunca
+ * se completaba, sin ninguna señal visible del fallo. Mover el CAS a
+ * proteger solo el `fetch` real corrige esto sin debilitar la garantía de
+ * "como mucho un relay real por evento": ante una entrega concurrente
+ * genuina, ambas pueden resolver/firmar en paralelo (barato, sin efecto
+ * secundario), pero solo una gana el CAS justo antes del POST.
  */
 export async function procesarMensajeInbound(deps: DependenciasWorkerInbound, mensaje: MensajePubSubInbound): Promise<ResultadoProcesamientoInbound> {
   const { supabase } = deps;
@@ -45,12 +59,7 @@ export async function procesarMensajeInbound(deps: DependenciasWorkerInbound, me
     const evento = await obtenerEventoPorId(supabase, { id: mensaje.eventoId });
     if (!evento) return { httpStatus: 200, motivo: "evento_no_encontrado" };
 
-    // CAS real -- si otra entrega concurrente (o una redelivery) ya ganó
-    // esta carrera, no reenviamos de nuevo. Esto es lo que prueba el
-    // requisito "recibir dos veces el mismo evento no genera efectos
-    // secundarios duplicados".
-    const marcado = await marcarEventoProcesado(supabase, { id: evento.id });
-    if (!marcado.marcado) return { httpStatus: 200, motivo: "ya_procesado_por_otra_entrega" };
+    if (evento.procesado_en) return { httpStatus: 200, motivo: "ya_procesado_por_otra_entrega" };
 
     if (!evento.payload) return { httpStatus: 200, motivo: "evento_sin_payload_nada_que_reenviar" };
 
@@ -72,6 +81,11 @@ export async function procesarMensajeInbound(deps: DependenciasWorkerInbound, me
 
     const cuerpo = JSON.stringify({ event_id: evento.event_id, tipo: evento.tipo, payload: evento.payload });
     const firmado = firmarEvento(secretoWebhook, cuerpo);
+
+    // CAS real, justo antes del único efecto secundario -- si otra entrega
+    // concurrente ya ganó esta carrera exacta, no reenviamos de nuevo.
+    const marcado = await marcarEventoProcesado(supabase, { id: evento.id });
+    if (!marcado.marcado) return { httpStatus: 200, motivo: "ya_procesado_por_otra_entrega" };
 
     try {
       await fetchFn(webhook.url, {
