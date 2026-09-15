@@ -4,14 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { MessageCircle, Loader2 } from "lucide-react";
 import { useAgenda } from "@/components/spa-panel/AgendaContext";
 import { AmoreOnlyScreen } from "@/components/spa-panel/amore/AmoreOnlyScreen";
-import {
-  AmoreCard,
-  AmoreScreenTitle,
-  AmoreSectionTitle,
-  AmoreSecondaryButton,
-  AmoreDivider,
-  AmoreSegmentedTabs,
-} from "@/components/spa-panel/amore/ui";
+import { AmoreCard, AmoreScreenTitle, AmoreSectionTitle, AmoreSecondaryButton, AmoreDivider } from "@/components/spa-panel/amore/ui";
 
 type EstadoConexion = "desconectado" | "conectando" | "conectado";
 type SlotWhatsApp = 1 | 2;
@@ -20,15 +13,8 @@ type EstadoPublico = {
   numeroConectado: string | null;
   conectadoEn: string | null;
   qr: string | null;
-  /** Código de 8 caracteres para "Vincular con número" -- alternativa real al QR, mutuamente excluyente con `qr`. */
-  codigoVinculacion: string | null;
 };
 type UsoWhatsApp = { label: string; cantidad: number };
-type ModoConexion = "qr" | "codigo";
-
-function formatearCodigo(codigo: string): string {
-  return codigo.length === 8 ? `${codigo.slice(0, 4)}-${codigo.slice(4)}` : codigo;
-}
 
 // AMORE (Fase 9A, autorizado) — MISMO Design System de la Fase 5 (AmoreCard,
 // AmoreScreenTitle, AmoreSecondaryButton...), ahora conectado a la
@@ -53,8 +39,6 @@ function useWhatsappSlot(token: string, slot: SlotWhatsApp) {
   const [estado, setEstado] = useState<EstadoPublico | null>(null);
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [modo, setModo] = useState<ModoConexion>("qr");
-  const [telefono, setTelefono] = useState("");
   const intervaloRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const consultarEstado = useCallback(() => {
@@ -84,18 +68,10 @@ function useWhatsappSlot(token: string, slot: SlotWhatsApp) {
   }, [estado?.estado, consultarEstado]);
 
   async function conectar() {
-    if (modo === "codigo" && !/^\d{8,15}$/.test(telefono.replace(/\D/g, ""))) {
-      setError("Escribe un teléfono válido (solo dígitos, con indicativo de país)");
-      return;
-    }
     setCargando(true);
     setError(null);
     try {
-      const r = await fetch(`/api/agenda/${token}/whatsapp-qr/iniciar?slot=${slot}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(modo === "codigo" ? { telefono: telefono.replace(/\D/g, "") } : {}),
-      });
+      const r = await fetch(`/api/agenda/${token}/whatsapp-qr/iniciar?slot=${slot}`, { method: "POST" });
       const body = await r.json();
       if (body.error) setError(body.error);
       else setEstado(body);
@@ -121,7 +97,7 @@ function useWhatsappSlot(token: string, slot: SlotWhatsApp) {
     }
   }
 
-  return { estado, cargando, error, modo, setModo, telefono, setTelefono, conectar, desconectar };
+  return { estado, cargando, error, conectar, desconectar };
 }
 
 function WhatsappSlotBlock({
@@ -135,7 +111,7 @@ function WhatsappSlotBlock({
   titulo: string;
   descripcion: string;
 }) {
-  const { estado, cargando, error, modo, setModo, telefono, setTelefono, conectar, desconectar } = useWhatsappSlot(token, slot);
+  const { estado, cargando, error, conectar, desconectar } = useWhatsappSlot(token, slot);
 
   return (
     <div className="flex flex-col gap-3">
@@ -172,17 +148,7 @@ function WhatsappSlotBlock({
         </>
       ) : estado.estado === "conectando" ? (
         <AmoreCard className="flex flex-col items-center gap-3 text-center">
-          {estado.codigoVinculacion ? (
-            <>
-              <p className="text-sm font-medium text-fg">Escribe este código en tu WhatsApp</p>
-              <p className="rounded-xl border border-edge bg-ink px-6 py-4 text-3xl font-bold tracking-[0.2em] text-fg">
-                {formatearCodigo(estado.codigoVinculacion)}
-              </p>
-              <p className="text-xs text-mist">
-                WhatsApp &gt; Dispositivos vinculados &gt; Vincular un dispositivo &gt; Vincular con número de teléfono
-              </p>
-            </>
-          ) : estado.qr ? (
+          {estado.qr ? (
             <>
               <p className="text-sm font-medium text-fg">Escanea el código QR con tu WhatsApp</p>
               {/* eslint-disable-next-line @next/next/no-img-element -- data URL local, no aplica optimización de imagen */}
@@ -191,16 +157,14 @@ function WhatsappSlotBlock({
             </>
           ) : (
             <>
-              <p className="text-sm font-medium text-fg">
-                {modo === "codigo" ? "Generando tu código..." : "Generando el código QR..."}
-              </p>
+              <p className="text-sm font-medium text-fg">Generando el código QR...</p>
               <div className="flex size-56 items-center justify-center rounded-xl border border-edge">
                 <Loader2 className="size-6 animate-spin text-mist" />
               </div>
             </>
           )}
           <AmoreSecondaryButton onClick={conectar} disabled={cargando} className="w-full">
-            {estado.codigoVinculacion ? "Generar otro código" : "Actualizar código QR"}
+            Actualizar código QR
           </AmoreSecondaryButton>
           <AmoreSecondaryButton onClick={desconectar} disabled={cargando} className="w-full !bg-transparent !text-mist">
             Cancelar
@@ -216,28 +180,6 @@ function WhatsappSlotBlock({
               <p className="text-sm font-medium text-fg">🔴 No conectado</p>
             </div>
           </AmoreCard>
-
-          <AmoreSegmentedTabs
-            opciones={[
-              { valor: "qr", etiqueta: "Código QR" },
-              { valor: "codigo", etiqueta: "Vincular con número" },
-            ]}
-            activo={modo}
-            onChange={setModo}
-          />
-
-          {modo === "codigo" && (
-            <label className="flex items-center gap-2.5 rounded-2xl border border-edge bg-card px-4 py-2.5">
-              <span className="text-sm text-mist">+</span>
-              <input
-                value={telefono}
-                onChange={(e) => setTelefono(e.target.value)}
-                placeholder="Ej. 573001234567"
-                inputMode="tel"
-                className="w-full bg-transparent text-sm text-fg outline-none placeholder:text-mist"
-              />
-            </label>
-          )}
 
           <AmoreSecondaryButton onClick={conectar} disabled={cargando}>
             Conectar WhatsApp

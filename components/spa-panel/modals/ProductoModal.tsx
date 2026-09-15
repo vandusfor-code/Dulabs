@@ -3,7 +3,7 @@
 import { useRef, useState } from "react";
 import { Minus, Plus, ShoppingBag, Trash2 } from "lucide-react";
 import { Button, Field, inputClass, Modal } from "../ui";
-import type { ProductoInventarioUI } from "@/app/amoreweb/inventario/page";
+import type { ProductoInventarioUI } from "@/app/amoreweb/(app)/inventario/page";
 
 // Módulo Inventario (autorizado) -- crear/editar producto. Mismo patrón
 // exacto que ServicioModal.tsx (Button/Field/inputClass/Modal de

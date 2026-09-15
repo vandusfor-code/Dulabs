@@ -16,6 +16,7 @@ import {
   Download,
   Check,
   Image as ImageIcon,
+  CircleAlert,
 } from "lucide-react";
 import { useDashboard } from "@/lib/dashboard-session";
 import { PageHeader, Pill, StatTile } from "@/components/dashboard/shell/ui";
@@ -45,6 +46,11 @@ type Campana = {
   created_at: string;
   estado: "completado" | "fallido";
   funnel: { sent: number; delivered: number; read: number; replied: number };
+  // CORRECCIÓN (autorizada, auditoría de masivos de Charlotte) -- causa real
+  // por destinatario, tal cual la reportó Meta (nunca reinterpretada como
+  // "token inválido"/"cuenta desconectada"/error de OAuth -- eso NUNCA es lo
+  // que dice este campo). Vacío si la campaña no tuvo fallos.
+  erroresDetalle: { telefono: string; wamid: string | null; errorCodigo: number | null; errorDetalle: string | null }[];
 };
 
 type DatosCampanas = {
@@ -724,6 +730,29 @@ export default function CampanasPage() {
                     </div>
                   );
                 })}
+
+                {activa.erroresDetalle.length > 0 && (
+                  <div className="mt-4 space-y-2 border-t border-edge pt-4">
+                    <p className="flex items-center gap-1.5 font-mono text-[10.5px] uppercase tracking-widest text-mist">
+                      <CircleAlert className="size-3.5 text-red-400" />
+                      {t("No entregados", "Not delivered")} ({activa.erroresDetalle.length})
+                    </p>
+                    <div className="max-h-64 space-y-2 overflow-y-auto pr-1">
+                      {activa.erroresDetalle.map((e, i) => (
+                        <div key={e.wamid ?? `${e.telefono}-${i}`} className="rounded-lg border border-edge bg-ink/40 p-2.5 text-xs">
+                          <p className="font-medium text-fg">{e.telefono}</p>
+                          <p className="mt-0.5 text-mist">
+                            {e.errorCodigo !== null
+                              ? t(`Meta ${e.errorCodigo}`, `Meta ${e.errorCodigo}`)
+                              : t("Sin código de Meta registrado", "No Meta code recorded")}
+                          </p>
+                          {e.errorDetalle && <p className="mt-0.5 text-mist/80">{e.errorDetalle}</p>}
+                          {e.wamid && <p className="mt-0.5 truncate font-mono text-[10px] text-mist/60">wamid: {e.wamid}</p>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
