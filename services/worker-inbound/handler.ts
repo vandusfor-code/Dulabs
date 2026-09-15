@@ -3,6 +3,7 @@ import { obtenerEventoPorId, marcarEventoProcesado } from "@/lib/developer/event
 import { obtenerNumeroPorPhoneNumberId } from "@/lib/developer/whatsapp-numbers-store";
 import { obtenerWebhookDelNumero, obtenerSecretoWebhookDelNumero } from "@/lib/developer/webhook-config-store";
 import { firmarEvento, HEADER_FIRMA, HEADER_TIMESTAMP, HEADER_EVENT_ID } from "@/lib/developer/webhook-signature";
+import { validarUrlWebhookSegura, type FuncionLookupDns } from "@/lib/developer/ssrf-guard";
 
 // DuLabs Developer V1 -- Fase 3 (autorizado, sección B del documento de
 // infraestructura). Handler del Worker inbound -- procesa UN mensaje push
@@ -14,6 +15,11 @@ import { firmarEvento, HEADER_FIRMA, HEADER_TIMESTAMP, HEADER_EVENT_ID } from "@
 export type DependenciasWorkerInbound = {
   supabase: SupabaseClient;
   fetchImpl?: typeof fetch;
+  // Inyectable a propósito (mismo criterio que fetchImpl) -- los tests de DNS
+  // rebinding necesitan controlar exactamente a qué IP "resuelve" la URL del
+  // webhook al momento del envío, sin depender de un DNS real. En producción
+  // queda undefined y ssrf-guard usa el resolver real.
+  lookupDnsFn?: FuncionLookupDns;
 };
 
 export type MensajePubSubInbound = { eventoId: number };
@@ -78,6 +84,30 @@ export async function procesarMensajeInbound(deps: DependenciasWorkerInbound, me
 
     const secretoWebhook = await obtenerSecretoWebhookDelNumero(supabase, { workspaceId: evento.workspace_id, whatsappNumberId: numero.id });
     if (!secretoWebhook) return { httpStatus: 200, motivo: "secreto_de_webhook_no_disponible" };
+
+    // Endurecimiento de seguridad (autorizado) -- protección real contra DNS
+    // rebinding. La URL del webhook YA se validó contra SSRF al configurarse
+    // (webhook-config-store.ts), pero esa validación es de solo-config: un
+    // hostname que resolvía a una IP pública en ese momento puede resolver a
+    // una IP interna (loopback, RFC1918, 169.254.169.254/metadata) justo al
+    // momento real del envío. Se RE-VALIDA acá, inmediatamente antes del POST
+    // -- mismo patrón de defensa en profundidad que ya usa el Flow para sus
+    // integraciones externas (lib/flow/executors/http-integration-executor.ts,
+    // re-valida SSRF en el dispatch). Si la URL ahora resuelve a un destino no
+    // seguro, se rechaza el relay y a propósito NO se marca procesado (mismo
+    // criterio que cualquier otro fallo ANTES del relay real -- ver el test de
+    // regresión "sin webhook configurado"): así el evento no se pierde de forma
+    // silenciosa si el desarrollador corrige su DNS más adelante.
+    //
+    // Límite conocido V1: esto reduce la ventana de rebinding a un TOCTOU
+    // mínimo entre esta validación y la resolución DNS propia de fetch; el
+    // pinning a la IP ya validada (vía undici Agent) queda como endurecimiento
+    // futuro -- exactamente igual que el http-integration-executor del Flow,
+    // que también se detiene en la re-validación.
+    const validacionSsrf = await validarUrlWebhookSegura(webhook.url, deps.lookupDnsFn ? { lookupFn: deps.lookupDnsFn } : undefined);
+    if (!validacionSsrf.permitido) {
+      return { httpStatus: 200, motivo: `webhook_destino_no_seguro:${validacionSsrf.motivo}` };
+    }
 
     const cuerpo = JSON.stringify({ event_id: evento.event_id, tipo: evento.tipo, payload: evento.payload });
     const firmado = firmarEvento(secretoWebhook, cuerpo);

@@ -12,6 +12,7 @@ import { procesarMensajeInbound } from "./handler";
 import { registrarNumero } from "@/lib/developer/whatsapp-numbers-store";
 import { configurarWebhook } from "@/lib/developer/webhook-config-store";
 import { registrarEvento } from "@/lib/developer/events-store";
+import type { FuncionLookupDns } from "@/lib/developer/ssrf-guard";
 
 const HAS_SUPABASE = Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
 
@@ -167,6 +168,64 @@ describe(
 
       const trasR3 = await admin.from("dulabs_dev_events").select("procesado_en").eq("id", eventoId).single();
       assert.ok(trasR3.data!.procesado_en, "ahora sí debe quedar marcado, justo cuando el relay real ocurrió");
+    });
+
+    it("SEGURIDAD (DNS rebinding) -- una URL de webhook que era pública al configurarse pero resuelve a una IP INTERNA (169.254.169.254 / metadata) al momento del envío es rechazada: CERO POST físico y NO se marca procesado", async () => {
+      const workspaceId = randomUUID();
+      workspacesUsados.push(workspaceId);
+      // prepararEvento configura el webhook con https://example.com (validado
+      // contra SSRF con DNS REAL al configurarse -> IP pública -> permitido).
+      const eventoId = await prepararEvento(workspaceId);
+
+      let reenvios = 0;
+      const fetchFixture = (async () => {
+        reenvios++;
+        return new Response("ok", { status: 200 });
+      }) as typeof fetch;
+
+      // Simula el rebinding: al momento REAL del envío, el mismo hostname
+      // ahora "resuelve" a la IP de metadata de la nube. Esto es exactamente
+      // el ataque que una validación de solo-config no puede detener.
+      const lookupRebinding: FuncionLookupDns = async () => [{ address: "169.254.169.254", family: 4 }];
+
+      const r1 = await procesarMensajeInbound({ supabase: admin, fetchImpl: fetchFixture, lookupDnsFn: lookupRebinding }, { eventoId });
+      assert.equal(r1.httpStatus, 200, "ACK -- nunca un 500 que provoque redelivery contra el destino interno una y otra vez");
+      assert.match(r1.motivo, /^webhook_destino_no_seguro:/, "debe rechazarse explícitamente como destino no seguro");
+      assert.equal(reenvios, 0, "CERO POST físico -- jamás se toca la IP interna");
+
+      const trasR1 = await admin.from("dulabs_dev_events").select("procesado_en").eq("id", eventoId).single();
+      assert.equal(trasR1.data!.procesado_en, null, "un rechazo de seguridad ANTES del relay nunca debe marcar procesado -- el evento no se pierde silenciosamente");
+
+      // Prueba de que NO es una pérdida permanente: si el DNS del desarrollador
+      // vuelve a un destino legítimo (acá, resolución real de example.com ->
+      // IP pública), una entrega posterior del MISMO evento SÍ completa el
+      // relay real exactamente una vez.
+      const r2 = await procesarMensajeInbound({ supabase: admin, fetchImpl: fetchFixture }, { eventoId });
+      assert.equal(r2.httpStatus, 200);
+      assert.equal(r2.motivo, "reenviado_a_developer_webhook");
+      assert.equal(reenvios, 1, "exactamente 1 reenvío real, una vez que el destino volvió a ser seguro");
+
+      const trasR2 = await admin.from("dulabs_dev_events").select("procesado_en").eq("id", eventoId).single();
+      assert.ok(trasR2.data!.procesado_en, "recién ahora, con el relay real completado, queda marcado");
+    });
+
+    it("SEGURIDAD (SSRF, RFC1918) -- un webhook que resuelve a una IP privada 10.x al momento del envío también se bloquea (no solo el rango de metadata)", async () => {
+      const workspaceId = randomUUID();
+      workspacesUsados.push(workspaceId);
+      const eventoId = await prepararEvento(workspaceId);
+
+      let reenvios = 0;
+      const fetchFixture = (async () => {
+        reenvios++;
+        return new Response("ok", { status: 200 });
+      }) as typeof fetch;
+
+      const lookupInterno: FuncionLookupDns = async () => [{ address: "10.0.0.5", family: 4 }];
+
+      const r = await procesarMensajeInbound({ supabase: admin, fetchImpl: fetchFixture, lookupDnsFn: lookupInterno }, { eventoId });
+      assert.equal(r.httpStatus, 200);
+      assert.match(r.motivo, /^webhook_destino_no_seguro:/);
+      assert.equal(reenvios, 0, "CERO POST físico hacia la red interna RFC1918");
     });
   }
 );
