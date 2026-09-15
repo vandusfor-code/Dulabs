@@ -7,7 +7,7 @@ import type { Session } from "@supabase/supabase-js";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import { useI18n } from "@/lib/i18n";
 import { PLANES, PLAN_POR_DEFECTO, resolverPlanId, type PlanId } from "@/lib/planes";
-import { whatsappVentasUrl, mensajeCompraConfirmadaWhatsapp } from "@/lib/site-contact";
+import { whatsappVentasUrl } from "@/lib/site-contact";
 
 const PLAN_PENDIENTE_KEY = "du_labs_plan_elegido";
 
@@ -37,7 +37,7 @@ export default function CheckoutPage() {
 function CheckoutPageInterna() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { t, lang } = useI18n();
+  const { t } = useI18n();
   const publicKey = process.env.NEXT_PUBLIC_WOMPI_PUBLIC_KEY;
 
   const [session, setSession] = useState<Session | null | "verificando">("verificando");
@@ -97,19 +97,24 @@ function CheckoutPageInterna() {
   }, [router, searchParams]);
 
   const precioAMostrar = precioNegociadoCop ?? PLANES[plan].precioCop;
+  // F16.2 (Onboarding comercial, autorizado) -- el primer cobro incluye la
+  // cuota de implementación (mismo cálculo que hace el backend en
+  // /api/pagos/suscribir, mostrado acá solo para que el cliente vea el
+  // desglose ANTES de pagar -- el backend nunca confía en lo que calcule
+  // esta pantalla). null si el plan no tiene cuota de implementación.
+  const implementacionCop = PLANES[plan].implementacionCop;
+  const totalHoyCop = (precioAMostrar ?? 0) + (implementacionCop ?? 0);
 
-  const linkWhatsappCompra = whatsappVentasUrl(mensajeCompraConfirmadaWhatsapp(PLANES[plan].nombre, lang));
-
-  // Apenas se confirma el pago, se redirige de una vez a WhatsApp con el
-  // mensaje ya escrito -- el cliente solo tiene que tocar "Enviar" ahí. Ese
-  // mensaje real (no uno que mande DuLabs) es lo que abre la ventana de 24h
-  // y dispara la bienvenida del onboarding (ver lib/onboarding-trigger.ts),
-  // sin depender de ninguna plantilla aprobada por Meta.
+  // F16.2 (Onboarding comercial, autorizado) -- ya NO se redirige a wa.me:
+  // apenas se confirma el pago, el siguiente paso es la pantalla de
+  // post-pago que pide conectar WhatsApp con Meta (sección 8 del brief). La
+  // bienvenida real (`bienvenida_dulabs`) se manda cuando Meta confirme esa
+  // conexión, no antes -- ver lib/onboarding-meta-template.ts.
   useEffect(() => {
     if (estado.fase === "exito") {
-      window.location.href = linkWhatsappCompra;
+      router.push(`/checkout/conectar-whatsapp?plan=${plan}`);
     }
-  }, [estado.fase, linkWhatsappCompra]);
+  }, [estado.fase, plan, router]);
 
   const pagar = useCallback(
     async (e: FormEvent) => {
@@ -210,8 +215,27 @@ function CheckoutPageInterna() {
           {t("← Volver al panel", "← Back to dashboard")}
         </Link>
         <h1 className="mt-6 text-2xl font-semibold">{t("Activa tu suscripción", "Activate your subscription")}</h1>
-        <p className="mt-3 text-sm leading-relaxed text-mist">
-          {PLANES[plan].nombre} — ${precioAMostrar?.toLocaleString("es-CO") ?? "—"} COP / {t("mes", "month")}.{" "}
+        <p className="mt-3 text-sm leading-relaxed text-mist">{PLANES[plan].nombre}</p>
+
+        <div className="mt-4 space-y-1.5 rounded-xl border border-edge bg-ink-2 p-4 text-sm">
+          <div className="flex items-center justify-between">
+            <span className="text-mist">{t("Total hoy", "Total today")}</span>
+            <span className="font-semibold text-fg">${totalHoyCop.toLocaleString("es-CO")} COP</span>
+          </div>
+          {implementacionCop !== null && implementacionCop > 0 && (
+            <p className="text-xs text-mist/70">
+              {t(
+                `(${(precioAMostrar ?? 0).toLocaleString("es-CO")} de mensualidad + ${implementacionCop.toLocaleString("es-CO")} de implementación)`,
+                `(${(precioAMostrar ?? 0).toLocaleString("es-CO")} monthly + ${implementacionCop.toLocaleString("es-CO")} setup)`
+              )}
+            </p>
+          )}
+          <div className="flex items-center justify-between border-t border-edge pt-1.5">
+            <span className="text-mist">{t("Desde el próximo mes", "Starting next month")}</span>
+            <span className="font-medium text-fg">${(precioAMostrar ?? 0).toLocaleString("es-CO")} COP / {t("mes", "month")}</span>
+          </div>
+        </div>
+        <p className="mt-3 text-xs leading-relaxed text-mist/70">
           {t("Se te cobrará automáticamente cada mes con esta tarjeta.", "You'll be charged automatically every month with this card.")}
         </p>
 
@@ -243,22 +267,7 @@ function CheckoutPageInterna() {
           </div>
         ) : estado.fase === "exito" ? (
           <div className="mt-8 rounded-xl border border-lime/40 bg-lime/10 p-5 text-sm leading-relaxed">
-            {t("✅ Suscripción activada. Te estamos llevando a WhatsApp para empezar la configuración.", "✅ Subscription activated. We're taking you to WhatsApp to start setup.")}
-            <a
-              href={linkWhatsappCompra}
-              className="btn-shine mt-4 block rounded-lg bg-lime px-6 py-3 text-center text-sm font-semibold text-lime-fg transition-[background-color,transform] duration-200 hover:-translate-y-0.5 hover:bg-lime-hover active:scale-[0.97]"
-            >
-              {t("Notificar compra a DuLabs →", "Notify DuLabs of your purchase →")}
-            </a>
-            <p className="mt-3 text-xs text-mist/70">
-              {t(
-                "Si no se abrió WhatsApp automáticamente, toca el botón de arriba.",
-                "If WhatsApp didn't open automatically, tap the button above."
-              )}
-            </p>
-            <Link href="/dashboard/conexion" className="mt-4 block font-semibold text-lime-text hover:text-fg">
-              {t("Ir al panel →", "Go to dashboard →")}
-            </Link>
+            {t("✅ Suscripción activada. Te estamos llevando a conectar tu WhatsApp…", "✅ Subscription activated. Taking you to connect your WhatsApp…")}
           </div>
         ) : (
           <form onSubmit={pagar} className="mt-8 flex flex-col gap-4">

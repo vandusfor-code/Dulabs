@@ -1,5 +1,21 @@
 # Pasos manuales pendientes en producción
 
+## PENDIENTE — F16.2 (Onboarding comercial: pago → conectar WhatsApp con Meta → plantilla)
+
+La migración `20261005000000_dulabs_onboarding_meta_bienvenida.sql`
+(columnas `bienvenida_meta_enviada_at` / `bienvenida_meta_error` /
+`bienvenida_meta_intentado_at` en `dulabs_onboarding_sesiones`) **todavía
+no se ha corrido en producción**. Sin ella:
+
+- `lib/onboarding-meta-template.e2e.test.ts` falla con un error de Postgres
+  ("column does not exist"), no silenciosamente.
+- El envío real de `bienvenida_dulabs` al conectar WhatsApp con Meta
+  fallará en producción (error controlado, registrado, no rompe la
+  conexión del número -- ver `lib/onboarding-meta-template.ts`).
+
+Correr el archivo completo en el SQL Editor de Supabase antes de dar F16.2
+por cerrado en producción.
+
 > Verificado el 14-sep-2026 (F16.1, Dunning): la migración
 > `20261004000000_dulabs_dunning.sql` (tablas `dulabs_dunning_ciclos` /
 > `dulabs_dunning_eventos` + función `dulabs_dunning_reclamar_reintento`)

@@ -19,6 +19,10 @@ export type ImplementacionDetalle = {
   iniciadaAt: string | null;
   activadaAt: string | null;
   actualizadoAt: string;
+  /** F16.2 (Onboarding comercial, autorizado) -- estado real del envío de la plantilla Meta bienvenida_dulabs. */
+  bienvenidaMetaEnviadaAt: string | null;
+  bienvenidaMetaError: string | null;
+  bienvenidaMetaIntentadoAt: string | null;
 } | null;
 
 export type OnboardingResumen = { estado: string } | null;
@@ -46,6 +50,7 @@ export function SeccionImplementacion({
 }) {
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [reintentando, setReintentando] = useState(false);
 
   async function cambiarEstado(nuevoEstado: string) {
     setGuardando(true);
@@ -63,6 +68,28 @@ export function SeccionImplementacion({
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setGuardando(false);
+    }
+  }
+
+  // F16.2 (Onboarding comercial, autorizado) -- sección 19: reintento seguro
+  // del envío de bienvenida_dulabs cuando falló (plantilla no aprobada en
+  // su momento, error de red). Idempotente del lado del backend.
+  async function reintentarBienvenidaMeta() {
+    setReintentando(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/dashboard/admin/clientes/${idTenant}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ reintentar_bienvenida_meta: true }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "No se pudo reintentar el envío");
+      onCambio();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setReintentando(false);
     }
   }
 
@@ -114,6 +141,28 @@ export function SeccionImplementacion({
           <p className="font-mono text-[10.5px] uppercase tracking-widest text-mist">Estado de onboarding</p>
           <div className="mt-1.5">
             <Pill tone="info">{labelEstadoOnboarding(onboarding.estado)}</Pill>
+          </div>
+        </div>
+      )}
+
+      {implementacion && (
+        <div className="mt-4 border-t border-edge pt-4">
+          <p className="font-mono text-[10.5px] uppercase tracking-widest text-mist">Plantilla bienvenida_dulabs</p>
+          <div className="mt-1.5 flex flex-wrap items-center gap-2">
+            {implementacion.bienvenidaMetaEnviadaAt ? (
+              <Pill tone="success">Enviada — {fechaLarga(implementacion.bienvenidaMetaEnviadaAt)}</Pill>
+            ) : implementacion.bienvenidaMetaError ? (
+              <Pill tone="danger">Falló: {implementacion.bienvenidaMetaError}</Pill>
+            ) : implementacion.bienvenidaMetaIntentadoAt ? (
+              <Pill tone="warning">Intentada sin resultado registrado</Pill>
+            ) : (
+              <Pill tone="neutral">Sin enviar todavía</Pill>
+            )}
+            {!implementacion.bienvenidaMetaEnviadaAt && (
+              <Boton onClick={reintentarBienvenidaMeta} disabled={reintentando}>
+                {reintentando ? "Reintentando…" : "Reintentar envío"}
+              </Boton>
+            )}
           </div>
         </div>
       )}

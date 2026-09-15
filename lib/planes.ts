@@ -95,7 +95,7 @@ export const PLANES: Record<PlanId, PlanDef> = {
     id: "essential",
     nombre: "Essential",
     precioCop: 79990,
-    implementacionCop: 149900,
+    implementacionCop: 49990,
     limites: {
       numeros: 1,
       usuarios: 2,
@@ -112,7 +112,7 @@ export const PLANES: Record<PlanId, PlanDef> = {
     id: "business",
     nombre: "Business",
     precioCop: 159990,
-    implementacionCop: 299900,
+    implementacionCop: 149990,
     limites: {
       numeros: 2,
       usuarios: 5,
@@ -132,7 +132,7 @@ export const PLANES: Record<PlanId, PlanDef> = {
     // "Desde" -- el equipo comercial puede cotizar más alto según alcance,
     // pero el checkout siempre cobra este valor de referencia (mismo patrón
     // que ya usan start/growth/scale, ninguno tiene lógica de "desde X").
-    implementacionCop: 499900,
+    implementacionCop: 199990,
     limites: {
       numeros: 5,
       usuarios: 15,
