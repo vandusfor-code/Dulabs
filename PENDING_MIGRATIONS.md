@@ -1,17 +1,5 @@
 # Pasos manuales pendientes en producción
 
-## PENDIENTE — AMORE Agenda V2, corrección del motor de opciones (CASO 5, "evitar bucles")
-
-La migración `20261006000000_dulabs_agenda_v2_intentos_fallidos.sql`
-(columna `intentos_fallidos_consecutivos` en `dulabs_agenda_v2_sesiones`)
-**todavía no se ha corrido en producción** (no se pudo verificar contra la
-base real desde este entorno -- las credenciales de Supabase en
-`.env.local` están vacías acá). El código ya es defensivo mientras tanto
-(ver el catch de "columna no existe", Postgres 42703/PGRST204, en
-`actualizarSesionAgendaV2`, `lib/agenda-v2/sesiones.ts`): Agenda V2 sigue
-funcionando exactamente igual, solo sin la protección anti-bucle (CASO 5)
-hasta que este archivo se corra en el SQL Editor de Supabase.
-
 ## PENDIENTE — F16.2 (Onboarding comercial: pago → conectar WhatsApp con Meta → plantilla)
 
 La migración `20261005000000_dulabs_onboarding_meta_bienvenida.sql`
@@ -67,6 +55,16 @@ aparte (vía el SQL Editor de Supabase) — no ocurre automáticamente al hacer
 > `dulabs_amore_entrada` existe y el CHECK de `modo` acepta `inicio`/`gemini`
 > (insert/update/delete de prueba OK). La sección que la daba por pendiente
 > se eliminó.
+
+---
+
+> Aplicada el 15-sep-2026 (corrida manualmente por el operador en el SQL
+> Editor de Supabase, "Success. No rows returned"): la migración
+> `20261006000000_dulabs_agenda_v2_intentos_fallidos.sql` (AMORE Agenda V2,
+> CASO 5 — columna `intentos_fallidos_consecutivos` en
+> `dulabs_agenda_v2_sesiones`) ya está aplicada. La protección anti-bucle
+> queda activa en producción. La sección que la daba por pendiente se
+> eliminó.
 
 ## Variables de entorno que también son paso manual
 
