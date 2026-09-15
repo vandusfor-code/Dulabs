@@ -178,3 +178,66 @@ export function detectarIntencionGestionCitas(mensaje: string): AccionGestionCit
   if (coincideAlgunaFrase(textoNormalizado, FRASES_CONSULTAR)) return "consultar";
   return null;
 }
+
+/**
+ * Corrección post-deploy (autorizada, CASO 3 -- "el cliente rechaza el
+ * horario") -- detección determinista de rechazo de los horarios YA
+ * mostrados EN S4_HORA (frases fijas y controladas, mismo mecanismo
+ * EXACTO "contains" que detectarIntencionGestionCitas -- NUNCA IA
+ * semántica, embeddings ni fuzzy matching). Deliberadamente distinta de
+ * FRASES_REPROGRAMAR (esa lista es para gestionar una cita YA agendada,
+ * sin sesión de Agenda V2 activa -- caller garantiza que esto solo se
+ * evalúa con una sesión activa en S4_HORA, así que no hay superposición
+ * real posible entre los dos contextos).
+ */
+const FRASES_RECHAZO_HORARIO_ACTUAL = [
+  "no puedo a esa hora",
+  "no puedo esa hora",
+  "no me sirve esa hora",
+  "esa hora no me sirve",
+  "esa hora no",
+  "ese horario no",
+  "ese horario no me sirve",
+  "no me sirve ese horario",
+  "no me queda esa hora",
+  "no me queda ese horario",
+  "no me sirve",
+  "no me sirven",
+  "ninguna me sirve",
+  "ninguno me sirve",
+  "no puedo",
+];
+
+export function detectarRechazoDeHorarioActual(mensaje: string): boolean {
+  return coincideAlgunaFrase(normalizeText(mensaje), FRASES_RECHAZO_HORARIO_ACTUAL);
+}
+
+/**
+ * Corrección post-deploy (autorizada, CASO 4 -- "el cliente pide otra
+ * profesional") -- detección determinista de la intención BUSCAR_OTRA_PROFESIONAL
+ * durante S3_DIA/S4_HORA (frases fijas y controladas, mismo mecanismo
+ * EXACTO "contains" que el resto de detectores de este archivo).
+ * Deliberadamente NO usa la palabra sola "otra" (calzaría por error con
+ * frases sin ninguna relación a un cambio de profesional, ej. "quiero
+ * otra fecha"/"quiero otro horario") -- exige que la frase mencione
+ * explícitamente a la persona (chica/profesional/especialista/estilista/
+ * manicurista), nunca solo "otra".
+ */
+const FRASES_OTRA_PROFESIONAL = [
+  "otras chicas",
+  "otra chica",
+  "otra profesional",
+  "otra especialista",
+  "otra estilista",
+  "otra manicurista",
+  "otra estetica",
+  "con otra chica",
+  "con otra profesional",
+  "cambiar de profesional",
+  "cambiar de chica",
+  "cambiar de especialista",
+];
+
+export function detectarSolicitudOtraProfesional(mensaje: string): boolean {
+  return coincideAlgunaFrase(normalizeText(mensaje), FRASES_OTRA_PROFESIONAL);
+}

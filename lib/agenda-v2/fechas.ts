@@ -14,6 +14,7 @@
  * numerado, y resolver la respuesta del cliente contra esas opciones
  * guardadas. Nunca decide por su cuenta qué día es válido.
  */
+import { normalizarNumeroDeOpcion } from "@/lib/agenda-v2/normalizar-opcion";
 
 function capitalizar(texto: string): string {
   return texto.length > 0 ? texto[0]!.toUpperCase() + texto.slice(1) : texto;
@@ -57,10 +58,10 @@ export function textoSeleccionInvalidaFecha(opciones: OpcionFechaAgendaV2[], num
   return `No reconocí esa opción 💗 Por favor responde con el número de una de estas:\n\n${listaOpciones(opciones, numeroVerMasFechas)}`;
 }
 
-/** `mensaje` calza EXACTAMENTE el número de "Ver más fechas" de este menú (nunca fuzzy, mismo criterio "solo número exacto" de todo Agenda V2). `numeroVerMasFechas === null` (no hay más fechas dentro del horizonte) siempre devuelve `false`. */
+/** `mensaje` calza EXACTAMENTE el número de "Ver más fechas" de este menú (normalizado, ver normalizar-opcion.ts -- nunca fuzzy). `numeroVerMasFechas === null` (no hay más fechas dentro del horizonte) siempre devuelve `false`. */
 export function esSeleccionVerMasFechas(mensaje: string, numeroVerMasFechas: number | null): boolean {
   if (numeroVerMasFechas === null) return false;
-  return mensaje.trim() === String(numeroVerMasFechas);
+  return normalizarNumeroDeOpcion(mensaje) === numeroVerMasFechas;
 }
 
 /**
@@ -71,8 +72,7 @@ export function esSeleccionVerMasFechas(mensaje: string, numeroVerMasFechas: num
  * directamente en base de datos. Solo número exacto es válido.
  */
 export function resolverSeleccionFecha(mensaje: string, opciones: OpcionFechaAgendaV2[]): OpcionFechaAgendaV2 | undefined {
-  const texto = mensaje.trim();
-  if (!/^\d+$/.test(texto)) return undefined;
-  const numero = Number(texto);
+  const numero = normalizarNumeroDeOpcion(mensaje);
+  if (numero === null) return undefined;
   return opciones.find((o) => o.numero === numero);
 }

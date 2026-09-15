@@ -100,8 +100,13 @@ describe("resolverSeleccionConfirmacion -- SOLO número exacto (1-4), nunca fuzz
     }
   });
 
-  it("nunca extrae dígitos de en medio de un texto ('999abc', 'opción 1')", () => {
+  it("nunca extrae dígitos de en medio de un texto que no es un prefijo/sufijo reconocido ('999abc')", () => {
     assert.equal(resolverSeleccionConfirmacion("999abc", OPCIONES_CONFIRMACION), undefined);
-    assert.equal(resolverSeleccionConfirmacion("opción 1", OPCIONES_CONFIRMACION), undefined);
+  });
+
+  it("CASO 1 (obligatorio) -- '1.', '1)', 'opción 1', 'opcion 1', 'la 1' resuelven TODOS 'confirmar' igual que '1'", () => {
+    for (const texto of ["1.", "1)", "opción 1", "opcion 1", "la 1"]) {
+      assert.equal(resolverSeleccionConfirmacion(texto, OPCIONES_CONFIRMACION)?.accion, "confirmar", `"${texto}" debe resolver igual que "1"`);
+    }
   });
 });

@@ -16,6 +16,7 @@
  * dulabs_agenda_v2_sesiones.step (y por lo tanto no requiere migración).
  */
 import type { ServicioCatalogoReal } from "@/lib/catalogo-servicios-flow-adaptador";
+import { normalizarNumeroDeOpcion } from "@/lib/agenda-v2/normalizar-opcion";
 
 export interface OpcionCategoriaAgendaV2 {
   numero: number;
@@ -47,11 +48,10 @@ export function textoSeleccionInvalidaCategoria(opciones: OpcionCategoriaAgendaV
   return `No reconocí esa opción 💗 Por favor responde con el número de una de estas:\n\n${listaOpciones(opciones)}`;
 }
 
-/** Misma regla que resolverSeleccionServicio -- solo número exacto contra lo ya mostrado, nunca fuzzy ni nombre de categoría en texto libre. */
+/** Misma regla que resolverSeleccionServicio -- solo número exacto (normalizado, ver normalizar-opcion.ts) contra lo ya mostrado, nunca fuzzy ni nombre de categoría en texto libre. */
 export function resolverSeleccionCategoria(mensaje: string, opciones: OpcionCategoriaAgendaV2[]): OpcionCategoriaAgendaV2 | undefined {
-  const texto = mensaje.trim();
-  if (!/^\d+$/.test(texto)) return undefined;
-  const numero = Number(texto);
+  const numero = normalizarNumeroDeOpcion(mensaje);
+  if (numero === null) return undefined;
   return opciones.find((o) => o.numero === numero);
 }
 

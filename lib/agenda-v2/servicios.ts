@@ -10,6 +10,7 @@
  */
 import type { ServicioCatalogoReal } from "@/lib/catalogo-servicios-flow-adaptador";
 import { formatearPrecioCop } from "@/lib/especialistas-flow-adaptador";
+import { normalizarNumeroDeOpcion } from "@/lib/agenda-v2/normalizar-opcion";
 
 export interface OpcionServicioAgendaV2 {
   numero: number;
@@ -51,9 +52,8 @@ export function textoSeleccionInvalidaServicio(opciones: OpcionServicioAgendaV2[
  * "ENTRADAS INVÁLIDAS" del pedido).
  */
 export function resolverSeleccionServicio(mensaje: string, opciones: OpcionServicioAgendaV2[]): OpcionServicioAgendaV2 | undefined {
-  const texto = mensaje.trim();
-  if (!/^\d+$/.test(texto)) return undefined;
-  const numero = Number(texto);
+  const numero = normalizarNumeroDeOpcion(mensaje);
+  if (numero === null) return undefined;
   return opciones.find((o) => o.numero === numero);
 }
 
@@ -86,9 +86,10 @@ export function resolverSeleccionMultiServicio(mensaje: string, opciones: Opcion
     .filter((t) => t.length > 0);
 
   if (tokens.length === 0 || tokens.length > MAX_SERVICIOS_POR_CITA) return undefined;
-  if (!tokens.every((t) => /^\d+$/.test(t))) return undefined;
+  const numerosOrNull = tokens.map((t) => normalizarNumeroDeOpcion(t));
+  if (numerosOrNull.some((n) => n === null)) return undefined;
 
-  const numeros = tokens.map(Number);
+  const numeros = numerosOrNull as number[];
   if (new Set(numeros).size !== numeros.length) return undefined; // "1 y 1" -- duplicado, nunca válido
 
   const seleccionadas: OpcionServicioAgendaV2[] = [];

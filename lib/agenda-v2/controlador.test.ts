@@ -53,6 +53,7 @@ function sesionEnServicio(overrides: Partial<SesionAgendaV2> = {}): SesionAgenda
     ultimoWamidProcesado: "wamid-anterior",
     citaObjetivoId: null,
     accionGestion: null,
+    intentosFallidosConsecutivos: 0,
     createdAt: "2026-09-07T00:00:00.000Z",
     updatedAt: "2026-09-07T00:00:00.000Z",
     ...overrides,
@@ -255,6 +256,14 @@ describe("FASE 3 (autorizado) -- manejarMensajeAgendaV2 en S2_PROFESIONAL", () =
     assert.equal(r.cambios, undefined);
     assert.match(r.respuesta, /Se perdió el menú/);
   });
+
+  it("TEST A (obligatorio) -- '4', '4.', '4)', 'opción 4', 'opcion 4', 'la 4' resuelven TODOS la misma profesional (Jessica, numero 4 en el menú de 4 opciones)", () => {
+    const cuatroOpciones = [...OPCIONES_PROFESIONAL, { numero: 3, profesionalId: 1300, nombre: "Nata" }, { numero: 4, profesionalId: 1400, nombre: "Jessica" }];
+    for (const texto of ["4", "4.", "4)", " 4", "opción 4", "opcion 4", "la 4"]) {
+      const r = manejarMensajeAgendaV2(sesionEnProfesional({ opcionesMostradas: cuatroOpciones }), texto);
+      assert.deepEqual(r, { accion: "profesional_seleccionado", profesionalId: 1400 }, `"${texto}" debe resolver a Jessica (opción 4)`);
+    }
+  });
 });
 
 describe("FASE 4 (autorizado) -- manejarMensajeAgendaV2 en S3_DIA", () => {
@@ -365,7 +374,7 @@ describe("FASE 5 (autorizado) -- manejarMensajeAgendaV2 en S4_HORA", () => {
       servicioId: "s-cejas-cuchilla-real",
       profesionalId: 1262,
       fechaIso: "2026-09-08",
-      opcionesMostradas: OPCIONES_HORA,
+      opcionesMostradas: { opciones: OPCIONES_HORA, numeroVerMasHoras: null },
       ...overrides,
     });
   }
@@ -418,6 +427,40 @@ describe("FASE 5 (autorizado) -- manejarMensajeAgendaV2 en S4_HORA", () => {
     if (r.accion !== "continuar") return;
     assert.equal(r.cambios, undefined);
     assert.match(r.respuesta, /Se perdió el menú/);
+  });
+
+  it("TEST B (obligatorio) -- '4.' con el menú 9:00/9:30/10:00/10:30/11:00/11:30 selecciona 10:30 (opción 4)", () => {
+    const opcionesHorario = [
+      { numero: 1, fechaIso: "2026-09-08", hora: "09:00" },
+      { numero: 2, fechaIso: "2026-09-08", hora: "09:30" },
+      { numero: 3, fechaIso: "2026-09-08", hora: "10:00" },
+      { numero: 4, fechaIso: "2026-09-08", hora: "10:30" },
+      { numero: 5, fechaIso: "2026-09-08", hora: "11:00" },
+      { numero: 6, fechaIso: "2026-09-08", hora: "11:30" },
+    ];
+    const r = manejarMensajeAgendaV2(sesionEnHora({ opcionesMostradas: { opciones: opcionesHorario, numeroVerMasHoras: null } }), "4.");
+    assert.deepEqual(r, { accion: "hora_seleccionada", fechaIso: "2026-09-08", hora: "10:30" });
+  });
+
+  it("TEST C (obligatorio) -- con 'Ver más horarios' ofrecido (numeroVerMasHoras=4, menú de 3 horas reales), responder su número (con o sin punto) -> accion:'ver_mas_horas_solicitado', NUNCA se interpreta como una hora real", () => {
+    for (const texto of ["4", "4."]) {
+      const r = manejarMensajeAgendaV2(sesionEnHora({ opcionesMostradas: { opciones: OPCIONES_HORA, numeroVerMasHoras: 4 } }), texto);
+      assert.deepEqual(r, { accion: "ver_mas_horas_solicitado" }, `"${texto}" debe pedir ver más horarios`);
+    }
+  });
+
+  it("TEST D (obligatorio) -- sin 'Ver más horarios' (numeroVerMasHoras=null), ese mismo número sigue siendo una selección inválida, NUNCA activa la acción especial", () => {
+    const r = manejarMensajeAgendaV2(sesionEnHora({ opcionesMostradas: { opciones: OPCIONES_HORA, numeroVerMasHoras: null } }), "4");
+    assert.equal(r.accion, "continuar");
+    if (r.accion !== "continuar") return;
+    assert.doesNotMatch(r.respuesta, /Ver más horarios/);
+  });
+
+  it("TEST G (obligatorio) -- un número dentro de una frase libre ('Tengo disponibilidad a las 4.') NUNCA se interpreta como una opción", () => {
+    const r = manejarMensajeAgendaV2(sesionEnHora(), "Tengo disponibilidad a las 4.");
+    assert.equal(r.accion, "continuar");
+    if (r.accion !== "continuar") return;
+    assert.match(r.respuesta, /No reconocí esa opción/);
   });
 });
 

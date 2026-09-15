@@ -26,13 +26,13 @@ import { resolverNylasGrantIdParaTenant, AMORE_TENANT_ID } from "@/lib/nylas/nyl
 import { createNylasEventsClient, createNylasEventsWriteClient, resolveNylasApiKeyFromEnv } from "@/lib/nylas/nylas-client";
 import type { DepsDisponibilidadNylas } from "@/lib/disponibilidad-servicio-nylas";
 import { enviarMensajeWhatsApp } from "@/lib/whatsapp-worker-client";
-import { esInicioDeAgendaV2 } from "@/lib/agenda-v2/entrada";
+import { esInicioDeAgendaV2, detectarRechazoDeHorarioActual, detectarSolicitudOtraProfesional } from "@/lib/agenda-v2/entrada";
 import { manejarMensajeAgendaV2 } from "@/lib/agenda-v2/controlador";
 import { construirOpcionesServicio, renderizarMenuServicio } from "@/lib/agenda-v2/servicios";
 import { construirOpcionesCategoria, renderizarMenuCategoria } from "@/lib/agenda-v2/categorias";
 import { construirOpcionesProfesional, renderizarMenuProfesional } from "@/lib/agenda-v2/profesionales";
 import { renderizarMenuFecha, formatearFechaLarga, type OpcionFechaAgendaV2 } from "@/lib/agenda-v2/fechas";
-import { construirOpcionesHora, renderizarMenuHora } from "@/lib/agenda-v2/horas";
+import { construirBloqueHora, renderizarMenuHora } from "@/lib/agenda-v2/horas";
 import {
   OPCIONES_CONFIRMACION,
   renderizarResumenConfirmacion,
@@ -376,7 +376,7 @@ async function intentarPreLlenarSesion(
       nylasDeps,
     );
     const horarios = horariosResultado.ok ? horariosResultado.horarios : [];
-    const opcionesHora = construirOpcionesHora(fechaParseada.ok ? fechaParseada.fecha : "", horarios);
+    const bloqueHora = construirBloqueHora(fechaParseada.ok ? fechaParseada.fecha : "", horarios);
     await crearSesion(params.supabase, {
       tenantId: params.idTenant,
       telefonoCliente: params.telefono,
@@ -385,15 +385,15 @@ async function intentarPreLlenarSesion(
       servicioId: servicio!.id,
       profesionalId: profesional!.especialistaId,
       fechaIso: fechaParseada.ok ? fechaParseada.fecha : null,
-      opcionesMostradas: opcionesHora,
+      opcionesMostradas: bloqueHora,
     });
     const prefijo = mensajePrevio ? `${mensajePrevio}\n\n` : "";
     await enviarMensaje({
       tenantId: params.idTenant,
       telefono: params.telefono,
       mensaje:
-        opcionesHora.length > 0
-          ? `${prefijo}${renderizarMenuHora(opcionesHora)}`
+        bloqueHora.opciones.length > 0
+          ? `${prefijo}${renderizarMenuHora(bloqueHora.opciones, bloqueHora.numeroVerMasHoras)}`
           : `${prefijo}Ese día ya no tiene horarios disponibles 😔 Escribe *cancelar* y vuelve a intentarlo más tarde.`,
       origen: "automatico",
     });
@@ -1094,16 +1094,112 @@ export async function procesarMensajeConAgendaV2(
           return { manejado: true };
         }
 
-        const opcionesHora = construirOpcionesHora(fechaIso, horariosResultado.horarios);
+        const bloqueHora = construirBloqueHora(fechaIso, horariosResultado.horarios);
         await actualizarSesion(params.supabase, sesion!.id, {
           step: "S4_HORA",
           fechaIso,
           slotSeleccionado: null,
-          opcionesMostradas: opcionesHora,
+          opcionesMostradas: bloqueHora,
           ultimoWamidProcesado: params.wamid,
         });
-        await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: `${prefijo}${renderizarMenuHora(opcionesHora)}`, origen: "automatico" });
+        await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: `${prefijo}${renderizarMenuHora(bloqueHora.opciones, bloqueHora.numeroVerMasHoras)}`, origen: "automatico" });
         return { manejado: true };
+      }
+
+      // CASO 4 (autorizado, "quiero ver a otra profesional") -- durante
+      // S3_DIA/S4_HORA, reconoce la intención de ver otra profesional
+      // (frases fijas y controladas, ver detectarSolicitudOtraProfesional en
+      // lib/agenda-v2/entrada.ts -- NUNCA IA semántica/fuzzy, mismo criterio
+      // que detectarIntencionGestionCitas) y regresa a S2_PROFESIONAL con el
+      // menú REAL de elegibles para el/los MISMO(S) servicio(s) ya elegidos
+      // -- nunca reinicia la selección de servicio.
+      async function mostrarMenuProfesionalDeNuevo(): Promise<ResultadoRouterAgendaV2> {
+        if (!sesion!.servicioId) return await reiniciarPorEstadoInconsistente("solicitud de otra profesional sin servicioId");
+        const serviciosIdsMulti = sesion!.serviciosIds;
+        const resolucion =
+          serviciosIdsMulti && serviciosIdsMulti.length > 1
+            ? await resolverEspecialistasMulti(params.supabase, params.idTenant, serviciosIdsMulti)
+            : await resolverEspecialistas(params.supabase, params.idTenant, sesion!.servicioId);
+        if (resolucion.especialistas.length === 0) {
+          const catalogo = await cargarCatalogo(params.supabase, params.idTenant);
+          const categoriasActualizadas = construirOpcionesCategoria(catalogo);
+          await actualizarSesion(params.supabase, sesion!.id, {
+            step: "S1_SERVICIO",
+            servicioId: null,
+            serviciosIds: null,
+            profesionalId: null,
+            fechaIso: null,
+            slotSeleccionado: null,
+            opcionesMostradas: categoriasActualizadas,
+            ultimoWamidProcesado: params.wamid,
+          });
+          await enviarMensaje({
+            tenantId: params.idTenant,
+            telefono: params.telefono,
+            mensaje: `En este momento no encontramos otra profesional disponible para este servicio 😔 Elige de nuevo:\n\n${renderizarMenuCategoria(categoriasActualizadas)}`,
+            origen: "automatico",
+          });
+          return { manejado: true };
+        }
+        const opcionesProfesional = construirOpcionesProfesional(resolucion.especialistas);
+        await actualizarSesion(params.supabase, sesion!.id, {
+          step: "S2_PROFESIONAL",
+          profesionalId: null,
+          fechaIso: null,
+          slotSeleccionado: null,
+          opcionesMostradas: opcionesProfesional,
+          ultimoWamidProcesado: params.wamid,
+        });
+        await enviarMensaje({
+          tenantId: params.idTenant,
+          telefono: params.telefono,
+          mensaje: `Claro 💗 Elige con quién prefieres:\n\n${renderizarMenuProfesional(opcionesProfesional)}`,
+          origen: "automatico",
+        });
+        return { manejado: true };
+      }
+
+      // CASO 3 (autorizado, "no puedo a esa hora") -- durante S4_HORA,
+      // reconoce el rechazo de los horarios YA mostrados (frases fijas,
+      // mismo criterio) y ofrece una alternativa real SIN repetir el mismo
+      // menú: más horarios reales del mismo día si quedan (reutiliza "Ver
+      // más horarios" TAL CUAL, sin volver a consultar Nylas), o si ya no
+      // queda ninguno, otros días reales (reutiliza
+      // mostrarMenuFechaOVolverAProfesional TAL CUAL, continuando DESPUÉS
+      // del día ya rechazado -- nunca vuelve a ofrecer el mismo día).
+      async function manejarRechazoDeHorario(): Promise<ResultadoRouterAgendaV2> {
+        const datosHoraActual = sesion!.opcionesMostradas as { horariosRestantes: string[] } | null;
+        const horariosRestantes = datosHoraActual?.horariosRestantes ?? [];
+        if (horariosRestantes.length > 0 && sesion!.fechaIso) {
+          const bloqueHora = construirBloqueHora(sesion!.fechaIso, horariosRestantes);
+          await actualizarSesion(params.supabase, sesion!.id, { opcionesMostradas: bloqueHora, ultimoWamidProcesado: params.wamid });
+          await enviarMensaje({
+            tenantId: params.idTenant,
+            telefono: params.telefono,
+            mensaje: `Entiendo 💗 Aquí tienes otros horarios:\n\n${renderizarMenuHora(bloqueHora.opciones, bloqueHora.numeroVerMasHoras)}`,
+            origen: "automatico",
+          });
+          return { manejado: true };
+        }
+        if (!sesion!.servicioId || !sesion!.profesionalId) {
+          return await reiniciarPorEstadoInconsistente("rechazo de horario sin servicioId/profesionalId");
+        }
+        return await mostrarMenuFechaOVolverAProfesional(sesion!.servicioId, sesion!.profesionalId, sesion!.fechaIso ?? undefined);
+      }
+
+      // Caso 3/4 solo aplican con una sesión REALMENTE en curso de elegir
+      // fecha/hora (S3_DIA/S4_HORA) -- en cualquier otro paso, el mensaje
+      // sigue su camino normal por manejarMensajeAgendaV2 (comando
+      // "cancelar" incluido, revisado ahí primero y sin superposición real
+      // con estas frases). Detección determinista, mismo criterio EXACTO
+      // que detectarIntencionGestionCitas -- nunca IA semántica.
+      if (sesion.step === "S3_DIA" || sesion.step === "S4_HORA") {
+        if (detectarSolicitudOtraProfesional(params.texto)) {
+          return await mostrarMenuProfesionalDeNuevo();
+        }
+        if (sesion.step === "S4_HORA" && detectarRechazoDeHorarioActual(params.texto)) {
+          return await manejarRechazoDeHorario();
+        }
       }
 
       const resultado = manejarMensajeAgendaV2(sesion, params.texto);
@@ -1222,6 +1318,31 @@ export async function procesarMensajeConAgendaV2(
           return await reiniciarPorEstadoInconsistente("S3_DIA sin fechas previas al pedir más fechas");
         }
         return await mostrarMenuFechaOVolverAProfesional(sesion.servicioId, sesion.profesionalId, ultimaFechaMostrada);
+      }
+
+      if (resultado.accion === "ver_mas_horas_solicitado") {
+        // Corrección post-deploy (autorizada, "Ver más horarios") -- los
+        // horarios restantes YA están calculados y guardados en la sesión
+        // (ver lib/agenda-v2/horas.ts) -- nunca se vuelve a consultar Nylas,
+        // nunca se repiten horarios ya mostrados. Mismo servicio(s)/
+        // profesional/día -- nunca reinicia la selección.
+        if (!sesion.fechaIso) {
+          return await reiniciarPorEstadoInconsistente("S4_HORA sin fechaIso al pedir más horarios");
+        }
+        const datosHoraActual = sesion.opcionesMostradas as { horariosRestantes: string[] } | null;
+        const horariosRestantes = datosHoraActual?.horariosRestantes ?? [];
+        const bloqueHora = construirBloqueHora(sesion.fechaIso, horariosRestantes);
+        await actualizarSesion(params.supabase, sesion.id, {
+          opcionesMostradas: bloqueHora,
+          ultimoWamidProcesado: params.wamid,
+        });
+        await enviarMensaje({
+          tenantId: params.idTenant,
+          telefono: params.telefono,
+          mensaje: renderizarMenuHora(bloqueHora.opciones, bloqueHora.numeroVerMasHoras),
+          origen: "automatico",
+        });
+        return { manejado: true };
       }
 
       if (resultado.accion === "hora_seleccionada") {
@@ -1635,16 +1756,29 @@ export async function procesarMensajeConAgendaV2(
 
       if (resultado.accion === "cerrar_sesion") {
         await cerrarSesion(params.supabase, sesion.id);
-      } else {
-        // Aplica los cambios reales que decidió el controlador de forma
-        // síncrona (ej. slotSeleccionado + step="S5_CONFIRMAR" al elegir un
-        // horario válido, Fase 5), siempre junto con el wamid ya procesado.
-        // Las transiciones que exigen datos reales async (categoría->
-        // servicios, servicio->profesionales, profesional->días,
-        // fecha->horas) se resuelven arriba, antes de llegar acá.
-        await actualizarSesion(params.supabase, sesion.id, { ...resultado.cambios, ultimoWamidProcesado: params.wamid });
+        await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: resultado.respuesta, origen: "automatico" });
+        return { manejado: true };
       }
-      await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: resultado.respuesta, origen: "automatico" });
+
+      // CASO 5 (autorizado, "evitar bucles") -- accion === "continuar" es
+      // SIEMPRE un mensaje que no se pudo interpretar (ver
+      // manejarMensajeAgendaV2 -- ningún caso de "continuar" trae `cambios`,
+      // nunca representa avance real). Se cuenta cuántos van SEGUIDOS sin
+      // ningún progreso real desde el último (el contador se reinicia solo
+      // en cuanto haya progreso real -- ver el reinicio automático en
+      // actualizarSesionAgendaV2). Tras varios fallos seguidos, se agrega
+      // una orientación clara ADEMÁS del mismo menú -- nunca se reemplaza el
+      // menú, nunca se inventa una opción ni un escalamiento que AMORE no
+      // pueda cumplir hoy (no existe traspaso a un asesor humano en Agenda
+      // V2 -- la orientación real y honesta es *cancelar* o escribir aparte).
+      const UMBRAL_FALLOS_CONSECUTIVOS_PARA_ORIENTAR = 3;
+      const intentosFallidosNuevos = sesion.intentosFallidosConsecutivos + 1;
+      await actualizarSesion(params.supabase, sesion.id, { intentosFallidosConsecutivos: intentosFallidosNuevos, ultimoWamidProcesado: params.wamid });
+      const mensajeFinal =
+        intentosFallidosNuevos >= UMBRAL_FALLOS_CONSECUTIVOS_PARA_ORIENTAR
+          ? `${resultado.respuesta}\n\nSi prefieres, escribe *cancelar* para salir de la reserva y volver a intentarlo, o escríbenos directamente y una persona del salón te ayudará 💗`
+          : resultado.respuesta;
+      await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: mensajeFinal, origen: "automatico" });
       return { manejado: true };
     }
 

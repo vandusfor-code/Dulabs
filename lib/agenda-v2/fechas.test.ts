@@ -73,9 +73,14 @@ describe("resolverSeleccionFecha -- SOLO número exacto contra las opciones ya m
     }
   });
 
-  it("nunca extrae dígitos de en medio de un texto ('999abc', 'opción 1')", () => {
+  it("nunca extrae dígitos de en medio de un texto que no es un prefijo/sufijo reconocido ('999abc')", () => {
     assert.equal(resolverSeleccionFecha("999abc", OPCIONES), undefined);
-    assert.equal(resolverSeleccionFecha("opción 1", OPCIONES), undefined);
+  });
+
+  it("CASO 1 (obligatorio) -- '1.', '1)', 'opción 1', 'opcion 1', 'la 1' resuelven TODOS la misma fecha que '1'", () => {
+    for (const texto of ["1.", "1)", "opción 1", "opcion 1", "la 1"]) {
+      assert.equal(resolverSeleccionFecha(texto, OPCIONES)?.fechaIso, "2026-09-08", `"${texto}" debe resolver la misma fecha que "1"`);
+    }
   });
 });
 
@@ -113,5 +118,11 @@ describe("CORRECCIÓN (autorizada, 'Ver más fechas') -- render + selección del
     assert.equal(esSeleccionVerMasFechas("5", 4), false, "'5' pero el número real de 'Ver más fechas' era 4 -- nunca calza");
     assert.equal(esSeleccionVerMasFechas("5", null), false, "si no hay 'Ver más fechas' en este menú (null), NINGÚN número la activa");
     assert.equal(esSeleccionVerMasFechas("cinco", 5), false, "nunca texto libre, solo número exacto");
+  });
+
+  it("CASO 1 (obligatorio, normalización centralizada) -- '5.', '5)', 'opción 5' también activan 'Ver más fechas'", () => {
+    for (const texto of ["5.", "5)", "opción 5", "opcion 5", "la 5"]) {
+      assert.equal(esSeleccionVerMasFechas(texto, 5), true, `"${texto}" debe activar 'Ver más fechas'`);
+    }
   });
 });

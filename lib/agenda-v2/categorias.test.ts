@@ -87,9 +87,14 @@ describe("resolverSeleccionCategoria -- SOLO número exacto contra las opciones 
     }
   });
 
-  it("nunca extrae dígitos de en medio de un texto ('999abc', 'opción 1')", () => {
+  it("nunca extrae dígitos de en medio de un texto que no es un prefijo/sufijo reconocido ('999abc')", () => {
     assert.equal(resolverSeleccionCategoria("999abc", OPCIONES), undefined);
-    assert.equal(resolverSeleccionCategoria("opción 1", OPCIONES), undefined);
+  });
+
+  it("CASO 1 (obligatorio) -- '1.', '1)', 'opción 1', 'opcion 1', 'la 1' resuelven TODOS la misma categoría que '1'", () => {
+    for (const texto of ["1.", "1)", "opción 1", "opcion 1", "la 1"]) {
+      assert.equal(resolverSeleccionCategoria(texto, OPCIONES)?.categoria, "Cabello", `"${texto}" debe resolver la misma categoría que "1"`);
+    }
   });
 });
 

@@ -75,7 +75,12 @@ describe("resolverSeleccionServicio -- SOLO número exacto contra las opciones y
 
   it("nunca usa parseInt(text.replace(/\\D/g, \"\")) -- '999abc' NUNCA se interpreta como '999' ni como ningún número", () => {
     assert.equal(resolverSeleccionServicio("999abc", OPCIONES), undefined);
-    assert.equal(resolverSeleccionServicio("opción 1", OPCIONES), undefined, "debe ser el mensaje completo, nunca extraer dígitos de en medio");
+  });
+
+  it("CASO 1 (obligatorio) -- '1.', '1)', 'opción 1', 'opcion 1', 'la 1' resuelven TODOS el mismo servicio que '1'", () => {
+    for (const texto of ["1.", "1)", "opción 1", "opcion 1", "la 1"]) {
+      assert.equal(resolverSeleccionServicio(texto, OPCIONES)?.servicioId, "s-dipping", `"${texto}" debe resolver el mismo servicio que "1"`);
+    }
   });
 });
 
@@ -120,6 +125,10 @@ describe("FASE 3 (autorizado, multi-servicio) -- resolverSeleccionMultiServicio"
   it("mensaje vacío o solo separadores -> rechazado", () => {
     assert.equal(resolverSeleccionMultiServicio("", OPCIONES), undefined);
     assert.equal(resolverSeleccionMultiServicio("y", OPCIONES), undefined);
+  });
+
+  it("CASO 1 (bonus, normalización centralizada) -- un token individual con puntuación real ('1 y 2.') también resuelve", () => {
+    assert.deepEqual(resolverSeleccionMultiServicio("1 y 2.", OPCIONES)?.map((s) => s.servicioId), ["s-dipping", "s-presson"]);
   });
 });
 

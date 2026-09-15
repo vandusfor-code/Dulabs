@@ -13,7 +13,7 @@ import { resolverSeleccionMultiServicio, textoSeleccionInvalidaServicio, type Op
 import { esOpcionCategoria, resolverSeleccionCategoria, textoSeleccionInvalidaCategoria, type OpcionCategoriaAgendaV2 } from "@/lib/agenda-v2/categorias";
 import { resolverSeleccionProfesional, textoSeleccionInvalidaProfesional, type OpcionProfesionalAgendaV2 } from "@/lib/agenda-v2/profesionales";
 import { resolverSeleccionFecha, textoSeleccionInvalidaFecha, esSeleccionVerMasFechas, type OpcionFechaAgendaV2 } from "@/lib/agenda-v2/fechas";
-import { resolverSeleccionHora, textoSeleccionInvalidaHora, type OpcionHoraAgendaV2 } from "@/lib/agenda-v2/horas";
+import { resolverSeleccionHora, textoSeleccionInvalidaHora, esSeleccionVerMasHoras, type OpcionHoraAgendaV2 } from "@/lib/agenda-v2/horas";
 import { resolverSeleccionConfirmacion, textoSeleccionInvalidaConfirmacion, type OpcionConfirmacionAgendaV2 } from "@/lib/agenda-v2/confirmacion";
 import {
   resolverSeleccionCita,
@@ -64,6 +64,13 @@ export type ResultadoControladorAgendaV2 =
   // servicio/profesional, precio, duración) exige datos async -- router.ts
   // termina la transición a S5_CONFIRMAR con el resumen ya armado.
   | { accion: "hora_seleccionada"; fechaIso: string; hora: string }
+  // Corrección post-deploy (autorizada, "Ver más horarios") -- se pidió ver
+  // horarios posteriores a los ya mostrados, para EL MISMO día/profesional
+  // ya elegidos. Los horarios restantes YA están calculados (ver
+  // lib/agenda-v2/horas.ts) -- router.ts solo arma el siguiente bloque,
+  // nunca vuelve a consultar Nylas. El controlador se queda puro/síncrono,
+  // mismo patrón EXACTO que "ver_mas_fechas_solicitado".
+  | { accion: "ver_mas_horas_solicitado" }
   // FASE 6 -- desde S5_CONFIRMAR, "cambiar fecha"/"cambiar hora" exigen
   // recalcular disponibilidad real (async, reutilizando el mismo motor de
   // las Fases 4/5) -- router.ts resuelve ambas transiciones.
@@ -256,16 +263,32 @@ function manejarSeleccionFecha(sesion: SesionAgendaV2, mensaje: string): Resulta
 
 /**
  * FASE 5 -- S4_HORA. Mismo patrón EXACTO que los pasos anteriores.
+ *
+ * Corrección post-deploy (autorizada, "Ver más horarios") --
+ * `opcionesMostradas` para este paso ya no es un arreglo plano, sino
+ * `{ opciones, numeroVerMasHoras, horariosRestantes }` -- los horarios
+ * reales ya mostrados más, si corresponde, el número real de "Ver más
+ * horarios" (`null` si no hay más horarios reales ese día) y los horarios
+ * restantes crudos para armar el siguiente bloque sin recalcular. Los
+ * demás pasos de Agenda V2 conservan su propia forma tal cual.
  */
 function manejarSeleccionHora(sesion: SesionAgendaV2, mensaje: string): ResultadoControladorAgendaV2 {
-  const opciones = (sesion.opcionesMostradas as OpcionHoraAgendaV2[] | null) ?? [];
-  if (opciones.length === 0) {
+  const datos = sesion.opcionesMostradas as { opciones: OpcionHoraAgendaV2[]; numeroVerMasHoras: number | null } | null;
+  if (!datos || !Array.isArray(datos.opciones) || datos.opciones.length === 0) {
     return { accion: "continuar", respuesta: RESPUESTA_MENU_PERDIDO };
   }
 
-  const seleccion = resolverSeleccionHora(mensaje, opciones);
+  if (esSeleccionVerMasHoras(mensaje, datos.numeroVerMasHoras)) {
+    // Corrección post-deploy (autorizada) -- "Ver más horarios" nunca
+    // recalcula nada acá (los horarios restantes ya están guardados en la
+    // sesión) -- router.ts arma el siguiente bloque, el controlador se
+    // queda puro/síncrono, mismo patrón EXACTO que "Ver más fechas".
+    return { accion: "ver_mas_horas_solicitado" };
+  }
+
+  const seleccion = resolverSeleccionHora(mensaje, datos.opciones);
   if (!seleccion) {
-    return { accion: "continuar", respuesta: textoSeleccionInvalidaHora(opciones) };
+    return { accion: "continuar", respuesta: textoSeleccionInvalidaHora(datos.opciones, datos.numeroVerMasHoras) };
   }
 
   // FASE 6 -- ya no se responde con un texto temporal: el siguiente mensaje
