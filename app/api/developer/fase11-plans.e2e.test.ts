@@ -266,5 +266,57 @@ describe(
       assert.equal(oks, 1, "exactamente una creación debe ganar el último cupo");
       assert.equal(rechazos, 1, "exactamente una debe ser rechazada");
     });
+
+    it("seguridad cuenta: OWNER de un workspace de una cuenta AJENA no puede cambiar su plan (403 not_account_owner)", async () => {
+      const ws = randomUUID();
+      workspaceIds.push(ws);
+      const dueno = await usuario("OWNER", ws); // dueño de la cuenta
+      await upgradeAAgency(dueno.token, ws); // cuenta owner = dueno
+      // Otro usuario agregado como OWNER del MISMO workspace (miembro del equipo del dueño).
+      const otro = await usuario("OWNER", ws);
+      const res = await planPOST(req("/api/developer/subscription/plan", { token: otro.token, ws, method: "POST", body: { plan: "DEVELOPER" } }));
+      assert.equal(res.status, 403);
+      assert.equal(((await bodyDe(res)).error as { code: string }).code, "not_account_owner");
+    });
+
+    it("seguridad cuenta: el DUEÑO de la cuenta sí puede cambiar el plan", async () => {
+      const ws = randomUUID();
+      workspaceIds.push(ws);
+      const dueno = await usuario("OWNER", ws);
+      const accId = await upgradeAAgency(dueno.token, ws);
+      // Volver a Developer (no hay recursos por encima) debe permitirse al dueño.
+      const res = await planPOST(req("/api/developer/subscription/plan", { token: dueno.token, ws, method: "POST", body: { plan: "DEVELOPER" } }));
+      assert.equal(res.status, 200);
+      const { data } = await admin.from("dulabs_dev_accounts").select("plan_codigo").eq("id", accId).maybeSingle();
+      assert.equal((data as { plan_codigo: string }).plan_codigo, "DEVELOPER");
+    });
+
+    it("seguridad cross-tenant: x-dulabs-workspace de un workspace ajeno -> 403 (no llega a tocar cuenta)", async () => {
+      const wsA = randomUUID();
+      const wsB = randomUUID();
+      workspaceIds.push(wsA, wsB);
+      await usuario("OWNER", wsA); // dueño de A
+      const intruso = await usuario("OWNER", wsB); // dueño de B, sin membresía en A
+      const res = await planPOST(req("/api/developer/subscription/plan", { token: intruso.token, ws: wsA, method: "POST", body: { plan: "AGENCY" } }));
+      assert.equal(res.status, 403);
+      assert.equal(((await bodyDe(res)).error as { code: string }).code, "workspace_forbidden");
+    });
+
+    it("seguridad: un accountId manipulado en el body se IGNORA (la cuenta se deriva del workspace)", async () => {
+      const wsX = randomUUID();
+      const wsZ = randomUUID();
+      workspaceIds.push(wsX, wsZ);
+      const x = await usuario("OWNER", wsX);
+      const z = await usuario("OWNER", wsZ);
+      const accX = await upgradeAAgency(x.token, wsX); // ambas parten en AGENCY para distinguir el cambio
+      const accZ = await upgradeAAgency(z.token, wsZ);
+      // X intenta cambiar a DEVELOPER pero inyecta el accountId de Z en el body.
+      const res = await planPOST(req("/api/developer/subscription/plan", { token: x.token, ws: wsX, method: "POST", body: { plan: "DEVELOPER", accountId: accZ } }));
+      assert.equal(res.status, 200);
+      const { data: dx } = await admin.from("dulabs_dev_accounts").select("plan_codigo").eq("id", accX).maybeSingle();
+      const { data: dz } = await admin.from("dulabs_dev_accounts").select("plan_codigo").eq("id", accZ).maybeSingle();
+      assert.equal((dx as { plan_codigo: string }).plan_codigo, "DEVELOPER", "se modificó la cuenta derivada de X");
+      assert.equal((dz as { plan_codigo: string }).plan_codigo, "AGENCY", "la cuenta de Z (accountId inyectado) quedó intacta");
+    });
   }
 );

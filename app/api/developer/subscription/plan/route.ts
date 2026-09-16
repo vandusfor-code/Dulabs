@@ -20,7 +20,15 @@ export async function POST(request: NextRequest) {
     const planExiste = await obtenerPlan(ctx.supabase, nuevoPlan);
     if (!planExiste) return jsonError(400, "plan_invalido", ctx.requestId, "El plan no existe en el catálogo");
 
+    // La cuenta se deriva SERVER-SIDE del workspace autenticado -- nunca de un
+    // accountId del request. El cambio de plan (compromiso de facturación) se
+    // autoriza contra el DUEÑO DE LA CUENTA (owner_user_id), no solo contra un
+    // OWNER de workspace: un OWNER de un workspace que pertenece a la cuenta de
+    // OTRO usuario no puede modificar esa suscripción.
     const cuenta = await ensureCuentaParaWorkspace(ctx.supabase, { workspaceId: ctx.workspaceId, ownerUserId: ctx.userId });
+    if (cuenta.owner_user_id !== ctx.userId) {
+      return jsonError(403, "not_account_owner", ctx.requestId, "Solo el dueño de la cuenta puede cambiar el plan.");
+    }
     const r = await cambiarPlan(ctx.supabase, { accountId: cuenta.id, nuevoPlan, actorUserId: ctx.userId, motivo: cuerpo?.motivo ?? null });
     if (!r.ok) {
       if (r.motivo === "downgrade_bloqueado") return jsonError(409, "downgrade_blocked", ctx.requestId, r.detalle ?? undefined);
