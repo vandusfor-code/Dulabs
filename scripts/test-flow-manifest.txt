@@ -226,6 +226,7 @@ lib/developer/webhook-signature.test.ts
 lib/developer/outbound-state-machine.test.ts
 lib/developer/crash-recovery.test.ts
 lib/developer/secure-crypto.test.ts
+lib/config/release-crypto-config.test.ts
 lib/developer/meta-event-id.test.ts
 lib/developer/meta-webhook-signature.test.ts
 lib/developer/idempotency.e2e.test.ts
