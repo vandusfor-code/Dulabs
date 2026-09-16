@@ -123,6 +123,16 @@ export type UsageResp = {
 export type ApiKeyMeta = { id: string; workspace_id: string; name: string; prefix: string; created_at: string; last_used_at: string | null; revoked_at: string | null };
 export type ApiKeySecret = { id: string; name: string; prefix: string; createdAt: string; apiKey: string };
 export type NumberMeta = { id: string; phoneNumberId: string; displayName: string | null; status: string; wabaId?: string | null; createdAt: string };
+export type ConnectResp = {
+  id: string;
+  phoneNumberId: string;
+  displayName: string | null;
+  displayPhoneNumber: string;
+  status: string;
+  reconnected: boolean;
+  webhookSubscribed: boolean;
+  createdAt: string;
+};
 export type WebhookMeta = { id: string; whatsappNumberId: string; url: string; status: string; createdAt: string; rotatedAt: string | null };
 export type WebhookSecret = { id: string; whatsappNumberId: string; url: string; status: string; createdAt: string; secret: string };
 export type MemberMeta = { id: string; userId: string; rol: "OWNER" | "ADMIN" | "MEMBER"; estado: string; createdAt: string };
@@ -152,7 +162,16 @@ export function createDevClient(deps: DevClientDeps) {
     },
     numbers: {
       list: () => solicitar<{ numbers: NumberMeta[] }>(deps, "/numbers"),
-      create: (body: { phoneNumberId: string; wabaId?: string; displayName?: string; metaToken?: string }) => solicitar<NumberMeta>(deps, "/numbers", { method: "POST", body }),
+      /** Fase 10 -- desconexión local segura (borra el token de Meta, marca 'desconectado'; conserva el histórico). OWNER/ADMIN. */
+      disconnect: (id: string) => solicitar<{ id: string; phoneNumberId: string; status: string }>(deps, `/numbers/${id}`, { method: "DELETE" }),
+    },
+    whatsapp: {
+      /**
+       * Fase 10 -- completa el Embedded Signup: manda el `code` (+ hints del
+       * popup) al backend, que hace el intercambio server-side y obtiene/cifra
+       * el token de Meta. El token NUNCA viaja por acá.
+       */
+      connect: (body: { code: string; wabaId?: string; phoneNumberId?: string }) => solicitar<ConnectResp>(deps, "/whatsapp/connect", { method: "POST", body }),
     },
     webhooks: {
       list: () => solicitar<{ webhooks: WebhookMeta[] }>(deps, "/webhooks"),

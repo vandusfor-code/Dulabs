@@ -237,6 +237,8 @@ services/gateway/identidad-acceso.e2e.test.ts
 lib/dev-dashboard/dev-logic.test.ts
 lib/dev-dashboard/dev-client.test.ts
 app/api/developer/dev-routes.e2e.test.ts
+app/api/developer/whatsapp-connect.e2e.test.ts
+lib/developer/meta-embedded-signup-exchange.test.ts
 components/developer/dashboard-ui.dom.test.tsx
 lib/developer/events-store.e2e.test.ts
 lib/developer/rls-isolation.e2e.test.ts

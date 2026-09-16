@@ -1,12 +1,11 @@
 import type { NextRequest } from "next/server";
 import { conSesionDeveloper, jsonOk, jsonError } from "@/lib/developer/dev-api-http";
-import { listarNumeros, registrarNumeroConLimite } from "@/lib/developer/whatsapp-numbers-store";
-import { resolverLimitesDelWorkspace } from "@/lib/developer/plans";
+import { listarNumeros } from "@/lib/developer/whatsapp-numbers-store";
 
-// DuLabs Developer V1 -- Fase 9 (autorizado). GET (listar, cualquier rol) /
-// POST (registrar, OWNER o ADMIN). La proyección pública NUNCA incluye el
-// token de Meta cifrado. El límite de números del plan (Fase 7) se aplica de
-// forma atómica.
+// DuLabs Developer V1 -- Fase 9/10 (autorizado). GET (listar, cualquier rol).
+// La proyección pública NUNCA incluye el token de Meta cifrado. La conexión
+// (POST) se movió a /api/developer/whatsapp/connect (Embedded Signup real,
+// Fase 10) -- ver nota en el POST de abajo.
 
 export const runtime = "nodejs";
 
@@ -26,29 +25,15 @@ export async function GET(request: NextRequest) {
   });
 }
 
+// Fase 10 (autorizado): la conexión REAL de un número pasa exclusivamente por
+// POST /api/developer/whatsapp/connect (Embedded Signup -> code exchange
+// server-side -> token obtenido y cifrado por el backend). Esta ruta ya NO
+// acepta un `metaToken` desde el navegador -- meter el token del cliente por
+// el frontend violaba "el token nunca viaja al/desde el navegador". Se
+// responde 410 apuntando al flujo correcto en vez de dejar una vía insegura
+// abierta.
 export async function POST(request: NextRequest) {
   return conSesionDeveloper(request, ["OWNER", "ADMIN"], async (ctx) => {
-    const cuerpo = (await request.json().catch(() => null)) as { phoneNumberId?: string; wabaId?: string; displayName?: string; metaToken?: string } | null;
-    if (!cuerpo?.phoneNumberId) return jsonError(400, "invalid_request", ctx.requestId, "Falta 'phoneNumberId'");
-    const limites = await resolverLimitesDelWorkspace(ctx.supabase, ctx.workspaceId);
-    const resultado = await registrarNumeroConLimite(ctx.supabase, {
-      workspaceId: ctx.workspaceId,
-      phoneNumberId: cuerpo.phoneNumberId,
-      wabaId: cuerpo.wabaId,
-      displayName: cuerpo.displayName,
-      metaToken: cuerpo.metaToken,
-      limiteNumeros: limites.numerosIncluidos,
-    });
-    if (!resultado.ok) {
-      if (resultado.motivo === "limite_numeros_excedido") {
-        return jsonError(403, "number_limit_exceeded", ctx.requestId, `El plan ${limites.planCodigo} incluye ${limites.numerosIncluidos} números`);
-      }
-      return jsonError(409, resultado.motivo, ctx.requestId);
-    }
-    return jsonOk(
-      { id: resultado.fila.id, phoneNumberId: resultado.fila.phone_number_id, displayName: resultado.fila.display_name, status: resultado.fila.estado, createdAt: resultado.fila.created_at },
-      ctx.requestId,
-      201
-    );
+    return jsonError(410, "use_embedded_signup", ctx.requestId, "Conecta un número vía POST /api/developer/whatsapp/connect (Meta Embedded Signup). El token de Meta nunca se envía manualmente.");
   });
 }

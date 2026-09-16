@@ -143,6 +143,36 @@ export async function obtenerNumeroDelWorkspace(supabase: SupabaseClient, params
   return (data as NumeroWhatsAppFila) ?? null;
 }
 
+export type ResultadoDesconexion = { ok: true; fila: NumeroWhatsAppFila } | { ok: false; motivo: "numero_no_encontrado" };
+
+/**
+ * Fase 10 (autorizado) -- desconexión LOCAL segura de un número: lo marca
+ * 'desconectado' y BORRA el token de Meta cifrado (meta_token_cifrado=null)
+ * -- tras esto el número ya no puede enviar (obtenerNumeroParaEnvioMeta
+ * devuelve null sin token), que es exactamente el efecto buscado. Scoped por
+ * workspace_id + id (mismo criterio de ownership del resto del store: nunca
+ * toca una fila sin el workspace_id en el filtro).
+ *
+ * NO borra la fila ni ningún histórico (jobs, usage ledger, eventos siguen
+ * intactos -- referencian el número por su UUID interno, que se conserva).
+ * Es una desconexión del lado de DuLabs: NO revoca nada en Meta (el token de
+ * Meta sigue siendo válido en Meta hasta que el dueño lo revoque allá) --
+ * esta función jamás afirma lo contrario. Reconectar más tarde re-registra
+ * el mismo phone_number_id (reconexión, no consume cupo nuevo).
+ */
+export async function desconectarNumero(supabase: SupabaseClient, params: { workspaceId: string; numeroId: string }): Promise<ResultadoDesconexion> {
+  const { data, error } = await supabase
+    .from("dulabs_dev_whatsapp_numbers")
+    .update({ estado: "desconectado", meta_token_cifrado: null, updated_at: new Date().toISOString() })
+    .eq("id", params.numeroId)
+    .eq("workspace_id", params.workspaceId)
+    .select(CAMPOS_PUBLICOS)
+    .maybeSingle();
+  if (error) throw new Error(`[developer/whatsapp-numbers-store] error desconectando número: ${error.message}`);
+  if (!data) return { ok: false, motivo: "numero_no_encontrado" };
+  return { ok: true, fila: data as NumeroWhatsAppFila };
+}
+
 export type NumeroParaEnvioMeta = { id: string; phoneNumberId: string; tokenMeta: string };
 
 /**
