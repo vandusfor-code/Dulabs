@@ -43,8 +43,14 @@ describe(
     const accountIds: string[] = [];
 
     after(async () => {
-      // Borra workspaces creados por la cuenta (via crear_workspace) además de los sembrados.
-      for (const acc of accountIds) {
+      // Barre TODAS las cuentas de los usuarios de prueba (incluye cualquier
+      // huérfana que un bug de materialización hubiera creado) + las cuentas
+      // rastreadas, y sus workspaces enlazados.
+      for (const uid of userIds) {
+        const { data } = await admin.from("dulabs_dev_accounts").select("id").eq("owner_user_id", uid);
+        for (const a of data ?? []) accountIds.push(a.id as string);
+      }
+      for (const acc of [...new Set(accountIds)]) {
         const { data } = await admin.from("dulabs_dev_workspace_plans").select("workspace_id").eq("account_id", acc);
         for (const w of data ?? []) workspaceIds.push(w.workspace_id as string);
       }
@@ -54,7 +60,7 @@ describe(
           await admin.from(t).delete().eq("workspace_id", ws).then(() => {}, () => {});
         }
       }
-      for (const acc of accountIds) {
+      for (const acc of [...new Set(accountIds)]) {
         await admin.from("dulabs_dev_plan_overrides").delete().eq("account_id", acc).then(() => {}, () => {});
         await admin.from("dulabs_dev_account_audit").delete().eq("account_id", acc).then(() => {}, () => {});
         await admin.from("dulabs_dev_accounts").delete().eq("id", acc).then(() => {}, () => {});
@@ -193,6 +199,55 @@ describe(
       const adminU = await usuario("ADMIN", ws);
       assert.equal((await planPOST(req("/api/developer/subscription/plan", { token: member.token, ws, method: "POST", body: { plan: "AGENCY" } }))).status, 403);
       assert.equal((await planPOST(req("/api/developer/subscription/plan", { token: adminU.token, ws, method: "POST", body: { plan: "AGENCY" } }))).status, 403);
+    });
+
+    it("miembros: reactivar un miembro suspendido BAJO el límite -> ok", async () => {
+      const ws = randomUUID();
+      workspaceIds.push(ws);
+      const owner = await usuario("OWNER", ws); // activo #1
+      await upgradeAAgency(owner.token, ws);
+      const u = await usuarioSuelto();
+      assert.equal((await membersPOST(req("/api/developer/members", { token: owner.token, ws, method: "POST", body: { userId: u, rol: "MEMBER" } }))).status, 201); // activo #2
+      // Suspender directamente (no hay endpoint de suspensión en alcance).
+      await admin.from("dulabs_dev_memberships").update({ estado: "suspendido" }).eq("workspace_id", ws).eq("user_id", u);
+      // Reactivar: la cuenta tiene 1 activo, límite 5 -> debe permitirse.
+      const re = await membersPOST(req("/api/developer/members", { token: owner.token, ws, method: "POST", body: { userId: u, rol: "MEMBER" } }));
+      assert.equal(re.status, 201);
+    });
+
+    it("miembros: reactivar un suspendido con la cuenta LLENA -> 403 (una membresía inactiva no burla el límite)", async () => {
+      const ws = randomUUID();
+      workspaceIds.push(ws);
+      const owner = await usuario("OWNER", ws); // activo #1
+      const accId = await upgradeAAgency(owner.token, ws);
+      // Llenar a 5 activos (owner + 4).
+      for (let i = 0; i < 4; i++) {
+        const u = await usuarioSuelto();
+        assert.equal((await membersPOST(req("/api/developer/members", { token: owner.token, ws, method: "POST", body: { userId: u, rol: "MEMBER" } }))).status, 201);
+      }
+      // Insertar un 6.º usuario como SUSPENDIDO directamente (no cuenta como activo).
+      const suspendido = await usuarioSuelto();
+      const { error: eIns } = await admin.from("dulabs_dev_memberships").insert({ workspace_id: ws, user_id: suspendido, rol: "MEMBER", estado: "suspendido" });
+      assert.equal(eIns, null);
+      void accId;
+      // Reactivarlo debe RECHAZARSE: ya hay 5 activos.
+      const re = await membersPOST(req("/api/developer/members", { token: owner.token, ws, method: "POST", body: { userId: suspendido, rol: "MEMBER" } }));
+      assert.equal(re.status, 403);
+      assert.equal(((await bodyDe(re)).error as { code: string }).code, "member_limit_exceeded");
+    });
+
+    it("materialización de cuenta atómica: 2 upgrades concurrentes sobre un workspace fresco -> UNA sola cuenta (sin huérfanas)", async () => {
+      const ws = randomUUID();
+      workspaceIds.push(ws);
+      const owner = await usuario("OWNER", ws);
+      await Promise.all([
+        planPOST(req("/api/developer/subscription/plan", { token: owner.token, ws, method: "POST", body: { plan: "AGENCY" } })),
+        planPOST(req("/api/developer/subscription/plan", { token: owner.token, ws, method: "POST", body: { plan: "AGENCY" } })),
+      ]);
+      const { data, error } = await admin.from("dulabs_dev_accounts").select("id").eq("owner_user_id", owner.userId);
+      assert.equal(error, null);
+      assert.equal((data ?? []).length, 1, "debe existir exactamente 1 cuenta para el owner (ninguna huérfana)");
+      for (const a of data ?? []) accountIds.push(a.id as string);
     });
 
     it("concurrencia: 2 creaciones de workspace con 1 solo cupo libre -> exactamente una gana", async () => {

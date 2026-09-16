@@ -47,37 +47,28 @@ export async function obtenerCuentaDeWorkspace(supabase: SupabaseClient, workspa
 }
 
 /**
- * Garantiza que el workspace tenga cuenta. Si no la tiene, crea una cuenta
- * DEVELOPER (estado active, período mensual desde now) y ENLAZA este workspace
- * a ella (upsert de workspace_plans.account_id). Idempotente: si ya hay
- * cuenta, la devuelve tal cual. Solo enlaza el workspace dado (el back-link de
- * otros workspaces del owner queda fuera de alcance en Fase 11 para no
- * violar límites de forma implícita -- ver doc, Riesgos).
+ * Garantiza que el workspace tenga cuenta, de forma ATÓMICA E IDEMPOTENTE vía
+ * el RPC dulabs_dev_ensure_account_for_workspace (advisory lock por workspace
+ * en la BD): dos requests concurrentes sobre el mismo workspace nunca crean
+ * dos cuentas huérfanas -- el segundo ve la cuenta ya creada. Crea una cuenta
+ * DEVELOPER (active, período mensual) y enlaza SOLO este workspace (sin
+ * backfill de otros workspaces del owner -- ver doc, Riesgos). El gate
+ * OWNER/ADMIN y el aislamiento tenant los aplica la ruta que llama.
  */
 export async function ensureCuentaParaWorkspace(
   supabase: SupabaseClient,
   params: { workspaceId: string; ownerUserId: string }
 ): Promise<CuentaFila> {
-  const existente = await obtenerCuentaDeWorkspace(supabase, params.workspaceId);
-  if (existente) return existente;
-
-  const ahora = new Date();
-  const finMes = new Date(ahora);
-  finMes.setMonth(finMes.getMonth() + 1);
-
-  const { data: cuenta, error: eAcc } = await supabase
-    .from("dulabs_dev_accounts")
-    .insert({ owner_user_id: params.ownerUserId, plan_codigo: "DEVELOPER", estado: "active", periodo_inicio: ahora.toISOString(), periodo_fin: finMes.toISOString() })
-    .select(CAMPOS)
-    .single();
-  if (eAcc) throw new Error(`[developer/accounts] error creando cuenta: ${eAcc.message}`);
-
-  const { error: eLink } = await supabase
-    .from("dulabs_dev_workspace_plans")
-    .upsert({ workspace_id: params.workspaceId, account_id: (cuenta as CuentaFila).id, updated_at: ahora.toISOString() }, { onConflict: "workspace_id" });
-  if (eLink) throw new Error(`[developer/accounts] error enlazando workspace a la cuenta: ${eLink.message}`);
-
-  return cuenta as CuentaFila;
+  const { data, error } = await supabase.rpc("dulabs_dev_ensure_account_for_workspace", {
+    p_workspace_id: params.workspaceId,
+    p_owner_user_id: params.ownerUserId,
+  });
+  if (error) throw new Error(`[developer/accounts] error materializando cuenta: ${error.message}`);
+  const fila = Array.isArray(data) ? data[0] : data;
+  if (!fila?.account_id) throw new Error("[developer/accounts] ensure_account_for_workspace no devolvió account_id");
+  const cuenta = await obtenerCuentaPorId(supabase, fila.account_id as string);
+  if (!cuenta) throw new Error("[developer/accounts] cuenta materializada pero no recuperable");
+  return cuenta;
 }
 
 // --- Conteos A NIVEL DE CUENTA (para display y validaciones no atómicas) ---
