@@ -7,10 +7,17 @@ import {
   manejarCrearApiKey,
   manejarListarApiKeys,
   manejarRevocarApiKey,
+  manejarRotarApiKey,
   manejarRegistrarNumero,
   manejarListarNumeros,
   manejarConfigurarWebhook,
+  manejarObtenerWorkspace,
+  manejarListarMiembros,
+  manejarCrearMiembro,
+  manejarActualizarRolMiembro,
+  manejarEliminarMiembro,
 } from "./management-handler";
+import type { RolDev } from "@/lib/developer/memberships-store";
 import { manejarListaNumerosPublica, manejarObtenerNumeroPublico } from "./numbers-handler";
 import { manejarObtenerUso } from "./usage-handler";
 import { manejarObtenerMe } from "./me-handler";
@@ -204,34 +211,85 @@ export function crearServidorGateway(deps: DependenciasGateway) {
         const partes = path.split("/").filter(Boolean); // ["api","v1","dev","api-keys", ...]
         const recurso = partes[3];
         const idRecurso = partes[4];
+        const subRecurso = partes[5];
+        // Fase 8 (D3) -- selección de workspace multi-tenant. Nunca se confía
+        // a ciegas: conWorkspaceAutenticado valida este header contra las
+        // membresías reales del usuario.
+        const wsHeader = req.headers["x-dulabs-workspace"] as string | undefined;
+        const auth = req.headers.authorization;
 
-        if (recurso === "api-keys" && req.method === "POST") {
-          const r = await conWorkspaceAutenticado(deps, req.headers.authorization, (ws) => manejarCrearApiKey(deps, ws, cuerpo));
+        // Roles (D4): OWNER = todo; ADMIN = api-keys/números/webhooks;
+        // MEMBER = solo lectura. Miembros = solo OWNER.
+        const TODOS: RolDev[] = ["OWNER", "ADMIN", "MEMBER"];
+        const GESTION: RolDev[] = ["OWNER", "ADMIN"];
+        const SOLO_OWNER: RolDev[] = ["OWNER"];
+
+        // --- api-keys ---
+        if (recurso === "api-keys" && req.method === "POST" && !idRecurso) {
+          const r = await conWorkspaceAutenticado(deps, auth, wsHeader, GESTION, (ctx) => manejarCrearApiKey(deps, ctx.workspaceId, cuerpo));
           enviarJson(res, r.status, r.cuerpo);
           return;
         }
         if (recurso === "api-keys" && req.method === "GET") {
-          const r = await conWorkspaceAutenticado(deps, req.headers.authorization, (ws) => manejarListarApiKeys(deps, ws));
+          const r = await conWorkspaceAutenticado(deps, auth, wsHeader, TODOS, (ctx) => manejarListarApiKeys(deps, ctx.workspaceId));
           enviarJson(res, r.status, r.cuerpo);
           return;
         }
         if (recurso === "api-keys" && req.method === "DELETE" && idRecurso) {
-          const r = await conWorkspaceAutenticado(deps, req.headers.authorization, (ws) => manejarRevocarApiKey(deps, ws, idRecurso));
+          const r = await conWorkspaceAutenticado(deps, auth, wsHeader, GESTION, (ctx) => manejarRevocarApiKey(deps, ctx.workspaceId, idRecurso));
           enviarJson(res, r.status, r.cuerpo);
           return;
         }
+        if (recurso === "api-keys" && req.method === "POST" && idRecurso && subRecurso === "rotate") {
+          const r = await conWorkspaceAutenticado(deps, auth, wsHeader, GESTION, (ctx) => manejarRotarApiKey(deps, ctx.workspaceId, idRecurso));
+          enviarJson(res, r.status, r.cuerpo);
+          return;
+        }
+
+        // --- numbers ---
         if (recurso === "numbers" && req.method === "POST") {
-          const r = await conWorkspaceAutenticado(deps, req.headers.authorization, (ws) => manejarRegistrarNumero(deps, ws, cuerpo));
+          const r = await conWorkspaceAutenticado(deps, auth, wsHeader, GESTION, (ctx) => manejarRegistrarNumero(deps, ctx.workspaceId, cuerpo));
           enviarJson(res, r.status, r.cuerpo);
           return;
         }
         if (recurso === "numbers" && req.method === "GET") {
-          const r = await conWorkspaceAutenticado(deps, req.headers.authorization, (ws) => manejarListarNumeros(deps, ws));
+          const r = await conWorkspaceAutenticado(deps, auth, wsHeader, TODOS, (ctx) => manejarListarNumeros(deps, ctx.workspaceId));
           enviarJson(res, r.status, r.cuerpo);
           return;
         }
+
+        // --- webhooks ---
         if (recurso === "webhooks" && req.method === "POST") {
-          const r = await conWorkspaceAutenticado(deps, req.headers.authorization, (ws) => manejarConfigurarWebhook(deps, ws, cuerpo));
+          const r = await conWorkspaceAutenticado(deps, auth, wsHeader, GESTION, (ctx) => manejarConfigurarWebhook(deps, ctx.workspaceId, cuerpo));
+          enviarJson(res, r.status, r.cuerpo);
+          return;
+        }
+
+        // --- workspace (Fase 8) ---
+        if (recurso === "workspace" && req.method === "GET") {
+          const r = await conWorkspaceAutenticado(deps, auth, wsHeader, TODOS, (ctx) => manejarObtenerWorkspace(deps, ctx));
+          enviarJson(res, r.status, r.cuerpo);
+          return;
+        }
+
+        // --- members (Fase 8) ---
+        if (recurso === "members" && req.method === "GET") {
+          const r = await conWorkspaceAutenticado(deps, auth, wsHeader, TODOS, (ctx) => manejarListarMiembros(deps, ctx.workspaceId));
+          enviarJson(res, r.status, r.cuerpo);
+          return;
+        }
+        if (recurso === "members" && req.method === "POST" && !idRecurso) {
+          const r = await conWorkspaceAutenticado(deps, auth, wsHeader, SOLO_OWNER, (ctx) => manejarCrearMiembro(deps, ctx.workspaceId, cuerpo));
+          enviarJson(res, r.status, r.cuerpo);
+          return;
+        }
+        if (recurso === "members" && req.method === "PATCH" && idRecurso) {
+          const r = await conWorkspaceAutenticado(deps, auth, wsHeader, SOLO_OWNER, (ctx) => manejarActualizarRolMiembro(deps, ctx.workspaceId, idRecurso, cuerpo));
+          enviarJson(res, r.status, r.cuerpo);
+          return;
+        }
+        if (recurso === "members" && req.method === "DELETE" && idRecurso) {
+          const r = await conWorkspaceAutenticado(deps, auth, wsHeader, SOLO_OWNER, (ctx) => manejarEliminarMiembro(deps, ctx.workspaceId, idRecurso));
           enviarJson(res, r.status, r.cuerpo);
           return;
         }

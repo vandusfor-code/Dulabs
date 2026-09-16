@@ -99,6 +99,45 @@ export async function revocarApiKey(supabase: SupabaseClient, params: { workspac
   return { revocada: Boolean(data) };
 }
 
+export type ResultadoRotacion =
+  | { ok: true; fila: ApiKeyFila; claveEnClaro: string }
+  | { ok: false; motivo: "old_no_encontrada_o_ya_revocada" };
+
+/**
+ * Fase 8 (autorizado, D6) -- rota una API key: revoca la vieja y crea una
+ * nueva en UNA transacción atómica (función dulabs_dev_rotar_api_key), para
+ * que el workspace nunca quede sin key por una falla a mitad de camino ni
+ * con dos keys activas. La clave en claro se genera acá (TS) y solo su hash
+ * viaja a la DB; se devuelve la clave completa UNA sola vez, igual que en la
+ * creación. Scoped por workspace_id -- jamás rota una key de otro workspace.
+ */
+export async function rotarApiKey(supabase: SupabaseClient, params: { workspaceId: string; apiKeyId: string }): Promise<ResultadoRotacion> {
+  const generada: ApiKeyGenerada = generarApiKey();
+  const prefix = generada.claveEnClaro.slice(0, 12);
+
+  const { data, error } = await supabase.rpc("dulabs_dev_rotar_api_key", {
+    p_workspace_id: params.workspaceId,
+    p_old_id: params.apiKeyId,
+    p_key_hash: generada.hash,
+    p_prefix: prefix,
+  });
+  if (error) throw new Error(`[developer/api-keys-store] error rotando API key: ${error.message}`);
+
+  const filaRpc = Array.isArray(data) ? data[0] : data;
+  if (!filaRpc || filaRpc.resultado !== "rotada") return { ok: false, motivo: "old_no_encontrada_o_ya_revocada" };
+
+  const fila: ApiKeyFila = {
+    id: filaRpc.new_id as string,
+    workspace_id: params.workspaceId,
+    name: filaRpc.new_name as string,
+    prefix,
+    created_at: filaRpc.new_created_at as string,
+    last_used_at: null,
+    revoked_at: null,
+  };
+  return { ok: true, fila, claveEnClaro: generada.claveEnClaro };
+}
+
 export async function listarApiKeys(supabase: SupabaseClient, workspaceId: string): Promise<ApiKeyFila[]> {
   const { data, error } = await supabase
     .from("dulabs_dev_api_keys")

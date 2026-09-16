@@ -34,7 +34,7 @@ describe(
       const apiKey = await crearApiKey(admin, { workspaceId, name: "test" });
 
       let llamadaInterna = false;
-      const resultado = await conWorkspaceAutenticado({ supabase: admin }, `Bearer ${apiKey.claveEnClaro}`, async () => {
+      const resultado = await conWorkspaceAutenticado({ supabase: admin }, `Bearer ${apiKey.claveEnClaro}`, undefined, ["OWNER", "ADMIN", "MEMBER"], async () => {
         llamadaInterna = true;
         return { status: 200, cuerpo: {} };
       });
