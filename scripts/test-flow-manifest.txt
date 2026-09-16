@@ -175,6 +175,9 @@ lib/agenda-v2/gestion-citas.test.ts
 lib/agenda-v2/router.test.ts
 lib/agenda-v2/multi-servicio.test.ts
 lib/contabilidad/consultas.test.ts
+lib/contabilidad/periodo.test.ts
+lib/contabilidad/metricas.test.ts
+lib/contabilidad/reporte.test.ts
 lib/bot-escenarios/agendamiento-entidades.test.ts
 lib/bot-escenarios/resolver-agendamiento.test.ts
 lib/bot-escenarios/resolver-agendamiento-guiado.test.ts
@@ -190,6 +193,7 @@ lib/comunicaciones/config.test.ts
 lib/chats/historial-reciente.test.ts
 lib/amore-inventario.test.ts
 lib/amore-inventario-excel.test.ts
+lib/amore-inventario-ventas.test.ts
 lib/amore-tienda.test.ts
 lib/contabilidad/comisiones.test.ts
 lib/clientes-conocidos.test.ts

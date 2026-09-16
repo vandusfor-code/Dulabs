@@ -1,7 +1,8 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { calcularIngresoTotal, compararConAnterior, agruparPorServicio, construirMovimientos } from "./metricas";
+import { calcularIngresoTotal, compararConAnterior, agruparPorServicio, construirMovimientos, calcularIngresoVentas, construirMovimientosVenta } from "./metricas";
 import type { FilaCitaCompletada } from "./tipos";
+import type { VentaProducto } from "@/lib/amore-inventario-ventas";
 
 function fila(p: Partial<FilaCitaCompletada>): FilaCitaCompletada {
   return {
@@ -15,6 +16,20 @@ function fila(p: Partial<FilaCitaCompletada>): FilaCitaCompletada {
     especialistaId: 1,
     profesionalNombre: "Mary",
     estado: "completada",
+    ...p,
+  };
+}
+
+function venta(p: Partial<VentaProducto>): VentaProducto {
+  return {
+    id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+    idTenant: "amore-test",
+    productoId: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+    productoNombre: "Shampoo Nutritivo",
+    cantidad: 2,
+    precioUnitario: 65000,
+    total: 130000,
+    createdAt: "2026-03-18T16:00:00Z",
     ...p,
   };
 }
@@ -61,5 +76,32 @@ describe("metricas (Fase 10, pura)", () => {
     const movimientos = construirMovimientos([fila({ id: 9, precio: null, servicioNombre: null, servicioTexto: "Corte manual" })]);
     assert.equal(movimientos[0].valor, null);
     assert.equal(movimientos[0].servicio, "Corte manual");
+  });
+});
+
+describe("AMORE (autorizado, Inventario -- 'Registrar venta') -- calcularIngresoVentas/construirMovimientosVenta (pura)", () => {
+  it("calcularIngresoVentas suma el total real de cada venta -- nunca precio_unitario * cantidad recalculado acá (ya viene del backend)", () => {
+    const total = calcularIngresoVentas([venta({ total: 130000 }), venta({ total: 45000 })]);
+    assert.equal(total, 175000);
+  });
+
+  it("calcularIngresoVentas con lista vacía -> 0, nunca rompe", () => {
+    assert.equal(calcularIngresoVentas([]), 0);
+  });
+
+  it("TEST M/N/O (obligatorios) -- construirMovimientosVenta produce un movimiento con el nombre del producto, cantidad, y el total real coincide con la venta", () => {
+    const [m] = construirMovimientosVenta([venta({ productoNombre: "Shampoo Nutritivo", cantidad: 2, total: 130000 })]);
+    assert.equal(m.tipo, "venta_producto");
+    assert.equal(m.servicio, "Shampoo Nutritivo", "el nombre del producto debe estar presente en el movimiento");
+    assert.equal(m.cantidad, 2);
+    assert.equal(m.valor, 130000, "el total contable debe coincidir EXACTAMENTE con el total de la venta");
+    assert.equal(m.cliente, "Venta de producto");
+    assert.equal(m.estado, "completada");
+  });
+
+  it("nunca confunde una venta de producto con una cita de servicio -- tipo explícito, valor NUNCA null (una venta siempre tiene precio real)", () => {
+    const [m] = construirMovimientosVenta([venta({})]);
+    assert.notEqual(m.tipo, "servicio");
+    assert.notEqual(m.valor, null);
   });
 });

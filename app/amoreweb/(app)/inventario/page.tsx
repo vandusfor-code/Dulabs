@@ -1,12 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Loader2, ShoppingBag, Plus, Pencil, Upload, Download } from "lucide-react";
+import { Loader2, ShoppingBag, Plus, Pencil, Upload, Download, Receipt } from "lucide-react";
 import { useAdminWeb } from "@/components/admin-web/AdminWebContext";
 import { AdminOnlyDesktop } from "@/components/admin-web/AdminOnlyDesktop";
 import { formatearPrecioCop } from "@/lib/especialistas-flow-adaptador";
 import { ProductoModal } from "@/components/spa-panel/modals/ProductoModal";
 import { ImportarInventarioModal } from "@/components/spa-panel/modals/ImportarInventarioModal";
+import { VentaModal } from "@/components/spa-panel/modals/VentaModal";
 
 // Módulo Inventario (autorizado) -- admin desktop de AMORE. Mismo patrón
 // exacto que app/admin/amore/servicios/page.tsx (AdminOnlyDesktop, fetch
@@ -47,6 +48,7 @@ function InventarioContenido() {
   const [error, setError] = useState<string | null>(null);
   const [modal, setModal] = useState<{ modo: "crear" } | { modo: "editar"; producto: ProductoInventarioUI } | null>(null);
   const [importando, setImportando] = useState(false);
+  const [vendiendo, setVendiendo] = useState(false);
 
   const recargar = useCallback(() => {
     fetch(`/api/agenda/${token}/inventario`)
@@ -94,6 +96,14 @@ function InventarioContenido() {
             className="flex items-center gap-1.5 rounded-xl bg-lime px-4 py-2.5 text-sm font-medium text-lime-fg hover:bg-lime-hover"
           >
             <Plus className="size-4" /> Nuevo producto
+          </button>
+          <button
+            type="button"
+            onClick={() => setVendiendo(true)}
+            disabled={!productos || productos.filter((p) => p.activo && p.stock > 0).length === 0}
+            className="flex items-center gap-1.5 rounded-xl bg-lime-soft px-4 py-2.5 text-sm font-medium text-lime-text hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Receipt className="size-4" /> Registrar venta
           </button>
         </div>
       </div>
@@ -191,6 +201,18 @@ function InventarioContenido() {
           token={token}
           onClose={() => setImportando(false)}
           onImportado={() => {
+            recargar();
+          }}
+        />
+      )}
+
+      {vendiendo && productos && (
+        <VentaModal
+          token={token}
+          productos={productos.filter((p) => p.activo && p.stock > 0)}
+          onClose={() => setVendiendo(false)}
+          onVendido={() => {
+            setVendiendo(false);
             recargar();
           }}
         />

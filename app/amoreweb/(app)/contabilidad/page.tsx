@@ -213,7 +213,10 @@ function ContabilidadContenido() {
                     <tr key={m.id}>
                       <td className="px-5 py-3 text-fg">{new Date(m.fecha).toLocaleString("es-CO")}</td>
                       <td className="px-5 py-3 text-fg">{m.cliente}</td>
-                      <td className="px-5 py-3 text-fg">{m.servicio}</td>
+                      <td className="px-5 py-3 text-fg">
+                        {m.servicio}
+                        {m.tipo === "venta_producto" && m.cantidad != null ? ` (x${m.cantidad})` : ""}
+                      </td>
                       <td className="px-5 py-3 text-fg">{m.profesional}</td>
                       <td className="px-5 py-3">
                         {m.valor !== null ? (

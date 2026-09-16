@@ -19,7 +19,7 @@ export type FilaCitaCompletada = {
 };
 
 export type Movimiento = {
-  id: number;
+  id: number | string;
   fecha: string;
   cliente: string;
   servicio: string;
@@ -27,6 +27,17 @@ export type Movimiento = {
   /** null = "Sin precio configurado" -- nunca inventar un valor. */
   valor: number | null;
   estado: string;
+  /**
+   * AMORE (autorizado, Inventario -- "Registrar venta") -- discrimina el
+   * origen real del movimiento. Ausente (undefined) para todo movimiento de
+   * cita de servicio -- comportamiento 100% idéntico al de antes de esta
+   * corrección para cualquier consumidor que no lo lea. "venta_producto"
+   * viene de dulabs_inventario_ventas (ver lib/contabilidad/consultas.ts),
+   * nunca de una cita.
+   */
+  tipo?: "servicio" | "venta_producto";
+  /** Solo presente en tipo:"venta_producto" -- unidades vendidas. */
+  cantidad?: number;
 };
 
 export type IngresoPorServicio = {

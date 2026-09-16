@@ -1,4 +1,5 @@
 import type { ComparacionIngresos, FilaCitaCompletada, IngresoPorServicio, Movimiento } from "./tipos";
+import type { VentaProducto } from "@/lib/amore-inventario-ventas";
 
 // Contabilidad (Fase 10, genérico, autorizado) — agregaciones PURAS sobre
 // las filas ya consultadas (ver consultas.ts). Nada acá toca Supabase.
@@ -35,5 +36,33 @@ export function construirMovimientos(filas: FilaCitaCompletada[]): Movimiento[] 
     profesional: f.profesionalNombre,
     valor: f.precio,
     estado: f.estado,
+  }));
+}
+
+// AMORE (autorizado, Inventario -- "Registrar venta") -- mismo criterio
+// EXACTO que calcularIngresoTotal/construirMovimientos, pero para ventas
+// reales de producto (dulabs_inventario_ventas, ver
+// lib/amore-inventario-ventas.ts) en vez de citas completadas. Funciones
+// PURAS y separadas a propósito: nunca se mezclan con
+// calcularIngresoTotal/construirMovimientos (esas siguen recibiendo
+// EXCLUSIVAMENTE citas, cero cambio de comportamiento) -- reporte.ts es el
+// único lugar que suma/combina ambos resultados.
+
+/** Nunca ignora un total -- a diferencia de una cita, una venta de producto SIEMPRE tiene un precio real (nunca "sin precio configurado"). */
+export function calcularIngresoVentas(ventas: VentaProducto[]): number {
+  return ventas.reduce((total, v) => total + v.total, 0);
+}
+
+export function construirMovimientosVenta(ventas: VentaProducto[]): Movimiento[] {
+  return ventas.map((v) => ({
+    id: v.id,
+    fecha: v.createdAt,
+    cliente: "Venta de producto",
+    servicio: v.productoNombre,
+    profesional: "—",
+    valor: v.total,
+    estado: "completada",
+    tipo: "venta_producto" as const,
+    cantidad: v.cantidad,
   }));
 }
