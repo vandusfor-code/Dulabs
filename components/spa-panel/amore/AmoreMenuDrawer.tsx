@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { X, Home, CalendarDays, Users, Sparkles, Cake, Heart, Wallet, UserRound, MessageCircle, Settings, User } from "lucide-react";
+import { X, Home, CalendarDays, Users, Sparkles, ShoppingBag, Cake, Heart, Wallet, UserRound, MessageCircle, Settings, User } from "lucide-react";
 import { useAgenda } from "@/components/spa-panel/AgendaContext";
 import { cn } from "@/components/spa-panel/ui";
 import {
@@ -10,6 +10,7 @@ import {
   rutaCitas,
   rutaClientes,
   rutaServicios,
+  rutaInventario,
   rutaCumpleanos,
   rutaFidelizacion,
   rutaContabilidad,
@@ -34,6 +35,7 @@ export function AmoreMenuDrawer({ onClose }: { onClose: () => void }) {
     { label: "Citas", icon: CalendarDays, href: rutaCitas(token), activo: esRutaActiva(pathname, rutaCitas(token)) },
     { label: "Clientes", icon: Users, href: rutaClientes(token), activo: esRutaActiva(pathname, rutaClientes(token)) },
     { label: "Servicios", icon: Sparkles, href: rutaServicios(token), activo: esRutaActiva(pathname, rutaServicios(token)) },
+    { label: "Inventario", icon: ShoppingBag, href: rutaInventario(token), activo: esRutaActiva(pathname, rutaInventario(token)) },
     { label: "Cumpleaños", icon: Cake, href: rutaCumpleanos(token), activo: esRutaActiva(pathname, rutaCumpleanos(token)) },
     { label: "Fidelización", icon: Heart, href: rutaFidelizacion(token), activo: esRutaActiva(pathname, rutaFidelizacion(token)) },
     { label: "Contabilidad", icon: Wallet, href: rutaContabilidad(token), activo: esRutaActiva(pathname, rutaContabilidad(token)) },

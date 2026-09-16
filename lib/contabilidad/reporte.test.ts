@@ -19,6 +19,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { generarReporteContabilidad } from "./reporte";
+import { rangoMes } from "./periodo";
 
 const HAS_SUPABASE = Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
 const AMORE_TENANT_ID = "ed6ae77f-8a0c-483e-a5d9-8ede68eca50f";
@@ -35,6 +36,12 @@ describe(
   () => {
     let supabase: SupabaseClient;
     let migracionesListas = false;
+    // AMORE (autorizado, Inventario -- "Registrar venta") -- sonda APARTE
+    // para la migración de dulabs_inventario_ventas
+    // (20261007000000_amore_inventario_ventas.sql): es independiente de
+    // migracionesListas (esa es la de comisión por servicio) -- una puede
+    // estar aplicada sin la otra.
+    let migracionVentasLista = false;
 
     const tenantsCreados: string[] = [];
     const especialistaIds: number[] = [];
@@ -46,6 +53,8 @@ describe(
       supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
       const sonda = await supabase.from("dulabs_servicios").select("comision_tipo").limit(1);
       migracionesListas = !sonda.error;
+      const sondaVentas = await supabase.from("dulabs_inventario_ventas").select("id").limit(1);
+      migracionVentasLista = !sondaVentas.error;
     });
 
     after(async () => {
@@ -342,6 +351,90 @@ describe(
     });
 
     // ------------------------------------------------------------------
+    // AMORE (autorizado, Inventario -- "Registrar venta") -- las ventas
+    // reales de producto (dulabs_inventario_ventas) deben sumarse al
+    // ingreso total y aparecer en movimientos, SIN contaminar
+    // porServicio/porProfesional (esas siguen siendo EXCLUSIVAMENTE de
+    // citas de servicio) ni aparecer cuando el reporte está filtrado por
+    // especialista/servicio (una venta de producto nunca tiene ninguno de
+    // los dos).
+    // ------------------------------------------------------------------
+    describe("ventas de producto (Inventario) se suman a Contabilidad", () => {
+      const TENANT = randomUUID();
+      const productoIds: string[] = [];
+      const ventaIds: string[] = [];
+      let especialistaVentas: number;
+
+      before(async () => {
+        if (!migracionesListas || !migracionVentasLista) return;
+        tenantsCreados.push(TENANT);
+        especialistaVentas = await crearEspecialista(TENANT, "Especialista Ventas");
+        const servicio = await crearServicio(TENANT, "Servicio Con Precio Ventas", 50000);
+        await crearCita({ idTenant: TENANT, especialistaId: especialistaVentas, servicioId: servicio, servicioTexto: "Servicio Con Precio Ventas", inicio: AHORA, estado: "completada" });
+
+        const { data: producto, error: errorProducto } = await supabase
+          .from("dulabs_inventario_productos")
+          .insert({ id_tenant: TENANT, nombre: "Shampoo Nutritivo", precio: 65000, stock: 100 })
+          .select("id")
+          .single();
+        if (errorProducto) throw errorProducto;
+        productoIds.push(producto!.id as string);
+
+        const { data: venta, error: errorVenta } = await supabase
+          .from("dulabs_inventario_ventas")
+          .insert({
+            id_tenant: TENANT,
+            producto_id: producto!.id,
+            producto_nombre: "Shampoo Nutritivo",
+            cantidad: 2,
+            precio_unitario: 65000,
+            total: 130000,
+            idempotency_key: randomUUID(),
+            created_at: AHORA.toISOString(),
+          })
+          .select("id")
+          .single();
+        if (errorVenta) throw errorVenta;
+        ventaIds.push(venta!.id as string);
+      });
+
+      after(async () => {
+        if (!migracionesListas || !migracionVentasLista) return;
+        if (ventaIds.length) await supabase.from("dulabs_inventario_ventas").delete().in("id", ventaIds);
+        if (productoIds.length) await supabase.from("dulabs_inventario_productos").delete().in("id", productoIds);
+      });
+
+      it("TEST M/N/O (obligatorios) -- la venta real se suma al ingreso total y aparece en movimientos con el nombre del producto, cantidad y total reales", async (t) => {
+        if (!migracionesListas || !migracionVentasLista) return t.skip("falta la migración de Inventario/Ventas");
+        const resultado = await generarReporteContabilidad(supabase, { idTenant: TENANT, periodo: "hoy", ahora: AHORA });
+        assert.ok(resultado.ok);
+        assert.equal(resultado.reporte.ingresos.actual, 50000 + 130000, "ingreso total = servicio (50000) + venta de producto (130000)");
+        assert.equal(resultado.reporte.citasCompletadas, 1, "la venta de producto nunca cuenta como cita completada");
+
+        const movVenta = resultado.reporte.movimientos.find((m) => m.tipo === "venta_producto");
+        assert.equal(movVenta?.servicio, "Shampoo Nutritivo", "el nombre del producto debe estar presente");
+        assert.equal(movVenta?.cantidad, 2);
+        assert.equal(movVenta?.valor, 130000, "el total contable debe coincidir EXACTAMENTE con el total de la venta real");
+      });
+
+      it("una venta de producto NUNCA aparece en 'Ingresos por servicio' ni 'Ingresos por profesional' (esas vistas siguen siendo exclusivas de citas)", async (t) => {
+        if (!migracionesListas || !migracionVentasLista) return t.skip("falta la migración de Inventario/Ventas");
+        const resultado = await generarReporteContabilidad(supabase, { idTenant: TENANT, periodo: "hoy", ahora: AHORA });
+        assert.ok(resultado.ok);
+        assert.ok(!resultado.reporte.porServicio.some((s) => s.servicio === "Shampoo Nutritivo"));
+        assert.ok(!resultado.reporte.porProfesional.some((p) => p.especialistaId === especialistaVentas && p.ingresos > 50000));
+      });
+
+      it("con filtro por especialista real, las ventas de producto NUNCA se incluyen (no tienen especialista real que calce con el filtro)", async (t) => {
+        if (!migracionesListas || !migracionVentasLista) return t.skip("falta la migración de Inventario/Ventas");
+        const resultado = await generarReporteContabilidad(supabase, { idTenant: TENANT, periodo: "hoy", ahora: AHORA, especialistaId: especialistaVentas });
+        assert.ok(resultado.ok);
+        assert.ok(!resultado.reporte.movimientos.some((m) => m.tipo === "venta_producto"), "un filtro por especialista nunca debe incluir ventas de producto");
+        assert.equal(resultado.reporte.ingresos.actual, 50000, "sin la venta de producto, solo queda el ingreso del servicio filtrado");
+      });
+    });
+
+    // ------------------------------------------------------------------
     // Grupo 3: escenario 18 (aislamiento entre tenants).
     // ------------------------------------------------------------------
     it("18. aislamiento entre tenants: el ingreso de un tenant nunca aparece en el reporte de otro", async (t) => {
@@ -367,14 +460,35 @@ describe(
     // ------------------------------------------------------------------
     // Escenario 19: AMORE real, SOLO LECTURA -- nunca se escribe nada acá.
     // ------------------------------------------------------------------
-    it("19. AMORE (tenant real) sin citas/clientes -> métricas en cero, nunca se inventan datos", async () => {
+    it("19. AMORE (tenant real) sin citas -> métricas de servicio en cero; el ingreso total coincide EXACTAMENTE con las ventas de producto reales del mes (si las hay) -- nunca se inventan datos", async () => {
+      // Corrección post-deploy (autorizada, Inventario -- "Registrar venta")
+      // -- este aserto original asumía ingresos.actual === 0 siempre, una
+      // coincidencia real de "todavía nadie ha usado el negocio este mes",
+      // no una garantía real del sistema. Desde que existe "Registrar
+      // venta", una venta real del staff durante el mes en curso haría
+      // fallar esa aserción sin que sea un bug -- se reemplaza por una
+      // verificación de CONSISTENCIA contra el dato real (nunca un número
+      // fijo), que sigue detectando el mismo problema real que el aserto
+      // original protegía (fabricación/contaminación de datos).
+      const rango = rangoMes(new Date());
+      const { data: ventasReales, error: errorVentas } = await supabase
+        .from("dulabs_inventario_ventas")
+        .select("total")
+        .eq("id_tenant", AMORE_TENANT_ID)
+        .gte("created_at", rango.desde.toISOString())
+        .lt("created_at", rango.hasta.toISOString());
+      const ingresoVentasReal = errorVentas ? 0 : (ventasReales ?? []).reduce((suma, v) => suma + (v.total as number), 0);
+
       const resultado = await generarReporteContabilidad(supabase, { idTenant: AMORE_TENANT_ID, periodo: "mes" });
       assert.ok(resultado.ok);
-      assert.equal(resultado.reporte.ingresos.actual, 0);
       assert.equal(resultado.reporte.citasCompletadas, 0);
-      assert.deepEqual(resultado.reporte.movimientos, []);
       assert.deepEqual(resultado.reporte.porServicio, []);
       assert.deepEqual(resultado.reporte.porProfesional, []);
+      assert.ok(
+        !resultado.reporte.movimientos.some((m) => m.tipo !== "venta_producto"),
+        "ningún movimiento de tipo servicio para este tenant este mes -- nunca se inventa una cita"
+      );
+      assert.equal(resultado.reporte.ingresos.actual, ingresoVentasReal, "el ingreso total debe coincidir EXACTAMENTE con las ventas reales de producto, nunca con un número fabricado");
     });
 
     // Escenario 20 (ausencia de residuos de prueba) se verifica DESPUÉS de

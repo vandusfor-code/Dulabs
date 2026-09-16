@@ -14,23 +14,9 @@ import {
   AmoreEmptyState,
 } from "@/components/spa-panel/amore/ui";
 import { formatearCOP } from "@/components/spa-panel/amore/amore-dashboard-mock";
+import type { ReporteContabilidad, TipoPeriodo } from "@/lib/contabilidad/tipos";
 
-type Periodo = "hoy" | "semana" | "mes" | "personalizado";
-
-type ReporteContabilidad = {
-  periodo: { tipo: Periodo; desde: string; hasta: string };
-  ingresos: { actual: number; anterior: number; variacionPorcentual: number | null };
-  citasCompletadas: number;
-  porServicio: { servicioId: string | null; servicio: string; cantidad: number; ingresos: number }[];
-  porProfesional: {
-    especialistaId: number;
-    profesional: string;
-    cantidad: number;
-    ingresos: number;
-    comision: { estado: "configurada"; tipo: string; valor: number; monto: number } | { estado: "no_configurada" };
-  }[];
-  movimientos: { id: number; fecha: string; cliente: string; servicio: string; profesional: string; valor: number | null; estado: string }[];
-};
+type Periodo = TipoPeriodo;
 
 type Opcion = { id: string | number; nombre: string };
 
@@ -260,7 +246,8 @@ function ContabilidadContenido() {
                     </div>
                     <div className="mt-0.5 flex items-center justify-between gap-3">
                       <p className="truncate text-xs text-mist">
-                        {m.servicio} · {m.profesional} · {new Date(m.fecha).toLocaleString("es-CO")}
+                        {m.servicio}
+                        {m.tipo === "venta_producto" && m.cantidad != null ? ` (x${m.cantidad})` : ""} · {m.profesional} · {new Date(m.fecha).toLocaleString("es-CO")}
                       </p>
                       {m.valor !== null ? (
                         <p className="shrink-0 text-sm font-semibold text-fg">{formatearCOP(m.valor)}</p>

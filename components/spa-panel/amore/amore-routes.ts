@@ -3,12 +3,13 @@
 // nunca se desincronicen entre sí. Citas/Clientes/Servicios REUTILIZAN las
 // rutas ya existentes del panel genérico (con una rama por tenant dentro de
 // cada página) -- Cumpleaños/Fidelización/Contabilidad/Equipo/WhatsApp/
-// Configuración son rutas nuevas, exclusivas de AMORE, que no chocan con
-// ninguna ruta ya usada por Daniela.
+// Configuración/Inventario son rutas nuevas, exclusivas de AMORE, que no
+// chocan con ninguna ruta ya usada por Daniela.
 export const rutaInicio = (token: string) => `/agenda/${token}`;
 export const rutaCitas = (token: string) => `/agenda/${token}/completa`;
 export const rutaClientes = (token: string) => `/agenda/${token}/clientes`;
 export const rutaServicios = (token: string) => `/agenda/${token}/servicios`;
+export const rutaInventario = (token: string) => `/agenda/${token}/inventario`;
 export const rutaCumpleanos = (token: string) => `/agenda/${token}/cumpleanos`;
 export const rutaFidelizacion = (token: string) => `/agenda/${token}/fidelizacion`;
 export const rutaContabilidad = (token: string) => `/agenda/${token}/contabilidad`;
