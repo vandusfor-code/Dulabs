@@ -22,7 +22,6 @@ import { procesarMensajeOutbound } from "../worker-outbound/handler";
 import { ejecutarReconciliacion } from "./run";
 import { registrarNumero } from "@/lib/developer/whatsapp-numbers-store";
 import { crearJobConIdempotencia, obtenerJobDelWorkspace } from "@/lib/developer/jobs-store";
-import { obtenerLedgerDelJob } from "@/lib/developer/usage-ledger";
 
 const HAS_SUPABASE = Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
 
@@ -174,73 +173,39 @@ describe(
       assert.equal(llamadasFisicasAMeta, 1, `EXACTAMENTE 1 llamada física real pese a 2 republicaciones + 2 entregas, hubo ${llamadasFisicasAMeta}`);
     });
 
-    it("riesgo #4 -- reconciliación confirma contra Meta que un job incierto SÍ se envió: transiciona a success_confirmed, confirma usage_ledger, CERO POST físico nuevo", async () => {
+    // NOTA (Fase 6, decisión I): los antiguos tests "riesgo #4" (reconciliación
+    // confirma enviado/no_enviado consultando a Meta con consultarEstadoEnMeta)
+    // se ELIMINARON aquí. Esa función usaba un endpoint ficticio de Meta y el
+    // UUID interno; fue removida. La resolución de reconciliation_pending ya
+    // NO se hace por polling activo: llega de forma pasiva por los status
+    // webhooks reales de Meta -> ver la cobertura en
+    // services/worker-inbound/handler.e2e.test.ts ("reconciliation_pending ->
+    // resolución por status webhook").
+
+    it("Fase 6 (D2) -- una entrega inbound que quedó en 'fallido' con next_attempt_at vencido es republicada por el barrido reintentarEntregasInbound", async () => {
       const workspaceId = randomUUID();
       workspacesUsados.push(workspaceId);
-      const { jobId } = await prepararJob(workspaceId);
+      // Se persiste un evento directamente en estado de entrega 'fallido'
+      // vencido (no se simula todo el flujo inbound aquí -- eso lo cubre el
+      // suite del worker inbound). Solo se prueba que el BARRIDO lo selecciona.
+      const eventId = randomUUID();
+      const { data: ev } = await admin
+        .from("dulabs_dev_events")
+        .insert({ event_id: eventId, workspace_id: workspaceId, tipo: "received", payload: { entry: [] }, entrega_estado: "fallido", entrega_intentos: 1, entrega_next_attempt_at: new Date(Date.now() - 1_000).toISOString() })
+        .select("id")
+        .single();
 
-      let llamadasFisicasAMeta = 0;
-      const fetchQueTimeoutea = (async () => {
-        llamadasFisicasAMeta++;
-        throw new Error("simulated network timeout");
-      }) as typeof fetch;
-      const incierto = await procesarMensajeOutbound({ supabase: admin, metaGraphApiBaseUrl: "https://fixture.invalido", fetchImpl: fetchQueTimeoutea }, { workspaceId, jobId });
-      assert.equal(incierto.motivo, "incertidumbre_de_red");
+      const republicados: number[] = [];
+      const publicarFixture: typeof import("../shared/pubsub").publicarMensaje = async (_t, payload) => {
+        republicados.push((payload as { eventoId: number }).eventoId);
+        return "fake-message-id";
+      };
 
-      const jobIncierto = await obtenerJobDelWorkspace(admin, { workspaceId, jobId });
-      assert.equal(jobIncierto!.status, "reconciliation_pending");
+      const resumen = await ejecutarReconciliacion({ supabase: admin, topicInbound: "dulabs-inbound", topicOutbound: "dulabs-outbound", publicar: publicarFixture });
+      assert.ok(resumen.reintentoEntrega.some((r) => r.eventoId === ev!.id && r.resultado === "republicado"), "el evento fallido y vencido debe aparecer republicado");
+      assert.ok(republicados.includes(ev!.id), "debe republicarse {eventoId} a dulabs-inbound para que el worker reintente la entrega");
 
-      // consultarEstadoEnMeta hace un GET real (fixture) -- responde que SÍ
-      // se envió. Ningún POST físico debe volver a ocurrir.
-      const fetchConsultaMeta = (async () => new Response(JSON.stringify({ enviado: true }), { status: 200 })) as typeof fetch;
-      const resumen = await ejecutarReconciliacion({
-        supabase: admin,
-        metaGraphApiBaseUrl: "https://fixture.invalido",
-        topicInbound: "dulabs-inbound",
-        topicOutbound: "dulabs-outbound",
-        fetchImpl: fetchConsultaMeta,
-        publicar: (async () => "fake-message-id") as typeof import("../shared/pubsub").publicarMensaje,
-      });
-
-      const miResultado = resumen.reconciliacionOutbound.find((r) => r.jobId === jobId);
-      assert.ok(miResultado, "el job debe aparecer en el resultado de la reconciliación outbound");
-      assert.equal(miResultado!.resultado, "confirmado_enviado");
-      assert.equal(llamadasFisicasAMeta, 1, "sigue siendo 1 -- SOLO el intento original que dio incertidumbre, la reconciliación nunca hace un POST físico");
-
-      const jobFinal = await obtenerJobDelWorkspace(admin, { workspaceId, jobId });
-      assert.equal(jobFinal!.status, "success_confirmed", "antes de esta corrección quedaba sin mutar para siempre");
-      assert.equal(jobFinal!.physical_outcome, "success_confirmed");
-      assert.equal(jobFinal!.network_attempts, 1, "networkAttempts no cambia -- no hubo un intento físico nuevo, solo una confirmación tardía");
-
-      const ledger = await obtenerLedgerDelJob(admin, { workspaceId, jobId });
-      assert.equal(ledger!.estado, "confirmado", "el usage_ledger debe confirmarse igual que en el camino de éxito síncrono (meta_confirmo_exito)");
-    });
-
-    it("regresión -- reconciliación confirma que Meta NO envió sigue funcionando igual que antes de esta corrección (solo se tocó la rama 'enviado')", async () => {
-      const workspaceId = randomUUID();
-      workspacesUsados.push(workspaceId);
-      const { jobId } = await prepararJob(workspaceId);
-
-      const fetchQueTimeoutea = (async () => {
-        throw new Error("simulated network timeout");
-      }) as typeof fetch;
-      await procesarMensajeOutbound({ supabase: admin, metaGraphApiBaseUrl: "https://fixture.invalido", fetchImpl: fetchQueTimeoutea }, { workspaceId, jobId });
-
-      const fetchConsultaMeta = (async () => new Response(JSON.stringify({ enviado: false }), { status: 200 })) as typeof fetch;
-      const resumen = await ejecutarReconciliacion({
-        supabase: admin,
-        metaGraphApiBaseUrl: "https://fixture.invalido",
-        topicInbound: "dulabs-inbound",
-        topicOutbound: "dulabs-outbound",
-        fetchImpl: fetchConsultaMeta,
-        publicar: (async () => "fake-message-id") as typeof import("../shared/pubsub").publicarMensaje,
-      });
-
-      const miResultado = resumen.reconciliacionOutbound.find((r) => r.jobId === jobId);
-      assert.equal(miResultado!.resultado, "confirmado_no_enviado");
-
-      const jobFinal = await obtenerJobDelWorkspace(admin, { workspaceId, jobId });
-      assert.equal(jobFinal!.status, "retry_pending");
+      await admin.from("dulabs_dev_events").delete().eq("workspace_id", workspaceId).then(() => {}, () => {});
     });
   }
 );

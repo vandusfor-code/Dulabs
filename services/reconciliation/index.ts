@@ -26,9 +26,11 @@ async function main() {
       jobsRevisados: resumen.reconciliacionOutbound.length,
       eventosRecuperados: resumen.recoveryInbound.length,
       jobsReintentados: resumen.reintentoOutbound.length,
+      entregasReintentadas: resumen.reintentoEntrega.length,
       detalleOutbound: resumen.reconciliacionOutbound,
       detalleInbound: resumen.recoveryInbound,
       detalleReintento: resumen.reintentoOutbound,
+      detalleReintentoEntrega: resumen.reintentoEntrega,
     })
   );
 }

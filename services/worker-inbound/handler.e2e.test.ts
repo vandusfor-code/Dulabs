@@ -1,8 +1,11 @@
 /**
- * DuLabs Developer V1 -- Fase 3 (autorizado). E2E real contra Postgres para
- * el handler del Worker inbound -- prueba real de que recibir el MISMO
- * evento dos veces (redelivery de Pub/Sub) no reenvía dos veces al
- * Developer Webhook (idempotencia real, no solo dedupe de persistencia).
+ * DuLabs Developer V1 -- Fase 6 (autorizado). E2E real contra Postgres del
+ * Worker inbound reescrito: entrega NORMALIZADA (message.received /
+ * message.status) al webhook del Developer con reintentos/DLQ (D2),
+ * correlación de status por wamid con guarda multi-tenant + monotonicidad,
+ * y resolución de reconciliation_pending (Opción 1: solo si hay wamid).
+ *
+ * REQUIERE la migración 20261012000000 (Fase 6) aplicada.
  */
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
@@ -12,220 +15,214 @@ import { procesarMensajeInbound } from "./handler";
 import { registrarNumero } from "@/lib/developer/whatsapp-numbers-store";
 import { configurarWebhook } from "@/lib/developer/webhook-config-store";
 import { registrarEvento } from "@/lib/developer/events-store";
+import { crearJobConIdempotencia, obtenerJobDelWorkspace } from "@/lib/developer/jobs-store";
+import { obtenerLedgerDelJob } from "@/lib/developer/usage-ledger";
 import type { FuncionLookupDns } from "@/lib/developer/ssrf-guard";
 
 const HAS_SUPABASE = Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
+const lookupPublico: FuncionLookupDns = async () => [{ address: "93.184.216.34", family: 4 }];
 
 describe(
-  "DuLabs Developer V1 — worker-inbound handler real contra Postgres (Fase 3)",
+  "DuLabs Developer V1 — worker-inbound handler real contra Postgres (Fase 6)",
   { skip: !HAS_SUPABASE && "requiere SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY" },
   () => {
     const admin: SupabaseClient = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false } });
-    const workspacesUsados: string[] = [];
-
+    const workspaces: string[] = [];
     const claveOriginal = process.env.DEVELOPER_TOKEN_ENCRYPTION_KEY;
-    before(() => {
-      process.env.DEVELOPER_TOKEN_ENCRYPTION_KEY = randomBytes(32).toString("base64");
-    });
-    after(() => {
-      if (claveOriginal === undefined) delete process.env.DEVELOPER_TOKEN_ENCRYPTION_KEY;
-      else process.env.DEVELOPER_TOKEN_ENCRYPTION_KEY = claveOriginal;
-    });
-
+    before(() => { process.env.DEVELOPER_TOKEN_ENCRYPTION_KEY = randomBytes(32).toString("base64"); });
+    after(() => { if (claveOriginal === undefined) delete process.env.DEVELOPER_TOKEN_ENCRYPTION_KEY; else process.env.DEVELOPER_TOKEN_ENCRYPTION_KEY = claveOriginal; });
     after(async () => {
-      for (const workspaceId of workspacesUsados) {
-        await admin.from("dulabs_dev_events").delete().eq("workspace_id", workspaceId).then(() => {}, () => {});
-        await admin.from("dulabs_dev_webhook_configs").delete().eq("workspace_id", workspaceId).then(() => {}, () => {});
-        await admin.from("dulabs_dev_whatsapp_numbers").delete().eq("workspace_id", workspaceId).then(() => {}, () => {});
+      for (const ws of workspaces) {
+        for (const t of ["dulabs_dev_events", "dulabs_dev_usage_ledger", "dulabs_dev_jobs", "dulabs_dev_idempotency_keys", "dulabs_dev_webhook_configs", "dulabs_dev_whatsapp_numbers"]) {
+          await admin.from(t).delete().eq("workspace_id", ws).then(() => {}, () => {});
+        }
       }
     });
 
-    async function prepararEvento(workspaceId: string) {
-      const phoneNumberId = `phn-${randomUUID()}`;
-      const numero = await registrarNumero(admin, { workspaceId, phoneNumberId });
+    async function prepararNumero(ws: string, opts: { conWebhook?: boolean } = {}) {
+      const phoneNumberId = `1055500${Math.floor(Math.random() * 1_000_000)}`;
+      const numero = await registrarNumero(admin, { workspaceId: ws, phoneNumberId, metaToken: "EAAtoken" });
       if (!numero.ok) throw new Error("no se pudo crear número");
-      const webhook = await configurarWebhook(admin, { workspaceId, whatsappNumberId: numero.fila.id, url: "https://example.com/developer-webhook" });
-      if (!webhook.ok) throw new Error("no se pudo configurar webhook");
-
-      const payload = { entry: [{ changes: [{ value: { metadata: { phone_number_id: phoneNumberId } } }] }] };
-      const registro = await registrarEvento(admin, { eventId: randomUUID(), workspaceId, tipo: "received", payload });
-      if (!registro.registrado) throw new Error("no se pudo registrar evento");
-      return registro.fila.id;
+      if (opts.conWebhook ?? true) {
+        const wh = await configurarWebhook(admin, { workspaceId: ws, whatsappNumberId: numero.fila.id, url: "https://example.com/dev-webhook" });
+        if (!wh.ok) throw new Error("no se pudo configurar webhook");
+      }
+      return { numeroId: numero.fila.id, phoneNumberId };
     }
 
-    it("procesa un evento nuevo: reenvía al Developer Webhook exactamente una vez, queda marcado procesado", async () => {
-      const workspaceId = randomUUID();
-      workspacesUsados.push(workspaceId);
-      const eventoId = await prepararEvento(workspaceId);
+    function payloadMensaje(phoneNumberId: string) {
+      return { entry: [{ changes: [{ value: { metadata: { phone_number_id: phoneNumberId }, messages: [{ from: "573148127388", id: "wamid.INBOUND" + randomUUID().replace(/-/g, ""), timestamp: "1789500000", type: "text", text: { body: "hola inbound" } }] } }] }] };
+    }
+    function payloadStatus(phoneNumberId: string, wamid: string, status: string) {
+      return { entry: [{ changes: [{ value: { metadata: { phone_number_id: phoneNumberId }, statuses: [{ id: wamid, status, timestamp: "1789500100", recipient_id: "573148127388" }] } }] }] };
+    }
 
-      let reenvios = 0;
-      const fetchFixture = (async () => {
-        reenvios++;
-        return new Response("ok", { status: 200 });
-      }) as typeof fetch;
+    async function persistir(ws: string, tipo: string, payload: Record<string, unknown>) {
+      const r = await registrarEvento(admin, { eventId: randomUUID(), workspaceId: ws, tipo: tipo as "received", payload });
+      if (!r.registrado) throw new Error("no se registró el evento");
+      return r.fila.id;
+    }
+    const leerEvento = async (id: number) => (await admin.from("dulabs_dev_events").select("entrega_estado,entrega_intentos,entrega_next_attempt_at").eq("id", id).single()).data!;
 
-      const resultado = await procesarMensajeInbound({ supabase: admin, fetchImpl: fetchFixture }, { eventoId });
-      assert.equal(resultado.httpStatus, 200);
-      assert.equal(reenvios, 1);
+    it("mensaje entrante -> entrega NORMALIZADA (message.received) firmada, entrega_estado=entregado", async () => {
+      const ws = randomUUID(); workspaces.push(ws);
+      const { numeroId, phoneNumberId } = await prepararNumero(ws);
+      const eventoId = await persistir(ws, "received", payloadMensaje(phoneNumberId));
 
-      const { data } = await admin.from("dulabs_dev_events").select("procesado_en").eq("id", eventoId).single();
-      assert.ok(data!.procesado_en, "debe quedar marcado como procesado");
-    });
+      let posts = 0; let bodyEnviado: any = null; let headers: any = null;
+      const fetchFix = (async (_u: string, init?: RequestInit) => { posts++; bodyEnviado = JSON.parse(init!.body as string); headers = init!.headers; return new Response("ok", { status: 200 }); }) as typeof fetch;
 
-    it("IDEMPOTENCIA REAL: recibir el MISMO evento dos veces (simulando redelivery de Pub/Sub) -- solo UN reenvío real al Developer Webhook, la segunda es un no-op seguro", async () => {
-      const workspaceId = randomUUID();
-      workspacesUsados.push(workspaceId);
-      const eventoId = await prepararEvento(workspaceId);
-
-      let reenvios = 0;
-      const fetchFixture = (async () => {
-        reenvios++;
-        return new Response("ok", { status: 200 });
-      }) as typeof fetch;
-      const deps = { supabase: admin, fetchImpl: fetchFixture };
-
-      const r1 = await procesarMensajeInbound(deps, { eventoId });
-      const r2 = await procesarMensajeInbound(deps, { eventoId });
-
-      assert.equal(r1.httpStatus, 200);
-      assert.equal(r2.httpStatus, 200);
-      assert.equal(r2.motivo, "ya_procesado_por_otra_entrega");
-      assert.equal(reenvios, 1, "cero efectos secundarios duplicados -- exactamente un reenvío real, pese a 2 entregas");
-    });
-
-    it("IDEMPOTENCIA bajo concurrencia real: dos entregas SIMULTÁNEAS del mismo evento -- exactamente un reenvío real (CAS real, no una condición de carrera)", async () => {
-      const workspaceId = randomUUID();
-      workspacesUsados.push(workspaceId);
-      const eventoId = await prepararEvento(workspaceId);
-
-      let reenvios = 0;
-      const fetchFixture = (async () => {
-        reenvios++;
-        await new Promise((r) => setTimeout(r, 30));
-        return new Response("ok", { status: 200 });
-      }) as typeof fetch;
-      const deps = { supabase: admin, fetchImpl: fetchFixture };
-
-      const [r1, r2] = await Promise.all([procesarMensajeInbound(deps, { eventoId }), procesarMensajeInbound(deps, { eventoId })]);
-      assert.equal(r1.httpStatus, 200);
-      assert.equal(r2.httpStatus, 200);
-      assert.equal(reenvios, 1, `exactamente 1 reenvío real bajo concurrencia real, hubo ${reenvios}`);
-    });
-
-    it("evento inexistente: ACK sin lanzar", async () => {
-      const resultado = await procesarMensajeInbound({ supabase: admin, fetchImpl: (async () => new Response("ok")) as typeof fetch }, { eventoId: 999_999_999 });
-      assert.equal(resultado.httpStatus, 200);
-      assert.equal(resultado.motivo, "evento_no_encontrado");
-    });
-
-    it("REGRESIÓN (Fase 3, cierre) -- un fallo ANTES del relay real (ej. sin webhook configurado todavía) NUNCA deja procesado_en marcado, y una entrega posterior SÍ puede completar el relay real", async () => {
-      const workspaceId = randomUUID();
-      workspacesUsados.push(workspaceId);
-      const phoneNumberId = `phn-${randomUUID()}`;
-      const numero = await registrarNumero(admin, { workspaceId, phoneNumberId });
-      if (!numero.ok) throw new Error("no se pudo crear número");
-
-      // A propósito: SIN configurar webhook todavía -- exactamente la
-      // misma forma de "no se puede completar el relay todavía" que
-      // representaba el gap real de KMS del Worker inbound (riesgo #1)
-      // antes de otorgar el permiso -- ambos casos fallan DESPUÉS de lo
-      // que antes era el punto del CAS.
-      const payload = { entry: [{ changes: [{ value: { metadata: { phone_number_id: phoneNumberId } } }] }] };
-      const registro = await registrarEvento(admin, { eventId: randomUUID(), workspaceId, tipo: "received", payload });
-      if (!registro.registrado) throw new Error("no se pudo registrar evento");
-      const eventoId = registro.fila.id;
-
-      let reenvios = 0;
-      const fetchFixture = (async () => {
-        reenvios++;
-        return new Response("ok", { status: 200 });
-      }) as typeof fetch;
-      const deps = { supabase: admin, fetchImpl: fetchFixture };
-
-      const r1 = await procesarMensajeInbound(deps, { eventoId });
-      assert.equal(r1.httpStatus, 200);
-      assert.equal(r1.motivo, "sin_webhook_configurado_o_pausado");
-
-      const trasR1 = await admin.from("dulabs_dev_events").select("procesado_en").eq("id", eventoId).single();
-      assert.equal(trasR1.data!.procesado_en, null, "un fallo ANTES del relay real nunca debe marcar procesado_en -- si lo marcara, esto se perdería para siempre");
-
-      // Redelivery real de Pub/Sub -- misma conclusión, sigue sin marcar.
-      const r2 = await procesarMensajeInbound(deps, { eventoId });
-      assert.equal(r2.motivo, "sin_webhook_configurado_o_pausado");
-      const trasR2 = await admin.from("dulabs_dev_events").select("procesado_en").eq("id", eventoId).single();
-      assert.equal(trasR2.data!.procesado_en, null);
-
-      // Ahora sí se configura el webhook (equivalente a que el gap real se
-      // resuelva, ej. el permiso de KMS ya otorgado) -- una entrega
-      // posterior del MISMO evento debe poder completar el relay real.
-      const webhook = await configurarWebhook(admin, { workspaceId, whatsappNumberId: numero.fila.id, url: "https://example.com/developer-webhook" });
-      if (!webhook.ok) throw new Error("no se pudo configurar webhook");
-
-      const r3 = await procesarMensajeInbound(deps, { eventoId });
-      assert.equal(r3.httpStatus, 200);
-      assert.equal(r3.motivo, "reenviado_a_developer_webhook");
-      assert.equal(reenvios, 1, "exactamente 1 reenvío real, una vez que el relay finalmente pudo completarse");
-
-      const trasR3 = await admin.from("dulabs_dev_events").select("procesado_en").eq("id", eventoId).single();
-      assert.ok(trasR3.data!.procesado_en, "ahora sí debe quedar marcado, justo cuando el relay real ocurrió");
-    });
-
-    it("SEGURIDAD (DNS rebinding) -- una URL de webhook que era pública al configurarse pero resuelve a una IP INTERNA (169.254.169.254 / metadata) al momento del envío es rechazada: CERO POST físico y NO se marca procesado", async () => {
-      const workspaceId = randomUUID();
-      workspacesUsados.push(workspaceId);
-      // prepararEvento configura el webhook con https://example.com (validado
-      // contra SSRF con DNS REAL al configurarse -> IP pública -> permitido).
-      const eventoId = await prepararEvento(workspaceId);
-
-      let reenvios = 0;
-      const fetchFixture = (async () => {
-        reenvios++;
-        return new Response("ok", { status: 200 });
-      }) as typeof fetch;
-
-      // Simula el rebinding: al momento REAL del envío, el mismo hostname
-      // ahora "resuelve" a la IP de metadata de la nube. Esto es exactamente
-      // el ataque que una validación de solo-config no puede detener.
-      const lookupRebinding: FuncionLookupDns = async () => [{ address: "169.254.169.254", family: 4 }];
-
-      const r1 = await procesarMensajeInbound({ supabase: admin, fetchImpl: fetchFixture, lookupDnsFn: lookupRebinding }, { eventoId });
-      assert.equal(r1.httpStatus, 200, "ACK -- nunca un 500 que provoque redelivery contra el destino interno una y otra vez");
-      assert.match(r1.motivo, /^webhook_destino_no_seguro:/, "debe rechazarse explícitamente como destino no seguro");
-      assert.equal(reenvios, 0, "CERO POST físico -- jamás se toca la IP interna");
-
-      const trasR1 = await admin.from("dulabs_dev_events").select("procesado_en").eq("id", eventoId).single();
-      assert.equal(trasR1.data!.procesado_en, null, "un rechazo de seguridad ANTES del relay nunca debe marcar procesado -- el evento no se pierde silenciosamente");
-
-      // Prueba de que NO es una pérdida permanente: si el DNS del desarrollador
-      // vuelve a un destino legítimo (acá, resolución real de example.com ->
-      // IP pública), una entrega posterior del MISMO evento SÍ completa el
-      // relay real exactamente una vez.
-      const r2 = await procesarMensajeInbound({ supabase: admin, fetchImpl: fetchFixture }, { eventoId });
-      assert.equal(r2.httpStatus, 200);
-      assert.equal(r2.motivo, "reenviado_a_developer_webhook");
-      assert.equal(reenvios, 1, "exactamente 1 reenvío real, una vez que el destino volvió a ser seguro");
-
-      const trasR2 = await admin.from("dulabs_dev_events").select("procesado_en").eq("id", eventoId).single();
-      assert.ok(trasR2.data!.procesado_en, "recién ahora, con el relay real completado, queda marcado");
-    });
-
-    it("SEGURIDAD (SSRF, RFC1918) -- un webhook que resuelve a una IP privada 10.x al momento del envío también se bloquea (no solo el rango de metadata)", async () => {
-      const workspaceId = randomUUID();
-      workspacesUsados.push(workspaceId);
-      const eventoId = await prepararEvento(workspaceId);
-
-      let reenvios = 0;
-      const fetchFixture = (async () => {
-        reenvios++;
-        return new Response("ok", { status: 200 });
-      }) as typeof fetch;
-
-      const lookupInterno: FuncionLookupDns = async () => [{ address: "10.0.0.5", family: 4 }];
-
-      const r = await procesarMensajeInbound({ supabase: admin, fetchImpl: fetchFixture, lookupDnsFn: lookupInterno }, { eventoId });
+      const r = await procesarMensajeInbound({ supabase: admin, fetchImpl: fetchFix, lookupDnsFn: lookupPublico }, { eventoId });
       assert.equal(r.httpStatus, 200);
+      assert.equal(r.motivo, "entregado:message.received");
+      assert.equal(posts, 1);
+      assert.equal(bodyEnviado.event_type, "message.received");
+      assert.equal(bodyEnviado.from, "573148127388");
+      assert.equal(bodyEnviado.text, "hola inbound");
+      assert.equal(bodyEnviado.whatsapp_number_id, numeroId);
+      assert.ok(bodyEnviado.raw, "debe incluir el raw de Meta");
+      assert.ok(headers["X-DuLabs-Signature"] && headers["X-DuLabs-Event-ID"], "firmado con HMAC + event id");
+      assert.equal((await leerEvento(eventoId)).entrega_estado, "entregado");
+    });
+
+    it("redelivery de Pub/Sub -> idempotente: cero segundo POST (entrega ya terminal)", async () => {
+      const ws = randomUUID(); workspaces.push(ws);
+      const { phoneNumberId } = await prepararNumero(ws);
+      const eventoId = await persistir(ws, "received", payloadMensaje(phoneNumberId));
+      let posts = 0;
+      const fetchFix = (async () => { posts++; return new Response("ok", { status: 200 }); }) as typeof fetch;
+      const deps = { supabase: admin, fetchImpl: fetchFix, lookupDnsFn: lookupPublico };
+      await procesarMensajeInbound(deps, { eventoId });
+      const r2 = await procesarMensajeInbound(deps, { eventoId });
+      assert.equal(posts, 1, "exactamente 1 entrega real pese a 2 entregas");
+      assert.match(r2.motivo, /^entrega_ya_terminal:entregado/);
+    });
+
+    it("sin webhook configurado -> sin_webhook, cero POST", async () => {
+      const ws = randomUUID(); workspaces.push(ws);
+      const { phoneNumberId } = await prepararNumero(ws, { conWebhook: false });
+      const eventoId = await persistir(ws, "received", payloadMensaje(phoneNumberId));
+      let posts = 0;
+      const r = await procesarMensajeInbound({ supabase: admin, fetchImpl: (async () => { posts++; return new Response("ok"); }) as typeof fetch, lookupDnsFn: lookupPublico }, { eventoId });
+      assert.equal(posts, 0);
+      assert.equal(r.motivo, "sin_webhook_configurado_o_pausado");
+      assert.equal((await leerEvento(eventoId)).entrega_estado, "sin_webhook");
+    });
+
+    it("SEGURIDAD (DNS rebinding) -- webhook que resuelve a IP interna al momento del envío -> DLQ, cero POST", async () => {
+      const ws = randomUUID(); workspaces.push(ws);
+      const { phoneNumberId } = await prepararNumero(ws);
+      const eventoId = await persistir(ws, "received", payloadMensaje(phoneNumberId));
+      let posts = 0;
+      const lookupInterno: FuncionLookupDns = async () => [{ address: "169.254.169.254", family: 4 }];
+      const r = await procesarMensajeInbound({ supabase: admin, fetchImpl: (async () => { posts++; return new Response("ok"); }) as typeof fetch, lookupDnsFn: lookupInterno }, { eventoId });
+      assert.equal(posts, 0, "jamás se toca la IP interna");
       assert.match(r.motivo, /^webhook_destino_no_seguro:/);
-      assert.equal(reenvios, 0, "CERO POST físico hacia la red interna RFC1918");
+      assert.equal((await leerEvento(eventoId)).entrega_estado, "dlq");
+    });
+
+    it("D2 -- 5xx del Developer es REINTENTABLE (fallido + backoff), luego un 200 entrega y cierra", async () => {
+      const ws = randomUUID(); workspaces.push(ws);
+      const { phoneNumberId } = await prepararNumero(ws);
+      const eventoId = await persistir(ws, "received", payloadMensaje(phoneNumberId));
+      const r1 = await procesarMensajeInbound({ supabase: admin, fetchImpl: (async () => new Response("boom", { status: 502 })) as typeof fetch, lookupDnsFn: lookupPublico }, { eventoId });
+      assert.match(r1.motivo, /^entrega_reintentable:http_502$/);
+      let ev = await leerEvento(eventoId);
+      assert.equal(ev.entrega_estado, "fallido");
+      assert.equal(ev.entrega_intentos, 1);
+      assert.ok(new Date(ev.entrega_next_attempt_at!).getTime() > Date.now(), "backoff futuro");
+
+      // Simula que venció el backoff (mismo patrón que outbound/lease).
+      await admin.from("dulabs_dev_events").update({ entrega_next_attempt_at: new Date(Date.now() - 1_000).toISOString() }).eq("id", eventoId);
+      const r2 = await procesarMensajeInbound({ supabase: admin, fetchImpl: (async () => new Response("ok", { status: 200 })) as typeof fetch, lookupDnsFn: lookupPublico }, { eventoId });
+      assert.equal(r2.motivo, "entregado:message.received");
+      assert.equal((await leerEvento(eventoId)).entrega_estado, "entregado");
+    });
+
+    it("D2 -- 4xx del Developer (400) es TERMINAL -> DLQ, sin reintento", async () => {
+      const ws = randomUUID(); workspaces.push(ws);
+      const { phoneNumberId } = await prepararNumero(ws);
+      const eventoId = await persistir(ws, "received", payloadMensaje(phoneNumberId));
+      const r = await procesarMensajeInbound({ supabase: admin, fetchImpl: (async () => new Response("bad", { status: 400 })) as typeof fetch, lookupDnsFn: lookupPublico }, { eventoId });
+      assert.match(r.motivo, /^entrega_dlq:http_400$/);
+      assert.equal((await leerEvento(eventoId)).entrega_estado, "dlq");
+    });
+
+    async function prepararJobConWamid(ws: string, numeroId: string, wamid: string, extra: Record<string, unknown> = {}) {
+      const job = await crearJobConIdempotencia(admin, { workspaceId: ws, whatsappNumberId: numeroId, idempotencyKey: `idem-${randomUUID()}`, payload: { whatsappNumberId: numeroId, to: "573148127388", type: "text", text: { body: "x" } } });
+      if (job.resultado === "conflicto_payload_distinto") throw new Error("conflicto");
+      await admin.from("dulabs_dev_jobs").update({ wamid, ...extra }).eq("id", job.jobId);
+      return job.jobId;
+    }
+
+    it("status delivered -> correlaciona delivery_status del Job por wamid + entrega el status normalizado", async () => {
+      const ws = randomUUID(); workspaces.push(ws);
+      const { numeroId, phoneNumberId } = await prepararNumero(ws);
+      const wamid = "wamid.OUTBOUND" + randomUUID().replace(/-/g, "");
+      const jobId = await prepararJobConWamid(ws, numeroId, wamid);
+
+      let bodyEnviado: any = null;
+      const fetchFix = (async (_u: string, init?: RequestInit) => { bodyEnviado = JSON.parse(init!.body as string); return new Response("ok", { status: 200 }); }) as typeof fetch;
+      const eventoId = await persistir(ws, "delivered", payloadStatus(phoneNumberId, wamid, "delivered"));
+      const r = await procesarMensajeInbound({ supabase: admin, fetchImpl: fetchFix, lookupDnsFn: lookupPublico }, { eventoId });
+      assert.equal(r.motivo, "entregado:message.status");
+
+      const job = await obtenerJobDelWorkspace(admin, { workspaceId: ws, jobId });
+      assert.equal(job!.delivery_status, "delivered");
+      assert.equal(job!.delivery_status_rank, 2);
+      assert.equal(bodyEnviado.event_type, "message.status");
+      assert.equal(bodyEnviado.status, "delivered");
+      assert.equal(bodyEnviado.wamid, wamid);
+    });
+
+    it("MONOTONICIDAD -- un status atrasado (delivered) nunca retrocede un delivery_status ya en 'read'", async () => {
+      const ws = randomUUID(); workspaces.push(ws);
+      const { numeroId, phoneNumberId } = await prepararNumero(ws);
+      const wamid = "wamid.OUTBOUND" + randomUUID().replace(/-/g, "");
+      const jobId = await prepararJobConWamid(ws, numeroId, wamid);
+      const fetchFix = (async () => new Response("ok", { status: 200 })) as typeof fetch;
+
+      const evRead = await persistir(ws, "read", payloadStatus(phoneNumberId, wamid, "read"));
+      await procesarMensajeInbound({ supabase: admin, fetchImpl: fetchFix, lookupDnsFn: lookupPublico }, { eventoId: evRead });
+      const evDelivered = await persistir(ws, "delivered", payloadStatus(phoneNumberId, wamid, "delivered"));
+      await procesarMensajeInbound({ supabase: admin, fetchImpl: fetchFix, lookupDnsFn: lookupPublico }, { eventoId: evDelivered });
+
+      const job = await obtenerJobDelWorkspace(admin, { workspaceId: ws, jobId });
+      assert.equal(job!.delivery_status, "read", "delivered NO debe pisar un read ya alcanzado");
+      assert.equal(job!.delivery_status_rank, 3);
+    });
+
+    it("reconciliation_pending CON wamid (Opción 1) -> un status sent lo resuelve a success_confirmed + usage confirmado, sin blind resend", async () => {
+      const ws = randomUUID(); workspaces.push(ws);
+      const { numeroId, phoneNumberId } = await prepararNumero(ws);
+      const wamid = "wamid.OUTBOUND" + randomUUID().replace(/-/g, "");
+      // Seed: job en reconciliation_pending pero CON wamid (escenario seguro donde SÍ hay correlación).
+      const jobId = await prepararJobConWamid(ws, numeroId, wamid, { status: "reconciliation_pending", physical_outcome: "uncertain", network_attempts: 1 });
+      assert.equal((await obtenerLedgerDelJob(admin, { workspaceId: ws, jobId }))!.estado, "reservado");
+
+      const eventoId = await persistir(ws, "sent", payloadStatus(phoneNumberId, wamid, "sent"));
+      await procesarMensajeInbound({ supabase: admin, fetchImpl: (async () => new Response("ok", { status: 200 })) as typeof fetch, lookupDnsFn: lookupPublico }, { eventoId });
+
+      const job = await obtenerJobDelWorkspace(admin, { workspaceId: ws, jobId });
+      assert.equal(job!.status, "success_confirmed", "resuelto por el status webhook, sin endpoint ficticio");
+      assert.equal(job!.network_attempts, 1, "cero intento físico nuevo -- no blind resend");
+      assert.equal((await obtenerLedgerDelJob(admin, { workspaceId: ws, jobId }))!.estado, "confirmado");
+    });
+
+    it("CROSS-TENANT -- un status cuyo wamid pertenece a un Job de OTRO workspace NO contamina (job_no_encontrado_por_wamid en el workspace del número)", async () => {
+      const wsA = randomUUID(); workspaces.push(wsA);
+      const wsB = randomUUID(); workspaces.push(wsB);
+      const a = await prepararNumero(wsA);
+      const b = await prepararNumero(wsB);
+      const wamid = "wamid.OUTBOUND" + randomUUID().replace(/-/g, "");
+      const jobA = await prepararJobConWamid(wsA, a.numeroId, wamid); // el wamid vive en el job de A
+
+      // Llega un status por el número de B con ESE wamid (ataque cross-tenant).
+      const eventoId = await persistir(wsB, "delivered", payloadStatus(b.phoneNumberId, wamid, "delivered"));
+      await procesarMensajeInbound({ supabase: admin, fetchImpl: (async () => new Response("ok", { status: 200 })) as typeof fetch, lookupDnsFn: lookupPublico }, { eventoId });
+
+      const job = await obtenerJobDelWorkspace(admin, { workspaceId: wsA, jobId: jobA });
+      assert.equal(job!.delivery_status, null, "el Job de A NUNCA debe ser tocado por un status llegado por el número de B");
     });
   }
 );

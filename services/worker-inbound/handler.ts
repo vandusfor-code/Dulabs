@@ -1,62 +1,96 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { obtenerEventoPorId, marcarEventoProcesado } from "@/lib/developer/events-store";
+import {
+  obtenerEventoPorId,
+  reclamarEntrega,
+  marcarEntregado,
+  marcarEntregaReintentable,
+  marcarEntregaDlq,
+  marcarEntregaSinWebhook,
+} from "@/lib/developer/events-store";
 import { obtenerNumeroPorPhoneNumberId } from "@/lib/developer/whatsapp-numbers-store";
 import { obtenerWebhookDelNumero, obtenerSecretoWebhookDelNumero } from "@/lib/developer/webhook-config-store";
 import { firmarEvento, HEADER_FIRMA, HEADER_TIMESTAMP, HEADER_EVENT_ID } from "@/lib/developer/webhook-signature";
 import { validarUrlWebhookSegura, type FuncionLookupDns } from "@/lib/developer/ssrf-guard";
+import { clasificarWebhookMeta, extraerPhoneNumberIdMeta, extraerStatusMeta, normalizarEventoInbound } from "@/lib/developer/inbound-event-mapper";
+import { aplicarDeliveryStatus, adquirirLease, aplicarEventoJob, liberarLease } from "@/lib/developer/jobs-store";
+import { confirmarUso } from "@/lib/developer/usage-ledger";
 
-// DuLabs Developer V1 -- Fase 3 (autorizado, sección B del documento de
-// infraestructura). Handler del Worker inbound -- procesa UN mensaje push
-// de dulabs-inbound (una referencia a una fila ya persistida y validada por
-// el Gateway en dulabs_dev_events). Reenvía el contenido al Developer
-// Webhook configurado (si existe), firmado con HMAC (webhook-signature.ts,
-// Fase 1, sin modificar).
+// DuLabs Developer V1 -- Fase 3 (autorizado), reescrito en Fase 6
+// (autorizado, D1-D4). Handler del Worker inbound. Dos responsabilidades:
+//
+// 1. STATUS de Meta (sent/delivered/read/failed): correlaciona por
+//    (phone_number_id + workspace + wamid) -- NUNCA solo por wamid --,
+//    actualiza delivery_status de forma monotónica (dimensión ortogonal, la
+//    máquina de estados congelada de Fase 1 no se toca) y, si el Job estaba
+//    en reconciliation_pending, lo resuelve vía el evento YA existente
+//    `reconciliacion_confirmo_enviado` (sin endpoint ficticio, sin blind
+//    resend). La deuda de Fase 5 (consultarEstadoEnMeta) queda resuelta acá.
+//
+// 2. ENTREGA al webhook del Developer (D1/D3): entrega el evento NORMALIZADO
+//    (message.received | message.status) + raw, con reintentos acotados +
+//    DLQ (D2), reusando SSRF (config + send-time), HMAC, timeout e
+//    idempotencia por event_id/entrega_estado.
 
 export type DependenciasWorkerInbound = {
   supabase: SupabaseClient;
   fetchImpl?: typeof fetch;
-  // Inyectable a propósito (mismo criterio que fetchImpl) -- los tests de DNS
-  // rebinding necesitan controlar exactamente a qué IP "resuelve" la URL del
-  // webhook al momento del envío, sin depender de un DNS real. En producción
-  // queda undefined y ssrf-guard usa el resolver real.
   lookupDnsFn?: FuncionLookupDns;
+  metaGraphApiBaseUrl?: string; // no se usa para inbound; presente por simetría de deps
 };
 
 export type MensajePubSubInbound = { eventoId: number };
 
 export type ResultadoProcesamientoInbound = { httpStatus: 200 | 500; motivo: string };
 
-function extraerPhoneNumberId(payload: unknown): string | null {
-  try {
-    const entry = (payload as { entry?: Array<{ changes?: Array<{ value?: { metadata?: { phone_number_id?: string } } }> }> })?.entry?.[0];
-    return entry?.changes?.[0]?.value?.metadata?.phone_number_id ?? null;
-  } catch {
-    return null;
+const ESTADOS_ENTREGA_TERMINALES = new Set(["entregado", "dlq", "sin_webhook"]);
+
+/** Correlación de un status de Meta con su Job outbound + resolución de reconciliation_pending. Idempotente: re-aplicar el mismo status o resolver un job ya resuelto son no-ops seguros. */
+async function correlacionarStatus(
+  supabase: SupabaseClient,
+  params: { workspaceId: string; whatsappNumberId: string; payload: unknown }
+): Promise<void> {
+  const st = extraerStatusMeta(params.payload);
+  if (!st || !st.wamid) return;
+
+  const resultado = await aplicarDeliveryStatus(supabase, {
+    workspaceId: params.workspaceId,
+    whatsappNumberId: params.whatsappNumberId,
+    wamid: st.wamid,
+    status: st.status,
+    statusAt: st.timestamp ? new Date(Number(st.timestamp) * 1000).toISOString() : undefined,
+  });
+
+  // Resolución de reconciliation_pending (decisión I, Opción 1 aprobada): un
+  // status sent/delivered/read es evidencia REAL de que Meta envió el mensaje.
+  // La correlación es EXCLUSIVAMENTE por wamid (obtenerJobPorWamid) -- nunca
+  // heurística por recipient/ventana temporal. Consecuencia explícita del
+  // contrato de seguridad "no inventar certeza": un job que entró en
+  // reconciliation_pending por timeout NUNCA capturó wamid, así que este
+  // bloque no lo encontrará y el job permanece uncertain -- eso NO es un bug,
+  // es lo aprobado. Este bloque solo resuelve el caso (seguro) en que sí
+  // existe un Job con ese wamid exacto todavía en reconciliation_pending.
+  if (resultado.job && resultado.job.status === "reconciliation_pending" && (st.status === "sent" || st.status === "delivered" || st.status === "read")) {
+    const lease = await adquirirLease(supabase, { workspaceId: params.workspaceId, jobId: resultado.job.id });
+    if (lease.adquirido) {
+      try {
+        const r = await aplicarEventoJob(supabase, { workspaceId: params.workspaceId, jobId: resultado.job.id, leaseId: lease.leaseId, evento: { tipo: "reconciliacion_confirmo_enviado" } });
+        if (r.aplicada && r.job.status === "success_confirmed") {
+          await confirmarUso(supabase, { workspaceId: params.workspaceId, jobId: resultado.job.id }).catch(() => {});
+        }
+      } finally {
+        await liberarLease(supabase, { workspaceId: params.workspaceId, jobId: resultado.job.id, leaseId: lease.leaseId }).catch(() => {});
+      }
+    }
   }
 }
 
-/**
- * Procesa un mensaje de dulabs-inbound. Idempotente por diseño: el único
- * efecto secundario real es el POST al Developer Webhook, así que el CAS
- * de `marcarEventoProcesado` protege ESE punto específicamente -- no toda
- * la función. Resolver el evento/número/webhook/secreto y firmar son
- * operaciones de solo lectura + cómputo local, sin efecto secundario, por
- * lo que son seguras de repetir en cada entrega/redelivery sin necesidad
- * de CAS.
- *
- * CORRECCIÓN (Fase 3, cierre): originalmente el CAS corría ANTES de
- * resolver número/webhook/secreto -- cualquier fallo transitorio en esa
- * ventana (ej. el gap real de IAM de KMS documentado como riesgo #1, o
- * cualquier error pasajero de Postgres) dejaba `procesado_en` marcado
- * permanentemente sin que el relay real hubiera ocurrido nunca, y todo
- * reintento de Pub/Sub encontraba el evento "ya procesado" y respondía 200
- * sin volver a intentar -- el evento nunca llegaba a DLQ, el relay nunca
- * se completaba, sin ninguna señal visible del fallo. Mover el CAS a
- * proteger solo el `fetch` real corrige esto sin debilitar la garantía de
- * "como mucho un relay real por evento": ante una entrega concurrente
- * genuina, ambas pueden resolver/firmar en paralelo (barato, sin efecto
- * secundario), pero solo una gana el CAS justo antes del POST.
- */
+/** Clasifica la respuesta HTTP del webhook del Developer en retryable vs terminal (D2): 4xx es terminal salvo 408/429; 5xx y timeouts son reintentables. */
+function esRespuestaReintentable(status: number): boolean {
+  if (status >= 500) return true;
+  if (status === 408 || status === 429) return true;
+  return false; // 2xx no llega acá; 4xx (salvo 408/429) es terminal
+}
+
 export async function procesarMensajeInbound(deps: DependenciasWorkerInbound, mensaje: MensajePubSubInbound): Promise<ResultadoProcesamientoInbound> {
   const { supabase } = deps;
   const fetchFn = deps.fetchImpl ?? fetch;
@@ -64,84 +98,92 @@ export async function procesarMensajeInbound(deps: DependenciasWorkerInbound, me
   try {
     const evento = await obtenerEventoPorId(supabase, { id: mensaje.eventoId });
     if (!evento) return { httpStatus: 200, motivo: "evento_no_encontrado" };
+    if (ESTADOS_ENTREGA_TERMINALES.has(evento.entrega_estado)) return { httpStatus: 200, motivo: `entrega_ya_terminal:${evento.entrega_estado}` };
+    if (!evento.payload) {
+      await marcarEntregaDlq(supabase, { id: evento.id, motivoSanitizado: "evento_sin_payload" });
+      return { httpStatus: 200, motivo: "evento_sin_payload" };
+    }
 
-    if (evento.procesado_en) return { httpStatus: 200, motivo: "ya_procesado_por_otra_entrega" };
-
-    if (!evento.payload) return { httpStatus: 200, motivo: "evento_sin_payload_nada_que_reenviar" };
-
-    const phoneNumberId = extraerPhoneNumberId(evento.payload);
-    if (!phoneNumberId) return { httpStatus: 200, motivo: "payload_sin_phone_number_id" };
+    const phoneNumberId = extraerPhoneNumberIdMeta(evento.payload);
+    if (!phoneNumberId) {
+      await marcarEntregaDlq(supabase, { id: evento.id, motivoSanitizado: "payload_sin_phone_number_id" });
+      return { httpStatus: 200, motivo: "payload_sin_phone_number_id" };
+    }
 
     const numero = await obtenerNumeroPorPhoneNumberId(supabase, phoneNumberId);
     if (!numero || numero.workspace_id !== evento.workspace_id) {
+      await marcarEntregaDlq(supabase, { id: evento.id, motivoSanitizado: "numero_no_resuelto_o_workspace_no_coincide" });
       return { httpStatus: 200, motivo: "numero_no_resuelto_o_workspace_no_coincide" };
     }
 
+    // (1) STATUS: correlación interna, independiente de que el webhook del
+    // Developer esté arriba -- el estado del Job nunca depende de eso.
+    if (clasificarWebhookMeta(evento.payload) === "status") {
+      await correlacionarStatus(supabase, { workspaceId: evento.workspace_id, whatsappNumberId: numero.id, payload: evento.payload });
+    }
+
+    // (2) ENTREGA al webhook del Developer (message.received y message.status).
     const webhook = await obtenerWebhookDelNumero(supabase, { workspaceId: evento.workspace_id, whatsappNumberId: numero.id });
     if (!webhook || webhook.estado !== "activo") {
+      await marcarEntregaSinWebhook(supabase, { id: evento.id });
       return { httpStatus: 200, motivo: "sin_webhook_configurado_o_pausado" };
     }
 
-    const secretoWebhook = await obtenerSecretoWebhookDelNumero(supabase, { workspaceId: evento.workspace_id, whatsappNumberId: numero.id });
-    if (!secretoWebhook) return { httpStatus: 200, motivo: "secreto_de_webhook_no_disponible" };
+    const claim = await reclamarEntrega(supabase, { id: evento.id });
+    if (!claim.reclamado || !claim.fila) return { httpStatus: 200, motivo: "entrega_no_reclamada_o_no_vencida" };
+    const intentosPrevios = claim.fila.entrega_intentos;
 
-    // Endurecimiento de seguridad (autorizado) -- protección real contra DNS
-    // rebinding. La URL del webhook YA se validó contra SSRF al configurarse
-    // (webhook-config-store.ts), pero esa validación es de solo-config: un
-    // hostname que resolvía a una IP pública en ese momento puede resolver a
-    // una IP interna (loopback, RFC1918, 169.254.169.254/metadata) justo al
-    // momento real del envío. Se RE-VALIDA acá, inmediatamente antes del POST
-    // -- mismo patrón de defensa en profundidad que ya usa el Flow para sus
-    // integraciones externas (lib/flow/executors/http-integration-executor.ts,
-    // re-valida SSRF en el dispatch). Si la URL ahora resuelve a un destino no
-    // seguro, se rechaza el relay y a propósito NO se marca procesado (mismo
-    // criterio que cualquier otro fallo ANTES del relay real -- ver el test de
-    // regresión "sin webhook configurado"): así el evento no se pierde de forma
-    // silenciosa si el desarrollador corrige su DNS más adelante.
-    //
-    // Límite conocido V1: esto reduce la ventana de rebinding a un TOCTOU
-    // mínimo entre esta validación y la resolución DNS propia de fetch; el
-    // pinning a la IP ya validada (vía undici Agent) queda como endurecimiento
-    // futuro -- exactamente igual que el http-integration-executor del Flow,
-    // que también se detiene en la re-validación.
-    const validacionSsrf = await validarUrlWebhookSegura(webhook.url, deps.lookupDnsFn ? { lookupFn: deps.lookupDnsFn } : undefined);
-    if (!validacionSsrf.permitido) {
-      return { httpStatus: 200, motivo: `webhook_destino_no_seguro:${validacionSsrf.motivo}` };
+    const secreto = await obtenerSecretoWebhookDelNumero(supabase, { workspaceId: evento.workspace_id, whatsappNumberId: numero.id });
+    if (!secreto) {
+      await marcarEntregaReintentable(supabase, { id: evento.id, intentosPrevios, motivoSanitizado: "secreto_no_disponible" });
+      return { httpStatus: 200, motivo: "secreto_no_disponible" };
     }
 
-    const cuerpo = JSON.stringify({ event_id: evento.event_id, tipo: evento.tipo, payload: evento.payload });
-    const firmado = firmarEvento(secretoWebhook, cuerpo);
+    // SSRF send-time (DNS rebinding) -- destino inseguro es TERMINAL (nunca se reintenta pegarle a una IP interna).
+    const ssrf = await validarUrlWebhookSegura(webhook.url, deps.lookupDnsFn ? { lookupFn: deps.lookupDnsFn } : undefined);
+    if (!ssrf.permitido) {
+      await marcarEntregaDlq(supabase, { id: evento.id, motivoSanitizado: `destino_no_seguro:${ssrf.motivo}` });
+      return { httpStatus: 200, motivo: `webhook_destino_no_seguro:${ssrf.motivo}` };
+    }
 
-    // CAS real, justo antes del único efecto secundario -- si otra entrega
-    // concurrente ya ganó esta carrera exacta, no reenviamos de nuevo.
-    const marcado = await marcarEventoProcesado(supabase, { id: evento.id });
-    if (!marcado.marcado) return { httpStatus: 200, motivo: "ya_procesado_por_otra_entrega" };
+    const normal = normalizarEventoInbound({ payload: evento.payload, eventId: evento.event_id, workspaceId: evento.workspace_id, whatsappNumberId: numero.id });
+    if (!normal) {
+      await marcarEntregaDlq(supabase, { id: evento.id, motivoSanitizado: "evento_no_normalizable" });
+      return { httpStatus: 200, motivo: "evento_no_normalizable" };
+    }
 
+    const cuerpo = JSON.stringify(normal);
+    const firmado = firmarEvento(secreto, cuerpo);
+
+    let respuesta: Response;
     try {
-      await fetchFn(webhook.url, {
+      respuesta = await fetchFn(webhook.url, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          [HEADER_FIRMA]: firmado.firma,
-          [HEADER_TIMESTAMP]: String(firmado.timestamp),
-          [HEADER_EVENT_ID]: evento.event_id,
-        },
+        headers: { "Content-Type": "application/json", [HEADER_FIRMA]: firmado.firma, [HEADER_TIMESTAMP]: String(firmado.timestamp), [HEADER_EVENT_ID]: evento.event_id },
         body: cuerpo,
         signal: AbortSignal.timeout(10_000),
       });
-      // No se condiciona el ACK a que el desarrollador haya respondido 200
-      // -- eso es responsabilidad de su propio endpoint/reintentos, fuera
-      // del contrato de "at-least-once hacia DuLabs, exactamente-una-vez
-      // procesado del lado nuestro" que este Worker garantiza.
     } catch {
-      // Fallo de red hacia el webhook del desarrollador -- ya se marcó
-      // procesado (decisión deliberada: at-most-once del lado nuestro
-      // hacia el desarrollador, no se reintenta automáticamente desde acá
-      // en V1 -- ver nota en el reporte de Fase 3).
+      // Timeout / conexión -- reintentable (nunca se filtra el error real al log).
+      await marcarEntregaReintentable(supabase, { id: evento.id, intentosPrevios, motivoSanitizado: "timeout_o_conexion" });
+      return { httpStatus: 200, motivo: "entrega_reintentable:timeout_o_conexion" };
     }
 
-    return { httpStatus: 200, motivo: "reenviado_a_developer_webhook" };
+    if (respuesta.ok) {
+      await marcarEntregado(supabase, { id: evento.id });
+      return { httpStatus: 200, motivo: `entregado:${normal.event_type}` };
+    }
+
+    if (esRespuestaReintentable(respuesta.status)) {
+      await marcarEntregaReintentable(supabase, { id: evento.id, intentosPrevios, motivoSanitizado: `http_${respuesta.status}` });
+      return { httpStatus: 200, motivo: `entrega_reintentable:http_${respuesta.status}` };
+    }
+
+    // 4xx terminal (el endpoint del Developer rechazó el evento -- reintentar no ayuda).
+    await marcarEntregaDlq(supabase, { id: evento.id, intentos: intentosPrevios + 1, motivoSanitizado: `http_${respuesta.status}` });
+    return { httpStatus: 200, motivo: `entrega_dlq:http_${respuesta.status}` };
   } catch (err) {
+    // Error transitorio de infraestructura ANTES/DURANTE -- 500 deja que Pub/Sub reintente. Nunca se filtra detalle sensible.
     return { httpStatus: 500, motivo: `error_transitorio:${err instanceof Error ? err.message : String(err)}` };
   }
 }

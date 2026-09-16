@@ -25,6 +25,11 @@ export type JobFila = {
   version_token: number;
   payload: Record<string, unknown>;
   wamid: string | null;
+  // Fase 6 (autorizado) -- dimensión ORTOGONAL al Job lifecycle congelado.
+  // No participa de la máquina de estados (status/physical_outcome).
+  delivery_status: "sent" | "delivered" | "read" | "failed" | null;
+  delivery_status_at: string | null;
+  delivery_status_rank: number;
   created_at: string;
   updated_at: string;
 };
@@ -280,6 +285,79 @@ export async function obtenerJobsListosParaReintento(supabase: SupabaseClient, p
     .limit(params.limite ?? 200);
   if (error) throw new Error(`[developer/jobs-store] error obteniendo jobs listos para reintento: ${error.message}`);
   return (data ?? []) as JobFila[];
+}
+
+// ============================================================
+// Fase 6 (autorizado) -- correlación de status webhooks por wamid.
+// ============================================================
+
+const RANK_STATUS: Record<"sent" | "delivered" | "read" | "failed", number> = { sent: 1, delivered: 2, read: 3, failed: 4 };
+
+/** Busca el Job de un wamid DENTRO de un workspace -- nunca resuelve un wamid sin el workspace_id como parte del filtro (usa dulabs_dev_jobs_wamid_idx). */
+export async function obtenerJobPorWamid(supabase: SupabaseClient, params: { workspaceId: string; wamid: string }): Promise<JobFila | null> {
+  const { data, error } = await supabase
+    .from("dulabs_dev_jobs")
+    .select("*")
+    .eq("workspace_id", params.workspaceId)
+    .eq("wamid", params.wamid)
+    .maybeSingle();
+  if (error) throw new Error(`[developer/jobs-store] error obteniendo job por wamid: ${error.message}`);
+  return (data as JobFila) ?? null;
+}
+
+export type ResultadoDeliveryStatus =
+  | { aplicado: true; job: JobFila; retrocedido: false }
+  | { aplicado: false; motivo: "job_no_encontrado_por_wamid" | "numero_no_coincide" | "status_no_avanza"; job: JobFila | null };
+
+/**
+ * Fase 6 -- aplica un status de Meta (sent/delivered/read/failed) al Job
+ * correlacionado por wamid, de forma MONOTÓNICA y con guarda multi-tenant.
+ *
+ * Correlación protegida por (workspace_id + wamid + whatsapp_number_id):
+ * nunca solo por wamid. Si el Job del wamid pertenece a otro número del que
+ * Meta reporta, se rechaza (defensa contra cross-tenant/number contamination).
+ *
+ * Monotonicidad (decisión H): sent<delivered<read nunca retroceden -- se
+ * aplica solo si el nuevo rank es MAYOR al actual. `failed` es terminal
+ * pero NO pisa un delivered/read ya alcanzado (un mensaje ya entregado/leído
+ * no puede "fallar" tardíamente): solo aplica desde sin-status o 'sent'. El
+ * guard va en el WHERE del UPDATE -> atómico frente a status concurrentes.
+ * NO toca status/physical_outcome (la máquina de estados congelada).
+ */
+export async function aplicarDeliveryStatus(
+  supabase: SupabaseClient,
+  params: { workspaceId: string; whatsappNumberId: string; wamid: string; status: "sent" | "delivered" | "read" | "failed"; statusAt?: string }
+): Promise<ResultadoDeliveryStatus> {
+  const job = await obtenerJobPorWamid(supabase, { workspaceId: params.workspaceId, wamid: params.wamid });
+  if (!job) return { aplicado: false, motivo: "job_no_encontrado_por_wamid", job: null };
+  if (job.whatsapp_number_id !== params.whatsappNumberId) {
+    // El wamid resolvió un job del workspace correcto pero de OTRO número --
+    // nunca se acepta (defensa en profundidad contra contaminación cruzada).
+    return { aplicado: false, motivo: "numero_no_coincide", job };
+  }
+
+  const nuevoRank = RANK_STATUS[params.status];
+  const cuando = params.statusAt ?? new Date().toISOString();
+
+  let consulta = supabase
+    .from("dulabs_dev_jobs")
+    .update({ delivery_status: params.status, delivery_status_rank: nuevoRank, delivery_status_at: cuando, updated_at: new Date().toISOString() })
+    .eq("id", job.id)
+    .eq("workspace_id", params.workspaceId)
+    .eq("whatsapp_number_id", params.whatsappNumberId);
+
+  if (params.status === "failed") {
+    // failed solo desde sin-status o 'sent' (rank <= 1) -- nunca pisa delivered/read.
+    consulta = consulta.lte("delivery_status_rank", 1);
+  } else {
+    // sent/delivered/read: monotónico estricto.
+    consulta = consulta.lt("delivery_status_rank", nuevoRank);
+  }
+
+  const { data, error } = await consulta.select("*").maybeSingle();
+  if (error) throw new Error(`[developer/jobs-store] error aplicando delivery_status: ${error.message}`);
+  if (!data) return { aplicado: false, motivo: "status_no_avanza", job };
+  return { aplicado: true, job: data as JobFila, retrocedido: false };
 }
 
 export { estadoInicial };

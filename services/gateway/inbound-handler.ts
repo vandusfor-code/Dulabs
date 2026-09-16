@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { verificarFirmaMeta } from "@/lib/developer/meta-webhook-signature";
 import { calcularEventIdWebhookMeta } from "@/lib/developer/meta-event-id";
 import { registrarEvento, marcarEventoPublicado } from "@/lib/developer/events-store";
+import { tipoEventoDeWebhook } from "@/lib/developer/inbound-event-mapper";
 import { obtenerNumeroPorPhoneNumberId } from "@/lib/developer/whatsapp-numbers-store";
 import { publicarMensaje } from "../shared/pubsub";
 
@@ -79,7 +80,9 @@ export async function manejarWebhookMeta(deps: DependenciasInbound, req: Request
   const registro = await registrarEvento(deps.supabase, {
     eventId,
     workspaceId: numero.workspace_id,
-    tipo: "received",
+    // Fase 6 (D4) -- tipo real del webhook: received (mensaje entrante) o
+    // sent/delivered/read/failed (status de un mensaje outbound).
+    tipo: tipoEventoDeWebhook(payload),
     payload: payload as Record<string, unknown>,
   });
 

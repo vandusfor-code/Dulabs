@@ -6,7 +6,11 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 // contra la entrega at-least-once de Pub/Sub -- reintentar el registro del
 // MISMO event_id nunca produce una segunda fila.
 
-export type TipoEvento = "received" | "queued" | "sending" | "sent" | "failed";
+// Fase 6 (D4) -- enum extendido ADITIVAMENTE con delivered/read.
+export type TipoEvento = "received" | "queued" | "sending" | "sent" | "delivered" | "read" | "failed";
+
+// Fase 6 (D2) -- estado de la entrega al webhook del Developer.
+export type EstadoEntrega = "pendiente" | "entregando" | "entregado" | "fallido" | "dlq" | "sin_webhook";
 
 export type EventoFila = {
   id: number;
@@ -21,7 +25,20 @@ export type EventoFila = {
   intentos_publicacion: number;
   payload: Record<string, unknown> | null;
   procesado_en: string | null;
+  // Fase 6 (D2) -- retry/DLQ de la entrega al webhook del Developer.
+  entrega_estado: EstadoEntrega;
+  entrega_intentos: number;
+  entrega_next_attempt_at: string | null;
+  entrega_ultimo_error: string | null;
 };
+
+// Fase 6 (D2) -- política de reintentos de entrega al Developer.
+export const MAX_INTENTOS_ENTREGA = 5;
+export const LEASE_ENTREGA_MS = 30_000;
+/** Backoff exponencial acotado: 30s, 60s, 120s, 240s, tope 300s. */
+export function backoffEntregaMs(intentosYaHechos: number): number {
+  return Math.min(30_000 * 2 ** Math.max(0, intentosYaHechos - 1), 300_000);
+}
 
 export type ResultadoRegistroEvento = { registrado: true; fila: EventoFila } | { registrado: false; motivo: "evento_duplicado" };
 
@@ -141,6 +158,99 @@ export async function marcarEventoProcesado(supabase: SupabaseClient, params: { 
     .maybeSingle();
   if (error) throw new Error(`[developer/events-store] error marcando evento procesado: ${error.message}`);
   return { marcado: Boolean(data) };
+}
+
+// ============================================================
+// Fase 6 (D2) -- entrega al webhook del Developer con retry/DLQ.
+// ============================================================
+
+/**
+ * Reclama un evento para intentar su entrega -- CAS real: solo aplica si
+ * `entrega_estado` es reintentable (pendiente/fallido, o un 'entregando'
+ * vencido de un worker que murió) Y `entrega_next_attempt_at` ya venció (o
+ * es null). Al reclamar fija next_attempt_at = ahora + LEASE, de modo que
+ * un segundo worker concurrente NO pueda reclamar el mismo evento (su WHERE
+ * de "next_attempt_at <= ahora" ya no matchea). Devuelve la fila reclamada
+ * (con su entrega_intentos actual) o {reclamado:false}.
+ */
+export async function reclamarEntrega(supabase: SupabaseClient, params: { id: number }): Promise<{ reclamado: boolean; fila: EventoFila | null }> {
+  const ahora = new Date();
+  const leaseHasta = new Date(ahora.getTime() + LEASE_ENTREGA_MS).toISOString();
+  const { data, error } = await supabase
+    .from("dulabs_dev_events")
+    .update({ entrega_estado: "entregando", entrega_next_attempt_at: leaseHasta })
+    .eq("id", params.id)
+    .in("entrega_estado", ["pendiente", "fallido", "entregando"])
+    .or(`entrega_next_attempt_at.is.null,entrega_next_attempt_at.lte.${ahora.toISOString()}`)
+    .select("*")
+    .maybeSingle();
+  if (error) throw new Error(`[developer/events-store] error reclamando entrega: ${error.message}`);
+  return { reclamado: Boolean(data), fila: (data as EventoFila) ?? null };
+}
+
+/** Entrega exitosa -- estado terminal. Setea procesado_en (backcompat de observabilidad de Fase 3). */
+export async function marcarEntregado(supabase: SupabaseClient, params: { id: number }): Promise<void> {
+  const { error } = await supabase
+    .from("dulabs_dev_events")
+    .update({ entrega_estado: "entregado", entrega_next_attempt_at: null, entrega_ultimo_error: null, procesado_en: new Date().toISOString() })
+    .eq("id", params.id);
+  if (error) throw new Error(`[developer/events-store] error marcando entregado: ${error.message}`);
+}
+
+/** Fallo REINTENTABLE (5xx/timeout/red) -- programa el próximo intento con backoff, o pasa a DLQ si agotó los intentos. `motivoSanitizado` NUNCA debe traer secretos. */
+export async function marcarEntregaReintentable(
+  supabase: SupabaseClient,
+  params: { id: number; intentosPrevios: number; motivoSanitizado: string }
+): Promise<{ estado: "fallido" | "dlq" }> {
+  const intentos = params.intentosPrevios + 1;
+  if (intentos >= MAX_INTENTOS_ENTREGA) {
+    await marcarEntregaDlq(supabase, { id: params.id, intentos, motivoSanitizado: `max_intentos:${params.motivoSanitizado}` });
+    return { estado: "dlq" };
+  }
+  const next = new Date(Date.now() + backoffEntregaMs(intentos)).toISOString();
+  const { error } = await supabase
+    .from("dulabs_dev_events")
+    .update({ entrega_estado: "fallido", entrega_intentos: intentos, entrega_next_attempt_at: next, entrega_ultimo_error: params.motivoSanitizado })
+    .eq("id", params.id);
+  if (error) throw new Error(`[developer/events-store] error marcando entrega reintentable: ${error.message}`);
+  return { estado: "fallido" };
+}
+
+/** Fallo TERMINAL (4xx no reintentable, URL insegura, etc.) -- va directo a DLQ, nunca se reintenta. */
+export async function marcarEntregaDlq(supabase: SupabaseClient, params: { id: number; intentos?: number; motivoSanitizado: string }): Promise<void> {
+  const cambios: Record<string, unknown> = { entrega_estado: "dlq", entrega_next_attempt_at: null, entrega_ultimo_error: params.motivoSanitizado };
+  if (typeof params.intentos === "number") cambios.entrega_intentos = params.intentos;
+  const { error } = await supabase.from("dulabs_dev_events").update(cambios).eq("id", params.id);
+  if (error) throw new Error(`[developer/events-store] error marcando entrega DLQ: ${error.message}`);
+}
+
+/** No hay webhook configurado (o está pausado) -- no es un fallo, no se reintenta. */
+export async function marcarEntregaSinWebhook(supabase: SupabaseClient, params: { id: number }): Promise<void> {
+  const { error } = await supabase
+    .from("dulabs_dev_events")
+    .update({ entrega_estado: "sin_webhook", entrega_next_attempt_at: null })
+    .eq("id", params.id);
+  if (error) throw new Error(`[developer/events-store] error marcando sin_webhook: ${error.message}`);
+}
+
+/**
+ * Barrido de reintentos de entrega (dulabs-reconciliation, Fase 6 D2):
+ * eventos reintentables cuyo next_attempt_at ya venció (o es null), por
+ * debajo del tope de intentos. Incluye 'entregando' vencido (worker que
+ * murió a mitad). Usa dulabs_dev_events_entrega_pendiente_idx.
+ */
+export async function obtenerEntregasListasParaReintento(supabase: SupabaseClient, params: { limite?: number } = {}): Promise<EventoFila[]> {
+  const ahora = new Date().toISOString();
+  const { data, error } = await supabase
+    .from("dulabs_dev_events")
+    .select("*")
+    .in("entrega_estado", ["pendiente", "fallido", "entregando"])
+    .lt("entrega_intentos", MAX_INTENTOS_ENTREGA)
+    .or(`entrega_next_attempt_at.is.null,entrega_next_attempt_at.lte.${ahora}`)
+    .order("created_at", { ascending: true })
+    .limit(params.limite ?? 200);
+  if (error) throw new Error(`[developer/events-store] error obteniendo entregas listas para reintento: ${error.message}`);
+  return (data ?? []) as EventoFila[];
 }
 
 export async function obtenerEventosPendientesDePublicar(
