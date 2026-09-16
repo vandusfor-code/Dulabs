@@ -1,0 +1,131 @@
+// DuLabs Developer V1 -- Fase 1 (autorizado, secciones 10, 11, 14 del brief).
+// Máquina de estados PURA (sin red, sin DB) del ciclo de vida de un job
+// saliente hacia Meta. La separación entre `status` (estado lógico, quién
+// tiene la pelota) y `physicalOutcome` (¿el POST físico a Meta ocurrió de
+// verdad?) es intencional y obligatoria -- son dos preguntas distintas:
+// "¿qué toca hacer ahora?" vs. "¿es seguro volver a intentar sin duplicar
+// el mensaje del lado del cliente final?".
+
+export type EstadoJob = "created" | "queued" | "sending" | "success_confirmed" | "failed_by_meta" | "retry_pending" | "reconciliation_pending";
+
+export type ResultadoFisico = "pre_send" | "uncertain" | "success_confirmed";
+
+export const MAX_INTENTOS_FISICOS = 2;
+
+export type EventoJob =
+  | { tipo: "encolar" }
+  | { tipo: "iniciar_envio" }
+  // Meta respondió 2xx con confirmación real -- certeza total.
+  | { tipo: "meta_confirmo_exito" }
+  // Meta respondió con un error identificable (4xx/5xx CON cuerpo de
+  // respuesta legible) -- certeza de que el mensaje NO se envió.
+  // Fase 5 (autorizado, decisión D5) -- `permanente: true` viene de
+  // lib/developer/meta-error-classifier.ts cuando el error.code real de
+  // Meta es una falla de validación/negocio definitiva (ej. número
+  // inválido) -- en ese caso SIEMPRE se va a failed_by_meta, sin importar
+  // cuántos intentos físicos queden, para no gastar el único reintento
+  // disponible en algo que nunca puede funcionar. Sin el flag (default
+  // false/ausente), el comportamiento es EXACTAMENTE el mismo que antes
+  // de Fase 5: retry_pending si quedan intentos, failed_by_meta si no.
+  | { tipo: "meta_rechazo"; codigoError?: string; permanente?: boolean }
+  // No hay certeza de si Meta recibió el POST (timeout de red, conexión
+  // cortada, crash del proceso a mitad de la llamada). Regla crítica del
+  // brief (sección 11): esto NUNCA se trata como "no enviado".
+  | { tipo: "incertidumbre_de_red" }
+  // Un proceso de reconciliación (fuera de esta máquina de estados)
+  // confirmó, consultando a Meta, que el POST anterior NO llegó a
+  // ejecutarse del lado de Meta -- solo entonces es seguro reintentar.
+  | { tipo: "reconciliacion_confirmo_no_enviado" }
+  // Fase 3, cierre (riesgo #4) -- un proceso de reconciliación confirmó,
+  // consultando a Meta, que el POST anterior SÍ llegó a procesarse del
+  // lado de Meta pese a la incertidumbre de red original -- certeza total
+  // tardía, mismo destino final que una confirmación síncrona
+  // (meta_confirmo_exito), pero llegando desde reconciliation_pending en
+  // vez de desde sending.
+  | { tipo: "reconciliacion_confirmo_enviado" };
+
+export type EstadoCompletoJob = {
+  status: EstadoJob;
+  physicalOutcome: ResultadoFisico;
+  networkAttempts: number;
+};
+
+export type ResultadoTransicion = { permitida: true; siguiente: EstadoCompletoJob } | { permitida: false; motivo: string };
+
+/**
+ * Única función de transición -- ni el Gateway ni ningún Worker deben mutar
+ * `status`/`physicalOutcome` directamente, siempre a través de esta
+ * función, para que la regla crítica de la sección 11 (nunca reintentar
+ * automáticamente tras incertidumbre) esté en UN solo lugar, comprobable
+ * con una tabla de casos, no repetida/reinterpretada en cada Worker.
+ */
+export function transicionar(actual: EstadoCompletoJob, evento: EventoJob): ResultadoTransicion {
+  switch (evento.tipo) {
+    case "encolar": {
+      if (actual.status !== "created") return { permitida: false, motivo: `no se puede encolar desde "${actual.status}"` };
+      return { permitida: true, siguiente: { ...actual, status: "queued" } };
+    }
+
+    case "iniciar_envio": {
+      if (actual.status !== "queued" && actual.status !== "retry_pending") {
+        return { permitida: false, motivo: `no se puede iniciar envío desde "${actual.status}"` };
+      }
+      if (actual.networkAttempts >= MAX_INTENTOS_FISICOS) {
+        return { permitida: false, motivo: `ya se agotaron los ${MAX_INTENTOS_FISICOS} intentos físicos permitidos` };
+      }
+      return {
+        permitida: true,
+        siguiente: { status: "sending", physicalOutcome: "pre_send", networkAttempts: actual.networkAttempts + 1 },
+      };
+    }
+
+    case "meta_confirmo_exito": {
+      if (actual.status !== "sending") return { permitida: false, motivo: `solo se confirma éxito desde "sending", no desde "${actual.status}"` };
+      return { permitida: true, siguiente: { ...actual, status: "success_confirmed", physicalOutcome: "success_confirmed" } };
+    }
+
+    case "meta_rechazo": {
+      if (actual.status !== "sending") return { permitida: false, motivo: `solo se procesa un rechazo desde "sending", no desde "${actual.status}"` };
+      // Un rechazo CIERTO de Meta (no una duda de red) -- el mensaje
+      // definitivamente no llegó al usuario final, así que sí es seguro
+      // decidir si reintentar (a diferencia de la incertidumbre de red).
+      // Fase 5 (D5): un error PERMANENTE nunca reintenta, sin importar
+      // cuántos intentos queden -- reintentar algo que estructuralmente
+      // nunca puede funcionar solo gastaría el único intento disponible.
+      if (evento.permanente || actual.networkAttempts >= MAX_INTENTOS_FISICOS) {
+        return { permitida: true, siguiente: { status: "failed_by_meta", physicalOutcome: "pre_send", networkAttempts: actual.networkAttempts } };
+      }
+      return { permitida: true, siguiente: { status: "retry_pending", physicalOutcome: "pre_send", networkAttempts: actual.networkAttempts } };
+    }
+
+    case "incertidumbre_de_red": {
+      if (actual.status !== "sending") return { permitida: false, motivo: `solo aplica incertidumbre desde "sending", no desde "${actual.status}"` };
+      // REGLA CRÍTICA (sección 11 del brief): nunca pasar automáticamente a
+      // retry_pending desde acá. El único destino posible es
+      // reconciliation_pending -- sin excepción, sin importar cuántos
+      // intentos queden disponibles.
+      return { permitida: true, siguiente: { status: "reconciliation_pending", physicalOutcome: "uncertain", networkAttempts: actual.networkAttempts } };
+    }
+
+    case "reconciliacion_confirmo_no_enviado": {
+      if (actual.status !== "reconciliation_pending") {
+        return { permitida: false, motivo: `solo aplica reconciliación desde "reconciliation_pending", no desde "${actual.status}"` };
+      }
+      if (actual.networkAttempts >= MAX_INTENTOS_FISICOS) {
+        return { permitida: true, siguiente: { status: "failed_by_meta", physicalOutcome: "pre_send", networkAttempts: actual.networkAttempts } };
+      }
+      return { permitida: true, siguiente: { status: "retry_pending", physicalOutcome: "pre_send", networkAttempts: actual.networkAttempts } };
+    }
+
+    case "reconciliacion_confirmo_enviado": {
+      if (actual.status !== "reconciliation_pending") {
+        return { permitida: false, motivo: `solo aplica reconciliación desde "reconciliation_pending", no desde "${actual.status}"` };
+      }
+      return { permitida: true, siguiente: { status: "success_confirmed", physicalOutcome: "success_confirmed", networkAttempts: actual.networkAttempts } };
+    }
+  }
+}
+
+export function estadoInicial(): EstadoCompletoJob {
+  return { status: "created", physicalOutcome: "pre_send", networkAttempts: 0 };
+}
