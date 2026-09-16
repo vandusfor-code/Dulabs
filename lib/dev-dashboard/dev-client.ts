@@ -148,6 +148,20 @@ export type JobResumen = {
   updated_at: string;
 };
 export type JobsResp = { jobs: JobResumen[]; nextCursor: string | null };
+export type LimiteUso = { included: number | null; used: number; available: number | null };
+export type SubscriptionResp = {
+  plan: string;
+  planName: string;
+  estado: "active" | "past_due" | "canceled";
+  consumoBloqueado: boolean;
+  period: string;
+  pricing: { monthlyUsd: number | null; additionalNumberUsd: number | null };
+  numbers: { included: number | null; additional: number; max: number | null; used: number; available: number | null; canBuyAdditional: boolean };
+  messages: { included: number | null; reserved: number; confirmed: number; used: number; available: number | null };
+  workspaces: LimiteUso;
+  members: LimiteUso;
+  limits: { messagesPerSecondPerNumber: number | null };
+};
 
 /** Cliente Developer con métodos por recurso. Un solo punto de fetch -- nunca fetch manual disperso en componentes. */
 export function createDevClient(deps: DevClientDeps) {
@@ -184,6 +198,15 @@ export function createDevClient(deps: DevClientDeps) {
       remove: (id: string) => solicitar<{ eliminado: boolean }>(deps, `/members/${id}`, { method: "DELETE" }),
     },
     jobs: (opts?: { limit?: number; cursor?: string }) => solicitar<JobsResp>(deps, "/jobs", { query: { limit: opts?.limit, cursor: opts?.cursor } }),
+    subscription: {
+      get: () => solicitar<SubscriptionResp>(deps, "/subscription"),
+      changePlan: (plan: string, motivo?: string) => solicitar<{ ok: boolean; plan: string }>(deps, "/subscription/plan", { method: "POST", body: { plan, motivo } }),
+      setAdditionalNumbers: (total: number, motivo?: string) => solicitar<{ ok: boolean; additionalNumbers: number }>(deps, "/subscription/additional-numbers", { method: "POST", body: { total, motivo } }),
+    },
+    workspaces: {
+      list: () => solicitar<{ workspaces: { workspaceId: string; createdAt?: string }[] }>(deps, "/workspaces"),
+      create: () => solicitar<{ workspaceId: string }>(deps, "/workspaces", { method: "POST", body: {} }),
+    },
   };
 }
 
