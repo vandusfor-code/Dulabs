@@ -63,6 +63,10 @@ function crearFakeEntradas() {
         ultimoWamidProcesado: params.wamid,
         notificadoAJessica: params.notificadoAJessica ?? false,
         productoInteresNombre: params.productoInteresNombre ?? null,
+        // Protección contra ciclo (autorizado) -- mismo default que
+        // mapearFila en producción (lib/amore-entrada-sesiones.ts): 0 hasta
+        // que actualizarEntrada lo cambie explícitamente.
+        intentosFallidosConsecutivos: 0,
       };
       filas.push(nueva);
       if (params.atencionHumanaDesde !== undefined) atencionHumanaDesdePorId.set(nueva.id, params.atencionHumanaDesde);
@@ -77,6 +81,7 @@ function crearFakeEntradas() {
         notificadoAJessica?: boolean;
         productoInteresNombre?: string | null;
         atencionHumanaDesde?: string | null;
+        intentosFallidosConsecutivos?: number;
       },
     ) => {
       const f = filas.find((x) => x.id === id);
@@ -508,14 +513,117 @@ describe("Defensivo -- si leer el estado falla (migración no aplicada todavía)
   });
 });
 
-describe("Opción inválida en modo 'inicio' -- nunca fuzzy, reenvía el mismo menú", () => {
-  it("un texto que no es exactamente '1', '2' o '3' no avanza", async () => {
+describe("Opción inválida en modo 'inicio' -- ni número ni intención resoluble, nunca repite el menú tal cual", () => {
+  it("un texto sin intención determinista reconocible no avanza de modo, pero ya no repite 'No reconocí esa opción'", async () => {
     const { deps, entradas, envios } = armarDeps();
     await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "hola", wamid: "w1" }, deps);
-    const r = await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "quiero una cita", wamid: "w2" }, deps);
+    const r = await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "El viernes tienes para ella?", wamid: "w2" }, deps);
     assert.equal(r.manejado, true);
-    assert.equal(entradas.filas[0]!.modo, "inicio", "nunca infiere la intención en el menú 1/2/3 -- solo número exacto");
-    assert.match(envios.enviados.at(-1)!.mensaje, /No reconocí esa opción/);
+    assert.equal(entradas.filas[0]!.modo, "inicio", "nunca infiere una intención inexistente -- sigue esperando 1/2/3 o una intención real");
+    assert.doesNotMatch(envios.enviados.at(-1)!.mensaje, /No reconocí esa opción/, "protección contra ciclo (autorizado) -- ya no repite el menú tal cual");
+  });
+});
+
+// --- Protección contra ciclo por cliente que ignora menús (autorizado) ----
+//
+// Bug reportado: un menú de bienvenida repetido indefinidamente cuando la
+// clienta responde con texto libre no resoluble ("Mi amiga tmb quiere", "El
+// viernes tienes para ella?"). Localizado en procesarEntradaAmore, rama
+// fila.modo==='inicio' (lib/amore-entrada-router.ts) -- capa distinta y
+// anterior a cualquier sesión de Agenda V2 (que ya tenía su propio anti-loop,
+// intacto, ver lib/agenda-v2/*.test.ts). Reutiliza EXACTAMENTE los detectores
+// deterministas ya existentes (detectarTriggerAgendaDeterminista,
+// detectarSolicitudAtencionHumana) para CASO A, y el mecanismo YA EXISTENTE
+// de atención humana (activarAtencionHumana/interceptarAtencionHumanaAmore)
+// para la transferencia -- nunca un segundo sistema de transferencia.
+describe("Protección contra ciclo (autorizado) -- cliente que ignora el menú de bienvenida con texto libre", () => {
+  it("Test A -- 'Quiero una cita' resuelve como la opción '1' sin exigir el número, nunca transfiere", async () => {
+    const { deps, entradas, iniciarAgenda } = armarDeps();
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "hola", wamid: "w1" }, deps);
+    const r = await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "Quiero una cita", wamid: "w2" }, deps);
+    assert.equal(r.manejado, true);
+    assert.equal(iniciarAgenda.llamadas.length, 1, "misma entrega directa a Agenda V2 que la opción '1' literal -- nunca pasa por Gemini");
+    assert.equal(entradas.filas[0]!.modo, "gemini");
+    assert.equal(entradas.filas[0]!.intentosFallidosConsecutivos, 0, "progreso real -- el contador nunca queda contaminado por fallos previos");
+  });
+
+  it("Test I -- 'Quiero una cita para el viernes' también resuelve como opción '1' -- nunca transfiere solo porque trae más texto", async () => {
+    const { deps, iniciarAgenda } = armarDeps();
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "hola", wamid: "w1" }, deps);
+    const r = await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "Quiero una cita para el viernes", wamid: "w2" }, deps);
+    assert.equal(r.manejado, true);
+    assert.equal(iniciarAgenda.llamadas.length, 1);
+  });
+
+  it("Test B -- 'Quiero hablar con una persona' resuelve como la opción '3' sin exigir el número", async () => {
+    const { deps, entradas, envios, nombreConocido } = armarDeps();
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "hola", wamid: "w1" }, deps);
+    const r = await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "Quiero hablar con una persona", wamid: "w2" }, deps);
+    assert.equal(r.manejado, true);
+    assert.equal(entradas.filas[0]!.modo, "atencion_humana");
+    assert.equal(entradas.filas[0]!.notificadoAJessica, true);
+    assert.equal(nombreConocido.llamadas.length, 1, "misma notificación real a Jessica que la opción '3' literal");
+    assert.equal(envios.enviados.at(-1)!.mensaje, "Entiendo que quieres hablar directamente con Jessica. 💗\nYa le notifiqué que deseas comunicarte con ella. En un momento te responderá directamente.");
+  });
+
+  it("Tests C/D/G -- primer texto libre sin intención resoluble ofrece orientación clara (nunca repite el menú, nunca transfiere todavía)", async () => {
+    const { deps, entradas, envios } = armarDeps();
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "hola", wamid: "w1" }, deps);
+    const r = await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "El viernes tienes para ella?", wamid: "w2" }, deps);
+    assert.equal(r.manejado, true);
+    assert.equal(entradas.filas[0]!.modo, "inicio", "todavía no transfiere en el primer fallo");
+    assert.equal(entradas.filas[0]!.intentosFallidosConsecutivos, 1);
+    assert.match(envios.enviados.at(-1)!.mensaje, /Parece que buscas algo diferente a las opciones del menú/);
+    assert.match(envios.enviados.at(-1)!.mensaje, /1\. Quiero una cita/, "mantiene la MISMA numeración 1\\/2\\/3, nunca una segunda numeración paralela");
+    assert.match(envios.enviados.at(-1)!.mensaje, /también puedo comunicarte directamente con alguien/, "ofrece el atajo de transferencia humana explícitamente");
+  });
+
+  it("Tests E/H -- segundo texto libre SEGUIDO sin intención resoluble transfiere a atención humana (nunca un tercer intento)", async () => {
+    const { deps, entradas, envios, nombreConocido } = armarDeps();
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "hola", wamid: "w1" }, deps);
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "Mi amiga tmb quiere", wamid: "w2" }, deps);
+    const r = await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "A las 4:30 el viernes para mi amiga por favor", wamid: "w3" }, deps);
+    assert.equal(r.manejado, true);
+    assert.equal(entradas.filas[0]!.modo, "atencion_humana", "nunca un tercer intento -- transfiere en el segundo fallo consecutivo");
+    assert.equal(entradas.filas[0]!.notificadoAJessica, true);
+    assert.equal(nombreConocido.llamadas.length, 1);
+    assert.equal(
+      envios.enviados.at(-1)!.mensaje,
+      "💗 Veo que esto es un poco diferente a lo que puedo resolver por aquí. Te voy a comunicar con alguien de nuestro equipo para que te ayude mejor. Un momento 💗",
+    );
+  });
+
+  it("Test N -- el contador se reinicia con progreso real: un fallo + una opción válida nunca acumula hacia la transferencia", async () => {
+    const { deps, entradas, iniciarAgenda } = armarDeps();
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "hola", wamid: "w1" }, deps);
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "El viernes tienes para ella?", wamid: "w2" }, deps);
+    assert.equal(entradas.filas[0]!.intentosFallidosConsecutivos, 1);
+
+    const r = await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "1", wamid: "w3" }, deps);
+    assert.equal(r.manejado, true);
+    assert.equal(entradas.filas[0]!.modo, "gemini", "la opción '1' real sigue funcionando igual después de un fallo previo");
+    assert.equal(iniciarAgenda.llamadas.length, 1);
+    assert.equal(entradas.filas[0]!.intentosFallidosConsecutivos, 0, "progreso real -- nunca conserva un fallo previo ya superado");
+  });
+
+  it("Test F/O -- tras la transferencia, el mecanismo YA EXISTENTE de atención humana deja al bot en silencio total (reutilizado, no un segundo sistema)", async () => {
+    const entradasCompartidas = crearFakeEntradas();
+    const { deps, envios } = armarDeps({
+      crearEntrada: entradasCompartidas.crearEntrada,
+      buscarEntrada: entradasCompartidas.buscarEntrada,
+      actualizarEntrada: entradasCompartidas.actualizarEntrada,
+    });
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "hola", wamid: "w1" }, deps);
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "Mi amiga tmb quiere", wamid: "w2" }, deps);
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "A las 4:30 el viernes para mi amiga por favor", wamid: "w3" }, deps);
+    assert.equal(entradasCompartidas.filas[0]!.modo, "atencion_humana");
+
+    const totalEnviosTrasTransferir = envios.enviados.length;
+    const gate = armarDepsGate({}, entradasCompartidas);
+    const r = await interceptarAtencionHumanaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "Sí, a la misma hora?", wamid: "w4" }, gate.deps);
+    assert.equal(r.manejado, true, "el gate global de atención humana se queda con el mensaje -- Agenda V2/Gemini nunca lo evalúan");
+    assert.equal(gate.envios.enviados.length, 0, "ninguna respuesta automática nueva mientras está en atención humana");
+    assert.equal(envios.enviados.length, totalEnviosTrasTransferir, "procesarEntradaAmore ya ni siquiera se vuelve a llamar en producción para esta conversación (ver app/api/whatsapp-qr-bot/route.ts)");
   });
 });
 

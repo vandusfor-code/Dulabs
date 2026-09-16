@@ -23,6 +23,23 @@ export const MENSAJE_BIENVENIDA_1 = "¡Hola! 💗 Bienvenido/a a AMORE.\n\nEstoy
 export const MENSAJE_BIENVENIDA_2 = "¿Qué deseas hacer?\n\n1. Quiero una cita\n2. Quiero hacer una consulta\n3. Hablar con una persona";
 export const MENSAJE_MENU_INICIO_INVALIDO =
   "No reconocí esa opción 💗 Por favor responde con el número de una de estas:\n\n1. Quiero una cita\n2. Quiero hacer una consulta\n3. Hablar con una persona";
+
+// --- Protección contra ciclo (autorizado) -- cliente que ignora el menú de bienvenida ---
+//
+// Primer mensaje libre que no se pudo resolver (ni número exacto, ni
+// intención determinista equivalente a 1/3, ver detectarTriggerAgendaDeterminista/
+// detectarSolicitudAtencionHumana en procesarEntradaAmore): se reconoce que
+// el menú no encajó, se invita a responder en lenguaje natural O con el
+// mismo número (nunca se inventa una segunda numeración -- "1"/"2"/"3"
+// siguen significando exactamente lo mismo que siempre), y se ofrece
+// explícitamente el atajo de hablar con una persona.
+export const MENSAJE_MENU_INICIO_ORIENTACION =
+  "💗 Parece que buscas algo diferente a las opciones del menú. Cuéntame con tus palabras qué necesitas y trato de ayudarte, o si prefieres, responde con el número:\n\n1. Quiero una cita\n2. Quiero hacer una consulta\n3. Hablar con una persona\n\nSi prefieres, también puedo comunicarte directamente con alguien de nuestro equipo.";
+
+/** Segundo mensaje libre SEGUIDO que tampoco se pudo resolver -- transferencia real (nunca un tercer intento). Deliberadamente distinto de MENSAJE_ATENCION_HUMANA_CLIENTE (esa asume que la clienta SÍ pidió hablar con una persona; acá el bot es quien ofrece la salida porque no logró entender). */
+export const MENSAJE_TRANSFERENCIA_MENU_IGNORADO_CLIENTE =
+  "💗 Veo que esto es un poco diferente a lo que puedo resolver por aquí. Te voy a comunicar con alguien de nuestro equipo para que te ayude mejor. Un momento 💗";
+
 export const MENSAJE_GEMINI_BIENVENIDA = "Claro 💗 Cuéntame, ¿qué te gustaría saber?";
 export const MENSAJE_TRANSICION_AGENDA = "Perfecto 💗 Vamos a agendar tu cita.";
 export const MENSAJE_ERROR_GEMINI = "Disculpa, tuve un problema entendiendo tu mensaje 💗 ¿Puedes reformularlo?";

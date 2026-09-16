@@ -29,6 +29,17 @@ export interface EntradaAmore {
   notificadoAJessica: boolean;
   /** Fase 3 (compra de producto) -- nombre del producto detectado mientras modo está en compra_producto_opcion/compra_esperando_pago. null fuera de ese flujo. */
   productoInteresNombre: string | null;
+  /**
+   * Corrección post-deploy (autorizada, "protección contra ciclo por
+   * cliente que ignora menús") -- cuántos mensajes SEGUIDOS en modo='inicio'
+   * no se pudieron interpretar (ni número exacto, ni intención determinista
+   * equivalente), sin ningún avance real desde el último. Se reinicia a 0
+   * explícitamente en cada punto de progreso real (ver procesarEntradaAmore)
+   * -- nunca automático, para no afectar los ~15 demás llamadores de
+   * actualizarEntradaAmore en este archivo (registro/compra/gemini) que no
+   * necesitan saber que este contador existe.
+   */
+  intentosFallidosConsecutivos: number;
 }
 
 interface FilaDb {
@@ -39,6 +50,8 @@ interface FilaDb {
   ultimo_wamid_procesado: string | null;
   notificado_a_jessica: boolean;
   producto_interes_nombre: string | null;
+  /** Puede no existir todavía en producción si la migración no se ha aplicado -- ver mapearFila. */
+  intentos_fallidos_consecutivos?: number | null;
 }
 
 const TABLA = "dulabs_amore_entrada";
@@ -69,6 +82,7 @@ function mapearFila(fila: FilaDb): EntradaAmore {
     ultimoWamidProcesado: fila.ultimo_wamid_procesado,
     notificadoAJessica: fila.notificado_a_jessica,
     productoInteresNombre: fila.producto_interes_nombre ?? null,
+    intentosFallidosConsecutivos: fila.intentos_fallidos_consecutivos ?? 0,
   };
 }
 
@@ -114,6 +128,8 @@ export async function crearEntradaAmore(
     productoInteresNombre?: string | null;
     /** Expiración de atención humana (autorizado) -- ver obtenerAtencionHumanaDesde. Si la migración aún no corrió, se reintenta sin este campo (nunca rompe la creación real de la fila). */
     atencionHumanaDesde?: string | null;
+    /** Corrección post-deploy (autorizada, "protección contra ciclo") -- ver EntradaAmore.intentosFallidosConsecutivos. Si la migración aún no corrió, se reintenta sin este campo. */
+    intentosFallidosConsecutivos?: number;
   },
 ): Promise<EntradaAmore> {
   const base = {
@@ -125,8 +141,16 @@ export async function crearEntradaAmore(
     ...(params.productoInteresNombre !== undefined ? { producto_interes_nombre: params.productoInteresNombre } : {}),
   };
   const conAtencion = params.atencionHumanaDesde !== undefined ? { ...base, atencion_humana_desde: params.atencionHumanaDesde } : base;
+  const conContador =
+    params.intentosFallidosConsecutivos !== undefined
+      ? { ...conAtencion, intentos_fallidos_consecutivos: params.intentosFallidosConsecutivos }
+      : conAtencion;
 
-  let { data, error } = await supabase.from(TABLA).insert(conAtencion).select(COLUMNAS).single();
+  let { data, error } = await supabase.from(TABLA).insert(conContador).select(COLUMNAS).single();
+  if (error && CODIGOS_COLUMNA_INEXISTENTE.has(error.code) && conContador !== conAtencion) {
+    // Migración del contador todavía no aplicada -- reintenta sin ese campo.
+    ({ data, error } = await supabase.from(TABLA).insert(conAtencion).select(COLUMNAS).single());
+  }
   if (error && CODIGOS_COLUMNA_INEXISTENTE.has(error.code) && conAtencion !== base) {
     // Migración 20260924010000 (expiración de atención humana) todavía no
     // aplicada -- reintenta sin ese campo. activarAtencionHumana (el único
@@ -148,6 +172,8 @@ export async function actualizarEntradaAmore(
     productoInteresNombre?: string | null;
     /** Expiración de atención humana (autorizado) -- ver obtenerAtencionHumanaDesde. Si la migración aún no corrió, se reintenta sin este campo (nunca rompe la actualización real de la fila). */
     atencionHumanaDesde?: string | null;
+    /** Corrección post-deploy (autorizada, "protección contra ciclo") -- ver EntradaAmore.intentosFallidosConsecutivos. Si la migración aún no corrió, se reintenta sin este campo. */
+    intentosFallidosConsecutivos?: number;
   },
 ): Promise<void> {
   const base: Record<string, unknown> = { updated_at: new Date().toISOString() };
@@ -157,8 +183,16 @@ export async function actualizarEntradaAmore(
   if (cambios.productoInteresNombre !== undefined) base.producto_interes_nombre = cambios.productoInteresNombre;
   const conAtencion =
     cambios.atencionHumanaDesde !== undefined ? { ...base, atencion_humana_desde: cambios.atencionHumanaDesde } : base;
+  const conContador =
+    cambios.intentosFallidosConsecutivos !== undefined
+      ? { ...conAtencion, intentos_fallidos_consecutivos: cambios.intentosFallidosConsecutivos }
+      : conAtencion;
 
-  let { error } = await supabase.from(TABLA).update(conAtencion).eq("id", id);
+  let { error } = await supabase.from(TABLA).update(conContador).eq("id", id);
+  if (error && CODIGOS_COLUMNA_INEXISTENTE.has(error.code) && conContador !== conAtencion) {
+    // Migración del contador todavía no aplicada -- reintenta sin ese campo.
+    ({ error } = await supabase.from(TABLA).update(conAtencion).eq("id", id));
+  }
   if (error && CODIGOS_COLUMNA_INEXISTENTE.has(error.code) && conAtencion !== base) {
     // Mismo criterio que crearEntradaAmore -- reintenta sin el campo nuevo.
     ({ error } = await supabase.from(TABLA).update(base).eq("id", id));

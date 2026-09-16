@@ -39,7 +39,6 @@ import {
 import {
   MENSAJE_BIENVENIDA_1,
   MENSAJE_BIENVENIDA_2,
-  MENSAJE_MENU_INICIO_INVALIDO,
   MENSAJE_GEMINI_BIENVENIDA,
   MENSAJE_TRANSICION_AGENDA,
   MENSAJE_ATENCION_HUMANA_CLIENTE,
@@ -73,6 +72,8 @@ import {
   construirMensajeNotificacionJessica,
   clasificarMensajeConGemini,
   type IntentGemini,
+  MENSAJE_MENU_INICIO_ORIENTACION,
+  MENSAJE_TRANSFERENCIA_MENU_IGNORADO_CLIENTE,
 } from "@/lib/amore-entrada-gemini";
 import { listarProductosActivos } from "@/lib/amore-inventario";
 
@@ -165,7 +166,7 @@ export async function procesarEntradaAmore(
       // resuelve de inmediato con el link de la tienda, sin forzar a elegir
       // 1/2/3 primero. Nunca avanza de modo (se queda en "inicio").
       if (detectarInteresGeneralProductos(texto)) {
-        await actualizarEntrada(params.supabase, fila.id, { ultimoWamidProcesado: params.wamid });
+        await actualizarEntrada(params.supabase, fila.id, { ultimoWamidProcesado: params.wamid, intentosFallidosConsecutivos: 0 });
         await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_INTERES_PRODUCTOS, origen: "automatico" });
         return { manejado: true };
       }
@@ -174,24 +175,27 @@ export async function procesarEntradaAmore(
         // OPCIÓN 1 -- entrega inmediata a Agenda V2. NUNCA pasa por Gemini,
         // NUNCA hace clasificación de intención, NUNCA conversación
         // intermedia (sección OPCIÓN 1 del pedido).
-        await actualizarEntrada(params.supabase, fila.id, { modo: "gemini", ultimoWamidProcesado: params.wamid });
+        await actualizarEntrada(params.supabase, fila.id, { modo: "gemini", ultimoWamidProcesado: params.wamid, intentosFallidosConsecutivos: 0 });
         await iniciarAgendaV2({ supabase: params.supabase, idTenant: params.idTenant, telefono: params.telefono, wamid: params.wamid });
         return { manejado: true };
       }
 
       if (texto === "2") {
         // OPCIÓN 2 -- entra al modo conversacional con Gemini.
-        await actualizarEntrada(params.supabase, fila.id, { modo: "gemini", ultimoWamidProcesado: params.wamid });
+        await actualizarEntrada(params.supabase, fila.id, { modo: "gemini", ultimoWamidProcesado: params.wamid, intentosFallidosConsecutivos: 0 });
         await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_GEMINI_BIENVENIDA, origen: "automatico" });
         return { manejado: true };
       }
 
-      if (texto === "3") {
-        // OPCIÓN 3 (Fase 1, autorizado) -- derivación humana directa desde el
-        // menú inicial. Nunca puede haber una sesión Agenda V2 activa en este
-        // punto (procesarMensajeConAgendaV2 ya se evaluó antes y devolvió
-        // manejado:false, o este mensaje jamás habría llegado hasta acá) --
-        // por eso este branch no necesita "pausar" nada, solo activar el modo.
+      if (texto === "3" || detectarSolicitudAtencionHumana(texto)) {
+        // OPCIÓN 3 (Fase 1, autorizado), AHORA TAMBIÉN equivalente en
+        // lenguaje natural (protección contra ciclo, CASO A -- "quiero
+        // hablar con una persona" resuelve exactamente igual que "3", nunca
+        // se le exige usar el número). Nunca puede haber una sesión Agenda
+        // V2 activa en este punto (procesarMensajeConAgendaV2 ya se evaluó
+        // antes y devolvió manejado:false, o este mensaje jamás habría
+        // llegado hasta acá) -- por eso este branch no necesita "pausar"
+        // nada, solo activar el modo.
         return await activarAtencionHumana(params, {
           fila,
           enviarMensaje,
@@ -201,10 +205,48 @@ export async function procesarEntradaAmore(
         });
       }
 
-      // Mismo criterio EXACTO que el resto de Agenda V2: solo número exacto
-      // (1-3), nunca fuzzy -- se reenvía el mismo menú, sin avanzar.
-      await actualizarEntrada(params.supabase, fila.id, { ultimoWamidProcesado: params.wamid });
-      await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_MENU_INICIO_INVALIDO, origen: "automatico" });
+      // Protección contra ciclo (autorizado, CASO A) -- "quiero una cita"/
+      // "necesito agendar"/etc. resuelven exactamente igual que "1", nunca
+      // se le exige usar el número (mismo detector determinista que ya usa
+      // el fast-track de modo='gemini' más abajo en este archivo -- nunca
+      // una segunda lista de frases divergente para el mismo concepto).
+      if (detectarTriggerAgendaDeterminista(texto)) {
+        await actualizarEntrada(params.supabase, fila.id, { modo: "gemini", ultimoWamidProcesado: params.wamid, intentosFallidosConsecutivos: 0 });
+        await iniciarAgendaV2({ supabase: params.supabase, idTenant: params.idTenant, telefono: params.telefono, wamid: params.wamid });
+        return { manejado: true };
+      }
+
+      // Protección contra ciclo (autorizado, CASO B/C/D) -- ni número exacto
+      // (1-3) ni intención determinista equivalente: mismo criterio EXACTO
+      // que intentos_fallidos_consecutivos de Agenda V2
+      // (lib/agenda-v2/sesiones.ts), pero en la columna propia de
+      // dulabs_amore_entrada (acá todavía no existe ninguna sesión de
+      // Agenda V2 -- ver la migración 20261008000000). Primer fallo:
+      // orientación clara sin repetir el mismo mensaje. Segundo fallo
+      // SEGUIDO sin ningún progreso real: transferencia humana real (nunca
+      // un tercer intento, nunca solo una promesa de "te paso con alguien"
+      // sin ejecutarla de verdad).
+      const intentosFallidosNuevos = fila.intentosFallidosConsecutivos + 1;
+      if (intentosFallidosNuevos >= 2) {
+        // Sin `mensajeJessica` custom a propósito -- activarAtencionHumana ya
+        // arma la notificación con el nombre real (una sola consulta a
+        // nombreConocido, no dos) y su motivo por defecto
+        // (MOTIVO_ATENCION_HUMANA_DEFECTO) es suficientemente genérico; solo
+        // el mensaje al CLIENTE necesita ser distinto acá (el bot está
+        // ofreciendo la salida porque no entendió, no porque la clienta pidió
+        // explícitamente hablar con alguien).
+        return await activarAtencionHumana(params, {
+          fila,
+          enviarMensaje,
+          crearEntrada,
+          actualizarEntrada,
+          buscarNombreConocidoDep: deps.buscarNombreConocido ?? nombreConocido,
+          mensajeCliente: MENSAJE_TRANSFERENCIA_MENU_IGNORADO_CLIENTE,
+        });
+      }
+
+      await actualizarEntrada(params.supabase, fila.id, { ultimoWamidProcesado: params.wamid, intentosFallidosConsecutivos: intentosFallidosNuevos });
+      await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_MENU_INICIO_ORIENTACION, origen: "automatico" });
       return { manejado: true };
     }
 

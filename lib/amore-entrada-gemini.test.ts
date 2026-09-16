@@ -18,6 +18,8 @@ import {
   MENSAJE_DESPEDIDA,
   MENSAJE_NO_ENTENDI_REPETIR,
   NUMERO_JESSICA,
+  MENSAJE_MENU_INICIO_ORIENTACION,
+  MENSAJE_TRANSFERENCIA_MENU_IGNORADO_CLIENTE,
 } from "@/lib/amore-entrada-gemini";
 import type { GeminiGenerateContentClient } from "@/lib/flow/gemini/gemini-types";
 
@@ -29,6 +31,18 @@ describe("Textos exactos pedidos", () => {
 
   it("MENSAJE_MENU_INICIO_INVALIDO también ofrece la opción 3", () => {
     assert.match(MENSAJE_MENU_INICIO_INVALIDO, /3\. Hablar con una persona/);
+  });
+
+  it("Protección contra ciclo (autorizado) -- MENSAJE_MENU_INICIO_ORIENTACION mantiene la MISMA numeración 1/2/3 y ofrece el atajo humano", () => {
+    assert.match(MENSAJE_MENU_INICIO_ORIENTACION, /1\. Quiero una cita/);
+    assert.match(MENSAJE_MENU_INICIO_ORIENTACION, /2\. Quiero hacer una consulta/);
+    assert.match(MENSAJE_MENU_INICIO_ORIENTACION, /3\. Hablar con una persona/);
+    assert.match(MENSAJE_MENU_INICIO_ORIENTACION, /también puedo comunicarte directamente con alguien/);
+  });
+
+  it("Protección contra ciclo (autorizado) -- MENSAJE_TRANSFERENCIA_MENU_IGNORADO_CLIENTE es distinto de MENSAJE_ATENCION_HUMANA_CLIENTE", () => {
+    assert.notEqual(MENSAJE_TRANSFERENCIA_MENU_IGNORADO_CLIENTE, MENSAJE_ATENCION_HUMANA_CLIENTE);
+    assert.match(MENSAJE_TRANSFERENCIA_MENU_IGNORADO_CLIENTE, /comunicar con alguien de nuestro equipo/);
   });
 
   it("MENSAJE_GEMINI_BIENVENIDA / MENSAJE_TRANSICION_AGENDA", () => {
