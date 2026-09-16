@@ -227,6 +227,10 @@ lib/developer/whatsapp-numbers-store.e2e.test.ts
 lib/developer/webhook-config-store.e2e.test.ts
 lib/developer/jobs-store.e2e.test.ts
 lib/developer/usage-ledger.e2e.test.ts
+lib/developer/plans.e2e.test.ts
+lib/developer/usage-mensual.e2e.test.ts
+lib/developer/numeros-limite.e2e.test.ts
+services/gateway/facturacion-limits.e2e.test.ts
 lib/developer/events-store.e2e.test.ts
 lib/developer/rls-isolation.e2e.test.ts
 services/gateway/inbound-handler.e2e.test.ts

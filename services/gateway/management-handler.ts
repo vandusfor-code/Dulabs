@@ -1,7 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { crearApiKey, listarApiKeys, revocarApiKey } from "@/lib/developer/api-keys-store";
-import { registrarNumero, listarNumeros, obtenerNumeroDelWorkspace } from "@/lib/developer/whatsapp-numbers-store";
+import { registrarNumeroConLimite, listarNumeros, obtenerNumeroDelWorkspace } from "@/lib/developer/whatsapp-numbers-store";
 import { configurarWebhook } from "@/lib/developer/webhook-config-store";
+import { resolverLimitesDelWorkspace } from "@/lib/developer/plans";
 
 // DuLabs Developer V1 -- Fase 3 (autorizado, sección A/N del documento de
 // infraestructura -- "Management API cerrada en Cloud Run"). CRUD mínimo
@@ -68,8 +69,25 @@ export async function manejarRevocarApiKey(deps: DependenciasManagement, workspa
 export async function manejarRegistrarNumero(deps: DependenciasManagement, workspaceId: string, cuerpo: unknown): Promise<RespuestaManagement> {
   const body = cuerpo as { phoneNumberId?: string; wabaId?: string; displayName?: string; metaToken?: string } | null;
   if (!body?.phoneNumberId) return { status: 400, cuerpo: { error: "Falta 'phoneNumberId'" } };
-  const resultado = await registrarNumero(deps.supabase, { workspaceId, phoneNumberId: body.phoneNumberId, wabaId: body.wabaId, displayName: body.displayName, metaToken: body.metaToken });
-  if (!resultado.ok) return { status: 409, cuerpo: { error: resultado.motivo } };
+
+  // Fase 7 (autorizado) -- límite de números incluidos del plan, aplicado
+  // de forma atómica (ver registrarNumeroConLimite). Una reconexión del
+  // mismo número no consume cupo. null = plan sin límite.
+  const limites = await resolverLimitesDelWorkspace(deps.supabase, workspaceId);
+  const resultado = await registrarNumeroConLimite(deps.supabase, {
+    workspaceId,
+    phoneNumberId: body.phoneNumberId,
+    wabaId: body.wabaId,
+    displayName: body.displayName,
+    metaToken: body.metaToken,
+    limiteNumeros: limites.numerosIncluidos,
+  });
+  if (!resultado.ok) {
+    if (resultado.motivo === "limite_numeros_excedido") {
+      return { status: 403, cuerpo: { error: "number_limit_exceeded", detalle: `El plan ${limites.planCodigo} incluye ${limites.numerosIncluidos} números` } };
+    }
+    return { status: 409, cuerpo: { error: resultado.motivo } };
+  }
   return { status: 201, cuerpo: { numero: resultado.fila } };
 }
 

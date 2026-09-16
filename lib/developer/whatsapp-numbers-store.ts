@@ -58,6 +58,56 @@ export async function registrarNumero(
   return { ok: true, fila: data as NumeroWhatsAppFila };
 }
 
+export type ResultadoRegistroNumeroConLimite =
+  | { ok: true; fila: NumeroWhatsAppFila; reconectado: boolean }
+  | { ok: false; motivo: "numero_ya_conectado_a_otro_workspace" | "limite_numeros_excedido" };
+
+/**
+ * Fase 7 (autorizado) -- registro de número con límite de plan aplicado de
+ * forma ATÓMICA (función dulabs_dev_registrar_numero_con_limite, migración
+ * 20261013000000). A diferencia de registrarNumero() (que no conoce límites
+ * y se mantiene para usos internos/tests), esta variante:
+ *   - cuenta contra `numeros_incluidos` del plan SOLO los números NUEVOS
+ *     (una reconexión del mismo phone_number_id del mismo workspace no
+ *     consume cupo);
+ *   - protege contra creación concurrente (advisory lock por workspace en
+ *     la función) -> dos altas simultáneas de números distintos con un solo
+ *     cupo libre nunca superan el límite;
+ *   - nunca crea el número si la cuota no lo permite (rechazo, sin fila
+ *     parcial).
+ * `limiteNumeros` null = plan sin límite de números -> no se aplica.
+ * El token de Meta se cifra ACÁ (TS) antes de llamar a la función -- nunca
+ * viaja en claro hacia Postgres.
+ */
+export async function registrarNumeroConLimite(
+  supabase: SupabaseClient,
+  params: { workspaceId: string; phoneNumberId: string; wabaId?: string | null; displayName?: string | null; metaToken?: string | null; limiteNumeros: number | null }
+): Promise<ResultadoRegistroNumeroConLimite> {
+  const tokenCifrado = params.metaToken ? await cifrarSecretoDev(params.metaToken) : null;
+
+  const { data, error } = await supabase.rpc("dulabs_dev_registrar_numero_con_limite", {
+    p_workspace_id: params.workspaceId,
+    p_phone_number_id: params.phoneNumberId,
+    p_waba_id: params.wabaId ?? null,
+    p_display_name: params.displayName ?? null,
+    p_meta_token_cifrado: tokenCifrado,
+    p_limite_numeros: params.limiteNumeros,
+  });
+  if (error) throw new Error(`[developer/whatsapp-numbers-store] error registrando número con límite: ${error.message}`);
+
+  const filaRpc = Array.isArray(data) ? data[0] : data;
+  if (!filaRpc) throw new Error("[developer/whatsapp-numbers-store] la función de registro con límite no devolvió resultado");
+
+  if (filaRpc.resultado === "numero_ya_conectado_a_otro_workspace") return { ok: false, motivo: "numero_ya_conectado_a_otro_workspace" };
+  if (filaRpc.resultado === "limite_numeros_excedido") return { ok: false, motivo: "limite_numeros_excedido" };
+
+  // 'creado' | 'reconectado' -- re-proyecta la fila pública (nunca el token
+  // cifrado) reusando la consulta ya existente scoped por workspace.
+  const fila = await obtenerNumeroDelWorkspace(supabase, { workspaceId: params.workspaceId, numeroId: filaRpc.numero_id as string });
+  if (!fila) throw new Error("[developer/whatsapp-numbers-store] número registrado pero no recuperable (inconsistencia inesperada)");
+  return { ok: true, fila, reconectado: filaRpc.resultado === "reconectado" };
+}
+
 export async function listarNumeros(supabase: SupabaseClient, workspaceId: string): Promise<NumeroWhatsAppFila[]> {
   const { data, error } = await supabase
     .from("dulabs_dev_whatsapp_numbers")

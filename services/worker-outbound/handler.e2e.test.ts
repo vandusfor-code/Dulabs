@@ -62,7 +62,7 @@ describe(
         idempotencyKey: `idem-${randomUUID()}`,
         payload: { whatsappNumberId: numero.fila.id, to: "573000000000", type: "text", text: { body: "hola" } },
       });
-      if (job.resultado === "conflicto_payload_distinto") throw new Error("no debería haber conflicto");
+      if (!("jobId" in job)) throw new Error("no debería haber conflicto ni límite excedido");
       return { numeroId: numero.fila.id, jobId: job.jobId, phoneNumberId };
     }
 
@@ -323,7 +323,7 @@ describe(
       if (!numero.ok) throw new Error("no se pudo crear número");
       // Payload deliberadamente incompleto -- simula un dato corrupto/legado.
       const job = await crearJobConIdempotencia(admin, { workspaceId, whatsappNumberId: numero.fila.id, idempotencyKey: `idem-${randomUUID()}`, payload: { to: "573000000000" } });
-      if (job.resultado === "conflicto_payload_distinto") throw new Error("no debería haber conflicto");
+      if (!("jobId" in job)) throw new Error("no debería haber conflicto ni límite excedido");
 
       let llamadas = 0;
       const fetchFixture = (async () => {

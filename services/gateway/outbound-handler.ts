@@ -78,6 +78,14 @@ export async function manejarMensajeSaliente(deps: DependenciasOutbound, req: Re
       return errorApi(409, "idempotency_conflict", "Ya existe una operación con esa Idempotency-Key pero con un payload distinto", req.requestId);
     }
 
+    // Fase 7 (autorizado) -- cuota mensual del plan agotada. La reserva
+    // atómica ya garantizó que NO se creó job, NO se reservó usage y NO se
+    // dejó ningún idempotency-key huérfano; acá solo falta traducirlo al
+    // contrato público y NUNCA publicar a Pub/Sub.
+    if (resultado.resultado === "limite_excedido") {
+      return errorApi(429, "monthly_message_limit_exceeded", "Cuota mensual de mensajes del plan agotada", req.requestId);
+    }
+
     if (resultado.resultado === "duplicado_identico") {
       // Réplica exacta de un request ya procesado -- el job original ya fue
       // (o está siendo) publicado a Pub/Sub la primera vez; NO se vuelve a

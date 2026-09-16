@@ -62,7 +62,7 @@ describe(
         idempotencyKey: `idem-${randomUUID()}`,
         payload: { whatsappNumberId: numero.fila.id, to: "573000000000", type: "text", text: { body: "hola" } },
       });
-      if (job.resultado === "conflicto_payload_distinto") throw new Error("no debería haber conflicto");
+      if (!("jobId" in job)) throw new Error("no debería haber conflicto ni límite excedido");
       // Fase 3, cierre (hallazgo del usage_ledger) -- crearJobConIdempotencia
       // ya reserva internamente, no hace falta reservar acá aparte.
       return { numeroId: numero.fila.id, jobId: job.jobId, whatsappNumberId: numero.fila.id };
@@ -82,7 +82,7 @@ describe(
       const primerIntento = await procesarMensajeOutbound({ supabase: admin, metaGraphApiBaseUrl: "https://fixture.invalido", fetchImpl: fetchRechazo }, { workspaceId, jobId });
       assert.equal(primerIntento.httpStatus, 200);
 
-      let jobTrasPrimerIntento = await obtenerJobDelWorkspace(admin, { workspaceId, jobId });
+      const jobTrasPrimerIntento = await obtenerJobDelWorkspace(admin, { workspaceId, jobId });
       assert.equal(jobTrasPrimerIntento!.status, "retry_pending", "con intentos disponibles, un rechazo cierto debe dejarlo en retry_pending");
       assert.ok(jobTrasPrimerIntento!.next_attempt_at, "Fase 5 (D6) -- debe quedar un backoff real fijado");
 

@@ -1,8 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { randomUUID } from "node:crypto";
-import { reclamarIdempotencia } from "@/lib/developer/idempotency";
+import { hashPayload } from "@/lib/developer/idempotency";
 import { transicionar, estadoInicial, type EventoJob, type EstadoCompletoJob } from "@/lib/developer/outbound-state-machine";
-import { reservarUso } from "@/lib/developer/usage-ledger";
+import { reclamarYReservarMensaje } from "@/lib/developer/usage-ledger";
+import { resolverLimitesDelWorkspace } from "@/lib/developer/plans";
 
 // DuLabs Developer V1 -- Fase 2 (autorizado, secciones 9/10/11 del brief).
 // Persistencia real del job saliente + ownership/lease con CAS real
@@ -35,78 +36,58 @@ export type JobFila = {
 };
 
 /**
- * Reclama la idempotencia (Fase 1, sin modificar) Y crea la fila de job
- * persistente con el MISMO id -- la conexión entre ambas tablas que la
- * migración de Fase 2 documenta explícitamente que NO se hace vía foreign
- * key (para no romper el contrato ya probado de Fase 1), sino acá, en el
- * único punto de entrada real de un job nuevo.
+ * Reclama idempotencia + aplica la cuota mensual del plan + crea la fila de
+ * job + reserva el uso -- TODO en una sola transacción atómica de Postgres
+ * (función dulabs_dev_reclamar_reservar_mensaje, migración 20261013000000).
  *
- * Fase 3, cierre (hallazgo del usage_ledger) -- este es también el ÚNICO
- * punto real donde se llama a reservarUso() (Fase 2, lib/developer/usage-ledger.ts,
- * ya existía pero nunca se invocaba desde código de producción). Se
- * reserva acá, no en el Gateway ni en el Worker, porque:
- *   - es el único lugar donde el job_id ya está atómicamente decidido
- *     (viene del propio reclamo de idempotencia, UNIQUE(workspace_id,
- *     idempotency_key) real de Postgres) ANTES de reservar -- nunca se
- *     reserva "adivinando" un id que después podría no persistir;
- *   - una solicitud rechazada ANTES de llegar acá (auth inválida, falta
- *     Idempotency-Key, payload inválido, o un conflicto de idempotencia
- *     con payload distinto -- sección "conflicto_payload_distinto" arriba)
- *     nunca ejecuta esta función, así que nunca reserva;
- *   - "duplicado_identico" (réplica exacta de un request ya procesado)
- *     NUNCA crea una fila de job nueva ni debe crear una reserva nueva --
- *     reservarUso() ya es idempotente por su propio UNIQUE(job_id), así
- *     que reintentarla acá es un no-op seguro, y sirve como auto-sanación
- *     real ante el único caso borde posible: una ejecución anterior creó
- *     la fila de job pero se cayó (crash/timeout) antes de reservar -- un
- *     reintento real del desarrollador con la MISMA Idempotency-Key (el
- *     comportamiento esperado tras un error) completa la reserva que
- *     había quedado pendiente, sin inventar ninguna transacción nueva.
+ * Fase 7 (autorizado) -- prioridad máxima: reserva atómica y CERO
+ * idempotency-key/job huérfano cuando se excede la cuota. Antes (Fase 3/4)
+ * el reclamo de idempotencia, la inserción del job y reservarUso() eran
+ * tres pasos separados desde este módulo; agregar el límite mensual ahí
+ * habría dejado una ventana en la que un reclamo de idempotencia persiste
+ * pero la reserva se rechaza por cuota -> un idempotency-key apuntando a un
+ * job que nunca existió. Fusionar los tres pasos dentro de la función de
+ * Postgres elimina esa ventana por completo: si la cuota se excede, la
+ * función hace ROLLBACK de todo (incluido el reclamo de idempotencia).
+ *
+ * Semántica preservada EXACTA respecto a Fase 3/4:
+ *   - conflicto_payload_distinto -> nunca crea job ni reserva.
+ *   - duplicado_identico (réplica exacta) -> devuelve el MISMO job, NUNCA
+ *     una segunda reserva, NUNCA vuelve a chequear cuota (la reserva
+ *     original ya cuenta).
+ *   - nuevo -> job creado + reserva 'reservado' con el mismo job_id.
+ * Y una salida NUEVA de Fase 7:
+ *   - limite_excedido -> nada creado, nada reservado, nada publicado (el
+ *     Gateway lo traduce a 429 monthly_message_limit_exceeded).
+ *
+ * El límite mensual se resuelve desde el plan del workspace (DEVELOPER por
+ * defecto; null = plan sin límite -> no se aplica cuota). Ver lib/developer/plans.ts.
  */
 export async function crearJobConIdempotencia(
   supabase: SupabaseClient,
   params: { workspaceId: string; whatsappNumberId: string; idempotencyKey: string; payload: Record<string, unknown> }
-): Promise<{ resultado: "nuevo" | "duplicado_identico"; jobId: string } | { resultado: "conflicto_payload_distinto" }> {
-  const reclamo = await reclamarIdempotencia(supabase, {
+): Promise<{ resultado: "nuevo" | "duplicado_identico"; jobId: string } | { resultado: "conflicto_payload_distinto" } | { resultado: "limite_excedido" }> {
+  const limites = await resolverLimitesDelWorkspace(supabase, params.workspaceId);
+
+  const reserva = await reclamarYReservarMensaje(supabase, {
     workspaceId: params.workspaceId,
     idempotencyKey: params.idempotencyKey,
+    payloadHash: hashPayload(params.payload),
     payload: params.payload,
+    whatsappNumberId: params.whatsappNumberId,
+    limiteMensual: limites.mensajesMensualesIncluidos,
   });
-  if (reclamo.resultado === "conflicto_payload_distinto") return reclamo;
-  if (reclamo.resultado === "duplicado_identico") {
-    // Auto-sanación idempotente -- ver comentario de la función. Nunca debe
-    // romper una réplica que de otro modo sería exitosa: si esto falla de
-    // nuevo (ej. Postgres momentáneamente inalcanzable), se ignora y el
-    // caller igual recibe su "duplicado_identico" normal.
-    await reservarUso(supabase, { workspaceId: params.workspaceId, jobId: reclamo.jobId }).catch(() => {});
-    return { resultado: "duplicado_identico", jobId: reclamo.jobId };
-  }
 
-  // "nuevo": inserta la fila de job real con ESE mismo id. onConflict
-  // do-nothing por si dos requests concurrentes llegaran a pasar el
-  // reclamo de idempotencia (no debería, es atómico) y competir acá --
-  // nunca produce dos filas de job para el mismo id.
-  const { error } = await supabase
-    .from("dulabs_dev_jobs")
-    .insert({
-      id: reclamo.jobId,
-      workspace_id: params.workspaceId,
-      whatsapp_number_id: params.whatsappNumberId,
-      status: "created",
-      physical_outcome: "pre_send",
-      payload: params.payload,
-    });
-  if (error && error.code !== "23505") {
-    throw new Error(`[developer/jobs-store] error creando fila de job: ${error.message}`);
+  switch (reserva.resultado) {
+    case "nuevo":
+      return { resultado: "nuevo", jobId: reserva.jobId };
+    case "duplicado_identico":
+      return { resultado: "duplicado_identico", jobId: reserva.jobId };
+    case "conflicto_payload_distinto":
+      return { resultado: "conflicto_payload_distinto" };
+    case "limite_excedido":
+      return { resultado: "limite_excedido" };
   }
-
-  // Reserva real de uso -- job_id ya atómicamente decidido arriba. Se deja
-  // propagar un error real (nunca se traga silenciosamente): si falla acá,
-  // el caller (Gateway) responde error real, y el reintento del
-  // desarrollador con la MISMA Idempotency-Key cae en la rama
-  // "duplicado_identico" de arriba, que reintenta la reserva.
-  await reservarUso(supabase, { workspaceId: params.workspaceId, jobId: reclamo.jobId });
-  return { resultado: "nuevo", jobId: reclamo.jobId };
 }
 
 export async function obtenerJobDelWorkspace(supabase: SupabaseClient, params: { workspaceId: string; jobId: string }): Promise<JobFila | null> {

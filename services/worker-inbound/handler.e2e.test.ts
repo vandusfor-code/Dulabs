@@ -69,8 +69,8 @@ describe(
       const { numeroId, phoneNumberId } = await prepararNumero(ws);
       const eventoId = await persistir(ws, "received", payloadMensaje(phoneNumberId));
 
-      let posts = 0; let bodyEnviado: any = null; let headers: any = null;
-      const fetchFix = (async (_u: string, init?: RequestInit) => { posts++; bodyEnviado = JSON.parse(init!.body as string); headers = init!.headers; return new Response("ok", { status: 200 }); }) as typeof fetch;
+      let posts = 0; let bodyEnviado: Record<string, unknown> = {}; let headers: Record<string, string> = {};
+      const fetchFix = (async (_u: string, init?: RequestInit) => { posts++; bodyEnviado = JSON.parse(init!.body as string); headers = init!.headers as Record<string, string>; return new Response("ok", { status: 200 }); }) as typeof fetch;
 
       const r = await procesarMensajeInbound({ supabase: admin, fetchImpl: fetchFix, lookupDnsFn: lookupPublico }, { eventoId });
       assert.equal(r.httpStatus, 200);
@@ -127,7 +127,7 @@ describe(
       const eventoId = await persistir(ws, "received", payloadMensaje(phoneNumberId));
       const r1 = await procesarMensajeInbound({ supabase: admin, fetchImpl: (async () => new Response("boom", { status: 502 })) as typeof fetch, lookupDnsFn: lookupPublico }, { eventoId });
       assert.match(r1.motivo, /^entrega_reintentable:http_502$/);
-      let ev = await leerEvento(eventoId);
+      const ev = await leerEvento(eventoId);
       assert.equal(ev.entrega_estado, "fallido");
       assert.equal(ev.entrega_intentos, 1);
       assert.ok(new Date(ev.entrega_next_attempt_at!).getTime() > Date.now(), "backoff futuro");
@@ -150,7 +150,7 @@ describe(
 
     async function prepararJobConWamid(ws: string, numeroId: string, wamid: string, extra: Record<string, unknown> = {}) {
       const job = await crearJobConIdempotencia(admin, { workspaceId: ws, whatsappNumberId: numeroId, idempotencyKey: `idem-${randomUUID()}`, payload: { whatsappNumberId: numeroId, to: "573148127388", type: "text", text: { body: "x" } } });
-      if (job.resultado === "conflicto_payload_distinto") throw new Error("conflicto");
+      if (!("jobId" in job)) throw new Error("conflicto o límite excedido inesperado");
       await admin.from("dulabs_dev_jobs").update({ wamid, ...extra }).eq("id", job.jobId);
       return job.jobId;
     }
@@ -161,7 +161,7 @@ describe(
       const wamid = "wamid.OUTBOUND" + randomUUID().replace(/-/g, "");
       const jobId = await prepararJobConWamid(ws, numeroId, wamid);
 
-      let bodyEnviado: any = null;
+      let bodyEnviado: Record<string, unknown> = {};
       const fetchFix = (async (_u: string, init?: RequestInit) => { bodyEnviado = JSON.parse(init!.body as string); return new Response("ok", { status: 200 }); }) as typeof fetch;
       const eventoId = await persistir(ws, "delivered", payloadStatus(phoneNumberId, wamid, "delivered"));
       const r = await procesarMensajeInbound({ supabase: admin, fetchImpl: fetchFix, lookupDnsFn: lookupPublico }, { eventoId });

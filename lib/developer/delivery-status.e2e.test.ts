@@ -34,7 +34,7 @@ describe(
       const numero = await registrarNumero(admin, { workspaceId: ws, phoneNumberId: `1055500${Math.floor(Math.random() * 1e6)}`, metaToken: "EAAtoken" });
       if (!numero.ok) throw new Error("num");
       const job = await crearJobConIdempotencia(admin, { workspaceId: ws, whatsappNumberId: numero.fila.id, idempotencyKey: `idem-${randomUUID()}`, payload: { whatsappNumberId: numero.fila.id, to: "573000000000", type: "text", text: { body: "x" } } });
-      if (job.resultado === "conflicto_payload_distinto") throw new Error("conflicto");
+      if (!("jobId" in job)) throw new Error("conflicto o límite excedido inesperado");
       await admin.from("dulabs_dev_jobs").update({ wamid }).eq("id", job.jobId);
       return { jobId: job.jobId, numeroId: numero.fila.id };
     }
@@ -73,7 +73,7 @@ describe(
     it("guarda por número: un wamid del workspace correcto pero de OTRO número se rechaza (numero_no_coincide)", async () => {
       const ws = randomUUID(); workspaces.push(ws);
       const wamid = "wamid." + randomUUID().replace(/-/g, "");
-      const { jobId, numeroId } = await jobConWamid(ws, wamid);
+      const { jobId } = await jobConWamid(ws, wamid);
       // otro número del mismo workspace
       const otro = await registrarNumero(admin, { workspaceId: ws, phoneNumberId: `1055500${Math.floor(Math.random() * 1e6)}`, metaToken: "EAAtoken" });
       if (!otro.ok) throw new Error("num");

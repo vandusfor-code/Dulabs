@@ -13,7 +13,10 @@ export type CodigoErrorApi =
   | "not_found"
   | "idempotency_conflict"
   | "rate_limit_exceeded"
-  | "usage_limit_exceeded"
+  // Fase 7 (autorizado) -- cuota mensual de mensajes del plan agotada. Código
+  // estable del contrato público (reemplaza al 'usage_limit_exceeded' que se
+  // había declarado en Fase 4 pero nunca se usó en ningún handler).
+  | "monthly_message_limit_exceeded"
   | "internal_error";
 
 export type RespuestaApi = { status: number; cuerpo: Record<string, unknown>; headers?: Record<string, string> };

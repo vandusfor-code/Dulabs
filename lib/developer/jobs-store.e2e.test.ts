@@ -30,7 +30,7 @@ describe(
 
     async function crearJobDePrueba(workspaceId: string, numeroId: string): Promise<string> {
       const resultado = await crearJobConIdempotencia(admin, { workspaceId, whatsappNumberId: numeroId, idempotencyKey: `job-${randomUUID()}`, payload: { to: "573000000000" } });
-      if (resultado.resultado === "conflicto_payload_distinto") throw new Error("no debería haber conflicto en un job nuevo");
+      if (!("jobId" in resultado)) throw new Error("no debería haber conflicto ni límite excedido en un job nuevo");
       return resultado.jobId;
     }
 
@@ -295,7 +295,7 @@ describe(
       await aplicarEventoJob(admin, { workspaceId, jobId, leaseId: lease.leaseId, evento: { tipo: "encolar" } });
       await aplicarEventoJob(admin, { workspaceId, jobId, leaseId: lease.leaseId, evento: { tipo: "iniciar_envio" } });
       await aplicarEventoJob(admin, { workspaceId, jobId, leaseId: lease.leaseId, evento: { tipo: "meta_rechazo" } });
-      let job = await obtenerJobDelWorkspace(admin, { workspaceId, jobId });
+      const job = await obtenerJobDelWorkspace(admin, { workspaceId, jobId });
       assert.ok(job!.next_attempt_at);
 
       const reintento = await aplicarEventoJob(admin, { workspaceId, jobId, leaseId: lease.leaseId, evento: { tipo: "iniciar_envio" } });
