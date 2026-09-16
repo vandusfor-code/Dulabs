@@ -25,6 +25,7 @@ export const DEV_NAV: NavSection[] = [
   {
     title: "Workspace",
     items: [
+      { label: "Plan & Limits", href: "/developer/plan", icon: "gauge" },
       { label: "API Keys", href: "/developer/api-keys", icon: "key" },
       { label: "Members", href: "/developer/members", icon: "users" },
       { label: "Settings", href: "/developer/settings", icon: "settings" },
