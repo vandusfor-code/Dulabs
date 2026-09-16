@@ -47,8 +47,10 @@ export async function POST(request: NextRequest) {
       config: { appId, appSecret, graphVersion: process.env.META_GRAPH_VERSION, graphBaseUrl: process.env.META_GRAPH_API_BASE_URL },
     });
     if (!meta.ok) {
-      const status = meta.motivo === "code_invalido" ? 400 : 502;
-      return jsonError(status, meta.motivo, ctx.requestId, meta.detalle);
+      // Fallos de identidad/entrada (code inválido, phone no confirmado por
+      // Meta, número ambiguo) => 400. Fallos de Meta/red/descubrimiento => 502.
+      const esFalloDeEntrada = meta.motivo === "code_invalido" || meta.motivo === "phone_number_no_confirmado" || meta.motivo === "numero_ambiguo";
+      return jsonError(esFalloDeEntrada ? 400 : 502, meta.motivo, ctx.requestId, meta.detalle);
     }
 
     // 4-5. Cifrar el token y registrar con límite atómico (Fase 7). El token

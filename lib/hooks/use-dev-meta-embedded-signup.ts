@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { DevClient, ConnectResp } from "@/lib/dev-dashboard/dev-client";
 import { DevApiError } from "@/lib/dev-dashboard/dev-client";
+import { esOrigenMetaValido } from "@/lib/developer/meta-embedded-origin";
 
 // DuLabs Developer V1 -- Fase 10 (Onboarding + Conexión de WhatsApp,
 // autorizado). Hook de Meta Embedded Signup PROPIO de Developer -- archivo
@@ -63,7 +64,9 @@ export function useDevMetaEmbeddedSignup(params: { client: DevClient; onExito?: 
     if (configFaltante) return;
 
     const onMessage = (event: MessageEvent) => {
-      if (!event.origin.endsWith("facebook.com")) return;
+      // Validación EXACTA de origin (allowlist) -- nunca endsWith/includes:
+      // `evilfacebook.com` o `www.facebook.com.evil.com` deben ignorarse.
+      if (!esOrigenMetaValido(event.origin)) return;
       try {
         const data = JSON.parse(event.data as string);
         if (data?.type === "WA_EMBEDDED_SIGNUP" && data?.data) {

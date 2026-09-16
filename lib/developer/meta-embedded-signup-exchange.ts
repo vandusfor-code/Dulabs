@@ -39,7 +39,13 @@ export type DatosNumeroMeta = {
   tokenPermanente: string;
 };
 
-export type MotivoFalloExchange = "code_invalido" | "waba_no_determinado" | "numeros_no_encontrados" | "meta_error";
+export type MotivoFalloExchange =
+  | "code_invalido"
+  | "waba_no_determinado"
+  | "numeros_no_encontrados"
+  | "phone_number_no_confirmado"
+  | "numero_ambiguo"
+  | "meta_error";
 
 export type ResultadoExchange = { ok: true; datos: DatosNumeroMeta } | { ok: false; motivo: MotivoFalloExchange; detalle?: string };
 
@@ -109,7 +115,28 @@ export async function intercambiarYDescubrirNumeroMeta(params: {
     if (!phonesRes.ok || !phones.data?.length) {
       return { ok: false, motivo: "numeros_no_encontrados", detalle: phones.error?.message ?? "El WABA no tiene números" };
     }
-    const phone = phones.data.find((p) => p.id === params.phoneNumberIdSugerido) ?? phones.data[0]!;
+
+    // IDENTIDAD DEL NÚMERO = solo un phone_number_id CONFIRMADO por Meta.
+    // Nunca "el primer número disponible" (fallback eliminado, corrección de
+    // revisión de Fase 10).
+    let phone: { id: string; display_phone_number: string; verified_name?: string };
+    if (params.phoneNumberIdSugerido) {
+      // Si el popup entregó un phone_number_id, DEBE existir en la lista real
+      // del WABA. Si no está, se rechaza -- jamás se cae a otro número.
+      const encontrado = phones.data.find((p) => p.id === params.phoneNumberIdSugerido);
+      if (!encontrado) {
+        return { ok: false, motivo: "phone_number_no_confirmado", detalle: "El phone_number_id del signup no pertenece a los números reales del WABA" };
+      }
+      phone = encontrado;
+    } else if (phones.data.length === 1) {
+      // Sin sugerencia pero el WABA tiene EXACTAMENTE un número -> identidad
+      // inequívoca (no es "el primero de varios"). Se usa ese.
+      phone = phones.data[0]!;
+    } else {
+      // Sin sugerencia y varios números -> ambiguo. No se elige arbitrariamente
+      // ni se persiste ninguna conexión.
+      return { ok: false, motivo: "numero_ambiguo", detalle: "El WABA tiene varios números y el signup no indicó cuál conectar" };
+    }
 
     // Nombre del negocio: WABA.name, o verified_name del número como respaldo.
     const wabaRes = await doFetch(`${graph}/${encodeURIComponent(wabaId)}?fields=name`, { headers: { Authorization: `Bearer ${tokenPermanente}` } });

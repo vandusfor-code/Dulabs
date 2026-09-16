@@ -50,15 +50,47 @@ describe("Developer V1 Fase 10 -- intercambio Embedded Signup (puro)", () => {
     if (r.ok) assert.equal(r.datos.wabaId, "WABA-DESC");
   });
 
-  it("phone hint que NO está en la lista real -> cae al primer número real (nunca persiste uno no confirmado)", async () => {
+  it("[C] phone hint que NO está en la lista real -> ERROR phone_number_no_confirmado (NUNCA fallback al primero)", async () => {
     const fetchImpl = fetchFalso([
       { test: (u) => u.includes("/oauth/access_token"), responder: () => ({ json: { access_token: "T" } }) },
       { test: (u) => u.includes("/phone_numbers"), responder: () => ({ json: { data: [{ id: "REAL-1", display_phone_number: "+1 1" }] } }) },
       { test: (u) => u.includes("fields=name"), responder: () => ({ json: { name: "N" } }) },
     ]);
     const r = await intercambiarYDescubrirNumeroMeta({ code: "CODE", wabaIdSugerido: "W", phoneNumberIdSugerido: "FALSO-999", config: { ...CONFIG_BASE, fetchImpl } });
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.equal(r.motivo, "phone_number_no_confirmado");
+  });
+
+  it("[E] WABA con varios números + hint específico -> conecta EXACTAMENTE el solicitado", async () => {
+    const fetchImpl = fetchFalso([
+      { test: (u) => u.includes("/oauth/access_token"), responder: () => ({ json: { access_token: "T" } }) },
+      { test: (u) => u.includes("/phone_numbers"), responder: () => ({ json: { data: [{ id: "PN-A", display_phone_number: "+1 1" }, { id: "PN-B", display_phone_number: "+1 2" }, { id: "PN-C", display_phone_number: "+1 3" }] } }) },
+      { test: (u) => u.includes("fields=name"), responder: () => ({ json: { name: "N" } }) },
+    ]);
+    const r = await intercambiarYDescubrirNumeroMeta({ code: "CODE", wabaIdSugerido: "W", phoneNumberIdSugerido: "PN-B", config: { ...CONFIG_BASE, fetchImpl } });
     assert.equal(r.ok, true);
-    if (r.ok) assert.equal(r.datos.phoneNumberId, "REAL-1");
+    if (r.ok) assert.equal(r.datos.phoneNumberId, "PN-B");
+  });
+
+  it("[D] sin hint + WABA con VARIOS números -> ERROR numero_ambiguo (NUNCA phones.data[0])", async () => {
+    const fetchImpl = fetchFalso([
+      { test: (u) => u.includes("/oauth/access_token"), responder: () => ({ json: { access_token: "T" } }) },
+      { test: (u) => u.includes("/phone_numbers"), responder: () => ({ json: { data: [{ id: "PN-A", display_phone_number: "+1 1" }, { id: "PN-B", display_phone_number: "+1 2" }] } }) },
+    ]);
+    const r = await intercambiarYDescubrirNumeroMeta({ code: "CODE", wabaIdSugerido: "W", config: { ...CONFIG_BASE, fetchImpl } });
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.equal(r.motivo, "numero_ambiguo");
+  });
+
+  it("sin hint + WABA con UN solo número -> identidad inequívoca, usa ese", async () => {
+    const fetchImpl = fetchFalso([
+      { test: (u) => u.includes("/oauth/access_token"), responder: () => ({ json: { access_token: "T" } }) },
+      { test: (u) => u.includes("/phone_numbers"), responder: () => ({ json: { data: [{ id: "UNICO", display_phone_number: "+1 9" }] } }) },
+      { test: (u) => u.includes("fields=name"), responder: () => ({ json: { name: "N" } }) },
+    ]);
+    const r = await intercambiarYDescubrirNumeroMeta({ code: "CODE", wabaIdSugerido: "W", config: { ...CONFIG_BASE, fetchImpl } });
+    assert.equal(r.ok, true);
+    if (r.ok) assert.equal(r.datos.phoneNumberId, "UNICO");
   });
 
   it("code inválido -> {ok:false, code_invalido} y NUNCA expone token", async () => {
