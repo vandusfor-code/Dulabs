@@ -271,7 +271,7 @@ function crearFakeEntradasAmore() {
     filas,
     buscarEntradaAmoreDeps: async (_s: unknown, tenantId: string, telefono: string) => filas.find((f) => f.tenantId === tenantId && f.telefonoCliente === telefono) ?? null,
     crearEntradaAmoreDeps: async (_s: unknown, params: { tenantId: string; telefonoCliente: string; wamid: string; modo: ModoEntradaAmore }) => {
-      const nueva: EntradaAmore = { id: siguienteId++, tenantId: params.tenantId, telefonoCliente: params.telefonoCliente, modo: params.modo, ultimoWamidProcesado: params.wamid, notificadoAJessica: false, productoInteresNombre: null };
+      const nueva: EntradaAmore = { id: siguienteId++, tenantId: params.tenantId, telefonoCliente: params.telefonoCliente, modo: params.modo, ultimoWamidProcesado: params.wamid, notificadoAJessica: false, productoInteresNombre: null, intentosFallidosConsecutivos: 0 };
       filas.push(nueva);
       return nueva;
     },
