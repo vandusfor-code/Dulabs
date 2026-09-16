@@ -48,8 +48,19 @@ function LoginPageInterna() {
     if (planPorUrl) localStorage.setItem(PLAN_PENDIENTE_KEY, resolverPlanId(planPorUrl));
   }, [searchParams]);
 
+  // Si se llegó a /login desde una ruta protegida (p.ej. /developer redirige
+  // a /login?next=/developer), se respeta ese destino tras autenticar. SOLO
+  // rutas internas absolutas -- se rechaza cualquier cosa que pudiera abrir
+  // un redirect externo (//host, /\host, http://...). Sin `next`, el
+  // comportamiento por defecto de Business no cambia.
+  const destinoSeguroNext = (): string | null => {
+    const next = searchParams.get("next");
+    if (!next || !next.startsWith("/") || next.startsWith("//") || next.startsWith("/\\")) return null;
+    return next;
+  };
+
   const destinoTrasIniciarSesion = (esAdmin?: boolean) =>
-    esAdmin ? "/admin" : localStorage.getItem(PLAN_PENDIENTE_KEY) ? "/checkout" : "/dashboard/conexion";
+    destinoSeguroNext() ?? (esAdmin ? "/admin" : localStorage.getItem(PLAN_PENDIENTE_KEY) ? "/checkout" : "/dashboard/conexion");
 
   // Si ya hay sesión (recargó /login, o volvió con una pestaña vieja
   // abierta), se consulta /api/dashboard/me -- ÚNICA fuente de verdad de
