@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "tsx scripts/validate-release-config.mts && next build",
     "start": "next start",
     "lint": "eslint",
     "test:flow": "node scripts/run-test-flow.mjs"
