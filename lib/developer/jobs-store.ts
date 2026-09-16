@@ -96,6 +96,51 @@ export async function obtenerJobDelWorkspace(supabase: SupabaseClient, params: {
   return (data as JobFila) ?? null;
 }
 
+/**
+ * Fase 9 (autorizado, D2) -- lista paginada de jobs de UN workspace para el
+ * Dashboard (Jobs/Logs). Estrictamente scoped por workspace_id (nunca cruza
+ * tenant) y proyección SEGURA: solo columnas de estado/trazabilidad, NUNCA
+ * el payload (puede traer datos del mensaje) ni nada sensible. Paginación
+ * keyset por created_at desc (estable ante inserciones nuevas, sin offset).
+ * No toca la máquina de estados.
+ */
+export type JobResumen = {
+  id: string;
+  status: EstadoCompletoJob["status"];
+  physical_outcome: EstadoCompletoJob["physicalOutcome"];
+  network_attempts: number;
+  delivery_status: "sent" | "delivered" | "read" | "failed" | null;
+  wamid: string | null;
+  whatsapp_number_id: string;
+  created_at: string;
+  updated_at: string;
+};
+
+const COLUMNAS_JOB_RESUMEN = "id, status, physical_outcome, network_attempts, delivery_status, wamid, whatsapp_number_id, created_at, updated_at";
+
+export async function listarJobsDelWorkspace(
+  supabase: SupabaseClient,
+  params: { workspaceId: string; limit?: number; cursor?: string }
+): Promise<{ jobs: JobResumen[]; nextCursor: string | null }> {
+  const limite = Math.min(Math.max(params.limit ?? 20, 1), 100);
+  let consulta = supabase
+    .from("dulabs_dev_jobs")
+    .select(COLUMNAS_JOB_RESUMEN)
+    .eq("workspace_id", params.workspaceId)
+    .order("created_at", { ascending: false })
+    .limit(limite + 1);
+  if (params.cursor) consulta = consulta.lt("created_at", params.cursor);
+
+  const { data, error } = await consulta;
+  if (error) throw new Error(`[developer/jobs-store] error listando jobs del workspace: ${error.message}`);
+
+  const filas = (data ?? []) as JobResumen[];
+  const hayMas = filas.length > limite;
+  const jobs = hayMas ? filas.slice(0, limite) : filas;
+  const nextCursor = hayMas ? jobs[jobs.length - 1].created_at : null;
+  return { jobs, nextCursor };
+}
+
 export type ResultadoLease = { adquirido: true; leaseId: string; job: JobFila } | { adquirido: false; motivo: "ya_tomado" | "job_no_encontrado" };
 
 // Un lease se considera vencido después de este tiempo sin refrescar --

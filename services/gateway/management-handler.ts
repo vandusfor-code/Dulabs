@@ -4,6 +4,7 @@ import { registrarNumeroConLimite, listarNumeros, obtenerNumeroDelWorkspace } fr
 import { configurarWebhook } from "@/lib/developer/webhook-config-store";
 import { resolverLimitesDelWorkspace } from "@/lib/developer/plans";
 import { listarWorkspacesDelUsuario, listarMiembros, crearMiembro, cambiarRolMiembro, eliminarMiembro, type RolDev } from "@/lib/developer/memberships-store";
+import { resolverSesionWorkspace, resolverWorkspaceSeleccionado, type ContextoSesion } from "@/lib/developer/session-workspace";
 
 // DuLabs Developer V1 -- Fase 3 (autorizado, sección A/N del documento de
 // infraestructura -- "Management API cerrada en Cloud Run"). CRUD mínimo
@@ -15,57 +16,20 @@ import { listarWorkspacesDelUsuario, listarMiembros, crearMiembro, cambiarRolMie
 
 export type DependenciasManagement = { supabase: SupabaseClient };
 
-function extraerBearer(header: string | undefined): string | null {
-  if (!header || !header.startsWith("Bearer ")) return null;
-  return header.slice("Bearer ".length).trim();
-}
-
-/** Resuelve el user_id (Supabase Auth) desde el token de sesión. El Gateway corre con service_role (bypassea RLS), así que la identidad humana se valida acá vía auth.getUser, nunca confiando en un id del request. */
-async function resolverUsuarioDesdeToken(supabase: SupabaseClient, tokenSesion: string): Promise<string | null> {
-  const { data, error } = await supabase.auth.getUser(tokenSesion);
-  if (error || !data?.user) return null;
-  return data.user.id;
-}
-
-export type ContextoSesion = { workspaceId: string; userId: string; rol: RolDev };
 export type RespuestaManagement = { status: number; cuerpo: Record<string, unknown> };
 
-export type SeleccionWorkspace =
-  | { ok: true; workspaceId: string; rol: RolDev }
-  | { ok: false; status: number; error: string };
-
-/**
- * Fase 8 (autorizado, D3) -- selección de workspace para operaciones de
- * sesión. NUNCA confía en un workspace_id del cliente: `workspaceHeader`
- * (X-Dulabs-Workspace) solo se acepta si está dentro de los workspaces con
- * membresía Developer efectiva del usuario (incluye fallback Business, D2).
- * Si no se envía y el usuario tiene exactamente uno, se usa ese; si tiene
- * varios, se exige el header (nunca se elige uno "al azar").
- */
-export async function resolverWorkspaceSeleccionado(
-  supabase: SupabaseClient,
-  params: { userId: string; workspaceHeader?: string }
-): Promise<SeleccionWorkspace> {
-  const workspaces = await listarWorkspacesDelUsuario(supabase, params.userId);
-  if (workspaces.length === 0) return { ok: false, status: 401, error: "sin_membresia_activa" };
-
-  const header = params.workspaceHeader?.trim();
-  if (header) {
-    const match = workspaces.find((w) => w.workspaceId === header);
-    // Un workspace ajeno (o inexistente) enviado en el header NUNCA escala:
-    // se rechaza, no se "cae" a otro workspace del usuario.
-    if (!match) return { ok: false, status: 403, error: "workspace_no_autorizado" };
-    return { ok: true, workspaceId: match.workspaceId, rol: match.rol };
-  }
-  if (workspaces.length === 1) return { ok: true, workspaceId: workspaces[0].workspaceId, rol: workspaces[0].rol };
-  return { ok: false, status: 400, error: "workspace_ambiguo" };
-}
+// Fase 9 (D1) -- la resolución sesión->workspace->rol se movió a
+// lib/developer/session-workspace.ts (ÚNICA fuente de verdad, compartida con
+// las rutas Next del Dashboard). Se re-exportan los tipos/funciones que ya
+// consumían tests y server.ts, para no cambiar el contrato del Gateway.
+export type { ContextoSesion };
+export { resolverWorkspaceSeleccionado };
 
 /**
  * Autenticación + selección de workspace + autorización por rol para las
- * rutas de SESIÓN (/api/v1/dev/*). `rolesPermitidos` es la lista de roles
- * (D4) que pueden ejecutar la operación -- un rol fuera de esa lista recibe
- * 403 forbidden, nunca ejecuta el handler.
+ * rutas de SESIÓN (/api/v1/dev/*). Delega en resolverSesionWorkspace (D1) --
+ * mismo criterio EXACTO que usa el Dashboard, sin lógica de autorización
+ * duplicada. Un rol fuera de `rolesPermitidos` recibe 403, nunca ejecuta fn.
  */
 export async function conWorkspaceAutenticado(
   deps: DependenciasManagement,
@@ -74,18 +38,9 @@ export async function conWorkspaceAutenticado(
   rolesPermitidos: RolDev[],
   fn: (ctx: ContextoSesion) => Promise<RespuestaManagement>
 ): Promise<RespuestaManagement> {
-  const token = extraerBearer(autorizacion);
-  if (!token) return { status: 401, cuerpo: { error: "Falta Authorization: Bearer <sesión de Supabase>" } };
-  const userId = await resolverUsuarioDesdeToken(deps.supabase, token);
-  if (!userId) return { status: 401, cuerpo: { error: "Sesión inválida" } };
-
-  const seleccion = await resolverWorkspaceSeleccionado(deps.supabase, { userId, workspaceHeader });
-  if (!seleccion.ok) return { status: seleccion.status, cuerpo: { error: seleccion.error } };
-
-  if (!rolesPermitidos.includes(seleccion.rol)) {
-    return { status: 403, cuerpo: { error: "forbidden", detalle: `El rol ${seleccion.rol} no está autorizado para esta operación` } };
-  }
-  return fn({ workspaceId: seleccion.workspaceId, userId, rol: seleccion.rol });
+  const r = await resolverSesionWorkspace(deps.supabase, { autorizacion, workspaceHeader, rolesPermitidos });
+  if (!r.ok) return { status: r.status, cuerpo: { error: r.error } };
+  return fn(r.ctx);
 }
 
 export async function manejarCrearApiKey(deps: DependenciasManagement, workspaceId: string, cuerpo: unknown): Promise<RespuestaManagement> {

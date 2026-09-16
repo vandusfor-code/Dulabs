@@ -999,3 +999,52 @@ body {
     0 48px 100px -40px rgba(17, 17, 17, 0.16),
     0 16px 44px -28px rgba(17, 17, 17, 0.08);
 }
+
+/* ---------- Developer Dashboard palette (fixed dark, scoped via .dev-scope) ----------
+   DuLabs Developer V1 -- Fase 9 (autorizado, D3). Identidad propia,
+   premium/técnica (estilo Vercel/Linear/Supabase), DELIBERADAMENTE distinta
+   de Business (.dash-scope, acento lime) y de AMORE. Acento índigo técnico.
+   Sin gradientes, sin glassmorphism. Todo scoped: no afecta a ningún otro
+   producto. */
+@theme {
+  --color-dev-accent: oklch(0.62 0.19 264);
+  --color-dev-accent-hover: oklch(0.68 0.19 264);
+  --color-dev-accent-fg: oklch(0.98 0 0);
+  --color-dev-accent-soft: oklch(0.62 0.19 264 / 16%);
+}
+.dev-scope {
+  --color-ink: oklch(0.145 0.005 265);
+  --color-ink-2: oklch(0.176 0.006 265);
+  --color-card: oklch(0.198 0.006 265);
+  --color-mist: oklch(0.645 0.012 265);
+  --color-edge: oklch(1 0 0 / 8%);
+  --color-fg: oklch(0.97 0.003 265);
+
+  /* Tonos de estado para badges/barras en fondo oscuro (bg tenue + texto vivo). */
+  --color-success: oklch(0.27 0.05 155);
+  --color-success-text: oklch(0.82 0.16 158);
+  --color-warning: oklch(0.29 0.06 75);
+  --color-warning-text: oklch(0.86 0.15 85);
+  --color-danger: oklch(0.29 0.08 22);
+  --color-danger-text: oklch(0.77 0.17 22);
+
+  background: var(--color-ink);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+.dev-scope ::selection {
+  background: var(--color-dev-accent-soft);
+}
+/* Scrollbar sobria, técnica. */
+.dev-scope ::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.dev-scope ::-webkit-scrollbar-thumb {
+  background: oklch(1 0 0 / 10%);
+  border-radius: 6px;
+}
+.dev-scope ::-webkit-scrollbar-track {
+  background: transparent;
+}

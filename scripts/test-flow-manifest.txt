@@ -234,6 +234,10 @@ services/gateway/facturacion-limits.e2e.test.ts
 lib/developer/memberships-store.e2e.test.ts
 lib/developer/memberships-rls.e2e.test.ts
 services/gateway/identidad-acceso.e2e.test.ts
+lib/dev-dashboard/dev-logic.test.ts
+lib/dev-dashboard/dev-client.test.ts
+app/api/developer/dev-routes.e2e.test.ts
+components/developer/dashboard-ui.dom.test.tsx
 lib/developer/events-store.e2e.test.ts
 lib/developer/rls-isolation.e2e.test.ts
 services/gateway/inbound-handler.e2e.test.ts
