@@ -20,15 +20,15 @@ function fmtUsd(n: number): string {
 }
 
 function caracteristicas(p: PlanPublico, t: (es: string, en: string) => string): string[] {
-  const fmtLimite = (n: number | null, es: string, en: string) =>
-    n === null ? t("Ilimitado", "Unlimited") + " " + t(es, en) : `${n.toLocaleString("en-US")} ${t(es, en)}`;
+  // Gramática correcta por idioma: ES pone "ilimitado(s)" tras el sustantivo;
+  // EN lo pone antes ("Unlimited ...").
+  const linea = (n: number | null, es: string, en: string, esIlim: string, enIlim: string) =>
+    n === null ? t(esIlim, enIlim) : `${n.toLocaleString("en-US")} ${t(es, en)}`;
   const out: string[] = [
-    p.mensajesMensualesIncluidos === null
-      ? t("Mensajes ilimitados", "Unlimited messages")
-      : `${p.mensajesMensualesIncluidos.toLocaleString("en-US")} ${t("mensajes/mes", "messages/mo")}`,
-    fmtLimite(p.numerosIncluidos, "números de WhatsApp", "WhatsApp numbers"),
-    fmtLimite(p.maxWorkspaces, "workspaces", "workspaces"),
-    fmtLimite(p.maxMembers, "miembros", "members"),
+    linea(p.mensajesMensualesIncluidos, "mensajes/mes", "messages/mo", "Mensajes ilimitados", "Unlimited messages"),
+    linea(p.numerosIncluidos, "números de WhatsApp", "WhatsApp numbers", "Números ilimitados", "Unlimited numbers"),
+    linea(p.maxWorkspaces, "workspaces", "workspaces", "Workspaces ilimitados", "Unlimited workspaces"),
+    linea(p.maxMembers, "miembros", "members", "Miembros ilimitados", "Unlimited members"),
   ];
   if (p.mensajesPorSegundoPorNumero !== null) {
     out.push(`${p.mensajesPorSegundoPorNumero} ${t("msg/seg por número", "msg/s per number")}`);
