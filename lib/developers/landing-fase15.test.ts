@@ -32,7 +32,9 @@ function archivosLanding(): string[] {
 
 describe("Fase 15 -- landing, rutas y CTAs", () => {
   it("las constantes de CTA apuntan a los destinos correctos", () => {
-    assert.equal(START_HREF, "/login?next=/developer");
+    // El CTA de "comenzar" pasó de /login?next=/developer al flujo de registro
+    // dedicado /developer-platform/registro (PR #50, registro + auto-provisión).
+    assert.equal(START_HREF, "/developer-platform/registro");
     assert.equal(DOCS_HREF, "/developers");
     assert.equal(LANDING_PATH, "/developer-platform");
   });

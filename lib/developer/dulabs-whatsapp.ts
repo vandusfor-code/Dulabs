@@ -40,11 +40,13 @@ async function resolverTokenDulabs(supabase: SupabaseClient): Promise<{ token: s
   return { token };
 }
 
-async function contarVariablesPlantilla(token: string, nombre: string): Promise<{ status: string; bodyVars: number } | { error: string }> {
-  const url = `${graphBase()}/${DULABS_WABA_ID}/message_templates?name=${encodeURIComponent(nombre)}&fields=name,status,components`;
+async function inspeccionarPlantilla(token: string, nombre: string): Promise<{ status: string; bodyVars: number; language: string } | { error: string }> {
+  // Incluye `language` para enviar SIEMPRE con el idioma REAL aprobado de la
+  // plantilla (no un código hardcodeado que Meta rechazaría con (#100)).
+  const url = `${graphBase()}/${DULABS_WABA_ID}/message_templates?name=${encodeURIComponent(nombre)}&fields=name,status,language,components`;
   const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
   const json = (await res.json().catch(() => null)) as
-    | { data?: { status: string; components?: { type: string; text?: string }[] }[]; error?: { message: string } }
+    | { data?: { status: string; language?: string; components?: { type: string; text?: string }[] }[]; error?: { message: string } }
     | null;
   if (!json) return { error: "respuesta no-JSON de Meta" };
   if (json.error) return { error: json.error.message };
@@ -52,7 +54,7 @@ async function contarVariablesPlantilla(token: string, nombre: string): Promise<
   if (!t) return { error: `plantilla ${nombre} no encontrada en el WABA` };
   const body = (t.components ?? []).find((c) => c.type === "BODY");
   const bodyVars = (body?.text?.match(/{{\d+}}/g) ?? []).length;
-  return { status: t.status, bodyVars };
+  return { status: t.status, bodyVars, language: t.language ?? "" };
 }
 
 /**
@@ -70,7 +72,7 @@ export async function enviarTemplateDulabs(
   const tok = await resolverTokenDulabs(supabase);
   if ("error" in tok) return { enviado: false, motivo: "sin_credenciales", detalle: tok.error };
 
-  const insp = await contarVariablesPlantilla(tok.token, input.nombrePlantilla);
+  const insp = await inspeccionarPlantilla(tok.token, input.nombrePlantilla);
   if ("error" in insp) return { enviado: false, motivo: "plantilla_no_consultable", detalle: insp.error };
   if (insp.status !== "APPROVED") return { enviado: false, motivo: "plantilla_no_aprobada", detalle: `status=${insp.status}` };
 
@@ -79,13 +81,17 @@ export async function enviarTemplateDulabs(
     return { enviado: false, motivo: "variables_no_coinciden", detalle: `plantilla espera ${insp.bodyVars}, se pasaron ${params.length}` };
   }
 
+  // Idioma REAL aprobado de la plantilla (fallback al solicitado). Evita el
+  // (#100) Invalid parameter por enviar con un código de idioma que no calza.
+  const idiomaReal = insp.language || input.idioma;
+
   try {
     const { wamid } = await enviarPlantilla({
       phoneNumberId: DULABS_PHONE_NUMBER_ID,
       token: tok.token,
       para: destino,
       nombrePlantilla: input.nombrePlantilla,
-      idioma: input.idioma,
+      idioma: idiomaReal,
       parametrosPosicionales: params.length > 0 ? params : undefined,
     });
     return { enviado: true, wamid };

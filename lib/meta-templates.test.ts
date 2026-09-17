@@ -7,7 +7,7 @@
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { construirComponentesPlantilla, contarVariablesPlantilla, normalizarNombrePlantilla } from "@/lib/meta-templates";
+import { construirComponentesPlantilla, contarVariablesPlantilla, normalizarNombrePlantilla, formatearErrorMeta } from "@/lib/meta-templates";
 
 describe("construirComponentesPlantilla", () => {
   it("solo BODY cuando no hay footer/header/botones/variables", () => {
@@ -137,5 +137,29 @@ describe("contarVariablesPlantilla (reutilizada por la validación de creación)
 describe("normalizarNombrePlantilla", () => {
   it("colapsa espacios/tildes/ñ a guion bajo y pasa a minúsculas", () => {
     assert.equal(normalizarNombrePlantilla("Promoción Año Nuevo"), "promoci_n_a_o_nuevo");
+  });
+});
+
+describe("formatearErrorMeta -- detalle accionable sin secretos", () => {
+  it("incluye code, subcode y error_data.details cuando Meta los da", () => {
+    const msg = formatearErrorMeta(400, {
+      message: "Invalid parameter",
+      code: 100,
+      error_subcode: 2494102,
+      error_data: { details: "The parameter template.language.code is invalid: es_CO" },
+    });
+    assert.match(msg, /400/);
+    assert.match(msg, /\(#100\)/);
+    assert.match(msg, /Invalid parameter/);
+    assert.match(msg, /subcode=2494102/);
+    assert.match(msg, /es_CO/);
+  });
+
+  it("degrada con gracia cuando faltan campos (solo message)", () => {
+    assert.equal(formatearErrorMeta(400, { message: "boom" }), "Meta respondió 400: boom");
+  });
+
+  it("nunca revienta si error es undefined", () => {
+    assert.match(formatearErrorMeta(500, undefined), /Meta respondió 500: sin detalle/);
   });
 });
