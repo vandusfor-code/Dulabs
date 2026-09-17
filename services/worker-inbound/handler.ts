@@ -162,6 +162,12 @@ export async function procesarMensajeInbound(deps: DependenciasWorkerInbound, me
         headers: { "Content-Type": "application/json", [HEADER_FIRMA]: firmado.firma, [HEADER_TIMESTAMP]: String(firmado.timestamp), [HEADER_EVENT_ID]: evento.event_id },
         body: cuerpo,
         signal: AbortSignal.timeout(10_000),
+        // Fase 16 (hardening SSRF): NUNCA seguir redirects. El SSRF guard valida
+        // la IP de webhook.url ANTES del fetch; si se siguiera un 3xx, el destino
+        // final (elegido por el endpoint del Developer) escaparía esa validación
+        // y podría apuntar a metadata/red interna. Un 3xx queda como respuesta no
+        // "ok" y no reintentable -> DLQ terminal (mismo criterio que el ping).
+        redirect: "manual",
       });
     } catch {
       // Timeout / conexión -- reintentable (nunca se filtra el error real al log).

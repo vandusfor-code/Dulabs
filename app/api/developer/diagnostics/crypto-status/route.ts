@@ -24,7 +24,12 @@ function claveValida(recibida: string | null, esperada: string | undefined): boo
 }
 
 export async function GET(request: NextRequest) {
-  if (!claveValida(request.nextUrl.searchParams.get("key"), process.env.DIAGNOSTICS_SECRET)) {
+  // Fase 16 (hardening): se acepta el secreto por Authorization: Bearer
+  // (preferido -- no queda en logs/referrer) o, por compatibilidad, ?key=.
+  const auth = request.headers.get("authorization") ?? "";
+  const bearer = auth.startsWith("Bearer ") ? auth.slice(7).trim() : null;
+  const clave = bearer || request.nextUrl.searchParams.get("key");
+  if (!claveValida(clave, process.env.DIAGNOSTICS_SECRET)) {
     return new Response("Forbidden", { status: 403 });
   }
 
