@@ -284,3 +284,8 @@ app/api/developers/plans/fase15-plans.e2e.test.ts
 
 # --- DuLabs Developer V1 Fase 16 (security/hardening) ---
 lib/developer/fase16-security.test.ts
+
+# --- DuLabs Developer V1 Fase 17 (hardening + chaos/concurrency) ---
+lib/developer/secure-webhook-delivery.test.ts
+lib/developer/client-ip.test.ts
+lib/developer/fase17-chaos-concurrency.e2e.test.ts
