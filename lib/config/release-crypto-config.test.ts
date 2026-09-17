@@ -87,3 +87,67 @@ describe("release-crypto-config -- validación de cifrado por producto", () => {
     assert.equal(r.ok, true);
   });
 });
+
+describe("release-crypto-config -- Fase 20 (B2): formato canónico + cobertura de lectura", () => {
+  const VARS = ["DEVELOPER_TOKEN_ENCRYPTION_MODE", "KMS_KEY_NAME", "DEVELOPER_TOKEN_ENCRYPTION_KEY"] as const;
+  let orig: Record<string, string | undefined>;
+  const KMS = "projects/p/locations/l/keyRings/r/cryptoKeys/k";
+  beforeEach(() => {
+    orig = {};
+    for (const v of VARS) {
+      orig[v] = process.env[v];
+      delete process.env[v];
+    }
+  });
+  afterEach(() => {
+    for (const v of VARS) {
+      if (orig[v] === undefined) delete process.env[v];
+      else process.env[v] = orig[v];
+    }
+  });
+
+  it("modo kms + KMS_KEY_NAME -> ok, canónico dev2, lee dev2 (no dev1 sin clave estática)", () => {
+    process.env.DEVELOPER_TOKEN_ENCRYPTION_MODE = "kms";
+    process.env.KMS_KEY_NAME = KMS;
+    const e = estadoCriptoDeveloper();
+    assert.equal(e.ok, true);
+    assert.equal(e.formatoCanonico, "dev2");
+    assert.equal(e.puedeLeerDev2, true);
+    assert.equal(e.puedeLeerDev1, false);
+    assert.equal(e.coberturaLectura, false);
+    assert.ok((e.advertencias ?? []).some((w) => /dev1 legacy/.test(w)));
+  });
+
+  it("FIX B2: modo kms SIN KMS_KEY_NAME (con clave estática presente) -> !ok (static no valida un runtime kms)", () => {
+    process.env.DEVELOPER_TOKEN_ENCRYPTION_MODE = "kms";
+    process.env.DEVELOPER_TOKEN_ENCRYPTION_KEY = "x".repeat(44); // presente, pero NO valida kms
+    const e = estadoCriptoDeveloper();
+    // La INTENCIÓN es dev2 (modo explícito), pero NO es alcanzable sin KMS_KEY_NAME:
+    // ok=false es la señal real de que no puede cifrar el canónico. La sola
+    // presencia de la clave estática NO lo valida (raíz de B2).
+    assert.equal(e.formatoCanonico, "dev2");
+    assert.equal(e.ok, false);
+    assert.equal(e.mecanismo, "kms");
+    assert.equal(e.puedeLeerDev2, false);
+  });
+
+  it("transición completa: modo kms + KMS + clave estática -> ok + cobertura de lectura completa, sin advertencias", () => {
+    process.env.DEVELOPER_TOKEN_ENCRYPTION_MODE = "kms";
+    process.env.KMS_KEY_NAME = KMS;
+    process.env.DEVELOPER_TOKEN_ENCRYPTION_KEY = "x".repeat(44);
+    const e = estadoCriptoDeveloper();
+    assert.equal(e.ok, true);
+    assert.equal(e.formatoCanonico, "dev2");
+    assert.equal(e.coberturaLectura, true);
+    assert.deepEqual(e.advertencias, []);
+  });
+
+  it("modo static explícito -> canónico dev1 (local/CI), mecanismo static", () => {
+    process.env.DEVELOPER_TOKEN_ENCRYPTION_MODE = "static";
+    process.env.DEVELOPER_TOKEN_ENCRYPTION_KEY = "x".repeat(44);
+    const e = estadoCriptoDeveloper();
+    assert.equal(e.ok, true);
+    assert.equal(e.formatoCanonico, "dev1");
+    assert.equal(e.mecanismo, "static");
+  });
+});
