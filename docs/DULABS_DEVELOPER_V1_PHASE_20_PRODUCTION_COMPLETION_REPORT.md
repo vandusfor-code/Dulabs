@@ -35,15 +35,15 @@ Creado en este ciclo (aditivo, no afecta Business/AMORE):
 **NOT VERIFIED (runtime):** el intercambio WIF real solo se puede probar con la app desplegada en Vercel con OIDC habilitado (no hay `VERCEL_OIDC_TOKEN` fuera de runtime). Ver §6/§9.
 
 ## 6. Variables configuradas (NOMBRES, nunca valores)
-**Pendiente de setear en Vercel Production (comandos en §23):** `DEVELOPER_TOKEN_ENCRYPTION_MODE=kms`, `KMS_KEY_NAME=…`, `GCP_WORKLOAD_IDENTITY_AUDIENCE=…`, `GCP_WORKLOAD_IDENTITY_SA_EMAIL=…`, conservar `DEVELOPER_TOKEN_ENCRYPTION_KEY` (lectura legacy). **No se modificó el proyecto Vercel compartido** (evita acoplar Business con una config a medias antes del deploy).
+**SET en Vercel Production (FIXED, este ciclo)** — valores no-secretos, inertes para Business/AMORE hasta el deploy de Developer: `DEVELOPER_TOKEN_ENCRYPTION_MODE=kms`, `KMS_KEY_NAME=projects/dulabs-developer-v1/…/dulabs-developer-master-key`, `GCP_WORKLOAD_IDENTITY_AUDIENCE=//iam.googleapis.com/projects/654668494598/…/providers/dulabs-vercel-provider`, `GCP_WORKLOAD_IDENTITY_SA_EMAIL=dulabs-vercel-kms@…`. `DEVELOPER_TOKEN_ENCRYPTION_KEY` conservada (lectura legacy). Solo scope Production (Preview no tocado).
 **Pendiente en Cloud Run:** `DEVELOPER_TOKEN_ENCRYPTION_KEY` (lectura de `dev1:` legacy) — **BLOCKED**: requiere el VALOR de la clave (vive cifrado en Vercel; no debo manipular plaintext de secretos). Debe hacerlo el owner vía Secret Manager reusando el mismo valor.
 
 ## 7. Deployments
 **Ninguno.** B1 preparado pero **no ejecutado**: desplegar a `www.dulabs.co` es publicar en la web viva compartida con Business/AMORE. Aunque la rama es superconjunto de main (sin regresión por commits faltantes), el deploy es outward-facing e irreversible en caliente y depende de §8/§9 → requiere tu autorización explícita de publicación.
 
-## 8. DNS — BLOCKED
-`dulabs.dev` **no está registrado** (apex NXDOMAIN, sin NS en resolvers públicos). No puedo registrar un dominio ni crear registros de una zona inexistente.
-**Opciones (decisión + acceso a registrador):** (a) registrar `dulabs.dev` y delegar NS; (b) usar `api.dulabs.co` (subdominio del dominio ya operativo) — solo requiere un registro en la zona de `dulabs.co`. En ambos casos: crear el domain mapping de Cloud Run al gateway. **Requiere acceso al registrador/DNS (no disponible aquí).**
+## 8. DNS — BLOCKED (GoDaddy)
+**Decisión tomada: `api.dulabs.co`** (no `dulabs.dev`, que no está registrado). El DNS de `dulabs.co` está en **GoDaddy** (`ns61/ns62.domaincontrol.com`); Vercel NO es autoritativo (0 records gestionados). → crear el registro `api.dulabs.co` y el TXT de verificación de dominio para el Cloud Run domain mapping **requiere acceso a GoDaddy**, no disponible en este entorno. **BLOCKED (proveedor DNS externo).**
+**Pasos (owner, en GoDaddy + gcloud):** 1) verificar el dominio en GCP (`gcloud domains verify dulabs.co` → añade el TXT que indique en GoDaddy); 2) `gcloud beta run domain-mappings create --service dulabs-gateway --domain api.dulabs.co --region us-central1`; 3) crear en GoDaddy el registro (CNAME/A) que devuelva el mapping (`ghs.googlehosted.com` o los A/AAAA que indique). TLS lo gestiona Cloud Run automáticamente.
 
 ## 9. KMS / WIF — CÓDIGO PASS · GCP VERIFIED · runtime NOT VERIFIED
 GCP creado y confirmado (§5). Falta (externo): (a) **habilitar OIDC** en el proyecto Vercel `dulabs` (Settings → Secure Backend Access / OIDC; inyecta `VERCEL_OIDC_TOKEN`); (b) setear las 4 vars (§23); (c) legacy key en Cloud Run (§6). Verificación viva: `GET /api/developer/diagnostics/crypto-status` debe dar `mecanismo=kms, formato_canonico_escritura=dev2, puede_leer_dev1=true, puede_leer_dev2=true, cobertura_lectura_completa=true` **tras el deploy**.
