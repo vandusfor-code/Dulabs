@@ -43,7 +43,11 @@ export default function ApiPage() {
           <p className="mt-2">Include an <code className="font-mono text-xs">Idempotency-Key</code> to safely retry without duplicating sends.</p>
         </Bloque>
         <Bloque titulo="Full documentation">
-          <p>Complete API reference and SDKs are coming with the Developer Portal.</p>
+          <p>
+            Guides and the complete API reference live in the{" "}
+            <a className="text-dev-accent hover:underline" href="/developers">Developer Portal</a>{" "}
+            — quickstart, authentication, webhooks, errors and the OpenAPI reference.
+          </p>
         </Bloque>
       </div>
     </>
