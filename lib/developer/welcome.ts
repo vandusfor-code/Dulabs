@@ -45,14 +45,18 @@ export async function dispararBienvenidaDeveloper(supabase: SupabaseClient, user
   } else {
     resumen.email = { enviado: false, motivo: "excepcion" };
   }
+  let waDetalle = "";
   if (rWa.status === "fulfilled") {
     resumen.whatsapp = rWa.value.enviado
       ? { enviado: true, wamid: rWa.value.wamid }
       : { enviado: false, motivo: rWa.value.motivo };
+    const det = !rWa.value.enviado && "detalle" in rWa.value ? rWa.value.detalle : undefined;
+    if (det) waDetalle = ` detalle="${det}"`;
   } else {
     resumen.whatsapp = { enviado: false, motivo: "excepcion" };
+    waDetalle = ` detalle="${rWa.reason instanceof Error ? rWa.reason.message : String(rWa.reason)}"`;
   }
 
-  console.log(`[developer/welcome] userId=${userId} email=${resumen.email.enviado ? "ok" : `fail:${resumen.email.motivo}`} whatsapp=${resumen.whatsapp.enviado ? "ok" : `fail:${resumen.whatsapp.motivo}`}`);
+  console.log(`[developer/welcome] userId=${userId} email=${resumen.email.enviado ? "ok" : `fail:${resumen.email.motivo}`} whatsapp=${resumen.whatsapp.enviado ? `ok wamid=${resumen.whatsapp.wamid}` : `fail:${resumen.whatsapp.motivo}`}${waDetalle}`);
   return resumen;
 }
