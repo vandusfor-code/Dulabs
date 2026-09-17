@@ -19,6 +19,7 @@ export const DEV_NAV: NavSection[] = [
     title: "Observe",
     items: [
       { label: "Jobs / Logs", href: "/developer/jobs", icon: "logs" },
+      { label: "Events", href: "/developer/events", icon: "webhook" },
       { label: "Usage", href: "/developer/usage", icon: "gauge" },
     ],
   },
