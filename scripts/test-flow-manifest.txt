@@ -281,3 +281,6 @@ lib/developers/portal.test.ts
 lib/developers/planes-publicos.test.ts
 lib/developers/landing-fase15.test.ts
 app/api/developers/plans/fase15-plans.e2e.test.ts
+
+# --- DuLabs Developer V1 Fase 16 (security/hardening) ---
+lib/developer/fase16-security.test.ts
