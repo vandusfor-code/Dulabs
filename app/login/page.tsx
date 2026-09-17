@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState, type FormEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase-browser";
+import { siteUrlCon } from "@/lib/site-url";
 import { AuthVisual } from "@/components/site/AuthVisual";
 import { useI18n } from "@/lib/i18n";
 import { LanguageSelector } from "@/components/LanguageSelector";
@@ -132,7 +133,14 @@ function LoginPageInterna() {
         setError(err instanceof Error ? err.message : String(err));
       }
     } else {
-      const { error: err } = await supabase.auth.signUp({ email, password });
+      const { error: err } = await supabase.auth.signUp({
+        email,
+        password,
+        // Fija el redirect de confirmación al origen real (producción en prod,
+        // localhost solo en dev): nunca deja el enlace del correo apuntando a
+        // localhost cuando el registro ocurre en producción.
+        options: { emailRedirectTo: siteUrlCon("/login") },
+      });
       setCargando(false);
       if (err) {
         setError(err.message);

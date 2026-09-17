@@ -11,8 +11,13 @@ import { EmptyState } from "@/components/developer/EmptyState";
 import { ErrorState } from "@/components/developer/ErrorState";
 import { CardsSkeleton, TableSkeleton } from "@/components/developer/Skeleton";
 import { DataTable } from "@/components/developer/DataTable";
+import { OnboardingChecklist, type PasoOnboarding } from "@/components/developer/OnboardingChecklist";
 import { labelEstadoJob, tonoEstadoJob, truncarWamid, formatearLimite, formatearFechaHora, formatearFecha } from "@/lib/dev-dashboard/dev-format";
 import type { JobResumen } from "@/lib/dev-dashboard/dev-client";
+
+// Código del plan base por defecto de un workspace nuevo (fuente: lib/developer/plans.ts).
+// Se compara acá para saber si el usuario ya activó un plan de pago en el onboarding.
+const PLAN_BASE = "DEVELOPER";
 
 export default function OverviewPage() {
   const { client, selectedWorkspaceId, email } = useDeveloper();
@@ -26,7 +31,15 @@ export default function OverviewPage() {
     return (
       <>
         <PageHeader title="Overview" />
-        <EmptyState title="Select a workspace" description="Choose a workspace from the switcher above to see its overview." />
+        <EmptyState
+          title="Aún no tienes un workspace"
+          description="Crea tu workspace para empezar a conectar WhatsApp, generar API keys y construir flows sobre DuLabs."
+          action={
+            <Link href="/developer/settings" className="rounded-md bg-dev-accent px-3 py-1.5 text-sm font-medium text-dev-accent-fg hover:bg-dev-accent-hover">
+              Configurar mi cuenta
+            </Link>
+          }
+        />
       </>
     );
   }
@@ -43,6 +56,19 @@ export default function OverviewPage() {
         <ErrorState error={error} onRetry={reload} />
       ) : data ? (
         <div className="space-y-8">
+          {(() => {
+            const planActivo = data.usage.plan !== PLAN_BASE;
+            const whatsappConectado = data.numbers.length > 0;
+            const apiKeyCreada = data.apiKeys.some((k) => !k.revoked_at);
+            const setupCompleto = planActivo && whatsappConectado && apiKeyCreada;
+            if (setupCompleto) return null;
+            const pasos: PasoOnboarding[] = [
+              { id: "plan", titulo: "Activa un plan", descripcion: "Elige el plan que se ajuste a tu volumen de mensajes y números.", href: "/developer/plan", cta: "Ver planes", hecho: planActivo },
+              { id: "whatsapp", titulo: "Conecta WhatsApp", descripcion: "Vincula tu número vía Meta Embedded Signup para enviar y recibir mensajes.", href: "/developer/whatsapp", cta: "Conectar", hecho: whatsappConectado },
+              { id: "apikey", titulo: "Genera tu API Key", descripcion: "Crea una clave dl_live_ para autenticar tus llamadas a la API.", href: "/developer/api-keys", cta: "Crear key", hecho: apiKeyCreada },
+            ];
+            return <OnboardingChecklist nombre={email ? email.split("@")[0] : ""} pasos={pasos} />;
+          })()}
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
             <StatCard label="Plan" value={data.usage.plan} hint={`Period ${data.usage.period}`} />
             <StatCard label="Messages" value={`${(data.usage.messages.reserved + data.usage.messages.confirmed).toLocaleString("en-US")}`} hint={`of ${formatearLimite(data.usage.messages.included)} this month`}>
