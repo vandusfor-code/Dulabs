@@ -264,3 +264,6 @@ services/reconciliation/run.e2e.test.ts
 
 # --- DuLabs Developer V1 Fase 11 (plans/pricing/subscriptions) ---
 app/api/developer/fase11-plans.e2e.test.ts
+
+# --- DuLabs Developer V1 Fase 12 (billing/Wompi) ---
+lib/developer/billing/billing-unit.test.ts
