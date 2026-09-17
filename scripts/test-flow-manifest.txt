@@ -272,3 +272,7 @@ app/api/developer/billing/fase12-billing.e2e.test.ts
 # --- DuLabs Developer V1 Fase 13 (events/webhooks/logs) ---
 lib/developer/events-fase13.test.ts
 app/api/developer/events/fase13-events.e2e.test.ts
+
+# --- DuLabs Developer V1 Fase 14 (API docs + portal) ---
+lib/developers/openapi.conformidad.test.ts
+lib/developers/portal.test.ts
