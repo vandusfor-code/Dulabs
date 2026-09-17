@@ -16,6 +16,8 @@ export function Nav() {
     { label: "Enterprise", href: "/soluciones-empresariales" },
     { label: t("Casos", "Case studies"), href: "/casos" },
     { label: t("Recursos", "Resources"), href: "/recursos" },
+    // Fase 15: descubrimiento de la plataforma Developer (aditivo).
+    { label: "Developers", href: "/developer-platform" },
   ];
   const [scrolled, setScrolled] = useState(false);
   useEffect(() => {

@@ -15,6 +15,9 @@ const RUTAS_ESTATICAS: { path: string; priority: number; changeFrequency: Metada
   { path: "/crm-personalizado", priority: 0.8, changeFrequency: "monthly" },
   { path: "/integraciones", priority: 0.8, changeFrequency: "monthly" },
   { path: "/soluciones-empresariales", priority: 0.9, changeFrequency: "monthly" },
+  // Fase 15: landing comercial pública de DuLabs Developer. El dashboard
+  // privado /developer NUNCA entra al sitemap (ver robots.ts).
+  { path: "/developer-platform", priority: 0.9, changeFrequency: "monthly" },
   { path: "/casos", priority: 0.7, changeFrequency: "monthly" },
   { path: "/recursos", priority: 0.7, changeFrequency: "weekly" },
   { path: "/precios", priority: 0.8, changeFrequency: "monthly" },
