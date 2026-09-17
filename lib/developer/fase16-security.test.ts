@@ -65,15 +65,18 @@ describe("Fase 16 -- SSRF guard (adversarial)", () => {
 });
 
 describe("Fase 16 -- SSRF por redirect (P1): fetch nunca sigue 3xx", () => {
-  it("el worker de entrega usa redirect:\"manual\"", () => {
+  // Nota (Fase 17.1): la entrega migró a entregarWebhookSeguro (IP pinning con
+  // node:https, que NO sigue redirects por construcción). El invariante sigue
+  // siendo el mismo -- nunca seguir 3xx -- por eso se acepta cualquiera de las
+  // dos formas: redirect:"manual" (compat) o la entrega pinneada.
+  it("el worker de entrega nunca sigue redirects (redirect:manual o entrega pinneada)", () => {
     const src = readFileSync(path.join(raiz, "services/worker-inbound/handler.ts"), "utf8");
-    // El bloque de fetch de entrega debe fijar redirect:"manual".
-    assert.ok(/redirect:\s*["']manual["']/.test(src), "worker-inbound/handler.ts debe fijar redirect:\"manual\" en la entrega");
+    assert.ok(/redirect:\s*["']manual["']/.test(src) || src.includes("entregarWebhookSeguro"), "worker-inbound/handler.ts no debe seguir redirects en la entrega");
   });
 
-  it("el ping de webhook usa redirect:\"manual\"", () => {
+  it("el ping de webhook nunca sigue redirects (redirect:manual o entrega pinneada)", () => {
     const src = readFileSync(path.join(raiz, "app/api/developer/webhooks/ping/route.ts"), "utf8");
-    assert.ok(/redirect:\s*["']manual["']/.test(src), "webhooks/ping debe fijar redirect:\"manual\"");
+    assert.ok(/redirect:\s*["']manual["']/.test(src) || src.includes("entregarWebhookSeguro"), "webhooks/ping no debe seguir redirects");
   });
 });
 
