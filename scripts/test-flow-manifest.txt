@@ -293,3 +293,4 @@ lib/developer/fase17-chaos-concurrency.e2e.test.ts
 # --- DuLabs Developer V1 Fase 19 (controlled beta safety) ---
 lib/developer/fase19-beta-safety.test.ts
 lib/developer/fase19-api-key-cap.e2e.test.ts
+lib/developer/fase19-dashboard-links.test.ts
