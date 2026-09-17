@@ -1,6 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Intervalo } from "@/lib/developer/billing/pricing";
 import { upsertSuscripcion, auditarBilling } from "@/lib/developer/billing/billing-store";
+import { obtenerPlan } from "@/lib/developer/plans";
+import { contarNumerosDeCuenta, contarWorkspacesDeCuenta, contarMiembrosDeCuenta } from "@/lib/developer/accounts-store";
 
 // DuLabs Developer V1 -- Fase 12 (Billing). Ciclo de vida de la suscripción:
 // activación (checkout/renovación aprobada), fallo de renovación (dunning) y
@@ -69,9 +71,35 @@ export async function activarSuscripcionPagada(
     intervalo: params.intervalo,
     precioUsdCents: params.precioUsdCents,
     proximoCobro: isoFecha(fin),
+    // Una activación/renovación exitosa resuelve cualquier downgrade pendiente
+    // (ya sea porque se aplicó como cambiarPlanA, o porque el ciclo se renovó).
+    downgradeAPlan: null,
   });
   await setEstadoSistema(supabase, params.accountId, "active", params.motivo);
   await auditarBilling(supabase, { accountId: params.accountId, accion: "SUBSCRIPTION_ACTIVATED", despues: { plan: params.cambiarPlanA ?? params.planCodigo, intervalo: params.intervalo, hasta: isoFecha(fin) }, motivo: params.motivo });
+}
+
+/**
+ * Valida (read-only) que los recursos actuales de la cuenta CABEN en un plan
+ * destino (opción A de Fase 11: nunca se destruyen recursos; se bloquea el
+ * downgrade si algo excede). Mismo criterio que dulabs_dev_cambiar_plan. NULL en
+ * un límite del plan destino = sin límite -> no bloquea.
+ */
+export async function validarRecursosCabenEnPlan(
+  supabase: SupabaseClient,
+  params: { accountId: string; planCodigo: string }
+): Promise<{ ok: boolean; detalle?: string }> {
+  const plan = await obtenerPlan(supabase, params.planCodigo);
+  if (!plan) return { ok: false, detalle: "plan_invalido" };
+  const [nums, ws, mem] = await Promise.all([
+    contarNumerosDeCuenta(supabase, params.accountId),
+    contarWorkspacesDeCuenta(supabase, params.accountId),
+    contarMiembrosDeCuenta(supabase, params.accountId),
+  ]);
+  if (plan.numeros_incluidos !== null && nums > plan.numeros_incluidos) return { ok: false, detalle: `numeros:${nums}>${plan.numeros_incluidos}` };
+  if (plan.max_workspaces !== null && ws > plan.max_workspaces) return { ok: false, detalle: `workspaces:${ws}>${plan.max_workspaces}` };
+  if (plan.max_members !== null && mem > plan.max_members) return { ok: false, detalle: `miembros:${mem}>${plan.max_members}` };
+  return { ok: true };
 }
 
 /** Cuenta los pagos de renovación fallidos desde el último pago APROBADO (largo del ciclo de dunning). */

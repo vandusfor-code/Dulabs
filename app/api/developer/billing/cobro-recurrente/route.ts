@@ -2,14 +2,14 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { obtenerPaymentProvider } from "@/lib/developer/billing/payment-provider";
-import { obtenerTasaFxUsdCop, usdCentsACopCents } from "@/lib/developer/billing/pricing";
+import { obtenerTasaFxUsdCop, usdCentsACopCents, resolverPricing } from "@/lib/developer/billing/pricing";
 import {
   suscripcionesPorCobrar,
   tienePagoPendienteReciente,
   obtenerClienteDeCuenta,
   insertarPagoRenovacion,
 } from "@/lib/developer/billing/billing-store";
-import { activarSuscripcionPagada, procesarRenovacionFallida } from "@/lib/developer/billing/billing-lifecycle";
+import { activarSuscripcionPagada, procesarRenovacionFallida, validarRecursosCabenEnPlan } from "@/lib/developer/billing/billing-lifecycle";
 
 // DuLabs Developer V1 -- Fase 12 (Billing, Wompi). Cron de recurrencia
 // (mensual/anual) + reintentos de dunning. Cobra vía la fuente de pago
@@ -60,7 +60,22 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
-      const montoCopCents = usdCentsACopCents(sub.precio_usd_cents, fxRate);
+      // Downgrade al fin de período (opción A): si hay intención y los recursos
+      // caben en el plan destino, se renueva YA en el plan menor (precio menor).
+      // Si ya no caben, se mantiene el plan actual este ciclo (intención queda).
+      let planRenovar = sub.plan_codigo;
+      let cambiarPlanA: string | null = null;
+      let precioUsdCents = sub.precio_usd_cents;
+      if (sub.downgrade_a_plan) {
+        const cabe = await validarRecursosCabenEnPlan(supabase, { accountId: sub.account_id, planCodigo: sub.downgrade_a_plan });
+        if (cabe.ok) {
+          planRenovar = sub.downgrade_a_plan;
+          cambiarPlanA = sub.downgrade_a_plan;
+          precioUsdCents = (await resolverPricing(supabase, { plan: sub.downgrade_a_plan, intervalo: sub.intervalo })).precioUsdCents;
+        }
+      }
+
+      const montoCopCents = usdCentsACopCents(precioUsdCents, fxRate);
       const reference = `dulabs-dev-${sub.account_id}-renew-${Date.now()}`;
       const tx = await provider.cobrar({
         amountInCents: montoCopCents,
@@ -72,9 +87,9 @@ export async function POST(request: NextRequest) {
       await insertarPagoRenovacion(supabase, {
         accountId: sub.account_id,
         reference,
-        planCodigo: sub.plan_codigo,
+        planCodigo: planRenovar,
         intervalo: sub.intervalo,
-        precioUsdCents: sub.precio_usd_cents,
+        precioUsdCents,
         montoCopCents,
         fxRate,
         providerTransactionId: tx.id,
@@ -85,9 +100,10 @@ export async function POST(request: NextRequest) {
       if (efecto === "active") {
         await activarSuscripcionPagada(supabase, {
           accountId: sub.account_id,
-          planCodigo: sub.plan_codigo,
+          planCodigo: planRenovar,
           intervalo: sub.intervalo,
-          precioUsdCents: sub.precio_usd_cents,
+          precioUsdCents,
+          cambiarPlanA,
           motivo: `renovación ${tx.id}`,
         });
         cobrados++;

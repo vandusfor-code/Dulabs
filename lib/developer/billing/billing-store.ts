@@ -89,6 +89,33 @@ export async function upsertSuscripcion(
   if (error) throw new Error(`[developer/billing] error guardando suscripción: ${error.message}`);
 }
 
+/**
+ * Registra (o limpia con null) la intención de downgrade a aplicar al fin de
+ * período. UPDATE si existe la suscripción; si no existe (cuenta activa legacy
+ * sin fila de billing), INSERT con defaults mínimos. No pisa intervalo/precio.
+ */
+export async function registrarIntencionDowngrade(
+  supabase: SupabaseClient,
+  params: { accountId: string; downgradeAPlan: string | null; intervaloDefault: Intervalo; precioUsdCentsDefault: number; proximoCobroDefault: string | null }
+): Promise<void> {
+  const { data, error } = await supabase
+    .from("dulabs_dev_billing_subscriptions")
+    .update({ downgrade_a_plan: params.downgradeAPlan, updated_at: new Date().toISOString() })
+    .eq("account_id", params.accountId)
+    .select("account_id")
+    .maybeSingle();
+  if (error) throw new Error(`[developer/billing] error registrando downgrade: ${error.message}`);
+  if (data) return;
+  const { error: eIns } = await supabase.from("dulabs_dev_billing_subscriptions").insert({
+    account_id: params.accountId,
+    intervalo: params.intervaloDefault,
+    precio_usd_cents: params.precioUsdCentsDefault,
+    proximo_cobro: params.proximoCobroDefault,
+    downgrade_a_plan: params.downgradeAPlan,
+  });
+  if (eIns) throw new Error(`[developer/billing] error creando suscripción para downgrade: ${eIns.message}`);
+}
+
 export async function obtenerSuscripcion(
   supabase: SupabaseClient,
   accountId: string
@@ -194,7 +221,7 @@ export async function marcarEvento(
 
 // ---- Recurrencia (cron) ----
 
-export type SuscripcionPorCobrar = { account_id: string; intervalo: Intervalo; precio_usd_cents: number; proximo_cobro: string | null };
+export type SuscripcionPorCobrar = { account_id: string; intervalo: Intervalo; precio_usd_cents: number; proximo_cobro: string | null; downgrade_a_plan: string | null };
 
 export type SuscripcionPorCobrarConPlan = SuscripcionPorCobrar & { plan_codigo: string };
 
@@ -206,7 +233,7 @@ export type SuscripcionPorCobrarConPlan = SuscripcionPorCobrar & { plan_codigo: 
 export async function suscripcionesPorCobrar(supabase: SupabaseClient, hoyISO: string): Promise<SuscripcionPorCobrarConPlan[]> {
   const { data: subs, error } = await supabase
     .from("dulabs_dev_billing_subscriptions")
-    .select("account_id, intervalo, precio_usd_cents, proximo_cobro")
+    .select("account_id, intervalo, precio_usd_cents, proximo_cobro, downgrade_a_plan")
     .lte("proximo_cobro", hoyISO);
   if (error) throw new Error(`[developer/billing] error listando suscripciones por cobrar: ${error.message}`);
   if (!subs || subs.length === 0) return [];
