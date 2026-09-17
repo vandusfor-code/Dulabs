@@ -261,3 +261,6 @@ services/gateway/read-rate-limit.e2e.test.ts
 services/worker-outbound/handler.e2e.test.ts
 services/worker-inbound/handler.e2e.test.ts
 services/reconciliation/run.e2e.test.ts
+
+# --- DuLabs Developer V1 Fase 11 (plans/pricing/subscriptions) ---
+app/api/developer/fase11-plans.e2e.test.ts

@@ -130,6 +130,34 @@ export async function crearMiembro(
   return data as MiembroFila;
 }
 
+export type ResultadoCrearMiembroLimite =
+  | { ok: true; membershipId: string }
+  | { ok: false; motivo: "rol_invalido" | "limite_miembros_excedido" };
+
+/**
+ * Fase 11 (autorizado) -- alta/activación de miembro con límite A NIVEL DE
+ * CUENTA (miembros distintos across los workspaces de la cuenta), atómica
+ * (RPC dulabs_dev_crear_miembro_con_limite, advisory lock por cuenta).
+ * Re-agregar a un usuario que ya es miembro de la cuenta no consume cupo.
+ * `limiteMiembros` null = sin tope. Sin cuenta (legacy) => límite por-workspace.
+ */
+export async function crearMiembroConLimite(
+  supabase: SupabaseClient,
+  params: { workspaceId: string; userId: string; rol: RolDev; limiteMiembros: number | null }
+): Promise<ResultadoCrearMiembroLimite> {
+  const { data, error } = await supabase.rpc("dulabs_dev_crear_miembro_con_limite", {
+    p_workspace_id: params.workspaceId,
+    p_user_id: params.userId,
+    p_rol: params.rol,
+    p_limite_miembros: params.limiteMiembros,
+  });
+  if (error) throw new Error(`[developer/memberships] error creando miembro con límite: ${error.message}`);
+  const fila = Array.isArray(data) ? data[0] : data;
+  if (!fila) throw new Error("[developer/memberships] crear_miembro_con_limite no devolvió resultado");
+  if (fila.resultado === "ok") return { ok: true, membershipId: fila.membership_id as string };
+  return { ok: false, motivo: fila.resultado as "rol_invalido" | "limite_miembros_excedido" };
+}
+
 export type ResultadoCambioRol = { ok: true; rol: RolDev } | { ok: false; motivo: "no_encontrado" | "ultimo_owner" | "rol_invalido" };
 
 /** Cambia el rol de un miembro -- ATÓMICO con guarda de último OWNER (función Postgres con advisory lock). */
