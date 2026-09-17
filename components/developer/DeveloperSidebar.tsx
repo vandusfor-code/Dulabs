@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { DEV_NAV, esRutaActiva } from "@/components/developer/nav";
 import { NavIcon } from "@/components/developer/NavIcon";
@@ -12,9 +13,12 @@ export function DeveloperSidebar({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
   return (
     <nav className="flex h-full flex-col gap-6 overflow-y-auto p-4">
-      <Link href="/developer" onClick={onNavigate} className="flex items-center gap-2 px-2">
-        <span className="flex h-6 w-6 items-center justify-center rounded-md bg-dev-accent text-xs font-bold text-dev-accent-fg">D</span>
-        <span className="text-sm font-semibold tracking-tight text-fg">DuLabs Developer</span>
+      <Link href="/developer" onClick={onNavigate} className="flex items-center gap-2.5 px-2" aria-label="DuLabs Developers">
+        <Image src="/logo.png" alt="DuLabs" width={28} height={28} className="h-7 w-7 rounded-md object-contain" priority />
+        <span className="flex flex-col leading-tight">
+          <span className="text-sm font-semibold tracking-tight text-fg">DuLabs</span>
+          <span className="text-[11px] font-medium uppercase tracking-wider text-dev-accent">Developers</span>
+        </span>
       </Link>
       <div className="flex flex-col gap-5">
         {DEV_NAV.map((section, i) => (

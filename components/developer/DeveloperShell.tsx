@@ -1,16 +1,16 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
-import { DeveloperSessionProvider, useDeveloper } from "@/lib/dev-dashboard/developer-session";
+import { DeveloperSessionProvider } from "@/lib/dev-dashboard/developer-session";
 import { DeveloperSidebar } from "@/components/developer/DeveloperSidebar";
 import { WorkspaceSwitcher } from "@/components/developer/WorkspaceSwitcher";
+import { AccountMenu } from "@/components/developer/AccountMenu";
 
 // DuLabs Developer V1 -- Fase 9 (D3/D4). Shell del Dashboard: sidebar fija en
 // desktop, drawer en móvil, topbar con selector de workspace + cuenta.
 // Envuelto en DeveloperSessionProvider (sesión + workspaces + rol).
 
 function ShellInterno({ children }: { children: ReactNode }) {
-  const { email } = useDeveloper();
   const [drawerAbierto, setDrawerAbierto] = useState(false);
 
   return (
@@ -43,7 +43,7 @@ function ShellInterno({ children }: { children: ReactNode }) {
             <WorkspaceSwitcher />
           </div>
           <div className="flex items-center gap-3">
-            {email ? <span className="hidden max-w-[180px] truncate text-xs text-mist sm:inline">{email}</span> : null}
+            <AccountMenu />
           </div>
         </header>
         <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 sm:px-6">{children}</main>
