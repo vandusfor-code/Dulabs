@@ -16,6 +16,7 @@ import {
   Footer,
 } from "@/components/site/Sections";
 import { SolutionsSection, HowWeWorkSection, EnterpriseSection, EnterpriseContactSection } from "@/components/site/EnterpriseSections";
+import { DevelopersEntrySection } from "@/components/site/DevelopersEntrySection";
 
 // Promoción del diseño oscuro (con la información comercial actual, ya
 // verificada: pricing Essential/Business/Pro/Enterprise, cero legacy
@@ -77,6 +78,10 @@ export default function Home() {
 
         <Reveal>
           <EnterpriseContactSection />
+        </Reveal>
+
+        <Reveal>
+          <DevelopersEntrySection />
         </Reveal>
       </main>
       <Footer />
