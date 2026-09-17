@@ -188,7 +188,7 @@ export const OPENAPI_DEVELOPER_V1 = {
           error: {
             type: "object",
             properties: {
-              code: { type: "string", enum: ["missing_api_key", "invalid_api_key", "invalid_request", "invalid_whatsapp_number", "forbidden", "not_found", "idempotency_conflict", "rate_limit_exceeded", "monthly_message_limit_exceeded", "internal_error"] },
+              code: { type: "string", enum: ["missing_api_key", "invalid_api_key", "invalid_request", "invalid_whatsapp_number", "forbidden", "not_found", "idempotency_conflict", "rate_limit_exceeded", "monthly_message_limit_exceeded", "service_unavailable", "internal_error"] },
               message: { type: "string" },
               request_id: { type: "string" },
             },

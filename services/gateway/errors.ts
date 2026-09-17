@@ -17,6 +17,9 @@ export type CodigoErrorApi =
   // estable del contrato público (reemplaza al 'usage_limit_exceeded' que se
   // había declarado en Fase 4 pero nunca se usó en ningún handler).
   | "monthly_message_limit_exceeded"
+  // Fase 19 (Controlled Beta) -- kill switch operativo: el API está deshabilitado
+  // temporalmente (mantenimiento/incidente). 503. Adición aditiva al contrato.
+  | "service_unavailable"
   | "internal_error";
 
 export type RespuestaApi = { status: number; cuerpo: Record<string, unknown>; headers?: Record<string, string> };

@@ -17,10 +17,38 @@ export type ApiKeyFila = {
   revoked_at: string | null;
 };
 
+// DuLabs Developer V1 -- Fase 19 (Controlled Beta, 19.5). Cap de API keys
+// ACTIVAS por workspace: evita la creación masiva (abuso/ruido) durante la beta.
+// Es un tope "suave" (cuenta + inserta): una carrera extrema podría dejar +1,
+// aceptable para un control anti-abuso (no es un límite de facturación).
+export const MAX_API_KEYS_ACTIVAS = 20;
+
+export class ErrorLimiteApiKeys extends Error {
+  constructor(public readonly limite: number) {
+    super(`limite_api_keys:${limite}`);
+    this.name = "ErrorLimiteApiKeys";
+  }
+}
+
+/** Cuenta las API keys NO revocadas de un workspace. */
+export async function contarApiKeysActivas(supabase: SupabaseClient, workspaceId: string): Promise<number> {
+  const { count, error } = await supabase
+    .from("dulabs_dev_api_keys")
+    .select("id", { count: "exact", head: true })
+    .eq("workspace_id", workspaceId)
+    .is("revoked_at", null);
+  if (error) throw new Error(`[developer/api-keys-store] error contando API keys: ${error.message}`);
+  return count ?? 0;
+}
+
 export async function crearApiKey(
   supabase: SupabaseClient,
   params: { workspaceId: string; name: string }
 ): Promise<{ fila: ApiKeyFila; claveEnClaro: string }> {
+  // Fase 19: tope anti creación masiva. Se cuenta ANTES de crear.
+  if ((await contarApiKeysActivas(supabase, params.workspaceId)) >= MAX_API_KEYS_ACTIVAS) {
+    throw new ErrorLimiteApiKeys(MAX_API_KEYS_ACTIVAS);
+  }
   const generada: ApiKeyGenerada = generarApiKey();
   const prefix = generada.claveEnClaro.slice(0, 12); // "dl_live_XXXX" -- suficiente para que el desarrollador reconozca la key en una lista, insuficiente para reconstruirla.
 
