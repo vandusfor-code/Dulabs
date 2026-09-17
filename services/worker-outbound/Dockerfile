@@ -8,4 +8,7 @@ COPY lib/developer ./lib/developer
 COPY services ./services
 ENV NODE_ENV=production
 EXPOSE 8080
+# Fase 18 (container hardening): usuario no-root (`node`, uid 1000). Runtime de
+# solo lectura (HTTP + Supabase; tsx transpila en memoria). Verificar build/smoke.
+USER node
 CMD ["node_modules/.bin/tsx", "services/worker-outbound/index.ts"]
