@@ -15,7 +15,7 @@ export const START_HREF = "/login?next=/developer";
 export const DOCS_HREF = "/developers";
 
 /** Base URL pública del API (misma que el OpenAPI de Fase 14). Solo display. */
-export const API_BASE_URL = "https://api.dulabs.dev/api/v1";
+export const API_BASE_URL = "https://api.dulabs.co/api/v1";
 
 /** Anclas de secciones para el nav de la landing. */
 export const SECTION_IDS = {

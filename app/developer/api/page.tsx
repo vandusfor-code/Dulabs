@@ -5,7 +5,7 @@ import { PageHeader } from "@/components/developer/PageHeader";
 // DuLabs Developer V1 -- Fase 9 (autorizado). Quick start estático (no ejecuta
 // código del usuario). La documentación completa es Fase 14.
 
-const EJEMPLO = `curl https://api.dulabs.dev/api/v1/messages \\
+const EJEMPLO = `curl https://api.dulabs.co/api/v1/messages \\
   -H "Authorization: Bearer dl_live_your_api_key" \\
   -H "Idempotency-Key: $(uuidgen)" \\
   -H "Content-Type: application/json" \\
@@ -31,7 +31,7 @@ export default function ApiPage() {
       <PageHeader title="API" description="Send WhatsApp messages programmatically with the DuLabs Developer API." />
       <div className="space-y-4">
         <Bloque titulo="Base URL">
-          <code className="font-mono text-xs text-fg">https://api.dulabs.dev/api/v1</code>
+          <code className="font-mono text-xs text-fg">https://api.dulabs.co/api/v1</code>
         </Bloque>
         <Bloque titulo="Authentication">
           <p>Every request is authenticated with an API key sent as a Bearer token:</p>
