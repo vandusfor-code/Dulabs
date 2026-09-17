@@ -873,6 +873,15 @@ export function Footer() {
       ],
     },
     {
+      // Fase 15: superficie Developer (aditivo, no rompe Business).
+      title: "Developers",
+      links: [
+        { l: t("Plataforma", "Platform"), h: "/developer-platform" },
+        { l: t("Documentación", "Documentation"), h: "/developers" },
+        { l: "API Reference", h: "/developers/reference" },
+      ],
+    },
+    {
       title: "Legal",
       links: [
         { l: t("Privacidad", "Privacy"), h: "/privacidad" },
@@ -884,7 +893,7 @@ export function Footer() {
   return (
     <footer className="relative border-t border-site-border bg-site-bg">
       <div className="mx-auto max-w-[1440px] px-6 py-16">
-        <div className="grid grid-cols-2 gap-10 sm:grid-cols-2 lg:grid-cols-5">
+        <div className="grid grid-cols-2 gap-10 sm:grid-cols-2 lg:grid-cols-6">
           <div className="col-span-2">
             <div className="flex items-center gap-2 font-display text-[15px] font-medium tracking-tight text-site-fg">
               <Image src="/logo.png" alt="Du Labs" width={24} height={24} className="rounded-full" />

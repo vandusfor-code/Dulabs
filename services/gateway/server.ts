@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { extraerIpConfiable } from "@/lib/developer/client-ip";
 import { manejarMensajeSaliente, manejarObtenerMensaje } from "./outbound-handler";
 import { manejarVerificacionMeta, manejarWebhookMeta } from "./inbound-handler";
 import {
@@ -61,12 +62,14 @@ async function leerCuerpo(req: IncomingMessage): Promise<string> {
   return Buffer.concat(trozos).toString("utf8");
 }
 
-/** IP real del cliente -- Cloud Run está detrás del balanceador de Google, que agrega X-Forwarded-For real; se usa la primera IP de esa cadena (el cliente original), con fallback al socket para entornos locales/tests. */
+/**
+ * IP real del cliente, resistente a spoofing de X-Forwarded-For (Fase 17.2).
+ * Cuenta desde la DERECHA (la infra confiable anexa la IP real al final; el
+ * cliente solo puede anteponer a la izquierda). El número de hops confiables se
+ * configura con GATEWAY_TRUSTED_PROXIES (ver lib/developer/client-ip.ts).
+ */
 function ipRemota(req: IncomingMessage): string | undefined {
-  const header = req.headers["x-forwarded-for"];
-  const valor = Array.isArray(header) ? header[0] : header;
-  if (valor) return valor.split(",")[0].trim();
-  return req.socket.remoteAddress ?? undefined;
+  return extraerIpConfiable({ xff: req.headers["x-forwarded-for"], socketAddr: req.socket.remoteAddress ?? undefined });
 }
 
 export function crearServidorGateway(deps: DependenciasGateway) {

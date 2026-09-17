@@ -64,6 +64,28 @@ export function serviceSchema(params: { name: string; description: string; path:
   };
 }
 
+// DuLabs Developer V1 -- Fase 15. Landing comercial de la plataforma Developer.
+// SoftwareApplication (no Product): es una plataforma/API, no un bien físico.
+// Deliberadamente SIN `offers`/precios: la fuente única de precios es
+// dulabs_dev_plans (vía /api/developers/plans); no se publica una segunda copia
+// de cifras en el JSON-LD. Sin ratings/reseñas/certificaciones que no existan.
+export function softwareApplicationSchema(params: { name: string; description: string; path: string }) {
+  return {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    name: params.name,
+    description: params.description,
+    url: `${SITE_URL}${params.path}`,
+    applicationCategory: "DeveloperApplication",
+    operatingSystem: "Web, REST API",
+    publisher: {
+      "@type": "Organization",
+      name: "DuLabs",
+      url: `${SITE_URL}/`,
+    },
+  };
+}
+
 export function articleSchema(params: { title: string; description: string; path: string; datePublished: string }) {
   return {
     "@context": "https://schema.org",

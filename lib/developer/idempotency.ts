@@ -77,3 +77,24 @@ export async function reclamarIdempotencia(
   }
   return { resultado: "conflicto_payload_distinto" };
 }
+
+/**
+ * Fase 13 -- limpieza real de la ventana de retención lógica (24h) de las
+ * idempotency keys (ver comentario de la migración de Fase 1). Borra las claves
+ * más antiguas que `horas`, acotado. La deduplicación de una operación solo
+ * importa dentro de su ventana; pasada esa ventana la fila es basura segura de
+ * borrar (nunca afecta jobs/eventos, que viven en otras tablas).
+ */
+export async function limpiarIdempotencyKeysVencidas(
+  supabase: SupabaseClient,
+  params: { horas?: number; limite?: number } = {}
+): Promise<{ borradas: number }> {
+  const umbral = new Date(Date.now() - (params.horas ?? 24) * 60 * 60 * 1000).toISOString();
+  const { data, error } = await supabase.from("dulabs_dev_idempotency_keys").select("id").lt("created_at", umbral).limit(params.limite ?? 5000);
+  if (error) throw new Error(`[developer/idempotency] error seleccionando keys vencidas: ${error.message}`);
+  const ids = (data ?? []).map((r) => r.id as number);
+  if (ids.length === 0) return { borradas: 0 };
+  const { error: eDel } = await supabase.from("dulabs_dev_idempotency_keys").delete().in("id", ids);
+  if (eDel) throw new Error(`[developer/idempotency] error borrando keys vencidas: ${eDel.message}`);
+  return { borradas: ids.length };
+}

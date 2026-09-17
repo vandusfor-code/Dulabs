@@ -3,6 +3,10 @@ import { conSesionDeveloper, jsonOk, jsonError } from "@/lib/developer/dev-api-h
 import { ensureCuentaParaWorkspace } from "@/lib/developer/accounts-store";
 import { cambiarPlan } from "@/lib/developer/subscription-store";
 import { obtenerPlan } from "@/lib/developer/plans";
+import { billingHabilitado } from "@/lib/developer/billing/billing-flag";
+import { esPlanManual } from "@/lib/developer/billing/pricing";
+import { validarRecursosCabenEnPlan } from "@/lib/developer/billing/billing-lifecycle";
+import { registrarIntencionDowngrade, auditarBilling } from "@/lib/developer/billing/billing-store";
 
 // DuLabs Developer V1 -- Fase 11 (autorizado). Cambio de plan de la CUENTA.
 // Solo OWNER. Downgrade bloqueado (opción A) si hay recursos por encima del
@@ -29,6 +33,36 @@ export async function POST(request: NextRequest) {
     if (cuenta.owner_user_id !== ctx.userId) {
       return jsonError(403, "not_account_owner", ctx.requestId, "Solo el dueño de la cuenta puede cambiar el plan.");
     }
+
+    // Fase 12 (billing ON): el upgrade exige pago (checkout) y el downgrade se
+    // difiere al fin de período. Con billing OFF, se conserva EXACTAMENTE el
+    // comportamiento de Fase 11 (cambio inmediato) -> los 16/16 no se tocan.
+    if (billingHabilitado()) {
+      if (nuevoPlan === cuenta.plan_codigo) return jsonOk({ ok: true, plan: cuenta.plan_codigo, changed: false }, ctx.requestId);
+      if (esPlanManual(nuevoPlan)) return jsonError(400, "enterprise_manual", ctx.requestId, "Enterprise se contrata con el equipo comercial.");
+
+      const planActual = await obtenerPlan(ctx.supabase, cuenta.plan_codigo);
+      const precioT = planExiste.precio_mensual_usd ?? Number.POSITIVE_INFINITY;
+      const precioA = planActual?.precio_mensual_usd ?? 0;
+      if (precioT > precioA) {
+        // Upgrade: no se aplica sin pago confirmado. El cliente debe pasar por checkout.
+        return jsonError(402, "upgrade_requires_payment", ctx.requestId, "Este upgrade requiere pago. Complétalo en el checkout de billing.");
+      }
+
+      // Downgrade (opción A): validar recursos; registrar intención (se aplica al fin de período).
+      const cabe = await validarRecursosCabenEnPlan(ctx.supabase, { accountId: cuenta.id, planCodigo: nuevoPlan });
+      if (!cabe.ok) return jsonError(409, "downgrade_blocked", ctx.requestId, cabe.detalle);
+      await registrarIntencionDowngrade(ctx.supabase, {
+        accountId: cuenta.id,
+        downgradeAPlan: nuevoPlan,
+        intervaloDefault: "month",
+        precioUsdCentsDefault: Math.round((planActual?.precio_mensual_usd ?? 0) * 100),
+        proximoCobroDefault: cuenta.periodo_fin ? cuenta.periodo_fin.slice(0, 10) : null,
+      });
+      await auditarBilling(ctx.supabase, { accountId: cuenta.id, actorUserId: ctx.userId, accion: "DOWNGRADE_SCHEDULED", antes: { plan: cuenta.plan_codigo }, despues: { plan: nuevoPlan }, motivo: cuerpo?.motivo ?? null });
+      return jsonOk({ ok: true, plan: cuenta.plan_codigo, scheduledDowngradeTo: nuevoPlan, effectiveAt: cuenta.periodo_fin }, ctx.requestId);
+    }
+
     const r = await cambiarPlan(ctx.supabase, { accountId: cuenta.id, nuevoPlan, actorUserId: ctx.userId, motivo: cuerpo?.motivo ?? null });
     if (!r.ok) {
       if (r.motivo === "downgrade_bloqueado") return jsonError(409, "downgrade_blocked", ctx.requestId, r.detalle ?? undefined);

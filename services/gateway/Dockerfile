@@ -14,4 +14,10 @@ COPY lib/rate-limit.ts ./lib/rate-limit.ts
 COPY services ./services
 ENV NODE_ENV=production
 EXPOSE 8080
+# Fase 18 (container hardening): correr como usuario no-root. node:22-slim trae
+# el usuario `node` (uid 1000). El runtime solo LEE archivos (HTTP + Supabase;
+# tsx transpila en memoria; los temporales usan /tmp), así que no requiere
+# escritura sobre /app. Verificar el build/smoke antes de desplegar (ver
+# docs/DULABS_DEVELOPER_V1_PHASE_18_CLOSURE_REPORT.md).
+USER node
 CMD ["node_modules/.bin/tsx", "services/gateway/index.ts"]

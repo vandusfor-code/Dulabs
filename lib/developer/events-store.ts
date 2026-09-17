@@ -253,6 +253,184 @@ export async function obtenerEntregasListasParaReintento(supabase: SupabaseClien
   return (data ?? []) as EventoFila[];
 }
 
+// ============================================================
+// Fase 13 (autorizado) -- superficie de OBSERVABILIDAD para el Developer:
+// lectura segura de eventos/entregas, métricas, pruning y replay. NO
+// reimplementa el pipeline (Fases 2-6); solo lee/expone/opera lo existente.
+// ============================================================
+
+// Proyección SEGURA hacia el Developer: nunca expone secretos/tokens ni
+// columnas internas (published_at, intentos_publicacion, request_id).
+export type EventoSeguro = {
+  id: number; // id de fila (no sensible) -- necesario para replay
+  eventId: string;
+  tipo: TipoEvento;
+  createdAt: string;
+  jobId: string | null;
+  correlationId: string | null;
+  delivery: {
+    estado: EstadoEntrega;
+    intentos: number;
+    nextAttemptAt: string | null;
+    ultimoError: string | null;
+    entregadoEn: string | null;
+    replayable: boolean;
+  };
+  payload: Record<string, unknown> | null;
+};
+
+const CLAVES_SENSIBLES = /token|secret|authorization|api[_-]?key|password|bearer|firma|signature|credential/i;
+
+/** Redacta recursivamente cualquier clave sensible del payload antes de exponerlo. Nunca muta el original. */
+export function redactarPayloadEvento(valor: unknown, profundidad = 0): unknown {
+  if (profundidad > 6 || valor === null || typeof valor !== "object") return valor;
+  if (Array.isArray(valor)) return valor.map((v) => redactarPayloadEvento(v, profundidad + 1));
+  const salida: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(valor as Record<string, unknown>)) {
+    salida[k] = CLAVES_SENSIBLES.test(k) ? "[redactado]" : redactarPayloadEvento(v, profundidad + 1);
+  }
+  return salida;
+}
+
+const ENTREGA_REPLAYABLE = new Set<EstadoEntrega>(["dlq", "fallido"]);
+
+export function proyectarEventoSeguro(fila: EventoFila): EventoSeguro {
+  return {
+    id: fila.id,
+    eventId: fila.event_id,
+    tipo: fila.tipo,
+    createdAt: fila.created_at,
+    jobId: fila.job_id,
+    correlationId: fila.correlation_id,
+    delivery: {
+      estado: fila.entrega_estado,
+      intentos: fila.entrega_intentos,
+      nextAttemptAt: fila.entrega_next_attempt_at,
+      ultimoError: fila.entrega_ultimo_error,
+      entregadoEn: fila.entrega_estado === "entregado" ? fila.procesado_en : null,
+      replayable: ENTREGA_REPLAYABLE.has(fila.entrega_estado),
+    },
+    payload: (redactarPayloadEvento(fila.payload) as Record<string, unknown> | null) ?? null,
+  };
+}
+
+export type FiltrosEventos = {
+  workspaceId: string;
+  limit?: number;
+  cursor?: string; // id de la última fila de la página anterior
+  tipo?: TipoEvento;
+  entregaEstado?: EstadoEntrega;
+  desde?: string; // ISO
+  hasta?: string; // ISO
+  jobId?: string;
+  correlationId?: string;
+};
+
+/** Lista paginada de eventos del workspace (scoped server-side), proyección SEGURA. Cursor por id descendente (estable). */
+export async function listarEventosDelWorkspace(
+  supabase: SupabaseClient,
+  filtros: FiltrosEventos
+): Promise<{ events: EventoSeguro[]; nextCursor: string | null }> {
+  const limite = Math.min(Math.max(filtros.limit ?? 20, 1), 100);
+  let consulta = supabase.from("dulabs_dev_events").select("*").eq("workspace_id", filtros.workspaceId).order("id", { ascending: false }).limit(limite + 1);
+  if (filtros.cursor) consulta = consulta.lt("id", Number(filtros.cursor));
+  if (filtros.tipo) consulta = consulta.eq("tipo", filtros.tipo);
+  if (filtros.entregaEstado) consulta = consulta.eq("entrega_estado", filtros.entregaEstado);
+  if (filtros.jobId) consulta = consulta.eq("job_id", filtros.jobId);
+  if (filtros.correlationId) consulta = consulta.eq("correlation_id", filtros.correlationId);
+  if (filtros.desde) consulta = consulta.gte("created_at", filtros.desde);
+  if (filtros.hasta) consulta = consulta.lte("created_at", filtros.hasta);
+
+  const { data, error } = await consulta;
+  if (error) throw new Error(`[developer/events-store] error listando eventos: ${error.message}`);
+  const filas = (data ?? []) as EventoFila[];
+  const hayMas = filas.length > limite;
+  const page = hayMas ? filas.slice(0, limite) : filas;
+  const nextCursor = hayMas ? String(page[page.length - 1].id) : null;
+  return { events: page.map(proyectarEventoSeguro), nextCursor };
+}
+
+/** Obtiene un evento por id SOLO si pertenece al workspace (tenant isolation a nivel de dato). */
+export async function obtenerEventoDelWorkspace(supabase: SupabaseClient, params: { workspaceId: string; id: number }): Promise<EventoFila | null> {
+  const { data, error } = await supabase.from("dulabs_dev_events").select("*").eq("id", params.id).eq("workspace_id", params.workspaceId).maybeSingle();
+  if (error) throw new Error(`[developer/events-store] error obteniendo evento del workspace: ${error.message}`);
+  return (data as EventoFila) ?? null;
+}
+
+export type ResultadoReplay = { ok: true; estadoPrevio: EstadoEntrega } | { ok: false; motivo: "no_encontrado" | "no_replayable" };
+
+/**
+ * Fase 13 -- Re-encola una entrega en DLQ/fallido para que el loop de reintento
+ * EXISTENTE (services/reconciliation -> worker-inbound) la vuelva a entregar.
+ * NO crea otra cola ni toca el worker: solo resetea el estado de entrega a
+ * 'pendiente' (intentos=0, next_attempt_at=ahora). Scoped por workspace_id en
+ * el WHERE (aislamiento a nivel de dato, además del check de la ruta). Solo
+ * desde dlq/fallido -> nunca re-dispara un evento ya entregado o en curso.
+ */
+export async function reencolarEntregaParaReplay(supabase: SupabaseClient, params: { workspaceId: string; id: number }): Promise<ResultadoReplay> {
+  const fila = await obtenerEventoDelWorkspace(supabase, { workspaceId: params.workspaceId, id: params.id });
+  if (!fila) return { ok: false, motivo: "no_encontrado" };
+  if (!ENTREGA_REPLAYABLE.has(fila.entrega_estado)) return { ok: false, motivo: "no_replayable" };
+  const { error } = await supabase
+    .from("dulabs_dev_events")
+    .update({ entrega_estado: "pendiente", entrega_intentos: 0, entrega_next_attempt_at: new Date().toISOString(), entrega_ultimo_error: null })
+    .eq("id", params.id)
+    .eq("workspace_id", params.workspaceId)
+    .in("entrega_estado", ["dlq", "fallido"]);
+  if (error) throw new Error(`[developer/events-store] error re-encolando entrega: ${error.message}`);
+  return { ok: true, estadoPrevio: fila.entrega_estado };
+}
+
+export type MetricasEventos = {
+  desde: string | null;
+  hasta: string | null;
+  total: number;
+  porEstadoEntrega: Record<EstadoEntrega, number>;
+  deliveryRate: number | null; // entregado / (entregado + fallido + dlq)
+};
+
+/** Métricas de entrega del workspace en un rango. Cuentas por estado (head counts, sin traer filas). */
+export async function metricasDeEntrega(supabase: SupabaseClient, params: { workspaceId: string; desde?: string; hasta?: string }): Promise<MetricasEventos> {
+  const estados: EstadoEntrega[] = ["pendiente", "entregando", "entregado", "fallido", "dlq", "sin_webhook"];
+  const contar = async (estado?: EstadoEntrega): Promise<number> => {
+    let q = supabase.from("dulabs_dev_events").select("id", { count: "exact", head: true }).eq("workspace_id", params.workspaceId);
+    if (estado) q = q.eq("entrega_estado", estado);
+    if (params.desde) q = q.gte("created_at", params.desde);
+    if (params.hasta) q = q.lte("created_at", params.hasta);
+    const { count, error } = await q;
+    if (error) throw new Error(`[developer/events-store] error contando métricas: ${error.message}`);
+    return count ?? 0;
+  };
+  const total = await contar();
+  const porEstado = {} as Record<EstadoEntrega, number>;
+  for (const e of estados) porEstado[e] = await contar(e);
+  const terminales = porEstado.entregado + porEstado.fallido + porEstado.dlq;
+  const deliveryRate = terminales > 0 ? porEstado.entregado / terminales : null;
+  return { desde: params.desde ?? null, hasta: params.hasta ?? null, total, porEstadoEntrega: porEstado, deliveryRate };
+}
+
+/**
+ * Fase 13 -- Pruning SEGURO: borra SOLO eventos terminales entregados o
+ * sin_webhook más antiguos que `diasRetencion`. NUNCA borra pendiente,
+ * entregando, fallido ni dlq (eventos no resueltos se conservan siempre).
+ * Selecciona ids acotados y borra por id (delete acotado y auditable).
+ */
+export async function podarEventosAntiguos(supabase: SupabaseClient, params: { diasRetencion: number; limite?: number }): Promise<{ borrados: number }> {
+  const umbral = new Date(Date.now() - params.diasRetencion * 24 * 60 * 60 * 1000).toISOString();
+  const { data, error } = await supabase
+    .from("dulabs_dev_events")
+    .select("id")
+    .in("entrega_estado", ["entregado", "sin_webhook"])
+    .lt("created_at", umbral)
+    .limit(params.limite ?? 1000);
+  if (error) throw new Error(`[developer/events-store] error seleccionando eventos a podar: ${error.message}`);
+  const ids = (data ?? []).map((r) => r.id as number);
+  if (ids.length === 0) return { borrados: 0 };
+  const { error: eDel } = await supabase.from("dulabs_dev_events").delete().in("id", ids).in("entrega_estado", ["entregado", "sin_webhook"]);
+  if (eDel) throw new Error(`[developer/events-store] error podando eventos: ${eDel.message}`);
+  return { borrados: ids.length };
+}
+
 export async function obtenerEventosPendientesDePublicar(
   supabase: SupabaseClient,
   params: { minutosAntiguedad: number; maximoIntentos: number; limite?: number }

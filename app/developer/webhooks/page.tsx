@@ -31,6 +31,26 @@ export default function WebhooksPage() {
   const [secreto, setSecreto] = useState<string | null>(null);
   const [ocupado, setOcupado] = useState(false);
   const [accionError, setAccionError] = useState<string | null>(null);
+  const [pingId, setPingId] = useState<string | null>(null);
+  const [pingAviso, setPingAviso] = useState<{ tono: "ok" | "error"; texto: string } | null>(null);
+
+  const probar = async (w: WebhookMeta) => {
+    if (pingId) return;
+    setPingId(w.id);
+    setPingAviso(null);
+    try {
+      const r = await client.webhooks.ping(w.whatsappNumberId);
+      setPingAviso(
+        r.ok
+          ? { tono: "ok", texto: `Webhook respondió ${r.status} en ${r.latencyMs} ms (evento de prueba ${r.eventId}).` }
+          : { tono: "error", texto: `Sin respuesta válida (${r.error ?? `status ${r.status}`}) en ${r.latencyMs} ms.` }
+      );
+    } catch (err) {
+      setPingAviso({ tono: "error", texto: mensajeDeError(err) });
+    } finally {
+      setPingId(null);
+    }
+  };
 
   const abrirCrear = () => {
     setNumeroId(data?.numbers[0]?.id ?? "");
@@ -65,6 +85,7 @@ export default function WebhooksPage() {
       />
 
       {accionError ? <div className="mb-4"><ErrorState error={new Error(accionError)} /></div> : null}
+      {pingAviso ? <div className={`mb-4 rounded-lg border px-4 py-3 text-sm ${pingAviso.tono === "ok" ? "border-success-text/30 bg-success text-success-text" : "border-danger-text/30 bg-danger text-danger-text"}`}>{pingAviso.texto}</div> : null}
 
       {loading ? (
         <TableSkeleton cols={3} />
@@ -81,7 +102,19 @@ export default function WebhooksPage() {
             { key: "url", header: "Endpoint URL", render: (w) => <span className="font-mono text-xs text-fg">{w.url}</span> },
             { key: "status", header: "Status", render: (w) => <StatusBadge tono={w.status === "activo" ? "success" : "neutral"}>{w.status}</StatusBadge> },
             { key: "signed", header: "Signing", render: () => <span className="text-xs text-mist">HMAC · secret hidden</span> },
-            { key: "created", header: "Created", align: "right", render: (w) => <span className="text-xs text-mist">{formatearFecha(w.createdAt)}</span> },
+            { key: "created", header: "Created", render: (w) => <span className="text-xs text-mist">{formatearFecha(w.createdAt)}</span> },
+            ...(puedeGestionar
+              ? [{
+                  key: "test",
+                  header: "Test",
+                  align: "right" as const,
+                  render: (w: WebhookMeta) => (
+                    <button onClick={() => probar(w)} disabled={pingId !== null || w.status !== "activo"} className="rounded-md border border-edge px-2.5 py-1 text-xs text-fg hover:bg-white/5 disabled:opacity-50">
+                      {pingId === w.id ? "Probando…" : "Probar"}
+                    </button>
+                  ),
+                }]
+              : []),
           ]}
         />
       )}

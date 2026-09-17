@@ -18,19 +18,35 @@
 // La disponibilidad de Developer se delega a la ÚNICA fuente de verdad ya
 // existente (claveMaestraDisponible en secure-crypto), para que este guard y
 // el guard en tiempo de ejecución de la route nunca puedan divergir.
-import { claveMaestraDisponible } from "@/lib/developer/secure-crypto";
+import {
+  cifradoCanonicoDisponible,
+  formatoCanonicoEscritura,
+  puedeLeerFormato,
+  coberturaLecturaCompleta,
+} from "@/lib/developer/secure-crypto";
 
 export type ProductoCripto = "business" | "developer";
 
 export type EstadoCripto = {
   producto: ProductoCripto;
   ok: boolean;
-  /** "static" | "kms" | "none" -- el MECANISMO detectado, jamás el valor. */
+  /** "static" | "kms" | "none" -- el MECANISMO CANÓNICO de ESCRITURA, jamás el valor. */
   mecanismo: "static" | "kms" | "none";
   /** NOMBRES de las variables aceptadas para este producto (nunca valores). */
   variablesAceptadas: string[];
   /** Mensaje accionable si !ok; null si ok. */
   faltante: string | null;
+  // --- Fase 20 (B2) -- solo Developer: cobertura real de cifrado ---
+  /** Formato canónico de las NUEVAS escrituras ("dev2"|"dev1"|"none"). */
+  formatoCanonico?: "dev2" | "dev1" | "none";
+  /** ¿Configurado (por presencia) para descifrar dev1 legacy? */
+  puedeLeerDev1?: boolean;
+  /** ¿Configurado (por presencia) para descifrar dev2 canónico? */
+  puedeLeerDev2?: boolean;
+  /** ¿Puede leer AMBOS formatos (cobertura de transición)? */
+  coberturaLectura?: boolean;
+  /** Advertencias no bloqueantes (p.ej. cobertura de lectura incompleta). */
+  advertencias?: string[];
 };
 
 /** Business cifra los tokens de Meta de sus tenants con TOKEN_ENCRYPTION_KEY (lib/crypto.ts). */
@@ -48,26 +64,58 @@ export function estadoCriptoBusiness(): EstadoCripto {
 }
 
 /**
- * Developer V1 cifra los tokens de Meta con secure-crypto (FAIL-CLOSED): KMS
- * real (KMS_KEY_NAME) en Cloud Run, o clave estática (DEVELOPER_TOKEN_ENCRYPTION_KEY)
- * en el resto de entornos. `ok` reutiliza claveMaestraDisponible() -- la misma
- * comprobación que hace el guard de /api/developer/whatsapp/connect.
+ * Developer V1 cifra los secretos de Meta con secure-crypto (FAIL-CLOSED).
+ * Fase 20 (B2): el formato CANÓNICO de escritura es EXPLÍCITO
+ * (DEVELOPER_TOKEN_ENCRYPTION_MODE) -- en producción "kms" -> dev2. `ok` ya NO
+ * es "hay alguna clave", sino "puede cifrar en el formato canónico configurado"
+ * (cifradoCanonicoDisponible): así, un runtime configurado para KMS sin
+ * KMS_KEY_NAME NO se considera válido aunque exista la clave estática -- ese
+ * fue exactamente el hueco de B2. Además reporta la cobertura de LECTURA de
+ * ambos formatos (dev1 legacy + dev2 canónico) para la transición.
  */
 export function estadoCriptoDeveloper(): EstadoCripto {
-  const kms = Boolean(process.env.KMS_KEY_NAME);
-  const estatica = Boolean(process.env.DEVELOPER_TOKEN_ENCRYPTION_KEY);
-  const ok = claveMaestraDisponible(); // === kms || estatica (fuente de verdad única)
+  const ok = cifradoCanonicoDisponible();
+  const formatoCanonico = formatoCanonicoEscritura(); // "dev2" | "dev1" | "none"
+  const puedeLeerDev1 = puedeLeerFormato("dev1");
+  const puedeLeerDev2 = puedeLeerFormato("dev2");
+  const coberturaLectura = coberturaLecturaCompleta();
+  const mecanismo: "static" | "kms" | "none" =
+    formatoCanonico === "dev2" ? "kms" : formatoCanonico === "dev1" ? "static" : "none";
+
+  const advertencias: string[] = [];
+  // Cobertura de lectura incompleta: puede escribir el canónico pero no puede
+  // leer el OTRO formato que producción puede contener durante la transición.
+  if (ok && !coberturaLectura) {
+    if (!puedeLeerDev1) {
+      advertencias.push(
+        "Cobertura de lectura incompleta: no puede descifrar dev1 legacy (falta DEVELOPER_TOKEN_ENCRYPTION_KEY). " +
+          "Durante la transición, añade la clave estática para poder leer tokens/secretos legacy existentes."
+      );
+    }
+    if (!puedeLeerDev2) {
+      advertencias.push(
+        "Cobertura de lectura incompleta: no puede descifrar dev2 canónico (falta KMS_KEY_NAME/acceso KMS). " +
+          "Este runtime no podrá leer secretos escritos en el formato canónico."
+      );
+    }
+  }
+
   return {
     producto: "developer",
     ok,
-    mecanismo: kms ? "kms" : estatica ? "static" : "none",
-    variablesAceptadas: ["KMS_KEY_NAME", "DEVELOPER_TOKEN_ENCRYPTION_KEY"],
+    mecanismo,
+    variablesAceptadas: ["DEVELOPER_TOKEN_ENCRYPTION_MODE", "KMS_KEY_NAME", "DEVELOPER_TOKEN_ENCRYPTION_KEY"],
     faltante: ok
       ? null
-      : "Falta la clave de cifrado de Developer: configura DEVELOPER_TOKEN_ENCRYPTION_KEY " +
-        "(clave estática AES-256 en base64) o KMS_KEY_NAME (Google Cloud KMS). " +
-        "secure-crypto.ts es FAIL-CLOSED: sin una de ellas, /api/developer/whatsapp/connect " +
-        "responde `encryption_unavailable` y ningún número se conecta.",
+      : "Cifrado canónico de Developer no disponible. Configura DEVELOPER_TOKEN_ENCRYPTION_MODE=kms + KMS_KEY_NAME " +
+        "(producción, envelope KMS -> dev2), o DEVELOPER_TOKEN_ENCRYPTION_KEY con modo static (local/CI -> dev1). " +
+        "secure-crypto.ts es FAIL-CLOSED: sin el mecanismo canónico, /api/developer/whatsapp/connect responde " +
+        "`encryption_unavailable` y ningún número se conecta. La sola presencia de la clave estática NO valida un runtime configurado para KMS.",
+    formatoCanonico,
+    puedeLeerDev1,
+    puedeLeerDev2,
+    coberturaLectura,
+    advertencias,
   };
 }
 

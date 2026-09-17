@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { crearApiKey, listarApiKeys, revocarApiKey, rotarApiKey } from "@/lib/developer/api-keys-store";
+import { crearApiKey, listarApiKeys, revocarApiKey, rotarApiKey, ErrorLimiteApiKeys } from "@/lib/developer/api-keys-store";
 import { registrarNumeroConLimite, listarNumeros, obtenerNumeroDelWorkspace } from "@/lib/developer/whatsapp-numbers-store";
 import { configurarWebhook } from "@/lib/developer/webhook-config-store";
 import { resolverLimitesDelWorkspace } from "@/lib/developer/plans";
@@ -46,8 +46,15 @@ export async function conWorkspaceAutenticado(
 export async function manejarCrearApiKey(deps: DependenciasManagement, workspaceId: string, cuerpo: unknown): Promise<RespuestaManagement> {
   const name = (cuerpo as { name?: string } | null)?.name;
   if (!name) return { status: 400, cuerpo: { error: "Falta 'name'" } };
-  const { fila, claveEnClaro } = await crearApiKey(deps.supabase, { workspaceId, name });
-  return { status: 201, cuerpo: { id: fila.id, name: fila.name, prefix: fila.prefix, apiKey: claveEnClaro } };
+  try {
+    const { fila, claveEnClaro } = await crearApiKey(deps.supabase, { workspaceId, name });
+    return { status: 201, cuerpo: { id: fila.id, name: fila.name, prefix: fila.prefix, apiKey: claveEnClaro } };
+  } catch (err) {
+    if (err instanceof ErrorLimiteApiKeys) {
+      return { status: 409, cuerpo: { error: "api_key_limit", limite: err.limite } };
+    }
+    throw err;
+  }
 }
 
 export async function manejarListarApiKeys(deps: DependenciasManagement, workspaceId: string): Promise<RespuestaManagement> {

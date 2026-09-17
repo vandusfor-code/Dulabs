@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { autenticarApiKey } from "@/lib/developer/api-keys-store";
 import { errorApi, retryAfterHeader, type RespuestaApi } from "./errors";
 import { verificarLimiteTasa } from "@/lib/rate-limit";
+import { apiPublicaHabilitada } from "@/lib/developer/beta-flags";
 
 // DuLabs Developer V1 -- Fase 4 (autorizado, sección "AUTHENTICATION").
 // Capa de autenticación por API key para la Developer API pública --
@@ -42,6 +43,12 @@ export async function conWorkspaceAutenticadoPorApiKey(
   ipRemota: string | undefined,
   fn: (ctx: ContextoApiKey) => Promise<RespuestaApi>
 ): Promise<RespuestaApi> {
+  // Fase 19 (kill switch): si el API público está deshabilitado, se rechaza
+  // TODO antes de tocar auth/DB -- respuesta genérica 503, sin filtrar detalle.
+  if (!apiPublicaHabilitada()) {
+    return errorApi(503, "service_unavailable", "El API está temporalmente deshabilitado. Reintenta más tarde.", requestId);
+  }
+
   const clave = extraerBearer(autorizacion);
   if (!clave) return errorApi(401, "missing_api_key", "Falta el header Authorization: Bearer dl_live_...", requestId);
 

@@ -24,7 +24,12 @@ function claveValida(recibida: string | null, esperada: string | undefined): boo
 }
 
 export async function GET(request: NextRequest) {
-  if (!claveValida(request.nextUrl.searchParams.get("key"), process.env.DIAGNOSTICS_SECRET)) {
+  // Fase 16 (hardening): se acepta el secreto por Authorization: Bearer
+  // (preferido -- no queda en logs/referrer) o, por compatibilidad, ?key=.
+  const auth = request.headers.get("authorization") ?? "";
+  const bearer = auth.startsWith("Bearer ") ? auth.slice(7).trim() : null;
+  const clave = bearer || request.nextUrl.searchParams.get("key");
+  if (!claveValida(clave, process.env.DIAGNOSTICS_SECRET)) {
     return new Response("Forbidden", { status: 403 });
   }
 
@@ -34,6 +39,13 @@ export async function GET(request: NextRequest) {
     entorno: r.entorno,
     developer_crypto_ready: dev.ok,
     mecanismo: dev.mecanismo, // "kms" | "static" | "none" -- nunca el valor
+    // Fase 20 (B2): cobertura real -- formato canónico de escritura + qué
+    // formatos puede LEER este runtime (por presencia de config, nunca valores).
+    formato_canonico_escritura: dev.formatoCanonico ?? null,
+    puede_leer_dev1: dev.puedeLeerDev1 ?? null,
+    puede_leer_dev2: dev.puedeLeerDev2 ?? null,
+    cobertura_lectura_completa: dev.coberturaLectura ?? null,
+    advertencias: dev.advertencias ?? [],
     variables_aceptadas: dev.variablesAceptadas,
   });
 }

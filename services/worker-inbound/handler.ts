@@ -11,6 +11,7 @@ import { obtenerNumeroPorPhoneNumberId } from "@/lib/developer/whatsapp-numbers-
 import { obtenerWebhookDelNumero, obtenerSecretoWebhookDelNumero } from "@/lib/developer/webhook-config-store";
 import { firmarEvento, HEADER_FIRMA, HEADER_TIMESTAMP, HEADER_EVENT_ID } from "@/lib/developer/webhook-signature";
 import { validarUrlWebhookSegura, type FuncionLookupDns } from "@/lib/developer/ssrf-guard";
+import { entregarWebhookSeguro, ErrorDestinoNoSeguro, type RespuestaEntrega } from "@/lib/developer/secure-webhook-delivery";
 import { clasificarWebhookMeta, extraerPhoneNumberIdMeta, extraerStatusMeta, normalizarEventoInbound } from "@/lib/developer/inbound-event-mapper";
 import { aplicarDeliveryStatus, adquirirLease, aplicarEventoJob, liberarLease } from "@/lib/developer/jobs-store";
 import { confirmarUso } from "@/lib/developer/usage-ledger";
@@ -34,6 +35,10 @@ import { confirmarUso } from "@/lib/developer/usage-ledger";
 export type DependenciasWorkerInbound = {
   supabase: SupabaseClient;
   fetchImpl?: typeof fetch;
+  /** Fase 17 (17.1): entrega inyectable en tests. En producción se usa
+   *  entregarWebhookSeguro (IP pinning). Si no se inyecta y hay fetchImpl, este
+   *  se adapta (compat con tests existentes). */
+  entregarFn?: (url: string, opts: { headers: Record<string, string>; body: string; timeoutMs: number }) => Promise<RespuestaEntrega>;
   lookupDnsFn?: FuncionLookupDns;
   metaGraphApiBaseUrl?: string; // no se usa para inbound; presente por simetría de deps
 };
@@ -93,7 +98,18 @@ function esRespuestaReintentable(status: number): boolean {
 
 export async function procesarMensajeInbound(deps: DependenciasWorkerInbound, mensaje: MensajePubSubInbound): Promise<ResultadoProcesamientoInbound> {
   const { supabase } = deps;
-  const fetchFn = deps.fetchImpl ?? fetch;
+  // Fase 17 (17.1): la entrega usa IP pinning (entregarWebhookSeguro) en
+  // producción -- la conexión se hace SOLO a la IP validada, cerrando el
+  // rebinding TOCTOU. deps.entregarFn permite inyectar en tests; deps.fetchImpl
+  // se adapta para no romper los tests existentes (mock con Response).
+  const entregar: (url: string, opts: { headers: Record<string, string>; body: string; timeoutMs: number }) => Promise<RespuestaEntrega> =
+    deps.entregarFn ??
+    (deps.fetchImpl
+      ? async (url, o) => {
+          const r = await deps.fetchImpl!(url, { method: "POST", headers: o.headers, body: o.body, signal: AbortSignal.timeout(o.timeoutMs), redirect: "manual" });
+          return { status: r.status, ok: r.ok };
+        }
+      : (url, o) => entregarWebhookSeguro(url, o));
 
   try {
     const evento = await obtenerEventoPorId(supabase, { id: mensaje.eventoId });
@@ -155,15 +171,22 @@ export async function procesarMensajeInbound(deps: DependenciasWorkerInbound, me
     const cuerpo = JSON.stringify(normal);
     const firmado = firmarEvento(secreto, cuerpo);
 
-    let respuesta: Response;
+    let respuesta: RespuestaEntrega;
     try {
-      respuesta = await fetchFn(webhook.url, {
-        method: "POST",
+      // Fase 16: no seguir redirects (un 3xx -> no "ok", no reintentable -> DLQ).
+      // Fase 17 (17.1): la conexión usa IP pinning -> solo la IP validada; un
+      // rebinding detectado al conectar lanza ErrorDestinoNoSeguro (terminal).
+      respuesta = await entregar(webhook.url, {
         headers: { "Content-Type": "application/json", [HEADER_FIRMA]: firmado.firma, [HEADER_TIMESTAMP]: String(firmado.timestamp), [HEADER_EVENT_ID]: evento.event_id },
         body: cuerpo,
-        signal: AbortSignal.timeout(10_000),
+        timeoutMs: 10_000,
       });
-    } catch {
+    } catch (err) {
+      if (err instanceof ErrorDestinoNoSeguro) {
+        // Destino no seguro detectado EN LA CONEXIÓN (rebinding/pin) -> terminal.
+        await marcarEntregaDlq(supabase, { id: evento.id, motivoSanitizado: `destino_no_seguro:${err.motivo}` });
+        return { httpStatus: 200, motivo: `webhook_destino_no_seguro:${err.motivo}` };
+      }
       // Timeout / conexión -- reintentable (nunca se filtra el error real al log).
       await marcarEntregaReintentable(supabase, { id: evento.id, intentosPrevios, motivoSanitizado: "timeout_o_conexion" });
       return { httpStatus: 200, motivo: "entrega_reintentable:timeout_o_conexion" };

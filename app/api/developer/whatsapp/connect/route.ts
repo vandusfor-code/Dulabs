@@ -1,7 +1,7 @@
 import type { NextRequest } from "next/server";
 import { conSesionDeveloper, jsonOk, jsonError } from "@/lib/developer/dev-api-http";
 import { intercambiarYDescubrirNumeroMeta, suscribirAppAlWaba } from "@/lib/developer/meta-embedded-signup-exchange";
-import { claveMaestraDisponible } from "@/lib/developer/secure-crypto";
+import { cifradoCanonicoDisponible } from "@/lib/developer/secure-crypto";
 import { registrarNumeroConLimite } from "@/lib/developer/whatsapp-numbers-store";
 import { resolverLimitesDelWorkspace } from "@/lib/developer/plans";
 
@@ -32,10 +32,13 @@ export async function POST(request: NextRequest) {
       console.error(`[dev-whatsapp-connect] faltan NEXT_PUBLIC_META_APP_ID/META_APP_SECRET (request_id=${ctx.requestId})`);
       return jsonError(500, "meta_config_missing", ctx.requestId);
     }
-    // Fail-closed: sin mecanismo de cifrado disponible NO se toca Meta ni se
-    // persiste nada (evita obtener un token que no podríamos cifrar).
-    if (!claveMaestraDisponible()) {
-      console.error(`[dev-whatsapp-connect] no hay clave de cifrado disponible (request_id=${ctx.requestId})`);
+    // Fail-closed: sin el mecanismo de cifrado CANÓNICO disponible NO se toca
+    // Meta ni se persiste nada (evita obtener un token que no podríamos cifrar
+    // en el formato canónico). Fase 20 (B2): exige el canónico configurado, no
+    // "cualquier clave" -- así un runtime en modo kms sin KMS_KEY_NAME nunca
+    // obtiene un token de Meta que luego no podría cifrar como dev2.
+    if (!cifradoCanonicoDisponible()) {
+      console.error(`[dev-whatsapp-connect] cifrado canónico no disponible (request_id=${ctx.requestId})`);
       return jsonError(500, "encryption_unavailable", ctx.requestId);
     }
 
