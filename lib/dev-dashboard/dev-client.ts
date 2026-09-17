@@ -161,7 +161,18 @@ export type SubscriptionResp = {
   workspaces: LimiteUso;
   members: LimiteUso;
   limits: { messagesPerSecondPerNumber: number | null };
+  /** Fase 12 (billing). Presente siempre; `enabled` refleja DEVELOPER_BILLING_ENABLED. */
+  billing?: {
+    enabled: boolean;
+    intervalo: "month" | "year" | null;
+    proximoCobro: string | null;
+    periodoFin: string | null;
+    cancelarAlFinPeriodo: boolean;
+    scheduledDowngradeTo: string | null;
+  };
 };
+export type CheckoutResp = { estado: string; reference: string; activada: boolean };
+export type CancelResp = { ok: boolean; cancelarAlFinPeriodo: boolean; periodoFin: string | null };
 
 /** Cliente Developer con métodos por recurso. Un solo punto de fetch -- nunca fetch manual disperso en componentes. */
 export function createDevClient(deps: DevClientDeps) {
@@ -200,8 +211,15 @@ export function createDevClient(deps: DevClientDeps) {
     jobs: (opts?: { limit?: number; cursor?: string }) => solicitar<JobsResp>(deps, "/jobs", { query: { limit: opts?.limit, cursor: opts?.cursor } }),
     subscription: {
       get: () => solicitar<SubscriptionResp>(deps, "/subscription"),
-      changePlan: (plan: string, motivo?: string) => solicitar<{ ok: boolean; plan: string }>(deps, "/subscription/plan", { method: "POST", body: { plan, motivo } }),
+      changePlan: (plan: string, motivo?: string) => solicitar<{ ok: boolean; plan: string; changed?: boolean; scheduledDowngradeTo?: string; effectiveAt?: string | null }>(deps, "/subscription/plan", { method: "POST", body: { plan, motivo } }),
       setAdditionalNumbers: (total: number, motivo?: string) => solicitar<{ ok: boolean; additionalNumbers: number }>(deps, "/subscription/additional-numbers", { method: "POST", body: { total, motivo } }),
+      /** Fase 12 -- cancelación al fin de período (cancelar=false revierte). Solo dueño de cuenta. */
+      cancel: (cancelar = true) => solicitar<CancelResp>(deps, "/subscription/cancel", { method: "POST", body: { cancelar } }),
+    },
+    billing: {
+      /** Fase 12 -- checkout Wompi. El backend resuelve precio/FX/cuenta; el frontend solo manda plan+intervalo+token tokenizado. */
+      checkout: (body: { plan: string; intervalo: "month" | "year"; token: string; acceptance_token: string; accept_personal_auth: string; customer_email: string }) =>
+        solicitar<CheckoutResp>(deps, "/billing/checkout", { method: "POST", body }),
     },
     workspaces: {
       list: () => solicitar<{ workspaces: { workspaceId: string; createdAt?: string }[] }>(deps, "/workspaces"),

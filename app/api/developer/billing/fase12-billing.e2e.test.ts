@@ -17,6 +17,8 @@ import { ensureCuentaParaWorkspace } from "@/lib/developer/accounts-store";
 import { activarSuscripcionPagada, procesarRenovacionFallida } from "@/lib/developer/billing/billing-lifecycle";
 import { reservarCheckout, obtenerSuscripcion } from "@/lib/developer/billing/billing-store";
 import { POST as planPOST } from "@/app/api/developer/subscription/plan/route";
+import { POST as checkoutPOST } from "@/app/api/developer/billing/checkout/route";
+import { POST as cancelPOST } from "@/app/api/developer/subscription/cancel/route";
 
 const HAS_SUPABASE = Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
 
@@ -153,6 +155,50 @@ describe(
       const { data } = await admin.from("dulabs_dev_accounts").select("estado, plan_codigo").eq("id", o.accountId).maybeSingle();
       assert.equal((data as { estado: string }).estado, "canceled");
       assert.equal((data as { plan_codigo: string }).plan_codigo, "AGENCY");
+    });
+
+    async function miembro(ws: string, rol: "OWNER" | "ADMIN" | "MEMBER"): Promise<{ token: string; userId: string }> {
+      const email = `f12m-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@example.com`;
+      const password = `F12m-${randomUUID()}`;
+      const { data, error } = await admin.auth.admin.createUser({ email, password, email_confirm: true });
+      if (error || !data.user) throw error ?? new Error("no user");
+      userIds.push(data.user.id);
+      await crearMiembro(admin, { workspaceId: ws, userId: data.user.id, rol });
+      const s = crearClienteDePruebaComoSesion();
+      const si = await s.auth.signInWithPassword({ email, password });
+      if (si.error || !si.data.session) throw si.error ?? new Error("no session");
+      return { token: si.data.session.access_token, userId: data.user.id };
+    }
+    const bodyCheckout = (plan: string, extra: Record<string, unknown> = {}) => ({
+      plan, intervalo: "month", token: "tok_test", customer_email: "x@example.com", acceptance_token: "acc", accept_personal_auth: "auth", ...extra,
+    });
+
+    it("checkout: un MEMBER no puede iniciar checkout -> 403 (gate de rol)", async () => {
+      const o = await ownerConCuenta();
+      const m = await miembro(o.ws, "MEMBER");
+      const r = await checkoutPOST(req("/api/developer/billing/checkout", { token: m.token, ws: o.ws, body: bodyCheckout("AGENCY") }));
+      assert.equal(r.status, 403);
+    });
+
+    it("checkout: OWNER de un workspace de una cuenta AJENA -> 403 not_account_owner (accountId del body IGNORADO)", async () => {
+      const dueno = await ownerConCuenta(); // cuenta cuyo owner es 'dueno'
+      const otro = await miembro(dueno.ws, "OWNER"); // OWNER del MISMO ws, pero NO dueño de la cuenta
+      // 'otro' inyecta un accountId falso en el body: debe ignorarse (cuenta = del workspace).
+      const r = await checkoutPOST(req("/api/developer/billing/checkout", { token: otro.token, ws: dueno.ws, body: bodyCheckout("AGENCY", { accountId: randomUUID() }) }));
+      assert.equal(r.status, 403);
+      assert.equal(((await body(r)).error as { code: string }).code, "not_account_owner");
+    });
+
+    it("cancelación: dueño programa cancelar_al_fin_periodo y puede revertir", async () => {
+      const o = await ownerConCuenta();
+      await ponerPlan(o.accountId, "AGENCY");
+      const r1 = await cancelPOST(req("/api/developer/subscription/cancel", { token: o.token, ws: o.ws, body: { cancelar: true } }));
+      assert.equal(r1.status, 200);
+      assert.equal((await body(r1)).cancelarAlFinPeriodo, true);
+      const { data: d1 } = await admin.from("dulabs_dev_accounts").select("cancelar_al_fin_periodo").eq("id", o.accountId).maybeSingle();
+      assert.equal((d1 as { cancelar_al_fin_periodo: boolean }).cancelar_al_fin_periodo, true);
+      const r2 = await cancelPOST(req("/api/developer/subscription/cancel", { token: o.token, ws: o.ws, body: { cancelar: false } }));
+      assert.equal((await body(r2)).cancelarAlFinPeriodo, false);
     });
 
     it("reserva atómica: 2º checkout concurrente -> checkout_en_curso (anti doble-cobro)", async () => {

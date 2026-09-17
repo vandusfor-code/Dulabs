@@ -2,8 +2,10 @@ import type { NextRequest } from "next/server";
 import { conSesionDeveloper, jsonOk } from "@/lib/developer/dev-api-http";
 import { resolverEntitlementsDeWorkspace } from "@/lib/developer/plans";
 import { periodoActual, obtenerResumenMensualDelWorkspace, contarNumerosDelWorkspace } from "@/lib/developer/usage-ledger";
-import { contarNumerosDeCuenta, contarWorkspacesDeCuenta, contarMiembrosDeCuenta, obtenerResumenMensualDeCuenta } from "@/lib/developer/accounts-store";
+import { contarNumerosDeCuenta, contarWorkspacesDeCuenta, contarMiembrosDeCuenta, obtenerResumenMensualDeCuenta, obtenerCuentaPorId } from "@/lib/developer/accounts-store";
 import { listarMiembros } from "@/lib/developer/memberships-store";
+import { billingHabilitado } from "@/lib/developer/billing/billing-flag";
+import { obtenerSuscripcion } from "@/lib/developer/billing/billing-store";
 
 // DuLabs Developer V1 -- Fase 11 (autorizado). Vista canónica de suscripción
 // A NIVEL DE CUENTA: plan, estado, entitlements (nominales) y uso agregado
@@ -46,6 +48,19 @@ export async function GET(request: NextRequest) {
     }
     const mensajesUsados = resumen.reserved + resumen.confirmed;
 
+    // Info de billing (Fase 12, aditiva): estado de suscripción/período. Sin
+    // cuenta (legacy) o sin fila de billing => valores nulos/false.
+    const cuentaFila = e.accountId ? await obtenerCuentaPorId(ctx.supabase, e.accountId) : null;
+    const sub = e.accountId ? await obtenerSuscripcion(ctx.supabase, e.accountId) : null;
+    const billing = {
+      enabled: billingHabilitado(),
+      intervalo: sub?.intervalo ?? null,
+      proximoCobro: sub?.proximo_cobro ?? null,
+      periodoFin: cuentaFila?.periodo_fin ?? null,
+      cancelarAlFinPeriodo: cuentaFila?.cancelar_al_fin_periodo ?? false,
+      scheduledDowngradeTo: sub?.downgrade_a_plan ?? null,
+    };
+
     return jsonOk(
       {
         plan: e.planCodigo,
@@ -72,6 +87,7 @@ export async function GET(request: NextRequest) {
         workspaces: { included: e.maxWorkspaces, used: workspacesUsed, available: disponible(e.maxWorkspaces, workspacesUsed) },
         members: { included: e.maxMembers, used: membersUsed, available: disponible(e.maxMembers, membersUsed) },
         limits: { messagesPerSecondPerNumber: e.throughputPerNumber },
+        billing,
       },
       ctx.requestId
     );
