@@ -71,21 +71,33 @@ export function DeveloperSessionProvider({ children }: { children: ReactNode }) 
 
   const cargarWorkspaces = useCallback((token: string) => {
     const bootstrap = createDevClient({ getToken: () => token, getWorkspaceId: () => null });
-    bootstrap.workspace().then(
-      (data) => {
-        setWorkspaces(data.workspaces);
-        const guardado = leerWorkspaceGuardado();
-        const valido = Boolean(guardado && data.workspaces.some((w) => w.workspaceId === guardado));
-        const elegido = valido ? guardado! : data.selected?.workspaceId ?? (data.workspaces.length === 1 ? data.workspaces[0].workspaceId : null);
-        setSelectedWorkspaceId(elegido);
-        if (elegido) guardarWorkspace(elegido);
-        setEstado("listo");
-      },
-      (err) => {
-        setErrorBootstrap(err instanceof Error ? err.message : String(err));
-        setEstado("error");
+    const alError = (err: unknown) => {
+      setErrorBootstrap(err instanceof Error ? err.message : String(err));
+      setEstado("error");
+    };
+    const aplicar = (data: { workspaces: WorkspaceInfo[]; selected?: { workspaceId: string } | null }) => {
+      setWorkspaces(data.workspaces);
+      const guardado = leerWorkspaceGuardado();
+      const valido = Boolean(guardado && data.workspaces.some((w) => w.workspaceId === guardado));
+      const elegido = valido ? guardado! : data.selected?.workspaceId ?? (data.workspaces.length === 1 ? data.workspaces[0].workspaceId : null);
+      setSelectedWorkspaceId(elegido);
+      if (elegido) guardarWorkspace(elegido);
+      setEstado("listo");
+    };
+    bootstrap.workspace().then((data) => {
+      // GAP de provisión: un usuario recién registrado no tiene workspace.
+      // Se provisiona (cuenta + workspace + membership OWNER) de forma
+      // idempotente en el backend y se recarga -- así nunca queda atrapado en
+      // "Select a workspace". La provisión no crea duplicados en reintentos.
+      if (data.workspaces.length === 0) {
+        bootstrap.onboarding.provision().then(
+          () => bootstrap.workspace().then(aplicar, alError),
+          alError
+        );
+      } else {
+        aplicar(data);
       }
-    );
+    }, alError);
   }, []);
 
   const selectWorkspace = useCallback((workspaceId: string) => {
