@@ -11,6 +11,7 @@ import {
   type EstadoPago,
 } from "@/lib/developer/billing/billing-store";
 import { activarSuscripcionPagada, procesarRenovacionFallida } from "@/lib/developer/billing/billing-lifecycle";
+import { dispararConfirmacionPagoDeveloper } from "@/lib/developer/payment-confirmation";
 
 // DuLabs Developer V1 -- Fase 12 (Billing, Wompi). Webhook PROPIO de Developer
 // (comercio Wompi separado; NO el de Business). Pipeline: firma -> registrar
@@ -95,6 +96,17 @@ export async function POST(request: NextRequest) {
         cambiarPlanA: pagoPrevio.plan_codigo,
         motivo: `webhook ${evento.transactionId}`,
       });
+      // Confirmación de pago (email + WhatsApp) -- una vez por activación, no
+      // bloqueante: un fallo se loguea pero nunca revierte la activación.
+      try {
+        await dispararConfirmacionPagoDeveloper(supabase, {
+          accountId: pagoPrevio.account_id,
+          planCodigo: pagoPrevio.plan_codigo,
+          transactionId: evento.transactionId,
+        });
+      } catch (err) {
+        console.error("[dev-billing-webhook] confirmación de pago falló (no bloqueante):", err instanceof Error ? err.message : String(err));
+      }
     } else if (efecto === "fallido" && pagoPrevio.tipo === "renewal" && pagoPrevio.estado !== nuevoEstado) {
       // Solo las RENOVACIONES fallidas abren dunning (un checkout inicial fallido
       // no tiene servicio que proteger).
