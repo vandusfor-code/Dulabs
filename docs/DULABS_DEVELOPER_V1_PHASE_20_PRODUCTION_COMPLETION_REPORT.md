@@ -39,7 +39,10 @@ Creado en este ciclo (aditivo, no afecta Business/AMORE):
 **Pendiente en Cloud Run:** `DEVELOPER_TOKEN_ENCRYPTION_KEY` (lectura de `dev1:` legacy) — **BLOCKED**: requiere el VALOR de la clave (vive cifrado en Vercel; no debo manipular plaintext de secretos). Debe hacerlo el owner vía Secret Manager reusando el mismo valor.
 
 ## 7. Deployments
-**Ninguno.** B1 preparado pero **no ejecutado**: desplegar a `www.dulabs.co` es publicar en la web viva compartida con Business/AMORE. Aunque la rama es superconjunto de main (sin regresión por commits faltantes), el deploy es outward-facing e irreversible en caliente y depende de §8/§9 → requiere tu autorización explícita de publicación.
+- **PR #47** abierto a `main` (rama pusheada a origin; `MERGEABLE`; **sin merge**). https://github.com/vandusfor-code/Dulabs/pull/47
+- **CI = PASS** (VERIFIED): checks Vercel `Vercel Preview Comments` ✅ + `Vercel` ✅ ("Deployment has completed"). → el stack Developer V1 (F11–F20) **compila y se despliega** en Vercel (preview `Ready`).
+- **Contenido del preview = NOT VERIFIED (anónimo)**: el preview responde `302 → vercel.com/sso-api` (Vercel Deployment Protection / SSO en previews). No es un fallo; la verificación de contenido (rutas 200 + JSON + `crypto-status=kms`) se hará en **producción tras el merge** (prod sin ese SSO).
+- **Deploy a producción**: pendiente del **merge de PR #47** (autorización del owner) + precondiciones §8/§9. No ejecutado.
 
 ## 8. DNS — BLOCKED (GoDaddy)
 **Decisión tomada: `api.dulabs.co`** (no `dulabs.dev`, que no está registrado). El DNS de `dulabs.co` está en **GoDaddy** (`ns61/ns62.domaincontrol.com`); Vercel NO es autoritativo (0 records gestionados). → crear el registro `api.dulabs.co` y el TXT de verificación de dominio para el Cloud Run domain mapping **requiere acceso a GoDaddy**, no disponible en este entorno. **BLOCKED (proveedor DNS externo).**
