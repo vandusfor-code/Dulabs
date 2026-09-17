@@ -112,6 +112,22 @@ plantilla en Meta o el mapeo de variables.
 
 ---
 
+## 6. Confirmación de pago (Wompi → email + WhatsApp)
+
+Al confirmarse un pago (webhook Wompi, transición a APPROVED) se dispara la confirmación una
+sola vez, no bloqueante:
+- **Email:** branded, vía Resend (requiere `RESEND_API_KEY`, ya cubierto en paso 4). Funciona sin config extra.
+- **WhatsApp:** GATED. No existe todavía una plantilla Meta aprobada de confirmación de pago.
+  - **MANUAL_REQUIRED:** crear y aprobar en Meta una plantilla de confirmación de pago (Utility,
+    es_CO) con **2 variables de cuerpo**: `{{1}}` = nombre, `{{2}}` = plan. Ej.:
+    *"Hola {{1}}, tu plan {{2}} de DuLabs ya está activo. ¡Gracias!"*
+  - Luego setear en Vercel Production: `DEV_PAYMENT_TEMPLATE_NAME` = nombre de la plantilla
+    (y opcional `DEV_PAYMENT_TEMPLATE_LANG`, por defecto `es_CO`).
+  - El código lee la estructura real de la plantilla y valida que el nº de variables coincida
+    antes de enviar; si no coincide o no está aprobada, omite el envío con un motivo claro (no
+    manda un payload inválido). Sin la env, el WhatsApp de pago simplemente no se envía (el pago
+    y la activación NO se afectan).
+
 ## Estado
 
 | Paso | Tipo | Estado |
@@ -122,3 +138,6 @@ plantilla en Meta o el mapeo de variables.
 | Correo confirmación branded | Config | MANUAL (paso 3) |
 | Email bienvenida | Código | CODE_READY — requiere RESEND_API_KEY (paso 4) |
 | WhatsApp bienvenida | Código | CODE_READY — prueba controlada en runtime (paso 5) |
+| Wompi checkout→webhook→activación | Código | CODE_READY (firma, idempotencia, activación por webhook ya sólidas) |
+| Email confirmación de pago | Código | CODE_READY — requiere RESEND_API_KEY |
+| WhatsApp confirmación de pago | Config | MANUAL — falta plantilla Meta + DEV_PAYMENT_TEMPLATE_NAME (paso 6) |
