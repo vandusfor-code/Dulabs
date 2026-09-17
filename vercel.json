@@ -12,6 +12,10 @@
     {
       "path": "/api/developer/billing/cobro-recurrente",
       "schedule": "0 15 * * *"
+    },
+    {
+      "path": "/api/developer/maintenance/retencion",
+      "schedule": "30 4 * * *"
     }
   ]
 }

@@ -174,6 +174,13 @@ export type SubscriptionResp = {
 export type CheckoutResp = { estado: string; reference: string; activada: boolean };
 export type CancelResp = { ok: boolean; cancelarAlFinPeriodo: boolean; periodoFin: string | null };
 
+// Fase 13 -- observabilidad de eventos/webhooks (proyección segura).
+export type EventDelivery = { estado: string; intentos: number; nextAttemptAt: string | null; ultimoError: string | null; entregadoEn: string | null; replayable: boolean };
+export type DevEvent = { id: number; eventId: string; tipo: string; createdAt: string; jobId: string | null; correlationId: string | null; delivery: EventDelivery; payload: Record<string, unknown> | null };
+export type EventsResp = { events: DevEvent[]; nextCursor: string | null };
+export type EventMetrics = { desde: string | null; hasta: string | null; total: number; porEstadoEntrega: Record<string, number>; deliveryRate: number | null };
+export type WebhookPingResp = { ok: boolean; status: number; latencyMs: number; eventId: string; error?: string };
+
 /** Cliente Developer con métodos por recurso. Un solo punto de fetch -- nunca fetch manual disperso en componentes. */
 export function createDevClient(deps: DevClientDeps) {
   return {
@@ -201,6 +208,16 @@ export function createDevClient(deps: DevClientDeps) {
     webhooks: {
       list: () => solicitar<{ webhooks: WebhookMeta[] }>(deps, "/webhooks"),
       create: (body: { whatsappNumberId: string; url: string }) => solicitar<WebhookSecret>(deps, "/webhooks", { method: "POST", body }),
+      /** Fase 13 -- envía un evento de prueba firmado al webhook del número (OWNER/ADMIN). */
+      ping: (whatsappNumberId: string) => solicitar<WebhookPingResp>(deps, "/webhooks/ping", { method: "POST", body: { whatsappNumberId } }),
+    },
+    events: {
+      /** Fase 13 -- lista paginada de eventos (proyección segura) con filtros. */
+      list: (opts: { limit?: number; cursor?: string; tipo?: string; entregaEstado?: string; desde?: string; hasta?: string; jobId?: string; correlationId?: string } = {}) =>
+        solicitar<EventsResp>(deps, "/events", { query: { limit: opts.limit, cursor: opts.cursor, tipo: opts.tipo, entregaEstado: opts.entregaEstado, desde: opts.desde, hasta: opts.hasta, jobId: opts.jobId, correlationId: opts.correlationId } }),
+      metrics: (opts: { desde?: string; hasta?: string } = {}) => solicitar<EventMetrics>(deps, "/events/metrics", { query: { desde: opts.desde, hasta: opts.hasta } }),
+      /** Fase 13 -- re-entrega manual de una entrega en DLQ/fallido (OWNER/ADMIN). */
+      replay: (id: string) => solicitar<{ ok: boolean; reencolado: boolean; estadoPrevio: string }>(deps, `/events/${id}/replay`, { method: "POST" }),
     },
     members: {
       list: () => solicitar<{ members: MemberMeta[] }>(deps, "/members"),
