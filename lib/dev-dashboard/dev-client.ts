@@ -242,6 +242,10 @@ export function createDevClient(deps: DevClientDeps) {
       list: () => solicitar<{ workspaces: { workspaceId: string; createdAt?: string }[] }>(deps, "/workspaces"),
       create: () => solicitar<{ workspaceId: string }>(deps, "/workspaces", { method: "POST", body: {} }),
     },
+    onboarding: {
+      /** Provisión idempotente del primer workspace del usuario (cuenta + workspace + membership OWNER). No requiere workspace elegido. */
+      provision: () => solicitar<{ workspaceId: string; created: boolean }>(deps, "/onboarding/provision", { method: "POST", workspace: false, body: {} }),
+    },
   };
 }
 

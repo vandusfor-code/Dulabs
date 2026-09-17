@@ -6,10 +6,10 @@
 /** Landing comercial pública. */
 export const LANDING_PATH = "/developer-platform";
 
-/** CTA "Comenzar" / "Get API Key": entra al login y regresa al dashboard
- *  privado (flujo de onboarding ya existente). NO enlaza directo a /developer
- *  (privado) para no exponer una ruta que redirige a login igual. */
-export const START_HREF = "/login?next=/developer";
+/** CTA "Comenzar" / "Get API Key": registro completo de DuLabs Developer
+ *  (nombre, empresa, WhatsApp, correo). Tras confirmar el correo e iniciar
+ *  sesión, el dashboard auto-provisiona cuenta + workspace + membership OWNER. */
+export const START_HREF = "/developer-platform/registro";
 
 /** CTA de documentación: portal público de docs (Fase 14). */
 export const DOCS_HREF = "/developers";
