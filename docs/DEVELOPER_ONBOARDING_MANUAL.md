@@ -77,14 +77,18 @@ DuLabs, pegar esta plantilla en **Auth → Email Templates → "Confirm signup"*
 
 ---
 
-## 4. Email de bienvenida (Resend)
+## 4. Email de bienvenida y de pago (Resend)
 
-El correo de bienvenida (post-provisión) usa el proveedor existente `lib/dunning/email-provider`
-(Resend). Requiere en Vercel Production:
-- `RESEND_API_KEY` (si falta, el email de bienvenida no se envía; el registro NO falla).
+Ambos correos usan el proveedor existente `lib/dunning/email-provider` (Resend).
+
+> **Hallazgo (2026-09-17):** `RESEND_API_KEY` **NO está** en Vercel Production. Sin ella, los
+> correos de bienvenida y de pago no se envían (el registro y la activación NO fallan).
+
+Acción: en Vercel Production añadir:
+- `RESEND_API_KEY` = tu API key de Resend (dominio `dulabs.co` verificado en Resend).
 - Opcional: `DUNNING_EMAIL_FROM` (por defecto `DuLabs <facturacion@dulabs.co>`).
 
-Verificar presencia: `vercel env ls production | grep RESEND`.
+Verificar: `vercel env ls production | grep RESEND`.
 
 ---
 
@@ -127,6 +131,38 @@ sola vez, no bloqueante:
     antes de enviar; si no coincide o no está aprobada, omite el envío con un motivo claro (no
     manda un payload inválido). Sin la env, el WhatsApp de pago simplemente no se envía (el pago
     y la activación NO se afectan).
+
+## 7. Verificación E2E (para pasar de CODE_READY a VERIFIED)
+
+Ya desplegado y verificado en vivo (sin acción tuya): `/developer-platform/registro` = 200,
+`POST /api/developer/onboarding/provision` = 401 sin sesión (gate OK), CTA de la landing →
+registro. Falta la verificación que toca la BD / envía mensajes, que requiere tus credenciales.
+
+**7.1 Provisión (después de aplicar la migración del paso 1).** Verifica cuenta+workspace+
+membership OWNER + idempotencia contra la BD real, con limpieza automática. No envía mensajes:
+```bash
+SUPABASE_URL=https://<proyecto>.supabase.co SUPABASE_SERVICE_ROLE_KEY=<service_role> \
+  node scripts/verify-onboarding-e2e.mjs
+```
+Esperado: `RESULTADO: N PASS, 0 FAIL`.
+
+**7.2 WhatsApp de bienvenida (envía un mensaje REAL a un número TUYO de prueba).** Reutiliza el
+código real (número oficial DuLabs + token de `dulabs_clientes_config` + `bienvenida_2`):
+```bash
+SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... TOKEN_ENCRYPTION_KEY=... \
+  node --import tsx scripts/verify-bienvenida-whatsapp.mts +57XXXXXXXXXX "Juan"
+```
+Esperado: `PASS  Meta aceptó el mensaje. wamid=...` y recepción en el WhatsApp de prueba. Si sale
+`FAIL motivo=variables_no_coinciden`, ajustar el nº de variables de `bienvenida_2` en Meta o el
+mapeo (el código NO manda payloads inválidos).
+
+**7.3 Email (tras añadir `RESEND_API_KEY`).** Regístrate en `/developer-platform/registro` con un
+correo tuyo, confirma, entra al dashboard: deben llegar el correo de bienvenida y (tras pagar) el
+de pago. Verificable también en los logs de Vercel: `[developer/welcome] ... email=ok`.
+
+**7.4 Pago Wompi (sandbox).** Con el checkout en modo sandbox, completa un pago de prueba y
+verifica en logs `[dev-billing-webhook] ... processed` + suscripción activa en el dashboard. No
+ejecutes un cobro real.
 
 ## Estado
 
