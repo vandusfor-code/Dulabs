@@ -5,6 +5,7 @@ import { respuestaSiLimiteTasaExcedido } from "@/lib/rate-limit";
 import { obtenerNumeroDelWorkspace } from "@/lib/developer/whatsapp-numbers-store";
 import { obtenerWebhookDelNumero, obtenerSecretoWebhookDelNumero } from "@/lib/developer/webhook-config-store";
 import { validarUrlWebhookSegura } from "@/lib/developer/ssrf-guard";
+import { entregarWebhookSeguro, ErrorDestinoNoSeguro } from "@/lib/developer/secure-webhook-delivery";
 import { firmarEvento, HEADER_FIRMA, HEADER_TIMESTAMP, HEADER_EVENT_ID } from "@/lib/developer/webhook-signature";
 
 // DuLabs Developer V1 -- Fase 13 (autorizado, 13.4). Envía un evento de PRUEBA
@@ -44,23 +45,22 @@ export async function POST(request: NextRequest) {
     const cuerpoJson = JSON.stringify({ type: "webhook.ping", event_id: eventId, workspace_id: ctx.workspaceId, sent_at: new Date().toISOString() });
     const { firma, timestamp } = firmarEvento(secreto, cuerpoJson);
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+    // Fase 17 (17.1): entrega con IP pinning (sin seguir redirects, TLS validado,
+    // conexión solo a la IP validada -> cierra el rebinding TOCTOU).
     const inicio = Date.now();
     try {
-      const res = await fetch(webhook.url, {
-        method: "POST",
+      const res = await entregarWebhookSeguro(webhook.url, {
         headers: { "Content-Type": "application/json", [HEADER_FIRMA]: firma, [HEADER_TIMESTAMP]: String(timestamp), [HEADER_EVENT_ID]: eventId },
         body: cuerpoJson,
-        signal: controller.signal,
-        redirect: "manual", // no seguir redirects (defensa SSRF adicional)
+        timeoutMs: TIMEOUT_MS,
       });
       return jsonOk({ ok: res.ok, status: res.status, latencyMs: Date.now() - inicio, eventId }, ctx.requestId);
     } catch (err) {
-      const abortado = err instanceof Error && err.name === "AbortError";
-      return jsonOk({ ok: false, status: 0, latencyMs: Date.now() - inicio, eventId, error: abortado ? `timeout tras ${TIMEOUT_MS}ms` : "no se pudo contactar el endpoint" }, ctx.requestId);
-    } finally {
-      clearTimeout(timer);
+      if (err instanceof ErrorDestinoNoSeguro) {
+        return jsonError(422, "url_no_permitida", ctx.requestId, err.motivo);
+      }
+      const timeout = err instanceof Error && err.message === "timeout";
+      return jsonOk({ ok: false, status: 0, latencyMs: Date.now() - inicio, eventId, error: timeout ? `timeout tras ${TIMEOUT_MS}ms` : "no se pudo contactar el endpoint" }, ctx.requestId);
     }
   });
 }

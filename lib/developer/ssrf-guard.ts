@@ -61,6 +61,17 @@ function ipv6Bloqueada(ip: string): string | null {
 }
 
 /**
+ * Fase 17 -- expone la política de "IP bloqueada" (exactamente la misma que usa
+ * validarUrlWebhookSegura) para que la ENTREGA pinneada (secure-webhook-delivery)
+ * valide la IP a la que realmente se va a conectar con las MISMAS reglas -- sin
+ * duplicar la lista de rangos ni arriesgar divergencia. Devuelve el motivo del
+ * bloqueo o null si la IP es aceptable.
+ */
+export function motivoIpBloqueada(address: string, family: number): string | null {
+  return family === 6 ? ipv6Bloqueada(address) : ipv4Bloqueada(address);
+}
+
+/**
  * Valida que una URL de webhook de desarrollador sea segura de invocar.
  * Chequea: protocolo (solo https en producción -- http se permite si
  * `permitirHttp` es true, únicamente para fixtures de test), resolución DNS
