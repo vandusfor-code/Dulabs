@@ -1,6 +1,14 @@
 const GRAPH = `https://graph.facebook.com/${process.env.META_GRAPH_VERSION ?? "v23.0"}`;
 
-type GraphError = { error?: { message?: string; code?: number } };
+type GraphError = { error?: { message?: string; code?: number; error_subcode?: number; error_data?: { details?: string } } };
+
+/** Formatea el error de Meta con el máximo detalle accionable (code, subcode, details) -- nunca incluye el token ni datos sensibles. */
+export function formatearErrorMeta(status: number, err: GraphError["error"]): string {
+  const code = err?.code != null ? `(#${err.code})` : "";
+  const sub = err?.error_subcode ? ` subcode=${err.error_subcode}` : "";
+  const det = err?.error_data?.details ? ` details="${err.error_data.details}"` : "";
+  return `Meta respondió ${status}: ${code} ${err?.message ?? "sin detalle"}${sub}${det}`.replace(/\s+/g, " ").trim();
+}
 
 // Meta exige nombres de plantilla en minúsculas, solo [a-z0-9_]. Cualquier
 // otro carácter (espacios, tildes, ñ) se colapsa a guion bajo.
@@ -351,7 +359,7 @@ export async function enviarPlantilla(params: {
   });
   const json = (await res.json()) as { messages?: { id?: string }[] } & GraphError;
   if (!res.ok) {
-    throw new Error(`Meta respondió ${res.status}: ${json.error?.message ?? "sin detalle"}`);
+    throw new Error(formatearErrorMeta(res.status, json.error));
   }
   return { wamid: json.messages?.[0]?.id ?? null };
 }

@@ -294,3 +294,7 @@ lib/developer/fase17-chaos-concurrency.e2e.test.ts
 lib/developer/fase19-beta-safety.test.ts
 lib/developer/fase19-api-key-cap.e2e.test.ts
 lib/developer/fase19-dashboard-links.test.ts
+
+lib/meta-templates.test.ts
+
+lib/developer/whatsapp-jobs.test.ts

@@ -1,9 +1,17 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { enviarNotificacionEmail } from "@/lib/dunning/email-provider";
-import { enviarTemplateDulabs } from "@/lib/developer/dulabs-whatsapp";
+import { enviarTemplateDulabs, type ResultadoEnvioTemplate } from "@/lib/developer/dulabs-whatsapp";
 import { obtenerCuentaPorId } from "@/lib/developer/accounts-store";
 import { obtenerPlan } from "@/lib/developer/plans";
 import { siteUrlCon } from "@/lib/site-url";
+import { encolarWhatsappDeveloper } from "@/lib/developer/whatsapp-jobs";
+import { resolverContactoUsuario, primerNombreDe } from "@/lib/developer/contacto";
+
+// Plantilla Meta de confirmación de pago (Utility, sin botones): {{1}}=nombre,
+// {{2}}=plan. Se usa `pago_recibido` por defecto; el sender valida que esté
+// APPROVED antes de enviar, así que mientras Meta no la apruebe simplemente no
+// envía (motivo plantilla_no_aprobada) sin romper nada. Override por env opcional.
+const NOMBRE_PLANTILLA_PAGO = process.env.DEV_PAYMENT_TEMPLATE_NAME || "pago_recibido";
 
 // DuLabs Developer -- confirmación de PAGO (email + WhatsApp). Se dispara desde
 // el webhook de Wompi SOLO en la transición a APPROVED (una vez por activación).
@@ -67,7 +75,7 @@ function emailHtml(params: { nombre: string; planNombre: string; referencia: str
 
 export type ResumenConfirmacionPago = {
   email: { enviado: boolean; motivo?: string };
-  whatsapp: { enviado: boolean; motivo?: string; wamid?: string | null };
+  whatsapp: { enviado: boolean; motivo?: string; wamid?: string | null; encolado?: boolean };
 };
 
 export async function dispararConfirmacionPagoDeveloper(
@@ -83,13 +91,10 @@ export async function dispararConfirmacionPagoDeveloper(
   }
   let email = "";
   let nombre = "";
-  let whatsapp = "";
   try {
-    const { data } = await supabase.auth.admin.getUserById(cuenta.owner_user_id);
-    email = data?.user?.email ?? "";
-    const meta = (data?.user?.user_metadata ?? {}) as Record<string, unknown>;
-    nombre = typeof meta.nombre === "string" ? meta.nombre : "";
-    whatsapp = typeof meta.whatsapp === "string" ? meta.whatsapp : "";
+    const c = await resolverContactoUsuario(supabase, cuenta.owner_user_id);
+    email = c.email;
+    nombre = c.nombre;
   } catch (err) {
     console.error(`[developer/payment-confirmation] no se pudo leer el owner:`, err instanceof Error ? err.message : String(err));
   }
@@ -116,17 +121,41 @@ export async function dispararConfirmacionPagoDeveloper(
     resumen.email = { enviado: false, motivo: "sin_email" };
   }
 
-  // WhatsApp (gated: requiere plantilla Meta aprobada configurada por env)
-  const tpl = process.env.DEV_PAYMENT_TEMPLATE_NAME;
-  if (tpl && whatsapp) {
-    const idioma = process.env.DEV_PAYMENT_TEMPLATE_LANG || "es_CO";
-    // Params por convención: {{1}}=nombre, {{2}}=plan. El sender valida el nº real.
-    const r = await enviarTemplateDulabs(supabase, { nombrePlantilla: tpl, idioma, destinoE164: whatsapp, params: [primerNombre || "cliente", planNombre] });
-    resumen.whatsapp = r.enviado ? { enviado: true, wamid: r.wamid } : { enviado: false, motivo: r.motivo };
+  // WhatsApp: se ENCOLA en QStash para envío inmediato con reintentos, sin
+  // bloquear el webhook de Wompi. Si QStash no está disponible, fallback inline
+  // (sin regresión). El worker/fallback usan pago_recibido y validan APPROVED.
+  const enc = await encolarWhatsappDeveloper({ tipo: "pago", accountId: input.accountId, planCodigo: input.planCodigo, transactionId: input.transactionId });
+  if (enc.encolado) {
+    resumen.whatsapp = { enviado: false, encolado: true };
   } else {
-    resumen.whatsapp = { enviado: false, motivo: tpl ? "sin_whatsapp" : "plantilla_no_configurada" };
+    const r = await enviarConfirmacionPagoWhatsappPorCuenta(supabase, input);
+    resumen.whatsapp = r.enviado ? { enviado: true, wamid: r.wamid } : { enviado: false, motivo: r.motivo };
   }
 
-  console.log(`[developer/payment-confirmation] account=${input.accountId} email=${resumen.email.enviado ? "ok" : `fail:${resumen.email.motivo}`} whatsapp=${resumen.whatsapp.enviado ? "ok" : `fail:${resumen.whatsapp.motivo}`}`);
+  console.log(`[developer/payment-confirmation] account=${input.accountId} email=${resumen.email.enviado ? "ok" : `fail:${resumen.email.motivo}`} whatsapp=${resumen.whatsapp.encolado ? "encolado" : resumen.whatsapp.enviado ? "ok" : `fail:${resumen.whatsapp.motivo}`}`);
   return resumen;
+}
+
+/**
+ * Resuelve cuenta+owner+plan y envía la confirmación de pago por WhatsApp
+ * (`pago_recibido`, {{1}}=nombre {{2}}=plan). Reutilizado por el worker de
+ * QStash y por el fallback inline. El sender valida APPROVED + idioma real +
+ * nº de variables antes de enviar. No expone el token de Meta.
+ */
+export async function enviarConfirmacionPagoWhatsappPorCuenta(
+  supabase: SupabaseClient,
+  input: { accountId: string; planCodigo: string; transactionId: string }
+): Promise<ResultadoEnvioTemplate> {
+  const cuenta = await obtenerCuentaPorId(supabase, input.accountId);
+  if (!cuenta) return { enviado: false, motivo: "cuenta_no_encontrada" };
+  const c = await resolverContactoUsuario(supabase, cuenta.owner_user_id);
+  if (!c.whatsapp) return { enviado: false, motivo: "sin_whatsapp" };
+  const plan = await obtenerPlan(supabase, input.planCodigo).catch(() => null);
+  const planNombre = plan?.nombre ?? input.planCodigo;
+  return enviarTemplateDulabs(supabase, {
+    nombrePlantilla: NOMBRE_PLANTILLA_PAGO,
+    idioma: process.env.DEV_PAYMENT_TEMPLATE_LANG || "es_CO",
+    destinoE164: c.whatsapp,
+    params: [primerNombreDe(c.nombre), planNombre],
+  });
 }
