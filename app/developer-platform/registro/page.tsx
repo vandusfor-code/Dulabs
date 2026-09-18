@@ -101,7 +101,7 @@ export default function RegistroDeveloperPage() {
 
   if (enviado) {
     return (
-      <main className="relative flex min-h-screen items-center justify-center bg-site-bg px-6 py-16 text-site-fg">
+      <main className="dev-scope relative flex min-h-screen items-center justify-center bg-site-bg px-6 py-16 text-site-fg">
         <div className="pointer-events-none absolute inset-0 site-grid-bg-fine opacity-30" />
         <div className="relative w-full max-w-[440px] rounded-2xl border border-site-border bg-site-card/40 p-8 text-center">
           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full border border-site-border bg-white/[0.02]">

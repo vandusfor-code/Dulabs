@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import { Reveal } from "@/components/site/Reveal";
-import { PageSpotlight } from "@/components/site/PageSpotlight";
 import { JsonLd } from "@/components/site/JsonLd";
 import { Footer } from "@/components/site/Sections";
 import { breadcrumbSchema, softwareApplicationSchema } from "@/lib/schema";
@@ -42,11 +41,9 @@ export const metadata: Metadata = {
 
 export default function DeveloperPlatformPage() {
   return (
-    <div className="relative min-h-screen bg-site-bg text-site-fg">
-      <div className="site-grain" aria-hidden />
+    <div className="dev-scope relative min-h-screen bg-site-bg text-site-fg">
       <JsonLd data={breadcrumbSchema([{ name: "Inicio", path: "/" }, { name: "Developer", path: "/developer-platform" }])} />
       <JsonLd data={softwareApplicationSchema({ name: "DuLabs Developer", description: DESCRIPCION, path: "/developer-platform" })} />
-      <PageSpotlight />
       <DevNav />
       <main>
         <DevHero />

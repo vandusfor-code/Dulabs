@@ -78,7 +78,7 @@ export function DevHero() {
         {/* Visual: ciclo de vida real de un mensaje */}
         <div className="relative">
           <div className="pointer-events-none absolute -inset-6 -z-10 rounded-[28px] bg-[radial-gradient(60%_60%_at_70%_20%,var(--color-dev-accent-soft),transparent)] opacity-70" aria-hidden />
-          <div className="rounded-2xl border border-site-border bg-site-bg/60 p-4 shadow-xl backdrop-blur-sm md:p-5">
+          <div className="rounded-2xl border border-site-border bg-site-card p-4 md:p-5">
             <div className="mb-3 flex items-center gap-2 px-1">
               <span className="h-2.5 w-2.5 rounded-full bg-site-border" aria-hidden />
               <span className="h-2.5 w-2.5 rounded-full bg-site-border" aria-hidden />
