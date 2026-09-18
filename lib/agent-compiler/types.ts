@@ -49,6 +49,8 @@ export interface CompilerIssue {
   message: string;
   /** Fragmento original que originó el diagnóstico (trazabilidad). */
   evidence?: string;
+  /** Nombre normalizado del ítem al que refiere (para gate de persistencia). */
+  subject?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -107,6 +109,32 @@ export interface ExtractedCatalogItem {
 export interface CatalogExtractionResult {
   items: ExtractedCatalogItem[];
   /** AMBIGUOUS_CATALOG_ITEM, duplicados, moneda inválida, precio ausente. */
+  issues: CompilerIssue[];
+}
+
+// ---------------------------------------------------------------------------
+// Pilar 1 (Step 3) — Persistencia idempotente del catálogo
+// ---------------------------------------------------------------------------
+
+export type CatalogPersistOutcome = "inserted" | "updated" | "unchanged" | "rejected" | "failed";
+
+export interface CatalogPersistEntry {
+  name: string;
+  type: CatalogItemType;
+  outcome: CatalogPersistOutcome;
+  /** id del registro persistido (inserted/updated/unchanged). */
+  id?: string;
+  /** diagnóstico cuando outcome es rejected/failed. */
+  issue?: CompilerIssue;
+}
+
+export interface CatalogPersistenceReport {
+  entries: CatalogPersistEntry[];
+  inserted: number;
+  updated: number;
+  unchanged: number;
+  rejected: number;
+  failed: number;
   issues: CompilerIssue[];
 }
 

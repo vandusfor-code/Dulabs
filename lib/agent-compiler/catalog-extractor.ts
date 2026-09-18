@@ -118,8 +118,14 @@ function pareceNombreDeItem(nombre: string): boolean {
   return true;
 }
 
-function issue(code: CompilerIssue["code"], severity: CompilerIssue["severity"], message: string, evidence?: string): CompilerIssue {
-  return { code, severity, message, evidence };
+function issue(
+  code: CompilerIssue["code"],
+  severity: CompilerIssue["severity"],
+  message: string,
+  evidence?: string,
+  subject?: string,
+): CompilerIssue {
+  return { code, severity, message, evidence, subject };
 }
 
 export interface OpcionesExtraccion {
@@ -148,7 +154,7 @@ export function extraerCatalogo(input: CompilerInput, opciones: OpcionesExtracci
       if (!pareceNombreDeItem(p.nombre)) continue; // hay un número pero no es una línea de catálogo
       if (!p.monto.moneda.canonica) {
         issues.push(
-          issue("CATALOG_INVALID_CURRENCY", "block", `Moneda no soportada (${p.monto.moneda.moneda}) para "${p.nombre}". El catálogo se persiste en COP; convierte o corrige.`, p.original),
+          issue("CATALOG_INVALID_CURRENCY", "block", `Moneda no soportada (${p.monto.moneda.moneda}) para "${p.nombre}". El catálogo se persiste en COP; convierte o corrige.`, p.original, normalizarNombre(p.nombre)),
         );
         continue; // no se persiste un precio en moneda no canónica
       }
@@ -166,7 +172,7 @@ export function extraerCatalogo(input: CompilerInput, opciones: OpcionesExtracci
       // texto tras el delimitador (config, "consultar", prosa) NO se marca, para
       // no bloquear por falsos positivos.
       issues.push(
-        issue("CATALOG_ITEM_MISSING_PRICE", "block", `"${p.nombre}" parece un ítem de catálogo pero no tiene un precio.`, p.original),
+        issue("CATALOG_ITEM_MISSING_PRICE", "block", `"${p.nombre}" parece un ítem de catálogo pero no tiene un precio.`, p.original, normalizarNombre(p.nombre)),
       );
     }
   }
@@ -179,7 +185,7 @@ export function extraerCatalogo(input: CompilerInput, opciones: OpcionesExtracci
     const previo = vistos.get(clave);
     if (previo) {
       issues.push(
-        issue("CATALOG_DUPLICATE_ITEM", "block", `Ítem duplicado "${it.name}" (${previo.priceCop ?? "?"} vs ${it.priceCop ?? "?"}). Resuelve el duplicado antes de publicar.`, it.sourceEvidence),
+        issue("CATALOG_DUPLICATE_ITEM", "block", `Ítem duplicado "${it.name}" (${previo.priceCop ?? "?"} vs ${it.priceCop ?? "?"}). Resuelve el duplicado antes de publicar.`, it.sourceEvidence, normalizarNombre(it.name)),
       );
       continue;
     }
@@ -198,7 +204,7 @@ export function extraerCatalogo(input: CompilerInput, opciones: OpcionesExtracci
     const variantesUnicas = new Set(variantes.map(normalizarNombre));
     if (variantesUnicas.size >= 2) {
       issues.push(
-        issue("AMBIGUOUS_CATALOG_ITEM", "block", `"${it.name}" es ambiguo: existen variantes más específicas (${[...variantesUnicas].join(", ")}). Asigna el precio a la variante correcta.`, it.sourceEvidence),
+        issue("AMBIGUOUS_CATALOG_ITEM", "block", `"${it.name}" es ambiguo: existen variantes más específicas (${[...variantesUnicas].join(", ")}). Asigna el precio a la variante correcta.`, it.sourceEvidence, normalizarNombre(it.name)),
       );
     }
   }
