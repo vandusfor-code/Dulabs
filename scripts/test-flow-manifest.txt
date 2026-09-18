@@ -303,3 +303,6 @@ lib/developer/whatsapp-jobs.test.ts
 # Puros: store en memoria + executors con registro, sin Supabase ni LLM.
 lib/agent-compiler/runtime/guardrail-gate.test.ts
 lib/agent-compiler/runtime/agent-runtime.test.ts
+# Step 7.1 — compiler alineado con el runtime (turn-taking, propose_action->action).
+lib/agent-compiler/flow-compiler.test.ts
+lib/agent-compiler/flow-compiler-alignment.test.ts

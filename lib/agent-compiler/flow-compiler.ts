@@ -1,22 +1,28 @@
-// DuLabs Business — Agent Compiler (Fase 1), Step 6 — IR → FlowDefinition.
+// DuLabs Business — Agent Compiler (Fase 1), Step 6 + Step 7.1 — IR → FlowDefinition.
 //
 // Generador DETERMINISTA: CompiledBusinessAgentIR -> FlowDefinition válido para
-// el Flow Engine EXISTENTE. No construye otro runtime; solo produce una
-// definición declarativa que el motor ya sabe ejecutar, y la valida con la API
-// real (validateFlowDefinition). No publica, no toca lib/flow. Reglas duras:
-//  - Los precios/stock/disponibilidad NUNCA se embeben en el prompt del nodo AI:
-//    se acceden por tool binding (allowedTools) → internal-action-executor.
-//  - Los guardrails críticos se evalúan ANTES del nodo AI (rama mutuamente
-//    excluyente). El contexto (ej. ESTUDIO + MASCOTA) se preserva íntegro.
-//  - Las tools de un nodo están autorizadas por el estado/capability, no porque
-//    el LLM pudiera quererlas.
+// el Flow Engine EXISTENTE. No construye otro runtime; produce una máquina
+// conversacional declarativa MULTI-TURNO que el motor ya sabe ejecutar, y la
+// valida con la API real (validateFlowDefinition / validateFlowForPublish). No
+// publica, no toca lib/flow. Reglas duras (Step 7.1):
+//  - Los guardrails PRE-LLM NO se duplican en el grafo: viven en el Business
+//    Guardrail Gate (buildGateRules sobre la misma IR). El grafo es el diálogo
+//    comercial POSTERIOR al Gate. La trazabilidad de la regla queda en la IR.
+//  - Tools: patrón AI(propose_action, allowedTools) --success--> ACTION. El nodo
+//    AI SOLO propone; el runtime/validator autoriza; el nodo action ejecuta. Los
+//    precios/stock/disponibilidad NUNCA se embeben en prompt ni en texto estático.
+//  - Turn-taking real: cada estado que necesita input del usuario termina en un
+//    nodo question (waiting_input). Un mensaje NO recorre todos los estados.
+//  - BOOKING solo si scheduling.enabled y hay runtime real; si no, ERROR (nunca
+//    inventa una integración). La acción crítica lleva rama failure -> human.
 //  - Si una IR no puede representarse con seguridad => ERROR (nunca best-effort).
 
 import { createHash } from "node:crypto";
 import { FLOW_EDGE_HANDLE } from "@/lib/flow/constants";
 import { validateFlowDefinition } from "@/lib/flow/validate-graph";
 import type {
-  ConditionRule,
+  ActionNodeConfig,
+  FlowActionType,
   FlowDefinition,
   FlowEdge,
   FlowNode,
@@ -32,7 +38,8 @@ export type FlowCompilationResult =
   | { success: true; flow: FlowDefinition; checksum: string; diagnostics: CompilerDiagnostic[] }
   | { success: false; diagnostics: CompilerDiagnostic[] };
 
-const PAUSA_TRANSFER_HORAS = 24;
+/** Mensaje fijo seguro (sin afirmaciones externas) cuando una tool no está disponible. */
+const MENSAJE_TOOL_NO_DISPONIBLE = "En este momento no puedo completar esa consulta. Dame un momento, por favor.";
 
 function stableStringify(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
@@ -79,174 +86,219 @@ function aiInstruction(purpose: string, ir: CompiledBusinessAgentIR): string {
   return `${purpose} Estilo: ${ir.personality.styleHints.join(", ")}. Nunca inventes precios, stock ni disponibilidad: usa exclusivamente las herramientas autorizadas de este paso.`;
 }
 
-/** Condición de un handoff por keywords (determinista, usa las keywords dadas). */
-function condicionKeywords(keywords: string[]): { rules: ConditionRule[]; match: "any" } {
-  return { rules: keywords.map((k) => ({ field: "message", operator: "contains", value: k })), match: "any" };
+/** Acción de creación de cita según el provider real (o null si no hay runtime). */
+function bookingCreateAction(provider: string): FlowActionType | null {
+  if (provider === "nylas") return "crear_cita_nylas";
+  if (provider === "internal") return "agendar_cita_especialista";
+  return null;
 }
 
-type Interceptor = {
-  id: string;
-  kind: "deterministic" | "semantic";
-  label: string;
-  condition?: { rules: ConditionRule[]; match: "all" | "any" };
-  action: "BLOCK" | "FIXED_RESPONSE" | "TRANSFER_HUMAN";
-  response?: string;
-  pauseHours: number;
-};
+/**
+ * Config de un action node "simple" (params-only) desde un FlowActionType. Los
+ * actionType que emite el compiler (catálogo/agenda) tienen config params-only;
+ * el cast está acotado a ese conjunto y validateFlowForPublish lo re-verifica
+ * (Zod) antes de publicar. No aplica a webhook_http/asignar_miembro/etc.
+ */
+function actionConfig(actionType: FlowActionType): ActionNodeConfig {
+  return { actionType } as ActionNodeConfig;
+}
 
-function recolectarInterceptores(ir: CompiledBusinessAgentIR): Interceptor[] {
-  const out: Interceptor[] = [];
-  // Prohibiciones (ya vienen ordenadas por prioridad en la IR).
+/**
+ * Valida que cada guardrail PRE-LLM de la IR sea representable por el Gate
+ * (un FIXED_RESPONSE exige respuesta). NO emite nodos en el grafo: los
+ * guardrails viven en el Business Guardrail Gate (buildGateRules). Devuelve un
+ * diagnóstico si algo no es representable.
+ */
+function validarGuardrailsGateRepresentables(ir: CompiledBusinessAgentIR, diags: CompilerDiagnostic[]): boolean {
   for (const g of ir.guardrails) {
-    if (g.condition) {
-      out.push({ id: `grd-${g.id}`, kind: "deterministic", label: g.id, condition: g.condition, action: g.action, response: g.response, pauseHours: PAUSA_TRANSFER_HORAS });
-    } else {
-      // Sin condición determinista => detección semántica (LLM clasifica, DuLabs decide la acción).
-      out.push({ id: `grd-${g.id}`, kind: "semantic", label: g.id, action: g.action, response: g.response, pauseHours: PAUSA_TRANSFER_HORAS });
+    if (g.action === "FIXED_RESPONSE" && !g.response?.trim()) {
+      diags.push(
+        diagError(
+          "GUARDRAIL_NO_RESPONSE",
+          "ir_generation",
+          `El guardrail "${g.id}" es FIXED_RESPONSE pero no tiene respuesta; no puede representarse en el Business Guardrail Gate.`,
+          { source: g.id },
+        ),
+      );
+      return false;
     }
   }
-  // Handoff (ordenado por id en la IR).
-  for (const h of ir.handoff) {
-    if (h.trigger.kind === "keyword" && (h.trigger.keywords?.length ?? 0) > 0) {
-      out.push({ id: `hof-${h.id}`, kind: "deterministic", label: h.id, condition: condicionKeywords(h.trigger.keywords!), action: "TRANSFER_HUMAN", response: h.response, pauseHours: h.pauseHours });
-    } else {
-      out.push({ id: `hof-${h.id}`, kind: "semantic", label: h.id, action: h.action === "FIXED_RESPONSE_THEN_PAUSE" ? "TRANSFER_HUMAN" : "TRANSFER_HUMAN", response: h.response, pauseHours: h.pauseHours });
-    }
-  }
-  return out;
+  return true;
 }
 
-/** Construye el nodo destino de un interceptor que hace match (mensaje/humano) → end. */
-function construirDestinoInterceptor(g: GraphBuilder, ir: CompiledBusinessAgentIR, it: Interceptor, endId: string, diags: CompilerDiagnostic[]): string | null {
-  if (it.action === "TRANSFER_HUMAN") {
-    const hid = `it-human:${it.id}`;
-    g.addNode({ id: hid, type: "human", config: { message: it.response, pauseDurationHours: it.pauseHours } });
-    g.addEdge(hid, endId);
-    return hid;
+/**
+ * Construye la máquina conversacional comercial (posterior al Gate). Lineal con
+ * puntos de espera (turn-taking) y sub-grafos de tool propose_action->action.
+ * Devuelve el id del nodo de entrada, o null si algún estado no puede
+ * representarse con runtime real (ej. BOOKING sin provider soportado).
+ */
+function construirMaquina(g: GraphBuilder, ir: CompiledBusinessAgentIR, endId: string, diags: CompilerDiagnostic[]): string | null {
+  const activos = new Set<CommercialState>(ir.states.map((s) => s.id));
+
+  // Las tools autorizadas se derivan EXCLUSIVAMENTE de los bindings reales de
+  // la IR (nunca inventadas). El allowlist de cada nodo es EXACTAMENTE la
+  // acción que el grafo cablea aguas abajo (propose_action -> action): una
+  // tool sin nodo action nunca podría ejecutarse.
+  const toolsOf = (s: CommercialState): FlowActionType[] => ir.states.find((x) => x.id === s)?.toolBindings ?? [];
+  const primaryTool = (tools: FlowActionType[], preferido: FlowActionType): FlowActionType | null =>
+    tools.includes(preferido) ? preferido : (tools[0] ?? null);
+
+  // Mensaje de fallback seguro (sin claims) que siempre alcanza el end.
+  let failCounter = 0;
+  const safeFail = (): string => {
+    const id = `msg-fail:${failCounter++}`;
+    g.addNode({ id, type: "message", config: { text: MENSAJE_TOOL_NO_DISPONIBLE, messageRole: "informational" } });
+    g.addEdge(id, endId);
+    return id;
+  };
+
+  // --- WELCOME (siempre): saludo + primera pregunta (primer punto de espera) ---
+  g.addNode({
+    id: "welcome",
+    type: "message",
+    config: { text: `¡Hola! Soy ${ir.identity.agentName} de ${ir.identity.businessName}. ¿En qué puedo ayudarte?`, messageRole: "informational" },
+  });
+  g.declareVar("user_request");
+  g.addNode({
+    id: "q-need",
+    type: "question",
+    config: { text: "Cuéntame, ¿qué necesitas hoy?", variableKey: "user_request", required: true, validation: { kind: "text" } },
+  });
+  g.addEdge("welcome", "q-need");
+  const entry = "welcome";
+  let prev = "q-need";
+
+  // --- IDENTIFICATION (leadCapture) ---
+  if (activos.has("IDENTIFICATION")) {
+    g.declareVar("customer_name");
+    g.addNode({
+      id: "q-identify",
+      type: "question",
+      config: { text: "¿Con quién tengo el gusto de hablar?", variableKey: "customer_name", required: true, validation: { kind: "text" } },
+    });
+    g.addEdge(prev, "q-identify");
+    prev = "q-identify";
   }
-  if (it.action === "FIXED_RESPONSE") {
-    if (!it.response) {
-      diags.push(diagError("GUARDRAIL_NO_RESPONSE", "ir_generation", `El interceptor "${it.label}" es FIXED_RESPONSE pero no tiene respuesta; no se puede representar.`, { source: it.id }));
+
+  // --- QUALIFICATION ---
+  if (activos.has("QUALIFICATION")) {
+    g.declareVar("qualification");
+    g.addNode({
+      id: "q-qualify",
+      type: "question",
+      config: { text: "Para orientarte mejor, ¿qué servicio o producto te interesa?", variableKey: "qualification", required: true, validation: { kind: "text" } },
+    });
+    g.addEdge(prev, "q-qualify");
+    prev = "q-qualify";
+  }
+
+  // --- INFORMATION (faq): respuesta conversacional con conocimiento secundario ---
+  if (activos.has("INFORMATION")) {
+    g.addNode({
+      id: "ai-info",
+      type: "ai",
+      config: { instruction: aiInstruction("Responde la consulta del cliente usando únicamente el conocimiento permitido (fuente secundaria).", ir), mode: "respond", allowedTools: [] },
+    });
+    g.addEdge(prev, "ai-info");
+    prev = "ai-info";
+  }
+
+  // --- CATALOG: propose_action -> action(catálogo) -> present -> choose ---
+  const catalogAction = primaryTool(toolsOf("CATALOG"), "listar_catalogo_servicios");
+  if (activos.has("CATALOG") && catalogAction) {
+    g.declareVar("service_choice");
+    g.addNode({ id: "ai-catalog-propose", type: "ai", config: { instruction: aiInstruction("Propón consultar el catálogo real para lo que pidió el cliente.", ir), mode: "propose_action", allowedTools: [catalogAction] } });
+    g.addNode({ id: "act-catalog", type: "action", config: actionConfig(catalogAction) });
+    g.addNode({ id: "ai-catalog-present", type: "ai", config: { instruction: aiInstruction("Presenta las opciones del catálogo consultado. Nunca inventes precios ni servicios que no estén en el resultado.", ir), mode: "respond", allowedTools: [] } });
+    g.addNode({ id: "q-catalog-choose", type: "question", config: { text: "¿Cuál de estas opciones te interesa?", variableKey: "service_choice", required: true, validation: { kind: "text" } } });
+    g.addEdge(prev, "ai-catalog-propose");
+    g.addEdge("ai-catalog-propose", "act-catalog", FLOW_EDGE_HANDLE.aiSuccess);
+    g.addEdge("ai-catalog-propose", safeFail(), FLOW_EDGE_HANDLE.aiFailure);
+    g.addEdge("act-catalog", "ai-catalog-present");
+    g.addEdge("act-catalog", safeFail(), FLOW_EDGE_HANDLE.aiFailure);
+    g.addEdge("ai-catalog-present", "q-catalog-choose");
+    prev = "q-catalog-choose";
+  }
+
+  // --- QUOTING (catalog && sales): propose_action -> action(precio/disponibilidad) -> present ---
+  const quoteAction = primaryTool(toolsOf("QUOTING"), "consultar_disponibilidad_catalogo");
+  if (activos.has("QUOTING") && quoteAction) {
+    g.addNode({ id: "ai-quote-propose", type: "ai", config: { instruction: aiInstruction("Propón resolver el precio/disponibilidad real del servicio elegido.", ir), mode: "propose_action", allowedTools: [quoteAction] } });
+    g.addNode({ id: "act-quote", type: "action", config: actionConfig(quoteAction) });
+    g.addNode({ id: "ai-quote-present", type: "ai", config: { instruction: aiInstruction("Da el precio y detalles EXACTOS del servicio resuelto por la herramienta. Jamás un precio de memoria.", ir), mode: "respond", allowedTools: [] } });
+    g.addEdge(prev, "ai-quote-propose");
+    g.addEdge("ai-quote-propose", "act-quote", FLOW_EDGE_HANDLE.aiSuccess);
+    g.addEdge("ai-quote-propose", safeFail(), FLOW_EDGE_HANDLE.aiFailure);
+    g.addEdge("act-quote", "ai-quote-present");
+    g.addEdge("act-quote", safeFail(), FLOW_EDGE_HANDLE.aiFailure);
+    prev = "ai-quote-present";
+  }
+
+  // --- BOOKING (scheduling): question(cuándo) -> propose_action -> action CRÍTICA -> present; failure -> human ---
+  if (activos.has("BOOKING")) {
+    if (!ir.scheduling.available) {
+      diags.push(
+        diagError(
+          "SCHEDULING_NO_RUNTIME",
+          "ir_generation",
+          `El agendamiento con provider "${ir.scheduling.provider}" no tiene un runtime real; no se puede compilar BOOKING sin inventar una integración.`,
+          { source: "scheduling" },
+        ),
+      );
       return null;
     }
-    const mid = `it-msg:${it.id}`;
-    g.addNode({ id: mid, type: "message", config: { text: it.response, messageRole: "informational" } });
-    g.addEdge(mid, endId);
-    return mid;
-  }
-  // BLOCK: con respuesta => mensaje; sin respuesta => corta al end (bloqueo silencioso).
-  if (it.response) {
-    const mid = `it-msg:${it.id}`;
-    g.addNode({ id: mid, type: "message", config: { text: it.response, messageRole: "informational" } });
-    g.addEdge(mid, endId);
-    return mid;
-  }
-  void ir;
-  return endId;
-}
-
-/** Construye el sub-grafo de estados comerciales activados. Devuelve el id de entrada. */
-function construirEstados(g: GraphBuilder, ir: CompiledBusinessAgentIR, endId: string): string {
-  const activos = new Set(ir.states.map((s) => s.id));
-  const orden: CommercialState[] = ["WELCOME", "IDENTIFICATION", "QUALIFICATION", "INFORMATION", "CATALOG", "QUOTING", "BOOKING", "CONFIRMATION"];
-  const secuencia = orden.filter((s) => activos.has(s));
-
-  const nodeIdOf = (s: CommercialState) => `st:${s}`;
-  const toolsOf = (s: CommercialState): string[] => ir.states.find((x) => x.id === s)?.toolBindings.map(String) ?? [];
-
-  for (const s of secuencia) {
-    const id = nodeIdOf(s);
-    switch (s) {
-      case "WELCOME":
-        g.addNode({ id, type: "message", config: { text: `¡Hola! Soy ${ir.identity.agentName} de ${ir.identity.businessName}. ¿En qué puedo ayudarte?`, messageRole: "informational" } });
-        break;
-      case "IDENTIFICATION":
-        g.declareVar("customer_name");
-        g.addNode({ id, type: "ai", config: { instruction: aiInstruction("Identifica y capta el nombre del cliente de forma natural.", ir), mode: "extract", outputVariables: ["customer_name"], allowedTools: toolsOf(s) } });
-        break;
-      case "QUALIFICATION":
-        g.declareVar("qualification");
-        g.addNode({ id, type: "ai", config: { instruction: aiInstruction("Determina servicio/categoría/contexto ANTES de cotizar. No des precios en este paso.", ir), mode: "hybrid", outputVariables: ["qualification"], allowedTools: [] } });
-        break;
-      case "INFORMATION":
-        g.addNode({ id, type: "ai", config: { instruction: aiInstruction("Responde preguntas usando el conocimiento permitido (fuente secundaria).", ir), mode: "respond", allowedTools: [] } });
-        break;
-      case "CATALOG":
-        g.declareVar("service_id");
-        g.addNode({ id, type: "ai", config: { instruction: aiInstruction("Presenta el catálogo consultando SOLO las herramientas de catálogo.", ir), mode: "hybrid", outputVariables: ["service_id"], allowedTools: toolsOf(s) } });
-        break;
-      case "QUOTING":
-        g.addNode({ id, type: "ai", config: { instruction: aiInstruction("Cotiza usando EXCLUSIVAMENTE el resultado de las herramientas; jamás un precio de memoria.", ir), mode: "hybrid", allowedTools: toolsOf(s) } });
-        break;
-      case "BOOKING":
-        g.declareVar("appointment_request");
-        g.addNode({ id, type: "ai", config: { instruction: aiInstruction("Agenda consultando la disponibilidad real por herramienta.", ir), mode: "hybrid", outputVariables: ["appointment_request"], allowedTools: toolsOf(s) } });
-        break;
-      case "CONFIRMATION":
-        g.addNode({ id, type: "message", config: { text: "Confirmamos los detalles. ¡Gracias!", messageRole: "informational" } });
-        break;
+    const createAction = bookingCreateAction(ir.scheduling.provider);
+    // La acción DEBE existir en los bindings reales de la IR (nunca inventada).
+    if (!createAction || !toolsOf("BOOKING").includes(createAction)) {
+      diags.push(diagError("SCHEDULING_NO_RUNTIME", "ir_generation", `Sin acción de creación de cita real para el provider "${ir.scheduling.provider}".`, { source: "scheduling" }));
+      return null;
     }
+    g.declareVar("appointment_request");
+    g.addNode({ id: "q-booking-when", type: "question", config: { text: "¿Para qué fecha y hora te gustaría?", variableKey: "appointment_request", required: true, validation: { kind: "text" } } });
+    g.addNode({ id: "ai-book-propose", type: "ai", config: { instruction: aiInstruction("Propón crear la reserva con la fecha/hora indicada. La disponibilidad la valida el sistema, no tú.", ir), mode: "propose_action", allowedTools: [createAction] } });
+    g.addNode({ id: "act-book", type: "action", config: actionConfig(createAction) });
+    g.addNode({ id: "ai-book-present", type: "ai", config: { instruction: aiInstruction("Comunica el resultado REAL de la solicitud según el sistema. Si no fue posible, dilo con claridad.", ir), mode: "respond", allowedTools: [] } });
+    g.addNode({ id: "human-book-fail", type: "human", config: { message: "Te comunico con una persona del equipo para completar tu solicitud.", pauseDurationHours: 24 } });
+    g.addEdge(prev, "q-booking-when");
+    g.addEdge("q-booking-when", "ai-book-propose");
+    g.addEdge("ai-book-propose", "act-book", FLOW_EDGE_HANDLE.aiSuccess);
+    g.addEdge("ai-book-propose", "human-book-fail", FLOW_EDGE_HANDLE.aiFailure);
+    g.addEdge("act-book", "ai-book-present");
+    // Rama failure OBLIGATORIA para acción crítica (validateSecurityRules).
+    g.addEdge("act-book", "human-book-fail", FLOW_EDGE_HANDLE.aiFailure);
+    g.addEdge("human-book-fail", endId);
+    prev = "ai-book-present";
   }
 
-  // Enlace lineal entre estados consecutivos; el último → end.
-  for (let i = 0; i < secuencia.length; i++) {
-    const from = nodeIdOf(secuencia[i]!);
-    if (i < secuencia.length - 1) g.addEdge(from, nodeIdOf(secuencia[i + 1]!));
-    else g.addEdge(from, endId);
+  // --- CONFIRMATION (scheduling): cierre neutral (sin claims) ---
+  if (activos.has("CONFIRMATION")) {
+    g.addNode({ id: "st-confirmation", type: "message", config: { text: "¿Hay algo más en lo que pueda ayudarte?", messageRole: "informational" } });
+    g.addEdge(prev, "st-confirmation");
+    prev = "st-confirmation";
   }
-  return secuencia.length > 0 ? nodeIdOf(secuencia[0]!) : endId;
+
+  // Cierre: último nodo del diálogo -> end.
+  g.addEdge(prev, endId);
+  return entry;
 }
 
 function construirFlow(ir: CompiledBusinessAgentIR, diags: CompilerDiagnostic[]): FlowDefinition | null {
-  const g = new GraphBuilder();
-  g.declareVar("message"); // usado por condiciones de keywords
+  // Los guardrails PRE-LLM viven en el Gate; acá solo se valida que sean
+  // representables (no se emiten nodos de guardrail en el grafo).
+  if (!validarGuardrailsGateRepresentables(ir, diags)) return null;
 
-  const endId = g.addNode({ id: "end", type: "end", config: { messageRole: "informational" } });
+  const g = new GraphBuilder();
+  const endId = g.addNode({ id: "end", type: "end", config: {} });
   const startId = g.addNode({ id: "start", type: "start", config: { triggerType: "first_message" } });
 
-  const mainEntry = construirEstados(g, ir, endId);
-
-  // Declarar como variables todos los campos usados por condiciones deterministas.
-  const interceptores = recolectarInterceptores(ir);
-  for (const it of interceptores) for (const r of it.condition?.rules ?? []) g.declareVar(r.field);
-
-  const deterministas = interceptores.filter((i) => i.kind === "deterministic");
-  const semanticos = interceptores.filter((i) => i.kind === "semantic");
-
-  // Cadena de guardrails deterministas (condition nodes) antes del flujo.
-  let prev = startId;
-  let prevHandle: string | undefined = undefined; // start usa default; los siguientes usan "false"
-  for (const it of deterministas) {
-    const cid = `cond:${it.id}`;
-    g.addNode({ id: cid, type: "condition", config: { rules: it.condition!.rules, match: it.condition!.match } });
-    g.addEdge(prev, cid, prevHandle);
-    const destino = construirDestinoInterceptor(g, ir, it, endId, diags);
-    if (destino === null) return null;
-    g.addEdge(cid, destino, FLOW_EDGE_HANDLE.conditionTrue);
-    prev = cid;
-    prevHandle = FLOW_EDGE_HANDLE.conditionFalse;
-  }
-
-  // Router semántico (ai classify) para intents/prohibiciones sin condición.
-  if (semanticos.length > 0) {
-    const rid = "policy-router";
-    const classifications = [...semanticos.map((s) => s.label), "continue"];
-    g.addNode({ id: rid, type: "ai", config: { instruction: "Clasifica la intención del mensaje para aplicar políticas y transferencias. No respondas al cliente aquí.", mode: "classify", classifications } });
-    g.addEdge(prev, rid, prevHandle);
-    for (const it of semanticos) {
-      const destino = construirDestinoInterceptor(g, ir, it, endId, diags);
-      if (destino === null) return null;
-      g.addEdge(rid, destino, FLOW_EDGE_HANDLE.aiClass(it.label));
-    }
-    g.addEdge(rid, mainEntry, FLOW_EDGE_HANDLE.aiClass("continue"));
-  } else {
-    g.addEdge(prev, mainEntry, prevHandle);
-  }
+  const entry = construirMaquina(g, ir, endId, diags);
+  if (entry === null) return null;
+  g.addEdge(startId, entry);
 
   const parts = g.build();
   return {
     name: `${ir.identity.businessName} — ${ir.identity.agentName}`,
-    description: `Compilado desde BusinessAgentSpec (spec v${ir.specVersion}).`,
+    description: `Compilado desde BusinessAgentSpec (spec v${ir.specVersion}). Guardrails en el Business Guardrail Gate.`,
     tenantId: ir.tenantId,
     version: ir.specVersion,
     status: "draft",

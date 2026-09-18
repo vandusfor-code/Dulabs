@@ -1,21 +1,26 @@
 /**
- * Agent Compiler (Fase 1) — Step 6: IR → FlowDefinition.
- * 20 tests offline + 3 fixtures de industria (photography / salon / retail).
+ * Agent Compiler (Fase 1) — Step 6 + Step 7.1: IR → FlowDefinition.
  * Pipeline real: Spec → compileBusinessAgent → compileIRToFlowDefinition →
- * validateFlowDefinition (API existente de lib/flow).
+ * validateFlowDefinition / validateFlowForPublish (API existente de lib/flow).
+ *
+ * Step 7.1: los guardrails PRE-LLM ya NO se duplican en el grafo (viven en el
+ * Business Guardrail Gate). El grafo es la máquina comercial multi-turno con
+ * turn-taking (question) y tools vía propose_action -> action.
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { compileBusinessAgent } from "@/lib/agent-compiler/compile";
 import { compileIRToFlowDefinition } from "@/lib/agent-compiler/flow-compiler";
 import { validateFlowDefinition } from "@/lib/flow/validate-graph";
+import { validateFlowForPublish } from "@/lib/flow/validate-publish";
+import { buildGateRules } from "@/lib/agent-compiler/runtime/guardrail-gate";
 import { nuevaSpecMetadata } from "@/lib/agent-compiler/spec/version";
 import type { AgentCapabilities, BusinessAgentSpec } from "@/lib/agent-compiler/spec/types";
 import type { CompiledBusinessAgentIR } from "@/lib/agent-compiler/ir";
 import type { FlowDefinition, FlowNode } from "@/lib/flow/types";
 
 const NOW = "2026-09-18T00:00:00.000Z";
-const CTX = { tenantId: "11111111-1111-1111-1111-111111111111" };
+const CTX = { tenantId: "11111111-1111-4111-8111-111111111111" };
 
 function caps(p: Partial<AgentCapabilities>): AgentCapabilities {
   return { faq: false, sales: false, catalog: false, leadCapture: false, scheduling: false, orders: false, payments: false, humanHandoff: false, ...p };
@@ -47,99 +52,109 @@ function flowDe(spec: BusinessAgentSpec): FlowDefinition {
 }
 const nodo = (f: FlowDefinition, id: string): FlowNode | undefined => f.nodes.find((n) => n.id === id);
 const tieneEdge = (f: FlowDefinition, source: string, target: string, handle?: string) => f.edges.some((e) => e.source === source && e.target === target && (handle === undefined || e.sourceHandle === handle));
+const aiAllowed = (n: FlowNode | undefined): string[] => (n && n.type === "ai" ? n.config.allowedTools ?? [] : ["<no-ai>"]);
 
-describe("Agent Compiler — IR → FlowDefinition", () => {
-  it("1. flow mínimo válido pasa validateFlowDefinition", () => {
+describe("Agent Compiler — IR → FlowDefinition (Step 7.1)", () => {
+  it("1. flow mínimo válido pasa validateFlowDefinition y validateFlowForPublish", () => {
     const f = flowDe(specBase());
     assert.equal(validateFlowDefinition(f).valid, true);
-    assert.ok(nodo(f, "start") && nodo(f, "end"));
+    assert.equal(validateFlowForPublish(f).valid, true);
+    assert.ok(nodo(f, "start") && nodo(f, "end") && nodo(f, "welcome"));
   });
 
-  it("2. WELCOME → IDENTIFICATION cuando leadCapture activo", () => {
+  it("2. IDENTIFICATION genera un question de captura cuando leadCapture activo", () => {
     const f = flowDe(specBase({ capabilities: caps({ faq: true, leadCapture: true }) }));
-    assert.ok(tieneEdge(f, "st:WELCOME", "st:IDENTIFICATION"));
+    const q = nodo(f, "q-identify");
+    assert.ok(q && q.type === "question" && q.config.variableKey === "customer_name");
   });
 
-  it("3. qualification flow: QUALIFICATION antes de QUOTING", () => {
+  it("3. QUALIFICATION (question) precede a QUOTING; QUOTING no es accesible desde start/welcome", () => {
     const f = flowDe(specBase({ capabilities: caps({ faq: true, catalog: true, sales: true }) }));
-    assert.ok(nodo(f, "st:QUALIFICATION") && nodo(f, "st:QUOTING"));
-    // La máquina de estados fuerza calificar antes de cotizar: QUOTING no es
-    // accesible directo desde el inicio y va después de CATALOG.
-    assert.ok(tieneEdge(f, "st:CATALOG", "st:QUOTING"));
-    assert.ok(!tieneEdge(f, "start", "st:QUOTING") && !tieneEdge(f, "st:WELCOME", "st:QUOTING"));
-    assert.equal(validateFlowDefinition(f).valid, true);
+    assert.ok(nodo(f, "q-qualify")?.type === "question");
+    assert.ok(nodo(f, "ai-quote-propose")?.type === "ai");
+    assert.ok(!tieneEdge(f, "start", "ai-quote-propose") && !tieneEdge(f, "welcome", "ai-quote-propose"));
+    assert.equal(validateFlowForPublish(f).valid, true);
   });
 
-  it("4. estados dependientes de capability: scheduling agrega BOOKING", () => {
+  it("4. scheduling ON genera BOOKING (question + action crítica + rama human)", () => {
     const f = flowDe(specBase({ capabilities: caps({ faq: true, scheduling: true }), scheduling: { enabled: true, provider: "internal", timezone: "America/Bogota", minNoticeMinutes: 60, cancellation: { allowed: true, minNoticeHours: 24 }, confirmation: { required: true, hoursBefore: 24 }, resources: [] } }));
-    assert.ok(nodo(f, "st:BOOKING"));
+    assert.ok(nodo(f, "q-booking-when")?.type === "question");
+    assert.ok(nodo(f, "act-book")?.type === "action");
+    // Acción crítica DEBE tener rama failure -> human.
+    assert.ok(tieneEdge(f, "act-book", "human-book-fail", "failure"));
+    assert.equal(validateFlowForPublish(f).valid, true, JSON.stringify(validateFlowForPublish(f).errors));
   });
 
-  it("5. scheduling desactivado NO genera BOOKING", () => {
+  it("5. scheduling OFF NO genera BOOKING", () => {
     const f = flowDe(specBase({ capabilities: caps({ faq: true }) }));
-    assert.equal(nodo(f, "st:BOOKING"), undefined);
+    assert.equal(nodo(f, "act-book"), undefined);
+    assert.equal(nodo(f, "q-booking-when"), undefined);
   });
 
-  it("6. human handoff genera rama EXCLUSIVA (human vía interceptor, no en el flujo lineal)", () => {
+  it("6. §H handoff (humanHandoff sin scheduling) NO se duplica en el grafo: sin nodo human", () => {
     const f = flowDe(specBase({ capabilities: caps({ faq: true, humanHandoff: true }), handoff: { rules: [{ id: "h1", description: "asesor", trigger: { kind: "keyword", keywords: ["asesor", "humano"] }, action: "TRANSFER_HUMAN", pauseHours: 2 }], defaultPauseHours: 1 } }));
-    const human = f.nodes.find((n) => n.type === "human");
-    assert.ok(human, "hay nodo human");
-    // El human se alcanza por la rama true de un condition (interceptor), no por el flujo principal.
-    assert.ok(f.edges.some((e) => e.target === human!.id && e.sourceHandle === "true"));
-    assert.ok(!tieneEdge(f, "st:WELCOME", human!.id));
-    assert.equal(validateFlowDefinition(f).valid, true);
+    assert.equal(f.nodes.some((n) => n.type === "human"), false, "el handoff vive en el Gate, no en el grafo");
   });
 
-  it("7. guardrail contextual se evalúa ANTES del AI (start → condition → main)", () => {
+  it("7. §H los guardrails NO están en el grafo: start entra a welcome (message), sin condition nodes", () => {
     const f = flowDe(specBase({ capabilities: caps({ faq: true }), policies: { prohibitions: [{ id: "pm", description: "No mascotas en estudio", scope: "contextual", action: "BLOCK", response: "En estudio no se permiten mascotas.", priority: 5, condition: { match: "all", rules: [{ field: "session_type", operator: "equals", value: "estudio" }, { field: "message", operator: "contains", value: "mascota" }] } }], rules: [] } }));
     const startEdge = f.edges.find((e) => e.source === "start")!;
-    assert.equal(nodo(f, startEdge.target)!.type, "condition", "start entra primero a un guardrail");
+    assert.equal(nodo(f, startEdge.target)!.id, "welcome");
+    assert.equal(f.nodes.some((n) => n.type === "condition"), false, "sin condition nodes de guardrail en el grafo");
   });
 
-  it("8. guardrail contextual preserva las 2 reglas (ESTUDIO + MASCOTA)", () => {
-    const f = flowDe(specBase({ capabilities: caps({ faq: true }), policies: { prohibitions: [{ id: "pm", description: "x", scope: "contextual", action: "BLOCK", response: "no", priority: 5, condition: { match: "all", rules: [{ field: "session_type", operator: "equals", value: "estudio" }, { field: "message", operator: "contains", value: "mascota" }] } }], rules: [] } }));
-    const cond = f.nodes.find((n) => n.type === "condition");
-    assert.ok(cond && cond.type === "condition");
-    assert.equal(cond.config.rules.length, 2);
-    assert.equal(cond.config.match, "all");
+  it("8. §H la prohibición se conserva en la IR/Gate (buildGateRules), no en el grafo", () => {
+    const spec = specBase({ capabilities: caps({ faq: true }), policies: { prohibitions: [{ id: "pm", description: "x", scope: "contextual", action: "BLOCK", response: "no", priority: 5, condition: { match: "all", rules: [{ field: "session_type", operator: "equals", value: "estudio" }, { field: "message", operator: "contains", value: "mascota" }] } }], rules: [] } });
+    const ir = irDe(spec);
+    const f = compileIRToFlowDefinition(ir, CTX);
+    assert.ok(f.success && f.flow.nodes.every((n) => n.type !== "condition"));
+    const gate = buildGateRules(ir).find((r) => r.id === "pm");
+    assert.ok(gate && gate.evaluation === "deterministic" && gate.condition?.rules.length === 2 && gate.condition?.match === "all");
   });
 
-  it("9. catalog tool binding: el AI de CATALOG autoriza listar_catalogo_servicios", () => {
+  it("9. §2 CATALOG: propose_action autoriza la tool real y hay ACTION cableada por success", () => {
     const f = flowDe(specBase({ capabilities: caps({ faq: true, catalog: true }), catalog: { source: "structured", useServices: true, useProducts: false, quoteBeforeQualification: false } }));
-    const cat = nodo(f, "st:CATALOG");
-    assert.ok(cat && cat.type === "ai" && (cat.config.allowedTools ?? []).includes("listar_catalogo_servicios"));
+    const ai = nodo(f, "ai-catalog-propose");
+    assert.ok(ai && ai.type === "ai" && ai.config.mode === "propose_action");
+    assert.ok(aiAllowed(ai).includes("listar_catalogo_servicios"));
+    // propose_action --success--> action(listar_catalogo_servicios)
+    assert.ok(tieneEdge(f, "ai-catalog-propose", "act-catalog", "success"));
+    const act = nodo(f, "act-catalog");
+    assert.ok(act && act.type === "action" && act.config.actionType === "listar_catalogo_servicios");
   });
 
-  it("10. precios NUNCA embebidos en el FlowDefinition", () => {
-    const f = flowDe(specBase({ capabilities: caps({ faq: true, catalog: true, sales: true }), catalog: { source: "structured", useServices: true, useProducts: false, quoteBeforeQualification: false } }));
+  it("10. §D precios NUNCA embebidos en el FlowDefinition serializado", () => {
+    const f = flowDe(specBase({ capabilities: caps({ faq: true, catalog: true, sales: true, scheduling: true }), catalog: { source: "structured", useServices: true, useProducts: false, quoteBeforeQualification: false }, scheduling: { enabled: true, provider: "internal", timezone: "America/Bogota", minNoticeMinutes: 60, cancellation: { allowed: true, minNoticeHours: 24 }, confirmation: { required: true, hoursBefore: 24 }, resources: [] } }));
     const serial = JSON.stringify(f);
-    // Un precio embebido se vería como "$350.000" o "350.000" (formato COP).
     assert.ok(!/\$\s?\d|\d{1,3}(?:\.\d{3})+/.test(serial), "no debe haber precios en el grafo");
   });
 
-  it("11. tools limitadas por estado: QUALIFICATION sin tools; QUOTING con tool de precio", () => {
+  it("11. §2 tools por estado: QUALIFICATION es question (sin tools); QUOTING propone su tool real", () => {
     const f = flowDe(specBase({ capabilities: caps({ faq: true, catalog: true, sales: true }) }));
-    const q = nodo(f, "st:QUALIFICATION");
-    const quote = nodo(f, "st:QUOTING");
-    assert.deepEqual(q!.type === "ai" ? q.config.allowedTools : ["x"], []);
-    assert.ok(quote && quote.type === "ai" && (quote.config.allowedTools ?? []).includes("consultar_disponibilidad_catalogo"));
+    assert.equal(nodo(f, "q-qualify")?.type, "question");
+    const quote = nodo(f, "ai-quote-propose");
+    assert.ok(quote && quote.type === "ai" && quote.config.mode === "propose_action");
+    assert.ok(aiAllowed(quote).includes("consultar_disponibilidad_catalogo"));
+    assert.ok(tieneEdge(f, "ai-quote-propose", "act-quote", "success"));
   });
 
-  it("12. variables declaradas incluyen las de condiciones y outputs", () => {
-    const f = flowDe(specBase({ capabilities: caps({ faq: true, leadCapture: true }), policies: { prohibitions: [{ id: "p", description: "x", scope: "contextual", action: "BLOCK", response: "no", priority: 1, condition: { match: "all", rules: [{ field: "session_type", operator: "equals", value: "estudio" }] } }], rules: [] } }));
+  it("12. variables declaradas incluyen las de los question de captura", () => {
+    const f = flowDe(specBase({ capabilities: caps({ faq: true, leadCapture: true, catalog: true }), catalog: { source: "structured", useServices: true, useProducts: false, quoteBeforeQualification: false } }));
     const keys = new Set(f.variables.map((v) => v.key));
-    assert.ok(keys.has("session_type"), "campo de condición declarado");
-    assert.ok(keys.has("message"));
+    assert.ok(keys.has("user_request"));
+    assert.ok(keys.has("customer_name"));
+    assert.ok(keys.has("service_choice"));
   });
 
-  it("13-15. edges válidos, sin huérfanos ni edges inválidos (validateFlowDefinition)", () => {
+  it("13-15. grafo completo válido (edges consistentes, validateFlowForPublish)", () => {
     const f = flowDe(specBase({ capabilities: caps({ faq: true, catalog: true, sales: true, leadCapture: true, scheduling: true, humanHandoff: true }), scheduling: { enabled: true, provider: "nylas", timezone: "America/Bogota", minNoticeMinutes: 30, cancellation: { allowed: true, minNoticeHours: 12 }, confirmation: { required: true, hoursBefore: 12 }, resources: [{ kind: "specialist", label: "Pro", required: true }] }, handoff: { rules: [{ id: "h", description: "asesor", trigger: { kind: "keyword", keywords: ["asesor"] }, action: "TRANSFER_HUMAN" }], defaultPauseHours: 1 }, policies: { prohibitions: [{ id: "pm", description: "x", scope: "contextual", action: "TRANSFER_HUMAN", priority: 3, condition: { match: "all", rules: [{ field: "message", operator: "contains", value: "descuento" }] } }], rules: [] } }));
     const nodeIds = new Set(f.nodes.map((n) => n.id));
     for (const e of f.edges) { assert.ok(nodeIds.has(e.source), `source ${e.source}`); assert.ok(nodeIds.has(e.target), `target ${e.target}`); }
-    assert.equal(validateFlowDefinition(f).valid, true, JSON.stringify(validateFlowDefinition(f).errors));
+    const vp = validateFlowForPublish(f);
+    assert.equal(vp.valid, true, JSON.stringify(vp.errors));
   });
 
-  it("16-17. determinismo e idempotencia (mismo flow y checksum)", () => {
+  it("16-17. §10 determinismo e idempotencia (mismo flow y checksum)", () => {
     const spec = specBase({ capabilities: caps({ faq: true, catalog: true, sales: true, humanHandoff: true }) });
     const ir = irDe(spec);
     const a = compileIRToFlowDefinition(ir, CTX);
@@ -156,7 +171,7 @@ describe("Agent Compiler — IR → FlowDefinition", () => {
     const roto: CompiledBusinessAgentIR = { ...ir, guardrails: [...ir.guardrails, { id: "bad", source: { kind: "prohibition", prohibitionId: "bad" }, execution: "PRE_LLM", scope: "business", action: "FIXED_RESPONSE", priority: 0, runtimeBinding: null }] };
     const r = compileIRToFlowDefinition(roto, CTX);
     assert.equal(r.success, false);
-    assert.ok(r.diagnostics.some((d) => d.code === "GUARDRAIL_NO_RESPONSE"));
+    assert.ok(!r.success && r.diagnostics.some((d) => d.code === "GUARDRAIL_NO_RESPONSE"));
   });
 
   it("19. integración con validateFlowDefinition (grafo generado es válido)", () => {
@@ -164,11 +179,11 @@ describe("Agent Compiler — IR → FlowDefinition", () => {
     assert.equal(validateFlowDefinition(f).valid, true);
   });
 
-  it("20. tenant isolation: contexto con otro tenant => ERROR (no cross-tenant)", () => {
+  it("20. §J tenant isolation: contexto con otro tenant => ERROR (no cross-tenant)", () => {
     const ir = irDe(specBase());
-    const r = compileIRToFlowDefinition(ir, { tenantId: "99999999-9999-9999-9999-999999999999" });
+    const r = compileIRToFlowDefinition(ir, { tenantId: "99999999-9999-4999-8999-999999999999" });
     assert.equal(r.success, false);
-    assert.ok(r.diagnostics.some((d) => d.code === "TENANT_MISMATCH"));
+    assert.ok(!r.success && r.diagnostics.some((d) => d.code === "TENANT_MISMATCH"));
   });
 });
 
@@ -205,13 +220,12 @@ describe("Agent Compiler — mismo motor, múltiples industrias (fixtures)", () 
   ];
 
   for (const { nombre, spec } of industrias) {
-    it(`fixture ${nombre}: compila a un FlowDefinition válido`, () => {
+    it(`fixture ${nombre}: compila a un FlowDefinition publicable (sin if industry)`, () => {
       const f = flowDe(spec);
-      const v = validateFlowDefinition(f);
-      assert.equal(v.valid, true, JSON.stringify(v.errors));
-      assert.ok(nodo(f, "start") && nodo(f, "end") && nodo(f, "st:WELCOME"));
-      const serial = JSON.stringify(f);
-      assert.ok(!/\$\s?\d/.test(serial), "sin precios embebidos");
+      assert.equal(validateFlowDefinition(f).valid, true, JSON.stringify(validateFlowDefinition(f).errors));
+      assert.equal(validateFlowForPublish(f).valid, true, JSON.stringify(validateFlowForPublish(f).errors));
+      assert.ok(nodo(f, "start") && nodo(f, "end") && nodo(f, "welcome"));
+      assert.ok(!/\$\s?\d/.test(JSON.stringify(f)), "sin precios embebidos");
     });
   }
 });
