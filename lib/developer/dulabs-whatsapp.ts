@@ -57,6 +57,16 @@ async function inspeccionarPlantilla(token: string, nombre: string): Promise<{ s
   return { status: t.status, bodyVars, language: t.language ?? "" };
 }
 
+/** Diagnóstico (READ-ONLY): inspecciona la plantilla en Meta desde el número DuLabs -- status, nº de variables e idioma REAL aprobado. No envía. No expone el token. */
+export async function inspeccionarPlantillaDulabs(
+  supabase: SupabaseClient,
+  nombre: string
+): Promise<{ status: string; bodyVars: number; language: string } | { error: string }> {
+  const tok = await resolverTokenDulabs(supabase);
+  if ("error" in tok) return { error: tok.error };
+  return inspeccionarPlantilla(tok.token, nombre);
+}
+
 /**
  * Envía `nombrePlantilla` desde el número DuLabs a `destinoE164`, validando
  * contra la estructura real: la plantilla debe estar APPROVED y su nº de
