@@ -20,7 +20,7 @@ export async function POST(request: NextRequest) {
     // provisión ni el acceso al dashboard.
     if (r.created) {
       try {
-        await dispararBienvenidaDeveloper(ctx.supabase, ctx.userId);
+        await dispararBienvenidaDeveloper(ctx.supabase, ctx.userId, r.workspaceId);
       } catch (err) {
         console.error(`[developer/onboarding] bienvenida falló (no bloqueante) userId=${ctx.userId}:`, err instanceof Error ? err.message : String(err));
       }

@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { enviarTemplateDulabs, type ResultadoEnvioTemplate } from "@/lib/developer/dulabs-whatsapp";
+import { resolverContactoUsuario, primerNombreDe } from "@/lib/developer/contacto";
 
 // DuLabs Developer -- bienvenida por WhatsApp. Usa la plantilla APROBADA
 // bienvenida_2 (Spanish COL, es_CO) enviada desde el número oficial de DuLabs
@@ -24,4 +25,16 @@ export async function enviarBienvenidaWhatsappDeveloper(
     destinoE164: params.destinoE164,
     params: [params.nombre || "cliente"],
   });
+}
+
+/**
+ * Resuelve el contacto del usuario y envía la bienvenida. Punto reutilizado por
+ * el worker de QStash (procesamiento del job) y por el fallback inline de
+ * welcome.ts cuando QStash no está disponible. Devuelve motivo "sin_whatsapp"
+ * si el usuario no tiene número (no es un error).
+ */
+export async function enviarBienvenidaWhatsappPorUsuario(supabase: SupabaseClient, userId: string): Promise<ResultadoBienvenidaWhatsapp> {
+  const c = await resolverContactoUsuario(supabase, userId);
+  if (!c.whatsapp) return { enviado: false, motivo: "sin_whatsapp" };
+  return enviarBienvenidaWhatsappDeveloper(supabase, { destinoE164: c.whatsapp, nombre: primerNombreDe(c.nombre) });
 }

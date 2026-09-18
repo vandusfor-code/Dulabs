@@ -79,6 +79,26 @@ export async function reclamarIdempotencia(
 }
 
 /**
+ * Libera (borra) una idempotency key ya reclamada. Se usa cuando un job
+ * reclamado FALLÓ de forma TRANSITORIA y debe poder reintentarse (p.ej. un
+ * job de WhatsApp encolado en QStash: si Meta responde 5xx, se libera la
+ * clave para que el retry de QStash pueda volver a reclamarla y reenviar).
+ * Un fallo PERMANENTE (plantilla no aprobada, etc.) NO libera -- así el retry
+ * no reintenta algo que nunca va a funcionar. Scoped por (workspace, key).
+ */
+export async function liberarIdempotencia(
+  supabase: SupabaseClient,
+  params: { workspaceId: string; idempotencyKey: string }
+): Promise<void> {
+  const { error } = await supabase
+    .from("dulabs_dev_idempotency_keys")
+    .delete()
+    .eq("workspace_id", params.workspaceId)
+    .eq("idempotency_key", params.idempotencyKey);
+  if (error) console.error(`[developer/idempotency] no se pudo liberar la clave (no fatal): ${error.message}`);
+}
+
+/**
  * Fase 13 -- limpieza real de la ventana de retención lógica (24h) de las
  * idempotency keys (ver comentario de la migración de Fase 1). Borra las claves
  * más antiguas que `horas`, acotado. La deduplicación de una operación solo
