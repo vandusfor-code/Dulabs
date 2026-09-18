@@ -317,6 +317,8 @@ lib/agent-compiler/runtime/agent-runtime.test.ts
 # Step 7.1 — compiler alineado con el runtime (turn-taking, propose_action->action).
 lib/agent-compiler/flow-compiler.test.ts
 lib/agent-compiler/flow-compiler-alignment.test.ts
+# Bloque G — E2E cadena completa (offline: Spec->compile->publish->resolve->runtime).
+lib/agent-compiler/e2e/business-agent-e2e.test.ts
 # Step 8A (Business Agent Registry). Puro: fake en memoria, sin Supabase real
 # (el adapter real -- registry-store-supabase.ts -- tiene su propio harness de
 # integración, deliberadamente FUERA de este manifiesto: ver
