@@ -1,7 +1,7 @@
 import type { NextRequest } from "next/server";
 import { timingSafeEqual, createHash } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
-import { inspeccionarPlantillaDulabs, enviarTemplateDulabs } from "@/lib/developer/dulabs-whatsapp";
+import { inspeccionarPlantillaDulabs, estructuraPlantillaDulabs, enviarTemplateDulabs } from "@/lib/developer/dulabs-whatsapp";
 
 // Diagnóstico de envío de WhatsApp de DuLabs (autorizado -- cierre de la
 // verificación E2E de bienvenida). Protegido por DIAGNOSTICS_SECRET (Bearer),
@@ -36,8 +36,12 @@ function admin() {
 export async function GET(request: NextRequest) {
   if (!autorizado(request)) return new Response("Forbidden", { status: 403 });
   const template = request.nextUrl.searchParams.get("template") || "bienvenida_2";
-  const insp = await inspeccionarPlantillaDulabs(admin(), template);
-  return Response.json({ template, inspeccion: insp });
+  const sb = admin();
+  const [insp, estructura] = await Promise.all([
+    inspeccionarPlantillaDulabs(sb, template),
+    estructuraPlantillaDulabs(sb, template),
+  ]);
+  return Response.json({ template, inspeccion: insp, estructura });
 }
 
 export async function POST(request: NextRequest) {
