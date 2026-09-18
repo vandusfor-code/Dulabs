@@ -76,6 +76,19 @@ export type BindResult =
   | { ok: false; reason: "flow_not_published" | "tenant_mismatch" | "number_not_found" | "store_error"; detail: string };
 
 /**
+ * Bloque 12 (Authoring API) — proyección LIGERA de una versión (sin Spec/IR/
+ * FlowDefinition completos) para listados/historial (ej. selector de rollback).
+ * Para el detalle completo de una versión puntual, usar getVersion.
+ */
+export interface AgentVersionSummary {
+  flowVersionId: string;
+  versionNumber: number;
+  publishedAt: string | null;
+  retiredAt: string | null;
+  validationStatus: ValidationStatus;
+}
+
+/**
  * Puerto de persistencia del Registry. TODAS las operaciones son
  * tenant-scoped: `tenantId` viene del contexto autenticado del servidor. Cada
  * implementación (Supabase o fake en memoria) debe aplicar el filtro/valor de
@@ -107,4 +120,10 @@ export interface BusinessAgentRegistryStore {
    * normal, sin Gate — el caller debe seguir por el Flow Engine genérico).
    */
   resolvePublishedVersion(tenantId: string, flowId: string): Promise<AgentVersionRow | null>;
+
+  /**
+   * Bloque 12 (Authoring API) — historial de versiones (más reciente primero),
+   * proyección ligera (sin Spec/IR/FlowDefinition). tenant-scoped.
+   */
+  listVersions(tenantId: string, flowId: string): Promise<AgentVersionSummary[]>;
 }

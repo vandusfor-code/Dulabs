@@ -326,3 +326,10 @@ lib/agent-compiler/runtime/commercial-state-resolver.test.ts
 # commercialState + idempotencia). Puro: overrides en memoria (orquestador/
 # store/gateSink/idempotency), sin Supabase ni WhatsApp reales.
 lib/agent-compiler/runtime/production/atender-business-agent.test.ts
+# Bloque 12 (Authoring API: draft/validate/publish/rollback/preview). Puro:
+# fake en memoria del Registry (mismo patrón que Step 8A), sin Supabase real.
+# El adapter Supabase real (listVersions incluido) se cubre por el mismo
+# harness de integración de registry-store-supabase.integration.test.ts,
+# deliberadamente FUERA de este manifiesto.
+lib/agent-compiler/api/business-agent-api.test.ts
+lib/agent-compiler/api/preview.test.ts

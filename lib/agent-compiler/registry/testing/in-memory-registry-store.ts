@@ -12,6 +12,7 @@ import { randomUUID } from "node:crypto";
 import type {
   AgentIdentityRow,
   AgentVersionRow,
+  AgentVersionSummary,
   BindResult,
   BusinessAgentRegistryStore,
   CreateDraftVersionInput,
@@ -181,6 +182,22 @@ export function createInMemoryBusinessAgentRegistryStore(fixtures?: Partial<InMe
       const flow = flows.get(flowKey(tenantId, flowId));
       if (!flow || flow.status !== "published" || !flow.publishedVersionId) return null;
       return this.getVersion(tenantId, flow.publishedVersionId);
+    },
+
+    async listVersions(tenantId, flowId): Promise<AgentVersionSummary[]> {
+      return [...versions.values()]
+        .filter((v) => v.tenantId === tenantId && v.flowId === flowId)
+        .sort((a, b) => b.versionNumber - a.versionNumber)
+        .map((v) => {
+          const art = artifacts.get(flowKey(tenantId, v.id));
+          return {
+            flowVersionId: v.id,
+            versionNumber: v.versionNumber,
+            publishedAt: v.publishedAt,
+            retiredAt: v.retiredAt,
+            validationStatus: art?.validationStatus ?? "pending",
+          };
+        });
     },
   };
 }

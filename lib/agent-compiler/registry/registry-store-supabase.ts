@@ -13,7 +13,7 @@
 // tenant, el UPDATE afecta 0 filas (nunca escribe cross-tenant).
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { createFlow, createFlowVersion, getFlowById, getFlowVersion, publishFlowVersion } from "@/lib/flow/flow-store";
+import { createFlow, createFlowVersion, getFlowById, getFlowVersion, listFlowVersions, publishFlowVersion } from "@/lib/flow/flow-store";
 import { FlowStoreError, FLOW_STORE_ERROR_CODES } from "@/lib/flow/flow-store-errors";
 import type { FlowDefinition } from "@/lib/flow/types";
 import type { GateRule } from "@/lib/agent-compiler/runtime/guardrail-gate";
@@ -24,6 +24,7 @@ import {
   BUSINESS_AGENT_SLUG,
   type AgentIdentityRow,
   type AgentVersionRow,
+  type AgentVersionSummary,
   type BindResult,
   type BusinessAgentRegistryStore,
   type CreateDraftVersionInput,
@@ -231,6 +232,33 @@ export function createSupabaseBusinessAgentRegistryStore(supabase: SupabaseClien
       const flow = await getFlowById(supabase, tenantId, flowId);
       if (!flow || flow.status !== "published" || !flow.published_version_id) return null;
       return assembleVersionRow(tenantId, flow.published_version_id);
+    },
+
+    async listVersions(tenantId, flowId): Promise<AgentVersionSummary[]> {
+      const versions = await listFlowVersions(supabase, { tenantId, flowId });
+      if (versions.length === 0) return [];
+      const { data, error } = await supabase
+        .from("dulabs_business_agent_versions")
+        .select("flow_version_id, validation_status")
+        .eq("tenant_id", tenantId)
+        .in("flow_version_id", versions.map((v) => v.id));
+      if (error) throw error;
+      const statusByVersionId = new Map(
+        (data as { flow_version_id: string; validation_status: ValidationStatus }[]).map((r) => [r.flow_version_id, r.validation_status]),
+      );
+      // Una dulabs_flow_versions sin fila de artefactos no es un Business Agent
+      // (flow hand-built normal) -- no debería ocurrir bajo el flowId del
+      // Business Agent (todas sus versiones se crean vía createDraftVersion),
+      // pero se filtra explícitamente en vez de asumirlo (nunca inventar status).
+      return versions
+        .filter((v) => statusByVersionId.has(v.id))
+        .map((v) => ({
+          flowVersionId: v.id,
+          versionNumber: v.version_number,
+          publishedAt: v.published_at,
+          retiredAt: v.retired_at,
+          validationStatus: statusByVersionId.get(v.id)!,
+        }));
     },
   };
 }
