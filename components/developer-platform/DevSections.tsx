@@ -1,10 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import {
-  KeyRound, Webhook, Radio, ScrollText, GaugeCircle, Boxes, Users, Timer,
-  Fingerprint, ShieldCheck, Repeat, MessageSquareText, ArrowRight, Check, Lock, Network, FileCode2,
-} from "lucide-react";
+import { KeyRound, Timer, Fingerprint, ShieldCheck, Repeat, ArrowRight, Check, Lock, FileCode2 } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import { CodeSample } from "@/components/developers/CodeSample";
 import { API_BASE_URL, DOCS_HREF, SECTION_IDS } from "./constants";
@@ -26,37 +23,69 @@ function DevSectionHeading({ eyebrow, title, desc }: { eyebrow: string; title: s
 
 /* ============================ 3 · PLATFORM ============================ */
 
+/** Flecha del pipeline: → en desktop, ↓ apilado en móvil. */
+function PipeArrow() {
+  return (
+    <span className="flex items-center justify-center text-site-muted-fg" aria-hidden>
+      <span className="md:hidden">↓</span>
+      <span className="hidden md:inline">→</span>
+    </span>
+  );
+}
+
 export function DevPlatform() {
   const { t } = useI18n();
-  const caps = [
-    { icon: MessageSquareText, title: "WhatsApp API", desc: t("Envía mensajes sobre la WhatsApp Cloud API oficial de Meta.", "Send messages over Meta's official WhatsApp Cloud API.") },
-    { icon: KeyRound, title: "API Keys", desc: t("Claves dl_live_ por workspace, con rotación y revocación.", "dl_live_ keys per workspace, with rotation and revocation.") },
-    { icon: Webhook, title: "Webhooks", desc: t("Recibe eventos entrantes y de estado firmados con HMAC.", "Receive inbound and status events signed with HMAC.") },
-    { icon: Radio, title: t("Eventos", "Events"), desc: t("message.received y message.status en tiempo real.", "message.received and message.status in real time.") },
-    { icon: ScrollText, title: "Logs", desc: t("Historial de entregas, intentos y errores por evento.", "Delivery history, attempts and errors per event.") },
-    { icon: GaugeCircle, title: "Usage", desc: t("Consumo mensual de mensajes y números por cuenta.", "Monthly message and number usage per account.") },
-    { icon: Boxes, title: "Workspaces", desc: t("Aísla proyectos y clientes con datos separados.", "Isolate projects and clients with separate data.") },
-    { icon: Users, title: t("Miembros", "Members"), desc: t("Roles OWNER / ADMIN / MEMBER por workspace.", "OWNER / ADMIN / MEMBER roles per workspace.") },
-    { icon: Timer, title: "Rate limits", desc: t("Límites por número y por workspace, con Retry-After.", "Per-number and per-workspace limits, with Retry-After.") },
-    { icon: Repeat, title: "Idempotency", desc: t("Reintenta sin duplicar con Idempotency-Key.", "Retry without duplicating using Idempotency-Key.") },
-    { icon: Network, title: t("Delivery tracking", "Delivery tracking"), desc: t("Sigue cada mensaje de created a sent o failed.", "Track each message from created to sent or failed.") },
-    { icon: ShieldCheck, title: t("Tenant isolation", "Tenant isolation"), desc: t("Aislamiento estricto por cuenta y workspace.", "Strict isolation per account and workspace.") },
+  const pipeline = [
+    { k: t("Tu app", "Your app"), s: "cURL · JS · TS" },
+    { k: "API Gateway", s: t("auth · rate limit · idempotency", "auth · rate limit · idempotency") },
+    { k: "Queue", s: "at-least-once" },
+    { k: "Workers", s: t("reintentos · DLQ", "retries · DLQ") },
+    { k: "WhatsApp Cloud API", s: t("envío oficial de Meta", "Meta official send") },
   ];
+  const incluido = ["API keys", "webhooks", "events", "logs", "usage", "workspaces", "members", "rate limits", "idempotency", "tenant isolation"];
   return (
     <section id={SECTION_IDS.plataforma} className="scroll-mt-20 py-20 md:py-28">
       <div className="mx-auto max-w-[1440px] px-6">
         <DevSectionHeading
           eyebrow={t("La plataforma", "The platform")}
-          title={t("Todo lo que necesitas para integrar WhatsApp, en un solo lugar.", "Everything you need to integrate WhatsApp, in one place.")}
-          desc={t("No es una lista de features de IA: es infraestructura de mensajería con las piezas que un equipo de producto realmente necesita en producción.", "Not a list of AI features: it's messaging infrastructure with the pieces a product team actually needs in production.")}
+          title={t("La infraestructura de mensajería, ya construida.", "The messaging infrastructure, already built.")}
+          desc={t("Tú haces un POST. Nosotros manejamos autenticación, rate limiting, idempotencia, la cola, los reintentos, la firma de webhooks y la entrega a Meta.", "You make a POST. We handle auth, rate limiting, idempotency, the queue, retries, webhook signing and delivery to Meta.")}
         />
-        <div className="mt-12 grid gap-px overflow-hidden rounded-2xl border border-site-border bg-site-border sm:grid-cols-2 lg:grid-cols-3">
-          {caps.map((c) => (
-            <div key={c.title} className="group bg-site-bg p-6 transition-colors hover:bg-site-card">
-              <c.icon className="h-5 w-5 text-dev-accent" strokeWidth={1.75} aria-hidden />
-              <h3 className="mt-4 font-display text-[16px] font-medium text-site-fg">{c.title}</h3>
-              <p className="mt-1.5 text-[13.5px] leading-relaxed text-site-muted-fg">{c.desc}</p>
+        {/* Diagrama de arquitectura real (no cards) */}
+        <div className="mt-12 rounded-2xl border border-site-border bg-site-card p-5 md:p-7">
+          <div className="flex flex-col gap-2.5 md:flex-row md:items-stretch md:gap-2.5">
+            {pipeline.map((n, i) => (
+              <div key={n.k} className="contents md:flex md:flex-1 md:items-stretch">
+                <div className="flex-1 rounded-xl border border-site-border bg-site-bg px-4 py-3.5">
+                  <div className="font-mono text-[12.5px] text-site-fg">{n.k}</div>
+                  <div className="mt-1 font-mono text-[10px] leading-relaxed text-site-muted-fg">{n.s}</div>
+                </div>
+                {i < pipeline.length - 1 ? <PipeArrow /> : null}
+              </div>
+            ))}
+          </div>
+          {/* Camino de retorno: webhooks firmados */}
+          <div className="mt-3 flex flex-col gap-2.5 border-t border-site-border pt-4 sm:flex-row sm:items-center">
+            <span className="font-mono text-[10px] uppercase tracking-widest text-site-muted-fg">↳ {t("eventos", "events")}</span>
+            <div className="flex flex-1 flex-col gap-2.5 sm:flex-row sm:items-center">
+              <div className="rounded-xl border border-site-border bg-site-bg px-4 py-2.5">
+                <span className="font-mono text-[12px] text-site-fg">{t("Webhooks firmados", "Signed webhooks")}</span>
+                <span className="ml-2 font-mono text-[10px] text-site-muted-fg">HMAC-SHA256</span>
+              </div>
+              <span className="hidden text-site-muted-fg sm:inline" aria-hidden>→</span>
+              <div className="rounded-xl border border-site-border bg-site-bg px-4 py-2.5">
+                <span className="font-mono text-[12px] text-site-fg">{t("Tu endpoint", "Your endpoint")}</span>
+              </div>
             </div>
+          </div>
+        </div>
+        {/* Incluido (tira mono, no cards) */}
+        <div className="mt-6 flex flex-wrap gap-x-5 gap-y-2.5 font-mono text-[12px] text-site-muted-fg">
+          {incluido.map((x) => (
+            <span key={x} className="inline-flex items-center gap-2">
+              <span className="h-1 w-1 rounded-full bg-site-muted-fg" aria-hidden />
+              {x}
+            </span>
           ))}
         </div>
       </div>
