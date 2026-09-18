@@ -1025,13 +1025,16 @@ body {
   --color-edge: rgba(255, 255, 255, 0.09);  /* hairline borders */
   --color-fg: #f5f5f5;       /* headings / texto principal */
 
-  /* Tonos de estado para badges (bg tenue + texto vivo, sobrio). */
-  --color-success: rgba(52, 199, 123, 0.12);
-  --color-success-text: #57d499;
-  --color-warning: rgba(240, 180, 70, 0.12);
-  --color-warning-text: #eab24a;
-  --color-danger: rgba(240, 95, 95, 0.12);
-  --color-danger-text: #f07a7a;
+  /* Estados: MONOCROMO por defecto (identidad sin verde). success/positivo =
+     neutro (chip blanco tenue + texto claro). Solo danger conserva un rojo
+     apagado -- señal funcional de error, que sí debe destacar. warning = neutro
+     con texto algo más tenue. */
+  --color-success: rgba(255, 255, 255, 0.08);
+  --color-success-text: #ededed;
+  --color-warning: rgba(255, 255, 255, 0.06);
+  --color-warning-text: #b8b8b8;
+  --color-danger: rgba(240, 95, 95, 0.1);
+  --color-danger-text: #f08a8a;
 
   /* La landing (tokens site-*) hereda EL MISMO sistema monocromo cuando su
      wrapper lleva .dev-scope -- así landing y dashboard son un solo producto. */
