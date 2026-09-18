@@ -298,3 +298,8 @@ lib/developer/fase19-dashboard-links.test.ts
 lib/meta-templates.test.ts
 
 lib/developer/whatsapp-jobs.test.ts
+
+# DuLabs Business — Agent Compiler Step 7 (Gate PRE-LLM + Runtime Integration).
+# Puros: store en memoria + executors con registro, sin Supabase ni LLM.
+lib/agent-compiler/runtime/guardrail-gate.test.ts
+lib/agent-compiler/runtime/agent-runtime.test.ts
