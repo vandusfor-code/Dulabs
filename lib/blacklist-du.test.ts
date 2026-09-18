@@ -10,6 +10,7 @@ import {
   parsearListaNegra,
   esTelefonoBloqueado,
   unirListaNegra,
+  quitarDeListaNegra,
 } from "./blacklist-du";
 
 describe("normalizarCampoTelefonos", () => {
@@ -142,5 +143,26 @@ describe("unirListaNegra", () => {
     const { resultado, agregados } = unirListaNegra(null, ["573181234567"]);
     assert.equal(agregados, 1);
     assert.equal(resultado, "573181234567");
+  });
+});
+
+describe("quitarDeListaNegra", () => {
+  it("quita un número existente sin tocar el resto", () => {
+    const resultado = quitarDeListaNegra("573181234567,573001112233,573009998888", "573001112233");
+    assert.deepEqual(resultado.split(",").sort(), ["573009998888", "573181234567"]);
+  });
+
+  it("idempotente: quitar un número que no está no rompe nada ni cambia el resto", () => {
+    const resultado = quitarDeListaNegra("573181234567,573001112233", "573000000000");
+    assert.deepEqual(resultado.split(",").sort(), ["573001112233", "573181234567"]);
+  });
+
+  it("lista vacía/null -> resultado vacío, sin fallar", () => {
+    assert.equal(quitarDeListaNegra(null, "573001112233"), "");
+    assert.equal(quitarDeListaNegra("", "573001112233"), "");
+  });
+
+  it("quitar el único número deja la lista vacía", () => {
+    assert.equal(quitarDeListaNegra("573001112233", "573001112233"), "");
   });
 });

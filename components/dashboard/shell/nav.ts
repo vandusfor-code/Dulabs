@@ -12,6 +12,7 @@ import {
   ShoppingCart,
   ShieldCheck,
   Workflow,
+  Sparkles,
   type LucideIcon,
 } from "lucide-react";
 import type { Rol } from "@/lib/team";
@@ -53,6 +54,13 @@ export const navSections: NavSection[] = [
     title: "Crear",
     titleEn: "Create",
     items: [
+      {
+        label: "Business Agent",
+        labelEn: "Business Agent",
+        href: "/dashboard/business-agent",
+        icon: Sparkles,
+        rolesPermitidos: ["admin", "agente"],
+      },
       { label: "Plantillas", labelEn: "Templates", href: "/dashboard/plantillas", icon: LayoutTemplate },
       { label: "Campañas", labelEn: "Campaigns", href: "/dashboard/campanas", icon: Send },
       { label: "Encuestas", labelEn: "Surveys", href: "/dashboard/surveys", icon: ClipboardList },

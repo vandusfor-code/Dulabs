@@ -111,3 +111,15 @@ export function unirListaNegra(
   }
   return { resultado: Array.from(set).join(","), agregados, yaExistian };
 }
+
+/**
+ * Bloque E (Authoring UI -- gestión de números excluidos, autorizado). Quita
+ * UN número ya normalizado de la lista negra, sin tocar el resto. Simétrica
+ * a unirListaNegra: pura, sin red. Si el número no estaba, el resultado
+ * queda igual (idempotente).
+ */
+export function quitarDeListaNegra(actual: string | null | undefined, numero: string): string {
+  const set = parsearListaNegra(actual);
+  set.delete(numero);
+  return Array.from(set).join(",");
+}

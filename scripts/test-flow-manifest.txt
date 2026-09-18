@@ -22,6 +22,9 @@ lib/flow/flow-engine-media.test.ts
 lib/flow/media-schema.test.ts
 lib/flow/flow-orchestrator-media.test.ts
 lib/flow/executors/send-message-executor.test.ts
+# Puro/offline (sin Supabase); faltaba en el manifiesto -- agregado al tocar
+# quitarDeListaNegra (Bloque E, gestión de números excluidos).
+lib/blacklist-du.test.ts
 app/webhook-dulabs/media-inbound.test.ts
 app/webhook-dulabs/blacklist-orden.test.ts
 app/webhook-dulabs/migracion-amore-orden.test.ts
