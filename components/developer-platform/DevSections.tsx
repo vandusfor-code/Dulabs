@@ -41,6 +41,7 @@ export function DevPlatform() {
     { k: "Queue", s: "at-least-once" },
     { k: "Workers", s: t("reintentos · DLQ", "retries · DLQ") },
     { k: "WhatsApp Cloud API", s: t("envío oficial de Meta", "Meta official send") },
+    { k: t("Cliente", "Customer"), s: t("recibe en WhatsApp", "receives on WhatsApp") },
   ];
   const incluido = ["API keys", "webhooks", "events", "logs", "usage", "workspaces", "members", "rate limits", "idempotency", "tenant isolation"];
   return (
@@ -56,7 +57,7 @@ export function DevPlatform() {
           <div className="flex flex-col gap-2.5 md:flex-row md:items-stretch md:gap-2.5">
             {pipeline.map((n, i) => (
               <div key={n.k} className="contents md:flex md:flex-1 md:items-stretch">
-                <div className="flex-1 rounded-xl border border-site-border bg-site-bg px-4 py-3.5">
+                <div className="dev-step flex-1 rounded-xl border border-site-border bg-site-bg px-4 py-3.5" style={{ ["--dev-i" as string]: i }}>
                   <div className="font-mono text-[12.5px] text-site-fg">{n.k}</div>
                   <div className="mt-1 font-mono text-[10px] leading-relaxed text-site-muted-fg">{n.s}</div>
                 </div>
@@ -250,7 +251,7 @@ function MockChrome({ label, live }: { label: string; live?: string }) {
       <span className="ml-2 font-mono text-[11px] text-site-muted-fg">{label}</span>
       {live ? (
         <span className="ml-auto inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest text-site-muted-fg">
-          <span className="h-1.5 w-1.5 rounded-full bg-site-fg" aria-hidden /> {live}
+          <span className="dev-live-dot h-1.5 w-1.5 rounded-full bg-site-fg" aria-hidden /> {live}
         </span>
       ) : null}
     </div>
@@ -293,8 +294,8 @@ export function DevObservability() {
             <span className="text-right">time</span>
           </div>
           <div className="divide-y divide-site-border border-t border-site-border">
-            {EVENT_ROWS.map((r) => (
-              <div key={r.id} className="grid grid-cols-[auto_1fr_auto] items-center gap-x-4 px-3.5 py-2.5 font-mono text-[12px] transition-colors hover:bg-site-bg/60 sm:grid-cols-[auto_1fr_auto_auto_auto] sm:gap-x-6">
+            {EVENT_ROWS.map((r, i) => (
+              <div key={r.id} style={{ ["--dev-i" as string]: i }} className="dev-stream-row grid grid-cols-[auto_1fr_auto] items-center gap-x-4 px-3.5 py-2.5 font-mono text-[12px] transition-colors hover:bg-site-bg/60 sm:grid-cols-[auto_1fr_auto_auto_auto] sm:gap-x-6">
                 <span className="inline-flex items-center gap-2">
                   <StDot st={r.st} />
                   <span className={r.st === "failed" ? "text-[#f08a8a]" : "text-site-fg"}>{r.st}</span>
@@ -443,8 +444,8 @@ export function DevDashboardPreview() {
                   <span className="text-[11.5px] font-medium text-site-fg">{t("Eventos recientes", "Recent events")}</span>
                   <span className="font-mono text-[10px] text-site-muted-fg">message.status · webhook.delivery</span>
                 </div>
-                {EVENT_ROWS.slice(0, 4).map((r) => (
-                  <div key={r.id} className="flex items-center gap-3 border-b border-site-border px-3 py-2 font-mono text-[11.5px] last:border-0">
+                {EVENT_ROWS.slice(0, 4).map((r, i) => (
+                  <div key={r.id} style={{ ["--dev-i" as string]: i }} className="dev-stream-row flex items-center gap-3 border-b border-site-border px-3 py-2 font-mono text-[11.5px] last:border-0">
                     <StDot st={r.st} />
                     <span className={`w-[74px] flex-none ${r.st === "failed" ? "text-[#f08a8a]" : "text-site-fg"}`}>{r.st}</span>
                     <span className="min-w-0 flex-1 truncate text-site-muted-fg">{r.ev}</span>
@@ -455,6 +456,257 @@ export function DevDashboardPreview() {
               </div>
             </div>
           </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/* =================== 10 · BUILD ON OFFICIAL WHATSAPP =================== */
+
+/** Nodo de un stack vertical (producto → infra → Meta → cliente). */
+function StackNode({ k, s, i, last }: { k: string; s: string; i: number; last?: boolean }) {
+  return (
+    <div className="flex flex-col items-stretch">
+      <div className="dev-step rounded-xl border border-site-border bg-site-bg px-4 py-3.5" style={{ ["--dev-i" as string]: i }}>
+        <div className="font-mono text-[12.5px] text-site-fg">{k}</div>
+        <div className="mt-1 font-mono text-[10.5px] leading-relaxed text-site-muted-fg">{s}</div>
+      </div>
+      {!last ? (
+        <div className="flex h-6 items-center justify-center" aria-hidden>
+          <span className="dev-wire-y h-full w-px bg-site-border" style={{ ["--dev-i" as string]: i }} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+export function DevBuild() {
+  const { t } = useI18n();
+  const stack = [
+    { k: t("Tu agente de IA · tu app", "Your AI agent · your app"), s: t("IA · CRM · automatización", "AI · CRM · automation") },
+    { k: "DuLabs API", s: t("API keys · webhooks · eventos · logs", "API keys · webhooks · events · logs") },
+    { k: "WhatsApp Cloud API", s: t("oficial de Meta", "official, by Meta") },
+    { k: t("Cliente", "Customer"), s: t("recibe en WhatsApp", "receives on WhatsApp") },
+  ];
+  const usos = [
+    t("Agentes de IA", "AI agents"),
+    "CRMs",
+    t("Automatizaciones", "Automations"),
+    t("Campañas", "Campaigns"),
+    t("Notificaciones", "Notifications"),
+    t("Soporte", "Support"),
+    t("Reservas", "Bookings"),
+    t("Ventas", "Sales"),
+    t("Integraciones", "Integrations"),
+  ];
+  return (
+    <section className="scroll-mt-20 border-t border-site-border py-20 md:py-28">
+      <div className="mx-auto grid max-w-[1440px] items-center gap-12 px-6 lg:grid-cols-[1fr_0.95fr]">
+        <div>
+          <DevSectionHeading
+            eyebrow={t("Sobre WhatsApp oficial", "On official WhatsApp")}
+            title={t("WhatsApp oficial. Tu producto. Tu infraestructura.", "Official WhatsApp. Your product. Your infrastructure.")}
+            desc={t(
+              "DuLabs es la infraestructura, no otro chatbot. Conectas WhatsApp Cloud API de Meta a tu propio producto y construyes encima: agentes de IA, CRMs, automatizaciones y sistemas propios.",
+              "DuLabs is the infrastructure, not another chatbot. You connect Meta's WhatsApp Cloud API to your own product and build on top: AI agents, CRMs, automations and your own systems.",
+            )}
+          />
+          <div className="mt-8 flex flex-wrap gap-x-5 gap-y-2.5 font-mono text-[12px] text-site-muted-fg">
+            {usos.map((x) => (
+              <span key={x} className="inline-flex items-center gap-2">
+                <span className="h-1 w-1 rounded-full bg-site-muted-fg" aria-hidden />
+                {x}
+              </span>
+            ))}
+          </div>
+          <p className="mt-8 max-w-lg rounded-xl border border-site-border bg-site-card p-4 text-[13.5px] leading-relaxed text-site-muted-fg">
+            {t(
+              "Construyes sobre la infraestructura oficial de WhatsApp de Meta y operas dentro de sus políticas y mecanismos de mensajería.",
+              "You build on Meta's official WhatsApp infrastructure and operate within its messaging policies and mechanisms.",
+            )}
+          </p>
+        </div>
+        {/* Stack: tu producto -> DuLabs -> WhatsApp Cloud API -> cliente */}
+        <div className="overflow-hidden rounded-2xl border border-site-border bg-site-card">
+          <MockChrome label={t("arquitectura", "architecture")} live={t("oficial", "official")} />
+          <div className="p-5 md:p-6">
+            {stack.map((n, i) => (
+              <StackNode key={n.k} k={n.k} s={n.s} i={i} last={i === stack.length - 1} />
+            ))}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/* ====================== 11 · MESSAGE LIFECYCLE ====================== */
+
+export function DevLifecycle() {
+  const { t } = useI18n();
+  const steps = [
+    { n: "01", k: "request", d: "POST /api/v1/messages", note: t("Autenticado con API key + Idempotency-Key", "Authenticated with API key + Idempotency-Key"), meta: "12:41:03.011" },
+    { n: "02", k: "accepted", d: `201 · { "status": "created" }`, note: t("Encolado con rate limit e idempotencia", "Queued with rate limit and idempotency"), meta: "+142 ms" },
+    { n: "03", k: "queued", d: "queue · at-least-once", note: t("En cola, listo para un worker", "In queue, ready for a worker"), meta: "+8 ms" },
+    { n: "04", k: "sent", d: `GET /messages/{id} → "sent"`, note: t("Entregado a WhatsApp Cloud API", "Handed off to WhatsApp Cloud API"), meta: "+240 ms" },
+    { n: "05", k: "delivered", d: "message.status → delivered", note: t("Confirmado por WhatsApp", "Confirmed by WhatsApp"), meta: "+1.2 s" },
+    { n: "06", k: "webhook", d: t("POST tu endpoint · message.status", "POST your endpoint · message.status"), note: t("Firmado HMAC-SHA256 + Event-ID", "Signed HMAC-SHA256 + Event-ID"), meta: "200 OK" },
+  ];
+  return (
+    <section className="scroll-mt-20 border-t border-site-border py-20 md:py-28">
+      <div className="mx-auto max-w-[1440px] px-6">
+        <DevSectionHeading
+          eyebrow={t("Ciclo de vida", "Message lifecycle")}
+          title={t("Sigue cada mensaje, del POST al webhook.", "Follow every message, from POST to webhook.")}
+          desc={t(
+            "Un mensaje no es «enviar y rezar». Cada estado queda registrado con su request id, latencia y timestamp, y termina en un webhook firmado en tu endpoint.",
+            "A message isn't fire-and-forget. Every state is recorded with its request id, latency and timestamp, and ends in a signed webhook on your endpoint.",
+          )}
+        />
+        <div className="mt-10 overflow-hidden rounded-2xl border border-site-border bg-site-card">
+          <MockChrome label="message.lifecycle" live={t("en vivo", "live")} />
+          <div className="divide-y divide-site-border">
+            {steps.map((st, i) => (
+              <div key={st.n} className="grid grid-cols-[2rem_1fr_auto] items-stretch gap-4 px-4 py-4 sm:px-5">
+                <div className="flex flex-col items-center">
+                  <span className="flex h-6 w-6 flex-none items-center justify-center rounded-full border border-site-border font-mono text-[9.5px] text-site-muted-fg">{st.n}</span>
+                  {i < steps.length - 1 ? <span className="dev-wire-y mt-1.5 w-px flex-1 bg-site-border" style={{ ["--dev-i" as string]: i }} aria-hidden /> : null}
+                </div>
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1 font-mono text-[12.5px]">
+                    <span className="dev-step text-site-fg" style={{ ["--dev-i" as string]: i }}>{st.k}</span>
+                    <span className="min-w-0 truncate text-site-muted-fg">{st.d}</span>
+                  </div>
+                  <div className="mt-1 text-[12.5px] leading-relaxed text-site-muted-fg">{st.note}</div>
+                </div>
+                <div className="text-right font-mono text-[11px] text-site-muted-fg">{st.meta}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/* ===================== 12 · MESSAGING & CAMPAIGNS ===================== */
+
+export function DevMessaging() {
+  const { t } = useI18n();
+  const puntos = [
+    t("Transaccionales, notificaciones, conversacionales y campañas con plantillas.", "Transactional, notifications, conversational and template campaigns."),
+    t("Seguimiento por estado: enviado, entregado, leído y fallido.", "Status tracking: sent, delivered, read and failed."),
+    t("Reintentos con backoff, DLQ y webhooks de estado por cada mensaje.", "Backoff retries, DLQ and status webhooks for every message."),
+  ];
+  const funnel = [
+    { k: t("encolados", "queued"), v: "12,480", w: "100%" },
+    { k: t("enviados", "sent"), v: "12,455", w: "99.8%" },
+    { k: t("entregados", "delivered"), v: "12,390", w: "99.3%" },
+    { k: t("leídos", "read"), v: "9,102", w: "73%" },
+    { k: t("fallidos", "failed"), v: "25", w: "2%", danger: true },
+  ];
+  return (
+    <section className="scroll-mt-20 border-t border-site-border py-20 md:py-28">
+      <div className="mx-auto grid max-w-[1440px] items-center gap-12 px-6 lg:grid-cols-[0.9fr_1.1fr]">
+        <div>
+          <DevSectionHeading
+            eyebrow={t("Mensajería", "Messaging")}
+            title={t("Mensajería a escala, con reglas claras.", "Messaging at scale, with clear rules.")}
+            desc={t(
+              "Envía desde una confirmación hasta una campaña, y observa cada entrega. El envío de plantillas y campañas sigue las categorías y políticas de mensajería de WhatsApp/Meta.",
+              "Send anything from a single confirmation to a campaign, and observe every delivery. Template and campaign sending follows WhatsApp/Meta's messaging categories and policies.",
+            )}
+          />
+          <ul className="mt-8 space-y-3">
+            {puntos.map((p) => (
+              <li key={p} className="flex items-start gap-3 text-[14.5px] text-site-muted-fg">
+                <Check className="mt-0.5 h-4 w-4 flex-none text-dev-accent" strokeWidth={2.25} aria-hidden />
+                <span>{p}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+        {/* Panel de entrega: funnel con estados reales de WhatsApp */}
+        <div className="overflow-hidden rounded-2xl border border-site-border bg-site-card">
+          <MockChrome label="delivery" live={t("último envío", "last send")} />
+          <div className="space-y-3.5 p-5 md:p-6">
+            {funnel.map((f, i) => (
+              <div key={f.k} style={{ ["--dev-i" as string]: i }} className="dev-stream-row">
+                <div className="flex items-baseline justify-between font-mono text-[11.5px]">
+                  <span className={f.danger ? "text-[#f08a8a]" : "text-site-fg"}>{f.k}</span>
+                  <span className="tabular-nums text-site-muted-fg">
+                    {f.v} <span className="text-site-border">·</span> {f.w}
+                  </span>
+                </div>
+                <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-white/[0.06]">
+                  <div className={`h-full rounded-full ${f.danger ? "bg-[#f08a8a]/70" : "bg-site-fg/70"}`} style={{ width: f.w }} />
+                </div>
+              </div>
+            ))}
+            <p className="border-t border-site-border pt-3 font-mono text-[10.5px] leading-relaxed text-site-muted-fg">
+              {t("Estados provistos por WhatsApp Cloud API · sin promesas de «cero bloqueos».", "Statuses provided by WhatsApp Cloud API · no “zero blocks” promises.")}
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/* ========================= 13 · COEXISTENCE ========================= */
+
+export function DevCoexistence() {
+  const { t } = useI18n();
+  const nodos = [
+    { k: t("Tu equipo", "Your team"), s: t("app de WhatsApp", "WhatsApp app") },
+    { k: t("Número de WhatsApp", "WhatsApp number"), s: t("mismo número", "same number") },
+    { k: "DuLabs", s: t("API · webhooks · agentes", "API · webhooks · agents") },
+  ];
+  const puntos = [
+    t("Un mismo número atiende de forma manual y por API, según la configuración de Meta.", "A single number is served both manually and via API, per Meta's configuration."),
+    t("Automatiza e integra agentes y sistemas propios sin migrar el número.", "Automate and integrate your own agents and systems without migrating the number."),
+    t("Las capacidades disponibles dependen de la configuración de WhatsApp/Meta.", "Available capabilities depend on the WhatsApp/Meta configuration."),
+  ];
+  return (
+    <section className="scroll-mt-20 border-t border-site-border py-20 md:py-28">
+      <div className="mx-auto max-w-[1440px] px-6">
+        <DevSectionHeading
+          eyebrow={t("Coexistencia", "Coexistence")}
+          title={t("Automatiza sin dejar de atender a mano.", "Automate without giving up manual replies.")}
+          desc={t(
+            "Cuando la configuración de Meta lo permite, DuLabs trabaja en modo Coexistencia: tu equipo sigue usando la app de WhatsApp y, sobre el mismo número, conectas API, webhooks y agentes.",
+            "When Meta's configuration allows it, DuLabs works in Coexistence mode: your team keeps using the WhatsApp app while, on the same number, you connect API, webhooks and agents.",
+          )}
+        />
+        <div className="mt-10 overflow-hidden rounded-2xl border border-site-border bg-site-card p-5 md:p-7">
+          <div className="flex flex-col gap-2.5 md:flex-row md:items-stretch">
+            {nodos.map((n, i) => (
+              <div key={n.k} className="contents md:flex md:flex-1 md:items-stretch">
+                <div
+                  className={`dev-step flex-1 rounded-xl border px-4 py-4 ${i === 1 ? "border-white/25 bg-site-bg" : "border-site-border bg-site-bg"}`}
+                  style={{ ["--dev-i" as string]: i }}
+                >
+                  <div className="font-mono text-[12.5px] text-site-fg">{n.k}</div>
+                  <div className="mt-1 font-mono text-[10.5px] text-site-muted-fg">{n.s}</div>
+                </div>
+                {i < nodos.length - 1 ? (
+                  <span className="flex items-center justify-center text-site-muted-fg" aria-hidden>
+                    <span className="md:hidden">↕</span>
+                    <span className="hidden md:inline">⇄</span>
+                  </span>
+                ) : null}
+              </div>
+            ))}
+          </div>
+          <ul className="mt-6 grid gap-3 border-t border-site-border pt-5 sm:grid-cols-3">
+            {puntos.map((p) => (
+              <li key={p} className="flex items-start gap-2.5 text-[13px] leading-relaxed text-site-muted-fg">
+                <Check className="mt-0.5 h-4 w-4 flex-none text-dev-accent" strokeWidth={2.25} aria-hidden />
+                <span>{p}</span>
+              </li>
+            ))}
+          </ul>
         </div>
       </div>
     </section>

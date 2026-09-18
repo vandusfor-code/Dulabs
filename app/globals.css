@@ -1075,3 +1075,102 @@ body {
 .dev-scope ::-webkit-scrollbar-track {
   background: transparent;
 }
+
+/* ---------- Developer landing motion (scoped, subtle, technical) ----------
+   DuLabs Developer V1 -- rediseño Resend-level. Animaciones sobrias de
+   producto: dots vivos, estados que avanzan, wires que pulsan, streams de
+   eventos que entran. Todo scoped a .dev-scope (no toca Business/AMORE) y
+   anulado bajo prefers-reduced-motion. Sin glow/blur pesado ni color. */
+
+@keyframes dev-dot-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(0.82); }
+}
+.dev-scope .dev-live-dot {
+  animation: dev-dot-pulse 2.2s ease-in-out infinite;
+}
+
+/* Estados que avanzan: cada .dev-step brilla por turnos según --dev-i.
+   En reposo permanecen legibles (opacity base alta): la animación solo
+   añade un realce que viaja. */
+@keyframes dev-step-travel {
+  0%, 100% { opacity: 0.5; }
+  9%, 20% { opacity: 1; }
+}
+.dev-scope .dev-step {
+  animation: dev-step-travel 5.5s ease-in-out infinite;
+  animation-delay: calc(var(--dev-i, 0) * 0.7s);
+}
+
+/* Wire horizontal con un pulso que recorre el segmento. */
+@keyframes dev-wire-run {
+  0% { transform: translateX(-130%); }
+  100% { transform: translateX(330%); }
+}
+.dev-scope .dev-wire {
+  position: relative;
+  overflow: hidden;
+}
+.dev-scope .dev-wire::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 38%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.5), transparent);
+  animation: dev-wire-run 3.4s linear infinite;
+  animation-delay: calc(var(--dev-i, 0) * 0.5s);
+}
+/* Variante vertical (timelines / stacks). */
+@keyframes dev-wire-run-y {
+  0% { transform: translateY(-130%); }
+  100% { transform: translateY(330%); }
+}
+.dev-scope .dev-wire-y {
+  position: relative;
+  overflow: hidden;
+}
+.dev-scope .dev-wire-y::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  height: 42%;
+  background: linear-gradient(180deg, transparent, rgba(255, 255, 255, 0.5), transparent);
+  animation: dev-wire-run-y 3.4s linear infinite;
+  animation-delay: calc(var(--dev-i, 0) * 0.5s);
+}
+
+/* Filas de un stream de eventos que entran escalonadas al aparecer. */
+@keyframes dev-stream-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+.dev-scope .dev-stream-row {
+  animation: dev-stream-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation-delay: calc(var(--dev-i, 0) * 90ms);
+}
+
+/* Caret de terminal. */
+@keyframes dev-caret-blink {
+  0%, 52% { opacity: 1; }
+  53%, 100% { opacity: 0; }
+}
+.dev-scope .dev-caret {
+  display: inline-block;
+  width: 0.55ch;
+  animation: dev-caret-blink 1.1s steps(1) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dev-scope .dev-live-dot,
+  .dev-scope .dev-step,
+  .dev-scope .dev-wire::after,
+  .dev-scope .dev-wire-y::after,
+  .dev-scope .dev-stream-row,
+  .dev-scope .dev-caret {
+    animation: none;
+  }
+  .dev-scope .dev-step { opacity: 1; }
+  .dev-scope .dev-stream-row { opacity: 1; transform: none; }
+  .dev-scope .dev-wire::after,
+  .dev-scope .dev-wire-y::after { display: none; }
+}
