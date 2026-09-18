@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { enviarPlantilla } from "@/lib/meta-templates";
+import { enviarPlantilla, importarPlantillaMeta, type PlantillaImportada } from "@/lib/meta-templates";
 import { resolverTokenMeta } from "@/lib/whatsapp-outbound";
 import { DULABS_PHONE_NUMBER_ID } from "@/lib/site-contact";
 import type { ClienteConfig } from "@/lib/supabase";
@@ -65,6 +65,18 @@ export async function inspeccionarPlantillaDulabs(
   const tok = await resolverTokenDulabs(supabase);
   if ("error" in tok) return { error: tok.error };
   return inspeccionarPlantilla(tok.token, nombre);
+}
+
+/** Diagnóstico (READ-ONLY): estructura COMPLETA de la plantilla (header/body/footer/botones + variables de ejemplo) -- para verificar qué parámetros exige Meta al enviar. No expone el token. */
+export async function estructuraPlantillaDulabs(
+  supabase: SupabaseClient,
+  nombre: string
+): Promise<PlantillaImportada | { error: string } | { noEncontrada: true }> {
+  const tok = await resolverTokenDulabs(supabase);
+  if ("error" in tok) return { error: tok.error };
+  const p = await importarPlantillaMeta({ wabaId: DULABS_WABA_ID, token: tok.token, nombre }).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }) as { error: string });
+  if (p && "error" in p) return p;
+  return p ?? { noEncontrada: true };
 }
 
 /**
