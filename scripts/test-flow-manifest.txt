@@ -319,3 +319,10 @@ lib/agent-compiler/flow-compiler-alignment.test.ts
 # integración, deliberadamente FUERA de este manifiesto: ver
 # lib/agent-compiler/registry/registry-store-supabase.integration.test.ts).
 lib/agent-compiler/registry/registry.test.ts
+# Bloque 11 (commercialState — current_node_id -> estado comercial, tenant-scoped).
+# Puro: fake mínimo de FlowOrchestratorStore, sin Supabase real.
+lib/agent-compiler/runtime/commercial-state-resolver.test.ts
+# Bloque 9 (Business Agent Production Boundary: blacklist + resolver + gate +
+# commercialState + idempotencia). Puro: overrides en memoria (orquestador/
+# store/gateSink/idempotency), sin Supabase ni WhatsApp reales.
+lib/agent-compiler/runtime/production/atender-business-agent.test.ts

@@ -1,11 +1,17 @@
-// DuLabs Business — Agent Compiler, Step 8 — BOUNDARY de ejecución.
+// DuLabs Business — Agent Compiler, Step 8 + Bloques 9/11 — BOUNDARY de ejecución.
 //
 // Frontera explícita entre el Runtime LEGACY y el Business Agent Runtime:
 //
 //   mensaje entrante
+//     -> número bloqueado? (dulabs_clientes_config.ia_numeros_bloqueados,
+//        mecanismo EXISTENTE reutilizado -- ver lib/blacklist-du.ts)
+//        - sí -> handled:true, CERO LLM/tools/Flow/respuesta. STOP.
 //     -> resolver Business Agent (tenant-scoped, fuente = dulabs_clientes_config)
 //        - none  -> handled:false  => el llamador sigue por LEGACY (intacto)
-//        - agent -> Business Guardrail Gate -> orquestador REAL -> WhatsApp
+//        - error del resolver -> handled:true, fail_closed (NUNCA propaga la
+//          excepción ni cae a LEGACY en silencio)
+//        - agent -> commercialState real (dulabs_flow_executions.current_node_id,
+//          Bloque 11) -> Business Guardrail Gate -> orquestador REAL -> WhatsApp
 //
 // Reglas: el tenant nunca proviene del mensaje/LLM; ante cualquier duda o error
 // crítico se FAIL-CLOSED (bloquea sin efectos, sin ceder a LEGACY ni dejar que
@@ -33,11 +39,14 @@ import type { SemanticClassifier } from "@/lib/agent-compiler/runtime/guardrail-
 import type { BusinessAgentResolver } from "@/lib/agent-compiler/runtime/production/business-agent-resolver";
 import { createWhatsAppGateSink, createClaudeSemanticClassifier } from "@/lib/agent-compiler/runtime/production/ports";
 import { type BusinessAgentObserver, type BusinessAgentTrace } from "@/lib/agent-compiler/runtime/production/observability";
+import { resolveCommercialState } from "@/lib/agent-compiler/runtime/commercial-state-resolver";
+import { esTelefonoBloqueado } from "@/lib/blacklist-du";
 
 export interface BusinessAgentBoundaryResult {
-  /** true = el Business Agent atendió (o bloqueó fail-closed) el mensaje; el
-   *  llamador NO debe seguir con LEGACY. false = no hay Business Agent para este
-   *  número; el llamador sigue por LEGACY exactamente como antes. */
+  /** true = el Business Agent atendió (o bloqueó fail-closed/blacklist) el
+   *  mensaje; el llamador NO debe seguir con LEGACY. false = no hay Business
+   *  Agent para este número; el llamador sigue por LEGACY exactamente como
+   *  antes. */
   handled: boolean;
   outcome: BusinessAgentTrace["outcome"];
   reason?: string;
@@ -59,7 +68,8 @@ export interface AtenderConBusinessAgentParams {
   texto: string;
   wamid: string;
   resolver: BusinessAgentResolver;
-  /** Estado comercial actual (autoridad del Runtime, nunca del LLM). */
+  /** Override SOLO para test. En producción se resuelve internamente desde
+   *  la ejecución activa (Bloque 11) -- nunca confiar en un valor externo. */
   commercialState?: string;
   classifier?: SemanticClassifier;
   observer?: BusinessAgentObserver;
@@ -74,8 +84,31 @@ export async function atenderMensajeConBusinessAgent(
   const base: Partial<BusinessAgentTrace> = { tenantId: cliente.id_tenant, wamid, phoneNumberId: cliente.phone_number_id };
   const emit = (t: BusinessAgentTrace) => params.observer?.onTrace(t);
 
-  // 1) Resolución tenant-scoped del Business Agent (fuente: fila real).
-  const resolution = await params.resolver.resolve(supabase, cliente);
+  // 0) Bloque 9 -- número bloqueado (máxima prioridad, ANTES que cualquier
+  // otra cosa: ni siquiera se resuelve si hay un Business Agent). Reutiliza
+  // el mecanismo EXISTENTE (dulabs_clientes_config.ia_numeros_bloqueados +
+  // lib/blacklist-du.ts), el MISMO que ya usa el webhook Legacy -- no se crea
+  // una segunda blacklist. Defensa en profundidad: esta frontera no asume que
+  // su caller ya hizo este chequeo (puede invocarse desde cualquier lugar).
+  if (esTelefonoBloqueado(cliente.ia_numeros_bloqueados, telefonoCliente)) {
+    emit({ ...base, outcome: "blocked_number", llmInvoked: false, latencyMs: Date.now() - started } as BusinessAgentTrace);
+    return { handled: true, outcome: "blocked_number" };
+  }
+
+  // 1) Resolución tenant-scoped del Business Agent (fuente: fila real). Un
+  // error real de infraestructura NUNCA propaga como excepción sin control
+  // (eso dejaría al caller decidir un fallback ad-hoc) ni degrada
+  // silenciosamente a "none"/LEGACY -- se convierte en fail_closed explícito
+  // (§20: nunca dejar que el mensaje caiga a un bot incorrecto por un error).
+  let resolution;
+  try {
+    resolution = await params.resolver.resolve(supabase, cliente);
+  } catch (err) {
+    emit({ ...base, outcome: "fail_closed", reason: "resolver_error", llmInvoked: false, latencyMs: Date.now() - started } as BusinessAgentTrace);
+    console.error(`[business-agent] resolver_error tenant=${cliente.id_tenant} phone=${cliente.phone_number_id}:`, err instanceof Error ? err.message : String(err));
+    return { handled: true, outcome: "fail_closed", reason: "resolver_error" };
+  }
+
   if (resolution.kind === "none") {
     emit({ ...base, outcome: "no_business_agent", reason: resolution.reason, llmInvoked: false, latencyMs: Date.now() - started } as BusinessAgentTrace);
     return { handled: false, outcome: "no_business_agent", reason: resolution.reason };
@@ -106,6 +139,15 @@ export async function atenderMensajeConBusinessAgent(
 
   const gateSink = params.overrides?.gateSink ?? createWhatsAppGateSink(supabase, cliente);
   const classifier = params.classifier ?? createClaudeSemanticClassifier({ tenantId: resolution.tenantId });
+
+  // 3.5) Bloque 11 -- commercialState REAL, derivado de la ejecución activa
+  // (nunca del LLM, nunca de params sin verificar salvo override explícito de
+  // test). Un fallo resolviéndolo NO bloquea el turno (el Gate simplemente
+  // evalúa condiciones que dependan de commercialState como "no coincide" --
+  // fail-closed en ESE guardrail puntual, no en toda la conversación).
+  const commercialState =
+    params.commercialState ??
+    (await resolveCommercialState(store, resolution.tenantId, { phoneNumberId: cliente.phone_number_id, telefonoCliente }).then((r) => r.commercialState));
 
   // 4) Ejecución vía Gate + orquestador. Observabilidad puenteada.
   let captured: BusinessAgentTrace["gateDecision"] | undefined;
@@ -138,7 +180,7 @@ export async function atenderMensajeConBusinessAgent(
       conversation: { phoneNumberId: cliente.phone_number_id, telefonoCliente },
       wamid,
       text: texto,
-      commercialState: params.commercialState,
+      commercialState,
       baseConocimiento: cliente.base_conocimiento ?? undefined,
     },
   );

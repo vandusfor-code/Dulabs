@@ -9,6 +9,9 @@ import { generarRespuestaAdminEspecialistaIA } from "@/lib/especialista-admin-ia
 import { tieneEspecialistasActivas, especialistaPorNumero } from "@/lib/especialistas";
 import { debeAtenderConFlow, atenderMensajeConFlowConFallback } from "@/lib/flow-runtime-bridge";
 import type { NormalizedInboundMedia } from "@/lib/flow/engine-types";
+import { atenderMensajeConBusinessAgent } from "@/lib/agent-compiler/runtime/production/atender-business-agent";
+import { createSupabaseBusinessAgentResolver } from "@/lib/agent-compiler/runtime/production/business-agent-resolver";
+import { createConsoleObserver } from "@/lib/agent-compiler/runtime/production/observability";
 import { debeUsarAsistenteDanielaIA } from "@/lib/asistente-daniela-gate";
 import { atenderConAsistenteDanielaIA } from "@/lib/asistente-daniela-ia";
 import { resolverConfigAgente, type ConfigAgenteEfectiva } from "@/lib/agentes";
@@ -1014,6 +1017,14 @@ async function atenderMensaje(
     // `if` se comporta exactamente igual que antes: cero cambio de
     // comportamiento para Flow fuera del piloto.
     if (debeAtenderConFlow(cliente, telefonoRemitente) && !debeUsarAsistenteDanielaIA(cliente, telefonoRemitente)) {
+      // Bloque 10 (autorizado) -- intenta el Business Agent Runtime PRIMERO,
+      // dentro de este MISMO gate (mismas flow_activo/flow_id). Si el flow
+      // publicado no tiene artefactos de Business Agent (hand-built en Flow
+      // Studio) o no aplica (sin texto), sigue de largo hacia
+      // atenderMensajeConFlowConFallback exactamente como hasta ahora --
+      // cero cambio de comportamiento para todo lo que no sea un Business Agent.
+      if (await intentarBusinessAgentSiAplica(cliente, mensaje, telefonoRemitente)) return;
+
       const buttonId =
         mensaje.interactive?.type === "button_reply"
           ? mensaje.interactive.button_reply?.id?.trim()
@@ -1222,6 +1233,47 @@ async function dentroDelCupoIA(cliente: ClienteConfig): Promise<boolean> {
     .filter((r) => r.mes_actual === mesHoy)
     .reduce((suma, r) => suma + (r.mensajes_usados_mes ?? 0), 0);
   return usados < tope;
+}
+
+// --- Business Agent (Agent Compiler, Bloque 10) ------------------------------
+//
+// Frontera EXPLÍCITA hacia el Business Agent Runtime (lib/agent-compiler/runtime/
+// production/atender-business-agent.ts). Se llama SOLO dentro del mismo gate que
+// ya usa el motor Flow hand-built (debeAtenderConFlow && !debeUsarAsistenteDanielaIA
+// -- MISMAS columnas flow_activo/flow_id de dulabs_clientes_config, nunca una
+// condición nueva/paralela). Devuelve true SOLO cuando el Business Agent es dueño
+// del mensaje (incluido fail-closed/número bloqueado); false deja el mensaje
+// exactamente en el mismo punto de siempre -- el intento normal de
+// atenderMensajeConFlowConFallback (flow hand-built) y después LEGACY, sin
+// ningún cambio de comportamiento para un tenant que no tenga un Business Agent.
+//
+// Solo texto: los FlowDefinition que compila el Agent Compiler (flow-compiler.ts)
+// no generan nodos de botones ni entienden media todavía -- un mensaje sin
+// mensaje.text.body sigue de largo hacia el camino existente (Flow hand-built
+// con su propio soporte de buttonId/media, o LEGACY), nunca se le pasa texto
+// vacío al Business Agent.
+async function intentarBusinessAgentSiAplica(cliente: ClienteConfig, mensaje: MetaMessage, telefonoRemitente: string): Promise<boolean> {
+  const texto = mensaje.text?.body;
+  if (!texto) return false;
+  try {
+    const resultado = await atenderMensajeConBusinessAgent({
+      supabase: supabaseAdmin(),
+      cliente,
+      telefonoCliente: telefonoRemitente,
+      texto,
+      wamid: mensaje.id,
+      resolver: createSupabaseBusinessAgentResolver(),
+      observer: createConsoleObserver(),
+    });
+    return resultado.handled;
+  } catch (err) {
+    // Defensa adicional (atenderMensajeConBusinessAgent ya es exception-safe
+    // internamente): un fallo inesperado acá NUNCA debe caer a LEGACY en
+    // silencio para un tenant con Business Agent real -- se corta el turno
+    // (sin respuesta) en vez de arriesgar un bot incorrecto.
+    console.error(`[webhook-dulabs] excepción inesperada en Business Agent boundary (tenant ${cliente.id_tenant}):`, err instanceof Error ? err.message : err);
+    return true;
+  }
 }
 
 // --- Bot de encuestas (motor determinístico) -----------------------------------

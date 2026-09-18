@@ -18,7 +18,7 @@ export interface BusinessAgentTrace {
   /** Resultado del orquestador (cuando el Gate pasa). */
   orchestratorOutcome?: string;
   /** Outcome del boundary. */
-  outcome: "no_business_agent" | "guardrail_blocked" | "flow" | "fail_closed" | "duplicate";
+  outcome: "no_business_agent" | "guardrail_blocked" | "flow" | "fail_closed" | "duplicate" | "blocked_number";
   reason?: string;
   llmInvoked: boolean;
   latencyMs?: number;
