@@ -33,6 +33,20 @@ export function DevFaq() {
       ),
     },
     {
+      q: t("¿Qué puedo construir sobre DuLabs?", "What can I build on DuLabs?"),
+      a: t(
+        "DuLabs es infraestructura: sobre ella conectas tu propio producto y construyes agentes de IA, CRMs, automatizaciones, notificaciones y campañas, usando WhatsApp Cloud API oficial de Meta.",
+        "DuLabs is infrastructure: on top of it you connect your own product and build AI agents, CRMs, automations, notifications and campaigns, using Meta's official WhatsApp Cloud API.",
+      ),
+    },
+    {
+      q: t("¿Funciona en modo Coexistencia?", "Does it work in Coexistence mode?"),
+      a: t(
+        "Sí, cuando la configuración de WhatsApp/Meta lo permite: tu equipo sigue atendiendo desde la app de WhatsApp y, sobre el mismo número, conectas API, webhooks y agentes. Las capacidades dependen de esa configuración.",
+        "Yes, when the WhatsApp/Meta configuration allows it: your team keeps replying from the WhatsApp app while, on the same number, you connect API, webhooks and agents. Capabilities depend on that configuration.",
+      ),
+    },
+    {
       q: t("¿Cómo funcionan los webhooks?", "How do webhooks work?"),
       a: t(
         "Enviamos cada evento entrante y de estado a tu endpoint, firmado con HMAC-SHA256, con timestamp y Event-ID. Verificas la firma y deduplicas por Event-ID; hay reintentos con backoff y DLQ.",

@@ -14,6 +14,11 @@ export const START_HREF = "/developer-platform/registro";
 /** CTA de documentación: portal público de docs (Fase 14). */
 export const DOCS_HREF = "/developers";
 
+/** Inicio de sesión de developers. El login compartido acepta ?next para
+ *  volver al dashboard privado tras autenticar (mismo destino que usa el flujo
+ *  de registro al confirmar el correo). */
+export const LOGIN_HREF = "/login?next=/developer";
+
 /** Base URL pública del API (misma que el OpenAPI de Fase 14). Solo display. */
 export const API_BASE_URL = "https://api.dulabs.co/api/v1";
 

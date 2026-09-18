@@ -5,7 +5,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { useI18n } from "@/lib/i18n";
 import { LanguageSelector } from "@/components/LanguageSelector";
-import { START_HREF, DOCS_HREF, SECTION_IDS } from "./constants";
+import { START_HREF, DOCS_HREF, LOGIN_HREF, SECTION_IDS } from "./constants";
 
 // DuLabs Developer V1 -- Fase 15. Nav DEDICADO de la landing comercial. No
 // toca el Nav compartido de Business (aislamiento): esta superficie tiene su
@@ -56,8 +56,8 @@ export function DevNav() {
 
         <div className="flex items-center gap-3">
           <LanguageSelector />
-          <Link href={DOCS_HREF} className="hidden text-[13px] text-site-muted-fg transition-colors hover:text-site-fg md:inline">
-            {t("Ver documentación", "View docs")}
+          <Link href={LOGIN_HREF} className="hidden text-[13px] text-site-muted-fg transition-colors hover:text-site-fg md:inline">
+            {t("Iniciar sesión", "Log in")}
           </Link>
           <Link
             href={START_HREF}
@@ -90,6 +90,22 @@ export function DevNav() {
                 {l.label}
               </a>
             ))}
+            <div className="mt-2 flex items-center gap-3 border-t border-site-border pt-3">
+              <Link
+                href={LOGIN_HREF}
+                onClick={() => setMenuAbierto(false)}
+                className="flex-1 rounded-lg border border-site-border px-3.5 py-2 text-center text-[13px] font-medium text-site-fg"
+              >
+                {t("Iniciar sesión", "Log in")}
+              </Link>
+              <Link
+                href={START_HREF}
+                onClick={() => setMenuAbierto(false)}
+                className="flex-1 rounded-lg bg-dev-accent px-3.5 py-2 text-center text-[13px] font-medium text-dev-accent-fg"
+              >
+                {t("Get API Key", "Get API Key")}
+              </Link>
+            </div>
           </nav>
         </div>
       ) : null}

@@ -5,7 +5,7 @@ import { Footer } from "@/components/site/Sections";
 import { breadcrumbSchema, softwareApplicationSchema } from "@/lib/schema";
 import { DevNav } from "@/components/developer-platform/DevNav";
 import { DevHero } from "@/components/developer-platform/DevHero";
-import { DevPlatform, DevApiFirst, DevWebhooks, DevObservability, DevSecurity, DevDocs } from "@/components/developer-platform/DevSections";
+import { DevPlatform, DevBuild, DevApiFirst, DevLifecycle, DevWebhooks, DevObservability, DevMessaging, DevCoexistence, DevSecurity, DevDocs, DevDashboardPreview } from "@/components/developer-platform/DevSections";
 import { DevPricing } from "@/components/developer-platform/DevPricing";
 import { DevFaq, DevFinalCta } from "@/components/developer-platform/DevFaqCta";
 
@@ -48,10 +48,15 @@ export default function DeveloperPlatformPage() {
       <main>
         <DevHero />
         <Reveal><DevPlatform /></Reveal>
+        <Reveal><DevBuild /></Reveal>
         <Reveal><DevApiFirst /></Reveal>
+        <Reveal><DevLifecycle /></Reveal>
         <Reveal><DevWebhooks /></Reveal>
         <Reveal><DevObservability /></Reveal>
+        <Reveal><DevMessaging /></Reveal>
+        <Reveal><DevCoexistence /></Reveal>
         <Reveal><DevSecurity /></Reveal>
+        <Reveal><DevDashboardPreview /></Reveal>
         <Reveal><DevPricing /></Reveal>
         <Reveal><DevDocs /></Reveal>
         <Reveal><DevFaq /></Reveal>
