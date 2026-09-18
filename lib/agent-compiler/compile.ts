@@ -7,8 +7,8 @@
 // del Spec. Si algo no puede representarse con seguridad => error (nunca "best
 // effort" ni fallback a LLM).
 
-import { createHash } from "node:crypto";
 import type { FlowActionType } from "@/lib/flow/types";
+import { checksumOf } from "@/lib/agent-compiler/checksum";
 import { validateBusinessAgentSpec } from "@/lib/agent-compiler/spec/validate";
 import { analyzeBusinessAgentSpec, type CompilerContext } from "@/lib/agent-compiler/semantic-analysis";
 import { CAPABILITY_BACKING, CAPABILITY_KEYS } from "@/lib/agent-compiler/spec/capabilities";
@@ -52,13 +52,6 @@ const ORDEN_ESTADOS: CommercialState[] = [
   "COMPLETED",
 ];
 
-function stableStringify(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
-  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
-  const obj = value as Record<string, unknown>;
-  const keys = Object.keys(obj).sort();
-  return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k])}`).join(",")}}`;
-}
 
 function personalityToBehavior(spec: BusinessAgentSpec): PersonalityBehaviorIR {
   const p = spec.personality;
@@ -188,7 +181,7 @@ function construirIR(spec: BusinessAgentSpec, context: CompilerContext): Compile
     provenance,
   };
   // Checksum determinista sobre el contenido lógico (sin el propio checksum).
-  const checksum = createHash("sha256").update(stableStringify(contenido)).digest("hex");
+  const checksum = checksumOf(contenido);
   return { ...contenido, checksum };
 }
 

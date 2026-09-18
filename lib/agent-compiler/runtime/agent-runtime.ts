@@ -17,7 +17,6 @@
 //
 // NO modifica lib/flow/*. Solo consume sus APIs/contratos.
 
-import type { CompiledBusinessAgentIR } from "@/lib/agent-compiler/ir";
 import type { FlowEngineEvent } from "@/lib/flow/engine-types";
 import type {
   ConversationKey,
@@ -26,7 +25,6 @@ import type {
   OrchestratorResult,
 } from "@/lib/flow/flow-orchestrator";
 import {
-  buildGateRules,
   evaluateGuardrailGate,
   type GateDecision,
   type GateRule,
@@ -83,7 +81,10 @@ export type AgentTurnResult =
   | { kind: "flow"; orchestrator: OrchestratorResult; trace: AgentTurnTrace };
 
 export interface AgentRuntimeDeps {
-  ir: CompiledBusinessAgentIR;
+  /** Tenant del agente compilado (fuente de verdad del servidor, nunca del LLM). */
+  tenantId: string;
+  /** Reglas del Business Guardrail Gate (derivadas de la IR en publicación). */
+  gateRules: GateRule[];
   /** Flow publicado que atiende a este tenant (dulabs_flows.id). */
   flowId: string;
   /** Orquestador REAL, construido con el mismo store. */
@@ -94,8 +95,6 @@ export interface AgentRuntimeDeps {
   classifier?: SemanticClassifier;
   idempotency?: GateIdempotencyStore;
   observer?: AgentTurnObserver;
-  /** Reglas precomputadas; si se omite, se derivan de la IR. */
-  gateRules?: GateRule[];
   now?: () => string;
 }
 
@@ -115,7 +114,7 @@ function emit(observer: AgentTurnObserver | undefined, trace: AgentTurnTrace): A
 }
 
 export async function runAgentTurn(deps: AgentRuntimeDeps, incoming: IncomingMessage): Promise<AgentTurnResult> {
-  const rules = deps.gateRules ?? buildGateRules(deps.ir);
+  const rules = deps.gateRules;
   const baseTrace: AgentTurnTrace = {
     tenantId: incoming.tenantId,
     wamid: incoming.wamid,
@@ -126,7 +125,7 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, incoming: IncomingMes
   };
 
   // 1) Fail-closed multi-tenant (§21): el compilado debe ser del mismo tenant.
-  if (deps.ir.tenantId !== incoming.tenantId) {
+  if (deps.tenantId !== incoming.tenantId) {
     return {
       kind: "fail_closed",
       reason: "tenant_mismatch",

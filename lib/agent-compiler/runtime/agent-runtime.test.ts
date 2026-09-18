@@ -115,7 +115,8 @@ function harness(opts: {
   const gate = gateSinkRecorder();
   const traces: AgentTurnTrace[] = [];
   const deps: AgentRuntimeDeps = {
-    ir: opts.ir,
+    tenantId: opts.ir.tenantId,
+    gateRules: buildGateRules(opts.ir),
     flowId,
     orchestrator: spy,
     store,

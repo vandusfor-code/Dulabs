@@ -17,8 +17,8 @@
 //    inventa una integración). La acción crítica lleva rama failure -> human.
 //  - Si una IR no puede representarse con seguridad => ERROR (nunca best-effort).
 
-import { createHash } from "node:crypto";
 import { FLOW_EDGE_HANDLE } from "@/lib/flow/constants";
+import { checksumOf } from "@/lib/agent-compiler/checksum";
 import { validateFlowDefinition } from "@/lib/flow/validate-graph";
 import type {
   ActionNodeConfig,
@@ -41,12 +41,6 @@ export type FlowCompilationResult =
 /** Mensaje fijo seguro (sin afirmaciones externas) cuando una tool no está disponible. */
 const MENSAJE_TOOL_NO_DISPONIBLE = "En este momento no puedo completar esa consulta. Dame un momento, por favor.";
 
-function stableStringify(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
-  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
-  const obj = value as Record<string, unknown>;
-  return `{${Object.keys(obj).sort().map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k])}`).join(",")}}`;
-}
 
 /** Builder de grafo con dedupe determinista de nodos/edges/variables. */
 class GraphBuilder {
@@ -332,6 +326,6 @@ export function compileIRToFlowDefinition(ir: CompiledBusinessAgentIR, context: 
     return { success: false, diagnostics };
   }
 
-  const checksum = createHash("sha256").update(stableStringify(flow)).digest("hex");
+  const checksum = checksumOf(flow);
   return { success: true, flow, checksum, diagnostics };
 }
