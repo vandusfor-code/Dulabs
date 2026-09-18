@@ -140,12 +140,6 @@ export function DevWebhooks() {
     { tag: "DuLabs", label: t("Normaliza, deduplica y firma el evento", "Normalizes, deduplicates and signs the event") },
     { tag: t("Tu endpoint", "Your endpoint"), label: t("Recibe el webhook firmado y verifica la firma", "Receives the signed webhook and verifies the signature") },
   ];
-  const attrs = [
-    { icon: Fingerprint, k: "X-DuLabs-Signature", v: t("HMAC-SHA256 de timestamp + body.", "HMAC-SHA256 of timestamp + body.") },
-    { icon: Timer, k: "X-DuLabs-Timestamp", v: t("Tolerancia de 5 min contra replay.", "5-min tolerance against replay.") },
-    { icon: Repeat, k: "X-DuLabs-Event-ID", v: t("Dedup at-least-once en tu lado.", "At-least-once dedup on your side.") },
-    { icon: Network, k: t("Reintentos + DLQ", "Retries + DLQ"), v: t("Reintentos con backoff y cola de fallidos.", "Backoff retries and a dead-letter queue.") },
-  ];
   return (
     <section id={SECTION_IDS.webhooks} className="scroll-mt-20 border-t border-site-border py-20 md:py-28">
       <div className="mx-auto max-w-[1440px] px-6">
@@ -166,14 +160,31 @@ export function DevWebhooks() {
               </div>
             ))}
           </div>
-          <div className="grid gap-px overflow-hidden rounded-2xl border border-site-border bg-site-border sm:grid-cols-2">
-            {attrs.map((a) => (
-              <div key={a.k} className="bg-site-bg p-5">
-                <a.icon className="h-5 w-5 text-dev-accent" strokeWidth={1.75} aria-hidden />
-                <div className="mt-3 font-mono text-[12.5px] text-site-fg">{a.k}</div>
-                <p className="mt-1 text-[13px] leading-relaxed text-site-muted-fg">{a.v}</p>
+          {/* Mockup: entrega real de webhook firmado */}
+          <div className="overflow-hidden rounded-2xl border border-site-border bg-site-card">
+            <MockChrome label="webhook.delivery" live="200 OK" />
+            <div className="space-y-3 p-5 font-mono text-[12px]">
+              <div className="flex items-center justify-between gap-3">
+                <span className="truncate text-site-fg"><span className="text-site-muted-fg">POST </span>https://api.acme.dev/webhooks</span>
+                <span className="flex-none text-site-muted-fg">87 ms</span>
               </div>
-            ))}
+              <div className="space-y-1.5 rounded-lg border border-site-border bg-site-bg p-3">
+                {[
+                  ["X-DuLabs-Signature", "t=1712000271,v1=9f2a…8c"],
+                  ["X-DuLabs-Timestamp", "1712000271"],
+                  ["X-DuLabs-Event-ID", "evt_01HX8Z…d4"],
+                ].map(([k, v]) => (
+                  <div key={k} className="flex flex-wrap gap-x-2 text-[11.5px]">
+                    <span className="text-site-muted-fg">{k}:</span>
+                    <span className="text-site-fg">{v}</span>
+                  </div>
+                ))}
+              </div>
+              <pre className="overflow-x-auto rounded-lg border border-site-border bg-site-bg p-3 text-[11.5px] leading-relaxed text-site-fg"><code>{`{
+  "type": "message.status",
+  "data": { "wamid": "wamid.HBg…", "status": "delivered" }
+}`}</code></pre>
+            </div>
           </div>
         </div>
         <Link href={`${DOCS_HREF}/webhooks`} className="mt-8 inline-flex items-center gap-1.5 text-[14px] font-medium text-dev-accent hover:underline">
@@ -187,31 +198,89 @@ export function DevWebhooks() {
 
 /* ========================= 6 · OBSERVABILITY ========================= */
 
+const EVENT_ROWS: { st: "delivered" | "sent" | "processing" | "failed" | "queued"; ev: string; id: string; meta: string; time: string }[] = [
+  { st: "delivered", ev: "message.status", id: "msg_01HX8Z…a1", meta: "245 ms", time: "12:04:31" },
+  { st: "sent", ev: "message.status", id: "msg_01HX8Z…b2", meta: "180 ms", time: "12:04:29" },
+  { st: "processing", ev: "message.created", id: "job_01HX8Z…c3", meta: "—", time: "12:04:27" },
+  { st: "failed", ev: "webhook.delivery", id: "evt_01HX8Z…d4", meta: "retry 2/5", time: "12:04:22" },
+  { st: "queued", ev: "message.created", id: "job_01HX8Z…e5", meta: "—", time: "12:04:20" },
+];
+
+function StDot({ st }: { st: string }) {
+  const cls = st === "failed" ? "bg-[#f08a8a]" : st === "processing" || st === "queued" ? "bg-site-muted-fg" : "bg-site-fg";
+  return <span className={`h-1.5 w-1.5 flex-none rounded-full ${cls}`} aria-hidden />;
+}
+
+/** Chrome de ventana de producto (barra de puntos + etiqueta + indicador opcional). */
+function MockChrome({ label, live }: { label: string; live?: string }) {
+  return (
+    <div className="flex items-center gap-2 border-b border-site-border px-3.5 py-2.5">
+      <span className="h-2.5 w-2.5 rounded-full bg-site-border" aria-hidden />
+      <span className="h-2.5 w-2.5 rounded-full bg-site-border" aria-hidden />
+      <span className="h-2.5 w-2.5 rounded-full bg-site-border" aria-hidden />
+      <span className="ml-2 font-mono text-[11px] text-site-muted-fg">{label}</span>
+      {live ? (
+        <span className="ml-auto inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest text-site-muted-fg">
+          <span className="h-1.5 w-1.5 rounded-full bg-site-fg" aria-hidden /> {live}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
 export function DevObservability() {
   const { t } = useI18n();
-  const items = [
-    t("Eventos entregados y pendientes", "Delivered and pending events"),
-    t("Intentos de entrega y su resultado", "Delivery attempts and their outcome"),
-    t("Errores y cola de fallidos (DLQ)", "Errors and dead-letter queue (DLQ)"),
-    t("Consumo de mensajes y números", "Message and number usage"),
-    t("Estado de cada mensaje: created → sent / failed", "Each message status: created → sent / failed"),
-    t("Replay de eventos desde el dashboard", "Event replay from the dashboard"),
+  const puntos = [
+    t("Cada intento de entrega y su latencia real.", "Every delivery attempt and its real latency."),
+    t("Reintentos con backoff y cola de fallidos (DLQ).", "Backoff retries and a dead-letter queue (DLQ)."),
+    t("Replay de un evento con un clic desde el dashboard.", "Replay an event with one click from the dashboard."),
   ];
   return (
-    <section className="border-t border-site-border py-20 md:py-28">
-      <div className="mx-auto max-w-[1440px] px-6">
-        <DevSectionHeading
-          eyebrow={t("Observabilidad", "Observability")}
-          title={t("Ve exactamente qué pasó con cada evento.", "See exactly what happened to every event.")}
-          desc={t("No adivines por qué no llegó un mensaje. El dashboard muestra entregas, intentos, errores y la DLQ, con replay cuando lo necesites.", "Don't guess why a message didn't arrive. The dashboard shows deliveries, attempts, errors and the DLQ, with replay when you need it.")}
-        />
-        <div className="mt-10 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {items.map((it) => (
-            <div key={it} className="flex items-start gap-3 rounded-xl border border-site-border bg-site-card p-4">
-              <Check className="mt-0.5 h-4 w-4 flex-none text-dev-accent" strokeWidth={2.25} aria-hidden />
-              <span className="text-[14px] text-site-fg">{it}</span>
-            </div>
-          ))}
+    <section className="scroll-mt-20 border-t border-site-border py-20 md:py-28">
+      <div className="mx-auto grid max-w-[1440px] items-center gap-12 px-6 lg:grid-cols-[0.9fr_1.1fr]">
+        <div>
+          <DevSectionHeading
+            eyebrow={t("Observabilidad", "Observability")}
+            title={t("Ve exactamente qué pasó con cada evento.", "See exactly what happened to every event.")}
+            desc={t("No adivines por qué no llegó un mensaje. Cada mensaje deja un rastro: estado, request id, latencia, intentos y timestamp.", "Don't guess why a message didn't arrive. Every message leaves a trail: status, request id, latency, attempts and timestamp.")}
+          />
+          <ul className="mt-8 space-y-3">
+            {puntos.map((p) => (
+              <li key={p} className="flex items-start gap-3 text-[14.5px] text-site-muted-fg">
+                <Check className="mt-0.5 h-4 w-4 flex-none text-dev-accent" strokeWidth={2.25} aria-hidden />
+                <span>{p}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+        {/* Mockup: stream de eventos del producto */}
+        <div className="overflow-hidden rounded-xl border border-site-border bg-site-card">
+          <MockChrome label="events" live={t("en vivo", "live")} />
+          <div className="grid grid-cols-[auto_1fr_auto] gap-x-4 px-3.5 py-2 font-mono text-[10px] uppercase tracking-wider text-site-muted-fg sm:grid-cols-[auto_1fr_auto_auto_auto] sm:gap-x-6">
+            <span>status</span>
+            <span>event</span>
+            <span className="hidden sm:block">id</span>
+            <span className="hidden sm:block text-right">latency</span>
+            <span className="text-right">time</span>
+          </div>
+          <div className="divide-y divide-site-border border-t border-site-border">
+            {EVENT_ROWS.map((r) => (
+              <div key={r.id} className="grid grid-cols-[auto_1fr_auto] items-center gap-x-4 px-3.5 py-2.5 font-mono text-[12px] transition-colors hover:bg-site-bg/60 sm:grid-cols-[auto_1fr_auto_auto_auto] sm:gap-x-6">
+                <span className="inline-flex items-center gap-2">
+                  <StDot st={r.st} />
+                  <span className={r.st === "failed" ? "text-[#f08a8a]" : "text-site-fg"}>{r.st}</span>
+                </span>
+                <span className="truncate text-site-muted-fg">{r.ev}</span>
+                <span className="hidden truncate text-site-muted-fg sm:block">{r.id}</span>
+                <span className="hidden text-right text-site-muted-fg sm:block">{r.meta}</span>
+                <span className="text-right text-site-muted-fg">{r.time}</span>
+              </div>
+            ))}
+          </div>
+          <div className="flex items-center justify-between border-t border-site-border px-3.5 py-2 font-mono text-[10px] text-site-muted-fg">
+            <span>GET /api/v1/events</span>
+            <span>{t("actualizado hace 2s", "updated 2s ago")}</span>
+          </div>
         </div>
       </div>
     </section>
@@ -223,13 +292,12 @@ export function DevObservability() {
 export function DevSecurity() {
   const { t } = useI18n();
   const items = [
-    { icon: KeyRound, title: "API Keys", desc: t("Claves por workspace, rotables y revocables.", "Per-workspace keys, rotatable and revocable.") },
-    { icon: Fingerprint, title: t("Firma HMAC de webhooks", "HMAC webhook signing"), desc: t("HMAC-SHA256 con tolerancia de tiempo contra replay.", "HMAC-SHA256 with a time tolerance against replay.") },
-    { icon: Repeat, title: "Idempotencia", desc: t("Idempotency-Key evita cobros y envíos duplicados.", "Idempotency-Key avoids duplicate charges and sends.") },
-    { icon: ShieldCheck, title: t("Aislamiento por tenant", "Tenant isolation"), desc: t("Datos separados por cuenta y workspace.", "Data separated per account and workspace.") },
-    { icon: Timer, title: "Rate limiting", desc: t("Protección por número y por workspace.", "Protection per number and per workspace.") },
-    { icon: Lock, title: t("Protección SSRF", "SSRF protection"), desc: t("Las URLs de webhook se validan contra SSRF.", "Webhook URLs are validated against SSRF.") },
-    { icon: ScrollText, title: t("Eventos auditables", "Auditable events"), desc: t("Historial append-only de eventos y entregas.", "Append-only history of events and deliveries.") },
+    { icon: KeyRound, k: "API KEY", v: "dl_live_••••••••••3f2a", tag: t("Activa", "Active") },
+    { icon: Fingerprint, k: "HMAC-SHA256", v: t("Firma verificada", "Signature verified"), tag: t("Verificada", "Verified") },
+    { icon: Repeat, k: "IDEMPOTENCY", v: "Idempotency-Key", tag: t("Activada", "Enabled") },
+    { icon: Timer, k: "RATE LIMIT", v: "120 req/min", tag: t("Aplicado", "Enforced") },
+    { icon: ShieldCheck, k: "TENANT", v: t("Workspace aislado", "Workspace isolated"), tag: t("Aislado", "Isolated") },
+    { icon: Lock, k: "SSRF", v: t("URLs de webhook validadas", "Webhook URLs validated"), tag: t("Protegido", "Protected") },
   ];
   return (
     <section className="border-t border-site-border py-20 md:py-28">
@@ -239,14 +307,21 @@ export function DevSecurity() {
           title={t("Seguridad integrada, no un extra.", "Security built in, not bolted on.")}
           desc={t("Capacidades reales del producto. Sin claims de certificaciones que aún no tenemos.", "Real product capabilities. No claims of certifications we don't hold yet.")}
         />
-        <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {items.map((it) => (
-            <div key={it.title} className="rounded-2xl border border-site-border bg-site-card p-6">
-              <it.icon className="h-5 w-5 text-dev-accent" strokeWidth={1.75} aria-hidden />
-              <h3 className="mt-4 font-display text-[15.5px] font-medium text-site-fg">{it.title}</h3>
-              <p className="mt-1.5 text-[13.5px] leading-relaxed text-site-muted-fg">{it.desc}</p>
-            </div>
-          ))}
+        <div className="mt-10 overflow-hidden rounded-xl border border-site-border bg-site-card">
+          <MockChrome label="security" live={t("aplicado", "enforced")} />
+          <div className="divide-y divide-site-border">
+            {items.map((it) => (
+              <div key={it.k} className="flex items-center gap-4 px-4 py-3.5 sm:px-5">
+                <it.icon className="h-4 w-4 flex-none text-site-muted-fg" strokeWidth={1.75} aria-hidden />
+                <span className="w-32 flex-none font-mono text-[11px] uppercase tracking-wider text-site-muted-fg sm:w-40">{it.k}</span>
+                <span className="min-w-0 flex-1 truncate font-mono text-[12.5px] text-site-fg">{it.v}</span>
+                <span className="inline-flex flex-none items-center gap-1.5 rounded-full border border-site-border px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-site-muted-fg">
+                  <span className="h-1.5 w-1.5 rounded-full bg-site-fg" aria-hidden />
+                  {it.tag}
+                </span>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     </section>
@@ -287,6 +362,70 @@ export function DevDocs() {
               <ArrowRight className="h-4 w-4 text-site-muted-fg transition-transform group-hover:translate-x-0.5 group-hover:text-dev-accent" aria-hidden />
             </Link>
           ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/* ====================== 8 · DASHBOARD PREVIEW ====================== */
+
+export function DevDashboardPreview() {
+  const { t } = useI18n();
+  const nav = ["Overview", "API keys", "WhatsApp", "Webhooks", "Events", "Usage"];
+  const metrics = [
+    { k: t("Mensajes", "Messages"), v: "12,480", sub: "/ 20,000" },
+    { k: t("Números", "Numbers"), v: "2", sub: "/ 2" },
+    { k: "API keys", v: "3", sub: t("activas", "active") },
+    { k: "p95", v: "212", sub: "ms" },
+  ];
+  return (
+    <section className="border-t border-site-border py-20 md:py-28">
+      <div className="mx-auto max-w-[1440px] px-6">
+        <DevSectionHeading
+          eyebrow="Dashboard"
+          title={t("Un panel para operar tu integración.", "One dashboard to run your integration.")}
+          desc={t("Workspaces, uso, números conectados, API keys, webhooks y el stream de eventos — todo en una sola herramienta.", "Workspaces, usage, connected numbers, API keys, webhooks and the event stream — all in one tool.")}
+        />
+        <div className="mt-10 overflow-hidden rounded-2xl border border-site-border bg-site-card">
+          <MockChrome label="app.dulabs.co/developer" />
+          <div className="grid grid-cols-1 md:grid-cols-[184px_1fr]">
+            <aside className="hidden border-r border-site-border p-3 md:block">
+              <div className="mb-3 flex items-center gap-1.5 px-2 py-1 text-[12px] font-semibold text-site-fg">
+                DuLabs <span className="font-mono text-[9px] uppercase tracking-wider text-site-muted-fg">Dev</span>
+              </div>
+              {nav.map((n, i) => (
+                <div key={n} className={`rounded-md px-2.5 py-1.5 text-[12px] ${i === 0 ? "bg-white/[0.06] text-site-fg" : "text-site-muted-fg"}`}>{n}</div>
+              ))}
+            </aside>
+            <div className="min-w-0 p-5">
+              <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+                {metrics.map((m) => (
+                  <div key={m.k} className="rounded-lg border border-site-border p-3">
+                    <div className="font-mono text-[9.5px] uppercase tracking-wider text-site-muted-fg">{m.k}</div>
+                    <div className="mt-1.5 font-mono text-[19px] tabular-nums text-site-fg">
+                      {m.v} <span className="text-[11px] text-site-muted-fg">{m.sub}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-4 overflow-hidden rounded-lg border border-site-border">
+                <div className="flex items-center justify-between border-b border-site-border px-3 py-2">
+                  <span className="text-[11.5px] font-medium text-site-fg">{t("Eventos recientes", "Recent events")}</span>
+                  <span className="font-mono text-[10px] text-site-muted-fg">message.status · webhook.delivery</span>
+                </div>
+                {EVENT_ROWS.slice(0, 4).map((r) => (
+                  <div key={r.id} className="flex items-center gap-3 border-b border-site-border px-3 py-2 font-mono text-[11.5px] last:border-0">
+                    <StDot st={r.st} />
+                    <span className={`w-[74px] flex-none ${r.st === "failed" ? "text-[#f08a8a]" : "text-site-fg"}`}>{r.st}</span>
+                    <span className="min-w-0 flex-1 truncate text-site-muted-fg">{r.ev}</span>
+                    <span className="hidden flex-none text-site-muted-fg sm:block">{r.id}</span>
+                    <span className="flex-none text-site-muted-fg">{r.time}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </section>
