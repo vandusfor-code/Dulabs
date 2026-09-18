@@ -14,7 +14,7 @@ export const metadata = {
 
 export default function DevelopersDocsLayout({ children }: { children: ReactNode }) {
   return (
-    <div className="min-h-screen bg-bg text-fg">
+    <div className="dev-scope min-h-screen bg-ink text-fg">
       <header className="border-b border-edge">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
           <Link href="/developers" className="text-sm font-semibold text-fg">DuLabs Developer <span className="text-mist">· Docs</span></Link>

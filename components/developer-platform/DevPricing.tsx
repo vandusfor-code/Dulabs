@@ -47,7 +47,7 @@ function PlanCard({ plan, intervalo, destacado }: { plan: PlanPublico; intervalo
   return (
     <div
       className={`relative flex flex-col rounded-2xl border p-6 ${
-        destacado ? "border-dev-accent/50 bg-site-card shadow-lg" : "border-site-border bg-site-card"
+        destacado ? "border-white/25 bg-site-card ring-1 ring-white/10" : "border-site-border bg-site-card"
       }`}
     >
       {destacado ? (
