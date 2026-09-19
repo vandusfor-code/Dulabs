@@ -5,7 +5,7 @@ import { Bot, CalendarClock, MessageSquareText, ShieldBan, UploadCloud } from "l
 import { PageHeader } from "@/components/dashboard/shell/ui";
 import { useDashboard } from "@/lib/dashboard-session";
 import { useI18n } from "@/lib/i18n";
-import { blankSpecForm, type EditableBusinessAgentSpecForm } from "@/lib/business-agent-form";
+import { blankSpecForm, normalizeFormForSave, type EditableBusinessAgentSpecForm } from "@/lib/business-agent-form";
 import { BusinessAgentWizard } from "@/components/dashboard/business-agent/Wizard";
 import { BusinessAgentPreview } from "@/components/dashboard/business-agent/BusinessAgentPreview";
 import { VersionsPanel } from "@/components/dashboard/business-agent/VersionsPanel";
@@ -30,10 +30,11 @@ function initialTabFromUrl(): Tab {
 }
 
 function specToForm(spec: EditableBusinessAgentSpecForm): EditableBusinessAgentSpecForm {
-  // El Spec completo del servidor ya contiene las 8 secciones editables --
+  // El Spec completo del servidor ya contiene las secciones editables --
   // se recorta explícitamente (nunca se reenvía metadata/schemaVersion).
-  const { identity, personality, capabilities, catalog, policies, handoff, scheduling, knowledge } = spec;
-  return { identity, personality, capabilities, catalog, policies, handoff, scheduling, knowledge };
+  // `customerData` puede faltar en borradores previos a R3 -> sin datos configurados.
+  const { identity, personality, capabilities, catalog, policies, handoff, scheduling, knowledge, customerData } = spec;
+  return { identity, personality, capabilities, catalog, policies, handoff, scheduling, knowledge, customerData: customerData ?? { fields: [] } };
 }
 
 export default function BusinessAgentPage() {
@@ -86,8 +87,8 @@ export default function BusinessAgentPage() {
     setSaveError(null);
     // Validación previa (no persiste) para mostrar diagnósticos frescos antes
     // de intentar guardar -- el servidor vuelve a validar de todas formas.
-    const validation = await validateBusinessAgentSpecDraft({ accessToken: session.access_token, editableSpec: form });
-    const result = await saveBusinessAgentDraft({ accessToken: session.access_token, editableSpec: form, baseVersionNumber });
+    const validation = await validateBusinessAgentSpecDraft({ accessToken: session.access_token, editableSpec: normalizeFormForSave(form) });
+    const result = await saveBusinessAgentDraft({ accessToken: session.access_token, editableSpec: normalizeFormForSave(form), baseVersionNumber });
     setSaving(false);
     if (!result.ok) {
       setSaveError(result.error.message);

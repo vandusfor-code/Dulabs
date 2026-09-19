@@ -17,6 +17,7 @@ import { BUSINESS_TYPE_OTRO } from "@/lib/agent-compiler/spec/types";
 import { CAPABILITY_KEYS, type CapabilityKey } from "@/lib/agent-compiler/spec/capabilities";
 import { ServicesModule } from "@/components/dashboard/business-agent/ServicesModule";
 import { BusinessHoursModule } from "@/components/dashboard/business-agent/BusinessHoursModule";
+import { CustomerDataModule } from "@/components/dashboard/business-agent/CustomerDataModule";
 import type { HandoffTriggerKind, ProhibitionAction, RuleKind } from "@/lib/agent-compiler/spec/types";
 import { actionBtn, Field, inputCls, IssuesList, primaryBtn, SectionCard, ToggleRow } from "@/components/dashboard/business-agent/ui";
 import type { CompilerDiagnostic } from "@/lib/agent-compiler/diagnostics";
@@ -54,7 +55,7 @@ const HANDOFF_TRIGGERS: { value: HandoffTriggerKind; es: string; en: string }[] 
   { value: "intent", es: "Intención detectada", en: "Detected intent" },
 ];
 
-export type WizardStep = "tipo" | "personalidad" | "capacidades" | "servicios" | "agendamiento" | "horarios" | "reglas" | "handoff" | "revisar";
+export type WizardStep = "tipo" | "personalidad" | "capacidades" | "servicios" | "agendamiento" | "horarios" | "datos" | "reglas" | "handoff" | "revisar";
 
 export interface WizardProps {
   form: EditableBusinessAgentSpecForm;
@@ -81,9 +82,11 @@ export function BusinessAgentWizard({ form, onChange, diagnostics, saving, onSav
     if (form.capabilities.catalog || form.capabilities.scheduling) steps.push("servicios");
     steps.push("agendamiento");
     if (form.capabilities.scheduling) steps.push("horarios");
+    // Datos del cliente (R3): módulo dinámico -- aparece si el agente capta datos o agenda.
+    if (form.capabilities.leadCapture || form.capabilities.scheduling) steps.push("datos");
     steps.push("reglas", "handoff", "revisar");
     return steps;
-  }, [form.capabilities.catalog, form.capabilities.scheduling]);
+  }, [form.capabilities.catalog, form.capabilities.scheduling, form.capabilities.leadCapture]);
   const stepIndex = Math.max(0, stepOrder.indexOf(step));
   useEffect(() => {
     // Si el paso actual dejó de existir (se desactivó su capacidad), vuelve a uno válido.
@@ -135,6 +138,7 @@ export function BusinessAgentWizard({ form, onChange, diagnostics, saving, onSav
         {step === "agendamiento" && <StepAgendamiento form={form} update={update} />}
         {step === "servicios" && <ServicesModule />}
         {step === "horarios" && <BusinessHoursModule form={form} onChange={onChange} />}
+        {step === "datos" && <CustomerDataModule form={form} onChange={onChange} />}
         {step === "reglas" && <StepReglas form={form} update={update} />}
         {step === "handoff" && <StepHandoff form={form} update={update} />}
         {step === "revisar" && (
@@ -180,6 +184,7 @@ function STEP_LABEL(s: WizardStep, t: (es: string, en: string) => string): strin
     agendamiento: t("Agendamiento", "Scheduling"),
     servicios: t("Servicios", "Services"),
     horarios: t("Horarios", "Business hours"),
+    datos: t("Datos del cliente", "Customer data"),
     reglas: t("Reglas", "Rules"),
     handoff: t("Transferencia", "Handoff"),
     revisar: t("Revisar y guardar", "Review & save"),
@@ -372,13 +377,13 @@ function StepAgendamiento({ form, update }: { form: EditableBusinessAgentSpecFor
         <Field
           label={t("Proveedor de calendario", "Calendar provider")}
           hint={t(
-            "Nylas/Google Calendar: la conexión ya funciona (pestaña Calendario), pero el agendamiento automático contra ese calendario todavía está en desarrollo -- usa 'Interno' para agendar citas reales hoy.",
-            "Nylas/Google Calendar: the connection already works (Calendar tab), but automatic booking against that calendar is still in development -- use 'Internal' to book real appointments today.",
+            "Nylas (Google Calendar): reserva directo en tu calendario conectado (pestaña Calendario), respetando tu horario de atención y los datos del cliente que definas. 'Interno' usa los especialistas de DuLabs.",
+            "Nylas (Google Calendar): books directly on your connected calendar (Calendar tab), respecting your business hours and the customer data you define. 'Internal' uses DuLabs specialists.",
           )}
         >
           <select className={inputCls} value={s.provider} onChange={(e) => update("scheduling", { ...s, provider: e.target.value as typeof s.provider })}>
             <option value="internal">{t("Interno (DuLabs) -- recomendado", "Internal (DuLabs) -- recommended")}</option>
-            <option value="nylas">Nylas {t("(agendamiento en desarrollo)", "(booking in development)")}</option>
+            <option value="nylas">Nylas {t("(tu Google Calendar)", "(your Google Calendar)")}</option>
             <option value="google_calendar">Google Calendar {t("(próximamente)", "(coming soon)")}</option>
           </select>
         </Field>
@@ -584,6 +589,17 @@ function StepRevisar({
           <dt className="text-xs text-mist">{t("Capacidades activas", "Active capabilities")}</dt>
           <dd className="text-fg">{activeCaps.length > 0 ? activeCaps.join(", ") : t("Ninguna", "None")}</dd>
         </div>
+        {(form.customerData?.fields ?? []).some((f) => f.enabled) && (
+          <div className="sm:col-span-2">
+            <dt className="text-xs text-mist">{t("Datos del cliente", "Customer data")}</dt>
+            <dd className="text-fg">
+              {(form.customerData?.fields ?? [])
+                .filter((f) => f.enabled)
+                .map((f) => `${f.label || f.key}${f.required ? "*" : ""}`)
+                .join(", ")}
+            </dd>
+          </div>
+        )}
       </dl>
 
       {localIssues.length > 0 && (

@@ -58,8 +58,17 @@ const NODE_ID_TO_COMMERCIAL_STATE: Readonly<Record<string, CommercialState>> = {
  */
 export function commercialStateFromNodeId(nodeId: string | null | undefined): CommercialState | undefined {
   if (!nodeId) return undefined;
-  return NODE_ID_TO_COMMERCIAL_STATE[nodeId];
+  const exacto = NODE_ID_TO_COMMERCIAL_STATE[nodeId];
+  if (exacto) return exacto;
+  // R3 -- nodos de captura de datos del cliente (uno por campo configurado;
+  // el sufijo es la clave del campo, así que no caben en la tabla exacta).
+  // Prefijos emitidos por emitirCapturaDatos() en flow-compiler.ts; cubiertos
+  // por flow-compiler-alignment/customer-data tests.
+  if (DATA_CAPTURE_NODE_PREFIXES.some((p) => nodeId.startsWith(p))) return "IDENTIFICATION";
+  return undefined;
 }
+
+const DATA_CAPTURE_NODE_PREFIXES: readonly string[] = ["cond-data:", "q-data:", "btn-data:", "sd-data"];
 
 export interface ResolveCommercialStateResult {
   commercialState: CommercialState | undefined;

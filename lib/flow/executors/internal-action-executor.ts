@@ -41,7 +41,8 @@ import {
   type ServicioCatalogoReal,
 } from "@/lib/catalogo-servicios-flow-adaptador";
 import { resolverEscenario, type ResolverEscenarioDeps } from "@/lib/bot-escenarios/resolver";
-import { nombreConocido, leerContactoActual } from "@/lib/clientes-conocidos";
+import { nombreConocido, leerContactoActual, recordarNombreCliente } from "@/lib/clientes-conocidos";
+import { parseCustomerFieldsJson } from "@/lib/customer-data";
 import {
   agregarEtiquetaAConversacion,
   quitarEtiquetaDeConversacion,
@@ -164,6 +165,9 @@ export interface InternalActionDeps {
   // El store de calendario del Bloque 15 (tenant-scoped, grant_id nunca
   // expuesto) -- NUNCA el resolver hardcodeado de AMORE (resolverNylasGrantIdParaTenant).
   createBusinessAgentCalendarStore?: (supabase: SupabaseClient) => CalendarConnectionStore;
+  // R3 (datos del cliente, autorizado) -- mismo criterio: real por default,
+  // spy en tests. Guarda el nombre/correo REALES del contacto tras una reserva.
+  recordarNombreCliente?: typeof recordarNombreCliente;
   // FASE F7 (Contacts + Variables + Tags, autorizado) -- opcionales, mismo
   // criterio de arriba (real por default vía lib/etiquetas.ts; solo se
   // inyectan mocks en tests). Único archivo de la lista de protección
@@ -2637,6 +2641,13 @@ export class InternalActionExecutor implements EffectExecutor {
       }
     }
 
+    // Datos del cliente (R3): definición ESTÁTICA embebida por el compiler.
+    // Fail-closed -- si existe pero está corrupta, NO se reserva a ciegas.
+    const camposCliente = parseCustomerFieldsJson(params.customerFieldsJson);
+    if (!camposCliente.ok) {
+      return rechazar("configuracion_invalida", "La configuración de datos del cliente del agente es inválida.");
+    }
+
     const resultado = await crearCitaNylasGenerico(
       {
         supabase: this.deps.supabase,
@@ -2657,6 +2668,10 @@ export class InternalActionExecutor implements EffectExecutor {
         notas: params.notas || undefined,
         duracionMinInput,
         businessHours,
+        customerFields: camposCliente.fields,
+        // Valores por clave: variables del flow (las capturó el sistema) ya
+        // mezcladas con el payload. El backend solo lee las claves CONFIGURADAS.
+        customerValues: params,
       },
       signal,
     );
@@ -2664,6 +2679,9 @@ export class InternalActionExecutor implements EffectExecutor {
     assertNotAborted(signal);
 
     if (!resultado.ok) {
+      if (resultado.motivo === "datos_incompletos" || resultado.motivo === "datos_invalidos") {
+        return { success: false, classification: EFFECT_RESULT_CLASSIFICATIONS.NON_RETRYABLE, error: resultado.motivo, data: { detalle: resultado.detalle, faltantes: resultado.faltantes ?? [] } };
+      }
       if (resultado.motivo === "ocupado") {
         return { success: false, classification: EFFECT_RESULT_CLASSIFICATIONS.NON_RETRYABLE, error: "ocupado", data: { ocupado: true } };
       }
@@ -2684,6 +2702,24 @@ export class InternalActionExecutor implements EffectExecutor {
     const evidenceError = criticalEvidenceMissing("crear_cita_nylas_generico", data);
     if (evidenceError) {
       return { success: false, classification: EFFECT_RESULT_CLASSIFICATIONS.EXTERNAL_AMBIGUOUS, error: evidenceError };
+    }
+
+    // R3: el nombre/correo REALES del cliente quedan en su contacto (para que el
+    // dashboard no muestre el teléfono como nombre). SOLO datos de alcance
+    // "customer" -- lo de la reserva nunca se guarda en el contacto. Best-effort:
+    // recordarNombreCliente nunca lanza y no puede tumbar una reserva ya creada.
+    if (resultado.datosCliente && request.conversation) {
+      const deCliente = (key: string) => resultado.datosCliente!.find((e) => e.key === key && e.scope === "customer")?.value;
+      const nombre = deCliente("nombreCliente");
+      if (nombre) {
+        await (this.deps.recordarNombreCliente ?? recordarNombreCliente)(this.deps.supabase, {
+          idTenant: request.tenantId,
+          phoneNumberId: request.conversation.phoneNumberId,
+          telefonoCliente: request.conversation.telefonoCliente,
+          nombre,
+          correo: deCliente("correoCliente") ?? null,
+        });
+      }
     }
 
     return {
