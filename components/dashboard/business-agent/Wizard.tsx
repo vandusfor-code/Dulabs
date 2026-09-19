@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { Check, ChevronLeft, ChevronRight, Loader2, Plus, Trash2 } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import {
-  BUSINESS_TYPE_PRESETS,
+  BUSINESS_TYPE_OPTIONS,
   blankHandoffRule,
   blankProhibition,
   blankRule,
@@ -12,6 +12,7 @@ import {
   localFormIssues,
   type EditableBusinessAgentSpecForm,
 } from "@/lib/business-agent-form";
+import { BUSINESS_TYPE_OTRO } from "@/lib/agent-compiler/spec/types";
 import { CAPABILITY_KEYS, type CapabilityKey } from "@/lib/agent-compiler/spec/capabilities";
 import type { HandoffTriggerKind, ProhibitionAction, RuleKind } from "@/lib/agent-compiler/spec/types";
 import { actionBtn, Field, inputCls, IssuesList, primaryBtn, SectionCard, ToggleRow } from "@/components/dashboard/business-agent/ui";
@@ -73,6 +74,10 @@ export function BusinessAgentWizard({ form, onChange, diagnostics, saving, onSav
   const stepIndex = STEP_ORDER.indexOf(step);
 
   const localIssues = useMemo(() => localFormIssues(form, t), [form, t]);
+  // El paso 1 (tipo de negocio) exige un tipo; con "Otro", además el texto libre.
+  const step1Invalid =
+    !form.identity.businessType?.trim() ||
+    (form.identity.businessType === BUSINESS_TYPE_OTRO && !form.identity.businessTypeCustom?.trim());
   const errorDiagnostics = diagnostics.filter((d) => d.severity === "error");
   const warningDiagnostics = diagnostics.filter((d) => d.severity === "warning");
 
@@ -127,7 +132,12 @@ export function BusinessAgentWizard({ form, onChange, diagnostics, saving, onSav
             <ChevronLeft className="size-4" /> {t("Anterior", "Back")}
           </button>
           {step !== "revisar" ? (
-            <button type="button" onClick={() => goto(STEP_ORDER[Math.min(STEP_ORDER.length - 1, stepIndex + 1)])} className={primaryBtn}>
+            <button
+              type="button"
+              onClick={() => goto(STEP_ORDER[Math.min(STEP_ORDER.length - 1, stepIndex + 1)])}
+              disabled={step === "tipo" && step1Invalid}
+              className={primaryBtn}
+            >
               {t("Siguiente", "Next")} <ChevronRight className="size-4" />
             </button>
           ) : (
@@ -159,20 +169,46 @@ function STEP_LABEL(s: WizardStep, t: (es: string, en: string) => string): strin
 // ---------------------------------------------------------------------------
 function StepTipoIdentidad({ form, onChange }: { form: EditableBusinessAgentSpecForm; onChange: (f: EditableBusinessAgentSpecForm) => void }) {
   const { t, lang } = useI18n();
+  const businessType = form.identity.businessType ?? "";
+  const esOtro = businessType === BUSINESS_TYPE_OTRO;
+
+  function setBusinessType(value: string) {
+    // Al cambiar de "Otro" a otra opción se limpia el texto libre para no dejar
+    // una validación colgada (requisito 5).
+    onChange({
+      ...form,
+      identity: {
+        ...form.identity,
+        businessType: value,
+        businessTypeCustom: value === BUSINESS_TYPE_OTRO ? (form.identity.businessTypeCustom ?? "") : "",
+      },
+    });
+  }
+
   return (
-    <SectionCard title={t("¿Qué tipo de negocio tienes?", "What type of business do you have?")} description={t("Esto solo prellena valores razonables -- puedes cambiar todo después.", "This only prefills reasonable defaults -- you can change everything afterward.")}>
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-        {BUSINESS_TYPE_PRESETS.map((preset) => (
-          <button
-            key={preset.id}
-            type="button"
-            onClick={() => onChange(preset.apply(form))}
-            className="rounded-lg border border-edge bg-ink px-3 py-3 text-left text-sm font-medium text-fg transition-colors hover:border-lime/40"
-          >
-            {lang === "en" ? preset.labelEn : preset.label}
-          </button>
-        ))}
-      </div>
+    <SectionCard title={t("¿Qué tipo de negocio tienes?", "What type of business do you have?")} description={t("Nos ayuda a configurar el agente. Si no está en la lista, elige 'Otro'.", "Helps us configure the agent. If it's not listed, choose 'Other'.")}>
+      <Field label={t("Tipo de negocio", "Business type")} required>
+        <select className={inputCls} value={businessType} onChange={(e) => setBusinessType(e.target.value)}>
+          <option value="" disabled>
+            {t("Selecciona el tipo de negocio", "Select the business type")}
+          </option>
+          {BUSINESS_TYPE_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {lang === "en" ? o.labelEn : o.value}
+            </option>
+          ))}
+        </select>
+      </Field>
+      {esOtro && (
+        <Field label={t("¿Qué tipo de negocio es?", "What type of business is it?")} required>
+          <input
+            className={inputCls}
+            value={form.identity.businessTypeCustom ?? ""}
+            onChange={(e) => onChange({ ...form, identity: { ...form.identity, businessTypeCustom: e.target.value } })}
+            placeholder={t("Escribe el tipo de negocio…", "Type the business type…")}
+          />
+        </Field>
+      )}
 
       <div className="grid gap-4 border-t border-edge pt-4 sm:grid-cols-2">
         <Field label={t("Nombre del negocio", "Business name")} required>

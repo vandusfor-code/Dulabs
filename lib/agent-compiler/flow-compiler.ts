@@ -31,6 +31,7 @@ import type {
 import type { CompiledBusinessAgentIR, CommercialState } from "@/lib/agent-compiler/ir";
 import { diagError, type CompilerDiagnostic } from "@/lib/agent-compiler/diagnostics";
 import type { CompilerContext } from "@/lib/agent-compiler/semantic-analysis";
+import { BUSINESS_TYPE_OTRO } from "@/lib/agent-compiler/spec/types";
 
 export type { CompilerContext } from "@/lib/agent-compiler/semantic-analysis";
 
@@ -76,8 +77,20 @@ class GraphBuilder {
 }
 
 /** Instrucción MÍNIMA para un nodo AI: propósito + estilo. Nunca datos de negocio. */
+/**
+ * Contexto de negocio inyectado en TODA instrucción de IA: nombre + tipo. El
+ * tipo de negocio es SOLO contexto (nunca una lista rígida en lógica); con
+ * "Otro" se usa el texto libre. Si no hay tipo (Specs previos), se omite.
+ */
+function businessContexto(ir: CompiledBusinessAgentIR): string {
+  const { businessName, businessType, businessTypeCustom } = ir.identity;
+  const tipo = businessType === BUSINESS_TYPE_OTRO ? businessTypeCustom : businessType;
+  const tipoTxt = tipo && tipo.trim() ? ` (${tipo.trim()})` : "";
+  return `Negocio: ${businessName}${tipoTxt}.`;
+}
+
 function aiInstruction(purpose: string, ir: CompiledBusinessAgentIR): string {
-  return `${purpose} Estilo: ${ir.personality.styleHints.join(", ")}. Nunca inventes precios, stock ni disponibilidad: usa exclusivamente las herramientas autorizadas de este paso.`;
+  return `${businessContexto(ir)} ${purpose} Estilo: ${ir.personality.styleHints.join(", ")}. Nunca inventes precios, stock ni disponibilidad: usa exclusivamente las herramientas autorizadas de este paso.`;
 }
 
 /**

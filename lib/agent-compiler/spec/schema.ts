@@ -15,6 +15,7 @@
 import { z } from "zod";
 import type { ConditionOperator } from "@/lib/flow/types";
 import { CAPABILITY_KEYS } from "@/lib/agent-compiler/spec/capabilities";
+import { BUSINESS_TYPE_OTRO } from "@/lib/agent-compiler/spec/types";
 
 // Topes de tamaño (hardening Bloque 18). Ajustados para no rechazar Specs reales.
 const MAX_ID = 200;
@@ -59,13 +60,23 @@ const policyConditionSchema = z.object({
   match: z.enum(["all", "any"]),
 });
 
-export const identitySchema = z.object({
-  businessName: texto,
-  agentName: texto,
-  description: textoLargoOpc,
-  language: texto,
-  timezone: texto,
-});
+export const identitySchema = z
+  .object({
+    businessName: texto,
+    agentName: texto,
+    description: textoLargoOpc,
+    // Tipo de negocio (dropdown): contexto para el compiler, cualquier string.
+    // Opcional a nivel de contrato para no romper Specs previos sin el campo.
+    businessType: z.string().trim().max(MAX_TEXTO).optional(),
+    businessTypeCustom: z.string().trim().max(MAX_TEXTO).optional(),
+    language: texto,
+    timezone: texto,
+  })
+  // El texto libre solo es obligatorio cuando el tipo elegido es "Otro".
+  .refine((i) => i.businessType !== BUSINESS_TYPE_OTRO || (i.businessTypeCustom?.trim().length ?? 0) > 0, {
+    message: "Especifica el tipo de negocio cuando eliges 'Otro'.",
+    path: ["businessTypeCustom"],
+  });
 
 export const personalitySchema = z.object({
   primary: z.enum(["professional", "friendly", "direct", "consultative"]),

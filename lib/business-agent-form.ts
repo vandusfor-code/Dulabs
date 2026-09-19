@@ -18,11 +18,12 @@ import type {
   Prohibition,
   SchedulingConfig,
 } from "@/lib/agent-compiler/spec/types";
+import { BUSINESS_TYPE_OTRO } from "@/lib/agent-compiler/spec/types";
 import { CAPABILITY_KEYS, type CapabilityKey } from "@/lib/agent-compiler/spec/capabilities";
 
 /** Las 8 secciones editables -- exactamente lo que el cliente puede enviar (ver business-agent-api.ts::EDITABLE_SPEC_KEYS). */
 export interface EditableBusinessAgentSpecForm {
-  identity: { businessName: string; agentName: string; description?: string; language: string; timezone: string };
+  identity: { businessName: string; agentName: string; description?: string; businessType?: string; businessTypeCustom?: string; language: string; timezone: string };
   personality: AgentPersonality;
   capabilities: AgentCapabilities;
   catalog: CatalogConfig;
@@ -40,7 +41,7 @@ export function emptyCapabilities(on: CapabilityKey[] = []): AgentCapabilities {
 
 export function blankSpecForm(): EditableBusinessAgentSpecForm {
   return {
-    identity: { businessName: "", agentName: "", description: "", language: "es-CO", timezone: "America/Bogota" },
+    identity: { businessName: "", agentName: "", description: "", businessType: "", businessTypeCustom: "", language: "es-CO", timezone: "America/Bogota" },
     personality: { primary: "friendly", verbosity: "balanced", emojiPolicy: "limited", formality: "neutral" },
     capabilities: emptyCapabilities(["faq"]),
     catalog: { source: "structured", useServices: false, useProducts: false, quoteBeforeQualification: false },
@@ -59,84 +60,34 @@ export function blankSpecForm(): EditableBusinessAgentSpecForm {
   };
 }
 
-export interface BusinessTypePreset {
-  id: string;
-  label: string;
+/**
+ * Opción del desplegable "Tipo de negocio". `value` es el string canónico que
+ * se persiste en identity.businessType (= etiqueta en español); `labelEn` es
+ * solo la traducción para mostrar. BUSINESS_TYPE_OTRO ("Otro") habilita el
+ * campo libre `businessTypeCustom`.
+ *
+ * ARQUITECTURA: el tipo de negocio es SOLO contexto para el compiler, nunca una
+ * lista rígida en lógica. Ampliar la oferta = agregar una línea aquí; jamás
+ * implica tocar el compiler, el runtime ni la base de datos. "Otro" ya cubre
+ * cualquier negocio no contemplado sin cambiar código.
+ */
+export interface BusinessTypeOption {
+  value: string;
   labelEn: string;
-  apply: (base: EditableBusinessAgentSpecForm) => EditableBusinessAgentSpecForm;
 }
 
-/**
- * Presets: SOLO rellenan valores por defecto razonables (capabilities,
- * catalog, scheduling, un recurso típico) -- el usuario puede cambiar
- * cualquier campo después. No existe ninguna rama de compilación distinta
- * por preset: todos producen un BusinessAgentSpec con la MISMA forma.
- */
-export const BUSINESS_TYPE_PRESETS: BusinessTypePreset[] = [
-  {
-    id: "barberia",
-    label: "Barbería / Peluquería",
-    labelEn: "Barbershop / Salon",
-    apply: (base) => ({
-      ...base,
-      capabilities: emptyCapabilities(["faq", "catalog", "scheduling", "leadCapture", "humanHandoff"]),
-      catalog: { ...base.catalog, useServices: true },
-      scheduling: { ...base.scheduling, enabled: true, provider: "internal", resources: [{ kind: "specialist", label: "Barbero", required: true }] },
-    }),
-  },
-  {
-    id: "fotografia",
-    label: "Fotografía / Estudio",
-    labelEn: "Photography / Studio",
-    apply: (base) => ({
-      ...base,
-      capabilities: emptyCapabilities(["faq", "catalog", "sales", "leadCapture", "humanHandoff"]),
-      catalog: { ...base.catalog, useServices: true },
-    }),
-  },
-  {
-    id: "retail",
-    label: "Retail / Tienda",
-    labelEn: "Retail / Store",
-    apply: (base) => ({
-      ...base,
-      capabilities: emptyCapabilities(["faq", "catalog", "leadCapture", "humanHandoff"]),
-      catalog: { ...base.catalog, useServices: false, useProducts: true },
-    }),
-  },
-  {
-    id: "consultorio",
-    label: "Consultorio / Clínica",
-    labelEn: "Clinic / Practice",
-    apply: (base) => ({
-      ...base,
-      capabilities: emptyCapabilities(["faq", "catalog", "scheduling", "leadCapture", "humanHandoff"]),
-      catalog: { ...base.catalog, useServices: true },
-      scheduling: {
-        ...base.scheduling,
-        enabled: true,
-        provider: "internal",
-        confirmation: { required: true, hoursBefore: 24 },
-        resources: [{ kind: "specialist", label: "Profesional", required: true }],
-      },
-    }),
-  },
-  {
-    id: "restaurante",
-    label: "Restaurante",
-    labelEn: "Restaurant",
-    apply: (base) => ({
-      ...base,
-      capabilities: emptyCapabilities(["faq", "catalog", "leadCapture", "humanHandoff"]),
-      catalog: { ...base.catalog, useProducts: true },
-    }),
-  },
-  {
-    id: "otro",
-    label: "Otro tipo de negocio",
-    labelEn: "Other business type",
-    apply: (base) => base,
-  },
+export const BUSINESS_TYPE_OPTIONS: BusinessTypeOption[] = [
+  { value: "Barbería / Peluquería", labelEn: "Barbershop / Salon" },
+  { value: "Salón de belleza / Uñas", labelEn: "Beauty salon / Nails" },
+  { value: "Spa / Estética", labelEn: "Spa / Aesthetics" },
+  { value: "Consultorio / Clínica", labelEn: "Clinic / Practice" },
+  { value: "Fotografía / Estudio", labelEn: "Photography / Studio" },
+  { value: "Restaurante", labelEn: "Restaurant" },
+  { value: "Tienda / Retail", labelEn: "Store / Retail" },
+  { value: "Gimnasio / Fitness", labelEn: "Gym / Fitness" },
+  { value: "Servicios profesionales", labelEn: "Professional services" },
+  { value: "Educación / Cursos", labelEn: "Education / Courses" },
+  { value: BUSINESS_TYPE_OTRO, labelEn: "Other" },
 ];
 
 export function newRuleId(prefix: string): string {
@@ -160,6 +111,11 @@ export function localFormIssues(form: EditableBusinessAgentSpecForm, t: (es: str
   const issues: string[] = [];
   if (!form.identity.businessName.trim()) issues.push(t("Falta el nombre del negocio.", "Missing business name."));
   if (!form.identity.agentName.trim()) issues.push(t("Falta el nombre del agente.", "Missing agent name."));
+  if (!form.identity.businessType?.trim()) {
+    issues.push(t("Falta el tipo de negocio.", "Missing business type."));
+  } else if (form.identity.businessType === BUSINESS_TYPE_OTRO && !form.identity.businessTypeCustom?.trim()) {
+    issues.push(t("Especifica el tipo de negocio para 'Otro'.", "Specify the business type for 'Other'."));
+  }
   if (form.capabilities.sales && !form.capabilities.catalog) issues.push(t("'Cotizar' requiere activar 'Catálogo'.", "'Quote' requires 'Catalog' enabled."));
   if (form.scheduling.enabled !== form.capabilities.scheduling) {
     issues.push(t("El agendamiento y la capacidad 'Agendar citas' deben coincidir.", "Scheduling and the 'Book appointments' capability must match."));

@@ -62,6 +62,27 @@ describe("Agent Compiler — IR → FlowDefinition (Step 7.1)", () => {
     assert.ok(nodo(f, "start") && nodo(f, "end") && nodo(f, "welcome"));
   });
 
+  it("1b. el tipo de negocio llega al compiler como contexto de las instrucciones de IA ('Otro' usa el texto libre)", () => {
+    const conCatalogo = (identityExtra: Partial<BusinessAgentSpec["identity"]>): FlowDefinition =>
+      flowDe(
+        specBase({
+          capabilities: caps({ faq: true, catalog: true }),
+          catalog: { source: "structured", useServices: true, useProducts: false, quoteBeforeQualification: false },
+          identity: { businessName: "Negocio X", agentName: "Ana", language: "es-CO", timezone: "America/Bogota", ...identityExtra },
+        }),
+      );
+    const aiInstr = (f: FlowDefinition): string => {
+      const ai = f.nodes.find((n) => n.type === "ai");
+      return ai && ai.type === "ai" ? ai.config.instruction ?? "" : "";
+    };
+    // Tipo normal: la etiqueta aparece como contexto de la instrucción de IA.
+    assert.ok(aiInstr(conCatalogo({ businessType: "Salón de belleza / Uñas" })).includes("Salón de belleza / Uñas"));
+    // "Otro": se usa el texto libre, nunca el centinela "Otro".
+    const otro = aiInstr(conCatalogo({ businessType: "Otro", businessTypeCustom: "Taller de reparación de celulares" }));
+    assert.ok(otro.includes("Taller de reparación de celulares"));
+    assert.ok(!otro.includes("(Otro)"), "con 'Otro' se compila el texto real, no el centinela");
+  });
+
   it("2. IDENTIFICATION genera un question de captura cuando leadCapture activo", () => {
     const f = flowDe(specBase({ capabilities: caps({ faq: true, leadCapture: true }) }));
     const q = nodo(f, "q-identify");
