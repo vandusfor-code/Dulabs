@@ -31,7 +31,8 @@ import type {
 import type { CompiledBusinessAgentIR, CommercialState } from "@/lib/agent-compiler/ir";
 import { diagError, type CompilerDiagnostic } from "@/lib/agent-compiler/diagnostics";
 import type { CompilerContext } from "@/lib/agent-compiler/semantic-analysis";
-import { BUSINESS_TYPE_OTRO } from "@/lib/agent-compiler/spec/types";
+import { BUSINESS_TYPE_OTRO, type CustomerField } from "@/lib/agent-compiler/spec/types";
+import { askableFields, buildQuestionText, buildQuestionValidation, sanitizeText } from "@/lib/customer-data";
 
 export type { CompilerContext } from "@/lib/agent-compiler/semantic-analysis";
 
@@ -143,6 +144,81 @@ function validarGuardrailsGateRepresentables(ir: CompiledBusinessAgentIR, diags:
   return true;
 }
 
+/** Salida abierta de un tramo del grafo: arista (source, handle) que aún debe conectarse al siguiente estado. */
+interface Exit {
+  source: string;
+  handle?: string;
+}
+
+/** Nodo save_data que persiste en el contacto los datos de alcance "customer". */
+const DATA_SAVE_NODE_ID = "sd-data";
+
+function dataNodeVariableType(field: CustomerField): VariableDefinition["type"] {
+  return field.type === "number" || field.type === "email" || field.type === "phone" ? field.type : "string";
+}
+
+/**
+ * R3 — captura de datos del cliente. Por cada campo pedible (en el orden del
+ * Spec) emite, de forma DETERMINISTA y sin LLM:
+ *
+ *   cond-data:<k>  (¿la variable <k> ya existe?  -- p. ej. sembrada desde el contacto)
+ *     ├─ sí ─────────────────────────────► siguiente campo (no se vuelve a preguntar)
+ *     └─ no ─► [requerido]  q-data:<k>  ─► siguiente campo
+ *              [opcional]   btn-data:<k> ─ Sí ─► q-data:<k> ─► siguiente campo
+ *                                         └ No ─────────────► siguiente campo
+ *
+ * La pregunta valida con las validaciones REALES del Flow Engine (email/phone/
+ * number/hora_colombia/regex). Los campos opcionales se ofrecen con botones
+ * (Sí/No) para que "omitir" nunca contamine el dato guardado.
+ *
+ * Devuelve el nodo de entrada, el último nodo con arista por defecto (`lastNode`)
+ * y las salidas abiertas restantes (`exits`) para que el caller las conecte
+ * al siguiente estado.
+ */
+function emitirCapturaDatos(g: GraphBuilder, campos: CustomerField[]): { entry: string; lastNode: string; exits: Exit[] } {
+  const condId = (k: string) => `cond-data:${k}`;
+  const preguntaId = (k: string) => `q-data:${k}`;
+  const botonesId = (k: string) => `btn-data:${k}`;
+
+  campos.forEach((campo, i) => {
+    const siguiente = campos[i + 1] ? condId(campos[i + 1]!.key) : null;
+    g.declareVar(campo.key, dataNodeVariableType(campo));
+    g.addNode({ id: condId(campo.key), type: "condition", config: { rules: [{ field: campo.key, operator: "exists" }], match: "all" } });
+    g.addNode({
+      id: preguntaId(campo.key),
+      type: "question",
+      config: { text: buildQuestionText(campo), variableKey: campo.key, required: true, validation: buildQuestionValidation(campo) },
+    });
+    if (campo.required) {
+      g.addEdge(condId(campo.key), preguntaId(campo.key), FLOW_EDGE_HANDLE.conditionFalse);
+    } else {
+      g.addNode({
+        id: botonesId(campo.key),
+        type: "buttons",
+        config: {
+          text: `Es opcional: ${sanitizeText(campo.label, 80)}. ¿Quieres indicarlo?`,
+          buttons: [
+            { id: "si", label: "Sí" },
+            { id: "no", label: "No, omitir" },
+          ],
+        },
+      });
+      g.addEdge(condId(campo.key), botonesId(campo.key), FLOW_EDGE_HANDLE.conditionFalse);
+      g.addEdge(botonesId(campo.key), preguntaId(campo.key), FLOW_EDGE_HANDLE.button("si"));
+    }
+    if (siguiente) {
+      g.addEdge(condId(campo.key), siguiente, FLOW_EDGE_HANDLE.conditionTrue);
+      g.addEdge(preguntaId(campo.key), siguiente);
+      if (!campo.required) g.addEdge(botonesId(campo.key), siguiente, FLOW_EDGE_HANDLE.button("no"));
+    }
+  });
+
+  const ultimo = campos[campos.length - 1]!;
+  const exits: Exit[] = [{ source: condId(ultimo.key), handle: FLOW_EDGE_HANDLE.conditionTrue }];
+  if (!ultimo.required) exits.push({ source: botonesId(ultimo.key), handle: FLOW_EDGE_HANDLE.button("no") });
+  return { entry: condId(campos[0]!.key), lastNode: preguntaId(ultimo.key), exits };
+}
+
 /**
  * Construye la máquina conversacional comercial (posterior al Gate). Lineal con
  * puntos de espera (turn-taking) y sub-grafos de tool propose_action->action.
@@ -184,17 +260,49 @@ function construirMaquina(g: GraphBuilder, ir: CompiledBusinessAgentIR, endId: s
   g.addEdge("welcome", "q-need");
   const entry = "welcome";
   let prev = "q-need";
+  // Salidas "abiertas" del tramo anterior (ramas condicionales que también deben
+  // continuar al siguiente estado). Ver link().
+  let pendingExits: Exit[] = [];
+  /** Conecta el tramo anterior (nodo por defecto + ramas abiertas) con `target`. */
+  const link = (target: string): void => {
+    g.addEdge(prev, target);
+    for (const e of pendingExits) g.addEdge(e.source, target, e.handle);
+    pendingExits = [];
+  };
 
-  // --- IDENTIFICATION (leadCapture) ---
+  // --- IDENTIFICATION (leadCapture / datos del cliente) ---
   if (activos.has("IDENTIFICATION")) {
-    g.declareVar("customer_name");
-    g.addNode({
-      id: "q-identify",
-      type: "question",
-      config: { text: "¿Con quién tengo el gusto de hablar?", variableKey: "customer_name", required: true, validation: { kind: "text" } },
-    });
-    g.addEdge(prev, "q-identify");
-    prev = "q-identify";
+    const preguntables = askableFields(ir.customerData?.fields);
+    if (preguntables.length > 0) {
+      // R3: captura configurada (datos estructurados del Spec). Reemplaza la
+      // pregunta genérica de nombre -- nunca se pregunta dos veces.
+      const captura = emitirCapturaDatos(g, preguntables);
+      link(captura.entry);
+      prev = captura.lastNode;
+      pendingExits = captura.exits;
+      const persistentes = preguntables.filter((f) => f.scope === "customer");
+      if (persistentes.length > 0) {
+        // Guarda en el CONTACTO (custom_fields) lo que pertenece a la persona:
+        // el orquestador ya persiste este export (merge) y lo re-siembra en la
+        // próxima conversación, así que no se vuelve a preguntar.
+        g.addNode({
+          id: DATA_SAVE_NODE_ID,
+          type: "save_data",
+          config: { mappings: persistentes.map((f) => ({ variable: f.key, target: "custom_field" as const, targetKey: f.key })) },
+        });
+        link(DATA_SAVE_NODE_ID);
+        prev = DATA_SAVE_NODE_ID;
+      }
+    } else {
+      g.declareVar("customer_name");
+      g.addNode({
+        id: "q-identify",
+        type: "question",
+        config: { text: "¿Con quién tengo el gusto de hablar?", variableKey: "customer_name", required: true, validation: { kind: "text" } },
+      });
+      link("q-identify");
+      prev = "q-identify";
+    }
   }
 
   // --- QUALIFICATION ---
@@ -205,7 +313,7 @@ function construirMaquina(g: GraphBuilder, ir: CompiledBusinessAgentIR, endId: s
       type: "question",
       config: { text: "Para orientarte mejor, ¿qué servicio o producto te interesa?", variableKey: "qualification", required: true, validation: { kind: "text" } },
     });
-    g.addEdge(prev, "q-qualify");
+    link("q-qualify");
     prev = "q-qualify";
   }
 
@@ -216,7 +324,7 @@ function construirMaquina(g: GraphBuilder, ir: CompiledBusinessAgentIR, endId: s
       type: "ai",
       config: { instruction: aiInstruction("Responde la consulta del cliente usando únicamente el conocimiento permitido (fuente secundaria).", ir), mode: "respond", allowedTools: [] },
     });
-    g.addEdge(prev, "ai-info");
+    link("ai-info");
     prev = "ai-info";
   }
 
@@ -228,7 +336,7 @@ function construirMaquina(g: GraphBuilder, ir: CompiledBusinessAgentIR, endId: s
     g.addNode({ id: "act-catalog", type: "action", config: actionConfig(catalogAction) });
     g.addNode({ id: "ai-catalog-present", type: "ai", config: { instruction: aiInstruction("Presenta las opciones del catálogo consultado. Nunca inventes precios ni servicios que no estén en el resultado.", ir), mode: "respond", allowedTools: [] } });
     g.addNode({ id: "q-catalog-choose", type: "question", config: { text: "¿Cuál de estas opciones te interesa?", variableKey: "service_choice", required: true, validation: { kind: "text" } } });
-    g.addEdge(prev, "ai-catalog-propose");
+    link("ai-catalog-propose");
     g.addEdge("ai-catalog-propose", "act-catalog", FLOW_EDGE_HANDLE.aiSuccess);
     g.addEdge("ai-catalog-propose", safeFail(), FLOW_EDGE_HANDLE.aiFailure);
     g.addEdge("act-catalog", "ai-catalog-present");
@@ -243,7 +351,7 @@ function construirMaquina(g: GraphBuilder, ir: CompiledBusinessAgentIR, endId: s
     g.addNode({ id: "ai-quote-propose", type: "ai", config: { instruction: aiInstruction("Propón resolver el precio/disponibilidad real del servicio elegido.", ir), mode: "propose_action", allowedTools: [quoteAction] } });
     g.addNode({ id: "act-quote", type: "action", config: actionConfig(quoteAction) });
     g.addNode({ id: "ai-quote-present", type: "ai", config: { instruction: aiInstruction("Da el precio y detalles EXACTOS del servicio resuelto por la herramienta. Jamás un precio de memoria.", ir), mode: "respond", allowedTools: [] } });
-    g.addEdge(prev, "ai-quote-propose");
+    link("ai-quote-propose");
     g.addEdge("ai-quote-propose", "act-quote", FLOW_EDGE_HANDLE.aiSuccess);
     g.addEdge("ai-quote-propose", safeFail(), FLOW_EDGE_HANDLE.aiFailure);
     g.addEdge("act-quote", "ai-quote-present");
@@ -272,18 +380,27 @@ function construirMaquina(g: GraphBuilder, ir: CompiledBusinessAgentIR, endId: s
     }
     g.declareVar("appointment_request");
     g.addNode({ id: "q-booking-when", type: "question", config: { text: "¿Para qué fecha y hora te gustaría?", variableKey: "appointment_request", required: true, validation: { kind: "text" } } });
-    g.addNode({ id: "ai-book-propose", type: "ai", config: { instruction: aiInstruction("Propón crear la reserva incluyendo el servicio elegido (su nombre exacto si el cliente lo mencionó) y la fecha/hora indicada. La disponibilidad, el horario y la duración los valida el sistema con los datos estructurados, no tú.", ir), mode: "propose_action", allowedTools: [createAction] } });
-    // El compiler EMBEBE el horario de atención (regla determinista) en la acción
-    // de agendamiento genérico Nylas, para que el Runtime lo valide sin que la IA
-    // pueda alterarlo. Otros providers (internal) validan por su propia vía.
-    const bookParams =
-      createAction === "crear_cita_nylas_generico" && ir.scheduling.businessHours
-        ? { businessHoursJson: JSON.stringify(ir.scheduling.businessHours) }
-        : undefined;
-    g.addNode({ id: "act-book", type: "action", config: actionConfig(createAction, bookParams) });
+    // Con datos del cliente configurados (R3) ya fueron recopilados y validados
+    // por el sistema en pasos previos y viajan con la solicitud: la IA no los pide
+    // ni los reescribe.
+    const notaDatos = ir.customerData?.fields.length
+      ? " Los datos del cliente ya fueron recopilados por el sistema: no los pidas, no los repitas y no los incluyas en la propuesta."
+      : "";
+    g.addNode({ id: "ai-book-propose", type: "ai", config: { instruction: aiInstruction(`Propón crear la reserva incluyendo el servicio elegido (su nombre exacto si el cliente lo mencionó) y la fecha/hora indicada. La disponibilidad, el horario y la duración los valida el sistema con los datos estructurados, no tú.${notaDatos}`, ir), mode: "propose_action", allowedTools: [createAction] } });
+    // El compiler EMBEBE en la acción de agendamiento genérico Nylas las reglas
+    // deterministas -- horario de atención y definición de los datos del cliente
+    // (R3) -- para que el Runtime las valide sin que la IA pueda alterarlas
+    // (mergeParams hace ganar la config estática). Otros providers (internal)
+    // validan por su propia vía.
+    const bookParams: Record<string, string> = {};
+    if (createAction === "crear_cita_nylas_generico") {
+      if (ir.scheduling.businessHours) bookParams.businessHoursJson = JSON.stringify(ir.scheduling.businessHours);
+      if (ir.customerData?.fields.length) bookParams.customerFieldsJson = JSON.stringify(ir.customerData.fields);
+    }
+    g.addNode({ id: "act-book", type: "action", config: actionConfig(createAction, Object.keys(bookParams).length > 0 ? bookParams : undefined) });
     g.addNode({ id: "ai-book-present", type: "ai", config: { instruction: aiInstruction("Comunica el resultado REAL de la solicitud según el sistema. Si no fue posible, dilo con claridad.", ir), mode: "respond", allowedTools: [] } });
     g.addNode({ id: "human-book-fail", type: "human", config: { message: "Te comunico con una persona del equipo para completar tu solicitud.", pauseDurationHours: 24 } });
-    g.addEdge(prev, "q-booking-when");
+    link("q-booking-when");
     g.addEdge("q-booking-when", "ai-book-propose");
     g.addEdge("ai-book-propose", "act-book", FLOW_EDGE_HANDLE.aiSuccess);
     g.addEdge("ai-book-propose", "human-book-fail", FLOW_EDGE_HANDLE.aiFailure);
@@ -297,12 +414,12 @@ function construirMaquina(g: GraphBuilder, ir: CompiledBusinessAgentIR, endId: s
   // --- CONFIRMATION (scheduling): cierre neutral (sin claims) ---
   if (activos.has("CONFIRMATION")) {
     g.addNode({ id: "st-confirmation", type: "message", config: { text: "¿Hay algo más en lo que pueda ayudarte?", messageRole: "informational" } });
-    g.addEdge(prev, "st-confirmation");
+    link("st-confirmation");
     prev = "st-confirmation";
   }
 
   // Cierre: último nodo del diálogo -> end.
-  g.addEdge(prev, endId);
+  link(endId);
   return entry;
 }
 

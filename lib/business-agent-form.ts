@@ -11,6 +11,8 @@ import type {
   AgentPersonality,
   BusinessRule,
   CatalogConfig,
+  CustomerDataConfig,
+  CustomerField,
   HandoffConfig,
   HandoffRule,
   KnowledgeConfig,
@@ -20,6 +22,7 @@ import type {
 } from "@/lib/agent-compiler/spec/types";
 import { BUSINESS_TYPE_OTRO, type BusinessHours } from "@/lib/agent-compiler/spec/types";
 import { tieneAlgunHorarioAbierto } from "@/lib/business-hours";
+import { WELL_KNOWN_FIELDS, activeFields, isChannelSourced, validateCustomerFieldsConfig } from "@/lib/customer-data";
 import { CAPABILITY_KEYS, type CapabilityKey } from "@/lib/agent-compiler/spec/capabilities";
 
 /** Las 8 secciones editables -- exactamente lo que el cliente puede enviar (ver business-agent-api.ts::EDITABLE_SPEC_KEYS). */
@@ -32,6 +35,8 @@ export interface EditableBusinessAgentSpecForm {
   handoff: HandoffConfig;
   scheduling: SchedulingConfig;
   knowledge: KnowledgeConfig;
+  /** Datos que el agente captura del cliente (R3). Ausente en borradores previos = sin datos configurados. */
+  customerData?: CustomerDataConfig;
 }
 
 export function emptyCapabilities(on: CapabilityKey[] = []): AgentCapabilities {
@@ -58,6 +63,7 @@ export function blankSpecForm(): EditableBusinessAgentSpecForm {
       resources: [],
     },
     knowledge: { authority: "secondary", documents: [] },
+    customerData: { fields: [] },
   };
 }
 
@@ -96,6 +102,44 @@ export function blankBusinessHours(): BusinessHours {
   const abierto = () => ({ closed: false, intervals: [{ open: "09:00", close: "18:00" }] });
   const cerrado = () => ({ closed: true, intervals: [] as { open: string; close: string }[] });
   return { week: [cerrado(), abierto(), abierto(), abierto(), abierto(), abierto(), cerrado()], exceptions: [] };
+}
+
+/** Campo con significado fijo en el sistema (nombre/teléfono/correo/notas), listo para agregar al wizard. */
+export function wellKnownCustomerField(key: keyof typeof WELL_KNOWN_FIELDS & string): CustomerField {
+  const known = WELL_KNOWN_FIELDS[key]!;
+  return {
+    key,
+    label: known.label,
+    type: known.type,
+    required: key === "nombreCliente" || key === "telefonoCliente",
+    enabled: true,
+    scope: key === "notas" ? "booking" : "customer",
+  };
+}
+
+/** Campo personalizado en blanco (la clave la deriva la UI de la etiqueta). */
+export function blankCustomerField(existingKeys: readonly string[]): CustomerField {
+  let n = existingKeys.length + 1;
+  while (existingKeys.includes(`campo_${n}`)) n += 1;
+  return { key: `campo_${n}`, label: "", type: "text", required: false, enabled: true, scope: "customer" };
+}
+
+/** Conjunto recomendado para agendar: nombre (obligatorio) + teléfono tomado del canal. */
+export function recommendedBookingFields(): CustomerField[] {
+  return [wellKnownCustomerField("nombreCliente"), wellKnownCustomerField("telefonoCliente")];
+}
+
+/** Clave técnica a partir de una etiqueta ("Edad del paciente" -> "edad_del_paciente"). */
+export function slugifyFieldKey(label: string): string {
+  const base = label
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .replace(/^[^a-z]+/, "")
+    .slice(0, 40);
+  return base;
 }
 
 export function newRuleId(prefix: string): string {
@@ -158,5 +202,55 @@ export function localFormIssues(form: EditableBusinessAgentSpecForm, t: (es: str
   if (usaTransferencia && !form.capabilities.humanHandoff) {
     issues.push(t("Hay reglas de transferencia a humano pero 'Transferir a humano' está apagada.", "There are human-transfer rules but 'Human handoff' is off."));
   }
+  issues.push(...customerDataIssues(form, t));
   return issues;
+}
+
+/**
+ * Validaciones de UX de los datos del cliente (espejo de spec/validate.ts, que es
+ * la autoridad real). Devuelve mensajes para mostrar en el módulo y en Revisar.
+ */
+export function customerDataIssues(form: EditableBusinessAgentSpecForm, t: (es: string, en: string) => string): string[] {
+  const campos = form.customerData?.fields ?? [];
+  if (campos.length === 0) return [];
+  const issues: string[] = validateCustomerFieldsConfig(campos).map((i) => i.message);
+  const activos = activeFields(campos);
+  if (activos.length === 0) return issues;
+  if (!form.capabilities.leadCapture && !form.capabilities.scheduling) {
+    issues.push(t("Los datos del cliente requieren 'Captar datos del cliente' o 'Agendar citas'.", "Customer data requires 'Capture customer data' or 'Book appointments'."));
+  }
+  if (activos.some((f) => f.scope === "booking") && !form.capabilities.scheduling) {
+    issues.push(t("Los datos de la reserva requieren 'Agendar citas'.", "Booking data requires 'Book appointments'."));
+  }
+  if (form.capabilities.scheduling && !activos.some((f) => f.key === "nombreCliente" && f.required)) {
+    issues.push(t("Con agendamiento, el Nombre debe estar entre los datos y ser obligatorio.", "With scheduling, the Name must be included and required."));
+  }
+  return issues;
+}
+
+/** Campos que el agente PREGUNTARÁ (activos y no tomados del canal), en orden. */
+export function fieldsAgentWillAsk(form: EditableBusinessAgentSpecForm): CustomerField[] {
+  return activeFields(form.customerData?.fields).filter((f) => !isChannelSourced(f.key));
+}
+
+/**
+ * Limpia el form justo antes de enviarlo al servidor: los editores dejan estados
+ * intermedios (opciones vacías, textos en blanco) que el schema estricto rechazaría.
+ * Función PURA -- no muta el form original.
+ */
+export function normalizeFormForSave(form: EditableBusinessAgentSpecForm): EditableBusinessAgentSpecForm {
+  const campos = form.customerData?.fields;
+  if (!campos) return form;
+  const limpios: CustomerField[] = campos.map((f) => {
+    const { question, description, options, ...resto } = f;
+    return {
+      ...resto,
+      key: f.key.trim(),
+      label: f.label.trim(),
+      ...(question?.trim() ? { question: question.trim() } : {}),
+      ...(description?.trim() ? { description: description.trim() } : {}),
+      ...(f.type === "select" ? { options: (options ?? []).map((o) => o.trim()).filter(Boolean) } : {}),
+    };
+  });
+  return { ...form, customerData: { fields: limpios } };
 }

@@ -29,8 +29,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { ejecutarConIdempotencia, huellaSolicitud } from "@/lib/idempotencia-reserva";
 import type { NylasEvent, NylasEventsClient, NylasEventsWriteClient } from "@/lib/nylas/nylas-types";
 import type { CalendarConnectionStore } from "@/lib/agent-compiler/calendar/types";
-import type { BusinessHours } from "@/lib/agent-compiler/spec/types";
+import type { BusinessHours, CustomerField } from "@/lib/agent-compiler/spec/types";
 import { evaluateBusinessHours } from "@/lib/business-hours";
+import { customerDataFingerprint, formatCustomerDataForEvent, resolveCustomerData, type ResolvedCustomerEntry } from "@/lib/customer-data";
 import { TIMEZONE_COLOMBIA } from "@/lib/timezone-colombia";
 
 export interface CrearCitaNylasGenericoParams {
@@ -52,10 +53,20 @@ export interface CrearCitaNylasGenericoParams {
    * = sin regla de horario (compatibilidad).
    */
   businessHours?: BusinessHours | null;
+  /**
+   * Definición de los datos del cliente (R3, config ESTÁTICA embebida por el
+   * compiler). Si viene con campos, el backend exige los requeridos y valida
+   * tipos ANTES de tocar el calendario. `undefined`/[] = agente sin datos
+   * configurados (comportamiento previo a R3, sin cambios).
+   */
+  customerFields?: CustomerField[];
+  /** Valores capturados por clave (variables del flow ya mezcladas con el payload). */
+  customerValues?: Record<string, string | undefined>;
 }
 
 export type CrearCitaNylasGenericoRechazoMotivo =
   | "datos_incompletos"
+  | "datos_invalidos"
   | "fecha_invalida"
   | "fuera_de_horario"
   | "calendario_no_conectado"
@@ -66,8 +77,15 @@ export type CrearCitaNylasGenericoRechazoMotivo =
   | "conflicto_reintento";
 
 export type ResultadoCrearCitaNylasGenerico =
-  | { ok: true; citaId: string; inicioIso: string; finIso: string }
-  | { ok: false; motivo: CrearCitaNylasGenericoRechazoMotivo; detalle: string };
+  | {
+      ok: true;
+      citaId: string;
+      inicioIso: string;
+      finIso: string;
+      /** Datos del cliente ya validados y normalizados que viajaron con la reserva (R3). Vacío si el agente no los configura. */
+      datosCliente?: ResolvedCustomerEntry[];
+    }
+  | { ok: false; motivo: CrearCitaNylasGenericoRechazoMotivo; detalle: string; faltantes?: string[] };
 
 const DURACION_MIN_DEFAULT = 60;
 /** Defensivo: nunca una "cita" de más de 8h por un dato corrupto/alucinado. */
@@ -134,7 +152,30 @@ export async function crearCitaNylasGenerico(
   params: CrearCitaNylasGenericoParams,
   signal?: AbortSignal,
 ): Promise<ResultadoCrearCitaNylasGenerico> {
-  if (!params.fecha || !params.hora || !params.nombreCliente) {
+  // Datos del cliente (R3): AUTORIDAD del backend. Si el agente los configura,
+  // los requeridos deben estar presentes y válidos ANTES de cualquier otra cosa
+  // (nunca se toca el calendario con datos incompletos). Sin configuración =
+  // comportamiento previo a R3, sin cambios.
+  let nombreCliente = params.nombreCliente;
+  let datosCliente: ResolvedCustomerEntry[] | undefined;
+  const camposCliente = params.customerFields ?? [];
+  if (camposCliente.length > 0) {
+    const datos = resolveCustomerData({ fields: camposCliente, values: params.customerValues ?? {}, channelPhone: params.telefonoCliente });
+    if (!datos.ok) {
+      const faltantes = datos.problems.map((p) => p.label);
+      const soloFaltan = datos.problems.every((p) => p.reason === "vacio");
+      return {
+        ok: false,
+        motivo: soloFaltan ? "datos_incompletos" : "datos_invalidos",
+        detalle: `${soloFaltan ? "Faltan" : "Faltan o son inválidos"} datos del cliente para poder reservar: ${faltantes.join(", ")}.`,
+        faltantes,
+      };
+    }
+    datosCliente = datos.entries;
+    if (datos.nombre) nombreCliente = datos.nombre;
+  }
+
+  if (!params.fecha || !params.hora || !nombreCliente) {
     return { ok: false, motivo: "datos_incompletos", detalle: "Faltan datos reales de la cita (fecha, hora o nombre) para poder reservar." };
   }
   const inicio = parseFechaHora(params.fecha, params.hora);
@@ -181,7 +222,20 @@ export async function crearCitaNylasGenerico(
   const writeClient = deps.createNylasEventsWriteClient(deps.nylasApiKey);
 
   const idempotencyKey = `cita_nylas_generico:${params.executionRowId}:${params.effectId}`;
-  const huella = huellaSolicitud([params.tenantId, calendarId, params.fecha, params.hora, duracionMin, params.nombreCliente]);
+  // Con datos configurados, la huella incluye los datos resueltos: el mismo
+  // effectId con datos DISTINTOS es un conflicto, no un replay. Sin datos
+  // configurados la huella es EXACTAMENTE la previa a R3.
+  const huella = huellaSolicitud([
+    params.tenantId,
+    calendarId,
+    params.fecha,
+    params.hora,
+    duracionMin,
+    nombreCliente,
+    ...(datosCliente ? [customerDataFingerprint(datosCliente)] : []),
+  ]);
+  // Descripción del evento: datos del cliente (R3) o las notas de siempre.
+  const descripcion = datosCliente ? formatCustomerDataForEvent(datosCliente, params.notas) : params.notas;
 
   type ResultadoInterno =
     | { ok: true; citaId: string; inicioIso: string; finIso: string }
@@ -206,11 +260,11 @@ export async function crearCitaNylasGenerico(
         if (hayConflictoDeHorario(eventosExistentes, startUnix, endUnix)) {
           return { ok: false, motivo: "ocupado", detalle: "Ese horario ya está ocupado en el calendario." };
         }
-        const titulo = params.servicio ? `${params.servicio} -- ${params.nombreCliente}` : params.nombreCliente;
+        const titulo = params.servicio ? `${params.servicio} -- ${nombreCliente}` : nombreCliente;
         let creado;
         try {
           creado = await writeClient.createEvent(
-            { grantId, calendarId, title: titulo, description: params.notas, startUnix, endUnix, timezone: TIMEZONE_COLOMBIA },
+            { grantId, calendarId, title: titulo, description: descripcion, startUnix, endUnix, timezone: TIMEZONE_COLOMBIA },
             signal,
           );
         } catch {
@@ -231,5 +285,6 @@ export async function crearCitaNylasGenerico(
   }
   // "ejecutado" o "repetido" devuelven el MISMO resultado real -- un
   // reintento/replay nunca produce un segundo evento en el calendario.
-  return resultado.resultado;
+  const final = resultado.resultado;
+  return final.ok && datosCliente ? { ...final, datosCliente } : final;
 }

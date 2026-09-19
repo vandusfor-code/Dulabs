@@ -360,3 +360,12 @@ lib/business-agent-services.test.ts
 # Horario de atención del Business Agent (rebanada 2): evaluación determinista
 # (día cerrado, intervalos múltiples, fin tras cierre, excepciones). Puro.
 lib/business-hours.test.ts
+# R3 -- Datos del cliente (captura estructurada): reglas puras, Spec/validate/IR/
+# flow, booking Nylas con datos, cableado del executor, API de authoring y E2E de
+# cadena completa (Spec->publish->WhatsApp offline->reserva con datos). Sin red/DB.
+lib/customer-data.test.ts
+lib/agent-compiler/customer-data-compiler.test.ts
+lib/agent-compiler/calendar/nylas-generic-booking-customer-data.test.ts
+lib/flow/executors/internal-action-executor-datos-cliente.test.ts
+lib/agent-compiler/api/business-agent-api-customer-data.test.ts
+lib/agent-compiler/e2e/customer-data-e2e.test.ts

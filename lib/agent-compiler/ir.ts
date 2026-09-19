@@ -12,6 +12,7 @@ import type { CapabilityKey } from "@/lib/agent-compiler/spec/capabilities";
 import type {
   AgentIdentity,
   BusinessHours,
+  CustomerField,
   HandoffAction,
   HandoffTrigger,
   PolicyCondition,
@@ -115,6 +116,15 @@ export interface SchedulingCapabilityIR {
   businessHours?: BusinessHours | null;
 }
 
+/**
+ * Datos del cliente compilados (R3): solo campos ACTIVOS, en forma compacta
+ * (sin notas internas). El flow compiler genera de aquí los nodos de captura y
+ * embebe la misma definición en la acción de reserva (validación de backend).
+ */
+export interface CustomerDataIR {
+  fields: CustomerField[];
+}
+
 /** Fuentes de conocimiento: SIEMPRE secundarias, nunca autoridad. */
 export interface KnowledgeBindingIR {
   authority: "secondary";
@@ -159,6 +169,8 @@ export interface CompiledBusinessAgentIR {
   catalogBindings: CatalogBinding[];
   handoff: HandoffBindingIR[];
   scheduling: SchedulingCapabilityIR;
+  /** Ausente cuando el Spec no configura datos del cliente (IR idéntica a la previa a R3). */
+  customerData?: CustomerDataIR;
   knowledge: KnowledgeBindingIR;
   provenance: ProvenanceEntry[];
 }

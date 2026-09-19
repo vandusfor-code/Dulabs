@@ -11,9 +11,9 @@
 // Spec crudo del cliente):
 //   - tenantId SIEMPRE es un parámetro explícito del caller (derivado del
 //     usuario autenticado por requireFlowAccess), NUNCA leído del body.
-//   - El cliente solo puede enviar las 8 secciones editables del Spec
+//   - El cliente solo puede enviar las secciones editables del Spec
 //     (identity/personality/capabilities/catalog/policies/handoff/scheduling/
-//     knowledge). `schemaVersion` y `metadata` los construye el servidor --
+//     knowledge/customerData). `schemaVersion` y `metadata` los construye el servidor --
 //     si el body los trae, se rechaza explícitamente (nunca se ignoran en
 //     silencio, para no confundir al cliente sobre qué se guardó).
 //   - `capabilities` son booleanos ancladas a CAPABILITY_BACKING (spec/capabilities.ts):
@@ -56,6 +56,7 @@ const EDITABLE_SPEC_KEYS = [
   "handoff",
   "scheduling",
   "knowledge",
+  "customerData",
 ] as const;
 
 /** Claves que el cliente JAMÁS puede enviar -- gestionadas 100% por el servidor. */
@@ -69,7 +70,7 @@ function findForbiddenTopLevelKeys(raw: Record<string, unknown>): string[] {
   return FORBIDDEN_TOP_LEVEL_KEYS.filter((k) => Object.prototype.hasOwnProperty.call(raw, k));
 }
 
-/** Solo las 8 secciones editables -- cualquier otra clave del body (flow, nodes, tenantId, etc.) nunca se lee. */
+/** Solo las secciones editables -- cualquier otra clave del body (flow, nodes, tenantId, etc.) nunca se lee. */
 function pickEditableSections(raw: Record<string, unknown>): Record<string, unknown> {
   const picked: Record<string, unknown> = {};
   for (const k of EDITABLE_SPEC_KEYS) {

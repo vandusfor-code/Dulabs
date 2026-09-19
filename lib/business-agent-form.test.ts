@@ -10,7 +10,18 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { blankBusinessHours, blankSpecForm, toggleCapability } from "@/lib/business-agent-form";
+import {
+  blankBusinessHours,
+  blankCustomerField,
+  blankSpecForm,
+  customerDataIssues,
+  fieldsAgentWillAsk,
+  normalizeFormForSave,
+  recommendedBookingFields,
+  slugifyFieldKey,
+  toggleCapability,
+  wellKnownCustomerField,
+} from "@/lib/business-agent-form";
 import { compileBusinessAgent } from "@/lib/agent-compiler/compile";
 import { compileIRToFlowDefinition } from "@/lib/agent-compiler/flow-compiler";
 import { nuevaSpecMetadata } from "@/lib/agent-compiler/spec/version";
@@ -76,5 +87,77 @@ describe("Wizard form — toggleCapability (fix checkbox 'Agendar citas')", () =
     const actBook = flow.flow.nodes.find((n) => n.id === "act-book");
     assert.ok(actBook && actBook.type === "action", "debe existir la acción de agendamiento");
     assert.equal((actBook as { config: { actionType: string } }).config.actionType, "crear_cita_nylas_generico");
+  });
+});
+
+describe("Wizard form — Datos del cliente (R3)", () => {
+  const t = (es: string) => es;
+  const conAgenda = () => toggleCapability(blankSpecForm(), "scheduling", true);
+
+  it("1. el form en blanco parte sin datos configurados; el conjunto recomendado es nombre (obligatorio) + teléfono del canal", () => {
+    assert.deepEqual(blankSpecForm().customerData, { fields: [] });
+    const rec = recommendedBookingFields();
+    assert.deepEqual(rec.map((f) => [f.key, f.required]), [["nombreCliente", true], ["telefonoCliente", true]]);
+    assert.deepEqual(fieldsAgentWillAsk({ ...conAgenda(), customerData: { fields: rec } }).map((f) => f.key), ["nombreCliente"], "el teléfono no se pregunta (viene del canal)");
+  });
+
+  it("2. los campos conocidos se agregan con su tipo/alcance fijos; el personalizado nace con clave única", () => {
+    assert.equal(wellKnownCustomerField("correoCliente").type, "email");
+    assert.equal(wellKnownCustomerField("notas").scope, "booking");
+    assert.equal(blankCustomerField([]).key, "campo_1");
+    assert.equal(blankCustomerField(["campo_1", "campo_2"]).key, "campo_3");
+  });
+
+  it("3. slugifyFieldKey: minúsculas, sin acentos, snake_case, empieza por letra", () => {
+    assert.equal(slugifyFieldKey("Edad del paciente"), "edad_del_paciente");
+    assert.equal(slugifyFieldKey("¿Número de personas?"), "numero_de_personas");
+    assert.equal(slugifyFieldKey("123 abc"), "abc");
+    assert.equal(slugifyFieldKey("!!!"), "");
+  });
+
+  it("4. customerDataIssues espeja al servidor: con agenda exige Nombre obligatorio; sin capacidad, avisa; sin datos, silencio", () => {
+    assert.deepEqual(customerDataIssues(conAgenda(), t), []);
+    const sinNombre = { ...conAgenda(), customerData: { fields: [wellKnownCustomerField("correoCliente")] } };
+    assert.ok(customerDataIssues(sinNombre, t).some((m) => /Nombre/.test(m)));
+    const conNombre = { ...conAgenda(), customerData: { fields: recommendedBookingFields() } };
+    assert.deepEqual(customerDataIssues(conNombre, t), []);
+    const sinCapacidad = { ...blankSpecForm(), customerData: { fields: [wellKnownCustomerField("nombreCliente")] } };
+    assert.ok(customerDataIssues(sinCapacidad, t).some((m) => /requieren/.test(m)));
+    const clave = { ...conAgenda(), customerData: { fields: [...recommendedBookingFields(), { ...blankCustomerField([]), key: "fecha", label: "Fecha" }] } };
+    assert.ok(customerDataIssues(clave, t).some((m) => /reservada/.test(m)));
+  });
+
+  it("5. normalizeFormForSave limpia estados intermedios del editor (opciones vacías, textos en blanco) sin mutar el original", () => {
+    const original = {
+      ...conAgenda(),
+      customerData: {
+        fields: [
+          { ...wellKnownCustomerField("nombreCliente"), question: "   ", description: "  " },
+          { key: " tipo ", label: " Tipo ", type: "select" as const, required: true, enabled: true, scope: "booking" as const, options: [" A ", "", "B", "  "] },
+        ],
+      },
+    };
+    const limpio = normalizeFormForSave(original);
+    assert.deepEqual(limpio.customerData!.fields[1], { key: "tipo", label: "Tipo", type: "select", required: true, enabled: true, scope: "booking", options: ["A", "B"] });
+    assert.equal("question" in limpio.customerData!.fields[0]!, false);
+    assert.equal("description" in limpio.customerData!.fields[0]!, false);
+    assert.equal(original.customerData.fields[1]!.options!.length, 4, "no muta");
+    // un form sin customerData (borrador previo) pasa tal cual
+    const viejo = { ...blankSpecForm(), customerData: undefined };
+    assert.equal(normalizeFormForSave(viejo), viejo);
+  });
+
+  it("6. UI -> Spec -> compiler: el form con datos recomendados compila y genera la pregunta de nombre (extremo a extremo del wizard)", () => {
+    let form = blankSpecForm();
+    form = { ...form, identity: { ...form.identity, businessName: "Salón X", agentName: "Ana", businessType: "Salón de belleza / Uñas" } };
+    form = toggleCapability(form, "scheduling", true);
+    form = { ...form, scheduling: { ...form.scheduling, provider: "nylas", businessHours: blankBusinessHours() }, customerData: { fields: recommendedBookingFields() } };
+    const spec: BusinessAgentSpec = { schemaVersion: "1.0.0", ...normalizeFormForSave(form), metadata: nuevaSpecMetadata(NOW) };
+    const compiled = compileBusinessAgent(spec, CTX);
+    if (!compiled.success) return assert.fail("compile: " + JSON.stringify(compiled.diagnostics));
+    const flow = compileIRToFlowDefinition(compiled.ir, CTX);
+    if (!flow.success) return assert.fail("flow: " + JSON.stringify(flow.diagnostics));
+    assert.ok(flow.flow.nodes.some((n) => n.id === "q-data:nombreCliente"));
+    assert.equal(flow.flow.nodes.some((n) => n.id === "q-data:telefonoCliente"), false, "el teléfono se toma de WhatsApp");
   });
 });

@@ -29,6 +29,7 @@ import {
   type SchedulingCapabilityIR,
 } from "@/lib/agent-compiler/ir";
 import { hasErrors, type CompilerDiagnostic } from "@/lib/agent-compiler/diagnostics";
+import { askableFields, toCompiledFields } from "@/lib/customer-data";
 
 export type { CompilerContext } from "@/lib/agent-compiler/semantic-analysis";
 
@@ -70,7 +71,13 @@ function activarEstados(spec: BusinessAgentSpec): CompiledState[] {
     estados.push({ id, enabledBy, toolBindings, description });
 
   push("WELCOME", "always", [], "Saludo inicial y encuadre de la conversación.");
-  if (caps.leadCapture) push("IDENTIFICATION", ["leadCapture"], CAPABILITY_BACKING.leadCapture.actions.slice(), "Identificación/captura de datos del cliente.");
+  if (caps.leadCapture) {
+    push("IDENTIFICATION", ["leadCapture"], CAPABILITY_BACKING.leadCapture.actions.slice(), "Identificación/captura de datos del cliente.");
+  } else if (caps.scheduling && askableFields(spec.customerData?.fields).length > 0) {
+    // Agente de agenda con datos del cliente configurados (R3) pero sin captura
+    // de leads: el segmento de captura lo habilita 'scheduling' (sin tools de lead).
+    push("IDENTIFICATION", ["scheduling"], [], "Captura de los datos del cliente necesarios para la reserva.");
+  }
   if (caps.sales || (caps.catalog && !spec.catalog.quoteBeforeQualification)) push("QUALIFICATION", caps.sales ? ["sales"] : ["catalog"], [], "Calificación antes de cotizar.");
   if (caps.faq) push("INFORMATION", ["faq"], [], "Respuesta a preguntas frecuentes (conocimiento secundario).");
   if (caps.catalog) push("CATALOG", ["catalog"], ["listar_catalogo_servicios", "resolver_servicio_catalogo", "listar_profesionales_servicio"], "Presentación del catálogo desde datos estructurados.");
@@ -156,8 +163,13 @@ function construirIR(spec: BusinessAgentSpec, context: CompilerContext): Compile
     businessHours: spec.scheduling.businessHours ?? null,
   };
 
+  // Datos del cliente (R3): solo campos activos; ausente si no hay (IR y checksum
+  // idénticos a los previos a R3 para todo Spec que no los configura).
+  const camposCompilados = toCompiledFields(spec.customerData?.fields);
+
   // Procedencia (auditoría): cada elemento generado con su origen.
   const provenance: ProvenanceEntry[] = [];
+  for (const f of camposCompilados) provenance.push({ element: `customer-field:${f.key}`, producedBy: "customer-data-binding", fromConfig: `customerData.fields[${f.key}]` });
   for (const cap of capabilities) provenance.push({ element: `capability:${cap.capability}`, producedBy: "capability-binding", fromConfig: `capabilities.${cap.capability}`, capability: cap.capability });
   for (const s of estados) provenance.push({ element: `state:${s.id}`, producedBy: "state-activation", fromConfig: s.enabledBy === "always" ? "always" : `capabilities.${s.enabledBy.join("+")}` });
   for (const g of guardrails) provenance.push({ element: `guardrail:${g.id}`, producedBy: "prohibition-compilation", fromConfig: `policies.prohibitions[${g.id}]`, policyId: g.id, runtimeTool: g.runtimeBinding ?? undefined });
@@ -178,6 +190,7 @@ function construirIR(spec: BusinessAgentSpec, context: CompilerContext): Compile
     catalogBindings,
     handoff,
     scheduling,
+    ...(camposCompilados.length > 0 ? { customerData: { fields: camposCompilados } } : {}),
     knowledge: { authority: "secondary", documentIds: spec.knowledge.documents.map((d) => d.id) },
     provenance,
   };

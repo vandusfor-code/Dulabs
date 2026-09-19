@@ -13,6 +13,7 @@ import { safeParseBusinessAgentSpec } from "@/lib/agent-compiler/spec/schema";
 import { CAPABILITY_BACKING, CAPABILITY_KEYS } from "@/lib/agent-compiler/spec/capabilities";
 import type { BusinessAgentSpec } from "@/lib/agent-compiler/spec/types";
 import { tieneAlgunHorarioAbierto } from "@/lib/business-hours";
+import { activeFields, validateCustomerFieldsConfig } from "@/lib/customer-data";
 
 export interface SpecValidationResult {
   valid: boolean;
@@ -100,6 +101,40 @@ function validarReglasDeNegocio(spec: BusinessAgentSpec, issues: CompilerIssue[]
   // usa horarios de especialistas.
   if (spec.scheduling.enabled && spec.scheduling.provider === "nylas" && !tieneAlgunHorarioAbierto(spec.scheduling.businessHours)) {
     issues.push(issue("SPEC_REFERENCE_INVALID", "El agendamiento con calendario (Nylas) exige un horario de atención (configura al menos un día abierto).", "scheduling.businessHours"));
+  }
+
+  validarDatosDelCliente(spec, issues);
+}
+
+/**
+ * (g) Datos del cliente (R3). Solo aplica si el Spec los configura -- un Spec
+ * sin `customerData` (todos los previos) no se toca. Valida la configuración
+ * (claves, duplicados, opciones) y su coherencia con las capabilities.
+ */
+function validarDatosDelCliente(spec: BusinessAgentSpec, issues: CompilerIssue[]): void {
+  const campos = spec.customerData?.fields ?? [];
+  if (campos.length === 0) return;
+  const caps = spec.capabilities;
+
+  for (const i of validateCustomerFieldsConfig(campos)) {
+    issues.push(issue("SPEC_REFERENCE_INVALID", i.message, i.key ? `customerData.fields.${i.key}` : "customerData.fields"));
+  }
+
+  const activos = activeFields(campos);
+  if (activos.length === 0) return;
+
+  // Captar datos exige una capability que respalde el segmento (captura o agenda).
+  if (!caps.leadCapture && !caps.scheduling) {
+    issues.push(issue("CAPABILITY_INCOMPATIBLE", "Hay datos del cliente configurados pero ni 'Captar datos del cliente' ni 'Agendar citas' están habilitadas.", "customerData"));
+  }
+  // Un dato de la RESERVA no tiene dónde viajar sin agendamiento.
+  const deReserva = activos.filter((f) => f.scope === "booking");
+  if (deReserva.length > 0 && !caps.scheduling) {
+    issues.push(issue("CAPABILITY_INCOMPATIBLE", `Los datos de la reserva (${deReserva.map((f) => f.key).join(", ")}) requieren la capacidad 'Agendar citas'.`, "customerData"));
+  }
+  // La reserva exige un nombre: si se configuran datos, el nombre debe estar y ser obligatorio.
+  if (caps.scheduling && !activos.some((f) => f.key === "nombreCliente" && f.required)) {
+    issues.push(issue("SPEC_REFERENCE_INVALID", "Con agendamiento, los datos del cliente deben incluir el Nombre (clave 'nombreCliente') como campo obligatorio.", "customerData.fields.nombreCliente"));
   }
 }
 

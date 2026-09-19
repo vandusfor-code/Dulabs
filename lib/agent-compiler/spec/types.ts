@@ -207,6 +207,56 @@ export interface KnowledgeConfig {
   documents: KnowledgeDocument[];
 }
 
+// --- 9. CUSTOMER DATA (datos que el agente captura del cliente) -------------
+/**
+ * Tipos soportados = los que el Runtime YA sabe validar de forma determinista
+ * (question.validation: text/number/email/phone/regex/hora_colombia). `date`,
+ * `select` y `boolean` se expresan como `regex`; `time` como `hora_colombia`.
+ * Ningún tipo requiere al LLM para validarse.
+ */
+export const CUSTOMER_FIELD_TYPES = ["text", "phone", "email", "number", "date", "time", "select", "boolean"] as const;
+export type CustomerFieldType = (typeof CUSTOMER_FIELD_TYPES)[number];
+
+/**
+ * Dónde vive el dato una vez capturado:
+ *  - "customer": pertenece a la PERSONA -- se guarda en su contacto
+ *    (dulabs_clientes_conocidos.custom_fields), se reutiliza en próximas
+ *    conversaciones (no se vuelve a preguntar) y viaja con la reserva.
+ *  - "booking": pertenece a ESTA reserva (motivo, nº de personas...) -- viaja
+ *    con el evento del calendario; nunca se guarda en el contacto ni se
+ *    reutiliza.
+ */
+export const CUSTOMER_FIELD_SCOPES = ["customer", "booking"] as const;
+export type CustomerFieldScope = (typeof CUSTOMER_FIELD_SCOPES)[number];
+
+export interface CustomerField {
+  /**
+   * Identificador técnico estable: nombre de la variable del flow, del
+   * custom_field del contacto y del parámetro de la acción de reserva.
+   * Claves "conocidas" (nombreCliente/telefonoCliente/correoCliente/notas)
+   * tienen semántica propia (ver lib/customer-data.ts::WELL_KNOWN_FIELDS).
+   */
+  key: string;
+  /** Etiqueta visible (evento del calendario, resumen del wizard). */
+  label: string;
+  type: CustomerFieldType;
+  /** El backend NO reserva si falta un dato requerido (la IA no decide esto). */
+  required: boolean;
+  /** Apagado = no se pregunta ni se exige (se conserva en el Spec). */
+  enabled: boolean;
+  scope: CustomerFieldScope;
+  /** Pregunta que se le hace al cliente. Opcional: hay una por defecto. */
+  question?: string;
+  /** Nota interna para quien configura (no se le muestra al cliente). */
+  description?: string;
+  /** Solo type === "select": opciones válidas. */
+  options?: string[];
+}
+
+export interface CustomerDataConfig {
+  fields: CustomerField[];
+}
+
 // --- 10. METADATA / VERSIONADO ---------------------------------------------
 export type SpecStatus = "draft" | "compiled" | "published" | "archived";
 
@@ -230,5 +280,10 @@ export interface BusinessAgentSpec {
   handoff: HandoffConfig;
   scheduling: SchedulingConfig;
   knowledge: KnowledgeConfig;
+  /**
+   * Datos que el agente captura del cliente. OPCIONAL: los Specs previos no lo
+   * traen y siguen compilando exactamente igual (compatibilidad hacia atrás).
+   */
+  customerData?: CustomerDataConfig;
   metadata: SpecMetadata;
 }

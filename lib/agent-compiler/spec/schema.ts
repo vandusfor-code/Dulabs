@@ -16,6 +16,7 @@ import { z } from "zod";
 import type { ConditionOperator } from "@/lib/flow/types";
 import { CAPABILITY_KEYS } from "@/lib/agent-compiler/spec/capabilities";
 import { BUSINESS_TYPE_OTRO } from "@/lib/agent-compiler/spec/types";
+import { customerDataSchema } from "@/lib/customer-data";
 
 // Topes de tamaño (hardening Bloque 18). Ajustados para no rechazar Specs reales.
 const MAX_ID = 200;
@@ -204,6 +205,8 @@ export const businessAgentSpecSchema = z.object({
   }),
   scheduling: schedulingSchema,
   knowledge: knowledgeSchema,
+  // Opcional: los Specs previos no lo traen (compatibilidad hacia atrás).
+  customerData: customerDataSchema.optional(),
   metadata: metadataSchema,
 });
 

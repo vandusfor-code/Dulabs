@@ -40,6 +40,10 @@ export interface InMemoryOrchestratorStore extends FlowOrchestratorStore {
   listTransitions(): NodeTransitionRecord[];
   listEffects(): FlowEffectRow[];
   eventCount(): number;
+  /** Contactos (R3): custom_fields del contacto de una conversación, aislados por tenant. */
+  getContactCustomFields(tenantId: string, conv: ConversationKey): Record<string, unknown> | undefined;
+  /** Pre-siembra custom_fields de un contacto (simula un cliente conocido de una conversación anterior). */
+  seedContact(tenantId: string, conv: ConversationKey, customFields: Record<string, unknown>): void;
 }
 
 const k = (tenantId: string, id: string) => `${tenantId}::${id}`;
@@ -51,6 +55,10 @@ export function createInMemoryOrchestratorStore(): InMemoryOrchestratorStore {
   const events = new Set<string>();
   const effects = new Map<string, FlowEffectRow>();
   const transitions: NodeTransitionRecord[] = [];
+  // Contactos por (tenant, número, teléfono): mismo contrato que el store real
+  // (resolverOCrearContacto / actualizarCampoPersonalizado en clientes-conocidos.ts).
+  const contacts = new Map<string, Record<string, unknown>>();
+  const contactKey = (tenantId: string, c: ConversationKey) => `${tenantId}::${c.phoneNumberId}::${c.telefonoCliente}`;
 
   function activeFor(tenantId: string, conv: ConversationKey): FlowExecutionRow | null {
     for (const row of executions.values()) {
@@ -233,6 +241,22 @@ export function createInMemoryOrchestratorStore(): InMemoryOrchestratorStore {
       };
       effects.set(key, updated);
       return { ok: true, row: updated, alreadyResolved: false };
+    },
+
+    getContactCustomFields(tenantId, conv) {
+      return contacts.get(contactKey(tenantId, conv));
+    },
+    seedContact(tenantId, conv, customFields) {
+      contacts.set(contactKey(tenantId, conv), { ...customFields });
+    },
+    async resolveOrCreateContact(tenantId, conv) {
+      const key = contactKey(tenantId, conv);
+      if (!contacts.has(key)) contacts.set(key, {});
+      return { customFields: { ...contacts.get(key)! } };
+    },
+    async persistContactCustomFields(tenantId, conv, customFields) {
+      const key = contactKey(tenantId, conv);
+      contacts.set(key, { ...(contacts.get(key) ?? {}), ...customFields });
     },
 
     async recordNodeTransition(input) {
