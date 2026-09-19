@@ -373,6 +373,9 @@ lib/business-agent-services.test.ts
 # R6 -- cotización DETERMINISTA (parsing de ítems, resolución contra el catálogo real, matemática COP entera,
 # precio nulo, stock, ambigüedad) + validación de productos. Puro.
 lib/business-agent-quote.test.ts
+# R8 -- validador FINAL de publicación (gate del servidor + panel de revisión): cada capacidad exige lo que necesita
+# para funcionar de verdad; pedidos/cobros y transferencia sin disparador se bloquean. Puro.
+lib/business-agent-readiness.test.ts
 # R6 -- persistencia de productos: aislamiento por tenant (fake de Supabase con dos tenants).
 lib/business-agent-products-store.test.ts
 # R6 -- contrato del executor: calcular_cotizacion + catálogo con productos (tenant de la solicitud, params

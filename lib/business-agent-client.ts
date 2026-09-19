@@ -13,6 +13,7 @@ import type { CompilerDiagnostic } from "@/lib/agent-compiler/diagnostics";
 import type { CalendarConnectionPublic, NylasCalendar } from "@/lib/agent-compiler/calendar/types";
 import type { BusinessAgentService } from "@/lib/business-agent-services";
 import type { BusinessAgentProduct } from "@/lib/business-agent-products";
+import type { ReadinessReport } from "@/lib/business-agent-readiness";
 import type { BusinessAgentFaq } from "@/lib/business-agent-knowledge/faq";
 import type { KnowledgeDocumentRecord } from "@/lib/business-agent-knowledge/store";
 
@@ -116,6 +117,13 @@ export async function publishBusinessAgentDraft(
     method: "POST",
     headers: flowApiHeaders(params.accessToken, { json: true, adminTenantId: params.adminTenantId }),
     body: JSON.stringify({ flowVersionId: params.flowVersionId, expectedChecksum: params.expectedChecksum }),
+  });
+}
+
+/** R8 -- ¿puede funcionar este agente? (mismo validador que el gate de publicación del servidor). */
+export async function getBusinessAgentReadiness(params: AuthParams & { flowVersionId: string }): Promise<ClientResult<ReadinessReport>> {
+  return callApi(params.fetchImpl ?? fetch, `/api/business-agent/readiness?flowVersionId=${encodeURIComponent(params.flowVersionId)}`, {
+    headers: flowApiHeaders(params.accessToken, { adminTenantId: params.adminTenantId }),
   });
 }
 
