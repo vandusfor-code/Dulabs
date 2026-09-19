@@ -5,6 +5,7 @@
  */
 import type { NextRequest } from "next/server";
 import { requireFlowAccess } from "@/lib/flow/api-auth";
+import { respuestaSiLimiteTasaExcedido } from "@/lib/rate-limit";
 import { createSupabaseCalendarStore } from "@/lib/agent-compiler/calendar/calendar-store-supabase";
 import { createNylasOAuthClientFromEnv } from "@/lib/agent-compiler/calendar/nylas-oauth-client";
 import { createCalendarConnectionService } from "@/lib/agent-compiler/calendar/calendar-connection-service";
@@ -16,6 +17,11 @@ export async function POST(request: NextRequest) {
   const access = await requireFlowAccess(request, ["admin"], { allowAdminOverride: true });
   if (!access.ok) return access.response;
   const { supabase, miembro } = access.ctx;
+
+  // Rate limit por tenant: disconnect revoca en Nylas y borra la conexión.
+  const limite = await respuestaSiLimiteTasaExcedido(supabase, { recurso: "business_agent_calendar_disconnect", tenantId: miembro.tenantId, categoria: "escritura" });
+  if (limite) return limite;
+
   try {
     const store = createSupabaseCalendarStore(supabase);
     const nylas = createNylasOAuthClientFromEnv();
