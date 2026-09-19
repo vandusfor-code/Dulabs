@@ -12,6 +12,8 @@ import type { PreviewTurnResult, SimulationInputEvent } from "@/lib/agent-compil
 import type { CompilerDiagnostic } from "@/lib/agent-compiler/diagnostics";
 import type { CalendarConnectionPublic, NylasCalendar } from "@/lib/agent-compiler/calendar/types";
 import type { BusinessAgentService } from "@/lib/business-agent-services";
+import type { BusinessAgentFaq } from "@/lib/business-agent-knowledge/faq";
+import type { KnowledgeDocumentRecord } from "@/lib/business-agent-knowledge/store";
 
 export type FetchLike = typeof fetch;
 
@@ -261,6 +263,86 @@ export async function deleteBusinessAgentService(params: AuthParams & { id: stri
   return callApi(params.fetchImpl ?? fetch, `/api/business-agent/services/${encodeURIComponent(params.id)}`, {
     method: "DELETE",
     headers: flowApiHeaders(params.accessToken, { json: true, adminTenantId: params.adminTenantId }),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Conocimiento (R4): FAQ estructurada + documentos indexados. El agente los
+// RECUPERA por relevancia (nunca se inyectan completos en el prompt).
+// ---------------------------------------------------------------------------
+
+export interface KnowledgeOverview {
+  faqs: BusinessAgentFaq[];
+  documents: KnowledgeDocumentRecord[];
+  limits: { faqMax: number; docMax: number; docMaxBytes: number; faqQuestionMax: number; faqAnswerMax: number; extensions: string[] };
+}
+
+export interface FaqInput {
+  question: string;
+  answer: string;
+  active?: boolean;
+}
+
+export interface KnowledgeSearchResponse {
+  found: boolean;
+  emptyQuery: boolean;
+  hits: Array<{ source: "faq" | "documento"; title: string; content: string; coverage: number }>;
+}
+
+export async function getBusinessAgentKnowledge(params: AuthParams): Promise<ClientResult<KnowledgeOverview>> {
+  return callApi(params.fetchImpl ?? fetch, "/api/business-agent/knowledge", {
+    headers: flowApiHeaders(params.accessToken, { adminTenantId: params.adminTenantId }),
+  });
+}
+
+export async function createBusinessAgentFaq(params: AuthParams & { input: FaqInput }): Promise<ClientResult<{ faq: BusinessAgentFaq; warnings: string[] }>> {
+  return callApi(params.fetchImpl ?? fetch, "/api/business-agent/knowledge/faqs", {
+    method: "POST",
+    headers: flowApiHeaders(params.accessToken, { json: true, adminTenantId: params.adminTenantId }),
+    body: JSON.stringify(params.input),
+  });
+}
+
+export async function updateBusinessAgentFaq(params: AuthParams & { id: string; input: FaqInput }): Promise<ClientResult<{ faq: BusinessAgentFaq; warnings: string[] }>> {
+  return callApi(params.fetchImpl ?? fetch, `/api/business-agent/knowledge/faqs/${encodeURIComponent(params.id)}`, {
+    method: "PUT",
+    headers: flowApiHeaders(params.accessToken, { json: true, adminTenantId: params.adminTenantId }),
+    body: JSON.stringify(params.input),
+  });
+}
+
+export async function deleteBusinessAgentFaq(params: AuthParams & { id: string }): Promise<ClientResult<{ ok: true }>> {
+  return callApi(params.fetchImpl ?? fetch, `/api/business-agent/knowledge/faqs/${encodeURIComponent(params.id)}`, {
+    method: "DELETE",
+    headers: flowApiHeaders(params.accessToken, { adminTenantId: params.adminTenantId }),
+  });
+}
+
+/** Sube un documento (multipart): el servidor valida tamaño/tipo/firma y lo indexa. */
+export async function uploadBusinessAgentDocument(params: AuthParams & { file: File }): Promise<ClientResult<{ document: KnowledgeDocumentRecord }>> {
+  const form = new FormData();
+  form.append("archivo", params.file);
+  return callApi(params.fetchImpl ?? fetch, "/api/business-agent/knowledge/documents", {
+    method: "POST",
+    // Sin Content-Type manual: el navegador agrega el boundary del multipart.
+    headers: flowApiHeaders(params.accessToken, { adminTenantId: params.adminTenantId }),
+    body: form,
+  });
+}
+
+export async function deleteBusinessAgentDocument(params: AuthParams & { id: string }): Promise<ClientResult<{ ok: true }>> {
+  return callApi(params.fetchImpl ?? fetch, `/api/business-agent/knowledge/documents/${encodeURIComponent(params.id)}`, {
+    method: "DELETE",
+    headers: flowApiHeaders(params.accessToken, { adminTenantId: params.adminTenantId }),
+  });
+}
+
+/** "Probar una pregunta": la misma recuperación real que usa el agente. */
+export async function searchBusinessAgentKnowledge(params: AuthParams & { query: string }): Promise<ClientResult<KnowledgeSearchResponse>> {
+  return callApi(params.fetchImpl ?? fetch, "/api/business-agent/knowledge/search", {
+    method: "POST",
+    headers: flowApiHeaders(params.accessToken, { json: true, adminTenantId: params.adminTenantId }),
+    body: JSON.stringify({ query: params.query }),
   });
 }
 

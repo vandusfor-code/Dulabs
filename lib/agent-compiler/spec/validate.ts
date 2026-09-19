@@ -104,6 +104,11 @@ function validarReglasDeNegocio(spec: BusinessAgentSpec, issues: CompilerIssue[]
   }
 
   validarDatosDelCliente(spec, issues);
+
+  // (h) R4 -- transferir cuando no hay respuesta exige la capability humanHandoff.
+  if (spec.knowledge.onNoAnswer === "handoff" && !caps.humanHandoff) {
+    issues.push(issue("CAPABILITY_INCOMPATIBLE", "Transferir a una persona cuando no hay información requiere la capacidad 'Transferir a un humano'.", "knowledge.onNoAnswer"));
+  }
 }
 
 /**

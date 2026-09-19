@@ -139,14 +139,15 @@ describe("Agent Compiler — IR → FlowDefinition (Step 7.1)", () => {
     const f = flowDe(specBase({ capabilities: caps({ faq: true }), policies: { prohibitions: [{ id: "pm", description: "No mascotas en estudio", scope: "contextual", action: "BLOCK", response: "En estudio no se permiten mascotas.", priority: 5, condition: { match: "all", rules: [{ field: "session_type", operator: "equals", value: "estudio" }, { field: "message", operator: "contains", value: "mascota" }] } }], rules: [] } }));
     const startEdge = f.edges.find((e) => e.source === "start")!;
     assert.equal(nodo(f, startEdge.target)!.id, "welcome");
-    assert.equal(f.nodes.some((n) => n.type === "condition"), false, "sin condition nodes de guardrail en el grafo");
+    // (con faq, R4 agrega condiciones ESTRUCTURALES propias del flujo; ninguna replica un guardrail)
+    assert.equal(f.nodes.some((n) => n.type === "condition" && /mascota|session_type|"message"/.test(JSON.stringify(n.config))), false, "sin condition nodes de guardrail en el grafo");
   });
 
   it("8. §H la prohibición se conserva en la IR/Gate (buildGateRules), no en el grafo", () => {
     const spec = specBase({ capabilities: caps({ faq: true }), policies: { prohibitions: [{ id: "pm", description: "x", scope: "contextual", action: "BLOCK", response: "no", priority: 5, condition: { match: "all", rules: [{ field: "session_type", operator: "equals", value: "estudio" }, { field: "message", operator: "contains", value: "mascota" }] } }], rules: [] } });
     const ir = irDe(spec);
     const f = compileIRToFlowDefinition(ir, CTX);
-    assert.ok(f.success && f.flow.nodes.every((n) => n.type !== "condition"));
+    assert.ok(f.success && f.flow.nodes.every((n) => n.type !== "condition" || !/mascota|session_type|"message"/.test(JSON.stringify(n.config))));
     const gate = buildGateRules(ir).find((r) => r.id === "pm");
     assert.ok(gate && gate.evaluation === "deterministic" && gate.condition?.rules.length === 2 && gate.condition?.match === "all");
   });

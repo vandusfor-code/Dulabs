@@ -16,6 +16,7 @@ import {
   blankSpecForm,
   customerDataIssues,
   fieldsAgentWillAsk,
+  localFormIssues,
   normalizeFormForSave,
   recommendedBookingFields,
   slugifyFieldKey,
@@ -159,5 +160,46 @@ describe("Wizard form — Datos del cliente (R3)", () => {
     if (!flow.success) return assert.fail("flow: " + JSON.stringify(flow.diagnostics));
     assert.ok(flow.flow.nodes.some((n) => n.id === "q-data:nombreCliente"));
     assert.equal(flow.flow.nodes.some((n) => n.id === "q-data:telefonoCliente"), false, "el teléfono se toma de WhatsApp");
+  });
+});
+
+describe("Wizard form — Conocimiento (R4)", () => {
+  const t = (es: string) => es;
+
+  it("1. 'Transferir cuando no hay información' sin la capacidad de handoff es un problema local (espejo del servidor)", () => {
+    const base = { ...blankSpecForm(), identity: { ...blankSpecForm().identity, businessName: "N", agentName: "A", businessType: "Restaurante" } };
+    const conHandoff = { ...base, knowledge: { ...base.knowledge, onNoAnswer: "handoff" as const } };
+    assert.ok(localFormIssues(conHandoff, t).some((m) => /Transferir a un humano/.test(m)));
+    const ok = { ...conHandoff, capabilities: { ...conHandoff.capabilities, humanHandoff: true } };
+    assert.equal(localFormIssues(ok, t).some((m) => /Transferir a un humano/.test(m)), false);
+  });
+
+  it("2. normalizeFormForSave: el mensaje sin información vacío se quita; con espacios se recorta; sin cambios devuelve el MISMO objeto", () => {
+    const base = blankSpecForm();
+    const vacio = normalizeFormForSave({ ...base, knowledge: { ...base.knowledge, noAnswerMessage: "   " } });
+    assert.equal("noAnswerMessage" in vacio.knowledge, false);
+    const vacio2 = normalizeFormForSave({ ...base, knowledge: { ...base.knowledge, noAnswerMessage: "" } });
+    assert.equal("noAnswerMessage" in vacio2.knowledge, false);
+    const recortado = normalizeFormForSave({ ...base, knowledge: { ...base.knowledge, noAnswerMessage: "  No tengo ese dato.  " } });
+    assert.equal(recortado.knowledge.noAnswerMessage, "No tengo ese dato.");
+    assert.deepEqual(normalizeFormForSave(base), base, "sin nada que limpiar el contenido no cambia");
+    const viejo = { ...base, customerData: undefined };
+    assert.equal(normalizeFormForSave(viejo), viejo, "borrador previo a R3 sin mensaje: mismo objeto");
+    const limpio = { ...viejo, knowledge: { ...base.knowledge, noAnswerMessage: "Ya limpio." } };
+    assert.equal(normalizeFormForSave(limpio), limpio);
+  });
+
+  it("3. UI -> Spec -> compiler: 'Responder preguntas frecuentes' con política y mensaje compila a recuperación con ese mensaje", () => {
+    let form = blankSpecForm();
+    form = { ...form, identity: { ...form.identity, businessName: "Restaurante X", agentName: "Ana", businessType: "Restaurante" } };
+    form = { ...form, knowledge: { ...form.knowledge, onNoAnswer: "message", noAnswerMessage: "  Eso no lo sé; ¿algo más?  " } };
+    const spec: BusinessAgentSpec = { schemaVersion: "1.0.0", ...normalizeFormForSave(form), metadata: nuevaSpecMetadata(NOW) };
+    assert.equal(spec.capabilities.faq, true, "faq viene activada por defecto en el form en blanco");
+    const compiled = compileBusinessAgent(spec, CTX);
+    if (!compiled.success) return assert.fail("compile: " + JSON.stringify(compiled.diagnostics));
+    assert.equal(compiled.ir.knowledge.retrieval?.noAnswerMessage, "Eso no lo sé; ¿algo más?");
+    const flow = compileIRToFlowDefinition(compiled.ir, CTX);
+    if (!flow.success) return assert.fail("flow: " + JSON.stringify(flow.diagnostics));
+    assert.ok(flow.flow.nodes.some((n) => n.id === "act-faq"));
   });
 });

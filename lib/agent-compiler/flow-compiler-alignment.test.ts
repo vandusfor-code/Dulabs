@@ -67,7 +67,7 @@ function runtimeFor(s: BusinessAgentSpec, ai?: AiHandler, tenantId = TENANT) {
 const RETAIL = spec({ capabilities: caps({ faq: true, catalog: true, sales: true, leadCapture: true }), catalog: { source: "structured", useServices: true, useProducts: false, quoteBeforeQualification: false } });
 const SALON = spec({ capabilities: caps({ faq: true, catalog: true, sales: true, scheduling: true, humanHandoff: true }), catalog: { source: "structured", useServices: true, useProducts: false, quoteBeforeQualification: false }, scheduling: { enabled: true, provider: "internal", timezone: "America/Bogota", minNoticeMinutes: 60, cancellation: { allowed: true, minNoticeHours: 12 }, confirmation: { required: true, hoursBefore: 12 }, resources: [{ kind: "specialist", label: "Especialista", required: true }] } });
 // Catálogo sin QUALIFICATION (quoteBeforeQualification=true) ni leadCapture:
-// welcome -> q-need -> ai-info -> ai-catalog-propose ... (llega rápido al tool).
+// welcome -> q-need -> act-faq -> ai-catalog-propose ... (llega rápido al tool).
 const CATALOG_FAST = spec({ capabilities: caps({ faq: true, catalog: true }), catalog: { source: "structured", useServices: true, useProducts: false, quoteBeforeQualification: true } });
 
 describe("Step 7.1 — turn-taking multi-turno (A, B, I)", () => {
@@ -110,9 +110,11 @@ describe("Step 7.1 — propose_action -> action + tool security (C, E)", () => {
     const ai: AiHandler = (req) => (req.nodeId === "ai-catalog-propose" ? aiProposes("listar_catalogo_servicios") : aiResponds("ok"));
     const rt = runtimeFor(CATALOG_FAST, ai);
     await rt.turn("Hola", "w1");
-    await rt.turn("Quiero ver servicios", "w2"); // responde q-need -> ai-info -> ai-catalog-propose -> act-catalog
-    assert.equal(rt.framework.actionCalls().length, 1, "la ACTION de catálogo se ejecutó (autorizada)");
-    assert.equal(rt.framework.actionCalls()[0]!.nodeId, "act-catalog");
+    await rt.turn("Quiero ver servicios", "w2"); // responde q-need -> act-faq -> ai-catalog-propose -> act-catalog
+    // (act-faq = recuperación de conocimiento R4: acción fija del flujo, no una tool propuesta por la IA)
+    const tools = rt.framework.actionCalls().filter((c) => c.nodeId !== "act-faq");
+    assert.equal(tools.length, 1, "la ACTION de catálogo se ejecutó (autorizada)");
+    assert.equal(tools[0]!.nodeId, "act-catalog");
   });
 
   it("E. una tool FUERA de allowedTools se rechaza: la ACTION nunca se ejecuta", async () => {
@@ -120,7 +122,7 @@ describe("Step 7.1 — propose_action -> action + tool security (C, E)", () => {
     const rt = runtimeFor(CATALOG_FAST, ai);
     await rt.turn("Hola", "w1");
     await rt.turn("Quiero ver servicios", "w2");
-    assert.equal(rt.framework.actionCalls().length, 0, "tool no autorizada => la ACTION jamás corre");
+    assert.equal(rt.framework.actionCalls().filter((c) => c.nodeId !== "act-faq").length, 0, "tool no autorizada => la ACTION jamás corre");
   });
 });
 
@@ -151,7 +153,10 @@ describe("Step 7.1 — estructura (D, F, G, H, J)", () => {
   it("H. una prohibición del Gate NO se duplica como interceptor en el Flow", () => {
     const s = spec({ capabilities: caps({ faq: true }), policies: { prohibitions: [{ id: "pm", description: "x", scope: "contextual", action: "BLOCK", response: "no", priority: 5, condition: { match: "all", rules: [{ field: "message", operator: "contains", value: "mascota" }] } }], rules: [] } });
     const rt = runtimeFor(s);
-    assert.equal(rt.flow.nodes.some((n) => n.type === "condition"), false);
+    // Ninguna condición del flow replica la prohibición del Gate (ni su campo `message`
+    // ni su palabra clave): las únicas condiciones son las estructurales del propio flujo (R4).
+    assert.equal(rt.flow.nodes.some((n) => n.type === "condition" && JSON.stringify(n.config).includes("mascota")), false);
+    assert.equal(rt.flow.nodes.some((n) => n.type === "condition" && JSON.stringify(n.config).includes('"field":"message"')), false);
   });
 
   it("J. dos tenants con el mismo spec => grafos equivalentes salvo tenantId, sin estado compartido", () => {

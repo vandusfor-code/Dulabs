@@ -179,6 +179,9 @@ export const knowledgeSchema = z.object({
   documents: z
     .array(z.object({ id, filename: texto, textRef: z.string().max(MAX_TEXTO_LARGO).optional(), uploadedAt: texto }))
     .max(MAX_ARRAY_DOCS),
+  // R4: política cuando no hay información relevante (opcionales: Specs previos no los traen).
+  onNoAnswer: z.enum(["message", "handoff"]).optional(),
+  noAnswerMessage: z.string().trim().max(300).optional(),
 });
 
 export const metadataSchema = z.object({

@@ -369,3 +369,11 @@ lib/agent-compiler/calendar/nylas-generic-booking-customer-data.test.ts
 lib/flow/executors/internal-action-executor-datos-cliente.test.ts
 lib/agent-compiler/api/business-agent-api-customer-data.test.ts
 lib/agent-compiler/e2e/customer-data-e2e.test.ts
+# R4 -- Conocimiento del Business Agent (FAQ + documentos indexados, recuperación por
+# relevancia): tokenizador/chunker/ingesta (PDF real)/límites/aislamiento/borrado,
+# cliente, Spec->compiler (recuperación, política sin respuesta, bucle solo-FAQ) y E2E
+# de cadena completa por el runtime real (FAQ + PDF + servicios + agenda + datos). Sin red/DB.
+lib/business-agent-knowledge/knowledge.test.ts
+lib/business-agent-knowledge/client.test.ts
+lib/agent-compiler/knowledge-compiler.test.ts
+lib/agent-compiler/e2e/knowledge-e2e.test.ts

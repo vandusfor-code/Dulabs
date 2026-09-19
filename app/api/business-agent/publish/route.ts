@@ -17,6 +17,8 @@ import { createSupabaseBusinessAgentRegistryStore } from "@/lib/agent-compiler/r
 import { publishDraftVersion, isPlainObject } from "@/lib/agent-compiler/api/business-agent-api";
 import { apiError, apiOk } from "@/lib/agent-compiler/api/http";
 import { registrarAuditoriaAdmin } from "@/lib/auditoria-admin";
+import { hasUsableKnowledge } from "@/lib/business-agent-knowledge/service";
+import { createSupabaseKnowledgeStore } from "@/lib/business-agent-knowledge/store-supabase";
 
 export const runtime = "nodejs";
 
@@ -68,6 +70,20 @@ export async function POST(request: NextRequest) {
         return apiError(
           "MISSING_SERVICES",
           "Para publicar con catálogo o agendamiento necesitas al menos un servicio activo. Agrégalo en el paso Servicios.",
+          422,
+        );
+      }
+    }
+
+    // R4: con "Responder preguntas frecuentes" el agente debe tener conocimiento real
+    // (una FAQ activa o un documento ya procesado); si no, publicaría un agente que
+    // solo puede decir "no tengo información". Validación en el SERVIDOR.
+    if (version?.spec.capabilities.faq) {
+      const hayConocimiento = await hasUsableKnowledge(createSupabaseKnowledgeStore(supabase), miembro.tenantId);
+      if (!hayConocimiento) {
+        return apiError(
+          "MISSING_KNOWLEDGE",
+          "Para publicar con preguntas frecuentes necesitas al menos una pregunta activa o un documento procesado. Agrégalos en el paso Conocimiento.",
           422,
         );
       }

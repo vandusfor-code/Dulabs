@@ -181,7 +181,12 @@ export async function atenderMensajeConBusinessAgent(
       wamid,
       text: texto,
       commercialState,
-      baseConocimiento: cliente.base_conocimiento ?? undefined,
+      // R4: el Business Agent NO siembra `dulabs_clientes_config.base_conocimiento`
+      // (texto legacy, hasta 100 000 caracteres) en el bloque VARIABLES de cada llamada a
+      // la IA: ese era el antipatrón "todo el PDF en el prompt" (falla con documentos
+      // grandes, cuesta tokens en cada turno y diluye las reglas). El conocimiento del
+      // Business Agent se RECUPERA por relevancia (FAQ + documentos indexados, acción
+      // buscar_conocimiento) y solo llegan a la IA los fragmentos pertinentes.
     },
   );
 
