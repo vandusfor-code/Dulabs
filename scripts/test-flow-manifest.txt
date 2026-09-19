@@ -338,3 +338,8 @@ lib/agent-compiler/runtime/production/atender-business-agent.test.ts
 # deliberadamente FUERA de este manifiesto.
 lib/agent-compiler/api/business-agent-api.test.ts
 lib/agent-compiler/api/preview.test.ts
+# Bloque 15 (Calendario self-service, Nylas Hosted OAuth). Puro: store en
+# memoria + cliente Nylas OAuth fake, sin red. El adapter Supabase real
+# (calendar-store-supabase.ts) y el cliente Nylas real (nylas-oauth-client.ts)
+# quedan gateados por credenciales/infra real, fuera de este manifiesto.
+lib/agent-compiler/calendar/calendar-connection-service.test.ts

@@ -10,6 +10,7 @@ import type { AgentSummaryPublic, AgentVersionPublic } from "@/lib/agent-compile
 import type { AgentVersionSummary } from "@/lib/agent-compiler/registry/types";
 import type { PreviewTurnResult, SimulationInputEvent } from "@/lib/agent-compiler/api/preview";
 import type { CompilerDiagnostic } from "@/lib/agent-compiler/diagnostics";
+import type { CalendarConnectionPublic, NylasCalendar } from "@/lib/agent-compiler/calendar/types";
 
 export type FetchLike = typeof fetch;
 
@@ -168,6 +169,53 @@ export async function removeBlockedNumber(params: AuthParams & { phoneNumberId: 
     method: "DELETE",
     headers: flowApiHeaders(params.accessToken, { json: true, adminTenantId: params.adminTenantId }),
     body: JSON.stringify({ phoneNumberId: params.phoneNumberId, numero: params.numero }),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Bloque 15C — Calendario self-service (Nylas). El cliente sólo ve conceptos de
+// negocio: "conectar agenda", "elegir calendario". El grant_id JAMÁS llega acá
+// (la API devuelve la proyección pública). El tenant sale de la sesión.
+// ---------------------------------------------------------------------------
+
+export interface CalendarStatusResponse {
+  connection: CalendarConnectionPublic;
+  providerAvailable: boolean;
+}
+
+export async function getBusinessAgentCalendarStatus(params: AuthParams): Promise<ClientResult<CalendarStatusResponse>> {
+  return callApi(params.fetchImpl ?? fetch, "/api/business-agent/calendar", {
+    headers: flowApiHeaders(params.accessToken, { adminTenantId: params.adminTenantId }),
+  });
+}
+
+export async function startBusinessAgentCalendarConnect(params: AuthParams): Promise<ClientResult<{ authUrl: string }>> {
+  return callApi(params.fetchImpl ?? fetch, "/api/business-agent/calendar/connect", {
+    method: "POST",
+    headers: flowApiHeaders(params.accessToken, { json: true, adminTenantId: params.adminTenantId }),
+    body: JSON.stringify({}),
+  });
+}
+
+export async function listBusinessAgentCalendars(params: AuthParams): Promise<ClientResult<{ calendars: NylasCalendar[] }>> {
+  return callApi(params.fetchImpl ?? fetch, "/api/business-agent/calendar/calendars", {
+    headers: flowApiHeaders(params.accessToken, { adminTenantId: params.adminTenantId }),
+  });
+}
+
+export async function selectBusinessAgentCalendar(params: AuthParams & { calendarId: string }): Promise<ClientResult<{ ok: true }>> {
+  return callApi(params.fetchImpl ?? fetch, "/api/business-agent/calendar/select", {
+    method: "POST",
+    headers: flowApiHeaders(params.accessToken, { json: true, adminTenantId: params.adminTenantId }),
+    body: JSON.stringify({ calendarId: params.calendarId }),
+  });
+}
+
+export async function disconnectBusinessAgentCalendar(params: AuthParams): Promise<ClientResult<{ ok: true }>> {
+  return callApi(params.fetchImpl ?? fetch, "/api/business-agent/calendar/disconnect", {
+    method: "POST",
+    headers: flowApiHeaders(params.accessToken, { json: true, adminTenantId: params.adminTenantId }),
+    body: JSON.stringify({}),
   });
 }
 

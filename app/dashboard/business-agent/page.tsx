@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Bot, MessageSquareText, ShieldBan, UploadCloud } from "lucide-react";
+import { Bot, CalendarClock, MessageSquareText, ShieldBan, UploadCloud } from "lucide-react";
 import { PageHeader } from "@/components/dashboard/shell/ui";
 import { useDashboard } from "@/lib/dashboard-session";
 import { useI18n } from "@/lib/i18n";
@@ -10,6 +10,7 @@ import { BusinessAgentWizard } from "@/components/dashboard/business-agent/Wizar
 import { BusinessAgentPreview } from "@/components/dashboard/business-agent/BusinessAgentPreview";
 import { VersionsPanel } from "@/components/dashboard/business-agent/VersionsPanel";
 import { BlockedNumbers } from "@/components/dashboard/business-agent/BlockedNumbers";
+import { CalendarConnection } from "@/components/dashboard/business-agent/CalendarConnection";
 import {
   getCurrentBusinessAgent,
   listBusinessAgentVersions,
@@ -20,7 +21,13 @@ import type { AgentSummaryPublic } from "@/lib/agent-compiler/api/business-agent
 import type { AgentVersionSummary } from "@/lib/agent-compiler/registry/types";
 import type { CompilerDiagnostic } from "@/lib/agent-compiler/diagnostics";
 
-type Tab = "configurar" | "preview" | "publicar" | "numeros";
+type Tab = "configurar" | "agenda" | "preview" | "publicar" | "numeros";
+
+function initialTabFromUrl(): Tab {
+  if (typeof window === "undefined") return "configurar";
+  const value = new URLSearchParams(window.location.search).get("tab");
+  return value === "agenda" || value === "preview" || value === "publicar" || value === "numeros" ? value : "configurar";
+}
 
 function specToForm(spec: EditableBusinessAgentSpecForm): EditableBusinessAgentSpecForm {
   // El Spec completo del servidor ya contiene las 8 secciones editables --
@@ -32,7 +39,7 @@ function specToForm(spec: EditableBusinessAgentSpecForm): EditableBusinessAgentS
 export default function BusinessAgentPage() {
   const { t } = useI18n();
   const { session, negocios, rol } = useDashboard();
-  const [tab, setTab] = useState<Tab>("configurar");
+  const [tab, setTab] = useState<Tab>(initialTabFromUrl);
   const [agent, setAgent] = useState<AgentSummaryPublic | null>(null);
   const [versions, setVersions] = useState<AgentVersionSummary[]>([]);
   const [form, setForm] = useState<EditableBusinessAgentSpecForm>(blankSpecForm());
@@ -143,6 +150,7 @@ export default function BusinessAgentPage() {
 
   const TABS: { key: Tab; icon: typeof Bot; es: string; en: string }[] = [
     { key: "configurar", icon: Bot, es: "Configurar", en: "Configure" },
+    { key: "agenda", icon: CalendarClock, es: "Calendario", en: "Calendar" },
     { key: "preview", icon: MessageSquareText, es: "Vista previa", en: "Preview" },
     { key: "publicar", icon: UploadCloud, es: "Publicar y versiones", en: "Publish & versions" },
     { key: "numeros", icon: ShieldBan, es: "Números excluidos", en: "Blocked numbers" },
@@ -169,6 +177,8 @@ export default function BusinessAgentPage() {
         {tab === "configurar" && (
           <BusinessAgentWizard form={form} onChange={setForm} diagnostics={diagnostics} saving={saving} onSaveDraft={guardarBorrador} saveError={saveError} />
         )}
+
+        {tab === "agenda" && <CalendarConnection />}
 
         {tab === "preview" &&
           (previewVersionId ? (

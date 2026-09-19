@@ -302,10 +302,16 @@ function StepAgendamiento({ form, update }: { form: EditableBusinessAgentSpecFor
   return (
     <SectionCard title={t("Agendamiento", "Scheduling")} description={t("Contra tu calendario real -- el agente nunca inventa disponibilidad.", "Against your real calendar -- the agent never invents availability.")}>
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label={t("Proveedor de calendario", "Calendar provider")}>
+        <Field
+          label={t("Proveedor de calendario", "Calendar provider")}
+          hint={t(
+            "Nylas/Google Calendar: la conexión ya funciona (pestaña Calendario), pero el agendamiento automático contra ese calendario todavía está en desarrollo -- usa 'Interno' para agendar citas reales hoy.",
+            "Nylas/Google Calendar: the connection already works (Calendar tab), but automatic booking against that calendar is still in development -- use 'Internal' to book real appointments today.",
+          )}
+        >
           <select className={inputCls} value={s.provider} onChange={(e) => update("scheduling", { ...s, provider: e.target.value as typeof s.provider })}>
-            <option value="internal">{t("Interno (DuLabs)", "Internal (DuLabs)")}</option>
-            <option value="nylas">Nylas</option>
+            <option value="internal">{t("Interno (DuLabs) -- recomendado", "Internal (DuLabs) -- recommended")}</option>
+            <option value="nylas">Nylas {t("(agendamiento en desarrollo)", "(booking in development)")}</option>
             <option value="google_calendar">Google Calendar {t("(próximamente)", "(coming soon)")}</option>
           </select>
         </Field>
