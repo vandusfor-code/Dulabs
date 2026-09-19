@@ -334,6 +334,13 @@ const actionNodeConfigSchema = z.discriminatedUnion("actionType", [
     semanticTag: semanticTagSchema,
     params: z.record(z.string(), z.string()).optional(),
   }),
+  // R4 (Business Agent, autorizado) -- recuperación de conocimiento. params
+  // estáticos opcionales (p. ej. `fuentes`); el tenant sale de request.tenantId.
+  z.object({
+    actionType: z.literal("buscar_conocimiento"),
+    semanticTag: semanticTagSchema,
+    params: z.record(z.string(), z.string()).optional(),
+  }),
   z.object({
     actionType: z.literal("webhook_http"),
     semanticTag: semanticTagSchema,

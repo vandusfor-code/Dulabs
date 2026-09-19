@@ -30,6 +30,7 @@ import {
 } from "@/lib/agent-compiler/ir";
 import { hasErrors, type CompilerDiagnostic } from "@/lib/agent-compiler/diagnostics";
 import { askableFields, toCompiledFields } from "@/lib/customer-data";
+import { DEFAULT_NO_ANSWER_MESSAGE, KNOWLEDGE_SOURCES } from "@/lib/business-agent-knowledge/limits";
 
 export type { CompilerContext } from "@/lib/agent-compiler/semantic-analysis";
 
@@ -79,7 +80,7 @@ function activarEstados(spec: BusinessAgentSpec): CompiledState[] {
     push("IDENTIFICATION", ["scheduling"], [], "Captura de los datos del cliente necesarios para la reserva.");
   }
   if (caps.sales || (caps.catalog && !spec.catalog.quoteBeforeQualification)) push("QUALIFICATION", caps.sales ? ["sales"] : ["catalog"], [], "Calificación antes de cotizar.");
-  if (caps.faq) push("INFORMATION", ["faq"], [], "Respuesta a preguntas frecuentes (conocimiento secundario).");
+  if (caps.faq) push("INFORMATION", ["faq"], CAPABILITY_BACKING.faq.actions.slice(), "Respuesta a preguntas frecuentes con recuperación de conocimiento (FAQ + documentos) del tenant.");
   if (caps.catalog) push("CATALOG", ["catalog"], ["listar_catalogo_servicios", "resolver_servicio_catalogo", "listar_profesionales_servicio"], "Presentación del catálogo desde datos estructurados.");
   if (caps.catalog && caps.sales) push("QUOTING", ["catalog", "sales"], ["consultar_disponibilidad_catalogo"], "Cotización con precios autoritativos (nunca del prompt).");
   if (caps.scheduling) push("BOOKING", ["scheduling"], CAPABILITY_BACKING.scheduling.actions.slice(), "Agendamiento contra el Runtime de disponibilidad.");
@@ -191,7 +192,19 @@ function construirIR(spec: BusinessAgentSpec, context: CompilerContext): Compile
     handoff,
     scheduling,
     ...(camposCompilados.length > 0 ? { customerData: { fields: camposCompilados } } : {}),
-    knowledge: { authority: "secondary", documentIds: spec.knowledge.documents.map((d) => d.id) },
+    knowledge: {
+      authority: "secondary",
+      documentIds: spec.knowledge.documents.map((d) => d.id),
+      ...(caps.faq
+        ? {
+            retrieval: {
+              sources: [...KNOWLEDGE_SOURCES],
+              onNoAnswer: spec.knowledge.onNoAnswer ?? "message",
+              noAnswerMessage: spec.knowledge.noAnswerMessage?.trim() || DEFAULT_NO_ANSWER_MESSAGE,
+            },
+          }
+        : {}),
+    },
     provenance,
   };
   // Checksum determinista sobre el contenido lógico (sin el propio checksum).

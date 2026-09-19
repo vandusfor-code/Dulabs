@@ -124,6 +124,10 @@ const INTERNAL_ACTION_TYPES = new Set([
   // InternalActionExecutor vía el camino real (solo funcionaba en tests que
   // llaman al executor directo).
   "get_contact",
+  // R4 (Business Agent, autorizado) -- registrada DESDE EL PRIMER COMMIT (mismo
+  // patrón de bug documentado arriba varias veces): acción nativa de solo
+  // lectura sobre las tablas de conocimiento del tenant, sin integración externa.
+  "buscar_conocimiento",
   // FASE F8.1 (Flow Engine <-> WhatsApp Cloud API, autorizado) -- MISMO
   // patrón de bug ya documentado arriba varias veces (F7 Bloque 2,
   // etiquetar_conversacion): esta acción existe y funciona en

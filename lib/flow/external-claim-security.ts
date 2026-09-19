@@ -135,6 +135,10 @@ const SOURCE_TO_ACTION: Record<string, ActionNodeConfig> = {
   // verifiesOnSuccess/outputVariables declarados en action-capabilities.ts
   // se otorguen en runtime.
   crear_cita_nylas_generico: { actionType: "crear_cita_nylas_generico", params: {} },
+  // R4 (Business Agent, autorizado) -- solo permite reconocer el source real que
+  // produce InternalActionExecutor. No declara capabilities (no verifica hechos
+  // externos): es información del propio negocio, no una operación.
+  buscar_conocimiento: { actionType: "buscar_conocimiento", params: {} },
 };
 
 const DOMAIN_CAPABILITY_RULES: Array<{ pattern: RegExp; capabilities: AssertionCapability[] }> = [

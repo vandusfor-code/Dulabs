@@ -43,6 +43,11 @@ import {
 import { resolverEscenario, type ResolverEscenarioDeps } from "@/lib/bot-escenarios/resolver";
 import { nombreConocido, leerContactoActual, recordarNombreCliente } from "@/lib/clientes-conocidos";
 import { parseCustomerFieldsJson } from "@/lib/customer-data";
+// R4 (Business Agent, autorizado) -- recuperación de conocimiento por tenant.
+import { buscarConocimiento } from "@/lib/business-agent-knowledge/retrieval";
+import { KNOWLEDGE_SOURCES, type KnowledgeSource } from "@/lib/business-agent-knowledge/limits";
+import { createSupabaseKnowledgeStore } from "@/lib/business-agent-knowledge/store-supabase";
+import type { KnowledgeStore } from "@/lib/business-agent-knowledge/store";
 import {
   agregarEtiquetaAConversacion,
   quitarEtiquetaDeConversacion,
@@ -165,6 +170,8 @@ export interface InternalActionDeps {
   // El store de calendario del Bloque 15 (tenant-scoped, grant_id nunca
   // expuesto) -- NUNCA el resolver hardcodeado de AMORE (resolverNylasGrantIdParaTenant).
   createBusinessAgentCalendarStore?: (supabase: SupabaseClient) => CalendarConnectionStore;
+  // R4 (conocimiento, autorizado) -- mismo criterio: real por default, fake en tests.
+  createKnowledgeStore?: (supabase: SupabaseClient) => Pick<KnowledgeStore, "search">;
   // R3 (datos del cliente, autorizado) -- mismo criterio: real por default,
   // spy en tests. Guarda el nombre/correo REALES del contacto tras una reserva.
   recordarNombreCliente?: typeof recordarNombreCliente;
@@ -223,6 +230,8 @@ const OPERATION_CLASS: Partial<Record<string, InternalActionOperationClass>> = {
   crear_cita_nylas_generico: "CRITICAL",
   // FASE F7.3 (Contacto + Tags + IA, autorizado) -- solo lectura.
   get_contact: "READ",
+  // R4 (Business Agent, autorizado) -- solo lectura del conocimiento del tenant.
+  buscar_conocimiento: "READ",
   // FASE F8.1 (Flow Engine <-> WhatsApp Cloud API, autorizado) -- envía un
   // mensaje real e irreversible a la clienta, mismo nivel que
   // agendar_cita_marketplace/crear_cita_nylas.
@@ -414,6 +423,8 @@ export class InternalActionExecutor implements EffectExecutor {
         return this.crearCitaNylasGenericoAction(request, params, signal);
       case "get_contact":
         return this.getContactAction(request, signal);
+      case "buscar_conocimiento":
+        return this.buscarConocimientoAction(request, params, signal);
       case "enviar_plantilla":
         return this.enviarPlantillaAction(request, action, signal);
       default:
@@ -2730,6 +2741,54 @@ export class InternalActionExecutor implements EffectExecutor {
       rawResult: data,
       externalReference: `cita_nylas_generico:${resultado.citaId}`,
       metadata: { operationClass: OPERATION_CLASS.crear_cita_nylas_generico },
+    };
+  }
+
+  /**
+   * R4 (Business Agent, autorizado) -- recuperación de conocimiento. AUTORIDAD
+   * del backend: el tenant sale de request.tenantId (nunca del payload/IA), las
+   * fuentes de `params.fuentes` (estático del nodo, que gana sobre el payload por
+   * mergeParams) y los límites de KNOWLEDGE_LIMITS (no configurables por la IA).
+   * La consulta es el mensaje del CLIENTE (user_request = el más reciente; en el
+   * primer mensaje directo, __firstMessageText). Devuelve solo fragmentos
+   * relevantes dentro de un presupuesto de caracteres; si nada es relevante,
+   * `conocimientoEncontrado:false` y el flujo NO invoca a la IA (no inventa).
+   */
+  private async buscarConocimientoAction(
+    request: EffectDispatchRequest,
+    params: Record<string, string>,
+    signal?: AbortSignal,
+  ): Promise<EffectDispatchResult> {
+    assertNotAborted(signal);
+    const query = params.user_request?.trim() || params.__firstMessageText?.trim() || "";
+    const fuentes = (params.fuentes ?? "")
+      .split(",")
+      .map((f) => f.trim())
+      .filter((f): f is KnowledgeSource => (KNOWLEDGE_SOURCES as readonly string[]).includes(f));
+
+    let resultado;
+    try {
+      const store = (this.deps.createKnowledgeStore ?? createSupabaseKnowledgeStore)(this.deps.supabase);
+      resultado = await buscarConocimiento(store, { tenantId: request.tenantId, query, sources: fuentes.length > 0 ? fuentes : undefined });
+    } catch {
+      return { success: false, classification: EFFECT_RESULT_CLASSIFICATIONS.RETRYABLE, error: "conocimiento_no_disponible" };
+    }
+    assertNotAborted(signal);
+
+    const data = {
+      conocimientoEncontrado: resultado.found,
+      conocimientoTexto: resultado.text,
+      cantidadConocimiento: resultado.hits.length,
+      consultaVacia: resultado.emptyQuery,
+      effectId: request.effectId,
+    };
+    return {
+      success: true,
+      classification: EFFECT_RESULT_CLASSIFICATIONS.SUCCESS,
+      data,
+      appliedResult: data,
+      rawResult: data,
+      metadata: { operationClass: OPERATION_CLASS.buscar_conocimiento },
     };
   }
 }

@@ -203,6 +203,9 @@ export function localFormIssues(form: EditableBusinessAgentSpecForm, t: (es: str
     issues.push(t("Hay reglas de transferencia a humano pero 'Transferir a humano' está apagada.", "There are human-transfer rules but 'Human handoff' is off."));
   }
   issues.push(...customerDataIssues(form, t));
+  if (form.knowledge.onNoAnswer === "handoff" && !form.capabilities.humanHandoff) {
+    issues.push(t("'Transferir cuando no hay información' requiere 'Transferir a un humano'.", "'Transfer when there is no information' requires 'Human handoff'."));
+  }
   return issues;
 }
 
@@ -238,7 +241,19 @@ export function fieldsAgentWillAsk(form: EditableBusinessAgentSpecForm): Custome
  * intermedios (opciones vacías, textos en blanco) que el schema estricto rechazaría.
  * Función PURA -- no muta el form original.
  */
-export function normalizeFormForSave(form: EditableBusinessAgentSpecForm): EditableBusinessAgentSpecForm {
+export function normalizeFormForSave(input: EditableBusinessAgentSpecForm): EditableBusinessAgentSpecForm {
+  // R4: un mensaje "sin información" vacío o con espacios se limpia (vacío = el mensaje estándar del sistema).
+  let form = input;
+  const bruto = input.knowledge.noAnswerMessage;
+  if (bruto !== undefined && bruto !== bruto.trim()) {
+    const { noAnswerMessage: _omit, ...resto } = input.knowledge;
+    void _omit;
+    form = { ...input, knowledge: bruto.trim() ? { ...resto, noAnswerMessage: bruto.trim() } : resto };
+  } else if (bruto === "") {
+    const { noAnswerMessage: _omit, ...resto } = input.knowledge;
+    void _omit;
+    form = { ...input, knowledge: resto };
+  }
   const campos = form.customerData?.fields;
   if (!campos) return form;
   const limpios: CustomerField[] = campos.map((f) => {

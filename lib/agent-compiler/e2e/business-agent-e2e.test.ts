@@ -184,7 +184,7 @@ describe("Bloque G — E2E cadena completa (Spec -> compile -> publish -> resolv
     const ai: LegacyHandler = (req) => (req.nodeId === "ai-catalog-propose" ? aiProposes("listar_catalogo_servicios") : aiResponds("ok"));
     const h = harnessFor(s, ai);
     await h.turn("Hola", "w1");
-    await h.turn("quiero ver servicios", "w2"); // q-need -> ai-info -> ai-catalog-propose -> act-catalog
+    await h.turn("quiero ver servicios", "w2"); // q-need -> act-faq -> ai-catalog-propose -> act-catalog
     assert.equal(h.framework.actionCalls().some((c) => c.nodeId === "act-catalog"), true, "la ACTION de catálogo se ejecutó (autorizada)");
   });
 
@@ -194,7 +194,8 @@ describe("Bloque G — E2E cadena completa (Spec -> compile -> publish -> resolv
     const h = harnessFor(s, ai);
     await h.turn("Hola", "w1");
     await h.turn("quiero ver servicios", "w2");
-    assert.equal(h.framework.actionCalls().length, 0, "tool fuera de allowedTools => rechazada, ACTION jamás corre");
+    // (act-faq = recuperación de conocimiento R4, acción fija del flujo -- no una tool propuesta por la IA)
+    assert.equal(h.framework.actionCalls().filter((c) => c.nodeId !== "act-faq").length, 0, "tool fuera de allowedTools => rechazada, ACTION jamás corre");
   });
 
   it("20-22. scheduling: el agente publicado (provider internal) cablea BOOKING con acción crítica + rama failure->human", async () => {

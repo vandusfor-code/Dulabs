@@ -290,6 +290,8 @@ describe("Business Agent Authoring API — Bloque 12 (núcleo)", () => {
       "consultar_disponibilidad_especialista", "listar_horarios_disponibles_especialista", "resolver_seleccion_horario",
       "agendar_cita_especialista", "cancelar_cita_especialista", "mover_cita_especialista", "buscar_disponibilidad_nylas", "crear_cita_nylas",
       "transferir_soporte",
+      // R4: recuperación de conocimiento (capability faq) -- acción real de solo lectura.
+      "buscar_conocimiento",
     ]);
     for (const actionType of flowActionTypes) assert.ok(ACCIONES_REALES_CONOCIDAS.has(actionType), `actionType inesperado: ${actionType}`);
   });

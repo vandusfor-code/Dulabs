@@ -8,6 +8,7 @@
 // valida la IR + el análisis semántico.
 
 import type { FlowActionType } from "@/lib/flow/types";
+import type { KnowledgeSource } from "@/lib/business-agent-knowledge/limits";
 import type { CapabilityKey } from "@/lib/agent-compiler/spec/capabilities";
 import type {
   AgentIdentity,
@@ -15,6 +16,7 @@ import type {
   CustomerField,
   HandoffAction,
   HandoffTrigger,
+  KnowledgeNoAnswerPolicy,
   PolicyCondition,
   ProhibitionAction,
   ProhibitionScope,
@@ -129,6 +131,16 @@ export interface CustomerDataIR {
 export interface KnowledgeBindingIR {
   authority: "secondary";
   documentIds: string[];
+  /**
+   * R4 -- recuperación real de conocimiento (solo con la capability faq). El flow
+   * compiler la traduce a: buscar_conocimiento -> [hay resultados] respuesta de
+   * la IA con SOLO esos fragmentos | [no hay] mensaje fijo o transferencia.
+   */
+  retrieval?: {
+    sources: KnowledgeSource[];
+    onNoAnswer: KnowledgeNoAnswerPolicy;
+    noAnswerMessage: string;
+  };
 }
 
 /** Personalidad como parámetros de comportamiento (no un prompt gigante). */

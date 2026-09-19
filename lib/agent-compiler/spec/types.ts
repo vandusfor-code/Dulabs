@@ -201,10 +201,23 @@ export interface KnowledgeDocument {
   uploadedAt: string;
 }
 
+/** Qué hace el agente cuando NO encuentra información relevante (nunca inventa). */
+export type KnowledgeNoAnswerPolicy = "message" | "handoff";
+
 export interface KnowledgeConfig {
   /** Literal fijo: el conocimiento no estructurado SIEMPRE es secundario. */
   authority: "secondary";
   documents: KnowledgeDocument[];
+  /**
+   * R4 -- política sin respuesta. "message" (default): responde el mensaje fijo y
+   * sigue; "handoff": transfiere a una persona (requiere la capability
+   * humanHandoff). Opcional: los Specs previos no lo traen (= "message").
+   * FAQ y documentos NO viven en el Spec: son datos por tenant (dulabs_ba_faqs /
+   * dulabs_ba_knowledge_*) editables sin publicar una versión nueva.
+   */
+  onNoAnswer?: KnowledgeNoAnswerPolicy;
+  /** Mensaje fijo cuando no hay información (≤300). Vacío = el estándar del sistema. */
+  noAnswerMessage?: string;
 }
 
 // --- 9. CUSTOMER DATA (datos que el agente captura del cliente) -------------

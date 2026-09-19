@@ -38,7 +38,9 @@ export interface CapabilityBacking {
  * porque hoy NO existe una acción de Runtime para tomar pedidos o cobrar.
  */
 export const CAPABILITY_BACKING: Record<CapabilityKey, CapabilityBacking> = {
-  faq: { available: true, actions: [], conversationalOnly: true },
+  // R4: FAQ/conocimiento = recuperación REAL (FAQ estructurada + documentos indexados),
+  // ya no solo conversacional: la acción busca en las tablas de conocimiento del tenant.
+  faq: { available: true, actions: ["buscar_conocimiento"] },
   sales: { available: true, actions: [], conversationalOnly: true, requires: ["catalog"] },
   catalog: {
     available: true,

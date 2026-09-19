@@ -302,7 +302,11 @@ export type FlowActionType =
   // ESTA ejecución (tenant + phone_number_id + telefono_cliente de
   // request.conversation, nunca elegido por la IA), ver
   // lib/flow/executors/internal-action-executor.ts. Solo lectura.
-  | "get_contact";
+  | "get_contact"
+  // R4 (Business Agent, autorizado) -- recuperación de conocimiento (FAQ +
+  // documentos indexados) del tenant. Solo lectura; el tenant sale de
+  // request.tenantId (nunca del payload/IA). Ver lib/business-agent-knowledge/.
+  | "buscar_conocimiento";
 
 /** Params genéricos mapeados desde variables en runtime. */
 export type ActionParams = Record<string, string>;
@@ -404,7 +408,8 @@ export interface SimpleActionConfig extends ActionSemanticTag {
     | "buscar_disponibilidad_nylas"
     | "crear_cita_nylas"
     | "crear_cita_nylas_generico"
-    | "get_contact";
+    | "get_contact"
+    | "buscar_conocimiento";
   params?: ActionParams;
 }
 

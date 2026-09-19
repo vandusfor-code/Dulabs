@@ -18,12 +18,13 @@ import { CAPABILITY_KEYS, type CapabilityKey } from "@/lib/agent-compiler/spec/c
 import { ServicesModule } from "@/components/dashboard/business-agent/ServicesModule";
 import { BusinessHoursModule } from "@/components/dashboard/business-agent/BusinessHoursModule";
 import { CustomerDataModule } from "@/components/dashboard/business-agent/CustomerDataModule";
+import { KnowledgeModule } from "@/components/dashboard/business-agent/KnowledgeModule";
 import type { HandoffTriggerKind, ProhibitionAction, RuleKind } from "@/lib/agent-compiler/spec/types";
 import { actionBtn, Field, inputCls, IssuesList, primaryBtn, SectionCard, ToggleRow } from "@/components/dashboard/business-agent/ui";
 import type { CompilerDiagnostic } from "@/lib/agent-compiler/diagnostics";
 
 const CAPABILITY_LABELS: Record<CapabilityKey, { es: string; en: string; hintEs: string; hintEn: string }> = {
-  faq: { es: "Responder preguntas frecuentes", en: "Answer FAQs", hintEs: "Usa la base de conocimiento como apoyo (nunca como autoridad de precios).", hintEn: "Uses the knowledge base as support (never as pricing authority)." },
+  faq: { es: "Responder preguntas frecuentes", en: "Answer FAQs", hintEs: "Con tus preguntas frecuentes y documentos: busca lo relevante y nunca inventa.", hintEn: "With your FAQs and documents: looks up what is relevant and never makes things up." },
   sales: { es: "Cotizar / vender", en: "Quote / sell", hintEs: "Requiere Catálogo activo.", hintEn: "Requires Catalog enabled." },
   catalog: { es: "Mostrar catálogo", en: "Show catalog", hintEs: "Servicios/productos reales, nunca inventados por el modelo.", hintEn: "Real services/products, never invented by the model." },
   leadCapture: { es: "Captar datos del cliente", en: "Capture customer data", hintEs: "Nombre, teléfono, necesidad.", hintEn: "Name, phone, need." },
@@ -55,7 +56,7 @@ const HANDOFF_TRIGGERS: { value: HandoffTriggerKind; es: string; en: string }[] 
   { value: "intent", es: "Intención detectada", en: "Detected intent" },
 ];
 
-export type WizardStep = "tipo" | "personalidad" | "capacidades" | "servicios" | "agendamiento" | "horarios" | "datos" | "reglas" | "handoff" | "revisar";
+export type WizardStep = "tipo" | "personalidad" | "capacidades" | "servicios" | "agendamiento" | "horarios" | "datos" | "conocimiento" | "reglas" | "handoff" | "revisar";
 
 export interface WizardProps {
   form: EditableBusinessAgentSpecForm;
@@ -84,9 +85,11 @@ export function BusinessAgentWizard({ form, onChange, diagnostics, saving, onSav
     if (form.capabilities.scheduling) steps.push("horarios");
     // Datos del cliente (R3): módulo dinámico -- aparece si el agente capta datos o agenda.
     if (form.capabilities.leadCapture || form.capabilities.scheduling) steps.push("datos");
+    // Conocimiento (R4): módulo dinámico -- aparece con "Responder preguntas frecuentes".
+    if (form.capabilities.faq) steps.push("conocimiento");
     steps.push("reglas", "handoff", "revisar");
     return steps;
-  }, [form.capabilities.catalog, form.capabilities.scheduling, form.capabilities.leadCapture]);
+  }, [form.capabilities.catalog, form.capabilities.scheduling, form.capabilities.leadCapture, form.capabilities.faq]);
   const stepIndex = Math.max(0, stepOrder.indexOf(step));
   useEffect(() => {
     // Si el paso actual dejó de existir (se desactivó su capacidad), vuelve a uno válido.
@@ -139,6 +142,7 @@ export function BusinessAgentWizard({ form, onChange, diagnostics, saving, onSav
         {step === "servicios" && <ServicesModule />}
         {step === "horarios" && <BusinessHoursModule form={form} onChange={onChange} />}
         {step === "datos" && <CustomerDataModule form={form} onChange={onChange} />}
+        {step === "conocimiento" && <KnowledgeModule form={form} onChange={onChange} />}
         {step === "reglas" && <StepReglas form={form} update={update} />}
         {step === "handoff" && <StepHandoff form={form} update={update} />}
         {step === "revisar" && (
@@ -185,6 +189,7 @@ function STEP_LABEL(s: WizardStep, t: (es: string, en: string) => string): strin
     servicios: t("Servicios", "Services"),
     horarios: t("Horarios", "Business hours"),
     datos: t("Datos del cliente", "Customer data"),
+    conocimiento: t("Conocimiento", "Knowledge"),
     reglas: t("Reglas", "Rules"),
     handoff: t("Transferencia", "Handoff"),
     revisar: t("Revisar y guardar", "Review & save"),

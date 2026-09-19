@@ -307,6 +307,13 @@ const BY_ACTION_TYPE: Partial<Record<FlowActionType, ActionCapabilitySpec>> = {
     outputVariables: ["citaId"],
     requiresFailureBranch: true,
   },
+  // R4 (Business Agent, autorizado) -- recuperación de conocimiento: solo
+  // lectura, no verifica hechos externos (sin verifiesOnSuccess), así que nunca
+  // puede usarse para colar una afirmación tipo "cita confirmada".
+  buscar_conocimiento: {
+    actionType: "buscar_conocimiento",
+    criticality: "standard",
+  },
 };
 
 /** Specs por semanticTag de webhook (prioridad sobre actionType genérico). */
