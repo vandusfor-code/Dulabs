@@ -163,4 +163,55 @@ describe("BusinessAgentSpec — validación y versionado", () => {
     assert.equal(r2.valid, false);
     assert.ok(r2.issues.some((i) => i.code === "SPEC_REFERENCE_INVALID"));
   });
+
+  // Bloque 18 (hardening de payload/costo): topes de tamaño en strings y arrays.
+  it("13. hardening: un string por encima del tope (description) se rechaza", () => {
+    const s = clon(specValido());
+    s.identity.description = "x".repeat(4001); // > MAX_TEXTO_LARGO
+    const r = validateBusinessAgentSpec(s);
+    assert.equal(r.valid, false);
+    assert.ok(r.issues.some((i) => i.code === "SPEC_SCHEMA_INVALID"));
+  });
+
+  it("14. hardening: un array por encima del tope (resources) se rechaza", () => {
+    const s = clon(specValido());
+    s.scheduling.resources = Array.from({ length: 51 }, (_, i) => ({ kind: "specialist", label: `R${i}`, required: false }));
+    const r = validateBusinessAgentSpec(s);
+    assert.equal(r.valid, false);
+    assert.ok(r.issues.some((i) => i.code === "SPEC_SCHEMA_INVALID"));
+  });
+
+  it("15. hardening: contenido dentro de los topes generosos sigue siendo válido (no rechaza Specs reales)", () => {
+    const s = clon(specValido());
+    s.identity.description = "x".repeat(4000); // == MAX_TEXTO_LARGO
+    s.identity.businessName = "y".repeat(2000); // == MAX_TEXTO
+    const r = validateBusinessAgentSpec(s);
+    assert.equal(r.valid, true, JSON.stringify(r.issues));
+  });
+
+  // Tipo de negocio (dropdown + "Otro"). businessType es opcional en el contrato
+  // (compatibilidad con Specs previos, ver test 1 que no lo trae).
+  it("16. tipo de negocio: una opción normal es válida", () => {
+    const s = clon(specValido());
+    s.identity.businessType = "Salón de belleza / Uñas";
+    const r = validateBusinessAgentSpec(s);
+    assert.equal(r.valid, true, JSON.stringify(r.issues));
+  });
+
+  it("17. tipo de negocio: 'Otro' sin texto libre se rechaza", () => {
+    const s = clon(specValido());
+    s.identity.businessType = "Otro";
+    s.identity.businessTypeCustom = ""; // vacío == no especificado
+    const r = validateBusinessAgentSpec(s);
+    assert.equal(r.valid, false);
+    assert.ok(r.issues.some((i) => i.code === "SPEC_SCHEMA_INVALID"));
+  });
+
+  it("18. tipo de negocio: 'Otro' con texto libre es válido", () => {
+    const s = clon(specValido());
+    s.identity.businessType = "Otro";
+    s.identity.businessTypeCustom = "Taller de reparación de celulares";
+    const r = validateBusinessAgentSpec(s);
+    assert.equal(r.valid, true, JSON.stringify(r.issues));
+  });
 });

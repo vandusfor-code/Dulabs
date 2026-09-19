@@ -16,11 +16,27 @@ import type { CapabilityKey } from "@/lib/agent-compiler/spec/capabilities";
 export type SpecSchemaVersion = "1.0.0";
 export const CURRENT_SPEC_SCHEMA_VERSION: SpecSchemaVersion = "1.0.0";
 
+/**
+ * Valor centinela del tipo de negocio que habilita el campo libre
+ * `businessTypeCustom`. Fuente única de verdad para schema, formulario y
+ * compiler -- así "Otro" nunca queda hardcodeado en tres sitios distintos.
+ */
+export const BUSINESS_TYPE_OTRO = "Otro";
+
 // --- 1. IDENTITY -----------------------------------------------------------
 export interface AgentIdentity {
   businessName: string;
   agentName: string;
   description?: string;
+  /**
+   * Categoría de negocio elegida en el wizard (un desplegable). Es CONTEXTO
+   * para el compiler, NUNCA una lista rígida en lógica: cualquier string es
+   * válido. Cuando vale BUSINESS_TYPE_OTRO ("Otro"), el tipo real está en
+   * `businessTypeCustom`. Opcional para no romper Specs previos sin el campo.
+   */
+  businessType?: string;
+  /** Tipo libre cuando businessType === "Otro" (negocio aún no contemplado). */
+  businessTypeCustom?: string;
   /** IETF BCP-47 (ej. "es-CO"). */
   language: string;
   /** IANA tz (ej. "America/Bogota"). */

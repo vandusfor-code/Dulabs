@@ -9,6 +9,7 @@
  */
 import type { NextRequest } from "next/server";
 import { requireFlowAccess } from "@/lib/flow/api-auth";
+import { respuestaSiLimiteTasaExcedido } from "@/lib/rate-limit";
 import { createSupabaseBusinessAgentRegistryStore } from "@/lib/agent-compiler/registry/registry-store-supabase";
 import { rollbackToVersion, isPlainObject } from "@/lib/agent-compiler/api/business-agent-api";
 import { apiError, apiOk } from "@/lib/agent-compiler/api/http";
@@ -28,6 +29,10 @@ export async function POST(request: NextRequest) {
   const access = await requireFlowAccess(request, ["admin"], { allowAdminOverride: true });
   if (!access.ok) return access.response;
   const { supabase, miembro, esAdminOverride } = access.ctx;
+
+  // Rate limit por tenant: rollback re-apunta el pointer publicado (RPC).
+  const limite = await respuestaSiLimiteTasaExcedido(supabase, { recurso: "business_agent_rollback", tenantId: miembro.tenantId, categoria: "escritura" });
+  if (limite) return limite;
 
   let body: unknown;
   try {

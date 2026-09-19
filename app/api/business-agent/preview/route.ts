@@ -12,6 +12,7 @@
  */
 import type { NextRequest } from "next/server";
 import { requireFlowAccess } from "@/lib/flow/api-auth";
+import { respuestaSiLimiteTasaExcedido } from "@/lib/rate-limit";
 import { createSupabaseBusinessAgentRegistryStore } from "@/lib/agent-compiler/registry/registry-store-supabase";
 import { listAgentVersions, isPlainObject } from "@/lib/agent-compiler/api/business-agent-api";
 import { previewBusinessAgentTurn, type SimulationInputEvent } from "@/lib/agent-compiler/api/preview";
@@ -39,6 +40,10 @@ export async function POST(request: NextRequest) {
   const access = await requireFlowAccess(request, ["admin", "agente"], { allowAdminOverride: true });
   if (!access.ok) return access.response;
   const { supabase, miembro } = access.ctx;
+
+  // Rate limit por tenant: preview corre el LLM real -> operación costosa.
+  const limite = await respuestaSiLimiteTasaExcedido(supabase, { recurso: "business_agent_preview", tenantId: miembro.tenantId, categoria: "costosa" });
+  if (limite) return limite;
 
   let body: unknown;
   try {

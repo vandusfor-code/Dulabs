@@ -5,6 +5,7 @@
  */
 import type { NextRequest } from "next/server";
 import { requireFlowAccess } from "@/lib/flow/api-auth";
+import { respuestaSiLimiteTasaExcedido } from "@/lib/rate-limit";
 import { createSupabaseCalendarStore } from "@/lib/agent-compiler/calendar/calendar-store-supabase";
 import { createNylasOAuthClientFromEnv } from "@/lib/agent-compiler/calendar/nylas-oauth-client";
 import { createCalendarConnectionService } from "@/lib/agent-compiler/calendar/calendar-connection-service";
@@ -16,6 +17,11 @@ export async function GET(request: NextRequest) {
   const access = await requireFlowAccess(request, ["admin"], { allowAdminOverride: true });
   if (!access.ok) return access.response;
   const { supabase, miembro } = access.ctx;
+
+  // Rate limit por tenant: lista contra Nylas (llamada externa) -> costosa.
+  const limite = await respuestaSiLimiteTasaExcedido(supabase, { recurso: "business_agent_calendar_list", tenantId: miembro.tenantId, categoria: "costosa" });
+  if (limite) return limite;
+
   const nylas = createNylasOAuthClientFromEnv();
   if (!nylas) return apiError("PROVIDER_UNAVAILABLE", "La integración de calendario no está configurada todavía.", 503);
   try {

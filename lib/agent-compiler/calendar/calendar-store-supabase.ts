@@ -73,6 +73,15 @@ export function createSupabaseCalendarStore(supabase: SupabaseClient): CalendarC
     },
 
     async createOAuthState({ state, tenantId, expiresAt }) {
+      // Higiene (Bloque 18): purga best-effort de states YA vencidos de ESTE
+      // tenant antes de crear el nuevo -- evita el crecimiento no acotado de la
+      // tabla por intentos de conexión abandonados. Acotada al tenant y nunca
+      // bloquea un connect legítimo (si la purga falla, se ignora).
+      try {
+        await supabase.from(STATES).delete().eq("tenant_id", tenantId).lt("expires_at", new Date().toISOString());
+      } catch {
+        // best-effort: un fallo de limpieza no impide conectar.
+      }
       const { error } = await supabase.from(STATES).insert({ state, tenant_id: tenantId, expires_at: expiresAt });
       if (error) throw error;
     },
