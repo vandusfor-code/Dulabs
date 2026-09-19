@@ -227,25 +227,36 @@ export async function disconnectBusinessAgentCalendar(params: AuthParams): Promi
  * segundo mecanismo de binding para Business Agent.
  */
 export async function setBusinessAgentActiveOnNumber(
-  params: AuthParams & { flowId: string; phoneNumberId: string; active: boolean },
+  params: AuthParams & { flowId: string; phoneNumberId: string; active: boolean; timeoutMs?: number },
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const doFetch = params.fetchImpl ?? fetch;
+  // Timeout duro (AbortController): la petición NUNCA puede quedar colgada. Sin
+  // esto, una respuesta que se estanca dejaba el botón "Conectar" en spinner
+  // infinito y sin error (bug real). El caller siempre recibe un resultado.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), params.timeoutMs ?? 20000);
   let response: Response;
   try {
     response = await doFetch(`/api/flows/${params.flowId}/${params.active ? "activate" : "deactivate"}`, {
       method: "POST",
       headers: flowApiHeaders(params.accessToken, { json: true, adminTenantId: params.adminTenantId }),
       body: JSON.stringify({ phoneNumberId: params.phoneNumberId }),
+      signal: controller.signal,
     });
   } catch (err) {
+    if (controller.signal.aborted) {
+      return { ok: false, error: "La solicitud tardó demasiado. Revisa tu conexión e inténtalo de nuevo." };
+    }
     return { ok: false, error: err instanceof Error ? err.message : "Error de red" };
+  } finally {
+    clearTimeout(timer);
   }
   if (response.ok) return { ok: true };
   let body: { error?: string } = {};
   try {
     body = await response.json();
   } catch {
-    // sin cuerpo
+    // sin cuerpo JSON
   }
-  return { ok: false, error: body.error ?? "Error inesperado" };
+  return { ok: false, error: body.error ?? `Error ${response.status}` };
 }
