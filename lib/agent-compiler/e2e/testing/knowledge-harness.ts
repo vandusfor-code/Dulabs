@@ -19,7 +19,7 @@ import { createExecutionOrchestrator, type NormalizedFlowEvent } from "@/lib/flo
 import { createTestEffectExecutorFramework } from "@/lib/flow/executor-factory";
 import { IntegrationResolver } from "@/lib/flow/integration-resolver";
 import { EFFECT_RESULT_CLASSIFICATIONS, type EffectDispatchRequest, type EffectExecutor } from "@/lib/flow/executor-types";
-import { InternalActionExecutor } from "@/lib/flow/executors/internal-action-executor";
+import { InternalActionExecutor, type InternalActionDeps } from "@/lib/flow/executors/internal-action-executor";
 import type { InternalActionAuthorizer } from "@/lib/flow/internal-action-authorizer";
 import type { ClienteConfig } from "@/lib/supabase";
 import type { AgentCapabilities, BusinessAgentSpec } from "@/lib/agent-compiler/spec/types";
@@ -125,12 +125,14 @@ export const SERVICIOS = [{ id: "s1", nombre: "Corte", precio: 35000, duracionMi
 
 export interface AiCall { nodeId: string; payload: Record<string, unknown> }
 
-export async function mundo(knowledge: KnowledgeStore = createInMemoryKnowledgeStore()) {
+export async function mundo(knowledge: KnowledgeStore = createInMemoryKnowledgeStore(), internalOverrides: Partial<InternalActionDeps> = {}) {
   const orchStore = createInMemoryOrchestratorStore();
   const calendarStore = createInMemoryCalendarStore();
   const eventos: NylasCreateEventParams[] = [];
   const mensajes: string[] = [];
   const acciones: EffectDispatchRequest[] = [];
+  // Pausas del chat que el runtime REAL pide (transferencia a humano).
+  const pausas: Array<{ phoneNumberId: string; telefonoCliente: string; duracionMs: number }> = [];
   const aiCalls: AiCall[] = [];
   let respuestaIA: (req: EffectDispatchRequest) => Record<string, unknown> = () => ({ responseText: "ok" });
 
@@ -140,11 +142,11 @@ export async function mundo(knowledge: KnowledgeStore = createInMemoryKnowledgeS
     supabase: supabaseIdempotencia(),
     authorizer: AUTHORIZER,
     guardarLeadEnterprise: async () => ({ ok: false }) as never,
-    activarPausaChat: async () => ({ ok: false }) as never,
+    activarPausaChat: async (_s, phoneNumberId, telefonoCliente, duracionMs) => { pausas.push({ phoneNumberId, telefonoCliente, duracionMs }); return { ok: true } as never; },
     verificarDisponibilidad: async () => ({ disponible: false }) as never,
     sugerirHorariosLibres: async () => [] as never,
     crearCita: async () => ({ ok: false }) as never,
-    readPausaUntil: async () => null,
+    readPausaUntil: async () => (pausas.length > 0 ? new Date(Date.now() + pausas[pausas.length - 1]!.duracionMs).toISOString() : null),
     consultarDisponibilidadEspecialista: async () => ({ disponible: false }) as never,
     validarServicioEspecialista: async () => ({ ok: false }) as never,
     agendarCitaEspecialista: async () => ({ ok: false }) as never,
@@ -158,8 +160,12 @@ export async function mundo(knowledge: KnowledgeStore = createInMemoryKnowledgeS
     createNylasEventsWriteClient: () => escritor,
     createBusinessAgentCalendarStore: () => calendarStore,
     recordarNombreCliente: async () => undefined,
+    // Reloj fijo: jueves 2030-03-14 (hora Colombia) => "el sábado" = 2030-03-16.
+    now: () => new Date("2030-03-14T15:00:00Z"),
     // R4: el store de conocimiento (en memoria, con el mismo contrato que el real).
     createKnowledgeStore: () => knowledge,
+    // El E2E REAL contra Supabase inyecta aquí las funciones reales (p. ej. la pausa del chat).
+    ...internalOverrides,
   });
   const accionEspiada: EffectExecutor = {
     kind: "action", version: "espia", capabilities: ejecutorReal.capabilities,
@@ -223,6 +229,7 @@ export async function mundo(knowledge: KnowledgeStore = createInMemoryKnowledgeS
     ejecucion: (tenantId: string) => orchStore.listExecutions(tenantId)[0]!,
     aiDe: (nodeId: string) => aiCalls.filter((c) => c.nodeId === nodeId),
     accionesDe: (nodeId: string) => acciones.filter((a) => a.nodeId === nodeId),
+    pausas,
   };
 }
 

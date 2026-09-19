@@ -80,7 +80,7 @@ interface Harness {
   orchStore: ReturnType<typeof createInMemoryOrchestratorStore>;
   framework: ReturnType<typeof createRecordingEffectFramework>;
   turn: (text: string, wamid: string) => ReturnType<typeof atenderMensajeConBusinessAgent>;
-  gate: { sent: number; transfers: number };
+  gate: { sent: number; transfers: number; lastTransfer?: { tenantId: string; text?: string; pauseHours: number; conversation: { phoneNumberId: string; telefonoCliente: string } } };
   orchestratorCalls: () => number;
 }
 
@@ -89,7 +89,7 @@ function harnessFor(setup: Awaited<ReturnType<typeof publishAgent>>, ai?: Legacy
   const orchestrator = createExecutionOrchestrator({ store: setup.orchStore, engine: { createFlowEngineState, runFlowEngine }, effectFramework: framework.framework });
   let calls = 0;
   const spyOrch = { process: (e: NormalizedFlowEvent) => { calls += 1; return orchestrator.process(e); } };
-  const gate = { sent: 0, transfers: 0 };
+  const gate: Harness["gate"] = { sent: 0, transfers: 0 };
   const seen = new Set<string>();
   const c = cliente(setup.flowId, clienteOver);
   return {
@@ -111,7 +111,7 @@ function harnessFor(setup: Awaited<ReturnType<typeof publishAgent>>, ai?: Legacy
           store: setup.orchStore,
           gateSink: {
             async sendMessage() { gate.sent += 1; },
-            async transferHuman() { gate.transfers += 1; },
+            async transferHuman(input) { gate.transfers += 1; gate.lastTransfer = input; },
           },
           idempotency: { async claim(_t, w) { return seen.has(w) ? false : (seen.add(w), true); } },
         },
@@ -282,11 +282,20 @@ describe("Bloque G — E2E cadena completa (Spec -> compile -> publish -> resolv
 
   it("15. el Business Agent publicado puede llegar hasta la nueva action autorizada: la IA propone crear_cita_nylas_generico y la ACTION se ejecuta; crear_cita_nylas (AMORE) NUNCA está autorizada aquí", async () => {
     const s = await publishAgent(NYLAS_SCHEDULING_FAST);
-    const ai: LegacyHandler = (req) => (req.nodeId === "ai-book-propose" ? aiProposes("crear_cita_nylas_generico") : aiResponds("ok"));
+    // R7: el provider "nylas" ahora consulta disponibilidad REAL (solo lectura)
+    // antes de reservar -- la IA propone esa consulta y luego la creación.
+    const ai: LegacyHandler = (req) =>
+      req.nodeId === "ai-avail-propose"
+        ? aiProposes("buscar_disponibilidad_nylas_generico")
+        : req.nodeId === "ai-book-propose"
+          ? aiProposes("crear_cita_nylas_generico")
+          : aiResponds("ok");
     const h = harnessFor(s, ai);
     await h.turn("Hola", "w1"); // welcome -> q-need (waiting_input)
     await h.turn("Quiero una cita", "w2"); // q-need -> q-booking-when (waiting_input)
-    await h.turn("El sábado a las 3pm", "w3"); // q-booking-when -> ai-book-propose -> act-book
+    await h.turn("El sábado", "w3"); // q-booking-when -> ai-avail-propose -> act-avail -> ai-avail-present -> q-booking-pick (waiting_input)
+    await h.turn("A las 3pm", "w3b"); // q-booking-pick -> ai-book-propose -> act-book
+    assert.equal(h.framework.actionCalls().some((c) => c.nodeId === "act-avail"), true, "la consulta de disponibilidad (solo lectura) se ejecutó (autorizada)");
     assert.equal(h.framework.actionCalls().some((c) => c.nodeId === "act-book"), true, "la ACTION de agendamiento genérico se ejecutó (autorizada)");
 
     // Defensa cruzada: proponer la acción de AMORE en este MISMO agente
@@ -294,11 +303,40 @@ describe("Bloque G — E2E cadena completa (Spec -> compile -> publish -> resolv
     // ACTION jamás corre. Confirma que ambas acciones quedan aisladas entre
     // sí incluso cuando el LLM "confunde" el nombre.
     const s2 = await publishAgent(NYLAS_SCHEDULING_FAST);
-    const aiAjeno: LegacyHandler = (req) => (req.nodeId === "ai-book-propose" ? aiProposes("crear_cita_nylas") : aiResponds("ok"));
+    const aiAjeno: LegacyHandler = (req) =>
+      req.nodeId === "ai-avail-propose"
+        ? aiProposes("buscar_disponibilidad_nylas_generico")
+        : req.nodeId === "ai-book-propose"
+          ? aiProposes("crear_cita_nylas")
+          : aiResponds("ok");
     const h2 = harnessFor(s2, aiAjeno);
     await h2.turn("Hola", "w4");
     await h2.turn("Quiero una cita", "w5");
-    await h2.turn("El sábado a las 3pm", "w6");
+    await h2.turn("El sábado", "w6");
+    await h2.turn("A las 3pm", "w6b");
     assert.equal(h2.framework.actionCalls().some((c) => c.nodeId === "act-book"), false, "crear_cita_nylas (AMORE) nunca autorizada en un Business Agent genérico");
+  });
+
+  it("16. R5 caso 5: a MITAD de una reserva, 'quiero hablar con una persona' => transferencia REAL por el Gate (determinista, sin LLM), con el mensaje y la pausa configurados; el flujo NO avanza", async () => {
+    const spec: BusinessAgentSpec = {
+      ...NYLAS_SCHEDULING_FAST,
+      handoff: {
+        rules: [{ id: "pedir_persona", description: "El cliente pide hablar con una persona.", trigger: { kind: "agent_request" }, action: "TRANSFER_HUMAN", response: "Con gusto te comunico con una persona del equipo.", pauseHours: 6 }],
+        defaultPauseHours: 24,
+      },
+    };
+    const s = await publishAgent(spec);
+    const h = harnessFor(s, () => aiResponds("ok"));
+    await h.turn("Hola", "x1");
+    await h.turn("Quiero una cita", "x2"); // ya está en plena reserva (q-booking-when)
+    const antes = h.orchestratorCalls();
+    const r = await h.turn("Mejor quiero hablar con una persona, por favor", "x3");
+    assert.equal(r.outcome, "guardrail_blocked");
+    assert.equal(h.gate.transfers, 1, "el sink de transferencia REAL fue invocado (pausa el chat + envía el mensaje)");
+    assert.equal(h.gate.lastTransfer?.pauseHours, 6);
+    assert.equal(h.gate.lastTransfer?.text, "Con gusto te comunico con una persona del equipo.");
+    assert.equal(h.gate.lastTransfer?.tenantId, TENANT, "el tenant sale del contexto confiable");
+    assert.equal(h.orchestratorCalls(), antes, "0 llamadas al orquestador/LLM: la decisión la tomó DuLabs, no el modelo");
+    assert.equal(h.framework.actionCalls().length, 0, "ninguna acción de calendario se ejecutó");
   });
 });

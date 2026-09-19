@@ -107,6 +107,13 @@ const INTERNAL_ACTION_TYPES = new Set([
   // que llama al executor directo, solo en el camino real orchestrator ->
   // EffectExecutorFramework -> IntegrationResolver -> InternalActionExecutor).
   "crear_cita_nylas_generico",
+  // R7 (Business Agent, autorizado) -- consulta de disponibilidad genérica Nylas
+  // (SOLO LECTURA). MISMO patrón de bug ya documentado arriba: registrada DESDE
+  // EL PRIMER COMMIT también acá para que el dispatch real (orchestrator ->
+  // EffectExecutorFramework -> IntegrationResolver -> InternalActionExecutor) no
+  // la rechace con SECURITY_REJECTED/"integration_required". Lo confirmó el E2E
+  // offline de R7 (no requiere integración externa: lee el calendario del tenant).
+  "buscar_disponibilidad_nylas_generico",
   // FASE F7 Bloque 2 (autorizado) -- BUG REAL preexistente encontrado durante
   // la validación E2E de F7.3 (autorizado): esta acción existe y funciona en
   // InternalActionExecutor desde F7 Bloque 2, pero NUNCA se agregó acá --

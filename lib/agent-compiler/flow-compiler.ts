@@ -226,6 +226,47 @@ function emitirCapturaDatos(g: GraphBuilder, campos: CustomerField[]): { entry: 
   return { entry: condId(campos[0]!.key), lastNode: preguntaId(ultimo.key), exits };
 }
 
+/** Mensaje seguro (sin afirmar nada) cuando la propia acción de transferencia falla. */
+const MENSAJE_TRANSFERENCIA_NO_DISPONIBLE = "En este momento no pude comunicarte con el equipo. Intenta de nuevo en unos minutos, por favor.";
+
+/**
+ * R5 -- transferencia iniciada por el FLOW (fallo de reserva / sin información).
+ *
+ * Con la capability humanHandoff ACTIVA emite una transferencia REAL, reutilizando la
+ * acción existente `transferir_soporte` (pausa el chat en dulabs_pausas_chat + evidencia
+ * verificada `support.transferred`): el nodo `human` del motor solo marca la ejecución
+ * como `transferred` y NO pausa el chat, así que el bot seguiría contestando después de
+ * prometer "te comunico con una persona".
+ *
+ *   <entryId> (mensaje al cliente, ANTES de pausar: SendMessageExecutor no envía con el
+ *   chat pausado) ─► <actId> (transferir_soporte: pausa + evidencia) ─► end
+ *                              └─ falla ─► msg-handoff-fail ─► end
+ *
+ * OJO con la redacción: un nodo `message` pasa por el filtro de afirmaciones externas del
+ * publicador; palabras como "solicitud" se leen como "lead creado" sin evidencia y bloquean
+ * la publicación. Por eso el texto es neutral (mismo criterio que el mensaje del camino FAQ).
+ *
+ * Sin la capability conserva EXACTAMENTE el nodo `human` histórico (grafo idéntico para
+ * los agentes que no usan transferencia). `entryId` conserva su nombre histórico.
+ */
+function emitirTransferencia(g: GraphBuilder, ir: CompiledBusinessAgentIR, endId: string, entryId: string, actId: string, message: string): void {
+  const transferenciaReal = ir.states.some((s) => s.id === "HUMAN_TRANSFER");
+  if (!transferenciaReal) {
+    g.addNode({ id: entryId, type: "human", config: { message, pauseDurationHours: 24 } });
+    g.addEdge(entryId, endId);
+    return;
+  }
+  const pauseHours = ir.handoffDefaults?.pauseHours ?? 24;
+  g.addNode({ id: entryId, type: "message", config: { text: message, messageRole: "informational" } });
+  g.addNode({ id: actId, type: "action", config: { actionType: "transferir_soporte", pauseDurationHours: pauseHours } as ActionNodeConfig });
+  g.addEdge(entryId, actId);
+  g.addEdge(actId, endId);
+  // El builder deduplica: los dos sitios (reserva / sin información) comparten el mismo mensaje de fallo.
+  g.addNode({ id: "msg-handoff-fail", type: "message", config: { text: MENSAJE_TRANSFERENCIA_NO_DISPONIBLE, messageRole: "informational" } });
+  g.addEdge("msg-handoff-fail", endId);
+  g.addEdge(actId, "msg-handoff-fail", FLOW_EDGE_HANDLE.aiFailure);
+}
+
 /**
  * Construye la máquina conversacional comercial (posterior al Gate). Lineal con
  * puntos de espera (turn-taking) y sub-grafos de tool propose_action->action.
@@ -387,8 +428,7 @@ function construirMaquina(g: GraphBuilder, ir: CompiledBusinessAgentIR, endId: s
     let sinInfoNode: string;
     if (politica === "handoff") {
       sinInfoNode = "human-faq-nofound";
-      g.addNode({ id: sinInfoNode, type: "human", config: { message: "Te comunico con una persona del equipo para ayudarte con esto.", pauseDurationHours: 24 } });
-      g.addEdge(sinInfoNode, endId);
+      emitirTransferencia(g, ir, endId, sinInfoNode, "act-handoff-faq", "Te comunico con una persona del equipo para ayudarte con esto.");
     } else {
       sinInfoNode = "msg-faq-nofound";
       g.addNode({ id: sinInfoNode, type: "message", config: { text: mensajeSin, messageRole: "informational" } });
@@ -494,8 +534,19 @@ function construirMaquina(g: GraphBuilder, ir: CompiledBusinessAgentIR, endId: s
       diags.push(diagError("SCHEDULING_NO_RUNTIME", "ir_generation", `Sin acción de creación de cita real para el provider "${ir.scheduling.provider}".`, { source: "scheduling" }));
       return null;
     }
+    const esNylasGenerico = createAction === "crear_cita_nylas_generico";
+    // R7 (autorizado): para el provider "nylas" el compiler cablea una CONSULTA DE
+    // DISPONIBILIDAD real (SOLO LECTURA) ANTES de proponer la reserva -- el backend
+    // ofrece horarios libres reales y el cliente elige uno. Debe ser un binding
+    // real de la IR (nunca inventado). El provider "internal" conserva su propia
+    // vía de disponibilidad (acciones de especialista) y este tramo no cambia.
+    const availAction: FlowActionType | null =
+      esNylasGenerico && toolsOf("BOOKING").includes("buscar_disponibilidad_nylas_generico")
+        ? "buscar_disponibilidad_nylas_generico"
+        : null;
+
     g.declareVar("appointment_request");
-    g.addNode({ id: "q-booking-when", type: "question", config: { text: "¿Para qué fecha y hora te gustaría?", variableKey: "appointment_request", required: true, validation: { kind: "text" } } });
+    g.addNode({ id: "q-booking-when", type: "question", config: { text: availAction ? "¿Para qué día te gustaría la cita?" : "¿Para qué fecha y hora te gustaría?", variableKey: "appointment_request", required: true, validation: { kind: "text" } } });
     // Con datos del cliente configurados (R3) ya fueron recopilados y validados
     // por el sistema en pasos previos y viajan con la solicitud: la IA no los pide
     // ni los reescribe.
@@ -509,21 +560,54 @@ function construirMaquina(g: GraphBuilder, ir: CompiledBusinessAgentIR, endId: s
     // (mergeParams hace ganar la config estática). Otros providers (internal)
     // validan por su propia vía.
     const bookParams: Record<string, string> = {};
-    if (createAction === "crear_cita_nylas_generico") {
+    if (esNylasGenerico) {
       if (ir.scheduling.businessHours) bookParams.businessHoursJson = JSON.stringify(ir.scheduling.businessHours);
       if (ir.customerData?.fields.length) bookParams.customerFieldsJson = JSON.stringify(ir.customerData.fields);
     }
     g.addNode({ id: "act-book", type: "action", config: actionConfig(createAction, Object.keys(bookParams).length > 0 ? bookParams : undefined) });
     g.addNode({ id: "ai-book-present", type: "ai", config: { instruction: aiInstruction("Comunica el resultado REAL de la solicitud según el sistema. Si no fue posible, dilo con claridad.", ir), mode: "respond", allowedTools: [] } });
-    g.addNode({ id: "human-book-fail", type: "human", config: { message: "Te comunico con una persona del equipo para completar tu solicitud.", pauseDurationHours: 24 } });
+    emitirTransferencia(g, ir, endId, "human-book-fail", "act-handoff-book", "Te comunico con una persona del equipo para ayudarte con esto.");
     link("q-booking-when");
-    g.addEdge("q-booking-when", "ai-book-propose");
+
+    if (availAction) {
+      // Disponibilidad REAL (solo lectura) -> presenta horarios -> el cliente
+      // elige -> propuesta de reserva. El horario de atención va embebido
+      // (mergeParams gana sobre lo que proponga la IA). La duración real la
+      // resuelve el backend desde el servicio (dulabs_servicios).
+      const availParams: Record<string, string> = {};
+      if (ir.scheduling.businessHours) availParams.businessHoursJson = JSON.stringify(ir.scheduling.businessHours);
+      g.declareVar("appointment_pick");
+      g.addNode({ id: "ai-avail-propose", type: "ai", config: { instruction: aiInstruction("Propón consultar la disponibilidad para el día que indicó el cliente, incluyendo el servicio elegido (su nombre exacto si lo mencionó) y la fecha. No calcules ni inventes horarios: el sistema los devuelve.", ir), mode: "propose_action", allowedTools: [availAction] } });
+      g.addNode({ id: "act-avail", type: "action", config: actionConfig(availAction, Object.keys(availParams).length > 0 ? availParams : undefined) });
+      g.addNode({ id: "ai-avail-present", type: "ai", config: { instruction: aiInstruction("Presenta ÚNICAMENTE los horarios disponibles que devolvió el sistema (horariosDisponibles), tal cual, e invita al cliente a elegir uno. No afirmes que ya reservaste ni agendaste nada: eso ocurre después. Si no hay cupos o no se pudo consultar, dilo con claridad y no inventes horarios.", ir), mode: "respond", allowedTools: [] } });
+      g.addNode({ id: "q-booking-pick", type: "question", config: { text: "¿A qué hora te gustaría?", variableKey: "appointment_pick", required: true, validation: { kind: "text" } } });
+      g.addEdge("q-booking-when", "ai-avail-propose");
+      g.addEdge("ai-avail-propose", "act-avail", FLOW_EDGE_HANDLE.aiSuccess);
+      // La consulta es advisory (solo lectura): si la IA no la propone, se continúa igual
+      // -- la CREACIÓN es el gate real que revalida horario y disponibilidad.
+      g.addEdge("ai-avail-propose", "q-booking-pick", FLOW_EDGE_HANDLE.aiFailure);
+      g.addEdge("act-avail", "ai-avail-present");
+      g.addEdge("ai-avail-present", "q-booking-pick");
+      // Si el filtro de afirmaciones bloquea la presentación (tras los reintentos del
+      // orquestador) el cliente NO queda en silencio: mensaje seguro y elige igual (la
+      // creación revalida horario y disponibilidad). El texto NO puede llevar palabras de
+      // dominio (reservar/agendar/horario/cita/disponible): sin evidencia el filtro descarta
+      // en silencio un mensaje estático que las contenga.
+      g.addNode({ id: "msg-avail-fail", type: "message", config: { text: "No pude mostrarte opciones para ese día. Dime la hora que prefieres y la reviso enseguida.", messageRole: "informational" } });
+      g.addEdge("ai-avail-present", "msg-avail-fail", FLOW_EDGE_HANDLE.aiFailure);
+      // La consulta solo tiene éxito con horarios reales: sin cupo / sin calendario / fallo técnico => mensaje seguro.
+      g.addEdge("act-avail", "msg-avail-fail", FLOW_EDGE_HANDLE.aiFailure);
+      g.addEdge("msg-avail-fail", "q-booking-pick");
+      g.addEdge("q-booking-pick", "ai-book-propose");
+    } else {
+      g.addEdge("q-booking-when", "ai-book-propose");
+    }
+
     g.addEdge("ai-book-propose", "act-book", FLOW_EDGE_HANDLE.aiSuccess);
     g.addEdge("ai-book-propose", "human-book-fail", FLOW_EDGE_HANDLE.aiFailure);
     g.addEdge("act-book", "ai-book-present");
     // Rama failure OBLIGATORIA para acción crítica (validateSecurityRules).
     g.addEdge("act-book", "human-book-fail", FLOW_EDGE_HANDLE.aiFailure);
-    g.addEdge("human-book-fail", endId);
     prev = "ai-book-present";
   }
 

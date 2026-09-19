@@ -296,6 +296,11 @@ export type FlowActionType =
   // AMORE); esta consume params simples (fecha/hora), el mismo contrato que
   // agendar_cita_especialista. Ver lib/agent-compiler/calendar/nylas-generic-booking.ts.
   | "crear_cita_nylas_generico"
+  // R7 (Business Agent, autorizado) -- consulta de disponibilidad genérica Nylas
+  // (SOLO LECTURA). El BACKEND calcula los horarios libres (horario de atención +
+  // duración real del servicio + eventos reales); la IA solo los presenta. Ver
+  // lib/agent-compiler/calendar/nylas-availability.ts.
+  | "buscar_disponibilidad_nylas_generico"
   | "webhook_http"
   | "enviar_plantilla"
   // FASE F7.3 (Contacto + Tags + IA, autorizado) -- lee SOLO el contacto de
@@ -408,6 +413,7 @@ export interface SimpleActionConfig extends ActionSemanticTag {
     | "buscar_disponibilidad_nylas"
     | "crear_cita_nylas"
     | "crear_cita_nylas_generico"
+    | "buscar_disponibilidad_nylas_generico"
     | "get_contact"
     | "buscar_conocimiento";
   params?: ActionParams;

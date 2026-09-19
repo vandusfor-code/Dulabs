@@ -348,6 +348,12 @@ lib/agent-compiler/calendar/calendar-connection-service.test.ts
 # (solo dulabs_idempotencia_reservas) + store de calendario en memoria +
 # clientes Nylas fake, sin red ni Supabase real.
 lib/agent-compiler/calendar/nylas-generic-booking.test.ts
+# R7 -- consulta de disponibilidad genérica Nylas (SOLO LECTURA): el backend
+# calcula los horarios libres (horario + duración real + eventos reales), la IA
+# solo los presenta. Puro + orquestación offline (store en memoria + Nylas fake).
+lib/agent-compiler/calendar/nylas-availability.test.ts
+# R7 -- la FECHA ("mañana", "el sábado") la resuelve el backend contra hoy (Colombia); la IA no conoce la fecha actual. Puro.
+lib/agent-compiler/calendar/fecha-solicitada.test.ts
 # Wizard/formulario (autoservicio) -- toggleCapability: fix del checkbox
 # "Agendar citas" + persistencia del estado hasta Spec/compiler. Puro.
 lib/business-agent-form.test.ts

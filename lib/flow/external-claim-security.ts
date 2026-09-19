@@ -135,6 +135,10 @@ const SOURCE_TO_ACTION: Record<string, ActionNodeConfig> = {
   // verifiesOnSuccess/outputVariables declarados en action-capabilities.ts
   // se otorguen en runtime.
   crear_cita_nylas_generico: { actionType: "crear_cita_nylas_generico", params: {} },
+  // R7 (Business Agent, autorizado) -- permite reconocer el source real que
+  // produce InternalActionExecutor para que se otorgue appointment.available
+  // (solo con horariosDisponibles presente). Ofrecer un horario no reserva nada.
+  buscar_disponibilidad_nylas_generico: { actionType: "buscar_disponibilidad_nylas_generico", params: {} },
   // R4 (Business Agent, autorizado) -- solo permite reconocer el source real que
   // produce InternalActionExecutor. No declara capabilities (no verifica hechos
   // externos): es información del propio negocio, no una operación.
