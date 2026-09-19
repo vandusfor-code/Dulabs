@@ -8,7 +8,13 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { setBusinessAgentActiveOnNumber } from "@/lib/business-agent-client";
+import {
+  createBusinessAgentService,
+  deleteBusinessAgentService,
+  listBusinessAgentServices,
+  setBusinessAgentActiveOnNumber,
+  updateBusinessAgentService,
+} from "@/lib/business-agent-client";
 
 const base = { accessToken: "tok", flowId: "flow-1", phoneNumberId: "111", active: true as const };
 
@@ -62,5 +68,59 @@ describe("setBusinessAgentActiveOnNumber — nunca cuelga", () => {
     await setBusinessAgentActiveOnNumber({ ...base, active: false, fetchImpl: spy });
     assert.ok(urls[0]?.endsWith("/api/flows/flow-1/activate"));
     assert.ok(urls[1]?.endsWith("/api/flows/flow-1/deactivate"));
+  });
+});
+
+describe("servicios del Business Agent — CRUD (envelope + endpoints)", () => {
+  it("list => GET /api/business-agent/services y parsea services", async () => {
+    let url = "";
+    const spy = ((input: unknown) => {
+      url = String(input);
+      return Promise.resolve(new Response(JSON.stringify({ success: true, data: { services: [{ id: "s1", nombre: "Manicure", categoria: null, descripcion: null, duracionMin: 30, precio: 30000, activo: true }] } }), { status: 200, headers: { "content-type": "application/json" } }));
+    }) as unknown as typeof fetch;
+    const r = await listBusinessAgentServices({ accessToken: "t", fetchImpl: spy });
+    assert.ok(url.endsWith("/api/business-agent/services"));
+    assert.ok(r.ok);
+    if (r.ok) assert.equal(r.data.services[0]?.precio, 30000);
+  });
+
+  it("create => POST con el body del servicio", async () => {
+    const calls: { url: string; method?: string; body?: string }[] = [];
+    const spy = ((input: unknown, init?: RequestInit) => {
+      calls.push({ url: String(input), method: init?.method, body: init?.body as string });
+      return Promise.resolve(new Response(JSON.stringify({ success: true, data: { service: { id: "s2" } } }), { status: 201, headers: { "content-type": "application/json" } }));
+    }) as unknown as typeof fetch;
+    const r = await createBusinessAgentService({ accessToken: "t", input: { nombre: "Pedicure", duracionMin: 45, precio: 40000 }, fetchImpl: spy });
+    assert.ok(r.ok);
+    assert.equal(calls[0]?.method, "POST");
+    assert.ok(calls[0]?.url.endsWith("/api/business-agent/services"));
+    assert.match(calls[0]?.body ?? "", /Pedicure/);
+  });
+
+  it("update => PUT /api/business-agent/services/:id", async () => {
+    let method = "";
+    let url = "";
+    const spy = ((input: unknown, init?: RequestInit) => {
+      url = String(input);
+      method = init?.method ?? "";
+      return Promise.resolve(new Response(JSON.stringify({ success: true, data: { service: { id: "s3" } } }), { status: 200, headers: { "content-type": "application/json" } }));
+    }) as unknown as typeof fetch;
+    await updateBusinessAgentService({ accessToken: "t", id: "s3", input: { nombre: "Uñas", duracionMin: 120 }, fetchImpl: spy });
+    assert.equal(method, "PUT");
+    assert.ok(url.endsWith("/api/business-agent/services/s3"));
+  });
+
+  it("delete => DELETE /api/business-agent/services/:id", async () => {
+    let method = "";
+    let url = "";
+    const spy = ((input: unknown, init?: RequestInit) => {
+      url = String(input);
+      method = init?.method ?? "";
+      return Promise.resolve(new Response(JSON.stringify({ success: true, data: { ok: true } }), { status: 200, headers: { "content-type": "application/json" } }));
+    }) as unknown as typeof fetch;
+    const r = await deleteBusinessAgentService({ accessToken: "t", id: "s4", fetchImpl: spy });
+    assert.ok(r.ok);
+    assert.equal(method, "DELETE");
+    assert.ok(url.endsWith("/api/business-agent/services/s4"));
   });
 });

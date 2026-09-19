@@ -11,6 +11,7 @@ import type { AgentVersionSummary } from "@/lib/agent-compiler/registry/types";
 import type { PreviewTurnResult, SimulationInputEvent } from "@/lib/agent-compiler/api/preview";
 import type { CompilerDiagnostic } from "@/lib/agent-compiler/diagnostics";
 import type { CalendarConnectionPublic, NylasCalendar } from "@/lib/agent-compiler/calendar/types";
+import type { BusinessAgentService } from "@/lib/business-agent-services";
 
 export type FetchLike = typeof fetch;
 
@@ -216,6 +217,50 @@ export async function disconnectBusinessAgentCalendar(params: AuthParams): Promi
     method: "POST",
     headers: flowApiHeaders(params.accessToken, { json: true, adminTenantId: params.adminTenantId }),
     body: JSON.stringify({}),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Servicios estructurados (dulabs_servicios) — autoservicio del Business Agent.
+// El precio y la duración quedan ESTRUCTURADOS (nunca en un prompt); las
+// acciones de catálogo del Runtime ya los leen.
+// ---------------------------------------------------------------------------
+
+export interface ServiceInput {
+  nombre: string;
+  categoria?: string | null;
+  descripcion?: string | null;
+  duracionMin: number;
+  precio?: number | null;
+  activo?: boolean;
+}
+
+export async function listBusinessAgentServices(params: AuthParams): Promise<ClientResult<{ services: BusinessAgentService[] }>> {
+  return callApi(params.fetchImpl ?? fetch, "/api/business-agent/services", {
+    headers: flowApiHeaders(params.accessToken, { adminTenantId: params.adminTenantId }),
+  });
+}
+
+export async function createBusinessAgentService(params: AuthParams & { input: ServiceInput }): Promise<ClientResult<{ service: BusinessAgentService }>> {
+  return callApi(params.fetchImpl ?? fetch, "/api/business-agent/services", {
+    method: "POST",
+    headers: flowApiHeaders(params.accessToken, { json: true, adminTenantId: params.adminTenantId }),
+    body: JSON.stringify(params.input),
+  });
+}
+
+export async function updateBusinessAgentService(params: AuthParams & { id: string; input: ServiceInput }): Promise<ClientResult<{ service: BusinessAgentService }>> {
+  return callApi(params.fetchImpl ?? fetch, `/api/business-agent/services/${encodeURIComponent(params.id)}`, {
+    method: "PUT",
+    headers: flowApiHeaders(params.accessToken, { json: true, adminTenantId: params.adminTenantId }),
+    body: JSON.stringify(params.input),
+  });
+}
+
+export async function deleteBusinessAgentService(params: AuthParams & { id: string }): Promise<ClientResult<{ ok: true }>> {
+  return callApi(params.fetchImpl ?? fetch, `/api/business-agent/services/${encodeURIComponent(params.id)}`, {
+    method: "DELETE",
+    headers: flowApiHeaders(params.accessToken, { json: true, adminTenantId: params.adminTenantId }),
   });
 }
 

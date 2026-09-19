@@ -352,5 +352,8 @@ lib/agent-compiler/calendar/nylas-generic-booking.test.ts
 # "Agendar citas" + persistencia del estado hasta Spec/compiler. Puro.
 lib/business-agent-form.test.ts
 # Cliente Business Agent -- setBusinessAgentActiveOnNumber (Conectar): timeout
-# duro + siempre resuelve (fix del spinner infinito). Puro, fetch inyectado.
+# duro + siempre resuelve (fix del spinner infinito) + CRUD de servicios. Puro.
 lib/business-agent-client.test.ts
+# Servicios estructurados del Business Agent (dulabs_servicios): validación pura
+# de precio/duración. Puro.
+lib/business-agent-services.test.ts
