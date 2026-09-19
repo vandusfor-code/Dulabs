@@ -76,6 +76,16 @@ import { fechaColombiaDesdeIso, horaColombiaDesdeIso } from "@/lib/timezone-colo
 import { crearCitaNylasGenerico } from "@/lib/agent-compiler/calendar/nylas-generic-booking";
 import { buscarDisponibilidadNylasGenerico } from "@/lib/agent-compiler/calendar/nylas-availability";
 import { resolverFechaSolicitada } from "@/lib/agent-compiler/calendar/fecha-solicitada";
+import { createSupabaseAppointmentStore, type AppointmentStore } from "@/lib/agent-compiler/calendar/appointment-store";
+import {
+  cancelarCitaCliente,
+  formatearFechaHoraCita,
+  listarCitasCliente,
+  obtenerCitaSeleccionada,
+  reprogramarCitaCliente,
+  type AppointmentsDeps,
+} from "@/lib/agent-compiler/calendar/nylas-appointments";
+import { parseHoraColombia } from "@/lib/parse-hora-colombia";
 import { buildQuote, formatCop, formatQuoteText, parseQuoteItems } from "@/lib/business-agent-quote";
 import {
   cargarCatalogoCotizable,
@@ -183,6 +193,9 @@ export interface InternalActionDeps {
   // R7 (autorizado) -- reloj inyectable (por default `new Date()`): "mañana"/"el sábado" se resuelven
   // contra "hoy" en Colombia; los tests fijan el reloj para no depender de la fecha real.
   now?: () => Date;
+  // R7 (cancelar/reprogramar, autorizado) -- registro de citas del agente por (tenant, teléfono del canal): real por
+  // default, fake en tests.
+  createAppointmentStore?: (supabase: SupabaseClient) => AppointmentStore;
   // R6 (catálogo/cotización, autorizado) -- servicios + productos del tenant (solo lectura): real por
   // default, fake en tests.
   createCatalogStore?: (supabase: SupabaseClient) => BusinessAgentCatalogStore;
@@ -252,6 +265,10 @@ const OPERATION_CLASS: Partial<Record<string, InternalActionOperationClass>> = {
   buscar_conocimiento: "READ",
   // R6 (Business Agent, autorizado) -- solo lectura del catálogo del tenant.
   calcular_cotizacion: "READ",
+  // R7 (Business Agent, autorizado) -- citas del cliente: listar es lectura; cancelar/mover escriben en el calendario real.
+  listar_citas_cliente: "READ",
+  cancelar_cita_cliente: "CRITICAL",
+  reprogramar_cita_cliente: "CRITICAL",
   // FASE F8.1 (Flow Engine <-> WhatsApp Cloud API, autorizado) -- envía un
   // mensaje real e irreversible a la clienta, mismo nivel que
   // agendar_cita_marketplace/crear_cita_nylas.
@@ -324,6 +341,8 @@ function criticalEvidenceMissing(
     if (typeof data.pausadoHasta !== "string") return "missing_pausadoHasta";
     return null;
   }
+  if (actionKey === "cancelar_cita_cliente") return data.cancelada === true ? null : "missing_cancelada";
+  if (actionKey === "reprogramar_cita_cliente") return data.movida === true ? null : "missing_movida";
   if (actionKey === "crear_lead_enterprise" || actionKey === "crear_lead_campana") {
     if (typeof data.leadId !== "number" && typeof data.leadId !== "string") {
       return "missing_leadId";
@@ -449,6 +468,12 @@ export class InternalActionExecutor implements EffectExecutor {
         return this.buscarConocimientoAction(request, params, signal);
       case "calcular_cotizacion":
         return this.calcularCotizacionAction(request, params, signal);
+      case "listar_citas_cliente":
+        return this.listarCitasClienteAction(request, params);
+      case "cancelar_cita_cliente":
+        return this.cancelarCitaClienteAction(request, params, signal);
+      case "reprogramar_cita_cliente":
+        return this.reprogramarCitaClienteAction(request, params, signal);
       case "enviar_plantilla":
         return this.enviarPlantillaAction(request, action, signal);
       default:
@@ -2750,6 +2775,9 @@ export class InternalActionExecutor implements EffectExecutor {
         // Valores por clave: variables del flow (las capturó el sistema) ya
         // mezcladas con el payload. El backend solo lee las claves CONFIGURADAS.
         customerValues: params,
+        // Aviso mínimo del negocio (ajuste del Wizard): el backend rechaza horarios pasados o sin la anticipación.
+        // Solo si el compiler lo embebió (agentes previos: sin cambios).
+        ...(params.minNoticeMinutes !== undefined ? { nowMs: (this.deps.now ?? (() => new Date()))().getTime(), minNoticeMinutes: num(params.minNoticeMinutes, 0) } : {}),
       },
       signal,
     );
@@ -2780,6 +2808,29 @@ export class InternalActionExecutor implements EffectExecutor {
     const evidenceError = criticalEvidenceMissing("crear_cita_nylas_generico", data);
     if (evidenceError) {
       return { success: false, classification: EFFECT_RESULT_CLASSIFICATIONS.EXTERNAL_AMBIGUOUS, error: evidenceError };
+    }
+
+    // R7: registra la cita del agente (índice tenant + teléfono del canal) para poder cancelarla/reprogramarla después.
+    // Best-effort: la cita YA existe en el calendario (fuente de verdad); si el registro falla, esta cita solo se podrá
+    // gestionar derivando a una persona -- nunca se tumba una reserva ya creada.
+    if (request.conversation) {
+      try {
+        const conexion = await calendarStore.getConnection(request.tenantId);
+        if (conexion?.selectedCalendarId) {
+          await (this.deps.createAppointmentStore ?? createSupabaseAppointmentStore)(this.deps.supabase).record({
+            tenantId: request.tenantId,
+            telefonoCliente: request.conversation.telefonoCliente,
+            calendarId: conexion.selectedCalendarId,
+            eventId: resultado.citaId,
+            servicio: servicioNombre ?? null,
+            nombreCliente: params.nombreCliente ?? null,
+            inicioIso: resultado.inicioIso,
+            finIso: resultado.finIso,
+          });
+        }
+      } catch {
+        console.error(`[business-agent] appointment_record_failed tenant=${request.tenantId}`);
+      }
     }
 
     // R3: el nombre/correo REALES del cliente quedan en su contacto (para que el
@@ -2880,9 +2931,41 @@ export class InternalActionExecutor implements EffectExecutor {
       };
     }
 
+    // R7: al REPROGRAMAR, la duración es la de la cita REGISTRADA (autoridad del backend, no del servicio que diga la IA) y su
+    // propio evento no cuenta como conflicto. La cita se re-verifica contra la base con la identidad del canal.
+    let excluirEventoId: string | undefined;
+    if (params.modoReprogramar === "true") {
+      const telefono = request.conversation?.telefonoCliente;
+      const mostradas = Array.isArray(request.payload.citasCliente) ? (request.payload.citasCliente as unknown[]).filter((c): c is { id: string } => typeof (c as { id?: unknown })?.id === "string") : [];
+      const elegida = telefono
+        ? await obtenerCitaSeleccionada(
+            { appointmentStore: (this.deps.createAppointmentStore ?? createSupabaseAppointmentStore)(this.deps.supabase), nowMs: ahora.getTime() },
+            { tenantId: request.tenantId, telefono, citasMostradas: mostradas, seleccion: params.cita_pick },
+          )
+        : null;
+      if (!elegida || !elegida.ok) {
+        return {
+          success: false,
+          classification: EFFECT_RESULT_CLASSIFICATIONS.NON_RETRYABLE,
+          error: `disponibilidad_no_disponible:${elegida ? elegida.motivo : "sin_conversacion"}`,
+          metadata: { operationClass: OPERATION_CLASS.buscar_disponibilidad_nylas_generico },
+        };
+      }
+      duracionMinInput = Math.round((new Date(elegida.cita.finIso).getTime() - new Date(elegida.cita.inicioIso).getTime()) / 60000);
+      excluirEventoId = elegida.cita.eventId;
+    }
+
     const resultado = await buscarDisponibilidadNylasGenerico(
       { calendarStore, nylasApiKey: apiKey, createNylasEventsClient: createReadClient },
-      { tenantId: request.tenantId, fecha: fechaRes.fecha, durationMin: duracionMinInput, businessHours, nowUnix: Math.floor(ahora.getTime() / 1000) },
+      {
+        tenantId: request.tenantId,
+        fecha: fechaRes.fecha,
+        durationMin: duracionMinInput,
+        businessHours,
+        nowUnix: Math.floor(ahora.getTime() / 1000),
+        ...(params.minNoticeMinutes !== undefined ? { minNoticeMin: num(params.minNoticeMinutes, 0) } : {}),
+        ...(excluirEventoId ? { excluirEventoId } : {}),
+      },
       signal,
     );
 
@@ -3016,5 +3099,150 @@ export class InternalActionExecutor implements EffectExecutor {
       rawResult: data,
       metadata: { operationClass: OPERATION_CLASS.calcular_cotizacion },
     };
+  }
+
+  // -------------------------------------------------------------------------
+  // R7 (Business Agent, autorizado) -- citas del cliente: listar / cancelar / reprogramar (Nylas).
+  // La IA NO participa: son nodos de acción deterministas. La identidad es SIEMPRE la del canal
+  // (request.conversation), el tenant el de la solicitud, y la política/horario/duración los aplica
+  // el backend (lib/agent-compiler/calendar/nylas-appointments.ts).
+  // -------------------------------------------------------------------------
+
+  private citasDeps(): AppointmentsDeps {
+    return {
+      supabase: this.deps.supabase,
+      calendarStore: (this.deps.createBusinessAgentCalendarStore ?? createSupabaseCalendarStore)(this.deps.supabase),
+      appointmentStore: (this.deps.createAppointmentStore ?? createSupabaseAppointmentStore)(this.deps.supabase),
+      nylasApiKey: (this.deps.resolveNylasApiKeyFromEnv ?? resolveNylasApiKeyFromEnv)(),
+      createNylasEventsClient: this.deps.createNylasEventsClient ?? createNylasEventsClient,
+      createNylasEventsWriteClient: this.deps.createNylasEventsWriteClient ?? createNylasEventsWriteClient,
+      nowMs: (this.deps.now ?? (() => new Date()))().getTime(),
+    };
+  }
+
+  /** Política de cancelación/cambio embebida por el compiler (params ESTÁTICOS: la IA/payload no la altera). */
+  private politicaCitas(params: Record<string, string>): { allowed: boolean; minNoticeHours: number } {
+    return { allowed: params.cancelAllowed === "true", minNoticeHours: num(params.cancelMinNoticeHours, 0) };
+  }
+
+  private citasMostradas(request: EffectDispatchRequest): Array<{ id: string }> {
+    const raw = request.payload.citasCliente;
+    return Array.isArray(raw) ? (raw as unknown[]).filter((c): c is { id: string } => typeof (c as { id?: unknown })?.id === "string") : [];
+  }
+
+  private async listarCitasClienteAction(request: EffectDispatchRequest, params: Record<string, string>): Promise<EffectDispatchResult> {
+    const telefono = request.conversation?.telefonoCliente;
+    if (!telefono) return { success: false, classification: EFFECT_RESULT_CLASSIFICATIONS.VALIDATION_ERROR, error: "conversation_required" };
+    const r = await listarCitasCliente(this.citasDeps(), { tenantId: request.tenantId, telefono, ...this.politicaCitas(params) });
+    // Éxito SOLO si hay al menos una cita: el orquestador concede appointment.reserved a todo success:true (sin mirar datos).
+    if (!r.ok) {
+      return {
+        success: false,
+        classification: r.motivo === "error_tecnico" ? EFFECT_RESULT_CLASSIFICATIONS.RETRYABLE : EFFECT_RESULT_CLASSIFICATIONS.NON_RETRYABLE,
+        error: `citas_no_disponibles:${r.motivo}`,
+        metadata: { operationClass: OPERATION_CLASS.listar_citas_cliente },
+      };
+    }
+    const data = { citasCliente: r.citas, citasTexto: r.texto, cantidadCitas: r.citas.length, effectId: request.effectId };
+    return { success: true, classification: EFFECT_RESULT_CLASSIFICATIONS.SUCCESS, data, appliedResult: data, rawResult: data, metadata: { operationClass: OPERATION_CLASS.listar_citas_cliente } };
+  }
+
+  private async cancelarCitaClienteAction(request: EffectDispatchRequest, params: Record<string, string>, signal?: AbortSignal): Promise<EffectDispatchResult> {
+    assertNotAborted(signal);
+    const telefono = request.conversation?.telefonoCliente;
+    if (!telefono) return { success: false, classification: EFFECT_RESULT_CLASSIFICATIONS.VALIDATION_ERROR, error: "conversation_required" };
+    const r = await cancelarCitaCliente(
+      this.citasDeps(),
+      { tenantId: request.tenantId, telefono, citasMostradas: this.citasMostradas(request), seleccion: params.cita_pick, ...this.politicaCitas(params) },
+      signal,
+    );
+    assertNotAborted(signal);
+    if (!r.ok) {
+      return {
+        success: false,
+        classification: r.motivo === "error_tecnico" ? EFFECT_RESULT_CLASSIFICATIONS.RETRYABLE : EFFECT_RESULT_CLASSIFICATIONS.NON_RETRYABLE,
+        error: `cancelacion_rechazada:${r.motivo}`,
+        rawResult: { motivo: r.motivo, detalle: r.detalle },
+        metadata: { operationClass: OPERATION_CLASS.cancelar_cita_cliente },
+      };
+    }
+    const data = {
+      cancelada: true,
+      citaCanceladaTexto: `${r.servicio ?? "Tu cita"} — ${formatearFechaHoraCita(r.inicioIso)}`,
+      yaCancelada: r.yaCancelada,
+      effectId: request.effectId,
+    };
+    const faltaEvidencia = criticalEvidenceMissing("cancelar_cita_cliente", data);
+    if (faltaEvidencia) return { success: false, classification: EFFECT_RESULT_CLASSIFICATIONS.EXTERNAL_AMBIGUOUS, error: faltaEvidencia };
+    return { success: true, classification: EFFECT_RESULT_CLASSIFICATIONS.SUCCESS, data, appliedResult: data, rawResult: data, externalReference: `cita_cancelada:${r.citaId}`, metadata: { operationClass: OPERATION_CLASS.cancelar_cita_cliente } };
+  }
+
+  private async reprogramarCitaClienteAction(request: EffectDispatchRequest, params: Record<string, string>, signal?: AbortSignal): Promise<EffectDispatchResult> {
+    assertNotAborted(signal);
+    const telefono = request.conversation?.telefonoCliente;
+    if (!telefono) return { success: false, classification: EFFECT_RESULT_CLASSIFICATIONS.VALIDATION_ERROR, error: "conversation_required" };
+    const rechazo = (motivo: string, detalle: string): EffectDispatchResult => ({
+      success: false,
+      classification: EFFECT_RESULT_CLASSIFICATIONS.NON_RETRYABLE,
+      error: `reprogramacion_rechazada:${motivo}`,
+      rawResult: { motivo, detalle },
+      metadata: { operationClass: OPERATION_CLASS.reprogramar_cita_cliente },
+    });
+
+    // FECHA y HORA las resuelve el backend desde lo que escribió el cliente (la IA no conoce "hoy"); la propuesta
+    // de la IA es solo un respaldo validado. Una fecha pasada nunca se acepta.
+    const ahora = (this.deps.now ?? (() => new Date()))();
+    const fecha = resolverFechaSolicitada({ solicitudTexto: params.appointment_request, fechaPropuesta: params.fecha, hoyISO: fechaColombiaDesdeIso(ahora.toISOString()) });
+    if (!fecha.ok) return rechazo(fecha.motivo, fecha.motivo === "fecha_pasada" ? "Esa fecha ya pasó." : "No se pudo identificar la fecha.");
+    const horaTexto = params.appointment_pick ? parseHoraColombia(params.appointment_pick) : null;
+    const hora = horaTexto && horaTexto.ok ? horaTexto.hhmm : params.hora;
+    if (!hora) return rechazo("hora_invalida", "No se pudo identificar la hora.");
+
+    let businessHours: BusinessHours | null = null;
+    if (typeof params.businessHoursJson === "string" && params.businessHoursJson.trim()) {
+      try {
+        businessHours = JSON.parse(params.businessHoursJson) as BusinessHours;
+      } catch {
+        return rechazo("configuracion_invalida", "La configuración de horario del agente es inválida.");
+      }
+    }
+
+    const r = await reprogramarCitaCliente(
+      this.citasDeps(),
+      {
+        tenantId: request.tenantId,
+        telefono,
+        executionRowId: request.executionRowId,
+        effectId: request.effectId,
+        citasMostradas: this.citasMostradas(request),
+        seleccion: params.cita_pick,
+        fecha: fecha.fecha,
+        hora,
+        businessHours,
+        minNoticeMinutes: params.minNoticeMinutes !== undefined ? num(params.minNoticeMinutes, 0) : undefined,
+        ...this.politicaCitas(params),
+      },
+      signal,
+    );
+    assertNotAborted(signal);
+    if (!r.ok) {
+      return {
+        success: false,
+        classification: r.motivo === "error_tecnico" || r.motivo === "en_progreso" ? EFFECT_RESULT_CLASSIFICATIONS.RETRYABLE : EFFECT_RESULT_CLASSIFICATIONS.NON_RETRYABLE,
+        error: `reprogramacion_rechazada:${r.motivo}`,
+        rawResult: { motivo: r.motivo, detalle: r.detalle },
+        metadata: { operationClass: OPERATION_CLASS.reprogramar_cita_cliente },
+      };
+    }
+    const data = {
+      movida: true,
+      citaMovidaTexto: `${r.servicio ?? "Tu cita"} — ${formatearFechaHoraCita(r.inicioIso)}`,
+      inicio: r.inicioIso,
+      fin: r.finIso,
+      effectId: request.effectId,
+    };
+    const faltaEvidencia = criticalEvidenceMissing("reprogramar_cita_cliente", data);
+    if (faltaEvidencia) return { success: false, classification: EFFECT_RESULT_CLASSIFICATIONS.EXTERNAL_AMBIGUOUS, error: faltaEvidencia };
+    return { success: true, classification: EFFECT_RESULT_CLASSIFICATIONS.SUCCESS, data, appliedResult: data, rawResult: data, externalReference: `cita_reprogramada:${r.citaId}`, metadata: { operationClass: OPERATION_CLASS.reprogramar_cita_cliente } };
   }
 }

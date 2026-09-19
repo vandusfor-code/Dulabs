@@ -354,6 +354,13 @@ lib/agent-compiler/calendar/nylas-generic-booking.test.ts
 lib/agent-compiler/calendar/nylas-availability.test.ts
 # R7 -- la FECHA ("mañana", "el sábado") la resuelve el backend contra hoy (Colombia); la IA no conoce la fecha actual. Puro.
 lib/agent-compiler/calendar/fecha-solicitada.test.ts
+# R7 -- cancelar/reprogramar las citas del cliente (backend): identidad por canal, aislamiento por tenant, política,
+# idempotencia, calendario sin conectar/distinto. Store en memoria + Nylas fake.
+lib/agent-compiler/calendar/nylas-appointments.test.ts
+# R7 -- contrato del executor para listar/cancelar/reprogramar (identidad del canal, política estática, lista forjada).
+lib/flow/executors/internal-action-executor-citas.test.ts
+# R7 -- E2E offline de la cadena completa: reservar (registra la cita) -> cancelar / reprogramar / política / aviso mínimo.
+lib/agent-compiler/e2e/appointments-e2e.test.ts
 # Wizard/formulario (autoservicio) -- toggleCapability: fix del checkbox
 # "Agendar citas" + persistencia del estado hasta Spec/compiler. Puro.
 lib/business-agent-form.test.ts

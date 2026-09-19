@@ -124,6 +124,10 @@ export interface BuscarDisponibilidadNylasGenericoParams {
   /** Unix seconds "ahora" (inyectable para tests). */
   nowUnix?: number;
   maxSlots?: number;
+  /** Antelación mínima (minutos) desde ahora: no se ofrecen horarios que no la cumplan. */
+  minNoticeMin?: number;
+  /** R7: id del evento que se está MOVIENDO; no cuenta como conflicto de sí mismo. */
+  excluirEventoId?: string;
 }
 
 export interface BuscarDisponibilidadNylasGenericoDeps {
@@ -174,9 +178,10 @@ export async function buscarDisponibilidadNylasGenerico(
     businessHours: params.businessHours,
     fecha: params.fecha,
     durationMin: dur,
-    eventos,
+    eventos: params.excluirEventoId ? eventos.filter((e) => e.id !== params.excluirEventoId) : eventos,
     nowUnix: params.nowUnix ?? Math.floor(Date.now() / 1000),
     maxSlots: params.maxSlots,
+    minNoticeMin: params.minNoticeMin,
   });
   if (!calc.ok) {
     return {

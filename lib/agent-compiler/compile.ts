@@ -167,6 +167,12 @@ function construirIR(spec: BusinessAgentSpec, context: CompilerContext): Compile
     actions: caps.scheduling ? CAPABILITY_BACKING.scheduling.actions.slice() : [],
     resources: spec.scheduling.resources.map((r) => ({ kind: r.kind, label: r.label, required: r.required })),
     businessHours: spec.scheduling.businessHours ?? null,
+    ...(caps.scheduling
+      ? {
+          minNoticeMinutes: spec.scheduling.minNoticeMinutes,
+          cancellation: { allowed: spec.scheduling.cancellation.allowed, minNoticeHours: spec.scheduling.cancellation.minNoticeHours },
+        }
+      : {}),
   };
 
   // Datos del cliente (R3): solo campos activos; ausente si no hay (IR y checksum

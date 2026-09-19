@@ -70,6 +70,11 @@ export const CAPABILITY_BACKING: Record<CapabilityKey, CapabilityBacking> = {
       // LECTURA). El compiler la cablea ANTES de la creación para el provider
       // "nylas": el backend ofrece horarios libres reales y el cliente elige.
       "buscar_disponibilidad_nylas_generico",
+      // R7 -- cancelar/reprogramar las citas del propio cliente (provider "nylas"): el compiler las cablea cuando el
+      // negocio permite cancelar/cambiar. Determinísticas (la IA no interviene) y con identidad del canal.
+      "listar_citas_cliente",
+      "cancelar_cita_cliente",
+      "reprogramar_cita_cliente",
     ],
   },
   orders: { available: false, actions: [], requires: ["catalog"] },

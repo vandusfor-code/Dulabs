@@ -116,6 +116,10 @@ export interface SchedulingCapabilityIR {
   resources: { kind: string; label: string; required: boolean }[];
   /** Horario de atención estructurado (regla de disponibilidad); compile lo puebla siempre. */
   businessHours?: BusinessHours | null;
+  /** R7 -- aviso mínimo (minutos) para reservar/mover. Solo con agendamiento solicitado (IR previa intacta si no). */
+  minNoticeMinutes?: number;
+  /** R7 -- política de cancelación/cambio por WhatsApp (ajuste del Wizard, antes solo UI). Solo con agendamiento solicitado. */
+  cancellation?: { allowed: boolean; minNoticeHours: number };
 }
 
 /**

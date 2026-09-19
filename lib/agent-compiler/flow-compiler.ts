@@ -267,6 +267,140 @@ function emitirTransferencia(g: GraphBuilder, ir: CompiledBusinessAgentIR, endId
   g.addEdge(actId, "msg-handoff-fail", FLOW_EDGE_HANDLE.aiFailure);
 }
 
+/** Frases con las que el cliente pide CANCELAR su cita (imperativas/primera persona: una pregunta de política — "¿puedo cancelar?" — es de la FAQ). */
+const CANCEL_INTENT_PHRASES = [
+  "quiero cancelar", "necesito cancelar", "voy a cancelar", "cancelar mi cita", "cancelar la cita", "cancelar mi reserva",
+  "cancelar mi turno", "cancela mi cita", "cancelame", "cancélame", "anular mi cita", "anular la cita", "no puedo asistir", "no voy a poder asistir", "ya no puedo ir",
+];
+/** Frases con las que el cliente pide CAMBIAR/REPROGRAMAR su cita. */
+const RESCHEDULE_INTENT_PHRASES = [
+  "reprogramar", "reprogramame", "reprográmame", "reagendar", "cambiar mi cita", "cambiar la cita", "cambiar mi reserva", "cambiar mi turno",
+  "mover mi cita", "mover la cita", "cambio de cita", "pasar mi cita", "aplazar mi cita",
+];
+
+interface GestionCitas {
+  cancelEntry: string;
+  reschedEntry: string;
+}
+
+/** Router determinista (sin LLM): campo contiene frase de cancelar -> cancelar; de cambiar -> reprogramar; si no, sigue. */
+function emitirRouterCitas(g: GraphBuilder, gestion: GestionCitas, prefix: string, field: string): { entry: string; exits: Exit[] } {
+  const notQuestionId = `cond-ap-${prefix}-notq`;
+  const cancelId = `cond-ap-${prefix}-cancel`;
+  const reschedId = `cond-ap-${prefix}-resched`;
+  // Una PREGUNTA ("¿puedo cancelar mi cita si estoy enferma?") es de la FAQ, no una orden de cancelar: el router solo actúa sobre
+  // mensajes SIN "?". (Una petición cortés con "?" sigue el flujo normal y el cliente puede repetirla como orden.)
+  g.addNode({ id: notQuestionId, type: "condition", config: { rules: [{ field, operator: "not_contains", value: "?" }], match: "all" } });
+  g.addEdge(notQuestionId, cancelId, FLOW_EDGE_HANDLE.conditionTrue);
+  g.addNode({ id: cancelId, type: "condition", config: { rules: CANCEL_INTENT_PHRASES.map((v) => ({ field, operator: "contains" as const, value: v })), match: "any" } });
+  g.addNode({ id: reschedId, type: "condition", config: { rules: RESCHEDULE_INTENT_PHRASES.map((v) => ({ field, operator: "contains" as const, value: v })), match: "any" } });
+  g.addEdge(cancelId, gestion.cancelEntry, FLOW_EDGE_HANDLE.conditionTrue);
+  g.addEdge(cancelId, reschedId, FLOW_EDGE_HANDLE.conditionFalse);
+  g.addEdge(reschedId, gestion.reschedEntry, FLOW_EDGE_HANDLE.conditionTrue);
+  return {
+    entry: notQuestionId,
+    exits: [
+      { source: notQuestionId, handle: FLOW_EDGE_HANDLE.conditionFalse },
+      { source: reschedId, handle: FLOW_EDGE_HANDLE.conditionFalse },
+    ],
+  };
+}
+
+/**
+ * R7 -- cancelar / reprogramar las citas del propio cliente (provider nylas). TODO es determinista: la IA solo REDACTA
+ * (presenta la lista/horarios que devolvió el backend); nunca elige ids, calcula horarios ni escribe en el calendario.
+ *
+ *   CANCELAR:     listar_citas_cliente -> presentar -> ¿cuál? -> confirmar (botones) -> cancelar_cita_cliente -> aviso
+ *   REPROGRAMAR:  listar -> presentar -> ¿cuál? -> ¿qué día? -> disponibilidad REAL (duración de la cita registrada) ->
+ *                 ¿a qué hora? -> reprogramar_cita_cliente -> aviso
+ * La identidad es la del canal (WhatsApp) y la política (permitido / anticipación) la aplica el backend. Ante cualquier
+ * fallo: mensaje seguro y, con "Transferir a un humano", transferencia REAL (nunca silencio).
+ */
+function emitirGestionCitas(g: GraphBuilder, ir: CompiledBusinessAgentIR, endId: string): GestionCitas {
+  const politica: Record<string, string> = { cancelAllowed: "true", cancelMinNoticeHours: String(ir.scheduling.cancellation?.minNoticeHours ?? 0) };
+  const horario: Record<string, string> = {};
+  if (ir.scheduling.businessHours) horario.businessHoursJson = JSON.stringify(ir.scheduling.businessHours);
+  if (ir.scheduling.minNoticeMinutes !== undefined) horario.minNoticeMinutes = String(ir.scheduling.minNoticeMinutes);
+  const conTransferencia = ir.states.some((s) => s.id === "HUMAN_TRANSFER");
+
+  // Mensajes seguros (sin palabras de dominio: sin evidencia el filtro las descarta en silencio).
+  g.addNode({ id: "msg-ap-none", type: "message", config: { text: "No encontré nada próximo a tu nombre. Si crees que es un error, escríbenos y te ayudamos.", messageRole: "informational" } });
+  g.addEdge("msg-ap-none", endId);
+  // Fallo de una acción crítica: con la capacidad => transferencia REAL; sin ella => mensaje seguro.
+  let falloEntry: string;
+  if (conTransferencia) {
+    falloEntry = "ap-fail-handoff";
+    emitirTransferencia(g, ir, endId, falloEntry, "act-handoff-cita", "Te comunico con una persona del equipo para ayudarte con esto.");
+  } else {
+    falloEntry = "msg-ap-fail";
+    g.addNode({ id: falloEntry, type: "message", config: { text: "No pude completar el cambio en este momento. Intenta de nuevo en unos minutos, por favor.", messageRole: "informational" } });
+    g.addEdge(falloEntry, endId);
+  }
+
+  const listar = (id: string, presentId: string): void => {
+    g.addNode({ id, type: "action", config: actionConfig("listar_citas_cliente", politica) });
+    g.addEdge(id, presentId);
+    g.addEdge(id, "msg-ap-none", FLOW_EDGE_HANDLE.aiFailure);
+  };
+  const presentar = (id: string, siguiente: string, pedir: string): void => {
+    g.addNode({ id, type: "ai", config: { instruction: aiInstruction(`Presenta la lista de citas del cliente EXACTAMENTE como la devolvió el sistema (citasTexto), sin cambiar fechas ni horas. ${pedir} No afirmes que ya se hizo ningún cambio.`, ir), mode: "respond", allowedTools: [] } });
+    g.addEdge(id, siguiente);
+    g.addEdge(id, falloEntry, FLOW_EDGE_HANDLE.aiFailure);
+  };
+  g.declareVar("cita_pick");
+  g.declareVar("cantidadCitas", "number");
+
+  // ---- CANCELAR ----
+  listar("ap-c-list", "ap-c-present");
+  presentar("ap-c-present", "ap-c-q-pick", "Pídele que responda con el número de la cita que quiere cancelar.");
+  g.addNode({ id: "ap-c-q-pick", type: "question", config: { text: "¿Cuál quieres cancelar? Responde con el número.", variableKey: "cita_pick", required: true, validation: { kind: "text" } } });
+  g.addNode({ id: "ap-c-btn", type: "buttons", config: { text: "¿Confirmas que quieres cancelarla?", buttons: [{ id: "si", label: "Sí, cancelar" }, { id: "no", label: "No, mantenerla" }] } });
+  g.addNode({ id: "ap-c-act", type: "action", config: actionConfig("cancelar_cita_cliente", politica) });
+  g.addNode({ id: "ap-c-done", type: "message", config: { text: "Listo, tu cita fue cancelada.", messageRole: "external_assertion", asserts: ["appointment.cancelled"] } });
+  g.addNode({ id: "ap-c-kept", type: "message", config: { text: "Perfecto, no se hizo ningún cambio.", messageRole: "informational" } });
+  g.addEdge("ap-c-q-pick", "ap-c-btn");
+  g.addEdge("ap-c-btn", "ap-c-act", FLOW_EDGE_HANDLE.button("si"));
+  g.addEdge("ap-c-btn", "ap-c-kept", FLOW_EDGE_HANDLE.button("no"));
+  g.addEdge("ap-c-act", "ap-c-done");
+  g.addEdge("ap-c-act", falloEntry, FLOW_EDGE_HANDLE.aiFailure);
+  g.addEdge("ap-c-done", endId);
+  g.addEdge("ap-c-kept", endId);
+
+  // ---- REPROGRAMAR ----
+  listar("ap-r-list", "ap-r-present");
+  presentar("ap-r-present", "ap-r-q-pick", "Pídele que responda con el número de la cita que quiere cambiar.");
+  g.declareVar("appointment_request");
+  g.declareVar("appointment_pick");
+  g.addNode({ id: "ap-r-q-pick", type: "question", config: { text: "¿Cuál quieres cambiar? Responde con el número.", variableKey: "cita_pick", required: true, validation: { kind: "text" } } });
+  g.addNode({ id: "ap-r-q-when", type: "question", config: { text: "¿Para qué día te gustaría el nuevo horario?", variableKey: "appointment_request", required: true, validation: { kind: "text" } } });
+  g.addNode({ id: "ap-r-ai-avail", type: "ai", config: { instruction: aiInstruction("Propón consultar la disponibilidad para el día que indicó el cliente. No calcules ni inventes horarios: el sistema los devuelve.", ir), mode: "propose_action", allowedTools: ["buscar_disponibilidad_nylas_generico"] } });
+  g.addNode({ id: "ap-r-act-avail", type: "action", config: actionConfig("buscar_disponibilidad_nylas_generico", { ...horario, modoReprogramar: "true" }) });
+  g.addNode({ id: "ap-r-ai-avail-present", type: "ai", config: { instruction: aiInstruction("Presenta ÚNICAMENTE los horarios disponibles que devolvió el sistema (horariosDisponibles), tal cual, e invita al cliente a elegir uno. No afirmes que ya se hizo ningún cambio.", ir), mode: "respond", allowedTools: [] } });
+  g.addNode({ id: "msg-ap-avail-fail", type: "message", config: { text: "No pude mostrarte opciones para ese día. Dime la hora que prefieres y la reviso enseguida.", messageRole: "informational" } });
+  g.addNode({ id: "ap-r-q-hour", type: "question", config: { text: "¿A qué hora te gustaría?", variableKey: "appointment_pick", required: true, validation: { kind: "text" } } });
+  g.addNode({ id: "ap-r-act", type: "action", config: actionConfig("reprogramar_cita_cliente", { ...politica, ...horario }) });
+  g.addNode({ id: "ap-r-done", type: "message", config: { text: "Listo, tu cita fue cambiada al nuevo horario.", messageRole: "external_assertion", asserts: ["appointment.rescheduled"] } });
+  g.addNode({ id: "msg-ap-move-fail", type: "message", config: { text: "No pude hacer ese cambio. Dime otro día y lo intentamos de nuevo.", messageRole: "informational" } });
+  g.addEdge("ap-r-q-pick", "ap-r-q-when");
+  g.addEdge("ap-r-q-when", "ap-r-ai-avail");
+  g.addEdge("ap-r-ai-avail", "ap-r-act-avail", FLOW_EDGE_HANDLE.aiSuccess);
+  g.addEdge("ap-r-ai-avail", "ap-r-q-hour", FLOW_EDGE_HANDLE.aiFailure);
+  g.addEdge("ap-r-act-avail", "ap-r-ai-avail-present");
+  g.addEdge("ap-r-act-avail", "msg-ap-avail-fail", FLOW_EDGE_HANDLE.aiFailure);
+  g.addEdge("ap-r-ai-avail-present", "ap-r-q-hour");
+  g.addEdge("ap-r-ai-avail-present", "msg-ap-avail-fail", FLOW_EDGE_HANDLE.aiFailure);
+  g.addEdge("msg-ap-avail-fail", "ap-r-q-hour");
+  g.addEdge("ap-r-q-hour", "ap-r-act");
+  g.addEdge("ap-r-act", "ap-r-done");
+  // Un cambio rechazado (ocupado / fuera de horario / política) NO cuelga al cliente: puede probar otro día; la transferencia
+  // real queda para los fallos técnicos de la propia acción crítica (rama failure obligatoria).
+  g.addEdge("ap-r-act", "msg-ap-move-fail", FLOW_EDGE_HANDLE.aiFailure);
+  g.addEdge("msg-ap-move-fail", "ap-r-q-when");
+  g.addEdge("ap-r-done", endId);
+
+  return { cancelEntry: "ap-c-list", reschedEntry: "ap-r-list" };
+}
+
 /**
  * Construye la máquina conversacional comercial (posterior al Gate). Lineal con
  * puntos de espera (turn-taking) y sub-grafos de tool propose_action->action.
@@ -313,18 +447,36 @@ function construirMaquina(g: GraphBuilder, ir: CompiledBusinessAgentIR, endId: s
   // Salidas "abiertas" del tramo anterior (ramas condicionales que también deben
   // continuar al siguiente estado). Ver link().
   let pendingExits: Exit[] = [];
+  // R7: cancelar/reprogramar SOLO con agendamiento nylas + política que lo permite. El router es determinista (frases
+  // explícitas) y corre sobre el primer mensaje y sobre la respuesta a "¿qué necesitas hoy?".
+  const gestionCitas =
+    ir.scheduling.available && ir.scheduling.provider === "nylas" && ir.scheduling.cancellation?.allowed === true
+      ? emitirGestionCitas(g, ir, endId)
+      : null;
+  const trasSaludo = informacionReal ? FIRST_QUESTION_NODE_ID : "q-need";
+  if (gestionCitas) {
+    g.declareVar(FIRST_MESSAGE_TEXT_VARIABLE_KEY);
+    const r1 = emitirRouterCitas(g, gestionCitas, "first", FIRST_MESSAGE_TEXT_VARIABLE_KEY);
+    g.addEdge("welcome", r1.entry);
+    for (const e of r1.exits) g.addEdge(e.source, trasSaludo, e.handle);
+  } else {
+    g.addEdge("welcome", trasSaludo);
+  }
   if (informacionReal) {
     // El motor siembra el texto del primer mensaje en esta variable (start); las condiciones exigen declararla.
     g.declareVar(FIRST_MESSAGE_TEXT_VARIABLE_KEY);
     g.addNode({ id: FIRST_QUESTION_NODE_ID, type: "condition", config: { rules: [{ field: FIRST_MESSAGE_TEXT_VARIABLE_KEY, operator: "contains", value: "?" }], match: "all" } });
-    g.addEdge("welcome", FIRST_QUESTION_NODE_ID);
     g.addEdge(FIRST_QUESTION_NODE_ID, "q-need", FLOW_EDGE_HANDLE.conditionFalse);
     pendingExits = [{ source: FIRST_QUESTION_NODE_ID, handle: FLOW_EDGE_HANDLE.conditionTrue }];
-  } else {
-    g.addEdge("welcome", "q-need");
   }
   const entry = "welcome";
   let prev: string | null = "q-need";
+  if (gestionCitas) {
+    const r2 = emitirRouterCitas(g, gestionCitas, "need", "user_request");
+    g.addEdge("q-need", r2.entry);
+    prev = null; // el tramo sigue SOLO por las ramas explícitas del router
+    pendingExits = [...pendingExits, ...r2.exits];
+  }
   /** Conecta el tramo anterior (nodo por defecto + ramas abiertas) con `target`. */
   const link = (target: string): void => {
     // prev = null: el tramo anterior termina SOLO en ramas explícitas (pendingExits), p. ej. botones.
@@ -603,6 +755,8 @@ function construirMaquina(g: GraphBuilder, ir: CompiledBusinessAgentIR, endId: s
     const bookParams: Record<string, string> = {};
     if (esNylasGenerico) {
       if (ir.scheduling.businessHours) bookParams.businessHoursJson = JSON.stringify(ir.scheduling.businessHours);
+      // Aviso mínimo del Wizard (antes solo UI): el backend rechaza horarios pasados o sin la anticipación.
+      if (ir.scheduling.minNoticeMinutes !== undefined) bookParams.minNoticeMinutes = String(ir.scheduling.minNoticeMinutes);
       if (ir.customerData?.fields.length) bookParams.customerFieldsJson = JSON.stringify(ir.customerData.fields);
     }
     g.addNode({ id: "act-book", type: "action", config: actionConfig(createAction, Object.keys(bookParams).length > 0 ? bookParams : undefined) });
@@ -617,6 +771,8 @@ function construirMaquina(g: GraphBuilder, ir: CompiledBusinessAgentIR, endId: s
       // resuelve el backend desde el servicio (dulabs_servicios).
       const availParams: Record<string, string> = {};
       if (ir.scheduling.businessHours) availParams.businessHoursJson = JSON.stringify(ir.scheduling.businessHours);
+      // Aviso mínimo del Wizard (antes solo UI): no se ofrecen horarios que no lo cumplan.
+      if (ir.scheduling.minNoticeMinutes !== undefined) availParams.minNoticeMinutes = String(ir.scheduling.minNoticeMinutes);
       g.declareVar("appointment_pick");
       g.addNode({ id: "ai-avail-propose", type: "ai", config: { instruction: aiInstruction("Propón consultar la disponibilidad para el día que indicó el cliente, incluyendo el servicio elegido (su nombre exacto si lo mencionó) y la fecha. No calcules ni inventes horarios: el sistema los devuelve.", ir), mode: "propose_action", allowedTools: [availAction] } });
       g.addNode({ id: "act-avail", type: "action", config: actionConfig(availAction, Object.keys(availParams).length > 0 ? availParams : undefined) });

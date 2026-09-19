@@ -338,6 +338,30 @@ const BY_ACTION_TYPE: Partial<Record<FlowActionType, ActionCapabilitySpec>> = {
     criticality: "standard",
     outputVariables: ["cotizacionTexto"],
   },
+  // R7 (Business Agent, autorizado) -- citas del cliente. ATENCIÓN (mismo contrato que buscar_disponibilidad_nylas_generico):
+  // el orquestador concede lo declarado en verifiesOnSuccess a TODO success:true sin mirar los datos, así que estas
+  // acciones devuelven éxito SOLO cuando el hecho es real: listar => hay al menos una cita; cancelar => la cita quedó
+  // cancelada; mover => la cita quedó en el nuevo horario. Cualquier otro caso es success:false.
+  listar_citas_cliente: {
+    actionType: "listar_citas_cliente",
+    criticality: "standard",
+    verifiesOnSuccess: ["appointment.reserved"],
+    outputVariables: ["cantidadCitas"],
+  },
+  cancelar_cita_cliente: {
+    actionType: "cancelar_cita_cliente",
+    criticality: "critical",
+    verifiesOnSuccess: ["appointment.cancelled"],
+    outputVariables: ["cancelada"],
+    requiresFailureBranch: true,
+  },
+  reprogramar_cita_cliente: {
+    actionType: "reprogramar_cita_cliente",
+    criticality: "critical",
+    verifiesOnSuccess: ["appointment.rescheduled"],
+    outputVariables: ["movida"],
+    requiresFailureBranch: true,
+  },
 };
 
 /** Specs por semanticTag de webhook (prioridad sobre actionType genérico). */

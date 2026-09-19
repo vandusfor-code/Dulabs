@@ -60,7 +60,24 @@ export interface NylasDeleteEventParams {
   eventId: string;
 }
 
+/**
+ * R7 (Business Agent, autorizado) -- mover un evento en el tiempo (reprogramar). Solo cambia `when`: conserva id,
+ * título, descripción (datos del cliente) e invitados.
+ */
+export interface NylasUpdateEventTimeParams {
+  grantId: string;
+  calendarId: string;
+  eventId: string;
+  /** Unix seconds. */
+  startUnix: number;
+  endUnix: number;
+  /** IANA, ej. "America/Bogota". */
+  timezone: string;
+}
+
 export interface NylasEventsWriteClient {
   createEvent(params: NylasCreateEventParams, signal?: AbortSignal): Promise<NylasCreatedEvent>;
   deleteEvent(params: NylasDeleteEventParams, signal?: AbortSignal): Promise<void>;
+  /** OPCIONAL a propósito: los clientes/mocks previos (AMORE) no la implementan; solo el Business Agent (R7) la usa. */
+  updateEventTime?(params: NylasUpdateEventTimeParams, signal?: AbortSignal): Promise<void>;
 }

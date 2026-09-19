@@ -316,7 +316,12 @@ export type FlowActionType =
   // ítems pedidos contra el catálogo REAL del tenant (servicios + productos) y calcula
   // líneas/subtotal/total. Solo lectura; el tenant sale de request.tenantId. La IA solo
   // propone `items` como texto estructurado. Ver lib/business-agent-quote.ts.
-  | "calcular_cotizacion";
+  | "calcular_cotizacion"
+  // R7 (Business Agent, autorizado) -- citas del cliente. La identidad es la del CANAL (request.conversation) y el
+  // tenant el de la solicitud; la IA no participa ni elige ids. Ver lib/agent-compiler/calendar/nylas-appointments.ts.
+  | "listar_citas_cliente"
+  | "cancelar_cita_cliente"
+  | "reprogramar_cita_cliente";
 
 /** Params genéricos mapeados desde variables en runtime. */
 export type ActionParams = Record<string, string>;
@@ -421,7 +426,10 @@ export interface SimpleActionConfig extends ActionSemanticTag {
     | "buscar_disponibilidad_nylas_generico"
     | "get_contact"
     | "buscar_conocimiento"
-    | "calcular_cotizacion";
+    | "calcular_cotizacion"
+    | "listar_citas_cliente"
+    | "cancelar_cita_cliente"
+    | "reprogramar_cita_cliente";
   params?: ActionParams;
 }
 

@@ -405,29 +405,39 @@ function StepAgendamiento({ form, update }: { form: EditableBusinessAgentSpecFor
           <input type="number" min={0} className={inputCls} value={s.minNoticeMinutes} onChange={(e) => update("scheduling", { ...s, minNoticeMinutes: Number(e.target.value) })} />
         </Field>
       </div>
-      <div className="grid gap-2 sm:grid-cols-2">
-        <ToggleRow label={t("Permitir cancelar", "Allow cancellation")} checked={s.cancellation.allowed} onChange={(v) => update("scheduling", { ...s, cancellation: { ...s.cancellation, allowed: v } })} />
-        <ToggleRow label={t("Requiere confirmación", "Requires confirmation")} checked={s.confirmation.required} onChange={(v) => update("scheduling", { ...s, confirmation: { ...s.confirmation, required: v } })} />
+      <div className="space-y-3">
+        <ToggleRow
+          label={t("Permitir cancelar y cambiar citas por WhatsApp", "Allow cancelling and rescheduling by WhatsApp")}
+          hint={t(
+            "El cliente puede cancelar o mover SUS citas (se identifica por su número). El sistema lo hace en tu calendario real, respetando tu horario y la duración de la cita. Disponible con Nylas (Google Calendar).",
+            "Customers can cancel or move THEIR appointments (identified by their number). The system does it on your real calendar, respecting your hours and the appointment length. Available with Nylas (Google Calendar).",
+          )}
+          checked={s.cancellation.allowed}
+          onChange={(v) => update("scheduling", { ...s, cancellation: { ...s.cancellation, allowed: v } })}
+        />
+        {s.cancellation.allowed && s.provider !== "nylas" && (
+          <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-300">
+            {t(
+              "Con el proveedor Interno esta opción todavía no actúa: cancelar/cambiar por WhatsApp funciona con Nylas (Google Calendar).",
+              "With the Internal provider this option does not apply yet: cancelling/rescheduling by WhatsApp works with Nylas (Google Calendar).",
+            )}
+          </p>
+        )}
+        {s.cancellation.allowed && (
+          <Field
+            label={t("Anticipación mínima para cancelar o cambiar (horas)", "Minimum notice to cancel or reschedule (hours)")}
+            hint={t("Con menos tiempo que esto, el agente pasa el caso a una persona (si activaste 'Transferir a un humano').", "With less time than this, the agent hands the case to a person (if 'Transfer to a human' is on).")}
+          >
+            <input type="number" min={0} className={`${inputCls} max-w-[140px]`} value={s.cancellation.minNoticeHours} onChange={(e) => update("scheduling", { ...s, cancellation: { ...s.cancellation, minNoticeHours: Math.max(0, Number(e.target.value)) } })} />
+          </Field>
+        )}
+        <p className="text-xs text-mist">
+          {t(
+            "Recordatorios de cita y recursos por especialista todavía no están disponibles: no se muestran para no prometer algo que el agente no hace.",
+            "Appointment reminders and per-specialist resources are not available yet: they are hidden so we don't promise something the agent doesn't do.",
+          )}
+        </p>
       </div>
-      <Field label={t("Recursos requeridos (ej. especialista, mesa, sala)", "Required resources (e.g. specialist, table, room)")}>
-        <div className="space-y-2">
-          {s.resources.map((r, i) => (
-            <div key={i} className="flex items-center gap-2">
-              <input className={inputCls} placeholder={t("Etiqueta (ej. Barbero)", "Label (e.g. Specialist)")} value={r.label} onChange={(e) => {
-                const next = [...s.resources];
-                next[i] = { ...next[i]!, label: e.target.value, kind: next[i]!.kind || "specialist" };
-                update("scheduling", { ...s, resources: next });
-              }} />
-              <button type="button" className={actionBtn} onClick={() => update("scheduling", { ...s, resources: s.resources.filter((_, j) => j !== i) })}>
-                <Trash2 className="size-3.5" />
-              </button>
-            </div>
-          ))}
-          <button type="button" className={actionBtn} onClick={() => update("scheduling", { ...s, resources: [...s.resources, { kind: "specialist", label: "", required: true }] })}>
-            <Plus className="size-3.5" /> {t("Agregar recurso", "Add resource")}
-          </button>
-        </div>
-      </Field>
     </SectionCard>
   );
 }

@@ -139,6 +139,12 @@ const INTERNAL_ACTION_TYPES = new Set([
   // documentado arriba: sin esto el framework la trata como integración externa y responde
   // integration_required): acción nativa de solo lectura sobre el catálogo del tenant.
   "calcular_cotizacion",
+  // R7 (Business Agent, autorizado) -- registradas DESDE EL PRIMER COMMIT (el mismo bug ya documentado arriba: sin esto el
+  // framework las trata como integración externa y responde integration_required): acciones nativas sobre el registro de
+  // citas del agente y el calendario del tenant, sin integración externa configurable.
+  "listar_citas_cliente",
+  "cancelar_cita_cliente",
+  "reprogramar_cita_cliente",
   // FASE F8.1 (Flow Engine <-> WhatsApp Cloud API, autorizado) -- MISMO
   // patrón de bug ya documentado arriba varias veces (F7 Bloque 2,
   // etiquetar_conversacion): esta acción existe y funciona en

@@ -62,12 +62,17 @@ export interface CrearCitaNylasGenericoParams {
   customerFields?: CustomerField[];
   /** Valores capturados por clave (variables del flow ya mezcladas con el payload). */
   customerValues?: Record<string, string | undefined>;
+  /** Reloj (ms). Junto con minNoticeMinutes activa el rechazo de horarios pasados / sin la anticipación mínima. */
+  nowMs?: number;
+  /** Aviso mínimo del negocio (minutos). Solo se aplica si viene nowMs (Specs previos no lo traen: sin cambios). */
+  minNoticeMinutes?: number;
 }
 
 export type CrearCitaNylasGenericoRechazoMotivo =
   | "datos_incompletos"
   | "datos_invalidos"
   | "fecha_invalida"
+  | "muy_pronto"
   | "fuera_de_horario"
   | "calendario_no_conectado"
   | "proveedor_no_disponible"
@@ -181,6 +186,11 @@ export async function crearCitaNylasGenerico(
   const inicio = parseFechaHora(params.fecha, params.hora);
   if (!inicio) {
     return { ok: false, motivo: "fecha_invalida", detalle: "Fecha u hora inválida." };
+  }
+
+  // Aviso mínimo (ajuste del Wizard, antes solo UI) y nunca en el pasado: regla determinista del backend.
+  if (params.nowMs !== undefined && inicio.getTime() < params.nowMs + Math.max(0, params.minNoticeMinutes ?? 0) * 60_000) {
+    return { ok: false, motivo: "muy_pronto", detalle: "Ese horario ya pasó o no cumple la anticipación mínima del negocio." };
   }
 
   // Calendario SIEMPRE resuelto server-side por tenantId (nunca del

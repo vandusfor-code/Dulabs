@@ -61,6 +61,10 @@ export const flowMediaRefSchema = z
 export const assertionCapabilitySchema = z.enum([
   "appointment.reserved",
   "appointment.available",
+  // R7 (autorizado, ADITIVO) -- el tipo AssertionCapability ya las define y las acciones de cancelar/mover las verifican;
+  // faltaba aceptarlas en el schema para poder declararlas en un mensaje external_assertion.
+  "appointment.cancelled",
+  "appointment.rescheduled",
   "payment.completed",
   "lead.created",
   "support.transferred",
@@ -353,6 +357,23 @@ const actionNodeConfigSchema = z.discriminatedUnion("actionType", [
   // opcionales (`incluirServicios`/`incluirProductos`); el tenant sale de request.tenantId.
   z.object({
     actionType: z.literal("calcular_cotizacion"),
+    semanticTag: semanticTagSchema,
+    params: z.record(z.string(), z.string()).optional(),
+  }),
+  // R7 (Business Agent, autorizado) -- citas del cliente (listar / cancelar / reprogramar). params estáticos
+  // (política y horario embebidos por el compiler); la identidad sale de request.conversation, el tenant de la solicitud.
+  z.object({
+    actionType: z.literal("listar_citas_cliente"),
+    semanticTag: semanticTagSchema,
+    params: z.record(z.string(), z.string()).optional(),
+  }),
+  z.object({
+    actionType: z.literal("cancelar_cita_cliente"),
+    semanticTag: semanticTagSchema,
+    params: z.record(z.string(), z.string()).optional(),
+  }),
+  z.object({
+    actionType: z.literal("reprogramar_cita_cliente"),
     semanticTag: semanticTagSchema,
     params: z.record(z.string(), z.string()).optional(),
   }),
