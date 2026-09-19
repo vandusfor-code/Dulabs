@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Check, ChevronLeft, ChevronRight, Loader2, Plus, Trash2 } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import {
@@ -15,6 +15,7 @@ import {
 } from "@/lib/business-agent-form";
 import { BUSINESS_TYPE_OTRO } from "@/lib/agent-compiler/spec/types";
 import { CAPABILITY_KEYS, type CapabilityKey } from "@/lib/agent-compiler/spec/capabilities";
+import { ServicesModule } from "@/components/dashboard/business-agent/ServicesModule";
 import type { HandoffTriggerKind, ProhibitionAction, RuleKind } from "@/lib/agent-compiler/spec/types";
 import { actionBtn, Field, inputCls, IssuesList, primaryBtn, SectionCard, ToggleRow } from "@/components/dashboard/business-agent/ui";
 import type { CompilerDiagnostic } from "@/lib/agent-compiler/diagnostics";
@@ -52,8 +53,7 @@ const HANDOFF_TRIGGERS: { value: HandoffTriggerKind; es: string; en: string }[] 
   { value: "intent", es: "Intención detectada", en: "Detected intent" },
 ];
 
-export type WizardStep = "tipo" | "personalidad" | "capacidades" | "agendamiento" | "reglas" | "handoff" | "revisar";
-const STEP_ORDER: WizardStep[] = ["tipo", "personalidad", "capacidades", "agendamiento", "reglas", "handoff", "revisar"];
+export type WizardStep = "tipo" | "personalidad" | "capacidades" | "agendamiento" | "servicios" | "reglas" | "handoff" | "revisar";
 
 export interface WizardProps {
   form: EditableBusinessAgentSpecForm;
@@ -72,7 +72,21 @@ function diagnosticText(d: CompilerDiagnostic): string {
 export function BusinessAgentWizard({ form, onChange, diagnostics, saving, onSaveDraft, saveError }: WizardProps) {
   const { t } = useI18n();
   const [step, setStep] = useState<WizardStep>("tipo");
-  const stepIndex = STEP_ORDER.indexOf(step);
+  // Orden de pasos DINÁMICO: los módulos aparecen según las capacidades. Primer
+  // paso hacia el configurador dinámico -- "servicios" solo se pide si el agente
+  // usa catálogo o agendamiento (precio/duración estructurados).
+  const stepOrder = useMemo<WizardStep[]>(() => {
+    const steps: WizardStep[] = ["tipo", "personalidad", "capacidades", "agendamiento"];
+    if (form.capabilities.catalog || form.capabilities.scheduling) steps.push("servicios");
+    steps.push("reglas", "handoff", "revisar");
+    return steps;
+  }, [form.capabilities.catalog, form.capabilities.scheduling]);
+  const stepIndex = Math.max(0, stepOrder.indexOf(step));
+  useEffect(() => {
+    // Si el paso actual dejó de existir (se desactivó su capacidad), vuelve a uno válido.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (!stepOrder.includes(step)) setStep(stepOrder[0]!);
+  }, [stepOrder, step]);
 
   const localIssues = useMemo(() => localFormIssues(form, t), [form, t]);
   // El paso 1 (tipo de negocio) exige un tipo; con "Otro", además el texto libre.
@@ -94,7 +108,7 @@ export function BusinessAgentWizard({ form, onChange, diagnostics, saving, onSav
   return (
     <div className="flex flex-col gap-6 lg:flex-row">
       <nav className="flex shrink-0 gap-1 overflow-x-auto lg:w-52 lg:flex-col lg:overflow-visible">
-        {STEP_ORDER.map((s, i) => (
+        {stepOrder.map((s, i) => (
           <button
             key={s}
             type="button"
@@ -116,6 +130,7 @@ export function BusinessAgentWizard({ form, onChange, diagnostics, saving, onSav
         {step === "personalidad" && <StepPersonalidad form={form} update={update} />}
         {step === "capacidades" && <StepCapacidades form={form} update={update} onChange={onChange} />}
         {step === "agendamiento" && <StepAgendamiento form={form} update={update} />}
+        {step === "servicios" && <ServicesModule />}
         {step === "reglas" && <StepReglas form={form} update={update} />}
         {step === "handoff" && <StepHandoff form={form} update={update} />}
         {step === "revisar" && (
@@ -129,13 +144,13 @@ export function BusinessAgentWizard({ form, onChange, diagnostics, saving, onSav
         )}
 
         <div className="flex items-center justify-between border-t border-edge pt-4">
-          <button type="button" onClick={() => goto(STEP_ORDER[Math.max(0, stepIndex - 1)])} disabled={stepIndex === 0} className={actionBtn}>
+          <button type="button" onClick={() => goto(stepOrder[Math.max(0, stepIndex - 1)]!)} disabled={stepIndex === 0} className={actionBtn}>
             <ChevronLeft className="size-4" /> {t("Anterior", "Back")}
           </button>
           {step !== "revisar" ? (
             <button
               type="button"
-              onClick={() => goto(STEP_ORDER[Math.min(STEP_ORDER.length - 1, stepIndex + 1)])}
+              onClick={() => goto(stepOrder[Math.min(stepOrder.length - 1, stepIndex + 1)]!)}
               disabled={step === "tipo" && step1Invalid}
               className={primaryBtn}
             >
@@ -159,6 +174,7 @@ function STEP_LABEL(s: WizardStep, t: (es: string, en: string) => string): strin
     personalidad: t("Personalidad", "Personality"),
     capacidades: t("Capacidades", "Capabilities"),
     agendamiento: t("Agendamiento", "Scheduling"),
+    servicios: t("Servicios", "Services"),
     reglas: t("Reglas", "Rules"),
     handoff: t("Transferencia", "Handoff"),
     revisar: t("Revisar y guardar", "Review & save"),
