@@ -343,3 +343,8 @@ lib/agent-compiler/api/preview.test.ts
 # (calendar-store-supabase.ts) y el cliente Nylas real (nylas-oauth-client.ts)
 # quedan gateados por credenciales/infra real, fuera de este manifiesto.
 lib/agent-compiler/calendar/calendar-connection-service.test.ts
+# Bloque 16 (agendamiento genérico Nylas -- acción PROPIA del Business Agent
+# Compiler, separada de crear_cita_nylas/AMORE). Puro: fake Supabase mínimo
+# (solo dulabs_idempotencia_reservas) + store de calendario en memoria +
+# clientes Nylas fake, sin red ni Supabase real.
+lib/agent-compiler/calendar/nylas-generic-booking.test.ts

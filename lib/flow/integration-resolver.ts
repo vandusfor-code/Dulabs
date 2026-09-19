@@ -99,6 +99,14 @@ const INTERNAL_ACTION_TYPES = new Set([
   // DESDE EL PRIMER COMMIT que las introduce.
   "buscar_disponibilidad_nylas",
   "crear_cita_nylas",
+  // Bloque 16 (Business Agent Compiler, autorizado) -- MISMO patrón de bug
+  // ya documentado arriba varias veces: se registró la acción en
+  // FlowActionType/SimpleActionConfig/schemas.ts/action-capabilities.ts/
+  // external-claim-security.ts/OPERATION_CLASS, pero faltaba acá. Encontrado
+  // por el propio E2E offline de Bloque 16 (nunca hubiera fallado en un test
+  // que llama al executor directo, solo en el camino real orchestrator ->
+  // EffectExecutorFramework -> IntegrationResolver -> InternalActionExecutor).
+  "crear_cita_nylas_generico",
   // FASE F7 Bloque 2 (autorizado) -- BUG REAL preexistente encontrado durante
   // la validación E2E de F7.3 (autorizado): esta acción existe y funciona en
   // InternalActionExecutor desde F7 Bloque 2, pero NUNCA se agregó acá --

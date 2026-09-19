@@ -80,9 +80,16 @@ function aiInstruction(purpose: string, ir: CompiledBusinessAgentIR): string {
   return `${purpose} Estilo: ${ir.personality.styleHints.join(", ")}. Nunca inventes precios, stock ni disponibilidad: usa exclusivamente las herramientas autorizadas de este paso.`;
 }
 
-/** Acción de creación de cita según el provider real (o null si no hay runtime). */
+/**
+ * Acción de creación de cita según el provider real (o null si no hay runtime).
+ * Bloque 16 (autorizado): "nylas" mapea a crear_cita_nylas_generico -- la
+ * acción PROPIA del Business Agent Compiler (params simples fecha/hora,
+ * mismo contrato que agendar_cita_especialista) -- NUNCA a crear_cita_nylas
+ * (AMORE, exige request.payload.agendamiento que solo produce su propio
+ * motor de escenarios; un Business Agent genérico no puede producir eso).
+ */
 function bookingCreateAction(provider: string): FlowActionType | null {
-  if (provider === "nylas") return "crear_cita_nylas";
+  if (provider === "nylas") return "crear_cita_nylas_generico";
   if (provider === "internal") return "agendar_cita_especialista";
   return null;
 }

@@ -318,6 +318,14 @@ const actionNodeConfigSchema = z.discriminatedUnion("actionType", [
     semanticTag: semanticTagSchema,
     params: z.record(z.string(), z.string()).optional(),
   }),
+  // Bloque 16 (Business Agent Compiler, autorizado) -- mismo criterio que
+  // crear_cita_nylas de arriba (sin params estáticos, lee tenantId/params
+  // simples de request.payload -- nunca request.payload.agendamiento).
+  z.object({
+    actionType: z.literal("crear_cita_nylas_generico"),
+    semanticTag: semanticTagSchema,
+    params: z.record(z.string(), z.string()).optional(),
+  }),
   // FASE F7.3 (Contacto + Tags + IA, autorizado) -- sin params: lee
   // exclusivamente el contacto de request.conversation, igual que
   // resolver_escenario/buscar_disponibilidad_nylas de arriba.

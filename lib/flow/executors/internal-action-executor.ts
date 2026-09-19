@@ -63,6 +63,13 @@ import {
   resolveNylasApiKeyFromEnv,
 } from "@/lib/nylas/nylas-client";
 import { fechaColombiaDesdeIso, horaColombiaDesdeIso } from "@/lib/timezone-colombia";
+// Bloque 16 (Business Agent Compiler, autorizado) -- agendamiento genérico
+// Nylas, DELIBERADAMENTE separado de crearCitaConNylas/crearCitaNylasAction
+// (AMORE, arriba): esta acción es propia del Business Agent Compiler, ver
+// lib/agent-compiler/calendar/nylas-generic-booking.ts para el porqué.
+import { crearCitaNylasGenerico } from "@/lib/agent-compiler/calendar/nylas-generic-booking";
+import { createSupabaseCalendarStore } from "@/lib/agent-compiler/calendar/calendar-store-supabase";
+import type { CalendarConnectionStore } from "@/lib/agent-compiler/calendar/types";
 // FASE F8.1 (Flow Engine <-> WhatsApp Cloud API, autorizado) -- reutiliza TAL
 // CUAL las mismas piezas que ya usa SendMessageExecutor/el webhook LEGACY
 // para enviar plantillas reales: nunca se reimplementa la llamada a la Graph
@@ -151,6 +158,11 @@ export interface InternalActionDeps {
   resolveNylasApiKeyFromEnv?: typeof resolveNylasApiKeyFromEnv;
   createNylasEventsClient?: typeof createNylasEventsClient;
   createNylasEventsWriteClient?: typeof createNylasEventsWriteClient;
+  // Bloque 16 (Business Agent Compiler, autorizado) -- mismo criterio de
+  // arriba (opcional, real por default; solo se inyecta un fake en tests).
+  // El store de calendario del Bloque 15 (tenant-scoped, grant_id nunca
+  // expuesto) -- NUNCA el resolver hardcodeado de AMORE (resolverNylasGrantIdParaTenant).
+  createBusinessAgentCalendarStore?: (supabase: SupabaseClient) => CalendarConnectionStore;
   // FASE F7 (Contacts + Variables + Tags, autorizado) -- opcionales, mismo
   // criterio de arriba (real por default vía lib/etiquetas.ts; solo se
   // inyectan mocks en tests). Único archivo de la lista de protección
@@ -202,6 +214,8 @@ const OPERATION_CLASS: Partial<Record<string, InternalActionOperationClass>> = {
   // FASE 1 -- Agendamiento conversacional (autorizado).
   buscar_disponibilidad_nylas: "READ",
   crear_cita_nylas: "CRITICAL",
+  // Bloque 16 (Business Agent Compiler, autorizado).
+  crear_cita_nylas_generico: "CRITICAL",
   // FASE F7.3 (Contacto + Tags + IA, autorizado) -- solo lectura.
   get_contact: "READ",
   // FASE F8.1 (Flow Engine <-> WhatsApp Cloud API, autorizado) -- envía un
@@ -294,6 +308,14 @@ function criticalEvidenceMissing(
     }
     return null;
   }
+  // Bloque 16 (Business Agent Compiler, autorizado) -- mismo criterio que
+  // agendar_cita_especialista arriba (defensa en profundidad; el EXECUTOR ya
+  // nunca marca success sin un citaId real, ver crearCitaNylasGenericoAction).
+  if (actionKey === "crear_cita_nylas_generico") {
+    if (typeof data.citaId !== "string") return "missing_citaId";
+    if (data.status !== "confirmada") return "missing_confirmed_status";
+    return null;
+  }
   return null;
 }
 
@@ -383,6 +405,8 @@ export class InternalActionExecutor implements EffectExecutor {
         return this.buscarDisponibilidadNylasAction(request, signal);
       case "crear_cita_nylas":
         return this.crearCitaNylasAction(request, signal);
+      case "crear_cita_nylas_generico":
+        return this.crearCitaNylasGenericoAction(request, params, signal);
       case "get_contact":
         return this.getContactAction(request, signal);
       case "enviar_plantilla":
@@ -2549,6 +2573,99 @@ export class InternalActionExecutor implements EffectExecutor {
       appliedResult: data,
       rawResult: data,
       metadata: { operationClass: OPERATION_CLASS.crear_cita_nylas },
+    };
+  }
+
+  /**
+   * Bloque 16 (Business Agent Compiler, autorizado) -- agendamiento genérico
+   * Nylas. DELIBERADAMENTE separada de crearCitaNylasAction (arriba, AMORE):
+   * esa acción exige request.payload.agendamiento (solo lo produce el motor
+   * de escenarios de AMORE); esta lee params simples (fecha/hora/nombreCliente),
+   * el MISMO contrato que agendarCitaEspecialistaAction (provider "internal").
+   * Cero cambios a crearCitaNylasAction; cero fallback cruzado entre ambas.
+   *
+   * La orquestación real (resolver calendario del tenant, consultar
+   * conflicto, crear evento, idempotencia) vive en
+   * lib/agent-compiler/calendar/nylas-generic-booking.ts (módulo puro,
+   * testeado offline aparte) -- este método es solo el adaptador delgado
+   * hacia EffectDispatchRequest/EffectDispatchResult, igual que el resto de
+   * acciones de este executor.
+   */
+  private async crearCitaNylasGenericoAction(
+    request: EffectDispatchRequest,
+    params: Record<string, string>,
+    signal?: AbortSignal,
+  ): Promise<EffectDispatchResult> {
+    assertNotAborted(signal);
+
+    const rechazar = (motivo: string, detalle: string, classification: EffectDispatchResult["classification"] = EFFECT_RESULT_CLASSIFICATIONS.NON_RETRYABLE): EffectDispatchResult => ({
+      success: false,
+      classification,
+      error: motivo,
+      data: { detalle },
+    });
+
+    const calendarStore = (this.deps.createBusinessAgentCalendarStore ?? createSupabaseCalendarStore)(this.deps.supabase);
+    const apiKey = (this.deps.resolveNylasApiKeyFromEnv ?? resolveNylasApiKeyFromEnv)();
+    const createReadClient = this.deps.createNylasEventsClient ?? createNylasEventsClient;
+    const createWriteClient = this.deps.createNylasEventsWriteClient ?? createNylasEventsWriteClient;
+
+    const resultado = await crearCitaNylasGenerico(
+      {
+        supabase: this.deps.supabase,
+        calendarStore,
+        nylasApiKey: apiKey,
+        createNylasEventsClient: createReadClient,
+        createNylasEventsWriteClient: createWriteClient,
+      },
+      {
+        tenantId: request.tenantId,
+        executionRowId: request.executionRowId,
+        effectId: request.effectId,
+        fecha: params.fecha ?? "",
+        hora: params.hora ?? "",
+        nombreCliente: params.nombreCliente ?? "",
+        telefonoCliente: request.conversation?.telefonoCliente,
+        servicio: params.servicio || undefined,
+        notas: params.notas || undefined,
+        duracionMinInput: params.duracionMin ? num(params.duracionMin, 0) : undefined,
+      },
+      signal,
+    );
+
+    assertNotAborted(signal);
+
+    if (!resultado.ok) {
+      if (resultado.motivo === "ocupado") {
+        return { success: false, classification: EFFECT_RESULT_CLASSIFICATIONS.NON_RETRYABLE, error: "ocupado", data: { ocupado: true } };
+      }
+      if (resultado.motivo === "en_progreso") {
+        return rechazar(resultado.motivo, resultado.detalle, EFFECT_RESULT_CLASSIFICATIONS.RETRYABLE);
+      }
+      return rechazar(resultado.motivo, resultado.detalle);
+    }
+
+    const data: Record<string, unknown> = {
+      citaId: resultado.citaId,
+      status: "confirmada",
+      inicio: resultado.inicioIso,
+      fin: resultado.finIso,
+      effectId: request.effectId,
+    };
+
+    const evidenceError = criticalEvidenceMissing("crear_cita_nylas_generico", data);
+    if (evidenceError) {
+      return { success: false, classification: EFFECT_RESULT_CLASSIFICATIONS.EXTERNAL_AMBIGUOUS, error: evidenceError };
+    }
+
+    return {
+      success: true,
+      classification: EFFECT_RESULT_CLASSIFICATIONS.SUCCESS,
+      data,
+      appliedResult: data,
+      rawResult: data,
+      externalReference: `cita_nylas_generico:${resultado.citaId}`,
+      metadata: { operationClass: OPERATION_CLASS.crear_cita_nylas_generico },
     };
   }
 }

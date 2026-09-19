@@ -129,6 +129,12 @@ const SOURCE_TO_ACTION: Record<string, ActionNodeConfig> = {
   // declarados en action-capabilities.ts se otorguen en runtime.
   buscar_disponibilidad_nylas: { actionType: "buscar_disponibilidad_nylas", params: {} },
   crear_cita_nylas: { actionType: "crear_cita_nylas", params: {} },
+  // Bloque 16 (Business Agent Compiler, autorizado) -- mismo criterio EXACTO
+  // que las entradas de arriba: solo permite que capabilitiesFromVerifiedEntry
+  // reconozca el source real que produce InternalActionExecutor, para que
+  // verifiesOnSuccess/outputVariables declarados en action-capabilities.ts
+  // se otorguen en runtime.
+  crear_cita_nylas_generico: { actionType: "crear_cita_nylas_generico", params: {} },
 };
 
 const DOMAIN_CAPABILITY_RULES: Array<{ pattern: RegExp; capabilities: AssertionCapability[] }> = [

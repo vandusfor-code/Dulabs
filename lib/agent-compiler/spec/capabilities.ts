@@ -56,6 +56,12 @@ export const CAPABILITY_BACKING: Record<CapabilityKey, CapabilityBacking> = {
       "mover_cita_especialista",
       "buscar_disponibilidad_nylas",
       "crear_cita_nylas",
+      // Bloque 16 (autorizado) -- agendamiento genérico Nylas, la acción que
+      // el Business Agent Compiler realmente selecciona para provider
+      // "nylas" (ver flow-compiler.ts::bookingCreateAction). crear_cita_nylas
+      // se conserva en esta lista sin cambios (compatibilidad hacia atrás),
+      // pero el compilador ya no la elige para agentes nuevos.
+      "crear_cita_nylas_generico",
     ],
   },
   orders: { available: false, actions: [], requires: ["catalog"] },

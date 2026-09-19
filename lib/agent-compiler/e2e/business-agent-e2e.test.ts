@@ -123,6 +123,23 @@ function harnessFor(setup: Awaited<ReturnType<typeof publishAgent>>, ai?: Legacy
 // para alcanzar el nodo de tool de catálogo en el 2º turno.
 const CATALOG_FAST: BusinessAgentSpec = { ...retailSpec(), capabilities: caps({ faq: true, catalog: true }), catalog: { source: "structured", useServices: true, useProducts: false, quoteBeforeQualification: true }, policies: { prohibitions: [PROHIBICION_NO_EFECTIVO], rules: [] }, handoff: { rules: [], defaultPauseHours: 24 } };
 
+// Bloque 16 -- mismo salonSpec() ya probado (Step 7/Bloque G), pero
+// provider="nylas" en vez de "internal" -- prueba la cadena completa
+// Wizard(equivalente)->Spec->Compiler->Published Agent->Runtime->Calendar
+// Action para el proveedor que ahora usa la acción genérica propia del
+// Business Agent Compiler (Bloque 16), nunca crear_cita_nylas (AMORE).
+const NYLAS_SCHEDULING: BusinessAgentSpec = { ...salonSpec(), scheduling: { ...salonSpec().scheduling, provider: "nylas" } };
+
+// Variante SIN catalog/faq (mismo criterio que CATALOG_FAST arriba): solo
+// WELCOME -> BOOKING -> CONFIRMATION, para alcanzar ai-book-propose en el
+// menor número de turnos reales posible.
+const NYLAS_SCHEDULING_FAST: BusinessAgentSpec = {
+  ...salonSpec(),
+  capabilities: caps({ scheduling: true, humanHandoff: true }),
+  catalog: { source: "structured", useServices: false, useProducts: false, quoteBeforeQualification: false },
+  scheduling: { ...salonSpec().scheduling, provider: "nylas" },
+};
+
 describe("Bloque G — E2E cadena completa (Spec -> compile -> publish -> resolve -> runtime)", () => {
   it("1-6. Spec -> compile -> draft validado -> publish -> resolve inequívoco", async () => {
     const s = await publishAgent(retailSpec());
@@ -243,5 +260,39 @@ describe("Bloque G — E2E cadena completa (Spec -> compile -> publish -> resolv
     assert.ok(rb.ok);
     const trasRollback = await resolver.resolve({} as never, cliente(d1.flowId));
     assert.equal(trasRollback.kind === "business_agent" && trasRollback.flowVersionId, d1.flowVersionId, "rollback dejó v1 activa");
+  });
+
+  // Bloque 16 -- cadena completa Spec->Compiler->Published Agent->Runtime para
+  // scheduling.provider="nylas": confirma que el agente publicado usa la
+  // acción genérica PROPIA del Business Agent Compiler (nunca la de AMORE) y
+  // que la autorización propose_action->action llega hasta ella.
+  it("14. Business Agent con provider Nylas compila correctamente y el agente publicado cablea crear_cita_nylas_generico (NUNCA crear_cita_nylas de AMORE)", async () => {
+    const s = await publishAgent(NYLAS_SCHEDULING);
+    const actBook = s.version.flow.nodes.find((n) => n.id === "act-book");
+    assert.ok(actBook && actBook.type === "action");
+    assert.equal((actBook as { config: { actionType: string } }).config.actionType, "crear_cita_nylas_generico");
+    assert.ok(s.version.flow.edges.some((e) => e.source === "act-book" && e.target === "human-book-fail" && e.sourceHandle === "failure"), "acción crítica exige rama de fallo a humano, igual que provider internal");
+  });
+
+  it("15. el Business Agent publicado puede llegar hasta la nueva action autorizada: la IA propone crear_cita_nylas_generico y la ACTION se ejecuta; crear_cita_nylas (AMORE) NUNCA está autorizada aquí", async () => {
+    const s = await publishAgent(NYLAS_SCHEDULING_FAST);
+    const ai: LegacyHandler = (req) => (req.nodeId === "ai-book-propose" ? aiProposes("crear_cita_nylas_generico") : aiResponds("ok"));
+    const h = harnessFor(s, ai);
+    await h.turn("Hola", "w1"); // welcome -> q-need (waiting_input)
+    await h.turn("Quiero una cita", "w2"); // q-need -> q-booking-when (waiting_input)
+    await h.turn("El sábado a las 3pm", "w3"); // q-booking-when -> ai-book-propose -> act-book
+    assert.equal(h.framework.actionCalls().some((c) => c.nodeId === "act-book"), true, "la ACTION de agendamiento genérico se ejecutó (autorizada)");
+
+    // Defensa cruzada: proponer la acción de AMORE en este MISMO agente
+    // (compilado para "nylas" genérico) nunca está en allowedTools -- la
+    // ACTION jamás corre. Confirma que ambas acciones quedan aisladas entre
+    // sí incluso cuando el LLM "confunde" el nombre.
+    const s2 = await publishAgent(NYLAS_SCHEDULING_FAST);
+    const aiAjeno: LegacyHandler = (req) => (req.nodeId === "ai-book-propose" ? aiProposes("crear_cita_nylas") : aiResponds("ok"));
+    const h2 = harnessFor(s2, aiAjeno);
+    await h2.turn("Hola", "w4");
+    await h2.turn("Quiero una cita", "w5");
+    await h2.turn("El sábado a las 3pm", "w6");
+    assert.equal(h2.framework.actionCalls().some((c) => c.nodeId === "act-book"), false, "crear_cita_nylas (AMORE) nunca autorizada en un Business Agent genérico");
   });
 });
