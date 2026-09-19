@@ -82,7 +82,7 @@ function activarEstados(spec: BusinessAgentSpec): CompiledState[] {
   if (caps.sales || (caps.catalog && !spec.catalog.quoteBeforeQualification)) push("QUALIFICATION", caps.sales ? ["sales"] : ["catalog"], [], "Calificación antes de cotizar.");
   if (caps.faq) push("INFORMATION", ["faq"], CAPABILITY_BACKING.faq.actions.slice(), "Respuesta a preguntas frecuentes con recuperación de conocimiento (FAQ + documentos) del tenant.");
   if (caps.catalog) push("CATALOG", ["catalog"], ["listar_catalogo_servicios", "resolver_servicio_catalogo", "listar_profesionales_servicio"], "Presentación del catálogo desde datos estructurados.");
-  if (caps.catalog && caps.sales) push("QUOTING", ["catalog", "sales"], ["consultar_disponibilidad_catalogo"], "Cotización con precios autoritativos (nunca del prompt).");
+  if (caps.catalog && caps.sales) push("QUOTING", ["catalog", "sales"], ["calcular_cotizacion"], "Cotización calculada por el backend con precios del catálogo real (nunca del prompt).");
   if (caps.scheduling) push("BOOKING", ["scheduling"], CAPABILITY_BACKING.scheduling.actions.slice(), "Agendamiento contra el Runtime de disponibilidad.");
   if (caps.scheduling) push("CONFIRMATION", ["scheduling"], [], "Confirmación de la cita/pedido.");
   if (caps.humanHandoff) push("HUMAN_TRANSFER", ["humanHandoff"], ["transferir_soporte"], "Transferencia a un humano (control determinista).");
@@ -145,9 +145,14 @@ function construirIR(spec: BusinessAgentSpec, context: CompilerContext): Compile
 
   const catalogBindings: CatalogBinding[] = [];
   if (caps.catalog) {
-    catalogBindings.push({ source: "dulabs_servicios", access: "internal-action-executor", actions: CAPABILITY_BACKING.catalog.actions.slice(), quoteBeforeQualification: spec.catalog.quoteBeforeQualification });
+    // Servicios: siempre, salvo que el negocio haya elegido SOLO productos (un Spec previo sin useServices ni
+    // useProducts sigue siendo "servicios": compatibilidad hacia atrás).
+    if (spec.catalog.useServices || !spec.catalog.useProducts) {
+      catalogBindings.push({ source: "dulabs_servicios", access: "internal-action-executor", actions: CAPABILITY_BACKING.catalog.actions.slice(), quoteBeforeQualification: spec.catalog.quoteBeforeQualification });
+    }
     if (spec.catalog.useProducts) {
-      catalogBindings.push({ source: "dulabs_inventario_productos", access: "internal-action-executor", actions: [], quoteBeforeQualification: spec.catalog.quoteBeforeQualification });
+      // R6: los productos SÍ se consultan (listar_catalogo_servicios con incluirProductos) y se cotizan.
+      catalogBindings.push({ source: "dulabs_inventario_productos", access: "internal-action-executor", actions: ["listar_catalogo_servicios", ...(caps.sales ? (["calcular_cotizacion"] as const) : [])], quoteBeforeQualification: spec.catalog.quoteBeforeQualification });
     }
   }
 
@@ -162,6 +167,12 @@ function construirIR(spec: BusinessAgentSpec, context: CompilerContext): Compile
     actions: caps.scheduling ? CAPABILITY_BACKING.scheduling.actions.slice() : [],
     resources: spec.scheduling.resources.map((r) => ({ kind: r.kind, label: r.label, required: r.required })),
     businessHours: spec.scheduling.businessHours ?? null,
+    ...(caps.scheduling
+      ? {
+          minNoticeMinutes: spec.scheduling.minNoticeMinutes,
+          cancellation: { allowed: spec.scheduling.cancellation.allowed, minNoticeHours: spec.scheduling.cancellation.minNoticeHours },
+        }
+      : {}),
   };
 
   // Datos del cliente (R3): solo campos activos; ausente si no hay (IR y checksum

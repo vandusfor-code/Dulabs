@@ -330,6 +330,38 @@ const BY_ACTION_TYPE: Partial<Record<FlowActionType, ActionCapabilitySpec>> = {
     actionType: "buscar_conocimiento",
     criticality: "standard",
   },
+  // R6 (Business Agent, autorizado) -- cotización: solo lectura del catálogo del propio
+  // negocio. No verifica hechos externos (sin verifiesOnSuccess): cotizar NO es vender, no
+  // reserva, no cobra ni crea pedidos, así que no puede colar "compra confirmada".
+  calcular_cotizacion: {
+    actionType: "calcular_cotizacion",
+    criticality: "standard",
+    outputVariables: ["cotizacionTexto"],
+  },
+  // R7 (Business Agent, autorizado) -- citas del cliente. ATENCIÓN (mismo contrato que buscar_disponibilidad_nylas_generico):
+  // el orquestador concede lo declarado en verifiesOnSuccess a TODO success:true sin mirar los datos, así que estas
+  // acciones devuelven éxito SOLO cuando el hecho es real: listar => hay al menos una cita; cancelar => la cita quedó
+  // cancelada; mover => la cita quedó en el nuevo horario. Cualquier otro caso es success:false.
+  listar_citas_cliente: {
+    actionType: "listar_citas_cliente",
+    criticality: "standard",
+    verifiesOnSuccess: ["appointment.reserved"],
+    outputVariables: ["cantidadCitas"],
+  },
+  cancelar_cita_cliente: {
+    actionType: "cancelar_cita_cliente",
+    criticality: "critical",
+    verifiesOnSuccess: ["appointment.cancelled"],
+    outputVariables: ["cancelada"],
+    requiresFailureBranch: true,
+  },
+  reprogramar_cita_cliente: {
+    actionType: "reprogramar_cita_cliente",
+    criticality: "critical",
+    verifiesOnSuccess: ["appointment.rescheduled"],
+    outputVariables: ["movida"],
+    requiresFailureBranch: true,
+  },
 };
 
 /** Specs por semanticTag de webhook (prioridad sobre actionType genérico). */

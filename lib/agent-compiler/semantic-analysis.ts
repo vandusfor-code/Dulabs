@@ -79,10 +79,7 @@ export function analyzeBusinessAgentSpec(spec: BusinessAgentSpec, context: Compi
     }
   }
 
-  // 5. Catálogo: productos sin acción de Runtime => aviso (solo servicios hoy).
-  if (spec.catalog.useProducts) {
-    diags.push(diagWarning("CATALOG_PRODUCTS_LIMITED", "semantic_analysis", "El catálogo incluye productos, pero hoy solo hay acciones de Runtime para servicios; los productos no se consultarán vía tool.", { path: "catalog.useProducts" }));
-  }
+  // 5. Catálogo: los productos (R6) SÍ tienen runtime real (listado + cotización); ya no hay aviso de limitación.
 
   // 6. Conocimiento: nunca autoridad; aviso si no se usará.
   if (spec.knowledge.documents.length > 0 && !caps.faq) {

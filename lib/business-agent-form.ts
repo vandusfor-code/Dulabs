@@ -182,9 +182,56 @@ export function toggleCapability(
   value: boolean,
 ): EditableBusinessAgentSpecForm {
   const capabilities = { ...form.capabilities, [key]: value };
+  if (key === "catalog") {
+    if (!value) {
+      // Sin catálogo no hay qué cotizar (sales requiere catalog) y las banderas del catálogo no pueden quedar activas.
+      return { ...form, capabilities: { ...capabilities, sales: false }, catalog: { ...form.catalog, useServices: false, useProducts: false } };
+    }
+    // Al activarlo, si no eligió qué catálogo usar, el predeterminado es SERVICIOS (mismo comportamiento de siempre).
+    const sinElegir = !form.catalog.useServices && !form.catalog.useProducts;
+    return { ...form, capabilities, catalog: sinElegir ? { ...form.catalog, useServices: true } : form.catalog };
+  }
   if (key !== "scheduling") return { ...form, capabilities };
   const provider = value && form.scheduling.provider === "none" ? "internal" : form.scheduling.provider;
   return { ...form, capabilities, scheduling: { ...form.scheduling, enabled: value, provider } };
+}
+
+// ---------------------------------------------------------------------------
+// Wizard dinámico: qué módulos aparecen según las capacidades elegidas (PURO, testeable).
+// ---------------------------------------------------------------------------
+
+export type WizardStepId =
+  | "tipo" | "personalidad" | "capacidades" | "servicios" | "agendamiento" | "horarios" | "datos" | "conocimiento" | "reglas" | "handoff" | "revisar";
+
+/** Servicios en el catálogo: explícito, o el predeterminado de Specs previos (ni servicios ni productos elegidos). */
+export function catalogUsesServices(c: EditableBusinessAgentSpecForm["catalog"]): boolean {
+  return c.useServices || !c.useProducts;
+}
+
+/** El paso Servicios se pide si el agente agenda (duración/precio) o muestra servicios en el catálogo. */
+export function needsServicesModule(form: EditableBusinessAgentSpecForm): boolean {
+  return form.capabilities.scheduling || (form.capabilities.catalog && catalogUsesServices(form.catalog));
+}
+
+export function needsProductsModule(form: EditableBusinessAgentSpecForm): boolean {
+  return form.capabilities.catalog && form.catalog.useProducts;
+}
+
+/**
+ * Orden de pasos del Wizard: cada módulo aparece SOLO si su capacidad está seleccionada (sin pasos de relleno).
+ * Identidad, capacidades, reglas y revisión son siempre parte del flujo.
+ */
+export function wizardStepOrder(form: EditableBusinessAgentSpecForm): WizardStepId[] {
+  const c = form.capabilities;
+  const steps: WizardStepId[] = ["tipo", "personalidad", "capacidades"];
+  if (needsServicesModule(form) || needsProductsModule(form)) steps.push("servicios");
+  if (c.scheduling) steps.push("agendamiento", "horarios");
+  if (c.leadCapture || c.scheduling) steps.push("datos");
+  if (c.faq) steps.push("conocimiento");
+  steps.push("reglas");
+  if (c.humanHandoff) steps.push("handoff");
+  steps.push("revisar");
+  return steps;
 }
 
 /** Validaciones de UX rápidas (no reemplazan al servidor, que es la autoridad real). */
@@ -203,6 +250,9 @@ export function localFormIssues(form: EditableBusinessAgentSpecForm, t: (es: str
   }
   if (form.scheduling.enabled && form.scheduling.provider === "nylas" && !tieneAlgunHorarioAbierto(form.scheduling.businessHours)) {
     issues.push(t("Configura el horario de atención (al menos un día abierto).", "Set the business hours (at least one open day)."));
+  }
+  if (form.capabilities.catalog && !form.catalog.useServices && !form.catalog.useProducts) {
+    issues.push(t("Elige qué muestra el catálogo: servicios y/o productos.", "Choose what the catalog shows: services and/or products."));
   }
   if ((form.catalog.useServices || form.catalog.useProducts) && !form.capabilities.catalog) {
     issues.push(t("El catálogo está configurado pero la capacidad 'Catálogo' está apagada.", "Catalog is configured but the 'Catalog' capability is off."));
@@ -262,6 +312,10 @@ export function normalizeFormForSave(input: EditableBusinessAgentSpecForm): Edit
     const { noAnswerMessage: _omit, ...resto } = input.knowledge;
     void _omit;
     form = { ...input, knowledge: resto };
+  }
+  // R6: un catálogo activo sin fuente elegida (Specs previos) significa SERVICIOS: se hace explícito (misma semántica).
+  if (form.capabilities.catalog && !form.catalog.useServices && !form.catalog.useProducts) {
+    form = { ...form, catalog: { ...form.catalog, useServices: true } };
   }
   const campos = form.customerData?.fields;
   if (!campos) return form;

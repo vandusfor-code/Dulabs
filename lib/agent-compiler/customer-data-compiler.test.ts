@@ -179,8 +179,10 @@ describe("R3 — compiler: FlowDefinition (nodos de captura y acción de reserva
     assert.equal(flow.nodes.some((n) => n.id === "q-identify"), false, "la pregunta genérica de nombre se reemplaza (no se pregunta dos veces)");
     // El teléfono lo aporta el canal: no se genera pregunta.
     assert.equal(flow.nodes.some((n) => n.id.includes("telefonoCliente")), false);
-    // q-need -> captura -> reserva
-    assert.ok(flow.edges.some((e) => e.source === "q-need" && e.target === "cond-data:nombreCliente"));
+    // q-need -> [router R7: cancelar/reprogramar si lo pide] -> captura -> reserva
+    assert.ok(flow.edges.some((e) => e.source === "q-need" && e.target === "cond-ap-need-notq"));
+    assert.ok(flow.edges.some((e) => e.source === "cond-ap-need-resched" && e.sourceHandle === "false" && e.target === "cond-data:nombreCliente"));
+    assert.ok(flow.edges.some((e) => e.source === "cond-ap-need-notq" && e.sourceHandle === "false" && e.target === "cond-data:nombreCliente"));
     assert.ok(flow.edges.some((e) => e.source === "cond-data:nombreCliente" && e.sourceHandle === "true" && e.target === "sd-data"));
     assert.ok(flow.edges.some((e) => e.source === "q-data:nombreCliente" && e.target === "sd-data"));
   });
@@ -231,7 +233,8 @@ describe("R3 — compiler: FlowDefinition (nodos de captura y acción de reserva
   it("19. agente SIN datos: la acción y la instrucción son exactamente las de antes (sin customerFieldsJson)", () => {
     const { flow } = compilar(nylasSpec());
     const cfg = (flow.nodes.find((n) => n.id === "act-book") as { config: { params: Record<string, string> } }).config;
-    assert.deepEqual(Object.keys(cfg.params), ["businessHoursJson"]);
+    // Solo horario (R2) y aviso mínimo (R7): NINGÚN parámetro de datos del cliente (R3).
+    assert.deepEqual(Object.keys(cfg.params).sort(), ["businessHoursJson", "minNoticeMinutes"]);
     const propose = flow.nodes.find((n) => n.id === "ai-book-propose") as { config: { instruction: string } };
     assert.doesNotMatch(propose.config.instruction, /datos del cliente/);
   });

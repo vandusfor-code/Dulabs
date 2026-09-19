@@ -10,12 +10,17 @@ import {
   blankRule,
   blankSpecForm,
   localFormIssues,
+  needsProductsModule,
+  needsServicesModule,
   toggleCapability,
+  wizardStepOrder,
   type EditableBusinessAgentSpecForm,
+  type WizardStepId,
 } from "@/lib/business-agent-form";
 import { BUSINESS_TYPE_OTRO } from "@/lib/agent-compiler/spec/types";
 import { CAPABILITY_KEYS, type CapabilityKey } from "@/lib/agent-compiler/spec/capabilities";
 import { ServicesModule } from "@/components/dashboard/business-agent/ServicesModule";
+import { ProductsModule } from "@/components/dashboard/business-agent/ProductsModule";
 import { BusinessHoursModule } from "@/components/dashboard/business-agent/BusinessHoursModule";
 import { CustomerDataModule } from "@/components/dashboard/business-agent/CustomerDataModule";
 import { KnowledgeModule } from "@/components/dashboard/business-agent/KnowledgeModule";
@@ -25,7 +30,7 @@ import type { CompilerDiagnostic } from "@/lib/agent-compiler/diagnostics";
 
 const CAPABILITY_LABELS: Record<CapabilityKey, { es: string; en: string; hintEs: string; hintEn: string }> = {
   faq: { es: "Responder preguntas frecuentes", en: "Answer FAQs", hintEs: "Con tus preguntas frecuentes y documentos: busca lo relevante y nunca inventa.", hintEn: "With your FAQs and documents: looks up what is relevant and never makes things up." },
-  sales: { es: "Cotizar precios", en: "Quote prices", hintEs: "Presenta precios REALES del catálogo (nunca inventa). Requiere Catálogo. Cobrar/tomar pedidos todavía no está disponible.", hintEn: "Shares REAL catalog prices (never invents). Requires Catalog. Charging/orders not available yet." },
+  sales: { es: "Cotizar precios", en: "Quote prices", hintEs: "Arma cotizaciones con precios y cantidades REALES: las calcula el sistema, nunca el modelo. Requiere Catálogo. No cobra ni toma pedidos: para concretar la compra activa 'Transferir a un humano' y el cliente pasa con tu equipo.", hintEn: "Builds quotes with REAL prices and quantities: calculated by the system, never by the model. Requires Catalog. It does not charge or take orders: to close the sale enable 'Transfer to a human' and the customer moves to your team." },
   catalog: { es: "Mostrar catálogo", en: "Show catalog", hintEs: "Servicios/productos reales, nunca inventados por el modelo.", hintEn: "Real services/products, never invented by the model." },
   leadCapture: { es: "Captar datos del cliente", en: "Capture customer data", hintEs: "Nombre, teléfono, necesidad.", hintEn: "Name, phone, need." },
   scheduling: { es: "Agendar citas", en: "Book appointments", hintEs: "Contra el calendario real, con confirmación crítica.", hintEn: "Against the real calendar, with critical confirmation." },
@@ -56,7 +61,7 @@ const HANDOFF_TRIGGERS: { value: HandoffTriggerKind; es: string; en: string }[] 
   { value: "intent", es: "Intención detectada", en: "Detected intent" },
 ];
 
-export type WizardStep = "tipo" | "personalidad" | "capacidades" | "servicios" | "agendamiento" | "horarios" | "datos" | "conocimiento" | "reglas" | "handoff" | "revisar";
+export type WizardStep = WizardStepId;
 
 export interface WizardProps {
   form: EditableBusinessAgentSpecForm;
@@ -79,17 +84,10 @@ export function BusinessAgentWizard({ form, onChange, diagnostics, saving, onSav
   // paso hacia el configurador dinámico -- "servicios" solo se pide si el agente
   // usa catálogo o agendamiento (precio/duración estructurados).
   const stepOrder = useMemo<WizardStep[]>(() => {
-    const steps: WizardStep[] = ["tipo", "personalidad", "capacidades"];
-    if (form.capabilities.catalog || form.capabilities.scheduling) steps.push("servicios");
-    steps.push("agendamiento");
-    if (form.capabilities.scheduling) steps.push("horarios");
-    // Datos del cliente (R3): módulo dinámico -- aparece si el agente capta datos o agenda.
-    if (form.capabilities.leadCapture || form.capabilities.scheduling) steps.push("datos");
-    // Conocimiento (R4): módulo dinámico -- aparece con "Responder preguntas frecuentes".
-    if (form.capabilities.faq) steps.push("conocimiento");
-    steps.push("reglas", "handoff", "revisar");
-    return steps;
-  }, [form.capabilities.catalog, form.capabilities.scheduling, form.capabilities.leadCapture, form.capabilities.faq]);
+    // Cada módulo aparece SOLO si su capacidad está seleccionada (lib/business-agent-form.ts::wizardStepOrder).
+    return wizardStepOrder(form);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.capabilities, form.catalog.useServices, form.catalog.useProducts]);
   const stepIndex = Math.max(0, stepOrder.indexOf(step));
   useEffect(() => {
     // Si el paso actual dejó de existir (se desactivó su capacidad), vuelve a uno válido.
@@ -129,7 +127,7 @@ export function BusinessAgentWizard({ form, onChange, diagnostics, saving, onSav
             <span className={`flex size-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold ${s === step ? "bg-lime text-lime-fg" : "bg-ink text-mist"}`}>
               {i + 1}
             </span>
-            {STEP_LABEL(s, t)}
+            {STEP_LABEL(s, t, form)}
           </button>
         ))}
       </nav>
@@ -139,7 +137,12 @@ export function BusinessAgentWizard({ form, onChange, diagnostics, saving, onSav
         {step === "personalidad" && <StepPersonalidad form={form} update={update} />}
         {step === "capacidades" && <StepCapacidades form={form} update={update} onChange={onChange} />}
         {step === "agendamiento" && <StepAgendamiento form={form} update={update} />}
-        {step === "servicios" && <ServicesModule />}
+        {step === "servicios" && (
+          <>
+            {needsServicesModule(form) && <ServicesModule />}
+            {needsProductsModule(form) && <ProductsModule />}
+          </>
+        )}
         {step === "horarios" && <BusinessHoursModule form={form} onChange={onChange} />}
         {step === "datos" && <CustomerDataModule form={form} onChange={onChange} />}
         {step === "conocimiento" && <KnowledgeModule form={form} onChange={onChange} />}
@@ -180,13 +183,19 @@ export function BusinessAgentWizard({ form, onChange, diagnostics, saving, onSav
   );
 }
 
-function STEP_LABEL(s: WizardStep, t: (es: string, en: string) => string): string {
+function STEP_LABEL(s: WizardStep, t: (es: string, en: string) => string, form: EditableBusinessAgentSpecForm): string {
+  // El paso 'servicios' se llama según lo que el negocio configura ahí: servicios, productos o ambos.
+  const catalogo = needsServicesModule(form) && needsProductsModule(form)
+    ? t("Servicios y productos", "Services & products")
+    : needsProductsModule(form)
+      ? t("Productos", "Products")
+      : t("Servicios", "Services");
   return {
     tipo: t("Tipo de negocio", "Business type"),
     personalidad: t("Personalidad", "Personality"),
     capacidades: t("Capacidades", "Capabilities"),
     agendamiento: t("Agendamiento", "Scheduling"),
-    servicios: t("Servicios", "Services"),
+    servicios: catalogo,
     horarios: t("Horarios", "Business hours"),
     datos: t("Datos del cliente", "Customer data"),
     conocimiento: t("Conocimiento", "Knowledge"),
@@ -348,8 +357,8 @@ function StepCapacidades({
       {caps.catalog && (
         <SectionCard title={t("Catálogo", "Catalog")} description={t("La fuente de verdad siempre son tus servicios/productos guardados -- nunca el prompt.", "The source of truth is always your saved services/products -- never the prompt.")}>
           <div className="grid gap-2 sm:grid-cols-2">
-            <ToggleRow label={t("Usar servicios", "Use services")} checked={form.catalog.useServices} onChange={(v) => update("catalog", { ...form.catalog, useServices: v })} />
-            <ToggleRow label={t("Usar productos", "Use products")} checked={form.catalog.useProducts} onChange={(v) => update("catalog", { ...form.catalog, useProducts: v })} />
+            <ToggleRow label={t("Usar servicios", "Use services")} hint={t("Se administran en el paso Servicios.", "Managed in the Services step.")} checked={form.catalog.useServices} onChange={(v) => update("catalog", { ...form.catalog, useServices: v })} />
+            <ToggleRow label={t("Usar productos", "Use products")} hint={t("Con precio y stock; el agente los lista y los cotiza. Se administran en su propio paso.", "With price and stock; the agent lists and quotes them. Managed in their own step.")} checked={form.catalog.useProducts} onChange={(v) => update("catalog", { ...form.catalog, useProducts: v })} />
           </div>
           <ToggleRow
             label={t("Cotizar antes de calificar al cliente", "Quote before qualifying the customer")}
@@ -396,29 +405,39 @@ function StepAgendamiento({ form, update }: { form: EditableBusinessAgentSpecFor
           <input type="number" min={0} className={inputCls} value={s.minNoticeMinutes} onChange={(e) => update("scheduling", { ...s, minNoticeMinutes: Number(e.target.value) })} />
         </Field>
       </div>
-      <div className="grid gap-2 sm:grid-cols-2">
-        <ToggleRow label={t("Permitir cancelar", "Allow cancellation")} checked={s.cancellation.allowed} onChange={(v) => update("scheduling", { ...s, cancellation: { ...s.cancellation, allowed: v } })} />
-        <ToggleRow label={t("Requiere confirmación", "Requires confirmation")} checked={s.confirmation.required} onChange={(v) => update("scheduling", { ...s, confirmation: { ...s.confirmation, required: v } })} />
+      <div className="space-y-3">
+        <ToggleRow
+          label={t("Permitir cancelar y cambiar citas por WhatsApp", "Allow cancelling and rescheduling by WhatsApp")}
+          hint={t(
+            "El cliente puede cancelar o mover SUS citas (se identifica por su número). El sistema lo hace en tu calendario real, respetando tu horario y la duración de la cita. Disponible con Nylas (Google Calendar).",
+            "Customers can cancel or move THEIR appointments (identified by their number). The system does it on your real calendar, respecting your hours and the appointment length. Available with Nylas (Google Calendar).",
+          )}
+          checked={s.cancellation.allowed}
+          onChange={(v) => update("scheduling", { ...s, cancellation: { ...s.cancellation, allowed: v } })}
+        />
+        {s.cancellation.allowed && s.provider !== "nylas" && (
+          <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-300">
+            {t(
+              "Con el proveedor Interno esta opción todavía no actúa: cancelar/cambiar por WhatsApp funciona con Nylas (Google Calendar).",
+              "With the Internal provider this option does not apply yet: cancelling/rescheduling by WhatsApp works with Nylas (Google Calendar).",
+            )}
+          </p>
+        )}
+        {s.cancellation.allowed && (
+          <Field
+            label={t("Anticipación mínima para cancelar o cambiar (horas)", "Minimum notice to cancel or reschedule (hours)")}
+            hint={t("Con menos tiempo que esto, el agente pasa el caso a una persona (si activaste 'Transferir a un humano').", "With less time than this, the agent hands the case to a person (if 'Transfer to a human' is on).")}
+          >
+            <input type="number" min={0} className={`${inputCls} max-w-[140px]`} value={s.cancellation.minNoticeHours} onChange={(e) => update("scheduling", { ...s, cancellation: { ...s.cancellation, minNoticeHours: Math.max(0, Number(e.target.value)) } })} />
+          </Field>
+        )}
+        <p className="text-xs text-mist">
+          {t(
+            "Recordatorios de cita y recursos por especialista todavía no están disponibles: no se muestran para no prometer algo que el agente no hace.",
+            "Appointment reminders and per-specialist resources are not available yet: they are hidden so we don't promise something the agent doesn't do.",
+          )}
+        </p>
       </div>
-      <Field label={t("Recursos requeridos (ej. especialista, mesa, sala)", "Required resources (e.g. specialist, table, room)")}>
-        <div className="space-y-2">
-          {s.resources.map((r, i) => (
-            <div key={i} className="flex items-center gap-2">
-              <input className={inputCls} placeholder={t("Etiqueta (ej. Barbero)", "Label (e.g. Specialist)")} value={r.label} onChange={(e) => {
-                const next = [...s.resources];
-                next[i] = { ...next[i]!, label: e.target.value, kind: next[i]!.kind || "specialist" };
-                update("scheduling", { ...s, resources: next });
-              }} />
-              <button type="button" className={actionBtn} onClick={() => update("scheduling", { ...s, resources: s.resources.filter((_, j) => j !== i) })}>
-                <Trash2 className="size-3.5" />
-              </button>
-            </div>
-          ))}
-          <button type="button" className={actionBtn} onClick={() => update("scheduling", { ...s, resources: [...s.resources, { kind: "specialist", label: "", required: true }] })}>
-            <Plus className="size-3.5" /> {t("Agregar recurso", "Add resource")}
-          </button>
-        </div>
-      </Field>
     </SectionCard>
   );
 }

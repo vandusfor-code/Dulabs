@@ -9,6 +9,8 @@ import type { AgentVersionSummary } from "@/lib/agent-compiler/registry/types";
 import { publishBusinessAgentDraft, rollbackBusinessAgent, setBusinessAgentActiveOnNumber } from "@/lib/business-agent-client";
 import { Pill } from "@/components/dashboard/shell/ui";
 import { actionBtn, IssuesList, primaryBtn, SectionCard } from "@/components/dashboard/business-agent/ui";
+import { ReadinessPanel } from "@/components/dashboard/business-agent/ReadinessPanel";
+import type { ReadinessReport } from "@/lib/business-agent-readiness";
 
 function diagText(d: { message: string; path?: string }): string {
   return d.path ? `${d.message} (${d.path})` : d.message;
@@ -29,6 +31,8 @@ export function VersionsPanel({
   const { session, cargarNegocios } = useDashboard();
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // R8: revisión final del borrador (mismo validador que el gate del servidor). null = aún no evaluada.
+  const [readiness, setReadiness] = useState<ReadinessReport | null>(null);
 
   const publicar = async (version: AgentVersionPublic) => {
     if (!session) return;
@@ -110,10 +114,12 @@ export function VersionsPanel({
                     <IssuesList issues={agent.draft.diagnostics.map(diagText)} tone={agent.draft.validationStatus === "validated" ? "warning" : "danger"} />
                   </div>
                 )}
+                <ReadinessPanel flowVersionId={agent.draft.flowVersionId} onReport={setReadiness} />
                 <button
                   type="button"
                   onClick={() => publicar(agent.draft!)}
-                  disabled={agent.draft.validationStatus !== "validated" || busyAction !== null}
+                  // El servidor TAMBIÉN rechaza la publicación si hay bloqueos (no depende de este botón).
+                  disabled={agent.draft.validationStatus !== "validated" || busyAction !== null || (readiness !== null && !readiness.ready)}
                   className={`${primaryBtn} mt-3`}
                 >
                   {busyAction === `publish-${agent.draft.flowVersionId}` ? <Loader2 className="size-4 animate-spin" /> : <UploadCloud className="size-4" />}

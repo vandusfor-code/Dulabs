@@ -17,8 +17,8 @@ import { createSupabaseBusinessAgentRegistryStore } from "@/lib/agent-compiler/r
 import { publishDraftVersion, isPlainObject } from "@/lib/agent-compiler/api/business-agent-api";
 import { apiError, apiOk } from "@/lib/agent-compiler/api/http";
 import { registrarAuditoriaAdmin } from "@/lib/auditoria-admin";
-import { hasUsableKnowledge } from "@/lib/business-agent-knowledge/service";
-import { createSupabaseKnowledgeStore } from "@/lib/business-agent-knowledge/store-supabase";
+import { evaluateReadiness } from "@/lib/business-agent-readiness";
+import { loadReadinessFacts } from "@/lib/business-agent-readiness-facts";
 
 export const runtime = "nodejs";
 
@@ -55,37 +55,17 @@ export async function POST(request: NextRequest) {
   try {
     const store = createSupabaseBusinessAgentRegistryStore(supabase);
 
-    // Validación de completitud (BACKEND, no solo UI): un agente con catálogo o
-    // agendamiento no puede publicarse sin al menos un servicio activo. El
-    // horario de atención ya lo exige el validador del Spec (validate.ts (f)),
-    // así que una versión sin horario ni siquiera queda "validated".
+    // Validador FINAL (R8, BACKEND -- no solo UI): mismas reglas que muestra el panel de revisión
+    // (lib/business-agent-readiness.ts). Un agente que no puede funcionar de verdad (sin servicios/productos/
+    // conocimiento, sin calendario conectado, transferencia sin disparador, capacidades sin runtime...) NO se publica.
+    // Las reglas estructurales del Spec (horario, datos del cliente...) ya las cubre spec/validate.ts al guardar.
     const version = await store.getVersion(miembro.tenantId, body.flowVersionId);
-    if (version && (version.spec.capabilities.scheduling || version.spec.capabilities.catalog)) {
-      const { count } = await supabase
-        .from("dulabs_servicios")
-        .select("id", { count: "exact", head: true })
-        .eq("id_tenant", miembro.tenantId)
-        .eq("activo", true);
-      if (!count || count === 0) {
-        return apiError(
-          "MISSING_SERVICES",
-          "Para publicar con catálogo o agendamiento necesitas al menos un servicio activo. Agrégalo en el paso Servicios.",
-          422,
-        );
-      }
-    }
-
-    // R4: con "Responder preguntas frecuentes" el agente debe tener conocimiento real
-    // (una FAQ activa o un documento ya procesado); si no, publicaría un agente que
-    // solo puede decir "no tengo información". Validación en el SERVIDOR.
-    if (version?.spec.capabilities.faq) {
-      const hayConocimiento = await hasUsableKnowledge(createSupabaseKnowledgeStore(supabase), miembro.tenantId);
-      if (!hayConocimiento) {
-        return apiError(
-          "MISSING_KNOWLEDGE",
-          "Para publicar con preguntas frecuentes necesitas al menos una pregunta activa o un documento procesado. Agrégalos en el paso Conocimiento.",
-          422,
-        );
+    if (version) {
+      const facts = await loadReadinessFacts(supabase, miembro.tenantId, version.spec);
+      const informe = evaluateReadiness(version.spec, facts);
+      if (!informe.ready) {
+        const [primero] = informe.blockers;
+        return apiError(primero!.code, informe.blockers.length > 1 ? `${primero!.message} (y ${informe.blockers.length - 1} problema(s) más: revisa el panel de publicación).` : primero!.message, 422, informe.blockers);
       }
     }
 

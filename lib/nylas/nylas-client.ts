@@ -11,6 +11,7 @@ import type {
   NylasEventsClient,
   NylasEventsWriteClient,
   NylasListEventsParams,
+  NylasUpdateEventTimeParams,
 } from "@/lib/nylas/nylas-types";
 
 const NYLAS_API_BASE = "https://api.us.nylas.com";
@@ -114,6 +115,28 @@ export function createNylasEventsWriteClient(apiKey: string): NylasEventsWriteCl
         throw new Error("nylas_respuesta_sin_id: Nylas respondió 2xx pero sin id de evento");
       }
       return { id: body.data.id };
+    },
+
+    async updateEventTime(params: NylasUpdateEventTimeParams, signal?: AbortSignal): Promise<void> {
+      const url = new URL(`${NYLAS_API_BASE}/v3/grants/${encodeURIComponent(params.grantId)}/events/${encodeURIComponent(params.eventId)}`);
+      url.searchParams.set("calendar_id", params.calendarId);
+
+      const res = await fetch(url, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json", Accept: "application/json" },
+        // Solo `when`: el resto del evento (título, descripción, invitados) queda intacto.
+        body: JSON.stringify({
+          when: { start_time: params.startUnix, end_time: params.endUnix, start_timezone: params.timezone, end_timezone: params.timezone },
+        }),
+        signal,
+      });
+
+      if (!res.ok) {
+        const detalle = await res.text().catch(() => "");
+        const err = new Error(`nylas_http_${res.status}: ${detalle.slice(0, 300)}`) as Error & { status?: number };
+        err.status = res.status;
+        throw err;
+      }
     },
 
     async deleteEvent(params: NylasDeleteEventParams, signal?: AbortSignal): Promise<void> {

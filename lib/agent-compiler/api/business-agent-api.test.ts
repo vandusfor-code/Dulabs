@@ -292,6 +292,8 @@ describe("Business Agent Authoring API — Bloque 12 (núcleo)", () => {
       "transferir_soporte",
       // R4: recuperación de conocimiento (capability faq) -- acción real de solo lectura.
       "buscar_conocimiento",
+      // R6: cotización determinista calculada por el backend (capability sales).
+      "calcular_cotizacion",
     ]);
     for (const actionType of flowActionTypes) assert.ok(ACCIONES_REALES_CONOCIDAS.has(actionType), `actionType inesperado: ${actionType}`);
   });

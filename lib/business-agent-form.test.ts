@@ -15,14 +15,19 @@ import {
   blankCustomerField,
   blankHandoffRule,
   blankSpecForm,
+  catalogUsesServices,
   customerDataIssues,
+  emptyCapabilities,
   fieldsAgentWillAsk,
   localFormIssues,
+  needsProductsModule,
+  needsServicesModule,
   normalizeFormForSave,
   recommendedBookingFields,
   slugifyFieldKey,
   toggleCapability,
   wellKnownCustomerField,
+  wizardStepOrder,
 } from "@/lib/business-agent-form";
 import { compileBusinessAgent } from "@/lib/agent-compiler/compile";
 import { compileIRToFlowDefinition } from "@/lib/agent-compiler/flow-compiler";
@@ -210,5 +215,66 @@ describe("R5 — transferencia a humano (mensaje configurable)", () => {
     const r = blankHandoffRule();
     assert.ok(r.response && r.response.trim().length > 0, "debe traer un mensaje de transferencia por defecto");
     assert.equal(r.action, "TRANSFER_HUMAN");
+  });
+});
+
+describe("R6/R8 — Wizard DINÁMICO: cada módulo aparece solo con su capacidad", () => {
+  // Partimos de CERO capacidades (el form en blanco trae 'faq' activada por defecto).
+  const sinCaps = () => ({ ...blankSpecForm(), capabilities: emptyCapabilities() });
+  const conCaps = (on: Parameters<typeof toggleCapability>[1][]) => on.reduce((f, k) => toggleCapability(f, k, true), sinCaps());
+
+  it("1. sin capacidades: solo identidad, capacidades, reglas y revisión (sin pasos de relleno)", () => {
+    assert.deepEqual(wizardStepOrder(sinCaps()), ["tipo", "personalidad", "capacidades", "reglas", "revisar"]);
+  });
+
+  it("2. agenda => servicios + agendamiento + horarios + datos; NO conocimiento/transferencia/productos", () => {
+    const steps = wizardStepOrder(conCaps(["scheduling"]));
+    assert.deepEqual(steps, ["tipo", "personalidad", "capacidades", "servicios", "agendamiento", "horarios", "datos", "reglas", "revisar"]);
+  });
+
+  it("3. FAQ => conocimiento; transferencia => paso handoff SOLO si está seleccionada", () => {
+    const soloFaq = wizardStepOrder(conCaps(["faq"]));
+    assert.ok(soloFaq.includes("conocimiento") && !soloFaq.includes("handoff") && !soloFaq.includes("agendamiento"));
+    const conHandoff = wizardStepOrder(conCaps(["humanHandoff"]));
+    assert.ok(conHandoff.includes("handoff"));
+    assert.ok(!wizardStepOrder(sinCaps()).includes("handoff"));
+  });
+
+  it("4. catálogo: al activarlo el predeterminado es SERVICIOS (mismo comportamiento de siempre) y aparece el paso de servicios", () => {
+    const f = conCaps(["catalog"]);
+    assert.equal(f.catalog.useServices, true);
+    assert.equal(f.catalog.useProducts, false);
+    assert.equal(needsServicesModule(f), true);
+    assert.equal(needsProductsModule(f), false);
+    assert.ok(wizardStepOrder(f).includes("servicios"));
+  });
+
+  it("5. 'Usar productos' agrega el módulo de productos; solo productos => sin módulo de servicios", () => {
+    let f = conCaps(["catalog"]);
+    f = { ...f, catalog: { ...f.catalog, useProducts: true } };
+    assert.equal(needsServicesModule(f) && needsProductsModule(f), true);
+    f = { ...f, catalog: { ...f.catalog, useServices: false } };
+    assert.equal(needsServicesModule(f), false);
+    assert.equal(needsProductsModule(f), true);
+    assert.ok(wizardStepOrder(f).includes("servicios"), "el paso existe (muestra productos)");
+    // ...pero si además agenda, los servicios vuelven a hacer falta (duración/precio de la reserva).
+    assert.equal(needsServicesModule(toggleCapability(f, "scheduling", true)), true);
+  });
+
+  it("6. apagar el catálogo apaga 'cotizar' y limpia las banderas (sin estados imposibles)", () => {
+    let f = conCaps(["catalog", "sales"]);
+    f = toggleCapability(f, "catalog", false);
+    assert.equal(f.capabilities.sales, false);
+    assert.deepEqual([f.catalog.useServices, f.catalog.useProducts], [false, false]);
+    assert.equal(localFormIssues({ ...f, identity: { ...f.identity, businessName: "N", agentName: "A", businessType: "Restaurante" } }, (es) => es).some((m) => /catálogo/i.test(m)), false);
+  });
+
+  it("7. un Spec previo (catálogo sin fuente elegida) significa SERVICIOS: se hace explícito al guardar, misma semántica", () => {
+    const legacy = { ...blankSpecForm(), capabilities: { ...blankSpecForm().capabilities, catalog: true } };
+    assert.equal(catalogUsesServices(legacy.catalog), true);
+    assert.equal(normalizeFormForSave(legacy).catalog.useServices, true);
+    const t = (es: string) => es;
+    const base = { ...legacy, identity: { ...legacy.identity, businessName: "N", agentName: "A", businessType: "Restaurante" } };
+    assert.ok(localFormIssues(base, t).some((m) => /servicios y\/o productos/.test(m)), "avisa antes de guardar");
   });
 });

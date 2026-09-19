@@ -199,6 +199,79 @@ describe("Agent Compiler — IR → FlowDefinition (Step 7.1)", () => {
     assert.ok(tieneEdge(f, "human-book-fail", "end"));
   });
 
+  const nylasSpec = (over: Partial<BusinessAgentSpec> = {}, cancelacion = { allowed: true, minNoticeHours: 12 }, humanHandoff = false): BusinessAgentSpec =>
+    specBase({
+      capabilities: caps({ faq: true, scheduling: true, humanHandoff }),
+      scheduling: { enabled: true, provider: "nylas", timezone: "America/Bogota", minNoticeMinutes: 45, cancellation: cancelacion, confirmation: { required: false, hoursBefore: 24 }, resources: [], businessHours: BH_TEST },
+      handoff: { rules: [], defaultPauseHours: 6 },
+      ...over,
+    });
+
+  it("5f. R7: cancelar/reprogramar — con nylas y política que lo permite se compila la gestión de citas (nodos deterministas, sin IA eligiendo ids)", () => {
+    const f = flowDe(nylasSpec());
+    for (const id of ["ap-c-list", "ap-c-act", "ap-r-list", "ap-r-act", "ap-r-act-avail"]) assert.ok(nodo(f, id), id);
+    const cfg = (id: string) => (nodo(f, id) as { config: { actionType: string; params?: Record<string, string> } }).config;
+    assert.equal(cfg("ap-c-list").actionType, "listar_citas_cliente");
+    assert.equal(cfg("ap-c-act").actionType, "cancelar_cita_cliente");
+    assert.equal(cfg("ap-r-act").actionType, "reprogramar_cita_cliente");
+    // La política y el horario viajan como params ESTÁTICOS (la IA/payload no los altera).
+    assert.deepEqual(cfg("ap-c-act").params, { cancelAllowed: "true", cancelMinNoticeHours: "12" });
+    assert.equal(cfg("ap-r-act").params?.minNoticeMinutes, "45");
+    assert.ok(cfg("ap-r-act").params?.businessHoursJson);
+    assert.equal(cfg("ap-r-act-avail").params?.modoReprogramar, "true");
+    // Ninguna IA puede proponer cancelar/mover/listar: son nodos action fuera de todo allowlist.
+    for (const n of f.nodes) if (n.type === "ai") for (const t of ["cancelar_cita_cliente", "reprogramar_cita_cliente", "listar_citas_cliente"]) assert.equal((n.config.allowedTools ?? []).includes(t), false, `${n.id} no debe poder proponer ${t}`);
+    assert.equal(validateFlowForPublish(f).valid, true, JSON.stringify(validateFlowForPublish(f).errors));
+  });
+
+  it("5g. R7: el router es DETERMINISTA (frases explícitas) sobre el primer mensaje y sobre la respuesta a '¿qué necesitas?'; el resto sigue igual", () => {
+    const f = flowDe(nylasSpec());
+    assert.ok(tieneEdge(f, "welcome", "cond-ap-first-notq"));
+    assert.ok(tieneEdge(f, "cond-ap-first-notq", "cond-ap-first-cancel", "true"));
+    assert.ok(tieneEdge(f, "cond-ap-first-notq", "cond-first-question", "false"), "un mensaje con '?' (pregunta) sigue el flujo normal");
+    assert.ok(tieneEdge(f, "cond-ap-first-cancel", "ap-c-list", "true"));
+    assert.ok(tieneEdge(f, "cond-ap-first-cancel", "cond-ap-first-resched", "false"));
+    assert.ok(tieneEdge(f, "cond-ap-first-resched", "ap-r-list", "true"));
+    assert.ok(tieneEdge(f, "q-need", "cond-ap-need-notq"));
+    assert.ok(tieneEdge(f, "cond-ap-need-resched", "ap-r-list", "true"));
+    // Sin cancelar/mover el flujo de siempre continúa (aquí, con FAQ: primera pregunta / q-need).
+    assert.ok(tieneEdge(f, "cond-ap-first-resched", "cond-first-question", "false"));
+    const reglas = (nodo(f, "cond-ap-need-cancel") as { config: { rules: Array<{ operator: string; value: string }>; match: string } }).config;
+    assert.equal(reglas.match, "any");
+    assert.ok(reglas.rules.every((r) => r.operator === "contains"));
+    // Una pregunta de POLÍTICA ("¿puedo cancelar?") NO dispara el flujo: las frases son imperativas / de primera persona.
+    assert.equal(reglas.rules.some((r) => r.value === "cancelar" || r.value === "cancel"), false);
+  });
+
+  it("5h. R7: la gestión falla HACIA UNA PERSONA (transferencia real) con la capacidad; sin ella, mensaje seguro (nunca silencio)", () => {
+    const con = flowDe(nylasSpec({}, { allowed: true, minNoticeHours: 12 }, true));
+    assert.ok(tieneEdge(con, "ap-c-act", "ap-fail-handoff", "failure"));
+    assert.ok(tieneEdge(con, "ap-r-act", "msg-ap-move-fail", "failure"), "un cambio rechazado deja probar otro día");
+    assert.ok(tieneEdge(con, "ap-fail-handoff", "act-handoff-cita"));
+    assert.equal((nodo(con, "act-handoff-cita") as { config: { actionType: string } }).config.actionType, "transferir_soporte");
+    assert.equal(validateFlowForPublish(con).valid, true, JSON.stringify(validateFlowForPublish(con).errors));
+    const sin = flowDe(nylasSpec());
+    assert.ok(tieneEdge(sin, "ap-c-act", "msg-ap-fail", "failure"));
+    assert.equal(nodo(sin, "act-handoff-cita"), undefined);
+  });
+
+  it("5i. R7: SIN permiso de cancelar, con provider internal o sin agenda => NO se compila nada de esto (agentes existentes intactos)", () => {
+    const noPermitido = flowDe(nylasSpec({}, { allowed: false, minNoticeHours: 24 }));
+    assert.equal(noPermitido.nodes.some((n) => n.id.startsWith("ap-") || n.id.startsWith("cond-ap-")), false);
+    assert.ok(tieneEdge(noPermitido, "welcome", "q-need") || tieneEdge(noPermitido, "welcome", "cond-first-question"));
+    const interno = flowDe(specBase({ capabilities: caps({ faq: true, scheduling: true }), scheduling: { enabled: true, provider: "internal", timezone: "America/Bogota", minNoticeMinutes: 60, cancellation: { allowed: true, minNoticeHours: 24 }, confirmation: { required: false, hoursBefore: 24 }, resources: [] } }));
+    assert.equal(interno.nodes.some((n) => n.id.startsWith("ap-")), false, "el provider internal conserva su propia vía");
+    const sinAgenda = flowDe(specBase());
+    assert.equal(sinAgenda.nodes.some((n) => n.id.startsWith("ap-")), false);
+  });
+
+  it("5j. R7: el aviso mínimo del Wizard llega a la reserva y a la disponibilidad (params estáticos)", () => {
+    const f = flowDe(nylasSpec());
+    const cfg = (id: string) => (nodo(f, id) as { config: { params?: Record<string, string> } }).config.params ?? {};
+    assert.equal(cfg("act-book").minNoticeMinutes, "45");
+    assert.equal(cfg("act-avail").minNoticeMinutes, "45");
+  });
+
   it("6. §H handoff (humanHandoff sin scheduling) NO se duplica en el grafo: sin nodo human", () => {
     const f = flowDe(specBase({ capabilities: caps({ faq: true, humanHandoff: true }), handoff: { rules: [{ id: "h1", description: "asesor", trigger: { kind: "keyword", keywords: ["asesor", "humano"] }, action: "TRANSFER_HUMAN", pauseHours: 2 }], defaultPauseHours: 1 } }));
     assert.equal(f.nodes.some((n) => n.type === "human"), false, "el handoff vive en el Gate, no en el grafo");
@@ -243,8 +316,52 @@ describe("Agent Compiler — IR → FlowDefinition (Step 7.1)", () => {
     assert.equal(nodo(f, "q-qualify")?.type, "question");
     const quote = nodo(f, "ai-quote-propose");
     assert.ok(quote && quote.type === "ai" && quote.config.mode === "propose_action");
-    assert.ok(aiAllowed(quote).includes("consultar_disponibilidad_catalogo"));
+    // R6: la cotización la CALCULA el backend (calcular_cotizacion), no una consulta de agenda.
+    assert.deepEqual(aiAllowed(quote), ["calcular_cotizacion"]);
     assert.ok(tieneEdge(f, "ai-quote-propose", "act-quote", "success"));
+  });
+
+  it("11b. R6: cotización real — act-quote lleva la acción del backend; la presentación tiene rama de fallo (nunca silencio)", () => {
+    const f = flowDe(specBase({ capabilities: caps({ faq: true, catalog: true, sales: true }) }));
+    const act = nodo(f, "act-quote") as { config: { actionType: string } } | undefined;
+    assert.equal(act?.config.actionType, "calcular_cotizacion");
+    assert.equal(f.nodes.some((n) => n.type === "action" && (n.config as { actionType: string }).actionType === "consultar_disponibilidad_catalogo"), false, "ya no se usa la agenda AMORE para cotizar");
+    assert.ok(f.edges.some((e) => e.source === "ai-quote-present" && e.sourceHandle === "failure"));
+    assert.ok(f.edges.some((e) => e.source === "act-quote" && e.sourceHandle === "failure"));
+    // Sin 'Transferir a un humano' NO hay paso de compra (no se promete nada que no exista).
+    assert.equal(nodo(f, "btn-quote-buy"), undefined);
+    assert.equal(nodo(f, "act-handoff-sale"), undefined);
+    assert.equal(validateFlowForPublish(f).valid, true, JSON.stringify(validateFlowForPublish(f).errors));
+  });
+
+  it("11c. R6: con 'Transferir a un humano', tras cotizar se ofrece seguir con una persona (transferencia REAL); 'solo el precio' continúa", () => {
+    const f = flowDe(specBase({ capabilities: caps({ faq: true, catalog: true, sales: true, humanHandoff: true }), handoff: { rules: [], defaultPauseHours: 12 } }));
+    assert.ok(tieneEdge(f, "ai-quote-present", "cond-quote-lines"));
+    assert.ok(tieneEdge(f, "cond-quote-lines", "btn-quote-buy", "true"));
+    assert.ok(tieneEdge(f, "btn-quote-buy", "msg-handoff-sale", "button:comprar"));
+    const act = nodo(f, "act-handoff-sale") as { config: { actionType: string; pauseDurationHours?: number } } | undefined;
+    assert.equal(act?.config.actionType, "transferir_soporte");
+    assert.equal(act?.config.pauseDurationHours, 12);
+    assert.ok(tieneEdge(f, "act-handoff-sale", "end"));
+    // Sin líneas cotizadas NO se ofrece comprar; 'Solo el precio' sigue el flujo (aquí: hasta el cierre/end).
+    assert.equal(f.edges.some((e) => e.source === "cond-quote-lines" && e.sourceHandle === "false"), true);
+    assert.equal(f.edges.some((e) => e.source === "btn-quote-buy" && e.sourceHandle === "button:solo"), true);
+    assert.equal(validateFlowForPublish(f).valid, true, JSON.stringify(validateFlowForPublish(f).errors));
+    for (const n of f.nodes) if (n.type === "ai") assert.equal((n.config.allowedTools ?? []).includes("transferir_soporte"), false);
+  });
+
+  it("11d. R6: productos — el catálogo y la cotización llevan params ESTÁTICOS (incluirProductos); solo productos => sin servicios", () => {
+    const conProductos = flowDe(specBase({ capabilities: caps({ faq: true, catalog: true, sales: true }), catalog: { source: "structured", useServices: true, useProducts: true, quoteBeforeQualification: false } }));
+    const cat = nodo(conProductos, "act-catalog") as { config: { params?: Record<string, string> } };
+    assert.deepEqual(cat.config.params, { incluirServicios: "true", incluirProductos: "true" });
+    assert.deepEqual((nodo(conProductos, "act-quote") as { config: { params?: Record<string, string> } }).config.params, { incluirServicios: "true", incluirProductos: "true" });
+
+    const soloProductos = flowDe(specBase({ capabilities: caps({ faq: true, catalog: true, sales: true }), catalog: { source: "structured", useServices: false, useProducts: true, quoteBeforeQualification: false } }));
+    assert.deepEqual((nodo(soloProductos, "act-catalog") as { config: { params?: Record<string, string> } }).config.params, { incluirServicios: "false", incluirProductos: "true" });
+
+    // Compatibilidad: catálogo sin flags (Specs previos) = SERVICIOS (mismo comportamiento), ahora con params explícitos.
+    const legacy = flowDe(specBase({ capabilities: caps({ faq: true, catalog: true }), catalog: { source: "structured", useServices: false, useProducts: false, quoteBeforeQualification: true } }));
+    assert.deepEqual((nodo(legacy, "act-catalog") as { config: { params?: Record<string, string> } }).config.params, { incluirServicios: "true", incluirProductos: "false" });
   });
 
   it("12. variables declaradas incluyen las de los question de captura", () => {
