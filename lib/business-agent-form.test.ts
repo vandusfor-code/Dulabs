@@ -13,6 +13,7 @@ import { describe, it } from "node:test";
 import {
   blankBusinessHours,
   blankCustomerField,
+  blankHandoffRule,
   blankSpecForm,
   customerDataIssues,
   fieldsAgentWillAsk,
@@ -201,5 +202,13 @@ describe("Wizard form — Conocimiento (R4)", () => {
     const flow = compileIRToFlowDefinition(compiled.ir, CTX);
     if (!flow.success) return assert.fail("flow: " + JSON.stringify(flow.diagnostics));
     assert.ok(flow.flow.nodes.some((n) => n.id === "act-faq"));
+  });
+});
+
+describe("R5 — transferencia a humano (mensaje configurable)", () => {
+  it("blankHandoffRule trae un mensaje al cliente (la transferencia nunca es silenciosa)", () => {
+    const r = blankHandoffRule();
+    assert.ok(r.response && r.response.trim().length > 0, "debe traer un mensaje de transferencia por defecto");
+    assert.equal(r.action, "TRANSFER_HUMAN");
   });
 });

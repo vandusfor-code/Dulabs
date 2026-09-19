@@ -168,6 +168,8 @@ describe("evaluateGuardrailGate — deterministas (0 LLM)", () => {
     if (decision.kind === "transfer_human") {
       assert.equal(decision.ruleId, "pedir_humano");
       assert.equal(decision.pauseHours, 12);
+      // El mensaje configurado debe llegar en la decisión (el sink lo envía al cliente).
+      assert.equal(decision.response, "Te comunico con un asesor.");
     }
   });
 

@@ -548,6 +548,23 @@ function StepHandoff({ form, update }: { form: EditableBusinessAgentSpecForm; up
                 update("handoff", { ...h, rules: next });
               }} />
             )}
+            {r.trigger.kind === "intent" && (
+              <input className={inputCls} placeholder={t("Intención (ej. quiere_reclamar)", "Intent (e.g. wants_to_complain)")} value={r.trigger.intent ?? ""} onChange={(e) => {
+                const next = [...h.rules];
+                next[i] = { ...next[i]!, trigger: { ...next[i]!.trigger, intent: e.target.value } };
+                update("handoff", { ...h, rules: next });
+              }} />
+            )}
+            <textarea className={inputCls} rows={2} placeholder={t("Mensaje al cliente al transferir (ej. Te comunico con una persona)", "Message to the customer on handoff (e.g. Connecting you with a person)")} value={r.response ?? ""} onChange={(e) => {
+              const next = [...h.rules];
+              next[i] = { ...next[i]!, response: e.target.value };
+              update("handoff", { ...h, rules: next });
+            }} />
+            <input type="number" min={0} className={`${inputCls} max-w-[220px]`} placeholder={t("Horas de pausa (opcional)", "Pause hours (optional)")} value={r.pauseHours ?? ""} onChange={(e) => {
+              const next = [...h.rules];
+              next[i] = { ...next[i]!, pauseHours: e.target.value === "" ? undefined : Number(e.target.value) };
+              update("handoff", { ...h, rules: next });
+            }} />
             <button type="button" className={actionBtn} onClick={() => update("handoff", { ...h, rules: h.rules.filter((_, j) => j !== i) })}>
               <Trash2 className="size-3.5" /> {t("Quitar", "Remove")}
             </button>
