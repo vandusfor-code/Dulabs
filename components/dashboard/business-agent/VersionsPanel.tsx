@@ -26,7 +26,7 @@ export function VersionsPanel({
   numeros: { phone_number_id: string; nombre_negocio: string; flow_activo: boolean; flow_id: string | null }[];
 }) {
   const { t } = useI18n();
-  const { session } = useDashboard();
+  const { session, cargarNegocios } = useDashboard();
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -55,10 +55,22 @@ export function VersionsPanel({
     if (!session) return;
     setBusyAction(`numero-${phoneNumberId}`);
     setError(null);
-    const result = await setBusinessAgentActiveOnNumber({ accessToken: session.access_token, flowId: agent.flowId, phoneNumberId, active: activar });
-    setBusyAction(null);
-    if (!result.ok) setError(result.error);
-    else onChanged();
+    try {
+      const result = await setBusinessAgentActiveOnNumber({ accessToken: session.access_token, flowId: agent.flowId, phoneNumberId, active: activar });
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      // Refresca la lista de números (fuente de "Conectado") Y el agente. Sin
+      // recargar los negocios, la UI no reflejaba la conexión hasta un reload.
+      await cargarNegocios();
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo completar la acción.");
+    } finally {
+      // finally: el botón SIEMPRE sale de loading, incluso ante error/timeout.
+      setBusyAction(null);
+    }
   };
 
   return (

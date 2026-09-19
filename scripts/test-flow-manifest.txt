@@ -351,3 +351,6 @@ lib/agent-compiler/calendar/nylas-generic-booking.test.ts
 # Wizard/formulario (autoservicio) -- toggleCapability: fix del checkbox
 # "Agendar citas" + persistencia del estado hasta Spec/compiler. Puro.
 lib/business-agent-form.test.ts
+# Cliente Business Agent -- setBusinessAgentActiveOnNumber (Conectar): timeout
+# duro + siempre resuelve (fix del spinner infinito). Puro, fetch inyectado.
+lib/business-agent-client.test.ts
