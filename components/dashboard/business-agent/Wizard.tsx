@@ -25,7 +25,7 @@ import type { CompilerDiagnostic } from "@/lib/agent-compiler/diagnostics";
 
 const CAPABILITY_LABELS: Record<CapabilityKey, { es: string; en: string; hintEs: string; hintEn: string }> = {
   faq: { es: "Responder preguntas frecuentes", en: "Answer FAQs", hintEs: "Con tus preguntas frecuentes y documentos: busca lo relevante y nunca inventa.", hintEn: "With your FAQs and documents: looks up what is relevant and never makes things up." },
-  sales: { es: "Cotizar / vender", en: "Quote / sell", hintEs: "Requiere Catálogo activo.", hintEn: "Requires Catalog enabled." },
+  sales: { es: "Cotizar precios", en: "Quote prices", hintEs: "Presenta precios REALES del catálogo (nunca inventa). Requiere Catálogo. Cobrar/tomar pedidos todavía no está disponible.", hintEn: "Shares REAL catalog prices (never invents). Requires Catalog. Charging/orders not available yet." },
   catalog: { es: "Mostrar catálogo", en: "Show catalog", hintEs: "Servicios/productos reales, nunca inventados por el modelo.", hintEn: "Real services/products, never invented by the model." },
   leadCapture: { es: "Captar datos del cliente", en: "Capture customer data", hintEs: "Nombre, teléfono, necesidad.", hintEn: "Name, phone, need." },
   scheduling: { es: "Agendar citas", en: "Book appointments", hintEs: "Contra el calendario real, con confirmación crítica.", hintEn: "Against the real calendar, with critical confirmation." },
