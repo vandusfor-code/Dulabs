@@ -106,6 +106,26 @@ export function blankHandoffRule(): HandoffRule {
   return { id: newRuleId("handoff"), description: "", trigger: { kind: "agent_request" }, action: "TRANSFER_HUMAN" };
 }
 
+/**
+ * Alterna una capacidad y devuelve el form COMPLETO ya actualizado (transición
+ * PURA, testeable). "scheduling" es especial: capabilities.scheduling y
+ * scheduling.enabled deben coincidir (lo exige el servidor), así que se cambian
+ * JUNTOS en una sola actualización. Hacerlo en dos update() encadenados sobre el
+ * mismo `form` perdía el primer cambio y el checkbox "Agendar citas" nunca se
+ * marcaba (bug real). Al activar scheduling sin proveedor aún, se usa "internal"
+ * (proveedor listo por defecto; el usuario puede cambiarlo a Nylas después).
+ */
+export function toggleCapability(
+  form: EditableBusinessAgentSpecForm,
+  key: CapabilityKey,
+  value: boolean,
+): EditableBusinessAgentSpecForm {
+  const capabilities = { ...form.capabilities, [key]: value };
+  if (key !== "scheduling") return { ...form, capabilities };
+  const provider = value && form.scheduling.provider === "none" ? "internal" : form.scheduling.provider;
+  return { ...form, capabilities, scheduling: { ...form.scheduling, enabled: value, provider } };
+}
+
 /** Validaciones de UX rápidas (no reemplazan al servidor, que es la autoridad real). */
 export function localFormIssues(form: EditableBusinessAgentSpecForm, t: (es: string, en: string) => string): string[] {
   const issues: string[] = [];

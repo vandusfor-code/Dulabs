@@ -348,3 +348,6 @@ lib/agent-compiler/calendar/calendar-connection-service.test.ts
 # (solo dulabs_idempotencia_reservas) + store de calendario en memoria +
 # clientes Nylas fake, sin red ni Supabase real.
 lib/agent-compiler/calendar/nylas-generic-booking.test.ts
+# Wizard/formulario (autoservicio) -- toggleCapability: fix del checkbox
+# "Agendar citas" + persistencia del estado hasta Spec/compiler. Puro.
+lib/business-agent-form.test.ts
