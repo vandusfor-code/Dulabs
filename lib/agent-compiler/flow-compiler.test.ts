@@ -105,6 +105,10 @@ describe("Agent Compiler — IR → FlowDefinition (Step 7.1)", () => {
     assert.ok(nodo(f, "act-book")?.type === "action");
     // Acción crítica DEBE tener rama failure -> human.
     assert.ok(tieneEdge(f, "act-book", "human-book-fail", "failure"));
+    // provider "internal": conserva su propia vía; NO se inserta la consulta de
+    // disponibilidad genérica (R7, solo nylas) -- q-booking-when va directo a propose.
+    assert.equal(nodo(f, "act-avail"), undefined);
+    assert.ok(tieneEdge(f, "q-booking-when", "ai-book-propose"));
     assert.equal(validateFlowForPublish(f).valid, true, JSON.stringify(validateFlowForPublish(f).errors));
   });
 
@@ -128,6 +132,71 @@ describe("Agent Compiler — IR → FlowDefinition (Step 7.1)", () => {
     assert.equal(cfg.actionType, "crear_cita_nylas_generico");
     assert.ok(cfg.params?.businessHoursJson, "el horario debe ir embebido en la acción de booking");
     assert.equal(JSON.parse(cfg.params!.businessHoursJson).week.length, 7);
+  });
+
+  it("5c. BOOKING nylas (R7) inserta consulta de disponibilidad REAL antes de reservar", () => {
+    const f = flowDe(
+      specBase({
+        capabilities: caps({ faq: true, scheduling: true }),
+        scheduling: { enabled: true, provider: "nylas", timezone: "America/Bogota", minNoticeMinutes: 60, cancellation: { allowed: true, minNoticeHours: 24 }, confirmation: { required: false, hoursBefore: 24 }, resources: [], businessHours: BH_TEST },
+      }),
+    );
+    // Acción de disponibilidad SOLO LECTURA, con el horario embebido (la IA no lo altera).
+    const avail = nodo(f, "act-avail");
+    assert.ok(avail && avail.type === "action");
+    const cfg = (avail as { config: { actionType: string; params?: Record<string, string> } }).config;
+    assert.equal(cfg.actionType, "buscar_disponibilidad_nylas_generico");
+    assert.ok(cfg.params?.businessHoursJson, "el horario debe ir embebido también en la consulta de disponibilidad");
+    // Secuencia: día -> propone consulta -> consulta -> presenta -> elige -> propone reserva.
+    assert.ok(tieneEdge(f, "q-booking-when", "ai-avail-propose"));
+    assert.ok(tieneEdge(f, "ai-avail-propose", "act-avail", "success"));
+    assert.ok(tieneEdge(f, "act-avail", "ai-avail-present"));
+    assert.ok(tieneEdge(f, "ai-avail-present", "q-booking-pick"));
+    // Sin horarios reales (sin cupo / calendario sin conectar / fallo) o presentación bloqueada: mensaje seguro, nunca silencio.
+    assert.ok(tieneEdge(f, "act-avail", "msg-avail-fail", "failure"));
+    assert.ok(tieneEdge(f, "ai-avail-present", "msg-avail-fail", "failure"));
+    assert.ok(tieneEdge(f, "msg-avail-fail", "q-booking-pick"));
+    assert.ok(tieneEdge(f, "q-booking-pick", "ai-book-propose"));
+    // Y la reserva sigue siendo crítica con su rama de fallo.
+    assert.ok(tieneEdge(f, "act-book", "human-book-fail", "failure"));
+    assert.equal(validateFlowForPublish(f).valid, true, JSON.stringify(validateFlowForPublish(f).errors));
+  });
+
+  it("5d. R5: fallo de reserva CON humanHandoff => transferencia REAL (mensaje -> transferir_soporte -> end), sin nodo human", () => {
+    const f = flowDe(
+      specBase({
+        capabilities: caps({ faq: true, scheduling: true, humanHandoff: true }),
+        scheduling: { enabled: true, provider: "nylas", timezone: "America/Bogota", minNoticeMinutes: 60, cancellation: { allowed: true, minNoticeHours: 24 }, confirmation: { required: false, hoursBefore: 24 }, resources: [], businessHours: BH_TEST },
+        handoff: { rules: [], defaultPauseHours: 6 },
+      }),
+    );
+    assert.equal(f.nodes.some((n) => n.type === "human"), false, "el nodo human del motor no pausa el chat: no se usa");
+    assert.equal(nodo(f, "human-book-fail")?.type, "message");
+    const act = nodo(f, "act-handoff-book") as { type: string; config: { actionType: string; pauseDurationHours?: number } } | undefined;
+    assert.ok(act && act.type === "action");
+    assert.equal(act.config.actionType, "transferir_soporte");
+    assert.equal(act.config.pauseDurationHours, 6, "respeta las horas de pausa configuradas en el Wizard");
+    assert.ok(tieneEdge(f, "act-book", "human-book-fail", "failure"));
+    assert.ok(tieneEdge(f, "ai-book-propose", "human-book-fail", "failure"));
+    assert.ok(tieneEdge(f, "human-book-fail", "act-handoff-book"));
+    assert.ok(tieneEdge(f, "act-handoff-book", "end"));
+    assert.ok(tieneEdge(f, "act-handoff-book", "msg-handoff-fail", "failure"), "si la transferencia falla, el cliente no queda en silencio");
+    assert.equal(validateFlowForPublish(f).valid, true, JSON.stringify(validateFlowForPublish(f).errors));
+    // Ninguna IA puede proponer la transferencia: es un nodo determinista, fuera de todo allowlist.
+    for (const n of f.nodes) if (n.type === "ai") assert.equal((n.config.allowedTools ?? []).includes("transferir_soporte"), false, `${n.id} no debe poder proponer transferir_soporte`);
+  });
+
+  it("5e. R5: fallo de reserva SIN humanHandoff conserva el nodo human histórico (agentes existentes no cambian)", () => {
+    const f = flowDe(
+      specBase({
+        capabilities: caps({ faq: true, scheduling: true }),
+        scheduling: { enabled: true, provider: "nylas", timezone: "America/Bogota", minNoticeMinutes: 60, cancellation: { allowed: true, minNoticeHours: 24 }, confirmation: { required: false, hoursBefore: 24 }, resources: [], businessHours: BH_TEST },
+      }),
+    );
+    assert.equal(nodo(f, "human-book-fail")?.type, "human");
+    assert.equal(nodo(f, "act-handoff-book"), undefined);
+    assert.equal(nodo(f, "msg-handoff-fail"), undefined);
+    assert.ok(tieneEdge(f, "human-book-fail", "end"));
   });
 
   it("6. §H handoff (humanHandoff sin scheduling) NO se duplica en el grafo: sin nodo human", () => {

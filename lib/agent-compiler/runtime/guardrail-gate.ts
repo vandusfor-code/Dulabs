@@ -147,6 +147,43 @@ function contextBag(context: GateContext): Record<string, unknown> {
 // Derivación de reglas del Gate desde la IR (prohibiciones + handoff).
 // ---------------------------------------------------------------------------
 
+/**
+ * R5 -- frases con las que un cliente pide EXPLÍCITAMENTE una persona (es/en). Se compara
+ * con `contains` en minúsculas (el operador NO ignora tildes, por eso se listan las dos
+ * variantes donde aplica). Son frases largas a propósito ("con un asesor", no "asesor"):
+ * una palabra suelta daría falsos positivos ("¿ofrecen asesoría?"). Solo se usan para las
+ * reglas `agent_request`; las paráfrasis raras las cubre el clasificador semántico.
+ */
+export const HUMAN_REQUEST_PHRASES: readonly string[] = [
+  "con una persona",
+  "con un humano",
+  "con una humana",
+  "con un asesor",
+  "con una asesora",
+  "con un agente",
+  "con una agente",
+  "con alguien del equipo",
+  "con alguien de atención",
+  "con alguien de atencion",
+  "con un representante",
+  "con un encargado",
+  "con una encargada",
+  "atención humana",
+  "atencion humana",
+  "agente humano",
+  "asesor humano",
+  "persona real",
+  "persona de verdad",
+  "hablar con alguien",
+  "speak to a human",
+  "speak with a human",
+  "talk to a human",
+  "talk to a person",
+  "speak to a person",
+  "human agent",
+  "real person",
+];
+
 /** Condición determinista por keywords (message contains any). */
 function keywordCondition(keywords: string[]): { rules: ConditionRule[]; match: ConditionMatchMode } {
   return { rules: keywords.map((k) => ({ field: "message", operator: "contains", value: k })), match: "any" };
@@ -197,6 +234,22 @@ export function buildGateRules(ir: CompiledBusinessAgentIR): GateRule[] {
   // Handoff (transferencias). keyword -> determinista; el resto -> semántico.
   for (const h of ir.handoff) {
     const pauseHours = h.pauseHours ?? DEFAULT_TRANSFER_PAUSE_HOURS;
+    if (h.trigger.kind === "agent_request") {
+      // R5: "quiero hablar con una persona" NO puede depender de un clasificador de IA (si falla o
+      // no está, el Gate deja pasar y el cliente queda sin transferencia): las frases explícitas se
+      // resuelven de forma determinista, sin LLM. La regla semántica (abajo) cubre las paráfrasis.
+      rules.push({
+        id: `${h.id}:frases`,
+        source: "handoff",
+        evaluation: "deterministic",
+        priority: HANDOFF_GATE_PRIORITY,
+        condition: keywordCondition([...HUMAN_REQUEST_PHRASES]),
+        action: "TRANSFER_HUMAN",
+        response: h.response,
+        pauseHours,
+        provenance: { kind: "handoff", sourceId: h.id },
+      });
+    }
     if (h.trigger.kind === "keyword" && (h.trigger.keywords?.length ?? 0) > 0) {
       rules.push({
         id: h.id,

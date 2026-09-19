@@ -74,6 +74,8 @@ import { fechaColombiaDesdeIso, horaColombiaDesdeIso } from "@/lib/timezone-colo
 // (AMORE, arriba): esta acción es propia del Business Agent Compiler, ver
 // lib/agent-compiler/calendar/nylas-generic-booking.ts para el porqué.
 import { crearCitaNylasGenerico } from "@/lib/agent-compiler/calendar/nylas-generic-booking";
+import { buscarDisponibilidadNylasGenerico } from "@/lib/agent-compiler/calendar/nylas-availability";
+import { resolverFechaSolicitada } from "@/lib/agent-compiler/calendar/fecha-solicitada";
 import type { BusinessHours } from "@/lib/agent-compiler/spec/types";
 import { createSupabaseCalendarStore } from "@/lib/agent-compiler/calendar/calendar-store-supabase";
 import type { CalendarConnectionStore } from "@/lib/agent-compiler/calendar/types";
@@ -170,6 +172,9 @@ export interface InternalActionDeps {
   // El store de calendario del Bloque 15 (tenant-scoped, grant_id nunca
   // expuesto) -- NUNCA el resolver hardcodeado de AMORE (resolverNylasGrantIdParaTenant).
   createBusinessAgentCalendarStore?: (supabase: SupabaseClient) => CalendarConnectionStore;
+  // R7 (autorizado) -- reloj inyectable (por default `new Date()`): "mañana"/"el sábado" se resuelven
+  // contra "hoy" en Colombia; los tests fijan el reloj para no depender de la fecha real.
+  now?: () => Date;
   // R4 (conocimiento, autorizado) -- mismo criterio: real por default, fake en tests.
   createKnowledgeStore?: (supabase: SupabaseClient) => Pick<KnowledgeStore, "search">;
   // R3 (datos del cliente, autorizado) -- mismo criterio: real por default,
@@ -228,6 +233,8 @@ const OPERATION_CLASS: Partial<Record<string, InternalActionOperationClass>> = {
   crear_cita_nylas: "CRITICAL",
   // Bloque 16 (Business Agent Compiler, autorizado).
   crear_cita_nylas_generico: "CRITICAL",
+  // R7 (Business Agent, autorizado) -- solo lectura: consulta de horarios libres.
+  buscar_disponibilidad_nylas_generico: "READ",
   // FASE F7.3 (Contacto + Tags + IA, autorizado) -- solo lectura.
   get_contact: "READ",
   // R4 (Business Agent, autorizado) -- solo lectura del conocimiento del tenant.
@@ -421,6 +428,8 @@ export class InternalActionExecutor implements EffectExecutor {
         return this.crearCitaNylasAction(request, signal);
       case "crear_cita_nylas_generico":
         return this.crearCitaNylasGenericoAction(request, params, signal);
+      case "buscar_disponibilidad_nylas_generico":
+        return this.buscarDisponibilidadNylasGenericoAction(request, params, signal);
       case "get_contact":
         return this.getContactAction(request, signal);
       case "buscar_conocimiento":
@@ -2659,6 +2668,20 @@ export class InternalActionExecutor implements EffectExecutor {
       return rechazar("configuracion_invalida", "La configuración de datos del cliente del agente es inválida.");
     }
 
+    // Fecha de la cita: la resuelve el BACKEND desde lo que escribió el cliente (la IA no conoce "hoy" y
+    // proponía fechas adivinadas). Una fecha pasada NUNCA se reserva (fail-closed).
+    const fechaCita = resolverFechaSolicitada({
+      solicitudTexto: params.appointment_request,
+      fechaPropuesta: params.fecha,
+      hoyISO: fechaColombiaDesdeIso((this.deps.now ?? (() => new Date()))().toISOString()),
+    });
+    if (!fechaCita.ok) {
+      return rechazar(
+        fechaCita.motivo === "fecha_pasada" ? "fecha_pasada" : "fecha_invalida",
+        fechaCita.motivo === "fecha_pasada" ? "Esa fecha ya pasó." : "No se pudo identificar la fecha de la cita.",
+      );
+    }
+
     const resultado = await crearCitaNylasGenerico(
       {
         supabase: this.deps.supabase,
@@ -2671,7 +2694,7 @@ export class InternalActionExecutor implements EffectExecutor {
         tenantId: request.tenantId,
         executionRowId: request.executionRowId,
         effectId: request.effectId,
-        fecha: params.fecha ?? "",
+        fecha: fechaCita.fecha,
         hora: params.hora ?? "",
         nombreCliente: params.nombreCliente ?? "",
         telefonoCliente: request.conversation?.telefonoCliente,
@@ -2741,6 +2764,112 @@ export class InternalActionExecutor implements EffectExecutor {
       rawResult: data,
       externalReference: `cita_nylas_generico:${resultado.citaId}`,
       metadata: { operationClass: OPERATION_CLASS.crear_cita_nylas_generico },
+    };
+  }
+
+  /**
+   * R7 (Business Agent, autorizado) -- consulta de disponibilidad genérica Nylas.
+   * SOLO LECTURA: el BACKEND calcula los horarios libres (horario de atención +
+   * duración REAL del servicio desde dulabs_servicios + eventos reales del
+   * calendario). La IA solo presenta lo que este backend devuelve; nunca inventa
+   * cupo. El tenant y el calendario salen del server (nunca del payload/IA).
+   *
+   * CONTRATO DE EVIDENCIA: el orquestador marca como VERIFICADO todo resultado
+   * success:true y le concede las capabilities declaradas (appointment.available),
+   * sin mirar los datos. Por eso SOLO hay éxito cuando el backend calculó al menos
+   * un horario real; sin cupo (día cerrado, agenda llena, sin horario configurado)
+   * o con un fallo técnico (calendario sin conectar, proveedor caído) la acción FALLA
+   * y el flujo usa su mensaje seguro: así la IA nunca puede afirmar disponibilidad
+   * que el backend no verificó.
+   */
+  private async buscarDisponibilidadNylasGenericoAction(
+    request: EffectDispatchRequest,
+    params: Record<string, string>,
+    signal?: AbortSignal,
+  ): Promise<EffectDispatchResult> {
+    assertNotAborted(signal);
+
+    const calendarStore = (this.deps.createBusinessAgentCalendarStore ?? createSupabaseCalendarStore)(this.deps.supabase);
+    const apiKey = (this.deps.resolveNylasApiKeyFromEnv ?? resolveNylasApiKeyFromEnv)();
+    const createReadClient = this.deps.createNylasEventsClient ?? createNylasEventsClient;
+
+    // Duración REAL desde el servicio estructurado (dulabs_servicios) -- MISMO
+    // criterio que crear_cita_nylas_generico. La IA no la decide.
+    const servicioNombre = params.servicio || undefined;
+    let duracionMinInput = params.duracionMin ? num(params.duracionMin, 0) : undefined;
+    if (servicioNombre) {
+      try {
+        const catalogo = await (this.deps.listarCatalogoServiciosReal ?? listarCatalogoServiciosReal)(this.deps.supabase, request.tenantId);
+        const resuelto = resolverServicioCatalogoReal({ servicios: catalogo, seleccionTipo: "nombre", seleccionNombre: servicioNombre });
+        if (resuelto.ok) duracionMinInput = resuelto.servicio.duracionMin;
+      } catch {
+        // duración por defecto si no se resuelve el servicio
+      }
+    }
+
+    // Horario de atención embebido por el compiler (regla determinista). La IA no
+    // puede alterarlo (mergeParams hace ganar la config estática).
+    let businessHours: BusinessHours | null = null;
+    if (typeof params.businessHoursJson === "string" && params.businessHoursJson.trim()) {
+      try {
+        businessHours = JSON.parse(params.businessHoursJson) as BusinessHours;
+      } catch {
+        businessHours = null;
+      }
+    }
+
+    // La FECHA la resuelve el backend desde lo que escribió el cliente ("mañana", "el sábado") anclada
+    // a hoy en Colombia: la IA no conoce la fecha actual y su `fecha` es solo un respaldo.
+    const ahora = (this.deps.now ?? (() => new Date()))();
+    const fechaRes = resolverFechaSolicitada({
+      solicitudTexto: params.appointment_request,
+      fechaPropuesta: params.fecha,
+      hoyISO: fechaColombiaDesdeIso(ahora.toISOString()),
+    });
+    if (!fechaRes.ok) {
+      return {
+        success: false,
+        classification: EFFECT_RESULT_CLASSIFICATIONS.NON_RETRYABLE,
+        error: `disponibilidad_no_disponible:${fechaRes.motivo}`,
+        rawResult: { motivo: fechaRes.motivo },
+        metadata: { operationClass: OPERATION_CLASS.buscar_disponibilidad_nylas_generico },
+      };
+    }
+
+    const resultado = await buscarDisponibilidadNylasGenerico(
+      { calendarStore, nylasApiKey: apiKey, createNylasEventsClient: createReadClient },
+      { tenantId: request.tenantId, fecha: fechaRes.fecha, durationMin: duracionMinInput, businessHours, nowUnix: Math.floor(ahora.getTime() / 1000) },
+      signal,
+    );
+
+    assertNotAborted(signal);
+
+    if (!resultado.ok || resultado.slots.length === 0) {
+      const motivo = resultado.ok ? "sin_cupos" : resultado.motivo;
+      return {
+        success: false,
+        // Solo un fallo técnico transitorio se reintenta; el resto es un resultado de negocio estable.
+        classification: motivo === "error_tecnico" ? EFFECT_RESULT_CLASSIFICATIONS.RETRYABLE : EFFECT_RESULT_CLASSIFICATIONS.NON_RETRYABLE,
+        error: `disponibilidad_no_disponible:${motivo}`,
+        rawResult: { motivo, ...(resultado.ok ? {} : { detalle: resultado.detalle }) },
+        metadata: { operationClass: OPERATION_CLASS.buscar_disponibilidad_nylas_generico },
+      };
+    }
+
+    const data: Record<string, unknown> = {
+      fecha: resultado.fecha,
+      duracionMin: resultado.durationMin,
+      horariosDisponibles: resultado.slots,
+      hayCupos: true,
+    };
+
+    return {
+      success: true,
+      classification: EFFECT_RESULT_CLASSIFICATIONS.SUCCESS,
+      data,
+      appliedResult: data,
+      rawResult: data,
+      metadata: { operationClass: OPERATION_CLASS.buscar_disponibilidad_nylas_generico },
     };
   }
 

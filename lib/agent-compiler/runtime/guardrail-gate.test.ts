@@ -185,6 +185,62 @@ describe("evaluateGuardrailGate — deterministas (0 LLM)", () => {
   });
 });
 
+describe("R5 — agent_request: 'quiero hablar con una persona' NO depende del clasificador de IA", () => {
+  const pedirPersona: HandoffBindingIR = {
+    id: "pedir_persona",
+    trigger: { kind: "agent_request" },
+    action: "TRANSFER_HUMAN",
+    response: "Con gusto te comunico con una persona del equipo.",
+    pauseHours: 6,
+    runtimeBinding: "transferir_soporte",
+  };
+
+  it("frase explícita => transfer_human DETERMINISTA, sin clasificador (y con el mensaje/pausa de la regla)", async () => {
+    const rules = rulesFor({ handoff: [pedirPersona] });
+    for (const msg of ["Quiero hablar con una persona.", "Necesito hablar con un asesor", "me pasas con alguien de atencion?", "Can I talk to a human?", "quiero atención humana"]) {
+      const decision = await evaluateGuardrailGate({ rules, context: { message: msg } }); // sin classifier
+      assert.equal(decision.kind, "transfer_human", msg);
+      if (decision.kind === "transfer_human") {
+        assert.equal(decision.matchedBy, "deterministic");
+        assert.equal(decision.pauseHours, 6);
+        assert.equal(decision.response, "Con gusto te comunico con una persona del equipo.");
+        assert.equal(decision.trace.source, "handoff");
+      }
+    }
+  });
+
+  it("si el clasificador FALLA, la solicitud explícita igual transfiere (antes se perdía: fail-safe = pass)", async () => {
+    const rules = rulesFor({ handoff: [pedirPersona] });
+    const classifier: SemanticClassifier = async () => { throw new Error("proveedor caído"); };
+    const decision = await evaluateGuardrailGate({ rules, context: { message: "quiero hablar con una persona" }, classifier });
+    assert.equal(decision.kind, "transfer_human");
+  });
+
+  it("la paráfrasis rara sigue cubierta por la regla semántica", async () => {
+    const rules = rulesFor({ handoff: [pedirPersona] });
+    const classifier: SemanticClassifier = async ({ labels }) => (labels.includes("pedir_persona") ? { label: "pedir_persona" } : { label: "continue" });
+    const decision = await evaluateGuardrailGate({ rules, context: { message: "prefiero que me atienda gente de carne y hueso" }, classifier });
+    assert.equal(decision.kind, "transfer_human");
+    if (decision.kind === "transfer_human") assert.equal(decision.matchedBy, "semantic");
+  });
+
+  it("sin falsos positivos: consultas normales NO transfieren", async () => {
+    const rules = rulesFor({ handoff: [pedirPersona] });
+    for (const msg of ["¿Ofrecen asesoría para cejas?", "¿Cuánto cuesta el manicure?", "Quiero una cita para mañana", "Hablé con una amiga que me lo recomendó", "el asesoramiento es gratis?"]) {
+      const decision = await evaluateGuardrailGate({ rules, context: { message: msg } });
+      assert.equal(decision.kind, "pass", msg);
+    }
+  });
+
+  it("tenant/wamid: solo agent_request genera la regla de frases (una keyword o queja NO)", () => {
+    const soloQueja = buildGateRules(irWith({ handoff: [{ id: "q", trigger: { kind: "complaint" }, action: "TRANSFER_HUMAN", pauseHours: 24, runtimeBinding: "transferir_soporte" }] }));
+    assert.equal(soloQueja.some((r) => r.id.endsWith(":frases")), false);
+    const con = buildGateRules(irWith({ handoff: [pedirPersona] }));
+    assert.equal(con.filter((r) => r.evaluation === "deterministic").length, 1);
+    assert.equal(con.filter((r) => r.evaluation === "semantic").length, 1);
+  });
+});
+
 describe("evaluateGuardrailGate — semánticas (clasificador controlado)", () => {
   it("clasifica intención y DuLabs decide la acción (transfer)", async () => {
     const classifier: SemanticClassifier = async ({ labels }) => {

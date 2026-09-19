@@ -190,6 +190,7 @@ function construirIR(spec: BusinessAgentSpec, context: CompilerContext): Compile
     rules,
     catalogBindings,
     handoff,
+    ...(caps.humanHandoff ? { handoffDefaults: { pauseHours: Math.max(1, spec.handoff.defaultPauseHours) } } : {}),
     scheduling,
     ...(camposCompilados.length > 0 ? { customerData: { fields: camposCompilados } } : {}),
     knowledge: {

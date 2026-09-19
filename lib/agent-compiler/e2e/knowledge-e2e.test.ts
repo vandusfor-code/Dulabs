@@ -150,6 +150,13 @@ describe("R4 — E2E: FAQ + PDF por el runtime REAL del Business Agent", () => {
     assert.ok(m2.mensajes.some((t) => /persona del equipo/.test(t)), "avisa que lo pasa a una persona");
     assert.equal(m2.aiDe("ai-faq-present").length, 0);
     assert.notEqual(m2.ejecucion(TENANT_A).status, "waiting_input", "ya no espera preguntas del bot: quedó en manos de una persona");
+    // R5: la transferencia es REAL -- se pausó el chat de ESTA conversación (el webhook hace que la IA calle).
+    assert.equal(m2.pausas.length, 1);
+    assert.deepEqual(m2.pausas[0], { phoneNumberId: CONV.phoneNumberId, telefonoCliente: CONV.telefonoCliente, duracionMs: 24 * 3600 * 1000 });
+    assert.equal(m2.accionesDe("act-handoff-faq").length, 1);
+    assert.equal(m2.ejecucion(TENANT_A).status, "completed");
+    // El agente SIN política 'handoff' no pausa nada.
+    assert.equal(m.pausas.length, 0);
   });
 
   it("6b. si el filtro de afirmaciones externas BLOQUEA la respuesta de la IA, el cliente NO queda en silencio: mensaje seguro y la conversación sigue", async () => {
@@ -219,7 +226,8 @@ describe("R4 — E2E: combinación FAQ + documentos + servicios + horarios + dat
     m.setIA((req) => {
       if (req.nodeId === "ai-faq-present") return iaHonesta(req);
       if (req.nodeId === "ai-catalog-propose") return { actionProposal: { actionType: "listar_catalogo_servicios", arguments: {} } };
-      if (req.nodeId === "ai-book-propose") return { actionProposal: { actionType: "crear_cita_nylas_generico", arguments: { fecha: "2026-09-26", hora: "15:00", servicio: "Corte" } } };
+      if (req.nodeId === "ai-avail-propose") return { actionProposal: { actionType: "buscar_disponibilidad_nylas_generico", arguments: { fecha: "2030-03-16", servicio: "Corte" } } };
+      if (req.nodeId === "ai-book-propose") return { actionProposal: { actionType: "crear_cita_nylas_generico", arguments: { fecha: "2030-03-16", hora: "15:00", servicio: "Corte" } } };
       return { responseText: "ok" };
     });
     const a = await m.activar(salon(), TENANT_A);
@@ -234,7 +242,11 @@ describe("R4 — E2E: combinación FAQ + documentos + servicios + horarios + dat
 
     await a.turno("Corte", "c3");
     assert.equal(m.ejecucion(TENANT_A).current_node_id, "q-booking-when");
-    await a.turno("El sábado a las 3pm", "c4");
+    await a.turno("El sábado", "c4");
+    // R7: horarios reales (solo lectura) con la duración REAL del servicio; el cliente elige.
+    assert.equal(m.accionesDe("act-avail").length, 1);
+    assert.equal(m.ejecucion(TENANT_A).current_node_id, "q-booking-pick");
+    await a.turno("A las 3pm", "c5");
 
     // Reserva REAL (R2/R3): duración del servicio (45), horario y datos del cliente en el evento.
     assert.equal(m.eventos.length, 1);

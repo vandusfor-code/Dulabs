@@ -33,7 +33,7 @@ import { createInMemoryOrchestratorStore } from "@/lib/agent-compiler/runtime/te
 import type { SemanticClassifier } from "@/lib/agent-compiler/runtime/guardrail-gate";
 import { salonSpec } from "@/lib/agent-compiler/runtime/fixtures";
 import { createInMemoryCalendarStore } from "@/lib/agent-compiler/calendar/testing/in-memory-calendar-store";
-import type { NylasCreateEventParams, NylasEventsClient, NylasEventsWriteClient } from "@/lib/nylas/nylas-types";
+import type { NylasCreateEventParams, NylasEvent, NylasEventsClient, NylasEventsWriteClient } from "@/lib/nylas/nylas-types";
 
 const TENANT_A = "11111111-1111-4111-8111-111111111111";
 const TENANT_B = "22222222-2222-4222-8222-222222222222";
@@ -140,17 +140,21 @@ async function mundo() {
   const acciones: EffectDispatchRequest[] = [];
   let respuestaIA: (req: EffectDispatchRequest) => Record<string, unknown> = () => ({ responseText: "ok" });
 
-  const lector: NylasEventsClient = { async listEvents() { return []; } };
+  // Eventos que el calendario REAL ya tiene (ocupan horario). Configurable por test.
+  let ocupados: NylasEvent[] = [];
+  // Pausas del chat que el runtime REAL pide (transferencia a humano): el webhook las consulta y la IA guarda silencio.
+  const pausas: Array<{ phoneNumberId: string; telefonoCliente: string; duracionMs: number }> = [];
+  const lector: NylasEventsClient = { async listEvents() { return ocupados; } };
   const escritor: NylasEventsWriteClient = { async createEvent(p) { eventos.push(p); return { id: `evt-${eventos.length}` }; }, async deleteEvent() {} };
   const ejecutorReal = new InternalActionExecutor({
     supabase: supabaseIdempotencia(),
     authorizer: AUTHORIZER,
     guardarLeadEnterprise: async () => ({ ok: false }) as never,
-    activarPausaChat: async () => ({ ok: false }) as never,
+    activarPausaChat: async (_s, phoneNumberId, telefonoCliente, duracionMs) => { pausas.push({ phoneNumberId, telefonoCliente, duracionMs }); return { ok: true } as never; },
     verificarDisponibilidad: async () => ({ disponible: false }) as never,
     sugerirHorariosLibres: async () => [] as never,
     crearCita: async () => ({ ok: false }) as never,
-    readPausaUntil: async () => null,
+    readPausaUntil: async () => (pausas.length > 0 ? new Date(Date.now() + pausas[pausas.length - 1]!.duracionMs).toISOString() : null),
     consultarDisponibilidadEspecialista: async () => ({ disponible: false }) as never,
     validarServicioEspecialista: async () => ({ ok: false }) as never,
     agendarCitaEspecialista: async () => ({ ok: false }) as never,
@@ -164,6 +168,8 @@ async function mundo() {
     createNylasEventsWriteClient: () => escritor,
     createBusinessAgentCalendarStore: () => calendarStore,
     recordarNombreCliente: async (_s, p) => { recordados.push(p as unknown as Record<string, unknown>); },
+    // Reloj fijo: jueves 2030-03-14 (hora Colombia) => "el sábado" = 2030-03-16, sin depender de la fecha real.
+    now: () => new Date("2030-03-14T15:00:00Z"),
   });
   // Espía sobre el executor real: registra la acción tal como llega (payload + params estáticos).
   const accionEspiada: EffectExecutor = {
@@ -180,7 +186,9 @@ async function mundo() {
     version: "stub",
     capabilities: { supportsIntegration: false, supportsAsync: false, operationClasses: [] },
     dispatch: async (req) => {
-      const data = respuestaIA(req);
+      // R7: el flujo nylas consulta disponibilidad REAL (solo lectura) antes de reservar; el stub la propone siempre.
+      const propia = respuestaIA(req);
+      const data = req.nodeId === "ai-avail-propose" && !(propia as { actionProposal?: unknown }).actionProposal ? PROPUESTA_DISPONIBILIDAD : propia;
       return { success: true, classification: EFFECT_RESULT_CLASSIFICATIONS.SUCCESS, data, appliedResult: data };
     },
   };
@@ -229,6 +237,9 @@ async function mundo() {
   }
   return {
     orchStore, calendarStore, eventos, recordados, mensajes, acciones,
+    accionesDe: (nodeId: string) => acciones.filter((r) => r.nodeId === nodeId),
+    ocupar: (evts: NylasEvent[]) => { ocupados = evts; },
+    pausas,
     setIA: (fn: typeof respuestaIA) => { respuestaIA = fn; },
     activar,
     conectarCalendario: (tenantId: string) =>
@@ -240,14 +251,22 @@ async function mundo() {
   };
 }
 
-const PROPUESTA = { actionProposal: { actionType: "crear_cita_nylas_generico", arguments: { fecha: "2026-03-14", hora: "15:00", servicio: "Corte" } } };
+const PROPUESTA_DISPONIBILIDAD = { actionProposal: { actionType: "buscar_disponibilidad_nylas_generico", arguments: { fecha: "2030-03-16", servicio: "Corte" } } };
+const PROPUESTA = { actionProposal: { actionType: "crear_cita_nylas_generico", arguments: { fecha: "2030-03-16", hora: "15:00", servicio: "Corte" } } };
 const FIELDS_FULL = [NOMBRE, TEL, CORREO, EDAD, MOTIVO];
 
 describe("R3 — E2E cadena completa: configurar datos -> WhatsApp (offline) -> reserva con datos", () => {
   it("1. faltan datos => el agente PREGUNTA (sin LLM, sin tools); dato inválido => re-pregunta; completos => continúa hasta la reserva real", async () => {
     const m = await mundo();
     await m.conectarCalendario(TENANT_A);
-    m.setIA((req) => (req.nodeId === "ai-book-propose" ? PROPUESTA : { responseText: "Listo, tu cita quedó reservada." }));
+    m.setIA((req) =>
+      req.nodeId === "ai-book-propose"
+        ? PROPUESTA
+        : req.nodeId === "ai-avail-present"
+          ? // Respuesta REALISTA: enumera los horarios que devolvió el BACKEND (pasa por el filtro de afirmaciones real).
+            { responseText: `Para el sábado tengo disponibilidad a las ${(req.payload.horariosDisponibles as string[]).join(", ")}. ¿Cuál te sirve?` }
+          : { responseText: "Listo, tu cita quedó reservada." },
+    );
     const a = await m.activar(agenteNylas(FIELDS_FULL), TENANT_A);
 
     await a.turno("Hola", "w1");
@@ -275,7 +294,15 @@ describe("R3 — E2E cadena completa: configurar datos -> WhatsApp (offline) -> 
     assert.equal(m.ejecucion(TENANT_A).current_node_id, "q-booking-when", "datos completos => continúa");
     assert.equal(m.eventos.length, 0, "aún no hay reserva");
 
-    await a.turno("El sábado a las 3pm", "w9");
+    await a.turno("El sábado", "w9");
+    // R7: primero se consulta la disponibilidad REAL (solo lectura) y el cliente elige horario.
+    assert.equal(m.ejecucion(TENANT_A).current_node_id, "q-booking-pick", "ofrece horarios reales y espera la elección");
+    assert.equal(m.eventos.length, 0, "consultar disponibilidad NO reserva");
+    assert.equal(m.accionesDe("act-avail").length, 1);
+    // "tengo disponibilidad ..." solo pasa el filtro de afirmaciones porque la consulta REAL otorgó appointment.available.
+    const ofrecidos = m.mensajes.find((t) => /tengo disponibilidad/.test(t));
+    assert.ok(ofrecidos && /08:00, 08:30/.test(ofrecidos), "el cliente RECIBE los horarios reales calculados por el backend: " + String(ofrecidos));
+    await a.turno("A las 3pm", "w10");
     // La acción REAL corrió: evento creado con los datos validados y normalizados.
     assert.equal(m.eventos.length, 1);
     const ev = m.eventos[0]!;
@@ -347,7 +374,8 @@ describe("R3 — E2E cadena completa: configurar datos -> WhatsApp (offline) -> 
     await a.turno("Hola", "d1");
     await a.turno("Quiero cita", "d2"); // ambos "existen" => no se preguntan => llega a q-booking-when con edad inválida
     assert.equal(m.ejecucion(TENANT_A).current_node_id, "q-booking-when");
-    await a.turno("sábado 3pm", "d3");
+    await a.turno("sábado", "d3");
+    await a.turno("3pm", "d3b");
     assert.equal(m.eventos.length, 0, "el backend rechazó: edad requerida e inválida => NO se toca el calendario");
     const act = m.acciones.find((r) => r.nodeId === "act-book");
     assert.ok(act, "la acción sí se intentó (autorizada) pero el backend la rechazó");
@@ -374,8 +402,8 @@ describe("R3 — E2E cadena completa: configurar datos -> WhatsApp (offline) -> 
     m.setIA((req) => (req.nodeId === "ai-book-propose" ? PROPUESTA : { responseText: "ok" }));
     const a = await m.activar(agenteNylas([NOMBRE, TEL]), TENANT_A);
     const b = await m.activar(agenteNylas([NOMBRE, TEL]), TENANT_B);
-    for (const [i, t] of ["Hola", "cita", "Ana A", "sábado 3pm"].entries()) await a.turno(t, `ta${i}`);
-    for (const [i, t] of ["Hola", "cita", "Beto B", "sábado 3pm"].entries()) await b.turno(t, `tb${i}`);
+    for (const [i, t] of ["Hola", "cita", "Ana A", "sábado", "3pm"].entries()) await a.turno(t, `ta${i}`);
+    for (const [i, t] of ["Hola", "cita", "Beto B", "sábado", "3pm"].entries()) await b.turno(t, `tb${i}`);
     assert.equal(m.eventos.length, 2);
     assert.deepEqual(m.eventos.map((e) => [e.grantId, e.title]), [[`grant-${TENANT_A}`, "Corte -- Ana A"], [`grant-${TENANT_B}`, "Corte -- Beto B"]]);
   });
@@ -385,14 +413,15 @@ describe("R3 — E2E cadena completa: configurar datos -> WhatsApp (offline) -> 
     await m.conectarCalendario(TENANT_A);
     m.setIA((req) =>
       req.nodeId === "ai-book-propose"
-        ? { actionProposal: { actionType: "crear_cita_nylas_generico", arguments: { fecha: "2026-03-14", hora: "15:00", servicio: "Corte", nombreCliente: "Luis" } } }
+        ? { actionProposal: { actionType: "crear_cita_nylas_generico", arguments: { fecha: "2030-03-16", hora: "15:00", servicio: "Corte", nombreCliente: "Luis" } } }
         : { responseText: "ok" },
     );
     const a = await m.activar(agenteNylas(), TENANT_A);
     await a.turno("Hola", "a1");
     await a.turno("Quiero una cita", "a2");
     assert.equal(m.ejecucion(TENANT_A).current_node_id, "q-booking-when", "sin datos configurados no hay preguntas de captura");
-    await a.turno("sábado 3pm", "a3");
+    await a.turno("sábado", "a3");
+    await a.turno("3pm", "a4");
     assert.equal(m.eventos.length, 1);
     assert.equal(m.eventos[0]!.title, "Corte -- Luis");
   });
@@ -408,8 +437,136 @@ describe("R3 — E2E cadena completa: configurar datos -> WhatsApp (offline) -> 
     const antes = a.orquestadorLlamado();
     await a.turno("Ana", "i3"); // reintento de Meta (mismo wamid)
     assert.equal(a.orquestadorLlamado(), antes, "el reintento no llega al orquestador");
-    await a.turno("sábado 3pm", "i4");
-    await a.turno("sábado 3pm", "i4");
+    await a.turno("sábado", "i4");
+    await a.turno("sábado", "i4"); // reintento de Meta
+    await a.turno("3pm", "i5");
+    await a.turno("3pm", "i5"); // reintento de Meta
+    assert.equal(m.accionesDe("act-avail").length, 1, "una sola consulta de disponibilidad");
     assert.equal(m.eventos.length, 1, "una sola reserva");
+  });
+
+  it("10. R7: SIN calendario conectado la consulta FALLA (no concede evidencia): la IA no se invoca para presentar, no se afirma disponibilidad y el cliente no queda en silencio", async () => {
+    const m = await mundo();
+    // (no se conecta el calendario del tenant)
+    m.setIA((req) =>
+      req.nodeId === "ai-avail-present"
+        ? { responseText: "Para el sábado tengo disponibilidad a las 8:00, 8:30 y 9:00. ¿Cuál te sirve?" } // alucinación: el backend no devolvió nada
+        : { responseText: "ok" },
+    );
+    const a = await m.activar(agenteNylas([NOMBRE, TEL]), TENANT_A);
+    for (const [i, t] of ["Hola", "cita", "Ana", "sábado"].entries()) await a.turno(t, `n${i}`);
+    assert.equal(m.accionesDe("act-avail").length, 1, "la consulta se intentó");
+    assert.equal(m.mensajes.some((t) => /tengo disponibilidad/.test(t)), false, "nadie pudo afirmar disponibilidad que el backend no verificó");
+    assert.ok(m.mensajes.some((t) => /No pude mostrarte opciones para ese día/.test(t)), "mensaje seguro en lugar de silencio");
+    assert.equal(m.ejecucion(TENANT_A).current_node_id, "q-booking-pick", "el cliente puede indicar su hora; la creación revalida todo");
+    assert.equal(m.eventos.length, 0);
+  });
+
+  it("11. R7: agenda LLENA ese día (evento real de día completo) => sin horarios, sin afirmaciones de disponibilidad, y NO se reserva", async () => {
+    const m = await mundo();
+    await m.conectarCalendario(TENANT_A);
+    m.ocupar([{ id: "bloqueo", when: { object: "datespan", start_date: "2030-03-16", end_date: "2030-03-16" } } as NylasEvent]);
+    m.setIA((req) =>
+      req.nodeId === "ai-avail-present"
+        ? { responseText: "Tengo disponibilidad a las 8:00 ese día. ¿Cuál te sirve?" }
+        : req.nodeId === "ai-book-propose"
+          ? { actionProposal: { actionType: "crear_cita_nylas_generico", arguments: { fecha: "2030-03-16", hora: "10:00", servicio: "Corte" } } }
+          : { responseText: "no se pudo" },
+    );
+    const a = await m.activar(agenteNylas([NOMBRE, TEL]), TENANT_A);
+    for (const [i, t] of ["Hola", "cita", "Ana", "sábado"].entries()) await a.turno(t, `f${i}`);
+    assert.equal(m.mensajes.some((t) => /tengo disponibilidad/.test(t)), false);
+    assert.ok(m.mensajes.some((t) => /No pude mostrarte opciones/.test(t)));
+    // Aunque el cliente insista con una hora, la CREACIÓN revalida contra el calendario real: conflicto => NO hay evento.
+    await a.turno("a las 10", "f4");
+    assert.equal(m.eventos.length, 0, "no se crea evento sobre un bloqueo real");
+  });
+
+  it("12. R7: con la agenda parcialmente ocupada, los horarios ofrecidos EXCLUYEN el bloque ocupado y respetan la duración; elegir un horario ocupado NO reserva", async () => {
+    const m = await mundo();
+    await m.conectarCalendario(TENANT_A);
+    // 08:00–10:00 (hora Colombia) ocupado el 2030-03-16.
+    const ini = Math.floor(new Date("2030-03-16T08:00:00-05:00").getTime() / 1000);
+    m.ocupar([{ id: "ocupado", when: { object: "timespan", start_time: ini, end_time: ini + 2 * 3600 } } as NylasEvent]);
+    m.setIA((req) =>
+      req.nodeId === "ai-avail-present"
+        ? { responseText: `Para el sábado tengo disponibilidad a las ${(req.payload.horariosDisponibles as string[]).join(", ")}. ¿Cuál te sirve?` }
+        : req.nodeId === "ai-book-propose"
+          ? { actionProposal: { actionType: "crear_cita_nylas_generico", arguments: { fecha: "2030-03-16", hora: "09:00", servicio: "Corte" } } }
+          : { responseText: "no se pudo" },
+    );
+    const a = await m.activar(agenteNylas([NOMBRE, TEL]), TENANT_A);
+    for (const [i, t] of ["Hola", "cita", "Ana", "sábado"].entries()) await a.turno(t, `p${i}`);
+    const ofrecidos = m.mensajes.find((t) => /tengo disponibilidad/.test(t)) ?? "";
+    assert.match(ofrecidos, /10:00/, "ofrece desde que el calendario real queda libre");
+    assert.doesNotMatch(ofrecidos, /08:00|08:30|09:00|09:30/, "NO ofrece horarios que se solapan con el evento real: " + ofrecidos);
+    // El cliente pide un horario ocupado: el backend lo rechaza (conflicto real) -> no hay evento.
+    await a.turno("a las 9", "p4");
+    assert.equal(m.eventos.length, 0, "conflicto detectado: nada se reserva sobre un evento real");
+  });
+
+  it("13. R5: si la RESERVA falla y el agente tiene 'Transferir a un humano', la transferencia es REAL: avisa, PAUSA el chat (la IA calla) y la ejecución termina — no solo promete", async () => {
+    const m = await mundo();
+    // Sin calendario conectado: la creación no puede completarse (rama de fallo crítica).
+    m.setIA((req) => (req.nodeId === "ai-book-propose" ? PROPUESTA : { responseText: "ok" }));
+    const a = await m.activar(agenteNylas([NOMBRE, TEL]), TENANT_A);
+    for (const [i, t] of ["Hola", "cita", "Ana", "sábado", "a las 3"].entries()) await a.turno(t, `h${i}`);
+    assert.equal(m.eventos.length, 0, "no se reservó nada");
+    assert.ok(m.mensajes.some((t) => /Te comunico con una persona del equipo/.test(t)), "el cliente recibe el aviso (pasa el filtro de afirmaciones real)");
+    // El efecto REAL: pausa del chat de ESTA conversación, con las horas configuradas (24 = defaultPauseHours del Spec).
+    assert.equal(m.pausas.length, 1);
+    assert.deepEqual(m.pausas[0], { phoneNumberId: PHONE_NUMBER_ID, telefonoCliente: TELEFONO, duracionMs: 24 * 3600 * 1000 });
+    const xfer = m.accionesDe("act-handoff-book");
+    assert.equal(xfer.length, 1);
+    assert.equal(xfer[0]!.tenantId, TENANT_A, "el tenant sale del contexto confiable");
+    assert.equal(m.ejecucion(TENANT_A).status, "completed", "la ejecución terminó: el bot ya no conduce esta conversación");
+    // La IA NUNCA pudo proponer la transferencia: la acción es un nodo determinista.
+    assert.equal(m.acciones.some((r) => r.nodeId !== "act-handoff-book" && (r.action as { actionType?: string }).actionType === "transferir_soporte"), false);
+  });
+
+  it("14. R5: SIN capacidad de transferencia el fallo de reserva NO pausa el chat (agentes existentes intactos)", async () => {
+    const m = await mundo();
+    m.setIA((req) => (req.nodeId === "ai-book-propose" ? PROPUESTA : { responseText: "ok" }));
+    const spec = agenteNylas([NOMBRE, TEL]);
+    const a = await m.activar({ ...spec, capabilities: { ...spec.capabilities, humanHandoff: false }, handoff: { rules: [], defaultPauseHours: 24 } }, TENANT_A);
+    for (const [i, t] of ["Hola", "cita", "Ana", "sábado", "a las 3"].entries()) await a.turno(t, `s${i}`);
+    assert.equal(m.pausas.length, 0);
+    assert.equal(m.accionesDe("act-handoff-book").length, 0);
+  });
+
+  it("15. R7: la IA propone una fecha ADIVINADA de otro año (no conoce 'hoy'): el backend usa la que dijo el cliente ('el sábado' = 2030-03-16) tanto al consultar como al reservar", async () => {
+    const m = await mundo();
+    await m.conectarCalendario(TENANT_A);
+    // Bloqueo real el 2030-03-16 08:00–10:00: si se usara la fecha adivinada (2024-05-04) NO se vería.
+    const ini = Math.floor(new Date("2030-03-16T08:00:00-05:00").getTime() / 1000);
+    m.ocupar([{ id: "ocupado", when: { object: "timespan", start_time: ini, end_time: ini + 2 * 3600 } } as NylasEvent]);
+    m.setIA((req) =>
+      req.nodeId === "ai-avail-propose"
+        ? { actionProposal: { actionType: "buscar_disponibilidad_nylas_generico", arguments: { fecha: "2024-05-04", servicio: "Corte" } } }
+        : req.nodeId === "ai-avail-present"
+          ? { responseText: `Para el sábado tengo disponibilidad a las ${(req.payload.horariosDisponibles as string[]).join(", ")}. ¿Cuál te sirve?` }
+          : req.nodeId === "ai-book-propose"
+            ? { actionProposal: { actionType: "crear_cita_nylas_generico", arguments: { fecha: "2024-05-04", hora: "10:00", servicio: "Corte" } } }
+            : { responseText: "ok" },
+    );
+    const a = await m.activar(agenteNylas([NOMBRE, TEL]), TENANT_A);
+    for (const [i, t] of ["Hola", "cita", "Ana", "sábado"].entries()) await a.turno(t, `r${i}`);
+    const ofrecidos = m.mensajes.find((t) => /tengo disponibilidad/.test(t)) ?? "";
+    assert.match(ofrecidos, /10:00/, "consultó el 2030-03-16 (la fecha del cliente), no la del modelo: " + ofrecidos);
+    assert.doesNotMatch(ofrecidos, /08:00/, "y respeta el evento real de ESE día");
+    await a.turno("a las 10", "r4");
+    assert.equal(m.eventos.length, 1, "se reservó");
+    const fechaEvento = new Date(m.eventos[0]!.startUnix * 1000).toISOString();
+    assert.match(fechaEvento, /^2030-03-16T15:00:00/, "en la fecha del CLIENTE (10:00 Colombia = 15:00Z), no en 2024: " + fechaEvento);
+  });
+
+  it("16. R7: fecha pasada solo por la IA (el cliente no dijo un día reconocible) => NO se reserva nada", async () => {
+    const m = await mundo();
+    await m.conectarCalendario(TENANT_A);
+    m.setIA((req) => (req.nodeId === "ai-book-propose" ? { actionProposal: { actionType: "crear_cita_nylas_generico", arguments: { fecha: "2024-05-04", hora: "10:00", servicio: "Corte" } } } : { responseText: "ok" }));
+    const a = await m.activar(agenteNylas([NOMBRE, TEL]), TENANT_A);
+    for (const [i, t] of ["Hola", "cita", "Ana", "cuando puedas", "a las 10"].entries()) await a.turno(t, `q${i}`);
+    assert.equal(m.eventos.length, 0, "una fecha pasada nunca llega al calendario");
+    assert.ok(m.accionesDe("act-book").length >= 1, "la acción se intentó y el backend la rechazó");
   });
 });

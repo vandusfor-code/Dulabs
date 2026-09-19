@@ -102,6 +102,8 @@ async function armar(over: { conectado?: boolean } = {}) {
     createNylasEventsWriteClient: () => escritor,
     createBusinessAgentCalendarStore: () => store,
     recordarNombreCliente: async (_s, p) => { recordados.push(p as unknown as Record<string, unknown>); },
+    // Reloj fijo ANTERIOR a FECHA_HORA: una fecha pasada nunca se reserva (R7), y la fecha real de hoy no debe afectar al test.
+    now: () => new Date("2026-03-09T15:00:00Z"),
   });
   return { executor, creados, recordados, lecturas: () => lecturas };
 }

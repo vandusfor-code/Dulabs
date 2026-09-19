@@ -136,7 +136,10 @@ describe("R4 — compiler: la capability faq compila a RECUPERACIÓN", () => {
     );
     assert.ok(edge(flow, "cond-faq-found", "human-faq-nofound", "false"));
     assert.ok(edge(flow, "ai-faq-present", "human-faq-nofound", "failure"), "respuesta bloqueada => también a una persona");
-    assert.ok(edge(flow, "human-faq-nofound", "end"));
+    // R5: transferencia REAL -- mensaje al cliente y luego la acción transferir_soporte (pausa el chat).
+    assert.equal(nodo(flow, "human-faq-nofound")?.type, "message");
+    assert.ok(edge(flow, "human-faq-nofound", "act-handoff-faq"));
+    assert.ok(edge(flow, "act-handoff-faq", "end"));
     assert.equal(nodo(flow, "msg-faq-nofound"), undefined);
   });
 

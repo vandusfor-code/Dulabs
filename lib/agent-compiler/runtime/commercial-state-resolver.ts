@@ -53,10 +53,20 @@ const NODE_ID_TO_COMMERCIAL_STATE: Readonly<Record<string, CommercialState>> = {
   "act-quote": "QUOTING",
   "ai-quote-present": "QUOTING",
   "q-booking-when": "BOOKING",
+  // R7 -- consulta de disponibilidad real antes de reservar (nylas).
+  "ai-avail-propose": "BOOKING",
+  "act-avail": "BOOKING",
+  "ai-avail-present": "BOOKING",
+  "msg-avail-fail": "BOOKING",
+  "q-booking-pick": "BOOKING",
   "ai-book-propose": "BOOKING",
   "act-book": "BOOKING",
   "ai-book-present": "BOOKING",
   "human-book-fail": "HUMAN_TRANSFER",
+  // R5 -- transferencia REAL iniciada por el flow (msg + acción transferir_soporte).
+  "act-handoff-book": "HUMAN_TRANSFER",
+  "act-handoff-faq": "HUMAN_TRANSFER",
+  "msg-handoff-fail": "HUMAN_TRANSFER",
   "st-confirmation": "CONFIRMATION",
   end: "COMPLETED",
 };

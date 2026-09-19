@@ -307,6 +307,22 @@ const BY_ACTION_TYPE: Partial<Record<FlowActionType, ActionCapabilitySpec>> = {
     outputVariables: ["citaId"],
     requiresFailureBranch: true,
   },
+  // R7 (Business Agent, autorizado) -- consulta de disponibilidad genérica Nylas.
+  // SOLO LECTURA: ofrecer un horario libre NO es reservarlo -- la reserva real la
+  // hace, y la verifica, crear_cita_nylas_generico (nunca puede colar "cita
+  // confirmada"). Otorga `appointment.available`: sin esa capability el filtro de
+  // afirmaciones externas bloquea la redacción natural de un LLM ("tengo
+  // disponibilidad a las 8:00..."). ATENCIÓN: el orquestador concede lo declarado
+  // en verifiesOnSuccess a TODO resultado success:true, sin mirar los datos; por eso
+  // el executor devuelve success:true SOLO cuando calculó al menos un horario real
+  // (sin cupo o con fallo técnico la acción falla). Ver
+  // InternalActionExecutor.buscarDisponibilidadNylasGenericoAction.
+  buscar_disponibilidad_nylas_generico: {
+    actionType: "buscar_disponibilidad_nylas_generico",
+    criticality: "standard",
+    verifiesOnSuccess: ["appointment.available"],
+    outputVariables: ["horariosDisponibles"],
+  },
   // R4 (Business Agent, autorizado) -- recuperación de conocimiento: solo
   // lectura, no verifica hechos externos (sin verifiesOnSuccess), así que nunca
   // puede usarse para colar una afirmación tipo "cita confirmada".

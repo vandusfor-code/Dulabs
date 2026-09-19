@@ -326,6 +326,14 @@ const actionNodeConfigSchema = z.discriminatedUnion("actionType", [
     semanticTag: semanticTagSchema,
     params: z.record(z.string(), z.string()).optional(),
   }),
+  // R7 (Business Agent, autorizado) -- consulta de disponibilidad genérica Nylas
+  // (SOLO LECTURA). params estáticos opcionales (el compiler embebe businessHoursJson);
+  // el tenant y el calendario salen del server, nunca del payload/IA.
+  z.object({
+    actionType: z.literal("buscar_disponibilidad_nylas_generico"),
+    semanticTag: semanticTagSchema,
+    params: z.record(z.string(), z.string()).optional(),
+  }),
   // FASE F7.3 (Contacto + Tags + IA, autorizado) -- sin params: lee
   // exclusivamente el contacto de request.conversation, igual que
   // resolver_escenario/buscar_disponibilidad_nylas de arriba.

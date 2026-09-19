@@ -64,6 +64,10 @@ export const CAPABILITY_BACKING: Record<CapabilityKey, CapabilityBacking> = {
       // se conserva en esta lista sin cambios (compatibilidad hacia atrás),
       // pero el compilador ya no la elige para agentes nuevos.
       "crear_cita_nylas_generico",
+      // R7 (autorizado) -- consulta de disponibilidad genérica Nylas (SOLO
+      // LECTURA). El compiler la cablea ANTES de la creación para el provider
+      // "nylas": el backend ofrece horarios libres reales y el cliente elige.
+      "buscar_disponibilidad_nylas_generico",
     ],
   },
   orders: { available: false, actions: [], requires: ["catalog"] },

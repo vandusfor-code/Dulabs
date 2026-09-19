@@ -180,6 +180,12 @@ export interface CompiledBusinessAgentIR {
   rules: CompiledRuleIR[];
   catalogBindings: CatalogBinding[];
   handoff: HandoffBindingIR[];
+  /**
+   * R5 -- ausente cuando la capability humanHandoff está apagada (IR idéntica a la
+   * previa). Pausa por defecto (horas) de las transferencias que inicia el FLOW
+   * (fallo de reserva / sin información): el Gate usa la de cada regla.
+   */
+  handoffDefaults?: { pauseHours: number };
   scheduling: SchedulingCapabilityIR;
   /** Ausente cuando el Spec no configura datos del cliente (IR idéntica a la previa a R3). */
   customerData?: CustomerDataIR;
