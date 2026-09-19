@@ -19,6 +19,7 @@ import { apiError, apiOk } from "@/lib/agent-compiler/api/http";
 import { registrarAuditoriaAdmin } from "@/lib/auditoria-admin";
 import { hasUsableKnowledge } from "@/lib/business-agent-knowledge/service";
 import { createSupabaseKnowledgeStore } from "@/lib/business-agent-knowledge/store-supabase";
+import { countActiveProducts } from "@/lib/business-agent-products-store";
 
 export const runtime = "nodejs";
 
@@ -60,7 +61,11 @@ export async function POST(request: NextRequest) {
     // horario de atención ya lo exige el validador del Spec (validate.ts (f)),
     // así que una versión sin horario ni siquiera queda "validated".
     const version = await store.getVersion(miembro.tenantId, body.flowVersionId);
-    if (version && (version.spec.capabilities.scheduling || version.spec.capabilities.catalog)) {
+    // Servicios: los necesita quien agenda (duración) o quien muestra SERVICIOS en el catálogo. Un catálogo solo de
+    // productos NO exige servicios (R6). Un Spec previo sin fuente elegida cuenta como servicios (compatibilidad).
+    const cat = version?.spec.catalog;
+    const necesitaServicios = !!version && (version.spec.capabilities.scheduling || (version.spec.capabilities.catalog && (cat?.useServices || !cat?.useProducts)));
+    if (version && necesitaServicios) {
       const { count } = await supabase
         .from("dulabs_servicios")
         .select("id", { count: "exact", head: true })
@@ -72,6 +77,13 @@ export async function POST(request: NextRequest) {
           "Para publicar con catálogo o agendamiento necesitas al menos un servicio activo. Agrégalo en el paso Servicios.",
           422,
         );
+      }
+    }
+
+    // R6: con catálogo de PRODUCTOS debe haber al menos un producto activo (validación en el SERVIDOR).
+    if (version?.spec.capabilities.catalog && version.spec.catalog.useProducts) {
+      if ((await countActiveProducts(supabase, miembro.tenantId)) === 0) {
+        return apiError("MISSING_PRODUCTS", "Para publicar con catálogo de productos necesitas al menos un producto activo. Agrégalo en el paso Productos.", 422);
       }
     }
 

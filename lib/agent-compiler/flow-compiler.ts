@@ -324,10 +324,11 @@ function construirMaquina(g: GraphBuilder, ir: CompiledBusinessAgentIR, endId: s
     g.addEdge("welcome", "q-need");
   }
   const entry = "welcome";
-  let prev = "q-need";
+  let prev: string | null = "q-need";
   /** Conecta el tramo anterior (nodo por defecto + ramas abiertas) con `target`. */
   const link = (target: string): void => {
-    g.addEdge(prev, target);
+    // prev = null: el tramo anterior termina SOLO en ramas explícitas (pendingExits), p. ej. botones.
+    if (prev) g.addEdge(prev, target);
     for (const e of pendingExits) g.addEdge(e.source, target, e.handle);
     pendingExits = [];
   };
@@ -486,11 +487,17 @@ function construirMaquina(g: GraphBuilder, ir: CompiledBusinessAgentIR, endId: s
 
   // --- CATALOG: propose_action -> action(catálogo) -> present -> choose ---
   const catalogAction = primaryTool(toolsOf("CATALOG"), "listar_catalogo_servicios");
+  // R6: qué parte del catálogo eligió el negocio (servicios y/o productos). Params ESTÁTICOS (la IA no
+  // los altera). Siempre se emiten para un agente compilado: además de elegir la fuente activan el
+  // formato estricto del listado (un servicio sin precio fijo dice "precio a confirmar", no "$0").
+  const usaProductos = ir.catalogBindings.some((b) => b.source === "dulabs_inventario_productos");
+  const usaServicios = ir.catalogBindings.some((b) => b.source === "dulabs_servicios");
+  const catalogParams: Record<string, string> = { incluirServicios: String(usaServicios), incluirProductos: String(usaProductos) };
   if (activos.has("CATALOG") && catalogAction) {
     g.declareVar("service_choice");
     g.addNode({ id: "ai-catalog-propose", type: "ai", config: { instruction: aiInstruction("Propón consultar el catálogo real para lo que pidió el cliente.", ir), mode: "propose_action", allowedTools: [catalogAction] } });
-    g.addNode({ id: "act-catalog", type: "action", config: actionConfig(catalogAction) });
-    g.addNode({ id: "ai-catalog-present", type: "ai", config: { instruction: aiInstruction("Presenta las opciones del catálogo consultado. Nunca inventes precios ni servicios que no estén en el resultado.", ir), mode: "respond", allowedTools: [] } });
+    g.addNode({ id: "act-catalog", type: "action", config: actionConfig(catalogAction, catalogParams) });
+    g.addNode({ id: "ai-catalog-present", type: "ai", config: { instruction: aiInstruction(usaProductos ? "Presenta las opciones del catálogo consultado (servicios y/o productos, tal como los devolvió el sistema). Nunca inventes precios, servicios ni productos que no estén en el resultado." : "Presenta las opciones del catálogo consultado. Nunca inventes precios ni servicios que no estén en el resultado.", ir), mode: "respond", allowedTools: [] } });
     g.addNode({ id: "q-catalog-choose", type: "question", config: { text: "¿Cuál de estas opciones te interesa?", variableKey: "service_choice", required: true, validation: { kind: "text" } } });
     link("ai-catalog-propose");
     g.addEdge("ai-catalog-propose", "act-catalog", FLOW_EDGE_HANDLE.aiSuccess);
@@ -501,18 +508,52 @@ function construirMaquina(g: GraphBuilder, ir: CompiledBusinessAgentIR, endId: s
     prev = "q-catalog-choose";
   }
 
-  // --- QUOTING (catalog && sales): propose_action -> action(precio/disponibilidad) -> present ---
-  const quoteAction = primaryTool(toolsOf("QUOTING"), "consultar_disponibilidad_catalogo");
+  // --- QUOTING (catalog && sales) -- R6: cotización CALCULADA POR EL BACKEND ---
+  //   ai(propone items) -> act calcular_cotizacion (catálogo real + matemática) -> ai(presenta el texto exacto)
+  //   -> [con "Transferir a un humano"] ¿comprar? -> persona del equipo (transferencia REAL) | seguir
+  // La IA solo transforma la intención en "Nombre xCantidad; ..."; nunca calcula ni escribe precios.
+  // Cotizar NO es vender: no se cobra ni se crea un pedido (no existe esa infraestructura); para concretar
+  // la compra el cliente pasa con una persona del equipo.
+  const quoteAction = primaryTool(toolsOf("QUOTING"), "calcular_cotizacion");
   if (activos.has("QUOTING") && quoteAction) {
-    g.addNode({ id: "ai-quote-propose", type: "ai", config: { instruction: aiInstruction("Propón resolver el precio/disponibilidad real del servicio elegido.", ir), mode: "propose_action", allowedTools: [quoteAction] } });
-    g.addNode({ id: "act-quote", type: "action", config: actionConfig(quoteAction) });
-    g.addNode({ id: "ai-quote-present", type: "ai", config: { instruction: aiInstruction("Da el precio y detalles EXACTOS del servicio resuelto por la herramienta. Jamás un precio de memoria.", ir), mode: "respond", allowedTools: [] } });
+    g.addNode({ id: "ai-quote-propose", type: "ai", config: { instruction: aiInstruction("Propón calcular la cotización con lo que el cliente eligió. Pasa `items` con los servicios/productos que pidió, usando los NOMBRES del catálogo consultado, en el formato 'Nombre xCantidad; Nombre xCantidad' (cantidad 1 si no dijo otra). No calcules ni escribas precios: el sistema los calcula.", ir), mode: "propose_action", allowedTools: [quoteAction] } });
+    g.addNode({ id: "act-quote", type: "action", config: actionConfig(quoteAction, catalogParams) });
+    g.addNode({ id: "ai-quote-present", type: "ai", config: { instruction: aiInstruction("Presenta la cotización EXACTAMENTE como la devolvió el sistema (cotizacionTexto): mismas líneas, cantidades y total, sin cambiar ninguna cifra. Si algo no se encontró o es ambiguo, díselo al cliente y pídele que precise. No afirmes que la compra ya está hecha.", ir), mode: "respond", allowedTools: [] } });
     link("ai-quote-propose");
     g.addEdge("ai-quote-propose", "act-quote", FLOW_EDGE_HANDLE.aiSuccess);
     g.addEdge("ai-quote-propose", safeFail(), FLOW_EDGE_HANDLE.aiFailure);
     g.addEdge("act-quote", "ai-quote-present");
     g.addEdge("act-quote", safeFail(), FLOW_EDGE_HANDLE.aiFailure);
+    // Si el filtro de afirmaciones bloquea la presentación, el cliente NO queda en silencio.
+    g.addEdge("ai-quote-present", safeFail(), FLOW_EDGE_HANDLE.aiFailure);
     prev = "ai-quote-present";
+
+    if (ir.states.some((s) => s.id === "HUMAN_TRANSFER")) {
+      // Intención de compra: solo se ofrece si hubo al menos una línea cotizada. Sí => persona del equipo
+      // (transferencia real: pausa el chat); No => el flujo sigue.
+      g.declareVar("cantidadLineasCotizacion", "number");
+      g.addNode({ id: "cond-quote-lines", type: "condition", config: { rules: [{ field: "cantidadLineasCotizacion", operator: "greater_than", value: 0 }], match: "all" } });
+      g.addNode({
+        id: "btn-quote-buy",
+        type: "buttons",
+        config: {
+          text: "¿Quieres que una persona del equipo te ayude a concretar esto?",
+          buttons: [
+            { id: "comprar", label: "Sí, quiero seguir" },
+            { id: "solo", label: "Solo el precio" },
+          ],
+        },
+      });
+      g.addEdge("ai-quote-present", "cond-quote-lines");
+      g.addEdge("cond-quote-lines", "btn-quote-buy", FLOW_EDGE_HANDLE.conditionTrue);
+      emitirTransferencia(g, ir, endId, "msg-handoff-sale", "act-handoff-sale", "Perfecto, te comunico con una persona del equipo para continuar con esto.");
+      g.addEdge("btn-quote-buy", "msg-handoff-sale", FLOW_EDGE_HANDLE.button("comprar"));
+      prev = null;
+      pendingExits = [
+        { source: "btn-quote-buy", handle: FLOW_EDGE_HANDLE.button("solo") },
+        { source: "cond-quote-lines", handle: FLOW_EDGE_HANDLE.conditionFalse },
+      ];
+    }
   }
 
   // --- BOOKING (scheduling): question(cuándo) -> propose_action -> action CRÍTICA -> present; failure -> human ---

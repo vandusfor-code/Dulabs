@@ -12,6 +12,7 @@ import type { PreviewTurnResult, SimulationInputEvent } from "@/lib/agent-compil
 import type { CompilerDiagnostic } from "@/lib/agent-compiler/diagnostics";
 import type { CalendarConnectionPublic, NylasCalendar } from "@/lib/agent-compiler/calendar/types";
 import type { BusinessAgentService } from "@/lib/business-agent-services";
+import type { BusinessAgentProduct } from "@/lib/business-agent-products";
 import type { BusinessAgentFaq } from "@/lib/business-agent-knowledge/faq";
 import type { KnowledgeDocumentRecord } from "@/lib/business-agent-knowledge/store";
 
@@ -261,6 +262,49 @@ export async function updateBusinessAgentService(params: AuthParams & { id: stri
 
 export async function deleteBusinessAgentService(params: AuthParams & { id: string }): Promise<ClientResult<{ ok: true }>> {
   return callApi(params.fetchImpl ?? fetch, `/api/business-agent/services/${encodeURIComponent(params.id)}`, {
+    method: "DELETE",
+    headers: flowApiHeaders(params.accessToken, { json: true, adminTenantId: params.adminTenantId }),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Productos estructurados (dulabs_inventario_productos) -- R6. El precio queda ESTRUCTURADO:
+// la cotización lo calcula el backend, nunca el modelo.
+// ---------------------------------------------------------------------------
+
+export interface ProductInput {
+  nombre: string;
+  categoria?: string | null;
+  descripcion?: string | null;
+  precio: number;
+  stock?: number;
+  activo?: boolean;
+}
+
+export async function listBusinessAgentProducts(params: AuthParams): Promise<ClientResult<{ products: BusinessAgentProduct[] }>> {
+  return callApi(params.fetchImpl ?? fetch, "/api/business-agent/products", {
+    headers: flowApiHeaders(params.accessToken, { adminTenantId: params.adminTenantId }),
+  });
+}
+
+export async function createBusinessAgentProduct(params: AuthParams & { input: ProductInput }): Promise<ClientResult<{ product: BusinessAgentProduct }>> {
+  return callApi(params.fetchImpl ?? fetch, "/api/business-agent/products", {
+    method: "POST",
+    headers: flowApiHeaders(params.accessToken, { json: true, adminTenantId: params.adminTenantId }),
+    body: JSON.stringify(params.input),
+  });
+}
+
+export async function updateBusinessAgentProduct(params: AuthParams & { id: string; input: ProductInput }): Promise<ClientResult<{ product: BusinessAgentProduct }>> {
+  return callApi(params.fetchImpl ?? fetch, `/api/business-agent/products/${encodeURIComponent(params.id)}`, {
+    method: "PUT",
+    headers: flowApiHeaders(params.accessToken, { json: true, adminTenantId: params.adminTenantId }),
+    body: JSON.stringify(params.input),
+  });
+}
+
+export async function deleteBusinessAgentProduct(params: AuthParams & { id: string }): Promise<ClientResult<{ ok: true }>> {
+  return callApi(params.fetchImpl ?? fetch, `/api/business-agent/products/${encodeURIComponent(params.id)}`, {
     method: "DELETE",
     headers: flowApiHeaders(params.accessToken, { json: true, adminTenantId: params.adminTenantId }),
   });

@@ -330,6 +330,14 @@ const BY_ACTION_TYPE: Partial<Record<FlowActionType, ActionCapabilitySpec>> = {
     actionType: "buscar_conocimiento",
     criticality: "standard",
   },
+  // R6 (Business Agent, autorizado) -- cotización: solo lectura del catálogo del propio
+  // negocio. No verifica hechos externos (sin verifiesOnSuccess): cotizar NO es vender, no
+  // reserva, no cobra ni crea pedidos, así que no puede colar "compra confirmada".
+  calcular_cotizacion: {
+    actionType: "calcular_cotizacion",
+    criticality: "standard",
+    outputVariables: ["cotizacionTexto"],
+  },
 };
 
 /** Specs por semanticTag de webhook (prioridad sobre actionType genérico). */

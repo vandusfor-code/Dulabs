@@ -143,6 +143,9 @@ const SOURCE_TO_ACTION: Record<string, ActionNodeConfig> = {
   // produce InternalActionExecutor. No declara capabilities (no verifica hechos
   // externos): es información del propio negocio, no una operación.
   buscar_conocimiento: { actionType: "buscar_conocimiento", params: {} },
+  // R6 (Business Agent, autorizado) -- solo permite reconocer el source real que produce
+  // InternalActionExecutor. No declara capabilities: es información del propio negocio.
+  calcular_cotizacion: { actionType: "calcular_cotizacion", params: {} },
 };
 
 const DOMAIN_CAPABILITY_RULES: Array<{ pattern: RegExp; capabilities: AssertionCapability[] }> = [

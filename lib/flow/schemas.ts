@@ -349,6 +349,13 @@ const actionNodeConfigSchema = z.discriminatedUnion("actionType", [
     semanticTag: semanticTagSchema,
     params: z.record(z.string(), z.string()).optional(),
   }),
+  // R6 (Business Agent, autorizado) -- cotización determinista. params estáticos
+  // opcionales (`incluirServicios`/`incluirProductos`); el tenant sale de request.tenantId.
+  z.object({
+    actionType: z.literal("calcular_cotizacion"),
+    semanticTag: semanticTagSchema,
+    params: z.record(z.string(), z.string()).optional(),
+  }),
   z.object({
     actionType: z.literal("webhook_http"),
     semanticTag: semanticTagSchema,

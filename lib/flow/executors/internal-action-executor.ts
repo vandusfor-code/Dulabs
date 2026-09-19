@@ -76,6 +76,14 @@ import { fechaColombiaDesdeIso, horaColombiaDesdeIso } from "@/lib/timezone-colo
 import { crearCitaNylasGenerico } from "@/lib/agent-compiler/calendar/nylas-generic-booking";
 import { buscarDisponibilidadNylasGenerico } from "@/lib/agent-compiler/calendar/nylas-availability";
 import { resolverFechaSolicitada } from "@/lib/agent-compiler/calendar/fecha-solicitada";
+import { buildQuote, formatCop, formatQuoteText, parseQuoteItems } from "@/lib/business-agent-quote";
+import {
+  cargarCatalogoCotizable,
+  createSupabaseCatalogStore,
+  formatearProductosTexto,
+  formatearServiciosTexto,
+  type BusinessAgentCatalogStore,
+} from "@/lib/business-agent-catalog-store";
 import type { BusinessHours } from "@/lib/agent-compiler/spec/types";
 import { createSupabaseCalendarStore } from "@/lib/agent-compiler/calendar/calendar-store-supabase";
 import type { CalendarConnectionStore } from "@/lib/agent-compiler/calendar/types";
@@ -175,6 +183,9 @@ export interface InternalActionDeps {
   // R7 (autorizado) -- reloj inyectable (por default `new Date()`): "mañana"/"el sábado" se resuelven
   // contra "hoy" en Colombia; los tests fijan el reloj para no depender de la fecha real.
   now?: () => Date;
+  // R6 (catálogo/cotización, autorizado) -- servicios + productos del tenant (solo lectura): real por
+  // default, fake en tests.
+  createCatalogStore?: (supabase: SupabaseClient) => BusinessAgentCatalogStore;
   // R4 (conocimiento, autorizado) -- mismo criterio: real por default, fake en tests.
   createKnowledgeStore?: (supabase: SupabaseClient) => Pick<KnowledgeStore, "search">;
   // R3 (datos del cliente, autorizado) -- mismo criterio: real por default,
@@ -239,6 +250,8 @@ const OPERATION_CLASS: Partial<Record<string, InternalActionOperationClass>> = {
   get_contact: "READ",
   // R4 (Business Agent, autorizado) -- solo lectura del conocimiento del tenant.
   buscar_conocimiento: "READ",
+  // R6 (Business Agent, autorizado) -- solo lectura del catálogo del tenant.
+  calcular_cotizacion: "READ",
   // FASE F8.1 (Flow Engine <-> WhatsApp Cloud API, autorizado) -- envía un
   // mensaje real e irreversible a la clienta, mismo nivel que
   // agendar_cita_marketplace/crear_cita_nylas.
@@ -413,7 +426,7 @@ export class InternalActionExecutor implements EffectExecutor {
       case "resolver_seleccion_servicio":
         return this.resolverSeleccionServicioAction(request, params);
       case "listar_catalogo_servicios":
-        return this.listarCatalogoServiciosAction(request, signal);
+        return this.listarCatalogoServiciosAction(request, params, signal);
       case "resolver_servicio_catalogo":
         return this.resolverServicioCatalogoAction(request, params);
       case "consultar_disponibilidad_catalogo":
@@ -434,6 +447,8 @@ export class InternalActionExecutor implements EffectExecutor {
         return this.getContactAction(request, signal);
       case "buscar_conocimiento":
         return this.buscarConocimientoAction(request, params, signal);
+      case "calcular_cotizacion":
+        return this.calcularCotizacionAction(request, params, signal);
       case "enviar_plantilla":
         return this.enviarPlantillaAction(request, action, signal);
       default:
@@ -1863,16 +1878,45 @@ export class InternalActionExecutor implements EffectExecutor {
 
   private async listarCatalogoServiciosAction(
     request: EffectDispatchRequest,
+    params: Record<string, string>,
     signal?: AbortSignal,
   ): Promise<EffectDispatchResult> {
     assertNotAborted(signal);
-    const servicios = await (this.deps.listarCatalogoServiciosReal ?? listarCatalogoServiciosReal)(this.deps.supabase, request.tenantId);
+    // R6: el compiler embebe (params ESTÁTICOS, ganan sobre el payload) qué parte del catálogo
+    // eligió el negocio. Sin params (agentes previos) => solo servicios, EXACTAMENTE como antes.
+    const incluirServicios = params.incluirServicios !== "false";
+    const incluirProductos = params.incluirProductos === "true";
+    const servicios = incluirServicios
+      ? await (this.deps.listarCatalogoServiciosReal ?? listarCatalogoServiciosReal)(this.deps.supabase, request.tenantId)
+      : [];
+    const productos = incluirProductos
+      ? await (this.deps.createCatalogStore ?? createSupabaseCatalogStore)(this.deps.supabase).listarProductos(request.tenantId)
+      : [];
     assertNotAborted(signal);
+
+    // Params del compiler (Business Agent) => formato estricto: el servicio SIN precio fijo dice "precio a confirmar" (el
+    // adaptador compartido lo convierte en 0). Flujos previos/AMORE/Daniela (sin params) conservan el texto de siempre.
+    let textoServicios = formatearCatalogoReal(servicios);
+    if (params.incluirServicios !== undefined && servicios.length > 0) {
+      // La marca de precios nulos es AUXILIAR: si esta segunda lectura falla, el listado NO se cae (usa el texto de siempre).
+      try {
+        const conPrecio = await (this.deps.createCatalogStore ?? createSupabaseCatalogStore)(this.deps.supabase).listarServicios(request.tenantId);
+        const sinPrecio = new Set(conPrecio.filter((s) => s.precio === null).map((s) => s.id));
+        textoServicios = formatearServiciosTexto(servicios, sinPrecio);
+      } catch {
+        // conserva formatearCatalogoReal
+      }
+    }
+    const textoProductos = formatearProductosTexto(productos);
+    const catalogoTexto = incluirProductos
+      ? [servicios.length > 0 ? `Servicios:\n${textoServicios}` : "", productos.length > 0 ? `Productos:\n${textoProductos}` : ""].filter(Boolean).join("\n\n")
+      : textoServicios;
 
     const data = {
       catalogoDisponible: servicios,
-      catalogoTexto: formatearCatalogoReal(servicios),
+      catalogoTexto,
       cantidadCatalogo: servicios.length,
+      ...(incluirProductos ? { productosDisponibles: productos, cantidadProductos: productos.length } : {}),
       effectId: request.effectId,
     };
 
@@ -2918,6 +2962,59 @@ export class InternalActionExecutor implements EffectExecutor {
       appliedResult: data,
       rawResult: data,
       metadata: { operationClass: OPERATION_CLASS.buscar_conocimiento },
+    };
+  }
+
+  /**
+   * R6 (Business Agent, autorizado) -- cotización DETERMINISTA. La IA solo propone `items`
+   * ("Nombre xCantidad; ...") como texto estructurado; el BACKEND carga el catálogo REAL del
+   * tenant (servicios y/o productos según los params ESTÁTICOS del nodo, que ganan sobre el
+   * payload), resuelve cada nombre, y calcula líneas/subtotal/total (lib/business-agent-quote.ts).
+   * El tenant sale de request.tenantId, nunca del payload/IA. Solo lectura: cotizar NO reserva,
+   * NO cobra y NO crea pedidos. Éxito = la consulta se hizo (aunque ningún ítem se resolviera:
+   * el texto explica qué no se encontró / qué es ambiguo); solo falla si no hay nada que cotizar
+   * o el catálogo no se pudo leer.
+   */
+  private async calcularCotizacionAction(
+    request: EffectDispatchRequest,
+    params: Record<string, string>,
+    signal?: AbortSignal,
+  ): Promise<EffectDispatchResult> {
+    assertNotAborted(signal);
+    const parsed = parseQuoteItems(params.items);
+    if (parsed.items.length === 0 && parsed.cantidadInvalida.length === 0) {
+      return { success: false, classification: EFFECT_RESULT_CLASSIFICATIONS.NON_RETRYABLE, error: "cotizacion_sin_items" };
+    }
+
+    let catalogo;
+    try {
+      catalogo = await cargarCatalogoCotizable((this.deps.createCatalogStore ?? createSupabaseCatalogStore)(this.deps.supabase), request.tenantId, {
+        servicios: params.incluirServicios !== "false",
+        productos: params.incluirProductos === "true",
+      });
+    } catch {
+      return { success: false, classification: EFFECT_RESULT_CLASSIFICATIONS.RETRYABLE, error: "catalogo_no_disponible" };
+    }
+    assertNotAborted(signal);
+
+    const quote = buildQuote(catalogo, parsed.items, parsed.cantidadInvalida);
+    const data = {
+      cotizacionTexto: formatQuoteText(quote),
+      cotizacionTotal: quote.total,
+      cotizacionTotalTexto: formatCop(quote.total),
+      cotizacionCompleta: quote.completa,
+      cantidadLineasCotizacion: quote.lineas.length,
+      cotizacionHayStockInsuficiente: quote.hayStockInsuficiente,
+      cotizacionLineas: quote.lineas,
+      effectId: request.effectId,
+    };
+    return {
+      success: true,
+      classification: EFFECT_RESULT_CLASSIFICATIONS.SUCCESS,
+      data,
+      appliedResult: data,
+      rawResult: data,
+      metadata: { operationClass: OPERATION_CLASS.calcular_cotizacion },
     };
   }
 }

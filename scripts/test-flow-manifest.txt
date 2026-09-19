@@ -363,6 +363,16 @@ lib/business-agent-client.test.ts
 # Servicios estructurados del Business Agent (dulabs_servicios): validación pura
 # de precio/duración. Puro.
 lib/business-agent-services.test.ts
+# R6 -- cotización DETERMINISTA (parsing de ítems, resolución contra el catálogo real, matemática COP entera,
+# precio nulo, stock, ambigüedad) + validación de productos. Puro.
+lib/business-agent-quote.test.ts
+# R6 -- persistencia de productos: aislamiento por tenant (fake de Supabase con dos tenants).
+lib/business-agent-products-store.test.ts
+# R6 -- contrato del executor: calcular_cotizacion + catálogo con productos (tenant de la solicitud, params
+# estáticos ganan, clasificación de fallos, formato estricto del precio nulo).
+lib/flow/executors/internal-action-executor-cotizacion.test.ts
+# R6 -- E2E offline de la cadena completa: catálogo (servicios+productos) -> cotización real -> transferencia real.
+lib/agent-compiler/e2e/quote-e2e.test.ts
 # Horario de atención del Business Agent (rebanada 2): evaluación determinista
 # (día cerrado, intervalos múltiples, fin tras cierre, excepciones). Puro.
 lib/business-hours.test.ts

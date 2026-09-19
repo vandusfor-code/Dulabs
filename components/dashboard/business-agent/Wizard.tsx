@@ -10,12 +10,17 @@ import {
   blankRule,
   blankSpecForm,
   localFormIssues,
+  needsProductsModule,
+  needsServicesModule,
   toggleCapability,
+  wizardStepOrder,
   type EditableBusinessAgentSpecForm,
+  type WizardStepId,
 } from "@/lib/business-agent-form";
 import { BUSINESS_TYPE_OTRO } from "@/lib/agent-compiler/spec/types";
 import { CAPABILITY_KEYS, type CapabilityKey } from "@/lib/agent-compiler/spec/capabilities";
 import { ServicesModule } from "@/components/dashboard/business-agent/ServicesModule";
+import { ProductsModule } from "@/components/dashboard/business-agent/ProductsModule";
 import { BusinessHoursModule } from "@/components/dashboard/business-agent/BusinessHoursModule";
 import { CustomerDataModule } from "@/components/dashboard/business-agent/CustomerDataModule";
 import { KnowledgeModule } from "@/components/dashboard/business-agent/KnowledgeModule";
@@ -25,7 +30,7 @@ import type { CompilerDiagnostic } from "@/lib/agent-compiler/diagnostics";
 
 const CAPABILITY_LABELS: Record<CapabilityKey, { es: string; en: string; hintEs: string; hintEn: string }> = {
   faq: { es: "Responder preguntas frecuentes", en: "Answer FAQs", hintEs: "Con tus preguntas frecuentes y documentos: busca lo relevante y nunca inventa.", hintEn: "With your FAQs and documents: looks up what is relevant and never makes things up." },
-  sales: { es: "Cotizar precios", en: "Quote prices", hintEs: "Presenta precios REALES del catálogo (nunca inventa). Requiere Catálogo. Cobrar/tomar pedidos todavía no está disponible.", hintEn: "Shares REAL catalog prices (never invents). Requires Catalog. Charging/orders not available yet." },
+  sales: { es: "Cotizar precios", en: "Quote prices", hintEs: "Arma cotizaciones con precios y cantidades REALES: las calcula el sistema, nunca el modelo. Requiere Catálogo. No cobra ni toma pedidos: para concretar la compra activa 'Transferir a un humano' y el cliente pasa con tu equipo.", hintEn: "Builds quotes with REAL prices and quantities: calculated by the system, never by the model. Requires Catalog. It does not charge or take orders: to close the sale enable 'Transfer to a human' and the customer moves to your team." },
   catalog: { es: "Mostrar catálogo", en: "Show catalog", hintEs: "Servicios/productos reales, nunca inventados por el modelo.", hintEn: "Real services/products, never invented by the model." },
   leadCapture: { es: "Captar datos del cliente", en: "Capture customer data", hintEs: "Nombre, teléfono, necesidad.", hintEn: "Name, phone, need." },
   scheduling: { es: "Agendar citas", en: "Book appointments", hintEs: "Contra el calendario real, con confirmación crítica.", hintEn: "Against the real calendar, with critical confirmation." },
@@ -56,7 +61,7 @@ const HANDOFF_TRIGGERS: { value: HandoffTriggerKind; es: string; en: string }[] 
   { value: "intent", es: "Intención detectada", en: "Detected intent" },
 ];
 
-export type WizardStep = "tipo" | "personalidad" | "capacidades" | "servicios" | "agendamiento" | "horarios" | "datos" | "conocimiento" | "reglas" | "handoff" | "revisar";
+export type WizardStep = WizardStepId;
 
 export interface WizardProps {
   form: EditableBusinessAgentSpecForm;
@@ -79,17 +84,10 @@ export function BusinessAgentWizard({ form, onChange, diagnostics, saving, onSav
   // paso hacia el configurador dinámico -- "servicios" solo se pide si el agente
   // usa catálogo o agendamiento (precio/duración estructurados).
   const stepOrder = useMemo<WizardStep[]>(() => {
-    const steps: WizardStep[] = ["tipo", "personalidad", "capacidades"];
-    if (form.capabilities.catalog || form.capabilities.scheduling) steps.push("servicios");
-    steps.push("agendamiento");
-    if (form.capabilities.scheduling) steps.push("horarios");
-    // Datos del cliente (R3): módulo dinámico -- aparece si el agente capta datos o agenda.
-    if (form.capabilities.leadCapture || form.capabilities.scheduling) steps.push("datos");
-    // Conocimiento (R4): módulo dinámico -- aparece con "Responder preguntas frecuentes".
-    if (form.capabilities.faq) steps.push("conocimiento");
-    steps.push("reglas", "handoff", "revisar");
-    return steps;
-  }, [form.capabilities.catalog, form.capabilities.scheduling, form.capabilities.leadCapture, form.capabilities.faq]);
+    // Cada módulo aparece SOLO si su capacidad está seleccionada (lib/business-agent-form.ts::wizardStepOrder).
+    return wizardStepOrder(form);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.capabilities, form.catalog.useServices, form.catalog.useProducts]);
   const stepIndex = Math.max(0, stepOrder.indexOf(step));
   useEffect(() => {
     // Si el paso actual dejó de existir (se desactivó su capacidad), vuelve a uno válido.
@@ -129,7 +127,7 @@ export function BusinessAgentWizard({ form, onChange, diagnostics, saving, onSav
             <span className={`flex size-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold ${s === step ? "bg-lime text-lime-fg" : "bg-ink text-mist"}`}>
               {i + 1}
             </span>
-            {STEP_LABEL(s, t)}
+            {STEP_LABEL(s, t, form)}
           </button>
         ))}
       </nav>
@@ -139,7 +137,12 @@ export function BusinessAgentWizard({ form, onChange, diagnostics, saving, onSav
         {step === "personalidad" && <StepPersonalidad form={form} update={update} />}
         {step === "capacidades" && <StepCapacidades form={form} update={update} onChange={onChange} />}
         {step === "agendamiento" && <StepAgendamiento form={form} update={update} />}
-        {step === "servicios" && <ServicesModule />}
+        {step === "servicios" && (
+          <>
+            {needsServicesModule(form) && <ServicesModule />}
+            {needsProductsModule(form) && <ProductsModule />}
+          </>
+        )}
         {step === "horarios" && <BusinessHoursModule form={form} onChange={onChange} />}
         {step === "datos" && <CustomerDataModule form={form} onChange={onChange} />}
         {step === "conocimiento" && <KnowledgeModule form={form} onChange={onChange} />}
@@ -180,13 +183,19 @@ export function BusinessAgentWizard({ form, onChange, diagnostics, saving, onSav
   );
 }
 
-function STEP_LABEL(s: WizardStep, t: (es: string, en: string) => string): string {
+function STEP_LABEL(s: WizardStep, t: (es: string, en: string) => string, form: EditableBusinessAgentSpecForm): string {
+  // El paso 'servicios' se llama según lo que el negocio configura ahí: servicios, productos o ambos.
+  const catalogo = needsServicesModule(form) && needsProductsModule(form)
+    ? t("Servicios y productos", "Services & products")
+    : needsProductsModule(form)
+      ? t("Productos", "Products")
+      : t("Servicios", "Services");
   return {
     tipo: t("Tipo de negocio", "Business type"),
     personalidad: t("Personalidad", "Personality"),
     capacidades: t("Capacidades", "Capabilities"),
     agendamiento: t("Agendamiento", "Scheduling"),
-    servicios: t("Servicios", "Services"),
+    servicios: catalogo,
     horarios: t("Horarios", "Business hours"),
     datos: t("Datos del cliente", "Customer data"),
     conocimiento: t("Conocimiento", "Knowledge"),
@@ -348,8 +357,8 @@ function StepCapacidades({
       {caps.catalog && (
         <SectionCard title={t("Catálogo", "Catalog")} description={t("La fuente de verdad siempre son tus servicios/productos guardados -- nunca el prompt.", "The source of truth is always your saved services/products -- never the prompt.")}>
           <div className="grid gap-2 sm:grid-cols-2">
-            <ToggleRow label={t("Usar servicios", "Use services")} checked={form.catalog.useServices} onChange={(v) => update("catalog", { ...form.catalog, useServices: v })} />
-            <ToggleRow label={t("Usar productos", "Use products")} checked={form.catalog.useProducts} onChange={(v) => update("catalog", { ...form.catalog, useProducts: v })} />
+            <ToggleRow label={t("Usar servicios", "Use services")} hint={t("Se administran en el paso Servicios.", "Managed in the Services step.")} checked={form.catalog.useServices} onChange={(v) => update("catalog", { ...form.catalog, useServices: v })} />
+            <ToggleRow label={t("Usar productos", "Use products")} hint={t("Con precio y stock; el agente los lista y los cotiza. Se administran en su propio paso.", "With price and stock; the agent lists and quotes them. Managed in their own step.")} checked={form.catalog.useProducts} onChange={(v) => update("catalog", { ...form.catalog, useProducts: v })} />
           </div>
           <ToggleRow
             label={t("Cotizar antes de calificar al cliente", "Quote before qualifying the customer")}

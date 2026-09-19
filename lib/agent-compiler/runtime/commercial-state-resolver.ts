@@ -64,6 +64,10 @@ const NODE_ID_TO_COMMERCIAL_STATE: Readonly<Record<string, CommercialState>> = {
   "ai-book-present": "BOOKING",
   "human-book-fail": "HUMAN_TRANSFER",
   // R5 -- transferencia REAL iniciada por el flow (msg + acción transferir_soporte).
+  "cond-quote-lines": "QUOTING",
+  "btn-quote-buy": "QUOTING",
+  "msg-handoff-sale": "HUMAN_TRANSFER",
+  "act-handoff-sale": "HUMAN_TRANSFER",
   "act-handoff-book": "HUMAN_TRANSFER",
   "act-handoff-faq": "HUMAN_TRANSFER",
   "msg-handoff-fail": "HUMAN_TRANSFER",

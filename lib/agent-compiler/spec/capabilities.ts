@@ -41,7 +41,9 @@ export const CAPABILITY_BACKING: Record<CapabilityKey, CapabilityBacking> = {
   // R4: FAQ/conocimiento = recuperación REAL (FAQ estructurada + documentos indexados),
   // ya no solo conversacional: la acción busca en las tablas de conocimiento del tenant.
   faq: { available: true, actions: ["buscar_conocimiento"] },
-  sales: { available: true, actions: [], conversationalOnly: true, requires: ["catalog"] },
+  // R6: "Cotizar precios" = cotización REAL (calcular_cotizacion: el backend resuelve los ítems contra el
+  // catálogo y calcula el total). NO cobra ni toma pedidos (orders/payments siguen no disponibles).
+  sales: { available: true, actions: ["calcular_cotizacion"], requires: ["catalog"] },
   catalog: {
     available: true,
     actions: ["listar_catalogo_servicios", "resolver_servicio_catalogo", "consultar_disponibilidad_catalogo", "listar_profesionales_servicio"],

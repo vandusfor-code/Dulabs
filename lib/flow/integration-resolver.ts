@@ -135,6 +135,10 @@ const INTERNAL_ACTION_TYPES = new Set([
   // patrón de bug documentado arriba varias veces): acción nativa de solo
   // lectura sobre las tablas de conocimiento del tenant, sin integración externa.
   "buscar_conocimiento",
+  // R6 (Business Agent, autorizado) -- registrada DESDE EL PRIMER COMMIT (el mismo bug ya
+  // documentado arriba: sin esto el framework la trata como integración externa y responde
+  // integration_required): acción nativa de solo lectura sobre el catálogo del tenant.
+  "calcular_cotizacion",
   // FASE F8.1 (Flow Engine <-> WhatsApp Cloud API, autorizado) -- MISMO
   // patrón de bug ya documentado arriba varias veces (F7 Bloque 2,
   // etiquetar_conversacion): esta acción existe y funciona en

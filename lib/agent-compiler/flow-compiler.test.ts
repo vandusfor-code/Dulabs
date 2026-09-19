@@ -243,8 +243,52 @@ describe("Agent Compiler — IR → FlowDefinition (Step 7.1)", () => {
     assert.equal(nodo(f, "q-qualify")?.type, "question");
     const quote = nodo(f, "ai-quote-propose");
     assert.ok(quote && quote.type === "ai" && quote.config.mode === "propose_action");
-    assert.ok(aiAllowed(quote).includes("consultar_disponibilidad_catalogo"));
+    // R6: la cotización la CALCULA el backend (calcular_cotizacion), no una consulta de agenda.
+    assert.deepEqual(aiAllowed(quote), ["calcular_cotizacion"]);
     assert.ok(tieneEdge(f, "ai-quote-propose", "act-quote", "success"));
+  });
+
+  it("11b. R6: cotización real — act-quote lleva la acción del backend; la presentación tiene rama de fallo (nunca silencio)", () => {
+    const f = flowDe(specBase({ capabilities: caps({ faq: true, catalog: true, sales: true }) }));
+    const act = nodo(f, "act-quote") as { config: { actionType: string } } | undefined;
+    assert.equal(act?.config.actionType, "calcular_cotizacion");
+    assert.equal(f.nodes.some((n) => n.type === "action" && (n.config as { actionType: string }).actionType === "consultar_disponibilidad_catalogo"), false, "ya no se usa la agenda AMORE para cotizar");
+    assert.ok(f.edges.some((e) => e.source === "ai-quote-present" && e.sourceHandle === "failure"));
+    assert.ok(f.edges.some((e) => e.source === "act-quote" && e.sourceHandle === "failure"));
+    // Sin 'Transferir a un humano' NO hay paso de compra (no se promete nada que no exista).
+    assert.equal(nodo(f, "btn-quote-buy"), undefined);
+    assert.equal(nodo(f, "act-handoff-sale"), undefined);
+    assert.equal(validateFlowForPublish(f).valid, true, JSON.stringify(validateFlowForPublish(f).errors));
+  });
+
+  it("11c. R6: con 'Transferir a un humano', tras cotizar se ofrece seguir con una persona (transferencia REAL); 'solo el precio' continúa", () => {
+    const f = flowDe(specBase({ capabilities: caps({ faq: true, catalog: true, sales: true, humanHandoff: true }), handoff: { rules: [], defaultPauseHours: 12 } }));
+    assert.ok(tieneEdge(f, "ai-quote-present", "cond-quote-lines"));
+    assert.ok(tieneEdge(f, "cond-quote-lines", "btn-quote-buy", "true"));
+    assert.ok(tieneEdge(f, "btn-quote-buy", "msg-handoff-sale", "button:comprar"));
+    const act = nodo(f, "act-handoff-sale") as { config: { actionType: string; pauseDurationHours?: number } } | undefined;
+    assert.equal(act?.config.actionType, "transferir_soporte");
+    assert.equal(act?.config.pauseDurationHours, 12);
+    assert.ok(tieneEdge(f, "act-handoff-sale", "end"));
+    // Sin líneas cotizadas NO se ofrece comprar; 'Solo el precio' sigue el flujo (aquí: hasta el cierre/end).
+    assert.equal(f.edges.some((e) => e.source === "cond-quote-lines" && e.sourceHandle === "false"), true);
+    assert.equal(f.edges.some((e) => e.source === "btn-quote-buy" && e.sourceHandle === "button:solo"), true);
+    assert.equal(validateFlowForPublish(f).valid, true, JSON.stringify(validateFlowForPublish(f).errors));
+    for (const n of f.nodes) if (n.type === "ai") assert.equal((n.config.allowedTools ?? []).includes("transferir_soporte"), false);
+  });
+
+  it("11d. R6: productos — el catálogo y la cotización llevan params ESTÁTICOS (incluirProductos); solo productos => sin servicios", () => {
+    const conProductos = flowDe(specBase({ capabilities: caps({ faq: true, catalog: true, sales: true }), catalog: { source: "structured", useServices: true, useProducts: true, quoteBeforeQualification: false } }));
+    const cat = nodo(conProductos, "act-catalog") as { config: { params?: Record<string, string> } };
+    assert.deepEqual(cat.config.params, { incluirServicios: "true", incluirProductos: "true" });
+    assert.deepEqual((nodo(conProductos, "act-quote") as { config: { params?: Record<string, string> } }).config.params, { incluirServicios: "true", incluirProductos: "true" });
+
+    const soloProductos = flowDe(specBase({ capabilities: caps({ faq: true, catalog: true, sales: true }), catalog: { source: "structured", useServices: false, useProducts: true, quoteBeforeQualification: false } }));
+    assert.deepEqual((nodo(soloProductos, "act-catalog") as { config: { params?: Record<string, string> } }).config.params, { incluirServicios: "false", incluirProductos: "true" });
+
+    // Compatibilidad: catálogo sin flags (Specs previos) = SERVICIOS (mismo comportamiento), ahora con params explícitos.
+    const legacy = flowDe(specBase({ capabilities: caps({ faq: true, catalog: true }), catalog: { source: "structured", useServices: false, useProducts: false, quoteBeforeQualification: true } }));
+    assert.deepEqual((nodo(legacy, "act-catalog") as { config: { params?: Record<string, string> } }).config.params, { incluirServicios: "true", incluirProductos: "false" });
   });
 
   it("12. variables declaradas incluyen las de los question de captura", () => {

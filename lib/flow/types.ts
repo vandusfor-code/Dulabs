@@ -311,7 +311,12 @@ export type FlowActionType =
   // R4 (Business Agent, autorizado) -- recuperación de conocimiento (FAQ +
   // documentos indexados) del tenant. Solo lectura; el tenant sale de
   // request.tenantId (nunca del payload/IA). Ver lib/business-agent-knowledge/.
-  | "buscar_conocimiento";
+  | "buscar_conocimiento"
+  // R6 (Business Agent, autorizado) -- cotización determinista: el BACKEND resuelve los
+  // ítems pedidos contra el catálogo REAL del tenant (servicios + productos) y calcula
+  // líneas/subtotal/total. Solo lectura; el tenant sale de request.tenantId. La IA solo
+  // propone `items` como texto estructurado. Ver lib/business-agent-quote.ts.
+  | "calcular_cotizacion";
 
 /** Params genéricos mapeados desde variables en runtime. */
 export type ActionParams = Record<string, string>;
@@ -415,7 +420,8 @@ export interface SimpleActionConfig extends ActionSemanticTag {
     | "crear_cita_nylas_generico"
     | "buscar_disponibilidad_nylas_generico"
     | "get_contact"
-    | "buscar_conocimiento";
+    | "buscar_conocimiento"
+    | "calcular_cotizacion";
   params?: ActionParams;
 }
 
