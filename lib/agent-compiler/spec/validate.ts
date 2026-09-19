@@ -12,6 +12,7 @@ import type { CompilerIssue } from "@/lib/agent-compiler/types";
 import { safeParseBusinessAgentSpec } from "@/lib/agent-compiler/spec/schema";
 import { CAPABILITY_BACKING, CAPABILITY_KEYS } from "@/lib/agent-compiler/spec/capabilities";
 import type { BusinessAgentSpec } from "@/lib/agent-compiler/spec/types";
+import { tieneAlgunHorarioAbierto } from "@/lib/business-hours";
 
 export interface SpecValidationResult {
   valid: boolean;
@@ -88,6 +89,17 @@ function validarReglasDeNegocio(spec: BusinessAgentSpec, issues: CompilerIssue[]
   const prioridades = spec.policies.prohibitions.map((p) => p.priority);
   if (new Set(prioridades).size !== prioridades.length) {
     issues.push(issue("SPEC_REFERENCE_INVALID", "Hay prohibiciones con la misma prioridad; la precedencia sería ambigua.", "policies.prohibitions"));
+  }
+
+  // (f) El agendamiento contra CALENDARIO (nylas/google) exige un horario de
+  // atención configurado (>=1 día abierto): el booking real lo valida contra ese
+  // horario. El provider "internal" (modelo de especialistas) usa sus propios
+  // horarios, así que no aplica esta regla.
+  // Solo "nylas" (provider de calendario con runtime real). "google_calendar"
+  // es "próximamente" y ya falla por SCHEDULING_PROVIDER_UNSUPPORTED; "internal"
+  // usa horarios de especialistas.
+  if (spec.scheduling.enabled && spec.scheduling.provider === "nylas" && !tieneAlgunHorarioAbierto(spec.scheduling.businessHours)) {
+    issues.push(issue("SPEC_REFERENCE_INVALID", "El agendamiento con calendario (Nylas) exige un horario de atención (configura al menos un día abierto).", "scheduling.businessHours"));
   }
 }
 

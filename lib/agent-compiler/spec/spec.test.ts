@@ -214,4 +214,28 @@ describe("BusinessAgentSpec — validación y versionado", () => {
     const r = validateBusinessAgentSpec(s);
     assert.equal(r.valid, true, JSON.stringify(r.issues));
   });
+
+  // Rebanada 2: agendamiento con calendario (nylas) exige horario de atención.
+  it("19. agendamiento nylas SIN horario de atención => inválido", () => {
+    const s = clon(specValido());
+    s.scheduling.provider = "nylas";
+    delete s.scheduling.businessHours;
+    const r = validateBusinessAgentSpec(s);
+    assert.equal(r.valid, false);
+    assert.ok(r.issues.some((i) => i.code === "SPEC_REFERENCE_INVALID" && /horario/i.test(i.message)));
+  });
+
+  it("20. agendamiento nylas CON horario de atención => válido", () => {
+    const s = clon(specValido());
+    s.scheduling.provider = "nylas";
+    s.scheduling.businessHours = { week: Array.from({ length: 7 }, () => ({ closed: false, intervals: [{ open: "09:00", close: "18:00" }] })), exceptions: [] };
+    const r = validateBusinessAgentSpec(s);
+    assert.equal(r.valid, true, JSON.stringify(r.issues));
+  });
+
+  it("21. agendamiento 'internal' NO exige businessHours (usa horarios de especialistas)", () => {
+    const s = clon(specValido()); // provider internal por defecto, sin businessHours
+    const r = validateBusinessAgentSpec(s);
+    assert.equal(r.valid, true, JSON.stringify(r.issues));
+  });
 });

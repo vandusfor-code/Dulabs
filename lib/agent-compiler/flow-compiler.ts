@@ -113,8 +113,11 @@ function bookingCreateAction(provider: string): FlowActionType | null {
  * el cast está acotado a ese conjunto y validateFlowForPublish lo re-verifica
  * (Zod) antes de publicar. No aplica a webhook_http/asignar_miembro/etc.
  */
-function actionConfig(actionType: FlowActionType): ActionNodeConfig {
-  return { actionType } as ActionNodeConfig;
+function actionConfig(actionType: FlowActionType, params?: Record<string, string>): ActionNodeConfig {
+  // `params` = config estática embebida por el compiler (p. ej. el horario de
+  // atención). mergeParams en el executor la hace ganar sobre el payload del
+  // LLM, así que la IA no puede alterarla. Ver internal-action-executor.ts.
+  return (params ? { actionType, params } : { actionType }) as ActionNodeConfig;
 }
 
 /**
@@ -269,8 +272,15 @@ function construirMaquina(g: GraphBuilder, ir: CompiledBusinessAgentIR, endId: s
     }
     g.declareVar("appointment_request");
     g.addNode({ id: "q-booking-when", type: "question", config: { text: "¿Para qué fecha y hora te gustaría?", variableKey: "appointment_request", required: true, validation: { kind: "text" } } });
-    g.addNode({ id: "ai-book-propose", type: "ai", config: { instruction: aiInstruction("Propón crear la reserva con la fecha/hora indicada. La disponibilidad la valida el sistema, no tú.", ir), mode: "propose_action", allowedTools: [createAction] } });
-    g.addNode({ id: "act-book", type: "action", config: actionConfig(createAction) });
+    g.addNode({ id: "ai-book-propose", type: "ai", config: { instruction: aiInstruction("Propón crear la reserva incluyendo el servicio elegido (su nombre exacto si el cliente lo mencionó) y la fecha/hora indicada. La disponibilidad, el horario y la duración los valida el sistema con los datos estructurados, no tú.", ir), mode: "propose_action", allowedTools: [createAction] } });
+    // El compiler EMBEBE el horario de atención (regla determinista) en la acción
+    // de agendamiento genérico Nylas, para que el Runtime lo valide sin que la IA
+    // pueda alterarlo. Otros providers (internal) validan por su propia vía.
+    const bookParams =
+      createAction === "crear_cita_nylas_generico" && ir.scheduling.businessHours
+        ? { businessHoursJson: JSON.stringify(ir.scheduling.businessHours) }
+        : undefined;
+    g.addNode({ id: "act-book", type: "action", config: actionConfig(createAction, bookParams) });
     g.addNode({ id: "ai-book-present", type: "ai", config: { instruction: aiInstruction("Comunica el resultado REAL de la solicitud según el sistema. Si no fue posible, dilo con claridad.", ir), mode: "respond", allowedTools: [] } });
     g.addNode({ id: "human-book-fail", type: "human", config: { message: "Te comunico con una persona del equipo para completar tu solicitud.", pauseDurationHours: 24 } });
     g.addEdge(prev, "q-booking-when");

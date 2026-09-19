@@ -10,7 +10,7 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { blankSpecForm, toggleCapability } from "@/lib/business-agent-form";
+import { blankBusinessHours, blankSpecForm, toggleCapability } from "@/lib/business-agent-form";
 import { compileBusinessAgent } from "@/lib/agent-compiler/compile";
 import { compileIRToFlowDefinition } from "@/lib/agent-compiler/flow-compiler";
 import { nuevaSpecMetadata } from "@/lib/agent-compiler/spec/version";
@@ -59,7 +59,8 @@ describe("Wizard form — toggleCapability (fix checkbox 'Agendar citas')", () =
     let form = blankSpecForm();
     form = { ...form, identity: { ...form.identity, businessName: "Barbería X", agentName: "Ana", businessType: "Barbería / Peluquería" } };
     form = toggleCapability(form, "scheduling", true); // enabled + provider internal
-    form = { ...form, scheduling: { ...form.scheduling, provider: "nylas" } }; // el usuario elige Nylas
+    // el usuario elige Nylas + configura horario (rebanada 2: nylas lo exige)
+    form = { ...form, scheduling: { ...form.scheduling, provider: "nylas", businessHours: blankBusinessHours() } };
 
     const spec: BusinessAgentSpec = { schemaVersion: "1.0.0", ...form, metadata: nuevaSpecMetadata(NOW) };
     // (b) el Spec resultante contiene scheduling activo.

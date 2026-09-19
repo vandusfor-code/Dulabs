@@ -18,7 +18,8 @@ import type {
   Prohibition,
   SchedulingConfig,
 } from "@/lib/agent-compiler/spec/types";
-import { BUSINESS_TYPE_OTRO } from "@/lib/agent-compiler/spec/types";
+import { BUSINESS_TYPE_OTRO, type BusinessHours } from "@/lib/agent-compiler/spec/types";
+import { tieneAlgunHorarioAbierto } from "@/lib/business-hours";
 import { CAPABILITY_KEYS, type CapabilityKey } from "@/lib/agent-compiler/spec/capabilities";
 
 /** Las 8 secciones editables -- exactamente lo que el cliente puede enviar (ver business-agent-api.ts::EDITABLE_SPEC_KEYS). */
@@ -90,6 +91,13 @@ export const BUSINESS_TYPE_OPTIONS: BusinessTypeOption[] = [
   { value: BUSINESS_TYPE_OTRO, labelEn: "Other" },
 ];
 
+/** Horario por defecto: L-V 09:00-18:00 abierto, sábado y domingo cerrados. Índice 0 = domingo. */
+export function blankBusinessHours(): BusinessHours {
+  const abierto = () => ({ closed: false, intervals: [{ open: "09:00", close: "18:00" }] });
+  const cerrado = () => ({ closed: true, intervals: [] as { open: string; close: string }[] });
+  return { week: [cerrado(), abierto(), abierto(), abierto(), abierto(), abierto(), cerrado()], exceptions: [] };
+}
+
 export function newRuleId(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
 }
@@ -139,6 +147,9 @@ export function localFormIssues(form: EditableBusinessAgentSpecForm, t: (es: str
   if (form.capabilities.sales && !form.capabilities.catalog) issues.push(t("'Cotizar' requiere activar 'Catálogo'.", "'Quote' requires 'Catalog' enabled."));
   if (form.scheduling.enabled !== form.capabilities.scheduling) {
     issues.push(t("El agendamiento y la capacidad 'Agendar citas' deben coincidir.", "Scheduling and the 'Book appointments' capability must match."));
+  }
+  if (form.scheduling.enabled && form.scheduling.provider === "nylas" && !tieneAlgunHorarioAbierto(form.scheduling.businessHours)) {
+    issues.push(t("Configura el horario de atención (al menos un día abierto).", "Set the business hours (at least one open day)."));
   }
   if ((form.catalog.useServices || form.catalog.useProducts) && !form.capabilities.catalog) {
     issues.push(t("El catálogo está configurado pero la capacidad 'Catálogo' está apagada.", "Catalog is configured but the 'Catalog' capability is off."));

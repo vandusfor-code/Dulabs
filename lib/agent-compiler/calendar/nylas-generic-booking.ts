@@ -29,6 +29,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { ejecutarConIdempotencia, huellaSolicitud } from "@/lib/idempotencia-reserva";
 import type { NylasEvent, NylasEventsClient, NylasEventsWriteClient } from "@/lib/nylas/nylas-types";
 import type { CalendarConnectionStore } from "@/lib/agent-compiler/calendar/types";
+import type { BusinessHours } from "@/lib/agent-compiler/spec/types";
+import { evaluateBusinessHours } from "@/lib/business-hours";
 import { TIMEZONE_COLOMBIA } from "@/lib/timezone-colombia";
 
 export interface CrearCitaNylasGenericoParams {
@@ -44,11 +46,18 @@ export interface CrearCitaNylasGenericoParams {
   servicio?: string;
   notas?: string;
   duracionMinInput?: number;
+  /**
+   * Horario de atención del negocio (regla de disponibilidad). Si viene, el
+   * turno completo debe caber en él ANTES de tocar el calendario. null/undefined
+   * = sin regla de horario (compatibilidad).
+   */
+  businessHours?: BusinessHours | null;
 }
 
 export type CrearCitaNylasGenericoRechazoMotivo =
   | "datos_incompletos"
   | "fecha_invalida"
+  | "fuera_de_horario"
   | "calendario_no_conectado"
   | "proveedor_no_disponible"
   | "ocupado"
@@ -147,6 +156,22 @@ export async function crearCitaNylasGenerico(
     params.duracionMinInput && params.duracionMinInput > 0 && params.duracionMinInput <= DURACION_MIN_MAX
       ? params.duracionMinInput
       : DURACION_MIN_DEFAULT;
+
+  // Horario de atención del negocio (regla determinista, ANTES del calendario):
+  // el turno COMPLETO [inicio, inicio+duración) debe caber en el horario. La IA
+  // no calcula esto. Sin horario configurado, no bloquea (compatibilidad).
+  const horario = evaluateBusinessHours(params.businessHours, { fecha: params.fecha, hora: params.hora, durationMin: duracionMin });
+  if (!horario.ok) {
+    return {
+      ok: false,
+      motivo: "fuera_de_horario",
+      detalle:
+        horario.reason === "cerrado"
+          ? "El negocio no atiende ese día."
+          : "Ese horario está fuera del horario de atención del negocio.",
+    };
+  }
+
   const startUnix = Math.floor(inicio.getTime() / 1000);
   const endUnix = startUnix + duracionMin * 60;
 

@@ -16,6 +16,7 @@ import {
 import { BUSINESS_TYPE_OTRO } from "@/lib/agent-compiler/spec/types";
 import { CAPABILITY_KEYS, type CapabilityKey } from "@/lib/agent-compiler/spec/capabilities";
 import { ServicesModule } from "@/components/dashboard/business-agent/ServicesModule";
+import { BusinessHoursModule } from "@/components/dashboard/business-agent/BusinessHoursModule";
 import type { HandoffTriggerKind, ProhibitionAction, RuleKind } from "@/lib/agent-compiler/spec/types";
 import { actionBtn, Field, inputCls, IssuesList, primaryBtn, SectionCard, ToggleRow } from "@/components/dashboard/business-agent/ui";
 import type { CompilerDiagnostic } from "@/lib/agent-compiler/diagnostics";
@@ -53,7 +54,7 @@ const HANDOFF_TRIGGERS: { value: HandoffTriggerKind; es: string; en: string }[] 
   { value: "intent", es: "Intención detectada", en: "Detected intent" },
 ];
 
-export type WizardStep = "tipo" | "personalidad" | "capacidades" | "agendamiento" | "servicios" | "reglas" | "handoff" | "revisar";
+export type WizardStep = "tipo" | "personalidad" | "capacidades" | "servicios" | "agendamiento" | "horarios" | "reglas" | "handoff" | "revisar";
 
 export interface WizardProps {
   form: EditableBusinessAgentSpecForm;
@@ -76,8 +77,10 @@ export function BusinessAgentWizard({ form, onChange, diagnostics, saving, onSav
   // paso hacia el configurador dinámico -- "servicios" solo se pide si el agente
   // usa catálogo o agendamiento (precio/duración estructurados).
   const stepOrder = useMemo<WizardStep[]>(() => {
-    const steps: WizardStep[] = ["tipo", "personalidad", "capacidades", "agendamiento"];
+    const steps: WizardStep[] = ["tipo", "personalidad", "capacidades"];
     if (form.capabilities.catalog || form.capabilities.scheduling) steps.push("servicios");
+    steps.push("agendamiento");
+    if (form.capabilities.scheduling) steps.push("horarios");
     steps.push("reglas", "handoff", "revisar");
     return steps;
   }, [form.capabilities.catalog, form.capabilities.scheduling]);
@@ -131,6 +134,7 @@ export function BusinessAgentWizard({ form, onChange, diagnostics, saving, onSav
         {step === "capacidades" && <StepCapacidades form={form} update={update} onChange={onChange} />}
         {step === "agendamiento" && <StepAgendamiento form={form} update={update} />}
         {step === "servicios" && <ServicesModule />}
+        {step === "horarios" && <BusinessHoursModule form={form} onChange={onChange} />}
         {step === "reglas" && <StepReglas form={form} update={update} />}
         {step === "handoff" && <StepHandoff form={form} update={update} />}
         {step === "revisar" && (
@@ -175,6 +179,7 @@ function STEP_LABEL(s: WizardStep, t: (es: string, en: string) => string): strin
     capacidades: t("Capacidades", "Capabilities"),
     agendamiento: t("Agendamiento", "Scheduling"),
     servicios: t("Servicios", "Services"),
+    horarios: t("Horarios", "Business hours"),
     reglas: t("Reglas", "Rules"),
     handoff: t("Transferencia", "Handoff"),
     revisar: t("Revisar y guardar", "Review & save"),

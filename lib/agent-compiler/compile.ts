@@ -153,6 +153,7 @@ function construirIR(spec: BusinessAgentSpec, context: CompilerContext): Compile
     available: caps.scheduling && PROVIDERS_CON_RUNTIME.has(spec.scheduling.provider),
     actions: caps.scheduling ? CAPABILITY_BACKING.scheduling.actions.slice() : [],
     resources: spec.scheduling.resources.map((r) => ({ kind: r.kind, label: r.label, required: r.required })),
+    businessHours: spec.scheduling.businessHours ?? null,
   };
 
   // Procedencia (auditoría): cada elemento generado con su origen.

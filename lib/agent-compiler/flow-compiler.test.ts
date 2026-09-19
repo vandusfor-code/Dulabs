@@ -21,6 +21,8 @@ import type { FlowDefinition, FlowNode } from "@/lib/flow/types";
 
 const NOW = "2026-09-18T00:00:00.000Z";
 const CTX = { tenantId: "11111111-1111-4111-8111-111111111111" };
+// Horario de atención de prueba (rebanada 2): el provider "nylas" lo exige.
+const BH_TEST = { week: Array.from({ length: 7 }, () => ({ closed: false, intervals: [{ open: "09:00", close: "18:00" }] })), exceptions: [] };
 
 function caps(p: Partial<AgentCapabilities>): AgentCapabilities {
   return { faq: false, sales: false, catalog: false, leadCapture: false, scheduling: false, orders: false, payments: false, humanHandoff: false, ...p };
@@ -112,6 +114,22 @@ describe("Agent Compiler — IR → FlowDefinition (Step 7.1)", () => {
     assert.equal(nodo(f, "q-booking-when"), undefined);
   });
 
+  it("5b. BOOKING nylas embebe el horario de atención en la acción (rebanada 2)", () => {
+    const bh = { week: Array.from({ length: 7 }, () => ({ closed: false, intervals: [{ open: "09:00", close: "18:00" }] })), exceptions: [] };
+    const f = flowDe(
+      specBase({
+        capabilities: caps({ faq: true, scheduling: true }),
+        scheduling: { enabled: true, provider: "nylas", timezone: "America/Bogota", minNoticeMinutes: 60, cancellation: { allowed: true, minNoticeHours: 24 }, confirmation: { required: false, hoursBefore: 24 }, resources: [], businessHours: bh },
+      }),
+    );
+    const act = nodo(f, "act-book");
+    assert.ok(act && act.type === "action");
+    const cfg = (act as { config: { actionType: string; params?: Record<string, string> } }).config;
+    assert.equal(cfg.actionType, "crear_cita_nylas_generico");
+    assert.ok(cfg.params?.businessHoursJson, "el horario debe ir embebido en la acción de booking");
+    assert.equal(JSON.parse(cfg.params!.businessHoursJson).week.length, 7);
+  });
+
   it("6. §H handoff (humanHandoff sin scheduling) NO se duplica en el grafo: sin nodo human", () => {
     const f = flowDe(specBase({ capabilities: caps({ faq: true, humanHandoff: true }), handoff: { rules: [{ id: "h1", description: "asesor", trigger: { kind: "keyword", keywords: ["asesor", "humano"] }, action: "TRANSFER_HUMAN", pauseHours: 2 }], defaultPauseHours: 1 } }));
     assert.equal(f.nodes.some((n) => n.type === "human"), false, "el handoff vive en el Gate, no en el grafo");
@@ -168,7 +186,7 @@ describe("Agent Compiler — IR → FlowDefinition (Step 7.1)", () => {
   });
 
   it("13-15. grafo completo válido (edges consistentes, validateFlowForPublish)", () => {
-    const f = flowDe(specBase({ capabilities: caps({ faq: true, catalog: true, sales: true, leadCapture: true, scheduling: true, humanHandoff: true }), scheduling: { enabled: true, provider: "nylas", timezone: "America/Bogota", minNoticeMinutes: 30, cancellation: { allowed: true, minNoticeHours: 12 }, confirmation: { required: true, hoursBefore: 12 }, resources: [{ kind: "specialist", label: "Pro", required: true }] }, handoff: { rules: [{ id: "h", description: "asesor", trigger: { kind: "keyword", keywords: ["asesor"] }, action: "TRANSFER_HUMAN" }], defaultPauseHours: 1 }, policies: { prohibitions: [{ id: "pm", description: "x", scope: "contextual", action: "TRANSFER_HUMAN", priority: 3, condition: { match: "all", rules: [{ field: "message", operator: "contains", value: "descuento" }] } }], rules: [] } }));
+    const f = flowDe(specBase({ capabilities: caps({ faq: true, catalog: true, sales: true, leadCapture: true, scheduling: true, humanHandoff: true }), scheduling: { enabled: true, provider: "nylas", timezone: "America/Bogota", minNoticeMinutes: 30, cancellation: { allowed: true, minNoticeHours: 12 }, confirmation: { required: true, hoursBefore: 12 }, resources: [{ kind: "specialist", label: "Pro", required: true }], businessHours: BH_TEST }, handoff: { rules: [{ id: "h", description: "asesor", trigger: { kind: "keyword", keywords: ["asesor"] }, action: "TRANSFER_HUMAN" }], defaultPauseHours: 1 }, policies: { prohibitions: [{ id: "pm", description: "x", scope: "contextual", action: "TRANSFER_HUMAN", priority: 3, condition: { match: "all", rules: [{ field: "message", operator: "contains", value: "descuento" }] } }], rules: [] } }));
     const nodeIds = new Set(f.nodes.map((n) => n.id));
     for (const e of f.edges) { assert.ok(nodeIds.has(e.source), `source ${e.source}`); assert.ok(nodeIds.has(e.target), `target ${e.target}`); }
     const vp = validateFlowForPublish(f);
@@ -226,7 +244,7 @@ describe("Agent Compiler — mismo motor, múltiples industrias (fixtures)", () 
         identity: { businessName: "Salón Bella", agentName: "Bella", language: "es-CO", timezone: "America/Bogota" },
         capabilities: caps({ faq: true, catalog: true, sales: true, scheduling: true, humanHandoff: true }),
         catalog: { source: "structured", useServices: true, useProducts: false, quoteBeforeQualification: false },
-        scheduling: { enabled: true, provider: "nylas", timezone: "America/Bogota", minNoticeMinutes: 60, cancellation: { allowed: true, minNoticeHours: 12 }, confirmation: { required: true, hoursBefore: 12 }, resources: [{ kind: "specialist", label: "Especialista", required: true }] },
+        scheduling: { enabled: true, provider: "nylas", timezone: "America/Bogota", minNoticeMinutes: 60, cancellation: { allowed: true, minNoticeHours: 12 }, confirmation: { required: true, hoursBefore: 12 }, resources: [{ kind: "specialist", label: "Especialista", required: true }], businessHours: BH_TEST },
         handoff: { rules: [{ id: "queja", description: "queja", trigger: { kind: "complaint" }, action: "FIXED_RESPONSE_THEN_PAUSE", response: "Lamento lo ocurrido, te comunico con una persona.", pauseHours: 2 }], defaultPauseHours: 1 },
       }),
     },
