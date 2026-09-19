@@ -10,6 +10,7 @@ import {
   blankRule,
   blankSpecForm,
   localFormIssues,
+  toggleCapability,
   type EditableBusinessAgentSpecForm,
 } from "@/lib/business-agent-form";
 import { BUSINESS_TYPE_OTRO } from "@/lib/agent-compiler/spec/types";
@@ -113,7 +114,7 @@ export function BusinessAgentWizard({ form, onChange, diagnostics, saving, onSav
       <div className="min-w-0 flex-1 space-y-4">
         {step === "tipo" && <StepTipoIdentidad form={form} onChange={onChange} />}
         {step === "personalidad" && <StepPersonalidad form={form} update={update} />}
-        {step === "capacidades" && <StepCapacidades form={form} update={update} />}
+        {step === "capacidades" && <StepCapacidades form={form} update={update} onChange={onChange} />}
         {step === "agendamiento" && <StepAgendamiento form={form} update={update} />}
         {step === "reglas" && <StepReglas form={form} update={update} />}
         {step === "handoff" && <StepHandoff form={form} update={update} />}
@@ -278,14 +279,23 @@ function StepPersonalidad({ form, update }: { form: EditableBusinessAgentSpecFor
 // ---------------------------------------------------------------------------
 // Paso 3 — Capacidades + catálogo
 // ---------------------------------------------------------------------------
-function StepCapacidades({ form, update }: { form: EditableBusinessAgentSpecForm; update: <K extends keyof EditableBusinessAgentSpecForm>(k: K, v: EditableBusinessAgentSpecForm[K]) => void }) {
+function StepCapacidades({
+  form,
+  update,
+  onChange,
+}: {
+  form: EditableBusinessAgentSpecForm;
+  update: <K extends keyof EditableBusinessAgentSpecForm>(k: K, v: EditableBusinessAgentSpecForm[K]) => void;
+  onChange: (f: EditableBusinessAgentSpecForm) => void;
+}) {
   const { t } = useI18n();
   const caps = form.capabilities;
   function setCap(key: CapabilityKey, value: boolean) {
-    const next = { ...caps, [key]: value };
-    update("capabilities", next);
-    // Mantiene scheduling.enabled sincronizado con la capability, como exige el servidor.
-    if (key === "scheduling") update("scheduling", { ...form.scheduling, enabled: value });
+    // Transición atómica y pura (ver toggleCapability): actualiza capabilities y,
+    // para "scheduling", también scheduling.enabled/provider en UNA sola llamada.
+    // Antes se hacían dos update() encadenados sobre el mismo `form` y el segundo
+    // pisaba al primero -> el checkbox "Agendar citas" no cambiaba (bug real).
+    onChange(toggleCapability(form, key, value));
   }
   return (
     <>
