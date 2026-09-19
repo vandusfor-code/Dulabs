@@ -155,7 +155,16 @@ export function blankRule(): BusinessRule {
 }
 
 export function blankHandoffRule(): HandoffRule {
-  return { id: newRuleId("handoff"), description: "", trigger: { kind: "agent_request" }, action: "TRANSFER_HUMAN" };
+  // response por defecto: el cliente SIEMPRE debe recibir un mensaje al
+  // transferir (sin él la transferencia pausa la IA en silencio). El usuario
+  // puede editarlo en el Wizard.
+  return {
+    id: newRuleId("handoff"),
+    description: "",
+    trigger: { kind: "agent_request" },
+    action: "TRANSFER_HUMAN",
+    response: "Con gusto te comunico con una persona del equipo. En un momento te responden. 🙌",
+  };
 }
 
 /**
