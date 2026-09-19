@@ -11,6 +11,7 @@ import type { FlowActionType } from "@/lib/flow/types";
 import type { CapabilityKey } from "@/lib/agent-compiler/spec/capabilities";
 import type {
   AgentIdentity,
+  BusinessHours,
   HandoffAction,
   HandoffTrigger,
   PolicyCondition,
@@ -110,6 +111,8 @@ export interface SchedulingCapabilityIR {
   available: boolean;
   actions: FlowActionType[];
   resources: { kind: string; label: string; required: boolean }[];
+  /** Horario de atención estructurado (regla de disponibilidad); compile lo puebla siempre. */
+  businessHours?: BusinessHours | null;
 }
 
 /** Fuentes de conocimiento: SIEMPRE secundarias, nunca autoridad. */

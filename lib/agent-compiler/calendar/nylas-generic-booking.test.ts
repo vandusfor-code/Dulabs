@@ -12,6 +12,8 @@ import { crearCitaNylasGenerico, hayConflictoDeHorario, type CrearCitaNylasGener
 import { createInMemoryCalendarStore } from "@/lib/agent-compiler/calendar/testing/in-memory-calendar-store";
 import type { CalendarConnectionStore } from "@/lib/agent-compiler/calendar/types";
 import type { NylasEvent, NylasEventsClient, NylasEventsWriteClient } from "@/lib/nylas/nylas-types";
+import type { BusinessDaySchedule, BusinessHours } from "@/lib/agent-compiler/spec/types";
+import { weekdayDeFecha } from "@/lib/business-hours";
 
 const TENANT_A = "11111111-1111-4111-8111-111111111111";
 const TENANT_B = "22222222-2222-4222-8222-222222222222";
@@ -323,5 +325,67 @@ describe("crearCitaNylasGenerico — Bloque 16 (offline)", () => {
     const r2 = await crearCitaNylasGenerico(d, baseParams({ nombreCliente: "Otro Cliente Distinto" }));
     assert.equal(r2.ok, false);
     if (!r2.ok) assert.equal(r2.motivo, "conflicto_reintento");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Rebanada 2 — horario de atención (regla determinista ANTES del calendario).
+// ---------------------------------------------------------------------------
+const FECHA_HORARIO = "2026-03-10";
+const WD_HORARIO = weekdayDeFecha(FECHA_HORARIO)!;
+function horarioConDia(dia: BusinessDaySchedule): BusinessHours {
+  const week: BusinessDaySchedule[] = Array.from({ length: 7 }, () => ({ closed: true, intervals: [] }));
+  week[WD_HORARIO] = dia;
+  return { week, exceptions: [] };
+}
+
+describe("crearCitaNylasGenerico — horario de atención (rebanada 2)", () => {
+  async function armarConCalendario() {
+    const store = createInMemoryCalendarStore();
+    await conectarCalendario(store, TENANT_A);
+    return armarDeps({ calendarStore: store });
+  }
+
+  it("dentro del horario -> crea la cita", async () => {
+    const { deps, write } = await armarConCalendario();
+    const bh = horarioConDia({ closed: false, intervals: [{ open: "09:00", close: "18:00" }] });
+    const r = await crearCitaNylasGenerico(deps, baseParams({ fecha: FECHA_HORARIO, hora: "14:00", businessHours: bh }));
+    assert.ok(r.ok, JSON.stringify(r));
+    assert.equal(write.creados, 1);
+  });
+
+  it("día cerrado -> fuera_de_horario y NUNCA toca el calendario", async () => {
+    const { deps, read, write } = await armarConCalendario();
+    const bh = horarioConDia({ closed: true, intervals: [] });
+    const r = await crearCitaNylasGenerico(deps, baseParams({ fecha: FECHA_HORARIO, hora: "14:00", businessHours: bh }));
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.equal(r.motivo, "fuera_de_horario");
+    assert.equal(read.llamadas, 0);
+    assert.equal(write.creados, 0);
+  });
+
+  it("la cita termina después del cierre -> fuera_de_horario", async () => {
+    const { deps, write } = await armarConCalendario();
+    const bh = horarioConDia({ closed: false, intervals: [{ open: "09:00", close: "14:30" }] });
+    const r = await crearCitaNylasGenerico(deps, baseParams({ fecha: FECHA_HORARIO, hora: "14:00", businessHours: bh })); // 14:00 + 60 = 15:00 > 14:30
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.equal(r.motivo, "fuera_de_horario");
+    assert.equal(write.creados, 0);
+  });
+
+  it("duración REAL usada en el chequeo (120 min a las 17:00 con cierre 18:00 -> fuera)", async () => {
+    const { deps, write } = await armarConCalendario();
+    const bh = horarioConDia({ closed: false, intervals: [{ open: "09:00", close: "18:00" }] });
+    const r = await crearCitaNylasGenerico(deps, baseParams({ fecha: FECHA_HORARIO, hora: "17:00", businessHours: bh, duracionMinInput: 120 }));
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.equal(r.motivo, "fuera_de_horario");
+    assert.equal(write.creados, 0);
+  });
+
+  it("sin horario configurado -> no bloquea por horario (manda el calendario)", async () => {
+    const { deps, write } = await armarConCalendario();
+    const r = await crearCitaNylasGenerico(deps, baseParams({ fecha: FECHA_HORARIO, hora: "03:00", businessHours: undefined }));
+    assert.ok(r.ok, JSON.stringify(r));
+    assert.equal(write.creados, 1);
   });
 });

@@ -144,6 +144,38 @@ export interface ResourceRequirement {
   required: boolean;
 }
 
+/** Un intervalo de atención dentro de un día, en hora local del negocio (HH:MM 24h). */
+export interface BusinessHoursInterval {
+  open: string;
+  close: string;
+}
+
+/** Atención de un día de la semana (puede tener varios intervalos: p. ej. cierre al mediodía). */
+export interface BusinessDaySchedule {
+  closed: boolean;
+  intervals: BusinessHoursInterval[];
+}
+
+/** Excepción por fecha concreta (festivo, vacaciones, horario especial). */
+export interface BusinessHoursException {
+  /** YYYY-MM-DD. */
+  date: string;
+  closed: boolean;
+  intervals: BusinessHoursInterval[];
+}
+
+/**
+ * Horario de atención del negocio (REGLA de disponibilidad, no reemplaza al
+ * calendario real). Las horas están en la zona horaria del negocio
+ * (scheduling.timezone). `week` tiene 7 posiciones, índice 0 = domingo ...
+ * 6 = sábado (getUTCDay de la fecha), para casar con el cálculo determinista
+ * del backend.
+ */
+export interface BusinessHours {
+  week: BusinessDaySchedule[];
+  exceptions: BusinessHoursException[];
+}
+
 export interface SchedulingConfig {
   enabled: boolean;
   provider: SchedulingProvider;
@@ -152,6 +184,12 @@ export interface SchedulingConfig {
   cancellation: { allowed: boolean; minNoticeHours: number };
   confirmation: { required: boolean; hoursBefore: number };
   resources: ResourceRequirement[];
+  /**
+   * Horario de atención estructurado. Opcional a nivel de contrato (Specs
+   * previos no lo traen -> no se bloquea por horario, compatibilidad). El
+   * validador de publicación exige tenerlo cuando el agendamiento está activo.
+   */
+  businessHours?: BusinessHours;
 }
 
 // --- 8. KNOWLEDGE (secundario; nunca autoridad sobre lo estructurado) ------

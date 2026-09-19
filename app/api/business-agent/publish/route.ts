@@ -51,8 +51,30 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    const store = createSupabaseBusinessAgentRegistryStore(supabase);
+
+    // Validación de completitud (BACKEND, no solo UI): un agente con catálogo o
+    // agendamiento no puede publicarse sin al menos un servicio activo. El
+    // horario de atención ya lo exige el validador del Spec (validate.ts (f)),
+    // así que una versión sin horario ni siquiera queda "validated".
+    const version = await store.getVersion(miembro.tenantId, body.flowVersionId);
+    if (version && (version.spec.capabilities.scheduling || version.spec.capabilities.catalog)) {
+      const { count } = await supabase
+        .from("dulabs_servicios")
+        .select("id", { count: "exact", head: true })
+        .eq("id_tenant", miembro.tenantId)
+        .eq("activo", true);
+      if (!count || count === 0) {
+        return apiError(
+          "MISSING_SERVICES",
+          "Para publicar con catálogo o agendamiento necesitas al menos un servicio activo. Agrégalo en el paso Servicios.",
+          422,
+        );
+      }
+    }
+
     const result = await publishDraftVersion(
-      { store: createSupabaseBusinessAgentRegistryStore(supabase) },
+      { store },
       { tenantId: miembro.tenantId, flowVersionId: body.flowVersionId, expectedChecksum: body.expectedChecksum as string | undefined },
     );
     if (!result.ok) return apiError(result.reason.toUpperCase(), result.message, REASON_STATUS[result.reason] ?? 500);

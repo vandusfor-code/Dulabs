@@ -357,3 +357,6 @@ lib/business-agent-client.test.ts
 # Servicios estructurados del Business Agent (dulabs_servicios): validación pura
 # de precio/duración. Puro.
 lib/business-agent-services.test.ts
+# Horario de atención del Business Agent (rebanada 2): evaluación determinista
+# (día cerrado, intervalos múltiples, fin tras cierre, excepciones). Puro.
+lib/business-hours.test.ts

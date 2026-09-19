@@ -68,6 +68,7 @@ import { fechaColombiaDesdeIso, horaColombiaDesdeIso } from "@/lib/timezone-colo
 // (AMORE, arriba): esta acción es propia del Business Agent Compiler, ver
 // lib/agent-compiler/calendar/nylas-generic-booking.ts para el porqué.
 import { crearCitaNylasGenerico } from "@/lib/agent-compiler/calendar/nylas-generic-booking";
+import type { BusinessHours } from "@/lib/agent-compiler/spec/types";
 import { createSupabaseCalendarStore } from "@/lib/agent-compiler/calendar/calendar-store-supabase";
 import type { CalendarConnectionStore } from "@/lib/agent-compiler/calendar/types";
 // FASE F8.1 (Flow Engine <-> WhatsApp Cloud API, autorizado) -- reutiliza TAL
@@ -2610,6 +2611,32 @@ export class InternalActionExecutor implements EffectExecutor {
     const createReadClient = this.deps.createNylasEventsClient ?? createNylasEventsClient;
     const createWriteClient = this.deps.createNylasEventsWriteClient ?? createNylasEventsWriteClient;
 
+    // Duración REAL desde el servicio estructurado (dulabs_servicios), nunca la
+    // que "adivine" la IA. Si el servicio no se resuelve, se usa lo que venga en
+    // el payload / el default del propio booking.
+    const servicioNombre = params.servicio || undefined;
+    let duracionMinInput = params.duracionMin ? num(params.duracionMin, 0) : undefined;
+    if (servicioNombre) {
+      try {
+        const catalogo = await (this.deps.listarCatalogoServiciosReal ?? listarCatalogoServiciosReal)(this.deps.supabase, request.tenantId);
+        const resuelto = resolverServicioCatalogoReal({ servicios: catalogo, seleccionTipo: "nombre", seleccionNombre: servicioNombre });
+        if (resuelto.ok) duracionMinInput = resuelto.servicio.duracionMin;
+      } catch {
+        // si falla la resolución del servicio, se usa la duración por defecto
+      }
+    }
+
+    // Horario de atención embebido por el compiler (regla determinista). La IA
+    // no puede alterarlo (mergeParams hace ganar la config estática).
+    let businessHours: BusinessHours | null = null;
+    if (typeof params.businessHoursJson === "string" && params.businessHoursJson.trim()) {
+      try {
+        businessHours = JSON.parse(params.businessHoursJson) as BusinessHours;
+      } catch {
+        businessHours = null;
+      }
+    }
+
     const resultado = await crearCitaNylasGenerico(
       {
         supabase: this.deps.supabase,
@@ -2626,9 +2653,10 @@ export class InternalActionExecutor implements EffectExecutor {
         hora: params.hora ?? "",
         nombreCliente: params.nombreCliente ?? "",
         telefonoCliente: request.conversation?.telefonoCliente,
-        servicio: params.servicio || undefined,
+        servicio: servicioNombre,
         notas: params.notas || undefined,
-        duracionMinInput: params.duracionMin ? num(params.duracionMin, 0) : undefined,
+        duracionMinInput,
+        businessHours,
       },
       signal,
     );

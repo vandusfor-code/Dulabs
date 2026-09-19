@@ -145,6 +145,23 @@ export const handoffRuleSchema = z
     path: ["trigger", "intent"],
   });
 
+const horaHHMM = z.string().trim().max(5);
+const businessHoursIntervalSchema = z.object({ open: horaHHMM, close: horaHHMM });
+const businessDayScheduleSchema = z.object({
+  closed: z.boolean(),
+  intervals: z.array(businessHoursIntervalSchema).max(6),
+});
+const businessHoursExceptionSchema = z.object({
+  date: z.string().trim().max(10),
+  closed: z.boolean(),
+  intervals: z.array(businessHoursIntervalSchema).max(6),
+});
+const businessHoursSchema = z.object({
+  // Exactamente 7 días (índice 0 = domingo ... 6 = sábado).
+  week: z.array(businessDayScheduleSchema).length(7),
+  exceptions: z.array(businessHoursExceptionSchema).max(120),
+});
+
 export const schedulingSchema = z.object({
   enabled: z.boolean(),
   provider: z.enum(["none", "internal", "nylas", "google_calendar"]),
@@ -153,6 +170,7 @@ export const schedulingSchema = z.object({
   cancellation: z.object({ allowed: z.boolean(), minNoticeHours: z.number().int().min(0) }),
   confirmation: z.object({ required: z.boolean(), hoursBefore: z.number().int().min(0) }),
   resources: z.array(z.object({ kind: texto, label: texto, required: z.boolean() })).max(MAX_ARRAY_RESOURCES),
+  businessHours: businessHoursSchema.optional(),
 });
 
 export const knowledgeSchema = z.object({

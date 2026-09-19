@@ -128,7 +128,12 @@ const CATALOG_FAST: BusinessAgentSpec = { ...retailSpec(), capabilities: caps({ 
 // Wizard(equivalente)->Spec->Compiler->Published Agent->Runtime->Calendar
 // Action para el proveedor que ahora usa la acción genérica propia del
 // Business Agent Compiler (Bloque 16), nunca crear_cita_nylas (AMORE).
-const NYLAS_SCHEDULING: BusinessAgentSpec = { ...salonSpec(), scheduling: { ...salonSpec().scheduling, provider: "nylas" } };
+// Rebanada 2: el provider "nylas" exige horario de atención (regla del validador).
+const HORARIO_TODOS_ABIERTOS: BusinessAgentSpec["scheduling"]["businessHours"] = {
+  week: Array.from({ length: 7 }, () => ({ closed: false, intervals: [{ open: "08:00", close: "20:00" }] })),
+  exceptions: [],
+};
+const NYLAS_SCHEDULING: BusinessAgentSpec = { ...salonSpec(), scheduling: { ...salonSpec().scheduling, provider: "nylas", businessHours: HORARIO_TODOS_ABIERTOS } };
 
 // Variante SIN catalog/faq (mismo criterio que CATALOG_FAST arriba): solo
 // WELCOME -> BOOKING -> CONFIRMATION, para alcanzar ai-book-propose en el
@@ -137,7 +142,7 @@ const NYLAS_SCHEDULING_FAST: BusinessAgentSpec = {
   ...salonSpec(),
   capabilities: caps({ scheduling: true, humanHandoff: true }),
   catalog: { source: "structured", useServices: false, useProducts: false, quoteBeforeQualification: false },
-  scheduling: { ...salonSpec().scheduling, provider: "nylas" },
+  scheduling: { ...salonSpec().scheduling, provider: "nylas", businessHours: HORARIO_TODOS_ABIERTOS },
 };
 
 describe("Bloque G — E2E cadena completa (Spec -> compile -> publish -> resolve -> runtime)", () => {
