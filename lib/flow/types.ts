@@ -290,6 +290,12 @@ export type FlowActionType =
   // (sin cambios), ver lib/flow/executors/internal-action-executor.ts.
   | "buscar_disponibilidad_nylas"
   | "crear_cita_nylas"
+  // Bloque 16 (Business Agent Compiler, autorizado) -- agendamiento genérico
+  // Nylas, DELIBERADAMENTE separado de crear_cita_nylas (AMORE): esa acción
+  // exige request.payload.agendamiento (solo lo produce bot-escenarios de
+  // AMORE); esta consume params simples (fecha/hora), el mismo contrato que
+  // agendar_cita_especialista. Ver lib/agent-compiler/calendar/nylas-generic-booking.ts.
+  | "crear_cita_nylas_generico"
   | "webhook_http"
   | "enviar_plantilla"
   // FASE F7.3 (Contacto + Tags + IA, autorizado) -- lee SOLO el contacto de
@@ -397,6 +403,7 @@ export interface SimpleActionConfig extends ActionSemanticTag {
     | "resolver_escenario"
     | "buscar_disponibilidad_nylas"
     | "crear_cita_nylas"
+    | "crear_cita_nylas_generico"
     | "get_contact";
   params?: ActionParams;
 }

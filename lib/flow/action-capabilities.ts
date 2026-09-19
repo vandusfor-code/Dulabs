@@ -293,6 +293,20 @@ const BY_ACTION_TYPE: Partial<Record<FlowActionType, ActionCapabilitySpec>> = {
     verifiesOnSuccess: ["appointment.reserved"],
     outputVariables: ["citaId"],
   },
+  // Bloque 16 (Business Agent Compiler, autorizado) -- agendamiento genérico
+  // Nylas, DELIBERADAMENTE separado de crear_cita_nylas (AMORE). Mismo
+  // criterio de criticidad/evidencia que agendar_cita_especialista (el
+  // equivalente ya funcional del provider "internal"): crítica, exige rama
+  // de fallo real, y solo otorga appointment.reserved por un citaId real
+  // (el EXECUTOR nunca marca success sin un evento real creado en Nylas --
+  // ver lib/agent-compiler/calendar/nylas-generic-booking.ts).
+  crear_cita_nylas_generico: {
+    actionType: "crear_cita_nylas_generico",
+    criticality: "critical",
+    verifiesOnSuccess: ["appointment.reserved"],
+    outputVariables: ["citaId"],
+    requiresFailureBranch: true,
+  },
 };
 
 /** Specs por semanticTag de webhook (prioridad sobre actionType genérico). */
