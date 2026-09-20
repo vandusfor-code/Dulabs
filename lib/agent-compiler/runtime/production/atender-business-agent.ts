@@ -61,6 +61,12 @@ export interface BusinessAgentBoundaryOverrides {
   now?: () => string;
 }
 
+/**
+ * Aviso fijo cuando el cliente manda algo que el Business Agent no entiende (audio, imagen, video, documento, sticker).
+ * Texto del agente, no de la IA: nunca inventa qué contenía el archivo. Sin palabras de dominio (no afirma nada externo).
+ */
+export const MENSAJE_SOLO_TEXTO = "Por ahora solo puedo leer mensajes de texto. ¿Me cuentas por escrito lo que necesitas?";
+
 export interface AtenderConBusinessAgentParams {
   supabase: SupabaseClient;
   cliente: ClienteConfig;
@@ -74,6 +80,54 @@ export interface AtenderConBusinessAgentParams {
   classifier?: SemanticClassifier;
   observer?: BusinessAgentObserver;
   overrides?: BusinessAgentBoundaryOverrides;
+}
+
+/**
+ * Anti-invención — un mensaje que NO es texto (audio, imagen, video, documento, sticker) de un tenant con Business Agent.
+ * El Business Agent es dueño de TODO mensaje de su número: ese archivo no debe caer al motor de flows hand-built (ni,
+ * peor, a la IA legacy de texto libre) ni quedar en silencio. Responde el aviso fijo MENSAJE_SOLO_TEXTO SIN IA y SIN tocar la
+ * ejecución en curso (el cliente retoma por escrito donde iba). Número bloqueado / error del resolver => silencio, y un
+ * número sin Business Agent (`handled:false`) sigue por su camino de siempre, sin ningún cambio.
+ */
+export async function atenderMensajeNoTextoConBusinessAgent(
+  params: Omit<AtenderConBusinessAgentParams, "texto" | "commercialState" | "classifier">,
+): Promise<BusinessAgentBoundaryResult> {
+  const started = Date.now();
+  const { supabase, cliente, telefonoCliente, wamid } = params;
+  const base: Partial<BusinessAgentTrace> = { tenantId: cliente.id_tenant, wamid, phoneNumberId: cliente.phone_number_id };
+  const emit = (t: BusinessAgentTrace) => params.observer?.onTrace(t);
+
+  if (esTelefonoBloqueado(cliente.ia_numeros_bloqueados, telefonoCliente)) {
+    emit({ ...base, outcome: "blocked_number", llmInvoked: false, latencyMs: Date.now() - started } as BusinessAgentTrace);
+    return { handled: true, outcome: "blocked_number" };
+  }
+
+  let resolution;
+  try {
+    resolution = await params.resolver.resolve(supabase, cliente);
+  } catch (err) {
+    emit({ ...base, outcome: "fail_closed", reason: "resolver_error", llmInvoked: false, latencyMs: Date.now() - started } as BusinessAgentTrace);
+    console.error(`[business-agent] resolver_error tenant=${cliente.id_tenant} phone=${cliente.phone_number_id}:`, err instanceof Error ? err.message : String(err));
+    return { handled: true, outcome: "fail_closed", reason: "resolver_error" };
+  }
+  if (resolution.kind === "none") {
+    emit({ ...base, outcome: "no_business_agent", reason: resolution.reason, llmInvoked: false, latencyMs: Date.now() - started } as BusinessAgentTrace);
+    return { handled: false, outcome: "no_business_agent", reason: resolution.reason };
+  }
+  if (resolution.tenantId !== cliente.id_tenant) {
+    emit({ ...base, outcome: "fail_closed", reason: "tenant_mismatch", flowId: resolution.flowId, checksum: resolution.checksum, llmInvoked: false, latencyMs: Date.now() - started } as BusinessAgentTrace);
+    return { handled: true, outcome: "fail_closed", reason: "tenant_mismatch" };
+  }
+
+  const gateSink = params.overrides?.gateSink ?? createWhatsAppGateSink(supabase, cliente);
+  try {
+    await gateSink.sendMessage({ tenantId: cliente.id_tenant, conversation: { phoneNumberId: cliente.phone_number_id, telefonoCliente }, wamid, text: MENSAJE_SOLO_TEXTO });
+  } catch (err) {
+    // Un fallo al avisar no cambia nada más: el mensaje ya es del Business Agent (nunca cae a LEGACY).
+    console.error(`[business-agent] unsupported_message_notice_failed tenant=${cliente.id_tenant}:`, err instanceof Error ? err.message : String(err));
+  }
+  emit({ ...base, flowId: resolution.flowId, flowVersionId: resolution.flowVersionId, checksum: resolution.checksum, outcome: "unsupported_message", llmInvoked: false, latencyMs: Date.now() - started } as BusinessAgentTrace);
+  return { handled: true, outcome: "unsupported_message" };
 }
 
 export async function atenderMensajeConBusinessAgent(

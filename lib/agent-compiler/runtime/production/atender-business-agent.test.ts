@@ -6,7 +6,7 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { atenderMensajeConBusinessAgent, type BusinessAgentBoundaryOverrides } from "@/lib/agent-compiler/runtime/production/atender-business-agent";
+import { MENSAJE_SOLO_TEXTO, atenderMensajeConBusinessAgent, atenderMensajeNoTextoConBusinessAgent, type BusinessAgentBoundaryOverrides } from "@/lib/agent-compiler/runtime/production/atender-business-agent";
 import type { BusinessAgentResolution, BusinessAgentResolver } from "@/lib/agent-compiler/runtime/production/business-agent-resolver";
 import type { GateRule } from "@/lib/agent-compiler/runtime/guardrail-gate";
 import type { OrchestratorResult } from "@/lib/flow/flow-orchestrator";
@@ -325,5 +325,59 @@ describe("atenderMensajeConBusinessAgent — Bloques 9 + 11", () => {
     assert.equal(r.handled, true);
     assert.equal(r.outcome, "flow", "la regla condicionada a BOOKING NO debe matchear: el estado cruzado nunca se filtra");
     assert.equal(llamadas.orchestrator, 1);
+  });
+});
+
+describe("atenderMensajeNoTextoConBusinessAgent — audio/imagen/etc. de un tenant con Business Agent", () => {
+  const params = (over: Record<string, unknown> = {}) => ({ supabase: {} as never, cliente: cliente(), telefonoCliente: "573001112233", wamid: "wamid-media", ...over });
+
+  it("1. Business Agent activo -> aviso fijo SIN IA ni orquestador (handled=true, outcome=unsupported_message)", async () => {
+    const enviados: string[] = [];
+    const { overrides, llamadas } = overridesConEspias();
+    overrides.gateSink = { async sendMessage({ text }) { enviados.push(text); }, async transferHuman() { llamadas.gateSink.transferHuman++; } };
+    const r = await atenderMensajeNoTextoConBusinessAgent({ ...params(), resolver: resolverQue(resolutionOk()), overrides });
+    assert.equal(r.handled, true);
+    assert.equal(r.outcome, "unsupported_message");
+    assert.deepEqual(enviados, [MENSAJE_SOLO_TEXTO]);
+    assert.equal(llamadas.orchestrator, 0, "la conversación en curso NO se toca (el cliente retoma por escrito)");
+    assert.equal(llamadas.gateSink.transferHuman, 0);
+  });
+
+  it("2. sin Business Agent (flow hand-built / tenant legacy) -> handled=false, NO envía nada (camino de siempre)", async () => {
+    const enviados: string[] = [];
+    const { overrides } = overridesConEspias();
+    overrides.gateSink = { async sendMessage({ text }) { enviados.push(text); }, async transferHuman() {} };
+    const r = await atenderMensajeNoTextoConBusinessAgent({ ...params(), resolver: resolverQue({ kind: "none", reason: "not_business_agent" }), overrides });
+    assert.equal(r.handled, false);
+    assert.deepEqual(enviados, []);
+  });
+
+  it("3. número bloqueado -> silencio (handled=true, sin resolver ni envío)", async () => {
+    const enviados: string[] = [];
+    const { overrides } = overridesConEspias();
+    overrides.gateSink = { async sendMessage({ text }) { enviados.push(text); }, async transferHuman() {} };
+    const r = await atenderMensajeNoTextoConBusinessAgent({ ...params({ cliente: cliente({ ia_numeros_bloqueados: "573001112233" }) }), resolver: resolverQueLanza("no debe resolverse"), overrides });
+    assert.equal(r.handled, true);
+    assert.equal(r.outcome, "blocked_number");
+    assert.deepEqual(enviados, []);
+  });
+
+  it("4. error del resolver / artefacto de otro tenant -> fail-closed silencioso (nunca cae a LEGACY)", async () => {
+    const enviados: string[] = [];
+    const { overrides } = overridesConEspias();
+    overrides.gateSink = { async sendMessage({ text }) { enviados.push(text); }, async transferHuman() {} };
+    const err = await atenderMensajeNoTextoConBusinessAgent({ ...params(), resolver: resolverQueLanza("db caída"), overrides });
+    assert.deepEqual({ handled: err.handled, outcome: err.outcome, reason: err.reason }, { handled: true, outcome: "fail_closed", reason: "resolver_error" });
+    const cruzado = await atenderMensajeNoTextoConBusinessAgent({ ...params(), resolver: resolverQue(resolutionOk({ tenantId: OTRO_TENANT })), overrides });
+    assert.deepEqual({ handled: cruzado.handled, outcome: cruzado.outcome, reason: cruzado.reason }, { handled: true, outcome: "fail_closed", reason: "tenant_mismatch" });
+    assert.deepEqual(enviados, []);
+  });
+
+  it("5. si falla el envío del aviso, el mensaje SIGUE siendo del Business Agent (no lanza, no cae a LEGACY)", async () => {
+    const { overrides } = overridesConEspias();
+    overrides.gateSink = { async sendMessage() { throw new Error("meta 500"); }, async transferHuman() {} };
+    const r = await atenderMensajeNoTextoConBusinessAgent({ ...params(), resolver: resolverQue(resolutionOk()), overrides });
+    assert.equal(r.handled, true);
+    assert.equal(r.outcome, "unsupported_message");
   });
 });

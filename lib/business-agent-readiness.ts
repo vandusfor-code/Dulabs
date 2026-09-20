@@ -38,6 +38,11 @@ export interface ReadinessFacts {
   hasKnowledge: boolean;
   /** Calendario Nylas conectado y con un calendario seleccionado. */
   calendarConnected: boolean;
+  /**
+   * Nombres de servicios/productos ACTIVOS que el filtro de afirmaciones del runtime podría bloquear (contienen "cita",
+   * "reserva", "pago"...): el agente no podría mostrar el catálogo ni la cotización. Opcional: si no se calcula, no avisa.
+   */
+  catalogNamesAtRisk?: string[];
 }
 
 export interface ReadinessSummaryItem {
@@ -110,6 +115,17 @@ export function evaluateReadiness(spec: BusinessAgentSpec, facts: ReadinessFacts
     if (spec.catalog.useProducts && facts.activeProducts === 0) {
       bloqueo("MISSING_PRODUCTS", "catalog", "Para publicar con catálogo de productos necesitas al menos un producto activo. Agrégalo en el paso Productos.", "servicios");
     }
+  }
+
+  // ---- Nombres del catálogo que el filtro de seguridad bloquearía (el cliente no vería el catálogo/cotización) ----
+  if ((caps.catalog || caps.sales) && (facts.catalogNamesAtRisk?.length ?? 0) > 0) {
+    const nombres = facts.catalogNamesAtRisk!.slice(0, 5).map((n) => `«${n}»`).join(", ");
+    aviso(
+      "CATALOG_NAME_CLAIM_RISK",
+      caps.catalog ? "catalog" : "sales",
+      `Estos nombres contienen palabras que el filtro de seguridad del agente puede bloquear (cita, reserva, agendar, pago...): ${nombres}. Si se bloquean, el cliente no verá el catálogo ni la cotización. Renómbralos (p. ej. «Valoración» en vez de «Cita de valoración»).`,
+      "servicios",
+    );
   }
 
   // ---- Cotizar: no cobra ni toma pedidos ----

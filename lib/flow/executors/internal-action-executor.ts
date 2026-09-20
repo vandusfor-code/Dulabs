@@ -76,6 +76,7 @@ import { fechaColombiaDesdeIso, horaColombiaDesdeIso } from "@/lib/timezone-colo
 import { crearCitaNylasGenerico } from "@/lib/agent-compiler/calendar/nylas-generic-booking";
 import { buscarDisponibilidadNylasGenerico } from "@/lib/agent-compiler/calendar/nylas-availability";
 import { resolverFechaSolicitada } from "@/lib/agent-compiler/calendar/fecha-solicitada";
+import { resolverHoraSolicitada } from "@/lib/agent-compiler/calendar/hora-solicitada";
 import { createSupabaseAppointmentStore, type AppointmentStore } from "@/lib/agent-compiler/calendar/appointment-store";
 import {
   cancelarCitaCliente,
@@ -85,7 +86,6 @@ import {
   reprogramarCitaCliente,
   type AppointmentsDeps,
 } from "@/lib/agent-compiler/calendar/nylas-appointments";
-import { parseHoraColombia } from "@/lib/parse-hora-colombia";
 import { buildQuote, formatCop, formatQuoteText, parseQuoteItems } from "@/lib/business-agent-quote";
 import {
   cargarCatalogoCotizable,
@@ -307,6 +307,18 @@ function mergeParams(
     }
   }
   return out;
+}
+
+/** Horarios que el sistema OFRECIÓ al cliente en este turno (variable `horariosDisponibles`), o [] si no hubo lista. */
+function horariosOfrecidosDe(valor: unknown): string[] {
+  return Array.isArray(valor) ? valor.filter((h): h is string => typeof h === "string") : [];
+}
+
+/** "2030-03-16" -> "sábado, 16 de marzo" (hora de Colombia). Determinista: nunca lo redacta la IA. */
+function etiquetaDiaColombia(fechaISO: string): string {
+  const d = new Date(`${fechaISO}T12:00:00-05:00`);
+  if (Number.isNaN(d.getTime())) return fechaISO;
+  return new Intl.DateTimeFormat("es-CO", { timeZone: "America/Bogota", weekday: "long", day: "numeric", month: "long" }).format(d);
 }
 
 function num(value: string | undefined, fallback: number): number {
@@ -2750,6 +2762,15 @@ export class InternalActionExecutor implements EffectExecutor {
         fechaCita.motivo === "fecha_pasada" ? "Esa fecha ya pasó." : "No se pudo identificar la fecha de la cita.",
       );
     }
+    // Hora de la cita: la fija el backend desde lo que escribió el cliente; la propuesta de la IA solo vale si es uno de
+    // los horarios que el sistema ofreció (o, sin lista, si el cliente la respalda con sus números). Nunca se reserva una
+    // hora que el cliente no dijo.
+    const horaCita = resolverHoraSolicitada({
+      solicitudTexto: params.appointment_pick?.trim() || params.appointment_request?.trim(),
+      horaPropuesta: params.hora,
+      horariosOfrecidos: horariosOfrecidosDe(request.payload.horariosDisponibles),
+    });
+    if (!horaCita.ok) return rechazar("hora_invalida", "No se pudo identificar la hora que pidió el cliente.");
 
     const resultado = await crearCitaNylasGenerico(
       {
@@ -2764,7 +2785,7 @@ export class InternalActionExecutor implements EffectExecutor {
         executionRowId: request.executionRowId,
         effectId: request.effectId,
         fecha: fechaCita.fecha,
-        hora: params.hora ?? "",
+        hora: horaCita.hora,
         nombreCliente: params.nombreCliente ?? "",
         telefonoCliente: request.conversation?.telefonoCliente,
         servicio: servicioNombre,
@@ -2802,6 +2823,8 @@ export class InternalActionExecutor implements EffectExecutor {
       status: "confirmada",
       inicio: resultado.inicioIso,
       fin: resultado.finIso,
+      // Anti-invención: la confirmación la redacta el BACKEND con la fecha/hora REALES del evento creado.
+      reservaTexto: `Listo, tu cita${servicioNombre ? ` de ${servicioNombre}` : ""} quedó agendada para el ${formatearFechaHoraCita(resultado.inicioIso)}.`,
       effectId: request.effectId,
     };
 
@@ -2987,6 +3010,8 @@ export class InternalActionExecutor implements EffectExecutor {
       fecha: resultado.fecha,
       duracionMin: resultado.durationMin,
       horariosDisponibles: resultado.slots,
+      // Anti-invención: lo que ve el cliente lo redacta el BACKEND (no la IA): día y horarios reales, nada más.
+      disponibilidadTexto: `Estos son los horarios disponibles para el ${etiquetaDiaColombia(resultado.fecha)}:\n${formatearListaHorarios(resultado.slots)}`,
       hayCupos: true,
     };
 
@@ -3034,6 +3059,10 @@ export class InternalActionExecutor implements EffectExecutor {
     const data = {
       conocimientoEncontrado: resultado.found,
       conocimientoTexto: resultado.text,
+      // Anti-invención: textos del BACKEND para responder sin depender de lo que redacte la IA. Siempre presentes
+      // ("" si no hay) para que un valor de una consulta anterior no sobreviva en las variables del flujo.
+      respuestaExacta: resultado.exact,
+      respuestaDirecta: resultado.direct,
       cantidadConocimiento: resultado.hits.length,
       consultaVacia: resultado.emptyQuery,
       effectId: request.effectId,
@@ -3194,9 +3223,13 @@ export class InternalActionExecutor implements EffectExecutor {
     const ahora = (this.deps.now ?? (() => new Date()))();
     const fecha = resolverFechaSolicitada({ solicitudTexto: params.appointment_request, fechaPropuesta: params.fecha, hoyISO: fechaColombiaDesdeIso(ahora.toISOString()) });
     if (!fecha.ok) return rechazo(fecha.motivo, fecha.motivo === "fecha_pasada" ? "Esa fecha ya pasó." : "No se pudo identificar la fecha.");
-    const horaTexto = params.appointment_pick ? parseHoraColombia(params.appointment_pick) : null;
-    const hora = horaTexto && horaTexto.ok ? horaTexto.hhmm : params.hora;
-    if (!hora) return rechazo("hora_invalida", "No se pudo identificar la hora.");
+    const horaRes = resolverHoraSolicitada({
+      solicitudTexto: params.appointment_pick?.trim(),
+      horaPropuesta: params.hora,
+      horariosOfrecidos: horariosOfrecidosDe(request.payload.horariosDisponibles),
+    });
+    if (!horaRes.ok) return rechazo("hora_invalida", "No se pudo identificar la hora.");
+    const hora = horaRes.hora;
 
     let businessHours: BusinessHours | null = null;
     if (typeof params.businessHoursJson === "string" && params.businessHoursJson.trim()) {

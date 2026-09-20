@@ -6,7 +6,7 @@
  * relevante devuelve `found:false` y el flujo NO invoca a la IA (no inventa).
  */
 import { KNOWLEDGE_LIMITS, KNOWLEDGE_SOURCES, type KnowledgeSource } from "@/lib/business-agent-knowledge/limits";
-import { tokenizeQuery } from "@/lib/business-agent-knowledge/tokenizer";
+import { tokenizeQuery, unaccent } from "@/lib/business-agent-knowledge/tokenizer";
 import type { KnowledgeStore, RawSearchHit } from "@/lib/business-agent-knowledge/store";
 
 export interface KnowledgeHit {
@@ -24,9 +24,50 @@ export interface KnowledgeSearchResult {
   hits: KnowledgeHit[];
   /** Texto listo para la IA: fragmentos numerados con su fuente, dentro del presupuesto. */
   text: string;
+  /**
+   * Anti-invención — respuesta EXACTA: si el mejor resultado es una FAQ que cubre TODOS los términos de la consulta y
+   * ninguna otra lo hace, su respuesta tal cual la escribió el negocio (el agente la envía sin pasar por la IA). "" si no.
+   */
+  exact: string;
+  /** Texto del mejor resultado, tal cual (respaldo verificable cuando la redacción de la IA no está respaldada). */
+  direct: string;
 }
 
-const NADA: KnowledgeSearchResult = { found: false, emptyQuery: false, hits: [], text: "" };
+const NADA: KnowledgeSearchResult = { found: false, emptyQuery: false, hits: [], text: "", exact: "", direct: "" };
+
+/** Tope del texto directo: un mensaje de WhatsApp legible, no un documento entero. */
+const DIRECT_MAX_CHARS = 1200;
+/** Frases máximas del extracto de un documento. */
+const EXCERPT_MAX_SENTENCES = 3;
+
+function acotar(texto: string): string {
+  return texto.length > DIRECT_MAX_CHARS ? `${texto.slice(0, DIRECT_MAX_CHARS - 1).trimEnd()}…` : texto;
+}
+
+const raizDe = (w: string): string => w.slice(0, 5);
+
+/**
+ * Extracto EXTRACTIVO de un fragmento de documento: las frases (por línea o por punto) que comparten términos con la
+ * consulta, en su orden original. Sin IA: solo texto del propio documento. Si ninguna comparte términos, el fragmento entero.
+ */
+export function extractRelevantExcerpt(content: string, terms: string[]): string {
+  const raices = new Set(terms.map(raizDe));
+  const frases = content
+    .split(/\n+|(?<=[.!?])\s+/)
+    .map((f) => f.trim())
+    .filter(Boolean);
+  const puntuadas = frases.map((frase, indice) => {
+    const palabras = unaccent(frase).match(/[a-z0-9ñ]+/g) ?? [];
+    const coincidencias = new Set(palabras.map(raizDe).filter((r) => raices.has(r)));
+    return { frase, indice, puntaje: coincidencias.size };
+  });
+  const elegidas = puntuadas
+    .filter((p) => p.puntaje > 0)
+    .sort((a, b) => b.puntaje - a.puntaje || a.indice - b.indice)
+    .slice(0, EXCERPT_MAX_SENTENCES)
+    .sort((a, b) => a.indice - b.indice);
+  return elegidas.length > 0 ? elegidas.map((p) => p.frase).join(" ") : content;
+}
 
 /** ¿El candidato es lo bastante relevante? Exige cobertura mínima de los términos de la consulta. */
 export function isRelevant(hit: Pick<RawSearchHit, "matched" | "total">): boolean {
@@ -92,5 +133,9 @@ export async function buscarConocimiento(
   }
 
   if (hits.length === 0) return NADA;
-  return { found: true, emptyQuery: false, hits, text: formatHits(hits) };
+  const top = hits[0]!;
+  // FAQ: la respuesta curada completa. Documento: solo las frases que tocan lo que preguntó el cliente.
+  const direct = acotar(top.source === "faq" ? top.content : extractRelevantExcerpt(top.content, terms));
+  const exact = top.source === "faq" && top.coverage >= 0.999 && !hits.slice(1).some((h) => h.coverage >= 0.999) ? top.content : "";
+  return { found: true, emptyQuery: false, hits, text: formatHits(hits), exact, direct };
 }

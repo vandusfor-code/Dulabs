@@ -37,7 +37,9 @@ describe("R4 — E2E: FAQ + PDF por el runtime REAL del Business Agent", () => {
 
     await a.turno("¿Cuál es el horario?", "w2");
     assert.equal(m.ejecucion(TENANT_A).current_node_id, "q-faq-more", "respondió y quedó esperando la siguiente pregunta (bucle)");
-    assert.ok(m.mensajes.includes("Según la información del negocio: Lunes a viernes de 8 a 6."), JSON.stringify(m.mensajes));
+    // Coincidencia exacta con una FAQ => se responde su texto TAL CUAL lo escribió el negocio y la IA ni se invoca.
+    assert.ok(m.mensajes.includes("Lunes a viernes de 8 a 6."), JSON.stringify(m.mensajes));
+    assert.equal(m.aiDe("ai-faq-present").length, 0, "FAQ exacta: sin IA (no puede adornar ni inventar)");
 
     await a.turno("¿Qué dice la política sobre cancelaciones?", "w3");
     assert.match(m.mensajes.join("\n"), /Según la información del negocio: [\s\S]*24 horas/, "fragmento del PDF");
@@ -168,7 +170,8 @@ describe("R4 — E2E: FAQ + PDF por el runtime REAL del Business Agent", () => {
     m.setIA(iaHonesta);
     const a = await m.activar(agenteFaq(), TENANT_A);
     await a.turno("¿Cómo pido una cita?", "f1");
-    assert.ok(m.aiDe("ai-faq-present").length >= 1, "la IA sí se invocó");
+    // FAQ exacta => texto del negocio sin IA; el filtro de afirmaciones AÚN se aplica a ese texto (misma barrera).
+    assert.equal(m.aiDe("ai-faq-present").length, 0, "FAQ exacta: la IA no se invoca");
     assert.ok(m.mensajes.includes("No pude preparar esa respuesta en este momento. ¿Puedes preguntármelo de otra forma?"), JSON.stringify(m.mensajes));
     assert.equal(m.mensajes.some((t) => /agendar tu cita/.test(t)), false, "el texto bloqueado NO se envió");
     assert.equal(m.ejecucion(TENANT_A).status, "waiting_input", "sigue esperando la siguiente pregunta (no colgado ni cerrado)");

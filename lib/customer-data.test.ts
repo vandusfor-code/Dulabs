@@ -92,12 +92,26 @@ describe("R3 customer-data — configuración (schema/reglas)", () => {
 
 describe("R3 customer-data — validación de valores (autoridad del backend)", () => {
   it("9. text: sanea control chars, <>, espacios y aplica tope", () => {
-    const r = validateFieldValue(NOMBRE, "  Ana\n  <b>María</b>  ");
+    const MOTIVO = campo({ key: "motivo", type: "text", label: "Motivo" }); // texto libre (el nombre tiene su propia regla, ver 9b)
+    const r = validateFieldValue(MOTIVO, "  Ana\n  <b>María</b>  ");
     assert.deepEqual(r, { ok: true, value: "Ana bMaría/b" });
-    const largo = validateFieldValue(NOMBRE, "x".repeat(5000));
+    const largo = validateFieldValue(MOTIVO, "x".repeat(5000));
     assert.ok(largo.ok && largo.value.length === 200);
-    assert.deepEqual(validateFieldValue(NOMBRE, "   "), { ok: false, reason: "vacio" });
-    assert.deepEqual(validateFieldValue(NOMBRE, undefined), { ok: false, reason: "vacio" });
+    assert.deepEqual(validateFieldValue(MOTIVO, "   "), { ok: false, reason: "vacio" });
+    assert.deepEqual(validateFieldValue(MOTIVO, undefined), { ok: false, reason: "vacio" });
+  });
+
+  it("9b. nombreCliente: solo se acepta algo que PAREZCA un nombre (no una pregunta, ni dígitos, ni símbolos)", () => {
+    for (const ok of ["Ana", "María José Pérez", "O'Brien", "Jean-Luc", "Ana P.", "Ñandú"]) assert.equal(validateFieldValue(NOMBRE, ok).ok, true, ok);
+    for (const mal of ["¿Quién ganó el mundial?", "cuéntame un chiste?", "Ana 123", "a@b.com", "x".repeat(90)]) {
+      assert.deepEqual(validateFieldValue(NOMBRE, mal), { ok: false, reason: "formato" }, mal);
+    }
+    // El motor aplica la MISMA regla al preguntar (re-pregunta en vez de aceptar cualquier cosa).
+    const v = buildQuestionValidation(NOMBRE);
+    assert.equal(v.kind, "regex");
+    const re = new RegExp((v as { pattern: string }).pattern, (v as { flags?: string }).flags);
+    assert.equal(re.test("Ana Pérez"), true);
+    assert.equal(re.test("¿Quién ganó el mundial?"), false);
   });
 
   it("10. phone/email/number: normalizan o rechazan", () => {

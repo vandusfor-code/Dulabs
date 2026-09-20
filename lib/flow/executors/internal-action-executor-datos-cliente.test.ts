@@ -116,7 +116,9 @@ function request(params: Record<string, string> | undefined, payload: Record<str
   } as EffectDispatchRequest;
 }
 const CTX = { tenantId: TENANT, internal: true };
-const FECHA_HORA = { fecha: "2026-03-10", hora: "14:00", servicio: "Corte" };
+// `appointment_pick` = lo que ESCRIBIÓ el cliente al elegir la hora (variable del flow real): la hora "propuesta" por la IA solo se
+// acepta si el cliente la respalda (backend = autoridad, ver calendar/hora-solicitada.ts).
+const FECHA_HORA = { fecha: "2026-03-10", hora: "14:00", servicio: "Corte", appointment_pick: "a las 2 de la tarde" };
 
 describe("InternalActionExecutor — crear_cita_nylas_generico con datos del cliente (R3)", () => {
   it("1. datos completos: reserva OK, descripción con los datos, y guarda nombre/correo REALES del contacto (solo scope customer)", async () => {

@@ -226,6 +226,20 @@ function emitirCapturaDatos(g: GraphBuilder, campos: CustomerField[]): { entry: 
   return { entry: condId(campos[0]!.key), lastNode: preguntaId(ultimo.key), exits };
 }
 
+// Validación DETERMINISTA (motor, sin IA) de las respuestas a preguntas de agenda: si el cliente contesta algo fuera de
+// tema ("cuéntame un chiste"), el motor re-pregunta en vez de agendar con datos que el cliente no dio. La comprobación
+// definitiva de fecha/hora sigue siendo del backend (fecha-solicitada / hora-solicitada); esto solo evita seguir adelante.
+/** ¿Nombra un día? (dígitos, hoy/mañana, día de la semana, mes, "semana", "finde"...). */
+const DIA_PATTERN = "(?:\\d|\\bhoy\\b|ma[nñ]ana|pasado|semana|pr[oó]xim|siguiente|\\bd[ií]a|lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo|enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre|finde)";
+/** ¿Nombra una hora o elige un horario de la lista? (dígitos, números/ordinales en letras, mediodía...). */
+const HORA_PATTERN = "(?:\\d|\\buna\\b|\\bdos\\b|\\btres\\b|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|primer|segund|tercer|cuart|quint|sext|[uú]ltim|tempran|mediod[ií]a|medianoche)";
+/** ¿Elige una cita de la lista por su número/posición? */
+const SELECCION_PATTERN = "(?:\\d|primer|segund|tercer|cuart|quint|[uú]ltim)";
+// El mensaje de re-pregunta lo ve el cliente: sin palabras de dominio (cita/reserva/horario...) que el filtro de afirmaciones descarte.
+const validarDia = { kind: "regex" as const, pattern: DIA_PATTERN, flags: "i", message: "No entendí el día. Dime cuándo prefieres, por ejemplo: mañana, el sábado o el 15 de abril." };
+const validarHora = { kind: "regex" as const, pattern: HORA_PATTERN, flags: "i", message: "No entendí la hora. Dime la hora que prefieres (por ejemplo: 3 de la tarde) o elige un número de la lista." };
+const validarSeleccion = { kind: "regex" as const, pattern: SELECCION_PATTERN, flags: "i", message: "No entendí cuál elegiste. Responde con el número, por favor." };
+
 /** Mensaje seguro (sin afirmar nada) cuando la propia acción de transferencia falla. */
 const MENSAJE_TRANSFERENCIA_NO_DISPONIBLE = "En este momento no pude comunicarte con el equipo. Intenta de nuevo en unos minutos, por favor.";
 
@@ -343,7 +357,7 @@ function emitirGestionCitas(g: GraphBuilder, ir: CompiledBusinessAgentIR, endId:
     g.addEdge(id, "msg-ap-none", FLOW_EDGE_HANDLE.aiFailure);
   };
   const presentar = (id: string, siguiente: string, pedir: string): void => {
-    g.addNode({ id, type: "ai", config: { instruction: aiInstruction(`Presenta la lista de citas del cliente EXACTAMENTE como la devolvió el sistema (citasTexto), sin cambiar fechas ni horas. ${pedir} No afirmes que ya se hizo ningún cambio.`, ir), mode: "respond", allowedTools: [] } });
+    g.addNode({ id, type: "ai", config: { instruction: aiInstruction(`Presenta la lista de citas del cliente EXACTAMENTE como la devolvió el sistema (citasTexto), sin cambiar fechas ni horas. ${pedir} No afirmes que ya se hizo ningún cambio.`, ir), mode: "respond", allowedTools: [], grounding: { verbatimFrom: "citasTexto" } } });
     g.addEdge(id, siguiente);
     g.addEdge(id, falloEntry, FLOW_EDGE_HANDLE.aiFailure);
   };
@@ -353,7 +367,7 @@ function emitirGestionCitas(g: GraphBuilder, ir: CompiledBusinessAgentIR, endId:
   // ---- CANCELAR ----
   listar("ap-c-list", "ap-c-present");
   presentar("ap-c-present", "ap-c-q-pick", "Pídele que responda con el número de la cita que quiere cancelar.");
-  g.addNode({ id: "ap-c-q-pick", type: "question", config: { text: "¿Cuál quieres cancelar? Responde con el número.", variableKey: "cita_pick", required: true, validation: { kind: "text" } } });
+  g.addNode({ id: "ap-c-q-pick", type: "question", config: { text: "¿Cuál quieres cancelar? Responde con el número.", variableKey: "cita_pick", required: true, validation: validarSeleccion } });
   g.addNode({ id: "ap-c-btn", type: "buttons", config: { text: "¿Confirmas que quieres cancelarla?", buttons: [{ id: "si", label: "Sí, cancelar" }, { id: "no", label: "No, mantenerla" }] } });
   g.addNode({ id: "ap-c-act", type: "action", config: actionConfig("cancelar_cita_cliente", politica) });
   g.addNode({ id: "ap-c-done", type: "message", config: { text: "Listo, tu cita fue cancelada.", messageRole: "external_assertion", asserts: ["appointment.cancelled"] } });
@@ -371,13 +385,13 @@ function emitirGestionCitas(g: GraphBuilder, ir: CompiledBusinessAgentIR, endId:
   presentar("ap-r-present", "ap-r-q-pick", "Pídele que responda con el número de la cita que quiere cambiar.");
   g.declareVar("appointment_request");
   g.declareVar("appointment_pick");
-  g.addNode({ id: "ap-r-q-pick", type: "question", config: { text: "¿Cuál quieres cambiar? Responde con el número.", variableKey: "cita_pick", required: true, validation: { kind: "text" } } });
-  g.addNode({ id: "ap-r-q-when", type: "question", config: { text: "¿Para qué día te gustaría el nuevo horario?", variableKey: "appointment_request", required: true, validation: { kind: "text" } } });
+  g.addNode({ id: "ap-r-q-pick", type: "question", config: { text: "¿Cuál quieres cambiar? Responde con el número.", variableKey: "cita_pick", required: true, validation: validarSeleccion } });
+  g.addNode({ id: "ap-r-q-when", type: "question", config: { text: "¿Para qué día te gustaría el cambio?", variableKey: "appointment_request", required: true, validation: validarDia } });
   g.addNode({ id: "ap-r-ai-avail", type: "ai", config: { instruction: aiInstruction("Propón consultar la disponibilidad para el día que indicó el cliente. No calcules ni inventes horarios: el sistema los devuelve.", ir), mode: "propose_action", allowedTools: ["buscar_disponibilidad_nylas_generico"] } });
   g.addNode({ id: "ap-r-act-avail", type: "action", config: actionConfig("buscar_disponibilidad_nylas_generico", { ...horario, modoReprogramar: "true" }) });
-  g.addNode({ id: "ap-r-ai-avail-present", type: "ai", config: { instruction: aiInstruction("Presenta ÚNICAMENTE los horarios disponibles que devolvió el sistema (horariosDisponibles), tal cual, e invita al cliente a elegir uno. No afirmes que ya se hizo ningún cambio.", ir), mode: "respond", allowedTools: [] } });
+  g.addNode({ id: "ap-r-ai-avail-present", type: "ai", config: { instruction: aiInstruction("Presenta ÚNICAMENTE los horarios disponibles que devolvió el sistema (horariosDisponibles), tal cual, e invita al cliente a elegir uno. No afirmes que ya se hizo ningún cambio.", ir), mode: "respond", allowedTools: [], grounding: { verbatimFrom: "disponibilidadTexto" } } });
   g.addNode({ id: "msg-ap-avail-fail", type: "message", config: { text: "No pude mostrarte opciones para ese día. Dime la hora que prefieres y la reviso enseguida.", messageRole: "informational" } });
-  g.addNode({ id: "ap-r-q-hour", type: "question", config: { text: "¿A qué hora te gustaría?", variableKey: "appointment_pick", required: true, validation: { kind: "text" } } });
+  g.addNode({ id: "ap-r-q-hour", type: "question", config: { text: "¿A qué hora te gustaría?", variableKey: "appointment_pick", required: true, validation: validarHora } });
   g.addNode({ id: "ap-r-act", type: "action", config: actionConfig("reprogramar_cita_cliente", { ...politica, ...horario }) });
   g.addNode({ id: "ap-r-done", type: "message", config: { text: "Listo, tu cita fue cambiada al nuevo horario.", messageRole: "external_assertion", asserts: ["appointment.rescheduled"] } });
   g.addNode({ id: "msg-ap-move-fail", type: "message", config: { text: "No pude hacer ese cambio. Dime otro día y lo intentamos de nuevo.", messageRole: "informational" } });
@@ -570,6 +584,9 @@ function construirMaquina(g: GraphBuilder, ir: CompiledBusinessAgentIR, endId: s
         ),
         mode: "respond",
         allowedTools: [],
+        // Anti-invención: coincidencia exacta con una FAQ => se responde su texto TAL CUAL (sin IA); si redacta la IA,
+        // cada cifra/enlace/promesa debe estar en los fragmentos, o se envía el fragmento principal del backend.
+        grounding: { verbatimFrom: "respuestaExacta", groundedIn: ["conocimientoTexto"], fallbackFrom: "respuestaDirecta" },
       },
     });
     link("act-faq");
@@ -649,7 +666,7 @@ function construirMaquina(g: GraphBuilder, ir: CompiledBusinessAgentIR, endId: s
     g.declareVar("service_choice");
     g.addNode({ id: "ai-catalog-propose", type: "ai", config: { instruction: aiInstruction("Propón consultar el catálogo real para lo que pidió el cliente.", ir), mode: "propose_action", allowedTools: [catalogAction] } });
     g.addNode({ id: "act-catalog", type: "action", config: actionConfig(catalogAction, catalogParams) });
-    g.addNode({ id: "ai-catalog-present", type: "ai", config: { instruction: aiInstruction(usaProductos ? "Presenta las opciones del catálogo consultado (servicios y/o productos, tal como los devolvió el sistema). Nunca inventes precios, servicios ni productos que no estén en el resultado." : "Presenta las opciones del catálogo consultado. Nunca inventes precios ni servicios que no estén en el resultado.", ir), mode: "respond", allowedTools: [] } });
+    g.addNode({ id: "ai-catalog-present", type: "ai", config: { instruction: aiInstruction(usaProductos ? "Presenta las opciones del catálogo consultado (servicios y/o productos, tal como los devolvió el sistema). Nunca inventes precios, servicios ni productos que no estén en el resultado." : "Presenta las opciones del catálogo consultado. Nunca inventes precios ni servicios que no estén en el resultado.", ir), mode: "respond", allowedTools: [], grounding: { verbatimFrom: "catalogoTexto" } } });
     g.addNode({ id: "q-catalog-choose", type: "question", config: { text: "¿Cuál de estas opciones te interesa?", variableKey: "service_choice", required: true, validation: { kind: "text" } } });
     link("ai-catalog-propose");
     g.addEdge("ai-catalog-propose", "act-catalog", FLOW_EDGE_HANDLE.aiSuccess);
@@ -670,7 +687,7 @@ function construirMaquina(g: GraphBuilder, ir: CompiledBusinessAgentIR, endId: s
   if (activos.has("QUOTING") && quoteAction) {
     g.addNode({ id: "ai-quote-propose", type: "ai", config: { instruction: aiInstruction("Propón calcular la cotización con lo que el cliente eligió. Pasa `items` con los servicios/productos que pidió, usando los NOMBRES del catálogo consultado, en el formato 'Nombre xCantidad; Nombre xCantidad' (cantidad 1 si no dijo otra). No calcules ni escribas precios: el sistema los calcula.", ir), mode: "propose_action", allowedTools: [quoteAction] } });
     g.addNode({ id: "act-quote", type: "action", config: actionConfig(quoteAction, catalogParams) });
-    g.addNode({ id: "ai-quote-present", type: "ai", config: { instruction: aiInstruction("Presenta la cotización EXACTAMENTE como la devolvió el sistema (cotizacionTexto): mismas líneas, cantidades y total, sin cambiar ninguna cifra. Si algo no se encontró o es ambiguo, díselo al cliente y pídele que precise. No afirmes que la compra ya está hecha.", ir), mode: "respond", allowedTools: [] } });
+    g.addNode({ id: "ai-quote-present", type: "ai", config: { instruction: aiInstruction("Presenta la cotización EXACTAMENTE como la devolvió el sistema (cotizacionTexto): mismas líneas, cantidades y total, sin cambiar ninguna cifra. Si algo no se encontró o es ambiguo, díselo al cliente y pídele que precise. No afirmes que la compra ya está hecha.", ir), mode: "respond", allowedTools: [], grounding: { verbatimFrom: "cotizacionTexto" } } });
     link("ai-quote-propose");
     g.addEdge("ai-quote-propose", "act-quote", FLOW_EDGE_HANDLE.aiSuccess);
     g.addEdge("ai-quote-propose", safeFail(), FLOW_EDGE_HANDLE.aiFailure);
@@ -739,7 +756,7 @@ function construirMaquina(g: GraphBuilder, ir: CompiledBusinessAgentIR, endId: s
         : null;
 
     g.declareVar("appointment_request");
-    g.addNode({ id: "q-booking-when", type: "question", config: { text: availAction ? "¿Para qué día te gustaría la cita?" : "¿Para qué fecha y hora te gustaría?", variableKey: "appointment_request", required: true, validation: { kind: "text" } } });
+    g.addNode({ id: "q-booking-when", type: "question", config: { text: availAction ? "¿Para qué día te gustaría?" : "¿Para qué fecha y hora te gustaría?", variableKey: "appointment_request", required: true, validation: validarDia } });
     // Con datos del cliente configurados (R3) ya fueron recopilados y validados
     // por el sistema en pasos previos y viajan con la solicitud: la IA no los pide
     // ni los reescribe.
@@ -760,7 +777,7 @@ function construirMaquina(g: GraphBuilder, ir: CompiledBusinessAgentIR, endId: s
       if (ir.customerData?.fields.length) bookParams.customerFieldsJson = JSON.stringify(ir.customerData.fields);
     }
     g.addNode({ id: "act-book", type: "action", config: actionConfig(createAction, Object.keys(bookParams).length > 0 ? bookParams : undefined) });
-    g.addNode({ id: "ai-book-present", type: "ai", config: { instruction: aiInstruction("Comunica el resultado REAL de la solicitud según el sistema. Si no fue posible, dilo con claridad.", ir), mode: "respond", allowedTools: [] } });
+    g.addNode({ id: "ai-book-present", type: "ai", config: { instruction: aiInstruction("Comunica el resultado REAL de la solicitud según el sistema. Si no fue posible, dilo con claridad.", ir), mode: "respond", allowedTools: [], grounding: { verbatimFrom: "reservaTexto" } } });
     emitirTransferencia(g, ir, endId, "human-book-fail", "act-handoff-book", "Te comunico con una persona del equipo para ayudarte con esto.");
     link("q-booking-when");
 
@@ -776,8 +793,8 @@ function construirMaquina(g: GraphBuilder, ir: CompiledBusinessAgentIR, endId: s
       g.declareVar("appointment_pick");
       g.addNode({ id: "ai-avail-propose", type: "ai", config: { instruction: aiInstruction("Propón consultar la disponibilidad para el día que indicó el cliente, incluyendo el servicio elegido (su nombre exacto si lo mencionó) y la fecha. No calcules ni inventes horarios: el sistema los devuelve.", ir), mode: "propose_action", allowedTools: [availAction] } });
       g.addNode({ id: "act-avail", type: "action", config: actionConfig(availAction, Object.keys(availParams).length > 0 ? availParams : undefined) });
-      g.addNode({ id: "ai-avail-present", type: "ai", config: { instruction: aiInstruction("Presenta ÚNICAMENTE los horarios disponibles que devolvió el sistema (horariosDisponibles), tal cual, e invita al cliente a elegir uno. No afirmes que ya reservaste ni agendaste nada: eso ocurre después. Si no hay cupos o no se pudo consultar, dilo con claridad y no inventes horarios.", ir), mode: "respond", allowedTools: [] } });
-      g.addNode({ id: "q-booking-pick", type: "question", config: { text: "¿A qué hora te gustaría?", variableKey: "appointment_pick", required: true, validation: { kind: "text" } } });
+      g.addNode({ id: "ai-avail-present", type: "ai", config: { instruction: aiInstruction("Presenta ÚNICAMENTE los horarios disponibles que devolvió el sistema (horariosDisponibles), tal cual, e invita al cliente a elegir uno. No afirmes que ya reservaste ni agendaste nada: eso ocurre después. Si no hay cupos o no se pudo consultar, dilo con claridad y no inventes horarios.", ir), mode: "respond", allowedTools: [], grounding: { verbatimFrom: "disponibilidadTexto" } } });
+      g.addNode({ id: "q-booking-pick", type: "question", config: { text: "¿A qué hora te gustaría?", variableKey: "appointment_pick", required: true, validation: validarHora } });
       g.addEdge("q-booking-when", "ai-avail-propose");
       g.addEdge("ai-avail-propose", "act-avail", FLOW_EDGE_HANDLE.aiSuccess);
       // La consulta es advisory (solo lectura): si la IA no la propone, se continúa igual

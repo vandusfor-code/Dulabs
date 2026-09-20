@@ -92,6 +92,26 @@ describe("R8 — catálogo, cotización y venta", () => {
   });
 });
 
+describe("R8 — nombres del catálogo que el filtro de seguridad bloquearía", () => {
+  const cat = spec({ capabilities: caps({ catalog: true }), catalog: { source: "structured", useServices: true, useProducts: false, quoteBeforeQualification: false } });
+
+  it("7b. nombres con 'cita'/'reserva'/'pago' => ADVERTENCIA (no bloquea) con los nombres y dónde arreglarlo", () => {
+    const r = evaluateReadiness(cat, { ...LISTO, catalogNamesAtRisk: ["Cita de valoración", "Reserva de cancha"] });
+    assert.equal(r.ready, true, "es un aviso al autor, no un bloqueo");
+    const w = r.warnings.find((x) => x.code === "CATALOG_NAME_CLAIM_RISK");
+    assert.ok(w);
+    assert.match(w!.message, /«Cita de valoración», «Reserva de cancha»/);
+    assert.equal(w!.step, "servicios");
+  });
+
+  it("7c. sin nombres de riesgo (o sin catálogo/cotización) no avisa", () => {
+    assert.ok(!codes(evaluateReadiness(cat, { ...LISTO, catalogNamesAtRisk: [] }), "warnings").includes("CATALOG_NAME_CLAIM_RISK"));
+    assert.ok(!codes(evaluateReadiness(cat, LISTO), "warnings").includes("CATALOG_NAME_CLAIM_RISK"), "campo ausente => no avisa");
+    const soloFaq = spec({ capabilities: caps({ faq: true }) });
+    assert.ok(!codes(evaluateReadiness(soloFaq, { ...LISTO, catalogNamesAtRisk: ["Cita"] }), "warnings").includes("CATALOG_NAME_CLAIM_RISK"), "sin catálogo/cotización no aplica");
+  });
+});
+
 describe("R8 — preguntas frecuentes y transferencia", () => {
   it("9. FAQ sin conocimiento => MISSING_KNOWLEDGE; con conocimiento => listo", () => {
     const s = spec({ capabilities: caps({ faq: true }) });

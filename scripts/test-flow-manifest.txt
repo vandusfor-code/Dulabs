@@ -403,3 +403,11 @@ lib/business-agent-knowledge/knowledge.test.ts
 lib/business-agent-knowledge/client.test.ts
 lib/agent-compiler/knowledge-compiler.test.ts
 lib/agent-compiler/e2e/knowledge-e2e.test.ts
+# Anti-invención -- el modelo NO es de fiar: barrera de FUNDAMENTACIÓN (lo que redacta la IA debe salir de datos del
+# backend; texto del backend palabra por palabra sin invocar la IA), hora/fecha de la cita fijadas por el backend desde lo que
+# dijo el cliente, aviso fijo para audio/imagen, auditoría de TODOS los textos estáticos de los flujos compilados (nada
+# informativo se descarta en silencio) y E2E con un LLM HOSTIL en cada nodo (solo llega texto del backend). Sin red/DB.
+lib/flow/ai-runtime/ai-grounding.test.ts
+lib/agent-compiler/calendar/hora-solicitada.test.ts
+lib/agent-compiler/e2e/hostile-llm-e2e.test.ts
+lib/agent-compiler/e2e/static-messages-audit.test.ts
