@@ -187,10 +187,10 @@ function escapeRegex(s: string): string {
 }
 
 /**
- * Nombre de persona plausible: letras (con tildes), espacios, punto, apóstrofe y guion; sin dígitos, signos de pregunta ni
- * símbolos. Evita que "¿Quién ganó el mundial?" o "no sé" queden como el NOMBRE del cliente (calendario y contacto).
+ * Nombre de persona plausible: letras (con tildes), espacios, puntuación corriente ("Ana!", "Pérez, Ana") y emojis; sin
+ * dígitos, signos de pregunta ni símbolos. Evita que "¿Quién ganó el mundial?" o "no sé" queden como el NOMBRE del cliente (calendario y contacto).
  */
-const NOMBRE_PATTERN = "^[\\p{L}][\\p{L}\\p{M} .'’-]{1,79}$";
+const NOMBRE_PATTERN = "^[\\p{L}][\\p{L}\\p{M} .,'’!\\p{Extended_Pictographic}-]{1,79}$";
 const NOMBRE_RE = new RegExp(NOMBRE_PATTERN, "u");
 
 const DATE_PATTERN = "^(?:\\d{4}-\\d{2}-\\d{2}|\\d{1,2}[/-]\\d{1,2}[/-]\\d{4})$";

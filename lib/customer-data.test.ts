@@ -102,7 +102,7 @@ describe("R3 customer-data — validación de valores (autoridad del backend)", 
   });
 
   it("9b. nombreCliente: solo se acepta algo que PAREZCA un nombre (no una pregunta, ni dígitos, ni símbolos)", () => {
-    for (const ok of ["Ana", "María José Pérez", "O'Brien", "Jean-Luc", "Ana P.", "Ñandú"]) assert.equal(validateFieldValue(NOMBRE, ok).ok, true, ok);
+    for (const ok of ["Ana", "María José Pérez", "O'Brien", "Jean-Luc", "Ana P.", "Ñandú", "Ana!", "Pérez, Ana", "Ana 😊"]) assert.equal(validateFieldValue(NOMBRE, ok).ok, true, ok);
     for (const mal of ["¿Quién ganó el mundial?", "cuéntame un chiste?", "Ana 123", "a@b.com", "x".repeat(90)]) {
       assert.deepEqual(validateFieldValue(NOMBRE, mal), { ok: false, reason: "formato" }, mal);
     }
