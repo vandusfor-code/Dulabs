@@ -731,14 +731,14 @@ export default function CampanasPage() {
                   );
                 })}
 
-                {activa.erroresDetalle.length > 0 && (
+                {(activa.erroresDetalle ?? []).length > 0 && (
                   <div className="mt-4 space-y-2 border-t border-edge pt-4">
                     <p className="flex items-center gap-1.5 font-mono text-[10.5px] uppercase tracking-widest text-mist">
                       <CircleAlert className="size-3.5 text-red-400" />
-                      {t("No entregados", "Not delivered")} ({activa.erroresDetalle.length})
+                      {t("No entregados", "Not delivered")} ({(activa.erroresDetalle ?? []).length})
                     </p>
                     <div className="max-h-64 space-y-2 overflow-y-auto pr-1">
-                      {activa.erroresDetalle.map((e, i) => (
+                      {(activa.erroresDetalle ?? []).map((e, i) => (
                         <div key={e.wamid ?? `${e.telefono}-${i}`} className="rounded-lg border border-edge bg-ink/40 p-2.5 text-xs">
                           <p className="font-medium text-fg">{e.telefono}</p>
                           <p className="mt-0.5 text-mist">
