@@ -146,7 +146,8 @@ export type QuestionValidation =
   | { kind: "number" }
   | { kind: "email" }
   | { kind: "phone" }
-  | { kind: "regex"; pattern: string; flags?: string }
+  // `message`: texto opcional que ve el cliente cuando su respuesta no cumple (aditivo; sin él, el genérico de siempre).
+  | { kind: "regex"; pattern: string; flags?: string; message?: string }
   | { kind: "hora_colombia" };
 
 // ---------------------------------------------------------------------------
@@ -199,6 +200,23 @@ export interface AiContextConfig {
   includeContactTags?: boolean;
 }
 
+/**
+ * Anti-invención (Business Agent, autorizado) — la IA de un nodo `respond` NO es la fuente de los HECHOS (precios,
+ * horarios, cupos, políticas, citas): esos los aporta el backend en variables del flujo. Opcional y retrocompatible:
+ * un nodo sin `grounding` (TODO Flow publicado hoy) se comporta exactamente igual que antes.
+ *  - verbatimFrom: variable cuyo texto (redactado por el BACKEND) ES la respuesta; la IA no se invoca. Si la variable
+ *    está vacía y no hay `groundedIn`, el nodo falla cerrado (rama aiFailure) en vez de dejar hablar a la IA.
+ *  - groundedIn: variables-fuente. Si la IA redacta, todo hecho concreto de su texto (cifras, horas, enlaces,
+ *    promesas comerciales) debe estar respaldado por ellas; si no, se rechaza.
+ *  - fallbackFrom: variable con texto del backend que se envía TAL CUAL cuando lo redactado por la IA no está respaldado
+ *    (en vez de fallar). Sin ella, lo no respaldado va a la rama aiFailure.
+ */
+export interface AiGroundingConfig {
+  verbatimFrom?: string;
+  groundedIn?: string[];
+  fallbackFrom?: string;
+}
+
 export interface AiNodeConfig {
   /** Referencia opcional a dulabs_agentes.id (perfil prompt existente). */
   agentId?: string;
@@ -223,6 +241,8 @@ export interface AiNodeConfig {
   classifications?: string[];
   /** FASE F7.3 (Contacto + Tags + IA, autorizado) -- ver AiContextConfig. */
   contextConfig?: AiContextConfig;
+  /** Anti-invención -- ver AiGroundingConfig. Opcional y retrocompatible. */
+  grounding?: AiGroundingConfig;
 }
 
 // ---------------------------------------------------------------------------

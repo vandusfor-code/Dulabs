@@ -115,6 +115,7 @@ export const questionValidationSchema = z.discriminatedUnion("kind", [
     kind: z.literal("regex"),
     pattern: z.string().min(1),
     flags: z.string().optional(),
+    message: z.string().trim().min(1).max(300).optional(),
   }),
   z.object({ kind: z.literal("hora_colombia") }),
 ]);
@@ -170,6 +171,14 @@ export const aiNodeConfigSchema = z.object({
       includeVariables: z.boolean().optional(),
       includeContactFields: z.boolean().optional(),
       includeContactTags: z.boolean().optional(),
+    })
+    .optional(),
+  // Anti-invención (Business Agent) -- opcional y retrocompatible, ver AiGroundingConfig en lib/flow/types.ts.
+  grounding: z
+    .object({
+      verbatimFrom: z.string().trim().min(1).optional(),
+      groundedIn: z.array(z.string().trim().min(1)).optional(),
+      fallbackFrom: z.string().trim().min(1).optional(),
     })
     .optional(),
 });

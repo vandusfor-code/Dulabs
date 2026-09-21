@@ -134,7 +134,8 @@ export async function mundo(knowledge: KnowledgeStore = createInMemoryKnowledgeS
   // Pausas del chat que el runtime REAL pide (transferencia a humano).
   const pausas: Array<{ phoneNumberId: string; telefonoCliente: string; duracionMs: number }> = [];
   const aiCalls: AiCall[] = [];
-  let respuestaIA: (req: EffectDispatchRequest) => Record<string, unknown> = () => ({ responseText: "ok" });
+  // Puede ser async (el script de calibración con Claude REAL hace una llamada de red por nodo).
+  let respuestaIA: (req: EffectDispatchRequest) => Record<string, unknown> | Promise<Record<string, unknown>> = () => ({ responseText: "ok" });
 
   const lector: NylasEventsClient = { async listEvents() { return []; } };
   const escritor: NylasEventsWriteClient = { async createEvent(p) { eventos.push(p); return { id: `evt-${eventos.length}` }; }, async deleteEvent() {} };
@@ -175,7 +176,7 @@ export async function mundo(knowledge: KnowledgeStore = createInMemoryKnowledgeS
     kind: "ai", version: "stub", capabilities: { supportsIntegration: false, supportsAsync: false, operationClasses: [] },
     dispatch: async (req) => {
       aiCalls.push({ nodeId: req.nodeId, payload: req.payload });
-      const data = respuestaIA(req);
+      const data = await respuestaIA(req);
       return { success: true, classification: EFFECT_RESULT_CLASSIFICATIONS.SUCCESS, data, appliedResult: data };
     },
   };

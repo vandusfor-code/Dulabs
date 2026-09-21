@@ -165,7 +165,8 @@ describe("R7 — E2E: reservar -> cancelar / reprogramar por el runtime REAL", (
     await x.turno("1");
     assert.equal(x.ultima().current_node_id, "ap-r-q-when");
     await x.turno("El lunes");
-    const ofrecidos = x.m.mensajes.filter((t) => /tengo disponibilidad/.test(t)).at(-1) ?? "";
+    // Texto redactado por el BACKEND (no por la IA): "Estos son los horarios disponibles para el ...".
+    const ofrecidos = x.m.mensajes.filter((t) => /horarios disponibles para el/.test(t)).at(-1) ?? "";
     assert.match(ofrecidos, /10:00/, "ofrece desde que el calendario real queda libre: " + ofrecidos);
     assert.doesNotMatch(ofrecidos, /08:00|08:30|09:00|09:30/, "no ofrece horarios que se solapan con el evento de otra persona");
     assert.equal(x.ultima().current_node_id, "ap-r-q-hour");

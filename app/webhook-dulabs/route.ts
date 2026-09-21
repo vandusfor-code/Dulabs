@@ -9,7 +9,7 @@ import { generarRespuestaAdminEspecialistaIA } from "@/lib/especialista-admin-ia
 import { tieneEspecialistasActivas, especialistaPorNumero } from "@/lib/especialistas";
 import { debeAtenderConFlow, atenderMensajeConFlowConFallback } from "@/lib/flow-runtime-bridge";
 import type { NormalizedInboundMedia } from "@/lib/flow/engine-types";
-import { atenderMensajeConBusinessAgent } from "@/lib/agent-compiler/runtime/production/atender-business-agent";
+import { atenderMensajeConBusinessAgent, atenderMensajeNoTextoConBusinessAgent } from "@/lib/agent-compiler/runtime/production/atender-business-agent";
 import { createSupabaseBusinessAgentResolver } from "@/lib/agent-compiler/runtime/production/business-agent-resolver";
 import { createConsoleObserver } from "@/lib/agent-compiler/runtime/production/observability";
 import { debeUsarAsistenteDanielaIA } from "@/lib/asistente-daniela-gate";
@@ -1254,7 +1254,25 @@ async function dentroDelCupoIA(cliente: ClienteConfig): Promise<boolean> {
 // vacío al Business Agent.
 async function intentarBusinessAgentSiAplica(cliente: ClienteConfig, mensaje: MetaMessage, telefonoRemitente: string): Promise<boolean> {
   const texto = mensaje.text?.body;
-  if (!texto) return false;
+  if (!texto) {
+    // Anti-invención: un audio/imagen/video/documento/sticker de un tenant con Business Agent NO debe caer al motor de
+    // flows hand-built (ni, peor, a la IA legacy de texto libre) ni quedarse en silencio: el Business Agent responde un
+    // aviso fijo (sin IA) y no toca la conversación en curso. Sin Business Agent (handled:false) => camino de siempre.
+    try {
+      const resultado = await atenderMensajeNoTextoConBusinessAgent({
+        supabase: supabaseAdmin(),
+        cliente,
+        telefonoCliente: telefonoRemitente,
+        wamid: mensaje.id,
+        resolver: createSupabaseBusinessAgentResolver(),
+        observer: createConsoleObserver(),
+      });
+      return resultado.handled;
+    } catch (err) {
+      console.error(`[webhook-dulabs] excepción inesperada en Business Agent (mensaje no texto) (tenant ${cliente.id_tenant}):`, err instanceof Error ? err.message : err);
+      return true;
+    }
+  }
   try {
     const resultado = await atenderMensajeConBusinessAgent({
       supabase: supabaseAdmin(),

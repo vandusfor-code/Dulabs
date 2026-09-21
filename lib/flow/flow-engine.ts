@@ -182,7 +182,7 @@ export function validateQuestionValue(
     case "regex": {
       try {
         const re = new RegExp(validation.pattern, validation.flags);
-        if (!re.test(text)) return { ok: false, message: "La respuesta no cumple el formato esperado." };
+        if (!re.test(text)) return { ok: false, message: validation.message ?? "La respuesta no cumple el formato esperado." };
         return { ok: true, value: text };
       } catch {
         return { ok: false, message: "Configuración de validación inválida." };

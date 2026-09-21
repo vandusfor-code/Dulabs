@@ -235,9 +235,19 @@ describe("R3 — booking genérico con datos del cliente", () => {
 
   it("12. datos inyectados (<script>, saltos de línea) se sanean antes de llegar al calendario", async () => {
     const { deps, write } = await armar();
-    await crearCitaNylasGenerico(deps, params({ customerFields: [NOMBRE], customerValues: { nombreCliente: "Ana\n<script>alert(1)</script>" } }));
+    // Texto libre (notas): se sanea. (Un NOMBRE con esa forma directamente se rechaza, ver 12b.)
+    const NOTAS = campo({ key: "notas", type: "text", label: "Notas", scope: "booking" });
+    await crearCitaNylasGenerico(deps, params({ nombreCliente: "Ana", customerFields: [NOMBRE, NOTAS], customerValues: { nombreCliente: "Ana", notas: "Ana\n<script>alert(1)</script>" } }));
     const d = write.pedidos[0]!.description ?? "";
     assert.doesNotMatch(d, /[<>]/);
-    assert.equal(d.split("\n").length, 1);
+    assert.equal(d.split("\n").length, 2, "una línea por dato (Nombre + Notas): los saltos inyectados no crean líneas nuevas");
+  });
+
+  it("12b. un NOMBRE con forma de inyección/ruido se rechaza (datos_invalidos) y el calendario NO se toca", async () => {
+    const { deps, write } = await armar();
+    const r = await crearCitaNylasGenerico(deps, params({ customerFields: [NOMBRE], customerValues: { nombreCliente: "Ana\n<script>alert(1)</script>" } }));
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.equal(r.motivo, "datos_invalidos");
+    assert.equal(write.pedidos.length, 0);
   });
 });

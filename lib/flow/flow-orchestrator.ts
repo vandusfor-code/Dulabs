@@ -18,6 +18,7 @@ import {
   rejectFabricatedAiEvidence,
 } from "@/lib/flow/ai-runtime/ai-proposal-bridge";
 import { buildVerifiedActionEffectData } from "@/lib/flow/ai-runtime/verified-results";
+import { applyAiGrounding, planAiVerbatim } from "@/lib/flow/ai-runtime/ai-grounding";
 import { applyAiResponseClaimSecurity, filterClaimSecuredEffects } from "@/lib/flow/ai-runtime/ai-response-security";
 import { isCriticalAction } from "@/lib/flow/action-capabilities";
 import type {
@@ -836,7 +837,13 @@ export class ExecutionOrchestrator {
         aiBudget: currentAiBudget,
       });
 
-      let dispatchResult = await this.deps.effectFramework.execute(request);
+      // Anti-invención: un nodo de IA con `grounding.verbatimFrom` responde con el texto que YA redactó el backend
+      // (variable del flujo) y el modelo ni se invoca. Nodos sin `grounding` (todo Flow previo): sin cambios.
+      const verbatimPlan =
+        effect.type === "effect_required" && effect.kind === "ai"
+          ? planAiVerbatim(effect.ai, params.executionRow.variables)
+          : null;
+      let dispatchResult = verbatimPlan ?? (await this.deps.effectFramework.execute(request));
       dispatchedEffectIds.push(effect.effectId);
 
       if (effect.type === "send_message") {
@@ -885,8 +892,15 @@ export class ExecutionOrchestrator {
           if (bridged.variablesPatch) {
             variablesPatch = { ...variablesPatch, ...bridged.variablesPatch };
           }
-          return applyAiResponseClaimSecurity({
+          // Anti-invención: lo que redacte la IA debe estar respaldado por los datos del backend ANTES del filtro de
+          // afirmaciones (que solo ve palabras de dominio, no un precio o un beneficio inventados).
+          const grounded = applyAiGrounding({
             dispatchResult: bridged.dispatchResult,
+            ai: effect.ai,
+            variables: params.executionRow.variables,
+          });
+          return applyAiResponseClaimSecurity({
+            dispatchResult: grounded,
             variables: params.executionRow.variables,
           });
         };
@@ -901,7 +915,7 @@ export class ExecutionOrchestrator {
         // engineError si no existe esa rama).
         for (
           let attempt = 2;
-          !dispatchResult.success && attempt <= MAX_AI_DISPATCH_ATTEMPTS;
+          !dispatchResult.success && !verbatimPlan && attempt <= MAX_AI_DISPATCH_ATTEMPTS;
           attempt += 1
         ) {
           const retryRequest = buildEffectDispatchRequest({

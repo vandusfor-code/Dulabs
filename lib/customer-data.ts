@@ -49,7 +49,7 @@ export const WELL_KNOWN_FIELDS: Readonly<Record<string, WellKnownField>> = {
   nombreCliente: { type: "text", label: "Nombre", question: "¿Cuál es tu nombre?" },
   telefonoCliente: { type: "phone", channelSourced: true, label: "Teléfono", question: "¿Cuál es tu número de teléfono?" },
   correoCliente: { type: "email", label: "Correo electrónico", question: "¿Cuál es tu correo electrónico?" },
-  notas: { type: "text", label: "Notas", question: "¿Hay algo que debamos tener en cuenta para tu reserva?" },
+  notas: { type: "text", label: "Notas", question: "¿Hay algo que debamos tener en cuenta?" },
 };
 
 /**
@@ -186,6 +186,13 @@ function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/**
+ * Nombre de persona plausible: letras (con tildes), espacios, punto, apóstrofe y guion; sin dígitos, signos de pregunta ni
+ * símbolos. Evita que "¿Quién ganó el mundial?" o "no sé" queden como el NOMBRE del cliente (calendario y contacto).
+ */
+const NOMBRE_PATTERN = "^[\\p{L}][\\p{L}\\p{M} .'’-]{1,79}$";
+const NOMBRE_RE = new RegExp(NOMBRE_PATTERN, "u");
+
 const DATE_PATTERN = "^(?:\\d{4}-\\d{2}-\\d{2}|\\d{1,2}[/-]\\d{1,2}[/-]\\d{4})$";
 const BOOLEAN_PATTERN = "^(?:s[ií]|no|yes|true|false)$";
 
@@ -216,6 +223,8 @@ export function buildQuestionValidation(field: CustomerField): QuestionValidatio
     }
     case "text":
     default:
+      // El nombre del cliente es un dato con forma conocida: la respuesta debe parecer un nombre.
+      if (field.key === "nombreCliente") return { kind: "regex", pattern: NOMBRE_PATTERN, flags: "u", message: "No entendí tu nombre. ¿Me lo escribes, por favor?" };
       return { kind: "text" };
   }
 }
@@ -266,6 +275,8 @@ export function validateFieldValue(field: CustomerField, raw: unknown): FieldVal
 
   switch (field.type) {
     case "text":
+      // Defensa en profundidad (la misma regla que aplica el motor al preguntar): el backend no acepta como nombre algo que no lo es.
+      if (field.key === "nombreCliente" && !NOMBRE_RE.test(text)) return { ok: false, reason: "formato" };
       return { ok: true, value: text };
     case "phone": {
       if (!PHONE_RE.test(text)) return { ok: false, reason: "formato" };
