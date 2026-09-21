@@ -4,10 +4,23 @@ import { InView } from "./InView";
 // Piezas de maquetación propias de la home (servidor). Los encabezados de components/site/Sections son cliente + bilingües + estilo
 // lima del sitio anterior; aquí se usan los tokens de .dev-scope/.home-scope y no se envía JS por un título.
 
-export function HomeSection({ id, titleId, children, className = "" }: { id: string; titleId: string; children: ReactNode; className?: string }) {
+export function HomeSection({
+  id,
+  titleId,
+  children,
+  className = "",
+  compacta = false,
+}: {
+  id: string;
+  titleId: string;
+  children: ReactNode;
+  className?: string;
+  /** Sección secundaria (p. ej. la línea Developer): menos espacio vertical para que no compita con las principales. */
+  compacta?: boolean;
+}) {
   return (
     <section id={id} aria-labelledby={titleId} className={`relative scroll-mt-16 border-t border-site-border ${className}`}>
-      <InView className="mx-auto max-w-[1240px] px-5 py-20 sm:px-6 md:py-28">{children}</InView>
+      <InView className={`mx-auto max-w-[1240px] px-5 sm:px-6 ${compacta ? "py-14 md:py-16" : "py-20 md:py-28"}`}>{children}</InView>
     </section>
   );
 }

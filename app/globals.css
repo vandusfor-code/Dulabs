@@ -1264,3 +1264,14 @@ body {
 }
 .home-scope .no-scrollbar { scrollbar-width: none; }
 .home-scope .no-scrollbar::-webkit-scrollbar { display: none; }
+
+/* ---------- Home v3 · Fase 4 ---------- */
+/* Los componentes existentes que se reutilizan tal cual (PricingSection, Footer) usan el token site-primary como su acento. Dentro de la
+   home v3 ese acento es el naranja de marca (bajo .dev-scope era el blanco): así heredan la identidad sin modificarlos ni afectar a las
+   demás páginas. Texto oscuro sobre naranja (6.4:1, AA). */
+.home-scope {
+  --color-site-primary: #ff5c1a;
+  --color-site-primary-fg: #0a0a0a;
+  --color-site-primary-glow: rgb(255 92 26 / 8%);
+}
+

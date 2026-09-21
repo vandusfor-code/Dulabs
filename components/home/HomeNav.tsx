@@ -17,14 +17,14 @@ export function HomeNav() {
 
         <nav aria-label="Principal" className="hidden items-center gap-7 lg:flex">
           {HOME_NAV_LINKS.map((l) => (
-            <Link key={l.href} href={l.href} className="text-[13.5px] text-site-muted-fg transition-colors hover:text-site-fg">
+            <Link key={l.href} href={l.href} className="inline-flex min-h-10 items-center text-[13.5px] text-site-muted-fg transition-colors hover:text-site-fg">
               {l.label}
             </Link>
           ))}
         </nav>
 
         <div className="hidden items-center gap-5 lg:flex">
-          <Link href={LOGIN_HREF} className="text-[13.5px] text-site-muted-fg transition-colors hover:text-site-fg">
+          <Link href={LOGIN_HREF} className="inline-flex min-h-10 items-center text-[13.5px] text-site-muted-fg transition-colors hover:text-site-fg">
             Iniciar sesión
           </Link>
           <TrackedLink

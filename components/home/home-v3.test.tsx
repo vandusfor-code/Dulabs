@@ -11,16 +11,34 @@ import { renderToStaticMarkup } from "react-dom/server";
 import sitemap from "@/app/sitemap";
 import { CAPABILITY_BACKING } from "@/lib/agent-compiler/spec/capabilities";
 import { AgentActionsSection } from "@/components/home/AgentActionsSection";
+import { BusinessTypesSection } from "@/components/home/BusinessTypesSection";
 import { CatalogSection } from "@/components/home/CatalogSection";
 import { ConfigSection } from "@/components/home/ConfigSection";
+import { CustomSolutionsSection } from "@/components/home/CustomSolutionsSection";
+import { DeveloperStrip } from "@/components/home/DeveloperStrip";
 import { HomeHero } from "@/components/home/HomeHero";
 import { HomeNav } from "@/components/home/HomeNav";
 import { KnowledgeSection } from "@/components/home/KnowledgeSection";
-import { PathsBridge } from "@/components/home/PathsBridge";
 import { ProblemSection } from "@/components/home/ProblemSection";
 import { SchedulingSection } from "@/components/home/SchedulingSection";
+import { StepsSection } from "@/components/home/StepsSection";
+import { TrustSection } from "@/components/home/TrustSection";
+import { BUSINESS_TYPE_OPTIONS } from "@/lib/business-agent-form";
+import { OPENAPI_BASE_URL, OPENAPI_DEVELOPER_V1 } from "@/lib/developers/openapi";
+import { RUBROS } from "@/lib/home/negocios";
+import { CAPACIDADES_A_MEDIDA, PROCESO_A_MEDIDA } from "@/lib/home/enterprise";
 import { ACCIONES_DEL_AGENTE, ETIQUETA_CAPACIDAD, PASOS_CON_PANEL, PASOS_DEL_WIZARD } from "@/lib/home/capabilities";
-import { CREAR_AGENTE_HREF, ENTERPRISE_HREF, HABLAR_CON_DULABS_HREF, HOME_NAV_LINKS, HOME_V3_PATH } from "@/lib/home/links";
+import {
+  CASOS_HREF,
+  CREAR_AGENTE_HREF,
+  DEVELOPER_DOCS_HREF,
+  DEVELOPER_PLATFORM_HREF,
+  ENTERPRISE_HREF,
+  HABLAR_CON_DULABS_HREF,
+  HABLAR_ESPECIALISTA_HREF,
+  HOME_NAV_LINKS,
+  HOME_V3_PATH,
+} from "@/lib/home/links";
 
 const RAIZ = join(__dirname, "..", "..");
 
@@ -54,8 +72,13 @@ const SECCIONES = [
   { id: "configuracion", html: renderToStaticMarkup(<ConfigSection />) },
   { id: "catalogo", html: renderToStaticMarkup(<CatalogSection />) },
   { id: "conocimiento", html: renderToStaticMarkup(<KnowledgeSection />) },
-  { id: "caminos", html: renderToStaticMarkup(<PathsBridge />) },
+  { id: "negocios", html: renderToStaticMarkup(<BusinessTypesSection />) },
+  { id: "como-funciona", html: renderToStaticMarkup(<StepsSection />) },
+  { id: "empresas", html: renderToStaticMarkup(<CustomSolutionsSection />) },
+  { id: "developers", html: renderToStaticMarkup(<DeveloperStrip />) },
+  { id: "confianza", html: renderToStaticMarkup(<TrustSection />) },
 ];
+const PAGINA_FUENTE = readFileSync(join(RAIZ, "app", "home-v3", "page.tsx"), "utf8").replace(/\r\n/g, "\n");
 const HERO = renderToStaticMarkup(<HomeHero />);
 const PAGINA = HERO + SECCIONES.map((s) => s.html).join("");
 const TEXTO_PAGINA = texto(PAGINA);
@@ -126,7 +149,7 @@ describe("Home v3 -- Fase 3: estructura de las secciones", () => {
     assert.equal((PAGINA.match(/<h1[\s>]/g) ?? []).length, 1);
     assert.deepEqual(
       SECCIONES.map((s) => s.id),
-      ["problema", "agentes", "agendamiento", "configuracion", "catalogo", "conocimiento", "caminos"],
+      ["problema", "agentes", "agendamiento", "configuracion", "catalogo", "conocimiento", "negocios", "como-funciona", "empresas", "developers", "confianza"],
     );
   });
 
@@ -135,18 +158,63 @@ describe("Home v3 -- Fase 3: estructura de las secciones", () => {
     assert.match(h2("agentes"), /Un agente que entiende cómo funciona tu negocio/);
     assert.match(h2("agendamiento"), /De la conversación a la cita confirmada/);
     assert.match(h2("configuracion"), /Configura tu negocio\. DuLabs lo convierte en un agente/);
-    assert.match(h2("caminos"), /Hazlo tú mismo o construyámoslo contigo/);
+    assert.match(h2("negocios"), /Para el negocio que atiende a sus clientes por WhatsApp/);
+    assert.match(h2("como-funciona"), /Tres pasos para tener tu agente atendiendo/);
+    assert.match(h2("empresas"), /¿Necesitas algo más que un agente\?/);
+    assert.match(h2("developers"), /También construimos infraestructura para developers/);
+    assert.match(h2("confianza"), /Tecnología propia, con reglas claras/);
   });
 
-  it("los dos caminos comerciales (autoservicio / a la medida) siguen visibles tras el producto, con los CTAs correctos", () => {
-    const puente = SECCIONES.find((s) => s.id === "caminos")!.html;
-    assert.ok(puente.includes(`href="${CREAR_AGENTE_HREF}"`));
-    assert.ok(puente.includes(`href="${ENTERPRISE_HREF}"`));
-    assert.ok(puente.includes(`href="${HABLAR_CON_DULABS_HREF.replace(/&/g, "&amp;")}"`));
-    const t = texto(puente);
-    assert.match(t, /Autoservicio/);
-    assert.match(t, /A la medida/);
+  it("las DOS líneas comerciales están separadas en la página: 01 Autoservicio -> 02 A la medida, cada una con sus secciones", () => {
+    const pos = (m: string) => {
+      const i = PAGINA_FUENTE.indexOf(m);
+      assert.notEqual(i, -1, `falta en page.tsx: ${m}`);
+      return i;
+    };
+    const orden = [
+      "<HomeHero />",
+      'etiqueta="Autoservicio"',
+      "<ProblemSection />",
+      "<AgentActionsSection />",
+      "<SchedulingSection />",
+      "<ConfigSection />",
+      "<CatalogSection />",
+      "<KnowledgeSection />",
+      "<BusinessTypesSection />",
+      "<StepsSection />",
+      "<PricingSection showComparisonLink />",
+      'etiqueta="A la medida"',
+      "<CustomSolutionsSection />",
+      "<DeveloperStrip />",
+      "<TrustSection />",
+    ].map(pos);
+    assert.deepEqual([...orden].sort((a, b) => a - b), orden, "las secciones de page.tsx no están en el orden previsto");
+    assert.match(PAGINA_FUENTE, /<TrackBand n="01" etiqueta="Autoservicio"/);
+    assert.match(PAGINA_FUENTE, /<TrackBand n="02" etiqueta="A la medida"/);
+  });
+
+  it("A la medida: CTAs correctos, sin clientes/logos/cifras y con la cotización según alcance", () => {
+    const html = SECCIONES.find((s) => s.id === "empresas")!.html;
+    assert.ok(html.includes(`href="${HABLAR_ESPECIALISTA_HREF.replace(/&/g, "&amp;")}"`), "falta 'Hablar con un especialista'");
+    assert.ok(html.includes(`href="${ENTERPRISE_HREF}"`));
+    assert.ok(html.includes(`href="${CASOS_HREF}"`));
+    assert.match(HABLAR_ESPECIALISTA_HREF, /^https:\/\/wa\.me\//);
+    const t = texto(html);
+    assert.match(t, /Hablar con un especialista/);
     assert.match(t, /automatización empresarial/);
+    assert.match(t, /Cotización personalizada según el alcance; el tiempo depende del proyecto/);
+    assert.match(t, /no todos los proyectos incluyen todo esto/);
+    assert.match(t, /Esquema conceptual/);
+    for (const c of CAPACIDADES_A_MEDIDA) for (const it of c.items) assert.ok(t.includes(it), `falta: ${it}`);
+    for (const p of PROCESO_A_MEDIDA) assert.ok(t.includes(p.titulo), `falta el paso ${p.titulo}`);
+    assert.doesNotMatch(t, /\b\d+\s?(clientes|empresas|proyectos)\b/i, "sin cifras de clientes/proyectos");
+  });
+
+  it("el único caso que se nombra (DuMo) existe publicado en /casos", () => {
+    const casos = readFileSync(join(RAIZ, "components", "site", "CasosSections.tsx"), "utf8");
+    assert.match(casos, /nombre: "DuMo"/);
+    assert.match(casos, /desarrollado por DuLabs/);
+    assert.match(texto(SECCIONES.find((s) => s.id === "empresas")!.html), /DuMo/);
   });
 
   it("las secuencias de las secciones esperan a la vista (InView) y todas las animaciones se anulan con reduced-motion", () => {
@@ -230,6 +298,66 @@ describe("Home v3 -- Fase 3: fidelidad contra el producto real", () => {
     for (const paso of PASOS_DEL_WIZARD) assert.ok(texto(html).includes(paso), `falta el paso ${paso}`);
   });
 
+  it("rubros: los nombres son EXACTAMENTE los tipos de negocio del Wizard y solo usan capacidades disponibles", () => {
+    const validos = new Set(BUSINESS_TYPE_OPTIONS.map((o) => o.value));
+    for (const r of RUBROS) {
+      for (const tipo of r.tipos) assert.ok(validos.has(tipo), `"${tipo}" no es un tipo de negocio del Wizard`);
+      for (const c of r.capacidades) assert.equal(CAPABILITY_BACKING[c].available, true, `${c} no está disponible`);
+      assert.ok(!r.capacidades.includes("orders") && !r.capacidades.includes("payments"));
+    }
+    const html = SECCIONES.find((s) => s.id === "negocios")!.html;
+    const t = texto(html);
+    for (const r of RUBROS) assert.ok(t.includes(r.tipos.join(" · ")), `falta el rubro ${r.tipos[0]}`);
+    assert.doesNotMatch(t, /joyer/i, "'Joyerías' no es un tipo de negocio del producto");
+    assert.match(t, /pasa la conversación a tu equipo/, "restaurante/tienda: el pedido lo concreta el equipo");
+    assert.ok(html.includes(`href="${ENTERPRISE_HREF}"`), "los rubros deben enlazar a la línea a la medida");
+  });
+
+  it("cómo funciona: 3 pasos con estados de versión reales y la coexistencia respaldada por el código", () => {
+    const t = texto(SECCIONES.find((s) => s.id === "como-funciona")!.html);
+    for (const n of ["01", "02", "03"]) assert.ok(t.includes(n));
+    assert.match(t, /Configura tu negocio\./);
+    assert.match(t, /Conecta tus canales\./);
+    assert.match(t, /Deja que tu agente atienda y automatice\./);
+    assert.match(t, /Sin escribir código/);
+    assert.match(t, /modo coexistencia \(según los requisitos de Meta\)/);
+    const versiones = readFileSync(join(RAIZ, "components", "dashboard", "business-agent", "VersionsPanel.tsx"), "utf8");
+    for (const estado of ["Publicada", "Reemplazada", "Historial de versiones"]) assert.ok(versiones.includes(estado), `VersionsPanel no tiene "${estado}"`);
+    const embedded = readFileSync(join(RAIZ, "lib", "hooks", "use-meta-embedded-signup.ts"), "utf8");
+    assert.match(embedded, /whatsapp_business_app_onboarding/, "la coexistencia (WhatsApp Business App) debe existir en el registro con Meta");
+  });
+
+  it("confianza: solo hechos comprobables en el código (cifrado AES-256, DuMo, Developer) y la IA conversa / el sistema decide", () => {
+    const t = texto(SECCIONES.find((s) => s.id === "confianza")!.html);
+    assert.match(t, /cifrados con AES-256/);
+    assert.match(readFileSync(join(RAIZ, "lib", "crypto.ts"), "utf8"), /aes-256-gcm/);
+    assert.match(t, /La IA conversa\. El sistema decide\./);
+    for (const x of ["Disponibilidad y horarios", "Precios y cotizaciones", "Reglas y prohibiciones", "Transferencia a una persona", "Validación y publicación"]) assert.ok(t.includes(x), x);
+    assert.match(t, /Producto propio/);
+    assert.doesNotMatch(t, /certific|\bISO\b|SOC ?2|auditor/i, "sin certificaciones que no existen");
+  });
+
+  it("Developer: línea discreta y compacta, con rutas y endpoint reales", () => {
+    const html = SECCIONES.find((s) => s.id === "developers")!.html;
+    assert.ok(html.includes(`href="${DEVELOPER_PLATFORM_HREF}"`));
+    assert.ok(html.includes(`href="${DEVELOPER_DOCS_HREF}"`));
+    assert.match(html, /py-14 md:py-16/, "la sección Developer debe ser compacta");
+    for (const ruta of ["developer-platform", "developers"]) assert.ok(statSync(join(RAIZ, "app", ruta)).isDirectory(), `no existe app/${ruta}`);
+    // El endpoint público se sirve desde el gateway; su fuente de verdad es el OpenAPI versionado (lib/developers/openapi.ts).
+    assert.ok(Object.keys(OPENAPI_DEVELOPER_V1.paths).includes("/messages"), "el OpenAPI debe definir POST /messages");
+    assert.ok(Object.keys(OPENAPI_DEVELOPER_V1.paths).includes("/webhooks"), "el OpenAPI debe definir /webhooks");
+    assert.ok(texto(html).includes("POST /api/v1/messages"));
+    assert.ok(OPENAPI_BASE_URL.endsWith("/api/v1"));
+    assert.match(texto(html), /También construimos infraestructura para developers/);
+  });
+
+  it("precios: se reutiliza PricingSection (componente existente) sin escribir precios en la home", () => {
+    assert.match(PAGINA_FUENTE, /import \{ Footer, PricingSection \} from "@\/components\/site\/Sections";/);
+    assert.match(PAGINA_FUENTE, /<PricingSection showComparisonLink \/>/);
+    const componente = readFileSync(join(RAIZ, "components", "site", "Sections.tsx"), "utf8");
+    assert.match(componente, /def\.precioCop/, "PricingSection debe leer los precios de PLANES (lib/planes.ts)");
+  });
+
   it("catálogo: cotización con el formato real del sistema y sin prometer cobro", () => {
     const t = texto(SECCIONES.find((s) => s.id === "catalogo")!.html);
     assert.match(t, /Total: \$85\.000/);
@@ -253,8 +381,9 @@ describe("Home v3 -- Fase 3: fidelidad contra el producto real", () => {
       assert.ok(t.includes(termino), `falta el término natural: ${termino}`);
     }
     const veces = (frase: string) => t.split(frase).length - 1;
-    assert.ok(veces("agente de ia") + veces("agentes de ia") <= 14, "demasiada repetición de 'agente(s) de IA'");
-    assert.ok(veces("automatización empresarial") <= 3, "demasiada repetición de 'automatización empresarial'");
+    const palabras = t.split(/\s+/).length;
+    assert.ok((veces("agente de ia") + veces("agentes de ia")) / palabras <= 0.012, "demasiada densidad de 'agente(s) de IA'");
+    assert.ok(veces("automatización empresarial") <= 4, "demasiada repetición de 'automatización empresarial'");
     assert.ok(veces("ia para whatsapp") + veces("whatsapp con ia") <= 2, "demasiada repetición de 'IA para WhatsApp'");
   });
 });
@@ -275,6 +404,7 @@ describe("Home v3 -- guardas de calidad (aplican a todas las fases)", () => {
       [/\b(cobra|cobrar|pagos? (automáticos?|por whatsapp)|toma pedidos)\b/i, "pedidos/pagos del agente (no existen)"],
       [/embedding|vectorial|búsqueda semántica|sinónimos/i, "búsqueda semántica (la búsqueda es por palabras)"],
       [/nunca se comparte|100% seguro|sin riesgo/i, "promesas absolutas de seguridad"],
+      [/\bISO ?\d{3,5}\b|SOC ?2|certificad[oa]s?\b|certificaci[oó]n/i, "certificaciones que DuLabs no tiene"],
     ];
     // Frases NEGATIVAS/HONESTAS permitidas (dicen lo que el producto NO hace) y las etiquetas de capacidades no disponibles.
     const permitidas = [/no cobra ni toma pedidos/gi, /"Cobrar"/g, /"Tomar pedidos"/g, /Tomar pedidos/g];
