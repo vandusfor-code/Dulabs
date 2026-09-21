@@ -1174,3 +1174,95 @@ body {
   .dev-scope .dev-wire::after,
   .dev-scope .dev-wire-y::after { display: none; }
 }
+
+/* ---------- Home principal v3 (scoped via .home-scope, el wrapper lleva .dev-scope .home-scope) ----------
+   Landing principal premium con la MISMA identidad monocroma de /developer-platform: negro, blanco y grises neutros (tokens de
+   .dev-scope). El CTA principal es blanco con texto oscuro (--color-dev-accent). Sin color de acento, sin gradientes decorativos: solo una
+   rejilla apenas perceptible. El logo NO se recolorea. */
+.home-scope .home-grid {
+  background-image:
+    linear-gradient(to right, rgb(255 255 255 / 3.5%) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(255 255 255 / 3.5%) 1px, transparent 1px);
+  background-size: 56px 56px;
+  -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 0%, #000 30%, transparent 78%);
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 0%, #000 30%, transparent 78%);
+}
+/* Secuencia de aparición ÚNICA (no en bucle): reutiliza el keyframe dev-stream-in; el retraso viene de --home-d. */
+.home-scope .home-seq {
+  animation: dev-stream-in 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation-delay: var(--home-d, 0ms);
+}
+.home-scope a:focus-visible,
+.home-scope button:focus-visible,
+.home-scope summary:focus-visible {
+  outline: 2px solid var(--color-site-fg);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .home-scope .home-seq { animation: none; opacity: 1; transform: none; }
+}
+
+/* ---------- Home v3 · Fase 3 ---------- */
+/* Las secuencias de las secciones (.home-seq dentro de .home-view) esperan a que la sección entre en pantalla: InView pone
+   data-inview="true". Sin JS (scripting: none) se muestran ya. El hero no usa .home-view y arranca al cargar. */
+.home-scope .home-view[data-inview="false"] .home-seq { animation-play-state: paused; }
+@media (scripting: none) {
+  .home-scope .home-view .home-seq { animation: none; opacity: 1; transform: none; }
+}
+
+/* Pestañas SIN JS de "Configuración": radios ocultos + hermanos (~). El n-ésimo radio muestra el n-ésimo panel y marca su pestaña. */
+.home-scope .cfg-panels > * { display: none; }
+.home-scope .cfg input:nth-of-type(1):checked ~ .cfg-panels > :nth-child(1),
+.home-scope .cfg input:nth-of-type(2):checked ~ .cfg-panels > :nth-child(2),
+.home-scope .cfg input:nth-of-type(3):checked ~ .cfg-panels > :nth-child(3),
+.home-scope .cfg input:nth-of-type(4):checked ~ .cfg-panels > :nth-child(4),
+.home-scope .cfg input:nth-of-type(5):checked ~ .cfg-panels > :nth-child(5),
+.home-scope .cfg input:nth-of-type(6):checked ~ .cfg-panels > :nth-child(6),
+.home-scope .cfg input:nth-of-type(7):checked ~ .cfg-panels > :nth-child(7),
+.home-scope .cfg input:nth-of-type(8):checked ~ .cfg-panels > :nth-child(8) { display: block; }
+.home-scope .cfg-tabs > label { cursor: pointer; }
+.home-scope .cfg input:nth-of-type(1):checked ~ .cfg-tabs > label:nth-of-type(1),
+.home-scope .cfg input:nth-of-type(2):checked ~ .cfg-tabs > label:nth-of-type(2),
+.home-scope .cfg input:nth-of-type(3):checked ~ .cfg-tabs > label:nth-of-type(3),
+.home-scope .cfg input:nth-of-type(4):checked ~ .cfg-tabs > label:nth-of-type(4),
+.home-scope .cfg input:nth-of-type(5):checked ~ .cfg-tabs > label:nth-of-type(5),
+.home-scope .cfg input:nth-of-type(6):checked ~ .cfg-tabs > label:nth-of-type(6),
+.home-scope .cfg input:nth-of-type(7):checked ~ .cfg-tabs > label:nth-of-type(7),
+.home-scope .cfg input:nth-of-type(8):checked ~ .cfg-tabs > label:nth-of-type(8) {
+  background: rgb(255 255 255 / 5%);
+  color: var(--color-site-fg);
+  box-shadow: inset 2px 0 0 var(--color-site-fg);
+}
+.home-scope .cfg input:nth-of-type(1):focus-visible ~ .cfg-tabs > label:nth-of-type(1),
+.home-scope .cfg input:nth-of-type(2):focus-visible ~ .cfg-tabs > label:nth-of-type(2),
+.home-scope .cfg input:nth-of-type(3):focus-visible ~ .cfg-tabs > label:nth-of-type(3),
+.home-scope .cfg input:nth-of-type(4):focus-visible ~ .cfg-tabs > label:nth-of-type(4),
+.home-scope .cfg input:nth-of-type(5):focus-visible ~ .cfg-tabs > label:nth-of-type(5),
+.home-scope .cfg input:nth-of-type(6):focus-visible ~ .cfg-tabs > label:nth-of-type(6),
+.home-scope .cfg input:nth-of-type(7):focus-visible ~ .cfg-tabs > label:nth-of-type(7),
+.home-scope .cfg input:nth-of-type(8):focus-visible ~ .cfg-tabs > label:nth-of-type(8) { outline: 2px solid var(--color-site-fg); outline-offset: -2px; }
+@media (max-width: 767px) {
+  .home-scope .cfg input:nth-of-type(1):checked ~ .cfg-tabs > label:nth-of-type(1),
+  .home-scope .cfg input:nth-of-type(2):checked ~ .cfg-tabs > label:nth-of-type(2),
+  .home-scope .cfg input:nth-of-type(3):checked ~ .cfg-tabs > label:nth-of-type(3),
+  .home-scope .cfg input:nth-of-type(4):checked ~ .cfg-tabs > label:nth-of-type(4),
+  .home-scope .cfg input:nth-of-type(5):checked ~ .cfg-tabs > label:nth-of-type(5),
+  .home-scope .cfg input:nth-of-type(6):checked ~ .cfg-tabs > label:nth-of-type(6),
+  .home-scope .cfg input:nth-of-type(7):checked ~ .cfg-tabs > label:nth-of-type(7),
+  .home-scope .cfg input:nth-of-type(8):checked ~ .cfg-tabs > label:nth-of-type(8) { box-shadow: inset 0 -2px 0 var(--color-site-fg); }
+}
+.home-scope .no-scrollbar { scrollbar-width: none; }
+.home-scope .no-scrollbar::-webkit-scrollbar { display: none; }
+
+/* ---------- Home v3 · Fase 4 ---------- */
+/* Los componentes existentes que se reutilizan tal cual (PricingSection, Footer) usan el token site-primary: bajo .dev-scope es blanco con
+   texto oscuro, igual que en /developer-platform. No se remapea nada. */
+
+
+/* ---------- Home v3 · Fase 6 ---------- */
+/* Objetivos táctiles >= 44 px en los componentes existentes que la home reutiliza tal cual (PricingSection y Footer): la regla vive AQUÍ,
+   acotada a .home-scope, para no editar componentes compartidos con "/" y "/precios". */
+.home-scope #precios a,
+.home-scope #precios button { min-height: 44px; }
+.home-scope footer a { display: inline-flex; align-items: center; min-height: 44px; }

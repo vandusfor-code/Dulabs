@@ -347,7 +347,7 @@ type TierData = {
 // con un toggle, para que las 4 tarjetas no dominen la pantalla de una vez.
 // Estado propio por tarjeta (no uno solo compartido): cada plan se abre/cierra
 // de forma independiente.
-function TarjetaPlan({ tier }: { tier: TierData }) {
+function TarjetaPlan({ tier, notaImplementacion }: { tier: TierData; notaImplementacion?: string }) {
   const { t } = useI18n();
   const [expandido, setExpandido] = useState(false);
   return (
@@ -398,10 +398,11 @@ function TarjetaPlan({ tier }: { tier: TierData }) {
               </div>
               <div className="mt-1 font-display text-[17px] font-medium text-site-fg">{tier.precioImplementacion}</div>
               <p className="mt-1 text-[10.5px] italic leading-relaxed text-site-muted-fg">
-                {t(
-                  "Pago único por la configuración y puesta en marcha de tu asistente.",
-                  "One-time payment to configure and launch your assistant."
-                )}
+                {notaImplementacion ??
+                  t(
+                    "Pago único por la configuración y puesta en marcha de tu asistente.",
+                    "One-time payment to configure and launch your assistant."
+                  )}
               </p>
             </div>
           )}
@@ -452,7 +453,12 @@ function TarjetaPlan({ tier }: { tier: TierData }) {
   );
 }
 
-export function PricingSection({ showComparisonLink = false }: { showComparisonLink?: boolean } = {}) {
+export function PricingSection({
+  showComparisonLink = false,
+  descripcion,
+  notaImplementacion,
+  notaSuscripcion,
+}: { showComparisonLink?: boolean; descripcion?: string; notaImplementacion?: string; notaSuscripcion?: string } = {}) {
   const { t, lang } = useI18n();
   const tiers = PLANES_WHATSAPP.map((id) => {
     const def = PLANES[id];
@@ -495,15 +501,18 @@ export function PricingSection({ showComparisonLink = false }: { showComparisonL
         <SectionHeading
           eyebrow={t("Planes WhatsApp con IA", "WhatsApp with AI plans")}
           title={<>{t("Un plan para cada etapa de tu negocio.", "A plan for every stage of your business.")}</>}
-          desc={t(
-            "Nosotros configuramos tu asistente de IA según la información y procesos de tu negocio. Precios en pesos colombianos (COP).",
-            "We configure your AI assistant based on your business' information and processes. Prices in Colombian pesos (COP)."
-          )}
+          desc={
+            descripcion ??
+            t(
+              "Nosotros configuramos tu asistente de IA según la información y procesos de tu negocio. Precios en pesos colombianos (COP).",
+              "We configure your AI assistant based on your business' information and processes. Prices in Colombian pesos (COP)."
+            )
+          }
           align="center"
         />
         <div className="mx-auto mt-14 grid max-w-6xl grid-cols-1 items-start gap-4 sm:grid-cols-2 xl:grid-cols-4">
           {tiers.map((tier) => (
-            <TarjetaPlan key={tier.id} tier={tier} />
+            <TarjetaPlan key={tier.id} tier={tier} notaImplementacion={notaImplementacion} />
           ))}
         </div>
 
@@ -529,10 +538,11 @@ export function PricingSection({ showComparisonLink = false }: { showComparisonL
         <div className="mx-auto mt-14 max-w-2xl rounded-2xl border border-site-border bg-site-card/40 p-6 text-center md:p-8">
           <h3 className="font-display text-[18px] font-medium text-site-fg">{t("¿Y el costo de WhatsApp?", "What about the cost of WhatsApp?")}</h3>
           <p className="mt-3 text-[13.5px] leading-relaxed text-site-muted-fg">
-            {t(
-              "Tu suscripción a DuLabs cubre la plataforma, la configuración y el uso de la IA según el plan elegido.",
-              "Your DuLabs subscription covers the platform, the setup and the AI usage for your chosen plan."
-            )}
+            {notaSuscripcion ??
+              t(
+                "Tu suscripción a DuLabs cubre la plataforma, la configuración y el uso de la IA según el plan elegido.",
+                "Your DuLabs subscription covers the platform, the setup and the AI usage for your chosen plan."
+              )}
           </p>
           <p className="mt-2.5 text-[13.5px] leading-relaxed text-site-muted-fg">
             {t(

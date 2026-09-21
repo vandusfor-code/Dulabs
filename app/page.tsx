@@ -1,88 +1,70 @@
-import { Nav } from "@/components/site/Nav";
-import { Hero } from "@/components/site/Hero";
-import { Reveal } from "@/components/site/Reveal";
-import { PageSpotlight } from "@/components/site/PageSpotlight";
+import type { Metadata } from "next";
+import { AgentActionsSection } from "@/components/home/AgentActionsSection";
+import { BusinessTypesSection } from "@/components/home/BusinessTypesSection";
+import { CatalogSection } from "@/components/home/CatalogSection";
+import { ConfigSection } from "@/components/home/ConfigSection";
+import { CustomSolutionsSection } from "@/components/home/CustomSolutionsSection";
+import { DeveloperStrip } from "@/components/home/DeveloperStrip";
+import { FaqSection } from "@/components/home/FaqSection";
+import { FinalCta } from "@/components/home/FinalCta";
+import { HomeHero } from "@/components/home/HomeHero";
+import { HomeNav } from "@/components/home/HomeNav";
+import { KnowledgeSection } from "@/components/home/KnowledgeSection";
+import { ProblemSection } from "@/components/home/ProblemSection";
+import { SchedulingSection } from "@/components/home/SchedulingSection";
+import { StepsSection } from "@/components/home/StepsSection";
+import { TrackBand } from "@/components/home/TrackBand";
+import { TrustSection } from "@/components/home/TrustSection";
 import { JsonLd } from "@/components/site/JsonLd";
-import { breadcrumbSchema } from "@/lib/schema";
-import {
-  TrustedBySection,
-  HowItWorksSection,
-  PricingSection,
-  NextLevelSection,
-  FeaturesGridSection,
-  MetricsSection,
-  FaqSection,
-  FinalCta,
-  Footer,
-} from "@/components/site/Sections";
-import { SolutionsSection, HowWeWorkSection, EnterpriseSection, EnterpriseContactSection } from "@/components/site/EnterpriseSections";
-import { DevelopersEntrySection } from "@/components/site/DevelopersEntrySection";
+import { Footer, PricingSection } from "@/components/site/Sections";
+import { HOME_PATH } from "@/lib/home/links";
+import { homeFaqJsonLd, homeMetadata, homeSoftwareApplicationJsonLd } from "@/lib/home/seo";
 
-// Promoción del diseño oscuro (con la información comercial actual, ya
-// verificada: pricing Essential/Business/Pro/Enterprise, cero legacy
-// Start/Growth/Scale como oferta nueva, cero Claude/Anthropic) a Home
-// principal -- reemplaza a V2 aquí. Sin metadata propia: hereda a propósito
-// el title/description/OpenGraph/Twitter/canonical ya auditados de
-// app/layout.tsx (indexables, sin noindex).
-const FAQ_HOME_IDS = ["que-es-dulabs", "solo-whatsapp", "cancelar", "conexion", "quien-configura", "seguridad", "meta-cobra"];
+// Home principal ("/"). Metadata, imagen social y datos estructurados salen de lib/home/seo.ts (indexable, canónica a "/").
+//
+// Estructura: hero -> 01 CREA TU AGENTE (agente estándar que el cliente configura solo, planes) -> 02 A LA MEDIDA (soluciones empresariales
+// que DuLabs desarrolla con el cliente) -> confianza -> línea Developer (aparte de las dos) -> preguntas frecuentes -> cierre. PricingSection y Footer son los
+// componentes existentes (PricingSection solo recibe tres frases propias de la home -- introducción y notas de cobro --; el resto no se toca). Organization y WebSite ya se publican desde app/layout.tsx.
+export const metadata: Metadata = homeMetadata({ path: HOME_PATH, indexable: true });
 
-export default function Home() {
+export default function HomePage() {
   return (
-    <div className="relative min-h-screen bg-site-bg text-site-fg">
-      <div className="site-grain" aria-hidden />
-      <JsonLd data={breadcrumbSchema([{ name: "Inicio", path: "/" }])} />
-      <PageSpotlight />
-      <Nav />
-      <main>
-        <Hero />
+    <div className="dev-scope home-scope min-h-screen">
+      <JsonLd data={homeSoftwareApplicationJsonLd()} />
+      <JsonLd data={homeFaqJsonLd()} />
+      <a
+        href="#contenido"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[60] focus:rounded-lg focus:bg-site-fg focus:px-4 focus:py-2 focus:text-[14px] focus:text-site-bg"
+      >
+        Saltar al contenido
+      </a>
+      <HomeNav />
+      <main id="contenido">
+        <HomeHero />
 
-        <TrustedBySection />
+        <TrackBand n="01" etiqueta="Crea tu agente" texto="Agente estándar: lo configuras tú mismo. Creas, configuras, pruebas, publicas y administras." />
+        <ProblemSection />
+        <AgentActionsSection />
+        <SchedulingSection />
+        <ConfigSection />
+        <CatalogSection />
+        <KnowledgeSection />
+        <BusinessTypesSection />
+        <StepsSection />
+        <PricingSection
+          showComparisonLink
+          descripcion="Elige tu plan y crea tu agente desde el panel de DuLabs. Precios en pesos colombianos (COP)."
+          notaImplementacion="Pago único que se suma al primer cobro; el desglose aparece antes de pagar."
+          notaSuscripcion="Tu suscripción a DuLabs cubre la plataforma y el uso de la IA según el plan elegido."
+        />
 
-        <Reveal>
-          <HowItWorksSection />
-        </Reveal>
+        <TrackBand n="02" etiqueta="A la medida" texto="Soluciones empresariales: DuLabs lo desarrolla contigo." />
+        <CustomSolutionsSection />
 
-        <Reveal>
-          <SolutionsSection />
-        </Reveal>
-
-        <Reveal>
-          <PricingSection showComparisonLink />
-        </Reveal>
-
-        <Reveal>
-          <NextLevelSection />
-        </Reveal>
-
-        <Reveal>
-          <FeaturesGridSection />
-        </Reveal>
-
-        <Reveal>
-          <MetricsSection />
-        </Reveal>
-
-        <Reveal>
-          <HowWeWorkSection />
-        </Reveal>
-
-        <Reveal>
-          <FaqSection ids={FAQ_HOME_IDS} showMoreLink />
-        </Reveal>
-
+        <TrustSection />
+        <DeveloperStrip />
+        <FaqSection />
         <FinalCta />
-
-        <Reveal>
-          <EnterpriseSection />
-        </Reveal>
-
-        <Reveal>
-          <EnterpriseContactSection />
-        </Reveal>
-
-        <Reveal>
-          <DevelopersEntrySection />
-        </Reveal>
       </main>
       <Footer />
     </div>

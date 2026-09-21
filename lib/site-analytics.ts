@@ -1,5 +1,6 @@
 export type ConversionEvent =
   | "cta_whatsapp"
+  | "cta_crear_agente"
   | "cta_enterprise"
   | "form_enterprise_start"
   | "form_enterprise_submit"
