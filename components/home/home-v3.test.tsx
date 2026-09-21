@@ -102,11 +102,12 @@ describe("Home v3 -- hero renderizado", () => {
     assert.ok(HABLAR_CON_DULABS_HREF.startsWith("https://wa.me/"));
   });
 
-  it("comunica las dos formas de trabajar (autoservicio y a la medida) y enlaza a soluciones empresariales", () => {
+  it("comunica las dos formas de trabajar (crea tu agente y a la medida) y enlaza a soluciones empresariales", () => {
     const t = texto(HERO);
-    assert.match(t, /Autoservicio/);
+    assert.match(t, /Crea tu agente/);
     assert.match(t, /A la medida/);
-    assert.match(t, /Sin programar/);
+    assert.match(t, /sin programar/);
+    assert.match(t, /Agente estándar/);
     assert.ok(HERO.includes(`href="${ENTERPRISE_HREF}"`));
   });
 
@@ -172,7 +173,7 @@ describe("Home v3 -- Fase 3: estructura de las secciones", () => {
     assert.match(h2("empezar"), /Tu negocio ya tiene procesos\. Ahora pueden trabajar automáticamente\./);
   });
 
-  it("las DOS líneas comerciales están separadas en la página: 01 Autoservicio -> 02 A la medida, cada una con sus secciones", () => {
+  it("las DOS líneas comerciales están separadas en la página: 01 Crea tu agente -> 02 A la medida, cada una con sus secciones", () => {
     const pos = (m: string) => {
       const i = PAGINA_FUENTE.indexOf(m);
       assert.notEqual(i, -1, `falta en page.tsx: ${m}`);
@@ -180,7 +181,7 @@ describe("Home v3 -- Fase 3: estructura de las secciones", () => {
     };
     const orden = [
       "<HomeHero />",
-      'etiqueta="Autoservicio"',
+      'etiqueta="Crea tu agente"',
       "<ProblemSection />",
       "<AgentActionsSection />",
       "<SchedulingSection />",
@@ -189,16 +190,16 @@ describe("Home v3 -- Fase 3: estructura de las secciones", () => {
       "<KnowledgeSection />",
       "<BusinessTypesSection />",
       "<StepsSection />",
-      "<PricingSection showComparisonLink />",
+      "<PricingSection showComparisonLink",
       'etiqueta="A la medida"',
       "<CustomSolutionsSection />",
-      "<DeveloperStrip />",
       "<TrustSection />",
+      "<DeveloperStrip />",
       "<FaqSection />",
       "<FinalCta />",
     ].map(pos);
     assert.deepEqual([...orden].sort((a, b) => a - b), orden, "las secciones de page.tsx no están en el orden previsto");
-    assert.match(PAGINA_FUENTE, /<TrackBand n="01" etiqueta="Autoservicio"/);
+    assert.match(PAGINA_FUENTE, /<TrackBand n="01" etiqueta="Crea tu agente"/);
     assert.match(PAGINA_FUENTE, /<TrackBand n="02" etiqueta="A la medida"/);
   });
 
@@ -362,7 +363,7 @@ describe("Home v3 -- Fase 3: fidelidad contra el producto real", () => {
 
   it("precios: se reutiliza PricingSection (componente existente) sin escribir precios en la home", () => {
     assert.match(PAGINA_FUENTE, /import \{ Footer, PricingSection \} from "@\/components\/site\/Sections";/);
-    assert.match(PAGINA_FUENTE, /<PricingSection showComparisonLink \/>/);
+    assert.match(PAGINA_FUENTE, /<PricingSection showComparisonLink descripcion="[^"]+" \/>/);
     const componente = readFileSync(join(RAIZ, "components", "site", "Sections.tsx"), "utf8");
     assert.match(componente, /def\.precioCop/, "PricingSection debe leer los precios de PLANES (lib/planes.ts)");
   });
@@ -416,6 +417,9 @@ describe("Home v3 -- guardas de calidad (aplican a todas las fases)", () => {
       [/\b(cobra|cobrar|pagos? (automáticos?|por whatsapp)|toma pedidos)\b/i, "pedidos/pagos del agente (no existen)"],
       [/embedding|vectorial|búsqueda semántica|sinónimos/i, "búsqueda semántica (la búsqueda es por palabras)"],
       [/nunca se comparte|100% seguro|sin riesgo/i, "promesas absolutas de seguridad"],
+      [/autoservicio/i, "la primera línea comercial se llama 'Crea tu agente' (decisión de producto)"],
+      [/nosotros (lo )?configuramos|te configuramos|que me configuren|tú no configuras nada|lo hacemos nosotros|no es algo que el due/i, "modelo antiguo: 'DuLabs configura el agente por ti'"],
+      [/especialistas? de DuLabs (te|configura|revisar|continuar)/i, "la implementación manual de DuLabs no es un requisito para crear el agente"],
       [/\bISO ?\d{3,5}\b|SOC ?2|certificad[oa]s?\b|certificaci[oó]n/i, "certificaciones que DuLabs no tiene"],
     ];
     // Frases NEGATIVAS/HONESTAS permitidas (dicen lo que el producto NO hace) y las etiquetas de capacidades no disponibles.

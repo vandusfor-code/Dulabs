@@ -4,7 +4,7 @@ import { TrackedLink } from "./TrackedLink";
 
 // Hero de la home v3. Servidor puro: el H1 es texto visible desde el primer render (sin revelado por palabras ni blur, que
 // retrasaban el LCP y dejaban el título borroso en móvil). Comunica de entrada las DOS formas de trabajar con DuLabs:
-// autoservicio (crear el propio agente) y a la medida (automatización e integraciones para empresas).
+// "Crea tu agente" (agente estándar que el cliente configura solo) y "A la medida" (soluciones empresariales que DuLabs desarrolla con él).
 export function HomeHero() {
   return (
     <section className="relative overflow-hidden">
@@ -48,12 +48,12 @@ export function HomeHero() {
 
           <div className="mt-12 grid gap-7 border-t border-site-border pt-7 sm:grid-cols-2 sm:gap-8">
             <div>
-              <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-site-fg">Autoservicio</p>
-              <p className="mt-2 text-[14px] leading-relaxed text-site-muted-fg">Crea, configura y publica tu propio agente desde el panel. Sin programar.</p>
+              <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-site-fg">Crea tu agente</p>
+              <p className="mt-2 text-[14px] leading-relaxed text-site-muted-fg">Agente estándar que configuras tú mismo desde el panel, sin programar: creas, pruebas, publicas y administras.</p>
             </div>
             <div>
               <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-site-fg">A la medida</p>
-              <p className="mt-2 text-[14px] leading-relaxed text-site-muted-fg">Automatización, integraciones y agentes personalizados para tu empresa.</p>
+              <p className="mt-2 text-[14px] leading-relaxed text-site-muted-fg">Soluciones empresariales que DuLabs desarrolla contigo: automatizaciones, integraciones y desarrollos personalizados.</p>
               <TrackedLink
                 href={ENTERPRISE_HREF}
                 event="cta_enterprise"

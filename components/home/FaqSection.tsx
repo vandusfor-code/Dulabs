@@ -45,16 +45,19 @@ export function FaqSection() {
                           <p key={parrafo.slice(0, 40)}>{parrafo}</p>
                         ))}
                       </div>
-                      {item.enlace ? (
-                        <p className="mt-3">
-                          <TrackedLink
-                            href={item.enlace.href}
-                            source={`faq_${item.id}`}
-                            className="group/enlace inline-flex min-h-11 items-center gap-1.5 text-[14px] text-site-fg underline-offset-4 hover:underline"
-                          >
-                            {item.enlace.texto}
-                            <span aria-hidden className="transition-transform group-hover/enlace:translate-x-0.5">→</span>
-                          </TrackedLink>
+                      {item.enlaces?.length ? (
+                        <p className="mt-3 flex flex-wrap gap-x-6">
+                          {item.enlaces.map((enlace) => (
+                            <TrackedLink
+                              key={enlace.href}
+                              href={enlace.href}
+                              source={`faq_${item.id}`}
+                              className="group/enlace inline-flex min-h-11 items-center gap-1.5 text-[14px] text-site-fg underline-offset-4 hover:underline"
+                            >
+                              {enlace.texto}
+                              <span aria-hidden className="transition-transform group-hover/enlace:translate-x-0.5">→</span>
+                            </TrackedLink>
+                          ))}
                         </p>
                       ) : null}
                     </div>

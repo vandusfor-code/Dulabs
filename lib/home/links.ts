@@ -6,7 +6,7 @@ import { MENSAJE_WHATSAPP_CONTACTO_ES, MENSAJE_WHATSAPP_ENTERPRISE_ES, whatsappV
 export const HOME_V3_PATH = "/home-v3";
 
 /**
- * "Crear mi agente de IA": el camino real de autoservicio ya existente = registro -> pago del plan -> conectar WhatsApp -> panel
+ * "Crear mi agente de IA": el camino real de alta ya existente = registro -> pago del plan -> conectar WhatsApp -> panel
  * (Business Agent). Es el mismo destino del botón "Comenzar con DuLabs" del plan Essential (PlanButton); el checkout no tiene
  * selector de plan, así que los otros planes se eligen desde la sección de precios.
  */

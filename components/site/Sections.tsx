@@ -452,7 +452,7 @@ function TarjetaPlan({ tier }: { tier: TierData }) {
   );
 }
 
-export function PricingSection({ showComparisonLink = false }: { showComparisonLink?: boolean } = {}) {
+export function PricingSection({ showComparisonLink = false, descripcion }: { showComparisonLink?: boolean; descripcion?: string } = {}) {
   const { t, lang } = useI18n();
   const tiers = PLANES_WHATSAPP.map((id) => {
     const def = PLANES[id];
@@ -495,10 +495,13 @@ export function PricingSection({ showComparisonLink = false }: { showComparisonL
         <SectionHeading
           eyebrow={t("Planes WhatsApp con IA", "WhatsApp with AI plans")}
           title={<>{t("Un plan para cada etapa de tu negocio.", "A plan for every stage of your business.")}</>}
-          desc={t(
-            "Nosotros configuramos tu asistente de IA según la información y procesos de tu negocio. Precios en pesos colombianos (COP).",
-            "We configure your AI assistant based on your business' information and processes. Prices in Colombian pesos (COP)."
-          )}
+          desc={
+            descripcion ??
+            t(
+              "Nosotros configuramos tu asistente de IA según la información y procesos de tu negocio. Precios en pesos colombianos (COP).",
+              "We configure your AI assistant based on your business' information and processes. Prices in Colombian pesos (COP)."
+            )
+          }
           align="center"
         />
         <div className="mx-auto mt-14 grid max-w-6xl grid-cols-1 items-start gap-4 sm:grid-cols-2 xl:grid-cols-4">

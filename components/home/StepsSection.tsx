@@ -3,7 +3,7 @@ import { Check } from "lucide-react";
 import { Caption, HomeSection, Panel, SectionHeader, Tag } from "./atoms";
 import { retraso } from "./ChatBubbles";
 
-// Cómo funciona (autoservicio), en 3 pasos. Cada paso lleva un fragmento de la interfaz real: los pasos del asistente, las conexiones
+// Cómo funciona (01 · Crea tu agente), en 3 pasos. Cada paso lleva un fragmento de la interfaz real: los pasos del asistente, las conexiones
 // (WhatsApp con la API oficial de Meta y Google Calendar) y el estado de publicación con su historial de versiones (Borrador, Publicada,
 // Reemplazada son los estados reales de las versiones). Los datos son un ejemplo.
 

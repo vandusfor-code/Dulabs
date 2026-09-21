@@ -24,9 +24,9 @@ import { homeFaqJsonLd, homeMetadata, homeSoftwareApplicationJsonLd } from "@/li
 // La metadata, la imagen social y los datos estructurados ya son los DEFINITIVOS (lib/home/seo.ts). Al promover esta página a "/" solo cambian
 // `path` ("/") e `indexable` (true), se mueve este archivo a app/page.tsx y se elimina esta ruta.
 //
-// Estructura: hero -> 01 AUTOSERVICIO (crear y configurar el propio agente, planes) -> 02 A LA MEDIDA (automatización, integraciones y
-// soluciones personalizadas, más la línea Developer) -> confianza -> preguntas frecuentes -> cierre. PricingSection y Footer son los
-// componentes existentes, sin modificar. Organization y WebSite ya se publican desde app/layout.tsx.
+// Estructura: hero -> 01 CREA TU AGENTE (agente estándar que el cliente configura solo, planes) -> 02 A LA MEDIDA (soluciones empresariales
+// que DuLabs desarrolla con el cliente) -> confianza -> línea Developer (aparte de las dos) -> preguntas frecuentes -> cierre. PricingSection y Footer son los
+// componentes existentes (PricingSection solo recibe una frase introductoria propia de la home; el resto no se toca). Organization y WebSite ya se publican desde app/layout.tsx.
 export const metadata: Metadata = homeMetadata({ path: HOME_V3_PATH, indexable: false });
 
 export default function HomeV3Page() {
@@ -44,7 +44,7 @@ export default function HomeV3Page() {
       <main id="contenido">
         <HomeHero />
 
-        <TrackBand n="01" etiqueta="Autoservicio" texto="Crea y configura tu propio agente desde DuLabs." />
+        <TrackBand n="01" etiqueta="Crea tu agente" texto="Agente estándar: lo configuras tú mismo. Creas, configuras, pruebas, publicas y administras." />
         <ProblemSection />
         <AgentActionsSection />
         <SchedulingSection />
@@ -53,13 +53,13 @@ export default function HomeV3Page() {
         <KnowledgeSection />
         <BusinessTypesSection />
         <StepsSection />
-        <PricingSection showComparisonLink />
+        <PricingSection showComparisonLink descripcion="Elige tu plan y crea tu agente desde el panel de DuLabs. Precios en pesos colombianos (COP)." />
 
-        <TrackBand n="02" etiqueta="A la medida" texto="Automatización, integraciones y soluciones personalizadas con nuestro equipo." />
+        <TrackBand n="02" etiqueta="A la medida" texto="Soluciones empresariales: DuLabs lo desarrolla contigo." />
         <CustomSolutionsSection />
-        <DeveloperStrip />
 
         <TrustSection />
+        <DeveloperStrip />
         <FaqSection />
         <FinalCta />
       </main>

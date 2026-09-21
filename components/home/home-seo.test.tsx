@@ -52,10 +52,10 @@ function jsonLdDe(data: object): unknown {
 
 describe("FAQ -- datos", () => {
   it("son preguntas reales y útiles: cuatro grupos, preguntas únicas con signos de interrogación y respuestas concretas", () => {
-    assert.equal(GRUPOS_FAQ.length, 4);
+    assert.equal(GRUPOS_FAQ.length, 5);
     const todas = todasLasFaq();
     assert.equal(todas.length, TOTAL_FAQ);
-    assert.ok(todas.length >= 15 && todas.length <= 22, `número de preguntas: ${todas.length}`);
+    assert.ok(todas.length >= 15 && todas.length <= 24, `número de preguntas: ${todas.length}`);
     assert.equal(new Set(todas.map((f) => f.id)).size, todas.length, "ids duplicados");
     assert.equal(new Set(todas.map((f) => f.pregunta)).size, todas.length, "preguntas duplicadas");
     for (const f of todas) {
@@ -68,7 +68,7 @@ describe("FAQ -- datos", () => {
     }
   });
 
-  it("cubre los temas que la gente busca (agentes de IA para WhatsApp, cómo crear uno, Google Calendar, atención al cliente, catálogo, conocimiento, asesores, a la medida y autoservicio vs implementación)", () => {
+  it("cubre los temas que la gente busca (agentes de IA para WhatsApp, cómo crear uno, Google Calendar, atención al cliente, catálogo, conocimiento, asesores, a la medida y crear tu agente vs a la medida)", () => {
     const preguntas = todasLasFaq().map((f) => f.pregunta).join("\n");
     const temas: [string, RegExp][] = [
       ["agente de IA para WhatsApp", /agente de IA para WhatsApp/i],
@@ -89,7 +89,10 @@ describe("FAQ -- datos", () => {
       ["tipos de empresa", /tipo de empresas/i],
       ["soluciones personalizadas", /soluciones personalizadas/i],
       ["integraciones", /otros sistemas/i],
-      ["autoservicio vs implementación", /diferencia hay entre crear el agente yo mismo y contratar una implementación personalizada/i],
+      ["personalidad, reglas y conocimiento", /personalidad, las reglas y el conocimiento/i],
+      ["probar antes de publicar", /probar mi agente antes de publicarlo/i],
+      ["publicar y administrar", /publico y administro mi agente/i],
+      ["crear tu agente vs a la medida", /diferencia hay entre crear mi propio agente y pedir una solución a la medida/i],
     ];
     for (const [nombre, re] of temas) assert.match(preguntas, re, `falta una pregunta sobre: ${nombre}`);
   });
@@ -170,7 +173,8 @@ describe("SEO -- metadata, imagen social y reparto de palabras clave", () => {
   it("título y descripción con longitud de búsqueda y los términos objetivo de la home", () => {
     assert.ok(HOME_SEO.title.length >= 30 && HOME_SEO.title.length <= 60, `título: ${HOME_SEO.title.length}`);
     assert.ok(HOME_SEO.description.length >= 110 && HOME_SEO.description.length <= 160, `descripción: ${HOME_SEO.description.length}`);
-    for (const t of ["agentes de IA", "automatización"]) assert.ok((HOME_SEO.title + " " + HOME_SEO.description).includes(t), t);
+    const cuerpo = (HOME_SEO.title + " " + HOME_SEO.description).toLowerCase();
+    for (const t of ["agentes de ia", "automatización", "agente de ia para whatsapp"]) assert.ok(cuerpo.includes(t), t);
     assert.ok(HOME_SEO.title.endsWith("| DuLabs"));
   });
 
@@ -180,7 +184,7 @@ describe("SEO -- metadata, imagen social y reparto de palabras clave", () => {
     assert.match(ws, /title: "WhatsApp con IA para empresas \| DuLabs"/);
     assert.match(ws, /canonical: "https:\/\/www\.dulabs\.co\/whatsapp-ia"/);
     assert.notEqual(HOME_SEO.title, "WhatsApp con IA para empresas | DuLabs");
-    const enlaces = todasLasFaq().map((f) => f.enlace?.href);
+    const enlaces = todasLasFaq().flatMap((f) => (f.enlaces ?? []).map((e) => e.href));
     assert.ok(enlaces.includes("/whatsapp-ia"), "la home enlaza a /whatsapp-ia desde una respuesta (enlazado interno)");
   });
 
@@ -282,9 +286,10 @@ describe("FAQ -- cada afirmación tiene respaldo en el producto real", () => {
   it("implementación y costos de Meta: lo que dice la FAQ está en el checkout y en la sección de planes", () => {
     // El comentario del checkout se parte en dos líneas: se une antes de comparar.
     assert.match(leer("app", "checkout", "page.tsx").replace(/\n\s*\/\/\s*/g, " "), /el primer cobro incluye la cuota de implementación/);
-    assert.match(leer("components", "site", "Sections.tsx"), /Pago único por la configuración y puesta en marcha de tu asistente/);
     assert.match(leer("components", "site", "Sections.tsx"), /Meta cobra directamente al negocio/);
-    assert.match(texto, /cuota de implementación de pago único, descrita en los planes como la configuración y puesta en marcha de tu asistente/);
+    // La FAQ nombra el cobro de forma neutral (sin presentar la implementación manual como requisito) y remite al desglose del checkout.
+    assert.match(texto, /cada plan muestra un pago único de implementación que va en el primer cobro; el desglose aparece antes de pagar/);
+    assert.match(leer("app", "checkout", "page.tsx"), /de mensualidad \+ \$\{implementacionCop/);
     assert.match(texto, /Meta los cobra directamente al negocio/);
   });
 
@@ -307,14 +312,13 @@ describe("FAQ -- cada afirmación tiene respaldo en el producto real", () => {
 
 describe("FAQ -- enlaces internos y accesibilidad", () => {
   it("cada enlace de una respuesta apunta a una ruta, un artículo o un ancla que existen", () => {
-    const anclas = new Set(["como-funciona", "agendamiento", "conocimiento", "catalogo", "empezar"]);
-    for (const f of todasLasFaq()) {
-      if (!f.enlace) continue;
-      const { href, texto } = f.enlace;
+    const anclas = new Set(["como-funciona", "agendamiento", "conocimiento", "catalogo", "configuracion", "empresas", "empezar"]);
+    for (const { f, e } of todasLasFaq().flatMap((f) => (f.enlaces ?? []).map((e) => ({ f, e })))) {
+      const { href, texto } = e;
       assert.ok(texto.length >= 8, `${f.id}: el texto del enlace debe ser descriptivo`);
       if (href.startsWith("#")) {
         assert.ok(anclas.has(href.slice(1)), `${f.id}: ancla desconocida ${href}`);
-        const fuentePagina = leer("app", "home-v3", "page.tsx") + leer("components", "home", "StepsSection.tsx") + leer("components", "home", "CatalogSection.tsx") + leer("components", "home", "KnowledgeSection.tsx") + leer("components", "home", "SchedulingSection.tsx") + leer("components", "home", "FinalCta.tsx");
+        const fuentePagina = leer("app", "home-v3", "page.tsx") + leer("components", "home", "StepsSection.tsx") + leer("components", "home", "CatalogSection.tsx") + leer("components", "home", "KnowledgeSection.tsx") + leer("components", "home", "SchedulingSection.tsx") + leer("components", "home", "ConfigSection.tsx") + leer("components", "home", "CustomSolutionsSection.tsx") + leer("components", "home", "FinalCta.tsx");
         assert.match(fuentePagina, new RegExp(`id="${href.slice(1)}"`), `no existe la sección ${href}`);
       } else if (href.startsWith("/recursos/")) {
         assert.ok(ARTICULOS.some((a) => a.slug === href.replace("/recursos/", "")), `${f.id}: artículo inexistente ${href}`);

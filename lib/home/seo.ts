@@ -17,9 +17,9 @@ export const HOME_SEO = {
   /** <= 60 caracteres. No contiene "WhatsApp con IA": esa frase es de /whatsapp-ia. */
   title: "Agentes de IA y automatización para empresas | DuLabs",
   /** <= 160 caracteres. */
-  description: "Crea agentes de IA que atienden por WhatsApp, agendan citas con Google Calendar y usan tu catálogo. O contrata automatización empresarial a la medida.",
-  ogTitle: "DuLabs: agentes de IA y automatización para empresas",
-  ogDescription: "Crea tu agente de IA para WhatsApp desde el panel de DuLabs, o pide automatización empresarial, integraciones y soluciones a la medida.",
+  description: "Crea tu agente de IA para WhatsApp: agenda citas con Google Calendar y responde con tu catálogo. Y si necesitas más, automatización empresarial a la medida.",
+  ogTitle: "DuLabs: crea tu agente de IA o pide automatización a la medida",
+  ogDescription: "Crea, configura, prueba y publica tu agente de IA para WhatsApp desde el panel de DuLabs, sin programar. Y si necesitas más, desarrollamos automatización e integraciones a la medida.",
   ogImage: {
     url: "/og/dulabs-agentes-ia.png",
     width: 1200,

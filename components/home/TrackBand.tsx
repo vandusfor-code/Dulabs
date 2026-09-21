@@ -1,4 +1,4 @@
-// Banda que separa las DOS líneas de DuLabs a lo largo de la página: 01 Autoservicio (crear y configurar el propio agente) y 02 A la
+// Banda que separa las DOS líneas de DuLabs a lo largo de la página: 01 Crea tu agente (agente estándar: el cliente lo configura solo) y 02 A la
 // medida (automatización, integraciones y soluciones personalizadas con el equipo). Es el mismo par que aparece en el hero.
 export function TrackBand({ n, etiqueta, texto }: { n: string; etiqueta: string; texto: string }) {
   return (
