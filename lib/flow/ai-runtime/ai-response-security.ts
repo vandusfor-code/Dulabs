@@ -27,6 +27,23 @@ function buildClaimContext(
 }
 
 /**
+ * El motor SOLO envía al cliente el `responseText` de los nodos `respond` y `classify`. En un nodo `propose_action` (o
+ * `extract`/`hybrid`) el modelo real suele escribir además una frase junto a su propuesta ("Ya consulté la disponibilidad...",
+ * "Reservando tu cita..."): ese texto no llega a nadie, pero pasaba por el filtro de afirmaciones y, al mencionar disponibilidad o
+ * reserva sin evidencia, el filtro rechazaba TODO el resultado -- la consulta de disponibilidad nunca se ejecutaba y la reserva
+ * terminaba transfiriendo el chat a una persona (hallado en la primera prueba real por WhatsApp). Aquí se descarta ese texto NO
+ * enviado antes de validar; lo que sí se envía (respond/classify) sigue pasando por el filtro completo.
+ */
+export function stripUnsentAiText(input: { dispatchResult: EffectDispatchResult; mode: string | undefined }): EffectDispatchResult {
+  if (!input.dispatchResult.success) return input.dispatchResult;
+  if (input.mode === "respond" || input.mode === "classify" || input.mode === undefined) return input.dispatchResult;
+  const base = input.dispatchResult.appliedResult ?? input.dispatchResult.data ?? {};
+  if (!("responseText" in base)) return input.dispatchResult;
+  const { responseText: _noEnviado, ...resto } = base as Record<string, unknown>;
+  return { ...input.dispatchResult, data: resto, appliedResult: resto };
+}
+
+/**
  * Impide que responseText de IA afirme operaciones externas sin evidencia verificada.
  */
 export function applyAiResponseClaimSecurity(input: {
