@@ -1174,3 +1174,41 @@ body {
   .dev-scope .dev-wire::after,
   .dev-scope .dev-wire-y::after { display: none; }
 }
+
+/* ---------- Home principal v3 (scoped via .home-scope, el wrapper lleva .dev-scope .home-scope) ----------
+   Landing principal premium. Mismo sistema neutro que .dev-scope (negro/blanco/gris, hairlines, Geist) + UN acento naranja de marca
+   usado con moderación: CTA principal, estados vivos y pequeños detalles. El logo NO se recolorea. Nada de gradientes decorativos:
+   solo una rejilla apenas perceptible y un resplandor tenue detrás del producto. */
+@theme {
+  --color-home-accent: #ff5c1a;
+  --color-home-accent-hover: #ff7440;
+  /* Texto sobre naranja: #0a0a0a da 6.4:1 (AA); el blanco daría 3.1:1 y no pasa. */
+  --color-home-accent-fg: #0a0a0a;
+  --color-home-accent-soft: rgb(255 92 26 / 12%);
+  --color-home-accent-line: rgb(255 92 26 / 35%);
+}
+.home-scope .home-grid {
+  background-image:
+    linear-gradient(to right, rgb(255 255 255 / 3.5%) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(255 255 255 / 3.5%) 1px, transparent 1px);
+  background-size: 56px 56px;
+  -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 0%, #000 30%, transparent 78%);
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 0%, #000 30%, transparent 78%);
+}
+.home-scope .home-glow {
+  background: radial-gradient(closest-side, rgb(255 92 26 / 9%), transparent 70%);
+}
+/* Secuencia de aparición ÚNICA (no en bucle): reutiliza el keyframe dev-stream-in; el retraso viene de --home-d. */
+.home-scope .home-seq {
+  animation: dev-stream-in 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation-delay: var(--home-d, 0ms);
+}
+.home-scope a:focus-visible,
+.home-scope button:focus-visible {
+  outline: 2px solid var(--color-home-accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .home-scope .home-seq { animation: none; opacity: 1; transform: none; }
+}
