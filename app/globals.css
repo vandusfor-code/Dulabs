@@ -1193,7 +1193,8 @@ body {
   animation-delay: var(--home-d, 0ms);
 }
 .home-scope a:focus-visible,
-.home-scope button:focus-visible {
+.home-scope button:focus-visible,
+.home-scope summary:focus-visible {
   outline: 2px solid var(--color-site-fg);
   outline-offset: 2px;
   border-radius: 6px;

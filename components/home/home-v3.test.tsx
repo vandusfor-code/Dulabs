@@ -16,6 +16,8 @@ import { CatalogSection } from "@/components/home/CatalogSection";
 import { ConfigSection } from "@/components/home/ConfigSection";
 import { CustomSolutionsSection } from "@/components/home/CustomSolutionsSection";
 import { DeveloperStrip } from "@/components/home/DeveloperStrip";
+import { FaqSection } from "@/components/home/FaqSection";
+import { FinalCta } from "@/components/home/FinalCta";
 import { HomeHero } from "@/components/home/HomeHero";
 import { HomeNav } from "@/components/home/HomeNav";
 import { KnowledgeSection } from "@/components/home/KnowledgeSection";
@@ -27,6 +29,7 @@ import { BUSINESS_TYPE_OPTIONS } from "@/lib/business-agent-form";
 import { OPENAPI_BASE_URL, OPENAPI_DEVELOPER_V1 } from "@/lib/developers/openapi";
 import { RUBROS } from "@/lib/home/negocios";
 import { CAPACIDADES_A_MEDIDA, PROCESO_A_MEDIDA } from "@/lib/home/enterprise";
+import { homeMetadata } from "@/lib/home/seo";
 import { ACCIONES_DEL_AGENTE, ETIQUETA_CAPACIDAD, PASOS_CON_PANEL, PASOS_DEL_WIZARD } from "@/lib/home/capabilities";
 import {
   CASOS_HREF,
@@ -77,6 +80,8 @@ const SECCIONES = [
   { id: "empresas", html: renderToStaticMarkup(<CustomSolutionsSection />) },
   { id: "developers", html: renderToStaticMarkup(<DeveloperStrip />) },
   { id: "confianza", html: renderToStaticMarkup(<TrustSection />) },
+  { id: "preguntas-frecuentes", html: renderToStaticMarkup(<FaqSection />) },
+  { id: "empezar", html: renderToStaticMarkup(<FinalCta />) },
 ];
 const PAGINA_FUENTE = readFileSync(join(RAIZ, "app", "home-v3", "page.tsx"), "utf8").replace(/\r\n/g, "\n");
 const HERO = renderToStaticMarkup(<HomeHero />);
@@ -149,7 +154,7 @@ describe("Home v3 -- Fase 3: estructura de las secciones", () => {
     assert.equal((PAGINA.match(/<h1[\s>]/g) ?? []).length, 1);
     assert.deepEqual(
       SECCIONES.map((s) => s.id),
-      ["problema", "agentes", "agendamiento", "configuracion", "catalogo", "conocimiento", "negocios", "como-funciona", "empresas", "developers", "confianza"],
+      ["problema", "agentes", "agendamiento", "configuracion", "catalogo", "conocimiento", "negocios", "como-funciona", "empresas", "developers", "confianza", "preguntas-frecuentes", "empezar"],
     );
   });
 
@@ -163,6 +168,8 @@ describe("Home v3 -- Fase 3: estructura de las secciones", () => {
     assert.match(h2("empresas"), /¿Necesitas algo más que un agente\?/);
     assert.match(h2("developers"), /También construimos infraestructura para developers/);
     assert.match(h2("confianza"), /Tecnología propia, con reglas claras/);
+    assert.match(h2("preguntas-frecuentes"), /Respuestas claras antes de empezar/);
+    assert.match(h2("empezar"), /Tu negocio ya tiene procesos\. Ahora pueden trabajar automáticamente\./);
   });
 
   it("las DOS líneas comerciales están separadas en la página: 01 Autoservicio -> 02 A la medida, cada una con sus secciones", () => {
@@ -187,6 +194,8 @@ describe("Home v3 -- Fase 3: estructura de las secciones", () => {
       "<CustomSolutionsSection />",
       "<DeveloperStrip />",
       "<TrustSection />",
+      "<FaqSection />",
+      "<FinalCta />",
     ].map(pos);
     assert.deepEqual([...orden].sort((a, b) => a - b), orden, "las secciones de page.tsx no están en el orden previsto");
     assert.match(PAGINA_FUENTE, /<TrackBand n="01" etiqueta="Autoservicio"/);
@@ -384,7 +393,10 @@ describe("Home v3 -- Fase 3: fidelidad contra el producto real", () => {
     const palabras = t.split(/\s+/).length;
     assert.ok((veces("agente de ia") + veces("agentes de ia")) / palabras <= 0.012, "demasiada densidad de 'agente(s) de IA'");
     assert.ok(veces("automatización empresarial") <= 4, "demasiada repetición de 'automatización empresarial'");
-    assert.ok(veces("ia para whatsapp") + veces("whatsapp con ia") <= 2, "demasiada repetición de 'IA para WhatsApp'");
+    // "WhatsApp con IA" es la frase que posee /whatsapp-ia: la home solo la usa como texto de enlace hacia esa página (<= 2 veces).
+    assert.ok(veces("whatsapp con ia") <= 2, "la home no debe competir con /whatsapp-ia por 'WhatsApp con IA'");
+    // "agente(s) de IA para WhatsApp" sí es un objetivo de la home, pero sin relleno.
+    assert.ok(veces("agente de ia para whatsapp") + veces("agentes de ia para whatsapp") <= 5, "demasiada repetición de 'agente de IA para WhatsApp'");
   });
 });
 
@@ -407,7 +419,15 @@ describe("Home v3 -- guardas de calidad (aplican a todas las fases)", () => {
       [/\bISO ?\d{3,5}\b|SOC ?2|certificad[oa]s?\b|certificaci[oó]n/i, "certificaciones que DuLabs no tiene"],
     ];
     // Frases NEGATIVAS/HONESTAS permitidas (dicen lo que el producto NO hace) y las etiquetas de capacidades no disponibles.
-    const permitidas = [/no cobra ni toma pedidos/gi, /"Cobrar"/g, /"Tomar pedidos"/g, /Tomar pedidos/g];
+    const permitidas = [
+      /no cobra ni toma pedidos/gi,
+      /tampoco cobra ni toma pedidos/gi,
+      /Meta[^.]{0,40}cobra[^.]{0,40}directamente/gi,
+      /palabras parecidas, no sinónimos/gi,
+      /"Cobrar"/g,
+      /"Tomar pedidos"/g,
+      /Tomar pedidos/g,
+    ];
     for (const ruta of FUENTES_HOME) {
       let fuente = sinComentarios(readFileSync(ruta, "utf8"));
       for (const p of permitidas) fuente = fuente.replace(p, "");
@@ -446,7 +466,8 @@ describe("Home v3 -- guardas de calidad (aplican a todas las fases)", () => {
 
   it("la ruta temporal es noindex/nofollow y no está en el sitemap", () => {
     const pagina = readFileSync(join(RAIZ, "app", "home-v3", "page.tsx"), "utf8");
-    assert.match(pagina, /robots:\s*\{\s*index:\s*false,\s*follow:\s*false\s*\}/);
+    assert.match(pagina, /homeMetadata\(\{ path: HOME_V3_PATH, indexable: false \}\)/);
+    assert.deepEqual(homeMetadata({ path: HOME_V3_PATH, indexable: false }).robots, { index: false, follow: false });
     const urls = sitemap().map((e) => e.url);
     assert.ok(!urls.some((u) => u.includes(HOME_V3_PATH)), "/home-v3 no debe estar en el sitemap");
   });
@@ -529,7 +550,7 @@ describe("Home v3 -- identidad monocroma (sin naranja ni ningún color de acento
   });
 
   it("el foco visible y la pestaña activa usan blanco, y las animaciones se anulan con prefers-reduced-motion", () => {
-    assert.match(cssHome, /button:focus-visible \{\s*outline: 2px solid var\(--color-site-fg\)/);
+    assert.match(cssHome, /summary:focus-visible \{\s*outline: 2px solid var\(--color-site-fg\)/);
     assert.match(cssHome, /box-shadow: inset 2px 0 0 var\(--color-site-fg\)/);
     assert.match(css, /prefers-reduced-motion:\s*reduce\)\s*\{\s*\.home-scope \.home-seq\s*\{\s*animation:\s*none/);
   });
