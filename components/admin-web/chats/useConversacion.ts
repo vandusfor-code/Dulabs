@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
+import { usePollingVisible } from "@/components/admin-web/chats/usePollingVisible";
 import type { MensajeChat, EstadoConversacion } from "@/lib/chats/tipos";
 
 export type ConversacionDetalle = {
@@ -42,12 +43,8 @@ export function useConversacion(token: string, conversacionId: number | null) {
       .catch(() => {});
   }, [token, conversacionId]);
 
-  useEffect(() => {
-    if (!conversacionId) return;
-    cargar();
-    const id = setInterval(cargar, INTERVALO_HILO_MS);
-    return () => clearInterval(id);
-  }, [conversacionId, cargar]);
+  // Solo con la pestaña visible (y despacio si nadie la usa): ver lib/chats/polling.ts (egress de Supabase).
+  usePollingVisible(cargar, INTERVALO_HILO_MS, Boolean(conversacionId));
 
   const vigente = datos && datos.id === conversacionId ? datos : null;
 
