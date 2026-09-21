@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { resolverMiembroEquipo } from "@/lib/team";
+import { agruparErroresPorCampana, type FilaMensajeFallido } from "@/lib/campanas-errores";
 
 export const runtime = "nodejs";
 
@@ -89,6 +90,20 @@ export async function GET(request: NextRequest) {
     .order("created_at", { ascending: false })
     .limit(LIMITE_DEFENSIVO_FUNNEL);
   if (funnelError) return Response.json({ error: funnelError.message }, { status: 500 });
+
+  // Causa real de cada destinatario que no recibió el mensaje (código y detalle tal cual los reportó Meta). Consulta APARTE y acotada
+  // a los fallidos: no se ensanchan las columnas de la consulta grande del funnel (cuida el egreso de Supabase). La página lee
+  // `erroresDetalle` de la campaña seleccionada; sin este campo se rompía al cargar para cualquier negocio con campañas enviadas.
+  const LIMITE_FILAS_ERRORES = 5_000;
+  const { data: mensajesFallidos, error: fallidosError } = await supabase
+    .from("dulabs_mensajes_log")
+    .select("campana_id, telefono_cliente, wamid, error_codigo, error_detalle")
+    .in("campana_id", idsCampanas)
+    .eq("estado_entrega", "fallido")
+    .order("created_at", { ascending: false })
+    .limit(LIMITE_FILAS_ERRORES);
+  if (fallidosError) return Response.json({ error: fallidosError.message }, { status: 500 });
+  const erroresPorCampana = agruparErroresPorCampana((mensajesFallidos ?? []) as FilaMensajeFallido[]);
 
   const filasTendencia = (mensajesTendencia ?? []) as FilaMensaje[];
   const filas = (mensajesFunnel ?? []) as FilaMensaje[];
@@ -187,6 +202,7 @@ export async function GET(request: NextRequest) {
       created_at: c.created_at,
       estado: enviados > 0 && enviados === fallidos ? "fallido" : "completado",
       funnel: { sent: enviados, delivered: entregados, read: leidos, replied: respondidos },
+      erroresDetalle: erroresPorCampana.get(c.id) ?? [],
     };
   });
 
