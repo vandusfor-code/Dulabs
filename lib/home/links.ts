@@ -2,8 +2,8 @@
 // los tests verifiquen contra un solo origen. NO define precios ni planes: eso vive solo en lib/planes.ts.
 import { MENSAJE_WHATSAPP_CONTACTO_ES, MENSAJE_WHATSAPP_ENTERPRISE_ES, whatsappVentasUrl } from "@/lib/site-contact";
 
-/** Ruta temporal de la versión nueva (noindex). Al promoverla, esta página pasa a ser "/". */
-export const HOME_V3_PATH = "/home-v3";
+/** Ruta de la home principal. */
+export const HOME_PATH = "/";
 
 /**
  * "Crear mi agente de IA": el camino real de alta ya existente = registro -> pago del plan -> conectar WhatsApp -> panel

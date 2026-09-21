@@ -1,5 +1,5 @@
 /**
- * Home principal v3 (ruta temporal /home-v3). Pruebas de contenido renderizado + guardas de calidad que se mantienen en TODAS las
+ * Home principal (ruta "/"). Pruebas de contenido renderizado + guardas de calidad que se mantienen en TODAS las
  * fases: sin claims falsos, sin JS cliente innecesario, sin prueba social no verificada, noindex mientras sea borrador, y fidelidad de lo
  * que se afirma contra el Runtime y el Wizard reales (si el producto cambia, la home no puede seguir diciendo algo viejo).
  */
@@ -40,7 +40,7 @@ import {
   HABLAR_CON_DULABS_HREF,
   HABLAR_ESPECIALISTA_HREF,
   HOME_NAV_LINKS,
-  HOME_V3_PATH,
+  HOME_PATH,
 } from "@/lib/home/links";
 
 const RAIZ = join(__dirname, "..", "..");
@@ -54,7 +54,7 @@ function archivos(dir: string, acumulado: string[] = []): string[] {
   return acumulado;
 }
 
-const FUENTES_HOME = [...archivos(join(RAIZ, "components", "home")), ...archivos(join(RAIZ, "lib", "home")), join(RAIZ, "app", "home-v3", "page.tsx")];
+const FUENTES_HOME = [...archivos(join(RAIZ, "components", "home")), ...archivos(join(RAIZ, "lib", "home")), join(RAIZ, "app", "page.tsx")];
 
 const texto = (html: string) =>
   html
@@ -67,7 +67,7 @@ const texto = (html: string) =>
 
 const sinComentarios = (fuente: string) => fuente.replace(/\/\*[\s\S]*?\*\/|(^|[^:])\/\/.*$/gm, "$1");
 
-/** La página completa, en el orden real de app/home-v3/page.tsx. */
+/** La página completa, en el orden real de app/page.tsx. */
 const SECCIONES = [
   { id: "problema", html: renderToStaticMarkup(<ProblemSection />) },
   { id: "agentes", html: renderToStaticMarkup(<AgentActionsSection />) },
@@ -83,7 +83,7 @@ const SECCIONES = [
   { id: "preguntas-frecuentes", html: renderToStaticMarkup(<FaqSection />) },
   { id: "empezar", html: renderToStaticMarkup(<FinalCta />) },
 ];
-const PAGINA_FUENTE = readFileSync(join(RAIZ, "app", "home-v3", "page.tsx"), "utf8").replace(/\r\n/g, "\n");
+const PAGINA_FUENTE = readFileSync(join(RAIZ, "app", "page.tsx"), "utf8").replace(/\r\n/g, "\n");
 const HERO = renderToStaticMarkup(<HomeHero />);
 const PAGINA = HERO + SECCIONES.map((s) => s.html).join("");
 const TEXTO_PAGINA = texto(PAGINA);
@@ -190,7 +190,7 @@ describe("Home v3 -- Fase 3: estructura de las secciones", () => {
       "<KnowledgeSection />",
       "<BusinessTypesSection />",
       "<StepsSection />",
-      "<PricingSection showComparisonLink",
+      "<PricingSection",
       'etiqueta="A la medida"',
       "<CustomSolutionsSection />",
       "<TrustSection />",
@@ -363,7 +363,7 @@ describe("Home v3 -- Fase 3: fidelidad contra el producto real", () => {
 
   it("precios: se reutiliza PricingSection (componente existente) sin escribir precios en la home", () => {
     assert.match(PAGINA_FUENTE, /import \{ Footer, PricingSection \} from "@\/components\/site\/Sections";/);
-    assert.match(PAGINA_FUENTE, /<PricingSection showComparisonLink descripcion="[^"]+" \/>/);
+    assert.match(PAGINA_FUENTE, /<PricingSection\s+showComparisonLink\s+descripcion="[^"]+"\s+notaImplementacion="[^"]+"\s+notaSuscripcion="[^"]+"\s+\/>/);
     const componente = readFileSync(join(RAIZ, "components", "site", "Sections.tsx"), "utf8");
     assert.match(componente, /def\.precioCop/, "PricingSection debe leer los precios de PLANES (lib/planes.ts)");
   });
@@ -468,12 +468,16 @@ describe("Home v3 -- guardas de calidad (aplican a todas las fases)", () => {
     assert.match(texto(HERO).toLowerCase(), /ejemplo ilustrativo/);
   });
 
-  it("la ruta temporal es noindex/nofollow y no está en el sitemap", () => {
-    const pagina = readFileSync(join(RAIZ, "app", "home-v3", "page.tsx"), "utf8");
-    assert.match(pagina, /homeMetadata\(\{ path: HOME_V3_PATH, indexable: false \}\)/);
-    assert.deepEqual(homeMetadata({ path: HOME_V3_PATH, indexable: false }).robots, { index: false, follow: false });
+  it("la home es indexable con canónica a '/', está en el sitemap y la ruta temporal /home-v3 ya no existe", () => {
+    const pagina = readFileSync(join(RAIZ, "app", "page.tsx"), "utf8");
+    assert.match(pagina, /homeMetadata\(\{ path: HOME_PATH, indexable: true \}\)/);
+    assert.equal(HOME_PATH, "/");
+    const robotsHome = homeMetadata({ path: HOME_PATH, indexable: true }).robots as { index: boolean; follow: boolean };
+    assert.deepEqual([robotsHome.index, robotsHome.follow], [true, true]);
     const urls = sitemap().map((e) => e.url);
-    assert.ok(!urls.some((u) => u.includes(HOME_V3_PATH)), "/home-v3 no debe estar en el sitemap");
+    assert.ok(urls.some((u) => u.endsWith("/") && !u.replace(/^https?:\/\/[^/]+/, "").slice(1)), "la home '/' debe estar en el sitemap");
+    assert.ok(!urls.some((u) => u.includes("home-v3")), "/home-v3 no debe estar en el sitemap");
+    assert.ok(!readdirSync(join(RAIZ, "app")).includes("home-v3"), "la ruta temporal app/home-v3 debe haberse retirado");
   });
 
   it("no toca lo que está fuera de alcance de la home (planes, Developer, dashboard, login, APIs)", () => {

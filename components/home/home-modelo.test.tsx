@@ -40,10 +40,10 @@ function archivos(dir: string, acc: string[] = []): string[] {
   }
   return acc;
 }
-const FUENTES = [...archivos(join(RAIZ, "components", "home")), ...archivos(join(RAIZ, "lib", "home")), join(RAIZ, "app", "home-v3", "page.tsx")];
+const FUENTES = [...archivos(join(RAIZ, "components", "home")), ...archivos(join(RAIZ, "lib", "home")), join(RAIZ, "app", "page.tsx")];
 
-// Bandas tal como las compone app/home-v3/page.tsx (los textos se leen del propio archivo para que la prueba no pueda divergir).
-const PAGINA = leer("app", "home-v3", "page.tsx");
+// Bandas tal como las compone app/page.tsx (los textos se leen del propio archivo para que la prueba no pueda divergir).
+const PAGINA = leer("app", "page.tsx");
 const banda = (n: string) => {
   const m = new RegExp(`<TrackBand n="${n}" etiqueta="([^"]+)" texto="([^"]+)" />`).exec(PAGINA);
   assert.ok(m, `no se encontró la banda ${n} en page.tsx`);
@@ -172,14 +172,26 @@ describe("Modelo de producto -- FAQ y SEO coherentes con 'Crea tu agente'", () =
     assert.match(HOME_SEO.title, /^Agentes de IA y automatización para empresas/);
   });
 
-  it("PricingSection compartido: solo recibe una frase propia de la home; '/' y '/precios' no la pasan y su texto por defecto no cambió", () => {
-    assert.match(PAGINA, /<PricingSection showComparisonLink descripcion="Elige tu plan y crea tu agente desde el panel de DuLabs\. Precios en pesos colombianos \(COP\)\." \/>/);
-    for (const otra of ["app/page.tsx", "app/precios/page.tsx"]) {
-      const f = leer(...otra.split("/"));
-      assert.match(f, /<PricingSection/);
-      assert.doesNotMatch(f, /descripcion=/, `${otra} no debe pasar la nueva propiedad`);
-    }
+  it("PricingSection compartido: solo la home le pasa sus tres frases; el resto de páginas no y sus textos por defecto no cambiaron", () => {
+    assert.match(PAGINA, /descripcion="Elige tu plan y crea tu agente desde el panel de DuLabs\. Precios en pesos colombianos \(COP\)\."/);
+    assert.match(PAGINA, /notaImplementacion="Pago único que se suma al primer cobro; el desglose aparece antes de pagar\."/);
+    assert.match(PAGINA, /notaSuscripcion="Tu suscripción a DuLabs cubre la plataforma y el uso de la IA según el plan elegido\."/);
+    // La home no dice que la suscripción "cubre la configuración" ni que el pago único es por "configurar y poner en marcha tu asistente".
+    assert.doesNotMatch(PAGINA, /cubre la plataforma, la configuraci[oó]n|configuraci[oó]n y puesta en marcha de tu asistente/i);
+    const paginas = archivos(join(RAIZ, "app")).filter((r) => /page\.tsx$/.test(r) && r !== join(RAIZ, "app", "page.tsx"));
+    const usan = paginas.filter((r) => readFileSync(r, "utf8").includes("<PricingSection"));
+    assert.ok(usan.length >= 1, "debe haber otras páginas que usan PricingSection (p. ej. /precios)");
+    for (const r of usan) assert.doesNotMatch(readFileSync(r, "utf8"), /descripcion=|notaImplementacion=|notaSuscripcion=/, `${relative(RAIZ, r)} no debe pasar propiedades de la home`);
     const sections = leer("components", "site", "Sections.tsx");
     assert.match(sections, /descripcion \?\?\s*t\(\s*"Nosotros configuramos tu asistente de IA según la información y procesos de tu negocio\. Precios en pesos colombianos \(COP\)\."/);
+    assert.match(sections, /notaImplementacion \?\?\s*t\(\s*"Pago único por la configuración y puesta en marcha de tu asistente\."/);
+    assert.match(sections, /notaSuscripcion \?\?\s*t\(\s*"Tu suscripción a DuLabs cubre la plataforma, la configuración y el uso de la IA según el plan elegido\."/);
+  });
+
+  it("la home vive en '/': app/page.tsx la publica y la ruta temporal /home-v3 ya no existe", () => {
+    assert.ok(!readdirSync(join(RAIZ, "app")).includes("home-v3"));
+    assert.match(PAGINA, /export default function HomePage\(\)/);
+    assert.match(PAGINA, /homeMetadata\(\{ path: HOME_PATH, indexable: true \}\)/);
+    assert.doesNotMatch(PAGINA, /noindex|HOME_V3/i);
   });
 });

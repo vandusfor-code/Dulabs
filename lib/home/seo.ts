@@ -1,5 +1,5 @@
 // SEO de la home principal: metadata, imagen social y datos estructurados (SoftwareApplication + FAQPage). Todo sale de UNA definición para
-// que la preview (/home-v3, noindex) y la home definitiva ("/") no puedan divergir: al promoverla solo cambian `path` e `indexable`.
+// que la home ("/") y sus pruebas no puedan divergir.
 //
 // Reparto de palabras clave (evita canibalizar /whatsapp-ia, que conserva "WhatsApp con IA para empresas"):
 //   Home  -> agentes de IA (para empresas y para WhatsApp) + automatización empresarial + IA para empresas.
@@ -31,7 +31,7 @@ export const HOME_SEO = {
 } as const;
 
 /**
- * Metadata de la home. Preview: { path: "/home-v3", indexable: false } (noindex, canónica a sí misma). Definitiva: { path: "/", indexable: true }.
+ * Metadata de la home: { path: "/", indexable: true } (indexable, canónica a sí misma). Con `indexable: false` emite noindex/nofollow.
  * Con `indexable: false` NO se declara una canónica hacia "/" (Google desaconseja mezclar noindex con canónicas hacia otra URL).
  */
 export function homeMetadata({ path, indexable }: { path: string; indexable: boolean }): Metadata {

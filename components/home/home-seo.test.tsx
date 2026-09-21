@@ -17,7 +17,7 @@ import { CAPABILITY_BACKING, CAPABILITY_KEYS } from "@/lib/agent-compiler/spec/c
 import { BUSINESS_TYPE_OPTIONS } from "@/lib/business-agent-form";
 import { ETIQUETA_CAPACIDAD } from "@/lib/home/capabilities";
 import { GRUPOS_FAQ, textoRespuesta, todasLasFaq } from "@/lib/home/faq";
-import { HOME_V3_PATH } from "@/lib/home/links";
+import { HOME_PATH } from "@/lib/home/links";
 import { HOME_SEO, homeFaqJsonLd, homeMetadata, homeSoftwareApplicationJsonLd, SITE_URL, TOTAL_FAQ } from "@/lib/home/seo";
 import { PLANES } from "@/lib/planes";
 import { ARTICULOS } from "@/lib/recursos";
@@ -159,7 +159,7 @@ describe("SEO -- datos estructurados", () => {
     const layout = leer("app", "layout.tsx");
     assert.match(layout, /organizationSchema\(\)/);
     assert.match(layout, /websiteSchema\(\)/);
-    const pagina = leer("app", "home-v3", "page.tsx");
+    const pagina = leer("app", "page.tsx");
     assert.doesNotMatch(pagina, /organizationSchema|websiteSchema/);
     assert.match(pagina, /homeSoftwareApplicationJsonLd\(\)/);
     assert.match(pagina, /homeFaqJsonLd\(\)/);
@@ -167,7 +167,8 @@ describe("SEO -- datos estructurados", () => {
 });
 
 describe("SEO -- metadata, imagen social y reparto de palabras clave", () => {
-  const preview = homeMetadata({ path: HOME_V3_PATH, indexable: false });
+  // Modo noindex del generador (no lo usa ninguna página hoy): se conserva probado para que nunca emita una canónica hacia otra URL.
+  const noindex = homeMetadata({ path: "/vista-previa", indexable: false });
   const definitiva = homeMetadata({ path: "/", indexable: true });
 
   it("título y descripción con longitud de búsqueda y los términos objetivo de la home", () => {
@@ -188,10 +189,15 @@ describe("SEO -- metadata, imagen social y reparto de palabras clave", () => {
     assert.ok(enlaces.includes("/whatsapp-ia"), "la home enlaza a /whatsapp-ia desde una respuesta (enlazado interno)");
   });
 
-  it("preview (/home-v3): noindex/nofollow y canónica a sí misma (sin mezclar noindex con canónica hacia '/')", () => {
-    assert.deepEqual(preview.robots, { index: false, follow: false });
-    assert.equal(preview.alternates?.canonical, HOME_V3_PATH);
-    assert.equal((preview.title as { absolute: string }).absolute, HOME_SEO.title);
+  it("modo noindex: noindex/nofollow y canónica a sí misma (sin mezclar noindex con canónica hacia '/')", () => {
+    assert.deepEqual(noindex.robots, { index: false, follow: false });
+    assert.equal(noindex.alternates?.canonical, "/vista-previa");
+    assert.equal((noindex.title as { absolute: string }).absolute, HOME_SEO.title);
+  });
+
+  it("la página '/' publica exactamente la metadata definitiva (indexable, ruta '/')", () => {
+    assert.equal(HOME_PATH, "/");
+    assert.match(leer("app", "page.tsx"), /export const metadata: Metadata = homeMetadata\(\{ path: HOME_PATH, indexable: true \}\);/);
   });
 
   it("definitiva ('/'): indexable, canónica '/', Open Graph y Twitter completos con imagen 1200x630 y texto alternativo", () => {
@@ -219,7 +225,7 @@ describe("SEO -- metadata, imagen social y reparto de palabras clave", () => {
     assert.ok(statSync(ruta).size < 300 * 1024, "la imagen debe pesar menos de 300 KB");
   });
 
-  it("/home-v3 sigue fuera del sitemap y rastreable (robots no lo bloquea, para que Google pueda leer el noindex); la home '/' está en el sitemap", () => {
+  it("la home '/' está en el sitemap y la ruta temporal /home-v3 ya no existe ni figura en sitemap/robots", () => {
     const urls = sitemap().map((e) => e.url);
     assert.ok(urls.includes(`${SITE_URL}/`));
     assert.ok(!urls.some((u) => u.includes("home-v3")));
@@ -318,7 +324,7 @@ describe("FAQ -- enlaces internos y accesibilidad", () => {
       assert.ok(texto.length >= 8, `${f.id}: el texto del enlace debe ser descriptivo`);
       if (href.startsWith("#")) {
         assert.ok(anclas.has(href.slice(1)), `${f.id}: ancla desconocida ${href}`);
-        const fuentePagina = leer("app", "home-v3", "page.tsx") + leer("components", "home", "StepsSection.tsx") + leer("components", "home", "CatalogSection.tsx") + leer("components", "home", "KnowledgeSection.tsx") + leer("components", "home", "SchedulingSection.tsx") + leer("components", "home", "ConfigSection.tsx") + leer("components", "home", "CustomSolutionsSection.tsx") + leer("components", "home", "FinalCta.tsx");
+        const fuentePagina = leer("app", "page.tsx") + leer("components", "home", "StepsSection.tsx") + leer("components", "home", "CatalogSection.tsx") + leer("components", "home", "KnowledgeSection.tsx") + leer("components", "home", "SchedulingSection.tsx") + leer("components", "home", "ConfigSection.tsx") + leer("components", "home", "CustomSolutionsSection.tsx") + leer("components", "home", "FinalCta.tsx");
         assert.match(fuentePagina, new RegExp(`id="${href.slice(1)}"`), `no existe la sección ${href}`);
       } else if (href.startsWith("/recursos/")) {
         assert.ok(ARTICULOS.some((a) => a.slug === href.replace("/recursos/", "")), `${f.id}: artículo inexistente ${href}`);
