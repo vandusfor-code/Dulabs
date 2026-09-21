@@ -43,6 +43,11 @@ export interface ReadinessFacts {
    * "reserva", "pago"...): el agente no podría mostrar el catálogo ni la cotización. Opcional: si no se calcula, no avisa.
    */
   catalogNamesAtRisk?: string[];
+  /**
+   * Preguntas de FAQ ACTIVAS cuya respuesta el filtro de afirmaciones del runtime bloquearía (contiene "cita", "reserva",
+   * "disponible", "pago"...): el cliente recibiría un mensaje genérico en vez de la respuesta. Opcional: si no se calcula, no avisa.
+   */
+  faqsAtRisk?: string[];
 }
 
 export interface ReadinessSummaryItem {
@@ -125,6 +130,17 @@ export function evaluateReadiness(spec: BusinessAgentSpec, facts: ReadinessFacts
       caps.catalog ? "catalog" : "sales",
       `Estos nombres contienen palabras que el filtro de seguridad del agente puede bloquear (cita, reserva, agendar, pago...): ${nombres}. Si se bloquean, el cliente no verá el catálogo ni la cotización. Renómbralos (p. ej. «Valoración» en vez de «Cita de valoración»).`,
       "servicios",
+    );
+  }
+
+  // ---- Respuestas de FAQ que el filtro de seguridad bloquearía (el cliente vería un mensaje genérico) ----
+  if (caps.faq && (facts.faqsAtRisk?.length ?? 0) > 0) {
+    const preguntas = facts.faqsAtRisk!.slice(0, 5).map((q) => `«${q}»`).join(", ");
+    aviso(
+      "FAQ_ANSWER_CLAIM_RISK",
+      "faq",
+      `Estas respuestas de preguntas frecuentes contienen palabras que el filtro de seguridad del agente puede bloquear (cita, reserva, disponible, pago...): ${preguntas}. Si se bloquean, el cliente recibe un mensaje genérico en vez de la respuesta. Reescríbelas sin esas palabras (p. ej. «Escríbenos por aquí lo que necesitas y con gusto te ayudamos»).`,
+      "conocimiento",
     );
   }
 

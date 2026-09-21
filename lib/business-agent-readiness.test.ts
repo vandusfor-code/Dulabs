@@ -163,3 +163,23 @@ describe("R8 — resumen 'Tu agente está configurado para:'", () => {
     assert.equal(a, JSON.stringify(evaluateReadiness(agenda(), LISTO)));
   });
 });
+
+describe("R8 — respuestas de FAQ que el filtro de seguridad bloquearía", () => {
+  const conFaq = spec({ capabilities: caps({ faq: true }) });
+
+  it("14. respuestas con palabras de dominio => ADVERTENCIA (no bloquea) con las preguntas y dónde arreglarlo", () => {
+    const r = evaluateReadiness(conFaq, { ...LISTO, faqsAtRisk: ["¿Cómo pido una cita?", "¿Tienen disponibilidad?"] });
+    assert.equal(r.ready, true, "es un aviso al autor, no un bloqueo");
+    const w = r.warnings.find((x) => x.code === "FAQ_ANSWER_CLAIM_RISK");
+    assert.ok(w);
+    assert.match(w!.message, /«¿Cómo pido una cita\?», «¿Tienen disponibilidad\?»/);
+    assert.equal(w!.step, "conocimiento");
+  });
+
+  it("15. sin FAQ en riesgo, campo ausente o agente sin FAQ => no avisa", () => {
+    assert.ok(!codes(evaluateReadiness(conFaq, { ...LISTO, faqsAtRisk: [] }), "warnings").includes("FAQ_ANSWER_CLAIM_RISK"));
+    assert.ok(!codes(evaluateReadiness(conFaq, LISTO), "warnings").includes("FAQ_ANSWER_CLAIM_RISK"));
+    const sinFaq = spec({ capabilities: caps({ scheduling: false }) });
+    assert.ok(!codes(evaluateReadiness(sinFaq, { ...LISTO, faqsAtRisk: ["x"] }), "warnings").includes("FAQ_ANSWER_CLAIM_RISK"));
+  });
+});

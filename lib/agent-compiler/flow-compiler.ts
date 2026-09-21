@@ -41,8 +41,18 @@ export type FlowCompilationResult =
   | { success: true; flow: FlowDefinition; checksum: string; diagnostics: CompilerDiagnostic[] }
   | { success: false; diagnostics: CompilerDiagnostic[] };
 
-/** Mensaje fijo seguro cuando la respuesta con conocimiento no pudo redactarse de forma segura (R4). */
-const MENSAJE_FAQ_RESPUESTA_NO_DISPONIBLE = "No pude preparar esa respuesta en este momento. ¿Puedes preguntármelo de otra forma?";
+/**
+ * Mensaje fijo seguro cuando la respuesta con conocimiento no pudo enviarse (p. ej. el filtro de afirmaciones bloqueó el texto de la
+ * FAQ). NO invita a "preguntarlo de otra forma": si una FAQ coincidió pero se bloqueó, reformular la pregunta da el mismo resultado.
+ */
+const MENSAJE_FAQ_RESPUESTA_NO_DISPONIBLE = "Por ahora no puedo darte esa respuesta por aquí. ¿Quieres preguntarme otra cosa?";
+
+/**
+ * Mensaje fijo cuando algo falla y el agente NO tiene la capability "Transferir a un humano": no hay a quién transferir, así que no
+ * se promete. (Antes: nodo `human` + "Te comunico con una persona del equipo", que no avisaba a nadie ni pausaba el chat.) Sin
+ * palabras de dominio (cita/reserva/horario...): el filtro de afirmaciones descartaría el mensaje en silencio.
+ */
+const MENSAJE_SIN_TRANSFERENCIA = "En este momento no pude completar eso. Intenta de nuevo en unos minutos, por favor.";
 
 /** Mensaje fijo seguro (sin afirmaciones externas) cuando una tool no está disponible. */
 const MENSAJE_TOOL_NO_DISPONIBLE = "En este momento no puedo completar esa consulta. Dame un momento, por favor.";
@@ -260,13 +270,14 @@ const MENSAJE_TRANSFERENCIA_NO_DISPONIBLE = "En este momento no pude comunicarte
  * publicador; palabras como "solicitud" se leen como "lead creado" sin evidencia y bloquean
  * la publicación. Por eso el texto es neutral (mismo criterio que el mensaje del camino FAQ).
  *
- * Sin la capability conserva EXACTAMENTE el nodo `human` histórico (grafo idéntico para
- * los agentes que no usan transferencia). `entryId` conserva su nombre histórico.
+ * Sin la capability NO hay transferencia: el nodo `human` del motor solo marca la ejecución como transferida (no avisa a nadie ni
+ * pausa el chat), así que decir "te comunico con una persona" sería una promesa falsa. Se emite un mensaje honesto
+ * (`sinTransferencia`) y termina. `entryId` conserva su nombre histórico.
  */
-function emitirTransferencia(g: GraphBuilder, ir: CompiledBusinessAgentIR, endId: string, entryId: string, actId: string, message: string): void {
+function emitirTransferencia(g: GraphBuilder, ir: CompiledBusinessAgentIR, endId: string, entryId: string, actId: string, message: string, sinTransferencia: string = MENSAJE_SIN_TRANSFERENCIA): void {
   const transferenciaReal = ir.states.some((s) => s.id === "HUMAN_TRANSFER");
   if (!transferenciaReal) {
-    g.addNode({ id: entryId, type: "human", config: { message, pauseDurationHours: 24 } });
+    g.addNode({ id: entryId, type: "message", config: { text: sinTransferencia, messageRole: "informational" } });
     g.addEdge(entryId, endId);
     return;
   }
@@ -598,7 +609,7 @@ function construirMaquina(g: GraphBuilder, ir: CompiledBusinessAgentIR, endId: s
     let sinInfoNode: string;
     if (politica === "handoff") {
       sinInfoNode = "human-faq-nofound";
-      emitirTransferencia(g, ir, endId, sinInfoNode, "act-handoff-faq", "Te comunico con una persona del equipo para ayudarte con esto.");
+      emitirTransferencia(g, ir, endId, sinInfoNode, "act-handoff-faq", "Te comunico con una persona del equipo para ayudarte con esto.", mensajeSin);
     } else {
       sinInfoNode = "msg-faq-nofound";
       g.addNode({ id: sinInfoNode, type: "message", config: { text: mensajeSin, messageRole: "informational" } });
