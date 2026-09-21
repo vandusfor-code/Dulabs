@@ -414,3 +414,5 @@ lib/agent-compiler/e2e/static-messages-audit.test.ts
 # Egress de Supabase -- la bandeja de chats ya no consulta con la pestaña oculta ni sin tope de filas (el polling ciego
 # agotaba la cuota compartida con producción). Política pura + guardas de código.
 lib/chats/polling.test.ts
+# Egress de Supabase -- el cron de inactividad de SOLOTALENTO (disparado cada ~5 s) ya no descarga filas completas en cada pasada.
+app/api/cron/seguimiento-inactividad-solotalento/route-egress.test.ts

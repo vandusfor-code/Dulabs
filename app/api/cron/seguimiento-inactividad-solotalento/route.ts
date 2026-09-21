@@ -62,22 +62,45 @@ export async function ejecutarSeguimientoInactividadSolotalento(
   // patológico (ej. un bug en otra parte dejando cientos de ejecuciones
   // waiting_input sin resolver), nunca pensado para recortar tráfico normal.
   const TOPE_EJECUCIONES_POR_BARRIDO = 200;
-  const { data: ejecuciones, error } = await supabase
-    .from("dulabs_flow_executions")
-    .select("*")
-    .eq("tenant_id", opts.tenantId)
-    .eq("phone_number_id", opts.phoneNumberId)
-    .eq("status", "waiting_input")
-    .lte("last_activity_at", limite)
-    .limit(TOPE_EJECUCIONES_POR_BARRIDO);
 
+  // EGRESS de Supabase (cuota compartida con producción): esta consulta corre con CADA disparo del cron y las ejecuciones ya
+  // avisadas se quedan en `waiting_input` para siempre. Antes se traían hasta 200 filas COMPLETAS (variables incluidas) en cada
+  // pasada y las ya avisadas se descartaban en JavaScript -- cientos de KB por disparo, decenas de miles de disparos al día. Además,
+  // esas filas ya avisadas ocupaban el tope y podían dejar sin aviso a las nuevas. Ahora: (1) columnas mínimas y filtro en SQL de las
+  // NO avisadas; (2) las filas completas se piden SOLO para las pendientes (en régimen normal: ninguna).
+  const YA_AVISADO = `metadata->>${METADATA_FLAG_ENVIADO}`;
+  const consultarCandidatas = (soloNoAvisadas: boolean) => {
+    let consulta = supabase
+      .from("dulabs_flow_executions")
+      .select("id, metadata")
+      .eq("tenant_id", opts.tenantId)
+      .eq("phone_number_id", opts.phoneNumberId)
+      .eq("status", "waiting_input")
+      .lte("last_activity_at", limite);
+    if (soloNoAvisadas) consulta = consulta.or(`${YA_AVISADO}.is.null,${YA_AVISADO}.neq.true`);
+    return consulta.limit(TOPE_EJECUCIONES_POR_BARRIDO);
+  };
+  let { data: candidatas, error } = await consultarCandidatas(true);
+  // El filtro en SQL es solo una optimización: si el servidor lo rechazara, se sigue sin él (columnas mínimas + filtro local).
+  if (error) ({ data: candidatas, error } = await consultarCandidatas(false));
   if (error) {
     return { enviados: 0, errores: [`consulta dulabs_flow_executions: ${error.message}`] };
   }
 
-  const pendientes = ((ejecuciones ?? []) as FlowExecutionRow[]).filter(
-    (e) => e.metadata?.[METADATA_FLAG_ENVIADO] !== true,
-  );
+  const idsPendientes = ((candidatas ?? []) as Array<Pick<FlowExecutionRow, "id" | "metadata">>)
+    .filter((e) => e.metadata?.[METADATA_FLAG_ENVIADO] !== true)
+    .map((e) => e.id);
+  if (idsPendientes.length === 0) return { enviados: 0, errores: [] };
+
+  const { data: ejecuciones, error: errorFilas } = await supabase
+    .from("dulabs_flow_executions")
+    .select("*")
+    .eq("tenant_id", opts.tenantId)
+    .in("id", idsPendientes);
+  if (errorFilas) {
+    return { enviados: 0, errores: [`consulta dulabs_flow_executions: ${errorFilas.message}`] };
+  }
+  const pendientes = ((ejecuciones ?? []) as FlowExecutionRow[]).filter((e) => e.metadata?.[METADATA_FLAG_ENVIADO] !== true);
   if (pendientes.length === 0) return { enviados: 0, errores: [] };
 
   const { data: cliente, error: clienteErr } = await supabase
@@ -121,11 +144,22 @@ export async function ejecutarSeguimientoInactividadSolotalento(
   return { enviados, errores };
 }
 
+// El aviso de inactividad es de 5 minutos: no necesita más precisión que ~1 minuto. En producción este cron se estaba disparando
+// cada ~5 segundos (planificador externo) y cada disparo consulta Supabase. Tope por instancia: los disparos que llegan antes de
+// INTERVALO_MIN_MS desde el anterior se responden 200 sin tocar la base. (La frecuencia real se corrige en el planificador.)
+const INTERVALO_MIN_MS = 30_000;
+let ultimaPasadaMs = 0;
+
 async function manejar(request: NextRequest) {
   const cuerpo = await request.text();
   if (!(await solicitudAutorizadaCron(request, cuerpo))) {
     return new Response("Unauthorized", { status: 401 });
   }
+  const ahora = Date.now();
+  if (ahora - ultimaPasadaMs < INTERVALO_MIN_MS) {
+    return Response.json({ enviados: 0, errores: [], omitido: "frecuencia" });
+  }
+  ultimaPasadaMs = ahora;
   const resultado = await ejecutarSeguimientoInactividadSolotalento(supabaseAdmin(), {
     tenantId: SOLOTALENTO_TENANT_ID,
     phoneNumberId: SOLOTALENTO_PHONE_NUMBER_ID,
