@@ -15,10 +15,10 @@ const PASOS: { quien: Quien; titulo: string; detalle: string }[] = [
   { quien: "ia", titulo: "Confirma al cliente", detalle: "“Listo. Tu cita de manicure básica quedó agendada para el jueves a las 3:30 p. m.”" },
 ];
 
-const ETIQUETA: Record<Quien, { texto: string; tono: "muted" | "light" | "accent" }> = {
+const ETIQUETA: Record<Quien, { texto: string; tono: "muted" | "light" | "filled" }> = {
   cliente: { texto: "Cliente", tono: "muted" },
   ia: { texto: "IA", tono: "light" },
-  sistema: { texto: "Sistema", tono: "accent" },
+  sistema: { texto: "Sistema", tono: "filled" },
 };
 
 const CAPACIDADES: { titulo: string; texto: string }[] = [
@@ -82,7 +82,7 @@ export function SchedulingSection() {
                   <li key={p.titulo} className="home-seq relative flex gap-4 pb-6 last:pb-0" style={retraso(150 + i * 420)}>
                     <span
                       aria-hidden
-                      className={`relative z-10 mt-1 size-3 shrink-0 rounded-full border bg-site-card ${p.quien === "sistema" ? "border-home-accent" : "border-white/30"}`}
+                      className={`relative z-10 mt-1 size-3 shrink-0 rounded-full border ${p.quien === "sistema" ? "border-site-fg bg-site-fg" : "border-white/30 bg-site-card"}`}
                     />
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
@@ -100,7 +100,7 @@ export function SchedulingSection() {
                 <span className="text-site-fg">IA</span> · entiende y conversa
               </p>
               <p>
-                <span className="text-home-accent">Sistema</span> · decide disponibilidad y reglas
+                <span className="text-site-fg">Sistema</span> · decide disponibilidad y reglas
               </p>
             </div>
           </Panel>

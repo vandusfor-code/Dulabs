@@ -24,7 +24,7 @@ export function DeveloperStrip() {
             <TrackedLink
               href={DEVELOPER_PLATFORM_HREF}
               source="developer_strip"
-              className="group inline-flex min-h-11 items-center gap-1.5 text-[14px] text-site-fg transition-colors hover:text-home-accent"
+              className="group inline-flex min-h-11 items-center gap-1.5 text-[14px] text-site-fg transition-colors underline-offset-4 hover:underline"
             >
               Explorar la plataforma
               <span aria-hidden className="transition-transform group-hover:translate-x-0.5">→</span>

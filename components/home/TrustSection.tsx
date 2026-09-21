@@ -50,7 +50,7 @@ export function TrustSection() {
                 </ul>
               </div>
               <div className="px-4 py-5 sm:px-5">
-                <Tag tono="accent">El sistema</Tag>
+                <Tag tono="filled">El sistema</Tag>
                 <ul className="mt-4 space-y-2.5 text-[14px] leading-snug text-site-fg">
                   {EL_SISTEMA.map((t) => (
                     <li key={t}>{t}</li>

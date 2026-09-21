@@ -41,7 +41,7 @@ export function SectionHeader({
   return (
     <header className={className}>
       <p className="flex items-center gap-2.5 font-mono text-[11px] uppercase tracking-[0.18em] text-site-muted-fg">
-        <span aria-hidden className="h-px w-5 bg-home-accent" />
+        <span aria-hidden className="h-px w-5 bg-white/30" />
         {eyebrow}
       </p>
       <h2 id={titleId} className="mt-5 text-balance text-[32px] font-medium leading-[1.06] tracking-[-0.03em] text-site-fg sm:text-[40px] lg:text-[46px]">
@@ -78,7 +78,7 @@ export function Dots() {
 const TONOS = {
   muted: "border-site-border text-site-muted-fg",
   light: "border-white/25 text-site-fg",
-  accent: "border-home-accent-line bg-home-accent-soft text-home-accent",
+  filled: "border-white/30 bg-dev-accent-soft text-site-fg",
 } as const;
 
 export function Tag({ tono = "muted", children }: { tono?: keyof typeof TONOS; children: ReactNode }) {

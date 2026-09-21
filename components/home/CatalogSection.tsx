@@ -32,7 +32,7 @@ export function CatalogSection() {
                   {SERVICIOS.map((s) => (
                     <li key={s.nombre} className="flex items-center justify-between gap-3 border-t border-site-border py-2.5 text-[13.5px] first:border-t-0">
                       <span className="flex items-center gap-2 text-site-fg">
-                        <span aria-hidden className={`size-1.5 rounded-full ${s.destacado ? "bg-home-accent" : "bg-white/15"}`} />
+                        <span aria-hidden className={`size-1.5 rounded-full ${s.destacado ? "bg-site-fg" : "bg-white/15"}`} />
                         {s.nombre}
                       </span>
                       <span className="font-mono text-[11.5px] text-site-muted-fg">{s.detalle}</span>
@@ -71,7 +71,7 @@ export function CatalogSection() {
               </Agente>
             </div>
             <div className="flex flex-wrap items-center gap-2 border-t border-site-border px-4 py-3 sm:px-5">
-              <Tag tono="accent">Calculado por el sistema</Tag>
+              <Tag tono="filled">Calculado por el sistema</Tag>
               <span className="font-mono text-[11px] text-site-muted-fg">precios y cantidades del catálogo, no del modelo</span>
             </div>
           </Panel>

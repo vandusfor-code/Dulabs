@@ -41,7 +41,7 @@ export function BusinessTypesSection() {
               href={ENTERPRISE_HREF}
               event="cta_enterprise"
               source="rubros"
-              className="group inline-flex min-h-11 items-center gap-1.5 text-[14px] text-site-fg transition-colors hover:text-home-accent"
+              className="group inline-flex min-h-11 items-center gap-1.5 text-[14px] text-site-fg transition-colors underline-offset-4 hover:underline"
             >
               Lo construimos a la medida
               <span aria-hidden className="transition-transform group-hover:translate-x-0.5">→</span>

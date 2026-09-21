@@ -11,7 +11,7 @@ import { Agente, Cliente, retraso } from "./ChatBubbles";
 function Accion({ ms, titulo, detalle, estado }: { ms: number; titulo: string; detalle: string; estado?: string }) {
   return (
     <li className="home-seq flex items-start gap-3 py-2.5" style={retraso(ms)}>
-      <span className="mt-0.5 grid size-4 shrink-0 place-items-center rounded-full bg-home-accent-soft text-home-accent">
+      <span className="mt-0.5 grid size-4 shrink-0 place-items-center rounded-full bg-dev-accent-soft text-site-fg">
         <Check className="size-2.5" strokeWidth={3} aria-hidden />
       </span>
       <div className="min-w-0 flex-1">
@@ -26,8 +26,6 @@ function Accion({ ms, titulo, detalle, estado }: { ms: number; titulo: string; d
 export function HeroProduct() {
   return (
     <figure className="relative" aria-label="Ejemplo de una conversación de un agente de DuLabs agendando una cita">
-      <div aria-hidden className="home-glow pointer-events-none absolute -inset-x-16 -inset-y-14 -z-10" />
-
       <div className="overflow-hidden rounded-xl border border-site-border bg-site-card">
         <div className="flex items-center justify-between gap-3 border-b border-site-border px-4 py-3">
           <div className="flex min-w-0 items-center gap-2.5">
@@ -38,7 +36,7 @@ export function HeroProduct() {
             </div>
           </div>
           <span className="inline-flex shrink-0 items-center gap-1.5 font-mono text-[10.5px] text-site-muted-fg">
-            <span className="dev-live-dot size-1.5 rounded-full bg-home-accent" />
+            <span className="dev-live-dot size-1.5 rounded-full bg-site-fg" />
             activo
           </span>
         </div>

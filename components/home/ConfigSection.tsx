@@ -28,7 +28,7 @@ export function ConfigSection() {
         {ETAPAS.map((e) => (
           <li key={e.n}>
             <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-site-fg">
-              <span className="text-home-accent">{e.n}</span> · {e.titulo}
+              <span className="text-site-muted-fg">{e.n}</span> · {e.titulo}
             </p>
             <p className="mt-2.5 text-[14.5px] leading-relaxed text-site-muted-fg">{e.texto}</p>
           </li>

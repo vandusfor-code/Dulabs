@@ -11,7 +11,7 @@ function Paso({ n, titulo, children, visual, ms }: { n: string; titulo: string; 
   return (
     <li className="home-seq flex flex-col md:row-span-2 md:grid md:grid-rows-subgrid" style={retraso(ms)}>
       <div>
-        <p className="font-mono text-[12px] text-home-accent">{n}</p>
+        <p className="font-mono text-[12px] text-site-muted-fg">{n}</p>
         <div className="mt-3 border-t border-site-border pt-5">
           <h3 className="text-[19px] font-medium leading-snug tracking-[-0.015em] text-site-fg">{titulo}</h3>
           <p className="mt-2.5 text-[14.5px] leading-relaxed text-site-muted-fg">{children}</p>
@@ -29,7 +29,7 @@ function Fila({ children }: { children: ReactNode }) {
 function Estado({ texto }: { texto: string }) {
   return (
     <span className="inline-flex shrink-0 items-center gap-1.5 font-mono text-[10.5px] text-site-muted-fg">
-      <span aria-hidden className="size-1.5 rounded-full bg-home-accent" />
+      <span aria-hidden className="size-1.5 rounded-full bg-site-fg" />
       {texto}
     </span>
   );
@@ -50,7 +50,7 @@ export function StepsSection() {
               {["Servicios y productos", "Horarios", "Conocimiento", "Reglas"].map((paso) => (
                 <Fila key={paso}>
                   <span className="text-site-fg">{paso}</span>
-                  <span className="grid size-4 place-items-center rounded-full bg-home-accent-soft text-home-accent">
+                  <span className="grid size-4 place-items-center rounded-full bg-dev-accent-soft text-site-fg">
                     <Check className="size-2.5" strokeWidth={3} aria-hidden />
                   </span>
                 </Fila>
@@ -98,7 +98,7 @@ export function StepsSection() {
             <Panel>
               <Fila>
                 <span className="text-site-fg">Estado actual</span>
-                <Tag tono="accent">Publicada</Tag>
+                <Tag tono="filled">Publicada</Tag>
               </Fila>
               <Fila>
                 <span className="text-site-muted-fg">Versión 2</span>

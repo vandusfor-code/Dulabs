@@ -10,8 +10,8 @@ import { TrackedLink } from "./TrackedLink";
 
 function Nivel({ etiqueta, items, destacado = false }: { etiqueta: string; items: string[]; destacado?: boolean }) {
   return (
-    <div className={`rounded-lg border px-4 py-3.5 ${destacado ? "border-home-accent-line bg-home-accent-soft" : "border-site-border bg-site-bg"}`}>
-      <p className={`font-mono text-[10.5px] uppercase tracking-[0.16em] ${destacado ? "text-home-accent" : "text-site-muted-fg"}`}>{etiqueta}</p>
+    <div className={`rounded-lg border px-4 py-3.5 ${destacado ? "border-white/30 bg-dev-accent-soft" : "border-site-border bg-site-bg"}`}>
+      <p className={`font-mono text-[10.5px] uppercase tracking-[0.16em] ${destacado ? "text-site-fg" : "text-site-muted-fg"}`}>{etiqueta}</p>
       <ul className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-[13.5px] leading-snug text-site-fg">
         {items.map((it) => (
           <li key={it} className="whitespace-nowrap">
@@ -45,7 +45,7 @@ export function CustomSolutionsSection() {
               href={HABLAR_ESPECIALISTA_HREF}
               event="cta_whatsapp"
               source="a_la_medida"
-              className="inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-home-accent px-6 text-[14.5px] font-medium text-home-accent-fg transition-colors hover:bg-home-accent-hover"
+              className="inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-dev-accent px-6 text-[14.5px] font-medium text-dev-accent-fg transition-colors hover:bg-dev-accent-hover"
             >
               Hablar con un especialista
               <span aria-hidden>→</span>
@@ -54,7 +54,7 @@ export function CustomSolutionsSection() {
               href={ENTERPRISE_HREF}
               event="cta_enterprise"
               source="a_la_medida"
-              className="group inline-flex min-h-11 items-center gap-1.5 text-[14px] text-site-fg transition-colors hover:text-home-accent"
+              className="group inline-flex min-h-11 items-center gap-1.5 text-[14px] text-site-fg transition-colors underline-offset-4 hover:underline"
             >
               Ver soluciones empresariales
               <span aria-hidden className="transition-transform group-hover:translate-x-0.5">→</span>
@@ -100,7 +100,7 @@ export function CustomSolutionsSection() {
         {PROCESO_A_MEDIDA.map((p, i) => (
           <li key={p.titulo}>
             <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-site-fg">
-              <span className="text-home-accent">{String(i + 1).padStart(2, "0")}</span> · {p.titulo}
+              <span className="text-site-muted-fg">{String(i + 1).padStart(2, "0")}</span> · {p.titulo}
             </p>
             <p className="mt-2.5 text-[14.5px] leading-relaxed text-site-muted-fg">{p.texto}</p>
           </li>
@@ -114,7 +114,7 @@ export function CustomSolutionsSection() {
         <TrackedLink
           href={CASOS_HREF}
           source="a_la_medida_caso"
-          className="group inline-flex min-h-11 shrink-0 items-center gap-1.5 text-[14px] text-site-fg transition-colors hover:text-home-accent"
+          className="group inline-flex min-h-11 shrink-0 items-center gap-1.5 text-[14px] text-site-fg transition-colors underline-offset-4 hover:underline"
         >
           Ver casos
           <span aria-hidden className="transition-transform group-hover:translate-x-0.5">→</span>

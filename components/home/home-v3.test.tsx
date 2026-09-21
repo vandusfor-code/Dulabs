@@ -459,7 +459,7 @@ describe("Home v3 -- guardas de calidad (aplican a todas las fases)", () => {
   });
 });
 
-describe("Home v3 -- acento naranja", () => {
+describe("Home v3 -- identidad monocroma (sin naranja ni ningún color de acento)", () => {
   function luminancia(hex: string): number {
     const canales = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
     return 0.2126 * canales[0] + 0.7152 * canales[1] + 0.0722 * canales[2];
@@ -468,19 +468,69 @@ describe("Home v3 -- acento naranja", () => {
     const [la, lb] = [luminancia(a), luminancia(b)].sort((x, y) => y - x);
     return (la + 0.05) / (lb + 0.05);
   };
-  const css = readFileSync(join(RAIZ, "app", "globals.css"), "utf8");
+  const css = readFileSync(join(RAIZ, "app", "globals.css"), "utf8").replace(/\r\n/g, "\n");
+  // Solo los bloques de la home (desde su cabecera hasta el final): el resto del archivo es de otros productos (p. ej. la V2 de /newversion).
+  const cssHome = css.slice(css.indexOf("Home principal v3"));
+  // Los tokens --color-dev-accent* están en un @theme anterior a .dev-scope; los site-* (los que /developer-platform re-mapea a monocromo) dentro de .dev-scope.
+  const token = (nombre: string): string => {
+    const zona = nombre.startsWith("--color-dev-accent") ? css : css.slice(css.indexOf(".dev-scope {"));
+    return new RegExp(`${nombre}:\\s*(#[0-9a-fA-F]{6})`).exec(zona)?.[1] ?? "";
+  };
 
-  it("el acento definido es #ff5c1a y el texto sobre él (#0a0a0a) cumple WCAG AA (>= 4.5:1)", () => {
-    assert.match(css, /--color-home-accent:\s*#ff5c1a;/i);
-    assert.match(css, /--color-home-accent-fg:\s*#0a0a0a;/i);
-    assert.ok(contraste("#ff5c1a", "#0a0a0a") >= 4.5, "texto oscuro sobre naranja");
+  const neutro = (hex: string) => {
+    const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+    return r === g && g === b;
+  };
+
+  it("no queda ningún naranja ni token de acento en los componentes, datos, página ni CSS de la home", () => {
+    const naranja = /#ff5c1a|255[ ,]+92[ ,]+26|home-accent|\borange\b|naranja/i;
+    for (const ruta of FUENTES_HOME) assert.doesNotMatch(readFileSync(ruta, "utf8"), naranja, relative(RAIZ, ruta));
+    assert.doesNotMatch(cssHome, naranja, "globals.css (bloques de la home)");
   });
 
-  it("el naranja sobre el fondo oscuro también cumple AA para texto pequeño (etiquetas)", () => {
-    assert.ok(contraste("#ff5c1a", "#070707") >= 4.5);
+  it("todos los colores de la home son neutros (R = G = B): negro, blanco y grises", () => {
+    const hexes = (t: string) => [...t.matchAll(/#([0-9a-fA-F]{6})\b/g)].map((m) => "#" + m[1]);
+    const rgbs = (t: string) => [...t.matchAll(/rgba?\(\s*(\d+)[ ,]+(\d+)[ ,]+(\d+)/g)].map((m) => [Number(m[1]), Number(m[2]), Number(m[3])]);
+    const fuentes = [...FUENTES_HOME.map((r) => [relative(RAIZ, r), readFileSync(r, "utf8")]), ["globals.css (home)", cssHome]] as [string, string][];
+    for (const [nombre, t] of fuentes) {
+      for (const h of hexes(t)) assert.ok(neutro(h), `${nombre}: color no neutro ${h}`);
+      for (const [r, g, b] of rgbs(t)) assert.ok(r === g && g === b, `${nombre}: color no neutro rgb(${r} ${g} ${b})`);
+      assert.doesNotMatch(t, /\b(bg|text|border|ring|from|to|via|fill|stroke)-(red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-\d{2,3}\b/, `${nombre}: utilidad de color de Tailwind`);
+    }
   });
 
-  it("las animaciones de la home se anulan con prefers-reduced-motion", () => {
+  it("el CTA principal es blanco con texto oscuro (mismos tokens que el botón primario de /developer-platform)", () => {
+    for (const [nombre, html] of [["hero", HERO], ["navbar", renderToStaticMarkup(<HomeNav />)], ["a la medida", SECCIONES.find((s) => s.id === "empresas")!.html]] as [string, string][]) {
+      assert.match(html, /bg-dev-accent /, `${nombre}: el CTA principal debe usar bg-dev-accent`);
+      assert.match(html, /text-dev-accent-fg/, `${nombre}: el texto del CTA debe ser oscuro`);
+    }
+    assert.match(readFileSync(join(RAIZ, "components", "home", "HomeMobileMenu.tsx"), "utf8"), /bg-dev-accent /);
+    const dev = readFileSync(join(RAIZ, "components", "developer-platform", "DevHero.tsx"), "utf8");
+    assert.match(dev, /bg-dev-accent /, "referencia: el botón primario de /developer-platform usa el mismo token");
+  });
+
+  it("los tokens de la identidad de referencia (.dev-scope) no se tocaron y el primario es blanco sobre negro", () => {
+    assert.equal(token("--color-dev-accent"), "#fafafa");
+    assert.equal(token("--color-dev-accent-fg"), "#0a0a0a");
+    assert.equal(token("--color-site-bg"), "#070707");
+    assert.equal(token("--color-site-primary"), "#fafafa");
+    assert.doesNotMatch(cssHome, /--color-site-primary\s*:/, "la home no remapea site-primary: PricingSection y Footer usan el blanco de .dev-scope");
+  });
+
+  it("contraste WCAG: botón primario, texto principal y texto atenuado sobre fondo y tarjetas", () => {
+    const fondo = token("--color-site-bg");
+    const tarjeta = token("--color-site-card");
+    const atenuado = token("--color-site-muted-fg");
+    assert.ok(contraste(token("--color-dev-accent"), token("--color-dev-accent-fg")) >= 7, "botón primario (AAA)");
+    assert.ok(contraste(token("--color-site-fg"), fondo) >= 15, "texto principal sobre fondo");
+    assert.ok(contraste(atenuado, fondo) >= 4.5, "texto atenuado sobre fondo (AA)");
+    assert.ok(contraste(atenuado, tarjeta) >= 4.5, "texto atenuado sobre tarjeta (AA)");
+    assert.ok(contraste(token("--color-site-fg"), fondo) >= 3, "el anillo de foco blanco es visible sobre el fondo (WCAG 1.4.11)");
+  });
+
+  it("el foco visible y la pestaña activa usan blanco, y las animaciones se anulan con prefers-reduced-motion", () => {
+    assert.match(cssHome, /button:focus-visible \{\s*outline: 2px solid var\(--color-site-fg\)/);
+    assert.match(cssHome, /box-shadow: inset 2px 0 0 var\(--color-site-fg\)/);
     assert.match(css, /prefers-reduced-motion:\s*reduce\)\s*\{\s*\.home-scope \.home-seq\s*\{\s*animation:\s*none/);
   });
 });

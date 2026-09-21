@@ -22,7 +22,7 @@ export function Agente({ ms = 0, children, etiqueta = "Agente", className = "" }
       className={`home-seq ml-auto max-w-[90%] rounded-2xl rounded-tr-md border border-site-border bg-site-secondary px-3.5 py-2.5 text-[13.5px] leading-snug text-site-fg ${className}`}
       style={retraso(ms)}
     >
-      <p className="mb-1 font-mono text-[10px] uppercase tracking-[0.16em] text-home-accent">{etiqueta}</p>
+      <p className="mb-1 font-mono text-[10px] uppercase tracking-[0.16em] text-site-muted-fg">{etiqueta}</p>
       {children}
     </div>
   );

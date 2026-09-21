@@ -30,7 +30,7 @@ export function HomeMobileMenu({ links, crearAgenteHref, hablarHref, loginHref }
         href={crearAgenteHref}
         event="cta_crear_agente"
         source="nav_movil"
-        className="inline-flex h-10 items-center rounded-lg bg-home-accent px-3.5 text-[13px] font-medium text-home-accent-fg transition-colors hover:bg-home-accent-hover"
+        className="inline-flex h-10 items-center rounded-lg bg-dev-accent px-3.5 text-[13px] font-medium text-dev-accent-fg transition-colors hover:bg-dev-accent-hover"
       >
         Crear mi agente
       </TrackedLink>
