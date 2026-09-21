@@ -6,6 +6,13 @@ import type { ConversacionFila } from "@/lib/chats/conversaciones";
 
 export const runtime = "nodejs";
 
+/**
+ * Tope de conversaciones por consulta (las más recientes). Antes NO había límite: la bandeja pedía la lista COMPLETA de un tenant
+ * con muchos chats cada pocos segundos, y eso agotaba el egress de Supabase (cuota compartida con producción). Las más antiguas
+ * siguen accesibles con la búsqueda (`q`, server-side) y con la pestaña Archivados.
+ */
+const LIMITE_CONVERSACIONES = 300;
+
 // Chats AMORE (autorizado) — lista de conversaciones reales, SIEMPRE
 // filtradas por id_tenant (el worker sostiene una única sesión de WhatsApp
 // por tenant, nunca por phone_number_id). `tab` reproduce las pestañas del
@@ -40,7 +47,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   }
 
   const [{ data: conversaciones }, estadoWorker] = await Promise.all([
-    consulta.order("ultima_actividad", { ascending: false }),
+    consulta.order("ultima_actividad", { ascending: false }).limit(LIMITE_CONVERSACIONES),
     consultarEstadoWorker(tenant.idTenant),
   ]);
 

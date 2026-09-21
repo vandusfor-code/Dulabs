@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
+import { usePollingVisible } from "@/components/admin-web/chats/usePollingVisible";
 import type { ConversacionResumen } from "@/lib/chats/tipos";
 
 export type TabChats = "todos" | "no_leidos" | "clientes" | "archivados";
@@ -32,11 +33,8 @@ export function useChats(token: string) {
       .catch(() => {});
   }, [token, tab, q]);
 
-  useEffect(() => {
-    cargar();
-    const id = setInterval(cargar, INTERVALO_LISTA_MS);
-    return () => clearInterval(id);
-  }, [cargar]);
+  // Solo con la pestaña visible (y despacio si nadie la usa): ver lib/chats/polling.ts (egress de Supabase).
+  usePollingVisible(cargar, INTERVALO_LISTA_MS);
 
   return { tab, setTab, q, setQ, conversaciones, whatsapp, seleccionId, setSeleccionId, recargarLista: cargar };
 }

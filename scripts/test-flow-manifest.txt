@@ -411,3 +411,6 @@ lib/flow/ai-runtime/ai-grounding.test.ts
 lib/agent-compiler/calendar/hora-solicitada.test.ts
 lib/agent-compiler/e2e/hostile-llm-e2e.test.ts
 lib/agent-compiler/e2e/static-messages-audit.test.ts
+# Egress de Supabase -- la bandeja de chats ya no consulta con la pestaña oculta ni sin tope de filas (el polling ciego
+# agotaba la cuota compartida con producción). Política pura + guardas de código.
+lib/chats/polling.test.ts
