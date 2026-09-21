@@ -19,7 +19,7 @@ import {
 } from "@/lib/flow/ai-runtime/ai-proposal-bridge";
 import { buildVerifiedActionEffectData } from "@/lib/flow/ai-runtime/verified-results";
 import { applyAiGrounding, planAiVerbatim } from "@/lib/flow/ai-runtime/ai-grounding";
-import { applyAiResponseClaimSecurity, filterClaimSecuredEffects } from "@/lib/flow/ai-runtime/ai-response-security";
+import { applyAiResponseClaimSecurity, filterClaimSecuredEffects, stripUnsentAiText } from "@/lib/flow/ai-runtime/ai-response-security";
 import { isCriticalAction } from "@/lib/flow/action-capabilities";
 import type {
   FlowEffectRow,
@@ -895,7 +895,8 @@ export class ExecutionOrchestrator {
           // Anti-invención: lo que redacte la IA debe estar respaldado por los datos del backend ANTES del filtro de
           // afirmaciones (que solo ve palabras de dominio, no un precio o un beneficio inventados).
           const grounded = applyAiGrounding({
-            dispatchResult: bridged.dispatchResult,
+            // El texto que el modelo escribe junto a una propuesta (propose_action) no se envía: no se valida como afirmación.
+            dispatchResult: stripUnsentAiText({ dispatchResult: bridged.dispatchResult, mode: effect.ai?.mode }),
             ai: effect.ai,
             variables: params.executionRow.variables,
           });

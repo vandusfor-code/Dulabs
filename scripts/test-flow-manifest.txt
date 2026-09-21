@@ -419,3 +419,7 @@ app/api/cron/seguimiento-inactividad-solotalento/route-egress.test.ts
 # Checksum del compilador con semántica JSON (undefined = ausente): sin esto ningún agente publicado en Supabase pasaba el
 # resolvedor de producción ("checksum_mismatch").
 lib/agent-compiler/checksum.test.ts
+# Primera prueba real por WhatsApp -- un modelo real escribe una frase junto a su propuesta de acción (propose_action) y el filtro de
+# afirmaciones la bloqueaba, tumbando la consulta de disponibilidad y la reserva. Ese texto no se envía: no se valida.
+lib/flow/ai-runtime/ai-unsent-text.test.ts
+lib/agent-compiler/e2e/real-llm-shape-e2e.test.ts
