@@ -1458,6 +1458,12 @@ async function atenderMensajeCampaña(
 // el ÚNICO número activo del WABA real de Charlotte hoy.
 const PHONE_NUMBER_ID_SOLUCIONES_FINANCIERAS = "1248901801649972";
 
+// DESACTIVADO por solicitud de Charlotte (2026-09-21): ya no quiere el bot de bienvenida/botones/traspaso. Con `false`
+// `atenderMensajeSolucionesFinancieras` no toma ningún turno: no responde, no crea solicitudes ni activa pausas nuevas, y los mensajes
+// siguen su curso normal (el número tiene ia_pausada=true, así que la IA general tampoco responde: Charlotte atiende a mano desde el
+// Inbox). No borra datos: las solicitudes y pausas ya creadas quedan intactas. Para reactivarlo basta poner `true` y desplegar.
+const BOT_SOLUCIONES_FINANCIERAS_ACTIVO = false;
+
 // AMORE — migración de número (autorizado). Este phone_number_id de Meta
 // Cloud API corresponde al número viejo (573132612141) que AMORE está
 // retirando en favor de su nuevo número real por WhatsApp-QR (573012276334).
@@ -1515,6 +1521,7 @@ async function atenderMensajeSolucionesFinancieras(
   telefonoRemitente: string,
   destinoWhatsApp: string,
 ): Promise<boolean> {
+  if (!BOT_SOLUCIONES_FINANCIERAS_ACTIVO) return false;
   if (cliente.phone_number_id !== PHONE_NUMBER_ID_SOLUCIONES_FINANCIERAS) return false;
 
   const supabase = supabaseAdmin();
