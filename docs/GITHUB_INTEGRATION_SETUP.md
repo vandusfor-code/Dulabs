@@ -22,17 +22,25 @@ Configura **exactamente** estos campos:
 | Campo | Valor |
 |---|---|
 | **GitHub App name** | `DuLabs Developers` (o el que prefieras; el *slug* sale de aquí) |
-| **Homepage URL** | `https://dulabs.co/developers` |
-| **Callback URL** | `https://dulabs.co/api/developer/github/callback` |
-| **Setup URL** (Post installation) | `https://dulabs.co/api/developer/github/callback` |
+| **Homepage URL** | `https://www.dulabs.co/developers` |
+| **Callback URL** | `https://www.dulabs.co/api/developer/github/callback` |
+| **Setup URL** (Post installation) | `https://www.dulabs.co/api/developer/github/callback` |
 | ☑ **Redirect on update** | activado (para que reinstalar/ajustar repos vuelva al callback) |
 | **Webhook → Active** | ☑ activado |
-| **Webhook URL** | `https://dulabs.co/api/github/webhook` |
+| **Webhook URL** | `https://www.dulabs.co/api/github/webhook` |
 | **Webhook secret** | genera uno fuerte (guárdalo → `GITHUB_WEBHOOK_SECRET`) |
 
-> Reemplaza `https://dulabs.co` por el dominio real del entorno si es distinto
+> Reemplaza `https://www.dulabs.co` por el dominio real del entorno si es distinto
 > (debe coincidir con `NEXT_PUBLIC_SITE_URL`). Para probar en un preview de
 > Vercel puedes crear una App aparte apuntando al dominio del preview.
+>
+> **Importante (host canónico):** usa el MISMO host (`www.dulabs.co`) en las cuatro
+> URLs y como dominio canónico. El código construye la redirección del callback de
+> forma relativa al host de la request, así que funciona con o sin `www`; pero si
+> `www.dulabs.co` hace un **redirect 301 a otro host** (p. ej. a `dulabs.co`), el
+> **POST del webhook perdería el cuerpo y la firma** y el callback perdería el
+> query. Verifica que `www.dulabs.co` sirva directo (sin redirect cross-host) en
+> `/api/github/webhook` y `/api/developer/github/callback`.
 
 ### Permisos (mínimos — no dar de más)
 
@@ -105,7 +113,7 @@ migraciones de Supabase (mismo que el resto de `supabase/migrations`).
 
 ## 4. Verificación end-to-end (una vez configurado)
 
-1. Entra a `https://dulabs.co/developer/github` con una sesión OWNER/ADMIN.
+1. Entra a `https://www.dulabs.co/developer/github` con una sesión OWNER/ADMIN.
 2. **Conectar GitHub** → te redirige a instalar la App → elige la cuenta/repos.
 3. Vuelves al dashboard con "GitHub conectado".
 4. **Elegir repositorio** → selecciona uno → queda "vinculado".
@@ -121,10 +129,10 @@ migraciones de Supabase (mismo que el resto de `supabase/migrations`).
 ## 5. Resumen de URLs (para copiar/pegar en la App)
 
 ```
-Homepage URL : https://dulabs.co/developers
-Callback URL : https://dulabs.co/api/developer/github/callback
-Setup URL    : https://dulabs.co/api/developer/github/callback
-Webhook URL  : https://dulabs.co/api/github/webhook
+Homepage URL : https://www.dulabs.co/developers
+Callback URL : https://www.dulabs.co/api/developer/github/callback
+Setup URL    : https://www.dulabs.co/api/developer/github/callback
+Webhook URL  : https://www.dulabs.co/api/github/webhook
 Permisos     : Repository → Metadata: Read-only
 Eventos      : installation, installation_repositories
 ```
