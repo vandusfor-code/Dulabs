@@ -172,7 +172,7 @@ describe("R4 — E2E: FAQ + PDF por el runtime REAL del Business Agent", () => {
     await a.turno("¿Cómo pido una cita?", "f1");
     // FAQ exacta => texto del negocio sin IA; el filtro de afirmaciones AÚN se aplica a ese texto (misma barrera).
     assert.equal(m.aiDe("ai-faq-present").length, 0, "FAQ exacta: la IA no se invoca");
-    assert.ok(m.mensajes.includes("No pude preparar esa respuesta en este momento. ¿Puedes preguntármelo de otra forma?"), JSON.stringify(m.mensajes));
+    assert.ok(m.mensajes.includes("Por ahora no puedo darte esa respuesta por aquí. ¿Quieres preguntarme otra cosa?"), JSON.stringify(m.mensajes));
     assert.equal(m.mensajes.some((t) => /agendar tu cita/.test(t)), false, "el texto bloqueado NO se envió");
     assert.equal(m.ejecucion(TENANT_A).status, "waiting_input", "sigue esperando la siguiente pregunta (no colgado ni cerrado)");
     // y la siguiente pregunta se responde con normalidad

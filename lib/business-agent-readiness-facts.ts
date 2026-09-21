@@ -11,6 +11,7 @@ import { createSupabaseKnowledgeStore } from "@/lib/business-agent-knowledge/sto
 import { createSupabaseCalendarStore } from "@/lib/agent-compiler/calendar/calendar-store-supabase";
 import { createSupabaseCatalogStore } from "@/lib/business-agent-catalog-store";
 import { detectDomainCapabilities } from "@/lib/flow/external-claim-security";
+import { assessClaimRisk } from "@/lib/business-agent-knowledge/claim-risk";
 
 export async function loadReadinessFacts(supabase: SupabaseClient, tenantId: string, spec: BusinessAgentSpec): Promise<ReadinessFacts> {
   const caps = spec.capabilities;
@@ -20,7 +21,7 @@ export async function loadReadinessFacts(supabase: SupabaseClient, tenantId: str
 
   // Nombres que el agente mostraría en catálogo/cotización: si el filtro de afirmaciones los bloquearía, se avisa al autor.
   const revisaNombres = caps.catalog || caps.sales;
-  const [activeServices, activeProducts, hasKnowledge, calendarConnected, catalogNamesAtRisk] = await Promise.all([
+  const [activeServices, activeProducts, hasKnowledge, calendarConnected, catalogNamesAtRisk, faqsAtRisk] = await Promise.all([
     necesitaServicios
       ? supabase
           .from("dulabs_servicios")
@@ -40,9 +41,10 @@ export async function loadReadinessFacts(supabase: SupabaseClient, tenantId: str
           .then((c) => !!c && c.status === "connected" && !!c.grantId && !!c.selectedCalendarId)
       : Promise.resolve(false),
     revisaNombres ? nombresConRiesgo(supabase, tenantId, spec) : Promise.resolve([] as string[]),
+    caps.faq ? faqsConRiesgo(supabase, tenantId) : Promise.resolve([] as string[]),
   ]);
 
-  return { activeServices, activeProducts, hasKnowledge, calendarConnected, catalogNamesAtRisk };
+  return { activeServices, activeProducts, hasKnowledge, calendarConnected, catalogNamesAtRisk, faqsAtRisk };
 }
 
 /** Nombres activos del catálogo (servicios y/o productos según el Spec) que el filtro de afirmaciones del runtime bloquearía. */
@@ -54,4 +56,10 @@ async function nombresConRiesgo(supabase: SupabaseClient, tenantId: string, spec
     spec.catalog.useProducts ? store.listarProductos(tenantId) : Promise.resolve([]),
   ]);
   return [...servicios, ...productos].map((i) => i.nombre).filter((n) => detectDomainCapabilities(n).length > 0);
+}
+
+/** Preguntas de FAQ activas cuya respuesta el filtro de afirmaciones del runtime bloquearía (el cliente vería un mensaje genérico). */
+async function faqsConRiesgo(supabase: SupabaseClient, tenantId: string): Promise<string[]> {
+  const faqs = await createSupabaseKnowledgeStore(supabase).listFaqs(tenantId);
+  return faqs.filter((f) => f.active && assessClaimRisk(f.answer).risky).map((f) => f.question);
 }

@@ -66,13 +66,46 @@ export interface SendMessageDeps {
 // reutilice EXACTAMENTE esta misma resolución en vez de duplicarla: ambos
 // executors resuelven "la config de un número de WhatsApp" de la MISMA
 // forma, por diseño, para no poder divergir en silencio.
+/**
+ * Columnas que el ENVÍO necesita de dulabs_clientes_config (conexión con Meta, contadores, banderas). Se excluyen las pesadas que
+ * solo usa la IA de texto libre / el webhook: `prompt_sistema`, `base_conocimiento*` y la lista negra `ia_numeros_bloqueados` (en el
+ * tenant Dulabs la fila completa pesa ~97 KB, de los que el envío no usa casi nada) y esta fila se releía en CADA mensaje saliente.
+ * Verificadas contra el esquema real; si alguna columna faltara en otro entorno se cae a `select("*")` (ver abajo).
+ */
+export const COLUMNAS_CLIENTE_PARA_ENVIO =
+  "id, id_tenant, nombre_negocio, whatsapp_business_account_id, phone_number_id, telefono_negocio, api_key_ia, meta_permanent_token, " +
+  "estado_pausa, pausado_hasta, plan, mensajes_usados_mes, mes_actual, calidad, limite_mensajeria, estado_verificacion, " +
+  "estado_nombre_visible, ultima_sincronizacion_meta, nombre_agente, ia_pausada, ia_restringida_a, forward_to_dumo, captura_leads, " +
+  "agente_id, marketplace_activacion_id, flow_activo, flow_id, created_at, updated_at";
+
+/** Si la lista liviana fallara una vez (columna ausente en ese entorno), no se reintenta en cada mensaje: se usa `*` directamente. */
+let listaLivianaNoDisponible = false;
+
 export async function resolverClienteDefault(supabase: SupabaseClient, phoneNumberId: string): Promise<ClienteConfig | null> {
+  if (!listaLivianaNoDisponible) {
+    const { data, error } = await supabase
+      .from("dulabs_clientes_config")
+      .select(COLUMNAS_CLIENTE_PARA_ENVIO)
+      .eq("phone_number_id", phoneNumberId)
+      .maybeSingle();
+    if (!error) {
+      if (!data) return null;
+      // Los campos pesados que el envío no usa quedan en null (el tipo ClienteConfig los exige).
+      return { ...(data as unknown as ClienteConfig), prompt_sistema: null, base_conocimiento: null, base_conocimiento_nombre_archivo: null, base_conocimiento_actualizado_at: null, ia_numeros_bloqueados: null };
+    }
+    listaLivianaNoDisponible = true;
+  }
   const { data } = await supabase
     .from("dulabs_clientes_config")
     .select("*")
     .eq("phone_number_id", phoneNumberId)
     .maybeSingle();
   return (data as ClienteConfig) ?? null;
+}
+
+/** Solo para pruebas: reinicia la memoria de "la lista liviana no está disponible". */
+export function __reiniciarListaLivianaParaTests(): void {
+  listaLivianaNoDisponible = false;
 }
 
 /**

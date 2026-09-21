@@ -86,6 +86,7 @@ describe("IA con la forma de un modelo real (propuesta + frase): el flujo de cit
     assert.equal(m.eventos.length, 1, JSON.stringify(r));
     assert.equal(appts.all().length, 1);
     assert.match(r.join("\n"), /Listo, tu cita de Corte quedó agendada para el sábado, 16 de marzo, 10:00 a\. m\./);
+    assert.doesNotMatch(r.join("\n"), /a\. m\.\./, "el mensaje no termina con dos puntos ('a. m..')");
     assert.equal(m.pausas.length, 0, "el chat NO se pausó (no hubo transferencia)");
     assert.equal(m.mensajes.some((t) => /Te comunico con una persona/.test(t)), false);
   });

@@ -309,6 +309,11 @@ function mergeParams(
   return out;
 }
 
+/** Cierra la frase con UN punto: si ya termina en punto (p. ej. "9:00 a. m."), no se duplica. */
+function terminarConPunto(texto: string): string {
+  return texto.trimEnd().endsWith(".") ? texto.trimEnd() : `${texto.trimEnd()}.`;
+}
+
 /** Horarios que el sistema OFRECIÓ al cliente en este turno (variable `horariosDisponibles`), o [] si no hubo lista. */
 function horariosOfrecidosDe(valor: unknown): string[] {
   return Array.isArray(valor) ? valor.filter((h): h is string => typeof h === "string") : [];
@@ -2824,7 +2829,8 @@ export class InternalActionExecutor implements EffectExecutor {
       inicio: resultado.inicioIso,
       fin: resultado.finIso,
       // Anti-invención: la confirmación la redacta el BACKEND con la fecha/hora REALES del evento creado.
-      reservaTexto: `Listo, tu cita${servicioNombre ? ` de ${servicioNombre}` : ""} quedó agendada para el ${formatearFechaHoraCita(resultado.inicioIso)}.`,
+      // La hora termina en "a. m."/"p. m.": no se añade otro punto (salía "9:00 a. m..").
+      reservaTexto: `Listo, tu cita${servicioNombre ? ` de ${servicioNombre}` : ""} quedó agendada para el ${terminarConPunto(formatearFechaHoraCita(resultado.inicioIso))}`,
       effectId: request.effectId,
     };
 

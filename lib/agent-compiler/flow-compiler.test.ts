@@ -186,14 +186,18 @@ describe("Agent Compiler — IR → FlowDefinition (Step 7.1)", () => {
     for (const n of f.nodes) if (n.type === "ai") assert.equal((n.config.allowedTools ?? []).includes("transferir_soporte"), false, `${n.id} no debe poder proponer transferir_soporte`);
   });
 
-  it("5e. R5: fallo de reserva SIN humanHandoff conserva el nodo human histórico (agentes existentes no cambian)", () => {
+  it("5e. fallo de reserva SIN humanHandoff: mensaje HONESTO (no promete una persona que nadie recibe) y termina; sin nodo human", () => {
     const f = flowDe(
       specBase({
         capabilities: caps({ faq: true, scheduling: true }),
         scheduling: { enabled: true, provider: "nylas", timezone: "America/Bogota", minNoticeMinutes: 60, cancellation: { allowed: true, minNoticeHours: 24 }, confirmation: { required: false, hoursBefore: 24 }, resources: [], businessHours: BH_TEST },
       }),
     );
-    assert.equal(nodo(f, "human-book-fail")?.type, "human");
+    // El nodo `human` del motor NO avisa a nadie ni pausa el chat: prometer "te comunico con una persona" sería una mentira.
+    assert.equal(nodo(f, "human-book-fail")?.type, "message");
+    assert.equal(f.nodes.some((n) => n.type === "human"), false);
+    assert.doesNotMatch(String((nodo(f, "human-book-fail")?.config as { text?: string }).text), /persona|equipo|comunico/i);
+    assert.match(String((nodo(f, "human-book-fail")?.config as { text?: string }).text), /no pude completar eso/i);
     assert.equal(nodo(f, "act-handoff-book"), undefined);
     assert.equal(nodo(f, "msg-handoff-fail"), undefined);
     assert.ok(tieneEdge(f, "human-book-fail", "end"));
