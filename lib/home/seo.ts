@@ -9,7 +9,7 @@
 import type { Metadata } from "next";
 import { CAPABILITY_BACKING, CAPABILITY_KEYS } from "@/lib/agent-compiler/spec/capabilities";
 import { ETIQUETA_CAPACIDAD } from "./capabilities";
-import { GRUPOS_FAQ, textoRespuesta, todasLasFaq } from "./faq";
+import { FAQ_HOME, textoRespuesta, todasLasFaq } from "./faq";
 
 export const SITE_URL = "https://www.dulabs.co";
 
@@ -91,4 +91,4 @@ export function homeFaqJsonLd() {
   };
 }
 
-export const TOTAL_FAQ = GRUPOS_FAQ.reduce((n, g) => n + g.items.length, 0);
+export const TOTAL_FAQ = FAQ_HOME.length;
