@@ -1259,3 +1259,10 @@ body {
 /* Los componentes existentes que se reutilizan tal cual (PricingSection, Footer) usan el token site-primary: bajo .dev-scope es blanco con
    texto oscuro, igual que en /developer-platform. No se remapea nada. */
 
+
+/* ---------- Home v3 · Fase 6 ---------- */
+/* Objetivos táctiles >= 44 px en los componentes existentes que la home reutiliza tal cual (PricingSection y Footer): la regla vive AQUÍ,
+   acotada a .home-scope, para no editar componentes compartidos con "/" y "/precios". */
+.home-scope #precios a,
+.home-scope #precios button { min-height: 44px; }
+.home-scope footer a { display: inline-flex; align-items: center; min-height: 44px; }
