@@ -14,6 +14,7 @@ import type { BusinessAgentSpec } from "@/lib/agent-compiler/spec/types";
 import type { EngineEffect } from "@/lib/flow/engine-types";
 import { filterClaimSecuredEffects } from "@/lib/flow/ai-runtime/ai-response-security";
 import { retailSpec, salonSpec } from "@/lib/agent-compiler/runtime/fixtures";
+import { checksumOf } from "@/lib/agent-compiler/checksum";
 import { TENANT_A, agenteFaq, caps, publicar } from "@/lib/agent-compiler/e2e/testing/knowledge-harness";
 
 const HORARIO = { week: Array.from({ length: 7 }, () => ({ closed: false, intervals: [{ open: "08:00", close: "20:00" }] })), exceptions: [] };
@@ -84,6 +85,9 @@ describe("Auditoría de textos estáticos: nada informativo se descarta en silen
   for (const [nombre, crear] of VARIANTES) {
     it(`${nombre}`, async () => {
       const { version } = await publicar(crear(), TENANT_A);
+      // El resolvedor de producción recalcula el checksum sobre el JSON que guarda Postgres (jsonb) y lo compara con el guardado al
+      // compilar: si difieren, el agente NO se sirve por el runtime del Business Agent ("checksum_mismatch").
+      assert.equal(checksumOf(JSON.parse(JSON.stringify(version.flow))), version.flowChecksum, "el checksum debe sobrevivir al almacenamiento JSON");
       const textos = textosEstaticos(version.flow);
       assert.ok(textos.length > 0, "el flujo tiene textos");
       const bloqueados = textos.filter((t) => t.role !== "external_assertion" && !llega(t));

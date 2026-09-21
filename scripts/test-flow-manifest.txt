@@ -416,3 +416,6 @@ lib/agent-compiler/e2e/static-messages-audit.test.ts
 lib/chats/polling.test.ts
 # Egress de Supabase -- el cron de inactividad de SOLOTALENTO (disparado cada ~5 s) ya no descarga filas completas en cada pasada.
 app/api/cron/seguimiento-inactividad-solotalento/route-egress.test.ts
+# Checksum del compilador con semántica JSON (undefined = ausente): sin esto ningún agente publicado en Supabase pasaba el
+# resolvedor de producción ("checksum_mismatch").
+lib/agent-compiler/checksum.test.ts
