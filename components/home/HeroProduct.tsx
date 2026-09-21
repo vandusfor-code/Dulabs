@@ -1,34 +1,12 @@
-import type { CSSProperties, ReactNode } from "react";
 import Image from "next/image";
 import { Check } from "lucide-react";
+import { Agente, Cliente, retraso } from "./ChatBubbles";
 
 // Producto del hero: una conversación de agendamiento por WhatsApp junto a lo que el agente hizo por detrás. Es HTML/CSS real
 // (texto seleccionable e indexable), sin imágenes ni JS. La secuencia aparece UNA vez (no en bucle) y se anula con
 // prefers-reduced-motion. Todo lo que muestra corresponde a acciones que el agente ejecuta hoy: identificar el servicio del
 // catálogo, consultar disponibilidad en Google Calendar (la calcula el sistema con horarios y duración, no la IA) y crear la cita.
 // Los datos (servicio, precio, horarios) son un EJEMPLO y así se rotula.
-
-const retraso = (ms: number): CSSProperties => ({ ["--home-d" as string]: `${ms}ms` });
-
-function Cliente({ ms, children }: { ms: number; children: ReactNode }) {
-  return (
-    <div className="home-seq max-w-[84%] rounded-2xl rounded-tl-md bg-white/[0.055] px-3.5 py-2.5 text-[13.5px] leading-snug text-site-fg" style={retraso(ms)}>
-      {children}
-    </div>
-  );
-}
-
-function Agente({ ms, children }: { ms: number; children: ReactNode }) {
-  return (
-    <div
-      className="home-seq ml-auto max-w-[90%] rounded-2xl rounded-tr-md border border-site-border bg-site-secondary px-3.5 py-2.5 text-[13.5px] leading-snug text-site-fg"
-      style={retraso(ms)}
-    >
-      <p className="mb-1 font-mono text-[10px] uppercase tracking-[0.16em] text-home-accent">Agente</p>
-      {children}
-    </div>
-  );
-}
 
 function Accion({ ms, titulo, detalle, estado }: { ms: number; titulo: string; detalle: string; estado?: string }) {
   return (

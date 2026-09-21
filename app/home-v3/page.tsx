@@ -1,6 +1,13 @@
 import type { Metadata } from "next";
+import { AgentActionsSection } from "@/components/home/AgentActionsSection";
+import { CatalogSection } from "@/components/home/CatalogSection";
+import { ConfigSection } from "@/components/home/ConfigSection";
 import { HomeHero } from "@/components/home/HomeHero";
 import { HomeNav } from "@/components/home/HomeNav";
+import { KnowledgeSection } from "@/components/home/KnowledgeSection";
+import { PathsBridge } from "@/components/home/PathsBridge";
+import { ProblemSection } from "@/components/home/ProblemSection";
+import { SchedulingSection } from "@/components/home/SchedulingSection";
 import { Footer } from "@/components/site/Sections";
 import { HOME_V3_PATH } from "@/lib/home/links";
 
@@ -25,6 +32,13 @@ export default function HomeV3Page() {
       <HomeNav />
       <main id="contenido">
         <HomeHero />
+        <ProblemSection />
+        <AgentActionsSection />
+        <SchedulingSection />
+        <ConfigSection />
+        <CatalogSection />
+        <KnowledgeSection />
+        <PathsBridge />
       </main>
       <Footer />
     </div>

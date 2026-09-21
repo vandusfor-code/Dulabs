@@ -10,7 +10,7 @@ export function HomeNav() {
   return (
     <header className="sticky top-0 z-50 border-b border-site-border bg-site-bg/85 backdrop-blur-md">
       <div className="relative mx-auto flex h-16 max-w-[1240px] items-center justify-between gap-6 px-5 sm:px-6">
-        <Link href="/" aria-label="DuLabs, ir al inicio" className="flex items-center gap-2.5 text-[15px] font-medium tracking-tight text-site-fg">
+        <Link href="/" aria-label="DuLabs, ir al inicio" className="flex min-h-11 items-center gap-2.5 text-[15px] font-medium tracking-tight text-site-fg">
           <Image src="/logo.png" alt="" width={26} height={26} priority className="rounded-full" />
           DuLabs
         </Link>

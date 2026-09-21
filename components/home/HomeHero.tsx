@@ -58,7 +58,7 @@ export function HomeHero() {
                 href={ENTERPRISE_HREF}
                 event="cta_enterprise"
                 source="hero"
-                className="group mt-2.5 inline-flex items-center gap-1.5 text-[13.5px] text-site-fg transition-colors hover:text-home-accent"
+                className="group -mb-2.5 mt-1 inline-flex min-h-11 items-center gap-1.5 text-[13.5px] text-site-fg transition-colors hover:text-home-accent"
               >
                 Ver soluciones empresariales
                 <span aria-hidden className="transition-transform group-hover:translate-x-0.5">→</span>
