@@ -49,12 +49,14 @@ const TODO = Object.values(HTML).join("\n");
 const T = texto(TODO);
 
 describe("Modelo de producto -- 01 · Crea tu agente / 02 · A la medida", () => {
-  it("el hero presenta las dos líneas con el mismo lenguaje", () => {
-    const t = texto(HTML.hero);
-    assert.match(t, /01 · Crea tu agente/);
-    assert.match(t, /Agente estándar que configuras tú mismo desde el panel, sin programar: creas, pruebas, publicas y administras/);
-    assert.match(t, /02 · A la medida/);
-    assert.match(t, /Soluciones empresariales que DuLabs desarrolla contigo: automatizaciones, integraciones y desarrollos personalizados/);
+  it("las dos líneas comerciales se comunican en la página (Crea tu agente + A la medida), aunque ya no en el hero", () => {
+    // El hero se rediseñó a un mensaje de marca ("Automatización sin límites") -- las dos vías se comunican ahora en las secciones del
+    // cuerpo: "Crea tu agente" (cómo funciona) y "A la medida" (soluciones empresariales). El hero no debe llevar el teaser antiguo.
+    assert.doesNotMatch(texto(HTML.hero), /01 · Crea tu agente|02 · A la medida/);
+    assert.match(texto(HTML.crea), /Crea tu agente/);
+    assert.match(texto(HTML.crea), /Agente estándar|agente estándar/);
+    assert.match(texto(HTML.empresas), /A la medida/);
+    assert.match(texto(HTML.empresas), /DuLabs también diseña e implementa automatización empresarial/);
   });
 
   it("Crea tu agente dice que el agente estándar lo configura el cliente y muestra el ciclo completo, en orden", () => {

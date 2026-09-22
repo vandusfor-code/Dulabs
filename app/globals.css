@@ -1231,3 +1231,249 @@ body {
 .home-scope #precios a,
 .home-scope #precios button { min-height: 44px; }
 .home-scope footer a { display: inline-flex; align-items: center; min-height: 44px; }
+
+/* ---------- Home · hero "sistema" (placas de vidrio en profundidad) ----------
+   Recreación de la referencia enterprise: cuatro placas de vidrio oscuro en perspectiva 3D que recede hacia el fondo-derecha (Du IA ->
+   Sistemas conectados -> Procesos automatizados -> Resultados reales), sobre un piso apenas iluminado. Todo monocromo (blanco/gris sobre
+   negro) SALVO un único acento: --home-signal (verde DuLabs), usado EXCLUSIVAMENTE en la señal que recorre las etapas -- "pequeñas zonas de
+   verde", casi imperceptibles en reposo. Sin JS: la señal es una animación CSS en bucle lento (~7 s), anulada con prefers-reduced-motion. */
+.home-scope { --home-signal: #c6ff3d; }
+
+.home-scope .home-system {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  min-height: clamp(17rem, 38vw, 33rem);
+  perspective: 1700px;
+  perspective-origin: 72% 42%;
+}
+/* Haz de luz sutil desde arriba-derecha + piso reflectante tenue bajo las placas. */
+.home-scope .home-system::before {
+  content: "";
+  position: absolute;
+  inset: -12% -6% 8% 4%;
+  background:
+    radial-gradient(60% 42% at 76% 6%, rgba(255, 255, 255, 0.1), transparent 70%),
+    radial-gradient(48% 30% at 60% 100%, rgba(255, 255, 255, 0.05), transparent 72%);
+  pointer-events: none;
+}
+.home-scope .home-system-floor {
+  position: absolute;
+  left: 8%;
+  right: 2%;
+  bottom: 6%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.16) 30%, rgba(255, 255, 255, 0.06) 78%, transparent);
+  transform: rotateX(72deg);
+  transform-origin: bottom;
+  pointer-events: none;
+}
+
+.home-scope .home-system-stage {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  transform-style: preserve-3d;
+}
+
+.home-scope .home-panel {
+  --hbase: clamp(15rem, 31vw, 31rem);
+  --w: clamp(5.5rem, 8.6vw, 12rem);
+  --hf: 1;
+  --op: 1;
+  --lift: 0rem;
+  --ml: -1.4rem;
+  --sig-delay: 0s;
+  position: relative;
+  flex: none;
+  width: var(--w);
+  height: calc(var(--hbase) * var(--hf));
+  margin-left: var(--ml);
+  transform: translateY(var(--lift)) rotateY(-18deg);
+  transform-origin: bottom center;
+  opacity: var(--op);
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 5px;
+  background: linear-gradient(157deg, rgba(255, 255, 255, 0.075) 0%, rgba(255, 255, 255, 0.012) 46%, rgba(255, 255, 255, 0.05) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    inset -1px 0 0 rgba(255, 255, 255, 0.12),
+    0 30px 60px -30px rgba(0, 0, 0, 0.8);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+}
+/* Reflejo mínimo bajo cada placa (piso de vidrio). */
+.home-scope .home-panel::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  height: 34%;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.06), transparent 78%);
+  transform: scaleY(-1);
+  transform-origin: top;
+  opacity: 0.5;
+  border-radius: 5px;
+  pointer-events: none;
+}
+.home-scope .home-panel--lead {
+  --w: clamp(6.25rem, 10vw, 14rem);
+  --hf: 1;
+  --op: 1;
+  --ml: 0rem;
+  --sig-delay: 0s;
+  z-index: 4;
+}
+.home-scope .home-panel:nth-child(2) { --hf: 0.9; --op: 0.72; --lift: -1.4rem; --ml: -1.2rem; --sig-delay: 1.3s; z-index: 3; }
+.home-scope .home-panel:nth-child(3) { --hf: 0.8; --op: 0.5; --lift: -3rem; --ml: 0.4rem; --sig-delay: 2.6s; z-index: 2; }
+.home-scope .home-panel:nth-child(4) { --hf: 0.7; --op: 0.36; --lift: -4.2rem; --ml: 0.6rem; --sig-delay: 3.9s; z-index: 1; }
+
+/* Franja de luz vertical que atraviesa la placa líder (reflejo especular). */
+.home-scope .home-panel-streak {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 56%;
+  width: 20%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.45) 45%, rgba(255, 255, 255, 0.07) 70%, transparent);
+  filter: blur(2px);
+  pointer-events: none;
+}
+
+/* Borde activo (señal) -- ÚNICO uso del verde de marca. */
+.home-scope .home-panel-edge {
+  position: absolute;
+  inset: -1px;
+  border-radius: 5px;
+  border: 1px solid var(--home-signal);
+  box-shadow: 0 0 26px -6px var(--home-signal), inset 0 0 18px -8px var(--home-signal);
+  opacity: 0;
+  pointer-events: none;
+  animation: home-hero-edge 7s var(--sig-delay) infinite;
+}
+
+/* Marca "Du IA" de la placa líder. */
+.home-scope .home-panel-mark {
+  position: absolute;
+  left: 12%;
+  bottom: 22%;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.28em;
+}
+.home-scope .home-panel-word {
+  font-size: clamp(1.4rem, 2.8vw, 2.9rem);
+  font-weight: 500;
+  letter-spacing: -0.03em;
+  color: #ffffff;
+  line-height: 1;
+}
+.home-scope .home-panel-sup {
+  margin-top: 0.15em;
+  font-family: var(--font-mono);
+  font-size: clamp(0.5rem, 0.9vw, 0.72rem);
+  letter-spacing: 0.14em;
+  color: rgba(255, 255, 255, 0.65);
+}
+.home-scope .home-panel-rule {
+  position: absolute;
+  left: 0;
+  bottom: -0.5em;
+  width: 1.4em;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.5);
+}
+
+/* Etiquetas de las placas 2-4. */
+.home-scope .home-panel-label {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 44%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15em;
+  padding-inline: 0.6rem;
+  font-family: var(--font-mono);
+  font-size: clamp(0.5rem, 0.82vw, 0.72rem);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.78);
+  text-align: center;
+  white-space: nowrap;
+}
+.home-scope .home-panel-tick {
+  margin-top: 0.5em;
+  width: 1.1em;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.4);
+}
+
+/* Punto de señal por etapa -- verde, casi imperceptible en reposo, brilla al pasar la señal. */
+.home-scope .home-panel-dot {
+  position: absolute;
+  left: 50%;
+  bottom: 12%;
+  width: 6px;
+  height: 6px;
+  margin-left: -3px;
+  border-radius: 50%;
+  background: var(--home-signal);
+  opacity: 0.16;
+  animation: home-hero-dot 7s var(--sig-delay) infinite;
+}
+.home-scope .home-panel--lead .home-panel-dot { left: 14%; bottom: 16%; }
+
+/* Indicador de "completado" en la última etapa (Resultados reales). */
+.home-scope .home-panel-done {
+  position: absolute;
+  left: 50%;
+  top: 30%;
+  display: grid;
+  place-items: center;
+  width: 1.4rem;
+  height: 1.4rem;
+  margin-left: -0.7rem;
+  border-radius: 50%;
+  border: 1px solid var(--home-signal);
+  color: var(--home-signal);
+  opacity: 0;
+  animation: home-hero-done 7s infinite;
+}
+.home-scope .home-panel-done svg { width: 0.8rem; height: 0.8rem; }
+
+@keyframes home-hero-edge {
+  0% { opacity: 0; }
+  4% { opacity: 0.55; }
+  11% { opacity: 0.22; }
+  20%, 100% { opacity: 0; }
+}
+@keyframes home-hero-dot {
+  0% { opacity: 0.16; transform: scale(1); box-shadow: none; }
+  4% { opacity: 1; transform: scale(1.4); box-shadow: 0 0 14px var(--home-signal); }
+  16% { opacity: 0.45; }
+  26%, 100% { opacity: 0.16; transform: scale(1); box-shadow: none; }
+}
+@keyframes home-hero-done {
+  0%, 52% { opacity: 0; transform: scale(0.8); }
+  57% { opacity: 1; transform: scale(1); }
+  76% { opacity: 1; }
+  84%, 100% { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .home-scope .home-panel-edge,
+  .home-scope .home-panel-dot,
+  .home-scope .home-panel-done { animation: none; }
+  .home-scope .home-panel-edge { opacity: 0; }
+  .home-scope .home-panel-dot { opacity: 0.2; }
+}
+@media (max-width: 767px) {
+  /* Móvil: la composición se conserva (profundidad + superposición) pero más compacta y centrada bajo el texto. */
+  .home-scope .home-system { min-height: 15rem; perspective: 1100px; perspective-origin: 60% 45%; }
+  .home-scope .home-panel { --hbase: clamp(11rem, 42vw, 15rem); --w: clamp(4.25rem, 20vw, 6rem); --ml: -1.9rem; transform: translateY(var(--lift)) rotateY(-19deg); }
+  .home-scope .home-panel--lead { --w: clamp(5rem, 24vw, 7rem); }
+}
