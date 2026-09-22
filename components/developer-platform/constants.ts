@@ -19,8 +19,9 @@ export const DOCS_HREF = "/developers";
  *  de registro al confirmar el correo). */
 export const LOGIN_HREF = "/login?next=/developer";
 
-/** Base URL pública del API (misma que el OpenAPI de Fase 14). Solo display. */
-export const API_BASE_URL = "https://api.dulabs.co/api/v1";
+/** Base URL pública del API (misma que el OpenAPI de Fase 14). Solo display.
+ *  Fuente de verdad única en lib/developers/api-base.ts. */
+export { DEVELOPER_API_BASE_URL as API_BASE_URL } from "@/lib/developers/api-base";
 
 /** Anclas de secciones para el nav de la landing. */
 export const SECTION_IDS = {

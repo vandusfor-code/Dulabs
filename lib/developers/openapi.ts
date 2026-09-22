@@ -8,7 +8,11 @@
 // NO incluye /api/v1/dev/* (sesión Supabase, uso del dashboard), ni la callback
 // de Meta (/api/v1/webhooks/meta), ni endpoints internos. Sin secretos.
 
-export const OPENAPI_BASE_URL = "https://api.dulabs.co/api/v1";
+import { DEVELOPER_API_BASE_URL } from "@/lib/developers/api-base";
+
+// Base URL pública documentada. Fuente de verdad única en lib/developers/api-base.ts
+// (migrada a developer-api.dulabs.co; api.dulabs.co es de otro servicio).
+export const OPENAPI_BASE_URL = DEVELOPER_API_BASE_URL;
 
 // Rutas públicas documentadas (relativas a la Base URL). El test de conformidad
 // las contrasta contra el ruteo real del gateway.
