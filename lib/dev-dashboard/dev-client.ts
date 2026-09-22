@@ -212,6 +212,9 @@ export function createDevClient(deps: DevClientDeps) {
        * el token de Meta. El token NUNCA viaja por acá.
        */
       connect: (body: { code: string; wabaId?: string; phoneNumberId?: string }) => solicitar<ConnectResp>(deps, "/whatsapp/connect", { method: "POST", body }),
+      /** "Probar envío": envía un mensaje real por el número conectado del workspace. El whatsappNumberId y la API key se resuelven server-side (nunca en el navegador). */
+      testSend: (body: { to: string; text: string }) =>
+        solicitar<{ jobId: string | null; status: string; to: string; phoneNumberId: string }>(deps, "/whatsapp/test-send", { method: "POST", body }),
     },
     webhooks: {
       list: () => solicitar<{ webhooks: WebhookMeta[] }>(deps, "/webhooks"),
