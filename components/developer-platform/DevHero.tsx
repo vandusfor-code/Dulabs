@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useI18n } from "@/lib/i18n";
-import { START_HREF, DOCS_HREF } from "./constants";
+import { START_HREF, DOCS_HREF, API_BASE_URL } from "./constants";
 
 // DuLabs Developer V1 -- rediseño Resend-level. Hero: el producto es el
 // protagonista. Mensaje central: infraestructura oficial de WhatsApp para
@@ -10,7 +10,7 @@ import { START_HREF, DOCS_HREF } from "./constants";
 // (mismo contrato que /developers y el gateway) + el ciclo de vida animado.
 // Nomenclatura real: POST /api/v1/messages, Bearer dl_live_, Idempotency-Key.
 
-const REQUEST = `curl -X POST https://api.dulabs.co/api/v1/messages \\
+const REQUEST = `curl -X POST ${API_BASE_URL}/messages \\
   -H "Authorization: Bearer dl_live_9c2f…a1" \\
   -H "Idempotency-Key: 8f2a1c…" \\
   -d '{
