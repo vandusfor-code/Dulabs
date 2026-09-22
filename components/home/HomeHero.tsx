@@ -1,12 +1,15 @@
-import { CREAR_AGENTE_HREF, ENTERPRISE_HREF, HABLAR_CON_DULABS_HREF } from "@/lib/home/links";
+import type { CSSProperties } from "react";
+import { CREAR_AGENTE_HREF, HABLAR_CON_DULABS_HREF } from "@/lib/home/links";
 import { BOTON_PRIMARIO, BOTON_SECUNDARIO, Contenedor } from "./atoms";
-import { HeroProduct } from "./HeroProduct";
+import { HeroSystem } from "./HeroSystem";
 import { TrackedLink } from "./TrackedLink";
 
-// Hero de la home. Servidor puro: el H1 es texto visible desde el primer render (sin revelado por palabras ni blur, que retrasaban el LCP).
-// Dos columnas que aprovechan el ancho de pantallas grandes (texto a la izquierda, mockup del agente a la derecha) y comunican de entrada
-// las DOS formas de trabajar con DuLabs: "Crea tu agente" (agente estándar que el cliente configura solo) y "A la medida" (soluciones
-// empresariales que DuLabs desarrolla con él).
+// Hero de la home -- composición "enterprise" de dos zonas: mensaje a la izquierda, visualización del SISTEMA (placas de vidrio en
+// profundidad) a la derecha (ver HeroSystem + globals.css). Servidor puro: el H1 renderiza de inmediato (sin animación, protege el LCP); el
+// resto del contenido y las placas entran con una secuencia suave (home-seq). Identidad monocroma (negro/blanco/gris); el único acento es la
+// señal verde de marca que recorre las placas, aplicada en CSS.
+const d = (ms: number): CSSProperties => ({ ["--home-d" as string]: `${ms}ms` });
+
 export function HomeHero() {
   return (
     <section className="relative overflow-hidden">
@@ -14,24 +17,26 @@ export function HomeHero() {
 
       <Contenedor
         ancho="hero"
-        className="relative grid gap-12 pb-14 pt-10 md:pt-14 lg:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)] lg:items-center lg:gap-14 lg:pb-20 lg:pt-16 xl:gap-20 2xl:pb-28 2xl:pt-24"
+        className="relative grid gap-12 pb-16 pt-12 md:pt-16 lg:grid-cols-[minmax(0,0.86fr)_minmax(0,1.14fr)] lg:items-center lg:gap-10 lg:pb-24 lg:pt-20 xl:gap-16 2xl:pb-28 2xl:pt-24"
       >
         <div>
-          <p className="inline-flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.12em] text-site-muted-fg sm:text-[11px] sm:tracking-[0.18em]">
-            <span className="dev-live-dot size-1.5 rounded-full bg-site-fg" />
-            IA · Automatización · Software empresarial
+          <p className="home-seq flex items-center gap-3 font-mono text-[10px] uppercase tracking-[0.2em] text-site-muted-fg sm:text-[11px]" style={d(0)}>
+            <span aria-hidden className="h-px w-8 bg-white/30" />
+            Tecnología que impulsa operaciones
           </p>
 
-          <h1 className="mt-6 max-w-[16ch] text-balance text-[clamp(2.625rem,1.1rem_+_3.7vw,5rem)] font-medium leading-[1.03] tracking-[-0.035em] text-site-fg">
-            Agentes de IA que hacen más que responder.
+          <h1 className="mt-7 text-balance text-[clamp(2.75rem,1.2rem_+_5.4vw,8.5rem)] font-medium leading-[0.92] tracking-[-0.04em] text-site-fg">
+            Automatización
+            <br />
+            <span className="bg-gradient-to-b from-white to-white/45 bg-clip-text text-transparent">sin límites.</span>
           </h1>
 
-          <p className="mt-6 max-w-[38rem] text-[16px] leading-[1.65] text-site-muted-fg md:text-[17px] xl:text-[18px]">
-            Crea un agente que atiende a tus clientes por WhatsApp, consulta la información de tu negocio, muestra tu catálogo y agenda citas en tu
-            calendario. Para operaciones más complejas, DuLabs construye e integra la solución contigo.
+          <p className="home-seq mt-7 max-w-[34rem] text-[16px] leading-[1.65] text-site-muted-fg md:text-[17px] xl:text-[18px]" style={d(90)}>
+            Conecta tus sistemas, automatiza procesos
+            <br className="hidden sm:block" /> y escala con agentes de IA. Todo desde WhatsApp.
           </p>
 
-          <div className="mt-9 flex flex-col gap-3 sm:flex-row">
+          <div className="home-seq mt-9 flex flex-col gap-3 sm:flex-row" style={d(160)}>
             <TrackedLink href={CREAR_AGENTE_HREF} event="cta_crear_agente" source="hero" className={BOTON_PRIMARIO}>
               Crear mi agente
               <span aria-hidden>→</span>
@@ -40,35 +45,11 @@ export function HomeHero() {
               Hablar con DuLabs
             </TrackedLink>
           </div>
-
-          <div className="mt-10 grid gap-3 sm:grid-cols-2 lg:grid-cols-1 xl:mt-12 xl:grid-cols-2 xl:gap-4">
-            <div className="rounded-xl border border-site-border bg-site-card/40 p-5">
-              <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-site-fg">
-                <span className="text-site-muted-fg">01</span> · Crea tu agente
-              </p>
-              <p className="mt-2.5 text-[14px] leading-relaxed text-site-muted-fg">Agente estándar que configuras tú mismo desde el panel, sin programar: creas, pruebas, publicas y administras.</p>
-            </div>
-            <div className="rounded-xl border border-site-border bg-site-card/40 p-5">
-              <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-site-fg">
-                <span className="text-site-muted-fg">02</span> · A la medida
-              </p>
-              <p className="mt-2.5 text-[14px] leading-relaxed text-site-muted-fg">
-                Soluciones empresariales que DuLabs desarrolla contigo: automatizaciones, integraciones y desarrollos personalizados.
-              </p>
-              <TrackedLink
-                href={ENTERPRISE_HREF}
-                event="cta_enterprise"
-                source="hero"
-                className="group -mb-2.5 mt-1 inline-flex min-h-11 items-center gap-1.5 text-[13.5px] text-site-fg transition-colors underline-offset-4 hover:underline"
-              >
-                Ver soluciones empresariales
-                <span aria-hidden className="transition-transform group-hover:translate-x-0.5">→</span>
-              </TrackedLink>
-            </div>
-          </div>
         </div>
 
-        <HeroProduct />
+        <div className="home-seq" style={d(140)}>
+          <HeroSystem />
+        </div>
       </Contenedor>
     </section>
   );

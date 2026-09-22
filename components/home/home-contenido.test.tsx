@@ -64,43 +64,46 @@ const PAGINA = HERO + SECCIONES.map((s) => s.html).join("");
 const TEXTO_PAGINA = texto(PAGINA);
 
 describe("Home -- hero", () => {
-  it("tiene exactamente un H1 con la propuesta de valor, visible en el HTML del servidor", () => {
+  it("tiene exactamente un H1 (Automatización sin límites.), visible en el HTML del servidor y no animado (LCP)", () => {
     assert.equal((HERO.match(/<h1[\s>]/g) ?? []).length, 1);
-    const h1 = /<h1[^>]*>([\s\S]*?)<\/h1>/.exec(HERO)?.[1] ?? "";
-    assert.equal(texto(h1), "Agentes de IA que hacen más que responder.");
+    const h1raw = /<h1[^>]*>([\s\S]*?)<\/h1>/.exec(HERO)?.[1] ?? "";
+    assert.equal(texto(h1raw), "Automatización sin límites.");
+    // El H1 renderiza de inmediato: nunca lleva .home-seq (que retrasa la aparición) -- protege el LCP.
+    assert.doesNotMatch(/<h1[^>]*>/.exec(HERO)?.[0] ?? "", /home-seq/);
   });
 
-  it("los dos CTAs principales son 'Crear mi agente' y 'Hablar con DuLabs' con los destinos centralizados", () => {
+  it("el eyebrow es 'Tecnología que impulsa operaciones'", () => {
+    assert.match(texto(HERO), /Tecnología que impulsa operaciones/);
+  });
+
+  it("máximo 1 CTA principal + 1 secundario: 'Crear mi agente' y 'Hablar con DuLabs' con los destinos centralizados", () => {
     assert.match(HERO, new RegExp(`href="${CREAR_AGENTE_HREF.replace("?", "\\?")}"[^>]*>[\\s\\S]*?Crear mi agente`));
     assert.ok(HERO.includes(`href="${HABLAR_CON_DULABS_HREF.replace(/&/g, "&amp;")}"`), "falta el enlace de WhatsApp de ventas");
     assert.match(HERO, /Hablar con DuLabs/);
     assert.ok(HABLAR_CON_DULABS_HREF.startsWith("https://wa.me/"));
+    // Exactamente 2 enlaces en el hero -- nada de teasers/CTAs extra (minimalismo de la referencia).
+    assert.equal((HERO.match(/<a /g) ?? []).length, 2, `el hero debe tener solo 2 CTAs, tiene ${(HERO.match(/<a /g) ?? []).length}`);
+    // El teaser antiguo "01 · Crea tu agente / 02 · A la medida" ya no vive en el hero (se mudó a las secciones del cuerpo).
+    assert.doesNotMatch(texto(HERO), /01 · Crea tu agente|02 · A la medida/);
   });
 
-  it("muestra claramente las dos posibilidades: 'Crea tu agente' y 'A la medida' (con enlace a soluciones empresariales)", () => {
-    const t = texto(HERO);
-    assert.match(t, /01 · Crea tu agente/);
-    assert.match(t, /02 · A la medida/);
-    assert.match(t, /Agente estándar que configuras tú mismo desde el panel, sin programar/);
-    assert.match(t, /Soluciones empresariales que DuLabs desarrolla contigo/);
-    assert.ok(HERO.includes(`href="${ENTERPRISE_HREF}"`));
-  });
-
-  it("es un hero de dos columnas amplio: texto a la izquierda y mockup del agente a la derecha, en el contenedor más ancho de la home", () => {
+  it("es un hero de dos columnas amplio: mensaje a la izquierda y la visualización del sistema a la derecha, en el contenedor más ancho", () => {
     assert.match(HERO, /class="hx hx-hero /);
-    assert.match(HERO, /lg:grid-cols-\[minmax\(0,0\.92fr\)_minmax\(0,1\.08fr\)\]/);
-    assert.ok(HERO.indexOf("<h1") < HERO.indexOf("<figure"), "el texto va antes que el mockup (izquierda -> derecha y en móvil primero el mensaje)");
-    assert.match(HERO, /text-\[clamp\(2\.625rem,1\.1rem_\+_3\.7vw,5rem\)\]/, "el H1 debe escalar de forma fluida");
+    assert.match(HERO, /lg:grid-cols-\[minmax\(0,0\.86fr\)_minmax\(0,1\.14fr\)\]/);
+    assert.ok(HERO.indexOf("<h1") < HERO.indexOf("home-system"), "el texto va antes que la visualización (izquierda -> derecha; en móvil primero el mensaje)");
+    assert.match(HERO, /text-\[clamp\(2\.75rem,1\.2rem_\+_5\.4vw,8\.5rem\)\]/, "el H1 debe escalar de forma fluida y contundente");
   });
 
-  it("el producto simulado se rotula como ejemplo y muestra solo acciones reales del agente", () => {
+  it("la visualización es un 'sistema' de placas (Du IA -> Sistemas conectados -> Procesos automatizados -> Resultados reales), sin iconos de IA genéricos", () => {
     const t = texto(HERO);
-    assert.match(t, /Ejemplo ilustrativo/);
-    for (const accion of ["Servicio identificado", "Disponibilidad consultada", "Google Calendar", "Cita creada"]) assert.ok(t.includes(accion), `falta: ${accion}`);
+    for (const etapa of ["Du", "Sistemas", "conectados", "Procesos", "automatizados", "Resultados", "reales"]) assert.ok(t.includes(etapa), `falta la etapa: ${etapa}`);
+    assert.match(HERO, /home-panel/, "las placas usan la clase home-panel (3D en CSS, sin JS)");
+    // Nada de ilustraciones típicas de IA (robots, cerebros, circuitos, estrellas, hologramas).
+    assert.doesNotMatch(HERO.toLowerCase(), /robot|cerebro|circuit|hologram|neural|\bbrain\b/);
   });
 
-  it("no promete una IA que calcula la disponibilidad ni usa marcadores de posición", () => {
-    assert.doesNotMatch(texto(HERO).toLowerCase(), /la ia calcula|lorem|próximamente|coming soon/);
+  it("no usa marcadores de posición ni claims de placeholder", () => {
+    assert.doesNotMatch(texto(HERO).toLowerCase(), /lorem|próximamente|coming soon|placeholder/);
   });
 });
 
@@ -366,7 +369,7 @@ describe("Home -- guardas de calidad", () => {
 
   it("los datos de ejemplo (jueves 3:30 p. m., $30.000...) están rotulados como ejemplo en cada bloque que los muestra", () => {
     assert.match(texto(seccion("agendamiento")).toLowerCase(), /ejemplo ilustrativo/);
-    assert.match(texto(HERO).toLowerCase(), /ejemplo ilustrativo/);
+    // El hero ya no muestra datos de negocio concretos (era un chat de ejemplo); ahora es una visualización abstracta del sistema.
   });
 
   it("la home es indexable con canónica a '/', está en el sitemap y la ruta temporal /home-v3 ya no existe", () => {
@@ -441,7 +444,10 @@ describe("Home -- diseño fluido y responsive real (aprovecha pantallas grandes)
   });
 });
 
-describe("Home -- identidad monocroma (sin naranja ni ningún color de acento)", () => {
+describe("Home -- identidad monocroma con un ÚNICO acento (verde DuLabs solo en la señal del hero)", () => {
+  // La home es monocroma (negro/blanco/gris) SALVO un único acento de marca: el verde DuLabs (#c6ff3d), usado EXCLUSIVAMENTE en la señal
+  // que recorre las placas del hero (--home-signal). Cualquier OTRO color cromático (naranja, azul, etc.) sigue prohibido.
+  const VERDE_MARCA = "#c6ff3d";
   function luminancia(hex: string): number {
     const canales = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
     return 0.2126 * canales[0] + 0.7152 * canales[1] + 0.0722 * canales[2];
@@ -469,15 +475,30 @@ describe("Home -- identidad monocroma (sin naranja ni ningún color de acento)",
     assert.doesNotMatch(cssHome, naranja, "globals.css (bloques de la home)");
   });
 
-  it("todos los colores de la home son neutros (R = G = B): negro, blanco y grises, sin gradientes de color", () => {
+  it("todos los colores de la home son neutros (R = G = B), salvo el único acento verde de marca (#c6ff3d)", () => {
     const hexes = (t: string) => [...t.matchAll(/#([0-9a-fA-F]{6})\b/g)].map((m) => "#" + m[1]);
     const rgbs = (t: string) => [...t.matchAll(/rgba?\(\s*(\d+)[ ,]+(\d+)[ ,]+(\d+)/g)].map((m) => [Number(m[1]), Number(m[2]), Number(m[3])]);
     const fuentes = [...FUENTES_HOME.map((r) => [relative(RAIZ, r), readFileSync(r, "utf8")]), ["globals.css (home)", cssHome]] as [string, string][];
     for (const [nombre, t] of fuentes) {
-      for (const h of hexes(t)) assert.ok(neutro(h), `${nombre}: color no neutro ${h}`);
+      for (const h of hexes(t)) assert.ok(neutro(h) || h.toLowerCase() === VERDE_MARCA, `${nombre}: color no neutro ${h}`);
       for (const [r, g, b] of rgbs(t)) assert.ok(r === g && g === b, `${nombre}: color no neutro rgb(${r} ${g} ${b})`);
-      assert.doesNotMatch(t, /\b(bg|text|border|ring|from|to|via|fill|stroke)-(red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-\d{2,3}\b/, `${nombre}: utilidad de color de Tailwind`);
+      // Se sigue prohibiendo TODA utilidad de color de Tailwind (incl. lime/green): el verde vive solo como token CSS (--home-signal), no como clase.
+      assert.doesNotMatch(t, /\b(bg|text|border|ring|from|to|via|fill|stroke)-(red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-?\d{0,3}\b/, `${nombre}: utilidad de color de Tailwind`);
     }
+  });
+
+  it("el verde de marca aparece SOLO como el token --home-signal y su uso está confinado a la señal del hero", () => {
+    // El único hex verde del CSS de la home es la definición del token.
+    const hexesVerdes = [...cssHome.matchAll(/#c6ff3d/gi)];
+    assert.equal(hexesVerdes.length, 1, `#c6ff3d debe aparecer una sola vez (la definición de --home-signal), aparece ${hexesVerdes.length}`);
+    assert.match(cssHome, /--home-signal:\s*#c6ff3d;/);
+    // Todo consumo del verde es vía var(--home-signal), y solo en reglas de la señal (home-panel-edge / -dot / -done).
+    for (const m of cssHome.matchAll(/var\(--home-signal\)/g)) {
+      const contexto = cssHome.slice(Math.max(0, m.index! - 400), m.index!);
+      assert.match(contexto, /home-panel-(edge|dot|done)|home-hero-(dot|edge|done)|--home-signal:/, "var(--home-signal) solo se usa en la señal del hero");
+    }
+    // Ninguna FUENTE .tsx/.ts de la home escribe el verde a mano (el hex vive solo en CSS; los comentarios pueden nombrar el token).
+    for (const ruta of FUENTES_HOME) assert.doesNotMatch(sinComentarios(readFileSync(ruta, "utf8")), /#c6ff3d/i, relative(RAIZ, ruta));
   });
 
   it("el CTA principal es blanco con texto oscuro (mismos tokens que el botón primario de /developer-platform)", () => {
