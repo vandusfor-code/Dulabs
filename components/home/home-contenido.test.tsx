@@ -1,7 +1,8 @@
 /**
- * Home principal (ruta "/"): contenido renderizado + guardas de calidad. La home es la PUERTA DE ENTRADA al producto (8 bloques), no el sitio
- * completo: estas pruebas fijan su estructura compacta, que el ancho sea fluido, que no haya claims falsos ni JS cliente innecesario y que
- * todo lo que afirma coincida con el Runtime y el Wizard reales (si el producto cambia, la home no puede seguir diciendo algo viejo).
+ * Home principal (ruta "/"): contenido renderizado + guardas de calidad. La home es la PUERTA DE ENTRADA al producto (7 bloques), no el sitio
+ * completo: estas pruebas fijan su estructura compacta, que el ancho tenga un tope real (nunca "pantalla completa"), que no haya claims falsos
+ * ni JS cliente innecesario y que todo lo que afirma coincida con el Runtime y el Wizard reales (si el producto cambia, la home no puede
+ * seguir diciendo algo viejo).
  */
 import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
@@ -17,7 +18,6 @@ import { FinalCta } from "@/components/home/FinalCta";
 import { HomeHero } from "@/components/home/HomeHero";
 import { HomeNav } from "@/components/home/HomeNav";
 import { HowItWorksSection } from "@/components/home/HowItWorksSection";
-import { SchedulingSection } from "@/components/home/SchedulingSection";
 import { CAPACIDADES_A_MEDIDA } from "@/lib/home/enterprise";
 import { CAPACIDADES_HOME, ETAPAS_CREA_TU_AGENTE, ETIQUETA_CAPACIDAD, PASOS_DEL_WIZARD } from "@/lib/home/capabilities";
 import { homeMetadata } from "@/lib/home/seo";
@@ -51,7 +51,6 @@ const sinComentarios = (fuente: string) => fuente.replace(/\/\*[\s\S]*?\*\/|(^|[
 const SECCIONES = [
   { id: "capacidades", html: renderToStaticMarkup(<CapabilitiesSection />) },
   { id: "como-funciona", html: renderToStaticMarkup(<HowItWorksSection />) },
-  { id: "agendamiento", html: renderToStaticMarkup(<SchedulingSection />) },
   { id: "empresas", html: renderToStaticMarkup(<CustomSolutionsSection />) },
   { id: "preguntas-frecuentes", html: renderToStaticMarkup(<FaqSection />) },
   { id: "empezar", html: renderToStaticMarkup(<FinalCta />) },
@@ -77,20 +76,31 @@ describe("Home -- hero", () => {
     assert.ok(HABLAR_CON_DULABS_HREF.startsWith("https://wa.me/"));
   });
 
-  it("muestra claramente las dos posibilidades: 'Crea tu agente' y 'A la medida' (con enlace a soluciones empresariales)", () => {
+  it("muestra claramente las dos posibilidades ('Crea tu agente' / 'A la medida') como una línea breve, sin tarjetas ni CTA de más", () => {
     const t = texto(HERO);
     assert.match(t, /01 · Crea tu agente/);
+    assert.match(t, /agente estándar, lo configuras tú mismo/);
     assert.match(t, /02 · A la medida/);
-    assert.match(t, /Agente estándar que configuras tú mismo desde el panel, sin programar/);
-    assert.match(t, /Soluciones empresariales que DuLabs desarrolla contigo/);
-    assert.ok(HERO.includes(`href="${ENTERPRISE_HREF}"`));
+    assert.match(t, /soluciones que DuLabs desarrolla contigo/);
+    // Máximo 1 CTA principal + 1 secundario en el hero: ningún otro <a>/TrackedLink además de esos dos.
+    const enlaces = (HERO.match(/<a /g) ?? []).length;
+    assert.equal(enlaces, 2, `el hero debe tener solo 2 CTAs, tiene ${enlaces}`);
   });
 
   it("es un hero de dos columnas amplio: texto a la izquierda y mockup del agente a la derecha, en el contenedor más ancho de la home", () => {
+    assert.match(HERO, /class="home-hero /, "la sección debe llevar .home-hero (la excluye del revelado por scroll: tiene su propia entrada)");
     assert.match(HERO, /class="hx hx-hero /);
     assert.match(HERO, /lg:grid-cols-\[minmax\(0,0\.92fr\)_minmax\(0,1\.08fr\)\]/);
     assert.ok(HERO.indexOf("<h1") < HERO.indexOf("<figure"), "el texto va antes que el mockup (izquierda -> derecha y en móvil primero el mensaje)");
     assert.match(HERO, /text-\[clamp\(2\.625rem,1\.1rem_\+_3\.7vw,5rem\)\]/, "el H1 debe escalar de forma fluida");
+  });
+
+  it("el contenido entra con una secuencia suave al cargar (eyebrow, H1, párrafo, CTAs y línea de las dos vías, en ese orden de aparición)", () => {
+    const columnaTexto = HERO.slice(0, HERO.indexOf("<figure"));
+    const retrasos = [...columnaTexto.matchAll(/class="home-seq[^"]*"[^>]*style="--home-d:(\d+)ms"/g)].map((m) => Number(m[1]));
+    assert.equal(retrasos.length, 5, `deben animar los 5 elementos de la columna de texto, animan ${retrasos.length}`);
+    assert.deepEqual([...retrasos].sort((a, b) => a - b), retrasos, "los retrasos deben ser crecientes (aparición escalonada)");
+    assert.equal(new Set(retrasos).size, retrasos.length, "cada elemento debe tener su propio retraso");
   });
 
   it("el producto simulado se rotula como ejemplo y muestra solo acciones reales del agente", () => {
@@ -142,21 +152,39 @@ describe("Home -- estructura compacta: la puerta de entrada, no el sitio complet
     const h2 = (id: string) => texto(new RegExp(`<h2 id="${id}-titulo"[^>]*>([\\s\\S]*?)</h2>`).exec(seccion(id))![1]);
     assert.match(h2("capacidades"), /Lo que tu agente hace por tu negocio/);
     assert.match(h2("como-funciona"), /Tu agente estándar lo configuras tú\./);
-    assert.match(h2("agendamiento"), /De la conversación a la cita confirmada/);
     assert.match(h2("empresas"), /¿Necesitas algo más que un agente\?/);
     assert.match(h2("preguntas-frecuentes"), /Respuestas claras antes de empezar/);
     assert.match(h2("empezar"), /Tu negocio ya tiene procesos\. Ahora pueden trabajar automáticamente\./);
   });
 
-  it("la página tiene exactamente 8 bloques, en este orden: hero, capacidades, cómo funciona, agendamiento, planes, a la medida, FAQ y cierre", () => {
+  it("la página tiene exactamente 7 bloques, en este orden: hero, capacidades, cómo funciona, planes, a la medida, FAQ y cierre", () => {
     const cuerpo = PAGINA_FUENTE.slice(PAGINA_FUENTE.indexOf("<main"), PAGINA_FUENTE.indexOf("</main>"));
     const bloques = [...cuerpo.matchAll(/<([A-Z][A-Za-z]+)[\s/>]/g)].map((m) => m[1]);
-    assert.deepEqual(bloques, ["HomeHero", "CapabilitiesSection", "HowItWorksSection", "SchedulingSection", "PricingSection", "CustomSolutionsSection", "FaqSection", "FinalCta"]);
-    assert.ok(bloques.length >= 7 && bloques.length <= 9, "la home debe tener entre 7 y 9 bloques");
+    assert.deepEqual(bloques, ["HomeHero", "CapabilitiesSection", "HowItWorksSection", "PricingSection", "CustomSolutionsSection", "FaqSection", "FinalCta"]);
+    assert.equal(bloques.length, 7, "la home debe tener 7 bloques: menos es más");
+  });
+
+  it("no hay una sección de agendamiento aparte: el hero ya demuestra ese flujo (repetirlo alargaba la página sin aportar nada nuevo)", () => {
+    assert.ok(!existsSync(join(RAIZ, "components", "home", "SchedulingSection.tsx")), "SchedulingSection debe seguir eliminada");
+    assert.doesNotMatch(PAGINA_FUENTE, /SchedulingSection|id="agendamiento"/);
   });
 
   it("no vuelven las secciones enciclopédicas: cada una tiene su propia página y la home solo la enlaza", () => {
-    for (const eliminado of ["ProblemSection", "AgentActionsSection", "ConfigSection", "ConfigWizard", "CatalogSection", "KnowledgeSection", "BusinessTypesSection", "StepsSection", "TrustSection", "DeveloperStrip", "TrackBand", "InView"]) {
+    for (const eliminado of [
+      "ProblemSection",
+      "AgentActionsSection",
+      "ConfigSection",
+      "ConfigWizard",
+      "CatalogSection",
+      "KnowledgeSection",
+      "BusinessTypesSection",
+      "StepsSection",
+      "TrustSection",
+      "DeveloperStrip",
+      "TrackBand",
+      "InView",
+      "SchedulingSection",
+    ]) {
       assert.ok(!existsSync(join(RAIZ, "components", "home", `${eliminado}.tsx`)), `${eliminado} debe seguir eliminado de la home`);
       assert.doesNotMatch(PAGINA_FUENTE, new RegExp(eliminado));
     }
@@ -164,11 +192,11 @@ describe("Home -- estructura compacta: la puerta de entrada, no el sitio complet
   });
 
   it("es considerablemente más corta: pocos caracteres visibles, una sola FAQ de 8 preguntas y sin secciones repetidas", () => {
-    // La versión anterior (13 secciones) tenía ~25.000 caracteres visibles en las secciones propias de la home (31.000 con planes y footer).
+    // La versión de 13 secciones tenía ~25.000 caracteres visibles propios; la de 8 bloques (con agendamiento) rondaba los 9.500.
     // Incluye las respuestas de la FAQ, que están en el HTML aunque el acordeón las muestre cerradas.
-    assert.ok(TEXTO_PAGINA.length < 10500, `texto visible de la home: ${TEXTO_PAGINA.length} caracteres`);
+    assert.ok(TEXTO_PAGINA.length < 9000, `texto visible de la home: ${TEXTO_PAGINA.length} caracteres`);
     assert.equal((seccion("preguntas-frecuentes").match(/<details /g) ?? []).length, 8);
-    assert.equal((PAGINA.match(/<section /g) ?? []).length, 7, "hero + 6 secciones propias (más PricingSection = 8 bloques)");
+    assert.equal((PAGINA.match(/<section /g) ?? []).length, 6, "hero + 5 secciones propias (más PricingSection = 7 bloques)");
   });
 
   it("las páginas internas siguen existiendo y la home las enlaza (la profundidad vive allí)", () => {
@@ -274,17 +302,14 @@ describe("Home -- fidelidad contra el producto real", () => {
     assert.match(t, /queda el historial de versiones/);
   });
 
-  it("agendamiento: flujo Cliente -> Agente -> Google Calendar -> Cita creada; la IA interpreta y el SISTEMA calcula la disponibilidad", () => {
-    const t = texto(seccion("agendamiento"));
+  it("agendamiento: la demostración vive en el hero (Cliente -> Agente -> Google Calendar -> Cita creada), no repetida en otra sección", () => {
+    const t = texto(HERO);
     let ultima = -1;
-    for (const nodo of ["Cliente", "Agente", "Google Calendar", "Cita creada"]) {
+    for (const nodo of ["Hola, quiero una manicure", "Manicure básica", "Google Calendar", "Cita creada"]) {
       const pos = t.indexOf(nodo, ultima + 1);
-      assert.ok(pos > ultima, `el nodo "${nodo}" falta o está fuera de orden`);
+      assert.ok(pos > ultima, `el paso "${nodo}" falta o está fuera de orden en el hero`);
       ultima = pos;
     }
-    assert.match(t, /La disponibilidad y las reglas las calcula el sistema: la IA nunca inventa un horario/);
-    assert.match(t, /Cancelar y reprogramar desde WhatsApp funciona con Google Calendar conectado/);
-    assert.match(t, /Ejemplo ilustrativo/);
     assert.doesNotMatch(t.toLowerCase(), /la ia calcula|la ia decide|la ia consulta el calendario/);
     const readiness = readFileSync(join(RAIZ, "lib", "business-agent-readiness.ts"), "utf8");
     assert.match(readiness, /solo actúa con Google Calendar/);
@@ -364,8 +389,7 @@ describe("Home -- guardas de calidad", () => {
     for (const ruta of FUENTES_HOME) assert.doesNotMatch(sinComentarios(readFileSync(ruta, "utf8")), /(79\.?990|159\.?990|299\.?990|49\.?990|149\.?990|199\.?990)/, relative(RAIZ, ruta));
   });
 
-  it("los datos de ejemplo (jueves 3:30 p. m., $30.000...) están rotulados como ejemplo en cada bloque que los muestra", () => {
-    assert.match(texto(seccion("agendamiento")).toLowerCase(), /ejemplo ilustrativo/);
+  it("los datos de ejemplo (jueves 3:30 p. m., $30.000...) están rotulados como ejemplo", () => {
     assert.match(texto(HERO).toLowerCase(), /ejemplo ilustrativo/);
   });
 
@@ -387,33 +411,44 @@ describe("Home -- guardas de calidad", () => {
   });
 });
 
-describe("Home -- diseño fluido y responsive real (aprovecha pantallas grandes)", () => {
+describe("Home -- ancho premium (tope real, nunca pantalla completa) y responsive real", () => {
   const css = readFileSync(join(RAIZ, "app", "globals.css"), "utf8").replace(/\r\n/g, "\n");
   const cssHome = css.slice(css.indexOf("Home principal v3"));
   const anchoMax = (clase: string) => Number(new RegExp(`\\.home-scope \\.${clase} \\{ --hx-max: (\\d+)px; \\}`).exec(cssHome)?.[1]);
 
-  it("el contenedor es FLUIDO (~92 % del viewport, margen mínimo en móvil) con un tope alto por tipo de contenido", () => {
-    assert.match(cssHome, /\.home-scope \.hx \{\s*width: min\(92%, calc\(100% - 2\.5rem\), var\(--hx-max, 1500px\)\);\s*margin-inline: auto;\s*\}/);
+  it("el contenedor tiene un TOPE REAL (gutter que crece con el viewport, sin llegar nunca al borde) con un ancho por tipo de contenido", () => {
+    assert.match(
+      cssHome,
+      /\.home-scope \.hx \{\s*--hx-gutter: clamp\(1\.25rem, 4vw, 4rem\);\s*width: min\(calc\(100% - \(var\(--hx-gutter\) \* 2\)\), var\(--hx-max, 1200px\)\);\s*margin-inline: auto;\s*\}/,
+    );
     const [hero, grid, lectura] = [anchoMax("hx-hero"), anchoMax("hx-grid"), anchoMax("hx-read")];
-    assert.ok(hero >= 1400 && hero <= 1700, `hero: ${hero}`);
-    assert.ok(grid >= 1300 && grid <= 1600, `rejillas: ${grid}`);
-    assert.ok(lectura >= 900 && lectura <= 1200, `lectura: ${lectura}`);
-    assert.ok(hero >= grid && grid > lectura, "el hero es lo más amplio y la lectura lo más estrecho");
+    assert.ok(hero >= 1200 && hero <= 1400, `hero: ${hero}`);
+    assert.ok(grid >= 1100 && grid <= 1300, `rejillas: ${grid}`);
+    assert.ok(lectura >= 900 && lectura <= 1150, `lectura: ${lectura}`);
+    assert.ok(hero >= grid && grid > lectura, "el hero es lo más amplio (protagonista) y la lectura lo más estrecha");
+    // A 1440 px el contenido de las rejillas debe dejar un margen visible a cada lado (no "pantalla completa").
+    const gutter1440 = Math.min(Math.max(1440 * 0.04, 20), 64);
+    const anchoContenido1440 = Math.min(1440 - gutter1440 * 2, grid);
+    const margen1440 = (1440 - anchoContenido1440) / 2;
+    assert.ok(margen1440 >= 100, `margen lateral a 1440px demasiado angosto: ${margen1440.toFixed(0)}px`);
   });
 
-  it("ya no hay contenedores angostos fijos (max-w-[1240px] y similares) en la home", () => {
+  it("ya no hay contenedores angostos fijos (max-w-[1240px] y similares) ni un ancho fijo en px como max-width en la home", () => {
     for (const ruta of FUENTES_HOME) assert.doesNotMatch(readFileSync(ruta, "utf8"), /max-w-\[(1[0-3]\d{2}|9\d{2})px\]/, `${relative(RAIZ, ruta)}: contenedor angosto fijo`);
-    assert.doesNotMatch(cssHome, /max-width:\s*1[0-3]\d{2}px/);
+    assert.doesNotMatch(cssHome, /max-width:\s*\d+px\s*;/, "ningún max-width fijo en px como declaración (--hx-max es una variable, no esta propiedad)");
   });
 
-  it("cada bloque usa el contenedor fluido con el ancho que le corresponde: rejillas amplias y FAQ de lectura más estrecha", () => {
-    for (const id of ["capacidades", "como-funciona", "agendamiento", "empresas", "empezar"]) assert.match(seccion(id), /class="hx hx-grid /, id);
+  it("cada bloque usa el contenedor con el ancho que le corresponde: rejillas amplias y FAQ de lectura más estrecha", () => {
+    for (const id of ["capacidades", "como-funciona", "empresas", "empezar"]) assert.match(seccion(id), /class="hx hx-grid /, id);
     assert.match(seccion("preguntas-frecuentes"), /class="hx hx-read /);
     assert.match(HERO, /class="hx hx-hero /);
   });
 
-  it("PricingSection y Footer (componentes compartidos) se alinean al ancho fluido con reglas acotadas a .home-scope", () => {
-    assert.match(cssHome, /\.home-scope #precios > div,\s*\.home-scope footer > div:first-child \{\s*width: min\(92%, calc\(100% - 2\.5rem\), 1500px\);\s*max-width: none;\s*padding-inline: 0;\s*\}/);
+  it("PricingSection y Footer (componentes compartidos) se alinean al MISMO tope que las rejillas (1200 px), con reglas acotadas a .home-scope", () => {
+    assert.match(
+      cssHome,
+      /\.home-scope #precios > div,\s*\.home-scope footer > div:first-child \{\s*width: min\(calc\(100% - \(clamp\(1\.25rem, 4vw, 4rem\) \* 2\)\), 1200px\);\s*max-width: none;\s*padding-inline: 0;\s*\}/,
+    );
     assert.match(cssHome, /\.home-scope #precios \.max-w-6xl \{ max-width: none; \}/);
     assert.match(cssHome, /\.home-scope #precios a,\s*\.home-scope #precios button \{ min-height: 44px; \}/);
     assert.match(cssHome, /\.home-scope footer a \{ display: inline-flex; align-items: center; min-height: 44px; \}/);
@@ -428,16 +463,55 @@ describe("Home -- diseño fluido y responsive real (aprovecha pantallas grandes)
     }
   });
 
-  it("las rejillas se reorganizan por breakpoints: 1 -> 2 -> 4 (capacidades), 1 -> 5 (etapas), 1 -> 2 -> 4 (agendamiento)", () => {
-    assert.match(seccion("capacidades"), /sm:grid-cols-2 lg:grid-cols-4/);
+  it("las rejillas se reorganizan por breakpoints: 1 -> 2 -> 3 -> 4 (capacidades), 1 -> 5 (etapas)", () => {
+    const capacidades = seccion("capacidades");
+    for (const clase of ["sm:grid-cols-2", "lg:grid-cols-3", "xl:grid-cols-4"]) assert.match(capacidades, new RegExp(clase.replace(/[[\]]/g, "\\$&")));
     assert.match(seccion("como-funciona"), /xl:grid-cols-5/);
-    assert.match(seccion("agendamiento"), /md:grid-cols-2 lg:grid-cols-4/);
     assert.match(seccion("empresas"), /lg:grid-cols-\[minmax\(0,0\.9fr\)_minmax\(0,1\.1fr\)\]/);
   });
 
   it("los objetivos táctiles y el foco visible se conservan (enlaces de al menos 44 px)", () => {
     for (const html of [seccion("preguntas-frecuentes"), seccion("como-funciona"), seccion("empresas")]) assert.match(html, /min-h-11/);
     assert.match(seccion("preguntas-frecuentes"), /min-h-14/);
+  });
+});
+
+describe("Home -- animaciones sutiles: entrada del hero, revelado al scroll y microinteracciones", () => {
+  const css = readFileSync(join(RAIZ, "app", "globals.css"), "utf8").replace(/\r\n/g, "\n");
+  const cssHome = css.slice(css.indexOf("Home principal v3"));
+
+  it("el revelado al hacer scroll es 100% CSS (animation-timeline: view()), sin JS, con fallback visible y respeta prefers-reduced-motion", () => {
+    assert.match(cssHome, /@keyframes home-reveal \{\s*from \{ opacity: 0; transform: translateY\(14px\); \}\s*to \{ opacity: 1; transform: none; \}\s*\}/);
+    assert.match(cssHome, /@supports \(animation-timeline: view\(\)\) \{\s*\.home-scope main > section:not\(\.home-hero\) \{/);
+    assert.match(cssHome, /animation-timeline: view\(\);/);
+    assert.match(cssHome, /animation-range: entry 0% entry 40%;/);
+    assert.match(cssHome, /@media \(prefers-reduced-motion: reduce\) \{\s*\.home-scope main > section \{ animation: none !important; opacity: 1; transform: none; \}\s*\}/);
+    // Sin @supports, o con prefers-reduced-motion, el contenido queda visible (opacity 1 es el valor inicial real del elemento: la animación
+    // solo se activa dentro del @supports, nunca hay un opacity:0 fuera de una animación que lo revierta).
+    assert.doesNotMatch(cssHome.replace(/@supports[\s\S]*?\n\}\n/, ""), /main > section[\s\S]{0,40}opacity:\s*0/);
+  });
+
+  it("el hero queda fuera del revelado por scroll (.home-hero): tiene su propia entrada escalonada al cargar, no ligada al scroll", () => {
+    assert.match(HERO, /^<section class="home-hero /);
+  });
+
+  it("las tarjetas tienen hover sutil (borde + elevación mínima, 200 ms, solo transform/color) en capacidades, cómo funciona y a la medida", () => {
+    const hoverTarjeta = /transition duration-200 hover:-translate-y-0\.5 hover:border-white\/20/;
+    assert.match(readFileSync(join(RAIZ, "components", "home", "atoms.tsx"), "utf8"), /TARJETA_HOVER = "transition duration-200 hover:-translate-y-0\.5 hover:border-white\/20"/);
+    for (const id of ["capacidades", "como-funciona", "empresas"]) assert.match(seccion(id), hoverTarjeta, `${id} debe usar TARJETA_HOVER`);
+  });
+
+  it("los botones tienen un hover elegante (contraste + transición suave + micro-movimiento), nada exagerado", () => {
+    const atoms = readFileSync(join(RAIZ, "components", "home", "atoms.tsx"), "utf8");
+    assert.match(atoms, /BOTON_PRIMARIO =\s*\n\s*"[^"]*transition duration-200 hover:-translate-y-px hover:bg-dev-accent-hover"/);
+    assert.match(atoms, /BOTON_SECUNDARIO =\s*\n\s*"[^"]*transition duration-200 hover:-translate-y-px hover:border-white\/25"/);
+  });
+
+  it("solo se anima opacity/transform (más color, ya cubierto por transition-colors en otras utilidades): nada de propiedades de layout", () => {
+    assert.doesNotMatch(cssHome, /animation:[^;]*\b(width|height|margin|padding|top|left|right|bottom)\b/);
+    for (const ruta of ["components/home/HeroProduct.tsx", "components/home/ChatBubbles.tsx"]) {
+      assert.doesNotMatch(readFileSync(join(RAIZ, ruta), "utf8"), /requestAnimationFrame|setTimeout|setInterval/, ruta);
+    }
   });
 });
 

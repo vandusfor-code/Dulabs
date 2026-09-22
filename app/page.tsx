@@ -6,7 +6,6 @@ import { FinalCta } from "@/components/home/FinalCta";
 import { HomeHero } from "@/components/home/HomeHero";
 import { HomeNav } from "@/components/home/HomeNav";
 import { HowItWorksSection } from "@/components/home/HowItWorksSection";
-import { SchedulingSection } from "@/components/home/SchedulingSection";
 import { JsonLd } from "@/components/site/JsonLd";
 import { Footer, PricingSection } from "@/components/site/Sections";
 import { HOME_PATH } from "@/lib/home/links";
@@ -14,12 +13,14 @@ import { homeFaqJsonLd, homeMetadata, homeSoftwareApplicationJsonLd } from "@/li
 
 // Home principal ("/"). Metadata, imagen social y datos estructurados salen de lib/home/seo.ts (indexable, canónica a "/").
 //
-// La home es la PUERTA DE ENTRADA al producto, no el sitio completo: 8 bloques y nada más. La profundidad (qué es un agente, seguridad,
+// La home es la PUERTA DE ENTRADA al producto, no el sitio completo: 7 bloques y nada más. La profundidad (qué es un agente, seguridad,
 // integraciones, soluciones empresariales, Developer, casos, FAQ completa) vive en las páginas internas y se enlaza desde aquí.
-//   1 hero (+ las dos vías: Crea tu agente / A la medida) · 2 qué puede hacer tu agente · 3 cómo funciona Crea tu agente (crea -> configura ->
-//   prueba -> publica -> administra) · 4 agendamiento · 5 planes · 6 A la medida · 7 preguntas frecuentes (8) · 8 cierre.
+//   1 hero (producto funcionando + las dos vías: Crea tu agente / A la medida) · 2 qué puede hacer tu agente · 3 cómo funciona Crea tu agente
+//   (crea -> configura -> prueba -> publica -> administra) · 4 planes · 5 A la medida · 6 preguntas frecuentes (8) · 7 cierre.
+// Sin sección de agendamiento aparte: el hero YA demuestra ese flujo completo (incluida la consulta a Google Calendar), así que una sección
+// adicional solo lo repetía -- se retiró para no alargar la página con algo que el producto ya demuestra.
 // PricingSection y Footer son los componentes existentes (PricingSection solo recibe tres frases propias de la home -- introducción y notas de
-// cobro --; su ancho lo amplía globals.css acotado a .home-scope). Organization y WebSite ya se publican desde app/layout.tsx.
+// cobro --; su ancho lo alinea globals.css acotado a .home-scope). Organization y WebSite ya se publican desde app/layout.tsx.
 export const metadata: Metadata = homeMetadata({ path: HOME_PATH, indexable: true });
 
 export default function HomePage() {
@@ -38,7 +39,6 @@ export default function HomePage() {
         <HomeHero />
         <CapabilitiesSection />
         <HowItWorksSection />
-        <SchedulingSection />
         <PricingSection
           showComparisonLink
           descripcion="Elige tu plan y crea tu agente desde el panel de DuLabs. Precios en pesos colombianos (COP)."

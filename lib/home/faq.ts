@@ -54,7 +54,7 @@ export const FAQ_HOME: FaqItem[] = [
     respuesta: [
       "Sí. Identifica el servicio que pide el cliente, consulta la disponibilidad, le ofrece horarios libres, crea la cita en tu Google Calendar cuando el cliente elige y se la confirma. Para que funcione activas la capacidad «Agendar citas», configuras tus servicios con su duración y tus horarios de atención, y conectas tu Google Calendar.",
     ],
-    enlaces: [{ texto: "Ver cómo funciona el agendamiento", href: "#agendamiento" }],
+    enlaces: [{ texto: "Ver qué más puede hacer tu agente", href: "#capacidades" }],
   },
   {
     id: "google-calendar",

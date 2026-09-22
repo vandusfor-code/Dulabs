@@ -16,7 +16,6 @@ import { FinalCta } from "@/components/home/FinalCta";
 import { HomeHero } from "@/components/home/HomeHero";
 import { HomeNav } from "@/components/home/HomeNav";
 import { HowItWorksSection } from "@/components/home/HowItWorksSection";
-import { SchedulingSection } from "@/components/home/SchedulingSection";
 import { todasLasFaq } from "@/lib/home/faq";
 import { HOME_SEO } from "@/lib/home/seo";
 
@@ -40,7 +39,6 @@ const HTML = {
   nav: renderToStaticMarkup(<HomeNav />),
   capacidades: renderToStaticMarkup(<CapabilitiesSection />),
   crea: renderToStaticMarkup(<HowItWorksSection />),
-  agendamiento: renderToStaticMarkup(<SchedulingSection />),
   empresas: renderToStaticMarkup(<CustomSolutionsSection />),
   faq: renderToStaticMarkup(<FaqSection />),
   cierre: renderToStaticMarkup(<FinalCta />),
@@ -49,12 +47,10 @@ const TODO = Object.values(HTML).join("\n");
 const T = texto(TODO);
 
 describe("Modelo de producto -- 01 · Crea tu agente / 02 · A la medida", () => {
-  it("el hero presenta las dos líneas con el mismo lenguaje", () => {
+  it("el hero presenta las dos líneas con el mismo lenguaje, como una línea breve (no una tarjeta por vía)", () => {
     const t = texto(HTML.hero);
-    assert.match(t, /01 · Crea tu agente/);
-    assert.match(t, /Agente estándar que configuras tú mismo desde el panel, sin programar: creas, pruebas, publicas y administras/);
-    assert.match(t, /02 · A la medida/);
-    assert.match(t, /Soluciones empresariales que DuLabs desarrolla contigo: automatizaciones, integraciones y desarrollos personalizados/);
+    assert.match(t, /01 · Crea tu agente — agente estándar, lo configuras tú mismo\./);
+    assert.match(t, /02 · A la medida — soluciones que DuLabs desarrolla contigo\./);
   });
 
   it("Crea tu agente dice que el agente estándar lo configura el cliente y muestra el ciclo completo, en orden", () => {
@@ -87,7 +83,7 @@ describe("Modelo de producto -- 01 · Crea tu agente / 02 · A la medida", () =>
   });
 
   it("las dos líneas no se mezclan: los bloques de 'Crea tu agente' no prometen desarrollo a medida y 'A la medida' no dice que el cliente lo configura", () => {
-    for (const s of ["capacidades", "crea", "agendamiento"] as const) {
+    for (const s of ["capacidades", "crea"] as const) {
       assert.doesNotMatch(texto(HTML[s]), /a la medida|desarrolla contigo|desarrollamos|proyecto a la medida/i, `${s} mezcla la línea 02`);
     }
     const empresas = texto(HTML.empresas);

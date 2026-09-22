@@ -296,8 +296,8 @@ describe("FAQ -- cada afirmación tiene respaldo en el producto real", () => {
 
 describe("FAQ -- enlaces internos y accesibilidad", () => {
   it("cada enlace de una respuesta apunta a una ruta, un artículo o un ancla que existen", () => {
-    const anclas = new Set(["como-funciona", "agendamiento", "empresas"]);
-    const fuentePagina = ["HowItWorksSection", "SchedulingSection", "CustomSolutionsSection"].map((s) => leer("components", "home", `${s}.tsx`)).join("\n");
+    const anclas = new Set(["como-funciona", "capacidades", "empresas"]);
+    const fuentePagina = ["CapabilitiesSection", "HowItWorksSection", "CustomSolutionsSection"].map((s) => leer("components", "home", `${s}.tsx`)).join("\n");
     for (const { f, e } of todasLasFaq().flatMap((f) => (f.enlaces ?? []).map((e) => ({ f, e })))) {
       const { href, texto } = e;
       assert.ok(texto.length >= 8, `${f.id}: el texto del enlace debe ser descriptivo`);

@@ -1,6 +1,6 @@
 import { ETAPAS_CREA_TU_AGENTE } from "@/lib/home/capabilities";
 import { CREAR_AGENTE_HREF } from "@/lib/home/links";
-import { ENLACE_FLECHA, HomeSection, SectionHeader, Tag } from "./atoms";
+import { ENLACE_FLECHA, HomeSection, SectionHeader, TARJETA_HOVER } from "./atoms";
 import { TrackedLink } from "./TrackedLink";
 
 // Cómo funciona "Crea tu agente": el corazón del producto nuevo. Crea -> Configura -> Prueba -> Publica -> Administra, y el mensaje claro de
@@ -25,22 +25,17 @@ export function HowItWorksSection() {
 
       <ol className="mt-10 grid gap-3 xl:mt-12 xl:grid-cols-5 xl:gap-4">
         {ETAPAS_CREA_TU_AGENTE.map((e, i) => (
-          <li key={e.n} className="relative rounded-xl border border-site-border bg-site-card/50 p-4 sm:p-5 md:grid md:grid-cols-[11rem_minmax(0,1fr)] md:gap-x-8 xl:block xl:p-6">
+          <li
+            key={e.n}
+            className={`relative rounded-xl border border-site-border/70 bg-site-card/50 p-4 sm:p-5 md:grid md:grid-cols-[11rem_minmax(0,1fr)] md:gap-x-8 xl:block xl:p-6 ${TARJETA_HOVER}`}
+          >
             <div className="flex items-baseline gap-3 md:block">
               <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-site-muted-fg">{e.n}</p>
               <p className="text-[22px] font-medium leading-none tracking-tight text-site-fg md:mt-2">{e.titulo}</p>
             </div>
             <div className="mt-2.5 md:mt-0 xl:mt-5">
               <p className="text-[14.5px] leading-relaxed text-site-muted-fg">{e.texto}</p>
-              {e.pasos.length ? (
-                <ul className="mt-3.5 flex flex-wrap gap-1.5" aria-label="Pasos del asistente">
-                  {e.pasos.map((p) => (
-                    <li key={p}>
-                      <Tag>{p}</Tag>
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
+              {e.pasos.length ? <p className="mt-3 font-mono text-[10.5px] uppercase leading-relaxed tracking-[0.1em] text-site-muted-fg/70">{e.pasos.join(" · ")}</p> : null}
             </div>
             {i < ETAPAS_CREA_TU_AGENTE.length - 1 ? (
               <span

@@ -3,9 +3,10 @@ import type { ReactNode } from "react";
 // Piezas de maquetación propias de la home (servidor, sin JS). Los encabezados de components/site/Sections son cliente + bilingües + estilo
 // lima del sitio anterior; aquí se usan los tokens de .dev-scope/.home-scope.
 //
-// ANCHOS: la home usa un contenedor FLUIDO (clases .hx* de globals.css) en lugar de un max-width fijo pequeño: ocupa ~92 % del viewport con
-// márgenes cómodos y solo se detiene en un tope alto. Cada tipo de contenido tiene el suyo:
-//   "hero" -> hero y navbar (el más amplio, 1600 px)   "grid" -> rejillas y mockups (1500 px)   "read" -> lectura (FAQ, 1120 px)
+// ANCHOS: la home usa un contenedor con TOPE REAL (clases .hx* de globals.css), no un porcentaje que llega casi al borde -- en pantallas
+// grandes debe verse espacio vacío a los lados. El gutter lateral crece con el viewport hasta que el contenido alcanza su tope; de ahí el
+// margen se reparte como espacio simétrico. Cada tipo de contenido tiene el suyo:
+//   "hero" -> hero y navbar (el más amplio, 1280 px, el protagonista)   "grid" -> rejillas (1200 px)   "read" -> lectura (FAQ, 1040 px)
 
 export type Ancho = "hero" | "grid" | "read";
 
@@ -28,7 +29,7 @@ export function HomeSection({
 }) {
   return (
     <section id={id} aria-labelledby={titleId} className={`relative scroll-mt-16 border-t border-site-border ${className}`}>
-      <Contenedor ancho={ancho} className="py-16 md:py-20 2xl:py-24">
+      <Contenedor ancho={ancho} className="py-16 md:py-24 2xl:py-28">
         {children}
       </Contenedor>
     </section>
@@ -78,6 +79,9 @@ export function Caption({ children, className = "" }: { children: ReactNode; cla
 /** Enlace de texto con flecha (los destinos van en <TrackedLink>; este es solo el aspecto). */
 export const ENLACE_FLECHA = "group/enlace inline-flex min-h-11 items-center gap-1.5 text-[14px] text-site-fg underline-offset-4 hover:underline";
 export const BOTON_PRIMARIO =
-  "inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-dev-accent px-6 text-[14.5px] font-medium text-dev-accent-fg transition-colors hover:bg-dev-accent-hover";
+  "inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-dev-accent px-6 text-[14.5px] font-medium text-dev-accent-fg transition duration-200 hover:-translate-y-px hover:bg-dev-accent-hover";
 export const BOTON_SECUNDARIO =
-  "inline-flex h-12 items-center justify-center rounded-lg border border-site-border bg-site-card px-6 text-[14.5px] font-medium text-site-fg transition-colors hover:border-white/25";
+  "inline-flex h-12 items-center justify-center rounded-lg border border-site-border bg-site-card px-6 text-[14.5px] font-medium text-site-fg transition duration-200 hover:-translate-y-px hover:border-white/25";
+
+/** Tarjeta base con hover premium sutil: borde y elevación mínima, 200 ms, solo transform/color (sin layout shift). */
+export const TARJETA_HOVER = "transition duration-200 hover:-translate-y-0.5 hover:border-white/20";

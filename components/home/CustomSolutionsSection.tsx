@@ -1,6 +1,6 @@
 import { CAPACIDADES_A_MEDIDA } from "@/lib/home/enterprise";
 import { CASOS_HREF, ENTERPRISE_HREF, HABLAR_ESPECIALISTA_HREF } from "@/lib/home/links";
-import { BOTON_PRIMARIO, Caption, ENLACE_FLECHA, HomeSection, SectionHeader } from "./atoms";
+import { BOTON_PRIMARIO, Caption, ENLACE_FLECHA, HomeSection, SectionHeader, TARJETA_HOVER } from "./atoms";
 import { TrackedLink } from "./TrackedLink";
 
 // A la medida: la línea empresarial de DuLabs, en una sección compacta que capta empresas grandes sin convertir la home en otra página
@@ -43,7 +43,7 @@ export function CustomSolutionsSection() {
         <div>
           <ul className="grid gap-3 sm:grid-cols-2 xl:gap-4">
             {CAPACIDADES_A_MEDIDA.map((c) => (
-              <li key={c.titulo} className="rounded-xl border border-site-border bg-site-card/50 p-4 sm:p-5 xl:p-6">
+              <li key={c.titulo} className={`rounded-xl border border-site-border/70 bg-site-card/50 p-4 sm:p-5 xl:p-6 ${TARJETA_HOVER}`}>
                 <h3 className="text-[17px] font-medium tracking-tight text-site-fg">{c.titulo}</h3>
                 <p className="mt-1.5 text-[14px] leading-relaxed text-site-muted-fg">{c.texto}</p>
                 <p className="mt-4 hidden border-t border-site-border pt-3.5 text-[13px] leading-relaxed text-site-muted-fg sm:block">{c.items.join(" · ")}</p>

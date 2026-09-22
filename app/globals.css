@@ -1203,24 +1203,28 @@ body {
   .home-scope .home-seq { animation: none; opacity: 1; transform: none; }
 }
 
-/* ---------- Home · layout fluido y componentes reutilizados ---------- */
-/* Contenedor FLUIDO en lugar de un max-width pequeño: ocupa ~92 % del viewport (mínimo 20 px de margen a cada lado en móvil) y solo se
-   detiene en un tope alto. Cada tipo de contenido tiene el suyo: hero y navbar 1600 px, rejillas y mockups 1500 px, lectura (FAQ) 1120 px. En
-   1440 px el contenido mide ~1325 px (92 %); en 1920 px llega a 1600/1500 px sin estirar el texto (los párrafos llevan su propio max-width). */
+/* ---------- Home · layout de contenido premium (max-width real, no fluido al borde) ---------- */
+/* Contenedor con techo de ancho REAL (no un porcentaje que llega casi al borde en pantallas grandes): el gutter lateral crece con el
+   viewport -- clamp(20px, 4vw, 64px) -- hasta que el contenido alcanza su tope; de ahí en adelante el espacio sobrante se reparte como
+   margen simétrico, que en pantallas grandes se ve claramente vacío a los lados (look "SaaS premium", no "pantalla completa"). Nunca hay un
+   ancho fijo por debajo de eso: en móvil y tablet el contenido sigue fluido, solo con el gutter mínimo. Tres topes según el contenido:
+   hero/navbar 1280 px (el más amplio: el hero es el protagonista) -- rejillas 1200 px -- lectura (FAQ) 1040 px, más estrecha para leer. */
 .home-scope .hx {
-  width: min(92%, calc(100% - 2.5rem), var(--hx-max, 1500px));
+  --hx-gutter: clamp(1.25rem, 4vw, 4rem);
+  width: min(calc(100% - (var(--hx-gutter) * 2)), var(--hx-max, 1200px));
   margin-inline: auto;
 }
-.home-scope .hx-hero { --hx-max: 1600px; }
-.home-scope .hx-grid { --hx-max: 1500px; }
-.home-scope .hx-read { --hx-max: 1120px; }
+.home-scope .hx-hero { --hx-max: 1280px; }
+.home-scope .hx-grid { --hx-max: 1200px; }
+.home-scope .hx-read { --hx-max: 1040px; }
 
 /* Los componentes existentes que la home reutiliza tal cual (PricingSection y Footer) traen su propio contenedor de 1440 px y una rejilla de
-   planes de 1152 px: aquí se alinean con el ancho fluido de la home. La regla vive AQUÍ, acotada a .home-scope, para no editar componentes
-   compartidos con "/precios" y el resto del sitio. También ganan objetivos táctiles >= 44 px. */
+   planes de 1152 px: aquí se alinean al mismo tope que las rejillas (1200 px) para que todo el contenido quede en la misma columna vertical.
+   La regla vive AQUÍ, acotada a .home-scope, para no editar componentes compartidos con "/precios" y el resto del sitio. También ganan
+   objetivos táctiles >= 44 px. */
 .home-scope #precios > div,
 .home-scope footer > div:first-child {
-  width: min(92%, calc(100% - 2.5rem), 1500px);
+  width: min(calc(100% - (clamp(1.25rem, 4vw, 4rem) * 2)), 1200px);
   max-width: none;
   padding-inline: 0;
 }
@@ -1231,3 +1235,29 @@ body {
 .home-scope #precios a,
 .home-scope #precios button { min-height: 44px; }
 .home-scope footer a { display: inline-flex; align-items: center; min-height: 44px; }
+
+/* Microinteracciones premium: tarjetas y botones ganan un borde/elevación muy sutil al pasar el mouse (150-250 ms, solo opacity/transform/
+   color -- nada de layout). En dispositivos sin hover real (móvil) esto simplemente no se dispara. */
+.home-scope .hx a,
+.home-scope .hx button,
+.home-scope .hx li {
+  transition-duration: 200ms;
+}
+
+/* Revelado al hacer scroll: CSS puro (animation-timeline: view()), sin JavaScript. Cada sección aparece con un fade + un desplazamiento muy
+   pequeño la primera vez que entra en pantalla. Fallback seguro: sin @supports el contenido ya está visible (opacity:1 por defecto abajo), así
+   que un navegador sin esta feature (o con prefers-reduced-motion) simplemente no anima nada -- nunca queda contenido invisible. */
+@keyframes home-reveal {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: none; }
+}
+@supports (animation-timeline: view()) {
+  .home-scope main > section:not(.home-hero) {
+    animation: home-reveal 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
+    animation-timeline: view();
+    animation-range: entry 0% entry 40%;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .home-scope main > section { animation: none !important; opacity: 1; transform: none; }
+}

@@ -26,7 +26,7 @@ function Accion({ ms, titulo, detalle, estado }: { ms: number; titulo: string; d
 export function HeroProduct() {
   return (
     <figure className="relative w-full lg:justify-self-end" aria-label="Ejemplo de una conversación de un agente de DuLabs agendando una cita">
-      <div className="overflow-hidden rounded-xl border border-site-border bg-site-card">
+      <div className="home-seq overflow-hidden rounded-xl border border-site-border bg-site-card" style={retraso(40)}>
         <div className="flex items-center justify-between gap-3 border-b border-site-border px-4 py-3 xl:px-6 xl:py-4">
           <div className="flex min-w-0 items-center gap-2.5">
             <Image src="/logo.png" alt="" width={24} height={24} className="rounded-full" />
