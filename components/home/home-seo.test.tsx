@@ -1,22 +1,23 @@
 /**
- * Home v3 -- Fase 5: SEO + FAQ. Comprueba que (1) el JSON-LD FAQPage coincide EXACTAMENTE con lo que se ve, (2) el JSON-LD es válido y solo
- * usa tipos que corresponden, (3) la metadata/imagen social cumplen las reglas de búsqueda y no canibalizan /whatsapp-ia, y (4) cada
- * afirmación de las respuestas tiene respaldo en el producto real (Wizard, Runtime, planes, checkout, OpenAPI, casos publicados).
+ * Home -- SEO + FAQ. Comprueba que (1) el JSON-LD FAQPage coincide EXACTAMENTE con lo que se ve (las 8 preguntas de la home), (2) el JSON-LD es
+ * válido y solo usa tipos que corresponden, (3) la metadata/imagen social cumplen las reglas de búsqueda y no canibalizan /whatsapp-ia, y
+ * (4) cada afirmación de las respuestas tiene respaldo en el producto real (Wizard, Runtime, planes, checkout). La home es conversión +
+ * producto; la profundidad SEO vive en las páginas internas (la FAQ completa, en /preguntas-frecuentes).
  */
 import assert from "node:assert/strict";
-import { readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import robots from "@/app/robots";
 import sitemap from "@/app/sitemap";
+import { CapabilitiesSection } from "@/components/home/CapabilitiesSection";
 import { FaqSection } from "@/components/home/FaqSection";
 import { FinalCta } from "@/components/home/FinalCta";
 import { JsonLd } from "@/components/site/JsonLd";
 import { CAPABILITY_BACKING, CAPABILITY_KEYS } from "@/lib/agent-compiler/spec/capabilities";
-import { BUSINESS_TYPE_OPTIONS } from "@/lib/business-agent-form";
-import { ETIQUETA_CAPACIDAD } from "@/lib/home/capabilities";
-import { GRUPOS_FAQ, textoRespuesta, todasLasFaq } from "@/lib/home/faq";
+import { CAPACIDADES_HOME, ETIQUETA_CAPACIDAD } from "@/lib/home/capabilities";
+import { FAQ_HOME, textoRespuesta, todasLasFaq } from "@/lib/home/faq";
 import { HOME_PATH } from "@/lib/home/links";
 import { HOME_SEO, homeFaqJsonLd, homeMetadata, homeSoftwareApplicationJsonLd, SITE_URL, TOTAL_FAQ } from "@/lib/home/seo";
 import { PLANES } from "@/lib/planes";
@@ -51,11 +52,11 @@ function jsonLdDe(data: object): unknown {
 }
 
 describe("FAQ -- datos", () => {
-  it("son preguntas reales y útiles: cuatro grupos, preguntas únicas con signos de interrogación y respuestas concretas", () => {
-    assert.equal(GRUPOS_FAQ.length, 5);
+  it("son 8 preguntas reales y útiles (no 22): únicas, con signos de interrogación y respuestas concretas", () => {
     const todas = todasLasFaq();
+    assert.equal(todas, FAQ_HOME);
     assert.equal(todas.length, TOTAL_FAQ);
-    assert.ok(todas.length >= 15 && todas.length <= 24, `número de preguntas: ${todas.length}`);
+    assert.equal(todas.length, 8, `número de preguntas: ${todas.length}`);
     assert.equal(new Set(todas.map((f) => f.id)).size, todas.length, "ids duplicados");
     assert.equal(new Set(todas.map((f) => f.pregunta)).size, todas.length, "preguntas duplicadas");
     for (const f of todas) {
@@ -68,33 +69,25 @@ describe("FAQ -- datos", () => {
     }
   });
 
-  it("cubre los temas que la gente busca (agentes de IA para WhatsApp, cómo crear uno, Google Calendar, atención al cliente, catálogo, conocimiento, asesores, a la medida y crear tu agente vs a la medida)", () => {
+  it("cubre lo que decide una compra: qué es, cómo se crea, si hay que programar, WhatsApp Business, citas, Google Calendar, crea tu agente vs a la medida y precio", () => {
     const preguntas = todasLasFaq().map((f) => f.pregunta).join("\n");
     const temas: [string, RegExp][] = [
-      ["agente de IA para WhatsApp", /agente de IA para WhatsApp/i],
-      ["cómo crear un agente", /¿Cómo creo un agente de IA/i],
+      ["qué es un agente de IA", /¿Qué es un agente de IA para WhatsApp\?/],
+      ["cómo se crea", /¿Cómo creo mi agente de IA\?/],
       ["programar", /saber programar/i],
-      ["configurarlo yo mismo", /configurar el agente yo mismo/i],
-      ["conectar WhatsApp", /conectar mi número de WhatsApp/i],
-      ["mantener el número", /mantener mi número de WhatsApp Business/i],
+      ["conectar WhatsApp Business", /conectar mi WhatsApp Business/i],
       ["agendar citas", /agendar citas por WhatsApp/i],
-      ["Google Calendar", /Google Calendar/i],
-      ["disponibilidad real", /horarios están disponibles/i],
-      ["cancelar/reprogramar", /cancelar o reprogramar/i],
-      ["atención al cliente", /atención al cliente/i],
-      ["conocimiento", /cargar la información de mi empresa/i],
-      ["catálogo", /catálogo/i],
-      ["asesor", /transferir la conversación a un asesor/i],
-      ["precios", /Cuánto cuesta/i],
-      ["tipos de empresa", /tipo de empresas/i],
-      ["soluciones personalizadas", /soluciones personalizadas/i],
-      ["integraciones", /otros sistemas/i],
-      ["personalidad, reglas y conocimiento", /personalidad, las reglas y el conocimiento/i],
-      ["probar antes de publicar", /probar mi agente antes de publicarlo/i],
-      ["publicar y administrar", /publico y administro mi agente/i],
+      ["Google Calendar", /conectar el agente con Google Calendar/i],
       ["crear tu agente vs a la medida", /diferencia hay entre crear mi propio agente y pedir una solución a la medida/i],
+      ["precio", /¿Cuánto cuesta/i],
     ];
     for (const [nombre, re] of temas) assert.match(preguntas, re, `falta una pregunta sobre: ${nombre}`);
+    assert.equal(temas.length, 8);
+  });
+
+  it("las preguntas que ya no están en la home siguen disponibles en /preguntas-frecuentes (la FAQ completa)", () => {
+    assert.ok(existsSync(join(RAIZ, "app", "preguntas-frecuentes", "page.tsx")));
+    assert.match(HTML_FAQ, /href="\/preguntas-frecuentes"/);
   });
 });
 
@@ -150,9 +143,11 @@ describe("SEO -- datos estructurados", () => {
     assert.equal(app.url, `${SITE_URL}/`);
   });
 
-  it("la descripción y las capacidades del JSON-LD están visibles en la página (mismo contenido que se ve)", () => {
-    const paginaConfig = renderToStaticMarkup(<FaqSection />) + leer("components", "home", "ConfigWizard.tsx");
-    for (const f of app.featureList) assert.ok(paginaConfig.includes(f) || leer("lib", "home", "capabilities.ts").includes(f), `capacidad no visible: ${f}`);
+  it("todo lo que anuncia el JSON-LD se ve en la página: cada capacidad disponible está cubierta por una tarjeta de 'Qué puede hacer tu agente'", () => {
+    const visibles = new Set(CAPACIDADES_HOME.flatMap((c) => c.capacidades));
+    for (const k of CAPABILITY_KEYS.filter((x) => CAPABILITY_BACKING[x].available)) assert.ok(visibles.has(k), `la capacidad "${ETIQUETA_CAPACIDAD[k]}" no se ve en la home`);
+    const html = normalizar(renderToStaticMarkup(<CapabilitiesSection />));
+    for (const c of CAPACIDADES_HOME) assert.ok(html.includes(c.titulo), c.titulo);
   });
 
   it("Organization y WebSite siguen publicándose una sola vez desde el layout: la home no los duplica", () => {
@@ -179,14 +174,13 @@ describe("SEO -- metadata, imagen social y reparto de palabras clave", () => {
     assert.ok(HOME_SEO.title.endsWith("| DuLabs"));
   });
 
-  it("no canibaliza /whatsapp-ia: la home no usa 'WhatsApp con IA' en título/descripción y /whatsapp-ia conserva su enfoque", () => {
+  it("no canibaliza /whatsapp-ia: la home no usa 'WhatsApp con IA' en título/descripción, conserva su enfoque y la enlaza", () => {
     assert.doesNotMatch(HOME_SEO.title + HOME_SEO.description + HOME_SEO.ogTitle + HOME_SEO.ogDescription, /whatsapp con ia/i);
     const ws = leer("app", "whatsapp-ia", "page.tsx");
     assert.match(ws, /title: "WhatsApp con IA para empresas \| DuLabs"/);
     assert.match(ws, /canonical: "https:\/\/www\.dulabs\.co\/whatsapp-ia"/);
     assert.notEqual(HOME_SEO.title, "WhatsApp con IA para empresas | DuLabs");
-    const enlaces = todasLasFaq().flatMap((f) => (f.enlaces ?? []).map((e) => e.href));
-    assert.ok(enlaces.includes("/whatsapp-ia"), "la home enlaza a /whatsapp-ia desde una respuesta (enlazado interno)");
+    assert.match(renderToStaticMarkup(<CapabilitiesSection />), /href="\/whatsapp-ia"/, "la home enlaza a /whatsapp-ia (enlazado interno)");
   });
 
   it("modo noindex: noindex/nofollow y canónica a sí misma (sin mezclar noindex con canónica hacia '/')", () => {
@@ -239,45 +233,38 @@ describe("FAQ -- cada afirmación tiene respaldo en el producto real", () => {
   const wizard = leer("components", "dashboard", "business-agent", "Wizard.tsx");
 
   it("capacidades y opciones citadas existen con ese nombre exacto en el Wizard", () => {
-    for (const etiqueta of ["Agendar citas", "Transferir a un humano"]) {
-      assert.match(texto, new RegExp(`«${etiqueta}»`));
-      assert.ok(wizard.includes(`es: "${etiqueta}"`), `el Wizard no tiene la capacidad ${etiqueta}`);
-    }
-    assert.match(texto, /«Permitir cancelar y cambiar citas por WhatsApp»/);
+    assert.match(texto, /«Agendar citas»/);
+    assert.ok(wizard.includes(`es: "Agendar citas"`), "el Wizard no tiene la capacidad Agendar citas");
+    // "puede cancelar y reprogramar si activas esa opción": la opción existe en el Wizard.
+    assert.match(texto, /cancelar y reprogramar citas si activas esa opción/);
     assert.ok(wizard.includes("Permitir cancelar y cambiar citas por WhatsApp"));
-    assert.ok(wizard.includes("Anticipación mínima para cancelar o cambiar"));
-    for (const disparador of ["El cliente lo pide", "Queja", "Pide descuento", "Palabra clave", "Intención detectada"]) assert.ok(wizard.includes(disparador), `Wizard sin disparador: ${disparador}`);
     for (const paso of ["tipo de negocio", "personalidad", "capacidades", "agendamiento", "servicios y productos", "horarios", "datos del cliente", "conocimiento", "reglas", "transferencia"]) {
       assert.ok(texto.includes(paso), `la respuesta de cómo crear un agente debe nombrar el paso "${paso}"`);
     }
-  });
-
-  it("formatos de documento, búsqueda por palabras y catálogo: coinciden con el código", () => {
-    const ingest = leer("lib", "business-agent-knowledge", "ingest.ts");
-    for (const ext of ["pdf", "xlsx", "csv", "txt"]) assert.match(ingest, new RegExp(ext), `ingest no soporta ${ext}`);
-    assert.match(texto, /PDF, Excel \(\.xlsx\), CSV o TXT/);
-    assert.match(leer("components", "dashboard", "business-agent", "KnowledgeModule.tsx"), /palabras parecidas, no sinónimos/);
-    assert.match(texto, /palabras parecidas, no sinónimos/);
-    const productos = leer("lib", "business-agent-products-store.ts");
-    assert.match(productos, /COLUMNS = "id, nombre, categoria, descripcion, precio, stock, activo"/);
-    assert.doesNotMatch(productos, /imagen|image|foto/i, "el catálogo no tiene imágenes: la FAQ dice que no incluye fotos");
-    assert.match(leer("components", "dashboard", "business-agent", "ProductsModule.tsx"), /Lo administras tú/);
     assert.equal(CAPABILITY_BACKING.orders.available, false);
     assert.equal(CAPABILITY_BACKING.payments.available, false);
+    assert.match(texto, /No cobra ni toma pedidos/);
   });
 
-  it("calendario: Google Calendar (Nylas) y el modo interno con especialistas existen como dice la respuesta", () => {
+  it("calendario: Google Calendar (Nylas) existe como dice la respuesta y la disponibilidad la calcula el sistema", () => {
     const readiness = leer("lib", "business-agent-readiness.ts");
-    assert.match(readiness, /INTERNAL_PROVIDER_SPECIALISTS/);
-    assert.match(readiness, /especialistas configurados en DuLabs/);
     assert.match(readiness, /solo actúa con Google Calendar/);
     assert.match(readiness, /Conecta tu Google Calendar/);
     assert.match(leer("components", "dashboard", "business-agent", "CalendarConnection.tsx"), /Elige qué calendario usar/);
+    assert.match(texto, /La disponibilidad no la inventa la IA: la calcula el sistema/);
   });
 
   it("WhatsApp: la coexistencia (app WhatsApp Business) está soportada por el registro con Meta", () => {
     assert.match(leer("lib", "hooks", "use-meta-embedded-signup.ts"), /whatsapp_business_app_onboarding/);
     assert.match(leer("lib", "coexistence-sync.ts"), /coexist/i);
+    assert.match(texto, /modo coexistencia/);
+  });
+
+  it("vista previa simulada y versiones: existen en el panel como dice la respuesta", () => {
+    assert.match(leer("components", "dashboard", "business-agent", "BusinessAgentPreview.tsx"), /100% simulado -- no envía WhatsApp real/);
+    assert.match(leer("components", "dashboard", "business-agent", "VersionsPanel.tsx"), /Historial de versiones/);
+    assert.match(texto, /vista previa simulada, que no envía mensajes reales/);
+    assert.match(texto, /cada cambio se guarda como una versión nueva/);
   });
 
   it("precios: los importes de la respuesta son EXACTAMENTE los de lib/planes.ts (y no hay otros importes)", () => {
@@ -299,32 +286,23 @@ describe("FAQ -- cada afirmación tiene respaldo en el producto real", () => {
     assert.match(texto, /Meta los cobra directamente al negocio/);
   });
 
-  it("tipos de negocio: la respuesta lista EXACTAMENTE los del Wizard (sin inventar rubros)", () => {
-    const tipos = todasLasFaq().find((f) => f.id === "tipos-de-empresas")!.respuesta[0];
-    for (const o of BUSINESS_TYPE_OPTIONS.filter((x) => x.value !== "Otro")) assert.ok(tipos.includes(o.value), `falta ${o.value}`);
-    assert.doesNotMatch(tipos, /joyer/i);
-  });
-
-  it("a la medida: categorías del sitio, DuMo publicado y API de Developer con webhooks firmados y documentación pública", () => {
+  it("a la medida: el caso DuMo y las categorías que menciona el sitio existen; el agente estándar solo se conecta a WhatsApp y Google Calendar", () => {
     assert.match(leer("components", "site", "CasosSections.tsx"), /nombre: "DuMo"/);
-    assert.match(leer("components", "site", "CasosSections.tsx"), /desarrollado por DuLabs/);
     const enterprise = leer("lib", "home", "enterprise.ts");
-    for (const c of ["CRM empresarial", "Sistemas internos", "Plataformas web", "Dashboards empresariales", "Automatización de procesos", "Agentes de IA personalizados"]) assert.ok(enterprise.includes(c), c);
-    assert.match(leer("components", "developer-platform", "DevHero.tsx"), /firma de webhooks/);
-    assert.match(leer("components", "developer-platform", "DevHero.tsx"), /API keys/);
-    for (const ruta of ["developers", "developer-platform"]) assert.ok(statSync(join(RAIZ, "app", ruta)).isDirectory());
+    for (const c of ["CRM empresarial", "Sistemas internos", "Automatización de procesos", "Agentes de IA personalizados"]) assert.ok(enterprise.includes(c), c);
+    assert.match(texto, /automatizaciones, integraciones con tus sistemas, agentes personalizados o software propio/);
   });
 });
 
 describe("FAQ -- enlaces internos y accesibilidad", () => {
   it("cada enlace de una respuesta apunta a una ruta, un artículo o un ancla que existen", () => {
-    const anclas = new Set(["como-funciona", "agendamiento", "conocimiento", "catalogo", "configuracion", "empresas", "empezar"]);
+    const anclas = new Set(["como-funciona", "agendamiento", "empresas"]);
+    const fuentePagina = ["HowItWorksSection", "SchedulingSection", "CustomSolutionsSection"].map((s) => leer("components", "home", `${s}.tsx`)).join("\n");
     for (const { f, e } of todasLasFaq().flatMap((f) => (f.enlaces ?? []).map((e) => ({ f, e })))) {
       const { href, texto } = e;
       assert.ok(texto.length >= 8, `${f.id}: el texto del enlace debe ser descriptivo`);
       if (href.startsWith("#")) {
         assert.ok(anclas.has(href.slice(1)), `${f.id}: ancla desconocida ${href}`);
-        const fuentePagina = leer("app", "page.tsx") + leer("components", "home", "StepsSection.tsx") + leer("components", "home", "CatalogSection.tsx") + leer("components", "home", "KnowledgeSection.tsx") + leer("components", "home", "SchedulingSection.tsx") + leer("components", "home", "ConfigSection.tsx") + leer("components", "home", "CustomSolutionsSection.tsx") + leer("components", "home", "FinalCta.tsx");
         assert.match(fuentePagina, new RegExp(`id="${href.slice(1)}"`), `no existe la sección ${href}`);
       } else if (href.startsWith("/recursos/")) {
         assert.ok(ARTICULOS.some((a) => a.slug === href.replace("/recursos/", "")), `${f.id}: artículo inexistente ${href}`);
@@ -334,14 +312,14 @@ describe("FAQ -- enlaces internos y accesibilidad", () => {
     }
   });
 
-  it("el cierre (CTA final) mantiene los dos caminos y la sección tiene el ancla que usa la FAQ", () => {
+  it("el cierre (CTA final) es corto y fuerte: la frase, 'Crea tu agente' y 'Hablar con DuLabs'", () => {
     assert.match(HTML_CIERRE, /<section id="empezar"/);
     const t = normalizar(HTML_CIERRE);
-    assert.match(t, /Crear mi agente de IA/);
-    assert.match(t, /Hablar con DuLabs/);
-    assert.match(t, /Ver soluciones empresariales/);
     assert.match(t, /Tu negocio ya tiene procesos\. Ahora pueden trabajar automáticamente\./);
+    assert.match(t, /Crea tu agente/);
+    assert.match(t, /Hablar con DuLabs/);
     assert.match(HTML_CIERRE, /bg-dev-accent /);
+    assert.ok(t.length < 220, `el cierre debe ser breve (${t.length} caracteres)`);
   });
 
   it("el acordeón es accesible: foco visible, marcador nativo oculto solo visualmente y objetivos táctiles amplios", () => {
