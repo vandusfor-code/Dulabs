@@ -36,12 +36,23 @@ for (const e of r.estados) {
   for (const w of e.advertencias ?? []) console.warn(`      ⚠ ${e.producto}: ${w}`);
 }
 
-// Fase 20 (B2): en PRODUCCIÓN el formato canónico de Developer DEBE ser dev2
-// (envelope KMS). Un build de producción que escribiría dev1 (clave estática)
-// queda BLOQUEADO -- fail-closed, para que el dashboard nunca vuelva a producir
-// tokens que el pipeline de Cloud Run no pueda descifrar (raíz de B2).
+// Fase 20 (B2): en PRODUCCIÓN el formato canónico de Developer debe ser dev2
+// (envelope KMS) o dev1 (clave estática) -- CUALQUIERA de los dos mecanismos
+// SOPORTADOS por completo (nunca un tercer valor inválido ni "sin mecanismo").
+// dev2 sigue siendo la opción preferida (ver docs de Fase 20), pero exigirla
+// SIEMPRE asume acceso a KMS vía Workload Identity Federation, que Vercel solo
+// ofrece en planes Pro/Enterprise -- en Hobby (autorizado, 2026-09-22) dev1
+// queda aceptado como mecanismo de producción válido, siempre que la clave
+// estática esté sincronizada en Vercel + Secret Manager + el worker que la
+// necesite (dulabs-outbound-worker). Esto solo relaja el guard, no la
+// fortaleza del cifrado en sí: AES-256-GCM es el mismo algoritmo en ambos
+// casos, dev1 y dev2 -- la única diferencia es dónde vive la clave maestra
+// (estática vs envuelta por KMS). Si el plan de Vercel sube a Pro/Enterprise,
+// se puede volver a exigir solo "dev2" quitando "dev1" del set de abajo.
 const dev = r.estados.find((e) => e.producto === "developer");
-const developerNoCanonicoEnProd = esProduccion && dev !== undefined && dev.ok && dev.formatoCanonico !== "dev2";
+const FORMATOS_CANONICOS_ACEPTADOS_EN_PROD = new Set(["dev2", "dev1"]);
+const developerNoCanonicoEnProd =
+  esProduccion && dev !== undefined && dev.ok && !FORMATOS_CANONICOS_ACEPTADOS_EN_PROD.has(dev.formatoCanonico ?? "");
 
 if (r.ok && !developerNoCanonicoEnProd) {
   console.log("[validate-release-config] configuración criptográfica completa. Continúa el build.");
@@ -55,8 +66,9 @@ if (esProduccion) {
   for (const e of r.faltantes) console.error(`  ✗ ${e.producto}: ${e.faltante}`);
   if (developerNoCanonicoEnProd) {
     console.error(
-      `  ✗ developer: el formato canónico de escritura es "${dev?.formatoCanonico}", pero en producción DEBE ser "dev2" (envelope KMS). ` +
-        "Configura DEVELOPER_TOKEN_ENCRYPTION_MODE=kms + KMS_KEY_NAME (+ acceso KMS vía WIF en Vercel). " +
+      `  ✗ developer: el formato canónico de escritura es "${dev?.formatoCanonico}", pero en producción debe ser "dev2" (KMS) o "dev1" (clave estática). ` +
+        "Configura DEVELOPER_TOKEN_ENCRYPTION_MODE=kms + KMS_KEY_NAME (+ acceso KMS vía WIF en Vercel, requiere plan Pro/Enterprise), " +
+        "o DEVELOPER_TOKEN_ENCRYPTION_MODE=static + DEVELOPER_TOKEN_ENCRYPTION_KEY. " +
         "Ver docs/DULABS_DEVELOPER_V1_PHASE_20_REMEDIATION_REPORT.md."
     );
   }
