@@ -236,6 +236,10 @@ export async function procesarMensajeOutbound(deps: DependenciasWorkerOutbound, 
     // Error inesperado ANTES de haber intentado el POST físico a Meta (ej.
     // Postgres momentáneamente inalcanzable) -- todavía es seguro
     // reintentar, así que se deja que Pub/Sub reintente (sección E punto 4).
+    // DIAGNÓSTICO TEMPORAL (2026-09-22, autorizado): loguea el error real --
+    // antes solo viajaba en el body de la respuesta, que Cloud Logging no
+    // captura como texto. Nunca imprime el token/payload, solo el error.
+    console.error(`[worker-outbound] error_transitorio en job ${mensaje.jobId} (workspace ${mensaje.workspaceId}):`, err instanceof Error ? (err.stack ?? err.message) : String(err));
     await liberarLease(supabase, { workspaceId: mensaje.workspaceId, jobId: mensaje.jobId, leaseId: lease.leaseId }).catch(() => {});
     return { httpStatus: 500, motivo: `error_transitorio:${err instanceof Error ? err.message : String(err)}` };
   }

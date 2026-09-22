@@ -76,6 +76,8 @@ export function crearServidorWorkerOutbound(deps: DependenciasWorkerOutbound) {
     } catch (err) {
       // Error verdaderamente inesperado (no capturado por el handler) --
       // 500 deja que Pub/Sub reintente con su backoff configurado.
+      // DIAGNÓSTICO TEMPORAL (2026-09-22, autorizado): igual que en handler.ts.
+      console.error("[worker-outbound] error inesperado en /push:", err instanceof Error ? (err.stack ?? err.message) : String(err));
       enviarJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
     }
   });
