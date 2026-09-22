@@ -12,6 +12,7 @@ export const DEV_NAV: NavSection[] = [
       { label: "Flows", href: "/developer/flows", icon: "flow" },
       { label: "API", href: "/developer/api", icon: "code" },
       { label: "WhatsApp Numbers", href: "/developer/whatsapp", icon: "phone" },
+      { label: "GitHub", href: "/developer/github", icon: "github" },
       { label: "Webhooks", href: "/developer/webhooks", icon: "webhook" },
     ],
   },

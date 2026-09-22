@@ -12,6 +12,9 @@ const PATHS: Record<string, string> = {
   key: "M14 7a3 3 0 11-2.83 4H8v2H6v2H3v-3l5.17-5.17A3 3 0 0114 7z",
   users: "M9 11a3 3 0 100-6 3 3 0 000 6zM3 20a6 6 0 0112 0M16 11a3 3 0 10-1-5.83M21 20a6 6 0 00-4-5.65",
   settings: "M12 15a3 3 0 100-6 3 3 0 000 6zM19 12l1.5 1-1 2-1.8-.3-1.2 1.4.3 1.8-2 1-1.3-1.3h-1.6L10 20l-2-1 .3-1.8-1.2-1.4-1.8.3-1-2L5.5 12 4 11l1-2 1.8.3L8 7.9 7.7 6l2-1L11 6.3h1.6L14 4l2 1-.3 1.8 1.2 1.4 1.8-.3 1 2L19 12z",
+  // Marca de rama de GitHub (dos nodos + merge) -- reconocible sin depender de
+  // la marca registrada; encaja con el set inline de 24x24.
+  github: "M6 3a2.5 2.5 0 100 5 2.5 2.5 0 000-5zM6 8v8M18 16a2.5 2.5 0 100 5 2.5 2.5 0 000-5zM18 16v-2a4 4 0 00-4-4H6",
 };
 
 export function NavIcon({ name, className = "h-4 w-4" }: { name: string; className?: string }) {

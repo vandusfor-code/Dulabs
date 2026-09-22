@@ -1,5 +1,25 @@
 # Pasos manuales pendientes en producción
 
+## PENDIENTE — DuLabs Developer V1, GitHub Integration (Fase 1)
+
+La migración `20261104000000_dulabs_developer_v1_github_integration.sql`
+(4 tablas nuevas: `dulabs_dev_github_installations`, `dulabs_dev_github_repos`,
+`dulabs_dev_github_connect_states`, `dulabs_dev_github_webhook_deliveries` —
+todas con RLS por `workspace_id` vía el helper existente
+`public.dulabs_dev_workspaces_del_usuario()`, aisladas del esquema de Business)
+**todavía no se ha corrido en producción**. Sin ella, la página
+`/developer/github` y las rutas `/api/developer/github/*` responden un error
+controlado (500 `internal_error`) porque las tablas no existen — nada más se
+rompe (es aditivo y aislado). Correr el archivo completo en el **SQL Editor de
+Supabase** antes de dar la integración por VERIFIED en producción.
+
+Variables de entorno de la GitHub App (ya configuradas en Vercel por el
+operador el 21-sep-2026): `GITHUB_APP_ID` (5026938), `GITHUB_APP_SLUG`
+(`dulabs-developer`), `GITHUB_PRIVATE_KEY`, `GITHUB_WEBHOOK_SECRET`. Se
+verifican en runtime: `GET /api/developer/github` devuelve `configured: true`
+cuando las cuatro están presentes.
+
+
 ## PENDIENTE — F16.2 (Onboarding comercial: pago → conectar WhatsApp con Meta → plantilla)
 
 La migración `20261005000000_dulabs_onboarding_meta_bienvenida.sql`

@@ -181,6 +181,14 @@ export type EventsResp = { events: DevEvent[]; nextCursor: string | null };
 export type EventMetrics = { desde: string | null; hasta: string | null; total: number; porEstadoEntrega: Record<string, number>; deliveryRate: number | null };
 export type WebhookPingResp = { ok: boolean; status: number; latencyMs: number; eventId: string; error?: string };
 
+// GitHub Integration (Fase 1) -- proyecciones seguras (nunca secretos).
+export type GithubRepoOption = { repoId: number; owner: string; name: string; fullName: string; htmlUrl: string; private: boolean };
+export type GithubConnection = {
+  installation: { accountLogin: string; accountType: string | null; status: "activo" | "sin_acceso" | "desconectado"; connectedAt: string } | null;
+  repo: (GithubRepoOption & { linkedAt: string }) | null;
+};
+export type GithubStatusResp = { configured: boolean; connection: GithubConnection };
+
 /** Cliente Developer con métodos por recurso. Un solo punto de fetch -- nunca fetch manual disperso en componentes. */
 export function createDevClient(deps: DevClientDeps) {
   return {
@@ -245,6 +253,18 @@ export function createDevClient(deps: DevClientDeps) {
     onboarding: {
       /** Provisión idempotente del primer workspace del usuario (cuenta + workspace + membership OWNER). No requiere workspace elegido. */
       provision: () => solicitar<{ workspaceId: string; created: boolean }>(deps, "/onboarding/provision", { method: "POST", workspace: false, body: {} }),
+    },
+    github: {
+      /** Estado de la conexión GitHub del workspace (cualquier rol). */
+      status: () => solicitar<GithubStatusResp>(deps, "/github"),
+      /** Inicia la conexión: devuelve la URL de instalación de la GitHub App (OWNER/ADMIN). */
+      connect: () => solicitar<{ installUrl: string }>(deps, "/github/connect", { method: "POST", body: {} }),
+      /** Repos autorizados por la instalación, para el selector (OWNER/ADMIN). */
+      repos: () => solicitar<{ repos: GithubRepoOption[] }>(deps, "/github/repos"),
+      /** Vincula el repo elegido al workspace (OWNER/ADMIN). */
+      selectRepo: (repoId: number) => solicitar<{ repo: GithubRepoOption & { linkedAt: string } }>(deps, "/github/repo", { method: "POST", body: { repoId } }),
+      /** Desconecta GitHub del workspace (OWNER/ADMIN). */
+      disconnect: () => solicitar<{ disconnected: boolean }>(deps, "/github", { method: "DELETE" }),
     },
   };
 }
