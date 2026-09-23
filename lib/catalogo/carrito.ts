@@ -50,11 +50,27 @@ export interface CartLine {
   maxQuantity: number | null;
 }
 
+/**
+ * Intento de envío en curso (idempotencia): la clave opaca que el backend usa
+ * para derivar el id de la solicitud, ligada a las líneas exactas que se
+ * enviaron. Mismo carrito => misma clave => mismo DL-ORD (doble toque,
+ * reintento, volver de WhatsApp y tocar de nuevo). Carrito distinto => clave nueva.
+ */
+export interface CartRequest {
+  key: string;
+  /** Huella de las líneas enviadas (ver `requestFingerprint`). */
+  items: string;
+  /** Id de solicitud que devolvió el backend (para mostrarlo al volver). */
+  requestId?: string;
+  whatsappUrl?: string;
+}
+
 export interface CartState {
   version: typeof CART_VERSION;
   slug: string;
   context: PriceContext;
   lines: CartLine[];
+  request?: CartRequest;
 }
 
 export type CartAction =
@@ -62,6 +78,8 @@ export type CartAction =
   | { type: "setQuantity"; reference: string; quantity: number }
   | { type: "remove"; reference: string }
   | { type: "clear" }
+  /** Registra el intento de envío (clave de idempotencia y, al confirmarse, la solicitud). */
+  | { type: "setRequest"; request: CartRequest }
   /** Verdad del backend: actualiza lo resuelto, acota cantidades al stock y retira lo que ya no existe o no está activo. */
   | { type: "reconcile"; resolved: CartProduct[]; unknown: string[] };
 
@@ -118,7 +136,9 @@ export function cartReducer(state: CartState, action: CartAction): CartState {
     case "remove":
       return { ...state, lines: state.lines.filter((l) => l.reference !== action.reference) };
     case "clear":
-      return { ...state, lines: [] };
+      return { ...state, lines: [], request: undefined };
+    case "setRequest":
+      return { ...state, request: action.request };
     case "reconcile":
       return reconcileCart(state, action.resolved, action.unknown);
   }
@@ -164,7 +184,8 @@ export function cartTotal(state: CartState): { total: number; unpricedItems: num
 export type CartChange =
   | { kind: "removed"; reference: string; name: string }
   | { kind: "sold_out"; reference: string; name: string }
-  | { kind: "reduced"; reference: string; name: string; from: number; to: number };
+  | { kind: "reduced"; reference: string; name: string; from: number; to: number }
+  | { kind: "price_changed"; reference: string; name: string; from: number | null; to: number | null };
 
 /**
  * Aplica la verdad del backend (`resolveSelection` / `prepareOrder`): cada
@@ -195,6 +216,7 @@ export function reconcileWithChanges(state: CartState, resolved: readonly CartPr
     const available = fresh.available ?? true;
     const limit = quantityLimit(fresh);
     const next: CartLine = { ...l, name: fresh.name, unitPrice: fresh.price, imageUrl: fresh.imageUrl, available, maxQuantity: fresh.maxQuantity ?? null };
+    if (available && l.available && l.unitPrice !== fresh.price) changes.push({ kind: "price_changed", reference: l.reference, name: fresh.name, from: l.unitPrice, to: fresh.price });
     if (!available || limit < 1) {
       if (l.available) changes.push({ kind: "sold_out", reference: l.reference, name: fresh.name });
     } else if (l.quantity > limit) {
@@ -203,7 +225,9 @@ export function reconcileWithChanges(state: CartState, resolved: readonly CartPr
     }
     lines.push(next);
   }
-  return { state: { ...state, lines }, changes };
+  // Si las líneas cambiaron, el intento anterior ya no aplica (se genera una clave nueva al enviar).
+  const request = state.request && state.request.items === requestFingerprint(lines) ? state.request : undefined;
+  return { state: { ...state, lines, request }, changes };
 }
 
 // ---------------------------------------------------------------------------
@@ -233,6 +257,16 @@ export function parseStoredCart(raw: string | null, slug: string, context: Price
   if (!data || typeof data !== "object") return empty;
   const d = data as Partial<CartState>;
   if (d.version !== CART_VERSION || d.slug !== slug || d.context !== context || !Array.isArray(d.lines)) return empty;
+  const r = d.request as Partial<CartRequest> | undefined;
+  const request: CartRequest | undefined =
+    r && typeof r.key === "string" && /^[A-Za-z0-9_-]{16,64}$/.test(r.key) && typeof r.items === "string" && r.items.length <= 4000
+      ? {
+          key: r.key,
+          items: r.items,
+          ...(typeof r.requestId === "string" && /^DL-ORD-[0-9A-Z]{6}$/.test(r.requestId) ? { requestId: r.requestId } : {}),
+          ...(typeof r.whatsappUrl === "string" && r.whatsappUrl.startsWith("https://wa.me/") ? { whatsappUrl: r.whatsappUrl } : {}),
+        }
+      : undefined;
   const seen = new Set<string>();
   const lines: CartLine[] = [];
   for (const raw of d.lines as unknown[]) {
@@ -256,12 +290,26 @@ export function parseStoredCart(raw: string | null, slug: string, context: Price
     });
     if (lines.length >= MAX_LINES) break;
   }
-  return { ...empty, lines };
+  return { ...empty, lines, ...(request ? { request } : {}) };
 }
 
 // ---------------------------------------------------------------------------
 // Selección confiable para el backend
 // ---------------------------------------------------------------------------
+
+/** Huella de lo que se pediría (referencia:cantidad de las líneas pedibles, en orden de referencia). */
+export function requestFingerprint(lines: readonly CartLine[]): string {
+  return lines
+    .filter((l) => l.available)
+    .map((l) => `${l.reference}:${l.quantity}`)
+    .sort()
+    .join(",");
+}
+
+/** Intento vigente para el carrito actual (misma huella) o null si hay que empezar uno nuevo. */
+export function currentRequest(state: CartState): CartRequest | null {
+  return state.request && state.request.items === requestFingerprint(state.lines) ? state.request : null;
+}
 
 /**
  * Lo ÚNICO que un backend acepta de un carrito: referencias y cantidades de

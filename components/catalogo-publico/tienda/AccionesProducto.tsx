@@ -18,7 +18,7 @@ const stepBtn =
 
 export function AccionesProducto({ product }: { product: PublicProductDetail }) {
   const { state, dispatch } = useCarrito();
-  const { abrirCarrito } = useTienda();
+  const { abrirCarrito, avisarAgregado } = useTienda();
   const [cantidad, setCantidad] = useState(1);
   const [agregado, setAgregado] = useState(0);
   const [topeAvisado, setTopeAvisado] = useState(false);
@@ -114,6 +114,7 @@ export function AccionesProducto({ product }: { product: PublicProductDetail }) 
             onClick={() => {
               dispatch({ type: "add", product: item, quantity: cantidadValida });
               setAgregado((n) => n + 1);
+              avisarAgregado(product.name);
               setCantidad(1);
               setTopeAvisado(false);
             }}

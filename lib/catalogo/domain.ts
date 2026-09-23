@@ -131,6 +131,21 @@ export function maxOrderableUnits(product: StockView): number | null {
   return product.tracksStock ? product.stock : null;
 }
 
+/**
+ * Stock DISCRETO para el público: el backend conoce el número exacto, pero la
+ * tienda solo necesita "Disponible / Últimas unidades / Agotado". El límite
+ * exacto se publica únicamente cuando es pequeño (para no dejar pedir de más
+ * en el carrito); por encima, el público no ve cuántas hay (null = sin tope
+ * visible) y el backend igual valida contra el stock real al preparar el
+ * pedido ("Solo quedan N" solo aparece si alguien pide más de lo que hay).
+ */
+export const PUBLIC_STOCK_VISIBLE = 10;
+
+export function publicOrderLimit(product: StockView): number | null {
+  const max = maxOrderableUnits(product);
+  return max !== null && max > PUBLIC_STOCK_VISIBLE ? null : max;
+}
+
 // ---------------------------------------------------------------------------
 // Referencia comercial (espejo EXACTO del formato de la BD, solo para
 // validar/mostrar: la BD es la única que la genera)

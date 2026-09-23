@@ -11,6 +11,8 @@ import assert from "node:assert/strict";
 import { beforeEach, describe, it } from "node:test";
 import { createResolucionCatalogo } from "@/lib/catalogo/resolucion";
 import { FEATURED_LIMIT, SELECTION_MAX, createCatalogService, createPublicCatalogService, normalizeReferences, type CatalogActor } from "@/lib/catalogo/service";
+import { memoryOrderRequestSink } from "@/lib/catalogo/eventos-pedido";
+import type { OrderItem } from "@/lib/catalogo/pedido";
 import { createInMemoryCatalogRepository, WEBP_HEAD } from "@/lib/catalogo/testing/in-memory-repository";
 
 const DELACOUR: CatalogActor = { tenantId: "0d3ae22d-0c38-4fd6-ba48-fb9e29b7cdb4", userId: "admin" };
@@ -25,7 +27,7 @@ beforeEach(async () => {
   mem = createInMemoryCatalogRepository();
   let n = 0;
   admin = createCatalogService({ repo: mem.repo, newId: () => `00000000-0000-4000-8000-${String(++n).padStart(12, "0")}` });
-  publico = createPublicCatalogService({ repo: mem.repo });
+  publico = createPublicCatalogService({ repo: mem.repo, orders: { key: Buffer.alloc(32, 7), events: memoryOrderRequestSink() } });
   mem.setProfile(DELACOUR.tenantId, { name: "Delacour Joyería", whatsapp: "573183715860" });
   mem.enableModule(DELACOUR.tenantId);
   slug = (await admin.ensurePublication(DELACOUR)).slug;
@@ -275,18 +277,24 @@ describe("preparación del pedido (el backend decide)", () => {
     return (await admin.getPublication(DELACOUR, { includeWholesale: true }))!.wholesalePath!.split("/").pop()!;
   }
 
+  /** Lo que hace la tienda: ver los precios (cotización firmada) y luego pedir. */
+  async function pedir(items: OrderItem[], opts: { context?: "retail" | "wholesale"; token?: string } = {}) {
+    const vista = await publico.resolveSelection({ slug, references: items.map((i) => i.reference), ...opts });
+    return publico.prepareOrder({ slug, items, quote: vista?.quote ?? undefined, requestKey: "clave-de-prueba-0001", ...opts });
+  }
+
   it("pedido válido => ready, con el mensaje armado en el servidor con datos reales", async () => {
     const p = await admin.createProduct(DELACOUR, { stock: 5, name: "Dije corazón", retailPrice: 35_000 });
-    const r = await publico.prepareOrder({ slug, items: [{ reference: p.reference.toLowerCase(), quantity: 2 }] });
+    const r = await pedir([{ reference: p.reference.toLowerCase(), quantity: 2 }]);
     assert.equal(r?.status, "ready");
-    assert.deepEqual(r?.order.lines, [{ reference: p.reference, name: "Dije corazón", quantity: 2, unitPrice: 35_000, subtotal: 70_000 }]);
+    assert.deepEqual(r?.order.lines, [{ reference: p.reference, productId: p.id, name: "Dije corazón", quantity: 2, unitPrice: 35_000, subtotal: 70_000 }]);
     const texto = decodeURIComponent((r as { whatsappUrl: string }).whatsappUrl.split("text=")[1]);
     assert.match(texto, new RegExp(`• ${p.reference} · Dije corazón — 2 unidades`));
   });
 
   it("superar el stock => adjusted, nunca una cantidad imposible ni link de WhatsApp", async () => {
     const p = await admin.createProduct(DELACOUR, { stock: 2, name: "Aretes", retailPrice: 42_000 });
-    const r = await publico.prepareOrder({ slug, items: [{ reference: p.reference, quantity: 5 }] });
+    const r = await pedir([{ reference: p.reference, quantity: 5 }]);
     assert.equal(r?.status, "adjusted");
     assert.equal("whatsappUrl" in (r ?? {}), false);
     assert.deepEqual(r?.order.adjustments, [{ kind: "quantity_reduced", reference: p.reference, name: "Aretes", requested: 5, granted: 2 }]);
@@ -296,7 +304,7 @@ describe("preparación del pedido (el backend decide)", () => {
   it("stock que baja a 0 después de agregar => adjusted (agotado)", async () => {
     const p = await admin.createProduct(DELACOUR, { stock: 3, name: "Anillo", retailPrice: 1_000 });
     await admin.updateProduct(DELACOUR, p.id, { stock: 0 });
-    const r = await publico.prepareOrder({ slug, items: [{ reference: p.reference, quantity: 1 }] });
+    const r = await pedir([{ reference: p.reference, quantity: 1 }]);
     assert.equal(r?.status, "adjusted");
     assert.deepEqual(r?.order.adjustments.map((a) => a.kind), ["sold_out"]);
   });
@@ -312,14 +320,11 @@ describe("preparación del pedido (el backend decide)", () => {
     const inactivo = await admin.createProduct(DELACOUR, { stock: 10, name: "Retirado", retailPrice: 1 });
     await admin.updateProduct(DELACOUR, inactivo.id, { status: "INACTIVE" });
     assert.notEqual(ajeno.reference, inactivo.reference);
-    const r = await publico.prepareOrder({
-      slug,
-      items: [
-        { reference: ajeno.reference, quantity: 1 },
-        { reference: inactivo.reference, quantity: 1 },
-        { reference: "DL-999999", quantity: 1 },
-      ],
-    });
+    const r = await pedir([
+      { reference: ajeno.reference, quantity: 1 },
+      { reference: inactivo.reference, quantity: 1 },
+      { reference: "DL-999999", quantity: 1 },
+    ]);
     assert.equal(r?.status, "adjusted");
     assert.deepEqual(r?.order.lines, []);
     assert.deepEqual(
@@ -332,19 +337,24 @@ describe("preparación del pedido (el backend decide)", () => {
     );
   });
 
-  it("precio cambiado después de agregar => el pedido usa el precio vigente", async () => {
+  it("precio cambiado después de que el cliente lo vio => adjusted (price_changed); al confirmar, el precio vigente", async () => {
     const p = await admin.createProduct(DELACOUR, { stock: 5, name: "Pulsera", retailPrice: 20_000 });
+    const items = [{ reference: p.reference, quantity: 2 }];
+    const vista = await publico.resolveSelection({ slug, references: [p.reference] });
     await admin.updateProduct(DELACOUR, p.id, { retailPrice: 25_000 });
-    const r = await publico.prepareOrder({ slug, items: [{ reference: p.reference, quantity: 2 }] });
-    assert.equal(r?.status, "ready");
-    assert.equal(r?.order.total, 50_000);
-    assert.deepEqual(r?.selection.items.map((i) => i.price), [25_000]);
+    const r = await publico.prepareOrder({ slug, items, quote: vista!.quote! });
+    assert.equal(r?.status, "adjusted");
+    assert.deepEqual(r?.order.adjustments, [{ kind: "price_changed", reference: p.reference, name: "Pulsera", before: 20_000, after: 25_000 }]);
+    assert.equal("whatsappUrl" in (r ?? {}), false, "no se abre WhatsApp con un precio que el cliente no vio");
+    const ok = await publico.prepareOrder({ slug, items, quote: r!.selection.quote! });
+    assert.equal(ok?.status, "ready");
+    assert.equal(ok?.order.total, 50_000);
   });
 
   it("sin WhatsApp configurado => no_whatsapp (sin link)", async () => {
     mem.setProfile(DELACOUR.tenantId, { name: "Delacour Joyería", whatsapp: null });
     const p = await admin.createProduct(DELACOUR, { stock: 5, name: "Dije", retailPrice: 1_000 });
-    const r = await publico.prepareOrder({ slug, items: [{ reference: p.reference, quantity: 1 }] });
+    const r = await pedir([{ reference: p.reference, quantity: 1 }]);
     assert.equal(r?.status, "no_whatsapp");
     assert.equal("whatsappUrl" in (r ?? {}), false);
   });
@@ -354,7 +364,7 @@ describe("preparación del pedido (el backend decide)", () => {
     const items = [{ reference: p.reference, quantity: 1 }];
     assert.equal(await publico.prepareOrder({ slug, items, context: "wholesale" }), null);
     assert.equal(await publico.prepareOrder({ slug, items, context: "wholesale", token: "x".repeat(32) }), null);
-    const r = await publico.prepareOrder({ slug, items, context: "wholesale", token: await tokenMayorista() });
+    const r = await pedir(items, { context: "wholesale", token: await tokenMayorista() });
     assert.equal(r?.status, "ready");
     assert.equal(r?.order.total, 18_000);
     assert.match(decodeURIComponent((r as { whatsappUrl: string }).whatsappUrl), /precio mayorista/);

@@ -6,9 +6,8 @@
  */
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { ImageOff, MessageCircle, Search, X } from "lucide-react";
-import { formatCop } from "@/lib/business-agent-quote";
-import { whatsappOrderLink, type PublicCatalogPage, type PublicCatalogProduct } from "@/lib/catalogo/publicacion";
+import { Search, X } from "lucide-react";
+import type { PublicCatalogPage, PublicCatalogProduct } from "@/lib/catalogo/publicacion";
 
 function cn(...cls: Array<string | false | null | undefined>) {
   return cls.filter(Boolean).join(" ");
@@ -21,54 +20,6 @@ function href(basePath: string, params: { q?: string; categoria?: string; pagina
   if (params.pagina && params.pagina > 1) qs.set("pagina", String(params.pagina));
   const s = qs.toString();
   return s ? `${basePath}?${s}` : basePath;
-}
-
-function ProductTile({ product, whatsapp, context }: { product: PublicCatalogProduct; whatsapp: string | null; context: PublicCatalogPage["context"] }) {
-  const pedir = whatsappOrderLink(whatsapp, product, context);
-  const detalle = [product.material, product.color].filter(Boolean).join(" · ");
-  return (
-    <article className="group flex flex-col overflow-hidden rounded-2xl border border-edge bg-card transition-colors hover:border-fg/20">
-      {product.imageUrl ? (
-        <a href={product.imageUrl} target="_blank" rel="noopener noreferrer" className="block overflow-hidden bg-ink-2" aria-label={`Ver foto de ${product.name}`}>
-          {/* eslint-disable-next-line @next/next/no-img-element -- imagen pública ya optimizada (WebP) en la carga */}
-          <img
-            src={product.thumbUrl ?? product.imageUrl}
-            alt={product.name}
-            loading="lazy"
-            decoding="async"
-            className="aspect-square w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
-          />
-        </a>
-      ) : (
-        <div className="flex aspect-square w-full items-center justify-center bg-ink-2 text-mist/50">
-          <ImageOff className="size-7" />
-        </div>
-      )}
-      <div className="flex flex-1 flex-col gap-1 p-3.5 sm:p-4">
-        <p className="font-mono text-[11px] tracking-tight text-mist">{product.reference}</p>
-        <h2 className="line-clamp-2 text-sm font-medium leading-snug text-fg sm:text-[15px]">{product.name}</h2>
-        {detalle && <p className="line-clamp-1 text-xs text-mist">{detalle}</p>}
-        <p className="mt-auto pt-2 text-base font-semibold tabular-nums text-fg sm:text-lg">
-          {product.price === null ? <span className="text-sm font-medium text-mist">Precio a consultar</span> : formatCop(product.price)}
-        </p>
-        {product.availability === "low" && <p className="text-xs font-medium text-amber-400">Últimas unidades</p>}
-        {!product.available ? (
-          <p className="mt-2 rounded-lg bg-ink-2 px-3 py-2 text-center text-xs font-medium text-mist sm:text-sm">Agotado</p>
-        ) : pedir && (
-          <a
-            href={pedir}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="mt-2 flex items-center justify-center gap-2 rounded-lg border border-fg/15 px-3 py-2 text-xs font-medium text-fg transition-colors hover:border-fg/40 hover:bg-fg/5 sm:text-sm"
-          >
-            <MessageCircle className="size-4 shrink-0" />
-            <span className="sm:hidden">Pedir</span>
-            <span className="hidden sm:inline">Pedir por WhatsApp</span>
-          </a>
-        )}
-      </div>
-    </article>
-  );
 }
 
 export function PublicCatalog({
@@ -88,8 +39,12 @@ export function PublicCatalog({
   compact?: boolean;
   /** Destino de "Todo" / "Quitar filtros" (el listado completo). Por defecto, basePath. */
   listPath?: string;
-  /** Tarjeta de producto propia (la tienda usa la suya, con carrito). Por defecto, la tarjeta con "Pedir por WhatsApp". */
-  tile?: (product: PublicCatalogProduct) => ReactNode;
+  /**
+   * Tarjeta de producto (la de la tienda, con carrito). Obligatoria: todo
+   * pedido pasa por el carrito y la validación del servidor; ya no existe un
+   * link directo a WhatsApp por producto.
+   */
+  tile: (product: PublicCatalogProduct) => ReactNode;
 }) {
   const todo = listPath ?? basePath;
   const totalPaginas = Math.max(1, Math.ceil(data.total / data.pageSize));
@@ -170,9 +125,9 @@ export function PublicCatalog({
         </div>
       ) : (
         <div className="grid grid-cols-2 gap-3 sm:gap-5 md:grid-cols-3 lg:grid-cols-4">
-          {data.products.map((p) =>
-            tile ? <div key={p.reference}>{tile(p)}</div> : <ProductTile key={p.reference} product={p} whatsapp={data.business.whatsapp} context={data.context} />,
-          )}
+          {data.products.map((p) => (
+            <div key={p.reference}>{tile(p)}</div>
+          ))}
         </div>
       )}
 

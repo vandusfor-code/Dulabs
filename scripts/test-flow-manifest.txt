@@ -452,3 +452,4 @@ lib/catalogo/import/importacion.test.ts
 lib/catalogo/import/fotos-asociacion.test.ts
 lib/catalogo/import/fase5-flujo.test.ts
 lib/catalogo/variantes.test.ts
+lib/catalogo/pedido-fase6.test.ts
