@@ -135,6 +135,32 @@ Validada contra PostgreSQL 16 local con el esquema real de AMORE (productos
    commit;
    ```
 
+**Deuda técnica / hardening futuro (riesgos conocidos y aceptados en la
+Fase 1; NO se resuelven ahora):**
+
+- **Caché de fotos de productos desactivados (hasta ~1 día).** Las fotos
+  públicas (`/catalogo/{slug}/productos/{referencia}/{main|thumb}.webp`)
+  llevan `s-maxage=86400, stale-while-revalidate=604800`. Al desactivar un
+  producto sale de la vitrina al instante, pero su foto puede seguir
+  respondiendo por URL directa hasta que venza la copia del CDN (~1 día,
+  más una revalidación). Opciones futuras: bajar `s-maxage` o purgar el CDN
+  al desactivar.
+- **Bucket `inventario-productos` público (heredado de AMORE).** El
+  catálogo público ya no publica rutas de Storage, pero quien conozca una
+  ruta completa (`{tenant}/{producto}/{archivo}`) puede abrir la foto
+  directo en Supabase. Hacer el bucket privado hoy rompería la tienda de
+  AMORE, el inventario y el envío de fotos del Business Agent (usan
+  `foto_url` directa). Requiere migrar esos consumidores primero.
+- **Código del link mayorista.** Va en la ruta
+  (`/catalogo/{slug}/mayor/{código}`), así que aparece en los logs de
+  peticiones de Vercel y en el historial del navegador de quien lo abre. Se
+  guarda en texto plano en `dulabs_catalogo_publicacion.token_mayor` porque
+  el administrador necesita verlo y copiarlo. Mitigación actual: 244–256
+  bits de entropía, comparación en tiempo constante, `referrer: no-referrer`
+  y regeneración inmediata desde el dashboard. Opciones futuras: guardar
+  solo un hash (mostrando el código una sola vez al generarlo) y/o expirar
+  links.
+
 ## PENDIENTE — DuLabs Developer V1, GitHub Integration (Fase 1)
 
 La migración `20261104000000_dulabs_developer_v1_github_integration.sql`
