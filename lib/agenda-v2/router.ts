@@ -27,11 +27,13 @@ import { createNylasEventsClient, createNylasEventsWriteClient, resolveNylasApiK
 import type { DepsDisponibilidadNylas } from "@/lib/disponibilidad-servicio-nylas";
 import { enviarMensajeWhatsApp } from "@/lib/whatsapp-worker-client";
 import { esInicioDeAgendaV2, detectarRechazoDeHorarioActual, detectarSolicitudOtraProfesional } from "@/lib/agenda-v2/entrada";
-import { manejarMensajeAgendaV2 } from "@/lib/agenda-v2/controlador";
+import { manejarMensajeAgendaV2, type ResultadoControladorAgendaV2 } from "@/lib/agenda-v2/controlador";
+import { resolverPorNombre, resolverHoraNatural } from "@/lib/agenda-v2/seleccion-natural";
+import { normalizarNumeroDeOpcion } from "@/lib/agenda-v2/normalizar-opcion";
 import { construirOpcionesServicio, renderizarMenuServicio } from "@/lib/agenda-v2/servicios";
 import { construirOpcionesCategoria, renderizarMenuCategoria } from "@/lib/agenda-v2/categorias";
-import { construirOpcionesProfesional, renderizarMenuProfesional } from "@/lib/agenda-v2/profesionales";
-import { renderizarMenuFecha, formatearFechaLarga, type OpcionFechaAgendaV2 } from "@/lib/agenda-v2/fechas";
+import { construirOpcionesProfesional, renderizarMenuProfesional, type OpcionProfesionalAgendaV2 } from "@/lib/agenda-v2/profesionales";
+import { renderizarMenuFecha, formatearFechaLarga, ENCABEZADO_MENU_FECHA_ALTERNATIVAS, type OpcionFechaAgendaV2 } from "@/lib/agenda-v2/fechas";
 import { construirBloqueHora, renderizarMenuHora } from "@/lib/agenda-v2/horas";
 import {
   OPCIONES_CONFIRMACION,
@@ -54,6 +56,8 @@ import {
   type ResultadoHorariosFecha,
   type ResultadoHorariosFechaMultiServicio,
   causaSinDias,
+  HORIZONTE_DIAS_A_EVALUAR,
+  type CausaSinDias,
 } from "@/lib/agenda-v2/disponibilidad";
 import { decidirSinDiasParaProfesional, lineaLogSinDias } from "@/lib/agenda-v2/sin-disponibilidad";
 // FASE 3 (autorizado, multi-servicio) -- intersección real de elegibilidad
@@ -1018,9 +1022,13 @@ export async function procesarMensajeConAgendaV2(
         profesionalId: number,
         continuarDesdeFechaIso?: string,
         mensajePrevio?: string,
+        /** Días ya calculados para ESTA profesional (ej. al elegir "la que tenga disponibilidad") -- evita repetir las consultas a Nylas. */
+        diasPrecalculados?: ResultadoDiasCandidatos,
+        /** Encabezado del menú de días; por defecto el de siempre, o uno neutro si el menú sigue a una mala noticia. */
+        encabezadoMenu?: string,
       ): Promise<ResultadoRouterAgendaV2> {
         const prefijo = mensajePrevio ? `${mensajePrevio}\n\n` : "";
-        const diasResultado = await calcularDiasComoCorresponda(servicioId, profesionalId, continuarDesdeFechaIso);
+        const diasResultado = diasPrecalculados ?? (await calcularDiasComoCorresponda(servicioId, profesionalId, continuarDesdeFechaIso));
         if (!diasResultado) return await reiniciarPorEstadoInconsistente("multi-servicio con un servicio o profesional ya no válido");
         // El servicio se desactivó o la profesional dejó de ser elegible a mitad de la conversación -- no es "falta de
         // agenda": se reinicia con el catálogo real, igual que el resto de los casos defensivos.
@@ -1108,7 +1116,12 @@ export async function procesarMensajeConAgendaV2(
           opcionesMostradas: { opciones: diasResultado.opciones, numeroVerMasFechas },
           ultimoWamidProcesado: params.wamid,
         });
-        await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: `${prefijo}${renderizarMenuFecha(diasResultado.opciones, numeroVerMasFechas)}`, origen: "automatico" });
+        await enviarMensaje({
+          tenantId: params.idTenant,
+          telefono: params.telefono,
+          mensaje: `${prefijo}${renderizarMenuFecha(diasResultado.opciones, numeroVerMasFechas, encabezadoMenu)}`,
+          origen: "automatico",
+        });
         return { manejado: true };
       }
 
@@ -1137,7 +1150,14 @@ export async function procesarMensajeConAgendaV2(
             );
           }
           const aviso = horariosResultado.motivo === "no_confirmado" ? "No pude consultar los horarios de ese día 😔" : "Ese día ya no tiene horarios disponibles 😔";
-          return await mostrarMenuFechaOVolverAProfesional(servicioId, profesionalId, undefined, `${mensajePrevio ? `${mensajePrevio}\n\n` : ""}${aviso}`);
+          return await mostrarMenuFechaOVolverAProfesional(
+            servicioId,
+            profesionalId,
+            undefined,
+            `${mensajePrevio ? `${mensajePrevio}\n\n` : ""}${aviso}`,
+            undefined,
+            ENCABEZADO_MENU_FECHA_ALTERNATIVAS,
+          );
         }
 
         const bloqueHora = construirBloqueHora(fechaIso, horariosResultado.horarios);
@@ -1222,7 +1242,7 @@ export async function procesarMensajeConAgendaV2(
           await enviarMensaje({
             tenantId: params.idTenant,
             telefono: params.telefono,
-            mensaje: `Entiendo 💗 Aquí tienes otros horarios:\n\n${renderizarMenuHora(bloqueHora.opciones, bloqueHora.numeroVerMasHoras)}`,
+            mensaje: renderizarMenuHora(bloqueHora.opciones, bloqueHora.numeroVerMasHoras, "Entiendo 💗 Aquí tienes otros horarios:"),
             origen: "automatico",
           });
           return { manejado: true };
@@ -1231,6 +1251,26 @@ export async function procesarMensajeConAgendaV2(
           return await reiniciarPorEstadoInconsistente("rechazo de horario sin servicioId/profesionalId");
         }
         return await mostrarMenuFechaOVolverAProfesional(sesion!.servicioId, sesion!.profesionalId, sesion!.fechaIso ?? undefined);
+      }
+
+      // "mejor con Mary", "bueno, si ella no puede entonces Mary" -- durante día/hora/confirmación, nombrar a OTRA
+      // profesional elegible (palabra completa, única) cambia directo a sus días REALES. Nunca en una reprogramación
+      // (FASE 8: una reprogramación jamás cambia de profesional) ni para un número de opción.
+      if (
+        (sesion.step === "S3_DIA" || sesion.step === "S4_HORA" || sesion.step === "S5_CONFIRMAR") &&
+        !sesion.citaObjetivoId &&
+        sesion.servicioId &&
+        normalizarNumeroDeOpcion(params.texto) === null
+      ) {
+        const serviciosIdsCambio = sesion.serviciosIds;
+        const elegiblesCambio =
+          serviciosIdsCambio && serviciosIdsCambio.length > 1
+            ? await resolverEspecialistasMulti(params.supabase, params.idTenant, serviciosIdsCambio)
+            : await resolverEspecialistas(params.supabase, params.idTenant, sesion.servicioId);
+        const mencion = resolverPorNombre(params.texto, elegiblesCambio.especialistas, (e) => e.nombre);
+        if (mencion.tipo === "unica" && mencion.opcion.especialistaId !== sesion.profesionalId) {
+          return await mostrarMenuFechaOVolverAProfesional(sesion.servicioId, mencion.opcion.especialistaId, undefined, undefined, undefined, `Claro 💗 Estos son los días con espacio de ${mencion.opcion.nombre}:`);
+        }
       }
 
       // Caso 3/4 solo aplican con una sesión REALMENTE en curso de elegir
@@ -1248,7 +1288,78 @@ export async function procesarMensajeConAgendaV2(
         }
       }
 
-      const resultado = manejarMensajeAgendaV2(sesion, params.texto);
+      let resultado: ResultadoControladorAgendaV2 = manejarMensajeAgendaV2(sesion, params.texto, { hoyIso: deps.hoyIsoParaExtraccion?.() });
+
+      if (resultado.accion === "profesional_cualquiera") {
+        // "me da igual", "la que tenga disponibilidad" -- la primera profesional, en el orden REAL del menú (que ya
+        // refleja la prioridad del salón), con días REALES disponibles. Los días ya calculados se reutilizan (sin
+        // repetir consultas a Nylas).
+        if (!sesion.servicioId) return await reiniciarPorEstadoInconsistente("S2_PROFESIONAL sin servicioId");
+        const opcionesActuales = (sesion.opcionesMostradas as OpcionProfesionalAgendaV2[] | null) ?? [];
+        const causas: CausaSinDias[] = [];
+        for (const opcion of opcionesActuales) {
+          const dias = await calcularDiasComoCorresponda(sesion.servicioId, opcion.profesionalId);
+          if (dias?.ok && dias.opciones.length > 0) {
+            return await mostrarMenuFechaOVolverAProfesional(
+              sesion.servicioId,
+              opcion.profesionalId,
+              undefined,
+              `¡Listo! 💗 Te propongo con *${opcion.nombre}*, que tiene espacio pronto. Si prefieres a otra, solo dime su nombre.`,
+              dias,
+            );
+          }
+          if (dias?.ok) causas.push(causaSinDias(dias));
+        }
+        const noSeConfirmo = causas.some((c) => c !== "sin_cupo");
+        const log = `[agenda-v2] cualquier profesional: ninguna con días -- tenant=${params.idTenant} servicio=${sesion.servicioId} causas=${causas.join(",") || "-"}`;
+        if (noSeConfirmo) console.error(log);
+        else console.info(log);
+        await cerrarSesion(params.supabase, sesion.id);
+        const salida = params.idTenant === AMORE_TENANT_ID ? " Si quieres, escribe *hablar con una persona* y te ayudamos directamente 💗" : " Escríbeme cuando quieras intentarlo de nuevo 💗";
+        await enviarMensaje({
+          tenantId: params.idTenant,
+          telefono: params.telefono,
+          mensaje: noSeConfirmo
+            ? `En este momento no pude consultar la agenda completa 😔 Para no darte información equivocada, prefiero no ofrecerte horarios todavía.${salida}`
+            : `En este momento ninguna de nuestras profesionales tiene espacio para este servicio en los próximos ${HORIZONTE_DIAS_A_EVALUAR} días 😔${salida}`,
+          origen: "automatico",
+        });
+        return { manejado: true };
+      }
+
+      if (resultado.accion === "hora_texto") {
+        // "a las 3", "después de las 5", "en la tarde" -- se resuelve contra los horarios REALES recalculados de ESE día
+        // (una consulta): la lista guardada puede estar paginada ("Ver más horarios") o desactualizada.
+        if (!sesion.servicioId || !sesion.profesionalId) return await reiniciarPorEstadoInconsistente("hora en texto sin servicioId/profesionalId");
+        const horasReales = await calcularHorasComoCorresponda(sesion.servicioId, sesion.profesionalId, resultado.fechaIso);
+        if (!horasReales.ok) return await mostrarMenuHoraOVolverAFecha(sesion.servicioId, sesion.profesionalId, resultado.fechaIso);
+        const hora = resolverHoraNatural(resultado.texto, horasReales.horarios);
+        if (hora.tipo === "unica") {
+          // Hora REAL libre -> exactamente el mismo camino que elegirla por número (resumen + confirmación).
+          resultado = { accion: "hora_seleccionada", fechaIso: resultado.fechaIso, hora: hora.hora };
+        } else {
+          const sinCoincidencias = hora.tipo === "filtro" && hora.horas.length === 0;
+          const lista = hora.tipo === "filtro" && !sinCoincidencias ? hora.horas : horasReales.horarios;
+          const encabezado =
+            hora.tipo === "no_disponible"
+              ? `A las ${formatearHoraAmPm(hora.hora)} no tengo espacio ese día 😔 Estos son los horarios libres:`
+              : sinCoincidencias
+                ? `No tengo horarios ${hora.descripcion} ese día 😔 Estos son los horarios libres:`
+                : hora.tipo === "filtro"
+                  ? `Claro 💗 Estos son los horarios ${hora.descripcion}:`
+                  : "Estos son los horarios disponibles ese día:";
+          const bloque = construirBloqueHora(resultado.fechaIso, lista);
+          await actualizarSesion(params.supabase, sesion.id, {
+            step: "S4_HORA",
+            fechaIso: resultado.fechaIso,
+            slotSeleccionado: null,
+            opcionesMostradas: bloque,
+            ultimoWamidProcesado: params.wamid,
+          });
+          await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: renderizarMenuHora(bloque.opciones, bloque.numeroVerMasHoras, encabezado), origen: "automatico" });
+          return { manejado: true };
+        }
+      }
 
       if (resultado.accion === "categoria_seleccionada") {
         // Ajuste de UX (autorizado) -- la categoría ya fue elegida; se

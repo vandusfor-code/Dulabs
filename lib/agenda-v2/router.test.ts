@@ -423,7 +423,7 @@ describe("Test 2/3 -- entradas inválidas durante S1_SERVICIO (sub-fase servicio
     assert.match(envios.enviados[2]!.mensaje, /No reconocí esa opción/);
   });
 
-  it("Test 3: texto ambiguo ('hola'/'quiero el dipping'/'no sé') no avanza -- NUNCA usa Gemini ni Flow Engine para decidir", async () => {
+  it("Test 3: texto ambiguo ('hola'/'quiero algo lindo'/'no sé') no avanza -- NUNCA usa Gemini ni Flow Engine para decidir", async () => {
     const { deps, sesiones, envios } = armarDeps({ cargarEscenariosReal: cargarEscenariosNuncaDebeLlamarse });
     // La sesión ya existe (creada directamente, sin pasar por el router), ya
     // en la sub-fase de SERVICIO (opciones reales de la categoría Uñas) --
@@ -436,7 +436,7 @@ describe("Test 2/3 -- entradas inválidas durante S1_SERVICIO (sub-fase servicio
       wamid: "w1",
       opcionesMostradas: construirOpcionesServicio(SERVICIOS_UNAS),
     });
-    for (const [i, mensaje] of ["hola", "quiero el dipping", "no sé"].entries()) {
+    for (const [i, mensaje] of ["hola", "quiero algo lindo", "no sé"].entries()) {
       const r = await procesarMensajeConAgendaV2(
         { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: mensaje, wamid: `w-inv-${i}` },
         deps,
@@ -756,13 +756,20 @@ describe("Ajuste de UX (autorizado) -- menú jerárquico categoría -> servicio"
     assert.equal(sesionesUnas.filas[0]!.servicioId, "s-presson-real");
   });
 
+  it("'quiero hacerme las uñas' en el menú de categorías -> muestra los servicios REALES de Uñas (nombre de categoría, palabra completa)", async () => {
+    const { deps, sesiones } = armarDeps();
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "quiero una cita", wamid: "w1" }, deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "quiero hacerme las uñas", wamid: "w2" }, deps);
+    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, construirOpcionesServicio(SERVICIOS_UNAS));
+  });
+
   it("Test 10: número de categoría fuera de rango o texto no numérico -- permanece mostrando categorías, nunca inventa ni avanza", async () => {
     const { deps, sesiones, envios } = armarDeps();
     await procesarMensajeConAgendaV2(
       { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "quiero una cita", wamid: "w1" },
       deps,
     );
-    for (const [i, mensaje] of ["99", "uñas", "hola"].entries()) {
+    for (const [i, mensaje] of ["99", "algo bonito", "hola"].entries()) {
       const r = await procesarMensajeConAgendaV2(
         { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: mensaje, wamid: `w-inv-${i}` },
         deps,
@@ -891,10 +898,27 @@ describe("FASE 3 (autorizado) -- selección de profesional vía router real", ()
     assert.match(envios.enviados[3]!.mensaje, /No reconocí esa opción/);
   });
 
-  it("Test 5: texto ambiguo ('hola'/'quiero a mary'/'no sé') no cambia el estado", async () => {
+  it("'Quiero con Cristal' (nombre de una profesional del menú) -> sus días REALES, igual que elegir su número", async () => {
+    const { deps, sesiones } = armarDeps();
+    await llegarAMenuProfesionalDipping(deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "Quiero con Cristal", wamid: "w-nombre" }, deps);
+    assert.equal(sesiones.filas[0]!.step, "S3_DIA");
+    assert.equal(sesiones.filas[0]!.profesionalId, 1263);
+  });
+
+  it("'me da igual' -> la primera profesional del menú con días REALES (Jessica no tiene; nunca se elige sin agenda)", async () => {
     const { deps, sesiones, envios } = armarDeps();
     await llegarAMenuProfesionalDipping(deps);
-    for (const [i, mensaje] of ["hola", "quiero a mary", "no sé"].entries()) {
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "me da igual", wamid: "w-igual" }, deps);
+    assert.equal(sesiones.filas[0]!.step, "S3_DIA");
+    assert.equal(sesiones.filas[0]!.profesionalId, 1262, "Mary es la primera del menú con días reales");
+    assert.match(envios.enviados.at(-1)!.mensaje, /Te propongo con \*Mary\*/);
+  });
+
+  it("Test 5: texto ambiguo ('hola'/'quiero a marisol'/'asdf') no cambia el estado", async () => {
+    const { deps, sesiones, envios } = armarDeps();
+    await llegarAMenuProfesionalDipping(deps);
+    for (const [i, mensaje] of ["hola", "quiero a marisol", "asdf"].entries()) {
       const r = await procesarMensajeConAgendaV2(
         { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: mensaje, wamid: `w-inv-${i}` },
         deps,
@@ -1062,19 +1086,33 @@ describe("FASE 4 (autorizado) -- selección de fecha vía router real", () => {
     assert.match(envios.enviados[4]!.mensaje, /No reconocí esa opción/);
   });
 
-  it("Test 10: texto ambiguo ('el sábado'/'mañana') en S3_DIA no cambia el estado -- nunca se interpreta como fecha", async () => {
+  it("Test 10: texto sin fecha ('hola') en S3_DIA no cambia el estado", async () => {
     const { deps, sesiones, envios } = armarDeps();
     await llegarAMenuFechaMary(deps);
-    for (const [i, mensaje] of ["hola", "el sábado", "mañana"].entries()) {
-      const r = await procesarMensajeConAgendaV2(
-        { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: mensaje, wamid: `w-inv-${i}` },
-        deps,
-      );
-      assert.equal(r.manejado, true);
-      assert.equal(sesiones.filas[0]!.step, "S3_DIA", `"${mensaje}" no debía avanzar el step`);
-      assert.equal(sesiones.filas[0]!.fechaIso, null, `"${mensaje}" no debía fijar ninguna fecha`);
-    }
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "hola", wamid: "w-inv-0" }, deps);
+    assert.equal(sesiones.filas[0]!.step, "S3_DIA");
+    assert.equal(sesiones.filas[0]!.fechaIso, null);
     assert.match(envios.enviados.at(-1)!.mensaje, /No reconocí esa opción/);
+  });
+
+  it("fecha en texto SIN horarios reales ('el sábado') -> nunca la fuerza: lo dice y ofrece los días REALES (sin 'Perfecto' tras la mala noticia)", async () => {
+    const { deps, sesiones, envios } = armarDeps({ hoyIsoParaExtraccion: () => "2026-09-07" });
+    await llegarAMenuFechaMary(deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "mejor el sábado", wamid: "w-sab" }, deps);
+    assert.equal(sesiones.filas[0]!.step, "S3_DIA", "el sábado no tiene horarios reales en el fixture -- se queda eligiendo día");
+    assert.equal(sesiones.filas[0]!.fechaIso, null);
+    const msg = envios.enviados.at(-1)!.mensaje;
+    assert.match(msg, /Ese día ya no tiene horarios disponibles/);
+    assert.match(msg, /Estos son los días con espacio disponible/);
+    assert.doesNotMatch(msg, /Perfecto/);
+  });
+
+  it("fecha en texto CON horarios reales ('el martes') -> avanza a sus horarios reales", async () => {
+    const { deps, sesiones } = armarDeps({ hoyIsoParaExtraccion: () => "2026-09-07" });
+    await llegarAMenuFechaMary(deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "el martes", wamid: "w-mar" }, deps);
+    assert.equal(sesiones.filas[0]!.step, "S4_HORA");
+    assert.equal(sesiones.filas[0]!.fechaIso, "2026-09-08");
   });
 
   it("Test 7: sin días disponibles (Jessica, agenda verificada y llena) -- NUNCA avanza a S3_DIA, revierte a S2_PROFESIONAL con las OTRAS profesionales reales", async () => {
@@ -1540,7 +1578,7 @@ describe("CASO 5 (autorizado, 'evitar bucles') -- protección anti-loop vía rou
     await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "hola", wamid: "w5" }, deps);
     assert.doesNotMatch(envios.enviados.at(-1)!.mensaje, /escríbenos directamente/, "1er fallo -- todavía sin orientación extra");
 
-    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "no sé", wamid: "w6" }, deps);
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "asdf", wamid: "w6" }, deps);
     assert.doesNotMatch(envios.enviados.at(-1)!.mensaje, /escríbenos directamente/, "2do fallo -- todavía sin orientación extra");
 
     await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", texto: "cualquier cosa", wamid: "w7" }, deps);

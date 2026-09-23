@@ -25,6 +25,37 @@ import {
   type OpcionCitaAgendaV2,
   type OpcionSiNoAgendaV2,
 } from "@/lib/agenda-v2/gestion-citas";
+import {
+  resolverPorNombre,
+  esPedidoCualquierProfesional,
+  extraerFechaNatural,
+  resolverHoraNatural,
+  resolverConfirmacionNatural,
+  resolverSiNoNatural,
+} from "@/lib/agenda-v2/seleccion-natural";
+import { fechaColombiaDesdeIso } from "@/lib/timezone-colombia";
+import { normalizarNumeroDeOpcion } from "@/lib/agenda-v2/normalizar-opcion";
+
+/**
+ * Un número ("7", "7.", "la 7") SIEMPRE es un intento de elegir una opción: si no existe, es inválido. Nunca se
+ * reinterpreta como hora ("las 7") ni fecha -- la capa de lenguaje natural solo corre para mensajes que no son números.
+ */
+function esNumeroDeOpcion(mensaje: string): boolean {
+  return normalizarNumeroDeOpcion(mensaje) !== null;
+}
+
+/** Número de opción (1/2) o, si no lo es, "sí"/"no" en vocabulario cerrado con coincidencia exacta del mensaje completo. */
+function resolverSeleccionSiNoConTexto(mensaje: string, opciones: OpcionSiNoAgendaV2[]): OpcionSiNoAgendaV2 | undefined {
+  const porNumero = resolverSeleccionSiNo(mensaje, opciones);
+  if (porNumero) return porNumero;
+  const natural = resolverSiNoNatural(mensaje);
+  return natural ? opciones.find((o) => o.accion === natural) : undefined;
+}
+
+/** Contexto determinístico del mensaje -- inyectable para tests (default real: hoy en Colombia). */
+export interface ContextoControladorAgendaV2 {
+  hoyIso?: string;
+}
 
 export const RESPUESTA_PLACEHOLDER_AGENDA_V2 = "Agenda V2 activa. Selecciona una opción.";
 const RESPUESTA_CANCELACION = "Listo, cancelé tu proceso de agenda 💗 Escríbeme cuando quieras retomarlo.";
@@ -51,6 +82,12 @@ export type ResultadoControladorAgendaV2 =
   // reales exige el motor de disponibilidad + Nylas (async) -- misma razón
   // que las dos anteriores. Ver lib/agenda-v2/disponibilidad.ts.
   | { accion: "profesional_seleccionado"; profesionalId: number }
+  // "me da igual", "la que tenga disponibilidad" -- router.ts elige, en el orden real del menú (que ya refleja la
+  // prioridad del salón), la primera profesional con días REALES disponibles. Nunca se elige sin consultar la agenda.
+  | { accion: "profesional_cualquiera" }
+  // Una hora dicha en texto ("a las 3", "después de las 5", "en la tarde") -- router.ts recalcula los horarios REALES
+  // de esa fecha (una consulta) y la resuelve contra ellos: la lista guardada puede estar paginada o desactualizada.
+  | { accion: "hora_texto"; fechaIso: string; texto: string }
   // FASE 5 -- la fecha fue elegida, pero calcular los horarios reales de ESE
   // día exige el mismo motor async. Ver lib/agenda-v2/disponibilidad.ts.
   | { accion: "fecha_seleccionada"; fechaIso: string }
@@ -101,11 +138,12 @@ export type ResultadoControladorAgendaV2 =
  * llama a resolverEscenario, ejecutarBotWhatsAppQR, Gemini/Claude, ni
  * ningún otro escenario -- el mensaje entero queda resuelto acá.
  */
-export function manejarMensajeAgendaV2(sesion: SesionAgendaV2, mensaje: string): ResultadoControladorAgendaV2 {
+export function manejarMensajeAgendaV2(sesion: SesionAgendaV2, mensaje: string, contexto: ContextoControladorAgendaV2 = {}): ResultadoControladorAgendaV2 {
   const normalizado = normalizeText(mensaje);
   if (normalizado === COMANDO_CANCELAR) {
     return { accion: "cerrar_sesion", respuesta: RESPUESTA_CANCELACION };
   }
+  const hoyIso = contexto.hoyIso ?? fechaColombiaDesdeIso(new Date().toISOString());
 
   if (sesion.step === "S1_SERVICIO") {
     return manejarSeleccionServicioOCategoria(sesion, mensaje);
@@ -116,15 +154,15 @@ export function manejarMensajeAgendaV2(sesion: SesionAgendaV2, mensaje: string):
   }
 
   if (sesion.step === "S3_DIA") {
-    return manejarSeleccionFecha(sesion, mensaje);
+    return manejarSeleccionFecha(sesion, mensaje, hoyIso);
   }
 
   if (sesion.step === "S4_HORA") {
-    return manejarSeleccionHora(sesion, mensaje);
+    return manejarSeleccionHora(sesion, mensaje, hoyIso);
   }
 
   if (sesion.step === "S5_CONFIRMAR") {
-    return manejarConfirmacion(sesion, mensaje);
+    return manejarConfirmacion(sesion, mensaje, hoyIso);
   }
 
   // FASE 8 -- gestión de citas existentes.
@@ -166,12 +204,13 @@ function manejarSeleccionServicioOCategoria(sesion: SesionAgendaV2, mensaje: str
   if (esOpcionCategoria(opciones[0])) {
     const categorias = opciones as OpcionCategoriaAgendaV2[];
     const seleccion = resolverSeleccionCategoria(mensaje, categorias);
-    if (!seleccion) {
-      // Igual criterio que "ENTRADAS INVÁLIDAS" de servicio -- NUNCA avanza,
-      // reenvía EXACTAMENTE las mismas categorías ya guardadas.
-      return { accion: "continuar", respuesta: textoSeleccionInvalidaCategoria(categorias) };
-    }
-    return { accion: "categoria_seleccionada", categoria: seleccion.categoria };
+    if (seleccion) return { accion: "categoria_seleccionada", categoria: seleccion.categoria };
+    // "quiero hacerme las uñas" -- nombre de categoría (palabra completa, única entre las mostradas).
+    const porNombre = resolverPorNombre(mensaje, categorias, (c) => c.categoria);
+    if (porNombre.tipo === "unica") return { accion: "categoria_seleccionada", categoria: porNombre.opcion.categoria };
+    // Igual criterio que "ENTRADAS INVÁLIDAS" de servicio -- NUNCA avanza,
+    // reenvía EXACTAMENTE las mismas categorías ya guardadas.
+    return { accion: "continuar", respuesta: textoSeleccionInvalidaCategoria(categorias) };
   }
 
   const opcionesServicio = opciones as OpcionServicioAgendaV2[];
@@ -182,6 +221,9 @@ function manejarSeleccionServicioOCategoria(sesion: SesionAgendaV2, mensaje: str
   // comportamiento de un solo servicio queda idéntico en la práctica.
   const seleccion = resolverSeleccionMultiServicio(mensaje, opcionesServicio);
   if (!seleccion) {
+    // "quiero el dipping" -- nombre de servicio (palabra completa, único entre los mostrados).
+    const porNombre = resolverPorNombre(mensaje, opcionesServicio, (s) => s.nombre);
+    if (porNombre.tipo === "unica") return { accion: "servicio_seleccionado", servicioIds: [porNombre.opcion.servicioId] };
     // Sección "ENTRADAS INVÁLIDAS" del pedido -- NUNCA avanza, NUNCA cambia
     // el servicio, NUNCA llama a nada externo. Vuelve a mostrar EXACTAMENTE
     // las mismas opciones ya guardadas (nunca una consulta nueva al catálogo).
@@ -208,18 +250,28 @@ function manejarSeleccionProfesional(sesion: SesionAgendaV2, mensaje: string): R
   }
 
   const seleccion = resolverSeleccionProfesional(mensaje, opciones);
-  if (!seleccion) {
-    // Sección "ENTRADAS INVÁLIDAS" del pedido -- NUNCA avanza, NUNCA cambia
-    // profesional_id, NUNCA llama a nada externo. Vuelve a mostrar
-    // EXACTAMENTE las mismas opciones ya guardadas.
-    return { accion: "continuar", respuesta: textoSeleccionInvalidaProfesional(opciones) };
+  if (seleccion) {
+    // FASE 4 -- el siguiente mensaje real es el menú de días candidatos reales para ESTE profesional. Eso exige el
+    // motor de disponibilidad + Nylas (async), así que router.ts termina la transición.
+    return { accion: "profesional_seleccionado", profesionalId: seleccion.profesionalId };
   }
 
-  // FASE 4 -- ya no se responde con un texto temporal: el siguiente mensaje
-  // real es el menú de días candidatos reales para ESTE profesional. Eso
-  // exige el motor de disponibilidad + Nylas (async), así que router.ts
-  // termina la transición (step, servicioId, opcionesMostradas).
-  return { accion: "profesional_seleccionado", profesionalId: seleccion.profesionalId };
+  // "Quiero con Cristal", "¿y Mary?" -- nombre de una de las profesionales MOSTRADAS (palabra completa, única).
+  const porNombre = resolverPorNombre(mensaje, opciones, (o) => o.nombre);
+  if (porNombre.tipo === "unica") return { accion: "profesional_seleccionado", profesionalId: porNombre.opcion.profesionalId };
+  if (porNombre.tipo === "ambigua") {
+    // Nombró a más de una ("no con Cristal, mejor Mary") -- nunca se adivina cuál quiso decir.
+    return {
+      accion: "continuar",
+      respuesta: `Para no equivocarme 💗 ¿con quién prefieres: ${porNombre.opciones.map((o) => o.nombre).join(" o ")}? Puedes responder con su nombre o su número.`,
+    };
+  }
+  // "me da igual", "la que tenga disponibilidad" -- router.ts elige con la agenda REAL, nunca aquí.
+  if (esPedidoCualquierProfesional(mensaje)) return { accion: "profesional_cualquiera" };
+
+  // Sección "ENTRADAS INVÁLIDAS" del pedido -- NUNCA avanza, NUNCA cambia profesional_id, NUNCA llama a nada externo.
+  // Vuelve a mostrar EXACTAMENTE las mismas opciones ya guardadas.
+  return { accion: "continuar", respuesta: textoSeleccionInvalidaProfesional(opciones) };
 }
 
 /**
@@ -236,7 +288,7 @@ function manejarSeleccionProfesional(sesion: SesionAgendaV2, mensaje: string): R
  * fechas dentro del horizonte). Los demás pasos de Agenda V2 conservan su
  * propio arreglo plano tal cual, sin ningún cambio.
  */
-function manejarSeleccionFecha(sesion: SesionAgendaV2, mensaje: string): ResultadoControladorAgendaV2 {
+function manejarSeleccionFecha(sesion: SesionAgendaV2, mensaje: string, hoyIso: string): ResultadoControladorAgendaV2 {
   const datos = sesion.opcionesMostradas as { opciones: OpcionFechaAgendaV2[]; numeroVerMasFechas: number | null } | null;
   if (!datos || !Array.isArray(datos.opciones) || datos.opciones.length === 0) {
     return { accion: "continuar", respuesta: RESPUESTA_MENU_PERDIDO };
@@ -252,6 +304,11 @@ function manejarSeleccionFecha(sesion: SesionAgendaV2, mensaje: string): Resulta
 
   const seleccion = resolverSeleccionFecha(mensaje, datos.opciones);
   if (!seleccion) {
+    // "mañana", "mejor el viernes", "¿puede ser el 30 de septiembre?" -- fecha concreta. Aunque no esté entre las
+    // mostradas, router.ts la valida contra la agenda REAL (mostrarMenuHoraOVolverAFecha): si no tiene horarios, lo dice
+    // y ofrece los días reales. Nunca se da por libre sin consultarla.
+    const fechaIso = esNumeroDeOpcion(mensaje) ? null : extraerFechaNatural(mensaje, hoyIso);
+    if (fechaIso) return { accion: "fecha_seleccionada", fechaIso };
     return { accion: "continuar", respuesta: textoSeleccionInvalidaFecha(datos.opciones, datos.numeroVerMasFechas) };
   }
 
@@ -272,8 +329,8 @@ function manejarSeleccionFecha(sesion: SesionAgendaV2, mensaje: string): Resulta
  * restantes crudos para armar el siguiente bloque sin recalcular. Los
  * demás pasos de Agenda V2 conservan su propia forma tal cual.
  */
-function manejarSeleccionHora(sesion: SesionAgendaV2, mensaje: string): ResultadoControladorAgendaV2 {
-  const datos = sesion.opcionesMostradas as { opciones: OpcionHoraAgendaV2[]; numeroVerMasHoras: number | null } | null;
+function manejarSeleccionHora(sesion: SesionAgendaV2, mensaje: string, hoyIso: string): ResultadoControladorAgendaV2 {
+  const datos = sesion.opcionesMostradas as { opciones: OpcionHoraAgendaV2[]; numeroVerMasHoras: number | null; horariosRestantes?: string[] } | null;
   if (!datos || !Array.isArray(datos.opciones) || datos.opciones.length === 0) {
     return { accion: "continuar", respuesta: RESPUESTA_MENU_PERDIDO };
   }
@@ -287,7 +344,18 @@ function manejarSeleccionHora(sesion: SesionAgendaV2, mensaje: string): Resultad
   }
 
   const seleccion = resolverSeleccionHora(mensaje, datos.opciones);
+  if (!seleccion && esNumeroDeOpcion(mensaje)) {
+    return { accion: "continuar", respuesta: textoSeleccionInvalidaHora(datos.opciones, datos.numeroVerMasHoras) };
+  }
   if (!seleccion) {
+    // "a las 3", "4:30", "después de las 5", "en la tarde" -- se detecta que ES una hora/franja y router.ts la resuelve
+    // contra los horarios REALES recalculados de ese día (la lista guardada puede estar paginada).
+    const fechaIso = datos.opciones[0]!.fechaIso;
+    const conocidos = [...datos.opciones.map((o) => o.hora), ...(datos.horariosRestantes ?? [])];
+    if (resolverHoraNatural(mensaje, conocidos).tipo !== "ninguna") return { accion: "hora_texto", fechaIso, texto: mensaje };
+    // "mejor el viernes" -- cambio de día (acá "mañana" sola es la franja de la mañana, nunca el día siguiente).
+    const otraFecha = extraerFechaNatural(mensaje, hoyIso, { sinManana: true });
+    if (otraFecha) return { accion: "fecha_seleccionada", fechaIso: otraFecha };
     return { accion: "continuar", respuesta: textoSeleccionInvalidaHora(datos.opciones, datos.numeroVerMasHoras) };
   }
 
@@ -305,16 +373,25 @@ function manejarSeleccionHora(sesion: SesionAgendaV2, mensaje: string): Resultad
  * lib/agenda-v2/confirmacion.ts) -- nunca fuzzy matching, nunca "sí"/"dale"/
  * "confirmo", nunca interpretación semántica.
  */
-function manejarConfirmacion(sesion: SesionAgendaV2, mensaje: string): ResultadoControladorAgendaV2 {
+function manejarConfirmacion(sesion: SesionAgendaV2, mensaje: string, hoyIso: string): ResultadoControladorAgendaV2 {
   const opciones = (sesion.opcionesMostradas as OpcionConfirmacionAgendaV2[] | null) ?? [];
   if (opciones.length === 0) {
     return { accion: "continuar", respuesta: RESPUESTA_MENU_PERDIDO };
   }
 
-  const seleccion = resolverSeleccionConfirmacion(mensaje, opciones);
+  const porNumero = resolverSeleccionConfirmacion(mensaje, opciones);
+  // "sí", "confirmo", "sí, perfecto" -- vocabulario CERRADO y mensaje COMPLETO (nunca "sí, pero…"): responder
+  // afirmativamente a "¿Confirmas tu cita?" es una confirmación explícita, igual que el "1".
+  const natural = porNumero ? null : resolverConfirmacionNatural(mensaje);
+  const seleccion = porNumero ?? (natural ? opciones.find((o) => o.accion === natural) : undefined);
   if (!seleccion) {
-    // Sección "VALIDACIONES" del pedido -- número inválido: se mantiene en
-    // S5_CONFIRMAR y se reenvía EXACTAMENTE el mismo menú de control.
+    // "mejor el viernes" / "mejor a las 5" -- cambio directo, validado por router.ts contra la agenda real.
+    if (sesion.fechaIso && !esNumeroDeOpcion(mensaje)) {
+      if (resolverHoraNatural(mensaje, []).tipo !== "ninguna") return { accion: "hora_texto", fechaIso: sesion.fechaIso, texto: mensaje };
+      const otraFecha = extraerFechaNatural(mensaje, hoyIso);
+      if (otraFecha) return { accion: "fecha_seleccionada", fechaIso: otraFecha };
+    }
+    // Sección "VALIDACIONES" del pedido -- se mantiene en S5_CONFIRMAR y se reenvía EXACTAMENTE el mismo menú.
     return { accion: "continuar", respuesta: textoSeleccionInvalidaConfirmacion() };
   }
 
@@ -374,7 +451,7 @@ function manejarConfirmacionCancelar(sesion: SesionAgendaV2, mensaje: string): R
     return { accion: "continuar", respuesta: RESPUESTA_MENU_PERDIDO };
   }
 
-  const seleccion = resolverSeleccionSiNo(mensaje, opciones);
+  const seleccion = resolverSeleccionSiNoConTexto(mensaje, opciones);
   if (!seleccion) {
     return { accion: "continuar", respuesta: textoSeleccionInvalidaSiNo() };
   }
@@ -397,7 +474,7 @@ function manejarConfirmacionReprogramarInicio(sesion: SesionAgendaV2, mensaje: s
     return { accion: "continuar", respuesta: RESPUESTA_MENU_PERDIDO };
   }
 
-  const seleccion = resolverSeleccionSiNo(mensaje, opciones);
+  const seleccion = resolverSeleccionSiNoConTexto(mensaje, opciones);
   if (!seleccion) {
     return { accion: "continuar", respuesta: textoSeleccionInvalidaSiNo() };
   }

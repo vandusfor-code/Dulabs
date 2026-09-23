@@ -179,6 +179,7 @@ lib/agenda-v2/router.test.ts
 lib/agenda-v2/multi-servicio.test.ts
 lib/agenda-v2/sin-disponibilidad.test.ts
 lib/agenda-v2/disponibilidad-cadena-real.test.ts
+lib/agenda-v2/seleccion-natural.test.ts
 lib/contabilidad/consultas.test.ts
 lib/contabilidad/periodo.test.ts
 lib/contabilidad/metricas.test.ts
