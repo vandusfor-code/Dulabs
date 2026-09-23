@@ -454,3 +454,7 @@ lib/catalogo/import/fase5-flujo.test.ts
 lib/catalogo/variantes.test.ts
 lib/catalogo/pedido-fase6.test.ts
 lib/catalogo/pedidos/pedidos-fase7.test.ts
+lib/ia-proveedores/ia-proveedores.test.ts
+lib/agente/agente-config-estado.test.ts
+lib/agente/agente-runtime.test.ts
+lib/agente/agente-webhook.test.ts

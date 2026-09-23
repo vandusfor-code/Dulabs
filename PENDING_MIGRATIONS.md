@@ -1,5 +1,45 @@
 # Pasos manuales pendientes en producción
 
+## ⏳ PENDIENTE — Fase 8: agente conversacional (Gemini) por número de WhatsApp
+
+Migración `supabase/migrations/20261109000000_dulabs_agente_runtime.sql`.
+**100 % aditiva** (no toca tablas existentes):
+
+- `dulabs_agente_runtime_config`: agente por número con proveedor, modelo y
+  referencia a la credencial **obligatorios** (sin default), herramientas
+  permitidas, canal y configuración del negocio. Nunca guarda el secreto.
+- `dulabs_agente_conversaciones`: memoria de corto plazo estructurada por
+  conversación (compare-and-set por versión). Sin precios ni stock.
+
+**Aplicarla no activa nada**: sin filas en `dulabs_agente_runtime_config`, el
+webhook sigue exactamente igual.
+
+Validada contra PostgreSQL 16 local:
+`supabase/tests/20261109000000_dulabs_agente_runtime.test.sql` (5/5), aplicada
+dos veces sin error.
+
+1. Correr el archivo completo en el SQL Editor (idempotente).
+2. Verificar (esperado 2):
+   ```sql
+   select count(*) from information_schema.tables
+    where table_name in ('dulabs_agente_runtime_config', 'dulabs_agente_conversaciones');
+   ```
+
+**Activación del piloto de Delacour (NO antes de tener su GEMINI_KEY):**
+
+1. En Vercel: variable `GEMINI_KEY_DELACOUR` con la key propia de Delacour y redesplegar.
+2. Insertar la configuración (la plantilla está en `lib/agente/README.md`):
+   `proveedor='gemini'`, `modelo='gemini-3.6-flash'`,
+   `credencial_ref='env:GEMINI_KEY_DELACOUR'`, herramientas, `habilitado=true`.
+3. `ia_restringida_a` = números de prueba en `dulabs_clientes_config`.
+4. Solo al final `ia_pausada = false`.
+
+⚠️ Poner `ia_pausada = false` SIN la fila del agente haría responder a la IA
+legacy (Claude). Con la fila presente (aunque esté apagada o sin key) el número
+nunca cae a otro bot.
+
+Rollback: al inicio del archivo de la migración.
+
 ## ✅ APLICADA (23-sep-2026) — Catálogo DuLabs, Fase 7 (pedidos estructurados: WhatsApp + agente)
 
 **Estado: aplicada en Supabase de producción por el responsable del proyecto.**

@@ -32,6 +32,8 @@ import { descifrarSecreto } from "@/lib/crypto";
 import { esTelefonoBloqueado } from "@/lib/blacklist-du";
 import { recibirPedidoWhatsapp } from "@/lib/catalogo/pedidos/intake";
 import { productionIntakeDeps } from "@/lib/catalogo/pedidos/produccion";
+import { loadAgentConfig } from "@/lib/agente/config";
+import { atenderConAgenteSiAplica, productionAgentBoundaryDeps } from "@/lib/agente/webhook";
 import { getSurveyBot, getSession, saveSession } from "@/lib/survey-bot-store";
 import { handleMessage, questionPrompt } from "@/lib/survey-engine";
 import { interpretarRespuestaEncuesta, redactarPreguntaCalida, fraseEmpatica, type Sentimiento } from "@/lib/survey-agent-ia";
@@ -1022,6 +1024,13 @@ async function atenderMensaje(
       return;
     }
 
+    // FASE 8 -- agente conversacional por número (Gemini, configuración
+    // explícita en dulabs_agente_runtime_config). Sin fila para este número
+    // no hace nada y todo sigue exactamente igual (Flow, Business Agent,
+    // legacy). Con fila, el mensaje es SUYO: nunca cae a otro bot (ni si la
+    // configuración es inválida o falta la credencial: fail-closed).
+    if (await intentarAgenteConversacionalSiAplica(cliente, mensaje, telefonoRemitente, destinoWhatsApp)) return;
+
     // Fase 0 (migración a Flow) — puerta EXPLÍCITA y opt-in, ver
     // lib/flow-routing.ts. flow_activo=false (default de TODO tenant
     // existente, incluida Daniela) dejaba esto sin efecto: el mensaje sigue
@@ -1282,6 +1291,25 @@ async function dentroDelCupoIA(cliente: ClienteConfig): Promise<boolean> {
 // mensaje.text.body sigue de largo hacia el camino existente (Flow hand-built
 // con su propio soporte de buttonId/media, o LEGACY), nunca se le pasa texto
 // vacío al Business Agent.
+async function intentarAgenteConversacionalSiAplica(cliente: ClienteConfig, mensaje: MetaMessage, telefonoRemitente: string, destino: string): Promise<boolean> {
+  const texto = mensaje.text?.body?.trim();
+  try {
+    const supabase = supabaseAdmin();
+    const deps = productionAgentBoundaryDeps(supabase, cliente);
+    if (!texto) {
+      // Solo se decide si el número tiene agente: un mensaje sin texto de un número con agente no cae a otro bot.
+      const cfg = await loadAgentConfig(deps.configStore, { tenantId: cliente.id_tenant, phoneNumberId: cliente.phone_number_id });
+      return cfg.kind !== "none";
+    }
+    const r = await atenderConAgenteSiAplica({ cliente, waId: telefonoRemitente, destino, wamid: mensaje.id, text: texto.slice(0, 4_000) }, deps);
+    return r.handled;
+  } catch (err) {
+    // Error inesperado: no se sabe si el número tiene agente => no se arriesga a que responda otro bot.
+    console.error(`[webhook-dulabs] excepción en el agente conversacional (tenant ${cliente.id_tenant}):`, err instanceof Error ? err.message : err);
+    return true;
+  }
+}
+
 async function intentarBusinessAgentSiAplica(cliente: ClienteConfig, mensaje: MetaMessage, telefonoRemitente: string): Promise<boolean> {
   const texto = mensaje.text?.body;
   if (!texto) {
