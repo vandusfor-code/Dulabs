@@ -33,9 +33,10 @@ export function HomeNav() {
             href={CREAR_AGENTE_HREF}
             event="cta_crear_agente"
             source="nav"
-            className="inline-flex h-10 items-center rounded-lg bg-dev-accent px-4 text-[13.5px] font-medium text-dev-accent-fg transition-colors hover:bg-dev-accent-hover xl:px-5 xl:text-[14px]"
+            className="inline-flex h-10 items-center gap-2 rounded-lg bg-dev-accent px-4 text-[13.5px] font-medium text-dev-accent-fg transition-colors hover:bg-dev-accent-hover xl:px-5 xl:text-[14px]"
           >
             Crear mi agente
+            <span aria-hidden>→</span>
           </TrackedLink>
         </div>
 

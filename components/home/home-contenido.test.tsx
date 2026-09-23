@@ -81,25 +81,51 @@ describe("Home -- hero", () => {
     assert.ok(HERO.includes(`href="${HABLAR_CON_DULABS_HREF.replace(/&/g, "&amp;")}"`), "falta el enlace de WhatsApp de ventas");
     assert.match(HERO, /Hablar con DuLabs/);
     assert.ok(HABLAR_CON_DULABS_HREF.startsWith("https://wa.me/"));
-    // Exactamente 2 enlaces en el hero -- nada de teasers/CTAs extra (minimalismo de la referencia).
-    assert.equal((HERO.match(/<a /g) ?? []).length, 2, `el hero debe tener solo 2 CTAs, tiene ${(HERO.match(/<a /g) ?? []).length}`);
+    // Exactamente 2 CTAs en el hero -- nada de teasers/CTAs extra (minimalismo de la referencia). El único otro enlace es el ancla interna
+    // "Descubre más" (#capacidades), que no es un CTA.
+    const enlaces = [...HERO.matchAll(/<a [^>]*href="([^"]+)"/g)].map((m) => m[1]);
+    assert.equal(enlaces.filter((h) => !h.startsWith("#")).length, 2, `el hero debe tener solo 2 CTAs: ${enlaces.join(", ")}`);
+    assert.deepEqual(enlaces.filter((h) => h.startsWith("#")), ["#capacidades"]);
+    assert.match(texto(HERO), /Descubre más/);
     // El teaser antiguo "01 · Crea tu agente / 02 · A la medida" ya no vive en el hero (se mudó a las secciones del cuerpo).
     assert.doesNotMatch(texto(HERO), /01 · Crea tu agente|02 · A la medida/);
   });
 
-  it("es un hero de dos columnas amplio: mensaje a la izquierda y la visualización del sistema a la derecha, en el contenedor más ancho", () => {
+  it("es un hero amplio: mensaje a la izquierda y la aurora a la derecha en desktop; en mobile texto -> aurora -> CTAs -> beneficios", () => {
     assert.match(HERO, /class="hx hx-hero /);
-    assert.match(HERO, /lg:grid-cols-\[minmax\(0,0\.86fr\)_minmax\(0,1\.14fr\)\]/);
-    assert.ok(HERO.indexOf("<h1") < HERO.indexOf("home-system"), "el texto va antes que la visualización (izquierda -> derecha; en móvil primero el mensaje)");
-    assert.match(HERO, /text-\[clamp\(2\.75rem,1\.2rem_\+_5\.4vw,8\.5rem\)\]/, "el H1 debe escalar de forma fluida y contundente");
+    // Un solo DOM: el orden del HTML es el de mobile (la aurora va entre el subtítulo y los CTAs); en desktop la aurora se posiciona absoluta.
+    const [h1, sub, aurora, cta, beneficios] = ["<h1", "Conecta tus sistemas", "home-aurora", "Crear mi agente", "Implementación"].map((m) => HERO.indexOf(m));
+    assert.ok(h1 < sub && sub < aurora && aurora < cta && cta < beneficios, "orden: H1 -> subtítulo -> aurora -> CTAs -> beneficios");
+    assert.match(HERO, /class="home-aurora [^"]*lg:absolute[^"]*lg:left-\[33%\][^"]*lg:right-0/, "en desktop la aurora ocupa la zona derecha");
+    // El H1 son dos líneas fijas que nunca se parten ("Automatización" / "sin límites.") con tamaño fluido en CSS (.home-hero-h1).
+    assert.match(HERO, /<span class="block whitespace-nowrap">Automatización<\/span><span class="block whitespace-nowrap">sin límites\.<\/span>/);
+    assert.match(HERO, /class="home-hero-h1 /);
   });
 
-  it("la visualización es un 'sistema' de placas (Du IA -> Sistemas conectados -> Procesos automatizados -> Resultados reales), sin iconos de IA genéricos", () => {
-    const t = texto(HERO);
-    for (const etapa of ["Du", "Sistemas", "conectados", "Procesos", "automatizados", "Resultados", "reales"]) assert.ok(t.includes(etapa), `falta la etapa: ${etapa}`);
-    assert.match(HERO, /home-panel/, "las placas usan la clase home-panel (3D en CSS, sin JS)");
+  it("la visualización es UNA aurora WebGL (un canvas, sin imágenes ni librerías) con fallback CSS, sin iconos de IA genéricos", () => {
+    assert.equal((HERO.match(/<canvas /g) ?? []).length, 1, "un solo canvas");
+    assert.match(HERO, /home-aurora-fallback/, "si WebGL no está disponible queda un fallback estático, nunca un hueco");
+    assert.doesNotMatch(HERO, /<img |<video |\.gif|\.png|\.webp/, "la aurora no es una imagen ni un video");
+    const fuente = readFileSync(join(RAIZ, "components", "home", "AuroraField.tsx"), "utf8");
+    assert.match(fuente, /getContext\("webgl"/);
+    assert.match(fuente, /requestAnimationFrame/);
+    assert.match(fuente, /uniform float uTime;/);
+    assert.match(fuente, /prefers-reduced-motion: reduce/);
+    assert.match(fuente, /Math\.min\(window\.devicePixelRatio \|\| 1, compacto \? 1\.25 : 1\.5\)/, "DPR limitado (1.25 en mobile, 1.5 en desktop)");
+    assert.doesNotMatch(fuente, /setInterval|setTimeout|useState/, "sin temporizadores ni estado de React por cuadro");
     // Nada de ilustraciones típicas de IA (robots, cerebros, circuitos, estrellas, hologramas).
     assert.doesNotMatch(HERO.toLowerCase(), /robot|cerebro|circuit|hologram|neural|\bbrain\b/);
+  });
+
+  it("beneficios: Implementación rápida, Seguridad empresarial y Resultados medibles, con iconos blancos (sin tarjetas)", () => {
+    const t = texto(HERO);
+    for (const b of ["Implementación rápida", "Seguridad empresarial", "Resultados medibles"]) assert.ok(t.includes(b), `falta: ${b}`);
+    assert.equal((HERO.match(/class="lucide [^"]*text-site-fg/g) ?? []).length, 3, "los tres iconos usan el blanco del texto principal");
+  });
+
+  it("los detalles editoriales de desktop (rótulo lateral e indicadores) no existen en mobile", () => {
+    assert.match(HERO, /<div aria-hidden="true" class="pointer-events-none absolute inset-0 hidden lg:block">/);
+    for (const e of ["posibilidades", "Sistemas", "Personas", "Oportunidades"]) assert.ok(texto(HERO).includes(e), `falta: ${e}`);
   });
 
   it("no usa marcadores de posición ni claims de placeholder", () => {
@@ -349,9 +375,9 @@ describe("Home -- guardas de calidad", () => {
     for (const ruta of FUENTES_HOME) assert.doesNotMatch(readFileSync(ruta, "utf8"), /logos-clientes|TrustedBySection/, relative(RAIZ, ruta));
   });
 
-  it("solo hay JS cliente donde hace falta: enlace con tracking y menú móvil (nada de avisos de scroll ni animaciones por JS)", () => {
+  it("solo hay JS cliente donde hace falta: enlace con tracking, menú móvil y la aurora WebGL del hero (nada de avisos de scroll ni otras animaciones por JS)", () => {
     const clientes = FUENTES_HOME.filter((r) => /^\s*["']use client["']/.test(readFileSync(r, "utf8"))).map((r) => relative(RAIZ, r).replace(/\\/g, "/"));
-    assert.deepEqual(clientes.sort(), ["components/home/HomeMobileMenu.tsx", "components/home/TrackedLink.tsx"]);
+    assert.deepEqual(clientes.sort(), ["components/home/AuroraField.tsx", "components/home/HomeMobileMenu.tsx", "components/home/TrackedLink.tsx"]);
   });
 
   it("no agrega librerías: la home solo importa de react, next, lucide-react (ya instalada) y rutas propias", () => {
@@ -444,10 +470,12 @@ describe("Home -- diseño fluido y responsive real (aprovecha pantallas grandes)
   });
 });
 
-describe("Home -- identidad monocroma con un ÚNICO acento (verde DuLabs solo en la señal del hero)", () => {
-  // La home es monocroma (negro/blanco/gris) SALVO un único acento de marca: el verde DuLabs (#c6ff3d), usado EXCLUSIVAMENTE en la señal
-  // que recorre las placas del hero (--home-signal). Cualquier OTRO color cromático (naranja, azul, etc.) sigue prohibido.
-  const VERDE_MARCA = "#c6ff3d";
+describe("Home -- identidad monocroma: el único color es la aurora azul/violeta del hero", () => {
+  // La home es monocroma (negro/blanco/gris). El ÚNICO color es la paleta de la aurora del hero (#315CFF #1D4FFF #6547FF #5E8CFF #EAF2FF,
+  // y el rgba(90,130,255) de sus puntos), confinada al shader de AuroraField y a las reglas .home-aurora* / .home-hero-* del CSS. Nada de
+  // verde en la home (el logo se muestra tal cual desde su archivo); cualquier otro color cromático sigue prohibido.
+  const PALETA_AURORA = ["#315cff", "#1d4fff", "#6547ff", "#5e8cff", "#eaf2ff"];
+  const RGB_AURORA = ["49,92,255", "29,79,255", "101,71,255", "94,140,255", "234,242,255", "90,130,255"];
   function luminancia(hex: string): number {
     const canales = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
     return 0.2126 * canales[0] + 0.7152 * canales[1] + 0.0722 * canales[2];
@@ -459,6 +487,7 @@ describe("Home -- identidad monocroma con un ÚNICO acento (verde DuLabs solo en
   const css = readFileSync(join(RAIZ, "app", "globals.css"), "utf8").replace(/\r\n/g, "\n");
   // Solo los bloques de la home (desde su cabecera hasta el final): el resto del archivo es de otros productos (p. ej. la V2 de /newversion).
   const cssHome = css.slice(css.indexOf("Home principal v3"));
+  const cssAurora = cssHome.slice(cssHome.indexOf("Home · hero con aurora"));
   // Los tokens --color-dev-accent* están en un @theme anterior a .dev-scope; los site-* (los que /developer-platform re-mapea a monocromo) dentro de .dev-scope.
   const token = (nombre: string): string => {
     const zona = nombre.startsWith("--color-dev-accent") ? css : css.slice(css.indexOf(".dev-scope {"));
@@ -468,6 +497,8 @@ describe("Home -- identidad monocroma con un ÚNICO acento (verde DuLabs solo en
     const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
     return r === g && g === b;
   };
+  const hexes = (t: string) => [...t.matchAll(/#([0-9a-fA-F]{6})\b/g)].map((m) => "#" + m[1].toLowerCase());
+  const rgbs = (t: string) => [...t.matchAll(/rgba?\(\s*(\d+)[ ,]+(\d+)[ ,]+(\d+)/g)].map((m) => [Number(m[1]), Number(m[2]), Number(m[3])]);
 
   it("no queda ningún naranja ni token de acento en los componentes, datos, página ni CSS de la home", () => {
     const naranja = /#ff5c1a|255[ ,]+92[ ,]+26|home-accent|\borange\b|naranja/i;
@@ -475,30 +506,23 @@ describe("Home -- identidad monocroma con un ÚNICO acento (verde DuLabs solo en
     assert.doesNotMatch(cssHome, naranja, "globals.css (bloques de la home)");
   });
 
-  it("todos los colores de la home son neutros (R = G = B), salvo el único acento verde de marca (#c6ff3d)", () => {
-    const hexes = (t: string) => [...t.matchAll(/#([0-9a-fA-F]{6})\b/g)].map((m) => "#" + m[1]);
-    const rgbs = (t: string) => [...t.matchAll(/rgba?\(\s*(\d+)[ ,]+(\d+)[ ,]+(\d+)/g)].map((m) => [Number(m[1]), Number(m[2]), Number(m[3])]);
-    const fuentes = [...FUENTES_HOME.map((r) => [relative(RAIZ, r), readFileSync(r, "utf8")]), ["globals.css (home)", cssHome]] as [string, string][];
+  it("todos los colores de la home son neutros (R = G = B), salvo la paleta de la aurora, que solo vive en su bloque de CSS", () => {
+    const cssFueraDeAurora = cssHome.slice(0, cssHome.indexOf("Home · hero con aurora"));
+    const fuentes = [...FUENTES_HOME.map((r) => [relative(RAIZ, r), sinComentarios(readFileSync(r, "utf8"))]), ["globals.css (home, sin aurora)", cssFueraDeAurora]] as [string, string][];
     for (const [nombre, t] of fuentes) {
-      for (const h of hexes(t)) assert.ok(neutro(h) || h.toLowerCase() === VERDE_MARCA, `${nombre}: color no neutro ${h}`);
+      for (const h of hexes(t)) assert.ok(neutro(h), `${nombre}: color no neutro ${h}`);
       for (const [r, g, b] of rgbs(t)) assert.ok(r === g && g === b, `${nombre}: color no neutro rgb(${r} ${g} ${b})`);
-      // Se sigue prohibiendo TODA utilidad de color de Tailwind (incl. lime/green): el verde vive solo como token CSS (--home-signal), no como clase.
+      // Se sigue prohibiendo TODA utilidad de color de Tailwind (incl. lime/green/blue): el color de la aurora vive en el shader y en CSS.
       assert.doesNotMatch(t, /\b(bg|text|border|ring|from|to|via|fill|stroke)-(red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-?\d{0,3}\b/, `${nombre}: utilidad de color de Tailwind`);
     }
+    for (const h of hexes(cssAurora)) assert.ok(neutro(h) || PALETA_AURORA.includes(h), `aurora: color fuera de la paleta ${h}`);
+    for (const [r, g, b] of rgbs(cssAurora)) assert.ok((r === g && g === b) || RGB_AURORA.includes(`${r},${g},${b}`), `aurora: color fuera de la paleta rgb(${r} ${g} ${b})`);
   });
 
-  it("el verde de marca aparece SOLO como el token --home-signal y su uso está confinado a la señal del hero", () => {
-    // El único hex verde del CSS de la home es la definición del token.
-    const hexesVerdes = [...cssHome.matchAll(/#c6ff3d/gi)];
-    assert.equal(hexesVerdes.length, 1, `#c6ff3d debe aparecer una sola vez (la definición de --home-signal), aparece ${hexesVerdes.length}`);
-    assert.match(cssHome, /--home-signal:\s*#c6ff3d;/);
-    // Todo consumo del verde es vía var(--home-signal), y solo en reglas de la señal (home-panel-edge / -dot / -done).
-    for (const m of cssHome.matchAll(/var\(--home-signal\)/g)) {
-      const contexto = cssHome.slice(Math.max(0, m.index! - 400), m.index!);
-      assert.match(contexto, /home-panel-(edge|dot|done)|home-hero-(dot|edge|done)|--home-signal:/, "var(--home-signal) solo se usa en la señal del hero");
-    }
-    // Ninguna FUENTE .tsx/.ts de la home escribe el verde a mano (el hex vive solo en CSS; los comentarios pueden nombrar el token).
-    for (const ruta of FUENTES_HOME) assert.doesNotMatch(sinComentarios(readFileSync(ruta, "utf8")), /#c6ff3d/i, relative(RAIZ, ruta));
+  it("no hay verde en la home: ni el antiguo token --home-signal ni el verde de marca escrito a mano", () => {
+    assert.doesNotMatch(cssHome, /#c6ff3d|#a8ff3e|--home-signal/i);
+    for (const ruta of FUENTES_HOME) assert.doesNotMatch(sinComentarios(readFileSync(ruta, "utf8")), /#c6ff3d|#a8ff3e|home-signal/i, relative(RAIZ, ruta));
+    assert.ok(!existsSync(join(RAIZ, "components", "home", "HeroSystem.tsx")), "el hero de placas se retiró");
   });
 
   it("el CTA principal es blanco con texto oscuro (mismos tokens que el botón primario de /developer-platform)", () => {
