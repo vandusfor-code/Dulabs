@@ -1,14 +1,22 @@
 # Pasos manuales pendientes en producción
 
-## PENDIENTE — Catálogo DuLabs, Fase 1 (módulo Catálogo, cliente inicial Delacour & Orus)
+## ✅ APLICADA (23-sep-2026) — Catálogo DuLabs, Fase 1 (módulo Catálogo, cliente inicial Delacour & Orus)
 
 Las migraciones `20261105000000_dulabs_catalogo_fase1.sql` y
-`20261106000000_dulabs_catalogo_publicacion.sql` (en ese orden) **todavía no
-se han corrido en producción**. Sin ellas, los links públicos
-`/catalogo/*` responden 404, y `/dashboard/catalogo` y
-`/api/dashboard/catalogo/*` responden un error controlado (el módulo no
-aparece en el menú porque `dulabs_tenant_modulos` no existe); AMORE y el
-Business Agent siguen funcionando exactamente igual.
+`20261106000000_dulabs_catalogo_publicacion.sql` **ya se corrieron en
+producción**, junto con los pasos 3 (módulo `catalogo` habilitado para
+Delacour) y 4 (publicación `slug = delacour`). Verificación posterior:
+
+- Estructura 9/9 OK: `dulabs_tenant_modulos`, `dulabs_catalogo_categorias`,
+  `dulabs_catalogo_secuencias`, `dulabs_catalogo_eventos`,
+  `dulabs_catalogo_media`, `dulabs_catalogo_publicacion`, las 9 columnas
+  nuevas de `dulabs_inventario_productos`, sus 3 triggers y las 2 RPC de media.
+- Datos: 4 productos, 4 con referencia (backfill completo), 0 eventos de
+  auditoría, módulo de Delacour `habilitado = true`, publicación
+  `delacour` con `publicado = true`.
+
+No hay nada pendiente en la base de datos para esta fase. Se conservan
+abajo los pasos (referencia histórica), el rollback y la deuda técnica.
 
 **Qué hace (100 % aditiva):** evoluciona `dulabs_inventario_productos` (la
 fuente de verdad que ya usan AMORE, el Business Agent y la cotización del
