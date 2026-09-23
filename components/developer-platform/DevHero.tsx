@@ -10,16 +10,16 @@ import { InfraFlowField } from "./InfraFlowField";
 // solo queda una línea técnica secundaria con datos reales (POST /api/v1/messages, firma HMAC-SHA256, Idempotency-Key).
 //
 // Desktop (lg+): primera pantalla completa (min-height 100vh -> 100svh), el campo ocupa ~64 % derecho con fundido hacia el texto.
-// Mobile: el campo es una textura compacta detrás de la mitad inferior del contenido (otra topología, menos densidad), no el desktop
-// reducido. La máscara del campo lo atenúa bajo el texto (sin capas extra encima), así el H1 se lee limpio sobre cualquier punto del campo.
+// Mobile: H1 -> descripción -> CTAs -> línea técnica -> campo. El campo es una banda compacta DEBAJO del contenido (otra topología, menos
+// densidad), no el desktop reducido. En desktop la zona de procesamiento queda a la derecha del final real del H1 (libreDe).
 
 export function DevHero() {
   const { t } = useI18n();
   return (
     <section className="dev-hero relative isolate overflow-hidden">
-      <InfraFlowField className="dev-hero-campo" />
+      <InfraFlowField className="dev-hero-campo" libreDe="h1" />
 
-      <div className="relative z-10 mx-auto w-full max-w-[1440px] px-6 pb-16 pt-28 md:pb-20 md:pt-36 lg:py-28">
+      <div className="relative z-10 mx-auto w-full max-w-[1440px] px-6 pb-[clamp(14rem,60vw,19rem)] pt-28 md:pt-36 lg:py-28">
         <p className="dev-hero-in flex items-center gap-3 font-mono text-[10.5px] uppercase tracking-[0.24em] text-site-muted-fg sm:text-[11px]">
           <span aria-hidden className="h-px w-7 bg-white/30" />
           {t("Infraestructura para developers", "Infrastructure for developers")}

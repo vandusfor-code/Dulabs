@@ -16,7 +16,7 @@ import { useEffect, useRef } from "react";
 // intensidad 100 % -> 50 % mientras el hero sale del viewport (opacity del contenedor vía IntersectionObserver con umbrales, sin listener de
 // scroll). Con prefers-reduced-motion se dibuja un solo cuadro estático.
 
-type Nodo = { x: number; y: number; r: number; forma: "punto" | "cuadro"; salida: boolean; brillo: number; fase: number };
+type Nodo = { x: number; y: number; r: number; forma: "punto" | "cuadro"; estacion: boolean; salida: boolean; brillo: number; carga: number; fase: number };
 type Ruta = { pts: Float32Array; largo: number; path: Path2D; paradas: { d: number; nodo: number }[] };
 type Capa = {
   nodos: Nodo[];
@@ -86,7 +86,8 @@ function construirRuta(segmentos: [number, number, number, number, number, numbe
     // Cada 41 muestras termina un segmento: ahí hay un nodo.
     if ((i / 2) % 40 === 0) {
       segmentoActual++;
-      if (nodosEnRuta[segmentoActual] !== undefined) paradas.push({ d: acumulado, nodo: nodosEnRuta[segmentoActual] });
+      const nodo = nodosEnRuta[segmentoActual];
+      if (nodo !== undefined && nodo >= 0) paradas.push({ d: acumulado, nodo });
     }
   }
   const pts = new Float32Array(salida);
@@ -98,65 +99,90 @@ function construirRuta(segmentos: [number, number, number, number, number, numbe
 
 type Region = { x0: number; y0: number; x1: number; y1: number };
 
-function construirCapa(lienzo: HTMLCanvasElement, prof: number, region: Region, compacto: boolean, semilla: number, dpr: number, w: number, h: number, fuente: string): Capa {
+// Topología ordenada (sin cruces): cada ruta conserva su posición de arriba a abajo en todas las etapas. Entradas -> pocas puertas de
+// convergencia -> carriles casi paralelos por la zona de procesamiento (con sus estaciones) -> trabajadores -> salidas. Las curvas son
+// monótonas (tangentes tipo Fritsch-Carlson, sin sobrepaso): cambian de dirección con suavidad pero nunca ondulan en "S".
+// puertaMin: fracción mínima de la región donde puede estar la convergencia (para que el procesamiento quede a la derecha del H1); las etapas
+// siguientes se reparten en el espacio restante y la entrada conserva todo su recorrido, largo y suave.
+function construirCapa(lienzo: HTMLCanvasElement, prof: number, region: Region, compacto: boolean, semilla: number, dpr: number, w: number, h: number, fuente: string, etiquetas: boolean, puertaMin = 0): Capa {
   const r = azar(semilla);
-  const ancho = region.x1 - region.x0;
-  const alto = region.y1 - region.y0;
-  // Etapas: entradas -> convergencia -> haz -> trabajadores -> salidas (en mobile, una etapa menos).
-  const etapas = compacto
-    ? [
-        { x: 0, n: 5, y: [0.05, 0.95] },
-        { x: 0.36, n: 1, y: [0.45, 0.55] },
-        { x: 0.66, n: 2, y: [0.3, 0.7] },
-        { x: 1, n: 3, y: [0.12, 0.88] },
-      ]
-    : [
-        { x: 0, n: 9, y: [0.02, 0.98] },
-        { x: 0.3, n: 2, y: [0.4, 0.6] },
-        { x: 0.5, n: 3, y: [0.32, 0.68] },
-        { x: 0.7, n: 3, y: [0.22, 0.78] },
-        { x: 1, n: 6, y: [0.06, 0.94] },
-      ];
-
-  const nodos: Nodo[] = [];
-  const porEtapa: number[][] = etapas.map((e, ei) => {
-    const ids: number[] = [];
-    for (let i = 0; i < e.n; i++) {
-      const f = e.n === 1 ? 0.5 : i / (e.n - 1);
-      const jitter = (r() - 0.5) * (alto / Math.max(3, e.n * 3));
-      const y = region.y0 + alto * (e.y[0] + (e.y[1] - e.y[0]) * f) + jitter;
-      const x = region.x0 + ancho * e.x + (ei === 0 || ei === etapas.length - 1 ? (r() - 0.5) * ancho * 0.04 : 0);
-      const intermedia = ei > 0 && ei < etapas.length - 1;
-      ids.push(nodos.length);
-      nodos.push({ x, y, r: intermedia ? 2.6 : 1.6, forma: intermedia && r() > 0.5 ? "cuadro" : "punto", salida: ei === etapas.length - 1, brillo: 0, fase: r() * Math.PI * 2 });
-    }
-    return ids;
-  });
-
-  // Rutas completas de una entrada a una salida, eligiendo el siguiente nodo con preferencia por el más cercano en altura.
-  const siguiente = (desde: number, candidatos: number[]) => {
-    const orden = [...candidatos].sort((a, b) => Math.abs(nodos[a].y - nodos[desde].y) - Math.abs(nodos[b].y - nodos[desde].y));
-    return orden[Math.min(orden.length - 1, Math.floor(Math.pow(r(), 2.2) * orden.length))];
-  };
-  const firmas = new Set<string>();
-  const rutas: Ruta[] = [];
-  const objetivoRutas = compacto ? (prof === 2 ? 10 : 6) : [8, 12, 20][prof];
-  for (let intento = 0; intento < objetivoRutas * 6 && rutas.length < objetivoRutas; intento++) {
-    const camino = [porEtapa[0][Math.floor(r() * porEtapa[0].length)]];
-    for (let e = 1; e < porEtapa.length; e++) camino.push(siguiente(camino[e - 1], porEtapa[e]));
-    const firma = camino.join("-");
-    if (firmas.has(firma)) continue;
-    firmas.add(firma);
-    const segmentos = camino.slice(1).map((b, i) => {
-      const A = nodos[camino[i]];
-      const B = nodos[b];
-      const k = (B.x - A.x) * (0.42 + r() * 0.16);
-      return [A.x, A.y, A.x + k, A.y, B.x - k, B.y, B.x, B.y] as [number, number, number, number, number, number, number, number];
-    });
-    rutas.push(construirRuta(segmentos, camino));
+  const W = region.x1 - region.x0;
+  const H = region.y1 - region.y0;
+  const X = (f: number) => region.x0 + W * f;
+  const Y = (f: number) => region.y0 + H * f;
+  const cfg = compacto
+    ? { fuentes: 5, puertas: 1, estaciones: 2, workers: 2, salidas: 3, rutas: prof === 2 ? 10 : 6, puerta: 0.24, bus0: 0.37, estacion: 0.5, bus1: 0.62, worker: 0.78, carril: 0.034 }
+    : { fuentes: 9, puertas: 2, estaciones: 3, workers: 3, salidas: 6, rutas: [8, 12, 20][prof], puerta: 0.22, bus0: 0.35, estacion: 0.475, bus1: 0.6, worker: 0.77, carril: 0.0135 };
+  if (puertaMin > cfg.puerta) {
+    const p0 = cfg.puerta;
+    const p1 = Math.min(0.6, puertaMin);
+    const mover = (f: number) => p1 + ((f - p0) * (1 - p1)) / (1 - p0);
+    cfg.bus0 = mover(cfg.bus0);
+    cfg.estacion = mover(cfg.estacion);
+    cfg.bus1 = mover(cfg.bus1);
+    cfg.worker = mover(cfg.worker);
+    cfg.puerta = p1;
   }
 
-  // Capa estática: rejilla de puntos (microestructura), líneas de referencia, conexiones, nodos y marcas mínimas.
+  const nodos: Nodo[] = [];
+  const nodo = (x: number, y: number, tipo: "extremo" | "puerta" | "estacion" | "worker", salida = false) => {
+    nodos.push({ x, y, r: tipo === "extremo" ? 1.5 : tipo === "estacion" ? 2.8 : 2.6, forma: tipo === "estacion" ? "cuadro" : "punto", estacion: tipo !== "extremo", salida, brillo: 0, carga: 0, fase: r() * Math.PI * 2 });
+    return nodos.length - 1;
+  };
+  const repartir = (n: number, a: number, b: number) => Array.from({ length: n }, (_, i) => (n === 1 ? (a + b) / 2 : a + ((b - a) * i) / (n - 1)));
+
+  const fuentes = repartir(cfg.fuentes, 0.06, 0.94).map((f) => nodo(X(0) + (r() - 0.5) * W * 0.05, Y(f) + (r() - 0.5) * H * 0.04, "extremo"));
+  const puertas = (cfg.puertas === 1 ? [0.5] : [0.41, 0.59]).map((f) => nodo(X(cfg.puerta), Y(f) + (r() - 0.5) * H * 0.015, "puerta"));
+
+  // Carriles de la zona de procesamiento: casi paralelos, con separación levemente irregular y una inclinación mínima (sistema vivo, no rejilla).
+  const inclinacion = (r() - 0.5) * H * 0.05;
+  const carriles: number[] = [];
+  let acumulado = 0;
+  for (let k = 0; k < cfg.rutas; k++) {
+    carriles.push(acumulado);
+    acumulado += H * cfg.carril * (0.8 + r() * 0.4);
+  }
+  const centroBus = Y(0.5) - acumulado / 2 + (r() - 0.5) * H * 0.02;
+  const yCarril = (k: number, fx: number) => centroBus + carriles[k] + inclinacion * (fx - cfg.bus0);
+
+  const estaciones = Array.from({ length: cfg.estaciones }, (_, g) => {
+    const desde = Math.floor((g * cfg.rutas) / cfg.estaciones);
+    const hasta = Math.floor(((g + 1) * cfg.rutas) / cfg.estaciones) - 1;
+    return nodo(X(cfg.estacion), (yCarril(desde, cfg.estacion) + yCarril(hasta, cfg.estacion)) / 2, "estacion");
+  });
+  const workers = repartir(cfg.workers, cfg.workers === 2 ? 0.3 : 0.25, cfg.workers === 2 ? 0.7 : 0.75).map((f) => nodo(X(cfg.worker), Y(f) + (r() - 0.5) * H * 0.03, "worker"));
+  const salidas = repartir(cfg.salidas, 0.08, 0.92).map((f) => nodo(X(1) + (r() - 0.5) * W * 0.04, Y(f) + (r() - 0.5) * H * 0.03, "extremo", true));
+
+  const rutas: Ruta[] = [];
+  const en = (k: number, lista: number[]) => lista[Math.min(lista.length - 1, Math.floor((k * lista.length) / cfg.rutas))];
+  for (let k = 0; k < cfg.rutas; k++) {
+    const ids = [en(k, fuentes), en(k, puertas), -1, en(k, estaciones), -1, en(k, workers), en(k, salidas)];
+    const pts: [number, number][] = [
+      [nodos[ids[0]].x, nodos[ids[0]].y],
+      [nodos[ids[1]].x, nodos[ids[1]].y],
+      [X(cfg.bus0), yCarril(k, cfg.bus0)],
+      [X(cfg.estacion), yCarril(k, cfg.estacion)],
+      [X(cfg.bus1), yCarril(k, cfg.bus1)],
+      [nodos[ids[5]].x, nodos[ids[5]].y],
+      [nodos[ids[6]].x, nodos[ids[6]].y],
+    ];
+    // Tangentes monótonas: planas en los extremos y en cualquier punto donde la ruta cambiaría de sentido (así nunca sobrepasa).
+    const pend = pts.map((pt, i) => {
+      if (i === 0 || i === pts.length - 1) return 0;
+      const a = (pt[1] - pts[i - 1][1]) / (pt[0] - pts[i - 1][0]);
+      const b = (pts[i + 1][1] - pt[1]) / (pts[i + 1][0] - pt[0]);
+      return a * b <= 0 ? 0 : (2 * a * b) / (a + b);
+    });
+    const tension = 0.42 + r() * 0.06;
+    const segmentos = pts.slice(1).map((B, i) => {
+      const A = pts[i];
+      const kx = (B[0] - A[0]) * tension;
+      return [A[0], A[1], A[0] + kx, A[1] + pend[i] * kx, B[0] - kx, B[1] - pend[i + 1] * kx, B[0], B[1]] as [number, number, number, number, number, number, number, number];
+    });
+    rutas.push(construirRuta(segmentos, ids));
+  }
+
+  // Capa estática: rejilla de puntos (microestructura), líneas de referencia por etapa, conexiones, nodos y dos marcas de dirección.
   lienzo.width = Math.round(w * dpr);
   lienzo.height = Math.round(h * dpr);
   const g = lienzo.getContext("2d")!;
@@ -170,7 +196,7 @@ function construirCapa(lienzo: HTMLCanvasElement, prof: number, region: Region, 
     const cy = (region.y0 + region.y1) / 2;
     for (let y = paso / 2; y < h; y += paso) {
       for (let x = paso / 2; x < w; x += paso) {
-        const dist = Math.hypot((x - cx) / (ancho * 0.75), (y - cy) / (alto * 0.8));
+        const dist = Math.hypot((x - cx) / (W * 0.75), (y - cy) / (H * 0.8));
         const a = 0.085 * Math.max(0, 1 - dist) * (0.6 + r() * 0.4);
         if (a < 0.008) continue;
         g.fillStyle = `rgba(255,255,255,${a.toFixed(3)})`;
@@ -181,11 +207,11 @@ function construirCapa(lienzo: HTMLCanvasElement, prof: number, region: Region, 
   if (prof === 2 && !compacto) {
     g.strokeStyle = "rgba(255,255,255,0.035)";
     g.setLineDash([2, 5]);
-    for (const e of etapas.slice(1, -1)) {
-      const x = Math.round(region.x0 + ancho * e.x) + 0.5;
+    for (const f of [cfg.puerta, cfg.estacion, cfg.worker]) {
+      const x = Math.round(X(f)) + 0.5;
       g.beginPath();
-      g.moveTo(x, region.y0 - alto * 0.12);
-      g.lineTo(x, region.y1 + alto * 0.12);
+      g.moveTo(x, region.y0 - H * 0.12);
+      g.lineTo(x, region.y1 + H * 0.12);
       g.stroke();
     }
     g.setLineDash([]);
@@ -193,33 +219,34 @@ function construirCapa(lienzo: HTMLCanvasElement, prof: number, region: Region, 
   g.lineWidth = prof === 2 ? 0.8 : 0.7;
   g.strokeStyle = `rgba(255,255,255,${alfaLinea})`;
   for (const ruta of rutas) g.stroke(ruta.path);
+  // Nodos: los extremos casi invisibles; las estaciones intermedias algo más presentes (siempre gris/blanco muy tenue).
   for (const n of nodos) {
     g.fillStyle = "#070707";
-    g.strokeStyle = `rgba(255,255,255,${(alfaLinea * 2.4).toFixed(3)})`;
+    g.strokeStyle = `rgba(255,255,255,${(alfaLinea * (n.estacion ? 3.4 : 2.2)).toFixed(3)})`;
     g.lineWidth = 0.8;
     g.beginPath();
     if (n.forma === "cuadro") g.rect(n.x - n.r, n.y - n.r, n.r * 2, n.r * 2);
     else g.arc(n.x, n.y, n.r, 0, Math.PI * 2);
     g.fill();
     g.stroke();
+    if (n.estacion) {
+      g.fillStyle = `rgba(255,255,255,${(alfaLinea * 3).toFixed(3)})`;
+      g.fillRect(Math.round(n.x) - 0.5, Math.round(n.y) - 0.5, 1, 1);
+    }
   }
-  if (prof === 2 && !compacto) {
-    // Marcas técnicas mínimas y claramente decorativas.
+  if (etiquetas && prof === 2 && !compacto) {
+    // Solo la dirección del flujo: de dónde entra y a dónde sale. Nítidas (posición entera) y muy tenues.
     g.font = `9px ${fuente}`;
-    g.fillStyle = "rgba(255,255,255,0.26)";
-    const entrada = nodos[porEtapa[0][0]];
-    const salida = nodos[porEtapa[porEtapa.length - 1][porEtapa[porEtapa.length - 1].length - 1]];
-    const centro = nodos[porEtapa[2][0]];
-    g.fillText("REQUEST", entrada.x - 2, region.y0 - 16);
+    g.fillStyle = "rgba(255,255,255,0.22)";
+    const primera = nodos[fuentes[0]];
+    const ultima = nodos[salidas[salidas.length - 1]];
+    g.fillText("REQUEST", Math.round(primera.x), Math.round(region.y0 - H * 0.06));
     g.textAlign = "right";
-    g.fillText("WEBHOOK", salida.x + 2, region.y1 + 24);
+    g.fillText("WEBHOOK", Math.round(ultima.x), Math.round(region.y1 + H * 0.08));
     g.textAlign = "left";
-    g.fillStyle = "rgba(255,255,255,0.18)";
-    g.fillText("evt_01HX8Z…", centro.x + 9, centro.y - 9);
-    g.fillText(`x ${(etapas[1].x).toFixed(3)}`, region.x0 + ancho * etapas[1].x + 4, region.y0 - alto * 0.12 + 10);
   }
 
-  const respiran = rutas.slice(0, Math.min(rutas.length, compacto ? 3 : 6)).map((_, i) => ({ ruta: i, fase: r() * Math.PI * 2, vel: 0.08 + r() * 0.1 }));
+  const respiran = rutas.slice(0, Math.min(rutas.length, compacto ? 3 : 6)).map((_, i) => ({ ruta: (i * 7) % rutas.length, fase: r() * Math.PI * 2, vel: 0.08 + r() * 0.1 }));
   return {
     nodos,
     rutas,
@@ -231,7 +258,9 @@ function construirCapa(lienzo: HTMLCanvasElement, prof: number, region: Region, 
   };
 }
 
-export function InfraFlowField({ className = "" }: { className?: string }) {
+// libreDe: selector (dentro de la misma sección) del texto que el campo no debe disputar. En desktop, la zona de convergencia y procesamiento
+// se ubica siempre a la derecha del final real de ese texto y la máscara atenúa el campo justo detrás de él.
+export function InfraFlowField({ className = "", libreDe }: { className?: string; libreDe?: string }) {
   const caja = useRef<HTMLDivElement>(null);
   const lienzo = useRef<HTMLCanvasElement>(null);
   const estaticos = useRef<(HTMLCanvasElement | null)[]>([]);
@@ -284,9 +313,27 @@ export function InfraFlowField({ className = "" }: { className?: string }) {
       dpr = Math.min(window.devicePixelRatio || 1, compacto ? 1.5 : 1.75);
       canvas.width = Math.round(w * dpr);
       canvas.height = Math.round(h * dpr);
+      // Mobile: el contenedor es una banda bajo el contenido; el sistema ocupa su parte baja.
       const base: Region = compacto
-        ? { x0: w * 0.06, y0: h * 0.5, x1: w * 1.04, y1: h * 0.94 }
+        ? { x0: w * 0.06, y0: h * 0.36, x1: w * 1.04, y1: h * 0.92 }
         : { x0: w * 0.12, y0: h * 0.2, x1: w * 0.92, y1: h * 0.8 };
+      // Desktop: el campo nunca disputa el H1. La puerta de convergencia (24 % de la región) queda a la derecha del final real del texto.
+      const texto = libreDe && window.innerWidth >= 1024 ? contenedor.closest("section")?.querySelector(libreDe) : null;
+      let puertaMin = 0;
+      contenedor.style.removeProperty("--hueco-rx");
+      if (texto && !compacto) {
+        const rango = document.createRange();
+        rango.selectNodeContents(texto);
+        const t = rango.getBoundingClientRect();
+        const fin = t.right - caj.left;
+        puertaMin = (fin + 56 - base.x0) / (base.x1 - base.x0);
+        if (fin > 0) {
+          contenedor.style.setProperty("--hueco-x", `${Math.round(fin - 60)}px`);
+          contenedor.style.setProperty("--hueco-y", `${Math.round((t.top + t.bottom) / 2 - caj.top)}px`);
+          contenedor.style.setProperty("--hueco-rx", `${Math.round(Math.max(220, t.width * 0.5))}px`);
+          contenedor.style.setProperty("--hueco-ry", `${Math.round(t.height * 1.05)}px`);
+        }
+      }
       // Las capas de fondo son ECOS del mismo sistema (misma topología, escalada y desplazada), no grafos distintos: así se lee como una
       // sola infraestructura con profundidad y no como líneas sueltas.
       const eco = (esc: number, dx: number, dy: number): Region => {
@@ -297,7 +344,7 @@ export function InfraFlowField({ className = "" }: { className?: string }) {
         return { x0: cx - mx, y0: cy - my, x1: cx + mx, y1: cy + my };
       };
       const regiones: Region[] = compacto ? [eco(1.16, -0.03, -0.03), base] : [eco(1.16, -0.03, -0.025), eco(1.07, -0.012, -0.012), base];
-      capas = regiones.map((reg, i) => construirCapa(fijos[i]!, compacto ? i * 2 : i, reg, compacto, 1000, dpr, w, h, fuente));
+      capas = regiones.map((reg, i) => construirCapa(fijos[i]!, compacto ? i * 2 : i, reg, compacto, 1000, dpr, w, h, fuente, false, puertaMin));
       fijos.forEach((f, i) => {
         f!.style.display = i < capas.length ? "" : "none";
         f!.style.opacity = String(capas[i]?.alfa ?? 1);
@@ -337,7 +384,8 @@ export function InfraFlowField({ className = "" }: { className?: string }) {
       capas.forEach((c, ci) => {
         const ox = desp[ci * 2];
         const oy = desp[ci * 2 + 1];
-        fijos[ci]!.style.transform = `translate3d(${ox.toFixed(2)}px, ${oy.toFixed(2)}px, 0)`;
+        // Redondeado a píxel de dispositivo: las líneas finas y las marcas quedan nítidas mientras la capa se desplaza.
+        fijos[ci]!.style.transform = `translate3d(${Math.round(ox * dpr) / dpr}px, ${Math.round(oy * dpr) / dpr}px, 0)`;
         ctx.save();
         ctx.translate(ox, oy);
         // Conexiones que aparecen y desaparecen despacio.
@@ -350,17 +398,30 @@ export function InfraFlowField({ className = "" }: { className?: string }) {
         }
         // Nodos intermedios con intensidad que varía levemente + brillo al paso de un pulso.
         for (const n of c.nodos) {
-          const base = n.salida ? 0 : 0.05 + 0.05 * Math.sin(t * 0.35 + n.fase);
-          if (animado) n.brillo *= Math.exp(-dt * 1.5);
+          const base = n.estacion ? 0.07 + 0.05 * Math.sin(t * 0.35 + n.fase) : 0;
+          // Al paso de un pulso: sube con suavidad (sin salto), se expande un poco y vuelve despacio a su estado normal.
+          if (animado) {
+            n.brillo += (n.carga - n.brillo) * Math.min(1, dt * 7);
+            n.carga *= Math.exp(-dt * 1.3);
+          }
           const b = n.brillo;
           if (b > 0.02) {
-            const s = 10 + 16 * b;
-            ctx.globalAlpha = b * 0.55;
+            const s = 6 + 7 * b;
+            ctx.globalAlpha = b * 0.3;
             ctx.drawImage(n.salida ? brilloVerde : brilloAzul, n.x - s, n.y - s, s * 2, s * 2);
             ctx.globalAlpha = 1;
+            if (n.estacion) {
+              const rr = n.r * (1 + 0.4 * b);
+              ctx.strokeStyle = `rgba(${AZUL_NUCLEO}, ${(0.12 + 0.45 * b).toFixed(3)})`;
+              ctx.lineWidth = 0.8;
+              ctx.beginPath();
+              if (n.forma === "cuadro") ctx.rect(n.x - rr, n.y - rr, rr * 2, rr * 2);
+              else ctx.arc(n.x, n.y, rr, 0, Math.PI * 2);
+              ctx.stroke();
+            }
           }
           if (base + b > 0.03) {
-            ctx.fillStyle = n.salida && b > 0.02 ? `rgba(${VERDE}, ${(b * 0.8).toFixed(3)})` : `rgba(${AZUL_NUCLEO}, ${((base + b * 0.7)).toFixed(3)})`;
+            ctx.fillStyle = n.salida && b > 0.02 ? `rgba(${VERDE}, ${(b * 0.8).toFixed(3)})` : `rgba(${AZUL_NUCLEO}, ${(base + b * 0.7).toFixed(3)})`;
             ctx.fillRect(n.x - 1, n.y - 1, 2, 2);
           }
         }
@@ -404,7 +465,7 @@ export function InfraFlowField({ className = "" }: { className?: string }) {
         const ruta = c.rutas[p.ruta];
         p.d += p.vel * dt;
         while (p.siguiente < ruta.paradas.length && p.d >= ruta.paradas[p.siguiente].d) {
-          c.nodos[ruta.paradas[p.siguiente].nodo].brillo = 1;
+          c.nodos[ruta.paradas[p.siguiente].nodo].carga = 1;
           p.siguiente++;
         }
         if (p.d > ruta.largo + 40) return false;
@@ -417,13 +478,19 @@ export function InfraFlowField({ className = "" }: { className?: string }) {
           const [x, y] = punto(ruta, d);
           const a = Math.pow(1 - k / 15, 2) * 0.85 * desvanecer;
           ctx.fillStyle = `rgba(${AZUL}, ${a.toFixed(3)})`;
-          const s = k === 0 ? 2.2 : 1.4;
-          ctx.fillRect(x + ox - s / 2, y + oy - s / 2, s, s);
+          if (k === 0) continue;
+          ctx.fillRect(x + ox - 0.7, y + oy - 0.7, 1.4, 1.4);
         }
         if (p.d <= ruta.largo) {
           const [x, y] = punto(ruta, p.d);
           ctx.globalAlpha = 0.45 * desvanecer;
           ctx.drawImage(brilloAzul, x + ox - 12, y + oy - 12, 24, 24);
+          // Cabeza definida: un punto nítido del mismo azul (antes era un cuadrado de 2 px casi perdido en su propio brillo).
+          ctx.globalAlpha = desvanecer;
+          ctx.fillStyle = `rgb(${AZUL})`;
+          ctx.beginPath();
+          ctx.arc(x + ox, y + oy, 1.7, 0, Math.PI * 2);
+          ctx.fill();
           ctx.globalAlpha = 1;
         }
         return true;
@@ -511,7 +578,7 @@ export function InfraFlowField({ className = "" }: { className?: string }) {
       window.removeEventListener("pointermove", alMover);
       delete contenedor.dataset.listo;
     };
-  }, []);
+  }, [libreDe]);
 
   return (
     <div ref={caja} aria-hidden className={`dev-flujo ${className}`}>

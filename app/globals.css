@@ -1199,28 +1199,31 @@ body {
 .dev-scope .dev-flujo-capa,
 .dev-scope .dev-flujo-canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
 .dev-scope .dev-flujo-capa { will-change: transform; }
-/* La máscara hace todo el trabajo de composición (sin capas encima del canvas): fundidos en los bordes y un "hueco" radial donde está el
-   texto, para que el campo baje de intensidad justo detrás del H1 y del párrafo. Mobile: textura detrás de la mitad inferior. */
+/* La máscara hace todo el trabajo de composición (sin capas encima del canvas).
+   Mobile: el campo es una banda DEBAJO del contenido (H1 -> descripción -> CTAs -> línea técnica -> campo); solo asoma con un fundido
+   suave bajo los CTAs, nunca detrás del párrafo. */
 .dev-scope .dev-hero-campo {
-  inset: 0;
-  -webkit-mask-image: linear-gradient(180deg, transparent 0%, transparent 38%, #000 62%, #000 88%, transparent 100%),
-    radial-gradient(ellipse 80% 22% at 30% 62%, rgba(0, 0, 0, 0.25), #000 100%);
-  -webkit-mask-composite: source-in;
-  mask-image: linear-gradient(180deg, transparent 0%, transparent 38%, #000 62%, #000 88%, transparent 100%),
-    radial-gradient(ellipse 80% 22% at 30% 62%, rgba(0, 0, 0, 0.25), #000 100%);
-  mask-composite: intersect;
+  top: auto;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: clamp(300px, 82vw, 420px);
+  -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 42%, #000 86%, transparent 100%);
+  mask-image: linear-gradient(180deg, transparent 0%, #000 42%, #000 86%, transparent 100%);
 }
-/* Desktop: ~64 % derecho, fundido hacia el texto y hacia arriba/abajo, más atenuado donde el H1 se extiende sobre el campo. */
+/* Desktop: ~64 % derecho, fundido hacia el texto y hacia arriba/abajo. El hueco radial sigue la posición REAL del H1 (variables que
+   calcula InfraFlowField): el texto siempre tiene una zona limpia detrás. */
 @media (min-width: 1024px) {
   .dev-scope .dev-hero-campo {
     inset: 0 0 0 36%;
+    height: auto;
     -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 34%, #000 92%, transparent 100%),
       linear-gradient(180deg, transparent 0%, #000 14%, #000 86%, transparent 100%),
-      radial-gradient(ellipse 42% 30% at 0% 44%, rgba(0, 0, 0, 0.18), #000 100%);
+      radial-gradient(ellipse var(--hueco-rx, 42%) var(--hueco-ry, 30%) at var(--hueco-x, 0%) var(--hueco-y, 44%), rgba(0, 0, 0, 0.03), #000 100%);
     -webkit-mask-composite: source-in, source-in;
     mask-image: linear-gradient(90deg, transparent 0%, #000 34%, #000 92%, transparent 100%),
       linear-gradient(180deg, transparent 0%, #000 14%, #000 86%, transparent 100%),
-      radial-gradient(ellipse 42% 30% at 0% 44%, rgba(0, 0, 0, 0.18), #000 100%);
+      radial-gradient(ellipse var(--hueco-rx, 42%) var(--hueco-ry, 30%) at var(--hueco-x, 0%) var(--hueco-y, 44%), rgba(0, 0, 0, 0.03), #000 100%);
     mask-composite: intersect, intersect;
   }
 }
