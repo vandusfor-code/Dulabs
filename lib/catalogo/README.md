@@ -212,11 +212,8 @@ La IA no participa en nada de esto: **WhatsApp funciona con la IA apagada**.
   símbolos base32 (30 bits) y `evt_` + 26 (130 bits), derivados con HMAC de
   (negocio, canal, clave de idempotencia del intento, líneas). Doble toque,
   reintento o volver de WhatsApp y tocar de nuevo => mismo id, mismo mensaje,
-  mismo evento. Por qué no persistir todavía: nadie lee aún la solicitud
-  (el agente no existe), el mensaje ya lleva el contrato estructurado y el
-  agente debe volver a resolver todo igual. Cuando exista el consumidor, el
-  adaptador `OrderRequestEventSink` pasa de "registro JSON" a una tabla con
-  `UNIQUE(event_id)` (o una cola) sin tocar el dominio.
+  mismo evento. (Fase 7: la solicitud ya se persiste como pedido canónico;
+  ver la sección siguiente.)
 - **Clave de firma**: `CATALOG_ORDER_SECRET` o, si no existe, derivada de la
   clave de servicio de Supabase con separación de dominio (nunca se usa tal
   cual). Sin ninguna => el pedido responde 503 (falla cerrado).
@@ -241,3 +238,122 @@ La IA no participa en nada de esto: **WhatsApp funciona con la IA apagada**.
 
 Cada producto resuelto trae referencia, nombre, categoría, descripción,
 precios detal y mayor, stock, disponibilidad, imagen y estado.
+
+## WhatsApp + motor de pedidos para el agente (Fase 7)
+
+**La IA conversa. El backend decide. El catálogo es la fuente de verdad.**
+Todo vive en `lib/catalogo/pedidos/`; no hay webhook nuevo ni arquitectura
+paralela.
+
+### Qué se reutiliza
+
+| Pieza existente | Uso en la Fase 7 |
+| --- | --- |
+| `app/webhook-dulabs/route.ts` (firma HMAC de Meta, `dulabs_mensajes_log` con `wamid` único, `procesarCambio`) | Única entrada. Se añadió `entry.id` (WABA) como parámetro opcional y un llamado a la entrada de pedidos antes de `atenderMensaje`. |
+| `dulabs_clientes_config` (`phone_number_id` UNIQUE → `id_tenant`) | Resolución del negocio. Nunca por nombre. |
+| `resolverTelefonoRemitenteMeta` | Contacto = `wa_id` del remitente. Conversación = (`phone_number_id`, `wa_id`), la misma identidad del Inbox. |
+| `resolucion.ts`, `pedido.ts`, `pedido-firma.ts`, `domain.ts` (Fases 2–6) | Resolución de referencias, reglas de stock, formato del mensaje, derivación HMAC de ids. |
+| `activarPausaChat` + `dulabs_conversacion_estado` | Handoff: la IA calla 24 h en ESE chat (igual que `transferir_soporte`) y la conversación queda `pending` en el Inbox. |
+| Lista negra (`ia_numeros_bloqueados`) | También excluye el registro de pedidos. |
+
+### Cadena de resolución
+
+```
+Meta (firma HMAC) → entry.id (WABA) → metadata.phone_number_id → dulabs_clientes_config.id_tenant
+  → messages[].from (wa_id) → conversación (phone_number_id + wa_id) → pedido → herramientas
+```
+
+Si el WABA de la entrega no coincide con el del negocio del número, no se
+registra nada. Idempotencia de entrada: `wamid` (nunca el timestamp).
+
+### Contrato canónico (`contrato.ts`)
+
+`order_id` público (`DL-ORD-XXXXXX`), `channel` (retail | wholesale), `source`
+(catalog | whatsapp | agent | manual), `status`, líneas (referencia, nombre
+resuelto, cantidad, precio unitario, subtotal), `total`, `currency`,
+`created_at`. El id interno, el negocio y el contacto NUNCA salen en la vista
+pública (`publicView`). Precio, subtotal, total, stock, negocio, canal e id de
+producto no los puede fijar ni el cliente ni la IA.
+
+### Estados
+
+| Desde | Hacia | Quién |
+| --- | --- | --- |
+| draft | validated | system |
+| draft / validated / pending_confirmation / confirmed | handoff | system, agent, human |
+| validated | pending_confirmation | system, agent |
+| validated / pending_confirmation | draft | system (algo cambió) |
+| pending_confirmation | confirmed | agent, human (con la propuesta vigente) |
+| handoff | confirmed | human |
+| confirmed / handoff | completed | human |
+| draft / validated | cancelled | system, human |
+| pending_confirmation / confirmed / handoff | cancelled | human |
+| draft / validated / pending_confirmation | expired | system |
+
+La MISMA tabla está en la BD (`dulabs_catalogo_pedido_transicion_valida`); un
+test compara ambas. Las transiciones son compare-and-set en una transacción
+con su evento.
+
+**Confirmación contextual**: el backend emite una propuesta
+(`confirmation.id`, total, vence en 30 min). `confirm_order` exige ese id,
+que no haya vencido y que precio y stock sigan iguales; si algo cambió, el
+pedido vuelve a `draft` con el problema. Un "sí" suelto no confirma nada.
+No descuenta stock, no reserva, no cobra.
+
+### Evento `catalog.order_request.created` (v2, `eventos.ts`)
+
+`{ event_id, event_type, version: 2, occurred_at, business, customer, channel,
+source, order, transition? }`. También `order.created`,
+`order.status_changed` y `order.handoff_requested`. Se guardan en
+`dulabs_catalogo_pedido_eventos` (inmutable, `event_id` único) en la misma
+transacción que el cambio; a los registros va un resumen sin teléfono.
+
+### Herramientas del agente (`herramientas.ts`)
+
+| Herramienta | Permiso | Conversación | Errores deterministas |
+| --- | --- | --- | --- |
+| `search_products` | catalog:read | no | — (solo candidatos) |
+| `resolve_product` | catalog:read | no | NOT_FOUND, AMBIGUOUS, PRODUCT_UNAVAILABLE |
+| `get_product_by_reference` | catalog:read | no | REFERENCE_NOT_FOUND, PRODUCT_UNAVAILABLE |
+| `get_product_availability` | catalog:read | no | REFERENCE_NOT_FOUND |
+| `get_order` | orders:read | sí | NOT_FOUND |
+| `validate_order` | orders:write | sí | NOT_FOUND, CONFLICT |
+| `create_order` | orders:write | sí | CONFLICT (misma clave, otro contenido) |
+| `confirm_order` | orders:write | sí | CONFIRMATION_MISMATCH, CONFIRMATION_EXPIRED, PRICE_CHANGED, OUT_OF_STOCK, INVALID_TRANSITION |
+| `handoff_to_human` | conversation:handoff | sí | INVALID_TRANSITION, UNAVAILABLE |
+
+Comunes: INVALID_INPUT (esquema estricto: un campo de más como `price`,
+`total`, `business_id` o `channel` se rechaza), FORBIDDEN (módulo apagado,
+contexto inválido, número que no es del negocio), UNAVAILABLE (migración sin
+aplicar o falla). El contexto (tenant, canal, conversación) lo arma el
+backend. Las salidas se validan con esquemas estrictos. `agentToolDefinitions()`
+entrega los JSON Schema para el modelo. **En esta fase ningún runtime de IA
+las expone todavía**: quedan listas y probadas para conectarlas.
+
+### Entrada por WhatsApp (`intake.ts` + `whatsapp.ts`)
+
+- Solo texto de clientes con forma de pedido del catálogo (líneas `• REF · …
+  — N unidades` o `Solicitud: DL-ORD-…`). Cualquier otro mensaje sigue su
+  camino normal, sin consultar la BD.
+- Con `Solicitud:` de una solicitud del catálogo aún sin conversación: se
+  vincula a esta conversación (una sola vez), manda lo GUARDADO (si el texto
+  difiere: `message_mismatch`), se re-valida y queda propuesta o en `draft`.
+- Sin id, reenviado desde otra conversación o vencido: pedido nuevo de
+  WhatsApp, canal DETAL (el texto no autoriza precio mayorista:
+  `wholesale_unverified`). Una cantidad ilegible, 0, negativa o mayor a 99 es
+  un problema (`invalid_quantity`), nunca un ajuste silencioso.
+- Registra y devuelve una respuesta estructurada; **no responde por
+  WhatsApp** en esta fase.
+
+### Persistencia (migración `20261108000000_dulabs_catalogo_pedidos.sql`)
+
+Sin la migración, la tienda y el webhook funcionan exactamente como antes
+(sonda `available()`, caché de 60 s) y las herramientas de pedido responden
+UNAVAILABLE.
+
+### Registros
+
+Una línea JSON `catalog_order` por operación: `request_id`, `event_id`,
+`business_id`, `operation`, `result`, `duration_ms`, `error_code`/`reason`,
+`order_id`, `status` y `contact_ref` (hash del wa_id). Nunca el teléfono, el
+texto del mensaje, tokens ni secretos.

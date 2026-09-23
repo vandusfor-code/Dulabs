@@ -1,5 +1,45 @@
 # Pasos manuales pendientes en producción
 
+## ⏳ PENDIENTE — Catálogo DuLabs, Fase 7 (pedidos estructurados: WhatsApp + agente)
+
+Migración `supabase/migrations/20261108000000_dulabs_catalogo_pedidos.sql`.
+**100 % aditiva** (no toca tablas existentes):
+
+- crea `dulabs_catalogo_pedidos` (pedido canónico; RLS activado, solo backend;
+  UNIQUE por negocio de la clave de idempotencia y del `DL-ORD-…`);
+- crea `dulabs_catalogo_pedido_eventos` (bitácora inmutable de eventos v2,
+  `event_id` único, FK compuesta pedido+negocio);
+- crea las funciones transaccionales `dulabs_catalogo_pedido_crear`,
+  `dulabs_catalogo_pedido_transicion` y `dulabs_catalogo_pedido_transicion_valida`
+  (EXECUTE solo para `service_role`; revocado explícitamente a `anon` y
+  `authenticated`).
+
+**Mientras no se aplique (convivencia segura):** la tienda sigue generando la
+solicitud y el link de WhatsApp exactamente como hoy; el webhook no registra
+pedidos y las herramientas de pedido del agente responden `UNAVAILABLE`. Nada
+existente cambia (AMORE, Business Agent, Flow, IA).
+
+**Al aplicarla:** se activa sola (sonda del backend), sin desplegar código.
+
+Validada contra PostgreSQL 16 local emulando los privilegios por defecto de
+Supabase: `supabase/tests/20261108000000_dulabs_catalogo_pedidos.test.sql`
+(17/17), aplicada dos veces sin error (idempotente); 20 creaciones
+concurrentes con la misma clave => 1 pedido y 1 evento; 20 transiciones
+concurrentes => 1 gana (compare-and-set), 1 contacto, 1 evento.
+
+1. Correr el archivo completo en el SQL Editor (idempotente).
+2. Verificar (esperado 2, 3, 0):
+   ```sql
+   select count(*) from information_schema.tables
+    where table_name in ('dulabs_catalogo_pedidos', 'dulabs_catalogo_pedido_eventos');
+   select count(*) from pg_proc where proname in
+    ('dulabs_catalogo_pedido_crear', 'dulabs_catalogo_pedido_transicion', 'dulabs_catalogo_pedido_transicion_valida');
+   select count(*) from information_schema.role_routine_grants
+    where routine_name like 'dulabs_catalogo_pedido%' and grantee in ('anon', 'authenticated');
+   ```
+
+Rollback: al inicio del archivo de la migración.
+
 ## ✅ APLICADA (según confirmación del responsable, 23-sep-2026) — Catálogo DuLabs, Fase 4 (carga masiva)
 
 **Estado: el responsable del proyecto confirmó que la migración se ejecutó
