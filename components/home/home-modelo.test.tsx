@@ -82,7 +82,8 @@ describe("Modelo de producto -- 01 · Crea tu agente / 02 · A la medida", () =>
   });
 
   it("la 'implementación' solo aparece como el cobro único que muestra el checkout, nunca como paso obligatorio de DuLabs", () => {
-    const menciones = [...T.matchAll(/implementaci[oó]n/gi)].length;
+    // Única excepción: el beneficio "Implementación rápida" del hero (etiqueta de marca de la referencia, no un paso que el cliente deba hacer).
+    const menciones = [...T.replace(/Implementación rápida/g, "").matchAll(/implementaci[oó]n/gi)].length;
     assert.equal(menciones, 1, "solo debe nombrarse en la respuesta de precios");
     assert.match(T, /cada plan muestra un pago único de implementación que va en el primer cobro; el desglose aparece antes de pagar/);
     for (const f of todasLasFaq()) assert.doesNotMatch(f.respuesta.join(" "), /debes|tienes que|es necesario|es obligatorio/i, `${f.id}: no impone pasos manuales`);
