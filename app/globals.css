@@ -1249,6 +1249,161 @@ body {
   .dev-scope .dev-flujo { transition: none; }
 }
 
+/* ---------- DuLabs Developer · /developer-platform (scoped via .dp) ----------
+   Sistema propio de la landing de Developer, en su propio namespace (dp-*): no toca los tokens .dev-scope que comparten el dashboard
+   privado y la home. Negro, blanco, grises técnicos y UN solo color de señal (el azul de los pulsos del campo de infraestructura): el azul
+   solo aparece cuando representa un estado o un evento, nunca como superficie o decoración.
+   Spacing: se usa EXCLUSIVAMENTE la escala de Tailwind equivalente a 4 · 8 · 12 · 16 · 24 · 32 · 48 · 64 · 96 · 128 px (1 · 2 · 3 · 4 · 6 ·
+   8 · 12 · 16 · 24 · 32). Radios contenidos (rounded-dp = 8 px, rounded-dp-lg = 12 px). */
+@theme {
+  --color-dp-bg: #070707;
+  --color-dp-surface: #0b0b0b;
+  --color-dp-surface-hover: #111111;
+  --color-dp-border: rgba(255, 255, 255, 0.08);
+  --color-dp-border-strong: rgba(255, 255, 255, 0.16);
+  --color-dp-text: #f5f5f5;
+  --color-dp-text-2: #a3a3a3;
+  --color-dp-muted: #8a8a8a;
+  --color-dp-signal: #5e8cff;
+  --color-dp-danger: #f08a8a;
+  --color-dp-success: #e8e8e8;
+  --radius-dp: 8px;
+  --radius-dp-lg: 12px;
+}
+.dp {
+  /* Motion tokens: toda duración/curva de la página sale de aquí. */
+  --dp-dur-fast: 160ms;
+  --dp-dur: 320ms;
+  --dp-dur-slow: 720ms;
+  --dp-ease: cubic-bezier(0.2, 0, 0, 1);
+  --dp-ease-emph: cubic-bezier(0.16, 1, 0.3, 1);
+  /* Ciclo del sistema: un evento recorre la infraestructura cada --dp-ciclo (compartido por el diagrama y el ciclo de vida). */
+  --dp-ciclo: 6s;
+}
+.dp :focus-visible {
+  outline: 2px solid var(--color-dp-signal);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.dp .dp-link {
+  transition: color var(--dp-dur-fast) var(--dp-ease), border-color var(--dp-dur-fast) var(--dp-ease), background-color var(--dp-dur-fast) var(--dp-ease);
+}
+/* Botones: primario blanco sobre negro; secundario hairline que se ilumina en hover. */
+.dp .dp-btn {
+  transition: background-color var(--dp-dur-fast) var(--dp-ease), border-color var(--dp-dur-fast) var(--dp-ease), color var(--dp-dur-fast) var(--dp-ease);
+}
+.dp .dp-btn .dp-flecha { transition: transform var(--dp-dur) var(--dp-ease-emph); }
+.dp .dp-btn:hover .dp-flecha { transform: translateX(3px); }
+/* Superficie de producto (una entidad real: request, evento, dashboard, plan): borde que se ilumina levemente en hover. */
+.dp .dp-panel {
+  transition: border-color var(--dp-dur) var(--dp-ease);
+}
+.dp .dp-panel:hover { border-color: var(--color-dp-border-strong); }
+
+/* Nav: transparente arriba, fondo sutil al hacer scroll (el estado lo pone un IntersectionObserver, sin listener de scroll). */
+.dp .dp-nav { transition: background-color var(--dp-dur) var(--dp-ease), border-color var(--dp-dur) var(--dp-ease); }
+.dp .dp-nav[data-scrolled] { background-color: rgba(7, 7, 7, 0.82); border-color: var(--color-dp-border); backdrop-filter: saturate(140%) blur(14px); }
+.dp .dp-nav-link[aria-current="true"] { color: var(--color-dp-text); }
+.dp .dp-nav-link[aria-current="true"]::after { transform: scaleX(1); }
+.dp .dp-nav-link::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -19px;
+  height: 1px;
+  background: var(--color-dp-text);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform var(--dp-dur) var(--dp-ease-emph);
+}
+
+/* Hero: el campo se inicializa de izquierda a derecha (una sola transición de clip-path), no aparece de golpe. */
+.dp .dev-flujo { transition: opacity 1.2s ease, clip-path 1.6s var(--dp-ease-emph); clip-path: inset(0 0 0 0); }
+.dp .dev-flujo:not([data-listo]) { clip-path: inset(0 100% 0 0); }
+.dp .dp-hero-h1 { font-size: clamp(2.5rem, 10.4vw, 3.5rem); line-height: 1; letter-spacing: -0.042em; }
+@media (min-width: 768px) {
+  .dp .dp-hero-h1 { font-size: clamp(3.25rem, 7vw, 4.5rem); line-height: 0.98; }
+}
+@media (min-width: 1024px) {
+  .dp .dp-hero { min-height: 100vh; min-height: 100svh; }
+  .dp .dp-hero-h1 { font-size: clamp(3rem, 4.6vw, 5.25rem); line-height: 0.96; letter-spacing: -0.048em; }
+}
+.dp .dp-entra { animation: dev-stream-in var(--dp-dur-slow) var(--dp-ease-emph) both; }
+
+/* Señal: el único azul de la página. Un punto que respira = algo está vivo. */
+.dp .dp-senal {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-dp-signal);
+  box-shadow: 0 0 8px rgba(94, 140, 255, 0.55);
+  animation: dev-hero-respira 3.6s ease-in-out infinite;
+}
+
+/* Movimiento por bloque: TODA animación continua de un bloque arranca solo cuando el bloque está en pantalla ([data-activo], lo pone un
+   IntersectionObserver) y se pausa al salir. */
+.dp [data-bloque] .dp-anim { animation-play-state: paused; }
+.dp [data-bloque][data-activo] .dp-anim { animation-play-state: running; }
+
+/* 02 · Sistema: un evento recorre las etapas. Un único elemento que se traslada (transform) + cada etapa se ilumina cuando el evento pasa. */
+@keyframes dp-viaje-x { 0% { left: 0%; opacity: 0; } 4% { opacity: 1; } 86% { opacity: 1; } 92%, 100% { left: 100%; opacity: 0; } }
+@keyframes dp-viaje-y { 0% { top: 0%; opacity: 0; } 4% { opacity: 1; } 86% { opacity: 1; } 92%, 100% { top: 100%; opacity: 0; } }
+.dp .dp-viajero-x { position: absolute; animation: dp-viaje-x var(--dp-ciclo) linear infinite; }
+.dp .dp-viajero-y { position: absolute; animation: dp-viaje-y var(--dp-ciclo) linear infinite; }
+@keyframes dp-etapa {
+  0%, 26%, 100% { color: var(--color-dp-text-2); }
+  6%, 16% { color: var(--color-dp-text); }
+}
+@keyframes dp-etapa-marca {
+  0%, 26%, 100% { background: rgba(255, 255, 255, 0.2); box-shadow: none; }
+  6%, 16% { background: var(--color-dp-signal); box-shadow: 0 0 0 4px rgba(94, 140, 255, 0.12); }
+}
+/* Retardos negativos: la misma fase que el viajero (la etapa i se ilumina a i·15,33 % del ciclo) sin una espera inicial en la que las
+   marcas no tendrían estilo. El estilo base es el mismo del reposo del keyframe. */
+.dp .dp-etapa-nombre { color: var(--color-dp-text-2); animation: dp-etapa var(--dp-ciclo) linear infinite; animation-delay: calc((var(--dp-i, 0) * 0.1533 - 1) * var(--dp-ciclo)); }
+.dp .dp-etapa-marca { background: rgba(255, 255, 255, 0.2); animation: dp-etapa-marca var(--dp-ciclo) linear infinite; animation-delay: calc((var(--dp-i, 0) * 0.1533 - 1) * var(--dp-ciclo)); }
+
+/* 03 · Ciclo de vida: los estados se confirman en secuencia, una sola vez, al entrar en pantalla. */
+.dp .dp-estado { opacity: 0.38; transition: opacity var(--dp-dur-slow) var(--dp-ease); transition-delay: calc(var(--dp-i, 0) * 420ms); }
+.dp .dp-estado .dp-estado-marca { transition: background-color var(--dp-dur) var(--dp-ease), border-color var(--dp-dur) var(--dp-ease); transition-delay: calc(var(--dp-i, 0) * 420ms); }
+.dp [data-bloque][data-visto] .dp-estado { opacity: 1; }
+.dp [data-bloque][data-visto] .dp-estado .dp-estado-marca { background: var(--color-dp-text); border-color: var(--color-dp-text); }
+.dp [data-bloque][data-visto] .dp-estado[data-senal] .dp-estado-marca { background: var(--color-dp-signal); border-color: var(--color-dp-signal); }
+
+/* 04/05 · Filas de eventos que entran (la fila nueva la inserta React; esta animación solo corre en su montaje). */
+@keyframes dp-fila-entra { from { opacity: 0; transform: translateY(-6px); background: rgba(94, 140, 255, 0.06); } to { opacity: 1; transform: none; background: transparent; } }
+.dp .dp-fila-nueva { animation: dp-fila-entra var(--dp-dur-slow) var(--dp-ease-emph) both; }
+@keyframes dp-cambio { from { color: var(--color-dp-signal); } to { color: inherit; } }
+.dp .dp-cambio { animation: dp-cambio 1.2s var(--dp-ease) both; }
+
+/* Pestañas de código: el contenido cambia con un cruce corto. */
+@keyframes dp-cruce { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: none; } }
+.dp .dp-cruce { animation: dp-cruce var(--dp-dur) var(--dp-ease) both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .dp .dp-senal,
+  .dp .dp-entra,
+  .dp .dp-viajero-x,
+  .dp .dp-viajero-y,
+  .dp .dp-etapa-nombre,
+  .dp .dp-etapa-marca,
+  .dp .dp-fila-nueva,
+  .dp .dp-cambio,
+  .dp .dp-cruce { animation: none; }
+  .dp .dp-viajero-x,
+  .dp .dp-viajero-y { display: none; }
+  .dp .dp-etapa-nombre { color: var(--color-dp-text); }
+  .dp .dev-flujo { transition: none; clip-path: none; }
+  .dp .dp-estado,
+  .dp .dp-estado .dp-estado-marca { transition: none; }
+  .dp .dp-estado { opacity: 1; }
+  .dp .dp-estado .dp-estado-marca { background: var(--color-dp-text); border-color: var(--color-dp-text); }
+  .dp .dp-estado[data-senal] .dp-estado-marca { background: var(--color-dp-signal); border-color: var(--color-dp-signal); }
+  .dp .dp-nav-link::after,
+  .dp .dp-btn .dp-flecha { transition: none; }
+}
+
 /* ---------- Home principal v3 (scoped via .home-scope, el wrapper lleva .dev-scope .home-scope) ----------
    Landing principal premium con la MISMA identidad monocroma de /developer-platform: negro, blanco y grises neutros (tokens de
    .dev-scope). El CTA principal es blanco con texto oscuro (--color-dev-accent). Sin color de acento, sin gradientes decorativos: solo una

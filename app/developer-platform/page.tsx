@@ -1,22 +1,23 @@
 import type { Metadata } from "next";
-import { Reveal } from "@/components/site/Reveal";
 import { JsonLd } from "@/components/site/JsonLd";
 import { Footer } from "@/components/site/Sections";
 import { breadcrumbSchema, softwareApplicationSchema } from "@/lib/schema";
 import { DevNav } from "@/components/developer-platform/DevNav";
 import { DevHero } from "@/components/developer-platform/DevHero";
-import { DevPlatform, DevBuild, DevApiFirst, DevLifecycle, DevWebhooks, DevObservability, DevMessaging, DevCoexistence, DevSecurity, DevDocs, DevDashboardPreview } from "@/components/developer-platform/DevSections";
+import { DevPlataforma, DevApi, DevEventos, DevControl, DevProduccion } from "@/components/developer-platform/DevSections";
 import { DevPricing } from "@/components/developer-platform/DevPricing";
-import { DevFaq, DevFinalCta } from "@/components/developer-platform/DevFaqCta";
+import { DevDocsFaq, DevFinalCta } from "@/components/developer-platform/DevFaqCta";
 
-// DuLabs Developer V1 -- Fase 15. Landing comercial PÚBLICA de la plataforma
-// Developer (CPaaS). Superficie distinta de /developers (docs, Fase 14) y de
-// /developer (dashboard privado). Server component: metadata + JSON-LD reales;
-// el contenido bilingüe se renderiza en componentes cliente (useI18n).
+// DuLabs Developer -- landing comercial PÚBLICA de la plataforma (CPaaS). Superficie distinta de /developers (docs) y de /developer
+// (dashboard privado). Server component: metadata + JSON-LD reales; el contenido bilingüe vive en componentes cliente (useI18n).
+//
+// Una sola narrativa en 8 bloques: hero -> 01 plataforma (el sistema) -> 02 API (el request y su ciclo de vida) -> 03 webhooks y eventos
+// -> 04 control (dashboard) -> 05 producción (controles + coexistencia) -> 06 pricing y docs (+ preguntas) -> 07 cierre.
+// Sin Reveal genérico: cada bloque decide su propio movimiento (components/developer-platform/motion.ts).
 
-const TITULO = "DuLabs Developer | API de WhatsApp, webhooks y eventos";
+const TITULO = "DuLabs Developer | WhatsApp Cloud API para developers: API, webhooks y eventos";
 const DESCRIPCION =
-  "Plataforma CPaaS para construir sobre WhatsApp: envía mensajes por API, recibe eventos por webhook firmados con HMAC y observa cada entrega. API keys, workspaces, idempotencia y rate limits.";
+  "Infraestructura sobre WhatsApp Cloud API oficial de Meta: envía mensajes con un POST, recibe webhooks firmados con HMAC-SHA256 y observa cada entrega. API keys, idempotencia, rate limits y workspaces.";
 
 export const metadata: Metadata = {
   title: TITULO,
@@ -41,25 +42,20 @@ export const metadata: Metadata = {
 
 export default function DeveloperPlatformPage() {
   return (
-    <div className="dev-scope relative min-h-screen bg-site-bg text-site-fg">
+    <div className="dev-scope dp relative min-h-screen bg-dp-bg text-dp-text">
       <JsonLd data={breadcrumbSchema([{ name: "Inicio", path: "/" }, { name: "Developer", path: "/developer-platform" }])} />
       <JsonLd data={softwareApplicationSchema({ name: "DuLabs Developer", description: DESCRIPCION, path: "/developer-platform" })} />
       <DevNav />
       <main>
         <DevHero />
-        <Reveal><DevPlatform /></Reveal>
-        <Reveal><DevBuild /></Reveal>
-        <Reveal><DevApiFirst /></Reveal>
-        <Reveal><DevLifecycle /></Reveal>
-        <Reveal><DevWebhooks /></Reveal>
-        <Reveal><DevObservability /></Reveal>
-        <Reveal><DevMessaging /></Reveal>
-        <Reveal><DevCoexistence /></Reveal>
-        <Reveal><DevSecurity /></Reveal>
-        <Reveal><DevDashboardPreview /></Reveal>
-        <Reveal><DevPricing /></Reveal>
-        <Reveal><DevDocs /></Reveal>
-        <Reveal><DevFaq /></Reveal>
+        <DevPlataforma />
+        <DevApi />
+        <DevEventos />
+        <DevControl />
+        <DevProduccion />
+        <DevPricing>
+          <DevDocsFaq />
+        </DevPricing>
         <DevFinalCta />
       </main>
       <Footer />
