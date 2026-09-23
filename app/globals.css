@@ -1329,6 +1329,13 @@ body {
   50% { transform: translateY(3px); }
 }
 
+/* Desktop con poca altura (laptops de ~630-820 px útiles): el indicador de scroll es absoluto y chocaba con los beneficios. Se quita el
+   ratón (queda solo "Descubre más" + chevron) y se reduce el aire sobre los beneficios. */
+@media (min-width: 1024px) and (max-height: 820px) {
+  .home-scope .home-hero-raton { display: none; }
+  .home-scope .home-hero-beneficios { margin-top: 2.5rem; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .home-scope .home-hero-punto,
   .home-scope .home-hero-raton::after,
