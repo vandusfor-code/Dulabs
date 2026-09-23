@@ -182,6 +182,7 @@ lib/agenda-v2/disponibilidad-cadena-real.test.ts
 lib/agenda-v2/seleccion-natural.test.ts
 lib/agenda-v2/entidades-extraidas.test.ts
 lib/amore-contexto-negocio.test.ts
+lib/amore-conversacion-matriz.test.ts
 lib/contabilidad/consultas.test.ts
 lib/contabilidad/periodo.test.ts
 lib/contabilidad/metricas.test.ts

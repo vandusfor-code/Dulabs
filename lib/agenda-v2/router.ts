@@ -1302,9 +1302,9 @@ export async function procesarMensajeConAgendaV2(
       let resultado: ResultadoControladorAgendaV2 = manejarMensajeAgendaV2(sesion, params.texto, { hoyIso: deps.hoyIsoParaExtraccion?.() });
 
       if (resultado.accion === "profesional_cualquiera") {
-        // "me da igual", "la que tenga disponibilidad" -- la primera profesional, en el orden REAL del menú (que ya
-        // refleja la prioridad del salón), con días REALES disponibles. Los días ya calculados se reutilizan (sin
-        // repetir consultas a Nylas).
+        // "me da igual", "la que tenga disponibilidad" -- la primera profesional, en el orden del menú mostrado (la
+        // prioridad del salón en el modo por categoría; orden estable de registro en el modo explícito), con días REALES
+        // disponibles. Los días ya calculados se reutilizan (sin repetir consultas a Nylas).
         if (!sesion.servicioId) return await reiniciarPorEstadoInconsistente("S2_PROFESIONAL sin servicioId");
         const opcionesActuales = (sesion.opcionesMostradas as OpcionProfesionalAgendaV2[] | null) ?? [];
         const causas: CausaSinDias[] = [];

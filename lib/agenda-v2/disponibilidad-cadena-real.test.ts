@@ -21,6 +21,7 @@ import { AMORE_TENANT_ID } from "@/lib/nylas/nylas-grant";
 import type { SesionAgendaV2, CambiosSesionAgendaV2 } from "@/lib/agenda-v2/sesiones";
 import { construirOpcionesProfesional } from "@/lib/agenda-v2/profesionales";
 import { crearSupabaseEnMemoria, type TablasEnMemoria } from "@/lib/test-helpers/supabase-en-memoria";
+import { instalarNylasFalso, type RespuestaNylas } from "@/lib/test-helpers/nylas-falso";
 import { fechaColombiaDesdeIso } from "@/lib/timezone-colombia";
 import { sumarDias } from "@/lib/parse-fecha-colombia";
 
@@ -44,26 +45,6 @@ function tablasAmore(): TablasEnMemoria {
     dulabs_horario_especialista: [],
     dulabs_bloqueos: [],
     dulabs_citas_especialista: [],
-  };
-}
-
-type RespuestaNylas = (q: { calendarId: string; start: number; end: number }) => { status: number; body: unknown };
-
-/** Sustituye fetch SOLO para la API de Nylas -- cualquier otra URL falla ruidosamente (ningún test sale a la red). */
-function instalarNylasFalso(responder: RespuestaNylas): () => void {
-  const original = globalThis.fetch;
-  globalThis.fetch = (async (input: string | URL | Request) => {
-    const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
-    if (url.hostname !== "api.us.nylas.com") throw new Error(`fetch inesperado a ${url.hostname}`);
-    const { status, body } = responder({
-      calendarId: url.searchParams.get("calendar_id") ?? "",
-      start: Number(url.searchParams.get("start")),
-      end: Number(url.searchParams.get("end")),
-    });
-    return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
-  }) as typeof fetch;
-  return () => {
-    globalThis.fetch = original;
   };
 }
 

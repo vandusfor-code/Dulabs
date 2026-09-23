@@ -82,8 +82,8 @@ export type ResultadoControladorAgendaV2 =
   // reales exige el motor de disponibilidad + Nylas (async) -- misma razón
   // que las dos anteriores. Ver lib/agenda-v2/disponibilidad.ts.
   | { accion: "profesional_seleccionado"; profesionalId: number }
-  // "me da igual", "la que tenga disponibilidad" -- router.ts elige, en el orden real del menú (que ya refleja la
-  // prioridad del salón), la primera profesional con días REALES disponibles. Nunca se elige sin consultar la agenda.
+  // "me da igual", "la que tenga disponibilidad" -- router.ts elige, en el orden del menú mostrado, la primera
+  // profesional con días REALES disponibles. Nunca se elige sin consultar la agenda.
   | { accion: "profesional_cualquiera" }
   // Una hora dicha en texto ("a las 3", "después de las 5", "en la tarde") -- router.ts recalcula los horarios REALES
   // de esa fecha (una consulta) y la resuelve contra ellos: la lista guardada puede estar paginada o desactualizada.
