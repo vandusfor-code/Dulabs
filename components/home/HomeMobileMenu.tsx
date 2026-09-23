@@ -25,22 +25,14 @@ export function HomeMobileMenu({ links, crearAgenteHref, hablarHref, loginHref }
   }, [abierto]);
 
   return (
-    <div className="flex items-center gap-2 lg:hidden">
-      <TrackedLink
-        href={crearAgenteHref}
-        event="cta_crear_agente"
-        source="nav_movil"
-        className="inline-flex h-10 items-center rounded-lg bg-dev-accent px-3.5 text-[13px] font-medium text-dev-accent-fg transition-colors hover:bg-dev-accent-hover"
-      >
-        Crear mi agente
-      </TrackedLink>
+    <div className="flex items-center lg:hidden">
       <button
         type="button"
         aria-expanded={abierto}
         aria-controls="home-menu-movil"
         aria-label={abierto ? "Cerrar menú" : "Abrir menú"}
         onClick={() => setAbierto((v) => !v)}
-        className="grid size-10 place-items-center rounded-lg border border-site-border text-site-fg transition-colors hover:border-white/25"
+        className="-mr-2.5 grid size-11 place-items-center rounded-lg text-site-fg/85 transition-colors hover:text-site-fg"
       >
         <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden>
           {abierto ? (
@@ -72,11 +64,21 @@ export function HomeMobileMenu({ links, crearAgenteHref, hablarHref, loginHref }
           </nav>
           <div className="mt-5 grid gap-3">
             <TrackedLink
+              href={crearAgenteHref}
+              event="cta_crear_agente"
+              source="nav_movil"
+              onNavigate={cerrar}
+              className="inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-dev-accent text-[14.5px] font-medium text-dev-accent-fg transition-colors hover:bg-dev-accent-hover"
+            >
+              Crear mi agente
+              <span aria-hidden>→</span>
+            </TrackedLink>
+            <TrackedLink
               href={hablarHref}
               event="cta_whatsapp"
               source="nav_movil_hablar"
               onNavigate={cerrar}
-              className="inline-flex h-12 items-center justify-center rounded-lg border border-site-border bg-site-card text-[14.5px] font-medium text-site-fg"
+              className="inline-flex h-12 items-center justify-center rounded-lg border border-white/[0.16] text-[14.5px] font-medium text-site-fg"
             >
               Hablar con DuLabs
             </TrackedLink>
