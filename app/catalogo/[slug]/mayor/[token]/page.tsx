@@ -34,5 +34,9 @@ export async function generateMetadata(props: Props): Promise<Metadata> {
 export default async function CatalogoMayorPage(props: Props) {
   const { slug, token, q, categoria, data } = await cargar(props);
   if (!data) notFound();
-  return <PublicCatalog data={data} basePath={wholesalePath(slug, token)} q={q} categoria={categoria} />;
+  return (
+    <div className="dash-scope min-h-screen w-full flex-1 bg-ink text-fg">
+      <PublicCatalog data={data} basePath={wholesalePath(slug, token)} q={q} categoria={categoria} />
+    </div>
+  );
 }
