@@ -62,16 +62,20 @@ export function EnlaceFlecha({ href, children }: { href: string; children: React
 
 export type Estado = "created" | "queued" | "processing" | "sent" | "delivered" | "read" | "received" | "failed" | "retrying" | "dlq" | "200";
 
-/** Marca de estado: neutro por defecto; azul solo para lo que está ocurriendo; rojo apagado solo para fallos. */
+/** Marca de estado: el color solo comunica estado (azul = en curso, verde = confirmado, ámbar = reintento, rojo = fallo). */
 export function MarcaEstado({ estado }: { estado: Estado }) {
   const cls =
     estado === "failed" || estado === "dlq"
       ? "bg-dp-danger"
-      : estado === "processing" || estado === "retrying"
-        ? "bg-dp-signal"
-        : estado === "queued" || estado === "created"
-          ? "bg-dp-muted"
-          : "bg-dp-text";
+      : estado === "retrying"
+        ? "bg-dp-warn"
+        : estado === "processing"
+          ? "bg-dp-signal"
+          : estado === "delivered" || estado === "read" || estado === "200"
+            ? "bg-dp-ok"
+            : estado === "queued" || estado === "created"
+              ? "bg-dp-muted"
+              : "bg-dp-text";
   return <span aria-hidden className={`inline-block h-1.5 w-1.5 flex-none rounded-full ${cls}`} />;
 }
 
