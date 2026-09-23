@@ -86,7 +86,7 @@ export function HomeHero() {
             </TrackedLink>
           </div>
 
-          <ul className="home-seq mt-10 grid gap-5 lg:mt-16 lg:flex lg:items-center lg:gap-0" style={d(220)}>
+          <ul className="home-hero-beneficios home-seq mt-10 grid gap-5 lg:mt-16 lg:flex lg:items-center lg:gap-0" style={d(220)}>
             {BENEFICIOS.map(({ icono: Icono, a, b }, i) => (
               <li
                 key={a}

@@ -347,30 +347,45 @@ type TierData = {
 // con un toggle, para que las 4 tarjetas no dominen la pantalla de una vez.
 // Estado propio por tarjeta (no uno solo compartido): cada plan se abre/cierra
 // de forma independiente.
-function TarjetaPlan({ tier, notaImplementacion }: { tier: TierData; notaImplementacion?: string }) {
+// variante "home": la misma tarjeta (mismos datos, toggle y PlanButton) con la presentación de la home -- bordes finos, más aire, el plan
+// destacado integrado en el sistema monocromo (sin bloque de color) y un único microdetalle azul al pasar el cursor (.home-plan en globals.css).
+function TarjetaPlan({ tier, notaImplementacion, variante = "sitio" }: { tier: TierData; notaImplementacion?: string; variante?: "sitio" | "home" }) {
   const { t } = useI18n();
   const [expandido, setExpandido] = useState(false);
+  const home = variante === "home";
   return (
     <div
-      className={`relative flex flex-col overflow-hidden rounded-2xl border p-7 ${
-        tier.featured
-          ? "border-site-primary/30 bg-gradient-to-b from-site-primary/[0.08] to-site-card/60 ring-1 ring-site-primary/20"
-          : "border-site-border bg-site-card/50"
-      }`}
+      className={
+        home
+          ? `home-plan relative flex flex-col rounded-xl border p-7 transition-colors duration-300 xl:p-8 ${
+              tier.featured ? "home-plan--destacado border-white/[0.22] bg-white/[0.035]" : "border-site-border bg-white/[0.012] hover:border-white/[0.16]"
+            }`
+          : `relative flex flex-col overflow-hidden rounded-2xl border p-7 ${
+              tier.featured
+                ? "border-site-primary/30 bg-gradient-to-b from-site-primary/[0.08] to-site-card/60 ring-1 ring-site-primary/20"
+                : "border-site-border bg-site-card/50"
+            }`
+      }
     >
       {tier.featured && (
-        <div className="absolute right-5 top-5 rounded-full bg-site-primary px-2 py-0.5 font-mono text-[9.5px] uppercase tracking-widest text-site-primary-fg">
+        <div
+          className={
+            home
+              ? "absolute right-6 top-6 rounded-full border border-white/20 px-2 py-0.5 font-mono text-[9.5px] uppercase tracking-widest text-site-fg xl:right-7 xl:top-7"
+              : "absolute right-5 top-5 rounded-full bg-site-primary px-2 py-0.5 font-mono text-[9.5px] uppercase tracking-widest text-site-primary-fg"
+          }
+        >
           {t("Más elegido", "Most chosen")}
         </div>
       )}
 
       {/* 1-2. Nombre + descripción */}
       <div className="font-mono text-[10px] uppercase tracking-widest text-site-muted-fg">{tier.nombre}</div>
-      <p className="mt-2 text-[13px] text-site-muted-fg">{tier.tag}</p>
+      <p className={`mt-2 text-[13px] text-site-muted-fg ${home ? "min-h-[2.9em] leading-[1.45]" : ""}`}>{tier.tag}</p>
 
       {/* 3. Precio mensual */}
-      <div className="mt-5 flex items-baseline gap-1">
-        <span className="font-display text-[30px] font-medium tracking-tight text-site-fg">{tier.precioMensual}</span>
+      <div className={`flex items-baseline gap-1 ${home ? "mt-8" : "mt-5"}`}>
+        <span className={`font-display font-medium tracking-tight text-site-fg ${home ? "text-[34px] tracking-[-0.03em] xl:text-[38px]" : "text-[30px]"}`}>{tier.precioMensual}</span>
         {tier.id !== "enterprise" && <span className="text-[12px] text-site-muted-fg">{t("COP / mes", "COP / mo")}</span>}
       </div>
       <div className="font-mono text-[9.5px] uppercase tracking-widest text-site-muted-fg/70">{t("Plan mensual", "Monthly plan")}</div>
@@ -443,11 +458,17 @@ function TarjetaPlan({ tier, notaImplementacion }: { tier: TierData; notaImpleme
       <PlanButton
         planId={tier.id}
         label={tier.boton}
-        className={`mt-6 inline-flex h-10 w-full items-center justify-center rounded-lg text-[13px] font-medium transition-all ${
-          tier.featured
-            ? "bg-site-primary text-site-primary-fg hover:brightness-110"
-            : "border border-site-border text-site-fg hover:border-white/20 hover:bg-site-card"
-        }`}
+        className={
+          home
+            ? `mt-7 inline-flex h-11 w-full items-center justify-center rounded-lg text-[13.5px] font-medium transition-colors ${
+                tier.featured ? "bg-dev-accent text-dev-accent-fg hover:bg-dev-accent-hover" : "border border-site-border bg-site-bg text-site-fg hover:border-white/25"
+              }`
+            : `mt-6 inline-flex h-10 w-full items-center justify-center rounded-lg text-[13px] font-medium transition-all ${
+                tier.featured
+                  ? "bg-site-primary text-site-primary-fg hover:brightness-110"
+                  : "border border-site-border text-site-fg hover:border-white/20 hover:bg-site-card"
+              }`
+        }
       />
     </div>
   );
@@ -458,7 +479,8 @@ export function PricingSection({
   descripcion,
   notaImplementacion,
   notaSuscripcion,
-}: { showComparisonLink?: boolean; descripcion?: string; notaImplementacion?: string; notaSuscripcion?: string } = {}) {
+  variante = "sitio",
+}: { showComparisonLink?: boolean; descripcion?: string; notaImplementacion?: string; notaSuscripcion?: string; variante?: "sitio" | "home" } = {}) {
   const { t, lang } = useI18n();
   const tiers = PLANES_WHATSAPP.map((id) => {
     const def = PLANES[id];
@@ -490,6 +512,91 @@ export function PricingSection({
       featured: id === "business",
     };
   });
+  const notaCostoWhatsApp = [
+    notaSuscripcion ??
+      t(
+        "Tu suscripción a DuLabs cubre la plataforma, la configuración y el uso de la IA según el plan elegido.",
+        "Your DuLabs subscription covers the platform, the setup and the AI usage for your chosen plan."
+      ),
+    t(
+      "Los costos de mensajería de WhatsApp no están incluidos en la suscripción de DuLabs. Meta cobra directamente al negocio los cargos correspondientes a los mensajes enviados mediante WhatsApp Business Platform, de acuerdo con sus tarifas vigentes.",
+      "WhatsApp messaging costs aren't included in the DuLabs subscription. Meta charges the business directly for messages sent through the WhatsApp Business Platform, per its current pricing."
+    ),
+  ];
+  const garantias = [
+    { Icono: ShieldCheck, texto: t("API Oficial de Meta", "Official Meta API") },
+    { Icono: Globe, texto: t("Datos alojados de forma segura", "Data hosted securely") },
+    { Icono: Sparkles, texto: t("Agente de IA propio", "Own AI agent") },
+  ];
+
+  // Home: encabezado editorial alineado a la izquierda (mismo sistema que el resto de la home), tarjetas refinadas y la aclaración del costo
+  // de WhatsApp como bloque de lectura en vez de otra tarjeta. MISMO contenido, precios y botones que la variante del sitio.
+  if (variante === "home") {
+    return (
+      <section id="precios" aria-labelledby="precios-titulo" className="relative scroll-mt-16 border-t border-site-border">
+        <div className="hx hx-grid py-20 md:py-28 2xl:py-32">
+          <div className="grid gap-8 lg:grid-cols-2 lg:items-end lg:gap-16">
+            <header>
+              <p className="flex items-center gap-2.5 font-mono text-[11px] uppercase tracking-[0.18em] text-site-muted-fg">
+                <span aria-hidden className="h-px w-5 bg-white/30" />
+                {t("Planes WhatsApp con IA", "WhatsApp with AI plans")}
+              </p>
+              <h2 id="precios-titulo" className="mt-5 text-balance text-[30px] font-medium leading-[1.06] tracking-[-0.03em] text-site-fg sm:text-[38px] lg:text-[44px] 2xl:text-[52px]">
+                {t("Un plan para cada etapa de tu negocio.", "A plan for every stage of your business.")}
+              </h2>
+            </header>
+            <div className="max-w-[36rem] text-[16px] leading-[1.65] text-site-muted-fg md:text-[17px]">
+              <p>
+                {descripcion ??
+                  t(
+                    "Nosotros configuramos tu asistente de IA según la información y procesos de tu negocio. Precios en pesos colombianos (COP).",
+                    "We configure your AI assistant based on your business' information and processes. Prices in Colombian pesos (COP)."
+                  )}
+              </p>
+              <p className="mt-2 font-mono text-[11px] uppercase tracking-[0.16em] text-white/45">
+                {t("Una de nuestras soluciones más utilizadas", "One of our most used solutions")}
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-12 grid grid-cols-1 items-start gap-4 sm:grid-cols-2 xl:mt-14 xl:grid-cols-4 xl:gap-5">
+            {tiers.map((tier) => (
+              <TarjetaPlan key={tier.id} tier={tier} notaImplementacion={notaImplementacion} variante="home" />
+            ))}
+          </div>
+
+          <div className="mt-8 flex flex-col gap-4 border-b border-site-border pb-8 text-[12.5px] text-site-muted-fg md:flex-row md:items-center md:justify-between">
+            <p>{t("Los límites de IA y campañas son independientes.", "AI and campaign limits are independent of each other.")}</p>
+            <ul className="flex flex-wrap gap-x-6 gap-y-2">
+              {garantias.map(({ Icono, texto }) => (
+                <li key={texto} className="inline-flex items-center gap-1.5">
+                  <Icono className="h-3.5 w-3.5 text-site-fg/70" /> {texto}
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <div className="mt-10 grid gap-6 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)] lg:gap-16">
+            <div>
+              <h3 className="text-[19px] font-medium tracking-tight text-site-fg">{t("¿Y el costo de WhatsApp?", "What about the cost of WhatsApp?")}</h3>
+              {showComparisonLink && (
+                <Link href="/precios" className="group mt-3 inline-flex min-h-11 items-center gap-1.5 text-[14px] text-site-fg underline-offset-4 hover:underline">
+                  {t("Ver comparación completa", "See full comparison")}
+                  <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
+                </Link>
+              )}
+            </div>
+            <div className="space-y-3 text-[14.5px] leading-relaxed text-site-muted-fg">
+              {notaCostoWhatsApp.map((p) => (
+                <p key={p.slice(0, 30)}>{p}</p>
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section id="precios" className="relative border-t border-site-border py-20">
       <div className="mx-auto max-w-[1440px] px-6">
@@ -521,9 +628,9 @@ export function PricingSection({
         </p>
 
         <div className="mt-6 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-[12px] text-site-muted-fg">
-          <span className="inline-flex items-center gap-1.5"><ShieldCheck className="h-3.5 w-3.5 text-site-primary" /> {t("API Oficial de Meta", "Official Meta API")}</span>
-          <span className="inline-flex items-center gap-1.5"><Globe className="h-3.5 w-3.5 text-site-primary" /> {t("Datos alojados de forma segura", "Data hosted securely")}</span>
-          <span className="inline-flex items-center gap-1.5"><Sparkles className="h-3.5 w-3.5 text-site-primary" /> {t("Agente de IA propio", "Own AI agent")}</span>
+          {garantias.map(({ Icono, texto }) => (
+            <span key={texto} className="inline-flex items-center gap-1.5"><Icono className="h-3.5 w-3.5 text-site-primary" /> {texto}</span>
+          ))}
         </div>
 
         {showComparisonLink && (
@@ -537,19 +644,8 @@ export function PricingSection({
         {/* Aclaración general: Meta cobra la mensajería aparte, directo al negocio. */}
         <div className="mx-auto mt-14 max-w-2xl rounded-2xl border border-site-border bg-site-card/40 p-6 text-center md:p-8">
           <h3 className="font-display text-[18px] font-medium text-site-fg">{t("¿Y el costo de WhatsApp?", "What about the cost of WhatsApp?")}</h3>
-          <p className="mt-3 text-[13.5px] leading-relaxed text-site-muted-fg">
-            {notaSuscripcion ??
-              t(
-                "Tu suscripción a DuLabs cubre la plataforma, la configuración y el uso de la IA según el plan elegido.",
-                "Your DuLabs subscription covers the platform, the setup and the AI usage for your chosen plan."
-              )}
-          </p>
-          <p className="mt-2.5 text-[13.5px] leading-relaxed text-site-muted-fg">
-            {t(
-              "Los costos de mensajería de WhatsApp no están incluidos en la suscripción de DuLabs. Meta cobra directamente al negocio los cargos correspondientes a los mensajes enviados mediante WhatsApp Business Platform, de acuerdo con sus tarifas vigentes.",
-              "WhatsApp messaging costs aren't included in the DuLabs subscription. Meta charges the business directly for messages sent through the WhatsApp Business Platform, per its current pricing."
-            )}
-          </p>
+          <p className="mt-3 text-[13.5px] leading-relaxed text-site-muted-fg">{notaCostoWhatsApp[0]}</p>
+          <p className="mt-2.5 text-[13.5px] leading-relaxed text-site-muted-fg">{notaCostoWhatsApp[1]}</p>
         </div>
       </div>
     </section>
@@ -860,7 +956,7 @@ export function FinalCta() {
    Footer
 ========================================================= */
 
-export function Footer() {
+export function Footer({ variante = "sitio" }: { variante?: "sitio" | "home" } = {}) {
   const { t } = useI18n();
   const cols = [
     {
@@ -900,6 +996,74 @@ export function Footer() {
       ],
     },
   ];
+  // Home: minimalista -- logo, descripción corta, las mismas columnas de enlaces y la MISMA información legal del titular (People BPO)
+  // compactada en una línea. Nada se elimina, solo se ordena.
+  if (variante === "home") {
+    return (
+      <footer className="relative border-t border-site-border bg-site-bg">
+        <div className="hx hx-grid py-16 md:py-20">
+          <div className="grid gap-12 lg:grid-cols-[minmax(0,1.3fr)_repeat(4,minmax(0,1fr))] lg:gap-10">
+            <div>
+              <div className="flex items-center gap-2.5 text-[16px] font-medium tracking-tight text-site-fg">
+                <Image src="/logo.png" alt="Du Labs" width={26} height={26} className="rounded-full" />
+                DuLabs
+              </div>
+              <p className="mt-4 max-w-[22rem] text-[14px] leading-relaxed text-site-muted-fg">
+                {t("IA, automatización y software para empresas. Hecho en Bogotá, Colombia.", "AI, automation and software for businesses. Made in Bogotá, Colombia.")}
+              </p>
+              <a href="mailto:contacto@dulabs.co" className="mt-5 inline-flex min-h-11 items-center text-[14px] text-site-fg underline-offset-4 hover:underline">
+                contacto@dulabs.co
+              </a>
+            </div>
+            <div className="grid grid-cols-2 gap-x-6 gap-y-10 sm:grid-cols-4 lg:col-span-4">
+              {cols.map((c) => (
+                <div key={c.title}>
+                  <p className="font-mono text-[10.5px] uppercase tracking-[0.18em] text-site-muted-fg">{c.title}</p>
+                  <ul className="mt-3 text-[13.5px]">
+                    {c.links.map((l) => (
+                      <li key={l.l}>
+                        <a className="text-site-fg/80 transition-colors hover:text-site-fg" href={l.h}>
+                          {l.l}
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="mt-16 flex flex-col gap-4 border-t border-site-border pt-8 text-[12px] leading-relaxed text-site-muted-fg lg:flex-row lg:items-start lg:justify-between lg:gap-10">
+            <div className="max-w-[46rem] space-y-1.5">
+              <p>
+                {t("Titular del servicio", "Service holder")}: People BPO · {t("Nombre comercial", "Trade name")}: DuLabs · DuLabs by People BPO ·{" "}
+                {t("Colombia", "Colombia")} ·{" "}
+                <a href="https://www.dulabs.co" className="transition-colors hover:text-site-fg">
+                  www.dulabs.co
+                </a>
+              </p>
+              <p className="text-site-muted-fg/80">
+                {t(
+                  "DuLabs es una marca y plataforma tecnológica de People BPO, enfocada en el desarrollo de soluciones de automatización, inteligencia artificial, integraciones y software empresarial.",
+                  "DuLabs is a technology brand and platform of People BPO, focused on developing automation, artificial intelligence, integrations, and enterprise software solutions."
+                )}
+              </p>
+            </div>
+            <div className="shrink-0 space-y-1.5 lg:text-right">
+              <p className="inline-flex items-center gap-2 font-mono text-[10px] uppercase tracking-widest">
+                <span aria-hidden className="home-estado" />
+                {t("Todo funcionando con normalidad", "All systems operational")}
+              </p>
+              <p>
+                © {new Date().getFullYear()} Du Labs. {t("Todos los derechos reservados.", "All rights reserved.")}
+              </p>
+            </div>
+          </div>
+        </div>
+      </footer>
+    );
+  }
+
   return (
     <footer className="relative border-t border-site-border bg-site-bg">
       <div className="mx-auto max-w-[1440px] px-6 py-16">

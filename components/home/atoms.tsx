@@ -28,7 +28,7 @@ export function HomeSection({
 }) {
   return (
     <section id={id} aria-labelledby={titleId} className={`relative scroll-mt-16 border-t border-site-border ${className}`}>
-      <Contenedor ancho={ancho} className="py-16 md:py-20 2xl:py-24">
+      <Contenedor ancho={ancho} className="py-20 md:py-28 2xl:py-32">
         {children}
       </Contenedor>
     </section>
@@ -54,7 +54,7 @@ export function SectionHeader({
         <span aria-hidden className="h-px w-5 bg-white/30" />
         {eyebrow}
       </p>
-      <h2 id={titleId} className="mt-5 text-balance text-[30px] font-medium leading-[1.08] tracking-[-0.03em] text-site-fg sm:text-[38px] lg:text-[44px] 2xl:text-[50px]">
+      <h2 id={titleId} className="mt-5 text-balance text-[32px] font-medium leading-[1.04] tracking-[-0.035em] text-site-fg sm:text-[40px] lg:text-[46px] 2xl:text-[54px]">
         {title}
       </h2>
       {children ? <div className="mt-5 max-w-[40rem] text-[16px] leading-[1.65] text-site-muted-fg md:text-[17px]">{children}</div> : null}

@@ -12,7 +12,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { CapabilitiesSection } from "@/components/home/CapabilitiesSection";
 import { CustomSolutionsSection } from "@/components/home/CustomSolutionsSection";
 import { FaqSection } from "@/components/home/FaqSection";
-import { FinalCta } from "@/components/home/FinalCta";
+import { ContactSection } from "@/components/home/ContactSection";
 import { HomeHero } from "@/components/home/HomeHero";
 import { HomeNav } from "@/components/home/HomeNav";
 import { HowItWorksSection } from "@/components/home/HowItWorksSection";
@@ -43,7 +43,7 @@ const HTML = {
   agendamiento: renderToStaticMarkup(<SchedulingSection />),
   empresas: renderToStaticMarkup(<CustomSolutionsSection />),
   faq: renderToStaticMarkup(<FaqSection />),
-  cierre: renderToStaticMarkup(<FinalCta />),
+  cierre: renderToStaticMarkup(<ContactSection />),
 };
 const TODO = Object.values(HTML).join("\n");
 const T = texto(TODO);
@@ -134,7 +134,8 @@ describe("Modelo de producto -- FAQ, SEO y planes coherentes con 'Crea tu agente
     const paginas = archivos(join(RAIZ, "app")).filter((r) => /page\.tsx$/.test(r) && r !== join(RAIZ, "app", "page.tsx"));
     const usan = paginas.filter((r) => readFileSync(r, "utf8").includes("<PricingSection"));
     assert.ok(usan.length >= 1, "debe haber otras páginas que usan PricingSection (p. ej. /precios)");
-    for (const r of usan) assert.doesNotMatch(readFileSync(r, "utf8"), /descripcion=|notaImplementacion=|notaSuscripcion=/, `${relative(RAIZ, r)} no debe pasar propiedades de la home`);
+    for (const r of usan) assert.doesNotMatch(readFileSync(r, "utf8"), /descripcion=|notaImplementacion=|notaSuscripcion=|variante=/, `${relative(RAIZ, r)} no debe pasar propiedades de la home`);
+    assert.match(PAGINA, /<PricingSection\s+variante="home"/, "la home usa la variante home (mismos planes, presentación de la home)");
     const sections = leer("components", "site", "Sections.tsx");
     assert.match(sections, /descripcion \?\?\s*t\(\s*"Nosotros configuramos tu asistente de IA según la información y procesos de tu negocio\. Precios en pesos colombianos \(COP\)\."/);
     assert.match(sections, /notaImplementacion \?\?\s*t\(\s*"Pago único por la configuración y puesta en marcha de tu asistente\."/);
