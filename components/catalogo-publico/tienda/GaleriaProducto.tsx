@@ -51,7 +51,7 @@ export function GaleriaProducto({ images, name }: { images: PublicProductImages[
             <div key={img.imageUrl} data-index={i} className="aspect-square w-full shrink-0 snap-center">
               {/* eslint-disable-next-line @next/next/no-img-element -- foto pública ya optimizada (WebP) en la carga */}
               <img
-                src={img.imageUrl}
+                src={img.detailUrl}
                 alt={images.length > 1 ? `${name}, foto ${i + 1} de ${images.length}` : name}
                 loading={i === 0 ? "eager" : "lazy"}
                 fetchPriority={i === 0 ? "high" : "auto"}

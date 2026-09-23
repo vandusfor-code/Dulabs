@@ -54,6 +54,7 @@ export interface UploadTicket {
   mimeType: "image/webp" | "image/jpeg";
   image: { path: string; token: string };
   thumb: { path: string; token: string };
+  detail?: { path: string; token: string };
 }
 
 const BASE = "/api/dashboard/catalogo";
@@ -150,7 +151,7 @@ export function createCatalogClient(accessToken: string) {
       opts.onStage?.("uploading");
       const ticket = await call<{ upload: UploadTicket }>(accessToken, `/productos/${encodeURIComponent(productId)}/imagenes/upload-url`, {
         method: "POST",
-        body: JSON.stringify({ mimeType: prepared.mimeType, bytes: prepared.image.size, thumbBytes: prepared.thumb.size }),
+        body: JSON.stringify({ mimeType: prepared.mimeType, bytes: prepared.image.size, thumbBytes: prepared.thumb.size, detailBytes: prepared.detail.size }),
       });
       if (!ticket.ok) return ticket;
       const { upload } = ticket.data;
@@ -204,7 +205,7 @@ export function createCatalogClient(accessToken: string) {
 
     importPhotoUrls(
       importId: string,
-      items: Array<{ productId: string; mimeType: PreparedImage["mimeType"]; bytes: number; thumbBytes: number }>,
+      items: Array<{ productId: string; mimeType: PreparedImage["mimeType"]; bytes: number; thumbBytes: number; detailBytes?: number }>,
     ): Promise<CatalogResult<{ results: Array<{ productId: string; ok: true; upload: UploadTicket } | { productId: string; ok: false; message: string }> }>> {
       return call(accessToken, `/importaciones/${encodeURIComponent(importId)}/fotos/urls`, { method: "POST", body: JSON.stringify({ items }) });
     },
@@ -241,10 +242,13 @@ export function createCatalogClient(accessToken: string) {
 /** Sube imagen + miniatura YA preparadas DIRECTO a Storage con URLs firmadas (nunca pasan por Vercel). */
 export async function uploadPrepared(upload: UploadTicket, prepared: PreparedImage): Promise<CatalogResult<null>> {
   const storage = supabaseBrowser().storage.from(upload.bucket);
-  const [img, thumb] = await Promise.all([
+  const [img, thumb, detail] = await Promise.all([
     storage.uploadToSignedUrl(upload.image.path, upload.image.token, prepared.image, { contentType: prepared.mimeType }),
     storage.uploadToSignedUrl(upload.thumb.path, upload.thumb.token, prepared.thumb, { contentType: prepared.mimeType }),
+    upload.detail ? storage.uploadToSignedUrl(upload.detail.path, upload.detail.token, prepared.detail, { contentType: prepared.mimeType }) : Promise.resolve({ error: null }),
   ]);
+  // La variante de detalle es opcional: si falla, la tienda usa la principal.
+  if (detail.error) console.warn("[catalogo] no se pudo subir la variante de detalle; se usará la principal.");
   if (img.error || thumb.error) {
     return { ok: false, error: { code: "UPLOAD_FAILED", message: "No se pudo subir la foto. Revisa tu conexión e intenta de nuevo.", status: 0 } };
   }

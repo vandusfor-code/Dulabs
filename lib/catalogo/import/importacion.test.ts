@@ -588,7 +588,7 @@ describe("orquestación de la importación", () => {
       finishImport: async (id, counts) => ok({ import: await imports.finish(DELACOUR, id, counts) }),
       prepare: async (file) => {
         if (file.name.startsWith("rota")) throw new Error("No pudimos leer esta imagen. Usa una foto JPG, PNG o WEBP.");
-        return { image: new Blob([new Uint8Array(10)]), thumb: new Blob([new Uint8Array(10)]), mimeType: "image/webp", width: 800, height: 800 };
+        return { image: new Blob([new Uint8Array(10)]), thumb: new Blob([new Uint8Array(10)]), detail: new Blob([new Uint8Array(10)]), mimeType: "image/webp", width: 800, height: 800 };
       },
       upload: async (ticket) => {
         mem.putObject(ticket.image.path, { size: 10, contentType: "image/webp", head: WEBP_HEAD });

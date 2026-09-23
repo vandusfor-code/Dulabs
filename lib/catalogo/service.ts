@@ -12,6 +12,7 @@
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import {
   CATALOG_LIMITS,
+  detailPathOf,
   imageStoragePaths,
   normalizeSearch,
   sniffImageMime,
@@ -70,6 +71,8 @@ export interface ImageUploadTicket {
   mimeType: ImageMimeType;
   image: { path: string; token: string };
   thumb: { path: string; token: string };
+  /** Solo si el navegador anunció la variante de detalle (`detailBytes`). */
+  detail?: { path: string; token: string };
 }
 
 /** Links públicos del catálogo, tal como los ve el dashboard. `wholesalePath` solo para administradores. */
@@ -250,14 +253,19 @@ export function createCatalogService({ repo, newId = randomUUID }: CatalogServic
         throw new CatalogError("LIMIT_REACHED", `Un producto admite máximo ${CATALOG_LIMITS.imagesPerProduct} imágenes.`);
       }
       const uploadId = newId();
-      const { path, thumbPath } = imageStoragePaths(actor.tenantId, productId, uploadId, request.mimeType);
-      const [image, thumb] = await Promise.all([repo.createSignedUpload(path), repo.createSignedUpload(thumbPath)]);
+      const { path, thumbPath, detailPath } = imageStoragePaths(actor.tenantId, productId, uploadId, request.mimeType);
+      const [image, thumb, detail] = await Promise.all([
+        repo.createSignedUpload(path),
+        repo.createSignedUpload(thumbPath),
+        request.detailBytes !== undefined ? repo.createSignedUpload(detailPath) : Promise.resolve(null),
+      ]);
       return {
         uploadId,
         bucket: repo.bucket,
         mimeType: request.mimeType,
         image: { path: image.path, token: image.token },
         thumb: { path: thumb.path, token: thumb.token },
+        ...(detail ? { detail: { path: detail.path, token: detail.token } } : {}),
       };
     },
 
@@ -269,13 +277,13 @@ export function createCatalogService({ repo, newId = randomUUID }: CatalogServic
      */
     async confirmImage(actor: CatalogActor, productId: string, input: ImageConfirmInput): Promise<CatalogImage> {
       await requireProduct(actor, productId);
-      const { path, thumbPath } = imageStoragePaths(actor.tenantId, productId, input.uploadId, input.mimeType);
+      const { path, thumbPath, detailPath } = imageStoragePaths(actor.tenantId, productId, input.uploadId, input.mimeType);
 
-      const [info, thumbInfo] = await Promise.all([repo.objectInfo(path), repo.objectInfo(thumbPath)]);
+      const [info, thumbInfo, detailInfo] = await Promise.all([repo.objectInfo(path), repo.objectInfo(thumbPath), repo.objectInfo(detailPath)]);
       if (!info) throw new CatalogError("IMAGE_INVALID", "No encontramos la imagen subida. Intenta subirla de nuevo.");
 
       const rechazar = async (message: string): Promise<never> => {
-        await discardUpload(thumbInfo ? [path, thumbPath] : [path]);
+        await discardUpload([path, ...(thumbInfo ? [thumbPath] : []), ...(detailInfo ? [detailPath] : [])]);
         throw new CatalogError("IMAGE_INVALID", message);
       };
 
@@ -293,6 +301,18 @@ export function createCatalogService({ repo, newId = randomUUID }: CatalogServic
 
       if ((await repo.countMedia(actor.tenantId, productId)) >= CATALOG_LIMITS.imagesPerProduct) {
         await rechazar(`Un producto admite máximo ${CATALOG_LIMITS.imagesPerProduct} imágenes.`);
+      }
+
+      // Variante de detalle: OPCIONAL. Si llegó y no cumple (tamaño, tipo o
+      // firma), se descarta solo ella: la tienda servirá la principal.
+      if (detailInfo) {
+        const detailHead = await repo.readObjectHead(detailPath, HEAD_BYTES);
+        const detailOk =
+          (detailInfo.size === null || detailInfo.size <= CATALOG_LIMITS.detailBytes) &&
+          (!detailInfo.contentType || detailInfo.contentType === input.mimeType) &&
+          detailHead !== null &&
+          sniffImageMime(detailHead) === input.mimeType;
+        if (!detailOk) await discardUpload([detailPath]);
       }
 
       try {
@@ -357,7 +377,7 @@ export function createCatalogService({ repo, newId = randomUUID }: CatalogServic
     async deleteImage(actor: CatalogActor, mediaId: string): Promise<{ deleted: true }> {
       const removed = await repo.deleteMedia(actor.tenantId, actor.userId, mediaId);
       if (!removed) throw new CatalogError("NOT_FOUND", "La imagen no existe.");
-      await discardUpload([removed.storagePath, ...(removed.thumbPath ? [removed.thumbPath] : [])]);
+      await discardUpload([removed.storagePath, ...(removed.thumbPath ? [removed.thumbPath] : []), detailPathOf(removed.storagePath)]);
       return { deleted: true };
     },
   };
@@ -474,8 +494,9 @@ function imageSources(repo: CatalogRepository, tenantId: string, product: Catalo
 
 function publicImages(slug: string, reference: string, index: number, src: ImageSource): PublicProductImages {
   return {
-    imageUrl: productImagePath(slug, reference, { index, thumb: false }, src.main),
-    thumbUrl: productImagePath(slug, reference, { index, thumb: true }, src.thumb),
+    imageUrl: productImagePath(slug, reference, { index, variant: "main" }, src.main),
+    detailUrl: productImagePath(slug, reference, { index, variant: "detail" }, src.main),
+    thumbUrl: productImagePath(slug, reference, { index, variant: "thumb" }, src.thumb),
   };
 }
 
@@ -677,7 +698,12 @@ export function createPublicCatalogService({ repo }: { repo: CatalogRepository }
       const media = input.file.index === 1 ? await repo.listPrimaryMedia(pub.tenantId, [product.id]) : await repo.listMedia(pub.tenantId, product.id);
       const src = imageSources(repo, pub.tenantId, product, media)[input.file.index - 1];
       if (!src) return null;
-      return repo.openImage(input.file.thumb ? src.thumb : src.main);
+      if (input.file.variant === "thumb") return repo.openImage(src.thumb);
+      if (input.file.variant === "detail") {
+        // Fotos anteriores a las variantes (o de AMORE) no tienen detalle: se sirve la principal.
+        return (await repo.openImage(detailPathOf(src.main))) ?? repo.openImage(src.main);
+      }
+      return repo.openImage(src.main);
     },
   };
 }

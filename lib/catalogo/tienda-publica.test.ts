@@ -213,10 +213,10 @@ describe("fotos de la galería por la ruta pública", () => {
     const principal = await foto(DELACOUR, p.id, true);
     const segunda = await foto(DELACOUR, p.id, false);
     const ref = p.reference.toLowerCase();
-    await publico.getImage({ slug, reference: ref, file: { index: 1, thumb: false } });
-    await publico.getImage({ slug, reference: ref, file: { index: 2, thumb: true } });
+    await publico.getImage({ slug, reference: ref, file: { index: 1, variant: "main" } });
+    await publico.getImage({ slug, reference: ref, file: { index: 2, variant: "thumb" } });
     assert.deepEqual(mem.opened, [principal.image.path, segunda.thumb.path]);
-    assert.equal(await publico.getImage({ slug, reference: ref, file: { index: 3, thumb: false } }), null);
+    assert.equal(await publico.getImage({ slug, reference: ref, file: { index: 3, variant: "main" } }), null);
   });
 });
 

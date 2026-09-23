@@ -2,8 +2,9 @@
  * Catálogo DuLabs — preparación de imágenes EN EL NAVEGADOR, antes de subir.
  *
  * Las fotos de celular pesan 3-10 MB; nunca viajan a una función de Vercel.
- * Aquí se decodifican (respetando la orientación EXIF), se escalan a un lado
- * máximo de 2048 px (imagen) y 400 px (miniatura del listado) y se codifican
+ * Aquí se decodifican (respetando la orientación EXIF), se escalan a tres
+ * variantes -- 2048 px (original optimizado), 1200 px (detalle: ficha del
+ * producto) y 400 px (miniatura: tarjetas, carrito) -- y se codifican
  * en WebP -- o JPEG si el navegador no sabe codificar WebP (Safari) -- con la
  * calidad más alta que quepa en el tope del catálogo. Imagen y miniatura usan
  * SIEMPRE el mismo formato. El servidor vuelve a verificar tamaño y firma
@@ -14,6 +15,8 @@ import { CATALOG_LIMITS, type ImageMimeType } from "@/lib/catalogo/domain";
 export interface PreparedImage {
   image: Blob;
   thumb: Blob;
+  /** Variante de detalle (≤ 1200 px): la que ve el cliente en la ficha. */
+  detail: Blob;
   mimeType: ImageMimeType;
   width: number;
   height: number;
@@ -82,11 +85,12 @@ export async function prepareProductImage(file: File): Promise<PreparedImage> {
   }
   try {
     const mimeType: ImageMimeType = (await canEncodeWebp()) ? "image/webp" : "image/jpeg";
-    const [main, thumb] = await Promise.all([
+    const [main, detail, thumb] = await Promise.all([
       encode(bitmap, CATALOG_LIMITS.imageMaxSide, CATALOG_LIMITS.imageBytes, mimeType),
+      encode(bitmap, CATALOG_LIMITS.detailMaxSide, CATALOG_LIMITS.detailBytes, mimeType),
       encode(bitmap, CATALOG_LIMITS.thumbMaxSide, CATALOG_LIMITS.thumbBytes, mimeType),
     ]);
-    return { image: main.blob, thumb: thumb.blob, mimeType, width: main.width, height: main.height };
+    return { image: main.blob, detail: detail.blob, thumb: thumb.blob, mimeType, width: main.width, height: main.height };
   } catch (err) {
     if (err instanceof ImagePreparationError) throw err;
     throw new ImagePreparationError("No pudimos procesar esta imagen.");

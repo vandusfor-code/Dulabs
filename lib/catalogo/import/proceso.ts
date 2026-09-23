@@ -23,6 +23,7 @@ type Result<T> = { ok: true; data: T } | { ok: false; error: { code: string; mes
 export interface PreparedPhoto {
   image: Blob;
   thumb: Blob;
+  detail: Blob;
   mimeType: "image/webp" | "image/jpeg";
   width: number;
   height: number;
@@ -37,7 +38,7 @@ export interface ImportRunDeps<Ticket extends UploadTicketLike = UploadTicketLik
   importRows(importId: string, body: { rows: RawRow[]; images: ImageInfo[]; decisions: Record<string, CategoryDecision>; force: number[] }): Promise<Result<{ results: ImportRowResult[] }>>;
   photoUrls(
     importId: string,
-    items: Array<{ productId: string; mimeType: PreparedPhoto["mimeType"]; bytes: number; thumbBytes: number }>,
+    items: Array<{ productId: string; mimeType: PreparedPhoto["mimeType"]; bytes: number; thumbBytes: number; detailBytes?: number }>,
   ): Promise<Result<{ results: Array<{ productId: string; ok: true; upload: Ticket } | { productId: string; ok: false; message: string }> }>>;
   confirmPhotos(
     importId: string,
@@ -181,7 +182,7 @@ export async function runImport<Ticket extends UploadTicketLike>(input: ImportRu
       const urls = await withRetry(deps, () =>
         deps.photoUrls(
           importId,
-          ready.map((r) => ({ productId: r.task.productId, mimeType: r.photo.mimeType, bytes: r.photo.image.size, thumbBytes: r.photo.thumb.size })),
+          ready.map((r) => ({ productId: r.task.productId, mimeType: r.photo.mimeType, bytes: r.photo.image.size, thumbBytes: r.photo.thumb.size, detailBytes: r.photo.detail.size })),
         ),
       );
       if (!urls.ok) {

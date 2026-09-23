@@ -39,7 +39,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   return {
     title: titulo,
     description: producto.description ?? descripcion,
-    openGraph: { title: titulo, description: descripcion, images: producto.imageUrl ? [{ url: producto.imageUrl }] : undefined },
+    openGraph: { title: titulo, description: descripcion, images: producto.detailUrl ? [{ url: producto.detailUrl }] : undefined },
   };
 }
 

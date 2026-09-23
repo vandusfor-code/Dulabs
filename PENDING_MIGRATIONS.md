@@ -1,10 +1,12 @@
 # Pasos manuales pendientes en producción
 
-## ⏳ PENDIENTE DE APLICAR Y VERIFICAR EN PRODUCCIÓN — Catálogo DuLabs, Fase 4 (carga masiva)
+## ✅ APLICADA (según confirmación del responsable, 23-sep-2026) — Catálogo DuLabs, Fase 4 (carga masiva)
 
-**Estado: sin evidencia de que se haya ejecutado en producción.** Hasta que
-las 3 consultas de verificación (abajo) devuelvan 1, 2 y 1, se considera
-pendiente.
+**Estado: el responsable del proyecto confirmó que la migración se ejecutó
+en Supabase de producción.** El resultado de las consultas de verificación no
+se registró aquí. Si hubiera dudas, la pantalla de carga masiva lo muestra: sin
+la estructura aparece «estará disponible muy pronto» y el botón de importar
+queda deshabilitado (la sonda `importsAvailable` del backend).
 
 Migración `supabase/migrations/20261107000000_dulabs_catalogo_importaciones.sql`
 (requiere la Fase 1 ya aplicada). **100 % aditiva:**
