@@ -67,6 +67,73 @@ Validada contra PostgreSQL 16 local con el esquema real de AMORE (productos
    select * from public.dulabs_catalogo_secuencias;       -- ultimo_numero = productos por tenant
    select count(*) from public.dulabs_catalogo_eventos;   -- 0 (el backfill no genera eventos)
    ```
+6. **Rollback / mitigación** (de menor a mayor; usar el nivel más bajo que
+   resuelva el problema). Probado de punta a punta en PostgreSQL 16 local con el
+   esquema de AMORE: tras el nivel 3 la tabla vuelve EXACTAMENTE a sus 11
+   columnas e índices originales, conserva todos los productos y ventas, AMORE
+   inserta y vende normalmente, y las dos migraciones se pueden volver a correr.
+   Un error a mitad revierte la transacción completa (no queda estado a medias).
+
+   **Nivel 1 — apagar sin tocar el esquema** (inmediato, reversible):
+   ```sql
+   update public.dulabs_catalogo_publicacion set publicado = false, updated_at = now()
+   where id_tenant = '0d3ae22d-0c38-4fd6-ba48-fb9e29b7cdb4';        -- links públicos (y fotos) => 404
+   update public.dulabs_tenant_modulos set habilitado = false, updated_at = now()
+   where id_tenant = '0d3ae22d-0c38-4fd6-ba48-fb9e29b7cdb4' and modulo = 'catalogo';  -- oculta el módulo
+   ```
+   **Nivel 2 — neutralizar la BD sin borrar datos** (si un trigger afectara las
+   escrituras de AMORE / Business Agent; aplicar junto con el nivel 1). Los productos nuevos quedan con
+   `referencia` NULL; volver a correr la migración fase 1 les asigna la suya
+   (verificado):
+   ```sql
+   begin;
+   drop trigger if exists dulabs_catalogo_asignar_referencia on public.dulabs_inventario_productos;
+   drop trigger if exists dulabs_catalogo_proteger_producto on public.dulabs_inventario_productos;
+   drop trigger if exists dulabs_catalogo_auditar_producto on public.dulabs_inventario_productos;
+   alter table public.dulabs_inventario_productos alter column referencia drop not null;
+   commit;
+   ```
+   **Nivel 3 — rollback completo** (⚠️ BORRA los datos del Catálogo:
+   categorías, fotos registradas, auditoría, links, referencias y precios
+   mayoristas; NUNCA toca productos, stock, fotos legadas ni ventas de AMORE).
+   Solo con aprobación explícita y después de un backup
+   (`create table … as select` de las tablas del catálogo). Los archivos del
+   bucket no se borran:
+   ```sql
+   begin;
+   drop trigger if exists dulabs_catalogo_asignar_referencia on public.dulabs_inventario_productos;
+   drop trigger if exists dulabs_catalogo_proteger_producto on public.dulabs_inventario_productos;
+   drop trigger if exists dulabs_catalogo_auditar_producto on public.dulabs_inventario_productos;
+   drop function if exists public.dulabs_catalogo_adjuntar_media(uuid, uuid, text, text, text, integer, integer, integer, boolean, uuid, text);
+   drop function if exists public.dulabs_catalogo_eliminar_media(uuid, uuid, uuid, text);
+   drop function if exists public.dulabs_catalogo_asignar_referencia();
+   drop function if exists public.dulabs_catalogo_proteger_producto();
+   drop function if exists public.dulabs_catalogo_auditar_producto();
+   drop function if exists public.dulabs_catalogo_formatear_referencia(text, bigint);
+   drop table if exists public.dulabs_catalogo_publicacion;
+   drop table if exists public.dulabs_catalogo_media;
+   drop table if exists public.dulabs_catalogo_eventos;
+   alter table public.dulabs_inventario_productos drop constraint if exists dulabs_inventario_productos_categoria_fk;
+   alter table public.dulabs_inventario_productos drop constraint if exists dulabs_inventario_productos_referencia_formato;
+   drop index if exists public.dulabs_inventario_productos_referencia_uq;
+   drop index if exists public.dulabs_inventario_productos_tenant_created_idx;
+   drop index if exists public.dulabs_inventario_productos_tenant_categoria_idx;
+   alter table public.dulabs_inventario_productos
+     drop column if exists referencia,
+     drop column if exists precio_mayor,
+     drop column if exists material,
+     drop column if exists color,
+     drop column if exists categoria_id,
+     drop column if exists controla_stock,
+     drop column if exists created_by,
+     drop column if exists updated_by,
+     drop column if exists escritura_id;
+   drop table if exists public.dulabs_catalogo_categorias;
+   drop table if exists public.dulabs_catalogo_secuencias;
+   drop table if exists public.dulabs_tenant_modulos;
+   drop function if exists public.dulabs_catalogo_eventos_inmutables();
+   commit;
+   ```
 
 ## PENDIENTE — DuLabs Developer V1, GitHub Integration (Fase 1)
 

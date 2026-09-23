@@ -30,10 +30,12 @@ import {
   type PriceContext,
 } from "@/lib/catalogo/domain";
 import { CatalogError } from "@/lib/catalogo/errors";
-import type { CatalogRepository, ProductPatchData, StoredMedia } from "@/lib/catalogo/repository";
+import type { CatalogRepository, ProductPatchData, PublicImageObject, StoredMedia } from "@/lib/catalogo/repository";
 import {
   PUBLIC_PAGE_SIZE,
   isValidSlug,
+  productImagePath,
+  referenceFromUrl,
   retailPath,
   slugCandidates,
   slugify,
@@ -41,6 +43,8 @@ import {
   wholesalePath,
   type CatalogPublication,
   type PublicCatalogPage,
+  type PublicImageKind,
+  type PublicProductImages,
 } from "@/lib/catalogo/publicacion";
 
 /** Quién ejecuta la operación. tenantId SIEMPRE proviene de la membresía autenticada. */
@@ -368,14 +372,41 @@ export interface PublicCatalogQuery {
   page?: number;
 }
 
+export interface PublicImageQuery {
+  slug: string;
+  /** Tal como llega en la URL ("dl-000184"). */
+  reference: string;
+  kind: PublicImageKind;
+}
+
+/**
+ * Rutas de Storage de la foto principal de un producto: la media del Catálogo
+ * o, si no tiene, la foto legada (foto_url) SOLO si vive en este bucket y bajo
+ * la carpeta del propio tenant. Una URL externa no se publica (tampoco la
+ * permitiría el CSP img-src).
+ */
+function imageSources(repo: CatalogRepository, tenantId: string, product: CatalogProduct, primary: StoredMedia | undefined): { main: string; thumb: string } | null {
+  if (primary) return { main: primary.storagePath, thumb: primary.thumbPath ?? primary.storagePath };
+  const legacy = product.primaryImage?.url ? repo.storagePathFromUrl(product.primaryImage.url) : null;
+  if (!legacy || !legacy.startsWith(`${tenantId}/`) || legacy.includes("..")) return null;
+  return { main: legacy, thumb: legacy };
+}
+
 export function createPublicCatalogService({ repo }: { repo: CatalogRepository }) {
+  /** Publicación visible por slug: publicada y con el módulo habilitado; null en cualquier otro caso (=> 404). */
+  async function openPublication(slug: string) {
+    if (!isValidSlug(slug)) return null;
+    const pub = await repo.getPublicationBySlug(slug);
+    if (!pub || !pub.published) return null;
+    if (!(await repo.isModuleEnabled(pub.tenantId))) return null;
+    return pub;
+  }
+
   return {
     async getCatalog(input: PublicCatalogQuery): Promise<PublicCatalogPage | null> {
-      if (!isValidSlug(input.slug)) return null;
-      const pub = await repo.getPublicationBySlug(input.slug);
-      if (!pub || !pub.published) return null;
+      const pub = await openPublication(input.slug);
+      if (!pub) return null;
       if (input.context === "wholesale" && !tokensMatch(input.token, pub.wholesaleToken)) return null;
-      if (!(await repo.isModuleEnabled(pub.tenantId))) return null;
 
       const page = Number.isInteger(input.page) && (input.page as number) >= 1 ? Math.min(input.page as number, 10_000) : 1;
       const categoryId = input.categoryId && UUID_PATTERN.test(input.categoryId) ? input.categoryId : undefined;
@@ -394,15 +425,40 @@ export function createPublicCatalogService({ repo }: { repo: CatalogRepository }
       const primaries = await repo.listPrimaryMedia(pub.tenantId, items.map((p) => p.id));
       const byProduct = new Map(primaries.map((m) => [m.productId, m]));
 
+      const publicImages = (p: CatalogProduct): PublicProductImages | null => {
+        const src = imageSources(repo, pub.tenantId, p, byProduct.get(p.id));
+        return src
+          ? { imageUrl: productImagePath(pub.slug, p.reference, "main", src.main), thumbUrl: productImagePath(pub.slug, p.reference, "thumb", src.thumb) }
+          : null;
+      };
+
       return {
         business: { name: pub.publicName, whatsapp: business.whatsapp },
         context: input.context,
-        products: items.map((p) => toPublicProduct(withPrimaryMedia(repo, p, byProduct.get(p.id)), input.context)),
+        products: items.map((p) => toPublicProduct(p, input.context, publicImages(p))),
         categories,
         total,
         page,
         pageSize: PUBLIC_PAGE_SIZE,
       };
+    },
+
+    /**
+     * Foto de un producto para la ruta pública. Mismas reglas que la vitrina:
+     * catálogo publicado, módulo habilitado y producto ACTIVO. La imagen es la
+     * misma para detal y mayor, así que no pide token (no contiene precios).
+     */
+    async getImage(input: PublicImageQuery): Promise<PublicImageObject | null> {
+      const reference = referenceFromUrl(input.reference);
+      if (!reference) return null;
+      const pub = await openPublication(input.slug);
+      if (!pub) return null;
+      const product = await repo.getProductByReference(pub.tenantId, reference);
+      if (!product || product.status !== "ACTIVE") return null;
+      const [primary] = await repo.listPrimaryMedia(pub.tenantId, [product.id]);
+      const src = imageSources(repo, pub.tenantId, product, primary);
+      if (!src) return null;
+      return repo.openImage(input.kind === "thumb" ? src.thumb : src.main);
     },
   };
 }

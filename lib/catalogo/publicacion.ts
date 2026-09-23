@@ -9,7 +9,7 @@
  * La proyección pública lleva UN solo precio (el del contexto) y nada
  * interno: ni id técnico, ni tenant, ni el precio del otro contexto.
  */
-import { priceFor, type CatalogCategory, type CatalogProduct, type PriceContext } from "@/lib/catalogo/domain";
+import { isReference, priceFor, type CatalogCategory, type CatalogProduct, type PriceContext } from "@/lib/catalogo/domain";
 
 export interface CatalogPublication {
   slug: string;
@@ -81,7 +81,18 @@ export function wholesalePath(slug: string, token: string): string {
   return `/catalogo/${slug}/mayor/${token}`;
 }
 
-export function toPublicProduct(product: CatalogProduct, context: PriceContext): PublicCatalogProduct {
+/** URLs PÚBLICAS de la foto (las de /catalogo/{slug}/productos/…), nunca las de Storage. */
+export interface PublicProductImages {
+  imageUrl: string;
+  thumbUrl: string;
+}
+
+/**
+ * Proyección pública de un producto. Las imágenes llegan APARTE y ya
+ * convertidas a la ruta pública: `product.primaryImage` (URL de Storage con
+ * {tenant}/{producto}/…) nunca se copia al HTML.
+ */
+export function toPublicProduct(product: CatalogProduct, context: PriceContext, images: PublicProductImages | null = null): PublicCatalogProduct {
   return {
     reference: product.reference,
     name: product.name,
@@ -90,9 +101,54 @@ export function toPublicProduct(product: CatalogProduct, context: PriceContext):
     color: product.color,
     categoryName: product.categoryName,
     price: priceFor(product, context),
-    imageUrl: product.primaryImage?.url ?? null,
-    thumbUrl: product.primaryImage?.thumbUrl ?? null,
+    imageUrl: images?.imageUrl ?? null,
+    thumbUrl: images?.thumbUrl ?? null,
   };
+}
+
+// ---------------------------------------------------------------------------
+// URL pública de las fotos: /catalogo/{slug}/productos/{referencia}/{main|thumb}.{ext}?v={version}
+// Solo slug + referencia (datos que el cliente ya ve). La ruta de Storage
+// ({tenant}/{producto}/{upload}.webp) se resuelve en el servidor.
+// ---------------------------------------------------------------------------
+
+export type PublicImageKind = "main" | "thumb";
+
+const IMAGE_FILE_PATTERN = /^(main|thumb)\.(webp|jpe?g|png)$/;
+
+/** "main.webp" -> "main"; cualquier otro nombre -> null (404). */
+export function parseImageFileName(name: string): PublicImageKind | null {
+  const match = IMAGE_FILE_PATTERN.exec(name);
+  return match ? (match[1] as PublicImageKind) : null;
+}
+
+/** "dl-000184" (como va en la URL) -> "DL-000184"; null si no es una referencia válida. */
+export function referenceFromUrl(value: string): string | null {
+  const ref = value.toUpperCase();
+  return isReference(ref) ? ref : null;
+}
+
+function extensionOf(storagePath: string): string {
+  const match = /\.(webp|jpe?g|png)$/i.exec(storagePath);
+  return match ? match[1].toLowerCase() : "webp";
+}
+
+/**
+ * Versión de la imagen para la caché (FNV-1a 32 bits en base 36): cambia cuando
+ * cambia la foto principal, así el CDN y el navegador nunca sirven una foto
+ * vieja. Es un hash NO reversible de la ruta: no revela ningún id.
+ */
+export function imageVersion(storagePath: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < storagePath.length; i++) {
+    hash ^= storagePath.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+export function productImagePath(slug: string, reference: string, kind: PublicImageKind, storagePath: string): string {
+  return `/catalogo/${slug}/productos/${reference.toLowerCase()}/${kind}.${extensionOf(storagePath)}?v=${imageVersion(storagePath)}`;
 }
 
 /** Link de WhatsApp con la referencia en el mensaje: el agente (y el asesor) identifican la pieza exacta. */

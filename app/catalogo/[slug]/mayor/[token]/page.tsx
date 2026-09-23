@@ -25,6 +25,9 @@ export async function generateMetadata(props: Props): Promise<Metadata> {
   return {
     title: `${data.business.name} · Catálogo mayorista`,
     robots: { index: false, follow: false, nocache: true },
+    // La URL lleva el token: ni siquiera las peticiones a nuestro propio
+    // dominio (fotos, navegación) la envían como Referer.
+    referrer: "no-referrer",
   };
 }
 

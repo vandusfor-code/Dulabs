@@ -67,6 +67,16 @@ export interface StoredObjectInfo {
   contentType: string | null;
 }
 
+/** Imagen lista para servir por la ruta pública (cuerpo en streaming, sin cargarla en memoria). */
+export interface PublicImageObject {
+  body: ReadableStream<Uint8Array>;
+  contentType: string;
+  size: number | null;
+}
+
+/** Únicos tipos que la ruta pública sirve (lo que el Catálogo y AMORE suben). */
+export const PUBLIC_IMAGE_TYPES = ["image/webp", "image/jpeg", "image/png"] as const;
+
 export interface SignedUpload {
   path: string;
   token: string;
@@ -87,6 +97,7 @@ export interface AttachMediaData {
 export interface CatalogRepository {
   listProducts(tenantId: string, filter: ProductListFilter): Promise<{ items: CatalogProduct[]; total: number }>;
   getProduct(tenantId: string, productId: string): Promise<CatalogProduct | null>;
+  getProductByReference(tenantId: string, reference: string): Promise<CatalogProduct | null>;
   insertProduct(tenantId: string, actorId: string, data: ProductWriteData): Promise<CatalogProduct>;
   updateProduct(tenantId: string, actorId: string, productId: string, patch: ProductPatchData): Promise<CatalogProduct | null>;
 
@@ -118,6 +129,10 @@ export interface CatalogRepository {
   readObjectHead(path: string, bytes: number): Promise<Uint8Array | null>;
   removeObjects(paths: string[]): Promise<void>;
   publicUrl(path: string): string;
+  /** Ruta dentro del bucket si `url` es una URL pública de ESTE bucket (foto legada en foto_url); null en otro caso. */
+  storagePathFromUrl(url: string): string | null;
+  /** Abre una imagen del bucket para servirla por la ruta pública; null si no existe o no es una imagen permitida. */
+  openImage(path: string): Promise<PublicImageObject | null>;
 }
 
 // ---------------------------------------------------------------------------
@@ -265,6 +280,12 @@ export function createSupabaseCatalogRepository(supabase: SupabaseClient): Catal
     async getProduct(tenantId, productId) {
       const { data, error } = await supabase.from(T_PRODUCTOS).select(PRODUCT_COLUMNS).eq("id_tenant", tenantId).eq("id", productId).maybeSingle();
       if (error) fail("getProduct", error);
+      return data ? mapProduct(data as ProductRow) : null;
+    },
+
+    async getProductByReference(tenantId, reference) {
+      const { data, error } = await supabase.from(T_PRODUCTOS).select(PRODUCT_COLUMNS).eq("id_tenant", tenantId).eq("referencia", reference).maybeSingle();
+      if (error) fail("getProductByReference", error);
       return data ? mapProduct(data as ProductRow) : null;
     },
 
@@ -495,5 +516,35 @@ export function createSupabaseCatalogRepository(supabase: SupabaseClient): Catal
     },
 
     publicUrl,
+
+    storagePathFromUrl(url) {
+      const base = publicUrlBase();
+      if (!url.startsWith(base)) return null;
+      const path = url.slice(base.length).split(/[?#]/)[0];
+      try {
+        return decodeURIComponent(path) || null;
+      } catch {
+        return null;
+      }
+    },
+
+    async openImage(path) {
+      // El bucket es público: se lee por su URL pública (CDN de Supabase) y el
+      // cuerpo se reenvía en streaming. Sin caché de datos de Next: la caché
+      // la hacen el CDN y el navegador con los headers de la ruta pública.
+      try {
+        const res = await fetch(publicUrl(path), { cache: "no-store" });
+        const contentType = (res.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+        if (!res.ok || !res.body || !(PUBLIC_IMAGE_TYPES as readonly string[]).includes(contentType)) {
+          await res.body?.cancel();
+          return null;
+        }
+        const length = Number(res.headers.get("content-length"));
+        return { body: res.body, contentType, size: Number.isFinite(length) && length > 0 ? length : null };
+      } catch (error) {
+        console.error("[catalogo/repository] openImage:", error instanceof Error ? error.message : error);
+        return null;
+      }
+    },
   };
 }

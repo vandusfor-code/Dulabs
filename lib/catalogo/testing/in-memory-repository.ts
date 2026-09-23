@@ -35,6 +35,7 @@ export function createInMemoryCatalogRepository() {
   const objects = new Map<string, StoredObject>();
   const removed: string[] = [];
   const signedPaths: string[] = [];
+  const opened: string[] = [];
   const publications = new Map<string, CatalogPublication>();
   const profiles = new Map<string, { name: string | null; whatsapp: string | null }>();
   const modulesEnabled = new Set<string>();
@@ -61,6 +62,11 @@ export function createInMemoryCatalogRepository() {
     async getProduct(tenantId, id) {
       const p = products.get(id);
       return p && p.tenantId === tenantId ? strip(p) : null;
+    },
+
+    async getProductByReference(tenantId, reference) {
+      const p = [...products.values()].find((x) => x.tenantId === tenantId && x.reference === reference);
+      return p ? strip(p) : null;
     },
 
     async insertProduct(tenantId, actorId, d: ProductWriteData) {
@@ -243,6 +249,28 @@ export function createInMemoryCatalogRepository() {
     },
 
     publicUrl,
+
+    storagePathFromUrl(url) {
+      const base = publicUrl("");
+      return url.startsWith(base) ? url.slice(base.length) || null : null;
+    },
+
+    async openImage(path) {
+      const o = objects.get(path);
+      if (!o || !o.contentType || !["image/webp", "image/jpeg", "image/png"].includes(o.contentType)) return null;
+      const head = o.head;
+      opened.push(path);
+      return {
+        body: new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(head);
+            controller.close();
+          },
+        }),
+        contentType: o.contentType,
+        size: o.size,
+      };
+    },
   };
 
   function strip(p: StoredProduct): CatalogProduct {
@@ -266,6 +294,8 @@ export function createInMemoryCatalogRepository() {
     hasObject: (path: string) => objects.has(path),
     removed,
     signedPaths,
+    /** Rutas de Storage que la ruta pública de imágenes abrió. */
+    opened,
     setProfile(tenantId: string, profile: { name: string | null; whatsapp: string | null }) {
       profiles.set(tenantId, profile);
     },
