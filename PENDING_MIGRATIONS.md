@@ -1,6 +1,10 @@
 # Pasos manuales pendientes en producción
 
-## ⏳ PENDIENTE — Catálogo DuLabs, Fase 7 (pedidos estructurados: WhatsApp + agente)
+## ✅ APLICADA (23-sep-2026) — Catálogo DuLabs, Fase 7 (pedidos estructurados: WhatsApp + agente)
+
+**Estado: aplicada en Supabase de producción por el responsable del proyecto.**
+Verificación en el SQL Editor: `tablas = 2`, `funciones = 3`,
+`permisos_publicos = 0` (consulta del paso 2, combinada en una sola fila).
 
 Migración `supabase/migrations/20261108000000_dulabs_catalogo_pedidos.sql`.
 **100 % aditiva** (no toca tablas existentes):
