@@ -1957,10 +1957,23 @@ body {
   --color-edge: #e7ded3;
   --color-fg: #1e1914;
   --color-mist: #766a5f;
-  --tienda-oro: #9a6a33;
-  --tienda-oro-hover: #85592a;
+  /* Oro con contraste AA (≥ 4.5:1) como texto sobre marfil y como fondo de texto blanco. */
+  --tienda-oro: #8a5d2b;
+  --tienda-oro-hover: #74491f;
   --tienda-oro-suave: #f1e6d6;
   color-scheme: light;
+}
+
+/* Foco visible solo con teclado (no al tocar), en todo el tema de la tienda. */
+.catalogo-tienda :focus-visible,
+.catalogo-tienda:focus-visible {
+  outline: 2px solid var(--tienda-oro);
+  outline-offset: 2px;
+}
+
+.catalogo-tienda dialog::backdrop {
+  background: rgb(30 25 20 / 0.4);
+  backdrop-filter: blur(2px);
 }
 
 .catalogo-tienda .font-serif-tienda {

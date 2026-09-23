@@ -443,3 +443,4 @@ lib/catalogo/compat-stock.test.ts
 lib/catalogo/publicacion.test.ts
 lib/catalogo/carrito.test.ts
 lib/catalogo/inicio.test.ts
+lib/catalogo/tienda-publica.test.ts

@@ -54,6 +54,7 @@ describe("proyección pública de un producto", () => {
     pricing: { retail: 35_000, wholesale: 18_000 },
     status: "ACTIVE",
     tracksStock: false,
+    stock: 0,
     primaryImage: { url: "https://x/a.webp", thumbUrl: "https://x/a_thumb.webp" },
     createdAt: "",
     updatedAt: "",
@@ -235,11 +236,11 @@ describe("links del catálogo (dashboard) + catálogo público", () => {
 describe("URL pública de las fotos", () => {
   it("solo slug + referencia + versión opaca", () => {
     const ruta = "0d3ae22d-0c38-4fd6-ba48-fb9e29b7cdb4/11111111-2222-4333-8444-555555555555/99999999-aaaa-4bbb-8ccc-dddddddddddd.webp";
-    const url = productImagePath("delacour", "DL-000184", "main", ruta);
+    const url = productImagePath("delacour", "DL-000184", { index: 1, thumb: false }, ruta);
     assert.match(url, /^\/catalogo\/delacour\/productos\/dl-000184\/main\.webp\?v=[0-9a-z]+$/);
     for (const id of ruta.replace(".webp", "").split("/")) assert.equal(url.includes(id), false);
     // Foto legada JPG de AMORE: la extensión real se conserva.
-    assert.ok(productImagePath("amore", "DL-000001", "thumb", "t/p/foto.JPG").includes("/thumb.jpg?v="));
+    assert.ok(productImagePath("amore", "DL-000001", { index: 1, thumb: true }, "t/p/foto.JPG").includes("/thumb.jpg?v="));
   });
   it("la versión cambia cuando cambia la foto y es estable para la misma", () => {
     assert.equal(imageVersion("a/b/c.webp"), imageVersion("a/b/c.webp"));
@@ -247,9 +248,12 @@ describe("URL pública de las fotos", () => {
   });
 
   it("valida el nombre de archivo y la referencia de la URL", () => {
-    assert.equal(parseImageFileName("main.webp"), "main");
-    assert.equal(parseImageFileName("thumb.jpg"), "thumb");
-    for (const malo of ["main.gif", "otra.webp", "../main.webp", "main.webp.exe", "MAIN.webp", ""]) assert.equal(parseImageFileName(malo), null, malo);
+    assert.deepEqual(parseImageFileName("main.webp"), { index: 1, thumb: false });
+    assert.deepEqual(parseImageFileName("thumb.jpg"), { index: 1, thumb: true });
+    assert.deepEqual(parseImageFileName("2.webp"), { index: 2, thumb: false });
+    assert.deepEqual(parseImageFileName("12-thumb.webp"), { index: 12, thumb: true });
+    for (const malo of ["main.gif", "otra.webp", "../main.webp", "main.webp.exe", "MAIN.webp", "", "1.webp", "13.webp", "0-thumb.webp", "2-main.webp"])
+      assert.equal(parseImageFileName(malo), null, malo);
     assert.equal(referenceFromUrl("dl-000184"), "DL-000184");
     for (const malo of ["dl-1", "000184", "dl-000184;drop", "..%2f"]) assert.equal(referenceFromUrl(malo), null, malo);
   });
@@ -281,8 +285,8 @@ describe("ruta pública de imágenes", () => {
 
   it("sirve la foto principal y la miniatura de un producto activo", async () => {
     const { p, pub, ticket } = await productoConFoto();
-    const main = await publico.getImage({ slug: pub.slug, reference: p.reference.toLowerCase(), kind: "main" });
-    const thumb = await publico.getImage({ slug: pub.slug, reference: p.reference.toLowerCase(), kind: "thumb" });
+    const main = await publico.getImage({ slug: pub.slug, reference: p.reference.toLowerCase(), file: { index: 1, thumb: false } });
+    const thumb = await publico.getImage({ slug: pub.slug, reference: p.reference.toLowerCase(), file: { index: 1, thumb: true } });
     assert.equal(main?.contentType, "image/webp");
     assert.ok(thumb);
     assert.deepEqual(mem.opened, [ticket.image.path, ticket.thumb.path]);
@@ -291,21 +295,21 @@ describe("ruta pública de imágenes", () => {
   it("404 si el producto está inactivo, no existe, es de otro catálogo o el catálogo no es visible", async () => {
     const { p, pub } = await productoConFoto();
     const ref = p.reference.toLowerCase();
-    assert.equal(await publico.getImage({ slug: pub.slug, reference: "dl-999999", kind: "main" }), null);
-    assert.equal(await publico.getImage({ slug: pub.slug, reference: "../../x", kind: "main" }), null);
-    assert.equal(await publico.getImage({ slug: "otro-negocio", reference: ref, kind: "main" }), null);
+    assert.equal(await publico.getImage({ slug: pub.slug, reference: "dl-999999", file: { index: 1, thumb: false } }), null);
+    assert.equal(await publico.getImage({ slug: pub.slug, reference: "../../x", file: { index: 1, thumb: false } }), null);
+    assert.equal(await publico.getImage({ slug: "otro-negocio", reference: ref, file: { index: 1, thumb: false } }), null);
     mem.setProfile(OTRO.tenantId, { name: "Otro negocio", whatsapp: null });
     mem.enableModule(OTRO.tenantId);
     const otro = await admin.ensurePublication(OTRO);
-    assert.equal(await publico.getImage({ slug: otro.slug, reference: ref, kind: "main" }), null, "la referencia es por tenant");
+    assert.equal(await publico.getImage({ slug: otro.slug, reference: ref, file: { index: 1, thumb: false } }), null, "la referencia es por tenant");
     mem.setPublished(DELACOUR.tenantId, false);
-    assert.equal(await publico.getImage({ slug: pub.slug, reference: ref, kind: "main" }), null);
+    assert.equal(await publico.getImage({ slug: pub.slug, reference: ref, file: { index: 1, thumb: false } }), null);
     mem.setPublished(DELACOUR.tenantId, true);
     mem.enableModule(DELACOUR.tenantId, false);
-    assert.equal(await publico.getImage({ slug: pub.slug, reference: ref, kind: "main" }), null);
+    assert.equal(await publico.getImage({ slug: pub.slug, reference: ref, file: { index: 1, thumb: false } }), null);
     mem.enableModule(DELACOUR.tenantId, true);
     await admin.updateProduct(DELACOUR, p.id, { status: "INACTIVE" });
-    assert.equal(await publico.getImage({ slug: pub.slug, reference: ref, kind: "main" }), null);
+    assert.equal(await publico.getImage({ slug: pub.slug, reference: ref, file: { index: 1, thumb: false } }), null);
     assert.equal(mem.opened.length, 0, "nunca se abrió el Storage");
   });
 
@@ -320,15 +324,15 @@ describe("ruta pública de imágenes", () => {
     stored.primaryImage = { url: mem.repo.publicUrl(propia), thumbUrl: mem.repo.publicUrl(propia) };
     const page = await publico.getCatalog({ slug: pub.slug, context: "retail" });
     assert.match(page?.products[0].imageUrl ?? "", /\/productos\/dl-\d{6}\/main\.jpg\?v=/);
-    assert.equal((await publico.getImage({ slug: pub.slug, reference: ref, kind: "main" }))?.contentType, "image/jpeg");
+    assert.equal((await publico.getImage({ slug: pub.slug, reference: ref, file: { index: 1, thumb: false } }))?.contentType, "image/jpeg");
 
     const ajena = `${OTRO.tenantId}/${p.id}/ajena.jpg`;
     mem.putObject(ajena, { size: 10, contentType: "image/jpeg", head: JPEG_HEAD });
     stored.primaryImage = { url: mem.repo.publicUrl(ajena), thumbUrl: mem.repo.publicUrl(ajena) };
-    assert.equal(await publico.getImage({ slug: pub.slug, reference: ref, kind: "main" }), null, "otra carpeta de tenant");
+    assert.equal(await publico.getImage({ slug: pub.slug, reference: ref, file: { index: 1, thumb: false } }), null, "otra carpeta de tenant");
 
     stored.primaryImage = { url: "https://otro-sitio.test/foto.jpg", thumbUrl: "https://otro-sitio.test/foto.jpg" };
     assert.equal((await publico.getCatalog({ slug: pub.slug, context: "retail" }))?.products[0].imageUrl, null, "URL externa: sin foto");
-    assert.equal(await publico.getImage({ slug: pub.slug, reference: ref, kind: "main" }), null);
+    assert.equal(await publico.getImage({ slug: pub.slug, reference: ref, file: { index: 1, thumb: false } }), null);
   });
 });

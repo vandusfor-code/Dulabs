@@ -5,6 +5,7 @@
  * GET): funciona sin JavaScript y cada vista se puede compartir.
  */
 import Link from "next/link";
+import type { ReactNode } from "react";
 import { ImageOff, MessageCircle, Search, X } from "lucide-react";
 import { formatCop } from "@/lib/business-agent-quote";
 import { whatsappOrderLink, type PublicCatalogPage, type PublicCatalogProduct } from "@/lib/catalogo/publicacion";
@@ -74,6 +75,7 @@ export function PublicCatalog({
   categoria,
   compact = false,
   listPath,
+  tile,
 }: {
   data: PublicCatalogPage;
   basePath: string;
@@ -83,6 +85,8 @@ export function PublicCatalog({
   compact?: boolean;
   /** Destino de "Todo" / "Quitar filtros" (el listado completo). Por defecto, basePath. */
   listPath?: string;
+  /** Tarjeta de producto propia (la tienda usa la suya, con carrito). Por defecto, la tarjeta con "Pedir por WhatsApp". */
+  tile?: (product: PublicCatalogProduct) => ReactNode;
 }) {
   const todo = listPath ?? basePath;
   const totalPaginas = Math.max(1, Math.ceil(data.total / data.pageSize));
@@ -163,9 +167,9 @@ export function PublicCatalog({
         </div>
       ) : (
         <div className="grid grid-cols-2 gap-3 sm:gap-5 md:grid-cols-3 lg:grid-cols-4">
-          {data.products.map((p) => (
-            <ProductTile key={p.reference} product={p} whatsapp={data.business.whatsapp} context={data.context} />
-          ))}
+          {data.products.map((p) =>
+            tile ? <div key={p.reference}>{tile(p)}</div> : <ProductTile key={p.reference} product={p} whatsapp={data.business.whatsapp} context={data.context} />,
+          )}
         </div>
       )}
 

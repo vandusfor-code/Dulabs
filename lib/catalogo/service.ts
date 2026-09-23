@@ -43,7 +43,9 @@ import {
   wholesalePath,
   type CatalogPublication,
   type PublicCatalogPage,
-  type PublicImageKind,
+  type PublicCatalogProduct,
+  type PublicImageFile,
+  type PublicProductDetail,
   type PublicProductImages,
 } from "@/lib/catalogo/publicacion";
 
@@ -376,25 +378,94 @@ export interface PublicImageQuery {
   slug: string;
   /** Tal como llega en la URL ("dl-000184"). */
   reference: string;
-  kind: PublicImageKind;
+  file: PublicImageFile;
+}
+
+/** Máximo de productos destacados en el inicio. */
+export const FEATURED_LIMIT = 8;
+/** Máximo de referencias por resolución de selección (= tope de líneas del carrito). */
+export const SELECTION_MAX = 60;
+/** Productos recientes con foto que se revisan para elegir la portada de cada categoría. */
+const COVER_POOL = 200;
+
+/**
+ * Política con la que se eligen los destacados. HOY no existe un campo
+ * explícito: se usan los productos activos más recientes con foto
+ * ("recent-with-photo") y, si ninguno tiene foto, los más recientes
+ * ("recent"). Cuando exista `destacado = true/false` (marcado por un
+ * administrador) solo cambia `featuredProducts`: la vista y el contrato
+ * (`PublicHome`) no se tocan.
+ */
+export type FeaturedPolicy = "recent-with-photo" | "recent";
+
+/** Marco de la tienda: identidad pública + categorías + WhatsApp de pedidos (todo desde la BD). */
+export interface PublicStorefront {
+  slug: string;
+  publicName: string;
+  whatsapp: string | null;
+  categories: CatalogCategory[];
+}
+
+export interface PublicHome {
+  featured: PublicCatalogProduct[];
+  featuredPolicy: FeaturedPolicy;
+  /** Todas las categorías reales, con la miniatura de uno de sus productos cuando existe. */
+  categories: Array<CatalogCategory & { coverUrl: string | null }>;
+}
+
+/** Selección del carrito resuelta por el backend: la verdad sobre cada referencia. */
+export interface ResolvedSelection {
+  context: PriceContext;
+  /** Productos ACTIVOS encontrados, con su precio vigente del contexto y su disponibilidad. */
+  items: PublicCatalogProduct[];
+  /** Referencias que ya no existen o no están activas en este catálogo. */
+  unknown: string[];
+}
+
+interface ImageSource {
+  main: string;
+  thumb: string;
 }
 
 /**
- * Rutas de Storage de la foto principal de un producto: la media del Catálogo
- * o, si no tiene, la foto legada (foto_url) SOLO si vive en este bucket y bajo
- * la carpeta del propio tenant. Una URL externa no se publica (tampoco la
- * permitiría el CSP img-src).
+ * Rutas de Storage de las fotos de un producto, principal primero: la media
+ * del Catálogo o, si no tiene, la foto legada (foto_url) SOLO si vive en este
+ * bucket y bajo la carpeta del propio tenant. Una URL externa no se publica
+ * (tampoco la permitiría el CSP img-src).
  */
-function imageSources(repo: CatalogRepository, tenantId: string, product: CatalogProduct, primary: StoredMedia | undefined): { main: string; thumb: string } | null {
-  if (primary) return { main: primary.storagePath, thumb: primary.thumbPath ?? primary.storagePath };
+function imageSources(repo: CatalogRepository, tenantId: string, product: CatalogProduct, media: StoredMedia[]): ImageSource[] {
+  if (media.length > 0) {
+    const ordered = [...media].sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary) || a.order - b.order);
+    return ordered.map((m) => ({ main: m.storagePath, thumb: m.thumbPath ?? m.storagePath }));
+  }
   const legacy = product.primaryImage?.url ? repo.storagePathFromUrl(product.primaryImage.url) : null;
-  if (!legacy || !legacy.startsWith(`${tenantId}/`) || legacy.includes("..")) return null;
-  return { main: legacy, thumb: legacy };
+  if (!legacy || !legacy.startsWith(`${tenantId}/`) || legacy.includes("..")) return [];
+  return [{ main: legacy, thumb: legacy }];
+}
+
+function publicImages(slug: string, reference: string, index: number, src: ImageSource): PublicProductImages {
+  return {
+    imageUrl: productImagePath(slug, reference, { index, thumb: false }, src.main),
+    thumbUrl: productImagePath(slug, reference, { index, thumb: true }, src.thumb),
+  };
+}
+
+/** "dl-000184, DL-000184 ,x" -> ["DL-000184"]: solo referencias con formato válido, sin duplicados, con tope. */
+export function normalizeReferences(input: readonly string[]): string[] {
+  const out: string[] = [];
+  for (const raw of input) {
+    const ref = referenceFromUrl(raw.trim());
+    if (ref && !out.includes(ref)) out.push(ref);
+    if (out.length >= SELECTION_MAX) break;
+  }
+  return out;
 }
 
 export function createPublicCatalogService({ repo }: { repo: CatalogRepository }) {
+  type Publication = NonNullable<Awaited<ReturnType<CatalogRepository["getPublicationBySlug"]>>>;
+
   /** Publicación visible por slug: publicada y con el módulo habilitado; null en cualquier otro caso (=> 404). */
-  async function openPublication(slug: string) {
+  async function openPublication(slug: string): Promise<Publication | null> {
     if (!isValidSlug(slug)) return null;
     const pub = await repo.getPublicationBySlug(slug);
     if (!pub || !pub.published) return null;
@@ -402,11 +473,41 @@ export function createPublicCatalogService({ repo }: { repo: CatalogRepository }
     return pub;
   }
 
+  /** Contexto de precio autorizado: el mayorista exige su token exacto. */
+  function contextAllowed(pub: Publication, context: PriceContext, token: string | undefined): boolean {
+    return context === "retail" || tokensMatch(token, pub.wholesaleToken);
+  }
+
+  /** Única proyección pública de productos (lista, inicio, ficha, selección): una consulta de media por lote. */
+  async function project(pub: Publication, products: CatalogProduct[], context: PriceContext): Promise<PublicCatalogProduct[]> {
+    const primaries = await repo.listPrimaryMedia(pub.tenantId, products.map((p) => p.id));
+    const byProduct = new Map(primaries.map((m) => [m.productId, m]));
+    return products.map((p) => {
+      const media = byProduct.get(p.id);
+      const [src] = imageSources(repo, pub.tenantId, p, media ? [media] : []);
+      return toPublicProduct(p, context, src ? publicImages(pub.slug, p.reference, 1, src) : null);
+    });
+  }
+
+  /** Destacados según la política vigente (ver FeaturedPolicy). */
+  async function featuredProducts(tenantId: string): Promise<{ items: CatalogProduct[]; policy: FeaturedPolicy }> {
+    const conFoto = await repo.listProducts(tenantId, { status: "ACTIVE", withImage: true, offset: 0, limit: FEATURED_LIMIT });
+    if (conFoto.items.length > 0) return { items: conFoto.items, policy: "recent-with-photo" };
+    const recientes = await repo.listProducts(tenantId, { status: "ACTIVE", offset: 0, limit: FEATURED_LIMIT });
+    return { items: recientes.items, policy: "recent" };
+  }
+
   return {
+    async getStorefront(slug: string): Promise<PublicStorefront | null> {
+      const pub = await openPublication(slug);
+      if (!pub) return null;
+      const [categories, business] = await Promise.all([repo.listCategories(pub.tenantId), repo.getBusinessProfile(pub.tenantId)]);
+      return { slug: pub.slug, publicName: pub.publicName, whatsapp: business.whatsapp, categories };
+    },
+
     async getCatalog(input: PublicCatalogQuery): Promise<PublicCatalogPage | null> {
       const pub = await openPublication(input.slug);
-      if (!pub) return null;
-      if (input.context === "wholesale" && !tokensMatch(input.token, pub.wholesaleToken)) return null;
+      if (!pub || !contextAllowed(pub, input.context, input.token)) return null;
 
       const page = Number.isInteger(input.page) && (input.page as number) >= 1 ? Math.min(input.page as number, 10_000) : 1;
       const categoryId = input.categoryId && UUID_PATTERN.test(input.categoryId) ? input.categoryId : undefined;
@@ -422,20 +523,11 @@ export function createPublicCatalogService({ repo }: { repo: CatalogRepository }
         repo.listCategories(pub.tenantId),
         repo.getBusinessProfile(pub.tenantId),
       ]);
-      const primaries = await repo.listPrimaryMedia(pub.tenantId, items.map((p) => p.id));
-      const byProduct = new Map(primaries.map((m) => [m.productId, m]));
-
-      const publicImages = (p: CatalogProduct): PublicProductImages | null => {
-        const src = imageSources(repo, pub.tenantId, p, byProduct.get(p.id));
-        return src
-          ? { imageUrl: productImagePath(pub.slug, p.reference, "main", src.main), thumbUrl: productImagePath(pub.slug, p.reference, "thumb", src.thumb) }
-          : null;
-      };
 
       return {
         business: { name: pub.publicName, whatsapp: business.whatsapp },
         context: input.context,
-        products: items.map((p) => toPublicProduct(p, input.context, publicImages(p))),
+        products: await project(pub, items, input.context),
         categories,
         total,
         page,
@@ -443,10 +535,71 @@ export function createPublicCatalogService({ repo }: { repo: CatalogRepository }
       };
     },
 
+    /** Inicio de la tienda (detal): destacados + categorías con portada. Consultas acotadas, nunca el catálogo completo. */
+    async getHome(slug: string): Promise<PublicHome | null> {
+      const pub = await openPublication(slug);
+      if (!pub) return null;
+      const [featured, pool, categories] = await Promise.all([
+        featuredProducts(pub.tenantId),
+        repo.listProducts(pub.tenantId, { status: "ACTIVE", withImage: true, offset: 0, limit: COVER_POOL }),
+        repo.listCategories(pub.tenantId),
+      ]);
+      const coverProduct = new Map<string, CatalogProduct>();
+      for (const p of pool.items) if (p.categoryId && !coverProduct.has(p.categoryId)) coverProduct.set(p.categoryId, p);
+
+      const covers = [...coverProduct.values()].filter((p) => !featured.items.some((f) => f.id === p.id));
+      const projected = await project(pub, [...featured.items, ...covers], "retail");
+      const byReference = new Map(projected.map((p) => [p.reference, p]));
+
+      return {
+        featured: projected.slice(0, featured.items.length),
+        featuredPolicy: featured.policy,
+        categories: categories.map((c) => {
+          const cover = coverProduct.get(c.id);
+          return { ...c, coverUrl: (cover && byReference.get(cover.reference)?.thumbUrl) ?? null };
+        }),
+      };
+    },
+
     /**
-     * Foto de un producto para la ruta pública. Mismas reglas que la vitrina:
-     * catálogo publicado, módulo habilitado y producto ACTIVO. La imagen es la
-     * misma para detal y mayor, así que no pide token (no contiene precios).
+     * Ficha pública de UN producto por su referencia (la identidad real del
+     * producto). Solo ACTIVOS; el precio es el del contexto autorizado.
+     */
+    async getProduct(input: { slug: string; reference: string; context?: PriceContext; token?: string }): Promise<PublicProductDetail | null> {
+      const reference = referenceFromUrl(input.reference);
+      if (!reference) return null;
+      const context = input.context ?? "retail";
+      const pub = await openPublication(input.slug);
+      if (!pub || !contextAllowed(pub, context, input.token)) return null;
+      const product = await repo.getProductByReference(pub.tenantId, reference);
+      if (!product || product.status !== "ACTIVE") return null;
+      const media = await repo.listMedia(pub.tenantId, product.id);
+      const gallery = imageSources(repo, pub.tenantId, product, media).map((src, i) => publicImages(pub.slug, product.reference, i + 1, src));
+      return { ...toPublicProduct(product, context, gallery[0] ?? null), categoryId: product.categoryId, gallery };
+    },
+
+    /**
+     * Resuelve una selección (carrito) contra la BD: referencia -> producto
+     * real -> precio vigente del contexto -> disponibilidad. El navegador solo
+     * aporta referencias y cantidades; nada de lo que envía se toma como verdad.
+     */
+    async resolveSelection(input: { slug: string; references: readonly string[]; context?: PriceContext; token?: string }): Promise<ResolvedSelection | null> {
+      const context = input.context ?? "retail";
+      const pub = await openPublication(input.slug);
+      if (!pub || !contextAllowed(pub, context, input.token)) return null;
+      const references = normalizeReferences(input.references);
+      const found = references.length > 0 ? await repo.getProductsByReferences(pub.tenantId, references) : [];
+      const activos = found.filter((p) => p.status === "ACTIVE");
+      const items = await project(pub, activos, context);
+      const resueltas = new Set(items.map((p) => p.reference));
+      return { context, items, unknown: references.filter((r) => !resueltas.has(r)) };
+    },
+
+    /**
+     * Foto de un producto para la ruta pública (principal o de la galería).
+     * Mismas reglas que la vitrina: catálogo publicado, módulo habilitado y
+     * producto ACTIVO. La imagen es la misma para detal y mayor, así que no
+     * pide token (no contiene precios).
      */
     async getImage(input: PublicImageQuery): Promise<PublicImageObject | null> {
       const reference = referenceFromUrl(input.reference);
@@ -455,10 +608,10 @@ export function createPublicCatalogService({ repo }: { repo: CatalogRepository }
       if (!pub) return null;
       const product = await repo.getProductByReference(pub.tenantId, reference);
       if (!product || product.status !== "ACTIVE") return null;
-      const [primary] = await repo.listPrimaryMedia(pub.tenantId, [product.id]);
-      const src = imageSources(repo, pub.tenantId, product, primary);
+      const media = input.file.index === 1 ? await repo.listPrimaryMedia(pub.tenantId, [product.id]) : await repo.listMedia(pub.tenantId, product.id);
+      const src = imageSources(repo, pub.tenantId, product, media)[input.file.index - 1];
       if (!src) return null;
-      return repo.openImage(input.kind === "thumb" ? src.thumb : src.main);
+      return repo.openImage(input.file.thumb ? src.thumb : src.main);
     },
   };
 }

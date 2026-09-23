@@ -51,6 +51,7 @@ export function createInMemoryCatalogRepository() {
       let items = [...products.values()].filter((p) => p.tenantId === tenantId);
       if (f.status !== "ALL") items = items.filter((p) => p.status === f.status);
       if (f.categoryId) items = items.filter((p) => p.categoryId === f.categoryId);
+      if (f.withImage) items = items.filter((p) => p.primaryImage !== null);
       if (f.search) {
         const q = f.search.toLowerCase();
         items = items.filter((p) => p.name.toLowerCase().includes(q) || p.reference.toLowerCase().includes(q));
@@ -67,6 +68,10 @@ export function createInMemoryCatalogRepository() {
     async getProductByReference(tenantId, reference) {
       const p = [...products.values()].find((x) => x.tenantId === tenantId && x.reference === reference);
       return p ? strip(p) : null;
+    },
+
+    async getProductsByReferences(tenantId, references) {
+      return [...products.values()].filter((x) => x.tenantId === tenantId && references.includes(x.reference)).map(strip);
     },
 
     async insertProduct(tenantId, actorId, d: ProductWriteData) {
@@ -87,6 +92,7 @@ export function createInMemoryCatalogRepository() {
         pricing: { retail: d.retailPrice, wholesale: d.wholesalePrice },
         status: "ACTIVE",
         tracksStock: false,
+        stock: 0,
         primaryImage: null,
         createdAt: ts,
         updatedAt: ts,
@@ -308,5 +314,10 @@ export function createInMemoryCatalogRepository() {
       if (p) p.published = published;
     },
     auditTrail: (id: string) => products.get(id),
+    /** Simula inventario controlado (AMORE / futuros negocios con stock). */
+    setStock(id: string, tracksStock: boolean, stock: number) {
+      const p = products.get(id);
+      if (p) Object.assign(p, { tracksStock, stock });
+    },
   };
 }
