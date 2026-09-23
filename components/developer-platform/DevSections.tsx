@@ -1,100 +1,102 @@
 "use client";
 
-import Link from "next/link";
-import { KeyRound, Timer, Fingerprint, ShieldCheck, Repeat, ArrowRight, Check, Lock, FileCode2 } from "lucide-react";
+import { useState } from "react";
 import { useI18n } from "@/lib/i18n";
-import { CodeSample } from "@/components/developers/CodeSample";
 import { API_BASE_URL, DOCS_HREF, SECTION_IDS } from "./constants";
+import { useBloque, useMenosMovimiento, useTic } from "./motion";
+import { Encabezado, EnlaceFlecha, MarcaEstado, NotaEjemplo, type Estado } from "./ui";
 
-// DuLabs Developer V1 -- Fase 15. Secciones de contenido de la landing
-// comercial. Todo el contenido es Developer/CPaaS (no Business). Las
-// capacidades descritas son REALES (Fases 5/10/12/13/14); sin claims de
-// certificaciones/compliance inexistentes.
+// DuLabs Developer -- bloques de contenido de la landing (02-06). Una sola narrativa: el sistema (02), el request que lo recorre (03), los
+// eventos que devuelve (04), el lugar desde donde se opera (05) y por qué aguanta producción (06).
+//
+// Veracidad: todo lo técnico sale del producto real -- rutas de lib/developers/openapi.ts, respuestas del gateway (201 {jobId, status},
+// error {code, message, request_id}), cabeceras reales de la firma (lib/developer/webhook-signature.ts), el cuerpo real que envía el worker
+// (lib/developer/inbound-event-mapper.ts), 5 intentos de entrega + DLQ (lib/developer/events-store.ts) y los límites reales del gateway.
+// Los IDs, horas y cifras de las vistas de producto son de EJEMPLO y se rotulan así; sin claims de certificaciones.
 
-function DevSectionHeading({ eyebrow, title, desc }: { eyebrow: string; title: string; desc?: string }) {
-  return (
-    <div className="max-w-2xl">
-      <p className="font-mono text-[11px] font-medium uppercase tracking-[0.28em] text-dev-accent">{eyebrow}</p>
-      <h2 className="mt-4 font-display text-[28px] font-medium leading-[1.1] tracking-[-0.02em] text-site-fg md:text-[36px]">{title}</h2>
-      {desc ? <p className="mt-4 text-[15.5px] leading-relaxed text-site-muted-fg md:text-[16px]">{desc}</p> : null}
-    </div>
-  );
-}
+/* ============================== 02 · PLATAFORMA ============================== */
 
-/* ============================ 3 · PLATFORM ============================ */
-
-/** Flecha del pipeline: → en desktop, ↓ apilado en móvil. */
-function PipeArrow() {
-  return (
-    <span className="flex items-center justify-center text-site-muted-fg" aria-hidden>
-      <span className="md:hidden">↓</span>
-      <span className="hidden md:inline">→</span>
-    </span>
-  );
-}
-
-export function DevPlatform() {
+function Etapas() {
   const { t } = useI18n();
-  const pipeline = [
-    { k: t("Tu app", "Your app"), s: "cURL · JS · TS" },
-    { k: "API Gateway", s: t("auth · rate limit · idempotency", "auth · rate limit · idempotency") },
-    { k: "Queue", s: "at-least-once" },
-    { k: "Workers", s: t("reintentos · DLQ", "retries · DLQ") },
-    { k: "WhatsApp Cloud API", s: t("envío oficial de Meta", "Meta official send") },
-    { k: t("Cliente", "Customer"), s: t("recibe en WhatsApp", "receives on WhatsApp") },
+  const etapas = [
+    { k: t("Tu app", "Your app"), a: "cURL · JS · TS", b: "HTTPS + API key" },
+    { k: "API Gateway", a: t("auth · límites", "auth · rate limits"), b: "Idempotency-Key" },
+    { k: "Queue", a: "at-least-once", b: "jobId" },
+    { k: "Workers", a: t("reintentos · backoff", "retries · backoff"), b: "DLQ" },
+    { k: "WhatsApp Cloud API", a: t("oficial de Meta", "official, by Meta"), b: "wamid" },
+    { k: t("Cliente", "Customer"), a: t("recibe en WhatsApp", "gets it on WhatsApp"), b: "sent → delivered" },
   ];
-  const incluido = ["API keys", "webhooks", "events", "logs", "usage", "workspaces", "members", "rate limits", "idempotency", "tenant isolation"];
   return (
-    <section id={SECTION_IDS.plataforma} className="scroll-mt-20 py-20 md:py-28">
-      <div className="mx-auto max-w-[1440px] px-6">
-        <DevSectionHeading
-          eyebrow={t("La plataforma", "The platform")}
-          title={t("La infraestructura de mensajería, ya construida.", "The messaging infrastructure, already built.")}
-          desc={t("Tú haces un POST. Nosotros manejamos autenticación, rate limiting, idempotencia, la cola, los reintentos, la firma de webhooks y la entrega a Meta.", "You make a POST. We handle auth, rate limiting, idempotency, the queue, retries, webhook signing and delivery to Meta.")}
-        />
-        {/* Diagrama de arquitectura real (no cards) */}
-        <div className="mt-12 rounded-2xl border border-site-border bg-site-card p-5 md:p-7">
-          <div className="flex flex-col gap-2.5 md:flex-row md:items-stretch md:gap-2.5">
-            {pipeline.map((n, i) => (
-              <div key={n.k} className="contents md:flex md:flex-1 md:items-stretch">
-                <div className="dev-step flex-1 rounded-xl border border-site-border bg-site-bg px-4 py-3.5" style={{ ["--dev-i" as string]: i }}>
-                  <div className="font-mono text-[12.5px] text-site-fg">{n.k}</div>
-                  <div className="mt-1 font-mono text-[10px] leading-relaxed text-site-muted-fg">{n.s}</div>
-                </div>
-                {i < pipeline.length - 1 ? <PipeArrow /> : null}
-              </div>
-            ))}
-          </div>
-          {/* Camino de retorno: webhooks firmados */}
-          <div className="mt-3 flex flex-col gap-2.5 border-t border-site-border pt-4 sm:flex-row sm:items-center">
-            <span className="font-mono text-[10px] uppercase tracking-widest text-site-muted-fg">↳ {t("eventos", "events")}</span>
-            <div className="flex flex-1 flex-col gap-2.5 sm:flex-row sm:items-center">
-              <div className="rounded-xl border border-site-border bg-site-bg px-4 py-2.5">
-                <span className="font-mono text-[12px] text-site-fg">{t("Webhooks firmados", "Signed webhooks")}</span>
-                <span className="ml-2 font-mono text-[10px] text-site-muted-fg">HMAC-SHA256</span>
-              </div>
-              <span className="hidden text-site-muted-fg sm:inline" aria-hidden>→</span>
-              <div className="rounded-xl border border-site-border bg-site-bg px-4 py-2.5">
-                <span className="font-mono text-[12px] text-site-fg">{t("Tu endpoint", "Your endpoint")}</span>
-              </div>
-            </div>
-          </div>
+    <>
+      {/* Desktop: seis etapas en columnas abiertas; un evento recorre la línea y cada etapa se ilumina al pasar. */}
+      <ol className="relative hidden grid-cols-6 border-y border-dp-border md:grid">
+        <div aria-hidden className="pointer-events-none absolute inset-x-0 top-[52px] h-px bg-dp-border-strong">
+          <span className="dp-anim dp-viajero-x -ml-[3px] -mt-[2.5px] block h-1.5 w-1.5 rounded-full bg-dp-signal shadow-[0_0_10px_rgba(94,140,255,0.8)]" />
         </div>
-        {/* Incluido (tira mono, no cards) */}
-        <div className="mt-6 flex flex-wrap gap-x-5 gap-y-2.5 font-mono text-[12px] text-site-muted-fg">
-          {incluido.map((x) => (
-            <span key={x} className="inline-flex items-center gap-2">
-              <span className="h-1 w-1 rounded-full bg-site-muted-fg" aria-hidden />
-              {x}
+        {etapas.map((e, i) => (
+          <li key={e.k} className={`relative px-4 pb-6 pt-5 lg:px-5 ${i > 0 ? "border-l border-dp-border" : ""}`} style={{ ["--dp-i" as string]: i }}>
+            <span className="block font-mono text-[10.5px] leading-4 text-dp-muted">{String(i + 1).padStart(2, "0")}</span>
+            <span aria-hidden className="dp-anim dp-etapa-marca absolute left-4 top-[49px] z-10 block h-[7px] w-[7px] rounded-full lg:left-5" />
+            <p className="dp-anim dp-etapa-nombre mt-10 font-mono text-[13px] leading-snug">{e.k}</p>
+            <p className="mt-2 font-mono text-[11px] leading-relaxed text-dp-muted">{e.a}</p>
+            <p className="font-mono text-[11px] leading-relaxed text-dp-muted">{e.b}</p>
+          </li>
+        ))}
+      </ol>
+
+      {/* Mobile: la misma secuencia en vertical, con el evento bajando por el rail. */}
+      <ol className="relative border-y border-dp-border md:hidden">
+        <div aria-hidden className="pointer-events-none absolute bottom-0 left-[3px] top-0 w-px bg-dp-border-strong">
+          <span className="dp-anim dp-viajero-y -ml-[2.5px] -mt-[3px] block h-1.5 w-1.5 rounded-full bg-dp-signal shadow-[0_0_10px_rgba(94,140,255,0.8)]" />
+        </div>
+        {etapas.map((e, i) => (
+          <li key={e.k} className={`relative flex h-[76px] items-center gap-5 pl-6 ${i > 0 ? "border-t border-dp-border" : ""}`} style={{ ["--dp-i" as string]: i }}>
+            <span aria-hidden className="dp-anim dp-etapa-marca absolute left-0 top-1/2 z-10 -mt-[3.5px] block h-[7px] w-[7px] rounded-full" />
+            <span className="w-5 flex-none font-mono text-[10.5px] text-dp-muted">{String(i + 1).padStart(2, "0")}</span>
+            <span className="min-w-0">
+              <span className="dp-anim dp-etapa-nombre block font-mono text-[13px]">{e.k}</span>
+              <span className="block truncate font-mono text-[11px] text-dp-muted">
+                {e.a} · {e.b}
+              </span>
             </span>
-          ))}
+          </li>
+        ))}
+      </ol>
+    </>
+  );
+}
+
+export function DevPlataforma() {
+  const { t } = useI18n();
+  const { ref, atributos } = useBloque<HTMLElement>({ umbral: 0.2 });
+  return (
+    <section ref={ref} {...atributos} id={SECTION_IDS.plataforma} className="scroll-mt-14 border-t border-dp-border py-20 md:py-28">
+      <div className="mx-auto max-w-[1440px] px-6">
+        <Encabezado
+          indice="01"
+          etiqueta={t("Plataforma", "Platform")}
+          titulo={t("Del POST al WhatsApp de tu cliente.", "From your POST to your customer's WhatsApp.")}
+          apoyo={t(
+            "Tú haces un request. DuLabs autentica, aplica límites, encola, entrega a Meta, reintenta si algo falla y te devuelve cada evento firmado.",
+            "You make a request. DuLabs authenticates, rate-limits, queues, hands off to Meta, retries when something fails and sends every event back to you, signed.",
+          )}
+        />
+        <div className="mt-14 md:mt-16">
+          <Etapas />
+          {/* Camino de vuelta: lo que regresa a tu sistema. */}
+          <div className="flex flex-col gap-2 border-b border-dp-border py-4 font-mono text-[11.5px] text-dp-muted md:flex-row md:items-center md:justify-between">
+            <span>
+              <span className="text-dp-text-2">↩ {t("vuelta", "return")}</span> · WhatsApp → DuLabs → {t("tu endpoint", "your endpoint")}
+            </span>
+            <span>message.received · message.status · HMAC-SHA256</span>
+          </div>
         </div>
       </div>
     </section>
   );
 }
 
-/* ============================ 4 · API FIRST ============================ */
+/* ============================== 03 · API ============================== */
 
 const SEND_CURL = `curl ${API_BASE_URL}/messages \\
   -H "Authorization: Bearer dl_live_your_api_key" \\
@@ -123,591 +125,464 @@ const SEND_JS = `const res = await fetch("${API_BASE_URL}/messages", {
 });
 const { jobId, status } = await res.json(); // 201 { jobId, status: "created" }`;
 
-export function DevApiFirst() {
+/** Panel de request: pestañas cURL / JavaScript, copiar con confirmación y la respuesta real del gateway. */
+function PanelRequest() {
   const { t } = useI18n();
-  const puntos = [
-    t("Autenticación con API key vía Bearer.", "Authentication with an API key via Bearer."),
-    t("Idempotency-Key para reintentar sin duplicar.", "Idempotency-Key to retry without duplicating."),
-    t("Respuestas y errores con formato estable y request_id.", "Stable-shaped responses and errors with request_id."),
-    t("Consulta el estado con GET /messages/{id}.", "Check status with GET /messages/{id}."),
-  ];
+  const [lang, setLang] = useState<"curl" | "js">("curl");
+  const [copiado, setCopiado] = useState(false);
+  const codigo = lang === "curl" ? SEND_CURL : SEND_JS;
+
+  async function copiar() {
+    try {
+      await navigator.clipboard.writeText(codigo);
+      setCopiado(true);
+      window.setTimeout(() => setCopiado(false), 1600);
+    } catch {
+      // Sin portapapeles (contexto inseguro): no es crítico.
+    }
+  }
+
   return (
-    <section id={SECTION_IDS.api} className="scroll-mt-20 border-t border-site-border py-20 md:py-28">
-      <div className="mx-auto grid max-w-[1440px] items-center gap-12 px-6 lg:grid-cols-2">
-        {/* min-w-0: un item de grid no puede crecer por el ancho natural del código (el <pre> hace scroll dentro de su caja). */}
-        <div className="min-w-0">
-          <DevSectionHeading
-            eyebrow="API-first"
-            title={t("Un POST y tu mensaje está en camino.", "One POST and your message is on its way.")}
-            desc={t("Diseñada para leerse en un minuto. El mismo contrato en cURL, JavaScript o TypeScript.", "Designed to read in a minute. The same contract in cURL, JavaScript or TypeScript.")}
-          />
-          <ul className="mt-8 space-y-3">
-            {puntos.map((p) => (
-              <li key={p} className="flex items-start gap-3 text-[14.5px] text-site-muted-fg">
-                <Check className="mt-0.5 h-4 w-4 flex-none text-dev-accent" strokeWidth={2.25} aria-hidden />
-                <span>{p}</span>
-              </li>
-            ))}
-          </ul>
-          <Link href={`${DOCS_HREF}/messages`} className="mt-8 inline-flex items-center gap-1.5 text-[14px] font-medium text-dev-accent hover:underline">
-            {t("Ver la referencia de Mensajes", "See the Messages reference")}
-            <ArrowRight className="h-4 w-4" aria-hidden />
-          </Link>
-        </div>
-        <div className="min-w-0">
-          <CodeSample curl={SEND_CURL} js={SEND_JS} titulo="POST /api/v1/messages" />
-        </div>
-      </div>
-    </section>
-  );
-}
-
-/* ============================ 5 · WEBHOOKS ============================ */
-
-export function DevWebhooks() {
-  const { t } = useI18n();
-  const flujo = [
-    { tag: "Meta", label: t("WhatsApp Cloud API notifica a DuLabs", "WhatsApp Cloud API notifies DuLabs") },
-    { tag: "DuLabs", label: t("Normaliza, deduplica y firma el evento", "Normalizes, deduplicates and signs the event") },
-    { tag: t("Tu endpoint", "Your endpoint"), label: t("Recibe el webhook firmado y verifica la firma", "Receives the signed webhook and verifies the signature") },
-  ];
-  return (
-    <section id={SECTION_IDS.webhooks} className="scroll-mt-20 border-t border-site-border py-20 md:py-28">
-      <div className="mx-auto max-w-[1440px] px-6">
-        <DevSectionHeading
-          eyebrow="Webhooks"
-          title={t("Eventos en tiempo real, firmados y verificables.", "Real-time events, signed and verifiable.")}
-          desc={t("Cada mensaje entrante y cada cambio de estado llega a tu endpoint como un evento firmado. Verificas la firma y confías en el origen.", "Every inbound message and every status change reaches your endpoint as a signed event. You verify the signature and trust the source.")}
-        />
-        <div className="mt-12 grid gap-6 lg:grid-cols-[1fr_1.1fr]">
-          <div className="flex flex-col justify-center gap-2 rounded-2xl border border-site-border bg-site-card p-6">
-            {flujo.map((f, i) => (
-              <div key={f.tag}>
-                <div className="flex items-center gap-3 rounded-xl border border-site-border bg-site-bg px-4 py-3">
-                  <span className="font-mono text-[10px] uppercase tracking-widest text-dev-accent">{f.tag}</span>
-                  <span className="text-[13px] text-site-fg">{f.label}</span>
-                </div>
-                {i < flujo.length - 1 ? <div className="flex justify-center py-1" aria-hidden><span className="h-4 w-px bg-site-border" /></div> : null}
-              </div>
-            ))}
-          </div>
-          {/* Mockup: entrega real de webhook firmado */}
-          <div className="overflow-hidden rounded-2xl border border-site-border bg-site-card">
-            <MockChrome label="webhook.delivery" live="200 OK" />
-            <div className="space-y-3 p-5 font-mono text-[12px]">
-              <div className="flex items-center justify-between gap-3">
-                <span className="truncate text-site-fg"><span className="text-site-muted-fg">POST </span>https://api.acme.dev/webhooks</span>
-                <span className="flex-none text-site-muted-fg">87 ms</span>
-              </div>
-              <div className="space-y-1.5 rounded-lg border border-site-border bg-site-bg p-3">
-                {[
-                  ["X-DuLabs-Signature", "t=1712000271,v1=9f2a…8c"],
-                  ["X-DuLabs-Timestamp", "1712000271"],
-                  ["X-DuLabs-Event-ID", "evt_01HX8Z…d4"],
-                ].map(([k, v]) => (
-                  <div key={k} className="flex flex-wrap gap-x-2 text-[11.5px]">
-                    <span className="text-site-muted-fg">{k}:</span>
-                    <span className="text-site-fg">{v}</span>
-                  </div>
-                ))}
-              </div>
-              <pre className="overflow-x-auto rounded-lg border border-site-border bg-site-bg p-3 text-[11.5px] leading-relaxed text-site-fg"><code>{`{
-  "type": "message.status",
-  "data": { "wamid": "wamid.HBg…", "status": "delivered" }
-}`}</code></pre>
-            </div>
-          </div>
-        </div>
-        <Link href={`${DOCS_HREF}/webhooks`} className="mt-8 inline-flex items-center gap-1.5 text-[14px] font-medium text-dev-accent hover:underline">
-          {t("Cómo verificar la firma de un webhook", "How to verify a webhook signature")}
-          <ArrowRight className="h-4 w-4" aria-hidden />
-        </Link>
-      </div>
-    </section>
-  );
-}
-
-/* ========================= 6 · OBSERVABILITY ========================= */
-
-const EVENT_ROWS: { st: "delivered" | "sent" | "processing" | "failed" | "queued"; ev: string; id: string; meta: string; time: string }[] = [
-  { st: "delivered", ev: "message.status", id: "msg_01HX8Z…a1", meta: "245 ms", time: "12:04:31" },
-  { st: "sent", ev: "message.status", id: "msg_01HX8Z…b2", meta: "180 ms", time: "12:04:29" },
-  { st: "processing", ev: "message.created", id: "job_01HX8Z…c3", meta: "—", time: "12:04:27" },
-  { st: "failed", ev: "webhook.delivery", id: "evt_01HX8Z…d4", meta: "retry 2/5", time: "12:04:22" },
-  { st: "queued", ev: "message.created", id: "job_01HX8Z…e5", meta: "—", time: "12:04:20" },
-];
-
-function StDot({ st }: { st: string }) {
-  const cls = st === "failed" ? "bg-[#f08a8a]" : st === "processing" || st === "queued" ? "bg-site-muted-fg" : "bg-site-fg";
-  return <span className={`h-1.5 w-1.5 flex-none rounded-full ${cls}`} aria-hidden />;
-}
-
-/** Chrome de ventana de producto (barra de puntos + etiqueta + indicador opcional). */
-function MockChrome({ label, live }: { label: string; live?: string }) {
-  return (
-    <div className="flex items-center gap-2 border-b border-site-border px-3.5 py-2.5">
-      <span className="h-2.5 w-2.5 rounded-full bg-site-border" aria-hidden />
-      <span className="h-2.5 w-2.5 rounded-full bg-site-border" aria-hidden />
-      <span className="h-2.5 w-2.5 rounded-full bg-site-border" aria-hidden />
-      <span className="ml-2 font-mono text-[11px] text-site-muted-fg">{label}</span>
-      {live ? (
-        <span className="ml-auto inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest text-site-muted-fg">
-          <span className="dev-live-dot h-1.5 w-1.5 rounded-full bg-site-fg" aria-hidden /> {live}
-        </span>
-      ) : null}
-    </div>
-  );
-}
-
-export function DevObservability() {
-  const { t } = useI18n();
-  const puntos = [
-    t("Cada intento de entrega y su latencia real.", "Every delivery attempt and its real latency."),
-    t("Reintentos con backoff y cola de fallidos (DLQ).", "Backoff retries and a dead-letter queue (DLQ)."),
-    t("Replay de un evento con un clic desde el dashboard.", "Replay an event with one click from the dashboard."),
-  ];
-  return (
-    <section className="scroll-mt-20 border-t border-site-border py-20 md:py-28">
-      <div className="mx-auto grid max-w-[1440px] items-center gap-12 px-6 lg:grid-cols-[0.9fr_1.1fr]">
-        <div>
-          <DevSectionHeading
-            eyebrow={t("Observabilidad", "Observability")}
-            title={t("Ve exactamente qué pasó con cada evento.", "See exactly what happened to every event.")}
-            desc={t("No adivines por qué no llegó un mensaje. Cada mensaje deja un rastro: estado, request id, latencia, intentos y timestamp.", "Don't guess why a message didn't arrive. Every message leaves a trail: status, request id, latency, attempts and timestamp.")}
-          />
-          <ul className="mt-8 space-y-3">
-            {puntos.map((p) => (
-              <li key={p} className="flex items-start gap-3 text-[14.5px] text-site-muted-fg">
-                <Check className="mt-0.5 h-4 w-4 flex-none text-dev-accent" strokeWidth={2.25} aria-hidden />
-                <span>{p}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-        {/* Mockup: stream de eventos del producto */}
-        <div className="overflow-hidden rounded-xl border border-site-border bg-site-card">
-          <MockChrome label="events" live={t("en vivo", "live")} />
-          <div className="grid grid-cols-[auto_1fr_auto] gap-x-4 px-3.5 py-2 font-mono text-[10px] uppercase tracking-wider text-site-muted-fg sm:grid-cols-[auto_1fr_auto_auto_auto] sm:gap-x-6">
-            <span>status</span>
-            <span>event</span>
-            <span className="hidden sm:block">id</span>
-            <span className="hidden sm:block text-right">latency</span>
-            <span className="text-right">time</span>
-          </div>
-          <div className="divide-y divide-site-border border-t border-site-border">
-            {EVENT_ROWS.map((r, i) => (
-              <div key={r.id} style={{ ["--dev-i" as string]: i }} className="dev-stream-row grid grid-cols-[auto_1fr_auto] items-center gap-x-4 px-3.5 py-2.5 font-mono text-[12px] transition-colors hover:bg-site-bg/60 sm:grid-cols-[auto_1fr_auto_auto_auto] sm:gap-x-6">
-                <span className="inline-flex items-center gap-2">
-                  <StDot st={r.st} />
-                  <span className={r.st === "failed" ? "text-[#f08a8a]" : "text-site-fg"}>{r.st}</span>
-                </span>
-                <span className="truncate text-site-muted-fg">{r.ev}</span>
-                <span className="hidden truncate text-site-muted-fg sm:block">{r.id}</span>
-                <span className="hidden text-right text-site-muted-fg sm:block">{r.meta}</span>
-                <span className="text-right text-site-muted-fg">{r.time}</span>
-              </div>
-            ))}
-          </div>
-          <div className="flex items-center justify-between border-t border-site-border px-3.5 py-2 font-mono text-[10px] text-site-muted-fg">
-            <span>GET /api/v1/events</span>
-            <span>{t("actualizado hace 2s", "updated 2s ago")}</span>
-          </div>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-/* ============================ 7 · SECURITY ============================ */
-
-export function DevSecurity() {
-  const { t } = useI18n();
-  const items = [
-    { icon: KeyRound, k: "API KEY", v: "dl_live_••••••••••3f2a", tag: t("Activa", "Active") },
-    { icon: Fingerprint, k: "HMAC-SHA256", v: t("Firma verificada", "Signature verified"), tag: t("Verificada", "Verified") },
-    { icon: Repeat, k: "IDEMPOTENCY", v: "Idempotency-Key", tag: t("Activada", "Enabled") },
-    { icon: Timer, k: "RATE LIMIT", v: "120 req/min", tag: t("Aplicado", "Enforced") },
-    { icon: ShieldCheck, k: "TENANT", v: t("Workspace aislado", "Workspace isolated"), tag: t("Aislado", "Isolated") },
-    { icon: Lock, k: "SSRF", v: t("URLs de webhook validadas", "Webhook URLs validated"), tag: t("Protegido", "Protected") },
-  ];
-  return (
-    <section className="border-t border-site-border py-20 md:py-28">
-      <div className="mx-auto max-w-[1440px] px-6">
-        <DevSectionHeading
-          eyebrow={t("Seguridad", "Security")}
-          title={t("Seguridad integrada, no un extra.", "Security built in, not bolted on.")}
-          desc={t("Capacidades reales del producto. Sin claims de certificaciones que aún no tenemos.", "Real product capabilities. No claims of certifications we don't hold yet.")}
-        />
-        <div className="mt-10 overflow-hidden rounded-xl border border-site-border bg-site-card">
-          <MockChrome label="security" live={t("aplicado", "enforced")} />
-          <div className="divide-y divide-site-border">
-            {items.map((it) => (
-              <div key={it.k} className="flex items-center gap-4 px-4 py-3.5 sm:px-5">
-                <it.icon className="h-4 w-4 flex-none text-site-muted-fg" strokeWidth={1.75} aria-hidden />
-                <span className="w-32 flex-none font-mono text-[11px] uppercase tracking-wider text-site-muted-fg sm:w-40">{it.k}</span>
-                <span className="min-w-0 flex-1 truncate font-mono text-[12.5px] text-site-fg">{it.v}</span>
-                <span className="inline-flex flex-none items-center gap-1.5 rounded-full border border-site-border px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-site-muted-fg">
-                  <span className="h-1.5 w-1.5 rounded-full bg-site-fg" aria-hidden />
-                  {it.tag}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-/* ============================ 9 · DOCS ============================ */
-
-export function DevDocs() {
-  const { t } = useI18n();
-  const docs = [
-    { label: "Quickstart", href: DOCS_HREF },
-    { label: "Authentication", href: `${DOCS_HREF}/authentication` },
-    { label: "Messages", href: `${DOCS_HREF}/messages` },
-    { label: "Webhooks", href: `${DOCS_HREF}/webhooks` },
-    { label: "Rate limits", href: `${DOCS_HREF}/rate-limits` },
-    { label: "Errors", href: `${DOCS_HREF}/errors` },
-    { label: "API Reference", href: `${DOCS_HREF}/reference` },
-  ];
-  return (
-    <section id={SECTION_IDS.docs} className="scroll-mt-20 border-t border-site-border py-20 md:py-28">
-      <div className="mx-auto max-w-[1440px] px-6">
-        <div className="flex flex-col justify-between gap-6 md:flex-row md:items-end">
-          <DevSectionHeading
-            eyebrow={t("Documentación", "Documentation")}
-            title={t("Docs claras, con ejemplos que funcionan.", "Clear docs, with examples that work.")}
-            desc={t("Quickstart, autenticación, mensajes, webhooks, rate limits, errores y la referencia completa del API.", "Quickstart, authentication, messages, webhooks, rate limits, errors and the full API reference.")}
-          />
-          <Link href={DOCS_HREF} className="inline-flex flex-none items-center gap-2 rounded-lg bg-dev-accent px-5 py-3 text-[14px] font-medium text-dev-accent-fg transition-colors hover:bg-dev-accent-hover">
-            <FileCode2 className="h-4 w-4" aria-hidden />
-            {t("Explora la documentación", "Explore the docs")}
-          </Link>
-        </div>
-        <div className="mt-10 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {docs.map((d) => (
-            <Link key={d.label} href={d.href} className="group flex items-center justify-between rounded-xl border border-site-border bg-site-card px-4 py-3.5 transition-colors hover:border-dev-accent/40">
-              <span className="text-[14px] font-medium text-site-fg">{d.label}</span>
-              <ArrowRight className="h-4 w-4 text-site-muted-fg transition-transform group-hover:translate-x-0.5 group-hover:text-dev-accent" aria-hidden />
-            </Link>
+    <div className="dp-panel min-w-0 overflow-hidden rounded-dp-lg border border-dp-border bg-dp-surface">
+      <div className="flex items-center justify-between gap-3 border-b border-dp-border px-4">
+        <div role="tablist" aria-label={t("Lenguaje", "Language")} className="flex">
+          {(["curl", "js"] as const).map((l) => (
+            <button
+              key={l}
+              type="button"
+              role="tab"
+              aria-selected={lang === l}
+              onClick={() => setLang(l)}
+              className={`dp-link relative py-3 pr-5 font-mono text-[12px] ${lang === l ? "text-dp-text" : "text-dp-muted hover:text-dp-text-2"}`}
+            >
+              {l === "curl" ? "cURL" : "JavaScript"}
+              {lang === l ? <span aria-hidden className="absolute bottom-0 left-0 right-5 h-px bg-dp-text" /> : null}
+            </button>
           ))}
         </div>
-      </div>
-    </section>
-  );
-}
-
-/* ====================== 8 · DASHBOARD PREVIEW ====================== */
-
-export function DevDashboardPreview() {
-  const { t } = useI18n();
-  const nav = ["Overview", "API keys", "WhatsApp", "Webhooks", "Events", "Usage"];
-  const metrics = [
-    { k: t("Mensajes", "Messages"), v: "12,480", sub: "/ 20,000" },
-    { k: t("Números", "Numbers"), v: "2", sub: "/ 2" },
-    { k: "API keys", v: "3", sub: t("activas", "active") },
-    { k: "p95", v: "212", sub: "ms" },
-  ];
-  return (
-    <section className="border-t border-site-border py-20 md:py-28">
-      <div className="mx-auto max-w-[1440px] px-6">
-        <DevSectionHeading
-          eyebrow="Dashboard"
-          title={t("Un panel para operar tu integración.", "One dashboard to run your integration.")}
-          desc={t("Workspaces, uso, números conectados, API keys, webhooks y el stream de eventos — todo en una sola herramienta.", "Workspaces, usage, connected numbers, API keys, webhooks and the event stream — all in one tool.")}
-        />
-        <div className="mt-10 overflow-hidden rounded-2xl border border-site-border bg-site-card">
-          <MockChrome label="app.dulabs.co/developer" />
-          <div className="grid grid-cols-1 md:grid-cols-[184px_1fr]">
-            <aside className="hidden border-r border-site-border p-3 md:block">
-              <div className="mb-3 flex items-center gap-1.5 px-2 py-1 text-[12px] font-semibold text-site-fg">
-                DuLabs <span className="font-mono text-[9px] uppercase tracking-wider text-site-muted-fg">Dev</span>
-              </div>
-              {nav.map((n, i) => (
-                <div key={n} className={`rounded-md px-2.5 py-1.5 text-[12px] ${i === 0 ? "bg-white/[0.06] text-site-fg" : "text-site-muted-fg"}`}>{n}</div>
-              ))}
-            </aside>
-            <div className="min-w-0 p-5">
-              <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-                {metrics.map((m) => (
-                  <div key={m.k} className="rounded-lg border border-site-border p-3">
-                    <div className="font-mono text-[9.5px] uppercase tracking-wider text-site-muted-fg">{m.k}</div>
-                    <div className="mt-1.5 font-mono text-[19px] tabular-nums text-site-fg">
-                      {m.v} <span className="text-[11px] text-site-muted-fg">{m.sub}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <div className="mt-4 overflow-hidden rounded-lg border border-site-border">
-                <div className="flex items-center justify-between border-b border-site-border px-3 py-2">
-                  <span className="text-[11.5px] font-medium text-site-fg">{t("Eventos recientes", "Recent events")}</span>
-                  <span className="font-mono text-[10px] text-site-muted-fg">message.status · webhook.delivery</span>
-                </div>
-                {EVENT_ROWS.slice(0, 4).map((r, i) => (
-                  <div key={r.id} style={{ ["--dev-i" as string]: i }} className="dev-stream-row flex items-center gap-3 border-b border-site-border px-3 py-2 font-mono text-[11.5px] last:border-0">
-                    <StDot st={r.st} />
-                    <span className={`w-[74px] flex-none ${r.st === "failed" ? "text-[#f08a8a]" : "text-site-fg"}`}>{r.st}</span>
-                    <span className="min-w-0 flex-1 truncate text-site-muted-fg">{r.ev}</span>
-                    <span className="hidden flex-none text-site-muted-fg sm:block">{r.id}</span>
-                    <span className="flex-none text-site-muted-fg">{r.time}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
+        <div className="flex min-w-0 items-center gap-4">
+          <span className="hidden truncate font-mono text-[11px] text-dp-muted sm:block">POST /api/v1/messages</span>
+          <button
+            type="button"
+            onClick={copiar}
+            aria-live="polite"
+            className="dp-link flex-none rounded-dp border border-dp-border px-2.5 py-1 font-mono text-[11px] text-dp-text-2 hover:border-dp-border-strong hover:text-dp-text"
+          >
+            {copiado ? t("Copiado ✓", "Copied ✓") : t("Copiar", "Copy")}
+          </button>
         </div>
       </div>
-    </section>
-  );
-}
-
-/* =================== 10 · BUILD ON OFFICIAL WHATSAPP =================== */
-
-/** Nodo de un stack vertical (producto → infra → Meta → cliente). */
-function StackNode({ k, s, i, last }: { k: string; s: string; i: number; last?: boolean }) {
-  return (
-    <div className="flex flex-col items-stretch">
-      <div className="dev-step rounded-xl border border-site-border bg-site-bg px-4 py-3.5" style={{ ["--dev-i" as string]: i }}>
-        <div className="font-mono text-[12.5px] text-site-fg">{k}</div>
-        <div className="mt-1 font-mono text-[10.5px] leading-relaxed text-site-muted-fg">{s}</div>
-      </div>
-      {!last ? (
-        <div className="flex h-6 items-center justify-center" aria-hidden>
-          <span className="dev-wire-y h-full w-px bg-site-border" style={{ ["--dev-i" as string]: i }} />
+      <pre key={lang} className="dp-cruce overflow-x-auto px-4 py-5 font-mono text-[12px] leading-[1.7] text-dp-text md:text-[12.5px]">
+        <code>{codigo}</code>
+      </pre>
+      <div className="border-t border-dp-border px-4 py-4 font-mono text-[12px]">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <span className="text-dp-text">201 Created</span>
+          <span className="text-dp-muted">X-Request-Id: 8c1f…e04a</span>
         </div>
-      ) : null}
+        <pre className="mt-2 overflow-x-auto text-dp-text-2">{`{ "jobId": "5f0c2a91-…-7d3e", "status": "created" }`}</pre>
+      </div>
     </div>
   );
 }
 
-export function DevBuild() {
+export function DevApi() {
   const { t } = useI18n();
-  const stack = [
-    { k: t("Tu agente de IA · tu app", "Your AI agent · your app"), s: t("IA · CRM · automatización", "AI · CRM · automation") },
-    { k: "DuLabs API", s: t("API keys · webhooks · eventos · logs", "API keys · webhooks · events · logs") },
-    { k: "WhatsApp Cloud API", s: t("oficial de Meta", "official, by Meta") },
-    { k: t("Cliente", "Customer"), s: t("recibe en WhatsApp", "receives on WhatsApp") },
+  const { ref, atributos } = useBloque<HTMLElement>({ umbral: 0.3 });
+  const ciclo: { k: string; via: string; d: string; senal?: boolean }[] = [
+    { k: "request", via: "API", d: t("Bearer dl_live_… + Idempotency-Key", "Bearer dl_live_… + Idempotency-Key") },
+    { k: "created", via: "201", d: t("aceptado, con jobId", "accepted, with a jobId") },
+    { k: "queued", via: "GET /messages/{id}", d: t("en cola para un worker", "queued for a worker") },
+    { k: "processing", via: "GET /messages/{id}", d: t("un worker lo está enviando", "a worker is sending it") },
+    { k: "sent", via: "GET /messages/{id}", d: t("entregado a WhatsApp Cloud API", "handed off to WhatsApp Cloud API") },
+    { k: "delivered", via: "webhook · message.status", d: t("confirmado por WhatsApp, firmado a tu endpoint", "confirmed by WhatsApp, signed to your endpoint"), senal: true },
   ];
-  const usos = [
-    t("Agentes de IA", "AI agents"),
-    "CRMs",
-    t("Automatizaciones", "Automations"),
-    t("Campañas", "Campaigns"),
-    t("Notificaciones", "Notifications"),
-    t("Soporte", "Support"),
-    t("Reservas", "Bookings"),
-    t("Ventas", "Sales"),
-    t("Integraciones", "Integrations"),
+  const superficie = [
+    ["POST", "/messages", t("Enviar un mensaje", "Send a message")],
+    ["GET", "/messages/{id}", t("Estado de un mensaje", "Message status")],
+    ["GET", "/whatsapp-numbers", t("Números conectados", "Connected numbers")],
+    ["GET", "/whatsapp-numbers/{id}", t("Un número", "One number")],
+    ["GET", "/webhooks", t("Webhooks configurados", "Configured webhooks")],
+    ["POST", "/webhooks", t("Configurar un webhook", "Configure a webhook")],
+    ["GET", "/usage", t("Uso del mes", "Monthly usage")],
+    ["GET", "/me", t("Verificar la API key", "Verify the API key")],
   ];
   return (
-    <section className="scroll-mt-20 border-t border-site-border py-20 md:py-28">
-      <div className="mx-auto grid max-w-[1440px] items-center gap-12 px-6 lg:grid-cols-[1fr_0.95fr]">
-        <div>
-          <DevSectionHeading
-            eyebrow={t("Sobre WhatsApp oficial", "On official WhatsApp")}
-            title={t("WhatsApp oficial. Tu producto. Tu infraestructura.", "Official WhatsApp. Your product. Your infrastructure.")}
-            desc={t(
-              "DuLabs es la infraestructura, no otro chatbot. Conectas WhatsApp Cloud API de Meta a tu propio producto y construyes encima: agentes de IA, CRMs, automatizaciones y sistemas propios.",
-              "DuLabs is the infrastructure, not another chatbot. You connect Meta's WhatsApp Cloud API to your own product and build on top: AI agents, CRMs, automations and your own systems.",
-            )}
-          />
-          <div className="mt-8 flex flex-wrap gap-x-5 gap-y-2.5 font-mono text-[12px] text-site-muted-fg">
-            {usos.map((x) => (
-              <span key={x} className="inline-flex items-center gap-2">
-                <span className="h-1 w-1 rounded-full bg-site-muted-fg" aria-hidden />
-                {x}
-              </span>
-            ))}
-          </div>
-          <p className="mt-8 max-w-lg rounded-xl border border-site-border bg-site-card p-4 text-[13.5px] leading-relaxed text-site-muted-fg">
-            {t(
-              "Construyes sobre la infraestructura oficial de WhatsApp de Meta y operas dentro de sus políticas y mecanismos de mensajería.",
-              "You build on Meta's official WhatsApp infrastructure and operate within its messaging policies and mechanisms.",
-            )}
-          </p>
-        </div>
-        {/* Stack: tu producto -> DuLabs -> WhatsApp Cloud API -> cliente */}
-        <div className="overflow-hidden rounded-2xl border border-site-border bg-site-card">
-          <MockChrome label={t("arquitectura", "architecture")} live={t("oficial", "official")} />
-          <div className="p-5 md:p-6">
-            {stack.map((n, i) => (
-              <StackNode key={n.k} k={n.k} s={n.s} i={i} last={i === stack.length - 1} />
-            ))}
-          </div>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-/* ====================== 11 · MESSAGE LIFECYCLE ====================== */
-
-export function DevLifecycle() {
-  const { t } = useI18n();
-  const steps = [
-    { n: "01", k: "request", d: "POST /api/v1/messages", note: t("Autenticado con API key + Idempotency-Key", "Authenticated with API key + Idempotency-Key"), meta: "12:41:03.011" },
-    { n: "02", k: "accepted", d: `201 · { "status": "created" }`, note: t("Encolado con rate limit e idempotencia", "Queued with rate limit and idempotency"), meta: "+142 ms" },
-    { n: "03", k: "queued", d: "queue · at-least-once", note: t("En cola, listo para un worker", "In queue, ready for a worker"), meta: "+8 ms" },
-    { n: "04", k: "sent", d: `GET /messages/{id} → "sent"`, note: t("Entregado a WhatsApp Cloud API", "Handed off to WhatsApp Cloud API"), meta: "+240 ms" },
-    { n: "05", k: "delivered", d: "message.status → delivered", note: t("Confirmado por WhatsApp", "Confirmed by WhatsApp"), meta: "+1.2 s" },
-    { n: "06", k: "webhook", d: t("POST tu endpoint · message.status", "POST your endpoint · message.status"), note: t("Firmado HMAC-SHA256 + Event-ID", "Signed HMAC-SHA256 + Event-ID"), meta: "200 OK" },
-  ];
-  return (
-    <section className="scroll-mt-20 border-t border-site-border py-20 md:py-28">
+    <section ref={ref} {...atributos} id={SECTION_IDS.api} className="scroll-mt-14 border-t border-dp-border py-20 md:py-28">
       <div className="mx-auto max-w-[1440px] px-6">
-        <DevSectionHeading
-          eyebrow={t("Ciclo de vida", "Message lifecycle")}
-          title={t("Sigue cada mensaje, del POST al webhook.", "Follow every message, from POST to webhook.")}
-          desc={t(
-            "Un mensaje no es «enviar y rezar». Cada estado queda registrado con su request id, latencia y timestamp, y termina en un webhook firmado en tu endpoint.",
-            "A message isn't fire-and-forget. Every state is recorded with its request id, latency and timestamp, and ends in a signed webhook on your endpoint.",
+        <Encabezado
+          indice="02"
+          etiqueta="API"
+          titulo={t("Un POST inicia una cadena observable.", "One POST starts an observable chain.")}
+          apoyo={t(
+            "Autenticas con tu API key, envías con una Idempotency-Key y recibes un jobId. Desde ahí, cada estado queda registrado hasta el webhook firmado.",
+            "Authenticate with your API key, send with an Idempotency-Key and get a jobId back. From there, every state is recorded up to the signed webhook.",
           )}
         />
-        <div className="mt-10 overflow-hidden rounded-2xl border border-site-border bg-site-card">
-          <MockChrome label="message.lifecycle" live={t("en vivo", "live")} />
-          <div className="divide-y divide-site-border">
-            {steps.map((st, i) => (
-              <div key={st.n} className="grid grid-cols-[2rem_1fr_auto] items-stretch gap-4 px-4 py-4 sm:px-5">
-                <div className="flex flex-col items-center">
-                  <span className="flex h-6 w-6 flex-none items-center justify-center rounded-full border border-site-border font-mono text-[9.5px] text-site-muted-fg">{st.n}</span>
-                  {i < steps.length - 1 ? <span className="dev-wire-y mt-1.5 w-px flex-1 bg-site-border" style={{ ["--dev-i" as string]: i }} aria-hidden /> : null}
-                </div>
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1 font-mono text-[12.5px]">
-                    <span className="dev-step text-site-fg" style={{ ["--dev-i" as string]: i }}>{st.k}</span>
-                    <span className="min-w-0 truncate text-site-muted-fg">{st.d}</span>
-                  </div>
-                  <div className="mt-1 text-[12.5px] leading-relaxed text-site-muted-fg">{st.note}</div>
-                </div>
-                <div className="text-right font-mono text-[11px] text-site-muted-fg">{st.meta}</div>
-              </div>
-            ))}
+
+        <div className="mt-14 grid gap-10 md:mt-16 lg:grid-cols-12 lg:gap-12">
+          <div className="min-w-0 lg:col-span-7">
+            <PanelRequest />
           </div>
-        </div>
-      </div>
-    </section>
-  );
-}
 
-/* ===================== 12 · MESSAGING & CAMPAIGNS ===================== */
-
-export function DevMessaging() {
-  const { t } = useI18n();
-  const puntos = [
-    t("Transaccionales, notificaciones, conversacionales y campañas con plantillas.", "Transactional, notifications, conversational and template campaigns."),
-    t("Seguimiento por estado: enviado, entregado, leído y fallido.", "Status tracking: sent, delivered, read and failed."),
-    t("Reintentos con backoff, DLQ y webhooks de estado por cada mensaje.", "Backoff retries, DLQ and status webhooks for every message."),
-  ];
-  const funnel = [
-    { k: t("encolados", "queued"), v: "12,480", w: "100%" },
-    { k: t("enviados", "sent"), v: "12,455", w: "99.8%" },
-    { k: t("entregados", "delivered"), v: "12,390", w: "99.3%" },
-    { k: t("leídos", "read"), v: "9,102", w: "73%" },
-    { k: t("fallidos", "failed"), v: "25", w: "2%", danger: true },
-  ];
-  return (
-    <section className="scroll-mt-20 border-t border-site-border py-20 md:py-28">
-      <div className="mx-auto grid max-w-[1440px] items-center gap-12 px-6 lg:grid-cols-[0.9fr_1.1fr]">
-        <div>
-          <DevSectionHeading
-            eyebrow={t("Mensajería", "Messaging")}
-            title={t("Mensajería a escala, con reglas claras.", "Messaging at scale, with clear rules.")}
-            desc={t(
-              "Envía desde una confirmación hasta una campaña, y observa cada entrega. El envío de plantillas y campañas sigue las categorías y políticas de mensajería de WhatsApp/Meta.",
-              "Send anything from a single confirmation to a campaign, and observe every delivery. Template and campaign sending follows WhatsApp/Meta's messaging categories and policies.",
-            )}
-          />
-          <ul className="mt-8 space-y-3">
-            {puntos.map((p) => (
-              <li key={p} className="flex items-start gap-3 text-[14.5px] text-site-muted-fg">
-                <Check className="mt-0.5 h-4 w-4 flex-none text-dev-accent" strokeWidth={2.25} aria-hidden />
-                <span>{p}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-        {/* Panel de entrega: funnel con estados reales de WhatsApp */}
-        <div className="overflow-hidden rounded-2xl border border-site-border bg-site-card">
-          <MockChrome label="delivery" live={t("último envío", "last send")} />
-          <div className="space-y-3.5 p-5 md:p-6">
-            {funnel.map((f, i) => (
-              <div key={f.k} style={{ ["--dev-i" as string]: i }} className="dev-stream-row">
-                <div className="flex items-baseline justify-between font-mono text-[11.5px]">
-                  <span className={f.danger ? "text-[#f08a8a]" : "text-site-fg"}>{f.k}</span>
-                  <span className="tabular-nums text-site-muted-fg">
-                    {f.v} <span className="text-site-border">·</span> {f.w}
-                  </span>
-                </div>
-                <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-white/[0.06]">
-                  <div className={`h-full rounded-full ${f.danger ? "bg-[#f08a8a]/70" : "bg-site-fg/70"}`} style={{ width: f.w }} />
-                </div>
-              </div>
-            ))}
-            <p className="border-t border-site-border pt-3 font-mono text-[10.5px] leading-relaxed text-site-muted-fg">
-              {t("Estados provistos por WhatsApp Cloud API · sin promesas de «cero bloqueos».", "Statuses provided by WhatsApp Cloud API · no “zero blocks” promises.")}
+          <div className="lg:col-span-5">
+            <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-dp-muted">{t("Ciclo de vida", "Lifecycle")}</p>
+            <ol className="mt-5">
+              {ciclo.map((c, i) => (
+                <li key={c.k} className="dp-estado relative grid grid-cols-[20px_1fr] gap-x-4 pb-5 last:pb-0" style={{ ["--dp-i" as string]: i }} {...(c.senal ? { "data-senal": "" } : {})}>
+                  {i < ciclo.length - 1 ? <span aria-hidden className="absolute bottom-0 left-[4.5px] top-4 w-px bg-dp-border" /> : null}
+                  <span aria-hidden className="dp-estado-marca relative mt-[5px] block h-2.5 w-2.5 rounded-full border border-dp-border-strong bg-dp-bg" />
+                  <div className="min-w-0">
+                    <p className="flex flex-wrap items-baseline gap-x-3 font-mono text-[13px]">
+                      <span className="text-dp-text">{c.k}</span>
+                      <span className="text-[11px] text-dp-muted">{c.via}</span>
+                    </p>
+                    <p className="mt-1 text-[13.5px] leading-relaxed text-dp-text-2">{c.d}</p>
+                  </div>
+                </li>
+              ))}
+            </ol>
+            <p className="mt-6 border-t border-dp-border pt-4 text-[12.5px] leading-relaxed text-dp-muted">
+              {t(
+                "GET /messages/{id} reporta queued, processing, sent o failed. delivered y read llegan por el webhook message.status.",
+                "GET /messages/{id} reports queued, processing, sent or failed. delivered and read arrive through the message.status webhook.",
+              )}
             </p>
           </div>
         </div>
+
+        {/* Superficie pública completa (OpenAPI): lo que existe, nada más. */}
+        <div className="mt-16 grid gap-6 border-t border-dp-border pt-8 lg:grid-cols-12 lg:gap-8">
+          <div className="lg:col-span-3">
+            <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-dp-muted">{t("Superficie del API", "API surface")}</p>
+            <p className="mt-3 break-all font-mono text-[11.5px] text-dp-text-2">{API_BASE_URL}</p>
+          </div>
+          <ul className="grid gap-x-10 sm:grid-cols-2 lg:col-span-9">
+            {superficie.map(([m, ruta, d]) => (
+              <li key={m + ruta} className="flex items-baseline gap-3 border-b border-dp-border py-2.5 font-mono text-[12px]">
+                <span className={`w-10 flex-none ${m === "POST" ? "text-dp-text" : "text-dp-muted"}`}>{m}</span>
+                <span className="min-w-0 flex-1 truncate text-dp-text-2">{ruta}</span>
+                <span className="hidden flex-none font-sans text-[12.5px] text-dp-muted md:inline">{d}</span>
+              </li>
+            ))}
+          </ul>
+          <div className="flex flex-wrap gap-x-8 gap-y-3 lg:col-span-9 lg:col-start-4">
+            <EnlaceFlecha href={`${DOCS_HREF}/messages`}>{t("Guía de mensajes", "Messages guide")}</EnlaceFlecha>
+            <EnlaceFlecha href={`${DOCS_HREF}/reference`}>{t("Referencia OpenAPI", "OpenAPI reference")}</EnlaceFlecha>
+          </div>
+        </div>
       </div>
     </section>
   );
 }
 
-/* ========================= 13 · COEXISTENCE ========================= */
+/* ============================== 04 · WEBHOOKS + EVENTOS ============================== */
 
-export function DevCoexistence() {
+type Evento = { id: number; hora: string; tipo: "message.received" | "message.status"; detalle: string; estado: Estado; entrega: string };
+
+// Guion de ejemplo (en bucle): lo que un workspace ve pasar. Tipos, estados y la política de reintentos son los reales del producto.
+const GUION: Omit<Evento, "id" | "hora">[] = [
+  { tipo: "message.status", detalle: "sent", estado: "sent", entrega: "200 · 41 ms" },
+  { tipo: "message.status", detalle: "delivered", estado: "delivered", entrega: "200 · 38 ms" },
+  { tipo: "message.received", detalle: "text", estado: "received", entrega: "503 · retry 2/5" },
+  { tipo: "message.received", detalle: "text", estado: "received", entrega: "200 · 52 ms" },
+  { tipo: "message.status", detalle: "read", estado: "read", entrega: "200 · 36 ms" },
+  { tipo: "message.status", detalle: "failed", estado: "failed", entrega: "200 · 44 ms" },
+  { tipo: "message.status", detalle: "sent", estado: "sent", entrega: "200 · 40 ms" },
+];
+
+function horaDe(base: number, paso: number): string {
+  const s = base + paso * 3;
+  const hh = 12;
+  const mm = 4 + Math.floor(s / 60);
+  return `${hh}:${String(mm % 60).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+}
+
+/** Stream de eventos: una fila nueva cada pocos segundos mientras el bloque está en pantalla (en pausa fuera de ella / sin movimiento). */
+function useStream(activo: boolean, filas: number) {
+  const menos = useMenosMovimiento();
+  const [n, setN] = useState(filas);
+  useTic(activo && !menos, 2800, () => setN((x) => x + 1));
+  const lista: Evento[] = [];
+  for (let k = n - 1; k >= Math.max(0, n - filas); k--) lista.push({ ...GUION[k % GUION.length]!, id: k, hora: horaDe(20, k) });
+  return { lista, ultimo: n - 1 };
+}
+
+function StreamEventos({ activo }: { activo: boolean }) {
   const { t } = useI18n();
-  const nodos = [
-    { k: t("Tu equipo", "Your team"), s: t("app de WhatsApp", "WhatsApp app") },
-    { k: t("Número de WhatsApp", "WhatsApp number"), s: t("mismo número", "same number") },
-    { k: "DuLabs", s: t("API · webhooks · agentes", "API · webhooks · agents") },
-  ];
-  const puntos = [
-    t("Un mismo número atiende de forma manual y por API, según la configuración de Meta.", "A single number is served both manually and via API, per Meta's configuration."),
-    t("Automatiza e integra agentes y sistemas propios sin migrar el número.", "Automate and integrate your own agents and systems without migrating the number."),
-    t("Las capacidades disponibles dependen de la configuración de WhatsApp/Meta.", "Available capabilities depend on the WhatsApp/Meta configuration."),
-  ];
+  const { lista, ultimo } = useStream(activo, 6);
   return (
-    <section className="scroll-mt-20 border-t border-site-border py-20 md:py-28">
+    <div className="dp-panel min-w-0 overflow-hidden rounded-dp-lg border border-dp-border bg-dp-surface">
+      <div className="flex items-center justify-between border-b border-dp-border px-4 py-3">
+        <span className="font-mono text-[11.5px] text-dp-text-2">events</span>
+        <span className="inline-flex items-center gap-2 font-mono text-[10.5px] uppercase tracking-[0.16em] text-dp-muted">
+          <span aria-hidden className="dp-senal" /> {t("en vivo · ejemplo", "live · example")}
+        </span>
+      </div>
+      <div className="grid grid-cols-[64px_1fr_auto] gap-x-4 border-b border-dp-border px-4 py-2 font-mono text-[10px] uppercase tracking-[0.14em] text-dp-muted sm:grid-cols-[72px_150px_1fr_auto]">
+        <span>{t("hora", "time")}</span>
+        <span>{t("evento", "event")}</span>
+        <span className="hidden sm:block">{t("estado", "status")}</span>
+        <span className="text-right">{t("entrega", "delivery")}</span>
+      </div>
+      <ol aria-label={t("Eventos recientes (ejemplo)", "Recent events (example)")}>
+        {lista.map((e) => (
+          <li
+            key={e.id}
+            className={`grid grid-cols-[64px_1fr_auto] items-center gap-x-4 border-b border-dp-border px-4 py-2.5 font-mono text-[12px] last:border-0 sm:grid-cols-[72px_150px_1fr_auto] ${e.id === ultimo && ultimo > 5 ? "dp-fila-nueva" : ""}`}
+          >
+            <span className="text-dp-muted">{e.hora}</span>
+            <span className="truncate text-dp-text-2">{e.tipo}</span>
+            <span className="hidden items-center gap-2 sm:inline-flex">
+              <MarcaEstado estado={e.estado} />
+              <span className={e.estado === "failed" ? "text-dp-danger" : "text-dp-text"}>{e.detalle}</span>
+            </span>
+            <span className={`text-right ${e.entrega.startsWith("200") ? "text-dp-muted" : "text-dp-signal"}`}>{e.entrega}</span>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+function InspectorEntrega() {
+  const { t } = useI18n();
+  return (
+    <div className="dp-panel min-w-0 overflow-hidden rounded-dp-lg border border-dp-border bg-dp-surface">
+      <div className="flex items-center justify-between gap-3 border-b border-dp-border px-4 py-3 font-mono text-[11.5px]">
+        <span className="truncate text-dp-text-2">
+          POST <span className="text-dp-text">https://api.acme.dev/dulabs</span>
+        </span>
+        <span className="flex-none text-dp-text">200</span>
+      </div>
+      <dl className="space-y-1.5 border-b border-dp-border px-4 py-4 font-mono text-[11.5px]">
+        {[
+          ["X-DuLabs-Signature", "9f2a41c0…b78c"],
+          ["X-DuLabs-Timestamp", "1712000271"],
+          ["X-DuLabs-Event-ID", "0c7e5d1a-…-41f2"],
+        ].map(([k, v]) => (
+          <div key={k} className="flex flex-wrap gap-x-2">
+            <dt className="text-dp-muted">{k}:</dt>
+            <dd className="text-dp-text">{v}</dd>
+          </div>
+        ))}
+      </dl>
+      <pre className="overflow-x-auto px-4 py-4 font-mono text-[11.5px] leading-[1.7] text-dp-text-2">{`{
+  "event_type": "message.status",
+  "event_id": "0c7e5d1a-…-41f2",
+  "wamid": "wamid.HBgM…",
+  "status": "delivered",
+  "timestamp": "1712000270"
+}`}</pre>
+      <div className="border-t border-dp-border px-4 py-4">
+        <p className="font-mono text-[10.5px] uppercase tracking-[0.16em] text-dp-muted">{t("Verificación", "Verification")}</p>
+        <p className="mt-2 break-words font-mono text-[11.5px] leading-relaxed text-dp-text-2">
+          hmac_sha256(secret, <span className="text-dp-text">timestamp + &quot;.&quot; + body</span>) == X-DuLabs-Signature
+        </p>
+        <p className="mt-1 text-[12px] text-dp-muted">{t("Tolerancia de 5 minutos · deduplica por Event-ID", "5-minute tolerance · dedup by Event-ID")}</p>
+      </div>
+    </div>
+  );
+}
+
+export function DevEventos() {
+  const { t } = useI18n();
+  const { ref, activo, atributos } = useBloque<HTMLElement>({ umbral: 0.2 });
+  return (
+    <section ref={ref} {...atributos} id={SECTION_IDS.webhooks} className="scroll-mt-14 border-t border-dp-border py-20 md:py-28">
       <div className="mx-auto max-w-[1440px] px-6">
-        <DevSectionHeading
-          eyebrow={t("Coexistencia", "Coexistence")}
-          title={t("Automatiza sin dejar de atender a mano.", "Automate without giving up manual replies.")}
-          desc={t(
-            "Cuando la configuración de Meta lo permite, DuLabs trabaja en modo Coexistencia: tu equipo sigue usando la app de WhatsApp y, sobre el mismo número, conectas API, webhooks y agentes.",
-            "When Meta's configuration allows it, DuLabs works in Coexistence mode: your team keeps using the WhatsApp app while, on the same number, you connect API, webhooks and agents.",
+        <Encabezado
+          indice="03"
+          etiqueta={t("Webhooks y eventos", "Webhooks & events")}
+          titulo={t("Cada evento, firmado y trazable.", "Every event, signed and traceable.")}
+          apoyo={t(
+            "Los mensajes entrantes y cada cambio de estado llegan a tu endpoint firmados con HMAC-SHA256. Si tu endpoint falla, DuLabs reintenta con backoff hasta 5 veces; después, el evento queda en la cola de fallidos (DLQ) y lo reenvías desde el dashboard.",
+            "Inbound messages and every status change reach your endpoint signed with HMAC-SHA256. If your endpoint fails, DuLabs retries with backoff up to 5 times; after that the event lands in the dead-letter queue (DLQ) and you replay it from the dashboard.",
           )}
         />
-        <div className="mt-10 overflow-hidden rounded-2xl border border-site-border bg-site-card p-5 md:p-7">
-          <div className="flex flex-col gap-2.5 md:flex-row md:items-stretch">
-            {nodos.map((n, i) => (
-              <div key={n.k} className="contents md:flex md:flex-1 md:items-stretch">
-                <div
-                  className={`dev-step flex-1 rounded-xl border px-4 py-4 ${i === 1 ? "border-white/25 bg-site-bg" : "border-site-border bg-site-bg"}`}
-                  style={{ ["--dev-i" as string]: i }}
-                >
-                  <div className="font-mono text-[12.5px] text-site-fg">{n.k}</div>
-                  <div className="mt-1 font-mono text-[10.5px] text-site-muted-fg">{n.s}</div>
+        <div className="mt-14 grid gap-6 md:mt-16 lg:grid-cols-12 lg:gap-8">
+          <div className="min-w-0 lg:col-span-7">
+            <StreamEventos activo={activo} />
+          </div>
+          <div className="min-w-0 lg:col-span-5">
+            <InspectorEntrega />
+          </div>
+        </div>
+        <div className="mt-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <NotaEjemplo>{t("Datos de ejemplo · tipos, cabeceras y política de reintentos reales", "Example data · real event types, headers and retry policy")}</NotaEjemplo>
+          <EnlaceFlecha href={`${DOCS_HREF}/webhooks`}>{t("Cómo verificar la firma", "How to verify the signature")}</EnlaceFlecha>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/* ============================== 05 · CONTROL (dashboard) ============================== */
+
+export function DevControl() {
+  const { t } = useI18n();
+  const { ref, activo, atributos } = useBloque<HTMLElement>({ umbral: 0.25 });
+  const { lista, ultimo } = useStream(activo, 4);
+  const enviados = 12480 + Math.max(0, ultimo - 3) * 3;
+  const nav = ["Overview", "API keys", "WhatsApp", "Webhooks", "Events", "Usage", "Members", "Plan"];
+  const metricas = [
+    { k: t("Mensajes este mes", "Messages this month"), v: enviados.toLocaleString("en-US"), sub: "/ 20,000", barra: enviados / 20000, cambia: true },
+    { k: t("Números", "Numbers"), v: "2", sub: "/ 2" },
+    { k: "API keys", v: "3", sub: t("activas", "active") },
+    { k: "DLQ", v: "1", sub: t("por reenviar", "to replay") },
+  ];
+  return (
+    <section ref={ref} {...atributos} id={SECTION_IDS.control} className="scroll-mt-14 border-t border-dp-border py-20 md:py-28">
+      <div className="mx-auto max-w-[1440px] px-6">
+        <Encabezado
+          indice="04"
+          etiqueta={t("Control", "Control")}
+          titulo={t("Opera tu integración desde un solo lugar.", "Run your integration from one place.")}
+          apoyo={t(
+            "Workspaces, números conectados, API keys, webhooks, uso del plan y el stream de eventos con reenvío desde la DLQ.",
+            "Workspaces, connected numbers, API keys, webhooks, plan usage and the event stream with DLQ replay.",
+          )}
+        />
+
+        <figure className="mt-14 md:mt-16">
+          <div className="dp-panel overflow-hidden rounded-dp-lg border border-dp-border bg-dp-surface">
+            <div className="flex items-center gap-3 border-b border-dp-border px-4 py-2.5">
+              <span aria-hidden className="flex gap-1.5">
+                <span className="h-2 w-2 rounded-full bg-white/10" />
+                <span className="h-2 w-2 rounded-full bg-white/10" />
+                <span className="h-2 w-2 rounded-full bg-white/10" />
+              </span>
+              <span className="font-mono text-[11px] text-dp-muted">dulabs.co/developer</span>
+            </div>
+            <div className="grid md:grid-cols-[200px_1fr]">
+              <nav aria-hidden className="hidden border-r border-dp-border p-3 md:block">
+                <p className="px-2.5 pb-3 pt-1 text-[12.5px] font-medium text-dp-text">
+                  acme-prod <span className="font-mono text-[10px] text-dp-muted">workspace</span>
+                </p>
+                {nav.map((n, i) => (
+                  <p key={n} className={`rounded-md px-2.5 py-1.5 text-[12.5px] ${i === 0 ? "bg-white/[0.06] text-dp-text" : "text-dp-muted"}`}>
+                    {n}
+                  </p>
+                ))}
+              </nav>
+              <div className="min-w-0 p-4 md:p-6">
+                <div className="grid grid-cols-2 border-l border-t border-dp-border lg:grid-cols-4">
+                  {metricas.map((m) => (
+                    <div key={m.k} className="border-b border-r border-dp-border p-4">
+                      <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-dp-muted">{m.k}</p>
+                      <p className="mt-2 font-mono text-[20px] tabular-nums text-dp-text md:text-[22px]">
+                        <span key={m.cambia ? m.v : undefined} className={m.cambia && ultimo > 3 ? "dp-cambio" : undefined}>
+                          {m.v}
+                        </span>{" "}
+                        <span className="text-[11.5px] text-dp-muted">{m.sub}</span>
+                      </p>
+                      {m.barra !== undefined ? (
+                        <div aria-hidden className="mt-3 h-px bg-dp-border">
+                          <div className="h-px bg-dp-text transition-[width] duration-700" style={{ width: `${Math.min(100, m.barra * 100)}%` }} />
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
                 </div>
-                {i < nodos.length - 1 ? (
-                  <span className="flex items-center justify-center text-site-muted-fg" aria-hidden>
-                    <span className="md:hidden">↕</span>
-                    <span className="hidden md:inline">⇄</span>
-                  </span>
-                ) : null}
+                <div className="mt-5">
+                  <div className="flex items-center justify-between pb-2">
+                    <p className="text-[12.5px] font-medium text-dp-text">{t("Eventos recientes", "Recent events")}</p>
+                    <p className="font-mono text-[10.5px] text-dp-muted">message.received · message.status</p>
+                  </div>
+                  <ol className="border-t border-dp-border">
+                    {lista.map((e) => (
+                      <li
+                        key={e.id}
+                        className={`flex items-center gap-3 border-b border-dp-border py-2 font-mono text-[11.5px] ${e.id === ultimo && ultimo > 3 ? "dp-fila-nueva" : ""}`}
+                      >
+                        <MarcaEstado estado={e.estado} />
+                        <span className={`w-20 flex-none ${e.estado === "failed" ? "text-dp-danger" : "text-dp-text"}`}>{e.detalle}</span>
+                        <span className="min-w-0 flex-1 truncate text-dp-muted">{e.tipo}</span>
+                        <span className="hidden flex-none text-dp-muted sm:inline">{e.entrega}</span>
+                        <span className="flex-none text-dp-muted">{e.hora}</span>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              </div>
+            </div>
+          </div>
+          <figcaption className="mt-4">
+            <NotaEjemplo>{t("Vista ilustrativa del dashboard · datos de ejemplo", "Illustrative dashboard view · example data")}</NotaEjemplo>
+          </figcaption>
+        </figure>
+      </div>
+    </section>
+  );
+}
+
+/* ============================== 06 · PRODUCCIÓN ============================== */
+
+export function DevProduccion() {
+  const { t } = useI18n();
+  const controles = [
+    { k: "API key", v: t("dl_live_… por workspace · rotación y revocación", "dl_live_… per workspace · rotate and revoke") },
+    { k: "HMAC-SHA256", v: t("firma de cada webhook sobre timestamp.body", "every webhook signed over timestamp.body") },
+    { k: "Idempotency-Key", v: t("un reintento nunca duplica el envío", "a retry never duplicates a send") },
+    { k: "Rate limits", v: t("2 msg/s por número · 1.200 msg/min y 300 lecturas/min por workspace", "2 msg/s per number · 1,200 msg/min and 300 reads/min per workspace") },
+    { k: t("Aislamiento", "Isolation"), v: t("keys, números y eventos confinados a su workspace", "keys, numbers and events scoped to their workspace") },
+    { k: "SSRF", v: t("URLs de webhook validadas antes de cada entrega", "webhook URLs validated before every delivery") },
+    { k: t("Auditoría", "Audit"), v: t("registro de acciones de cuenta y facturación", "log of account and billing actions") },
+  ];
+  return (
+    <section id={SECTION_IDS.produccion} className="scroll-mt-14 border-t border-dp-border py-20 md:py-28">
+      <div className="mx-auto max-w-[1440px] px-6">
+        <Encabezado
+          indice="05"
+          etiqueta={t("Producción", "Production")}
+          titulo={t("Pensado para producción desde el primer request.", "Built for production from the first request.")}
+          apoyo={t(
+            "Controles aplicados por la plataforma, no configuraciones opcionales. Sin claims de certificaciones que aún no tenemos.",
+            "Controls enforced by the platform, not optional settings. No claims of certifications we don't hold yet.",
+          )}
+        />
+        <div className="mt-14 grid gap-12 md:mt-16 lg:grid-cols-12 lg:gap-8">
+          <dl className="border-t border-dp-border lg:col-span-7">
+            {controles.map((c) => (
+              <div key={c.k} className="grid grid-cols-1 gap-1 border-b border-dp-border py-3.5 sm:grid-cols-[170px_1fr_auto] sm:items-center sm:gap-4">
+                <dt className="font-mono text-[12px] uppercase tracking-[0.08em] text-dp-text">{c.k}</dt>
+                <dd className="text-[13.5px] leading-relaxed text-dp-text-2">{c.v}</dd>
+                <dd className="hidden font-mono text-[10.5px] uppercase tracking-[0.14em] text-dp-muted sm:block">{t("aplicado", "enforced")}</dd>
               </div>
             ))}
+          </dl>
+
+          {/* Coexistencia: una capacidad operativa, no otra sección. */}
+          <div className="lg:col-span-5">
+            <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-dp-muted">{t("Coexistencia", "Coexistence")}</p>
+            <h3 className="mt-4 text-[22px] font-medium leading-[1.2] tracking-[-0.02em] text-dp-text">{t("El mismo número, a mano y por API.", "The same number, by hand and by API.")}</h3>
+            <div className="mt-6 border-y border-dp-border py-5 font-mono text-[12px]">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-dp-text">{t("Tu equipo", "Your team")}</span>
+                <span className="text-dp-muted">{t("app de WhatsApp", "WhatsApp app")}</span>
+              </div>
+              <div aria-hidden className="my-2.5 flex items-center gap-3 text-dp-muted">
+                <span className="h-px flex-1 bg-dp-border" /> ⇅ <span className="h-px flex-1 bg-dp-border" />
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-dp-text">{t("Número de WhatsApp", "WhatsApp number")}</span>
+                <span className="text-dp-muted">{t("mismo número", "same number")}</span>
+              </div>
+              <div aria-hidden className="my-2.5 flex items-center gap-3 text-dp-muted">
+                <span className="h-px flex-1 bg-dp-border" /> ⇅ <span className="h-px flex-1 bg-dp-border" />
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-dp-text">DuLabs</span>
+                <span className="text-dp-muted">API · webhooks · {t("agentes", "agents")}</span>
+              </div>
+            </div>
+            <p className="mt-5 text-[13.5px] leading-relaxed text-dp-text-2">
+              {t(
+                "Cuando la configuración de Meta lo permite, tu equipo sigue atendiendo desde la app de WhatsApp mientras automatizas sobre el mismo número, sin migrarlo.",
+                "When Meta's configuration allows it, your team keeps replying from the WhatsApp app while you automate on the same number, without migrating it.",
+              )}
+            </p>
           </div>
-          <ul className="mt-6 grid gap-3 border-t border-site-border pt-5 sm:grid-cols-3">
-            {puntos.map((p) => (
-              <li key={p} className="flex items-start gap-2.5 text-[13px] leading-relaxed text-site-muted-fg">
-                <Check className="mt-0.5 h-4 w-4 flex-none text-dev-accent" strokeWidth={2.25} aria-hidden />
-                <span>{p}</span>
-              </li>
-            ))}
-          </ul>
         </div>
       </div>
     </section>

@@ -1,115 +1,86 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { Check } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import type { PlanPublico } from "@/lib/developers/planes-publicos";
 import { START_HREF, SECTION_IDS, mailtoVentas } from "./constants";
+import { Encabezado } from "./ui";
 
-// DuLabs Developer V1 -- Fase 15. Sección de pricing PÚBLICA. Los precios y
-// límites vienen SIEMPRE de /api/developers/plans (que lee dulabs_dev_plans);
-// este componente NO fija cifras. Toggle mensual/anual (anual = 2 meses gratis,
-// derivado en el backend). Developer/Agency -> Comenzar; Enterprise -> ventas.
+// DuLabs Developer -- pricing comparativo. Precios y límites vienen SIEMPRE de /api/developers/plans (lee dulabs_dev_plans): este
+// componente no fija ninguna cifra. Anual = 2 meses gratis, derivado en el backend. Developer/Agency -> registro; Enterprise -> ventas.
+// Desktop: una tabla (los planes como columnas, lo que se compara como filas). Mobile: un bloque por plan con los mismos datos.
+// `children` es la columna de documentación + FAQ del mismo bloque (Build -> Read -> Ship).
 
 type Intervalo = "month" | "year";
 
 function fmtUsd(n: number): string {
-  // Sin decimales si es entero; si no, 2 decimales (p. ej. 15.83).
   return Number.isInteger(n) ? `$${n}` : `$${n.toFixed(2)}`;
 }
 
-function caracteristicas(p: PlanPublico, t: (es: string, en: string) => string): string[] {
-  // Gramática correcta por idioma: ES pone "ilimitado(s)" tras el sustantivo;
-  // EN lo pone antes ("Unlimited ...").
-  const linea = (n: number | null, es: string, en: string, esIlim: string, enIlim: string) =>
-    n === null ? t(esIlim, enIlim) : `${n.toLocaleString("en-US")} ${t(es, en)}`;
-  const out: string[] = [
-    linea(p.mensajesMensualesIncluidos, "mensajes/mes", "messages/mo", "Mensajes ilimitados", "Unlimited messages"),
-    linea(p.numerosIncluidos, "números de WhatsApp", "WhatsApp numbers", "Números ilimitados", "Unlimited numbers"),
-    linea(p.maxWorkspaces, "workspaces", "workspaces", "Workspaces ilimitados", "Unlimited workspaces"),
-    linea(p.maxMembers, "miembros", "members", "Miembros ilimitados", "Unlimited members"),
+function filas(t: (es: string, en: string) => string) {
+  const num = (n: number | null, ilim: string) => (n === null ? ilim : n.toLocaleString("en-US"));
+  return [
+    { k: t("Mensajes / mes", "Messages / mo"), v: (p: PlanPublico) => num(p.mensajesMensualesIncluidos, t("Ilimitados", "Unlimited")) },
+    { k: t("Números de WhatsApp", "WhatsApp numbers"), v: (p: PlanPublico) => num(p.numerosIncluidos, t("Ilimitados", "Unlimited")) },
+    { k: t("Mensajes/seg por número", "Msg/s per number"), v: (p: PlanPublico) => (p.mensajesPorSegundoPorNumero === null ? t("A medida", "Custom") : String(p.mensajesPorSegundoPorNumero)) },
+    { k: "Workspaces", v: (p: PlanPublico) => num(p.maxWorkspaces, t("Ilimitados", "Unlimited")) },
+    { k: t("Miembros", "Members"), v: (p: PlanPublico) => num(p.maxMembers, t("Ilimitados", "Unlimited")) },
+    {
+      k: t("Números adicionales", "Additional numbers"),
+      v: (p: PlanPublico) => (p.permiteNumerosAdicionales && p.precioNumeroAdicionalUsd !== null ? `${fmtUsd(p.precioNumeroAdicionalUsd)}${t("/mes", "/mo")}` : "—"),
+    },
   ];
-  if (p.mensajesPorSegundoPorNumero !== null) {
-    out.push(`${p.mensajesPorSegundoPorNumero} ${t("msg/seg por número", "msg/s per number")}`);
-  }
-  if (p.permiteNumerosAdicionales && p.precioNumeroAdicionalUsd !== null) {
-    out.push(`${t("Números adicionales", "Additional numbers")} · ${fmtUsd(p.precioNumeroAdicionalUsd)}${t("/mes", "/mo")}`);
-  }
-  return out;
 }
 
-function PlanCard({ plan, intervalo, destacado }: { plan: PlanPublico; intervalo: Intervalo; destacado: boolean }) {
+function Precio({ plan, intervalo }: { plan: PlanPublico; intervalo: Intervalo }) {
   const { t } = useI18n();
-  const esManual = plan.esManual;
-  const precioMostrado = intervalo === "year" ? plan.equivalenteMensualAnualUsd : plan.precioMensualUsd;
-
+  const precio = intervalo === "year" ? plan.equivalenteMensualAnualUsd : plan.precioMensualUsd;
   return (
-    <div
-      className={`relative flex flex-col rounded-2xl border p-6 ${
-        destacado ? "border-white/25 bg-site-card ring-1 ring-white/10" : "border-site-border bg-site-card"
-      }`}
-    >
-      {destacado ? (
-        <span className="absolute -top-3 left-6 rounded-full bg-dev-accent px-3 py-0.5 font-mono text-[10px] uppercase tracking-widest text-dev-accent-fg">
-          {t("Más popular", "Most popular")}
-        </span>
-      ) : null}
-      <h3 className="font-display text-[18px] font-medium text-site-fg">{plan.nombre}</h3>
-
-      <div className="mt-4 flex items-baseline gap-1.5">
-        {precioMostrado === null ? (
-          <span className="font-display text-[32px] font-medium text-site-fg">{t("A cotizar", "Custom")}</span>
+    <div>
+      <p className="flex items-baseline gap-1.5">
+        {precio === null ? (
+          <span className="text-[26px] font-medium tracking-[-0.02em] text-dp-text">{t("A cotizar", "Custom")}</span>
         ) : (
           <>
-            <span className="font-display text-[40px] font-medium leading-none tracking-tight text-site-fg">{fmtUsd(precioMostrado)}</span>
-            <span className="text-[13px] text-site-muted-fg">{t("USD/mes", "USD/mo")}</span>
+            <span className="font-mono text-[30px] font-medium tracking-[-0.03em] tabular-nums text-dp-text">{fmtUsd(precio)}</span>
+            <span className="text-[12.5px] text-dp-muted">{t("USD/mes", "USD/mo")}</span>
           </>
         )}
-      </div>
-      {intervalo === "year" && plan.precioAnualUsd !== null ? (
-        <p className="mt-1 text-[12px] text-site-muted-fg">
-          {t("Facturado anual", "Billed annually")} {fmtUsd(plan.precioAnualUsd)} · {t("2 meses gratis", "2 months free")}
-        </p>
-      ) : esManual ? (
-        <p className="mt-1 text-[12px] text-site-muted-fg">{t("Contratación por ventas", "Sales-assisted")}</p>
-      ) : (
-        <p className="mt-1 text-[12px] text-site-muted-fg">{t("Precio de lista, facturación mensual", "List price, billed monthly")}</p>
-      )}
-
-      <ul className="mt-6 flex-1 space-y-2.5">
-        {caracteristicas(plan, t).map((c) => (
-          <li key={c} className="flex items-start gap-2.5 text-[13.5px] text-site-muted-fg">
-            <Check className="mt-0.5 h-4 w-4 flex-none text-dev-accent" strokeWidth={2.25} aria-hidden />
-            <span>{c}</span>
-          </li>
-        ))}
-      </ul>
-
-      {esManual ? (
-        <a
-          href={mailtoVentas(`DuLabs Developer — ${plan.nombre}`)}
-          className="mt-7 inline-flex items-center justify-center rounded-lg border border-site-border bg-site-bg px-4 py-2.5 text-[14px] font-medium text-site-fg transition-colors hover:border-dev-accent/40"
-        >
-          {t("Contactar ventas", "Contact sales")}
-        </a>
-      ) : (
-        <Link
-          href={START_HREF}
-          className={`mt-7 inline-flex items-center justify-center rounded-lg px-4 py-2.5 text-[14px] font-medium transition-colors ${
-            destacado
-              ? "bg-dev-accent text-dev-accent-fg hover:bg-dev-accent-hover"
-              : "border border-site-border bg-site-bg text-site-fg hover:border-dev-accent/40"
-          }`}
-        >
-          {t("Comenzar", "Get started")}
-        </Link>
-      )}
+      </p>
+      <p className="mt-1 text-[12px] text-dp-muted">
+        {plan.esManual
+          ? t("Contratación con ventas", "Sales-assisted")
+          : intervalo === "year" && plan.precioAnualUsd !== null
+            ? `${t("Facturado anual", "Billed annually")} ${fmtUsd(plan.precioAnualUsd)}`
+            : t("Facturación mensual", "Billed monthly")}
+      </p>
     </div>
   );
 }
 
-export function DevPricing() {
+function Cta({ plan, destacado }: { plan: PlanPublico; destacado: boolean }) {
+  const { t } = useI18n();
+  const base = "dp-btn inline-flex h-10 w-full items-center justify-center gap-2 rounded-dp px-4 text-[13.5px] font-medium";
+  if (plan.esManual) {
+    return (
+      <a href={mailtoVentas(`DuLabs Developer — ${plan.nombre}`)} className={`${base} border border-dp-border-strong text-dp-text hover:border-white/35 hover:bg-white/[0.03]`}>
+        {t("Contactar ventas", "Contact sales")}
+      </a>
+    );
+  }
+  return (
+    <Link
+      href={START_HREF}
+      className={`${base} ${destacado ? "bg-dev-accent text-dev-accent-fg hover:bg-dev-accent-hover" : "border border-dp-border-strong text-dp-text hover:border-white/35 hover:bg-white/[0.03]"}`}
+    >
+      {t("Comenzar", "Get started")}
+      <span aria-hidden className="dp-flecha">→</span>
+    </Link>
+  );
+}
+
+export function DevPricing({ children }: { children?: ReactNode }) {
   const { t } = useI18n();
   const [planes, setPlanes] = useState<PlanPublico[] | null>(null);
   const [error, setError] = useState(false);
@@ -133,57 +104,123 @@ export function DevPricing() {
     };
   }, []);
 
+  const destacado = (i: number) => i === 1;
+  const comparacion = filas(t);
+
+  const toggle = (
+    <div role="group" aria-label={t("Periodo de facturación", "Billing period")} className="inline-flex items-center rounded-dp border border-dp-border p-0.5 font-mono text-[12px]">
+      {(["month", "year"] as const).map((iv) => (
+        <button
+          key={iv}
+          type="button"
+          onClick={() => setIntervalo(iv)}
+          aria-pressed={intervalo === iv}
+          className={`dp-link rounded-[6px] px-3 py-1.5 ${intervalo === iv ? "bg-white/[0.08] text-dp-text" : "text-dp-muted hover:text-dp-text-2"}`}
+        >
+          {iv === "month" ? t("Mensual", "Monthly") : t("Anual · 2 meses gratis", "Annual · 2 months free")}
+        </button>
+      ))}
+    </div>
+  );
+
   return (
-    <section id={SECTION_IDS.pricing} className="scroll-mt-20 border-t border-site-border py-20 md:py-28">
+    <section id={SECTION_IDS.pricing} className="scroll-mt-14 border-t border-dp-border py-20 md:py-28">
       <div className="mx-auto max-w-[1440px] px-6">
-        <div className="flex flex-col items-start justify-between gap-6 md:flex-row md:items-end">
-          <div className="max-w-2xl">
-            <p className="font-mono text-[11px] font-medium uppercase tracking-[0.28em] text-dev-accent">Pricing</p>
-            <h2 className="mt-4 font-display text-[28px] font-medium leading-[1.1] tracking-[-0.02em] text-site-fg md:text-[36px]">
-              {t("Precios simples, en USD.", "Simple pricing, in USD.")}
-            </h2>
-            <p className="mt-4 text-[15.5px] leading-relaxed text-site-muted-fg">
-              {t("Elige un plan y cámbialo cuando quieras desde el dashboard.", "Pick a plan and change it anytime from the dashboard.")}
-            </p>
-          </div>
+        <Encabezado
+          indice="06"
+          etiqueta={t("Pricing y docs", "Pricing & docs")}
+          titulo={t("Precios en USD. Documentación abierta.", "Pricing in USD. Open documentation.")}
+          apoyo={t("Elige un plan y cámbialo cuando quieras desde el dashboard.", "Pick a plan and change it anytime from the dashboard.")}
+          accion={toggle}
+        />
 
-          {/* Toggle mensual / anual */}
-          <div className="inline-flex items-center rounded-full border border-site-border bg-site-card p-1 text-[13px]">
-            <button
-              type="button"
-              onClick={() => setIntervalo("month")}
-              aria-pressed={intervalo === "month"}
-              className={`rounded-full px-4 py-1.5 font-medium transition-colors ${intervalo === "month" ? "bg-dev-accent text-dev-accent-fg" : "text-site-muted-fg hover:text-site-fg"}`}
-            >
-              {t("Mensual", "Monthly")}
-            </button>
-            <button
-              type="button"
-              onClick={() => setIntervalo("year")}
-              aria-pressed={intervalo === "year"}
-              className={`rounded-full px-4 py-1.5 font-medium transition-colors ${intervalo === "year" ? "bg-dev-accent text-dev-accent-fg" : "text-site-muted-fg hover:text-site-fg"}`}
-            >
-              {t("Anual", "Annual")} <span className="opacity-80">· {t("2 meses gratis", "2 months free")}</span>
-            </button>
-          </div>
-        </div>
-
-        <div className="mt-12 grid gap-5 lg:grid-cols-3">
+        <div className="mt-14 md:mt-16">
           {planes === null && !error ? (
-            [0, 1, 2].map((i) => <div key={i} className="h-[420px] animate-pulse rounded-2xl border border-site-border bg-site-card" />)
+            <div aria-busy="true" className="h-[360px] animate-pulse rounded-dp-lg border border-dp-border bg-dp-surface" />
           ) : error ? (
-            <div className="col-span-full rounded-2xl border border-site-border bg-site-card p-8 text-center">
-              <p className="text-[14px] text-site-muted-fg">
-                {t("No pudimos cargar los planes ahora. Escríbenos y te ayudamos.", "We couldn't load plans right now. Reach out and we'll help.")}
-              </p>
-              <a href={mailtoVentas("DuLabs Developer — Pricing")} className="mt-3 inline-block text-[14px] font-medium text-dev-accent hover:underline">
+            <div className="border-y border-dp-border py-10 text-center">
+              <p className="text-[14px] text-dp-text-2">{t("No pudimos cargar los planes ahora. Escríbenos y te ayudamos.", "We couldn't load plans right now. Reach out and we'll help.")}</p>
+              <a href={mailtoVentas("DuLabs Developer — Pricing")} className="dp-link mt-3 inline-block text-[14px] font-medium text-dp-text underline-offset-4 hover:underline">
                 {t("Contactar ventas", "Contact sales")}
               </a>
             </div>
           ) : (
-            planes!.map((p, i) => <PlanCard key={p.slug} plan={p} intervalo={intervalo} destacado={i === 1} />)
+            <>
+              {/* Desktop: tabla comparativa. */}
+              <table className="hidden w-full table-fixed border-collapse md:table">
+                <caption className="sr-only">{t("Comparación de planes", "Plan comparison")}</caption>
+                <thead>
+                  <tr className="border-y border-dp-border">
+                    <th scope="col" className="w-[26%] pt-5 text-left align-top font-mono text-[11px] font-normal uppercase tracking-[0.18em] text-dp-muted">
+                      {t("Plan", "Plan")}
+                    </th>
+                    {planes!.map((p, i) => (
+                      <th key={p.slug} scope="col" className={`px-6 py-5 text-left align-top font-normal ${destacado(i) ? "bg-white/[0.025]" : ""}`}>
+                        <p className="text-[15px] font-medium text-dp-text">{p.nombre}</p>
+                        <div className="mt-4">
+                          <Precio plan={p} intervalo={intervalo} />
+                        </div>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {comparacion.map((f) => (
+                    <tr key={f.k} className="border-b border-dp-border">
+                      <th scope="row" className="py-3 text-left text-[13.5px] font-normal text-dp-text-2">
+                        {f.k}
+                      </th>
+                      {planes!.map((p, i) => (
+                        <td key={p.slug} className={`px-6 py-3 font-mono text-[13px] tabular-nums text-dp-text ${destacado(i) ? "bg-white/[0.025]" : ""}`}>
+                          {f.v(p)}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                  <tr>
+                    <td />
+                    {planes!.map((p, i) => (
+                      <td key={p.slug} className={`px-6 pb-6 pt-5 ${destacado(i) ? "bg-white/[0.025]" : ""}`}>
+                        <Cta plan={p} destacado={destacado(i)} />
+                      </td>
+                    ))}
+                  </tr>
+                </tbody>
+              </table>
+
+              {/* Mobile: un bloque por plan, mismos datos. */}
+              <div className="border-t border-dp-border md:hidden">
+                {planes!.map((p, i) => (
+                  <div key={p.slug} className="border-b border-dp-border py-6">
+                    <div className="flex items-start justify-between gap-4">
+                      <p className="text-[16px] font-medium text-dp-text">{p.nombre}</p>
+                      <Precio plan={p} intervalo={intervalo} />
+                    </div>
+                    <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-2">
+                      {comparacion.map((f) => (
+                        <div key={f.k}>
+                          <dt className="text-[11.5px] text-dp-muted">{f.k}</dt>
+                          <dd className="font-mono text-[12.5px] text-dp-text">{f.v(p)}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                    <div className="mt-5">
+                      <Cta plan={p} destacado={destacado(i)} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
           )}
+          <p className="mt-4 text-[12.5px] leading-relaxed text-dp-muted">
+            {t(
+              "Meta factura los mensajes de WhatsApp directamente al dueño de la cuenta (WABA); DuLabs no cobra sobre eso. El pago del plan se hace dentro del dashboard.",
+              "Meta bills WhatsApp messages directly to the account owner (WABA); DuLabs doesn't charge on top. Plan payment happens inside the dashboard.",
+            )}
+          </p>
         </div>
+
+        {children}
       </div>
     </section>
   );
