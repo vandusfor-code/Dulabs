@@ -22,6 +22,7 @@ const PRODUCTO: CatalogProduct = {
   pricing: { retail: 35_000, wholesale: 18_000 },
   status: "ACTIVE",
   tracksStock: false,
+  stock: 0,
   primaryImage: null,
   createdAt: "2026-09-22T00:00:00Z",
   updatedAt: "2026-09-22T00:00:00Z",
