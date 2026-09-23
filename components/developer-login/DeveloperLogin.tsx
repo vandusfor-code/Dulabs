@@ -9,7 +9,7 @@ import { useI18n } from "@/lib/i18n";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import { LanguageSelector } from "@/components/LanguageSelector";
 import { LANDING_PATH, START_HREF } from "@/components/developer-platform/constants";
-import { LoginForm, type Modo } from "./LoginForm";
+import { AuthForm, type Modo } from "@/components/auth/AuthForm";
 import { InfrastructureVisual } from "./InfrastructureVisual";
 
 // DuLabs Developer · login. La landing vende; el login solo recibe: marca + idioma, volver, un título, una línea, el formulario y el
@@ -45,7 +45,7 @@ export function DeveloperLogin({ next, recuperacion }: { next: string; recuperac
       });
   }, [next, recuperacion, router]);
 
-  const titulos: Record<Modo, { h: string; p: string }> = {
+  const titulos: Record<Exclude<Modo, "registro">, { h: string; p: string }> = {
     login: { h: t("Bienvenido de vuelta.", "Welcome back."), p: t("Accede a tu workspace y continúa desarrollando.", "Access your workspace and keep building.") },
     recuperar: {
       h: t("Recupera tu acceso.", "Recover your access."),
@@ -70,12 +70,20 @@ export function DeveloperLogin({ next, recuperacion }: { next: string; recuperac
             </Link>
 
             <div key={modo} className="dl-entra mt-10 md:mt-12 [@media(max-height:920px)]:mt-7" style={{ ["--i" as string]: 2 }}>
-              <h1 className="text-[36px] font-medium leading-[1.05] tracking-[-0.04em] text-auth-text md:text-[40px] lg:text-[44px]">{titulos[modo].h}</h1>
-              <p className="mt-4 max-w-[36ch] text-[16px] leading-[1.6] text-auth-text-2">{titulos[modo].p}</p>
+              <h1 className="text-[36px] font-medium leading-[1.05] tracking-[-0.04em] text-auth-text md:text-[40px] lg:text-[44px]">{titulos[modo === "registro" ? "login" : modo].h}</h1>
+              <p className="mt-4 max-w-[36ch] text-[16px] leading-[1.6] text-auth-text-2">{titulos[modo === "registro" ? "login" : modo].p}</p>
             </div>
 
             <div className="dl-entra mt-10 max-w-[400px] [@media(max-height:920px)]:mt-7" style={{ ["--i" as string]: 3 }}>
-              <LoginForm next={next} modo={modo} onModo={setModo} configFaltante={supabaseConfigFaltante} />
+              <AuthForm
+                modo={modo}
+                onModo={setModo}
+                configFaltante={supabaseConfigFaltante}
+                destino={() => next}
+                retornoRecuperacion={`/login?next=${encodeURIComponent(next)}&recuperar=1`}
+                placeholderEmail={["tu@empresa.com", "you@company.com"]}
+                cargandoLogin={["Ingresando…", "Signing in…"]}
+              />
             </div>
 
             {modo === "login" ? (
