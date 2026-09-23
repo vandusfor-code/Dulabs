@@ -6,9 +6,8 @@
  *   - solo productos ACTIVOS; catálogo no publicado / módulo apagado => 404.
  */
 import assert from "node:assert/strict";
-import { parseOrderMessage } from "@/lib/catalogo/pedido";
 import { beforeEach, describe, it } from "node:test";
-import type { CatalogProduct } from "@/lib/catalogo/domain";
+import { PUBLIC_STOCK_VISIBLE, type CatalogProduct } from "@/lib/catalogo/domain";
 import {
   imageVersion,
   isValidSlug,
@@ -18,7 +17,6 @@ import {
   slugCandidates,
   slugify,
   toPublicProduct,
-  whatsappOrderLink,
 } from "@/lib/catalogo/publicacion";
 import { createCatalogService, createPublicCatalogService, newWholesaleToken, tokensMatch, type CatalogActor } from "@/lib/catalogo/service";
 import { createInMemoryCatalogRepository, JPEG_HEAD, WEBP_HEAD } from "@/lib/catalogo/testing/in-memory-repository";
@@ -84,13 +82,15 @@ describe("proyección pública de un producto", () => {
     assert.equal(toPublicProduct({ ...producto, pricing: { retail: 35_000, wholesale: null } }, "wholesale").price, null);
   });
 
-  it("WhatsApp: mensaje con la referencia exacta de la pieza", () => {
-    const link = whatsappOrderLink("+57 318 3715860", { reference: "DL-000184", name: "Dije corazón" }, "retail");
-    assert.ok(link?.startsWith("https://wa.me/573183715860?text="));
-    assert.match(decodeURIComponent(link!.split("text=")[1]), /• DL-000184 · Dije corazón — 1 unidad/);
-    const mayor = whatsappOrderLink("573183715860", { reference: "DL-000184", name: "Dije corazón" }, "wholesale");
-    assert.deepEqual(parseOrderMessage(decodeURIComponent(mayor!.split("text=")[1])), { context: "wholesale", items: [{ reference: "DL-000184", quantity: 1 }] });
-    assert.equal(whatsappOrderLink(null, { reference: "DL-1", name: "x" }, "retail"), null);
+  it("stock discreto: el número exacto solo sale si es pequeño; el backend conoce siempre el real", () => {
+    const conStock = (stock: number) => toPublicProduct({ ...producto, tracksStock: true, stock }, "retail");
+    assert.equal(conStock(37).maxQuantity, null, "37 unidades: el público solo ve 'Disponible'");
+    assert.equal(conStock(37).availability, "available");
+    assert.equal(conStock(PUBLIC_STOCK_VISIBLE).maxQuantity, PUBLIC_STOCK_VISIBLE);
+    assert.equal(conStock(2).maxQuantity, 2);
+    assert.equal(conStock(2).availability, "low");
+    assert.equal(conStock(0).maxQuantity, 0);
+    assert.equal(toPublicProduct({ ...producto, tracksStock: false }, "retail").maxQuantity, null);
   });
 });
 

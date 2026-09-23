@@ -5,25 +5,33 @@
  * escritorio (diálogo nativo). El carrito del navegador nunca es la fuente de
  * verdad:
  *   - al abrirse, el backend confirma cada referencia (precio vigente,
- *     disponibilidad, máximo pedible) y la selección se ajusta;
- *   - "Pedir por WhatsApp" PREPARA el pedido en el servidor (POST /pedido):
- *     solo si todo es posible se abre WhatsApp, con el mensaje armado allá.
- *     Si algo cambió, se muestra y el cliente confirma de nuevo.
+ *     disponibilidad, máximo pedible) y entrega una COTIZACIÓN FIRMADA de los
+ *     precios que el cliente está viendo;
+ *   - "Enviar pedido por WhatsApp" pide al servidor preparar la SOLICITUD
+ *     (POST …/pedido) con referencias, cantidades, esa cotización y la clave
+ *     de idempotencia del intento. Solo si todo es posible y los precios no
+ *     cambiaron se abre WhatsApp, con el mensaje armado allá. Si algo cambió,
+ *     se muestra exactamente qué y el cliente confirma de nuevo.
+ *   - El mismo carrito enviado dos veces (doble toque, volver de WhatsApp)
+ *     produce la MISMA solicitud (mismo DL-ORD): la clave vive con el carrito.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ImageOff, Loader2, MessageCircle, Minus, Plus, ShoppingBag, Trash2, X } from "lucide-react";
 import { formatCop } from "@/lib/business-agent-quote";
 import {
   cartTotal,
+  currentRequest,
   lineSubtotal,
   orderableLines,
   quantityLimit,
   reconcileWithChanges,
+  requestFingerprint,
   selectionSnapshot,
   type CartChange,
   type CartProduct,
   type CartState,
 } from "@/lib/catalogo/carrito";
+import type { OrderAdjustment } from "@/lib/catalogo/pedido";
 import { Dialogo } from "@/components/catalogo-publico/tienda/Dialogo";
 import { useCarrito, useTienda } from "@/components/catalogo-publico/tienda/TiendaContext";
 
@@ -33,6 +41,16 @@ const stepBtn =
 interface Seleccion {
   items: CartProduct[];
   unknown: string[];
+  quote?: string | null;
+}
+
+interface RespuestaPedido {
+  status: "ready" | "adjusted" | "review" | "no_whatsapp";
+  whatsappUrl: string | null;
+  request: { requestId: string } | null;
+  adjustments: OrderAdjustment[];
+  quote: string | null;
+  selection: Seleccion;
 }
 
 /** Verdad del servidor sobre las referencias del carrito (solo referencias viajan). */
@@ -48,10 +66,36 @@ async function resolverSeleccion(basePath: string, state: CartState, signal: Abo
   }
 }
 
+const precio = (p: number | null) => (p === null ? "precio a consultar" : formatCop(p));
+
 function textoCambio(c: CartChange): string {
   if (c.kind === "removed") return `«${c.name}» ya no está disponible y se retiró de tu selección.`;
   if (c.kind === "sold_out") return `«${c.name}» se agotó y no se incluirá en tu pedido.`;
+  if (c.kind === "price_changed") return `El precio de «${c.name}» cambió: ahora ${precio(c.to)}.`;
   return c.to === 1 ? `Solo queda 1 unidad de «${c.name}»; ajustamos tu selección.` : `Solo quedan ${c.to} unidades de «${c.name}»; ajustamos tu selección.`;
+}
+
+/** Lo que dijo el servidor, en palabras del cliente (el nombre de lo retirado sale del carrito: el servidor ya no lo conoce). */
+function textoAjuste(a: OrderAdjustment, nombres: ReadonlyMap<string, string>): string {
+  switch (a.kind) {
+    case "not_found":
+      return `«${nombres.get(a.reference) ?? a.reference}» ya no está disponible y se retiró de tu selección.`;
+    case "sold_out":
+      return `«${a.name}» se agotó y no se incluirá en tu pedido.`;
+    case "quantity_reduced":
+      return a.granted === 1 ? `Solo queda 1 unidad de «${a.name}»; ajustamos tu selección.` : `Solo quedan ${a.granted} unidades de «${a.name}»; ajustamos tu selección.`;
+    case "price_changed":
+      return `El precio de «${a.name}» cambió: antes ${precio(a.before)}, ahora ${precio(a.after)}.`;
+  }
+}
+
+/** Clave opaca de idempotencia del intento de envío. */
+function nuevaClave(): string {
+  const c = globalThis.crypto;
+  if (c?.randomUUID) return c.randomUUID().replace(/-/g, "");
+  const b = new Uint8Array(16);
+  c.getRandomValues(b);
+  return Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
 }
 
 export function HojaCarrito() {
@@ -60,11 +104,14 @@ export function HojaCarrito() {
   const [avisos, setAvisos] = useState<string[]>([]);
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Última cotización firmada que el backend entregó para lo que el cliente está viendo. */
+  const cotizacion = useRef<string | null>(null);
 
   /** Aplica la verdad del servidor y devuelve los avisos de lo que cambió. */
   const aplicar = (s: Seleccion): string[] => {
     const { changes } = reconcileWithChanges(store.getSnapshot(), s.items, s.unknown);
     store.dispatch({ type: "reconcile", resolved: s.items, unknown: s.unknown });
+    if (s.quote !== undefined) cotizacion.current = s.quote;
     return changes.map(textoCambio);
   };
 
@@ -90,29 +137,43 @@ export function HojaCarrito() {
     cerrarCarrito();
   };
 
-  /** Prepara el pedido en el servidor; solo abre WhatsApp si todo lo pedido es posible. */
+  /** Prepara la solicitud en el servidor; solo abre WhatsApp si todo lo pedido es posible y los precios no cambiaron. */
   const pedir = async () => {
+    if (enviando) return; // doble toque: una sola petición en vuelo
     setEnviando(true);
     setError(null);
     setAvisos([]);
+    const actual = store.getSnapshot();
+    const nombres = new Map(actual.lines.map((l) => [l.reference, l.name]));
+    let intento = currentRequest(actual);
+    if (!intento) {
+      intento = { key: nuevaClave(), items: requestFingerprint(actual.lines) };
+      store.dispatch({ type: "setRequest", request: intento });
+    }
     try {
       const res = await fetch(`${basePath}/pedido`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({ items: selectionSnapshot(store.getSnapshot()).items }),
+        body: JSON.stringify({ items: selectionSnapshot(actual).items, quote: cotizacion.current ?? undefined, requestKey: intento.key }),
       });
       if (!res.ok) {
         setError("No pudimos preparar tu pedido. Intenta de nuevo en un momento.");
         return;
       }
-      const data = (await res.json()) as { status: "ready" | "adjusted" | "no_whatsapp"; whatsappUrl: string | null; selection: Seleccion };
-      const cambios = aplicar(data.selection);
-      if (data.status === "ready" && data.whatsappUrl) {
+      const data = (await res.json()) as RespuestaPedido;
+      const cambios = aplicar({ ...data.selection, quote: data.quote });
+      if (data.status === "ready" && data.whatsappUrl && data.request) {
+        store.dispatch({ type: "setRequest", request: { ...intento, requestId: data.request.requestId, whatsappUrl: data.whatsappUrl } });
         window.location.assign(data.whatsappUrl);
         return;
       }
       if (data.status === "no_whatsapp") setError("Este catálogo todavía no tiene un WhatsApp de pedidos configurado.");
-      else setAvisos(cambios.length > 0 ? cambios : ["Actualizamos tu selección con el inventario actual. Revísala y confirma tu pedido."]);
+      else if (data.status === "adjusted") {
+        const textos = data.adjustments.map((a) => textoAjuste(a, nombres));
+        setAvisos(textos.length > 0 ? textos : cambios.length > 0 ? cambios : ["Actualizamos tu selección con el inventario actual. Revísala y confirma tu pedido."]);
+      } else {
+        setAvisos(cambios.length > 0 ? [...cambios, "Revisa tu selección y vuelve a tocar «Enviar pedido por WhatsApp»."] : ["Confirmamos los precios vigentes de tu selección. Revísala y vuelve a tocar «Enviar pedido por WhatsApp»."]);
+      }
     } catch {
       setError("Sin conexión. Revisa tu internet e intenta de nuevo.");
     } finally {
@@ -122,6 +183,7 @@ export function HojaCarrito() {
 
   const { total, unpricedItems } = cartTotal(state);
   const hayPedibles = orderableLines(state).length > 0;
+  const solicitud = currentRequest(state);
   const whatsappValido = (whatsapp ?? "").replace(/\D/g, "").length >= 8;
 
   return (
@@ -278,8 +340,18 @@ export function HojaCarrito() {
                 className="mt-4 flex h-14 w-full items-center justify-center gap-2.5 rounded-full bg-[var(--tienda-oro)] text-[15px] font-semibold text-white shadow-sm transition-[background-color,transform,opacity] duration-150 hover:bg-[var(--tienda-oro-hover)] active:scale-[0.98] disabled:opacity-80"
               >
                 {enviando ? <Loader2 className="size-5 animate-spin" aria-hidden /> : <MessageCircle className="size-5" strokeWidth={1.8} aria-hidden />}
-                {enviando ? "Verificando disponibilidad…" : "Pedir por WhatsApp"}
+                {enviando ? "Verificando tu pedido…" : "Enviar pedido por WhatsApp"}
               </button>
+            )}
+            {solicitud?.requestId && hayPedibles && (
+              <div className="mt-3 flex items-center justify-between gap-3 text-[12.5px] text-mist">
+                <p>
+                  Solicitud <span className="font-mono font-medium text-fg">{solicitud.requestId}</span> lista. ¿No se abrió WhatsApp? Toca de nuevo.
+                </p>
+                <button type="button" onClick={() => dispatch({ type: "clear" })} className="shrink-0 font-medium text-fg underline underline-offset-4">
+                  Vaciar
+                </button>
+              </div>
             )}
           </footer>
         </>

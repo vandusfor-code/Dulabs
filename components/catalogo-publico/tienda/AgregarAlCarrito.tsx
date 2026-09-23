@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { Check, Plus } from "lucide-react";
 import { canAddMore } from "@/lib/catalogo/carrito";
 import type { PublicCatalogProduct } from "@/lib/catalogo/publicacion";
-import { productoCarrito, useCarrito } from "@/components/catalogo-publico/tienda/TiendaContext";
+import { productoCarrito, useCarrito, useTienda } from "@/components/catalogo-publico/tienda/TiendaContext";
 
 /**
  * "+" de las tarjetas (inicio, listado, búsqueda): agrega una unidad con el
@@ -13,6 +13,7 @@ import { productoCarrito, useCarrito } from "@/components/catalogo-publico/tiend
  */
 export function AgregarAlCarrito({ product }: { product: PublicCatalogProduct }) {
   const { state, dispatch } = useCarrito();
+  const { avisarAgregado } = useTienda();
   const [agregado, setAgregado] = useState(0);
   const item = productoCarrito(product);
   const puede = canAddMore(state, item);
@@ -32,8 +33,10 @@ export function AgregarAlCarrito({ product }: { product: PublicCatalogProduct })
       type="button"
       disabled={!puede && !agregado}
       onClick={() => {
+        if (!puede) return;
         dispatch({ type: "add", product: item });
         setAgregado((n) => n + 1);
+        avisarAgregado(product.name);
       }}
       aria-label={puede ? `Agregar ${product.name} a tu selección` : `Ya tienes todas las unidades disponibles de ${product.name}`}
       title={puede ? undefined : "Ya tienes todas las unidades disponibles"}

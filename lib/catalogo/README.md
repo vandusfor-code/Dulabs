@@ -178,3 +178,66 @@ creación por lotes con `createProduct` (misma regla que el formulario) →
 fotos a la galería existente → resultado e historial. Decisiones, límites y
 seguridad: [`import/README.md`](import/README.md). Migración aditiva:
 `20261107000000_dulabs_catalogo_importaciones.sql`.
+
+## Solicitud de pedido estructurada → WhatsApp → contrato del agente (Fase 6)
+
+```
+CATÁLOGO (detal o mayorista) → carrito (solo referencia + cantidad)
+  → GET …/seleccion : verdad del backend + COTIZACIÓN FIRMADA de los precios vistos
+  → POST …/pedido   : { items, quote, requestKey }
+       publicación → canal (el mayorista lo autoriza el token de la RUTA)
+       → referencia → producto ACTIVO de ESE negocio → precio del canal → stock REAL
+       → validación ATÓMICA (agotado, menos stock, retirado, precio cambiado)
+       → OrderDraft + DL-ORD-XXXXXX + mensaje + evento catalog.order_request.created
+  → WhatsApp (link wa.me con el mensaje armado en el servidor)
+  → [futuro] agente IA: herramientas deterministas de resolucion.ts
+```
+
+La IA no participa en nada de esto: **WhatsApp funciona con la IA apagada**.
+
+### Decisiones
+
+- **Una sola ruta de código para detal y mayorista** (`pedido-http.ts`): el
+  canal lo fija la ruta (`/catalogo/{slug}` o `/catalogo/{slug}/mayor/{token}`),
+  nunca un parámetro del navegador. La tienda mayorista usa ahora el MISMO
+  motor que el detal (carrito, ficha, validación); antes tenía un link directo
+  a WhatsApp por producto sin validación (eliminado).
+- **OrderDraft** (`pedido.ts`): la intención del cliente. No descuenta stock,
+  no reserva, no es una venta. Lo calcula todo el servidor.
+- **"El precio cambió" sin aceptar precios del navegador**: la cotización es
+  un dato opaco firmado con HMAC por el backend (`pedido-firma.ts`), ligado al
+  negocio y al canal. Alterada, de otro negocio o de otro canal => se trata
+  como ausente ("review": el cliente ve los precios vigentes y confirma).
+- **Id de solicitud y evento DETERMINISTAS, sin tabla nueva**: `DL-ORD-` + 6
+  símbolos base32 (30 bits) y `evt_` + 26 (130 bits), derivados con HMAC de
+  (negocio, canal, clave de idempotencia del intento, líneas). Doble toque,
+  reintento o volver de WhatsApp y tocar de nuevo => mismo id, mismo mensaje,
+  mismo evento. Por qué no persistir todavía: nadie lee aún la solicitud
+  (el agente no existe), el mensaje ya lleva el contrato estructurado y el
+  agente debe volver a resolver todo igual. Cuando exista el consumidor, el
+  adaptador `OrderRequestEventSink` pasa de "registro JSON" a una tabla con
+  `UNIQUE(event_id)` (o una cola) sin tocar el dominio.
+- **Clave de firma**: `CATALOG_ORDER_SECRET` o, si no existe, derivada de la
+  clave de servicio de Supabase con separación de dominio (nunca se usa tal
+  cual). Sin ninguna => el pedido responde 503 (falla cerrado).
+- **Stock discreto**: el público ve Disponible / Últimas unidades / Agotado;
+  el máximo exacto solo se publica cuando es ≤ `PUBLIC_STOCK_VISIBLE` (10).
+  El backend valida siempre contra el stock real.
+- **Formato del mensaje** (solo `orderWhatsappMessage`): REFERENCIA + PRODUCTO
+  + CANTIDAD por línea, totales, total estimado (formato de la tienda) e id de
+  solicitud. `parseOrderMessage` sigue leyendo los formatos anteriores. El
+  texto lo puede editar el cliente: canal e id son pistas; el agente confirma
+  con el evento y vuelve a resolver cada referencia.
+
+### Herramientas del agente (`resolucion.ts`, todas con el tenant del backend)
+
+| Herramienta | Resultado | Nunca |
+| --- | --- | --- |
+| `resolveByReference("DL-000184")` | found / not_found («No encontramos la referencia DL-000184.») / invalid_reference | buscar "parecidos" |
+| `resolveByExactAttributes({ name, color?, material?, category? })` | found / ambiguous (candidatos) / not_found | similitud |
+| `searchProducts(texto)` | candidates (activos, ≤ 10) | elegir por el cliente |
+| `resolveOrder(canal, items)` | pedido validado con la verdad actual | confiar en el mensaje |
+| `extractReferences(texto)` | referencias escritas literalmente | interpretar nombres |
+
+Cada producto resuelto trae referencia, nombre, categoría, descripción,
+precios detal y mayor, stock, disponibilidad, imagen y estado.
