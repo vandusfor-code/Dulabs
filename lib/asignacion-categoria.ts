@@ -184,12 +184,16 @@ export async function resolverEspecialistasElegiblesParaServicio(
   const idsExplicitos = ((relaciones ?? []) as { especialista_id: number }[]).map((r) => r.especialista_id);
 
   if (idsExplicitos.length > 0) {
+    // Orden ESTABLE por id (el orden en que se registraron). Sin ORDER BY, Postgres no garantiza ningún orden -- un
+    // UPDATE puede mover la fila físicamente --, así que el menú "1. Mary 2. Cristal…" podía cambiar entre
+    // conversaciones y "me da igual" elegía según un orden arbitrario.
     const { data: especialistas } = await supabase
       .from("dulabs_especialistas")
       .select("id, nombre")
       .eq("id_tenant", idTenant)
       .eq("activo", true)
-      .in("id", idsExplicitos);
+      .in("id", idsExplicitos)
+      .order("id", { ascending: true });
     return {
       modo: "explicita",
       especialistas: ((especialistas ?? []) as { id: number; nombre: string }[]).map((e) => ({ especialistaId: e.id, nombre: e.nombre })),

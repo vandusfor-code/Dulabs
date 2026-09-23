@@ -9,7 +9,8 @@
 import type { VentanaHoraria } from "@/lib/especialistas";
 import type { NylasEvent, NylasEventsClient } from "@/lib/nylas/nylas-types";
 
-export type ResultadoEventosOcupadosNylas = { ok: true; ocupadas: VentanaHoraria[] } | { ok: false; motivo: "error" | "timeout" };
+/** `httpStatus` (solo en errores HTTP de Nylas, ej. 403/404 = calendario no compartido con la cuenta conectada o calendar_id inválido) -- nunca incluye credenciales ni el cuerpo de la respuesta, es seguro para logs. */
+export type ResultadoEventosOcupadosNylas = { ok: true; ocupadas: VentanaHoraria[] } | { ok: false; motivo: "error" | "timeout"; httpStatus?: number };
 
 function bloqueDiaCompleto(fechaISO: string): VentanaHoraria {
   // Mismo huso fijo America/Bogota (-05:00) que ya usa todo el motor
@@ -24,7 +25,10 @@ function bloqueDiaCompleto(fechaISO: string): VentanaHoraria {
 
 /**
  * Nunca inventa ocupación que Nylas no reportó, y nunca trata un evento
- * cancelado como si ocupara. `datespan`/`date` (eventos de día completo) se
+ * cancelado ni un evento marcado "Libre" (`busy: false`) como si ocupara --
+ * antes se contaban, y un bloque "Disponible"/"Turno" o un recordatorio de día
+ * completo (libres por defecto en Google) dejaba a la profesional sin ningún
+ * día real ("No encontramos días disponibles con esa profesional"). `datespan`/`date` (eventos de día completo) se
  * traducen a "todo el día local" SOLO si la fecha consultada cae dentro de
  * su rango -- `end_date` de un datespan es EXCLUSIVO (convención real de
  * Google/Microsoft que Nylas expone tal cual, ver docs), así que se compara
@@ -34,6 +38,7 @@ export function eventosNylasComoVentanas(eventos: NylasEvent[], fechaISO: string
   const ocupadas: VentanaHoraria[] = [];
   for (const evento of eventos) {
     if (evento.status === "cancelled") continue;
+    if (evento.busy === false) continue;
     switch (evento.when.object) {
       case "timespan":
         ocupadas.push({
@@ -49,6 +54,13 @@ export function eventosNylasComoVentanas(eventos: NylasEvent[], fechaISO: string
           ocupadas.push(bloqueDiaCompleto(fechaISO));
         }
         break;
+      default: {
+        // "time" (un instante, sin duración) no ocupa. Cualquier otra forma desconocida es AMBIGUA: antes se ignoraba
+        // en silencio (su tiempo quedaba como libre). Ahora se lanza, y consultarEventosOcupadosNylas lo devuelve como
+        // fallo -> la profesional queda "no_confirmado", nunca con horarios inventados.
+        const objeto = (evento.when as { object?: string }).object;
+        if (objeto !== "time") throw new Error(`nylas_evento_ambiguo: when.object=${String(objeto)}`);
+      }
     }
   }
   return ocupadas;
@@ -84,6 +96,7 @@ export async function consultarEventosOcupadosNylas(
     if (err instanceof Error && (err.name === "AbortError" || err.message.includes("aborted"))) {
       return { ok: false, motivo: "timeout" };
     }
-    return { ok: false, motivo: "error" };
+    const httpStatus = (err as { status?: unknown } | null)?.status;
+    return typeof httpStatus === "number" ? { ok: false, motivo: "error", httpStatus } : { ok: false, motivo: "error" };
   }
 }
