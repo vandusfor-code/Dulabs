@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Check, Clock, Download, FileSpreadsheet, FolderOpen, TriangleAlert } from "lucide-react";
+import { ArrowLeft, Check, Clock, FolderOpen, TriangleAlert } from "lucide-react";
 import { PageHeader } from "@/components/dashboard/shell/ui";
 import { useI18n } from "@/lib/i18n";
 import type { CatalogCategory } from "@/lib/catalogo/domain";
@@ -17,9 +17,10 @@ import { prepareProductImage } from "@/lib/catalogo/image-processing";
 import { uploadPrepared } from "@/lib/catalogo-client";
 import { COLUMNS } from "@/lib/catalogo/import/columnas";
 import { toCsv } from "@/lib/catalogo/import/csv";
-import { collectFiles, emptyImportFiles, imageFile, type ImportFiles } from "@/lib/catalogo/import/navegador";
+import { collectFiles, emptyImportFiles, imageFile, type ImportFiles, type IncomingFile } from "@/lib/catalogo/import/navegador";
 import { IMPORT_STEPS, finalOutcome, isFinalPhase, stepOf, type ImportPhase } from "@/lib/catalogo/import/estados";
 import { ImportStartError, runImport, type ImportProgress, type ImportReport } from "@/lib/catalogo/import/proceso";
+import { ATTENTION_LABEL, summarizeImport } from "@/lib/catalogo/import/resultado";
 import type { CategoryDecision, ImageInfo, ImportAnalysis, ImportHistoryItem, RawRow } from "@/lib/catalogo/import/types";
 import { Historial } from "@/components/dashboard/catalogo/importar/Historial";
 import { Proceso, Resultado } from "@/components/dashboard/catalogo/importar/ProcesoResultado";
@@ -73,11 +74,15 @@ export default function ImportarPage() {
   const [fileNotices, setFileNotices] = useState<string[]>([]);
   const [fileError, setFileError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  /** Revisando fotos recién elegidas (miles de encabezados: unos segundos). */
+  const [collecting, setCollecting] = useState(false);
   const [fileName, setFileName] = useState("");
   const [rows, setRows] = useState<RawRow[]>([]);
   const [analysis, setAnalysis] = useState<ImportAnalysis | null>(null);
   const [decisions, setDecisions] = useState<Record<string, CategoryDecision>>({});
   const [force, setForce] = useState<number[]>([]);
+  /** Filas ya importadas sin fotos a las que la persona decidió agregarles las fotos. */
+  const [attach, setAttach] = useState<number[]>([]);
   const [categories, setCategories] = useState<CatalogCategory[]>([]);
   const [progress, setProgress] = useState<ImportProgress | null>(null);
   const [report, setReport] = useState<ImportReport | null>(null);
@@ -126,9 +131,9 @@ export default function ImportarPage() {
   }, [phase]);
 
   const reanalyze = useCallback(
-    async (next: { rows?: RawRow[]; decisions?: Record<string, CategoryDecision>; force?: number[]; images?: ImageInfo[] }) => {
+    async (next: { rows?: RawRow[]; decisions?: Record<string, CategoryDecision>; force?: number[]; attach?: number[]; images?: ImageInfo[] }) => {
       if (!client) return;
-      const body = { rows: next.rows ?? rows, decisions: next.decisions ?? decisions, force: next.force ?? force, images: next.images ?? files.infos };
+      const body = { rows: next.rows ?? rows, decisions: next.decisions ?? decisions, force: next.force ?? force, attach: next.attach ?? attach, images: next.images ?? files.infos };
       if (body.rows.length === 0) {
         setAnalysis(null);
         setPhase("draft");
@@ -142,7 +147,7 @@ export default function ImportarPage() {
       if (r.ok) setAnalysis(r.data.analysis);
       else toast(r.error.message, "error");
     },
-    [client, rows, decisions, force, files.infos, toast],
+    [client, rows, decisions, force, attach, files.infos, toast],
   );
 
   const analyzeFile = async (next: ImportFiles) => {
@@ -162,21 +167,26 @@ export default function ImportarPage() {
     setRows(r.data.rows);
     setDecisions({});
     setForce([]);
+    setAttach([]);
     setAnalysis(r.data.analysis);
     setPhase("ready");
   };
 
-  const addFiles = async (list: File[]) => {
+  const addFiles = async (list: Array<File | IncomingFile>) => {
     setFileError(null);
-    const res = await collectFiles(list, files);
+    setCollecting(true);
+    const res = await collectFiles(list, files).finally(() => setCollecting(false));
     setFileNotices(res.notices);
     if (res.error) {
       setFileError(res.error);
       return;
     }
     setFiles(res.files);
+    // En el paso 1 se espera a "Revisar mis productos" (planilla y fotos juntas);
+    // en el preview, lo nuevo se revisa enseguida.
+    if (phase !== "ready") return;
     if (res.files.spreadsheet && res.files.spreadsheet !== files.spreadsheet) await analyzeFile(res.files);
-    else if (phase === "ready" && res.files.infos.length !== files.infos.length) await reanalyze({ images: res.files.infos });
+    else if (res.files.infos.length !== files.infos.length) await reanalyze({ images: res.files.infos });
   };
 
   const restart = () => {
@@ -189,6 +199,7 @@ export default function ImportarPage() {
     setRows([]);
     setDecisions({});
     setForce([]);
+    setAttach([]);
     setProgress(null);
     setReport(null);
     setBusy(false);
@@ -197,13 +208,19 @@ export default function ImportarPage() {
 
   const importar = async () => {
     if (!client || !analysis || busy || available === false) return;
-    const importable = new Set(analysis.rows.filter((r) => r.status === "ready" || r.status === "warning").map((r) => r.row));
-    const toImport = rows.filter((r) => importable.has(r.row));
+    // Se CONGELA lo que la persona revisó: cada fila viaja con sus fotos exactas
+    // (ids), así cada lote crea lo mismo que mostró el preview aunque el
+    // servidor analice las filas por partes.
+    const reviewed = new Map(analysis.rows.filter((r) => r.status === "ready" || r.status === "warning" || r.attach).map((r) => [r.row, r]));
+    const toImport = rows
+      .filter((r) => reviewed.has(r.row))
+      .map((r) => ({ ...r, photos: reviewed.get(r.row)!.images.flatMap((m) => (m.file ? [m.file] : [])) }));
     if (toImport.length === 0) return;
+    const attachRows = analysis.rows.filter((r) => r.attach).map((r) => r.row);
     setPhase("processing");
     try {
       const result = await runImport(
-        { fileName, rows: toImport, images: files.infos, decisions, force },
+        { fileName, rows: toImport, images: files.infos, decisions, force, attach: attachRows },
         {
           startImport: client.startImport,
           importRows: client.importRows,
@@ -223,6 +240,7 @@ export default function ImportarPage() {
           created: result.rows.filter((r) => r.status === "created").length,
           errors: result.rows.filter((r) => r.status === "error").length,
           photosFailed: result.photoFailures.length,
+          photosUploaded: result.photosUploaded,
         }),
       );
       setHistoryKey((k) => k + 1);
@@ -242,11 +260,11 @@ export default function ImportarPage() {
   };
 
   const descargarReporte = () => {
-    if (!report) return;
-    const estado = { created: "creado", skipped: "omitido", error: "error" } as const;
-    const data: Array<Array<string | number | null>> = [["fila", "estado", "referencia", "nombre", "detalle"]];
-    for (const r of report.rows) data.push([r.row, estado[r.status], r.reference, r.name, r.message]);
-    for (const f of report.photoFailures) data.push([f.row, "foto no subida", f.reference, f.file, f.message]);
+    if (!report || !analysis) return;
+    const estado = { created: "creado", attached: "fotos agregadas", skipped: "omitido", error: "error" } as const;
+    const data: Array<Array<string | number | null>> = [["fila", "estado", "referencia", "nombre", "fotos", "detalle"]];
+    for (const r of report.rows) data.push([r.row, estado[r.status], r.reference, r.name, r.images.length, r.message]);
+    for (const i of summarizeImport(analysis, report).items) data.push([i.row, `requiere atención: ${ATTENTION_LABEL[i.reason].es.toLowerCase()}`, i.reference, i.name, null, i.detail]);
     saveCsv(data, "resultado-importacion.csv");
   };
 
@@ -257,8 +275,8 @@ export default function ImportarPage() {
     else toast(r.error.message, "error");
   };
 
-  const photoUrl = (name: string) => {
-    const f = imageFile(files, name);
+  const photoUrl = (id: string) => {
+    const f = imageFile(files, id);
     return f ? objectUrl(f) : null;
   };
 
@@ -314,6 +332,7 @@ export default function ImportarPage() {
               <ZonaCarga
                 files={files}
                 analyzing={phase === "analyzing"}
+                collecting={collecting}
                 disabled={!client}
                 onFiles={(l) => void addFiles(l)}
                 onClearSpreadsheet={() => setFiles((f) => ({ ...f, spreadsheet: null }))}
@@ -321,26 +340,11 @@ export default function ImportarPage() {
                   releaseUrls(files);
                   setFiles((f) => ({ ...f, images: new Map(), infos: [] }));
                 }}
+                onDownloadTemplate={(format) => void descargarPlantilla(format)}
+                onContinue={() => void analyzeFile(files)}
               />
 
-              <section className="grid gap-3 md:grid-cols-3">
-                <Paso n={1} icon={<Download className="size-4" />} title={t("Descarga la plantilla", "Download the template")}>
-                  <span className="flex flex-wrap gap-x-3 gap-y-1">
-                    <button type="button" onClick={() => void descargarPlantilla("xlsx")} className="font-medium text-lime-text underline-offset-2 hover:underline">
-                      {t("Excel (.xlsx)", "Excel (.xlsx)")}
-                    </button>
-                    <button type="button" onClick={() => void descargarPlantilla("csv")} className="text-mist underline-offset-2 hover:text-fg hover:underline">
-                      CSV
-                    </button>
-                  </span>
-                </Paso>
-                <Paso n={2} icon={<FileSpreadsheet className="size-4" />} title={t("Una fila por producto", "One row per product")}>
-                  {t("En «imagenes» escribe el nombre de cada foto. Varias, separadas por coma: la primera es la principal.", "In «imagenes» write each photo's file name. Several, comma-separated: the first one is the main photo.")}
-                </Paso>
-                <Paso n={3} icon={<FolderOpen className="size-4" />} title={t("Sube el Excel y las fotos", "Upload the Excel and photos")}>
-                  {t("Selecciona la planilla y la carpeta de fotos (o un .zip). Revisarás todo antes de importar.", "Select the spreadsheet and the photo folder (or a .zip). You'll review everything before importing.")}
-                </Paso>
-              </section>
+              <GuiaFotos />
 
               <Historial items={history} />
             </>
@@ -356,11 +360,22 @@ export default function ImportarPage() {
               existingCategories={categories}
               busy={busy}
               photoUrl={photoUrl}
+              images={files.infos}
               addPhotos={<ZonaCarga compact files={files} analyzing={busy} onFiles={(l) => void addFiles(l)} />}
+              onPickPhotos={(row, ids) => {
+                const next = rows.map((r) => (r.row === row ? (ids === null ? { row, values: r.values } : { ...r, photos: ids }) : r));
+                setRows(next);
+                void reanalyze({ rows: next });
+              }}
               onDecision={(key, d) => {
                 const next = { ...decisions, [key]: d };
                 setDecisions(next);
                 void reanalyze({ decisions: next });
+              }}
+              onToggleAttach={(rowsToToggle, on) => {
+                const next = on ? [...new Set([...attach, ...rowsToToggle])] : attach.filter((r) => !rowsToToggle.includes(r));
+                setAttach(next);
+                void reanalyze({ attach: next });
               }}
               onToggleForce={(row) => {
                 const next = force.includes(row) ? force.filter((r) => r !== row) : [...force, row];
@@ -368,7 +383,8 @@ export default function ImportarPage() {
                 void reanalyze({ force: next });
               }}
               onSaveRow={(row, values) => {
-                const next = rows.map((r) => (r.row === row ? { row, values } : r));
+                // Corregir los datos no descarta las fotos elegidas a mano.
+                const next = rows.map((r) => (r.row === row ? { ...r, values } : r));
                 setRows(next);
                 void reanalyze({ rows: next });
               }}
@@ -385,23 +401,51 @@ export default function ImportarPage() {
 
           {phase === "processing" && progress && <Proceso progress={progress} />}
 
-          {isFinalPhase(phase) && report && <Resultado report={report} outcome={phase} onNew={restart} onDownloadReport={descargarReporte} />}
+          {isFinalPhase(phase) && report && analysis && (
+            <Resultado summary={summarizeImport(analysis, report)} outcome={phase} onNew={restart} onDownloadReport={descargarReporte} />
+          )}
         </div>
       </div>
     </div>
   );
 }
 
-function Paso({ n, icon, title, children }: { n: number; icon: React.ReactNode; title: string; children: React.ReactNode }) {
+/** Cómo relacionamos fotos y productos (la regla determinista, en lenguaje de la persona). */
+function GuiaFotos() {
+  const { t } = useI18n();
+  const ejemplos: Array<{ archivo: string; es: string; en: string }> = [
+    { archivo: "anillo-corazon.jpg", es: "foto principal de «Anillo corazón»", en: "main photo of «Anillo corazón»" },
+    { archivo: "anillo-corazon-2.jpg · -3.jpg", es: "galería, en ese orden", en: "gallery, in that order" },
+    { archivo: "Anillo corazón/ 1.jpg 2.jpg", es: "o una carpeta por producto", en: "or one folder per product" },
+    { archivo: "AN-014.jpg", es: "o tu código, en la columna «codigo»", en: "or your code, in the «codigo» column" },
+  ];
   return (
-    <div className="rounded-2xl border border-edge bg-card p-4">
-      <p className="flex items-center gap-2 text-sm font-semibold text-fg">
-        <span className={cn("flex size-6 items-center justify-center rounded-full bg-lime/10 text-[11px] font-semibold text-lime-text")}>{n}</span>
-        {title}
-        <span className="ml-auto text-mist">{icon}</span>
+    <section className="rounded-2xl border border-edge bg-card p-5 md:p-6">
+      <h3 className="flex items-center gap-2 text-sm font-semibold text-fg">
+        <FolderOpen className="size-4 text-mist" />
+        {t("Cómo encontramos las fotos de cada producto", "How we find each product's photos")}
+      </h3>
+      <p className="mt-1 text-xs text-mist">
+        {t(
+          "Por su nombre de archivo: mayúsculas, tildes, espacios y guiones no importan. Nunca adivinamos: si dos fotos podrían ser del mismo producto, te preguntamos.",
+          "By file name: case, accents, spaces and dashes don't matter. We never guess: if two photos could belong to the same product, we ask you.",
+        )}
       </p>
-      <div className="mt-2 text-xs leading-relaxed text-mist">{children}</div>
-    </div>
+      <ul className="mt-4 grid gap-2 sm:grid-cols-2">
+        {ejemplos.map((e) => (
+          <li key={e.archivo} className="flex flex-col rounded-xl bg-ink-2/50 px-3 py-2.5">
+            <code className="truncate font-mono text-xs text-lime-text">{e.archivo}</code>
+            <span className="text-xs text-mist">{t(e.es, e.en)}</span>
+          </li>
+        ))}
+      </ul>
+      <p className="mt-3 text-xs text-mist/80">
+        {t(
+          "¿Tus fotos tienen otro nombre? Escríbelo en la columna «imagenes» o elígelas en la revisión. Formatos: JPG, PNG o WEBP (en iPhone, exporta como JPG).",
+          "Photos named differently? Write the name in the «imagenes» column or pick them in the review. Formats: JPG, PNG or WEBP.",
+        )}
+      </p>
+    </section>
   );
 }
 

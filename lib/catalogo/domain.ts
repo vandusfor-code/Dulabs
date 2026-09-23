@@ -169,7 +169,11 @@ export const CATALOG_LIMITS = {
   thumbBytes: 400 * 1024,
   imageMaxSide: 2048,
   stock: 1_000_000,
+  /** Miniatura: tarjetas de la tienda, carrito y listados (≈ 150–200 px en pantalla, nítida a 2–3×). */
   thumbMaxSide: 400,
+  /** Variante "detalle": ficha del producto y galería (a lo ancho del móvil, nítida a 2–3×). */
+  detailMaxSide: 1200,
+  detailBytes: 600 * 1024,
 } as const;
 
 /** Formatos aceptados para media del catálogo (el navegador produce WebP; JPEG es el respaldo cuando el navegador no codifica WebP). */
@@ -292,6 +296,8 @@ export const imageUploadRequestSchema = z
     mimeType: z.enum(IMAGE_MIME_TYPES, { message: "Formato de imagen no permitido (WebP o JPEG)." }),
     bytes: z.number().int().min(1).max(CATALOG_LIMITS.imageBytes, { message: "La imagen supera el tamaño máximo permitido." }),
     thumbBytes: z.number().int().min(1).max(CATALOG_LIMITS.thumbBytes, { message: "La miniatura supera el tamaño máximo permitido." }),
+    /** Variante de detalle (opcional: navegadores con una versión anterior de la app no la envían). */
+    detailBytes: z.number().int().min(1).max(CATALOG_LIMITS.detailBytes, { message: "La versión de detalle supera el tamaño máximo permitido." }).optional(),
   })
   .strict();
 
@@ -326,10 +332,20 @@ export function firstIssueMessage(error: z.ZodError): string {
 // viva bajo el tenant y producto dueños de la fila.
 // ---------------------------------------------------------------------------
 
-export function imageStoragePaths(tenantId: string, productId: string, uploadId: string, mime: ImageMimeType): { path: string; thumbPath: string } {
+export function imageStoragePaths(tenantId: string, productId: string, uploadId: string, mime: ImageMimeType): { path: string; thumbPath: string; detailPath: string } {
   const ext = extensionForMime(mime);
   const base = `${tenantId}/${productId}/${uploadId}`;
-  return { path: `${base}.${ext}`, thumbPath: `${base}_thumb.${ext}` };
+  return { path: `${base}.${ext}`, thumbPath: `${base}_thumb.${ext}`, detailPath: detailPathOf(`${base}.${ext}`) };
+}
+
+/**
+ * Ruta de la variante de detalle, por CONVENCIÓN a partir de la principal
+ * ("…/u.webp" -> "…/u_detail.webp"). Sin columna nueva ni cambio de RPC: las
+ * fotos anteriores simplemente no la tienen y se sirve la principal.
+ */
+export function detailPathOf(storagePath: string): string {
+  const i = storagePath.lastIndexOf(".");
+  return i > storagePath.lastIndexOf("/") ? `${storagePath.slice(0, i)}_detail${storagePath.slice(i)}` : `${storagePath}_detail`;
 }
 
 // ---------------------------------------------------------------------------

@@ -10,7 +10,8 @@
  */
 import { productCreateSchema, CATALOG_LIMITS, type CatalogCategory } from "@/lib/catalogo/domain";
 import { columnDef, type ColumnKey } from "@/lib/catalogo/import/columnas";
-import { buildImageIndex, imageProblemText, splitImageCell } from "@/lib/catalogo/import/fotos";
+import { autoAssociate, buildPhotoCatalog, isNoPhotoCell, rowPhotoKeys } from "@/lib/catalogo/import/asociacion";
+import { baseName, imageProblemText, isLowResolution, pathKey, splitImageCell } from "@/lib/catalogo/import/fotos";
 import { IMPORT_LIMITS } from "@/lib/catalogo/import/limites";
 import type {
   AnalyzedRow,
@@ -23,6 +24,7 @@ import type {
   ImportIssue,
   ImportProductDraft,
   IssueCode,
+  PhotoSource,
   RawRow,
   RowStatus,
 } from "@/lib/catalogo/import/types";
@@ -38,6 +40,8 @@ export interface AnalyzeInput {
   decisions?: Readonly<Record<string, CategoryDecision>>;
   /** Filas que la persona decidió importar aunque parezcan repetidas. */
   force?: readonly number[];
+  /** Filas ya importadas (sin fotos) a cuyo producto la persona decidió agregarle las fotos. */
+  attach?: readonly number[];
 }
 
 /** Texto comparable: sin tildes, minúsculas, espacios colapsados. */
@@ -116,6 +120,7 @@ interface FirstPass {
 
 export function analyzeImport(input: AnalyzeInput): ImportAnalysis {
   const force = new Set(input.force ?? []);
+  const attachRows = new Set(input.attach ?? []);
   const issue = (row: number, code: IssueCode, severity: ImportIssue["severity"], field: ColumnKey | null, text: string): ImportIssue => ({
     code,
     severity,
@@ -177,7 +182,7 @@ export function analyzeImport(input: AnalyzeInput): ImportAnalysis {
         }
       }
     }
-    return { raw, issues, fields, categoryLabel, requested: splitImageCell(v.images) };
+    return { raw, issues, fields, categoryLabel, requested: isNoPhotoCell(v.images) ? [] : splitImageCell(v.images) };
   });
 
   // ---- 2. Categorías: existentes (sin tildes ni mayúsculas) y plan para las nuevas ----
@@ -224,11 +229,7 @@ export function analyzeImport(input: AnalyzeInput): ImportAnalysis {
     return { kind: "new", key: plan.key, label: plan.label };
   };
 
-  // ---- 3. Fotos, repetidos y estado ----
-  const index = buildImageIndex(input.images);
-  const used = new Set<string>();
-  const anyPhotos = input.images.length > 0 || first.some((f) => f.requested.length > 0);
-
+  // ---- 3. Repetidos (antes que las fotos: una fila que no se importará no compite por ellas) ----
   const catalogByKey = new Map<string, ExistingProductKey>();
   const dupKey = (name: string, categoryIdentity: string, color: string | null, material: string | null) =>
     [normalizeText(name), categoryIdentity, normalizeText(color), normalizeText(material)].join("|");
@@ -240,30 +241,9 @@ export function analyzeImport(input: AnalyzeInput): ImportAnalysis {
   }
   const fileByKey = new Map<string, number>();
 
-  const rows: AnalyzedRow[] = first.map((f) => {
+  const second = first.map((f) => {
     const row = f.raw.row;
     const issues = [...f.issues];
-
-    const images: ImageMatch[] = [];
-    f.requested.forEach((requested, i) => {
-      if (i >= IMPORT_LIMITS.imagesPerProduct) return;
-      const found = index.find(requested);
-      if (found) used.add(found.name);
-      if (!found) {
-        issues.push(issue(row, "image_not_found", "warning", "images", `No encontramos la imagen «${requested}». Agrégala antes de importar o súbela después desde el producto`));
-      } else if (found.problem) {
-        issues.push(issue(row, "image_invalid", "warning", "images", `La imagen «${found.name}» ${imageProblemText(found.problem)}`));
-      } else {
-        images.push({ requested, file: found.name });
-      }
-    });
-    if (f.requested.length > IMPORT_LIMITS.imagesPerProduct) {
-      issues.push(issue(row, "too_many_images", "warning", "images", `Tiene ${f.requested.length} fotos; se usarán las primeras ${IMPORT_LIMITS.imagesPerProduct}`));
-    }
-    if (f.requested.length === 0 && anyPhotos) {
-      issues.push(issue(row, "no_image", "warning", "images", "No tiene foto; podrás agregarla después desde el producto"));
-    }
-
     let product: ImportProductDraft | null = null;
     let duplicateOf: AnalyzedRow["duplicateOf"] = null;
     const forced = force.has(row);
@@ -282,7 +262,7 @@ export function analyzeImport(input: AnalyzeInput): ImportAnalysis {
         fileByKey.set(k, row);
         if (inCatalog) {
           const imported = inCatalog.importId !== null;
-          duplicateOf = { kind: "catalog", reference: inCatalog.reference, name: inCatalog.name, imported };
+          duplicateOf = { kind: "catalog", productId: inCatalog.id, reference: inCatalog.reference, name: inCatalog.name, imported, canAttach: imported && !inCatalog.hasImages };
           const text = forced
             ? `Ya existe «${inCatalog.name}» (${inCatalog.reference}); se importará de todas formas, como producto nuevo`
             : imported
@@ -292,17 +272,129 @@ export function analyzeImport(input: AnalyzeInput): ImportAnalysis {
         }
       }
     }
-
-    const hasError = issues.some((i) => i.severity === "error");
-    // Una fila que no se importará no necesita además el aviso de "sin foto".
-    if (hasError) {
-      const idx = issues.findIndex((i) => i.code === "no_image");
-      if (idx >= 0) issues.splice(idx, 1);
-    }
-    const status: RowStatus = hasError ? "error" : duplicateOf?.kind === "catalog" && !forced ? "duplicate" : issues.length > 0 ? "warning" : "ready";
-    return { row, values: f.raw.values, status, issues, product: hasError ? null : product, images: hasError ? [] : images, duplicateOf, forced: forced && duplicateOf?.kind === "catalog" };
+    return { f, row, issues, product, duplicateOf, forced, hasError: issues.some((i) => i.severity === "error") };
   });
 
+  // ---- 4. Fotos (asociacion.ts): elegidas > columna «imagenes» > automáticas por nombre ----
+  const photos = buildPhotoCatalog(input.images);
+  const claimed = new Set<string>();
+  type Plan = { source: PhotoSource; found: Array<{ requested: string; image: ImageInfo }>; candidates: ImageInfo[]; notes: ImportIssue[] };
+  const plans = new Map<number, Plan>();
+  for (const s2 of second) {
+    const { f, row } = s2;
+    const plan: Plan = { source: "none", found: [], candidates: [], notes: [] };
+    if (f.raw.photos !== undefined) {
+      plan.source = f.raw.photos.length > 0 ? "picked" : "none";
+      for (const id of f.raw.photos) {
+        const img = photos.byId(id);
+        if (img) plan.found.push({ requested: img.name, image: img });
+        else plan.notes.push(issue(row, "image_not_found", "warning", "images", `La foto «${baseName(id)}» ya no está en las fotos seleccionadas. Agrégala o elige otra`));
+      }
+    } else if (f.requested.length > 0) {
+      plan.source = "cell";
+      for (const requested of f.requested) {
+        const r = photos.lookup(requested);
+        if (r.kind === "found") for (const image of r.images) plan.found.push({ requested, image });
+        else if (r.kind === "ambiguous") {
+          plan.candidates.push(...r.candidates);
+          plan.notes.push(issue(row, "image_ambiguous", "warning", "images", `Tenemos varias imágenes posibles para «${requested}» (${r.candidates.length} con ese nombre). Elige cuál usar`));
+        } else {
+          plan.notes.push(issue(row, "image_not_found", "warning", "images", `No encontramos la imagen «${requested}». Agrégala antes de importar o súbela después desde el producto`));
+        }
+      }
+    }
+    for (const x of plan.found) claimed.add(pathKey(x.image.id));
+    plans.set(row, plan);
+  }
+  const autoRows = second.filter((s2) => !s2.hasError && s2.f.raw.photos === undefined && s2.f.requested.length === 0 && !isNoPhotoCell(s2.f.raw.values.images));
+  const auto = autoAssociate(
+    autoRows.map((s2) => ({ row: s2.row, keys: rowPhotoKeys(s2.f.raw.values) })),
+    input.images,
+    claimed,
+  );
+  for (const [row, res] of auto) {
+    const plan = plans.get(row)!;
+    if (res.images.length > 0) {
+      plan.source = "auto";
+      plan.found = res.images.map((image) => ({ requested: image.name, image }));
+    } else if (res.candidates.length > 0) {
+      plan.candidates = res.candidates;
+      const also = res.conflictRows.length > 0 ? `: también ${res.conflictRows.length === 1 ? "coinciden con la fila" : "coinciden con las filas"} ${res.conflictRows.join(", ")}` : "";
+      plan.notes.push(issue(row, "image_ambiguous", "warning", "images", `Tenemos varias imágenes posibles para este producto${also}. Elige cuáles usar`));
+    }
+  }
+
+  // ---- 5. Estado de cada fila ----
+  const used = new Set<string>();
+  const anyPhotos = input.images.length > 0 || first.some((f) => f.requested.length > 0);
+  const rows: AnalyzedRow[] = second.map((s2) => {
+    const { f, row, product, duplicateOf, forced } = s2;
+    const issues = [...s2.issues];
+    const plan = plans.get(row)!;
+    issues.push(...plan.notes);
+
+    const images: ImageMatch[] = [];
+    const seen = new Set<string>();
+    const valid = plan.found.filter((x) => !seen.has(x.image.id) && seen.add(x.image.id));
+    for (const x of valid) {
+      used.add(x.image.id);
+      if (x.image.problem) {
+        issues.push(issue(row, "image_invalid", "warning", "images", `La imagen «${x.image.name}» ${imageProblemText(x.image.problem, x.image)}`));
+        continue;
+      }
+      if (images.length >= IMPORT_LIMITS.imagesPerProduct) continue;
+      if (isLowResolution(x.image)) {
+        issues.push(issue(row, "image_low_resolution", "warning", "images", `La foto «${x.image.name}» es pequeña (${x.image.width}×${x.image.height} px); en la ficha se verá poco nítida`));
+      }
+      images.push({ requested: x.requested, file: x.image.id });
+    }
+    const usable = valid.filter((x) => !x.image.problem).length;
+    if (usable > IMPORT_LIMITS.imagesPerProduct) {
+      issues.push(issue(row, "too_many_images", "warning", "images", `Tiene ${usable} fotos; se usarán las primeras ${IMPORT_LIMITS.imagesPerProduct}`));
+    }
+    const explicitNone = f.raw.photos?.length === 0 || (f.raw.photos === undefined && f.requested.length === 0 && isNoPhotoCell(f.raw.values.images));
+    if (images.length === 0 && anyPhotos && !explicitNone && plan.candidates.length === 0 && !issues.some((i) => i.field === "images")) {
+      issues.push(issue(row, "no_image", "warning", "images", "No encontramos su foto. Elígela aquí o agrégala después desde el producto"));
+    }
+
+    const hasError = issues.some((i) => i.severity === "error");
+    // Producto ya importado SIN fotos y esta fila trae fotos: se pueden completar (solo si la persona lo pide).
+    const completable = !hasError && !forced && duplicateOf?.kind === "catalog" && duplicateOf.canAttach && images.length > 0;
+    const attach = completable && attachRows.has(row);
+    if (completable && duplicateOf?.kind === "catalog") {
+      const i = issues.findIndex((x) => x.code === "already_imported");
+      const fotos = images.length === 1 ? "1 foto" : `${images.length} fotos`;
+      if (i >= 0) {
+        issues[i] = {
+          ...issues[i],
+          message: attach
+            ? `Fila ${row}: «${duplicateOf.name}» ya se cargó antes (${duplicateOf.reference}) sin fotos: se le agregarán ${fotos}. No se crea otro producto ni se cambian sus datos.`
+            : `Fila ${row}: «${duplicateOf.name}» ya se cargó antes (${duplicateOf.reference}) y no tiene fotos. Puedes agregarle ${images.length === 1 ? "la foto encontrada" : `las ${fotos} encontradas`}.`,
+        };
+      }
+    }
+    // Una fila que no se importará (error, o repetida que no se puede completar) no necesita avisos de fotos.
+    const skipped = duplicateOf?.kind === "catalog" && !forced;
+    const quiet = hasError || (skipped && !completable);
+    const shown = (quiet ? issues.filter((i) => i.field !== "images" || i.severity === "error") : issues).filter((i) => !(skipped && i.code === "no_image"));
+    const status: RowStatus = hasError ? "error" : duplicateOf?.kind === "catalog" && !forced ? "duplicate" : shown.length > 0 ? "warning" : "ready";
+    return {
+      row,
+      values: f.raw.values,
+      ...(f.raw.photos !== undefined ? { photos: f.raw.photos } : {}),
+      status,
+      issues: shown,
+      product: hasError ? null : product,
+      images: hasError ? [] : images,
+      imageSource: hasError || images.length === 0 ? (plan.source === "picked" || plan.source === "cell" ? plan.source : "none") : plan.source,
+      imageCandidates: hasError ? [] : plan.candidates.map((c) => c.id),
+      duplicateOf,
+      forced: forced && duplicateOf?.kind === "catalog",
+      attach,
+    };
+  });
+
+  const pending = new Set(rows.flatMap((r) => r.imageCandidates));
   const count = (s: RowStatus) => rows.filter((r) => r.status === s).length;
   const importableRows = rows.filter((r) => r.status === "ready" || r.status === "warning");
   const notices: string[] = [];
@@ -318,10 +410,14 @@ export function analyzeImport(input: AnalyzeInput): ImportAnalysis {
       errors: count("error"),
       duplicates: count("duplicate"),
       importable: importableRows.length,
+      attach: rows.filter((r) => r.attach).length,
+      attachable: rows.filter((r) => r.status === "duplicate" && r.duplicateOf?.kind === "catalog" && r.duplicateOf.canAttach && r.images.length > 0).length,
       photos: {
         matched: importableRows.reduce((n, r) => n + r.images.length, 0),
+        auto: importableRows.filter((r) => r.imageSource === "auto" && r.images.length > 0).length,
+        ambiguous: importableRows.filter((r) => r.imageCandidates.length > 0).length,
         missing: rows.reduce((n, r) => n + r.issues.filter((i) => i.code === "image_not_found").length, 0),
-        unused: input.images.filter((img) => !used.has(img.name)).map((img) => img.name),
+        unused: input.images.filter((img) => !used.has(img.id) && !pending.has(img.id)).map((img) => img.id),
       },
     },
     notices,

@@ -6,14 +6,19 @@
  * línea y confirmación. Lo que se muestra lo decidió el SERVIDOR.
  */
 import { useMemo, useState, type ReactNode } from "react";
-import { AlertTriangle, CheckCircle2, Copy, Download, ImageOff, Info, Loader2, Pencil, RotateCcw, Trash2, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Copy, Download, ImageOff, Images, Info, Loader2, Pencil, RotateCcw, Sparkles, Trash2, XCircle } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import type { CatalogCategory } from "@/lib/catalogo/domain";
 import { COLUMNS, type ColumnKey } from "@/lib/catalogo/import/columnas";
-import type { AnalyzedRow, CategoryDecision, ImportAnalysis, RawRow, RowStatus } from "@/lib/catalogo/import/types";
+import type { AnalyzedRow, CategoryDecision, ImageInfo, ImportAnalysis, RawRow, RowStatus } from "@/lib/catalogo/import/types";
+import { SelectorFotos } from "@/components/dashboard/catalogo/importar/SelectorFotos";
 import { actionBtn, cn, formatPrice, inputCls, primaryBtn } from "@/components/dashboard/catalogo/ui";
 
-type Filter = "all" | RowStatus;
+/** "photos" = se importarán, pero sin foto o con dudas sobre cuál usar. */
+type Filter = "all" | RowStatus | "photos";
+
+const importable = (r: AnalyzedRow) => r.status === "ready" || r.status === "warning";
+const needsPhoto = (r: AnalyzedRow) => importable(r) && r.images.length === 0 && (r.imageCandidates.length > 0 || r.issues.some((i) => i.field === "images"));
 
 const LABELS: Record<ColumnKey, [string, string]> = {
   name: ["Nombre", "Name"],
@@ -24,6 +29,7 @@ const LABELS: Record<ColumnKey, [string, string]> = {
   material: ["Material", "Material"],
   color: ["Color", "Color"],
   description: ["Descripción", "Description"],
+  code: ["Código de fotos", "Photo code"],
   images: ["Imágenes", "Images"],
 };
 
@@ -35,8 +41,11 @@ export function VistaPrevia({
   existingCategories,
   busy,
   photoUrl,
+  images,
   addPhotos,
+  onPickPhotos,
   onDecision,
+  onToggleAttach,
   onToggleForce,
   onSaveRow,
   onRemoveRow,
@@ -49,9 +58,15 @@ export function VistaPrevia({
   analysis: ImportAnalysis;
   existingCategories: CatalogCategory[];
   busy: boolean;
-  photoUrl: (name: string) => string | null;
+  photoUrl: (id: string) => string | null;
+  /** Fotos seleccionadas (para el selector). */
+  images: readonly ImageInfo[];
   addPhotos: ReactNode;
+  /** Fotos elegidas para una fila (null = volver a lo automático). */
+  onPickPhotos: (row: number, ids: string[] | null) => void;
   onDecision: (key: string, decision: CategoryDecision) => void;
+  /** Agregar (on) o no las fotos de estas filas a sus productos ya importados sin fotos. */
+  onToggleAttach: (rows: number[], on: boolean) => void;
   onToggleForce: (row: number) => void;
   onSaveRow: (row: number, values: RawRow["values"]) => void;
   onRemoveRow: (row: number) => void;
@@ -65,7 +80,13 @@ export function VistaPrevia({
   const s = analysis.summary;
   const [filter, setFilter] = useState<Filter>(s.errors > 0 ? "error" : "all");
   const [editing, setEditing] = useState<number | null>(null);
-  const visibles = useMemo(() => (filter === "all" ? analysis.rows : analysis.rows.filter((r) => r.status === filter)), [analysis.rows, filter]);
+  const [picking, setPicking] = useState<number | null>(null);
+  const pickingRow = picking === null ? null : analysis.rows.find((r) => r.row === picking) ?? null;
+  const photoReview = useMemo(() => (images.length > 0 ? analysis.rows.filter(needsPhoto).length : 0), [analysis.rows, images.length]);
+  const visibles = useMemo(
+    () => (filter === "all" ? analysis.rows : filter === "photos" ? analysis.rows.filter(needsPhoto) : analysis.rows.filter((r) => r.status === filter)),
+    [analysis.rows, filter],
+  );
   const filtroActivo = filter !== "all" && visibles.length === 0 ? "all" : filter;
   const lista = filtroActivo === filter ? visibles : analysis.rows;
 
@@ -75,6 +96,7 @@ export function VistaPrevia({
     { id: "warning", label: t("Advertencias", "Warnings"), count: s.warnings },
     { id: "error", label: t("Errores", "Errors"), count: s.errors },
     { id: "duplicate", label: t("Repetidos", "Duplicates"), count: s.duplicates },
+    ...(photoReview > 0 ? [{ id: "photos" as const, label: t("Fotos por revisar", "Photos to review"), count: photoReview }] : []),
   ];
 
   return (
@@ -99,10 +121,17 @@ export function VistaPrevia({
           <Stat tone="error" icon={<XCircle className="size-4" />} value={s.errors} label={t("con errores", "with errors")} />
           <Stat tone="muted" icon={<Copy className="size-4" />} value={s.duplicates} label={t("ya existen", "already exist")} />
         </div>
-        <p className="mt-4 text-xs text-mist">
-          {t(`${s.photos.matched} fotos relacionadas`, `${s.photos.matched} photos matched`)}
-          {s.photos.missing > 0 && <span className="text-amber-400"> · {t(`${s.photos.missing} no encontradas`, `${s.photos.missing} not found`)}</span>}
-          {s.photos.unused.length > 0 && <span> · {t(`${s.photos.unused.length} sin usar`, `${s.photos.unused.length} unused`)}</span>}
+        <p className="mt-4 flex flex-wrap gap-x-3 gap-y-1 text-xs text-mist">
+          <span>{s.photos.matched === 1 ? t("1 foto relacionada", "1 photo matched") : t(`${s.photos.matched} fotos relacionadas`, `${s.photos.matched} photos matched`)}</span>
+          {s.photos.auto > 0 && (
+            <span className="inline-flex items-center gap-1 text-lime-text">
+              <Sparkles className="size-3" />
+              {t(`${s.photos.auto} productos con foto encontrada automáticamente`, `${s.photos.auto} products with photos found automatically`)}
+            </span>
+          )}
+          {s.photos.ambiguous > 0 && <span className="text-amber-400">{t(`${s.photos.ambiguous} con varias fotos posibles`, `${s.photos.ambiguous} with several possible photos`)}</span>}
+          {s.photos.missing > 0 && <span className="text-amber-400">{t(`${s.photos.missing} no encontradas`, `${s.photos.missing} not found`)}</span>}
+          {s.photos.unused.length > 0 && <span>{t(`${s.photos.unused.length} sin usar`, `${s.photos.unused.length} unused`)}</span>}
         </p>
         {analysis.notices.length > 0 && (
           <ul className="mt-4 space-y-1.5">
@@ -115,6 +144,37 @@ export function VistaPrevia({
           </ul>
         )}
       </section>
+
+      {/* Productos ya importados que siguen sin fotos: completar (decisión explícita) */}
+      {s.attachable > 0 && (
+        <section className="flex flex-col gap-3 rounded-2xl border border-lime/30 bg-lime/5 p-5 sm:flex-row sm:items-center md:p-6">
+          <div className="min-w-0 flex-1">
+            <h3 className="text-sm font-semibold text-fg">
+              {s.attachable === 1
+                ? t("1 producto que ya cargaste no tiene fotos, y aquí están", "1 product you already uploaded has no photos, and they're here")
+                : t(`${s.attachable} productos que ya cargaste no tienen fotos, y aquí están`, `${s.attachable} products you already uploaded have no photos, and they're here`)}
+            </h3>
+            <p className="mt-1 text-xs text-mist">
+              {t("Podemos agregarles las fotos encontradas. No se crea otro producto ni se cambian su precio, stock o referencia.", "We can add the photos we found. No new product is created and price, stock or reference don't change.")}
+            </p>
+          </div>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              const candidates = analysis.rows.filter((r) => r.duplicateOf?.kind === "catalog" && r.duplicateOf.canAttach && r.images.length > 0).map((r) => r.row);
+              onToggleAttach(candidates, s.attach < s.attachable);
+            }}
+            className={cn(s.attach < s.attachable ? primaryBtn : actionBtn, "shrink-0 justify-center py-2.5")}
+          >
+            {s.attach < s.attachable
+              ? s.attachable === 1
+                ? t("Agregar sus fotos", "Add its photos")
+                : t(`Agregar fotos a los ${s.attachable}`, `Add photos to all ${s.attachable}`)
+              : t("No agregar fotos", "Don't add photos")}
+          </button>
+        </section>
+      )}
 
       {/* Categorías nuevas */}
       {analysis.categories.length > 0 && (
@@ -196,6 +256,8 @@ export function VistaPrevia({
               key={r.row}
               r={r}
               photoUrl={photoUrl}
+              canPick={images.length > 0}
+              onPick={() => setPicking(r.row)}
               editing={editing === r.row}
               busy={busy}
               onEdit={() => setEditing(editing === r.row ? null : r.row)}
@@ -208,10 +270,26 @@ export function VistaPrevia({
                 onRemoveRow(r.row);
               }}
               onToggleForce={() => onToggleForce(r.row)}
+              onToggleAttach={() => onToggleAttach([r.row], !r.attach)}
             />
           ))}
         </ul>
       </section>
+
+      {pickingRow && (
+        <SelectorFotos
+          key={pickingRow.row}
+          row={pickingRow}
+          images={images}
+          unused={s.photos.unused}
+          photoUrl={photoUrl}
+          onClose={() => setPicking(null)}
+          onSave={(ids) => {
+            setPicking(null);
+            onPickPhotos(pickingRow.row, ids);
+          }}
+        />
+      )}
 
       {/* Confirmación */}
       <div className="fixed inset-x-0 bottom-0 z-30 border-t border-edge bg-ink/95 px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-3 backdrop-blur md:px-8 lg:left-64">
@@ -227,6 +305,7 @@ export function VistaPrevia({
             ) : (
               <>
                 <span className="font-semibold text-fg">{s.importable}</span> {t("se importarán", "will be imported")}
+                {s.attach > 0 && <span> · {t(`${s.attach} se completan con fotos`, `${s.attach} get photos`)}</span>}
                 {s.errors + s.duplicates > 0 && <span> · {t(`${s.errors + s.duplicates} no`, `${s.errors + s.duplicates} won't`)}</span>}
               </>
             )}
@@ -242,11 +321,17 @@ export function VistaPrevia({
             <button
               type="button"
               onClick={onImport}
-              disabled={busy || s.importable === 0 || importBlockedReason !== null}
+              disabled={busy || s.importable + s.attach === 0 || importBlockedReason !== null}
               title={importBlockedReason ?? undefined}
               className={cn(primaryBtn, "flex-1 justify-center whitespace-nowrap py-2.5 sm:flex-none")}
             >
-              {s.importable === 1 ? t("Importar 1 producto", "Import 1 product") : t(`Importar ${s.importable} productos`, `Import ${s.importable} products`)}
+              {s.importable === 0 && s.attach > 0
+                ? s.attach === 1
+                  ? t("Agregar fotos a 1 producto", "Add photos to 1 product")
+                  : t(`Agregar fotos a ${s.attach} productos`, `Add photos to ${s.attach} products`)
+                : s.importable === 1
+                  ? t("Importar 1 producto", "Import 1 product")
+                  : t(`Importar ${s.importable} productos`, `Import ${s.importable} products`)}
             </button>
           </div>
         </div>
@@ -279,21 +364,27 @@ function StatusIcon({ status }: { status: RowStatus }) {
 function FilaPreview({
   r,
   photoUrl,
+  canPick,
+  onPick,
   editing,
   busy,
   onEdit,
   onSave,
   onRemove,
   onToggleForce,
+  onToggleAttach,
 }: {
   r: AnalyzedRow;
-  photoUrl: (name: string) => string | null;
+  photoUrl: (id: string) => string | null;
+  canPick: boolean;
+  onPick: () => void;
   editing: boolean;
   busy: boolean;
   onEdit: () => void;
   onSave: (values: RawRow["values"]) => void;
   onRemove: () => void;
   onToggleForce: () => void;
+  onToggleAttach: () => void;
 }) {
   const { t } = useI18n();
   const p = r.product;
@@ -307,7 +398,16 @@ function FilaPreview({
         <span className="hidden pt-3 md:block">
           <StatusIcon status={r.status} />
         </span>
-        <div className="relative size-12 shrink-0 overflow-hidden rounded-lg bg-ink-2">
+        <button
+          type="button"
+          onClick={onPick}
+          disabled={!canPick || busy || r.status === "error"}
+          className={cn(
+            "relative size-12 shrink-0 overflow-hidden rounded-lg bg-ink-2 transition-shadow enabled:hover:ring-2 enabled:hover:ring-lime/50",
+            r.imageCandidates.length > 0 && "ring-2 ring-amber-400/60",
+          )}
+          aria-label={t(`Elegir fotos de la fila ${r.row}`, `Choose photos for row ${r.row}`)}
+        >
           {first ? (
             // eslint-disable-next-line @next/next/no-img-element -- vista previa local (blob:) de la foto elegida
             <img src={first} alt="" loading="lazy" decoding="async" className="size-full object-cover" />
@@ -317,7 +417,7 @@ function FilaPreview({
             </span>
           )}
           {r.images.length > 1 && <span className="absolute bottom-0.5 right-0.5 rounded bg-black/60 px-1 text-[10px] font-medium text-white">+{r.images.length - 1}</span>}
-        </div>
+        </button>
         <div className="min-w-0 flex-1">
           <div className="flex items-start gap-2">
             <span className="md:hidden">
@@ -327,6 +427,13 @@ function FilaPreview({
               <p className="truncate text-sm font-medium text-fg">{p?.name ?? r.values.name ?? t("(sin nombre)", "(no name)")}</p>
               <p className="text-xs text-mist">
                 {t(`Fila ${r.row}`, `Row ${r.row}`)}
+                {r.images.length > 0 && r.imageSource === "auto" && (
+                  <span className="ml-1.5 inline-flex items-center gap-0.5 text-lime-text">
+                    <Sparkles className="size-3" />
+                    {t("foto encontrada automáticamente", "photo found automatically")}
+                  </span>
+                )}
+                {r.imageSource === "picked" && <span className="ml-1.5 text-lime-text">{t("fotos elegidas por ti", "photos chosen by you")}</span>}
                 <span className="md:hidden">
                   {category && ` · ${category}`}
                   {p && ` · ${formatPrice(p.retailPrice)} · ${p.stock} u.`}
@@ -343,7 +450,19 @@ function FilaPreview({
               ))}
             </ul>
           )}
-          {catalogDup && (
+          {canPick && needsPhoto(r) && (
+            <button type="button" onClick={onPick} disabled={busy} className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-edge px-2.5 py-1 text-xs font-medium text-fg hover:border-lime/60">
+              <Images className="size-3.5" />
+              {t("Elegir fotos", "Choose photos")}
+            </button>
+          )}
+          {r.duplicateOf?.kind === "catalog" && r.duplicateOf.canAttach && r.images.length > 0 && !r.forced && (
+            <label className="mt-2 flex cursor-pointer items-center gap-2 text-xs text-fg">
+              <input type="checkbox" checked={r.attach} disabled={busy} onChange={onToggleAttach} className="size-4 accent-lime" />
+              {t(`Agregar ${r.images.length === 1 ? "la foto" : `las ${r.images.length} fotos`} a ${r.duplicateOf.reference}`, `Add the photos to ${r.duplicateOf.reference}`)}
+            </label>
+          )}
+          {catalogDup && !r.attach && (
             <label className="mt-2 inline-flex cursor-pointer items-center gap-2 text-xs text-fg">
               <input type="checkbox" checked={r.forced} disabled={busy} onChange={onToggleForce} className="size-4 accent-lime" />
               {t("Importarlo de todas formas (como producto nuevo)", "Import it anyway (as a new product)")}

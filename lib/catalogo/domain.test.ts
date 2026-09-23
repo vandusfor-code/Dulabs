@@ -159,7 +159,7 @@ describe("normalizeSearch — nunca rompe el filtro `or` de PostgREST", () => {
 describe("imágenes", () => {
   it("rutas SIEMPRE bajo {tenant}/{producto}/ con la extensión del formato", () => {
     const p = imageStoragePaths("tenant-a", "prod-1", "u1", "image/webp");
-    assert.deepEqual(p, { path: "tenant-a/prod-1/u1.webp", thumbPath: "tenant-a/prod-1/u1_thumb.webp" });
+    assert.deepEqual(p, { path: "tenant-a/prod-1/u1.webp", thumbPath: "tenant-a/prod-1/u1_thumb.webp", detailPath: "tenant-a/prod-1/u1_detail.webp" });
     assert.equal(imageStoragePaths("t", "p", "u", "image/jpeg").path, "t/p/u.jpg");
   });
 

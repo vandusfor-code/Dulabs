@@ -54,17 +54,19 @@ export interface OutcomeCounts {
   created: number;
   errors: number;
   photosFailed: number;
+  /** Fotos subidas (una carga que solo completa fotos de productos ya importados no "falló"). */
+  photosUploaded?: number;
 }
 
 /**
  * Resultado final a partir de los números:
- *   - failed: no se creó nada y hubo errores;
+ *   - failed: no se creó nada (ni se agregó ninguna foto) y hubo errores;
  *   - completed_with_errors: se creó algo, pero hubo filas con error o fotos que no subieron;
  *   - completed: todo lo que se podía crear se creó (las filas omitidas por
  *     repetidas NO son errores: es el comportamiento esperado).
  */
 export function finalOutcome(c: OutcomeCounts): ImportOutcomeFinal {
-  if (c.created === 0 && c.errors > 0) return "failed";
+  if (c.created === 0 && (c.photosUploaded ?? 0) === 0 && c.errors > 0) return "failed";
   if (c.errors > 0 || c.photosFailed > 0) return "completed_with_errors";
   return "completed";
 }
