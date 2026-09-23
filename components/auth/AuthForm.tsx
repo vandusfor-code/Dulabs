@@ -7,13 +7,15 @@ import { useI18n } from "@/lib/i18n";
 import { supabaseBrowser, fijarRecordarSesion, DIAS_RECORDAR_SESION } from "@/lib/supabase-browser";
 import { siteUrlCon } from "@/lib/site-url";
 
-// DuLabs Developer · login -- formulario. Tres modos sobre el MISMO flujo de autenticación existente:
-//   login     -> POST /api/auth/login (bloqueo por intentos, server-side) + setSession de Supabase, y se avanza a `next`
-//   recuperar -> supabase.auth.resetPasswordForEmail: el enlace vuelve a este mismo /login con ?recuperar=1
+// DuLabs · formulario de acceso compartido por el login de Business (/login) y el de Developer (/login?next=/developer). Cuatro
+// modos sobre el MISMO flujo de autenticación existente:
+//   login     -> POST /api/auth/login (bloqueo por intentos, server-side) + setSession de Supabase; el destino lo decide cada login
+//   registro  -> supabase.auth.signUp (solo si el login lo habilita: Business); confirmación por correo, vuelve a /login
+//   recuperar -> supabase.auth.resetPasswordForEmail: el enlace vuelve a /login con ?recuperar=1
 //   nueva     -> supabase.auth.updateUser({ password }) con la sesión de recuperación del enlace
 // Estados: idle · loading · error · success · disabled. Nunca se guardan credenciales ni se muestran errores técnicos internos.
 
-export type Modo = "login" | "recuperar" | "nueva";
+export type Modo = "login" | "registro" | "recuperar" | "nueva";
 type Estado = "idle" | "loading" | "error" | "success";
 type Msg = readonly [es: string, en: string];
 type ErroresCampo = { email?: Msg; password?: Msg };
@@ -23,6 +25,8 @@ const m = (es: string, en: string): Msg => [es, en];
 
 const EMAIL_VALIDO = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MIN_PASSWORD = 8;
+/** Mínimo del registro de Business (el mismo que ya exigía su formulario). */
+const MIN_PASSWORD_REGISTRO = 6;
 
 /* ---------- Piezas ---------- */
 
@@ -139,7 +143,19 @@ function Aviso({ tono, children }: { tono: "error" | "ok"; children: ReactNode }
 
 /* ---------- Formulario ---------- */
 
-export function LoginForm({ next, modo, onModo, configFaltante }: { next: string; modo: Modo; onModo: (m: Modo) => void; configFaltante: boolean }) {
+export type AuthFormProps = {
+  modo: Modo;
+  onModo: (m: Modo) => void;
+  configFaltante: boolean;
+  /** A dónde ir tras autenticar (esAdmin lo calcula /api/auth/login en el servidor). */
+  destino: (r: { esAdmin: boolean }) => string;
+  /** Ruta (con query) a la que vuelve el enlace de recuperación; debe incluir recuperar=1. */
+  retornoRecuperacion: string;
+  placeholderEmail: Msg;
+  cargandoLogin: Msg;
+};
+
+export function AuthForm({ modo, onModo, configFaltante, destino, retornoRecuperacion, placeholderEmail, cargandoLogin }: AuthFormProps) {
   const { t } = useI18n();
   const router = useRouter();
   const ids = useId();
@@ -152,6 +168,16 @@ export function LoginForm({ next, modo, onModo, configFaltante }: { next: string
   const [errores, setErrores] = useState<ErroresCampo>({});
   const cargando = estado === "loading" || estado === "success";
   const noDisponible = m("El inicio de sesión no está disponible en este momento. Inténtalo más tarde.", "Sign-in isn't available right now. Please try again later.");
+
+  // Cambio de modo desde fuera (p. ej. «Crear cuenta»): se limpian los errores del modo anterior durante el render (patrón de React
+  // para ajustar estado cuando cambia una prop). El aviso se conserva: así sobrevive el «te enviamos un correo» del registro.
+  const [modoPrevio, setModoPrevio] = useState(modo);
+  if (modo !== modoPrevio) {
+    setModoPrevio(modo);
+    setError(null);
+    setErrores({});
+    if (estado === "error") setEstado("idle");
+  }
 
   const cambiarModo = (m: Modo) => {
     setError(null);
@@ -170,6 +196,8 @@ export function LoginForm({ next, modo, onModo, configFaltante }: { next: string
     if (campos.password) {
       if (!password) e.password = m("Escribe tu contraseña.", "Enter your password.");
       else if (modo === "nueva" && password.length < MIN_PASSWORD) e.password = m(`Usa al menos ${MIN_PASSWORD} caracteres.`, `Use at least ${MIN_PASSWORD} characters.`);
+      else if (modo === "registro" && password.length < MIN_PASSWORD_REGISTRO)
+        e.password = m(`Usa al menos ${MIN_PASSWORD_REGISTRO} caracteres.`, `Use at least ${MIN_PASSWORD_REGISTRO} characters.`);
     }
     setErrores(e);
     return Object.keys(e).length === 0;
@@ -186,7 +214,7 @@ export function LoginForm({ next, modo, onModo, configFaltante }: { next: string
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email: email.trim(), password }),
     });
-    const data: { error?: string; bloqueado?: boolean; intentosRestantes?: number; session?: { access_token: string; refresh_token: string } } = await res
+    const data: { error?: string; bloqueado?: boolean; intentosRestantes?: number; esAdmin?: boolean; session?: { access_token: string; refresh_token: string } } = await res
       .json()
       .catch(() => ({}));
     if (!res.ok || !data.session) {
@@ -200,10 +228,10 @@ export function LoginForm({ next, modo, onModo, configFaltante }: { next: string
         return falla(
           data.intentosRestantes > 0
             ? m(
-                `Correo o contraseña incorrectos. Te quedan ${data.intentosRestantes} intento(s) antes del bloqueo temporal.`,
-                `Incorrect email or password. ${data.intentosRestantes} attempt(s) left before a temporary lockout.`,
+                `El correo o la contraseña no son correctos. Te quedan ${data.intentosRestantes} intento(s) antes del bloqueo temporal.`,
+                `The email or password is incorrect. ${data.intentosRestantes} attempt(s) left before a temporary lockout.`,
               )
-            : m("Correo o contraseña incorrectos. Cuenta bloqueada temporalmente por 15 minutos.", "Incorrect email or password. Account temporarily locked for 15 minutes."),
+            : m("El correo o la contraseña no son correctos. Cuenta bloqueada temporalmente por 15 minutos.", "The email or password is incorrect. Account temporarily locked for 15 minutes."),
         );
       }
       return falla(m("No pudimos iniciar sesión. Inténtalo de nuevo.", "We couldn't sign you in. Please try again."));
@@ -212,12 +240,37 @@ export function LoginForm({ next, modo, onModo, configFaltante }: { next: string
     const { error: errSesion } = await supabaseBrowser().auth.setSession(data.session);
     if (errSesion) return falla(m("No pudimos iniciar sesión. Inténtalo de nuevo.", "We couldn't sign you in. Please try again."));
     setEstado("success");
-    router.push(next);
+    router.push(destino({ esAdmin: Boolean(data.esAdmin) }));
+  }
+
+  async function registrar() {
+    const { error: err } = await supabaseBrowser().auth.signUp({
+      email: email.trim(),
+      password,
+      // Redirect de confirmación fijado al origen real (nunca localhost en producción).
+      options: { emailRedirectTo: siteUrlCon("/login") },
+    });
+    if (err) {
+      if (err.status === 429) return falla(m("Demasiados intentos. Espera unos minutos e inténtalo de nuevo.", "Too many attempts. Wait a few minutes and try again."));
+      if (/password/i.test(err.message)) return falla(m("La contraseña no cumple los requisitos mínimos.", "The password doesn't meet the minimum requirements."));
+      return falla(m("No pudimos crear la cuenta. Revisa el correo e inténtalo de nuevo.", "We couldn't create the account. Check the email and try again."));
+    }
+    setPassword("");
+    setErrores({});
+    setError(null);
+    setEstado("idle");
+    onModo("login");
+    setAviso(
+      m(
+        "¡Listo! Te enviamos un correo de bienvenida. Confírmalo para entrar a tu panel.",
+        "You're in! We sent you a welcome email. Confirm it to access your dashboard.",
+      ),
+    );
   }
 
   async function pedirEnlace() {
     const { error: err } = await supabaseBrowser().auth.resetPasswordForEmail(email.trim(), {
-      redirectTo: siteUrlCon(`/login?next=${encodeURIComponent(next)}&recuperar=1`),
+      redirectTo: siteUrlCon(retornoRecuperacion),
     });
     if (err && err.status === 429) return falla(m("Ya pediste varios enlaces. Espera unos minutos e inténtalo de nuevo.", "You've requested several links. Wait a few minutes and try again."));
     // Misma respuesta exista o no la cuenta: no se revela qué correos están registrados.
@@ -237,7 +290,7 @@ export function LoginForm({ next, modo, onModo, configFaltante }: { next: string
     const { error: err } = await supabase.auth.updateUser({ password });
     if (err) return falla(m("No pudimos guardar la contraseña. Prueba con otra o pide un enlace nuevo.", "We couldn't save the password. Try another one or request a new link."));
     setEstado("success");
-    router.replace(next);
+    router.replace(destino({ esAdmin: false }));
   }
 
   async function enviar(e: FormEvent) {
@@ -245,11 +298,12 @@ export function LoginForm({ next, modo, onModo, configFaltante }: { next: string
     setError(null);
     setAviso(null);
     if (configFaltante) return falla(noDisponible);
-    const ok = modo === "login" ? validar({ email: true, password: true }) : modo === "recuperar" ? validar({ email: true }) : validar({ password: true });
+    const ok = modo === "login" || modo === "registro" ? validar({ email: true, password: true }) : modo === "recuperar" ? validar({ email: true }) : validar({ password: true });
     if (!ok) return;
     setEstado("loading");
     try {
       if (modo === "login") await iniciarSesion();
+      else if (modo === "registro") await registrar();
       else if (modo === "recuperar") await pedirEnlace();
       else await guardarNueva();
     } catch {
@@ -278,7 +332,7 @@ export function LoginForm({ next, modo, onModo, configFaltante }: { next: string
           name="email"
           autoComplete="email"
           inputMode="email"
-          placeholder={t("tu@empresa.com", "you@company.com")}
+          placeholder={t(...placeholderEmail)}
           value={email}
           onChange={(e) => {
             setEmail(e.target.value);
@@ -300,7 +354,7 @@ export function LoginForm({ next, modo, onModo, configFaltante }: { next: string
           }}
           error={errores.password ? t(...errores.password) : undefined}
           deshabilitado={cargando || configFaltante}
-          autoComplete={modo === "nueva" ? "new-password" : "current-password"}
+          autoComplete={modo === "nueva" || modo === "registro" ? "new-password" : "current-password"}
         />
       ) : null}
 
@@ -326,12 +380,28 @@ export function LoginForm({ next, modo, onModo, configFaltante }: { next: string
         <BotonEnviar
           cargando={cargando}
           deshabilitado={configFaltante}
-          texto={modo === "login" ? t("Iniciar sesión", "Sign in") : modo === "recuperar" ? t("Enviar enlace", "Send link") : t("Guardar contraseña", "Save password")}
-          textoCargando={modo === "login" ? t("Ingresando…", "Signing in…") : modo === "recuperar" ? t("Enviando…", "Sending…") : t("Guardando…", "Saving…")}
+          texto={
+            modo === "login"
+              ? t("Iniciar sesión", "Sign in")
+              : modo === "registro"
+                ? t("Crear cuenta", "Create account")
+                : modo === "recuperar"
+                  ? t("Enviar enlace", "Send link")
+                  : t("Guardar contraseña", "Save password")
+          }
+          textoCargando={
+            modo === "login"
+              ? t(...cargandoLogin)
+              : modo === "registro"
+                ? t("Creando cuenta…", "Creating account…")
+                : modo === "recuperar"
+                  ? t("Enviando…", "Sending…")
+                  : t("Guardando…", "Saving…")
+          }
         />
       </div>
 
-      {modo !== "login" ? (
+      {modo === "recuperar" || modo === "nueva" ? (
         <button type="button" onClick={() => cambiarModo("login")} className="dl-link self-center text-[13.5px] text-auth-text-2 hover:text-auth-text">
           {t("← Volver a iniciar sesión", "← Back to sign in")}
         </button>
