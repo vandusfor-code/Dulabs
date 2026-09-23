@@ -53,7 +53,9 @@ import {
   type ResultadoDiasCandidatos,
   type ResultadoHorariosFecha,
   type ResultadoHorariosFechaMultiServicio,
+  causaSinDias,
 } from "@/lib/agenda-v2/disponibilidad";
+import { decidirSinDiasParaProfesional, lineaLogSinDias } from "@/lib/agenda-v2/sin-disponibilidad";
 // FASE 3 (autorizado, multi-servicio) -- intersección real de elegibilidad
 // para 2 o 3 servicios (reutiliza TAL CUAL resolverEspecialistasElegiblesParaServicio).
 import { resolverEspecialistasParaMultiServicio as resolverEspecialistasMultiServicio, obtenerServiciosDeCita } from "@/lib/agenda-v2/multi-servicio";
@@ -330,6 +332,42 @@ async function intentarPreLlenarSesion(
   async function detenerEnFecha(mensajePrevio?: string): Promise<boolean> {
     const diasResultado = await calcularDias(params.supabase, { idTenant: params.idTenant, servicioId: servicio!.id, profesionalId: profesional!.especialistaId }, nylasDeps);
     const opcionesFecha = diasResultado.ok ? diasResultado.opciones : [];
+    const prefijo = mensajePrevio ? `${mensajePrevio}\n\n` : "";
+
+    if (opcionesFecha.length === 0) {
+      // Misma decisión única que el flujo por menús (lib/agenda-v2/sin-disponibilidad.ts) -- antes se creaba la
+      // sesión en S3_DIA con CERO opciones (trampa: cualquier respuesta devolvía "Se perdió el menú") y se afirmaba
+      // "No encontramos días disponibles" aunque la causa fuera un calendario que no se pudo leer.
+      const causa = diasResultado.ok ? causaSinDias(diasResultado) : "sin_cupo";
+      const log = lineaLogSinDias({
+        causa,
+        idTenant: params.idTenant,
+        profesionalId: profesional!.especialistaId,
+        diasNoConfirmados: diasResultado.ok ? diasResultado.diasNoConfirmados : undefined,
+        detalleNoConfirmado: diasResultado.ok ? diasResultado.detalleNoConfirmado : undefined,
+      });
+      if (causa === "sin_cupo") console.info(log);
+      else console.error(log);
+      const decision = decidirSinDiasParaProfesional({
+        causa,
+        profesional: { id: profesional!.especialistaId, nombre: profesional!.nombre },
+        elegibles: resolucion.especialistas,
+        ofrecerAtencionHumana: params.idTenant === AMORE_TENANT_ID,
+      });
+      if (decision.accion === "ofrecer_otras") {
+        await crearSesion(params.supabase, {
+          tenantId: params.idTenant,
+          telefonoCliente: params.telefono,
+          wamid: params.wamid,
+          step: "S2_PROFESIONAL",
+          servicioId: servicio!.id,
+          opcionesMostradas: decision.opciones,
+        });
+      }
+      await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: `${prefijo}${decision.mensaje}`, origen: "automatico" });
+      return true;
+    }
+
     const numeroVerMasFechas = diasResultado.ok && diasResultado.hayMasFechas ? opcionesFecha.length + 1 : null;
     await crearSesion(params.supabase, {
       tenantId: params.idTenant,
@@ -340,16 +378,7 @@ async function intentarPreLlenarSesion(
       profesionalId: profesional!.especialistaId,
       opcionesMostradas: { opciones: opcionesFecha, numeroVerMasFechas },
     });
-    const prefijo = mensajePrevio ? `${mensajePrevio}\n\n` : "";
-    await enviarMensaje({
-      tenantId: params.idTenant,
-      telefono: params.telefono,
-      mensaje:
-        opcionesFecha.length > 0
-          ? `${prefijo}${renderizarMenuFecha(opcionesFecha, numeroVerMasFechas)}`
-          : `${prefijo}No encontramos días disponibles con esa profesional en este momento 😔 Escribe *cancelar* y vuelve a intentarlo más tarde.`,
-      origen: "automatico",
-    });
+    await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: `${prefijo}${renderizarMenuFecha(opcionesFecha, numeroVerMasFechas)}`, origen: "automatico" });
     return true;
   }
 
@@ -365,7 +394,9 @@ async function intentarPreLlenarSesion(
   if (!fechaParseada.ok) return await detenerEnFecha();
 
   const diasResultado = await calcularDias(params.supabase, { idTenant: params.idTenant, servicioId: servicio.id, profesionalId: profesional.especialistaId }, nylasDeps);
-  if (!diasResultado.ok || !diasResultado.opciones.some((o) => o.fechaIso === fechaParseada.fecha)) {
+  // Sin NINGÚN día real: detenerEnFecha ya explica la causa real (sin cupo / no se pudo consultar) -- sin prefijo redundante.
+  if (!diasResultado.ok || diasResultado.opciones.length === 0) return await detenerEnFecha();
+  if (!diasResultado.opciones.some((o) => o.fechaIso === fechaParseada.fecha)) {
     return await detenerEnFecha("Ese día no tiene cupo disponible con esa profesional 😔");
   }
 
@@ -376,6 +407,11 @@ async function intentarPreLlenarSesion(
       nylasDeps,
     );
     const horarios = horariosResultado.ok ? horariosResultado.horarios : [];
+    if (horarios.length === 0) {
+      // Nunca una sesión en S4_HORA con cero opciones (trampa "Se perdió el menú") -- se ofrecen los días reales.
+      const aviso = !horariosResultado.ok && horariosResultado.motivo === "no_confirmado" ? "No pude consultar los horarios de ese día 😔" : "Ese día ya no tiene horarios disponibles 😔";
+      return await detenerEnFecha(mensajePrevio ? `${mensajePrevio}\n\n${aviso}` : aviso);
+    }
     const bloqueHora = construirBloqueHora(fechaParseada.ok ? fechaParseada.fecha : "", horarios);
     await crearSesion(params.supabase, {
       tenantId: params.idTenant,
@@ -388,15 +424,7 @@ async function intentarPreLlenarSesion(
       opcionesMostradas: bloqueHora,
     });
     const prefijo = mensajePrevio ? `${mensajePrevio}\n\n` : "";
-    await enviarMensaje({
-      tenantId: params.idTenant,
-      telefono: params.telefono,
-      mensaje:
-        bloqueHora.opciones.length > 0
-          ? `${prefijo}${renderizarMenuHora(bloqueHora.opciones, bloqueHora.numeroVerMasHoras)}`
-          : `${prefijo}Ese día ya no tiene horarios disponibles 😔 Escribe *cancelar* y vuelve a intentarlo más tarde.`,
-      origen: "automatico",
-    });
+    await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: `${prefijo}${renderizarMenuHora(bloqueHora.opciones, bloqueHora.numeroVerMasHoras)}`, origen: "automatico" });
     return true;
   }
 
@@ -960,7 +988,7 @@ export async function procesarMensajeConAgendaV2(
           { idTenant: params.idTenant, especialista: { id: profesionalId, nombre: especialista.nombre }, duracionTotalMin, continuarDesdeFechaIso },
           construirNylasDeps(),
         );
-        return { ok: true, opciones: resultadoMulti.opciones, hayMasFechas: resultadoMulti.hayMasFechas };
+        return { ok: true, ...resultadoMulti };
       }
 
       /** Mismo criterio EXACTO que calcularDiasComoCorresponda -- multi-servicio usa la duración total real, un solo servicio queda idéntico a antes. */
@@ -985,54 +1013,82 @@ export async function procesarMensajeConAgendaV2(
       // `profesionalId` y, si no hay ninguno, revierte a S2_PROFESIONAL
       // mostrando los profesionales reales de nuevo (mismo criterio en
       // ambos casos de uso).
-      async function mostrarMenuFechaOVolverAProfesional(servicioId: string, profesionalId: number, continuarDesdeFechaIso?: string): Promise<ResultadoRouterAgendaV2> {
+      async function mostrarMenuFechaOVolverAProfesional(
+        servicioId: string,
+        profesionalId: number,
+        continuarDesdeFechaIso?: string,
+        mensajePrevio?: string,
+      ): Promise<ResultadoRouterAgendaV2> {
+        const prefijo = mensajePrevio ? `${mensajePrevio}\n\n` : "";
         const diasResultado = await calcularDiasComoCorresponda(servicioId, profesionalId, continuarDesdeFechaIso);
         if (!diasResultado) return await reiniciarPorEstadoInconsistente("multi-servicio con un servicio o profesional ya no válido");
+        // El servicio se desactivó o la profesional dejó de ser elegible a mitad de la conversación -- no es "falta de
+        // agenda": se reinicia con el catálogo real, igual que el resto de los casos defensivos.
+        if (!diasResultado.ok) return await reiniciarPorEstadoInconsistente(`disponibilidad ${diasResultado.motivo}`);
 
-        if (!diasResultado.ok || diasResultado.opciones.length === 0) {
-          if (sesion!.citaObjetivoId) {
-            // FASE 8 (sección "CAMBIO DE PROFESIONAL" del pedido) -- una
-            // reprogramación NUNCA cambia de profesional. Si no hay más días
-            // reales disponibles con ESTA profesional, se informa y se deja
-            // un punto muerto seguro -- la cita ORIGINAL nunca se toca.
-            await actualizarSesion(params.supabase, sesion!.id, {
-              step: "S3_DIA",
-              fechaIso: null,
-              slotSeleccionado: null,
-              opcionesMostradas: [],
-              ultimoWamidProcesado: params.wamid,
-            });
-            await enviarMensaje({
-              tenantId: params.idTenant,
-              telefono: params.telefono,
-              mensaje: "No encontramos más días disponibles para reprogramar con esta profesional en este momento 😔 Tu cita original sigue intacta. Escribe *cancelar* y vuelve a intentarlo más tarde.",
-              origen: "automatico",
-            });
-            return { manejado: true };
-          }
+        if (diasResultado.opciones.length === 0) {
+          // Causa REAL de "cero días" -- "sin_cupo" (agenda verificada y llena) vs "no_confirmado"/"calendario_no_configurado"
+          // (no se pudo consultar). Antes ambas respondían "No encontramos días disponibles con esa profesional" y no
+          // dejaban ningún rastro: el bug real de AMORE (Cristal con agenda libre, reportada como sin días).
+          const causa = causaSinDias(diasResultado);
+          const log = lineaLogSinDias({
+            causa,
+            idTenant: params.idTenant,
+            profesionalId,
+            diasNoConfirmados: diasResultado.diasNoConfirmados,
+            detalleNoConfirmado: diasResultado.detalleNoConfirmado,
+          });
+          if (causa === "sin_cupo") console.info(log);
+          else console.error(log);
+
           const serviciosIdsMultiFallback = sesion!.serviciosIds;
           const resolucion =
             serviciosIdsMultiFallback && serviciosIdsMultiFallback.length > 1
               ? await resolverEspecialistasMulti(params.supabase, params.idTenant, serviciosIdsMultiFallback)
               : await resolverEspecialistas(params.supabase, params.idTenant, servicioId);
-          const opcionesProfesional = construirOpcionesProfesional(resolucion.especialistas);
-          await actualizarSesion(params.supabase, sesion!.id, {
-            step: "S2_PROFESIONAL",
-            profesionalId: null,
-            fechaIso: null,
-            slotSeleccionado: null,
-            opcionesMostradas: opcionesProfesional,
-            ultimoWamidProcesado: params.wamid,
+          const nombreProfesional =
+            resolucion.especialistas.find((e) => e.especialistaId === profesionalId)?.nombre ??
+            (await especialistaPorIdDep(params.supabase, profesionalId))?.nombre ??
+            "esa profesional";
+
+          if (sesion!.citaObjetivoId) {
+            // FASE 8 (sección "CAMBIO DE PROFESIONAL" del pedido) -- una reprogramación NUNCA cambia de profesional y la
+            // cita ORIGINAL nunca se toca. La sesión se cierra (antes quedaba en S3_DIA sin opciones: cualquier mensaje
+            // respondía "Se perdió el menú").
+            await cerrarSesion(params.supabase, sesion!.id);
+            const motivoTexto =
+              causa === "sin_cupo"
+                ? `${nombreProfesional} no tiene más días disponibles para reprogramar en este momento 😔`
+                : `En este momento no pude consultar la agenda de ${nombreProfesional} para reprogramar 😔`;
+            await enviarMensaje({
+              tenantId: params.idTenant,
+              telefono: params.telefono,
+              mensaje: `${prefijo}${motivoTexto} Tu cita original sigue intacta.${params.idTenant === AMORE_TENANT_ID ? " Si quieres, escribe *hablar con una persona* y te ayudamos directamente 💗" : ""}`,
+              origen: "automatico",
+            });
+            return { manejado: true };
+          }
+
+          const decision = decidirSinDiasParaProfesional({
+            causa,
+            profesional: { id: profesionalId, nombre: nombreProfesional },
+            elegibles: resolucion.especialistas,
+            ofrecerAtencionHumana: params.idTenant === AMORE_TENANT_ID,
           });
-          await enviarMensaje({
-            tenantId: params.idTenant,
-            telefono: params.telefono,
-            mensaje:
-              opcionesProfesional.length > 0
-                ? `No encontramos días disponibles con esa profesional en los próximos días 😔 Elige otra:\n\n${renderizarMenuProfesional(opcionesProfesional)}`
-                : "No encontramos días disponibles en este momento 😔 Escribe *cancelar* y vuelve a intentarlo más tarde.",
-            origen: "automatico",
-          });
+          if (decision.accion === "ofrecer_otras") {
+            await actualizarSesion(params.supabase, sesion!.id, {
+              step: "S2_PROFESIONAL",
+              profesionalId: null,
+              fechaIso: null,
+              slotSeleccionado: null,
+              opcionesMostradas: decision.opciones,
+              ultimoWamidProcesado: params.wamid,
+            });
+          } else {
+            // Sin ninguna alternativa real -- se cierra la sesión en vez de dejarla en un menú vacío.
+            await cerrarSesion(params.supabase, sesion!.id);
+          }
+          await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: `${prefijo}${decision.mensaje}`, origen: "automatico" });
           return { manejado: true };
         }
 
@@ -1052,7 +1108,7 @@ export async function procesarMensajeConAgendaV2(
           opcionesMostradas: { opciones: diasResultado.opciones, numeroVerMasFechas },
           ultimoWamidProcesado: params.wamid,
         });
-        await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: renderizarMenuFecha(diasResultado.opciones, numeroVerMasFechas), origen: "automatico" });
+        await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: `${prefijo}${renderizarMenuFecha(diasResultado.opciones, numeroVerMasFechas)}`, origen: "automatico" });
         return { manejado: true };
       }
 
@@ -1072,26 +1128,16 @@ export async function procesarMensajeConAgendaV2(
         const horariosResultado = await calcularHorasComoCorresponda(servicioId, profesionalId, fechaIso);
 
         if (!horariosResultado.ok) {
-          const diasResultado = await calcularDiasComoCorresponda(servicioId, profesionalId);
-          const opcionesFecha = diasResultado?.ok ? diasResultado.opciones : [];
-          const numeroVerMasFechasFallback = diasResultado?.ok && diasResultado.hayMasFechas ? opcionesFecha.length + 1 : null;
-          await actualizarSesion(params.supabase, sesion!.id, {
-            step: "S3_DIA",
-            fechaIso: null,
-            slotSeleccionado: null,
-            opcionesMostradas: { opciones: opcionesFecha, numeroVerMasFechas: numeroVerMasFechasFallback },
-            ultimoWamidProcesado: params.wamid,
-          });
-          await enviarMensaje({
-            tenantId: params.idTenant,
-            telefono: params.telefono,
-            mensaje:
-              opcionesFecha.length > 0
-                ? `${prefijo}Ese día ya no tiene horarios disponibles 😔 Elige otro:\n\n${renderizarMenuFecha(opcionesFecha, numeroVerMasFechasFallback)}`
-                : `${prefijo}Ese día ya no tiene horarios disponibles y no encontramos otro con cupo por ahora 😔 Escribe *cancelar* y vuelve a intentarlo más tarde.`,
-            origen: "automatico",
-          });
-          return { manejado: true };
+          // Un fallo de lectura del calendario ese día nunca se presenta como "ese día ya no tiene horarios". Los días
+          // alternativos (o, si no queda ninguno, la salida honesta) los decide la MISMA función que el paso de
+          // profesional -- antes este camino podía dejar la sesión en S3_DIA con cero opciones.
+          if (horariosResultado.motivo === "no_confirmado") {
+            console.error(
+              `[agenda-v2] horarios no_confirmado tenant=${params.idTenant} profesional=${profesionalId} fecha=${fechaIso} detalle=${horariosResultado.detalleNoConfirmado ?? "-"}`,
+            );
+          }
+          const aviso = horariosResultado.motivo === "no_confirmado" ? "No pude consultar los horarios de ese día 😔" : "Ese día ya no tiene horarios disponibles 😔";
+          return await mostrarMenuFechaOVolverAProfesional(servicioId, profesionalId, undefined, `${mensajePrevio ? `${mensajePrevio}\n\n` : ""}${aviso}`);
         }
 
         const bloqueHora = construirBloqueHora(fechaIso, horariosResultado.horarios);

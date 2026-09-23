@@ -1077,7 +1077,7 @@ describe("FASE 4 (autorizado) -- selección de fecha vía router real", () => {
     assert.match(envios.enviados.at(-1)!.mensaje, /No reconocí esa opción/);
   });
 
-  it("Test 7: sin días disponibles (Jessica) -- NUNCA avanza a S3_DIA, revierte a S2_PROFESIONAL mostrando profesionales reales de nuevo", async () => {
+  it("Test 7: sin días disponibles (Jessica, agenda verificada y llena) -- NUNCA avanza a S3_DIA, revierte a S2_PROFESIONAL con las OTRAS profesionales reales", async () => {
     const { deps, sesiones, envios } = armarDeps();
     await llegarAMenuProfesionalDipping(deps);
     const r = await procesarMensajeConAgendaV2(
@@ -1089,10 +1089,11 @@ describe("FASE 4 (autorizado) -- selección de fecha vía router real", () => {
     assert.equal(sesiones.filas[0]!.profesionalId, null, "nunca guarda un profesional sin días disponibles");
     assert.deepEqual(
       sesiones.filas[0]!.opcionesMostradas,
-      construirOpcionesProfesional(ESPECIALISTAS_POR_SERVICIO["s-dipping-real"]!),
-      "vuelve a mostrar los profesionales reales, nunca deja la sesión inconsistente",
+      construirOpcionesProfesional(ESPECIALISTAS_POR_SERVICIO["s-dipping-real"]!.filter((e) => e.especialistaId !== 1265)),
+      "vuelve a mostrar las profesionales reales SIN la que no tiene días (ofrecerla de nuevo solo crea un bucle)",
     );
-    assert.match(envios.enviados[3]!.mensaje, /No encontramos días disponibles/);
+    assert.match(envios.enviados[3]!.mensaje, /Jessica no tiene espacios libres en los próximos \d+ días/);
+    assert.doesNotMatch(envios.enviados[3]!.mensaje, /Jessica\n|\d\. Jessica/, "Jessica no vuelve a aparecer como opción");
   });
 
   it("Test 19: 'cumpleaños' (coincide con un escenario del Flow Engine) en S3_DIA -- se trata como selección inválida, NUNCA invoca Flow Engine", async () => {
@@ -3069,7 +3070,7 @@ describe("NUEVA FASE (autorizado) -- iniciarNuevaSesionAgendaV2 con entidades ex
     assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, construirBloqueHora("2026-09-08", ["09:00", "10:30", "14:00"]));
   });
 
-  it("fecha mencionada SIN cupo real con esa profesional (Jessica no tiene ningun dia disponible) -> nunca la fuerza, cae a S3_DIA con aviso real", async () => {
+  it("fecha mencionada SIN cupo real con esa profesional (Jessica no tiene ningun dia disponible) -> nunca la fuerza NI deja S3_DIA vacío (trampa 'Se perdió el menú'): ofrece las otras profesionales reales", async () => {
     const { deps, sesiones, envios } = armarDepsExtraccion();
     await iniciarNuevaSesionAgendaV2(
       {
@@ -3081,9 +3082,10 @@ describe("NUEVA FASE (autorizado) -- iniciarNuevaSesionAgendaV2 con entidades ex
       },
       deps,
     );
-    assert.equal(sesiones.filas[0]!.step, "S3_DIA");
-    assert.equal(sesiones.filas[0]!.profesionalId, 1265);
-    assert.match(envios.enviados[0]!.mensaje, /No encontramos días disponibles/);
+    assert.equal(sesiones.filas[0]!.step, "S2_PROFESIONAL");
+    assert.equal(sesiones.filas[0]!.profesionalId, null);
+    assert.ok((sesiones.filas[0]!.opcionesMostradas as unknown[]).length > 0, "nunca una sesión con cero opciones");
+    assert.match(envios.enviados[0]!.mensaje, /Jessica no tiene espacios libres/);
   });
 
   it("fecha mencionada invalida/ambigua ('cualquier dia') -> parseFechaColombia la rechaza, cae a S3_DIA con los dias reales (nunca inventa una fecha)", async () => {

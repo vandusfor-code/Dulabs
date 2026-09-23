@@ -52,6 +52,22 @@ describe("eventosNylasComoVentanas -- conversión pura, nunca inventa ocupación
   it("calendario sin eventos -> array vacío, nunca un error", () => {
     assert.deepEqual(eventosNylasComoVentanas([], "2026-09-14"), []);
   });
+
+  it("evento marcado 'Libre' (busy:false) NUNCA ocupa -- causa real de 'No encontramos días disponibles' con agenda libre", () => {
+    const eventos: NylasEvent[] = [
+      { id: "turno", when: { object: "timespan", start_time: 1_700_000_000, end_time: 1_700_036_000 }, busy: false },
+      { id: "cumple", when: { object: "date", date: "2026-09-14" }, busy: false },
+    ];
+    assert.deepEqual(eventosNylasComoVentanas(eventos, "2026-09-14"), []);
+  });
+
+  it("busy:true y busy ausente SÍ ocupan (criterio conservador: sin el dato se asume ocupado)", () => {
+    const eventos: NylasEvent[] = [
+      { id: "1", when: { object: "timespan", start_time: 1_700_000_000, end_time: 1_700_003_600 }, busy: true },
+      { id: "2", when: { object: "timespan", start_time: 1_700_010_000, end_time: 1_700_013_600 } },
+    ];
+    assert.equal(eventosNylasComoVentanas(eventos, "2026-09-14").length, 2);
+  });
 });
 
 describe("consultarEventosOcupadosNylas -- nunca inventa disponibilidad si Nylas falla", () => {
@@ -74,6 +90,16 @@ describe("consultarEventosOcupadosNylas -- nunca inventa disponibilidad si Nylas
     const client: NylasEventsClient = {
       async listEvents() {
         throw Object.assign(new Error("nylas_http_500: server error"), { status: 500 });
+      },
+    };
+    const r = await consultarEventosOcupadosNylas(client, PARAMS);
+    assert.deepEqual(r, { ok: false, motivo: "error", httpStatus: 500 }, "el código HTTP se conserva para el log (403/404 = calendario no compartido o id inválido)");
+  });
+
+  it("error sin código HTTP (ej. red caída) -> ok:false, motivo:'error' sin httpStatus", async () => {
+    const client: NylasEventsClient = {
+      async listEvents() {
+        throw new Error("fetch failed");
       },
     };
     const r = await consultarEventosOcupadosNylas(client, PARAMS);

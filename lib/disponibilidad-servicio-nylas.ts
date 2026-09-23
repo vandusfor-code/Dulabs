@@ -52,6 +52,8 @@ export type EspecialistaConHorariosNylas = {
   nombre: string;
   estado: EstadoDisponibilidadEspecialista;
   horarios: string[]; // "HH:MM" hora Colombia -- mismo formato que el motor existente
+  /** Solo con estado "no_confirmado": por qué Nylas no pudo confirmar (ej. "nylas_http_404", "timeout"). Seguro para logs. */
+  detalleNoConfirmado?: string;
 };
 
 export type ResultadoHorariosConNylas =
@@ -111,6 +113,7 @@ export async function calcularHorariosDeEspecialista(
 
   let ocupadas: VentanaHoraria[] = ocupadasDulabs;
   let estado: EstadoDisponibilidadEspecialista = "ok";
+  let detalleNoConfirmado: string | undefined;
 
   if (calendarId) {
     const resultadoNylas = await consultarEventosOcupadosNylas(deps.nylasClient, {
@@ -126,6 +129,8 @@ export async function calcularHorariosDeEspecialista(
       // Nylas falló/hizo timeout para ESTA profesional -- nunca se ofrecen
       // horarios que no se pudieron confirmar contra su calendario real.
       estado = "no_confirmado";
+      detalleNoConfirmado =
+        resultadoNylas.motivo === "timeout" ? "timeout" : resultadoNylas.httpStatus !== undefined ? `nylas_http_${resultadoNylas.httpStatus}` : "nylas_error";
     }
   }
 
@@ -142,7 +147,9 @@ export async function calcularHorariosDeEspecialista(
           .map((d) => horaColombiaDesdeIso(d.toISOString()))
       : [];
 
-  return { especialistaId: especialista.id, nombre: especialista.nombre, estado, horarios };
+  return detalleNoConfirmado
+    ? { especialistaId: especialista.id, nombre: especialista.nombre, estado, horarios, detalleNoConfirmado }
+    : { especialistaId: especialista.id, nombre: especialista.nombre, estado, horarios };
 }
 
 export async function listarHorariosDisponiblesPorServicioConNylas(
