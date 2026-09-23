@@ -3,10 +3,10 @@
 import { useId, useState } from "react";
 import { Hash, Loader2, Plus } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
-import type { CatalogCategory } from "@/lib/catalogo/domain";
+import { CATALOG_LIMITS, type CatalogCategory } from "@/lib/catalogo/domain";
 import type { ProductFormErrors, ProductFormState } from "@/lib/catalogo/form";
 import type { CatalogClient } from "@/lib/catalogo-client";
-import { CField, PriceInput, ReferenceTag, cn, inputCls } from "@/components/dashboard/catalogo/ui";
+import { CField, PriceInput, ReferenceTag, StockInput, cn, inputCls } from "@/components/dashboard/catalogo/ui";
 
 /** Referencia: SIEMPRE de solo lectura. Antes de guardar se explica que la genera DuLabs. */
 export function ReferenceField({ reference }: { reference: string | null }) {
@@ -137,6 +137,7 @@ export function ProductFields({
   onCategoryCreated,
   client,
   disabled,
+  stockUntracked,
 }: {
   value: ProductFormState;
   onChange: (v: ProductFormState) => void;
@@ -145,6 +146,8 @@ export function ProductFields({
   onCategoryCreated: (c: CatalogCategory) => void;
   client: CatalogClient | null;
   disabled?: boolean;
+  /** Producto legado que aún no controla inventario (el stock es opcional hasta definirlo). */
+  stockUntracked?: boolean;
 }) {
   const { t } = useI18n();
   const ids = useId();
@@ -189,6 +192,25 @@ export function ProductFields({
           {errors.wholesalePrice && <p className="mt-1 text-xs text-red-400">{errors.wholesalePrice}</p>}
         </CField>
       </div>
+
+      <CField
+        label={t("Stock disponible", "Available stock")}
+        htmlFor={`${ids}-stock`}
+        required={!stockUntracked}
+        hint={
+          stockUntracked && value.stock === null
+            ? t(
+                "Cantidad disponible para venta. Este producto aún no controla inventario: al definirla, el catálogo mostrará la disponibilidad real.",
+                "Quantity available for sale. This product doesn't track inventory yet: once set, the catalog will show real availability.",
+              )
+            : t("Cantidad disponible para venta.", "Quantity available for sale.")
+        }
+      >
+        <div className="sm:max-w-[calc(50%-0.5rem)]">
+          <StockInput id={`${ids}-stock`} value={value.stock} onChange={(v) => set("stock", v)} max={CATALOG_LIMITS.stock} disabled={disabled} invalid={Boolean(errors.stock)} />
+        </div>
+        {errors.stock && <p className="mt-1 text-xs text-red-400">{errors.stock}</p>}
+      </CField>
 
       <div className="grid gap-4 sm:grid-cols-2">
         <CField label={t("Material", "Material")} htmlFor={`${ids}-material`}>

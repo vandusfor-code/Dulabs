@@ -1,31 +1,27 @@
 /**
  * Carrito del catálogo público — DOMINIO PURO (sin DOM, sin red, sin React).
  *
- * Pieza central del catálogo: hoy alimenta la "selección + Pedir por
- * WhatsApp"; mañana, la pantalla completa de carrito. Por eso el estado es
- * explícito y versionado, y cada decisión futura tiene su lugar:
+ * Pieza central del catálogo: el mismo motor en inicio, categorías, búsqueda
+ * y ficha. El estado es explícito y versionado:
  *
  *   - Identidad de la línea = `reference` (DL-000184): la referencia real e
- *     inmutable de la BD, nunca el nombre visible. El mensaje de pedido se
- *     arma con ella.
+ *     inmutable de la BD, nunca el nombre visible.
  *   - `context` (detal / mayor): un carrito por catálogo Y por contexto de
- *     precio. El catálogo mayorista tendrá su propio carrito sin mezclar
- *     precios (la clave de almacenamiento incluye el contexto).
- *   - `unitPrice` es una FOTO del precio del catálogo al agregar (null =
- *     "precio a consultar"); el backend la corrige con `reconcile` (precio
- *     vigente, producto activo, disponibilidad).
- *   - El agente de IA podrá leer el mismo mensaje/estructura (referencias +
- *     cantidades) sin parsear texto libre.
+ *     precio (la clave de almacenamiento incluye ambos).
+ *   - Lo que viene del catálogo (nombre, precio, foto, disponibilidad y el
+ *     MÁXIMO pedible) es una vista que el backend corrige con `reconcile`.
+ *     Lo que decide el cliente es la cantidad, siempre acotada por ese máximo.
  *
  * CONFIANZA: el navegador solo es dueño de QUÉ referencias y CUÁNTAS
- * unidades. Nombre, precio, foto y disponibilidad son una vista que el
- * backend reconcilia (`reconcile`, con ResolvedSelection del servicio
- * público). Lo que un backend debe aceptar de un carrito es
- * `selectionSnapshot` (referencia + cantidad), jamás precios del cliente.
+ * unidades. Al preparar el pedido el backend vuelve a resolver todo
+ * (lib/catalogo/pedido.ts + servicio público `prepareOrder`): jamás se usan
+ * precios ni stock del cliente.
  */
 import type { PriceContext } from "@/lib/catalogo/domain";
+import type { OrderItem } from "@/lib/catalogo/pedido";
 
 export const CART_VERSION = 1;
+/** Tope técnico por línea cuando el producto no controla inventario. */
 export const MAX_QUANTITY = 99;
 export const MAX_LINES = 60;
 
@@ -38,6 +34,8 @@ export interface CartProduct {
   imageUrl: string | null;
   /** Decidido por el backend. Por defecto true. */
   available?: boolean;
+  /** Máximo pedible decidido por el backend (stock); null/undefined = sin límite de inventario. */
+  maxQuantity?: number | null;
 }
 
 export interface CartLine {
@@ -48,6 +46,8 @@ export interface CartLine {
   quantity: number;
   /** false = agotado según el backend: se muestra, pero no entra al pedido ni al total. */
   available: boolean;
+  /** Máximo pedible según el backend (null = sin límite de inventario). */
+  maxQuantity: number | null;
 }
 
 export interface CartState {
@@ -62,32 +62,42 @@ export type CartAction =
   | { type: "setQuantity"; reference: string; quantity: number }
   | { type: "remove"; reference: string }
   | { type: "clear" }
-  /** Verdad del backend: actualiza lo resuelto y retira lo que ya no existe o no está activo. */
+  /** Verdad del backend: actualiza lo resuelto, acota cantidades al stock y retira lo que ya no existe o no está activo. */
   | { type: "reconcile"; resolved: CartProduct[]; unknown: string[] };
 
 export function emptyCart(slug: string, context: PriceContext): CartState {
   return { version: CART_VERSION, slug, context, lines: [] };
 }
 
-function clampQuantity(quantity: number): number {
-  if (!Number.isFinite(quantity)) return 1;
-  return Math.min(MAX_QUANTITY, Math.max(1, Math.trunc(quantity)));
+/** Máximo efectivo de una línea o producto: el stock informado por el backend, o el tope técnico. */
+export function quantityLimit(item: { maxQuantity?: number | null }): number {
+  const max = item.maxQuantity;
+  return typeof max === "number" && Number.isFinite(max) ? Math.max(0, Math.min(MAX_QUANTITY, Math.trunc(max))) : MAX_QUANTITY;
+}
+
+function clamp(quantity: number, limit: number): number {
+  if (!Number.isFinite(quantity)) return Math.min(1, limit);
+  return Math.min(limit, Math.max(1, Math.trunc(quantity)));
 }
 
 export function cartReducer(state: CartState, action: CartAction): CartState {
   switch (action.type) {
     case "add": {
       const { product } = action;
-      const extra = clampQuantity(action.quantity ?? 1);
+      const available = product.available ?? true;
+      const limit = quantityLimit(product);
+      // Nunca se agrega lo que el backend dice que no se puede vender.
+      if (!available || limit < 1) return state;
+      const extra = clamp(action.quantity ?? 1, limit);
       const existing = state.lines.find((l) => l.reference === product.reference);
       if (existing) {
-        const quantity = Math.min(MAX_QUANTITY, existing.quantity + extra);
+        const quantity = Math.min(limit, existing.quantity + extra);
         return {
           ...state,
-          // Se refrescan nombre/precio/foto con los datos más recientes del catálogo.
+          // Se refrescan nombre/precio/foto/límite con los datos más recientes del catálogo.
           lines: state.lines.map((l) =>
             l.reference === product.reference
-              ? { ...l, name: product.name, unitPrice: product.price, imageUrl: product.imageUrl, available: product.available ?? true, quantity }
+              ? { ...l, name: product.name, unitPrice: product.price, imageUrl: product.imageUrl, available, maxQuantity: product.maxQuantity ?? null, quantity }
               : l,
           ),
         };
@@ -97,14 +107,13 @@ export function cartReducer(state: CartState, action: CartAction): CartState {
         ...state,
         lines: [
           ...state.lines,
-          { reference: product.reference, name: product.name, unitPrice: product.price, imageUrl: product.imageUrl, available: product.available ?? true, quantity: extra },
+          { reference: product.reference, name: product.name, unitPrice: product.price, imageUrl: product.imageUrl, available, maxQuantity: product.maxQuantity ?? null, quantity: extra },
         ],
       };
     }
     case "setQuantity": {
       if (action.quantity < 1) return cartReducer(state, { type: "remove", reference: action.reference });
-      const quantity = clampQuantity(action.quantity);
-      return { ...state, lines: state.lines.map((l) => (l.reference === action.reference ? { ...l, quantity } : l)) };
+      return { ...state, lines: state.lines.map((l) => (l.reference === action.reference ? { ...l, quantity: clamp(action.quantity, Math.max(1, quantityLimit(l))) } : l)) };
     }
     case "remove":
       return { ...state, lines: state.lines.filter((l) => l.reference !== action.reference) };
@@ -113,6 +122,13 @@ export function cartReducer(state: CartState, action: CartAction): CartState {
     case "reconcile":
       return reconcileCart(state, action.resolved, action.unknown);
   }
+}
+
+/** ¿Se puede sumar una unidad más de este producto? (feedback inmediato; la verdad la confirma el backend). */
+export function canAddMore(state: CartState, product: CartProduct): boolean {
+  if (product.available === false) return false;
+  const line = state.lines.find((l) => l.reference === product.reference);
+  return (line?.quantity ?? 0) < quantityLimit(product);
 }
 
 /** Unidades en el carrito (contador del header), incluidas las agotadas que el cliente aún no retira. */
@@ -141,30 +157,53 @@ export function cartTotal(state: CartState): { total: number; unpricedItems: num
 }
 
 // ---------------------------------------------------------------------------
-// Pedido por WhatsApp
+// Reconciliación con la verdad del backend
 // ---------------------------------------------------------------------------
 
+/** Qué cambió al reconciliar (para avisar al cliente con claridad). */
+export type CartChange =
+  | { kind: "removed"; reference: string; name: string }
+  | { kind: "sold_out"; reference: string; name: string }
+  | { kind: "reduced"; reference: string; name: string; from: number; to: number };
+
 /**
- * Mensaje del pedido con los datos REALES de cada línea (nombre + referencia
- * de la BD + cantidad). El contexto mayorista lo declara para que el asesor
- * (o el agente) cotice con la lista correcta.
+ * Aplica la verdad del backend (`resolveSelection` / `prepareOrder`): cada
+ * referencia resuelta actualiza nombre, precio vigente, foto, disponibilidad
+ * y máximo pedible (la cantidad se acota a ese máximo); las referencias
+ * desconocidas (eliminadas o inactivas) se retiran. Las no consultadas quedan
+ * como están.
  */
-export function cartWhatsappMessage(state: CartState): string {
-  const intro =
-    state.context === "wholesale"
-      ? "Hola, estoy interesado(a) en estos productos (precio mayorista):"
-      : "Hola, estoy interesado(a) en estos productos:";
-  const pedibles = orderableLines(state);
-  const lineas = pedibles.map((l) => `• ${l.name} — Ref. ${l.reference} — Cantidad: ${l.quantity}`);
-  const total = pedibles.reduce((sum, l) => sum + l.quantity, 0);
-  return [intro, "", ...lineas, "", `Total de productos: ${total}`].join("\n");
+export function reconcileCart(state: CartState, resolved: readonly CartProduct[], unknown: readonly string[]): CartState {
+  return reconcileWithChanges(state, resolved, unknown).state;
 }
 
-/** Link wa.me al número del negocio; null si no hay número válido o el carrito está vacío. */
-export function cartWhatsappLink(phone: string | null, state: CartState): string | null {
-  const digits = (phone ?? "").replace(/\D/g, "");
-  if (digits.length < 8 || orderableLines(state).length === 0) return null;
-  return `https://wa.me/${digits}?text=${encodeURIComponent(cartWhatsappMessage(state))}`;
+export function reconcileWithChanges(state: CartState, resolved: readonly CartProduct[], unknown: readonly string[]): { state: CartState; changes: CartChange[] } {
+  const byRef = new Map(resolved.map((p) => [p.reference, p]));
+  const gone = new Set(unknown);
+  const lines: CartLine[] = [];
+  const changes: CartChange[] = [];
+  for (const l of state.lines) {
+    if (gone.has(l.reference)) {
+      changes.push({ kind: "removed", reference: l.reference, name: l.name });
+      continue;
+    }
+    const fresh = byRef.get(l.reference);
+    if (!fresh) {
+      lines.push(l);
+      continue;
+    }
+    const available = fresh.available ?? true;
+    const limit = quantityLimit(fresh);
+    const next: CartLine = { ...l, name: fresh.name, unitPrice: fresh.price, imageUrl: fresh.imageUrl, available, maxQuantity: fresh.maxQuantity ?? null };
+    if (!available || limit < 1) {
+      if (l.available) changes.push({ kind: "sold_out", reference: l.reference, name: fresh.name });
+    } else if (l.quantity > limit) {
+      changes.push({ kind: "reduced", reference: l.reference, name: fresh.name, from: l.quantity, to: limit });
+      next.quantity = limit;
+    }
+    lines.push(next);
+  }
+  return { state: { ...state, lines }, changes };
 }
 
 // ---------------------------------------------------------------------------
@@ -180,6 +219,7 @@ const REFERENCE_SHAPE = /^[A-Z]{1,6}-\d{6,}$/;
 /**
  * Lee un carrito guardado. Tolerante: JSON corrupto, otra versión, otro
  * catálogo o líneas inválidas => se descartan (nunca rompe la página).
+ * Compatible con carritos guardados antes de existir `maxQuantity`.
  */
 export function parseStoredCart(raw: string | null, slug: string, context: PriceContext): CartState {
   const empty = emptyCart(slug, context);
@@ -203,73 +243,36 @@ export function parseStoredCart(raw: string | null, slug: string, context: Price
     if (typeof l.quantity !== "number" || !Number.isFinite(l.quantity) || l.quantity < 1) continue;
     const unitPrice = typeof l.unitPrice === "number" && Number.isFinite(l.unitPrice) && l.unitPrice >= 0 ? l.unitPrice : null;
     const imageUrl = typeof l.imageUrl === "string" && l.imageUrl.startsWith("/") ? l.imageUrl : null;
+    const maxQuantity = typeof l.maxQuantity === "number" && Number.isFinite(l.maxQuantity) && l.maxQuantity >= 0 ? Math.trunc(l.maxQuantity) : null;
     seen.add(l.reference);
-    const available = l.available !== false;
-    lines.push({ reference: l.reference, name: l.name.slice(0, 200), unitPrice, imageUrl, quantity: clampQuantity(l.quantity), available });
+    lines.push({
+      reference: l.reference,
+      name: l.name.slice(0, 200),
+      unitPrice,
+      imageUrl,
+      quantity: clamp(l.quantity, MAX_QUANTITY),
+      available: l.available !== false,
+      maxQuantity,
+    });
     if (lines.length >= MAX_LINES) break;
   }
   return { ...empty, lines };
 }
 
-/**
- * Reconciliación con la VERDAD del backend (servicio público
- * `resolveSelection`): cada referencia resuelta actualiza nombre, precio
- * vigente, foto y disponibilidad; las referencias que el backend declara
- * desconocidas (eliminadas o inactivas) se retiran. Las que no se
- * consultaron quedan como están.
- */
-export function reconcileCart(state: CartState, resolved: readonly CartProduct[], unknown: readonly string[]): CartState {
-  const byRef = new Map(resolved.map((p) => [p.reference, p]));
-  const gone = new Set(unknown);
-  const lines: CartLine[] = [];
-  for (const l of state.lines) {
-    if (gone.has(l.reference)) continue;
-    const fresh = byRef.get(l.reference);
-    lines.push(fresh ? { ...l, name: fresh.name, unitPrice: fresh.price, imageUrl: fresh.imageUrl, available: fresh.available ?? true } : l);
-  }
-  return { ...state, lines };
-}
-
 // ---------------------------------------------------------------------------
-// Selección confiable para el backend (pedido / WhatsApp / agente)
+// Selección confiable para el backend
 // ---------------------------------------------------------------------------
 
-export interface SelectionItem {
-  reference: string;
-  quantity: number;
-}
-
 /**
- * Lo ÚNICO que un backend debe aceptar de un carrito: referencias y
- * cantidades de las líneas pedibles. Sin nombres ni precios: el backend los
- * resuelve por referencia. Base del futuro snapshot/identificador de
- * selección que viajará con el pedido.
+ * Lo ÚNICO que un backend acepta de un carrito: referencias y cantidades de
+ * las líneas pedibles (`OrderItem[]`, el pedido estructurado). Sin nombres ni
+ * precios: el backend los resuelve por referencia.
  */
-export function selectionSnapshot(state: CartState): { version: typeof CART_VERSION; slug: string; context: PriceContext; items: SelectionItem[] } {
+export function selectionSnapshot(state: CartState): { version: typeof CART_VERSION; slug: string; context: PriceContext; items: OrderItem[] } {
   return {
     version: CART_VERSION,
     slug: state.slug,
     context: state.context,
     items: orderableLines(state).map((l) => ({ reference: l.reference, quantity: l.quantity })),
   };
-}
-
-const LINEA_PEDIDO = /Ref\.\s*([A-Z]{1,6}-\d{6,})\s*[—–-]\s*Cantidad:\s*(\d{1,3})/g;
-
-/**
- * Lee de forma DETERMINISTA un mensaje de pedido generado por el catálogo
- * (`cartWhatsappMessage`) -> [{referencia, cantidad}] + contexto. Para el
- * webhook: nunca interpreta nombres ni texto libre, solo "Ref. X — Cantidad: N".
- */
-export function parseSelectionMessage(text: string): { context: PriceContext | null; items: SelectionItem[] } {
-  const items: SelectionItem[] = [];
-  for (const match of text.matchAll(LINEA_PEDIDO)) {
-    const reference = match[1];
-    const quantity = clampQuantity(Number(match[2]));
-    const existing = items.find((i) => i.reference === reference);
-    if (existing) existing.quantity = Math.min(MAX_QUANTITY, existing.quantity + quantity);
-    else items.push({ reference, quantity });
-  }
-  const context: PriceContext | null = items.length === 0 ? null : /\(precio mayorista\)/.test(text) ? "wholesale" : "retail";
-  return { context, items };
 }

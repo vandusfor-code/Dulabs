@@ -3,9 +3,9 @@
  *
  * Resolución PÚBLICA de la selección del carrito (detal): el navegador solo
  * envía referencias; el backend responde la verdad de cada una (nombre,
- * precio vigente, miniatura pública, disponibilidad) y cuáles ya no existen
- * o no están activas. Solo lectura, sin datos internos (sin ids, sin stock
- * exacto, sin precio mayorista). Máximo 60 referencias.
+ * precio vigente, miniatura pública, disponibilidad y máximo pedible) y
+ * cuáles ya no existen o no están activas. Solo lectura, sin datos internos
+ * (sin ids, sin precio mayorista). Máximo 60 referencias.
  */
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
@@ -32,6 +32,7 @@ export async function GET(request: NextRequest, { params }: Params) {
       price: p.price,
       imageUrl: p.thumbUrl ?? p.imageUrl,
       available: p.available,
+      maxQuantity: p.maxQuantity,
     }));
     return Response.json({ items, unknown: resolved.unknown }, { headers: HEADERS });
   } catch (error) {

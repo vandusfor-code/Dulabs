@@ -33,9 +33,13 @@ Imágenes: bucket existente `inventario-productos`, ruta
 - Media: principal única, `foto_url` sincronizada, ruta obligatoriamente bajo
   el tenant/producto dueños (RPC atómicas `dulabs_catalogo_adjuntar_media` /
   `dulabs_catalogo_eliminar_media`).
-- `controla_stock`: `true` por defecto (comportamiento histórico). El Catálogo
-  crea productos con `false`: la cotización no marca "agotado" ni stock
-  insuficiente para ellos.
+- `controla_stock`: `true` por defecto (comportamiento histórico). Desde la
+  Fase 3 el Catálogo crea productos con `controla_stock = true` y el stock del
+  formulario; fijar el stock al editar también lo activa. Los productos que el
+  Catálogo creó antes (con `false`) siguen "disponibles sin control" hasta que
+  el admin les defina un stock (sin migración ni cambio de datos).
+- `stock integer not null default 0 check (stock >= 0)`: la BD garantiza que
+  nunca es negativo (el dominio y el formulario lo validan antes).
 
 ## Fronteras futuras (no implementadas en la Fase 1)
 
@@ -66,11 +70,9 @@ resolución es por referencia exacta, nunca por nombre ni aproximación.
   catálogo y contexto de precio). El navegador solo es dueño de referencias y
   cantidades; nombre/precio/foto/disponibilidad se reconcilian con
   `GET /catalogo/{slug}/seleccion` al abrir "Tu selección". Lo que un backend
-  debe aceptar es `selectionSnapshot` (referencia + cantidad);
-  `parseSelectionMessage` lee de forma determinista el mensaje de WhatsApp.
-- **Disponibilidad** — `isAvailable` (dominio): inactivo => no; sin control de
-  inventario => sí; con control => stock > 0. Nunca se expone el stock exacto
-  en público.
+  debe aceptar es `selectionSnapshot` (referencia + cantidad). (Fase 3: ver
+  abajo el pedido estructurado y el formato de WhatsApp.)
+- **Disponibilidad** — ver Fase 3.
 - **Resolución interna** — `resolucion.ts` (`createResolucionCatalogo`): para el
   webhook, el agente o la asesora; `tenantId` lo aporta el backend autenticado.
   Devuelve ambos precios, inventario, disponibilidad, imagen y estado. Sin
@@ -81,3 +83,89 @@ resolución es por referencia exacta, nunca por nombre ni aproximación.
 - **Vitrina** — `vitrina.ts`: contrato `CatalogStorefrontConfig` (misma forma que
   tendrá `catalog_config` en la BD). Fuente temporal: registro en código por
   slug. Siguiente paso: leerlo de `dulabs_catalogo_publicacion`.
+
+## Stock, pedido estructurado y WhatsApp (Fase 3)
+
+### Stock y disponibilidad (una sola función de dominio)
+
+`domain.ts` → `availabilityOf(product)`:
+
+| Condición                                   | Estado       | Público             |
+| ------------------------------------------- | ------------ | ------------------- |
+| inactivo                                    | `sold_out`   | (no se publica)     |
+| sin control de inventario (legado)          | `available`  | Disponible          |
+| con control, `stock <= 0`                   | `sold_out`   | Agotado             |
+| con control, `stock <= LOW_STOCK_THRESHOLD` | `low`        | Últimas unidades    |
+| con control, más                            | `available`  | Disponible          |
+
+`LOW_STOCK_THRESHOLD = 3`. `maxOrderableUnits` = stock (con control), `null`
+(sin control) o 0 (agotado). La proyección pública lleva `availability` y
+`maxQuantity` (el máximo pedible). **Decisión:** exponer ese máximo es lo que
+permite decir "Solo quedan 2 unidades disponibles." y acotar el carrito en el
+navegador; el stock exacto de un producto con control queda así visible para
+quien lea la respuesta. Lo agotado sigue visible en la tienda, pero no se
+puede agregar.
+
+### Carrito robusto (el navegador nunca es la fuente de verdad)
+
+`carrito.ts`: `quantityLimit` / `canAddMore` (nunca más que `maxQuantity`, ni
+agregar lo agotado), `reconcileWithChanges` (devuelve qué cambió: `removed`,
+`sold_out`, `reduced`, para avisar al cliente) y persistencia compatible con
+carritos guardados antes de existir `maxQuantity`.
+
+### Pedido estructurado (`pedido.ts`) — contrato único
+
+```json
+{ "items": [{ "reference": "DL-000184", "quantity": 2 }] }
+```
+
+- `orderRequestSchema` (zod estricto): rechaza precios, nombres, totales,
+  cantidades no enteras, fuera de 1–99 o más de 60 líneas.
+- `prepareOrder(items, verdad)`: determinista. Suma duplicados y, por cada
+  referencia, usa el producto real → precio vigente → stock vigente →
+  disponibilidad. Devuelve líneas + `adjustments` (`not_found`, `sold_out`,
+  `quantity_reduced`). Nunca concede más que el stock.
+- `POST /catalogo/{slug}/pedido` (tienda detal): valida el cuerpo (≤ 16 KB),
+  llama a `createPublicCatalogService().prepareOrder` (tenant + publicación +
+  módulo + referencia exacta ACTIVA) y responde `ready` (con el link de
+  WhatsApp armado en el servidor), `adjusted` (el cliente revisa y confirma de
+  nuevo) o `no_whatsapp`. Solo `ready` abre WhatsApp. El servicio ya admite
+  `context: "wholesale"` + token para cuando el mayorista tenga carrito; hoy el
+  mayorista (`/mayor/{token}`) pide pieza por pieza con el mismo formato
+  (`whatsappOrderLink`, 1 unidad) y lo agotado no ofrece el botón.
+
+### Formato de WhatsApp (centralizado: `orderWhatsappMessage`)
+
+```
+Hola, me interesan estos productos:
+
+• DL-000184 · Dije corazón — 2 unidades
+• DL-000186 · Anillo esencia — 1 unidad
+
+Quiero información para realizar la compra.
+```
+
+El mayorista agrega `(precio mayorista)` a la primera línea. La referencia va
+primero en cada línea: es lo que lee la máquina. El nombre acompaña para la
+asesora humana. `parseOrderMessage` lo lee de forma determinista (también el
+formato de la Fase 2) y nunca interpreta nombres ni texto libre.
+
+### Contrato para el agente (no implementado)
+
+```
+WhatsApp (mensaje entrante)
+  -> webhook (tenant = número de WhatsApp del negocio, lo resuelve el backend)
+  -> parseOrderMessage(texto)            => { context, items: OrderItem[] }
+  -> createResolucionCatalogo().resolverReferencias(tenantId, refs)
+                                          => producto real (ambos precios, stock, estado, imagen)
+  -> prepareOrder(items, verdad)          => líneas + ajustes (misma regla que la tienda)
+  -> contexto del agente                  => el agente CONVERSA con esos datos; nunca los inventa
+```
+
+El agente no decide precios ni disponibilidad: los recibe del backend. Si
+`items` viene vacío, el mensaje no es un pedido del catálogo y el agente
+conversa sin contexto de pedido.
+
+### Importación masiva
+
+Solo contrato (no implementada): `import/README.md` + `import/types.ts`.

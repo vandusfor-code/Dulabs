@@ -65,5 +65,12 @@ export function useCarrito(): { state: CartState; items: number; dispatch: (acti
 
 /** Único mapeo producto público -> carrito (nunca datos escritos a mano). */
 export function productoCarrito(product: PublicCatalogProduct): CartProduct {
-  return { reference: product.reference, name: product.name, price: product.price, imageUrl: product.thumbUrl ?? product.imageUrl, available: product.available };
+  return {
+    reference: product.reference,
+    name: product.name,
+    price: product.price,
+    imageUrl: product.thumbUrl ?? product.imageUrl,
+    available: product.available,
+    maxQuantity: product.maxQuantity,
+  };
 }

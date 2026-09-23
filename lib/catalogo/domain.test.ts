@@ -48,7 +48,7 @@ describe("precios: un producto, dos contextos (nunca dos productos)", () => {
 });
 
 describe("productCreateSchema", () => {
-  const valido = { name: "  Dije corazón  ", retailPrice: 35_000, wholesalePrice: 18_000, material: "Oro laminado", color: "", description: "   " };
+  const valido = { name: "  Dije corazón  ", retailPrice: 35_000, wholesalePrice: 18_000, stock: 25, material: "Oro laminado", color: "", description: "   " };
 
   it("normaliza: recorta, '' / espacios => null, precios enteros", () => {
     const r = productCreateSchema.parse(valido);
@@ -70,25 +70,37 @@ describe("productCreateSchema", () => {
   it("exige nombre y precio detal; precio mayor es opcional", () => {
     assert.equal(productCreateSchema.safeParse({ ...valido, name: "   " }).success, false);
     assert.equal(productCreateSchema.safeParse({ name: "X" }).success, false);
-    const sinMayor = productCreateSchema.parse({ name: "X", retailPrice: 1000 });
+    const sinMayor = productCreateSchema.parse({ name: "X", stock: 1, retailPrice: 1000 });
     assert.equal(sinMayor.wholesalePrice, undefined);
   });
 
   it("precios: enteros COP, >= 0, con tope", () => {
     for (const retailPrice of [-1, 10.5, "35000", CATALOG_LIMITS.price + 1]) {
-      assert.equal(productCreateSchema.safeParse({ name: "X", retailPrice }).success, false, String(retailPrice));
+      assert.equal(productCreateSchema.safeParse({ name: "X", stock: 1, retailPrice }).success, false, String(retailPrice));
     }
-    assert.equal(productCreateSchema.safeParse({ name: "X", retailPrice: 0 }).success, true);
+    assert.equal(productCreateSchema.safeParse({ name: "X", stock: 1, retailPrice: 0 }).success, true);
   });
 
   it("respeta topes de texto", () => {
-    assert.equal(productCreateSchema.safeParse({ name: "x".repeat(121), retailPrice: 1 }).success, false);
-    assert.equal(productCreateSchema.safeParse({ name: "X", retailPrice: 1, material: "m".repeat(81) }).success, false);
+    assert.equal(productCreateSchema.safeParse({ name: "x".repeat(121), stock: 1, retailPrice: 1 }).success, false);
+    assert.equal(productCreateSchema.safeParse({ name: "X", stock: 1, retailPrice: 1, material: "m".repeat(81) }).success, false);
+  });
+
+  it("stock: obligatorio, entero >= 0 (0 = agotado), nunca negativo, con tope", () => {
+    assert.equal(productCreateSchema.safeParse({ name: "X", retailPrice: 1 }).success, false, "sin stock");
+    assert.equal(productCreateSchema.parse({ name: "X", retailPrice: 1, stock: 0 }).stock, 0);
+    assert.equal(productCreateSchema.parse({ name: "X", retailPrice: 1, stock: 25 }).stock, 25);
+    for (const stock of [-1, 2.5, "10", null, CATALOG_LIMITS.stock + 1]) {
+      const r = productCreateSchema.safeParse({ name: "X", retailPrice: 1, stock });
+      assert.equal(r.success, false, String(stock));
+    }
+    const negativo = productCreateSchema.safeParse({ name: "X", retailPrice: 1, stock: -3 });
+    if (!negativo.success) assert.match(firstIssueMessage(negativo.error), /no puede ser negativo/);
   });
 
   it("categoryId debe ser UUID", () => {
-    assert.equal(productCreateSchema.safeParse({ name: "X", retailPrice: 1, categoryId: "no-uuid" }).success, false);
-    assert.equal(productCreateSchema.safeParse({ name: "X", retailPrice: 1, categoryId: "44444444-0000-4000-8000-000000000001" }).success, true);
+    assert.equal(productCreateSchema.safeParse({ name: "X", stock: 1, retailPrice: 1, categoryId: "no-uuid" }).success, false);
+    assert.equal(productCreateSchema.safeParse({ name: "X", stock: 1, retailPrice: 1, categoryId: "44444444-0000-4000-8000-000000000001" }).success, true);
   });
 });
 

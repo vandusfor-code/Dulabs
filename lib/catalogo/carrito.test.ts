@@ -1,8 +1,9 @@
 /**
  * Carrito del catálogo público — dominio puro (sin DOM ni red).
- * Garantías: identidad por referencia real, cantidades acotadas, totales sin
- * inventar precios, mensaje de WhatsApp con datos reales, persistencia
- * tolerante a datos corruptos y separación por catálogo/contexto.
+ * Garantías: identidad por referencia real, cantidades acotadas por el stock
+ * que informa el backend, totales sin inventar precios, reconciliación con
+ * cambios explícitos, persistencia tolerante a datos corruptos y separación
+ * por catálogo/contexto. (El mensaje de WhatsApp vive en pedido.test.ts.)
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
@@ -12,14 +13,14 @@ import {
   cartReducer,
   cartStorageKey,
   cartTotal,
-  cartWhatsappLink,
-  cartWhatsappMessage,
+  canAddMore,
   emptyCart,
   lineSubtotal,
   orderableLines,
-  parseSelectionMessage,
   parseStoredCart,
+  quantityLimit,
   reconcileCart,
+  reconcileWithChanges,
   selectionSnapshot,
   totalItems,
   type CartProduct,
@@ -82,39 +83,6 @@ describe("totales", () => {
   });
 });
 
-describe("pedido por WhatsApp", () => {
-  it("mensaje con nombre, referencia real y cantidad de cada línea", () => {
-    const s = con([DIJE, 2], [ARETES], [ANILLO, 2]);
-    assert.equal(
-      cartWhatsappMessage(s),
-      [
-        "Hola, estoy interesado(a) en estos productos:",
-        "",
-        "• Dije corazón — Ref. DL-000184 — Cantidad: 2",
-        "• Aretes brillo — Ref. DL-000185 — Cantidad: 1",
-        "• Anillo esencia — Ref. DL-000186 — Cantidad: 2",
-        "",
-        "Total de productos: 5",
-      ].join("\n"),
-    );
-  });
-
-  it("el carrito mayorista lo declara en el mensaje", () => {
-    const s = cartReducer(emptyCart("delacour", "wholesale"), { type: "add", product: DIJE });
-    assert.match(cartWhatsappMessage(s), /^Hola, estoy interesado\(a\) en estos productos \(precio mayorista\):/);
-  });
-
-  it("link wa.me con el número del negocio; null sin número o sin productos", () => {
-    const s = con([DIJE]);
-    const link = cartWhatsappLink("+57 318 371 5860", s);
-    assert.ok(link?.startsWith("https://wa.me/573183715860?text="));
-    assert.equal(decodeURIComponent(link!.split("text=")[1]), cartWhatsappMessage(s));
-    assert.equal(cartWhatsappLink(null, s), null);
-    assert.equal(cartWhatsappLink("123", s), null);
-    assert.equal(cartWhatsappLink("573183715860", emptyCart("delacour", "retail")), null);
-  });
-});
-
 describe("persistencia", () => {
   it("una clave por catálogo y contexto de precio (detal y mayor nunca se mezclan)", () => {
     assert.notEqual(cartStorageKey("delacour", "retail"), cartStorageKey("delacour", "wholesale"));
@@ -150,8 +118,8 @@ describe("persistencia", () => {
     });
     const s = parseStoredCart(raw, "delacour", "retail");
     assert.deepEqual(s.lines, [
-      { reference: "DL-000184", name: "Dije", unitPrice: 35_000, imageUrl: "/x.webp", quantity: 2, available: true },
-      { reference: "DL-000186", name: "Anillo", unitPrice: null, imageUrl: null, quantity: MAX_QUANTITY, available: true },
+      { reference: "DL-000184", name: "Dije", unitPrice: 35_000, imageUrl: "/x.webp", quantity: 2, available: true, maxQuantity: null },
+      { reference: "DL-000186", name: "Anillo", unitPrice: null, imageUrl: null, quantity: MAX_QUANTITY, available: true, maxQuantity: null },
     ]);
   });
 });
@@ -171,19 +139,89 @@ describe("reconciliación con la verdad del backend", () => {
   });
 
   it("lo agotado se ve en el carrito pero no entra al pedido ni al total", () => {
-    const s = reconcileCart(con([DIJE, 2], [ARETES]), [{ ...ARETES, available: false }], []);
+    const s = reconcileCart(con([DIJE, 2], [ARETES]), [{ ...ARETES, available: false, maxQuantity: 0 }], []);
     assert.equal(totalItems(s), 3);
     assert.deepEqual(orderableLines(s).map((l) => l.reference), ["DL-000184"]);
     assert.deepEqual(cartTotal(s), { total: 70_000, unpricedItems: 0 });
-    assert.ok(!cartWhatsappMessage(s).includes("DL-000185"));
-    assert.match(cartWhatsappMessage(s), /Total de productos: 2$/);
-    const soloAgotado = reconcileCart(con([ARETES]), [{ ...ARETES, available: false }], []);
-    assert.equal(cartWhatsappLink("573183715860", soloAgotado), null);
+    assert.deepEqual(selectionSnapshot(s).items, [{ reference: "DL-000184", quantity: 2 }]);
   });
 
-  it("agregar un producto agotado lo registra como no disponible", () => {
-    const s = con([{ ...DIJE, available: false }]);
-    assert.equal(s.lines[0].available, false);
+  it("stock que baja después de agregar => la cantidad se reduce al stock real y se informa", () => {
+    const s = con([{ ...DIJE, maxQuantity: 5 }, 5], [ARETES]);
+    const { state, changes } = reconcileWithChanges(s, [{ ...DIJE, maxQuantity: 2 }], []);
+    assert.equal(state.lines[0].quantity, 2);
+    assert.equal(state.lines[0].maxQuantity, 2);
+    assert.deepEqual(changes, [{ kind: "reduced", reference: "DL-000184", name: "Dije corazón", from: 5, to: 2 }]);
+  });
+
+  it("producto agotado o desactivado después de agregar => se informa (sin duplicar el aviso)", () => {
+    const s = con([DIJE], [ARETES]);
+    const r1 = reconcileWithChanges(s, [{ ...DIJE, available: false, maxQuantity: 0 }], ["DL-000185"]);
+    assert.deepEqual(r1.changes, [
+      { kind: "sold_out", reference: "DL-000184", name: "Dije corazón" },
+      { kind: "removed", reference: "DL-000185", name: "Aretes brillo" },
+    ]);
+    assert.deepEqual(r1.state.lines.map((l) => [l.reference, l.available]), [["DL-000184", false]]);
+    // Una segunda reconciliación con la misma verdad no vuelve a avisar.
+    assert.deepEqual(reconcileWithChanges(r1.state, [{ ...DIJE, available: false, maxQuantity: 0 }], []).changes, []);
+  });
+
+  it("precio cambiado después de agregar => el carrito toma el precio vigente del backend", () => {
+    const s = con([DIJE, 2]);
+    const { state, changes } = reconcileWithChanges(s, [{ ...DIJE, price: 40_000 }], []);
+    assert.equal(state.lines[0].unitPrice, 40_000);
+    assert.deepEqual(cartTotal(state), { total: 80_000, unpricedItems: 0 });
+    assert.deepEqual(changes, []);
+  });
+
+  it("vuelve a haber stock => la línea agotada vuelve a ser pedible", () => {
+    const s = reconcileCart(con([DIJE]), [{ ...DIJE, available: false, maxQuantity: 0 }], []);
+    const r = reconcileCart(s, [{ ...DIJE, available: true, maxQuantity: 4 }], []);
+    assert.deepEqual(orderableLines(r).map((l) => l.reference), ["DL-000184"]);
+  });
+});
+
+describe("stock en el carrito", () => {
+  it("límite efectivo: el stock del backend, o el tope técnico si no controla inventario", () => {
+    assert.equal(quantityLimit({ maxQuantity: 2 }), 2);
+    assert.equal(quantityLimit({ maxQuantity: 0 }), 0);
+    assert.equal(quantityLimit({ maxQuantity: null }), MAX_QUANTITY);
+    assert.equal(quantityLimit({}), MAX_QUANTITY);
+    assert.equal(quantityLimit({ maxQuantity: 5000 }), MAX_QUANTITY);
+    assert.equal(quantityLimit({ maxQuantity: -3 }), 0);
+  });
+
+  it("agregar válido dentro del stock", () => {
+    const s = con([{ ...DIJE, maxQuantity: 3 }, 2]);
+    assert.equal(s.lines[0].quantity, 2);
+    assert.equal(canAddMore(s, { ...DIJE, maxQuantity: 3 }), true);
+  });
+
+  it("nunca supera el stock: ni al agregar de más, ni sumando, ni con setQuantity", () => {
+    const PIEZA = { ...DIJE, maxQuantity: 2 };
+    let s = con([PIEZA, 5]);
+    assert.equal(s.lines[0].quantity, 2);
+    s = cartReducer(s, { type: "add", product: PIEZA });
+    assert.equal(s.lines[0].quantity, 2);
+    assert.equal(canAddMore(s, PIEZA), false);
+    s = cartReducer(s, { type: "setQuantity", reference: PIEZA.reference, quantity: 9 });
+    assert.equal(s.lines[0].quantity, 2);
+    s = cartReducer(s, { type: "setQuantity", reference: PIEZA.reference, quantity: 1 });
+    assert.equal(s.lines[0].quantity, 1);
+  });
+
+  it("agotado (o stock 0) nunca se agrega", () => {
+    assert.equal(con([{ ...DIJE, available: false }]).lines.length, 0);
+    assert.equal(con([{ ...DIJE, maxQuantity: 0 }]).lines.length, 0);
+    assert.equal(canAddMore(emptyCart("delacour", "retail"), { ...DIJE, available: false }), false);
+  });
+
+  it("el límite persiste con el carrito (y los carritos viejos sin límite siguen funcionando)", () => {
+    const s = con([{ ...DIJE, maxQuantity: 3 }, 2]);
+    const leido = parseStoredCart(JSON.stringify(s), "delacour", "retail");
+    assert.equal(leido.lines[0].maxQuantity, 3);
+    const viejo = JSON.stringify({ ...s, lines: s.lines.map((l) => ({ reference: l.reference, name: l.name, unitPrice: l.unitPrice, imageUrl: l.imageUrl, quantity: l.quantity, available: l.available })) });
+    assert.equal(parseStoredCart(viejo, "delacour", "retail").lines[0].maxQuantity, null);
   });
 });
 
@@ -194,24 +232,5 @@ describe("selección confiable para el backend", () => {
     assert.deepEqual(snap, { version: 1, slug: "delacour", context: "retail", items: [{ reference: "DL-000184", quantity: 2 }] });
     assert.equal(JSON.stringify(snap).includes("35000"), false);
     assert.equal(JSON.stringify(snap).includes("Dije"), false);
-  });
-
-  it("el webhook lee el mensaje de forma determinista (ida y vuelta)", () => {
-    const s = con([DIJE, 2], [ARETES], [ANILLO, 2]);
-    assert.deepEqual(parseSelectionMessage(cartWhatsappMessage(s)), {
-      context: "retail",
-      items: [
-        { reference: "DL-000184", quantity: 2 },
-        { reference: "DL-000185", quantity: 1 },
-        { reference: "DL-000186", quantity: 2 },
-      ],
-    });
-    const mayor = cartReducer(emptyCart("delacour", "wholesale"), { type: "add", product: DIJE, quantity: 3 });
-    assert.deepEqual(parseSelectionMessage(cartWhatsappMessage(mayor)), { context: "wholesale", items: [{ reference: "DL-000184", quantity: 3 }] });
-  });
-
-  it("nunca interpreta nombres ni texto libre", () => {
-    assert.deepEqual(parseSelectionMessage("Hola, quiero el dije corazón y el anillo DL-000186"), { context: null, items: [] });
-    assert.deepEqual(parseSelectionMessage("• X — Ref. DL-000184 — Cantidad: 2\n• Y — Ref. DL-000184 — Cantidad: 1").items, [{ reference: "DL-000184", quantity: 3 }]);
   });
 });

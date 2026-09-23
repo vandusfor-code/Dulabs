@@ -32,6 +32,15 @@ import {
 import { CatalogError } from "@/lib/catalogo/errors";
 import type { CatalogRepository, ProductPatchData, PublicImageObject, StoredMedia } from "@/lib/catalogo/repository";
 import {
+  normalizeOrderItems,
+  orderWhatsappMessage,
+  prepareOrder as prepararPedido,
+  whatsappUrl,
+  type OrderItem,
+  type PreparedOrder,
+  type ResolvedOrderProduct,
+} from "@/lib/catalogo/pedido";
+import {
   PUBLIC_PAGE_SIZE,
   isValidSlug,
   productImagePath,
@@ -185,6 +194,7 @@ export function createCatalogService({ repo, newId = randomUUID }: CatalogServic
         color: input.color ?? null,
         retailPrice: input.retailPrice,
         wholesalePrice: input.wholesalePrice ?? null,
+        stock: input.stock,
       });
     },
 
@@ -198,6 +208,7 @@ export function createCatalogService({ repo, newId = randomUUID }: CatalogServic
       if (input.retailPrice !== undefined) patch.retailPrice = input.retailPrice;
       if (input.wholesalePrice !== undefined) patch.wholesalePrice = input.wholesalePrice;
       if (input.status !== undefined) patch.status = input.status;
+      if (input.stock !== undefined) patch.stock = input.stock;
       if (input.categoryId !== undefined) {
         const category = await resolveCategory(actor, input.categoryId);
         patch.categoryId = category.categoryId;
@@ -422,6 +433,19 @@ export interface ResolvedSelection {
   unknown: string[];
 }
 
+/**
+ * Resultado de preparar un pedido en el backend:
+ *   - "ready": todo lo pedido es posible; `whatsappUrl` lleva el mensaje
+ *     armado en el servidor con los datos reales.
+ *   - "adjusted": algo cambió (agotado, stock menor, producto retirado); el
+ *     cliente debe revisar `selection` y confirmar de nuevo. Nunca se envía
+ *     una cantidad imposible.
+ *   - "no_whatsapp": el catálogo no tiene número de pedidos configurado.
+ */
+export type PreparedOrderResult =
+  | { status: "ready"; order: PreparedOrder; selection: ResolvedSelection; whatsappUrl: string }
+  | { status: "adjusted" | "no_whatsapp"; order: PreparedOrder; selection: ResolvedSelection };
+
 interface ImageSource {
   main: string;
   thumb: string;
@@ -487,6 +511,20 @@ export function createPublicCatalogService({ repo }: { repo: CatalogRepository }
       const [src] = imageSources(repo, pub.tenantId, p, media ? [media] : []);
       return toPublicProduct(p, context, src ? publicImages(pub.slug, p.reference, 1, src) : null);
     });
+  }
+
+  /**
+   * Resolución ÚNICA de referencias para la tienda (carrito y pedido): exacta,
+   * dentro del tenant de la publicación, solo productos ACTIVOS, con la
+   * proyección pública (precio del contexto, disponibilidad y máximo pedible).
+   */
+  async function resolveFor(pub: Publication, rawReferences: readonly string[], context: PriceContext): Promise<ResolvedSelection> {
+    const references = normalizeReferences(rawReferences);
+    const found = references.length > 0 ? await repo.getProductsByReferences(pub.tenantId, references) : [];
+    const activos = found.filter((p) => p.status === "ACTIVE");
+    const items = await project(pub, activos, context);
+    const resueltas = new Set(items.map((p) => p.reference));
+    return { context, items, unknown: references.filter((r) => !resueltas.has(r)) };
   }
 
   /** Destacados según la política vigente (ver FeaturedPolicy). */
@@ -587,12 +625,35 @@ export function createPublicCatalogService({ repo }: { repo: CatalogRepository }
       const context = input.context ?? "retail";
       const pub = await openPublication(input.slug);
       if (!pub || !contextAllowed(pub, context, input.token)) return null;
-      const references = normalizeReferences(input.references);
-      const found = references.length > 0 ? await repo.getProductsByReferences(pub.tenantId, references) : [];
-      const activos = found.filter((p) => p.status === "ACTIVE");
-      const items = await project(pub, activos, context);
-      const resueltas = new Set(items.map((p) => p.reference));
-      return { context, items, unknown: references.filter((r) => !resueltas.has(r)) };
+      return resolveFor(pub, input.references, context);
+    },
+
+    /**
+     * Prepara el pedido (lo que el navegador envía es solo `OrderItem[]`):
+     * vuelve a resolver cada referencia en ESTE negocio y ESTA publicación
+     * -> producto real -> precio vigente -> stock vigente -> disponibilidad,
+     * y solo con un pedido sin ajustes arma el mensaje de WhatsApp en el
+     * servidor. Nunca usa precios ni stock enviados por el cliente.
+     */
+    async prepareOrder(input: { slug: string; items: readonly OrderItem[]; context?: PriceContext; token?: string }): Promise<PreparedOrderResult | null> {
+      const context = input.context ?? "retail";
+      const pub = await openPublication(input.slug);
+      if (!pub || !contextAllowed(pub, context, input.token)) return null;
+      const items = normalizeOrderItems(input.items);
+      const selection = await resolveFor(
+        pub,
+        items.map((i) => i.reference),
+        context,
+      );
+      const verdad = new Map<string, ResolvedOrderProduct>(
+        selection.items.map((p) => [p.reference, { reference: p.reference, name: p.name, price: p.price, availability: p.availability, maxQuantity: p.maxQuantity }]),
+      );
+      const order = prepararPedido(items, verdad);
+      if (order.lines.length === 0 || order.adjustments.length > 0) return { status: "adjusted", order, selection };
+      const business = await repo.getBusinessProfile(pub.tenantId);
+      const url = whatsappUrl(business.whatsapp, orderWhatsappMessage(order.lines, context));
+      if (!url) return { status: "no_whatsapp", order, selection };
+      return { status: "ready", order, selection, whatsappUrl: url };
     },
 
     /**
