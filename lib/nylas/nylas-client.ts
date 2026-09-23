@@ -13,6 +13,7 @@ import type {
   NylasListEventsParams,
   NylasUpdateEventTimeParams,
 } from "@/lib/nylas/nylas-types";
+import { cercoActivo, BloqueadoPorCercoDePruebas } from "@/lib/amore-pruebas/cerco";
 
 const NYLAS_API_BASE = "https://api.us.nylas.com";
 /** Máximo de páginas a seguir por consulta -- un calendario real de un especialista nunca tiene miles de eventos en una sola ventana de un día; este tope es defensivo, nunca se espera alcanzarlo. */
@@ -77,9 +78,19 @@ interface NylasCreateEventResponse {
  * createNylasEventsClient (solo lectura, FASE B) para que el camino de
  * disponibilidad nunca pueda crear/borrar un evento por accidente.
  */
+/** Endpoint de pruebas (solo Preview): una escritura real en un calendario solo sale si el cerco activo la permite. Sin cerco, no hace nada. */
+function exigirEscrituraPermitida(operacion: "crear" | "actualizar" | "borrar"): void {
+  const cerco = cercoActivo();
+  if (cerco && !cerco.permitirEscrituraNylas) {
+    cerco.registrar({ tipo: "escritura_nylas_bloqueada", operacion });
+    throw new BloqueadoPorCercoDePruebas(`escritura en calendario (${operacion}) deshabilitada en pruebas`);
+  }
+}
+
 export function createNylasEventsWriteClient(apiKey: string): NylasEventsWriteClient {
   return {
     async createEvent(params: NylasCreateEventParams, signal?: AbortSignal): Promise<NylasCreatedEvent> {
+      exigirEscrituraPermitida("crear");
       const url = new URL(`${NYLAS_API_BASE}/v3/grants/${encodeURIComponent(params.grantId)}/events`);
       url.searchParams.set("calendar_id", params.calendarId);
 
@@ -121,6 +132,7 @@ export function createNylasEventsWriteClient(apiKey: string): NylasEventsWriteCl
     },
 
     async updateEventTime(params: NylasUpdateEventTimeParams, signal?: AbortSignal): Promise<void> {
+      exigirEscrituraPermitida("actualizar");
       const url = new URL(`${NYLAS_API_BASE}/v3/grants/${encodeURIComponent(params.grantId)}/events/${encodeURIComponent(params.eventId)}`);
       url.searchParams.set("calendar_id", params.calendarId);
 
@@ -143,6 +155,7 @@ export function createNylasEventsWriteClient(apiKey: string): NylasEventsWriteCl
     },
 
     async deleteEvent(params: NylasDeleteEventParams, signal?: AbortSignal): Promise<void> {
+      exigirEscrituraPermitida("borrar");
       const url = new URL(`${NYLAS_API_BASE}/v3/grants/${encodeURIComponent(params.grantId)}/events/${encodeURIComponent(params.eventId)}`);
       url.searchParams.set("calendar_id", params.calendarId);
 

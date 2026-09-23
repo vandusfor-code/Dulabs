@@ -1,4 +1,5 @@
 import type { NextRequest } from "next/server";
+import { cercoActivo, final4 } from "@/lib/amore-pruebas/cerco";
 
 // WhatsApp Worker (Fase 9B, autorizado) — único punto por el que Next.js
 // habla con el worker persistente que sostiene las sesiones Baileys (ver
@@ -35,6 +36,18 @@ async function llamarWorker<T>(
   cuerpoEnviado?: Record<string, unknown>,
   slot: SlotWhatsApp = 1
 ): Promise<RespuestaWorker<T>> {
+  // Endpoint de pruebas (solo Preview): dentro de una ejecución de prueba, solo sale lo que el cerco permite -- ver
+  // lib/amore-pruebas/cerco.ts. Fuera de una prueba no hay cerco y esto no hace nada.
+  const cerco = cercoActivo();
+  if (cerco) {
+    const destino = typeof cuerpoEnviado?.telefono === "string" ? cuerpoEnviado.telefono.replace(/\D/g, "") : null;
+    if (!cerco.permitirLlamadaWorker({ idTenant, ruta, destino })) {
+      cerco.registrar({ tipo: "envio_bloqueado", ruta, destinoFinal4: final4(destino), motivo: "destino_o_ruta_no_permitidos" });
+      return { ok: false, status: 403, error: "Bloqueado por el cerco de pruebas" };
+    }
+    cerco.registrar({ tipo: "envio_permitido", ruta, destinoFinal4: final4(destino) });
+  }
+
   const baseUrl = process.env.WHATSAPP_WORKER_URL;
   const secreto = process.env.WHATSAPP_WORKER_SECRET;
   if (!baseUrl || !secreto) {
