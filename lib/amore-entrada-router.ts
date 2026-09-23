@@ -72,10 +72,12 @@ import {
   construirMensajeNotificacionJessica,
   clasificarMensajeConGemini,
   type IntentGemini,
-  MENSAJE_MENU_INICIO_ORIENTACION,
-  MENSAJE_TRANSFERENCIA_MENU_IGNORADO_CLIENTE,
+  detectarSoloSaludo,
+  MENSAJE_TRANSFERENCIA_ERROR_TECNICO,
+  MAX_ERRORES_TECNICOS_SEGUIDOS,
 } from "@/lib/amore-entrada-gemini";
 import { listarProductosActivos } from "@/lib/amore-inventario";
+import { construirContextoNegocioAmore } from "@/lib/amore-contexto-negocio";
 
 /** Expiración de atención humana (autorizado) -- tras esto sin que un humano marque la conversación como resuelta, el bot recupera el turno solo. Ver interceptarAtencionHumanaAmore. */
 export const VENTANA_ATENCION_HUMANA_MS = 24 * 60 * 60 * 1000;
@@ -95,6 +97,8 @@ export interface AmoreEntradaDeps {
   clasificarConGemini?: typeof clasificarMensajeConGemini;
   /** Fase 1 (atención humana, autorizado) -- historial real reciente para dar contexto a Gemini. */
   obtenerHistorial?: typeof obtenerHistorialRecienteChat;
+  /** Datos REALES del negocio (catálogo, precios, duraciones, fichas, quién realiza cada servicio) para que Gemini responda consultas sin inventar. */
+  construirContextoNegocio?: typeof construirContextoNegocioAmore;
   /** Fase 1 (atención humana, autorizado) -- nombre real ya conocido de la clienta, para la notificación a Jessica. */
   buscarNombreConocido?: typeof nombreConocido;
   /** Inyectable para tests -- default real: iniciarNuevaSesionAgendaV2 (lib/agenda-v2/router.ts), sin deps custom. */
@@ -151,11 +155,17 @@ export async function procesarEntradaAmore(
     }
 
     if (!fila) {
-      // PRIMER CONTACTO real -- dos mensajes SEPARADOS (sección del pedido).
+      // PRIMER CONTACTO real -- la bienvenida siempre va primero.
       await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_BIENVENIDA_1, origen: "automatico" });
-      await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_BIENVENIDA_2, origen: "automatico" });
-      await crearEntrada(params.supabase, { tenantId: params.idTenant, telefonoCliente: params.telefono, wamid: params.wamid, modo: "inicio" });
-      return { manejado: true };
+      if (detectarSoloSaludo(params.texto)) {
+        // Solo saludó ("Hola", "Hola, buenas noches") -- menú de siempre, como segundo mensaje SEPARADO.
+        await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_BIENVENIDA_2, origen: "automatico" });
+        await crearEntrada(params.supabase, { tenantId: params.idTenant, telefonoCliente: params.telefono, wamid: params.wamid, modo: "inicio" });
+        return { manejado: true };
+      }
+      // El primer mensaje ya trae una necesidad real ("Hola, quiero hacerme las uñas para una boda") -- se atiende YA,
+      // conversando (más abajo). Antes se descartaba: la clienta recibía el menú y tenía que repetir lo que ya había dicho.
+      fila = await crearEntrada(params.supabase, { tenantId: params.idTenant, telefonoCliente: params.telefono, wamid: params.wamid, modo: "gemini" });
     }
 
     if (fila.modo === "inicio") {
@@ -216,38 +226,13 @@ export async function procesarEntradaAmore(
         return { manejado: true };
       }
 
-      // Protección contra ciclo (autorizado, CASO B/C/D) -- ni número exacto
-      // (1-3) ni intención determinista equivalente: mismo criterio EXACTO
-      // que intentos_fallidos_consecutivos de Agenda V2
-      // (lib/agenda-v2/sesiones.ts), pero en la columna propia de
-      // dulabs_amore_entrada (acá todavía no existe ninguna sesión de
-      // Agenda V2 -- ver la migración 20261008000000). Primer fallo:
-      // orientación clara sin repetir el mismo mensaje. Segundo fallo
-      // SEGUIDO sin ningún progreso real: transferencia humana real (nunca
-      // un tercer intento, nunca solo una promesa de "te paso con alguien"
-      // sin ejecutarla de verdad).
-      const intentosFallidosNuevos = fila.intentosFallidosConsecutivos + 1;
-      if (intentosFallidosNuevos >= 2) {
-        // Sin `mensajeJessica` custom a propósito -- activarAtencionHumana ya
-        // arma la notificación con el nombre real (una sola consulta a
-        // nombreConocido, no dos) y su motivo por defecto
-        // (MOTIVO_ATENCION_HUMANA_DEFECTO) es suficientemente genérico; solo
-        // el mensaje al CLIENTE necesita ser distinto acá (el bot está
-        // ofreciendo la salida porque no entendió, no porque la clienta pidió
-        // explícitamente hablar con alguien).
-        return await activarAtencionHumana(params, {
-          fila,
-          enviarMensaje,
-          crearEntrada,
-          actualizarEntrada,
-          buscarNombreConocidoDep: deps.buscarNombreConocido ?? nombreConocido,
-          mensajeCliente: MENSAJE_TRANSFERENCIA_MENU_IGNORADO_CLIENTE,
-        });
-      }
-
-      await actualizarEntrada(params.supabase, fila.id, { ultimoWamidProcesado: params.wamid, intentosFallidosConsecutivos: intentosFallidosNuevos });
-      await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_MENU_INICIO_ORIENTACION, origen: "automatico" });
-      return { manejado: true };
+      // Texto libre sin número ni intención determinista ("El viernes tienes para ella?", "¿Cuánto cuesta el
+      // manicure?", "Hola hermosa"): se atiende CONVERSANDO, igual que en modo 'gemini' (más abajo). Causa raíz del ciclo
+      // reportado antes (el menú se repetía): este modo solo sabía leer 1/2/3. La corrección anterior contaba esos
+      // mensajes como "fallos" y al segundo transfería a Jessica -- una clienta que simplemente preguntaba terminaba con
+      // una persona. La protección contra bucles se conserva donde sí aplica: fallos TÉCNICOS seguidos de Gemini.
+      await actualizarEntrada(params.supabase, fila.id, { modo: "gemini", intentosFallidosConsecutivos: 0 });
+      fila = { ...fila, modo: "gemini", intentosFallidosConsecutivos: 0 };
     }
 
     // FASE 3b (interés general en productos, autorizado) -- fast-track
@@ -287,6 +272,7 @@ export async function procesarEntradaAmore(
     // Gemini, así que no hay ningún dato extraído -- iniciarNuevaSesionAgendaV2
     // simplemente arranca desde categorías, comportamiento de siempre).
     let entidades: EntidadesExtraidasReserva | undefined;
+    let errorTecnico = false;
     if (detectarTriggerAgendaDeterminista(params.texto)) {
       intent = "TRIGGER_AGENDA";
     } else {
@@ -298,9 +284,19 @@ export async function procesarEntradaAmore(
       // historial paralelo, se lee tal cual lo que el worker ya persistió.
       const obtenerHistorial = deps.obtenerHistorial ?? obtenerHistorialRecienteChat;
       const historial = await obtenerHistorial(params.supabase, { idTenant: params.idTenant, telefono: params.telefono, wamidActual: params.wamid });
-      const resultado = await clasificar({ mensaje: params.texto, historial });
+      // Datos REALES del negocio (catálogo, precios, duraciones, fichas, quién realiza cada servicio): sin ellos Gemini
+      // no podía responder "¿cuánto cuesta?" y podía afirmar servicios que AMORE no ofrece. Si no se pueden cargar, la
+      // conversación sigue igual (Gemini tiene instrucción de no inventar) y queda en el log.
+      let contextoNegocio: string | undefined;
+      try {
+        contextoNegocio = await (deps.construirContextoNegocio ?? construirContextoNegocioAmore)(params.supabase, params.idTenant);
+      } catch (err) {
+        console.error("[amore-entrada] no se pudieron cargar los datos reales del negocio -- Gemini responde sin ellos:", err instanceof Error ? err.message : "error desconocido");
+      }
+      const resultado = await clasificar({ mensaje: params.texto, historial, contextoNegocio });
       intent = resultado.intent;
       replyText = resultado.replyText;
+      errorTecnico = resultado.errorTecnico === true;
       // NUEVA FASE (autorizado) -- los 4 datos extraídos por Gemini (texto
       // crudo, nunca resuelto) se entregan tal cual a iniciarNuevaSesionAgendaV2,
       // que es quien de verdad los valida contra el catálogo/disponibilidad
@@ -343,8 +339,32 @@ export async function procesarEntradaAmore(
       return { manejado: true };
     }
 
-    // CONSULTA -- Gemini sigue conversando normalmente.
-    await actualizarEntrada(params.supabase, fila.id, { ultimoWamidProcesado: params.wamid });
+    // Fallo TÉCNICO de Gemini (sin API key, red, salida fuera del schema): nunca un bucle de "¿puedes reformularlo?".
+    // Al MAX_ERRORES_TECNICOS_SEGUIDOS-ésimo seguido se pasa a una persona con el mecanismo YA existente, diciendo la
+    // verdad. Reutiliza intentos_fallidos_consecutivos (mensajes seguidos que el bot no pudo atender) -- sin migración.
+    if (errorTecnico) {
+      const erroresSeguidos = fila.intentosFallidosConsecutivos + 1;
+      console.error(`[amore-entrada] fallo técnico de Gemini (${erroresSeguidos} seguido/s) tenant=${params.idTenant}`);
+      if (erroresSeguidos >= MAX_ERRORES_TECNICOS_SEGUIDOS) {
+        return await activarAtencionHumana(params, {
+          fila,
+          enviarMensaje,
+          crearEntrada,
+          actualizarEntrada,
+          buscarNombreConocidoDep: deps.buscarNombreConocido ?? nombreConocido,
+          mensajeCliente: MENSAJE_TRANSFERENCIA_ERROR_TECNICO,
+        });
+      }
+      await actualizarEntrada(params.supabase, fila.id, { ultimoWamidProcesado: params.wamid, intentosFallidosConsecutivos: erroresSeguidos });
+      await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: replyText, origen: "automatico" });
+      return { manejado: true };
+    }
+
+    // CONSULTA -- Gemini sigue conversando normalmente (y una respuesta real reinicia el conteo de fallos técnicos).
+    await actualizarEntrada(params.supabase, fila.id, {
+      ultimoWamidProcesado: params.wamid,
+      ...(fila.intentosFallidosConsecutivos > 0 ? { intentosFallidosConsecutivos: 0 } : {}),
+    });
     await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: replyText, origen: "automatico" });
     return { manejado: true };
   } finally {

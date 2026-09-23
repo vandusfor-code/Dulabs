@@ -43,6 +43,10 @@ export const MENSAJE_TRANSFERENCIA_MENU_IGNORADO_CLIENTE =
 export const MENSAJE_GEMINI_BIENVENIDA = "Claro 💗 Cuéntame, ¿qué te gustaría saber?";
 export const MENSAJE_TRANSICION_AGENDA = "Perfecto 💗 Vamos a agendar tu cita.";
 export const MENSAJE_ERROR_GEMINI = "Disculpa, tuve un problema entendiendo tu mensaje 💗 ¿Puedes reformularlo?";
+/** Segundo fallo TÉCNICO seguido de Gemini: nunca un tercer "¿puedes reformularlo?" -- se pasa a una persona, diciendo la verdad. */
+export const MENSAJE_TRANSFERENCIA_ERROR_TECNICO =
+  "Estoy teniendo un problema técnico para responderte bien 😔 Para no hacerte esperar, te comunico con alguien de nuestro equipo. Un momento 💗";
+export const MAX_ERRORES_TECNICOS_SEGUIDOS = 2;
 
 // --- Fase 1 (atención humana, autorizado) -------------------------------
 
@@ -413,6 +417,57 @@ export function detectarDespedida(mensaje: string): boolean {
   return FRASES_DESPEDIDA.some((f) => normalizado === normalizeText(f));
 }
 
+// Primer contacto: SOLO un saludo (sin ninguna necesidad expresada) recibe la bienvenida + el menú de siempre. Cualquier
+// otro primer mensaje ("Hola, quiero hacerme las uñas para una boda") se procesa de inmediato -- antes se descartaba y
+// la clienta tenía que repetir lo que ya había dicho. Coincidencia EXACTA del mensaje completo (sin puntuación/emojis).
+const SALUDOS = new Set([
+  "hola",
+  "holaa",
+  "holi",
+  "holis",
+  "ola",
+  "buenas",
+  "buenos dias",
+  "buen dia",
+  "buenas tardes",
+  "buenas noches",
+  "hola buenas",
+  "hola buenos dias",
+  "hola buen dia",
+  "hola buenas tardes",
+  "hola buenas noches",
+  "hola que tal",
+  "que tal",
+  "hola como estas",
+  "hola como esta",
+  "como estas",
+  "hola como vas",
+  "saludos",
+  "hey",
+  "hi",
+  "hello",
+  "hola hermosa",
+  "hola linda",
+  "hola bella",
+  "hola amiga",
+  "hola hermosas",
+  "hola chicas",
+  "hola amore",
+  "hola buenas hermosa",
+  "buenas noches hermosa",
+  "buenos dias hermosa",
+  "buenas tardes hermosa",
+]);
+
+export function detectarSoloSaludo(mensaje: string): boolean {
+  const n = normalizeText(mensaje)
+    .replace(/[^\p{L}\s]/gu, " ")
+    .replace(/(\p{L})\1{2,}/gu, "$1") // "holaaaa" -> "hola"
+    .replace(/\s+/g, " ")
+    .trim();
+  return n.length > 0 && SALUDOS.has(n);
+}
+
 const FRASES_NO_ENTENDI_REPETIR = [
   "no entendi",
   "no entiendo",
@@ -480,6 +535,8 @@ export interface ResultadoClasificacionGemini {
   detectedProfessionalMention: string | null;
   detectedDateMention: string | null;
   detectedTimeMention: string | null;
+  /** true solo cuando la respuesta es el mensaje genérico por un fallo TÉCNICO (sin API key, error de red, salida fuera del schema) -- el caller cuenta fallos seguidos para no dejar a la clienta en un bucle de "¿puedes reformularlo?". */
+  errorTecnico?: true;
 }
 
 const RESPONSE_SCHEMA = {
@@ -510,11 +567,19 @@ Debes responder EXCLUSIVAMENTE en el JSON pedido, con "intent" siendo una de est
 
 Reglas estrictas:
 - NUNCA inventes que ya creaste, modificaste o cancelaste una cita -- tú NO tienes esa capacidad, solo clasificas. La cancelación/reprogramación/reserva real las hace otro sistema después de tu clasificación, y SIEMPRE le pedirá confirmación al cliente antes de ejecutar nada.
-- Cuando intent=CONSULTA, "reply_text" debe ser una respuesta natural, cálida y breve a la duda del cliente (información general del salón; si no conoces un dato exacto como un precio, sé honesta y sugiere que lo puede confirmar al agendar, nunca inventes una cifra).
+- Cuando intent=CONSULTA, "reply_text" debe ser una respuesta natural, cálida y breve a la duda del cliente. Si en este mensaje de sistema hay un bloque [DATOS REALES DE AMORE], respóndele con ESOS datos exactos (precio, duración, quién lo realiza, qué es y para qué sirve). Lo que NO esté en esos datos no lo afirmes nunca: ni servicios, ni precios, ni duraciones, ni promociones, descuentos o bonos de regalo, ni dirección, ni medios de pago. Si te preguntan algo que no está, dilo con naturalidad y ofrece que una persona del equipo lo confirme (la clienta puede escribir "hablar con una persona"). Si no hay bloque de datos, sé honesta: nunca inventes una cifra ni un servicio.
+- NUNCA digas qué días u horarios tiene libres una profesional ni prometas un espacio: eso solo lo sabe el sistema de agenda consultando el calendario real. Si la clienta pregunta por disponibilidad para ella, es TRIGGER_AGENDA.
 - Cuando intent=TRIGGER_AGENDA/CANCELAR_CITA/REPROGRAMAR_CITA, igual completa "reply_text" con cualquier texto breve (será ignorado por el sistema).
 - "detected_service_mention": si el cliente mencionó un servicio concreto (ej. "sombreado", "manicure"), pon ese texto tal cual; si no mencionó ninguno, usa null.
 - Nunca actives TRIGGER_AGENDA solo porque la palabra "cita" aparece en el mensaje -- una pregunta sobre citas (precio, horarios, disponibilidad general) sigue siendo CONSULTA.
 - Nunca confundas CANCELAR_CITA/REPROGRAMAR_CITA con TRIGGER_AGENDA -- son sobre una cita que el cliente YA TIENE reservada, nunca sobre agendar una cita nueva.
+
+[CÓMO CONVERSAR -- ERES UNA RECEPCIONISTA CÁLIDA, NO UN FORMULARIO]
+- Estilo WhatsApp: frases cortas, cercanas, en español colombiano neutro; como máximo 3-4 frases y un emoji (💗) por mensaje. Nunca listas largas: si recomiendas, 2 o 3 opciones reales con precio.
+- Saludos y charla casual ("hola hermosa", "jajaja", "gracias"): responde con calidez y brevedad, y reconduce con una pregunta abierta hacia lo que necesita.
+- Si la clienta cuenta su contexto ("es para una boda", "algo sencillo", "no tan exagerado", "es para mi mamá"), reconócelo con naturalidad y oriéntala con servicios REALES del catálogo que encajen, explicando en una frase por qué.
+- Cuando ya parezca decidida ("me gusta ese", "ese quiero"), pregúntale si quiere que le ayudes a agendar ("¿Te ayudo a agendarlo? 💗").
+- Nunca repitas la misma pregunta dos veces seguidas ni respondas con un menú numerado: eso lo hace otro sistema.
 
 [REGLA CRÍTICA DE INTENCIÓN]
 TRIGGER_AGENDA significa que el usuario desea iniciar EXPLÍCITAMENTE un proceso de reserva/agendamiento. Tienes acceso al historial reciente de esta conversación (turnos anteriores) --úsalo siempre que el mensaje actual sea corto o ambiguo.
@@ -575,22 +640,34 @@ export interface DepsClasificarGemini {
  * nunca se arriesga a disparar Agenda V2 por un error técnico ajeno a la
  * clienta).
  */
+/** Respuesta genérica ante un fallo TÉCNICO -- marcada para que el caller pueda escalar a una persona si se repite. */
+function respuestaErrorTecnico(): ResultadoClasificacionGemini {
+  return {
+    intent: "CONSULTA",
+    replyText: MENSAJE_ERROR_GEMINI,
+    detectedServiceMention: null,
+    detectedProfessionalMention: null,
+    detectedDateMention: null,
+    detectedTimeMention: null,
+    errorTecnico: true,
+  };
+}
+
+/** Datos reales del negocio (lib/amore-contexto-negocio.ts) como bloque delimitado del mensaje de sistema. */
+export function instruccionConDatosReales(contextoNegocio?: string): string {
+  if (!contextoNegocio) return SYSTEM_INSTRUCTION;
+  return `${SYSTEM_INSTRUCTION}\n\n[DATOS REALES DE AMORE -- única fuente válida para servicios, precios, duraciones y quién realiza cada servicio]\n${contextoNegocio}\n[FIN DE DATOS REALES]`;
+}
+
 export async function clasificarMensajeConGemini(
-  params: { mensaje: string; historial?: Array<{ role: "user" | "model"; text: string }> },
+  params: { mensaje: string; historial?: Array<{ role: "user" | "model"; text: string }>; contextoNegocio?: string },
   deps: DepsClasificarGemini = {},
 ): Promise<ResultadoClasificacionGemini> {
   const resolveApiKey = deps.resolveApiKey ?? resolveGeminiApiKeyFromEnv;
   const apiKey = resolveApiKey();
   if (!apiKey) {
     console.error("[amore-entrada] sin GEMINI_KEY configurada -- se responde CONSULTA con mensaje de error genérico");
-    return {
-      intent: "CONSULTA",
-      replyText: MENSAJE_ERROR_GEMINI,
-      detectedServiceMention: null,
-      detectedProfessionalMention: null,
-      detectedDateMention: null,
-      detectedTimeMention: null,
-    };
+    return respuestaErrorTecnico();
   }
   const client = deps.geminiClient ?? createGeminiGenerateContentClient(apiKey);
 
@@ -598,7 +675,7 @@ export async function clasificarMensajeConGemini(
   try {
     resultado = await client.generateContent({
       model: GEMINI_DEFAULT_MODEL,
-      systemInstruction: SYSTEM_INSTRUCTION,
+      systemInstruction: instruccionConDatosReales(params.contextoNegocio),
       contents: [...(params.historial ?? []), { role: "user", text: params.mensaje }],
       responseSchema: RESPONSE_SCHEMA,
       maxOutputTokens: 500,
@@ -606,27 +683,13 @@ export async function clasificarMensajeConGemini(
     });
   } catch (err) {
     console.error("[amore-entrada] error técnico llamando a Gemini -- se responde CONSULTA con mensaje de error genérico:", err instanceof Error ? err.message : "error desconocido");
-    return {
-      intent: "CONSULTA",
-      replyText: MENSAJE_ERROR_GEMINI,
-      detectedServiceMention: null,
-      detectedProfessionalMention: null,
-      detectedDateMention: null,
-      detectedTimeMention: null,
-    };
+    return respuestaErrorTecnico();
   }
 
   const parseado = parsearSalidaGemini(resultado.text);
   if (!parseado) {
     console.error("[amore-entrada] salida de Gemini fuera del schema esperado -- se responde CONSULTA con mensaje de error genérico");
-    return {
-      intent: "CONSULTA",
-      replyText: MENSAJE_ERROR_GEMINI,
-      detectedServiceMention: null,
-      detectedProfessionalMention: null,
-      detectedDateMention: null,
-      detectedTimeMention: null,
-    };
+    return respuestaErrorTecnico();
   }
   return parseado;
 }

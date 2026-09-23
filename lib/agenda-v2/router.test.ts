@@ -3037,6 +3037,17 @@ describe("NUEVA FASE (autorizado) -- iniciarNuevaSesionAgendaV2 con entidades ex
     return armarDeps({ hoyIsoParaExtraccion: () => HOY_FIJO, ...NYLAS_DEPS_FAKE_OVERRIDES, ...overrides });
   }
 
+  it("'quiero hacerme las uñas' (una CATEGORÍA real, no un servicio) -> salta directo a los servicios REALES de Uñas", async () => {
+    const { deps, sesiones, envios } = armarDepsExtraccion();
+    await iniciarNuevaSesionAgendaV2(
+      { supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", wamid: "e-cat", entidades: { servicioMencion: "las uñas" } },
+      deps,
+    );
+    assert.equal(sesiones.filas[0]!.step, "S1_SERVICIO");
+    assert.deepEqual(sesiones.filas[0]!.opcionesMostradas, construirOpcionesServicio(SERVICIOS_UNAS));
+    assert.match(envios.enviados[0]!.mensaje, /Dipping/);
+  });
+
   it("sin entidades -> comportamiento 100% identico al de siempre (menu de categorias)", async () => {
     const { deps, sesiones, envios } = armarDepsExtraccion();
     await iniciarNuevaSesionAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", wamid: "e1" }, deps);

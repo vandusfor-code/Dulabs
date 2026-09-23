@@ -295,7 +295,18 @@ async function intentarPreLlenarSesion(
   // 1) SERVICIO -- contra el catálogo real activo (mismo catálogo que ya se
   // usaría para el menú de categorías/servicios normal).
   const servicio = resolverMencionUnica(entidades.servicioMencion, catalogo, (s) => s.nombre);
-  if (!servicio) return false;
+  if (!servicio) {
+    // "quiero hacerme las uñas": no nombra un servicio, pero sí una CATEGORÍA real -- se salta directo a los servicios
+    // REALES de esa categoría (antes volvía al menú de categorías y la clienta tenía que decir "uñas" otra vez).
+    const categoria = resolverMencionUnica(entidades.servicioMencion, construirOpcionesCategoria(catalogo), (c) => c.categoria);
+    const opcionesServicio = categoria ? construirOpcionesServicio(catalogo.filter((s) => s.categoria === categoria.categoria)) : [];
+    if (opcionesServicio.length === 0) return false;
+    const crearSesionCategoria = deps.crearSesion ?? crearSesionAgendaV2;
+    const enviarMensajeCategoria = deps.enviarMensajeWhatsApp ?? enviarMensajeWhatsApp;
+    await crearSesionCategoria(params.supabase, { tenantId: params.idTenant, telefonoCliente: params.telefono, wamid: params.wamid, opcionesMostradas: opcionesServicio });
+    await enviarMensajeCategoria({ tenantId: params.idTenant, telefono: params.telefono, mensaje: renderizarMenuServicio(opcionesServicio), origen: "automatico" });
+    return true;
+  }
 
   // 2) PROFESIONALES ELEGIBLES -- el ÚNICO resolver real de elegibilidad
   // (lib/asignacion-categoria.ts), mismo que usa "servicio_seleccionado" en
