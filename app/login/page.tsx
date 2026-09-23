@@ -9,6 +9,7 @@ import { AuthVisual } from "@/components/site/AuthVisual";
 import { useI18n } from "@/lib/i18n";
 import { LanguageSelector } from "@/components/LanguageSelector";
 import { resolverPlanId } from "@/lib/planes";
+import { DeveloperLogin } from "@/components/developer-login/DeveloperLogin";
 
 type Modo = "login" | "registro";
 
@@ -26,9 +27,29 @@ const PLAN_PENDIENTE_KEY = "du_labs_plan_elegido";
 export default function LoginPage() {
   return (
     <Suspense fallback={null}>
-      <LoginPageInterna />
+      <LoginSegunDestino />
     </Suspense>
   );
+}
+
+/** Destino interno seguro de ?next (solo rutas absolutas del sitio: nunca //host, /\host ni URLs externas). */
+function nextSeguro(next: string | null): string | null {
+  if (!next || !next.startsWith("/") || next.startsWith("//") || next.startsWith("/\\")) return null;
+  return next;
+}
+
+/** El área privada de DuLabs Developer (/developer y sus subrutas; NO /developers ni /developer-platform). */
+function esDestinoDeveloper(next: string | null): next is string {
+  return next === "/developer" || Boolean(next?.startsWith("/developer/")) || Boolean(next?.startsWith("/developer?"));
+}
+
+// /login es compartido: cuando el destino es el dashboard de DuLabs Developer (la landing y el propio dashboard llegan con
+// ?next=/developer) se muestra el login de Developer; cualquier otro caso (Business, planes, checkout) sigue siendo el de siempre.
+function LoginSegunDestino() {
+  const searchParams = useSearchParams();
+  const next = nextSeguro(searchParams.get("next"));
+  if (esDestinoDeveloper(next)) return <DeveloperLogin next={next} recuperacion={searchParams.get("recuperar") === "1"} />;
+  return <LoginPageInterna />;
 }
 
 function LoginPageInterna() {

@@ -1505,6 +1505,96 @@ body {
   .dp .dev-flujo { clip-path: none; }
 }
 
+/* ---------- DuLabs Developer · login (/login?next=/developer, scoped via .dl-auth) ----------
+   Negro casi absoluto, blanco y grises. El azul solo aparece en foco, estados activos y la luz ambiental del panel visual; el botón
+   principal es blanco. Motion: entradas únicas del contenido y un panel de infraestructura con animaciones lentas (8–15 s, ease-in-out)
+   solo con transform/opacity/stroke; todo desactivado con prefers-reduced-motion. */
+@theme {
+  --color-auth-bg: #050505;
+  --color-auth-surface: #0a0a0a;
+  --color-auth-elevated: #111111;
+  --color-auth-border: rgba(255, 255, 255, 0.08);
+  --color-auth-border-hover: rgba(255, 255, 255, 0.16);
+  --color-auth-text: #f5f5f5;
+  --color-auth-text-2: #a1a1aa;
+  --color-auth-muted: #71717a;
+  --color-auth-accent: #3b82f6;
+  --color-auth-accent-2: #60a5fa;
+  --color-auth-danger: #f87171;
+}
+.dl-auth {
+  --dl-rapido: 150ms;
+  --dl-estandar: 200ms;
+  --dl-ease: cubic-bezier(0.2, 0, 0, 1);
+  --dl-ease-emph: cubic-bezier(0.16, 1, 0.3, 1);
+}
+.dl-auth :focus-visible { outline: 2px solid var(--color-auth-accent); outline-offset: 2px; border-radius: 6px; }
+.dl-auth .dl-link { transition: color var(--dl-rapido) var(--dl-ease); }
+
+/* Campo: fondo casi transparente, borde fino; foco azul sutil; error rojo discreto. El foco lo lleva el contenedor (:focus-within). */
+.dl-auth .dl-campo {
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  transition: border-color var(--dl-rapido) var(--dl-ease), box-shadow var(--dl-rapido) var(--dl-ease), background-color var(--dl-rapido) var(--dl-ease);
+}
+.dl-auth .dl-campo:hover { border-color: var(--color-auth-border-hover); }
+.dl-auth .dl-campo:focus-within { border-color: rgba(59, 130, 246, 0.55); box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1); background: rgba(255, 255, 255, 0.035); }
+.dl-auth .dl-campo[data-error] { border-color: rgba(248, 113, 113, 0.55); }
+.dl-auth .dl-campo[data-error]:focus-within { box-shadow: 0 0 0 3px rgba(248, 113, 113, 0.1); }
+.dl-auth .dl-campo[data-disabled] { opacity: 0.6; }
+.dl-auth .dl-campo input:focus-visible { outline: none; }
+.dl-auth .dl-campo input::placeholder { color: var(--color-auth-muted); }
+.dl-auth .dl-campo input:-webkit-autofill {
+  -webkit-text-fill-color: var(--color-auth-text);
+  -webkit-box-shadow: 0 0 0 1000px #0c0c0c inset;
+  caret-color: var(--color-auth-text);
+}
+/* Mostrar/ocultar contraseña: cruce de los dos iconos. */
+.dl-auth .dl-ojo > svg { transition: opacity var(--dl-rapido) var(--dl-ease), transform var(--dl-rapido) var(--dl-ease); }
+.dl-auth .dl-ojo[aria-pressed="true"] > svg:first-child,
+.dl-auth .dl-ojo[aria-pressed="false"] > svg:last-child { opacity: 0; transform: scale(0.85); }
+
+/* Botón principal blanco: hover gris claro + 1 px arriba. */
+.dl-auth .dl-boton { transition: background-color var(--dl-estandar) var(--dl-ease), transform var(--dl-estandar) var(--dl-ease), opacity var(--dl-estandar) var(--dl-ease); }
+.dl-auth .dl-boton:hover:not(:disabled) { background-color: #e4e4e7; transform: translateY(-1px); }
+.dl-auth .dl-boton:active:not(:disabled) { transform: none; }
+.dl-auth .dl-boton .dl-flecha { transition: transform var(--dl-estandar) var(--dl-ease-emph); }
+.dl-auth .dl-boton:hover:not(:disabled) .dl-flecha { transform: translateX(3px); }
+@keyframes dl-gira { to { transform: rotate(360deg); } }
+.dl-auth .dl-spinner { animation: dl-gira 0.8s linear infinite; }
+
+/* Casilla «Recordarme». */
+.dl-auth .dl-casilla { transition: background-color var(--dl-rapido) var(--dl-ease), border-color var(--dl-rapido) var(--dl-ease); }
+.dl-auth .dl-casilla svg { opacity: 0; transform: scale(0.7); transition: opacity var(--dl-rapido) var(--dl-ease), transform var(--dl-rapido) var(--dl-ease); }
+.dl-auth input:checked + .dl-casilla { background: var(--color-auth-text); border-color: var(--color-auth-text); }
+.dl-auth input:checked + .dl-casilla svg { opacity: 1; transform: none; }
+.dl-auth input:focus-visible + .dl-casilla { outline: 2px solid var(--color-auth-accent); outline-offset: 2px; }
+
+/* Entrada del contenido: una vez, corta, escalonada. */
+@keyframes dl-entra { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.dl-auth .dl-entra { animation: dl-entra 700ms var(--dl-ease-emph) both; animation-delay: calc(var(--i, 0) * 70ms); }
+.dl-auth .dl-cambio { animation: dl-entra 320ms var(--dl-ease) both; }
+
+/* Panel visual: infraestructura viva, casi imperceptible. */
+@keyframes dl-trazo { from { stroke-dashoffset: var(--largo); } to { stroke-dashoffset: 0; } }
+.dl-auth .dl-traza { stroke-dasharray: var(--largo); stroke-dashoffset: var(--largo); animation: dl-trazo 2.4s var(--dl-ease-emph) forwards; animation-delay: var(--retraso, 0s); }
+@keyframes dl-halo { 0%, 100% { opacity: 0.55; transform: scale(1); } 50% { opacity: 1; transform: scale(1.05); } }
+.dl-auth .dl-halo { transform-box: fill-box; transform-origin: center; animation: dl-halo 12s ease-in-out infinite; }
+@keyframes dl-respira { 0%, 100% { opacity: 0.75; } 50% { opacity: 1; } }
+.dl-auth .dl-portal-luz { animation: dl-respira 9s ease-in-out infinite; }
+@keyframes dl-deriva { from { transform: translate3d(0, 0, 0); } to { transform: translate3d(-6px, 4px, 0); } }
+.dl-auth .dl-deriva { animation: dl-deriva 14s ease-in-out infinite alternate; }
+@keyframes dl-nodo { 0%, 100% { opacity: 0.25; } 50% { opacity: 0.85; } }
+.dl-auth .dl-nodo { animation: dl-nodo 10s ease-in-out infinite; animation-delay: var(--retraso, 0s); }
+.dl-auth .dl-panel-texto { animation: dl-entra 1.2s var(--dl-ease-emph) 0.9s both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .dl-auth *,
+  .dl-auth *::before,
+  .dl-auth *::after { animation: none !important; transition-duration: 0s !important; }
+  .dl-auth .dl-traza { stroke-dashoffset: 0; }
+}
+
 /* ---------- Home principal v3 (scoped via .home-scope, el wrapper lleva .dev-scope .home-scope) ----------
    Landing principal premium con la MISMA identidad monocroma de /developer-platform: negro, blanco y grises neutros (tokens de
    .dev-scope). El CTA principal es blanco con texto oscuro (--color-dev-accent). Sin color de acento, sin gradientes decorativos: solo una
