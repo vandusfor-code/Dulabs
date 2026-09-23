@@ -1,0 +1,485 @@
+/**
+ * HERRAMIENTAS DEL AGENTE — la ÚNICA interfaz entre el modelo y el backend.
+ *
+ * Reutiliza las herramientas de la Fase 7 (lib/catalogo/pedidos/herramientas.ts:
+ * esquemas estrictos, alcance de tenant/canal/conversación, salidas validadas,
+ * errores deterministas) y agrega las que dependen de la conversación
+ * (carrito, contexto del cliente, fotos), con GUARDAS deterministas:
+ *
+ *   - Procedencia: al carrito o a las fotos solo entran referencias que el
+ *     cliente escribió o que una herramienta devolvió en esta conversación.
+ *   - Elección obligatoria: si una consulta de ESTE turno devolvió varias
+ *     opciones, ninguna se puede agregar en el mismo turno (el cliente aún no
+ *     eligió): "Encontré varias opciones… ¿cuál?".
+ *   - Confirmación ligada: confirm_order exige la propuesta vigente, ya
+ *     mostrada al cliente en un turno ANTERIOR, con su confirmation_id.
+ *   - El carrito guarda referencias y cantidades; precios, subtotales, total
+ *     y stock los calcula SIEMPRE el motor (engine.evaluate) al consultarlo.
+ *
+ * Nunca lanza: cada llamada termina en { ok, data } o { ok:false, error }.
+ */
+import { z } from "zod";
+import type { AIToolDeclaration } from "@/lib/ia-proveedores/contrato";
+import { formatCop } from "@/lib/business-agent-quote";
+import { ORDER_MAX_QUANTITY } from "@/lib/catalogo/pedido";
+import { REFERENCE_PATTERN } from "@/lib/catalogo/domain";
+import { createResolucionCatalogo } from "@/lib/catalogo/resolucion";
+import type { OrderChannel } from "@/lib/catalogo/pedidos/contrato";
+import { runAgentTool, type AgentToolDeps as CatalogToolDeps } from "@/lib/catalogo/pedidos/herramientas";
+import { OrderError, conversationKey, requestFingerprint, type OrderErrorCode } from "@/lib/catalogo/pedidos/motor";
+import { MAX_CART_LINES, MAX_SHOWN, isKnownReference, rememberReferences, type ConversationState } from "@/lib/agente/estado";
+import { AGENT_TOOL_NAMES, type AgentToolName } from "@/lib/agente/nombres-herramientas";
+
+export type AgentToolErrorCode = OrderErrorCode | "TOOL_NOT_ALLOWED" | "REFERENCE_NOT_ALLOWED" | "CHOICE_REQUIRED" | "CONFIRMATION_NOT_PRESENTED" | "CART_EMPTY" | "TOOL_LIMIT";
+
+export type AgentToolOutcome = { ok: true; data: Record<string, unknown> } | { ok: false; error: { code: AgentToolErrorCode; message: string; details?: Record<string, unknown> } };
+
+/** Foto que el BACKEND decidió enviar (el modelo nunca ve ni escribe URLs). */
+export interface QueuedImage {
+  reference: string;
+  url: string;
+  caption: string;
+}
+
+/** Contexto de UN turno: lo arma el runtime a partir del webhook. Nada de esto viene del modelo. */
+export interface AgentTurnToolContext {
+  tenantId: string;
+  phoneNumberId: string;
+  waId: string;
+  channel: OrderChannel;
+  requestId: string;
+  wamid: string;
+  /** Turno actual (el mismo número que state.turn). */
+  turn: number;
+  /** Estado de la conversación; las herramientas de estado lo reemplazan en `state`. */
+  state: ConversationState;
+  /** Referencias con varias opciones surgidas EN ESTE TURNO (el cliente aún no las vio). */
+  pendingChoice: Set<string>;
+  images: QueuedImage[];
+  /** true si esta llamada ejecutó un traspaso a una asesora. */
+  handedOff: boolean;
+  /** Pedido creado/validado en este turno cuya propuesta aún no se le mostró al cliente. */
+  newProposal: { orderId: string; confirmationId: string; total: number } | null;
+}
+
+export interface AgentToolsDeps extends CatalogToolDeps {
+  /** Nombre conocido del cliente (dulabs_clientes_conocidos); null si no hay. */
+  customerName?: (input: { tenantId: string; phoneNumberId: string; waId: string }) => Promise<string | null>;
+  /** Timeout por herramienta (ms). */
+  toolTimeoutMs?: number;
+}
+
+const MAX_IMAGES_PER_TURN = 5;
+const SEARCH_LIMIT = 5;
+
+const reference = z
+  .string()
+  .trim()
+  .max(24)
+  .transform((s) => s.toUpperCase())
+  .refine((s) => REFERENCE_PATTERN.test(s), { message: "Referencia inválida (ej. DL-000184)." });
+const orderId = z.string().regex(/^DL-ORD-[0-9A-HJKMNP-TV-Z]{6}$/);
+
+interface ToolSpec<I extends z.ZodType> {
+  description: string;
+  input: I;
+  /** read: solo consulta | state: cambia la memoria de la conversación | write: cambia pedidos o la conversación (máx. 1 por turno). */
+  kind: "read" | "state" | "write";
+  run(ctx: AgentTurnToolContext, input: z.output<I>, deps: AgentToolsDeps): Promise<AgentToolOutcome>;
+}
+const spec = <I extends z.ZodType>(s: ToolSpec<I>) => s;
+
+const fail = (code: AgentToolErrorCode, message: string, details?: Record<string, unknown>): AgentToolOutcome => ({ ok: false, error: { code, message, ...(details ? { details } : {}) } });
+
+function catalogCtx(ctx: AgentTurnToolContext) {
+  return { tenantId: ctx.tenantId, channel: ctx.channel, conversation: { phoneNumberId: ctx.phoneNumberId, waId: ctx.waId }, requestId: ctx.requestId };
+}
+
+/** Llama una herramienta de la Fase 7 y traduce su resultado. */
+async function catalog(name: Parameters<typeof runAgentTool>[0], input: unknown, ctx: AgentTurnToolContext, deps: AgentToolsDeps): Promise<AgentToolOutcome> {
+  const r = await runAgentTool(name, input, catalogCtx(ctx), deps);
+  return r.ok ? { ok: true, data: r.data as Record<string, unknown> } : { ok: false, error: r.error };
+}
+
+type ProductView = { reference: string; name: string; description: string | null; category: string | null; material: string | null; color: string | null; unit_price: number | null; currency: string; availability: string; max_quantity: number | null };
+
+const compact = (p: ProductView) => ({ ...p, description: p.description ? p.description.slice(0, 200) : null });
+const norm = (s: string | null | undefined) =>
+  (s ?? "")
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toLowerCase()
+    .trim();
+
+function show(ctx: AgentTurnToolContext, products: ProductView[], ambiguous: boolean) {
+  const refs = products.map((p) => p.reference);
+  ctx.state = { ...rememberReferences(ctx.state, refs, "tool"), lastShown: products.slice(0, MAX_SHOWN).map((p) => ({ reference: p.reference, name: p.name.slice(0, 160) })) };
+  if (ambiguous && refs.length > 1) {
+    for (const r of refs) ctx.pendingChoice.add(r);
+    ctx.state = { ...ctx.state, ambiguity: { references: refs.slice(0, MAX_SHOWN), createdTurn: ctx.turn, presentedTurn: null } };
+  }
+}
+
+/** ¿Puede esta referencia entrar al carrito / pedir fotos en este turno? */
+function checkProvenance(ctx: AgentTurnToolContext, ref: string, forCart: boolean): AgentToolOutcome | null {
+  if (!isKnownReference(ctx.state, ref)) {
+    return fail("REFERENCE_NOT_ALLOWED", `La referencia ${ref} no ha salido en esta conversación. Búscala primero con las herramientas o pídesela al cliente.`);
+  }
+  if (forCart && ctx.pendingChoice.has(ref)) {
+    return fail("CHOICE_REQUIRED", "Hay varias opciones y el cliente todavía no eligió. Muéstrale las opciones y pregúntale cuál quiere.");
+  }
+  return null;
+}
+
+async function evaluateCart(ctx: AgentTurnToolContext, deps: AgentToolsDeps) {
+  const ev = await deps.engine.evaluate(ctx.tenantId, ctx.channel, ctx.state.cart);
+  return {
+    lines: ev.lines.map((l) => ({ reference: l.reference, product_name: l.productName, quantity: l.quantity, unit_price: l.unitPrice, subtotal: l.subtotal })),
+    total_units: ev.totalUnits,
+    total: ev.total,
+    unpriced_units: ev.unpricedUnits,
+    currency: "COP",
+    issues: ev.issues.map((i) => ({ code: i.code, message: i.message })),
+  };
+}
+
+// ---------------------------------------------------------------------------
+
+export const AGENT_TOOLS = {
+  search_products: spec({
+    description:
+      "Busca productos ACTIVOS del catálogo por texto (nombre o referencia) y, opcionalmente, filtra por categoría, color, material y precio máximo. Devuelve CANDIDATOS (máx. 5), nunca una elección: si hay varios, pregunta cuál quiere el cliente.",
+    input: z
+      .object({
+        query: z.string().trim().min(1).max(80),
+        category: z.string().trim().max(60).optional(),
+        color: z.string().trim().max(60).optional(),
+        material: z.string().trim().max(60).optional(),
+        max_price: z.number().int().min(1).max(100_000_000).optional(),
+      })
+      .strict(),
+    kind: "read",
+    async run(ctx, input, deps) {
+      const r = await catalog("search_products", { query: input.query, limit: 10 }, ctx, deps);
+      if (!r.ok) return r;
+      let items = (r.data.candidates as ProductView[]) ?? [];
+      if (input.category) items = items.filter((p) => norm(p.category).includes(norm(input.category)));
+      if (input.color) items = items.filter((p) => norm(p.color).includes(norm(input.color)));
+      if (input.material) items = items.filter((p) => norm(p.material).includes(norm(input.material)));
+      if (input.max_price !== undefined) items = items.filter((p) => p.unit_price !== null && p.unit_price <= (input.max_price as number));
+      const candidates = items.slice(0, SEARCH_LIMIT).map(compact);
+      show(ctx, candidates, true);
+      return { ok: true, data: { status: "candidates", count: candidates.length, candidates, note: candidates.length === 0 ? "Sin coincidencias en el catálogo." : "Candidatos: el cliente debe elegir." } };
+    },
+  }),
+
+  resolve_product_by_reference: spec({
+    description: "Consulta UN producto por su referencia exacta (ej. DL-000184): nombre, precio del canal y disponibilidad.",
+    input: z.object({ reference }).strict(),
+    kind: "read",
+    async run(ctx, input, deps) {
+      const r = await catalog("get_product_by_reference", { reference: input.reference }, ctx, deps);
+      if (!r.ok) return r;
+      const product = compact(r.data.product as ProductView);
+      show(ctx, [product], false);
+      return { ok: true, data: { status: "found", product } };
+    },
+  }),
+
+  resolve_product_by_attributes: spec({
+    description:
+      "Identifica UN producto por nombre exacto (y opcionalmente color, material, categoría). Si hay varios devuelve CHOICE_REQUIRED/AMBIGUOUS con las opciones: pregúntale al cliente, nunca elijas.",
+    input: z
+      .object({
+        name: z.string().trim().min(1).max(120),
+        color: z.string().trim().max(60).optional(),
+        material: z.string().trim().max(60).optional(),
+        category: z.string().trim().max(60).optional(),
+      })
+      .strict(),
+    kind: "read",
+    async run(ctx, input, deps) {
+      const r = await catalog("resolve_product", input, ctx, deps);
+      if (!r.ok) {
+        const candidates = (r.error.details?.candidates as Array<{ reference: string; name: string }> | undefined) ?? [];
+        if (r.error.code === "AMBIGUOUS" && candidates.length > 0) {
+          show(
+            ctx,
+            candidates.map((c) => ({ reference: c.reference, name: c.name, description: null, category: null, material: null, color: null, unit_price: null, currency: "COP", availability: "", max_quantity: null })),
+            true,
+          );
+        }
+        return r;
+      }
+      const product = compact(r.data.product as ProductView);
+      show(ctx, [product], false);
+      return { ok: true, data: { status: "found", product } };
+    },
+  }),
+
+  get_product_details: spec({
+    description: "Detalle de un producto por referencia y su disponibilidad actual. Si envías la cantidad deseada, dice si alcanza (can_fulfill). La cantidad exacta solo se muestra cuando es pequeña.",
+    input: z.object({ reference, quantity: z.number().int().min(1).max(ORDER_MAX_QUANTITY).optional() }).strict(),
+    kind: "read",
+    async run(ctx, input, deps) {
+      const p = await catalog("get_product_by_reference", { reference: input.reference }, ctx, deps);
+      if (!p.ok) return p;
+      const a = await catalog("get_product_availability", { reference: input.reference, ...(input.quantity ? { quantity: input.quantity } : {}) }, ctx, deps);
+      if (!a.ok) return a;
+      const product = compact(p.data.product as ProductView);
+      show(ctx, [product], false);
+      return { ok: true, data: { status: "found", product, availability: a.data } };
+    },
+  }),
+
+  get_cart: spec({
+    description: "Muestra la selección actual de la conversación con precios, subtotales, total y problemas calculados por el sistema.",
+    input: z.object({}).strict(),
+    kind: "read",
+    async run(ctx, _input, deps) {
+      if (ctx.state.cart.length === 0) return { ok: true, data: { lines: [], total: 0, total_units: 0, unpriced_units: 0, currency: "COP", issues: [], empty: true } };
+      return { ok: true, data: { ...(await evaluateCart(ctx, deps)), empty: false } };
+    },
+  }),
+
+  update_cart: spec({
+    description:
+      "Agrega, cambia o quita productos de la selección: cantidad 0 = quitar. Solo referencias que el cliente eligió (escritas por él o mostradas antes por las herramientas). Devuelve la selección con los totales del sistema.",
+    input: z
+      .object({ items: z.array(z.object({ reference, quantity: z.number().int().min(0).max(ORDER_MAX_QUANTITY) }).strict()).min(1).max(10) })
+      .strict(),
+    kind: "state",
+    async run(ctx, input, deps) {
+      const additions = input.items.filter((i) => i.quantity > 0).map((i) => i.reference);
+      for (const ref of additions) {
+        const blocked = checkProvenance(ctx, ref, true);
+        if (blocked) return blocked;
+      }
+      // La referencia debe existir en ESTE negocio (una de otro negocio simplemente no existe).
+      if (additions.length > 0) {
+        const lote = await createResolucionCatalogo({ repo: deps.catalog }).resolverReferencias(ctx.tenantId, additions);
+        if (lote.unknown.length > 0 || lote.invalid.length > 0) {
+          const ref = lote.unknown[0] ?? String(lote.invalid[0]);
+          return fail("REFERENCE_NOT_FOUND", `No encontramos la referencia ${ref}.`);
+        }
+      }
+      const cart = [...ctx.state.cart];
+      for (const item of input.items) {
+        const i = cart.findIndex((c) => c.reference === item.reference);
+        if (item.quantity === 0) {
+          if (i >= 0) cart.splice(i, 1);
+        } else if (i >= 0) cart[i] = { reference: item.reference, quantity: item.quantity };
+        else cart.push({ reference: item.reference, quantity: item.quantity });
+      }
+      if (cart.length > MAX_CART_LINES) return fail("INVALID_INPUT", `La selección admite máximo ${MAX_CART_LINES} productos distintos.`);
+      ctx.state = { ...ctx.state, cart, ambiguity: null };
+      return { ok: true, data: { ...(await evaluateCart(ctx, deps)), empty: cart.length === 0 } };
+    },
+  }),
+
+  resolve_order: spec({
+    description: "Revisa la selección contra el catálogo actual SIN crear pedido: precios vigentes, stock, productos activos, total y si está lista para solicitar.",
+    input: z.object({}).strict(),
+    kind: "read",
+    async run(ctx, _input, deps) {
+      if (ctx.state.cart.length === 0) return fail("CART_EMPTY", "La selección está vacía.");
+      const view = await evaluateCart(ctx, deps);
+      return { ok: true, data: { ...view, ready: view.issues.length === 0 && view.lines.length > 0 } };
+    },
+  }),
+
+  create_order_request: spec({
+    description:
+      "Crea la solicitud de pedido con la selección actual. El sistema valida todo y, si está bien, devuelve una PROPUESTA (confirmation.id + total) que debes mostrarle al cliente para que la acepte en su próximo mensaje.",
+    input: z.object({}).strict(),
+    kind: "write",
+    async run(ctx, _input, deps) {
+      if (ctx.state.cart.length === 0) return fail("CART_EMPTY", "La selección está vacía.");
+      const contact = { phoneNumberId: ctx.phoneNumberId, waId: ctx.waId };
+      try {
+        const r = await deps.engine.createOrder({
+          tenantId: ctx.tenantId,
+          channel: ctx.channel,
+          source: "agent",
+          contact,
+          items: ctx.state.cart,
+          // Idempotente por mensaje + contenido: un reintento del mismo mensaje no crea otro pedido.
+          idempotencyKey: conversationKey("agent", contact, `${ctx.wamid}|${requestFingerprint(ctx.channel, ctx.state.cart)}`),
+          requestId: ctx.requestId,
+        });
+        const o = r.order;
+        ctx.state = { ...ctx.state, activeOrderId: o.orderId };
+        if (o.status === "pending_confirmation" && o.confirmation) {
+          ctx.newProposal = { orderId: o.orderId, confirmationId: o.confirmation.id, total: o.confirmation.total };
+          ctx.state = { ...ctx.state, cart: [], proposal: { orderId: o.orderId, confirmationId: o.confirmation.id, presentedTurn: null } };
+        }
+        return {
+          ok: true,
+          data: {
+            order_id: o.orderId,
+            status: o.status,
+            lines: o.lines.map((l) => ({ reference: l.reference, product_name: l.productName, quantity: l.quantity, unit_price: l.unitPrice, subtotal: l.subtotal })),
+            total: o.total,
+            unpriced_units: o.unpricedUnits,
+            currency: "COP",
+            issues: o.issues.map((i) => ({ code: i.code, message: i.message })),
+            confirmation: o.confirmation ? { id: o.confirmation.id, total: o.confirmation.total, expires_at: o.confirmation.expiresAt } : null,
+          },
+        };
+      } catch (err) {
+        if (err instanceof OrderError) return fail(err.code, err.message, err.details);
+        throw err;
+      }
+    },
+  }),
+
+  validate_order: spec({
+    description: "Vuelve a validar el pedido activo (o el indicado) con el catálogo actual; si está bien, el sistema renueva la propuesta (nuevo confirmation.id).",
+    input: z.object({ order_id: orderId.optional() }).strict(),
+    kind: "write",
+    async run(ctx, input, deps) {
+      const id = input.order_id ?? ctx.state.activeOrderId;
+      if (!id) return fail("NOT_FOUND", "No hay un pedido activo en esta conversación.");
+      const r = await catalog("validate_order", { order_id: id }, ctx, deps);
+      if (!r.ok) return r;
+      const confirmation = r.data.confirmation as { id: string; total: number } | null;
+      if (r.data.status === "pending_confirmation" && confirmation) {
+        const same = ctx.state.proposal?.confirmationId === confirmation.id;
+        ctx.state = { ...ctx.state, activeOrderId: id, proposal: { orderId: id, confirmationId: confirmation.id, presentedTurn: same ? (ctx.state.proposal?.presentedTurn ?? null) : null } };
+        if (!same) ctx.newProposal = { orderId: id, confirmationId: confirmation.id, total: confirmation.total };
+      } else {
+        ctx.state = { ...ctx.state, activeOrderId: id, proposal: null };
+      }
+      return r;
+    },
+  }),
+
+  confirm_order: spec({
+    description:
+      "Confirma la propuesta vigente. SOLO cuando el cliente, en su mensaje actual, aceptó explícitamente la propuesta que ya le mostraste (mismo pedido y total). Exige order_id y confirmation_id de esa propuesta.",
+    input: z.object({ order_id: orderId, confirmation_id: z.string().regex(/^cf_[0-9a-z]{16}$/) }).strict(),
+    kind: "write",
+    async run(ctx, input, deps) {
+      const p = ctx.state.proposal;
+      if (!p || p.orderId !== input.order_id || p.confirmationId !== input.confirmation_id || p.presentedTurn === null || p.presentedTurn >= ctx.turn) {
+        return fail("CONFIRMATION_NOT_PRESENTED", "Primero muéstrale al cliente la propuesta vigente (productos y total) y espera su aceptación.");
+      }
+      const r = await catalog("confirm_order", input, ctx, deps);
+      if (r.ok) ctx.state = { ...ctx.state, proposal: null, cart: [] };
+      else if (["PRICE_CHANGED", "OUT_OF_STOCK", "PRODUCT_UNAVAILABLE", "CONFIRMATION_EXPIRED", "ORDER_HAS_ISSUES"].includes(r.error.code)) ctx.state = { ...ctx.state, proposal: null };
+      return r;
+    },
+  }),
+
+  get_customer_context: spec({
+    description: "Contexto del cliente: nombre conocido, canal de precios de la conversación, selección y pedido activo (según el sistema).",
+    input: z.object({}).strict(),
+    kind: "read",
+    async run(ctx, _input, deps) {
+      const name = deps.customerName ? await deps.customerName({ tenantId: ctx.tenantId, phoneNumberId: ctx.phoneNumberId, waId: ctx.waId }).catch(() => null) : null;
+      const order = await catalog("get_order", {}, ctx, deps);
+      return {
+        ok: true,
+        data: {
+          customer_name: name,
+          channel: ctx.channel,
+          cart_items: ctx.state.cart.length,
+          active_order: order.ok ? order.data : null,
+        },
+      };
+    },
+  }),
+
+  request_product_images: spec({
+    description: "Pide al sistema enviar las fotos reales de productos ya mostrados en la conversación (máx. 5). El sistema decide qué fotos son válidas y las envía; no escribas enlaces.",
+    input: z.object({ references: z.array(reference).min(1).max(MAX_IMAGES_PER_TURN) }).strict(),
+    kind: "state",
+    async run(ctx, input, deps) {
+      const queued: string[] = [];
+      const skipped: Array<{ reference: string; reason: string }> = [];
+      const refs = [...new Set(input.references)];
+      const allowed = refs.filter((r) => {
+        const blocked = checkProvenance(ctx, r, false);
+        if (blocked) skipped.push({ reference: r, reason: "not_in_conversation" });
+        return !blocked;
+      });
+      if (allowed.length > 0) {
+        const lote = await createResolucionCatalogo({ repo: deps.catalog }).resolverReferencias(ctx.tenantId, allowed);
+        for (const r of allowed) {
+          const p = lote.items.find((x) => x.reference === r);
+          if (!p) skipped.push({ reference: r, reason: "not_found" });
+          else if (p.status !== "ACTIVE") skipped.push({ reference: r, reason: "unavailable" });
+          else if (!p.image) skipped.push({ reference: r, reason: "no_photo" });
+          else if (ctx.images.length >= MAX_IMAGES_PER_TURN) skipped.push({ reference: r, reason: "limit" });
+          else if (!ctx.images.some((i) => i.reference === r)) {
+            const price = ctx.channel === "wholesale" ? p.prices.wholesale : p.prices.retail;
+            ctx.images.push({ reference: r, url: p.image.url, caption: `${p.name} · ${r} · ${price === null ? "precio a consultar" : formatCop(price)}` });
+            queued.push(r);
+          }
+        }
+      }
+      return { ok: true, data: { queued, skipped, note: queued.length > 0 ? "El sistema enviará estas fotos después de tu mensaje." : "No hay fotos para enviar." } };
+    },
+  }),
+
+  handoff_to_human: spec({
+    description: "Pasa la conversación (y el pedido activo, si lo indicas) a una asesora. Después de esto no respondas más que una despedida breve.",
+    input: z.object({ reason: z.string().trim().min(3).max(300), context: z.string().trim().max(500).optional(), order_id: orderId.optional() }).strict(),
+    kind: "write",
+    async run(ctx, input, deps) {
+      const r = await catalog("handoff_to_human", input, ctx, deps);
+      if (r.ok) ctx.handedOff = true;
+      return r;
+    },
+  }),
+} as const satisfies Record<AgentToolName, ToolSpec<z.ZodType>>;
+
+/** Declaraciones para el modelo, SOLO de las herramientas permitidas (allowlist del agente). */
+export function agentToolDeclarations(allowed: readonly AgentToolName[]): AIToolDeclaration[] {
+  return AGENT_TOOL_NAMES.filter((n) => allowed.includes(n)).map((name) => ({
+    name,
+    description: AGENT_TOOLS[name].description,
+    parameters: z.toJSONSchema(AGENT_TOOLS[name].input, { io: "input" }) as Record<string, unknown>,
+  }));
+}
+
+export function toolKind(name: AgentToolName): "read" | "state" | "write" {
+  return AGENT_TOOLS[name].kind;
+}
+
+/**
+ * Ejecuta una herramienta pedida por el modelo. El nombre debe estar en la
+ * allowlist; los argumentos se validan estrictos; timeout por herramienta.
+ * Nunca lanza.
+ */
+export async function executeAgentTool(
+  name: string,
+  rawArgs: unknown,
+  allowed: readonly AgentToolName[],
+  ctx: AgentTurnToolContext,
+  deps: AgentToolsDeps,
+): Promise<AgentToolOutcome> {
+  if (!(allowed as readonly string[]).includes(name) || !Object.hasOwn(AGENT_TOOLS, name)) {
+    return fail("TOOL_NOT_ALLOWED", "Esa herramienta no está disponible.");
+  }
+  const tool = AGENT_TOOLS[name as AgentToolName] as unknown as ToolSpec<z.ZodType>;
+  const parsed = tool.input.safeParse(rawArgs ?? {});
+  if (!parsed.success) {
+    return fail("INVALID_INPUT", "Los datos de la herramienta no son válidos.", { fields: parsed.error.issues.map((i) => ({ path: i.path.join("."), code: i.code })) });
+  }
+  const timeoutMs = deps.toolTimeoutMs ?? 5_000;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      tool.run(ctx, parsed.data, deps),
+      new Promise<AgentToolOutcome>((resolve) => {
+        timer = setTimeout(() => resolve(fail("UNAVAILABLE", "La consulta tardó demasiado. Intenta de nuevo.")), timeoutMs);
+      }),
+    ]);
+  } catch (err) {
+    console.error(`[agente/herramientas] ${name} falló:`, err instanceof Error ? err.message : err);
+    return fail("UNAVAILABLE", "No pudimos completar la operación. Intenta de nuevo.");
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
