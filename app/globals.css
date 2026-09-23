@@ -1528,7 +1528,7 @@ body {
   --dl-ease: cubic-bezier(0.2, 0, 0, 1);
   --dl-ease-emph: cubic-bezier(0.16, 1, 0.3, 1);
 }
-.dl-auth :focus-visible { outline: 2px solid var(--color-auth-accent); outline-offset: 2px; border-radius: 6px; }
+.dl-auth :focus-visible { outline: 2px solid var(--dl-acento, var(--color-auth-accent)); outline-offset: 2px; border-radius: 6px; }
 .dl-auth .dl-link { transition: color var(--dl-rapido) var(--dl-ease); }
 
 /* Campo: fondo casi transparente, borde fino; foco azul sutil; error rojo discreto. El foco lo lleva el contenedor (:focus-within). */
@@ -1538,7 +1538,7 @@ body {
   transition: border-color var(--dl-rapido) var(--dl-ease), box-shadow var(--dl-rapido) var(--dl-ease), background-color var(--dl-rapido) var(--dl-ease);
 }
 .dl-auth .dl-campo:hover { border-color: var(--color-auth-border-hover); }
-.dl-auth .dl-campo:focus-within { border-color: rgba(59, 130, 246, 0.55); box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1); background: rgba(255, 255, 255, 0.035); }
+.dl-auth .dl-campo:focus-within { border-color: var(--dl-foco, rgba(59, 130, 246, 0.55)); box-shadow: 0 0 0 3px var(--dl-foco-halo, rgba(59, 130, 246, 0.1)); background: rgba(255, 255, 255, 0.035); }
 .dl-auth .dl-campo[data-error] { border-color: rgba(248, 113, 113, 0.55); }
 .dl-auth .dl-campo[data-error]:focus-within { box-shadow: 0 0 0 3px rgba(248, 113, 113, 0.1); }
 .dl-auth .dl-campo[data-disabled] { opacity: 0.6; }
@@ -1568,7 +1568,7 @@ body {
 .dl-auth .dl-casilla svg { opacity: 0; transform: scale(0.7); transition: opacity var(--dl-rapido) var(--dl-ease), transform var(--dl-rapido) var(--dl-ease); }
 .dl-auth input:checked + .dl-casilla { background: var(--color-auth-text); border-color: var(--color-auth-text); }
 .dl-auth input:checked + .dl-casilla svg { opacity: 1; transform: none; }
-.dl-auth input:focus-visible + .dl-casilla { outline: 2px solid var(--color-auth-accent); outline-offset: 2px; }
+.dl-auth input:focus-visible + .dl-casilla { outline: 2px solid var(--dl-acento, var(--color-auth-accent)); outline-offset: 2px; }
 
 /* Entrada del contenido: una vez, corta, escalonada. */
 @keyframes dl-entra { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
@@ -1594,6 +1594,45 @@ body {
   .dl-auth *::after { animation: none !important; transition-duration: 0s !important; }
   .dl-auth .dl-traza { stroke-dashoffset: 0; }
 }
+
+/* ---------- DuLabs Business · login (/login, scoped via .dl-auth.bl-auth) ----------
+   Mismo formulario que Developer (AuthForm) con la identidad de Business: negro, blanco, gris y una luz azul-violeta solo ambiental
+   (foco de campos y panel). Entrada: logo 8 px, titular 10 px, descripción solo opacidad, formulario 12 px; 600 ms, stagger 80 ms,
+   cubic-bezier(0.22, 1, 0.36, 1). Ambiente: una luz recorre cada arco (SVG), pulso en el cruce (4 s), arcos que derivan ±16 px (18 s),
+   resplandor 0.3 -> 0.75, halo que respira (12 s), puntos 0.2 -> 0.9 (3–6 s), grid solo con opacidad. Todo transform/opacity; con
+   prefers-reduced-motion queda estático (regla de .dl-auth). */
+.bl-auth {
+  --dl-acento: #7187ff;
+  --dl-foco: rgba(100, 130, 255, 0.55);
+  --dl-foco-halo: rgba(80, 100, 255, 0.08);
+}
+.bl-auth .dl-campo { background: #0a0a0a; border-color: rgba(255, 255, 255, 0.12); }
+.bl-auth .dl-campo:focus-within { background: #0a0a0a; }
+.bl-auth .dl-boton { background-color: #ffffff; color: #050505; }
+.bl-auth .dl-boton:hover:not(:disabled) { background-color: #ececf1; box-shadow: 0 8px 24px -12px rgba(255, 255, 255, 0.35); }
+@keyframes bl-sube { from { opacity: 0; transform: translateY(var(--dy, 10px)); } to { opacity: 1; transform: none; } }
+@keyframes bl-aparece { from { opacity: 0; } to { opacity: 1; } }
+.bl-auth .bl-sube { animation: bl-sube 600ms cubic-bezier(0.22, 1, 0.36, 1) both; animation-delay: calc(var(--i, 0) * 80ms); }
+.bl-auth .bl-aparece { animation: bl-aparece 600ms cubic-bezier(0.22, 1, 0.36, 1) both; animation-delay: calc(var(--i, 0) * 80ms); }
+
+.bl-auth .bl-visual {
+  background: radial-gradient(circle at 42% 22%, rgba(90, 105, 255, 0.09), transparent 38%), radial-gradient(circle at 70% 70%, rgba(80, 95, 255, 0.05), transparent 45%), #050505;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 14%);
+  mask-image: linear-gradient(90deg, transparent 0%, #000 14%);
+}
+@keyframes bl-deriva { from { transform: translate3d(-16px, 4px, 0); } to { transform: translate3d(16px, -4px, 0); } }
+@keyframes bl-resplandor { 0%, 100% { opacity: 0.3; } 50% { opacity: 0.75; } }
+@keyframes bl-punto { 0%, 100% { opacity: 0.2; } 50% { opacity: 0.9; } }
+@keyframes bl-grid { 0%, 100% { opacity: 0.8; } 50% { opacity: 1; } }
+@keyframes bl-ambiente { 0%, 100% { opacity: 0.55; transform: scale(1); } 50% { opacity: 1; transform: scale(1.06); } }
+@keyframes bl-pulso { 0% { opacity: 0.7; transform: scale(0.6); } 60%, 100% { opacity: 0; transform: scale(2.8); } }
+.bl-auth .bl-deriva { animation: bl-deriva 18s ease-in-out infinite alternate; }
+.bl-auth .bl-resplandor { animation: bl-resplandor 9s ease-in-out infinite; }
+.bl-auth .bl-punto { opacity: 0.2; animation: bl-punto 4.5s ease-in-out infinite; }
+.bl-auth .bl-grid { animation: bl-grid 16s ease-in-out infinite; }
+.bl-auth .bl-ambiente { transform-box: fill-box; transform-origin: center; animation: bl-ambiente 12s ease-in-out infinite; }
+.bl-auth .bl-pulso { opacity: 0; transform-box: fill-box; transform-origin: center; animation: bl-pulso 4s cubic-bezier(0.22, 1, 0.36, 1) infinite; }
+.bl-auth .bl-visual-movil { -webkit-mask-image: linear-gradient(180deg, #000 30%, transparent); mask-image: linear-gradient(180deg, #000 30%, transparent); }
 
 /* ---------- Home principal v3 (scoped via .home-scope, el wrapper lleva .dev-scope .home-scope) ----------
    Landing principal premium con la MISMA identidad monocroma de /developer-platform: negro, blanco y grises neutros (tokens de
