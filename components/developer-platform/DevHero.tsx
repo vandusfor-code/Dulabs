@@ -2,102 +2,74 @@
 
 import Link from "next/link";
 import { useI18n } from "@/lib/i18n";
-import { START_HREF, DOCS_HREF, API_BASE_URL } from "./constants";
+import { START_HREF, DOCS_HREF } from "./constants";
+import { InfraFlowField } from "./InfraFlowField";
 
-// DuLabs Developer V1 -- rediseño Resend-level. Hero: el producto es el
-// protagonista. Mensaje central: infraestructura oficial de WhatsApp para
-// developers. En vez de tarjetas de estado, un request/response REAL de la API
-// (mismo contrato que /developers y el gateway) + el ciclo de vida animado.
-// Nomenclatura real: POST /api/v1/messages, Bearer dl_live_, Idempotency-Key.
-
-const REQUEST = `curl -X POST ${API_BASE_URL}/messages \\
-  -H "Authorization: Bearer dl_live_9c2f…a1" \\
-  -H "Idempotency-Key: 8f2a1c…" \\
-  -d '{
-    "whatsappNumberId": "wn_01HX8Z…",
-    "to": "573000000000",
-    "type": "text",
-    "text": { "body": "Hola desde DuLabs" }
-  }'`;
-
-const LIFECYCLE = ["created", "queued", "sent", "delivered"];
+// DuLabs Developer -- hero. Una pieza completa, no "texto + screenshot": el mensaje a la izquierda y, detrás y alrededor del lado derecho,
+// el campo de flujo de infraestructura (InfraFlowField: canvas 2D). El contrato completo de la API vive en las secciones siguientes; aquí
+// solo queda una línea técnica secundaria con datos reales (POST /api/v1/messages, firma HMAC-SHA256, Idempotency-Key).
+//
+// Desktop (lg+): primera pantalla completa (min-height 100vh -> 100svh), el campo ocupa ~64 % derecho con fundido hacia el texto.
+// Mobile: H1 -> descripción -> CTAs -> línea técnica -> campo. El campo es una banda compacta DEBAJO del contenido (otra topología, menos
+// densidad), no el desktop reducido. En desktop la zona de procesamiento queda a la derecha del final real del H1 (libreDe).
 
 export function DevHero() {
   const { t } = useI18n();
   return (
-    <section className="relative overflow-hidden pt-28 pb-16 md:pt-36 md:pb-24">
-      <div className="mx-auto grid max-w-[1440px] items-center gap-14 px-6 lg:grid-cols-[1fr_1.05fr]">
-        {/* Mensaje */}
-        <div className="max-w-xl">
-          <p className="inline-flex items-center gap-2 rounded-full border border-site-border bg-site-card px-3 py-1 font-mono text-[11px] uppercase tracking-[0.2em] text-site-muted-fg">
-            <span className="dev-live-dot h-1.5 w-1.5 rounded-full bg-site-fg" />
-            {t("Infraestructura de WhatsApp para developers", "WhatsApp infrastructure for developers")}
-          </p>
-          <h1 className="mt-6 font-display text-[38px] font-medium leading-[1.05] tracking-[-0.03em] text-site-fg md:text-[56px]">
-            {t("Construye sobre WhatsApp sin construir la infraestructura.", "Build on WhatsApp without building the infrastructure.")}
-          </h1>
-          <p className="mt-6 text-[16px] leading-relaxed text-site-muted-fg md:text-[17px]">
-            {t(
-              "Una sola API sobre WhatsApp Cloud API oficial de Meta: envía mensajes, recibe eventos por webhook y observa cada entrega. API keys, workspaces, idempotencia, rate limits y firma de webhooks incluidos desde el día uno.",
-              "One API on top of Meta's official WhatsApp Cloud API: send messages, receive events via webhooks and observe every delivery. API keys, workspaces, idempotency, rate limits and webhook signing built in from day one.",
-            )}
-          </p>
-          <div className="mt-9 flex flex-wrap items-center gap-3">
-            <Link
-              href={START_HREF}
-              className="inline-flex items-center gap-2 rounded-lg bg-dev-accent px-5 py-3 text-[14px] font-medium text-dev-accent-fg transition-colors hover:bg-dev-accent-hover"
-            >
-              {t("Get API Key", "Get API Key")}
-              <span aria-hidden>→</span>
-            </Link>
-            <Link
-              href={DOCS_HREF}
-              className="inline-flex items-center gap-2 rounded-lg border border-site-border bg-site-card px-5 py-3 text-[14px] font-medium text-site-fg transition-colors hover:border-white/25"
-            >
-              {t("Ver documentación", "View docs")}
-            </Link>
-          </div>
-          <p className="mt-5 font-mono text-[11.5px] text-site-muted-fg">
-            {t("Empieza gratis en el dashboard · sin tarjeta para explorar", "Start in the dashboard · no card to explore")}
-          </p>
+    <section className="dev-hero relative isolate overflow-hidden">
+      <InfraFlowField className="dev-hero-campo" libreDe="h1" />
+
+      <div className="relative z-10 mx-auto w-full max-w-[1440px] px-6 pb-[clamp(14rem,60vw,19rem)] pt-28 md:pt-36 lg:py-28">
+        <p className="dev-hero-in flex items-center gap-3 font-mono text-[10.5px] uppercase tracking-[0.24em] text-site-muted-fg sm:text-[11px]">
+          <span aria-hidden className="h-px w-7 bg-white/30" />
+          {t("Infraestructura para developers", "Infrastructure for developers")}
+        </p>
+
+        <h1 className="dev-hero-h1 mt-7 font-medium text-site-fg lg:mt-8">
+          <span className="block lg:whitespace-nowrap">{t("Construye sobre WhatsApp.", "Build on WhatsApp.")}</span>
+          <span className="block text-site-muted-fg lg:whitespace-nowrap">{t("Sin construir la infraestructura.", "Without building the infrastructure.")}</span>
+        </h1>
+
+        <p className="dev-hero-in mt-7 max-w-[34rem] text-[16.5px] leading-[1.6] text-[#a1a1a1] md:text-[18px] lg:mt-9" style={{ animationDelay: "90ms" }}>
+          {t(
+            "Una sola API sobre WhatsApp Cloud API oficial de Meta para enviar mensajes, recibir eventos y operar cada entrega.",
+            "One API on top of Meta's official WhatsApp Cloud API to send messages, receive events and operate every delivery.",
+          )}
+        </p>
+
+        <div className="dev-hero-in mt-9 flex flex-col gap-3 sm:flex-row sm:items-center lg:mt-11" style={{ animationDelay: "160ms" }}>
+          <Link
+            href={START_HREF}
+            className="inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-dev-accent px-6 text-[14.5px] font-medium text-dev-accent-fg transition-colors hover:bg-dev-accent-hover"
+          >
+            Get API Key
+            <span aria-hidden>→</span>
+          </Link>
+          <Link
+            href={DOCS_HREF}
+            className="group inline-flex h-12 items-center justify-center gap-2 rounded-lg border border-white/[0.14] px-6 text-[14.5px] font-medium text-site-fg transition-colors hover:border-white/30 hover:bg-white/[0.03]"
+          >
+            {t("Ver documentación", "View docs")}
+            <span aria-hidden className="transition-transform group-hover:translate-x-0.5">→</span>
+          </Link>
         </div>
 
-        {/* Producto: request real -> response -> ciclo de vida animado */}
-        <div className="relative">
-          <div className="overflow-hidden rounded-2xl border border-site-border bg-site-card">
-            <div className="flex items-center gap-2 border-b border-site-border px-3.5 py-2.5">
-              <span className="h-2.5 w-2.5 rounded-full bg-site-border" />
-              <span className="h-2.5 w-2.5 rounded-full bg-site-border" />
-              <span className="h-2.5 w-2.5 rounded-full bg-site-border" />
-              <span className="ml-2 font-mono text-[11px] text-site-muted-fg">POST /api/v1/messages</span>
-              <span className="ml-auto rounded-full border border-site-border px-2 py-0.5 font-mono text-[10px] text-site-muted-fg">Bearer dl_live_</span>
-            </div>
-            <pre className="overflow-x-auto bg-site-bg px-4 py-4 font-mono text-[11.5px] leading-relaxed text-site-fg"><code>{REQUEST}<span className="dev-caret text-site-muted-fg" aria-hidden>▍</span></code></pre>
-            <div className="border-t border-site-border px-4 py-3.5">
-              <div className="flex items-center gap-2 font-mono text-[11px]">
-                <span className="rounded border border-site-border px-1.5 py-0.5 text-site-fg">201</span>
-                <span className="text-site-muted-fg">Created · 142 ms</span>
-              </div>
-              <pre className="mt-2 overflow-x-auto font-mono text-[11.5px] leading-relaxed text-site-fg"><code>{`{ "jobId": "job_01HX8Z…", "status": "created" }`}</code></pre>
-            </div>
-            <div className="flex items-center gap-1.5 border-t border-site-border px-4 py-3 font-mono text-[11px]">
-              {LIFECYCLE.map((s, i) => (
-                <span key={s} className="inline-flex items-center gap-1.5">
-                  <span
-                    className={`dev-step ${i === LIFECYCLE.length - 1 ? "text-site-fg" : "text-site-muted-fg"}`}
-                    style={{ ["--dev-i" as string]: i }}
-                  >
-                    {s}
-                  </span>
-                  {i < LIFECYCLE.length - 1 ? <span className="text-site-border" aria-hidden>→</span> : null}
-                </span>
-              ))}
-              <span className="ml-auto inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-site-muted-fg">
-                <span className="dev-live-dot h-1.5 w-1.5 rounded-full bg-site-fg" /> webhook
-              </span>
-            </div>
-          </div>
-        </div>
+        <ul
+          aria-label={t("Detalles técnicos", "Technical details")}
+          className="dev-hero-in mt-12 flex flex-wrap items-center gap-x-5 gap-y-2 font-mono text-[11px] text-site-muted-fg lg:mt-16"
+          style={{ animationDelay: "240ms" }}
+        >
+          <li className="flex items-center gap-2 text-site-fg">
+            <span aria-hidden className="dev-hero-senal" />
+            API v1
+          </li>
+          <li aria-hidden className="h-3 w-px bg-white/15" />
+          <li>
+            <span className="text-site-fg">POST</span> /api/v1/messages
+          </li>
+          <li aria-hidden className="hidden h-3 w-px bg-white/15 sm:block" />
+          <li className="hidden sm:block">HMAC-SHA256 · Idempotency-Key</li>
+        </ul>
       </div>
     </section>
   );

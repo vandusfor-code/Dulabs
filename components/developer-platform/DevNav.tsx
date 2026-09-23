@@ -38,7 +38,7 @@ export function DevNav() {
       }`}
     >
       <div className="mx-auto flex h-16 max-w-[1440px] items-center justify-between px-6">
-        <Link href="/developer-platform" className="flex items-center gap-2.5 font-display text-[14px] font-medium tracking-tight text-site-fg">
+        <Link href="/developer-platform" className="flex shrink-0 items-center gap-2.5 font-display text-[14px] font-medium tracking-tight text-site-fg">
           <Image src="/logo.png" alt="DuLabs" width={24} height={24} className="rounded-full" />
           <span>DuLabs</span>
           <span className="rounded-md border border-dev-accent/30 bg-dev-accent-soft px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-widest text-dev-accent">
@@ -55,13 +55,16 @@ export function DevNav() {
         </nav>
 
         <div className="flex items-center gap-3">
-          <LanguageSelector />
+          {/* En pantallas angostas el selector de idioma vive en el menú móvil: la barra no tiene espacio para todo sin montarse. */}
+          <div className="hidden sm:block">
+            <LanguageSelector />
+          </div>
           <Link href={LOGIN_HREF} className="hidden text-[13px] text-site-muted-fg transition-colors hover:text-site-fg md:inline">
             {t("Iniciar sesión", "Log in")}
           </Link>
           <Link
             href={START_HREF}
-            className="rounded-lg bg-dev-accent px-3.5 py-2 text-[13px] font-medium text-dev-accent-fg shadow-sm transition-colors hover:bg-dev-accent-hover"
+            className="shrink-0 whitespace-nowrap rounded-lg bg-dev-accent px-3.5 py-2 text-[13px] font-medium text-dev-accent-fg shadow-sm transition-colors hover:bg-dev-accent-hover"
           >
             {t("Get API Key", "Get API Key")}
           </Link>
@@ -70,7 +73,7 @@ export function DevNav() {
             aria-label={t("Abrir menú", "Open menu")}
             aria-expanded={menuAbierto}
             onClick={() => setMenuAbierto((v) => !v)}
-            className="lg:hidden inline-flex h-9 w-9 items-center justify-center rounded-lg border border-site-border text-site-fg"
+            className="lg:hidden inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-site-border text-site-fg"
           >
             <span aria-hidden className="text-lg leading-none">{menuAbierto ? "×" : "≡"}</span>
           </button>
@@ -90,6 +93,10 @@ export function DevNav() {
                 {l.label}
               </a>
             ))}
+            <div className="mt-2 flex items-center justify-between gap-3 border-t border-site-border pt-3 sm:hidden">
+              <span className="text-[13px] text-site-muted-fg">{t("Idioma", "Language")}</span>
+              <LanguageSelector />
+            </div>
             <div className="mt-2 flex items-center gap-3 border-t border-site-border pt-3">
               <Link
                 href={LOGIN_HREF}

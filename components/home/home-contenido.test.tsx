@@ -289,11 +289,12 @@ describe("Home -- estructura compacta: la puerta de entrada, no el sitio complet
     for (const pieza of ["/api/v1/messages", "Bearer dl_live_", "Idempotency-Key", "201", "message.received", "message.status", "HMAC-SHA256"]) assert.ok(t.includes(pieza), `falta: ${pieza}`);
     for (const paso of ["request", "accepted", "sent", "webhook"]) assert.ok(t.includes(paso), `falta el paso ${paso}`);
     assert.ok(html.includes(`href="${DEVELOPER_PLATFORM_HREF}"`) && html.includes(`href="${DEVELOPER_DOCS_HREF}"`));
-    // Mismo contrato que publica la plataforma para developers (no se inventa uno para la home).
-    const hero = readFileSync(join(RAIZ, "components", "developer-platform", "DevHero.tsx"), "utf8");
-    for (const pieza of ["Bearer dl_live_", "Idempotency-Key", '"whatsappNumberId"', '"jobId"']) assert.ok(hero.includes(pieza), pieza);
+    // Mismo contrato que publica la plataforma para developers (no se inventa uno para la home): el ejemplo de envío de /developer-platform
+    // (DevSections) y el OpenAPI público.
+    const plataforma = readFileSync(join(RAIZ, "components", "developer-platform", "DevSections.tsx"), "utf8");
+    for (const pieza of ["Bearer dl_live_", "Idempotency-Key", '"whatsappNumberId"']) assert.ok(plataforma.includes(pieza), pieza);
     const openapi = readFileSync(join(RAIZ, "lib", "developers", "openapi.ts"), "utf8");
-    for (const evento of ["message.received", "message.status"]) assert.ok(openapi.includes(`"${evento}"`), evento);
+    for (const pieza of ["jobId", '"message.received"', '"message.status"']) assert.ok(openapi.includes(pieza), pieza);
   });
 
   it("el único caso que se nombra (DuMo) existe publicado en /casos y las categorías de A la medida son las que publica el sitio", () => {

@@ -134,7 +134,8 @@ export function DevApiFirst() {
   return (
     <section id={SECTION_IDS.api} className="scroll-mt-20 border-t border-site-border py-20 md:py-28">
       <div className="mx-auto grid max-w-[1440px] items-center gap-12 px-6 lg:grid-cols-2">
-        <div>
+        {/* min-w-0: un item de grid no puede crecer por el ancho natural del código (el <pre> hace scroll dentro de su caja). */}
+        <div className="min-w-0">
           <DevSectionHeading
             eyebrow="API-first"
             title={t("Un POST y tu mensaje está en camino.", "One POST and your message is on its way.")}
@@ -153,7 +154,7 @@ export function DevApiFirst() {
             <ArrowRight className="h-4 w-4" aria-hidden />
           </Link>
         </div>
-        <div>
+        <div className="min-w-0">
           <CodeSample curl={SEND_CURL} js={SEND_JS} titulo="POST /api/v1/messages" />
         </div>
       </div>
