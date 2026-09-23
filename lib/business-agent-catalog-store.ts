@@ -41,22 +41,47 @@ export function createSupabaseCatalogStore(supabase: SupabaseClient): BusinessAg
       }));
     },
     async listarProductos(tenantId) {
-      const { data, error } = await supabase
-        .from("dulabs_inventario_productos")
-        .select("id, nombre, precio, stock")
-        .eq("id_tenant", tenantId)
-        .eq("activo", true)
-        .order("nombre", { ascending: true });
+      const consultar = (columnas: string) =>
+        supabase.from("dulabs_inventario_productos").select(columnas).eq("id_tenant", tenantId).eq("activo", true).order("nombre", { ascending: true });
+      let { data, error } = await consultar("id, nombre, precio, stock, controla_stock");
+      // Catálogo (autorizado) -- tolerante a despliegue antes de la migración
+      // 20261105000000: si controla_stock aún no existe (42703), se usa la
+      // consulta histórica y el comportamiento de stock es EXACTAMENTE el de hoy.
+      if (error && esColumnaInexistente(error)) ({ data, error } = await consultar("id, nombre, precio, stock"));
       if (error) throw error;
-      return ((data ?? []) as Array<{ id: string; nombre: string; precio: number; stock: number }>).map((p) => ({
-        tipo: "producto" as const,
-        id: p.id,
-        nombre: p.nombre,
-        precio: p.precio,
-        stock: p.stock,
-      }));
+      return mapearProductosCotizables((data ?? []) as unknown as FilaProductoCotizable[]);
     },
   };
+}
+
+function esColumnaInexistente(error: { code?: string }): boolean {
+  return error.code === "42703";
+}
+
+export interface FilaProductoCotizable {
+  id: string;
+  nombre: string;
+  precio: number;
+  stock: number;
+  /** Ausente si la migración del Catálogo aún no se aplicó (=> se controla stock, como siempre). */
+  controla_stock?: boolean;
+}
+
+/**
+ * Productos para la cotización. Catálogo (autorizado): si el negocio NO
+ * controla inventario (controla_stock = false), el stock se omite -- la
+ * cotización (buildQuote) ya ignora stock no numérico, así que nunca marca
+ * "stock insuficiente" ni "(agotado)" por un stock = 0 que nadie administra.
+ * Productos existentes (controla_stock true/ausente): idénticos a antes.
+ */
+export function mapearProductosCotizables(filas: FilaProductoCotizable[]): QuoteCatalogItem[] {
+  return filas.map((p) => ({
+    tipo: "producto" as const,
+    id: p.id,
+    nombre: p.nombre,
+    precio: p.precio,
+    ...(p.controla_stock === false ? {} : { stock: p.stock }),
+  }));
 }
 
 /** Catálogo cotizable según lo que el negocio eligió (servicios y/o productos). */

@@ -4,7 +4,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import { LogOut, Sparkles } from "lucide-react";
-import { navSections } from "./nav";
+import { navItemVisible, navSections } from "./nav";
 import { useDashboard } from "@/lib/dashboard-session";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import { useI18n } from "@/lib/i18n";
@@ -17,7 +17,7 @@ function cn(...cls: Array<string | false | undefined>) {
 export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { session, negocios, suscripcion, rol, esAdminDulabs } = useDashboard();
+  const { session, negocios, suscripcion, rol, esAdminDulabs, modulos } = useDashboard();
   const { t } = useI18n();
 
   const cerrarSesion = async () => {
@@ -75,7 +75,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
             </p>
             <ul className="space-y-0.5">
               {section.items
-                .filter((item) => !item.rolesPermitidos || (rol && item.rolesPermitidos.includes(rol)))
+                .filter((item) => navItemVisible(item, rol, modulos))
                 .map((item) => {
                   const active =
                     item.href === "/dashboard" ? pathname === "/dashboard" : pathname.startsWith(item.href);

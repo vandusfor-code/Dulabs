@@ -5,6 +5,7 @@ import { consultarEstadoNumero } from "@/lib/meta-numero";
 import { descifrarSecreto } from "@/lib/crypto";
 import { puedeUsarDumo } from "@/lib/dumo-acceso";
 import { esAdminDulabs } from "@/lib/admin-tenant";
+import { modulosHabilitados } from "@/lib/tenant-modulos";
 
 export const runtime = "nodejs";
 
@@ -208,11 +209,17 @@ export async function GET(request: NextRequest) {
     };
   });
 
-  const { data: suscripcion } = await supabase
-    .from("dulabs_suscripciones")
-    .select("plan, precio_cop, estado, fecha_proximo_cobro, cancelar_al_vencer")
-    .eq("id_tenant", tenantId)
-    .maybeSingle();
+  const [{ data: suscripcion }, modulos] = await Promise.all([
+    supabase
+      .from("dulabs_suscripciones")
+      .select("plan, precio_cop, estado, fecha_proximo_cobro, cancelar_al_vencer")
+      .eq("id_tenant", tenantId)
+      .maybeSingle(),
+    // Catálogo (autorizado) -- solo para mostrar/ocultar módulos en el nav;
+    // best-effort (tabla sin migrar => []). La autorización real vive en cada
+    // endpoint del módulo (lib/catalogo/auth.ts), que nunca confía en esto.
+    modulosHabilitados(supabase, tenantId),
+  ]);
 
   return Response.json({
     email: userData.user.email,
@@ -228,5 +235,6 @@ export async function GET(request: NextRequest) {
     // -- la autorización REAL vive en cada endpoint /api/dashboard/admin/*
     // (verificarAccesoAdminDulabs), que nunca confía en este booleano.
     es_admin_dulabs: esAdminDulabs({ miembroId: filaMiembro.id, tenantId, userId: userData.user.id, rol, estado: filaMiembro.estado }),
+    modulos,
   });
 }

@@ -1,5 +1,60 @@
 # Pasos manuales pendientes en producción
 
+## PENDIENTE — Catálogo DuLabs, Fase 1 (módulo Catálogo, cliente inicial Delacour & Orus)
+
+La migración `20261105000000_dulabs_catalogo_fase1.sql` **todavía no se ha
+corrido en producción**. Sin ella, `/dashboard/catalogo` y
+`/api/dashboard/catalogo/*` responden un error controlado (el módulo no
+aparece en el menú porque `dulabs_tenant_modulos` no existe); AMORE y el
+Business Agent siguen funcionando exactamente igual.
+
+**Qué hace (100 % aditiva):** evoluciona `dulabs_inventario_productos` (la
+fuente de verdad que ya usan AMORE, el Business Agent y la cotización del
+agente) con columnas nuevas nullable/default (`referencia`, `precio_mayor`,
+`material`, `color`, `categoria_id`, `controla_stock` default `true`,
+`created_by`, `updated_by`, `escritura_id`), crea
+`dulabs_tenant_modulos`, `dulabs_catalogo_categorias`,
+`dulabs_catalogo_media`, `dulabs_catalogo_secuencias`,
+`dulabs_catalogo_eventos`, y triggers de referencia automática (segura
+ante concurrencia), inmutabilidad de referencia y auditoría append-only.
+No renombra, elimina ni cambia el tipo de ninguna columna existente. Los
+productos existentes reciben su referencia (`DL-000001`, … por tenant, en
+orden de creación) y conservan `controla_stock = true` (mismo
+comportamiento de stock que hoy).
+
+**Riesgo operativo (bajo):** es una sola transacción; mientras corre, el
+primer `ALTER TABLE` bloquea `dulabs_inventario_productos` (lecturas y
+escrituras de AMORE/Business Agent esperan, con el volumen actual son
+milisegundos). Si algo falla, se revierte todo (no queda estado a medias).
+Validada contra PostgreSQL 16 local con el esquema real de AMORE (productos
++ ventas): ver `supabase/tests/20261105000000_dulabs_catalogo_fase1.test.sql`.
+
+1. **Antes** (SQL Editor, solo lectura) — confirmar el punto de partida:
+   ```sql
+   select column_name from information_schema.columns
+   where table_schema = 'public' and table_name = 'dulabs_inventario_productos'
+   order by ordinal_position;
+   -- Esperado: id, id_tenant, nombre, descripcion, precio, stock, categoria,
+   -- foto_url, activo, created_at, updated_at (sin 'referencia').
+   select id_tenant, count(*) from public.dulabs_inventario_productos group by 1;
+   ```
+2. Correr el archivo completo `20261105000000_dulabs_catalogo_fase1.sql`.
+3. Habilitar el módulo para Delacour & Orus (dato, no código — el módulo se
+   habilita por tenant, nunca por nombre en el código):
+   ```sql
+   insert into public.dulabs_tenant_modulos (id_tenant, modulo, habilitado)
+   values ('0d3ae22d-0c38-4fd6-ba48-fb9e29b7cdb4', 'catalogo', true)
+   on conflict (id_tenant, modulo) do update set habilitado = true, updated_at = now();
+   ```
+4. **Después** — verificar:
+   ```sql
+   select id_tenant, count(*) as productos, count(referencia) as con_referencia,
+          count(*) filter (where controla_stock) as controla_stock
+   from public.dulabs_inventario_productos group by 1;   -- con_referencia = productos = controla_stock
+   select * from public.dulabs_catalogo_secuencias;       -- ultimo_numero = productos por tenant
+   select count(*) from public.dulabs_catalogo_eventos;   -- 0 (el backfill no genera eventos)
+   ```
+
 ## PENDIENTE — DuLabs Developer V1, GitHub Integration (Fase 1)
 
 La migración `20261104000000_dulabs_developer_v1_github_integration.sql`

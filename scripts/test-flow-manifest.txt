@@ -425,3 +425,11 @@ lib/flow/ai-runtime/ai-unsent-text.test.ts
 lib/agent-compiler/e2e/real-llm-shape-e2e.test.ts
 # Perfeccionamiento tras la primera prueba real: el envío ya no relee la fila completa de configuración (96 KB -> 1,4 KB en el tenant Dulabs).
 lib/flow/executors/send-message-executor-cliente-liviano.test.ts
+# Catálogo DuLabs, Fase 1 -- dominio (referencia, precios, validación estricta, búsqueda, firma de imagen), autorización
+# (rol x módulo, tenant de la membresía), casos de uso con repositorio en memoria, formulario/nav, y compatibilidad
+# de controla_stock con AMORE / Business Agent / cotización. Todos puros: ninguno toca Supabase.
+lib/catalogo/domain.test.ts
+lib/catalogo/auth.test.ts
+lib/catalogo/service.test.ts
+lib/catalogo/form.test.ts
+lib/catalogo/compat-stock.test.ts

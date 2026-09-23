@@ -1477,3 +1477,30 @@ body {
   .home-scope .home-panel { --hbase: clamp(11rem, 42vw, 15rem); --w: clamp(4.25rem, 20vw, 6rem); --ml: -1.9rem; transform: translateY(var(--lift)) rotateY(-19deg); }
   .home-scope .home-panel--lead { --w: clamp(5rem, 24vw, 7rem); }
 }
+
+/* ---------- Catálogo (dashboard): microinteracciones sutiles ---------- */
+
+@keyframes catalogo-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes catalogo-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+  100% {
+    transform: none;
+  }
+}
