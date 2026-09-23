@@ -166,12 +166,13 @@ describe("reconciliación con la verdad del backend", () => {
     assert.deepEqual(reconcileWithChanges(r1.state, [{ ...DIJE, available: false, maxQuantity: 0 }], []).changes, []);
   });
 
-  it("precio cambiado después de agregar => el carrito toma el precio vigente del backend", () => {
+  it("precio cambiado después de agregar => el carrito toma el precio vigente del backend y lo AVISA", () => {
     const s = con([DIJE, 2]);
     const { state, changes } = reconcileWithChanges(s, [{ ...DIJE, price: 40_000 }], []);
     assert.equal(state.lines[0].unitPrice, 40_000);
     assert.deepEqual(cartTotal(state), { total: 80_000, unpricedItems: 0 });
-    assert.deepEqual(changes, []);
+    assert.deepEqual(changes, [{ kind: "price_changed", reference: "DL-000184", name: "Dije corazón", from: 35_000, to: 40_000 }]);
+    assert.deepEqual(reconcileWithChanges(state, [{ ...DIJE, price: 40_000 }], []).changes, [], "mismo precio: sin aviso");
   });
 
   it("vuelve a haber stock => la línea agotada vuelve a ser pedible", () => {

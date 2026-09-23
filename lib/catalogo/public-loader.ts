@@ -26,6 +26,14 @@ export const cargarInicio = cache((slug: string) => servicio().getHome(slug));
 /** Ficha pública de un producto (detal) por referencia. */
 export const cargarProducto = cache((slug: string, referencia: string) => servicio().getProduct({ slug, reference: referencia }));
 
+/** Marco de la tienda mayorista (exige el token exacto). */
+export const cargarTiendaMayor = cache((slug: string, token: string) => servicio().getWholesaleStorefront(slug, token));
+
+/** Ficha mayorista de un producto (precio mayor; exige el token exacto). */
+export const cargarProductoMayor = cache((slug: string, token: string, referencia: string) =>
+  servicio().getProduct({ slug, reference: referencia, context: "wholesale", token }),
+);
+
 /** Primer valor de un searchParam (Next entrega string | string[] | undefined). */
 export function param(value: string | string[] | undefined): string | undefined {
   const v = Array.isArray(value) ? value[0] : value;

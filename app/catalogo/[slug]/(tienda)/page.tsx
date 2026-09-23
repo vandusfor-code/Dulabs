@@ -41,7 +41,7 @@ export default async function CatalogoDetalPage({ params, searchParams }: Props)
   if (!listado) {
     const home = await cargarInicio(slug);
     if (!home) notFound();
-    return <TiendaInicio home={home} config={storefrontConfigFor(tienda.slug)} slug={tienda.slug} basePath={basePath} listPath={listPath} businessName={tienda.publicName} />;
+    return <TiendaInicio home={home} config={storefrontConfigFor(tienda.slug)} basePath={basePath} listPath={listPath} businessName={tienda.publicName} />;
   }
 
   const data = await cargarCatalogoPublico(slug, "retail", undefined, q, categoria, paginaDe(sp.pagina));
@@ -60,7 +60,7 @@ export default async function CatalogoDetalPage({ params, searchParams }: Props)
           categoria={categoria}
           compact
           listPath={listPath}
-          tile={(p) => <TarjetaProducto product={p} slug={tienda.slug} />}
+          tile={(p) => <TarjetaProducto product={p} basePath={basePath} />}
         />
       </div>
     </>

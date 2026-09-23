@@ -9,8 +9,7 @@
  * La proyección pública lleva UN solo precio (el del contexto) y nada
  * interno: ni id técnico, ni tenant, ni el precio del otro contexto.
  */
-import { orderWhatsappMessage, whatsappUrl } from "@/lib/catalogo/pedido";
-import { availabilityOf, isReference, maxOrderableUnits, priceFor, type Availability, type CatalogCategory, type CatalogProduct, type PriceContext } from "@/lib/catalogo/domain";
+import { availabilityOf, isReference, priceFor, publicOrderLimit, type Availability, type CatalogCategory, type CatalogProduct, type PriceContext } from "@/lib/catalogo/domain";
 
 export interface CatalogPublication {
   slug: string;
@@ -40,9 +39,9 @@ export interface PublicCatalogProduct {
   /** "available" | "low" (últimas unidades) | "sold_out" — reglas en availabilityOf (dominio). */
   availability: Availability;
   /**
-   * Máximo pedible decidido por el backend: el stock si el producto controla
-   * inventario, null = sin límite de inventario. Solo sirve para impedir
-   * cantidades imposibles en el carrito; la interfaz no lo exhibe como dato.
+   * Máximo pedible PÚBLICO (discreto, ver publicOrderLimit): el stock solo
+   * cuando es pequeño; null = sin tope visible. Sirve para impedir cantidades
+   * imposibles en el carrito; el backend valida SIEMPRE contra el stock real.
    */
   maxQuantity: number | null;
 }
@@ -129,7 +128,8 @@ export function toPublicProduct(product: CatalogProduct, context: PriceContext, 
     thumbUrl: images?.thumbUrl ?? null,
     available: availabilityOf(product) !== "sold_out",
     availability: availabilityOf(product),
-    maxQuantity: maxOrderableUnits(product),
+    // Discreto: el número exacto solo si es pequeño (ver publicOrderLimit).
+    maxQuantity: publicOrderLimit(product),
   };
 }
 
@@ -202,12 +202,7 @@ export function productPath(slug: string, reference: string): string {
   return `/catalogo/${slug}/productos/${reference.toLowerCase()}`;
 }
 
-/**
- * Link de WhatsApp de UNA pieza (catálogo mayorista, sin carrito). Mismo
- * formato centralizado que el pedido de la tienda (`orderWhatsappMessage`):
- * la referencia exacta primero, para que el agente (y el asesor) identifiquen
- * la pieza.
- */
-export function whatsappOrderLink(phone: string | null, product: Pick<PublicCatalogProduct, "reference" | "name">, context: PriceContext): string | null {
-  return whatsappUrl(phone, orderWhatsappMessage([{ reference: product.reference, name: product.name, quantity: 1 }], context));
+/** Ficha del producto dentro de la tienda de un canal (detal: /catalogo/{slug}; mayor: /catalogo/{slug}/mayor/{token}). */
+export function productPathIn(basePath: string, reference: string): string {
+  return `${basePath}/productos/${reference.toLowerCase()}`;
 }

@@ -12,6 +12,9 @@
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import {
   CATALOG_LIMITS,
+  availabilityOf,
+  maxOrderableUnits,
+  priceFor,
   detailPathOf,
   imageStoragePaths,
   normalizeSearch,
@@ -33,14 +36,18 @@ import {
 import { CatalogError } from "@/lib/catalogo/errors";
 import type { CatalogRepository, ProductOrigin, ProductPatchData, PublicImageObject, StoredMedia } from "@/lib/catalogo/repository";
 import {
+  buildOrderDraft,
   normalizeOrderItems,
   orderWhatsappMessage,
   prepareOrder as prepararPedido,
   whatsappUrl,
+  type OrderDraft,
   type OrderItem,
   type PreparedOrder,
   type ResolvedOrderProduct,
 } from "@/lib/catalogo/pedido";
+import { orderEventId, orderRequestId, readQuote, signQuote, type OrderKey } from "@/lib/catalogo/pedido-firma";
+import { orderRequestCreatedEvent, type OrderRequestEventSink } from "@/lib/catalogo/eventos-pedido";
 import {
   PUBLIC_PAGE_SIZE,
   isValidSlug,
@@ -456,6 +463,12 @@ export interface ResolvedSelection {
   items: PublicCatalogProduct[];
   /** Referencias que ya no existen o no están activas en este catálogo. */
   unknown: string[];
+  /**
+   * Cotización FIRMADA de estos precios (ver pedido-firma.ts): el navegador la
+   * devuelve al pedir para detectar "el precio cambió". null si el backend no
+   * tiene clave de firma configurada.
+   */
+  quote: string | null;
 }
 
 /**
@@ -468,8 +481,25 @@ export interface ResolvedSelection {
  *   - "no_whatsapp": el catálogo no tiene número de pedidos configurado.
  */
 export type PreparedOrderResult =
-  | { status: "ready"; order: PreparedOrder; selection: ResolvedSelection; whatsappUrl: string }
-  | { status: "adjusted" | "no_whatsapp"; order: PreparedOrder; selection: ResolvedSelection };
+  | { status: "ready"; order: PreparedOrder; selection: ResolvedSelection; whatsappUrl: string; draft: OrderDraft; message: string }
+  /**
+   * - adjusted: algo no es posible (agotado, menos stock, retirado) o el precio cambió;
+   * - review: no hay cotización válida (el cliente no vio los precios vigentes): se le muestran y confirma;
+   * - no_whatsapp: el catálogo no tiene número de pedidos.
+   */
+  | { status: "adjusted" | "review" | "no_whatsapp"; order: PreparedOrder; selection: ResolvedSelection };
+
+/** Dependencias del flujo de pedidos (clave de firma, salida de eventos, reloj). Inyectadas: se prueban sin red. */
+export interface OrderDeps {
+  /** null = sin clave: el pedido no se puede preparar (falla cerrado). */
+  key: OrderKey | null;
+  events?: OrderRequestEventSink;
+  now?: () => Date;
+  /** Clave de idempotencia si el navegador no mandó una (clientes anteriores). */
+  randomKey?: () => string;
+}
+
+export class OrderSigningUnavailable extends Error {}
 
 interface ImageSource {
   main: string;
@@ -511,7 +541,7 @@ export function normalizeReferences(input: readonly string[]): string[] {
   return out;
 }
 
-export function createPublicCatalogService({ repo }: { repo: CatalogRepository }) {
+export function createPublicCatalogService({ repo, orders }: { repo: CatalogRepository; orders?: OrderDeps }) {
   type Publication = NonNullable<Awaited<ReturnType<CatalogRepository["getPublicationBySlug"]>>>;
 
   /** Publicación visible por slug: publicada y con el módulo habilitado; null en cualquier otro caso (=> 404). */
@@ -544,13 +574,15 @@ export function createPublicCatalogService({ repo }: { repo: CatalogRepository }
    * dentro del tenant de la publicación, solo productos ACTIVOS, con la
    * proyección pública (precio del contexto, disponibilidad y máximo pedible).
    */
-  async function resolveFor(pub: Publication, rawReferences: readonly string[], context: PriceContext): Promise<ResolvedSelection> {
+  async function resolveFor(pub: Publication, rawReferences: readonly string[], context: PriceContext): Promise<ResolvedSelection & { products: CatalogProduct[] }> {
     const references = normalizeReferences(rawReferences);
     const found = references.length > 0 ? await repo.getProductsByReferences(pub.tenantId, references) : [];
     const activos = found.filter((p) => p.status === "ACTIVE");
     const items = await project(pub, activos, context);
     const resueltas = new Set(items.map((p) => p.reference));
-    return { context, items, unknown: references.filter((r) => !resueltas.has(r)) };
+    const key = orders?.key ?? null;
+    const quote = key ? signQuote(key, { businessId: pub.tenantId, channel: context }, new Map(items.map((p) => [p.reference, p.price]))) : null;
+    return { context, items, unknown: references.filter((r) => !resueltas.has(r)), quote, products: activos };
   }
 
   /** Destacados según la política vigente (ver FeaturedPolicy). */
@@ -565,6 +597,14 @@ export function createPublicCatalogService({ repo }: { repo: CatalogRepository }
     async getStorefront(slug: string): Promise<PublicStorefront | null> {
       const pub = await openPublication(slug);
       if (!pub) return null;
+      const [categories, business] = await Promise.all([repo.listCategories(pub.tenantId), repo.getBusinessProfile(pub.tenantId)]);
+      return { slug: pub.slug, publicName: pub.publicName, whatsapp: business.whatsapp, categories };
+    },
+
+    /** Marco de la tienda MAYORISTA: el mismo, pero solo con el token exacto de la publicación (si no, null => 404). */
+    async getWholesaleStorefront(slug: string, token: string): Promise<PublicStorefront | null> {
+      const pub = await openPublication(slug);
+      if (!pub || !contextAllowed(pub, "wholesale", token)) return null;
       const [categories, business] = await Promise.all([repo.listCategories(pub.tenantId), repo.getBusinessProfile(pub.tenantId)]);
       return { slug: pub.slug, publicName: pub.publicName, whatsapp: business.whatsapp, categories };
     },
@@ -651,35 +691,75 @@ export function createPublicCatalogService({ repo }: { repo: CatalogRepository }
       const context = input.context ?? "retail";
       const pub = await openPublication(input.slug);
       if (!pub || !contextAllowed(pub, context, input.token)) return null;
-      return resolveFor(pub, input.references, context);
+      // Solo la proyección pública: los productos internos (stock exacto, ids) nunca salen de aquí.
+      const resolved = await resolveFor(pub, input.references, context);
+      return { context: resolved.context, items: resolved.items, unknown: resolved.unknown, quote: resolved.quote };
     },
 
     /**
-     * Prepara el pedido (lo que el navegador envía es solo `OrderItem[]`):
-     * vuelve a resolver cada referencia en ESTE negocio y ESTA publicación
-     * -> producto real -> precio vigente -> stock vigente -> disponibilidad,
-     * y solo con un pedido sin ajustes arma el mensaje de WhatsApp en el
-     * servidor. Nunca usa precios ni stock enviados por el cliente.
+     * Prepara la SOLICITUD de pedido (lo que el navegador envía es solo
+     * `OrderItem[]` + dos datos opacos del propio backend):
+     *
+     *   1. publicación + canal autorizados (el mayorista exige su token);
+     *   2. cada referencia se resuelve de nuevo en ESTE negocio: producto
+     *      ACTIVO -> precio vigente del canal -> stock REAL (no el discreto
+     *      que ve el público) -> disponibilidad;
+     *   3. validación ATÓMICA: si algo no es posible o el precio cambió
+     *      respecto de la cotización firmada, no se abre WhatsApp;
+     *   4. OrderDraft + id corto idempotente + mensaje armado aquí + evento.
+     *
+     * No descuenta stock, no reserva, no crea una venta.
      */
-    async prepareOrder(input: { slug: string; items: readonly OrderItem[]; context?: PriceContext; token?: string }): Promise<PreparedOrderResult | null> {
+    async prepareOrder(input: {
+      slug: string;
+      items: readonly OrderItem[];
+      context?: PriceContext;
+      token?: string;
+      quote?: string;
+      requestKey?: string;
+    }): Promise<PreparedOrderResult | null> {
       const context = input.context ?? "retail";
       const pub = await openPublication(input.slug);
       if (!pub || !contextAllowed(pub, context, input.token)) return null;
+      const key = orders?.key ?? null;
+      if (!key) throw new OrderSigningUnavailable("Falta la clave de firma de pedidos (CATALOG_ORDER_SECRET o SUPABASE_SERVICE_ROLE_KEY).");
+
       const items = normalizeOrderItems(input.items);
-      const selection = await resolveFor(
+      const { products, ...selection } = await resolveFor(
         pub,
         items.map((i) => i.reference),
         context,
       );
+      // Verdad INTERNA (stock exacto, id interno): la del público es discreta.
       const verdad = new Map<string, ResolvedOrderProduct>(
-        selection.items.map((p) => [p.reference, { reference: p.reference, name: p.name, price: p.price, availability: p.availability, maxQuantity: p.maxQuantity }]),
+        products.map((p) => [p.reference, { reference: p.reference, productId: p.id, name: p.name, price: priceFor(p, context), availability: availabilityOf(p), maxQuantity: maxOrderableUnits(p) }]),
       );
-      const order = prepararPedido(items, verdad);
+      const scope = { businessId: pub.tenantId, channel: context };
+      const quoted = readQuote(key, scope, input.quote);
+      const order = prepararPedido(items, verdad, quoted);
       if (order.lines.length === 0 || order.adjustments.length > 0) return { status: "adjusted", order, selection };
+      // Sin cotización válida (o con líneas que el cliente no alcanzó a ver con su precio): que revise los precios vigentes.
+      if (!quoted || order.lines.some((l) => !quoted.has(l.reference))) return { status: "review", order, selection };
+
       const business = await repo.getBusinessProfile(pub.tenantId);
-      const url = whatsappUrl(business.whatsapp, orderWhatsappMessage(order.lines, context));
+      const identity = {
+        businessId: pub.tenantId,
+        channel: context,
+        requestKey: input.requestKey ?? orders?.randomKey?.() ?? randomUUID(),
+        items: order.lines.map((l) => ({ reference: l.reference, quantity: l.quantity })),
+      };
+      const requestId = orderRequestId(key, identity);
+      const message = orderWhatsappMessage(order.lines, context, { requestId, total: order.total, unpricedUnits: order.unpricedUnits });
+      const url = whatsappUrl(business.whatsapp, message);
       if (!url) return { status: "no_whatsapp", order, selection };
-      return { status: "ready", order, selection, whatsappUrl: url };
+
+      const draft = buildOrderDraft({ requestId, businessId: pub.tenantId, publication: pub, channel: context, order, now: (orders?.now ?? (() => new Date()))() });
+      const event = orderRequestCreatedEvent(draft, orderEventId(key, identity));
+      // Publicar es "mejor esfuerzo": el pedido del cliente nunca falla por esto.
+      await (orders?.events?.publish(event) ?? Promise.resolve()).catch((err: unknown) => {
+        console.error("[catalogo/pedido] no se pudo publicar el evento:", err instanceof Error ? err.message : err);
+      });
+      return { status: "ready", order, selection, whatsappUrl: url, draft, message };
     },
 
     /**

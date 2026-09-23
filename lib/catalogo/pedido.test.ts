@@ -113,7 +113,7 @@ describe("mensaje de WhatsApp (formato centralizado)", () => {
     { reference: "DL-000186", name: "Anillo esencia", quantity: 1 },
   ];
 
-  it("referencia primero, nombre y cantidad; cierre fijo", () => {
+  it("REFERENCIA + PRODUCTO + CANTIDAD por línea, resumen y cierre fijo", () => {
     assert.equal(
       orderWhatsappMessage(lineas, "retail"),
       [
@@ -122,9 +122,20 @@ describe("mensaje de WhatsApp (formato centralizado)", () => {
         "• DL-000184 · Dije corazón — 2 unidades",
         "• DL-000186 · Anillo esencia — 1 unidad",
         "",
-        "Quiero información para realizar la compra.",
+        "Total de productos: 2",
+        "Unidades: 3",
+        "",
+        "Quisiera información para realizar el pedido.",
       ].join("\n"),
     );
+  });
+
+  it("con la solicitud: id corto y total estimado calculado por el backend", () => {
+    const texto = orderWhatsappMessage(lineas, "retail", { requestId: "DL-ORD-7F42KQ", total: 1_250_000, unpricedUnits: 0 });
+    assert.match(texto, /\nTotal estimado: \$1\.250\.000\n/);
+    assert.match(texto, /\nSolicitud: DL-ORD-7F42KQ\nQuisiera información para realizar el pedido\.$/);
+    assert.match(orderWhatsappMessage(lineas, "retail", { total: 90_000, unpricedUnits: 1 }), /Total estimado: \$90\.000 \+ 1 producto con precio a consultar/);
+    assert.doesNotMatch(orderWhatsappMessage(lineas, "retail", { total: 0, unpricedUnits: 3 }), /Total estimado/, "sin precios no se inventa un total");
   });
 
   it("el pedido mayorista lo declara", () => {
@@ -141,25 +152,29 @@ describe("mensaje de WhatsApp (formato centralizado)", () => {
   });
 
   it("el webhook lo lee de forma determinista (ida y vuelta)", () => {
-    assert.deepEqual(parseOrderMessage(orderWhatsappMessage(lineas, "retail")), {
+    assert.deepEqual(parseOrderMessage(orderWhatsappMessage(lineas, "retail", { requestId: "DL-ORD-7F42KQ", total: 100_000 })), {
       context: "retail",
       items: [
         { reference: "DL-000184", quantity: 2 },
         { reference: "DL-000186", quantity: 1 },
       ],
+      requestId: "DL-ORD-7F42KQ",
     });
     assert.deepEqual(parseOrderMessage(orderWhatsappMessage([{ reference: "DL-000184", name: "Dije — oro", quantity: 3 }], "wholesale")), {
       context: "wholesale",
       items: [{ reference: "DL-000184", quantity: 3 }],
+      requestId: null,
     });
   });
 
   it("también lee el formato de la fase anterior", () => {
     const legado = "Hola, estoy interesado(a) en estos productos:\n\n• Dije — Ref. DL-000184 — Cantidad: 2\n\nTotal de productos: 2";
-    assert.deepEqual(parseOrderMessage(legado), { context: "retail", items: [{ reference: "DL-000184", quantity: 2 }] });
+    assert.deepEqual(parseOrderMessage(legado), { context: "retail", items: [{ reference: "DL-000184", quantity: 2 }], requestId: null });
+    const fase3 = "Hola, me interesan estos productos:\n\n• DL-000184 · Dije — 2 unidades\n\nQuiero información para realizar la compra.";
+    assert.deepEqual(parseOrderMessage(fase3).items, [{ reference: "DL-000184", quantity: 2 }]);
   });
 
   it("nunca interpreta nombres ni texto libre", () => {
-    assert.deepEqual(parseOrderMessage("Hola, quiero el dije corazón y el anillo DL-000186"), { context: null, items: [] });
+    assert.deepEqual(parseOrderMessage("Hola, quiero el dije corazón y el anillo DL-000186"), { context: null, items: [], requestId: null });
   });
 });
