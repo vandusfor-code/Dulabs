@@ -131,7 +131,7 @@ export function ZonaCarga({
         {analyzing ? <Loader2 className="size-7 animate-spin" /> : <FileSpreadsheet className="size-7" />}
       </div>
       <h2 className="mt-5 text-lg font-semibold tracking-tight text-fg sm:text-xl">
-        {analyzing ? t("Analizando productos…", "Analyzing products…") : dragging ? t("Suéltalos aquí", "Drop them here") : t("Importa tus productos", "Import your products")}
+        {analyzing ? t("Estamos revisando tus productos…", "We're reviewing your products…") : dragging ? t("Suéltalos aquí", "Drop them here") : t("Importa tus productos", "Import your products")}
       </h2>
       <p className="mx-auto mt-1.5 max-w-md text-sm text-mist">
         {analyzing

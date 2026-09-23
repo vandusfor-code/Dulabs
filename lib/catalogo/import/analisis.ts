@@ -234,7 +234,9 @@ export function analyzeImport(input: AnalyzeInput): ImportAnalysis {
     [normalizeText(name), categoryIdentity, normalizeText(color), normalizeText(material)].join("|");
   for (const p of input.existing) {
     const k = dupKey(p.name, p.categoryId ?? "", p.color, p.material);
-    if (!catalogByKey.has(k)) catalogByKey.set(k, p);
+    const prev = catalogByKey.get(k);
+    // Si varios coinciden, se informa el que vino de una carga masiva (señal más fuerte de "ya importado").
+    if (!prev || (prev.importId === null && p.importId !== null)) catalogByKey.set(k, p);
   }
   const fileByKey = new Map<string, number>();
 
@@ -279,18 +281,14 @@ export function analyzeImport(input: AnalyzeInput): ImportAnalysis {
       } else {
         fileByKey.set(k, row);
         if (inCatalog) {
-          duplicateOf = { kind: "catalog", reference: inCatalog.reference, name: inCatalog.name };
-          issues.push(
-            issue(
-              row,
-              "duplicate_in_catalog",
-              "warning",
-              "name",
-              forced
-                ? `Ya existe «${inCatalog.name}» (${inCatalog.reference}); se importará de todas formas, como producto nuevo`
-                : `Ya existe «${inCatalog.name}» en tu catálogo (${inCatalog.reference}). Se omitirá, salvo que elijas importarlo de todas formas`,
-            ),
-          );
+          const imported = inCatalog.importId !== null;
+          duplicateOf = { kind: "catalog", reference: inCatalog.reference, name: inCatalog.name, imported };
+          const text = forced
+            ? `Ya existe «${inCatalog.name}» (${inCatalog.reference}); se importará de todas formas, como producto nuevo`
+            : imported
+              ? `«${inCatalog.name}» ya se cargó en una importación anterior (${inCatalog.reference}). Se omitirá para no duplicarlo`
+              : `Ya existe «${inCatalog.name}» en tu catálogo (${inCatalog.reference}). Se omitirá, salvo que elijas importarlo de todas formas`;
+          issues.push(issue(row, imported ? "already_imported" : "duplicate_in_catalog", "warning", "name", text));
         }
       }
     }

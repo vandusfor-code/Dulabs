@@ -14,8 +14,9 @@
 import type { CatalogCategory, ImageConfirmInput, ImageUploadRequest } from "@/lib/catalogo/domain";
 import { CatalogError, isCatalogError } from "@/lib/catalogo/errors";
 import { analyzeImport, normalizeText } from "@/lib/catalogo/import/analisis";
+import { PERSISTED_STATUS, outcomeOf } from "@/lib/catalogo/import/estados";
 import { IMPORT_LIMITS } from "@/lib/catalogo/import/limites";
-import type { CategoryDecision, ImageInfo, ImportAnalysis, ImportRecord, ImportRowResult, RawRow } from "@/lib/catalogo/import/types";
+import type { CategoryDecision, ImageInfo, ImportAnalysis, ImportAvailability, ImportHistoryItem, ImportRecord, ImportRowResult, RawRow } from "@/lib/catalogo/import/types";
 import type { CatalogRepository, ImportCounts } from "@/lib/catalogo/repository";
 import type { CatalogActor, CatalogService, ImageUploadTicket } from "@/lib/catalogo/service";
 
@@ -46,7 +47,7 @@ export function createCatalogImportService({ repo, catalog }: { repo: CatalogRep
   async function requireOpenImport(actor: CatalogActor, importId: string): Promise<ImportRecord> {
     const imp = await repo.getImport(actor.tenantId, importId);
     if (!imp) throw new CatalogError("NOT_FOUND", "La importación no existe.");
-    if (imp.status === "completada") throw new CatalogError("CONFLICT", "Esta importación ya terminó. Inicia una nueva.");
+    if (imp.status === PERSISTED_STATUS.completed) throw new CatalogError("CONFLICT", "Esta importación ya terminó. Inicia una nueva.");
     return imp;
   }
 
@@ -84,7 +85,20 @@ export function createCatalogImportService({ repo, catalog }: { repo: CatalogRep
       return analyzeImport({ ...req, ...ctx });
     },
 
+    /**
+     * ¿Está activa la carga masiva? (false = falta la migración 20261107000000).
+     * La interfaz lo consulta para habilitar "Importar"; el análisis no depende de esto.
+     */
+    async availability(): Promise<ImportAvailability> {
+      return { available: await repo.importsAvailable() };
+    },
+
     async start(actor: CatalogActor, input: { fileName: string; totalRows: number }): Promise<ImportRecord> {
+      // Se verifica ANTES de crear nada: con la migración a medias no debe
+      // quedar una importación iniciada que luego falle fila por fila.
+      if (!(await repo.importsAvailable())) {
+        throw new CatalogError("FEATURE_UNAVAILABLE", "La carga masiva todavía no está activada. Puedes revisar tu archivo; la importación estará disponible pronto.");
+      }
       return repo.insertImport(actor.tenantId, actor.userId, input);
     },
 
@@ -119,7 +133,7 @@ export function createCatalogImportService({ repo, catalog }: { repo: CatalogRep
           continue;
         }
         if (a.status === "duplicate") {
-          const dup = a.issues.find((i) => i.code === "duplicate_in_catalog");
+          const dup = a.issues.find((i) => i.code === "duplicate_in_catalog" || i.code === "already_imported");
           results.push({ row: a.row, status: "skipped", reference: null, productId: null, name: a.product.name, message: dup?.message ?? `Fila ${a.row}: omitida.`, images: [] });
           continue;
         }
@@ -217,14 +231,17 @@ export function createCatalogImportService({ repo, catalog }: { repo: CatalogRep
     async finish(actor: CatalogActor, importId: string, counts: ImportCounts): Promise<ImportRecord> {
       const imp = await repo.getImport(actor.tenantId, importId);
       if (!imp) throw new CatalogError("NOT_FOUND", "La importación no existe.");
-      if (imp.status === "completada") return imp;
+      if (imp.status === PERSISTED_STATUS.completed) return imp;
       const done = await repo.finishImport(actor.tenantId, importId, counts);
       if (!done) throw new CatalogError("NOT_FOUND", "La importación no existe.");
       return done;
     },
 
-    async history(actor: CatalogActor): Promise<ImportRecord[]> {
-      return repo.listImports(actor.tenantId, HISTORY_LIMIT);
+    /** Historial con el resultado ya derivado. Sin la migración: vacío (no es un error para la persona). */
+    async history(actor: CatalogActor, now = Date.now()): Promise<ImportHistoryItem[]> {
+      if (!(await repo.importsAvailable())) return [];
+      const items = await repo.listImports(actor.tenantId, HISTORY_LIMIT);
+      return items.map((r) => ({ ...r, outcome: outcomeOf(r, now) }));
     },
   };
 }

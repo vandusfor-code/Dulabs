@@ -4,6 +4,7 @@
 import Link from "next/link";
 import { AlertTriangle, CheckCircle2, Download, ImageOff, Loader2, Plus, XCircle } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
+import type { ImportOutcomeFinal } from "@/lib/catalogo/import/estados";
 import type { ImportProgress, ImportReport } from "@/lib/catalogo/import/proceso";
 import { ReferenceTag, actionBtn, cn, primaryBtn } from "@/components/dashboard/catalogo/ui";
 
@@ -26,7 +27,7 @@ export function Proceso({ progress }: { progress: ImportProgress }) {
       <div className="mx-auto flex size-14 items-center justify-center rounded-2xl bg-lime/10 text-lime-text">
         <Loader2 className="size-7 animate-spin" />
       </div>
-      <h2 className="mt-5 text-lg font-semibold text-fg">{t("Importando tus productos", "Importing your products")}</h2>
+      <h2 className="mt-5 text-lg font-semibold text-fg">{t("Estamos registrando tus productos…", "We're registering your products…")}</h2>
       <p className="mt-1 text-sm text-mist" aria-live="polite">
         {etapa}
       </p>
@@ -43,7 +44,7 @@ export function Proceso({ progress }: { progress: ImportProgress }) {
   );
 }
 
-export function Resultado({ report, onNew, onDownloadReport }: { report: ImportReport; onNew: () => void; onDownloadReport: () => void }) {
+export function Resultado({ report, outcome, onNew, onDownloadReport }: { report: ImportReport; outcome: ImportOutcomeFinal; onNew: () => void; onDownloadReport: () => void }) {
   const { t } = useI18n();
   const created = report.rows.filter((r) => r.status === "created");
   const skipped = report.rows.filter((r) => r.status === "skipped");
@@ -57,21 +58,22 @@ export function Resultado({ report, onNew, onDownloadReport }: { report: ImportR
         <div
           className={cn(
             "mx-auto flex size-14 items-center justify-center rounded-full motion-safe:animate-[catalogo-pop_420ms_cubic-bezier(0.16,1,0.3,1)]",
-            created.length > 0 ? "bg-lime text-lime-fg" : "bg-ink-2 text-mist",
+            outcome !== "failed" ? "bg-lime text-lime-fg" : "bg-ink-2 text-mist",
           )}
         >
-          {created.length > 0 ? <CheckCircle2 className="size-7" /> : <XCircle className="size-7" />}
+          {outcome !== "failed" ? <CheckCircle2 className="size-7" /> : <XCircle className="size-7" />}
         </div>
         <h2 className="mt-5 text-xl font-semibold tracking-tight text-fg">
-          {created.length > 0 ? t("Importación completada", "Import completed") : t("No se creó ningún producto", "No product was created")}
+          {outcome === "failed" ? t("No se creó ningún producto", "No product was created") : t("Importación completada", "Import completed")}
         </h2>
         <p className="mt-1 text-sm text-mist">
-          {report.rows.length === 1 ? t("1 producto procesado", "1 product processed") : t(`${report.rows.length} productos procesados`, `${report.rows.length} products processed`)}
+          {created.length === 1 ? t("1 producto creado", "1 product created") : t(`${created.length} productos creados`, `${created.length} products created`)}
+          {errors.length > 0 && <span className="text-red-400"> · {errors.length === 1 ? t("1 requiere corrección", "1 needs a fix") : t(`${errors.length} requieren corrección`, `${errors.length} need fixes`)}</span>}
         </p>
         <div className="mx-auto mt-6 grid max-w-md grid-cols-3 gap-2">
           <Count tone="ok" value={created.length} label={t("creados", "created")} />
           <Count tone="warn" value={skipped.length} label={t("omitidos", "skipped")} />
-          <Count tone="error" value={errors.length} label={t("con error", "with errors")} />
+          <Count tone="error" value={errors.length} label={t("por corregir", "to fix")} />
         </div>
         {report.photosUploaded + report.photoFailures.length > 0 && (
           <p className="mt-4 text-sm text-mist">

@@ -8,7 +8,7 @@
  */
 import type { CatalogCategory, CatalogImage, CatalogProduct, CatalogProductDetail, ProductPage, ProductStatus, StatusFilter } from "@/lib/catalogo/domain";
 import { prepareProductImage, ImagePreparationError, type PreparedImage } from "@/lib/catalogo/image-processing";
-import type { CategoryDecision, ImageInfo, ImportAnalysis, ImportRecord, ImportRowResult, RawRow } from "@/lib/catalogo/import/types";
+import type { CategoryDecision, ImageInfo, ImportAnalysis, ImportHistoryItem, ImportRecord, ImportRowResult, RawRow } from "@/lib/catalogo/import/types";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import type { PublicationView } from "@/lib/catalogo/service";
 
@@ -220,7 +220,8 @@ export function createCatalogClient(accessToken: string) {
       return call(accessToken, `/importaciones/${encodeURIComponent(importId)}/finalizar`, { method: "POST", body: JSON.stringify(counts) });
     },
 
-    listImports(): Promise<CatalogResult<{ imports: ImportRecord[] }>> {
+    /** `available: false` = la carga masiva aún no está activada en la BD (el análisis sí funciona). */
+    listImports(): Promise<CatalogResult<{ available: boolean; imports: ImportHistoryItem[] }>> {
       return call(accessToken, "/importaciones");
     },
 

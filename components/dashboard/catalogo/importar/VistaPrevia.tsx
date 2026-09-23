@@ -43,6 +43,7 @@ export function VistaPrevia({
   onDownloadErrors,
   onImport,
   onRestart,
+  importBlockedReason = null,
 }: {
   fileName: string;
   analysis: ImportAnalysis;
@@ -57,6 +58,8 @@ export function VistaPrevia({
   onDownloadErrors: () => void;
   onImport: () => void;
   onRestart: () => void;
+  /** Motivo por el que aún no se puede importar (p. ej. la carga masiva no está activada). */
+  importBlockedReason?: string | null;
 }) {
   const { t } = useI18n();
   const s = analysis.summary;
@@ -219,6 +222,8 @@ export function VistaPrevia({
                 <Loader2 className="size-4 animate-spin" />
                 {t("Revisando cambios…", "Checking changes…")}
               </span>
+            ) : importBlockedReason ? (
+              <span className="text-amber-300">{importBlockedReason}</span>
             ) : (
               <>
                 <span className="font-semibold text-fg">{s.importable}</span> {t("se importarán", "will be imported")}
@@ -234,7 +239,13 @@ export function VistaPrevia({
                 <span className="hidden sm:inline">{t("Descargar filas con errores", "Download rows with errors")}</span>
               </button>
             )}
-            <button type="button" onClick={onImport} disabled={busy || s.importable === 0} className={cn(primaryBtn, "flex-1 justify-center whitespace-nowrap py-2.5 sm:flex-none")}>
+            <button
+              type="button"
+              onClick={onImport}
+              disabled={busy || s.importable === 0 || importBlockedReason !== null}
+              title={importBlockedReason ?? undefined}
+              className={cn(primaryBtn, "flex-1 justify-center whitespace-nowrap py-2.5 sm:flex-none")}
+            >
               {s.importable === 1 ? t("Importar 1 producto", "Import 1 product") : t(`Importar ${s.importable} productos`, `Import ${s.importable} products`)}
             </button>
           </div>
