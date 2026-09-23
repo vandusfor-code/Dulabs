@@ -329,7 +329,8 @@ export function InfraFlowField({ className = "" }: { className?: string }) {
       // Desplazamiento por capa (paralaje del cursor + una deriva lenta distinta por capa): se calcula una vez y lo comparten las líneas,
       // los nodos, las partículas y los pulsos de esa capa.
       capas.forEach((c, ci) => {
-        desp[ci * 2] = raton.x * c.paralaje + (animado ? Math.sin(t * 0.045 + ci * 1.7) * (1 + ci) : 0);
+        // En mobile (sin cursor) la deriva es solo vertical: el campo nunca se desplaza fuera del ancho de la pantalla.
+        desp[ci * 2] = raton.x * c.paralaje + (animado && !compacto ? Math.sin(t * 0.045 + ci * 1.7) * (1 + ci) : 0);
         desp[ci * 2 + 1] = raton.y * c.paralaje * 0.6 + (animado ? Math.cos(t * 0.037 + ci) * 0.8 : 0);
       });
 
