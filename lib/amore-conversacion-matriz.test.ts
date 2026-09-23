@@ -113,11 +113,39 @@ const geminiConDatos: Gemini = ({ mensaje, contextoNegocio }) => {
   }
   if (/cu[aá]nto (demora|dura)/.test(m)) return consulta(servicio ? `El ${servicio[1]} dura unos ${servicio[3]} minutos 💗` : "¿De qué servicio te gustaría saber? 💗");
   if (/boda|mam[aá]|regal/.test(m)) return consulta("¡Qué lindo! 💗 Para una ocasión especial te pueden gustar el Dipping o el Press On. ¿Te cuento de alguno?");
+  if (/no voy a poder ir|me sali[oó] una vuelta/.test(m)) return { ...consulta(""), intent: "CANCELAR_CITA" };
+  if (/cambiar(la)? para otro d[ií]a|pasar(la)? para otro d[ií]a/.test(m)) return { ...consulta(""), intent: "REPROGRAMAR_CITA" };
   return consulta("Claro 💗 ¿En qué te puedo ayudar?");
 };
 
-function crearBot(opciones: { clienteRegistrado?: boolean; gemini?: Gemini; crearCita?: AgendaV2RouterDeps["crearCitaConNylas"] } = {}) {
+/** Cita REAL futura de la clienta (Cristal, Dipping) para los casos de cancelar/reprogramar. */
+function citaExistente() {
+  return {
+    id: 77,
+    id_tenant: T,
+    phone_number_id: phoneNumberIdWhatsappQr(T),
+    telefono_cliente: TEL,
+    especialista_id: 1263,
+    servicio: "Dipping",
+    servicio_id: "s-dipping",
+    inicio: new Date(`${DIA_OBJETIVO}T10:00:00-05:00`).toISOString(),
+    fin: new Date(`${DIA_OBJETIVO}T12:00:00-05:00`).toISOString(),
+    estado: "confirmada",
+    bloquea_horario: true,
+  };
+}
+
+function crearBot(
+  opciones: {
+    clienteRegistrado?: boolean;
+    gemini?: Gemini;
+    crearCita?: AgendaV2RouterDeps["crearCitaConNylas"];
+    conCitaExistente?: boolean;
+  } = {},
+) {
   const tablas = tablasAmore(opciones.clienteRegistrado ?? true);
+  if (opciones.conCitaExistente) tablas.dulabs_citas_especialista = [citaExistente()];
+  const reprogramaciones: { citaId: number; nuevoInicio: Date }[] = [];
   const db = crearSupabaseEnMemoria(tablas, { defaults: DEFAULTS });
   const enviados: { telefono: string; mensaje: string }[] = [];
   const citas: { especialistaId: number; servicioId: string; inicio: Date }[] = [];
@@ -139,6 +167,14 @@ function crearBot(opciones: { clienteRegistrado?: boolean; gemini?: Gemini; crea
     hoyIsoParaExtraccion: () => HOY,
     createNylasEventsWriteClient: () => ({ createEvent: async () => ({ id: "evt" }), deleteEvent: async () => {} }),
     guardarNylasEventIdDeCita: async () => {},
+    obtenerNylasEventIdDeCita: async () => null,
+    borrarNylasEventIdDeCita: async () => {},
+    // Solo la ESCRITURA de la reprogramación se simula (actualizarCitaConNylas tiene su propia suite con revalidación).
+    actualizarCitaConNylas: (async (_s: unknown, p: { citaId: number; nuevoInicio: Date }) => {
+      reprogramaciones.push({ citaId: p.citaId, nuevoInicio: p.nuevoInicio });
+      const cita = { ...citaExistente(), inicio: p.nuevoInicio.toISOString() };
+      return { ok: true, cita, nylasEventId: "evt", especialista: { id: 1263, nombre: "Cristal" }, servicio: { id: "s-dipping", nombre: "Dipping", duracionMin: 120 } };
+    }) as never,
     crearCitaConNylas:
       opciones.crearCita ??
       (async (_s, p) => {
@@ -179,7 +215,8 @@ function crearBot(opciones: { clienteRegistrado?: boolean; gemini?: Gemini; crea
   }
   const sesion = () => (tablas.dulabs_agenda_v2_sesiones ?? []).find((s) => s.activo) ?? null;
   const entrada = () => (tablas.dulabs_amore_entrada ?? [])[0] ?? null;
-  return { decir, citas, llamadasGemini, sesion, entrada };
+  const citaReal = () => (tablas.dulabs_citas_especialista ?? []).find((c) => c.id === 77) ?? null;
+  return { decir, citas, reprogramaciones, llamadasGemini, sesion, entrada, citaReal };
 }
 
 let restaurar: () => void = () => {};
@@ -418,5 +455,62 @@ describe("G. Casos límite", () => {
     } finally {
       restaurarLogs();
     }
+  });
+});
+
+describe("H. Citas existentes -- cancelar y reprogramar (siempre con confirmación explícita)", () => {
+  it("'ya no voy a poder ir a mi cita' -> muestra SU cita real y pide confirmar; 'sí' -> la cancela de verdad", async () => {
+    conNylas(AGENDA_NORMAL());
+    const bot = crearBot({ conCitaExistente: true });
+    await bot.decir("Hola");
+    const pregunta = await bot.decir("ya no voy a poder ir a mi cita");
+    assert.match(pregunta.respuestas.join("\n"), /Cristal/, "muestra la cita REAL (profesional)");
+    assert.equal(bot.citaReal()!.estado, "confirmada", "nada se cancela sin confirmar");
+    await bot.decir("sí");
+    assert.equal(bot.citaReal()!.estado, "cancelada");
+  });
+
+  it("'no' a la pregunta de cancelar -> la cita queda INTACTA", async () => {
+    conNylas(AGENDA_NORMAL());
+    const bot = crearBot({ conCitaExistente: true });
+    await bot.decir("Hola");
+    await bot.decir("ya no voy a poder ir a mi cita");
+    await bot.decir("no gracias");
+    assert.equal(bot.citaReal()!.estado, "confirmada");
+    assert.equal(bot.sesion(), null);
+  });
+
+  it("'¿puedo cambiarla para otro día?' -> 'sí' -> días REALES de la MISMA profesional -> día -> hora -> 'sí' -> se reprograma esa cita", async () => {
+    conNylas(AGENDA_NORMAL());
+    const bot = crearBot({ conCitaExistente: true });
+    await bot.decir("Hola");
+    await bot.decir("¿puedo cambiarla para otro día?");
+    await bot.decir("sí");
+    assert.equal(bot.sesion()!.step, "S3_DIA");
+    assert.equal(bot.sesion()!.profesional_id, 1263, "una reprogramación nunca cambia de profesional");
+    const otroDia = sumarDias(DIA_OBJETIVO, 1);
+    const nombreOtroDia = DIAS[new Date(`${otroDia}T12:00:00-05:00`).getDay()]!;
+    // Si el día siguiente cae domingo (salón cerrado) se usa el objetivo mismo, a otra hora.
+    const dia = nombreOtroDia === "domingo" ? NOMBRE_DIA : nombreOtroDia;
+    const fechaElegida = nombreOtroDia === "domingo" ? DIA_OBJETIVO : otroDia;
+    await bot.decir(`el ${dia}`);
+    assert.equal(bot.sesion()!.step, "S4_HORA");
+    await bot.decir("a las 4");
+    assert.equal(bot.sesion()!.step, "S5_CONFIRMAR");
+    assert.equal(bot.reprogramaciones.length, 0, "nada se mueve sin confirmar");
+    await bot.decir("confirmo");
+    assert.equal(bot.reprogramaciones.length, 1);
+    assert.equal(bot.reprogramaciones[0]!.citaId, 77);
+    assert.equal(bot.reprogramaciones[0]!.nuevoInicio.toISOString(), new Date(`${fechaElegida}T16:00:00-05:00`).toISOString());
+  });
+
+  it("'mejor con Mary' durante una reprogramación -> NUNCA cambia de profesional", async () => {
+    conNylas(AGENDA_NORMAL());
+    const bot = crearBot({ conCitaExistente: true });
+    await bot.decir("Hola");
+    await bot.decir("¿puedo cambiarla para otro día?");
+    await bot.decir("sí");
+    await bot.decir("mejor con Mary");
+    assert.equal(bot.sesion()!.profesional_id, 1263);
   });
 });
