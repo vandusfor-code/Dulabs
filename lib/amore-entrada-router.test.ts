@@ -23,7 +23,7 @@ import {
 } from "@/lib/amore-entrada-router";
 import type { ProductoInventario } from "@/lib/amore-inventario";
 import type { EntradaAmore, ModoEntradaAmore } from "@/lib/amore-entrada-sesiones";
-import type { ResultadoClasificacionGemini } from "@/lib/amore-entrada-gemini";
+import { MENSAJE_TRANSFERENCIA_ERROR_TECNICO, type ResultadoClasificacionGemini } from "@/lib/amore-entrada-gemini";
 import { AMORE_TENANT_ID } from "@/lib/nylas/nylas-grant";
 
 const FAKE_SUPABASE = {} as SupabaseClient;
@@ -191,6 +191,18 @@ function armarDeps(overrides: Partial<AmoreEntradaDeps> = {}) {
     buscarNombreConocido: nombreConocido.buscarNombreConocido,
     iniciarAgendaV2: iniciarAgenda.iniciarAgendaV2,
     iniciarGestionCitasAgendaV2: iniciarGestionCitas.iniciarGestionCitasAgendaV2,
+    // Deterministas por defecto: ningún test depende de la red ni de variables de entorno (antes, sin GEMINI_KEY, el
+    // clasificador real respondía siempre "error técnico" y un test podía pasar por casualidad).
+    obtenerHistorial: async () => [],
+    construirContextoNegocio: async () => "CONTEXTO_REAL_DE_PRUEBA",
+    clasificarConGemini: async () => ({
+      intent: "CONSULTA",
+      replyText: "respuesta de prueba",
+      detectedServiceMention: null,
+      detectedProfessionalMention: null,
+      detectedDateMention: null,
+      detectedTimeMention: null,
+    }),
     ...overrides,
   };
   return { deps, entradas, envios, candado, iniciarAgenda, iniciarGestionCitas, nombreConocido };
@@ -513,14 +525,84 @@ describe("Defensivo -- si leer el estado falla (migración no aplicada todavía)
   });
 });
 
-describe("Opción inválida en modo 'inicio' -- ni número ni intención resoluble, nunca repite el menú tal cual", () => {
-  it("un texto sin intención determinista reconocible no avanza de modo, pero ya no repite 'No reconocí esa opción'", async () => {
-    const { deps, entradas, envios } = armarDeps();
+describe("Texto libre en modo 'inicio' -- se atiende conversando (antes: 'fallo' y, al segundo, transferencia a Jessica)", () => {
+  it("'¿Cuánto cuesta el manicure?' tras el menú -> Gemini responde; pasa a modo 'gemini'; nunca repite el menú ni transfiere", async () => {
+    const fake = crearFakeClasificador({ intent: "CONSULTA", replyText: "El manicure tradicional cuesta $25.000 💗 ¿Te ayudo a agendarlo?", detectedServiceMention: "manicure" });
+    const { deps, entradas, envios } = armarDeps({ clasificarConGemini: fake.clasificarConGemini });
     await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "hola", wamid: "w1" }, deps);
-    const r = await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "El viernes tienes para ella?", wamid: "w2" }, deps);
+    const r = await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "¿Cuánto cuesta el manicure?", wamid: "w2" }, deps);
     assert.equal(r.manejado, true);
-    assert.equal(entradas.filas[0]!.modo, "inicio", "nunca infiere una intención inexistente -- sigue esperando 1/2/3 o una intención real");
-    assert.doesNotMatch(envios.enviados.at(-1)!.mensaje, /No reconocí esa opción/, "protección contra ciclo (autorizado) -- ya no repite el menú tal cual");
+    assert.deepEqual(fake.llamadas, ["¿Cuánto cuesta el manicure?"]);
+    assert.equal(envios.enviados.at(-1)!.mensaje, "El manicure tradicional cuesta $25.000 💗 ¿Te ayudo a agendarlo?");
+    assert.equal(entradas.filas[0]!.modo, "gemini");
+    assert.equal(entradas.filas[0]!.notificadoAJessica, false);
+  });
+});
+
+describe("Primer contacto con una necesidad real -- nunca se descarta el mensaje", () => {
+  it("'Hola, quiero hacerme las uñas para una boda' -> bienvenida + respuesta a SU mensaje (sin menú, sin pedirle repetir)", async () => {
+    const fake = crearFakeClasificador({ intent: "CONSULTA", replyText: "¡Qué emoción, una boda! 💗 Para uñas tenemos Dipping y Press On…", detectedServiceMention: "uñas" });
+    const { deps, entradas, envios } = armarDeps({ clasificarConGemini: fake.clasificarConGemini });
+    const r = await procesarEntradaAmore(
+      { supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "Hola, quiero hacerme las uñas para una boda jajaja", wamid: "w1" },
+      deps,
+    );
+    assert.equal(r.manejado, true);
+    assert.deepEqual(fake.llamadas, ["Hola, quiero hacerme las uñas para una boda jajaja"], "el primer mensaje se procesa, no se descarta");
+    assert.equal(envios.enviados.length, 2);
+    assert.match(envios.enviados[0]!.mensaje, /Bienvenido\/a a AMORE/);
+    assert.match(envios.enviados[1]!.mensaje, /una boda/);
+    assert.doesNotMatch(envios.enviados[1]!.mensaje, /1\. Quiero una cita/, "no se le impone el menú cuando ya dijo qué necesita");
+    assert.equal(entradas.filas.length, 1);
+    assert.equal(entradas.filas[0]!.modo, "gemini");
+  });
+
+  it("solo un saludo ('Hola, buenas noches', 'holaaa 💗') -> bienvenida + menú de siempre, modo 'inicio'", async () => {
+    for (const saludo of ["Hola, buenas noches", "holaaa 💗", "Buenos días hermosa!"]) {
+      const fake = crearFakeClasificador({ intent: "CONSULTA", replyText: "no debería llamarse", detectedServiceMention: null });
+      const { deps, entradas, envios } = armarDeps({ clasificarConGemini: fake.clasificarConGemini });
+      await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: saludo, wamid: "w1" }, deps);
+      assert.equal(fake.llamadas.length, 0, saludo);
+      assert.match(envios.enviados[1]!.mensaje, /1\. Quiero una cita/, saludo);
+      assert.equal(entradas.filas[0]!.modo, "inicio", saludo);
+    }
+  });
+});
+
+describe("Gemini recibe los DATOS REALES del negocio (catálogo, precios, fichas)", () => {
+  it("el contexto real se entrega al clasificador en cada consulta", async () => {
+    const recibidos: (string | undefined)[] = [];
+    const { deps } = armarDeps({
+      construirContextoNegocio: async () => "- Dipping: $60.000, 120 min aprox.",
+      clasificarConGemini: async (p: { mensaje: string; contextoNegocio?: string }) => {
+        recibidos.push(p.contextoNegocio);
+        return { intent: "CONSULTA", replyText: "ok", detectedServiceMention: null, detectedProfessionalMention: null, detectedDateMention: null, detectedTimeMention: null };
+      },
+    });
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "¿cuánto cuesta el dipping?", wamid: "w1" }, deps);
+    assert.deepEqual(recibidos, ["- Dipping: $60.000, 120 min aprox."]);
+  });
+
+  it("si los datos no se pueden cargar, la conversación sigue (sin contexto) y nunca se rompe", async () => {
+    const recibidos: (string | undefined)[] = [];
+    const errorOriginal = console.error;
+    console.error = () => {};
+    try {
+      const { deps, envios } = armarDeps({
+        construirContextoNegocio: async () => {
+          throw new Error("supabase caído");
+        },
+        clasificarConGemini: async (p: { mensaje: string; contextoNegocio?: string }) => {
+          recibidos.push(p.contextoNegocio);
+          return { intent: "CONSULTA", replyText: "Te cuento 💗", detectedServiceMention: null, detectedProfessionalMention: null, detectedDateMention: null, detectedTimeMention: null };
+        },
+      });
+      await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "¿qué servicios tienen?", wamid: "w1" }, deps);
+      assert.deepEqual(recibidos, [undefined]);
+      assert.equal(envios.enviados.at(-1)!.mensaje, "Te cuento 💗");
+    } finally {
+      console.error = errorOriginal;
+    }
   });
 });
 
@@ -566,57 +648,82 @@ describe("Protección contra ciclo (autorizado) -- cliente que ignora el menú d
     assert.equal(envios.enviados.at(-1)!.mensaje, "Entiendo que quieres hablar directamente con Jessica. 💗\nYa le notifiqué que deseas comunicarte con ella. En un momento te responderá directamente.");
   });
 
-  it("Tests C/D/G -- primer texto libre sin intención resoluble ofrece orientación clara (nunca repite el menú, nunca transfiere todavía)", async () => {
-    const { deps, entradas, envios } = armarDeps();
+  it("Tests C/D/G -- 'El viernes tienes para ella?' (caso real del bug) -> Gemini lo entiende como reserva y Agenda V2 arranca con la fecha; nunca transfiere", async () => {
+    const fake = crearFakeClasificador({ intent: "TRIGGER_AGENDA", replyText: "", detectedServiceMention: null, detectedDateMention: "el viernes" });
+    const { deps, entradas, iniciarAgenda } = armarDeps({ clasificarConGemini: fake.clasificarConGemini });
     await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "hola", wamid: "w1" }, deps);
     const r = await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "El viernes tienes para ella?", wamid: "w2" }, deps);
     assert.equal(r.manejado, true);
-    assert.equal(entradas.filas[0]!.modo, "inicio", "todavía no transfiere en el primer fallo");
-    assert.equal(entradas.filas[0]!.intentosFallidosConsecutivos, 1);
-    assert.match(envios.enviados.at(-1)!.mensaje, /Parece que buscas algo diferente a las opciones del menú/);
-    assert.match(envios.enviados.at(-1)!.mensaje, /1\. Quiero una cita/, "mantiene la MISMA numeración 1\\/2\\/3, nunca una segunda numeración paralela");
-    assert.match(envios.enviados.at(-1)!.mensaje, /también puedo comunicarte directamente con alguien/, "ofrece el atajo de transferencia humana explícitamente");
+    assert.equal(iniciarAgenda.llamadas.length, 1);
+    assert.equal(entradas.filas[0]!.modo, "gemini");
+    assert.equal(entradas.filas[0]!.notificadoAJessica, false, "preguntar nunca termina transferido a una persona");
   });
 
-  it("Tests E/H -- segundo texto libre SEGUIDO sin intención resoluble transfiere a atención humana (nunca un tercer intento)", async () => {
-    const { deps, entradas, envios, nombreConocido } = armarDeps();
+  it("Tests E/H -- 'Mi amiga tmb quiere' / 'A las 4:30 el viernes para mi amiga' (casos reales) -> se conversa, NUNCA se transfiere por no usar el menú", async () => {
+    const fake = crearFakeClasificador({ intent: "CONSULTA", replyText: "¡Qué lindo plan! 💗 ¿Qué servicio le gustaría a tu amiga?", detectedServiceMention: null });
+    const { deps, entradas, envios, nombreConocido } = armarDeps({ clasificarConGemini: fake.clasificarConGemini });
     await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "hola", wamid: "w1" }, deps);
     await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "Mi amiga tmb quiere", wamid: "w2" }, deps);
     const r = await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "A las 4:30 el viernes para mi amiga por favor", wamid: "w3" }, deps);
     assert.equal(r.manejado, true);
-    assert.equal(entradas.filas[0]!.modo, "atencion_humana", "nunca un tercer intento -- transfiere en el segundo fallo consecutivo");
-    assert.equal(entradas.filas[0]!.notificadoAJessica, true);
-    assert.equal(nombreConocido.llamadas.length, 1);
-    assert.equal(
-      envios.enviados.at(-1)!.mensaje,
-      "💗 Veo que esto es un poco diferente a lo que puedo resolver por aquí. Te voy a comunicar con alguien de nuestro equipo para que te ayude mejor. Un momento 💗",
+    assert.equal(entradas.filas[0]!.modo, "gemini");
+    assert.equal(entradas.filas[0]!.notificadoAJessica, false);
+    assert.equal(nombreConocido.llamadas.length, 0, "nunca se notifica a Jessica por una clienta que solo conversa");
+    assert.equal(envios.enviados.at(-1)!.mensaje, "¡Qué lindo plan! 💗 ¿Qué servicio le gustaría a tu amiga?");
+  });
+
+  it("Test N -- red de seguridad: un fallo TÉCNICO de Gemini + una respuesta real reinicia el conteo (nunca acumula hacia la transferencia)", async () => {
+    let fallar = true;
+    const fake = crearFakeClasificador(() =>
+      fallar
+        ? { intent: "CONSULTA", replyText: "Disculpa, tuve un problema entendiendo tu mensaje 💗 ¿Puedes reformularlo?", detectedServiceMention: null, errorTecnico: true }
+        : { intent: "CONSULTA", replyText: "Claro 💗", detectedServiceMention: null },
     );
+    const errorOriginal = console.error;
+    console.error = () => {};
+    try {
+      const { deps, entradas } = armarDeps({ clasificarConGemini: fake.clasificarConGemini });
+      await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "hola", wamid: "w1" }, deps);
+      await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "¿cuánto cuesta?", wamid: "w2" }, deps);
+      assert.equal(entradas.filas[0]!.intentosFallidosConsecutivos, 1);
+      fallar = false;
+      await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "¿y el dipping?", wamid: "w3" }, deps);
+      assert.equal(entradas.filas[0]!.intentosFallidosConsecutivos, 0, "una respuesta real reinicia el conteo");
+      fallar = true;
+      await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "¿y cuánto demora?", wamid: "w4" }, deps);
+      assert.equal(entradas.filas[0]!.modo, "gemini", "un solo fallo técnico nuevo nunca transfiere");
+    } finally {
+      console.error = errorOriginal;
+    }
   });
 
-  it("Test N -- el contador se reinicia con progreso real: un fallo + una opción válida nunca acumula hacia la transferencia", async () => {
-    const { deps, entradas, iniciarAgenda } = armarDeps();
-    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "hola", wamid: "w1" }, deps);
-    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "El viernes tienes para ella?", wamid: "w2" }, deps);
-    assert.equal(entradas.filas[0]!.intentosFallidosConsecutivos, 1);
-
-    const r = await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "1", wamid: "w3" }, deps);
-    assert.equal(r.manejado, true);
-    assert.equal(entradas.filas[0]!.modo, "gemini", "la opción '1' real sigue funcionando igual después de un fallo previo");
-    assert.equal(iniciarAgenda.llamadas.length, 1);
-    assert.equal(entradas.filas[0]!.intentosFallidosConsecutivos, 0, "progreso real -- nunca conserva un fallo previo ya superado");
-  });
-
-  it("Test F/O -- tras la transferencia, el mecanismo YA EXISTENTE de atención humana deja al bot en silencio total (reutilizado, no un segundo sistema)", async () => {
+  it("Test F/O -- dos fallos TÉCNICOS seguidos de Gemini -> se pasa a una persona diciendo la verdad, y luego silencio total (mecanismo existente)", async () => {
     const entradasCompartidas = crearFakeEntradas();
+    const fake = crearFakeClasificador({
+      intent: "CONSULTA",
+      replyText: "Disculpa, tuve un problema entendiendo tu mensaje 💗 ¿Puedes reformularlo?",
+      detectedServiceMention: null,
+      errorTecnico: true,
+    });
+    const errorOriginal = console.error;
+    console.error = () => {};
     const { deps, envios } = armarDeps({
+      clasificarConGemini: fake.clasificarConGemini,
       crearEntrada: entradasCompartidas.crearEntrada,
       buscarEntrada: entradasCompartidas.buscarEntrada,
       actualizarEntrada: entradasCompartidas.actualizarEntrada,
     });
-    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "hola", wamid: "w1" }, deps);
-    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "Mi amiga tmb quiere", wamid: "w2" }, deps);
-    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "A las 4:30 el viernes para mi amiga por favor", wamid: "w3" }, deps);
-    assert.equal(entradasCompartidas.filas[0]!.modo, "atencion_humana");
+    try {
+      await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "hola", wamid: "w1" }, deps);
+      await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "¿cuánto cuesta el dipping?", wamid: "w2" }, deps);
+      assert.equal(entradasCompartidas.filas[0]!.modo, "gemini", "un solo fallo técnico: todavía no transfiere");
+      await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "¿cuánto cuesta?", wamid: "w3" }, deps);
+    } finally {
+      console.error = errorOriginal;
+    }
+    assert.equal(entradasCompartidas.filas[0]!.modo, "atencion_humana", "nunca un tercer '¿puedes reformularlo?'");
+    assert.equal(entradasCompartidas.filas[0]!.notificadoAJessica, true);
+    assert.equal(envios.enviados.at(-1)!.mensaje, MENSAJE_TRANSFERENCIA_ERROR_TECNICO);
 
     const totalEnviosTrasTransferir = envios.enviados.length;
     const gate = armarDepsGate({}, entradasCompartidas);

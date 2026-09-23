@@ -50,8 +50,12 @@ function listaOpciones(opciones: OpcionFechaAgendaV2[], numeroVerMasFechas: numb
 // real más allá de las ya mostradas (nunca se ofrece una opción que no
 // llevaría a ningún resultado). Comportamiento 100% idéntico al de antes de
 // esta corrección cuando se omite (default `null`).
-export function renderizarMenuFecha(opciones: OpcionFechaAgendaV2[], numeroVerMasFechas: number | null = null): string {
-  return `Perfecto 💗 ¿Qué día deseas agendar?\n\n${listaOpciones(opciones, numeroVerMasFechas)}`;
+export const ENCABEZADO_MENU_FECHA = "Perfecto 💗 ¿Qué día deseas agendar?";
+/** Encabezado neutro para cuando el menú sigue a una mala noticia ("Ese día ya no tiene horarios 😔") -- "Perfecto" ahí sonaba a burla. */
+export const ENCABEZADO_MENU_FECHA_ALTERNATIVAS = "Estos son los días con espacio disponible:";
+
+export function renderizarMenuFecha(opciones: OpcionFechaAgendaV2[], numeroVerMasFechas: number | null = null, encabezado: string = ENCABEZADO_MENU_FECHA): string {
+  return `${encabezado}\n\n${listaOpciones(opciones, numeroVerMasFechas)}`;
 }
 
 export function textoSeleccionInvalidaFecha(opciones: OpcionFechaAgendaV2[], numeroVerMasFechas: number | null = null): string {

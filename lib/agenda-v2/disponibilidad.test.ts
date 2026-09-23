@@ -7,9 +7,9 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { calcularDiasCandidatosReales, calcularHorariosParaFecha, MAX_DIAS_CANDIDATOS, HORIZONTE_DIAS_A_EVALUAR } from "@/lib/agenda-v2/disponibilidad";
+import { calcularDiasCandidatosReales, calcularHorariosParaFecha, causaSinDias, MAX_DIAS_CANDIDATOS, HORIZONTE_DIAS_A_EVALUAR } from "@/lib/agenda-v2/disponibilidad";
 import type { VentanaHoraria } from "@/lib/especialistas";
-import type { ResultadoHorariosConNylas } from "@/lib/disponibilidad-servicio-nylas";
+import type { ResultadoHorariosConNylas, listarHorariosDisponiblesPorServicioConNylas } from "@/lib/disponibilidad-servicio-nylas";
 import { fechaColombiaDesdeIso } from "@/lib/timezone-colombia";
 
 const FAKE_SUPABASE = {} as SupabaseClient;
@@ -277,14 +277,47 @@ describe("calcularDiasCandidatosReales", () => {
     assert.equal(llamadas, 1, "nunca debe seguir probando otros días si el servicio ya no existe");
   });
 
-  it("sin grant/API key de Nylas (tenant sin conexión con el calendario) -> lista vacía, nunca ofrece un día a ciegas", async () => {
+  it("sin grant/API key de Nylas (tenant sin conexión con el calendario) -> lista vacía MARCADA como no configurada, nunca ofrece un día a ciegas ni se confunde con 'sin cupo'", async () => {
     const resultado = await calcularDiasCandidatosReales(
       FAKE_SUPABASE,
       { idTenant: TENANT, servicioId: SERVICIO_ID, profesionalId: PROFESIONAL_ID },
       null,
       { ventanasLaboralesEspecialista: ventanasMary, bloqueosDelDia: sinBloqueos, listarHorariosDisponiblesPorServicioConNylas: nylasNuncaDebeLlamarse, hoyIso: () => HOY },
     );
+    assert.deepEqual(resultado, { ok: true, opciones: [], hayMasFechas: false, calendarioNoConfigurado: true });
+    assert.equal(causaSinDias(resultado as { calendarioNoConfigurado?: true }), "calendario_no_configurado");
+  });
+
+  it("Nylas no confirma el calendario (no_confirmado) -> NO es 'sin cupo': se cuentan los días no verificados y el motivo técnico", async () => {
+    const noConfirmado: typeof listarHorariosDisponiblesPorServicioConNylas = async (_s, p) => ({
+      ok: true,
+      servicio: { id: SERVICIO_ID, nombre: "Dipping", duracionMin: 120 },
+      especialistas: [{ especialistaId: p.especialistaId!, nombre: "Cristal", estado: "no_confirmado", horarios: [], detalleNoConfirmado: "nylas_http_404" }],
+    });
+    const resultado = await calcularDiasCandidatosReales(
+      FAKE_SUPABASE,
+      { idTenant: TENANT, servicioId: SERVICIO_ID, profesionalId: PROFESIONAL_ID },
+      NYLAS_DEPS_FAKE,
+      { ventanasLaboralesEspecialista: ventanasMary, bloqueosDelDia: sinBloqueos, listarHorariosDisponiblesPorServicioConNylas: noConfirmado, hoyIso: () => HOY },
+    );
+    assert.equal(resultado.ok, true);
+    if (!resultado.ok) return;
+    assert.deepEqual(resultado.opciones, []);
+    assert.ok((resultado.diasNoConfirmados ?? 0) > 0);
+    assert.equal(resultado.detalleNoConfirmado, "nylas_http_404");
+    assert.equal(causaSinDias(resultado), "no_confirmado");
+  });
+
+  it("agenda verificada y llena -> causa 'sin_cupo' (sin campos de verificación extra)", async () => {
+    const lleno = nylasPorFecha({});
+    const resultado = await calcularDiasCandidatosReales(
+      FAKE_SUPABASE,
+      { idTenant: TENANT, servicioId: SERVICIO_ID, profesionalId: PROFESIONAL_ID },
+      NYLAS_DEPS_FAKE,
+      { ventanasLaboralesEspecialista: ventanasMary, bloqueosDelDia: sinBloqueos, listarHorariosDisponiblesPorServicioConNylas: lleno.fn, hoyIso: () => HOY },
+    );
     assert.deepEqual(resultado, { ok: true, opciones: [], hayMasFechas: false });
+    assert.equal(causaSinDias(resultado as object), "sin_cupo");
   });
 });
 
@@ -312,13 +345,13 @@ describe("calcularHorariosParaFecha", () => {
     assert.deepEqual(resultado, { ok: false, motivo: "sin_horarios_ese_dia" });
   });
 
-  it("sin grant/API key de Nylas -> ok:false, nunca ofrece un horario a ciegas", async () => {
+  it("sin grant/API key de Nylas -> ok:false 'no_confirmado' (nunca ofrece un horario a ciegas, y nunca afirma que el día no tiene horarios)", async () => {
     const resultado = await calcularHorariosParaFecha(
       FAKE_SUPABASE,
       { idTenant: TENANT, servicioId: SERVICIO_ID, profesionalId: PROFESIONAL_ID, fechaIso: "2026-09-08" },
       null,
     );
-    assert.deepEqual(resultado, { ok: false, motivo: "sin_horarios_ese_dia" });
+    assert.deepEqual(resultado, { ok: false, motivo: "no_confirmado", detalleNoConfirmado: "calendario_no_configurado" });
   });
 
   it("servicio_no_encontrado / sin_especialistas_habilitados se propaga tal cual", async () => {

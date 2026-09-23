@@ -20,7 +20,7 @@ const MAX_PAGINAS = 10;
 
 interface NylasListEventsResponse {
   request_id?: string;
-  data?: Array<{ id: string; when: NylasEvent["when"]; status?: string }>;
+  data?: Array<{ id: string; when: NylasEvent["when"]; status?: string; busy?: boolean }>;
   next_cursor?: string | null;
 }
 
@@ -51,8 +51,11 @@ export function createNylasEventsClient(apiKey: string): NylasEventsClient {
         }
 
         const body = (await res.json()) as NylasListEventsResponse;
-        for (const fila of body.data ?? []) {
-          eventos.push({ id: fila.id, when: fila.when, status: fila.status });
+        // Respuesta AMBIGUA (2xx sin la lista de eventos): nunca se asume "calendario vacío" -- eso ofrecería horarios que
+        // nadie verificó. Se trata como fallo: el caller la marca "no_confirmado".
+        if (!Array.isArray(body.data)) throw new Error("nylas_respuesta_invalida: 2xx sin lista de eventos");
+        for (const fila of body.data) {
+          eventos.push({ id: fila.id, when: fila.when, status: fila.status, busy: fila.busy });
         }
 
         if (!body.next_cursor) break;

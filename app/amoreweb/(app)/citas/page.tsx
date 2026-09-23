@@ -1,9 +1,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Plus, Pencil, Check, X, CalendarX2 } from "lucide-react";
+import { Plus, Pencil, Check, X, CalendarX2, Store } from "lucide-react";
 import { useAdminWeb } from "@/components/admin-web/AdminWebContext";
 import { ColaboradoraDesktopCitas } from "@/components/admin-web/colaboradora/ColaboradoraDesktopCitas";
+import { ServicioPresencialModal } from "@/components/spa-panel/modals/ServicioPresencialModal";
 import { formatearHora, mismoDia } from "@/components/spa-panel/format";
 import type { Cita, EstadoCita } from "@/components/spa-panel/types";
 
@@ -39,8 +40,9 @@ export default function AdminAmoreCitasPage() {
 }
 
 function AdminCitasContenido() {
-  const { datos, procesandoId, confirmar, completar, marcarNoShow, rechazarDirecto, cancelarDirecto, abrirEditar, abrirNueva } =
+  const { token, cargar, datos, procesandoId, confirmar, completar, marcarNoShow, rechazarDirecto, cancelarDirecto, abrirEditar, abrirNueva } =
     useAdminWeb();
+  const [presencial, setPresencial] = useState(false);
   const [dia, setDia] = useState(() => new Date().toISOString().slice(0, 10));
   const [filtro, setFiltro] = useState<Filtro>("todas");
   const [cancelando, setCancelando] = useState<Cita | null>(null);
@@ -72,14 +74,24 @@ function AdminCitasContenido() {
           <h1 className="text-xl font-semibold text-fg">Citas</h1>
           <p className="text-sm text-mist">Gestiona todas las citas del salón</p>
         </div>
-        <button
-          type="button"
-          onClick={() => abrirNueva(new Date(`${dia}T12:00:00`))}
-          className="flex items-center gap-1.5 rounded-xl bg-lime px-4 py-2.5 text-sm font-medium text-lime-fg hover:bg-lime-hover"
-        >
-          <Plus className="size-4" /> Nueva cita
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setPresencial(true)}
+            className="flex items-center gap-1.5 rounded-xl border border-edge bg-card px-4 py-2.5 text-sm font-medium text-fg hover:bg-ink-2"
+          >
+            <Store className="size-4" /> Servicio presencial
+          </button>
+          <button
+            type="button"
+            onClick={() => abrirNueva(new Date(`${dia}T12:00:00`))}
+            className="flex items-center gap-1.5 rounded-xl bg-lime px-4 py-2.5 text-sm font-medium text-lime-fg hover:bg-lime-hover"
+          >
+            <Plus className="size-4" /> Nueva cita
+          </button>
+        </div>
       </div>
+      {presencial && <ServicioPresencialModal token={token} onClose={() => setPresencial(false)} onRegistrado={cargar} />}
 
       <div className="flex items-center justify-between rounded-2xl border border-edge bg-card p-3">
         <input

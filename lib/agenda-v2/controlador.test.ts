@@ -104,7 +104,7 @@ describe("FASE 2 -- manejarMensajeAgendaV2 en S1_SERVICIO", () => {
   });
 
   it("Test 3: texto ambiguo/no numérico -- permanece en S1_SERVICIO", () => {
-    for (const mensaje of ["hola", "quiero el dipping", "no sé", "no se", "asdkjaslkd"]) {
+    for (const mensaje of ["hola", "no sé", "no se", "asdkjaslkd"]) {
       const r = manejarMensajeAgendaV2(sesionEnServicio(), mensaje);
       assert.equal(r.accion, "continuar", `"${mensaje}" nunca debe cerrar la sesión`);
       if (r.accion !== "continuar") continue;
@@ -113,12 +113,13 @@ describe("FASE 2 -- manejarMensajeAgendaV2 en S1_SERVICIO", () => {
     }
   });
 
-  it("'quiero el dipping' (nombre real exacto en texto libre) es INVÁLIDO para esta fase -- solo número, nunca texto", () => {
+  it("'quiero el dipping' (nombre REAL de un servicio mostrado, palabra completa) selecciona ese servicio -- nunca un parecido", () => {
     const r = manejarMensajeAgendaV2(sesionEnServicio(), "quiero el dipping");
-    assert.equal(r.accion, "continuar");
-    if (r.accion !== "continuar") return;
-    assert.equal(r.cambios, undefined);
-    assert.match(r.respuesta, /No reconocí esa opción/);
+    assert.equal(r.accion, "servicio_seleccionado");
+    if (r.accion !== "servicio_seleccionado") return;
+    assert.deepEqual(r.servicioIds, ["s-dipping-real"]);
+    // Un fragmento que NO es el nombre completo nunca se aproxima.
+    assert.equal(manejarMensajeAgendaV2(sesionEnServicio(), "quiero el dip").accion, "continuar");
   });
 
   it("Test 8: la opción reenviada tras un error corresponde EXACTAMENTE a las opciones guardadas en la sesión", () => {
@@ -164,13 +165,21 @@ describe("Ajuste de UX (autorizado) -- manejarMensajeAgendaV2 en la sub-fase de 
     assert.match(r.respuesta, /2\. Uñas/);
   });
 
-  it("texto no numérico (incluido el nombre real de la categoría) -- nunca resuelve por texto libre, solo número exacto", () => {
-    for (const mensaje of ["hola", "uñas", "quiero uñas", "no sé"]) {
+  it("texto sin ninguna categoría mostrada -- permanece mostrando categorías, nunca aproxima", () => {
+    for (const mensaje of ["hola", "no sé", "quiero algo bonito"]) {
       const r = manejarMensajeAgendaV2(sesionEnCategoria(), mensaje);
-      assert.equal(r.accion, "continuar", `"${mensaje}" nunca debe resolver una categoría por texto libre`);
+      assert.equal(r.accion, "continuar", `"${mensaje}" nunca debe resolver una categoría`);
       if (r.accion !== "continuar") continue;
       assert.equal(r.cambios, undefined);
       assert.match(r.respuesta, /No reconocí esa opción/);
+    }
+  });
+
+  it("nombre REAL de una categoría mostrada ('uñas', 'quiero hacerme las uñas') la selecciona", () => {
+    for (const mensaje of ["uñas", "Uñas", "quiero hacerme las uñas", "unas porfa"]) {
+      const r = manejarMensajeAgendaV2(sesionEnCategoria(), mensaje);
+      assert.equal(r.accion, "categoria_seleccionada", `"${mensaje}"`);
+      if (r.accion === "categoria_seleccionada") assert.equal(r.categoria, "Uñas");
     }
   });
 
@@ -217,8 +226,8 @@ describe("FASE 3 (autorizado) -- manejarMensajeAgendaV2 en S2_PROFESIONAL", () =
     assert.match(r.respuesta, /1\. Mary/, "vuelve a mostrar las mismas opciones reales");
   });
 
-  it("Test 5: texto ambiguo/no numérico -- permanece en S2_PROFESIONAL", () => {
-    for (const mensaje of ["hola", "quiero cualquiera", "mary", "no sé"]) {
+  it("Test 5: texto sin profesional ni preferencia -- permanece en S2_PROFESIONAL", () => {
+    for (const mensaje of ["hola", "mar", "¿qué horarios tienen?", "9"]) {
       const r = manejarMensajeAgendaV2(sesionEnProfesional(), mensaje);
       assert.equal(r.accion, "continuar", `"${mensaje}" nunca debe cerrar la sesión`);
       if (r.accion !== "continuar") continue;
@@ -227,8 +236,38 @@ describe("FASE 3 (autorizado) -- manejarMensajeAgendaV2 en S2_PROFESIONAL", () =
     }
   });
 
+  it("nombre de una profesional MOSTRADA ('mary', 'Quiero con Jessica', '¿y Mary?') la selecciona", () => {
+    for (const [mensaje, id] of [
+      ["mary", 1262],
+      ["Quiero con Jessica", 1265],
+      ["¿y Mary?", 1262],
+    ] as const) {
+      const r = manejarMensajeAgendaV2(sesionEnProfesional(), mensaje);
+      assert.equal(r.accion, "profesional_seleccionado", `"${mensaje}"`);
+      if (r.accion === "profesional_seleccionado") assert.equal(r.profesionalId, id);
+    }
+  });
+
+  it("una profesional que NO está entre las mostradas nunca se selecciona (solo opciones reales)", () => {
+    assert.equal(manejarMensajeAgendaV2(sesionEnProfesional(), "quiero con Cristal").accion, "continuar");
+  });
+
+  it("dos profesionales nombradas ('no con Jessica, mejor Mary') -- nunca adivina, pregunta cuál", () => {
+    const r = manejarMensajeAgendaV2(sesionEnProfesional(), "no con Jessica, mejor Mary");
+    assert.equal(r.accion, "continuar");
+    if (r.accion !== "continuar") return;
+    assert.equal(r.cambios, undefined);
+    assert.match(r.respuesta, /Mary o Jessica|Jessica o Mary/);
+  });
+
+  it("'me da igual', 'la que tenga disponibilidad', 'quiero cualquiera', 'no sé' -> profesional_cualquiera (el router elige con la agenda REAL)", () => {
+    for (const mensaje of ["me da igual", "la que tenga disponibilidad", "quiero cualquiera", "mmm no sé", "me da igual quién"]) {
+      assert.equal(manejarMensajeAgendaV2(sesionEnProfesional(), mensaje).accion, "profesional_cualquiera", `"${mensaje}"`);
+    }
+  });
+
   it("Test 13: la opción reenviada tras un error corresponde EXACTAMENTE a las opciones guardadas en la sesión", () => {
-    const r = manejarMensajeAgendaV2(sesionEnProfesional(), "no sé");
+    const r = manejarMensajeAgendaV2(sesionEnProfesional(), "hola");
     assert.equal(r.accion, "continuar");
     if (r.accion !== "continuar") return;
     for (const o of OPCIONES_PROFESIONAL) {
@@ -299,8 +338,24 @@ describe("FASE 4 (autorizado) -- manejarMensajeAgendaV2 en S3_DIA", () => {
     assert.match(r.respuesta, /1\. Martes 8 de septiembre/, "vuelve a mostrar las mismas opciones reales");
   });
 
-  it("Test 10: texto ambiguo/no numérico ('el sábado', 'mañana') -- permanece en S3_DIA, nunca lo interpreta como fecha", () => {
-    for (const mensaje of ["hola", "el sábado", "mañana", "no sé"]) {
+  it("fecha en texto ('mañana', 'mejor el viernes', '¿y el sábado?') -> fecha_seleccionada; el router la valida contra la agenda REAL", () => {
+    const HOY = "2026-09-07"; // lunes
+    for (const [mensaje, fecha] of [
+      ["mañana", "2026-09-08"],
+      ["mejor el viernes", "2026-09-11"],
+      ["¿y el sábado?", "2026-09-12"],
+      ["puede ser el 9 de septiembre", "2026-09-09"],
+    ] as const) {
+      assert.deepEqual(manejarMensajeAgendaV2(sesionEnFecha(), mensaje, { hoyIso: HOY }), { accion: "fecha_seleccionada", fechaIso: fecha }, `"${mensaje}"`);
+    }
+  });
+
+  it("un número fuera de rango NUNCA se reinterpreta como fecha", () => {
+    assert.equal(manejarMensajeAgendaV2(sesionEnFecha(), "9", { hoyIso: "2026-09-07" }).accion, "continuar");
+  });
+
+  it("Test 10: texto sin una fecha concreta -- permanece en S3_DIA, nunca adivina", () => {
+    for (const mensaje of ["hola", "el otro sábado", "cualquier día", "no sé"]) {
       const r = manejarMensajeAgendaV2(sesionEnFecha(), mensaje);
       assert.equal(r.accion, "continuar", `"${mensaje}" nunca debe cerrar la sesión`);
       if (r.accion !== "continuar") continue;
@@ -398,8 +453,24 @@ describe("FASE 5 (autorizado) -- manejarMensajeAgendaV2 en S4_HORA", () => {
     assert.match(r.respuesta, /1\. 9:00 a\. m\./, "vuelve a mostrar las mismas opciones reales");
   });
 
-  it("Test 17: texto ambiguo/no numérico -- permanece en S4_HORA", () => {
-    for (const mensaje of ["hola", "9 am", "la de las 2", "no sé"]) {
+  it("hora o franja en texto ('9 am', 'a las 2', 'en la tarde', 'después de las 5') -> hora_texto: el router la resuelve con los horarios REALES del día", () => {
+    for (const mensaje of ["9 am", "a las 2", "la de las 2", "en la tarde", "después de las 5", "3pm", "a las 4 y media"]) {
+      assert.deepEqual(manejarMensajeAgendaV2(sesionEnHora(), mensaje, { hoyIso: "2026-09-07" }), { accion: "hora_texto", fechaIso: "2026-09-08", texto: mensaje }, `"${mensaje}"`);
+    }
+  });
+
+  it("'mejor el viernes' en el paso de hora -> cambia de día; 'mañana' sola es la franja de la mañana, nunca el día siguiente", () => {
+    assert.deepEqual(manejarMensajeAgendaV2(sesionEnHora(), "mejor el viernes", { hoyIso: "2026-09-07" }), { accion: "fecha_seleccionada", fechaIso: "2026-09-11" });
+    assert.equal(manejarMensajeAgendaV2(sesionEnHora(), "en la mañana", { hoyIso: "2026-09-07" }).accion, "hora_texto");
+  });
+
+  it("un número fuera de rango NUNCA se reinterpreta como hora ('7' no es 'las 7')", () => {
+    const r = manejarMensajeAgendaV2(sesionEnHora(), "7", { hoyIso: "2026-09-07" });
+    assert.equal(r.accion, "continuar");
+  });
+
+  it("Test 17: texto sin hora ni fecha -- permanece en S4_HORA", () => {
+    for (const mensaje of ["hola", "no sé", "cualquiera"]) {
       const r = manejarMensajeAgendaV2(sesionEnHora(), mensaje);
       assert.equal(r.accion, "continuar", `"${mensaje}" nunca debe cerrar la sesión`);
       if (r.accion !== "continuar") continue;
@@ -507,14 +578,31 @@ describe("FASE 6 (autorizado) -- manejarMensajeAgendaV2 en S5_CONFIRMAR", () => 
     assert.match(r.respuesta, /1\. Confirmar cita/);
   });
 
-  it("texto no numérico o interpretación semántica ('sí'/'dale'/'confirmo') -- permanece en S5_CONFIRMAR, nunca se infiere", () => {
-    for (const mensaje of ["hola", "sí", "dale", "confirmo", "no sé"]) {
+  it("confirmación EXPLÍCITA en palabras ('sí', 'dale', 'confirmo', 'Sí, perfecto 💗') -- vocabulario cerrado, mensaje completo", () => {
+    for (const mensaje of ["sí", "Sí!", "dale", "confirmo", "Sí, perfecto 💗", "listo"]) {
+      assert.equal(manejarMensajeAgendaV2(sesionEnConfirmacion(), mensaje).accion, "confirmacion_confirmar", `"${mensaje}"`);
+    }
+  });
+
+  it("'otro día' / 'otra hora' / 'mejor no' -> la acción real correspondiente", () => {
+    assert.equal(manejarMensajeAgendaV2(sesionEnConfirmacion(), "otro día").accion, "confirmacion_cambiar_fecha");
+    assert.equal(manejarMensajeAgendaV2(sesionEnConfirmacion(), "mejor otra hora").accion, "confirmacion_cambiar_hora");
+    assert.equal(manejarMensajeAgendaV2(sesionEnConfirmacion(), "mejor no").accion, "cerrar_sesion");
+  });
+
+  it("afirmación con condición, 'no' suelto o ambigüedad -- NUNCA confirma: permanece en S5_CONFIRMAR", () => {
+    for (const mensaje of ["hola", "sí pero", "sí, aunque no sé", "no", "no sé", "obvio que sí pero luego"]) {
       const r = manejarMensajeAgendaV2(sesionEnConfirmacion(), mensaje);
       assert.equal(r.accion, "continuar", `"${mensaje}" nunca debe cerrar la sesión ni confirmar nada`);
       if (r.accion !== "continuar") continue;
       assert.equal(r.cambios, undefined, `"${mensaje}" nunca debe avanzar/retroceder el step`);
       assert.match(r.respuesta, /No reconocí esa opción/, `"${mensaje}" debe repetir el menú, nunca inferir la intención`);
     }
+  });
+
+  it("'mejor a las 2' / 'mejor el viernes' en la confirmación -> cambio directo (validado después contra la agenda real)", () => {
+    assert.equal(manejarMensajeAgendaV2(sesionEnConfirmacion(), "mejor a las 2", { hoyIso: "2026-09-07" }).accion, "hora_texto");
+    assert.deepEqual(manejarMensajeAgendaV2(sesionEnConfirmacion(), "mejor el viernes", { hoyIso: "2026-09-07" }), { accion: "fecha_seleccionada", fechaIso: "2026-09-11" });
   });
 
   it("'cumpleaños' (coincide con un escenario del Flow Engine) -- se trata como selección inválida, nunca invoca Flow Engine", () => {
@@ -611,8 +699,13 @@ describe("FASE 8 (autorizado) -- manejarMensajeAgendaV2 en SG_CANCELAR_CONFIRMAR
     assert.equal(r.accion, "cerrar_sesion");
   });
 
-  it("número inválido o texto libre ('sí'/'dale') -- permanece en SG_CANCELAR_CONFIRMAR, nunca se infiere", () => {
-    for (const mensaje of ["3", "0", "sí", "dale", "obvio que sí"]) {
+  it("'sí' / 'no' explícitos (vocabulario cerrado, mensaje completo) responden la pregunta de cancelar", () => {
+    assert.equal(manejarMensajeAgendaV2(sesionCancelarConfirmar(), "sí").accion, "cancelacion_confirmada");
+    assert.equal(manejarMensajeAgendaV2(sesionCancelarConfirmar(), "no gracias").accion, "cerrar_sesion");
+  });
+
+  it("número inválido o texto libre ambiguo -- permanece en SG_CANCELAR_CONFIRMAR, nunca se infiere", () => {
+    for (const mensaje of ["3", "0", "obvio que sí", "sí pero mañana", "no sé"]) {
       const r = manejarMensajeAgendaV2(sesionCancelarConfirmar(), mensaje);
       assert.equal(r.accion, "continuar", `"${mensaje}" nunca debía cancelar ni cerrar`);
       if (r.accion !== "continuar") continue;
@@ -650,8 +743,12 @@ describe("FASE 8 (autorizado) -- manejarMensajeAgendaV2 en SG_REPROGRAMAR_CONFIR
     assert.equal(r.accion, "cerrar_sesion");
   });
 
-  it("número inválido o texto libre -- permanece en SG_REPROGRAMAR_CONFIRMAR_INICIO, nunca se infiere", () => {
-    for (const mensaje of ["3", "sí", "dale"]) {
+  it("'dale' explícito responde la pregunta de reprogramar", () => {
+    assert.equal(manejarMensajeAgendaV2(sesionReprogramarInicio(), "dale").accion, "reprogramar_confirmado_inicio");
+  });
+
+  it("número inválido o texto libre ambiguo -- permanece en SG_REPROGRAMAR_CONFIRMAR_INICIO, nunca se infiere", () => {
+    for (const mensaje of ["3", "obvio que sí", "tal vez"]) {
       const r = manejarMensajeAgendaV2(sesionReprogramarInicio(), mensaje);
       assert.equal(r.accion, "continuar", `"${mensaje}" nunca debía avanzar`);
       if (r.accion !== "continuar") continue;

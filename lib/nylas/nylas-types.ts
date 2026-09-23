@@ -15,6 +15,12 @@ export interface NylasEvent {
   when: NylasEventWhen;
   /** "confirmed" | "cancelled" | "tentative" -- eventos cancelados nunca ocupan horario. */
   status?: string;
+  /**
+   * `busy` real de Nylas v3 (Google: transparency opaque=true / transparent=false). `false` = el evento está marcado
+   * "Libre/Disponible" en el calendario y NO ocupa tiempo (ej. un bloque "Turno Cristal", un cumpleaños o recordatorio
+   * de día completo, que Google crea como libres por defecto). Ausente -> se asume ocupado (criterio conservador).
+   */
+  busy?: boolean;
 }
 
 export interface NylasListEventsParams {

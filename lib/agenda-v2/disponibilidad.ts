@@ -63,9 +63,37 @@ export interface DepsDiasCandidatos {
   hoyIso: () => string;
 }
 
+/**
+ * Verificación de una búsqueda de días (campos presentes SOLO cuando aplican). Antes, "no se pudo verificar" y "de
+ * verdad no hay cupo" devolvían exactamente lo mismo (lista vacía), y el router respondía en ambos casos "No
+ * encontramos días disponibles con esa profesional" -- un error técnico se le presentaba a la clienta como falta
+ * de agenda, y en producción no quedaba ningún rastro de por qué.
+ * - diasNoConfirmados: días laborables (con jornada libre tras bloqueos) cuyo calendario Nylas NO se pudo leer.
+ * - detalleNoConfirmado: motivo técnico del primer fallo (ej. "nylas_http_404"), seguro para logs.
+ * - calendarioNoConfigurado: el tenant no tiene grant/API key de Nylas -- no se verificó ningún día.
+ */
+export interface VerificacionDiasCandidatos {
+  diasNoConfirmados?: number;
+  detalleNoConfirmado?: string;
+  calendarioNoConfigurado?: true;
+}
+
 export type ResultadoDiasCandidatos =
-  | { ok: true; opciones: OpcionFechaAgendaV2[]; hayMasFechas: boolean }
+  | ({ ok: true; opciones: OpcionFechaAgendaV2[]; hayMasFechas: boolean } & VerificacionDiasCandidatos)
   | { ok: false; motivo: "servicio_no_encontrado" | "sin_especialistas_habilitados" };
+
+/** Causa real de "cero días": solo "sin_cupo" significa que la agenda se verificó y de verdad está llena. */
+export type CausaSinDias = "sin_cupo" | "no_confirmado" | "calendario_no_configurado";
+
+export function causaSinDias(verificacion: VerificacionDiasCandidatos): CausaSinDias {
+  if (verificacion.calendarioNoConfigurado) return "calendario_no_configurado";
+  if ((verificacion.diasNoConfirmados ?? 0) > 0) return "no_confirmado";
+  return "sin_cupo";
+}
+
+function verificacionDe(diasNoConfirmados: number, detalleNoConfirmado: string | undefined): VerificacionDiasCandidatos {
+  return diasNoConfirmados > 0 ? { diasNoConfirmados, ...(detalleNoConfirmado ? { detalleNoConfirmado } : {}) } : {};
+}
 
 /**
  * Corrección post-deploy (autorizada, "Ver más fechas") -- días de
@@ -112,9 +140,10 @@ function diasEntreFechas(desdeIso: string, hastaIso: string): number {
  * `nylasDeps === null` significa que este tenant no tiene grant_id/API key
  * de Nylas configurados (mismo criterio de "sin conexión con el calendario"
  * ya usado en lib/flow/executors/internal-action-executor.ts) -- nunca se
- * ofrece un día "a ciegas" sin poder confirmarlo contra el calendario real,
- * así que se devuelve la lista vacía (el caller lo trata igual que "sin
- * días disponibles", nunca como un error).
+ * ofrece un día "a ciegas" sin poder confirmarlo contra el calendario real:
+ * se devuelve la lista vacía marcada `calendarioNoConfigurado`, para que el
+ * caller NUNCA le diga a la clienta que la profesional no tiene agenda
+ * cuando en realidad no se pudo consultar (ver causaSinDias).
  */
 export async function calcularDiasCandidatosReales(
   supabase: SupabaseClient,
@@ -123,13 +152,15 @@ export async function calcularDiasCandidatosReales(
   deps: Partial<DepsDiasCandidatos> = {},
 ): Promise<ResultadoDiasCandidatos> {
   if (!nylasDeps) {
-    return { ok: true, opciones: [], hayMasFechas: false };
+    return { ok: true, opciones: [], hayMasFechas: false, calendarioNoConfigurado: true };
   }
 
   const _ventanasLaborales = deps.ventanasLaboralesEspecialista ?? ventanasLaboralesEspecialista;
   const _bloqueosDelDia = deps.bloqueosDelDia ?? bloqueosDelDia;
   const _restarBloqueos = deps.restarBloqueos ?? restarBloqueos;
   const _listarHorarios = deps.listarHorariosDisponiblesPorServicioConNylas ?? listarHorariosDisponiblesPorServicioConNylas;
+  let diasNoConfirmados = 0;
+  let detalleNoConfirmado: string | undefined;
   const _sumarDias = deps.sumarDias ?? sumarDias;
   const _hoyIso = deps.hoyIso ?? (() => fechaColombiaDesdeIso(new Date().toISOString()));
 
@@ -165,18 +196,31 @@ export async function calcularDiasCandidatosReales(
       return { ok: false, motivo: resultado.motivo };
     }
     const especialista = resultado.especialistas.find((e) => e.especialistaId === params.profesionalId);
-    if (!especialista || especialista.estado !== "ok" || especialista.horarios.length === 0) continue; // sin hueco real ese día (agenda llena, o Nylas no pudo confirmar)
+    if (especialista?.estado === "no_confirmado") {
+      // Nylas no pudo leer su calendario ese día -- NO es "agenda llena": se cuenta aparte para que el caller no
+      // lo presente como falta de disponibilidad.
+      diasNoConfirmados++;
+      detalleNoConfirmado ??= especialista.detalleNoConfirmado;
+      continue;
+    }
+    if (!especialista || especialista.horarios.length === 0) continue; // sin hueco real ese día (agenda llena)
 
     fechasCandidatas.push(fechaIso);
   }
 
   const hayMasFechas = fechasCandidatas.length > MAX_DIAS_CANDIDATOS;
-  return { ok: true, opciones: construirOpcionesFecha(fechasCandidatas.slice(0, MAX_DIAS_CANDIDATOS)), hayMasFechas };
+  return {
+    ok: true,
+    opciones: construirOpcionesFecha(fechasCandidatas.slice(0, MAX_DIAS_CANDIDATOS)),
+    hayMasFechas,
+    ...verificacionDe(diasNoConfirmados, detalleNoConfirmado),
+  };
 }
 
+/** "no_confirmado": el calendario no se pudo leer ese día (o no hay Nylas configurado) -- nunca equivale a "ese día no tiene horarios". */
 export type ResultadoHorariosFecha =
   | { ok: true; horarios: string[] }
-  | { ok: false; motivo: "servicio_no_encontrado" | "sin_especialistas_habilitados" | "sin_horarios_ese_dia" };
+  | { ok: false; motivo: "servicio_no_encontrado" | "sin_especialistas_habilitados" | "sin_horarios_ese_dia" | "no_confirmado"; detalleNoConfirmado?: string };
 
 /**
  * UNA sola consulta real (sección "EFICIENCIA / NYLAS": "para horas, una
@@ -190,7 +234,7 @@ export async function calcularHorariosParaFecha(
   deps: Partial<Pick<DepsDiasCandidatos, "listarHorariosDisponiblesPorServicioConNylas">> = {},
 ): Promise<ResultadoHorariosFecha> {
   if (!nylasDeps) {
-    return { ok: false, motivo: "sin_horarios_ese_dia" };
+    return { ok: false, motivo: "no_confirmado", detalleNoConfirmado: "calendario_no_configurado" };
   }
   const _listarHorarios = deps.listarHorariosDisponiblesPorServicioConNylas ?? listarHorariosDisponiblesPorServicioConNylas;
 
@@ -202,7 +246,12 @@ export async function calcularHorariosParaFecha(
   if (!resultado.ok) return { ok: false, motivo: resultado.motivo };
 
   const especialista = resultado.especialistas.find((e) => e.especialistaId === params.profesionalId);
-  if (!especialista || especialista.estado !== "ok" || especialista.horarios.length === 0) {
+  if (especialista?.estado === "no_confirmado") {
+    return especialista.detalleNoConfirmado
+      ? { ok: false, motivo: "no_confirmado", detalleNoConfirmado: especialista.detalleNoConfirmado }
+      : { ok: false, motivo: "no_confirmado" };
+  }
+  if (!especialista || especialista.horarios.length === 0) {
     return { ok: false, motivo: "sin_horarios_ese_dia" };
   }
   return { ok: true, horarios: especialista.horarios };
@@ -250,9 +299,9 @@ export async function calcularDiasCandidatosMultiServicio(
   params: { idTenant: string; especialista: { id: number; nombre: string }; duracionTotalMin: number; continuarDesdeFechaIso?: string },
   nylasDeps: DepsDisponibilidadNylas | null,
   deps: Partial<DepsDisponibilidadMultiServicio> = {},
-): Promise<{ opciones: OpcionFechaAgendaV2[]; hayMasFechas: boolean }> {
+): Promise<{ opciones: OpcionFechaAgendaV2[]; hayMasFechas: boolean } & VerificacionDiasCandidatos> {
   if (!nylasDeps) {
-    return { opciones: [], hayMasFechas: false };
+    return { opciones: [], hayMasFechas: false, calendarioNoConfigurado: true };
   }
 
   const _ventanasLaborales = deps.ventanasLaboralesEspecialista ?? ventanasLaboralesEspecialista;
@@ -264,6 +313,8 @@ export async function calcularDiasCandidatosMultiServicio(
 
   const hoy = _hoyIso();
   const fechasCandidatas: string[] = [];
+  let diasNoConfirmados = 0;
+  let detalleNoConfirmado: string | undefined;
 
   // Corrección post-deploy (autorizado, "agendar hoy" + "Ver más fechas") --
   // mismo criterio EXACTO que calcularDiasCandidatosReales: offset arranca
@@ -285,16 +336,27 @@ export async function calcularDiasCandidatosMultiServicio(
       { idTenant: params.idTenant, especialista: params.especialista, fecha: fechaIso, duracionMin: params.duracionTotalMin },
       nylasDeps,
     );
-    if (resultado.estado !== "ok" || resultado.horarios.length === 0) continue;
+    if (resultado.estado === "no_confirmado") {
+      diasNoConfirmados++;
+      detalleNoConfirmado ??= resultado.detalleNoConfirmado;
+      continue;
+    }
+    if (resultado.horarios.length === 0) continue;
 
     fechasCandidatas.push(fechaIso);
   }
 
   const hayMasFechas = fechasCandidatas.length > MAX_DIAS_CANDIDATOS;
-  return { opciones: construirOpcionesFecha(fechasCandidatas.slice(0, MAX_DIAS_CANDIDATOS)), hayMasFechas };
+  return {
+    opciones: construirOpcionesFecha(fechasCandidatas.slice(0, MAX_DIAS_CANDIDATOS)),
+    hayMasFechas,
+    ...verificacionDe(diasNoConfirmados, detalleNoConfirmado),
+  };
 }
 
-export type ResultadoHorariosFechaMultiServicio = { ok: true; horarios: string[] } | { ok: false; motivo: "sin_horarios_ese_dia" };
+export type ResultadoHorariosFechaMultiServicio =
+  | { ok: true; horarios: string[] }
+  | { ok: false; motivo: "sin_horarios_ese_dia" | "no_confirmado"; detalleNoConfirmado?: string };
 
 /** Mismo criterio EXACTO que calcularHorariosParaFecha -- UNA sola consulta real, ya con la fecha decidida. */
 export async function calcularHorariosParaFechaMultiServicio(
@@ -304,7 +366,7 @@ export async function calcularHorariosParaFechaMultiServicio(
   deps: Partial<Pick<DepsDisponibilidadMultiServicio, "calcularHorariosDeEspecialista">> = {},
 ): Promise<ResultadoHorariosFechaMultiServicio> {
   if (!nylasDeps) {
-    return { ok: false, motivo: "sin_horarios_ese_dia" };
+    return { ok: false, motivo: "no_confirmado", detalleNoConfirmado: "calendario_no_configurado" };
   }
   const _calcularHorarios = deps.calcularHorariosDeEspecialista ?? calcularHorariosDeEspecialista;
 
@@ -313,7 +375,12 @@ export async function calcularHorariosParaFechaMultiServicio(
     { idTenant: params.idTenant, especialista: params.especialista, fecha: params.fechaIso, duracionMin: params.duracionTotalMin },
     nylasDeps,
   );
-  if (resultado.estado !== "ok" || resultado.horarios.length === 0) {
+  if (resultado.estado === "no_confirmado") {
+    return resultado.detalleNoConfirmado
+      ? { ok: false, motivo: "no_confirmado", detalleNoConfirmado: resultado.detalleNoConfirmado }
+      : { ok: false, motivo: "no_confirmado" };
+  }
+  if (resultado.horarios.length === 0) {
     return { ok: false, motivo: "sin_horarios_ese_dia" };
   }
   return { ok: true, horarios: resultado.horarios };

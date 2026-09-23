@@ -76,8 +76,8 @@ function listaOpciones(opciones: OpcionHoraAgendaV2[], numeroVerMasHoras: number
  * EXACTO que renderizarMenuFecha: `null` por defecto, comportamiento
  * 100% idéntico al de antes de esta corrección cuando se omite.
  */
-export function renderizarMenuHora(opciones: OpcionHoraAgendaV2[], numeroVerMasHoras: number | null = null): string {
-  return `Perfecto 💗 Estos son los horarios disponibles:\n\n${listaOpciones(opciones, numeroVerMasHoras)}\n\nSelecciona el horario que prefieras.`;
+export function renderizarMenuHora(opciones: OpcionHoraAgendaV2[], numeroVerMasHoras: number | null = null, encabezado: string = "Perfecto 💗 Estos son los horarios disponibles:"): string {
+  return `${encabezado}\n\n${listaOpciones(opciones, numeroVerMasHoras)}\n\nSelecciona el horario que prefieras.`;
 }
 
 export function textoSeleccionInvalidaHora(opciones: OpcionHoraAgendaV2[], numeroVerMasHoras: number | null = null): string {

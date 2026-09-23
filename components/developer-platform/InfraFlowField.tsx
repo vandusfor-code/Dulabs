@@ -189,7 +189,10 @@ function construirCapa(lienzo: HTMLCanvasElement, prof: number, region: Region, 
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
   g.clearRect(0, 0, w, h);
 
-  const alfaLinea = [0.03, 0.05, 0.095][prof];
+  // Presencia: frente +28 % y medio +20 % respecto al ajuste anterior (0.095 / 0.05); el fondo queda igual para conservar profundidad.
+  const alfaLinea = [0.03, 0.06, 0.122][prof];
+  // Nodos: solo un poco más presentes (frente +15 %, medio +10 %); se separan de las líneas para no subirlos al mismo ritmo.
+  const alfaNodo = [0.03, 0.055, 0.109][prof];
   if (prof === 0) {
     const paso = compacto ? 18 : 22;
     const cx = (region.x0 + region.x1) / 2;
@@ -222,7 +225,7 @@ function construirCapa(lienzo: HTMLCanvasElement, prof: number, region: Region, 
   // Nodos: los extremos casi invisibles; las estaciones intermedias algo más presentes (siempre gris/blanco muy tenue).
   for (const n of nodos) {
     g.fillStyle = "#070707";
-    g.strokeStyle = `rgba(255,255,255,${(alfaLinea * (n.estacion ? 3.4 : 2.2)).toFixed(3)})`;
+    g.strokeStyle = `rgba(255,255,255,${(alfaNodo * (n.estacion ? 3.4 : 2.2)).toFixed(3)})`;
     g.lineWidth = 0.8;
     g.beginPath();
     if (n.forma === "cuadro") g.rect(n.x - n.r, n.y - n.r, n.r * 2, n.r * 2);
@@ -230,7 +233,7 @@ function construirCapa(lienzo: HTMLCanvasElement, prof: number, region: Region, 
     g.fill();
     g.stroke();
     if (n.estacion) {
-      g.fillStyle = `rgba(255,255,255,${(alfaLinea * 3).toFixed(3)})`;
+      g.fillStyle = `rgba(255,255,255,${(alfaNodo * 3).toFixed(3)})`;
       g.fillRect(Math.round(n.x) - 0.5, Math.round(n.y) - 0.5, 1, 1);
     }
   }
@@ -395,14 +398,14 @@ export function InfraFlowField({ className = "", libreDe }: { className?: string
         // Conexiones que aparecen y desaparecen despacio.
         ctx.lineWidth = 0.9;
         for (const b of c.respiran) {
-          const a = Math.pow(0.5 + 0.5 * Math.sin(t * b.vel + b.fase), 3) * 0.16;
+          const a = Math.pow(0.5 + 0.5 * Math.sin(t * b.vel + b.fase), 3) * 0.18;
           if (a < 0.004) continue;
           ctx.strokeStyle = `rgba(255,255,255,${a.toFixed(3)})`;
           ctx.stroke(c.rutas[b.ruta].path);
         }
         // Nodos intermedios con intensidad que varía levemente + brillo al paso de un pulso.
         for (const n of c.nodos) {
-          const base = n.estacion ? 0.07 + 0.05 * Math.sin(t * 0.35 + n.fase) : 0;
+          const base = n.estacion ? 0.08 + 0.055 * Math.sin(t * 0.35 + n.fase) : 0;
           // Al paso de un pulso: sube con suavidad (sin salto), se expande un poco y vuelve despacio a su estado normal.
           if (animado) {
             n.brillo += (n.carga - n.brillo) * Math.min(1, dt * 7);
@@ -480,14 +483,14 @@ export function InfraFlowField({ className = "", libreDe }: { className?: string
           const d = p.d - k * 4;
           if (d < 0 || d > ruta.largo) continue;
           const [x, y] = punto(ruta, d);
-          const a = Math.pow(1 - k / 15, 2) * 0.85 * desvanecer;
+          const a = Math.pow(1 - k / 15, 2) * 0.95 * desvanecer;
           ctx.fillStyle = `rgba(${AZUL}, ${a.toFixed(3)})`;
           if (k === 0) continue;
           ctx.fillRect(x + ox - 0.7, y + oy - 0.7, 1.4, 1.4);
         }
         if (p.d <= ruta.largo) {
           const [x, y] = punto(ruta, p.d);
-          ctx.globalAlpha = 0.45 * desvanecer;
+          ctx.globalAlpha = 0.52 * desvanecer;
           ctx.drawImage(brilloAzul, x + ox - 12, y + oy - 12, 24, 24);
           // Cabeza definida: un punto nítido del mismo azul (antes era un cuadrado de 2 px casi perdido en su propio brillo).
           ctx.globalAlpha = desvanecer;
