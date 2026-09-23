@@ -13,7 +13,7 @@ import robots from "@/app/robots";
 import sitemap from "@/app/sitemap";
 import { CapabilitiesSection } from "@/components/home/CapabilitiesSection";
 import { FaqSection } from "@/components/home/FaqSection";
-import { FinalCta } from "@/components/home/FinalCta";
+import { ContactSection } from "@/components/home/ContactSection";
 import { JsonLd } from "@/components/site/JsonLd";
 import { CAPABILITY_BACKING, CAPABILITY_KEYS } from "@/lib/agent-compiler/spec/capabilities";
 import { CAPACIDADES_HOME, ETIQUETA_CAPACIDAD } from "@/lib/home/capabilities";
@@ -30,7 +30,7 @@ const decodificar = (s: string) => s.replace(/&amp;/g, "&").replace(/&lt;/g, "<"
 const normalizar = (s: string) => decodificar(s).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
 
 const HTML_FAQ = renderToStaticMarkup(<FaqSection />);
-const HTML_CIERRE = renderToStaticMarkup(<FinalCta />);
+const HTML_CIERRE = renderToStaticMarkup(<ContactSection />);
 
 /** Lo que el visitante ve en el acordeón, por pregunta: { id, pregunta, respuesta } */
 function faqVisibles() {
@@ -312,14 +312,22 @@ describe("FAQ -- enlaces internos y accesibilidad", () => {
     }
   });
 
-  it("el cierre (CTA final) es corto y fuerte: la frase, 'Crea tu agente' y 'Hablar con DuLabs'", () => {
-    assert.match(HTML_CIERRE, /<section id="empezar"/);
+  it("el cierre es Contacto: 'Cuéntanos qué necesitas', el formulario real y las dos salidas (WhatsApp y Crea tu agente)", () => {
+    assert.match(HTML_CIERRE, /<section id="contacto"/);
     const t = normalizar(HTML_CIERRE);
-    assert.match(t, /Tu negocio ya tiene procesos\. Ahora pueden trabajar automáticamente\./);
+    assert.match(t, /Cuéntanos qué necesitas\./);
     assert.match(t, /Crea tu agente/);
     assert.match(t, /Hablar con DuLabs/);
+    assert.match(t, /contacto@dulabs\.co/);
     assert.match(HTML_CIERRE, /bg-dev-accent /);
-    assert.ok(t.length < 220, `el cierre debe ser breve (${t.length} caracteres)`);
+    // Mismo endpoint y mismos campos obligatorios que el formulario Enterprise existente (la API valida nombre, empresa, correo y necesidad).
+    const fuente = leer("components", "home", "ContactSection.tsx");
+    assert.match(fuente, /fetch\("\/api\/enterprise\/contacto"/);
+    const control = (campo: string) => new RegExp(`<(input|select)[^>]*name="${campo}"[^>]*>|<(input|select) name="${campo}"[^>]*>`).exec(HTML_CIERRE)?.[0] ?? "";
+    for (const campo of ["nombre", "empresa", "correo", "necesidad"]) assert.match(control(campo), /required/, `${campo} debe ser obligatorio`);
+    assert.match(HTML_CIERRE, /name="telefono"/);
+    assert.match(HTML_CIERRE, /name="detalle"/);
+    for (const evento of ["form_enterprise_start", "form_enterprise_submit"]) assert.match(fuente, new RegExp(evento));
   });
 
   it("el acordeón es accesible: foco visible, marcador nativo oculto solo visualmente y objetivos táctiles amplios", () => {

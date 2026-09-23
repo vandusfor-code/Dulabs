@@ -11,17 +11,20 @@ import { renderToStaticMarkup } from "react-dom/server";
 import sitemap from "@/app/sitemap";
 import { CAPABILITY_BACKING, CAPABILITY_KEYS } from "@/lib/agent-compiler/spec/capabilities";
 import { CapabilitiesSection } from "@/components/home/CapabilitiesSection";
+import { ContactSection } from "@/components/home/ContactSection";
 import { CustomSolutionsSection } from "@/components/home/CustomSolutionsSection";
+import { DevelopersSection } from "@/components/home/DevelopersSection";
 import { FaqSection } from "@/components/home/FaqSection";
-import { FinalCta } from "@/components/home/FinalCta";
 import { HomeHero } from "@/components/home/HomeHero";
 import { HomeNav } from "@/components/home/HomeNav";
 import { HowItWorksSection } from "@/components/home/HowItWorksSection";
+import { MoreThanWhatsappSection } from "@/components/home/MoreThanWhatsappSection";
 import { SchedulingSection } from "@/components/home/SchedulingSection";
+import { WorkProcessSection } from "@/components/home/WorkProcessSection";
 import { CAPACIDADES_A_MEDIDA } from "@/lib/home/enterprise";
 import { CAPACIDADES_HOME, ETAPAS_CREA_TU_AGENTE, ETIQUETA_CAPACIDAD, PASOS_DEL_WIZARD } from "@/lib/home/capabilities";
 import { homeMetadata } from "@/lib/home/seo";
-import { CASOS_HREF, CREAR_AGENTE_HREF, ENTERPRISE_HREF, HABLAR_CON_DULABS_HREF, HABLAR_ESPECIALISTA_HREF, HOME_NAV_LINKS, HOME_PATH } from "@/lib/home/links";
+import { CASOS_HREF, CREAR_AGENTE_HREF, DEVELOPER_DOCS_HREF, DEVELOPER_PLATFORM_HREF, ENTERPRISE_HREF, HABLAR_CON_DULABS_HREF, HABLAR_ESPECIALISTA_HREF, HOME_NAV_LINKS, HOME_PATH } from "@/lib/home/links";
 
 const RAIZ = join(__dirname, "..", "..");
 
@@ -47,14 +50,17 @@ const texto = (html: string) =>
 
 const sinComentarios = (fuente: string) => fuente.replace(/\/\*[\s\S]*?\*\/|(^|[^:])\/\/.*$/gm, "$1");
 
-/** Las secciones que renderiza la home (PricingSection es un componente cliente compartido: se comprueba en el código de la página). */
+/** Las secciones propias de la home, en su orden (PricingSection es un componente compartido: se comprueba en el código de la página). */
 const SECCIONES = [
   { id: "capacidades", html: renderToStaticMarkup(<CapabilitiesSection />) },
   { id: "como-funciona", html: renderToStaticMarkup(<HowItWorksSection />) },
   { id: "agendamiento", html: renderToStaticMarkup(<SchedulingSection />) },
-  { id: "empresas", html: renderToStaticMarkup(<CustomSolutionsSection />) },
+  { id: "soluciones", html: renderToStaticMarkup(<MoreThanWhatsappSection />) },
+  { id: "como-trabajamos", html: renderToStaticMarkup(<WorkProcessSection />) },
   { id: "preguntas-frecuentes", html: renderToStaticMarkup(<FaqSection />) },
-  { id: "empezar", html: renderToStaticMarkup(<FinalCta />) },
+  { id: "empresas", html: renderToStaticMarkup(<CustomSolutionsSection />) },
+  { id: "developers", html: renderToStaticMarkup(<DevelopersSection />) },
+  { id: "contacto", html: renderToStaticMarkup(<ContactSection />) },
 ];
 const seccion = (id: string) => SECCIONES.find((s) => s.id === id)!.html;
 const PAGINA_FUENTE = readFileSync(join(RAIZ, "app", "page.tsx"), "utf8").replace(/\r\n/g, "\n");
@@ -172,16 +178,33 @@ describe("Home -- estructura compacta: la puerta de entrada, no el sitio complet
     assert.match(h2("capacidades"), /Lo que tu agente hace por tu negocio/);
     assert.match(h2("como-funciona"), /Tu agente estándar lo configuras tú\./);
     assert.match(h2("agendamiento"), /De la conversación a la cita confirmada/);
-    assert.match(h2("empresas"), /¿Necesitas algo más que un agente\?/);
+    assert.match(h2("soluciones"), /Construimos tecnología para tu negocio\./);
+    assert.match(h2("como-trabajamos"), /De la idea a una solución funcionando\./);
     assert.match(h2("preguntas-frecuentes"), /Respuestas claras antes de empezar/);
-    assert.match(h2("empezar"), /Tu negocio ya tiene procesos\. Ahora pueden trabajar automáticamente\./);
+    assert.match(h2("empresas"), /No todas las empresas necesitan la misma tecnología\./);
+    assert.match(h2("developers"), /Construye sobre DuLabs\./);
+    assert.match(h2("contacto"), /Cuéntanos qué necesitas\./);
   });
 
-  it("la página tiene exactamente 8 bloques, en este orden: hero, capacidades, cómo funciona, agendamiento, planes, a la medida, FAQ y cierre", () => {
+  it("la página es UNA narrativa de 11 bloques, en este orden: hero, capacidades, crea tu agente, agendamiento, más que WhatsApp, planes, cómo trabajamos, FAQ, a la medida, developers y contacto", () => {
     const cuerpo = PAGINA_FUENTE.slice(PAGINA_FUENTE.indexOf("<main"), PAGINA_FUENTE.indexOf("</main>"));
     const bloques = [...cuerpo.matchAll(/<([A-Z][A-Za-z]+)[\s/>]/g)].map((m) => m[1]);
-    assert.deepEqual(bloques, ["HomeHero", "CapabilitiesSection", "HowItWorksSection", "SchedulingSection", "PricingSection", "CustomSolutionsSection", "FaqSection", "FinalCta"]);
-    assert.ok(bloques.length >= 7 && bloques.length <= 9, "la home debe tener entre 7 y 9 bloques");
+    assert.deepEqual(bloques, [
+      "HomeHero",
+      "CapabilitiesSection",
+      "HowItWorksSection",
+      "SchedulingSection",
+      "MoreThanWhatsappSection",
+      "PricingSection",
+      "WorkProcessSection",
+      "FaqSection",
+      "CustomSolutionsSection",
+      "DevelopersSection",
+      "ContactSection",
+    ]);
+    // Footer (variante home) y el motor de microinteracciones van fuera de <main>; FinalCta se retiró: el cierre es Contacto.
+    assert.match(PAGINA_FUENTE, /<\/main>\s*<Footer variante="home" \/>\s*<ScrollFx \/>/);
+    assert.ok(!existsSync(join(RAIZ, "components", "home", "FinalCta.tsx")));
   });
 
   it("no vuelven las secciones enciclopédicas: cada una tiene su propia página y la home solo la enlaza", () => {
@@ -192,12 +215,14 @@ describe("Home -- estructura compacta: la puerta de entrada, no el sitio complet
     assert.ok(!existsSync(join(RAIZ, "lib", "home", "negocios.ts")));
   });
 
-  it("es considerablemente más corta: pocos caracteres visibles, una sola FAQ de 8 preguntas y sin secciones repetidas", () => {
-    // La versión anterior (13 secciones) tenía ~25.000 caracteres visibles en las secciones propias de la home (31.000 con planes y footer).
-    // Incluye las respuestas de la FAQ, que están en el HTML aunque el acordeón las muestre cerradas.
-    assert.ok(TEXTO_PAGINA.length < 10500, `texto visible de la home: ${TEXTO_PAGINA.length} caracteres`);
+  it("sigue siendo contenida: el texto visible no se infla, una sola FAQ de 8 preguntas y sin secciones repetidas", () => {
+    // La home anterior al rediseño enciclopédico (13 secciones) tenía ~25.000 caracteres visibles en sus secciones propias. La narrativa actual
+    // (10 secciones propias + planes) debe quedarse muy por debajo: cada bloque dice lo suyo y enlaza la profundidad. Incluye las respuestas
+    // de la FAQ, que están en el HTML aunque el acordeón las muestre cerradas.
+    assert.ok(TEXTO_PAGINA.length < 15500, `texto visible de la home: ${TEXTO_PAGINA.length} caracteres`);
     assert.equal((seccion("preguntas-frecuentes").match(/<details /g) ?? []).length, 8);
-    assert.equal((PAGINA.match(/<section /g) ?? []).length, 7, "hero + 6 secciones propias (más PricingSection = 8 bloques)");
+    assert.equal((PAGINA.match(/<section /g) ?? []).length, 10, "hero + 9 secciones propias (más PricingSection = 11 bloques)");
+    assert.equal(new Set(SECCIONES.map((x) => x.id)).size, SECCIONES.length, "sin ids de sección repetidos");
   });
 
   it("las páginas internas siguen existiendo y la home las enlaza (la profundidad vive allí)", () => {
@@ -225,7 +250,50 @@ describe("Home -- estructura compacta: la puerta de entrada, no el sitio complet
     );
     for (const c of CAPACIDADES_A_MEDIDA) for (const it of c.items) assert.ok(t.includes(it), `falta: ${it}`);
     assert.doesNotMatch(t, /\b\d+\s?(clientes|empresas|proyectos)\b/i, "sin cifras de clientes/proyectos");
-    assert.match(html, /id="contacto"/, "el enlace 'Contacto' del footer (/#contacto) debe llevar a esta sección");
+    // La red de capacidades nombra solo líneas de trabajo reales de DuLabs.
+    for (const nodo of ["CRM", "IA", "Automatización", "Integraciones", "Software", "Datos"]) assert.ok(t.includes(nodo), `falta el nodo ${nodo}`);
+    // El enlace 'Contacto' del footer (/#contacto) lleva a la sección de contacto propia.
+    assert.match(seccion("contacto"), /<section id="contacto"/);
+    assert.match(readFileSync(join(RAIZ, "components", "site", "Sections.tsx"), "utf8"), /h: "\/#contacto"/);
+  });
+
+  it("Más que WhatsApp: las 4 líneas de trabajo que el sitio publica, sin tarjetas y con una visualización SVG por línea", () => {
+    const html = seccion("soluciones");
+    const t = texto(html);
+    for (const linea of ["IA & Automatización", "Software a medida", "Integraciones", "Datos & Operaciones"]) {
+      assert.ok(t.includes(linea.replace("&", "&amp;")) || t.includes(linea), `falta: ${linea}`);
+      assert.ok(readFileSync(join(RAIZ, "components", "site", "EnterpriseSections.tsx"), "utf8").includes(`"${linea}"`), `${linea} debe ser una línea ya publicada`);
+    }
+    assert.equal((html.match(/data-fx-opcion=/g) ?? []).length, 4);
+    assert.equal((html.match(/<svg /g) ?? []).length, 4, "una visualización por línea");
+    assert.doesNotMatch(html, /<img |rounded-2xl/, "sin imágenes ni tarjetas");
+  });
+
+  it("Cómo trabajamos: línea de tiempo de 4 pasos (entendemos -> diseñamos -> desarrollamos -> implementamos) activada por scroll", () => {
+    const html = seccion("como-trabajamos");
+    const t = texto(html);
+    let ultima = -1;
+    for (const paso of ["01 Entendemos", "02 Diseñamos", "03 Desarrollamos", "04 Implementamos"]) {
+      const pos = t.indexOf(paso);
+      assert.ok(pos > ultima, `el paso "${paso}" falta o está fuera de orden`);
+      ultima = pos;
+    }
+    assert.match(html, /data-fx-grupo/);
+    assert.equal((html.match(/data-fx-disparador/g) ?? []).length, 4);
+    assert.match(t, /El tiempo depende del alcance/);
+  });
+
+  it("Developers: el contrato público real de la API (POST /api/v1/messages, Bearer dl_live_, Idempotency-Key, 201, webhooks) y sus rutas", () => {
+    const html = seccion("developers");
+    const t = texto(html);
+    for (const pieza of ["/api/v1/messages", "Bearer dl_live_", "Idempotency-Key", "201", "message.received", "message.status", "HMAC-SHA256"]) assert.ok(t.includes(pieza), `falta: ${pieza}`);
+    for (const paso of ["request", "accepted", "sent", "webhook"]) assert.ok(t.includes(paso), `falta el paso ${paso}`);
+    assert.ok(html.includes(`href="${DEVELOPER_PLATFORM_HREF}"`) && html.includes(`href="${DEVELOPER_DOCS_HREF}"`));
+    // Mismo contrato que publica la plataforma para developers (no se inventa uno para la home).
+    const hero = readFileSync(join(RAIZ, "components", "developer-platform", "DevHero.tsx"), "utf8");
+    for (const pieza of ["Bearer dl_live_", "Idempotency-Key", '"whatsappNumberId"', '"jobId"']) assert.ok(hero.includes(pieza), pieza);
+    const openapi = readFileSync(join(RAIZ, "lib", "developers", "openapi.ts"), "utf8");
+    for (const evento of ["message.received", "message.status"]) assert.ok(openapi.includes(`"${evento}"`), evento);
   });
 
   it("el único caso que se nombra (DuMo) existe publicado en /casos y las categorías de A la medida son las que publica el sitio", () => {
@@ -321,7 +389,7 @@ describe("Home -- fidelidad contra el producto real", () => {
 
   it("precios: se reutiliza PricingSection (componente existente) sin escribir precios en la home", () => {
     assert.match(PAGINA_FUENTE, /import \{ Footer, PricingSection \} from "@\/components\/site\/Sections";/);
-    assert.match(PAGINA_FUENTE, /<PricingSection\s+showComparisonLink\s+descripcion="[^"]+"\s+notaImplementacion="[^"]+"\s+notaSuscripcion="[^"]+"\s+\/>/);
+    assert.match(PAGINA_FUENTE, /<PricingSection\s+variante="home"\s+showComparisonLink\s+descripcion="[^"]+"\s+notaImplementacion="[^"]+"\s+notaSuscripcion="[^"]+"\s+\/>/);
     const componente = readFileSync(join(RAIZ, "components", "site", "Sections.tsx"), "utf8");
     assert.match(componente, /def\.precioCop/, "PricingSection debe leer los precios de PLANES (lib/planes.ts)");
   });
@@ -375,9 +443,15 @@ describe("Home -- guardas de calidad", () => {
     for (const ruta of FUENTES_HOME) assert.doesNotMatch(readFileSync(ruta, "utf8"), /logos-clientes|TrustedBySection/, relative(RAIZ, ruta));
   });
 
-  it("solo hay JS cliente donde hace falta: enlace con tracking, menú móvil y la aurora WebGL del hero (nada de avisos de scroll ni otras animaciones por JS)", () => {
+  it("solo hay JS cliente donde hace falta: enlace con tracking, menú móvil, aurora WebGL, formulario de contacto y el motor único de microinteracciones (ScrollFx)", () => {
     const clientes = FUENTES_HOME.filter((r) => /^\s*["']use client["']/.test(readFileSync(r, "utf8"))).map((r) => relative(RAIZ, r).replace(/\\/g, "/"));
-    assert.deepEqual(clientes.sort(), ["components/home/AuroraField.tsx", "components/home/HomeMobileMenu.tsx", "components/home/TrackedLink.tsx"]);
+    assert.deepEqual(clientes.sort(), [
+      "components/home/AuroraField.tsx",
+      "components/home/ContactSection.tsx",
+      "components/home/HomeMobileMenu.tsx",
+      "components/home/ScrollFx.tsx",
+      "components/home/TrackedLink.tsx",
+    ]);
   });
 
   it("no agrega librerías: la home solo importa de react, next, lucide-react (ya instalada) y rutas propias", () => {
@@ -436,17 +510,18 @@ describe("Home -- diseño fluido y responsive real (aprovecha pantallas grandes)
   });
 
   it("cada bloque usa el contenedor fluido con el ancho que le corresponde: rejillas amplias y FAQ de lectura más estrecha", () => {
-    for (const id of ["capacidades", "como-funciona", "agendamiento", "empresas", "empezar"]) assert.match(seccion(id), /class="hx hx-grid /, id);
+    for (const id of ["capacidades", "como-funciona", "agendamiento", "soluciones", "como-trabajamos", "empresas", "developers", "contacto"]) assert.match(seccion(id), /class="hx hx-grid /, id);
     assert.match(seccion("preguntas-frecuentes"), /class="hx hx-read /);
     assert.match(HERO, /class="hx hx-hero /);
   });
 
-  it("PricingSection y Footer (componentes compartidos) se alinean al ancho fluido con reglas acotadas a .home-scope", () => {
-    assert.match(cssHome, /\.home-scope #precios > div,\s*\.home-scope footer > div:first-child \{\s*width: min\(92%, calc\(100% - 2\.5rem\), 1500px\);\s*max-width: none;\s*padding-inline: 0;\s*\}/);
-    assert.match(cssHome, /\.home-scope #precios \.max-w-6xl \{ max-width: none; \}/);
+  it("PricingSection y Footer (componentes compartidos) usan su variante home, con el contenedor fluido; el resto del sitio no cambia", () => {
+    const sections = readFileSync(join(RAIZ, "components", "site", "Sections.tsx"), "utf8");
+    assert.match(sections, /if \(variante === "home"\) \{\s*return \(\s*<section id="precios" aria-labelledby="precios-titulo"[^>]*>\s*<div className="hx hx-grid /);
+    assert.match(sections, /if \(variante === "home"\) \{\s*return \(\s*<footer[^>]*>\s*<div className="hx hx-grid /);
+    assert.match(sections, /variante = "sitio"/, "por defecto (el resto del sitio) la presentación no cambia");
     assert.match(cssHome, /\.home-scope #precios a,\s*\.home-scope #precios button \{ min-height: 44px; \}/);
     assert.match(cssHome, /\.home-scope footer a \{ display: inline-flex; align-items: center; min-height: 44px; \}/);
-    // Nada de esto se aplica fuera de la home: el componente compartido no se editó en su estructura.
     assert.ok(!/#precios/.test(css.slice(0, css.indexOf("Home principal v3"))), "las reglas de #precios solo existen bajo .home-scope");
   });
 
@@ -457,25 +532,45 @@ describe("Home -- diseño fluido y responsive real (aprovecha pantallas grandes)
     }
   });
 
-  it("las rejillas se reorganizan por breakpoints: 1 -> 2 -> 4 (capacidades), 1 -> 5 (etapas), 1 -> 2 -> 4 (agendamiento)", () => {
-    assert.match(seccion("capacidades"), /sm:grid-cols-2 lg:grid-cols-4/);
+  it("las composiciones editoriales pasan a una columna en mobile y se abren por breakpoints (índice + encabezado, flujo 1 -> 5)", () => {
+    for (const id of ["capacidades", "agendamiento", "como-trabajamos"]) assert.match(seccion(id), /lg:grid-cols-\[minmax\(0,0\.8fr\)_minmax\(0,1\.2fr\)\]/, id);
     assert.match(seccion("como-funciona"), /xl:grid-cols-5/);
-    assert.match(seccion("agendamiento"), /md:grid-cols-2 lg:grid-cols-4/);
-    assert.match(seccion("empresas"), /lg:grid-cols-\[minmax\(0,0\.9fr\)_minmax\(0,1\.1fr\)\]/);
+    assert.match(seccion("soluciones"), /lg:grid-cols-\[minmax\(0,1\.15fr\)_minmax\(0,0\.85fr\)\]/);
+    assert.match(seccion("empresas"), /lg:grid-cols-\[minmax\(0,1fr\)_minmax\(0,1fr\)\]/);
+    assert.match(seccion("contacto"), /lg:grid-cols-\[minmax\(0,0\.9fr\)_minmax\(0,1\.1fr\)\]/);
+  });
+
+  it("sin grids de tarjetas: las secciones propias no usan tarjetas con fondo (el único bloque con borde es el código de Developers)", () => {
+    for (const s of SECCIONES) assert.doesNotMatch(s.html, /rounded-(xl|2xl)[^"]*bg-site-card|bg-site-card[^"]*rounded-(xl|2xl)/, `${s.id} no debe tener tarjetas`);
+  });
+
+  it("las microinteracciones son un solo IntersectionObserver sin estado de React por cuadro ni listeners de scroll", () => {
+    const fx = readFileSync(join(RAIZ, "components", "home", "ScrollFx.tsx"), "utf8");
+    assert.match(fx, /new IntersectionObserver/);
+    assert.doesNotMatch(fx, /useState|addEventListener\("scroll"|requestAnimationFrame|setInterval/);
+    // Sin JS el contenido queda visible: los estados pendientes solo existen bajo html.fx-listo, que agrega ScrollFx.
+    assert.match(fx, /classList\.add\("fx-listo"\)/);
+    for (const m of cssHome.matchAll(/opacity: 0; transform: translateY/g)) {
+      const regla = cssHome.slice(cssHome.lastIndexOf("\n", m.index!), m.index!);
+      if (/home-fx-subir|home-log-fila/.test(regla)) assert.match(regla, /\.fx-listo/, "el estado oculto debe depender de .fx-listo");
+    }
+    // Sin scroll hijacking: el flujo usa CSS sticky, nunca bloquea el scroll.
+    assert.match(seccion("como-funciona"), /xl:sticky/);
+    assert.doesNotMatch(readFileSync(join(RAIZ, "app", "globals.css"), "utf8"), /overflow:\s*hidden[^}]*\.fx-listo|scroll-snap-type/);
   });
 
   it("los objetivos táctiles y el foco visible se conservan (enlaces de al menos 44 px)", () => {
-    for (const html of [seccion("preguntas-frecuentes"), seccion("como-funciona"), seccion("empresas")]) assert.match(html, /min-h-11/);
+    for (const html of [seccion("preguntas-frecuentes"), seccion("como-funciona"), seccion("empresas"), seccion("developers"), seccion("contacto")]) assert.match(html, /min-h-11/);
     assert.match(seccion("preguntas-frecuentes"), /min-h-14/);
   });
 });
 
-describe("Home -- identidad monocroma: el único color es la aurora azul/violeta del hero", () => {
-  // La home es monocroma (negro/blanco/gris). El ÚNICO color es la paleta de la aurora del hero (#315CFF #1D4FFF #6547FF #5E8CFF #EAF2FF,
-  // y el rgba(90,130,255) de sus puntos), confinada al shader de AuroraField y a las reglas .home-aurora* / .home-hero-* del CSS. Nada de
-  // verde en la home (el logo se muestra tal cual desde su archivo); cualquier otro color cromático sigue prohibido.
-  const PALETA_AURORA = ["#315cff", "#1d4fff", "#6547ff", "#5e8cff", "#eaf2ff"];
-  const RGB_AURORA = ["49,92,255", "29,79,255", "101,71,255", "94,140,255", "234,242,255", "90,130,255"];
+describe("Home -- identidad monocroma: el color es una señal (azul/violeta de la aurora, verde DuLabs solo para confirmar)", () => {
+  // La home es monocroma (negro/blanco/gris). El color solo aparece como SEÑAL y solo en CSS: la paleta de la aurora (#315CFF #1D4FFF
+  // #6547FF #5E8CFF #EAF2FF y el rgba(90,130,255) de los puntos) para lo activo/tecnológico, y el verde DuLabs (#A8FF3E) como microacento de
+  // "resultado confirmado". Ningún componente escribe colores a mano; cualquier otro color cromático sigue prohibido.
+  const PALETA_AURORA = ["#315cff", "#1d4fff", "#6547ff", "#5e8cff", "#eaf2ff", "#a8ff3e"];
+  const RGB_AURORA = ["49,92,255", "29,79,255", "101,71,255", "94,140,255", "234,242,255", "90,130,255", "168,255,62"];
   function luminancia(hex: string): number {
     const canales = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
     return 0.2126 * canales[0] + 0.7152 * canales[1] + 0.0722 * canales[2];
@@ -519,14 +614,20 @@ describe("Home -- identidad monocroma: el único color es la aurora azul/violeta
     for (const [r, g, b] of rgbs(cssAurora)) assert.ok((r === g && g === b) || RGB_AURORA.includes(`${r},${g},${b}`), `aurora: color fuera de la paleta rgb(${r} ${g} ${b})`);
   });
 
-  it("no hay verde en la home: ni el antiguo token --home-signal ni el verde de marca escrito a mano", () => {
-    assert.doesNotMatch(cssHome, /#c6ff3d|#a8ff3e|--home-signal/i);
+  it("el verde DuLabs es solo un microacento: un token (--home-verde) usado únicamente para confirmar un resultado", () => {
+    assert.doesNotMatch(cssHome, /#c6ff3d|--home-signal/i, "el verde anterior y su token se retiraron");
+    assert.equal([...cssHome.matchAll(/#a8ff3e/gi)].length, 1, "el hex del verde aparece una sola vez: la definición del token");
+    assert.match(cssHome, /--home-verde:\s*#a8ff3e;/);
+    for (const m of cssHome.matchAll(/var\(--home-verde\)|168, 255, 62/g)) {
+      const regla = cssHome.slice(cssHome.lastIndexOf("}", m.index!) + 1, m.index!);
+      assert.match(regla, /home-log-fila--ok|home-form-ok|home-estado/, `el verde solo confirma resultados: ${regla.trim().slice(0, 80)}`);
+    }
     for (const ruta of FUENTES_HOME) assert.doesNotMatch(sinComentarios(readFileSync(ruta, "utf8")), /#c6ff3d|#a8ff3e|home-signal/i, relative(RAIZ, ruta));
     assert.ok(!existsSync(join(RAIZ, "components", "home", "HeroSystem.tsx")), "el hero de placas se retiró");
   });
 
   it("el CTA principal es blanco con texto oscuro (mismos tokens que el botón primario de /developer-platform)", () => {
-    for (const [nombre, html] of [["hero", HERO], ["navbar", NAV], ["a la medida", seccion("empresas")], ["cierre", seccion("empezar")]] as [string, string][]) {
+    for (const [nombre, html] of [["hero", HERO], ["navbar", NAV], ["a la medida", seccion("empresas")], ["developers", seccion("developers")], ["contacto", seccion("contacto")]] as [string, string][]) {
       assert.match(html, /bg-dev-accent /, `${nombre}: el CTA principal debe usar bg-dev-accent`);
       assert.match(html, /text-dev-accent-fg/, `${nombre}: el texto del CTA debe ser oscuro`);
     }
