@@ -1,16 +1,16 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useI18n } from "@/lib/i18n";
 import type { PlanPublico } from "@/lib/developers/planes-publicos";
 import { START_HREF, SECTION_IDS, mailtoVentas } from "./constants";
+import { useBloque } from "./motion";
 import { Encabezado } from "./ui";
 
-// DuLabs Developer -- pricing comparativo. Precios y límites vienen SIEMPRE de /api/developers/plans (lee dulabs_dev_plans): este
-// componente no fija ninguna cifra. Anual = 2 meses gratis, derivado en el backend. Developer/Agency -> registro; Enterprise -> ventas.
-// Desktop: una tabla (los planes como columnas, lo que se compara como filas). Mobile: un bloque por plan con los mismos datos.
-// `children` es la columna de documentación + FAQ del mismo bloque (Build -> Read -> Ship).
+// DuLabs Developer -- pricing. Precios y límites vienen SIEMPRE de /api/developers/plans (lee dulabs_dev_plans): este componente no fija
+// ninguna cifra. Anual = 2 meses gratis, derivado en el backend. Developer/Agency -> registro; Enterprise -> ventas. Tarjetas compactas
+// con las mismas filas en el mismo orden (se comparan de un vistazo). Sin plan «destacado»: el catálogo no tiene ese dato, no se inventa.
 
 type Intervalo = "month" | "year";
 
@@ -59,7 +59,7 @@ function Precio({ plan, intervalo }: { plan: PlanPublico; intervalo: Intervalo }
   );
 }
 
-function Cta({ plan, destacado }: { plan: PlanPublico; destacado: boolean }) {
+function Cta({ plan }: { plan: PlanPublico }) {
   const { t } = useI18n();
   const base = "dp-btn inline-flex h-10 w-full items-center justify-center gap-2 rounded-dp px-4 text-[13.5px] font-medium";
   if (plan.esManual) {
@@ -70,21 +70,19 @@ function Cta({ plan, destacado }: { plan: PlanPublico; destacado: boolean }) {
     );
   }
   return (
-    <Link
-      href={START_HREF}
-      className={`${base} ${destacado ? "bg-dev-accent text-dev-accent-fg hover:bg-dev-accent-hover" : "border border-dp-border-strong text-dp-text hover:border-white/35 hover:bg-white/[0.03]"}`}
-    >
+    <Link href={START_HREF} className={`${base} bg-dev-accent text-dev-accent-fg hover:bg-dev-accent-hover`}>
       {t("Comenzar", "Get started")}
       <span aria-hidden className="dp-flecha">→</span>
     </Link>
   );
 }
 
-export function DevPricing({ children }: { children?: ReactNode }) {
+export function DevPricing() {
   const { t } = useI18n();
   const [planes, setPlanes] = useState<PlanPublico[] | null>(null);
   const [error, setError] = useState(false);
   const [intervalo, setIntervalo] = useState<Intervalo>("month");
+  const { ref, atributos } = useBloque<HTMLElement>({ umbral: 0.15 });
 
   useEffect(() => {
     let vivo = true;
@@ -104,7 +102,6 @@ export function DevPricing({ children }: { children?: ReactNode }) {
     };
   }, []);
 
-  const destacado = (i: number) => i === 1;
   const comparacion = filas(t);
 
   const toggle = (
@@ -124,19 +121,23 @@ export function DevPricing({ children }: { children?: ReactNode }) {
   );
 
   return (
-    <section id={SECTION_IDS.pricing} className="scroll-mt-14 border-t border-dp-border py-20 md:py-28">
+    <section ref={ref} {...atributos} id={SECTION_IDS.pricing} className="scroll-mt-14 border-t border-dp-border py-14 md:py-20">
       <div className="mx-auto max-w-[1440px] px-6">
         <Encabezado
-          indice="06"
-          etiqueta={t("Pricing y docs", "Pricing & docs")}
-          titulo={t("Precios en USD. Documentación abierta.", "Pricing in USD. Open documentation.")}
+          indice="07"
+          etiqueta="Pricing"
+          titulo={t("Precios en USD.", "Pricing in USD.")}
           apoyo={t("Elige un plan y cámbialo cuando quieras desde el dashboard.", "Pick a plan and change it anytime from the dashboard.")}
           accion={toggle}
         />
 
-        <div className="mt-14 md:mt-16">
+        <div className="mt-12 md:mt-14">
           {planes === null && !error ? (
-            <div aria-busy="true" className="h-[360px] animate-pulse rounded-dp-lg border border-dp-border bg-dp-surface" />
+            <div aria-busy="true" className="grid gap-4 md:grid-cols-3">
+              {[0, 1, 2].map((i) => (
+                <div key={i} className="h-[380px] animate-pulse rounded-dp-lg border border-dp-border bg-dp-surface" />
+              ))}
+            </div>
           ) : error ? (
             <div className="border-y border-dp-border py-10 text-center">
               <p className="text-[14px] text-dp-text-2">{t("No pudimos cargar los planes ahora. Escríbenos y te ayudamos.", "We couldn't load plans right now. Reach out and we'll help.")}</p>
@@ -145,72 +146,30 @@ export function DevPricing({ children }: { children?: ReactNode }) {
               </a>
             </div>
           ) : (
-            <>
-              {/* Desktop: tabla comparativa. */}
-              <table className="hidden w-full table-fixed border-collapse md:table">
-                <caption className="sr-only">{t("Comparación de planes", "Plan comparison")}</caption>
-                <thead>
-                  <tr className="border-y border-dp-border">
-                    <th scope="col" className="w-[26%] pt-5 text-left align-top font-mono text-[11px] font-normal uppercase tracking-[0.18em] text-dp-muted">
-                      {t("Plan", "Plan")}
-                    </th>
-                    {planes!.map((p, i) => (
-                      <th key={p.slug} scope="col" className={`px-6 py-5 text-left align-top font-normal ${destacado(i) ? "bg-white/[0.025]" : ""}`}>
-                        <p className="text-[15px] font-medium text-dp-text">{p.nombre}</p>
-                        <div className="mt-4">
-                          <Precio plan={p} intervalo={intervalo} />
-                        </div>
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {comparacion.map((f) => (
-                    <tr key={f.k} className="border-b border-dp-border">
-                      <th scope="row" className="py-3 text-left text-[13.5px] font-normal text-dp-text-2">
-                        {f.k}
-                      </th>
-                      {planes!.map((p, i) => (
-                        <td key={p.slug} className={`px-6 py-3 font-mono text-[13px] tabular-nums text-dp-text ${destacado(i) ? "bg-white/[0.025]" : ""}`}>
-                          {f.v(p)}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                  <tr>
-                    <td />
-                    {planes!.map((p, i) => (
-                      <td key={p.slug} className={`px-6 pb-6 pt-5 ${destacado(i) ? "bg-white/[0.025]" : ""}`}>
-                        <Cta plan={p} destacado={destacado(i)} />
-                      </td>
-                    ))}
-                  </tr>
-                </tbody>
-              </table>
-
-              {/* Mobile: un bloque por plan, mismos datos. */}
-              <div className="border-t border-dp-border md:hidden">
-                {planes!.map((p, i) => (
-                  <div key={p.slug} className="border-b border-dp-border py-6">
-                    <div className="flex items-start justify-between gap-4">
-                      <p className="text-[16px] font-medium text-dp-text">{p.nombre}</p>
-                      <Precio plan={p} intervalo={intervalo} />
-                    </div>
-                    <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-2">
-                      {comparacion.map((f) => (
-                        <div key={f.k}>
-                          <dt className="text-[11.5px] text-dp-muted">{f.k}</dt>
-                          <dd className="font-mono text-[12.5px] text-dp-text">{f.v(p)}</dd>
-                        </div>
-                      ))}
-                    </dl>
-                    <div className="mt-5">
-                      <Cta plan={p} destacado={destacado(i)} />
-                    </div>
+            <ul className="dp-revela grid gap-4 md:grid-cols-3">
+              {planes!.map((p) => (
+                <li key={p.slug} className="dp-panel flex flex-col rounded-dp-lg border border-dp-border bg-dp-surface p-5 md:p-6">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <h3 className="text-[15px] font-medium text-dp-text">{p.nombre}</h3>
+                    <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-dp-muted">{p.esManual ? t("con ventas", "sales") : "self-service"}</span>
                   </div>
-                ))}
-              </div>
-            </>
+                  <div className="mt-4">
+                    <Precio plan={p} intervalo={intervalo} />
+                  </div>
+                  <dl className="mt-5 grid flex-1 grid-cols-2 content-start gap-x-4 gap-y-2.5 border-t border-dp-border pt-4 md:grid-cols-1 md:gap-y-0 md:pt-3">
+                    {comparacion.map((f) => (
+                      <div key={f.k} className="min-w-0 md:flex md:items-baseline md:justify-between md:gap-4 md:py-1.5">
+                        <dt className="truncate text-[11.5px] text-dp-muted md:text-[12.5px]">{f.k}</dt>
+                        <dd className="font-mono text-[12.5px] tabular-nums text-dp-text md:text-right">{f.v(p)}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                  <div className="mt-5">
+                    <Cta plan={p} />
+                  </div>
+                </li>
+              ))}
+            </ul>
           )}
           <p className="mt-4 text-[12.5px] leading-relaxed text-dp-muted">
             {t(
@@ -219,8 +178,6 @@ export function DevPricing({ children }: { children?: ReactNode }) {
             )}
           </p>
         </div>
-
-        {children}
       </div>
     </section>
   );

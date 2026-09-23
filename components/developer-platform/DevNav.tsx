@@ -11,7 +11,7 @@ import { START_HREF, DOCS_HREF, LOGIN_HREF, SECTION_IDS } from "./constants";
 // de scroll: un centinela (IntersectionObserver) decide el fondo, y otro observer marca el bloque activo (aria-current) para que el nav
 // acompañe la lectura. Docs es la única salida de la página (va al portal /developers).
 
-const ANCLAS = [SECTION_IDS.plataforma, SECTION_IDS.api, SECTION_IDS.webhooks, SECTION_IDS.pricing] as const;
+const ANCLAS = [SECTION_IDS.plataforma, SECTION_IDS.capacidades, SECTION_IDS.api, SECTION_IDS.webhooks, SECTION_IDS.pricing] as const;
 
 export function DevNav() {
   const { t } = useI18n();
@@ -47,6 +47,7 @@ export function DevNav() {
 
   const links = [
     { id: SECTION_IDS.plataforma, label: t("Plataforma", "Platform"), href: `#${SECTION_IDS.plataforma}` },
+    { id: SECTION_IDS.capacidades, label: t("Capacidades", "Capabilities"), href: `#${SECTION_IDS.capacidades}` },
     { id: SECTION_IDS.api, label: "API", href: `#${SECTION_IDS.api}` },
     { id: SECTION_IDS.webhooks, label: "Webhooks", href: `#${SECTION_IDS.webhooks}` },
     { id: "docs-externo", label: "Docs", href: DOCS_HREF },

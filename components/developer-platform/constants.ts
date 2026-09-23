@@ -30,8 +30,11 @@ export const API_HOST = DEVELOPER_API_BASE_URL.replace(/^https?:\/\//, "");
 /** Anclas de los bloques de la landing (nav + estado activo). */
 export const SECTION_IDS = {
   plataforma: "plataforma",
+  capacidades: "capacidades",
+  infra: "infraestructura",
   api: "api",
   webhooks: "webhooks",
+  casos: "casos",
   control: "control",
   produccion: "produccion",
   pricing: "pricing",
