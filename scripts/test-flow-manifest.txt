@@ -435,3 +435,5 @@ lib/catalogo/form.test.ts
 lib/catalogo/compat-stock.test.ts
 # Catálogo público (links detal / mayor): sin precios mayoristas ni ids en el link detal, token exacto y rotable.
 lib/catalogo/publicacion.test.ts
+lib/catalogo/carrito.test.ts
+lib/catalogo/inicio.test.ts

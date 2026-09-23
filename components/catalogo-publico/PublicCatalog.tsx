@@ -26,7 +26,7 @@ function ProductTile({ product, whatsapp, context }: { product: PublicCatalogPro
   const pedir = whatsappOrderLink(whatsapp, product, context);
   const detalle = [product.material, product.color].filter(Boolean).join(" · ");
   return (
-    <article className="group flex flex-col overflow-hidden rounded-2xl border border-edge bg-card transition-colors hover:border-white/20">
+    <article className="group flex flex-col overflow-hidden rounded-2xl border border-edge bg-card transition-colors hover:border-fg/20">
       {product.imageUrl ? (
         <a href={product.imageUrl} target="_blank" rel="noopener noreferrer" className="block overflow-hidden bg-ink-2" aria-label={`Ver foto de ${product.name}`}>
           {/* eslint-disable-next-line @next/next/no-img-element -- imagen pública ya optimizada (WebP) en la carga */}
@@ -55,7 +55,7 @@ function ProductTile({ product, whatsapp, context }: { product: PublicCatalogPro
             href={pedir}
             target="_blank"
             rel="noopener noreferrer"
-            className="mt-2 flex items-center justify-center gap-2 rounded-lg border border-white/15 px-3 py-2 text-xs font-medium text-fg transition-colors hover:border-white/40 hover:bg-white/5 sm:text-sm"
+            className="mt-2 flex items-center justify-center gap-2 rounded-lg border border-fg/15 px-3 py-2 text-xs font-medium text-fg transition-colors hover:border-fg/40 hover:bg-fg/5 sm:text-sm"
           >
             <MessageCircle className="size-4 shrink-0" />
             <span className="sm:hidden">Pedir</span>
@@ -67,23 +67,43 @@ function ProductTile({ product, whatsapp, context }: { product: PublicCatalogPro
   );
 }
 
-export function PublicCatalog({ data, basePath, q, categoria }: { data: PublicCatalogPage; basePath: string; q?: string; categoria?: string }) {
+export function PublicCatalog({
+  data,
+  basePath,
+  q,
+  categoria,
+  compact = false,
+  listPath,
+}: {
+  data: PublicCatalogPage;
+  basePath: string;
+  q?: string;
+  categoria?: string;
+  /** Dentro de la tienda (que ya muestra la marca en su header): sin cabecera de marca ni pie propios. */
+  compact?: boolean;
+  /** Destino de "Todo" / "Quitar filtros" (el listado completo). Por defecto, basePath. */
+  listPath?: string;
+}) {
+  const todo = listPath ?? basePath;
   const totalPaginas = Math.max(1, Math.ceil(data.total / data.pageSize));
   const hayFiltros = Boolean(q || categoria);
   const mayor = data.context === "wholesale";
 
   return (
     <div className="mx-auto max-w-7xl px-4 pb-16 sm:px-6 lg:px-8">
-      <header className="flex flex-col gap-6 border-b border-edge py-8 sm:py-12">
-        <div>
+      <header className={cn("flex flex-col border-b border-edge", compact ? "gap-4 py-5 sm:py-8" : "gap-6 py-8 sm:py-12")}>
+        {!compact && (
+          <div>
           <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-mist">Catálogo</p>
           <h1 className="mt-2 text-3xl font-semibold tracking-tight text-fg sm:text-4xl">{data.business.name}</h1>
           <p className="mt-3 inline-flex items-center gap-2 rounded-full border border-edge px-3 py-1 text-xs text-mist">
-            <span className={cn("size-1.5 rounded-full", mayor ? "bg-amber-300" : "bg-white")} />
+            <span className={cn("size-1.5 rounded-full", mayor ? "bg-amber-300" : "bg-fg")} />
             {mayor ? "Precios al por mayor" : "Precios al detal"}
           </p>
-        </div>
+          </div>
+        )}
 
+        {!compact && (
         <form action={basePath} method="get" className="relative max-w-xl" role="search">
           {categoria && <input type="hidden" name="categoria" value={categoria} />}
           <Search className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-mist" />
@@ -93,15 +113,16 @@ export function PublicCatalog({ data, basePath, q, categoria }: { data: PublicCa
             defaultValue={q}
             placeholder="Buscar por nombre o referencia"
             aria-label="Buscar productos"
-            className="w-full rounded-xl border border-edge bg-card py-3 pl-10 pr-4 text-sm text-fg outline-none transition-colors placeholder:text-mist/70 focus:border-white/40"
+            className="w-full rounded-xl border border-edge bg-card py-3 pl-10 pr-4 text-sm text-fg outline-none transition-colors placeholder:text-mist/70 focus:border-fg/40"
           />
         </form>
+        )}
 
         {data.categories.length > 0 && (
           <nav aria-label="Categorías" className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 sm:mx-0 sm:flex-wrap sm:px-0">
             <Link
-              href={href(basePath, { q })}
-              className={cn("shrink-0 rounded-full border px-3.5 py-1.5 text-sm transition-colors", !categoria ? "border-white bg-white font-medium text-black" : "border-edge text-mist hover:border-white/40 hover:text-fg")}
+              href={q ? href(basePath, { q }) : todo}
+              className={cn("shrink-0 rounded-full border px-3.5 py-1.5 text-sm transition-colors", !categoria ? "border-fg bg-fg font-medium text-ink" : "border-edge text-mist hover:border-fg/40 hover:text-fg")}
             >
               Todo
             </Link>
@@ -111,7 +132,7 @@ export function PublicCatalog({ data, basePath, q, categoria }: { data: PublicCa
                 href={href(basePath, { q, categoria: c.id })}
                 className={cn(
                   "shrink-0 rounded-full border px-3.5 py-1.5 text-sm transition-colors",
-                  categoria === c.id ? "border-white bg-white font-medium text-black" : "border-edge text-mist hover:border-white/40 hover:text-fg",
+                  categoria === c.id ? "border-fg bg-fg font-medium text-ink" : "border-edge text-mist hover:border-fg/40 hover:text-fg",
                 )}
               >
                 {c.name}
@@ -124,7 +145,7 @@ export function PublicCatalog({ data, basePath, q, categoria }: { data: PublicCa
       <div className="flex items-center justify-between py-5 text-sm text-mist">
         <span>{data.total === 1 ? "1 producto" : `${data.total.toLocaleString("es-CO")} productos`}</span>
         {hayFiltros && (
-          <Link href={basePath} className="inline-flex items-center gap-1 hover:text-fg">
+          <Link href={todo} className="inline-flex items-center gap-1 hover:text-fg">
             <X className="size-3.5" />
             Quitar filtros
           </Link>
@@ -135,7 +156,7 @@ export function PublicCatalog({ data, basePath, q, categoria }: { data: PublicCa
         <div className="rounded-2xl border border-edge bg-card px-6 py-20 text-center">
           <p className="text-base font-medium text-fg">{hayFiltros ? "No encontramos productos con esa búsqueda" : "Pronto verás productos aquí"}</p>
           {hayFiltros && (
-            <Link href={basePath} className="mt-3 inline-block text-sm text-mist underline-offset-4 hover:text-fg hover:underline">
+            <Link href={todo} className="mt-3 inline-block text-sm text-mist underline-offset-4 hover:text-fg hover:underline">
               Ver todo el catálogo
             </Link>
           )}
@@ -151,7 +172,7 @@ export function PublicCatalog({ data, basePath, q, categoria }: { data: PublicCa
       {totalPaginas > 1 && (
         <nav className="mt-10 flex items-center justify-center gap-3 text-sm" aria-label="Paginación">
           {data.page > 1 ? (
-            <Link href={href(basePath, { q, categoria, pagina: data.page - 1 })} className="rounded-lg border border-edge px-4 py-2 text-fg hover:border-white/40">
+            <Link href={href(basePath, { q, categoria, pagina: data.page - 1 })} className="rounded-lg border border-edge px-4 py-2 text-fg hover:border-fg/40">
               Anterior
             </Link>
           ) : (
@@ -161,7 +182,7 @@ export function PublicCatalog({ data, basePath, q, categoria }: { data: PublicCa
             Página {data.page} de {totalPaginas}
           </span>
           {data.page < totalPaginas ? (
-            <Link href={href(basePath, { q, categoria, pagina: data.page + 1 })} className="rounded-lg border border-edge px-4 py-2 text-fg hover:border-white/40">
+            <Link href={href(basePath, { q, categoria, pagina: data.page + 1 })} className="rounded-lg border border-edge px-4 py-2 text-fg hover:border-fg/40">
               Siguiente
             </Link>
           ) : (
@@ -170,12 +191,14 @@ export function PublicCatalog({ data, basePath, q, categoria }: { data: PublicCa
         </nav>
       )}
 
+      {!compact && (
       <footer className="mt-16 border-t border-edge pt-6 text-center text-xs text-mist">
         Catálogo creado con{" "}
         <a href="https://www.dulabs.co" className="text-fg hover:underline">
           DuLabs
         </a>
       </footer>
+      )}
     </div>
   );
 }
