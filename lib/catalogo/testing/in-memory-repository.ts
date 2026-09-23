@@ -49,6 +49,11 @@ export function createInMemoryCatalogRepository() {
   const profiles = new Map<string, { name: string | null; whatsapp: string | null }>();
   const modulesEnabled = new Set<string>();
   const imports = new Map<string, ImportRecord & { tenantId: string }>();
+  /** false = simula la BD sin la migración de carga masiva. */
+  let importsEnabled = true;
+  const unavailable = () => new CatalogError("FEATURE_UNAVAILABLE", "La carga masiva todavía no está activada. Intenta de nuevo más tarde o avísale al equipo de DuLabs.");
+  /** Simula un fallo inesperado (no CatalogError) en la lectura de claves. */
+  let failKeys = false;
   /** Simula una caída de la BD al insertar (tests de importación parcial). */
   let failInsertWhen: ((d: ProductWriteData) => boolean) | null = null;
   let clock = 0;
@@ -88,6 +93,7 @@ export function createInMemoryCatalogRepository() {
 
     async insertProduct(tenantId, actorId, d: ProductWriteData, origin?: ProductOrigin) {
       if (failInsertWhen?.(d)) throw new CatalogError("INTERNAL_ERROR", "No se pudo completar la operación del catálogo.");
+      if (origin && !importsEnabled) throw unavailable();
       if (origin) {
         // Igual que la FK compuesta: la importación debe ser de ESTE tenant.
         const imp = imports.get(origin.importId);
@@ -152,22 +158,30 @@ export function createInMemoryCatalogRepository() {
     },
 
     async listProductKeys(tenantId) {
+      if (failKeys) throw new Error("conexión perdida con la base de datos");
       return [...products.values()]
         .filter((p) => p.tenantId === tenantId)
-        .map((p) => ({ reference: p.reference, name: p.name, categoryId: p.categoryId, color: p.color, material: p.material }));
+        .map((p) => ({ reference: p.reference, name: p.name, categoryId: p.categoryId, color: p.color, material: p.material, importId: importsEnabled ? p.importId : null }));
+    },
+
+    async importsAvailable() {
+      return importsEnabled;
     },
 
     async getProductsByImportRows(tenantId, importId, rows) {
+      if (!importsEnabled) throw unavailable();
       return [...products.values()]
         .filter((p) => p.tenantId === tenantId && p.importId === importId && p.importRow !== null && rows.includes(p.importRow))
         .map((p) => ({ row: p.importRow as number, product: strip(p) }));
     },
 
     async importedProductIds(tenantId, importId, productIds) {
+      if (!importsEnabled) throw unavailable();
       return [...products.values()].filter((p) => p.tenantId === tenantId && p.importId === importId && productIds.includes(p.id)).map((p) => p.id);
     },
 
     async insertImport(tenantId, actorId, d) {
+      if (!importsEnabled) throw unavailable();
       const rec = {
         id: randomUUID(),
         tenantId,
@@ -188,11 +202,13 @@ export function createInMemoryCatalogRepository() {
     },
 
     async getImport(tenantId, importId) {
+      if (!importsEnabled) throw unavailable();
       const r = imports.get(importId);
       return r && r.tenantId === tenantId ? stripImport(r) : null;
     },
 
     async finishImport(tenantId, importId, c) {
+      if (!importsEnabled) throw unavailable();
       const r = imports.get(importId);
       if (!r || r.tenantId !== tenantId) return null;
       Object.assign(r, {
@@ -208,6 +224,7 @@ export function createInMemoryCatalogRepository() {
     },
 
     async listImports(tenantId, limit) {
+      if (!importsEnabled) throw unavailable();
       return [...imports.values()]
         .filter((r) => r.tenantId === tenantId)
         .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
@@ -415,6 +432,14 @@ export function createInMemoryCatalogRepository() {
     auditTrail: (id: string) => products.get(id),
     /** Productos del tenant (tests: "los existentes quedan intactos"). */
     snapshot: (tenantId: string) => [...products.values()].filter((p) => p.tenantId === tenantId).map((p) => JSON.parse(JSON.stringify(p)) as StoredProduct),
+    /** Simula la BD de producción SIN la migración de carga masiva aplicada. */
+    setImportsEnabled(enabled: boolean) {
+      importsEnabled = enabled;
+    },
+    /** Simula un error inesperado de infraestructura al leer el catálogo. */
+    setFailKeys(v: boolean) {
+      failKeys = v;
+    },
     /** Hace fallar el INSERT de los productos que cumplan la condición (fallo de BD simulado). */
     failInsert(when: ((d: ProductWriteData) => boolean) | null) {
       failInsertWhen = when;

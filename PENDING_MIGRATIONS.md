@@ -1,6 +1,10 @@
 # Pasos manuales pendientes en producción
 
-## ⏳ PENDIENTE — Catálogo DuLabs, Fase 4 (carga masiva)
+## ⏳ PENDIENTE DE APLICAR Y VERIFICAR EN PRODUCCIÓN — Catálogo DuLabs, Fase 4 (carga masiva)
+
+**Estado: sin evidencia de que se haya ejecutado en producción.** Hasta que
+las 3 consultas de verificación (abajo) devuelvan 1, 2 y 1, se considera
+pendiente.
 
 Migración `supabase/migrations/20261107000000_dulabs_catalogo_importaciones.sql`
 (requiere la Fase 1 ya aplicada). **100 % aditiva:**
@@ -13,20 +17,33 @@ Migración `supabase/migrations/20261107000000_dulabs_catalogo_importaciones.sql
   (idempotencia por importación + fila). Para todo lo existente quedan en
   NULL: AMORE, el Business Agent y la cotización no cambian.
 
-Mientras no se aplique, la carga masiva muestra «La carga masiva todavía no
-está activada» (el preview funciona, la creación no); el resto del catálogo
-funciona igual. Validada contra PostgreSQL 16 local:
-`supabase/tests/20261107000000_dulabs_catalogo_importaciones.test.sql` (10/10) y
-12 importaciones concurrentes × 30 productos = 362 referencias únicas.
+**Mientras no se aplique (convivencia segura, ya desplegada):** la pantalla
+de carga masiva permite subir, analizar y revisar el archivo. Muestra «La
+carga masiva estará disponible muy pronto» y el botón de importar queda
+deshabilitado (`GET /api/dashboard/catalogo/importaciones` → `available:
+false`). El resto del catálogo funciona igual.
 
-1. Correr el archivo completo en el SQL Editor (es idempotente).
-2. Verificar:
+**Al aplicarla:** se activa sola. No hace falta desplegar código ni cambiar
+configuración.
+
+Validada contra PostgreSQL 16 local:
+`supabase/tests/20261107000000_dulabs_catalogo_importaciones.test.sql`
+(10/10), aplicada dos veces sin error (idempotente) y 12 importaciones
+concurrentes × 30 productos = 362 referencias únicas.
+
+1. Correr el archivo completo en el SQL Editor (es idempotente: si ya se
+   corrió, volver a correrlo no cambia nada).
+2. Verificar (esperado 1, 2, 1):
    ```sql
-   select count(*) from information_schema.tables where table_name = 'dulabs_catalogo_importaciones';            -- 1
+   select count(*) from information_schema.tables where table_name = 'dulabs_catalogo_importaciones';
    select count(*) from information_schema.columns where table_name = 'dulabs_inventario_productos'
-     and column_name in ('importacion_id', 'importacion_fila');                                                -- 2
-   select count(*) from pg_indexes where indexname = 'dulabs_inventario_productos_importacion_fila_uq';         -- 1
+     and column_name in ('importacion_id', 'importacion_fila');
+   select count(*) from pg_indexes where indexname = 'dulabs_inventario_productos_importacion_fila_uq';
    ```
+3. Alternativa sin SQL: con sesión de administrador, entrar a Catálogo →
+   Carga masiva. Si el aviso «estará disponible muy pronto» **no** aparece y
+   el botón de importar está habilitado, la sonda del backend encontró la
+   estructura.
 
 Rollback: al inicio del archivo de la migración.
 

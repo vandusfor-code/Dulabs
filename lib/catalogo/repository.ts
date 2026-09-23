@@ -146,6 +146,8 @@ export interface CatalogRepository {
   // Carga masiva (historial + origen de cada producto importado).
   /** Nombre/categoría/color/material de TODOS los productos del tenant (detección de repetidos). */
   listProductKeys(tenantId: string): Promise<ExistingProductKey[]>;
+  /** false si la migración de carga masiva (20261107000000) aún no está aplicada en esta BD. */
+  importsAvailable(): Promise<boolean>;
   /** Productos ya creados por esta importación para esas filas (reintentos idempotentes). */
   getProductsByImportRows(tenantId: string, importId: string, rows: number[]): Promise<Array<{ row: number; product: CatalogProduct }>>;
   /** De estos productos, cuáles creó esta importación. */
@@ -220,8 +222,13 @@ function mapImport(r: ImportRow): ImportRecord {
  * (tabla o columnas inexistentes) se responde con un mensaje claro en vez de
  * un error técnico. El resto del catálogo no se ve afectado.
  */
+/** Tabla o columna inexistente (migración de carga masiva sin aplicar). Códigos de Postgres y de PostgREST. */
+function isMissingSchema(error: PgError): boolean {
+  return error.code === "42P01" || error.code === "42703" || error.code === "PGRST204" || error.code === "PGRST205";
+}
+
 function failImport(context: string, error: PgError): never {
-  if (error.code === "42P01" || error.code === "42703" || error.code === "PGRST204" || error.code === "PGRST205") {
+  if (isMissingSchema(error)) {
     console.error(`[catalogo/repository] ${context}: falta la migración de carga masiva`, error.code);
     throw new CatalogError("FEATURE_UNAVAILABLE", "La carga masiva todavía no está activada. Intenta de nuevo más tarde o avísale al equipo de DuLabs.");
   }
@@ -446,21 +453,50 @@ export function createSupabaseCatalogRepository(supabase: SupabaseClient): Catal
     },
 
     async listProductKeys(tenantId) {
-      // PostgREST devuelve máximo 1000 filas por consulta: se pagina.
-      const out: ExistingProductKey[] = [];
-      for (let from = 0; ; from += 1000) {
-        const { data, error } = await supabase
-          .from(T_PRODUCTOS)
-          .select("referencia, nombre, categoria_id, color, material")
-          .eq("id_tenant", tenantId)
-          .order("id", { ascending: true })
-          .range(from, from + 999);
-        if (error) fail("listProductKeys", error);
-        const rows = (data ?? []) as Array<{ referencia: string; nombre: string; categoria_id: string | null; color: string | null; material: string | null }>;
-        for (const r of rows) out.push({ reference: r.referencia, name: r.nombre, categoryId: r.categoria_id, color: r.color, material: r.material });
-        if (rows.length < 1000 || out.length >= 50_000) break;
+      // PostgREST devuelve máximo 1000 filas por consulta: se pagina. `importacion_id`
+      // solo existe con la migración de carga masiva: sin ella se lee lo demás
+      // (el preview funciona igual; solo no se distingue "ya importado").
+      const read = async (withImport: boolean) => {
+        const out: ExistingProductKey[] = [];
+        const columns: string = withImport ? "referencia, nombre, categoria_id, color, material, importacion_id" : "referencia, nombre, categoria_id, color, material";
+        for (let from = 0; ; from += 1000) {
+          const { data, error } = await supabase
+            .from(T_PRODUCTOS)
+            .select(columns)
+            .eq("id_tenant", tenantId)
+            .order("id", { ascending: true })
+            .range(from, from + 999);
+          if (error) return { out, error };
+          const rows = (data ?? []) as unknown as Array<{ referencia: string; nombre: string; categoria_id: string | null; color: string | null; material: string | null; importacion_id?: string | null }>;
+          for (const r of rows) out.push({ reference: r.referencia, name: r.nombre, categoryId: r.categoria_id, color: r.color, material: r.material, importId: r.importacion_id ?? null });
+          if (rows.length < 1000 || out.length >= 50_000) break;
+        }
+        return { out, error: null };
+      };
+      const full = await read(true);
+      if (!full.error) return full.out;
+      if (!isMissingSchema(full.error)) fail("listProductKeys", full.error);
+      const basic = await read(false);
+      if (basic.error) fail("listProductKeys", basic.error);
+      return basic.out;
+    },
+
+    async importsAvailable() {
+      // Sonda barata (0 filas): ¿existen la tabla y las columnas de la migración?
+      // GET con limit(0), NO `head: true`: una respuesta HEAD no trae cuerpo, así
+      // que el código del error (PGRST205 / 42703) se perdería y no se podría
+      // distinguir "falta la migración" de una caída real.
+      const [tabla, columnas] = await Promise.all([
+        supabase.from(T_IMPORTACIONES).select("id").limit(0),
+        supabase.from(T_PRODUCTOS).select("importacion_id, importacion_fila").limit(0),
+      ]);
+      for (const r of [tabla, columnas]) {
+        if (r.error) {
+          if (isMissingSchema(r.error)) return false;
+          fail("importsAvailable", r.error);
+        }
       }
-      return out;
+      return true;
     },
 
     async getProductsByImportRows(tenantId, importId, rows) {

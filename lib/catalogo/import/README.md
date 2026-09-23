@@ -78,30 +78,34 @@ contador por tenant bloqueado por fila. Probado localmente con PostgreSQL 16:
 12 importaciones simultáneas × 30 productos dieron 362 referencias distintas,
 sin huecos. Nunca dependen del Excel, del nombre ni del navegador.
 
-## 4. Repetidos — decisión
+## 4. Repetidos — cómo se decide cada fila
 
-Sin una referencia del usuario, se evaluaron:
+No se asume «mismo nombre = mismo producto» **por parecido**: la comparación
+es por **igualdad exacta** de la clave
 
-- nombre + negocio (frágil: «Aretes argolla» dorados y plateados son distintos);
-- SKU/código externo (Delacour no los usa hoy: una columna que nadie llena);
-- hash de importación.
+```
+nombre + categoría + color + material   (sin tildes, sin mayúsculas, espacios colapsados)
+```
 
-**Elegido:**
+«Anillo corazón» y «Anillo corazón grande» son productos distintos. También lo
+son «Anillo corazón» dorado y plateado.
 
-1. **Idempotencia por importación + fila** (`importacion_id`,
-   `importacion_fila`, UNIQUE): un reintento (red caída, doble clic) nunca
-   duplica. Devuelve el producto ya creado.
-2. **Repetido en el archivo:** mismo nombre + categoría + color + material
-   (sin tildes ni mayúsculas) → error en la fila repetida.
-3. **Posible repetido en el catálogo:** misma clave que un producto existente
-   → se **omite por defecto**, mostrando su referencia. La persona puede
-   marcar «Importarlo de todas formas».
+| Caso | Cómo se detecta | Resultado |
+| ---- | --------------- | --------- |
+| **Producto nuevo** | Sin errores y su clave no coincide con ninguna fila anterior del archivo ni con ningún producto del negocio | Se crea (`created`), con referencia de la BD |
+| **Fila con error** | Falta nombre/precio/stock, número inválido, texto demasiado largo… (mismas reglas que el formulario, `productCreateSchema`) | No se crea (`error`). Se corrige en el preview o se descarga el CSV de errores |
+| **Fila repetida** (en el archivo) | Misma clave que una fila ANTERIOR del mismo archivo | Error en la fila repetida (la primera sí se importa) |
+| **Producto ya importado** | Misma clave que un producto que vino de una carga masiva anterior (`importacion_id` no nulo) | Se omite (`skipped`), con su referencia: «ya se cargó en una importación anterior (DL-…)». Así, **volver a subir el mismo archivo no crea duplicados** |
+| **Posible repetido** | Misma clave que un producto creado a mano o por otro camino | Se omite por defecto, mostrando su referencia. La persona puede marcar «Importarlo de todas formas» |
+| **Reintento del mismo lote** | Misma importación + misma fila (`UNIQUE (id_tenant, importacion_id, importacion_fila)`) | Devuelve el producto ya creado, nunca uno nuevo (red caída, doble clic, respuesta perdida) |
 
-Así, volver a subir el mismo archivo corregido solo crea lo que falta. Un
-`codigo_externo` no se agrega ahora. Si más adelante se necesita
-«actualizar productos existentes», su identidad natural es la referencia
-DL-…, y será una capacidad explícita aparte. **Hoy la importación solo CREA:
-nunca actualiza ni borra.**
+Sin la migración aplicada no se puede distinguir «ya importado» de «posible
+repetido»: ambos se muestran como posible repetido y se omiten igual.
+
+No se agregó un `codigo_externo`: nadie lo llenaría hoy. Si más adelante se
+necesita «actualizar productos existentes», su identidad natural es la
+referencia DL-…, y será una capacidad explícita aparte. **Hoy la importación
+solo CREA: nunca actualiza ni borra.**
 
 ## 5. Categorías
 
@@ -155,7 +159,19 @@ conserva y la foto se lista en el resultado.
   importación.
 - Solo administradores importan.
 
-## 9. Historial
+## 9. Estados (`estados.ts`, dominio central)
+
+- **Pantalla:** `draft → analyzing → ready → processing → completed | completed_with_errors | failed`,
+  con transiciones validadas (`canTransition`). La persona ve 3 pasos: «Sube
+  tus productos · Revisa los resultados · Confirma la importación».
+- **Guardado en la BD:** solo `procesando` | `completada` (el CHECK de la
+  migración). El resultado fino se **deriva** de los contadores
+  (`outcomeOf`/`finalOutcome`): completada, completada con correcciones
+  pendientes, fallida (no se creó nada y hubo errores) o interrumpida (sigue
+  «procesando» más de 1 hora). Así no hace falta otra migración para agregar
+  matices, y un estado guardado nunca puede contradecir los números.
+
+## 10. Historial
 
 `dulabs_catalogo_importaciones`: fecha, usuario, archivo, filas, creados
 (contados por la BD), omitidos, errores, fotos y estado. Lo que quedó
@@ -163,7 +179,7 @@ conserva y la foto se lista en el resultado.
 guardarlo porque la misma tabla ancla la idempotencia. El costo marginal fue
 mínimo.
 
-## 10. Límites (`limites.ts`, única fuente)
+## 11. Límites (`limites.ts`, única fuente)
 
 | Límite                        | Valor         |
 | ----------------------------- | ------------- |
@@ -191,3 +207,36 @@ proceso.ts                          orquestación por lotes (navegador)
 Rutas: `app/api/dashboard/catalogo/importaciones/*`. UI:
 `app/dashboard/catalogo/importar` y `components/dashboard/catalogo/importar/*`.
 Migración: `20261107000000_dulabs_catalogo_importaciones.sql`.
+
+## Activación — REQUISITO PARA ACTIVACIÓN EN PRODUCCIÓN
+
+El código ya está desplegado y convive con la base **sin** la migración:
+
+- `GET /api/dashboard/catalogo/importaciones` responde `{ available, imports }`.
+  `available` sale de una sonda (`repository.importsAvailable`: la tabla y las
+  dos columnas existen). Sin la migración, responde `available: false` (no es
+  un error).
+- La pantalla deja subir, analizar, revisar y corregir el archivo. Muestra
+  «La carga masiva estará disponible muy pronto…» y el botón de importar
+  queda deshabilitado.
+- Aunque alguien llame la API directamente, `start` verifica la disponibilidad
+  ANTES de crear nada y responde un mensaje claro (`FEATURE_UNAVAILABLE`).
+- El resto del catálogo no toca estas columnas: la creación manual y la
+  tienda pública funcionan igual.
+
+**Único paso pendiente:** aplicar y verificar
+`supabase/migrations/20261107000000_dulabs_catalogo_importaciones.sql` en la
+base de producción (ver `PENDING_MIGRATIONS.md`). En cuanto exista, la sonda
+devuelve `available: true` y el botón se habilita. No hay que desplegar
+código ni cambiar configuración.
+
+## Qué está probado y cómo
+
+| Qué | Cómo | Requiere producción |
+| --- | ---- | ------------------- |
+| Lectura CSV/XLSX, análisis, repetidos, categorías, fotos, ZIP, estados | Tests unitarios (`importacion.test.ts`) | No |
+| Servicio: creación, referencias secuenciales, parcial, reintento idempotente, multi-tenant, «ya importado», sin migración → activación | Tests con repositorio EN MEMORIA que emula las reglas de la BD | No |
+| Repositorio Supabase: convivencia sin migración (códigos PGRST205/42703), fallback de columnas, errores genéricos | Tests con un cliente Supabase SIMULADO | No |
+| Migración: constraints, FK compuesta entre tenants, UNIQUE de reintentos, inmutabilidad de referencia, concurrencia (12×30 → 362 referencias únicas) | PostgreSQL 16 LOCAL (`supabase/tests/20261107000000_…test.sql`) | No |
+| Flujo completo en el navegador (plantilla → preview → corrección → importar → fotos → historial) | Playwright contra un Supabase SIMULADO local | No |
+| **Integración real** con Supabase de producción (PostgREST, Storage, RLS, triggers reales) | — | **Sí: NO verificada todavía** |

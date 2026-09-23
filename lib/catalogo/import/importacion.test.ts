@@ -4,7 +4,12 @@
  */
 import assert from "node:assert/strict";
 import { beforeEach, describe, it } from "node:test";
+import { readFileSync } from "node:fs";
 import ExcelJS from "exceljs";
+import { CatalogError } from "@/lib/catalogo/errors";
+import { catalogErrorResponse } from "@/lib/catalogo/http";
+import { IMPORT_PHASES, PERSISTED_STATUS, canTransition, finalOutcome, outcomeOf, stepOf } from "@/lib/catalogo/import/estados";
+import { createSupabaseCatalogRepository } from "@/lib/catalogo/repository";
 import { COLUMNS, columnFor } from "@/lib/catalogo/import/columnas";
 import { parseCsv, decodeCsv, toCsv } from "@/lib/catalogo/import/csv";
 import { analyzeImport, parseMoney, parseStock } from "@/lib/catalogo/import/analisis";
@@ -15,7 +20,7 @@ import { buildTemplateCsv, buildTemplateXlsx } from "@/lib/catalogo/import/plant
 import { analyzeRowsSchema, importRowsSchema, photoUrlsSchema } from "@/lib/catalogo/import/esquemas";
 import { ImportStartError, runImport, type ImportProgress, type ImportRunDeps } from "@/lib/catalogo/import/proceso";
 import { createCatalogImportService } from "@/lib/catalogo/import/servicio";
-import type { ImageInfo, RawRow } from "@/lib/catalogo/import/types";
+import type { ExistingProductKey, ImageInfo, RawRow } from "@/lib/catalogo/import/types";
 import { isSystemEntry, readZipIndex, ZipError } from "@/lib/catalogo/import/zip";
 import { createCatalogService, type CatalogActor } from "@/lib/catalogo/service";
 import { createInMemoryCatalogRepository, WEBP_HEAD } from "@/lib/catalogo/testing/in-memory-repository";
@@ -137,7 +142,7 @@ describe("números de la planilla", () => {
 });
 
 describe("análisis de filas", () => {
-  const ctx = { categories: [{ id: "c-anillos", name: "Anillos" }], existing: [] as { reference: string; name: string; categoryId: string | null; color: string | null; material: string | null }[] };
+  const ctx = { categories: [{ id: "c-anillos", name: "Anillos" }], existing: [] as ExistingProductKey[] };
 
   it("fila completa => lista, con los valores validados por las reglas del dominio", () => {
     const a = analyzeImport({ ...ctx, rows: [row(2, { name: "  Anillo corazón ", category: "anillos", retailPrice: "129.900", wholesalePrice: "79900", stock: "5", material: "Oro", images: "a.jpg" })], images: [img("a.jpg")] });
@@ -238,7 +243,7 @@ describe("análisis de filas", () => {
   });
 
   it("repetidos: en el archivo => error; en el catálogo => se omite salvo que se fuerce", () => {
-    const existing = [{ reference: "DL-000184", name: "Anillo Corazón", categoryId: "c-anillos", color: "Dorado", material: null }];
+    const existing: ExistingProductKey[] = [{ reference: "DL-000184", name: "Anillo Corazón", categoryId: "c-anillos", color: "Dorado", material: null, importId: null }];
     const rows = [
       base(2, { name: "Anillo corazón", category: "Anillos", color: "dorado" }),
       base(3, { name: "Aretes", color: "Plateado" }),
@@ -650,5 +655,204 @@ describe("orquestación de la importación", () => {
     deps.startImport = async () => ({ ok: false as const, error: { code: "FEATURE_UNAVAILABLE", message: "La carga masiva todavía no está activada.", status: 503 } });
     await assert.rejects(runImport({ fileName: "p.csv", rows: [base(2)], images: [], decisions: {}, force: [] }, deps, () => {}), (e: Error) => e instanceof ImportStartError && /no está activada/.test(e.message));
     assert.equal(mem.snapshot(DELACOUR.tenantId).length, 0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fase 4.1 — estados, activación sin migración, repetidos precisos, errores inesperados
+// ---------------------------------------------------------------------------
+
+describe("estados de la importación (dominio central)", () => {
+  it("resultado final a partir de los números", () => {
+    assert.equal(finalOutcome({ created: 84, errors: 0, photosFailed: 0 }), "completed");
+    assert.equal(finalOutcome({ created: 84, errors: 3, photosFailed: 0 }), "completed_with_errors");
+    assert.equal(finalOutcome({ created: 84, errors: 0, photosFailed: 2 }), "completed_with_errors");
+    assert.equal(finalOutcome({ created: 0, errors: 5, photosFailed: 0 }), "failed");
+    assert.equal(finalOutcome({ created: 0, errors: 0, photosFailed: 0 }), "completed", "todo omitido por repetido no es un fallo");
+  });
+
+  it("historial: en curso vs interrumpida; los valores guardados son los del CHECK de la migración", () => {
+    const base = { created: 1, errors: 0, photosFailed: 0 };
+    const now = Date.UTC(2026, 8, 23, 12, 0, 0);
+    assert.equal(outcomeOf({ ...base, status: PERSISTED_STATUS.processing, createdAt: new Date(now - 60_000).toISOString() }, now), "processing");
+    assert.equal(outcomeOf({ ...base, status: PERSISTED_STATUS.processing, createdAt: new Date(now - 2 * 3600_000).toISOString() }, now), "interrupted");
+    assert.equal(outcomeOf({ ...base, status: PERSISTED_STATUS.completed, createdAt: new Date(now).toISOString() }, now), "completed");
+    assert.deepEqual(Object.values(PERSISTED_STATUS).sort(), ["completada", "procesando"]);
+    const sql = readFileSync("supabase/migrations/20261107000000_dulabs_catalogo_importaciones.sql", "utf8");
+    assert.match(sql, /estado in \('procesando', 'completada'\)/, "los estados guardados coinciden con la migración");
+  });
+
+  it("fases de la pantalla: transiciones válidas y paso visible", () => {
+    assert.ok(canTransition("draft", "analyzing"));
+    assert.ok(canTransition("ready", "processing"));
+    assert.ok(canTransition("processing", "completed_with_errors"));
+    assert.equal(canTransition("draft", "processing"), false, "no se puede importar sin analizar");
+    assert.equal(canTransition("completed", "processing"), false);
+    assert.deepEqual(IMPORT_PHASES.map(stepOf), [1, 1, 2, 3, 3, 3, 3]);
+  });
+});
+
+describe("activación: base de datos SIN la migración aplicada", () => {
+  it("el análisis funciona; importar se niega con un mensaje claro y sin crear nada; historial vacío", async () => {
+    const mem = createInMemoryCatalogRepository();
+    const catalog = createCatalogService({ repo: mem.repo });
+    const imports = createCatalogImportService({ repo: mem.repo, catalog });
+    await catalog.createProduct(DELACOUR, { name: "Existente", retailPrice: 1000, stock: 1 });
+    mem.setImportsEnabled(false);
+
+    assert.deepEqual(await imports.availability(), { available: false });
+    const a = await imports.analyze(DELACOUR, { rows: [base(2), base(3, { name: "Existente" })], images: [], decisions: {}, force: [] });
+    assert.deepEqual([a.summary.importable, a.summary.duplicates], [1, 1], "preview y repetidos funcionan sin la migración");
+    await assert.rejects(imports.start(DELACOUR, { fileName: "p.xlsx", totalRows: 1 }), (e: Error) => e instanceof CatalogError && e.code === "FEATURE_UNAVAILABLE" && !/tabla|migraci|sql/i.test(e.message));
+    assert.deepEqual(await imports.history(DELACOUR), []);
+    assert.equal(mem.snapshot(DELACOUR.tenantId).length, 1, "nada se creó");
+
+    // Se aplica la migración: activación inmediata, sin cambiar nada más.
+    mem.setImportsEnabled(true);
+    assert.deepEqual(await imports.availability(), { available: true });
+    const imp = await imports.start(DELACOUR, { fileName: "p.xlsx", totalRows: 1 });
+    const [r] = await imports.createRows(DELACOUR, imp.id, { rows: [base(2)], images: [], decisions: {}, force: [] });
+    assert.equal(r.status, "created");
+  });
+});
+
+describe("repetidos: cómo se decide cada fila", () => {
+  function setup() {
+    const mem = createInMemoryCatalogRepository();
+    const catalog = createCatalogService({ repo: mem.repo });
+    return { mem, catalog, imports: createCatalogImportService({ repo: mem.repo, catalog }) };
+  }
+  const req = (rows: RawRow[]) => ({ rows, images: [], decisions: {}, force: [] as number[] });
+
+  it("volver a subir el MISMO archivo no crea duplicados: todo sale como «ya importado»", async () => {
+    const { mem, imports } = setup();
+    const filas = [base(2, { name: "Anillo corazón", color: "Dorado" }), base(3, { name: "Aretes perla" }), base(4, { name: "Dije luna" })];
+    const imp1 = await imports.start(DELACOUR, { fileName: "productos.xlsx", totalRows: 3 });
+    const primero = await imports.createRows(DELACOUR, imp1.id, req(filas));
+    await imports.finish(DELACOUR, imp1.id, { skipped: 0, errors: 0, photosUploaded: 0, photosFailed: 0 });
+    assert.ok(primero.every((r) => r.status === "created"));
+
+    const preview = await imports.analyze(DELACOUR, req(filas));
+    assert.deepEqual([preview.summary.importable, preview.summary.duplicates], [0, 3]);
+    assert.ok(preview.rows.every((r) => r.issues.some((i) => i.code === "already_imported") && r.duplicateOf?.kind === "catalog" && r.duplicateOf.imported));
+    assert.match(preview.rows[0].issues[0].message, /ya se cargó en una importación anterior \(DL-000001\)/);
+
+    const imp2 = await imports.start(DELACOUR, { fileName: "productos.xlsx", totalRows: 3 });
+    const segundo = await imports.createRows(DELACOUR, imp2.id, req(filas));
+    assert.ok(segundo.every((r) => r.status === "skipped"));
+    assert.equal(mem.snapshot(DELACOUR.tenantId).length, 3);
+  });
+
+  it("producto creado a mano con el mismo nombre/categoría/color/material => «posible repetido» (no «ya importado»)", async () => {
+    const { catalog, imports } = setup();
+    await catalog.createProduct(DELACOUR, { name: "Pulsera oro", retailPrice: 1000, stock: 1 });
+    const a = await imports.analyze(DELACOUR, req([base(2, { name: "Pulsera Oro" })]));
+    assert.equal(a.rows[0].issues[0].code, "duplicate_in_catalog");
+    assert.equal(a.rows[0].duplicateOf?.kind === "catalog" && a.rows[0].duplicateOf.imported, false);
+  });
+
+  it("nombres PARECIDOS no son el mismo producto (no se asume mismo nombre = mismo producto por parecido)", async () => {
+    const { catalog, imports } = setup();
+    await catalog.createProduct(DELACOUR, { name: "Anillo corazón", retailPrice: 1000, stock: 1, color: "Dorado" });
+    const a = await imports.analyze(
+      DELACOUR,
+      req([base(2, { name: "Anillo corazón grande", color: "Dorado" }), base(3, { name: "Anillo corazón", color: "Plateado" }), base(4, { name: "Anillo corazones", color: "Dorado" })]),
+    );
+    assert.deepEqual(
+      a.rows.map((r) => r.status),
+      ["ready", "ready", "ready"],
+    );
+  });
+});
+
+describe("errores inesperados", () => {
+  it("un fallo de infraestructura nunca llega crudo a la persona", async () => {
+    const mem = createInMemoryCatalogRepository();
+    const catalog = createCatalogService({ repo: mem.repo });
+    const imports = createCatalogImportService({ repo: mem.repo, catalog });
+    mem.setFailKeys(true);
+    let caught: unknown = null;
+    try {
+      await imports.analyze(DELACOUR, { rows: [base(2)], images: [], decisions: {}, force: [] });
+    } catch (err) {
+      caught = err;
+    }
+    assert.ok(caught);
+    const res = catalogErrorResponse(caught);
+    assert.equal(res.status, 500);
+    const body = (await res.json()) as { error: { message: string } };
+    assert.equal(body.error.message, "No se pudo completar la operación del catálogo.");
+    assert.equal(JSON.stringify(body).includes("conexión perdida"), false, "el detalle técnico no se expone");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Repositorio Supabase contra un cliente SIMULADO (no toca Supabase real)
+// ---------------------------------------------------------------------------
+
+type FakeResult = { data?: unknown; error?: { code: string; message: string } | null; count?: number };
+
+/** Cliente mínimo encadenable: cada consulta termina en `responder(tabla, columnas, operación)`. */
+function fakeSupabase(responder: (q: { table: string; columns: string; op: "select" | "insert" | "update" }) => FakeResult) {
+  return {
+    from(table: string) {
+      const q = { table, columns: "", op: "select" as "select" | "insert" | "update", head: false };
+      const builder: Record<string, unknown> = {};
+      const chain = () => builder;
+      for (const m of ["eq", "in", "order", "range", "limit", "single", "maybeSingle"]) builder[m] = chain;
+      builder.select = (columns: string, opts?: { head?: boolean }) => {
+        q.columns = columns;
+        q.head = Boolean(opts?.head);
+        return builder;
+      };
+      builder.insert = () => {
+        q.op = "insert";
+        return builder;
+      };
+      builder.update = () => {
+        q.op = "update";
+        return builder;
+      };
+      builder.then = (ok: (v: unknown) => unknown, ko?: (e: unknown) => unknown) => {
+        const r = { data: null, error: null, ...responder(q) };
+        // Como el PostgREST real: una respuesta HEAD no trae cuerpo, el código del error se pierde.
+        if (q.head && r.error) r.error = { code: "", message: "" };
+        return Promise.resolve(r).then(ok, ko);
+      };
+      return builder;
+    },
+    storage: { from: () => ({ getPublicUrl: (p: string) => ({ data: { publicUrl: `https://x.supabase.co/storage/v1/object/public/b/${p}` } }) }) },
+  } as unknown as Parameters<typeof createSupabaseCatalogRepository>[0];
+}
+
+describe("repositorio Supabase (cliente simulado): convivencia con la migración pendiente", () => {
+  const missing = { code: "PGRST205", message: "Could not find the table" };
+  const missingColumn = { code: "42703", message: "column importacion_id does not exist" };
+
+  it("sin la migración: no disponible, claves sin importacion_id, crear importación => FEATURE_UNAVAILABLE", async () => {
+    const repo = createSupabaseCatalogRepository(
+      fakeSupabase(({ table, columns }) => {
+        if (table === "dulabs_catalogo_importaciones") return { error: missing };
+        if (columns.includes("importacion_id")) return { error: missingColumn };
+        return { data: [{ referencia: "DL-000001", nombre: "Anillo", categoria_id: null, color: null, material: null }] };
+      }),
+    );
+    assert.equal(await repo.importsAvailable(), false);
+    assert.deepEqual(await repo.listProductKeys("t"), [{ reference: "DL-000001", name: "Anillo", categoryId: null, color: null, material: null, importId: null }]);
+    await assert.rejects(repo.insertImport("t", "u", { fileName: "p.xlsx", totalRows: 1 }), (e: Error) => e instanceof CatalogError && e.code === "FEATURE_UNAVAILABLE");
+    await assert.rejects(repo.listImports("t", 20), (e: Error) => e instanceof CatalogError && e.code === "FEATURE_UNAVAILABLE");
+  });
+
+  it("con la migración: disponible y claves con importacion_id", async () => {
+    const repo = createSupabaseCatalogRepository(
+      fakeSupabase(() => ({ data: [{ referencia: "DL-000002", nombre: "Aretes", categoria_id: "c", color: "Dorado", material: null, importacion_id: "imp-1" }] })),
+    );
+    assert.equal(await repo.importsAvailable(), true);
+    assert.equal((await repo.listProductKeys("t"))[0].importId, "imp-1");
+  });
+
+  it("otros errores de la BD NO se confunden con 'migración pendiente': error genérico", async () => {
+    const repo = createSupabaseCatalogRepository(fakeSupabase(() => ({ error: { code: "57014", message: "statement timeout" } })));
+    await assert.rejects(repo.importsAvailable(), (e: Error) => e instanceof CatalogError && e.code === "INTERNAL_ERROR" && !/timeout/.test(e.message));
   });
 });

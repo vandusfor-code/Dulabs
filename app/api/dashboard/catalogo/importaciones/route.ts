@@ -10,8 +10,12 @@ import { withImport } from "@/lib/catalogo/import/http";
 
 export const runtime = "nodejs";
 
+/** Estado de la carga masiva + historial. `available: false` = falta aplicar la migración (no es un error). */
 export async function GET(request: NextRequest) {
-  return withImport(request, "read", async ({ imports, actor }) => apiOk({ imports: await imports.history(actor) }));
+  return withImport(request, "read", async ({ imports, actor }) => {
+    const { available } = await imports.availability();
+    return apiOk({ available, imports: available ? await imports.history(actor) : [] });
+  });
 }
 
 export async function POST(request: NextRequest) {

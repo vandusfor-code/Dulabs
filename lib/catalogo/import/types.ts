@@ -15,6 +15,7 @@
  * Ver ./README.md para las decisiones.
  */
 import type { ColumnKey } from "@/lib/catalogo/import/columnas";
+import type { ImportOutcome, PersistedImportStatus } from "@/lib/catalogo/import/estados";
 
 export type { ColumnKey };
 
@@ -52,6 +53,7 @@ export type IssueCode =
   | "image_invalid"
   | "too_many_images"
   | "duplicate_in_file"
+  | "already_imported"
   | "duplicate_in_catalog";
 
 export interface ImportIssue {
@@ -111,7 +113,12 @@ export interface AnalyzedRow {
   product: ImportProductDraft | null;
   /** Fotos que se subirán, en orden (la primera es la principal). */
   images: ImageMatch[];
-  duplicateOf: { kind: "catalog"; reference: string; name: string } | { kind: "file"; row: number } | null;
+  /**
+   * - file: repite otra fila del mismo archivo (error).
+   * - catalog: coincide con un producto existente. `imported` = ese producto vino
+   *   de una carga masiva anterior (casi seguro es el mismo archivo subido otra vez).
+   */
+  duplicateOf: { kind: "catalog"; reference: string; name: string; imported: boolean } | { kind: "file"; row: number } | null;
   /** true si la persona eligió importarla aunque parezca repetida. */
   forced: boolean;
 }
@@ -142,6 +149,8 @@ export interface ExistingProductKey {
   categoryId: string | null;
   color: string | null;
   material: string | null;
+  /** Carga masiva que lo creó (null: creado a mano, por AMORE, o la migración aún no está aplicada). */
+  importId: string | null;
 }
 
 /** Resultado de crear una fila al confirmar. */
@@ -156,7 +165,7 @@ export interface ImportRowResult {
   images: string[];
 }
 
-export type ImportStatus = "procesando" | "completada";
+export type ImportStatus = PersistedImportStatus;
 
 /** Registro del historial. */
 export interface ImportRecord {
@@ -172,4 +181,18 @@ export interface ImportRecord {
   createdAt: string;
   finishedAt: string | null;
   createdBy: string | null;
+}
+
+/** Registro del historial tal como lo consume la interfaz (con el resultado ya derivado). */
+export interface ImportHistoryItem extends ImportRecord {
+  outcome: ImportOutcome;
+}
+
+/**
+ * ¿Está activa la carga masiva en esta base de datos? false = falta aplicar la
+ * migración 20261107000000 (REQUISITO PARA ACTIVACIÓN EN PRODUCCIÓN). El
+ * análisis y el preview funcionan igual; crear productos no.
+ */
+export interface ImportAvailability {
+  available: boolean;
 }
