@@ -21,6 +21,7 @@ import type {
 } from "@/lib/catalogo/domain";
 import { CatalogError } from "@/lib/catalogo/errors";
 import type { CatalogPublication } from "@/lib/catalogo/publicacion";
+import type { ExistingProductKey, ImportRecord } from "@/lib/catalogo/import/types";
 import { moduloHabilitado } from "@/lib/tenant-modulos";
 
 // ---------------------------------------------------------------------------
@@ -42,6 +43,19 @@ export interface ProductWriteData {
 }
 
 export type ProductPatchData = Partial<ProductWriteData> & { status?: ProductStatus };
+
+/** De qué carga masiva y fila salió un producto (idempotencia: UNIQUE por tenant + importación + fila). */
+export interface ProductOrigin {
+  importId: string;
+  row: number;
+}
+
+export interface ImportCounts {
+  skipped: number;
+  errors: number;
+  photosUploaded: number;
+  photosFailed: number;
+}
 
 export interface ProductListFilter {
   search?: string;
@@ -104,7 +118,8 @@ export interface CatalogRepository {
   getProductByReference(tenantId: string, reference: string): Promise<CatalogProduct | null>;
   /** Resolución por lote de referencias EXACTAS del tenant (la referencia es la identidad del producto). */
   getProductsByReferences(tenantId: string, references: string[]): Promise<CatalogProduct[]>;
-  insertProduct(tenantId: string, actorId: string, data: ProductWriteData): Promise<CatalogProduct>;
+  /** `origin` solo en la carga masiva; un reintento de la misma fila lanza CONFLICT. */
+  insertProduct(tenantId: string, actorId: string, data: ProductWriteData, origin?: ProductOrigin): Promise<CatalogProduct>;
   updateProduct(tenantId: string, actorId: string, productId: string, patch: ProductPatchData): Promise<CatalogProduct | null>;
 
   listCategories(tenantId: string): Promise<CatalogCategory[]>;
@@ -127,6 +142,19 @@ export interface CatalogRepository {
   getBusinessProfile(tenantId: string): Promise<{ name: string | null; whatsapp: string | null }>;
   /** Módulo "catalogo" habilitado (estricto: un error de BD se propaga). */
   isModuleEnabled(tenantId: string): Promise<boolean>;
+
+  // Carga masiva (historial + origen de cada producto importado).
+  /** Nombre/categoría/color/material de TODOS los productos del tenant (detección de repetidos). */
+  listProductKeys(tenantId: string): Promise<ExistingProductKey[]>;
+  /** Productos ya creados por esta importación para esas filas (reintentos idempotentes). */
+  getProductsByImportRows(tenantId: string, importId: string, rows: number[]): Promise<Array<{ row: number; product: CatalogProduct }>>;
+  /** De estos productos, cuáles creó esta importación. */
+  importedProductIds(tenantId: string, importId: string, productIds: string[]): Promise<string[]>;
+  insertImport(tenantId: string, actorId: string, data: { fileName: string; totalRows: number }): Promise<ImportRecord>;
+  getImport(tenantId: string, importId: string): Promise<ImportRecord | null>;
+  /** Cierra la importación; `created` lo cuenta la BD (productos con esta importación), nunca el navegador. */
+  finishImport(tenantId: string, importId: string, counts: ImportCounts): Promise<ImportRecord | null>;
+  listImports(tenantId: string, limit: number): Promise<ImportRecord[]>;
 
   bucket: string;
   createSignedUpload(path: string): Promise<SignedUpload>;
@@ -152,6 +180,53 @@ const T_PRODUCTOS = "dulabs_inventario_productos";
 const T_CATEGORIAS = "dulabs_catalogo_categorias";
 const T_MEDIA = "dulabs_catalogo_media";
 const T_PUBLICACION = "dulabs_catalogo_publicacion";
+const T_IMPORTACIONES = "dulabs_catalogo_importaciones";
+const IMPORT_COLUMNS = "id, archivo, total_filas, creados, omitidos, errores, fotos_subidas, fotos_fallidas, estado, created_at, finalizada_at, creado_por";
+
+interface ImportRow {
+  id: string;
+  archivo: string;
+  total_filas: number;
+  creados: number;
+  omitidos: number;
+  errores: number;
+  fotos_subidas: number;
+  fotos_fallidas: number;
+  estado: ImportRecord["status"];
+  created_at: string;
+  finalizada_at: string | null;
+  creado_por: string | null;
+}
+
+function mapImport(r: ImportRow): ImportRecord {
+  return {
+    id: r.id,
+    fileName: r.archivo,
+    totalRows: r.total_filas,
+    created: r.creados,
+    skipped: r.omitidos,
+    errors: r.errores,
+    photosUploaded: r.fotos_subidas,
+    photosFailed: r.fotos_fallidas,
+    status: r.estado,
+    createdAt: r.created_at,
+    finishedAt: r.finalizada_at,
+    createdBy: r.creado_por,
+  };
+}
+
+/**
+ * Errores de la carga masiva: si la migración 20261107000000 aún no se aplicó
+ * (tabla o columnas inexistentes) se responde con un mensaje claro en vez de
+ * un error técnico. El resto del catálogo no se ve afectado.
+ */
+function failImport(context: string, error: PgError): never {
+  if (error.code === "42P01" || error.code === "42703" || error.code === "PGRST204" || error.code === "PGRST205") {
+    console.error(`[catalogo/repository] ${context}: falta la migración de carga masiva`, error.code);
+    throw new CatalogError("FEATURE_UNAVAILABLE", "La carga masiva todavía no está activada. Intenta de nuevo más tarde o avísale al equipo de DuLabs.");
+  }
+  fail(context, error);
+}
 const PUBLICATION_COLUMNS = "id_tenant, slug, nombre_publico, publicado, token_mayor";
 
 interface PublicationRow {
@@ -305,10 +380,12 @@ export function createSupabaseCatalogRepository(supabase: SupabaseClient): Catal
       return ((data ?? []) as ProductRow[]).map(mapProduct);
     },
 
-    async insertProduct(tenantId, actorId, d) {
+    async insertProduct(tenantId, actorId, d, origin) {
       const { data, error } = await supabase
         .from(T_PRODUCTOS)
         .insert({
+          // Solo la carga masiva envía estas columnas (así la creación manual no depende de su migración).
+          ...(origin ? { importacion_id: origin.importId, importacion_fila: origin.row } : {}),
           id_tenant: tenantId,
           nombre: d.name,
           descripcion: d.description,
@@ -330,7 +407,7 @@ export function createSupabaseCatalogRepository(supabase: SupabaseClient): Catal
         })
         .select(PRODUCT_COLUMNS)
         .single();
-      if (error || !data) fail("insertProduct", error ?? { message: "sin fila" });
+      if (error || !data) (origin ? failImport : fail)("insertProduct", error ?? { message: "sin fila" });
       return mapProduct(data as ProductRow);
     },
 
@@ -366,6 +443,96 @@ export function createSupabaseCatalogRepository(supabase: SupabaseClient): Catal
         .maybeSingle();
       if (error) fail("updateProduct", error);
       return data ? mapProduct(data as ProductRow) : null;
+    },
+
+    async listProductKeys(tenantId) {
+      // PostgREST devuelve máximo 1000 filas por consulta: se pagina.
+      const out: ExistingProductKey[] = [];
+      for (let from = 0; ; from += 1000) {
+        const { data, error } = await supabase
+          .from(T_PRODUCTOS)
+          .select("referencia, nombre, categoria_id, color, material")
+          .eq("id_tenant", tenantId)
+          .order("id", { ascending: true })
+          .range(from, from + 999);
+        if (error) fail("listProductKeys", error);
+        const rows = (data ?? []) as Array<{ referencia: string; nombre: string; categoria_id: string | null; color: string | null; material: string | null }>;
+        for (const r of rows) out.push({ reference: r.referencia, name: r.nombre, categoryId: r.categoria_id, color: r.color, material: r.material });
+        if (rows.length < 1000 || out.length >= 50_000) break;
+      }
+      return out;
+    },
+
+    async getProductsByImportRows(tenantId, importId, rows) {
+      if (rows.length === 0) return [];
+      const { data, error } = await supabase
+        .from(T_PRODUCTOS)
+        .select(`${PRODUCT_COLUMNS}, importacion_fila`)
+        .eq("id_tenant", tenantId)
+        .eq("importacion_id", importId)
+        .in("importacion_fila", rows);
+      if (error) failImport("getProductsByImportRows", error);
+      return ((data ?? []) as Array<ProductRow & { importacion_fila: number }>).map((r) => ({ row: r.importacion_fila, product: mapProduct(r) }));
+    },
+
+    async importedProductIds(tenantId, importId, productIds) {
+      if (productIds.length === 0) return [];
+      const { data, error } = await supabase.from(T_PRODUCTOS).select("id").eq("id_tenant", tenantId).eq("importacion_id", importId).in("id", productIds);
+      if (error) failImport("importedProductIds", error);
+      return ((data ?? []) as Array<{ id: string }>).map((r) => r.id);
+    },
+
+    async insertImport(tenantId, actorId, d) {
+      const { data, error } = await supabase
+        .from(T_IMPORTACIONES)
+        .insert({ id_tenant: tenantId, creado_por: actorId, archivo: d.fileName, total_filas: d.totalRows })
+        .select(IMPORT_COLUMNS)
+        .single();
+      if (error || !data) failImport("insertImport", error ?? { message: "sin fila" });
+      return mapImport(data as ImportRow);
+    },
+
+    async getImport(tenantId, importId) {
+      const { data, error } = await supabase.from(T_IMPORTACIONES).select(IMPORT_COLUMNS).eq("id_tenant", tenantId).eq("id", importId).maybeSingle();
+      if (error) failImport("getImport", error);
+      return data ? mapImport(data as ImportRow) : null;
+    },
+
+    async finishImport(tenantId, importId, c) {
+      const { count, error: countError } = await supabase
+        .from(T_PRODUCTOS)
+        .select("id", { count: "exact", head: true })
+        .eq("id_tenant", tenantId)
+        .eq("importacion_id", importId);
+      if (countError) failImport("finishImport.count", countError);
+      const { data, error } = await supabase
+        .from(T_IMPORTACIONES)
+        .update({
+          creados: count ?? 0,
+          omitidos: c.skipped,
+          errores: c.errors,
+          fotos_subidas: c.photosUploaded,
+          fotos_fallidas: c.photosFailed,
+          estado: "completada",
+          finalizada_at: new Date().toISOString(),
+        })
+        .eq("id_tenant", tenantId)
+        .eq("id", importId)
+        .select(IMPORT_COLUMNS)
+        .maybeSingle();
+      if (error) failImport("finishImport", error);
+      return data ? mapImport(data as ImportRow) : null;
+    },
+
+    async listImports(tenantId, limit) {
+      const { data, error } = await supabase
+        .from(T_IMPORTACIONES)
+        .select(IMPORT_COLUMNS)
+        .eq("id_tenant", tenantId)
+        .order("created_at", { ascending: false })
+        .limit(limit);
+      if (error) failImport("listImports", error);
+      return ((data ?? []) as ImportRow[]).map(mapImport);
     },
 
     async listCategories(tenantId) {

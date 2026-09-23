@@ -7,7 +7,8 @@
  *   a Storage (imagen + miniatura) -> confirmar (el servidor verifica todo).
  */
 import type { CatalogCategory, CatalogImage, CatalogProduct, CatalogProductDetail, ProductPage, ProductStatus, StatusFilter } from "@/lib/catalogo/domain";
-import { prepareProductImage, ImagePreparationError } from "@/lib/catalogo/image-processing";
+import { prepareProductImage, ImagePreparationError, type PreparedImage } from "@/lib/catalogo/image-processing";
+import type { CategoryDecision, ImageInfo, ImportAnalysis, ImportRecord, ImportRowResult, RawRow } from "@/lib/catalogo/import/types";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import type { PublicationView } from "@/lib/catalogo/service";
 
@@ -47,7 +48,7 @@ export interface ProductListParams {
 
 export type UploadStage = "preparing" | "uploading" | "confirming";
 
-interface UploadTicket {
+export interface UploadTicket {
   uploadId: string;
   bucket: string;
   mimeType: "image/webp" | "image/jpeg";
@@ -62,7 +63,7 @@ async function call<T>(accessToken: string, path: string, init: RequestInit = {}
   try {
     response = await fetch(`${BASE}${path}`, {
       ...init,
-      headers: { Authorization: `Bearer ${accessToken}`, ...(init.body ? { "Content-Type": "application/json" } : {}), ...init.headers },
+      headers: { Authorization: `Bearer ${accessToken}`, ...(typeof init.body === "string" ? { "Content-Type": "application/json" } : {}), ...init.headers },
     });
   } catch {
     return { ok: false, error: { code: "NETWORK_ERROR", message: "Sin conexión. Revisa tu internet e intenta de nuevo.", status: 0 } };
@@ -154,14 +155,8 @@ export function createCatalogClient(accessToken: string) {
       if (!ticket.ok) return ticket;
       const { upload } = ticket.data;
 
-      const storage = supabaseBrowser().storage.from(upload.bucket);
-      const [img, thumb] = await Promise.all([
-        storage.uploadToSignedUrl(upload.image.path, upload.image.token, prepared.image, { contentType: prepared.mimeType }),
-        storage.uploadToSignedUrl(upload.thumb.path, upload.thumb.token, prepared.thumb, { contentType: prepared.mimeType }),
-      ]);
-      if (img.error || thumb.error) {
-        return { ok: false, error: { code: "UPLOAD_FAILED", message: "No se pudo subir la foto. Revisa tu conexión e intenta de nuevo.", status: 0 } };
-      }
+      const subida = await uploadPrepared(upload, prepared);
+      if (!subida.ok) return subida;
 
       opts.onStage?.("confirming");
       return call(accessToken, `/productos/${encodeURIComponent(productId)}/imagenes`, {
@@ -175,7 +170,84 @@ export function createCatalogClient(accessToken: string) {
         }),
       });
     },
+
+    // ------------------------------------------------------------------
+    // Carga masiva
+    // ------------------------------------------------------------------
+
+    /** Preview a partir de la planilla (el servidor la lee). Las fotos NO viajan: solo `images` (metadatos). */
+    async analyzeImportFile(
+      file: File,
+      extras: { images: ImageInfo[]; decisions: Record<string, CategoryDecision> },
+    ): Promise<CatalogResult<{ file: { name: string; sheet: string | null }; rows: RawRow[]; analysis: ImportAnalysis }>> {
+      const form = new FormData();
+      form.set("archivo", file);
+      form.set("extras", JSON.stringify(extras));
+      // Sin Content-Type explícito: el navegador pone multipart/form-data con su boundary.
+      return call(accessToken, "/importaciones/analizar", { method: "POST", body: form });
+    },
+
+    analyzeImportRows(body: { rows: RawRow[]; images: ImageInfo[]; decisions: Record<string, CategoryDecision>; force: number[] }): Promise<CatalogResult<{ analysis: ImportAnalysis }>> {
+      return call(accessToken, "/importaciones/analizar", { method: "POST", body: JSON.stringify(body) });
+    },
+
+    startImport(fileName: string, totalRows: number): Promise<CatalogResult<{ import: ImportRecord }>> {
+      return call(accessToken, "/importaciones", { method: "POST", body: JSON.stringify({ fileName, totalRows }) });
+    },
+
+    importRows(
+      importId: string,
+      body: { rows: RawRow[]; images: ImageInfo[]; decisions: Record<string, CategoryDecision>; force: number[] },
+    ): Promise<CatalogResult<{ results: ImportRowResult[] }>> {
+      return call(accessToken, `/importaciones/${encodeURIComponent(importId)}/filas`, { method: "POST", body: JSON.stringify(body) });
+    },
+
+    importPhotoUrls(
+      importId: string,
+      items: Array<{ productId: string; mimeType: PreparedImage["mimeType"]; bytes: number; thumbBytes: number }>,
+    ): Promise<CatalogResult<{ results: Array<{ productId: string; ok: true; upload: UploadTicket } | { productId: string; ok: false; message: string }> }>> {
+      return call(accessToken, `/importaciones/${encodeURIComponent(importId)}/fotos/urls`, { method: "POST", body: JSON.stringify({ items }) });
+    },
+
+    confirmImportPhotos(
+      importId: string,
+      items: Array<{ productId: string; uploadId: string; mimeType: PreparedImage["mimeType"]; width: number; height: number; makePrimary: boolean }>,
+    ): Promise<CatalogResult<{ results: Array<{ productId: string; uploadId: string; ok: boolean; message?: string }> }>> {
+      return call(accessToken, `/importaciones/${encodeURIComponent(importId)}/fotos/confirmar`, { method: "POST", body: JSON.stringify({ items }) });
+    },
+
+    finishImport(importId: string, counts: { skipped: number; errors: number; photosUploaded: number; photosFailed: number }): Promise<CatalogResult<{ import: ImportRecord }>> {
+      return call(accessToken, `/importaciones/${encodeURIComponent(importId)}/finalizar`, { method: "POST", body: JSON.stringify(counts) });
+    },
+
+    listImports(): Promise<CatalogResult<{ imports: ImportRecord[] }>> {
+      return call(accessToken, "/importaciones");
+    },
+
+    /** Descarga la plantilla (XLSX con las categorías reales del catálogo, o CSV). */
+    async downloadTemplate(format: "xlsx" | "csv"): Promise<CatalogResult<{ blob: Blob; fileName: string }>> {
+      try {
+        const res = await fetch(`${BASE}/importaciones/plantilla?formato=${format}`, { headers: { Authorization: `Bearer ${accessToken}` } });
+        if (!res.ok) return { ok: false, error: { code: "UNKNOWN", message: "No pudimos descargar la plantilla. Intenta de nuevo.", status: res.status } };
+        return { ok: true, data: { blob: await res.blob(), fileName: `plantilla-productos.${format}` } };
+      } catch {
+        return { ok: false, error: { code: "NETWORK_ERROR", message: "Sin conexión. Revisa tu internet e intenta de nuevo.", status: 0 } };
+      }
+    },
   };
+}
+
+/** Sube imagen + miniatura YA preparadas DIRECTO a Storage con URLs firmadas (nunca pasan por Vercel). */
+export async function uploadPrepared(upload: UploadTicket, prepared: PreparedImage): Promise<CatalogResult<null>> {
+  const storage = supabaseBrowser().storage.from(upload.bucket);
+  const [img, thumb] = await Promise.all([
+    storage.uploadToSignedUrl(upload.image.path, upload.image.token, prepared.image, { contentType: prepared.mimeType }),
+    storage.uploadToSignedUrl(upload.thumb.path, upload.thumb.token, prepared.thumb, { contentType: prepared.mimeType }),
+  ]);
+  if (img.error || thumb.error) {
+    return { ok: false, error: { code: "UPLOAD_FAILED", message: "No se pudo subir la foto. Revisa tu conexión e intenta de nuevo.", status: 0 } };
+  }
+  return { ok: true, data: null };
 }
 
 export type CatalogClient = ReturnType<typeof createCatalogClient>;

@@ -1,97 +1,175 @@
 /**
- * Catálogo DuLabs — CONTRATOS de importación masiva. SOLO tipos: ningún
- * parser está implementado todavía. Contrato completo (columnas, imágenes,
- * duplicados, errores parciales, preview y confirmación): ./README.md
+ * Catálogo DuLabs — carga masiva: tipos compartidos por servidor y navegador.
  *
- * Pipeline acordado (nunca "subir archivo => crear 2.000 productos"):
+ * Pipeline (nunca "subir archivo => crear 2.000 productos"):
  *
- *   Archivo (CSV/XLSX, HTML, +ZIP de imágenes)
- *     -> Parse      (adaptador de infraestructura por formato:
- *                    lib/catalogo/import/csv, lib/catalogo/import/html)
- *     -> Normalize  (a ImportCandidate: el MISMO shape venga del formato que venga)
- *     -> Validate   (reglas del dominio: lib/catalogo/domain.ts -- productCreateSchema)
- *     -> Preview    (ImportPreview: válidos / errores / imágenes faltantes / precios faltantes)
- *     -> Confirm    (la usuaria decide)
- *     -> ImportJob  (procesamiento en segundo plano vía QStash, ya presente en el proyecto)
- *     -> Products   (a través de CatalogService.createProduct: la referencia la
- *                    asigna la BD igual que en la creación manual)
+ *   Planilla (CSV/XLSX) --> servidor: leer (exceljs / CSV) --> RawRow[]
+ *   Fotos (selección, carpeta o ZIP) --> quedan en el navegador: solo viajan
+ *     su nombre, tamaño y validez (ImageInfo)
+ *   RawRow[] + ImageInfo[] + decisiones --> analyzeImport (puro) --> preview
+ *   Confirmar --> lotes de filas --> CatalogService.createProduct (MISMA regla
+ *     que el formulario; referencia asignada por la BD)
+ *             --> lotes de fotos --> requestImageUpload / confirmImage (MISMA
+ *     galería del catálogo: la primera foto es la principal)
  *
- * Un parser NUNCA toca el dominio ni la BD: solo produce ImportCandidate. Si
- * el diseño del HTML de la cliente cambia, cambia su parser; el dominio no.
+ * Ver ./README.md para las decisiones.
  */
+import type { ColumnKey } from "@/lib/catalogo/import/columnas";
 
-export type ImportSourceKind = "csv" | "xlsx" | "html";
+export type { ColumnKey };
 
-/** Fila normalizada, independiente del formato de origen. Los precios ya en COP enteros o null. */
-export interface ImportCandidate {
-  /** Posición en el archivo de origen (fila, o índice del bloque HTML) para reportar problemas. */
-  sourceIndex: number;
-  name: string | null;
-  categoryName: string | null;
-  description: string | null;
-  material: string | null;
-  color: string | null;
-  retailPrice: number | null;
-  wholesalePrice: number | null;
-  /** Unidades disponibles (entero >= 0). null = columna vacía => error (el stock es obligatorio, como en el formulario). */
-  stock: number | null;
-  /** Referencia a la imagen en el origen (nombre de archivo del ZIP, o URL/src del HTML). */
-  imageRef: string | null;
+/** Fila tal como viene del archivo: solo texto. `row` = número de fila en Excel/CSV (el encabezado es la 1). */
+export interface RawRow {
+  row: number;
+  values: Partial<Record<ColumnKey, string>>;
 }
 
-export type ImportIssueCode =
+/** Foto disponible en el navegador. El servidor nunca recibe la foto para analizar: solo esto. */
+export interface ImageInfo {
+  /** Nombre de archivo (sin carpeta). */
+  name: string;
+  size: number;
+  /** null = válida; si no, por qué no se puede usar. */
+  problem: ImageProblem | null;
+}
+
+export type ImageProblem = "format" | "heic" | "size" | "empty";
+
+export type IssueSeverity = "error" | "warning";
+
+export type IssueCode =
   | "missing_name"
+  | "invalid_name"
   | "missing_retail_price"
-  | "missing_wholesale_price"
-  | "missing_image"
   | "invalid_price"
   | "missing_stock"
   | "invalid_stock"
-  | "new_category"
-  | "image_not_in_zip"
+  | "invalid_text"
+  | "invalid_category"
+  | "category_missing"
+  | "no_image"
+  | "image_not_found"
+  | "image_invalid"
+  | "too_many_images"
   | "duplicate_in_file"
-  | "possible_duplicate_in_catalog";
+  | "duplicate_in_catalog";
 
 export interface ImportIssue {
-  sourceIndex: number;
-  code: ImportIssueCode;
-  /** "error" bloquea la fila; "warning" permite importarla (ej. sin precio mayor, sin imagen). */
-  severity: "error" | "warning";
+  code: IssueCode;
+  severity: IssueSeverity;
+  field: ColumnKey | null;
+  /** Texto listo para mostrar: "Fila 24: el precio detal es obligatorio." */
   message: string;
 }
 
-export interface ImportPreview {
-  source: ImportSourceKind;
-  total: number;
-  valid: number;
-  withErrors: number;
-  missingImages: number;
-  missingWholesalePrice: number;
-  /** Categorías del archivo que no existen y se crearían al confirmar. */
-  newCategories: string[];
+/** Qué hacer con una categoría del archivo que no existe en el catálogo. */
+export type CategoryDecision = { action: "create" } | { action: "use"; categoryId: string } | { action: "none" };
+
+/** Categoría del archivo que no coincide con ninguna existente. */
+export interface CategoryPlan {
+  /** Clave normalizada (sin tildes ni mayúsculas): "Anillos", "anillos" y "ANILLOS" son la misma. */
+  key: string;
+  /** Cómo se llamará si se crea (primera escritura encontrada en el archivo). */
+  label: string;
+  /** Variantes tal como aparecen en el archivo. */
+  spellings: string[];
+  rows: number;
+  /** Categoría existente parecida (singular/plural): "Anillo" -> "Anillos". */
+  suggestion: { id: string; name: string } | null;
+  /** Decisión vigente (la del usuario o la propuesta por defecto). */
+  decision: CategoryDecision;
+}
+
+export interface ImageMatch {
+  /** Lo que escribió la persona en la celda. */
+  requested: string;
+  /** Archivo encontrado (nombre exacto) o null. */
+  file: string | null;
+}
+
+export type RowStatus = "ready" | "warning" | "error" | "duplicate";
+
+/** Producto listo para crear (valores ya validados con las reglas del dominio). */
+export interface ImportProductDraft {
+  name: string;
+  description: string | null;
+  material: string | null;
+  color: string | null;
+  retailPrice: number;
+  wholesalePrice: number | null;
+  stock: number;
+  /** Categoría resuelta: existente, a crear (por clave) o ninguna. */
+  category: { kind: "existing"; id: string; name: string } | { kind: "new"; key: string; label: string } | { kind: "none" };
+}
+
+export interface AnalyzedRow {
+  row: number;
+  values: RawRow["values"];
+  status: RowStatus;
   issues: ImportIssue[];
+  /** null si la fila tiene errores. */
+  product: ImportProductDraft | null;
+  /** Fotos que se subirán, en orden (la primera es la principal). */
+  images: ImageMatch[];
+  duplicateOf: { kind: "catalog"; reference: string; name: string } | { kind: "file"; row: number } | null;
+  /** true si la persona eligió importarla aunque parezca repetida. */
+  forced: boolean;
 }
 
-/** Resultado por fila tras procesar (errores parciales: una fila fallida no detiene las demás). */
+export interface ImportSummary {
+  total: number;
+  ready: number;
+  warnings: number;
+  errors: number;
+  duplicates: number;
+  /** Filas que se crearán al confirmar (listas + con advertencias + repetidas forzadas). */
+  importable: number;
+  photos: { matched: number; missing: number; unused: string[] };
+}
+
+export interface ImportAnalysis {
+  rows: AnalyzedRow[];
+  categories: CategoryPlan[];
+  summary: ImportSummary;
+  /** Avisos generales (no de una fila): columnas ignoradas, ninguna foto, etc. */
+  notices: string[];
+}
+
+/** Producto existente, reducido a lo necesario para detectar duplicados. */
+export interface ExistingProductKey {
+  reference: string;
+  name: string;
+  categoryId: string | null;
+  color: string | null;
+  material: string | null;
+}
+
+/** Resultado de crear una fila al confirmar. */
 export interface ImportRowResult {
-  sourceIndex: number;
-  status: "created" | "skipped" | "failed";
-  /** Referencia asignada por la BD (solo "created"). */
+  row: number;
+  status: "created" | "skipped" | "error";
   reference: string | null;
+  productId: string | null;
+  name: string | null;
   message: string | null;
+  /** Fotos que el navegador debe subir para este producto (solo "created"). */
+  images: string[];
 }
 
-export type ImportJobStatus = "previewed" | "confirmed" | "processing" | "completed" | "failed" | "cancelled";
+export type ImportStatus = "procesando" | "completada";
 
-/** Estado persistido de una importación (tabla a crear en la Fase 2, con la primera implementación real). */
-export interface ImportJob {
+/** Registro del historial. */
+export interface ImportRecord {
   id: string;
-  tenantId: string;
-  source: ImportSourceKind;
-  status: ImportJobStatus;
-  preview: ImportPreview;
-  createdBy: string;
+  fileName: string;
+  totalRows: number;
+  created: number;
+  skipped: number;
+  errors: number;
+  photosUploaded: number;
+  photosFailed: number;
+  status: ImportStatus;
   createdAt: string;
-  processed: number;
-  failed: number;
+  finishedAt: string | null;
+  createdBy: string | null;
 }

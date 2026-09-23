@@ -30,7 +30,7 @@ import {
   type PriceContext,
 } from "@/lib/catalogo/domain";
 import { CatalogError } from "@/lib/catalogo/errors";
-import type { CatalogRepository, ProductPatchData, PublicImageObject, StoredMedia } from "@/lib/catalogo/repository";
+import type { CatalogRepository, ProductOrigin, ProductPatchData, PublicImageObject, StoredMedia } from "@/lib/catalogo/repository";
 import {
   normalizeOrderItems,
   orderWhatsappMessage,
@@ -181,7 +181,12 @@ export function createCatalogService({ repo, newId = randomUUID }: CatalogServic
       return { ...withPrimary(product, media.find((m) => m.isPrimary)), images };
     },
 
-    async createProduct(actor: CatalogActor, input: ProductCreateInput): Promise<CatalogProduct> {
+    /**
+     * Crea un producto. ÚNICA regla de creación: la usan el formulario y la
+     * carga masiva (que además indica `origin`: importación + fila, para que
+     * un reintento nunca duplique el producto).
+     */
+    async createProduct(actor: CatalogActor, input: ProductCreateInput, origin?: ProductOrigin): Promise<CatalogProduct> {
       const category = await resolveCategory(actor, input.categoryId ?? null);
       // La referencia la asigna la BD (trigger, segura ante concurrencia):
       // el input ni siquiera tiene un campo para ella.
@@ -195,7 +200,7 @@ export function createCatalogService({ repo, newId = randomUUID }: CatalogServic
         retailPrice: input.retailPrice,
         wholesalePrice: input.wholesalePrice ?? null,
         stock: input.stock,
-      });
+      }, origin);
     },
 
     async updateProduct(actor: CatalogActor, productId: string, input: ProductUpdateInput): Promise<CatalogProduct> {

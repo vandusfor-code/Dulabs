@@ -14,11 +14,13 @@ import { respuestaSiLimiteTasaExcedido } from "@/lib/rate-limit";
 import { CATALOG_WRITE_ROLES, requireCatalogo, type CatalogAccessMode } from "@/lib/catalogo/auth";
 import { firstIssueMessage } from "@/lib/catalogo/domain";
 import { isCatalogError } from "@/lib/catalogo/errors";
-import { createSupabaseCatalogRepository } from "@/lib/catalogo/repository";
+import { createSupabaseCatalogRepository, type CatalogRepository } from "@/lib/catalogo/repository";
 import { createCatalogService, type CatalogActor, type CatalogService } from "@/lib/catalogo/service";
 
 export interface CatalogHandlerContext {
   service: CatalogService;
+  /** Mismo repositorio del service (para casos de uso que se construyen sobre él, como la carga masiva). */
+  repo: CatalogRepository;
   actor: CatalogActor;
   /** Rol con permiso de escritura (admin). Ya validado por el backend. */
   canWrite: boolean;
@@ -28,21 +30,24 @@ export async function withCatalog(
   request: NextRequest,
   mode: CatalogAccessMode,
   handler: (ctx: CatalogHandlerContext) => Promise<Response>,
+  /** `recurso`: cubeta propia de rate limit (la carga masiva no debe agotar la del formulario, ni al revés). */
+  opts: { recurso?: string } = {},
 ): Promise<Response> {
   const access = await requireCatalogo(request, mode);
   if (!access.ok) return access.response;
   const { supabase, actor, member } = access.ctx;
 
   const limite = await respuestaSiLimiteTasaExcedido(supabase, {
-    recurso: mode === "write" ? "catalogo_escritura" : "catalogo_lectura",
+    recurso: opts.recurso ?? (mode === "write" ? "catalogo_escritura" : "catalogo_lectura"),
     tenantId: actor.tenantId,
     categoria: mode === "write" ? "escritura" : "lectura",
   });
   if (limite) return limite;
 
-  const service = createCatalogService({ repo: createSupabaseCatalogRepository(supabase) });
+  const repo = createSupabaseCatalogRepository(supabase);
+  const service = createCatalogService({ repo });
   try {
-    return await handler({ service, actor, canWrite: CATALOG_WRITE_ROLES.includes(member.rol) });
+    return await handler({ service, repo, actor, canWrite: CATALOG_WRITE_ROLES.includes(member.rol) });
   } catch (err) {
     return catalogErrorResponse(err);
   }
