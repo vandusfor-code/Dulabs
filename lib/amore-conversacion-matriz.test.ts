@@ -175,6 +175,11 @@ function crearBot(
       const cita = { ...citaExistente(), inicio: p.nuevoInicio.toISOString() };
       return { ok: true, cita, nylasEventId: "evt", especialista: { id: 1263, nombre: "Cristal" }, servicio: { id: "s-dipping", nombre: "Dipping", duracionMin: 120 } };
     }) as never,
+    // Preguntas a mitad de la reserva que no son de precio/duración: el mismo LLM determinista con el catálogo real.
+    responderConsultaEnReserva: async ({ mensaje }) => {
+      const r = (opciones.gemini ?? geminiConDatos)({ mensaje, contextoNegocio: "- Dipping: $60.000, 120 min\n- Press On: $80.000, 120 min" });
+      return r.intent === "CONSULTA" && r.replyText ? r.replyText : null;
+    },
     crearCitaConNylas:
       opciones.crearCita ??
       (async (_s, p) => {
@@ -512,5 +517,99 @@ describe("H. Citas existentes -- cancelar y reprogramar (siempre con confirmaci�
     await bot.decir("sí");
     await bot.decir("mejor con Mary");
     assert.equal(bot.sesion()!.profesional_id, 1263);
+  });
+});
+
+describe("I. No repetir información ni caer en 'No reconocí' -- preguntas y datos dichos antes de tiempo", () => {
+  const opcionesDe = (sesion: Record<string, unknown> | null) => JSON.stringify(sesion?.opciones_mostradas);
+
+  it("I1 '¿cuánto cuesta el dipping?' eligiendo día -> precio REAL del catálogo, mismo paso y mismas opciones, sin contar como fallo", async () => {
+    conNylas(AGENDA_NORMAL());
+    const bot = crearBot();
+    for (const t of ["Quiero una cita", "uñas", "dipping", "con Cristal"]) await bot.decir(t);
+    const antes = opcionesDe(bot.sesion());
+    const { respuestas } = await bot.decir("¿cuánto cuesta el dipping?");
+    assert.match(respuestas[0]!, /Dipping\* cuesta \$60\.000/);
+    assert.doesNotMatch(respuestas[0]!, /No reconocí/);
+    assert.equal(bot.sesion()!.step, "S3_DIA");
+    assert.equal(opcionesDe(bot.sesion()), antes, "el menú de días REALES se conserva tal cual");
+    assert.equal(bot.sesion()!.intentos_fallidos_consecutivos, 0);
+  });
+
+  it("I2 '¿cuánto demora?' eligiendo hora -> duración del servicio YA elegido (catálogo real)", async () => {
+    conNylas(AGENDA_NORMAL());
+    const bot = crearBot();
+    for (const t of ["Quiero una cita", "uñas", "dipping", "Mary", `el ${NOMBRE_DIA}`]) await bot.decir(t);
+    const { respuestas } = await bot.decir("¿cuánto demora?");
+    assert.match(respuestas[0]!, /Dipping\* dura aproximadamente 120 minutos/);
+    assert.equal(bot.sesion()!.step, "S4_HORA");
+  });
+
+  it("I3 otra pregunta a mitad de la reserva ('estoy mirando para una boda, ¿qué me recomiendas?') -> la IA responde con datos reales y el menú sigue", async () => {
+    conNylas(AGENDA_NORMAL());
+    const bot = crearBot();
+    for (const t of ["Quiero una cita", "uñas", "dipping"]) await bot.decir(t);
+    const { respuestas } = await bot.decir("es para una boda, ¿qué me recomiendas?");
+    assert.match(respuestas[0]!, /ocasión especial/);
+    assert.match(respuestas[0]!, /1\. Mary/);
+    assert.equal(bot.sesion()!.step, "S2_PROFESIONAL");
+  });
+
+  it("I4 'sí' / 'sí, perfecto' cuando NO se está pidiendo confirmación -> jamás crea una cita ni avanza", async () => {
+    conNylas(AGENDA_NORMAL());
+    const bot = crearBot();
+    for (const t of ["Quiero una cita", "uñas", "dipping", "Mary", `el ${NOMBRE_DIA}`]) await bot.decir(t);
+    for (const t of ["sí", "sí, perfecto"]) {
+      const { respuestas } = await bot.decir(t);
+      assert.doesNotMatch(respuestas[0]!, /No reconocí/);
+      assert.equal(bot.sesion()!.step, "S4_HORA");
+    }
+    assert.equal(bot.citas.length, 0);
+  });
+
+  it("I5 'quiero con Cristal' ANTES del servicio + 'uñas para el <día>' -> al elegir el servicio va directo a los horarios REALES de Cristal ese día", async () => {
+    conNylas(AGENDA_NORMAL());
+    const bot = crearBot();
+    await bot.decir("Quiero una cita");
+    const anotado = await bot.decir("quiero con Cristal");
+    assert.match(anotado.respuestas[0]!, /Anoto que la quieres con \*Cristal\*/);
+    assert.equal(bot.sesion()!.step, "S1_SERVICIO");
+    await bot.decir(`uñas para el ${NOMBRE_DIA}`);
+    const horas = await bot.decir("dipping");
+    assert.equal(bot.sesion()!.step, "S4_HORA", horas.respuestas.join("\n"));
+    assert.equal(bot.sesion()!.profesional_id, 1263);
+    assert.equal(bot.sesion()!.fecha_iso, DIA_OBJETIVO);
+    assert.match(horas.respuestas[0]!, /Con \*Cristal\*/);
+  });
+
+  it("I6 primer mensaje '¿tienes disponibilidad el <día>?' (sin servicio) -> se recuerda el día; 'me da igual con quién' -> profesional con ESE día real", async () => {
+    conNylas(AGENDA_NORMAL());
+    const bot = crearBot({
+      gemini: ({ mensaje }) =>
+        /disponibilidad/.test(mensaje) ? { ...consulta(""), intent: "TRIGGER_AGENDA", detectedDateMention: `el ${NOMBRE_DIA}` } : geminiConDatos({ mensaje }),
+    });
+    const inicio = await bot.decir(`¿tienes disponibilidad el ${NOMBRE_DIA}?`);
+    assert.match(inicio.respuestas.join("\n"), /Anoto que la quieres para el/);
+    await bot.decir("uñas");
+    await bot.decir("dipping");
+    assert.equal(bot.sesion()!.step, "S2_PROFESIONAL");
+    await bot.decir("me da igual con quién");
+    assert.equal(bot.sesion()!.step, "S4_HORA");
+    assert.equal(bot.sesion()!.fecha_iso, DIA_OBJETIVO);
+  });
+
+  it("I7 día recordado SIN cupo real con la profesional elegida -> lo dice y muestra SUS días reales (nunca lo fuerza)", async () => {
+    conNylas(
+      calendarioNylas({ libresEn: ["cal-cristal"], ocupados: { "cal-cristal": [{ start: unix(DIA_OBJETIVO, "00:00"), end: unix(DIA_OBJETIVO, "23:59") }] } }),
+    );
+    const bot = crearBot();
+    await bot.decir("Quiero una cita");
+    await bot.decir(`uñas para el ${NOMBRE_DIA}`);
+    await bot.decir("dipping");
+    const { respuestas } = await bot.decir("Cristal");
+    assert.equal(bot.sesion()!.step, "S3_DIA");
+    assert.match(respuestas[0]!, /no tiene cupo disponible/);
+    const ofrecidos = (bot.sesion()!.opciones_mostradas as { opciones: { fechaIso: string }[] }).opciones.map((o) => o.fechaIso);
+    assert.ok(!ofrecidos.includes(DIA_OBJETIVO));
   });
 });
