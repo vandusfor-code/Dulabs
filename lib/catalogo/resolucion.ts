@@ -11,7 +11,7 @@
  * precios ni inventario ni identifica productos por el nombre: le pide a
  * este módulo la verdad de cada referencia.
  */
-import { isAvailable, isReference, type CatalogProduct, type ProductStatus } from "@/lib/catalogo/domain";
+import { availabilityOf, isReference, maxOrderableUnits, type Availability, type CatalogProduct, type ProductStatus } from "@/lib/catalogo/domain";
 import type { CatalogRepository } from "@/lib/catalogo/repository";
 
 export interface ProductoResuelto {
@@ -28,6 +28,10 @@ export interface ProductoResuelto {
   stock: { tracked: boolean; units: number | null };
   status: ProductStatus;
   available: boolean;
+  /** Mismas reglas que la tienda (availabilityOf): available | low | sold_out. */
+  availability: Availability;
+  /** Máximo pedible (stock si se controla; null = sin límite de inventario). */
+  maxQuantity: number | null;
   /** Foto principal en Storage (uso interno del backend, p. ej. enviarla por WhatsApp). */
   image: { storagePath: string; url: string } | null;
 }
@@ -61,7 +65,9 @@ export function createResolucionCatalogo({ repo }: { repo: CatalogRepository }) 
         prices: { retail: p.pricing.retail, wholesale: p.pricing.wholesale },
         stock: { tracked: p.tracksStock, units: p.tracksStock ? p.stock : null },
         status: p.status,
-        available: isAvailable(p),
+        available: availabilityOf(p) !== "sold_out",
+        availability: availabilityOf(p),
+        maxQuantity: maxOrderableUnits(p),
         // Solo fotos de este bucket (media del Catálogo o foto legada propia); una URL externa no se usa.
         image: storagePath ? { storagePath, url: repo.publicUrl(storagePath) } : null,
       };

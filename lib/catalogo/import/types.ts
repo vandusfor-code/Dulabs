@@ -1,6 +1,7 @@
 /**
- * Catálogo DuLabs — CONTRATOS de importación masiva (Fase 2+). SOLO tipos:
- * ningún parser se implementa en la Fase 1.
+ * Catálogo DuLabs — CONTRATOS de importación masiva. SOLO tipos: ningún
+ * parser está implementado todavía. Contrato completo (columnas, imágenes,
+ * duplicados, errores parciales, preview y confirmación): ./README.md
  *
  * Pipeline acordado (nunca "subir archivo => crear 2.000 productos"):
  *
@@ -32,11 +33,24 @@ export interface ImportCandidate {
   color: string | null;
   retailPrice: number | null;
   wholesalePrice: number | null;
+  /** Unidades disponibles (entero >= 0). null = columna vacía => error (el stock es obligatorio, como en el formulario). */
+  stock: number | null;
   /** Referencia a la imagen en el origen (nombre de archivo del ZIP, o URL/src del HTML). */
   imageRef: string | null;
 }
 
-export type ImportIssueCode = "missing_name" | "missing_retail_price" | "missing_wholesale_price" | "missing_image" | "invalid_price" | "duplicate_in_file";
+export type ImportIssueCode =
+  | "missing_name"
+  | "missing_retail_price"
+  | "missing_wholesale_price"
+  | "missing_image"
+  | "invalid_price"
+  | "missing_stock"
+  | "invalid_stock"
+  | "new_category"
+  | "image_not_in_zip"
+  | "duplicate_in_file"
+  | "possible_duplicate_in_catalog";
 
 export interface ImportIssue {
   sourceIndex: number;
@@ -53,7 +67,18 @@ export interface ImportPreview {
   withErrors: number;
   missingImages: number;
   missingWholesalePrice: number;
+  /** Categorías del archivo que no existen y se crearían al confirmar. */
+  newCategories: string[];
   issues: ImportIssue[];
+}
+
+/** Resultado por fila tras procesar (errores parciales: una fila fallida no detiene las demás). */
+export interface ImportRowResult {
+  sourceIndex: number;
+  status: "created" | "skipped" | "failed";
+  /** Referencia asignada por la BD (solo "created"). */
+  reference: string | null;
+  message: string | null;
 }
 
 export type ImportJobStatus = "previewed" | "confirmed" | "processing" | "completed" | "failed" | "cancelled";

@@ -51,7 +51,10 @@ function ProductTile({ product, whatsapp, context }: { product: PublicCatalogPro
         <p className="mt-auto pt-2 text-base font-semibold tabular-nums text-fg sm:text-lg">
           {product.price === null ? <span className="text-sm font-medium text-mist">Precio a consultar</span> : formatCop(product.price)}
         </p>
-        {pedir && (
+        {product.availability === "low" && <p className="text-xs font-medium text-amber-400">Últimas unidades</p>}
+        {!product.available ? (
+          <p className="mt-2 rounded-lg bg-ink-2 px-3 py-2 text-center text-xs font-medium text-mist sm:text-sm">Agotado</p>
+        ) : pedir && (
           <a
             href={pedir}
             target="_blank"

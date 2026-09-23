@@ -1419,6 +1419,16 @@ body {
   }
 }
 
+/* Barra de tiempo de una confirmación que se retira sola (Catálogo). */
+@keyframes catalogo-cuenta {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+
 @keyframes catalogo-pop {
   0% {
     opacity: 0;

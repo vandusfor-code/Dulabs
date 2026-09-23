@@ -6,6 +6,7 @@
  *   - solo productos ACTIVOS; catálogo no publicado / módulo apagado => 404.
  */
 import assert from "node:assert/strict";
+import { parseOrderMessage } from "@/lib/catalogo/pedido";
 import { beforeEach, describe, it } from "node:test";
 import type { CatalogProduct } from "@/lib/catalogo/domain";
 import {
@@ -86,7 +87,9 @@ describe("proyección pública de un producto", () => {
   it("WhatsApp: mensaje con la referencia exacta de la pieza", () => {
     const link = whatsappOrderLink("+57 318 3715860", { reference: "DL-000184", name: "Dije corazón" }, "retail");
     assert.ok(link?.startsWith("https://wa.me/573183715860?text="));
-    assert.match(decodeURIComponent(link!.split("text=")[1]), /ref\. DL-000184/);
+    assert.match(decodeURIComponent(link!.split("text=")[1]), /• DL-000184 · Dije corazón — 1 unidad/);
+    const mayor = whatsappOrderLink("573183715860", { reference: "DL-000184", name: "Dije corazón" }, "wholesale");
+    assert.deepEqual(parseOrderMessage(decodeURIComponent(mayor!.split("text=")[1])), { context: "wholesale", items: [{ reference: "DL-000184", quantity: 1 }] });
     assert.equal(whatsappOrderLink(null, { reference: "DL-1", name: "x" }, "retail"), null);
   });
 });
@@ -121,9 +124,9 @@ describe("links del catálogo (dashboard) + catálogo público", () => {
   });
 
   async function cargar() {
-    const dije = await admin.createProduct(DELACOUR, { name: "Dije corazón", retailPrice: 35_000, wholesalePrice: 18_000 });
-    const anillo = await admin.createProduct(DELACOUR, { name: "Anillo solitario", retailPrice: 58_000, wholesalePrice: null });
-    const oculto = await admin.createProduct(DELACOUR, { name: "Pieza descontinuada", retailPrice: 10_000, wholesalePrice: 5_000 });
+    const dije = await admin.createProduct(DELACOUR, { stock: 10, name: "Dije corazón", retailPrice: 35_000, wholesalePrice: 18_000 });
+    const anillo = await admin.createProduct(DELACOUR, { stock: 10, name: "Anillo solitario", retailPrice: 58_000, wholesalePrice: null });
+    const oculto = await admin.createProduct(DELACOUR, { stock: 10, name: "Pieza descontinuada", retailPrice: 10_000, wholesalePrice: 5_000 });
     await admin.updateProduct(DELACOUR, oculto.id, { status: "INACTIVE" });
     const ticket = await admin.requestImageUpload(DELACOUR, dije.id, { mimeType: "image/webp", bytes: 10, thumbBytes: 10 });
     mem.putObject(ticket.image.path, { size: 10, contentType: "image/webp", head: WEBP_HEAD });
@@ -218,8 +221,8 @@ describe("links del catálogo (dashboard) + catálogo público", () => {
 
   it("búsqueda, categoría y paginación desde la URL (entradas raras no rompen nada)", async () => {
     const cat = await admin.createCategory(DELACOUR, { name: "Dijes" });
-    await admin.createProduct(DELACOUR, { name: "Dije luna", retailPrice: 20_000, categoryId: cat.id });
-    for (let i = 0; i < 50; i++) await admin.createProduct(DELACOUR, { name: `Arete ${i}`, retailPrice: 10_000 });
+    await admin.createProduct(DELACOUR, { stock: 10, name: "Dije luna", retailPrice: 20_000, categoryId: cat.id });
+    for (let i = 0; i < 50; i++) await admin.createProduct(DELACOUR, { stock: 10, name: `Arete ${i}`, retailPrice: 10_000 });
     const pub = await admin.ensurePublication(DELACOUR);
     assert.equal((await publico.getCatalog({ slug: pub.slug, context: "retail", q: "luna" }))?.total, 1);
     assert.equal((await publico.getCatalog({ slug: pub.slug, context: "retail", categoryId: cat.id }))?.total, 1);
@@ -274,7 +277,7 @@ describe("ruta pública de imágenes", () => {
   });
 
   async function productoConFoto() {
-    const p = await admin.createProduct(DELACOUR, { name: "Dije corazón", retailPrice: 35_000, wholesalePrice: 18_000 });
+    const p = await admin.createProduct(DELACOUR, { stock: 10, name: "Dije corazón", retailPrice: 35_000, wholesalePrice: 18_000 });
     const ticket = await admin.requestImageUpload(DELACOUR, p.id, { mimeType: "image/webp", bytes: 10, thumbBytes: 10 });
     mem.putObject(ticket.image.path, { size: 10, contentType: "image/webp", head: WEBP_HEAD });
     mem.putObject(ticket.thumb.path, { size: 10, contentType: "image/webp", head: WEBP_HEAD });
@@ -314,7 +317,7 @@ describe("ruta pública de imágenes", () => {
   });
 
   it("foto legada (foto_url) solo si vive en el bucket y en la carpeta del propio tenant", async () => {
-    const p = await admin.createProduct(DELACOUR, { name: "Pieza legada", retailPrice: 10_000 });
+    const p = await admin.createProduct(DELACOUR, { stock: 10, name: "Pieza legada", retailPrice: 10_000 });
     const pub = await admin.ensurePublication(DELACOUR);
     const stored = mem.auditTrail(p.id)!;
     const ref = p.reference.toLowerCase();

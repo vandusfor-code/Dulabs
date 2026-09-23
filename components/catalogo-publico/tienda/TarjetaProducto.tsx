@@ -38,6 +38,7 @@ export function TarjetaProducto({ product, slug }: { product: PublicCatalogProdu
           </Link>
         </h3>
         <p className="mt-0.5 font-mono text-[11px] tracking-tight text-mist">{product.reference}</p>
+        {product.availability === "low" && <p className="mt-1 text-[11.5px] font-medium text-[var(--tienda-oro)]">Últimas unidades</p>}
         <div className="mt-auto flex items-end justify-between gap-2 pt-3">
           {product.price === null ? (
             <span className="text-[13px] text-mist">Precio a consultar</span>

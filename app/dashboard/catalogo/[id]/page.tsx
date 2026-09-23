@@ -72,15 +72,18 @@ export default function ProductoPage() {
   const selected: CatalogImage | null = images.find((i) => i.id === selectedId) ?? images.find((i) => i.isPrimary) ?? images[0] ?? null;
   const readOnly = !canWrite;
 
+  // Un producto que ya controla inventario no puede quedar sin stock; uno legado lo define cuando quiera.
+  const reglas = { requireStock: product?.tracksStock ?? true };
+
   const cambiar = (next: ProductFormState) => {
     setForm(next);
-    setErrors(validateProductForm(next));
+    setErrors(validateProductForm(next, reglas));
   };
 
   const guardar = async (e: FormEvent) => {
     e.preventDefault();
     if (!client || !form || !product || !dirty || readOnly) return;
-    const errs = validateProductForm(form);
+    const errs = validateProductForm(form, reglas);
     setErrors(errs);
     if (Object.keys(errs).length > 0) return;
     setSaving(true);
@@ -268,6 +271,7 @@ export default function ProductoPage() {
               onCategoryCreated={(c) => setCategories((all) => [...all, c].sort((a, b) => a.name.localeCompare(b.name, "es")))}
               client={client}
               disabled={readOnly || saving}
+              stockUntracked={!product.tracksStock}
             />
 
             {readOnly ? (
