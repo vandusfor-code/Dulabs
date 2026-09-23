@@ -189,8 +189,8 @@ function construirCapa(lienzo: HTMLCanvasElement, prof: number, region: Region, 
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
   g.clearRect(0, 0, w, h);
 
-  // Presencia: frente +28 % y medio +20 % respecto al ajuste anterior (0.095 / 0.05); el fondo queda igual para conservar profundidad.
-  const alfaLinea = [0.03, 0.06, 0.122][prof];
+  // Presencia por capa (fondo < medio < frente): el fondo se mantiene tenue para conservar la profundidad. Siempre gris, nunca blanco.
+  const alfaLinea = [0.03, 0.06, 0.13][prof];
   // Nodos: solo un poco más presentes (frente +15 %, medio +10 %); se separan de las líneas para no subirlos al mismo ritmo.
   const alfaNodo = [0.03, 0.055, 0.109][prof];
   if (prof === 0) {
@@ -418,8 +418,8 @@ export function InfraFlowField({ className = "", libreDe }: { className?: string
             ctx.drawImage(n.salida ? brilloVerde : brilloAzul, n.x - s, n.y - s, s * 2, s * 2);
             ctx.globalAlpha = 1;
             if (n.estacion) {
-              const rr = n.r * (1 + 0.4 * b);
-              ctx.strokeStyle = `rgba(${AZUL_NUCLEO}, ${(0.12 + 0.45 * b).toFixed(3)})`;
+              const rr = n.r * (1 + 0.5 * b);
+              ctx.strokeStyle = `rgba(${AZUL_NUCLEO}, ${(0.12 + 0.55 * b).toFixed(3)})`;
               ctx.lineWidth = 0.8;
               ctx.beginPath();
               if (n.forma === "cuadro") ctx.rect(n.x - rr, n.y - rr, rr * 2, rr * 2);
@@ -428,7 +428,7 @@ export function InfraFlowField({ className = "", libreDe }: { className?: string
             }
           }
           if (base + b > 0.03) {
-            ctx.fillStyle = n.salida && b > 0.02 ? `rgba(${VERDE}, ${(b * 0.8).toFixed(3)})` : `rgba(${AZUL_NUCLEO}, ${(base + b * 0.7).toFixed(3)})`;
+            ctx.fillStyle = n.salida && b > 0.02 ? `rgba(${VERDE}, ${(b * 0.8).toFixed(3)})` : `rgba(${AZUL_NUCLEO}, ${(base + b * 0.8).toFixed(3)})`;
             ctx.fillRect(n.x - 1, n.y - 1, 2, 2);
           }
         }
@@ -483,14 +483,14 @@ export function InfraFlowField({ className = "", libreDe }: { className?: string
           const d = p.d - k * 4;
           if (d < 0 || d > ruta.largo) continue;
           const [x, y] = punto(ruta, d);
-          const a = Math.pow(1 - k / 15, 2) * 0.95 * desvanecer;
+          const a = Math.pow(1 - k / 15, 1.7) * desvanecer;
           ctx.fillStyle = `rgba(${AZUL}, ${a.toFixed(3)})`;
           if (k === 0) continue;
           ctx.fillRect(x + ox - 0.7, y + oy - 0.7, 1.4, 1.4);
         }
         if (p.d <= ruta.largo) {
           const [x, y] = punto(ruta, p.d);
-          ctx.globalAlpha = 0.52 * desvanecer;
+          ctx.globalAlpha = 0.56 * desvanecer;
           ctx.drawImage(brilloAzul, x + ox - 12, y + oy - 12, 24, 24);
           // Cabeza definida: un punto nítido del mismo azul (antes era un cuadrado de 2 px casi perdido en su propio brillo).
           ctx.globalAlpha = desvanecer;
@@ -498,6 +498,10 @@ export function InfraFlowField({ className = "", libreDe }: { className?: string
           ctx.beginPath();
           ctx.arc(x + ox, y + oy, 1.7, 0, Math.PI * 2);
           ctx.fill();
+          // Núcleo más claro DENTRO de la misma cabeza (no la agranda): el pulso se distingue como tráfico, no como brillo.
+          ctx.globalAlpha = 0.75 * desvanecer;
+          ctx.fillStyle = `rgb(${AZUL_NUCLEO})`;
+          ctx.fillRect(x + ox - 0.6, y + oy - 0.6, 1.2, 1.2);
           ctx.globalAlpha = 1;
         }
         return true;

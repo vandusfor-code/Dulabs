@@ -22,12 +22,18 @@ export const LOGIN_HREF = "/login?next=/developer";
 /** Base URL pública del API (misma que el OpenAPI de Fase 14). Solo display.
  *  Fuente de verdad única en lib/developers/api-base.ts. */
 export { DEVELOPER_API_BASE_URL as API_BASE_URL } from "@/lib/developers/api-base";
+import { DEVELOPER_API_BASE_URL } from "@/lib/developers/api-base";
 
-/** Anclas de secciones para el nav de la landing. */
+/** La misma Base URL sin protocolo, para mostrarla en etiquetas técnicas. */
+export const API_HOST = DEVELOPER_API_BASE_URL.replace(/^https?:\/\//, "");
+
+/** Anclas de los bloques de la landing (nav + estado activo). */
 export const SECTION_IDS = {
   plataforma: "plataforma",
   api: "api",
   webhooks: "webhooks",
+  control: "control",
+  produccion: "produccion",
   pricing: "pricing",
   docs: "docs",
 } as const;
