@@ -23,18 +23,42 @@ export type { ColumnKey };
 export interface RawRow {
   row: number;
   values: Partial<Record<ColumnKey, string>>;
+  /**
+   * Fotos elegidas a mano en el preview (ids, en orden; [] = "sin foto").
+   * Si está presente manda sobre la columna «imagenes» y la detección
+   * automática. Al confirmar, el navegador congela aquí lo que mostró el
+   * preview, para que cada lote cree exactamente lo que la persona revisó.
+   */
+  photos?: string[];
 }
 
 /** Foto disponible en el navegador. El servidor nunca recibe la foto para analizar: solo esto. */
 export interface ImageInfo {
+  /**
+   * Identidad ÚNICA de la foto: su ruta relativa dentro de lo seleccionado
+   * ("Fotos/anillo-corazon/1.jpg"), o el nombre si se eligió suelta. Dos
+   * "1.jpg" en carpetas distintas son fotos distintas.
+   */
+  id: string;
   /** Nombre de archivo (sin carpeta). */
   name: string;
   size: number;
+  /** Dimensiones leídas del encabezado (null si no se pudieron leer sin decodificar). */
+  width: number | null;
+  height: number | null;
   /** null = válida; si no, por qué no se puede usar. */
   problem: ImageProblem | null;
 }
 
-export type ImageProblem = "format" | "heic" | "size" | "empty";
+/**
+ * - format: no es JPG/PNG/WEBP · heic: iPhone sin exportar · size: pesa demasiado · empty: 0 bytes
+ * - corrupt: la firma dice JPG/PNG/WEBP pero el contenido está dañado o incompleto
+ * - dimensions: demasiado pequeña para una tienda o demasiado grande para procesarla
+ */
+export type ImageProblem = "format" | "heic" | "size" | "empty" | "corrupt" | "dimensions";
+
+/** De dónde salieron las fotos de una fila (en este orden de prioridad). */
+export type PhotoSource = "picked" | "cell" | "auto" | "none";
 
 export type IssueSeverity = "error" | "warning";
 
@@ -51,6 +75,8 @@ export type IssueCode =
   | "no_image"
   | "image_not_found"
   | "image_invalid"
+  | "image_ambiguous"
+  | "image_low_resolution"
   | "too_many_images"
   | "duplicate_in_file"
   | "already_imported"
@@ -83,9 +109,9 @@ export interface CategoryPlan {
 }
 
 export interface ImageMatch {
-  /** Lo que escribió la persona en la celda. */
+  /** Lo que escribió la persona en la celda (o el nombre del archivo, si se encontró sola o se eligió). */
   requested: string;
-  /** Archivo encontrado (nombre exacto) o null. */
+  /** Id de la foto encontrada (ver ImageInfo.id) o null. */
   file: string | null;
 }
 
@@ -107,20 +133,39 @@ export interface ImportProductDraft {
 export interface AnalyzedRow {
   row: number;
   values: RawRow["values"];
+  /** Fotos elegidas a mano (si las hay): ver RawRow.photos. */
+  photos?: string[];
   status: RowStatus;
   issues: ImportIssue[];
   /** null si la fila tiene errores. */
   product: ImportProductDraft | null;
   /** Fotos que se subirán, en orden (la primera es la principal). */
   images: ImageMatch[];
+  /** Cómo se relacionaron las fotos: elegidas en el preview, columna «imagenes», automáticas o ninguna. */
+  imageSource: PhotoSource;
+  /** Si hay duda (varias fotos posibles): ids candidatos para que la persona elija. Nunca se asignan solos. */
+  imageCandidates: string[];
   /**
    * - file: repite otra fila del mismo archivo (error).
    * - catalog: coincide con un producto existente. `imported` = ese producto vino
    *   de una carga masiva anterior (casi seguro es el mismo archivo subido otra vez).
    */
-  duplicateOf: { kind: "catalog"; reference: string; name: string; imported: boolean } | { kind: "file"; row: number } | null;
+  duplicateOf:
+    | {
+        kind: "catalog";
+        productId: string;
+        reference: string;
+        name: string;
+        imported: boolean;
+        /** Vino de una carga masiva y NO tiene fotos: se le pueden agregar las de esta fila (si la persona lo pide). */
+        canAttach: boolean;
+      }
+    | { kind: "file"; row: number }
+    | null;
   /** true si la persona eligió importarla aunque parezca repetida. */
   forced: boolean;
+  /** true si la persona eligió agregar las fotos de esta fila al producto ya importado (sin crear nada ni cambiar sus datos). */
+  attach: boolean;
 }
 
 export interface ImportSummary {
@@ -131,7 +176,22 @@ export interface ImportSummary {
   duplicates: number;
   /** Filas que se crearán al confirmar (listas + con advertencias + repetidas forzadas). */
   importable: number;
-  photos: { matched: number; missing: number; unused: string[] };
+  /** Productos ya importados, sin fotos, a los que se agregarán las fotos de su fila. */
+  attach: number;
+  /** Productos ya importados, sin fotos, para los que esta carga trae fotos (se pueden completar). */
+  attachable: number;
+  photos: {
+    /** Fotos que se subirán (filas importables). */
+    matched: number;
+    /** Filas importables con fotos encontradas automáticamente. */
+    auto: number;
+    /** Filas con varias fotos posibles (sin asignar: la persona elige). */
+    ambiguous: number;
+    /** Nombres de la columna «imagenes» que no aparecen. */
+    missing: number;
+    /** Ids de fotos seleccionadas que ninguna fila usa. */
+    unused: string[];
+  };
 }
 
 export interface ImportAnalysis {
@@ -144,6 +204,7 @@ export interface ImportAnalysis {
 
 /** Producto existente, reducido a lo necesario para detectar duplicados. */
 export interface ExistingProductKey {
+  id: string;
   reference: string;
   name: string;
   categoryId: string | null;
@@ -151,17 +212,20 @@ export interface ExistingProductKey {
   material: string | null;
   /** Carga masiva que lo creó (null: creado a mano, por AMORE, o la migración aún no está aplicada). */
   importId: string | null;
+  /** ¿Tiene foto principal? (un producto importado sin fotos puede completarlas con otra carga). */
+  hasImages: boolean;
 }
 
 /** Resultado de crear una fila al confirmar. */
 export interface ImportRowResult {
   row: number;
-  status: "created" | "skipped" | "error";
+  /** attached = producto ya importado al que solo se le agregan fotos (no se modifica nada más). */
+  status: "created" | "attached" | "skipped" | "error";
   reference: string | null;
   productId: string | null;
   name: string | null;
   message: string | null;
-  /** Fotos que el navegador debe subir para este producto (solo "created"). */
+  /** Fotos que el navegador debe subir para este producto (solo "created" y "attached"). */
   images: string[];
 }
 

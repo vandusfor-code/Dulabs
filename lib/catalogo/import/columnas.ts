@@ -4,7 +4,7 @@
  * servidor, la plantilla y la interfaz.
  */
 
-export const COLUMN_KEYS = ["name", "category", "retailPrice", "wholesalePrice", "stock", "material", "color", "description", "images"] as const;
+export const COLUMN_KEYS = ["name", "category", "retailPrice", "wholesalePrice", "stock", "material", "color", "description", "code", "images"] as const;
 export type ColumnKey = (typeof COLUMN_KEYS)[number];
 
 export interface ColumnDef {
@@ -72,17 +72,25 @@ export const COLUMNS: readonly ColumnDef[] = [
     aliases: ["description", "detalle", "detalles"],
   },
   {
+    key: "code",
+    header: "codigo",
+    label: "el código",
+    required: false,
+    help: "Tu código interno, SOLO si tus fotos se llaman así (ej. AN-014.jpg, AN-014-2.jpg o una carpeta AN-014). Sirve para encontrar las fotos; no se guarda: la referencia del producto la asigna DuLabs. Opcional.",
+    aliases: ["sku", "codigo interno", "cod", "codigo proveedor", "codigo de foto", "codigo foto"],
+  },
+  {
     key: "images",
     header: "imagenes",
     label: "las imágenes",
     required: false,
-    help: "Nombre del archivo de cada foto, tal como está en tu computador. Varias fotos separadas por coma: la primera es la principal. Ej. anillo-corazon.jpg, anillo-corazon-2.jpg",
+    help: "Opcional: si tus fotos se llaman como el producto (anillo-corazon.jpg, anillo-corazon-2.jpg) o están en una carpeta con su nombre, las encontramos solas. Úsala solo para indicar otras: nombre de cada archivo separado por coma, la primera es la principal. Escribe «sin foto» para no asignarle ninguna.",
     aliases: ["imagen", "imagen principal", "imagenes", "fotos", "foto", "fotografia", "fotografias", "images", "image"],
   },
 ] as const;
 
 /** Encabezados que se reconocen pero se IGNORAN a propósito (la referencia la asigna DuLabs). */
-export const IGNORED_HEADERS: readonly string[] = ["referencia", "ref", "codigo", "sku", "id"];
+export const IGNORED_HEADERS: readonly string[] = ["referencia", "ref", "id"];
 
 /** Normaliza un encabezado: sin tildes, minúsculas, `_`/`-`/`.` como espacio, sin paréntesis ni asteriscos. */
 export function normalizeHeader(raw: string): string {
@@ -125,7 +133,8 @@ export const TEMPLATE_EXAMPLES: ReadonlyArray<Record<ColumnKey, string | number>
     material: "Oro laminado 18k",
     color: "Dorado",
     description: "Anillo con corazón central. Talla ajustable.",
-    images: "anillo-corazon.jpg, anillo-corazon-detalle.jpg",
+    code: "",
+    images: "",
   },
   {
     name: "Aretes perla",
@@ -136,7 +145,8 @@ export const TEMPLATE_EXAMPLES: ReadonlyArray<Record<ColumnKey, string | number>
     material: "Plata 925",
     color: "Plateado",
     description: "Aretes tipo topo con perla de río de 8 mm.",
-    images: "aretes-perla.jpg",
+    code: "",
+    images: "aretes-perla-frente.jpg, aretes-perla-lado.jpg",
   },
   {
     name: "Dije luna",
@@ -147,6 +157,7 @@ export const TEMPLATE_EXAMPLES: ReadonlyArray<Record<ColumnKey, string | number>
     material: "Oro laminado 18k",
     color: "",
     description: "",
-    images: "dije-luna.jpg",
+    code: "DJ-014",
+    images: "",
   },
 ];

@@ -150,8 +150,8 @@ export interface CatalogRepository {
   importsAvailable(): Promise<boolean>;
   /** Productos ya creados por esta importación para esas filas (reintentos idempotentes). */
   getProductsByImportRows(tenantId: string, importId: string, rows: number[]): Promise<Array<{ row: number; product: CatalogProduct }>>;
-  /** De estos productos, cuáles creó esta importación. */
-  importedProductIds(tenantId: string, importId: string, productIds: string[]): Promise<string[]>;
+  /** De estos productos, cuáles vinieron de una carga masiva (cualquiera del tenant). */
+  bulkImportedProductIds(tenantId: string, productIds: string[]): Promise<string[]>;
   insertImport(tenantId: string, actorId: string, data: { fileName: string; totalRows: number }): Promise<ImportRecord>;
   getImport(tenantId: string, importId: string): Promise<ImportRecord | null>;
   /** Cierra la importación; `created` lo cuenta la BD (productos con esta importación), nunca el navegador. */
@@ -458,7 +458,7 @@ export function createSupabaseCatalogRepository(supabase: SupabaseClient): Catal
       // (el preview funciona igual; solo no se distingue "ya importado").
       const read = async (withImport: boolean) => {
         const out: ExistingProductKey[] = [];
-        const columns: string = withImport ? "referencia, nombre, categoria_id, color, material, importacion_id" : "referencia, nombre, categoria_id, color, material";
+        const columns: string = withImport ? "id, referencia, nombre, categoria_id, color, material, foto_url, importacion_id" : "id, referencia, nombre, categoria_id, color, material, foto_url";
         for (let from = 0; ; from += 1000) {
           const { data, error } = await supabase
             .from(T_PRODUCTOS)
@@ -467,8 +467,19 @@ export function createSupabaseCatalogRepository(supabase: SupabaseClient): Catal
             .order("id", { ascending: true })
             .range(from, from + 999);
           if (error) return { out, error };
-          const rows = (data ?? []) as unknown as Array<{ referencia: string; nombre: string; categoria_id: string | null; color: string | null; material: string | null; importacion_id?: string | null }>;
-          for (const r of rows) out.push({ reference: r.referencia, name: r.nombre, categoryId: r.categoria_id, color: r.color, material: r.material, importId: r.importacion_id ?? null });
+          const rows = (data ?? []) as unknown as Array<{
+            id: string;
+            referencia: string;
+            nombre: string;
+            categoria_id: string | null;
+            color: string | null;
+            material: string | null;
+            foto_url: string | null;
+            importacion_id?: string | null;
+          }>;
+          for (const r of rows) {
+            out.push({ id: r.id, reference: r.referencia, name: r.nombre, categoryId: r.categoria_id, color: r.color, material: r.material, importId: r.importacion_id ?? null, hasImages: r.foto_url !== null });
+          }
           if (rows.length < 1000 || out.length >= 50_000) break;
         }
         return { out, error: null };
@@ -511,10 +522,10 @@ export function createSupabaseCatalogRepository(supabase: SupabaseClient): Catal
       return ((data ?? []) as Array<ProductRow & { importacion_fila: number }>).map((r) => ({ row: r.importacion_fila, product: mapProduct(r) }));
     },
 
-    async importedProductIds(tenantId, importId, productIds) {
+    async bulkImportedProductIds(tenantId, productIds) {
       if (productIds.length === 0) return [];
-      const { data, error } = await supabase.from(T_PRODUCTOS).select("id").eq("id_tenant", tenantId).eq("importacion_id", importId).in("id", productIds);
-      if (error) failImport("importedProductIds", error);
+      const { data, error } = await supabase.from(T_PRODUCTOS).select("id").eq("id_tenant", tenantId).not("importacion_id", "is", null).in("id", productIds);
+      if (error) failImport("bulkImportedProductIds", error);
       return ((data ?? []) as Array<{ id: string }>).map((r) => r.id);
     },
 

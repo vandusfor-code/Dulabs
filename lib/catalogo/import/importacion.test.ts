@@ -13,7 +13,8 @@ import { createSupabaseCatalogRepository } from "@/lib/catalogo/repository";
 import { COLUMNS, columnFor } from "@/lib/catalogo/import/columnas";
 import { parseCsv, decodeCsv, toCsv } from "@/lib/catalogo/import/csv";
 import { analyzeImport, parseMoney, parseStock } from "@/lib/catalogo/import/analisis";
-import { buildImageIndex, imageProblem, sniffImage, splitImageCell } from "@/lib/catalogo/import/fotos";
+import { imageProblem, sniffImage, splitImageCell } from "@/lib/catalogo/import/fotos";
+import { buildPhotoCatalog } from "@/lib/catalogo/import/asociacion";
 import { IMPORT_LIMITS } from "@/lib/catalogo/import/limites";
 import { ImportFileError, readSpreadsheet, rowsFromTable } from "@/lib/catalogo/import/planilla";
 import { buildTemplateCsv, buildTemplateXlsx } from "@/lib/catalogo/import/plantilla";
@@ -29,7 +30,14 @@ const DELACOUR: CatalogActor = { tenantId: "0d3ae22d-0c38-4fd6-ba48-fb9e29b7cdb4
 const OTRO: CatalogActor = { tenantId: "bbbbbbbb-0000-4000-8000-000000000002", userId: "otro" };
 
 const enc = new TextEncoder();
-const img = (name: string, problem: ImageInfo["problem"] = null, size = 50_000): ImageInfo => ({ name, size, problem });
+const img = (id: string, problem: ImageInfo["problem"] = null, size = 50_000, dims: [number, number] | null = [1600, 1600]): ImageInfo => ({
+  id,
+  name: id.split("/").pop()!,
+  size,
+  width: dims?.[0] ?? null,
+  height: dims?.[1] ?? null,
+  problem,
+});
 const row = (n: number, values: RawRow["values"]): RawRow => ({ row: n, values });
 const base = (n: number, over: RawRow["values"] = {}): RawRow => row(n, { name: `Pieza ${n}`, retailPrice: "10000", stock: "3", ...over });
 
@@ -79,7 +87,9 @@ describe("lector de planillas", () => {
     const xlsx = await readSpreadsheet("plantilla-productos.xlsx", await buildTemplateXlsx(["Anillos", "Aretes"]));
     assert.equal(xlsx.rows.length, 3);
     assert.equal(xlsx.rows[0].values.name, "Anillo corazón");
-    assert.equal(xlsx.rows[0].values.images, "anillo-corazon.jpg, anillo-corazon-detalle.jpg");
+    assert.equal(xlsx.rows[0].values.images, undefined, "el ejemplo principal usa la detección automática por nombre");
+    assert.equal(xlsx.rows[1].values.images, "aretes-perla-frente.jpg, aretes-perla-lado.jpg");
+    assert.equal(xlsx.rows[2].values.code, "DJ-014");
     const csv = await readSpreadsheet("plantilla-productos.csv", enc.encode(buildTemplateCsv()));
     assert.deepEqual(
       csv.rows.map((r) => r.values.name),
@@ -101,15 +111,15 @@ describe("lector de planillas", () => {
   it("archivo demasiado grande o con demasiadas filas", async () => {
     await assert.rejects(readSpreadsheet("grande.csv", new Uint8Array(IMPORT_LIMITS.spreadsheetBytes + 1)), /pesa más de 4 MB/);
     const muchas = ["nombre,precio_detal,stock", ...Array.from({ length: IMPORT_LIMITS.rows + 1 }, (_, i) => `P${i},1000,1`)].join("\n");
-    await assert.rejects(readSpreadsheet("muchas.csv", enc.encode(muchas)), /más de 1000 productos/);
+    await assert.rejects(readSpreadsheet("muchas.csv", enc.encode(muchas)), new RegExp(`más de ${IMPORT_LIMITS.rows} productos`));
   });
 
-  it("encabezados: sinónimos, tildes, mayúsculas y guiones; referencia/sku se ignoran", () => {
+  it("encabezados: sinónimos, tildes, mayúsculas y guiones; la referencia se ignora y el sku es el código de fotos", () => {
     assert.equal(columnFor("  Precio_Detal (COP) *"), "retailPrice");
     assert.equal(columnFor("DESCRIPCIÓN"), "description");
     assert.equal(columnFor("imagen principal"), "images");
     assert.equal(columnFor("Referencia"), "ignored");
-    assert.equal(columnFor("SKU"), "ignored");
+    assert.equal(columnFor("SKU"), "code");
     assert.equal(columnFor("otra cosa"), null);
     assert.throws(() => rowsFromTable([{ row: 1, cells: ["nombre"] }]), ImportFileError);
   });
@@ -157,7 +167,7 @@ describe("análisis de filas", () => {
       stock: 5,
       category: { kind: "existing", id: "c-anillos", name: "Anillos" },
     });
-    assert.deepEqual(a.summary, { total: 1, ready: 1, warnings: 0, errors: 0, duplicates: 0, importable: 1, photos: { matched: 1, missing: 0, unused: [] } });
+    assert.deepEqual(a.summary, { total: 1, ready: 1, warnings: 0, errors: 0, duplicates: 0, importable: 1, attach: 0, attachable: 0, photos: { matched: 1, auto: 0, ambiguous: 0, missing: 0, unused: [] } });
   });
 
   it("errores comprensibles por fila: sin nombre, sin precio, precio inválido, stock inválido, textos largos", () => {
@@ -226,7 +236,7 @@ describe("análisis de filas", () => {
     assert.deepEqual(a.rows[1].images, []);
     assert.ok(a.rows[2].issues.some((i) => i.code === "no_image"));
     assert.equal(a.summary.importable, 3, "las advertencias no impiden importar");
-    assert.deepEqual(a.summary.photos, { matched: 2, missing: 1, unused: ["sobrante.png"] });
+    assert.deepEqual(a.summary.photos, { matched: 2, auto: 0, ambiguous: 0, missing: 1, unused: ["sobrante.png"] });
   });
 
   it("sin ninguna foto en todo el lote => un solo aviso general (no una advertencia por fila)", () => {
@@ -243,7 +253,7 @@ describe("análisis de filas", () => {
   });
 
   it("repetidos: en el archivo => error; en el catálogo => se omite salvo que se fuerce", () => {
-    const existing: ExistingProductKey[] = [{ reference: "DL-000184", name: "Anillo Corazón", categoryId: "c-anillos", color: "Dorado", material: null, importId: null }];
+    const existing: ExistingProductKey[] = [{ id: "p-184", reference: "DL-000184", name: "Anillo Corazón", categoryId: "c-anillos", color: "Dorado", material: null, importId: null, hasImages: true }];
     const rows = [
       base(2, { name: "Anillo corazón", category: "Anillos", color: "dorado" }),
       base(3, { name: "Aretes", color: "Plateado" }),
@@ -280,9 +290,10 @@ describe("fotos: firma real, nombres y validez", () => {
 
   it("celda de imágenes: separadores, comillas y repetidos", () => {
     assert.deepEqual(splitImageCell(' "a.jpg" , b.jpg;c.png | a.JPG\nfotos/d.webp '), ["a.jpg", "b.jpg", "c.png", "fotos/d.webp"]);
-    const idx = buildImageIndex([img("d.webp"), img("x.jpg"), img("x.png")]);
-    assert.equal(idx.find("fotos/d.webp")?.name, "d.webp", "la carpeta del nombre pedido no importa");
-    assert.equal(idx.find("x")?.name, undefined, "nombre base ambiguo => no se adivina");
+    const idx = buildPhotoCatalog([img("d.webp"), img("x.jpg"), img("x.png")]);
+    const found = idx.lookup("fotos/d.webp");
+    assert.equal(found.kind === "found" && found.images[0].id, "d.webp", "la carpeta del nombre pedido no importa");
+    assert.equal(idx.lookup("x").kind, "ambiguous", "nombre base ambiguo => no se adivina");
   });
 });
 
@@ -391,7 +402,7 @@ describe("servicio de carga masiva", () => {
 
     // Fotos: solo a productos creados por ESTA importación.
     const fotos = await imports.photoUploadUrls(DELACOUR, imp.id, [{ productId: ajeno.id, mimeType: "image/webp", bytes: 10, thumbBytes: 10 }]);
-    assert.deepEqual(fotos, [{ productId: ajeno.id, ok: false, message: "El producto no pertenece a esta importación." }]);
+    assert.deepEqual(fotos, [{ productId: ajeno.id, ok: false, message: "Solo se pueden agregar fotos a productos cargados de forma masiva." }]);
   });
 
   it("fotos: la primera es la principal y las demás van a la galería existente (mismas verificaciones)", async () => {
@@ -834,21 +845,22 @@ describe("repositorio Supabase (cliente simulado): convivencia con la migración
       fakeSupabase(({ table, columns }) => {
         if (table === "dulabs_catalogo_importaciones") return { error: missing };
         if (columns.includes("importacion_id")) return { error: missingColumn };
-        return { data: [{ referencia: "DL-000001", nombre: "Anillo", categoria_id: null, color: null, material: null }] };
+        return { data: [{ id: "p1", referencia: "DL-000001", nombre: "Anillo", categoria_id: null, color: null, material: null, foto_url: null }] };
       }),
     );
     assert.equal(await repo.importsAvailable(), false);
-    assert.deepEqual(await repo.listProductKeys("t"), [{ reference: "DL-000001", name: "Anillo", categoryId: null, color: null, material: null, importId: null }]);
+    assert.deepEqual(await repo.listProductKeys("t"), [{ id: "p1", reference: "DL-000001", name: "Anillo", categoryId: null, color: null, material: null, importId: null, hasImages: false }]);
     await assert.rejects(repo.insertImport("t", "u", { fileName: "p.xlsx", totalRows: 1 }), (e: Error) => e instanceof CatalogError && e.code === "FEATURE_UNAVAILABLE");
     await assert.rejects(repo.listImports("t", 20), (e: Error) => e instanceof CatalogError && e.code === "FEATURE_UNAVAILABLE");
   });
 
   it("con la migración: disponible y claves con importacion_id", async () => {
     const repo = createSupabaseCatalogRepository(
-      fakeSupabase(() => ({ data: [{ referencia: "DL-000002", nombre: "Aretes", categoria_id: "c", color: "Dorado", material: null, importacion_id: "imp-1" }] })),
+      fakeSupabase(() => ({ data: [{ id: "p2", referencia: "DL-000002", nombre: "Aretes", categoria_id: "c", color: "Dorado", material: null, foto_url: "https://x/f.webp", importacion_id: "imp-1" }] })),
     );
     assert.equal(await repo.importsAvailable(), true);
-    assert.equal((await repo.listProductKeys("t"))[0].importId, "imp-1");
+    const [key] = await repo.listProductKeys("t");
+    assert.deepEqual([key.id, key.importId, key.hasImages], ["p2", "imp-1", true]);
   });
 
   it("otros errores de la BD NO se confunden con 'migración pendiente': error genérico", async () => {

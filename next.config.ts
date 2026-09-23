@@ -58,7 +58,14 @@ const nextConfig: NextConfig = {
               // funcione perfecto por fuera del sitio (hallazgo real:
               // "subí una imagen y no carga"). Mismo dominio ya confiado
               // para connect-src, nunca un origen nuevo/no auditado.
-              "img-src 'self' data: https://*.supabase.co",
+              //
+              // blob: -- vista previa LOCAL de las fotos que la persona
+              // elige antes de subirlas (carga masiva del catálogo, foto del
+              // producto). Una URL blob: solo la puede crear un script de
+              // esta misma página (script-src no cambia): no abre ningún
+              // origen externo. Sin esto, las miniaturas del preview de la
+              // carga masiva no se veían (hallazgo de la QA de la fase 5).
+              "img-src 'self' data: blob: https://*.supabase.co",
               "font-src 'self'",
               // connect.facebook.net (Embedded Signup), Supabase (auth), y
               // Wompi (tokenización de tarjeta directo desde el navegador en

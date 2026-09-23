@@ -16,7 +16,7 @@ export async function buildTemplateXlsx(categoryNames: readonly string[]): Promi
   hoja.columns = COLUMNS.map((c) => ({
     header: c.header,
     key: c.key,
-    width: c.key === "description" ? 44 : c.key === "images" ? 46 : c.key === "name" ? 28 : 16,
+    width: c.key === "description" ? 44 : c.key === "images" ? 40 : c.key === "code" ? 14 : c.key === "name" ? 28 : 16,
   }));
   const header = hoja.getRow(1);
   header.font = { bold: true, color: { argb: "FFFFFFFF" } };
@@ -57,10 +57,11 @@ export async function buildTemplateXlsx(categoryNames: readonly string[]): Promi
   ayuda.addRow([]);
   const pasos = [
     ["1.", "Escribe un producto por fila en la hoja «Productos» (puedes borrar los ejemplos)."],
-    ["2.", "Guarda las fotos en una carpeta. En la columna «imagenes» escribe el nombre de cada archivo (ej. anillo-corazon.jpg)."],
-    ["3.", "Varias fotos: sepáralas con coma. La primera es la principal; las demás van a la galería."],
-    ["4.", "En DuLabs → Catálogo → Carga masiva, sube este archivo y selecciona (o arrastra) las fotos o la carpeta."],
-    ["5.", "Revisa el resumen: puedes corregir filas, decidir categorías nuevas y luego confirmar."],
+    ["2.", "Guarda todas las fotos en UNA carpeta, nombradas como el producto: «Anillo corazón» → anillo-corazon.jpg (principal), anillo-corazon-2.jpg, anillo-corazon-3.jpg (galería). Mayúsculas, tildes y espacios no importan."],
+    ["", "También sirve una subcarpeta por producto (Anillo corazón/1.jpg, 2.jpg…: la primera en orden es la principal) o nombrar las fotos con tu código (columna «codigo»)."],
+    ["3.", "La columna «imagenes» es opcional: úsala solo si una foto tiene otro nombre (varias separadas por coma, la primera es la principal)."],
+    ["4.", "En DuLabs → Catálogo → Carga masiva, sube este archivo y selecciona la carpeta de fotos (o un .zip)."],
+    ["5.", "Revisa el resumen: verás la foto de cada producto, podrás corregir filas, elegir fotos cuando haya dudas y luego confirmar."],
     ["", "La referencia (DL-000XXX) la asigna DuLabs automáticamente: no la escribas."],
     ["", `Máximo ${IMPORT_LIMITS.rows} productos por archivo y ${IMPORT_LIMITS.imagesPerProduct} fotos por producto. Fotos en JPG, PNG o WEBP.`],
   ];

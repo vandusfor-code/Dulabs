@@ -161,7 +161,16 @@ export function createInMemoryCatalogRepository() {
       if (failKeys) throw new Error("conexión perdida con la base de datos");
       return [...products.values()]
         .filter((p) => p.tenantId === tenantId)
-        .map((p) => ({ reference: p.reference, name: p.name, categoryId: p.categoryId, color: p.color, material: p.material, importId: importsEnabled ? p.importId : null }));
+        .map((p) => ({
+          id: p.id,
+          reference: p.reference,
+          name: p.name,
+          categoryId: p.categoryId,
+          color: p.color,
+          material: p.material,
+          importId: importsEnabled ? p.importId : null,
+          hasImages: p.primaryImage !== null,
+        }));
     },
 
     async importsAvailable() {
@@ -175,9 +184,9 @@ export function createInMemoryCatalogRepository() {
         .map((p) => ({ row: p.importRow as number, product: strip(p) }));
     },
 
-    async importedProductIds(tenantId, importId, productIds) {
+    async bulkImportedProductIds(tenantId, productIds) {
       if (!importsEnabled) throw unavailable();
-      return [...products.values()].filter((p) => p.tenantId === tenantId && p.importId === importId && productIds.includes(p.id)).map((p) => p.id);
+      return [...products.values()].filter((p) => p.tenantId === tenantId && p.importId !== null && productIds.includes(p.id)).map((p) => p.id);
     },
 
     async insertImport(tenantId, actorId, d) {

@@ -8,8 +8,10 @@
  *     (misma galería: la primera foto de la fila es la principal).
  *
  * Seguridad: el tenant es SIEMPRE el del actor autenticado; una importación
- * solo se ve y se usa dentro de su tenant, y solo puede adjuntar fotos a los
- * productos que ELLA creó. Nunca actualiza ni borra productos existentes.
+ * solo se ve y se usa dentro de su tenant, y solo adjunta fotos a productos
+ * que vinieron de una carga masiva: los que ELLA creó y, si la persona lo
+ * elige fila por fila, los ya importados que siguen SIN fotos. Nunca cambia
+ * datos, precios, stock ni referencias de un producto existente, ni lo borra.
  */
 import type { CatalogCategory, ImageConfirmInput, ImageUploadRequest } from "@/lib/catalogo/domain";
 import { CatalogError, isCatalogError } from "@/lib/catalogo/errors";
@@ -25,6 +27,8 @@ export interface AnalyzeRequest {
   images: ImageInfo[];
   decisions: Record<string, CategoryDecision>;
   force: number[];
+  /** Filas ya importadas sin fotos a las que se les agregan las fotos (decisión explícita, fila por fila). */
+  attach?: number[];
 }
 
 export type PhotoTicketResult = { productId: string; ok: true; upload: ImageUploadTicket } | { productId: string; ok: false; message: string };
@@ -51,9 +55,14 @@ export function createCatalogImportService({ repo, catalog }: { repo: CatalogRep
     return imp;
   }
 
-  /** Productos creados por esta importación (las fotos solo se adjuntan a ellos). */
-  async function requireOwnProducts(actor: CatalogActor, importId: string, productIds: string[]): Promise<Set<string>> {
-    return new Set(await repo.importedProductIds(actor.tenantId, importId, [...new Set(productIds)]));
+  /**
+   * Productos a los que una importación puede adjuntar fotos: los que vinieron
+   * de una carga masiva de ESTE tenant (los creados ahora y los ya importados
+   * que la persona eligió completar). Un producto creado a mano o por AMORE
+   * nunca recibe fotos por esta vía.
+   */
+  async function requireImportedProducts(actor: CatalogActor, productIds: string[]): Promise<Set<string>> {
+    return new Set(await repo.bulkImportedProductIds(actor.tenantId, [...new Set(productIds)]));
   }
 
   /**
@@ -132,6 +141,11 @@ export function createCatalogImportService({ repo, catalog }: { repo: CatalogRep
           results.push({ row: a.row, status: "error", reference: null, productId: null, name: a.values.name ?? null, message: errors.join(" ") || `Fila ${a.row}: no se pudo validar.`, images: [] });
           continue;
         }
+        if (a.attach && a.duplicateOf?.kind === "catalog") {
+          // Solo fotos: el producto existente no se toca (ni datos, ni precio, ni stock, ni referencia).
+          results.push({ row: a.row, status: "attached", reference: a.duplicateOf.reference, productId: a.duplicateOf.productId, name: a.duplicateOf.name, message: null, images });
+          continue;
+        }
         if (a.status === "duplicate") {
           const dup = a.issues.find((i) => i.code === "duplicate_in_catalog" || i.code === "already_imported");
           results.push({ row: a.row, status: "skipped", reference: null, productId: null, name: a.product.name, message: dup?.message ?? `Fila ${a.row}: omitida.`, images: [] });
@@ -182,19 +196,18 @@ export function createCatalogImportService({ repo, catalog }: { repo: CatalogRep
     /** URLs firmadas para un lote de fotos (una por foto; la BD y Storage deciden la ruta). */
     async photoUploadUrls(actor: CatalogActor, importId: string, items: Array<ImageUploadRequest & { productId: string }>): Promise<PhotoTicketResult[]> {
       await requireOpenImport(actor, importId);
-      const own = await requireOwnProducts(
+      const own = await requireImportedProducts(
         actor,
-        importId,
         items.map((i) => i.productId),
       );
       const out: PhotoTicketResult[] = [];
       for (const item of items) {
         if (!own.has(item.productId)) {
-          out.push({ productId: item.productId, ok: false, message: "El producto no pertenece a esta importación." });
+          out.push({ productId: item.productId, ok: false, message: "Solo se pueden agregar fotos a productos cargados de forma masiva." });
           continue;
         }
         try {
-          const upload = await catalog.requestImageUpload(actor, item.productId, { mimeType: item.mimeType, bytes: item.bytes, thumbBytes: item.thumbBytes });
+          const upload = await catalog.requestImageUpload(actor, item.productId, { mimeType: item.mimeType, bytes: item.bytes, thumbBytes: item.thumbBytes, detailBytes: item.detailBytes });
           out.push({ productId: item.productId, ok: true, upload });
         } catch (err) {
           out.push({ productId: item.productId, ok: false, message: messageOf(err, "No se pudo preparar la subida de la foto.") });
@@ -206,16 +219,15 @@ export function createCatalogImportService({ repo, catalog }: { repo: CatalogRep
     /** Confirma un lote de fotos YA subidas (en orden: la principal primero). */
     async confirmPhotos(actor: CatalogActor, importId: string, items: Array<ImageConfirmInput & { productId: string }>): Promise<PhotoConfirmResult[]> {
       await requireOpenImport(actor, importId);
-      const own = await requireOwnProducts(
+      const own = await requireImportedProducts(
         actor,
-        importId,
         items.map((i) => i.productId),
       );
       const out: PhotoConfirmResult[] = [];
       for (const item of items) {
         const { productId, ...confirm } = item;
         if (!own.has(productId)) {
-          out.push({ productId, uploadId: item.uploadId, ok: false, message: "El producto no pertenece a esta importación." });
+          out.push({ productId, uploadId: item.uploadId, ok: false, message: "Solo se pueden agregar fotos a productos cargados de forma masiva." });
           continue;
         }
         try {

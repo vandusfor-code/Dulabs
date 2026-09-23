@@ -11,20 +11,31 @@ import { IMPORT_LIMITS } from "@/lib/catalogo/import/limites";
 
 const cell = z.string().max(IMPORT_LIMITS.cellChars);
 
+const photoId = z.string().min(1).max(IMPORT_LIMITS.photoIdChars);
+
 export const rawRowSchema = z
   .object({
     row: z.number().int().min(1).max(1_000_000),
     values: z.object(Object.fromEntries(COLUMN_KEYS.map((k) => [k, cell.optional()])) as Record<(typeof COLUMN_KEYS)[number], z.ZodOptional<typeof cell>>).strict(),
+    /** Fotos elegidas en el preview (ids). Nunca más que la galería. */
+    photos: z.array(photoId).max(IMPORT_LIMITS.imagesPerProduct).optional(),
   })
   .strict();
 
+const dimension = z.number().int().min(1).max(1_000_000).nullable().default(null);
+
+/** Metadatos de una foto. `id` es opcional para no romper una pestaña abierta con la versión anterior (id = nombre). */
 export const imageInfoSchema = z
   .object({
+    id: photoId.optional(),
     name: z.string().min(1).max(255),
     size: z.number().int().min(0),
-    problem: z.enum(["format", "heic", "size", "empty"]).nullable(),
+    width: dimension,
+    height: dimension,
+    problem: z.enum(["format", "heic", "size", "empty", "corrupt", "dimensions"]).nullable(),
   })
-  .strict();
+  .strict()
+  .transform((i) => ({ ...i, id: i.id ?? i.name }));
 
 export const categoryDecisionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("create") }).strict(),
@@ -34,6 +45,7 @@ export const categoryDecisionSchema = z.discriminatedUnion("action", [
 
 const decisions = z.record(z.string().max(80), categoryDecisionSchema).default({});
 const force = z.array(z.number().int().min(1)).max(IMPORT_LIMITS.rows).default([]);
+const attach = z.array(z.number().int().min(1)).max(IMPORT_LIMITS.rows).default([]);
 const images = z.array(imageInfoSchema).max(IMPORT_LIMITS.images).default([]);
 
 /** Re-análisis (fotos agregadas, decisiones o filas corregidas en el preview). */
@@ -43,6 +55,7 @@ export const analyzeRowsSchema = z
     images,
     decisions,
     force,
+    attach,
   })
   .strict();
 
@@ -63,6 +76,7 @@ export const importRowsSchema = z
     images,
     decisions,
     force,
+    attach,
   })
   .strict();
 

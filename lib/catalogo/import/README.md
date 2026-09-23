@@ -1,4 +1,4 @@
-# Carga masiva del Catálogo (Fase 4)
+# Carga masiva del Catálogo (Fases 4 y 5)
 
 Objetivo: que una joyería pase de «tengo 100 productos en mi computador» a
 «ya están cargados en mi catálogo» de forma rápida, segura y sin errores
@@ -27,13 +27,14 @@ las categorías reales del catálogo como lista sugerida):
 | `material`     | no          | ≤ 80                                                               |
 | `color`        | no          | ≤ 80                                                               |
 | `descripcion`  | no          | ≤ 1.000                                                            |
-| `imagenes`     | no          | Nombres de archivo, separados por coma. La 1.ª es la principal     |
+| `codigo`       | no          | Tu código interno, SOLO para encontrar fotos (`AN-014.jpg`). No se guarda |
+| `imagenes`     | no          | Opcional (ver §2). Nombres de archivo por coma; «sin foto» = ninguna |
 
 - Los encabezados se reconocen sin importar mayúsculas, tildes, guiones o
   paréntesis, y con sinónimos: «Precio», «Cantidad», «Fotos»… (`columnas.ts`).
-- **No hay columna de referencia.** Si el archivo trae `referencia`, `sku`,
-  `codigo` o `id`, se ignoran con un aviso. La referencia (`DL-000XXX`) la
-  asigna siempre la BD.
+- **No hay columna de referencia.** Si el archivo trae `referencia`, `ref` o
+  `id`, se ignoran con un aviso. La referencia (`DL-000XXX`) la asigna
+  siempre la BD. `codigo`/`sku` se leen solo para relacionar fotos.
 - El CSV de Excel en español (separado por `;`) y el guardado en Windows-1252
   se leen correctamente.
 
@@ -41,35 +42,98 @@ las categorías reales del catálogo como lista sugerida):
 límite de Vercel) y así el navegador nunca decide qué contiene. Se reutiliza
 `exceljs`, que el proyecto ya usa (AMORE y contactos).
 
-## 2. Imágenes — decisión
+## 2. Fotografías — decisión (Fase 5)
 
-Opciones evaluadas: ZIP con Excel + fotos, Excel + selección múltiple,
-arrastrar la carpeta, una foto por fila, varias por fila.
+¿Cómo se relaciona cada producto del Excel con sus fotos? Opciones evaluadas:
 
-**Elegido: la persona elige la planilla y sus fotos de la forma que le sea
-natural, y el sistema las relaciona por nombre de archivo:**
+| Opción | Fricción | Errores | Windows | 100–2.000 productos |
+| --- | --- | --- | --- | --- |
+| A. ZIP con Excel + fotos | Alta: crear el ZIP es un paso técnico | Bajos | Bien | Se lee **entero en memoria** (tope 600 MB) |
+| B. Selección múltiple | Media: miles de archivos en un diálogo | Bajos | Bien | Bien (referencias, no memoria) |
+| C. **Seleccionar la carpeta** | **Mínima: la carpeta ya existe** | Bajos | **Nativo** (`webkitdirectory`, Chrome/Edge/Firefox) | **Bien: el navegador guarda referencias; cada foto se lee al procesarla** |
+| D. Arrastrar fotos sobre filas | Muy alta con cientos de productos | Medios | Bien | Inviable |
+| E. Combinación | — | — | — | — |
 
-- selección múltiple de fotos, **carpeta completa** (botón o arrastrando la
-  carpeta) o un **.zip** (planilla y fotos adentro);
-- en la celda `imagenes`, el nombre del archivo. Coincidencia exacta sin
-  distinguir mayúsculas. Si hay una sola foto con ese nombre base, también
-  sin extensión o con otra (`anillo-corazon` → `anillo-corazon.jpeg`). Nunca
-  por parecido con el nombre del producto (sería frágil);
-- **varias fotos** separadas por coma: la primera es la **principal** y las
-  demás van a la **galería existente** (`dulabs_catalogo_media`). No hay un
-  sistema paralelo. Máximo 12 por producto.
+**Elegido: UN solo sistema de asociación (`asociacion.ts`) y UNA forma
+recomendada de entregar las fotos: la carpeta (C).** Selección múltiple,
+.zip y arrastrar siguen funcionando porque son solo *formas de entregar
+archivos* a la misma regla, no sistemas distintos. Para corregir casos
+puntuales hay un selector de fotos por fila en el preview (no arrastrar).
 
-**Por qué no solo ZIP:** crear un ZIP es un paso técnico extra y lento para
-una persona no técnica. Seleccionar o arrastrar la carpeta que ya tiene es lo
-más natural. El ZIP sigue soportado (lector nativo `zip.ts` con
-`DecompressionStream`, sin dependencias).
+### Regla determinista (nunca por parecido)
 
-**Las fotos nunca pasan por una función de Vercel.** Se validan por su firma
-real (JPG/PNG/WEBP; HEIC de iPhone se detecta y se explica). Se optimizan en
-el navegador con el mismo pipeline de la carga individual: principal ≤ 2048
-px + miniatura ≤ 400 px, en WebP (o JPEG en Safari). Suben directo a Storage
-con URLs firmadas y el servidor las verifica (tamaño, tipo y magic bytes)
-antes de registrarlas. El catálogo móvil nunca descarga originales.
+Cada fila toma sus fotos de UNA fuente, en este orden:
+
+1. **Elegidas en el preview** (`RawRow.photos`, ids exactos).
+2. **Columna `imagenes`**: ruta exacta, final de ruta, nombre, nombre sin
+   extensión o nombre "slug"; o el nombre de una carpeta. «sin foto» = ninguna.
+3. **Automática por nombre**, con la clave slug (`photoKey`: sin tildes,
+   mayúsculas ni signos) del `codigo`, de nombre + color, o del nombre (la
+   primera que encuentre algo):
+   - `anillo-corazon.jpg` → principal de «Anillo Corazón»;
+   - `anillo-corazon-2.jpg`, `Anillo Corazón (3).jpg` → galería por número;
+   - carpeta `Anillo Corazón/` → todas sus fotos (la que se llama como el
+     producto primero, luego orden natural: `2.jpg` antes que `10.jpg`).
+
+**Si hay duda, no se asigna nada** y la fila muestra «Tenemos varias imágenes
+posibles para este producto» con los candidatos para elegir: misma foto en
+dos formatos o carpetas, dos carpetas con el nombre del producto, fotos
+sueltas además de la carpeta, una foto que coincide con dos filas (se indica
+cuál), o `1.jpg` en varias carpetas. Una foto indicada expresamente por otra
+fila nunca se asigna sola. Las filas con error o repetidas en el archivo no
+compiten por fotos.
+
+**La identidad de una foto es su ruta relativa** (`Fotos/Anillo/1.jpg`): dos
+`1.jpg` en carpetas distintas son dos fotos.
+
+### El preview se congela al confirmar
+
+El servidor analiza por lotes de 20 filas; sin más, una duda entre filas de
+lotes distintos podría "resolverse sola" al procesar. Por eso, al confirmar,
+cada fila viaja con sus fotos exactas (`photos`), y cada lote lleva solo los
+metadatos de SUS fotos (no los de miles).
+
+### Validación (sin decodificar: 2.000 fotos en segundos)
+
+En el navegador, por foto: firma real (JPG/PNG/WEBP; HEIC y GIF se
+explican), peso, **dimensiones leídas del encabezado** (SOF de JPEG, IHDR de
+PNG, VP8/VP8L/VP8X de WEBP; se leen 64 KB, y solo si hace falta hasta 4 MB) y
+**archivos dañados** (firma válida pero encabezado roto o cortado). No se
+exige el marcador final del JPEG: las "fotos en movimiento" de los celulares
+agregan un video al final y son válidas. Menos de 200 px (lado mayor) o más
+de 16.384 px / 100 MP → no se usa; menos de 600 px → se usa con aviso de
+baja resolución. Un daño en el cuerpo de la foto (no en el encabezado) se
+detecta al optimizarla y se informa como «imagen inválida».
+
+### Variantes optimizadas (misma galería del catálogo)
+
+Se optimizan en el navegador (canvas, orientación EXIF respetada, proporción
+intacta) y suben directo a Storage con URLs firmadas; el servidor verifica
+tamaño, tipo y magic bytes antes de registrarlas:
+
+| Variante | Lado mayor | Tope | Uso |
+| --- | --- | --- | --- |
+| principal | 2048 px | 3 MB | original optimizado (respaldo) |
+| **detail** (nueva) | 1200 px | 600 KB | ficha del producto y vista previa al compartir |
+| thumb | 400 px | 400 KB | tarjetas, carrito, miniaturas de la galería |
+
+- `detail` vive junto a la principal por convención (`…/u_detail.webp`): sin
+  migración ni cambio de RPC. Las fotos anteriores sin `detail` caen a la
+  principal automáticamente.
+- Una sola miniatura de 400 px sirve para tarjetas (≈ 180 px en pantalla × 2
+  de densidad) y miniaturas: una de 160 px ahorraría poco y duplicaría
+  subidas.
+- **WebP** si el navegador lo codifica; si no (Safari), JPEG. **AVIF no**: la
+  codificación AVIF por canvas no está disponible de forma confiable en los
+  navegadores actuales.
+
+### Completar fotos de productos ya importados
+
+Si un producto vino de una carga masiva anterior y **no tiene fotos**, y la
+nueva carga trae sus fotos, el preview lo ofrece («Agregar sus fotos»), fila
+por fila o todos a la vez. Es una acción explícita: sin elegirla, la fila se
+omite como siempre. Nunca se cambian datos, precio, stock ni referencia, y un
+producto creado a mano o por AMORE nunca recibe fotos por esta vía.
 
 ## 3. Referencias
 
@@ -184,10 +248,10 @@ mínimo.
 | Límite                        | Valor         |
 | ----------------------------- | ------------- |
 | Planilla                      | 4 MB (Vercel) |
-| Filas por importación         | 1.000         |
-| Fotos por importación         | 3.000         |
+| Filas por importación         | 2.000         |
+| Fotos por importación         | 6.000         |
 | Foto original                 | 30 MB         |
-| Suma de fotos                 | 3 GB          |
+| Suma de fotos                 | 20 GB (desde una carpeta no se cargan en memoria) |
 | ZIP (se lee en memoria)       | 600 MB        |
 | Fotos por producto            | 12            |
 | Lote de filas / de fotos      | 20 / 10       |
@@ -198,7 +262,10 @@ mínimo.
 limites.ts, columnas.ts, types.ts   contrato compartido
 csv.ts, planilla.ts                 lectura (servidor; exceljs bajo demanda)
 analisis.ts                         análisis puro (usa productCreateSchema)
-fotos.ts, zip.ts, navegador.ts      fotos/ZIP/carpetas (navegador)
+fotos.ts                            firma, dimensiones, daños, claves (puro)
+asociacion.ts                       regla fila <-> fotos (pura, determinista)
+zip.ts, navegador.ts                ZIP y carpetas con su ruta (navegador)
+resultado.ts                        resultado por motivos (puro)
 servicio.ts, esquemas.ts, http.ts   casos de uso + validación + adaptador HTTP
 plantilla.ts                        plantilla XLSX/CSV
 proceso.ts                          orquestación por lotes (navegador)
@@ -208,9 +275,13 @@ Rutas: `app/api/dashboard/catalogo/importaciones/*`. UI:
 `app/dashboard/catalogo/importar` y `components/dashboard/catalogo/importar/*`.
 Migración: `20261107000000_dulabs_catalogo_importaciones.sql`.
 
-## Activación — REQUISITO PARA ACTIVACIÓN EN PRODUCCIÓN
+## Activación
 
-El código ya está desplegado y convive con la base **sin** la migración:
+**Estado:** el responsable del proyecto confirmó que la migración
+`20261107000000` se ejecutó en Supabase de producción (ver
+`PENDING_MIGRATIONS.md`). La Fase 5 no requiere migraciones nuevas.
+
+El código convive igual con una base **sin** la migración:
 
 - `GET /api/dashboard/catalogo/importaciones` responde `{ available, imports }`.
   `available` sale de una sonda (`repository.importsAvailable`: la tabla y las
@@ -239,4 +310,6 @@ código ni cambiar configuración.
 | Repositorio Supabase: convivencia sin migración (códigos PGRST205/42703), fallback de columnas, errores genéricos | Tests con un cliente Supabase SIMULADO | No |
 | Migración: constraints, FK compuesta entre tenants, UNIQUE de reintentos, inmutabilidad de referencia, concurrencia (12×30 → 362 referencias únicas) | PostgreSQL 16 LOCAL (`supabase/tests/20261107000000_…test.sql`) | No |
 | Flujo completo en el navegador (plantilla → preview → corrección → importar → fotos → historial) | Playwright contra un Supabase SIMULADO local | No |
-| **Integración real** con Supabase de producción (PostgREST, Storage, RLS, triggers reales) | — | **Sí: NO verificada todavía** |
+| Fase 5: encabezados reales (JPEG/PNG/WEBP), dañadas, dimensiones, identidad por ruta, asociación automática y dudas, columna, selector, volumen 2.000 × 6.000 | `fotos-asociacion.test.ts` | No |
+| Fase 5 de punta a punta: 1 foto, varias, 100 productos, preview congelado entre lotes, faltantes/inválidas/fallidas, duplicados, completar fotos sin tocar datos, multi-tenant, variante detail, progreso y tiempo restante | `fase5-flujo.test.ts` (servicio real + repositorio en memoria) | No |
+| **Integración real** con Supabase de producción (PostgREST, Storage, RLS, triggers reales) | Revisión en producción por el responsable | **Sí** |

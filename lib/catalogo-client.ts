@@ -188,7 +188,7 @@ export function createCatalogClient(accessToken: string) {
       return call(accessToken, "/importaciones/analizar", { method: "POST", body: form });
     },
 
-    analyzeImportRows(body: { rows: RawRow[]; images: ImageInfo[]; decisions: Record<string, CategoryDecision>; force: number[] }): Promise<CatalogResult<{ analysis: ImportAnalysis }>> {
+    analyzeImportRows(body: { rows: RawRow[]; images: ImageInfo[]; decisions: Record<string, CategoryDecision>; force: number[]; attach?: number[] }): Promise<CatalogResult<{ analysis: ImportAnalysis }>> {
       return call(accessToken, "/importaciones/analizar", { method: "POST", body: JSON.stringify(body) });
     },
 
@@ -198,7 +198,7 @@ export function createCatalogClient(accessToken: string) {
 
     importRows(
       importId: string,
-      body: { rows: RawRow[]; images: ImageInfo[]; decisions: Record<string, CategoryDecision>; force: number[] },
+      body: { rows: RawRow[]; images: ImageInfo[]; decisions: Record<string, CategoryDecision>; force: number[]; attach?: number[] },
     ): Promise<CatalogResult<{ results: ImportRowResult[] }>> {
       return call(accessToken, `/importaciones/${encodeURIComponent(importId)}/filas`, { method: "POST", body: JSON.stringify(body) });
     },

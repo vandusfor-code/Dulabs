@@ -12,14 +12,22 @@ export const IMPORT_LIMITS = {
    * filas de texto: sobra para un catálogo.
    */
   spreadsheetBytes: MAX_UPLOAD_BYTES,
-  /** Filas de producto por importación. */
-  rows: 1000,
-  /** Fotos seleccionadas por importación (nunca pasan por Vercel: van directo a Storage ya optimizadas). */
-  images: 3000,
+  /** Filas de producto por importación (la BD admite hasta 100.000: el tope es de experiencia, no técnico). */
+  rows: 2000,
+  /**
+   * Fotos seleccionadas por importación (nunca pasan por Vercel: van directo a
+   * Storage ya optimizadas). 3 por producto en promedio. Al analizar solo viaja
+   * su metadato (~150 bytes cada una).
+   */
+  images: 6000,
   /** Foto original individual (antes de optimizarla en el navegador). */
   imageBytes: 30 * 1024 * 1024,
-  /** Suma de las fotos originales seleccionadas. */
-  imagesTotalBytes: 3 * 1024 * 1024 * 1024,
+  /**
+   * Suma de las fotos originales seleccionadas. Elegidas desde una carpeta NO
+   * se cargan en memoria (el navegador solo guarda la referencia al archivo);
+   * se leen de a una al procesarlas.
+   */
+  imagesTotalBytes: 20 * 1024 * 1024 * 1024,
   /** Un ZIP se lee completo en memoria del navegador: tope prudente. */
   zipBytes: 600 * 1024 * 1024,
   /** Entradas de un ZIP (protección ante archivos manipulados). */
@@ -32,6 +40,8 @@ export const IMPORT_LIMITS = {
   photosPerBatch: 10,
   /** Tamaño del texto de una celda (defensa: nada legítimo ocupa más). */
   cellChars: 2000,
+  /** Ruta relativa de una foto ("Fotos/Anillos/anillo-corazon-2.jpg"). */
+  photoIdChars: 300,
 } as const;
 
 /** "4 MB", "30 MB", "3 GB" para los mensajes. */
