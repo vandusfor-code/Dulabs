@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type CSSProperties } from "react";
 
 // Infrastructure flow field del hero de /developer-platform. UN canvas 2D y UN loop de requestAnimationFrame; React nunca re-renderiza.
 //
@@ -307,8 +307,12 @@ export function InfraFlowField({ className = "", libreDe }: { className?: string
     const medir = () => {
       const caj = contenedor.getBoundingClientRect();
       if (!caj.width || !caj.height) return false;
-      w = caj.width;
-      h = caj.height;
+      // Freno anti-bucle: el campo nunca puede medir más que el viewport. Si por alguna razón el CSS del contenedor no
+      // se aplicara (o llegara tarde), el canvas -dimensionado en px de dispositivo- podría empujar al contenedor a
+      // crecer, lo que dispara de nuevo el ResizeObserver: contenedor -> canvas -> contenedor... hasta llenar la página
+      // de gris. Acotar la medida al viewport rompe ese bucle de raíz sin afectar el tamaño real en operación normal.
+      w = Math.min(caj.width, window.innerWidth);
+      h = Math.min(caj.height, Math.round(window.innerHeight * 1.25));
       compacto = w < 640;
       dpr = Math.min(window.devicePixelRatio || 1, compacto ? 1.5 : 1.75);
       canvas.width = Math.round(w * dpr);
@@ -580,8 +584,14 @@ export function InfraFlowField({ className = "", libreDe }: { className?: string
     };
   }, [libreDe]);
 
+  // Los estilos estructurales críticos van INLINE, no solo en globals.css: garantizan que los canvas siempre estén
+  // posicionados en absoluto y ocupen el 100 % del contenedor (nunca su tamaño intrínseco en px de dispositivo). Así, aun
+  // si la hoja de estilos no se aplicara en producción, el canvas no puede empujar al contenedor y provocar la pantalla
+  // gris. globals.css (.dev-scope .dev-flujo*) sigue aportando la composición visual (máscara, encaje del hero).
+  const capaEstilo: CSSProperties = { position: "absolute", inset: 0, width: "100%", height: "100%", willChange: "transform" };
+  const canvasEstilo: CSSProperties = { position: "absolute", inset: 0, width: "100%", height: "100%" };
   return (
-    <div ref={caja} aria-hidden className={`dev-flujo ${className}`}>
+    <div ref={caja} aria-hidden className={`dev-flujo ${className}`} style={{ position: "absolute", pointerEvents: "none", zIndex: 0 }}>
       {[0, 1, 2].map((i) => (
         <canvas
           key={i}
@@ -589,9 +599,10 @@ export function InfraFlowField({ className = "", libreDe }: { className?: string
             estaticos.current[i] = el;
           }}
           className="dev-flujo-capa"
+          style={capaEstilo}
         />
       ))}
-      <canvas ref={lienzo} className="dev-flujo-canvas font-mono" />
+      <canvas ref={lienzo} className="dev-flujo-canvas font-mono" style={canvasEstilo} />
     </div>
   );
 }
