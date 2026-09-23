@@ -49,3 +49,35 @@ Imágenes: bucket existente `inventario-productos`, ruta
   bajo demanda y devuelve producto + referencia + precio + `image_url` reales.
   La IA nunca recibe el catálogo completo en el prompt ni inventa precios,
   referencias ni imágenes.
+
+## Tienda pública y resolución por referencia (Fase 2)
+
+Regla: **la IA conversa, el backend decide, el catálogo es la fuente de
+verdad**. La referencia (`DL-000184`) es la identidad del producto: toda
+resolución es por referencia exacta, nunca por nombre ni aproximación.
+
+- **Tienda (detal)** — `app/catalogo/[slug]/(tienda)/`: un layout compartido
+  (header, carrito, navegación) para inicio, listado/búsqueda y ficha
+  (`/productos/{referencia}`). Datos desde `createPublicCatalogService`:
+  `getStorefront`, `getHome`, `getCatalog`, `getProduct`, `resolveSelection`,
+  `getImage` (principal + galería). El mayorista (`/mayor/{token}`) queda fuera
+  del grupo, aislado.
+- **Carrito** — dominio puro `carrito.ts` + store `carrito-store.ts` (uno por
+  catálogo y contexto de precio). El navegador solo es dueño de referencias y
+  cantidades; nombre/precio/foto/disponibilidad se reconcilian con
+  `GET /catalogo/{slug}/seleccion` al abrir "Tu selección". Lo que un backend
+  debe aceptar es `selectionSnapshot` (referencia + cantidad);
+  `parseSelectionMessage` lee de forma determinista el mensaje de WhatsApp.
+- **Disponibilidad** — `isAvailable` (dominio): inactivo => no; sin control de
+  inventario => sí; con control => stock > 0. Nunca se expone el stock exacto
+  en público.
+- **Resolución interna** — `resolucion.ts` (`createResolucionCatalogo`): para el
+  webhook, el agente o la asesora; `tenantId` lo aporta el backend autenticado.
+  Devuelve ambos precios, inventario, disponibilidad, imagen y estado. Sin
+  endpoint público.
+- **Destacados** — política explícita `FeaturedPolicy` en el servicio (hoy
+  "activos recientes con foto"). Cuando exista `destacado = true/false` solo
+  cambia `featuredProducts`; la vista y el contrato `PublicHome` no.
+- **Vitrina** — `vitrina.ts`: contrato `CatalogStorefrontConfig` (misma forma que
+  tendrá `catalog_config` en la BD). Fuente temporal: registro en código por
+  slug. Siguiente paso: leerlo de `dulabs_catalogo_publicacion`.

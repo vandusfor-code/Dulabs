@@ -1,6 +1,6 @@
 /**
  * Foto pública de un producto del catálogo:
- *   /catalogo/{slug}/productos/{referencia}/{main|thumb}.{webp|jpg|png}?v={version}
+ *   /catalogo/{slug}/productos/{referencia}/{main|thumb|2..12[-thumb]}.{webp|jpg|png}?v={version}
  *
  * La URL solo lleva datos que el cliente ya ve (slug del negocio y referencia).
  * La ruta real en Storage ({tenant}/{producto}/{upload}.webp) se resuelve aquí,
@@ -33,12 +33,12 @@ function notFound(): Response {
 
 export async function GET(_request: Request, { params }: Params) {
   const { slug, referencia, archivo } = await params;
-  const kind = parseImageFileName(archivo);
-  if (!kind) return notFound();
+  const file = parseImageFileName(archivo);
+  if (!file) return notFound();
 
   try {
     const service = createPublicCatalogService({ repo: createSupabaseCatalogRepository(supabaseAdmin()) });
-    const image = await service.getImage({ slug, reference: referencia, kind });
+    const image = await service.getImage({ slug, reference: referencia, file });
     if (!image) return notFound();
 
     const headers = new Headers({

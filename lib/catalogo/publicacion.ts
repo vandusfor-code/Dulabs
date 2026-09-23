@@ -9,7 +9,7 @@
  * La proyección pública lleva UN solo precio (el del contexto) y nada
  * interno: ni id técnico, ni tenant, ni el precio del otro contexto.
  */
-import { isReference, priceFor, type CatalogCategory, type CatalogProduct, type PriceContext } from "@/lib/catalogo/domain";
+import { isAvailable, isReference, priceFor, type CatalogCategory, type CatalogProduct, type PriceContext } from "@/lib/catalogo/domain";
 
 export interface CatalogPublication {
   slug: string;
@@ -30,6 +30,15 @@ export interface PublicCatalogProduct {
   price: number | null;
   imageUrl: string | null;
   thumbUrl: string | null;
+  /** Decidido por el backend (activo + inventario); nunca por el navegador. No expone el stock exacto. */
+  available: boolean;
+}
+
+/** Ficha pública de un producto: la misma proyección + galería completa (principal primero). */
+export interface PublicProductDetail extends PublicCatalogProduct {
+  /** Categoría real (el mismo id que usan los links públicos ?categoria=). */
+  categoryId: string | null;
+  gallery: PublicProductImages[];
 }
 
 export interface PublicCatalogPage {
@@ -103,6 +112,7 @@ export function toPublicProduct(product: CatalogProduct, context: PriceContext, 
     price: priceFor(product, context),
     imageUrl: images?.imageUrl ?? null,
     thumbUrl: images?.thumbUrl ?? null,
+    available: isAvailable(product),
   };
 }
 
@@ -112,14 +122,30 @@ export function toPublicProduct(product: CatalogProduct, context: PriceContext, 
 // ({tenant}/{producto}/{upload}.webp) se resuelve en el servidor.
 // ---------------------------------------------------------------------------
 
-export type PublicImageKind = "main" | "thumb";
+/**
+ * Archivo de imagen pública de un producto. `index` 1 = foto principal
+ * ("main" / "thumb", URLs estables); 2..12 = galería en su orden.
+ */
+export interface PublicImageFile {
+  index: number;
+  thumb: boolean;
+}
 
-const IMAGE_FILE_PATTERN = /^(main|thumb)\.(webp|jpe?g|png)$/;
+const PRINCIPAL_PATTERN = /^(main|thumb)\.(webp|jpe?g|png)$/;
+const GALERIA_PATTERN = /^([2-9]|1[0-2])(-thumb)?\.(webp|jpe?g|png)$/;
 
-/** "main.webp" -> "main"; cualquier otro nombre -> null (404). */
-export function parseImageFileName(name: string): PublicImageKind | null {
-  const match = IMAGE_FILE_PATTERN.exec(name);
-  return match ? (match[1] as PublicImageKind) : null;
+/** "main.webp" -> {1,false}; "3-thumb.webp" -> {3,true}; cualquier otro nombre -> null (404). */
+export function parseImageFileName(name: string): PublicImageFile | null {
+  const principal = PRINCIPAL_PATTERN.exec(name);
+  if (principal) return { index: 1, thumb: principal[1] === "thumb" };
+  const galeria = GALERIA_PATTERN.exec(name);
+  if (galeria) return { index: Number(galeria[1]), thumb: Boolean(galeria[2]) };
+  return null;
+}
+
+function imageBaseName(file: PublicImageFile): string {
+  if (file.index === 1) return file.thumb ? "thumb" : "main";
+  return `${file.index}${file.thumb ? "-thumb" : ""}`;
 }
 
 /** "dl-000184" (como va en la URL) -> "DL-000184"; null si no es una referencia válida. */
@@ -147,8 +173,13 @@ export function imageVersion(storagePath: string): string {
   return (hash >>> 0).toString(36);
 }
 
-export function productImagePath(slug: string, reference: string, kind: PublicImageKind, storagePath: string): string {
-  return `/catalogo/${slug}/productos/${reference.toLowerCase()}/${kind}.${extensionOf(storagePath)}?v=${imageVersion(storagePath)}`;
+export function productImagePath(slug: string, reference: string, file: PublicImageFile, storagePath: string): string {
+  return `${productPath(slug, reference)}/${imageBaseName(file)}.${extensionOf(storagePath)}?v=${imageVersion(storagePath)}`;
+}
+
+/** Ficha pública del producto: /catalogo/{slug}/productos/{referencia en minúsculas}. */
+export function productPath(slug: string, reference: string): string {
+  return `/catalogo/${slug}/productos/${reference.toLowerCase()}`;
 }
 
 /** Link de WhatsApp con la referencia en el mensaje: el agente (y el asesor) identifican la pieza exacta. */

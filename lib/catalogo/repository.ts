@@ -44,6 +44,8 @@ export type ProductPatchData = Partial<ProductWriteData> & { status?: ProductSta
 export interface ProductListFilter {
   search?: string;
   categoryId?: string;
+  /** Solo productos con foto principal (vitrina pública: destacados, portadas de categoría). */
+  withImage?: boolean;
   status: StatusFilter;
   offset: number;
   limit: number;
@@ -98,6 +100,8 @@ export interface CatalogRepository {
   listProducts(tenantId: string, filter: ProductListFilter): Promise<{ items: CatalogProduct[]; total: number }>;
   getProduct(tenantId: string, productId: string): Promise<CatalogProduct | null>;
   getProductByReference(tenantId: string, reference: string): Promise<CatalogProduct | null>;
+  /** Resolución por lote de referencias EXACTAS del tenant (la referencia es la identidad del producto). */
+  getProductsByReferences(tenantId: string, references: string[]): Promise<CatalogProduct[]>;
   insertProduct(tenantId: string, actorId: string, data: ProductWriteData): Promise<CatalogProduct>;
   updateProduct(tenantId: string, actorId: string, productId: string, patch: ProductPatchData): Promise<CatalogProduct | null>;
 
@@ -161,7 +165,7 @@ function mapPublication(row: PublicationRow): CatalogPublication {
 }
 
 const PRODUCT_COLUMNS =
-  "id, referencia, nombre, descripcion, precio, precio_mayor, material, color, categoria, categoria_id, activo, controla_stock, foto_url, created_at, updated_at";
+  "id, referencia, nombre, descripcion, precio, precio_mayor, material, color, categoria, categoria_id, activo, controla_stock, stock, foto_url, created_at, updated_at";
 const MEDIA_COLUMNS = "id, producto_id, storage_path, thumb_path, es_principal, orden, mime_type, bytes, ancho, alto";
 
 interface ProductRow {
@@ -177,6 +181,7 @@ interface ProductRow {
   categoria_id: string | null;
   activo: boolean;
   controla_stock: boolean;
+  stock: number | null;
   foto_url: string | null;
   created_at: string;
   updated_at: string;
@@ -213,6 +218,7 @@ function mapProduct(row: ProductRow): CatalogProduct {
     pricing: { retail: row.precio, wholesale: row.precio_mayor },
     status: row.activo ? "ACTIVE" : "INACTIVE",
     tracksStock: row.controla_stock,
+    stock: Math.max(0, row.stock ?? 0),
     // Foto legada (AMORE / principal sincronizada por la BD). El service la
     // reemplaza por la miniatura de la media principal cuando existe.
     primaryImage: row.foto_url ? { url: row.foto_url, thumbUrl: row.foto_url } : null,
@@ -265,6 +271,7 @@ export function createSupabaseCatalogRepository(supabase: SupabaseClient): Catal
       if (filter.status === "ACTIVE") query = query.eq("activo", true);
       if (filter.status === "INACTIVE") query = query.eq("activo", false);
       if (filter.categoryId) query = query.eq("categoria_id", filter.categoryId);
+      if (filter.withImage) query = query.not("foto_url", "is", null);
       // `search` ya viene normalizado por el dominio (sin , ( ) * % _ \ : " ').
       // El valor va ENTRE COMILLAS (forma documentada de PostgREST para
       // valores con caracteres reservados como "."), con % como comodín.
@@ -287,6 +294,13 @@ export function createSupabaseCatalogRepository(supabase: SupabaseClient): Catal
       const { data, error } = await supabase.from(T_PRODUCTOS).select(PRODUCT_COLUMNS).eq("id_tenant", tenantId).eq("referencia", reference).maybeSingle();
       if (error) fail("getProductByReference", error);
       return data ? mapProduct(data as ProductRow) : null;
+    },
+
+    async getProductsByReferences(tenantId, references) {
+      if (references.length === 0) return [];
+      const { data, error } = await supabase.from(T_PRODUCTOS).select(PRODUCT_COLUMNS).eq("id_tenant", tenantId).in("referencia", references);
+      if (error) fail("getProductsByReferences", error);
+      return ((data ?? []) as ProductRow[]).map(mapProduct);
     },
 
     async insertProduct(tenantId, actorId, d) {

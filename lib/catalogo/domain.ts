@@ -68,6 +68,8 @@ export interface CatalogProduct {
   status: ProductStatus;
   /** false = el negocio no controla inventario desde DuLabs (no hay "agotado"). */
   tracksStock: boolean;
+  /** Unidades en inventario (>= 0). Solo significa algo si tracksStock = true. */
+  stock: number;
   /** Imagen principal (listado/detalle/agente). Puede venir de la foto legada si el producto no tiene media. */
   primaryImage: Pick<CatalogImage, "url" | "thumbUrl"> | null;
   createdAt: string;
@@ -88,6 +90,16 @@ export interface ProductPage {
 /** Precio del producto para un contexto comercial. null = no definido para ese contexto (nunca 0 inventado). */
 export function priceFor(product: Pick<CatalogProduct, "pricing">, context: PriceContext): number | null {
   return context === "retail" ? product.pricing.retail : product.pricing.wholesale;
+}
+
+/**
+ * Disponibilidad DETERMINISTA de un producto (la decide el backend, nunca el
+ * navegador ni la IA): inactivo => no disponible; sin control de inventario
+ * => disponible; con control => disponible solo si hay stock.
+ */
+export function isAvailable(product: Pick<CatalogProduct, "status" | "tracksStock" | "stock">): boolean {
+  if (product.status !== "ACTIVE") return false;
+  return !product.tracksStock || product.stock > 0;
 }
 
 // ---------------------------------------------------------------------------

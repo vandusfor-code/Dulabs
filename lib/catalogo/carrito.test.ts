@@ -16,8 +16,11 @@ import {
   cartWhatsappMessage,
   emptyCart,
   lineSubtotal,
+  orderableLines,
+  parseSelectionMessage,
   parseStoredCart,
   reconcileCart,
+  selectionSnapshot,
   totalItems,
   type CartProduct,
   type CartState,
@@ -147,28 +150,68 @@ describe("persistencia", () => {
     });
     const s = parseStoredCart(raw, "delacour", "retail");
     assert.deepEqual(s.lines, [
-      { reference: "DL-000184", name: "Dije", unitPrice: 35_000, imageUrl: "/x.webp", quantity: 2 },
-      { reference: "DL-000186", name: "Anillo", unitPrice: null, imageUrl: null, quantity: MAX_QUANTITY },
+      { reference: "DL-000184", name: "Dije", unitPrice: 35_000, imageUrl: "/x.webp", quantity: 2, available: true },
+      { reference: "DL-000186", name: "Anillo", unitPrice: null, imageUrl: null, quantity: MAX_QUANTITY, available: true },
     ]);
   });
 });
 
-describe("reconciliación futura con el catálogo vigente", () => {
-  it("actualiza lo confirmado, retira lo que ya no está disponible y conserva lo no consultado", () => {
+describe("reconciliación con la verdad del backend", () => {
+  it("actualiza precio/nombre/disponibilidad, retira lo desconocido y conserva lo no consultado", () => {
     const s = con([DIJE], [ARETES], [ANILLO]);
-    const r = reconcileCart(
-      s,
-      new Map<string, CartProduct | undefined>([
-        ["DL-000184", { ...DIJE, price: 38_000 }],
-        ["DL-000185", undefined],
-      ]),
-    );
+    const r = reconcileCart(s, [{ ...DIJE, price: 38_000, name: "Dije corazón oro" }, { ...ANILLO, available: false }], ["DL-000185"]);
     assert.deepEqual(
-      r.lines.map((l) => [l.reference, l.unitPrice, l.quantity]),
+      r.lines.map((l) => [l.reference, l.name, l.unitPrice, l.available]),
       [
-        ["DL-000184", 38_000, 1],
-        ["DL-000186", null, 1],
+        ["DL-000184", "Dije corazón oro", 38_000, true],
+        ["DL-000186", "Anillo esencia", null, false],
       ],
     );
+    assert.deepEqual(cartReducer(s, { type: "reconcile", resolved: [], unknown: ["DL-000185"] }).lines.map((l) => l.reference), ["DL-000184", "DL-000186"]);
+  });
+
+  it("lo agotado se ve en el carrito pero no entra al pedido ni al total", () => {
+    const s = reconcileCart(con([DIJE, 2], [ARETES]), [{ ...ARETES, available: false }], []);
+    assert.equal(totalItems(s), 3);
+    assert.deepEqual(orderableLines(s).map((l) => l.reference), ["DL-000184"]);
+    assert.deepEqual(cartTotal(s), { total: 70_000, unpricedItems: 0 });
+    assert.ok(!cartWhatsappMessage(s).includes("DL-000185"));
+    assert.match(cartWhatsappMessage(s), /Total de productos: 2$/);
+    const soloAgotado = reconcileCart(con([ARETES]), [{ ...ARETES, available: false }], []);
+    assert.equal(cartWhatsappLink("573183715860", soloAgotado), null);
+  });
+
+  it("agregar un producto agotado lo registra como no disponible", () => {
+    const s = con([{ ...DIJE, available: false }]);
+    assert.equal(s.lines[0].available, false);
+  });
+});
+
+describe("selección confiable para el backend", () => {
+  it("snapshot = solo referencias y cantidades de lo pedible (sin nombres ni precios)", () => {
+    const s = reconcileCart(con([DIJE, 2], [ARETES]), [{ ...ARETES, available: false }], []);
+    const snap = selectionSnapshot(s);
+    assert.deepEqual(snap, { version: 1, slug: "delacour", context: "retail", items: [{ reference: "DL-000184", quantity: 2 }] });
+    assert.equal(JSON.stringify(snap).includes("35000"), false);
+    assert.equal(JSON.stringify(snap).includes("Dije"), false);
+  });
+
+  it("el webhook lee el mensaje de forma determinista (ida y vuelta)", () => {
+    const s = con([DIJE, 2], [ARETES], [ANILLO, 2]);
+    assert.deepEqual(parseSelectionMessage(cartWhatsappMessage(s)), {
+      context: "retail",
+      items: [
+        { reference: "DL-000184", quantity: 2 },
+        { reference: "DL-000185", quantity: 1 },
+        { reference: "DL-000186", quantity: 2 },
+      ],
+    });
+    const mayor = cartReducer(emptyCart("delacour", "wholesale"), { type: "add", product: DIJE, quantity: 3 });
+    assert.deepEqual(parseSelectionMessage(cartWhatsappMessage(mayor)), { context: "wholesale", items: [{ reference: "DL-000184", quantity: 3 }] });
+  });
+
+  it("nunca interpreta nombres ni texto libre", () => {
+    assert.deepEqual(parseSelectionMessage("Hola, quiero el dije corazón y el anillo DL-000186"), { context: null, items: [] });
+    assert.deepEqual(parseSelectionMessage("• X — Ref. DL-000184 — Cantidad: 2\n• Y — Ref. DL-000184 — Cantidad: 1").items, [{ reference: "DL-000184", quantity: 3 }]);
   });
 });

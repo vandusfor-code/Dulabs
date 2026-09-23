@@ -3,9 +3,9 @@
 import { useEffect, useState } from "react";
 import { Check, Plus } from "lucide-react";
 import type { PublicCatalogProduct } from "@/lib/catalogo/publicacion";
-import { useCarrito } from "@/components/catalogo-publico/tienda/TiendaContext";
+import { productoCarrito, useCarrito } from "@/components/catalogo-publico/tienda/TiendaContext";
 
-/** "+" de la tarjeta: agrega la pieza con los datos reales del catálogo y confirma con un check breve. */
+/** "+" de las tarjetas (inicio, listado, búsqueda): agrega una unidad con el motor único del carrito. */
 export function AgregarAlCarrito({ product }: { product: PublicCatalogProduct }) {
   const { dispatch } = useCarrito();
   const [agregado, setAgregado] = useState(0);
@@ -16,11 +16,15 @@ export function AgregarAlCarrito({ product }: { product: PublicCatalogProduct })
     return () => window.clearTimeout(t);
   }, [agregado]);
 
+  if (!product.available) {
+    return <span className="shrink-0 rounded-full bg-ink-2 px-2.5 py-1 text-[11px] font-medium text-mist">Agotado</span>;
+  }
+
   return (
     <button
       type="button"
       onClick={() => {
-        dispatch({ type: "add", product: { reference: product.reference, name: product.name, price: product.price, imageUrl: product.thumbUrl ?? product.imageUrl } });
+        dispatch({ type: "add", product: productoCarrito(product) });
         setAgregado((n) => n + 1);
       }}
       aria-label={`Agregar ${product.name} a tu selección`}
@@ -31,7 +35,7 @@ export function AgregarAlCarrito({ product }: { product: PublicCatalogProduct })
     >
       {agregado ? <Check key={agregado} className="tienda-bump size-5" strokeWidth={2.2} /> : <Plus className="size-5" strokeWidth={2} />}
       <span className="sr-only" aria-live="polite">
-        {agregado ? `${product.name} agregado` : ""}
+        {agregado ? `${product.name} agregado a tu selección` : ""}
       </span>
     </button>
   );
