@@ -1175,6 +1175,77 @@ body {
   .dev-scope .dev-wire-y::after { display: none; }
 }
 
+/* ---------- Developer · hero (/developer-platform) ----------
+   Negro + blanco + el campo de flujo de infraestructura (components/developer-platform/InfraFlowField, canvas 2D). El azul es energía y
+   actividad (pulsos, señal de la API), nunca superficie. Desktop: primera pantalla completa sin forzar height: 100vh (min-height con
+   fallback 100vh -> 100svh). Mobile: altura natural del contenido y el campo como textura compacta detrás. */
+.dev-scope .dev-hero-h1 {
+  font-size: clamp(2.125rem, 10.4vw, 3.25rem);
+  line-height: 1;
+  letter-spacing: -0.04em;
+}
+@media (min-width: 768px) {
+  .dev-scope .dev-hero-h1 { font-size: clamp(3.25rem, 7vw, 4.25rem); line-height: 0.98; }
+}
+@media (min-width: 1024px) {
+  .dev-scope .dev-hero { display: flex; align-items: center; min-height: 100vh; min-height: 100svh; }
+  .dev-scope .dev-hero-h1 { font-size: clamp(2.875rem, 4.3vw, 4.875rem); line-height: 0.98; letter-spacing: -0.045em; }
+}
+
+/* Capas: tres canvas estáticos (su paralaje es un transform: lo mueve el compositor, sin repintar) + un canvas dinámico. La opacidad del
+   contenedor es la intensidad (fundido de entrada y 100 % -> 50 % al salir del viewport). */
+.dev-scope .dev-flujo { position: absolute; pointer-events: none; z-index: 0; transition: opacity 1.2s ease; }
+.dev-scope .dev-flujo:not([data-listo]) { opacity: 0 !important; }
+.dev-scope .dev-flujo-capa,
+.dev-scope .dev-flujo-canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.dev-scope .dev-flujo-capa { will-change: transform; }
+/* La máscara hace todo el trabajo de composición (sin capas encima del canvas): fundidos en los bordes y un "hueco" radial donde está el
+   texto, para que el campo baje de intensidad justo detrás del H1 y del párrafo. Mobile: textura detrás de la mitad inferior. */
+.dev-scope .dev-hero-campo {
+  inset: 0;
+  -webkit-mask-image: linear-gradient(180deg, transparent 0%, transparent 38%, #000 62%, #000 88%, transparent 100%),
+    radial-gradient(ellipse 80% 22% at 30% 62%, rgba(0, 0, 0, 0.25), #000 100%);
+  -webkit-mask-composite: source-in;
+  mask-image: linear-gradient(180deg, transparent 0%, transparent 38%, #000 62%, #000 88%, transparent 100%),
+    radial-gradient(ellipse 80% 22% at 30% 62%, rgba(0, 0, 0, 0.25), #000 100%);
+  mask-composite: intersect;
+}
+/* Desktop: ~64 % derecho, fundido hacia el texto y hacia arriba/abajo, más atenuado donde el H1 se extiende sobre el campo. */
+@media (min-width: 1024px) {
+  .dev-scope .dev-hero-campo {
+    inset: 0 0 0 36%;
+    -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 34%, #000 92%, transparent 100%),
+      linear-gradient(180deg, transparent 0%, #000 14%, #000 86%, transparent 100%),
+      radial-gradient(ellipse 42% 30% at 0% 44%, rgba(0, 0, 0, 0.18), #000 100%);
+    -webkit-mask-composite: source-in, source-in;
+    mask-image: linear-gradient(90deg, transparent 0%, #000 34%, #000 92%, transparent 100%),
+      linear-gradient(180deg, transparent 0%, #000 14%, #000 86%, transparent 100%),
+      radial-gradient(ellipse 42% 30% at 0% 44%, rgba(0, 0, 0, 0.18), #000 100%);
+    mask-composite: intersect, intersect;
+  }
+}
+
+/* Señal de actividad de la API: punto azul con una respiración muy lenta. */
+.dev-scope .dev-hero-senal {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #5e8cff;
+  box-shadow: 0 0 10px rgba(49, 92, 255, 0.75);
+  animation: dev-hero-respira 3.6s ease-in-out infinite;
+}
+@keyframes dev-hero-respira {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+/* Entrada única del contenido (el H1 no se anima: protege el LCP). */
+.dev-scope .dev-hero-in { animation: dev-stream-in 0.7s cubic-bezier(0.16, 1, 0.3, 1) both; }
+@media (prefers-reduced-motion: reduce) {
+  .dev-scope .dev-hero-senal,
+  .dev-scope .dev-hero-in { animation: none; }
+  .dev-scope .dev-flujo { transition: none; }
+}
+
 /* ---------- Home principal v3 (scoped via .home-scope, el wrapper lleva .dev-scope .home-scope) ----------
    Landing principal premium con la MISMA identidad monocroma de /developer-platform: negro, blanco y grises neutros (tokens de
    .dev-scope). El CTA principal es blanco con texto oscuro (--color-dev-accent). Sin color de acento, sin gradientes decorativos: solo una
