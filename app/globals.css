@@ -1598,8 +1598,9 @@ body {
 /* ---------- DuLabs Business · login (/login, scoped via .dl-auth.bl-auth) ----------
    Mismo formulario que Developer (AuthForm) con la identidad de Business: negro, blanco, gris y una luz azul-violeta solo ambiental
    (foco de campos y panel). Entrada: logo 8 px, titular 10 px, descripción solo opacidad, formulario 12 px; 600 ms, stagger 80 ms,
-   cubic-bezier(0.22, 1, 0.36, 1). Ambiente: arcos que derivan ±8 px (20 s), resplandor 0.25 -> 0.40, puntos 0.25 -> 0.65 (3–6 s),
-   grid solo con opacidad. Todo transform/opacity; con prefers-reduced-motion queda estático (regla de .dl-auth). */
+   cubic-bezier(0.22, 1, 0.36, 1). Ambiente: una luz recorre cada arco (SVG), pulso en el cruce (4 s), arcos que derivan ±16 px (18 s),
+   resplandor 0.3 -> 0.75, halo que respira (12 s), puntos 0.2 -> 0.9 (3–6 s), grid solo con opacidad. Todo transform/opacity; con
+   prefers-reduced-motion queda estático (regla de .dl-auth). */
 .bl-auth {
   --dl-acento: #7187ff;
   --dl-foco: rgba(100, 130, 255, 0.55);
@@ -1619,14 +1620,18 @@ body {
   -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 14%);
   mask-image: linear-gradient(90deg, transparent 0%, #000 14%);
 }
-@keyframes bl-deriva { from { transform: translate3d(-8px, 0, 0); } to { transform: translate3d(8px, 0, 0); } }
-@keyframes bl-resplandor { 0%, 100% { opacity: 0.25; } 50% { opacity: 0.4; } }
-@keyframes bl-punto { 0%, 100% { opacity: 0.25; } 50% { opacity: 0.65; } }
-@keyframes bl-grid { 0%, 100% { opacity: 0.85; } 50% { opacity: 1; } }
-.bl-auth .bl-deriva { animation: bl-deriva 20s ease-in-out infinite alternate; }
-.bl-auth .bl-resplandor { animation: bl-resplandor 16s ease-in-out infinite; }
-.bl-auth .bl-punto { opacity: 0.25; animation: bl-punto 4.5s ease-in-out infinite; }
-.bl-auth .bl-grid { animation: bl-grid 24s ease-in-out infinite; }
+@keyframes bl-deriva { from { transform: translate3d(-16px, 4px, 0); } to { transform: translate3d(16px, -4px, 0); } }
+@keyframes bl-resplandor { 0%, 100% { opacity: 0.3; } 50% { opacity: 0.75; } }
+@keyframes bl-punto { 0%, 100% { opacity: 0.2; } 50% { opacity: 0.9; } }
+@keyframes bl-grid { 0%, 100% { opacity: 0.8; } 50% { opacity: 1; } }
+@keyframes bl-ambiente { 0%, 100% { opacity: 0.55; transform: scale(1); } 50% { opacity: 1; transform: scale(1.06); } }
+@keyframes bl-pulso { 0% { opacity: 0.7; transform: scale(0.6); } 60%, 100% { opacity: 0; transform: scale(2.8); } }
+.bl-auth .bl-deriva { animation: bl-deriva 18s ease-in-out infinite alternate; }
+.bl-auth .bl-resplandor { animation: bl-resplandor 9s ease-in-out infinite; }
+.bl-auth .bl-punto { opacity: 0.2; animation: bl-punto 4.5s ease-in-out infinite; }
+.bl-auth .bl-grid { animation: bl-grid 16s ease-in-out infinite; }
+.bl-auth .bl-ambiente { transform-box: fill-box; transform-origin: center; animation: bl-ambiente 12s ease-in-out infinite; }
+.bl-auth .bl-pulso { opacity: 0; transform-box: fill-box; transform-origin: center; animation: bl-pulso 4s cubic-bezier(0.22, 1, 0.36, 1) infinite; }
 .bl-auth .bl-visual-movil { -webkit-mask-image: linear-gradient(180deg, #000 30%, transparent); mask-image: linear-gradient(180deg, #000 30%, transparent); }
 
 /* ---------- Home principal v3 (scoped via .home-scope, el wrapper lleva .dev-scope .home-scope) ----------
