@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Plus, CalendarX2, Check, X, Loader2, Pencil } from "lucide-react";
+import { Plus, CalendarX2, Check, X, Loader2, Pencil, Store } from "lucide-react";
 import { useAgenda } from "@/components/spa-panel/AgendaContext";
 import { DateStrip } from "@/components/spa-panel/DateStrip";
 import { formatearHora, mismoDia } from "@/components/spa-panel/format";
@@ -43,7 +43,7 @@ const ESTADO_LABEL: Record<EstadoCita, string> = {
 // citas/[id]/route.ts), nunca confía en el dropdown. Reagendar (proponer
 // horario y esperar aceptación de la clienta) queda fuera de este alcance.
 export function AmoreCitasScreen() {
-  const { datos, procesandoId, confirmar, completar, marcarNoShow, abrirNueva, abrirEditar } = useAgenda();
+  const { datos, procesandoId, confirmar, completar, marcarNoShow, abrirNueva, abrirEditar, abrirServicioPresencial } = useAgenda();
   const [dia, setDia] = useState(() => new Date());
   const [vista, setVista] = useState<Vista>("dia");
   const [cancelando, setCancelando] = useState<Cita | null>(null);
@@ -70,14 +70,23 @@ export function AmoreCitasScreen() {
         title="Citas"
         subtitle="Tu agenda real"
         action={
-          <button
-            type="button"
-            onClick={() => abrirNueva(dia)}
-            aria-label="Nueva cita"
-            className="flex size-9 shrink-0 items-center justify-center rounded-full bg-lime text-white"
-          >
-            <Plus className="size-4" />
-          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            <button
+              type="button"
+              onClick={abrirServicioPresencial}
+              className="flex h-9 items-center gap-1.5 rounded-full border border-edge bg-card px-3 text-xs font-medium text-fg"
+            >
+              <Store className="size-4 text-lime-text" /> Presencial
+            </button>
+            <button
+              type="button"
+              onClick={() => abrirNueva(dia)}
+              aria-label="Nueva cita"
+              className="flex size-9 shrink-0 items-center justify-center rounded-full bg-lime text-white"
+            >
+              <Plus className="size-4" />
+            </button>
+          </div>
         }
       />
 
