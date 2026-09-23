@@ -1,5 +1,35 @@
 # Pasos manuales pendientes en producción
 
+## ⏳ PENDIENTE — Catálogo DuLabs, Fase 4 (carga masiva)
+
+Migración `supabase/migrations/20261107000000_dulabs_catalogo_importaciones.sql`
+(requiere la Fase 1 ya aplicada). **100 % aditiva:**
+
+- crea `dulabs_catalogo_importaciones` (historial por tenant, RLS activado,
+  solo backend);
+- agrega a `dulabs_inventario_productos` dos columnas **nullable**
+  (`importacion_id`, `importacion_fila`), un CHECK «ambas o ninguna», una FK
+  compuesta al historial del mismo tenant y un índice UNIQUE parcial
+  (idempotencia por importación + fila). Para todo lo existente quedan en
+  NULL: AMORE, el Business Agent y la cotización no cambian.
+
+Mientras no se aplique, la carga masiva muestra «La carga masiva todavía no
+está activada» (el preview funciona, la creación no); el resto del catálogo
+funciona igual. Validada contra PostgreSQL 16 local:
+`supabase/tests/20261107000000_dulabs_catalogo_importaciones.test.sql` (10/10) y
+12 importaciones concurrentes × 30 productos = 362 referencias únicas.
+
+1. Correr el archivo completo en el SQL Editor (es idempotente).
+2. Verificar:
+   ```sql
+   select count(*) from information_schema.tables where table_name = 'dulabs_catalogo_importaciones';            -- 1
+   select count(*) from information_schema.columns where table_name = 'dulabs_inventario_productos'
+     and column_name in ('importacion_id', 'importacion_fila');                                                -- 2
+   select count(*) from pg_indexes where indexname = 'dulabs_inventario_productos_importacion_fila_uq';         -- 1
+   ```
+
+Rollback: al inicio del archivo de la migración.
+
 ## ✅ APLICADA (23-sep-2026) — Catálogo DuLabs, Fase 1 (módulo Catálogo, cliente inicial Delacour & Orus)
 
 Las migraciones `20261105000000_dulabs_catalogo_fase1.sql` y

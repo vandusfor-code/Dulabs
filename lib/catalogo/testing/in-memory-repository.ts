@@ -9,13 +9,16 @@
 import { randomUUID } from "node:crypto";
 import { formatReference, type CatalogCategory, type CatalogProduct } from "@/lib/catalogo/domain";
 import { CatalogError } from "@/lib/catalogo/errors";
-import type { AttachMediaData, CatalogRepository, ProductListFilter, ProductPatchData, ProductWriteData, StoredMedia } from "@/lib/catalogo/repository";
+import type { AttachMediaData, CatalogRepository, ProductListFilter, ProductOrigin, ProductPatchData, ProductWriteData, StoredMedia } from "@/lib/catalogo/repository";
+import type { ImportRecord } from "@/lib/catalogo/import/types";
 import type { CatalogPublication } from "@/lib/catalogo/publicacion";
 
 interface StoredProduct extends CatalogProduct {
   tenantId: string;
   createdBy: string | null;
   updatedBy: string | null;
+  importId: string | null;
+  importRow: number | null;
 }
 
 export interface StoredObject {
@@ -45,6 +48,9 @@ export function createInMemoryCatalogRepository() {
   const publications = new Map<string, CatalogPublication>();
   const profiles = new Map<string, { name: string | null; whatsapp: string | null }>();
   const modulesEnabled = new Set<string>();
+  const imports = new Map<string, ImportRecord & { tenantId: string }>();
+  /** Simula una caída de la BD al insertar (tests de importación parcial). */
+  let failInsertWhen: ((d: ProductWriteData) => boolean) | null = null;
   let clock = 0;
   const now = () => new Date(Date.UTC(2026, 8, 22, 12, 0, clock++)).toISOString();
 
@@ -80,7 +86,17 @@ export function createInMemoryCatalogRepository() {
       return [...products.values()].filter((x) => x.tenantId === tenantId && references.includes(x.reference)).map(strip);
     },
 
-    async insertProduct(tenantId, actorId, d: ProductWriteData) {
+    async insertProduct(tenantId, actorId, d: ProductWriteData, origin?: ProductOrigin) {
+      if (failInsertWhen?.(d)) throw new CatalogError("INTERNAL_ERROR", "No se pudo completar la operación del catálogo.");
+      if (origin) {
+        // Igual que la FK compuesta: la importación debe ser de ESTE tenant.
+        const imp = imports.get(origin.importId);
+        if (!imp || imp.tenantId !== tenantId) throw new CatalogError("NOT_FOUND", "No se encontró el recurso.");
+        // Igual que el UNIQUE (id_tenant, importacion_id, importacion_fila).
+        if ([...products.values()].some((x) => x.tenantId === tenantId && x.importId === origin.importId && x.importRow === origin.row)) {
+          throw new CatalogError("CONFLICT", "Ya existe un registro con esos datos.");
+        }
+      }
       // Igual que el trigger de la BD: la referencia se asigna aquí, siempre.
       const n = (sequences.get(tenantId) ?? 0) + 1;
       sequences.set(tenantId, n);
@@ -105,6 +121,8 @@ export function createInMemoryCatalogRepository() {
         updatedAt: ts,
         createdBy: actorId,
         updatedBy: actorId,
+        importId: origin?.importId ?? null,
+        importRow: origin?.row ?? null,
       };
       products.set(p.id, p);
       return strip(p);
@@ -131,6 +149,70 @@ export function createInMemoryCatalogRepository() {
       p.updatedAt = now();
       p.updatedBy = actorId;
       return strip(p);
+    },
+
+    async listProductKeys(tenantId) {
+      return [...products.values()]
+        .filter((p) => p.tenantId === tenantId)
+        .map((p) => ({ reference: p.reference, name: p.name, categoryId: p.categoryId, color: p.color, material: p.material }));
+    },
+
+    async getProductsByImportRows(tenantId, importId, rows) {
+      return [...products.values()]
+        .filter((p) => p.tenantId === tenantId && p.importId === importId && p.importRow !== null && rows.includes(p.importRow))
+        .map((p) => ({ row: p.importRow as number, product: strip(p) }));
+    },
+
+    async importedProductIds(tenantId, importId, productIds) {
+      return [...products.values()].filter((p) => p.tenantId === tenantId && p.importId === importId && productIds.includes(p.id)).map((p) => p.id);
+    },
+
+    async insertImport(tenantId, actorId, d) {
+      const rec = {
+        id: randomUUID(),
+        tenantId,
+        fileName: d.fileName,
+        totalRows: d.totalRows,
+        created: 0,
+        skipped: 0,
+        errors: 0,
+        photosUploaded: 0,
+        photosFailed: 0,
+        status: "procesando" as const,
+        createdAt: now(),
+        finishedAt: null,
+        createdBy: actorId,
+      };
+      imports.set(rec.id, rec);
+      return stripImport(rec);
+    },
+
+    async getImport(tenantId, importId) {
+      const r = imports.get(importId);
+      return r && r.tenantId === tenantId ? stripImport(r) : null;
+    },
+
+    async finishImport(tenantId, importId, c) {
+      const r = imports.get(importId);
+      if (!r || r.tenantId !== tenantId) return null;
+      Object.assign(r, {
+        created: [...products.values()].filter((p) => p.tenantId === tenantId && p.importId === importId).length,
+        skipped: c.skipped,
+        errors: c.errors,
+        photosUploaded: c.photosUploaded,
+        photosFailed: c.photosFailed,
+        status: "completada",
+        finishedAt: now(),
+      });
+      return stripImport(r);
+    },
+
+    async listImports(tenantId, limit) {
+      return [...imports.values()]
+        .filter((r) => r.tenantId === tenantId)
+        .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
+        .slice(0, limit)
+        .map(stripImport);
     },
 
     async listCategories(tenantId) {
@@ -292,8 +374,14 @@ export function createInMemoryCatalogRepository() {
 
   function strip(p: StoredProduct): CatalogProduct {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { tenantId, createdBy, updatedBy, ...rest } = p;
+    const { tenantId, createdBy, updatedBy, importId, importRow, ...rest } = p;
     return { ...rest, pricing: { ...rest.pricing } };
+  }
+
+  function stripImport(r: ImportRecord & { tenantId: string }): ImportRecord {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { tenantId, ...rest } = r;
+    return { ...rest };
   }
 
   function stripMedia(m: StoredMedia & { tenantId: string }): StoredMedia {
@@ -325,6 +413,12 @@ export function createInMemoryCatalogRepository() {
       if (p) p.published = published;
     },
     auditTrail: (id: string) => products.get(id),
+    /** Productos del tenant (tests: "los existentes quedan intactos"). */
+    snapshot: (tenantId: string) => [...products.values()].filter((p) => p.tenantId === tenantId).map((p) => JSON.parse(JSON.stringify(p)) as StoredProduct),
+    /** Hace fallar el INSERT de los productos que cumplan la condición (fallo de BD simulado). */
+    failInsert(when: ((d: ProductWriteData) => boolean) | null) {
+      failInsertWhen = when;
+    },
     /** Simula inventario controlado (AMORE / futuros negocios con stock). */
     setStock(id: string, tracksStock: boolean, stock: number) {
       const p = products.get(id);

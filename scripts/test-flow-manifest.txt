@@ -447,3 +447,5 @@ lib/catalogo/carrito.test.ts
 lib/catalogo/pedido.test.ts
 lib/catalogo/inicio.test.ts
 lib/catalogo/tienda-publica.test.ts
+# Catálogo Fase 4 -- carga masiva: planillas (CSV/XLSX), análisis, servicio idempotente/multi-tenant y ZIP nativo.
+lib/catalogo/import/importacion.test.ts

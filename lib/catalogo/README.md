@@ -168,4 +168,13 @@ conversa sin contexto de pedido.
 
 ### Importación masiva
 
-Solo contrato (no implementada): `import/README.md` + `import/types.ts`.
+Implementada en la Fase 4: ver la sección de abajo.
+
+## Carga masiva (Fase 4)
+
+Dashboard → Catálogo → **Carga masiva**. Planilla XLSX/CSV + fotos
+(selección, carpeta o ZIP) → análisis en el servidor → preview corregible →
+creación por lotes con `createProduct` (misma regla que el formulario) →
+fotos a la galería existente → resultado e historial. Decisiones, límites y
+seguridad: [`import/README.md`](import/README.md). Migración aditiva:
+`20261107000000_dulabs_catalogo_importaciones.sql`.

@@ -10,6 +10,7 @@ export type CatalogErrorCode =
   | "CONFLICT"
   | "LIMIT_REACHED"
   | "IMAGE_INVALID"
+  | "FEATURE_UNAVAILABLE"
   | "INTERNAL_ERROR";
 
 const STATUS: Record<CatalogErrorCode, number> = {
@@ -18,6 +19,7 @@ const STATUS: Record<CatalogErrorCode, number> = {
   CONFLICT: 409,
   LIMIT_REACHED: 409,
   IMAGE_INVALID: 422,
+  FEATURE_UNAVAILABLE: 503,
   INTERNAL_ERROR: 500,
 };
 

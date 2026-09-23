@@ -2,13 +2,13 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { ChevronLeft, ChevronRight, PackagePlus, Plus, Search, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, FileSpreadsheet, PackagePlus, Plus, Search, X } from "lucide-react";
 import { PageHeader } from "@/components/dashboard/shell/ui";
 import { useI18n } from "@/lib/i18n";
 import type { CatalogCategory, ProductPage, StatusFilter } from "@/lib/catalogo/domain";
 import { CatalogLinks } from "@/components/dashboard/catalogo/CatalogLinks";
 import { ProductList, ProductListSkeleton } from "@/components/dashboard/catalogo/ProductList";
-import { cn, inputCls, primaryBtn, useCatalogAccess } from "@/components/dashboard/catalogo/ui";
+import { actionBtn, cn, inputCls, primaryBtn, useCatalogAccess } from "@/components/dashboard/catalogo/ui";
 
 const PAGE_SIZE = 30;
 
@@ -95,10 +95,16 @@ export default function CatalogoPage() {
         )}
       >
         {canWrite && (
-          <Link href="/dashboard/catalogo/nuevo" className={primaryBtn}>
-            <Plus className="size-4" />
-            {t("Nuevo producto", "New product")}
-          </Link>
+          <>
+            <Link href="/dashboard/catalogo/nuevo" className={primaryBtn}>
+              <Plus className="size-4" />
+              {t("Nuevo producto", "New product")}
+            </Link>
+            <Link href="/dashboard/catalogo/importar" className={actionBtn}>
+              <FileSpreadsheet className="size-4" />
+              {t("Carga masiva", "Bulk upload")}
+            </Link>
+          </>
         )}
       </PageHeader>
 
@@ -200,10 +206,16 @@ export default function CatalogoPage() {
                   {t("Registra tu primer producto con su foto y precios. DuLabs le asigna la referencia automáticamente.", "Register your first product with its photo and prices. DuLabs assigns its reference automatically.")}
                 </p>
                 {canWrite && (
-                  <Link href="/dashboard/catalogo/nuevo" className={cn(primaryBtn, "mx-auto mt-5 w-fit")}>
-                    <Plus className="size-4" />
-                    {t("Crear primer producto", "Create first product")}
-                  </Link>
+                  <div className="mt-5 flex flex-col items-center justify-center gap-2 sm:flex-row">
+                    <Link href="/dashboard/catalogo/nuevo" className={primaryBtn}>
+                      <Plus className="size-4" />
+                      {t("Crear primer producto", "Create first product")}
+                    </Link>
+                    <Link href="/dashboard/catalogo/importar" className={actionBtn}>
+                      <FileSpreadsheet className="size-4" />
+                      {t("Cargar muchos desde Excel", "Load many from Excel")}
+                    </Link>
+                  </div>
                 )}
               </div>
             )
