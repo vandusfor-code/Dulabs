@@ -1175,6 +1175,80 @@ body {
   .dev-scope .dev-wire-y::after { display: none; }
 }
 
+/* ---------- Developer · hero (/developer-platform) ----------
+   Negro + blanco + el campo de flujo de infraestructura (components/developer-platform/InfraFlowField, canvas 2D). El azul es energía y
+   actividad (pulsos, señal de la API), nunca superficie. Desktop: primera pantalla completa sin forzar height: 100vh (min-height con
+   fallback 100vh -> 100svh). Mobile: altura natural del contenido y el campo como textura compacta detrás. */
+.dev-scope .dev-hero-h1 {
+  font-size: clamp(2.125rem, 10.4vw, 3.25rem);
+  line-height: 1;
+  letter-spacing: -0.04em;
+}
+@media (min-width: 768px) {
+  .dev-scope .dev-hero-h1 { font-size: clamp(3.25rem, 7vw, 4.25rem); line-height: 0.98; }
+}
+@media (min-width: 1024px) {
+  .dev-scope .dev-hero { display: flex; align-items: center; min-height: 100vh; min-height: 100svh; }
+  .dev-scope .dev-hero-h1 { font-size: clamp(2.875rem, 4.3vw, 4.875rem); line-height: 0.98; letter-spacing: -0.045em; }
+}
+
+/* Capas: tres canvas estáticos (su paralaje es un transform: lo mueve el compositor, sin repintar) + un canvas dinámico. La opacidad del
+   contenedor es la intensidad (fundido de entrada y 100 % -> 50 % al salir del viewport). */
+.dev-scope .dev-flujo { position: absolute; pointer-events: none; z-index: 0; transition: opacity 1.2s ease; }
+.dev-scope .dev-flujo:not([data-listo]) { opacity: 0 !important; }
+.dev-scope .dev-flujo-capa,
+.dev-scope .dev-flujo-canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.dev-scope .dev-flujo-capa { will-change: transform; }
+/* La máscara hace todo el trabajo de composición (sin capas encima del canvas).
+   Mobile: el campo es una banda DEBAJO del contenido (H1 -> descripción -> CTAs -> línea técnica -> campo); solo asoma con un fundido
+   suave bajo los CTAs, nunca detrás del párrafo. */
+.dev-scope .dev-hero-campo {
+  top: auto;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: clamp(300px, 82vw, 420px);
+  -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 42%, #000 86%, transparent 100%);
+  mask-image: linear-gradient(180deg, transparent 0%, #000 42%, #000 86%, transparent 100%);
+}
+/* Desktop: ~64 % derecho, fundido hacia el texto y hacia arriba/abajo. El hueco radial sigue la posición REAL del H1 (variables que
+   calcula InfraFlowField): el texto siempre tiene una zona limpia detrás. */
+@media (min-width: 1024px) {
+  .dev-scope .dev-hero-campo {
+    inset: 0 0 0 36%;
+    height: auto;
+    -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 34%, #000 92%, transparent 100%),
+      linear-gradient(180deg, transparent 0%, #000 14%, #000 86%, transparent 100%),
+      radial-gradient(ellipse var(--hueco-rx, 42%) var(--hueco-ry, 30%) at var(--hueco-x, 0%) var(--hueco-y, 44%), rgba(0, 0, 0, 0.03), #000 100%);
+    -webkit-mask-composite: source-in, source-in;
+    mask-image: linear-gradient(90deg, transparent 0%, #000 34%, #000 92%, transparent 100%),
+      linear-gradient(180deg, transparent 0%, #000 14%, #000 86%, transparent 100%),
+      radial-gradient(ellipse var(--hueco-rx, 42%) var(--hueco-ry, 30%) at var(--hueco-x, 0%) var(--hueco-y, 44%), rgba(0, 0, 0, 0.03), #000 100%);
+    mask-composite: intersect, intersect;
+  }
+}
+
+/* Señal de actividad de la API: punto azul con una respiración muy lenta. */
+.dev-scope .dev-hero-senal {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #5e8cff;
+  box-shadow: 0 0 10px rgba(49, 92, 255, 0.75);
+  animation: dev-hero-respira 3.6s ease-in-out infinite;
+}
+@keyframes dev-hero-respira {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+/* Entrada única del contenido (el H1 no se anima: protege el LCP). */
+.dev-scope .dev-hero-in { animation: dev-stream-in 0.7s cubic-bezier(0.16, 1, 0.3, 1) both; }
+@media (prefers-reduced-motion: reduce) {
+  .dev-scope .dev-hero-senal,
+  .dev-scope .dev-hero-in { animation: none; }
+  .dev-scope .dev-flujo { transition: none; }
+}
+
 /* ---------- DuLabs Developer · /developer-platform (scoped via .dp) ----------
    Sistema propio de la landing de Developer, en su propio namespace (dp-*): no toca los tokens .dev-scope que comparten el dashboard
    privado y la home. Negro, blanco y grises técnicos. El color SOLO comunica estado:
@@ -1254,6 +1328,9 @@ body {
   .dp .dp-hero-h1 { font-size: clamp(3.5rem, 5vw, 5.5rem); line-height: 0.96; letter-spacing: -0.05em; }
   .dp .dp-display { font-size: clamp(3.25rem, 4.6vw, 5rem); line-height: 0.96; letter-spacing: -0.048em; }
 }
+/* Hero: el campo de infraestructura (InfraFlowField) se inicializa de izquierda a derecha (una sola transición de clip-path). */
+.dp .dev-flujo { transition: opacity 1.2s ease, clip-path 1.6s var(--dp-ease-emph); clip-path: inset(0 0 0 0); }
+.dp .dev-flujo:not([data-listo]) { clip-path: inset(0 100% 0 0); }
 .dp .dp-entra { animation: dp-entra var(--dp-dur-sistema) var(--dp-ease-emph) both; }
 @keyframes dp-entra { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
@@ -1425,6 +1502,7 @@ body {
   .dp .dp-control,
   .dp .dp-control .dp-check { opacity: 1; transform: none; }
   .dp .dp-firma { clip-path: none; }
+  .dp .dev-flujo { clip-path: none; }
 }
 
 /* ---------- Home principal v3 (scoped via .home-scope, el wrapper lleva .dev-scope .home-scope) ----------
