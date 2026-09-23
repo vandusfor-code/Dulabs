@@ -177,7 +177,7 @@ export default function CatalogoPage() {
 
         <div className="mt-3">
           {resultado?.error && !cargando ? (
-            <p className="rounded-xl border border-danger-text/30 bg-danger p-4 text-sm text-danger-text">{resultado.error}</p>
+            <p className="rounded-xl border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-400">{resultado.error}</p>
           ) : cargando && !data ? (
             <ProductGridSkeleton />
           ) : data && data.items.length === 0 ? (

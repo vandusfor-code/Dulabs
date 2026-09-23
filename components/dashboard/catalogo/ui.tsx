@@ -27,7 +27,7 @@ export function CField({ label, htmlFor, hint, required, children }: { label: st
     <div>
       <label htmlFor={htmlFor} className="mb-1.5 block text-xs font-medium text-mist">
         {label}
-        {required && <span className="ml-0.5 text-danger-text" aria-hidden>*</span>}
+        {required && <span className="ml-0.5 text-red-400" aria-hidden>*</span>}
       </label>
       {children}
       {hint && <p className="mt-1 text-[11px] text-mist/80">{hint}</p>}
@@ -112,7 +112,7 @@ export function CatalogToastProvider({ children }: { children: ReactNode }) {
             role="status"
             className={cn(
               "pointer-events-auto flex max-w-sm motion-safe:animate-[catalogo-toast-in_180ms_ease-out] items-start gap-2.5 rounded-xl border px-4 py-3 text-sm shadow-lg shadow-black/5 backdrop-blur",
-              item.tone === "success" ? "border-edge bg-card text-fg" : "border-danger-text/30 bg-danger text-danger-text",
+              item.tone === "success" ? "border-edge bg-card text-fg" : "border-red-500/40 bg-red-500/10 text-red-400",
             )}
           >
             {item.tone === "success" ? <Check className="mt-0.5 size-4 shrink-0 text-lime-text" /> : <X className="mt-0.5 size-4 shrink-0" />}
@@ -169,7 +169,7 @@ export function PriceInput({
         }}
         className={cn(
           "w-full rounded-lg border bg-ink py-2.5 pl-7 pr-3 text-sm tabular-nums text-fg outline-none transition-colors focus:border-lime/50 disabled:opacity-60",
-          invalid ? "border-danger-text/60" : "border-edge",
+          invalid ? "border-red-500/60" : "border-edge",
         )}
       />
     </div>

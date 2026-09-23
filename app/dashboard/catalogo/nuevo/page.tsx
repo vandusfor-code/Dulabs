@@ -147,7 +147,7 @@ export default function NuevoProductoPage() {
             </div>
 
             {errorFoto && (
-              <p className="mx-6 mt-3 flex items-start gap-2 rounded-lg border border-warning-text/30 bg-warning px-3 py-2.5 text-xs text-warning-text">
+              <p className="mx-6 mt-3 flex items-start gap-2 rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-2.5 text-xs text-amber-400">
                 <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
                 <span>
                   {t("El producto se guardó, pero la foto no se pudo subir: ", "The product was saved, but the photo could not be uploaded: ")}
@@ -201,7 +201,7 @@ export default function NuevoProductoPage() {
               disabled={ocupado}
             />
 
-            {errorServidor && <p className="rounded-lg border border-danger-text/30 bg-danger px-3 py-2.5 text-sm text-danger-text">{errorServidor}</p>}
+            {errorServidor && <p className="rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2.5 text-sm text-red-400">{errorServidor}</p>}
 
             <div className="flex flex-col-reverse gap-2 border-t border-edge pt-5 sm:flex-row sm:justify-end">
               <Link href="/dashboard/catalogo" className={cn(actionBtn, "justify-center", ocupado && "pointer-events-none opacity-50")}>

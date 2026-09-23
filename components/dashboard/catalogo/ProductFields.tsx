@@ -99,7 +99,7 @@ function CategorySelect({
             {t("Cancelar", "Cancel")}
           </button>
         </div>
-        {error && <p className="mt-1 text-xs text-danger-text">{error}</p>}
+        {error && <p className="mt-1 text-xs text-red-400">{error}</p>}
       </div>
     );
   }
@@ -155,7 +155,7 @@ export function ProductFields({
       <CField label={t("Nombre", "Name")} htmlFor={`${ids}-name`} required>
         <input
           id={`${ids}-name`}
-          className={cn(inputCls, errors.name && "border-danger-text/60")}
+          className={cn(inputCls, errors.name && "border-red-500/60")}
           value={value.name}
           maxLength={120}
           disabled={disabled}
@@ -163,7 +163,7 @@ export function ProductFields({
           aria-invalid={Boolean(errors.name) || undefined}
           onChange={(e) => set("name", e.target.value)}
         />
-        {errors.name && <p className="mt-1 text-xs text-danger-text">{errors.name}</p>}
+        {errors.name && <p className="mt-1 text-xs text-red-400">{errors.name}</p>}
       </CField>
 
       <CField label={t("Categoría", "Category")} htmlFor={`${ids}-category`}>
@@ -182,11 +182,11 @@ export function ProductFields({
       <div className="grid gap-4 sm:grid-cols-2">
         <CField label={t("Precio detal", "Retail price")} htmlFor={`${ids}-retail`} required>
           <PriceInput id={`${ids}-retail`} value={value.retailPrice} onChange={(v) => set("retailPrice", v)} placeholder="35.000" disabled={disabled} invalid={Boolean(errors.retailPrice)} />
-          {errors.retailPrice && <p className="mt-1 text-xs text-danger-text">{errors.retailPrice}</p>}
+          {errors.retailPrice && <p className="mt-1 text-xs text-red-400">{errors.retailPrice}</p>}
         </CField>
         <CField label={t("Precio mayor", "Wholesale price")} htmlFor={`${ids}-wholesale`} hint={t("Opcional. El mismo producto, precio al por mayor.", "Optional. Same product, wholesale price.")}>
           <PriceInput id={`${ids}-wholesale`} value={value.wholesalePrice} onChange={(v) => set("wholesalePrice", v)} placeholder="18.000" disabled={disabled} invalid={Boolean(errors.wholesalePrice)} />
-          {errors.wholesalePrice && <p className="mt-1 text-xs text-danger-text">{errors.wholesalePrice}</p>}
+          {errors.wholesalePrice && <p className="mt-1 text-xs text-red-400">{errors.wholesalePrice}</p>}
         </CField>
       </div>
 

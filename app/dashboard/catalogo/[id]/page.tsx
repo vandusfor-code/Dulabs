@@ -219,7 +219,7 @@ export default function ProductoPage() {
                       type="button"
                       onClick={() => eliminar(img)}
                       disabled={deletingId === img.id}
-                      className="absolute -right-1.5 -top-1.5 flex size-6 items-center justify-center rounded-full border border-edge bg-card text-mist opacity-0 shadow-sm transition-opacity hover:text-danger-text focus-visible:opacity-100 group-hover:opacity-100 disabled:opacity-100"
+                      className="absolute -right-1.5 -top-1.5 flex size-6 items-center justify-center rounded-full border border-edge bg-card text-mist opacity-0 shadow-sm transition-opacity hover:text-red-400 focus-visible:opacity-100 group-hover:opacity-100 disabled:opacity-100"
                       aria-label={t("Eliminar foto", "Delete photo")}
                     >
                       {deletingId === img.id ? <Loader2 className="size-3 animate-spin" /> : <Trash2 className="size-3" />}
@@ -274,7 +274,7 @@ export default function ProductoPage() {
               <p className="border-t border-edge pt-4 text-xs text-mist">{t("Solo un administrador puede editar el catálogo.", "Only an admin can edit the catalog.")}</p>
             ) : (
               <div className="flex flex-col-reverse items-stretch gap-3 border-t border-edge pt-5 sm:flex-row sm:items-center sm:justify-between">
-                <span className={cn("text-xs transition-opacity", dirty ? "text-warning-text opacity-100" : "opacity-0")} aria-live="polite">
+                <span className={cn("text-xs transition-opacity", dirty ? "text-amber-400 opacity-100" : "opacity-0")} aria-live="polite">
                   {dirty ? t("Tienes cambios sin guardar", "You have unsaved changes") : ""}
                 </span>
                 <div className="flex gap-2">
