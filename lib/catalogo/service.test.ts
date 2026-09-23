@@ -35,7 +35,7 @@ beforeEach(() => {
 const query = (q: Record<string, string> = {}) => productListQuerySchema.parse(q);
 
 async function crear(actor: CatalogActor, name: string, extra: Partial<{ retailPrice: number; wholesalePrice: number | null; categoryId: string | null }> = {}) {
-  return service.createProduct(actor, { name, retailPrice: extra.retailPrice ?? 35_000, wholesalePrice: extra.wholesalePrice ?? null, categoryId: extra.categoryId ?? null });
+  return service.createProduct(actor, { stock: 10, name, retailPrice: extra.retailPrice ?? 35_000, wholesalePrice: extra.wholesalePrice ?? null, categoryId: extra.categoryId ?? null });
 }
 
 async function rejects(p: Promise<unknown>, code: CatalogError["code"]) {
@@ -52,7 +52,8 @@ describe("crear productos", () => {
     assert.equal(otro.reference, "DL-000001", "cada tenant tiene su propia secuencia");
     assert.deepEqual(a.pricing, { retail: 35_000, wholesale: 18_000 });
     assert.equal(a.status, "ACTIVE");
-    assert.equal(a.tracksStock, false, "el Catálogo no controla inventario");
+    assert.equal(a.tracksStock, true, "el Catálogo controla inventario");
+    assert.equal(a.stock, 10);
   });
 
   it("muchos productos creados en paralelo nunca repiten referencia", async () => {

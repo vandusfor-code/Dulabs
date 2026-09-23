@@ -27,6 +27,12 @@ export interface StoredObject {
 export const WEBP_HEAD = new Uint8Array([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x20]);
 export const JPEG_HEAD = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 0x10, 0x4a, 0x46, 0x49, 0x46, 0, 1, 1, 0, 0, 1]);
 
+/** Emula el CHECK (stock >= 0) de la BD: un negativo nunca se guarda. */
+function assertStock(stock: number): number {
+  if (!Number.isInteger(stock) || stock < 0) throw new CatalogError("VALIDATION_ERROR", "Algún dato no cumple las reglas del catálogo.");
+  return stock;
+}
+
 export function createInMemoryCatalogRepository() {
   const products = new Map<string, StoredProduct>();
   const categories = new Map<string, CatalogCategory & { tenantId: string }>();
@@ -91,8 +97,9 @@ export function createInMemoryCatalogRepository() {
         color: d.color,
         pricing: { retail: d.retailPrice, wholesale: d.wholesalePrice },
         status: "ACTIVE",
-        tracksStock: false,
-        stock: 0,
+        // Igual que la BD: el Catálogo controla inventario; negativos imposibles (CHECK stock >= 0).
+        tracksStock: true,
+        stock: assertStock(d.stock),
         primaryImage: null,
         createdAt: ts,
         updatedAt: ts,
@@ -117,6 +124,10 @@ export function createInMemoryCatalogRepository() {
       if (patch.retailPrice !== undefined) p.pricing = { ...p.pricing, retail: patch.retailPrice };
       if (patch.wholesalePrice !== undefined) p.pricing = { ...p.pricing, wholesale: patch.wholesalePrice };
       if (patch.status !== undefined) p.status = patch.status;
+      if (patch.stock !== undefined) {
+        p.stock = assertStock(patch.stock);
+        p.tracksStock = true;
+      }
       p.updatedAt = now();
       p.updatedBy = actorId;
       return strip(p);

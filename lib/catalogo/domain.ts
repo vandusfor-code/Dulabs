@@ -92,14 +92,43 @@ export function priceFor(product: Pick<CatalogProduct, "pricing">, context: Pric
   return context === "retail" ? product.pricing.retail : product.pricing.wholesale;
 }
 
+// ---------------------------------------------------------------------------
+// Disponibilidad — ÚNICA fuente de las reglas de inventario (tienda, carrito,
+// pedido, agente). La decide el backend, nunca el navegador ni la IA.
+// ---------------------------------------------------------------------------
+
 /**
- * Disponibilidad DETERMINISTA de un producto (la decide el backend, nunca el
- * navegador ni la IA): inactivo => no disponible; sin control de inventario
- * => disponible; con control => disponible solo si hay stock.
+ * Umbral de "Últimas unidades": con inventario controlado y 1..N unidades.
+ * Regla de negocio centralizada (hoy común a todos los negocios; mañana puede
+ * venir de la configuración del catálogo sin tocar a los consumidores).
  */
-export function isAvailable(product: Pick<CatalogProduct, "status" | "tracksStock" | "stock">): boolean {
-  if (product.status !== "ACTIVE") return false;
-  return !product.tracksStock || product.stock > 0;
+export const LOW_STOCK_THRESHOLD = 3;
+
+export type Availability = "available" | "low" | "sold_out";
+
+type StockView = Pick<CatalogProduct, "status" | "tracksStock" | "stock">;
+
+/**
+ * inactivo => no disponible ("sold_out" para quien lo consulte: el producto
+ * existe pero no se vende); sin control de inventario => disponible; con
+ * control => agotado con 0, "últimas unidades" hasta el umbral, disponible
+ * por encima.
+ */
+export function availabilityOf(product: StockView): Availability {
+  if (product.status !== "ACTIVE") return "sold_out";
+  if (!product.tracksStock) return "available";
+  if (product.stock <= 0) return "sold_out";
+  return product.stock <= LOW_STOCK_THRESHOLD ? "low" : "available";
+}
+
+export function isAvailable(product: StockView): boolean {
+  return availabilityOf(product) !== "sold_out";
+}
+
+/** Máximo que se puede pedir de un producto: el stock si se controla; null = sin límite de inventario. */
+export function maxOrderableUnits(product: StockView): number | null {
+  if (!isAvailable(product)) return 0;
+  return product.tracksStock ? product.stock : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -139,6 +168,7 @@ export const CATALOG_LIMITS = {
   /** Miniatura (<= 400 px). */
   thumbBytes: 400 * 1024,
   imageMaxSide: 2048,
+  stock: 1_000_000,
   thumbMaxSide: 400,
 } as const;
 
@@ -174,6 +204,13 @@ const priceNumber = z
   .min(0, { message: "El precio no puede ser negativo." })
   .max(CATALOG_LIMITS.price, { message: "El precio es demasiado alto." });
 
+/** Stock: entero >= 0 (0 = agotado). La BD lo garantiza también (CHECK stock >= 0). */
+const stockNumber = z
+  .number({ error: "El stock debe ser un número." })
+  .int({ message: "El stock debe ser un número entero." })
+  .min(0, { message: "El stock no puede ser negativo." })
+  .max(CATALOG_LIMITS.stock, { message: "El stock es demasiado alto." });
+
 const uuid = z.uuid({ message: "Identificador inválido." });
 
 export const productCreateSchema = z
@@ -189,6 +226,8 @@ export const productCreateSchema = z
     color: optionalText(CATALOG_LIMITS.color),
     retailPrice: priceNumber,
     wholesalePrice: priceNumber.nullable().optional(),
+    /** Unidades disponibles para venta. Obligatorio: todo producto nuevo nace con inventario controlado. */
+    stock: stockNumber,
   })
   .strict();
 
@@ -208,6 +247,8 @@ export const productUpdateSchema = z
     color: optionalText(CATALOG_LIMITS.color),
     retailPrice: priceNumber.optional(),
     wholesalePrice: priceNumber.nullable().optional(),
+    /** Fijar el stock activa el control de inventario del producto (la referencia nunca cambia). */
+    stock: stockNumber.optional(),
     status: z.enum(PRODUCT_STATUSES).optional(),
   })
   .strict()

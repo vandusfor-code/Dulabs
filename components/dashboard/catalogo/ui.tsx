@@ -7,7 +7,7 @@
  * copiable y un toast local (el dashboard no tiene un sistema global).
  */
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react";
-import { Check, Copy, ImageOff, Package, X } from "lucide-react";
+import { Check, Copy, ImageOff, Minus, Package, Plus, X } from "lucide-react";
 import { formatCop } from "@/lib/business-agent-quote";
 import { useI18n } from "@/lib/i18n";
 import { useDashboard } from "@/lib/dashboard-session";
@@ -271,5 +271,52 @@ export function ReferenceTag({ reference, copyable = false, size = "sm" }: { ref
       {text}
       {copied ? <Check className="size-3.5 text-lime-text" /> : <Copy className="size-3.5 text-mist group-hover:text-fg" />}
     </button>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Stock (entero >= 0: solo dígitos, nunca negativo) con pasos − / +
+// ---------------------------------------------------------------------------
+
+export function StockInput({
+  value,
+  onChange,
+  id,
+  disabled,
+  invalid,
+  max,
+}: {
+  value: number | null;
+  onChange: (v: number | null) => void;
+  id?: string;
+  disabled?: boolean;
+  invalid?: boolean;
+  max: number;
+}) {
+  const paso = "flex size-10 shrink-0 items-center justify-center rounded-lg text-mist transition-colors hover:bg-ink-2 hover:text-fg active:scale-95 disabled:opacity-40";
+  return (
+    <div className={cn("flex items-center gap-1 rounded-lg border bg-ink p-1 transition-colors focus-within:border-lime/50", invalid ? "border-red-500/60" : "border-edge", disabled && "opacity-60")}>
+      <button type="button" className={paso} disabled={disabled || value === null || value <= 0} onClick={() => onChange(Math.max(0, (value ?? 0) - 1))} aria-label="Una unidad menos">
+        <Minus className="size-4" />
+      </button>
+      <input
+        id={id}
+        type="text"
+        inputMode="numeric"
+        autoComplete="off"
+        disabled={disabled}
+        placeholder="—"
+        value={value === null ? "" : String(value)}
+        aria-invalid={invalid || undefined}
+        onChange={(e) => {
+          const digits = e.target.value.replace(/\D/g, "").slice(0, 7);
+          onChange(digits === "" ? null : Math.min(max, Number(digits)));
+        }}
+        className="min-w-0 flex-1 bg-transparent py-1.5 text-center text-sm font-medium tabular-nums text-fg outline-none"
+      />
+      <button type="button" className={paso} disabled={disabled || (value ?? 0) >= max} onClick={() => onChange(Math.min(max, (value ?? 0) + 1))} aria-label="Una unidad más">
+        <Plus className="size-4" />
+      </button>
+    </div>
   );
 }

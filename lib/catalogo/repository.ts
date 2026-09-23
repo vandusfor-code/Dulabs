@@ -37,6 +37,8 @@ export interface ProductWriteData {
   color: string | null;
   retailPrice: number;
   wholesalePrice: number | null;
+  /** Unidades disponibles (>= 0). Escribirlo activa el control de inventario del producto. */
+  stock: number;
 }
 
 export type ProductPatchData = Partial<ProductWriteData> & { status?: ProductStatus };
@@ -317,9 +319,10 @@ export function createSupabaseCatalogRepository(supabase: SupabaseClient): Catal
           precio: d.retailPrice,
           precio_mayor: d.wholesalePrice,
           activo: true,
-          // El Catálogo no controla inventario (Fase 1): el producto nunca
-          // queda "agotado" ni bloquea cotizaciones por stock = 0.
-          controla_stock: false,
+          // Inventario CONTROLADO desde el Catálogo: el stock del formulario es
+          // la verdad (0 = agotado; la BD rechaza negativos con su CHECK).
+          controla_stock: true,
+          stock: d.stock,
           created_by: actorId,
           updated_by: actorId,
           escritura_id: randomUUID(),
@@ -348,6 +351,10 @@ export function createSupabaseCatalogRepository(supabase: SupabaseClient): Catal
       if (patch.color !== undefined) payload.color = patch.color;
       if (patch.retailPrice !== undefined) payload.precio = patch.retailPrice;
       if (patch.wholesalePrice !== undefined) payload.precio_mayor = patch.wholesalePrice;
+      if (patch.stock !== undefined) {
+        payload.stock = patch.stock;
+        payload.controla_stock = true;
+      }
       if (patch.status !== undefined) payload.activo = patch.status === "ACTIVE";
 
       const { data, error } = await supabase

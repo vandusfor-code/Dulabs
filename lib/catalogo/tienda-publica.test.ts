@@ -56,10 +56,10 @@ describe("marco de la tienda", () => {
 
 describe("inicio: destacados y categorías", () => {
   it("destacados = activos con foto (política explícita), con tope; nunca inactivos", async () => {
-    const conFoto = await admin.createProduct(DELACOUR, { name: "Con foto", retailPrice: 10_000 });
+    const conFoto = await admin.createProduct(DELACOUR, { stock: 10, name: "Con foto", retailPrice: 10_000 });
     await foto(DELACOUR, conFoto.id, true);
-    await admin.createProduct(DELACOUR, { name: "Sin foto", retailPrice: 10_000 });
-    const inactivo = await admin.createProduct(DELACOUR, { name: "Inactivo", retailPrice: 10_000 });
+    await admin.createProduct(DELACOUR, { stock: 10, name: "Sin foto", retailPrice: 10_000 });
+    const inactivo = await admin.createProduct(DELACOUR, { stock: 10, name: "Inactivo", retailPrice: 10_000 });
     await foto(DELACOUR, inactivo.id, true);
     await admin.updateProduct(DELACOUR, inactivo.id, { status: "INACTIVE" });
 
@@ -69,7 +69,7 @@ describe("inicio: destacados y categorías", () => {
   });
 
   it("si ningún producto tiene foto, los más recientes (política 'recent'); con tope", async () => {
-    for (let i = 0; i < FEATURED_LIMIT + 3; i++) await admin.createProduct(DELACOUR, { name: `Pieza ${i}`, retailPrice: 1_000 });
+    for (let i = 0; i < FEATURED_LIMIT + 3; i++) await admin.createProduct(DELACOUR, { stock: 10, name: `Pieza ${i}`, retailPrice: 1_000 });
     const home = await publico.getHome(slug);
     assert.equal(home?.featuredPolicy, "recent");
     assert.equal(home?.featured.length, FEATURED_LIMIT);
@@ -78,7 +78,7 @@ describe("inicio: destacados y categorías", () => {
   it("cada categoría real con la miniatura pública de uno de sus productos (o null)", async () => {
     const anillos = await admin.createCategory(DELACOUR, { name: "Anillos" });
     await admin.createCategory(DELACOUR, { name: "Dijes" });
-    const p = await admin.createProduct(DELACOUR, { name: "Solitario", retailPrice: 50_000, categoryId: anillos.id });
+    const p = await admin.createProduct(DELACOUR, { stock: 10, name: "Solitario", retailPrice: 50_000, categoryId: anillos.id });
     await foto(DELACOUR, p.id, true);
     const home = await publico.getHome(slug);
     const byName = new Map(home?.categories.map((c) => [c.name, c.coverUrl]));
@@ -96,7 +96,7 @@ describe("inicio: destacados y categorías", () => {
 describe("ficha de producto por referencia", () => {
   it("resuelve por referencia (sin importar mayúsculas), con galería ordenada (principal primero)", async () => {
     const cat = await admin.createCategory(DELACOUR, { name: "Dijes" });
-    const p = await admin.createProduct(DELACOUR, { name: "Dije corazón", retailPrice: 35_000, wholesalePrice: 18_000, material: "Oro laminado", categoryId: cat.id });
+    const p = await admin.createProduct(DELACOUR, { stock: 10, name: "Dije corazón", retailPrice: 35_000, wholesalePrice: 18_000, material: "Oro laminado", categoryId: cat.id });
     await foto(DELACOUR, p.id, true);
     await foto(DELACOUR, p.id, false);
     await foto(DELACOUR, p.id, false);
@@ -121,7 +121,7 @@ describe("ficha de producto por referencia", () => {
   });
 
   it("404 (null) para inactivos, inexistentes, referencias inválidas u otro negocio", async () => {
-    const p = await admin.createProduct(DELACOUR, { name: "Pieza", retailPrice: 1_000 });
+    const p = await admin.createProduct(DELACOUR, { stock: 10, name: "Pieza", retailPrice: 1_000 });
     mem.setProfile(OTRO.tenantId, { name: "Otro negocio", whatsapp: null });
     mem.enableModule(OTRO.tenantId);
     const otro = await admin.ensurePublication(OTRO);
@@ -133,7 +133,7 @@ describe("ficha de producto por referencia", () => {
   });
 
   it("contexto mayorista solo con el token exacto", async () => {
-    const p = await admin.createProduct(DELACOUR, { name: "Pieza", retailPrice: 35_000, wholesalePrice: 18_000 });
+    const p = await admin.createProduct(DELACOUR, { stock: 10, name: "Pieza", retailPrice: 35_000, wholesalePrice: 18_000 });
     const token = (await admin.getPublication(DELACOUR, { includeWholesale: true }))!.wholesalePath!.split("/").pop()!;
     assert.equal(await publico.getProduct({ slug, reference: p.reference, context: "wholesale" }), null);
     assert.equal((await publico.getProduct({ slug, reference: p.reference, context: "wholesale", token }))?.price, 18_000);
@@ -141,10 +141,11 @@ describe("ficha de producto por referencia", () => {
 });
 
 describe("disponibilidad (la decide el backend)", () => {
-  it("sin control de inventario: disponible; con control: solo si hay stock; nunca se expone el stock exacto", async () => {
-    const libre = await admin.createProduct(DELACOUR, { name: "Libre", retailPrice: 1_000 });
-    const conStock = await admin.createProduct(DELACOUR, { name: "Con stock", retailPrice: 1_000 });
-    const agotado = await admin.createProduct(DELACOUR, { name: "Agotado", retailPrice: 1_000 });
+  it("sin control de inventario (legado): disponible; con control: solo si hay stock; nunca se expone el stock exacto", async () => {
+    const libre = await admin.createProduct(DELACOUR, { stock: 10, name: "Libre", retailPrice: 1_000 });
+    const conStock = await admin.createProduct(DELACOUR, { stock: 10, name: "Con stock", retailPrice: 1_000 });
+    const agotado = await admin.createProduct(DELACOUR, { stock: 10, name: "Agotado", retailPrice: 1_000 });
+    mem.setStock(libre.id, false, 0);
     mem.setStock(conStock.id, true, 7);
     mem.setStock(agotado.id, true, 0);
     const page = await publico.getCatalog({ slug, context: "retail" });
@@ -152,14 +153,36 @@ describe("disponibilidad (la decide el backend)", () => {
     assert.deepEqual(Object.fromEntries(disp), { Libre: true, "Con stock": true, Agotado: false });
     assert.equal((await publico.getProduct({ slug, reference: agotado.reference }))?.available, false);
     assert.equal(JSON.stringify(page).includes('"stock"'), false);
-    void libre;
+  });
+
+  it("estados públicos: Disponible / Últimas unidades / Agotado; lo agotado sigue visible", async () => {
+    const mucho = await admin.createProduct(DELACOUR, { stock: 8, name: "Mucho", retailPrice: 1_000 });
+    const poco = await admin.createProduct(DELACOUR, { stock: 2, name: "Poco", retailPrice: 1_000 });
+    const nada = await admin.createProduct(DELACOUR, { stock: 0, name: "Nada", retailPrice: 1_000 });
+    const legado = await admin.createProduct(DELACOUR, { stock: 0, name: "Legado", retailPrice: 1_000 });
+    mem.setStock(legado.id, false, 0);
+    const page = await publico.getCatalog({ slug, context: "retail" });
+    const estados = Object.fromEntries(page!.products.map((p) => [p.name, [p.availability, p.maxQuantity]]));
+    assert.deepEqual(estados, { Mucho: ["available", 8], Poco: ["low", 2], Nada: ["sold_out", 0], Legado: ["available", null] });
+    const ficha = await publico.getProduct({ slug, reference: nada.reference });
+    assert.deepEqual([ficha?.available, ficha?.availability, ficha?.maxQuantity], [false, "sold_out", 0]);
+    void mucho;
+    void poco;
+  });
+
+  it("editar el stock actualiza la disponibilidad sin cambiar la referencia", async () => {
+    const p = await admin.createProduct(DELACOUR, { stock: 0, name: "Pieza", retailPrice: 1_000 });
+    assert.equal((await publico.getProduct({ slug, reference: p.reference }))?.availability, "sold_out");
+    const editado = await admin.updateProduct(DELACOUR, p.id, { stock: 5 });
+    assert.equal(editado.reference, p.reference);
+    assert.equal((await publico.getProduct({ slug, reference: p.reference }))?.availability, "available");
   });
 });
 
 describe("resolución de la selección (carrito)", () => {
   it("referencia -> producto real -> precio vigente; desconocidas e inactivas se informan", async () => {
-    const a = await admin.createProduct(DELACOUR, { name: "Anillo", retailPrice: 50_000, wholesalePrice: 30_000 });
-    const b = await admin.createProduct(DELACOUR, { name: "Aretes", retailPrice: 40_000 });
+    const a = await admin.createProduct(DELACOUR, { stock: 10, name: "Anillo", retailPrice: 50_000, wholesalePrice: 30_000 });
+    const b = await admin.createProduct(DELACOUR, { stock: 10, name: "Aretes", retailPrice: 40_000 });
     await admin.updateProduct(DELACOUR, b.id, { status: "INACTIVE" });
     await admin.updateProduct(DELACOUR, a.id, { retailPrice: 52_000 });
 
@@ -174,7 +197,7 @@ describe("resolución de la selección (carrito)", () => {
     mem.setProfile(OTRO.tenantId, { name: "Otro", whatsapp: null });
     mem.enableModule(OTRO.tenantId);
     await admin.ensurePublication(OTRO);
-    const ajeno = await admin.createProduct(OTRO, { name: "Ajeno", retailPrice: 1 });
+    const ajeno = await admin.createProduct(OTRO, { stock: 10, name: "Ajeno", retailPrice: 1 });
     const r = await publico.resolveSelection({ slug, references: [ajeno.reference] });
     assert.deepEqual(r?.items, []);
     assert.equal(await publico.resolveSelection({ slug, references: [], context: "wholesale" }), null);
@@ -186,7 +209,7 @@ describe("resolución de la selección (carrito)", () => {
 
 describe("fotos de la galería por la ruta pública", () => {
   it("índice 1 = principal, 2.. = galería; fuera de rango => null", async () => {
-    const p = await admin.createProduct(DELACOUR, { name: "Pieza", retailPrice: 1_000 });
+    const p = await admin.createProduct(DELACOUR, { stock: 10, name: "Pieza", retailPrice: 1_000 });
     const principal = await foto(DELACOUR, p.id, true);
     const segunda = await foto(DELACOUR, p.id, false);
     const ref = p.reference.toLowerCase();
@@ -200,7 +223,7 @@ describe("fotos de la galería por la ruta pública", () => {
 describe("resolución interna determinista (agente / webhook)", () => {
   it("referencia -> ambos precios, inventario, disponibilidad, imagen y estado", async () => {
     const resol = createResolucionCatalogo({ repo: mem.repo });
-    const p = await admin.createProduct(DELACOUR, { name: "Dije", retailPrice: 35_000, wholesalePrice: 18_000, color: "Dorado" });
+    const p = await admin.createProduct(DELACOUR, { stock: 10, name: "Dije", retailPrice: 35_000, wholesalePrice: 18_000, color: "Dorado" });
     const t = await foto(DELACOUR, p.id, true);
     mem.setStock(p.id, true, 3);
 
@@ -219,6 +242,8 @@ describe("resolución interna determinista (agente / webhook)", () => {
         stock: { tracked: true, units: 3 },
         status: "ACTIVE",
         available: true,
+        availability: "low",
+        maxQuantity: 3,
         image: t.image.path,
       },
     );
@@ -226,8 +251,8 @@ describe("resolución interna determinista (agente / webhook)", () => {
 
   it("nunca por aproximación ni entre negocios; lote en el orden recibido", async () => {
     const resol = createResolucionCatalogo({ repo: mem.repo });
-    const a = await admin.createProduct(DELACOUR, { name: "Anillo", retailPrice: 1 });
-    const b = await admin.createProduct(DELACOUR, { name: "Aretes", retailPrice: 2 });
+    const a = await admin.createProduct(DELACOUR, { stock: 10, name: "Anillo", retailPrice: 1 });
+    const b = await admin.createProduct(DELACOUR, { stock: 10, name: "Aretes", retailPrice: 2 });
     await admin.updateProduct(DELACOUR, b.id, { status: "INACTIVE" });
     assert.equal(await resol.resolverReferencia(DELACOUR.tenantId, "Anillo"), null);
     assert.equal(await resol.resolverReferencia(OTRO.tenantId, a.reference), null);
@@ -242,5 +267,102 @@ describe("resolución interna determinista (agente / webhook)", () => {
     );
     assert.deepEqual(lote.unknown, ["DL-999999"]);
     assert.deepEqual(lote.invalid, ["el anillo"]);
+  });
+});
+
+describe("preparación del pedido (el backend decide)", () => {
+  async function tokenMayorista() {
+    return (await admin.getPublication(DELACOUR, { includeWholesale: true }))!.wholesalePath!.split("/").pop()!;
+  }
+
+  it("pedido válido => ready, con el mensaje armado en el servidor con datos reales", async () => {
+    const p = await admin.createProduct(DELACOUR, { stock: 5, name: "Dije corazón", retailPrice: 35_000 });
+    const r = await publico.prepareOrder({ slug, items: [{ reference: p.reference.toLowerCase(), quantity: 2 }] });
+    assert.equal(r?.status, "ready");
+    assert.deepEqual(r?.order.lines, [{ reference: p.reference, name: "Dije corazón", quantity: 2, unitPrice: 35_000, subtotal: 70_000 }]);
+    const texto = decodeURIComponent((r as { whatsappUrl: string }).whatsappUrl.split("text=")[1]);
+    assert.match(texto, new RegExp(`• ${p.reference} · Dije corazón — 2 unidades`));
+  });
+
+  it("superar el stock => adjusted, nunca una cantidad imposible ni link de WhatsApp", async () => {
+    const p = await admin.createProduct(DELACOUR, { stock: 2, name: "Aretes", retailPrice: 42_000 });
+    const r = await publico.prepareOrder({ slug, items: [{ reference: p.reference, quantity: 5 }] });
+    assert.equal(r?.status, "adjusted");
+    assert.equal("whatsappUrl" in (r ?? {}), false);
+    assert.deepEqual(r?.order.adjustments, [{ kind: "quantity_reduced", reference: p.reference, name: "Aretes", requested: 5, granted: 2 }]);
+    assert.deepEqual(r?.selection.items.map((i) => i.maxQuantity), [2]);
+  });
+
+  it("stock que baja a 0 después de agregar => adjusted (agotado)", async () => {
+    const p = await admin.createProduct(DELACOUR, { stock: 3, name: "Anillo", retailPrice: 1_000 });
+    await admin.updateProduct(DELACOUR, p.id, { stock: 0 });
+    const r = await publico.prepareOrder({ slug, items: [{ reference: p.reference, quantity: 1 }] });
+    assert.equal(r?.status, "adjusted");
+    assert.deepEqual(r?.order.adjustments.map((a) => a.kind), ["sold_out"]);
+  });
+
+  it("producto desactivado, inexistente u otro negocio => adjusted (not_found)", async () => {
+    mem.setProfile(OTRO.tenantId, { name: "Otro", whatsapp: "573000000000" });
+    mem.enableModule(OTRO.tenantId);
+    await admin.ensurePublication(OTRO);
+    // Referencias por negocio: la 3.ª del otro negocio no existe en Delacour (que solo tiene una).
+    await admin.createProduct(OTRO, { stock: 10, name: "Ajeno 1", retailPrice: 1 });
+    await admin.createProduct(OTRO, { stock: 10, name: "Ajeno 2", retailPrice: 1 });
+    const ajeno = await admin.createProduct(OTRO, { stock: 10, name: "Ajeno", retailPrice: 1 });
+    const inactivo = await admin.createProduct(DELACOUR, { stock: 10, name: "Retirado", retailPrice: 1 });
+    await admin.updateProduct(DELACOUR, inactivo.id, { status: "INACTIVE" });
+    assert.notEqual(ajeno.reference, inactivo.reference);
+    const r = await publico.prepareOrder({
+      slug,
+      items: [
+        { reference: ajeno.reference, quantity: 1 },
+        { reference: inactivo.reference, quantity: 1 },
+        { reference: "DL-999999", quantity: 1 },
+      ],
+    });
+    assert.equal(r?.status, "adjusted");
+    assert.deepEqual(r?.order.lines, []);
+    assert.deepEqual(
+      r?.order.adjustments.map((a) => [a.kind, a.reference]),
+      [
+        ["not_found", ajeno.reference],
+        ["not_found", inactivo.reference],
+        ["not_found", "DL-999999"],
+      ],
+    );
+  });
+
+  it("precio cambiado después de agregar => el pedido usa el precio vigente", async () => {
+    const p = await admin.createProduct(DELACOUR, { stock: 5, name: "Pulsera", retailPrice: 20_000 });
+    await admin.updateProduct(DELACOUR, p.id, { retailPrice: 25_000 });
+    const r = await publico.prepareOrder({ slug, items: [{ reference: p.reference, quantity: 2 }] });
+    assert.equal(r?.status, "ready");
+    assert.equal(r?.order.total, 50_000);
+    assert.deepEqual(r?.selection.items.map((i) => i.price), [25_000]);
+  });
+
+  it("sin WhatsApp configurado => no_whatsapp (sin link)", async () => {
+    mem.setProfile(DELACOUR.tenantId, { name: "Delacour Joyería", whatsapp: null });
+    const p = await admin.createProduct(DELACOUR, { stock: 5, name: "Dije", retailPrice: 1_000 });
+    const r = await publico.prepareOrder({ slug, items: [{ reference: p.reference, quantity: 1 }] });
+    assert.equal(r?.status, "no_whatsapp");
+    assert.equal("whatsappUrl" in (r ?? {}), false);
+  });
+
+  it("mayorista solo con el token exacto, con el precio mayorista", async () => {
+    const p = await admin.createProduct(DELACOUR, { stock: 5, name: "Dije", retailPrice: 35_000, wholesalePrice: 18_000 });
+    const items = [{ reference: p.reference, quantity: 1 }];
+    assert.equal(await publico.prepareOrder({ slug, items, context: "wholesale" }), null);
+    assert.equal(await publico.prepareOrder({ slug, items, context: "wholesale", token: "x".repeat(32) }), null);
+    const r = await publico.prepareOrder({ slug, items, context: "wholesale", token: await tokenMayorista() });
+    assert.equal(r?.status, "ready");
+    assert.equal(r?.order.total, 18_000);
+    assert.match(decodeURIComponent((r as { whatsappUrl: string }).whatsappUrl), /precio mayorista/);
+  });
+
+  it("catálogo no publicado => null", async () => {
+    const p = await admin.createProduct(DELACOUR, { stock: 5, name: "Dije", retailPrice: 1_000 });
+    mem.setPublished(DELACOUR.tenantId, false);
+    assert.equal(await publico.prepareOrder({ slug, items: [{ reference: p.reference, quantity: 1 }] }), null);
   });
 });

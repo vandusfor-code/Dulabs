@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { formatCop } from "@/lib/business-agent-quote";
+import type { Availability } from "@/lib/catalogo/domain";
 import { AccionesProducto } from "@/components/catalogo-publico/tienda/AccionesProducto";
 import { BotonVolver } from "@/components/catalogo-publico/tienda/BotonVolver";
 import { GaleriaProducto } from "@/components/catalogo-publico/tienda/GaleriaProducto";
@@ -12,6 +13,22 @@ import { retailPath } from "@/lib/catalogo/publicacion";
 // La MISMA proyección pública del backend (referencia -> producto real), sin
 // copias de datos; solo productos activos. La referencia es la identidad.
 type Props = { params: Promise<{ slug: string; referencia: string }> };
+
+const ESTADOS: Record<Availability, { texto: string; clase: string; punto: string }> = {
+  available: { texto: "Disponible", clase: "bg-[var(--tienda-oro-suave)] text-fg", punto: "bg-[var(--tienda-oro)]" },
+  low: { texto: "Últimas unidades", clase: "bg-[var(--tienda-oro-suave)] text-[var(--tienda-oro)]", punto: "bg-[var(--tienda-oro)]" },
+  sold_out: { texto: "Agotado", clase: "bg-ink-2 text-mist", punto: "bg-mist" },
+};
+
+function EstadoDisponibilidad({ availability }: { availability: Availability }) {
+  const e = ESTADOS[availability];
+  return (
+    <span className={"inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium " + e.clase}>
+      <span className={"size-1.5 rounded-full " + e.punto} aria-hidden />
+      {e.texto}
+    </span>
+  );
+}
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug, referencia } = await params;
@@ -63,15 +80,7 @@ export default async function ProductoPage({ params }: Props) {
 
           <div className="flex flex-wrap items-center gap-3">
             <p className="text-2xl font-semibold tabular-nums text-fg">{producto.price === null ? <span className="text-lg font-medium text-mist">Precio a consultar</span> : formatCop(producto.price)}</p>
-            <span
-              className={
-                "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium " +
-                (producto.available ? "bg-[var(--tienda-oro-suave)] text-fg" : "bg-ink-2 text-mist")
-              }
-            >
-              <span className={"size-1.5 rounded-full " + (producto.available ? "bg-[var(--tienda-oro)]" : "bg-mist")} aria-hidden />
-              {producto.available ? "Disponible" : "Agotado"}
-            </span>
+            <EstadoDisponibilidad availability={producto.availability} />
           </div>
 
           {producto.description && <p className="whitespace-pre-line text-[15px] leading-relaxed text-fg/85">{producto.description}</p>}

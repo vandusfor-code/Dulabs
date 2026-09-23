@@ -9,7 +9,8 @@
  * La proyección pública lleva UN solo precio (el del contexto) y nada
  * interno: ni id técnico, ni tenant, ni el precio del otro contexto.
  */
-import { isAvailable, isReference, priceFor, type CatalogCategory, type CatalogProduct, type PriceContext } from "@/lib/catalogo/domain";
+import { orderWhatsappMessage, whatsappUrl } from "@/lib/catalogo/pedido";
+import { availabilityOf, isReference, maxOrderableUnits, priceFor, type Availability, type CatalogCategory, type CatalogProduct, type PriceContext } from "@/lib/catalogo/domain";
 
 export interface CatalogPublication {
   slug: string;
@@ -30,8 +31,16 @@ export interface PublicCatalogProduct {
   price: number | null;
   imageUrl: string | null;
   thumbUrl: string | null;
-  /** Decidido por el backend (activo + inventario); nunca por el navegador. No expone el stock exacto. */
+  /** Decidido por el backend (activo + inventario); nunca por el navegador. */
   available: boolean;
+  /** "available" | "low" (últimas unidades) | "sold_out" — reglas en availabilityOf (dominio). */
+  availability: Availability;
+  /**
+   * Máximo pedible decidido por el backend: el stock si el producto controla
+   * inventario, null = sin límite de inventario. Solo sirve para impedir
+   * cantidades imposibles en el carrito; la interfaz no lo exhibe como dato.
+   */
+  maxQuantity: number | null;
 }
 
 /** Ficha pública de un producto: la misma proyección + galería completa (principal primero). */
@@ -112,7 +121,9 @@ export function toPublicProduct(product: CatalogProduct, context: PriceContext, 
     price: priceFor(product, context),
     imageUrl: images?.imageUrl ?? null,
     thumbUrl: images?.thumbUrl ?? null,
-    available: isAvailable(product),
+    available: availabilityOf(product) !== "sold_out",
+    availability: availabilityOf(product),
+    maxQuantity: maxOrderableUnits(product),
   };
 }
 
@@ -182,11 +193,12 @@ export function productPath(slug: string, reference: string): string {
   return `/catalogo/${slug}/productos/${reference.toLowerCase()}`;
 }
 
-/** Link de WhatsApp con la referencia en el mensaje: el agente (y el asesor) identifican la pieza exacta. */
+/**
+ * Link de WhatsApp de UNA pieza (catálogo mayorista, sin carrito). Mismo
+ * formato centralizado que el pedido de la tienda (`orderWhatsappMessage`):
+ * la referencia exacta primero, para que el agente (y el asesor) identifiquen
+ * la pieza.
+ */
 export function whatsappOrderLink(phone: string | null, product: Pick<PublicCatalogProduct, "reference" | "name">, context: PriceContext): string | null {
-  const digits = (phone ?? "").replace(/\D/g, "");
-  if (digits.length < 8) return null;
-  const tipo = context === "wholesale" ? " (precio mayorista)" : "";
-  const text = `Hola, me interesa ${product.name} (ref. ${product.reference})${tipo}.`;
-  return `https://wa.me/${digits}?text=${encodeURIComponent(text)}`;
+  return whatsappUrl(phone, orderWhatsappMessage([{ reference: product.reference, name: product.name, quantity: 1 }], context));
 }

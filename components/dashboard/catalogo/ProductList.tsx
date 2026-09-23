@@ -7,7 +7,7 @@ import type { CatalogProduct } from "@/lib/catalogo/domain";
 import { ProductImage, StatusBadge, cn, formatPrice } from "@/components/dashboard/catalogo/ui";
 
 // Columnas compartidas por cabecera y filas (escritorio). En móvil cada fila se apila.
-const COLS = "md:grid md:grid-cols-[44px_104px_minmax(0,1fr)_104px_104px_96px_20px] md:items-center md:gap-4";
+const COLS = "md:grid md:grid-cols-[44px_104px_minmax(0,1fr)_104px_104px_72px_96px_20px] md:items-center md:gap-4";
 
 /** Lista de ADMINISTRACIÓN (no vitrina): encontrar, revisar y abrir para editar. */
 export function ProductList({ products, dimmed }: { products: CatalogProduct[]; dimmed?: boolean }) {
@@ -20,6 +20,7 @@ export function ProductList({ products, dimmed }: { products: CatalogProduct[]; 
         <span>{t("Producto", "Product")}</span>
         <span className="text-right">{t("Detal", "Retail")}</span>
         <span className="text-right">{t("Mayor", "Wholesale")}</span>
+        <span className="text-right">{t("Stock", "Stock")}</span>
         <span>{t("Estado", "Status")}</span>
         <span />
       </div>
@@ -39,14 +40,18 @@ export function ProductList({ products, dimmed }: { products: CatalogProduct[]; 
                   {p.categoryName ?? t("Sin categoría", "No category")}
                 </span>
                 {/* Móvil: precios y estado debajo del nombre */}
-                <span className="mt-1 flex items-center gap-2 text-xs md:hidden">
-                  <span className="font-medium tabular-nums text-fg">{formatPrice(p.pricing.retail)}</span>
-                  <span className="tabular-nums text-mist">{t("Mayor", "Wholesale")} {formatPrice(p.pricing.wholesale)}</span>
+                <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs md:hidden">
+                  <span className="whitespace-nowrap font-medium tabular-nums text-fg">{formatPrice(p.pricing.retail)}</span>
+                  <span className="whitespace-nowrap tabular-nums text-mist">{t("Mayor", "Wholesale")} {formatPrice(p.pricing.wholesale)}</span>
+                  <StockCell product={p} />
                   {p.status === "INACTIVE" && <StatusBadge status={p.status} />}
                 </span>
               </span>
               <span className="hidden text-right text-sm font-medium tabular-nums text-fg md:block">{formatPrice(p.pricing.retail)}</span>
               <span className="hidden text-right text-sm tabular-nums text-mist md:block">{formatPrice(p.pricing.wholesale)}</span>
+              <span className="hidden text-right text-sm md:block">
+                <StockCell product={p} />
+              </span>
               <span className="hidden md:block">
                 <StatusBadge status={p.status} />
               </span>
@@ -56,6 +61,19 @@ export function ProductList({ products, dimmed }: { products: CatalogProduct[]; 
         ))}
       </ul>
     </div>
+  );
+}
+
+/** Stock compacto: unidades, "Agotado" en 0, o "—" si el producto (legado) aún no controla inventario. */
+function StockCell({ product }: { product: CatalogProduct }) {
+  const { t } = useI18n();
+  if (!product.tracksStock) return <span className="text-mist" title={t("Sin control de inventario", "Inventory not tracked")}>—</span>;
+  if (product.stock <= 0) return <span className="font-medium text-amber-400">{t("Agotado", "Sold out")}</span>;
+  return (
+    <span className="whitespace-nowrap tabular-nums text-fg">
+      {product.stock}
+      <span className="text-mist"> {t("u.", "u.")}</span>
+    </span>
   );
 }
 

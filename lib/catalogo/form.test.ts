@@ -29,14 +29,28 @@ const PRODUCTO: CatalogProduct = {
 };
 
 describe("formulario de producto", () => {
-  it("exige nombre y precio detal; el mayor es opcional", () => {
-    assert.deepEqual(Object.keys(validateProductForm(emptyProductForm())).sort(), ["name", "retailPrice"]);
-    assert.deepEqual(validateProductForm({ ...emptyProductForm(), name: "Dije", retailPrice: 35_000 }), {});
+  it("exige nombre, precio detal y stock; el mayor es opcional", () => {
+    assert.deepEqual(Object.keys(validateProductForm(emptyProductForm())).sort(), ["name", "retailPrice", "stock"]);
+    assert.deepEqual(validateProductForm({ ...emptyProductForm(), name: "Dije", retailPrice: 35_000, stock: 4 }), {});
+  });
+
+  it("stock: 0 es válido (agotado); negativo, decimal o excesivo no", () => {
+    const base = { ...emptyProductForm(), name: "Dije", retailPrice: 35_000 };
+    assert.deepEqual(validateProductForm({ ...base, stock: 0 }), {});
+    for (const stock of [-1, 1.5, 2_000_000]) assert.ok(validateProductForm({ ...base, stock }).stock, String(stock));
+  });
+
+  it("producto legado sin control de inventario: el stock es opcional hasta definirlo", () => {
+    const legado = productFormFrom(PRODUCTO);
+    assert.equal(legado.stock, null);
+    assert.deepEqual(validateProductForm(legado, { requireStock: false }), {});
+    assert.ok(validateProductForm(legado, { requireStock: true }).stock);
+    assert.equal(productFormFrom({ ...PRODUCTO, tracksStock: true, stock: 7 }).stock, 7);
   });
 
   it("el borrador nunca lleva referencia y convierte vacíos en null", () => {
-    const draft = toProductDraft({ ...emptyProductForm(), name: "  Dije  ", retailPrice: 35_000, material: "  ", color: " Dorado " });
-    assert.deepEqual(draft, { name: "Dije", categoryId: null, description: null, material: null, color: "Dorado", retailPrice: 35_000, wholesalePrice: null });
+    const draft = toProductDraft({ ...emptyProductForm(), name: "  Dije  ", retailPrice: 35_000, stock: 3, material: "  ", color: " Dorado " });
+    assert.deepEqual(draft, { name: "Dije", categoryId: null, description: null, material: null, color: "Dorado", retailPrice: 35_000, wholesalePrice: null, stock: 3 });
     assert.equal("reference" in draft, false);
   });
 
@@ -45,6 +59,15 @@ describe("formulario de producto", () => {
     assert.deepEqual(diffProductForm(original, original), {});
     assert.deepEqual(diffProductForm(original, { ...original, wholesalePrice: null, color: "Dorado" }), { wholesalePrice: null, color: "Dorado" });
     assert.deepEqual(diffProductForm(original, { ...original, material: "  Oro laminado  " }), {}, "espacios no cuentan como cambio");
+  });
+
+  it("el stock viaja solo si se definió y cambió (nunca la referencia)", () => {
+    const legado = productFormFrom(PRODUCTO);
+    assert.deepEqual(diffProductForm(legado, legado), {});
+    assert.deepEqual(diffProductForm(legado, { ...legado, stock: 0 }), { stock: 0 });
+    const conStock = productFormFrom({ ...PRODUCTO, tracksStock: true, stock: 5 });
+    assert.deepEqual(diffProductForm(conStock, { ...conStock, stock: 2 }), { stock: 2 });
+    assert.equal("reference" in diffProductForm(conStock, { ...conStock, stock: 2 }), false);
   });
 });
 

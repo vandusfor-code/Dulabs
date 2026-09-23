@@ -31,6 +31,8 @@ export interface ProductDraft {
   color: string | null;
   retailPrice: number;
   wholesalePrice: number | null;
+  /** Unidades disponibles para venta (entero >= 0). */
+  stock: number;
 }
 
 export type ProductPatch = Partial<ProductDraft> & { status?: ProductStatus };
