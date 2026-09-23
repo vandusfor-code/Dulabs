@@ -43,6 +43,12 @@ type AgendaCtx = {
   editando: Cita | null;
   cerrarEditar: () => void;
   guardarEdicion: (body: { nuevo_inicio: string; servicio: string; duracion_min: number; nuevo_especialista_id?: number }) => Promise<void>;
+  /** Servicio PRESENCIAL (clienta sin cita) -- el modal lo monta el shell de AMORE (ver ServicioPresencialModal). */
+  mostrarServicioPresencial: boolean;
+  abrirServicioPresencial: () => void;
+  cerrarServicioPresencial: () => void;
+  /** Vuelve a cargar los datos reales (citas, resumen) -- p. ej. tras registrar un servicio presencial. */
+  recargar: () => void;
 };
 
 const Ctx = createContext<AgendaCtx | null>(null);
@@ -57,9 +63,10 @@ export function useAgenda() {
 // vista "Agenda completa" (/agenda/[token]/completa) -- ambas páginas viven
 // bajo este layout y consumen el mismo contexto en vez de repetir el fetch.
 export function AgendaProvider({ token, children }: { token: string; children: ReactNode }) {
-  const { datos, error, setError, noAutenticado, procesandoId, ejecutarAccion, crearCita } = useAgendaData(token);
+  const { datos, error, setError, noAutenticado, procesandoId, cargar, ejecutarAccion, crearCita } = useAgendaData(token);
   const router = useRouter();
   const [mostrarNueva, setMostrarNueva] = useState<Date | null | undefined>(undefined);
+  const [mostrarServicioPresencial, setMostrarServicioPresencial] = useState(false);
   const [editando, setEditando] = useState<Cita | null>(null);
   const [reagendando, setReagendando] = useState<Cita | null>(null);
   const [cancelando, setCancelando] = useState<{ cita: Cita; modo: "cancelar" | "rechazar" } | null>(null);
@@ -164,6 +171,10 @@ export function AgendaProvider({ token, children }: { token: string; children: R
       if (!editando) return;
       await ejecutarAccion(editando.id, { accion: "editar", ...body });
     },
+    mostrarServicioPresencial,
+    abrirServicioPresencial: () => setMostrarServicioPresencial(true),
+    cerrarServicioPresencial: () => setMostrarServicioPresencial(false),
+    recargar: () => void cargar(),
   };
 
   // AMORE (Fase 5, panel administrativo móvil, autorizado) — SOLO este

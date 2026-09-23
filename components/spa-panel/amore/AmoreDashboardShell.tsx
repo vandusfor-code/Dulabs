@@ -4,6 +4,7 @@ import { useState, type ReactNode } from "react";
 import { useAgenda } from "@/components/spa-panel/AgendaContext";
 import { NewAppointmentModal } from "@/components/spa-panel/modals/NewAppointmentModal";
 import { EditAppointmentModal } from "@/components/spa-panel/modals/EditAppointmentModal";
+import { ServicioPresencialModal } from "@/components/spa-panel/modals/ServicioPresencialModal";
 import { AmoreHeader } from "./AmoreHeader";
 import { AmoreBottomNav } from "./AmoreBottomNav";
 import { AmoreMenuDrawer } from "./AmoreMenuDrawer";
@@ -18,7 +19,8 @@ import { AmoreMenuDrawer } from "./AmoreMenuDrawer";
 // dashboard de escritorio de AMORE no es parte de esta fase.
 export function AmoreDashboardShell({ children }: { children: ReactNode }) {
   const [menuAbierto, setMenuAbierto] = useState(false);
-  const { token, datos, mostrarNueva, cerrarNueva, crearCita, editando, cerrarEditar, guardarEdicion } = useAgenda();
+  const { token, datos, mostrarNueva, cerrarNueva, crearCita, editando, cerrarEditar, guardarEdicion, mostrarServicioPresencial, cerrarServicioPresencial, recargar } =
+    useAgenda();
 
   return (
     <div className="amore-scope min-h-screen bg-ink">
@@ -31,6 +33,7 @@ export function AmoreDashboardShell({ children }: { children: ReactNode }) {
       {mostrarNueva !== undefined && (
         <NewAppointmentModal token={token} fechaInicial={mostrarNueva ?? undefined} onClose={cerrarNueva} onCrear={crearCita} />
       )}
+      {mostrarServicioPresencial && <ServicioPresencialModal token={token} onClose={cerrarServicioPresencial} onRegistrado={recargar} />}
       {editando && <EditAppointmentModal cita={editando} equipo={datos.equipo} onClose={cerrarEditar} onGuardar={guardarEdicion} />}
     </div>
   );

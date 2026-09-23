@@ -188,6 +188,7 @@ lib/contabilidad/consultas.test.ts
 lib/contabilidad/periodo.test.ts
 lib/contabilidad/metricas.test.ts
 lib/contabilidad/reporte.test.ts
+lib/servicio-presencial.test.ts
 lib/bot-escenarios/agendamiento-entidades.test.ts
 lib/bot-escenarios/resolver-agendamiento.test.ts
 lib/bot-escenarios/resolver-agendamiento-guiado.test.ts
