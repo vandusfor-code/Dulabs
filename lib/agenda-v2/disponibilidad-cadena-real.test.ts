@@ -306,3 +306,59 @@ describe("Conversación natural de punta a punta sobre la cadena REAL (sin núme
     assert.equal(e.citasCreadas.length, 0, "nada se reservó con el cambio");
   });
 });
+
+describe("Garantía: un ERROR de integración nunca se presenta como 'no hay disponibilidad'", () => {
+  let restaurarFetch: () => void = () => {};
+  let erroresOriginal: typeof console.error;
+  let errores: string[] = [];
+  beforeEach(() => {
+    errores = [];
+    erroresOriginal = console.error;
+    console.error = (...a: unknown[]) => void errores.push(a.map(String).join(" "));
+  });
+  afterEach(() => {
+    restaurarFetch();
+    console.error = erroresOriginal;
+  });
+
+  const casos: { nombre: string; respuesta: RespuestaNylas | "timeout"; detalle: RegExp }[] = [
+    { nombre: "HTTP 403 (calendario no compartido)", respuesta: () => ({ status: 403, body: { error: { type: "forbidden" } } }), detalle: /nylas_http_403/ },
+    { nombre: "HTTP 404 (calendar_id inexistente)", respuesta: () => ({ status: 404, body: { error: { type: "not_found" } } }), detalle: /nylas_http_404/ },
+    { nombre: "HTTP 500", respuesta: () => ({ status: 500, body: {} }), detalle: /nylas_http_500/ },
+    { nombre: "respuesta AMBIGUA (200 sin lista de eventos)", respuesta: () => ({ status: 200, body: { algo: "raro" } }), detalle: /nylas_error/ },
+    { nombre: "evento de forma desconocida", respuesta: () => ({ status: 200, body: { data: [{ id: "x", when: { object: "misterio" } }] } }), detalle: /nylas_error/ },
+    { nombre: "TIMEOUT", respuesta: "timeout", detalle: /timeout/ },
+  ];
+
+  for (const caso of casos) {
+    it(`${caso.nombre} -> "no pude consultar la agenda de Cristal" + log accionable; nunca "no hay días"`, async () => {
+      if (caso.respuesta === "timeout") {
+        const original = globalThis.fetch;
+        globalThis.fetch = (async () => {
+          throw Object.assign(new Error("The operation was aborted"), { name: "AbortError" });
+        }) as typeof fetch;
+        restaurarFetch = () => void (globalThis.fetch = original);
+      } else {
+        const r = caso.respuesta;
+        restaurarFetch = instalarNylasFalso((q) => (q.calendarId === "cal-cristal" ? r(q) : { status: 200, body: { data: [] } }));
+      }
+      const e = escenario();
+      await elegirOpcion("2", e.deps);
+      const msg = e.enviados.at(-1)!;
+      assert.match(msg, /no pude consultar la agenda de Cristal/);
+      assert.doesNotMatch(msg, /No encontramos días|no tiene espacios libres/);
+      assert.ok(errores.some((l) => l.includes("causa=no_confirmado") && l.includes("profesional=1263") && caso.detalle.test(l)), JSON.stringify(errores));
+    });
+  }
+
+  it("Nylas responde BIEN y la agenda está llena -> 'no tiene espacios libres' (esa sí es falta de disponibilidad)", async () => {
+    restaurarFetch = instalarNylasFalso(({ calendarId, start, end }) => ({
+      status: 200,
+      body: { data: calendarId === "cal-cristal" ? [{ id: "o", status: "confirmed", busy: true, when: { object: "timespan", start_time: start, end_time: end } }] : [] },
+    }));
+    const e = escenario();
+    await elegirOpcion("2", e.deps);
+    assert.match(e.enviados.at(-1)!, /Cristal no tiene espacios libres en los próximos \d+ días/);
+    assert.doesNotMatch(e.enviados.at(-1)!, /no pude consultar/);
+  });
+});

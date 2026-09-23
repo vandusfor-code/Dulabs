@@ -8,6 +8,9 @@
 // CONTRASTA la respuesta contra el estado real del sistema (sesión de Agenda V2 + agenda real con Nylas): si el bot dice
 // "no hay días" y la agenda real sí los tiene, o si ofrece un día/hora que la agenda real no tiene, el turno FALLA.
 //
+// OJO: prueba el bot DESPLEGADO en producción (el que responde a WhatsApp de verdad). Para validar el código de una rama
+// SIN desplegarlo, usar scripts/amore-pipeline-real.mts.
+//
 // ENVÍA MENSAJES REALES. Salvaguardas:
 // - Sin --confirmar no envía nada (solo muestra el plan y verifica la configuración).
 // - Solo AMORE (tenant fijo) y solo desde el número de prueba.
@@ -24,7 +27,7 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { AMORE_TENANT_ID, resolverNylasGrantIdParaTenant } from "@/lib/nylas/nylas-grant";
 import { createNylasEventsClient, resolveNylasApiKeyFromEnv } from "@/lib/nylas/nylas-client";
-import { calcularDiasCandidatosReales, calcularHorariosParaFecha, causaSinDias } from "@/lib/agenda-v2/disponibilidad";
+import { sesionAgendaReal, contrastarConAgendaReal } from "@/lib/testing/amore-contraste-real";
 
 const ESCENARIOS: Record<string, string[]> = {
   // El bug reportado, con lenguaje natural en vez de números.
@@ -125,64 +128,14 @@ async function esperarRespuestas(desdeIso: string): Promise<string[]> {
   return vistas;
 }
 
-// --- 3. Estado real y contraste ----------------------------------------------------------------------------------------
-type SesionReal = { step: string; servicio_id: string | null; profesional_id: number | null; fecha_iso: string | null; opciones_mostradas: unknown } | null;
-
-async function sesionAgendaReal(): Promise<SesionReal> {
-  const { data } = await supabase
-    .from("dulabs_agenda_v2_sesiones")
-    .select("step, servicio_id, profesional_id, fecha_iso, opciones_mostradas, telefono_cliente, activo")
-    .eq("tenant_id", AMORE_TENANT_ID)
-    .eq("activo", true);
-  return ((data ?? []).find((s) => ultimos10(s.telefono_cliente as string) === TELEFONO_PRUEBA) as SesionReal) ?? null;
-}
-
-async function contrastar(respuestas: string[], sesion: SesionReal, sesionAnterior: SesionReal): Promise<string[]> {
-  const fallos: string[] = [];
-  const texto = respuestas.join("\n");
-  const servicioId = sesion?.servicio_id ?? sesionAnterior?.servicio_id;
-
-  // (a) "No hay días / no tiene espacios" para una profesional -> la agenda real debe darle la razón.
-  if (/No encontramos días|no tiene espacios libres|no pude consultar la agenda/i.test(texto) && servicioId) {
-    const opciones = (sesionAnterior?.opciones_mostradas as { profesionalId?: number; nombre?: string }[] | null) ?? [];
-    const candidata = opciones.find((o) => o.nombre && texto.includes(o.nombre)) ?? opciones.find((o) => o.profesionalId === sesionAnterior?.profesional_id);
-    if (candidata?.profesionalId) {
-      const real = await calcularDiasCandidatosReales(supabase, { idTenant: AMORE_TENANT_ID, servicioId, profesionalId: candidata.profesionalId }, nylasDeps);
-      if (real.ok && real.opciones.length > 0) {
-        fallos.push(`dijo que ${candidata.nombre} no tiene días, pero la agenda REAL tiene: ${real.opciones.map((o) => o.fechaIso).join(", ")}`);
-      } else if (real.ok) {
-        console.log(`   ✓ contraste: ${candidata.nombre} de verdad sin días (causa real: ${causaSinDias(real)}${real.detalleNoConfirmado ? `, ${real.detalleNoConfirmado}` : ""})`);
-      }
-    }
-  }
-
-  // (b) Días ofrecidos -> cada uno debe tener horarios REALES.
-  if (sesion?.step === "S3_DIA" && servicioId && sesion.profesional_id) {
-    const ofrecidos = ((sesion.opciones_mostradas as { opciones?: { fechaIso: string }[] } | null)?.opciones ?? []).map((o) => o.fechaIso);
-    for (const fecha of ofrecidos) {
-      const horas = await calcularHorariosParaFecha(supabase, { idTenant: AMORE_TENANT_ID, servicioId, profesionalId: sesion.profesional_id, fechaIso: fecha }, nylasDeps);
-      if (!horas.ok) fallos.push(`ofreció el día ${fecha} pero la agenda REAL no tiene horarios (${horas.motivo})`);
-    }
-    if (ofrecidos.length > 0 && fallos.length === 0) console.log(`   ✓ contraste: los ${ofrecidos.length} días ofrecidos tienen horarios reales`);
-  }
-
-  // (c) Horas ofrecidas -> cada una debe estar libre en la agenda REAL.
-  if (sesion?.step === "S4_HORA" && servicioId && sesion.profesional_id && sesion.fecha_iso) {
-    const ofrecidas = ((sesion.opciones_mostradas as { opciones?: { hora: string }[] } | null)?.opciones ?? []).map((o) => o.hora);
-    const horas = await calcularHorariosParaFecha(supabase, { idTenant: AMORE_TENANT_ID, servicioId, profesionalId: sesion.profesional_id, fechaIso: sesion.fecha_iso }, nylasDeps);
-    const libres = horas.ok ? horas.horarios : [];
-    const invalidas = ofrecidas.filter((h) => !libres.includes(h));
-    if (invalidas.length > 0) fallos.push(`ofreció horas que la agenda REAL no tiene libres: ${invalidas.join(", ")}`);
-    else if (ofrecidas.length > 0) console.log(`   ✓ contraste: las ${ofrecidas.length} horas ofrecidas están libres en la agenda real`);
-  }
-  return fallos;
-}
+// --- 3. Estado real y contraste (módulo compartido con scripts/amore-pipeline-real.mts) ---------------------------------
+const sesionAgendaActual = () => sesionAgendaReal(supabase, TELEFONO_PRUEBA);
 
 // --- 4. Conversación -------------------------------------------------------------------------------------------------
 let totalFallos = 0;
 let reservaCreada = false;
 for (const [i, mensaje] of mensajes.entries()) {
-  const antes = await sesionAgendaReal();
+  const antes = await sesionAgendaActual();
   const esConfirmacion = antes?.step === "S5_CONFIRMAR" && /^(1|s[ií]|confirmo|dale|listo|perfecto)\b/i.test(mensaje.trim());
   if (esConfirmacion && !PERMITIR_RESERVA) {
     console.log(`\n[${i + 1}] "${mensaje}" -- DETENIDO: crearía una cita REAL. Usa --permitir-reserva si de verdad quieres reservar.`);
@@ -198,15 +151,15 @@ for (const [i, mensaje] of mensajes.entries()) {
     continue;
   }
   for (const r of respuestas) console.log(`   AMORE: ${r.replace(/\n/g, "\n          ")}`);
-  const despues = await sesionAgendaReal();
+  const despues = await sesionAgendaActual();
   console.log(`   estado real: ${despues ? `${despues.step} profesional=${despues.profesional_id ?? "-"} fecha=${despues.fecha_iso ?? "-"}` : "sin sesión de agenda activa"}`);
   if (esConfirmacion && !despues) reservaCreada = true;
-  const fallos = await contrastar(respuestas, despues, antes);
+  const fallos = await contrastarConAgendaReal(supabase, nylasDeps, respuestas, despues, antes);
   for (const f of fallos) console.log(`   ✗ FALLA: ${f}`);
   totalFallos += fallos.length;
 }
 
-if (!reservaCreada && (await sesionAgendaReal())) {
+if (!reservaCreada && (await sesionAgendaActual())) {
   console.log("\n[limpieza] cerrando la sesión de agenda de prueba con 'cancelar'…");
   await enviarDesdeDulabs("cancelar");
 }

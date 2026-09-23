@@ -54,6 +54,13 @@ export function eventosNylasComoVentanas(eventos: NylasEvent[], fechaISO: string
           ocupadas.push(bloqueDiaCompleto(fechaISO));
         }
         break;
+      default: {
+        // "time" (un instante, sin duración) no ocupa. Cualquier otra forma desconocida es AMBIGUA: antes se ignoraba
+        // en silencio (su tiempo quedaba como libre). Ahora se lanza, y consultarEventosOcupadosNylas lo devuelve como
+        // fallo -> la profesional queda "no_confirmado", nunca con horarios inventados.
+        const objeto = (evento.when as { object?: string }).object;
+        if (objeto !== "time") throw new Error(`nylas_evento_ambiguo: when.object=${String(objeto)}`);
+      }
     }
   }
   return ocupadas;
