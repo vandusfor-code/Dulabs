@@ -47,7 +47,9 @@ import {
   type ResolvedOrderProduct,
 } from "@/lib/catalogo/pedido";
 import { orderEventId, orderRequestId, readQuote, signQuote, type OrderKey } from "@/lib/catalogo/pedido-firma";
-import { orderRequestCreatedEvent, type OrderRequestEventSink } from "@/lib/catalogo/eventos-pedido";
+import type { Order } from "@/lib/catalogo/pedidos/contrato";
+import { eventIdFrom, orderEvent, type OrderEventSink } from "@/lib/catalogo/pedidos/eventos";
+import { requestFingerprint, type OrderEngine } from "@/lib/catalogo/pedidos/motor";
 import {
   PUBLIC_PAGE_SIZE,
   isValidSlug,
@@ -493,7 +495,14 @@ export type PreparedOrderResult =
 export interface OrderDeps {
   /** null = sin clave: el pedido no se puede preparar (falla cerrado). */
   key: OrderKey | null;
-  events?: OrderRequestEventSink;
+  /**
+   * Motor de pedidos (Fase 7): guarda la solicitud como pedido canónico
+   * (origen catálogo, validado, sin contacto) + su evento v2 en la BD. Sin él,
+   * o sin la migración aplicada, solo se publica el evento en `events`.
+   */
+  engine?: Pick<OrderEngine, "recordCatalogRequest">;
+  /** Salida del evento v2 cuando la solicitud no se persiste. */
+  events?: OrderEventSink;
   now?: () => Date;
   /** Clave de idempotencia si el navegador no mandó una (clientes anteriores). */
   randomKey?: () => string;
@@ -742,23 +751,69 @@ export function createPublicCatalogService({ repo, orders }: { repo: CatalogRepo
       if (!quoted || order.lines.some((l) => !quoted.has(l.reference))) return { status: "review", order, selection };
 
       const business = await repo.getBusinessProfile(pub.tenantId);
+      if (!whatsappUrl(business.whatsapp, "-")) return { status: "no_whatsapp", order, selection };
+      const requestKey = input.requestKey ?? orders?.randomKey?.() ?? randomUUID();
       const identity = {
         businessId: pub.tenantId,
         channel: context,
-        requestKey: input.requestKey ?? orders?.randomKey?.() ?? randomUUID(),
+        requestKey,
         items: order.lines.map((l) => ({ reference: l.reference, quantity: l.quantity })),
       };
-      const requestId = orderRequestId(key, identity);
-      const message = orderWhatsappMessage(order.lines, context, { requestId, total: order.total, unpricedUnits: order.unpricedUnits });
-      const url = whatsappUrl(business.whatsapp, message);
-      if (!url) return { status: "no_whatsapp", order, selection };
+      const now = (orders?.now ?? (() => new Date()))();
+      // Clave de idempotencia del pedido: la misma identidad del intento (130 bits, ver pedido-firma.ts).
+      const idempotencyKey = `catalog:${orderEventId(key, identity)}`;
+      const lines = order.lines.map((l) => ({ reference: l.reference, productName: l.name, quantity: l.quantity, unitPrice: l.unitPrice, subtotal: l.subtotal }));
 
-      const draft = buildOrderDraft({ requestId, businessId: pub.tenantId, publication: pub, channel: context, order, now: (orders?.now ?? (() => new Date()))() });
-      const event = orderRequestCreatedEvent(draft, orderEventId(key, identity));
-      // Publicar es "mejor esfuerzo": el pedido del cliente nunca falla por esto.
-      await (orders?.events?.publish(event) ?? Promise.resolve()).catch((err: unknown) => {
-        console.error("[catalogo/pedido] no se pudo publicar el evento:", err instanceof Error ? err.message : err);
-      });
+      // Se guarda ANTES de armar el mensaje: el id que viaja por WhatsApp es el del pedido guardado.
+      const persisted = orders?.engine
+        ? await orders.engine
+            .recordCatalogRequest({
+              tenantId: pub.tenantId,
+              channel: context,
+              lines,
+              idempotencyKey,
+              orderIdFor: (attempt) => orderRequestId(key, attempt === 0 ? identity : { ...identity, requestKey: `${requestKey}#${attempt}` }),
+            })
+            .catch((err: unknown) => {
+              // La tienda nunca falla por esto: el mensaje sigue siendo un pedido legible para el webhook.
+              console.error("[catalogo/pedido] no se pudo guardar la solicitud:", err instanceof Error ? err.message : err);
+              return null;
+            })
+        : null;
+      const requestId = persisted?.orderId ?? orderRequestId(key, identity);
+      const message = orderWhatsappMessage(order.lines, context, { requestId, total: order.total, unpricedUnits: order.unpricedUnits });
+      const url = whatsappUrl(business.whatsapp, message) as string;
+      const draft = buildOrderDraft({ requestId, businessId: pub.tenantId, publication: pub, channel: context, order, now });
+
+      if (!persisted && orders?.events) {
+        // Sin persistencia: el MISMO evento v2 (mismo event_id) solo a la salida de eventos. Mejor esfuerzo.
+        const at = now.toISOString();
+        const transient: Order = {
+          id: "",
+          orderId: requestId,
+          businessId: pub.tenantId,
+          channel: context,
+          source: "catalog",
+          status: "validated",
+          contact: null,
+          lines,
+          totalUnits: order.totalUnits,
+          total: order.total,
+          unpricedUnits: order.unpricedUnits,
+          currency: "COP",
+          issues: [],
+          confirmation: null,
+          handoff: null,
+          idempotencyKey,
+          requestFingerprint: requestFingerprint(context, identity.items),
+          createdAt: at,
+          updatedAt: at,
+        };
+        const event = orderEvent("catalog.order_request.created", transient, { eventId: eventIdFrom("order-created", pub.tenantId, idempotencyKey), occurredAt: at });
+        await orders.events.publish(event).catch((err: unknown) => {
+          console.error("[catalogo/pedido] no se pudo publicar el evento:", err instanceof Error ? err.message : err);
+        });
+      }
       return { status: "ready", order, selection, whatsappUrl: url, draft, message };
     },
 

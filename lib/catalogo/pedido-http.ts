@@ -12,9 +12,10 @@
 import { supabaseAdmin } from "@/lib/supabase";
 import type { CartProduct } from "@/lib/catalogo/carrito";
 import type { PriceContext } from "@/lib/catalogo/domain";
-import { logOrderRequestSink } from "@/lib/catalogo/eventos-pedido";
 import { orderRequestSchema, type OrderDraft } from "@/lib/catalogo/pedido";
 import { orderSigningKey } from "@/lib/catalogo/pedido-firma";
+import { logOrderEventSink } from "@/lib/catalogo/pedidos/eventos";
+import { productionOrderEngine } from "@/lib/catalogo/pedidos/produccion";
 import type { PublicCatalogProduct } from "@/lib/catalogo/publicacion";
 import { createSupabaseCatalogRepository } from "@/lib/catalogo/repository";
 import { OrderSigningUnavailable, SELECTION_MAX, createPublicCatalogService, type OrderDeps } from "@/lib/catalogo/service";
@@ -31,8 +32,9 @@ const MAX_BODY_BYTES = 24 * 1024;
 type Service = ReturnType<typeof createPublicCatalogService>;
 
 function servicioReal(): Service {
-  const orders: OrderDeps = { key: orderSigningKey(), events: logOrderRequestSink };
-  return createPublicCatalogService({ repo: createSupabaseCatalogRepository(supabaseAdmin()), orders });
+  const supabase = supabaseAdmin();
+  const orders: OrderDeps = { key: orderSigningKey(), engine: productionOrderEngine(supabase) ?? undefined, events: logOrderEventSink };
+  return createPublicCatalogService({ repo: createSupabaseCatalogRepository(supabase), orders });
 }
 
 /** Proyección que el carrito sabe reconciliar (nada interno). */

@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import { beforeEach, describe, it } from "node:test";
 import { createResolucionCatalogo } from "@/lib/catalogo/resolucion";
 import { FEATURED_LIMIT, SELECTION_MAX, createCatalogService, createPublicCatalogService, normalizeReferences, type CatalogActor } from "@/lib/catalogo/service";
-import { memoryOrderRequestSink } from "@/lib/catalogo/eventos-pedido";
+import { memoryOrderEventSink } from "@/lib/catalogo/pedidos/eventos";
 import type { OrderItem } from "@/lib/catalogo/pedido";
 import { createInMemoryCatalogRepository, WEBP_HEAD } from "@/lib/catalogo/testing/in-memory-repository";
 
@@ -27,7 +27,7 @@ beforeEach(async () => {
   mem = createInMemoryCatalogRepository();
   let n = 0;
   admin = createCatalogService({ repo: mem.repo, newId: () => `00000000-0000-4000-8000-${String(++n).padStart(12, "0")}` });
-  publico = createPublicCatalogService({ repo: mem.repo, orders: { key: Buffer.alloc(32, 7), events: memoryOrderRequestSink() } });
+  publico = createPublicCatalogService({ repo: mem.repo, orders: { key: Buffer.alloc(32, 7), events: memoryOrderEventSink() } });
   mem.setProfile(DELACOUR.tenantId, { name: "Delacour Joyería", whatsapp: "573183715860" });
   mem.enableModule(DELACOUR.tenantId);
   slug = (await admin.ensurePublication(DELACOUR)).slug;

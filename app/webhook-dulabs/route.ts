@@ -30,6 +30,8 @@ import {
 } from "@/lib/whatsapp-outbound";
 import { descifrarSecreto } from "@/lib/crypto";
 import { esTelefonoBloqueado } from "@/lib/blacklist-du";
+import { recibirPedidoWhatsapp } from "@/lib/catalogo/pedidos/intake";
+import { productionIntakeDeps } from "@/lib/catalogo/pedidos/produccion";
 import { getSurveyBot, getSession, saveSession } from "@/lib/survey-bot-store";
 import { handleMessage, questionPrompt } from "@/lib/survey-engine";
 import { interpretarRespuestaEncuesta, redactarPreguntaCalida, fraseEmpatica, type Sentimiento } from "@/lib/survey-agent-ia";
@@ -393,7 +395,7 @@ export async function POST(request: NextRequest) {
   }
 
   let payload: {
-    entry?: { changes?: { field: string; value: MetaChangeValue | HistoryChangeValue }[] }[];
+    entry?: { id?: string; changes?: { field: string; value: MetaChangeValue | HistoryChangeValue }[] }[];
   };
   try {
     payload = JSON.parse(rawBody);
@@ -469,7 +471,7 @@ export async function POST(request: NextRequest) {
 
       after(async () => {
         try {
-          await procesarCambio(phoneNumberId, value);
+          await procesarCambio(phoneNumberId, value, typeof entry.id === "string" ? entry.id : null);
         } catch (err) {
           console.error("[webhook-dulabs] error procesando cambio:", err instanceof Error ? err.message : err);
         }
@@ -576,7 +578,7 @@ export function extraerTextoMensajeCrudo(mensaje: MetaMessage, incluirPlaceholde
 // número desconectado, aislamiento cross-tenant, dedup de eventos)
 // directamente contra Supabase real, sin ese obstáculo. Ningún cambio de
 // comportamiento: mismo código, mismas firmas, solo visibilidad del módulo.
-export async function procesarCambio(phoneNumberId: string, value: MetaChangeValue) {
+export async function procesarCambio(phoneNumberId: string, value: MetaChangeValue, wabaId: string | null = null) {
   const supabase = supabaseAdmin();
 
   const { data, error } = await supabase
@@ -705,7 +707,35 @@ export async function procesarCambio(phoneNumberId: string, value: MetaChangeVal
     if (!mensaje.text?.body && !esSolucionesFinancieras && !esMediaHaciaFlow) continue;
     const nombreContacto =
       (value.contacts ?? []).find((c) => soloDigitos(c.wa_id ?? "") === telefonoRemitente)?.profile?.name ?? null;
+    // Catálogo, Fase 7: si el texto ES un pedido del catálogo (líneas con
+    // referencia o "Solicitud: DL-ORD-…"), se registra como pedido
+    // estructurado ANTES de conversar, para que la IA/asesora lo consulten
+    // con las herramientas. No responde nada ni cambia el camino de abajo;
+    // cualquier otro mensaje se descarta en memoria (sin BD). Nunca lanza.
+    if (mensaje.type === "text" && mensaje.text?.body) {
+      await registrarPedidoCatalogoSiAplica(cliente, wabaId, mensaje, telefonoRemitente);
+    }
     await atenderMensaje(cliente, mensaje, nombreContacto, telefonoRemitente);
+  }
+}
+
+async function registrarPedidoCatalogoSiAplica(cliente: ClienteConfig, wabaId: string | null, mensaje: MetaMessage, waId: string) {
+  try {
+    const deps = productionIntakeDeps(supabaseAdmin());
+    if (!deps) return;
+    await recibirPedidoWhatsapp(
+      {
+        business: cliente,
+        wabaId,
+        message: mensaje,
+        waId,
+        // La lista negra también excluye el registro de pedidos (números internos/de prueba del negocio).
+        blocked: esTelefonoBloqueado(cliente.ia_numeros_bloqueados, waId),
+      },
+      deps,
+    );
+  } catch (err) {
+    console.error("[webhook-dulabs] error en la entrada de pedidos del catálogo:", err instanceof Error ? err.message : err);
   }
 }
 

@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { beforeEach, describe, it } from "node:test";
 import { cartReducer, currentRequest, emptyCart, parseStoredCart, requestFingerprint, selectionSnapshot } from "@/lib/catalogo/carrito";
 import { PUBLIC_STOCK_VISIBLE } from "@/lib/catalogo/domain";
-import { memoryOrderRequestSink, orderRequestCreatedSchema } from "@/lib/catalogo/eventos-pedido";
+import { memoryOrderEventSink, orderEventV2Schema } from "@/lib/catalogo/pedidos/eventos";
 import { orderRequestSchema, parseOrderMessage, type OrderItem } from "@/lib/catalogo/pedido";
 import { canonicalItems, crockford, orderRequestId, orderSigningKey, readQuote, signQuote } from "@/lib/catalogo/pedido-firma";
 import { responderPedido, responderSeleccion } from "@/lib/catalogo/pedido-http";
@@ -21,7 +21,7 @@ const KEY = Buffer.alloc(32, 9);
 
 let mem: ReturnType<typeof createInMemoryCatalogRepository>;
 let admin: ReturnType<typeof createCatalogService>;
-let sink: ReturnType<typeof memoryOrderRequestSink>;
+let sink: ReturnType<typeof memoryOrderEventSink>;
 let publico: ReturnType<typeof createPublicCatalogService>;
 let slugA: string;
 let slugB: string;
@@ -31,7 +31,7 @@ const NOW = new Date("2026-09-24T15:00:00Z");
 beforeEach(async () => {
   mem = createInMemoryCatalogRepository();
   admin = createCatalogService({ repo: mem.repo });
-  sink = memoryOrderRequestSink();
+  sink = memoryOrderEventSink();
   publico = createPublicCatalogService({ repo: mem.repo, orders: { key: KEY, events: sink, now: () => NOW } });
   for (const [actor, name] of [
     [A, "Delacour"],
@@ -223,11 +223,15 @@ describe("idempotencia: doble envío, reintento y evento", () => {
     const p = await producto(A, "Anillo", 10_000, 5);
     await pedir([{ reference: p.reference, quantity: 1 }]);
     const [e] = sink.events;
-    assert.equal(orderRequestCreatedSchema.safeParse(e).success, true);
-    assert.equal(e.type, "catalog.order_request.created");
-    assert.equal(e.business_id, A.tenantId);
-    assert.equal(e.publication_id, slugA);
-    assert.deepEqual(e.items, [{ reference: p.reference, quantity: 1, name: "Anillo", unit_price: 10_000, subtotal: 10_000 }]);
+    // Contrato v2 (Fase 7): mismo evento canónico que emite el motor de pedidos.
+    assert.equal(orderEventV2Schema.safeParse(e).success, true);
+    assert.equal(e.event_type, "catalog.order_request.created");
+    assert.equal(e.version, 2);
+    assert.equal(e.business.id, A.tenantId);
+    assert.equal(e.customer, null, "aún no hay conversación: sin datos del cliente");
+    assert.equal(e.source, "catalog");
+    assert.equal(e.order.status, "validated");
+    assert.deepEqual(e.order.lines, [{ reference: p.reference, product_name: "Anillo", quantity: 1, unit_price: 10_000, subtotal: 10_000 }]);
     assert.match(e.event_id, /^evt_[0-9a-z]{26}$/);
   });
 
