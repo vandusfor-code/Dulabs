@@ -9,6 +9,10 @@
 import type { CatalogCategory, CatalogImage, CatalogProduct, CatalogProductDetail, ProductPage, ProductStatus, StatusFilter } from "@/lib/catalogo/domain";
 import { prepareProductImage, ImagePreparationError } from "@/lib/catalogo/image-processing";
 import { supabaseBrowser } from "@/lib/supabase-browser";
+import type { PublicationView } from "@/lib/catalogo/service";
+
+// Solo el TIPO (se borra al compilar): rutas relativas; el navegador les antepone su origen.
+export type { PublicationView };
 
 export interface CatalogClientError {
   code: string;
@@ -110,6 +114,16 @@ export function createCatalogClient(accessToken: string) {
 
     createCategory(name: string): Promise<CatalogResult<{ category: CatalogCategory }>> {
       return call(accessToken, "/categorias", { method: "POST", body: JSON.stringify({ name }) });
+    },
+
+    /** Links públicos (detal y, para admin, mayor). Para un admin los crea la primera vez. */
+    getPublication(): Promise<CatalogResult<{ publication: PublicationView | null }>> {
+      return call(accessToken, "/publicacion");
+    },
+
+    /** Regenera el link mayorista (el anterior deja de funcionar). Solo admin. */
+    rotateWholesaleLink(): Promise<CatalogResult<{ publication: PublicationView }>> {
+      return call(accessToken, "/publicacion/rotar-mayor", { method: "POST" });
     },
 
     deleteImage(mediaId: string): Promise<CatalogResult<{ deleted: true }>> {

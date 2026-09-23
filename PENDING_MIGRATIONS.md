@@ -2,8 +2,10 @@
 
 ## PENDIENTE — Catálogo DuLabs, Fase 1 (módulo Catálogo, cliente inicial Delacour & Orus)
 
-La migración `20261105000000_dulabs_catalogo_fase1.sql` **todavía no se ha
-corrido en producción**. Sin ella, `/dashboard/catalogo` y
+Las migraciones `20261105000000_dulabs_catalogo_fase1.sql` y
+`20261106000000_dulabs_catalogo_publicacion.sql` (en ese orden) **todavía no
+se han corrido en producción**. Sin ellas, los links públicos
+`/catalogo/*` responden 404, y `/dashboard/catalogo` y
 `/api/dashboard/catalogo/*` responden un error controlado (el módulo no
 aparece en el menú porque `dulabs_tenant_modulos` no existe); AMORE y el
 Business Agent siguen funcionando exactamente igual.
@@ -46,7 +48,18 @@ Validada contra PostgreSQL 16 local con el esquema real de AMORE (productos
    values ('0d3ae22d-0c38-4fd6-ba48-fb9e29b7cdb4', 'catalogo', true)
    on conflict (id_tenant, modulo) do update set habilitado = true, updated_at = now();
    ```
-4. **Después** — verificar:
+4. Correr `20261106000000_dulabs_catalogo_publicacion.sql` (links públicos del
+   catálogo: detal y mayor) y crear el link de Delacour con su nombre público:
+   ```sql
+   insert into public.dulabs_catalogo_publicacion (id_tenant, slug, nombre_publico)
+   values ('0d3ae22d-0c38-4fd6-ba48-fb9e29b7cdb4', 'delacour', 'Delacour & Orus Joyería')
+   on conflict (id_tenant) do nothing;
+   ```
+   Detal: `https://www.dulabs.co/catalogo/delacour`. Mayor: el link con token
+   secreto aparece en el dashboard (Catálogo → Links del catálogo), solo para
+   administradores. Si no se inserta, el dashboard lo crea solo la primera vez
+   que un admin abre el Catálogo (slug derivado del nombre del negocio).
+5. **Después** — verificar:
    ```sql
    select id_tenant, count(*) as productos, count(referencia) as con_referencia,
           count(*) filter (where controla_stock) as controla_stock

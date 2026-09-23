@@ -9,7 +9,7 @@
  * herramientas del agente (search_products): el agente leerá productos,
  * precios e imágenes REALES de aquí, nunca de un prompt ni de un HTML.
  */
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import {
   CATALOG_LIMITS,
   imageStoragePaths,
@@ -27,9 +27,21 @@ import {
   type ProductListQuery,
   type ProductPage,
   type ProductUpdateInput,
+  type PriceContext,
 } from "@/lib/catalogo/domain";
 import { CatalogError } from "@/lib/catalogo/errors";
 import type { CatalogRepository, ProductPatchData, StoredMedia } from "@/lib/catalogo/repository";
+import {
+  PUBLIC_PAGE_SIZE,
+  isValidSlug,
+  retailPath,
+  slugCandidates,
+  slugify,
+  toPublicProduct,
+  wholesalePath,
+  type CatalogPublication,
+  type PublicCatalogPage,
+} from "@/lib/catalogo/publicacion";
 
 /** Quién ejecuta la operación. tenantId SIEMPRE proviene de la membresía autenticada. */
 export interface CatalogActor {
@@ -45,12 +57,57 @@ export interface ImageUploadTicket {
   thumb: { path: string; token: string };
 }
 
+/** Links públicos del catálogo, tal como los ve el dashboard. `wholesalePath` solo para administradores. */
+export interface PublicationView {
+  slug: string;
+  publicName: string;
+  published: boolean;
+  retailPath: string;
+  wholesalePath: string | null;
+}
+
+function publicationView(pub: CatalogPublication, includeWholesale: boolean): PublicationView {
+  return {
+    slug: pub.slug,
+    publicName: pub.publicName,
+    published: pub.published,
+    retailPath: retailPath(pub.slug),
+    wholesalePath: includeWholesale ? wholesalePath(pub.slug, pub.wholesaleToken) : null,
+  };
+}
+
+/** Token nuevo del link mayorista: 32 bytes aleatorios (64 hex), mismo formato que exige la BD. */
+export function newWholesaleToken(): string {
+  return randomBytes(32).toString("hex");
+}
+
 export interface CatalogServiceDeps {
   repo: CatalogRepository;
   newId?: () => string;
 }
 
 const HEAD_BYTES = 16;
+
+function imageFromMedia(repo: CatalogRepository, media: StoredMedia): CatalogImage {
+  const url = repo.publicUrl(media.storagePath);
+  return {
+    id: media.id,
+    url,
+    thumbUrl: media.thumbPath ? repo.publicUrl(media.thumbPath) : url,
+    isPrimary: media.isPrimary,
+    order: media.order,
+    mimeType: media.mimeType,
+    bytes: media.bytes,
+    width: media.width,
+    height: media.height,
+  };
+}
+
+function withPrimaryMedia(repo: CatalogRepository, product: CatalogProduct, primary: StoredMedia | undefined): CatalogProduct {
+  if (!primary) return product;
+  const image = imageFromMedia(repo, primary);
+  return { ...product, primaryImage: { url: image.url, thumbUrl: image.thumbUrl } };
+}
 
 export function createCatalogService({ repo, newId = randomUUID }: CatalogServiceDeps) {
   async function requireProduct(actor: CatalogActor, productId: string): Promise<CatalogProduct> {
@@ -67,26 +124,8 @@ export function createCatalogService({ repo, newId = randomUUID }: CatalogServic
     return { categoryId: category.id, categoryName: category.name };
   }
 
-  function toImage(media: StoredMedia): CatalogImage {
-    const url = repo.publicUrl(media.storagePath);
-    return {
-      id: media.id,
-      url,
-      thumbUrl: media.thumbPath ? repo.publicUrl(media.thumbPath) : url,
-      isPrimary: media.isPrimary,
-      order: media.order,
-      mimeType: media.mimeType,
-      bytes: media.bytes,
-      width: media.width,
-      height: media.height,
-    };
-  }
-
-  function withPrimary(product: CatalogProduct, primary: StoredMedia | undefined): CatalogProduct {
-    if (!primary) return product;
-    const image = toImage(primary);
-    return { ...product, primaryImage: { url: image.url, thumbUrl: image.thumbUrl } };
-  }
+  const toImage = (media: StoredMedia) => imageFromMedia(repo, media);
+  const withPrimary = (product: CatalogProduct, primary: StoredMedia | undefined) => withPrimaryMedia(repo, product, primary);
 
   async function hydrate(actor: CatalogActor, product: CatalogProduct): Promise<CatalogProduct> {
     const [primary] = await repo.listPrimaryMedia(actor.tenantId, [product.id]);
@@ -256,6 +295,43 @@ export function createCatalogService({ repo, newId = randomUUID }: CatalogServic
       }
     },
 
+    /** Links públicos del catálogo. includeWholesale solo para administradores. */
+    async getPublication(actor: CatalogActor, opts: { includeWholesale: boolean }): Promise<PublicationView | null> {
+      const pub = await repo.getPublication(actor.tenantId);
+      return pub ? publicationView(pub, opts.includeWholesale) : null;
+    },
+
+    /**
+     * Crea la publicación si el negocio aún no tiene (idempotente). El slug se
+     * deriva del nombre del negocio; si está tomado, prueba variantes y al
+     * final un sufijo aleatorio. El token mayorista lo genera la BD.
+     */
+    async ensurePublication(actor: CatalogActor): Promise<PublicationView> {
+      const existing = await repo.getPublication(actor.tenantId);
+      if (existing) return publicationView(existing, true);
+      const profile = await repo.getBusinessProfile(actor.tenantId);
+      const name = profile.name?.trim() || "Catálogo";
+      const candidates = [...slugCandidates(name), `${slugify(name).slice(0, 40).replace(/-+$/g, "")}-${randomBytes(3).toString("hex")}`];
+      for (const slug of candidates) {
+        try {
+          return publicationView(await repo.insertPublication(actor.tenantId, slug, name.slice(0, 80)), true);
+        } catch (err) {
+          if (!(err instanceof CatalogError && err.code === "CONFLICT")) throw err;
+          // Otra petición concurrente pudo crearla para este mismo negocio.
+          const created = await repo.getPublication(actor.tenantId);
+          if (created) return publicationView(created, true);
+        }
+      }
+      throw new CatalogError("CONFLICT", "No se pudo crear el link del catálogo. Intenta de nuevo.");
+    },
+
+    /** Regenera el link mayorista: el anterior deja de funcionar de inmediato. */
+    async rotateWholesaleToken(actor: CatalogActor): Promise<PublicationView> {
+      const updated = await repo.updatePublicationToken(actor.tenantId, newWholesaleToken());
+      if (!updated) throw new CatalogError("NOT_FOUND", "El catálogo todavía no tiene links.");
+      return publicationView(updated, true);
+    },
+
     async deleteImage(actor: CatalogActor, mediaId: string): Promise<{ deleted: true }> {
       const removed = await repo.deleteMedia(actor.tenantId, actor.userId, mediaId);
       if (!removed) throw new CatalogError("NOT_FOUND", "La imagen no existe.");
@@ -266,3 +342,67 @@ export function createCatalogService({ repo, newId = randomUUID }: CatalogServic
 }
 
 export type CatalogService = ReturnType<typeof createCatalogService>;
+
+// ---------------------------------------------------------------------------
+// Catálogo PÚBLICO (HTML). Sin sesión: el negocio se resuelve por el slug del
+// link y, para el contexto mayorista, por el token secreto. Ante CUALQUIER
+// duda (slug inválido, no publicado, módulo apagado, token incorrecto)
+// devuelve null => 404, sin revelar cuál de las condiciones falló.
+// ---------------------------------------------------------------------------
+
+const TOKEN_PATTERN = /^[0-9a-f]{64}$/;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Comparación en tiempo constante (no filtra por tiempo cuántos caracteres del token acertó un atacante). */
+export function tokensMatch(received: string | undefined, expected: string): boolean {
+  if (!received || !TOKEN_PATTERN.test(received) || !TOKEN_PATTERN.test(expected)) return false;
+  return timingSafeEqual(Buffer.from(received), Buffer.from(expected));
+}
+
+export interface PublicCatalogQuery {
+  slug: string;
+  context: PriceContext;
+  token?: string;
+  q?: string;
+  categoryId?: string;
+  page?: number;
+}
+
+export function createPublicCatalogService({ repo }: { repo: CatalogRepository }) {
+  return {
+    async getCatalog(input: PublicCatalogQuery): Promise<PublicCatalogPage | null> {
+      if (!isValidSlug(input.slug)) return null;
+      const pub = await repo.getPublicationBySlug(input.slug);
+      if (!pub || !pub.published) return null;
+      if (input.context === "wholesale" && !tokensMatch(input.token, pub.wholesaleToken)) return null;
+      if (!(await repo.isModuleEnabled(pub.tenantId))) return null;
+
+      const page = Number.isInteger(input.page) && (input.page as number) >= 1 ? Math.min(input.page as number, 10_000) : 1;
+      const categoryId = input.categoryId && UUID_PATTERN.test(input.categoryId) ? input.categoryId : undefined;
+      const [{ items, total }, categories, business] = await Promise.all([
+        // Solo ACTIVOS: un producto desactivado nunca aparece en el catálogo público.
+        repo.listProducts(pub.tenantId, {
+          status: "ACTIVE",
+          search: normalizeSearch(input.q),
+          categoryId,
+          offset: (page - 1) * PUBLIC_PAGE_SIZE,
+          limit: PUBLIC_PAGE_SIZE,
+        }),
+        repo.listCategories(pub.tenantId),
+        repo.getBusinessProfile(pub.tenantId),
+      ]);
+      const primaries = await repo.listPrimaryMedia(pub.tenantId, items.map((p) => p.id));
+      const byProduct = new Map(primaries.map((m) => [m.productId, m]));
+
+      return {
+        business: { name: pub.publicName, whatsapp: business.whatsapp },
+        context: input.context,
+        products: items.map((p) => toPublicProduct(withPrimaryMedia(repo, p, byProduct.get(p.id)), input.context)),
+        categories,
+        total,
+        page,
+        pageSize: PUBLIC_PAGE_SIZE,
+      };
+    },
+  };
+}

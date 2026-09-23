@@ -10,6 +10,7 @@ import { randomUUID } from "node:crypto";
 import { formatReference, type CatalogCategory, type CatalogProduct } from "@/lib/catalogo/domain";
 import { CatalogError } from "@/lib/catalogo/errors";
 import type { AttachMediaData, CatalogRepository, ProductListFilter, ProductPatchData, ProductWriteData, StoredMedia } from "@/lib/catalogo/repository";
+import type { CatalogPublication } from "@/lib/catalogo/publicacion";
 
 interface StoredProduct extends CatalogProduct {
   tenantId: string;
@@ -34,6 +35,9 @@ export function createInMemoryCatalogRepository() {
   const objects = new Map<string, StoredObject>();
   const removed: string[] = [];
   const signedPaths: string[] = [];
+  const publications = new Map<string, CatalogPublication>();
+  const profiles = new Map<string, { name: string | null; whatsapp: string | null }>();
+  const modulesEnabled = new Set<string>();
   let clock = 0;
   const now = () => new Date(Date.UTC(2026, 8, 22, 12, 0, clock++)).toISOString();
 
@@ -181,6 +185,41 @@ export function createInMemoryCatalogRepository() {
       return stripMedia(m);
     },
 
+    async getPublication(tenantId) {
+      const p = publications.get(tenantId);
+      return p ? { ...p } : null;
+    },
+
+    async getPublicationBySlug(slug) {
+      for (const [tenantId, p] of publications) if (p.slug === slug) return { ...p, tenantId };
+      return null;
+    },
+
+    async insertPublication(tenantId, slug, publicName) {
+      // Igual que la BD: slug único global, un registro por tenant, token por defecto aleatorio.
+      if (publications.has(tenantId) || [...publications.values()].some((p) => p.slug === slug)) {
+        throw new CatalogError("CONFLICT", "Ya existe un registro con esos datos.");
+      }
+      const pub: CatalogPublication = { slug, publicName, published: true, wholesaleToken: randomUUID().replace(/-/g, "") + randomUUID().replace(/-/g, "") };
+      publications.set(tenantId, pub);
+      return { ...pub };
+    },
+
+    async updatePublicationToken(tenantId, token) {
+      const p = publications.get(tenantId);
+      if (!p) return null;
+      p.wholesaleToken = token;
+      return { ...p };
+    },
+
+    async getBusinessProfile(tenantId) {
+      return profiles.get(tenantId) ?? { name: null, whatsapp: null };
+    },
+
+    async isModuleEnabled(tenantId) {
+      return modulesEnabled.has(tenantId);
+    },
+
     async createSignedUpload(path) {
       signedPaths.push(path);
       return { path, token: `token-${path}`, signedUrl: `https://storage.test/upload/${path}?token=x` };
@@ -227,6 +266,17 @@ export function createInMemoryCatalogRepository() {
     hasObject: (path: string) => objects.has(path),
     removed,
     signedPaths,
+    setProfile(tenantId: string, profile: { name: string | null; whatsapp: string | null }) {
+      profiles.set(tenantId, profile);
+    },
+    enableModule(tenantId: string, enabled = true) {
+      if (enabled) modulesEnabled.add(tenantId);
+      else modulesEnabled.delete(tenantId);
+    },
+    setPublished(tenantId: string, published: boolean) {
+      const p = publications.get(tenantId);
+      if (p) p.published = published;
+    },
     auditTrail: (id: string) => products.get(id),
   };
 }

@@ -11,7 +11,7 @@ import type { NextRequest } from "next/server";
 import { z } from "zod";
 import { apiError } from "@/lib/agent-compiler/api/http";
 import { respuestaSiLimiteTasaExcedido } from "@/lib/rate-limit";
-import { requireCatalogo, type CatalogAccessMode } from "@/lib/catalogo/auth";
+import { CATALOG_WRITE_ROLES, requireCatalogo, type CatalogAccessMode } from "@/lib/catalogo/auth";
 import { firstIssueMessage } from "@/lib/catalogo/domain";
 import { isCatalogError } from "@/lib/catalogo/errors";
 import { createSupabaseCatalogRepository } from "@/lib/catalogo/repository";
@@ -20,6 +20,8 @@ import { createCatalogService, type CatalogActor, type CatalogService } from "@/
 export interface CatalogHandlerContext {
   service: CatalogService;
   actor: CatalogActor;
+  /** Rol con permiso de escritura (admin). Ya validado por el backend. */
+  canWrite: boolean;
 }
 
 export async function withCatalog(
@@ -29,7 +31,7 @@ export async function withCatalog(
 ): Promise<Response> {
   const access = await requireCatalogo(request, mode);
   if (!access.ok) return access.response;
-  const { supabase, actor } = access.ctx;
+  const { supabase, actor, member } = access.ctx;
 
   const limite = await respuestaSiLimiteTasaExcedido(supabase, {
     recurso: mode === "write" ? "catalogo_escritura" : "catalogo_lectura",
@@ -40,7 +42,7 @@ export async function withCatalog(
 
   const service = createCatalogService({ repo: createSupabaseCatalogRepository(supabase) });
   try {
-    return await handler({ service, actor });
+    return await handler({ service, actor, canWrite: CATALOG_WRITE_ROLES.includes(member.rol) });
   } catch (err) {
     return catalogErrorResponse(err);
   }

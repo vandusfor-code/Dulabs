@@ -6,10 +6,11 @@ import { ChevronLeft, ChevronRight, PackagePlus, Plus, Search, X } from "lucide-
 import { PageHeader } from "@/components/dashboard/shell/ui";
 import { useI18n } from "@/lib/i18n";
 import type { CatalogCategory, ProductPage, StatusFilter } from "@/lib/catalogo/domain";
-import { ProductCard } from "@/components/dashboard/catalogo/ProductCard";
-import { ProductGridSkeleton, cn, inputCls, primaryBtn, useCatalogAccess } from "@/components/dashboard/catalogo/ui";
+import { CatalogLinks } from "@/components/dashboard/catalogo/CatalogLinks";
+import { ProductList, ProductListSkeleton } from "@/components/dashboard/catalogo/ProductList";
+import { cn, inputCls, primaryBtn, useCatalogAccess } from "@/components/dashboard/catalogo/ui";
 
-const PAGE_SIZE = 24;
+const PAGE_SIZE = 30;
 
 type Resultado = { key: string; page: ProductPage | null; error: string | null };
 
@@ -87,10 +88,10 @@ export default function CatalogoPage() {
     <div className="pb-16">
       <PageHeader
         eyebrow={t("Catálogo", "Catalog")}
-        title={t("Productos", "Products")}
+        title={t("Carga de productos", "Product loading")}
         description={t(
-          "La fuente de verdad de tus productos: fotografías, referencias y precios. Lo que registres aquí es lo que usará tu agente de IA.",
-          "The source of truth for your products: photos, references and prices. What you register here is what your AI agent will use.",
+          "Aquí registras y administras tus productos: fotografía, referencia y precios. Tus clientes los ven en el link del catálogo, y es la información que usará tu agente de IA.",
+          "Register and manage your products here: photo, reference and prices. Your customers see them on the catalog link, and it is the information your AI agent will use.",
         )}
       >
         {canWrite && (
@@ -102,8 +103,10 @@ export default function CatalogoPage() {
       </PageHeader>
 
       <div className="px-4 pt-6 md:px-8">
+        <CatalogLinks client={client} canWrite={canWrite} />
+
         {/* Barra de búsqueda y filtros */}
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+        <div className="mt-6 flex flex-col gap-3 lg:flex-row lg:items-center">
           <div className="relative flex-1">
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-mist" />
             <input
@@ -179,7 +182,7 @@ export default function CatalogoPage() {
           {resultado?.error && !cargando ? (
             <p className="rounded-xl border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-400">{resultado.error}</p>
           ) : cargando && !data ? (
-            <ProductGridSkeleton />
+            <ProductListSkeleton />
           ) : data && data.items.length === 0 ? (
             hayFiltros ? (
               <div className="rounded-2xl border border-edge bg-card px-6 py-14 text-center">
@@ -192,7 +195,7 @@ export default function CatalogoPage() {
                 <div className="mx-auto flex size-14 items-center justify-center rounded-2xl bg-lime/10 text-lime-text">
                   <PackagePlus className="size-7" />
                 </div>
-                <p className="mt-4 text-base font-semibold text-fg">{t("Tu catálogo está vacío", "Your catalog is empty")}</p>
+                <p className="mt-4 text-base font-semibold text-fg">{t("Aún no has cargado productos", "You have not loaded products yet")}</p>
                 <p className="mx-auto mt-1 max-w-sm text-sm text-mist">
                   {t("Registra tu primer producto con su foto y precios. DuLabs le asigna la referencia automáticamente.", "Register your first product with its photo and prices. DuLabs assigns its reference automatically.")}
                 </p>
@@ -205,11 +208,7 @@ export default function CatalogoPage() {
               </div>
             )
           ) : data ? (
-            <div className={cn("grid grid-cols-2 gap-3 transition-opacity sm:grid-cols-3 sm:gap-4 lg:grid-cols-4 2xl:grid-cols-5", cargando && "opacity-60")}>
-              {data.items.map((p) => (
-                <ProductCard key={p.id} product={p} />
-              ))}
-            </div>
+            <ProductList products={data.items} dimmed={cargando} />
           ) : null}
         </div>
 

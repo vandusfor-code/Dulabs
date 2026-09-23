@@ -60,7 +60,15 @@ export function useCatalogAccess(): { client: CatalogClient | null; canWrite: bo
 export function CatalogGate({ children }: { children: ReactNode }) {
   const { t } = useI18n();
   const { enabled, ready } = useCatalogAccess();
-  if (!ready) return <div className="px-4 pt-6 md:px-8"><ProductGridSkeleton count={8} /></div>;
+  if (!ready) {
+    return (
+      <div className="space-y-3 px-4 pt-6 md:px-8" aria-hidden>
+        <div className="h-8 w-56 animate-pulse rounded-lg bg-ink-2" />
+        <div className="h-32 animate-pulse rounded-2xl bg-card" />
+        <div className="h-64 animate-pulse rounded-xl bg-card" />
+      </div>
+    );
+  }
   if (!enabled) {
     return (
       <div className="px-4 pt-10 md:px-8">
@@ -263,26 +271,5 @@ export function ReferenceTag({ reference, copyable = false, size = "sm" }: { ref
       {text}
       {copied ? <Check className="size-3.5 text-lime-text" /> : <Copy className="size-3.5 text-mist group-hover:text-fg" />}
     </button>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Skeleton del grid
-// ---------------------------------------------------------------------------
-
-export function ProductGridSkeleton({ count = 12 }: { count?: number }) {
-  return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4 2xl:grid-cols-5" aria-hidden>
-      {Array.from({ length: count }, (_, i) => (
-        <div key={i} className="overflow-hidden rounded-xl border border-edge bg-card">
-          <div className="aspect-square animate-pulse bg-ink-2" />
-          <div className="space-y-2 p-3">
-            <div className="h-2.5 w-16 animate-pulse rounded bg-ink-2" />
-            <div className="h-3.5 w-3/4 animate-pulse rounded bg-ink-2" />
-            <div className="h-3 w-1/2 animate-pulse rounded bg-ink-2" />
-          </div>
-        </div>
-      ))}
-    </div>
   );
 }

@@ -20,6 +20,8 @@ import type {
   StatusFilter,
 } from "@/lib/catalogo/domain";
 import { CatalogError } from "@/lib/catalogo/errors";
+import type { CatalogPublication } from "@/lib/catalogo/publicacion";
+import { moduloHabilitado } from "@/lib/tenant-modulos";
 
 // ---------------------------------------------------------------------------
 // Puerto (lo implementa Supabase aquí; los tests usan una implementación en memoria)
@@ -98,6 +100,17 @@ export interface CatalogRepository {
   attachMedia(tenantId: string, actorId: string, data: AttachMediaData): Promise<StoredMedia>;
   deleteMedia(tenantId: string, actorId: string, mediaId: string): Promise<StoredMedia | null>;
 
+  // Publicación pública del catálogo (links detal / mayor).
+  getPublication(tenantId: string): Promise<CatalogPublication | null>;
+  getPublicationBySlug(slug: string): Promise<(CatalogPublication & { tenantId: string }) | null>;
+  /** Lanza CatalogError CONFLICT si el slug ya lo usa otro negocio (o el tenant ya tiene publicación). */
+  insertPublication(tenantId: string, slug: string, publicName: string): Promise<CatalogPublication>;
+  updatePublicationToken(tenantId: string, token: string): Promise<CatalogPublication | null>;
+  /** Nombre y WhatsApp del negocio (número conectado más reciente del tenant). */
+  getBusinessProfile(tenantId: string): Promise<{ name: string | null; whatsapp: string | null }>;
+  /** Módulo "catalogo" habilitado (estricto: un error de BD se propaga). */
+  isModuleEnabled(tenantId: string): Promise<boolean>;
+
   bucket: string;
   createSignedUpload(path: string): Promise<SignedUpload>;
   objectInfo(path: string): Promise<StoredObjectInfo | null>;
@@ -117,6 +130,20 @@ export const CATALOG_BUCKET = "inventario-productos";
 const T_PRODUCTOS = "dulabs_inventario_productos";
 const T_CATEGORIAS = "dulabs_catalogo_categorias";
 const T_MEDIA = "dulabs_catalogo_media";
+const T_PUBLICACION = "dulabs_catalogo_publicacion";
+const PUBLICATION_COLUMNS = "id_tenant, slug, nombre_publico, publicado, token_mayor";
+
+interface PublicationRow {
+  id_tenant: string;
+  slug: string;
+  nombre_publico: string;
+  publicado: boolean;
+  token_mayor: string;
+}
+
+function mapPublication(row: PublicationRow): CatalogPublication {
+  return { slug: row.slug, publicName: row.nombre_publico, published: row.publicado, wholesaleToken: row.token_mayor };
+}
 
 const PRODUCT_COLUMNS =
   "id, referencia, nombre, descripcion, precio, precio_mayor, material, color, categoria, categoria_id, activo, controla_stock, foto_url, created_at, updated_at";
@@ -383,6 +410,57 @@ export function createSupabaseCatalogRepository(supabase: SupabaseClient): Catal
       }
       return data ? mapMedia(data as MediaRow) : null;
     },
+
+    async getPublication(tenantId) {
+      const { data, error } = await supabase.from(T_PUBLICACION).select(PUBLICATION_COLUMNS).eq("id_tenant", tenantId).maybeSingle();
+      if (error) fail("getPublication", error);
+      return data ? mapPublication(data as PublicationRow) : null;
+    },
+
+    async getPublicationBySlug(slug) {
+      const { data, error } = await supabase.from(T_PUBLICACION).select(PUBLICATION_COLUMNS).eq("slug", slug).maybeSingle();
+      if (error) fail("getPublicationBySlug", error);
+      if (!data) return null;
+      const row = data as PublicationRow;
+      return { ...mapPublication(row), tenantId: row.id_tenant };
+    },
+
+    async insertPublication(tenantId, slug, publicName) {
+      // token_mayor lo genera la BD (default aleatorio de 64 hex).
+      const { data, error } = await supabase
+        .from(T_PUBLICACION)
+        .insert({ id_tenant: tenantId, slug, nombre_publico: publicName })
+        .select(PUBLICATION_COLUMNS)
+        .single();
+      if (error || !data) fail("insertPublication", error ?? { message: "sin fila" });
+      return mapPublication(data as PublicationRow);
+    },
+
+    async updatePublicationToken(tenantId, token) {
+      const { data, error } = await supabase
+        .from(T_PUBLICACION)
+        .update({ token_mayor: token, updated_at: new Date().toISOString() })
+        .eq("id_tenant", tenantId)
+        .select(PUBLICATION_COLUMNS)
+        .maybeSingle();
+      if (error) fail("updatePublicationToken", error);
+      return data ? mapPublication(data as PublicationRow) : null;
+    },
+
+    async getBusinessProfile(tenantId) {
+      const { data, error } = await supabase
+        .from("dulabs_clientes_config")
+        .select("nombre_negocio, telefono_negocio")
+        .eq("id_tenant", tenantId)
+        .order("updated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (error) fail("getBusinessProfile", error);
+      const row = data as { nombre_negocio: string | null; telefono_negocio: string | null } | null;
+      return { name: row?.nombre_negocio ?? null, whatsapp: row?.telefono_negocio ?? null };
+    },
+
+    isModuleEnabled: (tenantId) => moduloHabilitado(supabase, tenantId, "catalogo"),
 
     async createSignedUpload(path) {
       // upsert false: una ruta emitida no puede sobrescribir un objeto existente.
