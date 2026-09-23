@@ -1332,6 +1332,33 @@ body {
   .home-scope .home-hero-indicador:first-child .home-hero-punto { background: #eaf2ff; box-shadow: 0 0 10px 1px rgba(49, 92, 255, 0.9); }
 }
 
+/* ---------- Catálogo (dashboard): microinteracciones sutiles ---------- */
+
+@keyframes catalogo-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes catalogo-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+  100% {
+    transform: none;
+  }
+}
+
 /* ---------- Home · sistema de secciones (una sola experiencia con el hero) ----------
    Mismo lenguaje en todos los bloques: negro, blanco, grises, líneas finas de 1 px y mucho aire. El color es una SEÑAL, no decoración:
    --home-azul / --home-azul-claro / --home-violeta (la paleta de la aurora) marcan lo activo o lo que "pasa por el sistema"; --home-verde

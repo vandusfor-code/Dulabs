@@ -1,5 +1,174 @@
 # Pasos manuales pendientes en producción
 
+## ✅ APLICADA (23-sep-2026) — Catálogo DuLabs, Fase 1 (módulo Catálogo, cliente inicial Delacour & Orus)
+
+Las migraciones `20261105000000_dulabs_catalogo_fase1.sql` y
+`20261106000000_dulabs_catalogo_publicacion.sql` **ya se corrieron en
+producción**, junto con los pasos 3 (módulo `catalogo` habilitado para
+Delacour) y 4 (publicación `slug = delacour`). Verificación posterior:
+
+- Estructura 9/9 OK: `dulabs_tenant_modulos`, `dulabs_catalogo_categorias`,
+  `dulabs_catalogo_secuencias`, `dulabs_catalogo_eventos`,
+  `dulabs_catalogo_media`, `dulabs_catalogo_publicacion`, las 9 columnas
+  nuevas de `dulabs_inventario_productos`, sus 3 triggers y las 2 RPC de media.
+- Datos: 4 productos, 4 con referencia (backfill completo), 0 eventos de
+  auditoría, módulo de Delacour `habilitado = true`, publicación
+  `delacour` con `publicado = true`.
+
+No hay nada pendiente en la base de datos para esta fase. Se conservan
+abajo los pasos (referencia histórica), el rollback y la deuda técnica.
+
+**Qué hace (100 % aditiva):** evoluciona `dulabs_inventario_productos` (la
+fuente de verdad que ya usan AMORE, el Business Agent y la cotización del
+agente) con columnas nuevas nullable/default (`referencia`, `precio_mayor`,
+`material`, `color`, `categoria_id`, `controla_stock` default `true`,
+`created_by`, `updated_by`, `escritura_id`), crea
+`dulabs_tenant_modulos`, `dulabs_catalogo_categorias`,
+`dulabs_catalogo_media`, `dulabs_catalogo_secuencias`,
+`dulabs_catalogo_eventos`, y triggers de referencia automática (segura
+ante concurrencia), inmutabilidad de referencia y auditoría append-only.
+No renombra, elimina ni cambia el tipo de ninguna columna existente. Los
+productos existentes reciben su referencia (`DL-000001`, … por tenant, en
+orden de creación) y conservan `controla_stock = true` (mismo
+comportamiento de stock que hoy).
+
+**Riesgo operativo (bajo):** es una sola transacción; mientras corre, el
+primer `ALTER TABLE` bloquea `dulabs_inventario_productos` (lecturas y
+escrituras de AMORE/Business Agent esperan, con el volumen actual son
+milisegundos). Si algo falla, se revierte todo (no queda estado a medias).
+Validada contra PostgreSQL 16 local con el esquema real de AMORE (productos
++ ventas): ver `supabase/tests/20261105000000_dulabs_catalogo_fase1.test.sql`.
+
+1. **Antes** (SQL Editor, solo lectura) — confirmar el punto de partida:
+   ```sql
+   select column_name from information_schema.columns
+   where table_schema = 'public' and table_name = 'dulabs_inventario_productos'
+   order by ordinal_position;
+   -- Esperado: id, id_tenant, nombre, descripcion, precio, stock, categoria,
+   -- foto_url, activo, created_at, updated_at (sin 'referencia').
+   select id_tenant, count(*) from public.dulabs_inventario_productos group by 1;
+   ```
+2. Correr el archivo completo `20261105000000_dulabs_catalogo_fase1.sql`.
+3. Habilitar el módulo para Delacour & Orus (dato, no código — el módulo se
+   habilita por tenant, nunca por nombre en el código):
+   ```sql
+   insert into public.dulabs_tenant_modulos (id_tenant, modulo, habilitado)
+   values ('0d3ae22d-0c38-4fd6-ba48-fb9e29b7cdb4', 'catalogo', true)
+   on conflict (id_tenant, modulo) do update set habilitado = true, updated_at = now();
+   ```
+4. Correr `20261106000000_dulabs_catalogo_publicacion.sql` (links públicos del
+   catálogo: detal y mayor) y crear el link de Delacour con su nombre público:
+   ```sql
+   insert into public.dulabs_catalogo_publicacion (id_tenant, slug, nombre_publico)
+   values ('0d3ae22d-0c38-4fd6-ba48-fb9e29b7cdb4', 'delacour', 'Delacour & Orus Joyería')
+   on conflict (id_tenant) do nothing;
+   ```
+   Detal: `https://www.dulabs.co/catalogo/delacour`. Mayor: el link con token
+   secreto aparece en el dashboard (Catálogo → Links del catálogo), solo para
+   administradores. Si no se inserta, el dashboard lo crea solo la primera vez
+   que un admin abre el Catálogo (slug derivado del nombre del negocio).
+5. **Después** — verificar:
+   ```sql
+   select id_tenant, count(*) as productos, count(referencia) as con_referencia,
+          count(*) filter (where controla_stock) as controla_stock
+   from public.dulabs_inventario_productos group by 1;   -- con_referencia = productos = controla_stock
+   select * from public.dulabs_catalogo_secuencias;       -- ultimo_numero = productos por tenant
+   select count(*) from public.dulabs_catalogo_eventos;   -- 0 (el backfill no genera eventos)
+   ```
+6. **Rollback / mitigación** (de menor a mayor; usar el nivel más bajo que
+   resuelva el problema). Probado de punta a punta en PostgreSQL 16 local con el
+   esquema de AMORE: tras el nivel 3 la tabla vuelve EXACTAMENTE a sus 11
+   columnas e índices originales, conserva todos los productos y ventas, AMORE
+   inserta y vende normalmente, y las dos migraciones se pueden volver a correr.
+   Un error a mitad revierte la transacción completa (no queda estado a medias).
+
+   **Nivel 1 — apagar sin tocar el esquema** (inmediato, reversible):
+   ```sql
+   update public.dulabs_catalogo_publicacion set publicado = false, updated_at = now()
+   where id_tenant = '0d3ae22d-0c38-4fd6-ba48-fb9e29b7cdb4';        -- links públicos (y fotos) => 404
+   update public.dulabs_tenant_modulos set habilitado = false, updated_at = now()
+   where id_tenant = '0d3ae22d-0c38-4fd6-ba48-fb9e29b7cdb4' and modulo = 'catalogo';  -- oculta el módulo
+   ```
+   **Nivel 2 — neutralizar la BD sin borrar datos** (si un trigger afectara las
+   escrituras de AMORE / Business Agent; aplicar junto con el nivel 1). Los productos nuevos quedan con
+   `referencia` NULL; volver a correr la migración fase 1 les asigna la suya
+   (verificado):
+   ```sql
+   begin;
+   drop trigger if exists dulabs_catalogo_asignar_referencia on public.dulabs_inventario_productos;
+   drop trigger if exists dulabs_catalogo_proteger_producto on public.dulabs_inventario_productos;
+   drop trigger if exists dulabs_catalogo_auditar_producto on public.dulabs_inventario_productos;
+   alter table public.dulabs_inventario_productos alter column referencia drop not null;
+   commit;
+   ```
+   **Nivel 3 — rollback completo** (⚠️ BORRA los datos del Catálogo:
+   categorías, fotos registradas, auditoría, links, referencias y precios
+   mayoristas; NUNCA toca productos, stock, fotos legadas ni ventas de AMORE).
+   Solo con aprobación explícita y después de un backup
+   (`create table … as select` de las tablas del catálogo). Los archivos del
+   bucket no se borran:
+   ```sql
+   begin;
+   drop trigger if exists dulabs_catalogo_asignar_referencia on public.dulabs_inventario_productos;
+   drop trigger if exists dulabs_catalogo_proteger_producto on public.dulabs_inventario_productos;
+   drop trigger if exists dulabs_catalogo_auditar_producto on public.dulabs_inventario_productos;
+   drop function if exists public.dulabs_catalogo_adjuntar_media(uuid, uuid, text, text, text, integer, integer, integer, boolean, uuid, text);
+   drop function if exists public.dulabs_catalogo_eliminar_media(uuid, uuid, uuid, text);
+   drop function if exists public.dulabs_catalogo_asignar_referencia();
+   drop function if exists public.dulabs_catalogo_proteger_producto();
+   drop function if exists public.dulabs_catalogo_auditar_producto();
+   drop function if exists public.dulabs_catalogo_formatear_referencia(text, bigint);
+   drop table if exists public.dulabs_catalogo_publicacion;
+   drop table if exists public.dulabs_catalogo_media;
+   drop table if exists public.dulabs_catalogo_eventos;
+   alter table public.dulabs_inventario_productos drop constraint if exists dulabs_inventario_productos_categoria_fk;
+   alter table public.dulabs_inventario_productos drop constraint if exists dulabs_inventario_productos_referencia_formato;
+   drop index if exists public.dulabs_inventario_productos_referencia_uq;
+   drop index if exists public.dulabs_inventario_productos_tenant_created_idx;
+   drop index if exists public.dulabs_inventario_productos_tenant_categoria_idx;
+   alter table public.dulabs_inventario_productos
+     drop column if exists referencia,
+     drop column if exists precio_mayor,
+     drop column if exists material,
+     drop column if exists color,
+     drop column if exists categoria_id,
+     drop column if exists controla_stock,
+     drop column if exists created_by,
+     drop column if exists updated_by,
+     drop column if exists escritura_id;
+   drop table if exists public.dulabs_catalogo_categorias;
+   drop table if exists public.dulabs_catalogo_secuencias;
+   drop table if exists public.dulabs_tenant_modulos;
+   drop function if exists public.dulabs_catalogo_eventos_inmutables();
+   commit;
+   ```
+
+**Deuda técnica / hardening futuro (riesgos conocidos y aceptados en la
+Fase 1; NO se resuelven ahora):**
+
+- **Caché de fotos de productos desactivados (hasta ~1 día).** Las fotos
+  públicas (`/catalogo/{slug}/productos/{referencia}/{main|thumb}.webp`)
+  llevan `s-maxage=86400, stale-while-revalidate=604800`. Al desactivar un
+  producto sale de la vitrina al instante, pero su foto puede seguir
+  respondiendo por URL directa hasta que venza la copia del CDN (~1 día,
+  más una revalidación). Opciones futuras: bajar `s-maxage` o purgar el CDN
+  al desactivar.
+- **Bucket `inventario-productos` público (heredado de AMORE).** El
+  catálogo público ya no publica rutas de Storage, pero quien conozca una
+  ruta completa (`{tenant}/{producto}/{archivo}`) puede abrir la foto
+  directo en Supabase. Hacer el bucket privado hoy rompería la tienda de
+  AMORE, el inventario y el envío de fotos del Business Agent (usan
+  `foto_url` directa). Requiere migrar esos consumidores primero.
+- **Código del link mayorista.** Va en la ruta
+  (`/catalogo/{slug}/mayor/{código}`), así que aparece en los logs de
+  peticiones de Vercel y en el historial del navegador de quien lo abre. Se
+  guarda en texto plano en `dulabs_catalogo_publicacion.token_mayor` porque
+  el administrador necesita verlo y copiarlo. Mitigación actual: 244–256
+  bits de entropía, comparación en tiempo constante, `referrer: no-referrer`
+  y regeneración inmediata desde el dashboard. Opciones futuras: guardar
+  solo un hash (mostrando el código una sola vez al generarlo) y/o expirar
+  links.
+
 ## PENDIENTE — DuLabs Developer V1, GitHub Integration (Fase 1)
 
 La migración `20261104000000_dulabs_developer_v1_github_integration.sql`

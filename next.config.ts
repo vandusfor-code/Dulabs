@@ -22,6 +22,15 @@ const nextConfig: NextConfig = {
   },
   async headers() {
     return [
+      // Catálogos públicos (/catalogo/{slug} y /catalogo/{slug}/mayor/{token}):
+      // noindex también como header HTTP, además del <meta name="robots"> de
+      // app/catalogo/layout.tsx. Cubre fotos y respuestas 404. robots.txt NO
+      // los bloquea a propósito: un Disallow impediría que el buscador lea el
+      // noindex y podría listar la URL igual si alguien la enlaza.
+      {
+        source: "/catalogo/:path*",
+        headers: [{ key: "X-Robots-Tag", value: "noindex, nofollow" }],
+      },
       {
         source: "/:path*",
         headers: [

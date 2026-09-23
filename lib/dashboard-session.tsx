@@ -11,6 +11,7 @@ import {
 import { useRouter } from "next/navigation";
 import type { Session } from "@supabase/supabase-js";
 import { supabaseBrowser } from "@/lib/supabase-browser";
+import { esModuloId, type ModuloId } from "@/lib/tenant-modulos";
 import type { Rol } from "@/lib/team";
 
 export type Negocio = {
@@ -70,6 +71,8 @@ type DashboardContextValue = {
   puedeUsarDumo: boolean;
   /** Solo para mostrar/ocultar el link del Panel de Operaciones -- la autorización real vive en el backend. */
   esAdminDulabs: boolean;
+  /** Módulos habilitados para el tenant (ej. "catalogo") -- solo para mostrar/ocultar el nav; la autorización real vive en el backend. */
+  modulos: ModuloId[];
   cargarNegocios: () => Promise<void>;
   /** phone_number_id elegido en el selector de número del Topbar. */
   numeroActivoId: string | null;
@@ -93,6 +96,7 @@ export function DashboardSessionProvider({ children }: { children: ReactNode }) 
   const [miembroId, setMiembroId] = useState<number | null>(null);
   const [puedeUsarDumo, setPuedeUsarDumo] = useState(false);
   const [esAdminDulabs, setEsAdminDulabs] = useState(false);
+  const [modulos, setModulos] = useState<ModuloId[]>([]);
   // Se hidrata una sola vez desde localStorage (lazy initializer, no efecto)
   // — si el número guardado ya no existe (se eliminó, o nunca hubo uno), los
   // consumidores (ver Topbar) ya caen a `negocios[0]` al resolverlo, así que
@@ -130,6 +134,7 @@ export function DashboardSessionProvider({ children }: { children: ReactNode }) 
       setMiembroId(data.miembro_id ?? null);
       setPuedeUsarDumo(Boolean(data.puede_usar_dumo));
       setEsAdminDulabs(Boolean(data.es_admin_dulabs));
+      setModulos(Array.isArray(data.modulos) ? data.modulos.filter(esModuloId) : []);
     } catch (err) {
       setErrorNegocios(err instanceof Error ? err.message : String(err));
     }
@@ -188,6 +193,7 @@ export function DashboardSessionProvider({ children }: { children: ReactNode }) 
         miembroId,
         puedeUsarDumo,
         esAdminDulabs,
+        modulos,
         cargarNegocios: () => cargarNegocios(),
         numeroActivoId,
         seleccionarNumero,

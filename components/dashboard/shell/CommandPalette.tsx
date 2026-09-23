@@ -3,11 +3,10 @@
 import { useCallback, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Search, CornerDownLeft } from "lucide-react";
-import { navSections } from "./nav";
+import { navItemVisible, navSections } from "./nav";
 import { useDashboard } from "@/lib/dashboard-session";
 import { formatearTelefono } from "@/lib/format";
 import { useI18n } from "@/lib/i18n";
-import type { Rol } from "@/lib/team";
 
 type Comando = {
   id: string;
@@ -25,15 +24,14 @@ type Comando = {
 // reseteen estado (que provocan renders en cascada).
 export function CommandPalette({ onCerrar }: { onCerrar: () => void }) {
   const router = useRouter();
-  const { negocios, rol, seleccionarNumero } = useDashboard();
+  const { negocios, rol, modulos, seleccionarNumero } = useDashboard();
   const { t, lang } = useI18n();
   const [consulta, setConsulta] = useState("");
   const [indice, setIndice] = useState(0);
 
   const comandos: Comando[] = useMemo(() => {
-    const puedeVer = (roles?: Rol[]) => !roles || (rol !== null && roles.includes(rol));
     const paginas: Comando[] = navSections.flatMap((seccion) =>
-      seccion.items.filter((i) => puedeVer(i.rolesPermitidos)).map((i) => ({
+      seccion.items.filter((i) => navItemVisible(i, rol, modulos)).map((i) => ({
         id: `nav:${i.href}`,
         etiqueta: lang === "en" ? i.labelEn : i.label,
         contexto: lang === "en" ? seccion.titleEn : seccion.title,
@@ -47,7 +45,7 @@ export function CommandPalette({ onCerrar }: { onCerrar: () => void }) {
       href: "/dashboard/conexion",
     }));
     return [...paginas, ...numeros];
-  }, [negocios, rol, lang, t]);
+  }, [negocios, rol, modulos, lang, t]);
 
   const resultados = useMemo(() => {
     const q = consulta.trim().toLowerCase();

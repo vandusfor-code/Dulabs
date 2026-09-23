@@ -13,9 +13,11 @@ import {
   ShieldCheck,
   Workflow,
   Sparkles,
+  Package,
   type LucideIcon,
 } from "lucide-react";
 import type { Rol } from "@/lib/team";
+import type { ModuloId } from "@/lib/tenant-modulos";
 
 export type NavItem = {
   label: string;
@@ -23,7 +25,16 @@ export type NavItem = {
   href: string;
   icon: LucideIcon;
   rolesPermitidos?: Rol[]; // undefined = visible a todos los roles
+  /** Solo visible si el tenant tiene este módulo habilitado (dulabs_tenant_modulos). undefined = siempre. */
+  modulo?: ModuloId;
 };
+
+/** Visibilidad de un ítem del nav (Sidebar y CommandPalette usan la MISMA regla). Solo presentación: cada endpoint autoriza por su cuenta. */
+export function navItemVisible(item: NavItem, rol: Rol | null, modulos: readonly ModuloId[]): boolean {
+  if (item.rolesPermitidos && !(rol && item.rolesPermitidos.includes(rol))) return false;
+  if (item.modulo && !modulos.includes(item.modulo)) return false;
+  return true;
+}
 
 export type NavSection = {
   title: string;
@@ -61,6 +72,10 @@ export const navSections: NavSection[] = [
         icon: Sparkles,
         rolesPermitidos: ["admin", "agente"],
       },
+      // Catálogo (autorizado) -- fuente de verdad de productos. Visible para
+      // todos los roles del tenant (lectura incluida); solo admin edita
+      // (lo exige el backend, lib/catalogo/auth.ts).
+      { label: "Catálogo", labelEn: "Catalog", href: "/dashboard/catalogo", icon: Package, modulo: "catalogo" },
       { label: "Plantillas", labelEn: "Templates", href: "/dashboard/plantillas", icon: LayoutTemplate },
       { label: "Campañas", labelEn: "Campaigns", href: "/dashboard/campanas", icon: Send },
       { label: "Encuestas", labelEn: "Surveys", href: "/dashboard/surveys", icon: ClipboardList },
