@@ -461,3 +461,4 @@ lib/agente/agente-webhook.test.ts
 lib/agente/agente-flujo-comercial.test.ts
 lib/agente/agente-busqueda.test.ts
 lib/agente/agente-buzon.test.ts
+lib/agente/agente-etapa.test.ts

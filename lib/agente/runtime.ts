@@ -29,6 +29,7 @@ import { HISTORY_MAX_TURNS, HISTORY_WINDOW_MS, buildSystemInstruction, historyTu
 import { MAX_IMAGES_REMEMBERED, MAX_RECENT_WAMIDS, rememberReferences, type ConversationState, type ConversationStateStore } from "@/lib/agente/estado";
 import type { ProductMediaLedger } from "@/lib/agente/medios";
 import { resolveSelection } from "@/lib/agente/seleccion";
+import { STAGE_GUIDANCE, conversationStage, type ConversationStage } from "@/lib/agente/etapa";
 import { agentToolDeclarations, executeAgentTool, toolKind, type AgentToolsDeps, type AgentTurnToolContext, type QueuedImage } from "@/lib/agente/herramientas";
 import type { AgentToolName } from "@/lib/agente/nombres-herramientas";
 
@@ -126,6 +127,8 @@ export interface AgentTurnTrace {
   /** Cómo señaló el cliente el producto en este mensaje (sin texto). */
   selection: Array<{ reference: string; via: string }>;
   clarification_needed: boolean;
+  /** Etapa derivada por el backend al empezar el turno y al terminarlo. */
+  stage: { start: ConversationStage | null; end: ConversationStage | null };
   /** Entrega: wamid del texto y de cada foto (y si la foto quedó registrada para poder citarla). */
   delivery: { text_wamid: string | null; images: Array<{ reference: string; wamid: string | null; recorded: boolean }> };
 }
@@ -197,6 +200,7 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
     reply_to: null,
     selection: [],
     clarification_needed: false,
+    stage: { start: null, end: null },
     delivery: { text_wamid: null, images: [] },
   };
   const finish = (outcome: AgentTurnOutcome, reply: string | null) => {
@@ -274,6 +278,7 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
   const selection = resolveSelection(input.text, state.lastShown, {
     replyReference: replyTo?.kind === "product_image" ? replyTo.reference : null,
     typedReferences: typedRefs,
+    previous: [...state.selection.map((x) => x.reference), ...state.cart.map((c) => c.reference)],
   });
   const designated = new Set([...selection.selected.map((x) => x.reference), ...state.selection.filter((x) => x.turn === state.turn - 1).map((x) => x.reference)]);
   state = { ...state, selection: selection.selected.slice(0, 10).map((x) => ({ ...x, turn: state.turn })) };
@@ -306,6 +311,9 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
     replyTo,
     selection: { selected: selection.selected, needsClarification: trace.clarification_needed && selection.selected.length === 0 },
   };
+  const stage = conversationStage(state, facts);
+  facts.stage = { name: stage, guidance: STAGE_GUIDANCE[stage] };
+  trace.stage.start = stage;
 
   const evidence: Evidence = emptyEvidence();
   addCustomerEvidence(input.text, evidence);
@@ -329,6 +337,7 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
     state,
     pendingChoice: new Set(),
     designated,
+    customerText: input.text,
     images: [],
     handedOff: false,
     newProposal: null,
@@ -492,6 +501,10 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
     }
   }
   trace.order_id = ctx.state.activeOrderId;
+  trace.stage.end = conversationStage(
+    ctx.state,
+    ctx.confirmedOrderId && facts.activeOrder ? { activeOrder: { ...facts.activeOrder, status: "confirmed", next_step: "none" } } : ctx.confirmedOrderId ? { activeOrder: { status: "confirmed", next_step: "none" } as TurnFacts["activeOrder"] } : facts,
+  );
   trace.state_saved = await deps.state.save(key, ctx.state, loaded.version).catch(() => false);
   return finish(outcome, sent ? reply : null);
 }

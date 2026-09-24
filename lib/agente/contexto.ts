@@ -50,6 +50,8 @@ export interface TurnFacts {
   handoffActive: boolean;
   replyTo?: ReplyContext | null;
   selection?: { selected: Array<{ reference: string; via: string }>; needsClarification: boolean };
+  /** Etapa derivada por el backend (lib/agente/etapa.ts) y qué conviene hacer en ella. */
+  stage?: { name: string; guidance: string };
 }
 
 const REPLY_STATUS = { available: "disponible", sold_out: "agotado", unavailable: "ya no está disponible" } as const;
@@ -69,6 +71,8 @@ function businessSection(config: AgentRuntimeConfig): string {
 /** Estado confiable en forma compacta (sin precios guardados: el pedido activo trae los del backend). */
 export function stateSection(state: ConversationState, facts: TurnFacts): string {
   const data = {
+    etapa: facts.stage?.name ?? null,
+    que_hacer_ahora: facts.stage?.guidance ?? null,
     canal: facts.channel === "wholesale" ? "mayorista" : "detal",
     cliente: facts.customerName ? { nombre: facts.customerName } : null,
     carrito: state.cart,
