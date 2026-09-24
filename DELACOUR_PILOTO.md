@@ -243,6 +243,10 @@ No hubo migraciones.
 
 ## Qué hace
 
+- **Saludo**: el primer mensaje a un contacto nuevo es un saludo aparte. Por defecto es
+  "¡Hola! 💖 Te damos la bienvenida 💍", y cada negocio puede poner el suyo en `negocio.saludo`
+  (ver "Activación", paso 5). Si hay que volver a preguntar, el saludo no se repite. Las flechas de
+  los botones las dibuja WhatsApp y la API de Meta no permite quitarlas.
 - **Contacto nuevo** → el agente pregunta, con mensaje fijo y botones y **sin llamar a Gemini**:
   "¿Tu compra es al detal o al por mayor?" con los botones [Comprar al detal] y
   [Comprar al por mayor]. Si responde otra cosa, se le vuelve a preguntar. Antes de elegir no ve
@@ -315,6 +319,14 @@ No hubo migraciones.
    select created_at, canal_anterior, canal_nuevo, origen, miembro_id, motivo
      from dulabs_catalogo_clientes_canal_eventos
     where id_tenant = '0d3ae22d-0c38-4fd6-ba48-fb9e29b7cdb4' order by created_at desc limit 50;
+   ```
+
+5. Saludo propio de Delacour (opcional; **solo después** de que esté desplegado el código que lo
+   admite, porque un campo desconocido en `negocio` invalida la configuración):
+   ```sql
+   update dulabs_agente_runtime_config
+      set negocio = negocio || '{"saludo": "¡Hola! 💖 Bienvenid@ a Delacour Joyería 💍"}'::jsonb
+    where phone_number_id = '1428584886997210';
    ```
 
 ## Pruebas

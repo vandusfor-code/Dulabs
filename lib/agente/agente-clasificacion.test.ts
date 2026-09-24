@@ -25,7 +25,7 @@ import type { AgentToolsDeps } from "@/lib/agente/herramientas";
 import { AGENT_TOOL_NAMES } from "@/lib/agente/nombres-herramientas";
 import { FALLBACK_MESSAGES, runAgentTurn, type AgentTurnTrace } from "@/lib/agente/runtime";
 import { sanitizeTurnTrace } from "@/lib/agente/trazas";
-import { CHANNEL_QUESTION, CLASSIFICATION_MESSAGES, createMemoryCustomerChannelStore, parseChannelChoice } from "@/lib/agente/clasificacion";
+import { CHANNEL_QUESTION, CLASSIFICATION_MESSAGES, DEFAULT_WELCOME, createMemoryCustomerChannelStore, parseChannelChoice } from "@/lib/agente/clasificacion";
 
 const A: CatalogActor = { tenantId: "aaaaaaaa-0000-4000-8000-00000000000a", userId: "admin-a" };
 const B: CatalogActor = { tenantId: "bbbbbbbb-0000-4000-8000-00000000000b", userId: "admin-b" };
@@ -211,6 +211,7 @@ describe("B25 · A–B clasificación de un contacto nuevo", () => {
     assert.equal(r0.outcome, "replied");
     assert.equal(r0.provider.requests.length, 0, "no se llama al modelo antes de clasificar");
     assert.deepEqual(buttons, [{ body: CHANNEL_QUESTION.body, ids: ["canal_detal", "canal_mayor"] }]);
+    assert.deepEqual(sent, [DEFAULT_WELCOME, CHANNEL_QUESTION.body], "saludo en un mensaje y, aparte, la pregunta con botones");
     assert.deepEqual(r0.trace.classification, { action: "asked", channel: null, origin: null });
     assert.equal(await canales.get(KEY_A), null, "preguntar no clasifica");
 
@@ -241,11 +242,17 @@ describe("B25 · A–B clasificación de un contacto nuevo", () => {
     assert.ok(link.url.includes(wholesaleToken), "enlace mayorista firmado");
   });
 
-  it("si responde otra cosa, se le vuelve a preguntar; si los botones fallan, la pregunta sale en texto", async () => {
+  it("saludo del negocio (negocio.saludo) antes de la pregunta", async () => {
+    await turno([], "hola", { config: cfg({ negocio: { nombre_agente: "Sofía", saludo: "¡Hola! 💖 Bienvenid@ a Joyería Ficticia 💍" } }) });
+    assert.deepEqual(sent, ["¡Hola! 💖 Bienvenid@ a Joyería Ficticia 💍", CHANNEL_QUESTION.body]);
+  });
+
+  it("si responde otra cosa, se le vuelve a preguntar (sin repetir el saludo); si los botones fallan, la pregunta sale en texto", async () => {
     await turno([], "hola");
     const r = await turno([], "¿tienen anillos?");
     assert.equal(r.provider.requests.length, 0);
     assert.equal(buttons.length, 2);
+    assert.deepEqual(sent, [DEFAULT_WELCOME, CHANNEL_QUESTION.body, CHANNEL_QUESTION.body], "el saludo solo va en el primer mensaje");
     buttonsFail = true;
     const r2 = await turno([], "?");
     assert.equal(r2.reply, CHANNEL_QUESTION.textFallback);

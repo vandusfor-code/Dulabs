@@ -24,6 +24,8 @@ export const businessConfigSchema = z
     presentacion: z.string().trim().max(300).optional(),
     tono: z.string().trim().max(200).optional(),
     politicas: z.array(z.string().trim().min(1).max(300)).max(12).optional(),
+    /** Bloque 25: saludo del primer contacto (antes de la pregunta detal / por mayor). Texto fijo, sin IA. */
+    saludo: z.string().trim().min(1).max(300).optional(),
   })
   .strict();
 
