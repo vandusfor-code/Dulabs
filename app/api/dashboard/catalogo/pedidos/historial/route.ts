@@ -7,9 +7,12 @@ import type { NextRequest } from "next/server";
 import { withCatalog } from "@/lib/catalogo/http";
 import { listarHistorial } from "@/lib/catalogo/pedidos/panel";
 import { productionOrderEngine } from "@/lib/catalogo/pedidos/produccion";
+import { productionPanelFuentes } from "@/lib/catalogo/pedidos/panel-fuentes";
 
 export const runtime = "nodejs";
 
 export async function GET(request: NextRequest) {
-  return withCatalog(request, "read", async ({ supabase, actor }) => listarHistorial(productionOrderEngine(supabase), actor.tenantId, request.nextUrl.searchParams));
+  return withCatalog(request, "read", async ({ supabase, actor, canManageOrders }) =>
+    listarHistorial(productionOrderEngine(supabase), actor.tenantId, request.nextUrl.searchParams, { fuentes: productionPanelFuentes(supabase), verTelefono: canManageOrders }),
+  );
 }

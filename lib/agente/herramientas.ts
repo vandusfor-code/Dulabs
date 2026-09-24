@@ -141,6 +141,19 @@ async function catalog(name: Parameters<typeof runAgentTool>[0], input: unknown,
   return r.ok ? { ok: true, data: r.data as Record<string, unknown> } : { ok: false, error: r.error };
 }
 
+/**
+ * Bloque 25: con canal POR CONTACTO, un pedido de la OTRA modalidad (p. ej. una solicitud de la
+ * tienda mayorista de un cliente al detal) no se valida ni se confirma desde el chat: lo revisa una
+ * asesora. null = se puede seguir.
+ */
+async function otherChannelOrder(ctx: AgentTurnToolContext, deps: AgentToolsDeps, orderId: string): Promise<AgentToolOutcome | null> {
+  if (ctx.state.channel?.source !== "customer_classification") return null;
+  const o = await catalog("get_order", { order_id: orderId }, ctx, deps);
+  if (!o.ok) return o;
+  if (o.data.channel === ctx.channel) return null;
+  return fail("FORBIDDEN", "Ese pedido es de otra modalidad de compra (detal / por mayor) y el cliente está registrado en la suya. No lo valides ni lo confirmes: ofrece una asesora.", { reason: "channel_mismatch" });
+}
+
 type ProductView = { reference: string; name: string; description: string | null; category: string | null; material: string | null; color: string | null; unit_price: number | null; currency: string; availability: string; max_quantity: number | null };
 
 const compact = (p: ProductView) => ({ ...p, description: p.description ? p.description.slice(0, 200) : null });
@@ -471,6 +484,8 @@ export const AGENT_TOOLS = {
     async run(ctx, input, deps) {
       const id = input.order_id ?? ctx.state.activeOrderId;
       if (!id) return fail("NOT_FOUND", "No hay un pedido activo en esta conversación.");
+      const locked = await otherChannelOrder(ctx, deps, id);
+      if (locked) return locked;
       const r = await catalog("validate_order", { order_id: id }, ctx, deps);
       if (!r.ok) return r;
       const confirmation = r.data.confirmation as { id: string; total: number } | null;
@@ -491,6 +506,8 @@ export const AGENT_TOOLS = {
     input: z.object({ order_id: orderId, confirmation_id: z.string().regex(/^cf_[0-9a-z]{16}$/) }).strict(),
     kind: "write",
     async run(ctx, input, deps) {
+      const locked = await otherChannelOrder(ctx, deps, input.order_id);
+      if (locked) return locked;
       const p = ctx.state.proposal;
       if (!p || p.orderId !== input.order_id || p.confirmationId !== input.confirmation_id || p.presentedTurn === null || p.presentedTurn >= ctx.turn) {
         return fail("CONFIRMATION_NOT_PRESENTED", "Primero muéstrale al cliente la propuesta vigente (productos y total) y espera su aceptación.");

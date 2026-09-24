@@ -12,7 +12,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { apiError } from "@/lib/agent-compiler/api/http";
 import { respuestaSiLimiteTasaExcedido } from "@/lib/rate-limit";
-import { CATALOG_WRITE_ROLES, requireCatalogo, type CatalogAccessMode } from "@/lib/catalogo/auth";
+import { CATALOG_ORDER_ROLES, CATALOG_WRITE_ROLES, requireCatalogo, type CatalogAccessMode } from "@/lib/catalogo/auth";
 import { firstIssueMessage } from "@/lib/catalogo/domain";
 import { isCatalogError } from "@/lib/catalogo/errors";
 import { createSupabaseCatalogRepository, type CatalogRepository } from "@/lib/catalogo/repository";
@@ -25,6 +25,10 @@ export interface CatalogHandlerContext {
   actor: CatalogActor;
   /** Rol con permiso de escritura (admin). Ya validado por el backend. */
   canWrite: boolean;
+  /** Rol que atiende pedidos (admin / agente): ve el teléfono del cliente y puede actuar. Ya validado por el backend. */
+  canManageOrders: boolean;
+  /** Miembro del equipo de la sesión (para registrar quién hizo un cambio). */
+  memberId: number;
   /** Cliente del backend (service_role) de la sesión ya autorizada: para casos de uso fuera del CatalogService (pedidos). */
   supabase: SupabaseClient;
 }
@@ -50,7 +54,7 @@ export async function withCatalog(
   const repo = createSupabaseCatalogRepository(supabase);
   const service = createCatalogService({ repo });
   try {
-    return await handler({ service, repo, actor, canWrite: CATALOG_WRITE_ROLES.includes(member.rol), supabase });
+    return await handler({ service, repo, actor, canWrite: CATALOG_WRITE_ROLES.includes(member.rol), canManageOrders: CATALOG_ORDER_ROLES.includes(member.rol), memberId: member.miembroId, supabase });
   } catch (err) {
     return catalogErrorResponse(err);
   }

@@ -31,7 +31,7 @@ export const conversationStateSchema = z
     /** Turnos atendidos por el agente (el actual incluido). */
     turn: z.number().int().min(0),
     /** Canal de precios fijado por el backend y de dónde salió. */
-    channel: z.object({ value: z.enum(["retail", "wholesale"]), source: z.enum(["number_config", "catalog_request"]) }).strict().nullable(),
+    channel: z.object({ value: z.enum(["retail", "wholesale"]), source: z.enum(["number_config", "catalog_request", "customer_classification"]) }).strict().nullable(),
     cart: z
       .array(z.object({ reference, quantity: z.number().int().min(1).max(ORDER_MAX_QUANTITY) }).strict())
       .max(MAX_CART_LINES),

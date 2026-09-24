@@ -44,7 +44,7 @@ export type ReplyContext =
 
 export interface TurnFacts {
   channel: OrderChannel;
-  channelSource: "number_config" | "catalog_request";
+  channelSource: "number_config" | "catalog_request" | "customer_classification";
   customerName: string | null;
   activeOrder: (OrderPublicView & { next_step: string }) | null;
   handoffActive: boolean;

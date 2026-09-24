@@ -55,6 +55,11 @@ export interface AgentRuntimeConfig {
   channel: OrderChannel;
   business: BusinessConfig;
   limits: AgentLimitsConfig;
+  /**
+   * Bloque 25 (columna clasificacion_cliente): true => cada contacto elige detal o por mayor y ese
+   * canal (dulabs_catalogo_clientes_canal) reemplaza a `channel`. Ausente/false => como antes.
+   */
+  classifyCustomers?: boolean;
 }
 
 export type AgentConfigInvalidReason =
@@ -87,6 +92,8 @@ const rowSchema = z.object({
   negocio: z.unknown(),
   /** Bloque 14: puede faltar (fila leída antes de la migración de límites). */
   limites: z.unknown().optional(),
+  /** Bloque 25: puede faltar (fila leída antes de la migración de clasificación). */
+  clasificacion_cliente: z.boolean().optional(),
 });
 
 export type AgentConfigRow = z.input<typeof rowSchema>;
@@ -127,6 +134,7 @@ export function parseAgentConfig(raw: unknown, expected: { tenantId: string; pho
       channel: r.canal,
       business: business.data,
       limits: limits.data,
+      classifyCustomers: r.clasificacion_cliente === true,
     },
   };
 }
@@ -154,11 +162,14 @@ const MISSING_SCHEMA = new Set(["42P01", "42703", "PGRST204", "PGRST205"]);
 export function createSupabaseAgentConfigStore(supabase: SupabaseClient): AgentConfigStore {
   return {
     async getByPhoneNumber(phoneNumberId) {
-      let { data, error } = await supabase.from("dulabs_agente_runtime_config").select(`${COLUMNS}, limites`).eq("phone_number_id", phoneNumberId).maybeSingle();
-      // Sin la migración de límites (columna inexistente): se lee sin ella y aplican los topes por defecto.
-      // Nunca se trata como "sin agente": eso haría caer el número a otro bot.
-      if (error && (error.code === "42703" || error.code === "PGRST204")) {
-        ({ data, error } = await supabase.from("dulabs_agente_runtime_config").select(COLUMNS).eq("phone_number_id", phoneNumberId).maybeSingle());
+      // Columnas agregadas por migraciones posteriores (clasificación, límites): si la migración aún
+      // no está, se lee sin ellas (por defecto: sin clasificación, topes por defecto). Nunca se trata
+      // como "sin agente": eso haría caer el número a otro bot.
+      let data: unknown = null;
+      let error: { code?: string } | null = null;
+      for (const extra of [", limites, clasificacion_cliente", ", limites", ""]) {
+        ({ data, error } = await supabase.from("dulabs_agente_runtime_config").select(`${COLUMNS}${extra}`).eq("phone_number_id", phoneNumberId).maybeSingle());
+        if (!error || (error.code !== "42703" && error.code !== "PGRST204")) break;
       }
       if (error) {
         // Sin la migración: no hay agentes configurados (todo sigue como antes).

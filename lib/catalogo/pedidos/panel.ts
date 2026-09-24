@@ -8,6 +8,7 @@ import { apiError, apiOk } from "@/lib/agent-compiler/api/http";
 import type { Order } from "@/lib/catalogo/pedidos/contrato";
 import { CLOSED_STATUSES, OrderError, type ClosedStatus, type OrderEngine } from "@/lib/catalogo/pedidos/motor";
 import type { OrderCursor, ReservationSummary } from "@/lib/catalogo/pedidos/repositorio";
+import type { CustomerChannel, CustomerChannelOrigin } from "@/lib/agente/clasificacion";
 
 export const PEDIDO_PUBLICO = /^DL-ORD-[0-9A-HJKMNP-TV-Z]{6}$/;
 
@@ -17,7 +18,7 @@ export interface PedidoPanel {
   canal: Order["channel"];
   origen: Order["source"];
   cliente: string | null;
-  lineas: Array<{ referencia: string; nombre: string; cantidad: number; precio_unitario: number | null; subtotal: number | null }>;
+  lineas: Array<{ referencia: string; nombre: string; cantidad: number; precio_unitario: number | null; subtotal: number | null; foto?: string | null }>;
   unidades: number;
   total: number;
   sin_precio: number;
@@ -25,6 +26,116 @@ export interface PedidoPanel {
   stock: { estado: "apartado" | "sin_reserva"; unidades: number; vence: string | null };
   creado: string;
   actualizado: string;
+  // --- Bloque 25 (solo con PanelExtras; ver enriquecerPedidos) ---
+  contacto?: PedidoContacto | null;
+  /** Cuándo el cliente confirmó (evento del motor). */
+  confirmado?: string | null;
+  /** Vence la reserva (confirmado) o la propuesta (esperando confirmación). */
+  vence?: string | null;
+  asesora?: PedidoAsesora | null;
+}
+
+/** Bloque 25 — el cliente del pedido, tal como lo ve la asesora. */
+export interface PedidoContacto {
+  /** Número del negocio que atendió (para abrir el chat en el Inbox). */
+  numero: string;
+  /** Teléfono completo: SOLO para quien puede atender (admin / agente). */
+  telefono: string | null;
+  /** Últimos 4 dígitos (para cualquiera con acceso al catálogo). */
+  telefono_parcial: string;
+  nombre: string | null;
+  /** Modalidad del contacto (detal / mayorista). null = sin clasificar. */
+  tipo: Order["channel"] | null;
+  tipo_origen: CustomerChannelOrigin | null;
+  tipo_desde: string | null;
+}
+
+export interface PedidoAsesora {
+  /** Motivo del traspaso (el que registró el motor). */
+  motivo: string | null;
+  pedida_por: "system" | "agent" | "human" | null;
+  desde: string | null;
+  /** Persona del equipo que tiene asignada la conversación (Inbox). */
+  asignada: string | null;
+}
+
+/**
+ * Fuentes del enriquecimiento (inyectables; en producción, panel-fuentes.ts). Cada una puede fallar
+ * sin romper el panel: lo que no se pudo leer queda en null.
+ */
+export interface PanelFuentes {
+  /** clave `${phoneNumberId}|${waId}` -> nombre conocido. */
+  nombres(tenantId: string, contactos: ReadonlyArray<{ phoneNumberId: string; waId: string }>): Promise<Map<string, string>>;
+  canales(tenantId: string, contactos: ReadonlyArray<{ phoneNumberId: string; waId: string }>): Promise<Map<string, CustomerChannel>>;
+  /** id INTERNO del pedido -> cuándo pasó a confirmado. */
+  confirmados(tenantId: string, orderIds: readonly string[]): Promise<Map<string, string>>;
+  /** clave `${phoneNumberId}|${waId}` -> nombre (o correo) de la persona asignada. */
+  asignadas(tenantId: string, contactos: ReadonlyArray<{ phoneNumberId: string; waId: string }>): Promise<Map<string, string>>;
+  /** referencia -> miniatura del producto. */
+  fotos(tenantId: string, references: readonly string[]): Promise<Map<string, string | null>>;
+}
+
+export interface PanelExtras {
+  fuentes: PanelFuentes;
+  /** Rol que atiende (admin / agente): ve el teléfono completo. */
+  verTelefono: boolean;
+}
+
+const claveContacto = (c: { phoneNumberId: string; waId: string }) => `${c.phoneNumberId}|${c.waId}`;
+const leer = async <T>(p: Promise<Map<string, T>>): Promise<Map<string, T>> => {
+  try {
+    return await p;
+  } catch (err) {
+    console.error("[catalogo/pedidos/panel] enriquecer:", err instanceof Error ? err.message : "?");
+    return new Map();
+  }
+};
+
+/**
+ * Bloque 25 — agrega a cada pedido lo que la asesora necesita para atenderlo (cliente, modalidad,
+ * fechas, fotos, asesora). Solo LECTURA: nada de esto se puede cambiar desde aquí.
+ */
+export async function enriquecerPedidos<P extends PedidoPanel | PedidoHistorial>(tenantId: string, items: Array<{ vista: P; order: Order; reservations: readonly ReservationSummary[] }>, extras: PanelExtras): Promise<P[]> {
+  const contactos = [...new Map(items.flatMap((i) => (i.order.contact ? [[claveContacto(i.order.contact), i.order.contact] as const] : []))).values()];
+  const refs = [...new Set(items.flatMap((i) => i.order.lines.map((l) => l.reference)))];
+  const conConfirmacion = items.filter((i) => ["confirmed", "handoff", "completed", "cancelled", "expired"].includes(i.order.status)).map((i) => i.order.id);
+  const [nombres, canales, confirmados, asignadas, fotos] = await Promise.all([
+    contactos.length ? leer(extras.fuentes.nombres(tenantId, contactos)) : new Map<string, string>(),
+    contactos.length ? leer(extras.fuentes.canales(tenantId, contactos)) : new Map<string, CustomerChannel>(),
+    conConfirmacion.length ? leer(extras.fuentes.confirmados(tenantId, conConfirmacion)) : new Map<string, string>(),
+    contactos.length ? leer(extras.fuentes.asignadas(tenantId, contactos)) : new Map<string, string>(),
+    refs.length ? leer(extras.fuentes.fotos(tenantId, refs)) : new Map<string, string | null>(),
+  ]);
+  return items.map(({ vista, order, reservations }) => {
+    const c = order.contact;
+    const k = c ? claveContacto(c) : null;
+    const canal = k ? canales.get(k) : undefined;
+    const activas = reservations.filter((r) => r.status === "activa").map((r) => r.expiresAt).sort();
+    const vence = order.status === "confirmed" ? (activas[0] ?? null) : order.status === "pending_confirmation" ? (order.confirmation?.expiresAt ?? null) : null;
+    return {
+      ...vista,
+      cliente: extras.verTelefono ? vista.cliente : null,
+      lineas: vista.lineas.map((l) => ({ ...l, foto: fotos.get(l.referencia) ?? null })),
+      contacto:
+        c && k
+          ? {
+              numero: c.phoneNumberId,
+              telefono: extras.verTelefono ? c.waId : null,
+              telefono_parcial: c.waId.slice(-4),
+              nombre: nombres.get(k) ?? null,
+              tipo: canal?.channel ?? null,
+              tipo_origen: canal?.origin ?? null,
+              tipo_desde: canal?.updatedAt ?? null,
+            }
+          : null,
+      confirmado: confirmados.get(order.id) ?? null,
+      vence,
+      asesora:
+        order.handoff || (k && asignadas.has(k))
+          ? { motivo: order.handoff?.reason ?? null, pedida_por: order.handoff?.requestedBy ?? null, desde: order.handoff?.at ?? null, asignada: (k && asignadas.get(k)) || null }
+          : null,
+    };
+  });
 }
 
 export function pedidoPanel(order: Order, reservations: readonly ReservationSummary[]): PedidoPanel {
@@ -97,7 +208,7 @@ export function decodificarCursor(valor: string): OrderCursor | null {
  * GET historial: ?estado=completed|cancelled|expired (opcional), ?limite=1..50, ?cursor=<opaco>.
  * Respuesta: { pedidos, siguiente } (siguiente = cursor de la próxima página o null).
  */
-export async function listarHistorial(engine: OrderEngine | null, tenantId: string, params: URLSearchParams): Promise<Response> {
+export async function listarHistorial(engine: OrderEngine | null, tenantId: string, params: URLSearchParams, extras?: PanelExtras): Promise<Response> {
   if (!engine) return apiError("UNAVAILABLE", "Los pedidos no están activados.", 503);
   const estado = params.get("estado");
   if (estado !== null && estado !== "todos" && !(CLOSED_STATUSES as readonly string[]).includes(estado)) {
@@ -111,7 +222,9 @@ export async function listarHistorial(engine: OrderEngine | null, tenantId: stri
   if (cursorTexto && !cursor) return apiError("VALIDATION_ERROR", "cursor inválido.", 400);
   try {
     const r = await engine.listClosedOrders(tenantId, { status: estado && estado !== "todos" ? (estado as ClosedStatus) : undefined, cursor, limit: limite });
-    return apiOk({ pedidos: r.items.map((i) => pedidoHistorial(i.order, i.reservations)), siguiente: r.next ? codificarCursor(r.next) : null });
+    const base = r.items.map((i) => ({ vista: pedidoHistorial(i.order, i.reservations), order: i.order, reservations: i.reservations }));
+    const pedidos = extras ? await enriquecerPedidos(tenantId, base, extras) : base.map((b) => b.vista);
+    return apiOk({ pedidos, siguiente: r.next ? codificarCursor(r.next) : null });
   } catch (err) {
     return errorPedido(err);
   }
@@ -119,11 +232,12 @@ export async function listarHistorial(engine: OrderEngine | null, tenantId: stri
 
 const HTTP: Partial<Record<OrderError["code"], number>> = { NOT_FOUND: 404, INVALID_TRANSITION: 409, CONFLICT: 409, UNAVAILABLE: 503 };
 
-export async function listarPedidos(engine: OrderEngine | null, tenantId: string): Promise<Response> {
+export async function listarPedidos(engine: OrderEngine | null, tenantId: string, extras?: PanelExtras): Promise<Response> {
   if (!engine) return apiError("UNAVAILABLE", "Los pedidos no están activados.", 503);
   try {
     const rows = await engine.listOpenOrders(tenantId, 100);
-    return apiOk({ pedidos: rows.map((r) => pedidoPanel(r.order, r.reservations)) });
+    const base = rows.map((r) => ({ vista: pedidoPanel(r.order, r.reservations), order: r.order, reservations: r.reservations }));
+    return apiOk({ pedidos: extras ? await enriquecerPedidos(tenantId, base, extras) : base.map((b) => b.vista) });
   } catch (err) {
     return errorPedido(err);
   }

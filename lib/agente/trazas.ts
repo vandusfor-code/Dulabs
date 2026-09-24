@@ -56,6 +56,7 @@ const TURN_KEYS: ReadonlyArray<keyof AgentTurnTrace> = [
   "intent",
   "handoff",
   "non_text",
+  "classification",
 ];
 const BOUNDARY_KEYS = ["result", "reason", "provider", "turns"] as const;
 const MAX_BYTES = 30_000;
