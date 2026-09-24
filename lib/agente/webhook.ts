@@ -29,7 +29,8 @@ import { createSupabaseAgentConfigStore, loadAgentConfig, providerForConfig, typ
 import { createSupabaseHistoryStore } from "@/lib/agente/contexto";
 import { createSupabaseConversationStateStore } from "@/lib/agente/estado";
 import { createSupabaseProductMediaLedger } from "@/lib/agente/medios";
-import { batchInput, createSupabaseMailboxStore, enqueueAndDrain, type DrainOptions, type MailboxStore } from "@/lib/agente/buzon";
+import { batchInput, createSupabaseMailboxStore, drain, enqueueAndDrain, type DrainOptions, type MailboxMessage, type MailboxStore } from "@/lib/agente/buzon";
+import type { NonTextKind } from "@/lib/agente/entrada";
 import { boundaryRecord, createSupabaseTraceSink, turnRecord } from "@/lib/agente/trazas";
 import { createSupabaseUsageReader } from "@/lib/agente/limites";
 import type { AgentToolsDeps } from "@/lib/agente/herramientas";
@@ -45,6 +46,8 @@ export interface AgentBoundaryInput {
   text: string;
   /** context de Meta: mensaje citado (swipe-to-reply a una foto) o reenviado. */
   replyTo?: { wamid?: string | null; forwarded?: boolean } | null;
+  /** Mensaje sin texto (Bloque 23): `text` vacío y la política determinista de entrada.ts. */
+  nonText?: { kind: NonTextKind } | null;
 }
 
 /**
@@ -122,21 +125,33 @@ async function atender(input: AgentBoundaryInput, deps: AgentBoundaryDeps): Prom
   const deps2: AgentRuntimeDeps = { ...runtimeDeps, config: cfg.config, provider: provider.provider, model: provider.model };
   const key = { tenantId: input.cliente.id_tenant, phoneNumberId: input.cliente.phone_number_id, waId: input.waId };
   const single = () =>
-    runAgentTurn(deps2, { ...key, wamid: input.wamid, text: input.text, replyTo: input.replyTo ?? null }).then((r) => ({ handled: true as const, outcome: r.outcome }));
+    runAgentTurn(deps2, { ...key, wamid: input.wamid, text: input.text, replyTo: input.replyTo ?? null, nonText: input.nonText ?? null }).then((r) => ({ handled: true as const, outcome: r.outcome }));
+  let last: AgentTurnTrace["outcome"] | null = null;
+  const runBatch = async (batch: MailboxMessage[]) => {
+    const b = batchInput(batch);
+    const r = await runAgentTurn(deps2, { ...key, wamid: b.wamid, wamids: b.wamids, text: b.text, replyTo: b.replyTo });
+    last = r.outcome;
+    return r.trace.turn;
+  };
+  if (input.nonText) {
+    // Sin texto (Bloque 23): no entra al buzón (no hay texto que sumar a la ráfaga). Primero se
+    // atienden, en orden, los mensajes de texto que llegaron antes y quedaron en el buzón (el freno
+    // de ráfaga los dejó ahí al llegar este); luego la política fija de este mensaje, sin modelo.
+    if (mailbox) {
+      await drain(mailbox, key, input.wamid, runBatch, drainOptions).catch((err) => {
+        logError({ ...base, result: "mailbox_error", reason: err instanceof Error ? err.message.slice(0, 120) : "unknown" });
+      });
+    }
+    return single();
+  }
   if (!mailbox) return single();
 
   // Buzón: si otro proceso tiene el turno de esta conversación, él atiende este mensaje (nunca dos turnos en paralelo).
-  let last: AgentTurnTrace["outcome"] | null = null;
   const drained = await enqueueAndDrain(
     mailbox,
     key,
     { wamid: input.wamid, text: input.text, replyTo: input.replyTo ? { wamid: input.replyTo.wamid ?? null, forwarded: !!input.replyTo.forwarded } : null },
-    async (batch) => {
-      const b = batchInput(batch);
-      const r = await runAgentTurn(deps2, { ...key, wamid: b.wamid, wamids: b.wamids, text: b.text, replyTo: b.replyTo });
-      last = r.outcome;
-      return r.trace.turn;
-    },
+    runBatch,
     drainOptions,
   ).catch((err) => {
     logError({ ...base, result: "mailbox_error", reason: err instanceof Error ? err.message.slice(0, 120) : "unknown" });
@@ -147,6 +162,19 @@ async function atender(input: AgentBoundaryInput, deps: AgentBoundaryDeps): Prom
   if (drained.status === "queued") return { handled: true, outcome: "queued" };
   if (drained.leftPending) logError({ ...base, result: "mailbox_left_pending", turns: drained.turns });
   return { handled: true, outcome: last ?? "queued", turns: drained.turns };
+}
+
+/**
+ * ¿El número tiene una fila de agente (aunque esté apagada o sea inválida)? Decide si un mensaje
+ * SIN texto se registra en el Inbox y llega al agente (Bloque 23). Si no se puede leer: false,
+ * es decir, el comportamiento de siempre para ese mensaje (se descarta); el texto no depende de esto.
+ */
+export async function numeroConAgente(store: AgentConfigStore, phoneNumberId: string): Promise<boolean> {
+  try {
+    return (await store.getByPhoneNumber(phoneNumberId)) !== null;
+  } catch {
+    return false;
+  }
 }
 
 /**

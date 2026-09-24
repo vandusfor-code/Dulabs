@@ -34,6 +34,7 @@ import { decideLimits, type UsageReader } from "@/lib/agente/limites";
 import { asksForHuman, detectIntent, type HandoffMotive, type SystemHandoffMotive, type TurnIntent } from "@/lib/agente/intencion";
 import { agentToolDeclarations, executeAgentTool, toolKind, type AgentToolsDeps, type AgentTurnToolContext, type QueuedImage } from "@/lib/agente/herramientas";
 import type { AgentToolName } from "@/lib/agente/nombres-herramientas";
+import { NON_TEXT_MESSAGES, NON_TEXT_NOTICE_COOLDOWN_MS, nonTextPolicy, type NonTextAction, type NonTextKind } from "@/lib/agente/entrada";
 
 /**
  * Resultado de un envío: true/false o, con detalle, el wamid que asignó Meta (necesario para
@@ -102,6 +103,11 @@ export interface AgentTurnInput {
    * más nuevo y `text` los reúne. Sin él, el turno atiende solo `wamid`.
    */
   wamids?: readonly string[];
+  /**
+   * Mensaje SIN texto (nota de voz, imagen, documento…; Bloque 23): lo resuelve la política
+   * determinista de entrada.ts, sin modelo. `text` llega vacío.
+   */
+  nonText?: { kind: NonTextKind } | null;
 }
 
 export type AgentTurnOutcome = "replied" | "handoff" | "fallback" | "preempted" | "safety" | "duplicate" | "rate_limited";
@@ -148,6 +154,8 @@ export interface AgentTurnTrace {
   intent: TurnIntent | null;
   /** Traspaso a una asesora: quién lo decidió y el motivo CERRADO (nunca el texto libre). */
   handoff: { source: "customer" | "model" | "system"; motive: HandoffMotive | SystemHandoffMotive } | null;
+  /** Mensaje sin texto y la política que aplicó el backend (Bloque 23); null = mensaje de texto. */
+  non_text: { kind: NonTextKind; action: NonTextAction } | null;
 }
 
 // Mensajes FIJOS (sin IA): nunca afirman datos comerciales.
@@ -156,6 +164,8 @@ export const FALLBACK_MESSAGES = {
   handoff: "Te comunico con una asesora para ayudarte mejor. En breve te escribe.",
   safety: "Disculpa, con eso no puedo ayudarte por aquí. ¿Te ayudo con algo de nuestro catálogo?",
   unverified: "Disculpa, no pude verificar esa información en el catálogo. ¿Me confirmas la referencia o el producto que buscas?",
+  /** Bloque 23: una escritura quedó sin respuesta (no se sabe si se hizo): ni "listo" ni "falló". */
+  pending: "Estoy verificando el estado de tu pedido. Escríbeme de nuevo en un momento y te confirmo cómo quedó.",
 } as const;
 
 const CORRECTION = (v: GroundingViolation[]) =>
@@ -181,6 +191,33 @@ function channelFor(config: AgentRuntimeConfig, activeOrder: OrderPublicView | n
   // Mayorista solo si la conversación trae una solicitud FIRMADA del link mayorista (verificada por el backend).
   if (activeOrder?.channel === "wholesale" && !["completed", "cancelled", "expired"].includes(activeOrder.status)) return { channel: "wholesale", source: "catalog_request" };
   return { channel: "retail", source: "number_config" };
+}
+
+/**
+ * Foto citada: SOLO si el registro dice que es de ESTA conversación; el producto se vuelve a
+ * consultar AHORA (la referencia debe seguir siendo el MISMO producto que se fotografió).
+ */
+async function repliedPhoto(
+  deps: AgentRuntimeDeps,
+  input: AgentTurnInput,
+  key: { tenantId: string; phoneNumberId: string; waId: string },
+  wamid: string,
+): Promise<Extract<ReplyContext, { kind: "product_image" }> | null> {
+  const sentImage = deps.media ? await deps.media.findByWamid(key, wamid).catch(() => null) : null;
+  if (!sentImage) return null;
+  const [p, product] = await Promise.all([
+    createResolucionCatalogo({ repo: deps.tools.catalog })
+      .resolverReferencia(input.tenantId, sentImage.reference)
+      .catch(() => null),
+    deps.tools.catalog.getProductByReference(input.tenantId, sentImage.reference).catch(() => null),
+  ]);
+  const same = !!p && !!product && (sentImage.productId === null || product.id === sentImage.productId);
+  return {
+    kind: "product_image",
+    reference: sentImage.reference,
+    name: (p?.name ?? sentImage.reference).slice(0, 160),
+    status: !same || p.status !== "ACTIVE" ? "unavailable" : p.availability === "sold_out" ? "sold_out" : "available",
+  };
 }
 
 export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput): Promise<{ outcome: AgentTurnOutcome; reply: string | null; trace: AgentTurnTrace }> {
@@ -222,6 +259,7 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
     limits: null,
     intent: null,
     handoff: null,
+    non_text: null,
     input: { wamids: (input.wamids && input.wamids.length > 0 ? [...input.wamids] : [input.wamid]).map((w) => w.slice(0, 200)).slice(0, 10), messages: input.wamids?.length || 1, chars: input.text.length },
     context: null,
   };
@@ -268,14 +306,14 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
   if (usage) trace.limits = { contact_minute: usage.contactMinute, contact_day: usage.contactDay, tenant_tokens_day: usage.tenantTokensDay, decision: limit.action === "allow" ? "allow" : `${limit.action}:${limit.reason}` };
   const seen = { ...loaded.state, recentWamids: [...loaded.state.recentWamids.filter((w) => !wamids.includes(w)), ...wamids].slice(-MAX_RECENT_WAMIDS) };
   /** Traspaso decidido por el backend (sin modelo): pausa + mensaje fijo. false = no se pudo pausar. */
-  const handOffNow = async (motive: SystemHandoffMotive, source: "customer" | "system", reason: string) => {
+  const handOffNow = async (motive: SystemHandoffMotive | "out_of_scope", source: "customer" | "system", reason: string, message: string = FALLBACK_MESSAGES.handoff) => {
     try {
       await deps.tools.engine.requestHandoff({ tenantId: input.tenantId, contact, reason, actor: "system", requestId });
     } catch {
       return false;
     }
     trace.handoff = { source, motive };
-    const r = sendResult(await deps.sender.sendText(FALLBACK_MESSAGES.handoff).catch(() => false));
+    const r = sendResult(await deps.sender.sendText(message).catch(() => false));
     trace.sent = r.sent;
     trace.delivery.text_wamid = r.wamid;
     trace.delivery.text_error = r.error;
@@ -295,6 +333,62 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
     trace.state_saved = await deps.state.save(key, seen, loaded.version).catch(() => false);
     return finish("rate_limited", null);
   }
+  // Mensaje sin texto (Bloque 23): política determinista, sin modelo (entrada.ts).
+  if (input.nonText) {
+    const policy = nonTextPolicy(input.nonText.kind) ?? { kind: "other" as const, action: "ignore" as const };
+    trace.non_text = { kind: policy.kind, action: policy.action };
+    trace.turn = loaded.state.turn;
+    const sendFixed = async (text: string) => {
+      const r = sendResult(await deps.sender.sendText(text).catch(() => false));
+      trace.sent = r.sent;
+      trace.delivery.text_wamid = r.wamid;
+      trace.delivery.text_error = r.error;
+      return r.sent;
+    };
+    if (policy.action === "handoff") {
+      const message = NON_TEXT_MESSAGES.handoff(policy.kind);
+      // Motivo de la lista cerrada existente ("algo que el asistente no puede resolver"); el tipo exacto queda en trace.non_text.
+      if (await handOffNow("out_of_scope", "system", "El cliente envió una imagen, archivo o ubicación que el asistente no puede revisar", message)) return finish("handoff", trace.sent ? message : null);
+      // La pausa no se pudo registrar: no se promete una asesora; se dice la verdad.
+      trace.error_kind = "handoff_failed";
+      const failed = NON_TEXT_MESSAGES.handoffFailed(policy.kind);
+      const sent = await sendFixed(failed);
+      trace.state_saved = await deps.state.save(key, seen, loaded.version).catch(() => false);
+      return finish("fallback", sent ? failed : null);
+    }
+    if (policy.action === "ignore") {
+      trace.state_saved = await deps.state.save(key, seen, loaded.version).catch(() => false);
+      return finish("rate_limited", null);
+    }
+    // ask_text: nota de voz / mensaje que Meta no pudo entregar. Si responde a una foto de ESTA
+    // conversación, el producto queda señalado para el siguiente mensaje ("quiero ese").
+    let next: ConversationState = { ...seen, turn: seen.turn + 1, lastInteractionAt: new Date(now()).toISOString() };
+    trace.turn = next.turn;
+    const photo = input.replyTo?.forwarded ? null : input.replyTo?.wamid ? await repliedPhoto(deps, input, key, input.replyTo.wamid) : null;
+    trace.reply_to = input.replyTo?.forwarded ? "forwarded" : input.replyTo?.wamid ? (photo ? "product_image" : "unknown_message") : null;
+    if (photo) {
+      next = rememberReferences(next, [photo.reference], "image");
+      next = { ...next, selection: [{ reference: photo.reference, via: "image_reply", turn: next.turn }] };
+      trace.selection = [{ reference: photo.reference, via: "image_reply" }];
+    }
+    const last = next.nonTextNoticeAt ? Date.parse(next.nonTextNoticeAt) : NaN;
+    if (Number.isFinite(last) && now() - last < NON_TEXT_NOTICE_COOLDOWN_MS) {
+      // Ya se le pidió escribir hace poco: no se repite el aviso (anti-spam), pero la foto citada queda señalada.
+      trace.state_saved = await deps.state.save(key, next, loaded.version).catch(() => false);
+      return finish("rate_limited", null);
+    }
+    const text =
+      policy.kind === "unsupported"
+        ? NON_TEXT_MESSAGES.unsupported
+        : photo
+          ? NON_TEXT_MESSAGES.audioAboutProduct({ reference: photo.reference, name: photo.name, available: photo.status === "available" })
+          : NON_TEXT_MESSAGES.audio;
+    const sent = await sendFixed(text);
+    if (sent) next = { ...next, nonTextNoticeAt: new Date(now()).toISOString() };
+    trace.state_saved = await deps.state.save(key, next, loaded.version).catch(() => false);
+    return finish("replied", sent ? text : null);
+  }
+
   // El cliente pide una persona: el backend lo pasa a una asesora sin depender del modelo.
   // Si la pausa falla, sigue el turno normal (el modelo puede reintentar con handoff_to_human).
   if (asksForHuman(input.text)) {
@@ -316,24 +410,11 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
   let replyTo: ReplyContext | null = null;
   if (input.replyTo?.forwarded) replyTo = { kind: "forwarded" };
   else if (input.replyTo?.wamid) {
-    const sentImage = deps.media ? await deps.media.findByWamid(key, input.replyTo.wamid).catch(() => null) : null;
-    if (!sentImage) replyTo = { kind: "unknown_message" };
+    const photo = await repliedPhoto(deps, input, key, input.replyTo.wamid);
+    if (!photo) replyTo = { kind: "unknown_message" };
     else {
-      const [p, product] = await Promise.all([
-        createResolucionCatalogo({ repo: deps.tools.catalog })
-          .resolverReferencia(input.tenantId, sentImage.reference)
-          .catch(() => null),
-        deps.tools.catalog.getProductByReference(input.tenantId, sentImage.reference).catch(() => null),
-      ]);
-      // La referencia debe seguir siendo el MISMO producto (id interno) que se fotografió.
-      const same = !!p && !!product && (sentImage.productId === null || product.id === sentImage.productId);
-      replyTo = {
-        kind: "product_image",
-        reference: sentImage.reference,
-        name: (p?.name ?? sentImage.reference).slice(0, 160),
-        status: !same || p.status !== "ACTIVE" ? "unavailable" : p.availability === "sold_out" ? "sold_out" : "available",
-      };
-      state = rememberReferences(state, [sentImage.reference], "image");
+      replyTo = photo;
+      state = rememberReferences(state, [photo.reference], "image");
     }
   }
   trace.reply_to = replyTo?.kind ?? null;
@@ -418,7 +499,7 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
   let writes = 0;
   let toolCalls = 0;
   let reply: string | null = null;
-  let failure: "technical" | "safety" | "unverified" | null = null;
+  let failure: "technical" | "safety" | "unverified" | "pending" | null = null;
   let corrected = false;
   let forceText = false;
 
@@ -477,6 +558,14 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
         }
         for (const k of ctx.state.known) evidence.refs.add(k.reference);
         turns.push({ role: "tool", results });
+        // Una escritura sin respuesta: el backend responde con un mensaje FIJO (el modelo no puede
+        // saber si el pedido quedó hecho, y adivinarlo sería inventar). El próximo mensaje del
+        // cliente ve el estado real del pedido (pedido activo desde el motor).
+        if (trace.tool_calls.some((c) => c.result === "OUTCOME_UNKNOWN")) {
+          failure = "pending";
+          trace.error_kind = "write_outcome_unknown";
+          break;
+        }
         if (ctx.handedOff) forceText = true;
         continue;
       }
@@ -509,10 +598,13 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
   // 5) Fallos: mensaje fijo; dos fallos técnicos seguidos => asesora.
   let outcome: AgentTurnOutcome = ctx.handedOff ? "handoff" : "replied";
   if (failure) {
-    ctx.state = { ...ctx.state, failures: Math.min(10, ctx.state.failures + (failure === "safety" ? 0 : 1)) };
+    ctx.state = { ...ctx.state, failures: Math.min(10, ctx.state.failures + (failure === "safety" || failure === "pending" ? 0 : 1)) };
     if (failure === "safety") {
       reply = FALLBACK_MESSAGES.safety;
       outcome = "safety";
+    } else if (failure === "pending") {
+      reply = FALLBACK_MESSAGES.pending;
+      outcome = "fallback";
     } else if (ctx.state.failures >= 2 && !ctx.handedOff) {
       try {
         await deps.tools.engine.requestHandoff({ tenantId: input.tenantId, contact, reason: "El asistente no pudo responder (fallas repetidas)", actor: "system", requestId });

@@ -90,6 +90,9 @@ export const conversationStateSchema = z
       .strict()
       .nullable()
       .default(null),
+    // --- Bloque 23 ---
+    /** Último aviso fijo por un mensaje sin texto ("no puedo escuchar audios"): enfriamiento anti-spam. */
+    nonTextNoticeAt: z.iso.datetime().nullable().default(null),
   })
   .strict();
 
@@ -113,6 +116,7 @@ export function emptyConversationState(): ConversationState {
     handoffTurn: null,
     recentWamids: [],
     lastSearch: null,
+    nonTextNoticeAt: null,
   };
 }
 
