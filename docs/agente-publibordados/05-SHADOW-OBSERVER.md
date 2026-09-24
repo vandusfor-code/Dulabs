@@ -498,3 +498,35 @@ where phone_number_id = :pid and event_type = 'STATUS' group by 1;
 - `ia_pausada`, si se cambió en §16.2: volver al valor anotado en C1 **solo** con tu aprobación.
 - Datos: `select dulabs_pb_observaciones_purgar(0);` borra todo lo de más de 1 día (el mínimo son
   1 día), o `delete from dulabs_pb_observaciones where phone_number_id = '<pid>';`.
+
+---
+
+## 17. Despliegue controlado (24-sep-2026)
+
+| Paso | Estado | Evidencia |
+| --- | --- | --- |
+| Revisión de alcance | ✓ | Archivos existentes: solo **líneas añadidas** en `route.ts` (+5), `scripts/test-flow-manifest.txt` (+2) y `PENDING_MIGRATIONS.md` (sección nueva). El resto son archivos nuevos de PB. Nada de AMORE, Business Agent, Flow, Delacour, legacy, otros webhooks ni agentes |
+| Commit | ✓ | `a1e48bf feat(pb): add isolated shadow observer` |
+| Integración de `main` | ✓ | `7eb7a55` (merge commit, sin reescribir historia). `main` agregó `20261118000000_dulabs_catalogo_pedidos_historial.sql` (**misma versión**), así que la migración de PB se renombró a **`20261119000000_dulabs_pb_observador.sql`** (aún no aplicada en ningún entorno) |
+| Revalidación tras el merge | ✓ | `tsc` 0 · `eslint` 0 · webhook + PB 74/74 · SQL 9/9 (migración ×2) · `test:flow` 4999/5001 (las 2 fallas previas de AMORE) · `next build` OK |
+| Push | ✓ | `origin/claude/beautiful-fermi-xyjyui` |
+| PR | ✓ | vandusfor-code/Dulabs#133 |
+| Deploy a producción (merge a `main`) | Ver el informe final | El despliegue llega **inerte**: `PUBLIBORDADOS_ENABLED` no existe |
+| C1/C3/C10, migración en Supabase, variable en Vercel, verificación en Meta, fila de config | **NO EJECUTADO** | Este entorno no tiene credenciales ni red hacia Supabase, Vercel ni Meta; los pasos son manuales (§16) |
+
+## 18. Resultados reales
+
+**No se marca nada con ✓ sin evidencia real de producción.**
+
+| Prueba | Resultado | Evidencia | Conclusión |
+| --- | --- | --- | --- |
+| Cliente → DuLabs | **NO VERIFICADO** | Solo E2E local (§15) | Pendiente de §16.7 P1 |
+| Asesora → DuLabs | **NO VERIFICADO** | Solo E2E local con la forma documentada | Pendiente de P2 |
+| WhatsApp Web | **NO VERIFICADO** | Ninguna | Pendiente de P3 |
+| Echo real (campo y arreglo) | **NO VERIFICADO** | Ninguna | Pendiente de P2/P3 + §16.5 |
+| IA simulada | **NO VERIFICADO en producción** · Local ✓ | E2E local | §16.8 (requiere aprobación) |
+| PLATFORM | **NO VERIFICADO en producción** · Local ✓ | E2E local | §16.8 |
+| Duplicado | **NO VERIFICADO en producción** · Local ✓ + SQL ✓ | E2E local; Postgres 16 | §16.7 P4 / §16.8 |
+| Latencia | **NO VERIFICADO** | Ninguna | §16.7 P7 |
+| Tenant B | **NO VERIFICADO en producción** · Local ✓ | E2E local; SQL bloques 4 y 5 | §16.9 |
+| Mensajes automáticos | **NO VERIFICADO en producción** · Local ✓ (0) | E2E local | §16.10 |
