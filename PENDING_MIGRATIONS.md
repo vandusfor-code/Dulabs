@@ -1,5 +1,17 @@
 # Pasos manuales pendientes en producción
 
+## PENDIENTE — Publi Bordados, Fase 2A: observador shadow de Coexistence
+
+Migración `supabase/migrations/20261119000000_dulabs_pb_observador.sql`. **Aditiva**: crea
+`dulabs_pb_config`, `dulabs_pb_observaciones` y `dulabs_pb_mensajes_enviados` (vacía en 2A), y las
+funciones `dulabs_pb_observar`, `dulabs_pb_clave_conversacion` y `dulabs_pb_observaciones_purgar`.
+Solo `service_role`. No toca ninguna tabla existente.
+
+Sin esta migración el código es inerte: el observador solo corre con `PUBLIBORDADOS_ENABLED=true`
+**y** una fila habilitada en `dulabs_pb_config`. Activación, comprobación e interpretación:
+`docs/agente-publibordados/05-SHADOW-OBSERVER.md`. Verificación local:
+`supabase/tests/20261119000000_dulabs_pb_observador.test.sql`.
+
 ## PENDIENTE (opcional, recomendada) — Bloque 21: índice del historial de pedidos
 
 Migración `supabase/migrations/20261118000000_dulabs_catalogo_pedidos_historial.sql`. **Solo crea

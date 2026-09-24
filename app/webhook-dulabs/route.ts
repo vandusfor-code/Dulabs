@@ -53,6 +53,7 @@ import {
 } from "@/lib/soluciones-financieras-bot";
 import { adquirirCandadoChat, liberarCandadoChat } from "@/lib/chat-lock";
 import { activarPausaChat, chatEnPausaHumana, logIaBloqueadaPorHumano } from "@/lib/pausas-chat";
+import { observadorPublibordadosActivo, observarCambioPublibordados } from "@/lib/publibordados/observador/observador";
 import { obtenerOnboardingSesionActivaPorTelefono, guardarOnboardingSesion, marcarBienvenidaEnviada, filaASesion } from "@/lib/onboarding-store";
 import { procesarMensajeOnboarding, textoBienvenida, BOTON_CONFIGURAR, BOTON_SOPORTE } from "@/lib/onboarding-engine";
 import {
@@ -408,8 +409,12 @@ export async function POST(request: NextRequest) {
     return new Response("Bad Request", { status: 400 });
   }
 
+  const recibidoAt = new Date();
   for (const entry of payload.entry ?? []) {
     for (const change of entry.changes ?? []) {
+      // Publi Bordados, Fase 2A: observador shadow (solo registra en tablas propias; nunca responde,
+      // pausa ni cambia este flujo; nunca rechaza). Inerte si PUBLIBORDADOS_ENABLED !== "true".
+      if (observadorPublibordadosActivo()) after(observarCambioPublibordados(change, recibidoAt));
       const inboundPhoneId = change.value?.metadata?.phone_number_id;
       const inboundCount =
         change.field === "messages" && "messages" in (change.value ?? {})
