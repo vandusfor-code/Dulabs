@@ -34,7 +34,7 @@ import { AGENT_TOOL_NAMES } from "@/lib/agente/nombres-herramientas";
 import { NON_TEXT_MESSAGES } from "@/lib/agente/entrada";
 import { FALLBACK_MESSAGES } from "@/lib/agente/runtime";
 import { liberarPausaChat } from "@/lib/pausas-chat";
-import { CHANNEL_QUESTION, CLASSIFICATION_MESSAGES, createSupabaseCustomerChannelStore } from "@/lib/agente/clasificacion";
+import { CHANNEL_QUESTION, CLASSIFICATION_MESSAGES, DEFAULT_WELCOME, createSupabaseCustomerChannelStore } from "@/lib/agente/clasificacion";
 import { procesarCambio, registrarMensajesEntrantesSincrono, type MetaChangeValue } from "@/app/webhook-dulabs/route";
 
 const db = createClient(URL_LOCAL, "local", { auth: { persistSession: false } });
@@ -775,6 +775,7 @@ describe("PILOTO DELACOUR — matriz de punta a punta (webhook real + PostgreSQL
     it("A/B. contacto nuevo: pregunta con BOTONES (sin Gemini); elige por botón 'al por mayor' → queda mayorista y ve precios mayoristas", async () => {
       const r0 = await turno(C[24], "hola, quiero ver aretes");
       assert.equal(r0.gemini.length, 0, "no se llama a Gemini antes de clasificar");
+      assert.deepEqual(r0.envios.map((e) => e.texto), [DEFAULT_WELCOME], "primero el saludo (texto), luego la pregunta con botones");
       const botones = meta.calls.slice(-1)[0].body as { type: string; interactive: { body: { text: string }; action: { buttons: Array<{ reply: { id: string; title: string } }> } } };
       assert.equal(botones.type, "interactive");
       assert.equal(botones.interactive.body.text, CHANNEL_QUESTION.body);

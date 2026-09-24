@@ -39,6 +39,7 @@ import {
   CHANNEL_LABEL,
   CHANNEL_QUESTION,
   CLASSIFICATION_MESSAGES,
+  DEFAULT_WELCOME,
   parseChannelChoice,
   type CustomerChannel,
   type CustomerChannelOrigin,
@@ -511,6 +512,8 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
     if (!current) {
       // Sin clasificar: la pregunta FIJA con botones (sin modelo). Ningún precio ni catálogo antes de elegir.
       trace.classification = { action: "asked", channel: null, origin: null };
+      // Primer mensaje de la conversación: saludo aparte (fijo, del negocio). Al volver a preguntar, no se repite.
+      if (loaded.state.turn === 0) await deps.sender.sendText(deps.config.business.saludo ?? DEFAULT_WELCOME).catch(() => false);
       let text: string = CHANNEL_QUESTION.body;
       const b = deps.sender.sendButtons ? sendResult(await deps.sender.sendButtons(CHANNEL_QUESTION.body, CHANNEL_QUESTION.buttons).catch(() => false)) : null;
       if (b?.sent) {

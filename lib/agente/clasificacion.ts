@@ -60,15 +60,24 @@ export interface CustomerChannelStore {
 // Qué eligió el cliente
 // ---------------------------------------------------------------------------
 
-/** Pregunta y botones FIJOS (sin IA). Títulos de botón: máx. 20 caracteres (Meta). */
+/**
+ * Saludo del primer contacto (mensaje aparte, ANTES de la pregunta). Cada negocio puede poner el suyo
+ * en dulabs_agente_runtime_config.negocio.saludo; si no, este.
+ */
+export const DEFAULT_WELCOME = "¡Hola! 💖 Te damos la bienvenida 💍";
+
+/**
+ * Pregunta y botones FIJOS (sin IA). Títulos de botón: máx. 20 caracteres (Meta). El ícono de
+ * "responder" que WhatsApp dibuja en cada botón es de la app: la API no permite quitarlo.
+ */
 export const CHANNEL_QUESTION = {
-  body: "¡Hola! Para mostrarte el catálogo y los precios correctos, cuéntame: ¿tu compra es al detal o al por mayor?",
+  body: "Para mostrarte el catálogo y los precios correctos, cuéntame: ¿tu compra es al detal o al por mayor?",
   buttons: [
     { id: "canal_detal", title: "Comprar al detal" },
     { id: "canal_mayor", title: "Comprar al por mayor" },
   ],
   /** Si los botones no salen: la misma pregunta en texto. */
-  textFallback: "¡Hola! Para mostrarte el catálogo y los precios correctos, cuéntame: ¿tu compra es al detal o al por mayor? Respóndeme *detal* o *por mayor*.",
+  textFallback: "Para mostrarte el catálogo y los precios correctos, cuéntame: ¿tu compra es al detal o al por mayor? Respóndeme *detal* o *por mayor*.",
 } as const;
 
 export const CHANNEL_LABEL: Record<OrderChannel, string> = { retail: "al detal", wholesale: "al por mayor" };
