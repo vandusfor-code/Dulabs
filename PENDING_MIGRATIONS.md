@@ -1,6 +1,11 @@
 # Pasos manuales pendientes en producción
 
-## ⏳ PENDIENTE — Fase 9: fotos citables y link del catálogo en el agente
+## ✅ APLICADA (24-sep-2026) — Fase 9: fotos citables y link del catálogo en el agente
+
+**Estado: migración aplicada en Supabase de producción por el responsable del
+proyecto** (verificación: `tablas = 1`, `permisos_publicos = 0`). También se
+habilitó `get_catalog_link` en el agente de Delacour y su catálogo está
+publicado (verificación: `tiene_link_catalogo = true`, `catalogo_publicado = true`).
 
 Migración `supabase/migrations/20261110000000_dulabs_agente_medios.sql`.
 **100 % aditiva** (no toca tablas existentes):
