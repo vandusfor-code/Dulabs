@@ -197,6 +197,19 @@ export function productImagePath(slug: string, reference: string, file: PublicIm
   return `${productPath(slug, reference)}/${imageBaseName(file)}.${extensionOf(storagePath)}?v=${imageVersion(storagePath)}`;
 }
 
+/** Nombre del archivo JPEG para WhatsApp (Meta no acepta WebP como imagen): se convierte en el servidor. */
+export const WHATSAPP_IMAGE_FILE = "whatsapp.jpg";
+
+/**
+ * Foto principal en JPEG para enviarla por WhatsApp:
+ * /catalogo/{slug}/productos/{referencia}/whatsapp.jpg?v={version}. Misma
+ * regla que las demás fotos públicas: solo slug + referencia, nunca la ruta
+ * de Storage (que lleva los ids del negocio y del producto).
+ */
+export function whatsappImagePath(slug: string, reference: string, storagePath: string): string {
+  return `${productPath(slug, reference)}/${WHATSAPP_IMAGE_FILE}?v=${imageVersion(storagePath)}`;
+}
+
 /** Ficha pública del producto: /catalogo/{slug}/productos/{referencia en minúsculas}. */
 export function productPath(slug: string, reference: string): string {
   return `/catalogo/${slug}/productos/${reference.toLowerCase()}`;

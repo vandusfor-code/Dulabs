@@ -13,8 +13,15 @@
  *     eligió): "Encontré varias opciones… ¿cuál?".
  *   - Confirmación ligada: confirm_order exige la propuesta vigente, ya
  *     mostrada al cliente en un turno ANTERIOR, con su confirmation_id.
+ *   - Selección del cliente: con varias opciones ya mostradas, solo entra al
+ *     carrito la que el cliente SEÑALÓ (foto citada, posición, referencia o
+ *     nombre inequívoco; ver lib/agente/seleccion.ts). "Quiero este" sin más
+ *     => CHOICE_REQUIRED y el agente pregunta.
+ *   - Productos inactivos o agotados no entran al carrito.
  *   - El carrito guarda referencias y cantidades; precios, subtotales, total
  *     y stock los calcula SIEMPRE el motor (engine.evaluate) al consultarlo.
+ *   - Enlaces (catálogo) y fotos los arma el backend con la publicación del
+ *     negocio: el modelo nunca escribe ni recibe una URL de Storage.
  *
  * Nunca lanza: cada llamada termina en { ok, data } o { ok:false, error }.
  */
@@ -23,7 +30,9 @@ import type { AIToolDeclaration } from "@/lib/ia-proveedores/contrato";
 import { formatCop } from "@/lib/business-agent-quote";
 import { ORDER_MAX_QUANTITY } from "@/lib/catalogo/pedido";
 import { REFERENCE_PATTERN } from "@/lib/catalogo/domain";
+import { productPathIn, retailPath, wholesalePath, whatsappImagePath } from "@/lib/catalogo/publicacion";
 import { createResolucionCatalogo } from "@/lib/catalogo/resolucion";
+import { siteUrl } from "@/lib/site-url";
 import type { OrderChannel } from "@/lib/catalogo/pedidos/contrato";
 import { runAgentTool, type AgentToolDeps as CatalogToolDeps } from "@/lib/catalogo/pedidos/herramientas";
 import { OrderError, conversationKey, requestFingerprint, type OrderErrorCode } from "@/lib/catalogo/pedidos/motor";
@@ -37,6 +46,9 @@ export type AgentToolOutcome = { ok: true; data: Record<string, unknown> } | { o
 /** Foto que el BACKEND decidió enviar (el modelo nunca ve ni escribe URLs). */
 export interface QueuedImage {
   reference: string;
+  /** Id interno del producto (registro de fotos enviadas); nunca se envía ni se muestra. */
+  productId: string | null;
+  /** URL pública JPEG (/catalogo/{slug}/productos/{ref}/whatsapp.jpg): sin ids internos. */
   url: string;
   caption: string;
 }
@@ -55,6 +67,8 @@ export interface AgentTurnToolContext {
   state: ConversationState;
   /** Referencias con varias opciones surgidas EN ESTE TURNO (el cliente aún no las vio). */
   pendingChoice: Set<string>;
+  /** Lo que el cliente señaló de forma determinista en este mensaje (o en el anterior). Ver seleccion.ts. */
+  designated: Set<string>;
   images: QueuedImage[];
   /** true si esta llamada ejecutó un traspaso a una asesora. */
   handedOff: boolean;
@@ -67,6 +81,8 @@ export interface AgentToolsDeps extends CatalogToolDeps {
   customerName?: (input: { tenantId: string; phoneNumberId: string; waId: string }) => Promise<string | null>;
   /** Timeout por herramienta (ms). */
   toolTimeoutMs?: number;
+  /** Origen público del sitio (pruebas); por defecto NEXT_PUBLIC_SITE_URL. */
+  siteUrl?: () => string;
 }
 
 const MAX_IMAGES_PER_TURN = 5;
@@ -111,10 +127,22 @@ const norm = (s: string | null | undefined) =>
     .toLowerCase()
     .trim();
 
-function show(ctx: AgentTurnToolContext, products: ProductView[], ambiguous: boolean) {
+/**
+ * Registra lo que el cliente va a ver. Solo una LISTA de opciones reemplaza
+ * "últimos mostrados" (la base de "el segundo"): consultar el detalle de un
+ * producto no debe renumerar la lista que el cliente tiene en pantalla.
+ */
+function show(ctx: AgentTurnToolContext, products: Array<{ reference: string; name: string; color?: string | null; material?: string | null }>, list: boolean) {
   const refs = products.map((p) => p.reference);
-  ctx.state = { ...rememberReferences(ctx.state, refs, "tool"), lastShown: products.slice(0, MAX_SHOWN).map((p) => ({ reference: p.reference, name: p.name.slice(0, 160) })) };
-  if (ambiguous && refs.length > 1) {
+  ctx.state = rememberReferences(ctx.state, refs, "tool");
+  if (!list || products.length === 0) return;
+  // Nombre + color/material: lo que distingue una opción de otra ("el dorado").
+  const label = (p: (typeof products)[number]) => {
+    const extra = [p.color, p.material].filter((x): x is string => !!x && x.trim() !== "").join(", ");
+    return (extra ? `${p.name} (${extra})` : p.name).slice(0, 160);
+  };
+  ctx.state = { ...ctx.state, lastShown: products.slice(0, MAX_SHOWN).map((p) => ({ reference: p.reference, name: label(p) })) };
+  if (refs.length > 1) {
     for (const r of refs) ctx.pendingChoice.add(r);
     ctx.state = { ...ctx.state, ambiguity: { references: refs.slice(0, MAX_SHOWN), createdTurn: ctx.turn, presentedTurn: null } };
   }
@@ -128,7 +156,22 @@ function checkProvenance(ctx: AgentTurnToolContext, ref: string, forCart: boolea
   if (forCart && ctx.pendingChoice.has(ref)) {
     return fail("CHOICE_REQUIRED", "Hay varias opciones y el cliente todavía no eligió. Muéstrale las opciones y pregúntale cuál quiere.");
   }
+  // Opciones ya mostradas y abiertas (hasta que se muestre otra lista): solo la que el cliente señaló
+  // (foto citada, posición, referencia o nombre). Cambiar la cantidad de algo ya elegido no exige señalarlo otra vez.
+  const open = ctx.state.ambiguity;
+  if (forCart && open && open.presentedTurn !== null && open.references.includes(ref) && !ctx.designated.has(ref) && !ctx.state.cart.some((c) => c.reference === ref)) {
+    return fail("CHOICE_REQUIRED", "El cliente no indicó cuál de las opciones quiere. Pregúntale cuál (por número, referencia, o que responda a la foto).");
+  }
   return null;
+}
+
+/** Enlaces públicos del catálogo del negocio (null si no está publicado o el módulo está apagado). */
+async function publication(ctx: AgentTurnToolContext, deps: AgentToolsDeps) {
+  const [pub, enabled] = await Promise.all([deps.catalog.getPublication(ctx.tenantId), deps.catalog.isModuleEnabled(ctx.tenantId)]);
+  if (!pub || !pub.published || !enabled) return null;
+  const origin = (deps.siteUrl ?? siteUrl)().replace(/\/+$/, "");
+  const base = ctx.channel === "wholesale" ? wholesalePath(pub.slug, pub.wholesaleToken) : retailPath(pub.slug);
+  return { slug: pub.slug, origin, base };
 }
 
 async function evaluateCart(ctx: AgentTurnToolContext, deps: AgentToolsDeps) {
@@ -201,14 +244,8 @@ export const AGENT_TOOLS = {
     async run(ctx, input, deps) {
       const r = await catalog("resolve_product", input, ctx, deps);
       if (!r.ok) {
-        const candidates = (r.error.details?.candidates as Array<{ reference: string; name: string }> | undefined) ?? [];
-        if (r.error.code === "AMBIGUOUS" && candidates.length > 0) {
-          show(
-            ctx,
-            candidates.map((c) => ({ reference: c.reference, name: c.name, description: null, category: null, material: null, color: null, unit_price: null, currency: "COP", availability: "", max_quantity: null })),
-            true,
-          );
-        }
+        const candidates = (r.error.details?.candidates as Array<{ reference: string; name: string; color?: string | null; material?: string | null }> | undefined) ?? [];
+        if (r.error.code === "AMBIGUOUS" && candidates.length > 0) show(ctx, candidates, true);
         return r;
       }
       const product = compact(r.data.product as ProductView);
@@ -255,12 +292,16 @@ export const AGENT_TOOLS = {
         const blocked = checkProvenance(ctx, ref, true);
         if (blocked) return blocked;
       }
-      // La referencia debe existir en ESTE negocio (una de otro negocio simplemente no existe).
+      // La referencia debe existir en ESTE negocio (una de otro negocio simplemente no existe), activa y con stock.
       if (additions.length > 0) {
         const lote = await createResolucionCatalogo({ repo: deps.catalog }).resolverReferencias(ctx.tenantId, additions);
         if (lote.unknown.length > 0 || lote.invalid.length > 0) {
           const ref = lote.unknown[0] ?? String(lote.invalid[0]);
           return fail("REFERENCE_NOT_FOUND", `No encontramos la referencia ${ref}.`);
+        }
+        for (const p of lote.items) {
+          if (p.status !== "ACTIVE") return fail("PRODUCT_UNAVAILABLE", `${p.name} (${p.reference}) ya no está disponible.`, { reference: p.reference });
+          if (p.availability === "sold_out") return fail("OUT_OF_STOCK", `${p.name} (${p.reference}) está agotado.`, { reference: p.reference });
         }
       }
       const cart = [...ctx.state.cart];
@@ -272,7 +313,8 @@ export const AGENT_TOOLS = {
         else cart.push({ reference: item.reference, quantity: item.quantity });
       }
       if (cart.length > MAX_CART_LINES) return fail("INVALID_INPUT", `La selección admite máximo ${MAX_CART_LINES} productos distintos.`);
-      ctx.state = { ...ctx.state, cart, ambiguity: null };
+      // La lista sigue abierta: "quiero este" más adelante también debe señalar cuál.
+      ctx.state = { ...ctx.state, cart };
       return { ok: true, data: { ...(await evaluateCart(ctx, deps)), empty: cart.length === 0 } };
     },
   }),
@@ -391,7 +433,8 @@ export const AGENT_TOOLS = {
   }),
 
   request_product_images: spec({
-    description: "Pide al sistema enviar las fotos reales de productos ya mostrados en la conversación (máx. 5). El sistema decide qué fotos son válidas y las envía; no escribas enlaces.",
+    description:
+      "Pide al sistema enviar las fotos reales de productos ya mostrados en la conversación (máx. 5), en el orden en que las quieres mostrar. El sistema decide qué fotos son válidas y las envía después de tu mensaje, cada una con su nombre, referencia y precio; no escribas enlaces.",
     input: z.object({ references: z.array(reference).min(1).max(MAX_IMAGES_PER_TURN) }).strict(),
     kind: "state",
     async run(ctx, input, deps) {
@@ -403,8 +446,12 @@ export const AGENT_TOOLS = {
         if (blocked) skipped.push({ reference: r, reason: "not_in_conversation" });
         return !blocked;
       });
-      if (allowed.length > 0) {
+      // Las fotos salen por la URL PÚBLICA del catálogo (JPEG, sin ids internos): sin catálogo publicado no hay fotos.
+      const pub = allowed.length > 0 ? await publication(ctx, deps) : null;
+      if (allowed.length > 0 && !pub) for (const r of allowed) skipped.push({ reference: r, reason: "catalog_not_published" });
+      if (allowed.length > 0 && pub) {
         const lote = await createResolucionCatalogo({ repo: deps.catalog }).resolverReferencias(ctx.tenantId, allowed);
+        const shown: Array<{ reference: string; name: string; color: string | null; material: string | null }> = [];
         for (const r of allowed) {
           const p = lote.items.find((x) => x.reference === r);
           if (!p) skipped.push({ reference: r, reason: "not_found" });
@@ -412,13 +459,42 @@ export const AGENT_TOOLS = {
           else if (!p.image) skipped.push({ reference: r, reason: "no_photo" });
           else if (ctx.images.length >= MAX_IMAGES_PER_TURN) skipped.push({ reference: r, reason: "limit" });
           else if (!ctx.images.some((i) => i.reference === r)) {
+            const product = await deps.catalog.getProductByReference(ctx.tenantId, r);
             const price = ctx.channel === "wholesale" ? p.prices.wholesale : p.prices.retail;
-            ctx.images.push({ reference: r, url: p.image.url, caption: `${p.name} · ${r} · ${price === null ? "precio a consultar" : formatCop(price)}` });
+            const stock = p.availability === "sold_out" ? " · agotado" : "";
+            ctx.images.push({
+              reference: r,
+              productId: product?.id ?? null,
+              url: `${pub.origin}${whatsappImagePath(pub.slug, r, p.image.storagePath)}`,
+              caption: `${p.name} · ${r} · ${price === null ? "precio a consultar" : formatCop(price)}${stock}`,
+            });
             queued.push(r);
+            shown.push({ reference: r, name: p.name, color: p.color, material: p.material });
           }
         }
+        // Las fotos son lo último que ve el cliente: "la segunda" = la segunda foto enviada.
+        if (shown.length > 1) show(ctx, shown, true);
       }
       return { ok: true, data: { queued, skipped, note: queued.length > 0 ? "El sistema enviará estas fotos después de tu mensaje." : "No hay fotos para enviar." } };
+    },
+  }),
+
+  get_catalog_link: spec({
+    description:
+      "Devuelve el enlace OFICIAL del catálogo del negocio para el canal de esta conversación (y, si indicas una referencia ya mostrada, el de la ficha de ese producto). Úsalo cuando el cliente quiera ver todo el catálogo o elegir varios productos. Copia el enlace exacto; nunca armes uno.",
+    input: z.object({ reference: reference.optional() }).strict(),
+    kind: "read",
+    async run(ctx, input, deps) {
+      const pub = await publication(ctx, deps);
+      if (!pub) return fail("UNAVAILABLE", "El catálogo en línea no está disponible en este momento.");
+      if (input.reference) {
+        const blocked = checkProvenance(ctx, input.reference, false);
+        if (blocked) return blocked;
+        const product = await deps.catalog.getProductByReference(ctx.tenantId, input.reference);
+        if (!product || product.status !== "ACTIVE") return fail("PRODUCT_UNAVAILABLE", `El producto ${input.reference} no está disponible.`);
+        return { ok: true, data: { url: `${pub.origin}${productPathIn(pub.base, input.reference)}`, kind: "product", reference: input.reference } };
+      }
+      return { ok: true, data: { url: `${pub.origin}${pub.base}`, kind: "catalog", channel: ctx.channel === "wholesale" ? "mayorista" : "detal" } };
     },
   }),
 

@@ -458,3 +458,4 @@ lib/ia-proveedores/ia-proveedores.test.ts
 lib/agente/agente-config-estado.test.ts
 lib/agente/agente-runtime.test.ts
 lib/agente/agente-webhook.test.ts
+lib/agente/agente-flujo-comercial.test.ts

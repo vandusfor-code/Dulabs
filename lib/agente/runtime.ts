@@ -1,9 +1,12 @@
 /**
  * RUNTIME DEL AGENTE — un turno de conversación.
  *
- *   mensaje -> estado (memoria estructurada) -> contexto por capas
+ *   mensaje -> ¿ya atendido (reintento de Meta)? -> ¿una asesora tiene el chat?
+ *     -> estado (memoria estructurada) -> foto citada (registro de fotos) + selección determinista
+ *     -> contexto por capas
  *     -> [modelo -> ¿herramientas? -> backend valida y ejecuta -> resultado -> modelo]* (acotado)
- *     -> anclaje de la respuesta -> ¿una asesora tomó el chat? -> envío -> estado (CAS) -> traza
+ *     -> anclaje de la respuesta -> ¿una asesora tomó el chat? -> envío (texto y fotos, cada foto
+ *        registrada con su wamid) -> estado (CAS) -> traza
  *
  * El runtime NO conoce a Gemini: usa el contrato AIProvider. El proveedor y
  * el modelo vienen de la configuración explícita (sin default ni fallback).
@@ -14,7 +17,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { formatCop } from "@/lib/business-agent-quote";
-import { extractReferences } from "@/lib/catalogo/resolucion";
+import { createResolucionCatalogo, extractReferences } from "@/lib/catalogo/resolucion";
 import { publicView, type OrderChannel, type OrderPublicView } from "@/lib/catalogo/pedidos/contrato";
 import { OrderError, nextStepOf } from "@/lib/catalogo/pedidos/motor";
 import { contactRef } from "@/lib/catalogo/pedidos/log";
@@ -22,14 +25,23 @@ import { AIProviderError, type AIGenerateResult, type AIProvider, type AITurn } 
 import { generateWithRetry } from "@/lib/ia-proveedores/reintentos";
 import { addCustomerEvidence, addEvidence, checkGrounding, emptyEvidence, type Evidence, type GroundingViolation } from "@/lib/agente/anclaje";
 import type { AgentRuntimeConfig } from "@/lib/agente/config";
-import { HISTORY_MAX_TURNS, HISTORY_WINDOW_MS, buildSystemInstruction, historyTurns, type HistoryStore, type TurnFacts } from "@/lib/agente/contexto";
-import { rememberReferences, type ConversationState, type ConversationStateStore } from "@/lib/agente/estado";
+import { HISTORY_MAX_TURNS, HISTORY_WINDOW_MS, buildSystemInstruction, historyTurns, type HistoryStore, type ReplyContext, type TurnFacts } from "@/lib/agente/contexto";
+import { MAX_IMAGES_REMEMBERED, MAX_RECENT_WAMIDS, rememberReferences, type ConversationState, type ConversationStateStore } from "@/lib/agente/estado";
+import type { ProductMediaLedger } from "@/lib/agente/medios";
+import { resolveSelection } from "@/lib/agente/seleccion";
 import { agentToolDeclarations, executeAgentTool, toolKind, type AgentToolsDeps, type AgentTurnToolContext, type QueuedImage } from "@/lib/agente/herramientas";
 import type { AgentToolName } from "@/lib/agente/nombres-herramientas";
 
+/** Resultado de un envío: true/false o, si Meta lo aceptó, con su wamid (necesario para registrar fotos). */
+export type SendOutcome = boolean | { sent: boolean; wamid: string | null };
+
+function sendResult(r: SendOutcome): { sent: boolean; wamid: string | null } {
+  return typeof r === "boolean" ? { sent: r, wamid: null } : { sent: r.sent, wamid: r.sent ? r.wamid : null };
+}
+
 export interface AgentSender {
-  sendText(text: string): Promise<boolean>;
-  sendImage(image: QueuedImage): Promise<boolean>;
+  sendText(text: string): Promise<SendOutcome>;
+  sendImage(image: QueuedImage): Promise<SendOutcome>;
   /** ¿Una asesora tomó el chat mientras el agente pensaba? (última barrera antes de enviar) */
   humanTookOver(): Promise<boolean>;
 }
@@ -60,6 +72,8 @@ export interface AgentRuntimeDeps {
   state: ConversationStateStore;
   history: HistoryStore;
   sender: AgentSender;
+  /** Registro de fotos enviadas (wamid -> producto). Sin él, una respuesta a una foto no se puede resolver: se pide aclaración. */
+  media?: ProductMediaLedger;
   limits?: Partial<AgentLimits>;
   log?: (trace: AgentTurnTrace) => void;
   now?: () => number;
@@ -73,15 +87,19 @@ export interface AgentTurnInput {
   wamid: string;
   text: string;
   requestId?: string;
+  /** context de Meta: el mensaje citado (wamid) o si fue reenviado. */
+  replyTo?: { wamid?: string | null; forwarded?: boolean } | null;
 }
 
-export type AgentTurnOutcome = "replied" | "handoff" | "fallback" | "preempted" | "safety";
+export type AgentTurnOutcome = "replied" | "handoff" | "fallback" | "preempted" | "safety" | "duplicate";
 
 export interface AgentTurnTrace {
   log: "agent_turn";
   request_id: string;
   business_id: string;
   contact_ref: string;
+  /** wamid del mensaje del cliente (correlación con Meta y con dulabs_mensajes_log; no es dato personal). */
+  wamid: string;
   turn: number;
   provider: string;
   model: string;
@@ -98,6 +116,13 @@ export interface AgentTurnTrace {
   state_saved: boolean;
   /** true solo si WhatsApp aceptó el mensaje de texto (outcome dice qué se decidió; esto, si salió). */
   sent: boolean;
+  /** A qué respondió el cliente (sin contenido): foto de producto, otro mensaje, reenviado o nada. */
+  reply_to: ReplyContext["kind"] | null;
+  /** Cómo señaló el cliente el producto en este mensaje (sin texto). */
+  selection: Array<{ reference: string; via: string }>;
+  clarification_needed: boolean;
+  /** Entrega: wamid del texto y de cada foto (y si la foto quedó registrada para poder citarla). */
+  delivery: { text_wamid: string | null; images: Array<{ reference: string; wamid: string | null; recorded: boolean }> };
 }
 
 // Mensajes FIJOS (sin IA): nunca afirman datos comerciales.
@@ -148,6 +173,7 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
     request_id: requestId,
     business_id: input.tenantId,
     contact_ref: contactRef(input.waId),
+    wamid: input.wamid.slice(0, 200),
     turn: 0,
     provider: deps.provider.id,
     model: deps.model,
@@ -163,6 +189,10 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
     error_kind: null,
     state_saved: false,
     sent: false,
+    reply_to: null,
+    selection: [],
+    clarification_needed: false,
+    delivery: { text_wamid: null, images: [] },
   };
   const finish = (outcome: AgentTurnOutcome, reply: string | null) => {
     trace.outcome = outcome;
@@ -183,13 +213,66 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
     loaded = await deps.state.load(key);
   } catch {
     trace.error_kind = "state_unavailable";
-    const sent = await deps.sender.sendText(FALLBACK_MESSAGES.technical).catch(() => false);
-    trace.sent = sent;
-    return finish("fallback", sent ? FALLBACK_MESSAGES.technical : null);
+    const r = sendResult(await deps.sender.sendText(FALLBACK_MESSAGES.technical).catch(() => false));
+    trace.sent = r.sent;
+    trace.delivery.text_wamid = r.wamid;
+    return finish("fallback", r.sent ? FALLBACK_MESSAGES.technical : null);
   }
-  let state: ConversationState = { ...loaded.state, turn: loaded.state.turn + 1, lastInteractionAt: new Date(now()).toISOString() };
+  // Reintento de Meta / mensaje doble ya atendido: ni modelo ni respuesta (el webhook también deduplica; esto es la segunda barrera).
+  if (loaded.state.recentWamids.includes(input.wamid)) {
+    trace.turn = loaded.state.turn;
+    return finish("duplicate", null);
+  }
+  // Una asesora ya tiene el chat: no se gasta una llamada al modelo ni se responde.
+  if (await deps.sender.humanTookOver().catch(() => false)) {
+    trace.turn = loaded.state.turn;
+    return finish("preempted", null);
+  }
+  let state: ConversationState = {
+    ...loaded.state,
+    turn: loaded.state.turn + 1,
+    lastInteractionAt: new Date(now()).toISOString(),
+    recentWamids: [...loaded.state.recentWamids, input.wamid.slice(0, 200)].slice(-MAX_RECENT_WAMIDS),
+  };
   trace.turn = state.turn;
-  state = rememberReferences(state, extractReferences(input.text), "customer");
+  const typedRefs = extractReferences(input.text);
+  state = rememberReferences(state, typedRefs, "customer");
+
+  // Foto citada: SOLO si el registro dice que es de ESTA conversación; el producto se vuelve a consultar ahora.
+  let replyTo: ReplyContext | null = null;
+  if (input.replyTo?.forwarded) replyTo = { kind: "forwarded" };
+  else if (input.replyTo?.wamid) {
+    const sentImage = deps.media ? await deps.media.findByWamid(key, input.replyTo.wamid).catch(() => null) : null;
+    if (!sentImage) replyTo = { kind: "unknown_message" };
+    else {
+      const [p, product] = await Promise.all([
+        createResolucionCatalogo({ repo: deps.tools.catalog })
+          .resolverReferencia(input.tenantId, sentImage.reference)
+          .catch(() => null),
+        deps.tools.catalog.getProductByReference(input.tenantId, sentImage.reference).catch(() => null),
+      ]);
+      // La referencia debe seguir siendo el MISMO producto (id interno) que se fotografió.
+      const same = !!p && !!product && (sentImage.productId === null || product.id === sentImage.productId);
+      replyTo = {
+        kind: "product_image",
+        reference: sentImage.reference,
+        name: (p?.name ?? sentImage.reference).slice(0, 160),
+        status: !same || p.status !== "ACTIVE" ? "unavailable" : p.availability === "sold_out" ? "sold_out" : "available",
+      };
+      state = rememberReferences(state, [sentImage.reference], "image");
+    }
+  }
+  trace.reply_to = replyTo?.kind ?? null;
+
+  // Selección determinista del mensaje (foto citada, referencia, posición o nombre inequívoco).
+  const selection = resolveSelection(input.text, state.lastShown, {
+    replyReference: replyTo?.kind === "product_image" ? replyTo.reference : null,
+    typedReferences: typedRefs,
+  });
+  const designated = new Set([...selection.selected.map((x) => x.reference), ...state.selection.filter((x) => x.turn === state.turn - 1).map((x) => x.reference)]);
+  state = { ...state, selection: selection.selected.slice(0, 10).map((x) => ({ ...x, turn: state.turn })) };
+  trace.selection = selection.selected.map((x) => ({ reference: x.reference, via: x.via }));
+  trace.clarification_needed = selection.needsClarification || replyTo?.kind === "forwarded" || replyTo?.kind === "unknown_message";
 
   // 2) Hechos confiables del turno (pedido activo desde el motor).
   let activeOrder: (OrderPublicView & { next_step: string }) | null = null;
@@ -208,7 +291,15 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
   state = { ...state, channel: { value: channel, source } };
 
   const customerName = deps.tools.customerName ? await deps.tools.customerName(key).catch(() => null) : null;
-  const facts: TurnFacts = { channel, channelSource: source, customerName, activeOrder, handoffActive: false };
+  const facts: TurnFacts = {
+    channel,
+    channelSource: source,
+    customerName,
+    activeOrder,
+    handoffActive: false,
+    replyTo,
+    selection: { selected: selection.selected, needsClarification: trace.clarification_needed && selection.selected.length === 0 },
+  };
 
   const evidence: Evidence = emptyEvidence();
   addCustomerEvidence(input.text, evidence);
@@ -231,6 +322,7 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
     turn: state.turn,
     state,
     pendingChoice: new Set(),
+    designated,
     images: [],
     handedOff: false,
     newProposal: null,
@@ -351,6 +443,11 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
   } else {
     ctx.state = { ...ctx.state, failures: 0 };
   }
+  // Tras pasar a una asesora el agente solo se despide: ni fotos ni nada más.
+  if (ctx.handedOff || outcome === "handoff") {
+    ctx.images = [];
+    ctx.state = { ...ctx.state, handoffTurn: ctx.turn };
+  }
 
   // 6) Última barrera: si una asesora tomó el chat mientras tanto, el agente NO envía nada.
   if (!ctx.handedOff && outcome !== "handoff" && (await deps.sender.humanTookOver().catch(() => false))) {
@@ -358,8 +455,10 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
     return finish("preempted", null);
   }
 
-  const sent = reply ? await deps.sender.sendText(reply).catch(() => false) : false;
+  const textResult = reply ? sendResult(await deps.sender.sendText(reply).catch(() => false)) : { sent: false, wamid: null };
+  const sent = textResult.sent;
   trace.sent = sent;
+  trace.delivery.text_wamid = textResult.wamid;
   if (sent && !failure) {
     // La propuesta cuenta como MOSTRADA solo si el mensaje enviado lleva su total exacto.
     const p = ctx.state.proposal;
@@ -368,7 +467,23 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
       ctx.state = { ...ctx.state, proposal: { ...p, presentedTurn: ctx.turn } };
     }
     if (ctx.state.ambiguity && ctx.state.ambiguity.createdTurn === ctx.turn) ctx.state = { ...ctx.state, ambiguity: { ...ctx.state.ambiguity, presentedTurn: ctx.turn } };
-    for (const img of ctx.images) if (await deps.sender.sendImage(img).catch(() => false)) trace.images++;
+    for (const img of ctx.images) {
+      const r = sendResult(await deps.sender.sendImage(img).catch(() => false));
+      if (!r.sent) {
+        trace.delivery.images.push({ reference: img.reference, wamid: null, recorded: false });
+        continue;
+      }
+      trace.images++;
+      // wamid de la foto -> producto: permite resolver "quiero este" cuando el cliente responde a ESTA foto.
+      const recorded =
+        r.wamid !== null && deps.media
+          ? await deps.media
+              .record({ tenantId: input.tenantId, phoneNumberId: input.phoneNumberId, waId: input.waId, wamid: r.wamid, reference: img.reference, productId: img.productId, channel, turn: ctx.turn })
+              .catch(() => false)
+          : false;
+      trace.delivery.images.push({ reference: img.reference, wamid: r.wamid, recorded });
+      ctx.state = { ...ctx.state, imagesSent: [...ctx.state.imagesSent, { reference: img.reference, turn: ctx.turn }].slice(-MAX_IMAGES_REMEMBERED) };
+    }
   }
   trace.order_id = ctx.state.activeOrderId;
   trace.state_saved = await deps.state.save(key, ctx.state, loaded.version).catch(() => false);

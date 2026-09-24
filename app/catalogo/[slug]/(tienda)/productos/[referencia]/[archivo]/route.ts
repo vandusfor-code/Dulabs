@@ -1,6 +1,7 @@
 /**
  * Foto pública de un producto del catálogo:
  *   /catalogo/{slug}/productos/{referencia}/{main|thumb|2..12[-thumb]}.{webp|jpg|png}?v={version}
+ *   /catalogo/{slug}/productos/{referencia}/whatsapp.jpg?v={version}   (JPEG para WhatsApp, ver imagen-whatsapp.ts)
  *
  * La URL solo lleva datos que el cliente ya ve (slug del negocio y referencia).
  * La ruta real en Storage ({tenant}/{producto}/{upload}.webp) se resuelve aquí,
@@ -10,7 +11,8 @@
  * y producto ACTIVO; en cualquier otro caso, 404 idéntico (no revela si existe).
  */
 import { supabaseAdmin } from "@/lib/supabase";
-import { parseImageFileName } from "@/lib/catalogo/publicacion";
+import { WHATSAPP_IMAGE_FILE, parseImageFileName } from "@/lib/catalogo/publicacion";
+import { toWhatsappJpeg } from "@/lib/catalogo/imagen-whatsapp";
 import { createSupabaseCatalogRepository } from "@/lib/catalogo/repository";
 import { createPublicCatalogService } from "@/lib/catalogo/service";
 
@@ -33,13 +35,29 @@ function notFound(): Response {
 
 export async function GET(_request: Request, { params }: Params) {
   const { slug, referencia, archivo } = await params;
-  const file = parseImageFileName(archivo);
+  const whatsapp = archivo === WHATSAPP_IMAGE_FILE;
+  const file = whatsapp ? { index: 1, variant: "detail" as const } : parseImageFileName(archivo);
   if (!file) return notFound();
 
   try {
     const service = createPublicCatalogService({ repo: createSupabaseCatalogRepository(supabaseAdmin()) });
     const image = await service.getImage({ slug, reference: referencia, file });
     if (!image) return notFound();
+
+    if (whatsapp) {
+      // Meta no acepta WebP como imagen: la foto de detalle se convierte a JPEG (el CDN la cachea por versión).
+      const jpeg = await toWhatsappJpeg(image.body);
+      return new Response(new Uint8Array(jpeg), {
+        status: 200,
+        headers: {
+          "Content-Type": "image/jpeg",
+          "Content-Length": String(jpeg.byteLength),
+          "Cache-Control": CACHE_OK,
+          "X-Robots-Tag": "noindex, nofollow",
+          "Content-Disposition": "inline",
+        },
+      });
+    }
 
     const headers = new Headers({
       "Content-Type": image.contentType,

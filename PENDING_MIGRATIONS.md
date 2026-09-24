@@ -1,5 +1,49 @@
 # Pasos manuales pendientes en producción
 
+## ⏳ PENDIENTE — Fase 9: fotos citables y link del catálogo en el agente
+
+Migración `supabase/migrations/20261110000000_dulabs_agente_medios.sql`.
+**100 % aditiva** (no toca tablas existentes):
+
+- `dulabs_agente_medios_enviados`: cada foto de producto que envía el agente
+  queda ligada a su wamid (negocio, número, cliente, referencia, id interno del
+  producto, canal). Cuando el cliente **responde a una foto** ("quiero este"),
+  el backend sabe de qué producto habla sin adivinar. RLS activado, solo backend.
+
+Sin la tabla el agente funciona igual, pero una respuesta a una foto no se
+puede resolver y el agente pregunta cuál producto es.
+
+Validada contra PostgreSQL 16 local:
+`supabase/tests/20261110000000_dulabs_agente_medios.test.sql` (5/5), aplicada
+dos veces sin error.
+
+1. Correr el archivo completo en el SQL Editor (idempotente).
+2. Verificar (esperado `1 | 0`):
+   ```sql
+   select
+     (select count(*) from information_schema.tables where table_name = 'dulabs_agente_medios_enviados') as tablas,
+     (select count(*) from information_schema.role_table_grants
+       where table_name = 'dulabs_agente_medios_enviados' and grantee in ('anon', 'authenticated')) as permisos_publicos;
+   ```
+
+**Después de que el deploy de esta fase esté en producción (NO antes):**
+habilitar la herramienta nueva `get_catalog_link` en el agente de Delacour.
+Si se hace antes del deploy, el código anterior no conoce la herramienta, marca
+la configuración como inválida y el agente queda en silencio (fail-closed).
+
+```sql
+update public.dulabs_agente_runtime_config
+   set herramientas = array_append(herramientas, 'get_catalog_link'), updated_at = now()
+ where phone_number_id = (select phone_number_id from public.dulabs_clientes_config
+                           where id_tenant = '0d3ae22d-0c38-4fd6-ba48-fb9e29b7cdb4')
+   and not ('get_catalog_link' = any(herramientas));
+```
+
+Las fotos salen por la URL pública del catálogo (`/catalogo/{slug}/productos/{ref}/whatsapp.jpg`):
+el catálogo de Delacour debe estar **publicado** para que el agente envíe fotos.
+
+Rollback: al inicio del archivo de la migración.
+
 ## ✅ APLICADA (24-sep-2026) — Fase 8: agente conversacional (Gemini) por número de WhatsApp
 
 **Estado: migración aplicada en Supabase de producción por el responsable del

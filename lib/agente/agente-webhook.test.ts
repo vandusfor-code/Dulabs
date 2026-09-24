@@ -141,6 +141,19 @@ describe("webhook: posición del agente y aislamiento de lo existente (guarda es
     }
   });
 
+  it("el webhook le pasa al agente el mensaje CITADO (respuesta a una foto) o si fue reenviado", () => {
+    const src = readFileSync(join(process.cwd(), "app/webhook-dulabs/route.ts"), "utf8");
+    assert.match(src, /const replyTo = mensaje\.context \? \{ wamid: mensaje\.context\.id \?\? null, forwarded: !!\(mensaje\.context\.forwarded \|\| mensaje\.context\.frequently_forwarded\) \} : null;/);
+    assert.match(src, /atenderConAgenteSiAplica\(\{ cliente, waId: telefonoRemitente, destino, wamid: mensaje\.id, text: texto\.slice\(0, 4_000\), replyTo \}, deps\)/);
+  });
+
+  it("frontera: el contexto de respuesta llega al runtime (una cita desconocida => aclaración, nunca adivina)", async () => {
+    const { d, provider } = deps(createMemoryAgentConfigStore([row()]), { script: [{ text: "¿Cuál producto te gustó? Respóndeme a su foto." }] });
+    const r = await atenderConAgenteSiAplica({ ...input, text: "quiero este", replyTo: { wamid: "wamid.no.registrado" } }, d);
+    assert.deepEqual(r, { handled: true, outcome: "replied" });
+    assert.match(provider.requests[0].system, /"respondio_a":"un mensaje que no es una foto de producto"/);
+  });
+
   it("la capa del agente y de proveedores no importa Anthropic, la IA legacy ni el Flow Engine", () => {
     const archivos: string[] = [];
     const walk = (dir: string) => {
