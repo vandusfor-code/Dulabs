@@ -534,6 +534,14 @@ export function createInMemoryCatalogRepository() {
     failInsert(when: ((d: ProductWriteData) => boolean) | null) {
       failInsertWhen = when;
     },
+    /**
+     * Borrado FÍSICO de un producto (como un DELETE en el SQL Editor): sus fotos se van en cascada,
+     * igual que la FK de dulabs_catalogo_media. La referencia nunca se reutiliza.
+     */
+    hardDelete(id: string) {
+      products.delete(id);
+      for (const [k, m] of media) if (m.productId === id) media.delete(k);
+    },
     /** Simula inventario controlado o no (tracksStock) de un producto. */
     setStock(id: string, tracksStock: boolean, stock: number) {
       const p = products.get(id);

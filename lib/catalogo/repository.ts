@@ -384,21 +384,32 @@ export function createSupabaseCatalogRepository(supabase: SupabaseClient): Catal
     bucket: CATALOG_BUCKET,
 
     async listProducts(tenantId, filter) {
-      let query = supabase.from(T_PRODUCTOS).select(PRODUCT_COLUMNS, { count: "exact" }).eq("id_tenant", tenantId);
-      if (filter.status === "ACTIVE") query = query.eq("activo", true);
-      if (filter.status === "INACTIVE") query = query.eq("activo", false);
-      if (filter.categoryId) query = query.eq("categoria_id", filter.categoryId);
-      if (filter.withImage) query = query.not("foto_url", "is", null);
-      // `search` ya viene normalizado por el dominio (sin , ( ) * % _ \ : " ').
-      // El valor va ENTRE COMILLAS (forma documentada de PostgREST para
-      // valores con caracteres reservados como "."), con % como comodín.
-      if (filter.search) query = query.or(`nombre.ilike."%${filter.search}%",referencia.ilike."%${filter.search}%"`);
-      const { data, error, count } = await query
+      // Mismos filtros para la página y para el conteo (página fuera de rango, abajo).
+      const consulta = (columns: string, head: boolean) => {
+        let query = supabase.from(T_PRODUCTOS).select(columns, { count: "exact", head }).eq("id_tenant", tenantId);
+        if (filter.status === "ACTIVE") query = query.eq("activo", true);
+        if (filter.status === "INACTIVE") query = query.eq("activo", false);
+        if (filter.categoryId) query = query.eq("categoria_id", filter.categoryId);
+        if (filter.withImage) query = query.not("foto_url", "is", null);
+        // `search` ya viene normalizado por el dominio (sin , ( ) * % _ \ : " ').
+        // El valor va ENTRE COMILLAS (forma documentada de PostgREST para
+        // valores con caracteres reservados como "."), con % como comodín.
+        if (filter.search) query = query.or(`nombre.ilike."%${filter.search}%",referencia.ilike."%${filter.search}%"`);
+        return query;
+      };
+      const { data, error, count } = await consulta(PRODUCT_COLUMNS, false)
         .order("created_at", { ascending: false })
         .order("id", { ascending: false })
         .range(filter.offset, filter.offset + filter.limit - 1);
+      if (error?.code === "PGRST103") {
+        // Página más allá del final (p. ej. se borraron productos mientras el panel estaba en una
+        // página alta): página vacía con el total REAL, nunca un error 500.
+        const { count: total, error: e2 } = await consulta("id", true);
+        if (e2) fail("listProducts", e2);
+        return { items: [], total: total ?? 0 };
+      }
       if (error) fail("listProducts", error);
-      return { items: ((data ?? []) as ProductRow[]).map(mapProduct), total: count ?? 0 };
+      return { items: ((data ?? []) as unknown as ProductRow[]).map(mapProduct), total: count ?? 0 };
     },
 
     async searchCatalog(tenantId, q) {

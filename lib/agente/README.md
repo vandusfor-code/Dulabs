@@ -239,3 +239,38 @@ values
    '{search_products,resolve_product_by_reference,resolve_product_by_attributes,get_product_details,get_cart,update_cart,resolve_order,create_order_request,validate_order,confirm_order,get_customer_context,request_product_images,handoff_to_human,get_catalog_link,more_products,similar_products}',
    'retail', '{"nombre_agente": "<nombre>", "tono": "<tono breve>"}');
 ```
+
+## Auditoría de integración catálogo ↔ Gemini (Bloque 22)
+
+El flujo completo (cliente → WhatsApp → Gemini → herramientas → catálogo → fotos → selección →
+cantidad → carrito → pedido → precio del backend → confirmación → reserva atómica → asesora) se
+auditó y quedó cubierto por pruebas de punta a punta. El detalle está en
+`agente-flujo-comercial.test.ts`, en el bloque "Bloque 22". Lo que ya estaba bien no se reescribió.
+
+**Fotos.**
+
+- El wamid de cada foto enviada queda registrado en `dulabs_agente_medios_enviados`, ligado al
+  negocio, el número, el cliente, la referencia y el canal.
+- Cuando el cliente responde a una foto, el webhook entrega `context.id`. `replyToDeMeta` es la
+  ÚNICA lectura de ese dato, tanto para el turno directo como para el buzón.
+- Con ese wamid, el backend resuelve el producto **sin depender de Gemini**. Si el modelo intenta
+  agregar otro producto de la lista, recibe `CHOICE_REQUIRED`.
+- Si el cliente escribe "quiero este" sin responder a ninguna foto, no se adivina el producto.
+- Si se envía dos veces la foto del mismo producto, ambos mensajes llevan al mismo producto.
+- Un producto sin foto se informa como `no_photo`; nunca se inventa una imagen.
+
+**Producto borrado físicamente después de iniciar la conversación.**
+
+- Elegirlo por posición o respondiendo a su foto devuelve `REFERENCE_NOT_FOUND`.
+- Si ya estaba en el carrito, el pedido queda en borrador, sin propuesta confirmable.
+- Si ya estaba propuesto, confirmar devuelve `REFERENCE_NOT_FOUND` y no se aparta stock.
+- En la BD, la reserva hace todo o nada (`CT011`). Si se borra un producto con stock apartado,
+  cancelar el pedido libera la reserva sin errores (`supabase/tests/20261116000000_dulabs_catalogo_reservas_borrado.test.sql`).
+
+**Canal mayorista.** Se decide por la configuración del número. La búsqueda, la foto y el pedido
+usan el precio mayorista; si el producto no tiene precio mayorista, el backend no inventa uno ni
+usa el de detal.
+
+**Asesora.** Ante "quiero hablar con una asesora", el traspaso es determinista: Gemini no se
+consulta (0 llamadas al modelo), queda registrado el motivo `customer_request` y el chat queda
+pausado.
