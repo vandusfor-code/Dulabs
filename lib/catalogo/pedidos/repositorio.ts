@@ -89,6 +89,12 @@ export interface ReservationSummary {
   expiresAt: string;
 }
 
+/** Posición en el historial: creación exacta (como la guarda la BD) + número público del pedido. */
+export interface OrderCursor {
+  createdAt: string;
+  orderId: string;
+}
+
 export interface OrdersRepository {
   /** false si la migración no está aplicada. */
   available(): Promise<boolean>;
@@ -100,6 +106,12 @@ export interface OrdersRepository {
   latestForContact(businessId: string, contact: OrderContact, statuses: readonly OrderStatus[]): Promise<Order | null>;
   /** Pedidos del negocio en esos estados, más recientes primero (panel de la asesora). */
   listForBusiness(businessId: string, statuses: readonly OrderStatus[], limit: number): Promise<Order[]>;
+  /**
+   * Historial (Bloque 21): pedidos CERRADOS del negocio en esos estados, del más reciente al más
+   * antiguo por (creación, número público), desde el cursor `before` (keyset; nunca OFFSET).
+   * `createdAtRaw` es la marca EXACTA de la BD (microsegundos) para armar el cursor siguiente.
+   */
+  listClosed(businessId: string, query: { statuses: readonly OrderStatus[]; before: OrderCursor | null; limit: number }): Promise<Array<{ order: Order; createdAtRaw: string }>>;
   /** Reservas de stock de esos pedidos (ids internos) del negocio. Sin la migración: []. */
   reservationsFor(businessId: string, orderIds: readonly string[]): Promise<ReservationSummary[]>;
   /** Vence los pedidos confirmados cuya reserva pasó su plazo (el stock vuelve). Sin la migración: 0. */
@@ -322,6 +334,20 @@ export function createSupabaseOrdersRepository(supabase: SupabaseClient, now: ()
       return ((data ?? []) as unknown as OrderRow[]).map(orderFromRow);
     },
 
+    async listClosed(businessId, { statuses, before, limit }) {
+      let query = supabase.from(T_PEDIDOS).select(COLUMNS).eq("id_tenant", businessId).in("estado", [...statuses]);
+      // Keyset por (created_at, pedido_publico) DESC: el `lte` acota el rango del índice parcial
+      // del historial; el `or` deja fuera lo ya mostrado con la misma marca. Ambos valores del
+      // cursor llegan validados (fecha ISO y número público), nunca texto libre.
+      if (before) query = query.lte("created_at", before.createdAt).or(`created_at.lt."${before.createdAt}",pedido_publico.lt."${before.orderId}"`);
+      const { data, error } = await query
+        .order("created_at", { ascending: false })
+        .order("pedido_publico", { ascending: false })
+        .limit(Math.min(Math.max(limit, 1), 101));
+      if (error) fail("listClosed", error);
+      return ((data ?? []) as unknown as OrderRow[]).map((r) => ({ order: orderFromRow(r), createdAtRaw: r.created_at }));
+    },
+
     async reservationsFor(businessId, orderIds) {
       if (orderIds.length === 0) return [];
       const { data, error } = await supabase
@@ -517,6 +543,15 @@ export function createMemoryOrdersRepository(opts: { available?: boolean; invent
         .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))
         .slice(0, limit)
         .map(clone);
+    },
+
+    async listClosed(businessId, { statuses, before, limit }) {
+      return orders
+        .filter((o) => o.businessId === businessId && statuses.includes(o.status))
+        .filter((o) => !before || o.createdAt < before.createdAt || (o.createdAt === before.createdAt && o.orderId < before.orderId))
+        .sort((a, b) => (a.createdAt === b.createdAt ? (a.orderId < b.orderId ? 1 : -1) : a.createdAt < b.createdAt ? 1 : -1))
+        .slice(0, limit)
+        .map((o) => ({ order: clone(o), createdAtRaw: o.createdAt }));
     },
 
     async reservationsFor(businessId, orderIds) {

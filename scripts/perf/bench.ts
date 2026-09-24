@@ -14,7 +14,7 @@ import { createClient } from "@supabase/supabase-js";
 import { createSupabaseCatalogRepository } from "@/lib/catalogo/repository";
 import { createCatalogService, createPublicCatalogService } from "@/lib/catalogo/service";
 import { createOrderEngine, OrderError } from "@/lib/catalogo/pedidos/motor";
-import { createSupabaseOrdersRepository } from "@/lib/catalogo/pedidos/repositorio";
+import { createSupabaseOrdersRepository, type OrderCursor } from "@/lib/catalogo/pedidos/repositorio";
 import { memoryOrderEventSink } from "@/lib/catalogo/pedidos/eventos";
 import { emptyConversationState, rememberReferences } from "@/lib/agente/estado";
 import { executeAgentTool, type AgentTurnToolContext } from "@/lib/agente/herramientas";
@@ -176,6 +176,27 @@ async function main() {
   // --- Panel de pedidos de la asesora (con N pedidos abiertos) ------------------------------
   const { count: abiertos } = await supabase.from("dulabs_catalogo_pedidos").select("id", { count: "exact", head: true }).eq("id_tenant", TENANT).in("estado", ["pending_confirmation", "confirmed", "handoff"]);
   await medir(`panel: pedidos abiertos (hay ${abiertos})`, () => engine.listOpenOrders(TENANT, 100), { nota: "tope 100 por página" });
+
+  // --- Historial de pedidos cerrados (cursor): recorrido completo exacto + costo por página ------
+  const { count: cerrados } = await supabase.from("dulabs_catalogo_pedidos").select("id", { count: "exact", head: true }).eq("id_tenant", TENANT).in("estado", ["completed", "cancelled", "expired"]);
+  const vistos = new Set<string>();
+  let cursor: OrderCursor | null = null;
+  let paginas = 0;
+  do {
+    const r = await engine.listClosedOrders(TENANT, { cursor, limit: 25 });
+    for (const i of r.items) {
+      if (vistos.has(i.order.orderId)) throw new Error(`FALLA historial: ${i.order.orderId} repetido`);
+      if (i.order.businessId !== TENANT) throw new Error("FALLA historial: pedido de otro negocio");
+      vistos.add(i.order.orderId);
+    }
+    cursor = r.next;
+    paginas++;
+  } while (cursor);
+  if (vistos.size !== cerrados) throw new Error(`FALLA historial: recorrió ${vistos.size} de ${cerrados}`);
+  let profundo: OrderCursor | null = null;
+  for (let i = 0; i < Math.min(paginas - 1, 10); i++) profundo = (await engine.listClosedOrders(TENANT, { cursor: profundo, limit: 25 })).next;
+  await medir(`panel: historial página 1 (hay ${cerrados} cerrados)`, () => engine.listClosedOrders(TENANT, { cursor: null, limit: 25 }), { nota: `recorrido completo por cursor: ${vistos.size}/${cerrados} en ${paginas} páginas, sin repetidos` });
+  await medir("panel: historial página 11 (cursor)", () => engine.listClosedOrders(TENANT, { cursor: profundo, limit: 25 }));
 
   // --- Herramientas del agente (lo que recibe Gemini) ---------------------------------------
   await medir("gemini: search_products (aretes oro)", () => herramienta("search_products", { query: "aretes oro" }), { gemini: tamano });

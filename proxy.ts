@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { limitarPaginaCatalogo } from "@/lib/catalogo/limite-paginas";
 
 // Rate limiting best-effort en memoria para los endpoints realmente públicos
 // (webhooks de Meta/Wompi, crons, diagnostics) — no toca rutas del
@@ -24,8 +25,12 @@ const LIMITES: { prefijo: string; config: LimiteConfig }[] = [
 
 const contadores = new Map<string, { cuenta: number; expira: number }>();
 
-export function proxy(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
+  // Catálogo público (Bloque 21): límite DISTRIBUIDO por cliente para páginas y búsquedas
+  // (lib/catalogo/limite-paginas.ts). Fotos, carrito y pedido quedan fuera (CDN / límite propio).
+  if (pathname.startsWith("/catalogo/")) return (await limitarPaginaCatalogo(request)) ?? NextResponse.next();
+
   const regla = LIMITES.find((r) => pathname === r.prefijo || pathname.startsWith(r.prefijo + "/"));
   if (!regla) return NextResponse.next();
 
@@ -55,5 +60,5 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/webhook-dulabs", "/api/wompi/:path*", "/api/cron/:path*", "/api/diagnostics/:path*"],
+  matcher: ["/webhook-dulabs", "/api/wompi/:path*", "/api/cron/:path*", "/api/diagnostics/:path*", "/catalogo/:path*"],
 };

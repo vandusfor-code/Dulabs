@@ -5,6 +5,7 @@
  * GET): funciona sin JavaScript y cada vista se puede compartir.
  */
 import Link from "next/link";
+import { EnlaceIntencion } from "@/components/catalogo-publico/tienda/EnlaceIntencion";
 import type { ReactNode } from "react";
 import { Search, X } from "lucide-react";
 import type { PublicCatalogPage, PublicCatalogProduct } from "@/lib/catalogo/publicacion";
@@ -89,7 +90,7 @@ export function PublicCatalog({
               Todo
             </Link>
             {data.categories.map((c) => (
-              <Link
+              <EnlaceIntencion
                 key={c.id}
                 href={href(basePath, { q, categoria: c.id })}
                 className={cn(
@@ -98,7 +99,7 @@ export function PublicCatalog({
                 )}
               >
                 {c.name}
-              </Link>
+              </EnlaceIntencion>
             ))}
           </nav>
         )}

@@ -461,3 +461,50 @@ reindexa.
   sigue diferido: al abrir el listado se descargan 11 de 43.
 - **`request_product_images`:** los ids internos, que se usan para registrar las fotos enviadas,
   salen de una sola consulta por lote y nunca llegan a Gemini.
+
+## Cierre de producción (Bloque 21)
+
+La guía operativa está en `DELACOUR_PRODUCTION_READINESS.md` (raíz del repo).
+
+**Límite de tasa de las páginas públicas.**
+
+- Lo aplica `proxy.ts`, con la lógica en `limite-paginas.ts`, sobre `/catalogo/*`: tienda detal,
+  mayorista, búsqueda, paginación y fichas.
+- Las fotos, el carrito y el pedido quedan fuera: las fotos van por el CDN y el carrito y el
+  pedido ya tienen su propio límite en `limites-publicos.ts`.
+- Es **distribuido**: el mismo contador en Postgres (`dulabs_rate_limit_incrementar`) vale para
+  todas las instancias.
+- Cuenta **por cliente**, con un hash con sal de la IP; en IPv6 usa el prefijo /64. Nunca cuenta
+  por URL, así que cambiar parámetros no abre un contador nuevo.
+
+| Clase de petición | Límite |
+| --- | --- |
+| Páginas | 600 por cliente por minuto |
+| Búsquedas | 120 por cliente por minuto, y además cuentan como página |
+| Búsquedas por catálogo | 3.000 por minuto; al superarse solo se frenan las búsquedas y la tienda sigue navegable |
+
+- Cada instancia recuerda a los clientes bloqueados y les responde 429 sin volver a consultar la
+  BD.
+- Si el limitador no responde en 400 ms, se permite la visita.
+- Pruebas: `limite-paginas.test.ts` (U) y `scripts/perf/limite-concurrencia.ts` (Postgres real:
+  de 700 peticiones simultáneas pasan exactamente 600).
+
+**Precarga por intención (`EnlaceIntencion`).**
+
+- Las tarjetas de producto y las listas de categorías precargan la ficha solo cuando el usuario
+  pasa el mouse, toca o enfoca el enlace.
+- Medido con el `Link` por defecto: abrir el listado y hacer scroll disparaba 53 precargas, que
+  sumaban 470 consultas a la BD por visita. Ahora son 2.
+
+**Historial de pedidos.**
+
+- En el panel está la pestaña **Historial**: pedidos completados, cancelados y vencidos, de a 25,
+  con "Ver más".
+- Se pagina por cursor (keyset por creación y número público), con un cursor opaco que se valida;
+  si llega manipulado, se responde 400.
+- Muestra qué pasó con el stock: vendido (reserva consumida), devuelto (reserva liberada) o sin
+  reserva.
+- No expone ids internos.
+- API: `GET /api/dashboard/catalogo/pedidos/historial?estado=&limite=&cursor=`.
+- Índice opcional en la migración `20261118000000`.
+- Pruebas: `pedidos/historial.test.ts` y `supabase/tests/20261118000000_*.test.sql`.

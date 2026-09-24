@@ -11,7 +11,7 @@ import { prepareProductImage, ImagePreparationError, type PreparedImage } from "
 import type { CategoryDecision, ImageInfo, ImportAnalysis, ImportHistoryItem, ImportRecord, ImportRowResult, RawRow } from "@/lib/catalogo/import/types";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import type { PublicationView } from "@/lib/catalogo/service";
-import type { PedidoPanel } from "@/lib/catalogo/pedidos/panel";
+import type { PedidoHistorial, PedidoPanel } from "@/lib/catalogo/pedidos/panel";
 
 // Solo el TIPO (se borra al compilar): rutas relativas; el navegador les antepone su origen.
 export type { PublicationView };
@@ -120,6 +120,16 @@ export function createCatalogClient(accessToken: string) {
     /** Pedidos abiertos con su stock apartado (Bloque 19). */
     listOrders(): Promise<CatalogResult<{ pedidos: PedidoPanel[] }>> {
       return call(accessToken, "/pedidos");
+    },
+
+    /** Historial de pedidos cerrados, por cursor (Bloque 21). `cursor` = `siguiente` de la página anterior. */
+    listOrderHistory(params: { estado?: "completed" | "cancelled" | "expired"; cursor?: string | null; limite?: number } = {}): Promise<CatalogResult<{ pedidos: PedidoHistorial[]; siguiente: string | null }>> {
+      const qs = new URLSearchParams();
+      if (params.estado) qs.set("estado", params.estado);
+      if (params.cursor) qs.set("cursor", params.cursor);
+      if (params.limite) qs.set("limite", String(params.limite));
+      const q = qs.toString();
+      return call(accessToken, `/pedidos/historial${q ? `?${q}` : ""}`);
     },
 
     /** Venta cerrada (completar) o cancelar (el stock vuelve). Idempotente. */
