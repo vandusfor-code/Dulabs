@@ -31,6 +31,7 @@ import type { ProductMediaLedger } from "@/lib/agente/medios";
 import { resolveSelection } from "@/lib/agente/seleccion";
 import { STAGE_GUIDANCE, conversationStage, type ConversationStage } from "@/lib/agente/etapa";
 import { decideLimits, type UsageReader } from "@/lib/agente/limites";
+import { asksForHuman, detectIntent, type HandoffMotive, type SystemHandoffMotive, type TurnIntent } from "@/lib/agente/intencion";
 import { agentToolDeclarations, executeAgentTool, toolKind, type AgentToolsDeps, type AgentTurnToolContext, type QueuedImage } from "@/lib/agente/herramientas";
 import type { AgentToolName } from "@/lib/agente/nombres-herramientas";
 
@@ -143,6 +144,10 @@ export interface AgentTurnTrace {
   context: { channel: string | null; cart_lines: number; open_options: number; proposal_presented: boolean; active_order: string | null } | null;
   /** Consumo medido y decisión de topes (null = no se midió). */
   limits: { contact_minute: number; contact_day: number; tenant_tokens_day: number; decision: string } | null;
+  /** Qué intentó resolver el turno (derivado de las herramientas pedidas y del resultado; ver intencion.ts). */
+  intent: TurnIntent | null;
+  /** Traspaso a una asesora: quién lo decidió y el motivo CERRADO (nunca el texto libre). */
+  handoff: { source: "customer" | "model" | "system"; motive: HandoffMotive | SystemHandoffMotive } | null;
 }
 
 // Mensajes FIJOS (sin IA): nunca afirman datos comerciales.
@@ -215,11 +220,14 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
     stage: { start: null, end: null },
     delivery: { text_wamid: null, text_error: null, images: [] },
     limits: null,
+    intent: null,
+    handoff: null,
     input: { wamids: (input.wamids && input.wamids.length > 0 ? [...input.wamids] : [input.wamid]).map((w) => w.slice(0, 200)).slice(0, 10), messages: input.wamids?.length || 1, chars: input.text.length },
     context: null,
   };
   const finish = (outcome: AgentTurnOutcome, reply: string | null) => {
     trace.outcome = outcome;
+    trace.intent = detectIntent(trace.tool_calls.map((c) => c.name), outcome);
     trace.latency_ms = now() - started;
     deps.log?.(trace);
     return { outcome, reply, trace };
@@ -258,9 +266,24 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
   const usage = deps.usage ? await deps.usage.read({ tenantId: input.tenantId, phoneNumberId: input.phoneNumberId, contactRef: trace.contact_ref }).catch(() => null) : null;
   const limit = decideLimits(usage, deps.config.limits);
   if (usage) trace.limits = { contact_minute: usage.contactMinute, contact_day: usage.contactDay, tenant_tokens_day: usage.tenantTokensDay, decision: limit.action === "allow" ? "allow" : `${limit.action}:${limit.reason}` };
+  const seen = { ...loaded.state, recentWamids: [...loaded.state.recentWamids.filter((w) => !wamids.includes(w)), ...wamids].slice(-MAX_RECENT_WAMIDS) };
+  /** Traspaso decidido por el backend (sin modelo): pausa + mensaje fijo. false = no se pudo pausar. */
+  const handOffNow = async (motive: SystemHandoffMotive, source: "customer" | "system", reason: string) => {
+    try {
+      await deps.tools.engine.requestHandoff({ tenantId: input.tenantId, contact, reason, actor: "system", requestId });
+    } catch {
+      return false;
+    }
+    trace.handoff = { source, motive };
+    const r = sendResult(await deps.sender.sendText(FALLBACK_MESSAGES.handoff).catch(() => false));
+    trace.sent = r.sent;
+    trace.delivery.text_wamid = r.wamid;
+    trace.delivery.text_error = r.error;
+    trace.state_saved = await deps.state.save(key, { ...seen, handoffTurn: seen.turn }, loaded.version).catch(() => false);
+    return true;
+  };
   if (limit.action !== "allow") {
     trace.turn = loaded.state.turn;
-    const seen = { ...loaded.state, recentWamids: [...loaded.state.recentWamids.filter((w) => !wamids.includes(w)), ...wamids].slice(-MAX_RECENT_WAMIDS) };
     if (limit.action === "throttle") {
       // Spam o bucle: ni modelo ni respuesta; el mensaje queda como atendido.
       trace.state_saved = await deps.state.save(key, seen, loaded.version).catch(() => false);
@@ -268,18 +291,15 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
     }
     // Tope del día: una asesora sigue la conversación (mensaje fijo, sin modelo).
     trace.error_kind = `limit_${limit.reason}`;
-    try {
-      await deps.tools.engine.requestHandoff({ tenantId: input.tenantId, contact, reason: `Límite de uso del asistente (${limit.reason})`, actor: "system", requestId });
-    } catch {
-      trace.state_saved = await deps.state.save(key, seen, loaded.version).catch(() => false);
-      return finish("rate_limited", null);
-    }
-    const r = sendResult(await deps.sender.sendText(FALLBACK_MESSAGES.handoff).catch(() => false));
-    trace.sent = r.sent;
-    trace.delivery.text_wamid = r.wamid;
-    trace.delivery.text_error = r.error;
-    trace.state_saved = await deps.state.save(key, { ...seen, handoffTurn: seen.turn }, loaded.version).catch(() => false);
-    return finish("handoff", r.sent ? FALLBACK_MESSAGES.handoff : null);
+    if (await handOffNow(`limit_${limit.reason}`, "system", `Límite de uso del asistente (${limit.reason})`)) return finish("handoff", trace.sent ? FALLBACK_MESSAGES.handoff : null);
+    trace.state_saved = await deps.state.save(key, seen, loaded.version).catch(() => false);
+    return finish("rate_limited", null);
+  }
+  // El cliente pide una persona: el backend lo pasa a una asesora sin depender del modelo.
+  // Si la pausa falla, sigue el turno normal (el modelo puede reintentar con handoff_to_human).
+  if (asksForHuman(input.text)) {
+    trace.turn = loaded.state.turn;
+    if (await handOffNow("customer_request", "customer", "El cliente pidió hablar con una asesora")) return finish("handoff", trace.sent ? FALLBACK_MESSAGES.handoff : null);
   }
 
   let state: ConversationState = {
@@ -391,6 +411,7 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
     customerText: input.text,
     images: [],
     handedOff: false,
+    handoffMotive: null,
     newProposal: null,
   };
 
@@ -495,6 +516,7 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
     } else if (ctx.state.failures >= 2 && !ctx.handedOff) {
       try {
         await deps.tools.engine.requestHandoff({ tenantId: input.tenantId, contact, reason: "El asistente no pudo responder (fallas repetidas)", actor: "system", requestId });
+        trace.handoff = { source: "system", motive: "repeated_failures" };
         reply = FALLBACK_MESSAGES.handoff;
         outcome = "handoff";
       } catch {
@@ -511,6 +533,7 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
   }
   // Tras pasar a una asesora el agente solo se despide: ni fotos ni nada más.
   if (ctx.handedOff || outcome === "handoff") {
+    if (ctx.handedOff && !trace.handoff) trace.handoff = { source: "model", motive: ctx.handoffMotive ?? "other" };
     ctx.images = [];
     ctx.state = { ...ctx.state, handoffTurn: ctx.turn };
   }

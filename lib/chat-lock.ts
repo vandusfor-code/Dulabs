@@ -51,7 +51,8 @@ export async function adquirirCandadoChat(phoneNumberId: string, telefonoCliente
     await esperar(REINTENTO_MS);
   }
 
-  console.error(`[chat-lock] no se pudo adquirir el candado de ${phoneNumberId}/${telefonoCliente} tras ${MAX_ESPERA_MS}ms -- se procesa igual`);
+  // Sin el teléfono del cliente en los logs (dato personal): el número del negocio basta para diagnosticar.
+  console.error(`[chat-lock] no se pudo adquirir el candado de una conversación de ${phoneNumberId} tras ${MAX_ESPERA_MS}ms -- se procesa igual`);
   return false;
 }
 
