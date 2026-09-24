@@ -68,6 +68,18 @@ total: un campo de más → `INVALID_INPUT`. Internas (no expuestas al modelo):
 - **Enlaces**: la respuesta solo puede llevar el enlace que devolvió `get_catalog_link` (el backend lo arma con negocio + canal + publicación). Detal nunca recibe el link mayorista.
 - **Duplicados**: un wamid ya atendido (reintento de Meta) no genera otra respuesta; el pedido es idempotente por mensaje.
 
+## Topes de costo y abuso (Bloque 14)
+
+Antes de gastar una llamada al modelo, el runtime lee el consumo (`dulabs_agente_consumo`, sobre
+las trazas) y lo compara con `limites` de la config (por defecto 8 turnos/min y 300/día por
+cliente, 20M tokens/día por negocio):
+
+| Situación | Qué pasa |
+| --- | --- |
+| ritmo por minuto del cliente | `rate_limited`: ni modelo ni respuesta a ese mensaje |
+| turnos del día del cliente / tokens del día del negocio | asesora (mensaje fijo, sin modelo) |
+| consumo no medible | sigue normal (no frena ventas); la traza lo muestra (`limits: null`) |
+
 ## Diagnóstico: trazas persistentes (Bloque 13)
 
 Cada turno queda en `dulabs_agente_trazas` (`lib/agente/trazas.ts`), sin datos personales:
