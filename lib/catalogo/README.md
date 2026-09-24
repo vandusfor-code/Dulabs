@@ -74,6 +74,10 @@ resolución es por referencia exacta, nunca por nombre ni aproximación.
   afinar). Una referencia completa (`DL-000184`, `dl000184`) va a ese producto
   exacto; un fragmento (`000184`) busca en las referencias. Sin la migración
   de búsqueda: la búsqueda anterior (frase en nombre/referencia).
+- **Límite de tasa** (Bloque 18, `limites-publicos.ts`) — `POST …/pedido`: 20 por IP cada
+  10 min y 1.000 por catálogo por hora; `GET …/seleccion`: 120 por IP por minuto. Limitador
+  distribuido (`dulabs_rate_limit_incrementar`); la IP solo como hash con sal; 429 con
+  `Retry-After`. Si el limitador falla, se permite.
 - **Carrito** — dominio puro `carrito.ts` + store `carrito-store.ts` (uno por
   catálogo y contexto de precio). El navegador solo es dueño de referencias y
   cantidades; nombre/precio/foto/disponibilidad se reconcilian con

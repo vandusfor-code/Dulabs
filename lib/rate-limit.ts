@@ -36,6 +36,10 @@ export const LIMITES_TASA = {
   devOutboundPorWorkspace: { ventanaSeg: 60, limite: 1200 },
   devAuthFallida: { ventanaSeg: 60, limite: 20 },
   devLectura: { ventanaSeg: 60, limite: 300 },
+  // Bloque 18 -- endpoints PÚBLICOS del catálogo (ver lib/catalogo/limites-publicos.ts).
+  catalogoPedidoIp: { ventanaSeg: 600, limite: 20 },
+  catalogoPedidoCatalogo: { ventanaSeg: 3600, limite: 1000 },
+  catalogoSeleccionIp: { ventanaSeg: 60, limite: 120 },
 } as const;
 
 export type CategoriaLimiteTasa = keyof typeof LIMITES_TASA;

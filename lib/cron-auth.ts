@@ -1,3 +1,4 @@
+import { createHash, timingSafeEqual } from "node:crypto";
 import type { NextRequest } from "next/server";
 import { Receiver } from "@upstash/qstash";
 
@@ -26,6 +27,17 @@ export async function solicitudAutorizadaCron(request: NextRequest, cuerpo: stri
     }
   }
 
-  const auth = request.headers.get("authorization");
-  return auth === `Bearer ${process.env.CRON_SECRET}`;
+  return bearerCronValido(request.headers.get("authorization"), process.env.CRON_SECRET);
+}
+
+/**
+ * Bloque 18 -- antes: `auth === \`Bearer ${CRON_SECRET}\`` aceptaba "Bearer undefined" si la
+ * variable faltaba. Ahora sin secreto NADA pasa, y la comparación es en tiempo
+ * constante (hash de ambos lados: mismo largo siempre).
+ */
+export function bearerCronValido(authorization: string | null, secreto: string | undefined): boolean {
+  if (!secreto || !authorization?.startsWith("Bearer ")) return false;
+  const a = createHash("sha256").update(authorization.slice(7)).digest();
+  const b = createHash("sha256").update(secreto).digest();
+  return timingSafeEqual(a, b);
 }

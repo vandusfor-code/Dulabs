@@ -16,6 +16,10 @@
     {
       "path": "/api/developer/maintenance/retencion",
       "schedule": "30 4 * * *"
+    },
+    {
+      "path": "/api/cron/agente-retencion",
+      "schedule": "45 4 * * *"
     }
   ]
 }

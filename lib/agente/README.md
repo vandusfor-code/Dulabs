@@ -98,6 +98,13 @@ select * from dulabs_agente_diagnosticar('<id_tenant>', '<teléfono>', 20);
 
 El guardado nunca frena un turno y la frontera lo espera antes de terminar (serverless).
 
+## Retención de datos (Bloque 18)
+
+Cron diario `/api/cron/agente-retencion` (04:45 UTC, `vercel.json`; QStash firmado o
+`Bearer CRON_SECRET` — sin secreto, nada pasa): trazas 90 días (`dulabs_agente_trazas_purgar`),
+buzón 14 días (incluye `wa_id` y el texto de mensajes no procesados), registro de fotos enviadas
+90 días. No toca pedidos, memoria de la conversación ni mensajes del Inbox. Ver `retencion.ts`.
+
 ## Atención humana en el Inbox y diagnóstico (Bloque 17)
 
 - **La asesora ve POR QUÉ recibió la conversación** (`atencion-humana.ts`): el Inbox
