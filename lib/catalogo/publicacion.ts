@@ -222,6 +222,20 @@ export function whatsappImagePath(slug: string, reference: string, storagePath: 
   return `${productPath(slug, reference)}/${WHATSAPP_IMAGE_FILE}?v=${imageVersion(storagePath)}`;
 }
 
+/**
+ * Carga de la foto de una tarjeta según su lugar en la página (0 = primera). Las visibles al abrir
+ * en un celular (2 filas de 2) se piden de inmediato; la primera fila, con prioridad alta de red;
+ * el resto, diferidas (solo al acercarse con el scroll). Medido (Bloque 20, celular con 4G lenta):
+ * con TODAS diferidas, el LCP era la primera foto, descubierta tarde (~3,1 s).
+ */
+export const FOTOS_INMEDIATAS = 4;
+const FOTOS_PRIORIDAD_ALTA = 2;
+
+export function cargaDeFoto(posicion: number | undefined): { loading: "eager" | "lazy"; fetchPriority: "high" | "auto" } {
+  if (posicion === undefined || posicion >= FOTOS_INMEDIATAS) return { loading: "lazy", fetchPriority: "auto" };
+  return { loading: "eager", fetchPriority: posicion < FOTOS_PRIORIDAD_ALTA ? "high" : "auto" };
+}
+
 /** Ficha pública del producto: /catalogo/{slug}/productos/{referencia en minúsculas}. */
 export function productPath(slug: string, reference: string): string {
   return `/catalogo/${slug}/productos/${reference.toLowerCase()}`;

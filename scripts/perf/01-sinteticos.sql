@@ -7,11 +7,16 @@
 --   sin control de inventario), ~8 % inactivos, precio detal y mayorista, foto principal
 --   simulada (ruta de Storage ficticia) en ~90 %.
 --   Negocio R (ruido): n_ruido productos de OTRO negocio en la misma tabla (multi-tenant).
+--   Negocio Q (opcional, n_segundo, por defecto 0): OTRO negocio CON Catálogo publicado
+--   (slug joyeria-sintetica-dos), mismas referencias DL-… que P y nombres con sufijo « Q» para
+--   detectar cualquier fuga entre negocios en las pruebas concurrentes.
+--   Para agregarlo a una BD ya sembrada: -v n_negocio=0 -v n_ruido=0 -v n_segundo=2000.
 -- Repetible: mismo resultado en cada corrida (setseed).
 
 \set ON_ERROR_STOP 1
 \if :{?n_negocio} \else \set n_negocio 2000 \endif
 \if :{?n_ruido} \else \set n_ruido 20000 \endif
+\if :{?n_segundo} \else \set n_segundo 0 \endif
 
 select setseed(0.2026);
 
@@ -65,6 +70,16 @@ insert into public.dulabs_clientes_config (id_tenant, nombre_negocio, phone_numb
 select pg_temp.sembrar('aaaaaaaa-0000-4000-8000-0000000000a1', :n_negocio, true);
 -- Negocio R (ruido multi-tenant, sin fotos).
 select pg_temp.sembrar('bbbbbbbb-0000-4000-8000-0000000000b2', :n_ruido, false);
+-- Negocio Q (segundo negocio con Catálogo, opcional).
+insert into public.dulabs_tenant_modulos (id_tenant, modulo, habilitado)
+  select 'cccccccc-0000-4000-8000-0000000000c3', 'catalogo', true where :n_segundo > 0 on conflict do nothing;
+insert into public.dulabs_catalogo_publicacion (id_tenant, slug, nombre_publico, publicado)
+  select 'cccccccc-0000-4000-8000-0000000000c3', 'joyeria-sintetica-dos', 'Joyería Sintética Dos', true where :n_segundo > 0 on conflict do nothing;
+insert into public.dulabs_clientes_config (id_tenant, nombre_negocio, phone_number_id, telefono_negocio)
+  select 'cccccccc-0000-4000-8000-0000000000c3', 'Joyería Sintética Dos', 'PN-PERF-2', '573000000002' where :n_segundo > 0 on conflict do nothing;
+select pg_temp.sembrar('cccccccc-0000-4000-8000-0000000000c3', :n_segundo, true);
+update public.dulabs_inventario_productos set nombre = nombre || ' Q'
+ where id_tenant = 'cccccccc-0000-4000-8000-0000000000c3' and nombre not like '% Q';
 analyze public.dulabs_inventario_productos;
 analyze public.dulabs_catalogo_media;
 analyze public.dulabs_catalogo_categorias;

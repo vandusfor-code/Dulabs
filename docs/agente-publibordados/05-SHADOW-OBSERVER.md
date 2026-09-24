@@ -34,7 +34,7 @@ Meta ──POST /webhook-dulabs──► POST()
 | `clave.ts` | Clave de conversación (igual a la función SQL) |
 | `repositorio.ts` | Única capa con Supabase: 3 lecturas + 1 RPC propia |
 
-## 2. Tablas (migración `20261118000000_dulabs_pb_observador.sql`)
+## 2. Tablas (migración `20261119000000_dulabs_pb_observador.sql`)
 
 **Infraestructura existente revisada:** no hay ninguna tabla equivalente.
 - `dulabs_agente_trazas` es por turno del agente de catálogo y exige `tipo in ('turn','boundary')`.
@@ -154,7 +154,7 @@ El webhook no espera su resultado ni lo usa para nada.
 | --- | --- |
 | `lib/publibordados/observador/observador.test.ts`: Supabase en memoria con el store **real**; red bloqueada | **17/17** |
 | `app/webhook-dulabs/publibordados-observador-aislamiento.test.ts`: guarda estructural sobre el código fuente | **6/6** |
-| `supabase/tests/20261118000000_dulabs_pb_observador.test.sql`: Postgres 16 local efímero; migración aplicada **dos veces** | **9/9 bloques** |
+| `supabase/tests/20261119000000_dulabs_pb_observador.test.sql`: Postgres 16 local efímero; migración aplicada **dos veces** | **9/9 bloques** |
 | Pruebas del webhook existentes (firma, lista negra, media, …) | Verde |
 | Evidencia de routing de la Fase 0 (11 pruebas sobre `procesarCambio` real), repetida con el gancho | **11/11**: comportamiento idéntico |
 | `npm run test:flow` completo | 4972/4974. Las **2 fallas son previas y ajenas**: `lib/agenda-v2/disponibilidad-cadena-real.test.ts` y `lib/amore-conversacion-matriz.test.ts` ("después de las 5"); se reproducen igual en `main` sin este cambio |
@@ -367,7 +367,7 @@ Resultado: **11/11**.
 
 ### 16.3 Migración
 
-Aplicar **solo** `supabase/migrations/20261118000000_dulabs_pb_observador.sql` en el SQL Editor
+Aplicar **solo** `supabase/migrations/20261119000000_dulabs_pb_observador.sql` en el SQL Editor
 (es idempotente). Verificar:
 
 ```sql

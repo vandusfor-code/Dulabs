@@ -1,9 +1,9 @@
--- Publi Bordados, Fase 2A — verificación de 20261118000000_dulabs_pb_observador.sql
+-- Publi Bordados, Fase 2A — verificación de 20261119000000_dulabs_pb_observador.sql
 --
 -- ⚠️  SOLO contra un PostgreSQL LOCAL EFÍMERO (inserta filas de prueba; ids SINTÉTICOS).
 -- Preparación: roles service_role/anon/authenticated y:
---   \i supabase/migrations/20261118000000_dulabs_pb_observador.sql   (dos veces: idempotente)
---   \i supabase/tests/20261118000000_dulabs_pb_observador.test.sql
+--   \i supabase/migrations/20261119000000_dulabs_pb_observador.sql   (dos veces: idempotente)
+--   \i supabase/tests/20261119000000_dulabs_pb_observador.test.sql
 
 \set ON_ERROR_STOP 1
 

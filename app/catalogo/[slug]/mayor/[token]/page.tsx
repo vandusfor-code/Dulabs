@@ -42,7 +42,7 @@ export default async function CatalogoMayorPage(props: Props) {
         <h1 className="font-serif-tienda mt-3 text-[30px] font-medium leading-tight text-fg sm:text-4xl">{titulo}</h1>
       </div>
       <div className="-mx-4 sm:-mx-6 lg:-mx-8">
-        <PublicCatalog data={data} basePath={basePath} q={q} categoria={categoria} compact tile={(p) => <TarjetaProducto product={p} basePath={basePath} />} />
+        <PublicCatalog data={data} basePath={basePath} q={q} categoria={categoria} compact tile={(p, i) => <TarjetaProducto product={p} basePath={basePath} posicion={i} />} />
       </div>
     </>
   );

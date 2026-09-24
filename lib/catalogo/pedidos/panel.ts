@@ -6,8 +6,8 @@
  */
 import { apiError, apiOk } from "@/lib/agent-compiler/api/http";
 import type { Order } from "@/lib/catalogo/pedidos/contrato";
-import { OrderError, type OrderEngine } from "@/lib/catalogo/pedidos/motor";
-import type { ReservationSummary } from "@/lib/catalogo/pedidos/repositorio";
+import { CLOSED_STATUSES, OrderError, type ClosedStatus, type OrderEngine } from "@/lib/catalogo/pedidos/motor";
+import type { OrderCursor, ReservationSummary } from "@/lib/catalogo/pedidos/repositorio";
 
 export const PEDIDO_PUBLICO = /^DL-ORD-[0-9A-HJKMNP-TV-Z]{6}$/;
 
@@ -46,6 +46,75 @@ export function pedidoPanel(order: Order, reservations: readonly ReservationSumm
     creado: order.createdAt,
     actualizado: order.updatedAt,
   };
+}
+
+/**
+ * Pedido CERRADO en el historial (Bloque 21): lo mismo que la asesora ve en abiertos, más cuándo
+ * se cerró y qué pasó con el stock (vendido = la reserva se consumió; devuelto = volvió al
+ * inventario). Nunca ids internos, negocio, confirmaciones ni eventos.
+ */
+export interface PedidoHistorial extends Omit<PedidoPanel, "stock"> {
+  cerrado: string;
+  stock: { estado: "vendido" | "devuelto" | "sin_reserva"; unidades: number };
+}
+
+export function pedidoHistorial(order: Order, reservations: readonly ReservationSummary[]): PedidoHistorial {
+  const { stock: _abierto, ...base } = pedidoPanel(order, []);
+  void _abierto;
+  const suma = (estado: ReservationSummary["status"]) => reservations.filter((r) => r.status === estado).reduce((n, r) => n + r.quantity, 0);
+  const vendido = suma("consumida");
+  const devuelto = suma("liberada");
+  return {
+    ...base,
+    cerrado: order.updatedAt,
+    stock: vendido > 0 ? { estado: "vendido", unidades: vendido } : devuelto > 0 ? { estado: "devuelto", unidades: devuelto } : { estado: "sin_reserva", unidades: 0 },
+  };
+}
+
+export const HISTORIAL_POR_PAGINA = 25;
+const HISTORIAL_MAX = 50;
+// Marca de tiempo tal como la devuelve Postgres/PostgREST (ISO, hasta microsegundos, con zona).
+const MARCA = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/;
+
+/** Cursor OPACO del historial: base64url de {c: creación exacta, p: número público}. Sin ids internos. */
+export function codificarCursor(cursor: OrderCursor): string {
+  return Buffer.from(JSON.stringify({ c: cursor.createdAt, p: cursor.orderId })).toString("base64url");
+}
+
+/** null si el cursor no es uno que emitimos (se rechaza, no se interpreta). */
+export function decodificarCursor(valor: string): OrderCursor | null {
+  if (valor.length > 200 || !/^[A-Za-z0-9_-]+$/.test(valor)) return null;
+  try {
+    const x = JSON.parse(Buffer.from(valor, "base64url").toString("utf8")) as { c?: unknown; p?: unknown };
+    if (typeof x.c !== "string" || typeof x.p !== "string" || !MARCA.test(x.c) || Number.isNaN(Date.parse(x.c)) || !PEDIDO_PUBLICO.test(x.p)) return null;
+    return { createdAt: x.c, orderId: x.p };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * GET historial: ?estado=completed|cancelled|expired (opcional), ?limite=1..50, ?cursor=<opaco>.
+ * Respuesta: { pedidos, siguiente } (siguiente = cursor de la próxima página o null).
+ */
+export async function listarHistorial(engine: OrderEngine | null, tenantId: string, params: URLSearchParams): Promise<Response> {
+  if (!engine) return apiError("UNAVAILABLE", "Los pedidos no están activados.", 503);
+  const estado = params.get("estado");
+  if (estado !== null && estado !== "todos" && !(CLOSED_STATUSES as readonly string[]).includes(estado)) {
+    return apiError("VALIDATION_ERROR", "estado debe ser completed, cancelled, expired o todos.", 400);
+  }
+  const limiteTexto = params.get("limite");
+  const limite = limiteTexto === null ? HISTORIAL_POR_PAGINA : Number(limiteTexto);
+  if (!Number.isInteger(limite) || limite < 1 || limite > HISTORIAL_MAX) return apiError("VALIDATION_ERROR", `limite debe ser un entero entre 1 y ${HISTORIAL_MAX}.`, 400);
+  const cursorTexto = params.get("cursor");
+  const cursor = cursorTexto ? decodificarCursor(cursorTexto) : null;
+  if (cursorTexto && !cursor) return apiError("VALIDATION_ERROR", "cursor inválido.", 400);
+  try {
+    const r = await engine.listClosedOrders(tenantId, { status: estado && estado !== "todos" ? (estado as ClosedStatus) : undefined, cursor, limit: limite });
+    return apiOk({ pedidos: r.items.map((i) => pedidoHistorial(i.order, i.reservations)), siguiente: r.next ? codificarCursor(r.next) : null });
+  } catch (err) {
+    return errorPedido(err);
+  }
 }
 
 const HTTP: Partial<Record<OrderError["code"], number>> = { NOT_FOUND: 404, INVALID_TRANSITION: 409, CONFLICT: 409, UNAVAILABLE: 503 };

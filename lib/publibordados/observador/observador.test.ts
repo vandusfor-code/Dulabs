@@ -2,7 +2,7 @@
  * Publi Bordados — Fase 2A: observador shadow.
  * Supabase EN MEMORIA (lib/testing/supabase-rest-memoria.ts) con el store REAL de Supabase;
  * la RPC dulabs_pb_observar se emula con la misma regla que la SQL (su versión SQL real se prueba
- * en supabase/tests/20261118000000_dulabs_pb_observador.test.sql). Ninguna salida de red: todo
+ * en supabase/tests/20261119000000_dulabs_pb_observador.test.sql). Ninguna salida de red: todo
  * fetch fuera de la base en memoria falla. IDs y teléfonos SINTÉTICOS.
  */
 process.env.SUPABASE_URL = "http://supabase.memoria";

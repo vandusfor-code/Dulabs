@@ -6,6 +6,7 @@
  */
 import Image from "next/image";
 import Link from "next/link";
+import { EnlaceIntencion } from "@/components/catalogo-publico/tienda/EnlaceIntencion";
 import { ArrowRight } from "lucide-react";
 import type { PublicHome } from "@/lib/catalogo/service";
 import { heroOf, type CatalogStorefrontConfig } from "@/lib/catalogo/vitrina";
@@ -52,7 +53,7 @@ function Categorias({ home, basePath }: { home: PublicHome; basePath: string }) 
       <ul className="tienda-scroll -mx-4 flex snap-x gap-2 overflow-x-auto px-4 pb-1 sm:mx-0 sm:gap-4 sm:px-0">
         {home.categories.map((c) => (
           <li key={c.id} className="shrink-0 snap-start">
-            <Link
+            <EnlaceIntencion
               href={`${basePath}?categoria=${encodeURIComponent(c.id)}`}
               className="group flex w-[84px] flex-col items-center gap-2 rounded-2xl py-1 transition-transform duration-150 active:scale-95 sm:w-24"
             >
@@ -67,7 +68,7 @@ function Categorias({ home, basePath }: { home: PublicHome; basePath: string }) 
                 )}
               </span>
               <span className="line-clamp-1 max-w-full px-1 text-center text-[13px] text-fg">{c.name}</span>
-            </Link>
+            </EnlaceIntencion>
           </li>
         ))}
       </ul>
@@ -96,9 +97,9 @@ function Destacados({ home, basePath, listPath }: { home: PublicHome; basePath: 
         </div>
       ) : (
         <ul className="tienda-scroll -mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto scroll-px-4 px-4 pb-2 md:mx-0 md:grid md:grid-cols-4 md:gap-5 md:overflow-visible md:px-0">
-          {home.featured.map((p) => (
+          {home.featured.map((p, i) => (
             <li key={p.reference} className="w-[46%] shrink-0 snap-start sm:w-[36%] md:w-auto">
-              <TarjetaProducto product={p} basePath={basePath} />
+              <TarjetaProducto product={p} basePath={basePath} posicion={i} />
             </li>
           ))}
         </ul>

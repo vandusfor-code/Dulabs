@@ -12,9 +12,9 @@ import { randomUUID } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { createClient } from "@supabase/supabase-js";
 import { createSupabaseCatalogRepository } from "@/lib/catalogo/repository";
-import { createPublicCatalogService } from "@/lib/catalogo/service";
+import { createCatalogService, createPublicCatalogService } from "@/lib/catalogo/service";
 import { createOrderEngine, OrderError } from "@/lib/catalogo/pedidos/motor";
-import { createSupabaseOrdersRepository } from "@/lib/catalogo/pedidos/repositorio";
+import { createSupabaseOrdersRepository, type OrderCursor } from "@/lib/catalogo/pedidos/repositorio";
 import { memoryOrderEventSink } from "@/lib/catalogo/pedidos/eventos";
 import { emptyConversationState, rememberReferences } from "@/lib/agente/estado";
 import { executeAgentTool, type AgentTurnToolContext } from "@/lib/agente/herramientas";
@@ -28,6 +28,9 @@ const arg = (name: string, def: string) => {
 const RONDAS = Number(arg("rondas", "30"));
 const TENANT = "aaaaaaaa-0000-4000-8000-0000000000a1";
 const SLUG = "joyeria-sintetica";
+// Segundo negocio CON Catálogo (opcional: 01-sinteticos.sql -v n_segundo=2000): mismas referencias DL-…, nombres con « Q».
+const TENANT_Q = "cccccccc-0000-4000-8000-0000000000c3";
+const SLUG_Q = "joyeria-sintetica-dos";
 
 // Contador de consultas y bytes por operación (envuelve el fetch de supabase-js).
 let requests = 0;
@@ -54,6 +57,8 @@ const orders = createSupabaseOrdersRepository(supabase);
 const KEY = Buffer.alloc(32, 7);
 const engine = createOrderEngine({ orders, catalog, key: KEY, log: () => {}, sink: memoryOrderEventSink() });
 const publico = createPublicCatalogService({ repo: catalog, orders: { key: KEY, engine, events: memoryOrderEventSink() } });
+const admin = createCatalogService({ repo: catalog });
+const ADMIN = { tenantId: TENANT, userId: "perf-admin" };
 
 type Resultado = { operacion: string; p50: number; p95: number; max: number; consultas: number; kb_bd: number; kb_gemini?: number; nota?: string };
 const resultados: Resultado[] = [];
@@ -172,6 +177,27 @@ async function main() {
   const { count: abiertos } = await supabase.from("dulabs_catalogo_pedidos").select("id", { count: "exact", head: true }).eq("id_tenant", TENANT).in("estado", ["pending_confirmation", "confirmed", "handoff"]);
   await medir(`panel: pedidos abiertos (hay ${abiertos})`, () => engine.listOpenOrders(TENANT, 100), { nota: "tope 100 por página" });
 
+  // --- Historial de pedidos cerrados (cursor): recorrido completo exacto + costo por página ------
+  const { count: cerrados } = await supabase.from("dulabs_catalogo_pedidos").select("id", { count: "exact", head: true }).eq("id_tenant", TENANT).in("estado", ["completed", "cancelled", "expired"]);
+  const vistos = new Set<string>();
+  let cursor: OrderCursor | null = null;
+  let paginas = 0;
+  do {
+    const r = await engine.listClosedOrders(TENANT, { cursor, limit: 25 });
+    for (const i of r.items) {
+      if (vistos.has(i.order.orderId)) throw new Error(`FALLA historial: ${i.order.orderId} repetido`);
+      if (i.order.businessId !== TENANT) throw new Error("FALLA historial: pedido de otro negocio");
+      vistos.add(i.order.orderId);
+    }
+    cursor = r.next;
+    paginas++;
+  } while (cursor);
+  if (vistos.size !== cerrados) throw new Error(`FALLA historial: recorrió ${vistos.size} de ${cerrados}`);
+  let profundo: OrderCursor | null = null;
+  for (let i = 0; i < Math.min(paginas - 1, 10); i++) profundo = (await engine.listClosedOrders(TENANT, { cursor: profundo, limit: 25 })).next;
+  await medir(`panel: historial página 1 (hay ${cerrados} cerrados)`, () => engine.listClosedOrders(TENANT, { cursor: null, limit: 25 }), { nota: `recorrido completo por cursor: ${vistos.size}/${cerrados} en ${paginas} páginas, sin repetidos` });
+  await medir("panel: historial página 11 (cursor)", () => engine.listClosedOrders(TENANT, { cursor: profundo, limit: 25 }));
+
   // --- Herramientas del agente (lo que recibe Gemini) ---------------------------------------
   await medir("gemini: search_products (aretes oro)", () => herramienta("search_products", { query: "aretes oro" }), { gemini: tamano });
   await medir("gemini: search_products (anillo)", () => herramienta("search_products", { query: "anillo" }), { gemini: tamano });
@@ -181,6 +207,19 @@ async function main() {
   carrito = refs.slice(40, 45).map((reference) => ({ reference, quantity: 1 }));
   await medir("gemini: resolve_order (carrito de 5 líneas)", () => herramienta("resolve_order", {}), { gemini: tamano });
   carrito = [];
+  await medir("gemini: more_products (página siguiente)", () => herramienta("more_products", {}), { gemini: tamano });
+  await medir("gemini: get_product_details", (i) => herramienta("get_product_details", { reference: refs[Math.abs(i) % 60] }), { gemini: tamano });
+  await medir("gemini: request_product_images (3 fotos)", () => herramienta("request_product_images", { references: refs.slice(0, 3) }), { gemini: tamano });
+
+  // --- Panel administrativo -------------------------------------------------------------------
+  await medir("admin: listado página 1 (50)", () => admin.listProducts(ADMIN, { q: undefined, page: 1, pageSize: 50, status: "ALL" }));
+  await medir("admin: listado página 100 (profunda)", () => admin.listProducts(ADMIN, { q: undefined, page: 100, pageSize: 50, status: "ALL" }));
+  await medir("admin: buscar 'luna' (nombre o referencia)", () => admin.listProducts(ADMIN, { q: "luna", page: 1, pageSize: 50, status: "ALL" }));
+  await medir("admin: ficha (producto + fotos)", async (i) => {
+    const { data } = await supabase.from("dulabs_inventario_productos").select("id").eq("id_tenant", TENANT).eq("referencia", refs[Math.abs(i) % refs.length]).single();
+    return admin.getProduct(ADMIN, data!.id as string);
+  }, { nota: "incluye 1 consulta para obtener el id" });
+  await medir("admin: claves del negocio (vista previa de importación)", () => catalog.listProductKeys(TENANT), { rondas: 5, nota: "acción de administración puntual; pagina de a 1.000" });
 
   // --- Concurrencia ---------------------------------------------------------------------------
   await concurrencia("concurrente: 50 búsquedas a la vez", 50, (i) => publico.getCatalog({ slug: SLUG, context: "retail", q: ["aretes oro", "anillo luna", "corazon", "plata", "collar perla"][i % 5] }));
@@ -193,6 +232,10 @@ async function main() {
     return c;
   });
   await ultimaUnidad(refs[79]);
+
+  // --- Varios negocios a la vez (si existe el segundo negocio con Catálogo) -------------------
+  const { count: productosQ } = await supabase.from("dulabs_inventario_productos").select("id", { count: "exact", head: true }).eq("id_tenant", TENANT_Q);
+  if (productosQ) await multiNegocio(refs);
 
   if (process.argv.includes("--json")) writeFileSync(arg("json", "perf.json"), JSON.stringify(resultados, null, 2));
   console.log("\n| Operación | p50 ms | p95 ms | máx ms | consultas | KB BD | KB a Gemini |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: |");
@@ -244,6 +287,50 @@ async function ultimaUnidad(reference: string) {
   if (ok !== 1 || data?.stock !== 0) throw new Error(`FALLA última unidad: ${fila.nota}`);
   for (const [i, x] of r.entries()) if (x.status === "fulfilled") await engine.closeOrder({ tenantId: TENANT, orderId: pedidos[i].order.orderId, action: "cancel" });
   await supabase.from("dulabs_inventario_productos").update({ stock: 12 }).eq("id_tenant", TENANT).eq("referencia", reference);
+}
+
+/**
+ * Dos negocios con Catálogo a la vez, con LAS MISMAS referencias (DL-…): búsquedas y carritos
+ * concurrentes intercalados nunca devuelven productos del otro negocio (los de Q terminan en « Q»),
+ * y la última unidad de la MISMA referencia en los dos negocios a la vez se reparte bien: exactamente
+ * un confirmado por negocio y el stock de cada uno en 0.
+ */
+async function multiNegocio(refs: string[]) {
+  let fugas = 0;
+  const palabras = ["anillo", "aretes luna", "corazon", "plata", "collar perla", "oro rosa"];
+  await concurrencia("multi-negocio: 60 búsquedas intercaladas (2 negocios)", 60, async (i) => {
+    const q = i % 2 === 1;
+    const page = await publico.getCatalog({ slug: q ? SLUG_Q : SLUG, context: "retail", q: palabras[i % palabras.length] });
+    for (const p of page?.products ?? []) if (p.name.endsWith(" Q") !== q) fugas++;
+  });
+  await concurrencia("multi-negocio: 60 carritos intercalados, mismas referencias", 60, async (i) => {
+    const q = i % 2 === 1;
+    const sel = await publico.resolveSelection({ slug: q ? SLUG_Q : SLUG, references: refs.slice(i % 40, (i % 40) + 10) });
+    for (const p of sel?.items ?? []) if (p.name.endsWith(" Q") !== q) fugas++;
+  });
+  const ref = refs[77];
+  await supabase.from("dulabs_inventario_productos").update({ stock: 1 }).in("id_tenant", [TENANT, TENANT_Q]).eq("referencia", ref);
+  const pedidos = await Promise.all(
+    Array.from({ length: 40 }, async (_, i) => {
+      const tenantId = i % 2 ? TENANT_Q : TENANT;
+      const contact = { phoneNumberId: i % 2 ? "PN-PERF-2" : "PN-PERF", waId: `5730094${String(i).padStart(5, "0")}` };
+      const { order } = await engine.createOrder({ tenantId, channel: "retail", source: "agent", contact, items: [{ reference: ref, quantity: 1 }], idempotencyKey: `agent:perf-${randomUUID()}` });
+      return { tenantId, contact, order };
+    }),
+  );
+  const t0 = performance.now();
+  const r = await Promise.allSettled(pedidos.map(({ tenantId, contact, order }) => engine.confirmOrder({ tenantId, contact, orderId: order.orderId, confirmationId: order.confirmation!.id, actor: "agent" })));
+  const ms = performance.now() - t0;
+  const okPor = (t: string) => r.filter((x, i) => x.status === "fulfilled" && pedidos[i].tenantId === t).length;
+  const { data: stocks } = await supabase.from("dulabs_inventario_productos").select("id_tenant, stock").in("id_tenant", [TENANT, TENANT_Q]).eq("referencia", ref);
+  const stock = (t: string) => stocks?.find((x) => x.id_tenant === t)?.stock;
+  const nota = `confirmados P ${okPor(TENANT)} / Q ${okPor(TENANT_Q)}; stock final P ${stock(TENANT)} / Q ${stock(TENANT_Q)}; fugas entre negocios ${fugas}`;
+  const fila: Resultado = { operacion: "multi-negocio: misma referencia, última unidad en 2 negocios (20+20 clientes)", p50: 0, p95: 0, max: +ms.toFixed(1), consultas: 0, kb_bd: 0, nota };
+  resultados.push(fila);
+  console.log(JSON.stringify(fila));
+  if (okPor(TENANT) !== 1 || okPor(TENANT_Q) !== 1 || stock(TENANT) !== 0 || stock(TENANT_Q) !== 0 || fugas !== 0) throw new Error(`FALLA multi-negocio: ${nota}`);
+  for (const [i, x] of r.entries()) if (x.status === "fulfilled") await engine.closeOrder({ tenantId: pedidos[i].tenantId, orderId: pedidos[i].order.orderId, action: "cancel" });
+  await supabase.from("dulabs_inventario_productos").update({ stock: 12 }).in("id_tenant", [TENANT, TENANT_Q]).eq("referencia", ref);
 }
 
 void main().catch((e) => {

@@ -40,6 +40,10 @@ export const LIMITES_TASA = {
   catalogoPedidoIp: { ventanaSeg: 600, limite: 20 },
   catalogoPedidoCatalogo: { ventanaSeg: 3600, limite: 1000 },
   catalogoSeleccionIp: { ventanaSeg: 60, limite: 120 },
+  // Bloque 21 -- PÁGINAS públicas del catálogo (lib/catalogo/limite-paginas.ts, desde proxy.ts).
+  catalogoPaginaIp: { ventanaSeg: 60, limite: 600 },
+  catalogoBusquedaIp: { ventanaSeg: 60, limite: 120 },
+  catalogoBusquedaCatalogo: { ventanaSeg: 60, limite: 3000 },
 } as const;
 
 export type CategoriaLimiteTasa = keyof typeof LIMITES_TASA;

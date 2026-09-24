@@ -536,6 +536,8 @@ export const AGENT_TOOLS = {
       if (allowed.length > 0 && pub) {
         const lote = await createResolucionCatalogo({ repo: deps.catalog }).resolverReferencias(ctx.tenantId, allowed);
         const shown: Array<{ reference: string; name: string; color: string | null; material: string | null }> = [];
+        // Id interno para el registro de fotos enviadas: UNA consulta por lote (nunca llega a Gemini).
+        let ids: Map<string, string> | null = null;
         for (const r of allowed) {
           const p = lote.items.find((x) => x.reference === r);
           if (!p) skipped.push({ reference: r, reason: "not_found" });
@@ -543,12 +545,12 @@ export const AGENT_TOOLS = {
           else if (!p.image) skipped.push({ reference: r, reason: "no_photo" });
           else if (ctx.images.length >= MAX_IMAGES_PER_TURN) skipped.push({ reference: r, reason: "limit" });
           else if (!ctx.images.some((i) => i.reference === r)) {
-            const product = await deps.catalog.getProductByReference(ctx.tenantId, r);
+            ids ??= new Map((await deps.catalog.getProductsByReferences(ctx.tenantId, allowed)).map((x) => [x.reference, x.id]));
             const price = ctx.channel === "wholesale" ? p.prices.wholesale : p.prices.retail;
             const stock = p.availability === "sold_out" ? " · agotado" : "";
             ctx.images.push({
               reference: r,
-              productId: product?.id ?? null,
+              productId: ids.get(r) ?? null,
               url: `${pub.origin}${whatsappImagePath(pub.slug, r, p.image.storagePath)}`,
               caption: `${p.name} · ${r} · ${price === null ? "precio a consultar" : formatCop(price)}${stock}`,
             });

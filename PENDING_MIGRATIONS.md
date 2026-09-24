@@ -2,7 +2,7 @@
 
 ## PENDIENTE — Publi Bordados, Fase 2A: observador shadow de Coexistence
 
-Migración `supabase/migrations/20261118000000_dulabs_pb_observador.sql`. **Aditiva**: crea
+Migración `supabase/migrations/20261119000000_dulabs_pb_observador.sql`. **Aditiva**: crea
 `dulabs_pb_config`, `dulabs_pb_observaciones` y `dulabs_pb_mensajes_enviados` (vacía en 2A), y las
 funciones `dulabs_pb_observar`, `dulabs_pb_clave_conversacion` y `dulabs_pb_observaciones_purgar`.
 Solo `service_role`. No toca ninguna tabla existente.
@@ -10,9 +10,43 @@ Solo `service_role`. No toca ninguna tabla existente.
 Sin esta migración el código es inerte: el observador solo corre con `PUBLIBORDADOS_ENABLED=true`
 **y** una fila habilitada en `dulabs_pb_config`. Activación, comprobación e interpretación:
 `docs/agente-publibordados/05-SHADOW-OBSERVER.md`. Verificación local:
-`supabase/tests/20261118000000_dulabs_pb_observador.test.sql`.
+`supabase/tests/20261119000000_dulabs_pb_observador.test.sql`.
 
-## PENDIENTE — Bloque 20: búsqueda del catálogo indexada (rendimiento con miles de referencias)
+## PENDIENTE (opcional, recomendada) — Bloque 21: índice del historial de pedidos
+
+Migración `supabase/migrations/20261118000000_dulabs_catalogo_pedidos_historial.sql`. **Solo crea
+un índice parcial** sobre `dulabs_catalogo_pedidos` (filas en estado final). No toca datos,
+funciones, triggers, permisos ni RLS, ni nada fuera del catálogo.
+
+**Para qué sirve:** el panel de pedidos tiene ahora un **historial** de pedidos cerrados, paginado
+por cursor.
+
+| Con 100.000 pedidos cerrados | Tiempo por página |
+| --- | --- |
+| Sin el índice | ~23–26 ms (recorre y ordena todos los cerrados del negocio; crece con el volumen) |
+| Con el índice | ~0,1 ms, en la primera página o en la número mil |
+
+Sin la migración el historial funciona igual, con el mismo resultado; solo es más lento cuando
+haya muchos pedidos.
+
+Validada contra PostgreSQL 16 local:
+
+- prueba SQL 3/3, aplicada dos veces: usa el índice, y el cursor recorre todo el historial sin
+  repetir ni saltar, incluso con miles de pedidos en el mismo instante;
+- recorrido real por PostgREST: 356 de 356 pedidos en 15 páginas.
+
+1. Correr el archivo completo en el SQL Editor (idempotente).
+2. Verificar (esperado `1`):
+   ```sql
+   select count(*) from pg_indexes where indexname = 'dulabs_catalogo_pedidos_historial_idx';
+   ```
+
+Rollback: `drop index if exists public.dulabs_catalogo_pedidos_historial_idx;`
+
+**Sin migración nueva:** el límite de tasa de las páginas del catálogo (Bloque 21) reutiliza
+`dulabs_rate_limit_incrementar`, que ya está en producción desde la Fase 11.
+
+## ✅ APLICADA (24-sep-2026, verificada `1 | 1 | 1 | 0 | 0`) — Bloque 20: búsqueda del catálogo indexada (rendimiento con miles de referencias)
 
 Migración `supabase/migrations/20261117000000_dulabs_catalogo_busqueda_indice.sql`. **Aditiva**.
 Crea la tabla propia del catálogo `dulabs_catalogo_busqueda_doc`, con dos cosas por producto:
@@ -235,6 +269,9 @@ Rollback: al inicio del archivo de la migración.
 ## ✅ APLICADA (24-sep-2026) — Bloque 10: búsqueda del catálogo para el agente (miles de referencias)
 
 Migración `supabase/migrations/20261111000000_dulabs_catalogo_busqueda.sql`.
+> Nota (24-sep-2026): sus funciones no estaban en producción (error 42883 al aplicar el
+> Bloque 20). Quedaron creadas por la migración del Bloque 20, que las incluye idénticas y
+> reemplaza `dulabs_catalogo_buscar` por su versión indexada. No hace falta correr esta.
 **100 % aditiva**: solo funciones nuevas. **No** agrega columnas a
 `dulabs_inventario_productos` (compartida con AMORE) ni cambia la tienda pública.
 
