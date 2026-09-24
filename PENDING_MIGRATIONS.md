@@ -1,6 +1,6 @@
 # Pasos manuales pendientes en producción
 
-## PENDIENTE — Bloque 17: el diagnóstico del agente muestra la intención y el motivo de la asesora
+## ✅ APLICADA (24-sep-2026) — Bloque 17: el diagnóstico del agente muestra la intención y el motivo de la asesora
 
 Migración `supabase/migrations/20261115000000_dulabs_agente_diagnostico_intencion.sql`.
 **No crea tablas ni toca filas**: reemplaza la función `dulabs_agente_diagnosticar` (Bloque 13)
