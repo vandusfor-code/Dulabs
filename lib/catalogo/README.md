@@ -66,6 +66,14 @@ resolución es por referencia exacta, nunca por nombre ni aproximación.
   `getStorefront`, `getHome`, `getCatalog`, `getProduct`, `resolveSelection`,
   `getImage` (principal + galería). El mayorista (`/mayor/{token}`) queda fuera
   del grupo, aislado.
+- **Búsqueda** (Bloque 15) — `getCatalog` con `q` usa la MISMA búsqueda de
+  texto completo del agente (`dulabs_catalogo_buscar`: sin tildes, plurales y
+  prefijos; nombre, categoría, color/material y descripción; por relevancia):
+  todas las palabras, o si ninguno las tiene todas, alguna (`search.relaxed`,
+  se avisa). Páginas de 20 y tope de 220 resultados (`search.capped`: se pide
+  afinar). Una referencia completa (`DL-000184`, `dl000184`) va a ese producto
+  exacto; un fragmento (`000184`) busca en las referencias. Sin la migración
+  de búsqueda: la búsqueda anterior (frase en nombre/referencia).
 - **Carrito** — dominio puro `carrito.ts` + store `carrito-store.ts` (uno por
   catálogo y contexto de precio). El navegador solo es dueño de referencias y
   cantidades; nombre/precio/foto/disponibilidad se reconcilian con
