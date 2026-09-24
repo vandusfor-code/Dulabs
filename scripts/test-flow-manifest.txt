@@ -477,3 +477,5 @@ lib/agente/agente-intencion.test.ts
 app/api/dashboard/conversaciones/atencion-humana.test.ts
 lib/publibordados/observador/observador.test.ts
 app/webhook-dulabs/publibordados-observador-aislamiento.test.ts
+app/webhook-dulabs/agente-no-texto-integracion.test.ts
+lib/catalogo/pedidos/abandonados.test.ts

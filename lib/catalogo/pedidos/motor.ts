@@ -107,6 +107,14 @@ export const OPEN_STATUSES: readonly OrderStatus[] = ["draft", "validated", "pen
 /** Estados finales: el historial del panel (Bloque 21). Su reserva ya se consumió o se liberó. */
 export const CLOSED_STATUSES = ["completed", "cancelled", "expired"] as const satisfies readonly OrderStatus[];
 export type ClosedStatus = (typeof CLOSED_STATUSES)[number];
+/**
+ * Bloque 23 — un pedido de conversación SIN confirmar (borrador, validado o propuesta sin "sí") que
+ * no cambió en este plazo se da por abandonado y vence (actor sistema). No queda "abierto" para
+ * siempre en el panel ni como pedido activo de la conversación semanas después. Mismo plazo que la
+ * reserva de un pedido confirmado. Los pedidos con una asesora (handoff) nunca vencen solos.
+ */
+export const ABANDONED_ORDER_MS = 72 * 60 * 60 * 1000;
+export const ABANDONABLE_STATUSES: readonly OrderStatus[] = ["draft", "validated", "pending_confirmation"];
 
 /** sha256 de lo pedido (canal + referencias:cantidades normalizadas). */
 export function requestFingerprint(channel: OrderChannel, items: readonly OrderItem[]): string {
@@ -305,6 +313,31 @@ export function createOrderEngine(deps: OrderEngineDeps) {
     return { order: updated, eventId: event?.event_id };
   }
 
+  /**
+   * Bloque 23 — vence los pedidos de conversación sin confirmar que llevan ABANDONED_ORDER_MS sin
+   * cambios (ver ABANDONABLE_STATUSES). Cada uno por la transición normal (compare-and-set +
+   * evento): si el pedido cambió mientras tanto (el cliente escribió), NO se vence. Idempotente.
+   */
+  async function expireAbandoned(input: { businessId?: string; limit?: number }): Promise<number> {
+    if (!(await deps.orders.available())) return 0;
+    const stale = await deps.orders.listStale({
+      statuses: ABANDONABLE_STATUSES,
+      updatedBefore: new Date(now().getTime() - ABANDONED_ORDER_MS).toISOString(),
+      businessId: input.businessId,
+      limit: input.limit ?? 200,
+    });
+    let n = 0;
+    for (const order of stale) {
+      try {
+        await move(order, "expired", "system", { confirmation: null }, { reason: "abandoned" });
+        n++;
+      } catch (err) {
+        if (!(err instanceof OrderError && err.code === "CONFLICT")) console.error("[catalogo/pedidos] vencer abandonado:", err instanceof Error ? err.message : "?");
+      }
+    }
+    return n;
+  }
+
   /** Pedido del negocio Y de esta conversación; cualquier otro caso es "no existe" (no se revela nada). */
   async function load(tenantId: string, contact: OrderContact, orderId: string): Promise<Order> {
     const order = await deps.orders.getByOrderId(tenantId, orderId);
@@ -370,7 +403,15 @@ export function createOrderEngine(deps: OrderEngineDeps) {
         await requireAvailable();
         const fingerprint = requestFingerprint(input.channel, input.items);
         const ev = await evaluate(input.tenantId, input.channel, input.items, undefined, input.stickyIssues ?? []);
-        const clean = ev.issues.length === 0 && ev.lines.length > 0;
+        // Bloque 23: ningún producto de la selección existe (p. ej. todos se borraron del catálogo):
+        // no se guarda un pedido vacío (sería basura operativa); se informa qué referencias faltan.
+        if (ev.lines.length === 0) {
+          throw new OrderError("REFERENCE_NOT_FOUND", "Ninguno de los productos de la selección existe en el catálogo.", {
+            references: ev.issues.flatMap((i) => ("reference" in i && i.code === "reference_not_found" ? [i.reference] : [])),
+            issues: ev.issues.map((i) => ({ code: i.code, message: i.message })),
+          });
+        }
+        const clean = ev.issues.length === 0;
         const at = now().toISOString();
         const result = await insert(
           {
@@ -537,12 +578,21 @@ export function createOrderEngine(deps: OrderEngineDeps) {
       });
     },
 
+    /**
+     * Bloque 23 — vence los pedidos de conversación sin confirmar que llevan ABANDONED_ORDER_MS sin
+     * cambios (ver ABANDONABLE_STATUSES). Cada uno por la transición normal (compare-and-set +
+     * evento): si el pedido cambió mientras tanto (el cliente escribió), NO se vence. Idempotente.
+     */
+    expireAbandonedOrders: (input: { businessId?: string; limit?: number } = {}) => expireAbandoned(input),
+
     /** Pedidos abiertos del negocio con su reserva de stock (panel de la asesora). */
     async listOpenOrders(tenantId: string, limit = 100): Promise<Array<{ order: Order; reservations: ReservationSummary[] }>> {
       await requireAvailable();
       // Al abrir el panel se vence lo que ya pasó su plazo (no depende solo del cron): lo que la
       // asesora ve es el stock real. Idempotente y barato (índice de reservas activas por vencimiento).
       await deps.orders.expireReservations(200).catch((err: unknown) => console.error("[catalogo/pedidos] vencer reservas:", err instanceof Error ? err.message : "?"));
+      // Bloque 23: tampoco se muestran propuestas abandonadas hace días como si siguieran abiertas.
+      await expireAbandoned({ businessId: tenantId, limit: 100 }).catch((err: unknown) => console.error("[catalogo/pedidos] vencer abandonados:", err instanceof Error ? err.message : "?"));
       const orders = await deps.orders.listForBusiness(tenantId, ["pending_confirmation", "confirmed", "handoff"], limit);
       const reservations = await deps.orders.reservationsFor(tenantId, orders.map((o) => o.id));
       return orders.map((order) => ({ order, reservations: reservations.filter((r) => r.orderId === order.id) }));

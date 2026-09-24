@@ -29,9 +29,10 @@ import { createMemoryConversationStateStore, parseConversationState, type Conver
 import type { AgentToolsDeps, QueuedImage } from "@/lib/agente/herramientas";
 import { createMemoryProductMediaLedger } from "@/lib/agente/medios";
 import { AGENT_TOOL_NAMES } from "@/lib/agente/nombres-herramientas";
-import { runAgentTurn, type AgentTurnTrace } from "@/lib/agente/runtime";
+import { FALLBACK_MESSAGES, runAgentTurn, type AgentTurnTrace } from "@/lib/agente/runtime";
 import { resolveSelection } from "@/lib/agente/seleccion";
 import { addCustomerEvidence, addEvidence, checkGrounding, emptyEvidence } from "@/lib/agente/anclaje";
+import { NON_TEXT_MESSAGES, NON_TEXT_NOTICE_COOLDOWN_MS, inboxLabel, nonTextPolicy, type NonTextKind } from "@/lib/agente/entrada";
 
 const A: CatalogActor = { tenantId: "aaaaaaaa-0000-4000-8000-00000000000a", userId: "admin-a" };
 const B: CatalogActor = { tenantId: "bbbbbbbb-0000-4000-8000-00000000000b", userId: "admin-b" };
@@ -55,6 +56,7 @@ let sent: string[];
 let images: QueuedImage[];
 let traces: AgentTurnTrace[];
 let tookOver: boolean;
+let pausaFalla: boolean;
 let seq: number;
 let slug: string;
 
@@ -88,6 +90,7 @@ beforeEach(async () => {
   images = [];
   traces = [];
   tookOver = false;
+  pausaFalla = false;
   seq = 0;
   engine = createOrderEngine({
     orders: pedidos,
@@ -98,6 +101,7 @@ beforeEach(async () => {
     now: () => new Date(reloj),
     handoff: {
       async pauseConversation({ contact }) {
+        if (pausaFalla) return { ok: false };
         pausas.push(contact.waId);
         return { ok: true };
       },
@@ -135,19 +139,23 @@ interface TurnoOpts {
   wamid?: string;
   replyTo?: { wamid?: string | null; forwarded?: boolean } | null;
   state?: ConversationStateStore;
+  /** Bloque 23: mensaje sin texto (nota de voz, imagen…). */
+  nonText?: { kind: NonTextKind };
+  /** Bloque 23: dependencias de herramientas alteradas (p. ej. un motor lento). */
+  tools?: Partial<AgentToolsDeps>;
 }
 
 /** Un mensaje del cliente atendido por el runtime real con Gemini simulado. */
 async function turno(script: SimulatedStep[], text: string, opts: TurnoOpts = {}) {
   const provider = createSimulatedProvider(script);
   const wamid = opts.wamid ?? `wamid.in.${++seq}`;
-  if (!history.some((h) => h.wamid === wamid)) history.push({ direccion: "entrante", contenido: text, origen: "entrante", wamid });
+  if (!history.some((h) => h.wamid === wamid)) history.push({ direccion: "entrante", contenido: opts.nonText ? inboxLabel(opts.nonText.kind) : text, origen: "entrante", wamid });
   const r = await runAgentTurn(
     {
       config: opts.config ?? cfg(),
       provider,
       model: "gemini-3.6-flash",
-      tools: toolDeps(),
+      tools: { ...toolDeps(), ...opts.tools },
       state: opts.state ?? stateStore,
       history: { recent: async () => history.map((h) => ({ ...h })) },
       media: ledger,
@@ -168,7 +176,7 @@ async function turno(script: SimulatedStep[], text: string, opts: TurnoOpts = {}
       now: () => reloj,
       retry: { sleep: async () => {}, random: () => 0 },
     },
-    { tenantId: A.tenantId, phoneNumberId: PN_A, waId: CLIENTE, wamid, text, replyTo: opts.replyTo ?? null },
+    { tenantId: A.tenantId, phoneNumberId: PN_A, waId: CLIENTE, wamid, text, replyTo: opts.replyTo ?? null, nonText: opts.nonText ?? null },
   );
   return { ...r, provider };
 }
@@ -759,10 +767,15 @@ describe("Bloque 22: venta real de punta a punta (catálogo con la forma del de 
     await turno([call("update_cart", { items: [{ reference: sol.reference, quantity: 1 }] }), { text: "Listo, Aretes Sol." }], "quiero este", { replyTo: { wamid: fotos.get(sol.reference) } });
     mem.hardDelete(sol.id);
     const c = await turno([call("create_order_request"), { text: "Ese producto ya no está disponible; ¿quieres ver otras opciones?" }], "hagamos el pedido");
-    const creado = lastToolOutputs(c.provider.requests[1])[0] as { status?: string; confirmation?: unknown; issues?: Array<{ code: string }> };
-    assert.equal(creado.confirmation ?? null, null, "sin propuesta confirmable con un producto borrado");
-    assert.equal(creado.status, "draft");
-    assert.deepEqual(creado.issues?.map((i) => i.code), ["reference_not_found"]);
+    // Bloque 23: si NINGÚN producto de la selección existe, no se guarda un pedido vacío (basura
+    // operativa): error claro para el modelo y la referencia borrada sale de la selección.
+    const antes = pedidos.orders.length;
+    assert.deepEqual(results(c), ["REFERENCE_NOT_FOUND"]);
+    const creado = lastToolOutputs(c.provider.requests[1])[0] as { error: { code: string; details?: { references?: string[] } } };
+    assert.deepEqual(creado.error.details?.references, [sol.reference]);
+    assert.equal(pedidos.orders.length, antes, "ningún pedido nuevo");
+    assert.ok(!pedidos.orders.some((o) => o.lines.length === 0), "ningún pedido sin líneas");
+    assert.deepEqual((await estado()).cart, [], "la referencia borrada salió de la selección");
     // d) Propuesto y borrado antes del "sí": no se confirma y no se toca stock de nadie.
     await turno([call("update_cart", { items: [{ reference: sol.reference, quantity: 0 }] }), { text: "Lo quité." }], "quítalo");
     const e2 = estrella;
@@ -823,6 +836,163 @@ describe("Bloque 22: venta real de punta a punta (catálogo con la forma del de 
       assert.equal(results(r)[0], esperado, JSON.stringify(items));
     }
     assert.deepEqual((await estado()).cart, []);
+  });
+});
+
+describe("Bloque 23: mensajes SIN texto — política determinista del backend, sin Gemini", () => {
+  const audio = { nonText: { kind: "audio" as const } };
+
+  it("B23-1 nota de voz respondiendo a la foto de Sol: aviso fijo que nombra ESE producto, sin Gemini; luego 'quiero ese' (sin citar) lo agrega", async () => {
+    const { sol, fotos } = await buscarConFotos();
+    const antes = sent.length;
+    const r = await turno([call("update_cart", { items: [{ reference: sol.reference, quantity: 1 }] })], "", { ...audio, replyTo: { wamid: fotos.get(sol.reference) } });
+    assert.equal(r.provider.requests.length, 0, "Gemini no se consulta: no puede escuchar el audio");
+    assert.equal(r.outcome, "replied");
+    assert.deepEqual(sent.slice(antes), [NON_TEXT_MESSAGES.audioAboutProduct({ reference: sol.reference, name: "Aretes Sol", available: true })]);
+    assert.deepEqual(r.trace.non_text, { kind: "audio", action: "ask_text" });
+    assert.equal(r.trace.reply_to, "product_image");
+    assert.deepEqual(r.trace.selection, [{ reference: sol.reference, via: "image_reply" }]);
+    assert.deepEqual((await estado()).cart, [], "un audio nunca agrega nada al carrito");
+    // Siguiente mensaje escrito, sin citar la foto: el producto de la foto quedó señalado por el backend.
+    const r2 = await turno([call("update_cart", { items: [{ reference: sol.reference, quantity: 1 }] }), { text: `Listo: Aretes Sol, ${formatCop(52_000)}.` }], "quiero ese");
+    assert.deepEqual(results(r2), ["ok"]);
+    assert.deepEqual((await estado()).cart, [{ reference: sol.reference, quantity: 1 }]);
+  });
+
+  it("B23-2 nota de voz sin citar nada: aviso fijo UNA vez; diez audios seguidos no generan diez avisos (enfriamiento)", async () => {
+    await aretes();
+    const r1 = await turno([], "", audio);
+    assert.deepEqual(sent, [NON_TEXT_MESSAGES.audio]);
+    assert.equal(r1.trace.reply_to, null);
+    for (let i = 0; i < 9; i++) {
+      const r = await turno([], "", audio);
+      assert.equal(r.outcome, "rate_limited");
+      assert.equal(r.provider.requests.length, 0);
+    }
+    assert.equal(sent.length, 1, "un solo aviso");
+    reloj += NON_TEXT_NOTICE_COOLDOWN_MS + 1;
+    await turno([], "", audio);
+    assert.equal(sent.length, 2, "pasado el enfriamiento se vuelve a avisar");
+  });
+
+  it("B23-3 imagen (p. ej. un comprobante o una captura): pasa a una asesora con motivo cerrado, pausa el chat y no consulta a Gemini", async () => {
+    await aretes();
+    const r = await turno([call("search_products", { query: "aretes" })], "", { nonText: { kind: "image" } });
+    assert.equal(r.outcome, "handoff");
+    assert.equal(r.provider.requests.length, 0);
+    assert.deepEqual(pausas, [CLIENTE]);
+    assert.deepEqual(r.trace.handoff, { source: "system", motive: "out_of_scope" }, "motivo de la lista cerrada (Inbox y diagnóstico SQL)");
+    assert.deepEqual(r.trace.non_text, { kind: "image", action: "handoff" }, "el tipo exacto, en la traza");
+    assert.deepEqual(sent, [NON_TEXT_MESSAGES.handoff("image")]);
+    assert.match(sent[0], /Recibí tu imagen\. Te comunico con una asesora/);
+    assert.equal((await estado()).handoffTurn, 0);
+  });
+
+  it("B23-4 la pausa para la asesora FALLA: no se promete una asesora que no viene (mensaje honesto), y queda el error en la traza", async () => {
+    pausaFalla = true;
+    const r = await turno([], "", { nonText: { kind: "document" } });
+    assert.equal(r.outcome, "fallback");
+    assert.equal(r.trace.error_kind, "handoff_failed");
+    assert.deepEqual(sent, [NON_TEXT_MESSAGES.handoffFailed("document")]);
+    assert.doesNotMatch(sent[0], /asesora/);
+    assert.deepEqual(pausas, []);
+  });
+
+  it("B23-5 video, documento, ubicación y contacto: asesora; mensaje no soportado: aviso fijo; sticker y reacción: se ignoran", () => {
+    for (const t of ["image", "video", "document", "location", "contacts"]) assert.equal(nonTextPolicy(t)?.action, "handoff", t);
+    for (const t of ["audio", "unsupported"]) assert.equal(nonTextPolicy(t)?.action, "ask_text", t);
+    for (const t of ["sticker", "reaction", "system", "request_welcome", "algo_nuevo_de_meta", "", undefined]) assert.equal(nonTextPolicy(t)?.action, "ignore", String(t));
+    for (const t of ["text", "button", "interactive"]) assert.equal(nonTextPolicy(t), null, `${t} es texto`);
+    // Lo que ve la asesora: el tipo siempre; de la ubicación y del contacto, nunca el contenido.
+    assert.equal(inboxLabel("image", { caption: "¿tienen este?" }), "[imagen] ¿tienen este?");
+    assert.equal(inboxLabel("document", { filename: "pago.pdf" }), "[documento] pago.pdf");
+    assert.equal(inboxLabel("location", { caption: "4.6097,-74.0817" }), "[ubicación]", "nunca las coordenadas");
+    assert.equal(inboxLabel("contacts", { caption: "573001234567" }), "[contacto]", "nunca el teléfono de un tercero");
+    assert.equal(inboxLabel("audio"), "[nota de voz]");
+  });
+
+  it("B23-6 una reacción 👍 o un sticker a la propuesta NUNCA confirman el pedido (ni aunque llegaran al runtime)", async () => {
+    const { sol, fotos } = await buscarConFotos();
+    await turno([call("update_cart", { items: [{ reference: sol.reference, quantity: 1 }] }), { text: "Listo, Aretes Sol." }], "quiero este", { replyTo: { wamid: fotos.get(sol.reference) } });
+    await turno([call("create_order_request"), { text: `Tu pedido: Aretes Sol × 1. Total: ${formatCop(52_000)}. ¿Confirmas?` }], "hagamos el pedido");
+    const s = await estado();
+    const antes = sent.length;
+    for (const kind of ["reaction", "sticker"] as const) {
+      const r = await turno([call("confirm_order", { order_id: s.proposal!.orderId, confirmation_id: s.proposal!.confirmationId })], "", { nonText: { kind } });
+      assert.equal(r.provider.requests.length, 0, kind);
+      assert.deepEqual(r.trace.tool_calls, []);
+    }
+    assert.equal(pedidos.orders[0].status, "pending_confirmation");
+    assert.equal(mem.inventory.stockOf(sol.id), 5, "nada apartado");
+    assert.equal(sent.length, antes, "ni respuesta");
+  });
+
+  it("B23-7 nota de voz citando una foto de OTRA conversación o un wamid desconocido: aviso genérico, nunca nombra un producto", async () => {
+    const { sol, fotos } = await buscarConFotos();
+    const otroCliente = "573009999999";
+    await ledger.record({ tenantId: A.tenantId, phoneNumberId: PN_A, waId: otroCliente, wamid: "wamid.ajena", reference: sol.reference, productId: sol.id, channel: "retail", turn: 1 });
+    const antes = sent.length;
+    const r = await turno([], "", { ...audio, replyTo: { wamid: "wamid.ajena" } });
+    assert.equal(r.trace.reply_to, "unknown_message");
+    assert.deepEqual(r.trace.selection, []);
+    assert.deepEqual(sent.slice(antes), [NON_TEXT_MESSAGES.audio]);
+    assert.ok(fotos.size > 0);
+  });
+
+  it("B23-8 reintento de Meta del MISMO audio: una sola respuesta; una asesora ya tiene el chat: silencio", async () => {
+    await aretes();
+    await turno([], "", { ...audio, wamid: "wamid.audio.1" });
+    const r = await turno([], "", { ...audio, wamid: "wamid.audio.1" });
+    assert.equal(r.outcome, "duplicate");
+    assert.equal(sent.length, 1);
+    tookOver = true;
+    const r2 = await turno([], "", { nonText: { kind: "image" } });
+    assert.equal(r2.outcome, "preempted");
+    assert.deepEqual(pausas, []);
+    assert.equal(sent.length, 1);
+  });
+
+  it("B23-10 confirmar tarda más que el límite: mensaje FIJO 'verificando' (ni 'listo' ni 'falló'); la venta ocurre UNA vez y el 'sí' repetido no aparta de nuevo", async () => {
+    const { sol, fotos } = await buscarConFotos();
+    await turno([call("update_cart", { items: [{ reference: sol.reference, quantity: 1 }] }), { text: "Listo, Aretes Sol." }], "quiero este", { replyTo: { wamid: fotos.get(sol.reference) } });
+    await turno([call("create_order_request"), { text: `Tu pedido: Aretes Sol × 1. Total: ${formatCop(52_000)}. ¿Confirmas?` }], "hagamos el pedido");
+    const s = await estado();
+    const ids = { order_id: s.proposal!.orderId, confirmation_id: s.proposal!.confirmationId };
+    let terminado: Promise<unknown> = Promise.resolve();
+    const lento = {
+      ...engine,
+      confirmOrder: (input: Parameters<typeof engine.confirmOrder>[0]) => {
+        const p = new Promise((r) => setTimeout(r, 60)).then(() => engine.confirmOrder(input));
+        terminado = p.catch(() => undefined);
+        return p;
+      },
+    } as typeof engine;
+    const antes = sent.length;
+    const r = await turno([call("confirm_order", ids), { text: "¡Listo! Tu pedido quedó confirmado." }], "sí", { tools: { engine: lento, writeToolTimeoutMs: 20 } });
+    assert.deepEqual(results(r), ["OUTCOME_UNKNOWN"]);
+    assert.equal(r.outcome, "fallback");
+    assert.equal(r.trace.error_kind, "write_outcome_unknown");
+    assert.equal(r.provider.requests.length, 1, "el modelo no redacta el resultado de algo que no se conoce");
+    assert.deepEqual(sent.slice(antes), [FALLBACK_MESSAGES.pending]);
+    await terminado;
+    assert.equal(pedidos.orders[0].status, "confirmed", "la confirmación sí ocurrió (en la BD), aunque se dejó de esperar");
+    assert.equal(mem.inventory.stockOf(sol.id), 4);
+    // El cliente vuelve a escribir "sí": el backend ya ve el pedido CONFIRMADO (el modelo lo recibe
+    // como hecho) y otra confirmación se bloquea: no se aparta de nuevo.
+    const r2 = await turno([call("confirm_order", ids), { text: "Tu pedido ya está confirmado." }], "sí");
+    assert.equal((stateJson(r2.provider.requests[0]).pedido_activo as { estado: string }).estado, "confirmed");
+    assert.deepEqual(results(r2), ["CONFIRMATION_NOT_PRESENTED"]);
+    assert.equal(mem.inventory.stockOf(sol.id), 4, "un solo efecto de negocio");
+    assert.equal(pedidos.reservations.filter((x) => x.status === "activa").length, 1);
+  });
+
+  it("B23-9 nota de voz a la foto de un producto BORRADO: se dice que ya no está disponible (sin nombre inventado)", async () => {
+    const { luna, fotos } = await buscarConFotos();
+    mem.hardDelete(luna.id);
+    const antes = sent.length;
+    await turno([], "", { ...audio, replyTo: { wamid: fotos.get(luna.reference) } });
+    assert.deepEqual(sent.slice(antes), [NON_TEXT_MESSAGES.audioAboutProduct({ reference: luna.reference, name: luna.reference, available: false })]);
+    assert.match(sent.at(-1)!, /ya no está disponible/);
   });
 });
 

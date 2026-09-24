@@ -116,6 +116,11 @@ export interface OrdersRepository {
   reservationsFor(businessId: string, orderIds: readonly string[]): Promise<ReservationSummary[]>;
   /** Vence los pedidos confirmados cuya reserva pasó su plazo (el stock vuelve). Sin la migración: 0. */
   expireReservations(limit: number): Promise<number>;
+  /**
+   * Bloque 23 — pedidos de una CONVERSACIÓN (con contacto) en esos estados sin ningún cambio desde
+   * `updatedBefore`, los más viejos primero (todos los negocios, o solo `businessId`).
+   */
+  listStale(query: { statuses: readonly OrderStatus[]; updatedBefore: string; businessId?: string; limit: number }): Promise<Order[]>;
 }
 
 /** Aplica cambios a un pedido (misma regla que la función SQL): para armar el evento ANTES de escribir. */
@@ -368,6 +373,14 @@ export function createSupabaseOrdersRepository(supabase: SupabaseClient, now: ()
       }));
     },
 
+    async listStale({ statuses, updatedBefore, businessId, limit }) {
+      let query = supabase.from(T_PEDIDOS).select(COLUMNS).in("estado", [...statuses]).lt("updated_at", updatedBefore).not("contacto_wa_id", "is", null);
+      if (businessId) query = query.eq("id_tenant", businessId);
+      const { data, error } = await query.order("updated_at", { ascending: true }).limit(Math.min(Math.max(limit, 1), 500));
+      if (error) fail("listStale", error);
+      return ((data ?? []) as unknown as OrderRow[]).map(orderFromRow);
+    },
+
     async expireReservations(limit) {
       const { data, error } = await supabase.rpc("dulabs_catalogo_reservas_vencer", { p_limite: limit });
       if (error) {
@@ -517,7 +530,7 @@ export function createMemoryOrdersRepository(opts: { available?: boolean; invent
       if (i < 0) return null;
       const current = orders[i];
       if (input.changes.contact && current.contact && !sameContact(current.contact, input.changes.contact)) return null;
-      const next = applyChanges(current, input.to, clone(input.changes), new Date().toISOString());
+      const next = applyChanges(current, input.to, clone(input.changes), new Date(clock()).toISOString());
       if (!["draft", "validated", "cancelled", "expired"].includes(next.status) && !next.contact) throw new Error("check_violation: contacto requerido");
       applyReservationRule(current, next); // lanza (sin escribir nada) si no alcanza el stock
       orders[i] = next;
@@ -558,6 +571,14 @@ export function createMemoryOrdersRepository(opts: { available?: boolean; invent
       return reservations
         .filter((r) => r.businessId === businessId && orderIds.includes(r.orderId))
         .map(({ orderId, reference, quantity, status, expiresAt }) => ({ orderId, reference, quantity, status, expiresAt }));
+    },
+
+    async listStale({ statuses, updatedBefore, businessId, limit }) {
+      return orders
+        .filter((o) => o.contact !== null && statuses.includes(o.status) && o.updatedAt < updatedBefore && (!businessId || o.businessId === businessId))
+        .sort((a, b) => (a.updatedAt < b.updatedAt ? -1 : 1))
+        .slice(0, limit)
+        .map(clone);
     },
 
     async expireReservations(limit) {

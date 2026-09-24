@@ -49,7 +49,9 @@ export type AgentToolErrorCode =
   | "CONFIRMATION_NOT_PRESENTED"
   | "CONFIRMATION_NOT_EXPLICIT"
   | "CART_EMPTY"
-  | "TOOL_LIMIT";
+  | "TOOL_LIMIT"
+  /** Bloque 23: una escritura (pedido, confirmación, asesora) no respondió a tiempo; su resultado NO se conoce. */
+  | "OUTCOME_UNKNOWN";
 
 export type AgentToolOutcome = { ok: true; data: Record<string, unknown> } | { ok: false; error: { code: AgentToolErrorCode; message: string; details?: Record<string, unknown> } };
 
@@ -95,8 +97,13 @@ export interface AgentTurnToolContext {
 export interface AgentToolsDeps extends CatalogToolDeps {
   /** Nombre conocido del cliente (dulabs_clientes_conocidos); null si no hay. */
   customerName?: (input: { tenantId: string; phoneNumberId: string; waId: string }) => Promise<string | null>;
-  /** Timeout por herramienta (ms). */
+  /** Timeout por herramienta de lectura (ms). */
   toolTimeoutMs?: number;
+  /**
+   * Timeout de una ESCRITURA (ms). Más largo: la operación sigue en la BD aunque se deje de esperar,
+   * así que cortar antes solo crea incertidumbre. Vencido => OUTCOME_UNKNOWN (nunca "falló").
+   */
+  writeToolTimeoutMs?: number;
   /** Origen público del sitio (pruebas); por defecto NEXT_PUBLIC_SITE_URL. */
   siteUrl?: () => string;
 }
@@ -445,6 +452,12 @@ export const AGENT_TOOLS = {
           },
         };
       } catch (err) {
+        // Bloque 23: ningún producto de la selección existe (se borraron): el pedido NO se crea y esas
+        // referencias salen de la selección (el backend las limpia; no quedan para un próximo intento).
+        if (err instanceof OrderError && err.code === "REFERENCE_NOT_FOUND" && Array.isArray(err.details?.references)) {
+          const gone = new Set((err.details.references as unknown[]).filter((r): r is string => typeof r === "string"));
+          ctx.state = { ...ctx.state, cart: ctx.state.cart.filter((c) => !gone.has(c.reference)) };
+        }
         if (err instanceof OrderError) return fail(err.code, err.message, err.details);
         throw err;
       }
@@ -641,13 +654,24 @@ export async function executeAgentTool(
   if (!parsed.success) {
     return fail("INVALID_INPUT", "Los datos de la herramienta no son válidos.", { fields: parsed.error.issues.map((i) => ({ path: i.path.join("."), code: i.code })) });
   }
-  const timeoutMs = deps.toolTimeoutMs ?? 5_000;
+  // Bloque 23: dejar de esperar NO cancela una escritura (el pedido puede quedar creado o confirmado
+  // igual): se espera más y, si aun así no responde, el resultado es DESCONOCIDO, nunca "falló".
+  const write = tool.kind === "write";
+  const timeoutMs = write ? (deps.writeToolTimeoutMs ?? 20_000) : (deps.toolTimeoutMs ?? 5_000);
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
       tool.run(ctx, parsed.data, deps),
       new Promise<AgentToolOutcome>((resolve) => {
-        timer = setTimeout(() => resolve(fail("UNAVAILABLE", "La consulta tardó demasiado. Intenta de nuevo.")), timeoutMs);
+        timer = setTimeout(
+          () =>
+            resolve(
+              write
+                ? fail("OUTCOME_UNKNOWN", "La operación no respondió a tiempo y no se sabe si quedó hecha. No digas que falló ni que se completó.")
+                : fail("UNAVAILABLE", "La consulta tardó demasiado. Intenta de nuevo."),
+            ),
+          timeoutMs,
+        );
       }),
     ]);
   } catch (err) {

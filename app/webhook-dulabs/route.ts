@@ -32,8 +32,9 @@ import { descifrarSecreto } from "@/lib/crypto";
 import { esTelefonoBloqueado } from "@/lib/blacklist-du";
 import { recibirPedidoWhatsapp } from "@/lib/catalogo/pedidos/intake";
 import { productionIntakeDeps } from "@/lib/catalogo/pedidos/produccion";
-import { loadAgentConfig } from "@/lib/agente/config";
-import { atenderConAgenteSiAplica, encolarEnBuzonSiAplica, productionAgentBoundaryDeps, replyToDeMeta } from "@/lib/agente/webhook";
+import { createSupabaseAgentConfigStore, loadAgentConfig } from "@/lib/agente/config";
+import { atenderConAgenteSiAplica, encolarEnBuzonSiAplica, numeroConAgente, productionAgentBoundaryDeps, replyToDeMeta } from "@/lib/agente/webhook";
+import { inboxLabel, nonTextPolicy, nonTextReachesAgent } from "@/lib/agente/entrada";
 import { createSupabaseMailboxStore } from "@/lib/agente/buzon";
 import { getSurveyBot, getSession, saveSession } from "@/lib/survey-bot-store";
 import { handleMessage, questionPrompt } from "@/lib/survey-engine";
@@ -161,6 +162,17 @@ export function placeholderMediaEntrante(mensaje: MetaMessage): string | null {
   if (mensaje.type === "document") return mensaje.document?.caption?.trim() || "[documento]";
   if (mensaje.type === "sticker") return "[sticker]";
   return null;
+}
+
+// Bloque 23 -- mensaje SIN texto para un número con agente conversacional (nota de voz, imagen,
+// documento, video, ubicación, contacto, "no soportado"): lo que ve la asesora en el Inbox, con
+// el tipo siempre visible (ver lib/agente/entrada.ts). null = el agente no lo atiende (texto,
+// sticker, reacción…). Nunca guarda coordenadas ni teléfonos de un contacto compartido.
+export function contenidoNoTextoAgente(mensaje: MetaMessage): string | null {
+  const politica = nonTextPolicy(mensaje.type);
+  if (!politica || politica.action === "ignore") return null;
+  const media = mensaje.type === "image" ? mensaje.image : mensaje.type === "video" ? mensaje.video : mensaje.type === "document" ? mensaje.document : undefined;
+  return inboxLabel(politica.kind, { caption: media?.caption, filename: mensaje.document?.filename });
 }
 
 type MetaStatus = {
@@ -501,7 +513,7 @@ export async function POST(request: NextRequest) {
 // "llegó y se atendió", en vez de perder el mensaje sin dejar rastro si el
 // trabajo diferido (after()) llegara a fallar. Nunca lanza: un problema acá
 // no puede impedir que respondamos 200 a Meta a tiempo.
-async function registrarMensajesEntrantesSincrono(phoneNumberId: string, value: MetaChangeValue): Promise<void> {
+export async function registrarMensajesEntrantesSincrono(phoneNumberId: string, value: MetaChangeValue): Promise<void> {
   const displayPhone = soloDigitos(value.metadata?.display_phone_number ?? "");
   const supabase = supabaseAdmin();
 
@@ -531,6 +543,13 @@ async function registrarMensajesEntrantesSincrono(phoneNumberId: string, value: 
       ).data as { id_tenant: string; phone_number_id: string; flow_activo: boolean; flow_id: string | null } | null)
     : null;
 
+  // Bloque 23 -- mismo criterio para los mensajes sin texto de un número con agente conversacional:
+  // se registran (y cuentan para el freno de ráfaga) SOLO los que el agente va a atender, con el
+  // MISMO gate que procesarCambio. Una consulta más, y solo si hay un mensaje de esos en el batch.
+  const conAgente = (value.messages ?? []).some((m) => nonTextReachesAgent(m.type))
+    ? await numeroConAgente(createSupabaseAgentConfigStore(supabase), phoneNumberId)
+    : false;
+
   for (const mensaje of value.messages ?? []) {
     const telefonoRemitente = resolverTelefonoRemitenteMeta(mensaje, value.contacts);
     if (!telefonoRemitente) {
@@ -542,7 +561,9 @@ async function registrarMensajesEntrantesSincrono(phoneNumberId: string, value: 
       clienteParaGateMedia != null &&
       debeAtenderConFlow(clienteParaGateMedia, telefonoRemitente) &&
       !debeUsarAsistenteDanielaIA(clienteParaGateMedia, telefonoRemitente);
-    const contenido = extraerTextoMensajeCrudo(mensaje, procesaraMediaFlow);
+    const contenido =
+      extraerTextoMensajeCrudo(mensaje, procesaraMediaFlow) ??
+      (conAgente && !procesaraMediaFlow && phoneNumberId !== PHONE_NUMBER_ID_SOLUCIONES_FINANCIERAS ? contenidoNoTextoAgente(mensaje) : null);
     if (!contenido) continue; // tipo no soportado, o media que este número no procesa -- procesarCambio decide si lo ignora
     try {
       const { error } = await supabase.from("dulabs_mensajes_log").insert({
@@ -667,6 +688,8 @@ export async function procesarCambio(phoneNumberId: string, value: MetaChangeVal
   }
 
   // Mensajes de clientes finales
+  let numeroConAgenteCache: Promise<boolean> | null = null;
+  const numeroConAgenteMemo = () => (numeroConAgenteCache ??= numeroConAgente(createSupabaseAgentConfigStore(supabaseAdmin()), cliente.phone_number_id));
   for (const mensaje of value.messages ?? []) {
     // Tap de un botón QUICK_REPLY de plantilla: se procesa como si el
     // participante hubiera escrito el texto del botón (mismo motor de
@@ -713,8 +736,14 @@ export async function procesarCambio(phoneNumberId: string, value: MetaChangeVal
       TIPOS_MEDIA_ENTRANTE.has(mensaje.type) &&
       debeAtenderConFlow(cliente, telefonoRemitente) &&
       !debeUsarAsistenteDanielaIA(cliente, telefonoRemitente);
-    if (mensaje.type !== "text" && mensaje.type !== "button" && mensaje.type !== "interactive" && !esSolucionesFinancieras && !esMediaHaciaFlow) continue;
-    if (!mensaje.text?.body && !esSolucionesFinancieras && !esMediaHaciaFlow) continue;
+    // Bloque 23 -- número con agente conversacional: la nota de voz, la imagen, el documento, etc.
+    // ya no se descartan en silencio; llegan al agente, que aplica una política DETERMINISTA sin
+    // modelo (lib/agente/entrada.ts). Sticker y reacción siguen descartándose. Sin fila de agente
+    // para el número (AMORE, Flow, legacy…), esto es false y todo queda IDÉNTICO.
+    const esNoTextoHaciaAgente =
+      !esSolucionesFinancieras && !esMediaHaciaFlow && nonTextReachesAgent(mensaje.type) && (await numeroConAgenteMemo());
+    if (mensaje.type !== "text" && mensaje.type !== "button" && mensaje.type !== "interactive" && !esSolucionesFinancieras && !esMediaHaciaFlow && !esNoTextoHaciaAgente) continue;
+    if (!mensaje.text?.body && !esSolucionesFinancieras && !esMediaHaciaFlow && !esNoTextoHaciaAgente) continue;
     const nombreContacto =
       (value.contacts ?? []).find((c) => soloDigitos(c.wa_id ?? "") === telefonoRemitente)?.profile?.name ?? null;
     // Catálogo, Fase 7: si el texto ES un pedido del catálogo (líneas con
@@ -852,7 +881,7 @@ async function atenderMensaje(
       phone_number_id: cliente.phone_number_id,
       telefono_cliente: telefonoRemitente,
       direccion: "entrante",
-      contenido: extraerTextoMensajeCrudo(mensaje, true) ?? "",
+      contenido: extraerTextoMensajeCrudo(mensaje, true) ?? contenidoNoTextoAgente(mensaje) ?? "",
       origen: "entrante",
       wamid: mensaje.id,
       procesado_at: new Date().toISOString(),
@@ -974,7 +1003,7 @@ async function atenderMensaje(
     console.log(`[webhook-dulabs] mensaje ${mensaje.id} superado por uno más nuevo del mismo remitente, no respondo (evita duplicados)`);
     // Agente conversacional (Bloque 11): este mensaje entra al buzón para que el turno del
     // más nuevo atienda la ráfaga completa (con la foto citada, si la hubo). Sin agente: nada.
-    await encolarMensajeSuperadoEnAgente(cliente, mensaje, telefonoRemitente);
+    await encolarMensajeSuperadoEnAgente(cliente, mensaje, telefonoRemitente, destinoWhatsApp);
     return;
   }
 
@@ -1308,6 +1337,15 @@ async function intentarAgenteConversacionalSiAplica(cliente: ClienteConfig, mens
     const supabase = supabaseAdmin();
     const deps = productionAgentBoundaryDeps(supabase, cliente);
     if (!texto) {
+      // Bloque 23 -- sin texto (nota de voz, imagen, documento…): política determinista del agente, sin modelo.
+      const politica = nonTextPolicy(mensaje.type);
+      if (politica && politica.action !== "ignore") {
+        const r = await atenderConAgenteSiAplica(
+          { cliente, waId: telefonoRemitente, destino, wamid: mensaje.id, text: "", replyTo: replyToDeMeta(mensaje.context), nonText: { kind: politica.kind } },
+          deps,
+        );
+        return r.handled;
+      }
       // Solo se decide si el número tiene agente: un mensaje sin texto de un número con agente no cae a otro bot.
       const cfg = await loadAgentConfig(deps.configStore, { tenantId: cliente.id_tenant, phoneNumberId: cliente.phone_number_id });
       return cfg.kind !== "none";
@@ -1323,9 +1361,15 @@ async function intentarAgenteConversacionalSiAplica(cliente: ClienteConfig, mens
   }
 }
 
-async function encolarMensajeSuperadoEnAgente(cliente: ClienteConfig, mensaje: MetaMessage, telefonoRemitente: string): Promise<void> {
+async function encolarMensajeSuperadoEnAgente(cliente: ClienteConfig, mensaje: MetaMessage, telefonoRemitente: string, destino: string): Promise<void> {
   const texto = mensaje.text?.body?.trim();
-  if (!texto) return;
+  if (!texto) {
+    // Bloque 23 -- un mensaje sin texto no se suma a la ráfaga (no tiene texto): se le aplica su
+    // política fija igual (p. ej. una imagen seguida de "¿tienen este?" igual pasa a una asesora).
+    // Sin agente para el número: nada, como antes.
+    if (nonTextReachesAgent(mensaje.type)) await intentarAgenteConversacionalSiAplica(cliente, mensaje, telefonoRemitente, destino);
+    return;
+  }
   try {
     const supabase = supabaseAdmin();
     const replyTo = replyToDeMeta(mensaje.context);
