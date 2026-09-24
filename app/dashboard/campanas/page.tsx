@@ -680,7 +680,7 @@ export default function CampanasPage() {
                           <span className="text-xs font-medium tabular-nums text-fg">{readPct}% {t("leído", "read")}</span>
                         </div>
                         <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-ink">
-                          <div className="h-full bg-lime" style={{ width: `${readPct}%` }} />
+                          <div className="h-full bg-[var(--color-chart-1)]" style={{ width: `${readPct}%` }} />
                         </div>
                       </div>
                       <div className="flex items-center gap-1.5 text-xs text-mist">

@@ -10,7 +10,7 @@ import type { SurveyPerformancePoint } from "@/lib/surveys";
 export function SurveyPerformanceChart({
   data,
   startedColor = "var(--color-chart-4)",
-  completedColor = "var(--color-lime)",
+  completedColor = "var(--color-chart-1)",
   height = 260,
 }: {
   data: SurveyPerformancePoint[];

@@ -55,7 +55,7 @@ export function CompletionFunnel({ steps }: { steps: FunnelStep[] }) {
                 </span>
               </div>
               <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-ink">
-                <div className="h-full rounded-full bg-lime" style={{ width: `${step.percentage}%` }} />
+                <div className="h-full rounded-full bg-[var(--color-chart-1)]" style={{ width: `${step.percentage}%` }} />
               </div>
             </div>
           );

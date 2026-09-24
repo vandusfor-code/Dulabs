@@ -51,11 +51,11 @@ function DistributionRow({ option, answered }: { option: OptionAggregate; answer
   return (
     <div className="grid grid-cols-[minmax(110px,1.3fr)_2fr_64px_116px] items-center gap-x-4 py-2.5">
       <span className="flex items-center gap-2.5 text-sm text-fg">
-        <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: option.color ?? "var(--color-lime)" }} />
+        <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: option.color ?? "var(--color-chart-1)" }} />
         <span className="truncate">{option.label}</span>
       </span>
       <div className="h-2 overflow-hidden rounded-full bg-ink">
-        <div className="h-full rounded-full bg-lime" style={{ width: `${percentage}%` }} />
+        <div className="h-full rounded-full bg-[var(--color-chart-1)]" style={{ width: `${percentage}%` }} />
       </div>
       <span className="text-right text-sm tabular-nums text-fg">{nf(option.count)}</span>
       <span className="text-right text-sm tabular-nums text-mist">{pf(percentage)}%</span>

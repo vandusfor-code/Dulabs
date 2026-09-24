@@ -163,7 +163,7 @@ export default function SurveysPage() {
               </div>
               <div className="flex items-center gap-4">
                 <Legend color="var(--color-chart-4)" label={t("Iniciadas", "Started")} />
-                <Legend color="var(--color-lime)" label={t("Completadas", "Completed")} />
+                <Legend color="var(--color-chart-1)" label={t("Completadas", "Completed")} />
               </div>
             </div>
             <div className="mt-4">

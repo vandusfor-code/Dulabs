@@ -206,7 +206,7 @@ export default function AnalyticsPage() {
               {dias === null ? (
                 <div className="flex h-[220px] items-center justify-center text-sm text-mist">{t("Cargando…", "Loading…")}</div>
               ) : (
-                <AreaTrend data={chartData} keys={[{ key: "mensajes", name: t("Mensajes", "Messages"), color: "var(--color-lime)" }]} />
+                <AreaTrend data={chartData} keys={[{ key: "mensajes", name: t("Mensajes", "Messages"), color: "var(--color-chart-1)" }]} />
               )}
             </div>
           </div>
@@ -260,7 +260,7 @@ export default function AnalyticsPage() {
                       </span>
                     </div>
                     <div className="h-2.5 overflow-hidden rounded-full bg-ink">
-                      <div className="h-full rounded-full bg-lime" style={{ width: `${pct}%` }} />
+                      <div className="h-full rounded-full bg-[var(--color-chart-1)]" style={{ width: `${pct}%` }} />
                     </div>
                   </div>
                 );
@@ -290,7 +290,7 @@ export default function AnalyticsPage() {
                       <div
                         key={j}
                         title={`${dia} ${String(BLOQUES_HORA[j]).padStart(2, "0")}:00 — ${valor} ${t("respuestas", "replies")}`}
-                        className="h-7 rounded-md bg-lime"
+                        className="h-7 rounded-md bg-[var(--color-chart-1)]"
                         style={{ opacity: valor === 0 ? 0.06 : 0.15 + 0.85 * (valor / maxHeatmap) }}
                       />
                     ))}
