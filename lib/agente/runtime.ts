@@ -33,11 +33,14 @@ import { STAGE_GUIDANCE, conversationStage, type ConversationStage } from "@/lib
 import { agentToolDeclarations, executeAgentTool, toolKind, type AgentToolsDeps, type AgentTurnToolContext, type QueuedImage } from "@/lib/agente/herramientas";
 import type { AgentToolName } from "@/lib/agente/nombres-herramientas";
 
-/** Resultado de un envío: true/false o, si Meta lo aceptó, con su wamid (necesario para registrar fotos). */
-export type SendOutcome = boolean | { sent: boolean; wamid: string | null };
+/**
+ * Resultado de un envío: true/false o, con detalle, el wamid que asignó Meta (necesario para
+ * registrar fotos) y, si falló, el motivo sin datos sensibles (p. ej. "meta_rejected 400/131053").
+ */
+export type SendOutcome = boolean | { sent: boolean; wamid: string | null; error?: string | null };
 
-function sendResult(r: SendOutcome): { sent: boolean; wamid: string | null } {
-  return typeof r === "boolean" ? { sent: r, wamid: null } : { sent: r.sent, wamid: r.sent ? r.wamid : null };
+function sendResult(r: SendOutcome): { sent: boolean; wamid: string | null; error: string | null } {
+  return typeof r === "boolean" ? { sent: r, wamid: null, error: null } : { sent: r.sent, wamid: r.sent ? r.wamid : null, error: r.sent ? null : (r.error ?? null) };
 }
 
 export interface AgentSender {
@@ -129,8 +132,12 @@ export interface AgentTurnTrace {
   clarification_needed: boolean;
   /** Etapa derivada por el backend al empezar el turno y al terminarlo. */
   stage: { start: ConversationStage | null; end: ConversationStage | null };
-  /** Entrega: wamid del texto y de cada foto (y si la foto quedó registrada para poder citarla). */
-  delivery: { text_wamid: string | null; images: Array<{ reference: string; wamid: string | null; recorded: boolean }> };
+  /** Entrega: wamid del texto y de cada foto (y si la foto quedó registrada para poder citarla); motivo si falló. */
+  delivery: { text_wamid: string | null; text_error: string | null; images: Array<{ reference: string; wamid: string | null; recorded: boolean; error?: string | null }> };
+  /** Qué entró (sin contenido): mensajes atendidos en este turno y largo del texto. */
+  input: { wamids: string[]; messages: number; chars: number };
+  /** Contexto confiable con el que se decidió (sin datos personales). */
+  context: { channel: string | null; cart_lines: number; open_options: number; proposal_presented: boolean; active_order: string | null } | null;
 }
 
 // Mensajes FIJOS (sin IA): nunca afirman datos comerciales.
@@ -201,7 +208,9 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
     selection: [],
     clarification_needed: false,
     stage: { start: null, end: null },
-    delivery: { text_wamid: null, images: [] },
+    delivery: { text_wamid: null, text_error: null, images: [] },
+    input: { wamids: (input.wamids && input.wamids.length > 0 ? [...input.wamids] : [input.wamid]).map((w) => w.slice(0, 200)).slice(0, 10), messages: input.wamids?.length || 1, chars: input.text.length },
+    context: null,
   };
   const finish = (outcome: AgentTurnOutcome, reply: string | null) => {
     trace.outcome = outcome;
@@ -225,6 +234,7 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
     const r = sendResult(await deps.sender.sendText(FALLBACK_MESSAGES.technical).catch(() => false));
     trace.sent = r.sent;
     trace.delivery.text_wamid = r.wamid;
+    trace.delivery.text_error = r.error;
     return finish("fallback", r.sent ? FALLBACK_MESSAGES.technical : null);
   }
   const wamids = input.wamids && input.wamids.length > 0 ? [...input.wamids] : [input.wamid];
@@ -314,6 +324,13 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
   const stage = conversationStage(state, facts);
   facts.stage = { name: stage, guidance: STAGE_GUIDANCE[stage] };
   trace.stage.start = stage;
+  trace.context = {
+    channel,
+    cart_lines: state.cart.length,
+    open_options: state.ambiguity?.references.length ?? 0,
+    proposal_presented: !!state.proposal && state.proposal.presentedTurn !== null,
+    active_order: activeOrder ? `${activeOrder.order_id}:${activeOrder.status}` : null,
+  };
 
   const evidence: Evidence = emptyEvidence();
   addCustomerEvidence(input.text, evidence);
@@ -470,10 +487,11 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
     return finish("preempted", null);
   }
 
-  const textResult = reply ? sendResult(await deps.sender.sendText(reply).catch(() => false)) : { sent: false, wamid: null };
+  const textResult = reply ? sendResult(await deps.sender.sendText(reply).catch(() => false)) : { sent: false, wamid: null, error: null };
   const sent = textResult.sent;
   trace.sent = sent;
   trace.delivery.text_wamid = textResult.wamid;
+  trace.delivery.text_error = textResult.error;
   if (sent && !failure) {
     // La propuesta cuenta como MOSTRADA solo si el mensaje enviado lleva su total exacto.
     const p = ctx.state.proposal;
@@ -485,7 +503,7 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
     for (const img of ctx.images) {
       const r = sendResult(await deps.sender.sendImage(img).catch(() => false));
       if (!r.sent) {
-        trace.delivery.images.push({ reference: img.reference, wamid: null, recorded: false });
+        trace.delivery.images.push({ reference: img.reference, wamid: null, recorded: false, error: r.error });
         continue;
       }
       trace.images++;

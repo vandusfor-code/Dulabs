@@ -1,5 +1,39 @@
 # Pasos manuales pendientes en producción
 
+## ⏳ PENDIENTE — Bloque 13: trazas persistentes del agente y diagnóstico
+
+Migración `supabase/migrations/20261113000000_dulabs_agente_trazas.sql`.
+**100 % aditiva** (tabla y funciones nuevas del agente):
+
+- `dulabs_agente_trazas`: una fila por turno del agente (y por error de su frontera) con
+  qué entró (sin el texto), el contexto, las herramientas y lo que validó el backend, la
+  respuesta y la entrega. **Nunca** teléfono (solo `contact_ref`, un hash), texto del
+  cliente, tokens ni secretos.
+- `dulabs_agente_diagnosticar(id_tenant, teléfono opcional, límite)`: cada turno con el
+  estado REAL de entrega de Meta (entregado / leído / fallido + código) del texto y de
+  cada foto. El teléfono se convierte en el mismo hash; no se guarda.
+- `dulabs_agente_trazas_purgar(días)`: borra trazas viejas (mínimo 7 días; sugerido 90).
+
+Requiere las columnas `error_codigo`/`error_detalle` de `dulabs_mensajes_log`
+(migración 20260827020000, ya aplicada en producción).
+
+Validada contra PostgreSQL 16 local (prueba SQL 6/6, aplicada dos veces) y de punta a
+punta con el webhook real: turnos guardados y una foto rechazada por Meta (131053)
+visible en el diagnóstico.
+
+1. Correr el archivo completo en el SQL Editor (idempotente). No hay pasos posteriores.
+2. Verificar (esperado `1 | 2 | 0`):
+   ```sql
+   select
+     (select count(*) from information_schema.tables where table_name = 'dulabs_agente_trazas') as tablas,
+     (select count(*) from pg_proc where proname in ('dulabs_agente_diagnosticar', 'dulabs_agente_trazas_purgar')) as funciones,
+     (select count(*) from information_schema.role_table_grants
+       where table_name = 'dulabs_agente_trazas' and grantee in ('anon', 'authenticated')) as permisos_publicos;
+   ```
+3. Uso: `select * from dulabs_agente_diagnosticar('<id_tenant>', '<teléfono>', 20);`
+
+Rollback: al inicio del archivo de la migración.
+
 ## ⏳ PENDIENTE — Bloque 11: un solo turno del agente a la vez por conversación
 
 Migración `supabase/migrations/20261112000000_dulabs_agente_buzon.sql`.

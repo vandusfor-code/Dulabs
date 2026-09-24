@@ -30,6 +30,7 @@ import { createSupabaseHistoryStore } from "@/lib/agente/contexto";
 import { createSupabaseConversationStateStore } from "@/lib/agente/estado";
 import { createSupabaseProductMediaLedger } from "@/lib/agente/medios";
 import { batchInput, createSupabaseMailboxStore, enqueueAndDrain, type DrainOptions, type MailboxStore } from "@/lib/agente/buzon";
+import { boundaryRecord, createSupabaseTraceSink, turnRecord } from "@/lib/agente/trazas";
 import type { AgentToolsDeps } from "@/lib/agente/herramientas";
 import { runAgentTurn, type AgentRuntimeDeps, type AgentSender, type AgentTurnTrace } from "@/lib/agente/runtime";
 
@@ -59,11 +60,21 @@ export interface AgentBoundaryDeps {
   env?: Record<string, string | undefined>;
   factories?: Partial<AIProviderFactories>;
   logError?: (entry: Record<string, unknown>) => void;
+  /** Espera lo que quedó pendiente de guardar (trazas) antes de que termine la función. */
+  flush?: () => Promise<void>;
 }
 
 const defaultLogError = (entry: Record<string, unknown>) => console.error(JSON.stringify({ log: "agent_boundary", ...entry }));
 
 export async function atenderConAgenteSiAplica(input: AgentBoundaryInput, deps: AgentBoundaryDeps): Promise<AgentBoundaryResult> {
+  try {
+    return await atender(input, deps);
+  } finally {
+    await deps.flush?.().catch(() => {});
+  }
+}
+
+async function atender(input: AgentBoundaryInput, deps: AgentBoundaryDeps): Promise<AgentBoundaryResult> {
   const logError = deps.logError ?? defaultLogError;
   const base = { business_id: input.cliente.id_tenant, contact_ref: contactRef(input.waId) };
   const expected = { tenantId: input.cliente.id_tenant, phoneNumberId: input.cliente.phone_number_id };
@@ -149,17 +160,12 @@ export async function encolarEnBuzonSiAplica(input: AgentBoundaryInput, deps: { 
 function whatsappSender(supabase: SupabaseClient, cliente: ClienteConfig, input: AgentBoundaryInput): AgentSender {
   const simulated = process.env.NODE_ENV !== "production" && process.env.DULABS_AGENTE_ENVIO_SIMULADO === "1";
   // Diagnóstico de envío SIN datos sensibles: solo el estado HTTP y el código de Meta (nunca el token, el texto ni el teléfono).
-  const sendError = (kind: "text" | "image", reason: string, err?: unknown) =>
-    console.error(
-      JSON.stringify({
-        log: "agent_send_error",
-        business_id: cliente.id_tenant,
-        contact_ref: contactRef(input.waId),
-        kind,
-        reason,
-        ...(err instanceof MetaGraphApiError ? { http_status: err.httpStatus, meta_code: err.metaErrorCode ?? null } : {}),
-      }),
-    );
+  // Devuelve el motivo resumido para la traza del turno (p. ej. "meta_rejected 400/131053").
+  const sendError = (kind: "text" | "image", reason: string, err?: unknown): string => {
+    const meta = err instanceof MetaGraphApiError ? { http_status: err.httpStatus, meta_code: err.metaErrorCode ?? null } : null;
+    console.error(JSON.stringify({ log: "agent_send_error", business_id: cliente.id_tenant, contact_ref: contactRef(input.waId), kind, reason, ...(meta ?? {}) }));
+    return meta ? `${reason} ${meta.http_status ?? "?"}/${meta.meta_code ?? "?"}` : reason;
+  };
   // Envío simulado (solo fuera de producción): un wamid ficticio para poder probar "responder a la foto" de punta a punta.
   const simulatedWamid = () => `wamid.sim.${randomUUID()}`;
   return {
@@ -168,14 +174,12 @@ function whatsappSender(supabase: SupabaseClient, cliente: ClienteConfig, input:
       if (!simulated) {
         const token = resolverTokenMeta(cliente);
         if (!token) {
-          sendError("text", "no_meta_token");
-          return { sent: false, wamid: null };
+          return { sent: false, wamid: null, error: sendError("text", "no_meta_token") };
         }
         try {
           ({ wamid } = await enviarTexto({ phoneNumberId: cliente.phone_number_id, token, para: input.destino, texto: text }));
         } catch (err) {
-          sendError("text", err instanceof MetaGraphApiError ? "meta_rejected" : "send_failed", err);
-          return { sent: false, wamid: null };
+          return { sent: false, wamid: null, error: sendError("text", err instanceof MetaGraphApiError ? "meta_rejected" : "send_failed", err) };
         }
         await incrementarUsoMensajes(supabase, cliente);
       }
@@ -187,14 +191,12 @@ function whatsappSender(supabase: SupabaseClient, cliente: ClienteConfig, input:
       if (!simulated) {
         const token = resolverTokenMeta(cliente);
         if (!token) {
-          sendError("image", "no_meta_token");
-          return { sent: false, wamid: null };
+          return { sent: false, wamid: null, error: sendError("image", "no_meta_token") };
         }
         try {
           ({ wamid } = await enviarMedia({ phoneNumberId: cliente.phone_number_id, token, para: input.destino, tipo: "image", link: image.url, caption: image.caption }));
         } catch (err) {
-          sendError("image", err instanceof MetaGraphApiError ? "meta_rejected" : "send_failed", err);
-          return { sent: false, wamid: null };
+          return { sent: false, wamid: null, error: sendError("image", err instanceof MetaGraphApiError ? "meta_rejected" : "send_failed", err) };
         }
         await incrementarUsoMensajes(supabase, cliente);
       }
@@ -214,8 +216,24 @@ async function nombreConocido(supabase: SupabaseClient, key: { phoneNumberId: st
 export function productionAgentBoundaryDeps(supabase: SupabaseClient, cliente: ClienteConfig): AgentBoundaryDeps {
   // Solo fuera de producción: E2E local contra un Gemini simulado por HTTP. En producción siempre la URL oficial.
   const baseUrl = process.env.NODE_ENV !== "production" ? process.env.DULABS_GEMINI_BASE_URL : undefined;
+  const traces = createSupabaseTraceSink(supabase);
+  // Guardados de trazas en curso: la frontera los espera al terminar (en serverless, lo no esperado se pierde).
+  const pending = new Set<Promise<void>>();
+  const persist = (p: Promise<void>) => {
+    pending.add(p);
+    void p.finally(() => pending.delete(p));
+  };
   return {
+    flush: async () => {
+      await Promise.allSettled([...pending]);
+    },
     configStore: createSupabaseAgentConfigStore(supabase),
+    // Errores de la frontera (config inválida, sin credencial, buzón…): log + traza persistente.
+    logError: (entry) => {
+      defaultLogError(entry);
+      const ref = typeof entry.contact_ref === "string" ? entry.contact_ref : null;
+      if (ref) persist(traces.record(boundaryRecord(entry, { tenantId: cliente.id_tenant, phoneNumberId: cliente.phone_number_id, contactRef: ref, wamid: null })));
+    },
     factories: baseUrl ? { gemini: (apiKey) => createGeminiProvider({ apiKey, baseUrl }) } : undefined,
     build(input) {
       const catalogDeps = productionAgentToolDeps(supabase);
@@ -228,7 +246,10 @@ export function productionAgentBoundaryDeps(supabase: SupabaseClient, cliente: C
         sender: whatsappSender(supabase, cliente, input),
         media: createSupabaseProductMediaLedger(supabase),
         mailbox: createSupabaseMailboxStore(supabase),
-        log: (trace) => console.info(JSON.stringify(trace)),
+        log: (trace) => {
+          console.info(JSON.stringify(trace));
+          persist(traces.record(turnRecord(trace, cliente.phone_number_id)));
+        },
       };
     },
   };
