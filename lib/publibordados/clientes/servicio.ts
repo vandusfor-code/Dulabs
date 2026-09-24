@@ -1,5 +1,5 @@
 /**
- * Módulo Clientes — casos de uso (listar, ver ficha, cambiar estado/asesor).
+ * Publi Bordados · módulo Clientes — casos de uso (listar, ver ficha, cambiar estado/asesor).
  * Reciben el tenant YA autenticado (auth.ts) y un repositorio que aplica el
  * aislamiento por tenant + números del tenant en cada consulta.
  */
@@ -14,8 +14,8 @@ import {
   type Cliente,
   type FiltroClientes,
   type FilaContacto,
-} from "@/lib/clientes-modulo/modelo";
-import type { ClientesRepositorio, MiembroEquipo } from "@/lib/clientes-modulo/repositorio";
+} from "@/lib/publibordados/clientes/modelo";
+import type { ClientesRepositorio, MiembroEquipo } from "@/lib/publibordados/clientes/repositorio";
 
 export type ResultadoServicio<T> = { ok: true; data: T } | { ok: false; status: 400 | 404 | 409; error: string };
 

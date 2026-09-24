@@ -122,7 +122,7 @@ describe("webhook real → agente: mensajes sin texto (Bloque 23)", { timeout: 6
     assert.ok(db.rows("dulabs_mensajes_log").some((r) => r.wamid === "wamid.b24.eco" && r.origen === "manual"), "la respuesta de la asesora queda en el Inbox");
   });
 
-  // Corrección autorizada (Publi Bordados): antes, en un número SIN agente, el eco REEMPLAZABA la pausa por
+  // Corrección general autorizada: antes, en un número SIN agente, el eco REEMPLAZABA la pausa por
   // 30 min (un traspaso de 24 h o 30 días quedaba en 30 min y el bot volvía a hablar en un chat atendido por
   // una persona). Ahora tampoco se acorta; se conserva el refresco de seguimiento (pausado_desde /
   // seguimiento_enviado) que usa el cron seguimiento-traspaso.

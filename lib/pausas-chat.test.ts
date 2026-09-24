@@ -171,8 +171,8 @@ function pausasEnMemoria(iniciales: FilaPausa[] = []) {
 
 const MIN = 60 * 1000;
 const HORA = 60 * MIN;
-const PN = "1337486632773969";
-const CHAT = "573148127388";
+const PN = "1000000000123";
+const CHAT = "573000000009";
 const hastaEn = (ms: number) => new Date(Date.now() + ms).toISOString();
 const restante = (iso: string) => Date.parse(iso) - Date.now();
 

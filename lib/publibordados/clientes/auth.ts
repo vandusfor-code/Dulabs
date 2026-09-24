@@ -1,12 +1,12 @@
 /**
- * Módulo Clientes — AUTORIZACIÓN (mismo esquema que el Catálogo).
+ * Publi Bordados · módulo Clientes — AUTORIZACIÓN (mismo esquema que el Catálogo).
  *
  * Tres barreras en el backend (el frontend nunca decide):
  *   1. Sesión válida + membresía ACTIVA (requireFlowAccess). El tenant sale
  *      SIEMPRE de la membresía, jamás de body/query/params/headers (sin
  *      override de administrador).
  *   2. Rol: ver = admin/agente/lectura; cambiar estado o asesor = admin/agente.
- *   3. Módulo "clientes" habilitado para el tenant (dulabs_tenant_modulos),
+ *   3. Módulo "publibordados_clientes" habilitado para el tenant (dulabs_tenant_modulos),
  *      verificado de forma ESTRICTA: un error de base de datos es 500, nunca
  *      "permitido".
  */
@@ -16,7 +16,7 @@ import { requireFlowAccess } from "@/lib/flow/api-auth";
 import { moduloHabilitado } from "@/lib/tenant-modulos";
 import type { Miembro, Rol } from "@/lib/team";
 
-export const CLIENTES_MODULE = "clientes" as const;
+export const CLIENTES_MODULE = "publibordados_clientes" as const;
 export const CLIENTES_READ_ROLES: readonly Rol[] = ["admin", "agente", "lectura"];
 export const CLIENTES_WRITE_ROLES: readonly Rol[] = ["admin", "agente"];
 

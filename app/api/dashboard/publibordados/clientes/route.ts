@@ -1,8 +1,8 @@
 import type { NextRequest } from "next/server";
-import { requireClientes } from "@/lib/clientes-modulo/auth";
-import { leerFiltro } from "@/lib/clientes-modulo/modelo";
-import { crearRepositorioClientes } from "@/lib/clientes-modulo/repositorio";
-import { listarClientes } from "@/lib/clientes-modulo/servicio";
+import { requireClientes } from "@/lib/publibordados/clientes/auth";
+import { leerFiltro } from "@/lib/publibordados/clientes/modelo";
+import { crearRepositorioClientes } from "@/lib/publibordados/clientes/repositorio";
+import { listarClientes } from "@/lib/publibordados/clientes/servicio";
 
 export const runtime = "nodejs";
 

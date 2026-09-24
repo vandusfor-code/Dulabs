@@ -5,8 +5,8 @@ import { X } from "lucide-react";
 import { Pill } from "@/components/dashboard/shell/ui";
 import { inputCls, primaryBtn } from "@/components/dashboard/business-agent/ui";
 import { useI18n } from "@/lib/i18n";
-import { ESTADOS, ETIQUETA_ESTADO, ETIQUETA_TIPO, type Asesor, type Cliente, type EstadoCliente } from "@/lib/clientes-modulo/modelo";
-import { fecha, fechaHora, telefono } from "@/components/dashboard/clientes/formato";
+import { ESTADOS, ETIQUETA_ESTADO, ETIQUETA_TIPO, type Asesor, type Cliente, type EstadoCliente } from "@/lib/publibordados/clientes/modelo";
+import { fecha, fechaHora, telefono } from "@/components/dashboard/publibordados/clientes/formato";
 
 export const TONO_ESTADO: Record<EstadoCliente, "info" | "warning" | "success"> = {
   nuevo: "info",

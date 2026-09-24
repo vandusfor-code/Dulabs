@@ -61,7 +61,6 @@ import {
   logIaBloqueadaPorHumano,
 } from "@/lib/pausas-chat";
 import { observadorPublibordadosActivo, observarCambioPublibordados } from "@/lib/publibordados/observador/observador";
-import { permiteFallbackALegacy } from "@/lib/publibordados/reinicio";
 import { obtenerOnboardingSesionActivaPorTelefono, guardarOnboardingSesion, marcarBienvenidaEnviada, filaASesion } from "@/lib/onboarding-store";
 import { procesarMensajeOnboarding, textoBienvenida, BOTON_CONFIGURAR, BOTON_SOPORTE } from "@/lib/onboarding-engine";
 import {
@@ -848,7 +847,7 @@ async function marcarRespondido(wamidCitado: string) {
   }
 }
 
-// Nunca acorta una pausa más larga (ej. traspaso de 30 días de Publi Bordados, 24 h de Daniela):
+// Nunca acorta una pausa más larga (p. ej. un traspaso a asesora de 24 h o de 30 días):
 // ver activarPausaPorRespuestaHumana en lib/pausas-chat.ts.
 async function activarPausaHumana(phoneNumberId: string, telefonoCliente: string) {
   await activarPausaPorRespuestaHumana(supabaseAdmin(), phoneNumberId, telefonoCliente, PAUSA_HUMANA_MS);
@@ -1140,11 +1139,6 @@ async function atenderMensaje(
         media,
       });
       if (intentoFlow.handled) return;
-      // Publi Bordados (autorizado): flow 100 % determinista, nunca cae a la IA generativa legacy.
-      if (!permiteFallbackALegacy(cliente.phone_number_id)) {
-        console.warn(`[webhook-dulabs] Flow de Publi Bordados no atendió el mensaje (${intentoFlow.motivo}); sin respuesta de IA legacy`);
-        return;
-      }
       // FASE F8.4 (autorizado) -- LEGACY (todo lo que sigue debajo en esta
       // función) nunca soportó media: usa mensaje.text!.body sin chequeo, a
       // propósito, porque hasta esta fase nunca podía recibir otra cosa (ver

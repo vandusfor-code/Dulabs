@@ -12,7 +12,7 @@
  *   … --publicar            → crea el flow (o una versión nueva) y la publica. No lo activa.
  *   … --publicar --activar  → además deja flow_activo=true / flow_id en ese número
  *                             y habilita el módulo Clientes del dashboard para ese tenant
- *                             (dulabs_tenant_modulos: id_tenant + modulo "clientes").
+ *                             (dulabs_tenant_modulos: id_tenant + modulo "publibordados_clientes").
  *
  * No toca ia_pausada: mientras siga en true, el número no responde aunque el
  * flow esté activo (el gate de ia_pausada corre antes que Flow en el webhook).
@@ -26,7 +26,7 @@ import { validateFlowForPublish } from "@/lib/flow/validate-publish";
 import { publibordadosFlow } from "@/lib/flows/publibordados.flow";
 
 const SLUG = "publibordados-calificacion";
-const MODULO_CLIENTES = "clientes";
+const MODULO_CLIENTES = "publibordados_clientes";
 
 const envPath = new URL("../.env.local", import.meta.url);
 if (existsSync(envPath)) {

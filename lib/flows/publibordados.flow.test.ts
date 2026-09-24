@@ -13,6 +13,7 @@ import { describe, it } from "node:test";
 import { createFlowEngineState, runFlowEngine } from "@/lib/flow/flow-engine";
 import { filterClaimSecuredEffects } from "@/lib/flow/ai-runtime/ai-response-security";
 import { validateFlowForPublish } from "@/lib/flow/validate-publish";
+import { politicaDeDefinicion } from "@/lib/flow/runtime-policy";
 import type { EngineEffect, FlowEngineEvent, FlowEngineState } from "@/lib/flow/engine-types";
 import {
   PUBLIBORDADOS_BIENVENIDA,
@@ -138,6 +139,22 @@ describe("PUBLI BORDADOS — estructura", () => {
 
   it("sin IA: ningún nodo ai", () => {
     assert.equal(flow.nodes.filter((n) => n.type === "ai").length, 0);
+  });
+
+  it("declara su propia política de runtime: determinista y reinicio con reiniciar/menú/menu/inicio o >24 h", () => {
+    assert.deepEqual(flow.runtimePolicy, {
+      deterministic: true,
+      restart: { keywords: ["reiniciar", "menú", "menu", "inicio"], afterInactivityHours: 24 },
+    });
+    // La política sobrevive al parseo que usa el runtime (no se pierde al publicar/leer).
+    assert.deepEqual(politicaDeDefinicion(JSON.parse(JSON.stringify(flow))), flow.runtimePolicy);
+  });
+
+  it("el guardado nunca incluye estado ni asesor", () => {
+    const save = flow.nodes.find((n) => n.id === "save-cliente");
+    assert.ok(save && save.type === "save_data");
+    const claves = save.config.mappings.map((m) => m.targetKey);
+    assert.ok(!claves.includes("pb_estado") && !claves.includes("pb_asesor"), JSON.stringify(claves));
   });
 });
 
@@ -311,7 +328,7 @@ describe("PUBLI BORDADOS — nombre y cantidad", () => {
 });
 
 describe("PUBLI BORDADOS — cliente guardado (save_data → custom_fields del contacto)", () => {
-  it("empresa: guarda tipo, nombre, empresa, producto, cantidad y estado 'nuevo'", () => {
+  it("empresa: guarda tipo, nombre, empresa, producto y cantidad — nunca estado ni asesor (son de las asesoras)", () => {
     const { state } = conversar([...HASTA_CANTIDAD, txt("20")]);
     assert.deepEqual(state.exports.custom_fields, {
       pb_tipo_cliente: "empresa",
@@ -319,7 +336,6 @@ describe("PUBLI BORDADOS — cliente guardado (save_data → custom_fields del c
       pb_nombre_empresa: "Textiles SAS",
       pb_producto: "gorras",
       pb_cantidad: "20",
-      pb_estado: "nuevo",
     });
   });
 
@@ -331,7 +347,6 @@ describe("PUBLI BORDADOS — cliente guardado (save_data → custom_fields del c
       pb_nombre_empresa: "",
       pb_producto: "otros",
       pb_cantidad: "2",
-      pb_estado: "nuevo",
     });
   });
 

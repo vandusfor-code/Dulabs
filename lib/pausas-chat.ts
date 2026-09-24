@@ -142,14 +142,13 @@ export async function extenderPausaChat(
 }
 
 /**
- * Respuesta manual de una persona desde el celular (eco de coexistencia) —
- * autorizado (Publi Bordados, corrección compartida).
+ * Respuesta manual de una persona desde el celular (eco de coexistencia).
  *
- * Antes el eco usaba activarPausaChat, que REEMPLAZA la pausa: un traspaso de
- * 30 días (Publi Bordados) o de 24 h (Daniela) quedaba en 30 minutos en
- * cuanto la asesora respondía, y el bot volvía a hablar en un chat atendido
- * por una persona. Ahora la pausa nunca se acorta (extenderPausaChat) y se
- * conserva el otro efecto de activarPausaChat que usa el cron
+ * Mejora general: antes el eco usaba activarPausaChat, que REEMPLAZA la
+ * pausa, así que un traspaso a asesora (24 h, 30 días...) quedaba en 30
+ * minutos en cuanto ella respondía y el bot volvía a hablar en un chat
+ * atendido por una persona. Ahora la pausa nunca se acorta (extenderPausaChat)
+ * y se conserva el otro efecto de activarPausaChat que usa el cron
  * seguimiento-traspaso: pausado_desde = ahora y seguimiento_enviado = false
  * ("una persona acaba de responder"), también cuando la pausa ya era más larga.
  */

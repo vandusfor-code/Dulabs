@@ -1,11 +1,14 @@
 /**
- * Módulo Clientes (dashboard Business) — modelo PURO, sin I/O.
+ * Publi Bordados · módulo Clientes (dashboard Business) — modelo PURO, sin I/O.
  *
  * Fuente de verdad: el contacto real existente (dulabs_clientes_conocidos),
  * una fila por (número de WhatsApp del negocio, teléfono del cliente). Los
- * datos de calificación viven en custom_fields con prefijo "pb_": los escribe
- * el Flow de Publi Bordados (save_data, lib/flows/publibordados.flow.ts) y
- * la ficha del cliente (estado y asesor). Sin tabla nueva ni migración.
+ * datos viven en custom_fields con prefijo "pb_", con dueños separados:
+ *   - el Flow (save_data, lib/flows/publibordados.flow.ts) escribe tipo,
+ *     nombre, empresa, producto y cantidad;
+ *   - la ficha del cliente escribe SOLO estado y asesor.
+ * Ninguno toca las claves del otro. Sin estado guardado = "Nuevo".
+ * Sin tabla nueva ni migración.
  */
 
 export const CAMPOS = {
@@ -90,9 +93,9 @@ export function parsearCantidad(v: unknown): number | null {
   return n >= 1 ? n : null;
 }
 
-/** true si el contacto pasó al menos una vez por el Flow (tiene estado del módulo). */
+/** true si el contacto completó al menos una vez el Flow (tiene el tipo de cliente que solo guarda el Flow). */
 export function esClienteDelModulo(fila: Pick<FilaContacto, "custom_fields">): boolean {
-  return esEstado(fila.custom_fields?.[CAMPOS.estado]);
+  return esTipo(fila.custom_fields?.[CAMPOS.tipo]);
 }
 
 export function aCliente(

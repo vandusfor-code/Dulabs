@@ -41,11 +41,11 @@ import {
   PUBLIBORDADOS_TRASPASO,
   publibordadosFlow,
 } from "@/lib/flows/publibordados.flow";
-import { PUBLIBORDADOS_PHONE_NUMBER_ID, reiniciarFlowPublibordadosSiCorresponde } from "@/lib/publibordados/reinicio";
+import { leerPoliticaRuntime, reiniciarSiLaPoliticaLoPide } from "@/lib/flow/runtime-policy";
 
 const T_PB = "f46242e0-e05e-4225-bc45-9539615f26df";
 const T_OTRO = "00000000-0000-4000-8000-000000000002";
-const PN_PB = PUBLIBORDADOS_PHONE_NUMBER_ID;
+const PN_PB = "1337486632773969";
 const PN_OTRO = "999000111222333";
 const CLIENTE = "573148127388";
 
@@ -317,16 +317,15 @@ function crearMundo() {
     const telefono = msg.telefono ?? CLIENTE;
     const texto = msg.texto ?? "";
     if (await chatEnPausaHumana(supabase, numero, telefono)) return { pausado: true };
-    await reiniciarFlowPublibordadosSiCorresponde({
-      supabase,
+    const flowId = msg.flowId ?? (tenant === T_PB ? "flow-pb" : "flow-otro");
+    // Mismo orden que el bridge: política declarada por el flow → reinicio si la política lo pide.
+    const { politica, activa: activaAntes } = await leerPoliticaRuntime({
       store,
       tenantId: tenant,
-      phoneNumberId: numero,
-      telefonoCliente: telefono,
-      texto,
-      wamid: msg.wamid,
-      buttonId: msg.boton,
+      conversation: { phoneNumberId: numero, telefonoCliente: telefono },
+      flowId,
     });
+    await reiniciarSiLaPoliticaLoPide({ supabase, store, tenantId: tenant, politica, activa: activaAntes, texto, eventId: msg.wamid, buttonId: msg.boton });
     const activa = await store.getActiveExecution(tenant, { phoneNumberId: numero, telefonoCliente: telefono });
     const engineEvent: FlowEngineEvent = !activa
       ? { type: "start", text: msg.boton || texto, eventId: msg.wamid }
@@ -336,7 +335,7 @@ function crearMundo() {
     const r = await orquestador.process({
       tenantId: tenant,
       conversation: { phoneNumberId: numero, telefonoCliente: telefono },
-      flowId: msg.flowId ?? (tenant === T_PB ? "flow-pb" : "flow-otro"),
+      flowId,
       eventId: msg.wamid,
       eventType: "message",
       payload: { text: texto },
@@ -528,13 +527,12 @@ describe("PB runtime — reinicio y abandono (K, L)", () => {
       pb_nombre_empresa: "",
       pb_producto: "uniformes",
       pb_cantidad: "3",
-      pb_estado: "nuevo",
     });
   });
 });
 
 describe("PB runtime — cliente guardado (R)", () => {
-  it("al transferir quedan guardados tipo, nombre, empresa, producto, cantidad y estado 'nuevo'", async () => {
+  it("al transferir quedan guardados tipo, nombre, empresa, producto y cantidad (sin estado: se muestra como Nuevo)", async () => {
     await m.completar(EMPRESA_GORRAS_20);
     assert.equal(m.contactos.length, 1);
     assert.deepEqual(m.contactos[0], {
@@ -547,19 +545,20 @@ describe("PB runtime — cliente guardado (R)", () => {
         pb_nombre_empresa: "Textiles SAS",
         pb_producto: "gorras",
         pb_cantidad: "20",
-        pb_estado: "nuevo",
       },
     });
   });
 
-  it("el guardado conserva los campos de la asesora (merge): el asesor asignado no se pierde", async () => {
+  it("una nueva solicitud del cliente NO sobrescribe el estado ni el asesor que puso la asesora", async () => {
     await m.completar(EMPRESA_GORRAS_20);
     m.contactos[0].custom_fields.pb_asesor = "miembro-7";
     m.contactos[0].custom_fields.pb_estado = "atendido";
     m.pausas.length = 0;
-    await m.completar(EMPRESA_GORRAS_20);
+    await m.completar([{ boton: "persona_natural" }, { texto: "Ana" }, { boton: "gorras" }, { texto: "8" }]);
     assert.equal(m.contactos[0].custom_fields.pb_asesor, "miembro-7");
-    assert.equal(m.contactos[0].custom_fields.pb_estado, "nuevo", "una solicitud nueva vuelve a quedar como Nuevo");
+    assert.equal(m.contactos[0].custom_fields.pb_estado, "atendido");
+    assert.equal(m.contactos[0].custom_fields.pb_tipo_cliente, "persona_natural", "los datos de la solicitud sí se actualizan");
+    assert.equal(m.contactos[0].custom_fields.pb_cantidad, "8");
   });
 });
 

@@ -631,4 +631,27 @@ export interface FlowDefinition {
   edges: FlowEdge[];
   variables: VariableDefinition[];
   metadata?: FlowMetadata;
+  /**
+   * Política de runtime OPCIONAL, declarada por el propio flow (ver
+   * lib/flow/runtime-policy.ts). Omitirla = comportamiento de siempre, así
+   * que ningún flow ya publicado cambia.
+   */
+  runtimePolicy?: FlowRuntimePolicy;
+}
+
+/** Reglas de runtime que un flow declara para sí mismo (genéricas, sin negocio concreto). */
+export interface FlowRuntimePolicy {
+  /**
+   * true = el flow responde TODO desde su grafo: el runtime no aplica atajos
+   * fuera del grafo (preguntas laterales con IA, atajos de interrupción) y, si
+   * el flow no atiende un mensaje, no cae a la IA legacy del número.
+   */
+  deterministic?: boolean;
+  /** Reinicio de la conversación desde "start". */
+  restart?: {
+    /** Mensajes COMPLETOS que reinician (sin importar mayúsculas, tildes, emojis ni signos). */
+    keywords?: string[];
+    /** Una ejecución esperando respuesta con más horas sin actividad se reinicia al siguiente mensaje. */
+    afterInactivityHours?: number;
+  };
 }

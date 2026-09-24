@@ -1,5 +1,5 @@
 /**
- * Módulo Clientes — acceso a datos. TODA consulta va acotada por:
+ * Publi Bordados · módulo Clientes — acceso a datos. TODA consulta va acotada por:
  *   1. id_tenant de la sesión (nunca del request), y
  *   2. los números de WhatsApp que pertenecen a ese tenant
  *      (dulabs_clientes_config.id_tenant).
@@ -8,7 +8,8 @@
  * fila vieja de un número que cambió de tenant nunca se filtra.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { CAMPOS, type FilaContacto } from "@/lib/clientes-modulo/modelo";
+import { siguienteMarcaDeTiempo } from "@/lib/clientes-conocidos";
+import { CAMPOS, type FilaContacto } from "@/lib/publibordados/clientes/modelo";
 
 const COLUMNAS = "id, id_tenant, phone_number_id, telefono_cliente, nombre, custom_fields, created_at, updated_at";
 /** Tope defensivo de clientes leídos por consulta (la paginación y la búsqueda van sobre este conjunto). */
@@ -60,7 +61,7 @@ export function crearRepositorioClientes(supabase: SupabaseClient): ClientesRepo
         .select(COLUMNAS)
         .eq("id_tenant", tenantId)
         .in("phone_number_id", numeros)
-        .not(`custom_fields->>${CAMPOS.estado}`, "is", null)
+        .not(`custom_fields->>${CAMPOS.tipo}`, "is", null)
         .order("updated_at", { ascending: false })
         .limit(TOPE_CLIENTES);
       if (error) fallo("listar clientes", error);
@@ -120,7 +121,7 @@ export function crearRepositorioClientes(supabase: SupabaseClient): ClientesRepo
       if (numeros.length === 0) return null;
       const { data, error } = await supabase
         .from("dulabs_clientes_conocidos")
-        .update({ custom_fields: customFields, updated_at: new Date().toISOString() })
+        .update({ custom_fields: customFields, updated_at: siguienteMarcaDeTiempo(leidoEn) })
         .eq("id", id)
         .eq("id_tenant", tenantId)
         .in("phone_number_id", numeros)

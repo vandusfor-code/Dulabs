@@ -175,6 +175,18 @@ export async function leerContactoActual(
   }
 }
 
+/**
+ * Marca de tiempo para una escritura optimista: ahora, pero siempre posterior
+ * a la marca leída (dos escrituras en el mismo milisegundo nunca comparten
+ * updated_at, así el control de concurrencia no se puede engañar).
+ */
+export function siguienteMarcaDeTiempo(anterior: string | null | undefined, ahoraMs = Date.now()): string {
+  const previa = anterior ? Date.parse(anterior) : NaN;
+  return new Date(Number.isFinite(previa) ? Math.max(ahoraMs, previa + 1) : ahoraMs).toISOString();
+}
+
+const MAX_INTENTOS_CAMPOS = 4;
+
 // FASE F7 (Contacts + Variables + Tags, autorizado) — persiste en el
 // contacto real los campos que save_data(target="custom_field") dejó en
 // state.exports.custom_fields (antes un balde muerto, ver flow-engine.ts::
@@ -183,6 +195,12 @@ export async function leerContactoActual(
 // mandar NUNCA se borran. Nunca lanza -- mismo criterio que
 // recordarNombreCliente/resolverOCrearContacto (persistir un custom_field es
 // un enriquecimiento, no puede tumbar el turno del Flow que lo generó).
+//
+// Escritura OPTIMISTA (mejora general): el merge se escribe solo si la fila
+// no cambió desde que se leyó (updated_at); si otro escritor (otra ejecución,
+// el dashboard) la cambió en medio, se relee y se vuelve a fusionar. Antes,
+// leer→fusionar→escribir sin control podía borrar un campo que otro acababa
+// de guardar. Sin concurrencia el resultado es idéntico al de siempre.
 export async function actualizarCampoPersonalizado(
   supabase: SupabaseClient,
   params: {
@@ -194,40 +212,49 @@ export async function actualizarCampoPersonalizado(
 ): Promise<void> {
   if (Object.keys(params.customFields).length === 0) return;
   try {
-    const { data: existing } = await supabase
-      .from("dulabs_clientes_conocidos")
-      .select("custom_fields")
-      .eq("phone_number_id", params.phoneNumberId)
-      .eq("telefono_cliente", params.telefonoCliente)
-      .maybeSingle();
-
-    const merged = {
-      ...((existing?.custom_fields as Record<string, unknown> | null) ?? {}),
-      ...params.customFields,
-    };
-
-    if (existing) {
-      await supabase
+    for (let intento = 0; intento < MAX_INTENTOS_CAMPOS; intento++) {
+      const { data: existing, error: errorLectura } = await supabase
         .from("dulabs_clientes_conocidos")
-        .update({ custom_fields: merged, updated_at: new Date().toISOString() })
+        .select("custom_fields, updated_at")
         .eq("phone_number_id", params.phoneNumberId)
-        .eq("telefono_cliente", params.telefonoCliente);
-      return;
-    }
+        .eq("telefono_cliente", params.telefonoCliente)
+        .maybeSingle();
+      if (errorLectura) throw new Error(errorLectura.message);
 
-    // No debería ocurrir en la práctica (la ejecución ya llamó
-    // resolverOCrearContacto al iniciar) -- cubierto de todos modos para que
-    // esta función nunca dependa de un orden de llamadas implícito.
-    await supabase.from("dulabs_clientes_conocidos").upsert(
-      {
-        id_tenant: params.idTenant,
-        phone_number_id: params.phoneNumberId,
-        telefono_cliente: params.telefonoCliente,
-        nombre: params.telefonoCliente,
-        custom_fields: merged,
-      },
-      { onConflict: "phone_number_id,telefono_cliente" }
-    );
+      if (!existing) {
+        // No debería ocurrir en la práctica (la ejecución ya llamó
+        // resolverOCrearContacto al iniciar) -- cubierto de todos modos para que
+        // esta función nunca dependa de un orden de llamadas implícito. Si otra
+        // invocación la crea en medio (23505), se reintenta como actualización.
+        const { error } = await supabase.from("dulabs_clientes_conocidos").insert({
+          id_tenant: params.idTenant,
+          phone_number_id: params.phoneNumberId,
+          telefono_cliente: params.telefonoCliente,
+          nombre: params.telefonoCliente,
+          custom_fields: { ...params.customFields },
+        });
+        if (!error) return;
+        if (error.code !== "23505") throw new Error(error.message);
+        continue;
+      }
+
+      const merged = {
+        ...((existing.custom_fields as Record<string, unknown> | null) ?? {}),
+        ...params.customFields,
+      };
+      const leido = existing.updated_at as string;
+      const { data: escritas, error: errorEscritura } = await supabase
+        .from("dulabs_clientes_conocidos")
+        .update({ custom_fields: merged, updated_at: siguienteMarcaDeTiempo(leido) })
+        .eq("phone_number_id", params.phoneNumberId)
+        .eq("telefono_cliente", params.telefonoCliente)
+        .eq("updated_at", leido)
+        .select("id");
+      if (errorEscritura) throw new Error(errorEscritura.message);
+      if ((escritas ?? []).length > 0) return;
+      // Otro escritor cambió la fila entre la lectura y la escritura: se relee.
+    }
+    console.error("[clientes-conocidos] custom_fields no guardados: la fila cambió en cada intento");
   } catch (err) {
     console.error(
       "[clientes-conocidos] error guardando custom_fields:",

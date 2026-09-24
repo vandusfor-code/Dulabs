@@ -480,7 +480,9 @@ app/webhook-dulabs/publibordados-observador-aislamiento.test.ts
 app/webhook-dulabs/agente-no-texto-integracion.test.ts
 lib/catalogo/pedidos/abandonados.test.ts
 lib/flows/publibordados.flow.test.ts
-lib/publibordados/reinicio.test.ts
+lib/flow/runtime-policy.test.ts
 lib/publibordados/runtime.test.ts
 lib/pausas-chat.test.ts
-lib/clientes-modulo/clientes.test.ts
+lib/publibordados/clientes/clientes.test.ts
+lib/flow-runtime-bridge-politica.test.ts
+lib/clientes-conocidos-concurrencia.test.ts

@@ -517,6 +517,16 @@ export const flowMetadataSchema = z.object({
   notes: z.string().optional(),
 });
 
+export const flowRuntimePolicySchema = z.object({
+  deterministic: z.boolean().optional(),
+  restart: z
+    .object({
+      keywords: z.array(z.string().trim().min(1).max(40)).max(20).optional(),
+      afterInactivityHours: z.number().positive().max(24 * 365).optional(),
+    })
+    .optional(),
+});
+
 export const flowDefinitionSchema = z.object({
   id: z.string().uuid().optional(),
   tenantId: z.string().uuid().optional(),
@@ -528,6 +538,7 @@ export const flowDefinitionSchema = z.object({
   edges: z.array(flowEdgeSchema),
   variables: z.array(variableDefinitionSchema),
   metadata: flowMetadataSchema.optional(),
+  runtimePolicy: flowRuntimePolicySchema.optional(),
 });
 
 export type ParsedFlowDefinition = z.infer<typeof flowDefinitionSchema>;

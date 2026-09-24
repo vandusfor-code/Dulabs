@@ -60,9 +60,16 @@ export const navSections: NavSection[] = [
         rolesPermitidos: ["admin", "agente"],
       },
       { label: "Agentes de IA", labelEn: "AI agents", href: "/dashboard/agentes", icon: Waypoints },
-      // Clientes (autorizado) -- solo para tenants con el módulo "clientes"
-      // habilitado (dulabs_tenant_modulos). La API autoriza por su cuenta.
-      { label: "Clientes", labelEn: "Customers", href: "/dashboard/clientes", icon: Contact, modulo: "clientes" },
+      // Clientes de Publi Bordados (autorizado) -- módulo propio de ese negocio,
+      // visible solo para tenants con "publibordados_clientes" habilitado
+      // (dulabs_tenant_modulos). La API autoriza por su cuenta.
+      {
+        label: "Clientes",
+        labelEn: "Customers",
+        href: "/dashboard/publibordados/clientes",
+        icon: Contact,
+        modulo: "publibordados_clientes",
+      },
     ],
   },
   {

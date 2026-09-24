@@ -1,5 +1,5 @@
 /**
- * Módulo Clientes — modelo, autorización, repositorio y servicio.
+ * Publi Bordados · módulo Clientes — modelo, autorización, repositorio y servicio.
  *
  * El repositorio REAL (crearRepositorioClientes) corre contra un Supabase en
  * memoria que aplica de verdad los filtros de supabase-js que usa
@@ -21,10 +21,10 @@ import {
   TAMANO_PAGINA,
   validarCambio,
   type FilaContacto,
-} from "@/lib/clientes-modulo/modelo";
-import { decidirAccesoClientes, requireClientes } from "@/lib/clientes-modulo/auth";
-import { crearRepositorioClientes } from "@/lib/clientes-modulo/repositorio";
-import { actualizarCliente, listarClientes, obtenerCliente } from "@/lib/clientes-modulo/servicio";
+} from "@/lib/publibordados/clientes/modelo";
+import { decidirAccesoClientes, requireClientes } from "@/lib/publibordados/clientes/auth";
+import { crearRepositorioClientes } from "@/lib/publibordados/clientes/repositorio";
+import { actualizarCliente, listarClientes, obtenerCliente } from "@/lib/publibordados/clientes/servicio";
 import type { Miembro } from "@/lib/team";
 
 // ---------------------------------------------------------------------------
@@ -136,7 +136,6 @@ const pb = (extra: Record<string, unknown> = {}) => ({
   pb_nombre_empresa: "Textiles SAS",
   pb_producto: "gorras",
   pb_cantidad: "20",
-  pb_estado: "nuevo",
   ...extra,
 });
 
@@ -306,6 +305,13 @@ describe("servicio + repositorio — aislamiento multi-tenant", () => {
     assert.equal(r.total, 0);
   });
 
+  it("un cliente que el Flow guardó sin estado se muestra como Nuevo", async () => {
+    const { supabase } = mundo();
+    const r = await obtenerCliente(crearRepositorioClientes(supabase), T1, 1);
+    assert.ok(r.ok);
+    assert.equal(r.data.cliente.estado, "nuevo");
+  });
+
   it("ficha: T1 abre la suya; la de T2, la vieja y la sin Flow responden 404", async () => {
     const { supabase } = mundo();
     const repo = crearRepositorioClientes(supabase);
@@ -388,7 +394,7 @@ describe("servicio — cambiar estado y asesor", () => {
     const m = supabaseEnMemoria(base.tablas, { antesDeActualizar: () => void (fila.updated_at = `2026-09-24T12:00:0${n++}Z`) });
     const r = await actualizarCliente(crearRepositorioClientes(m.supabase), T1, 1, { estado: "atendido" });
     assert.equal(!r.ok && r.status, 409);
-    assert.equal((fila.custom_fields as Record<string, unknown>).pb_estado, "nuevo");
+    assert.equal((fila.custom_fields as Record<string, unknown>).pb_estado, undefined, "no se escribió nada");
   });
 });
 
@@ -426,12 +432,12 @@ describe("servicio — búsqueda, filtros y paginación", () => {
 });
 
 describe("menú del dashboard", () => {
-  it("'Clientes' solo aparece para tenants con el módulo habilitado", async () => {
+  it("'Clientes' solo aparece para tenants con el módulo publibordados_clientes habilitado", async () => {
     const { navSections, navItemVisible } = await import("@/components/dashboard/shell/nav");
-    const item = navSections.flatMap((s) => s.items).find((i) => i.href === "/dashboard/clientes");
+    const item = navSections.flatMap((s) => s.items).find((i) => i.href === "/dashboard/publibordados/clientes");
     assert.ok(item);
     assert.equal(navItemVisible(item, "agente", []), false);
     assert.equal(navItemVisible(item, "agente", ["catalogo"]), false);
-    assert.equal(navItemVisible(item, "lectura", ["clientes"]), true);
+    assert.equal(navItemVisible(item, "lectura", ["publibordados_clientes"]), true);
   });
 });

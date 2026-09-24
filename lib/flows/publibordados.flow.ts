@@ -25,10 +25,16 @@
  *    dejaba pasar o no explicaba). Se guarda como texto de dígitos; la
  *    condición de mayorista la compara numéricamente.
  *
- * Cliente (v2): el nodo save_data escribe en custom_fields del contacto real
+ * Cliente: el nodo save_data escribe en custom_fields del contacto real
  * (dulabs_clientes_conocidos, por número del negocio + teléfono del cliente)
- * con el mecanismo existente del orquestador (persistContactCustomFields).
- * Claves con prefijo pb_ para no mezclarse con nada más del contacto.
+ * con el mecanismo existente del orquestador (persistContactCustomFields,
+ * merge con escritura optimista). Claves con prefijo pb_. El flow guarda SOLO
+ * los datos que capturó: nunca toca el estado ni el asesor que administran
+ * las asesoras desde el módulo Clientes (un cliente sin estado es "Nuevo").
+ *
+ * Política de runtime propia (FlowDefinition.runtimePolicy, mecanismo genérico
+ * del motor): determinista (sin atajos fuera del grafo ni IA legacy) y
+ * reinicio con "reiniciar"/"menú"/"inicio" o tras 24 h sin actividad.
  */
 import type { FlowDefinition } from "@/lib/flow/types";
 
@@ -63,14 +69,20 @@ export const PUBLIBORDADOS_CAMPOS = {
   nombre_empresa: "pb_nombre_empresa",
   producto: "pb_producto",
   cantidad: "pb_cantidad",
-  estado_cliente: "pb_estado",
 } as const;
+
+export const PUBLIBORDADOS_PALABRAS_REINICIO = ["reiniciar", "menú", "menu", "inicio"];
+export const PUBLIBORDADOS_INACTIVIDAD_HORAS = 24;
 
 export function publibordadosFlow(): FlowDefinition {
   return {
     name: "Publi Bordados – Calificación",
     description:
       "Flow determinístico de Publi Bordados: tipo de cliente, nombre, empresa, producto, cantidad (precio al por mayor desde 6), guardado del cliente y traspaso a asesora vía transferir_soporte. Sin IA.",
+    runtimePolicy: {
+      deterministic: true,
+      restart: { keywords: PUBLIBORDADOS_PALABRAS_REINICIO, afterInactivityHours: PUBLIBORDADOS_INACTIVIDAD_HORAS },
+    },
     nodes: [
       { id: "start", type: "start", config: { triggerType: "first_message" } },
       { id: "msg-bienvenida", type: "message", config: { text: PUBLIBORDADOS_BIENVENIDA } },
@@ -215,8 +227,6 @@ export function publibordadosFlow(): FlowDefinition {
       { key: "nombre_empresa", label: "Empresa", type: "string", defaultValue: "" },
       { key: "producto", label: "Producto", type: "string" },
       { key: "cantidad", label: "Cantidad", type: "string" },
-      // Cada solicitud completada deja al cliente como "nuevo" para las asesoras.
-      { key: "estado_cliente", label: "Estado del cliente", type: "string", defaultValue: "nuevo" },
     ],
   };
 }

@@ -4,8 +4,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight, Search } from "lucide-react";
 import { PageHeader, Pill } from "@/components/dashboard/shell/ui";
 import { actionBtn, inputCls } from "@/components/dashboard/business-agent/ui";
-import { FichaCliente, TONO_ESTADO } from "@/components/dashboard/clientes/FichaCliente";
-import { fecha, fechaHora, telefono } from "@/components/dashboard/clientes/formato";
+import { FichaCliente, TONO_ESTADO } from "@/components/dashboard/publibordados/clientes/FichaCliente";
+import { fecha, fechaHora, telefono } from "@/components/dashboard/publibordados/clientes/formato";
 import { useDashboard } from "@/lib/dashboard-session";
 import { useI18n } from "@/lib/i18n";
 import {
@@ -16,7 +16,7 @@ import {
   type Cliente,
   type EstadoCliente,
   type FiltroTipo,
-} from "@/lib/clientes-modulo/modelo";
+} from "@/lib/publibordados/clientes/modelo";
 
 type Listado = { clientes: Cliente[]; total: number; pagina: number; paginas: number; asesores: Asesor[] };
 
@@ -28,7 +28,7 @@ export default function ClientesPage() {
   const { t } = useI18n();
   const { session, rol, modulos, negocios } = useDashboard();
   const token = session?.access_token ?? null;
-  const habilitado = modulos.includes("clientes");
+  const habilitado = modulos.includes("publibordados_clientes");
   const puedeEditar = rol === "admin" || rol === "agente";
 
   const [busqueda, setBusqueda] = useState("");
@@ -60,7 +60,7 @@ export default function ClientesPage() {
   useEffect(() => {
     if (!token || !habilitado) return;
     let vivo = true;
-    fetch(`/api/dashboard/clientes?${consulta}`, { headers: { Authorization: `Bearer ${token}` } })
+    fetch(`/api/dashboard/publibordados/clientes?${consulta}`, { headers: { Authorization: `Bearer ${token}` } })
       .then(async (res) => {
         const data = await res.json();
         if (!res.ok) throw new Error(data.error ?? t("No se pudieron cargar los clientes.", "Couldn't load customers."));
@@ -83,7 +83,7 @@ export default function ClientesPage() {
     async (id: number, cambio: { estado?: EstadoCliente; asesorId?: number | null }): Promise<string | null> => {
       if (!token) return t("Sesión vencida.", "Session expired.");
       try {
-        const res = await fetch(`/api/dashboard/clientes/${id}`, {
+        const res = await fetch(`/api/dashboard/publibordados/clientes/${id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
           body: JSON.stringify(cambio),
