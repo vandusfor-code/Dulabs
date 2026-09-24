@@ -1,6 +1,6 @@
 # Pasos manuales pendientes en producción
 
-## PENDIENTE — Bloque 19: reserva de stock al confirmar pedidos del catálogo
+## ✅ APLICADA (24-sep-2026) — Bloque 19: reserva de stock al confirmar pedidos del catálogo
 
 Migración `supabase/migrations/20261116000000_dulabs_catalogo_reservas_stock.sql`. **Aditiva**:
 tabla `dulabs_catalogo_reservas`, funciones de reserva/cierre/vencimiento y un trigger nuevo sobre
