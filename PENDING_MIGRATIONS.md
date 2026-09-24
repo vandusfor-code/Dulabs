@@ -1,6 +1,12 @@
 # Pasos manuales pendientes en producción
 
-## ⏳ PENDIENTE — Fase 8: agente conversacional (Gemini) por número de WhatsApp
+## ✅ APLICADA (24-sep-2026) — Fase 8: agente conversacional (Gemini) por número de WhatsApp
+
+**Estado: migración aplicada en Supabase de producción por el responsable del
+proyecto.** Verificación en el SQL Editor: `tablas = 2`, `configuraciones = 0`,
+`permisos_publicos = 0`. Aún no hay ningún agente configurado: el webhook se
+comporta exactamente como antes. **Pendiente:** el piloto de Delacour (pasos de
+activación más abajo), cuando esté su GEMINI_KEY.
 
 Migración `supabase/migrations/20261109000000_dulabs_agente_runtime.sql`.
 **100 % aditiva** (no toca tablas existentes):
