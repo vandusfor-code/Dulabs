@@ -51,6 +51,13 @@ $P -d perf -v n_negocio=2000 -v n_ruido=20000 -f scripts/perf/01-sinteticos.sql
 `20260923000000_amore_inventario_productos` es la migración que crea la tabla física de
 productos que usa el catálogo. Se aplica **solo** en esta BD local. No se toca nada de AMORE.
 
+Para agregar un **segundo negocio con Catálogo** (mismas referencias `DL-…`, nombres con « Q»), usado
+en las pruebas de varios negocios a la vez:
+
+```bash
+psql -d perf -v n_negocio=0 -v n_ruido=0 -v n_segundo=2000 -f scripts/perf/01-sinteticos.sql
+```
+
 Para 10.000 productos, clona la base y agrega 8.000 más:
 
 ```bash
@@ -119,3 +126,99 @@ En los escenarios concurrentes con 10.000 productos:
 - carritos: 313/s;
 - confirmaciones: 104/s;
 - última unidad: 1 confirmado, 19 rechazados por agotado y stock final 0.
+
+## La app compilada, de punta a punta (Bloque 20, segunda parte)
+
+`bench.ts` mide el código del servidor. Para medir lo que recibe el navegador se levanta la app
+**compilada** contra un "Supabase" local. `proxy-supabase.mjs` cumple ese papel:
+
+- envía `/rest/v1` al PostgREST local;
+- responde `/storage/v1/object/public` con fotos WebP sintéticas de tamaño realista;
+- cuenta las consultas de cada petición en `GET /__stats`.
+
+```bash
+PERF_REST=http://127.0.0.1:54441 node scripts/perf/proxy-supabase.mjs &
+npx next build
+SUPABASE_URL=http://127.0.0.1:54450 SUPABASE_SERVICE_ROLE_KEY=local npx next start -p 3100 &
+node scripts/perf/paginas.mjs --rondas 8                    # HTML, fotos, consultas por página, concurrencia
+PLAYWRIGHT_MODULE=/ruta/a/playwright node scripts/perf/movil.mjs   # celular con 4G lenta (Chromium real)
+```
+
+### Resultados con 10.000 productos (24-sep-2026)
+
+Las páginas se midieron en un solo proceso, sin CDN adelante:
+
+| Página | p50 ms | HTML gzip | Fotos en el HTML (diferidas) | Consultas BD |
+| --- | ---: | ---: | ---: | ---: |
+| inicio | 61 | 10,9 KB | 8 (4) | 8 |
+| todo el catálogo, página 1 (48 productos) | 49 | 18,6 KB | 43 (39) | 6 |
+| todo el catálogo, página 100 | 55 | 18,7 KB | 42 (39) | 6 |
+| búsqueda "aretes dorados" | 45 | 13,3 KB | 17 (13) | 7 |
+| ficha de producto | 21 | 8,1 KB | 1 | 6 |
+| carrito de 60 referencias (API) | 22 | 11,8 KB | — | 5 |
+| foto (miniatura / principal) | 16 / 19 | 43 / 148 KB | — | 4 |
+| foto para WhatsApp (conversión a JPEG) | 240 | 123 KB | — | 4 |
+
+El navegador nunca recibe el catálogo completo: el listado trae 48 productos y ningún dato
+interno (ni ids, ni negocio, ni stock exacto). Next deduplica en la misma petición las lecturas
+repetidas del layout y de la página.
+
+Con 50 clientes a la vez en un solo proceso:
+
+| Escenario | Por segundo |
+| --- | ---: |
+| listado | 32 |
+| búsquedas distintas | 41 |
+| fichas | 67 |
+| carritos | 129 |
+
+El límite es la CPU del render, no la base de datos. En Vercel, cada instancia atiende en paralelo
+y la plataforma escala horizontalmente.
+
+### Celular (390×844, 4G lenta de 1,6 Mbps con 150 ms de latencia, CPU ×4)
+
+| Página | LCP antes | LCP después | Fotos descargadas al abrir / en la página |
+| --- | ---: | ---: | ---: |
+| inicio | 3.184 ms | 1.896 ms | 6 / 8 |
+| todo el catálogo | 3.228 ms | 2.176 ms | 11 / 43 |
+| búsqueda | 3.288 ms | 1.852 ms | 10 / 17 |
+| ficha | 2.596 ms | 2.644 ms | 1 / 1 |
+
+Antes, el LCP era la primera foto: estaba marcada como diferida y el navegador la descubría tarde.
+Ahora las 4 primeras tarjetas cargan de inmediato, y la primera fila con prioridad alta
+(`cargaDeFoto`). El resto sigue diferido.
+
+### Fotos con `v` inventada (cache-busting)
+
+| | Antes | Después |
+| --- | --- | --- |
+| 30 `whatsapp.jpg?v=<aleatorio>` a la vez | 200 × 30: 30 conversiones, 3,6 MB, 14/s (CPU saturada) | 307 × 30: 0 conversiones, 0 KB |
+| 100 `main.webp?v=<aleatorio>` | 200 × 100: 14,8 MB leídos de Storage | 307 × 100: 0 KB |
+
+La ruta solo sirve la URL canónica; cualquier otra `v` redirige a ella sin abrir Storage
+(`lib/catalogo/foto-http.ts`).
+
+### Varios negocios a la vez (`bench.ts`, con el segundo negocio)
+
+Los dos negocios tienen las mismas referencias. En todas las pruebas hubo **0 fugas** entre ellos:
+
+- **Búsquedas intercaladas:** 60, a 170 por segundo.
+- **Carritos intercalados:** 60, a 517 por segundo.
+- **Última unidad:** con stock 1 en ambos negocios para la misma referencia, 20 clientes por
+  negocio confirmaron a la vez. Resultado: exactamente 1 confirmado por negocio y stock final 0 en
+  ambos.
+
+### Panel administrativo y agente (10.000 productos)
+
+| Operación | p50 ms | Consultas | Otros datos |
+| --- | ---: | ---: | --- |
+| admin: listado página 1 | 14 | 2 | |
+| admin: listado página 100 | 21 | 2 | |
+| admin: buscar "luna" | 26 | 2 | |
+| admin: ficha | 7 | 3 | |
+| admin: vista previa de importación (lee todas las claves) | 114 | 12 | 2 MB con 10.000 productos (~400 KB con 2.000) |
+| gemini: `request_product_images` (3 fotos) | 14 | 7 → 5 | |
+
+La vista previa de importación es una acción puntual de administración. Con
+`request_product_images` ya no hay una consulta por foto. Gemini recibe entre 0,1 y 1,9 KB por
+herramienta.

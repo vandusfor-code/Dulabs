@@ -55,12 +55,14 @@ import {
   PUBLIC_SEARCH_MAX_RESULTS,
   PUBLIC_SEARCH_PAGE_SIZE,
   isValidSlug,
+  imageVersion,
   productImagePath,
   referenceFromUrl,
   retailPath,
   slugCandidates,
   slugify,
   toPublicProduct,
+  whatsappImagePath,
   wholesalePath,
   type CatalogPublication,
   type PublicCatalogPage,
@@ -428,6 +430,21 @@ export interface PublicImageQuery {
   /** Tal como llega en la URL ("dl-000184"). */
   reference: string;
   file: PublicImageFile;
+  /** JPEG para WhatsApp (whatsapp.jpg): misma foto de detalle, otra URL canónica. */
+  whatsapp?: boolean;
+}
+
+/**
+ * Foto pública UBICADA (solo base de datos, sin abrir Storage): la versión vigente y su URL canónica.
+ * La ruta pública sirve SOLO la URL canónica; cualquier otra `v` redirige a ella. Así una `v`
+ * inventada no evita el CDN ni fuerza descargas o conversiones (Bloque 20).
+ */
+export interface PublicImageLocation {
+  version: string;
+  canonicalPath: string;
+  /** Ruta en Storage que se sirve; `fallback` si la variante no existe (fotos anteriores a las variantes). */
+  path: string;
+  fallback: string | null;
 }
 
 /** Máximo de productos destacados en el inicio. */
@@ -564,6 +581,30 @@ export function createPublicCatalogService({ repo, orders }: { repo: CatalogRepo
     if (!pub || !pub.published) return null;
     if (!(await repo.isModuleEnabled(pub.tenantId))) return null;
     return pub;
+  }
+
+  async function locateImage(input: PublicImageQuery): Promise<PublicImageLocation | null> {
+    const reference = referenceFromUrl(input.reference);
+    if (!reference) return null;
+    const pub = await openPublication(input.slug);
+    if (!pub) return null;
+    const product = await repo.getProductByReference(pub.tenantId, reference);
+    if (!product || product.status !== "ACTIVE") return null;
+    const media = input.file.index === 1 ? await repo.listPrimaryMedia(pub.tenantId, [product.id]) : await repo.listMedia(pub.tenantId, product.id);
+    const src = imageSources(repo, pub.tenantId, product, media)[input.file.index - 1];
+    if (!src) return null;
+    // La versión es la misma que llevan las URLs que la tienda y el agente publican.
+    const versioned = input.file.variant === "thumb" ? src.thumb : src.main;
+    const canonicalPath = input.whatsapp ? whatsappImagePath(pub.slug, reference, src.main) : productImagePath(pub.slug, reference, input.file, versioned);
+    if (input.file.variant === "thumb") return { version: imageVersion(versioned), canonicalPath, path: src.thumb, fallback: null };
+    // Fotos anteriores a las variantes (o de AMORE) no tienen detalle: se sirve la principal.
+    if (input.file.variant === "detail") return { version: imageVersion(versioned), canonicalPath, path: detailPathOf(src.main), fallback: src.main };
+    return { version: imageVersion(versioned), canonicalPath, path: src.main, fallback: null };
+  }
+
+  /** Abre (Storage) una foto ya ubicada con locateImage. */
+  async function openLocatedImage(location: PublicImageLocation): Promise<PublicImageObject | null> {
+    return (await repo.openImage(location.path)) ?? (location.fallback ? repo.openImage(location.fallback) : null);
   }
 
   /** Contexto de precio autorizado: el mayorista exige su token exacto. */
@@ -888,22 +929,12 @@ export function createPublicCatalogService({ repo, orders }: { repo: CatalogRepo
      * producto ACTIVO. La imagen es la misma para detal y mayor, así que no
      * pide token (no contiene precios).
      */
+    locateImage,
+    openLocatedImage,
+
     async getImage(input: PublicImageQuery): Promise<PublicImageObject | null> {
-      const reference = referenceFromUrl(input.reference);
-      if (!reference) return null;
-      const pub = await openPublication(input.slug);
-      if (!pub) return null;
-      const product = await repo.getProductByReference(pub.tenantId, reference);
-      if (!product || product.status !== "ACTIVE") return null;
-      const media = input.file.index === 1 ? await repo.listPrimaryMedia(pub.tenantId, [product.id]) : await repo.listMedia(pub.tenantId, product.id);
-      const src = imageSources(repo, pub.tenantId, product, media)[input.file.index - 1];
-      if (!src) return null;
-      if (input.file.variant === "thumb") return repo.openImage(src.thumb);
-      if (input.file.variant === "detail") {
-        // Fotos anteriores a las variantes (o de AMORE) no tienen detalle: se sirve la principal.
-        return (await repo.openImage(detailPathOf(src.main))) ?? repo.openImage(src.main);
-      }
-      return repo.openImage(src.main);
+      const location = await locateImage(input);
+      return location ? openLocatedImage(location) : null;
     },
   };
 }

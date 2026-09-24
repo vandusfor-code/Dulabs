@@ -433,6 +433,28 @@ describe("handoff, fotos, límites y fallos", () => {
     assert.doesNotMatch(JSON.stringify(r.provider.requests), /storage\.test/, "el modelo nunca ve URLs");
   });
 
+  it("fotos en lote: el id interno de N fotos sale de UNA consulta (sin N+1) y nunca llega al modelo (Bloque 20)", async () => {
+    const ps = [];
+    for (const n of ["Aretes Luna", "Aretes Sol", "Aretes Gota"]) {
+      const p = await producto(A, n, 50_000, 5);
+      await mem.repo.attachMedia(A.tenantId, "admin-a", { productId: p.id, storagePath: `${A.tenantId}/${p.id}/a.webp`, thumbPath: null, mimeType: "image/webp", bytes: 10, width: 800, height: 800, makePrimary: true });
+      ps.push(p);
+    }
+    await mem.repo.insertPublication(A.tenantId, "joyeria-a", "Joyería A");
+    await turno([call("search_products", { query: "aretes" }), { text: "Tengo tres aretes." }], "muéstrame aretes");
+    const llamadas = { porReferencia: 0, porLote: 0 };
+    const espiado = {
+      ...mem.repo,
+      getProductByReference: (t: string, r: string) => (llamadas.porReferencia++, mem.repo.getProductByReference(t, r)),
+      getProductsByReferences: (t: string, rs: string[]) => (llamadas.porLote++, mem.repo.getProductsByReferences(t, rs)),
+    };
+    const r = await turno([call("request_product_images", { references: ps.map((p) => p.reference) }), { text: "Te envío las fotos." }], "fotos", { tools: { catalog: espiado } });
+    assert.deepEqual(images.map((i) => i.productId), ps.map((p) => p.id));
+    assert.equal(llamadas.porReferencia, 0, "ninguna consulta por foto");
+    assert.equal(llamadas.porLote, 2, "resolución + ids: dos consultas por lote, sea 1 foto o 5");
+    assert.doesNotMatch(JSON.stringify(r.provider.requests), new RegExp(ps.map((p) => p.id).join("|")), "el modelo nunca ve ids internos");
+  });
+
   it("límites: máximo de consultas por turno y una sola escritura", async () => {
     const r = await turno([{ toolCalls: Array.from({ length: 10 }, () => ({ name: "get_cart", args: {} })) }, { text: "Tu selección está vacía." }], "qué tengo?");
     assert.equal(r.trace.tool_calls.filter((t) => t.result === "TOOL_LIMIT").length, 2);

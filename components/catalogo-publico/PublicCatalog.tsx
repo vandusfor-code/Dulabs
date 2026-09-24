@@ -44,7 +44,7 @@ export function PublicCatalog({
    * pedido pasa por el carrito y la validación del servidor; ya no existe un
    * link directo a WhatsApp por producto.
    */
-  tile: (product: PublicCatalogProduct) => ReactNode;
+  tile: (product: PublicCatalogProduct, posicion: number) => ReactNode;
 }) {
   const todo = listPath ?? basePath;
   const totalPaginas = data.pageCount;
@@ -129,8 +129,8 @@ export function PublicCatalog({
         </div>
       ) : (
         <div className="grid grid-cols-2 gap-3 sm:gap-5 md:grid-cols-3 lg:grid-cols-4">
-          {data.products.map((p) => (
-            <div key={p.reference}>{tile(p)}</div>
+          {data.products.map((p, i) => (
+            <div key={p.reference}>{tile(p, i)}</div>
           ))}
         </div>
       )}
