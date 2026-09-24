@@ -4,6 +4,7 @@ import { resolverMiembroEquipo } from "@/lib/team";
 import { leerEstadosConversacion, estadoEfectivo } from "@/lib/conversacion-estado";
 import { resolverUltimoMensajePorConversacion } from "@/lib/conversaciones-inbox";
 import { respuestaSiLimiteTasaExcedido } from "@/lib/rate-limit";
+import { leerAtencionHumana } from "@/lib/agente/atencion-humana";
 
 export const runtime = "nodejs";
 
@@ -210,5 +211,10 @@ export async function GET(request: NextRequest) {
   const pagina = resultado.slice(0, limite);
   const siguienteCursor = hayMas ? pagina[pagina.length - 1]?.ultima_fecha ?? null : null;
 
-  return Response.json({ conversaciones: pagina, siguiente_cursor: siguienteCursor });
+  // Bloque 17 — por qué la conversación pasó a una asesora (derivado de la traza del agente;
+  // texto claro de una lista cerrada, solo de la página que se devuelve y del negocio de la sesión).
+  const atencion = await leerAtencionHumana(supabase, { tenantId: miembro.tenantId, conversaciones: pagina });
+  const conAtencion = pagina.map((c) => ({ ...c, atencion_humana: atencion.get(`${c.phone_number_id}:${c.telefono_cliente}`) ?? null }));
+
+  return Response.json({ conversaciones: conAtencion, siguiente_cursor: siguienteCursor });
 }

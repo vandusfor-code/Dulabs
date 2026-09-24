@@ -6,7 +6,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { actualizarEstadoConversacion } from "@/lib/conversacion-estado";
-import { activarPausaChat } from "@/lib/pausas-chat";
+import { extenderPausaChat } from "@/lib/pausas-chat";
 import { orderSigningKey } from "@/lib/catalogo/pedido-firma";
 import { createSupabaseCatalogRepository } from "@/lib/catalogo/repository";
 import type { AgentToolDeps } from "@/lib/catalogo/pedidos/herramientas";
@@ -20,10 +20,14 @@ const PAUSA_HANDOFF_MS = 24 * 60 * 60 * 1000;
 export function supabaseHandoffPort(supabase: SupabaseClient): HumanHandoffPort {
   return {
     async pauseConversation({ contact }) {
-      const pausa = await activarPausaChat(supabase, contact.phoneNumberId, contact.waId, PAUSA_HANDOFF_MS);
+      // Nunca acorta una pausa más larga: si una asesora ya tomó el chat (30 días), sigue suya.
+      const pausa = await extenderPausaChat(supabase, contact.phoneNumberId, contact.waId, PAUSA_HANDOFF_MS);
       if (!pausa.ok) return { ok: false };
-      // "pending" en el Inbox (si la migración del estado no está, la pausa ya basta).
-      await actualizarEstadoConversacion(supabase, { phoneNumberId: contact.phoneNumberId, telefonoCliente: contact.waId, estado: "pending" });
+      // "pending" en el Inbox (si la migración del estado no está, la pausa ya basta). Si una
+      // persona ya la tenía, no se le cambia el estado que ella decidió.
+      if (pausa.efecto !== "ya_mas_larga") {
+        await actualizarEstadoConversacion(supabase, { phoneNumberId: contact.phoneNumberId, telefonoCliente: contact.waId, estado: "pending" });
+      }
       return { ok: true };
     },
   };

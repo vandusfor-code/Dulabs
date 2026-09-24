@@ -3,6 +3,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { resolverMiembroEquipo, requireRol } from "@/lib/team";
 import { activarPausaChat, liberarPausaChat } from "@/lib/pausas-chat";
 import { respuestaSiLimiteTasaExcedido } from "@/lib/rate-limit";
+import { marcarAbiertaSiPendiente } from "@/lib/conversacion-estado";
 
 export const runtime = "nodejs";
 
@@ -74,6 +75,10 @@ export async function POST(request: NextRequest) {
   if (accion === "tomar") {
     const resultado = await activarPausaChat(supabase, phone_number_id, telefono_cliente, DURACION_TOMAR_MS);
     if (!resultado.ok) return Response.json({ error: "No se pudo tomar la conversación" }, { status: 500 });
+
+    // Bloque 17 — una conversación "pendiente" (p. ej. el agente la pasó a una asesora) queda
+    // "abierta" al tomarla: ya la atiende una persona. Cerrada o abierta no se toca.
+    await marcarAbiertaSiPendiente(supabase, phone_number_id, telefono_cliente);
 
     // Autoasignación al agente que la toma, mismo criterio que el
     // autoasignado-al-responder de app/api/dashboard/mensajes/route.ts --

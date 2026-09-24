@@ -27,6 +27,8 @@ type Conversacion = {
   /** Fase 9 (Human Inbox, autorizado) — puede faltar si la migración de estado no está aplicada (el backend ya cae a 'open' por defecto, pero se tolera undefined igual por robustez). */
   estado?: EstadoConversacion;
   no_leidos?: number;
+  /** Bloque 17 — por qué pasó a una asesora (texto claro de una lista cerrada; null si no aplica). */
+  atencion_humana?: { motivo: string; texto: string; origen: "cliente" | "asistente" | "sistema"; desde: string; pedido: string | null } | null;
 };
 
 type RespuestaRapida = { id: number; atajo: string; mensaje: string };
@@ -707,6 +709,11 @@ function MensajesPageInterna() {
                   </div>
                 </div>
                 <p className="mt-0.5 truncate text-sm text-mist">{c.ultimo_mensaje}</p>
+                {c.atencion_humana && (
+                  <p className="mt-1 truncate text-[11px] font-medium text-amber-500" title={c.atencion_humana.texto}>
+                    {t("Atención humana", "Human attention")} · {c.atencion_humana.texto}
+                  </p>
+                )}
                 <div className="mt-1 flex items-center gap-1.5">
                   <p className="truncate font-mono text-[10px] uppercase tracking-widest text-mist/70">
                     {c.nombre_negocio}
@@ -783,6 +790,7 @@ function MensajesPageInterna() {
                   <Pill tone={seleccionada.pausado ? "neutral" : "success"}>
                     {seleccionada.pausado ? t("Pausado", "Paused") : t("IA activa", "AI active")}
                   </Pill>
+                  {seleccionada.atencion_humana && <Pill tone="warning">{t("Atención humana", "Human attention")}</Pill>}
                   {seleccionada.estado && seleccionada.estado !== "open" && (
                     <Pill tone={seleccionada.estado === "closed" ? "neutral" : "warning"}>
                       {seleccionada.estado === "closed" ? t("Cerrada", "Closed") : t("Pendiente", "Pending")}
@@ -806,6 +814,18 @@ function MensajesPageInterna() {
                 <p className="mt-0.5 font-mono text-[10.5px] uppercase tracking-widest text-mist">
                   {seleccionada.nombre_negocio}
                 </p>
+                {seleccionada.atencion_humana && (
+                  <p className="mt-1 text-xs text-fg">
+                    <span className="text-mist">{t("Motivo:", "Reason:")}</span> {seleccionada.atencion_humana.texto}
+                    {seleccionada.atencion_humana.pedido && (
+                      <span className="text-mist">
+                        {" "}
+                        · {t("Pedido", "Order")} <span className="font-mono text-fg">{seleccionada.atencion_humana.pedido}</span>
+                      </span>
+                    )}
+                    <span className="text-mist"> · {horaCorta(seleccionada.atencion_humana.desde, t)}</span>
+                  </p>
+                )}
               </div>
               {rol !== "lectura" && (
                 <div className="flex shrink-0 items-center gap-2">
@@ -847,6 +867,17 @@ function MensajesPageInterna() {
                       </select>
                     );
                   })()}
+                  {/* Bloque 17 — el agente ya pausó el chat al pasarlo a una asesora: "Tomar" sigue
+                      disponible para que una persona lo asuma (se asigna y la IA queda detenida). */}
+                  {seleccionada.pausado && seleccionada.atencion_humana && !seleccionada.asignado_a && (
+                    <button
+                      onClick={() => ejecutarHandoff("tomar")}
+                      disabled={accionEnCurso === "tomar"}
+                      className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5 text-xs font-semibold text-amber-500 transition-colors hover:bg-amber-500/15 disabled:opacity-50"
+                    >
+                      {accionEnCurso === "tomar" ? t("Tomando…", "Taking…") : t("Tomar conversación", "Take conversation")}
+                    </button>
+                  )}
                   {seleccionada.pausado ? (
                     <button
                       onClick={() => ejecutarHandoff("devolver_a_ia")}

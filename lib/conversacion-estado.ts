@@ -128,3 +128,18 @@ export function estadoEfectivo(fila: FilaEstadoConversacion | undefined, ultimaF
   }
   return fila.estado;
 }
+
+/**
+ * Bloque 17 — al TOMAR una conversación pendiente, pasa a "open" (la atiende una persona).
+ * Condicional en la BD (solo si sigue en 'pending'): no pisa un cierre ni un cambio que otra
+ * asesora hizo al mismo tiempo. Sin la tabla de estado: no hace nada.
+ */
+export async function marcarAbiertaSiPendiente(supabase: SupabaseClient, phoneNumberId: string, telefonoCliente: string): Promise<void> {
+  const { error } = await supabase
+    .from("dulabs_conversacion_estado")
+    .update({ estado: "open", cerrado_en: null, updated_at: new Date().toISOString() })
+    .eq("phone_number_id", phoneNumberId)
+    .eq("telefono_cliente", telefonoCliente)
+    .eq("estado", "pending");
+  if (error && !esTablaEstadoInexistente(error)) console.error("[conversacion-estado] error marcando abierta:", error.code ?? "");
+}

@@ -98,6 +98,23 @@ select * from dulabs_agente_diagnosticar('<id_tenant>', '<teléfono>', 20);
 
 El guardado nunca frena un turno y la frontera lo espera antes de terminar (serverless).
 
+## Atención humana en el Inbox y diagnóstico (Bloque 17)
+
+- **La asesora ve POR QUÉ recibió la conversación** (`atencion-humana.ts`): el Inbox
+  (`GET /api/dashboard/conversaciones`) agrega `atencion_humana = {motivo, texto, origen, desde,
+  pedido}` con un texto claro de una lista cerrada ("El cliente pidió hablar con una asesora",
+  "El cliente tiene un reclamo"…). **Sin tabla nueva**: se deriva de la traza del turno que hizo
+  el traspaso. Se muestra si la conversación está pausada o pendiente, no cerrada, y nadie la
+  devolvió a la IA después. Nunca: texto libre del modelo, traza, teléfono, hash, ids internos
+  (solo el número público del pedido DL-ORD-…). Filtrado por el negocio de la sesión.
+- **Tomar** (`/handoff`, "tomar"): también disponible cuando el agente ya pausó el chat; pausa de
+  30 días, asignación, evento y la conversación pendiente pasa a abierta (condicional en la BD).
+- **La pausa del agente nunca acorta otra** (`extenderPausaChat`): si una asesora tomó el chat
+  mientras el agente lo traspasaba, sigue siendo de ella (30 días) y su estado no cambia.
+- **Diagnóstico** (migración `20261115000000`): `dulabs_agente_diagnosticar` agrega
+  `intencion`, `asesora_motivo`, `asesora_origen` (mismas listas que `INTENCIONES` y
+  `MOTIVOS_ASESORA`; una prueba compara el SQL con el código).
+
 ## Intención, motivo de la asesora y "quiero hablar con una asesora" (Bloque 16)
 
 - **Pedir una persona lo decide el backend** (`intencion.ts` → `asksForHuman`): "quiero
