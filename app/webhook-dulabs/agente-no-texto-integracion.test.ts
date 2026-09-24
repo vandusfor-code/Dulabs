@@ -84,7 +84,7 @@ describe("webhook real → agente: mensajes sin texto (Bloque 23)", { timeout: 6
     // Plan activo con cupo de IA disponible (sin suscripción, el cupo es 0 y la IA calla: otra guarda existente).
     db.table("dulabs_suscripciones").push({ id_tenant: T, estado: "activa", plan: "pro", mensajes_ia_mes_negociado: 1_000 });
     db.table("dulabs_agente_conversaciones");
-    db.table("dulabs_pausas_chat");
+    db.table("dulabs_pausas_chat", { unique: [["phone_number_id", "telefono_cliente"]] });
     db.table("dulabs_chat_lock", { unique: [["phone_number_id", "telefono_cliente"]], defaults: () => ({ bloqueado_at: new Date().toISOString() }) });
     db.table("dulabs_agente_trazas");
   });
@@ -109,6 +109,24 @@ describe("webhook real → agente: mensajes sin texto (Bloque 23)", { timeout: 6
     assert.equal(db.rows("dulabs_pausas_chat").length, 1, "el chat queda en manos de una asesora");
     const traza = db.rows("dulabs_agente_trazas").find((t) => t.tipo === "turn");
     assert.equal(traza?.resultado, "handoff");
+  });
+
+  it("Bloque 24: tras pasar a una asesora, que ella conteste desde el celular (eco) NO acorta la pausa: el agente no vuelve a hablar a los 30 min", async () => {
+    await webhook(PN, { id: "wamid.b24.img", type: "image", image: { id: "media-8" } });
+    const hasta = () => Date.parse(String(db.rows("dulabs_pausas_chat").find((r) => r.phone_number_id === PN && r.telefono_cliente === CLIENTE)!.pausado_hasta));
+    const traspaso = hasta();
+    assert.ok(traspaso - Date.now() > 23 * 3600_000, "traspaso del agente: 24 h");
+    // La asesora responde desde la app de WhatsApp Business (coexistencia): llega como eco.
+    await procesarCambio(PN, { messaging_product: "whatsapp", metadata: { phone_number_id: PN, display_phone_number: "573000000000" }, smb_message_echoes: [{ from: "573000000000", to: CLIENTE, id: "wamid.b24.eco", type: "text", text: { body: "Hola, soy Laura" } } as never] });
+    assert.ok(hasta() >= traspaso, "la pausa sigue siendo la del traspaso (24 h), no 30 min");
+    assert.ok(db.rows("dulabs_mensajes_log").some((r) => r.wamid === "wamid.b24.eco" && r.origen === "manual"), "la respuesta de la asesora queda en el Inbox");
+  });
+
+  it("Bloque 24: número SIN agente — el eco de la asesora deja la pausa en 30 min como siempre (comportamiento legacy intacto)", async () => {
+    db.rows("dulabs_pausas_chat").push({ phone_number_id: PN_OTRO, telefono_cliente: CLIENTE, pausado_hasta: new Date(Date.now() + 24 * 3600_000).toISOString(), pausado_desde: new Date().toISOString(), seguimiento_enviado: false });
+    await procesarCambio(PN_OTRO, { messaging_product: "whatsapp", metadata: { phone_number_id: PN_OTRO, display_phone_number: "573000000000" }, smb_message_echoes: [{ from: "573000000000", to: CLIENTE, id: "wamid.b24.eco.otro", type: "text", text: { body: "Hola" } } as never] });
+    const hasta = Date.parse(String(db.rows("dulabs_pausas_chat").find((r) => r.phone_number_id === PN_OTRO)!.pausado_hasta));
+    assert.ok(hasta - Date.now() < 31 * 60_000, "legacy: la pausa se reemplaza por 30 min");
   });
 
   it("sticker: ni Inbox ni respuesta (igual que antes)", async () => {
