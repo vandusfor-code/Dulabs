@@ -30,6 +30,7 @@ import { MAX_IMAGES_REMEMBERED, MAX_RECENT_WAMIDS, rememberReferences, type Conv
 import type { ProductMediaLedger } from "@/lib/agente/medios";
 import { resolveSelection } from "@/lib/agente/seleccion";
 import { STAGE_GUIDANCE, conversationStage, type ConversationStage } from "@/lib/agente/etapa";
+import { decideLimits, type UsageReader } from "@/lib/agente/limites";
 import { agentToolDeclarations, executeAgentTool, toolKind, type AgentToolsDeps, type AgentTurnToolContext, type QueuedImage } from "@/lib/agente/herramientas";
 import type { AgentToolName } from "@/lib/agente/nombres-herramientas";
 
@@ -78,6 +79,8 @@ export interface AgentRuntimeDeps {
   sender: AgentSender;
   /** Registro de fotos enviadas (wamid -> producto). Sin él, una respuesta a una foto no se puede resolver: se pide aclaración. */
   media?: ProductMediaLedger;
+  /** Consumo para los topes de costo/abuso (Bloque 14). Sin él, no se aplican topes. */
+  usage?: UsageReader;
   limits?: Partial<AgentLimits>;
   log?: (trace: AgentTurnTrace) => void;
   now?: () => number;
@@ -100,7 +103,7 @@ export interface AgentTurnInput {
   wamids?: readonly string[];
 }
 
-export type AgentTurnOutcome = "replied" | "handoff" | "fallback" | "preempted" | "safety" | "duplicate";
+export type AgentTurnOutcome = "replied" | "handoff" | "fallback" | "preempted" | "safety" | "duplicate" | "rate_limited";
 
 export interface AgentTurnTrace {
   log: "agent_turn";
@@ -138,6 +141,8 @@ export interface AgentTurnTrace {
   input: { wamids: string[]; messages: number; chars: number };
   /** Contexto confiable con el que se decidió (sin datos personales). */
   context: { channel: string | null; cart_lines: number; open_options: number; proposal_presented: boolean; active_order: string | null } | null;
+  /** Consumo medido y decisión de topes (null = no se midió). */
+  limits: { contact_minute: number; contact_day: number; tenant_tokens_day: number; decision: string } | null;
 }
 
 // Mensajes FIJOS (sin IA): nunca afirman datos comerciales.
@@ -209,6 +214,7 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
     clarification_needed: false,
     stage: { start: null, end: null },
     delivery: { text_wamid: null, text_error: null, images: [] },
+    limits: null,
     input: { wamids: (input.wamids && input.wamids.length > 0 ? [...input.wamids] : [input.wamid]).map((w) => w.slice(0, 200)).slice(0, 10), messages: input.wamids?.length || 1, chars: input.text.length },
     context: null,
   };
@@ -248,6 +254,34 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
     trace.turn = loaded.state.turn;
     return finish("preempted", null);
   }
+  // Topes de costo/abuso (Bloque 14): se deciden ANTES de gastar una llamada al modelo.
+  const usage = deps.usage ? await deps.usage.read({ tenantId: input.tenantId, phoneNumberId: input.phoneNumberId, contactRef: trace.contact_ref }).catch(() => null) : null;
+  const limit = decideLimits(usage, deps.config.limits);
+  if (usage) trace.limits = { contact_minute: usage.contactMinute, contact_day: usage.contactDay, tenant_tokens_day: usage.tenantTokensDay, decision: limit.action === "allow" ? "allow" : `${limit.action}:${limit.reason}` };
+  if (limit.action !== "allow") {
+    trace.turn = loaded.state.turn;
+    const seen = { ...loaded.state, recentWamids: [...loaded.state.recentWamids.filter((w) => !wamids.includes(w)), ...wamids].slice(-MAX_RECENT_WAMIDS) };
+    if (limit.action === "throttle") {
+      // Spam o bucle: ni modelo ni respuesta; el mensaje queda como atendido.
+      trace.state_saved = await deps.state.save(key, seen, loaded.version).catch(() => false);
+      return finish("rate_limited", null);
+    }
+    // Tope del día: una asesora sigue la conversación (mensaje fijo, sin modelo).
+    trace.error_kind = `limit_${limit.reason}`;
+    try {
+      await deps.tools.engine.requestHandoff({ tenantId: input.tenantId, contact, reason: `Límite de uso del asistente (${limit.reason})`, actor: "system", requestId });
+    } catch {
+      trace.state_saved = await deps.state.save(key, seen, loaded.version).catch(() => false);
+      return finish("rate_limited", null);
+    }
+    const r = sendResult(await deps.sender.sendText(FALLBACK_MESSAGES.handoff).catch(() => false));
+    trace.sent = r.sent;
+    trace.delivery.text_wamid = r.wamid;
+    trace.delivery.text_error = r.error;
+    trace.state_saved = await deps.state.save(key, { ...seen, handoffTurn: seen.turn }, loaded.version).catch(() => false);
+    return finish("handoff", r.sent ? FALLBACK_MESSAGES.handoff : null);
+  }
+
   let state: ConversationState = {
     ...loaded.state,
     turn: loaded.state.turn + 1,

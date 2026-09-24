@@ -1,6 +1,39 @@
 # Pasos manuales pendientes en producción
 
-## ⏳ PENDIENTE — Bloque 13: trazas persistentes del agente y diagnóstico
+## ⏳ PENDIENTE — Bloque 14: topes de costo y abuso del agente
+
+Migración `supabase/migrations/20261114000000_dulabs_agente_limites.sql`.
+**Aditiva**; requiere la del Bloque 13 (el consumo se lee de las trazas).
+
+- `dulabs_agente_runtime_config.limites` (jsonb, opcional; vacío = por defecto:
+  8 turnos/minuto y 300 turnos/día por cliente, 20 millones de tokens/día por negocio).
+- `dulabs_agente_consumo(negocio, número, contact_ref)`: turnos con modelo del cliente
+  (último minuto / 24 h) y tokens del negocio (24 h). Solo `service_role`.
+
+Al superar un tope: ritmo por minuto => el agente no llama al modelo ni responde ese
+mensaje; tope del día (cliente o negocio) => pasa la conversación a una asesora. Si el
+consumo no se puede medir, el agente sigue normal (no frena ventas).
+
+El código lee la configuración tolerando que falte la columna: el orden deploy/migración
+no importa (nunca cae a otro bot).
+
+Validada contra PostgreSQL 16 local (prueba SQL 3/3, aplicada dos veces).
+
+1. Correr el archivo completo en el SQL Editor (idempotente).
+2. Verificar (esperado `1 | 1 | 0`):
+   ```sql
+   select
+     (select count(*) from information_schema.columns where table_name = 'dulabs_agente_runtime_config' and column_name = 'limites') as columna,
+     (select count(*) from pg_proc where proname = 'dulabs_agente_consumo') as funcion,
+     (select count(*) from information_schema.routine_privileges
+       where routine_name = 'dulabs_agente_consumo' and grantee in ('anon', 'authenticated')) as permisos_publicos;
+   ```
+3. (Opcional) otros topes para Delacour, p. ej.:
+   `update dulabs_agente_runtime_config set limites = '{"tokens_por_dia_negocio": 40000000}' where id_tenant = '<id_tenant>';`
+
+Rollback: al inicio del archivo de la migración.
+
+## ✅ APLICADA (24-sep-2026) — Bloque 13: trazas persistentes del agente y diagnóstico
 
 Migración `supabase/migrations/20261113000000_dulabs_agente_trazas.sql`.
 **100 % aditiva** (tabla y funciones nuevas del agente):
@@ -34,7 +67,7 @@ visible en el diagnóstico.
 
 Rollback: al inicio del archivo de la migración.
 
-## ⏳ PENDIENTE — Bloque 11: un solo turno del agente a la vez por conversación
+## ✅ APLICADA (24-sep-2026) — Bloque 11: un solo turno del agente a la vez por conversación
 
 Migración `supabase/migrations/20261112000000_dulabs_agente_buzon.sql`.
 **100 % aditiva** (tablas y funciones nuevas del agente):
@@ -63,7 +96,7 @@ en paralelo => los 30 atendidos una sola vez, nunca dos turnos a la vez).
 
 Rollback: al inicio del archivo de la migración.
 
-## ⏳ PENDIENTE — Bloque 10: búsqueda del catálogo para el agente (miles de referencias)
+## ✅ APLICADA (24-sep-2026) — Bloque 10: búsqueda del catálogo para el agente (miles de referencias)
 
 Migración `supabase/migrations/20261111000000_dulabs_catalogo_busqueda.sql`.
 **100 % aditiva**: solo funciones nuevas. **No** agrega columnas a

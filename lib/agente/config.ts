@@ -29,6 +29,20 @@ export const businessConfigSchema = z
 
 export type BusinessConfig = z.infer<typeof businessConfigSchema>;
 
+/**
+ * Topes de costo y abuso del agente (Bloque 14; columna `limites`). Vacío = por defecto.
+ * Estrictos: un valor fuera de rango o una clave desconocida invalida la config (fail-closed).
+ */
+export const agentLimitsSchema = z
+  .object({
+    turnos_por_minuto_cliente: z.number().int().min(1).max(60).default(8),
+    turnos_por_dia_cliente: z.number().int().min(10).max(5_000).default(300),
+    tokens_por_dia_negocio: z.number().int().min(100_000).max(2_000_000_000).default(20_000_000),
+  })
+  .strict();
+
+export type AgentLimitsConfig = z.infer<typeof agentLimitsSchema>;
+
 export interface AgentRuntimeConfig {
   tenantId: string;
   phoneNumberId: string;
@@ -40,6 +54,7 @@ export interface AgentRuntimeConfig {
   tools: AgentToolName[];
   channel: OrderChannel;
   business: BusinessConfig;
+  limits: AgentLimitsConfig;
 }
 
 export type AgentConfigInvalidReason =
@@ -48,6 +63,7 @@ export type AgentConfigInvalidReason =
   | "kind_unsupported"
   | "tools_invalid"
   | "business_config_invalid"
+  | "limits_invalid"
   | "row_invalid";
 
 export type AgentConfigResult =
@@ -69,6 +85,8 @@ const rowSchema = z.object({
   herramientas: z.array(z.string()),
   canal: z.enum(["retail", "wholesale"]),
   negocio: z.unknown(),
+  /** Bloque 14: puede faltar (fila leída antes de la migración de límites). */
+  limites: z.unknown().optional(),
 });
 
 export type AgentConfigRow = z.input<typeof rowSchema>;
@@ -93,6 +111,8 @@ export function parseAgentConfig(raw: unknown, expected: { tenantId: string; pho
   if (tools.length === 0 || !tools.every(isAgentToolName)) return { kind: "invalid", reason: "tools_invalid" };
   const business = businessConfigSchema.safeParse(r.negocio);
   if (!business.success) return { kind: "invalid", reason: "business_config_invalid" };
+  const limits = agentLimitsSchema.safeParse(r.limites ?? {});
+  if (!limits.success) return { kind: "invalid", reason: "limits_invalid" };
   return {
     kind: "ok",
     config: {
@@ -106,6 +126,7 @@ export function parseAgentConfig(raw: unknown, expected: { tenantId: string; pho
       tools: tools as AgentToolName[],
       channel: r.canal,
       business: business.data,
+      limits: limits.data,
     },
   };
 }
@@ -133,7 +154,12 @@ const MISSING_SCHEMA = new Set(["42P01", "42703", "PGRST204", "PGRST205"]);
 export function createSupabaseAgentConfigStore(supabase: SupabaseClient): AgentConfigStore {
   return {
     async getByPhoneNumber(phoneNumberId) {
-      const { data, error } = await supabase.from("dulabs_agente_runtime_config").select(COLUMNS).eq("phone_number_id", phoneNumberId).maybeSingle();
+      let { data, error } = await supabase.from("dulabs_agente_runtime_config").select(`${COLUMNS}, limites`).eq("phone_number_id", phoneNumberId).maybeSingle();
+      // Sin la migración de límites (columna inexistente): se lee sin ella y aplican los topes por defecto.
+      // Nunca se trata como "sin agente": eso haría caer el número a otro bot.
+      if (error && (error.code === "42703" || error.code === "PGRST204")) {
+        ({ data, error } = await supabase.from("dulabs_agente_runtime_config").select(COLUMNS).eq("phone_number_id", phoneNumberId).maybeSingle());
+      }
       if (error) {
         // Sin la migración: no hay agentes configurados (todo sigue como antes).
         if (MISSING_SCHEMA.has(error.code ?? "")) return null;

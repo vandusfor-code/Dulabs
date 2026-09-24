@@ -31,6 +31,7 @@ import { createSupabaseConversationStateStore } from "@/lib/agente/estado";
 import { createSupabaseProductMediaLedger } from "@/lib/agente/medios";
 import { batchInput, createSupabaseMailboxStore, enqueueAndDrain, type DrainOptions, type MailboxStore } from "@/lib/agente/buzon";
 import { boundaryRecord, createSupabaseTraceSink, turnRecord } from "@/lib/agente/trazas";
+import { createSupabaseUsageReader } from "@/lib/agente/limites";
 import type { AgentToolsDeps } from "@/lib/agente/herramientas";
 import { runAgentTurn, type AgentRuntimeDeps, type AgentSender, type AgentTurnTrace } from "@/lib/agente/runtime";
 
@@ -246,6 +247,7 @@ export function productionAgentBoundaryDeps(supabase: SupabaseClient, cliente: C
         sender: whatsappSender(supabase, cliente, input),
         media: createSupabaseProductMediaLedger(supabase),
         mailbox: createSupabaseMailboxStore(supabase),
+        usage: createSupabaseUsageReader(supabase),
         log: (trace) => {
           console.info(JSON.stringify(trace));
           persist(traces.record(turnRecord(trace, cliente.phone_number_id)));
