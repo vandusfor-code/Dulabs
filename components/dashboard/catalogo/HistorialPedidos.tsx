@@ -9,6 +9,7 @@ import { useI18n } from "@/lib/i18n";
 import type { PedidoHistorial } from "@/lib/catalogo/pedidos/panel";
 import type { CatalogClient } from "@/lib/catalogo-client";
 import { actionBtn, cn, formatPrice } from "@/components/dashboard/catalogo/ui";
+import { CANAL_LABEL, ClientePedido, LineasPedido } from "@/components/dashboard/catalogo/PedidoDetalle";
 
 type Filtro = "todos" | "completed" | "cancelled" | "expired";
 
@@ -29,7 +30,8 @@ function fecha(iso: string): string {
   return new Date(iso).toLocaleString("es-CO", { dateStyle: "medium", timeStyle: "short", timeZone: "America/Bogota" });
 }
 
-export function HistorialPedidos({ client }: { client: CatalogClient }) {
+/** `canal`: filtro detal / mayorista sobre lo cargado (Bloque 25); la paginación sigue siendo la del backend. */
+export function HistorialPedidos({ client, canal = "todos" }: { client: CatalogClient; canal?: "todos" | "retail" | "wholesale" }) {
   const { t } = useI18n();
   const [filtro, setFiltro] = useState<Filtro>("todos");
   const [pagina, setPagina] = useState<{ filtro: Filtro; pedidos: PedidoHistorial[]; siguiente: string | null } | null>(null);
@@ -83,27 +85,25 @@ export function HistorialPedidos({ client }: { client: CatalogClient }) {
       {error && <p className="rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-400">{error}</p>}
       {!actual && !error && <div className="h-32 animate-pulse rounded-2xl bg-card" aria-hidden />}
       {actual?.pedidos.length === 0 && <div className="rounded-2xl border border-edge bg-card p-8 text-center text-sm text-mist">{t("No hay pedidos en el historial.", "No orders in history.")}</div>}
-      {actual?.pedidos.map((p) => {
+      {actual && actual.pedidos.length > 0 && canal !== "todos" && !actual.pedidos.some((p) => p.canal === canal) && (
+        <div className="rounded-2xl border border-edge bg-card p-6 text-center text-sm text-mist">{t("Ningún pedido de esta página con ese filtro.", "No orders on this page match that filter.")}</div>
+      )}
+      {actual?.pedidos.filter((p) => canal === "todos" || p.canal === canal).map((p) => {
         const estado = ESTADO[p.estado] ?? { es: p.estado, en: p.estado, tone: "bg-ink-2 text-mist" };
         return (
           <article key={p.pedido} className="rounded-2xl border border-edge bg-card p-4 sm:p-5">
             <header className="flex flex-wrap items-center gap-2">
               <span className="font-mono text-sm font-semibold text-fg">{p.pedido}</span>
               <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-medium", estado.tone)}>{t(estado.es, estado.en)}</span>
-              {p.canal === "wholesale" && <span className="rounded-full bg-ink-2 px-2 py-0.5 text-[11px] text-mist">{t("Mayorista", "Wholesale")}</span>}
-              {p.cliente && <span className="text-xs text-mist">+{p.cliente}</span>}
+              <span className={cn("rounded-full px-2 py-0.5 text-[11px]", p.canal === "wholesale" ? "bg-violet-500/15 text-violet-400" : "bg-ink-2 text-mist")}>
+                {t(`Pedido ${CANAL_LABEL[p.canal].es.toLowerCase()}`, `${CANAL_LABEL[p.canal].en} order`)}
+              </span>
               <span className="ml-auto text-xs text-mist">{t(`Cerrado el ${fecha(p.cerrado)}`, `Closed ${fecha(p.cerrado)}`)}</span>
             </header>
-            <ul className="mt-3 space-y-1 text-sm">
-              {p.lineas.map((l) => (
-                <li key={l.referencia} className="flex justify-between gap-3">
-                  <span className="min-w-0 truncate text-fg">
-                    <span className="font-mono text-xs text-mist">{l.referencia}</span> · {l.nombre} × {l.cantidad}
-                  </span>
-                  <span className="shrink-0 tabular-nums text-mist">{l.subtotal === null ? t("a consultar", "on request") : formatPrice(l.subtotal)}</span>
-                </li>
-              ))}
-            </ul>
+            <div className="mt-2">
+              <ClientePedido p={p} t={t} />
+            </div>
+            <LineasPedido p={p} t={t} />
             <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-edge pt-3 text-sm">
               <span className="font-semibold tabular-nums text-fg">{formatPrice(p.total)}</span>
               <span className="inline-flex items-center gap-1 text-xs text-mist">
@@ -115,6 +115,8 @@ export function HistorialPedidos({ client }: { client: CatalogClient }) {
                     : t("sin stock apartado", "no stock reserved")}
               </span>
               <span className="text-xs text-mist">{t(`Creado el ${fecha(p.creado)}`, `Created ${fecha(p.creado)}`)}</span>
+              {p.confirmado && <span className="text-xs text-mist">{t(`Confirmado el ${fecha(p.confirmado)}`, `Confirmed ${fecha(p.confirmado)}`)}</span>}
+              {p.asesora?.asignada && <span className="text-xs text-mist">{t(`Asesora: ${p.asesora.asignada}`, `Advisor: ${p.asesora.asignada}`)}</span>}
             </div>
           </article>
         );

@@ -34,6 +34,7 @@ import { AGENT_TOOL_NAMES } from "@/lib/agente/nombres-herramientas";
 import { NON_TEXT_MESSAGES } from "@/lib/agente/entrada";
 import { FALLBACK_MESSAGES } from "@/lib/agente/runtime";
 import { liberarPausaChat } from "@/lib/pausas-chat";
+import { CHANNEL_QUESTION, CLASSIFICATION_MESSAGES, createSupabaseCustomerChannelStore } from "@/lib/agente/clasificacion";
 import { procesarCambio, registrarMensajesEntrantesSincrono, type MetaChangeValue } from "@/app/webhook-dulabs/route";
 
 const db = createClient(URL_LOCAL, "local", { auth: { persistSession: false } });
@@ -46,7 +47,7 @@ const PN_B = num(920000000000000);
 const SLUG = `joyeria-piloto-${RUN}`;
 const DISPLAY = "573000000000";
 /** Clientes autorizados del piloto (ia_restringida_a) y uno que NO lo está. */
-const C = Array.from({ length: 24 }, (_, i) => `57310${RUN.replace(/\D/g, "7").padEnd(4, "7").slice(0, 4)}${String(i).padStart(3, "0")}`);
+const C = Array.from({ length: 28 }, (_, i) => `57310${RUN.replace(/\D/g, "7").padEnd(4, "7").slice(0, 4)}${String(i).padStart(3, "0")}`);
 const NO_AUTORIZADO = "573219990000";
 const CB = "573229990001";
 
@@ -759,6 +760,71 @@ describe("PILOTO DELACOUR — matriz de punta a punta (webhook real + PostgreSQL
   });
 
   // ------------------------------------------------------------------ diagnóstico
+  describe("I. Bloque 25 — clasificación detal / mayorista por contacto (RPC y bitácora reales)", () => {
+    const canalDe = async (wa: string) => (await db.from("dulabs_catalogo_clientes_canal").select("canal, origen").eq("id_tenant", T).eq("phone_number_id", PN).eq("wa_id", wa).maybeSingle()).data as { canal: string; origen: string } | null;
+    const eventosDe = async (wa: string) => ((await db.from("dulabs_catalogo_clientes_canal_eventos").select("canal_anterior, canal_nuevo, origen, miembro_id, motivo").eq("phone_number_id", PN).eq("wa_id", wa).order("id")).data ?? []) as Array<Record<string, unknown>>;
+    const buscarLuna = [fn("search_products", { query: "aretes luna" }), txt(lista)];
+    before(async () => {
+      await ok(db.from("dulabs_inventario_productos").update({ precio_mayor: 25_000 }).eq("id", P.luna.id));
+      await ok(setAgente({ clasificacion_cliente: true }));
+    });
+    after(async () => {
+      await ok(setAgente({ clasificacion_cliente: false }));
+    });
+
+    it("A/B. contacto nuevo: pregunta con BOTONES (sin Gemini); elige por botón 'al por mayor' → queda mayorista y ve precios mayoristas", async () => {
+      const r0 = await turno(C[24], "hola, quiero ver aretes");
+      assert.equal(r0.gemini.length, 0, "no se llama a Gemini antes de clasificar");
+      const botones = meta.calls.slice(-1)[0].body as { type: string; interactive: { body: { text: string }; action: { buttons: Array<{ reply: { id: string; title: string } }> } } };
+      assert.equal(botones.type, "interactive");
+      assert.equal(botones.interactive.body.text, CHANNEL_QUESTION.body);
+      assert.deepEqual(botones.interactive.action.buttons.map((b) => [b.reply.id, b.reply.title]), [["canal_detal", "Comprar al detal"], ["canal_mayor", "Comprar al por mayor"]]);
+      assert.equal(r0.traza?.traza.classification.action, "asked");
+      assert.equal(await canalDe(C[24]), null);
+      const r1 = await turno(C[24], { type: "interactive", interactive: { type: "button_reply", button_reply: { id: "canal_mayor", title: "Comprar al por mayor" } } }, buscarLuna);
+      assert.deepEqual(await canalDe(C[24]), { canal: "wholesale", origen: "cliente" });
+      assert.equal(candidatos(r1.gemini[1].body).find((c) => c.reference === P.luna.referencia)?.unit_price, 25_000, "precio mayorista del backend");
+      assert.match(r1.envios[0].texto, new RegExp(formatCop(25_000).replace("$", "\\$")));
+      assert.deepEqual(await eventosDe(C[24]), [{ canal_anterior: null, canal_nuevo: "wholesale", origen: "cliente", miembro_id: null, motivo: null }]);
+    });
+
+    it("A/C. detal: precios al detal; pedir el precio al por mayor => asesora con mensaje fijo, sin Gemini, sin precio mayorista", async () => {
+      await turno(C[25], "buenas");
+      const r1 = await turno(C[25], "Comprar al detal", buscarLuna);
+      assert.equal(candidatos(r1.gemini[1].body).find((c) => c.reference === P.luna.referencia)?.unit_price, 45_000);
+      const r2 = await turno(C[25], `¿Y cuál es el precio al por mayor de ${P.luna.referencia}?`);
+      assert.equal(r2.gemini.length, 0);
+      assert.deepEqual(r2.envios.map((e) => e.texto), [CLASSIFICATION_MESSAGES.changeRequested("retail")]);
+      assert.ok(!r2.envios[0].texto.includes(formatCop(25_000)));
+      assert.ok((await pausa(C[25]))! > Date.now(), "la IA queda en pausa: la asesora decide");
+      assert.equal((await canalDe(C[25]))?.canal, "retail", "pedirlo no lo cambia");
+    });
+
+    it("H. solo una asesora cambia la modalidad (RPC real): compare-and-set, bitácora inmutable, y el cliente ya ve el otro precio", async () => {
+      const store = createSupabaseCustomerChannelStore(db);
+      const key = { tenantId: T, phoneNumberId: PN, waId: C[25] };
+      assert.equal((await store.setInitial(key, "wholesale", "cliente")).result, "conflicto", "el cliente no se reclasifica");
+      assert.equal((await store.change(key, { channel: "wholesale", expected: "wholesale", memberId: 7, reason: "x" })).result, "conflicto");
+      assert.equal((await store.change({ ...key, tenantId: TB }, { channel: "wholesale", expected: "retail", memberId: 7, reason: "x" }).catch((e: Error) => e.message)), "[agente/clasificacion] 42501", "otro negocio: rechazado");
+      assert.deepEqual(await store.change(key, { channel: "wholesale", expected: "retail", memberId: 7, reason: "Distribuidora con NIT" }), { result: "cambiado", channel: "wholesale", origin: "asesora" });
+      assert.deepEqual((await eventosDe(C[25])).at(-1), { canal_anterior: "retail", canal_nuevo: "wholesale", origen: "asesora", miembro_id: 7, motivo: "Distribuidora con NIT" });
+      const { error } = await db.from("dulabs_catalogo_clientes_canal_eventos").delete().eq("phone_number_id", PN).eq("wa_id", C[25]);
+      assert.ok(error, "la bitácora no se puede borrar");
+      assert.equal((await eventosDe(C[25])).length, 2);
+      await liberarPausaChat(db, PN, C[25]);
+      const r = await turno(C[25], "muéstrame los aretes luna", buscarLuna);
+      assert.equal(candidatos(r.gemini[1].body).find((c) => c.reference === P.luna.referencia)?.unit_price, 25_000);
+      assert.deepEqual(r.traza?.traza.classification, { action: "known", channel: "wholesale", origin: "asesora" });
+    });
+
+    it("G. el pedido de un cliente mayorista queda marcado mayorista con su precio", async () => {
+      await turno(C[24], "quiero 2 del primero", [fn("update_cart", { items: [{ reference: P.luna.referencia, quantity: 2 }] }), txt("Listo, agregué 2.")]);
+      await turno(C[24], "hagamos el pedido", [fn("create_order_request"), txt((b) => `Total: ${formatCop((resultados(b)[0] as { total: number }).total)}. ¿Confirmas?`)]);
+      const { data } = await db.from("dulabs_catalogo_pedidos").select("canal, total").eq("id_tenant", T).eq("contacto_wa_id", C[24]).single();
+      assert.deepEqual(data, { canal: "wholesale", total: 50_000 });
+    });
+  });
+
   describe("2. diagnóstico de producción (sin datos personales)", () => {
     it("reconstruye cada turno: intención, herramientas, validación, respuesta enviada, entrega de Meta, asesora y pedido", async () => {
       // Meta informa la entrega del último mensaje de C[2] (confirmación) y un fallo de otro.

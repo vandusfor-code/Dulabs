@@ -35,6 +35,15 @@ import { asksForHuman, detectIntent, type HandoffMotive, type SystemHandoffMotiv
 import { agentToolDeclarations, executeAgentTool, toolKind, type AgentToolsDeps, type AgentTurnToolContext, type QueuedImage } from "@/lib/agente/herramientas";
 import type { AgentToolName } from "@/lib/agente/nombres-herramientas";
 import { NON_TEXT_MESSAGES, NON_TEXT_NOTICE_COOLDOWN_MS, nonTextPolicy, type NonTextAction, type NonTextKind } from "@/lib/agente/entrada";
+import {
+  CHANNEL_LABEL,
+  CHANNEL_QUESTION,
+  CLASSIFICATION_MESSAGES,
+  parseChannelChoice,
+  type CustomerChannel,
+  type CustomerChannelOrigin,
+  type CustomerChannelStore,
+} from "@/lib/agente/clasificacion";
 
 /**
  * Resultado de un envío: true/false o, con detalle, el wamid que asignó Meta (necesario para
@@ -49,6 +58,8 @@ function sendResult(r: SendOutcome): { sent: boolean; wamid: string | null; erro
 export interface AgentSender {
   sendText(text: string): Promise<SendOutcome>;
   sendImage(image: QueuedImage): Promise<SendOutcome>;
+  /** Mensaje con botones de respuesta (Bloque 25: pregunta detal / por mayor). Sin él, la pregunta sale en texto. */
+  sendButtons?(body: string, buttons: ReadonlyArray<{ id: string; title: string }>): Promise<SendOutcome>;
   /** ¿Una asesora tomó el chat mientras el agente pensaba? (última barrera antes de enviar) */
   humanTookOver(): Promise<boolean>;
 }
@@ -83,6 +94,8 @@ export interface AgentRuntimeDeps {
   media?: ProductMediaLedger;
   /** Consumo para los topes de costo/abuso (Bloque 14). Sin él, no se aplican topes. */
   usage?: UsageReader;
+  /** Bloque 25: canal por contacto. Obligatorio si config.classifyCustomers (sin él, el turno no sigue: fail-closed). */
+  classification?: CustomerChannelStore;
   limits?: Partial<AgentLimits>;
   log?: (trace: AgentTurnTrace) => void;
   now?: () => number;
@@ -156,6 +169,12 @@ export interface AgentTurnTrace {
   handoff: { source: "customer" | "model" | "system"; motive: HandoffMotive | SystemHandoffMotive } | null;
   /** Mensaje sin texto y la política que aplicó el backend (Bloque 23); null = mensaje de texto. */
   non_text: { kind: NonTextKind; action: NonTextAction } | null;
+  /**
+   * Bloque 25 — clasificación detal / por mayor del contacto (null = el número no clasifica):
+   * asked (se le preguntó), classified (quedó clasificado en este turno), known (ya lo estaba),
+   * change_requested (pidió el otro canal: asesora), order_mismatch (pedido abierto de otro canal: asesora).
+   */
+  classification: { action: "asked" | "classified" | "known" | "change_requested" | "order_mismatch"; channel: OrderChannel | null; origin: CustomerChannelOrigin | null } | null;
 }
 
 // Mensajes FIJOS (sin IA): nunca afirman datos comerciales.
@@ -260,6 +279,7 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
     intent: null,
     handoff: null,
     non_text: null,
+    classification: null,
     input: { wamids: (input.wamids && input.wamids.length > 0 ? [...input.wamids] : [input.wamid]).map((w) => w.slice(0, 200)).slice(0, 10), messages: input.wamids?.length || 1, chars: input.text.length },
     context: null,
   };
@@ -306,9 +326,9 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
   if (usage) trace.limits = { contact_minute: usage.contactMinute, contact_day: usage.contactDay, tenant_tokens_day: usage.tenantTokensDay, decision: limit.action === "allow" ? "allow" : `${limit.action}:${limit.reason}` };
   const seen = { ...loaded.state, recentWamids: [...loaded.state.recentWamids.filter((w) => !wamids.includes(w)), ...wamids].slice(-MAX_RECENT_WAMIDS) };
   /** Traspaso decidido por el backend (sin modelo): pausa + mensaje fijo. false = no se pudo pausar. */
-  const handOffNow = async (motive: SystemHandoffMotive | "out_of_scope", source: "customer" | "system", reason: string, message: string = FALLBACK_MESSAGES.handoff) => {
+  const handOffNow = async (motive: SystemHandoffMotive | HandoffMotive, source: "customer" | "system", reason: string, message: string = FALLBACK_MESSAGES.handoff, orderId?: string) => {
     try {
-      await deps.tools.engine.requestHandoff({ tenantId: input.tenantId, contact, reason, actor: "system", requestId });
+      await deps.tools.engine.requestHandoff({ tenantId: input.tenantId, contact, reason, actor: "system", requestId, ...(orderId ? { orderId } : {}) });
     } catch {
       return false;
     }
@@ -432,9 +452,11 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
 
   // 2) Hechos confiables del turno (pedido activo desde el motor).
   let activeOrder: (OrderPublicView & { next_step: string }) | null = null;
+  let activeOrderSource: string | null = null;
   try {
     const o = await deps.tools.engine.getOrder({ tenantId: input.tenantId, contact, requestId });
     activeOrder = { ...publicView(o), next_step: nextStepOf(o) };
+    activeOrderSource = o.source;
   } catch (err) {
     if (!(err instanceof OrderError)) trace.error_kind = "order_lookup_failed";
   }
@@ -449,7 +471,82 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
   if (activeOrder && ["draft", "validated", "pending_confirmation"].includes(activeOrder.status)) {
     for (const l of activeOrder.lines) designated.add(l.reference);
   }
-  const { channel, source } = channelFor(deps.config, activeOrder);
+  // Bloque 25: canal POR CONTACTO (detal / por mayor), decidido y guardado por el backend, nunca por el modelo.
+  let classified: { channel: OrderChannel; source: "customer_classification" } | null = null;
+  if (deps.config.classifyCustomers) {
+    const sendFixed = async (text: string) => {
+      const r = sendResult(await deps.sender.sendText(text).catch(() => false));
+      trace.sent = r.sent;
+      trace.delivery.text_wamid = r.wamid;
+      trace.delivery.text_error = r.error;
+      return r.sent;
+    };
+    let current: CustomerChannel | null = null;
+    try {
+      if (!deps.classification) throw new Error("classification_store_missing");
+      current = await deps.classification.get(key);
+      if (current) trace.classification = { action: "known", channel: current.channel, origin: current.origin };
+      else {
+        // Primera vez: la solicitud del catálogo abierta de ESTA conversación (tienda detal o enlace
+        // mayorista firmado) ya dice cómo compra; si no, lo que el cliente eligió en este mensaje.
+        const fromCatalog = activeOrder && activeOrderSource === "catalog" && !["completed", "cancelled", "expired"].includes(activeOrder.status) ? activeOrder.channel : null;
+        const choice = fromCatalog ?? parseChannelChoice(input.text);
+        if (choice) {
+          const origin = fromCatalog ? (fromCatalog === "wholesale" ? "catalogo_mayorista" : "catalogo_detal") : "cliente";
+          const w = await deps.classification.setInitial(key, choice, origin);
+          // conflicto = otra escritura lo clasificó antes: manda la que quedó guardada.
+          if (w.channel && w.origin) {
+            current = { channel: w.channel, origin: w.origin, updatedAt: new Date(now()).toISOString(), updatedBy: null };
+            trace.classification = { action: w.result === "fijado" ? "classified" : "known", channel: w.channel, origin: w.origin };
+          }
+        }
+      }
+    } catch {
+      // Sin clasificación legible no se sabe qué precios mostrar: mensaje fijo, sin modelo (fail-closed).
+      trace.error_kind = "classification_unavailable";
+      const sent = await sendFixed(FALLBACK_MESSAGES.technical);
+      trace.state_saved = await deps.state.save(key, state, loaded.version).catch(() => false);
+      return finish("fallback", sent ? FALLBACK_MESSAGES.technical : null);
+    }
+    if (!current) {
+      // Sin clasificar: la pregunta FIJA con botones (sin modelo). Ningún precio ni catálogo antes de elegir.
+      trace.classification = { action: "asked", channel: null, origin: null };
+      let text: string = CHANNEL_QUESTION.body;
+      const b = deps.sender.sendButtons ? sendResult(await deps.sender.sendButtons(CHANNEL_QUESTION.body, CHANNEL_QUESTION.buttons).catch(() => false)) : null;
+      if (b?.sent) {
+        trace.sent = true;
+        trace.delivery.text_wamid = b.wamid;
+      } else {
+        text = CHANNEL_QUESTION.textFallback;
+        await sendFixed(text);
+      }
+      trace.state_saved = await deps.state.save(key, state, loaded.version).catch(() => false);
+      return finish("replied", trace.sent ? text : null);
+    }
+    // Pedido abierto de OTRO canal (p. ej. solicitud de la tienda mayorista de un cliente al detal): asesora.
+    // Va primero: el mensaje de esa solicitud nombra su canal y no es un pedido de cambio.
+    if (activeOrder && ["draft", "validated", "pending_confirmation"].includes(activeOrder.status) && activeOrder.channel !== current.channel) {
+      trace.classification = { action: "order_mismatch", channel: current.channel, origin: current.origin };
+      const message = CLASSIFICATION_MESSAGES.orderMismatch(activeOrder.order_id, activeOrder.channel, current.channel);
+      const reason = `Pedido ${activeOrder.order_id} ${CHANNEL_LABEL[activeOrder.channel]} de un cliente registrado ${CHANNEL_LABEL[current.channel]}`;
+      if (await handOffNow("order_issue", "system", reason, message, activeOrder.order_id)) return finish("handoff", trace.sent ? message : null);
+      // Sin pausa: ese pedido no se muestra ni se propone en este turno (confirmarlo lo bloquean las herramientas).
+      if (state.proposal?.orderId === activeOrder.order_id) state = { ...state, proposal: null };
+      activeOrder = null;
+    }
+    // Pide el OTRO canal ("soy mayorista", "precio al por mayor"): el modelo no lo cambia; solo una asesora.
+    const asked = parseChannelChoice(input.text);
+    if (asked && asked !== current.channel && trace.classification?.action !== "classified") {
+      trace.classification = { action: "change_requested", channel: current.channel, origin: current.origin };
+      const message = CLASSIFICATION_MESSAGES.changeRequested(current.channel);
+      if (await handOffNow("customer_request", "customer", `El cliente pidió cambiar su modalidad de compra (${CHANNEL_LABEL[current.channel]} → ${CHANNEL_LABEL[asked]})`, message)) {
+        return finish("handoff", trace.sent ? message : null);
+      }
+      // Sin pausa: el turno sigue con SU canal (las herramientas nunca devuelven el otro precio).
+    }
+    classified = { channel: current.channel, source: "customer_classification" };
+  }
+  const { channel, source } = classified ?? channelFor(deps.config, activeOrder);
   state = { ...state, channel: { value: channel, source } };
 
   const customerName = deps.tools.customerName ? await deps.tools.customerName(key).catch(() => null) : null;

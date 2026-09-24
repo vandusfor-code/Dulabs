@@ -70,7 +70,34 @@ describe("topes: configuración y decisión", () => {
     };
     const store = createSupabaseAgentConfigStore(fake as never);
     assert.deepEqual(await store.getByPhoneNumber(PN), fila);
+    // Bloque 25: primero con limites + clasificacion_cliente, luego solo limites, luego sin ninguna.
+    assert.equal(calls.length, 3);
+    assert.ok(calls[0].includes("clasificacion_cliente") && !calls[1].includes("clasificacion_cliente") && !calls[2].includes("limites"));
+  });
+
+  it("Bloque 25: sin la columna clasificacion_cliente se lee con limites (sin clasificación, como antes)", async () => {
+    const calls: string[] = [];
+    const fila = { ...row(), limites: {} };
+    const fake = {
+      from: () => ({
+        select: (cols: string) => ({
+          eq: () => ({
+            maybeSingle: async () => {
+              calls.push(cols);
+              return cols.includes("clasificacion_cliente") ? { data: null, error: { code: "PGRST204" } } : { data: fila, error: null };
+            },
+          }),
+        }),
+      }),
+    };
+    const store = createSupabaseAgentConfigStore(fake as never);
+    const r = await store.getByPhoneNumber(PN);
+    assert.deepEqual(r, fila);
     assert.equal(calls.length, 2);
+    const cfg = parseAgentConfig(r, { tenantId: T, phoneNumberId: PN });
+    assert.equal(cfg.kind === "ok" && cfg.config.classifyCustomers, false);
+    const on = parseAgentConfig({ ...fila, clasificacion_cliente: true }, { tenantId: T, phoneNumberId: PN });
+    assert.equal(on.kind === "ok" && on.config.classifyCustomers, true);
   });
 });
 

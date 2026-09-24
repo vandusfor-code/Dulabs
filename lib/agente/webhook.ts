@@ -20,7 +20,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ClienteConfig } from "@/lib/supabase";
 import { chatEnPausaHumana } from "@/lib/pausas-chat";
 import { MetaGraphApiError, enviarMedia, enviarTexto } from "@/lib/whatsapp";
-import { incrementarUsoMensajes, registrarMensaje, resolverTokenMeta } from "@/lib/whatsapp-outbound";
+import { enviarBotones, incrementarUsoMensajes, registrarMensaje, resolverTokenMeta } from "@/lib/whatsapp-outbound";
 import { contactRef } from "@/lib/catalogo/pedidos/log";
 import { productionAgentToolDeps } from "@/lib/catalogo/pedidos/produccion";
 import { createGeminiProvider } from "@/lib/ia-proveedores/gemini";
@@ -33,6 +33,7 @@ import { batchInput, createSupabaseMailboxStore, drain, enqueueAndDrain, type Dr
 import type { NonTextKind } from "@/lib/agente/entrada";
 import { boundaryRecord, createSupabaseTraceSink, turnRecord } from "@/lib/agente/trazas";
 import { createSupabaseUsageReader } from "@/lib/agente/limites";
+import { createSupabaseCustomerChannelStore } from "@/lib/agente/clasificacion";
 import type { AgentToolsDeps } from "@/lib/agente/herramientas";
 import { runAgentTurn, type AgentRuntimeDeps, type AgentSender, type AgentTurnTrace } from "@/lib/agente/runtime";
 
@@ -247,6 +248,24 @@ function whatsappSender(supabase: SupabaseClient, cliente: ClienteConfig, input:
       await registrarMensaje(supabase, cliente.phone_number_id, input.waId, "saliente", `[imagen] ${image.caption}`, "ia", wamid ?? undefined);
       return { sent: true, wamid };
     },
+    async sendButtons(body, buttons) {
+      let wamid: string | null = simulated ? simulatedWamid() : null;
+      if (!simulated) {
+        const token = resolverTokenMeta(cliente);
+        if (!token) {
+          return { sent: false, wamid: null, error: sendError("text", "no_meta_token") };
+        }
+        try {
+          ({ wamid } = await enviarBotones({ phoneNumberId: cliente.phone_number_id, token, para: input.destino, cuerpo: body, botones: buttons.map((b) => ({ id: b.id, titulo: b.title })) }));
+        } catch (err) {
+          return { sent: false, wamid: null, error: sendError("text", err instanceof MetaGraphApiError ? "meta_rejected" : "send_failed", err) };
+        }
+        await incrementarUsoMensajes(supabase, cliente);
+      }
+      // En el Inbox se ve la pregunta con sus opciones (el cliente responde con el título del botón).
+      await registrarMensaje(supabase, cliente.phone_number_id, input.waId, "saliente", `${body}\n[${buttons.map((b) => b.title).join("] [")}]`, "ia", wamid ?? undefined);
+      return { sent: true, wamid };
+    },
     humanTookOver: () => chatEnPausaHumana(supabase, cliente.phone_number_id, input.waId),
   };
 }
@@ -291,6 +310,7 @@ export function productionAgentBoundaryDeps(supabase: SupabaseClient, cliente: C
         media: createSupabaseProductMediaLedger(supabase),
         mailbox: createSupabaseMailboxStore(supabase),
         usage: createSupabaseUsageReader(supabase),
+        classification: createSupabaseCustomerChannelStore(supabase),
         log: (trace) => {
           console.info(JSON.stringify(trace));
           persist(traces.record(turnRecord(trace, cliente.phone_number_id)));

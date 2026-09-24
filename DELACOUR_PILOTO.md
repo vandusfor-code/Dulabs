@@ -236,3 +236,94 @@ No hubo migraciones.
     - cancelar desde el panel los pedidos de prueba (el stock vuelve);
     - devolver a la IA los chats de prueba;
     - pedidos de prueba sin confirmar: vencen solos a las 72 h.
+
+---
+
+# Bloque 25 — Clasificación detal / mayorista por contacto + panel de pedidos
+
+## Qué hace
+
+- **Contacto nuevo** → el agente pregunta, con mensaje fijo y botones y **sin llamar a Gemini**:
+  "¿Tu compra es al detal o al por mayor?" con los botones [Comprar al detal] y
+  [Comprar al por mayor]. Si responde otra cosa, se le vuelve a preguntar. Antes de elegir no ve
+  ni precios ni catálogo.
+- La elección queda **en la base de datos**, no en la memoria del modelo:
+  - `dulabs_catalogo_clientes_canal`: una fila por número del negocio + cliente;
+  - `dulabs_catalogo_clientes_canal_eventos`: bitácora **inmutable**.
+- Si el contacto llega con una solicitud abierta de la tienda, esa solicitud lo clasifica: la
+  tienda mayorista exige el enlace firmado; la tienda detal lo deja al detal.
+- Cada turno cotiza con el canal del contacto. Las herramientas no aceptan otro canal: un
+  argumento `channel` se rechaza. El enlace del catálogo es el del canal del contacto.
+- Los pedidos quedan marcados con ese canal y con los precios de ese canal (motor de pedidos
+  existente, sin cambios).
+- **Pedir el otro canal** ("precio al por mayor", "soy mayorista", "catálogo mayorista") → el
+  cliente pasa a una asesora, con mensaje fijo y sin Gemini. Pedirlo no cambia nada.
+- **Pedido abierto de otro canal** (por ejemplo, una solicitud de la tienda mayorista de un
+  cliente al detal) → pasa a una asesora con el pedido (motivo `order_issue`). El chat no puede
+  validarlo ni confirmarlo (`FORBIDDEN`).
+- **Cambio de modalidad**: lo hace solo una asesora (admin o agente) desde **Catálogo → Pedidos →
+  Pasar a detal / mayorista**. El cambio:
+  - exige un motivo;
+  - usa compare-and-set: si la modalidad cambió mientras tanto, responde 409 y no toca nada;
+  - queda en la bitácora: quién, cuándo, de qué modalidad a cuál y por qué.
+
+  Los pedidos abiertos **conservan su canal y sus precios**, porque nada se recalcula en
+  silencio. La asesora los cancela o los cierra. El carrito solo guarda referencias y cantidades,
+  así que su precio sale siempre de la modalidad vigente.
+- **Panel de pedidos**: cada pedido muestra
+  - cliente: nombre, teléfono y modalidad. El teléfono completo solo lo ven admin y agente;
+    el rol lectura ve los últimos 4 dígitos;
+  - fechas: creado, confirmado y vencimiento (de la reserva o de la propuesta);
+  - productos con foto, precio unitario y subtotal;
+  - tipo de precio, reserva y asesora (asignada, motivo y quién la pidió).
+
+  Filtros por estado (propuestas, confirmados, con asesora) y por modalidad. Historial: venta
+  cerrada, cancelados y vencidos. Acciones: venta cerrada, cancelar, tomar conversación (la misma
+  del Inbox), abrir en Inbox y cambiar modalidad. Desde la UI **no** se editan stock, precios ni
+  reservas.
+- "En preparación" **no existe** en el motor de pedidos (los estados son propuesta, confirmado,
+  con asesora, venta cerrada, cancelado y vencido), así que no se muestra.
+
+## Activación (manual, en el SQL Editor de Supabase)
+
+1. Pegar completa `supabase/migrations/20261120000000_dulabs_catalogo_clientes_canal.sql`.
+   Es aditiva e idempotente, con RLS y sin políticas (solo service_role). **No cambia nada**
+   mientras el interruptor siga en `false`.
+2. Verificar la migración (solo lectura):
+   ```sql
+   select
+     (select count(*) from information_schema.columns where table_name = 'dulabs_agente_runtime_config' and column_name = 'clasificacion_cliente') as columna_interruptor,
+     to_regclass('public.dulabs_catalogo_clientes_canal') is not null as tabla_canal,
+     to_regclass('public.dulabs_catalogo_clientes_canal_eventos') is not null as tabla_bitacora,
+     (select count(*) from pg_proc where proname = 'dulabs_catalogo_cliente_canal_fijar') as funcion,
+     (select relrowsecurity from pg_class where relname = 'dulabs_catalogo_clientes_canal') as rls_canal,
+     (select relrowsecurity from pg_class where relname = 'dulabs_catalogo_clientes_canal_eventos') as rls_bitacora,
+     (select clasificacion_cliente from dulabs_agente_runtime_config where phone_number_id = '1428584886997210') as delacour_encendido;
+   -- Esperado: 1 | true | true | 1 | true | true | false
+   ```
+3. Encender **solo** para Delacour, cuando se decida:
+   ```sql
+   update dulabs_agente_runtime_config set clasificacion_cliente = true
+    where phone_number_id = '1428584886997210' and id_tenant = '0d3ae22d-0c38-4fd6-ba48-fb9e29b7cdb4';
+   ```
+   Para apagar, el mismo `update` con `false`: el agente vuelve a usar la columna `canal`, como
+   antes. Las clasificaciones guardadas se conservan.
+4. Revisar las clasificaciones y los cambios (solo lectura):
+   ```sql
+   select canal, origen, count(*) from dulabs_catalogo_clientes_canal
+    where id_tenant = '0d3ae22d-0c38-4fd6-ba48-fb9e29b7cdb4' group by 1, 2 order by 1, 2;
+   select created_at, canal_anterior, canal_nuevo, origen, miembro_id, motivo
+     from dulabs_catalogo_clientes_canal_eventos
+    where id_tenant = '0d3ae22d-0c38-4fd6-ba48-fb9e29b7cdb4' order by created_at desc limit 50;
+   ```
+
+## Pruebas
+
+- `lib/agente/agente-clasificacion.test.ts`: pruebas A–L del bloque, más las barreras (inyección
+  sin palabras clave, pedido de otro canal, fail-closed y traza).
+- `lib/catalogo/pedidos/panel-b25.test.ts`: panel enriquecido, teléfono por rol, fuentes que
+  fallan, cambio de modalidad (409, 404 por otro negocio, 400) y adaptadores Supabase.
+- `supabase/tests/20261120000000_dulabs_catalogo_clientes_canal.test.sql`: la RPC en PostgreSQL
+  (10 controles, incluidos la bitácora inmutable, el aislamiento y RLS).
+- `scripts/piloto/matriz-piloto.e2e.ts`, bloque I: webhook real con el botón de Meta, RPC real,
+  bitácora inmutable y precio mayorista tras el cambio de una asesora.

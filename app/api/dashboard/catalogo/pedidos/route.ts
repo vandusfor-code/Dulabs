@@ -6,9 +6,13 @@ import type { NextRequest } from "next/server";
 import { withCatalog } from "@/lib/catalogo/http";
 import { listarPedidos } from "@/lib/catalogo/pedidos/panel";
 import { productionOrderEngine } from "@/lib/catalogo/pedidos/produccion";
+import { productionPanelFuentes } from "@/lib/catalogo/pedidos/panel-fuentes";
 
 export const runtime = "nodejs";
 
 export async function GET(request: NextRequest) {
-  return withCatalog(request, "read", async ({ supabase, actor }) => listarPedidos(productionOrderEngine(supabase), actor.tenantId));
+  // Bloque 25: con el cliente (nombre, modalidad; teléfono solo para quien atiende), fechas, fotos y asesora.
+  return withCatalog(request, "read", async ({ supabase, actor, canManageOrders }) =>
+    listarPedidos(productionOrderEngine(supabase), actor.tenantId, { fuentes: productionPanelFuentes(supabase), verTelefono: canManageOrders }),
+  );
 }

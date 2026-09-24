@@ -137,6 +137,32 @@ export function createCatalogClient(accessToken: string) {
       return call(accessToken, `/pedidos/${encodeURIComponent(pedido)}`, { method: "POST", body: JSON.stringify({ accion }) });
     },
 
+    /**
+     * Bloque 25 — la asesora cambia la modalidad (detal / por mayor) de un cliente. `canalActual` es la
+     * que ve en pantalla: si cambió mientras tanto, el backend responde CONFLICT y no toca nada.
+     */
+    changeCustomerChannel(input: { numero: string; telefono: string; canal: "retail" | "wholesale"; canalActual: "retail" | "wholesale" | null; motivo: string }): Promise<CatalogResult<{ resultado: "cambiado" | "sin_cambio"; canal: "retail" | "wholesale" }>> {
+      return call(accessToken, "/clientes/canal", {
+        method: "POST",
+        body: JSON.stringify({ numero: input.numero, telefono: input.telefono, canal: input.canal, canal_actual: input.canalActual, motivo: input.motivo }),
+      });
+    },
+
+    /** Bloque 25 — "Tomar conversación": la MISMA acción del Inbox (pausa la IA en ese chat y se la asigna a quien la toma). */
+    async takeConversation(numero: string, telefono: string): Promise<CatalogResult<{ tomada: true }>> {
+      try {
+        const r = await fetch("/api/dashboard/conversaciones/handoff", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ phone_number_id: numero, telefono_cliente: telefono, accion: "tomar" }),
+        });
+        const body = (await r.json().catch(() => ({}))) as { success?: boolean; error?: string };
+        return r.ok && body.success ? { ok: true, data: { tomada: true } } : { ok: false, error: { code: "UNKNOWN", message: body.error ?? "No se pudo tomar la conversación.", status: r.status } };
+      } catch {
+        return { ok: false, error: { code: "NETWORK_ERROR", message: "Sin conexión. Revisa tu internet e intenta de nuevo.", status: 0 } };
+      }
+    },
+
     createCategory(name: string): Promise<CatalogResult<{ category: CatalogCategory }>> {
       return call(accessToken, "/categorias", { method: "POST", body: JSON.stringify({ name }) });
     },
