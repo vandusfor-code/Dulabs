@@ -443,6 +443,12 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
     state = { ...state, activeOrderId: activeOrder.order_id, proposal: { orderId: activeOrder.order_id, confirmationId: activeOrder.confirmation.id, presentedTurn: null } };
   }
   if (activeOrder && activeOrder.status !== "pending_confirmation" && state.proposal?.orderId === activeOrder.order_id) state = { ...state, proposal: null };
+  // Bloque 24: lo que ya está en el pedido ABIERTO de esta conversación lo eligió el cliente: cambiar
+  // su cantidad ("mejor que sean 2") no exige volver a señalarlo aunque la lista siga abierta.
+  // Solo esas referencias (del backend); nunca habilita un producto nuevo.
+  if (activeOrder && ["draft", "validated", "pending_confirmation"].includes(activeOrder.status)) {
+    for (const l of activeOrder.lines) designated.add(l.reference);
+  }
   const { channel, source } = channelFor(deps.config, activeOrder);
   state = { ...state, channel: { value: channel, source } };
 

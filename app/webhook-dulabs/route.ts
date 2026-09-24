@@ -53,7 +53,7 @@ import {
   procesarRespuestaProducto,
 } from "@/lib/soluciones-financieras-bot";
 import { adquirirCandadoChat, liberarCandadoChat } from "@/lib/chat-lock";
-import { activarPausaChat, chatEnPausaHumana, logIaBloqueadaPorHumano } from "@/lib/pausas-chat";
+import { activarPausaChat, chatEnPausaHumana, extenderPausaChat, logIaBloqueadaPorHumano } from "@/lib/pausas-chat";
 import { observadorPublibordadosActivo, observarCambioPublibordados } from "@/lib/publibordados/observador/observador";
 import { obtenerOnboardingSesionActivaPorTelefono, guardarOnboardingSesion, marcarBienvenidaEnviada, filaASesion } from "@/lib/onboarding-store";
 import { procesarMensajeOnboarding, textoBienvenida, BOTON_CONFIGURAR, BOTON_SOPORTE } from "@/lib/onboarding-engine";
@@ -669,7 +669,16 @@ export async function procesarCambio(phoneNumberId: string, value: MetaChangeVal
         eco.id
       );
       if (!yaProcesado) {
-        await activarPausaHumana(phoneNumberId, telefonoCliente);
+        // Bloque 24 -- número con agente conversacional: la respuesta manual de la asesora desde el
+        // celular pausa la IA 30 min pero NUNCA acorta una pausa más larga (traspaso del agente:
+        // 24 h; "tomar" en el Inbox: 30 días). Antes, contestar desde el celular dejaba la pausa en
+        // 30 min y el agente volvía a hablar en medio de una conversación humana. Sin agente para
+        // el número: exactamente el comportamiento de siempre.
+        if (await numeroConAgente(createSupabaseAgentConfigStore(supabaseAdmin()), phoneNumberId)) {
+          await extenderPausaChat(supabaseAdmin(), phoneNumberId, telefonoCliente, PAUSA_HUMANA_MS);
+        } else {
+          await activarPausaHumana(phoneNumberId, telefonoCliente);
+        }
       }
     } else {
       console.warn(`[webhook-dulabs] eco de coexistencia sin destinatario ('to'): id=${eco.id} type=${eco.type}`);

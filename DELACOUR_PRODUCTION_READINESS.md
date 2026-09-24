@@ -4,6 +4,9 @@ Estado al **24-sep-2026**, actualizado en el **Bloque 23** (robustez del agente 
 Documento operativo: qué está listo, cómo se comprobó, qué falta comprobar con servicios reales y
 el procedimiento para cargar los productos reales (secciones escritas en el Bloque 21).
 
+**Piloto (Bloque 24):** barreras, matriz de punta a punta, diagnóstico, costo, verificación de
+producción de solo lectura y la lista de pruebas manuales están en `DELACOUR_PILOTO.md`.
+
 Leyenda de cómo se comprobó cada cosa:
 
 | Marca | Qué significa |

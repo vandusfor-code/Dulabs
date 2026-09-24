@@ -31,7 +31,7 @@ import { createMemoryProductMediaLedger } from "@/lib/agente/medios";
 import { AGENT_TOOL_NAMES } from "@/lib/agente/nombres-herramientas";
 import { FALLBACK_MESSAGES, runAgentTurn, type AgentTurnTrace } from "@/lib/agente/runtime";
 import { resolveSelection } from "@/lib/agente/seleccion";
-import { addCustomerEvidence, addEvidence, checkGrounding, emptyEvidence } from "@/lib/agente/anclaje";
+import { addCustomerEvidence, addEvidence, checkGrounding, claimsConfirmation, emptyEvidence } from "@/lib/agente/anclaje";
 import { NON_TEXT_MESSAGES, NON_TEXT_NOTICE_COOLDOWN_MS, inboxLabel, nonTextPolicy, type NonTextKind } from "@/lib/agente/entrada";
 
 const A: CatalogActor = { tenantId: "aaaaaaaa-0000-4000-8000-00000000000a", userId: "admin-a" };
@@ -993,6 +993,55 @@ describe("Bloque 23: mensajes SIN texto — política determinista del backend, 
     await turno([], "", { ...audio, replyTo: { wamid: fotos.get(luna.reference) } });
     assert.deepEqual(sent.slice(antes), [NON_TEXT_MESSAGES.audioAboutProduct({ reference: luna.reference, name: luna.reference, available: false })]);
     assert.match(sent.at(-1)!, /ya no está disponible/);
+  });
+});
+
+describe("Bloque 24: 'pedido confirmado' solo si el backend lo confirmó", () => {
+  it("B24-1 el precio cambió antes del 'sí' y el modelo insiste en 'quedó confirmado': la respuesta NO sale; mensaje fijo; nada apartado", async () => {
+    const { sol, fotos } = await buscarConFotos();
+    await turno([call("update_cart", { items: [{ reference: sol.reference, quantity: 1 }] }), { text: "Listo, Aretes Sol." }], "quiero este", { replyTo: { wamid: fotos.get(sol.reference) } });
+    await turno([call("create_order_request"), { text: `Tu pedido: Aretes Sol × 1. Total: ${formatCop(52_000)}. ¿Confirmas?` }], "hagamos el pedido");
+    const s = await estado();
+    await admin.updateProduct(A, sol.id, { retailPrice: 55_000 });
+    const antes = sent.length;
+    const r = await turno(
+      [call("confirm_order", { order_id: s.proposal!.orderId, confirmation_id: s.proposal!.confirmationId }), { text: "¡Listo! Tu pedido quedó confirmado." }, { text: "Perfecto, tu pedido está confirmado 🎉" }],
+      "sí, confirmo",
+    );
+    assert.deepEqual(results(r), ["PRICE_CHANGED"]);
+    assert.deepEqual(r.trace.grounding.violations, ["confirmation", "confirmation"]);
+    assert.deepEqual(sent.slice(antes), [FALLBACK_MESSAGES.unverified], "ni 'confirmado' ni un texto del modelo");
+    assert.equal(pedidos.orders[0].status, "draft");
+    assert.equal(mem.inventory.stockOf(sol.id), 5);
+  });
+
+  it("B24-2 confirmación REAL: 'quedó confirmado' sí sale; y la regla distingue afirmación de pregunta, instrucción y negación", async () => {
+    const { sol, fotos } = await buscarConFotos();
+    await turno([call("update_cart", { items: [{ reference: sol.reference, quantity: 1 }] }), { text: "Listo, Aretes Sol." }], "quiero este", { replyTo: { wamid: fotos.get(sol.reference) } });
+    await turno([call("create_order_request"), { text: `Tu pedido: Aretes Sol × 1. Total: ${formatCop(52_000)}. ¿Confirmas?` }], "hagamos el pedido");
+    const s = await estado();
+    const r = await turno([call("confirm_order", { order_id: s.proposal!.orderId, confirmation_id: s.proposal!.confirmationId }), { text: "¡Listo! Tu pedido quedó confirmado." }], "sí, confirmo");
+    assert.deepEqual([results(r), r.trace.grounding.violations, sent.at(-1)], [["ok"], [], "¡Listo! Tu pedido quedó confirmado."]);
+    for (const t of ["¡Listo! Tu pedido quedó confirmado.", "Pedido confirmado: DL-ORD-7K4M2Q", "Ya quedó apartado tu anillo.", "Confirmé tu pedido.", "Tus aretes ya están reservados por 72 horas."]) assert.equal(claimsConfirmation(t), true, t);
+    for (const t of ["¿Confirmas el pedido?", "Tu pedido aún no está confirmado.", "Cuando confirmes, lo dejo apartado.", "El pedido no quedó confirmado porque cambió el precio.", "Tu pedido está pendiente de confirmación.", "¿Quieres que quede reservado?"]) assert.equal(claimsConfirmation(t), false, t);
+  });
+});
+
+describe("Bloque 24: cambiar la cantidad de un pedido ya propuesto", () => {
+  it("B24-3 'mejor que sean 2' tras la propuesta: el producto DEL PEDIDO se puede cambiar sin volver a señalarlo; uno de la lista que NO está en el pedido, no", async () => {
+    const { luna, sol } = await aretes();
+    const r0 = await turno([call("search_products", { query: "aretes" }), presentarLista], "busco aretes");
+    const lista = candidatos(r0.provider.requests[1]);
+    const primero = lista[0].reference;
+    const otro = [luna.reference, sol.reference].find((r) => r !== primero)!;
+    await turno([call("update_cart", { items: [{ reference: primero, quantity: 1 }] }), { text: "Listo." }], "quiero el primero");
+    await turno([call("create_order_request"), { text: "¿Confirmas?" }], "hagamos el pedido");
+    assert.deepEqual((await estado()).cart, [], "la propuesta vacía la selección");
+    const r = await turno([call("update_cart", { items: [{ reference: primero, quantity: 2 }] }), call("create_order_request"), { text: "Listo, nueva propuesta. ¿Confirmas?" }], "mejor que sean 2");
+    assert.deepEqual(results(r), ["ok", "ok"]);
+    assert.equal(pedidos.orders.at(-1)!.lines[0].quantity, 2);
+    const r2 = await turno([call("update_cart", { items: [{ reference: otro, quantity: 1 }] }), { text: "¿Cuál quieres agregar?" }], "y agrégame otro");
+    assert.deepEqual(results(r2), ["CHOICE_REQUIRED"], "un producto nuevo de la lista sigue exigiendo que el cliente lo señale");
   });
 });
 
