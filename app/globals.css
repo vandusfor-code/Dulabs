@@ -102,36 +102,104 @@
   --color-chart-5: oklch(0.55 0.01 260);
 }
 
-/* ---------- DuLabs Business: identidad monocromática (scoped via .business-scope) ---------- */
-/* Capa sobre .dash-scope aplicada SOLO a DuLabs Business (DashboardShell -> todo /dashboard/*, y /checkout). Misma continuidad que
-   la landing y los logins: negro, blanco y grises neutros. Reusa los mismos nombres de token, así que sidebar, topbar, cards,
-   botones, inputs, tabs, badges, modales, etc. cambian sin tocar sus classNames:
-     - lime (antes el verde de marca/UI) pasa a ser el acento monocromático: botón primario blanco con texto negro, hover gris
-       claro, selección/activo/foco en blanco (con la opacidad que ya trae cada componente: bg-lime/10, border-lime/50…).
-     - Las GRÁFICAS no cambian: usan --color-chart-1..5 (definidos en .dash-scope, con el verde de siempre), nunca lime.
-     - Los colores semánticos (rojo error, ámbar atención) siguen igual: comunican estado, no son marca.
-   .dash-scope sin esta clase (admin) queda como estaba. */
-.business-scope {
-  --color-ink: #050505;
-  --color-ink-2: #0a0a0a;
-  --color-card: #0d0d0d;
-  --color-mist: #a3a3a3;
-  --color-edge: rgb(255 255 255 / 8%);
-  --color-fg: #ffffff;
+/* ---------- DuLabs Business · sistema visual (scoped via .business-scope) ---------- */
+/* Fuente única de la identidad de DuLabs Business. Se aplica SOLO a Business: DashboardShell (todo /dashboard/*) y /checkout.
+   Admin (.dash-scope sin esta clase) y Flow Studio no cambian. Regla: UI = negro + blanco + grises; DATOS = conservan sus colores.
 
-  --color-lime: #ffffff;
-  --color-lime-hover: #e5e5e5;
-  --color-lime-soft: #d4d4d4;
-  --color-lime-text: #ffffff;
-  --color-lime-fg: #050505;
+   Tres capas, en este orden:
+     1. UI tokens (--business-*)      -> los valores. Cambiar la identidad = cambiar solo este bloque.
+     2. Puente a los tokens heredados  -> los nombres que ya usan los componentes (bg-ink, bg-card, border-edge, text-mist,
+                                          bg-lime, text-lime-text…) apuntan a los --business-*. Ningún className cambia.
+                                          "lime" deja de ser un color: es el acento primario (blanco).
+     3. Controles                      -> los usos translúcidos del acento (hover:border-lime/40, bg-lime/10, focus:border-lime/50…)
+                                          se mapean a su rol (hover, activo, seleccionado, foco) en vez de "blanco al N%".
+                                          Además evita el fallback que Tailwind compila con el lima antiguo (#c6ff3d) para
+                                          navegadores sin color-mix().
+   Datos (NO se tocan aquí): --color-chart-1..5 se definen en .dash-scope con sus valores de siempre. Las gráficas, sparklines,
+   donuts, barras, embudos y heatmaps usan esos tokens, nunca --business-* ni lime. Los colores semánticos (rojo error/atención,
+   ámbar warning) tampoco dependen de esta capa. */
+.business-scope {
+  /* 1 · UI tokens */
+  --business-bg: #050505;
+  --business-sidebar: #0a0a0a;
+  --business-surface: #0d0d0d;
+  --business-surface-hover: #111111;
+
+  --business-border: rgb(255 255 255 / 8%);
+  --business-border-control: rgb(255 255 255 / 12%);
+  --business-border-hover: rgb(255 255 255 / 14%);
+  --business-border-selected: rgb(255 255 255 / 24%);
+
+  --business-text-primary: #ffffff;
+  --business-text-secondary: #a3a3a3;
+  --business-text-muted: #737373;
+
+  --business-primary: #ffffff;
+  --business-primary-foreground: #000000;
+  --business-hover: #e5e5e5;
+
+  --business-subtle: rgb(255 255 255 / 4%);
+  --business-control-hover: rgb(255 255 255 / 5%);
+  --business-active: rgb(255 255 255 / 7%);
+  --business-focus: rgb(255 255 255 / 35%);
+
+  /* 2 · Puente a los tokens que ya usan los componentes */
+  --color-ink: var(--business-bg);
+  --color-ink-2: var(--business-sidebar);
+  --color-card: var(--business-surface);
+  --color-edge: var(--business-border);
+  --color-fg: var(--business-text-primary);
+  --color-mist: var(--business-text-secondary);
+
+  --color-lime: var(--business-primary);
+  --color-lime-hover: var(--business-hover);
+  --color-lime-soft: var(--business-hover);
+  --color-lime-text: var(--business-text-primary);
+  --color-lime-fg: var(--business-primary-foreground);
 
   color-scheme: dark;
 }
 
-/* Foco visible por defecto en blanco (base: cualquier focus-visible:* / outline-none de un componente sigue mandando). */
+/* 3 · Controles. Especificidad igual a la de la utilidad original (:where no suma) y declarados después, así que la reemplazan
+   sin pisar otras utilidades con variante (hover:, focus:, disabled:…) del mismo elemento. */
+@layer utilities {
+  /* Controles secundarios (botones con borde): borde de control, un punto más visible que el de las cards. */
+  :where(.business-scope) button.border-edge { border-color: var(--business-border-control); }
+
+  /* Superficies translúcidas del acento: sutil (selección tenue) y activo (nav activa, contenedores de icono, chips). */
+  :where(.business-scope) :is(.bg-lime\/\[0\.04\], .bg-lime\/5, .bg-lime\/8) { background-color: var(--business-subtle); }
+  :where(.business-scope) :is(.bg-lime\/10, .bg-lime\/12, .bg-lime\/15, .bg-lime\/20) { background-color: var(--business-active); }
+
+  /* Bordes del acento en reposo: decorativos (/20, /25) y de selección (/30 a /60). */
+  :where(.business-scope) :is(.border-lime\/20, .border-lime\/25) { border-color: var(--business-border-hover); }
+  :where(.business-scope) :is(.border-lime\/30, .border-lime\/40, .border-lime\/50, .border-lime\/60) { border-color: var(--business-border-selected); }
+
+  @media (hover: hover) {
+    /* Cards (hover:border-lime/25, /30): borde un punto más claro + superficie elevada. */
+    :where(.business-scope) :is(.hover\:border-lime\/25, .hover\:border-lime\/30):hover {
+      border-color: var(--business-border-hover);
+      background-color: var(--business-surface-hover);
+    }
+    /* Botones secundarios (hover:border-lime/40 a /60): borde + fondo translúcido. */
+    :where(.business-scope) :is(.hover\:border-lime\/40, .hover\:border-lime\/50, .hover\:border-lime\/60):hover {
+      border-color: var(--business-border-hover);
+      background-color: var(--business-control-hover);
+    }
+    :where(.business-scope) :is(.hover\:bg-lime\/10, .hover\:bg-lime\/15):hover { background-color: var(--business-control-hover); }
+    :where(.business-scope) .enabled\:hover\:ring-lime\/50:enabled:hover { --tw-ring-color: var(--business-focus); }
+  }
+
+  /* Foco: bordes y anillos del acento. */
+  :where(.business-scope) :is(.focus\:border-lime\/50, .focus\:border-lime\/60):focus { border-color: var(--business-focus); }
+  :where(.business-scope) .focus-within\:border-lime\/50:focus-within { border-color: var(--business-focus); }
+  :where(.business-scope) .ring-lime\/40 { --tw-ring-color: var(--business-focus); }
+  :where(.business-scope) :is(.ring-lime\/10, .ring-lime\/15) { --tw-ring-color: var(--business-control-hover); }
+}
+
+/* Foco visible y selección por defecto (base: cualquier focus-visible:* / outline-none propio de un componente sigue mandando). */
 @layer base {
   .business-scope :focus-visible {
-    outline: 2px solid rgb(255 255 255 / 70%);
+    outline: 2px solid var(--business-focus);
     outline-offset: 2px;
   }
   .business-scope ::selection {
