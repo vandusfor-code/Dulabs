@@ -205,7 +205,15 @@ export function createResolucionCatalogo({ repo }: { repo: CatalogRepository }) 
     async resolveByExactAttributes(tenantId: string, attrs: ExactAttributes): Promise<ExactResult> {
       const name = normalizeText(attrs.name);
       if (!name) return { status: "not_found", message: "Falta el nombre del producto." };
-      const [keys, categories] = await Promise.all([repo.listProductKeys(tenantId), attrs.category ? repo.listCategories(tenantId) : Promise.resolve([])]);
+      // Índice por nombre (Bloque 20): solo los productos con ESE nombre, no el catálogo entero.
+      // Sin la migración: la lectura completa anterior (misma regla, más lenta).
+      const indexed = await repo.findByExactName(tenantId, attrs.name, 200);
+      const [keys, categories] = await Promise.all([
+        indexed === null
+          ? repo.listProductKeys(tenantId)
+          : repo.getProductsByReferences(tenantId, indexed).then((ps) => ps.map((p) => ({ reference: p.reference, name: p.name, color: p.color, material: p.material, categoryId: p.categoryId }))),
+        attrs.category ? repo.listCategories(tenantId) : Promise.resolve([]),
+      ]);
       const categoryIds = attrs.category ? new Set(categories.filter((c) => normalizeText(c.name) === normalizeText(attrs.category)).map((c) => c.id)) : null;
       const matches = keys.filter(
         (k) =>

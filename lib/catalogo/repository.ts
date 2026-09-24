@@ -149,6 +149,11 @@ export interface CatalogRepository {
    * aplicada (el caller usa la búsqueda anterior).
    */
   searchCatalog(tenantId: string, query: CatalogSearchQuery): Promise<CatalogSearchPage | null>;
+  /**
+   * Referencias de productos cuyo nombre normalizado es IGUAL (índice dulabs_catalogo_por_nombre,
+   * Bloque 20). null = migración sin aplicar (el caller usa la lectura completa anterior).
+   */
+  findByExactName(tenantId: string, name: string, limit: number): Promise<string[] | null>;
 
   // Carga masiva (historial + origen de cada producto importado).
   /** Nombre/categoría/color/material de TODOS los productos del tenant (detección de repetidos). */
@@ -418,6 +423,15 @@ export function createSupabaseCatalogRepository(supabase: SupabaseClient): Catal
       }
       const rows = (data ?? []) as Array<{ referencia: string; total: number | string }>;
       return { references: rows.map((r) => r.referencia), total: rows.length > 0 ? Number(rows[0].total) : 0 };
+    },
+
+    async findByExactName(tenantId, name, limit) {
+      const { data, error } = await supabase.rpc("dulabs_catalogo_por_nombre", { p_tenant: tenantId, p_nombre: name, p_limite: limit });
+      if (error) {
+        if (["PGRST202", "42883", "PGRST205"].includes(error.code ?? "")) return null;
+        fail("findByExactName", error);
+      }
+      return ((data ?? []) as Array<{ referencia: string }>).map((r) => r.referencia);
     },
 
     async getProduct(tenantId, productId) {
