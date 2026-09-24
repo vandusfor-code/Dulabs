@@ -35,7 +35,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
     <div className="flex h-full flex-col bg-ink-2">
       {/* Brand */}
       <div className="flex h-16 items-center gap-2.5 px-5">
-        {/* Variante monocromática real del logo (public/logo-mono.svg: mismo trazo que /logo.png, en blanco y grises). Solo en Business. */}
+        {/* Variante monocromática real del logo (public/logo-mono.svg: mismo trazo que /logo.png, en blanco y grises). Se usa en las superficies monocromáticas: Business y los logins. */}
         <Image src="/logo-mono.svg" alt="Du Labs" width={32} height={32} className="rounded-lg" priority />
         <div className="flex flex-col leading-none">
           <span className="text-sm font-semibold tracking-tight text-fg">Du Labs</span>

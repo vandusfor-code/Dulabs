@@ -21,7 +21,7 @@ const supabaseConfigFaltante = !process.env.NEXT_PUBLIC_SUPABASE_URL || !process
 function Brand() {
   return (
     <Link href={LANDING_PATH} className="dl-link flex items-center gap-2.5 text-auth-text" aria-label="DuLabs Developer">
-      <Image src="/logo.png" alt="" width={24} height={24} className="rounded-full [filter:grayscale(1)_brightness(2.4)]" priority />
+      <Image src="/logo-mono.svg" alt="" width={24} height={24} className="rounded-full" priority />
       <span className="text-[16px] font-semibold tracking-[-0.02em]">DuLabs</span>
       <span className="rounded-[5px] border border-auth-border px-1.5 py-[3px] font-mono text-[9.5px] font-medium uppercase leading-none tracking-[0.18em] text-auth-text-2">
         Developer
