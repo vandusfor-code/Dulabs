@@ -52,6 +52,8 @@ import { eventIdFrom, orderEvent, type OrderEventSink } from "@/lib/catalogo/ped
 import { requestFingerprint, type OrderEngine } from "@/lib/catalogo/pedidos/motor";
 import {
   PUBLIC_PAGE_SIZE,
+  PUBLIC_SEARCH_MAX_RESULTS,
+  PUBLIC_SEARCH_PAGE_SIZE,
   isValidSlug,
   productImagePath,
   referenceFromUrl,
@@ -402,6 +404,8 @@ export type CatalogService = ReturnType<typeof createCatalogService>;
 // ---------------------------------------------------------------------------
 
 const TOKEN_PATTERN = /^[0-9a-f]{64}$/;
+/** "000184", "dl-0001", "DL000184": parte de una referencia (se busca en la referencia, no por texto). */
+const REFERENCE_FRAGMENT = /^[a-z]{0,6}-?\d{3,}$/i;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Comparación en tiempo constante (no filtra por tiempo cuántos caracteres del token acertó un atacante). */
@@ -602,6 +606,72 @@ export function createPublicCatalogService({ repo, orders }: { repo: CatalogRepo
     return { items: recientes.items, policy: "recent" };
   }
 
+  /**
+   * Listado público (solo ACTIVOS; un desactivado nunca aparece):
+   *   sin texto            -> más recientes, páginas de 48;
+   *   referencia completa  -> ese producto exacto (nunca "parecidos");
+   *   fragmento de ref.    -> "000184", "dl-0001": coincidencia en la referencia;
+   *   texto                -> búsqueda de texto completo (sin tildes, plurales, prefijos,
+   *                           nombre + categoría + color/material + descripción), por relevancia,
+   *                           con TODAS las palabras; si ninguno las tiene todas, con alguna
+   *                           (se avisa). Sin la migración de búsqueda: la búsqueda anterior.
+   */
+  async function publicListing(
+    tenantId: string,
+    context: PriceContext,
+    text: string | undefined,
+    categoryId: string | undefined,
+    requested: number,
+  ): Promise<{ items: CatalogProduct[]; total: number; page: number; pageSize: number; maxResults: number; search?: { relaxed: boolean; capped: boolean } }> {
+    const browse = async (search: string | undefined) => {
+      const { items, total } = await repo.listProducts(tenantId, { status: "ACTIVE", search, categoryId, offset: (requested - 1) * PUBLIC_PAGE_SIZE, limit: PUBLIC_PAGE_SIZE });
+      return { items, total, page: requested, pageSize: PUBLIC_PAGE_SIZE, maxResults: Number.POSITIVE_INFINITY };
+    };
+    if (!text) return browse(undefined);
+
+    // "DL-000184", "dl000184", "DL 000184": la referencia completa, se escriba como se escriba.
+    const whole = /^([a-z]{1,6})[\s-]?(\d{6,})$/i.exec(text);
+    const reference = whole ? referenceFromUrl(`${whole[1]}-${whole[2]}`) : null;
+    if (reference) {
+      const product = await repo.getProductByReference(tenantId, reference);
+      const ok = product && product.status === "ACTIVE" && (!categoryId || product.categoryId === categoryId) && requested === 1;
+      return { items: ok ? [product] : [], total: ok ? 1 : 0, page: requested, pageSize: PUBLIC_SEARCH_PAGE_SIZE, maxResults: 1 };
+    }
+    if (REFERENCE_FRAGMENT.test(text)) return browse(text.replace(/^([a-z]{1,6})(\d)/i, "$1-$2"));
+
+    const page = Math.min(requested, PUBLIC_SEARCH_MAX_RESULTS / PUBLIC_SEARCH_PAGE_SIZE);
+    const offset = (page - 1) * PUBLIC_SEARCH_PAGE_SIZE;
+    const query = (mode: "all" | "any", at: number, limit: number) =>
+      repo.searchCatalog(tenantId, { text, mode, channel: context, limit, offset: at, categoryId: categoryId ?? null, category: null, color: null, material: null, maxPrice: null, exclude: [] });
+
+    let result = await query("all", offset, PUBLIC_SEARCH_PAGE_SIZE);
+    if (result === null) return browse(text);
+    let relaxed = false;
+    if (result.references.length === 0) {
+      // Página vacía: ¿no hay NINGÚN producto con todas las palabras, o solo se pidió una página de más?
+      const allTotal = offset === 0 ? result.total : ((await query("all", 0, 1))?.total ?? 0);
+      if (allTotal > 0) result = { references: [], total: allTotal };
+      else if (text.includes(" ")) {
+        const loose = await query("any", offset, PUBLIC_SEARCH_PAGE_SIZE);
+        const looseTotal = loose && loose.references.length > 0 ? loose.total : offset > 0 ? ((await query("any", 0, 1))?.total ?? 0) : 0;
+        if (looseTotal > 0) {
+          result = { references: loose?.references ?? [], total: looseTotal };
+          relaxed = true;
+        }
+      }
+    }
+    const found = result.references.length > 0 ? await repo.getProductsByReferences(tenantId, result.references) : [];
+    const byReference = new Map(found.filter((p) => p.status === "ACTIVE").map((p) => [p.reference, p]));
+    return {
+      items: result.references.flatMap((r) => byReference.get(r) ?? []),
+      total: result.total,
+      page,
+      pageSize: PUBLIC_SEARCH_PAGE_SIZE,
+      maxResults: PUBLIC_SEARCH_MAX_RESULTS,
+      search: { relaxed, capped: result.total > PUBLIC_SEARCH_MAX_RESULTS },
+    };
+  }
+
   return {
     async getStorefront(slug: string): Promise<PublicStorefront | null> {
       const pub = await openPublication(slug);
@@ -622,17 +692,10 @@ export function createPublicCatalogService({ repo, orders }: { repo: CatalogRepo
       const pub = await openPublication(input.slug);
       if (!pub || !contextAllowed(pub, input.context, input.token)) return null;
 
-      const page = Number.isInteger(input.page) && (input.page as number) >= 1 ? Math.min(input.page as number, 10_000) : 1;
+      const requested = Number.isInteger(input.page) && (input.page as number) >= 1 ? Math.min(input.page as number, 10_000) : 1;
       const categoryId = input.categoryId && UUID_PATTERN.test(input.categoryId) ? input.categoryId : undefined;
-      const [{ items, total }, categories, business] = await Promise.all([
-        // Solo ACTIVOS: un producto desactivado nunca aparece en el catálogo público.
-        repo.listProducts(pub.tenantId, {
-          status: "ACTIVE",
-          search: normalizeSearch(input.q),
-          categoryId,
-          offset: (page - 1) * PUBLIC_PAGE_SIZE,
-          limit: PUBLIC_PAGE_SIZE,
-        }),
+      const [listing, categories, business] = await Promise.all([
+        publicListing(pub.tenantId, input.context, normalizeSearch(input.q), categoryId, requested),
         repo.listCategories(pub.tenantId),
         repo.getBusinessProfile(pub.tenantId),
       ]);
@@ -640,11 +703,13 @@ export function createPublicCatalogService({ repo, orders }: { repo: CatalogRepo
       return {
         business: { name: pub.publicName, whatsapp: business.whatsapp },
         context: input.context,
-        products: await project(pub, items, input.context),
+        products: await project(pub, listing.items, input.context),
         categories,
-        total,
-        page,
-        pageSize: PUBLIC_PAGE_SIZE,
+        total: listing.total,
+        page: listing.page,
+        pageSize: listing.pageSize,
+        pageCount: Math.max(1, Math.ceil(Math.min(listing.total, listing.maxResults) / listing.pageSize)),
+        ...(listing.search ? { search: listing.search } : {}),
       };
     },
 

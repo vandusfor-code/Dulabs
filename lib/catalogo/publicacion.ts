@@ -61,9 +61,21 @@ export interface PublicCatalogPage {
   total: number;
   page: number;
   pageSize: number;
+  /** Páginas navegables (una búsqueda por texto muestra como máximo PUBLIC_SEARCH_MAX_RESULTS). */
+  pageCount: number;
+  /**
+   * Solo en búsquedas por texto:
+   *   relaxed — ningún producto tenía TODAS las palabras: se muestran los que tienen alguna;
+   *   capped  — hay más resultados de los que se muestran (se pide afinar la búsqueda).
+   */
+  search?: { relaxed: boolean; capped: boolean };
 }
 
 export const PUBLIC_PAGE_SIZE = 48;
+/** Búsqueda por texto (dulabs_catalogo_buscar): páginas de 20, ordenadas por relevancia. */
+export const PUBLIC_SEARCH_PAGE_SIZE = 20;
+/** Tope de la función de búsqueda (offset ≤ 200): 11 páginas de 20. */
+export const PUBLIC_SEARCH_MAX_RESULTS = 220;
 export const SLUG_MAX = 50;
 
 /** "DELACOUR JOYERÍA" -> "delacour-joyeria". Mismo alfabeto que el CHECK de la BD. */

@@ -47,7 +47,7 @@ export function PublicCatalog({
   tile: (product: PublicCatalogProduct) => ReactNode;
 }) {
   const todo = listPath ?? basePath;
-  const totalPaginas = Math.max(1, Math.ceil(data.total / data.pageSize));
+  const totalPaginas = data.pageCount;
   const hayFiltros = Boolean(q || categoria);
   const mayor = data.context === "wholesale";
 
@@ -114,6 +114,10 @@ export function PublicCatalog({
         )}
       </div>
 
+      {data.search?.relaxed && data.products.length > 0 && (
+        <p className="mb-4 rounded-xl border border-edge bg-card px-4 py-3 text-sm text-mist">Ningún producto tiene todas las palabras que buscaste; estos tienen al menos una.</p>
+      )}
+
       {data.products.length === 0 ? (
         <div className="rounded-2xl border border-edge bg-card px-6 py-20 text-center">
           <p className="text-base font-medium text-fg">{hayFiltros ? "No encontramos productos con esa búsqueda" : "Pronto verás productos aquí"}</p>
@@ -129,6 +133,10 @@ export function PublicCatalog({
             <div key={p.reference}>{tile(p)}</div>
           ))}
         </div>
+      )}
+
+      {data.search?.capped && data.page === totalPaginas && (
+        <p className="mt-8 text-center text-sm text-mist">Estos son los resultados más parecidos a tu búsqueda. Agrega otra palabra (color, material…) para encontrar el resto.</p>
       )}
 
       {totalPaginas > 1 && (

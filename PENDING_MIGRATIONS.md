@@ -1,6 +1,6 @@
 # Pasos manuales pendientes en producción
 
-## ⏳ PENDIENTE — Bloque 14: topes de costo y abuso del agente
+## ✅ APLICADA (24-sep-2026) — Bloque 14: topes de costo y abuso del agente
 
 Migración `supabase/migrations/20261114000000_dulabs_agente_limites.sql`.
 **Aditiva**; requiere la del Bloque 13 (el consumo se lee de las trazas).
