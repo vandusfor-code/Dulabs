@@ -10,7 +10,9 @@
  *   npx tsx scripts/_publicar-publibordados.mts --tenant=<uuid> --numero=<phone_number_id>
  *       → SOLO LECTURA: valida el flow y muestra el estado actual. No escribe nada.
  *   … --publicar            → crea el flow (o una versión nueva) y la publica. No lo activa.
- *   … --publicar --activar  → además deja flow_activo=true / flow_id en ese número.
+ *   … --publicar --activar  → además deja flow_activo=true / flow_id en ese número
+ *                             y habilita el módulo Clientes del dashboard para ese tenant
+ *                             (dulabs_tenant_modulos: id_tenant + modulo "clientes").
  *
  * No toca ia_pausada: mientras siga en true, el número no responde aunque el
  * flow esté activo (el gate de ia_pausada corre antes que Flow en el webhook).
@@ -24,6 +26,7 @@ import { validateFlowForPublish } from "@/lib/flow/validate-publish";
 import { publibordadosFlow } from "@/lib/flows/publibordados.flow";
 
 const SLUG = "publibordados-calificacion";
+const MODULO_CLIENTES = "clientes";
 
 const envPath = new URL("../.env.local", import.meta.url);
 if (existsSync(envPath)) {
@@ -57,17 +60,30 @@ async function main() {
   // El número debe existir y ser de ESTE tenant (misma regla que la activación del panel).
   const { data: numero, error: errNumero } = await supabase
     .from("dulabs_clientes_config")
-    .select("id_tenant, phone_number_id, nombre_negocio, ia_pausada, flow_activo, flow_id")
+    .select("id_tenant, phone_number_id, nombre_negocio, ia_pausada, ia_restringida_a, flow_activo, flow_id")
     .eq("phone_number_id", phoneNumberId)
     .maybeSingle();
   if (errNumero) throw errNumero;
   if (!numero || numero.id_tenant !== tenantId) throw new Error("El número no existe o no pertenece a ese tenant");
 
   const existente = (await listFlows(supabase, { tenantId })).find((f) => f.slug === SLUG) ?? null;
+  const versionPublicada = existente?.published_version_id
+    ? (await listFlowVersions(supabase, { tenantId, flowId: existente.id, limit: 50 })).find((v) => v.id === existente.published_version_id)
+    : undefined;
+  const { data: modulo, error: errModulo } = await supabase
+    .from("dulabs_tenant_modulos")
+    .select("habilitado")
+    .eq("id_tenant", tenantId)
+    .eq("modulo", MODULO_CLIENTES)
+    .maybeSingle();
   const resumen: Record<string, unknown> = {
     modo: publicar ? (activar ? "publicar + activar" : "publicar") : "solo lectura",
     numero: numero,
-    flowExistente: existente ? { id: existente.id, status: existente.status, published_version_id: existente.published_version_id } : null,
+    flowExistente: existente
+      ? { id: existente.id, status: existente.status, versionPublicada: versionPublicada?.version_number ?? null }
+      : null,
+    // Si la tabla de módulos no existe todavía, se informa en vez de fallar (solo lectura).
+    moduloClientes: errModulo ? `no se pudo leer dulabs_tenant_modulos: ${errModulo.message}` : Boolean(modulo?.habilitado),
     definicion: { nodos: definition.nodes.length, conexiones: definition.edges.length, validacion: "OK" },
   };
 
@@ -95,6 +111,12 @@ async function main() {
     const r = await activarFlowParaNumero(supabase, { tenantId, flowId: flow.id, phoneNumberId });
     if (!r.ok) throw new Error(`No se pudo activar: ${r.reason}`);
     resumen.activado = { phone_number_id: r.row.phone_number_id, flow_activo: r.row.flow_activo, flow_id: r.row.flow_id, ia_pausada: r.row.ia_pausada };
+
+    const { error: errHabilitar } = await supabase
+      .from("dulabs_tenant_modulos")
+      .upsert({ id_tenant: tenantId, modulo: MODULO_CLIENTES, habilitado: true, updated_at: new Date().toISOString() }, { onConflict: "id_tenant,modulo" });
+    if (errHabilitar) throw errHabilitar;
+    resumen.moduloClientes = true;
   }
 
   console.log(JSON.stringify(resumen, null, 2));

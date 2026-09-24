@@ -14,6 +14,7 @@ import {
   Workflow,
   Blocks,
   Package,
+  Contact,
   type LucideIcon,
 } from "lucide-react";
 import type { Rol } from "@/lib/team";
@@ -59,6 +60,9 @@ export const navSections: NavSection[] = [
         rolesPermitidos: ["admin", "agente"],
       },
       { label: "Agentes de IA", labelEn: "AI agents", href: "/dashboard/agentes", icon: Waypoints },
+      // Clientes (autorizado) -- solo para tenants con el módulo "clientes"
+      // habilitado (dulabs_tenant_modulos). La API autoriza por su cuenta.
+      { label: "Clientes", labelEn: "Customers", href: "/dashboard/clientes", icon: Contact, modulo: "clientes" },
     ],
   },
   {

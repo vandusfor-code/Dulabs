@@ -41,6 +41,7 @@ import { esInterrupcionEscapeHatch, MENSAJE_HABLAR_CON_DANI } from "@/lib/flow-e
 import { esMencionPestanas, MENSAJE_TRANSFERENCIA_PESTANAS } from "@/lib/flow-pestanas-hatch";
 import { esMensajeInicioSolotalento } from "@/lib/flow-solotalento-inicio-hatch";
 import { pareceLikelyPreguntaLateral } from "@/lib/flow-lateral-question";
+import { esNumeroPublibordados, reiniciarFlowPublibordadosSiCorresponde } from "@/lib/publibordados/reinicio";
 import { enviarWhatsApp } from "@/lib/whatsapp-outbound";
 import { activarPausaChat } from "@/lib/pausas-chat";
 import { parseFlowDefinition } from "@/lib/flow/schemas";
@@ -897,36 +898,59 @@ export async function atenderMensajeConFlowConFallback(params: {
   });
   if (inicioSolotalento) return inicioSolotalento;
 
-  const pestanas = await intentarTransferenciaPestanas({
-    supabase: params.supabase,
-    cliente: params.cliente,
-    telefonoCliente: params.telefonoCliente,
-    texto: params.texto,
-    buttonId: params.buttonId,
-    store,
-  });
-  if (pestanas) return pestanas;
+  // PUBLI BORDADOS (autorizado) — exclusivo de su número. Reinicio por
+  // palabra ("reiniciar"/"menú"/"inicio") o por >24 h sin actividad: solo
+  // cierra la ejecución activa y sigue el camino normal (que arranca desde
+  // "start"). Y se saltan los atajos de abajo, que son de Daniela y no están
+  // limitados por negocio: pestañas y "espera/cancela" responderían con
+  // mensajes de Dani, y la pregunta lateral llamaría a IA generativa; el
+  // flow de Publi Bordados es determinista y responde todo por sí mismo.
+  const esPublibordados = esNumeroPublibordados(params.cliente.phone_number_id);
+  if (esPublibordados) {
+    await reiniciarFlowPublibordadosSiCorresponde({
+      supabase: params.supabase,
+      store,
+      tenantId: params.cliente.id_tenant,
+      phoneNumberId: params.cliente.phone_number_id,
+      telefonoCliente: params.telefonoCliente,
+      texto: params.texto,
+      wamid: params.wamid,
+      buttonId: params.buttonId,
+    });
+  }
 
-  const escapado = await intentarEscapeHatch({
-    supabase: params.supabase,
-    cliente: params.cliente,
-    telefonoCliente: params.telefonoCliente,
-    texto: params.texto,
-    buttonId: params.buttonId,
-    store,
-  });
-  if (escapado) return escapado;
+  if (!esPublibordados) {
+    const pestanas = await intentarTransferenciaPestanas({
+      supabase: params.supabase,
+      cliente: params.cliente,
+      telefonoCliente: params.telefonoCliente,
+      texto: params.texto,
+      buttonId: params.buttonId,
+      store,
+    });
+    if (pestanas) return pestanas;
 
-  const lateral = await intentarPreguntaLateral({
-    supabase: params.supabase,
-    cliente: params.cliente,
-    telefonoCliente: params.telefonoCliente,
-    texto: params.texto,
-    buttonId: params.buttonId,
-    store,
-    dispatchAiOverride: params.dispatchAiPreguntaLateralOverride,
-  });
-  if (lateral) return lateral;
+    const escapado = await intentarEscapeHatch({
+      supabase: params.supabase,
+      cliente: params.cliente,
+      telefonoCliente: params.telefonoCliente,
+      texto: params.texto,
+      buttonId: params.buttonId,
+      store,
+    });
+    if (escapado) return escapado;
+
+    const lateral = await intentarPreguntaLateral({
+      supabase: params.supabase,
+      cliente: params.cliente,
+      telefonoCliente: params.telefonoCliente,
+      texto: params.texto,
+      buttonId: params.buttonId,
+      store,
+      dispatchAiOverride: params.dispatchAiPreguntaLateralOverride,
+    });
+    if (lateral) return lateral;
+  }
 
   // Fase 4.A (Trigger Router → Runtime, autorizado) — resolución CONSERVADORA
   // del flowId de una ejecución NUEVA (ver resolverFlowIdConTriggerRouting

@@ -141,6 +141,40 @@ export async function extenderPausaChat(
   return { ok: false, error: "pausa inestable" };
 }
 
+/**
+ * Respuesta manual de una persona desde el celular (eco de coexistencia) —
+ * autorizado (Publi Bordados, corrección compartida).
+ *
+ * Antes el eco usaba activarPausaChat, que REEMPLAZA la pausa: un traspaso de
+ * 30 días (Publi Bordados) o de 24 h (Daniela) quedaba en 30 minutos en
+ * cuanto la asesora respondía, y el bot volvía a hablar en un chat atendido
+ * por una persona. Ahora la pausa nunca se acorta (extenderPausaChat) y se
+ * conserva el otro efecto de activarPausaChat que usa el cron
+ * seguimiento-traspaso: pausado_desde = ahora y seguimiento_enviado = false
+ * ("una persona acaba de responder"), también cuando la pausa ya era más larga.
+ */
+export async function activarPausaPorRespuestaHumana(
+  supabase: SupabaseClient,
+  phoneNumberId: string,
+  telefonoCliente: string,
+  duracionMs: number,
+): Promise<ActivarPausaChatResult> {
+  const resultado = await extenderPausaChat(supabase, phoneNumberId, telefonoCliente, duracionMs);
+  if (!resultado.ok) {
+    console.error("[pausas-chat] error activando pausa por respuesta humana:", resultado.error);
+    return resultado;
+  }
+  if (resultado.efecto === "ya_mas_larga") {
+    const { error } = await supabase
+      .from("dulabs_pausas_chat")
+      .update({ pausado_desde: new Date().toISOString(), seguimiento_enviado: false })
+      .eq("phone_number_id", phoneNumberId)
+      .eq("telefono_cliente", telefonoCliente);
+    if (error) console.error("[pausas-chat] error refrescando seguimiento de la pausa:", error.message);
+  }
+  return { ok: true, pausadoHasta: resultado.pausadoHasta };
+}
+
 // Fase 9 (Human Inbox, autorizado) — "Devolver a IA": libera la pausa de
 // ESTE chat puntual antes de que expire sola. Simplemente borra la fila
 // (sin fila = sin pausa = la IA vuelve a responder en el próximo mensaje,

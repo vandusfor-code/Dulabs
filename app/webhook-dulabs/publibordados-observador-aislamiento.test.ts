@@ -26,6 +26,9 @@ describe("webhook-dulabs: el observador de Publi Bordados es aditivo e inerte", 
     const lineas = ruta.split("\n").filter((l) => /publibordados/i.test(l) && !l.trim().startsWith("//"));
     assert.deepEqual(lineas.map((l) => l.trim()), [
       'import { observadorPublibordadosActivo, observarCambioPublibordados } from "@/lib/publibordados/observador/observador";',
+      // Único otro punto de contacto autorizado (Flow de Publi Bordados, no el observador):
+      // si su Flow no atiende un mensaje, nunca se cae a la IA generativa legacy.
+      'import { permiteFallbackALegacy } from "@/lib/publibordados/reinicio";',
       "if (observadorPublibordadosActivo()) after(observarCambioPublibordados(change, recibidoAt));",
     ]);
   });
