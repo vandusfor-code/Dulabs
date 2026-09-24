@@ -68,6 +68,24 @@ total: un campo de más → `INVALID_INPUT`. Internas (no expuestas al modelo):
 - **Enlaces**: la respuesta solo puede llevar el enlace que devolvió `get_catalog_link` (el backend lo arma con negocio + canal + publicación). Detal nunca recibe el link mayorista.
 - **Duplicados**: un wamid ya atendido (reintento de Meta) no genera otra respuesta; el pedido es idempotente por mensaje.
 
+## Un turno a la vez por conversación (Bloque 11)
+
+```
+mensaje -> dulabs_agente_buzon (único por wamid, con la foto citada)
+        -> dulabs_agente_tomar_turno --no--> "en cola": lo atiende el turno en curso
+                                     |sí
+        [pendientes (la ráfaga completa) -> UN turno del agente -> marcar procesados]*
+        -> dulabs_agente_soltar_turno: si llegó algo más, sigue (atómico); si no, suelta
+```
+
+- Nunca dos turnos del agente en paralelo en la misma conversación (antes: el candado del
+  chat esperaba 20 s y un turno podía tardar 45 s; el segundo pisaba el carrito del primero).
+- El mensaje que el freno de ráfaga del webhook deja pasar entra al buzón: el turno del más
+  nuevo atiende ambos (sus referencias cuentan como escritas por el cliente).
+- Turno caído: vence solo; el siguiente mensaje atiende lo pendiente. Pendientes de más de
+  15 min (p. ej. mientras una asesora tenía el chat) se cierran sin responder.
+- Presupuesto: no se empieza otro turno pasados 45 s (caben en los 120 s de la función).
+
 ## Búsqueda con miles de referencias (Bloque 10)
 
 El catálogo nunca viaja al modelo: cada búsqueda devuelve **una página de 5** con el total.

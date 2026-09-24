@@ -138,10 +138,10 @@ export const HISTORY_WINDOW_MS = 24 * 60 * 60 * 1000;
  * mensaje actual, campañas y vacíos; fusiona consecutivos del mismo rol;
  * empieza por el cliente; recorta por turnos y por caracteres (lo más nuevo gana).
  */
-export function historyTurns(rows: HistoryRow[], opts: { excludeWamid?: string; maxTurns?: number; maxChars?: number } = {}): AITurn[] {
+export function historyTurns(rows: HistoryRow[], opts: { excludeWamid?: string; excludeWamids?: readonly string[]; maxTurns?: number; maxChars?: number } = {}): AITurn[] {
   const turns: Array<{ role: "user" | "model"; text: string }> = [];
   for (const row of rows) {
-    if (opts.excludeWamid && row.wamid === opts.excludeWamid) continue;
+    if (row.wamid && (row.wamid === opts.excludeWamid || opts.excludeWamids?.includes(row.wamid))) continue;
     if (row.origen === "campaña") continue;
     const text = row.contenido.trim();
     if (!text) continue;

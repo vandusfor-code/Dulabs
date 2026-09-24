@@ -89,6 +89,11 @@ export interface AgentTurnInput {
   requestId?: string;
   /** context de Meta: el mensaje citado (wamid) o si fue reenviado. */
   replyTo?: { wamid?: string | null; forwarded?: boolean } | null;
+  /**
+   * Todos los mensajes que atiende este turno (ráfaga del buzón), en orden; `wamid` es el
+   * más nuevo y `text` los reúne. Sin él, el turno atiende solo `wamid`.
+   */
+  wamids?: readonly string[];
 }
 
 export type AgentTurnOutcome = "replied" | "handoff" | "fallback" | "preempted" | "safety" | "duplicate";
@@ -218,8 +223,9 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
     trace.delivery.text_wamid = r.wamid;
     return finish("fallback", r.sent ? FALLBACK_MESSAGES.technical : null);
   }
+  const wamids = input.wamids && input.wamids.length > 0 ? [...input.wamids] : [input.wamid];
   // Reintento de Meta / mensaje doble ya atendido: ni modelo ni respuesta (el webhook también deduplica; esto es la segunda barrera).
-  if (loaded.state.recentWamids.includes(input.wamid)) {
+  if (wamids.every((w) => loaded.state.recentWamids.includes(w))) {
     trace.turn = loaded.state.turn;
     return finish("duplicate", null);
   }
@@ -232,7 +238,7 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
     ...loaded.state,
     turn: loaded.state.turn + 1,
     lastInteractionAt: new Date(now()).toISOString(),
-    recentWamids: [...loaded.state.recentWamids, input.wamid.slice(0, 200)].slice(-MAX_RECENT_WAMIDS),
+    recentWamids: [...loaded.state.recentWamids.filter((w) => !wamids.includes(w)), ...wamids.map((w) => w.slice(0, 200))].slice(-MAX_RECENT_WAMIDS),
   };
   trace.turn = state.turn;
   const typedRefs = extractReferences(input.text);
@@ -309,7 +315,7 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
 
   // 3) Contexto por capas.
   const rows = await deps.history.recent({ phoneNumberId: input.phoneNumberId, waId: input.waId, sinceIso: new Date(now() - HISTORY_WINDOW_MS).toISOString(), limit: HISTORY_MAX_TURNS * 2 + 4 });
-  const turns: AITurn[] = [...historyTurns(rows, { excludeWamid: input.wamid }), { role: "user", text: input.text }];
+  const turns: AITurn[] = [...historyTurns(rows, { excludeWamids: wamids }), { role: "user", text: input.text }];
   const declarations = agentToolDeclarations(allowed);
 
   const ctx: AgentTurnToolContext = {

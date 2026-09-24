@@ -33,7 +33,8 @@ import { esTelefonoBloqueado } from "@/lib/blacklist-du";
 import { recibirPedidoWhatsapp } from "@/lib/catalogo/pedidos/intake";
 import { productionIntakeDeps } from "@/lib/catalogo/pedidos/produccion";
 import { loadAgentConfig } from "@/lib/agente/config";
-import { atenderConAgenteSiAplica, productionAgentBoundaryDeps } from "@/lib/agente/webhook";
+import { atenderConAgenteSiAplica, encolarEnBuzonSiAplica, productionAgentBoundaryDeps } from "@/lib/agente/webhook";
+import { createSupabaseMailboxStore } from "@/lib/agente/buzon";
 import { getSurveyBot, getSession, saveSession } from "@/lib/survey-bot-store";
 import { handleMessage, questionPrompt } from "@/lib/survey-engine";
 import { interpretarRespuestaEncuesta, redactarPreguntaCalida, fraseEmpatica, type Sentimiento } from "@/lib/survey-agent-ia";
@@ -966,6 +967,9 @@ async function atenderMensaje(
     .maybeSingle();
   if (masReciente?.wamid && masReciente.wamid !== mensaje.id) {
     console.log(`[webhook-dulabs] mensaje ${mensaje.id} superado por uno más nuevo del mismo remitente, no respondo (evita duplicados)`);
+    // Agente conversacional (Bloque 11): este mensaje entra al buzón para que el turno del
+    // más nuevo atienda la ráfaga completa (con la foto citada, si la hubo). Sin agente: nada.
+    await encolarMensajeSuperadoEnAgente(cliente, mensaje, telefonoRemitente);
     return;
   }
 
@@ -1311,6 +1315,21 @@ async function intentarAgenteConversacionalSiAplica(cliente: ClienteConfig, mens
     // Error inesperado: no se sabe si el número tiene agente => no se arriesga a que responda otro bot.
     console.error(`[webhook-dulabs] excepción en el agente conversacional (tenant ${cliente.id_tenant}):`, err instanceof Error ? err.message : err);
     return true;
+  }
+}
+
+async function encolarMensajeSuperadoEnAgente(cliente: ClienteConfig, mensaje: MetaMessage, telefonoRemitente: string): Promise<void> {
+  const texto = mensaje.text?.body?.trim();
+  if (!texto) return;
+  try {
+    const supabase = supabaseAdmin();
+    const replyTo = mensaje.context ? { wamid: mensaje.context.id ?? null, forwarded: !!(mensaje.context.forwarded || mensaje.context.frequently_forwarded) } : null;
+    await encolarEnBuzonSiAplica(
+      { cliente, waId: telefonoRemitente, destino: telefonoRemitente, wamid: mensaje.id, text: texto.slice(0, 4_000), replyTo },
+      { configStore: productionAgentBoundaryDeps(supabase, cliente).configStore, mailbox: createSupabaseMailboxStore(supabase) },
+    );
+  } catch (err) {
+    console.error(`[webhook-dulabs] no se pudo encolar en el buzón del agente (tenant ${cliente.id_tenant}):`, err instanceof Error ? err.message : err);
   }
 }
 
