@@ -1,6 +1,6 @@
 # Pasos manuales pendientes en producción
 
-## PENDIENTE — Bloque 20: búsqueda del catálogo indexada (rendimiento con miles de referencias)
+## ✅ APLICADA (24-sep-2026, verificada `1 | 1 | 1 | 0 | 0`) — Bloque 20: búsqueda del catálogo indexada (rendimiento con miles de referencias)
 
 Migración `supabase/migrations/20261117000000_dulabs_catalogo_busqueda_indice.sql`. **Aditiva**.
 Crea la tabla propia del catálogo `dulabs_catalogo_busqueda_doc`, con dos cosas por producto:
@@ -223,6 +223,9 @@ Rollback: al inicio del archivo de la migración.
 ## ✅ APLICADA (24-sep-2026) — Bloque 10: búsqueda del catálogo para el agente (miles de referencias)
 
 Migración `supabase/migrations/20261111000000_dulabs_catalogo_busqueda.sql`.
+> Nota (24-sep-2026): sus funciones no estaban en producción (error 42883 al aplicar el
+> Bloque 20). Quedaron creadas por la migración del Bloque 20, que las incluye idénticas y
+> reemplaza `dulabs_catalogo_buscar` por su versión indexada. No hace falta correr esta.
 **100 % aditiva**: solo funciones nuevas. **No** agrega columnas a
 `dulabs_inventario_productos` (compartida con AMORE) ni cambia la tienda pública.
 
