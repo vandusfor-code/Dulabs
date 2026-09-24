@@ -673,6 +673,159 @@ describe("17-20. duplicados, reintentos de Meta, asesora y carreras", () => {
   });
 });
 
+describe("Bloque 22: venta real de punta a punta (catálogo con la forma del de Delacour)", () => {
+  /** Todo lo que vio el modelo y todo lo que salió por WhatsApp en la conversación. */
+  const expuesto = (reqs: AIGenerateRequest[]) => JSON.stringify(reqs) + JSON.stringify(sent) + JSON.stringify(images.map((i) => ({ url: i.url, caption: i.caption })));
+
+  it("B22-1 'muéstrame aretes' → fotos → responde a la 2ª foto 'quiero este' → 'que sean 2' → pedido → 'sí' → stock apartado", async () => {
+    const reqs: AIGenerateRequest[] = [];
+    const { luna, sol, estrella, fotos } = await buscarConFotos();
+    assert.deepEqual([...fotos.keys()], [luna.reference, sol.reference, estrella.reference], "una foto por producto, en el orden pedido");
+    const r1 = await turno([call("update_cart", { items: [{ reference: sol.reference, quantity: 1 }] }), { text: `Listo: Aretes Sol, ${formatCop(52_000)}.` }], "quiero este", { replyTo: { wamid: fotos.get(sol.reference) } });
+    reqs.push(...r1.provider.requests);
+    assert.deepEqual(r1.trace.selection, [{ reference: sol.reference, via: "image_reply" }], "el producto lo decide la foto citada, no el modelo");
+    const r2 = await turno([call("update_cart", { items: [{ reference: sol.reference, quantity: 2 }] }), { text: `Cambié a 2 unidades: ${formatCop(104_000)}.` }], "que sean 2");
+    reqs.push(...r2.provider.requests);
+    assert.deepEqual((await estado()).cart, [{ reference: sol.reference, quantity: 2 }]);
+    const r3 = await turno([call("create_order_request"), { text: `Tu pedido: Aretes Sol × 2 — ${formatCop(104_000)}. Total: ${formatCop(104_000)}. ¿Confirmas?` }], "hagamos el pedido");
+    reqs.push(...r3.provider.requests);
+    const creado = lastToolOutputs(r3.provider.requests[1])[0] as { total: number; lines: Array<{ unit_price: number; quantity: number }> };
+    assert.equal(creado.total, 104_000, "el total lo calcula el backend");
+    assert.deepEqual(creado.lines.map((l) => [l.unit_price, l.quantity]), [[52_000, 2]]);
+    assert.equal(mem.inventory.stockOf(sol.id), 5, "proponer no aparta stock");
+    const s = await estado();
+    const r4 = await turno([call("confirm_order", { order_id: s.proposal!.orderId, confirmation_id: s.proposal!.confirmationId }), { text: "¡Pedido confirmado! Te escribe una asesora para el pago y el envío." }], "sí");
+    reqs.push(...r4.provider.requests);
+    assert.deepEqual(results(r4), ["ok"]);
+    assert.equal(mem.inventory.stockOf(sol.id), 3, "confirmar aparta exactamente 2 unidades, una sola vez");
+    assert.equal(pedidos.orders[0].status, "confirmed");
+    assert.deepEqual(pedidos.reservations.map((x) => [x.reference, x.quantity, x.status]), [[sol.reference, 2, "activa"]]);
+    const todo = expuesto(reqs);
+    for (const interno of [sol.id, luna.id, estrella.id, A.tenantId, pedidos.orders[0].id]) assert.ok(!todo.includes(interno), `nunca sale un id interno (${interno})`);
+  });
+
+  it("B22-2 responde a la foto de Sol, pero el modelo intenta agregar Luna ⇒ CHOICE_REQUIRED: la foto citada manda, no la inferencia del modelo", async () => {
+    const { luna, sol, fotos } = await buscarConFotos();
+    const r = await turno([call("update_cart", { items: [{ reference: luna.reference, quantity: 1 }] }), { text: "¿Te refieres a los Aretes Sol de la foto?" }], "quiero este", { replyTo: { wamid: fotos.get(sol.reference) } });
+    assert.deepEqual(results(r), ["CHOICE_REQUIRED"]);
+    assert.deepEqual((await estado()).cart, []);
+  });
+
+  it("B22-3 varias fotos y 'quiero este' SIN responder a ninguna ⇒ no se adivina", async () => {
+    const { sol } = await buscarConFotos();
+    const r = await turno([call("update_cart", { items: [{ reference: sol.reference, quantity: 1 }] }), { text: "¿Cuál de las fotos te gustó? Respóndele a esa foto." }], "quiero este");
+    assert.deepEqual(results(r), ["CHOICE_REQUIRED"]);
+    assert.deepEqual((await estado()).cart, []);
+  });
+
+  it("B22-4 la foto del mismo producto enviada dos veces: ambos mensajes llevan al MISMO producto, incluso la más vieja después de otra búsqueda", async () => {
+    const { sol, fotos } = await buscarConFotos();
+    const vieja = fotos.get(sol.reference)!;
+    await turno([call("search_products", { query: "aretes sol" }), call("request_product_images", { references: [sol.reference] }), { text: "Estos son los Aretes Sol." }], "muéstrame los sol otra vez");
+    const nueva = traces.at(-1)!.delivery.images[0].wamid!;
+    assert.notEqual(nueva, vieja);
+    for (const w of [vieja, nueva]) assert.equal((await ledger.findByWamid({ tenantId: A.tenantId, phoneNumberId: PN_A, waId: CLIENTE }, w))?.reference, sol.reference);
+    const r = await turno([call("update_cart", { items: [{ reference: sol.reference, quantity: 1 }] }), { text: "Listo, Aretes Sol." }], "este", { replyTo: { wamid: vieja } });
+    assert.deepEqual(r.trace.selection, [{ reference: sol.reference, via: "image_reply" }]);
+    assert.deepEqual((await estado()).cart, [{ reference: sol.reference, quantity: 1 }]);
+  });
+
+  it("B22-5 fotos de una lista con un producto SIN foto: salen las que existen; el faltante se informa y nunca se inventa una imagen", async () => {
+    const luna = await producto(A, "Aretes Luna", 45_000, 5);
+    const sinFoto = await producto(A, "Aretes Gota", 38_000, 5, { photo: false });
+    await turno([call("search_products", { query: "aretes" }), presentarLista], "aretes");
+    const r = await turno([call("request_product_images", { references: [luna.reference, sinFoto.reference] }), { text: "Te envío la foto que tengo." }], "fotos");
+    const out = lastToolOutputs(r.provider.requests[1])[0] as { queued: string[]; skipped: Array<{ reference: string; reason: string }> };
+    assert.deepEqual(out.queued, [luna.reference]);
+    assert.deepEqual(out.skipped, [{ reference: sinFoto.reference, reason: "no_photo" }]);
+    assert.equal(images.length, 1);
+  });
+
+  it("B22-6 producto BORRADO después de iniciar la conversación: ni por posición, ni desde el carrito, ni al confirmar, ni respondiendo a su foto", async () => {
+    const { luna, sol, estrella, fotos } = await buscarConFotos();
+    // a) Mostrado y luego borrado: elegirlo por posición no lo agrega.
+    mem.hardDelete(luna.id);
+    const pos = (await mostrados()).indexOf(luna.reference) + 1;
+    const a = await turno([call("update_cart", { items: [{ reference: luna.reference, quantity: 1 }] }), { text: "Ese producto ya no está disponible." }], `quiero el ${pos}`);
+    assert.deepEqual(results(a), ["REFERENCE_NOT_FOUND"]);
+    assert.deepEqual((await estado()).cart, []);
+    // b) Respondiendo a su foto: el sistema no lo encuentra y no lo agrega.
+    const b = await turno([call("update_cart", { items: [{ reference: luna.reference, quantity: 1 }] }), { text: "Ese producto ya no está disponible." }], "quiero este", { replyTo: { wamid: fotos.get(luna.reference) } });
+    assert.equal(b.trace.reply_to, "product_image", "la foto sí es de esta conversación");
+    assert.equal((stateJson(b.provider.requests[0]).respondio_a as { estado: string }).estado, "ya no está disponible", "el modelo recibe el hecho, no una suposición");
+    assert.deepEqual(results(b), ["REFERENCE_NOT_FOUND"]);
+    assert.deepEqual((await estado()).cart, []);
+    // c) En el carrito y borrado antes de proponer: el pedido no lo incluye como vendible.
+    await turno([call("update_cart", { items: [{ reference: sol.reference, quantity: 1 }] }), { text: "Listo, Aretes Sol." }], "quiero este", { replyTo: { wamid: fotos.get(sol.reference) } });
+    mem.hardDelete(sol.id);
+    const c = await turno([call("create_order_request"), { text: "Ese producto ya no está disponible; ¿quieres ver otras opciones?" }], "hagamos el pedido");
+    const creado = lastToolOutputs(c.provider.requests[1])[0] as { status?: string; confirmation?: unknown; issues?: Array<{ code: string }> };
+    assert.equal(creado.confirmation ?? null, null, "sin propuesta confirmable con un producto borrado");
+    assert.equal(creado.status, "draft");
+    assert.deepEqual(creado.issues?.map((i) => i.code), ["reference_not_found"]);
+    // d) Propuesto y borrado antes del "sí": no se confirma y no se toca stock de nadie.
+    await turno([call("update_cart", { items: [{ reference: sol.reference, quantity: 0 }] }), { text: "Lo quité." }], "quítalo");
+    const e2 = estrella;
+    await turno([call("update_cart", { items: [{ reference: e2.reference, quantity: 2 }] }), { text: "Agregué 2 Aretes Estrella." }], "quiero 2 del 3", { replyTo: { wamid: fotos.get(e2.reference) } });
+    await turno([call("create_order_request"), { text: `Total: ${formatCop(120_000)}. ¿Confirmas?` }], "pedido");
+    const s = await estado();
+    assert.ok(s.proposal, "hay propuesta");
+    mem.hardDelete(e2.id);
+    const d = await turno([call("confirm_order", { order_id: s.proposal!.orderId, confirmation_id: s.proposal!.confirmationId }), { text: "Ese producto ya no está disponible; no confirmé el pedido." }], "sí");
+    assert.deepEqual(results(d), ["REFERENCE_NOT_FOUND"]);
+    assert.ok(!pedidos.orders.some((o) => o.status === "confirmed"), "ningún pedido quedó confirmado");
+    assert.equal(pedidos.reservations.filter((x) => x.status === "activa").length, 0);
+  });
+
+  it("B22-7 número MAYORISTA: búsqueda, foto y pedido con el precio mayorista; sin precio mayorista ⇒ 'a consultar' y no se inventa", async () => {
+    const may = cfg({ canal: "wholesale" });
+    const luna = await producto(A, "Aretes Luna", 45_000, 5, { wholesale: 25_000 });
+    const sinMayor = await producto(A, "Aretes Nube", 50_000, 5);
+    const r1 = await turno([call("search_products", { query: "aretes" }), presentarLista], "aretes", { config: may });
+    const precios = new Map(candidatos(r1.provider.requests[1]).map((c) => [c.reference, c.unit_price]));
+    assert.equal(precios.get(luna.reference), 25_000);
+    assert.equal(precios.get(sinMayor.reference) ?? null, null, "sin precio mayorista: el backend no inventa uno (ni usa el detal)");
+    await turno([call("request_product_images", { references: [luna.reference] }), { text: "Te envío la foto." }], "foto", { config: may });
+    assert.match(images.at(-1)!.caption, /\$25\.000/);
+    assert.doesNotMatch(images.at(-1)!.caption, /45\.000/);
+    const pos = (await mostrados()).indexOf(luna.reference) + 1;
+    await turno([call("update_cart", { items: [{ reference: luna.reference, quantity: 3 }] }), { text: "Agregué 3." }], `quiero 3 del ${pos}`, { config: may });
+    const r2 = await turno([call("create_order_request"), { text: `Total: ${formatCop(75_000)}. ¿Confirmas?` }], "pedido", { config: may });
+    assert.equal((lastToolOutputs(r2.provider.requests[1])[0] as { total: number }).total, 75_000);
+    assert.equal(pedidos.orders[0].channel, "wholesale");
+  });
+
+  it("B22-8 'quiero hablar con una asesora': traspaso determinista SIN consultar a Gemini, con motivo y pausa del chat", async () => {
+    await aretes();
+    const r = await turno([call("search_products", { query: "aretes" }), presentarLista], "quiero hablar con una asesora por favor");
+    assert.equal(r.outcome, "handoff");
+    assert.deepEqual(pausas, [CLIENTE]);
+    assert.equal(r.trace.handoff?.source, "customer");
+    assert.equal(r.trace.handoff?.motive, "customer_request");
+    assert.equal(r.provider.requests.length, 0, "Gemini ni siquiera se consulta: el traspaso lo decide el backend");
+    assert.equal(sent.length, 1, "solo el aviso fijo del traspaso");
+  });
+
+  it("B22-9 cantidades y referencias manipuladas: fuera de rango, de otro negocio o inventadas nunca llegan al carrito", async () => {
+    const { sol, fotos } = await buscarConFotos();
+    // Las referencias son por negocio: B necesita una que NO exista en A para probar el cruce de negocios.
+    for (let i = 0; i < 3; i++) await producto(B, `Relleno B ${i}`, 10_000, 5);
+    const ajeno = await producto(B, "Aretes de B", 10_000, 50);
+    assert.equal(await mem.repo.getProductByReference(A.tenantId, ajeno.reference), null, "la referencia de B no existe en A");
+    for (const [items, esperado] of [
+      [[{ reference: sol.reference, quantity: 500 }], "INVALID_INPUT"],
+      [[{ reference: sol.reference, quantity: -1 }], "INVALID_INPUT"],
+      [[{ reference: sol.reference, quantity: 1.5 }], "INVALID_INPUT"],
+      [[{ reference: ajeno.reference, quantity: 1 }], "REFERENCE_NOT_ALLOWED"],
+      [[{ reference: "DL-999999", quantity: 1 }], "REFERENCE_NOT_ALLOWED"],
+    ] as const) {
+      const r = await turno([call("update_cart", { items: items as unknown as Record<string, unknown>[] }), { text: "No pude hacer ese cambio." }], "quiero este", { replyTo: { wamid: fotos.get(sol.reference) } });
+      assert.equal(results(r)[0], esperado, JSON.stringify(items));
+    }
+    assert.deepEqual((await estado()).cart, []);
+  });
+});
+
 describe("piezas de soporte", () => {
   it("memoria: un estado guardado antes de la Fase 9 sigue siendo válido (campos nuevos con default)", () => {
     const viejo = { v: 1, turn: 3, channel: null, cart: [], known: [], lastShown: [], ambiguity: null, proposal: null, activeOrderId: null, failures: 0, lastInteractionAt: null };

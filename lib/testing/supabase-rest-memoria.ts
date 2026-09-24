@@ -245,6 +245,15 @@ export function installSupabaseMemoria(url = "http://supabase.memoria"): Supabas
         let rows = sortRows(applyFilters(list, u.searchParams), u.searchParams.get("order"));
         const offset = Number(u.searchParams.get("offset") ?? 0);
         const limit = u.searchParams.has("limit") ? Number(u.searchParams.get("limit")) : rows.length;
+        // Como PostgREST con count=exact: el total es el de TODAS las filas filtradas, y pedir una
+        // página que empieza más allá del total responde 416 PGRST103 (verificado contra PostgREST 12).
+        if (prefer.includes("count=exact") && !single) {
+          const total = rows.length;
+          if (offset > total) return json(416, { code: "PGRST103", message: "Requested range not satisfiable", details: `An offset of ${offset} was requested, but there are only ${total} rows.`, hint: null });
+          const page = project(rows.slice(offset, offset + limit), u.searchParams.get("select"));
+          const range = page.length > 0 ? `${offset}-${offset + page.length - 1}` : "*";
+          return json(200, method === "HEAD" ? undefined : page, { "content-range": `${range}/${total}` });
+        }
         rows = rows.slice(offset, offset + limit);
         return reply(project(rows, u.searchParams.get("select")));
       }

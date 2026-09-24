@@ -47,6 +47,21 @@ export interface AgentBoundaryInput {
   replyTo?: { wamid?: string | null; forwarded?: boolean } | null;
 }
 
+/**
+ * `context` del mensaje de Meta -> a qué respondió el cliente (Bloque 22). Única lectura, para el
+ * turno directo y para el buzón:
+ *   - deslizar para responder a una foto: { from, id } -> id = wamid de ESA foto (el registro de
+ *     fotos enviadas dice qué producto es; nunca se adivina);
+ *   - reenviado: { forwarded: true } (o frequently_forwarded) -> no hay foto citada.
+ * Sin context => null. Un id vacío o inválido no se usa (el agente pide aclaración).
+ */
+export function replyToDeMeta(context: { id?: string | null; forwarded?: boolean; frequently_forwarded?: boolean } | null | undefined): AgentBoundaryInput["replyTo"] {
+  if (!context) return null;
+  const forwarded = !!(context.forwarded || context.frequently_forwarded);
+  const id = typeof context.id === "string" && context.id.trim() !== "" ? context.id.trim().slice(0, 200) : null;
+  return { wamid: forwarded ? null : id, forwarded };
+}
+
 export type AgentBoundaryResult =
   | { handled: false; reason: "no_agent" }
   | { handled: true; outcome: "disabled" | "invalid_config" | "unavailable" | "queued" | AgentTurnTrace["outcome"]; reason?: string; turns?: number };

@@ -33,7 +33,7 @@ import { esTelefonoBloqueado } from "@/lib/blacklist-du";
 import { recibirPedidoWhatsapp } from "@/lib/catalogo/pedidos/intake";
 import { productionIntakeDeps } from "@/lib/catalogo/pedidos/produccion";
 import { loadAgentConfig } from "@/lib/agente/config";
-import { atenderConAgenteSiAplica, encolarEnBuzonSiAplica, productionAgentBoundaryDeps } from "@/lib/agente/webhook";
+import { atenderConAgenteSiAplica, encolarEnBuzonSiAplica, productionAgentBoundaryDeps, replyToDeMeta } from "@/lib/agente/webhook";
 import { createSupabaseMailboxStore } from "@/lib/agente/buzon";
 import { getSurveyBot, getSession, saveSession } from "@/lib/survey-bot-store";
 import { handleMessage, questionPrompt } from "@/lib/survey-engine";
@@ -1308,7 +1308,7 @@ async function intentarAgenteConversacionalSiAplica(cliente: ClienteConfig, mens
       return cfg.kind !== "none";
     }
     // Respuesta a una foto: el agente resuelve el producto con el registro de fotos enviadas (nunca adivinando).
-    const replyTo = mensaje.context ? { wamid: mensaje.context.id ?? null, forwarded: !!(mensaje.context.forwarded || mensaje.context.frequently_forwarded) } : null;
+    const replyTo = replyToDeMeta(mensaje.context);
     const r = await atenderConAgenteSiAplica({ cliente, waId: telefonoRemitente, destino, wamid: mensaje.id, text: texto.slice(0, 4_000), replyTo }, deps);
     return r.handled;
   } catch (err) {
@@ -1323,7 +1323,7 @@ async function encolarMensajeSuperadoEnAgente(cliente: ClienteConfig, mensaje: M
   if (!texto) return;
   try {
     const supabase = supabaseAdmin();
-    const replyTo = mensaje.context ? { wamid: mensaje.context.id ?? null, forwarded: !!(mensaje.context.forwarded || mensaje.context.frequently_forwarded) } : null;
+    const replyTo = replyToDeMeta(mensaje.context);
     await encolarEnBuzonSiAplica(
       { cliente, waId: telefonoRemitente, destino: telefonoRemitente, wamid: mensaje.id, text: texto.slice(0, 4_000), replyTo },
       { configStore: productionAgentBoundaryDeps(supabase, cliente).configStore, mailbox: createSupabaseMailboxStore(supabase) },

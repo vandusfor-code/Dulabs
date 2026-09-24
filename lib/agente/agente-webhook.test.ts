@@ -143,7 +143,8 @@ describe("webhook: posición del agente y aislamiento de lo existente (guarda es
 
   it("el webhook le pasa al agente el mensaje CITADO (respuesta a una foto) o si fue reenviado", () => {
     const src = readFileSync(join(process.cwd(), "app/webhook-dulabs/route.ts"), "utf8");
-    assert.match(src, /const replyTo = mensaje\.context \? \{ wamid: mensaje\.context\.id \?\? null, forwarded: !!\(mensaje\.context\.forwarded \|\| mensaje\.context\.frequently_forwarded\) \} : null;/);
+    // Bloque 22: una ÚNICA lectura del context de Meta (replyToDeMeta, probada en agente-meta-contexto.test.ts).
+    assert.match(src, /const replyTo = replyToDeMeta\(mensaje\.context\);/);
     assert.match(src, /atenderConAgenteSiAplica\(\{ cliente, waId: telefonoRemitente, destino, wamid: mensaje\.id, text: texto\.slice\(0, 4_000\), replyTo \}, deps\)/);
   });
 
