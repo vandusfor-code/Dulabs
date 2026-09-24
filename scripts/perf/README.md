@@ -244,3 +244,16 @@ las fotos quedaron fuera del límite.
 
 Medido en local, el costo del límite es una consulta más por página (~3–7 ms). Las precargas del
 listado bajaron de 53 a 2 (`EnlaceIntencion`).
+
+## Pedidos abandonados contra Postgres real (Bloque 23)
+
+`abandonados-real.ts` corre el motor de pedidos REAL (`expireAbandonedOrders`) contra PostgREST +
+PostgreSQL locales (se niega a correr contra otra URL), con el reloj adelantado 4 días y **dos
+crons a la vez**:
+
+    SUPABASE_URL=http://127.0.0.1:54452 SUPABASE_SERVICE_ROLE_KEY=local npx tsx scripts/perf/abandonados-real.ts
+
+Resultado (24-sep-2026, copia desechable de la base `perf`): `{"cron1":73,"cron2":229,"total":302,"segunda_pasada":0}`.
+Los 302 pedidos de conversación sin confirmar (95 borradores + 207 propuestas) vencieron
+exactamente una vez (302 eventos `abandoned`, uno por pedido); los 33 confirmados, los 2 con
+asesora y las 174 solicitudes del catálogo sin contacto quedaron intactos.

@@ -38,9 +38,9 @@ describe("context de Meta -> a qué respondió el cliente", () => {
     assert.equal(replyToDeMeta({ id: "x".repeat(500) })?.wamid?.length, 200, "acotado");
   });
 
-  it("el webhook usa esta única lectura en el turno directo y en el buzón", () => {
+  it("el webhook usa esta única lectura en el turno directo, en el buzón y en los mensajes sin texto (Bloque 23)", () => {
     const route = readFileSync("app/webhook-dulabs/route.ts", "utf8");
-    assert.equal((route.match(/replyToDeMeta\(mensaje\.context\)/g) ?? []).length, 2);
+    assert.equal((route.match(/replyToDeMeta\(mensaje\.context\)/g) ?? []).length, 3);
     assert.doesNotMatch(route, /wamid:\s*mensaje\.context\.id/, "sin lecturas sueltas del context");
   });
 });

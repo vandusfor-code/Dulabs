@@ -12,6 +12,10 @@
  * Cualquier dato comercial sin respaldo => la respuesta NO se envía tal cual.
  * Un enlace solo se respalda con uno que devolvió el BACKEND (get_catalog_link):
  * nunca con uno que escribió el cliente (evita repetir un link de phishing).
+ *
+ * Bloque 24: afirmar que un pedido quedó CONFIRMADO / APARTADO / RESERVADO exige que el
+ * backend haya devuelto en este turno un pedido en ese estado (confirm_order o el pedido
+ * activo ya confirmado). Sin eso, la respuesta no sale: nunca "pedido confirmado" sin venta.
  */
 
 const REF = /\b([A-Z]{1,6}-\d{6,}|DL-ORD-[0-9A-HJKMNP-TV-Z]{6})\b/g;
@@ -32,6 +36,8 @@ export interface Evidence {
   customerNumbers: Set<number>;
   /** Enlaces que devolvió el backend (únicos que se pueden enviar). */
   urls: Set<string>;
+  /** El backend devolvió un pedido confirmado (o ya cerrado como venta) en este turno. */
+  confirmed?: boolean;
 }
 
 export function emptyEvidence(): Evidence {
@@ -63,7 +69,34 @@ export function addEvidence(value: unknown, ev: Evidence, depth = 0): void {
     for (const v of value) addEvidence(v, ev, depth + 1);
     return;
   }
-  if (typeof value === "object") for (const v of Object.values(value as Record<string, unknown>)) addEvidence(v, ev, depth + 1);
+  if (typeof value === "object") {
+    const status = (value as { status?: unknown }).status;
+    if (status === "confirmed" || status === "completed") ev.confirmed = true;
+    for (const v of Object.values(value as Record<string, unknown>)) addEvidence(v, ev, depth + 1);
+  }
+}
+
+/**
+ * ¿El texto AFIRMA que un pedido quedó confirmado / apartado / reservado? Preguntas ("¿confirmas?"),
+ * instrucciones ("cuando confirmes") y negaciones ("aún no está confirmado") no cuentan.
+ */
+const CLAIM = [
+  /\b(?:qued[oó]|quedaron|est[aá]n?|fue|fueron|ha sido|han sido|ya)\s+(?:\S+\s+){0,2}?(?:confirmad[oa]s?|apartad[oa]s?|reservad[oa]s?|separad[oa]s?)\b/,
+  /\b(?:pedido|compra|orden)\s+(?:\S+\s+)?(?:confirmad[oa]|apartad[oa]|reservad[oa])\b/,
+  /\b(?:confirm[eé]|apart[eé]|reserv[eé]|separ[eé])\s+(?:tu|el|su|los|las|tus|sus)\b/,
+];
+const NEGATION = /\b(?:no|sin|a[uú]n no|todav[ií]a no|falta|pendiente)\b/;
+
+export function claimsConfirmation(text: string): boolean {
+  return text
+    .toLowerCase()
+    .split(/(?<=[.!\n])\s*|(?=¿)/)
+    .some((sentence) => {
+      if (sentence.includes("¿") || sentence.trim().endsWith("?")) return false;
+      const m = CLAIM.map((re) => re.exec(sentence)).find((x) => x !== null);
+      if (!m) return false;
+      return !NEGATION.test(sentence.slice(0, m.index + m[0].length));
+    });
 }
 
 /**
@@ -75,7 +108,7 @@ export function addCustomerEvidence(text: string, ev: Evidence): void {
   for (const m of text.matchAll(/\b\d{1,3}\b/g)) ev.customerNumbers.add(Number(m[0]));
 }
 
-export type GroundingViolation = { kind: "reference" | "amount" | "quantity" | "link"; value: string };
+export type GroundingViolation = { kind: "reference" | "amount" | "quantity" | "link" | "confirmation"; value: string };
 
 export function checkGrounding(text: string, ev: Evidence): { ok: boolean; violations: GroundingViolation[] } {
   const violations: GroundingViolation[] = [];
@@ -110,5 +143,6 @@ export function checkGrounding(text: string, ev: Evidence): { ok: boolean; viola
     const n = Number(m[1]);
     if (!ev.numbers.has(n) && !ev.customerNumbers.has(n)) add({ kind: "quantity", value: m[0].trim() });
   }
+  if (!ev.confirmed && claimsConfirmation(withoutUrls)) add({ kind: "confirmation", value: "pedido confirmado" });
   return { ok: violations.length === 0, violations };
 }

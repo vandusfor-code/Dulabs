@@ -14,7 +14,9 @@ import { createSimulatedProvider } from "@/lib/ia-proveedores/simulado";
 import { createMemoryAgentConfigStore, type AgentConfigRow, type AgentConfigStore } from "@/lib/agente/config";
 import { createMemoryConversationStateStore } from "@/lib/agente/estado";
 import { AGENT_TOOL_NAMES } from "@/lib/agente/nombres-herramientas";
-import { atenderConAgenteSiAplica, type AgentBoundaryDeps } from "@/lib/agente/webhook";
+import { atenderConAgenteSiAplica, numeroConAgente, type AgentBoundaryDeps } from "@/lib/agente/webhook";
+import { createMemoryMailboxStore } from "@/lib/agente/buzon";
+import { NON_TEXT_MESSAGES } from "@/lib/agente/entrada";
 
 const T = "aaaaaaaa-0000-4000-8000-00000000000a";
 const PN = "100000000000001";
@@ -35,7 +37,7 @@ const row = (over: Partial<AgentConfigRow> = {}): AgentConfigRow => ({
   ...over,
 });
 
-function deps(store: AgentConfigStore, opts: { env?: Record<string, string>; script?: Parameters<typeof createSimulatedProvider>[0] } = {}) {
+function deps(store: AgentConfigStore, opts: { env?: Record<string, string>; script?: Parameters<typeof createSimulatedProvider>[0]; mailbox?: ReturnType<typeof createMemoryMailboxStore> } = {}) {
   const calls = { build: 0, factories: [] as string[], sent: [] as string[], errors: [] as Array<Record<string, unknown>> };
   const mem = createInMemoryCatalogRepository();
   mem.enableModule(T);
@@ -54,6 +56,7 @@ function deps(store: AgentConfigStore, opts: { env?: Record<string, string>; scr
         history: { recent: async () => [] },
         sender: { sendText: async (t) => (calls.sent.push(t), true), sendImage: async () => true, humanTookOver: async () => false },
         log: () => {},
+        ...(opts.mailbox ? { mailbox: opts.mailbox } : {}),
       };
     },
   };
@@ -116,6 +119,36 @@ describe("frontera webhook -> agente", () => {
   });
 });
 
+describe("Bloque 23: mensajes sin texto en la frontera", () => {
+  const audio = { ...input, wamid: "wamid.audio", text: "", nonText: { kind: "audio" as const } };
+
+  it("número SIN agente: handled:false (AMORE, Flow y legacy siguen igual); número con fila: el agente lo atiende sin Gemini", async () => {
+    const sin = deps(createMemoryAgentConfigStore([]));
+    assert.deepEqual(await atenderConAgenteSiAplica(audio, sin.d), { handled: false, reason: "no_agent" });
+    assert.equal(await numeroConAgente(createMemoryAgentConfigStore([]), PN), false);
+    assert.equal(await numeroConAgente(createMemoryAgentConfigStore([row({ habilitado: false })]), PN), true, "apagado sigue siendo del agente (silencio, no otro bot)");
+    assert.equal(await numeroConAgente({ getByPhoneNumber: async () => { throw new Error("db"); } }, PN), false, "si no se puede leer: el comportamiento de siempre (se descarta)");
+    const con = deps(createMemoryAgentConfigStore([row()]));
+    assert.deepEqual(await atenderConAgenteSiAplica(audio, con.d), { handled: true, outcome: "replied" });
+    assert.deepEqual(con.calls.sent, [NON_TEXT_MESSAGES.audio]);
+    assert.equal(con.provider.requests.length, 0);
+  });
+
+  it("ráfaga 'texto + nota de voz': el texto que el freno de ráfaga dejó en el buzón se atiende PRIMERO (con Gemini), luego el aviso fijo", async () => {
+    const mailbox = createMemoryMailboxStore();
+    const key = { tenantId: T, phoneNumberId: PN, waId: input.waId };
+    await mailbox.enqueue(key, { wamid: "wamid.texto", text: "hola, ¿tienen aretes?", replyTo: null });
+    const { d, calls, provider } = deps(createMemoryAgentConfigStore([row()]), { mailbox });
+    const r = await atenderConAgenteSiAplica(audio, d);
+    assert.equal(r.handled, true);
+    assert.deepEqual(calls.sent, ["¡Hola! ¿En qué te ayudo?", NON_TEXT_MESSAGES.audio], "en el orden en que escribió el cliente");
+    assert.equal(provider.requests.length, 1, "Gemini solo para el texto");
+    assert.match(JSON.stringify(provider.requests[0].turns.at(-1)), /tienen aretes/);
+    assert.ok(mailbox.rows.every((m) => m.processed), "nada queda pendiente en el buzón");
+    assert.ok(!mailbox.rows.some((m) => m.wamid === "wamid.audio"), "el audio no entra al buzón (no tiene texto)");
+  });
+});
+
 describe("webhook: posición del agente y aislamiento de lo existente (guarda estructural)", () => {
   const fuente = readFileSync(join(process.cwd(), "app/webhook-dulabs/route.ts"), "utf8");
   const pos = (m: string) => {
@@ -153,6 +186,19 @@ describe("webhook: posición del agente y aislamiento de lo existente (guarda es
     const r = await atenderConAgenteSiAplica({ ...input, text: "quiero este", replyTo: { wamid: "wamid.no.registrado" } }, d);
     assert.deepEqual(r, { handled: true, outcome: "replied" });
     assert.match(provider.requests[0].system, /"respondio_a":"un mensaje que no es una foto de producto"/);
+  });
+
+  it("Bloque 23: el MISMO gate registra (Inbox + freno de ráfaga) y enruta los mensajes sin texto al agente; sticker y reacción no pasan", () => {
+    const src = readFileSync(join(process.cwd(), "app/webhook-dulabs/route.ts"), "utf8");
+    // Registro síncrono: solo si el número tiene agente y el tipo llega al agente.
+    assert.match(src, /some\(\(m\) => nonTextReachesAgent\(m\.type\)\)\s*\? await numeroConAgente\(createSupabaseAgentConfigStore\(supabase\), phoneNumberId\)/);
+    assert.match(src, /conAgente && !procesaraMediaFlow && phoneNumberId !== PHONE_NUMBER_ID_SOLUCIONES_FINANCIERAS \? contenidoNoTextoAgente\(mensaje\)/);
+    // Enrutamiento: mismo criterio (Flow y Soluciones Financieras no cambian).
+    assert.match(src, /!esSolucionesFinancieras && !esMediaHaciaFlow && nonTextReachesAgent\(mensaje\.type\) && \(await numeroConAgenteMemo\(\)\)/);
+    assert.equal((src.match(/&& !esNoTextoHaciaAgente\) continue;/g) ?? []).length, 2);
+    // En el agente: política determinista, y el mensaje superado por la ráfaga igual se atiende.
+    assert.match(src, /nonText: \{ kind: politica\.kind \}/);
+    assert.match(src, /if \(nonTextReachesAgent\(mensaje\.type\)\) await intentarAgenteConversacionalSiAplica\(cliente, mensaje, telefonoRemitente, destino\);/);
   });
 
   it("la capa del agente y de proveedores no importa Anthropic, la IA legacy ni el Flow Engine", () => {

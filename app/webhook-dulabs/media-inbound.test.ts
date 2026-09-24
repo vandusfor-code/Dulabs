@@ -17,6 +17,7 @@ import {
   normalizarMediaEntrante,
   placeholderMediaEntrante,
   extraerTextoMensajeCrudo,
+  contenidoNoTextoAgente,
   TIPOS_MEDIA_ENTRANTE,
   type MetaMessage,
 } from "./route";
@@ -151,9 +152,11 @@ describe("procesarCambio — gate de media hacia Flow (guarda estructural)", () 
   it("24. el filtro de tipos y el de texto vacío respetan esMediaHaciaFlow además de esSolucionesFinancieras (no rompe el carve-out existente)", () => {
     assert.match(
       fuente,
-      /if \(mensaje\.type !== "text" && mensaje\.type !== "button" && mensaje\.type !== "interactive" && !esSolucionesFinancieras && !esMediaHaciaFlow\) continue;/,
+      /if \(mensaje\.type !== "text" && mensaje\.type !== "button" && mensaje\.type !== "interactive" && !esSolucionesFinancieras && !esMediaHaciaFlow && !esNoTextoHaciaAgente\) continue;/,
     );
-    assert.match(fuente, /if \(!mensaje\.text\?\.body && !esSolucionesFinancieras && !esMediaHaciaFlow\) continue;/);
+    assert.match(fuente, /if \(!mensaje\.text\?\.body && !esSolucionesFinancieras && !esMediaHaciaFlow && !esNoTextoHaciaAgente\) continue;/);
+    // Bloque 23: el carve-out del agente conversacional excluye explícitamente Flow y Soluciones Financieras.
+    assert.match(fuente, /const esNoTextoHaciaAgente =\s*!esSolucionesFinancieras && !esMediaHaciaFlow && nonTextReachesAgent\(mensaje\.type\)/);
   });
 });
 
@@ -204,5 +207,21 @@ describe("atenderMensajeEncuesta — defensa en profundidad contra media (sesió
     const cuerpo = fuente.slice(posFn, posSiguiente);
     assert.match(cuerpo, /const textoUsuario = mensaje\.text\?\.body \?\? "";/);
     assert.match(cuerpo, /if \(!textoUsuario\) return false;/);
+  });
+});
+
+describe("Bloque 23 — contenidoNoTextoAgente (Inbox de un número con agente conversacional)", () => {
+  it("29. el tipo siempre visible; leyenda y nombre de archivo si existen; ubicación/contacto sin su contenido; lo ignorado => null", () => {
+    assert.equal(contenidoNoTextoAgente(mensajeBase({ type: "audio", audio: { id: "a" } })), "[nota de voz]");
+    assert.equal(contenidoNoTextoAgente(mensajeBase({ type: "image", image: { id: "i", caption: "¿tienen este?" } })), "[imagen] ¿tienen este?");
+    assert.equal(contenidoNoTextoAgente(mensajeBase({ type: "document", document: { id: "d", filename: "pago.pdf" } })), "[documento] pago.pdf");
+    assert.equal(contenidoNoTextoAgente({ ...mensajeBase({ type: "location" }), location: { latitude: 4.6, longitude: -74.08 } } as MetaMessage), "[ubicación]");
+    assert.equal(contenidoNoTextoAgente(mensajeBase({ type: "contacts" })), "[contacto]");
+    for (const type of ["sticker", "reaction", "text", "button", "system"]) assert.equal(contenidoNoTextoAgente(mensajeBase({ type })), null, type);
+  });
+
+  it("30. el placeholder de Flow (F8.4) NO cambia: los números con Flow siguen viendo lo mismo", () => {
+    assert.equal(placeholderMediaEntrante(mensajeBase({ type: "image", image: { id: "1", caption: "una foto" } })), "una foto");
+    assert.equal(placeholderMediaEntrante(mensajeBase({ type: "audio", audio: { id: "1" } })), "[audio]");
   });
 });

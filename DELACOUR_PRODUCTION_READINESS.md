@@ -1,8 +1,11 @@
 # Delacour — preparación para producción (Catálogo + Agente)
 
-Estado al **24-sep-2026**, cierre del **Bloque 21**. Documento operativo: qué está listo, cómo se
-comprobó, qué falta comprobar con servicios reales y el procedimiento exacto para cargar los
-~2.000 productos reales. **Todavía no se cargó ningún producto real.**
+Estado al **24-sep-2026**, actualizado en el **Bloque 23** (robustez del agente antes del piloto).
+Documento operativo: qué está listo, cómo se comprobó, qué falta comprobar con servicios reales y
+el procedimiento para cargar los productos reales (secciones escritas en el Bloque 21).
+
+**Piloto (Bloque 24):** barreras, matriz de punta a punta, diagnóstico, costo, verificación de
+producción de solo lectura y la lista de pruebas manuales están en `DELACOUR_PILOTO.md`.
 
 Leyenda de cómo se comprobó cada cosa:
 
@@ -11,6 +14,7 @@ Leyenda de cómo se comprobó cada cosa:
 | **U** | Prueba automática sin red (repositorios en memoria que emulan las reglas de la BD) |
 | **PG** | PostgreSQL 16 local con las migraciones reales (pruebas SQL y de concurrencia con sesiones paralelas) |
 | **E2E** | La app compilada (`next start`) contra PostgreSQL + PostgREST locales con datos sintéticos (hasta 10.000 productos y 2 negocios), y Chromium emulando un celular con 4G lenta |
+| **W** | El webhook REAL (`registrarMensajesEntrantesSincrono` + `procesarCambio`) con Supabase emulado en memoria y Meta simulado (B23) |
 | **PROD** | Verificado en producción |
 
 ---
@@ -58,6 +62,9 @@ Detalle de los límites de tasa:
 | Traspaso a asesora con motivo | U |
 | Trazas, diagnóstico e Inbox | U, PROD |
 | Retención de datos | U |
+| Mensajes sin texto (B23): nota de voz ⇒ aviso fijo (nombra el producto si responde a una foto); imagen, video, documento, ubicación o contacto ⇒ asesora; sticker y reacción ⇒ nada. Sin Gemini, visibles en el Inbox | U, W |
+| Una escritura (pedido, confirmación) que no responde a tiempo ⇒ mensaje fijo "estoy verificando", nunca "falló" ni "listo" (B23) | U |
+| Nunca se guarda un pedido sin productos; los pedidos de conversación sin confirmar vencen a las 72 h sin cambios (B23) | U, PG |
 
 ### Seguridad (auditada en B20/B21)
 
@@ -236,12 +243,20 @@ Sigue el procedimiento de `PENDING_MIGRATIONS.md` (Fase 8, "Activación del pilo
 | Resultados de búsqueda | hasta 220 (11 páginas) | Más allá, se pide refinar |
 | Pedidos abiertos en el panel | 100 más recientes | Los cerrados están en el historial, paginado |
 | Reserva de stock | 72 h (los pedidos con asesora no vencen solos) | Regla del negocio |
+| Pedido de conversación sin confirmar (borrador o propuesta) | vence a las 72 h sin cambios (B23) | No queda "abierto" para siempre |
+| Aviso "no puedo escuchar audios" | uno cada 10 min por conversación | Diez audios seguidos no generan diez avisos |
+| Espera de una escritura del agente | 20 s (lecturas: 5 s) | Cortar antes solo crea incertidumbre |
 | Páginas por cliente | 600/min (búsquedas 120/min; 3.000/min por catálogo) | Frena scripts, no a personas |
 
 Otros comportamientos por diseño:
 
 - El cron de vencimiento es diario (plan de Vercel); además, el vencimiento corre al abrir el
-  panel.
+  panel. Desde B23 también vence los pedidos de conversación abandonados.
+- Mensajes sin texto en el número del agente (B23): el Inbox muestra el tipo (`[nota de voz]`,
+  `[imagen] leyenda`, `[documento] archivo.pdf`, `[ubicación]`, `[contacto]`), nunca coordenadas ni
+  teléfonos de terceros. La asesora ve la imagen o el archivo en WhatsApp: el Inbox todavía no
+  descarga la media entrante. Motivo de la asesora: "algo que el asistente no puede resolver"; el
+  tipo exacto queda en la traza (`non_text`).
 - La tienda no se indexa en buscadores (`noindex`).
 
 ## 7. Riesgos restantes
@@ -262,7 +277,14 @@ Otros comportamientos por diseño:
 5. **Latencia real Vercel→Supabase** no medida; en local cada consulta toma ~1–5 ms. El límite de
    tasa suma una consulta por página, y si el limitador no responde en 400 ms se permite la
    visita.
-6. **Pruebas dependientes del reloj (preexistentes, de AMORE/agenda).**
+6. **Imágenes que llegan al número del agente.** Pasan a una asesora siempre (pueden ser un
+   comprobante de pago o una captura de un producto): la asesora debe revisarlas en WhatsApp. Si
+   el volumen de capturas de productos fuera alto, el siguiente paso sería una búsqueda por imagen,
+   que hoy no existe (Gemini no ve imágenes en este flujo).
+7. **Solicitudes del catálogo nunca enviadas por WhatsApp** (el cliente armó el carrito y no
+   envió el mensaje): quedan como `validated` sin contacto. No aparecen en el panel ni en ninguna
+   conversación, y no se vencen para no romper un envío tardío; son registros inertes.
+8. **Pruebas dependientes del reloj (preexistentes, de AMORE/agenda).**
    `lib/agenda-v2/disponibilidad-cadena-real.test.ts` y `lib/amore-conversacion-matriz.test.ts`
    eligen el día con la fecha real y fallan a ciertas horas. Fallan igual en `main`, no son del
    catálogo y no se tocaron.
