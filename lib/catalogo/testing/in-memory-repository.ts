@@ -12,6 +12,7 @@ import { CatalogError } from "@/lib/catalogo/errors";
 import type { AttachMediaData, CatalogRepository, CatalogSearchQuery, ProductListFilter, ProductOrigin, ProductPatchData, ProductWriteData, StoredMedia } from "@/lib/catalogo/repository";
 import type { ImportRecord } from "@/lib/catalogo/import/types";
 import type { CatalogPublication } from "@/lib/catalogo/publicacion";
+import { normalizeText } from "@/lib/catalogo/import/analisis";
 
 interface StoredProduct extends CatalogProduct {
   tenantId: string;
@@ -127,6 +128,16 @@ export function createInMemoryCatalogRepository() {
       const offset = Math.min(Math.max(q.offset, 0), 200);
       const page = scored.slice(offset, offset + limit);
       return { references: page.map((x) => x.p.reference), total: page.length > 0 ? scored.length : 0 };
+    },
+
+    async findByExactName(tenantId, name, limit) {
+      if (!searchEnabled) return null;
+      const key = normalizeText(name);
+      return [...products.values()]
+        .filter((p) => p.tenantId === tenantId && normalizeText(p.name) === key)
+        .map((p) => p.reference)
+        .sort()
+        .slice(0, limit);
     },
 
     async listProducts(tenantId: string, f: ProductListFilter) {

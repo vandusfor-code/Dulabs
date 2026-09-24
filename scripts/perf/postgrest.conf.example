@@ -1,0 +1,8 @@
+# PostgREST LOCAL para las pruebas de rendimiento (nunca contra Supabase).
+# Sin JWT: el rol anónimo de ESTA instancia local es service_role (el mismo que usa el backend).
+db-uri = "postgres://authenticator@/perf?host=/var/tmp/pgsock&port=55432"
+db-schemas = "public"
+db-anon-role = "service_role"
+db-pool = 10
+server-host = "127.0.0.1"
+server-port = 54440

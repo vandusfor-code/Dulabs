@@ -404,3 +404,45 @@ navegador ni Gemini (migración `20261116000000_dulabs_catalogo_reservas_stock.s
   ir cada hora).
 - Pruebas: `supabase/tests/20261116000000_*.test.sql` (12), `*.concurrencia.sh` (sesiones
   paralelas reales), `pedidos/reservas-stock.test.ts` y el caso 11b del flujo comercial del agente.
+
+## Rendimiento y escalabilidad (Bloque 20)
+
+Medido con datos **sintéticos** en PostgreSQL y PostgREST locales, sin datos reales. Cómo
+reproducirlo está en `scripts/perf/README.md`.
+
+**Búsqueda indexada.** La migración `20261117000000_dulabs_catalogo_busqueda_indice.sql` agrega
+la tabla `dulabs_catalogo_busqueda_doc`. Guarda el documento FTS precalculado de cada producto y
+lo indexa con GIN. Unos triggers la mantienen en la misma transacción, y solo para negocios con
+Catálogo. `dulabs_catalogo_buscar` tiene la misma firma y el mismo resultado; la paridad se
+comprobó con 0 diferencias. Con 10.000 productos:
+
+- una búsqueda bajó de ~450 ms a ~20 ms;
+- 50 búsquedas simultáneas pasaron de 8/s a 110/s.
+
+**Nombre exacto por índice.** `resolveByExactAttributes` usa `findByExactName`, que llama a la RPC
+`dulabs_catalogo_por_nombre`. Solo trae los candidatos con ese nombre normalizado y después
+aplica la misma regla exacta del backend. Sin la migración cae al camino anterior, que lee todas
+las claves.
+
+**Gemini** recibe solo el resultado de cada herramienta, entre 0,4 y 1,9 KB. Nunca recibe el
+catálogo.
+
+**Aún no necesitan optimización.** Las operaciones siguientes hacen un número constante de
+consultas (no hay N+1):
+
+| Operación | Tiempo o volumen |
+| --- | --- |
+| listado y ficha | 8–27 ms |
+| carrito de 60 referencias | 11 ms |
+| validar un pedido | 22 ms |
+| confirmar con reserva | ~16 ms |
+| panel | ~12 ms, tope de 100 pedidos |
+| búsqueda por fragmento de referencia (ILIKE) | 35 ms con 10.000 productos |
+
+Para la búsqueda por fragmento, si crece se puede agregar un índice trigram. La vista previa de
+importación sigue leyendo todas las claves del negocio (`listProductKeys`), pero es una acción
+de administración puntual.
+
+**Costo en escritura.** Indexar agrega ~1,3 ms por producto, y solo cuando cambia algo buscable
+(nombre, color, material, descripción, categoría o estado). Cambiar el precio o el stock no
+reindexa.

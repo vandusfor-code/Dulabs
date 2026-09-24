@@ -24,6 +24,8 @@ declare
   t0 timestamptz;
   ms numeric;
 begin
+  -- Los negocios que buscan tienen el módulo Catálogo (desde el Bloque 20 solo esos se indexan).
+  insert into public.dulabs_tenant_modulos (id_tenant, modulo, habilitado) values (a, 'catalogo', true), (b, 'catalogo', true) on conflict do nothing;
   insert into dulabs_catalogo_categorias (id_tenant, nombre) values (a, 'Collares') returning id into cat_collares;
   insert into dulabs_catalogo_categorias (id_tenant, nombre) values (a, 'Aretes') returning id into cat_aretes;
 

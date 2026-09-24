@@ -1,5 +1,62 @@
 # Pasos manuales pendientes en producción
 
+## PENDIENTE — Bloque 20: búsqueda del catálogo indexada (rendimiento con miles de referencias)
+
+Migración `supabase/migrations/20261117000000_dulabs_catalogo_busqueda_indice.sql`. **Aditiva**.
+Crea la tabla propia del catálogo `dulabs_catalogo_busqueda_doc`, con dos cosas por producto:
+
+- el documento de búsqueda ya calculado;
+- la clave normalizada del nombre.
+
+La tabla tiene índices GIN y btree, y dos triggers la mantienen sola (se escribe en la misma
+transacción que el producto). Solo se indexan negocios con el módulo **Catálogo** habilitado. No
+agrega columnas ni índices a la tabla de productos, ni toca nada de otros módulos.
+
+Además:
+
+- reemplaza `dulabs_catalogo_buscar` con **la misma firma y el mismo resultado**;
+- agrega `dulabs_catalogo_por_nombre`, que resuelve el nombre exacto por índice;
+- solo `service_role` tiene acceso.
+
+**Por qué:** medido con datos sintéticos (`scripts/perf`), la búsqueda recalculaba el documento de
+cada producto en cada consulta. Tiempos antes y después:
+
+| Productos | Antes | Después |
+| --- | ---: | ---: |
+| 2.000 | ~100 ms | ~12–16 ms |
+| 10.000 | ~450 ms | ~17–23 ms |
+
+Con 50 búsquedas simultáneas sobre 10.000 productos se pasó de 8/s a 110/s. La herramienta del
+agente `resolve_product_by_attributes` dejó de leer el catálogo entero: con 10.000 productos
+bajó de 2,1 MB a 53 KB por llamada.
+
+**Orden seguro:** el código ya desplegado funciona sin la migración (la búsqueda sigue igual, solo
+más lenta, y la herramienta lee como antes). Al aplicarla, el backfill indexa los negocios con
+Catálogo en la misma transacción: 10.000 productos tardaron menos de 1 s en local.
+
+Validada contra PostgreSQL 16 local:
+
+- prueba SQL 7/7, aplicada dos veces;
+- la prueba del Bloque 10 sigue 10/10 con la función nueva;
+- paridad de 22 búsquedas antes/después con **0 diferencias**, con 2.000 y con 10.000 productos.
+
+1. Correr el archivo completo en el SQL Editor (idempotente).
+2. Verificar (esperado `1 | 1 | 1 | 0 | 0`):
+   ```sql
+   select
+     (select count(*) from information_schema.tables where table_name = 'dulabs_catalogo_busqueda_doc') as tabla,
+     (select count(*) from pg_trigger where tgname = 'dulabs_catalogo_busqueda_doc_producto') as trigger_productos,
+     (select count(*) from pg_proc where proname = 'dulabs_catalogo_por_nombre') as funcion_nombre,
+     (select count(*) from information_schema.routine_privileges
+       where routine_name in ('dulabs_catalogo_por_nombre', 'dulabs_catalogo_buscar', 'dulabs_catalogo_busqueda_indexar')
+         and grantee in ('anon', 'authenticated')) as permisos_publicos,
+     (select count(*) from public.dulabs_inventario_productos p
+       join public.dulabs_tenant_modulos m on m.id_tenant = p.id_tenant and m.modulo = 'catalogo' and m.habilitado
+       where not exists (select 1 from public.dulabs_catalogo_busqueda_doc d where d.producto_id = p.id)) as productos_sin_indexar;
+   ```
+
+Rollback: al inicio del archivo de la migración.
+
 ## ✅ APLICADA (24-sep-2026) — Bloque 19: reserva de stock al confirmar pedidos del catálogo
 
 Migración `supabase/migrations/20261116000000_dulabs_catalogo_reservas_stock.sql`. **Aditiva**:
