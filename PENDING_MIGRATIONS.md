@@ -1,5 +1,37 @@
 # Pasos manuales pendientes en producción
 
+## PENDIENTE — Bloque 19: reserva de stock al confirmar pedidos del catálogo
+
+Migración `supabase/migrations/20261116000000_dulabs_catalogo_reservas_stock.sql`. **Aditiva**:
+tabla `dulabs_catalogo_reservas`, funciones de reserva/cierre/vencimiento y un trigger nuevo sobre
+`dulabs_catalogo_pedidos`. Reemplaza `dulabs_catalogo_pedido_transicion_valida` agregando una sola
+transición (`confirmed -> expired`, sistema). No toca datos existentes ni nada fuera del catálogo.
+
+Regla: **confirmar aparta el stock** (todo o nada, nunca negativo); **venta cerrada** lo consume;
+**cancelar** o **vencer** (72 h sin cerrar; los pedidos con asesora no vencen solos) lo devuelven.
+Lo aplica la BD en la misma transacción del cambio de estado, sea quien sea el que lo cambie.
+Pedidos confirmados ANTES de la migración no tienen reserva (no se descuenta nada retroactivo).
+
+**Orden seguro:** el código ya desplegado funciona sin la migración (confirma como antes, sin
+apartar). Al aplicarla, la reserva empieza a regir de inmediato.
+
+Validada contra PostgreSQL 16 local: prueba SQL 12/12 (aplicada dos veces) y concurrencia REAL
+4/4 (30 confirmaciones simultáneas por 5 unidades => exactamente 5; líneas cruzadas sin deadlocks;
+la misma confirmación 10 veces => un descuento; cancelaciones y confirmaciones mezcladas cuadran).
+
+1. Correr el archivo completo en el SQL Editor (idempotente).
+2. Verificar (esperado `1 | 2 | true | 0`):
+   ```sql
+   select
+     (select count(*) from information_schema.tables where table_name = 'dulabs_catalogo_reservas') as tabla,
+     (select count(*) from pg_trigger where tgname in ('dulabs_catalogo_pedido_reservas', 'dulabs_catalogo_pedido_reservas_insert')) as triggers,
+     (select public.dulabs_catalogo_pedido_transicion_valida('confirmed', 'expired', 'system')) as vencimiento,
+     (select count(*) from information_schema.routine_privileges
+       where routine_name like 'dulabs_catalogo_reserva%' and grantee in ('anon', 'authenticated')) as permisos_publicos;
+   ```
+
+Rollback: al inicio del archivo de la migración.
+
 ## ✅ APLICADA (24-sep-2026) — Bloque 17: el diagnóstico del agente muestra la intención y el motivo de la asesora
 
 Migración `supabase/migrations/20261115000000_dulabs_agente_diagnostico_intencion.sql`.

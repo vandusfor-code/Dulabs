@@ -20,6 +20,10 @@
     {
       "path": "/api/cron/agente-retencion",
       "schedule": "45 4 * * *"
+    },
+    {
+      "path": "/api/cron/catalogo-reservas",
+      "schedule": "10 5 * * *"
     }
   ]
 }

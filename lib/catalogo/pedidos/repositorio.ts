@@ -62,6 +62,33 @@ export class PublicIdTaken extends Error {}
 /** Transición no permitida por la máquina de estados (código o BD). */
 export class InvalidTransition extends Error {}
 
+/**
+ * Bloque 19 — confirmar APARTA el stock (trigger de la BD, todo o nada). Si no alcanza, la BD
+ * revierte la transición entera (CT010) y dice qué falta; si un producto ya no se vende, CT011.
+ */
+export class StockUnavailable extends Error {
+  constructor(readonly shortages: Array<{ reference: string; requested: number; available: number }>) {
+    super("stock_insuficiente");
+  }
+}
+export class ProductNotSellable extends Error {
+  constructor(readonly references: string[]) {
+    super("producto_no_disponible");
+  }
+}
+
+/** Plazo de la reserva de un pedido confirmado sin cerrar (igual que dulabs_catalogo_reserva_ttl()). */
+export const RESERVATION_TTL_MS = 72 * 60 * 60 * 1000;
+
+export interface ReservationSummary {
+  /** id INTERNO del pedido (el público no se guarda en la reserva). */
+  orderId: string;
+  reference: string;
+  quantity: number;
+  status: "activa" | "liberada" | "consumida";
+  expiresAt: string;
+}
+
 export interface OrdersRepository {
   /** false si la migración no está aplicada. */
   available(): Promise<boolean>;
@@ -71,6 +98,12 @@ export interface OrdersRepository {
   getByOrderId(businessId: string, orderId: string): Promise<Order | null>;
   /** Pedido más reciente de la conversación en alguno de esos estados. */
   latestForContact(businessId: string, contact: OrderContact, statuses: readonly OrderStatus[]): Promise<Order | null>;
+  /** Pedidos del negocio en esos estados, más recientes primero (panel de la asesora). */
+  listForBusiness(businessId: string, statuses: readonly OrderStatus[], limit: number): Promise<Order[]>;
+  /** Reservas de stock de esos pedidos (ids internos) del negocio. Sin la migración: []. */
+  reservationsFor(businessId: string, orderIds: readonly string[]): Promise<ReservationSummary[]>;
+  /** Vence los pedidos confirmados cuya reserva pasó su plazo (el stock vuelve). Sin la migración: 0. */
+  expireReservations(limit: number): Promise<number>;
 }
 
 /** Aplica cambios a un pedido (misma regla que la función SQL): para armar el evento ANTES de escribir. */
@@ -249,6 +282,8 @@ export function createSupabaseOrdersRepository(supabase: SupabaseClient, now: ()
       });
       if (error) {
         if (error.code === "22023") throw new InvalidTransition(error.message ?? "transición no permitida");
+        if (error.code === "CT010") throw new StockUnavailable(parseShortages(error.details));
+        if (error.code === "CT011") throw new ProductNotSellable(parseReferences(error.details));
         fail("transition", error);
       }
       return data ? orderFromRow(data as OrderRow) : null;
@@ -274,22 +309,165 @@ export function createSupabaseOrdersRepository(supabase: SupabaseClient, now: ()
       if (error) fail("latestForContact", error);
       return data ? orderFromRow(data as unknown as OrderRow) : null;
     },
+
+    async listForBusiness(businessId, statuses, limit) {
+      const { data, error } = await supabase
+        .from(T_PEDIDOS)
+        .select(COLUMNS)
+        .eq("id_tenant", businessId)
+        .in("estado", [...statuses])
+        .order("updated_at", { ascending: false })
+        .limit(Math.min(Math.max(limit, 1), 200));
+      if (error) fail("listForBusiness", error);
+      return ((data ?? []) as unknown as OrderRow[]).map(orderFromRow);
+    },
+
+    async reservationsFor(businessId, orderIds) {
+      if (orderIds.length === 0) return [];
+      const { data, error } = await supabase
+        .from("dulabs_catalogo_reservas")
+        .select("pedido_id, referencia, cantidad, estado, vence_at")
+        .eq("id_tenant", businessId)
+        .in("pedido_id", [...orderIds]);
+      if (error) {
+        if (isMissingSchema(error)) return [];
+        fail("reservationsFor", error);
+      }
+      return ((data ?? []) as Array<{ pedido_id: string; referencia: string; cantidad: number; estado: ReservationSummary["status"]; vence_at: string }>).map((r) => ({
+        orderId: r.pedido_id,
+        reference: r.referencia,
+        quantity: r.cantidad,
+        status: r.estado,
+        expiresAt: iso(r.vence_at),
+      }));
+    },
+
+    async expireReservations(limit) {
+      const { data, error } = await supabase.rpc("dulabs_catalogo_reservas_vencer", { p_limite: limit });
+      if (error) {
+        if (isMissingSchema(error)) return 0;
+        fail("expireReservations", error);
+      }
+      return Number(data ?? 0);
+    },
   };
+}
+
+/** detail de CT010: [{referencia, pedido, disponible}] (texto JSON de la BD). */
+function parseShortages(details: unknown): StockUnavailable["shortages"] {
+  try {
+    const list = JSON.parse(String(details ?? "[]")) as Array<{ referencia?: unknown; pedido?: unknown; disponible?: unknown }>;
+    return list.map((x) => ({ reference: String(x.referencia ?? ""), requested: Number(x.pedido ?? 0), available: Math.max(0, Number(x.disponible ?? 0)) }));
+  } catch {
+    return [];
+  }
+}
+
+function parseReferences(details: unknown): string[] {
+  try {
+    return (JSON.parse(String(details ?? "[]")) as unknown[]).map(String);
+  } catch {
+    return [];
+  }
 }
 
 // ---------------------------------------------------------------------------
 // Memoria (pruebas): MISMA semántica que las funciones SQL
 // ---------------------------------------------------------------------------
 
-export function createMemoryOrdersRepository(opts: { available?: boolean } = {}) {
+/**
+ * Inventario de pruebas (lo implementa el catálogo en memoria): la MISMA regla de reserva que
+ * el trigger de la BD se emula sobre él. Sin inventario, el repositorio no reserva (pruebas viejas).
+ */
+export interface MemoryInventory {
+  product(tenantId: string, reference: string): { id: string; active: boolean; tracked: boolean; stock: number } | null;
+  setStock(productId: string, stock: number): void;
+  stockOf(productId: string): number | null;
+}
+
+type MemoryReservation = ReservationSummary & { businessId: string; productId: string };
+
+export function createMemoryOrdersRepository(opts: { available?: boolean; inventory?: MemoryInventory; now?: () => number } = {}) {
   const orders: Order[] = [];
   const events: OrderEvent[] = [];
+  const reservations: MemoryReservation[] = [];
   let seq = 0;
   const clone = <T>(v: T): T => structuredClone(v);
+  const clock = opts.now ?? Date.now;
 
-  const repo: OrdersRepository & { orders: Order[]; events: OrderEvent[]; isAvailable: boolean } = {
+  /** Ajusta las reservas activas a las líneas: primero VALIDA todo, después aplica (todo o nada). */
+  function reconcile(order: Order) {
+    const inv = opts.inventory;
+    if (!inv) return;
+    const want = new Map<string, number>();
+    for (const l of order.lines) if (l.quantity > 0) want.set(l.reference.toUpperCase(), (want.get(l.reference.toUpperCase()) ?? 0) + l.quantity);
+    const active = reservations.filter((r) => r.orderId === order.id && r.status === "activa");
+    const refs = [...new Set([...want.keys(), ...active.map((r) => r.reference)])].sort();
+    const plan: Array<() => void> = [];
+    const shortages: StockUnavailable["shortages"] = [];
+    const notSellable: string[] = [];
+    for (const ref of refs) {
+      const q = want.get(ref) ?? 0;
+      const current = active.find((r) => r.reference === ref);
+      const have = current?.quantity ?? 0;
+      if (q === have) continue;
+      if (q < have && current) {
+        plan.push(() => {
+          const s = inv.stockOf(current.productId);
+          if (s !== null) inv.setStock(current.productId, s + (have - q));
+          if (q === 0) current.status = "liberada";
+          else current.quantity = q;
+        });
+        continue;
+      }
+      const p = inv.product(order.businessId, ref);
+      if (!p || !p.active) {
+        notSellable.push(ref);
+        continue;
+      }
+      if (!p.tracked) continue;
+      const delta = q - have;
+      if (p.stock < delta) {
+        shortages.push({ reference: ref, requested: q, available: p.stock + have });
+        continue;
+      }
+      plan.push(() => {
+        inv.setStock(p.id, (inv.stockOf(p.id) ?? 0) - delta);
+        if (current) current.quantity = q;
+        else
+          reservations.push({ businessId: order.businessId, orderId: order.id, productId: p.id, reference: ref, quantity: q, status: "activa", expiresAt: new Date(clock() + RESERVATION_TTL_MS).toISOString() });
+      });
+    }
+    if (notSellable.length > 0) throw new ProductNotSellable(notSellable);
+    if (shortages.length > 0) throw new StockUnavailable(shortages);
+    for (const step of plan) step();
+  }
+
+  function close(orderId: string, status: "liberada" | "consumida") {
+    for (const r of reservations.filter((x) => x.orderId === orderId && x.status === "activa")) {
+      if (status === "liberada" && opts.inventory) {
+        const s = opts.inventory.stockOf(r.productId);
+        if (s !== null) opts.inventory.setStock(r.productId, s + r.quantity);
+      }
+      r.status = status;
+    }
+  }
+
+  /** Misma regla que el trigger dulabs_catalogo_pedido_reservas_trigger. */
+  function applyReservationRule(before: Order, after: Order) {
+    const linesChanged = JSON.stringify(before.lines) !== JSON.stringify(after.lines);
+    if (before.status === after.status && !linesChanged) return;
+    if (after.status === "confirmed") reconcile(after);
+    else if (after.status === "handoff") {
+      if (linesChanged && reservations.some((r) => r.orderId === after.id && r.status === "activa")) reconcile(after);
+    } else if (after.status === "completed") close(after.id, "consumida");
+    else close(after.id, "liberada");
+  }
+
+  const repo: OrdersRepository & { orders: Order[]; events: OrderEvent[]; reservations: MemoryReservation[]; isAvailable: boolean } = {
     orders,
     events,
+    reservations,
     isAvailable: opts.available ?? true,
 
     async available() {
@@ -315,6 +493,7 @@ export function createMemoryOrdersRepository(opts: { available?: boolean } = {})
       if (input.changes.contact && current.contact && !sameContact(current.contact, input.changes.contact)) return null;
       const next = applyChanges(current, input.to, clone(input.changes), new Date().toISOString());
       if (!["draft", "validated", "cancelled", "expired"].includes(next.status) && !next.contact) throw new Error("check_violation: contacto requerido");
+      applyReservationRule(current, next); // lanza (sin escribir nada) si no alcanza el stock
       orders[i] = next;
       if (input.event && !events.some((e) => e.event_id === input.event?.event_id)) events.push(clone(input.event));
       return clone(next);
@@ -330,6 +509,34 @@ export function createMemoryOrdersRepository(opts: { available?: boolean } = {})
         .filter((o) => o.businessId === businessId && sameContact(o.contact, contact) && statuses.includes(o.status))
         .sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0))[0];
       return found ? clone(found) : null;
+    },
+
+    async listForBusiness(businessId, statuses, limit) {
+      return orders
+        .filter((o) => o.businessId === businessId && statuses.includes(o.status))
+        .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))
+        .slice(0, limit)
+        .map(clone);
+    },
+
+    async reservationsFor(businessId, orderIds) {
+      return reservations
+        .filter((r) => r.businessId === businessId && orderIds.includes(r.orderId))
+        .map(({ orderId, reference, quantity, status, expiresAt }) => ({ orderId, reference, quantity, status, expiresAt }));
+    },
+
+    async expireReservations(limit) {
+      let n = 0;
+      for (const o of orders) {
+        if (n >= limit) break;
+        if (o.status !== "confirmed") continue;
+        if (!reservations.some((r) => r.orderId === o.id && r.status === "activa" && Date.parse(r.expiresAt) <= clock())) continue;
+        const next = applyChanges(o, "expired", { confirmation: null }, new Date(clock()).toISOString());
+        applyReservationRule(o, next);
+        orders[orders.indexOf(o)] = next;
+        n++;
+      }
+      return n;
     },
   };
   return repo;

@@ -8,6 +8,7 @@
  * ruta contiene lógica de negocio.
  */
 import type { NextRequest } from "next/server";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { apiError } from "@/lib/agent-compiler/api/http";
 import { respuestaSiLimiteTasaExcedido } from "@/lib/rate-limit";
@@ -24,6 +25,8 @@ export interface CatalogHandlerContext {
   actor: CatalogActor;
   /** Rol con permiso de escritura (admin). Ya validado por el backend. */
   canWrite: boolean;
+  /** Cliente del backend (service_role) de la sesión ya autorizada: para casos de uso fuera del CatalogService (pedidos). */
+  supabase: SupabaseClient;
 }
 
 export async function withCatalog(
@@ -38,16 +41,16 @@ export async function withCatalog(
   const { supabase, actor, member } = access.ctx;
 
   const limite = await respuestaSiLimiteTasaExcedido(supabase, {
-    recurso: opts.recurso ?? (mode === "write" ? "catalogo_escritura" : "catalogo_lectura"),
+    recurso: opts.recurso ?? (mode === "read" ? "catalogo_lectura" : "catalogo_escritura"),
     tenantId: actor.tenantId,
-    categoria: mode === "write" ? "escritura" : "lectura",
+    categoria: mode === "read" ? "lectura" : "escritura",
   });
   if (limite) return limite;
 
   const repo = createSupabaseCatalogRepository(supabase);
   const service = createCatalogService({ repo });
   try {
-    return await handler({ service, repo, actor, canWrite: CATALOG_WRITE_ROLES.includes(member.rol) });
+    return await handler({ service, repo, actor, canWrite: CATALOG_WRITE_ROLES.includes(member.rol), supabase });
   } catch (err) {
     return catalogErrorResponse(err);
   }

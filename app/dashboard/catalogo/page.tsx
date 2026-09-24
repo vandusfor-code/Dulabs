@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { ChevronLeft, ChevronRight, FileSpreadsheet, PackagePlus, Plus, Search, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, ClipboardList, FileSpreadsheet, PackagePlus, Plus, Search, X } from "lucide-react";
 import { PageHeader } from "@/components/dashboard/shell/ui";
 import { useI18n } from "@/lib/i18n";
 import type { CatalogCategory, ProductPage, StatusFilter } from "@/lib/catalogo/domain";
@@ -94,6 +94,10 @@ export default function CatalogoPage() {
           "Register and manage your products here: photo, reference and prices. Your customers see them on the catalog link, and it is the information your AI agent will use.",
         )}
       >
+        <Link href="/dashboard/catalogo/pedidos" className={actionBtn}>
+          <ClipboardList className="size-4" />
+          {t("Pedidos", "Orders")}
+        </Link>
         {canWrite && (
           <>
             <Link href="/dashboard/catalogo/nuevo" className={primaryBtn}>
