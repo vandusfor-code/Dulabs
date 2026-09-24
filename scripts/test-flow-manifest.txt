@@ -465,3 +465,4 @@ lib/agente/agente-buzon.test.ts
 lib/agente/agente-etapa.test.ts
 lib/agente/agente-trazas.test.ts
 lib/agente/agente-limites.test.ts
+lib/agente/agente-intencion.test.ts

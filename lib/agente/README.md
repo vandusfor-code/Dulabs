@@ -98,6 +98,31 @@ select * from dulabs_agente_diagnosticar('<id_tenant>', '<teléfono>', 20);
 
 El guardado nunca frena un turno y la frontera lo espera antes de terminar (serverless).
 
+## Intención, motivo de la asesora y "quiero hablar con una asesora" (Bloque 16)
+
+- **Pedir una persona lo decide el backend** (`intencion.ts` → `asksForHuman`): "quiero
+  hablar con una asesora", "pásame con un asesor", "¿me atiende una persona?", "asesora"…
+  pausan el chat y envían el mensaje fijo SIN llamar al modelo (no depende de que Gemini lo
+  decida; no gasta tokens). Preguntas sobre la asesora ("¿la asesora me envía fotos?") o
+  "no quiero un asesor" no cuentan. Si la pausa falla, el turno sigue normal.
+- **Motivo cerrado** en cada traspaso (`trace.handoff = {source, motive}`): el modelo elige
+  `motive` en `handoff_to_human` (customer_request, order_issue, payment_or_delivery,
+  complaint, out_of_scope, other); el sistema usa customer_request, repeated_failures,
+  limit_contact_day, limit_tenant_tokens_day. La razón en texto libre llega a la pausa y al
+  pedido, nunca a la traza (puede traer datos del cliente).
+- **Intención detectada** (`trace.intent`): derivada de las herramientas que se pidieron
+  (lo que el agente HIZO) y del resultado — handoff, confirm_order, order, cart, photos,
+  product_detail, similar, more_results, search, catalog_link, conversation; null si el turno
+  no llegó al modelo (duplicado, ritmo, asesora atendiendo).
+
+```sql
+-- Últimos turnos de una conversación con intención y motivo de asesora (contact_ref = hash).
+select created_at, resultado, traza->>'intent' as intencion, traza->'handoff' as asesora
+  from dulabs_agente_trazas
+ where id_tenant = '<negocio>' and contact_ref = '<contact_ref>' and tipo = 'turn'
+ order by created_at desc limit 20;
+```
+
 ## Etapa de la conversación y confirmación (Bloque 12)
 
 La etapa la **deriva el backend** en cada turno del estado real (`lib/agente/etapa.ts`); no se

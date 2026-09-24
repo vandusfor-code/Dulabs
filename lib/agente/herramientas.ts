@@ -39,6 +39,7 @@ import { OrderError, conversationKey, requestFingerprint, type OrderErrorCode } 
 import { MAX_CART_LINES, MAX_SHOWN, isKnownReference, rememberReferences, type ConversationState } from "@/lib/agente/estado";
 import { AGENT_TOOL_NAMES, type AgentToolName } from "@/lib/agente/nombres-herramientas";
 import { isExplicitConfirmation } from "@/lib/agente/etapa";
+import { HANDOFF_MOTIVES, type HandoffMotive } from "@/lib/agente/intencion";
 
 export type AgentToolErrorCode =
   | OrderErrorCode
@@ -83,6 +84,8 @@ export interface AgentTurnToolContext {
   images: QueuedImage[];
   /** true si esta llamada ejecutó un traspaso a una asesora. */
   handedOff: boolean;
+  /** Motivo CERRADO del traspaso que pidió el modelo (va a la traza; el texto libre no). */
+  handoffMotive: HandoffMotive | null;
   /** Pedido creado/validado en este turno cuya propuesta aún no se le mostró al cliente. */
   newProposal: { orderId: string; confirmationId: string; total: number } | null;
   /** Pedido confirmado en este turno (la etapa de salida lo refleja). */
@@ -580,12 +583,24 @@ export const AGENT_TOOLS = {
   }),
 
   handoff_to_human: spec({
-    description: "Pasa la conversación (y el pedido activo, si lo indicas) a una asesora. Después de esto no respondas más que una despedida breve.",
-    input: z.object({ reason: z.string().trim().min(3).max(300), context: z.string().trim().max(500).optional(), order_id: orderId.optional() }).strict(),
+    description:
+      "Pasa la conversación (y el pedido activo, si lo indicas) a una asesora. motive: customer_request (el cliente lo pidió), order_issue (problema con el pedido), payment_or_delivery (pago, envío o entrega), complaint (reclamo), out_of_scope (algo que no puedes resolver con el catálogo), other. Después de esto no respondas más que una despedida breve.",
+    input: z
+      .object({
+        reason: z.string().trim().min(3).max(300),
+        motive: z.enum(HANDOFF_MOTIVES).optional(),
+        context: z.string().trim().max(500).optional(),
+        order_id: orderId.optional(),
+      })
+      .strict(),
     kind: "write",
     async run(ctx, input, deps) {
-      const r = await catalog("handoff_to_human", input, ctx, deps);
-      if (r.ok) ctx.handedOff = true;
+      const { motive, ...handoff } = input;
+      const r = await catalog("handoff_to_human", handoff, ctx, deps);
+      if (r.ok) {
+        ctx.handedOff = true;
+        ctx.handoffMotive = motive ?? "other";
+      }
       return r;
     },
   }),

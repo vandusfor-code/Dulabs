@@ -619,7 +619,7 @@ describe("17-20. duplicados, reintentos de Meta, asesora y carreras", () => {
   it("19. asesora: handoff_to_human pausa el chat, el agente solo se despide (sin fotos) y después no responde", async () => {
     const { luna } = await aretes();
     await turno([call("search_products", { query: "luna" }), { text: `Aretes Luna: ${formatCop(45_000)}.` }], "luna");
-    const r = await turno([calls(["request_product_images", { references: [luna.reference] }], ["handoff_to_human", { reason: "El cliente pidió una asesora" }]), { text: "Te comunico con una asesora. En breve te escribe." }], "quiero hablar con una asesora");
+    const r = await turno([calls(["request_product_images", { references: [luna.reference] }], ["handoff_to_human", { reason: "Pedido corporativo especial", motive: "out_of_scope" }]), { text: "Te comunico con una asesora. En breve te escribe." }], "es para un regalo de empresa, necesito algo especial");
     assert.equal(r.outcome, "handoff");
     assert.deepEqual(pausas, [CLIENTE]);
     assert.deepEqual(images, [], "tras el traspaso no salen fotos");

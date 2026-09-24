@@ -406,7 +406,7 @@ describe("pedido completo con confirmación contextual", () => {
 
 describe("handoff, fotos, límites y fallos", () => {
   it("18. handoff: pausa la IA en el chat, cierra el turno sin más herramientas", async () => {
-    const r = await turno([call("handoff_to_human", { reason: "Pide hablar con una persona" }), (req) => ({ toolMode: req.toolMode, text: "Te comunico con una asesora. ¡Gracias!" })], "quiero hablar con alguien");
+    const r = await turno([call("handoff_to_human", { reason: "Reclamo por un pago" }), (req) => ({ toolMode: req.toolMode, text: "Te comunico con una asesora. ¡Gracias!" })], "me cobraron dos veces el pedido");
     assert.equal(r.outcome, "handoff");
     assert.deepEqual(pausas, [CLIENTE]);
     assert.equal(r.provider.requests[1].toolMode, "none");
