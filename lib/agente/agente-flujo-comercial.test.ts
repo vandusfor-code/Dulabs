@@ -77,7 +77,8 @@ const cfg = (over: Partial<AgentConfigRow> = {}) => (parseAgentConfig(configRow(
 beforeEach(async () => {
   mem = createInMemoryCatalogRepository();
   admin = createCatalogService({ repo: mem.repo });
-  pedidos = createMemoryOrdersRepository();
+  // Bloque 19: la misma regla de reserva de stock que la BD, sobre el inventario del catálogo en memoria.
+  pedidos = createMemoryOrdersRepository({ inventory: mem.inventory });
   ledger = createMemoryProductMediaLedger();
   stateStore = createMemoryConversationStateStore();
   pausas = [];
@@ -396,6 +397,26 @@ describe("4-5. fotos y respuesta a una foto", () => {
     const r = await turno([call("update_cart", { items: [{ reference: estrella.reference, quantity: 1 }] }), { text: "Ese producto está agotado. ¿Te muestro otro?" }], "quiero este", { replyTo: { wamid: fotos.get(estrella.reference) } });
     assert.equal((stateJson(r.provider.requests[0]).respondio_a as { estado: string }).estado, "agotado");
     assert.deepEqual(results(r), ["OUT_OF_STOCK"]);
+  });
+
+  it("11b. la última unidad la CONFIRMÓ otro cliente entre la propuesta y el 'sí': no se confirma, el stock no se toca dos veces", async () => {
+    const { luna } = await aretes();
+    await admin.updateProduct(A, luna.id, { stock: 1 });
+    await turno([call("resolve_product_by_reference", { reference: luna.reference }), call("update_cart", { items: [{ reference: luna.reference, quantity: 1 }] }), { text: "Agregué 1 unidad." }], `quiero el ${luna.reference}`);
+    await turno([call("create_order_request"), { text: `Total: ${formatCop(45_000)}. ¿Confirmas?` }], "pedido");
+    // Otra clienta (otra conversación) confirma la misma última unidad justo antes.
+    const otra = { phoneNumberId: PN_A, waId: "573009990000" };
+    const { order: suya } = await engine.createOrder({ tenantId: A.tenantId, channel: "retail", source: "agent", contact: otra, items: [{ reference: luna.reference, quantity: 1 }], idempotencyKey: "agent:otra-clienta" });
+    await engine.confirmOrder({ tenantId: A.tenantId, contact: otra, orderId: suya.orderId, confirmationId: suya.confirmation!.id, actor: "agent" });
+    assert.equal(mem.inventory.stockOf(luna.id), 0);
+
+    const s = await estado();
+    const r = await turno([call("confirm_order", { order_id: s.proposal!.orderId, confirmation_id: s.proposal!.confirmationId }), { text: "Lo siento, esa pieza se acaba de agotar." }], "sí, confirmo");
+    assert.deepEqual(results(r), ["OUT_OF_STOCK"], "Gemini no puede confirmar: decide el inventario de la BD");
+    const mio = pedidos.orders.find((o) => o.orderId === s.proposal!.orderId)!;
+    assert.equal(mio.status, "draft");
+    assert.equal(mem.inventory.stockOf(luna.id), 0, "nunca negativo");
+    assert.equal(pedidos.reservations.filter((x) => x.status === "activa").length, 1, "solo la de la otra clienta");
   });
 });
 

@@ -44,13 +44,15 @@ export function formatPrice(value: number | null | undefined): string {
 // backend autoriza cada llamada).
 // ---------------------------------------------------------------------------
 
-export function useCatalogAccess(): { client: CatalogClient | null; canWrite: boolean; enabled: boolean; ready: boolean } {
+export function useCatalogAccess(): { client: CatalogClient | null; canWrite: boolean; canManageOrders: boolean; enabled: boolean; ready: boolean } {
   const { session, rol, modulos, negocios } = useDashboard();
   const token = session?.access_token ?? null;
   const client = useMemo(() => (token ? createCatalogClient(token) : null), [token]);
   return {
     client,
     canWrite: rol === "admin",
+    // Cerrar pedidos: admin y asesoras (el backend vuelve a validarlo: CATALOG_ORDER_ROLES).
+    canManageOrders: rol === "admin" || rol === "agente",
     enabled: modulos.includes("catalogo"),
     // `negocios` y `modulos` llegan en la misma respuesta de /me.
     ready: negocios !== null,

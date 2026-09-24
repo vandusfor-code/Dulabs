@@ -369,3 +369,38 @@ Una línea JSON `catalog_order` por operación: `request_id`, `event_id`,
 `business_id`, `operation`, `result`, `duration_ms`, `error_code`/`reason`,
 `order_id`, `status` y `contact_ref` (hash del wa_id). Nunca el teléfono, el
 texto del mensaje, tokens ni secretos.
+
+## Reserva de stock al confirmar (Bloque 19)
+
+Regla del negocio: **el stock se descuenta al CONFIRMAR** el pedido. Lo decide la BD, nunca el
+navegador ni Gemini (migración `20261116000000_dulabs_catalogo_reservas_stock.sql`):
+
+| Estado del pedido | Stock |
+| --- | --- |
+| `confirmed` | se aparta (todo o nada; si falta, `CT010` y la confirmación entera se revierte) |
+| `handoff` | la reserva sigue (la asesora decide; no vence sola) |
+| `completed` (venta cerrada) | la reserva se consume: el stock queda descontado |
+| `cancelled` / `expired` | la reserva se libera: el stock vuelve |
+| `confirmed` sin cerrar 72 h | vence (`dulabs_catalogo_reservas_vencer`): pasa a `expired` y el stock vuelve |
+
+- **Trigger** sobre `dulabs_catalogo_pedidos`: cualquier camino (agente, asesora, cron, SQL) aplica
+  la regla en la misma transacción. Descuento `stock = stock - n WHERE stock >= n` (Postgres
+  re-evalúa tras el bloqueo), productos bloqueados en orden de referencia (sin deadlocks),
+  `CHECK (stock >= 0)` como última barrera. Solo productos del mismo negocio con
+  `controla_stock = true`. Cada cambio queda en `dulabs_catalogo_eventos` (auditoría) y en
+  `dulabs_catalogo_reservas` (qué pedido, cuánto, hasta cuándo).
+- **Motor** (`pedidos/motor.ts`): si otro cliente se llevó las unidades entre la propuesta y el
+  "sí", `confirm_order` responde `OUT_OF_STOCK`/`PRODUCT_UNAVAILABLE` y el pedido vuelve a
+  borrador con el problema real ("se agotó", "quedan N"). `closeOrder` (asesora: completar o
+  cancelar, idempotente), `listOpenOrders` (vence lo vencido al abrir el panel),
+  `expireReservations` (cron).
+- **Panel** `/dashboard/catalogo/pedidos` (API `GET/POST /api/dashboard/catalogo/pedidos[/{DL-ORD-…}]`):
+  pedidos abiertos con el stock apartado y su vencimiento; "Venta cerrada" y "Cancelar". Ver:
+  cualquier rol del catálogo; cerrar: admin y asesoras (`agente`). Sin ids internos.
+- **El stock del producto es el DISPONIBLE**: lo apartado ya está descontado. Si la asesora
+  corrige el stock en el formulario, escribe lo que hay para vender (sin contar lo apartado);
+  cancelar o vencer después suma lo apartado de vuelta.
+- **Cron** `/api/cron/catalogo-reservas` (diario en `vercel.json` por el plan; con QStash puede
+  ir cada hora).
+- Pruebas: `supabase/tests/20261116000000_*.test.sql` (12), `*.concurrencia.sh` (sesiones
+  paralelas reales), `pedidos/reservas-stock.test.ts` y el caso 11b del flujo comercial del agente.

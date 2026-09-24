@@ -60,7 +60,8 @@ const TRANSITIONS: Record<OrderStatus, Partial<Record<OrderStatus, readonly Orde
     cancelled: ["human"],
     expired: ["system"],
   },
-  confirmed: { handoff: ["system", "agent", "human"], completed: ["human"], cancelled: ["human"] },
+  // expired (system): la reserva de stock venció sin cerrar la venta (Bloque 19, cron horario).
+  confirmed: { handoff: ["system", "agent", "human"], completed: ["human"], cancelled: ["human"], expired: ["system"] },
   handoff: { confirmed: ["human"], completed: ["human"], cancelled: ["human"] },
   completed: {},
   cancelled: {},

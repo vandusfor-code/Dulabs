@@ -35,7 +35,7 @@ import {
 } from "@/lib/catalogo/pedidos/contrato";
 import { eventIdFrom, logOrderEventSink, orderEvent, type OrderEvent, type OrderEventSink, type OrderEventType } from "@/lib/catalogo/pedidos/eventos";
 import { contactRef, logOrderOperation, type OrderLogger } from "@/lib/catalogo/pedidos/log";
-import { PublicIdTaken, applyChanges, type NewOrder, type OrderChanges, type OrderContact, type OrdersRepository } from "@/lib/catalogo/pedidos/repositorio";
+import { ProductNotSellable, PublicIdTaken, StockUnavailable, applyChanges, type NewOrder, type OrderChanges, type OrderContact, type OrdersRepository, type ReservationSummary } from "@/lib/catalogo/pedidos/repositorio";
 import { parseWhatsappOrderText } from "@/lib/catalogo/pedidos/whatsapp";
 
 /** Errores DETERMINISTAS (mismo insumo => mismo código). El mensaje es apto para el cliente. */
@@ -116,6 +116,21 @@ export function conversationKey(prefix: "agent" | "wa", contact: OrderContact, c
 }
 
 const pesos = (n: number | null) => (n === null ? "precio a consultar" : formatCop(n));
+
+/** Problemas a partir de lo que dijo la BD al apartar el stock (solo los que la evaluación no vio ya). */
+function issuesFromReservation(err: StockUnavailable | ProductNotSellable, seen: readonly OrderIssue[]): OrderIssue[] {
+  const known = new Set(seen.map((i) => ("reference" in i ? i.reference : "")));
+  if (err instanceof ProductNotSellable) {
+    return err.references.filter((r) => !known.has(r)).map((reference) => ({ code: "product_unavailable" as const, reference, message: `El producto ${reference} ya no está disponible.` }));
+  }
+  return err.shortages
+    .filter((x) => !known.has(x.reference))
+    .map((x) =>
+      x.available <= 0
+        ? { code: "sold_out" as const, reference: x.reference, message: `El producto ${x.reference} se agotó.` }
+        : { code: "insufficient_stock" as const, reference: x.reference, requested: x.requested, available: x.available, message: `De ${x.reference} quedan ${x.available} ${x.available === 1 ? "unidad" : "unidades"}; pediste ${x.requested}.` },
+    );
+}
 
 function codeForIssues(issues: readonly OrderIssue[]): OrderErrorCode {
   const codes = new Set(issues.map((i) => i.code));
@@ -476,9 +491,64 @@ export function createOrderEngine(deps: OrderEngineDeps) {
               issues: ev.issues.map((i) => ({ code: i.code, message: i.message })),
             });
           }
-          return move(order, "confirmed", input.actor, {}, { reason: "customer_confirmed" });
+          try {
+            // La BD aparta el stock en la MISMA transacción (todo o nada): si no alcanza, nada cambia.
+            return await move(order, "confirmed", input.actor, {}, { reason: "customer_confirmed" });
+          } catch (err) {
+            if (!(err instanceof StockUnavailable) && !(err instanceof ProductNotSellable)) throw err;
+            // Otro cliente se llevó las unidades entre la validación y la confirmación: el pedido vuelve a
+            // borrador con el problema real (lo que dice la BD manda sobre la evaluación anterior).
+            const fresh = await evaluate(order.businessId, order.channel, itemsOf(order), previousPrices(order), order.issues);
+            const issues = [...fresh.issues, ...issuesFromReservation(err, fresh.issues)];
+            const moved = await move(order, "draft", "system", { ...evaluationChanges(fresh), issues, confirmation: null }, { reason: codeForIssues(issues) });
+            throw new OrderError(codeForIssues(issues), issues[0]?.message ?? "Ya no hay unidades suficientes para confirmar el pedido.", {
+              order_id: moved.order.orderId,
+              issues: issues.map((i) => ({ code: i.code, message: i.message })),
+            });
+          }
         })
       ).order;
+    },
+
+    /**
+     * La ASESORA cierra un pedido desde el panel (actor humano, negocio de la sesión):
+     *   complete  confirmed | handoff            => completed (la reserva se consume)
+     *   cancel    pending_confirmation | confirmed | handoff | draft | validated => cancelled (el stock vuelve)
+     * Idempotente: repetir la misma acción sobre un pedido ya cerrado así devuelve el pedido tal cual.
+     */
+    async closeOrder(input: { tenantId: string; orderId: string; action: "complete" | "cancel"; requestId?: string }): Promise<{ order: Order; result: "ok" | "duplicate" }> {
+      return traced(input.action === "complete" ? "complete_order" : "cancel_order", input, async () => {
+        await requireAvailable();
+        const order = await deps.orders.getByOrderId(input.tenantId, input.orderId);
+        if (!order) throw new OrderError("NOT_FOUND", `No encontramos el pedido ${input.orderId}.`);
+        const target: OrderStatus = input.action === "complete" ? "completed" : "cancelled";
+        if (order.status === target) return { order, result: "duplicate" as const };
+        const allowed: readonly OrderStatus[] = input.action === "complete" ? ["confirmed", "handoff"] : ["draft", "validated", "pending_confirmation", "confirmed", "handoff"];
+        if (!allowed.includes(order.status)) {
+          throw new OrderError("INVALID_TRANSITION", `El pedido ${order.orderId} está ${order.status}: no se puede ${input.action === "complete" ? "completar" : "cancelar"}.`);
+        }
+        const moved = await move(order, target, "human", input.action === "cancel" ? { confirmation: null } : {}, {
+          reason: input.action === "complete" ? "closed_by_advisor" : "cancelled_by_advisor",
+        });
+        return { order: moved.order, eventId: moved.eventId, result: "ok" as const };
+      });
+    },
+
+    /** Pedidos abiertos del negocio con su reserva de stock (panel de la asesora). */
+    async listOpenOrders(tenantId: string, limit = 100): Promise<Array<{ order: Order; reservations: ReservationSummary[] }>> {
+      await requireAvailable();
+      // Al abrir el panel se vence lo que ya pasó su plazo (no depende solo del cron): lo que la
+      // asesora ve es el stock real. Idempotente y barato (índice de reservas activas por vencimiento).
+      await deps.orders.expireReservations(200).catch((err: unknown) => console.error("[catalogo/pedidos] vencer reservas:", err instanceof Error ? err.message : "?"));
+      const orders = await deps.orders.listForBusiness(tenantId, ["pending_confirmation", "confirmed", "handoff"], limit);
+      const reservations = await deps.orders.reservationsFor(tenantId, orders.map((o) => o.id));
+      return orders.map((order) => ({ order, reservations: reservations.filter((r) => r.orderId === order.id) }));
+    },
+
+    /** Cron: vence los pedidos confirmados cuya reserva pasó su plazo (el stock vuelve en la BD). */
+    async expireReservations(limit = 200): Promise<number> {
+      if (!(await deps.orders.available())) return 0;
+      return deps.orders.expireReservations(limit);
     },
 
     /**

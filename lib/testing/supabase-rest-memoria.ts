@@ -14,7 +14,7 @@
  * devuelve datos inventados.
  */
 type Row = Record<string, unknown>;
-type RpcHandler = (args: Record<string, unknown>) => { data?: unknown; error?: { code: string; message: string } };
+type RpcHandler = (args: Record<string, unknown>) => { data?: unknown; error?: { code: string; message: string; details?: string | null } };
 
 export interface TableSpec {
   /** Columnas que forman cada restricción UNIQUE (la primera también sirve para on_conflict). */
@@ -195,7 +195,7 @@ export function installSupabaseMemoria(url = "http://supabase.memoria"): Supabas
       if (!handler) return json(404, { code: "PGRST202", message: `Could not find the function public.${rpc[1]}`, details: null, hint: null });
       const args = method === "GET" ? Object.fromEntries(u.searchParams) : ((await req.json().catch(() => ({}))) as Record<string, unknown>);
       const r = handler(args);
-      return r.error ? json(400, { ...r.error, details: null, hint: null }) : json(200, r.data ?? null);
+      return r.error ? json(400, { details: null, hint: null, ...r.error }) : json(200, r.data ?? null);
     }
 
     const t = /^\/rest\/v1\/([a-z_0-9]+)$/.exec(u.pathname);

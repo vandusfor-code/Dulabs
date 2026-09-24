@@ -11,6 +11,7 @@ import { prepareProductImage, ImagePreparationError, type PreparedImage } from "
 import type { CategoryDecision, ImageInfo, ImportAnalysis, ImportHistoryItem, ImportRecord, ImportRowResult, RawRow } from "@/lib/catalogo/import/types";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import type { PublicationView } from "@/lib/catalogo/service";
+import type { PedidoPanel } from "@/lib/catalogo/pedidos/panel";
 
 // Solo el TIPO (se borra al compilar): rutas relativas; el navegador les antepone su origen.
 export type { PublicationView };
@@ -114,6 +115,16 @@ export function createCatalogClient(accessToken: string) {
 
     listCategories(): Promise<CatalogResult<{ categories: CatalogCategory[] }>> {
       return call(accessToken, "/categorias");
+    },
+
+    /** Pedidos abiertos con su stock apartado (Bloque 19). */
+    listOrders(): Promise<CatalogResult<{ pedidos: PedidoPanel[] }>> {
+      return call(accessToken, "/pedidos");
+    },
+
+    /** Venta cerrada (completar) o cancelar (el stock vuelve). Idempotente. */
+    closeOrder(pedido: string, accion: "completar" | "cancelar"): Promise<CatalogResult<{ pedido: PedidoPanel; repetido: boolean }>> {
+      return call(accessToken, `/pedidos/${encodeURIComponent(pedido)}`, { method: "POST", body: JSON.stringify({ accion }) });
     },
 
     createCategory(name: string): Promise<CatalogResult<{ category: CatalogCategory }>> {

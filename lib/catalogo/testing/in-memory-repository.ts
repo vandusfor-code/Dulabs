@@ -523,10 +523,24 @@ export function createInMemoryCatalogRepository() {
     failInsert(when: ((d: ProductWriteData) => boolean) | null) {
       failInsertWhen = when;
     },
-    /** Simula inventario controlado (AMORE / futuros negocios con stock). */
+    /** Simula inventario controlado o no (tracksStock) de un producto. */
     setStock(id: string, tracksStock: boolean, stock: number) {
       const p = products.get(id);
       if (p) Object.assign(p, { tracksStock, stock });
+    },
+    /** Inventario para la reserva de stock de los pedidos en memoria (misma tabla de productos). */
+    inventory: {
+      product(tenantId: string, reference: string) {
+        const p = [...products.values()].find((x) => x.tenantId === tenantId && x.reference === reference);
+        return p ? { id: p.id, active: p.status === "ACTIVE", tracked: p.tracksStock, stock: p.stock } : null;
+      },
+      setStock(productId: string, stock: number) {
+        const p = products.get(productId);
+        if (p) p.stock = assertStock(stock);
+      },
+      stockOf(productId: string) {
+        return products.get(productId)?.stock ?? null;
+      },
     },
   };
 }

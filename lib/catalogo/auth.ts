@@ -21,11 +21,13 @@ import type { Miembro, Rol } from "@/lib/team";
 import { apiError } from "@/lib/agent-compiler/api/http";
 import type { CatalogActor } from "@/lib/catalogo/service";
 
-export type CatalogAccessMode = "read" | "write";
+/** read: ver; write: modificar el catálogo (admin); orders: cerrar pedidos (admin y asesoras). */
+export type CatalogAccessMode = "read" | "write" | "orders";
 
 export const CATALOG_MODULE = "catalogo" as const;
 export const CATALOG_READ_ROLES: readonly Rol[] = ["admin", "agente", "lectura"];
 export const CATALOG_WRITE_ROLES: readonly Rol[] = ["admin"];
+export const CATALOG_ORDER_ROLES: readonly Rol[] = ["admin", "agente"];
 
 export type CatalogAccessDecision =
   | { allowed: true }
@@ -33,13 +35,14 @@ export type CatalogAccessDecision =
 
 /** Política pura de acceso al Catálogo (rol + módulo). */
 export function decideCatalogAccess(input: { role: Rol; mode: CatalogAccessMode; moduleEnabled: boolean }): CatalogAccessDecision {
-  const roles = input.mode === "write" ? CATALOG_WRITE_ROLES : CATALOG_READ_ROLES;
+  const roles = input.mode === "write" ? CATALOG_WRITE_ROLES : input.mode === "orders" ? CATALOG_ORDER_ROLES : CATALOG_READ_ROLES;
   if (!roles.includes(input.role)) {
     return {
       allowed: false,
       status: 403,
       code: "FORBIDDEN",
-      message: input.mode === "write" ? "Solo un administrador puede modificar el catálogo." : "No tienes acceso al catálogo.",
+      message:
+        input.mode === "write" ? "Solo un administrador puede modificar el catálogo." : input.mode === "orders" ? "No tienes permiso para cerrar pedidos." : "No tienes acceso al catálogo.",
     };
   }
   if (!input.moduleEnabled) {

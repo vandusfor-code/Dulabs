@@ -9,7 +9,7 @@
  */
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { beforeEach, describe, it } from "node:test";
 import { verificarFirmaMeta } from "@/lib/meta-firma";
 import { resolverTelefonoRemitenteMeta } from "@/lib/webhook-meta-remitente";
@@ -109,8 +109,14 @@ type OrderOut = ReturnType<typeof publicView> & { next_step: string; created?: b
 // ---------------------------------------------------------------------------
 
 describe("contrato: estados y transiciones", () => {
-  it("la tabla de transiciones de TS es EXACTAMENTE la de la función SQL", () => {
-    const sql = readFileSync("supabase/migrations/20261108000000_dulabs_catalogo_pedidos.sql", "utf8");
+  it("la tabla de transiciones de TS es EXACTAMENTE la de la función SQL (su definición más reciente)", () => {
+    // La última migración que redefine la función manda (Bloque 19 agregó confirmed -> expired).
+    const ultima = readdirSync("supabase/migrations")
+      .filter((f) => f.endsWith(".sql") && /function public\.dulabs_catalogo_pedido_transicion_valida\(/.test(readFileSync(`supabase/migrations/${f}`, "utf8")))
+      .sort()
+      .at(-1)!;
+    assert.equal(ultima, "20261116000000_dulabs_catalogo_reservas_stock.sql");
+    const sql = readFileSync(`supabase/migrations/${ultima}`, "utf8");
     const bloque = /transicion_valida[\s\S]*?\(values([\s\S]*?)\) as t\(desde, hacia, actor\)/.exec(sql)?.[1] ?? "";
     const enSql = [...bloque.matchAll(/\('(\w+)', '(\w+)', '(\w+)'\)/g)].map((m) => `${m[1]}>${m[2]}>${m[3]}`).sort();
     const enTs = allowedTransitions()
