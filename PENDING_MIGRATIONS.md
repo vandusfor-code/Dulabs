@@ -1,5 +1,39 @@
 # Pasos manuales pendientes en producción
 
+## PENDIENTE (opcional, recomendada) — Bloque 21: índice del historial de pedidos
+
+Migración `supabase/migrations/20261118000000_dulabs_catalogo_pedidos_historial.sql`. **Solo crea
+un índice parcial** sobre `dulabs_catalogo_pedidos` (filas en estado final). No toca datos,
+funciones, triggers, permisos ni RLS, ni nada fuera del catálogo.
+
+**Para qué sirve:** el panel de pedidos tiene ahora un **historial** de pedidos cerrados, paginado
+por cursor.
+
+| Con 100.000 pedidos cerrados | Tiempo por página |
+| --- | --- |
+| Sin el índice | ~23–26 ms (recorre y ordena todos los cerrados del negocio; crece con el volumen) |
+| Con el índice | ~0,1 ms, en la primera página o en la número mil |
+
+Sin la migración el historial funciona igual, con el mismo resultado; solo es más lento cuando
+haya muchos pedidos.
+
+Validada contra PostgreSQL 16 local:
+
+- prueba SQL 3/3, aplicada dos veces: usa el índice, y el cursor recorre todo el historial sin
+  repetir ni saltar, incluso con miles de pedidos en el mismo instante;
+- recorrido real por PostgREST: 356 de 356 pedidos en 15 páginas.
+
+1. Correr el archivo completo en el SQL Editor (idempotente).
+2. Verificar (esperado `1`):
+   ```sql
+   select count(*) from pg_indexes where indexname = 'dulabs_catalogo_pedidos_historial_idx';
+   ```
+
+Rollback: `drop index if exists public.dulabs_catalogo_pedidos_historial_idx;`
+
+**Sin migración nueva:** el límite de tasa de las páginas del catálogo (Bloque 21) reutiliza
+`dulabs_rate_limit_incrementar`, que ya está en producción desde la Fase 11.
+
 ## ✅ APLICADA (24-sep-2026, verificada `1 | 1 | 1 | 0 | 0`) — Bloque 20: búsqueda del catálogo indexada (rendimiento con miles de referencias)
 
 Migración `supabase/migrations/20261117000000_dulabs_catalogo_busqueda_indice.sql`. **Aditiva**.

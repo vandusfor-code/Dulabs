@@ -2,7 +2,7 @@
 
 // Bloque 19 — pedidos del catálogo con su stock apartado. La asesora cierra la venta
 // (el stock queda descontado) o cancela (el stock vuelve). Todo lo decide el backend;
-// esta vista solo muestra y pide la acción.
+// esta vista solo muestra y pide la acción. Bloque 21: pestaña de historial (cerrados, por cursor).
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { ChevronLeft, Clock, PackageCheck, RefreshCw, XCircle } from "lucide-react";
@@ -10,6 +10,7 @@ import { PageHeader } from "@/components/dashboard/shell/ui";
 import { useI18n } from "@/lib/i18n";
 import type { PedidoPanel } from "@/lib/catalogo/pedidos/panel";
 import { actionBtn, cn, formatPrice, primaryBtn, useCatalogAccess, useCatalogToast } from "@/components/dashboard/catalogo/ui";
+import { HistorialPedidos } from "@/components/dashboard/catalogo/HistorialPedidos";
 
 const ESTADO: Record<string, { es: string; en: string; tone: string }> = {
   pending_confirmation: { es: "Esperando confirmación", en: "Awaiting confirmation", tone: "bg-ink-2 text-mist" },
@@ -32,6 +33,7 @@ export default function PedidosPage() {
   const [pedidos, setPedidos] = useState<PedidoPanel[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [enCurso, setEnCurso] = useState<string | null>(null);
+  const [vista, setVista] = useState<"abiertos" | "historial">("abiertos");
 
   // Cada cambio de `version` vuelve a pedir la lista (después de cerrar un pedido o al tocar "Actualizar").
   const [version, setVersion] = useState(0);
@@ -91,7 +93,33 @@ export default function PedidosPage() {
         </button>
       </PageHeader>
 
-      <div className="space-y-3 px-4 pt-6 md:px-8">
+      <div className="flex gap-2 px-4 pt-6 md:px-8" role="tablist">
+        {(
+          [
+            ["abiertos", t("Abiertos", "Open")],
+            ["historial", t("Historial", "History")],
+          ] as const
+        ).map(([id, etiqueta]) => (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            aria-selected={vista === id}
+            onClick={() => setVista(id)}
+            className={cn("rounded-xl px-3.5 py-1.5 text-sm font-medium", vista === id ? "bg-fg text-ink" : "text-mist hover:text-fg")}
+          >
+            {etiqueta}
+          </button>
+        ))}
+      </div>
+
+      {vista === "historial" && client && (
+        <div className="px-4 pt-4 md:px-8">
+          <HistorialPedidos client={client} />
+        </div>
+      )}
+
+      <div className={cn("space-y-3 px-4 pt-4 md:px-8", vista !== "abiertos" && "hidden")}>
         {error && <p className="rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-400">{error}</p>}
         {pedidos === null && !error && <div className="h-32 animate-pulse rounded-2xl bg-card" aria-hidden />}
         {pedidos?.length === 0 && (

@@ -28,9 +28,27 @@ export function ipDe(request: Request): string {
   return (real || forwarded || "sin-ip").slice(0, 64);
 }
 
-/** Hash corto con sal: identifica la IP en el contador sin guardarla. */
+/**
+ * La IP como la cuenta el limitador (Bloque 21): IPv4 tal cual; IPv4 dentro de IPv6
+ * (::ffff:1.2.3.4) como IPv4; IPv6 por su prefijo /64. Un proveedor entrega a cada cliente un /64
+ * completo: contar la dirección exacta dejaría rotar direcciones para evadir el límite.
+ */
+export function ipNormalizada(ip: string): string {
+  const v = ip.trim().toLowerCase().replace(/^\[|\]$/g, "").split("%")[0];
+  const mapeada = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(v);
+  if (mapeada) return mapeada[1];
+  if (!v.includes(":")) return v;
+  const [izq, der = ""] = v.split("::");
+  const a = izq ? izq.split(":") : [];
+  const b = v.includes("::") && der ? der.split(":") : [];
+  const grupos = v.includes("::") ? [...a, ...Array(Math.max(0, 8 - a.length - b.length)).fill("0"), ...b] : a;
+  if (grupos.length !== 8 || grupos.some((g) => !/^[0-9a-f]{1,4}$/.test(g))) return v;
+  return `${grupos.slice(0, 4).map((g) => g.replace(/^0+(?=.)/, "")).join(":")}::/64`;
+}
+
+/** Hash corto con sal de la IP NORMALIZADA: identifica al cliente en el contador sin guardar la IP. */
 export function refDeIp(ip: string): string {
-  return createHash("sha256").update(`dulabs:ip:${ip}`).digest("hex").slice(0, 16);
+  return createHash("sha256").update(`dulabs:ip:${ipNormalizada(ip)}`).digest("hex").slice(0, 16);
 }
 
 const REGLAS: Record<RecursoPublico, Array<{ recurso: string; categoria: CategoriaLimiteTasa; porIp: boolean }>> = {

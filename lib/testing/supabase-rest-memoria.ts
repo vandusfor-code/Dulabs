@@ -82,11 +82,40 @@ function matches(row: Row, col: string, op: string, raw: string): boolean {
   }
 }
 
+/** "(a.lt.\"x,y\",b.eq.2)" -> ["a.lt.\"x,y\"", "b.eq.2"]: separa por comas de primer nivel (respeta comillas). */
+function splitLogic(value: string): string[] {
+  const inner = value.replace(/^\(|\)$/g, "");
+  const parts: string[] = [];
+  let cur = "";
+  let quoted = false;
+  for (const ch of inner) {
+    if (ch === '"') quoted = !quoted;
+    if (ch === "," && !quoted) {
+      parts.push(cur);
+      cur = "";
+    } else cur += ch;
+  }
+  if (cur) parts.push(cur);
+  return parts;
+}
+
+/** Una condición "col.op.valor" (valor con comillas opcionales) de un or()/and() SIN anidar. */
+function matchesCondition(row: Row, cond: string): boolean {
+  const [col, op, ...rest] = cond.split(".");
+  if (!col || !op || rest.length === 0 || !SIMPLE_OPS.has(op) || /^(or|and)\(/.test(cond)) throw new Error(`condición no soportada: ${cond}`);
+  return matches(row, col, op, rest.join(".").replace(/^"|"$/g, ""));
+}
+
 function applyFilters(rows: Row[], query: URLSearchParams): Row[] {
   let out = rows;
   for (const [key, value] of query) {
     if (["select", "order", "limit", "offset", "on_conflict", "columns"].includes(key)) continue;
-    if (key === "or" || key === "and") throw new Error(`filtro no soportado: ${key}`);
+    // or=(c1,c2) / and=(c1,c2) de condiciones simples (sin anidar): lo que usa el cursor del historial.
+    if (key === "or" || key === "and") {
+      const conds = splitLogic(value);
+      out = out.filter((r) => (key === "or" ? conds.some((c) => matchesCondition(r, c)) : conds.every((c) => matchesCondition(r, c))));
+      continue;
+    }
     const negate = value.startsWith("not.");
     const expr = negate ? value.slice(4) : value;
     const dot = expr.indexOf(".");

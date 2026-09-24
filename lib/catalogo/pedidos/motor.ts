@@ -35,7 +35,7 @@ import {
 } from "@/lib/catalogo/pedidos/contrato";
 import { eventIdFrom, logOrderEventSink, orderEvent, type OrderEvent, type OrderEventSink, type OrderEventType } from "@/lib/catalogo/pedidos/eventos";
 import { contactRef, logOrderOperation, type OrderLogger } from "@/lib/catalogo/pedidos/log";
-import { ProductNotSellable, PublicIdTaken, StockUnavailable, applyChanges, type NewOrder, type OrderChanges, type OrderContact, type OrdersRepository, type ReservationSummary } from "@/lib/catalogo/pedidos/repositorio";
+import { ProductNotSellable, PublicIdTaken, StockUnavailable, applyChanges, type NewOrder, type OrderChanges, type OrderContact, type OrderCursor, type OrdersRepository, type ReservationSummary } from "@/lib/catalogo/pedidos/repositorio";
 import { parseWhatsappOrderText } from "@/lib/catalogo/pedidos/whatsapp";
 
 /** Errores DETERMINISTAS (mismo insumo => mismo código). El mensaje es apto para el cliente. */
@@ -104,6 +104,9 @@ export function nextStepOf(o: Order): NextStep {
 /** Problemas que dependen de lo que el cliente ESCRIBIÓ (no del catálogo): re-validar no los borra. */
 const STICKY: ReadonlySet<OrderIssue["code"]> = new Set(["reference_not_found", "invalid_quantity", "message_mismatch", "wholesale_unverified"]);
 export const OPEN_STATUSES: readonly OrderStatus[] = ["draft", "validated", "pending_confirmation", "confirmed", "handoff"];
+/** Estados finales: el historial del panel (Bloque 21). Su reserva ya se consumió o se liberó. */
+export const CLOSED_STATUSES = ["completed", "cancelled", "expired"] as const satisfies readonly OrderStatus[];
+export type ClosedStatus = (typeof CLOSED_STATUSES)[number];
 
 /** sha256 de lo pedido (canal + referencias:cantidades normalizadas). */
 export function requestFingerprint(channel: OrderChannel, items: readonly OrderItem[]): string {
@@ -543,6 +546,27 @@ export function createOrderEngine(deps: OrderEngineDeps) {
       const orders = await deps.orders.listForBusiness(tenantId, ["pending_confirmation", "confirmed", "handoff"], limit);
       const reservations = await deps.orders.reservationsFor(tenantId, orders.map((o) => o.id));
       return orders.map((order) => ({ order, reservations: reservations.filter((r) => r.orderId === order.id) }));
+    },
+
+    /**
+     * Historial del panel (Bloque 21): pedidos cerrados, más recientes primero, de a `limit` por
+     * página con cursor (keyset). Una consulta de pedidos + una de reservas por página, sea la
+     * primera o la número mil. `next` = cursor de la página siguiente (null si no hay más).
+     */
+    async listClosedOrders(
+      tenantId: string,
+      input: { status?: ClosedStatus; cursor: OrderCursor | null; limit: number },
+    ): Promise<{ items: Array<{ order: Order; reservations: ReservationSummary[] }>; next: OrderCursor | null }> {
+      await requireAvailable();
+      const limit = Math.min(Math.max(Math.trunc(input.limit), 1), 100);
+      const rows = await deps.orders.listClosed(tenantId, { statuses: input.status ? [input.status] : CLOSED_STATUSES, before: input.cursor, limit: limit + 1 });
+      const page = rows.slice(0, limit);
+      const reservations = await deps.orders.reservationsFor(tenantId, page.map((r) => r.order.id));
+      const last = page.at(-1);
+      return {
+        items: page.map(({ order }) => ({ order, reservations: reservations.filter((r) => r.orderId === order.id) })),
+        next: rows.length > limit && last ? { createdAt: last.createdAtRaw, orderId: last.order.orderId } : null,
+      };
     },
 
     /** Cron: vence los pedidos confirmados cuya reserva pasó su plazo (el stock vuelve en la BD). */

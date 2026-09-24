@@ -222,3 +222,25 @@ Los dos negocios tienen las mismas referencias. En todas las pruebas hubo **0 fu
 La vista previa de importación es una acción puntual de administración. Con
 `request_product_images` ya no hay una consulta por foto. Gemini recibe entre 0,1 y 1,9 KB por
 herramienta.
+
+## Límite de tasa de las páginas contra Postgres real (Bloque 21)
+
+Este script prueba que el contador distribuido es exacto bajo concurrencia. Necesita la migración
+`20261001000000_dulabs_rate_limit.sql` aplicada en la BD local.
+
+```bash
+PERF_REST=http://127.0.0.1:54440 npx tsx scripts/perf/limite-concurrencia.ts
+```
+
+Resultado esperado:
+
+- de 700 peticiones simultáneas del mismo cliente se permiten exactamente 600;
+- otro cliente no se ve afectado;
+- de 150 búsquedas se permiten exactamente 120.
+
+Con la app compilada, 650 páginas en menos de un minuto desde una IP dieron 600 respuestas 200 y
+50 respuestas 429 (con `Retry-After` y `no-store`). En ese mismo momento otra IP recibió 200, y
+las fotos quedaron fuera del límite.
+
+Medido en local, el costo del límite es una consulta más por página (~3–7 ms). Las precargas del
+listado bajaron de 53 a 2 (`EnlaceIntencion`).
