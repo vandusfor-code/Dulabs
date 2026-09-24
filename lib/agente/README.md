@@ -68,6 +68,24 @@ total: un campo de más → `INVALID_INPUT`. Internas (no expuestas al modelo):
 - **Enlaces**: la respuesta solo puede llevar el enlace que devolvió `get_catalog_link` (el backend lo arma con negocio + canal + publicación). Detal nunca recibe el link mayorista.
 - **Duplicados**: un wamid ya atendido (reintento de Meta) no genera otra respuesta; el pedido es idempotente por mensaje.
 
+## Diagnóstico: trazas persistentes (Bloque 13)
+
+Cada turno queda en `dulabs_agente_trazas` (`lib/agente/trazas.ts`), sin datos personales:
+
+| Pregunta | Dónde |
+| --- | --- |
+| ¿Qué recibió? | `input` (wamids, cantidad, largo; nunca el texto), `reply_to` |
+| ¿Con qué contexto decidió? | `context` (canal, carrito, opciones abiertas, propuesta, pedido), `stage` |
+| ¿Qué pidió Gemini y qué validó el backend? | `tool_calls` (nombre, resultado/código, ms, argumentos resumidos) |
+| ¿Qué respondió? | `outcome`, `grounding`, `retries`, `usage`, `error_kind` |
+| ¿Qué se envió? ¿Meta lo aceptó? | `delivery` (wamid y error de envío) + estado real en `dulabs_mensajes_log` |
+
+```sql
+select * from dulabs_agente_diagnosticar('<id_tenant>', '<teléfono>', 20);
+```
+
+El guardado nunca frena un turno y la frontera lo espera antes de terminar (serverless).
+
 ## Etapa de la conversación y confirmación (Bloque 12)
 
 La etapa la **deriva el backend** en cada turno del estado real (`lib/agente/etapa.ts`); no se
