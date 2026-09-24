@@ -96,9 +96,9 @@ function Destacados({ home, basePath, listPath }: { home: PublicHome; basePath: 
         </div>
       ) : (
         <ul className="tienda-scroll -mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto scroll-px-4 px-4 pb-2 md:mx-0 md:grid md:grid-cols-4 md:gap-5 md:overflow-visible md:px-0">
-          {home.featured.map((p) => (
+          {home.featured.map((p, i) => (
             <li key={p.reference} className="w-[46%] shrink-0 snap-start sm:w-[36%] md:w-auto">
-              <TarjetaProducto product={p} basePath={basePath} />
+              <TarjetaProducto product={p} basePath={basePath} posicion={i} />
             </li>
           ))}
         </ul>

@@ -6,11 +6,15 @@
 import Link from "next/link";
 import { ImageOff } from "lucide-react";
 import { formatCop } from "@/lib/business-agent-quote";
-import { productPathIn, type PublicCatalogProduct } from "@/lib/catalogo/publicacion";
+import { cargaDeFoto, productPathIn, type PublicCatalogProduct } from "@/lib/catalogo/publicacion";
 import { AgregarAlCarrito } from "@/components/catalogo-publico/tienda/AgregarAlCarrito";
 
-/** `basePath`: raíz de la tienda del canal (detal o mayorista), para que la ficha conserve el canal. */
-export function TarjetaProducto({ product, basePath }: { product: PublicCatalogProduct; basePath: string }) {
+/**
+ * `basePath`: raíz de la tienda del canal (detal o mayorista), para que la ficha conserve el canal.
+ * `posicion`: lugar de la tarjeta en la página (0 = primera); decide si la foto se carga de inmediato.
+ */
+export function TarjetaProducto({ product, basePath, posicion }: { product: PublicCatalogProduct; basePath: string; posicion?: number }) {
+  const carga = cargaDeFoto(posicion);
   const href = productPathIn(basePath, product.reference);
   return (
     <article className="group relative flex h-full flex-col overflow-hidden rounded-[20px] border border-edge/80 bg-card shadow-[0_1px_2px_rgba(60,40,20,0.04)] transition-transform duration-150 active:scale-[0.985]">
@@ -20,7 +24,8 @@ export function TarjetaProducto({ product, basePath }: { product: PublicCatalogP
           <img
             src={product.thumbUrl}
             alt=""
-            loading="lazy"
+            loading={carga.loading}
+            fetchPriority={carga.fetchPriority}
             decoding="async"
             width={400}
             height={400}

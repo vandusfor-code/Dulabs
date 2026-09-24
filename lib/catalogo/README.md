@@ -446,3 +446,18 @@ de administración puntual.
 **Costo en escritura.** Indexar agrega ~1,3 ms por producto, y solo cuando cambia algo buscable
 (nombre, color, material, descripción, categoría o estado). Cambiar el precio o el stock no
 reindexa.
+
+**Segunda parte: la app compilada de punta a punta.** Detalle en `scripts/perf/README.md`.
+
+- **Fotos públicas:** solo se sirve la URL canónica (la `v` vigente).
+  - Cualquier otra `v`, una referencia en mayúsculas o una extensión distinta redirige (307) a la
+    canónica sin abrir Storage ni convertir a JPEG.
+  - Antes, una `v` aleatoria evitaba el CDN y forzaba descargas y conversiones: 30 peticiones a la
+    vez saturaban la CPU.
+  - El servicio separa `locateImage` (solo BD, calcula la versión y la URL canónica) de
+    `openLocatedImage` (Storage).
+- **Celular:** las 4 primeras tarjetas cargan su foto de inmediato, y la primera fila con prioridad
+  alta (`cargaDeFoto`). El LCP con 4G lenta bajó de ~3,2 s a ~1,9–2,2 s. El resto de las fotos
+  sigue diferido: al abrir el listado se descargan 11 de 43.
+- **`request_product_images`:** los ids internos, que se usan para registrar las fotos enviadas,
+  salen de una sola consulta por lote y nunca llegan a Gemini.

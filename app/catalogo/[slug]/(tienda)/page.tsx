@@ -60,7 +60,7 @@ export default async function CatalogoDetalPage({ params, searchParams }: Props)
           categoria={categoria}
           compact
           listPath={listPath}
-          tile={(p) => <TarjetaProducto product={p} basePath={basePath} />}
+          tile={(p, i) => <TarjetaProducto product={p} basePath={basePath} posicion={i} />}
         />
       </div>
     </>

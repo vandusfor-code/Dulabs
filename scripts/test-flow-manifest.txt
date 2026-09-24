@@ -449,6 +449,7 @@ lib/catalogo/inicio.test.ts
 lib/catalogo/tienda-publica.test.ts
 lib/catalogo/busqueda-publica.test.ts
 lib/catalogo/busqueda-indice.test.ts
+lib/catalogo/foto-http.test.ts
 lib/catalogo/bloque18-seguridad.test.ts
 lib/catalogo/pedidos/reservas-stock.test.ts
 # Catálogo Fase 4 -- carga masiva: planillas (CSV/XLSX), análisis, servicio idempotente/multi-tenant y ZIP nativo.
