@@ -119,7 +119,8 @@ function discreetMax(p: ProductoResuelto): number | null {
   return p.maxQuantity !== null && p.maxQuantity <= PUBLIC_STOCK_VISIBLE ? p.maxQuantity : null;
 }
 
-function productView(p: ProductoResuelto, channel: OrderChannel): z.input<typeof productOut> {
+/** Vista de un producto para el agente: solo el precio del canal y el stock discreto (reutilizada por lib/agente). */
+export function productView(p: ProductoResuelto, channel: OrderChannel): z.input<typeof productOut> {
   return {
     reference: p.reference,
     name: p.name,

@@ -1,5 +1,46 @@
 # Pasos manuales pendientes en producción
 
+## ⏳ PENDIENTE — Bloque 10: búsqueda del catálogo para el agente (miles de referencias)
+
+Migración `supabase/migrations/20261111000000_dulabs_catalogo_busqueda.sql`.
+**100 % aditiva**: solo funciones nuevas. **No** agrega columnas a
+`dulabs_inventario_productos` (compartida con AMORE) ni cambia la tienda pública.
+
+- `dulabs_catalogo_buscar`: búsqueda de texto completo en español para el agente
+  (sin tildes, plural/singular, prefijos; nombre, color, material, categoría y
+  descripción), filtros y precio del canal en SQL, paginada, solo productos
+  activos del negocio indicado. Solo `service_role` puede ejecutarla.
+
+Sin la migración el agente usa la búsqueda anterior (el nombre contiene el texto).
+
+Validada contra PostgreSQL 16 local con ~2.000 productos:
+`supabase/tests/20261111000000_dulabs_catalogo_busqueda.test.sql` (10/10;
+~40 ms por búsqueda), aplicada dos veces sin error.
+
+1. Correr el archivo completo en el SQL Editor (idempotente).
+2. Verificar (esperado `1 | 0`):
+   ```sql
+   select
+     (select count(*) from pg_proc where proname = 'dulabs_catalogo_buscar') as funciones,
+     (select count(*) from information_schema.routine_privileges
+       where routine_name = 'dulabs_catalogo_buscar' and grantee in ('anon', 'authenticated')) as permisos_publicos;
+   ```
+
+**Después de que el deploy de este bloque esté en producción (NO antes):**
+habilitar `more_products` ("muéstrame más") y `similar_products` ("¿algo parecido?")
+en el agente de Delacour. Si se hace antes, el código anterior no conoce las
+herramientas y el agente queda en silencio (fail-closed).
+
+```sql
+update public.dulabs_agente_runtime_config
+   set herramientas = (select array_agg(distinct h) from unnest(herramientas || array['more_products', 'similar_products']) h),
+       updated_at = now()
+ where phone_number_id = (select phone_number_id from public.dulabs_clientes_config
+                           where id_tenant = '0d3ae22d-0c38-4fd6-ba48-fb9e29b7cdb4');
+```
+
+Rollback: al inicio del archivo de la migración.
+
 ## ✅ APLICADA (24-sep-2026) — Fase 9: fotos citables y link del catálogo en el agente
 
 **Estado: migración aplicada en Supabase de producción por el responsable del

@@ -24,6 +24,9 @@ export const AGENT_TOOL_NAMES = [
   "handoff_to_human",
   // Enlace oficial del catálogo del canal (lo arma el backend con la publicación del negocio)
   "get_catalog_link",
+  // Navegación de resultados: página siguiente de la última búsqueda y "algo parecido" (Bloque 10)
+  "more_products",
+  "similar_products",
 ] as const;
 
 export type AgentToolName = (typeof AGENT_TOOL_NAMES)[number];
