@@ -35,7 +35,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
     <div className="flex h-full flex-col bg-ink-2">
       {/* Brand */}
       <div className="flex h-16 items-center gap-2.5 px-5">
-        <Image src="/logo.png" alt="Du Labs" width={32} height={32} className="rounded-lg [filter:grayscale(1)_brightness(2.4)]" priority />
+        <Image src="/logo.png" alt="Du Labs" width={32} height={32} className="rounded-lg" priority />
         <div className="flex flex-col leading-none">
           <span className="text-sm font-semibold tracking-tight text-fg">Du Labs</span>
           <span className="mt-1 font-mono text-[10.5px] uppercase tracking-widest text-mist">
