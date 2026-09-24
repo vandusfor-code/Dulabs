@@ -29,6 +29,7 @@ import { createSupabaseAgentConfigStore, loadAgentConfig, providerForConfig, typ
 import { createSupabaseHistoryStore } from "@/lib/agente/contexto";
 import { createSupabaseConversationStateStore } from "@/lib/agente/estado";
 import { createSupabaseProductMediaLedger } from "@/lib/agente/medios";
+import { batchInput, createSupabaseMailboxStore, enqueueAndDrain, type DrainOptions, type MailboxStore } from "@/lib/agente/buzon";
 import type { AgentToolsDeps } from "@/lib/agente/herramientas";
 import { runAgentTurn, type AgentRuntimeDeps, type AgentSender, type AgentTurnTrace } from "@/lib/agente/runtime";
 
@@ -46,12 +47,15 @@ export interface AgentBoundaryInput {
 
 export type AgentBoundaryResult =
   | { handled: false; reason: "no_agent" }
-  | { handled: true; outcome: "disabled" | "invalid_config" | "unavailable" | AgentTurnTrace["outcome"]; reason?: string };
+  | { handled: true; outcome: "disabled" | "invalid_config" | "unavailable" | "queued" | AgentTurnTrace["outcome"]; reason?: string; turns?: number };
 
 export interface AgentBoundaryDeps {
   configStore: AgentConfigStore;
-  /** Construye el resto de dependencias solo si hay un agente válido (evita trabajo para los demás números). */
-  build(input: AgentBoundaryInput): Omit<AgentRuntimeDeps, "config" | "provider" | "model"> | null;
+  /**
+   * Construye el resto de dependencias solo si hay un agente válido (evita trabajo para los demás números).
+   * Con `mailbox`, los mensajes pasan por el buzón y hay UN turno a la vez por conversación (Bloque 11).
+   */
+  build(input: AgentBoundaryInput): (Omit<AgentRuntimeDeps, "config" | "provider" | "model"> & { mailbox?: MailboxStore; drain?: DrainOptions }) | null;
   env?: Record<string, string | undefined>;
   factories?: Partial<AIProviderFactories>;
   logError?: (entry: Record<string, unknown>) => void;
@@ -87,11 +91,54 @@ export async function atenderConAgenteSiAplica(input: AgentBoundaryInput, deps: 
     logError({ ...base, result: "unavailable", reason: "runtime_deps_unavailable" });
     return { handled: true, outcome: "unavailable", reason: "runtime_deps_unavailable" };
   }
-  const r = await runAgentTurn(
-    { ...rest, config: cfg.config, provider: provider.provider, model: provider.model },
-    { tenantId: input.cliente.id_tenant, phoneNumberId: input.cliente.phone_number_id, waId: input.waId, wamid: input.wamid, text: input.text, replyTo: input.replyTo ?? null },
-  );
-  return { handled: true, outcome: r.outcome };
+  const { mailbox, drain: drainOptions, ...runtimeDeps } = rest;
+  const deps2: AgentRuntimeDeps = { ...runtimeDeps, config: cfg.config, provider: provider.provider, model: provider.model };
+  const key = { tenantId: input.cliente.id_tenant, phoneNumberId: input.cliente.phone_number_id, waId: input.waId };
+  const single = () =>
+    runAgentTurn(deps2, { ...key, wamid: input.wamid, text: input.text, replyTo: input.replyTo ?? null }).then((r) => ({ handled: true as const, outcome: r.outcome }));
+  if (!mailbox) return single();
+
+  // Buzón: si otro proceso tiene el turno de esta conversación, él atiende este mensaje (nunca dos turnos en paralelo).
+  let last: AgentTurnTrace["outcome"] | null = null;
+  const drained = await enqueueAndDrain(
+    mailbox,
+    key,
+    { wamid: input.wamid, text: input.text, replyTo: input.replyTo ? { wamid: input.replyTo.wamid ?? null, forwarded: !!input.replyTo.forwarded } : null },
+    async (batch) => {
+      const b = batchInput(batch);
+      const r = await runAgentTurn(deps2, { ...key, wamid: b.wamid, wamids: b.wamids, text: b.text, replyTo: b.replyTo });
+      last = r.outcome;
+      return r.trace.turn;
+    },
+    drainOptions,
+  ).catch((err) => {
+    logError({ ...base, result: "mailbox_error", reason: err instanceof Error ? err.message.slice(0, 120) : "unknown" });
+    return { status: "unavailable" as const };
+  });
+  // Sin la migración del buzón (o si falló al encolar): un turno directo, como antes.
+  if (drained.status === "unavailable") return single();
+  if (drained.status === "queued") return { handled: true, outcome: "queued" };
+  if (drained.leftPending) logError({ ...base, result: "mailbox_left_pending", turns: drained.turns });
+  return { handled: true, outcome: last ?? "queued", turns: drained.turns };
+}
+
+/**
+ * Mensaje que el freno de ráfaga del webhook deja pasar en silencio (llegó uno más nuevo):
+ * si el número tiene un agente válido, entra al buzón para que el turno del mensaje más
+ * nuevo atienda la ráfaga COMPLETA (con la foto citada, si la hubo). Nunca lanza.
+ */
+export async function encolarEnBuzonSiAplica(input: AgentBoundaryInput, deps: { configStore: AgentConfigStore; mailbox: MailboxStore }): Promise<boolean> {
+  try {
+    const cfg = await loadAgentConfig(deps.configStore, { tenantId: input.cliente.id_tenant, phoneNumberId: input.cliente.phone_number_id });
+    if (cfg.kind !== "ok") return false;
+    const r = await deps.mailbox.enqueue(
+      { tenantId: input.cliente.id_tenant, phoneNumberId: input.cliente.phone_number_id, waId: input.waId },
+      { wamid: input.wamid, text: input.text, replyTo: input.replyTo ? { wamid: input.replyTo.wamid ?? null, forwarded: !!input.replyTo.forwarded } : null },
+    );
+    return r === "queued";
+  } catch {
+    return false;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -180,6 +227,7 @@ export function productionAgentBoundaryDeps(supabase: SupabaseClient, cliente: C
         history: createSupabaseHistoryStore(supabase),
         sender: whatsappSender(supabase, cliente, input),
         media: createSupabaseProductMediaLedger(supabase),
+        mailbox: createSupabaseMailboxStore(supabase),
         log: (trace) => console.info(JSON.stringify(trace)),
       };
     },

@@ -1,5 +1,34 @@
 # Pasos manuales pendientes en producción
 
+## ⏳ PENDIENTE — Bloque 11: un solo turno del agente a la vez por conversación
+
+Migración `supabase/migrations/20261112000000_dulabs_agente_buzon.sql`.
+**100 % aditiva** (tablas y funciones nuevas del agente):
+
+- `dulabs_agente_buzon`: cada mensaje para el agente (único por wamid, con la foto
+  citada). El texto se borra al procesarse (ya vive en `dulabs_mensajes_log`).
+- `dulabs_agente_turno` + `dulabs_agente_tomar_turno` / `dulabs_agente_soltar_turno`:
+  un solo proceso atiende la conversación a la vez; atiende la ráfaga completa y no
+  suelta el turno si llegó algo más (atómico). Un turno caído vence solo.
+
+Sin la migración el agente funciona como antes (un turno por mensaje).
+
+Validada contra PostgreSQL 16 local: prueba SQL (6/6), aplicada dos veces sin error,
+y concurrencia real vía PostgREST (20 procesos por el turno => 1 dueño; 30 mensajes
+en paralelo => los 30 atendidos una sola vez, nunca dos turnos a la vez).
+
+1. Correr el archivo completo en el SQL Editor (idempotente). No hay pasos posteriores.
+2. Verificar (esperado `2 | 2 | 0`):
+   ```sql
+   select
+     (select count(*) from information_schema.tables where table_name in ('dulabs_agente_buzon', 'dulabs_agente_turno')) as tablas,
+     (select count(*) from pg_proc where proname in ('dulabs_agente_tomar_turno', 'dulabs_agente_soltar_turno')) as funciones,
+     (select count(*) from information_schema.role_table_grants
+       where table_name in ('dulabs_agente_buzon', 'dulabs_agente_turno') and grantee in ('anon', 'authenticated')) as permisos_publicos;
+   ```
+
+Rollback: al inicio del archivo de la migración.
+
 ## ⏳ PENDIENTE — Bloque 10: búsqueda del catálogo para el agente (miles de referencias)
 
 Migración `supabase/migrations/20261111000000_dulabs_catalogo_busqueda.sql`.
