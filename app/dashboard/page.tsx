@@ -4,7 +4,9 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
   MessagesSquare,
-  Bot,
+  Waypoints,
+  MessageSquareCheck,
+  MessageSquareReply,
   Send,
   Phone,
   ArrowUpRight,
@@ -79,7 +81,7 @@ function PantallaBienvenida({ nombre, suscripcionActiva }: { nombre: string; sus
   const { t } = useI18n();
   const VENTAJAS = [
     {
-      icon: Bot,
+      icon: Waypoints,
       titulo: t("Automatización con IA", "AI automation"),
       descripcion: t("Tu asistente responde solo en WhatsApp, entrenado con el prompt de tu negocio.", "Your assistant replies on its own in WhatsApp, trained with your business prompt."),
       href: "/dashboard/agentes",
@@ -185,7 +187,7 @@ function MiniStat({
   etiqueta,
 }: {
   href: string;
-  icon: typeof Bot;
+  icon: typeof Waypoints;
   valor: string;
   etiqueta: string;
 }) {
@@ -324,7 +326,7 @@ export default function ResumenPage() {
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <MiniStat
             href="/dashboard/agentes"
-            icon={Bot}
+            icon={MessageSquareCheck}
             valor={(resumen?.autopilot.resueltoPorIA ?? 0).toLocaleString("es-CO")}
             etiqueta={t("Resueltos por IA (24h)", "Resolved by AI (24h)")}
           />
@@ -356,7 +358,7 @@ export default function ResumenPage() {
             value={resumen ? `${Math.round(resumen.tasaAutomatizacion * 100)}%` : "—"}
             delta={resumen?.deltaAutomatizacionPts != null ? `${Math.abs(Math.round(resumen.deltaAutomatizacionPts * 100))}%` : undefined}
             positive={(resumen?.deltaAutomatizacionPts ?? 0) >= 0}
-            icon={Bot}
+            icon={Waypoints}
           />
           <StatTile
             label={t("Tiempo de respuesta", "Response time")}
@@ -489,7 +491,7 @@ export default function ResumenPage() {
                       ) : a.tipo === "manual" || a.tipo === "agente" ? (
                         <User className="size-3.5" />
                       ) : (
-                        <Bot className="size-3.5 text-lime-text" />
+                        <MessageSquareReply className="size-3.5 text-lime-text" />
                       )}
                     </div>
                     <span className="min-w-0 flex-1 truncate text-fg">{a.descripcion}</span>

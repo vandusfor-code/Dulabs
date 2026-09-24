@@ -1,6 +1,6 @@
 "use client";
 
-import { ListChecks, Workflow, Sparkles, LifeBuoy, Settings, type LucideIcon } from "lucide-react";
+import { ListChecks, Workflow, MessageSquareMore, LifeBuoy, Settings, type LucideIcon } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 
 export type BuilderTab = "questions" | "flow" | "engagement" | "recovery" | "settings";
@@ -8,7 +8,7 @@ export type BuilderTab = "questions" | "flow" | "engagement" | "recovery" | "set
 const TABS: { key: BuilderTab; icon: LucideIcon; es: string; en: string }[] = [
   { key: "questions", icon: ListChecks, es: "Preguntas", en: "Questions" },
   { key: "flow", icon: Workflow, es: "Flujo", en: "Flow" },
-  { key: "engagement", icon: Sparkles, es: "Interacción", en: "Engagement" },
+  { key: "engagement", icon: MessageSquareMore, es: "Interacción", en: "Engagement" },
   { key: "recovery", icon: LifeBuoy, es: "Recuperación", en: "Recovery" },
   { key: "settings", icon: Settings, es: "Ajustes", en: "Settings" },
 ];

@@ -471,7 +471,9 @@ function MensajesPageInterna() {
   // Popover de etiquetas de la conversación abierta.
   const [popoverEtiquetasAbierto, setPopoverEtiquetasAbierto] = useState(false);
   const [nuevaEtiquetaNombre, setNuevaEtiquetaNombre] = useState("");
-  const [nuevaEtiquetaColor, setNuevaEtiquetaColor] = useState("#c6ff3d");
+  // Color inicial del selector de etiqueta nueva: gris neutro de Business (--business-text-secondary), no el lima antiguo.
+  // El usuario sigue eligiendo el color que quiera con el selector; esto es solo el valor por defecto.
+  const [nuevaEtiquetaColor, setNuevaEtiquetaColor] = useState("#a3a3a3");
   const [guardandoEtiqueta, setGuardandoEtiqueta] = useState(false);
   const [errorEtiqueta, setErrorEtiqueta] = useState<string | null>(null);
 

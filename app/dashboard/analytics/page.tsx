@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { MessagesSquare, TrendingUp, Phone, Bot, LayoutTemplate, Timer, Inbox, Workflow, Plug } from "lucide-react";
+import { MessagesSquare, TrendingUp, Phone, Activity, LayoutTemplate, Timer, Inbox, Workflow, Plug } from "lucide-react";
 import { useDashboard } from "@/lib/dashboard-session";
 import { formatearTelefono } from "@/lib/format";
 import { PageHeader, StatTile, Pill } from "@/components/dashboard/shell/ui";
@@ -185,7 +185,7 @@ export default function AnalyticsPage() {
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
           <StatTile label={t("Mensajes este mes", "Messages this month")} value={mensajesUsados.toLocaleString("es-CO")} icon={MessagesSquare} />
           <StatTile label={t("Últimos 7 días", "Last 7 days")} value={totalSemana.toLocaleString("es-CO")} icon={TrendingUp} />
-          <StatTile label={t("Promedio diario", "Daily average")} value={promedioDiario.toLocaleString("es-CO")} icon={Bot} />
+          <StatTile label={t("Promedio diario", "Daily average")} value={promedioDiario.toLocaleString("es-CO")} icon={Activity} />
           <StatTile label={t("Números activos", "Active numbers")} value={String(numerosActivos)} icon={Phone} />
           <StatTile
             label={t("Tiempo de primera respuesta", "First response time")}
@@ -273,8 +273,10 @@ export default function AnalyticsPage() {
           <div className="rounded-xl border border-edge bg-card p-5 lg:col-span-2">
             <h2 className="text-base font-semibold text-fg">{t("Mapa de actividad", "Activity map")}</h2>
             <p className="text-sm text-mist">{t(`Cuándo responden tus clientes — ${etiquetaPeriodo}`, `When your customers reply — ${etiquetaPeriodo}`)}</p>
+            {/* Sin ancho mínimo fijo: las 8 columnas (1fr) se adaptan al ancho del card (~30 px por celda a 390 px), así que el
+                mapa ya no fuerza scroll horizontal de la página en mobile. overflow-x-auto queda solo como red por debajo de 320 px. */}
             <div className="mt-4 overflow-x-auto">
-              <div className="min-w-[520px]">
+              <div className="min-w-[288px]">
                 <div className="grid grid-cols-[40px_repeat(8,1fr)] gap-1 text-[10px] text-mist">
                   <span />
                   {BLOQUES_HORA.map((h) => (
@@ -327,16 +329,16 @@ export default function AnalyticsPage() {
             <h2 className="text-base font-semibold text-fg">{t("Plantillas con mejor desempeño", "Top-performing templates")}</h2>
             <p className="text-sm text-mist">{t("Todo el tiempo, por envíos", "All time, by sends")}</p>
             <div className="mt-4 divide-y divide-edge">
-              <div className="grid grid-cols-[1fr_repeat(3,90px)] gap-2 pb-2 font-mono text-[10.5px] uppercase tracking-widest text-mist">
+              <div className="grid grid-cols-[minmax(0,1fr)_64px_52px_84px] sm:grid-cols-[minmax(0,1fr)_repeat(3,90px)] gap-2 pb-2 font-mono text-[10.5px] uppercase tracking-widest text-mist">
                 <span>{t("Plantilla", "Template")}</span>
                 <span className="text-right">{t("Enviados", "Sent")}</span>
                 <span className="text-right">{t("Leídas", "Read")}</span>
                 <span className="text-right">{t("Respondidas", "Replied")}</span>
               </div>
               {analytics.topPlantillas.map((p) => (
-                <div key={p.nombre} className="grid grid-cols-[1fr_repeat(3,90px)] items-center gap-2 py-3 text-sm">
-                  <span className="flex items-center gap-2 truncate font-medium text-fg">
-                    <LayoutTemplate className="size-3.5 shrink-0 text-mist" /> {p.nombre}
+                <div key={p.nombre} className="grid grid-cols-[minmax(0,1fr)_64px_52px_84px] sm:grid-cols-[minmax(0,1fr)_repeat(3,90px)] items-center gap-2 py-3 text-sm">
+                  <span className="flex min-w-0 items-center gap-2 font-medium text-fg">
+                    <LayoutTemplate className="size-3.5 shrink-0 text-mist" /> <span className="truncate">{p.nombre}</span>
                   </span>
                   <span className="text-right tabular-nums text-mist">{p.enviados.toLocaleString("es-CO")}</span>
                   <span className="text-right tabular-nums text-mist">{Math.round(p.tasaLectura * 100)}%</span>
@@ -442,14 +444,14 @@ export default function AnalyticsPage() {
               <h3 className="text-sm font-medium text-fg">{t("Integraciones", "Integrations")}</h3>
             </div>
             <div className="mt-3 divide-y divide-edge">
-              <div className="grid grid-cols-[1fr_repeat(3,70px)] gap-2 pb-2 font-mono text-[10.5px] uppercase tracking-widest text-mist">
+              <div className="grid grid-cols-[minmax(0,1fr)_repeat(3,70px)] gap-2 pb-2 font-mono text-[10.5px] uppercase tracking-widest text-mist">
                 <span>{t("Integración", "Integration")}</span>
                 <span className="text-right">{t("OK", "OK")}</span>
                 <span className="text-right">{t("Error", "Error")}</span>
                 <span className="text-right">{t("Timeout", "Timeout")}</span>
               </div>
               {flowsAnalytics.integraciones.porIntegracion.map((i) => (
-                <div key={i.integrationId} className="grid grid-cols-[1fr_repeat(3,70px)] items-center gap-2 py-2 text-sm">
+                <div key={i.integrationId} className="grid grid-cols-[minmax(0,1fr)_repeat(3,70px)] items-center gap-2 py-2 text-sm">
                   <span className="truncate font-medium text-fg">{i.nombre}</span>
                   <span className="text-right tabular-nums text-mist">{i.succeeded}</span>
                   <span className="text-right tabular-nums text-red-400">{i.failed}</span>
@@ -461,7 +463,7 @@ export default function AnalyticsPage() {
         )}
 
         <div className="mt-10 flex items-center gap-2">
-          <Bot className="size-4 text-mist" />
+          <Inbox className="size-4 text-mist" />
           <h2 className="font-mono text-xs uppercase tracking-widest text-mist">{t("Human Inbox", "Human Inbox")}</h2>
         </div>
         <div className="mt-3 grid grid-cols-1 gap-4 lg:grid-cols-2">

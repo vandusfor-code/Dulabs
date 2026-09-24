@@ -1,7 +1,7 @@
 import {
   LayoutGrid,
   MessagesSquare,
-  Bot,
+  Waypoints,
   LayoutTemplate,
   Send,
   ClipboardList,
@@ -12,7 +12,7 @@ import {
   ShoppingCart,
   ShieldCheck,
   Workflow,
-  Sparkles,
+  Blocks,
   Package,
   type LucideIcon,
 } from "lucide-react";
@@ -58,7 +58,7 @@ export const navSections: NavSection[] = [
         icon: Zap,
         rolesPermitidos: ["admin", "agente"],
       },
-      { label: "Agentes de IA", labelEn: "AI agents", href: "/dashboard/agentes", icon: Bot },
+      { label: "Agentes de IA", labelEn: "AI agents", href: "/dashboard/agentes", icon: Waypoints },
     ],
   },
   {
@@ -69,7 +69,7 @@ export const navSections: NavSection[] = [
         label: "Business Agent",
         labelEn: "Business Agent",
         href: "/dashboard/business-agent",
-        icon: Sparkles,
+        icon: Blocks,
         rolesPermitidos: ["admin", "agente"],
       },
       // Catálogo (autorizado) -- fuente de verdad de productos. Visible para

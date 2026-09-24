@@ -26,7 +26,7 @@ const PLAN_PENDIENTE_KEY = "du_labs_plan_elegido";
 function Brand() {
   return (
     <Link href="/" className="dl-link inline-flex items-center gap-3 text-auth-text" aria-label="DuLabs Business">
-      <Image src="/logo.png" alt="" width={28} height={28} className="rounded-full [filter:grayscale(1)_brightness(2.4)]" priority />
+      <Image src="/logo-mono.svg" alt="" width={28} height={28} className="rounded-full" priority />
       <span className="text-[19px] font-semibold tracking-[-0.02em]">DuLabs</span>
       <span className="rounded-full border border-[#7187FF]/40 px-2.5 py-[5px] font-mono text-[9.5px] font-medium uppercase leading-none tracking-[0.22em] text-[#9AA8FF]">
         Business

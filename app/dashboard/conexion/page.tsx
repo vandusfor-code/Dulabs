@@ -2,7 +2,7 @@
 
 import { useCallback, useState } from "react";
 import Link from "next/link";
-import { Phone as PhoneIcon, BadgeCheck, Pencil, Check, X, Bot, MessagesSquare, Trash2, Link2, Loader2 } from "lucide-react";
+import { Phone as PhoneIcon, BadgeCheck, Pencil, Check, X, Waypoints, Gauge, MessagesSquare, Trash2, Link2, Loader2 } from "lucide-react";
 import { useDashboard, type Negocio } from "@/lib/dashboard-session";
 import { formatearTelefono, nombreDelAgente, CALIDAD_INFO } from "@/lib/format";
 import { PageHeader, Pill, StatTile } from "@/components/dashboard/shell/ui";
@@ -297,7 +297,7 @@ function NumeroCard({
               </div>
             ) : negocio.agente_id ? (
               <Link href="/dashboard/agentes" className="group mt-1.5 flex items-center gap-1.5">
-                <Bot className="size-3 text-mist" />
+                <Waypoints className="size-3 text-mist" />
                 <span className="text-xs text-mist">
                   <span className="font-medium text-lime-text">{nombreDelAgente(negocio)}</span>
                 </span>
@@ -307,7 +307,7 @@ function NumeroCard({
               </Link>
             ) : (
               <button onClick={() => setEditandoAgente(true)} className="group mt-1.5 flex items-center gap-1.5">
-                <Bot className="size-3 text-mist" />
+                <Waypoints className="size-3 text-mist" />
                 <span className="text-xs text-mist">
                   <span className="font-medium text-lime-text">{nombreDelAgente(negocio)}</span>
                 </span>
@@ -566,7 +566,7 @@ export default function ConexionPage() {
               value={hayIlimitado ? t("Ilimitado", "Unlimited") : capacidadTotal > 0 ? capacidadTotal.toLocaleString("es-CO") : "—"}
               icon={BadgeCheck}
             />
-            <StatTile label={t("Calidad promedio", "Average quality")} value={calidadPromedioLabel} icon={Bot} />
+            <StatTile label={t("Calidad promedio", "Average quality")} value={calidadPromedioLabel} icon={Gauge} />
             <StatTile label={t("Mensajes hoy", "Messages today")} value={mensajesHoy.toLocaleString("es-CO")} icon={MessagesSquare} />
           </div>
         )}

@@ -12,7 +12,7 @@
  */
 
 import { useMemo, useState } from "react";
-import { Bot, CheckCircle2, MapPin, RotateCcw, Send, TriangleAlert, User, X } from "lucide-react";
+import { Workflow, CheckCircle2, MapPin, RotateCcw, Send, TriangleAlert, User, X } from "lucide-react";
 import { simulateFlowTurn } from "@/lib/flow-builder/simulate-flow-client";
 import type {
   ConditionEvaluationTrace,
@@ -417,7 +417,7 @@ export function FlowSimulatorPanel({
                           b.role === "user" ? "bg-lime/20 text-lime-text" : "bg-ink text-mist"
                         }`}
                       >
-                        {b.role === "user" ? <User className="size-3.5" /> : <Bot className="size-3.5" />}
+                        {b.role === "user" ? <User className="size-3.5" /> : <Workflow className="size-3.5" />}
                       </div>
                       <div>
                         <div

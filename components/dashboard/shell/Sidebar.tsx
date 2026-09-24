@@ -3,7 +3,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
-import { LogOut, Sparkles } from "lucide-react";
+import { LogOut, TrendingUp } from "lucide-react";
 import { navItemVisible, navSections } from "./nav";
 import { useDashboard } from "@/lib/dashboard-session";
 import { supabaseBrowser } from "@/lib/supabase-browser";
@@ -35,7 +35,8 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
     <div className="flex h-full flex-col bg-ink-2">
       {/* Brand */}
       <div className="flex h-16 items-center gap-2.5 px-5">
-        <Image src="/logo.png" alt="Du Labs" width={32} height={32} className="rounded-lg" priority />
+        {/* Variante monocromática real del logo (public/logo-mono.svg: mismo trazo que /logo.png, en blanco y grises). Solo en Business. */}
+        <Image src="/logo-mono.svg" alt="Du Labs" width={32} height={32} className="rounded-lg" priority />
         <div className="flex flex-col leading-none">
           <span className="text-sm font-semibold tracking-tight text-fg">Du Labs</span>
           <span className="mt-1 font-mono text-[10.5px] uppercase tracking-widest text-mist">
@@ -111,7 +112,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         <div className="p-3">
           <div className="relative overflow-hidden rounded-xl border border-lime/20 bg-gradient-to-br from-lime/10 to-transparent p-4">
             <div className="flex items-center gap-2">
-              <Sparkles className="size-4 text-lime-text" />
+              <TrendingUp className="size-4 text-lime-text" />
               <span className="text-sm font-medium text-fg">{t("Ya usas todo tu plan", "You're using all of your plan")}</span>
             </div>
             <p className="mt-1.5 text-xs leading-relaxed text-mist">

@@ -1,6 +1,6 @@
 "use client";
 
-import { Scissors, UtensilsCrossed, Cross, ShoppingBag, Dumbbell, House, Scale, Bot, type LucideIcon } from "lucide-react";
+import { Scissors, UtensilsCrossed, Cross, ShoppingBag, Dumbbell, House, Scale, Waypoints, type LucideIcon } from "lucide-react";
 
 // Mapea la clave de ícono del catálogo (lib/marketplace.ts) a un componente
 // Lucide. Todos los íconos del Marketplace usan el mismo estilo monocromático
@@ -16,7 +16,7 @@ const ICONOS: Record<string, LucideIcon> = {
 };
 
 export function AgenteIcono({ icono, className = "size-14" }: { icono: string; className?: string }) {
-  const Icono = ICONOS[icono] ?? Bot;
+  const Icono = ICONOS[icono] ?? Waypoints;
   return (
     <div className={`flex shrink-0 items-center justify-center rounded-xl border border-edge bg-ink ${className}`}>
       <Icono className="size-7 text-fg/80" strokeWidth={1.8} />
