@@ -11,6 +11,7 @@ import { memoryOrderEventSink, orderEventV2Schema } from "@/lib/catalogo/pedidos
 import { orderRequestSchema, parseOrderMessage, type OrderItem } from "@/lib/catalogo/pedido";
 import { canonicalItems, crockford, orderRequestId, orderSigningKey, readQuote, signQuote } from "@/lib/catalogo/pedido-firma";
 import { responderPedido, responderSeleccion } from "@/lib/catalogo/pedido-http";
+import { sinLimitePublico } from "@/lib/catalogo/limites-publicos";
 import { createResolucionCatalogo, extractReferences } from "@/lib/catalogo/resolucion";
 import { createCatalogService, createPublicCatalogService, type CatalogActor } from "@/lib/catalogo/service";
 import { createInMemoryCatalogRepository } from "@/lib/catalogo/testing/in-memory-repository";
@@ -361,9 +362,9 @@ describe("adaptador HTTP (detal y mayor con el mismo código)", () => {
 
   it("respuesta pública: sin ids internos ni negocio; canal fijado por la ruta", async () => {
     const p = await producto(A, "Anillo", 10_000, 5);
-    const sel = await responderSeleccion(new Request(`https://x.test/catalogo/${slugA}/seleccion?ref=${p.reference}`), { slug: slugA, context: "retail" }, () => publico);
+    const sel = await responderSeleccion(new Request(`https://x.test/catalogo/${slugA}/seleccion?ref=${p.reference}`), { slug: slugA, context: "retail" }, () => publico, sinLimitePublico);
     const vista = (await sel.json()) as { quote: string };
-    const res = await responderPedido(req({ items: [{ reference: p.reference, quantity: 1 }], quote: vista.quote, requestKey: "clave-http-0000000001" }), { slug: slugA, context: "retail" }, () => publico);
+    const res = await responderPedido(req({ items: [{ reference: p.reference, quantity: 1 }], quote: vista.quote, requestKey: "clave-http-0000000001" }), { slug: slugA, context: "retail" }, () => publico, sinLimitePublico);
     const texto = await res.text();
     const data = JSON.parse(texto) as { status: string; request: { requestId: string; total: number }; whatsappUrl: string };
     assert.equal(data.status, "ready");
@@ -374,18 +375,18 @@ describe("adaptador HTTP (detal y mayor con el mismo código)", () => {
 
   it("errores: JSON inválido 400, pedido inválido 400, demasiado grande 413, sin clave de firma 503, catálogo inexistente 404", async () => {
     const canal = { slug: slugA, context: "retail" as const };
-    assert.equal((await responderPedido(req(null, "{"), canal, () => publico)).status, 400);
-    assert.equal((await responderPedido(req({ items: [] }), canal, () => publico)).status, 400);
-    assert.equal((await responderPedido(req(null, "x".repeat(30_000)), canal, () => publico)).status, 413);
+    assert.equal((await responderPedido(req(null, "{"), canal, () => publico, sinLimitePublico)).status, 400);
+    assert.equal((await responderPedido(req({ items: [] }), canal, () => publico, sinLimitePublico)).status, 400);
+    assert.equal((await responderPedido(req(null, "x".repeat(30_000)), canal, () => publico, sinLimitePublico)).status, 413);
     const sinClave = createPublicCatalogService({ repo: mem.repo, orders: { key: null } });
-    assert.equal((await responderPedido(req({ items: [{ reference: "DL-000001", quantity: 1 }] }), canal, () => sinClave)).status, 503);
-    assert.equal((await responderPedido(req({ items: [{ reference: "DL-000001", quantity: 1 }] }), { slug: "no-existe", context: "retail" }, () => publico)).status, 404);
+    assert.equal((await responderPedido(req({ items: [{ reference: "DL-000001", quantity: 1 }] }), canal, () => sinClave, sinLimitePublico)).status, 503);
+    assert.equal((await responderPedido(req({ items: [{ reference: "DL-000001", quantity: 1 }] }), { slug: "no-existe", context: "retail" }, () => publico, sinLimitePublico)).status, 404);
   });
 
   it("la selección mayorista nunca va a cachés compartidas", async () => {
-    const res = await responderSeleccion(new Request("https://x.test/?ref=DL-000001"), { slug: slugA, context: "wholesale", token: tokenA }, () => publico);
+    const res = await responderSeleccion(new Request("https://x.test/?ref=DL-000001"), { slug: slugA, context: "wholesale", token: tokenA }, () => publico, sinLimitePublico);
     assert.equal(res.headers.get("Cache-Control"), "private, no-store");
-    const detal = await responderSeleccion(new Request("https://x.test/?ref=DL-000001"), { slug: slugA, context: "retail" }, () => publico);
+    const detal = await responderSeleccion(new Request("https://x.test/?ref=DL-000001"), { slug: slugA, context: "retail" }, () => publico, sinLimitePublico);
     assert.match(detal.headers.get("Cache-Control") ?? "", /s-maxage/);
   });
 });

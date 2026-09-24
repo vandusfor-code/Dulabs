@@ -245,7 +245,8 @@ export function installSupabaseMemoria(url = "http://supabase.memoria"): Supabas
       if (method === "DELETE") {
         const target = new Set(applyFilters(list, u.searchParams));
         tables.set(name, list.filter((r) => !target.has(r)));
-        return wantsRows ? reply(project([...target], u.searchParams.get("select"))) : json(204, undefined);
+        if (wantsRows) return reply(project([...target], u.searchParams.get("select")));
+        return json(204, undefined, prefer.includes("count=exact") ? { "content-range": `*/${target.size}` } : {});
       }
       return json(405, { message: `método no emulado: ${method}` });
     } catch (e) {

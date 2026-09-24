@@ -19,6 +19,7 @@ import { productionOrderEngine } from "@/lib/catalogo/pedidos/produccion";
 import type { PublicCatalogProduct } from "@/lib/catalogo/publicacion";
 import { createSupabaseCatalogRepository } from "@/lib/catalogo/repository";
 import { OrderSigningUnavailable, SELECTION_MAX, createPublicCatalogService, type OrderDeps } from "@/lib/catalogo/service";
+import { limitadorPublicoReal, type DecisionLimite, type LimitadorPublico } from "@/lib/catalogo/limites-publicos";
 
 export interface Canal {
   slug: string;
@@ -58,7 +59,14 @@ export function publicDraft(d: OrderDraft) {
 }
 
 /** GET …/seleccion?ref=DL-000184&ref=… : la verdad de cada referencia + la cotización firmada de esos precios. */
-export async function responderSeleccion(request: Request, canal: Canal, servicio: () => Service = servicioReal): Promise<Response> {
+/** 429 con Retry-After (sin caché: la respuesta depende de quién pide). */
+function demasiadas(d: Extract<DecisionLimite, { permitido: false }>): Response {
+  return Response.json({ error: "too_many_requests" }, { status: 429, headers: { ...NO_STORE, "Retry-After": String(d.reintentarEnSeg) } });
+}
+
+export async function responderSeleccion(request: Request, canal: Canal, servicio: () => Service = servicioReal, limitar: LimitadorPublico = limitadorPublicoReal): Promise<Response> {
+  const limite = await limitar({ recurso: "seleccion", slug: canal.slug, request });
+  if (!limite.permitido) return demasiadas(limite);
   // El mayorista va detrás de un token en la URL: nunca se guarda en cachés compartidas.
   const headers =
     canal.context === "wholesale"
@@ -79,7 +87,10 @@ export async function responderSeleccion(request: Request, canal: Canal, servici
  * POST …/pedido  body: { items: [{ reference, quantity }], quote?, requestKey? }
  * Respuestas: ready (link de WhatsApp + solicitud) | adjusted | review | no_whatsapp.
  */
-export async function responderPedido(request: Request, canal: Canal, servicio: () => Service = servicioReal): Promise<Response> {
+export async function responderPedido(request: Request, canal: Canal, servicio: () => Service = servicioReal, limitar: LimitadorPublico = limitadorPublicoReal): Promise<Response> {
+  // Antes de leer el cuerpo: cada intento cuenta (también los inválidos).
+  const limite = await limitar({ recurso: "pedido", slug: canal.slug, request });
+  if (!limite.permitido) return demasiadas(limite);
   const raw = await request.text();
   if (raw.length > MAX_BODY_BYTES) return Response.json({ error: "payload_too_large" }, { status: 413, headers: NO_STORE });
   let body: unknown;
