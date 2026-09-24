@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Bot, CalendarClock, MessageSquareText, ShieldBan, UploadCloud } from "lucide-react";
+import { Settings2, CalendarClock, MessageSquareText, ShieldBan, UploadCloud } from "lucide-react";
 import { PageHeader } from "@/components/dashboard/shell/ui";
 import { useDashboard } from "@/lib/dashboard-session";
 import { useI18n } from "@/lib/i18n";
@@ -149,8 +149,8 @@ export default function BusinessAgentPage() {
     );
   }
 
-  const TABS: { key: Tab; icon: typeof Bot; es: string; en: string }[] = [
-    { key: "configurar", icon: Bot, es: "Configurar", en: "Configure" },
+  const TABS: { key: Tab; icon: typeof Settings2; es: string; en: string }[] = [
+    { key: "configurar", icon: Settings2, es: "Configurar", en: "Configure" },
     { key: "agenda", icon: CalendarClock, es: "Calendario", en: "Calendar" },
     { key: "preview", icon: MessageSquareText, es: "Vista previa", en: "Preview" },
     { key: "publicar", icon: UploadCloud, es: "Publicar y versiones", en: "Publish & versions" },

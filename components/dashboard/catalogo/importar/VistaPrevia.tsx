@@ -6,7 +6,7 @@
  * línea y confirmación. Lo que se muestra lo decidió el SERVIDOR.
  */
 import { useMemo, useState, type ReactNode } from "react";
-import { AlertTriangle, CheckCircle2, Copy, Download, ImageOff, Images, Info, Loader2, Pencil, RotateCcw, Sparkles, Trash2, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Copy, Download, ImageOff, Images, Info, Loader2, Pencil, RotateCcw, ScanSearch, Trash2, XCircle } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import type { CatalogCategory } from "@/lib/catalogo/domain";
 import { COLUMNS, type ColumnKey } from "@/lib/catalogo/import/columnas";
@@ -125,7 +125,7 @@ export function VistaPrevia({
           <span>{s.photos.matched === 1 ? t("1 foto relacionada", "1 photo matched") : t(`${s.photos.matched} fotos relacionadas`, `${s.photos.matched} photos matched`)}</span>
           {s.photos.auto > 0 && (
             <span className="inline-flex items-center gap-1 text-lime-text">
-              <Sparkles className="size-3" />
+              <ScanSearch className="size-3" />
               {t(`${s.photos.auto} productos con foto encontrada automáticamente`, `${s.photos.auto} products with photos found automatically`)}
             </span>
           )}
@@ -429,7 +429,7 @@ function FilaPreview({
                 {t(`Fila ${r.row}`, `Row ${r.row}`)}
                 {r.images.length > 0 && r.imageSource === "auto" && (
                   <span className="ml-1.5 inline-flex items-center gap-0.5 text-lime-text">
-                    <Sparkles className="size-3" />
+                    <ScanSearch className="size-3" />
                     {t("foto encontrada automáticamente", "photo found automatically")}
                   </span>
                 )}

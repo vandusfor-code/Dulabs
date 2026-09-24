@@ -1,6 +1,6 @@
 "use client";
 
-import { Eye, MoreVertical, ListChecks, Sparkles } from "lucide-react";
+import { Eye, MoreVertical, ListChecks, Lightbulb } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import {
   TYPE_LABEL,
@@ -142,7 +142,7 @@ export function QuestionAnalyticsPanel({
       {insight && (
         <div className="rounded-xl border border-lime/20 bg-lime/[0.04] p-4">
           <div className="flex items-center gap-2">
-            <Sparkles className="size-4 text-lime-text" />
+            <Lightbulb className="size-4 text-lime-text" />
             <span className="text-sm font-semibold text-fg">Insight</span>
           </div>
           <p className="mt-1.5 text-sm leading-relaxed text-mist">{insight}</p>

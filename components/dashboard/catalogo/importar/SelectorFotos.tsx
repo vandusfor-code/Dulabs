@@ -8,7 +8,7 @@
  * (RawRow.photos) y el SERVIDOR vuelve a analizarla.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, ImageOff, Search, Sparkles, X } from "lucide-react";
+import { Check, ImageOff, ScanSearch, Search, X } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import { naturalCompare } from "@/lib/catalogo/import/asociacion";
 import { IMPORT_LIMITS } from "@/lib/catalogo/import/limites";
@@ -121,7 +121,7 @@ export function SelectorFotos({
           {candidates.length > 0 && !query && (
             <section className="mb-5">
               <h3 className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-amber-300">
-                <Sparkles className="size-3.5" />
+                <ScanSearch className="size-3.5" />
                 {t("Posibles para este producto", "Possible matches for this product")}
               </h3>
               <Grid items={candidates} selected={selected} full={full} photoUrl={photoUrl} onToggle={toggle} />
