@@ -18,7 +18,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ClienteConfig } from "@/lib/supabase";
 import { chatEnPausaHumana } from "@/lib/pausas-chat";
-import { enviarMedia, enviarTexto } from "@/lib/whatsapp";
+import { MetaGraphApiError, enviarMedia, enviarTexto } from "@/lib/whatsapp";
 import { incrementarUsoMensajes, registrarMensaje, resolverTokenMeta } from "@/lib/whatsapp-outbound";
 import { contactRef } from "@/lib/catalogo/pedidos/log";
 import { productionAgentToolDeps } from "@/lib/catalogo/pedidos/produccion";
@@ -97,15 +97,31 @@ export async function atenderConAgenteSiAplica(input: AgentBoundaryInput, deps: 
 /** Envío real por WhatsApp Cloud API; registra en el historial (origen "ia") y cuenta el uso, igual que enviarWhatsApp. */
 function whatsappSender(supabase: SupabaseClient, cliente: ClienteConfig, input: AgentBoundaryInput): AgentSender {
   const simulated = process.env.NODE_ENV !== "production" && process.env.DULABS_AGENTE_ENVIO_SIMULADO === "1";
+  // Diagnóstico de envío SIN datos sensibles: solo el estado HTTP y el código de Meta (nunca el token, el texto ni el teléfono).
+  const sendError = (kind: "text" | "image", reason: string, err?: unknown) =>
+    console.error(
+      JSON.stringify({
+        log: "agent_send_error",
+        business_id: cliente.id_tenant,
+        contact_ref: contactRef(input.waId),
+        kind,
+        reason,
+        ...(err instanceof MetaGraphApiError ? { http_status: err.httpStatus, meta_code: err.metaErrorCode ?? null } : {}),
+      }),
+    );
   return {
     async sendText(text) {
       let wamid: string | null = null;
       if (!simulated) {
         const token = resolverTokenMeta(cliente);
-        if (!token) return false;
+        if (!token) {
+          sendError("text", "no_meta_token");
+          return false;
+        }
         try {
           ({ wamid } = await enviarTexto({ phoneNumberId: cliente.phone_number_id, token, para: input.destino, texto: text }));
-        } catch {
+        } catch (err) {
+          sendError("text", err instanceof MetaGraphApiError ? "meta_rejected" : "send_failed", err);
           return false;
         }
         await incrementarUsoMensajes(supabase, cliente);
@@ -117,10 +133,14 @@ function whatsappSender(supabase: SupabaseClient, cliente: ClienteConfig, input:
       let wamid: string | null = null;
       if (!simulated) {
         const token = resolverTokenMeta(cliente);
-        if (!token) return false;
+        if (!token) {
+          sendError("image", "no_meta_token");
+          return false;
+        }
         try {
           ({ wamid } = await enviarMedia({ phoneNumberId: cliente.phone_number_id, token, para: input.destino, tipo: "image", link: image.url, caption: image.caption }));
-        } catch {
+        } catch (err) {
+          sendError("image", err instanceof MetaGraphApiError ? "meta_rejected" : "send_failed", err);
           return false;
         }
         await incrementarUsoMensajes(supabase, cliente);

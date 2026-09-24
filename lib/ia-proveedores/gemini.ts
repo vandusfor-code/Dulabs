@@ -208,31 +208,39 @@ export function createGeminiProvider(options: GeminiProviderOptions): AIProvider
     id: "gemini",
     async generate(req, signal) {
       if (!/^[a-z0-9][a-z0-9.-]{1,60}$/.test(req.model)) throw new AIProviderError("config", "gemini");
-      const timeout = AbortSignal.timeout(req.timeoutMs);
+      // Temporizador propio (no AbortSignal.timeout, que no mantiene vivo el
+      // proceso) y liberado al terminar, cubre la petición y la lectura del cuerpo.
+      const timeoutCtl = new AbortController();
+      const timeout = timeoutCtl.signal;
+      const timer = setTimeout(() => timeoutCtl.abort(), req.timeoutMs);
       const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
       const started = Date.now();
-      let res: Response;
       try {
-        res = await doFetch(`${baseUrl}/models/${req.model}:generateContent`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "x-goog-api-key": options.apiKey },
-          body: JSON.stringify(buildGeminiRequestBody(req)),
-          signal: combined,
-        });
-      } catch (err) {
-        if (timeout.aborted || signal?.aborted) throw new AIProviderError("timeout", "gemini");
-        void err;
-        throw new AIProviderError("network", "gemini");
+        let res: Response;
+        try {
+          res = await doFetch(`${baseUrl}/models/${req.model}:generateContent`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "x-goog-api-key": options.apiKey },
+            body: JSON.stringify(buildGeminiRequestBody(req)),
+            signal: combined,
+          });
+        } catch (err) {
+          if (timeout.aborted || signal?.aborted) throw new AIProviderError("timeout", "gemini");
+          void err;
+          throw new AIProviderError("network", "gemini");
+        }
+        let body: unknown = null;
+        try {
+          body = await res.json();
+        } catch {
+          if (timeout.aborted || signal?.aborted) throw new AIProviderError("timeout", "gemini");
+          if (res.ok) throw new AIProviderError("invalid_response", "gemini", { httpStatus: res.status });
+        }
+        if (!res.ok) throw geminiHttpError(res.status, body);
+        return parseGeminiResponse(body, req.model, Date.now() - started);
+      } finally {
+        clearTimeout(timer);
       }
-      let body: unknown = null;
-      try {
-        body = await res.json();
-      } catch {
-        if (timeout.aborted || signal?.aborted) throw new AIProviderError("timeout", "gemini");
-        if (res.ok) throw new AIProviderError("invalid_response", "gemini", { httpStatus: res.status });
-      }
-      if (!res.ok) throw geminiHttpError(res.status, body);
-      return parseGeminiResponse(body, req.model, Date.now() - started);
     },
   };
 }

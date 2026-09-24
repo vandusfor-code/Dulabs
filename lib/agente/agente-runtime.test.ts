@@ -489,6 +489,24 @@ describe("handoff, fotos, límites y fallos", () => {
     assert.deepEqual(sent, []);
   });
 
+  it("WhatsApp rechaza el envío => la traza lo registra (sent:false) aunque la decisión fuera responder", async () => {
+    const provider = createSimulatedProvider([{ text: "Hola." }]);
+    const r = await runAgentTurn(
+      {
+        config: cfg(),
+        provider,
+        model: "gemini-3.6-flash",
+        tools: toolDeps(),
+        state: stateStore,
+        history: { recent: async () => [] },
+        sender: { sendText: async () => false, sendImage: async () => false, humanTookOver: async () => false },
+      },
+      { tenantId: A.tenantId, phoneNumberId: PN_A, waId: CLIENTE, wamid: "wamid.no-sale", text: "hola" },
+    );
+    assert.equal(r.trace.sent, false);
+    assert.equal(r.reply, null);
+  });
+
   it("solicitud del catálogo reclamada por el webhook: el agente la presenta y el cliente confirma", async () => {
     const p = await producto(A, "Anillo", 58_000, 5);
     const rec = await engine.createOrder({ tenantId: A.tenantId, channel: "retail", source: "whatsapp", contact: { phoneNumberId: PN_A, waId: CLIENTE }, items: [{ reference: p.reference, quantity: 2 }], idempotencyKey: "wa:intake-test-000001" });
@@ -511,6 +529,7 @@ describe("observabilidad y anclaje", () => {
     assert.deepEqual(t.tool_calls[0], { name: "resolve_product_by_reference", result: "ok", ms: 0, args: { reference: p.reference } });
     assert.ok(t.usage.input > 0);
     assert.equal(t.state_saved, true);
+    assert.equal(t.sent, true, "la traza dice si WhatsApp aceptó el mensaje");
     assert.doesNotMatch(JSON.stringify(traces), new RegExp(CLIENTE));
     const busqueda = await turno([call("search_products", { query: "algo muy personal del cliente" }), { text: "No encontré coincidencias." }], "x");
     assert.deepEqual(busqueda.trace.tool_calls[0].args, { query: "<text:29>" });
