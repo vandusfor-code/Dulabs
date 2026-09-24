@@ -53,7 +53,13 @@ import {
   procesarRespuestaProducto,
 } from "@/lib/soluciones-financieras-bot";
 import { adquirirCandadoChat, liberarCandadoChat } from "@/lib/chat-lock";
-import { activarPausaChat, chatEnPausaHumana, extenderPausaChat, logIaBloqueadaPorHumano } from "@/lib/pausas-chat";
+import {
+  activarPausaChat,
+  activarPausaPorRespuestaHumana,
+  chatEnPausaHumana,
+  extenderPausaChat,
+  logIaBloqueadaPorHumano,
+} from "@/lib/pausas-chat";
 import { observadorPublibordadosActivo, observarCambioPublibordados } from "@/lib/publibordados/observador/observador";
 import { obtenerOnboardingSesionActivaPorTelefono, guardarOnboardingSesion, marcarBienvenidaEnviada, filaASesion } from "@/lib/onboarding-store";
 import { procesarMensajeOnboarding, textoBienvenida, BOTON_CONFIGURAR, BOTON_SOPORTE } from "@/lib/onboarding-engine";
@@ -841,8 +847,10 @@ async function marcarRespondido(wamidCitado: string) {
   }
 }
 
+// Nunca acorta una pausa más larga (p. ej. un traspaso a asesora de 24 h o de 30 días):
+// ver activarPausaPorRespuestaHumana en lib/pausas-chat.ts.
 async function activarPausaHumana(phoneNumberId: string, telefonoCliente: string) {
-  await activarPausaChat(supabaseAdmin(), phoneNumberId, telefonoCliente, PAUSA_HUMANA_MS);
+  await activarPausaPorRespuestaHumana(supabaseAdmin(), phoneNumberId, telefonoCliente, PAUSA_HUMANA_MS);
 }
 
 async function atenderMensaje(

@@ -530,3 +530,26 @@ where phone_number_id = :pid and event_type = 'STATUS' group by 1;
 | Latencia | **NO VERIFICADO** | Ninguna | §16.7 P7 |
 | Tenant B | **NO VERIFICADO en producción** · Local ✓ | E2E local; SQL bloques 4 y 5 | §16.9 |
 | Mensajes automáticos | **NO VERIFICADO en producción** · Local ✓ (0) | E2E local | §16.10 |
+
+## 19. Cierre de la Fase 2A: estado verificado (24-sep-2026, después del merge)
+
+Estados: **PRODUCTION VERIFIED** (con evidencia de producción) · **LOCAL VERIFIED** (código real
+ejecutado localmente) · **NOT VERIFIED**.
+
+| Punto | Estado | Evidencia |
+| --- | --- | --- |
+| Preview de Vercel del commit final (`cc156ba`) | **PRODUCTION VERIFIED** (build) | Estado de GitHub `Vercel: success, "Deployment has completed"` antes del merge |
+| Merge del PR #133 a `main` (merge commit, sin squash) | **PRODUCTION VERIFIED** | `7e8a211`; `main` contiene el observador, la migración `20261119000000_dulabs_pb_observador.sql`, sus pruebas y `docs/agente-publibordados/` |
+| Revalidación sobre `main` real (incluye el PR #132, que entró en paralelo) | **LOCAL VERIFIED** | `tsc` 0 · `eslint` 0 · webhook + PB 74/74 · `next build` OK. #132 no agrega migraciones ni toca el gancho de PB |
+| Deployment de producción de `main` = READY y `/webhook-dulabs` operativo | **NOT VERIFIED** | Sin acceso a Vercel ni a `dulabs.co` desde este entorno (conexión `000`). Verificar en el panel de Vercel el deployment de `7e8a211` |
+| C1 / C3 / C10 (configuración real y motores) | **NOT VERIFIED** | Sin acceso a Supabase |
+| Silencio total (encuestas, campañas, onboarding, Flow, Business Agent, agente, legacy) | **NOT VERIFIED** con datos · **LOCAL VERIFIED** la regla | Regla probada (R1/R2): con `ia_pausada = true` y C3 = 0 nadie responde; la encuesta, campaña u onboarding de un contacto sí respondería. Requiere C1/C3 |
+| Migración aplicada | **NOT VERIFIED** (no aplicada por este entorno) | §16.3 |
+| Config shadow (`enabled`, `shadow_mode`) | **NOT VERIFIED** | §16.4 |
+| Meta (WABA, app, webhook, suscripción de ecos) | **NOT VERIFIED** | §16.5 |
+| Pruebas reales (cliente, asesora, WhatsApp Web, latencia, duplicado, clasificación, aislamiento, cero respuestas) | **NOT VERIFIED** | Requieren producción y teléfonos (§16.7–§16.10) |
+| Comportamiento del observador en todos esos casos | **LOCAL VERIFIED** | E2E sobre el `POST()` real 11/11; unidad 17/17; aislamiento estructural 6/6; SQL en Postgres 16 9/9 |
+
+**La Fase 2A no se cierra**: el criterio exige migración aplicada, shadow activo y pruebas reales,
+y ninguno puede ejecutarse desde este entorno. El código está en `main` e **inerte** hasta los
+pasos manuales §16.1–§16.6.

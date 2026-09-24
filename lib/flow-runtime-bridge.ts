@@ -41,6 +41,8 @@ import { esInterrupcionEscapeHatch, MENSAJE_HABLAR_CON_DANI } from "@/lib/flow-e
 import { esMencionPestanas, MENSAJE_TRANSFERENCIA_PESTANAS } from "@/lib/flow-pestanas-hatch";
 import { esMensajeInicioSolotalento } from "@/lib/flow-solotalento-inicio-hatch";
 import { pareceLikelyPreguntaLateral } from "@/lib/flow-lateral-question";
+import { leerPoliticaRuntime, reiniciarSiLaPoliticaLoPide } from "@/lib/flow/runtime-policy";
+import type { FlowRuntimePolicy } from "@/lib/flow/types";
 import { enviarWhatsApp } from "@/lib/whatsapp-outbound";
 import { activarPausaChat } from "@/lib/pausas-chat";
 import { parseFlowDefinition } from "@/lib/flow/schemas";
@@ -246,7 +248,11 @@ export type MotivoIntentoFlow =
   // ejecución activa. Se cerró esa ejecución si existía y se reinició el
   // flow desde "start" -- nunca un fallo, exclusivo del phone_number_id de
   // SOLOTALENTO, sin efecto en ningún otro tenant.
-  | "inicio_solotalento";
+  | "inicio_solotalento"
+  // Política de runtime del flow (lib/flow/runtime-policy.ts): el flow es
+  // determinista y no pudo atender el mensaje (el fallo ya quedó registrado).
+  // No se cae a la IA legacy; el mensaje queda sin respuesta automática.
+  | "sin_fallback_flow_determinista";
 
 export interface ResultadoIntentoFlow {
   /** true = Flow ya resolvió este mensaje (con éxito o sin que haga falta
@@ -897,36 +903,88 @@ export async function atenderMensajeConFlowConFallback(params: {
   });
   if (inicioSolotalento) return inicioSolotalento;
 
-  const pestanas = await intentarTransferenciaPestanas({
-    supabase: params.supabase,
-    cliente: params.cliente,
-    telefonoCliente: params.telefonoCliente,
-    texto: params.texto,
-    buttonId: params.buttonId,
+  // Política de runtime declarada por el flow (lib/flow/runtime-policy.ts).
+  // Sin política (todo flow publicado antes de esto) = comportamiento de siempre.
+  const { politica, activa } = await leerPoliticaRuntime({
     store,
+    tenantId: params.cliente.id_tenant,
+    conversation: { phoneNumberId: params.cliente.phone_number_id, telefonoCliente: params.telefonoCliente },
+    flowId: params.cliente.flow_id,
   });
-  if (pestanas) return pestanas;
+  await reiniciarSiLaPoliticaLoPide({
+    supabase: params.supabase,
+    store,
+    tenantId: params.cliente.id_tenant,
+    politica,
+    activa,
+    texto: params.texto,
+    eventId: params.wamid,
+    buttonId: params.buttonId,
+  });
 
-  const escapado = await intentarEscapeHatch({
-    supabase: params.supabase,
-    cliente: params.cliente,
-    telefonoCliente: params.telefonoCliente,
-    texto: params.texto,
-    buttonId: params.buttonId,
-    store,
-  });
-  if (escapado) return escapado;
+  const resultado = await atenderConFlowYFallback(params, store, { atajosFueraDelGrafo: !politica.deterministic });
+  const final = aplicarPoliticaAlResultado(politica, resultado);
+  if (final !== resultado) {
+    console.warn(
+      `[flow-runtime-bridge] flow determinista sin respuesta (${resultado.motivo}) tenant=${params.cliente.id_tenant}: sin fallback a IA legacy`,
+    );
+  }
+  return final;
+}
 
-  const lateral = await intentarPreguntaLateral({
-    supabase: params.supabase,
-    cliente: params.cliente,
-    telefonoCliente: params.telefonoCliente,
-    texto: params.texto,
-    buttonId: params.buttonId,
-    store,
-    dispatchAiOverride: params.dispatchAiPreguntaLateralOverride,
-  });
-  if (lateral) return lateral;
+/**
+ * Un flow determinista (runtimePolicy.deterministic) nunca deja que el
+ * llamador caiga a la IA legacy: si no atendió el mensaje, se marca como
+ * atendido sin respuesta (el fallo ya quedó registrado). Sin política, el
+ * resultado se devuelve intacto (comportamiento de siempre).
+ */
+export function aplicarPoliticaAlResultado(politica: FlowRuntimePolicy, resultado: ResultadoIntentoFlow): ResultadoIntentoFlow {
+  if (!politica.deterministic || resultado.handled) return resultado;
+  return { ...resultado, handled: true, motivo: "sin_fallback_flow_determinista" };
+}
+
+/**
+ * Atajos fuera del grafo (si el flow los admite) + Trigger Router + Flow +
+ * decisión de fallback a LEGACY. Es el cuerpo que tenía
+ * atenderMensajeConFlowConFallback antes de la política de runtime, sin cambios.
+ */
+async function atenderConFlowYFallback(
+  params: Parameters<typeof atenderMensajeConFlowConFallback>[0],
+  store: FlowOrchestratorStore,
+  opts: { atajosFueraDelGrafo: boolean },
+): Promise<ResultadoIntentoFlow> {
+  if (opts.atajosFueraDelGrafo) {
+    const pestanas = await intentarTransferenciaPestanas({
+      supabase: params.supabase,
+      cliente: params.cliente,
+      telefonoCliente: params.telefonoCliente,
+      texto: params.texto,
+      buttonId: params.buttonId,
+      store,
+    });
+    if (pestanas) return pestanas;
+
+    const escapado = await intentarEscapeHatch({
+      supabase: params.supabase,
+      cliente: params.cliente,
+      telefonoCliente: params.telefonoCliente,
+      texto: params.texto,
+      buttonId: params.buttonId,
+      store,
+    });
+    if (escapado) return escapado;
+
+    const lateral = await intentarPreguntaLateral({
+      supabase: params.supabase,
+      cliente: params.cliente,
+      telefonoCliente: params.telefonoCliente,
+      texto: params.texto,
+      buttonId: params.buttonId,
+      store,
+      dispatchAiOverride: params.dispatchAiPreguntaLateralOverride,
+    });
+    if (lateral) return lateral;
+  }
 
   // Fase 4.A (Trigger Router → Runtime, autorizado) — resolución CONSERVADORA
   // del flowId de una ejecución NUEVA (ver resolverFlowIdConTriggerRouting

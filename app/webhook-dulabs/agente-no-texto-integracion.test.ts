@@ -122,11 +122,24 @@ describe("webhook real → agente: mensajes sin texto (Bloque 23)", { timeout: 6
     assert.ok(db.rows("dulabs_mensajes_log").some((r) => r.wamid === "wamid.b24.eco" && r.origen === "manual"), "la respuesta de la asesora queda en el Inbox");
   });
 
-  it("Bloque 24: número SIN agente — el eco de la asesora deja la pausa en 30 min como siempre (comportamiento legacy intacto)", async () => {
-    db.rows("dulabs_pausas_chat").push({ phone_number_id: PN_OTRO, telefono_cliente: CLIENTE, pausado_hasta: new Date(Date.now() + 24 * 3600_000).toISOString(), pausado_desde: new Date().toISOString(), seguimiento_enviado: false });
+  // Corrección general autorizada: antes, en un número SIN agente, el eco REEMPLAZABA la pausa por
+  // 30 min (un traspaso de 24 h o 30 días quedaba en 30 min y el bot volvía a hablar en un chat atendido por
+  // una persona). Ahora tampoco se acorta; se conserva el refresco de seguimiento (pausado_desde /
+  // seguimiento_enviado) que usa el cron seguimiento-traspaso.
+  it("número SIN agente — el eco de la asesora NUNCA acorta una pausa más larga (y refresca el seguimiento)", async () => {
+    db.rows("dulabs_pausas_chat").push({ phone_number_id: PN_OTRO, telefono_cliente: CLIENTE, pausado_hasta: new Date(Date.now() + 24 * 3600_000).toISOString(), pausado_desde: new Date(0).toISOString(), seguimiento_enviado: true });
     await procesarCambio(PN_OTRO, { messaging_product: "whatsapp", metadata: { phone_number_id: PN_OTRO, display_phone_number: "573000000000" }, smb_message_echoes: [{ from: "573000000000", to: CLIENTE, id: "wamid.b24.eco.otro", type: "text", text: { body: "Hola" } } as never] });
-    const hasta = Date.parse(String(db.rows("dulabs_pausas_chat").find((r) => r.phone_number_id === PN_OTRO)!.pausado_hasta));
-    assert.ok(hasta - Date.now() < 31 * 60_000, "legacy: la pausa se reemplaza por 30 min");
+    const fila = db.rows("dulabs_pausas_chat").find((r) => r.phone_number_id === PN_OTRO)!;
+    assert.ok(Date.parse(String(fila.pausado_hasta)) - Date.now() > 23 * 3600_000, "la pausa de 24 h no se acorta a 30 min");
+    assert.equal(fila.seguimiento_enviado, false, "el seguimiento se reinicia como siempre");
+    assert.ok(Date.now() - Date.parse(String(fila.pausado_desde)) < 60_000, "pausado_desde = ahora, como siempre");
+  });
+
+  it("número SIN agente — sin pausa previa, el eco de la asesora pausa 30 min como siempre", async () => {
+    await procesarCambio(PN_OTRO, { messaging_product: "whatsapp", metadata: { phone_number_id: PN_OTRO, display_phone_number: "573000000000" }, smb_message_echoes: [{ from: "573000000000", to: CLIENTE, id: "wamid.b24.eco.nueva", type: "text", text: { body: "Hola" } } as never] });
+    const fila = db.rows("dulabs_pausas_chat").find((r) => r.phone_number_id === PN_OTRO)!;
+    const restante = Date.parse(String(fila.pausado_hasta)) - Date.now();
+    assert.ok(restante > 29 * 60_000 && restante < 31 * 60_000, "30 min");
   });
 
   it("sticker: ni Inbox ni respuesta (igual que antes)", async () => {

@@ -14,6 +14,7 @@ import {
   Workflow,
   Blocks,
   Package,
+  Contact,
   type LucideIcon,
 } from "lucide-react";
 import type { Rol } from "@/lib/team";
@@ -59,6 +60,16 @@ export const navSections: NavSection[] = [
         rolesPermitidos: ["admin", "agente"],
       },
       { label: "Agentes de IA", labelEn: "AI agents", href: "/dashboard/agentes", icon: Waypoints },
+      // Clientes de Publi Bordados (autorizado) -- módulo propio de ese negocio,
+      // visible solo para tenants con "publibordados_clientes" habilitado
+      // (dulabs_tenant_modulos). La API autoriza por su cuenta.
+      {
+        label: "Clientes",
+        labelEn: "Customers",
+        href: "/dashboard/publibordados/clientes",
+        icon: Contact,
+        modulo: "publibordados_clientes",
+      },
     ],
   },
   {
