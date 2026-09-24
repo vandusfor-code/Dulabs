@@ -29,6 +29,9 @@ WhatsApp → app/webhook-dulabs/route.ts (firma, dedupe por wamid, tenant por ph
 | `lib/agente/herramientas.ts` | Herramientas con guardas: procedencia, elección obligatoria, confirmación ligada, 1 escritura por turno, timeout. |
 | `lib/agente/anclaje.ts` | La respuesta no se envía si menciona referencias, montos o cantidades que no vinieron del backend. |
 | `lib/agente/runtime.ts` | El turno completo, con límites (4 rondas, 8 herramientas, 45 s) y mensajes fijos ante fallos. |
+| `lib/agente/seleccion.ts` | Qué señaló el cliente: foto citada, referencia, posición ("el segundo") o nombre inequívoco. Nunca adivina. |
+| `lib/agente/medios.ts` | Registro de fotos enviadas (`dulabs_agente_medios_enviados`): wamid de la foto -> producto, solo dentro de la conversación. |
+| `lib/catalogo/imagen-whatsapp.ts` | Foto en JPEG para WhatsApp (Meta no acepta WebP como imagen), servida por la ruta pública `…/whatsapp.jpg`. |
 
 ## Qué decide la IA y qué el backend
 
@@ -44,7 +47,7 @@ WhatsApp → app/webhook-dulabs/route.ts (firma, dedupe por wamid, tenant por ph
 `search_products`, `resolve_product_by_reference`, `resolve_product_by_attributes`,
 `get_product_details`, `get_cart`, `update_cart`, `resolve_order`,
 `create_order_request`, `validate_order`, `confirm_order`, `get_customer_context`,
-`request_product_images`, `handoff_to_human`.
+`request_product_images`, `handoff_to_human`, `get_catalog_link`.
 
 Ninguna acepta tenant, negocio, canal, id de producto, precio, subtotal ni
 total: un campo de más → `INVALID_INPUT`. Internas (no expuestas al modelo):
@@ -59,7 +62,24 @@ total: un campo de más → `INVALID_INPUT`. Internas (no expuestas al modelo):
 - **Canal**: el del número (`canal` de la config) o mayorista SOLO si la conversación trae una solicitud firmada del link mayorista.
 - **Anclaje**: los montos del cliente nunca respaldan un precio.
 - **Fallos**: mensaje fijo; dos fallos seguidos → asesora (pausa del chat). Seguridad del modelo → mensaje fijo.
-- **Asesora**: si tomó el chat mientras el agente pensaba, no se envía nada.
+- **Asesora**: si tomó el chat mientras el agente pensaba, no se envía nada (ni texto ni fotos); si ya lo tiene, ni se llama al modelo. Tras `handoff_to_human` solo sale la despedida.
+- **Selección**: con varias opciones ya mostradas, al carrito solo entra la que el cliente señaló (respondió a su foto, dijo la posición, la referencia o un nombre inequívoco). "Quiero este" sin señal => `CHOICE_REQUIRED` y el agente pregunta.
+- **Fotos**: por la URL pública del catálogo publicado, en JPEG, sin ids internos; cada una queda registrada con su wamid para poder citarla.
+- **Enlaces**: la respuesta solo puede llevar el enlace que devolvió `get_catalog_link` (el backend lo arma con negocio + canal + publicación). Detal nunca recibe el link mayorista.
+- **Duplicados**: un wamid ya atendido (reintento de Meta) no genera otra respuesta; el pedido es idempotente por mensaje.
+
+## Flujo de fotos y respuesta a una foto
+
+```
+"quiero ver aretes" -> search_products (candidatos del backend, en su orden)
+                    -> request_product_images (el backend valida: conversación, negocio, activo, foto)
+texto -> fotos JPEG  (…/productos/{ref}/whatsapp.jpg, leyenda: nombre · referencia · precio del canal)
+      -> cada foto: wamid -> dulabs_agente_medios_enviados (negocio, número, cliente, referencia, producto, canal)
+cliente responde a una foto: "quiero este" (context.id = wamid de la foto)
+      -> registro (misma conversación) -> producto consultado de nuevo (activo / agotado / ya no disponible)
+      -> selección "image_reply" -> update_cart permitido solo para esa referencia
+reenviado, foto desconocida o de otro negocio -> sin selección -> el agente pregunta
+```
 
 ## Activación segura de un número (orden obligatorio)
 
@@ -78,6 +98,6 @@ insert into public.dulabs_agente_runtime_config
   (id_tenant, phone_number_id, tipo, habilitado, proveedor, modelo, credencial_ref, nivel_razonamiento, herramientas, canal, negocio)
 values
   ('<id_tenant>', '<phone_number_id>', 'catalog_sales', true, 'gemini', 'gemini-3.6-flash', 'env:GEMINI_KEY_<NEGOCIO>', 'low',
-   '{search_products,resolve_product_by_reference,resolve_product_by_attributes,get_product_details,get_cart,update_cart,resolve_order,create_order_request,validate_order,confirm_order,get_customer_context,request_product_images,handoff_to_human}',
+   '{search_products,resolve_product_by_reference,resolve_product_by_attributes,get_product_details,get_cart,update_cart,resolve_order,create_order_request,validate_order,confirm_order,get_customer_context,request_product_images,handoff_to_human,get_catalog_link}',
    'retail', '{"nombre_agente": "<nombre>", "tono": "<tono breve>"}');
 ```

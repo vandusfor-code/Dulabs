@@ -771,7 +771,9 @@ export function createSupabaseCatalogRepository(supabase: SupabaseClient): Catal
         const res = await fetch(publicUrl(path), { cache: "no-store" });
         const contentType = (res.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
         if (!res.ok || !res.body || !(PUBLIC_IMAGE_TYPES as readonly string[]).includes(contentType)) {
-          await res.body?.cancel();
+          // Sin await: con el fetch de Next, esperar el cancel de un 404 puede no resolver nunca
+          // y dejaba colgada la ruta pública (p. ej. foto sin variante de detalle => fallback a la principal).
+          void res.body?.cancel().catch(() => {});
           return null;
         }
         const length = Number(res.headers.get("content-length"));

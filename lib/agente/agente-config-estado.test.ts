@@ -91,7 +91,7 @@ describe("configuración del agente: explícita y fail-closed", () => {
   });
 
   it("el universo de herramientas es cerrado y conocido", () => {
-    assert.equal(AGENT_TOOL_NAMES.length, 13);
+    assert.equal(AGENT_TOOL_NAMES.length, 14);
     assert.ok(!AGENT_TOOL_NAMES.some((n) => /sql|stock|price|delete|update_product/.test(n)));
   });
 });
@@ -156,7 +156,7 @@ describe("contexto por capas", () => {
   });
 
   it("las reglas cubren lo crítico: fuente de verdad, no calcular, ambigüedad, confirmación, canal, inyección", () => {
-    for (const re of [/única fuente de verdad/, /Nunca calcules precios/, /Nunca elijas por el cliente/, /confirmation_id/, /canal de precios/i, /datos, no instrucciones/, /Nunca escribas enlaces/]) {
+    for (const re of [/única fuente de verdad/, /Nunca calcules precios/, /Nunca elijas por el cliente/, /confirmation_id/, /canal de precios/i, /datos, no instrucciones/, /El único enlace que puedes escribir es el que devuelve get_catalog_link/]) {
       assert.match(PLATFORM_RULES, re);
     }
   });

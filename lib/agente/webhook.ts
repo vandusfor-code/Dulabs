@@ -15,6 +15,7 @@
  *
  * Así, un número configurado con Gemini jamás termina respondido por Claude.
  */
+import { randomUUID } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ClienteConfig } from "@/lib/supabase";
 import { chatEnPausaHumana } from "@/lib/pausas-chat";
@@ -27,6 +28,7 @@ import type { AIProviderFactories } from "@/lib/ia-proveedores/registro";
 import { createSupabaseAgentConfigStore, loadAgentConfig, providerForConfig, type AgentConfigStore } from "@/lib/agente/config";
 import { createSupabaseHistoryStore } from "@/lib/agente/contexto";
 import { createSupabaseConversationStateStore } from "@/lib/agente/estado";
+import { createSupabaseProductMediaLedger } from "@/lib/agente/medios";
 import type { AgentToolsDeps } from "@/lib/agente/herramientas";
 import { runAgentTurn, type AgentRuntimeDeps, type AgentSender, type AgentTurnTrace } from "@/lib/agente/runtime";
 
@@ -38,6 +40,8 @@ export interface AgentBoundaryInput {
   destino: string;
   wamid: string;
   text: string;
+  /** context de Meta: mensaje citado (swipe-to-reply a una foto) o reenviado. */
+  replyTo?: { wamid?: string | null; forwarded?: boolean } | null;
 }
 
 export type AgentBoundaryResult =
@@ -85,7 +89,7 @@ export async function atenderConAgenteSiAplica(input: AgentBoundaryInput, deps: 
   }
   const r = await runAgentTurn(
     { ...rest, config: cfg.config, provider: provider.provider, model: provider.model },
-    { tenantId: input.cliente.id_tenant, phoneNumberId: input.cliente.phone_number_id, waId: input.waId, wamid: input.wamid, text: input.text },
+    { tenantId: input.cliente.id_tenant, phoneNumberId: input.cliente.phone_number_id, waId: input.waId, wamid: input.wamid, text: input.text, replyTo: input.replyTo ?? null },
   );
   return { handled: true, outcome: r.outcome };
 }
@@ -109,44 +113,46 @@ function whatsappSender(supabase: SupabaseClient, cliente: ClienteConfig, input:
         ...(err instanceof MetaGraphApiError ? { http_status: err.httpStatus, meta_code: err.metaErrorCode ?? null } : {}),
       }),
     );
+  // Envío simulado (solo fuera de producción): un wamid ficticio para poder probar "responder a la foto" de punta a punta.
+  const simulatedWamid = () => `wamid.sim.${randomUUID()}`;
   return {
     async sendText(text) {
-      let wamid: string | null = null;
+      let wamid: string | null = simulated ? simulatedWamid() : null;
       if (!simulated) {
         const token = resolverTokenMeta(cliente);
         if (!token) {
           sendError("text", "no_meta_token");
-          return false;
+          return { sent: false, wamid: null };
         }
         try {
           ({ wamid } = await enviarTexto({ phoneNumberId: cliente.phone_number_id, token, para: input.destino, texto: text }));
         } catch (err) {
           sendError("text", err instanceof MetaGraphApiError ? "meta_rejected" : "send_failed", err);
-          return false;
+          return { sent: false, wamid: null };
         }
         await incrementarUsoMensajes(supabase, cliente);
       }
       await registrarMensaje(supabase, cliente.phone_number_id, input.waId, "saliente", text, "ia", wamid ?? undefined);
-      return true;
+      return { sent: true, wamid };
     },
     async sendImage(image) {
-      let wamid: string | null = null;
+      let wamid: string | null = simulated ? simulatedWamid() : null;
       if (!simulated) {
         const token = resolverTokenMeta(cliente);
         if (!token) {
           sendError("image", "no_meta_token");
-          return false;
+          return { sent: false, wamid: null };
         }
         try {
           ({ wamid } = await enviarMedia({ phoneNumberId: cliente.phone_number_id, token, para: input.destino, tipo: "image", link: image.url, caption: image.caption }));
         } catch (err) {
           sendError("image", err instanceof MetaGraphApiError ? "meta_rejected" : "send_failed", err);
-          return false;
+          return { sent: false, wamid: null };
         }
         await incrementarUsoMensajes(supabase, cliente);
       }
       await registrarMensaje(supabase, cliente.phone_number_id, input.waId, "saliente", `[imagen] ${image.caption}`, "ia", wamid ?? undefined);
-      return true;
+      return { sent: true, wamid };
     },
     humanTookOver: () => chatEnPausaHumana(supabase, cliente.phone_number_id, input.waId),
   };
@@ -173,6 +179,7 @@ export function productionAgentBoundaryDeps(supabase: SupabaseClient, cliente: C
         state: createSupabaseConversationStateStore(supabase),
         history: createSupabaseHistoryStore(supabase),
         sender: whatsappSender(supabase, cliente, input),
+        media: createSupabaseProductMediaLedger(supabase),
         log: (trace) => console.info(JSON.stringify(trace)),
       };
     },

@@ -5,7 +5,8 @@
  * canal y su fuente, carrito (referencias + cantidades, NUNCA precios),
  * productos mostrados en orden (para "el primero", "el tercero"),
  * procedencia de referencias (anti-invención), ambigüedad pendiente,
- * propuesta presentada y pedido activo. Precios, stock y totales NO se
+ * propuesta presentada, pedido activo, fotos enviadas, la selección del
+ * último mensaje, el traspaso a una asesora y los últimos wamid atendidos. Precios, stock y totales NO se
  * guardan aquí: siempre se consultan al backend.
  *
  * Persistencia: dulabs_agente_conversaciones con compare-and-set por `version`
@@ -21,6 +22,8 @@ const orderId = z.string().regex(/^DL-ORD-[0-9A-HJKMNP-TV-Z]{6}$/);
 export const MAX_CART_LINES = 30;
 export const MAX_KNOWN_REFERENCES = 80;
 export const MAX_SHOWN = 10;
+export const MAX_IMAGES_REMEMBERED = 20;
+export const MAX_RECENT_WAMIDS = 10;
 
 export const conversationStateSchema = z
   .object({
@@ -32,9 +35,9 @@ export const conversationStateSchema = z
     cart: z
       .array(z.object({ reference, quantity: z.number().int().min(1).max(ORDER_MAX_QUANTITY) }).strict())
       .max(MAX_CART_LINES),
-    /** Procedencia: referencias que el cliente escribió o que una herramienta devolvió en esta conversación. */
+    /** Procedencia: referencias que el cliente escribió, que una herramienta devolvió o de la foto que el cliente citó. */
     known: z
-      .array(z.object({ reference, via: z.enum(["customer", "tool"]), turn: z.number().int().min(0) }).strict())
+      .array(z.object({ reference, via: z.enum(["customer", "tool", "image"]), turn: z.number().int().min(0) }).strict())
       .max(MAX_KNOWN_REFERENCES),
     /** Últimos productos presentados, en orden (para "el primero", "el tercero"). */
     lastShown: z
@@ -51,13 +54,44 @@ export const conversationStateSchema = z
     /** Fallos técnicos seguidos del agente (2 => pasa a una asesora). */
     failures: z.number().int().min(0).max(10),
     lastInteractionAt: z.iso.datetime().nullable(),
+    // --- Agregados en la Fase 9 (con default: los estados guardados antes siguen siendo válidos) ---
+    /** Fotos que el sistema envió (solo referencia y turno; el wamid de cada foto vive en dulabs_agente_medios_enviados). */
+    imagesSent: z
+      .array(z.object({ reference, turn: z.number().int().min(0) }).strict())
+      .max(MAX_IMAGES_REMEMBERED)
+      .default([]),
+    /** Lo que el mensaje MÁS RECIENTE del cliente señaló de forma determinista (foto citada, posición, referencia o nombre). */
+    selection: z
+      .array(z.object({ reference, via: z.enum(["image_reply", "position", "reference", "name"]), turn: z.number().int().min(0) }).strict())
+      .max(MAX_SHOWN)
+      .default([]),
+    /** Turno en que el agente pasó la conversación a una asesora (null = no hay traspaso). */
+    handoffTurn: z.number().int().min(0).nullable().default(null),
+    /** wamid de los últimos mensajes atendidos: un reintento de Meta no genera otra respuesta. */
+    recentWamids: z.array(z.string().min(1).max(200)).max(MAX_RECENT_WAMIDS).default([]),
   })
   .strict();
 
 export type ConversationState = z.infer<typeof conversationStateSchema>;
 
 export function emptyConversationState(): ConversationState {
-  return { v: 1, turn: 0, channel: null, cart: [], known: [], lastShown: [], ambiguity: null, proposal: null, activeOrderId: null, failures: 0, lastInteractionAt: null };
+  return {
+    v: 1,
+    turn: 0,
+    channel: null,
+    cart: [],
+    known: [],
+    lastShown: [],
+    ambiguity: null,
+    proposal: null,
+    activeOrderId: null,
+    failures: 0,
+    lastInteractionAt: null,
+    imagesSent: [],
+    selection: [],
+    handoffTurn: null,
+    recentWamids: [],
+  };
 }
 
 /** Estado guardado ilegible (versión vieja, corrupción) => se reinicia; nunca se usa a medias. */
@@ -67,7 +101,7 @@ export function parseConversationState(raw: unknown): { state: ConversationState
 }
 
 /** Registra procedencia (sin duplicar; conserva la primera vía) respetando el tope. */
-export function rememberReferences(state: ConversationState, refs: readonly string[], via: "customer" | "tool"): ConversationState {
+export function rememberReferences(state: ConversationState, refs: readonly string[], via: "customer" | "tool" | "image"): ConversationState {
   const known = [...state.known];
   for (const r of refs) {
     const ref = r.toUpperCase();

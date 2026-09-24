@@ -22,6 +22,7 @@ import { AGENT_TOOLS } from "@/lib/agente/herramientas";
 import { AGENT_TOOL_NAMES } from "@/lib/agente/nombres-herramientas";
 import { FALLBACK_MESSAGES, runAgentTurn, type AgentTurnTrace } from "@/lib/agente/runtime";
 import { checkGrounding, emptyEvidence, addEvidence, addCustomerEvidence } from "@/lib/agente/anclaje";
+import { imageVersion } from "@/lib/catalogo/publicacion";
 
 const A: CatalogActor = { tenantId: "aaaaaaaa-0000-4000-8000-00000000000a", userId: "admin-a" };
 const B: CatalogActor = { tenantId: "bbbbbbbb-0000-4000-8000-00000000000b", userId: "admin-b" };
@@ -103,6 +104,7 @@ function toolDeps(over: Partial<AgentToolsDeps> = {}): AgentToolsDeps {
     log: () => {},
     ownsPhoneNumber: async (tenantId, pn) => (tenantId === A.tenantId && pn === PN_A) || (tenantId === B.tenantId && pn === PN_B),
     customerName: async () => "Laura",
+    siteUrl: () => "https://dulabs.test",
     ...over,
   };
 }
@@ -414,6 +416,7 @@ describe("handoff, fotos, límites y fallos", () => {
     const con = await producto(A, "Anillo con foto", 58_000, 5);
     const sin = await producto(A, "Anillo sin foto", 40_000, 5);
     await mem.repo.attachMedia(A.tenantId, "admin-a", { productId: con.id, storagePath: `${A.tenantId}/${con.id}/a.webp`, thumbPath: null, mimeType: "image/webp", bytes: 10, width: 800, height: 800, makePrimary: true });
+    const pub = await mem.repo.insertPublication(A.tenantId, "joyeria-a", "Joyería A");
     await turno([call("search_products", { query: "anillo" }), { text: "Tengo dos anillos." }], "muéstrame anillos");
     const r = await turno([call("request_product_images", { references: [con.reference, sin.reference, "DL-777777"] }), { text: "Te envío la foto." }], "fotos");
     const out = lastToolOutputs(r.provider.requests[1])[0] as { queued: string[]; skipped: Array<{ reference: string; reason: string }> };
@@ -422,7 +425,11 @@ describe("handoff, fotos, límites y fallos", () => {
       out.skipped.map((s) => s.reason).sort(),
       ["no_photo", "not_in_conversation"],
     );
-    assert.deepEqual(images, [{ reference: con.reference, url: `https://storage.test/inventario-productos/${A.tenantId}/${con.id}/a.webp`, caption: `Anillo con foto · ${con.reference} · $58.000` }]);
+    // URL PÚBLICA en JPEG (sin ids internos); el id del producto solo viaja internamente para el registro de fotos.
+    assert.deepEqual(images, [
+      { reference: con.reference, productId: con.id, url: `https://dulabs.test/catalogo/${pub.slug}/productos/${con.reference.toLowerCase()}/whatsapp.jpg?v=${imageVersion(`${A.tenantId}/${con.id}/a.webp`)}`, caption: `Anillo con foto · ${con.reference} · $58.000` },
+    ]);
+    assert.doesNotMatch(images[0].url, new RegExp(`${A.tenantId}|${con.id}`), "la URL de la foto no lleva ids internos");
     assert.doesNotMatch(JSON.stringify(r.provider.requests), /storage\.test/, "el modelo nunca ve URLs");
   });
 

@@ -91,7 +91,9 @@ export type MetaMessage = {
   // como type "interactive" con interactive.button_reply, distinto del
   // "button" de arriba.
   interactive?: { type?: string; button_reply?: { id?: string; title?: string } };
-  context?: { id?: string };
+  // Mensaje citado (swipe-to-reply): `id` = wamid del mensaje respondido. Un mensaje
+  // reenviado trae `forwarded`/`frequently_forwarded` (y no `id`).
+  context?: { id?: string; from?: string; forwarded?: boolean; frequently_forwarded?: boolean };
   // Presente SOLO en el primer mensaje de una conversación que arrancó
   // tocando un anuncio "Click to WhatsApp" de Meta -- contexto real del
   // anuncio (no formulario, eso es Meta Lead Ads, una integración aparte que
@@ -1301,7 +1303,9 @@ async function intentarAgenteConversacionalSiAplica(cliente: ClienteConfig, mens
       const cfg = await loadAgentConfig(deps.configStore, { tenantId: cliente.id_tenant, phoneNumberId: cliente.phone_number_id });
       return cfg.kind !== "none";
     }
-    const r = await atenderConAgenteSiAplica({ cliente, waId: telefonoRemitente, destino, wamid: mensaje.id, text: texto.slice(0, 4_000) }, deps);
+    // Respuesta a una foto: el agente resuelve el producto con el registro de fotos enviadas (nunca adivinando).
+    const replyTo = mensaje.context ? { wamid: mensaje.context.id ?? null, forwarded: !!(mensaje.context.forwarded || mensaje.context.frequently_forwarded) } : null;
+    const r = await atenderConAgenteSiAplica({ cliente, waId: telefonoRemitente, destino, wamid: mensaje.id, text: texto.slice(0, 4_000), replyTo }, deps);
     return r.handled;
   } catch (err) {
     // Error inesperado: no se sabe si el número tiene agente => no se arriesga a que responda otro bot.
