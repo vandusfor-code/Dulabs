@@ -44,7 +44,7 @@ language sql
 immutable
 parallel safe
 as $$
-  select btrim(regexp_replace(regexp_replace(normalize(lower(coalesce(p_texto, '')), NFD), '[̀-ͯ]', '', 'g'), '\s+', ' ', 'g'))
+  select btrim(regexp_replace(regexp_replace(normalize(lower(coalesce(p_texto, '')), NFD), '[\u0300-\u036f]', '', 'g'), '\s+', ' ', 'g'))
 $$;
 
 -- Documento de búsqueda completo (el mismo que armaba dulabs_catalogo_buscar en cada consulta).
