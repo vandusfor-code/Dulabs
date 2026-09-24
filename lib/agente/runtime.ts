@@ -96,6 +96,8 @@ export interface AgentTurnTrace {
   images: number;
   error_kind: string | null;
   state_saved: boolean;
+  /** true solo si WhatsApp aceptó el mensaje de texto (outcome dice qué se decidió; esto, si salió). */
+  sent: boolean;
 }
 
 // Mensajes FIJOS (sin IA): nunca afirman datos comerciales.
@@ -160,6 +162,7 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
     images: 0,
     error_kind: null,
     state_saved: false,
+    sent: false,
   };
   const finish = (outcome: AgentTurnOutcome, reply: string | null) => {
     trace.outcome = outcome;
@@ -181,6 +184,7 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
   } catch {
     trace.error_kind = "state_unavailable";
     const sent = await deps.sender.sendText(FALLBACK_MESSAGES.technical).catch(() => false);
+    trace.sent = sent;
     return finish("fallback", sent ? FALLBACK_MESSAGES.technical : null);
   }
   let state: ConversationState = { ...loaded.state, turn: loaded.state.turn + 1, lastInteractionAt: new Date(now()).toISOString() };
@@ -355,6 +359,7 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
   }
 
   const sent = reply ? await deps.sender.sendText(reply).catch(() => false) : false;
+  trace.sent = sent;
   if (sent && !failure) {
     // La propuesta cuenta como MOSTRADA solo si el mensaje enviado lleva su total exacto.
     const p = ctx.state.proposal;
