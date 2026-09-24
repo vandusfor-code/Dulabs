@@ -6,7 +6,7 @@ import { Shell } from "./shell/Shell";
 
 export default function DashboardShell({ children }: { children: ReactNode }) {
   return (
-    <div className="dash-scope">
+    <div className="dash-scope business-scope">
       <DashboardSessionProvider>
         <Shell>{children}</Shell>
       </DashboardSessionProvider>

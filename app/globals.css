@@ -102,6 +102,43 @@
   --color-chart-5: oklch(0.55 0.01 260);
 }
 
+/* ---------- DuLabs Business: identidad monocromática (scoped via .business-scope) ---------- */
+/* Capa sobre .dash-scope aplicada SOLO a DuLabs Business (DashboardShell -> todo /dashboard/*, y /checkout). Misma continuidad que
+   la landing y los logins: negro, blanco y grises neutros. Reusa los mismos nombres de token, así que sidebar, topbar, cards,
+   botones, inputs, tabs, badges, modales, etc. cambian sin tocar sus classNames:
+     - lime (antes el verde de marca/UI) pasa a ser el acento monocromático: botón primario blanco con texto negro, hover gris
+       claro, selección/activo/foco en blanco (con la opacidad que ya trae cada componente: bg-lime/10, border-lime/50…).
+     - Las GRÁFICAS no cambian: usan --color-chart-1..5 (definidos en .dash-scope, con el verde de siempre), nunca lime.
+     - Los colores semánticos (rojo error, ámbar atención) siguen igual: comunican estado, no son marca.
+   .dash-scope sin esta clase (admin) queda como estaba. */
+.business-scope {
+  --color-ink: #050505;
+  --color-ink-2: #0a0a0a;
+  --color-card: #0d0d0d;
+  --color-mist: #a3a3a3;
+  --color-edge: rgb(255 255 255 / 8%);
+  --color-fg: #ffffff;
+
+  --color-lime: #ffffff;
+  --color-lime-hover: #e5e5e5;
+  --color-lime-soft: #d4d4d4;
+  --color-lime-text: #ffffff;
+  --color-lime-fg: #050505;
+
+  color-scheme: dark;
+}
+
+/* Foco visible por defecto en blanco (base: cualquier focus-visible:* / outline-none de un componente sigue mandando). */
+@layer base {
+  .business-scope :focus-visible {
+    outline: 2px solid rgb(255 255 255 / 70%);
+    outline-offset: 2px;
+  }
+  .business-scope ::selection {
+    background: rgb(255 255 255 / 22%);
+  }
+}
+
 /* ---------- Flow Builder canvas — tema de @xyflow/react (polish visual) ----
    El MiniMap/Controls de React Flow venían con fondo blanco porque el
    componente <ReactFlow> nunca declaraba colorMode="dark" -- su hoja de

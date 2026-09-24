@@ -177,7 +177,7 @@ export function PlanUsageCard({
 export function Sparkline({
   data,
   className,
-  stroke = "var(--color-lime)",
+  stroke = "var(--color-chart-1)",
 }: {
   data: number[];
   className?: string;

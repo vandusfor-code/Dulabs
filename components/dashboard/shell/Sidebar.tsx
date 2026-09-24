@@ -35,7 +35,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
     <div className="flex h-full flex-col bg-ink-2">
       {/* Brand */}
       <div className="flex h-16 items-center gap-2.5 px-5">
-        <Image src="/logo.png" alt="Du Labs" width={32} height={32} className="rounded-lg" priority />
+        <Image src="/logo.png" alt="Du Labs" width={32} height={32} className="rounded-lg [filter:grayscale(1)_brightness(2.4)]" priority />
         <div className="flex flex-col leading-none">
           <span className="text-sm font-semibold tracking-tight text-fg">Du Labs</span>
           <span className="mt-1 font-mono text-[10.5px] uppercase tracking-widest text-mist">
@@ -86,7 +86,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
                         onClick={onNavigate}
                         className={cn(
                           "group flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
-                          active ? "bg-lime/10 font-medium text-fg" : "text-mist hover:bg-ink-2 hover:text-fg"
+                          active ? "bg-lime/10 font-medium text-fg" : "text-mist hover:bg-white/[0.04] hover:text-fg"
                         )}
                       >
                         <item.icon

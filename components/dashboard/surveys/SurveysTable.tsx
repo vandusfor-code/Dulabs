@@ -47,7 +47,7 @@ function CompletionCell({ rate }: { rate: number }) {
         {rate.toLocaleString(t("es-CO", "en-US"), { minimumFractionDigits: rate % 1 === 0 ? 0 : 1, maximumFractionDigits: 1 })}%
       </span>
       <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-ink">
-        <div className="h-full rounded-full bg-lime" style={{ width: `${rate}%` }} />
+        <div className="h-full rounded-full bg-[var(--color-chart-1)]" style={{ width: `${rate}%` }} />
       </div>
     </div>
   );

@@ -380,7 +380,7 @@ export default function ResumenPage() {
                   <span className="size-2.5 rounded-full" style={{ background: "var(--color-chart-2)" }} /> {t("Entrante", "Inbound")}
                 </span>
                 <span className="flex items-center gap-2 text-xs text-mist">
-                  <span className="size-2.5 rounded-full" style={{ background: "var(--color-lime)" }} /> {t("Saliente", "Outbound")}
+                  <span className="size-2.5 rounded-full" style={{ background: "var(--color-chart-1)" }} /> {t("Saliente", "Outbound")}
                 </span>
               </div>
             </div>
@@ -392,7 +392,7 @@ export default function ResumenPage() {
                   data={chartData}
                   keys={[
                     { key: "entrante", name: t("Entrante", "Inbound"), color: "var(--color-chart-2)" },
-                    { key: "saliente", name: t("Saliente", "Outbound"), color: "var(--color-lime)" },
+                    { key: "saliente", name: t("Saliente", "Outbound"), color: "var(--color-chart-1)" },
                   ]}
                 />
               )}

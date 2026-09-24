@@ -26,7 +26,7 @@ export function EffectivenessBar({ detail }: { detail: SurveyDetail }) {
       <div className="mt-4 flex items-start justify-between gap-4 text-sm">
         <div>
           <p className="text-mist">{t("Respondió encuesta", "Completed")}</p>
-          <p className="mt-0.5 font-semibold tabular-nums text-lime-text">
+          <p className="mt-0.5 font-semibold tabular-nums text-[var(--color-chart-1)]">
             {nf(completed)} ({pf(effPct)}%)
           </p>
         </div>
@@ -39,7 +39,7 @@ export function EffectivenessBar({ detail }: { detail: SurveyDetail }) {
       </div>
 
       <div className="mt-3 flex h-3 w-full overflow-hidden rounded-full bg-ink" aria-hidden>
-        <div className="h-full bg-lime" style={{ width: `${effPct}%` }} />
+        <div className="h-full bg-[var(--color-chart-1)]" style={{ width: `${effPct}%` }} />
         <div className="h-full" style={{ width: `${ineffPct}%`, backgroundColor: NON_EFFECTIVE_COLOR }} />
       </div>
     </div>

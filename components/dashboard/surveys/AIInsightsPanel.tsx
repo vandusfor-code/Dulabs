@@ -6,7 +6,7 @@ import type { AIInsights } from "@/lib/surveys";
 
 // Positivo → verde de marca; Neutral → azul de la plataforma; Negativo → rojo.
 const SENTIMENT_COLORS = {
-  positive: "var(--color-lime)",
+  positive: "var(--color-chart-1)",
   neutral: "var(--color-chart-4)",
   negative: "#e85d68",
 } as const;

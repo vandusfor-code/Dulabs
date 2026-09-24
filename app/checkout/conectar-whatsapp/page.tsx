@@ -57,7 +57,7 @@ function ConectarWhatsappInterna() {
 
   if (session === "verificando") {
     return (
-      <main className="dash-scope flex min-h-screen items-center justify-center bg-ink px-5 text-fg">
+      <main className="dash-scope business-scope flex min-h-screen items-center justify-center bg-ink px-5 text-fg">
         <p className="text-sm text-mist">{t("Verificando tu sesión…", "Verifying your session…")}</p>
       </main>
     );
@@ -65,7 +65,7 @@ function ConectarWhatsappInterna() {
   if (!session) return null;
 
   return (
-    <main className="dash-scope flex min-h-screen items-center justify-center bg-ink px-5 py-16 text-fg">
+    <main className="dash-scope business-scope flex min-h-screen items-center justify-center bg-ink px-5 py-16 text-fg">
       <div className="w-full max-w-md rounded-2xl border border-edge/60 bg-card p-8 text-center sm:p-10">
         {estado.fase === "exito" ? (
           <>
