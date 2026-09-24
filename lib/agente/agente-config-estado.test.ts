@@ -91,7 +91,7 @@ describe("configuración del agente: explícita y fail-closed", () => {
   });
 
   it("el universo de herramientas es cerrado y conocido", () => {
-    assert.equal(AGENT_TOOL_NAMES.length, 14);
+    assert.equal(AGENT_TOOL_NAMES.length, 16);
     assert.ok(!AGENT_TOOL_NAMES.some((n) => /sql|stock|price|delete|update_product/.test(n)));
   });
 });

@@ -69,6 +69,27 @@ export const conversationStateSchema = z
     handoffTurn: z.number().int().min(0).nullable().default(null),
     /** wamid de los últimos mensajes atendidos: un reintento de Meta no genera otra respuesta. */
     recentWamids: z.array(z.string().min(1).max(200)).max(MAX_RECENT_WAMIDS).default([]),
+    // --- Bloque 10 ---
+    /**
+     * Cursor de la última búsqueda (lo guarda el backend): "muéstrame más" pide la página
+     * siguiente de ESTA búsqueda; el modelo no puede inventar la consulta ni el desplazamiento.
+     */
+    lastSearch: z
+      .object({
+        query: z.string().max(120),
+        category: z.string().max(60).nullable(),
+        color: z.string().max(60).nullable(),
+        material: z.string().max(60).nullable(),
+        maxPrice: z.number().int().min(1).nullable(),
+        /** Búsqueda de "parecidos" a esta referencia. */
+        similarTo: reference.nullable(),
+        offset: z.number().int().min(0),
+        total: z.number().int().min(0),
+        relaxed: z.boolean(),
+      })
+      .strict()
+      .nullable()
+      .default(null),
   })
   .strict();
 
@@ -91,6 +112,7 @@ export function emptyConversationState(): ConversationState {
     selection: [],
     handoffTurn: null,
     recentWamids: [],
+    lastSearch: null,
   };
 }
 

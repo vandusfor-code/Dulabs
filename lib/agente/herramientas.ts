@@ -34,7 +34,7 @@ import { productPathIn, retailPath, wholesalePath, whatsappImagePath } from "@/l
 import { createResolucionCatalogo } from "@/lib/catalogo/resolucion";
 import { siteUrl } from "@/lib/site-url";
 import type { OrderChannel } from "@/lib/catalogo/pedidos/contrato";
-import { runAgentTool, type AgentToolDeps as CatalogToolDeps } from "@/lib/catalogo/pedidos/herramientas";
+import { productView, runAgentTool, type AgentToolDeps as CatalogToolDeps } from "@/lib/catalogo/pedidos/herramientas";
 import { OrderError, conversationKey, requestFingerprint, type OrderErrorCode } from "@/lib/catalogo/pedidos/motor";
 import { MAX_CART_LINES, MAX_SHOWN, isKnownReference, rememberReferences, type ConversationState } from "@/lib/agente/estado";
 import { AGENT_TOOL_NAMES, type AgentToolName } from "@/lib/agente/nombres-herramientas";
@@ -86,7 +86,8 @@ export interface AgentToolsDeps extends CatalogToolDeps {
 }
 
 const MAX_IMAGES_PER_TURN = 5;
-const SEARCH_LIMIT = 5;
+/** Candidatos por página: pocos y claros; para ver muchos, el catálogo (get_catalog_link). */
+const SEARCH_PAGE = 5;
 
 const reference = z
   .string()
@@ -120,12 +121,6 @@ async function catalog(name: Parameters<typeof runAgentTool>[0], input: unknown,
 type ProductView = { reference: string; name: string; description: string | null; category: string | null; material: string | null; color: string | null; unit_price: number | null; currency: string; availability: string; max_quantity: number | null };
 
 const compact = (p: ProductView) => ({ ...p, description: p.description ? p.description.slice(0, 200) : null });
-const norm = (s: string | null | undefined) =>
-  (s ?? "")
-    .normalize("NFD")
-    .replace(/\p{Diacritic}/gu, "")
-    .toLowerCase()
-    .trim();
 
 /**
  * Registra lo que el cliente va a ver. Solo una LISTA de opciones reemplaza
@@ -186,12 +181,55 @@ async function evaluateCart(ctx: AgentTurnToolContext, deps: AgentToolsDeps) {
   };
 }
 
+type SearchCursor = Omit<NonNullable<ConversationState["lastSearch"]>, "offset" | "total" | "relaxed">;
+
+/** Palabras que describen un producto para buscar "parecidos" (nombre + color + material). */
+function similarQuery(p: { name: string; color: string | null; material: string | null }): string {
+  return [p.name, p.color, p.material].filter(Boolean).join(" ").slice(0, 120);
+}
+
+/**
+ * Una página de resultados (búsqueda o parecidos) con el precio del canal. El cursor queda
+ * en el estado (lo usa more_products). Los "parecidos" comparten categoría con el producto
+ * base (si la tiene) y lo excluyen; si en su categoría no hay nada, se busca en todo el catálogo.
+ */
+async function searchPage(ctx: AgentTurnToolContext, deps: AgentToolsDeps, cursor: SearchCursor, offset: number): Promise<AgentToolOutcome> {
+  // Defensa en profundidad (igual que las herramientas de la Fase 7): el número debe ser de este negocio.
+  if (!(await deps.catalog.isModuleEnabled(ctx.tenantId))) return fail("FORBIDDEN", "El catálogo no está habilitado para este negocio.");
+  if (!(await deps.ownsPhoneNumber(ctx.tenantId, ctx.phoneNumberId))) return fail("FORBIDDEN", "Esta conversación no pertenece a este negocio.");
+  const resolucion = createResolucionCatalogo({ repo: deps.catalog });
+  const input = { query: cursor.query, channel: ctx.channel, offset, limit: SEARCH_PAGE, category: cursor.category, color: cursor.color, material: cursor.material, maxPrice: cursor.maxPrice };
+  let r;
+  if (cursor.similarTo) {
+    const base = await deps.catalog.getProductByReference(ctx.tenantId, cursor.similarTo);
+    const similar = { ...input, mode: "any" as const, exclude: [cursor.similarTo] };
+    r = await resolucion.buscarCatalogo(ctx.tenantId, { ...similar, categoryId: base?.categoryId ?? null });
+    if (r.total === 0 && base?.categoryId) r = await resolucion.buscarCatalogo(ctx.tenantId, similar);
+  } else {
+    r = await resolucion.buscarCatalogo(ctx.tenantId, input);
+  }
+  const candidates = r.candidates.map((p) => compact(productView(p, ctx.channel) as ProductView));
+  show(ctx, candidates, true);
+  ctx.state = { ...ctx.state, lastSearch: { ...cursor, offset, total: r.total, relaxed: r.relaxed } };
+  const hasMore = offset + candidates.length < r.total;
+  const note =
+    candidates.length === 0
+      ? "Sin coincidencias en el catálogo. Dilo con claridad y pide más detalles u ofrece el catálogo (get_catalog_link)."
+      : r.relaxed
+        ? "No hubo coincidencia con TODAS las palabras: estos son los más cercanos. Dilo así; el cliente debe elegir."
+        : "Candidatos: el cliente debe elegir.";
+  return {
+    ok: true,
+    data: { status: "candidates", count: candidates.length, total: r.total, page_start: offset + 1, has_more: hasMore, relaxed: r.relaxed, candidates, note },
+  };
+}
+
 // ---------------------------------------------------------------------------
 
 export const AGENT_TOOLS = {
   search_products: spec({
     description:
-      "Busca productos ACTIVOS del catálogo por texto (nombre o referencia) y, opcionalmente, filtra por categoría, color, material y precio máximo. Devuelve CANDIDATOS (máx. 5), nunca una elección: si hay varios, pregunta cuál quiere el cliente.",
+      "Busca productos ACTIVOS del catálogo (nombre, color, material, categoría o descripción; sin importar tildes ni plurales) y, opcionalmente, filtra por categoría, color, material y precio máximo. Devuelve una PÁGINA de candidatos (máx. 5) y el total; nunca una elección: si hay varios, preséntalos numerados y pregunta cuál quiere el cliente.",
     input: z
       .object({
         query: z.string().trim().min(1).max(80),
@@ -203,16 +241,38 @@ export const AGENT_TOOLS = {
       .strict(),
     kind: "read",
     async run(ctx, input, deps) {
-      const r = await catalog("search_products", { query: input.query, limit: 10 }, ctx, deps);
-      if (!r.ok) return r;
-      let items = (r.data.candidates as ProductView[]) ?? [];
-      if (input.category) items = items.filter((p) => norm(p.category).includes(norm(input.category)));
-      if (input.color) items = items.filter((p) => norm(p.color).includes(norm(input.color)));
-      if (input.material) items = items.filter((p) => norm(p.material).includes(norm(input.material)));
-      if (input.max_price !== undefined) items = items.filter((p) => p.unit_price !== null && p.unit_price <= (input.max_price as number));
-      const candidates = items.slice(0, SEARCH_LIMIT).map(compact);
-      show(ctx, candidates, true);
-      return { ok: true, data: { status: "candidates", count: candidates.length, candidates, note: candidates.length === 0 ? "Sin coincidencias en el catálogo." : "Candidatos: el cliente debe elegir." } };
+      const cursor = { query: input.query, category: input.category ?? null, color: input.color ?? null, material: input.material ?? null, maxPrice: input.max_price ?? null, similarTo: null };
+      return searchPage(ctx, deps, cursor, 0);
+    },
+  }),
+
+  more_products: spec({
+    description:
+      "Muestra la SIGUIENTE página de la última búsqueda o de los parecidos (\"muéstrame más\", \"quiero ver otros\", \"¿qué más tienes?\"). No recibe parámetros: el sistema recuerda qué se buscó y qué ya se mostró.",
+    input: z.object({}).strict(),
+    kind: "read",
+    async run(ctx, _input, deps) {
+      const last = ctx.state.lastSearch;
+      if (!last) return fail("NOT_FOUND", "No hay una búsqueda anterior en esta conversación. Pregúntale al cliente qué busca.");
+      const next = last.offset + SEARCH_PAGE;
+      if (next >= last.total) {
+        return { ok: true, data: { status: "candidates", count: 0, total: last.total, has_more: false, candidates: [], note: "Ya se mostraron todos los resultados de esta búsqueda. Ofrece el catálogo completo (get_catalog_link) o pregunta por otra cosa." } };
+      }
+      return searchPage(ctx, deps, last, next);
+    },
+  }),
+
+  similar_products: spec({
+    description:
+      "Productos PARECIDOS a uno ya mostrado en la conversación (misma categoría y nombre/color/material cercanos), excluyendo ese producto. Úsalo para \"¿tienes algo parecido?\" o \"otro como este\".",
+    input: z.object({ reference }).strict(),
+    kind: "read",
+    async run(ctx, input, deps) {
+      const blocked = checkProvenance(ctx, input.reference, false);
+      if (blocked) return blocked;
+      const base = await deps.catalog.getProductByReference(ctx.tenantId, input.reference);
+      if (!base) return fail("REFERENCE_NOT_FOUND", `No encontramos la referencia ${input.reference}.`);
+      return searchPage(ctx, deps, { query: similarQuery(base), category: null, color: null, material: null, maxPrice: null, similarTo: input.reference }, 0);
     },
   }),
 

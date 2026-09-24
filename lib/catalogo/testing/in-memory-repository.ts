@@ -9,7 +9,7 @@
 import { randomUUID } from "node:crypto";
 import { formatReference, type CatalogCategory, type CatalogProduct } from "@/lib/catalogo/domain";
 import { CatalogError } from "@/lib/catalogo/errors";
-import type { AttachMediaData, CatalogRepository, ProductListFilter, ProductOrigin, ProductPatchData, ProductWriteData, StoredMedia } from "@/lib/catalogo/repository";
+import type { AttachMediaData, CatalogRepository, CatalogSearchQuery, ProductListFilter, ProductOrigin, ProductPatchData, ProductWriteData, StoredMedia } from "@/lib/catalogo/repository";
 import type { ImportRecord } from "@/lib/catalogo/import/types";
 import type { CatalogPublication } from "@/lib/catalogo/publicacion";
 
@@ -29,6 +29,25 @@ export interface StoredObject {
 
 export const WEBP_HEAD = new Uint8Array([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x20]);
 export const JPEG_HEAD = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 0x10, 0x4a, 0x46, 0x49, 0x46, 0, 1, 1, 0, 0, 1]);
+
+/** Emula dulabs_catalogo_normalizar: minúsculas y sin tildes (conserva la ñ). */
+function normalizeForSearch(text: string): string {
+  return text
+    .replace(/ñ/g, "\u0000")
+    .replace(/Ñ/g, "\u0000")
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .replace(/\u0000/g, "ñ")
+    .toLowerCase();
+}
+
+/** Palabras con una raíz aproximada del español (aretes/arete -> aret, dorados/dorado -> dorad). */
+function searchWords(text: string): string[] {
+  return normalizeForSearch(text)
+    .split(/[^a-z0-9ñ]+/)
+    .filter((w) => w.length >= 2 && !["de", "del", "la", "el", "los", "las", "con", "en", "y", "para", "por", "un", "una"].includes(w))
+    .map((w) => (w.length > 4 ? w.replace(/(es|s)$/, "").replace(/[aeiou]$/, "") : w));
+}
 
 /** Emula el CHECK (stock >= 0) de la BD: un negativo nunca se guarda. */
 function assertStock(stock: number): number {
@@ -60,9 +79,55 @@ export function createInMemoryCatalogRepository() {
   const now = () => new Date(Date.UTC(2026, 8, 22, 12, 0, clock++)).toISOString();
 
   const publicUrl = (path: string) => `https://storage.test/inventario-productos/${path}`;
+  /** false = simula la BD sin la migración de búsqueda (20261111000000). */
+  let searchEnabled = true;
+  const searchCalls: CatalogSearchQuery[] = [];
 
   const repo: CatalogRepository = {
     bucket: "inventario-productos",
+
+    // Emula dulabs_catalogo_buscar: sin tildes, plural/singular y prefijos (raíz aproximada),
+    // pesos nombre > color/material/categoría > descripción, filtros con el precio del canal,
+    // disponibles primero, paginación y total.
+    async searchCatalog(tenantId, q) {
+      searchCalls.push({ ...q, exclude: q.exclude ? [...q.exclude] : undefined });
+      if (!searchEnabled) return null;
+      const words = searchWords(q.text).slice(0, 8);
+      const norm = (v: string | null | undefined) => normalizeForSearch(v ?? "");
+      const scored = [...products.values()]
+        .filter((p) => p.tenantId === tenantId && p.status === "ACTIVE" && !(q.exclude ?? []).includes(p.reference))
+        .filter((p) => !q.categoryId || p.categoryId === q.categoryId)
+        .filter((p) => !q.category || norm(p.categoryName).includes(norm(q.category)))
+        .filter((p) => !q.color || norm(p.color).includes(norm(q.color)))
+        .filter((p) => !q.material || norm(p.material).includes(norm(q.material)))
+        .filter((p) => {
+          if (q.maxPrice == null) return true;
+          const price = q.channel === "wholesale" ? p.pricing.wholesale : p.pricing.retail;
+          return price !== null && price <= q.maxPrice;
+        })
+        .map((p) => {
+          const fields: Array<[string[], number]> = [
+            [searchWords(p.name), 1],
+            [[...searchWords(p.color ?? ""), ...searchWords(p.material ?? ""), ...searchWords(p.categoryName ?? "")], 0.6],
+            [searchWords((p.description ?? "").slice(0, 2000)), 0.2],
+          ];
+          let score = 0;
+          let matched = 0;
+          for (const w of words) {
+            const weight = Math.max(0, ...fields.map(([ts, wt]) => (ts.some((t) => t.startsWith(w)) ? wt : 0)));
+            if (weight > 0) matched++;
+            score += weight;
+          }
+          const ok = words.length === 0 || (q.mode === "all" ? matched === words.length : matched > 0);
+          return { p, score, ok, available: !p.tracksStock || p.stock > 0 };
+        })
+        .filter((x) => x.ok)
+        .sort((a, b) => b.score - a.score || Number(b.available) - Number(a.available) || b.p.createdAt.localeCompare(a.p.createdAt) || b.p.id.localeCompare(a.p.id));
+      const limit = Math.min(Math.max(q.limit, 1), 20);
+      const offset = Math.min(Math.max(q.offset, 0), 200);
+      const page = scored.slice(offset, offset + limit);
+      return { references: page.map((x) => x.p.reference), total: page.length > 0 ? scored.length : 0 };
+    },
 
     async listProducts(tenantId: string, f: ProductListFilter) {
       let items = [...products.values()].filter((p) => p.tenantId === tenantId);
@@ -434,6 +499,11 @@ export function createInMemoryCatalogRepository() {
       if (enabled) modulesEnabled.add(tenantId);
       else modulesEnabled.delete(tenantId);
     },
+    /** Simula la BD sin la migración de búsqueda (el agente usa la búsqueda anterior). */
+    setSearchEnabled(enabled: boolean) {
+      searchEnabled = enabled;
+    },
+    searchCalls,
     setPublished(tenantId: string, published: boolean) {
       const p = publications.get(tenantId);
       if (p) p.published = published;

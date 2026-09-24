@@ -91,6 +91,36 @@ export interface SearchResult {
   query: string;
 }
 
+/** Búsqueda paginada del agente (texto completo, filtros y precio del canal en la BD). */
+export interface CatalogSearchInput {
+  query: string;
+  channel: PriceContext;
+  offset?: number;
+  limit?: number;
+  category?: string | null;
+  color?: string | null;
+  material?: string | null;
+  /** Misma categoría que un producto (similares); id interno, nunca viene del modelo. */
+  categoryId?: string | null;
+  maxPrice?: number | null;
+  exclude?: readonly string[];
+  /** Forzar modo; sin él: primero todas las palabras y, si no hay nada, alguna ("relaxed"). */
+  mode?: "all" | "any";
+}
+
+export interface CatalogSearchResult {
+  candidates: ProductoResuelto[];
+  total: number;
+  offset: number;
+  /** true = no hubo coincidencia con TODAS las palabras; son resultados con alguna. */
+  relaxed: boolean;
+  /** false = la búsqueda indexada no está disponible (migración pendiente) y se usó la anterior. */
+  indexed: boolean;
+}
+
+export const SEARCH_PAGE_MAX = 20;
+export const SEARCH_OFFSET_MAX = 200;
+
 export interface ResolvedOrder {
   channel: PriceContext;
   order: PreparedOrder;
@@ -204,6 +234,53 @@ export function createResolucionCatalogo({ repo }: { repo: CatalogRepository }) 
       if (!q) return { status: "candidates", candidates: [], query: "" };
       const { items } = await repo.listProducts(tenantId, { status: "ACTIVE", search: q, offset: 0, limit: Math.max(1, Math.min(SEARCH_MAX, limit)) });
       return { status: "candidates", candidates: await resolverProductos(tenantId, items), query: q };
+    },
+
+    /**
+     * Búsqueda ESCALABLE del agente (miles de referencias): texto completo en español en la
+     * BD (sin tildes, plural/singular, prefijos, categoría/color/material/descripción),
+     * filtros y precio del canal en SQL, paginada. El catálogo nunca viaja completo: solo la
+     * página pedida, resuelta con la misma verdad que el resto (precio, stock, foto).
+     */
+    async buscarCatalogo(tenantId: string, input: CatalogSearchInput): Promise<CatalogSearchResult> {
+      const offset = Math.min(Math.max(input.offset ?? 0, 0), SEARCH_OFFSET_MAX);
+      const limit = Math.min(Math.max(input.limit ?? 5, 1), SEARCH_PAGE_MAX);
+      const text = normalizeSearch(input.query) ?? "";
+      // Una referencia escrita tal cual: resolución exacta (nunca "parecidos").
+      const asRef = text.toUpperCase();
+      if (isReference(asRef) && !input.categoryId) {
+        const product = await repo.getProductByReference(tenantId, asRef);
+        const [r] = product && product.status === "ACTIVE" && offset === 0 && !(input.exclude ?? []).includes(asRef) ? await resolverProductos(tenantId, [product]) : [];
+        const candidates = r ? [r] : [];
+        return { candidates, total: candidates.length, offset, relaxed: false, indexed: true };
+      }
+      const query = {
+        text,
+        channel: input.channel,
+        limit,
+        offset,
+        category: input.category ?? null,
+        color: input.color ?? null,
+        material: input.material ?? null,
+        categoryId: input.categoryId ?? null,
+        maxPrice: input.maxPrice ?? null,
+        exclude: input.exclude ?? [],
+      };
+      let relaxed = false;
+      let page = await repo.searchCatalog(tenantId, { ...query, mode: input.mode ?? "all" });
+      if (page === null) {
+        // Sin la migración de búsqueda: la búsqueda anterior (el nombre contiene el texto), sin filtros en BD.
+        const { items, total } = await repo.listProducts(tenantId, { status: "ACTIVE", search: text || undefined, offset, limit });
+        return { candidates: await resolverProductos(tenantId, items), total, offset, relaxed: false, indexed: false };
+      }
+      if (page.total === 0 && !input.mode && offset === 0 && text.split(" ").length > 1) {
+        page = (await repo.searchCatalog(tenantId, { ...query, mode: "any" })) ?? page;
+        relaxed = page.total > 0;
+      }
+      const found = page.references.length > 0 ? await repo.getProductsByReferences(tenantId, page.references) : [];
+      const resueltos = await resolverProductos(tenantId, found.filter((p) => p.status === "ACTIVE"));
+      const byRef = new Map(resueltos.map((r) => [r.reference, r]));
+      return { candidates: page.references.flatMap((r) => (byRef.has(r) ? [byRef.get(r) as ProductoResuelto] : [])), total: page.total, offset, relaxed, indexed: true };
     },
 
     /**

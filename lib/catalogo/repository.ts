@@ -143,6 +143,13 @@ export interface CatalogRepository {
   /** Módulo "catalogo" habilitado (estricto: un error de BD se propaga). */
   isModuleEnabled(tenantId: string): Promise<boolean>;
 
+  /**
+   * Búsqueda de texto completo del agente (dulabs_catalogo_buscar): SOLO referencias,
+   * en orden de relevancia, con el total. null = la migración de búsqueda aún no está
+   * aplicada (el caller usa la búsqueda anterior).
+   */
+  searchCatalog(tenantId: string, query: CatalogSearchQuery): Promise<CatalogSearchPage | null>;
+
   // Carga masiva (historial + origen de cada producto importado).
   /** Nombre/categoría/color/material de TODOS los productos del tenant (detección de repetidos). */
   listProductKeys(tenantId: string): Promise<ExistingProductKey[]>;
@@ -169,6 +176,27 @@ export interface CatalogRepository {
   storagePathFromUrl(url: string): string | null;
   /** Abre una imagen del bucket para servirla por la ruta pública; null si no existe o no es una imagen permitida. */
   openImage(path: string): Promise<PublicImageObject | null>;
+}
+
+export interface CatalogSearchQuery {
+  text: string;
+  /** all = todas las palabras; any = alguna (para relajar cuando no hay coincidencias). */
+  mode: "all" | "any";
+  /** El filtro de precio usa el precio de ESTE canal. */
+  channel: "retail" | "wholesale";
+  limit: number;
+  offset: number;
+  category?: string | null;
+  color?: string | null;
+  material?: string | null;
+  categoryId?: string | null;
+  maxPrice?: number | null;
+  exclude?: readonly string[];
+}
+
+export interface CatalogSearchPage {
+  references: string[];
+  total: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -366,6 +394,30 @@ export function createSupabaseCatalogRepository(supabase: SupabaseClient): Catal
         .range(filter.offset, filter.offset + filter.limit - 1);
       if (error) fail("listProducts", error);
       return { items: ((data ?? []) as ProductRow[]).map(mapProduct), total: count ?? 0 };
+    },
+
+    async searchCatalog(tenantId, q) {
+      const { data, error } = await supabase.rpc("dulabs_catalogo_buscar", {
+        p_tenant: tenantId,
+        p_texto: q.text,
+        p_modo: q.mode,
+        p_canal: q.channel,
+        p_limite: q.limit,
+        p_offset: q.offset,
+        p_categoria: q.category ?? null,
+        p_color: q.color ?? null,
+        p_material: q.material ?? null,
+        p_categoria_id: q.categoryId ?? null,
+        p_precio_max: q.maxPrice ?? null,
+        p_excluir: q.exclude && q.exclude.length > 0 ? [...q.exclude] : null,
+      });
+      if (error) {
+        // Sin la migración de búsqueda (función inexistente): el caller usa la búsqueda anterior.
+        if (["PGRST202", "42883", "PGRST205"].includes(error.code ?? "")) return null;
+        fail("searchCatalog", error);
+      }
+      const rows = (data ?? []) as Array<{ referencia: string; total: number | string }>;
+      return { references: rows.map((r) => r.referencia), total: rows.length > 0 ? Number(rows[0].total) : 0 };
     },
 
     async getProduct(tenantId, productId) {

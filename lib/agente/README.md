@@ -47,7 +47,7 @@ WhatsApp → app/webhook-dulabs/route.ts (firma, dedupe por wamid, tenant por ph
 `search_products`, `resolve_product_by_reference`, `resolve_product_by_attributes`,
 `get_product_details`, `get_cart`, `update_cart`, `resolve_order`,
 `create_order_request`, `validate_order`, `confirm_order`, `get_customer_context`,
-`request_product_images`, `handoff_to_human`, `get_catalog_link`.
+`request_product_images`, `handoff_to_human`, `get_catalog_link`, `more_products`, `similar_products`.
 
 Ninguna acepta tenant, negocio, canal, id de producto, precio, subtotal ni
 total: un campo de más → `INVALID_INPUT`. Internas (no expuestas al modelo):
@@ -67,6 +67,23 @@ total: un campo de más → `INVALID_INPUT`. Internas (no expuestas al modelo):
 - **Fotos**: por la URL pública del catálogo publicado, en JPEG, sin ids internos; cada una queda registrada con su wamid para poder citarla.
 - **Enlaces**: la respuesta solo puede llevar el enlace que devolvió `get_catalog_link` (el backend lo arma con negocio + canal + publicación). Detal nunca recibe el link mayorista.
 - **Duplicados**: un wamid ya atendido (reintento de Meta) no genera otra respuesta; el pedido es idempotente por mensaje.
+
+## Búsqueda con miles de referencias (Bloque 10)
+
+El catálogo nunca viaja al modelo: cada búsqueda devuelve **una página de 5** con el total.
+
+```
+search_products(query, filtros) -> dulabs_catalogo_buscar (texto completo en español en la BD:
+    sin tildes, plural/singular, prefijos; nombre > color/material/categoría > descripción;
+    filtros y precio DEL CANAL en SQL; solo activos del negocio) -> referencias
+  -> resolución existente (precio del canal, stock discreto, foto) -> 5 candidatos + total + has_more
+  -> cursor en el estado (lastSearch)
+more_products()             -> página siguiente de ESA búsqueda (el modelo no puede cambiarla)
+similar_products(referencia) -> misma categoría primero, sin el producto base
+```
+
+Sin coincidencia con todas las palabras, se relaja a "alguna" y se marca `relaxed`
+(los filtros nunca se relajan). Sin la migración, se usa la búsqueda anterior.
 
 ## Flujo de fotos y respuesta a una foto
 
@@ -98,6 +115,6 @@ insert into public.dulabs_agente_runtime_config
   (id_tenant, phone_number_id, tipo, habilitado, proveedor, modelo, credencial_ref, nivel_razonamiento, herramientas, canal, negocio)
 values
   ('<id_tenant>', '<phone_number_id>', 'catalog_sales', true, 'gemini', 'gemini-3.6-flash', 'env:GEMINI_KEY_<NEGOCIO>', 'low',
-   '{search_products,resolve_product_by_reference,resolve_product_by_attributes,get_product_details,get_cart,update_cart,resolve_order,create_order_request,validate_order,confirm_order,get_customer_context,request_product_images,handoff_to_human,get_catalog_link}',
+   '{search_products,resolve_product_by_reference,resolve_product_by_attributes,get_product_details,get_cart,update_cart,resolve_order,create_order_request,validate_order,confirm_order,get_customer_context,request_product_images,handoff_to_human,get_catalog_link,more_products,similar_products}',
    'retail', '{"nombre_agente": "<nombre>", "tono": "<tono breve>"}');
 ```

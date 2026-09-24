@@ -439,7 +439,7 @@ describe("handoff, fotos, límites y fallos", () => {
   });
 
   it("20. herramienta caída (timeout) => UNAVAILABLE controlado", async () => {
-    const lento = { ...mem.repo, listProducts: () => new Promise<never>(() => {}) };
+    const lento = { ...mem.repo, listProducts: () => new Promise<never>(() => {}), searchCatalog: () => new Promise<never>(() => {}) };
     const r = await turno([call("search_products", { query: "anillo" }), { text: "Tuve un problema buscando, ¿me repites?" }], "anillo", { tools: { catalog: lento as typeof mem.repo, toolTimeoutMs: 20 } });
     assert.equal(r.trace.tool_calls[0].result, "UNAVAILABLE");
     assert.equal(r.outcome, "replied");
