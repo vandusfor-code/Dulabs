@@ -68,6 +68,30 @@ total: un campo de más → `INVALID_INPUT`. Internas (no expuestas al modelo):
 - **Enlaces**: la respuesta solo puede llevar el enlace que devolvió `get_catalog_link` (el backend lo arma con negocio + canal + publicación). Detal nunca recibe el link mayorista.
 - **Duplicados**: un wamid ya atendido (reintento de Meta) no genera otra respuesta; el pedido es idempotente por mensaje.
 
+## Etapa de la conversación y confirmación (Bloque 12)
+
+La etapa la **deriva el backend** en cada turno del estado real (`lib/agente/etapa.ts`); no se
+guarda ni la escribe el modelo, así que no se desincroniza:
+
+| Etapa | Cuándo |
+| --- | --- |
+| `inicio` | nada mostrado todavía |
+| `explorando` | ya vio productos; nada abierto por elegir |
+| `eligiendo` | varias opciones mostradas y no dijo cuál |
+| `armando_pedido` | hay productos en la selección |
+| `esperando_confirmacion` | ya vio la propuesta (productos + total) del backend |
+| `pedido_con_problemas` | el pedido no se puede proponer (precio, stock, producto) |
+| `pedido_confirmado` | el pedido quedó en manos del negocio |
+
+El modelo recibe la etapa y qué conviene hacer en ella; lo **permitido** lo imponen las guardas.
+
+- **Confirmar**: además de la propuesta vigente ya mostrada, el mensaje del cliente debe ser un
+  **sí explícito** sin condiciones ni cambios (`isExplicitConfirmation`): "sí", "dale", "listo",
+  "ok gracias" confirman; "sí pero quita uno", "¿cuánto es el envío?", "espera" no
+  (`CONFIRMATION_NOT_EXPLICIT`).
+- **Selección ambigua**: "el otro" (dos opciones y una ya elegida => la otra), "quiero 3" (una sola
+  opción => esa; varias => aclaración), "el de arriba" / "el anterior" => aclaración.
+
 ## Un turno a la vez por conversación (Bloque 11)
 
 ```

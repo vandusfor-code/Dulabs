@@ -38,8 +38,17 @@ import { productView, runAgentTool, type AgentToolDeps as CatalogToolDeps } from
 import { OrderError, conversationKey, requestFingerprint, type OrderErrorCode } from "@/lib/catalogo/pedidos/motor";
 import { MAX_CART_LINES, MAX_SHOWN, isKnownReference, rememberReferences, type ConversationState } from "@/lib/agente/estado";
 import { AGENT_TOOL_NAMES, type AgentToolName } from "@/lib/agente/nombres-herramientas";
+import { isExplicitConfirmation } from "@/lib/agente/etapa";
 
-export type AgentToolErrorCode = OrderErrorCode | "TOOL_NOT_ALLOWED" | "REFERENCE_NOT_ALLOWED" | "CHOICE_REQUIRED" | "CONFIRMATION_NOT_PRESENTED" | "CART_EMPTY" | "TOOL_LIMIT";
+export type AgentToolErrorCode =
+  | OrderErrorCode
+  | "TOOL_NOT_ALLOWED"
+  | "REFERENCE_NOT_ALLOWED"
+  | "CHOICE_REQUIRED"
+  | "CONFIRMATION_NOT_PRESENTED"
+  | "CONFIRMATION_NOT_EXPLICIT"
+  | "CART_EMPTY"
+  | "TOOL_LIMIT";
 
 export type AgentToolOutcome = { ok: true; data: Record<string, unknown> } | { ok: false; error: { code: AgentToolErrorCode; message: string; details?: Record<string, unknown> } };
 
@@ -69,11 +78,15 @@ export interface AgentTurnToolContext {
   pendingChoice: Set<string>;
   /** Lo que el cliente señaló de forma determinista en este mensaje (o en el anterior). Ver seleccion.ts. */
   designated: Set<string>;
+  /** Texto del cliente en este turno (solo para guardas deterministas, p. ej. la confirmación explícita). */
+  customerText: string;
   images: QueuedImage[];
   /** true si esta llamada ejecutó un traspaso a una asesora. */
   handedOff: boolean;
   /** Pedido creado/validado en este turno cuya propuesta aún no se le mostró al cliente. */
   newProposal: { orderId: string; confirmationId: string; total: number } | null;
+  /** Pedido confirmado en este turno (la etapa de salida lo refleja). */
+  confirmedOrderId?: string | null;
 }
 
 export interface AgentToolsDeps extends CatalogToolDeps {
@@ -466,8 +479,16 @@ export const AGENT_TOOLS = {
       if (!p || p.orderId !== input.order_id || p.confirmationId !== input.confirmation_id || p.presentedTurn === null || p.presentedTurn >= ctx.turn) {
         return fail("CONFIRMATION_NOT_PRESENTED", "Primero muéstrale al cliente la propuesta vigente (productos y total) y espera su aceptación.");
       }
+      // El BACKEND decide qué significa el mensaje: solo un sí explícito, sin condiciones ni cambios, confirma.
+      if (!isExplicitConfirmation(ctx.customerText)) {
+        return fail("CONFIRMATION_NOT_EXPLICIT", "El cliente no aceptó la propuesta de forma explícita en este mensaje. Pregúntale si confirma el pedido tal como está (productos y total) o qué quiere cambiar.");
+      }
       const r = await catalog("confirm_order", input, ctx, deps);
-      if (r.ok) ctx.state = { ...ctx.state, proposal: null, cart: [] };
+      if (r.ok) {
+        // Pedido confirmado: se cierran la propuesta, la selección y las opciones abiertas.
+        ctx.state = { ...ctx.state, proposal: null, cart: [], ambiguity: null };
+        ctx.confirmedOrderId = input.order_id;
+      }
       else if (["PRICE_CHANGED", "OUT_OF_STOCK", "PRODUCT_UNAVAILABLE", "CONFIRMATION_EXPIRED", "ORDER_HAS_ISSUES"].includes(r.error.code)) ctx.state = { ...ctx.state, proposal: null };
       return r;
     },

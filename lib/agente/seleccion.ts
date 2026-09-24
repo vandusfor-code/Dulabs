@@ -21,9 +21,11 @@ export type SelectionVia = "image_reply" | "position" | "reference" | "name";
 
 export interface SelectionResult {
   selected: Array<{ reference: string; via: SelectionVia }>;
-  /** El cliente señaló algo ("este", "ese") sin decir cuál. */
+  /** El cliente señaló algo ("este", "ese", "el de arriba", "el otro") sin decir cuál. */
   deictic: boolean;
-  /** Deíctico sin resolver con varias opciones abiertas: hay que preguntar. */
+  /** Pidió una cantidad sin decir de qué producto ("quiero 3"). */
+  quantityOnly: boolean;
+  /** Deíctico o cantidad sin producto, sin resolver, con varias opciones abiertas: hay que preguntar. */
   needsClarification: boolean;
 }
 
@@ -57,7 +59,17 @@ const ORDINALS: Array<[RegExp, number]> = ORDINAL_WORDS.map(([w, n]) => [
 const MARKED_NUMBER = /(?:\b(?:el|la|los|las|del|de\s+la|opcion|numero|nro|no\.|foto|imagen)\s*#?\s*|#\s*)(10|[1-9])\b(?!\s*(?:unidad|unidades|pieza|piezas|de\s+cada))/g;
 const LAST = /\bultim[oa]s?\b/;
 const ALL = /\b(?:todos|todas|ambos|ambas)\b/;
-const DEICTIC = /\b(?:este|esta|estos|estas|ese|esa|esos|esas|eso|esto|aquel|aquella|aquellos|aquellas)\b|\b(?:el|la)\s+de\s+la\s+(?:foto|imagen)\b/;
+const DEICTIC =
+  /\b(?:este|esta|estos|estas|ese|esa|esos|esas|eso|esto|aquel|aquella|aquellos|aquellas)\b|\b(?:el|la)\s+de\s+la\s+(?:foto|imagen)\b|\b(?:el|la)\s+(?:de\s+(?:arriba|abajo)|anterior|otr[oa])\b/;
+/** "el otro" / "la otra": solo se resuelve con exactamente dos opciones y una ya elegida. */
+const OTHER = /\b(?:el|la)\s+otr[oa]\b/;
+/**
+ * Mensaje que SOLO pide una cantidad ("3", "quiero 3", "dame dos unidades", "mejor 4"). Con UNA
+ * sola opción a la vista, es de esa; con varias, hay que preguntar de cuál. Un número dentro de
+ * otra frase ("¿tienes aretes de 2 cm?") no cuenta.
+ */
+const QUANTITY_ONLY =
+  /^(?:(?:quiero|dame|deme|necesito|ponme|pongame|agrega(?:me)?|me\s+llevo|llevo|seria[n]?|mejor|que\s+sean)\s+)?(?:[1-9]\d?|un[oa]?|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)(?:\s+(?:unidades?|piezas?|por\s+favor|porfa))?\s*[.!]?$/;
 
 const STOPWORDS = new Set(["con", "sin", "para", "por", "del", "las", "los", "una", "uno", "unos", "unas", "que", "mas", "muy", "este", "esta", "ese", "esa", "quiero", "tiene", "tienen", "tienes"]);
 
@@ -76,7 +88,12 @@ function tokens(text: string): Set<string> {
 export function resolveSelection(
   text: string,
   shown: ConversationState["lastShown"],
-  opts: { replyReference?: string | null; typedReferences?: readonly string[] } = {},
+  opts: {
+    replyReference?: string | null;
+    typedReferences?: readonly string[];
+    /** Lo que el cliente ya eligió antes (selección anterior y carrito): resuelve "el otro". */
+    previous?: readonly string[];
+  } = {},
 ): SelectionResult {
   const selected: SelectionResult["selected"] = [];
   const add = (reference: string, via: SelectionVia) => {
@@ -103,12 +120,19 @@ export function resolveSelection(
         const distinctive = [...perItem[i]].filter((w) => perItem.every((other, j) => j === i || !other.has(w)));
         if (distinctive.some((w) => words.has(w))) add(s.reference, "name");
       });
-    } else if (shown.length === 1 && DEICTIC.test(t)) {
-      // Una sola opción a la vista: "ese" no es ambiguo.
+      // "El otro": dos opciones y una ya elegida => la que no.
+      if (selected.length === 0 && OTHER.test(t) && shown.length === 2) {
+        const previous = new Set(opts.previous ?? []);
+        const chosen = shown.filter((x) => previous.has(x.reference));
+        if (chosen.length === 1) add(shown.find((x) => !previous.has(x.reference))!.reference, "position");
+      }
+    } else if (shown.length === 1 && (DEICTIC.test(t) || QUANTITY_ONLY.test(t.trim()))) {
+      // Una sola opción a la vista: "ese" o "quiero 3" no son ambiguos.
       add(shown[0].reference, "position");
     }
   }
 
   const deictic = DEICTIC.test(t);
-  return { selected, deictic, needsClarification: deictic && selected.length === 0 && shown.length > 1 };
+  const quantityOnly = selected.length === 0 && QUANTITY_ONLY.test(t.trim());
+  return { selected, deictic, quantityOnly, needsClarification: (deictic || quantityOnly) && selected.length === 0 && shown.length > 1 };
 }
