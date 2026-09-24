@@ -1,5 +1,36 @@
 # Pasos manuales pendientes en producción
 
+## PENDIENTE — Bloque 17: el diagnóstico del agente muestra la intención y el motivo de la asesora
+
+Migración `supabase/migrations/20261115000000_dulabs_agente_diagnostico_intencion.sql`.
+**No crea tablas ni toca filas**: reemplaza la función `dulabs_agente_diagnosticar` (Bloque 13)
+agregando tres columnas: `intencion` (buscar, ver_mas, similares, detalle, carrito, pedido,
+confirmar, fotos, asesora, link_catalogo, conversacion), `asesora_motivo`
+(cliente_pidio_asesora, problema_pedido, pago_o_entrega, reclamo, fuera_de_alcance, otro,
+fallas_del_asistente, limite_uso_cliente, limite_uso_negocio, sin_detalle) y `asesora_origen`
+(cliente, asistente, sistema). Lista cerrada: un valor desconocido sale como
+`desconocida` / `sin_detalle`. Sigue siendo solo `service_role` y de UN negocio.
+
+**No bloquea nada**: el Inbox ya muestra el motivo sin esta migración (lo lee de la traza), y
+sin ella la intención y el motivo siguen consultables en la columna `traza`.
+
+Validada contra PostgreSQL 16 local: prueba SQL 5/5 (aplicada dos veces) y la prueba del
+Bloque 13 sigue 6/6 con la función nueva.
+
+1. Correr el archivo completo en el SQL Editor (idempotente).
+2. Verificar (esperado `1 | true | 0`):
+   ```sql
+   select
+     (select count(*) from pg_proc where proname = 'dulabs_agente_diagnosticar') as funcion,
+     (select 'asesora_motivo' = any (proargnames) from pg_proc where proname = 'dulabs_agente_diagnosticar') as columnas_nuevas,
+     (select count(*) from information_schema.routine_privileges
+       where routine_name = 'dulabs_agente_diagnosticar' and grantee in ('anon', 'authenticated')) as permisos_publicos;
+   ```
+3. Uso: `select creado, resultado, intencion, asesora_motivo, asesora_origen, herramientas
+   from dulabs_agente_diagnosticar('<id_tenant>', '<teléfono del cliente>', 30);`
+
+Rollback: al inicio del archivo de la migración.
+
 ## ✅ APLICADA (24-sep-2026) — Bloque 14: topes de costo y abuso del agente
 
 Migración `supabase/migrations/20261114000000_dulabs_agente_limites.sql`.

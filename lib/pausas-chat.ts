@@ -93,6 +93,54 @@ export async function activarPausaChat(
   return { ok: true, pausadoHasta };
 }
 
+/**
+ * Bloque 17 — pausa que NUNCA acorta otra más larga (traspaso del agente del catálogo).
+ *
+ * activarPausaChat reemplaza la pausa sin mirar la que había: si una asesora acaba de TOMAR el
+ * chat (30 días) y en el mismo instante el agente lo pasa a una asesora (24 h), la pausa quedaría
+ * en 24 h y la IA volvería a hablar en un chat que atiende una persona. Aquí, dos sentencias
+ * atómicas: crear si no existe (sin pisar) y, si existe, extender solo si la nueva vence después.
+ *   "creada" | "extendida" => esta llamada dejó la pausa;
+ *   "ya_mas_larga"          => ya había una pausa igual o más larga (una persona la tiene).
+ */
+export async function extenderPausaChat(
+  supabase: SupabaseClient,
+  phoneNumberId: string,
+  telefonoCliente: string,
+  duracionMs: number,
+): Promise<{ ok: true; efecto: "creada" | "extendida" | "ya_mas_larga"; pausadoHasta: string } | { ok: false; error: string }> {
+  const ahora = new Date().toISOString();
+  const pausadoHasta = new Date(Date.now() + duracionMs).toISOString();
+  const fila = { pausado_hasta: pausadoHasta, pausado_desde: ahora, seguimiento_enviado: false };
+  for (let intento = 0; intento < 2; intento++) {
+    const creada = await supabase
+      .from("dulabs_pausas_chat")
+      .upsert({ phone_number_id: phoneNumberId, telefono_cliente: telefonoCliente, ...fila }, { onConflict: "phone_number_id,telefono_cliente", ignoreDuplicates: true })
+      .select("pausado_hasta");
+    if (creada.error) return { ok: false, error: creada.error.message };
+    if ((creada.data ?? []).length > 0) return { ok: true, efecto: "creada", pausadoHasta };
+    const extendida = await supabase
+      .from("dulabs_pausas_chat")
+      .update(fila)
+      .eq("phone_number_id", phoneNumberId)
+      .eq("telefono_cliente", telefonoCliente)
+      .lt("pausado_hasta", pausadoHasta)
+      .select("pausado_hasta");
+    if (extendida.error) return { ok: false, error: extendida.error.message };
+    if ((extendida.data ?? []).length > 0) return { ok: true, efecto: "extendida", pausadoHasta };
+    const vigente = await supabase
+      .from("dulabs_pausas_chat")
+      .select("pausado_hasta")
+      .eq("phone_number_id", phoneNumberId)
+      .eq("telefono_cliente", telefonoCliente)
+      .maybeSingle();
+    if (vigente.error) return { ok: false, error: vigente.error.message };
+    // Alguien la liberó entre las dos sentencias: se vuelve a intentar crearla.
+    if (vigente.data) return { ok: true, efecto: "ya_mas_larga", pausadoHasta: String(vigente.data.pausado_hasta) };
+  }
+  return { ok: false, error: "pausa inestable" };
+}
+
 // Fase 9 (Human Inbox, autorizado) — "Devolver a IA": libera la pausa de
 // ESTE chat puntual antes de que expire sola. Simplemente borra la fila
 // (sin fila = sin pausa = la IA vuelve a responder en el próximo mensaje,
