@@ -30,6 +30,10 @@ Con 50 búsquedas simultáneas sobre 10.000 productos se pasó de 8/s a 110/s. L
 agente `resolve_product_by_attributes` dejó de leer el catálogo entero: con 10.000 productos
 bajó de 2,1 MB a 53 KB por llamada.
 
+**Incluye las funciones base del Bloque 10** (`dulabs_catalogo_normalizar`, `dulabs_catalogo_documento`,
+idénticas): en producción faltaban (error 42883 al aplicarla el 24-sep), así que esta migración
+funciona con o sin la del Bloque 10 aplicada.
+
 **Orden seguro:** el código ya desplegado funciona sin la migración (la búsqueda sigue igual, solo
 más lenta, y la herramienta lee como antes). Al aplicarla, el backfill indexa los negocios con
 Catálogo en la misma transacción: 10.000 productos tardaron menos de 1 s en local.

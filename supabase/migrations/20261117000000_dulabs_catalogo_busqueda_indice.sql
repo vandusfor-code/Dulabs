@@ -36,6 +36,32 @@
 
 begin;
 
+-- Funciones base del Bloque 10 (idénticas a 20261111000000_dulabs_catalogo_busqueda.sql), repetidas
+-- aquí para que esta migración funcione aunque la del Bloque 10 no esté aplicada. Idempotente.
+create or replace function public.dulabs_catalogo_normalizar(p_text text)
+returns text
+language sql
+immutable
+parallel safe
+as $$
+  -- Igual que dulabs_ba_unaccent (Business Agent), sin depender de esa migración:
+  -- translate() no depende de la collation; después lower() solo toca ASCII.
+  select lower(translate(coalesce(p_text, ''),
+    'áéíóúüàèìòùâêîôûÁÉÍÓÚÜÀÈÌÒÙÂÊÎÔÛÑ',
+    'aeiouuaeiouaeiouAEIOUUAEIOUAEIOUñ'))
+$$;
+
+create or replace function public.dulabs_catalogo_documento(p_nombre text, p_color text, p_material text, p_descripcion text)
+returns tsvector
+language sql
+immutable
+parallel safe
+as $$
+  select setweight(to_tsvector('spanish'::regconfig, public.dulabs_catalogo_normalizar(p_nombre)), 'A')
+      || setweight(to_tsvector('spanish'::regconfig, public.dulabs_catalogo_normalizar(coalesce(p_color, '') || ' ' || coalesce(p_material, ''))), 'B')
+      || setweight(to_tsvector('spanish'::regconfig, public.dulabs_catalogo_normalizar(left(coalesce(p_descripcion, ''), 2000))), 'C')
+$$;
+
 -- Clave del nombre IGUAL a normalizeText() del backend: sin marcas diacríticas (NFD), minúsculas,
 -- espacios colapsados. El backend vuelve a comparar exacto: la clave solo encuentra candidatos.
 create or replace function public.dulabs_catalogo_clave_nombre(p_texto text)
