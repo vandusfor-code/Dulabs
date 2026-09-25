@@ -97,6 +97,13 @@ const BY_ACTION_TYPE: Partial<Record<FlowActionType, ActionCapabilitySpec>> = {
     actionType: "get_contact",
     criticality: "standard",
   },
+  // Registro en un módulo del tenant: escribe datos propios del negocio. No
+  // afirma ningún hecho externo (sin verifiesOnSuccess); el flow decide qué
+  // hacer si falla (rama "failure").
+  registrar_en_modulo: {
+    actionType: "registrar_en_modulo",
+    criticality: "elevated",
+  },
   asignar_miembro: {
     actionType: "asignar_miembro",
     criticality: "standard",

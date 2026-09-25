@@ -45,8 +45,12 @@ function enviados(effects: EngineEffect[], variables: Record<string, unknown>): 
   return filterClaimSecuredEffects(effects, variables).filter((e): e is Enviado => e.type === "send_message");
 }
 
-/** Conversación completa desde "Hola"; completa el efecto de transferencia como lo hace el executor real. */
-function conversar(pasos: Paso[]): {
+/**
+ * Conversación completa desde "Hola". Resuelve las acciones pendientes como lo hacen los
+ * executors reales: registrar_en_modulo (la solicitud) y transferir_soporte. `registroFalla`
+ * simula que el registro de la solicitud falla (rama "failure").
+ */
+function conversar(pasos: Paso[], opciones: { registroFalla?: boolean } = {}): {
   state: FlowEngineState;
   recibidos: string[];
   mensajes: Enviado[];
@@ -68,13 +72,22 @@ function conversar(pasos: Paso[]): {
   };
   correr({ type: "start", text: "Hola" });
   for (const p of pasos) correr(p);
-  if (state.status === "waiting_effect" && state.pendingEffect?.kind === "action") {
-    correr({
-      type: "effect_result",
-      success: true,
-      effectId: state.pendingEffect.effectId,
-      data: { transferred: true, pausadoHasta: "2026-01-01T00:00:00Z", pauseDurationHours: PUBLIBORDADOS_PAUSA_HORAS },
-    });
+  for (let i = 0; i < 3 && state.status === "waiting_effect" && state.pendingEffect?.kind === "action"; i++) {
+    const nodo = state.pendingEffect.nodeId;
+    if (nodo === "act-registrar-solicitud") {
+      correr(
+        opciones.registroFalla
+          ? { type: "effect_result", success: false, effectId: state.pendingEffect.effectId, error: "registro_rechazado:error_bd" }
+          : { type: "effect_result", success: true, effectId: state.pendingEffect.effectId, data: { registroId: 101, registroCreado: true } },
+      );
+    } else {
+      correr({
+        type: "effect_result",
+        success: true,
+        effectId: state.pendingEffect.effectId,
+        data: { transferred: true, pausadoHasta: "2026-01-01T00:00:00Z", pauseDurationHours: PUBLIBORDADOS_PAUSA_HORAS },
+      });
+    }
   }
   return { state, recibidos: mensajes.map((m) => m.content.text ?? ""), mensajes, efectos, ultimaRespuesta };
 }
@@ -101,6 +114,8 @@ describe("PUBLI BORDADOS — estructura", () => {
     assert.ok(act && act.type === "action");
     assert.equal(act.config.actionType, "transferir_soporte");
     assert.equal(act.config.pauseDurationHours, PUBLIBORDADOS_PAUSA_HORAS);
+    assert.equal(PUBLIBORDADOS_PAUSA_HORAS, 5, "política de Publi Bordados: 5 h de silencio tras el traspaso");
+    assert.equal(act.config.actionType === "transferir_soporte" && act.config.pauseMode, "extend", "el traspaso nunca acorta una pausa vigente");
     assert.deepEqual(
       flow.edges.filter((e) => e.source === "act-transferir-soporte").map((e) => e.target),
       ["end-transferido"],
@@ -141,20 +156,25 @@ describe("PUBLI BORDADOS — estructura", () => {
     assert.equal(flow.nodes.filter((n) => n.type === "ai").length, 0);
   });
 
-  it("declara su propia política de runtime: determinista y reinicio con reiniciar/menú/menu/inicio o >24 h", () => {
+  it("declara su propia política de runtime: determinista, reinicio con reiniciar/menú/menu/inicio o >24 h, y pausa humana de 5 h", () => {
     assert.deepEqual(flow.runtimePolicy, {
       deterministic: true,
       restart: { keywords: ["reiniciar", "menú", "menu", "inicio"], afterInactivityHours: 24 },
+      humanTakeover: { renewHours: 5 },
     });
     // La política sobrevive al parseo que usa el runtime (no se pierde al publicar/leer).
     assert.deepEqual(politicaDeDefinicion(JSON.parse(JSON.stringify(flow))), flow.runtimePolicy);
   });
 
-  it("el guardado nunca incluye estado ni asesor", () => {
-    const save = flow.nodes.find((n) => n.id === "save-cliente");
-    assert.ok(save && save.type === "save_data");
-    const claves = save.config.mappings.map((m) => m.targetKey);
-    assert.ok(!claves.includes("pb_estado") && !claves.includes("pb_asesor"), JSON.stringify(claves));
+  it("registra la solicitud con la acción GENÉRICA registrar_en_modulo, justo antes del traspaso; nunca envía estado ni asesor", () => {
+    const act = flow.nodes.find((n) => n.id === "act-registrar-solicitud");
+    assert.ok(act && act.type === "action" && act.config.actionType === "registrar_en_modulo");
+    assert.equal(act.config.modulo, "publibordados_clientes");
+    assert.deepEqual(Object.keys(act.config.campos).sort(), ["cantidad", "nombre", "nombre_empresa", "producto", "tipo_cliente"]);
+    // Éxito y fallo llevan al MISMO traspaso: el cliente nunca queda sin asesora.
+    const salidas = flow.edges.filter((e) => e.source === "act-registrar-solicitud");
+    assert.deepEqual(salidas.map((e) => [e.target, e.sourceHandle ?? "default"]).sort(), [["msg-traspaso", "default"], ["msg-traspaso", "failure"]]);
+    assert.equal(flow.nodes.filter((n) => n.type === "save_data").length, 0, "el historial no vive en custom_fields");
   });
 });
 
@@ -327,31 +347,33 @@ describe("PUBLI BORDADOS — nombre y cantidad", () => {
   });
 });
 
-describe("PUBLI BORDADOS — cliente guardado (save_data → custom_fields del contacto)", () => {
-  it("empresa: guarda tipo, nombre, empresa, producto y cantidad — nunca estado ni asesor (son de las asesoras)", () => {
-    const { state } = conversar([...HASTA_CANTIDAD, txt("20")]);
-    assert.deepEqual(state.exports.custom_fields, {
-      pb_tipo_cliente: "empresa",
-      pb_nombre: "Ana Gómez",
-      pb_nombre_empresa: "Textiles SAS",
-      pb_producto: "gorras",
-      pb_cantidad: "20",
+/** Valores que la acción registrar_en_modulo envía al módulo (campo → valor de la variable). */
+function solicitudRegistrada(efectos: EngineEffect[]): Record<string, unknown>[] {
+  return efectos
+    .filter((e): e is Extract<EngineEffect, { type: "effect_required" }> => e.type === "effect_required" && e.action?.actionType === "registrar_en_modulo")
+    .map((e) => {
+      const campos = e.action && "campos" in e.action ? (e.action.campos as Record<string, string>) : {};
+      return Object.fromEntries(Object.entries(campos).map(([campo, variable]) => [campo, e.context?.[variable]]));
     });
+}
+
+describe("PUBLI BORDADOS — solicitud registrada (registrar_en_modulo)", () => {
+  it("empresa: registra UNA solicitud con tipo, nombre, empresa, producto y cantidad", () => {
+    const { efectos } = conversar([...HASTA_CANTIDAD, txt("20")]);
+    assert.deepEqual(solicitudRegistrada(efectos), [
+      { tipo_cliente: "empresa", nombre: "Ana Gómez", nombre_empresa: "Textiles SAS", producto: "gorras", cantidad: "20" },
+    ]);
   });
 
-  it("persona natural: empresa vacía (limpia una empresa de una solicitud anterior)", () => {
-    const { state } = conversar([btn("persona_natural"), txt("Luis"), btn("mas_opciones"), btn("otros"), txt("2")]);
-    assert.deepEqual(state.exports.custom_fields, {
-      pb_tipo_cliente: "persona_natural",
-      pb_nombre: "Luis",
-      pb_nombre_empresa: "",
-      pb_producto: "otros",
-      pb_cantidad: "2",
-    });
+  it("persona natural: empresa vacía", () => {
+    const { efectos } = conversar([btn("persona_natural"), txt("Luis"), btn("mas_opciones"), btn("otros"), txt("2")]);
+    assert.deepEqual(solicitudRegistrada(efectos), [
+      { tipo_cliente: "persona_natural", nombre: "Luis", nombre_empresa: "", producto: "otros", cantidad: "2" },
+    ]);
   });
 
-  it("nunca guarda un valor no elegido: textos inválidos previos quedan sobrescritos por la opción real", () => {
-    const { state } = conversar([
+  it("nunca registra un valor no elegido: textos inválidos previos quedan sobrescritos por la opción real", () => {
+    const { efectos } = conversar([
       txt("Necesito unas gorras"),
       btn("persona_natural"),
       txt("Luis"),
@@ -361,12 +383,29 @@ describe("PUBLI BORDADOS — cliente guardado (save_data → custom_fields del c
       btn("uniformes"),
       txt("7"),
     ]);
-    assert.equal(state.exports.custom_fields.pb_tipo_cliente, "persona_natural");
-    assert.equal(state.exports.custom_fields.pb_producto, "uniformes");
+    const [s] = solicitudRegistrada(efectos);
+    assert.equal(s.tipo_cliente, "persona_natural");
+    assert.equal(s.producto, "uniformes");
   });
 
-  it("se guarda ANTES del traspaso: sin datos guardados si el cliente no termina", () => {
-    const { state } = conversar([...HASTA_CANTIDAD]);
-    assert.deepEqual(state.exports.custom_fields, {});
+  it("sin solicitud si el cliente no termina (abandono): no hay basura", () => {
+    const { efectos } = conversar([...HASTA_CANTIDAD]);
+    assert.deepEqual(solicitudRegistrada(efectos), []);
+  });
+
+  it("orden: primero se registra la solicitud, después el mensaje de traspaso y la transferencia", () => {
+    const { efectos } = conversar([...HASTA_CANTIDAD, txt("20")]);
+    const i = (pred: (e: EngineEffect) => boolean) => efectos.findIndex(pred);
+    const registro = i((e) => e.type === "effect_required" && e.action?.actionType === "registrar_en_modulo");
+    const traspaso = i((e) => e.type === "send_message" && e.content.text === PUBLIBORDADOS_TRASPASO);
+    const transferencia = i((e) => e.type === "effect_required" && e.action?.actionType === "transferir_soporte");
+    assert.ok(registro >= 0 && registro < traspaso && traspaso < transferencia, JSON.stringify([registro, traspaso, transferencia]));
+  });
+
+  it("si el registro falla, el cliente IGUAL recibe el traspaso y pasa a la asesora", () => {
+    const { state, recibidos, efectos } = conversar([...HASTA_CANTIDAD, txt("20")], { registroFalla: true });
+    assert.equal(recibidos.at(-1), PUBLIBORDADOS_TRASPASO);
+    assert.equal(accionTransferir(efectos).length, 1);
+    assert.equal(state.status, "completed");
   });
 });

@@ -216,6 +216,7 @@ const actionNodeConfigSchema = z.discriminatedUnion("actionType", [
     actionType: z.literal("transferir_soporte"),
     semanticTag: semanticTagSchema,
     pauseDurationHours: z.number().positive().optional(),
+    pauseMode: z.enum(["replace", "extend"]).optional(),
   }),
   z.object({
     actionType: z.literal("etiquetar_conversacion"),
@@ -403,6 +404,16 @@ const actionNodeConfigSchema = z.discriminatedUnion("actionType", [
     templateName: z.string().trim().min(1),
     variables: z.record(z.string(), z.string()).optional(),
   }),
+  // Registro en un módulo del tenant (genérico, ver RegistrarEnModuloActionConfig).
+  z.object({
+    actionType: z.literal("registrar_en_modulo"),
+    semanticTag: semanticTagSchema,
+    modulo: z.string().regex(/^[a-z][a-z0-9_]{1,39}$/),
+    campos: z
+      .record(z.string().regex(/^[a-z][a-z0-9_]{0,39}$/), z.string().trim().min(1))
+      .refine((c) => Object.keys(c).length >= 1 && Object.keys(c).length <= 30, "entre 1 y 30 campos"),
+    outputVariables: z.array(z.string().trim().min(1)).optional(),
+  }),
 ]);
 
 const nodeBaseSchema = z.object({
@@ -523,6 +534,11 @@ export const flowRuntimePolicySchema = z.object({
     .object({
       keywords: z.array(z.string().trim().min(1).max(40)).max(20).optional(),
       afterInactivityHours: z.number().positive().max(24 * 365).optional(),
+    })
+    .optional(),
+  humanTakeover: z
+    .object({
+      renewHours: z.number().positive().max(24 * 30),
     })
     .optional(),
 });

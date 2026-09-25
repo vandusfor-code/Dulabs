@@ -263,6 +263,7 @@ export interface SaveDataMapping {
 // ---------------------------------------------------------------------------
 
 export type FlowActionType =
+  | "registrar_en_modulo"
   | "crear_lead_enterprise"
   | "crear_lead_campana"
   | "transferir_soporte"
@@ -417,6 +418,11 @@ export interface AsignarMiembroActionConfig extends ActionSemanticTag {
 export interface TransferirSoporteActionConfig extends ActionSemanticTag {
   actionType: "transferir_soporte";
   pauseDurationHours?: number;
+  /**
+   * "replace" (por defecto, comportamiento de siempre): la pausa queda en pauseDurationHours.
+   * "extend": la pausa nunca ACORTA una vigente más larga (p. ej. una asesora ya tomó el chat).
+   */
+  pauseMode?: "replace" | "extend";
 }
 
 export interface SimpleActionConfig extends ActionSemanticTag {
@@ -453,7 +459,21 @@ export interface SimpleActionConfig extends ActionSemanticTag {
   params?: ActionParams;
 }
 
+/**
+ * Registra datos del flow en un MÓDULO del tenant (dulabs_tenant_modulos) —
+ * capacidad GENÉRICA: el motor no sabe qué guarda cada módulo. Verifica que el
+ * número sea del tenant y que el módulo esté habilitado, y delega en el
+ * manejador que el módulo registró (lib/modulos/registros-flow.ts). El flow
+ * declara QUÉ variables envía (campo del módulo → variable del flow).
+ */
+export interface RegistrarEnModuloActionConfig extends ActionSemanticTag {
+  actionType: "registrar_en_modulo";
+  modulo: string;
+  campos: Record<string, string>;
+}
+
 export type ActionNodeConfig =
+  | RegistrarEnModuloActionConfig
   | SimpleActionConfig
   | TransferirSoporteActionConfig
   | EtiquetarConversacionActionConfig
@@ -653,5 +673,15 @@ export interface FlowRuntimePolicy {
     keywords?: string[];
     /** Una ejecución esperando respuesta con más horas sin actividad se reinicia al siguiente mensaje. */
     afterInactivityHours?: number;
+  };
+  /**
+   * Pausa por intervención humana. Cada mensaje que una persona del equipo envía en una
+   * conversación atendida por este flow (eco de coexistencia desde el celular o envío desde el
+   * Inbox) deja la pausa del chat en `renewHours` DESDE ESE MOMENTO, sin acortar nunca una pausa
+   * vigente más larga. Omitirla = comportamiento de siempre (eco: 30 min sin acortar; Inbox: no
+   * toca la pausa).
+   */
+  humanTakeover?: {
+    renewHours: number;
   };
 }

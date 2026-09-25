@@ -4,12 +4,25 @@
  * Bienvenida → persona natural / empresa → nombre → (empresa: nombre de la
  * empresa) → producto (dos pantallas de botones: WhatsApp admite máximo 3
  * por mensaje) → cantidad → aviso de precio al por mayor si cantidad >= 6 →
- * guardar cliente → mensaje de traspaso → transferir_soporte → fin.
+ * registrar la solicitud → mensaje de traspaso → transferir_soporte → fin.
  *
  * Transferencia: mismo mecanismo genérico que Solo Talento y Daniela
  * (action actionType:"transferir_soporte" -> end), que pausa el chat en
- * dulabs_pausas_chat. Pausa de 720 h (30 días) para que el bot no vuelva a
- * saludar mientras la asesora atiende; Solo Talento usa 24 h.
+ * dulabs_pausas_chat. Política de Publi Bordados (configuración de ESTE flow,
+ * no del motor):
+ *  - Pausa de 5 h tras el traspaso: el bot queda en silencio total en ese chat
+ *    (el gate del webhook descarta el mensaje antes del flow: no responde, no
+ *    reinicia, no crea solicitud).
+ *  - pauseMode "extend": el traspaso nunca ACORTA una pausa vigente más larga
+ *    (p. ej. una asesora que ya tomó el chat desde el Inbox, 30 días).
+ *  - runtimePolicy.humanTakeover (5 h): cada mensaje de la asesora (eco desde
+ *    el celular o envío desde el Inbox) RENUEVA la pausa a 5 h desde ese
+ *    momento, sin acortar nunca una pausa vigente más larga
+ *    (lib/flow/pausa-intervencion-humana.ts, mecanismo genérico).
+ *  - Vencida la pausa (5 h desde la última intervención humana), el siguiente
+ *    mensaje del cliente inicia el flow desde el principio (la ejecución
+ *    anterior terminó en el traspaso) y, al completarlo, se crea una solicitud
+ *    NUEVA del MISMO cliente.
  *
  * Blindaje de entradas (v2), todo con piezas que el motor ya tiene:
  *  - Texto en una pregunta de botones: el motor ya acepta la etiqueta o el id
@@ -25,12 +38,16 @@
  *    dejaba pasar o no explicaba). Se guarda como texto de dígitos; la
  *    condición de mayorista la compara numéricamente.
  *
- * Cliente: el nodo save_data escribe en custom_fields del contacto real
- * (dulabs_clientes_conocidos, por número del negocio + teléfono del cliente)
- * con el mecanismo existente del orquestador (persistContactCustomFields,
- * merge con escritura optimista). Claves con prefijo pb_. El flow guarda SOLO
- * los datos que capturó: nunca toca el estado ni el asesor que administran
- * las asesoras desde el módulo Clientes (un cliente sin estado es "Nuevo").
+ * Solicitud: justo antes del traspaso, el nodo `registrar_en_modulo` (acción
+ * GENÉRICA del motor) registra una SOLICITUD nueva en el módulo
+ * "publibordados_clientes": el cliente es el contacto real (se reutiliza, nunca
+ * se duplica) y cada flow completado crea exactamente una solicitud, idempotente
+ * por la ejecución real del flow (dulabs_pb_solicitudes). Estado y asesor son de
+ * cada solicitud y solo los cambian las asesoras. Si el registro fallara, el
+ * cliente igual pasa a la asesora (rama "failure" → mismo traspaso) y el
+ * registro queda RECUPERABLE: el motor reintenta en línea los errores
+ * transitorios y deja un respaldo (dulabs_registros_modulo) que el conciliador
+ * reprocesa; lo pendiente/fallido se ve en el dashboard de Solicitudes.
  *
  * Política de runtime propia (FlowDefinition.runtimePolicy, mecanismo genérico
  * del motor): determinista (sin atajos fuera del grafo ni IA legacy) y
@@ -55,20 +72,23 @@ export const PUBLIBORDADOS_REINTENTO_NOMBRE_EMPRESA = "Por favor escríbenos el 
 export const PUBLIBORDADOS_REINTENTO_CANTIDAD = "Escríbenos solo el número de unidades, por ejemplo: 20";
 
 export const PUBLIBORDADOS_UMBRAL_MAYORISTA = 6;
-export const PUBLIBORDADOS_PAUSA_HORAS = 720;
+export const PUBLIBORDADOS_PAUSA_HORAS = 5;
 
 /** Al menos una letra, hasta 80 caracteres (el motor ya recorta espacios). */
 const TEXTO_CON_LETRA = "^(?=.*\\p{L}).{1,80}$";
 /** Entero de 1 a 999999; admite ceros a la izquierda ("06"). */
 const CANTIDAD_ENTERA = "^0*[1-9][0-9]{0,5}$";
 
-/** custom_fields que el flow guarda en el contacto (dulabs_clientes_conocidos). */
-export const PUBLIBORDADOS_CAMPOS = {
-  tipo_cliente: "pb_tipo_cliente",
-  nombre: "pb_nombre",
-  nombre_empresa: "pb_nombre_empresa",
-  producto: "pb_producto",
-  cantidad: "pb_cantidad",
+/** Módulo del tenant que recibe las solicitudes (dulabs_tenant_modulos). */
+export const PUBLIBORDADOS_MODULO = "publibordados_clientes";
+
+/** Campos de la solicitud → variables del flow (los valida la BD al registrar). */
+export const PUBLIBORDADOS_CAMPOS_SOLICITUD = {
+  tipo_cliente: "tipo_cliente",
+  nombre: "nombre",
+  nombre_empresa: "nombre_empresa",
+  producto: "producto",
+  cantidad: "cantidad",
 } as const;
 
 export const PUBLIBORDADOS_PALABRAS_REINICIO = ["reiniciar", "menú", "menu", "inicio"];
@@ -82,6 +102,7 @@ export function publibordadosFlow(): FlowDefinition {
     runtimePolicy: {
       deterministic: true,
       restart: { keywords: PUBLIBORDADOS_PALABRAS_REINICIO, afterInactivityHours: PUBLIBORDADOS_INACTIVIDAD_HORAS },
+      humanTakeover: { renewHours: PUBLIBORDADOS_PAUSA_HORAS },
     },
     nodes: [
       { id: "start", type: "start", config: { triggerType: "first_message" } },
@@ -172,21 +193,20 @@ export function publibordadosFlow(): FlowDefinition {
       },
       { id: "msg-mayorista", type: "message", config: { text: PUBLIBORDADOS_MAYORISTA } },
       {
-        id: "save-cliente",
-        type: "save_data",
+        id: "act-registrar-solicitud",
+        type: "action",
         config: {
-          mappings: Object.entries(PUBLIBORDADOS_CAMPOS).map(([variable, targetKey]) => ({
-            variable,
-            target: "custom_field" as const,
-            targetKey,
-          })),
+          actionType: "registrar_en_modulo",
+          modulo: PUBLIBORDADOS_MODULO,
+          campos: { ...PUBLIBORDADOS_CAMPOS_SOLICITUD },
+          outputVariables: ["registroId"],
         },
       },
       { id: "msg-traspaso", type: "message", config: { text: PUBLIBORDADOS_TRASPASO } },
       {
         id: "act-transferir-soporte",
         type: "action",
-        config: { actionType: "transferir_soporte", pauseDurationHours: PUBLIBORDADOS_PAUSA_HORAS },
+        config: { actionType: "transferir_soporte", pauseDurationHours: PUBLIBORDADOS_PAUSA_HORAS, pauseMode: "extend" },
       },
       { id: "end-transferido", type: "end", config: { tags: ["publibordados", "transferido"] } },
     ],
@@ -213,9 +233,11 @@ export function publibordadosFlow(): FlowDefinition {
       { id: "e-reintento-producto-mas", source: "msg-reintento-producto-mas", target: "btn-producto-mas" },
       { id: "e-cantidad-cond", source: "q-cantidad", target: "cond-mayorista" },
       { id: "e-cond-true", source: "cond-mayorista", target: "msg-mayorista", sourceHandle: "true" },
-      { id: "e-cond-false", source: "cond-mayorista", target: "save-cliente", sourceHandle: "false" },
-      { id: "e-mayorista-save", source: "msg-mayorista", target: "save-cliente" },
-      { id: "e-save-traspaso", source: "save-cliente", target: "msg-traspaso" },
+      { id: "e-cond-false", source: "cond-mayorista", target: "act-registrar-solicitud", sourceHandle: "false" },
+      { id: "e-mayorista-registrar", source: "msg-mayorista", target: "act-registrar-solicitud" },
+      { id: "e-registrar-traspaso", source: "act-registrar-solicitud", target: "msg-traspaso" },
+      // Si el registro falla, el cliente IGUAL pasa a la asesora (el fallo queda registrado).
+      { id: "e-registrar-fallo-traspaso", source: "act-registrar-solicitud", target: "msg-traspaso", sourceHandle: "failure" },
       { id: "e-traspaso-act", source: "msg-traspaso", target: "act-transferir-soporte" },
       { id: "e-act-end", source: "act-transferir-soporte", target: "end-transferido" },
     ],

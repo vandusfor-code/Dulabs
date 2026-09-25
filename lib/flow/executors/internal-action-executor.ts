@@ -43,6 +43,18 @@ import {
 import { resolverEscenario, type ResolverEscenarioDeps } from "@/lib/bot-escenarios/resolver";
 import { nombreConocido, leerContactoActual, recordarNombreCliente } from "@/lib/clientes-conocidos";
 import { parseCustomerFieldsJson } from "@/lib/customer-data";
+import { valoresDeCampos, type ManejadorRegistroModulo, type RegistrosModuloStore } from "@/lib/flow/registro-modulo";
+import {
+  conTope,
+  llamarManejadorRegistro,
+  POLITICA_CONCILIACION,
+  verificarDestinoRegistro,
+  type PedidoRegistroModulo,
+  type ProcesadorRegistroDeps,
+  type ResultadoIntentoRegistro,
+} from "@/lib/flow/registro-modulo-procesador";
+import type { ModuloId } from "@/lib/tenant-modulos";
+import { extenderPausaChat as extenderPausaChatReal } from "@/lib/pausas-chat";
 // R4 (Business Agent, autorizado) -- recuperación de conocimiento por tenant.
 import { buscarConocimiento } from "@/lib/business-agent-knowledge/retrieval";
 import { KNOWLEDGE_SOURCES, type KnowledgeSource } from "@/lib/business-agent-knowledge/limits";
@@ -119,6 +131,26 @@ import type { ActionNodeConfig } from "@/lib/flow/types";
 export type { LeadEnterprise };
 
 export interface InternalActionDeps {
+  /**
+   * registrar_en_modulo (genérico): manejadores por módulo (lib/modulos/registros-flow.ts) y
+   * verificación de módulo habilitado. Opcionales: sin manejador, la acción falla de forma
+   * segura (NON_RETRYABLE) y ningún flow existente la usa.
+   */
+  registrosDeModulo?: Readonly<Partial<Record<string, ManejadorRegistroModulo>>>;
+  moduloHabilitado?: (supabase: SupabaseClient, tenantId: string, modulo: ModuloId) => Promise<boolean>;
+  /**
+   * Respaldo de registrar_en_modulo (dulabs_registros_modulo): se abre ANTES de registrar y se
+   * cierra con el resultado; lo pendiente lo reprocesa el conciliador. Sin store (tests o
+   * entornos sin la migración) el registro funciona igual, pero un fallo solo queda en logs.
+   */
+  registrosModuloStore?: RegistrosModuloStore;
+  /** Verificación estricta del número para registrar_en_modulo (ver ProcesadorRegistroDeps). */
+  verificarNumeroRegistro?: (tenantId: string, phoneNumberId: string) => Promise<boolean>;
+  /** Reloj y espera inyectables (reintentos en línea de registrar_en_modulo). */
+  ahoraMs?: () => number;
+  esperarMs?: (ms: number) => Promise<void>;
+  /** transferir_soporte con pauseMode "extend": pausa que nunca acorta una vigente. */
+  extenderPausaChat?: typeof extenderPausaChatReal;
   supabase: SupabaseClient;
   authorizer: InternalActionAuthorizer;
   guardarLeadEnterprise: (
@@ -228,7 +260,21 @@ export interface InternalActionDeps {
   registrarMensaje?: typeof registrarMensaje;
 }
 
+/**
+ * registrar_en_modulo — reintentos EN LÍNEA (dentro del turno del mensaje). Presupuesto total por
+ * debajo del tope de 30 s del framework; lo que no alcance queda "pendiente" para el conciliador.
+ */
+export const REGISTRO_EN_LINEA = {
+  maxIntentos: 3,
+  esperasMs: [300, 1200],
+  presupuestoMs: 20_000,
+  topeRespaldoMs: 5_000,
+  /** El conciliador no toma una fila recién abierta mientras el motor la procesa en línea. */
+  graciaSegundos: 120,
+} as const;
+
 const OPERATION_CLASS: Partial<Record<string, InternalActionOperationClass>> = {
+  registrar_en_modulo: "WRITE",
   consultar_disponibilidad: "READ",
   crear_lead_enterprise: "WRITE",
   crear_lead_campana: "WRITE",
@@ -493,11 +539,179 @@ export class InternalActionExecutor implements EffectExecutor {
         return this.reprogramarCitaClienteAction(request, params, signal);
       case "enviar_plantilla":
         return this.enviarPlantillaAction(request, action, signal);
+      case "registrar_en_modulo":
+        return this.registrarEnModuloAction(request, action, signal);
       default:
         return {
           success: false,
           classification: EFFECT_RESULT_CLASSIFICATIONS.NON_RETRYABLE,
           error: `internal_action_not_supported:${actionKey}`,
+        };
+    }
+  }
+
+  /**
+   * registrar_en_modulo — GENÉRICO. Barreras (lib/flow/registro-modulo-procesador.ts): número del
+   * tenant → módulo conocido, con manejador y HABILITADO → manejador del módulo, idempotente por la
+   * ejecución REAL (flowExecutionId). Resiliencia:
+   *   1. Reintentos EN LÍNEA acotados (hasta 3 intentos, espera creciente, presupuesto de 20 s
+   *      dentro del tope de 30 s del framework) solo ante errores transitorios o ambiguos
+   *      (timeout, excepción, BD). Un error definitivo o de seguridad NO se reintenta.
+   *   2. Respaldo: antes de registrar se abre la fila de dulabs_registros_modulo (única por
+   *      tenant+módulo+ejecución) y al final se cierra: registrado / fallido (visible, con motivo)
+   *      / pendiente (lo retoma el conciliador con los datos de la ejecución original).
+   * El flow decide qué hacer si falla (rama "failure"): la atención humana no se bloquea.
+   */
+  private async registrarEnModuloAction(
+    request: EffectDispatchRequest,
+    action: ActionNodeConfig,
+    signal?: AbortSignal,
+  ): Promise<EffectDispatchResult> {
+    if (action.actionType !== "registrar_en_modulo") return this.tenantRejected();
+    const conversation = request.conversation;
+    if (!conversation || !request.executionRowId) {
+      return { success: false, classification: EFFECT_RESULT_CLASSIFICATIONS.VALIDATION_ERROR, error: "conversation_required" };
+    }
+    assertNotAborted(signal);
+    const ahora = this.deps.ahoraMs ?? Date.now;
+    const esperar = this.deps.esperarMs ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+    const limite = ahora() + REGISTRO_EN_LINEA.presupuestoMs;
+    const puedeReintentar = (intento: number) =>
+      intento < REGISTRO_EN_LINEA.maxIntentos && ahora() + REGISTRO_EN_LINEA.esperasMs[intento - 1] < limite;
+    const procesador: ProcesadorRegistroDeps = {
+      supabase: this.deps.supabase,
+      authorizer: this.deps.authorizer,
+      verificarNumero: this.deps.verificarNumeroRegistro,
+      registrosDeModulo: this.deps.registrosDeModulo,
+      moduloHabilitado: this.deps.moduloHabilitado,
+    };
+    const pedido: PedidoRegistroModulo = {
+      tenantId: request.tenantId,
+      phoneNumberId: conversation.phoneNumberId,
+      telefonoCliente: conversation.telefonoCliente,
+      flowExecutionId: request.executionRowId,
+      modulo: action.modulo,
+      campos: valoresDeCampos(action.campos, request.payload),
+    };
+
+    // 1. Barreras. Seguridad o configuración → se corta aquí, sin respaldo (nada que recuperar).
+    let destino = await verificarDestinoRegistro(procesador, pedido);
+    for (let intento = 1; !destino.ok && destino.resultado.tipo === "transitorio" && puedeReintentar(intento); intento++) {
+      await esperar(REGISTRO_EN_LINEA.esperasMs[intento - 1]);
+      assertNotAborted(signal);
+      destino = await verificarDestinoRegistro(procesador, pedido);
+    }
+    if (!destino.ok && destino.resultado.tipo !== "transitorio") {
+      console.warn(
+        `[registro-modulo] REGISTRO_NO_PERMITIDO tenant=${pedido.tenantId} modulo=${pedido.modulo} ejecucion=${pedido.flowExecutionId} motivo=${destino.resultado.motivo}`,
+      );
+      return this.resultadoRegistro(destino.resultado, { origen: "barrera", respaldo: false });
+    }
+
+    // 2. Respaldo ANTES de registrar: desde aquí, pase lo que pase, el registro es recuperable.
+    const respaldo = await this.abrirRespaldoRegistro(request, pedido, action.campos);
+
+    // 3. Registro con reintentos acotados (idempotente por la ejecución: nunca duplica).
+    let resultado: ResultadoIntentoRegistro = destino.ok ? await llamarManejadorRegistro(procesador, pedido, destino.manejador) : destino.resultado;
+    for (let intento = 1; destino.ok && resultado.tipo === "transitorio" && puedeReintentar(intento); intento++) {
+      await esperar(REGISTRO_EN_LINEA.esperasMs[intento - 1]);
+      assertNotAborted(signal);
+      resultado = await llamarManejadorRegistro(procesador, pedido, destino.manejador);
+    }
+
+    // 4. Cierre del respaldo y evidencia.
+    await this.cerrarRespaldoRegistro(pedido, respaldo, resultado);
+    return this.resultadoRegistro(resultado, { origen: destino.ok ? "manejador" : "barrera", respaldo: respaldo !== null });
+  }
+
+  private async abrirRespaldoRegistro(
+    request: EffectDispatchRequest,
+    pedido: PedidoRegistroModulo,
+    campos: Record<string, string>,
+  ): Promise<{ id: number } | null> {
+    const store = this.deps.registrosModuloStore;
+    if (!store) return null;
+    try {
+      const fila = await conTope(
+        store.abrir({
+          tenantId: pedido.tenantId,
+          modulo: pedido.modulo,
+          flowExecutionId: pedido.flowExecutionId,
+          phoneNumberId: pedido.phoneNumberId,
+          telefonoCliente: pedido.telefonoCliente,
+          nodeId: request.nodeId,
+          campos,
+          graciaSegundos: REGISTRO_EN_LINEA.graciaSegundos,
+        }),
+        REGISTRO_EN_LINEA.topeRespaldoMs,
+      );
+      return { id: fila.id };
+    } catch (err) {
+      console.error(
+        `[registro-modulo] RESPALDO_NO_ABIERTO tenant=${pedido.tenantId} modulo=${pedido.modulo} ejecucion=${pedido.flowExecutionId}:`,
+        err instanceof Error ? err.message : err,
+      );
+      return null;
+    }
+  }
+
+  private async cerrarRespaldoRegistro(
+    pedido: PedidoRegistroModulo,
+    respaldo: { id: number } | null,
+    resultado: ResultadoIntentoRegistro,
+  ): Promise<void> {
+    const huella = `tenant=${pedido.tenantId} modulo=${pedido.modulo} ejecucion=${pedido.flowExecutionId}`;
+    if (resultado.tipo !== "registrado") {
+      console.error(
+        `[registro-modulo] ${respaldo ? (resultado.tipo === "transitorio" ? "REGISTRO_PENDIENTE" : "REGISTRO_FALLIDO") : "REGISTRO_SIN_RESPALDO"} ${huella} motivo=${resultado.motivo}`,
+      );
+    }
+    const store = this.deps.registrosModuloStore;
+    if (!store || !respaldo) return;
+    const cierre =
+      resultado.tipo === "registrado"
+        ? { estado: "registrado" as const, registroId: resultado.registroId }
+        : resultado.tipo === "transitorio"
+          ? { estado: "pendiente" as const, error: resultado.motivo, reintentarEnSegundos: POLITICA_CONCILIACION.esperaSegundos(1) }
+          : { estado: "fallido" as const, error: resultado.motivo };
+    try {
+      await conTope(store.resolver({ tenantId: pedido.tenantId, id: respaldo.id, ...cierre }), REGISTRO_EN_LINEA.topeRespaldoMs);
+    } catch (err) {
+      // La fila sigue "pendiente": el conciliador la retoma (el registro es idempotente).
+      console.error(`[registro-modulo] RESPALDO_NO_CERRADO ${huella} registro=${respaldo.id}:`, err instanceof Error ? err.message : err);
+    }
+  }
+
+  private resultadoRegistro(
+    resultado: ResultadoIntentoRegistro,
+    ctx: { origen: "barrera" | "manejador"; respaldo: boolean },
+  ): EffectDispatchResult {
+    switch (resultado.tipo) {
+      case "registrado": {
+        const data = { registroId: resultado.registroId, registroCreado: resultado.creado };
+        return {
+          success: true,
+          classification: EFFECT_RESULT_CLASSIFICATIONS.SUCCESS,
+          data,
+          appliedResult: data,
+          metadata: { operationClass: OPERATION_CLASS.registrar_en_modulo },
+        };
+      }
+      case "rechazado":
+        return resultado.motivo === "numero_ajeno"
+          ? this.tenantRejected()
+          : { success: false, classification: EFFECT_RESULT_CLASSIFICATIONS.SECURITY_REJECTED, error: resultado.motivo };
+      case "permanente":
+        return {
+          success: false,
+          classification: EFFECT_RESULT_CLASSIFICATIONS.NON_RETRYABLE,
+          error: ctx.origen === "barrera" ? resultado.motivo : `registro_rechazado:${resultado.motivo}`,
+        };
+      case "transitorio":
+        return {
+          success: false,
+          classification: EFFECT_RESULT_CLASSIFICATIONS.RETRYABLE,
+          error: `${ctx.respaldo ? "registro_pendiente" : "registro_sin_respaldo"}:${resultado.motivo}`,
         };
     }
   }
@@ -749,12 +963,22 @@ export class InternalActionExecutor implements EffectExecutor {
       action.actionType === "transferir_soporte" ? (action.pauseDurationHours ?? 24) : 24;
     const duracionMs = pauseHours * 60 * 60 * 1000;
 
-    const pauseResult = await this.deps.activarPausaChat(
-      this.deps.supabase,
-      conversation.phoneNumberId,
-      conversation.telefonoCliente,
-      duracionMs,
-    );
+    // pauseMode "extend" (opt-in del flow): la transferencia nunca ACORTA una pausa vigente más
+    // larga (p. ej. una asesora que ya tomó el chat). Sin pauseMode: reemplaza, como siempre.
+    const extender = action.actionType === "transferir_soporte" && action.pauseMode === "extend";
+    const pauseResult = extender
+      ? await (this.deps.extenderPausaChat ?? extenderPausaChatReal)(
+          this.deps.supabase,
+          conversation.phoneNumberId,
+          conversation.telefonoCliente,
+          duracionMs,
+        )
+      : await this.deps.activarPausaChat(
+          this.deps.supabase,
+          conversation.phoneNumberId,
+          conversation.telefonoCliente,
+          duracionMs,
+        );
 
     if (!pauseResult.ok) {
       return {
