@@ -490,3 +490,7 @@ lib/pausas-chat.test.ts
 lib/publibordados/clientes/clientes.test.ts
 lib/flow-runtime-bridge-politica.test.ts
 lib/clientes-conocidos-concurrencia.test.ts
+lib/flow/registrar-en-modulo.test.ts
+lib/publibordados/clientes/solicitudes.integracion.test.ts
+lib/flow/registro-modulo-conciliacion.integracion.test.ts
+app/webhook-dulabs/pausa-intervencion-humana-integracion.test.ts

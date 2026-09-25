@@ -1,27 +1,37 @@
 /**
- * Publi Bordados · módulo Clientes — casos de uso (listar, ver ficha, cambiar estado/asesor).
- * Reciben el tenant YA autenticado (auth.ts) y un repositorio que aplica el
- * aislamiento por tenant + números del tenant en cada consulta.
+ * Publi Bordados · módulo Clientes — casos de uso de Clientes y Solicitudes.
+ * Reciben el tenant YA autenticado (auth.ts); el repositorio aplica el aislamiento en SQL.
  */
 import {
   aCliente,
-  aplicarCambio,
-  esClienteDelModulo,
-  filtrarClientes,
+  aClienteDetalle,
+  aSolicitud,
+  filtroClientesSql,
+  filtroSolicitudesSql,
   TAMANO_PAGINA,
   type Asesor,
-  type CambioCliente,
+  type CambioSolicitud,
   type Cliente,
+  type ClienteDetalle,
   type FiltroClientes,
-  type FilaContacto,
+  type FiltroSolicitudes,
+  type Solicitud,
 } from "@/lib/publibordados/clientes/modelo";
 import type { ClientesRepositorio, MiembroEquipo } from "@/lib/publibordados/clientes/repositorio";
 
 export type ResultadoServicio<T> = { ok: true; data: T } | { ok: false; status: 400 | 404 | 409; error: string };
 
+export interface Listado<T> {
+  filas: T[];
+  total: number;
+  pagina: number;
+  paginas: number;
+  asesores: Asesor[];
+}
+
 const nombreMiembro = (m: MiembroEquipo) => m.nombre?.trim() || m.email?.trim() || `Miembro ${m.id}`;
 
-async function asesoresDe(repo: ClientesRepositorio, tenantId: string) {
+async function equipo(repo: ClientesRepositorio, tenantId: string) {
   const miembros = await repo.miembrosDelTenant(tenantId);
   return {
     // Todos (incluidos suspendidos) para mostrar el nombre de un asesor ya asignado.
@@ -31,81 +41,68 @@ async function asesoresDe(repo: ClientesRepositorio, tenantId: string) {
   };
 }
 
-async function enriquecer(repo: ClientesRepositorio, tenantId: string, fila: FilaContacto, nombres: ReadonlyMap<number, string>) {
-  const [ultimoContactoEn, ultimaSolicitudEn] = await Promise.all([
-    repo.ultimoContacto(fila.phone_number_id, fila.telefono_cliente),
-    repo.ultimaSolicitud(tenantId, fila.phone_number_id, fila.telefono_cliente),
-  ]);
-  return aCliente(fila, { asesores: nombres, ultimoContactoEn, ultimaSolicitudEn });
-}
+const paginas = (total: number) => Math.max(1, Math.ceil(total / TAMANO_PAGINA));
 
-export async function listarClientes(
-  repo: ClientesRepositorio,
-  tenantId: string,
-  filtro: FiltroClientes,
-  pagina = 1,
-): Promise<{ clientes: Cliente[]; total: number; pagina: number; paginas: number; asesores: Asesor[] }> {
-  const [numeros, asesores] = await Promise.all([repo.numerosDelTenant(tenantId), asesoresDe(repo, tenantId)]);
-  // Doble barrera: el repositorio ya filtra por tenant y números; aquí se
-  // descarta cualquier fila que no cumpla (nunca se confía en una sola capa).
-  const filas = (await repo.listarContactos(tenantId, numeros)).filter(
-    (f) => f.id_tenant === tenantId && numeros.includes(f.phone_number_id) && esClienteDelModulo(f),
-  );
-  const porId = new Map(filas.map((f) => [f.id, f]));
-  const base = filas.map((f) => aCliente(f, { asesores: asesores.nombres }));
-  const filtrados = filtrarClientes(base, filtro);
-  const paginas = Math.max(1, Math.ceil(filtrados.length / TAMANO_PAGINA));
-  const actual = Math.min(Math.max(1, Math.trunc(pagina) || 1), paginas);
-  const pagina_ = filtrados.slice((actual - 1) * TAMANO_PAGINA, actual * TAMANO_PAGINA);
-  const clientes = await Promise.all(pagina_.map((c) => enriquecer(repo, tenantId, porId.get(c.id)!, asesores.nombres)));
-  return { clientes, total: filtrados.length, pagina: actual, paginas, asesores: asesores.activos };
-}
-
-async function leerFila(repo: ClientesRepositorio, tenantId: string, id: number) {
-  const numeros = await repo.numerosDelTenant(tenantId);
-  const fila = await repo.obtenerContacto(tenantId, numeros, id);
-  // Mismo criterio que el listado: otro tenant, otro número o un contacto
-  // que nunca pasó por el Flow responden igual que "no existe" (404).
-  if (!fila || fila.id_tenant !== tenantId || !numeros.includes(fila.phone_number_id) || !esClienteDelModulo(fila)) return null;
-  return { fila, numeros };
+export async function listarClientes(repo: ClientesRepositorio, tenantId: string, filtro: FiltroClientes, pagina = 1): Promise<Listado<Cliente>> {
+  const [resultado, e] = await Promise.all([repo.listarClientes(tenantId, filtroClientesSql(filtro, pagina)), equipo(repo, tenantId)]);
+  return { filas: resultado.filas.map((f) => aCliente(f, e.nombres)), total: resultado.total, pagina, paginas: paginas(resultado.total), asesores: e.activos };
 }
 
 export async function obtenerCliente(
   repo: ClientesRepositorio,
   tenantId: string,
-  id: number,
-): Promise<ResultadoServicio<{ cliente: Cliente; asesores: Asesor[] }>> {
-  const [leido, asesores] = await Promise.all([leerFila(repo, tenantId, id), asesoresDe(repo, tenantId)]);
-  if (!leido) return { ok: false, status: 404, error: "Cliente no encontrado" };
-  return { ok: true, data: { cliente: await enriquecer(repo, tenantId, leido.fila, asesores.nombres), asesores: asesores.activos } };
+  clienteId: number,
+): Promise<ResultadoServicio<ClienteDetalle & { asesores: Asesor[] }>> {
+  const [detalle, e] = await Promise.all([repo.obtenerCliente(tenantId, clienteId), equipo(repo, tenantId)]);
+  // Otro tenant, otro número o un contacto que nunca fue cliente: igual que "no existe".
+  if (!detalle) return { ok: false, status: 404, error: "Cliente no encontrado" };
+  return { ok: true, data: { ...aClienteDetalle(detalle, e.nombres), asesores: e.activos } };
 }
 
-const MAX_INTENTOS = 3;
-
-export async function actualizarCliente(
+export async function listarSolicitudes(
   repo: ClientesRepositorio,
   tenantId: string,
-  id: number,
-  cambio: CambioCliente,
-): Promise<ResultadoServicio<{ cliente: Cliente }>> {
-  const asesores = await asesoresDe(repo, tenantId);
-  if (typeof cambio.asesorId === "number" && !asesores.activos.some((a) => a.id === cambio.asesorId)) {
+  filtro: FiltroSolicitudes,
+  pagina = 1,
+): Promise<Listado<Solicitud>> {
+  const [resultado, e] = await Promise.all([repo.listarSolicitudes(tenantId, filtroSolicitudesSql(filtro, pagina)), equipo(repo, tenantId)]);
+  return { filas: resultado.filas.map((f) => aSolicitud(f, e.nombres)), total: resultado.total, pagina, paginas: paginas(resultado.total), asesores: e.activos };
+}
+
+export async function obtenerSolicitud(
+  repo: ClientesRepositorio,
+  tenantId: string,
+  solicitudId: number,
+): Promise<ResultadoServicio<{ solicitud: Solicitud; asesores: Asesor[] }>> {
+  const [fila, e] = await Promise.all([repo.obtenerSolicitud(tenantId, solicitudId), equipo(repo, tenantId)]);
+  if (!fila) return { ok: false, status: 404, error: "Solicitud no encontrada" };
+  return { ok: true, data: { solicitud: aSolicitud(fila, e.nombres), asesores: e.activos } };
+}
+
+/**
+ * Cambia estado y/o asesor de UNA solicitud con escritura optimista (versión leída). La BD
+ * vuelve a validar tenant, número y que el asesor sea un miembro activo del mismo equipo.
+ */
+export async function actualizarSolicitud(
+  repo: ClientesRepositorio,
+  tenantId: string,
+  solicitudId: number,
+  cambio: CambioSolicitud,
+): Promise<ResultadoServicio<{ solicitud: Solicitud }>> {
+  const e = await equipo(repo, tenantId);
+  if (typeof cambio.asesorId === "number" && !e.activos.some((a) => a.id === cambio.asesorId)) {
     return { ok: false, status: 400, error: "El asesor no pertenece a tu equipo activo" };
   }
-  // Escritura optimista: si el Flow (u otra persona) cambió la fila entre la
-  // lectura y la escritura, se relee y se vuelve a aplicar el cambio sobre lo
-  // nuevo -- nunca se pisa un dato que otro acaba de guardar.
-  for (let intento = 0; intento < MAX_INTENTOS; intento++) {
-    const leido = await leerFila(repo, tenantId, id);
-    if (!leido) return { ok: false, status: 404, error: "Cliente no encontrado" };
-    const escrito = await repo.actualizarCustomFields(
-      tenantId,
-      leido.numeros,
-      id,
-      leido.fila.updated_at,
-      aplicarCambio(leido.fila.custom_fields, cambio),
-    );
-    if (escrito) return { ok: true, data: { cliente: await enriquecer(repo, tenantId, escrito, asesores.nombres) } };
+  const { version, ...campos } = cambio;
+  const r = await repo.actualizarSolicitud(tenantId, solicitudId, version, campos);
+  switch (r.resultado) {
+    case "ok":
+      return { ok: true, data: { solicitud: aSolicitud(r.solicitud, e.nombres) } };
+    case "no_encontrada":
+      return { ok: false, status: 404, error: "Solicitud no encontrada" };
+    case "conflicto":
+      return { ok: false, status: 409, error: "La solicitud cambió mientras la editabas. Se recargó la versión actual." };
+    case "asesor_invalido":
+      return { ok: false, status: 400, error: "El asesor no pertenece a tu equipo activo" };
   }
-  return { ok: false, status: 409, error: "El cliente cambió mientras se guardaba. Intenta de nuevo." };
 }

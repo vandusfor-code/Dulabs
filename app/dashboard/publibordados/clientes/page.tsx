@@ -1,46 +1,29 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { ChevronLeft, ChevronRight, Search } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Search } from "lucide-react";
 import { PageHeader, Pill } from "@/components/dashboard/shell/ui";
-import { actionBtn, inputCls } from "@/components/dashboard/business-agent/ui";
-import { FichaCliente, TONO_ESTADO } from "@/components/dashboard/publibordados/clientes/FichaCliente";
+import { inputCls } from "@/components/dashboard/business-agent/ui";
+import { FichaCliente } from "@/components/dashboard/publibordados/clientes/FichaCliente";
+import { FichaSolicitud } from "@/components/dashboard/publibordados/clientes/FichaSolicitud";
 import { fecha, fechaHora, telefono } from "@/components/dashboard/publibordados/clientes/formato";
-import { useDashboard } from "@/lib/dashboard-session";
+import { Aviso, cn, EstadoPill, Paginacion, Pestanas, useAccesoPb, useConsulta } from "@/components/dashboard/publibordados/clientes/ui";
 import { useI18n } from "@/lib/i18n";
-import {
-  ESTADOS,
-  ETIQUETA_ESTADO,
-  ETIQUETA_TIPO,
-  type Asesor,
-  type Cliente,
-  type EstadoCliente,
-  type FiltroTipo,
-} from "@/lib/publibordados/clientes/modelo";
+import { ETIQUETA_TIPO, type Asesor, type Cliente, type Solicitud, type TipoCliente } from "@/lib/publibordados/clientes/modelo";
 
-type Listado = { clientes: Cliente[]; total: number; pagina: number; paginas: number; asesores: Asesor[] };
-
-function cn(...cls: Array<string | false | null | undefined>) {
-  return cls.filter(Boolean).join(" ");
-}
+type Listado = { filas: Cliente[]; total: number; pagina: number; paginas: number; asesores: Asesor[] };
+type Abierto = { tipo: "cliente"; id: number } | { tipo: "solicitud"; solicitud: Solicitud; asesores: Asesor[]; desdeCliente: number | null };
 
 export default function ClientesPage() {
   const { t } = useI18n();
-  const { session, rol, modulos, negocios } = useDashboard();
-  const token = session?.access_token ?? null;
-  const habilitado = modulos.includes("publibordados_clientes");
-  const puedeEditar = rol === "admin" || rol === "agente";
-
+  const { token, habilitado, listo, puedeEditar } = useAccesoPb();
   const [busqueda, setBusqueda] = useState("");
   const [q, setQ] = useState("");
-  const [tipo, setTipo] = useState<FiltroTipo>("todos");
-  const [estado, setEstado] = useState<EstadoCliente | "todos">("todos");
+  const [tipo, setTipo] = useState<"todos" | TipoCliente>("todos");
   const [pagina, setPagina] = useState(1);
-  const [version, setVersion] = useState(0);
-  const [resultado, setResultado] = useState<{ clave: string; listado: Listado | null; error: string | null } | null>(null);
-  const [abierto, setAbierto] = useState<Cliente | null>(null);
+  const [recarga, setRecarga] = useState(0);
+  const [abierto, setAbierto] = useState<Abierto | null>(null);
 
-  // Búsqueda con debounce: una consulta por pausa de escritura, no por tecla.
   useEffect(() => {
     const timer = window.setTimeout(() => {
       setQ(busqueda.trim());
@@ -49,70 +32,26 @@ export default function ClientesPage() {
     return () => window.clearTimeout(timer);
   }, [busqueda]);
 
-  const consulta = useMemo(() => {
-    const p = new URLSearchParams({ tipo, estado, pagina: String(pagina) });
+  const url = useMemo(() => {
+    if (!habilitado) return null;
+    const p = new URLSearchParams({ pagina: String(pagina) });
     if (q) p.set("q", q);
-    return p.toString();
-  }, [q, tipo, estado, pagina]);
+    if (tipo !== "todos") p.set("tipo", tipo);
+    return `/api/dashboard/publibordados/clientes?${p}`;
+  }, [habilitado, pagina, q, tipo]);
+  const { data, error, cargando } = useConsulta<Listado>(url, token, recarga);
 
-  const clave = `${consulta}#${version}`;
-
-  useEffect(() => {
-    if (!token || !habilitado) return;
-    let vivo = true;
-    fetch(`/api/dashboard/publibordados/clientes?${consulta}`, { headers: { Authorization: `Bearer ${token}` } })
-      .then(async (res) => {
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error ?? t("No se pudieron cargar los clientes.", "Couldn't load customers."));
-        if (vivo) setResultado({ clave, listado: data as Listado, error: null });
-      })
-      .catch((err) => {
-        // Se conserva el último listado bueno y se muestra el error.
-        if (vivo) setResultado((prev) => ({ clave, listado: prev?.listado ?? null, error: err instanceof Error ? err.message : String(err) }));
-      });
-    return () => {
-      vivo = false; // respuesta vieja: nunca pisa a la actual
-    };
-  }, [token, habilitado, consulta, clave, t]);
-
-  const listado = resultado?.listado ?? null;
-  const error = resultado?.error ?? null;
-  const cargando = resultado?.clave !== clave;
-
-  const guardar = useCallback(
-    async (id: number, cambio: { estado?: EstadoCliente; asesorId?: number | null }): Promise<string | null> => {
-      if (!token) return t("Sesión vencida.", "Session expired.");
-      try {
-        const res = await fetch(`/api/dashboard/publibordados/clientes/${id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-          body: JSON.stringify(cambio),
-        });
-        const data = await res.json();
-        if (!res.ok) return data.error ?? t("No se pudo guardar.", "Couldn't save.");
-        setAbierto(data.cliente as Cliente);
-        setVersion((v) => v + 1);
-        return null;
-      } catch (err) {
-        return err instanceof Error ? err.message : String(err);
-      }
-    },
-    [token, t],
-  );
-
-  const filtrosTipo: Array<{ id: FiltroTipo; label: string }> = [
+  const filtros: Array<{ id: "todos" | TipoCliente; label: string }> = [
     { id: "todos", label: t("Todos", "All") },
     { id: "persona_natural", label: ETIQUETA_TIPO.persona_natural },
     { id: "empresa", label: ETIQUETA_TIPO.empresa },
   ];
 
-  if (negocios !== null && !habilitado) {
+  if (listo && !habilitado) {
     return (
       <div className="pb-12">
         <PageHeader title={t("Clientes", "Customers")} />
-        <p className="px-4 pt-6 text-sm text-mist md:px-8">
-          {t("El módulo Clientes no está habilitado para tu cuenta.", "The Customers module isn't enabled for your account.")}
-        </p>
+        <p className="px-4 pt-6 text-sm text-mist md:px-8">{t("El módulo Clientes no está habilitado para tu cuenta.", "The Customers module isn't enabled for your account.")}</p>
       </div>
     );
   }
@@ -120,18 +59,14 @@ export default function ClientesPage() {
   return (
     <div className="pb-12">
       <PageHeader
-        eyebrow={t("Operar", "Operate")}
+        eyebrow="Publi Bordados"
         title={t("Clientes", "Customers")}
         description={t(
-          "Clientes que completaron la calificación por WhatsApp. Se registran y actualizan solos al pasar con una asesora.",
-          "Customers who completed the WhatsApp qualification. They're created and updated automatically when handed to an advisor.",
+          "Cada cliente una sola vez, con el historial de todas sus solicitudes.",
+          "Each customer once, with the history of all their requests.",
         )}
       >
-        {listado && (
-          <Pill>
-            {listado.total} {listado.total === 1 ? t("cliente", "customer") : t("clientes", "customers")}
-          </Pill>
-        )}
+        <Pestanas activa="clientes" />
       </PageHeader>
 
       <div className="px-4 pt-6 md:px-8">
@@ -148,7 +83,7 @@ export default function ClientesPage() {
             />
           </div>
           <div className="flex rounded-lg border border-edge p-0.5" role="group" aria-label={t("Tipo de cliente", "Customer type")}>
-            {filtrosTipo.map((f) => (
+            {filtros.map((f) => (
               <button
                 key={f.id}
                 onClick={() => {
@@ -156,89 +91,76 @@ export default function ClientesPage() {
                   setPagina(1);
                 }}
                 aria-pressed={tipo === f.id}
-                className={cn(
-                  "rounded-md px-3 py-1.5 text-sm transition-colors",
-                  tipo === f.id ? "bg-card font-medium text-fg" : "text-mist hover:text-fg",
-                )}
+                className={cn("rounded-md px-3 py-1.5 text-sm transition-colors", tipo === f.id ? "bg-card font-medium text-fg" : "text-mist hover:text-fg")}
               >
                 {f.label}
               </button>
             ))}
           </div>
-          <select
-            value={estado}
-            onChange={(e) => {
-              setEstado(e.target.value as EstadoCliente | "todos");
-              setPagina(1);
-            }}
-            aria-label={t("Estado", "Status")}
-            className={cn(inputCls, "lg:w-44")}
-          >
-            <option value="todos">{t("Todos los estados", "All statuses")}</option>
-            {ESTADOS.map((e) => (
-              <option key={e} value={e}>
-                {ETIQUETA_ESTADO[e]}
-              </option>
-            ))}
-          </select>
+          {data && (
+            <Pill>
+              {data.total} {data.total === 1 ? t("cliente", "customer") : t("clientes", "customers")}
+            </Pill>
+          )}
         </div>
 
-        {error && <p className="mt-4 text-sm text-red-400">{error}</p>}
-
         <section className="mt-5 overflow-hidden rounded-xl border border-edge bg-card">
-          {listado === null ? (
-            <p className="p-5 text-sm text-mist">{t("Cargando…", "Loading…")}</p>
-          ) : listado.clientes.length === 0 ? (
-            <p className="p-5 text-sm text-mist">
-              {q || tipo !== "todos" || estado !== "todos"
+          {error && <Aviso tipo="error">{error}</Aviso>}
+          {!data ? (
+            !error && <Aviso tipo="cargando">{t("Cargando…", "Loading…")}</Aviso>
+          ) : data.filas.length === 0 ? (
+            <Aviso tipo="vacio">
+              {q || tipo !== "todos"
                 ? t("Ningún cliente coincide con la búsqueda.", "No customers match your search.")
-                : t(
-                    "Todavía no hay clientes. Aparecerán aquí cuando alguien complete la conversación del bot.",
-                    "No customers yet. They'll appear here when someone completes the bot conversation.",
-                  )}
-            </p>
+                : t("Todavía no hay clientes. Aparecen aquí cuando alguien completa la conversación del bot.", "No customers yet. They appear here when someone completes the bot conversation.")}
+            </Aviso>
           ) : (
             <div className={cn("overflow-x-auto", cargando && "opacity-60")}>
-              <table className="w-full min-w-[960px] text-left text-sm">
+              <table className="w-full min-w-[980px] text-left text-sm">
                 <thead className="border-b border-edge text-xs text-mist">
                   <tr>
-                    <th className="px-4 py-3 font-medium">{t("Nombre", "Name")}</th>
+                    <th className="px-4 py-3 font-medium">{t("Cliente", "Customer")}</th>
                     <th className="px-4 py-3 font-medium">{t("Teléfono", "Phone")}</th>
-                    <th className="px-4 py-3 font-medium">{t("Producto", "Product")}</th>
-                    <th className="px-4 py-3 text-right font-medium">{t("Cantidad", "Qty")}</th>
+                    <th className="px-4 py-3 text-right font-medium">{t("Solicitudes", "Requests")}</th>
+                    <th className="px-4 py-3 font-medium">{t("Última solicitud", "Latest request")}</th>
                     <th className="px-4 py-3 font-medium">{t("Estado", "Status")}</th>
                     <th className="px-4 py-3 font-medium">{t("Asesor", "Advisor")}</th>
-                    <th className="px-4 py-3 font-medium">{t("Registro", "Registered")}</th>
-                    <th className="px-4 py-3 font-medium">{t("Última solicitud", "Latest request")}</th>
+                    <th className="px-4 py-3 font-medium">{t("Primer registro", "First registered")}</th>
                     <th className="px-4 py-3 font-medium">{t("Último contacto", "Last contact")}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-edge">
-                  {listado.clientes.map((c) => (
+                  {data.filas.map((c) => (
                     <tr
                       key={c.id}
-                      onClick={() => setAbierto(c)}
-                      onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), setAbierto(c))}
                       tabIndex={0}
+                      onClick={() => setAbierto({ tipo: "cliente", id: c.id })}
+                      onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), setAbierto({ tipo: "cliente", id: c.id }))}
                       className="cursor-pointer transition-colors hover:bg-ink focus:bg-ink focus:outline-none"
                     >
                       <td className="px-4 py-3">
                         <p className="font-medium text-fg">{c.nombre}</p>
                         <p className="text-xs text-mist">
-                          {c.tipo ? ETIQUETA_TIPO[c.tipo] : "—"}
+                          {c.tipoCliente ? ETIQUETA_TIPO[c.tipoCliente] : "—"}
                           {c.nombreEmpresa ? ` · ${c.nombreEmpresa}` : ""}
                         </p>
                       </td>
                       <td className="whitespace-nowrap px-4 py-3 text-fg">{telefono(c.telefono)}</td>
-                      <td className="px-4 py-3 text-fg">{c.productoEtiqueta ?? "—"}</td>
-                      <td className="px-4 py-3 text-right tabular-nums text-fg">{c.cantidad ?? "—"}</td>
-                      <td className="px-4 py-3">
-                        <Pill tone={TONO_ESTADO[c.estado]}>{ETIQUETA_ESTADO[c.estado]}</Pill>
+                      <td className="px-4 py-3 text-right tabular-nums text-fg">{c.totalSolicitudes}</td>
+                      <td className="px-4 py-3 text-fg">
+                        {c.ultimaSolicitud ? (
+                          <>
+                            {c.ultimaSolicitud.productoEtiqueta} · {c.ultimaSolicitud.cantidad}
+                            <p className="text-xs text-mist">{fechaHora(c.ultimaSolicitudAt)}</p>
+                          </>
+                        ) : (
+                          <span className="text-mist">—</span>
+                        )}
                       </td>
-                      <td className="px-4 py-3 text-fg">{c.asesor?.nombre ?? <span className="text-mist">—</span>}</td>
-                      <td className="whitespace-nowrap px-4 py-3 text-mist">{fecha(c.registradoEn)}</td>
-                      <td className="whitespace-nowrap px-4 py-3 text-mist">{fechaHora(c.ultimaSolicitudEn)}</td>
-                      <td className="whitespace-nowrap px-4 py-3 text-mist">{fechaHora(c.ultimoContactoEn)}</td>
+                      <td className="px-4 py-3">{c.ultimaSolicitud ? <EstadoPill estado={c.ultimaSolicitud.estado} /> : <span className="text-mist">—</span>}</td>
+                      <td className="px-4 py-3 text-fg">{c.ultimaSolicitud?.asesor?.nombre ?? <span className="text-mist">—</span>}</td>
+                      <td className="whitespace-nowrap px-4 py-3 text-mist">{fecha(c.registradoAt)}</td>
+                      <td className="whitespace-nowrap px-4 py-3 text-mist">{fechaHora(c.ultimoContactoAt)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -247,37 +169,27 @@ export default function ClientesPage() {
           )}
         </section>
 
-        {listado && listado.paginas > 1 && (
-          <div className="mt-4 flex items-center justify-between text-sm text-mist">
-            <span>
-              {t("Página", "Page")} {listado.pagina} / {listado.paginas}
-            </span>
-            <div className="flex gap-2">
-              <button className={actionBtn} disabled={listado.pagina <= 1 || cargando} onClick={() => setPagina(listado.pagina - 1)}>
-                <ChevronLeft className="size-4" />
-                {t("Anterior", "Previous")}
-              </button>
-              <button
-                className={actionBtn}
-                disabled={listado.pagina >= listado.paginas || cargando}
-                onClick={() => setPagina(listado.pagina + 1)}
-              >
-                {t("Siguiente", "Next")}
-                <ChevronRight className="size-4" />
-              </button>
-            </div>
-          </div>
-        )}
+        {data && <Paginacion pagina={data.pagina} paginas={data.paginas} cargando={cargando} onCambiar={setPagina} />}
       </div>
 
-      {abierto && listado && (
+      {abierto?.tipo === "cliente" && (
         <FichaCliente
-          key={`${abierto.id}:${abierto.estado}:${abierto.asesor?.id ?? ""}`}
-          cliente={abierto}
-          asesores={listado.asesores}
-          puedeEditar={puedeEditar}
+          clienteId={abierto.id}
+          token={token}
+          recarga={recarga}
           onCerrar={() => setAbierto(null)}
-          onGuardar={(cambio) => guardar(abierto.id, cambio)}
+          onAbrirSolicitud={(s, asesores) => setAbierto({ tipo: "solicitud", solicitud: s, asesores, desdeCliente: abierto.id })}
+        />
+      )}
+      {abierto?.tipo === "solicitud" && (
+        <FichaSolicitud
+          key={abierto.solicitud.id}
+          solicitud={abierto.solicitud}
+          asesores={abierto.asesores}
+          puedeEditar={puedeEditar}
+          token={token}
+          onCerrar={() => setAbierto(abierto.desdeCliente ? { tipo: "cliente", id: abierto.desdeCliente } : null)}
+          onGuardada={() => setRecarga((v) => v + 1)}
         />
       )}
     </div>

@@ -4,6 +4,7 @@ import { resolverMiembroEquipo, requireRol } from "@/lib/team";
 import { enviarTexto, enviarMedia, dentroVentana24h, type WhatsAppMediaType } from "@/lib/whatsapp";
 import { descifrarSecreto } from "@/lib/crypto";
 import { respuestaSiLimiteTasaExcedido } from "@/lib/rate-limit";
+import { renovarPausaPorIntervencionHumana } from "@/lib/flow/pausa-intervencion-humana";
 
 export const runtime = "nodejs";
 
@@ -207,6 +208,12 @@ export async function POST(request: NextRequest) {
         }
       : {}),
   });
+
+  // Intervención humana desde el Inbox: si el flow que atiende esta conversación declara
+  // runtimePolicy.humanTakeover (genérico), la pausa se renueva a su duración desde ahora sin
+  // acortarla nunca. Sin esa política no se toca la pausa (comportamiento de siempre). Nunca
+  // afecta el envío: el mensaje ya salió.
+  await renovarPausaPorIntervencionHumana({ supabase, cliente, telefonoCliente: telefono_cliente });
 
   const mesHoy = new Date().toISOString().slice(0, 7);
   const nuevoUsados = cliente.mes_actual === mesHoy ? cliente.mensajes_usados_mes + 1 : 1;

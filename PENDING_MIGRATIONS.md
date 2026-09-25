@@ -1,5 +1,56 @@
 # Pasos manuales pendientes en producción
 
+## ✅ APLICADA (25-sep-2026, verificada `5`) — Registros de módulo: respaldo y conciliación de `registrar_en_modulo` (genérico)
+
+Migración `supabase/migrations/20261121000000_dulabs_registros_modulo.sql`. **Aditiva**: crea la
+tabla `dulabs_registros_modulo` (RLS activo, sin acceso anon/authenticated) y las funciones
+`dulabs_registro_modulo_abrir`, `_resolver`, `_reclamar`, `_resumen` y `_reencolar` (solo
+`service_role`). No toca ninguna tabla existente. Genérica: sirve a cualquier módulo que use
+`registrar_en_modulo`.
+
+**Para qué sirve:** antes de registrar (p. ej. una solicitud de Publi Bordados) el motor deja una
+fila "pendiente"; si el registro falla por un error transitorio queda pendiente y el conciliador
+(cron diario `/api/cron/registros-modulo`, botón "Reprocesar ahora" y apertura del dashboard) la
+reprocesa con los datos de la ejecución original, sin duplicar. Los pendientes/fallidos se ven en
+el dashboard del módulo.
+
+Sin esta migración el registro funciona igual, pero un fallo solo quedaría en los logs; por eso
+`scripts/_publicar-publibordados.mts --publicar` se niega a publicar la v3 si falta.
+
+Verificación local (PostgreSQL 16): `supabase/tests/20261121000000_dulabs_registros_modulo.test.sql`
+y `supabase/tests/20261121000000_dulabs_registros_modulo.concurrencia.sh`.
+
+1. Correr el archivo completo en el SQL Editor (idempotente).
+2. Verificar (esperado `5`):
+   ```sql
+   select count(*) from pg_proc where proname like 'dulabs_registro_modulo_%';
+   ```
+
+## ✅ APLICADA (25-sep-2026, verificada `8`) — Publi Bordados: Clientes → N Solicitudes
+
+Migración `supabase/migrations/20261120000000_dulabs_pb_solicitudes.sql`. **Aditiva y no
+destructiva**: crea la tabla `dulabs_pb_solicitudes` (RLS activo, sin acceso anon/authenticated),
+su trigger de integridad y las funciones `dulabs_pb_registrar_solicitud`,
+`dulabs_pb_listar_solicitudes`, `dulabs_pb_listar_clientes`, `dulabs_pb_obtener_cliente`,
+`dulabs_pb_obtener_solicitud`, `dulabs_pb_actualizar_solicitud` y `dulabs_pb_solicitud_json`
+(solo `service_role`). No modifica ni borra datos existentes; los `custom_fields.pb_*` históricos
+se muestran como "datos anteriores" del cliente y **no** se convierten en solicitudes.
+
+Sin la migración el flow sigue funcionando: la acción `registrar_en_modulo` falla con
+`migracion_pendiente` y el cliente se transfiere igual. El script
+`scripts/_publicar-publibordados.mts --publicar` se niega a publicar la v3 si falta.
+
+Verificación local (PostgreSQL 16): `supabase/tests/20261120000000_dulabs_pb_solicitudes.test.sql`
+(con su `.prelude.sql`) y `supabase/tests/20261120000000_dulabs_pb_solicitudes.concurrencia.sh`.
+
+1. Correr el archivo completo en el SQL Editor (idempotente).
+2. Verificar (esperado `8`: 7 funciones + la del trigger):
+   ```sql
+   select count(*) from pg_proc where proname like 'dulabs_pb_%solicitud%' or proname in ('dulabs_pb_listar_clientes','dulabs_pb_obtener_cliente');
+   ```
+3. Publicar el flow v3:
+   `npx tsx scripts/_publicar-publibordados.mts --tenant=<tenant> --numero=<phone_number_id> --publicar --activar`
+
 ## PENDIENTE — Publi Bordados, Fase 2A: observador shadow de Coexistence
 
 Migración `supabase/migrations/20261119000000_dulabs_pb_observador.sql`. **Aditiva**: crea

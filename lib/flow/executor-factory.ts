@@ -2,9 +2,12 @@
  * Factory del registry de executors por defecto (Fase 4.1 / 4.1.2).
  */
 
+import { REGISTROS_FLOW_POR_MODULO } from "@/lib/modulos/registros-flow";
+import { crearRegistrosModuloStore } from "@/lib/flow/registro-modulo-conciliacion";
+import { crearVerificadorNumeroEstricto } from "@/lib/flow/registro-modulo-procesador";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { guardarLeadEnterprise } from "@/lib/enterprise-leads";
-import { activarPausaChat, chatEnPausaHumana } from "@/lib/pausas-chat";
+import { activarPausaChat, chatEnPausaHumana, extenderPausaChat } from "@/lib/pausas-chat";
 import {
   crearCita,
   sugerirHorariosLibres,
@@ -82,9 +85,13 @@ export function createDefaultExecutorRegistry(
   const registry = new ExecutorRegistry();
   const internalDeps: InternalActionDeps = {
     supabase,
+    registrosDeModulo: REGISTROS_FLOW_POR_MODULO,
+    registrosModuloStore: crearRegistrosModuloStore(supabase),
+    verificarNumeroRegistro: crearVerificadorNumeroEstricto(supabase),
     authorizer: createSupabaseInternalActionAuthorizer(supabase),
     guardarLeadEnterprise,
     activarPausaChat,
+    extenderPausaChat,
     verificarDisponibilidad,
     sugerirHorariosLibres,
     crearCita,
