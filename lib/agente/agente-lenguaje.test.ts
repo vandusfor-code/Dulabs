@@ -23,7 +23,7 @@ import type { HistoryRow } from "@/lib/agente/contexto";
 import { createMemoryConversationStateStore, type ConversationState, type ConversationStateStore } from "@/lib/agente/estado";
 import type { AgentToolsDeps } from "@/lib/agente/herramientas";
 import { AGENT_TOOL_NAMES } from "@/lib/agente/nombres-herramientas";
-import { runAgentTurn, type AgentTurnTrace } from "@/lib/agente/runtime";
+import { CART_CLARIFY, runAgentTurn, type AgentTurnTrace } from "@/lib/agente/runtime";
 import { createMemoryCustomerChannelStore, parseChannelChoice } from "@/lib/agente/clasificacion";
 import { CHECKOUT_BUTTONS, CHECKOUT_MESSAGES, CHECKOUT_STEP_HINT, parseCustomerName, parseDelivery, parsePayment, wantsCheckout } from "@/lib/agente/checkout";
 import { resolveSelection } from "@/lib/agente/seleccion";
@@ -40,6 +40,7 @@ import {
   leerPago,
   leerSalida,
   modalidadInicial,
+  numerosDelCliente,
   pideQuitar,
   pistasCheckout,
 } from "@/lib/agente/lenguaje/interpretar";
@@ -768,5 +769,166 @@ describe("B28 · aislamiento: sin checkout conversacional nada de esto aplica", 
     const r = await turno([{ text: "Te cuento que el envío lo coordina una asesora." }], "¿cuánto cuesta el envío?", { config: cfg({ checkout_conversacional: false }) });
     assert.equal(r.trace.checkout ?? null, null);
     assert.equal(r.reply, "Te cuento que el envío lo coordina una asesora.");
+  });
+});
+
+// ===========================================================================
+// 4. Auditoría final (Bloque 28): frases reales de WhatsApp que fallaban + guardas del carrito
+// ===========================================================================
+
+describe("B28 · auditoría final — intérprete", () => {
+  it("nombre: ubicación, atributos, posiciones y 'para mi' nunca son un nombre", () => {
+    for (const t of ["vivo en Montería", "para mi", "el dorado", "el segundo", "ahorita te la mando"]) assert.equal(leerNombre(t), null, t);
+    assert.equal(leerNombre("Juan"), "Juan");
+    assert.equal(leerNombre("Tienda La Perla"), "Tienda La Perla");
+  });
+
+  it("dirección suficiente vs insuficiente; ciudad con 'vivo en'; 'ahorita te la mando' es un anuncio", () => {
+    for (const t of ["calle 20", "es por la 30", "por el centro", "en montería"]) assert.equal(leerDireccion(t)?.tipo, "vaga", t);
+    for (const t of ["Calle 20 # 10-15", "Cra 7 20-15 barrio Centro", "Mz 3 casa 5", "Finca La Esperanza, vereda El Tigre", "barrio La Castellana casa 12"]) assert.equal(leerDireccion(t)?.tipo, "ok", t);
+    assert.equal(leerDireccion("ahorita te la mando")?.tipo, "anuncio");
+    assert.equal(leerCiudad("vivo en Montería"), "Montería");
+    assert.equal(leerCiudad("ahorita te la mando"), null);
+  });
+
+  it("'y si lo recojo' (sin signo) es pregunta; 'ese x2' y 'ponle otro' son cantidades; 'me arrepentí'/'mejor no' son duda; 'me yebo'", () => {
+    assert.equal(esPregunta("y si lo recojo"), true);
+    assert.equal(leerCorreccion("y si lo recojo", "domicilio"), null);
+    assert.deepEqual(leerCantidad("ese x2"), { tipo: "fijar", n: 2 });
+    assert.deepEqual(leerCantidad("ponle otro"), { tipo: "sumar", n: 1 });
+    assert.equal(leerSalida("me arrepentí"), "doubt");
+    assert.equal(leerSalida("mejor no"), "doubt");
+    assert.equal(normalizar("me yebo ese"), "me llevo ese");
+    assert.deepEqual([...numerosDelCliente("quiero dos, x3 y 4und")].sort(), [2, 3, 4]);
+  });
+
+  it("selección: 'uno de cada uno' = todas; 'el de la foto' solo con UNA foto enviada", () => {
+    const shown = [{ reference: "DL-000001", name: "Aretes Luna" }, { reference: "DL-000002", name: "Collar Sol" }];
+    const todos = resolveSelection("uno de cada uno", shown);
+    assert.equal(todos.all, true);
+    assert.deepEqual(todos.selected.map((x) => x.reference), ["DL-000001", "DL-000002"]);
+    assert.deepEqual(resolveSelection("quiero el de la foto", shown, { photoReferences: ["DL-000002"] }).selected.map((x) => x.reference), ["DL-000002"]);
+    assert.deepEqual(resolveSelection("quiero el de la foto", shown, { photoReferences: ["DL-000001", "DL-000002"] }).selected, []);
+  });
+});
+
+describe("B28 · auditoría final — el modelo nunca decide cantidad ni producto por el cliente", () => {
+  async function sembrar(parcial: Partial<ConversationState>) {
+    const k = { tenantId: A.tenantId, phoneNumberId: PN_A, waId: CLIENTE };
+    const l = await stateStore.load(k);
+    await stateStore.save(k, { ...l.state, ...parcial }, l.version);
+  }
+  const mostrados = (ps: Array<{ reference: string; name: string }>) => ({
+    lastShown: ps.map((p) => ({ reference: p.reference, name: p.name })),
+    known: ps.map((p) => ({ reference: p.reference, via: "tool" as const, turn: 0 })),
+    ...(ps.length > 1 ? { ambiguity: { references: ps.map((p) => p.reference), createdTurn: 0, presentedTurn: 0 } } : {}),
+  });
+
+  it("'ese x2' y el modelo pone 3: QUANTITY_NOT_STATED; el carrito no cambia y se pregunta cuántas (no un 'listo' falso)", async () => {
+    const a = await producto("Aretes Luna", 45_000, 10);
+    await clasificar();
+    await sembrar(mostrados([a]));
+    const r = await turno([call("update_cart", { items: [{ reference: a.reference, quantity: 3 }] }), { text: "¡Listo, te agregué 3!" }, { text: "¡Listo, te agregué 3!" }], "ese x2");
+    assert.equal(r.trace.tool_calls[0].result, "QUANTITY_NOT_STATED");
+    assert.deepEqual((await estado()).cart, []);
+    assert.equal(sent.at(-1), CART_CLARIFY.QUANTITY_NOT_STATED);
+    assert.ok(!sent.some((t) => /Listo, te agregu/.test(t)), "nunca un 'listo' sin cambio real");
+  });
+
+  it("la cantidad puede venir de un mensaje reciente ('necesito 3' y luego la referencia): se acepta", async () => {
+    const a = await producto("Collar Luna", 50_000, 10);
+    await clasificar();
+    await turno([{ text: "¡Claro! ¿Cuál producto te interesa?" }], "necesito 3 unidades");
+    const r = await turno([call("update_cart", { items: [{ reference: a.reference, quantity: 3 }] }), { text: "Listo." }], `el ${a.reference}`);
+    assert.equal(r.trace.tool_calls[0].result, "ok");
+    assert.deepEqual((await estado()).cart.map((c) => c.quantity), [3]);
+  });
+
+  it("'uno más' = +1 (no +2); 'los dos' exige agregar los dos (SELECTION_INCOMPLETE)", async () => {
+    const a = await producto("Aretes Sol", 45_000, 10);
+    const b = await producto("Collar Sol", 60_000, 10);
+    await clasificar();
+    await sembrar({ ...mostrados([a]), cart: [{ reference: a.reference, quantity: 1 }] });
+    const mas = await turno([call("update_cart", { items: [{ reference: a.reference, quantity: 3 }] }), { text: "¿Cuántas?" }], "uno más");
+    assert.equal(mas.trace.tool_calls[0].result, "QUANTITY_NOT_STATED");
+    await turno([call("update_cart", { items: [{ reference: a.reference, quantity: 2 }] }), { text: "Listo, 2." }], "uno más");
+    assert.deepEqual((await estado()).cart.map((c) => c.quantity), [2]);
+    await sembrar({ ...mostrados([a, b]), cart: [] });
+    const dos = await turno([call("update_cart", { items: [{ reference: a.reference, quantity: 1 }] }), { text: "¿Quieres los dos?" }], "los dos");
+    assert.equal(dos.trace.tool_calls[0].result, "SELECTION_INCOMPLETE");
+    assert.deepEqual((await estado()).cart, []);
+  });
+
+  it("'quiero el de la foto' con UNA foto enviada: ese producto; con la otra opción: CHOICE_REQUIRED y pregunta concreta", async () => {
+    const a = await producto("Aretes Mar", 45_000, 10);
+    const b = await producto("Collar Mar", 60_000, 10);
+    await clasificar();
+    await sembrar({ ...mostrados([a, b]), imagesSent: [{ reference: b.reference, turn: 0 }] });
+    const mal = await turno([call("update_cart", { items: [{ reference: a.reference, quantity: 1 }] }), { text: "¡Listo!" }, { text: "¡Listo!" }], "quiero el de la foto");
+    assert.equal(mal.trace.tool_calls[0].result, "CHOICE_REQUIRED");
+    assert.equal(sent.at(-1), CART_CLARIFY.CHOICE_REQUIRED);
+    const bien = await turno([call("update_cart", { items: [{ reference: b.reference, quantity: 1 }] }), { text: "¡Listo, el collar!" }], "quiero el de la foto");
+    assert.equal(bien.trace.tool_calls[0].result, "ok");
+    assert.deepEqual((await estado()).cart.map((c) => c.reference), [b.reference]);
+  });
+
+  it("aislamiento: con el checkout conversacional apagado, las guardas nuevas no aplican (como antes)", async () => {
+    const a = await producto("Pulsera Mar", 30_000, 10);
+    await clasificar();
+    await sembrar(mostrados([a]));
+    const r = await turno([call("update_cart", { items: [{ reference: a.reference, quantity: 3 }] }), { text: "Listo." }], "ese x2", { config: cfg({ checkout_conversacional: false }) });
+    assert.equal(r.trace.tool_calls[0].result, "ok");
+  });
+});
+
+describe("B28 · auditoría final — estado real, fotos y datos del checkout", () => {
+  it("'ya pagué' y el modelo insiste 'ya está pagado': sale el estado REAL (fijo) y nada cambia", async () => {
+    const p = await producto("Aretes Río", 45_000, 5);
+    await clasificar();
+    await comprar([{ ref: p.reference, qty: 1 }]);
+    await tocar("delivery", 0);
+    await tocar("payment", 1);
+    await tocar("summary", 0);
+    const r = await turno([{ text: "¡Perfecto! Tu pedido ya está pagado ✅" }, { text: "¡Perfecto! Tu pedido ya está pagado ✅" }], "ya pagué");
+    assert.ok(r.trace.grounding.violations.includes("order_status"));
+    assert.match(sent.at(-1)!, /está confirmado \(aún no se prepara\) y el pago está pendiente de verificación/);
+    assert.equal(ultimo().checkout?.paymentStatus, "pendiente");
+  });
+
+  it("foto (captura de la dirección) en el paso de la dirección: se pide escrita, sin asesora", async () => {
+    const p = await producto("Collar Río", 50_000, 5);
+    await clasificar();
+    await comprar([{ ref: p.reference, qty: 1 }]);
+    await tocar("delivery", 1);
+    const r = await turno([], "", { nonText: { kind: "image" } });
+    assert.equal(r.reply, CHECKOUT_MESSAGES.mediaNeedsText("address"));
+    assert.deepEqual(pausas, []);
+    assert.equal((await estado()).checkout?.step, "address");
+  });
+
+  it("fuera de orden: pide nombre → '¿Cuánto vale?' → 'Juan' → 'pero cuánto cuesta el envío?' → 'vivo en Montería' → 'mejor lo recojo'", async () => {
+    nombreGuardado = null;
+    const p = await producto("Anillo Río", 80_000, 5);
+    await clasificar();
+    await comprar([{ ref: p.reference, qty: 1 }]);
+    await turno([{ text: "Cuesta $80.000 😊" }], "¿Cuánto vale?");
+    await turno([], "Juan");
+    await turno([{ text: "El domicilio te lo confirma una asesora 😊" }], "pero cuánto cuesta el envío?");
+    await turno([], "vivo en Montería");
+    await turno([], "mejor lo recojo");
+    const ck = (await estado()).checkout!;
+    assert.deepEqual([ck.customerName, ck.delivery, ck.address, ck.city, ck.step], ["Juan", "tienda", null, null, "payment"]);
+  });
+
+  it("dirección insuficiente ('calle 20') no se guarda; la completa sí", async () => {
+    const p = await producto("Dije Río", 25_000, 5);
+    await clasificar();
+    await comprar([{ ref: p.reference, qty: 1 }]);
+    await tocar("delivery", 1);
+    await turno([], "calle 20");
+    assert.equal(sent.at(-1), CHECKOUT_MESSAGES.addressVague);
+    assert.equal((await estado()).checkout?.address, null);
+    await turno([], "Calle 20 # 10-15");
+    assert.equal((await estado()).checkout?.address, "Calle 20 # 10-15");
   });
 });

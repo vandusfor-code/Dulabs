@@ -132,6 +132,11 @@ export const CHECKOUT_MESSAGES = {
   noCashOnDelivery: "Por ahora no manejamos pago contra entrega 🙏 Puedes pagar por *transferencia* o *en la tienda*.",
   /** Ubicación compartida en el paso de la dirección (Bloque 28): se pide escrita, sin pasar a una asesora. */
   locationNeedsText: "Recibí tu ubicación 📍, pero para registrar el pedido necesito la dirección escrita: calle o carrera, número y barrio.",
+  /** Foto o documento en el paso de la dirección o la ciudad (p. ej. captura de la dirección): se pide escrito. */
+  mediaNeedsText: (step: "address" | "city") =>
+    step === "address"
+      ? "Recibí tu archivo 📎, pero para registrar el pedido necesito la dirección escrita: calle o carrera, número y barrio."
+      : "Recibí tu archivo 📎, pero para registrar el pedido necesito que me escribas la ciudad.",
   notConfirmed: "Tu pedido NO quedó confirmado y no se reservó nada. Dime qué deseas cambiar y te ayudo.",
   /** Falla conocida (nada se escribió). */
   failed: "Disculpa, no pude registrar tu pedido en este momento; no quedó confirmado. ¿Me escribes de nuevo en un momento?",

@@ -661,3 +661,56 @@ segura (el esquema estricto los descarta y empiezan de cero) solo dos casos:
 - las que tocaron Modificar y conservan `checkoutName`.
 
 En ese caso el cliente vuelve a elegir. Ningún pedido cambia: la propuesta pendiente vence sola.
+
+## Bloque 28 · auditoría final de lenguaje humano (antes del merge)
+
+`scripts/eval/gemini-lenguaje.ts` corre **153 casos** sobre el runtime real del agente:
+normalizador, léxico, intérprete, selección, herramientas, checkout, motor de pedidos, reservas y
+anclaje. Cubre:
+- errores de escritura, frases incompletas y lenguaje coloquial;
+- cantidades y cambios de opinión;
+- checkout, entrega, dirección y pago;
+- preguntas en medio del checkout, mensajes fuera de orden y mensajes consecutivos (con reservas);
+- fotos, audio y otros mensajes sin texto;
+- ambigüedad entre productos;
+- detal vs mayorista y estados del pedido.
+
+Cada caso registra el mensaje, el estado previo, lo esperado, lo obtenido, las herramientas, la
+respuesta, si cambió el estado o el pedido, si consultó datos reales, la protección que actuó y el
+resultado (PASS / BLOCKED-SAFE / FAIL). Hay tres modos:
+- `--cooperativo`: el modelo hace lo correcto. Prueba que lo resoluble **se resuelve**, sin un bot
+  que repite "no entendí".
+- `--adversario`: el modelo se equivoca a propósito (producto o cantidad equivocados, montos y
+  estados inventados, "listo" falso). Prueba que una protección determinista lo **bloquea**.
+- `--real`: Gemini real, con N corridas por caso. La clave se lee solo del entorno
+  (`GEMINI_EVAL_KEY`) y nunca se imprime.
+
+Resultados en `AUDITORIA_LENGUAJE_B28.md`:
+- cooperativo: 153 PASS;
+- adversario: 87 PASS y 66 BLOCKED-SAFE, **0 FAIL**.
+
+Corregido en esta auditoría (todo solo con `checkout_conversacional`; otros negocios no cambian):
+- **Nombre:** "vivo en Montería", "para mi", "el dorado" y "el segundo" ya no se aceptan como
+  nombre.
+- **Ciudad:** "vivo en Montería" guarda Montería; "ahorita te la mando" espera, no es una ciudad.
+- **Dirección:** hay que distinguir la dirección suficiente de la insuficiente:
+  - "calle 20" y "es por la 30" piden el número completo;
+  - "Calle 20 # 10-15", "Mz 3 casa 5" y las direcciones rurales (finca, vereda, km) se aceptan.
+- **Foto o documento** en la dirección o la ciudad: se pide escrita, sin asesora.
+- **Preguntas sin signo** ("y si lo recojo", "pero cuánto…"): se tratan como pregunta y no cambian
+  datos.
+- **Cantidades:** se entienden "ese x2" y "ponle otro"; "me arrepentí" y "mejor no" preguntan qué
+  cambiar; "me yebo" se corrige a "me llevo".
+- **Selección:** "uno de cada uno" = todas; "el de la foto" = la foto enviada, si fue una sola.
+- **Cantidad respaldada.** Una cantidad del carrito debe haberla escrito el cliente en sus
+  mensajes recientes, o ser "uno más" / "quita uno". Si no, `update_cart` devuelve
+  `QUANTITY_NOT_STATED`.
+- **Selección completa.** "los dos" / "todos" exige agregarlos todos; si no, devuelve
+  `SELECTION_INCOMPLETE`.
+- **"Listo" falso.** Si el carrito se bloqueó, el texto no puede decir "listo / agregué".
+  Sale la pregunta concreta:
+  - ¿cuál de las opciones quieres?
+  - ¿cuántas unidades quieres?
+  - ¿quieres todos o solo algunos?
+- **Estado inventado:** si el modelo afirma un estado sin respaldo ("ya está pagado"), sale el
+  estado **real** del pedido.

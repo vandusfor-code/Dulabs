@@ -50,6 +50,9 @@ export interface Evidence {
   estados?: Set<string>;
   /** Bloque 28: en este turno hubo una escritura real sobre el pedido (crear / revalidar / confirmar). */
   orderWritten?: boolean;
+  /** Bloque 28 (auditoría final): update_cart se BLOQUEÓ en el turno (y ninguno salió bien): nada cambió en la selección. */
+  cartBlocked?: boolean;
+  cartWritten?: boolean;
 }
 
 /**
@@ -162,7 +165,10 @@ export function addCustomerEvidence(text: string, ev: Evidence): void {
   for (const m of text.matchAll(/\b\d{1,3}\b/g)) ev.customerNumbers.add(Number(m[0]));
 }
 
-export type GroundingViolation = { kind: "reference" | "amount" | "quantity" | "link" | "confirmation" | "order_status"; value: string };
+/** "Listo, te lo agregué / te separé…": afirmar un cambio en la selección. */
+const CARRITO_CLAIM = /(?:^|[\s¡!.,])(?:listo|agregu[eé]|a[nñ]ad[ií]|separ[eé]|te separ[eé]|actualic[eé]|te dej[eé]|qued[oó] (?:agregad|en tu|list)|ya (?:est[aá]|qued[oó]) en tu)/i;
+
+export type GroundingViolation = { kind: "reference" | "amount" | "quantity" | "link" | "confirmation" | "order_status" | "cart"; value: string };
 
 export function checkGrounding(text: string, ev: Evidence): { ok: boolean; violations: GroundingViolation[] } {
   const violations: GroundingViolation[] = [];
@@ -202,5 +208,7 @@ export function checkGrounding(text: string, ev: Evidence): { ok: boolean; viola
   const claimed = claimedOrderStates(withoutUrls);
   for (const e of claimed.estados) if (!ev.estados?.has(e)) add({ kind: "order_status", value: e });
   if (claimed.modificado && !ev.orderWritten) add({ kind: "order_status", value: "pedido modificado" });
+  // Bloque 28 (auditoría final): la selección NO cambió (la herramienta se bloqueó): no se dice "listo / agregué".
+  if (ev.cartBlocked && !ev.cartWritten && CARRITO_CLAIM.test(withoutUrls)) add({ kind: "cart", value: "selección sin cambios" });
   return { ok: violations.length === 0, violations };
 }

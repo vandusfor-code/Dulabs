@@ -14,6 +14,7 @@ import {
   AFIRMACIONES,
   ANTES_DE_CANTIDAD,
   ANUNCIA_DIRECCION,
+  CAMBIO_PRODUCTO,
   COMPRA_PEDIDO,
   CONECTORES_OPCION,
   CORTESIA,
@@ -74,7 +75,10 @@ export const esCortesia = (text: string) => una(normalizar(text), CORTESIA);
 export const esAfirmacion = (text: string) => una(sinCortesia(normalizar(text)), AFIRMACIONES);
 export const esNegacion = (text: string) => una(sinCortesia(normalizar(text)), NEGACIONES);
 export const esEspera = (text: string) => una(sinCortesia(normalizar(text)), ESPERA);
-export const anunciaDireccion = (text: string) => una(sinCortesia(normalizar(text)), ANUNCIA_DIRECCION);
+export const anunciaDireccion = (text: string) => {
+  const t = sinCortesia(normalizar(text));
+  return !/\d/.test(t) && (una(t, ANUNCIA_DIRECCION) || alguna(t, ANUNCIA_DIRECCION));
+};
 /** Mensaje sin contenido útil para un dato (risa, saludo, "ok", "gracias", "espera"). */
 export const esRelleno = (text: string) => esRisa(text) || esSaludo(text) || esCortesia(text) || esAfirmacion(text) || esNegacion(text) || esEspera(text);
 
@@ -195,6 +199,18 @@ export function leerCantidad(text: string): Cantidad | null {
   return { tipo: "fijar", n };
 }
 
+/**
+ * Números que ESCRIBIÓ el cliente ("x2", "2 und", "dos", "una"): respaldan una cantidad del carrito.
+ * Solo respaldan: nunca eligen producto ni cantidad por sí mismos.
+ */
+export function numerosDelCliente(text: string): Set<number> {
+  const out = new Set<number>();
+  const t = normalizar(text);
+  for (const m of t.matchAll(/(?:^|\s)x?(\d{1,2})(?:x|u|und|unds|ud|uds)?(?=\s|$)/g)) out.add(Number(m[1]));
+  for (const w of t.split(" ")) if (w in NUMEROS_EN_LETRAS) out.add(NUMEROS_EN_LETRAS[w]);
+  return out;
+}
+
 /** "quita ese", "borra el primero", "no quiero ese", "elimina el dorado": quitar un producto (cuál: lo resuelve la selección). */
 export function pideQuitar(text: string): boolean {
   if (esPregunta(text)) return false;
@@ -212,6 +228,7 @@ export function pideProducto(text: string): boolean {
   if (/\d/.test(text)) return false;
   const t = sinCortesia(normalizar(text));
   if (!t || t.split(" ").length > 12) return false;
+  if (una(t, CAMBIO_PRODUCTO)) return true;
   return VERBOS_PRODUCTO.some((v) => t === v || t.startsWith(`${v} `) || contieneFrase(t, v)) && alguna(t, PALABRAS_PRODUCTO);
 }
 
@@ -284,7 +301,13 @@ export function leerDireccion(text: string): LecturaDireccion {
   const intencion = ws.some((w) => ["quiero", "comprar", "pedido", "precio", "cuanto", "catalogo", "ese", "esa", "este", "esta", "aretes", "collar", "dije", "dijes", "pulsera", "anillo", "tienda", "recoger", "recojo", "transferencia", "efectivo"].includes(w));
   if (numero || marca) {
     if (!numero && (intencion || leerEntrega(valor) || leerPago(valor))) return null;
-    return { tipo: "ok", valor };
+    // Suficiente: calle y número de casa ("Calle 20 # 10-15", "Mz 3 casa 5"), un lugar con número
+    // ("barrio X casa 12") o una dirección rural (finca, vereda, km). "calle 20" o "por la 30" no bastan.
+    const grupos = (valor.match(/\d+/g) ?? []).length;
+    const rural = ws.some((w) => ["finca", "vereda", "km", "kilometro", "corregimiento", "hacienda", "parcela"].includes(w));
+    const lugar = ws.some((w) => ["barrio", "br", "conjunto", "urbanizacion", "urb", "edificio", "edif", "condominio", "torre", "bloque", "manzana", "mz", "mza", "casa", "apto", "apartamento", "apt", "ap", "lote", "local", "interior", "int", "piso", "oficina"].includes(w));
+    if (grupos >= 2 || rural || (grupos >= 1 && lugar)) return { tipo: "ok", valor };
+    return { tipo: "vaga" };
   }
   if (intencion || leerEntrega(valor) || leerPago(valor)) return null;
   if (alguna(normalizar(valor), UBICACION_VAGA) || ws.length >= 2) return { tipo: "vaga" };
@@ -294,8 +317,8 @@ export function leerDireccion(text: string): LecturaDireccion {
 /** Ciudad: "Montería", "Santa Marta", "Bogotá D.C.". Nunca una pregunta, un número, una intención ni un relleno. */
 export function leerCiudad(text: string): string | null {
   let raw = text.trim().replace(/\s+/g, " ").replace(/[!,;]+$/g, "").trim();
-  if (!raw || raw.length > 80 || esPregunta(raw) || /\d/.test(raw) || esRelleno(raw)) return null;
-  raw = quitarPrefijo(raw, ["la ciudad es", "mi ciudad es", "ciudad", "en la ciudad de", "en", "es en", "es", "de"]).trim();
+  if (!raw || raw.length > 80 || esPregunta(raw) || /\d/.test(raw) || esRelleno(raw) || anunciaDireccion(raw)) return null;
+  raw = quitarPrefijo(raw, ["vivo en", "estoy en", "soy de", "somos de", "queda en", "la ciudad es", "mi ciudad es", "ciudad", "en la ciudad de", "en", "es en", "es", "de"]).trim();
   if (raw.length < 2 || !/^\p{L}[\p{L} .'’-]*$/u.test(raw) || raw.split(" ").length > 5) return null;
   const ws = normalizar(raw).split(" ");
   if (ws.some((w) => NO_ES_NOMBRE.has(w) && !["de", "la", "el", "los", "las"].includes(w))) return null;

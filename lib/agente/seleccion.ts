@@ -28,6 +28,8 @@ export interface SelectionResult {
   quantityOnly: boolean;
   /** Deíctico o cantidad sin producto, sin resolver, con varias opciones abiertas: hay que preguntar. */
   needsClarification: boolean;
+  /** Bloque 28: pidió TODAS las opciones señaladas ("todos", "los dos", "uno de cada uno"). */
+  all?: boolean;
 }
 
 const norm = (s: string) =>
@@ -59,7 +61,7 @@ const ORDINALS: Array<[RegExp, number]> = ORDINAL_WORDS.map(([w, n]) => [
 /** Un número SOLO es posición con un marcador ("el 2", "opción 2", "#2", "del 3"); "quiero 2" es una cantidad. */
 const MARKED_NUMBER = /(?:\b(?:el|la|los|las|del|de\s+la|opcion|numero|nro|no\.|foto|imagen)\s*#?\s*|#\s*)(10|[1-9])\b(?!\s*(?:unidad|unidades|pieza|piezas|de\s+cada))/g;
 const LAST = /\bultim[oa]s?\b/;
-const ALL = /\b(?:todos|todas|ambos|ambas)\b/;
+const ALL = /\b(?:todos|todas|ambos|ambas|(?:uno|una) de cada (?:uno|una)|de cada uno|de cada una)\b/;
 /** Bloque 28: "los dos" / "las dos" = ambas SOLO si hay exactamente dos opciones a la vista. */
 const BOTH = /\b(?:los|las)\s+dos\b/;
 const DEICTIC =
@@ -96,6 +98,8 @@ export function resolveSelection(
     typedReferences?: readonly string[];
     /** Lo que el cliente ya eligió antes (selección anterior y carrito): resuelve "el otro". */
     previous?: readonly string[];
+    /** Bloque 28: referencias de las fotos enviadas en la conversación reciente ("el de la foto" con UNA sola). */
+    photoReferences?: readonly string[];
   } = {},
 ): SelectionResult {
   const selected: SelectionResult["selected"] = [];
@@ -103,8 +107,12 @@ export function resolveSelection(
     if (!selected.some((s) => s.reference === reference)) selected.push({ reference, via });
   };
   const t = norm(text);
+  let all = false;
 
   if (opts.replyReference) add(opts.replyReference, "image_reply");
+  // "El de la foto" / "la de la imagen" sin citarla: solo si se envió UNA sola foto (con varias, se pregunta).
+  const fotos = [...new Set(opts.photoReferences ?? [])];
+  if (!opts.replyReference && fotos.length === 1 && /\b(?:el|la|los|las)\s+de\s+la\s+(?:foto|imagen)\b/.test(t)) add(fotos[0], "image_reply");
   for (const r of opts.typedReferences ?? []) add(r.toUpperCase(), "reference");
 
   if (shown.length > 0) {
@@ -113,7 +121,8 @@ export function resolveSelection(
     for (const m of t.matchAll(MARKED_NUMBER)) positions.add(Number(m[1]));
     if (LAST.test(t)) positions.add(shown.length);
     for (const p of [...positions].sort((a, b) => a - b)) if (p >= 1 && p <= shown.length) add(shown[p - 1].reference, "position");
-    if ((ALL.test(t) && shown.length > 1) || (BOTH.test(t) && shown.length === 2)) for (const s of shown) add(s.reference, "position");
+    all = (ALL.test(t) && shown.length > 1) || (BOTH.test(t) && shown.length === 2);
+    if (all) for (const s of shown) add(s.reference, "position");
 
     if (shown.length > 1) {
       // Solo palabras que distinguen a UNA opción de las demás.
@@ -138,5 +147,5 @@ export function resolveSelection(
   const deictic = DEICTIC.test(t);
   // Bloque 28: también "x2", "2 und", "eran 3", "no mejor 3", "uno más" (lib/agente/lenguaje).
   const quantityOnly = selected.length === 0 && (QUANTITY_ONLY.test(t.trim()) || leerCantidad(text) !== null);
-  return { selected, deictic, quantityOnly, needsClarification: (deictic || quantityOnly) && selected.length === 0 && shown.length > 1 };
+  return { selected, deictic, quantityOnly, needsClarification: (deictic || quantityOnly) && selected.length === 0 && shown.length > 1, ...(all ? { all } : {}) };
 }

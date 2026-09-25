@@ -15,6 +15,8 @@
 // ---------------------------------------------------------------------------
 export const CORRECCIONES_PALABRA: Readonly<Record<string, string>> = {
   // querer
+  // llevar ("me yebo ese")
+  yebo: "llevo", yevo: "llevo", llebo: "llevo", yevar: "llevar", yebar: "llevar",
   kiero: "quiero", qiero: "quiero", keiro: "quiero", quero: "quiero", kero: "quiero", qero: "quiero", qiere: "quiere", kiere: "quiere",
   // entrega
   domisilio: "domicilio", domicilo: "domicilio", domicillo: "domicilio", domisilo: "domicilio", domicio: "domicilio", domiclio: "domicilio",
@@ -57,6 +59,8 @@ export const INICIO_DE_PREGUNTA = [
   "cuanto", "cuanta", "cuantos", "cuantas", "cuando", "donde", "cual", "cuales", "a que hora", "a cuanto",
   "puedo", "puedes", "pueden", "se puede", "hay", "tienen", "tienes", "hacen", "manejan", "aceptan", "reciben", "cobran",
   "es posible", "sera que", "me pueden", "me puedes", "incluye", "tiene costo", "tiene algun costo", "llega", "demora", "tarda",
+  // Bloque 28 (auditoría final): hipótesis y preguntas encadenadas sin signo ("y si lo recojo", "pero cuánto cuesta").
+  "y si", "que tal si", "que pasa si", "y cuanto", "y cuando", "y donde", "pero cuanto", "pero cuando", "que precio", "que valor",
 ] as const;
 
 // ---------------------------------------------------------------------------
@@ -110,13 +114,13 @@ export const SALIDA_MODIFICAR = [
 ] as const;
 
 /** El cliente duda o se retracta SIN decir qué cambia: se le pregunta qué quiere cambiar (nada se modifica). */
-export const DUDA = ["cambie de opinion", "me confundi", "me equivoque", "perdon", "perdona", "disculpa", "espera me equivoque", "me enrede", "no era eso", "eso no"] as const;
+export const DUDA = ["me arrepenti", "mejor no", "no estoy seguro", "no estoy segura", "lo estoy pensando", "cambie de opinion", "me confundi", "me equivoque", "perdon", "perdona", "disculpa", "espera me equivoque", "me enrede", "no era eso", "eso no"] as const;
 
 /** Pide un momento: se le espera (nada se modifica). */
 export const ESPERA = ["espera", "esperame", "espere", "un momento", "un momentico", "un segundo", "un seg", "dame un momento", "ya te digo", "ahorita te digo", "dejame ver", "dejame pensar", "ya vuelvo", "ya te escribo"] as const;
 
 /** Anuncia que va a mandar la dirección (no es la dirección). */
-export const ANUNCIA_DIRECCION = ["te mando la direccion", "te envio la direccion", "ya te la mando", "ya te la envio", "te la mando", "te la envio", "ya te paso la direccion", "te paso la direccion", "espera te la mando", "dejame buscarla", "ahi te va", "ya te mando la direccion"] as const;
+export const ANUNCIA_DIRECCION = ["ahorita te la mando", "ahorita te la paso", "ahorita te la envio", "ahora te la mando", "ahora te la paso", "ya te la paso", "te la paso", "ahorita te mando la direccion", "ahorita te paso la direccion", "en un momento te la mando", "te mando la direccion", "te envio la direccion", "ya te la mando", "ya te la envio", "te la mando", "te la envio", "ya te paso la direccion", "te paso la direccion", "espera te la mando", "dejame buscarla", "ahi te va", "ya te mando la direccion"] as const;
 
 // ---------------------------------------------------------------------------
 // 5. Respuestas cortas, saludo, cortesía y risa
@@ -137,12 +141,12 @@ export const UNIDADES = ["u", "un", "und", "unds", "ud", "uds", "unidad", "unida
 /** Verbos / marcadores que pueden ir ANTES de una cantidad en un mensaje de solo cantidad. */
 export const ANTES_DE_CANTIDAD = [
   "quiero", "dame", "deme", "necesito", "ponme", "pongame", "ponle", "agregame", "agrega", "me llevo", "llevo", "seria", "serian", "que sean", "sean",
-  "eran", "era", "son", "cambia a", "cambialo a", "cambiala a", "mejor", "no", "perdon", "mejor que sean", "solo", "solamente", "dejame", "dejalo en", "quiero solo",
+  "ese", "esa", "este", "esta", "de ese", "de esa", "eran", "era", "son", "cambia a", "cambialo a", "cambiala a", "mejor", "no", "perdon", "mejor que sean", "solo", "solamente", "dejame", "dejalo en", "quiero solo",
 ] as const;
 /** Lo que puede ir DESPUÉS de la cantidad sin nombrar un producto nuevo ("de esos", "por favor"). */
 export const DESPUES_DE_CANTIDAD = ["de esos", "de esas", "de ese", "de esa", "de este", "de esta", "de estos", "de estas", "por favor", "no mas", "nada mas"] as const;
 /** Una unidad más / menos del producto señalado (o del único). */
-export const SUMAR_UNO = ["uno mas", "una mas", "otro mas", "otra mas", "agregame otro", "agregame otra", "agrega otro", "agrega otra", "ponme otro", "ponme otra", "quiero otro igual", "quiero otra igual", "otro igual", "otra igual", "dame otro", "dame otra", "suma uno", "uno adicional", "quiero agregar uno mas", "agrega uno mas", "agregar uno mas", "quiero uno mas", "quiero una mas", "otra unidad", "una unidad mas"] as const;
+export const SUMAR_UNO = ["ponle otro", "ponle otra", "ponle uno mas", "agregale otro", "agregale otra", "echale otro", "mandame otro", "uno mas", "una mas", "otro mas", "otra mas", "agregame otro", "agregame otra", "agrega otro", "agrega otra", "ponme otro", "ponme otra", "quiero otro igual", "quiero otra igual", "otro igual", "otra igual", "dame otro", "dame otra", "suma uno", "uno adicional", "quiero agregar uno mas", "agrega uno mas", "agregar uno mas", "quiero uno mas", "quiero una mas", "otra unidad", "una unidad mas"] as const;
 export const RESTAR_UNO = ["quita uno", "quita una", "quitale uno", "quitale una", "uno menos", "una menos", "resta uno", "resta una", "saca uno", "saca una"] as const;
 /** Quitar un producto de la selección / del pedido ("quita ese", "borra el primero"). */
 export const QUITAR = ["quita", "quitar", "quitale", "elimina", "eliminar", "borra", "borrar", "saca", "sacar", "no quiero", "ya no quiero", "remueve", "retira"] as const;
@@ -159,6 +163,9 @@ export const NO_ES_NOMBRE = new Set([
   "confirmar", "confirmo", "direccion", "calle", "carrera", "ciudad", "barrio", "referencia", "foto", "fotos", "asesora", "asesor", "ayuda", "cambiar",
   "cambia", "agregar", "agrega", "quita", "quitar", "nada", "ninguno", "ninguna", "yo", "mio", "mia", "claro", "perfecto", "bueno", "igual", "tambien",
   "detal", "mayor", "mayorista", "todo", "todos", "dos", "tres", "uno", "una", "por", "favor", "que", "porque", "hay", "tienen", "tienes", "puedo",
+  // Bloque 28 (auditoría final): ubicación, atributos y posiciones nunca son un nombre ("vivo en Montería", "el dorado", "el segundo", "para mi").
+  "vivo", "vive", "vivimos", "queda", "para", "mi", "dorado", "dorada", "dorados", "doradas", "plateado", "plateada", "plateados", "plateadas", "oro", "plata",
+  "primero", "primera", "segundo", "segunda", "tercero", "tercera", "ultimo", "ultima", "arriba", "abajo", "color", "talla", "ahorita", "mando", "paso",
 ]);
 /**
  * Palabras de NO_ES_NOMBRE que SÍ aparecen en nombres de negocio ("Tienda Mayorista Luna", "Joyas Mary"):
@@ -201,6 +208,11 @@ export const COMPRA_PEDIDO = [
 export const VERBOS_PRODUCTO = ["quiero", "agrega", "agregame", "agregar", "anade", "anademe", "tambien", "ponme", "dame", "me llevo", "me interesa", "muestrame", "busco", "mandame", "enviame", "quisiera"] as const;
 /** Lo que el cliente puede estar pidiendo como producto (nombres de joyas y deícticos). */
 export const PALABRAS_PRODUCTO = ["arete", "aretes", "collar", "collares", "dije", "dijes", "pulsera", "pulseras", "anillo", "anillos", "cadena", "cadenas", "tobillera", "tobilleras", "candonga", "candongas", "joya", "joyas", "producto", "productos", "ese", "esa", "este", "esta", "esos", "esas", "otro producto", "otra joya", "otra cosa", "algo mas"] as const;
+/** Dentro del checkout: cambiar de producto ("mejor el otro", "no ese no") se hace con Modificar; nunca es un dato del paso. */
+export const CAMBIO_PRODUCTO = [
+  "mejor el otro", "mejor la otra", "el otro", "la otra", "mejor otro", "mejor otra", "no ese no", "no esa no", "ese no", "esa no", "no ese", "no esa",
+  "cambia ese", "cambia esa", "cambialo", "cambiala", "cambiar el producto", "cambiar de producto", "otro producto", "quiero otro producto", "quiero el otro", "quiero la otra",
+] as const;
 /** Pide el catálogo o el enlace ("pásame el catálogo", "mándame el link", "quiero ver todo"). */
 export const PIDE_CATALOGO = ["catalogo", "link", "enlace", "pagina", "tienda en linea", "ver todo", "quiero ver todo", "ver los productos", "ver mas productos"] as const;
 
