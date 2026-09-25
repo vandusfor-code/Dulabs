@@ -1,5 +1,30 @@
 # Pasos manuales pendientes en producción
 
+## PENDIENTE — Publi Bordados: Clientes → N Solicitudes
+
+Migración `supabase/migrations/20261120000000_dulabs_pb_solicitudes.sql`. **Aditiva y no
+destructiva**: crea la tabla `dulabs_pb_solicitudes` (RLS activo, sin acceso anon/authenticated),
+su trigger de integridad y las funciones `dulabs_pb_registrar_solicitud`,
+`dulabs_pb_listar_solicitudes`, `dulabs_pb_listar_clientes`, `dulabs_pb_obtener_cliente`,
+`dulabs_pb_obtener_solicitud`, `dulabs_pb_actualizar_solicitud` y `dulabs_pb_solicitud_json`
+(solo `service_role`). No modifica ni borra datos existentes; los `custom_fields.pb_*` históricos
+se muestran como "datos anteriores" del cliente y **no** se convierten en solicitudes.
+
+Sin la migración el flow sigue funcionando: la acción `registrar_en_modulo` falla con
+`migracion_pendiente` y el cliente se transfiere igual. El script
+`scripts/_publicar-publibordados.mts --publicar` se niega a publicar la v3 si falta.
+
+Verificación local (PostgreSQL 16): `supabase/tests/20261120000000_dulabs_pb_solicitudes.test.sql`
+(con su `.prelude.sql`) y `supabase/tests/20261120000000_dulabs_pb_solicitudes.concurrencia.sh`.
+
+1. Correr el archivo completo en el SQL Editor (idempotente).
+2. Verificar (esperado `8`: 7 funciones + la del trigger):
+   ```sql
+   select count(*) from pg_proc where proname like 'dulabs_pb_%solicitud%' or proname in ('dulabs_pb_listar_clientes','dulabs_pb_obtener_cliente');
+   ```
+3. Publicar el flow v3:
+   `npx tsx scripts/_publicar-publibordados.mts --tenant=<tenant> --numero=<phone_number_id> --publicar --activar`
+
 ## PENDIENTE — Publi Bordados, Fase 2A: observador shadow de Coexistence
 
 Migración `supabase/migrations/20261119000000_dulabs_pb_observador.sql`. **Aditiva**: crea

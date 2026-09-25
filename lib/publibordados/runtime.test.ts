@@ -23,6 +23,7 @@ import { createExecutionOrchestrator, type FlowOrchestratorStore } from "@/lib/f
 import { createTestEffectExecutorFramework } from "@/lib/flow/executor-factory";
 import { EFFECT_RESULT_CLASSIFICATIONS, type EffectExecutor } from "@/lib/flow/executor-types";
 import { InternalActionExecutor, type InternalActionDeps } from "@/lib/flow/executors/internal-action-executor";
+import type { ManejadorRegistroModulo } from "@/lib/flow/registro-modulo";
 import type { FlowExecutionRow } from "@/lib/flow/flow-store-types";
 import { engineStateToExecutionUpdate } from "@/lib/flow/flow-store-types";
 import { FlowExecutionConcurrencyConflictError } from "@/lib/flow/flow-store-errors";
@@ -289,13 +290,29 @@ function crearMundo() {
     },
   };
 
-  // transferir_soporte REAL: verifica que el número sea del tenant, activa la pausa y la relee.
+  // Módulo de solicitudes: mismo contrato que la BD real (una por ejecución, idempotente; la
+  // lógica SQL se prueba contra Postgres en clientes/solicitudes.integracion.test.ts).
+  const solicitudes: Array<{ id: number; tenant: string; telefono: string; flowExecutionId: string; campos: Record<string, unknown> }> = [];
+  let registroFalla = false;
+  const registrarSolicitud: ManejadorRegistroModulo = async (input) => {
+    if (registroFalla) return { ok: false, motivo: "error_bd", reintentable: true };
+    const previa = solicitudes.find((x) => x.tenant === input.tenantId && x.flowExecutionId === input.flowExecutionId);
+    if (previa) return { ok: true, registroId: previa.id, creado: false };
+    const nueva = { id: solicitudes.length + 1, tenant: input.tenantId, telefono: input.telefonoCliente, flowExecutionId: input.flowExecutionId, campos: { ...input.campos } };
+    solicitudes.push(nueva);
+    return { ok: true, registroId: nueva.id, creado: true };
+  };
+
+  // transferir_soporte y registrar_en_modulo REALES (InternalActionExecutor): verifican que el
+  // número sea del tenant; el registro además exige el módulo habilitado para el tenant.
   const acciones = new InternalActionExecutor({
     supabase,
     authorizer: {
       assertPhoneNumberOwnedByTenant: async (tenantId: string, pn: string) => duenoNumero[pn] === tenantId,
       assertActivacionOwnedByTenant: async () => false,
     },
+    registrosDeModulo: { publibordados_clientes: registrarSolicitud },
+    moduloHabilitado: async (_sb: SupabaseClient, tenantId: string, modulo: string) => tenantId === T_PB && modulo === "publibordados_clientes",
     activarPausaChat,
     readPausaUntil: async (_sb: SupabaseClient, pn: string, tel: string) =>
       pausas.find((p) => p.phone_number_id === pn && p.telefono_cliente === tel)?.pausado_hasta ?? null,
@@ -358,6 +375,10 @@ function crearMundo() {
     supabase,
     ejecuciones,
     contactos,
+    solicitudes,
+    fallarRegistro: (v: boolean) => {
+      registroFalla = v;
+    },
     pausas,
     enviados,
     recibir,
@@ -516,49 +537,55 @@ describe("PB runtime — reinicio y abandono (K, L)", () => {
     assert.equal(m.textos().at(-1), PUBLIBORDADOS_PRODUCTO);
   });
 
-  it("reiniciar y completar de nuevo actualiza el MISMO cliente (sin duplicados)", async () => {
+  it("volver a completar el flow crea una SEGUNDA solicitud del MISMO cliente (sin duplicar el cliente)", async () => {
     await m.completar(EMPRESA_GORRAS_20);
     m.pausas.length = 0; // la asesora devolvió el chat al bot / la pausa venció
     await m.completar([{ boton: "persona_natural" }, { texto: "Ana" }, { boton: "mas_opciones" }, { boton: "uniformes" }, { texto: "3" }]);
     assert.equal(m.contactos.length, 1);
-    assert.deepEqual(m.contactos[0].custom_fields, {
-      pb_tipo_cliente: "persona_natural",
-      pb_nombre: "Ana",
-      pb_nombre_empresa: "",
-      pb_producto: "uniformes",
-      pb_cantidad: "3",
-    });
+    assert.deepEqual(
+      m.solicitudes.map((x) => [x.telefono, x.campos.producto, x.campos.cantidad]),
+      [
+        [CLIENTE, "gorras", "20"],
+        [CLIENTE, "uniformes", "3"],
+      ],
+    );
+    assert.notEqual(m.solicitudes[0].flowExecutionId, m.solicitudes[1].flowExecutionId, "cada solicitud sale de su propia ejecución");
   });
 });
 
-describe("PB runtime — cliente guardado (R)", () => {
-  it("al transferir quedan guardados tipo, nombre, empresa, producto y cantidad (sin estado: se muestra como Nuevo)", async () => {
+describe("PB runtime — solicitud registrada (R, 9, 21, 23)", () => {
+  it("al completar el flow se registra UNA solicitud con los datos capturados, ligada a la ejecución REAL", async () => {
     await m.completar(EMPRESA_GORRAS_20);
-    assert.equal(m.contactos.length, 1);
-    assert.deepEqual(m.contactos[0], {
-      id_tenant: T_PB,
-      phone_number_id: PN_PB,
-      telefono_cliente: CLIENTE,
-      custom_fields: {
-        pb_tipo_cliente: "empresa",
-        pb_nombre: "Ana Gómez",
-        pb_nombre_empresa: "Textiles SAS",
-        pb_producto: "gorras",
-        pb_cantidad: "20",
-      },
-    });
+    assert.equal(m.solicitudes.length, 1);
+    const [s] = m.solicitudes;
+    assert.deepEqual(s.campos, { tipo_cliente: "empresa", nombre: "Ana Gómez", nombre_empresa: "Textiles SAS", producto: "gorras", cantidad: "20" });
+    assert.equal(s.tenant, T_PB);
+    assert.equal(s.flowExecutionId, m.ejecuciones[0].id, "trazabilidad: el id de la ejecución real del flow");
+    // El flow ya no guarda el historial en custom_fields del contacto.
+    assert.deepEqual(m.contactos[0].custom_fields, {});
   });
 
-  it("una nueva solicitud del cliente NO sobrescribe el estado ni el asesor que puso la asesora", async () => {
-    await m.completar(EMPRESA_GORRAS_20);
-    m.contactos[0].custom_fields.pb_asesor = "miembro-7";
-    m.contactos[0].custom_fields.pb_estado = "atendido";
+  it("abandono: sin flow completo no hay solicitud", async () => {
+    await m.completar([{ boton: "empresa" }, { texto: "Ana" }]);
+    assert.equal(m.solicitudes.length, 0);
+  });
+
+  it("reintento de Meta del último mensaje: UNA sola solicitud", async () => {
+    await m.recibir({ texto: "Hola", wamid: m.w() });
+    for (const p of EMPRESA_GORRAS_20.slice(0, -1)) await m.recibir({ ...p, wamid: m.w() });
+    await m.recibir({ texto: "20", wamid: "wamid.FINAL" });
     m.pausas.length = 0;
-    await m.completar([{ boton: "persona_natural" }, { texto: "Ana" }, { boton: "gorras" }, { texto: "8" }]);
-    assert.equal(m.contactos[0].custom_fields.pb_asesor, "miembro-7");
-    assert.equal(m.contactos[0].custom_fields.pb_estado, "atendido");
-    assert.equal(m.contactos[0].custom_fields.pb_tipo_cliente, "persona_natural", "los datos de la solicitud sí se actualizan");
-    assert.equal(m.contactos[0].custom_fields.pb_cantidad, "8");
+    await m.recibir({ texto: "20", wamid: "wamid.FINAL" });
+    assert.equal(m.solicitudes.length, 1);
+  });
+
+  it("si el registro falla, el cliente IGUAL pasa a la asesora (traspaso + pausa)", async () => {
+    m.fallarRegistro(true);
+    await m.completar(EMPRESA_GORRAS_20);
+    assert.equal(m.solicitudes.length, 0);
+    assert.equal(m.textos().at(-1), PUBLIBORDADOS_TRASPASO);
+    assert.equal(m.pausas.length, 1);
+    assert.equal(m.ejecuciones[0].status, "completed");
   });
 });
 

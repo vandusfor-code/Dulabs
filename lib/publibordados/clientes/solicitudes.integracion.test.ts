@@ -28,6 +28,7 @@ import { InternalActionExecutor, type InternalActionDeps } from "@/lib/flow/exec
 import { createSupabaseInternalActionAuthorizer } from "@/lib/flow/internal-action-authorizer";
 import { EFFECT_RESULT_CLASSIFICATIONS, type EffectDispatchRequest } from "@/lib/flow/executor-types";
 import { publibordadosFlow } from "@/lib/flows/publibordados.flow";
+import type { Cliente, ClienteDetalle, Solicitud } from "@/lib/publibordados/clientes/modelo";
 import { GET as clientesGET } from "@/app/api/dashboard/publibordados/clientes/route";
 import { GET as clienteGET } from "@/app/api/dashboard/publibordados/clientes/[id]/route";
 import { GET as solicitudesGET } from "@/app/api/dashboard/publibordados/solicitudes/route";
@@ -93,7 +94,9 @@ const req = (url: string, token?: string, init?: { method?: string; body?: unkno
     body: init?.body ? JSON.stringify(init.body) : undefined,
   });
 const params = (id: string | number) => ({ params: Promise.resolve({ id: String(id) }) });
-const json = async (r: Response) => ({ status: r.status, body: (await r.json()) as Record<string, any> });
+/** Unión de las formas de respuesta de las rutas (listas, ficha de cliente, solicitud, error). */
+type Cuerpo = { total: number; paginas: number; filas: Array<Cliente & Solicitud>; solicitud: Solicitud; error?: string } & ClienteDetalle;
+const json = async (r: Response) => ({ status: r.status, body: (await r.json()) as Cuerpo });
 
 const solicitudes = async (qs = "", token = "t-admin-1") => json(await solicitudesGET(req(`/api/dashboard/publibordados/solicitudes${qs}`, token)));
 const solicitud = async (id: number | string, token = "t-admin-1") => json(await solicitudGET(req(`/x`, token), params(id)));
@@ -170,10 +173,10 @@ describe("Publi Bordados — Cliente → Solicitudes (Postgres real)", { skip: !
       await registrar(T1, PN1, ANA, DATOS.anaEmpresa);
       const lista = await clientes();
       assert.equal(lista.body.total, 2);
-      const ana = lista.body.filas.find((c: { telefono: string }) => c.telefono === ANA);
+      const ana = lista.body.filas.find((c) => c.telefono === ANA)!;
       assert.equal(ana.tipoCliente, "empresa");
       assert.equal(ana.nombreEmpresa, "Bordados Ana");
-      assert.equal(ana.ultimaSolicitud.productoEtiqueta, "Prendas de vestir");
+      assert.equal(ana.ultimaSolicitud?.productoEtiqueta, "Prendas de vestir");
     });
 
     it("9/10/22. idempotencia: la MISMA ejecución (reintento de Meta / efecto repetido) no duplica", async () => {
@@ -206,12 +209,13 @@ describe("Publi Bordados — Cliente → Solicitudes (Postgres real)", { skip: !
     });
 
     it("20. datos incompletos o inválidos: se rechazan sin guardar nada (no reintentable)", async () => {
-      for (const campos of [
+      const invalidos: Array<Record<string, string>> = [
         { tipo_cliente: "empresa", nombre: "Ana", nombre_empresa: "", producto: "gorras", cantidad: "5" },
         { tipo_cliente: "persona_natural", nombre: "Ana", producto: "gorras", cantidad: "0" },
         { tipo_cliente: "persona_natural", nombre: "Ana", producto: "sombreros", cantidad: "5" },
         { tipo_cliente: "persona_natural", nombre: "   ", producto: "gorras", cantidad: "5" },
-      ]) {
+      ];
+      for (const campos of invalidos) {
         const r = await registrar(T1, PN1, ANA, campos);
         assert.equal(r.ok, false, JSON.stringify(campos));
         assert.equal(!r.ok && r.reintentable, false);
@@ -285,9 +289,9 @@ describe("Publi Bordados — Cliente → Solicitudes (Postgres real)", { skip: !
       assert.deepEqual([r1.body.solicitud.estado, r1.body.solicitud.asesor], ["atendido", { id: 1, nombre: "Ana" }]);
       assert.deepEqual([r2.body.solicitud.estado, r2.body.solicitud.asesor], ["en_atencion", { id: 2, nombre: "Carlos" }]);
       const ficha = await cliente(r1.body.solicitud.clienteId);
-      const porId = new Map(ficha.body.solicitudes.map((s: { id: number }) => [s.id, s]));
-      assert.equal((porId.get(a.registroId) as { estado: string }).estado, "atendido");
-      assert.equal((porId.get(b.registroId) as { estado: string }).estado, "en_atencion");
+      const porId = new Map(ficha.body.solicitudes.map((s) => [s.id, s]));
+      assert.equal(porId.get(Number(a.registroId))?.estado, "atendido");
+      assert.equal(porId.get(Number(b.registroId))?.estado, "en_atencion");
       // Una solicitud nueva del mismo cliente nace Nuevo y sin asesor.
       const c = await registrar(T1, PN1, JUAN, DATOS.juanEmpresa);
       const nueva = await solicitud(c.ok ? c.registroId : 0);
@@ -434,7 +438,7 @@ describe("Publi Bordados — Cliente → Solicitudes (Postgres real)", { skip: !
         ('${PN1}', '${JUAN}', 'entrante', 'hola', '2026-09-20T10:00:00Z'), ('${PN1}', '${JUAN}', 'saliente', 'ok', '2026-09-21T10:00:00Z'),
         ('${PN2}', '${JUAN}', 'entrante', 'otro negocio', '2026-09-25T10:00:00Z')`);
       const c = (await clientes()).body.filas[0];
-      assert.equal(new Date(c.ultimoContactoAt).toISOString(), "2026-09-21T10:00:00.000Z");
+      assert.equal(new Date(c.ultimoContactoAt ?? "").toISOString(), "2026-09-21T10:00:00.000Z");
     });
   });
 });

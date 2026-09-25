@@ -1,5 +1,6 @@
 /**
- * Publica (y opcionalmente activa) el Flow de PUBLI BORDADOS
+ * Publica (y opcionalmente activa) el Flow de PUBLI BORDADOS (v3: registra una SOLICITUD por flow
+ * completado; exige la migración 20261120000000_dulabs_pb_solicitudes.sql aplicada)
  * (lib/flows/publibordados.flow.ts) con las MISMAS funciones que usan el
  * panel y los scripts de Solo Talento: createFlow / createFlowVersion /
  * publishFlowVersion (lib/flow/flow-store.ts) y activarFlowParaNumero
@@ -76,6 +77,12 @@ async function main() {
     .eq("id_tenant", tenantId)
     .eq("modulo", MODULO_CLIENTES)
     .maybeSingle();
+  // Migración de solicitudes (20261120000000_dulabs_pb_solicitudes.sql): el flow v3 registra cada
+  // solicitud con registrar_en_modulo → dulabs_pb_registrar_solicitud. Se comprueba con una lectura
+  // inofensiva (listar solicitudes del propio tenant, 1 fila).
+  const { error: errSolicitudes } = await supabase.rpc("dulabs_pb_listar_solicitudes", { p_tenant: tenantId, p_filtro: { limite: 1 } });
+  const migracionSolicitudes = !errSolicitudes;
+
   const resumen: Record<string, unknown> = {
     modo: publicar ? (activar ? "publicar + activar" : "publicar") : "solo lectura",
     numero: numero,
@@ -83,9 +90,15 @@ async function main() {
       ? { id: existente.id, status: existente.status, versionPublicada: versionPublicada?.version_number ?? null }
       : null,
     // Si la tabla de módulos no existe todavía, se informa en vez de fallar (solo lectura).
+    migracionSolicitudes: migracionSolicitudes ? true : `falta aplicar 20261120000000_dulabs_pb_solicitudes.sql (${errSolicitudes?.message})`,
     moduloClientes: errModulo ? `no se pudo leer dulabs_tenant_modulos: ${errModulo.message}` : Boolean(modulo?.habilitado),
     definicion: { nodos: definition.nodes.length, conexiones: definition.edges.length, validacion: "OK" },
   };
+
+  if (publicar && !migracionSolicitudes) {
+    console.log(JSON.stringify(resumen, null, 2));
+    throw new Error("No se publica: primero debe aplicarse la migración 20261120000000_dulabs_pb_solicitudes.sql (sin ella las solicitudes no se registrarían).");
+  }
 
   if (!publicar) {
     console.log(JSON.stringify(resumen, null, 2));
