@@ -546,8 +546,8 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
     replyReference: replyTo?.kind === "product_image" ? replyTo.reference : null,
     typedReferences: typedRefs,
     previous: [...state.selection.map((x) => x.reference), ...state.cart.map((c) => c.reference)],
-    // Bloque 28 (solo con el checkout conversacional): "el de la foto" con UNA sola foto enviada.
-    ...(deps.config.checkoutEnabled ? { photoReferences: state.imagesSent.filter((x) => x.turn >= state.turn - 6).map((x) => x.reference) } : {}),
+    // Bloque 28 (solo con el checkout conversacional): capa de lenguaje y "el de la foto" con UNA sola foto enviada.
+    ...(deps.config.checkoutEnabled ? { lenguaje: true, photoReferences: state.imagesSent.filter((x) => x.turn >= state.turn - 6).map((x) => x.reference) } : {}),
   });
   const designated = new Set([...selection.selected.map((x) => x.reference), ...state.selection.filter((x) => x.turn === state.turn - 1).map((x) => x.reference)]);
   state = { ...state, selection: selection.selected.slice(0, 10).map((x) => ({ ...x, turn: state.turn })) };
@@ -937,7 +937,7 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
     pendingChoice: new Set(),
     designated,
     // Bloque 28: "eran 3" / "quita ese" sin decir cuál, con 2+ productos en la selección => se pregunta (nunca se elige).
-    cartTargetAmbiguous: selection.selected.length === 0 && state.cart.length >= 2 && (leerCantidad(input.text) !== null || pideQuitar(input.text)),
+    cartTargetAmbiguous: deps.config.checkoutEnabled && selection.selected.length === 0 && state.cart.length >= 2 && (leerCantidad(input.text) !== null || pideQuitar(input.text)),
     // Bloque 28 (auditoría final): cantidades y "todos" respaldados por lo que ESCRIBIÓ el cliente (sus mensajes recientes).
     ...(deps.config.checkoutEnabled
       ? {

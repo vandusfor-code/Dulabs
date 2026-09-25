@@ -590,7 +590,7 @@ function objetivo(text: string, lines: readonly Linea[]): string | "ambiguo" {
   const sel = resolveSelection(
     text,
     lines.map((l) => ({ reference: l.reference, name: l.product_name })),
-    { typedReferences: extractReferences(text) },
+    { typedReferences: extractReferences(text), lenguaje: true },
   );
   return sel.selected.length === 1 ? sel.selected[0].reference : "ambiguo";
 }

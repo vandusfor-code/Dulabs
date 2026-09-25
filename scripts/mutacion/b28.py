@@ -39,7 +39,7 @@ M = [
     ("M12 contra entrega con domicilio se acepta", IN,
      "  if (segun && !transfer && !tienda && entrega === \"domicilio\") return \"no_disponible\";\n", "", LG),
     ("M13 'los dos' no selecciona ambos", "lib/agente/seleccion.ts",
-     " || (BOTH.test(t) && shown.length === 2)", "", LG),
+     " || (!!opts.lenguaje && BOTH.test(t) && shown.length === 2)", "", LG),
     ("M14 'Tienda La Perla' se lee como entrega", IN,
      "  const soloOpcion = ws.length <= 4 && ws.every((w) => PALABRAS_DE_OPCION.has(w));", "  const soloOpcion = ws.length <= 4;", LG),
     ("M15 tras Modificar se pierde el nombre", CK_,

@@ -89,7 +89,7 @@ const TRES = [
 ];
 const UNO = TRES.slice(0, 1);
 const DOS = TRES.slice(0, 2);
-const sel = (t: string, shown = TRES, prev: string[] = []) => resolveSelection(t, shown, { previous: prev });
+const sel = (t: string, shown = TRES, prev: string[] = []) => resolveSelection(t, shown, { previous: prev, lenguaje: true });
 
 const MATRIZ: Fila[] = [
   // --- intención de compra (nivel pedido) ---
@@ -804,7 +804,8 @@ describe("B28 · auditoría final — intérprete", () => {
 
   it("selección: 'uno de cada uno' = todas; 'el de la foto' solo con UNA foto enviada", () => {
     const shown = [{ reference: "DL-000001", name: "Aretes Luna" }, { reference: "DL-000002", name: "Collar Sol" }];
-    const todos = resolveSelection("uno de cada uno", shown);
+    const todos = resolveSelection("uno de cada uno", shown, { lenguaje: true });
+    assert.equal(resolveSelection("uno de cada uno", shown).all, undefined, "sin la capa de lenguaje, como antes");
     assert.equal(todos.all, true);
     assert.deepEqual(todos.selected.map((x) => x.reference), ["DL-000001", "DL-000002"]);
     assert.deepEqual(resolveSelection("quiero el de la foto", shown, { photoReferences: ["DL-000002"] }).selected.map((x) => x.reference), ["DL-000002"]);

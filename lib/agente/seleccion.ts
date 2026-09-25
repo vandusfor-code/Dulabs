@@ -61,7 +61,9 @@ const ORDINALS: Array<[RegExp, number]> = ORDINAL_WORDS.map(([w, n]) => [
 /** Un número SOLO es posición con un marcador ("el 2", "opción 2", "#2", "del 3"); "quiero 2" es una cantidad. */
 const MARKED_NUMBER = /(?:\b(?:el|la|los|las|del|de\s+la|opcion|numero|nro|no\.|foto|imagen)\s*#?\s*|#\s*)(10|[1-9])\b(?!\s*(?:unidad|unidades|pieza|piezas|de\s+cada))/g;
 const LAST = /\bultim[oa]s?\b/;
-const ALL = /\b(?:todos|todas|ambos|ambas|(?:uno|una) de cada (?:uno|una)|de cada uno|de cada una)\b/;
+const ALL = /\b(?:todos|todas|ambos|ambas)\b/;
+/** Bloque 28 (solo con la capa de lenguaje): "uno de cada uno" también es TODAS. */
+const ALL_B28 = /\b(?:todos|todas|ambos|ambas|(?:uno|una) de cada (?:uno|una)|de cada uno|de cada una)\b/;
 /** Bloque 28: "los dos" / "las dos" = ambas SOLO si hay exactamente dos opciones a la vista. */
 const BOTH = /\b(?:los|las)\s+dos\b/;
 const DEICTIC =
@@ -100,6 +102,11 @@ export function resolveSelection(
     previous?: readonly string[];
     /** Bloque 28: referencias de las fotos enviadas en la conversación reciente ("el de la foto" con UNA sola). */
     photoReferences?: readonly string[];
+    /**
+     * Bloque 28: capa de lenguaje ("los dos", "uno de cada uno", "x2" / "eran 3" como cantidad). Solo con el
+     * checkout conversacional; sin ella, la selección es exactamente la de antes.
+     */
+    lenguaje?: boolean;
   } = {},
 ): SelectionResult {
   const selected: SelectionResult["selected"] = [];
@@ -121,7 +128,7 @@ export function resolveSelection(
     for (const m of t.matchAll(MARKED_NUMBER)) positions.add(Number(m[1]));
     if (LAST.test(t)) positions.add(shown.length);
     for (const p of [...positions].sort((a, b) => a - b)) if (p >= 1 && p <= shown.length) add(shown[p - 1].reference, "position");
-    all = (ALL.test(t) && shown.length > 1) || (BOTH.test(t) && shown.length === 2);
+    all = ((opts.lenguaje ? ALL_B28 : ALL).test(t) && shown.length > 1) || (!!opts.lenguaje && BOTH.test(t) && shown.length === 2);
     if (all) for (const s of shown) add(s.reference, "position");
 
     if (shown.length > 1) {
@@ -138,7 +145,7 @@ export function resolveSelection(
         const chosen = shown.filter((x) => previous.has(x.reference));
         if (chosen.length === 1) add(shown.find((x) => !previous.has(x.reference))!.reference, "position");
       }
-    } else if (shown.length === 1 && (DEICTIC.test(t) || QUANTITY_ONLY.test(t.trim()) || leerCantidad(text) !== null)) {
+    } else if (shown.length === 1 && (DEICTIC.test(t) || QUANTITY_ONLY.test(t.trim()) || (!!opts.lenguaje && leerCantidad(text) !== null))) {
       // Una sola opción a la vista: "ese" o "quiero 3" no son ambiguos.
       add(shown[0].reference, "position");
     }
@@ -146,6 +153,6 @@ export function resolveSelection(
 
   const deictic = DEICTIC.test(t);
   // Bloque 28: también "x2", "2 und", "eran 3", "no mejor 3", "uno más" (lib/agente/lenguaje).
-  const quantityOnly = selected.length === 0 && (QUANTITY_ONLY.test(t.trim()) || leerCantidad(text) !== null);
+  const quantityOnly = selected.length === 0 && (QUANTITY_ONLY.test(t.trim()) || (!!opts.lenguaje && leerCantidad(text) !== null));
   return { selected, deictic, quantityOnly, needsClarification: (deictic || quantityOnly) && selected.length === 0 && shown.length > 1, ...(all ? { all } : {}) };
 }
