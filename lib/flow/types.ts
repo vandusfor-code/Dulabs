@@ -674,4 +674,14 @@ export interface FlowRuntimePolicy {
     /** Una ejecución esperando respuesta con más horas sin actividad se reinicia al siguiente mensaje. */
     afterInactivityHours?: number;
   };
+  /**
+   * Pausa por intervención humana. Cada mensaje que una persona del equipo envía en una
+   * conversación atendida por este flow (eco de coexistencia desde el celular o envío desde el
+   * Inbox) deja la pausa del chat en `renewHours` DESDE ESE MOMENTO, sin acortar nunca una pausa
+   * vigente más larga. Omitirla = comportamiento de siempre (eco: 30 min sin acortar; Inbox: no
+   * toca la pausa).
+   */
+  humanTakeover?: {
+    renewHours: number;
+  };
 }

@@ -15,12 +15,14 @@
  *    reinicia, no crea solicitud).
  *  - pauseMode "extend": el traspaso nunca ACORTA una pausa vigente más larga
  *    (p. ej. una asesora que ya tomó el chat desde el Inbox, 30 días).
- *  - Respuesta de la asesora desde el celular (eco de coexistencia): el
- *    mecanismo existente extiende la pausa a "ahora + 30 min" SOLO si eso la
- *    alarga (activarPausaPorRespuestaHumana); nunca la acorta.
- *  - Vencida la pausa, el siguiente mensaje del cliente inicia el flow desde el
- *    principio (la ejecución anterior terminó en el traspaso) y, al completarlo,
- *    se crea una solicitud NUEVA del MISMO cliente.
+ *  - runtimePolicy.humanTakeover (5 h): cada mensaje de la asesora (eco desde
+ *    el celular o envío desde el Inbox) RENUEVA la pausa a 5 h desde ese
+ *    momento, sin acortar nunca una pausa vigente más larga
+ *    (lib/flow/pausa-intervencion-humana.ts, mecanismo genérico).
+ *  - Vencida la pausa (5 h desde la última intervención humana), el siguiente
+ *    mensaje del cliente inicia el flow desde el principio (la ejecución
+ *    anterior terminó en el traspaso) y, al completarlo, se crea una solicitud
+ *    NUEVA del MISMO cliente.
  *
  * Blindaje de entradas (v2), todo con piezas que el motor ya tiene:
  *  - Texto en una pregunta de botones: el motor ya acepta la etiqueta o el id
@@ -100,6 +102,7 @@ export function publibordadosFlow(): FlowDefinition {
     runtimePolicy: {
       deterministic: true,
       restart: { keywords: PUBLIBORDADOS_PALABRAS_REINICIO, afterInactivityHours: PUBLIBORDADOS_INACTIVIDAD_HORAS },
+      humanTakeover: { renewHours: PUBLIBORDADOS_PAUSA_HORAS },
     },
     nodes: [
       { id: "start", type: "start", config: { triggerType: "first_message" } },

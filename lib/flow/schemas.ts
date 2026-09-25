@@ -536,6 +536,11 @@ export const flowRuntimePolicySchema = z.object({
       afterInactivityHours: z.number().positive().max(24 * 365).optional(),
     })
     .optional(),
+  humanTakeover: z
+    .object({
+      renewHours: z.number().positive().max(24 * 30),
+    })
+    .optional(),
 });
 
 export const flowDefinitionSchema = z.object({

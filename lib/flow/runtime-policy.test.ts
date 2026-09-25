@@ -187,3 +187,39 @@ describe("reiniciarSiLaPoliticaLoPide", () => {
     assert.deepEqual((await correr({ politica: {} })).guardados, []);
   });
 });
+
+describe("runtimePolicy.humanTakeover (genérico)", () => {
+  const flow = (runtimePolicy: unknown) => ({
+    name: "f",
+    runtimePolicy,
+    nodes: [
+      { id: "start", type: "start", config: { triggerType: "first_message" } },
+      { id: "end", type: "end", config: {} },
+    ],
+    edges: [{ id: "e1", source: "start", target: "end" }],
+    variables: [],
+  });
+
+  it("el esquema acepta renewHours positivo (hasta 30 días) y lo conserva", () => {
+    const r = safeParseFlowDefinition(flow({ humanTakeover: { renewHours: 5 } }));
+    assert.ok(r.success);
+    assert.deepEqual(r.data.runtimePolicy?.humanTakeover, { renewHours: 5 });
+    assert.deepEqual(politicaDeDefinicion({ runtimePolicy: { humanTakeover: { renewHours: 5 } } }).humanTakeover, { renewHours: 5 });
+  });
+
+  it("el esquema rechaza valores inválidos; una política inválida en BD se ignora (comportamiento de siempre)", () => {
+    for (const malo of [{ renewHours: 0 }, { renewHours: -1 }, { renewHours: 24 * 31 }, {}]) {
+      assert.equal(safeParseFlowDefinition(flow({ humanTakeover: malo })).success, false, JSON.stringify(malo));
+    }
+    assert.deepEqual(politicaDeDefinicion({ runtimePolicy: { humanTakeover: { renewHours: "5" } } }), {});
+  });
+
+  it("ningún otro flow del repositorio declara humanTakeover (AMORE, Daniela, Solo Talento no cambian)", async () => {
+    const { amoreRouterFlow } = await import("@/lib/flows/amore-router.flow");
+    const { danielaRouterFlow } = await import("@/lib/flows/daniela-router.flow");
+    const { danielaAgendarCitaFlow } = await import("@/lib/flows/daniela-agendar-cita.flow");
+    for (const f of [amoreRouterFlow(), danielaRouterFlow(), danielaAgendarCitaFlow(), solotalentoFlow()]) {
+      assert.equal(f.runtimePolicy?.humanTakeover, undefined, f.name);
+    }
+  });
+});

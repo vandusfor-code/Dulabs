@@ -156,10 +156,11 @@ describe("PUBLI BORDADOS — estructura", () => {
     assert.equal(flow.nodes.filter((n) => n.type === "ai").length, 0);
   });
 
-  it("declara su propia política de runtime: determinista y reinicio con reiniciar/menú/menu/inicio o >24 h", () => {
+  it("declara su propia política de runtime: determinista, reinicio con reiniciar/menú/menu/inicio o >24 h, y pausa humana de 5 h", () => {
     assert.deepEqual(flow.runtimePolicy, {
       deterministic: true,
       restart: { keywords: ["reiniciar", "menú", "menu", "inicio"], afterInactivityHours: 24 },
+      humanTakeover: { renewHours: 5 },
     });
     // La política sobrevive al parseo que usa el runtime (no se pierde al publicar/leer).
     assert.deepEqual(politicaDeDefinicion(JSON.parse(JSON.stringify(flow))), flow.runtimePolicy);

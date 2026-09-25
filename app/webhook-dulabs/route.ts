@@ -8,6 +8,7 @@ import { generarRespuestaConLeadIA } from "@/lib/lead-solicitud-ia";
 import { generarRespuestaAdminEspecialistaIA } from "@/lib/especialista-admin-ia";
 import { tieneEspecialistasActivas, especialistaPorNumero } from "@/lib/especialistas";
 import { debeAtenderConFlow, atenderMensajeConFlowConFallback } from "@/lib/flow-runtime-bridge";
+import { renovarPausaPorIntervencionHumana } from "@/lib/flow/pausa-intervencion-humana";
 import type { NormalizedInboundMedia } from "@/lib/flow/engine-types";
 import { atenderMensajeConBusinessAgent, atenderMensajeNoTextoConBusinessAgent } from "@/lib/agent-compiler/runtime/production/atender-business-agent";
 import { createSupabaseBusinessAgentResolver } from "@/lib/agent-compiler/runtime/production/business-agent-resolver";
@@ -675,6 +676,10 @@ export async function procesarCambio(phoneNumberId: string, value: MetaChangeVal
         eco.id
       );
       if (!yaProcesado) {
+        // Política del flow (runtimePolicy.humanTakeover, genérico): si el flow que atiende esta
+        // conversación la declara, la respuesta humana renueva la pausa a su duración desde ahora
+        // sin acortarla nunca. Sin esa política: exactamente lo de siempre (abajo).
+        if (await renovarPausaPorIntervencionHumana({ supabase: supabaseAdmin(), cliente, telefonoCliente })) continue;
         // Bloque 24 -- número con agente conversacional: la respuesta manual de la asesora desde el
         // celular pausa la IA 30 min pero NUNCA acorta una pausa más larga (traspaso del agente:
         // 24 h; "tomar" en el Inbox: 30 días). Antes, contestar desde el celular dejaba la pausa en

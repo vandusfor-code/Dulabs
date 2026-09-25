@@ -4,8 +4,8 @@
  * Piezas REALES: motor (runFlowEngine), orquestador (createExecutionOrchestrator:
  * idempotencia por evento, reintento de envío, save_data → contacto, efectos),
  * InternalActionExecutor (transferir_soporte → activarPausaChat real),
- * chatEnPausaHumana (gate del webhook), activarPausaPorRespuestaHumana (eco de
- * la asesora) y reiniciarFlowPublibordadosSiCorresponde (reinicio).
+ * chatEnPausaHumana (gate del webhook), renovarPausaPorIntervencionHumana (mensaje de
+ * la asesora, política del flow) y reiniciarFlowPublibordadosSiCorresponde (reinicio).
  * Lo único simulado es el almacenamiento (en memoria, con las mismas reglas:
  * ejecuciones por tenant, CAS por state_version, evento único por ejecución,
  * contacto único por número+teléfono con merge de custom_fields) y el envío a
@@ -44,6 +44,7 @@ import {
   publibordadosFlow,
 } from "@/lib/flows/publibordados.flow";
 import { leerPoliticaRuntime, reiniciarSiLaPoliticaLoPide } from "@/lib/flow/runtime-policy";
+import { renovarPausaPorIntervencionHumana } from "@/lib/flow/pausa-intervencion-humana";
 
 const T_PB = "f46242e0-e05e-4225-bc45-9539615f26df";
 const T_OTRO = "00000000-0000-4000-8000-000000000002";
@@ -421,6 +422,20 @@ function crearMundo() {
     textos: (telefono = CLIENTE) => enviados.filter((e) => e.telefono === telefono).map((e) => e.texto),
     activa: (telefono = CLIENTE, tenant = T_PB, numero = PN_PB) => store.getActiveExecution(tenant, { phoneNumberId: numero, telefonoCliente: telefono }),
     respaldos,
+    /**
+     * La asesora escribe (eco del celular o Inbox): los dos canales llaman al MISMO mecanismo
+     * genérico (renovarPausaPorIntervencionHumana) con la configuración del número. Si la política
+     * del flow no aplica, el canal hace lo de siempre (aquí: el eco de 30 min que nunca acorta).
+     */
+    async asesoraEscribe(opts: { tenant?: string; numero?: string; flowId?: string; telefono?: string } = {}) {
+      const tenant = opts.tenant ?? T_PB;
+      const numero = opts.numero ?? PN_PB;
+      const telefono = opts.telefono ?? CLIENTE;
+      const cliente = { id_tenant: tenant, phone_number_id: numero, flow_activo: true, flow_id: opts.flowId ?? (tenant === T_PB ? "flow-pb" : "flow-otro") };
+      const porPolitica = await renovarPausaPorIntervencionHumana({ supabase, cliente, telefonoCliente: telefono, store });
+      if (!porPolitica) await activarPausaPorRespuestaHumana(supabase, numero, telefono, 30 * 60 * 1000);
+      return porPolitica;
+    },
     /** El reloj avanza `horas`: las pausas y la actividad de las ejecuciones quedan `horas` más viejas. */
     avanzar(horas: number) {
       const mover = (iso: string | undefined) => (iso ? new Date(Date.parse(iso) - horas * HORA).toISOString() : iso);
@@ -482,18 +497,20 @@ describe("PB runtime — flujo completo, transferencia y pausa (A, M, N)", () =>
 });
 
 describe("PB runtime — respuesta de la asesora (O)", () => {
-  it("la asesora responde desde el celular: la pausa de 5 h NO se acorta y el bot sigue callado", async () => {
+  it("la asesora responde durante la pausa: la política del flow la RENUEVA a 5 h desde ese momento y el bot sigue callado", async () => {
     await m.completar(EMPRESA_GORRAS_20);
-    const hasta = m.pausas[0].pausado_hasta;
-    await activarPausaPorRespuestaHumana(m.supabase, PN_PB, CLIENTE, 30 * 60 * 1000); // eco de coexistencia
-    assert.equal(m.pausas[0].pausado_hasta, hasta);
+    m.avanzar(2);
+    assert.equal(await m.asesoraEscribe(), true, "aplicó la política humanTakeover del flow");
+    assert.ok(Math.abs(m.horasDePausa()! - 5) < 0.01, `quedan 5 h desde la intervención (${m.horasDePausa()})`);
     assert.deepEqual(await m.recibir({ texto: "gracias", wamid: m.w() }), { pausado: true });
   });
 
-  it("contraste: con la función anterior del eco, la pausa quedaba en 30 minutos", async () => {
-    await m.completar(EMPRESA_GORRAS_20);
-    await activarPausaChat(m.supabase, PN_PB, CLIENTE, 30 * 60 * 1000);
-    assert.ok(Date.parse(m.pausas[0].pausado_hasta) - Date.now() < 31 * 60 * 1000);
+  it("contraste: un flow SIN humanTakeover conserva el comportamiento de siempre (eco: 30 min que no acortan)", async () => {
+    await m.recibir({ tenant: T_OTRO, numero: PN_OTRO, texto: "Hola", wamid: m.w() });
+    assert.equal(await m.asesoraEscribe({ tenant: T_OTRO, numero: PN_OTRO }), false, "sin política: el canal sigue con lo de siempre");
+    const p = m.pausas.find((x) => x.phone_number_id === PN_OTRO)!;
+    const horas = (Date.parse(p.pausado_hasta) - Date.now()) / HORA;
+    assert.ok(horas > 0.49 && horas <= 0.5, `30 min (${horas} h)`);
   });
 });
 
@@ -675,11 +692,11 @@ describe("PB runtime — aislamiento multi-tenant (Q)", () => {
 });
 
 describe("PB runtime — pausa de 5 h tras el traspaso (política del flow de Publi Bordados)", () => {
-  const ASESORA_MS = 30 * 60 * 1000; // PAUSA_HUMANA_MS del webhook (eco de coexistencia)
-
-  it("la pausa la define el FLOW (transferir_soporte: 5 h, pauseMode 'extend'), no el motor", () => {
-    const nodo = publibordadosFlow().nodes.find((n) => n.id === "act-transferir-soporte")!;
+  it("la pausa la define el FLOW: transferir_soporte 5 h ('extend') y runtimePolicy.humanTakeover 5 h", () => {
+    const flow = publibordadosFlow();
+    const nodo = flow.nodes.find((n) => n.id === "act-transferir-soporte")!;
     assert.deepEqual(nodo.config, { actionType: "transferir_soporte", pauseDurationHours: 5, pauseMode: "extend" });
+    assert.deepEqual(flow.runtimePolicy?.humanTakeover, { renewHours: 5 });
   });
 
   it("a las 2 h el cliente escribe: silencio total (sin mensajes, sin ejecución nueva, sin solicitud nueva)", async () => {
@@ -719,31 +736,73 @@ describe("PB runtime — pausa de 5 h tras el traspaso (política del flow de Pu
     assert.ok(m.horasDePausa()! > 4.99);
   });
 
-  it("la asesora escribe durante la pausa: nunca la acorta (a la 1 h, 2 h y 3 h la pausa sigue venciendo a las 5 h)", async () => {
+  it("mensaje humano durante la pausa → +5 h desde esa intervención (no desde el traspaso)", async () => {
     await m.completar(EMPRESA_GORRAS_20);
-    for (const h of [1, 1, 1]) {
-      m.avanzar(h);
-      const antes = m.pausas[0].pausado_hasta;
-      await activarPausaPorRespuestaHumana(m.supabase, PN_PB, CLIENTE, ASESORA_MS);
-      assert.equal(m.pausas[0].pausado_hasta, antes, "30 min desde ahora es MENOS que lo que queda: no cambia");
-      assert.deepEqual(await m.recibir({ texto: "gracias", wamid: m.w() }), { pausado: true });
-    }
-    assert.ok(Math.abs(m.horasDePausa()! - 2) < 0.01, "a las 3 h quedan 2 h");
+    m.avanzar(3); // quedan 2 h de la pausa del traspaso
+    await m.asesoraEscribe();
+    assert.ok(Math.abs(m.horasDePausa()! - 5) < 0.01, `5 h desde la intervención (${m.horasDePausa()})`);
+    m.avanzar(4.9); // 7 h 54 min desde el traspaso, 4 h 54 min desde la asesora
+    assert.deepEqual(await m.recibir({ texto: "Hola", wamid: m.w() }), { pausado: true });
+    m.avanzar(0.2); // 5 h 06 min desde la asesora
+    assert.equal((await m.recibir({ texto: "Hola", wamid: m.w() })).pausado, false, "vencidas 5 h desde la última intervención, el flow vuelve a atender");
+    assert.deepEqual(m.textos().slice(-2), [PUBLIBORDADOS_BIENVENIDA, PUBLIBORDADOS_TIPO_CLIENTE]);
   });
 
-  it("varios mensajes de la asesora cerca del final EXTIENDEN la pausa (+30 min desde su último mensaje)", async () => {
+  it("múltiples mensajes humanos → la expiración SIEMPRE se mueve hacia adelante (5 h desde el último)", async () => {
     await m.completar(EMPRESA_GORRAS_20);
-    m.avanzar(4.75); // 4 h 45 min: quedan 15 min
-    await activarPausaPorRespuestaHumana(m.supabase, PN_PB, CLIENTE, ASESORA_MS);
-    assert.ok(Math.abs(m.horasDePausa()! - 0.5) < 0.01, "ahora vence en 30 min (a las 5 h 15 min)");
-    m.avanzar(0.25); // 5 h 00 min: la asesora vuelve a escribir
-    await activarPausaPorRespuestaHumana(m.supabase, PN_PB, CLIENTE, ASESORA_MS);
-    m.avanzar(1 / 6); // 5 h 10 min
-    assert.deepEqual(await m.recibir({ texto: "¿sigues ahí?", wamid: m.w() }), { pausado: true }, "la asesora sigue atendiendo");
-    m.avanzar(1 / 3 + 1 / 60); // 5 h 31 min: 31 min sin actividad humana
-    const r = await m.recibir({ texto: "Hola", wamid: m.w() });
-    assert.equal(r.pausado, false);
-    assert.equal(m.textos().at(-1), PUBLIBORDADOS_TIPO_CLIENTE);
+    let vencimientoPrevio = Date.parse(m.pausas[0].pausado_hasta);
+    for (const h of [0.5, 1, 2, 0.25, 4]) {
+      m.avanzar(h);
+      vencimientoPrevio -= h * HORA; // el reloj simulado mueve todo hacia atrás
+      await m.asesoraEscribe();
+      const vencimiento = Date.parse(m.pausas[0].pausado_hasta);
+      assert.ok(vencimiento >= vencimientoPrevio, "nunca retrocede");
+      assert.ok(Math.abs(m.horasDePausa()! - 5) < 0.01, `siempre 5 h desde el último mensaje (${m.horasDePausa()})`);
+      assert.deepEqual(await m.recibir({ texto: "¿sigues ahí?", wamid: m.w() }), { pausado: true });
+      vencimientoPrevio = vencimiento;
+    }
+  });
+
+  it("una intervención humana NUNCA acorta una pausa más larga (la asesora tomó el chat: 30 días)", async () => {
+    await m.completar(EMPRESA_GORRAS_20);
+    await activarPausaChat(m.supabase, PN_PB, CLIENTE, 30 * 24 * HORA); // "tomar" en el Inbox
+    const hasta = m.pausas[0].pausado_hasta;
+    await m.asesoraEscribe();
+    assert.equal(m.pausas[0].pausado_hasta, hasta, "30 días se conservan");
+  });
+
+  it("mensajes del cliente durante la pausa: CERO respuestas automáticas (flow ni IA), sin ejecución ni solicitud nuevas", async () => {
+    await m.completar(EMPRESA_GORRAS_20);
+    await m.asesoraEscribe();
+    const enviados = m.enviados.length;
+    for (const msg of [{ texto: "Hola" }, { texto: "menú" }, { boton: "persona_natural" }, { texto: "quiero 50 gorras más" }]) {
+      m.avanzar(1);
+      assert.deepEqual(await m.recibir({ ...msg, wamid: m.w() }), { pausado: true });
+    }
+    assert.equal(m.enviados.length, enviados);
+    assert.equal(m.ejecuciones.length, 1);
+    assert.equal(m.solicitudes.length, 1);
+    assert.equal(m.contactos.length, 1, "el cliente y su historial siguen intactos");
+  });
+
+  it("aislamiento: la intervención humana en Publi Bordados no pausa al mismo teléfono en otro negocio, y viceversa", async () => {
+    await m.completar(EMPRESA_GORRAS_20);
+    await m.asesoraEscribe();
+    assert.equal(m.pausas.filter((p) => p.phone_number_id === PN_OTRO).length, 0);
+    const r = await m.recibir({ tenant: T_OTRO, numero: PN_OTRO, texto: "Hola", wamid: m.w() });
+    assert.equal(r.pausado, false, "el otro negocio atiende normal");
+    // La intervención en el otro negocio usa SU comportamiento (30 min) y no toca la pausa de PB.
+    const pbAntes = m.pausas.find((p) => p.phone_number_id === PN_PB)!.pausado_hasta;
+    assert.equal(await m.asesoraEscribe({ tenant: T_OTRO, numero: PN_OTRO }), false);
+    assert.equal(m.pausas.find((p) => p.phone_number_id === PN_PB)!.pausado_hasta, pbAntes);
+  });
+
+  it("la política se aplica solo por configuración del número: otro tenant NO puede usar el flow de PB para cambiar la pausa de PB", async () => {
+    await m.completar(EMPRESA_GORRAS_20);
+    const pbAntes = m.pausas[0].pausado_hasta;
+    // Configuración ajena que apunta al flow de PB (no existe para ese tenant): sin política, nada cambia en PB.
+    assert.equal(await m.asesoraEscribe({ tenant: T_OTRO, numero: PN_OTRO, flowId: "flow-pb" }), false);
+    assert.equal(m.pausas.find((p) => p.phone_number_id === PN_PB)!.pausado_hasta, pbAntes);
   });
 
   it("carrera: la asesora TOMÓ el chat (30 días) justo cuando el flow transfería → la transferencia NO lo acorta a 5 h", async () => {
@@ -761,16 +820,16 @@ describe("PB runtime — pausa de 5 h tras el traspaso (política del flow de Pu
   });
 
   it("reinicio por 24 h NO interfiere con la pausa: una ejecución vieja no se reinicia mientras hay atención humana", async () => {
-    // Abandonó a mitad del flow hace 25 h; la asesora le escribió (eco): 30 min de pausa.
+    // Abandonó a mitad del flow hace 25 h; la asesora le escribió: 5 h de pausa (política del flow).
     await m.completar([{ boton: "persona_natural" }]);
     m.envejecer(25);
-    await activarPausaPorRespuestaHumana(m.supabase, PN_PB, CLIENTE, ASESORA_MS);
+    await m.asesoraEscribe();
     const activa = (await m.activa())!;
     assert.deepEqual(await m.recibir({ texto: "Hola", wamid: m.w() }), { pausado: true });
     assert.equal((await m.activa())?.id, activa.id, "la ejecución no se cerró ni se reinició durante la pausa");
     assert.equal(m.ejecuciones.length, 1);
     // Vencida la pausa, la regla de 24 h aplica como siempre: 'Hola' reinicia (no se guarda como nombre).
-    m.avanzar(1);
+    m.avanzar(5.1);
     await m.recibir({ texto: "Hola", wamid: m.w() });
     assert.deepEqual(m.textos().slice(-2), [PUBLIBORDADOS_BIENVENIDA, PUBLIBORDADOS_TIPO_CLIENTE]);
     assert.equal((await m.activa())?.variables.nombre, undefined);
