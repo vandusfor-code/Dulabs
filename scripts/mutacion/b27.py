@@ -18,9 +18,9 @@ M = [
  ("M08 el modelo recupera confirm_order", "lib/agente/runtime.ts", 'deps.config.tools.filter((t) => t !== "confirm_order")', 'deps.config.tools.filter((t) => t !== "__nada__")', CK),
  ("M09 resumen viejo sin barrera", "lib/agente/checkout.ts", "if (!data || !ck.summary || order.confirmation?.id !== ck.summary.confirmationId || order.confirmation.total !== ck.summary.total) {", "if (!data || !ck.summary) {", CK),
  ("M10 domicilio sin dirección", "lib/catalogo/pedidos/motor.ts", "if (!c.address || c.address.trim().length < 3 || c.address.length > 300) return false;", "", CK),
- ("M11 nombre = teléfono", "lib/agente/checkout.ts", "customerName: isTrustedName(known) ? known.trim() : null,", "customerName: known ? known.trim() : null,", CK),
+ ("M11 nombre = teléfono", "lib/agente/checkout.ts", "isTrustedName(known) ? known.trim() : null),", "known ? known.trim() : null),", CK),
  # --- método de pago ---
- ("M12 método de pago invertido", "lib/agente/checkout.ts", 'return store === transfer ? null : store ? "pago_en_tienda" : "transferencia";', 'return store === transfer ? null : store ? "transferencia" : "pago_en_tienda";', CK),
+ ("M12 método de pago invertido", "lib/agente/lenguaje/interpretar.ts", '  return tienda ? "pago_en_tienda" : "transferencia";', '  return tienda ? "transferencia" : "pago_en_tienda";', CK),
  # --- asesora / pausa ---
  ("M13 sin asesora tras confirmar", "lib/agente/checkout.ts", 'const paused = await io.handOff("pedido confirmado").catch(() => false);', "const paused = false;", CK),
  ("M14 pausa de 24 h en vez de hasta liberar", "lib/agente/runtime.ts", 'requestId, pauseUntil: "released" });', "requestId });", CK),
