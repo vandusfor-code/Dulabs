@@ -13,6 +13,7 @@
  *   npx tsx scripts/eval/gemini-lenguaje.ts --cooperativo
  *   npx tsx scripts/eval/gemini-lenguaje.ts --adversario
  *   GEMINI_EVAL_KEY=… npx tsx scripts/eval/gemini-lenguaje.ts --real 3 --salida informe.md
+ *   (clave de Vertex AI "AQ.…": además GEMINI_EVAL_BASE_URL=https://aiplatform.googleapis.com/v1/publishers/google)
  *
  * Cada caso registra: mensaje · estado previo · interpretación esperada · interpretación obtenida ·
  * herramientas · respuesta · si cambió estado/pedido · si consultó datos reales · protección que bloqueó ·
@@ -116,7 +117,9 @@ async function mundo() {
   const sent: string[] = [];
   const traces: AgentTurnTrace[] = [];
   let seq = 0;
-  const real = MODO === "real" ? createGeminiProvider({ apiKey: KEY }) : null;
+  // Claves de Vertex AI ("AQ.…"): GEMINI_EVAL_BASE_URL=https://aiplatform.googleapis.com/v1/publishers/google
+  const baseUrl = process.env.GEMINI_EVAL_BASE_URL;
+  const real = MODO === "real" ? createGeminiProvider({ apiKey: KEY, ...(baseUrl ? { baseUrl } : {}) }) : null;
   const key = { tenantId: T.tenantId, phoneNumberId: PN, waId: WA };
 
   const turno = async (paso: Paso, script: SimulatedStep[] | null) => {
