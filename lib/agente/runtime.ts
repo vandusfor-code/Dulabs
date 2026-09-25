@@ -19,7 +19,7 @@ import { randomUUID } from "node:crypto";
 import { formatCop } from "@/lib/business-agent-quote";
 import { createResolucionCatalogo, extractReferences } from "@/lib/catalogo/resolucion";
 import { publicView, type OrderChannel, type OrderPublicView } from "@/lib/catalogo/pedidos/contrato";
-import { OrderError, nextStepOf } from "@/lib/catalogo/pedidos/motor";
+import { OrderError, conversationKey, nextStepOf, requestFingerprint } from "@/lib/catalogo/pedidos/motor";
 import { contactRef } from "@/lib/catalogo/pedidos/log";
 import { AIProviderError, type AIGenerateResult, type AIProvider, type AITurn } from "@/lib/ia-proveedores/contrato";
 import { generateWithRetry } from "@/lib/ia-proveedores/reintentos";
@@ -49,6 +49,19 @@ import {
   type CustomerChannelOrigin,
   type CustomerChannelStore,
 } from "@/lib/agente/clasificacion";
+import { isExplicitConfirmation } from "@/lib/agente/etapa";
+import {
+  continueCheckout,
+  isCheckoutButton,
+  parseSummaryAction,
+  staleCheckoutButton,
+  startCheckout,
+  wantsCheckout,
+  type CheckoutAction,
+  type CheckoutIO,
+  type CheckoutResult,
+} from "@/lib/agente/checkout";
+import type { CheckoutStep } from "@/lib/agente/estado";
 
 /**
  * Resultado de un envío: true/false o, con detalle, el wamid que asignó Meta (necesario para
@@ -191,6 +204,8 @@ export interface AgentTurnTrace {
   classification: { action: "asked" | "classified" | "known" | "change_requested" | "order_mismatch"; channel: OrderChannel | null; origin: CustomerChannelOrigin | null } | null;
   /** Bloque 26 — acción de inicio que resolvió el backend sin modelo (menú, búsqueda guiada o catálogo). */
   start: "intent_menu" | "search_prompt" | "catalog_link" | null;
+  /** Bloque 27 — checkout conversacional: paso en que quedó y qué decidió el backend (sin datos del cliente). */
+  checkout?: { step: CheckoutStep | null; action: CheckoutAction } | null;
 }
 
 // Mensajes FIJOS (sin IA): nunca afirman datos comerciales.
@@ -224,7 +239,7 @@ export function summarizeArgs(args: Record<string, unknown>): Record<string, unk
 function channelFor(config: AgentRuntimeConfig, activeOrder: OrderPublicView | null): { channel: OrderChannel; source: "number_config" | "catalog_request" } {
   if (config.channel === "wholesale") return { channel: "wholesale", source: "number_config" };
   // Mayorista solo si la conversación trae una solicitud FIRMADA del link mayorista (verificada por el backend).
-  if (activeOrder?.channel === "wholesale" && !["completed", "cancelled", "expired"].includes(activeOrder.status)) return { channel: "wholesale", source: "catalog_request" };
+  if (activeOrder?.channel === "wholesale" && !["completed", "cancelled", "expired", "rejected"].includes(activeOrder.status)) return { channel: "wholesale", source: "catalog_request" };
   return { channel: "retail", source: "number_config" };
 }
 
@@ -263,7 +278,8 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
   const requestId = input.requestId ?? randomUUID();
   const key = { tenantId: input.tenantId, phoneNumberId: input.phoneNumberId, waId: input.waId };
   const contact = { phoneNumberId: input.phoneNumberId, waId: input.waId };
-  const allowed = deps.config.tools;
+  // Bloque 27: con el checkout del sistema, el modelo NO confirma pedidos (confirm_order no existe para él).
+  const allowed = deps.config.checkoutEnabled ? deps.config.tools.filter((t) => t !== "confirm_order") : deps.config.tools;
 
   const trace: AgentTurnTrace = {
     log: "agent_turn",
@@ -297,6 +313,7 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
     non_text: null,
     classification: null,
     start: null,
+    checkout: null,
     input: { wamids: (input.wamids && input.wamids.length > 0 ? [...input.wamids] : [input.wamid]).map((w) => w.slice(0, 200)).slice(0, 10), messages: input.wamids?.length || 1, chars: input.text.length },
     context: null,
   };
@@ -519,7 +536,7 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
       else {
         // Primera vez: la solicitud del catálogo abierta de ESTA conversación (tienda detal o enlace
         // mayorista firmado) ya dice cómo compra; si no, lo que el cliente eligió en este mensaje.
-        const fromCatalog = activeOrder && activeOrderSource === "catalog" && !["completed", "cancelled", "expired"].includes(activeOrder.status) ? activeOrder.channel : null;
+        const fromCatalog = activeOrder && activeOrderSource === "catalog" && !["completed", "cancelled", "expired", "rejected"].includes(activeOrder.status) ? activeOrder.channel : null;
         const choice = fromCatalog ?? buttonChoice ?? parseChannelChoice(input.text);
         if (choice) {
           const origin = fromCatalog ? (fromCatalog === "wholesale" ? "catalogo_mayorista" : "catalogo_detal") : "cliente";
@@ -595,6 +612,117 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
   const { channel, source } = classified ?? channelFor(deps.config, activeOrder);
   state = { ...state, channel: { value: channel, source } };
 
+  // Bloque 27 — CHECKOUT CONVERSACIONAL (solo si el número lo tiene encendido): lo conduce el BACKEND,
+  // sin modelo. El modelo solo detecta la intención (create_order_request, más abajo).
+  const checkoutIO: CheckoutIO | null = deps.config.checkoutEnabled
+    ? {
+        engine: deps.tools.engine,
+        tenantId: input.tenantId,
+        contact,
+        channel,
+        requestId,
+        turn: state.turn,
+        businessName: deps.config.business.nombre_negocio ?? null,
+        sendText: async (text) => {
+          const r = sendResult(await deps.sender.sendText(text).catch(() => false));
+          trace.sent = r.sent;
+          trace.delivery.text_wamid = r.wamid;
+          trace.delivery.text_error = r.error;
+          return r.sent ? text : null;
+        },
+        sendMenu: async (body, buttons, fallback) => {
+          const b = deps.sender.sendButtons ? sendResult(await deps.sender.sendButtons(body, buttons).catch(() => false)) : null;
+          if (b?.sent) {
+            trace.sent = true;
+            trace.delivery.text_wamid = b.wamid;
+            trace.delivery.text_error = null;
+            return body;
+          }
+          const r = sendResult(await deps.sender.sendText(fallback).catch(() => false));
+          trace.sent = r.sent;
+          trace.delivery.text_wamid = r.wamid;
+          trace.delivery.text_error = r.error;
+          return r.sent ? fallback : null;
+        },
+        knownName: async () => (deps.tools.customerName ? deps.tools.customerName(key) : null),
+        rememberName: deps.tools.rememberCustomerName ? (name) => deps.tools.rememberCustomerName!(key, name) : undefined,
+        handOff: async (reason) => {
+          try {
+            const r = await deps.tools.engine.requestHandoff({ tenantId: input.tenantId, contact, reason, actor: "system", requestId });
+            return r.paused;
+          } catch {
+            return false;
+          }
+        },
+      }
+    : null;
+  const checkoutDone = async (r: CheckoutResult) => {
+    trace.checkout = { step: r.step, action: r.action };
+    if (r.handedOff) trace.handoff = { source: "system", motive: "payment_or_delivery" };
+    state = r.state;
+    trace.state_saved = await deps.state.save(key, state, loaded.version).catch(() => false);
+    return finish(r.handedOff ? "handoff" : r.action === "pending" || r.action === "failed" ? "fallback" : "replied", r.reply);
+  };
+  if (checkoutIO) {
+    try {
+      let r: CheckoutResult | null = null;
+      if (state.checkout) {
+        r = await continueCheckout(checkoutIO, state, { text: input.text, buttonId: input.buttonId }, activeOrder);
+        // El pedido cambió por otro camino (vencido, cancelado, una asesora lo tomó): el checkout se cierra.
+        if (!r) state = { ...state, checkout: null };
+      } else if (isCheckoutButton(input.text, input.buttonId) && !(activeOrder?.status === "pending_confirmation" && parseSummaryAction(input.text, input.buttonId) === "confirm")) {
+        // Un botón de un resumen viejo: nunca confirma ni cancela nada.
+        r = await staleCheckoutButton(checkoutIO, state, activeOrder);
+      } else if (
+        activeOrder?.status === "pending_confirmation" &&
+        activeOrder.channel === channel &&
+        // "Confirmar" de un resumen viejo con otra propuesta abierta: se muestra el resumen NUEVO (nunca se confirma).
+        (isCheckoutButton(input.text, input.buttonId) ||
+          wantsCheckout(input.text) ||
+          input.text.toUpperCase().includes(`SOLICITUD: ${activeOrder.order_id}`) ||
+          (state.proposal?.orderId === activeOrder.order_id && state.proposal.presentedTurn !== null && isExplicitConfirmation(input.text)))
+      ) {
+        r = await startCheckout(checkoutIO, state, activeOrder);
+      } else if (
+        state.cart.length > 0 &&
+        !(activeOrder && ["draft", "validated", "pending_confirmation"].includes(activeOrder.status)) &&
+        wantsCheckout(input.text) &&
+        typedRefs.length === 0 &&
+        selection.selected.every((x) => state.cart.some((c) => c.reference === x.reference))
+      ) {
+        // "Quiero comprar" con productos ya elegidos: el backend crea la propuesta (misma regla que create_order_request).
+        const created = await deps.tools.engine
+          .createOrder({
+            tenantId: input.tenantId,
+            channel,
+            source: "agent",
+            contact,
+            items: state.cart,
+            idempotencyKey: conversationKey("agent", contact, `${input.wamid}|${requestFingerprint(channel, state.cart)}`),
+            requestId,
+          })
+          .catch((err: unknown) => {
+            if (err instanceof OrderError) return null;
+            throw err;
+          });
+        if (created?.order.status === "pending_confirmation" && created.order.confirmation) {
+          r = await startCheckout(checkoutIO, { ...state, activeOrderId: created.order.orderId }, publicView(created.order));
+        } else if (created) {
+          // Con problemas (agotado, retirado…): el agente se los explica con el pedido real a la vista.
+          activeOrder = { ...publicView(created.order), next_step: nextStepOf(created.order) };
+          state = { ...state, activeOrderId: created.order.orderId };
+        }
+      }
+      if (r) return await checkoutDone(r);
+    } catch {
+      trace.error_kind = "checkout_failed";
+      const sent = await checkoutIO.sendText(FALLBACK_MESSAGES.pending);
+      trace.checkout = { step: state.checkout?.step ?? null, action: "pending" };
+      trace.state_saved = await deps.state.save(key, state, loaded.version).catch(() => false);
+      return finish("fallback", sent);
+    }
+  }
+
   const customerName = deps.tools.customerName ? await deps.tools.customerName(key).catch(() => null) : null;
   const facts: TurnFacts = {
     channel,
@@ -652,6 +780,7 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
   let corrected = false;
   let forceText = false;
   let nudged = false;
+  let checkoutOrderId: string | null = null;
 
   const call = async (toolMode: "auto" | "none"): Promise<AIGenerateResult> => {
     trace.rounds++;
@@ -716,6 +845,11 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
           trace.error_kind = "write_outcome_unknown";
           break;
         }
+        // Bloque 27: hay propuesta del backend => el checkout del sistema sigue (el modelo no la presenta).
+        if (checkoutIO && ctx.newProposal && !ctx.handedOff) {
+          checkoutOrderId = ctx.newProposal.orderId;
+          break;
+        }
         if (ctx.handedOff) forceText = true;
         continue;
       }
@@ -752,10 +886,26 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
       turns.push({ role: "model", text: r.text, toolCalls: [], continuation: r.continuation });
       turns.push({ role: "user", text: CORRECTION(check.violations) });
     }
-    if (reply === null && failure === null) failure = "technical";
+    if (reply === null && failure === null && checkoutOrderId === null) failure = "technical";
   } catch (err) {
     failure = "technical";
     trace.error_kind = err instanceof AIProviderError ? err.kind : "runtime_error";
+  }
+
+  // Bloque 27: el modelo detectó la compra y el backend creó la propuesta => empieza el checkout.
+  if (checkoutIO && checkoutOrderId !== null && failure === null) {
+    state = { ...ctx.state, failures: 0 };
+    try {
+      const o = await deps.tools.engine.getOrder({ tenantId: input.tenantId, contact, orderId: checkoutOrderId, requestId });
+      if (o.status === "pending_confirmation") return await checkoutDone(await startCheckout(checkoutIO, state, publicView(o)));
+    } catch {
+      // Sin el pedido a la vista: nunca se inventa un resumen.
+    }
+    trace.error_kind = "checkout_failed";
+    const sent = await checkoutIO.sendText(FALLBACK_MESSAGES.pending);
+    trace.checkout = { step: null, action: "pending" };
+    trace.state_saved = await deps.state.save(key, state, loaded.version).catch(() => false);
+    return finish("fallback", sent);
   }
 
   // 5) Fallos: mensaje fijo; dos fallos técnicos seguidos => asesora.

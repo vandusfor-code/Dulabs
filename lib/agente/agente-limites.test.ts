@@ -70,9 +70,10 @@ describe("topes: configuración y decisión", () => {
     };
     const store = createSupabaseAgentConfigStore(fake as never);
     assert.deepEqual(await store.getByPhoneNumber(PN), fila);
-    // Bloque 25: primero con limites + clasificacion_cliente, luego solo limites, luego sin ninguna.
-    assert.equal(calls.length, 3);
-    assert.ok(calls[0].includes("clasificacion_cliente") && !calls[1].includes("clasificacion_cliente") && !calls[2].includes("limites"));
+    // Bloque 27: primero con checkout_conversacional, luego limites + clasificacion_cliente, luego solo limites, luego sin ninguna.
+    assert.equal(calls.length, 4);
+    assert.ok(calls[0].includes("checkout_conversacional") && !calls[1].includes("checkout_conversacional") && calls[1].includes("clasificacion_cliente"));
+    assert.ok(!calls[2].includes("clasificacion_cliente") && !calls[3].includes("limites"));
   });
 
   it("Bloque 25: sin la columna clasificacion_cliente se lee con limites (sin clasificación, como antes)", async () => {
@@ -93,11 +94,37 @@ describe("topes: configuración y decisión", () => {
     const store = createSupabaseAgentConfigStore(fake as never);
     const r = await store.getByPhoneNumber(PN);
     assert.deepEqual(r, fila);
-    assert.equal(calls.length, 2);
+    assert.equal(calls.length, 3);
     const cfg = parseAgentConfig(r, { tenantId: T, phoneNumberId: PN });
     assert.equal(cfg.kind === "ok" && cfg.config.classifyCustomers, false);
     const on = parseAgentConfig({ ...fila, clasificacion_cliente: true }, { tenantId: T, phoneNumberId: PN });
     assert.equal(on.kind === "ok" && on.config.classifyCustomers, true);
+  });
+
+  it("Bloque 27: sin la columna checkout_conversacional se lee con clasificación; el checkout queda APAGADO por defecto", async () => {
+    const calls: string[] = [];
+    const fila = { ...row(), limites: {}, clasificacion_cliente: true };
+    const fake = {
+      from: () => ({
+        select: (cols: string) => ({
+          eq: () => ({
+            maybeSingle: async () => {
+              calls.push(cols);
+              return cols.includes("checkout_conversacional") ? { data: null, error: { code: "42703" } } : { data: fila, error: null };
+            },
+          }),
+        }),
+      }),
+    };
+    const r = await createSupabaseAgentConfigStore(fake as never).getByPhoneNumber(PN);
+    assert.deepEqual(r, fila);
+    assert.equal(calls.length, 2);
+    const cfg = parseAgentConfig(r, { tenantId: T, phoneNumberId: PN });
+    assert.ok(cfg.kind === "ok" && cfg.config.classifyCustomers === true && cfg.config.checkoutEnabled === false);
+    const off = parseAgentConfig({ ...fila, checkout_conversacional: false }, { tenantId: T, phoneNumberId: PN });
+    assert.equal(off.kind === "ok" && off.config.checkoutEnabled, false);
+    const on = parseAgentConfig({ ...fila, checkout_conversacional: true }, { tenantId: T, phoneNumberId: PN });
+    assert.equal(on.kind === "ok" && on.config.checkoutEnabled, true);
   });
 });
 

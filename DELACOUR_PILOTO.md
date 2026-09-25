@@ -375,3 +375,143 @@ update dulabs_agente_runtime_config
    set negocio = negocio || '{"saludo": "¡Hola! 💖 Bienvenido/a a Delacour Joyería 💍"}'::jsonb
  where phone_number_id = '1428584886997210';
 ```
+
+---
+
+# Bloque 27 — Pedido real: checkout conversacional + módulo Pedidos
+
+Todo queda **apagado** hasta que se active a mano: interruptor `checkout_conversacional = false`
+por defecto (por número) y módulo `pedidos` sin habilitar (por negocio). Con el interruptor
+apagado el agente funciona exactamente como antes.
+
+## Checkout (lo conduce el backend; Gemini solo detecta la intención)
+
+1. El cliente quiere comprar lo que eligió:
+   - Gemini llama `create_order_request`; o
+   - el backend reconoce una frase fija ("quiero comprar", "finalizar pedido", "me lo llevo"…),
+     solo si no trae productos nuevos.
+
+   El motor crea la **propuesta** con precios, total y stock del catálogo. Desde ahí Gemini ya no
+   habla: su texto de esa ronda se descarta y `confirm_order` deja de existir para él.
+2. Pasos, en orden fijo y con mensajes fijos:
+   1. **Nombre**: se reutiliza el nombre guardado si es confiable (un teléfono nunca cuenta como
+      nombre). Si no hay: "¿A nombre de quién registramos tu pedido?".
+   2. **Entrega**: [🏬 Recoger en tienda] [🏠 Domicilio].
+   3. **Solo domicilio**: dirección → ciudad → referencia (opcional, con botón "Sin referencia").
+   4. **Pago**: [💵 Pago en tienda] [🏦 Transferencia].
+   5. **Resumen**: productos, total, nombre, entrega y pago, con precios y total del motor. Botones
+      [✅ Confirmar pedido] [✏️ Modificar pedido] [❌ Cancelar].
+
+   Nunca se pregunta persona natural o empresa, razón social, teléfono ni modalidad.
+3. **Confirmar**: solo el botón o un "sí" / "confirmo" exacto ("ok", "dale" y "perfecto" no
+   confirman). Solo se confirma el resumen **mostrado**, en una sola transacción del motor, que:
+   - re-verifica modalidad, productos, precios, stock, `confirmation_id` y vigencia;
+   - aparta el stock (reserva atómica);
+   - guarda nombre, entrega, pago, `estado_pago = pendiente`, `etapa = pendiente_pago`,
+     `confirmado_at` y el evento.
+
+   Si cambió el precio o se acabó el stock, **no confirma**: explica qué pasó y muestra el resumen
+   nuevo. Si ya no se puede confirmar, los productos vuelven a la selección.
+4. **Después de confirmar**:
+   - la IA se pausa en ese chat (motivo `payment_or_delivery`; el pedido queda con
+     "pedido confirmado");
+   - sale el mensaje **fijo**: "✅ Tu pedido quedó registrado correctamente. Una asesora continuará
+     contigo para coordinar el pago y los siguientes pasos. Gracias por comprar en Delacour
+     Joyería 💖" (el nombre sale de `negocio.nombre_negocio`).
+
+   Nunca dice "pago recibido", "enviado" ni "completado".
+5. **Modificar**: no confirma ni reserva. La propuesta se cancela (actor sistema, sin tocar stock),
+   los productos siguen en la selección y el cliente sigue conversando. Un botón de un resumen
+   viejo **nunca** confirma: responde "Ese resumen ya no está vigente…".
+6. **Cancelar** (en cualquier paso): cancela la propuesta sin reserva, conserva los productos,
+   sale del checkout y queda el evento `checkout_cancelled_by_customer`.
+7. Doble "sí", doble clic o dos mensajes a la vez: **una** reserva y **un** pedido confirmado.
+
+## Módulo Pedidos (`/dashboard/pedidos` y `/dashboard/pedidos/DL-ORD-…`)
+
+- Solo para negocios con el módulo `pedidos`; la API lo vuelve a exigir en cada llamada.
+- **Lista**:
+  - columnas: pedido, cliente, teléfono (solo admin/agente), modalidad, total, método de pago,
+    estado del pago, entrega, estado, asesora, fechas;
+  - filtros: estado, pago, modalidad, método, entrega, rango de fechas y búsqueda por número,
+    nombre, referencia o teléfono (el teléfono solo para quien puede verlo);
+  - orden: última actualización; paginación por cursor.
+- **Detalle**: cliente, productos (foto, referencia, cantidad, precio, subtotal), total, entrega,
+  pago, estado, asesora e **historial inmutable** con quién hizo cada cambio.
+- **Estados visibles**: PENDIENTE DE PAGO → PAGO RECIBIDO → EN PREPARACIÓN → ENVIADO (solo
+  domicilio) → COMPLETADO. Para recoger en tienda: EN PREPARACIÓN → COMPLETADO. Terminales:
+  CANCELADO (cliente/operación) y RECHAZADO (la empresa). Ambos devuelven el stock.
+- **Acciones** (solo admin y agente, con confirmación; cancelar y rechazar exigen motivo):
+  marcar pago recibido, pasar a preparación, marcar enviado, completar, cancelar, rechazar,
+  tomar conversación y abrir en Inbox.
+  - Cada acción valida el estado que la persona **vio** (compare-and-set: si cambió, 409).
+  - Repetir la misma acción no la repite.
+  - La BD vuelve a validar el orden (función `dulabs_catalogo_pedido_etapa` + trigger).
+  - Completar consume la reserva una sola vez.
+- Nunca se editan productos, precios, stock ni reservas de un pedido confirmado (la BD lo impide).
+- **Vencimiento**: las 72 h aplican solo a pedidos confirmados con el pago pendiente. Con el pago
+  recibido, la reserva no vence.
+- **Pedidos anteriores**: no tienen checkout. Se ven en el módulo con su fecha de confirmación
+  (tomada de su historial) y se pueden completar, cancelar o rechazar como antes.
+
+## Activación en producción (manual, en el SQL Editor; NADA de esto se ejecutó)
+
+1. Pegar completa `supabase/migrations/20261121000000_dulabs_catalogo_pedidos_checkout.sql`. Es
+   aditiva e idempotente y no cambia ningún comportamiento con el interruptor apagado.
+2. Verificar (solo lectura):
+   ```sql
+   select
+     (select count(*) from information_schema.columns where table_name = 'dulabs_catalogo_pedidos'
+        and column_name in ('checkout','cliente_nombre','metodo_pago','estado_pago','tipo_entrega','direccion','ciudad','referencia_entrega','etapa','confirmado_at')) as columnas_pedido,
+     (select count(*) from information_schema.columns where table_name = 'dulabs_catalogo_pedido_eventos' and column_name = 'miembro_id') as columna_miembro,
+     (select count(*) from pg_proc where proname = 'dulabs_catalogo_pedido_etapa') as funcion_etapa,
+     (select count(*) from pg_trigger where tgname = 'dulabs_catalogo_pedidos_checkout_reglas') as trigger_reglas,
+     (select checkout_conversacional from dulabs_agente_runtime_config where phone_number_id = '1428584886997210') as checkout_delacour,
+     (select count(*) from dulabs_tenant_modulos where id_tenant = '0d3ae22d-0c38-4fd6-ba48-fb9e29b7cdb4' and modulo = 'pedidos') as modulo_pedidos;
+   -- Esperado: 10 | 1 | 1 | 1 | false | 0
+   ```
+3. Cuando se decida, en este orden:
+   1. desplegar el código;
+   2. nombre comercial del mensaje final:
+      ```sql
+      update dulabs_agente_runtime_config
+         set negocio = negocio || '{"nombre_negocio": "Delacour Joyería"}'::jsonb
+       where phone_number_id = '1428584886997210';
+      ```
+   3. habilitar el módulo:
+      ```sql
+      insert into dulabs_tenant_modulos (id_tenant, modulo, habilitado)
+      values ('0d3ae22d-0c38-4fd6-ba48-fb9e29b7cdb4', 'pedidos', true)
+      on conflict (id_tenant, modulo) do update set habilitado = true;
+      ```
+   4. encender el checkout:
+      ```sql
+      update dulabs_agente_runtime_config set checkout_conversacional = true
+       where phone_number_id = '1428584886997210' and id_tenant = '0d3ae22d-0c38-4fd6-ba48-fb9e29b7cdb4';
+      ```
+
+   Para apagar, el mismo `update` con `false`: vuelve el flujo anterior y los pedidos ya
+   registrados se siguen operando desde el módulo.
+
+## Pruebas
+
+- `lib/agente/agente-checkout.test.ts`: A–P, AD–AG + barreras (el modelo no confirma; con el
+  interruptor apagado, todo como antes; aislamiento).
+- `lib/catalogo/pedidos/pedidos-b27.test.ts`: Q–Z, AA–AC, AH + filtros, cursor, permisos y el panel
+  viejo del catálogo.
+- `supabase/tests/20261121000000_dulabs_catalogo_pedidos_checkout.test.sql`: 11 controles en
+  PostgreSQL (datos obligatorios, etapas con compare-and-set, completar/rechazar, inmutabilidad,
+  vencimiento, aislamiento, el sistema no confirma, historial inmutable).
+- `scripts/piloto/matriz-piloto.e2e.ts`, bloque K: checkout completo por el webhook real con
+  botones de Meta, PG real (reserva, datos, pausa, nombre recordado) y la operación en el panel
+  contra PG real.
+- `scripts/mutacion/b27.py`: 20 pruebas de mutación. Se quita una protección a la vez y la prueba
+  correspondiente debe fallar:
+  - 16 en el código: confirmación estricta, `confirm_order` oculto, modalidad congelada, domicilio
+    sin dirección, teléfono como nombre, resumen viejo, asesora tras confirmar, botón viejo,
+    "enviado" en recoger, compare-and-set del panel, pagado no vence, confirmado inmutable,
+    teléfono por permiso, motivo obligatorio, módulo exigido, reintento idempotente;
+  - 4 en la BD: pagado no vence, el sistema no confirma, confirmado inmutable, completar exige
+    terminar.
+
+  Las 20 se detectan.

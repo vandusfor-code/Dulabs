@@ -36,6 +36,10 @@ import { FALLBACK_MESSAGES } from "@/lib/agente/runtime";
 import { liberarPausaChat } from "@/lib/pausas-chat";
 import { CHANNEL_QUESTION, CLASSIFICATION_MESSAGES, DEFAULT_WELCOME, INTENT_MENU, START_MESSAGES, channelQuestionBody, createSupabaseCustomerChannelStore } from "@/lib/agente/clasificacion";
 import { procesarCambio, registrarMensajesEntrantesSincrono, type MetaChangeValue } from "@/app/webhook-dulabs/route";
+import { CHECKOUT_BUTTONS, CHECKOUT_MESSAGES } from "@/lib/agente/checkout";
+import { productionOrderEngine } from "@/lib/catalogo/pedidos/produccion";
+import { productionPanelFuentes } from "@/lib/catalogo/pedidos/panel-fuentes";
+import { accionGestion, detalleGestion, listarGestion } from "@/lib/catalogo/pedidos/gestion";
 
 const db = createClient(URL_LOCAL, "local", { auth: { persistSession: false } });
 const RUN = randomBytes(3).toString("hex");
@@ -892,6 +896,226 @@ describe("PILOTO DELACOUR — matriz de punta a punta (webhook real + PostgreSQL
       const r = await turno(CB, "Hola", [txt("¡Hola! ¿Qué buscas hoy?")], { pn: PN_B });
       assert.equal(r.gemini.length, 1);
       assert.equal(interactivos(m0).length, 0);
+    });
+  });
+
+  describe("K. Bloque 27 — pedido real: checkout conversacional + operación en el panel (webhook real, PG real)", () => {
+    type Interactivo = { type: string; interactive: { body: { text: string }; action: { buttons: Array<{ reply: { id: string; title: string } }> } } };
+    const salidas = (desde: number) =>
+      meta.calls.slice(desde).flatMap((c) => {
+        const b = c.body as unknown as Interactivo & { text?: { body: string } };
+        if (b.type === "interactive") return [{ texto: b.interactive.body.text, botones: b.interactive.action.buttons.map((x) => x.reply.id) }];
+        if (b.type === "text") return [{ texto: b.text!.body, botones: [] as string[] }];
+        return [];
+      });
+    const tocar = (grupo: keyof typeof CHECKOUT_BUTTONS, i: number) => {
+      const b = CHECKOUT_BUTTONS[grupo][i] as { id: string; title: string };
+      return { type: "interactive", interactive: { type: "button_reply", button_reply: { id: b.id, title: b.title } } };
+    };
+    const MIEMBRO = 7_777;
+    const NEGOCIO = "Joyería Piloto";
+    const engine = () => productionOrderEngine(db)!;
+    const fuentesPanel = () => ({ fuentes: productionPanelFuentes(db), verTelefono: true });
+    const pedidoDb = async (wa: string) =>
+      (await db.from("dulabs_catalogo_pedidos").select("*").eq("id_tenant", T).eq("contacto_wa_id", wa).order("created_at", { ascending: false }).limit(1).single()).data as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+    const actuar = async (pedido: string, accion: string, esperado: { estado: string; etapa: string | null }, motivo?: string, tenant = T) => {
+      const r = await accionGestion(engine(), tenant, pedido, { accion, esperado, ...(motivo ? { motivo } : {}) }, MIEMBRO);
+      return { status: r.status, body: (await r.json()) as { success: boolean; data: { pedido: { estado_visible: string; checkout: { estado_pago: string } | null }; repetido: boolean }; error?: { code: string } } };
+    };
+    /** Selección + el MODELO detecta la compra (create_order_request): desde ahí, el backend. */
+    const comprar = async (wa: string, ref: string, qty: number) => {
+      await turno(wa, `quiero ${qty} ${ref}`, [fn("update_cart", { items: [{ reference: ref, quantity: qty }] }), txt("Listo, lo agregué.")]);
+      return turno(wa, "me encantan", [fn("create_order_request"), txt("TEXTO DEL MODELO QUE NO DEBE SALIR")]);
+    };
+    const hastaResumen = async (wa: string, entrega: "tienda" | "domicilio", pago: 0 | 1) => {
+      await turno(wa, tocar("delivery", entrega === "tienda" ? 0 : 1));
+      if (entrega === "domicilio") {
+        await turno(wa, "Calle 5 # 10-20, barrio Centro");
+        await turno(wa, "Montería");
+        await turno(wa, "Portón azul");
+      }
+      return turno(wa, tocar("payment", pago));
+    };
+    let ULTIMA: Prod;
+    /** Productos propios del bloque (el stock de los demás lo mueven los bloques anteriores). */
+    const KP: Record<string, Prod> = {};
+
+    before(async () => {
+      await ok(db.from("dulabs_tenant_modulos").insert({ id_tenant: T, modulo: "pedidos", habilitado: true }));
+      await ok(setAgente({ clasificacion_cliente: true, checkout_conversacional: true, negocio: { nombre_agente: "Sofía", nombre_negocio: NEGOCIO } }));
+      await ok(setConfig({ ia_pausada: false }));
+      const filas = (await ok(db.from("dulabs_inventario_productos").insert({ id_tenant: T, nombre: "Dije Última Unidad", precio: 70_000, stock: 1, color: "Dorado", material: "Oro", categoria: "Dije", controla_stock: true, activo: true }).select("id, referencia, nombre, precio, color, stock"))) as Prod[];
+      ULTIMA = filas[0];
+      for (const [clave, nombre, precio] of [["tob", "Tobillera Checkout", 25_000], ["pul", "Pulsera Checkout", 30_000], ["flor", "Aretes Checkout", 43_000]] as const) {
+        KP[clave] = ((await ok(db.from("dulabs_inventario_productos").insert({ id_tenant: T, nombre, precio, stock: 5, color: "Dorado", material: "Acero", categoria: "Checkout", controla_stock: true, activo: true }).select("id, referencia, nombre, precio, color, stock"))) as Prod[])[0];
+      }
+      for (const wa of [C[31], C[26], C[22], C[27]]) await createSupabaseCustomerChannelStore(db).setInitial({ tenantId: T, phoneNumberId: PN, waId: wa }, "retail", "cliente");
+    });
+    after(async () => {
+      await ok(setAgente({ clasificacion_cliente: false, checkout_conversacional: false, negocio: { nombre_agente: "Sofía", presentacion: "Asesora virtual de la joyería" } }));
+    });
+
+    it("A·C·F·H. detal: nombre -> domicilio (dirección, ciudad, referencia) -> transferencia -> resumen -> confirmar: reserva, datos, asesora y mensaje fijo", async () => {
+      const wa = C[31];
+      const s0 = await stock(KP.tob.referencia);
+      const m0 = meta.calls.length;
+      const r0 = await comprar(wa, KP.tob.referencia, 2);
+      assert.equal(r0.gemini.length, 1, "tras crear la propuesta Gemini NO vuelve a hablar");
+      assert.equal(r0.traza?.traza.checkout?.action, "started");
+      const g0 = gemini.length;
+      assert.equal((await turno(wa, "3001112233")).envios[0]?.texto, CHECKOUT_MESSAGES.askNameAgain, "un teléfono no es un nombre");
+      await turno(wa, "Laura Piloto");
+      await hastaResumen(wa, "domicilio", 1);
+      const out = salidas(m0);
+      assert.ok(!out.some((o) => o.texto.includes("TEXTO DEL MODELO")), "el texto del modelo nunca sale");
+      const resumen = out.at(-1)!;
+      assert.deepEqual(resumen.botones, ["checkout_confirmar", "checkout_modificar", "checkout_cancelar"]);
+      assert.ok(resumen.texto.includes(`*Total: ${formatCop(50_000)}*`) && resumen.texto.includes("Calle 5 # 10-20, barrio Centro, Montería") && resumen.texto.includes("Pago: Transferencia"));
+      assert.equal(await stock(KP.tob.referencia), s0, "el resumen no reserva");
+      const rc = await turno(wa, tocar("summary", 0));
+      assert.equal(gemini.length, g0, "ningún paso del checkout llama a Gemini");
+      assert.deepEqual(rc.envios.map((e) => e.texto), [CHECKOUT_MESSAGES.confirmed(NEGOCIO)]);
+      assert.equal(rc.traza?.resultado, "handoff");
+      assert.deepEqual(rc.traza?.traza.handoff, { source: "system", motive: "payment_or_delivery" });
+      assert.ok((await pausa(wa)) !== null, "IA pausada en ESE chat");
+      const o = await pedidoDb(wa);
+      assert.deepEqual(
+        [o.estado, o.checkout, o.cliente_nombre, o.metodo_pago, o.estado_pago, o.tipo_entrega, o.direccion, o.ciudad, o.referencia_entrega, o.etapa, o.canal],
+        ["confirmed", true, "Laura Piloto", "transferencia", "pendiente", "domicilio", "Calle 5 # 10-20, barrio Centro", "Montería", "Portón azul", "pendiente_pago", "retail"],
+      );
+      assert.ok(o.confirmado_at);
+      assert.equal(o.handoff?.reason, "pedido confirmado");
+      assert.deepEqual(await reservas(o.id), [{ cantidad: 2, estado: "activa" }]);
+      assert.equal(await stock(KP.tob.referencia), s0 - 2);
+      assert.equal(((await db.from("dulabs_clientes_conocidos").select("nombre").eq("phone_number_id", PN).eq("telefono_cliente", wa).single()).data as { nombre: string }).nombre, "Laura Piloto");
+      const trazas = JSON.stringify((await db.from("dulabs_agente_trazas").select("traza").eq("id_tenant", T)).data ?? []);
+      assert.ok(!trazas.includes("Laura Piloto") && !trazas.includes("Calle 5"), "las trazas no guardan nombre ni dirección");
+    });
+
+    it("Q·R·S·U·AB. el panel opera el pedido en PG real: pago -> preparación -> enviado -> completado, con la persona en el historial", async () => {
+      const o = await pedidoDb(C[31]);
+      const s0 = await stock(KP.tob.referencia);
+      assert.equal((await actuar(o.pedido_publico, "completar", { estado: "confirmed", etapa: "pendiente_pago" })).status, 409, "sin saltos");
+      const q = await actuar(o.pedido_publico, "pago_recibido", { estado: "confirmed", etapa: "pendiente_pago" });
+      assert.deepEqual([q.status, q.body.data.pedido.estado_visible, q.body.data.pedido.checkout?.estado_pago], [200, "pago_recibido", "recibido"]);
+      assert.equal((await actuar(o.pedido_publico, "pago_recibido", { estado: "confirmed", etapa: "pendiente_pago" })).body.data.repetido, true, "doble clic");
+      assert.equal((await actuar(o.pedido_publico, "en_preparacion", { estado: "confirmed", etapa: "pago_recibido" })).body.data.pedido.estado_visible, "en_preparacion");
+      assert.equal((await actuar(o.pedido_publico, "enviado", { estado: "confirmed", etapa: "en_preparacion" })).body.data.pedido.estado_visible, "enviado");
+      assert.equal((await actuar(o.pedido_publico, "completar", { estado: "confirmed", etapa: "enviado" })).body.data.pedido.estado_visible, "completado");
+      assert.deepEqual(await reservas(o.id), [{ cantidad: 2, estado: "consumida" }]);
+      assert.equal(await stock(KP.tob.referencia), s0, "completar no devuelve stock");
+      const { data: ev } = await db.from("dulabs_catalogo_pedido_eventos").select("tipo, estado_desde, estado_hacia, miembro_id").eq("pedido_id", o.id).order("id");
+      assert.deepEqual(
+        (ev ?? []).filter((e) => e.miembro_id !== null).map((e) => `${e.tipo}:${e.estado_desde}>${e.estado_hacia}:${e.miembro_id}`),
+        [
+          `order.stage_changed:pendiente_pago>pago_recibido:${MIEMBRO}`,
+          `order.stage_changed:pago_recibido>en_preparacion:${MIEMBRO}`,
+          `order.stage_changed:en_preparacion>enviado:${MIEMBRO}`,
+          `order.status_changed:confirmed>completed:${MIEMBRO}`,
+        ],
+      );
+      // AB. El historial no se edita (trigger de la BD).
+      const { error } = await db.from("dulabs_catalogo_pedido_eventos").update({ motivo: "editado" }).eq("pedido_id", o.id);
+      assert.ok(error, "historial inmutable");
+      const d = (await (await detalleGestion(engine(), T, o.pedido_publico, fuentesPanel())).json()) as { data: { historial: Array<{ hacia: string }> } };
+      assert.deepEqual(d.data.historial.map((h) => h.hacia).slice(-4), ["pago_recibido", "en_preparacion", "enviado", "completed"]);
+    });
+
+    it("E·I·L·T·Y. recoger + pago en tienda; el precio cambia antes de confirmar: nuevo resumen; 'enviado' bloqueado; pagado no vence", async () => {
+      const wa = C[27];
+      await comprar(wa, KP.pul.referencia, 1);
+      await turno(wa, "Carlos Piloto");
+      await hastaResumen(wa, "tienda", 0);
+      await ok(db.from("dulabs_inventario_productos").update({ precio: 33_000 }).eq("id", KP.pul.id));
+      const r = await turno(wa, tocar("summary", 0));
+      assert.equal(r.traza?.traza.checkout?.action, "resummarized");
+      const txtR = salidas(meta.calls.length - 2).map((x) => x.texto).join("\n");
+      assert.ok(txtR.includes(`*Total: ${formatCop(33_000)}*`));
+      assert.notEqual((await pedidoDb(wa)).estado, "confirmed");
+      const r2 = await turno(wa, tocar("summary", 0));
+      assert.equal(r2.traza?.traza.checkout?.action, "confirmed");
+      const o = await pedidoDb(wa);
+      assert.deepEqual([o.estado, o.total, o.tipo_entrega, o.metodo_pago, o.direccion], ["confirmed", 33_000, "tienda", "pago_en_tienda", null]);
+      await actuar(o.pedido_publico, "pago_recibido", { estado: "confirmed", etapa: "pendiente_pago" });
+      await actuar(o.pedido_publico, "en_preparacion", { estado: "confirmed", etapa: "pago_recibido" });
+      assert.equal((await actuar(o.pedido_publico, "enviado", { estado: "confirmed", etapa: "en_preparacion" })).status, 409, "recoger: sin 'enviado'");
+      // Y. Pagado: aunque la reserva pase su plazo, no vence.
+      await ok(db.from("dulabs_catalogo_reservas").update({ vence_at: new Date(Date.now() - 60_000).toISOString() }).eq("pedido_id", o.id));
+      await ok(db.rpc("dulabs_catalogo_reservas_vencer", { p_limite: 1000 }));
+      assert.equal((await pedidoDb(wa)).estado, "confirmed");
+    });
+
+    it("J·K. modificar (propuesta cancelada, productos guardados, el resumen viejo NO confirma) y cancelar desde cualquier paso", async () => {
+      const wa = C[26];
+      const s0 = await stock(KP.flor.referencia);
+      await comprar(wa, KP.flor.referencia, 1);
+      await turno(wa, "Marta Piloto");
+      await hastaResumen(wa, "tienda", 1);
+      const viejo = await pedidoDb(wa);
+      const m = await turno(wa, tocar("summary", 1));
+      assert.deepEqual(m.envios.map((e) => e.texto), [CHECKOUT_MESSAGES.modify]);
+      assert.equal((await pedidoDb(wa)).estado, "cancelled");
+      assert.deepEqual((await conv(wa))?.cart, [{ reference: KP.flor.referencia, quantity: 1 }]);
+      const st = await turno(wa, tocar("summary", 0));
+      assert.deepEqual(st.envios.map((e) => e.texto), [CHECKOUT_MESSAGES.stale]);
+      assert.equal(st.gemini.length, 0);
+      assert.equal((await db.from("dulabs_catalogo_pedidos").select("estado").eq("id", viejo.id).single()).data?.estado, "cancelled");
+      // Vuelve con la frase fija (sin Gemini) y cancela en el paso de entrega.
+      const f = await turno(wa, "finalizar pedido");
+      assert.equal(f.gemini.length, 0);
+      assert.equal(f.traza?.traza.checkout?.action, "started");
+      const c = await turno(wa, "cancelar");
+      assert.deepEqual(c.envios.map((e) => e.texto), [CHECKOUT_MESSAGES.cancelled]);
+      assert.equal(await stock(KP.flor.referencia), s0, "nunca se reservó");
+      const { data: ev } = await db.from("dulabs_catalogo_pedido_eventos").select("motivo, actor").eq("id_tenant", T).eq("estado_hacia", "cancelled").eq("motivo", "checkout_cancelled_by_customer");
+      assert.ok((ev ?? []).length >= 1 && ev!.every((e) => e.actor === "system"));
+    });
+
+    it("P·X. la última unidad entre dos clientes: una compra; la otra no se confirma; pendiente de pago vence y el stock vuelve", async () => {
+      await comprar(C[22], ULTIMA.referencia, 1);
+      await turno(C[22], "Ana Piloto");
+      await hastaResumen(C[22], "tienda", 1);
+      await comprar(C[26], ULTIMA.referencia, 1);
+      await hastaResumen(C[26], "tienda", 1);
+      const a = await turno(C[22], tocar("summary", 0));
+      const b = await turno(C[26], tocar("summary", 0));
+      assert.equal(a.traza?.traza.checkout?.action, "confirmed");
+      assert.equal(b.traza?.traza.checkout?.action, "not_confirmed");
+      assert.ok(b.envios.some((e) => e.texto.includes(CHECKOUT_MESSAGES.notConfirmed)));
+      assert.equal(await stock(ULTIMA.referencia), 0);
+      const ganador = await pedidoDb(C[22]);
+      await ok(db.from("dulabs_catalogo_reservas").update({ vence_at: new Date(Date.now() - 60_000).toISOString() }).eq("pedido_id", ganador.id));
+      await ok(db.rpc("dulabs_catalogo_reservas_vencer", { p_limite: 1000 }));
+      assert.equal((await pedidoDb(C[22])).estado, "expired", "X. pendiente de pago: vence");
+      assert.equal(await stock(ULTIMA.referencia), 1, "el stock vuelve");
+    });
+
+    it("Z·AA·listado. el panel filtra en PG real y otro negocio no ve nada", async () => {
+      const r = await listarGestion(engine(), T, new URLSearchParams({ entrega: "domicilio" }), fuentesPanel());
+      const l = (await r.json()) as { data: { pedidos: Array<{ pedido: string; estado_visible: string }> } };
+      assert.deepEqual(l.data.pedidos.map((p) => p.estado_visible), ["completado"]);
+      const q = (await (await listarGestion(engine(), T, new URLSearchParams({ q: "carlos" }), fuentesPanel())).json()) as { data: { pedidos: unknown[] } };
+      assert.equal(q.data.pedidos.length, 1, "búsqueda por nombre del checkout");
+      const ref = (await (await listarGestion(engine(), T, new URLSearchParams({ q: KP.pul.referencia }), fuentesPanel())).json()) as { data: { pedidos: unknown[] } };
+      assert.equal(ref.data.pedidos.length, 1, "búsqueda por referencia (jsonb)");
+      // Cursor (keyset por última actualización) en PG real: páginas sin repetir ni saltar pedidos.
+      type Pagina = { data: { pedidos: Array<{ pedido: string }>; siguiente: string | null } };
+      const todos = ((await (await listarGestion(engine(), T, new URLSearchParams({ limite: "50" }), fuentesPanel())).json()) as Pagina).data.pedidos.map((p) => p.pedido);
+      const vistos: string[] = [];
+      let cursor: string | null = null;
+      do {
+        const qs = new URLSearchParams({ limite: "2", ...(cursor ? { cursor } : {}) });
+        const pag = (await (await listarGestion(engine(), T, qs, fuentesPanel())).json()) as Pagina;
+        vistos.push(...pag.data.pedidos.map((p) => p.pedido));
+        cursor = pag.data.siguiente;
+      } while (cursor);
+      assert.ok(todos.length >= 3);
+      assert.deepEqual(vistos, todos);
+      const otro = (await (await listarGestion(engine(), TB, new URLSearchParams(), fuentesPanel())).json()) as { data: { pedidos: unknown[] } };
+      assert.deepEqual(otro.data.pedidos, []);
+      const o = await pedidoDb(C[27]);
+      assert.equal((await detalleGestion(engine(), TB, o.pedido_publico, fuentesPanel())).status, 404);
+      assert.equal((await actuar(o.pedido_publico, "cancelar", { estado: "confirmed", etapa: "en_preparacion" }, "ajeno", TB)).status, 404);
     });
   });
 

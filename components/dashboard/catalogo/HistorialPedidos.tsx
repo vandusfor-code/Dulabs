@@ -11,19 +11,21 @@ import type { CatalogClient } from "@/lib/catalogo-client";
 import { actionBtn, cn, formatPrice } from "@/components/dashboard/catalogo/ui";
 import { CANAL_LABEL, ClientePedido, LineasPedido } from "@/components/dashboard/catalogo/PedidoDetalle";
 
-type Filtro = "todos" | "completed" | "cancelled" | "expired";
+type Filtro = "todos" | "completed" | "cancelled" | "expired" | "rejected";
 
 const FILTROS: Array<{ id: Filtro; es: string; en: string }> = [
   { id: "todos", es: "Todos", en: "All" },
   { id: "completed", es: "Ventas cerradas", en: "Sold" },
   { id: "cancelled", es: "Cancelados", en: "Cancelled" },
   { id: "expired", es: "Vencidos", en: "Expired" },
+  { id: "rejected", es: "Rechazados", en: "Rejected" },
 ];
 
 const ESTADO: Record<string, { es: string; en: string; tone: string }> = {
   completed: { es: "Venta cerrada", en: "Sold", tone: "bg-lime-soft text-lime-text" },
   cancelled: { es: "Cancelado", en: "Cancelled", tone: "bg-ink-2 text-mist" },
   expired: { es: "Vencido", en: "Expired", tone: "bg-amber-500/15 text-amber-500" },
+  rejected: { es: "Rechazado", en: "Rejected", tone: "bg-red-500/15 text-red-500" },
 };
 
 function fecha(iso: string): string {

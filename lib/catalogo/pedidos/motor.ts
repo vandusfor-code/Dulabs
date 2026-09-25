@@ -24,6 +24,9 @@ import { createResolucionCatalogo } from "@/lib/catalogo/resolucion";
 import {
   CONFIRMATION_TTL_MS,
   TERMINAL_STATUSES,
+  canCompleteStage,
+  nextStage,
+  type DeliveryType,
   type Order,
   type OrderActor,
   type OrderChannel,
@@ -31,11 +34,13 @@ import {
   type OrderIssue,
   type OrderLine,
   type OrderSource,
+  type OrderStage,
   type OrderStatus,
+  type PaymentMethod,
 } from "@/lib/catalogo/pedidos/contrato";
 import { eventIdFrom, logOrderEventSink, orderEvent, type OrderEvent, type OrderEventSink, type OrderEventType } from "@/lib/catalogo/pedidos/eventos";
 import { contactRef, logOrderOperation, type OrderLogger } from "@/lib/catalogo/pedidos/log";
-import { ProductNotSellable, PublicIdTaken, StockUnavailable, applyChanges, type NewOrder, type OrderChanges, type OrderContact, type OrderCursor, type OrdersRepository, type ReservationSummary } from "@/lib/catalogo/pedidos/repositorio";
+import { InvalidTransition, ProductNotSellable, PublicIdTaken, StockUnavailable, applyChanges, type NewOrder, type OrderChanges, type OrderContact, type OrderCursor, type OrdersRepository, type PanelQuery, type ReservationSummary } from "@/lib/catalogo/pedidos/repositorio";
 import { parseWhatsappOrderText } from "@/lib/catalogo/pedidos/whatsapp";
 
 /** Errores DETERMINISTAS (mismo insumo => mismo código). El mensaje es apto para el cliente. */
@@ -105,7 +110,7 @@ export function nextStepOf(o: Order): NextStep {
 const STICKY: ReadonlySet<OrderIssue["code"]> = new Set(["reference_not_found", "invalid_quantity", "message_mismatch", "wholesale_unverified"]);
 export const OPEN_STATUSES: readonly OrderStatus[] = ["draft", "validated", "pending_confirmation", "confirmed", "handoff"];
 /** Estados finales: el historial del panel (Bloque 21). Su reserva ya se consumió o se liberó. */
-export const CLOSED_STATUSES = ["completed", "cancelled", "expired"] as const satisfies readonly OrderStatus[];
+export const CLOSED_STATUSES = ["completed", "cancelled", "expired", "rejected"] as const satisfies readonly OrderStatus[];
 export type ClosedStatus = (typeof CLOSED_STATUSES)[number];
 /**
  * Bloque 23 — un pedido de conversación SIN confirmar (borrador, validado o propuesta sin "sí") que
@@ -153,6 +158,33 @@ function codeForIssues(issues: readonly OrderIssue[]): OrderErrorCode {
 }
 
 const sameContact = (a: OrderContact | null, b: OrderContact) => a !== null && a.waId === b.waId && a.phoneNumberId === b.phoneNumberId;
+
+/**
+ * Bloque 27 — datos que el checkout conversacional reunió (el BACKEND los validó paso a paso; la IA
+ * no los escribe). Se guardan en la MISMA transición que confirma y aparta el stock.
+ */
+export interface CheckoutData {
+  customerName: string;
+  paymentMethod: PaymentMethod;
+  delivery: DeliveryType;
+  address: string | null;
+  city: string | null;
+  deliveryReference: string | null;
+}
+
+/** Motivo del traspaso automático tras un pedido confirmado por el checkout. */
+export const CHECKOUT_HANDOFF_REASON = "pedido confirmado";
+
+export function validCheckout(c: CheckoutData): boolean {
+  const name = c.customerName.trim();
+  if (name.length < 2 || name.length > 120 || /^[+\d\s()-]+$/.test(name)) return false;
+  if (c.delivery === "domicilio") {
+    if (!c.address || c.address.trim().length < 3 || c.address.length > 300) return false;
+    if (!c.city || c.city.trim().length < 2 || c.city.length > 80) return false;
+  }
+  if (c.deliveryReference !== null && c.deliveryReference.length > 300) return false;
+  return true;
+}
 
 export function createOrderEngine(deps: OrderEngineDeps) {
   const now = deps.now ?? (() => new Date());
@@ -283,7 +315,7 @@ export function createOrderEngine(deps: OrderEngineDeps) {
     const eventId = eventIdFrom("order-created", base.businessId, base.idempotencyKey);
     for (let attempt = 0; attempt < 5; attempt++) {
       const candidate: NewOrder = { ...base, orderId: idFor(attempt) };
-      const event = orderEvent(type, { ...candidate, id: "", handoff: null, updatedAt: candidate.createdAt }, { eventId, occurredAt: candidate.createdAt });
+      const event = orderEvent(type, { ...candidate, id: "", handoff: null, checkout: null, confirmedAt: null, updatedAt: candidate.createdAt }, { eventId, occurredAt: candidate.createdAt });
       try {
         const result = await deps.orders.create(candidate, event);
         if (result.created) await publish(event);
@@ -296,7 +328,7 @@ export function createOrderEngine(deps: OrderEngineDeps) {
   }
 
   /** Transición con compare-and-set; el evento se arma con el resultado y se escribe en la MISMA transacción. */
-  async function move(order: Order, to: OrderStatus, actor: OrderActor, changes: OrderChanges, opts: { reason?: string | null; type?: OrderEventType } = {}) {
+  async function move(order: Order, to: OrderStatus, actor: OrderActor, changes: OrderChanges, opts: { reason?: string | null; type?: OrderEventType; memberId?: number | null } = {}) {
     const at = now().toISOString();
     const next = applyChanges(order, to, changes, at);
     const event =
@@ -307,7 +339,7 @@ export function createOrderEngine(deps: OrderEngineDeps) {
             occurredAt: at,
             transition: { from: order.status, to, actor, reason: opts.reason ?? null },
           });
-    const updated = await deps.orders.transition({ businessId: order.businessId, id: order.id, from: order.status, to, actor, changes, event });
+    const updated = await deps.orders.transition({ businessId: order.businessId, id: order.id, from: order.status, to, actor, changes, event, memberId: opts.memberId ?? null });
     if (!updated) throw new OrderError("CONFLICT", "El pedido cambió mientras lo procesábamos. Consulta el pedido de nuevo.");
     if (event) await publish(event);
     return { order: updated, eventId: event?.event_id };
@@ -512,10 +544,22 @@ export function createOrderEngine(deps: OrderEngineDeps) {
      * haya vencido y que precios y stock sigan iguales. Si algo cambió, el
      * pedido vuelve a draft con el problema y NO se confirma.
      */
-    async confirmOrder(input: { tenantId: string; contact: OrderContact; orderId: string; confirmationId: string; actor: OrderActor; requestId?: string }): Promise<Order> {
+    async confirmOrder(input: {
+      tenantId: string;
+      contact: OrderContact;
+      orderId: string;
+      confirmationId: string;
+      actor: OrderActor;
+      requestId?: string;
+      /** Bloque 27: datos del checkout (se guardan en la MISMA transacción que confirma y aparta el stock). */
+      checkout?: CheckoutData;
+      /** Bloque 27: modalidad con la que se armó el resumen; si el pedido tiene otra, no se confirma. */
+      expectedChannel?: OrderChannel;
+    }): Promise<Order> {
       return (
         await traced("confirm_order", input, async () => {
           await requireAvailable();
+          if (input.checkout && !validCheckout(input.checkout)) throw new OrderError("INVALID_INPUT", "Faltan datos del pedido.");
           const order = await load(input.tenantId, input.contact, input.orderId);
           if (order.status === "confirmed" && order.confirmation?.id === input.confirmationId) return { order, result: "duplicate" as const };
           if (order.status !== "pending_confirmation") {
@@ -527,6 +571,9 @@ export function createOrderEngine(deps: OrderEngineDeps) {
           if (new Date(order.confirmation.expiresAt).getTime() <= now().getTime()) {
             throw new OrderError("CONFIRMATION_EXPIRED", "La propuesta venció. Hay que validar el pedido de nuevo antes de confirmarlo.");
           }
+          if (input.expectedChannel && order.channel !== input.expectedChannel) {
+            throw new OrderError("CONFIRMATION_MISMATCH", "Esa confirmación no corresponde a la propuesta vigente del pedido.");
+          }
           const ev = await evaluate(order.businessId, order.channel, itemsOf(order), previousPrices(order), order.issues);
           if (ev.issues.length > 0 || ev.total !== order.confirmation.total || ev.unpricedUnits !== order.confirmation.unpricedUnits) {
             const moved = await move(order, "draft", "system", { ...evaluationChanges(ev), confirmation: null }, { reason: codeForIssues(ev.issues) });
@@ -537,7 +584,25 @@ export function createOrderEngine(deps: OrderEngineDeps) {
           }
           try {
             // La BD aparta el stock en la MISMA transacción (todo o nada): si no alcanza, nada cambia.
-            return await move(order, "confirmed", input.actor, {}, { reason: "customer_confirmed" });
+            const at = now().toISOString();
+            const checkoutChanges: OrderChanges = input.checkout
+              ? {
+                  checkout: {
+                    customerName: input.checkout.customerName.trim(),
+                    paymentMethod: input.checkout.paymentMethod,
+                    paymentStatus: "pendiente",
+                    delivery: input.checkout.delivery,
+                    address: input.checkout.delivery === "domicilio" ? input.checkout.address?.trim() ?? null : null,
+                    city: input.checkout.delivery === "domicilio" ? input.checkout.city?.trim() ?? null : null,
+                    deliveryReference: input.checkout.delivery === "domicilio" ? input.checkout.deliveryReference?.trim() || null : null,
+                    stage: "pendiente_pago",
+                  },
+                  confirmedAt: at,
+                  // La asesora sigue la conversación (el pedido queda CONFIRMADO: la reserva sigue su plazo).
+                  handoff: { reason: CHECKOUT_HANDOFF_REASON, context: null, requestedBy: "system", at },
+                }
+              : { confirmedAt: at };
+            return await move(order, "confirmed", input.actor, checkoutChanges, { reason: "customer_confirmed" });
           } catch (err) {
             if (!(err instanceof StockUnavailable) && !(err instanceof ProductNotSellable)) throw err;
             // Otro cliente se llevó las unidades entre la validación y la confirmación: el pedido vuelve a
@@ -560,22 +625,132 @@ export function createOrderEngine(deps: OrderEngineDeps) {
      *   cancel    pending_confirmation | confirmed | handoff | draft | validated => cancelled (el stock vuelve)
      * Idempotente: repetir la misma acción sobre un pedido ya cerrado así devuelve el pedido tal cual.
      */
-    async closeOrder(input: { tenantId: string; orderId: string; action: "complete" | "cancel"; requestId?: string }): Promise<{ order: Order; result: "ok" | "duplicate" }> {
-      return traced(input.action === "complete" ? "complete_order" : "cancel_order", input, async () => {
+    async closeOrder(input: {
+      tenantId: string;
+      orderId: string;
+      action: "complete" | "cancel" | "reject";
+      requestId?: string;
+      /** Bloque 27: quién del equipo (historial) y por qué (obligatorio para cancelar/rechazar desde "Pedidos"). */
+      memberId?: number | null;
+      reason?: string | null;
+      /** Bloque 27: estado que la persona VIO al decidir (compare-and-set; otro estado = conflicto). */
+      expectedStatus?: OrderStatus;
+    }): Promise<{ order: Order; result: "ok" | "duplicate" }> {
+      const opName = input.action === "complete" ? "complete_order" : input.action === "reject" ? "reject_order" : "cancel_order";
+      return traced(opName, input, async () => {
         await requireAvailable();
         const order = await deps.orders.getByOrderId(input.tenantId, input.orderId);
         if (!order) throw new OrderError("NOT_FOUND", `No encontramos el pedido ${input.orderId}.`);
-        const target: OrderStatus = input.action === "complete" ? "completed" : "cancelled";
+        const target: OrderStatus = input.action === "complete" ? "completed" : input.action === "reject" ? "rejected" : "cancelled";
         if (order.status === target) return { order, result: "duplicate" as const };
-        const allowed: readonly OrderStatus[] = input.action === "complete" ? ["confirmed", "handoff"] : ["draft", "validated", "pending_confirmation", "confirmed", "handoff"];
-        if (!allowed.includes(order.status)) {
-          throw new OrderError("INVALID_TRANSITION", `El pedido ${order.orderId} está ${order.status}: no se puede ${input.action === "complete" ? "completar" : "cancelar"}.`);
+        if (input.expectedStatus && order.status !== input.expectedStatus) {
+          throw new OrderError("CONFLICT", "El pedido cambió mientras lo procesábamos. Consulta el pedido de nuevo.");
         }
-        const moved = await move(order, target, "human", input.action === "cancel" ? { confirmation: null } : {}, {
-          reason: input.action === "complete" ? "closed_by_advisor" : "cancelled_by_advisor",
-        });
-        return { order: moved.order, eventId: moved.eventId, result: "ok" as const };
+        const allowed: readonly OrderStatus[] =
+          input.action === "cancel" ? ["draft", "validated", "pending_confirmation", "confirmed", "handoff"] : ["confirmed", "handoff"];
+        const verb = input.action === "complete" ? "completar" : input.action === "reject" ? "rechazar" : "cancelar";
+        if (!allowed.includes(order.status)) {
+          throw new OrderError("INVALID_TRANSITION", `El pedido ${order.orderId} está ${order.status}: no se puede ${verb}.`);
+        }
+        if (input.action === "complete" && order.checkout && !canCompleteStage(order.checkout.stage, order.checkout.delivery)) {
+          throw new OrderError("INVALID_TRANSITION", `El pedido ${order.orderId} aún no se puede completar (etapa: ${order.checkout.stage}).`);
+        }
+        const reason =
+          input.reason?.trim().slice(0, 500) || (input.action === "complete" ? "closed_by_advisor" : input.action === "reject" ? "rejected_by_company" : "cancelled_by_advisor");
+        try {
+          const moved = await move(order, target, "human", input.action === "complete" ? {} : { confirmation: null }, { reason, memberId: input.memberId ?? null });
+          return { order: moved.order, eventId: moved.eventId, result: "ok" as const };
+        } catch (err) {
+          if (err instanceof InvalidTransition) throw new OrderError("INVALID_TRANSITION", `El pedido ${order.orderId} no se puede ${verb} ahora.`);
+          throw err;
+        }
       });
+    },
+
+    /**
+     * Bloque 27 — una persona del equipo avanza la ETAPA operativa de un pedido del checkout:
+     * pendiente de pago -> pago recibido -> en preparación -> enviado (solo domicilio). Compare-and-set
+     * sobre la etapa que la persona vio: repetir el mismo clic no hace nada; otra etapa = conflicto.
+     */
+    async advanceStage(input: { tenantId: string; orderId: string; from: OrderStage; to: OrderStage; memberId: number; reason?: string | null; requestId?: string }): Promise<{ order: Order; result: "ok" | "duplicate" }> {
+      return traced("advance_stage", input, async () => {
+        await requireAvailable();
+        const order = await deps.orders.getByOrderId(input.tenantId, input.orderId);
+        if (!order) throw new OrderError("NOT_FOUND", `No encontramos el pedido ${input.orderId}.`);
+        if (!order.checkout) throw new OrderError("INVALID_TRANSITION", `El pedido ${order.orderId} no tiene etapas de operación.`);
+        if (order.checkout.stage === input.to) return { order, result: "duplicate" as const };
+        if (nextStage(input.from, order.checkout.delivery) !== input.to) {
+          throw new OrderError("INVALID_TRANSITION", input.to === "enviado" ? "Solo los pedidos a domicilio se marcan como enviados." : "Ese cambio de etapa no está permitido.");
+        }
+        let r;
+        try {
+          r = await deps.orders.setStage({
+            businessId: input.tenantId,
+            orderId: input.orderId,
+            from: input.from,
+            to: input.to,
+            memberId: input.memberId,
+            reason: input.reason?.trim().slice(0, 500) || null,
+            eventId: eventIdFrom("stage", order.id, input.from, input.to),
+          });
+        } catch (err) {
+          if (err instanceof InvalidTransition) throw new OrderError("INVALID_TRANSITION", "Ese cambio de etapa no está permitido.");
+          throw err;
+        }
+        if (r.result === "no_encontrado") throw new OrderError("NOT_FOUND", `No encontramos el pedido ${input.orderId}.`);
+        if (r.result === "conflicto") throw new OrderError("CONFLICT", "El pedido cambió mientras lo procesábamos. Consulta el pedido de nuevo.");
+        return { order: r.order, result: r.result === "ok" ? ("ok" as const) : ("duplicate" as const) };
+      });
+    },
+
+    /**
+     * Bloque 27 — el cliente MODIFICA o CANCELA en el checkout: la propuesta de ESTA conversación se
+     * cancela (actor sistema). Nunca toca stock: una propuesta no tiene reserva. Un pedido ya
+     * confirmado no se cancela por aquí (eso lo decide una persona del equipo). Idempotente.
+     */
+    async cancelProposal(input: { tenantId: string; contact: OrderContact; orderId: string; reason: string; requestId?: string }): Promise<Order> {
+      return (
+        await traced("cancel_proposal", input, async () => {
+          await requireAvailable();
+          const order = await load(input.tenantId, input.contact, input.orderId);
+          if (order.status === "cancelled") return { order, result: "duplicate" as const };
+          if (!ABANDONABLE_STATUSES.includes(order.status)) {
+            throw new OrderError("INVALID_TRANSITION", `El pedido ${order.orderId} ya no es una propuesta (estado: ${order.status}).`);
+          }
+          return move(order, "cancelled", "system", { confirmation: null }, { reason: input.reason.slice(0, 500) });
+        })
+      ).order;
+    },
+
+    /**
+     * Bloque 27 — panel "Pedidos": pedidos YA confirmados del negocio (con o sin checkout), por
+     * última actualización, con filtros y cursor. Antes de leer se vence lo que ya pasó su plazo.
+     */
+    async panelOrders(tenantId: string, query: Omit<PanelQuery, "limit"> & { limit: number }): Promise<{ items: Array<{ order: Order; reservations: ReservationSummary[] }>; next: { updatedAt: string; orderId: string } | null }> {
+      await requireAvailable();
+      await deps.orders.expireReservations(200).catch((err: unknown) => console.error("[catalogo/pedidos] vencer reservas:", err instanceof Error ? err.message : "?"));
+      const limit = Math.min(Math.max(Math.trunc(query.limit), 1), 100);
+      const rows = await deps.orders.listPanel(tenantId, { ...query, limit: limit + 1 });
+      const page = rows.slice(0, limit);
+      const reservations = await deps.orders.reservationsFor(tenantId, page.map((r) => r.order.id));
+      const last = page.at(-1);
+      return {
+        items: page.map(({ order }) => ({ order, reservations: reservations.filter((r) => r.orderId === order.id) })),
+        next: rows.length > limit && last ? { updatedAt: last.updatedAtRaw, orderId: last.order.orderId } : null,
+      };
+    },
+
+    /** Bloque 27 — un pedido del negocio para el panel (null = no existe en ESTE negocio). */
+    async panelOrder(tenantId: string, orderId: string): Promise<{ order: Order; reservations: ReservationSummary[] } | null> {
+      await requireAvailable();
+      const order = await deps.orders.getByOrderId(tenantId, orderId);
+      if (!order) return null;
+      return { order, reservations: await deps.orders.reservationsFor(tenantId, [order.id]) };
+    },
+
+    /** Bloque 27 — historial inmutable del pedido (panel "Pedidos"). */
+    async orderHistory(tenantId: string, order: Order) {
+      return deps.orders.historyFor(tenantId, order.id);
     },
 
     /**

@@ -12,6 +12,19 @@ import type { CategoryDecision, ImageInfo, ImportAnalysis, ImportHistoryItem, Im
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import type { PublicationView } from "@/lib/catalogo/service";
 import type { PedidoHistorial, PedidoPanel } from "@/lib/catalogo/pedidos/panel";
+import type { AccionPedido, EstadoVisible, HistorialEntrada, PedidoGestion } from "@/lib/catalogo/pedidos/gestion";
+
+/** Bloque 27 — filtros del listado del módulo "Pedidos" (todos opcionales). */
+export interface PedidosFiltros {
+  estado?: EstadoVisible | "todos";
+  pago?: "pendiente" | "recibido";
+  modalidad?: "detal" | "mayorista";
+  metodo?: "pago_en_tienda" | "transferencia";
+  entrega?: "tienda" | "domicilio";
+  desde?: string;
+  hasta?: string;
+  q?: string;
+}
 
 // Solo el TIPO (se borra al compilar): rutas relativas; el navegador les antepone su origen.
 export type { PublicationView };
@@ -59,11 +72,13 @@ export interface UploadTicket {
 }
 
 const BASE = "/api/dashboard/catalogo";
+/** Bloque 27: módulo "Pedidos" (su propia API; exige el módulo "pedidos"). */
+const PEDIDOS_BASE = "/api/dashboard/pedidos";
 
-async function call<T>(accessToken: string, path: string, init: RequestInit = {}): Promise<CatalogResult<T>> {
+async function call<T>(accessToken: string, path: string, init: RequestInit = {}, base: string = BASE): Promise<CatalogResult<T>> {
   let response: Response;
   try {
-    response = await fetch(`${BASE}${path}`, {
+    response = await fetch(`${base}${path}`, {
       ...init,
       headers: { Authorization: `Bearer ${accessToken}`, ...(typeof init.body === "string" ? { "Content-Type": "application/json" } : {}), ...init.headers },
     });
@@ -123,7 +138,7 @@ export function createCatalogClient(accessToken: string) {
     },
 
     /** Historial de pedidos cerrados, por cursor (Bloque 21). `cursor` = `siguiente` de la página anterior. */
-    listOrderHistory(params: { estado?: "completed" | "cancelled" | "expired"; cursor?: string | null; limite?: number } = {}): Promise<CatalogResult<{ pedidos: PedidoHistorial[]; siguiente: string | null }>> {
+    listOrderHistory(params: { estado?: "completed" | "cancelled" | "expired" | "rejected"; cursor?: string | null; limite?: number } = {}): Promise<CatalogResult<{ pedidos: PedidoHistorial[]; siguiente: string | null }>> {
       const qs = new URLSearchParams();
       if (params.estado) qs.set("estado", params.estado);
       if (params.cursor) qs.set("cursor", params.cursor);
@@ -161,6 +176,25 @@ export function createCatalogClient(accessToken: string) {
       } catch {
         return { ok: false, error: { code: "NETWORK_ERROR", message: "Sin conexión. Revisa tu internet e intenta de nuevo.", status: 0 } };
       }
+    },
+
+    /** Bloque 27 — módulo "Pedidos": pedidos confirmados con filtros y cursor. */
+    listManagedOrders(filtros: PedidosFiltros, cursor: string | null = null): Promise<CatalogResult<{ pedidos: PedidoGestion[]; siguiente: string | null }>> {
+      const qs = new URLSearchParams();
+      for (const [k, v] of Object.entries(filtros)) if (typeof v === "string" && v.trim()) qs.set(k, v.trim());
+      if (cursor) qs.set("cursor", cursor);
+      const q = qs.toString();
+      return call(accessToken, q ? `?${q}` : "", {}, PEDIDOS_BASE);
+    },
+
+    /** Bloque 27 — detalle de un pedido con su historial. */
+    getManagedOrder(pedido: string): Promise<CatalogResult<{ pedido: PedidoGestion; historial: HistorialEntrada[] }>> {
+      return call(accessToken, `/${encodeURIComponent(pedido)}`, {}, PEDIDOS_BASE);
+    },
+
+    /** Bloque 27 — acción de la operación sobre lo que la persona VIO (`esperado`); motivo para cancelar/rechazar. */
+    actOnOrder(pedido: string, input: { accion: AccionPedido; esperado: PedidoGestion["version"]; motivo?: string }): Promise<CatalogResult<{ pedido: PedidoGestion; repetido: boolean }>> {
+      return call(accessToken, `/${encodeURIComponent(pedido)}`, { method: "POST", body: JSON.stringify(input) }, PEDIDOS_BASE);
     },
 
     createCategory(name: string): Promise<CatalogResult<{ category: CatalogCategory }>> {

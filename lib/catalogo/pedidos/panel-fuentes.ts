@@ -66,6 +66,11 @@ export function productionPanelFuentes(supabase: SupabaseClient): PanelFuentes {
       }
       return out;
     },
+    async miembros(tenantId, ids) {
+      const { data, error } = await supabase.from("dulabs_miembros_equipo").select("id, nombre, email").eq("tenant_id", tenantId).in("id", [...ids].slice(0, 100));
+      if (error) throw new Error(`miembros ${error.code ?? "?"}`);
+      return new Map(((data ?? []) as Array<{ id: number; nombre: string | null; email: string | null }>).map((m) => [m.id, (m.nombre?.trim() || m.email || `#${m.id}`).slice(0, 80)]));
+    },
     async fotos(tenantId, references) {
       const out = new Map<string, string | null>();
       for (const p of await repo.getProductsByReferences(tenantId, [...references].slice(0, 300))) out.set(p.reference, p.primaryImage?.thumbUrl ?? null);
