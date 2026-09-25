@@ -41,7 +41,7 @@ function ejecutar(base: string | null, consulta: string): string {
   }).trim();
 }
 
-/** Crea una base nueva con el preludio y la migración REAL de solicitudes aplicados. */
+/** Crea una base nueva con el preludio y las migraciones REALES de solicitudes y de registros de módulo. */
 export function crearBasePrueba(): BasePrueba {
   const nombre = `pb_it_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
   ejecutar(null, `create database ${nombre}`);
@@ -50,6 +50,7 @@ export function crearBasePrueba(): BasePrueba {
   for (const archivo of [
     "supabase/tests/20261120000000_dulabs_pb_solicitudes.prelude.sql",
     "supabase/migrations/20261120000000_dulabs_pb_solicitudes.sql",
+    "supabase/migrations/20261121000000_dulabs_registros_modulo.sql",
   ]) {
     execFileSync(bin!, [...args, "-d", nombre, "-v", "ON_ERROR_STOP=1", "-qX", "-f", join(raiz, archivo)], { stdio: ["ignore", "ignore", "pipe"] });
   }

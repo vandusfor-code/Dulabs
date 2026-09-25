@@ -8,8 +8,19 @@
  *
  * Transferencia: mismo mecanismo genérico que Solo Talento y Daniela
  * (action actionType:"transferir_soporte" -> end), que pausa el chat en
- * dulabs_pausas_chat. Pausa de 720 h (30 días) para que el bot no vuelva a
- * saludar mientras la asesora atiende; Solo Talento usa 24 h.
+ * dulabs_pausas_chat. Política de Publi Bordados (configuración de ESTE flow,
+ * no del motor):
+ *  - Pausa de 5 h tras el traspaso: el bot queda en silencio total en ese chat
+ *    (el gate del webhook descarta el mensaje antes del flow: no responde, no
+ *    reinicia, no crea solicitud).
+ *  - pauseMode "extend": el traspaso nunca ACORTA una pausa vigente más larga
+ *    (p. ej. una asesora que ya tomó el chat desde el Inbox, 30 días).
+ *  - Respuesta de la asesora desde el celular (eco de coexistencia): el
+ *    mecanismo existente extiende la pausa a "ahora + 30 min" SOLO si eso la
+ *    alarga (activarPausaPorRespuestaHumana); nunca la acorta.
+ *  - Vencida la pausa, el siguiente mensaje del cliente inicia el flow desde el
+ *    principio (la ejecución anterior terminó en el traspaso) y, al completarlo,
+ *    se crea una solicitud NUEVA del MISMO cliente.
  *
  * Blindaje de entradas (v2), todo con piezas que el motor ya tiene:
  *  - Texto en una pregunta de botones: el motor ya acepta la etiqueta o el id
@@ -31,7 +42,10 @@
  * se duplica) y cada flow completado crea exactamente una solicitud, idempotente
  * por la ejecución real del flow (dulabs_pb_solicitudes). Estado y asesor son de
  * cada solicitud y solo los cambian las asesoras. Si el registro fallara, el
- * cliente igual pasa a la asesora (rama "failure" → mismo traspaso).
+ * cliente igual pasa a la asesora (rama "failure" → mismo traspaso) y el
+ * registro queda RECUPERABLE: el motor reintenta en línea los errores
+ * transitorios y deja un respaldo (dulabs_registros_modulo) que el conciliador
+ * reprocesa; lo pendiente/fallido se ve en el dashboard de Solicitudes.
  *
  * Política de runtime propia (FlowDefinition.runtimePolicy, mecanismo genérico
  * del motor): determinista (sin atajos fuera del grafo ni IA legacy) y
@@ -56,7 +70,7 @@ export const PUBLIBORDADOS_REINTENTO_NOMBRE_EMPRESA = "Por favor escríbenos el 
 export const PUBLIBORDADOS_REINTENTO_CANTIDAD = "Escríbenos solo el número de unidades, por ejemplo: 20";
 
 export const PUBLIBORDADOS_UMBRAL_MAYORISTA = 6;
-export const PUBLIBORDADOS_PAUSA_HORAS = 720;
+export const PUBLIBORDADOS_PAUSA_HORAS = 5;
 
 /** Al menos una letra, hasta 80 caracteres (el motor ya recorta espacios). */
 const TEXTO_CON_LETRA = "^(?=.*\\p{L}).{1,80}$";
@@ -189,7 +203,7 @@ export function publibordadosFlow(): FlowDefinition {
       {
         id: "act-transferir-soporte",
         type: "action",
-        config: { actionType: "transferir_soporte", pauseDurationHours: PUBLIBORDADOS_PAUSA_HORAS },
+        config: { actionType: "transferir_soporte", pauseDurationHours: PUBLIBORDADOS_PAUSA_HORAS, pauseMode: "extend" },
       },
       { id: "end-transferido", type: "end", config: { tags: ["publibordados", "transferido"] } },
     ],

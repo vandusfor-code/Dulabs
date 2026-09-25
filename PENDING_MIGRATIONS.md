@@ -1,6 +1,32 @@
 # Pasos manuales pendientes en producción
 
-## PENDIENTE — Publi Bordados: Clientes → N Solicitudes
+## PENDIENTE — Registros de módulo: respaldo y conciliación de `registrar_en_modulo` (genérico)
+
+Migración `supabase/migrations/20261121000000_dulabs_registros_modulo.sql`. **Aditiva**: crea la
+tabla `dulabs_registros_modulo` (RLS activo, sin acceso anon/authenticated) y las funciones
+`dulabs_registro_modulo_abrir`, `_resolver`, `_reclamar`, `_resumen` y `_reencolar` (solo
+`service_role`). No toca ninguna tabla existente. Genérica: sirve a cualquier módulo que use
+`registrar_en_modulo`.
+
+**Para qué sirve:** antes de registrar (p. ej. una solicitud de Publi Bordados) el motor deja una
+fila "pendiente"; si el registro falla por un error transitorio queda pendiente y el conciliador
+(cron diario `/api/cron/registros-modulo`, botón "Reprocesar ahora" y apertura del dashboard) la
+reprocesa con los datos de la ejecución original, sin duplicar. Los pendientes/fallidos se ven en
+el dashboard del módulo.
+
+Sin esta migración el registro funciona igual, pero un fallo solo quedaría en los logs; por eso
+`scripts/_publicar-publibordados.mts --publicar` se niega a publicar la v3 si falta.
+
+Verificación local (PostgreSQL 16): `supabase/tests/20261121000000_dulabs_registros_modulo.test.sql`
+y `supabase/tests/20261121000000_dulabs_registros_modulo.concurrencia.sh`.
+
+1. Correr el archivo completo en el SQL Editor (idempotente).
+2. Verificar (esperado `5`):
+   ```sql
+   select count(*) from pg_proc where proname like 'dulabs_registro_modulo_%';
+   ```
+
+## ✅ APLICADA (25-sep-2026, verificada `8`) — Publi Bordados: Clientes → N Solicitudes
 
 Migración `supabase/migrations/20261120000000_dulabs_pb_solicitudes.sql`. **Aditiva y no
 destructiva**: crea la tabla `dulabs_pb_solicitudes` (RLS activo, sin acceso anon/authenticated),

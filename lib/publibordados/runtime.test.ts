@@ -23,18 +23,19 @@ import { createExecutionOrchestrator, type FlowOrchestratorStore } from "@/lib/f
 import { createTestEffectExecutorFramework } from "@/lib/flow/executor-factory";
 import { EFFECT_RESULT_CLASSIFICATIONS, type EffectExecutor } from "@/lib/flow/executor-types";
 import { InternalActionExecutor, type InternalActionDeps } from "@/lib/flow/executors/internal-action-executor";
-import type { ManejadorRegistroModulo } from "@/lib/flow/registro-modulo";
+import type { EstadoRegistroModulo, ManejadorRegistroModulo, RegistrosModuloStore } from "@/lib/flow/registro-modulo";
 import type { FlowExecutionRow } from "@/lib/flow/flow-store-types";
 import { engineStateToExecutionUpdate } from "@/lib/flow/flow-store-types";
 import { FlowExecutionConcurrencyConflictError } from "@/lib/flow/flow-store-errors";
 import type { FlowEngineEvent, FlowEngineState } from "@/lib/flow/engine-types";
 import type { FlowDefinition } from "@/lib/flow/types";
-import { activarPausaChat, activarPausaPorRespuestaHumana, chatEnPausaHumana } from "@/lib/pausas-chat";
+import { activarPausaChat, activarPausaPorRespuestaHumana, chatEnPausaHumana, extenderPausaChat } from "@/lib/pausas-chat";
 import {
   PUBLIBORDADOS_BIENVENIDA,
   PUBLIBORDADOS_CANTIDAD,
   PUBLIBORDADOS_MAYORISTA,
   PUBLIBORDADOS_NOMBRE,
+  PUBLIBORDADOS_PAUSA_HORAS,
   PUBLIBORDADOS_PRODUCTO,
   PUBLIBORDADOS_REINTENTO_CANTIDAD,
   PUBLIBORDADOS_REINTENTO_OPCION,
@@ -303,6 +304,31 @@ function crearMundo() {
     return { ok: true, registroId: nueva.id, creado: true };
   };
 
+  // Respaldo de registrar_en_modulo (dulabs_registros_modulo) en memoria: una fila por ejecución.
+  const respaldos: Array<{ id: number; flowExecutionId: string; estado: EstadoRegistroModulo; error?: string | null }> = [];
+  const registrosModuloStore: RegistrosModuloStore = {
+    async abrir(i) {
+      let f = respaldos.find((x) => x.flowExecutionId === i.flowExecutionId);
+      if (!f) respaldos.push((f = { id: respaldos.length + 1, flowExecutionId: i.flowExecutionId, estado: "pendiente" }));
+      return { id: f.id, estado: f.estado, intentos: 0 };
+    },
+    async resolver(i) {
+      const f = respaldos.find((x) => x.id === i.id && x.estado === "pendiente");
+      if (f) Object.assign(f, { estado: i.estado, error: i.error ?? null });
+      return { actualizado: Boolean(f) };
+    },
+    reclamar: async () => [],
+    async resumen() {
+      const sin = respaldos.filter((r) => r.estado !== "registrado");
+      return {
+        pendientes: sin.filter((r) => r.estado === "pendiente").length,
+        fallidos: sin.filter((r) => r.estado === "fallido").length,
+        filas: [],
+      };
+    },
+    reencolar: async () => false,
+  };
+
   // transferir_soporte y registrar_en_modulo REALES (InternalActionExecutor): verifican que el
   // número sea del tenant; el registro además exige el módulo habilitado para el tenant.
   const acciones = new InternalActionExecutor({
@@ -314,6 +340,9 @@ function crearMundo() {
     registrosDeModulo: { publibordados_clientes: registrarSolicitud },
     moduloHabilitado: async (_sb: SupabaseClient, tenantId: string, modulo: string) => tenantId === T_PB && modulo === "publibordados_clientes",
     activarPausaChat,
+    extenderPausaChat,
+    registrosModuloStore,
+    esperarMs: async () => {},
     readPausaUntil: async (_sb: SupabaseClient, pn: string, tel: string) =>
       pausas.find((p) => p.phone_number_id === pn && p.telefono_cliente === tel)?.pausado_hasta ?? null,
   } as unknown as InternalActionDeps);
@@ -327,13 +356,15 @@ function crearMundo() {
 
   /** Webhook + bridge: pausa → reinicio PB → start/button/text → orquestador. */
   async function recibir(
-    msg: { texto?: string; boton?: string; wamid: string; tenant?: string; numero?: string; telefono?: string; flowId?: string },
+    msg: { texto?: string; boton?: string; wamid: string; tenant?: string; numero?: string; telefono?: string; flowId?: string; antesDelGate?: () => Promise<void> },
   ): Promise<{ pausado: true } | { pausado: false; outcome: string }> {
     const tenant = msg.tenant ?? T_PB;
     const numero = msg.numero ?? PN_PB;
     const telefono = msg.telefono ?? CLIENTE;
     const texto = msg.texto ?? "";
     if (await chatEnPausaHumana(supabase, numero, telefono)) return { pausado: true };
+    // Carrera: algo ocurre justo DESPUÉS de que el mensaje pasó el gate de pausa.
+    await msg.antesDelGate?.();
     const flowId = msg.flowId ?? (tenant === T_PB ? "flow-pb" : "flow-otro");
     // Mismo orden que el bridge: política declarada por el flow → reinicio si la política lo pide.
     const { politica, activa: activaAntes } = await leerPoliticaRuntime({
@@ -389,6 +420,18 @@ function crearMundo() {
     },
     textos: (telefono = CLIENTE) => enviados.filter((e) => e.telefono === telefono).map((e) => e.texto),
     activa: (telefono = CLIENTE, tenant = T_PB, numero = PN_PB) => store.getActiveExecution(tenant, { phoneNumberId: numero, telefonoCliente: telefono }),
+    respaldos,
+    /** El reloj avanza `horas`: las pausas y la actividad de las ejecuciones quedan `horas` más viejas. */
+    avanzar(horas: number) {
+      const mover = (iso: string | undefined) => (iso ? new Date(Date.parse(iso) - horas * HORA).toISOString() : iso);
+      for (const p of pausas) Object.assign(p, { pausado_hasta: mover(p.pausado_hasta), pausado_desde: mover(p.pausado_desde) });
+      for (const e of ejecuciones) e.last_activity_at = mover(e.last_activity_at) as string;
+    },
+    /** Horas que faltan para que venza la pausa del chat (negativo = vencida; null = sin pausa). */
+    horasDePausa(telefono = CLIENTE) {
+      const p = pausas.find((x) => x.telefono_cliente === telefono);
+      return p ? (Date.parse(p.pausado_hasta) - Date.now()) / HORA : null;
+    },
     envejecer(horas: number, telefono = CLIENTE) {
       for (const e of ejecuciones) {
         if (e.telefono_cliente === telefono && ACTIVOS.has(e.status)) e.last_activity_at = new Date(Date.now() - horas * HORA).toISOString();
@@ -405,7 +448,7 @@ beforeEach(() => {
 });
 
 describe("PB runtime — flujo completo, transferencia y pausa (A, M, N)", () => {
-  it("recorrido completo: textos en orden, una sola transferencia, flow finalizado y pausa de 30 días", async () => {
+  it("recorrido completo: textos en orden, una sola transferencia, flow finalizado y pausa de 5 h", async () => {
     await m.completar(EMPRESA_GORRAS_20);
     assert.deepEqual(m.textos(), [
       PUBLIBORDADOS_BIENVENIDA,
@@ -421,8 +464,9 @@ describe("PB runtime — flujo completo, transferencia y pausa (A, M, N)", () =>
     assert.equal(m.ejecuciones[0].status, "completed");
     assert.equal(m.ejecuciones[0].current_node_id, "end-transferido");
     assert.equal(m.pausas.length, 1);
-    const restante = Date.parse(m.pausas[0].pausado_hasta) - Date.now();
-    assert.ok(restante > 719 * HORA && restante <= 720 * HORA);
+    const restante = m.horasDePausa()!;
+    assert.equal(PUBLIBORDADOS_PAUSA_HORAS, 5);
+    assert.ok(restante > 4.99 && restante <= 5, `restante=${restante}`);
   });
 
   it("después del traspaso el bot NO responde (ni 'Hola', ni 'menú', ni botones)", async () => {
@@ -438,7 +482,7 @@ describe("PB runtime — flujo completo, transferencia y pausa (A, M, N)", () =>
 });
 
 describe("PB runtime — respuesta de la asesora (O)", () => {
-  it("la asesora responde desde el celular: la pausa de 30 días NO se acorta y el bot sigue callado", async () => {
+  it("la asesora responde desde el celular: la pausa de 5 h NO se acorta y el bot sigue callado", async () => {
     await m.completar(EMPRESA_GORRAS_20);
     const hasta = m.pausas[0].pausado_hasta;
     await activarPausaPorRespuestaHumana(m.supabase, PN_PB, CLIENTE, 30 * 60 * 1000); // eco de coexistencia
@@ -579,13 +623,23 @@ describe("PB runtime — solicitud registrada (R, 9, 21, 23)", () => {
     assert.equal(m.solicitudes.length, 1);
   });
 
-  it("si el registro falla, el cliente IGUAL pasa a la asesora (traspaso + pausa)", async () => {
+  it("si el registro falla, el cliente IGUAL pasa a la asesora (traspaso + pausa) y el registro queda PENDIENTE, visible", async () => {
     m.fallarRegistro(true);
     await m.completar(EMPRESA_GORRAS_20);
     assert.equal(m.solicitudes.length, 0);
     assert.equal(m.textos().at(-1), PUBLIBORDADOS_TRASPASO);
     assert.equal(m.pausas.length, 1);
     assert.equal(m.ejecuciones[0].status, "completed");
+    // No es un fallo silencioso: queda un respaldo "pendiente" ligado a la ejecución real.
+    assert.deepEqual(
+      m.respaldos.map((r) => [r.flowExecutionId, r.estado, r.error]),
+      [[m.ejecuciones[0].id, "pendiente", "error_bd"]],
+    );
+  });
+
+  it("registro exitoso: el respaldo queda 'registrado' (nada pendiente en el dashboard)", async () => {
+    await m.completar(EMPRESA_GORRAS_20);
+    assert.deepEqual(m.respaldos.map((r) => r.estado), ["registrado"]);
   });
 });
 
@@ -617,5 +671,128 @@ describe("PB runtime — aislamiento multi-tenant (Q)", () => {
     assert.equal(m.pausas.length, 0, "el executor real debe negar la pausa (número de otro tenant)");
     const ex = m.ejecuciones.find((e) => e.tenant_id === T_OTRO)!;
     assert.notEqual(ex.status, "completed");
+  });
+});
+
+describe("PB runtime — pausa de 5 h tras el traspaso (política del flow de Publi Bordados)", () => {
+  const ASESORA_MS = 30 * 60 * 1000; // PAUSA_HUMANA_MS del webhook (eco de coexistencia)
+
+  it("la pausa la define el FLOW (transferir_soporte: 5 h, pauseMode 'extend'), no el motor", () => {
+    const nodo = publibordadosFlow().nodes.find((n) => n.id === "act-transferir-soporte")!;
+    assert.deepEqual(nodo.config, { actionType: "transferir_soporte", pauseDurationHours: 5, pauseMode: "extend" });
+  });
+
+  it("a las 2 h el cliente escribe: silencio total (sin mensajes, sin ejecución nueva, sin solicitud nueva)", async () => {
+    await m.completar(EMPRESA_GORRAS_20);
+    const enviados = m.enviados.length;
+    m.avanzar(2);
+    for (const msg of [{ texto: "Hola" }, { texto: "reiniciar" }, { boton: "empresa" }, { texto: "necesito otra cotización" }]) {
+      assert.deepEqual(await m.recibir({ ...msg, wamid: m.w() }), { pausado: true });
+    }
+    assert.equal(m.enviados.length, enviados);
+    assert.equal(m.ejecuciones.length, 1);
+    assert.equal(m.solicitudes.length, 1);
+  });
+
+  it("a las 4 h 59 min sigue en silencio; a las 5 h 01 min el cliente inicia una solicitud NUEVA", async () => {
+    await m.completar(EMPRESA_GORRAS_20);
+    m.avanzar(4 + 59 / 60);
+    assert.deepEqual(await m.recibir({ texto: "Hola", wamid: m.w() }), { pausado: true });
+    m.avanzar(2 / 60);
+    const r = await m.recibir({ texto: "Hola", wamid: m.w() });
+    assert.equal(r.pausado, false);
+    assert.deepEqual(m.textos().slice(-2), [PUBLIBORDADOS_BIENVENIDA, PUBLIBORDADOS_TIPO_CLIENTE]);
+    assert.equal(m.ejecuciones.length, 2, "ejecución nueva desde el inicio");
+  });
+
+  it("después de 6 h: segunda solicitud del MISMO cliente; la primera queda intacta; sin cliente duplicado", async () => {
+    await m.completar(EMPRESA_GORRAS_20);
+    const primera = structuredClone(m.solicitudes[0]);
+    m.avanzar(6);
+    await m.completar([{ boton: "persona_natural" }, { texto: "Ana" }, { boton: "mas_opciones" }, { boton: "uniformes" }, { texto: "3" }]);
+    assert.equal(m.contactos.length, 1, "el mismo teléfono es el mismo cliente");
+    assert.equal(m.solicitudes.length, 2);
+    assert.deepEqual(m.solicitudes[0], primera, "la primera solicitud no se toca");
+    assert.deepEqual(m.solicitudes[1].campos, { tipo_cliente: "persona_natural", nombre: "Ana", nombre_empresa: "", producto: "uniformes", cantidad: "3" });
+    assert.notEqual(m.solicitudes[1].flowExecutionId, primera.flowExecutionId);
+    // Y la nueva transferencia vuelve a pausar 5 h.
+    assert.ok(m.horasDePausa()! > 4.99);
+  });
+
+  it("la asesora escribe durante la pausa: nunca la acorta (a la 1 h, 2 h y 3 h la pausa sigue venciendo a las 5 h)", async () => {
+    await m.completar(EMPRESA_GORRAS_20);
+    for (const h of [1, 1, 1]) {
+      m.avanzar(h);
+      const antes = m.pausas[0].pausado_hasta;
+      await activarPausaPorRespuestaHumana(m.supabase, PN_PB, CLIENTE, ASESORA_MS);
+      assert.equal(m.pausas[0].pausado_hasta, antes, "30 min desde ahora es MENOS que lo que queda: no cambia");
+      assert.deepEqual(await m.recibir({ texto: "gracias", wamid: m.w() }), { pausado: true });
+    }
+    assert.ok(Math.abs(m.horasDePausa()! - 2) < 0.01, "a las 3 h quedan 2 h");
+  });
+
+  it("varios mensajes de la asesora cerca del final EXTIENDEN la pausa (+30 min desde su último mensaje)", async () => {
+    await m.completar(EMPRESA_GORRAS_20);
+    m.avanzar(4.75); // 4 h 45 min: quedan 15 min
+    await activarPausaPorRespuestaHumana(m.supabase, PN_PB, CLIENTE, ASESORA_MS);
+    assert.ok(Math.abs(m.horasDePausa()! - 0.5) < 0.01, "ahora vence en 30 min (a las 5 h 15 min)");
+    m.avanzar(0.25); // 5 h 00 min: la asesora vuelve a escribir
+    await activarPausaPorRespuestaHumana(m.supabase, PN_PB, CLIENTE, ASESORA_MS);
+    m.avanzar(1 / 6); // 5 h 10 min
+    assert.deepEqual(await m.recibir({ texto: "¿sigues ahí?", wamid: m.w() }), { pausado: true }, "la asesora sigue atendiendo");
+    m.avanzar(1 / 3 + 1 / 60); // 5 h 31 min: 31 min sin actividad humana
+    const r = await m.recibir({ texto: "Hola", wamid: m.w() });
+    assert.equal(r.pausado, false);
+    assert.equal(m.textos().at(-1), PUBLIBORDADOS_TIPO_CLIENTE);
+  });
+
+  it("carrera: la asesora TOMÓ el chat (30 días) justo cuando el flow transfería → la transferencia NO lo acorta a 5 h", async () => {
+    await m.recibir({ texto: "Hola", wamid: m.w() });
+    for (const p of EMPRESA_GORRAS_20.slice(0, -1)) await m.recibir({ ...p, wamid: m.w() });
+    await m.recibir({
+      texto: "20",
+      wamid: m.w(),
+      antesDelGate: async () => {
+        await activarPausaChat(m.supabase, PN_PB, CLIENTE, 30 * 24 * HORA); // "tomar" en el Inbox
+      },
+    });
+    assert.equal(m.textos().at(-1), PUBLIBORDADOS_TRASPASO);
+    assert.ok(m.horasDePausa()! > 30 * 24 - 0.01, `la pausa de 30 días se conserva (${m.horasDePausa()} h)`);
+  });
+
+  it("reinicio por 24 h NO interfiere con la pausa: una ejecución vieja no se reinicia mientras hay atención humana", async () => {
+    // Abandonó a mitad del flow hace 25 h; la asesora le escribió (eco): 30 min de pausa.
+    await m.completar([{ boton: "persona_natural" }]);
+    m.envejecer(25);
+    await activarPausaPorRespuestaHumana(m.supabase, PN_PB, CLIENTE, ASESORA_MS);
+    const activa = (await m.activa())!;
+    assert.deepEqual(await m.recibir({ texto: "Hola", wamid: m.w() }), { pausado: true });
+    assert.equal((await m.activa())?.id, activa.id, "la ejecución no se cerró ni se reinició durante la pausa");
+    assert.equal(m.ejecuciones.length, 1);
+    // Vencida la pausa, la regla de 24 h aplica como siempre: 'Hola' reinicia (no se guarda como nombre).
+    m.avanzar(1);
+    await m.recibir({ texto: "Hola", wamid: m.w() });
+    assert.deepEqual(m.textos().slice(-2), [PUBLIBORDADOS_BIENVENIDA, PUBLIBORDADOS_TIPO_CLIENTE]);
+    assert.equal((await m.activa())?.variables.nombre, undefined);
+  });
+
+  it("tras el traspaso la ejecución terminó: después de la pausa no hay nada que 'reiniciar', arranca una nueva (a las 6 h, sin esperar 24 h)", async () => {
+    await m.completar(EMPRESA_GORRAS_20);
+    assert.equal(await m.activa(), null);
+    m.avanzar(6);
+    await m.recibir({ texto: "buenas", wamid: m.w() });
+    assert.equal((await m.activa())?.current_node_id, "btn-tipo-cliente");
+  });
+
+  it("reintento de Meta del último mensaje de la segunda solicitud: no duplica la solicitud", async () => {
+    await m.completar(EMPRESA_GORRAS_20);
+    m.avanzar(6);
+    await m.recibir({ texto: "Hola", wamid: m.w() });
+    for (const p of [{ boton: "persona_natural" }, { texto: "Ana" }, { boton: "gorras" }]) await m.recibir({ ...p, wamid: m.w() });
+    await m.recibir({ texto: "8", wamid: "wamid.SEGUNDA" });
+    m.pausas.length = 0; // aunque el reintento llegara antes de ver la pausa
+    await m.recibir({ texto: "8", wamid: "wamid.SEGUNDA" });
+    assert.equal(m.solicitudes.length, 2);
+    assert.equal(m.contactos.length, 1);
   });
 });

@@ -114,6 +114,8 @@ describe("PUBLI BORDADOS — estructura", () => {
     assert.ok(act && act.type === "action");
     assert.equal(act.config.actionType, "transferir_soporte");
     assert.equal(act.config.pauseDurationHours, PUBLIBORDADOS_PAUSA_HORAS);
+    assert.equal(PUBLIBORDADOS_PAUSA_HORAS, 5, "política de Publi Bordados: 5 h de silencio tras el traspaso");
+    assert.equal(act.config.actionType === "transferir_soporte" && act.config.pauseMode, "extend", "el traspaso nunca acorta una pausa vigente");
     assert.deepEqual(
       flow.edges.filter((e) => e.source === "act-transferir-soporte").map((e) => e.target),
       ["end-transferido"],

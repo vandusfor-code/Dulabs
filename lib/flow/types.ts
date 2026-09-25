@@ -418,6 +418,11 @@ export interface AsignarMiembroActionConfig extends ActionSemanticTag {
 export interface TransferirSoporteActionConfig extends ActionSemanticTag {
   actionType: "transferir_soporte";
   pauseDurationHours?: number;
+  /**
+   * "replace" (por defecto, comportamiento de siempre): la pausa queda en pauseDurationHours.
+   * "extend": la pausa nunca ACORTA una vigente más larga (p. ej. una asesora ya tomó el chat).
+   */
+  pauseMode?: "replace" | "extend";
 }
 
 export interface SimpleActionConfig extends ActionSemanticTag {

@@ -216,6 +216,7 @@ const actionNodeConfigSchema = z.discriminatedUnion("actionType", [
     actionType: z.literal("transferir_soporte"),
     semanticTag: semanticTagSchema,
     pauseDurationHours: z.number().positive().optional(),
+    pauseMode: z.enum(["replace", "extend"]).optional(),
   }),
   z.object({
     actionType: z.literal("etiquetar_conversacion"),

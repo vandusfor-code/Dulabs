@@ -7,7 +7,8 @@ import { inputCls } from "@/components/dashboard/business-agent/ui";
 import { FichaCliente } from "@/components/dashboard/publibordados/clientes/FichaCliente";
 import { FichaSolicitud } from "@/components/dashboard/publibordados/clientes/FichaSolicitud";
 import { fechaHora, telefono } from "@/components/dashboard/publibordados/clientes/formato";
-import { Aviso, cn, EstadoPill, Paginacion, Pestanas, useAccesoPb, useConsulta } from "@/components/dashboard/publibordados/clientes/ui";
+import { Aviso, cn, EstadoPill, MODULO, Paginacion, Pestanas, useAccesoPb, useConsulta } from "@/components/dashboard/publibordados/clientes/ui";
+import { RegistrosModuloPendientes } from "@/components/dashboard/modulos/RegistrosModuloPendientes";
 import { useI18n } from "@/lib/i18n";
 import {
   ESTADOS,
@@ -125,6 +126,14 @@ export default function SolicitudesPage() {
             )}
           </div>
         </div>
+
+        <RegistrosModuloPendientes
+          modulo={MODULO}
+          token={token}
+          puedeEditar={puedeEditar}
+          etiqueta={{ es: "solicitudes", en: "requests" }}
+          onCambio={() => setRecarga((v) => v + 1)}
+        />
 
         <section className="mt-5 overflow-hidden rounded-xl border border-edge bg-card">
           {error && <Aviso tipo="error">{error}</Aviso>}
