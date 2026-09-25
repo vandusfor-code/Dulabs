@@ -5,7 +5,7 @@
  * motor de pedidos, reservas y anclaje) sobre almacenes EN MEMORIA con un negocio y productos FICTICIOS.
  * Nunca toca Supabase, Meta ni datos de clientes. Solo cambia el modelo:
  *
- *   --real        Gemini REAL (clave SOLO del entorno: GEMINI_EVAL_KEY o GEMINI_KEY_DELACOUR; nunca se imprime).
+ *   --real        Gemini REAL (clave SOLO del entorno: GEMINI_EVAL_KEY, GEMINI_KEY o GEMINI_KEY_DELACOUR; nunca se imprime).
  *   --cooperativo Modelo simulado que hace lo correcto: prueba que el sistema RESUELVE lo resoluble.
  *   --adversario  Modelo simulado que se equivoca a propósito (producto/cantidad equivocados, montos y estados
  *                 inventados): prueba que una protección determinista lo BLOQUEA.
@@ -18,7 +18,7 @@
  * herramientas · respuesta · si cambió estado/pedido · si consultó datos reales · protección que bloqueó ·
  * resultado PASS / BLOCKED-SAFE / FAIL. BLOCKED-SAFE = el modelo se equivocó y una protección lo frenó.
  */
-import { writeFileSync } from "node:fs";
+import { appendFileSync, writeFileSync } from "node:fs";
 import { createCatalogService, type CatalogActor } from "@/lib/catalogo/service";
 import { createInMemoryCatalogRepository } from "@/lib/catalogo/testing/in-memory-repository";
 import { createOrderEngine } from "@/lib/catalogo/pedidos/motor";
@@ -38,13 +38,25 @@ import { CHECKOUT_BUTTONS, CHECKOUT_MESSAGES } from "@/lib/agente/checkout";
 import type { NonTextKind } from "@/lib/agente/entrada";
 
 const MODO = process.argv.includes("--real") ? "real" : process.argv.includes("--adversario") ? "adversario" : "cooperativo";
-const KEY = process.env.GEMINI_EVAL_KEY ?? process.env.GEMINI_KEY_DELACOUR ?? "";
+const KEY = process.env.GEMINI_EVAL_KEY ?? process.env.GEMINI_KEY ?? process.env.GEMINI_KEY_DELACOUR ?? "";
 const MODEL = "gemini-3.6-flash";
 const REPS = MODO === "real" ? Math.max(1, Math.min(10, Number(process.argv.find((a) => /^\d+$/.test(a)) ?? 3) || 3)) : 1;
 const SALIDA = (() => {
   const i = process.argv.indexOf("--salida");
   return i > 0 ? process.argv[i + 1] : null;
 })();
+/** Pausa entre casos en modo real (ms): para no chocar con el límite por minuto de una clave de prueba. */
+const PAUSA = (() => {
+  const i = process.argv.indexOf("--pausa");
+  return i > 0 ? Math.max(0, Number(process.argv[i + 1]) || 0) : 0;
+})();
+/** Casos donde lo correcto es ACTUAR (el contexto lo resuelve): si el modelo solo pregunta, "preguntó de más". */
+const RESOLUBLES = new Set(["E02", "E03", "E07", "E08", "C01", "C02", "C03", "C04", "C05", "C06", "C07", "Q01", "Q02", "Q04", "Q06", "Q07", "Q08", "Q09", "Q10", "Q11", "O04", "O05", "I07", "AM04", "AM05", "F09", "F10"]);
+/** Error de infraestructura del modelo (cuota, tiempo, servidor): no es un fallo de lenguaje. */
+const INFRA = /rate_limit|timeout|server|auth|config|unknown|overloaded|runtime_error|model_/;
+/** El texto del modelo AFIRMA algo hecho ("listo", "agregué", "confirmado"…): se revisa si el backend lo respaldó. */
+const AFIRMA = /(?:^|[\s¡!.,])(?:listo|hecho|agregu[eé]|a[nñ]ad[ií]|separ[eé]|actualic[eé]|confirmad[oa]|registrad[oa]|qued[oó])/i;
+const AFIRMA_SIN_PEDIDO = /(?:^|[\s¡!.,])(?:listo|hecho|agregu[eé]|a[nñ]ad[ií]|separ[eé]|actualic[eé]|qued[oó])/i;
 const SOLO = (() => {
   const i = process.argv.indexOf("--solo");
   return i > 0 ? new RegExp(process.argv[i + 1]) : null;
@@ -452,7 +464,7 @@ const LECTURA = new Set(["search_products", "more_products", "similar_products",
 
 interface Fila {
   id: string; grupo: string; mensaje: string; estado: string; espera: string; obtenida: string; herramientas: string; respuesta: string;
-  cambio: string; datosReales: string; proteccion: string; resultado: "PASS" | "BLOCKED-SAFE" | "FAIL"; motivo: string;
+  cambio: string; datosReales: string; proteccion: string; resultado: "PASS" | "BLOCKED-SAFE" | "FAIL" | "INFRA"; motivo: string; notas: string[];
 }
 
 async function correr(caso: Caso): Promise<Fila> {
@@ -474,6 +486,7 @@ async function correr(caso: Caso): Promise<Fila> {
     ...r.trazas.flatMap((t) => t.grounding.violations.map((v) => `anclaje:${v}`)),
   ];
   const ult = r.trazas.at(-1);
+  const infra = r.trazas.map((t) => t.error_kind).filter((k): k is string => !!k && INFRA.test(k));
   const obtenida = r.trazas
     .map((t) => t.checkout?.action ? `checkout:${t.checkout.action}@${t.checkout.step}` : t.non_text ? `no_texto:${t.non_text.kind}→${t.non_text.action}` : t.classification && t.classification.action !== "known" ? `modalidad:${t.classification.action}` : t.start ? `inicio:${t.start}` : t.intent ? `intención:${t.intent}` : t.outcome)
     .join(" → ");
@@ -485,6 +498,15 @@ async function correr(caso: Caso): Promise<Fila> {
     !pausadoAntes && m.pausado() ? "asesora (pausa)" : null,
   ].filter(Boolean).join("; ");
   const datosReales = tools.some((t) => LECTURA.has(t.name)) || r.trazas.some((t) => t.checkout) ? "sí" : "no";
+  const notas: string[] = [];
+  if (RESOLUBLES.has(caso.id) && !falla && !cambio) notas.push("preguntó de más");
+  // Texto del MODELO (turnos con rondas y sin checkout) que afirma algo hecho sin ningún cambio real: revisar a mano.
+  const delModelo = r.trazas.some((t) => t.rounds > 0 && !t.checkout);
+  const escrituraOk = tools.some((t) => t.result === "ok" && ["update_cart", "create_order_request", "validate_order", "confirm_order"].includes(t.name));
+  // "Confirmado / registrado" está respaldado si el pedido YA estaba confirmado en la BD.
+  const afirma = pedidosAntes.some((p) => p.status === "confirmed") ? AFIRMA_SIN_PEDIDO : AFIRMA;
+  if (delModelo && !cambio && !escrituraOk && r.salidas.some((x) => afirma.test(x))) notas.push("afirma algo hecho sin cambio: revisar");
+  if (infra.length) notas.push(`infra: ${[...new Set(infra)].join(",")}`);
   return {
     id: caso.id, grupo: caso.grupo,
     mensaje: caso.pasos.map((p) => (typeof p === "string" ? p : "b" in p ? `[botón ${p.b[0]}#${p.b[1]}]` : "nt" in p ? `[${p.nt}]` : `[cita foto] ${p.cita}`)).join(" ⟶ "),
@@ -492,50 +514,65 @@ async function correr(caso: Caso): Promise<Fila> {
     herramientas: tools.map((t) => `${t.name}:${t.result}`).join(", ") || "-",
     respuesta: (r.salidas.at(-1) ?? "(sin respuesta)").replace(/\s+/g, " ").slice(0, 140),
     cambio: cambio || "no", datosReales, proteccion: bloqueos.join(", ") || "-",
-    resultado: falla ? "FAIL" : bloqueos.length > 0 ? "BLOCKED-SAFE" : "PASS",
+    resultado: falla ? (MODO === "real" && infra.length ? "INFRA" : "FAIL") : bloqueos.length > 0 ? "BLOCKED-SAFE" : "PASS",
     motivo: falla ?? (ult?.outcome === "fallback" ? "respuesta fija de respaldo" : ""),
+    notas,
   };
 }
 
 async function main() {
   if (MODO === "real" && !KEY) {
-    console.log("Sin GEMINI_EVAL_KEY / GEMINI_KEY_DELACOUR en el entorno: evaluación REAL no ejecutada.");
+    console.log("Sin GEMINI_EVAL_KEY / GEMINI_KEY / GEMINI_KEY_DELACOUR en el entorno: evaluación REAL no ejecutada.");
     process.exit(2);
   }
   const probe = await mundo();
   const lista = casos(probe.P).filter((c) => !SOLO || SOLO.test(c.id));
   const filas: Fila[][] = [];
-  for (const c of lista) {
+  const esc = (x: string) => x.replace(/\|/g, "/").replace(/\n/g, " ");
+  const peor = (fs: Fila[]) => fs.find((f) => f.resultado === "FAIL") ?? fs.find((f) => f.resultado === "INFRA") ?? fs.find((f) => f.resultado === "BLOCKED-SAFE") ?? fs[0];
+  const tally = (fs: Fila[]) => (["PASS", "BLOCKED-SAFE", "FAIL", "INFRA"] as const).map((k) => fs.filter((x) => x.resultado === k).length);
+  const fila = (fs: Fila[]) => {
+    const f = peor(fs);
+    const [p, b, fl, inf] = tally(fs);
+    const res = REPS > 1 ? `${f.resultado} (${p}P/${b}B/${fl}F${inf ? `/${inf}I` : ""})` : f.resultado;
+    const notas = [...new Set(fs.flatMap((x) => x.notas))].join("; ");
+    return `| ${f.id} | ${f.grupo} | ${esc(f.mensaje)} | ${esc(f.estado)} | ${esc(f.espera)} | ${esc(f.obtenida)} | ${esc(f.herramientas)} | ${esc(f.respuesta)} | ${esc(f.cambio)} | ${f.datosReales} | ${esc(f.proteccion)} | **${res}**${f.motivo ? ` — ${esc(f.motivo)}` : ""}${notas ? ` · _${esc(notas)}_` : ""} |`;
+  };
+  for (const [n, c] of lista.entries()) {
     const corridas: Fila[] = [];
     for (let i = 0; i < REPS; i++) {
       try {
         corridas.push(await correr(c));
       } catch (err) {
-        corridas.push({ id: c.id, grupo: c.grupo, mensaje: "", estado: DESCR[c.ctx], espera: c.espera, obtenida: "error", herramientas: "-", respuesta: "", cambio: "-", datosReales: "-", proteccion: "-", resultado: "FAIL", motivo: `excepción: ${err instanceof Error ? err.message.slice(0, 120) : "?"}` });
+        corridas.push({ id: c.id, grupo: c.grupo, mensaje: "", estado: DESCR[c.ctx], espera: c.espera, obtenida: "error", herramientas: "-", respuesta: "", cambio: "-", datosReales: "-", proteccion: "-", resultado: "FAIL", motivo: `excepción: ${err instanceof Error ? err.message.slice(0, 120) : "?"}`, notas: [] });
       }
+      if (PAUSA) await new Promise((ok) => setTimeout(ok, PAUSA));
     }
     filas.push(corridas);
+    const [p, b, fl, inf] = tally(corridas);
+    console.error(`[${n + 1}/${lista.length}] ${c.id} ${p}P ${b}B ${fl}F${inf ? ` ${inf}I` : ""}`);
+    if (SALIDA) appendFileSync(`${SALIDA}.parcial`, `${fila(corridas)}\n`);
   }
-  const peor = (fs: Fila[]) => fs.find((f) => f.resultado === "FAIL") ?? fs.find((f) => f.resultado === "BLOCKED-SAFE") ?? fs[0];
-  const cuenta = { PASS: 0, "BLOCKED-SAFE": 0, FAIL: 0 };
-  for (const fs of filas) for (const f of fs) cuenta[f.resultado]++;
-  const esc = (s: string) => s.replace(/\|/g, "/").replace(/\n/g, " ");
+  const todas = filas.flat();
+  const [P, B, F, I] = tally(todas);
+  const inconsistentes = filas.filter((fs) => new Set(fs.map((x) => x.resultado)).size > 1);
+  const deMas = filas.filter((fs) => fs.some((x) => x.notas.includes("preguntó de más")));
+  const revisar = filas.filter((fs) => fs.some((x) => x.notas.some((n) => n.startsWith("afirma"))));
   const md = [
     `# Auditoría de lenguaje humano — modo ${MODO}${MODO === "real" ? ` (${MODEL}, ${REPS} corridas por caso)` : ""}`,
     "",
-    `Casos: **${lista.length}** · corridas: **${lista.length * REPS}** · PASS **${cuenta.PASS}** · BLOCKED-SAFE **${cuenta["BLOCKED-SAFE"]}** · FAIL **${cuenta.FAIL}**`,
+    `Casos: **${lista.length}** · corridas: **${todas.length}** · PASS **${P}** · BLOCKED-SAFE **${B}** · FAIL **${F}**${I ? ` · INFRA **${I}** (cuota/tiempo del modelo; no es lenguaje)` : ""}`,
+    "",
+    `Inconsistentes entre corridas: **${inconsistentes.length}**${inconsistentes.length ? ` (${inconsistentes.map((fs) => fs[0].id).join(", ")})` : ""} · preguntó de más: **${deMas.length}**${deMas.length ? ` (${deMas.map((fs) => fs[0].id).join(", ")})` : ""} · afirmaciones a revisar: **${revisar.length}**${revisar.length ? ` (${revisar.map((fs) => fs[0].id).join(", ")})` : ""}`,
     "",
     "| Caso | Grupo | Mensaje(s) | Estado previo | Esperado | Obtenido | Herramientas | Respuesta | ¿Cambió estado/pedido? | ¿Datos reales? | Protección | Resultado |",
     "|---|---|---|---|---|---|---|---|---|---|---|---|",
-    ...filas.map((fs) => {
-      const f = peor(fs);
-      const res = REPS > 1 ? `${f.resultado} (${fs.filter((x) => x.resultado === "PASS").length}P/${fs.filter((x) => x.resultado === "BLOCKED-SAFE").length}B/${fs.filter((x) => x.resultado === "FAIL").length}F)` : f.resultado;
-      return `| ${f.id} | ${f.grupo} | ${esc(f.mensaje)} | ${esc(f.estado)} | ${esc(f.espera)} | ${esc(f.obtenida)} | ${esc(f.herramientas)} | ${esc(f.respuesta)} | ${esc(f.cambio)} | ${f.datosReales} | ${esc(f.proteccion)} | **${res}**${f.motivo ? ` — ${esc(f.motivo)}` : ""} |`;
-    }),
+    ...filas.map(fila),
   ].join("\n");
   if (SALIDA) writeFileSync(SALIDA, md);
   const fails = filas.map(peor).filter((f) => f.resultado === "FAIL");
-  console.log(`Modo ${MODO}: casos ${lista.length} · PASS ${cuenta.PASS} · BLOCKED-SAFE ${cuenta["BLOCKED-SAFE"]} · FAIL ${cuenta.FAIL}`);
+  console.log(`Modo ${MODO}: casos ${lista.length} · corridas ${todas.length} · PASS ${P} · BLOCKED-SAFE ${B} · FAIL ${F}${I ? ` · INFRA ${I}` : ""}`);
+  console.log(`Inconsistentes: ${inconsistentes.length} · preguntó de más: ${deMas.length} · afirmaciones a revisar: ${revisar.length}`);
   for (const f of fails) console.log(`  FAIL ${f.id} [${f.mensaje}] ${f.motivo} :: ${f.obtenida} :: ${f.herramientas} :: "${f.respuesta}"`);
   process.exit(fails.length ? 1 : 0);
 }
