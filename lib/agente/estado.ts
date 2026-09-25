@@ -43,6 +43,15 @@ export const checkoutStateSchema = z
     /** Resumen que se le MOSTRÓ: solo esa propuesta (id + total) se puede confirmar. */
     summary: z.object({ confirmationId: z.string().regex(/^cf_[0-9a-z]{16}$/), total: z.number().int().min(0), turn: z.number().int().min(0) }).strict().nullable(),
     startedTurn: z.number().int().min(0),
+    /**
+     * Bloque 28 — cambio de cantidad / quitar que el cliente pidió SIN decir de cuál producto ("eran 3"
+     * con varios productos): se le preguntó cuál y se aplica cuando lo diga. Nunca se asume.
+     */
+    pendingChange: z
+      .object({ tipo: z.enum(["fijar", "sumar", "restar", "quitar"]), n: z.number().int().min(0).max(99) })
+      .strict()
+      .nullable()
+      .default(null),
   })
   .strict();
 export type CheckoutState = z.infer<typeof checkoutStateSchema>;
@@ -118,6 +127,13 @@ export const conversationStateSchema = z
     // --- Bloque 27 ---
     /** Checkout conversacional en curso (lo conduce el BACKEND paso a paso; el modelo no lo ve ni lo cambia). */
     checkout: checkoutStateSchema.nullable().default(null),
+    // --- Bloque 28 ---
+    /**
+     * Nombre dado en un checkout de ESTA conversación que aún no se confirmó (el cliente tocó Modificar):
+     * el siguiente checkout no lo vuelve a pedir. NO es el contacto: al contacto llega solo al confirmar.
+     */
+    // Opcional (sin default): solo se escribe cuando existe, así un rollback no invalida los estados guardados.
+    checkoutName: z.string().min(2).max(60).optional(),
   })
   .strict();
 

@@ -28,6 +28,14 @@ const MILES = /\b\d{1,3}(?:\.\d{3})+\b/g;
 const URL_PATTERN = /\b(?:https?:\/\/|www\.)[^\s<>"'()]+/gi;
 const cleanUrl = (u: string) => u.replace(/[.,;:!?*_)\]]+$/, "");
 
+/** Bloque 28 — seguimiento real de un pedido del checkout (de la BD): etapa, pago y entrega. */
+export interface OrderTracking {
+  etapa: "confirmado" | "en_preparacion" | "enviado" | "entregado";
+  pago: "pendiente" | "recibido";
+  entrega: "tienda" | "domicilio";
+  metodo_pago: "pago_en_tienda" | "transferencia";
+}
+
 export interface Evidence {
   refs: Set<string>;
   /** Números que devolvió el BACKEND (únicos que respaldan montos). */
@@ -38,6 +46,55 @@ export interface Evidence {
   urls: Set<string>;
   /** El backend devolvió un pedido confirmado (o ya cerrado como venta) en este turno. */
   confirmed?: boolean;
+  /** Bloque 28: estados REALES del pedido que el backend respalda ("preparado", "enviado", "entregado", "pagado"). */
+  estados?: Set<string>;
+  /** Bloque 28: en este turno hubo una escritura real sobre el pedido (crear / revalidar / confirmar). */
+  orderWritten?: boolean;
+  /** Bloque 28 (auditoría final): update_cart se BLOQUEÓ en el turno (y ninguno salió bien): nada cambió en la selección. */
+  cartBlocked?: boolean;
+  cartWritten?: boolean;
+}
+
+/**
+ * Bloque 28 — qué estados del pedido puede AFIRMAR el agente: solo los que dice la BD (etapa, pago,
+ * cierre). Sin seguimiento => ninguno: "ya fue enviado" sin respaldo no sale.
+ */
+export function addOrderStateEvidence(order: { status?: string; tracking?: OrderTracking } | null | undefined, ev: Evidence): void {
+  if (!order) return;
+  const e = (ev.estados ??= new Set());
+  if (order.status === "completed") for (const x of ["preparado", "enviado", "entregado", "pagado"]) e.add(x);
+  const t = order.tracking;
+  if (!t) return;
+  if (t.etapa === "en_preparacion" || t.etapa === "enviado" || t.etapa === "entregado") e.add("preparado");
+  if (t.etapa === "enviado" || t.etapa === "entregado") e.add("enviado");
+  if (t.etapa === "entregado") e.add("entregado");
+  if (t.pago === "recibido") e.add("pagado");
+}
+
+/** Afirmaciones sobre el estado del pedido (enviado, entregado, pagado, en preparación). */
+const ESTADO_CLAIMS: ReadonlyArray<readonly [string, RegExp]> = [
+  ["enviado", /\b(?:fue|est[aá]n?|qued[oó]|va|van|ha sido|ya)\s+(?:\S+\s+){0,2}?(?:enviad[oa]s?|despachad[oa]s?|en camino|en ruta)\b|\bya\s+(?:sali[oó]|lo enviamos|la enviamos|te lo enviamos|lo despachamos)\b/],
+  ["entregado", /\b(?:fue|est[aá]n?|qued[oó]|ha sido|ya)\s+(?:\S+\s+){0,2}?entregad[oa]s?\b/],
+  ["pagado", /\b(?:tu|el|su)\s+pago\s+(?:ya\s+)?(?:fue|est[aá]|qued[oó]|ha sido)\s+(?:\S+\s+)?(?:recibido|confirmado|registrado|aprobado|verificado)\b|\b(?:est[aá]|qued[oó]|fue)\s+(?:\S+\s+)?pagad[oa]s?\b|\brecibimos\s+tu\s+pago\b/],
+  ["preparado", /\b(?:est[aá]n?|qued[oó]|va|ya)\s+(?:\S+\s+){0,2}?(?:en preparaci[oó]n|preparando|preparad[oa]s?|listo para (?:recoger|enviar|entregar|despachar))\b/],
+];
+/** "Cambié / actualicé tu pedido" (no el carrito): exige una escritura real sobre el pedido en el turno. */
+const PEDIDO_MODIFICADO = /\b(?:cambi[eé]|modifiqu[eé]|actualic[eé]|ajust[eé])\s+(?:\S+\s+){0,2}?(?:tu|el|su)\s+(?:pedido|orden)\b/;
+
+/** Estados del pedido que el texto AFIRMA (preguntas, negaciones e instrucciones no cuentan). */
+export function claimedOrderStates(text: string): { estados: string[]; modificado: boolean } {
+  const estados = new Set<string>();
+  let modificado = false;
+  for (const sentence of text.toLowerCase().split(/(?<=[.!\n])\s*|(?=¿)/)) {
+    if (sentence.includes("¿") || sentence.trim().endsWith("?")) continue;
+    for (const [estado, re] of ESTADO_CLAIMS) {
+      const m = re.exec(sentence);
+      if (m && !/\b(?:no|sin|a[uú]n no|todav[ií]a no|falta|pendiente|cuando)\b/.test(sentence.slice(0, m.index + m[0].length))) estados.add(estado);
+    }
+    const mm = PEDIDO_MODIFICADO.exec(sentence);
+    if (mm && !/\b(?:no|puedo|podemos|puede)\b/.test(sentence.slice(0, mm.index + mm[0].length))) modificado = true;
+  }
+  return { estados: [...estados], modificado };
 }
 
 export function emptyEvidence(): Evidence {
@@ -108,7 +165,10 @@ export function addCustomerEvidence(text: string, ev: Evidence): void {
   for (const m of text.matchAll(/\b\d{1,3}\b/g)) ev.customerNumbers.add(Number(m[0]));
 }
 
-export type GroundingViolation = { kind: "reference" | "amount" | "quantity" | "link" | "confirmation"; value: string };
+/** "Listo, te lo agregué / te separé…": afirmar un cambio en la selección. */
+const CARRITO_CLAIM = /(?:^|[\s¡!.,])(?:listo|agregu[eé]|a[nñ]ad[ií]|separ[eé]|te separ[eé]|actualic[eé]|te dej[eé]|qued[oó] (?:agregad|en tu|list)|ya (?:est[aá]|qued[oó]) en tu)/i;
+
+export type GroundingViolation = { kind: "reference" | "amount" | "quantity" | "link" | "confirmation" | "order_status" | "cart"; value: string };
 
 export function checkGrounding(text: string, ev: Evidence): { ok: boolean; violations: GroundingViolation[] } {
   const violations: GroundingViolation[] = [];
@@ -144,5 +204,11 @@ export function checkGrounding(text: string, ev: Evidence): { ok: boolean; viola
     if (!ev.numbers.has(n) && !ev.customerNumbers.has(n)) add({ kind: "quantity", value: m[0].trim() });
   }
   if (!ev.confirmed && claimsConfirmation(withoutUrls)) add({ kind: "confirmation", value: "pedido confirmado" });
+  // Bloque 28: el estado del pedido (enviado, entregado, pagado, en preparación) solo si la BD lo respalda.
+  const claimed = claimedOrderStates(withoutUrls);
+  for (const e of claimed.estados) if (!ev.estados?.has(e)) add({ kind: "order_status", value: e });
+  if (claimed.modificado && !ev.orderWritten) add({ kind: "order_status", value: "pedido modificado" });
+  // Bloque 28 (auditoría final): la selección NO cambió (la herramienta se bloqueó): no se dice "listo / agregué".
+  if (ev.cartBlocked && !ev.cartWritten && CARRITO_CLAIM.test(withoutUrls)) add({ kind: "cart", value: "selección sin cambios" });
   return { ok: violations.length === 0, violations };
 }

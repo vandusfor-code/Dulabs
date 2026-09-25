@@ -51,6 +51,8 @@ import {
 } from "@/lib/agente/clasificacion";
 import { isExplicitConfirmation } from "@/lib/agente/etapa";
 import {
+  CHECKOUT_MESSAGES,
+  CHECKOUT_STEP_HINT,
   continueCheckout,
   isCheckoutButton,
   parseSummaryAction,
@@ -62,6 +64,8 @@ import {
   type CheckoutResult,
 } from "@/lib/agente/checkout";
 import type { CheckoutStep } from "@/lib/agente/estado";
+import { leerCantidad, modalidadInicial, numerosDelCliente, pideQuitar } from "@/lib/agente/lenguaje/interpretar";
+import { addOrderStateEvidence, type OrderTracking } from "@/lib/agente/anclaje";
 
 /**
  * Resultado de un envío: true/false o, con detalle, el wamid que asignó Meta (necesario para
@@ -218,8 +222,53 @@ export const FALLBACK_MESSAGES = {
   pending: "Estoy verificando el estado de tu pedido. Escríbeme de nuevo en un momento y te confirmo cómo quedó.",
 } as const;
 
+/**
+ * Bloque 28 (auditoría final): la selección no cambió porque el backend rechazó el cambio y el modelo no
+ * supo decirlo: en vez de un "no pude verificar" genérico, la pregunta CONCRETA que falta (nunca "no entendí").
+ */
+export const CART_CLARIFY: Readonly<Partial<Record<string, string>>> = {
+  CHOICE_REQUIRED: "¿Cuál de las opciones quieres? 😊 Escríbeme el número o responde a la foto del producto.",
+  QUANTITY_NOT_STATED: "¿Cuántas unidades quieres? 😊",
+  SELECTION_INCOMPLETE: "¿Quieres todos los productos que te mostré o solo algunos? 😊",
+  REFERENCE_NOT_ALLOWED: "¿Me confirmas cuál producto quieres? 😊 Puedes escribirme su nombre o su referencia.",
+};
+
+/** Bloque 28 (auditoría final): el modelo afirmó un estado que la BD no respalda => se cuenta el estado REAL (fijo). */
+export function realOrderStatus(order: { order_id: string; tracking?: OrderTracking }): string | null {
+  const t = order.tracking;
+  if (!t) return null;
+  const etapa = { confirmado: "confirmado (aún no se prepara)", en_preparacion: "en preparación", enviado: "enviado", entregado: "entregado" }[t.etapa];
+  const pago = t.pago === "recibido" ? "el pago está recibido" : "el pago está pendiente de verificación";
+  return `Según nuestro sistema, tu pedido ${order.order_id} está ${etapa} y ${pago}. Una asesora te confirma cualquier novedad 😊`;
+}
+
+/** Bloque 28: herramientas de SOLO LECTURA para responder una pregunta durante el checkout (nunca escriben). */
+const SIDE_QUESTION_TOOLS: readonly AgentToolName[] = [
+  "search_products",
+  "more_products",
+  "similar_products",
+  "resolve_product_by_reference",
+  "resolve_product_by_attributes",
+  "get_product_details",
+  "get_catalog_link",
+  "get_customer_context",
+];
+const STEP_LABEL: Readonly<Record<CheckoutStep, string>> = {
+  name: "nombre",
+  delivery: "forma de entrega",
+  address: "dirección",
+  city: "ciudad",
+  reference: "referencia de la entrega",
+  payment: "forma de pago",
+  summary: "resumen del pedido",
+};
+const SIDE_QUESTION_RULES = (step: CheckoutStep) =>
+  `El cliente está REGISTRANDO su pedido con el sistema (paso actual: ${STEP_LABEL[step]}) y te hizo una pregunta. Responde SOLO esa pregunta, en 1 a 3 frases, con datos de las herramientas o de la configuración del negocio (políticas). Si el dato no está (por ejemplo, el costo o el tiempo del envío no están configurados), dilo con honestidad y di que una asesora lo confirma al registrar el pedido. No pidas nombre, dirección, entrega ni pago; no confirmes ni registres pedidos; no agregues ni quites productos; no repitas la pregunta del paso: el sistema la repite después de tu respuesta.`;
+
 const CORRECTION = (v: GroundingViolation[]) =>
-  `[VERIFICACIÓN DEL SISTEMA] Tu respuesta incluye datos que no vienen de las herramientas (${v
+  v.some((x) => x.kind === "cart")
+    ? "[VERIFICACIÓN DEL SISTEMA] La selección NO cambió: la herramienta rechazó el cambio (lee su motivo). No digas que agregaste o dejaste listo nada: hazle al cliente la pregunta concreta que indica la herramienta (cuál producto o cuántas unidades). No menciones esta verificación."
+    : `[VERIFICACIÓN DEL SISTEMA] Tu respuesta incluye datos que no vienen de las herramientas (${v
     .map((x) => x.value)
     .slice(0, 5)
     .join(", ")}). Reescríbela usando SOLO referencias, precios y cantidades devueltos por las herramientas, o consulta la herramienta que corresponda. No menciones esta verificación.`;
@@ -399,6 +448,22 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
       trace.delivery.text_error = r.error;
       return r.sent;
     };
+    // Bloque 28: con un pedido en registro, una ubicación en el paso de la dirección no pasa a una asesora:
+    // se pide la dirección escrita (el checkout sigue).
+    const ckStep = deps.config.checkoutEnabled ? (loaded.state.checkout?.step ?? null) : null;
+    // Igual una foto o un documento en la dirección o la ciudad (una captura de la dirección): se pide escrito.
+    const pideEscrito =
+      ckStep === "address" && policy.kind === "location"
+        ? CHECKOUT_MESSAGES.locationNeedsText
+        : (ckStep === "address" || ckStep === "city") && (policy.kind === "image" || policy.kind === "document")
+          ? CHECKOUT_MESSAGES.mediaNeedsText(ckStep)
+          : null;
+    if (ckStep && pideEscrito) {
+      const sent = await sendFixed(pideEscrito);
+      trace.checkout = { step: ckStep, action: "invalid" };
+      trace.state_saved = await deps.state.save(key, seen, loaded.version).catch(() => false);
+      return finish("replied", sent ? pideEscrito : null);
+    }
     if (policy.action === "handoff") {
       const message = NON_TEXT_MESSAGES.handoff(policy.kind);
       // Motivo de la lista cerrada existente ("algo que el asistente no puede resolver"); el tipo exacto queda en trace.non_text.
@@ -436,7 +501,10 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
         ? NON_TEXT_MESSAGES.unsupported
         : photo
           ? NON_TEXT_MESSAGES.audioAboutProduct({ reference: photo.reference, name: photo.name, available: photo.status === "available" })
-          : NON_TEXT_MESSAGES.audio;
+          : ckStep
+            ? // Bloque 28: con un pedido en registro, se dice exactamente qué dato falta.
+              `Por ahora no puedo escuchar notas de voz 🙏 ${CHECKOUT_STEP_HINT[ckStep]}`
+            : NON_TEXT_MESSAGES.audio;
     const sent = await sendFixed(text);
     if (sent) next = { ...next, nonTextNoticeAt: new Date(now()).toISOString() };
     trace.state_saved = await deps.state.save(key, next, loaded.version).catch(() => false);
@@ -478,6 +546,8 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
     replyReference: replyTo?.kind === "product_image" ? replyTo.reference : null,
     typedReferences: typedRefs,
     previous: [...state.selection.map((x) => x.reference), ...state.cart.map((c) => c.reference)],
+    // Bloque 28 (solo con el checkout conversacional): capa de lenguaje y "el de la foto" con UNA sola foto enviada.
+    ...(deps.config.checkoutEnabled ? { lenguaje: true, photoReferences: state.imagesSent.filter((x) => x.turn >= state.turn - 6).map((x) => x.reference) } : {}),
   });
   const designated = new Set([...selection.selected.map((x) => x.reference), ...state.selection.filter((x) => x.turn === state.turn - 1).map((x) => x.reference)]);
   state = { ...state, selection: selection.selected.slice(0, 10).map((x) => ({ ...x, turn: state.turn })) };
@@ -485,11 +555,13 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
   trace.clarification_needed = selection.needsClarification || replyTo?.kind === "forwarded" || replyTo?.kind === "unknown_message";
 
   // 2) Hechos confiables del turno (pedido activo desde el motor).
-  let activeOrder: (OrderPublicView & { next_step: string }) | null = null;
+  let activeOrder: (OrderPublicView & { next_step: string; tracking?: OrderTracking }) | null = null;
   let activeOrderSource: string | null = null;
   try {
     const o = await deps.tools.engine.getOrder({ tenantId: input.tenantId, contact, requestId });
-    activeOrder = { ...publicView(o), next_step: nextStepOf(o) };
+    // Bloque 28: seguimiento REAL del pedido del checkout (etapa, pago, entrega): el modelo nunca lo supone.
+    const tracking: OrderTracking | undefined = o.checkout ? { etapa: o.checkout.stage, pago: o.checkout.paymentStatus, entrega: o.checkout.delivery, metodo_pago: o.checkout.paymentMethod } : undefined;
+    activeOrder = { ...publicView(o), next_step: nextStepOf(o), ...(tracking ? { tracking } : {}) };
     activeOrderSource = o.source;
   } catch (err) {
     if (!(err instanceof OrderError)) trace.error_kind = "order_lookup_failed";
@@ -537,7 +609,8 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
         // Primera vez: la solicitud del catálogo abierta de ESTA conversación (tienda detal o enlace
         // mayorista firmado) ya dice cómo compra; si no, lo que el cliente eligió en este mensaje.
         const fromCatalog = activeOrder && activeOrderSource === "catalog" && !["completed", "cancelled", "expired", "rejected"].includes(activeOrder.status) ? activeOrder.channel : null;
-        const choice = fromCatalog ?? buttonChoice ?? parseChannelChoice(input.text);
+        // Bloque 28: "soy particular" / "es para mí" => detal (seguro); mayorista SOLO con la palabra ("mayor", "por mallor").
+        const choice = fromCatalog ?? buttonChoice ?? parseChannelChoice(input.text) ?? modalidadInicial(input.text);
         if (choice) {
           const origin = fromCatalog ? (fromCatalog === "wholesale" ? "catalogo_mayorista" : "catalogo_detal") : "cliente";
           const w = await deps.classification.setInitial(key, choice, origin);
@@ -599,10 +672,11 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
       return startDone("intent_menu", await sendMenu(INTENT_MENU.body, INTENT_MENU.buttons, INTENT_MENU.textFallback));
     }
     //   b) "Buscar una joya": se le pide que escriba; lo que escriba entra a la búsqueda normal del agente.
-    if (startAction === "search_product") return startDone("search_prompt", (await sendFixed(START_MESSAGES.searchPrompt)) ? START_MESSAGES.searchPrompt : null);
+    // Con un pedido en registro, "catálogo" / "buscar" los atiende el checkout (responde y repite su pregunta).
+    if (startAction === "search_product" && !state.checkout) return startDone("search_prompt", (await sendFixed(START_MESSAGES.searchPrompt)) ? START_MESSAGES.searchPrompt : null);
     //   c) "Ver catálogo": el enlace REAL de la publicación para el canal GUARDADO (detal => tienda detal;
     //      mayorista => enlace mayorista firmado). El modelo no elige ni arma el enlace.
-    if (startAction === "open_catalog") {
+    if (startAction === "open_catalog" && !state.checkout) {
       const pub = await catalogPublication(deps.tools, input.tenantId, current.channel).catch(() => null);
       const text = pub ? START_MESSAGES.catalog(`${pub.origin}${pub.base}`) : START_MESSAGES.catalogUnavailable;
       return startDone("catalog_link", (await sendFixed(text)) ? text : null);
@@ -655,8 +729,92 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
             return false;
           }
         },
+        wamid: input.wamid,
+        // Bloque 28: una PREGUNTA durante el checkout la responde el modelo SOLO con herramientas de lectura
+        // (y el anclaje); el checkout no cambia y el backend repite la pregunta del paso.
+        answerQuestion: (text, step) => answerSideQuestion(text, step),
       }
     : null;
+  async function answerSideQuestion(text: string, step: CheckoutStep): Promise<string | null> {
+    const readOnly = allowed.filter((t) => SIDE_QUESTION_TOOLS.includes(t));
+    const rows = await deps.history.recent({ phoneNumberId: input.phoneNumberId, waId: input.waId, sinceIso: new Date(now() - HISTORY_WINDOW_MS).toISOString(), limit: HISTORY_MAX_TURNS * 2 + 4 }).catch(() => []);
+    const qTurns: AITurn[] = [...historyTurns(rows, { excludeWamids: wamids }), { role: "user", text }];
+    const qFacts: TurnFacts = {
+      channel,
+      channelSource: source,
+      customerName: null,
+      activeOrder,
+      handoffActive: false,
+      replyTo: null,
+      selection: { selected: [], needsClarification: false },
+      stage: { name: "registrando_pedido", guidance: SIDE_QUESTION_RULES(step) },
+    };
+    const qCtx: AgentTurnToolContext = {
+      tenantId: input.tenantId,
+      phoneNumberId: input.phoneNumberId,
+      waId: input.waId,
+      channel,
+      requestId,
+      wamid: input.wamid,
+      turn: state.turn,
+      state,
+      pendingChoice: new Set(),
+      designated: new Set(),
+      customerText: text,
+      images: [],
+      handedOff: false,
+      handoffMotive: null,
+      newProposal: null,
+    };
+    const ev = emptyEvidence();
+    addCustomerEvidence(text, ev);
+    addEvidence(activeOrder, ev);
+    addOrderStateEvidence(activeOrder, ev);
+    for (const k of state.known) ev.refs.add(k.reference);
+    const system = `${buildSystemInstruction(deps.config, state, qFacts)}\n\n=== PREGUNTA DURANTE EL REGISTRO DEL PEDIDO ===\n${SIDE_QUESTION_RULES(step)}`;
+    try {
+      for (let round = 0; round < 3; round++) {
+        trace.rounds++;
+        const r = await generateWithRetry(
+          deps.provider,
+          { model: deps.model, system, turns: qTurns, tools: agentToolDeclarations(readOnly), toolMode: round === 2 ? "none" : "auto", maxOutputTokens: limits.maxOutputTokens, ...(deps.config.thinking ? { thinking: deps.config.thinking } : {}), timeoutMs: limits.modelTimeoutMs },
+          { deadlineAt, now, sleep: deps.retry?.sleep, random: deps.retry?.random, onRetry: () => trace.retries++ },
+        );
+        trace.model = r.model;
+        trace.usage.input += r.usage.inputTokens ?? 0;
+        trace.usage.output += r.usage.outputTokens ?? 0;
+        trace.usage.thinking += r.usage.thinkingTokens ?? 0;
+        trace.usage.cached += r.usage.cachedTokens ?? 0;
+        if (r.finish === "safety") return null;
+        if (r.toolCalls.length > 0 && round < 2) {
+          qTurns.push({ role: "model", text: r.text, toolCalls: r.toolCalls, continuation: r.continuation });
+          const results = [];
+          for (const tc of r.toolCalls.slice(0, 3)) {
+            const t0 = now();
+            // Solo lectura: cualquier otra herramienta (update_cart, create_order_request…) => TOOL_NOT_ALLOWED.
+            const outcome = await executeAgentTool(tc.name, tc.args, readOnly, qCtx, deps.tools);
+            trace.tool_calls.push({ name: tc.name.slice(0, 40), result: outcome.ok ? "ok" : outcome.error.code, ms: now() - t0, args: summarizeArgs(tc.args) });
+            const output = outcome.ok ? outcome.data : { error: outcome.error };
+            addEvidence(output, ev);
+            results.push({ callId: tc.id, name: tc.name, output });
+          }
+          for (const k of qCtx.state.known) ev.refs.add(k.reference);
+          qTurns.push({ role: "tool", results });
+          continue;
+        }
+        if (!r.text) return null;
+        const check = checkGrounding(r.text, ev);
+        if (!check.ok) {
+          trace.grounding.violations.push(...check.violations.map((v) => v.kind));
+          return null;
+        }
+        return r.text.trim().slice(0, 1_200);
+      }
+    } catch (err) {
+      trace.error_kind = err instanceof AIProviderError ? `side_${err.kind}` : "side_error";
+    }
+    return null;
+  }
   const checkoutDone = async (r: CheckoutResult) => {
     trace.checkout = { step: r.step, action: r.action };
     if (r.handedOff) trace.handoff = { source: "system", motive: "payment_or_delivery" };
@@ -693,7 +851,7 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
           input.text.toUpperCase().includes(`SOLICITUD: ${activeOrder.order_id}`) ||
           (state.proposal?.orderId === activeOrder.order_id && state.proposal.presentedTurn !== null && isExplicitConfirmation(input.text)))
       ) {
-        r = await startCheckout(checkoutIO, state, activeOrder);
+        r = await startCheckout(checkoutIO, state, activeOrder, input.text);
       } else if (
         state.cart.length > 0 &&
         !(activeOrder && ["draft", "validated", "pending_confirmation"].includes(activeOrder.status)) &&
@@ -717,7 +875,7 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
             throw err;
           });
         if (created?.order.status === "pending_confirmation" && created.order.confirmation) {
-          r = await startCheckout(checkoutIO, { ...state, activeOrderId: created.order.orderId }, publicView(created.order));
+          r = await startCheckout(checkoutIO, { ...state, activeOrderId: created.order.orderId }, publicView(created.order), input.text);
         } else if (created) {
           // Con problemas (agotado, retirado…): el agente se los explica con el pedido real a la vista.
           activeOrder = { ...publicView(created.order), next_step: nextStepOf(created.order) };
@@ -758,6 +916,7 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
   const evidence: Evidence = emptyEvidence();
   addCustomerEvidence(input.text, evidence);
   addEvidence(activeOrder, evidence);
+  addOrderStateEvidence(activeOrder, evidence);
   for (const k of state.known) evidence.refs.add(k.reference);
   for (const c of state.cart) evidence.numbers.add(c.quantity);
 
@@ -777,6 +936,18 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
     state,
     pendingChoice: new Set(),
     designated,
+    // Bloque 28: "eran 3" / "quita ese" sin decir cuál, con 2+ productos en la selección => se pregunta (nunca se elige).
+    cartTargetAmbiguous: deps.config.checkoutEnabled && selection.selected.length === 0 && state.cart.length >= 2 && (leerCantidad(input.text) !== null || pideQuitar(input.text)),
+    // Bloque 28 (auditoría final): cantidades y "todos" respaldados por lo que ESCRIBIÓ el cliente (sus mensajes recientes).
+    ...(deps.config.checkoutEnabled
+      ? {
+          cartBacking: {
+            numbers: numerosDelCliente([...rows.filter((r) => r.direccion === "entrante").slice(-4).map((r) => r.contenido ?? ""), input.text].join("\n")),
+            cambio: leerCantidad(input.text),
+            todos: selection.all ? selection.selected.map((x) => x.reference) : null,
+          },
+        }
+      : {}),
     customerText: input.text,
     images: [],
     handedOff: false,
@@ -788,6 +959,8 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
   let toolCalls = 0;
   let reply: string | null = null;
   let failure: "technical" | "safety" | "unverified" | "pending" | null = null;
+  /** Bloque 28: último rechazo de update_cart en el turno (solo con el checkout conversacional). */
+  let cartError: string | null = null;
   let corrected = false;
   let forceText = false;
   let nudged = false;
@@ -844,6 +1017,16 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
           trace.tool_calls.push({ name: tc.name.slice(0, 40), result: outcome.ok ? "ok" : outcome.error.code, ms: now() - t0, args: summarizeArgs(tc.args) });
           const output = outcome.ok ? outcome.data : { error: outcome.error };
           addEvidence(output, evidence);
+          // Bloque 28: "actualicé tu pedido" solo con una escritura real sobre el pedido en este turno.
+          if (outcome.ok && ["create_order_request", "validate_order", "confirm_order"].includes(tc.name)) evidence.orderWritten = true;
+          // Bloque 28 (auditoría final; solo con el checkout conversacional): "listo" sin cambio real en la selección.
+          if (tc.name === "update_cart" && deps.config.checkoutEnabled) {
+            if (outcome.ok) evidence.cartWritten = true;
+            else {
+              evidence.cartBlocked = true;
+              cartError = outcome.error.code;
+            }
+          }
           results.push({ callId: tc.id, name: tc.name, output });
         }
         for (const k of ctx.state.known) evidence.refs.add(k.reference);
@@ -908,7 +1091,7 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
     state = { ...ctx.state, failures: 0 };
     try {
       const o = await deps.tools.engine.getOrder({ tenantId: input.tenantId, contact, orderId: checkoutOrderId, requestId });
-      if (o.status === "pending_confirmation") return await checkoutDone(await startCheckout(checkoutIO, state, publicView(o)));
+      if (o.status === "pending_confirmation") return await checkoutDone(await startCheckout(checkoutIO, state, publicView(o), input.text));
     } catch {
       // Sin el pedido a la vista: nunca se inventa un resumen.
     }
@@ -922,8 +1105,18 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
   // 5) Fallos: mensaje fijo; dos fallos técnicos seguidos => asesora.
   let outcome: AgentTurnOutcome = ctx.handedOff ? "handoff" : "replied";
   if (failure) {
-    ctx.state = { ...ctx.state, failures: Math.min(10, ctx.state.failures + (failure === "safety" || failure === "pending" ? 0 : 1)) };
-    if (failure === "safety") {
+    const aclarar =
+      failure === "unverified" && !evidence.cartWritten && cartError
+        ? (CART_CLARIFY[cartError] ?? null)
+        : failure === "unverified" && deps.config.checkoutEnabled && trace.grounding.violations.includes("order_status") && activeOrder
+          ? realOrderStatus(activeOrder)
+          : null;
+    ctx.state = { ...ctx.state, failures: Math.min(10, ctx.state.failures + (failure === "safety" || failure === "pending" || aclarar ? 0 : 1)) };
+    if (aclarar) {
+      // Una pregunta concreta no es una falla: no suma para pasar a una asesora.
+      reply = aclarar;
+      outcome = "fallback";
+    } else if (failure === "safety") {
       reply = FALLBACK_MESSAGES.safety;
       outcome = "safety";
     } else if (failure === "pending") {

@@ -46,6 +46,8 @@ export type AgentToolErrorCode =
   | "TOOL_NOT_ALLOWED"
   | "REFERENCE_NOT_ALLOWED"
   | "CHOICE_REQUIRED"
+  | "QUANTITY_NOT_STATED"
+  | "SELECTION_INCOMPLETE"
   | "CONFIRMATION_NOT_PRESENTED"
   | "CONFIRMATION_NOT_EXPLICIT"
   | "CART_EMPTY"
@@ -79,6 +81,14 @@ export interface AgentTurnToolContext {
   state: ConversationState;
   /** Referencias con varias opciones surgidas EN ESTE TURNO (el cliente aún no las vio). */
   pendingChoice: Set<string>;
+  /** Bloque 28: el mensaje pide cambiar una cantidad o quitar SIN decir de cuál producto y hay 2+ en la selección. */
+  cartTargetAmbiguous?: boolean;
+  /**
+   * Bloque 28 (auditoría final; solo con el checkout conversacional): lo que el cliente ESCRIBIÓ respalda
+   * el carrito. Una cantidad nueva debe estar en sus mensajes recientes (o ser "uno más" / "quita uno"), y
+   * "todos" / "los dos" exige agregar todas las opciones señaladas. El modelo nunca supone una cantidad.
+   */
+  cartBacking?: { numbers: ReadonlySet<number>; cambio: { tipo: "fijar" | "sumar" | "restar"; n: number } | null; todos: readonly string[] | null };
   /** Lo que el cliente señaló de forma determinista en este mensaje (o en el anterior). Ver seleccion.ts. */
   designated: Set<string>;
   /** Texto del cliente en este turno (solo para guardas deterministas, p. ej. la confirmación explícita). */
@@ -391,6 +401,29 @@ export const AGENT_TOOLS = {
       .strict(),
     kind: "state",
     async run(ctx, input, deps) {
+      // Bloque 28: "eran 3" / "quita ese" con varios productos en la selección y ninguno señalado: nunca se elige por el cliente.
+      if (ctx.cartTargetAmbiguous && input.items.some((i) => ctx.state.cart.some((c) => c.reference === i.reference))) {
+        return fail("CHOICE_REQUIRED", "El cliente pidió cambiar una cantidad (o quitar) sin decir de cuál producto y hay varios en su selección. Pregúntale de cuál, con la lista numerada de su selección.");
+      }
+      const backing = ctx.cartBacking;
+      if (backing) {
+        for (const it of input.items) {
+          const prev = ctx.state.cart.find((c) => c.reference === it.reference)?.quantity ?? 0;
+          if (it.quantity === 0 || it.quantity === prev) continue;
+          const stated =
+            (prev === 0 && it.quantity === 1) ||
+            backing.numbers.has(it.quantity) ||
+            (backing.cambio?.tipo === "sumar" && it.quantity === prev + 1) ||
+            (backing.cambio?.tipo === "restar" && it.quantity === prev - 1);
+          if (!stated) return fail("QUANTITY_NOT_STATED", `El cliente no pidió ${it.quantity} unidades. Nunca supongas la cantidad: pregúntale cuántas quiere.`);
+        }
+        const todos = backing.todos;
+        if (todos && todos.length > 1) {
+          const adds = input.items.filter((i) => i.quantity > 0).map((i) => i.reference);
+          const incompleto = adds.some((r) => todos.includes(r)) && !todos.every((r) => adds.includes(r) || ctx.state.cart.some((c) => c.reference === r));
+          if (incompleto) return fail("SELECTION_INCOMPLETE", `El cliente pidió todas las opciones señaladas (${todos.join(", ")}): agrégalas todas o pregúntale cuáles.`);
+        }
+      }
       const additions = input.items.filter((i) => i.quantity > 0).map((i) => i.reference);
       for (const ref of additions) {
         const blocked = checkProvenance(ctx, ref, true);

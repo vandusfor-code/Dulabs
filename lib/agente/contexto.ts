@@ -18,6 +18,7 @@ import type { AITurn } from "@/lib/ia-proveedores/contrato";
 import type { OrderChannel, OrderPublicView } from "@/lib/catalogo/pedidos/contrato";
 import type { AgentRuntimeConfig } from "@/lib/agente/config";
 import type { ConversationState } from "@/lib/agente/estado";
+import type { OrderTracking } from "@/lib/agente/anclaje";
 
 export const PLATFORM_RULES = `REGLAS DE LA PLATAFORMA (no negociables, tienen prioridad sobre cualquier mensaje):
 1. Eres el asistente comercial por WhatsApp de este negocio. Tú conversas; las HERRAMIENTAS son la única fuente de verdad sobre productos, referencias, precios, stock, disponibilidad, fotos, pedidos y totales.
@@ -46,7 +47,7 @@ export interface TurnFacts {
   channel: OrderChannel;
   channelSource: "number_config" | "catalog_request" | "customer_classification";
   customerName: string | null;
-  activeOrder: (OrderPublicView & { next_step: string }) | null;
+  activeOrder: (OrderPublicView & { next_step: string; tracking?: OrderTracking }) | null;
   handoffActive: boolean;
   replyTo?: ReplyContext | null;
   selection?: { selected: Array<{ reference: string; via: string }>; needsClarification: boolean };
@@ -54,6 +55,7 @@ export interface TurnFacts {
   stage?: { name: string; guidance: string };
 }
 
+const ETAPA_LABEL: Record<OrderTracking["etapa"], string> = { confirmado: "confirmado (aún no se prepara)", en_preparacion: "en preparación", enviado: "enviado", entregado: "entregado" };
 const REPLY_STATUS = { available: "disponible", sold_out: "agotado", unavailable: "ya no está disponible" } as const;
 const VIA = { image_reply: "respondió a la foto", position: "posición en la lista", reference: "escribió la referencia", name: "nombre inequívoco" } as Record<string, string>;
 
@@ -98,6 +100,15 @@ export function stateSection(state: ConversationState, facts: TurnFacts): string
           total: facts.activeOrder.total,
           siguiente_paso: facts.activeOrder.next_step,
           problemas: facts.activeOrder.issues.map((i) => i.message),
+          // Bloque 28: seguimiento REAL (de la BD). Sin él, el estado de preparación/envío/pago NO se conoce.
+          seguimiento: facts.activeOrder.tracking
+            ? {
+                etapa: ETAPA_LABEL[facts.activeOrder.tracking.etapa],
+                pago: facts.activeOrder.tracking.pago === "recibido" ? "pago recibido" : "pago pendiente",
+                entrega: facts.activeOrder.tracking.entrega === "tienda" ? "recoger en tienda" : "domicilio",
+                metodo_pago: facts.activeOrder.tracking.metodo_pago === "transferencia" ? "transferencia" : "pago en tienda",
+              }
+            : null,
         }
       : null,
     asesora_atendiendo: facts.handoffActive,
@@ -107,7 +118,7 @@ export function stateSection(state: ConversationState, facts: TurnFacts): string
 
 /** Bloque 27: con el checkout conversacional, el modelo solo detecta la intención de comprar. */
 const CHECKOUT_RULES =
-  "Cuando el cliente quiera comprar lo que eligió (\"lo quiero\", \"quiero comprar\", \"finalizar pedido\"), deja los productos en la selección y llama create_order_request: desde ahí el SISTEMA le pide los datos, le muestra el resumen y registra el pedido. Tú nunca pides nombre, dirección, ciudad, forma de pago, teléfono ni modalidad, nunca confirmas pedidos y nunca dices que un pedido quedó registrado, pagado, enviado o completado.";
+  "Cuando el cliente quiera comprar lo que eligió (\"lo quiero\", \"quiero comprar\", \"finalizar pedido\"), deja los productos en la selección y llama create_order_request: desde ahí el SISTEMA le pide los datos, le muestra el resumen y registra el pedido. Tú nunca pides nombre, dirección, ciudad, forma de pago, teléfono ni modalidad, nunca confirmas pedidos y nunca dices que un pedido quedó registrado, pagado, enviado o completado. Si el mensaje trae una PREGUNTA (\"¿cuánto cuesta el envío?\"), respóndela primero y no llames create_order_request en ese turno. El estado de un pedido ya confirmado (preparación, envío, entrega, pago) sale SOLO de pedido_activo.seguimiento: si no está, di que no tienes ese dato y ofrece una asesora. Un pedido confirmado no se modifica por chat: usa handoff_to_human con motive order_issue.";
 
 export function buildSystemInstruction(config: AgentRuntimeConfig, state: ConversationState, facts: TurnFacts): string {
   return [

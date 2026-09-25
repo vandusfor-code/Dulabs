@@ -318,9 +318,15 @@ describe("B27 · A–D compra completa y nombre", () => {
     assert.equal((await estado()).checkout?.step, "name");
     await turno([], "Me llamo Ana María");
     assert.equal((await estado()).checkout?.customerName, "Ana María");
-    assert.deepEqual(nombresRecordados, ["Ana María"]);
+    // Bloque 28: el nombre queda en el pedido en curso; en el contacto SOLO cuando el pedido se confirma.
+    assert.deepEqual(nombresRecordados, [], "no se guarda en el contacto antes de confirmar");
     assert.equal((await estado()).checkout?.step, "delivery");
     for (const t of sent) assert.ok(!/tel[eé]fono|empresa|raz[oó]n social|persona natural|detal o/i.test(t), `nunca se pregunta: ${t}`);
+    await tocar("delivery", 0);
+    await tocar("payment", 0);
+    await tocar("summary", 0);
+    assert.equal(pedidos.orders.at(-1)!.status, "confirmed");
+    assert.deepEqual(nombresRecordados, ["Ana María"], "se guarda al confirmar");
   });
 
   it("D. nombre existente: no se vuelve a preguntar", async () => {

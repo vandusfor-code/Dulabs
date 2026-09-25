@@ -54,7 +54,7 @@ const PN_B = num(920000000000000);
 const SLUG = `joyeria-piloto-${RUN}`;
 const DISPLAY = "573000000000";
 /** Clientes autorizados del piloto (ia_restringida_a) y uno que NO lo está. */
-const C = Array.from({ length: 48 }, (_, i) => `57310${RUN.replace(/\D/g, "7").padEnd(4, "7").slice(0, 4)}${String(i).padStart(3, "0")}`);
+const C = Array.from({ length: 56 }, (_, i) => `57310${RUN.replace(/\D/g, "7").padEnd(4, "7").slice(0, 4)}${String(i).padStart(3, "0")}`);
 const NO_AUTORIZADO = "573219990000";
 const CB = "573229990001";
 
@@ -1309,6 +1309,127 @@ describe("PILOTO DELACOUR — matriz de punta a punta (webhook real + PostgreSQL
       } while (cursor);
       assert.ok(todos.length >= 8);
       assert.deepEqual(vistos, todos, "el cursor no repite ni salta pedidos");
+    });
+
+    // -----------------------------------------------------------------------
+    // L. Bloque 28 — lenguaje humano en el checkout, por el webhook REAL y PostgreSQL REAL
+    // -----------------------------------------------------------------------
+    const detal = (wa: string) => createSupabaseCustomerChannelStore(db).setInitial({ tenantId: T, phoneNumberId: PN, waId: wa }, "retail", "cliente");
+    const estadoConv = async (wa: string) => ((await db.from("dulabs_agente_conversaciones").select("estado").eq("id_tenant", T).eq("wa_id", wa).maybeSingle()).data as { estado: Record<string, any> } | null)?.estado; // eslint-disable-line @typescript-eslint/no-explicit-any
+    const nombreConocido = async (wa: string) => ((await db.from("dulabs_clientes_conocidos").select("nombre").eq("phone_number_id", PN).eq("telefono_cliente", wa).maybeSingle()).data as { nombre: string } | null)?.nombre ?? null;
+    const declaradas = (body: Body) => (body.tools ?? []).flatMap((t) => t.functionDeclarations as Array<{ name: string }>).map((d) => d.name);
+
+    it("L1. B28: '¿Cuánto cuesta el envío?' en la entrega se RESPONDE (solo lectura) y el checkout no cambia", async () => {
+      const wa = C[48];
+      await detal(wa);
+      await comprar(wa, KP.aretes.referencia, 1);
+      await turno(wa, "Lina Piloto");
+      assert.equal((await estadoConv(wa))!.checkout.step, "delivery");
+      const m0 = meta.calls.length;
+      const r = await turno(wa, "¿Cuánto cuesta el envío?", [txt("El costo del domicilio depende de la dirección 📍 y te lo confirma una asesora.")]);
+      const out = salidas(m0);
+      assert.equal(out.length, 1);
+      assert.ok(out[0].texto.startsWith("El costo del domicilio depende de la dirección") && out[0].texto.endsWith(CHECKOUT_MESSAGES.delivery), out[0].texto);
+      assert.deepEqual(out[0].botones, ["checkout_tienda", "checkout_domicilio"]);
+      assert.equal(r.traza?.traza.checkout?.action, "question");
+      const tools = declaradas(r.gemini[0].body);
+      for (const t of ["update_cart", "create_order_request", "validate_order", "confirm_order", "handoff_to_human"]) assert.ok(!tools.includes(t), `sin ${t}`);
+      const ck = (await estadoConv(wa))!.checkout;
+      assert.deepEqual([ck.step, ck.delivery], ["delivery", null], "la pregunta no eligió domicilio");
+      assert.equal((await pedidoDb(wa))!.estado, "pending_confirmation");
+    });
+
+    it("L2. B28: en la dirección, 'No, mejor recojo en tienda' corrige la ENTREGA (no es una dirección) y así queda en PostgreSQL", async () => {
+      const wa = C[49];
+      await detal(wa);
+      await comprar(wa, KP.pulsera.referencia, 1);
+      await turno(wa, "Nora Piloto");
+      await turno(wa, tocar("delivery", 1));
+      assert.equal((await estadoConv(wa))!.checkout.step, "address");
+      const r = await turno(wa, "No, mejor recojo en tienda");
+      assert.equal(r.traza?.traza.checkout?.action, "corrected");
+      assert.deepEqual([(await estadoConv(wa))!.checkout.delivery, (await estadoConv(wa))!.checkout.address, (await estadoConv(wa))!.checkout.step], ["tienda", null, "payment"]);
+      await turno(wa, "mejor transferencia");
+      await turno(wa, tocar("summary", 0));
+      const o = (await pedidoDb(wa))!;
+      assert.deepEqual([o.estado, o.tipo_entrega, o.direccion, o.metodo_pago], ["confirmed", "tienda", null, "transferencia"]);
+    });
+
+    it("L3. B28: un texto que no es nombre nunca se guarda; el nombre real llega al contacto SOLO al confirmar", async () => {
+      const wa = C[50];
+      await detal(wa);
+      await comprar(wa, KP.tobillera.referencia, 1);
+      assert.equal((await estadoConv(wa))!.checkout.step, "name");
+      const r1 = await turno(wa, "quiero dos aretes");
+      assert.equal(r1.traza?.traza.checkout?.action, "products_via_modify");
+      assert.equal((await turno(wa, "jajaja")).envios[0].texto, CHECKOUT_MESSAGES.askNameAgain);
+      await turno(wa, "Mariana Piloto");
+      assert.notEqual(await nombreConocido(wa), "quiero dos aretes");
+      assert.notEqual(await nombreConocido(wa), "Mariana Piloto", "aún no confirmado: no se guarda en el contacto");
+      await turno(wa, tocar("delivery", 0));
+      await turno(wa, tocar("payment", 0));
+      await turno(wa, tocar("summary", 0));
+      assert.equal((await pedidoDb(wa))!.cliente_nombre, "Mariana Piloto");
+      assert.equal(await nombreConocido(wa), "Mariana Piloto");
+    });
+
+    it("L4. B28: 'eran 3' durante el checkout rehace la propuesta en PG (la vieja se cancela sin reserva) y confirma 3 con su stock", async () => {
+      const wa = C[51];
+      await detal(wa);
+      const s0 = await stock(KP.collar.referencia);
+      await comprar(wa, KP.collar.referencia, 1);
+      await turno(wa, "Olga Piloto");
+      await turno(wa, tocar("delivery", 0));
+      const viejo = (await pedidoDb(wa))!;
+      const r = await turno(wa, "eran 3");
+      assert.equal(r.traza?.traza.checkout?.action, "updated");
+      const nuevo = (await pedidoDb(wa))!;
+      assert.notEqual(nuevo.pedido_publico, viejo.pedido_publico);
+      assert.equal((await db.from("dulabs_catalogo_pedidos").select("estado").eq("id", viejo.id).single()).data!.estado, "cancelled");
+      assert.equal((await reservas(viejo.id)).length, 0, "la propuesta vieja nunca reservó");
+      const fin = await turno(wa, tocar("payment", 1));
+      assert.ok(salidas(meta.calls.length - 1)[0].texto.includes(`× 3 — ${formatCop(240_000)}`), fin.envios.map((e) => e.texto).join(" | "));
+      await turno(wa, tocar("summary", 0));
+      const o = (await pedidoDb(wa))!;
+      assert.deepEqual([o.estado, o.total, o.tipo_entrega], ["confirmed", 240_000, "tienda"], "entrega conservada");
+      assert.deepEqual((await reservas(o.id)).map((x) => [x.cantidad, x.estado]), [[3, "activa"]]);
+      assert.equal(await stock(KP.collar.referencia), s0 - 3);
+    });
+
+    it("L5. B28: ubicación en el paso de la dirección: se pide escrita, sin asesora y sin romper el checkout", async () => {
+      const wa = C[52];
+      await detal(wa);
+      await comprar(wa, KP.aretes.referencia, 1);
+      await turno(wa, "Pía Piloto");
+      await turno(wa, tocar("delivery", 1));
+      const r = await turno(wa, { type: "location", location: { latitude: 8.75, longitude: -75.88 } });
+      assert.deepEqual(r.envios.map((e) => e.texto), [CHECKOUT_MESSAGES.locationNeedsText]);
+      assert.equal(await pausa(wa), null, "sin pausa: el checkout sigue");
+      assert.equal((await estadoConv(wa))!.checkout.step, "address");
+      await turno(wa, "Carrera 7 # 20-15, barrio Centro");
+      assert.equal((await estadoConv(wa))!.checkout.step, "city");
+    });
+
+    it("L6. B28: el estado del pedido NUNCA se inventa: 'ya fue enviado' no sale; con la etapa real del panel, sí se informa", async () => {
+      const wa = C[49];
+      await db.from("dulabs_pausas_chat").delete().eq("phone_number_id", PN).eq("telefono_cliente", wa); // "Devolver a la IA"
+      const pedido = (await pedidoDb(wa))!.pedido_publico;
+      const r1 = await turno(wa, "ya lo enviaron?", [txt("¡Sí! Tu pedido ya fue enviado."), txt("Tu pedido ya fue enviado hoy.")]);
+      assert.ok(!r1.envios.some((e) => /ya fue enviado/.test(e.texto)), "nunca se afirma un envío que no ocurrió");
+      assert.ok(r1.gemini[0].body.systemInstruction.parts[0].text.includes('"seguimiento":{"etapa":"confirmado (aún no se prepara)","pago":"pago pendiente"'), "el modelo ve el seguimiento REAL");
+      assert.equal((await actuar(pedido, "pago_recibido")).status, 200);
+      assert.equal((await actuar(pedido, "en_preparacion")).status, 200);
+      const r2 = await turno(wa, "y cómo va?", [txt("Tu pedido está en preparación y tu pago ya fue recibido. 💖")]);
+      assert.deepEqual(r2.envios.map((e) => e.texto), ["Tu pedido está en preparación y tu pago ya fue recibido. 💖"]);
+    });
+
+    it("L7. B28: fuera del checkout, 'eran 3' con dos productos en la selección NO se asigna a ninguno (se pregunta)", async () => {
+      const wa = C[53];
+      await detal(wa);
+      await turno(wa, `quiero ${KP.aretes.referencia} y ${KP.pulsera.referencia}`, [fn("update_cart", { items: [{ reference: KP.aretes.referencia, quantity: 1 }, { reference: KP.pulsera.referencia, quantity: 1 }] }), txt("Listo, los agregué.")]);
+      const r = await turno(wa, "eran 3", [fn("update_cart", { items: [{ reference: KP.pulsera.referencia, quantity: 3 }] }), txt("¿De cuál producto quieres 3 unidades?")]);
+      assert.deepEqual(r.tools, ["update_cart:CHOICE_REQUIRED"]);
+      assert.deepEqual((await conv(wa))?.cart.map((c) => c.quantity), [1, 1]);
     });
 
     it("consistencia: ningún pedido quedó 'en conversación' sin existir en PostgreSQL", async () => {
