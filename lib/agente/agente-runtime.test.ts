@@ -251,7 +251,7 @@ describe("conversación y catálogo (la IA nunca es la fuente de verdad)", () =>
     const p = await producto(A, "Dije Corazón", 42_000, 5);
     const r = await turno([call("resolve_product_by_reference", { reference: p.reference }), { text: "Cuesta $35.000." }, { text: "Cuesta $42.000." }], `precio del ${p.reference}`);
     assert.deepEqual(sent, ["Cuesta $42.000."]);
-    assert.deepEqual(r.trace.grounding, { violations: ["amount"], corrected: true });
+    assert.deepEqual(r.trace.grounding, { violations: ["amount"], corrected: true, values: ["$35.000"] });
     const correccion = r.provider.requests[2].turns.at(-1) as { role: string; text: string };
     assert.match(correccion.text, /VERIFICACIÓN DEL SISTEMA/);
   });
