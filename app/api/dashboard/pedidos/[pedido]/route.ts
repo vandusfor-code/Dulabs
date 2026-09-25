@@ -3,8 +3,8 @@
  *
  *   GET  detalle: cliente, productos con foto, total, entrega, pago, estado, asesora e historial.
  *   POST acción de la operación (solo admin / agente):
- *        { accion: "pago_recibido" | "en_preparacion" | "enviado" | "completar" | "cancelar" | "rechazar",
- *          esperado: { estado, etapa },   // lo que la persona VIO (compare-and-set)
+ *        { accion: "pago_recibido" | "en_preparacion" | "enviado" | "entregado" | "completar" | "cancelar" | "rechazar",
+ *          esperado: { estado, etapa, pago },   // lo que la persona VIO (compare-and-set)
  *          motivo?: string }              // obligatorio para cancelar y rechazar
  *        Queda en el historial con la persona que la hizo. Repetir la misma acción no la repite.
  */
