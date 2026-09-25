@@ -486,7 +486,9 @@ async function correr(caso: Caso): Promise<Fila> {
     ...r.trazas.flatMap((t) => t.grounding.violations.map((v) => `anclaje:${v}`)),
   ];
   const ult = r.trazas.at(-1);
-  const infra = r.trazas.map((t) => t.error_kind).filter((k): k is string => !!k && INFRA.test(k));
+  // En modo real, CUALQUIER error del modelo (clave inválida, cuota, tiempo, 4xx/5xx) invalida la corrida del caso:
+  // la respuesta fija de respaldo no mide el lenguaje, así que nunca cuenta como PASS.
+  const infra = r.trazas.map((t) => t.error_kind).filter((k): k is string => !!k && (MODO === "real" || INFRA.test(k)));
   const obtenida = r.trazas
     .map((t) => t.checkout?.action ? `checkout:${t.checkout.action}@${t.checkout.step}` : t.non_text ? `no_texto:${t.non_text.kind}→${t.non_text.action}` : t.classification && t.classification.action !== "known" ? `modalidad:${t.classification.action}` : t.start ? `inicio:${t.start}` : t.intent ? `intención:${t.intent}` : t.outcome)
     .join(" → ");
@@ -514,7 +516,7 @@ async function correr(caso: Caso): Promise<Fila> {
     herramientas: tools.map((t) => `${t.name}:${t.result}`).join(", ") || "-",
     respuesta: (r.salidas.at(-1) ?? "(sin respuesta)").replace(/\s+/g, " ").slice(0, 140),
     cambio: cambio || "no", datosReales, proteccion: bloqueos.join(", ") || "-",
-    resultado: falla ? (MODO === "real" && infra.length ? "INFRA" : "FAIL") : bloqueos.length > 0 ? "BLOCKED-SAFE" : "PASS",
+    resultado: MODO === "real" && infra.length ? "INFRA" : falla ? "FAIL" : bloqueos.length > 0 ? "BLOCKED-SAFE" : "PASS",
     motivo: falla ?? (ult?.outcome === "fallback" ? "respuesta fija de respaldo" : ""),
     notas,
   };
@@ -527,6 +529,18 @@ async function main() {
   }
   const probe = await mundo();
   const lista = casos(probe.P).filter((c) => !SOLO || SOLO.test(c.id));
+  if (MODO === "real") {
+    // Canario: UNA llamada real antes de la matriz. Si el modelo no responde, se aborta (sin gastar ni informar falsos PASS).
+    const m = await mundo();
+    await preparar(m, "detal-1");
+    await m.turno("cuánto vale?", null);
+    const err = m.traces.map((t) => t.error_kind).find((k) => !!k);
+    if (err || m.traces.every((t) => t.rounds === 0)) {
+      console.log(`Gemini NO respondió en la llamada de prueba (error: ${err ?? "sin rondas"}). Evaluación abortada: revisa la clave o su acceso a la API de Gemini.`);
+      process.exit(3);
+    }
+    console.error(`Canario OK: Gemini respondió ("${(m.sent.at(-1) ?? "").slice(0, 80)}")`);
+  }
   const filas: Fila[][] = [];
   const esc = (x: string) => x.replace(/\|/g, "/").replace(/\n/g, " ");
   const peor = (fs: Fila[]) => fs.find((f) => f.resultado === "FAIL") ?? fs.find((f) => f.resultado === "INFRA") ?? fs.find((f) => f.resultado === "BLOCKED-SAFE") ?? fs[0];
