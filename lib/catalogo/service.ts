@@ -902,6 +902,8 @@ export function createPublicCatalogService({ repo, orders }: { repo: CatalogRepo
           source: "catalog",
           status: "validated",
           contact: null,
+          checkout: null,
+          confirmedAt: null,
           lines,
           totalUnits: order.totalUnits,
           total: order.total,

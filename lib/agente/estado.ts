@@ -25,6 +25,28 @@ export const MAX_SHOWN = 10;
 export const MAX_IMAGES_REMEMBERED = 20;
 export const MAX_RECENT_WAMIDS = 10;
 
+/** Bloque 27 — pasos del checkout, en orden (dirección, ciudad y referencia solo con domicilio). */
+export const CHECKOUT_STEPS = ["name", "delivery", "address", "city", "reference", "payment", "summary"] as const;
+export type CheckoutStep = (typeof CHECKOUT_STEPS)[number];
+
+export const checkoutStateSchema = z
+  .object({
+    /** Pedido (propuesta del backend) que se está registrando. */
+    orderId,
+    step: z.enum(CHECKOUT_STEPS),
+    customerName: z.string().min(1).max(120).nullable(),
+    delivery: z.enum(["tienda", "domicilio"]).nullable(),
+    address: z.string().min(1).max(300).nullable(),
+    city: z.string().min(1).max(80).nullable(),
+    deliveryReference: z.string().min(1).max(300).nullable(),
+    paymentMethod: z.enum(["pago_en_tienda", "transferencia"]).nullable(),
+    /** Resumen que se le MOSTRÓ: solo esa propuesta (id + total) se puede confirmar. */
+    summary: z.object({ confirmationId: z.string().regex(/^cf_[0-9a-z]{16}$/), total: z.number().int().min(0), turn: z.number().int().min(0) }).strict().nullable(),
+    startedTurn: z.number().int().min(0),
+  })
+  .strict();
+export type CheckoutState = z.infer<typeof checkoutStateSchema>;
+
 export const conversationStateSchema = z
   .object({
     v: z.literal(1),
@@ -93,6 +115,9 @@ export const conversationStateSchema = z
     // --- Bloque 23 ---
     /** Último aviso fijo por un mensaje sin texto ("no puedo escuchar audios"): enfriamiento anti-spam. */
     nonTextNoticeAt: z.iso.datetime().nullable().default(null),
+    // --- Bloque 27 ---
+    /** Checkout conversacional en curso (lo conduce el BACKEND paso a paso; el modelo no lo ve ni lo cambia). */
+    checkout: checkoutStateSchema.nullable().default(null),
   })
   .strict();
 
@@ -117,6 +142,7 @@ export function emptyConversationState(): ConversationState {
     recentWamids: [],
     lastSearch: null,
     nonTextNoticeAt: null,
+    checkout: null,
   };
 }
 

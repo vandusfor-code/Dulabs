@@ -16,7 +16,7 @@
 import type { NextRequest } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireFlowAccess } from "@/lib/flow/api-auth";
-import { moduloHabilitado } from "@/lib/tenant-modulos";
+import { moduloHabilitado, type ModuloId } from "@/lib/tenant-modulos";
 import type { Miembro, Rol } from "@/lib/team";
 import { apiError } from "@/lib/agent-compiler/api/http";
 import type { CatalogActor } from "@/lib/catalogo/service";
@@ -25,6 +25,9 @@ import type { CatalogActor } from "@/lib/catalogo/service";
 export type CatalogAccessMode = "read" | "write" | "orders";
 
 export const CATALOG_MODULE = "catalogo" as const;
+/** Bloque 27: módulo "Pedidos" (gestión del pedido real). Se habilita por negocio, aparte del catálogo. */
+export const ORDERS_MODULE = "pedidos" as const;
+export type CatalogModule = typeof CATALOG_MODULE | typeof ORDERS_MODULE;
 export const CATALOG_READ_ROLES: readonly Rol[] = ["admin", "agente", "lectura"];
 export const CATALOG_WRITE_ROLES: readonly Rol[] = ["admin"];
 export const CATALOG_ORDER_ROLES: readonly Rol[] = ["admin", "agente"];
@@ -34,7 +37,7 @@ export type CatalogAccessDecision =
   | { allowed: false; status: 403; code: "FORBIDDEN" | "MODULE_DISABLED"; message: string };
 
 /** Política pura de acceso al Catálogo (rol + módulo). */
-export function decideCatalogAccess(input: { role: Rol; mode: CatalogAccessMode; moduleEnabled: boolean }): CatalogAccessDecision {
+export function decideCatalogAccess(input: { role: Rol; mode: CatalogAccessMode; moduleEnabled: boolean; module?: CatalogModule }): CatalogAccessDecision {
   const roles = input.mode === "write" ? CATALOG_WRITE_ROLES : input.mode === "orders" ? CATALOG_ORDER_ROLES : CATALOG_READ_ROLES;
   if (!roles.includes(input.role)) {
     return {
@@ -46,7 +49,12 @@ export function decideCatalogAccess(input: { role: Rol; mode: CatalogAccessMode;
     };
   }
   if (!input.moduleEnabled) {
-    return { allowed: false, status: 403, code: "MODULE_DISABLED", message: "El módulo Catálogo no está habilitado para tu cuenta." };
+    return {
+      allowed: false,
+      status: 403,
+      code: "MODULE_DISABLED",
+      message: input.module === ORDERS_MODULE ? "El módulo Pedidos no está habilitado para tu cuenta." : "El módulo Catálogo no está habilitado para tu cuenta.",
+    };
   }
   return { allowed: true };
 }
@@ -62,7 +70,7 @@ export type CatalogAuthResult = { ok: true; ctx: CatalogAuthContext } | { ok: fa
 /** Dependencias inyectables (los tests reemplazan la autenticación y la consulta del módulo). */
 export interface CatalogAuthDeps {
   authenticate(request: NextRequest): Promise<{ ok: true; supabase: SupabaseClient; member: Miembro } | { ok: false; status: number; message: string }>;
-  isModuleEnabled(supabase: SupabaseClient, tenantId: string): Promise<boolean>;
+  isModuleEnabled(supabase: SupabaseClient, tenantId: string, module?: ModuloId): Promise<boolean>;
 }
 
 const defaultDeps: CatalogAuthDeps = {
@@ -77,10 +85,10 @@ const defaultDeps: CatalogAuthDeps = {
       .catch(() => ({}))) as { error?: unknown };
     return { ok: false, status: access.response.status, message: typeof body.error === "string" ? body.error : "No autorizado" };
   },
-  isModuleEnabled: (supabase, tenantId) => moduloHabilitado(supabase, tenantId, CATALOG_MODULE),
+  isModuleEnabled: (supabase, tenantId, module) => moduloHabilitado(supabase, tenantId, module ?? CATALOG_MODULE),
 };
 
-export async function requireCatalogo(request: NextRequest, mode: CatalogAccessMode, deps: CatalogAuthDeps = defaultDeps): Promise<CatalogAuthResult> {
+export async function requireCatalogo(request: NextRequest, mode: CatalogAccessMode, deps: CatalogAuthDeps = defaultDeps, module: CatalogModule = CATALOG_MODULE): Promise<CatalogAuthResult> {
   const auth = await deps.authenticate(request);
   if (!auth.ok) {
     return { ok: false, response: apiError(auth.status === 401 ? "UNAUTHENTICATED" : "FORBIDDEN", auth.message, auth.status) };
@@ -88,13 +96,13 @@ export async function requireCatalogo(request: NextRequest, mode: CatalogAccessM
 
   let moduleEnabled: boolean;
   try {
-    moduleEnabled = await deps.isModuleEnabled(auth.supabase, auth.member.tenantId);
+    moduleEnabled = await deps.isModuleEnabled(auth.supabase, auth.member.tenantId, module);
   } catch (err) {
     console.error("[catalogo/auth] no se pudo verificar el módulo:", err instanceof Error ? err.message : err);
     return { ok: false, response: apiError("INTERNAL_ERROR", "No se pudo verificar el acceso al catálogo.", 500) };
   }
 
-  const decision = decideCatalogAccess({ role: auth.member.rol, mode, moduleEnabled });
+  const decision = decideCatalogAccess({ role: auth.member.rol, mode, moduleEnabled, module });
   if (!decision.allowed) return { ok: false, response: apiError(decision.code, decision.message, decision.status) };
 
   return {

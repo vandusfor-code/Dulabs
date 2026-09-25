@@ -85,6 +85,18 @@ describe("confirmar aparta el stock (todo o nada)", () => {
     assert.equal(orders.reservations.filter((r) => r.status === "activa").length, 1);
   });
 
+  it("carrera real: dos clientes confirman A LA VEZ la última unidad (ambos ya validados) → un solo pedido, el stock nunca queda negativo", async () => {
+    const p = await producto(A, "Dije Estrella", 1);
+    const deAna = await propuesta(ANA, [{ reference: p.reference, quantity: 1 }]);
+    const deBeto = await propuesta(BETO, [{ reference: p.reference, quantity: 1 }]);
+    const r = await Promise.allSettled([confirmar(deAna, ANA), confirmar(deBeto, BETO)]);
+    assert.equal(r.filter((x) => x.status === "fulfilled").length, 1, "solo uno confirma");
+    const fallo = r.find((x) => x.status === "rejected") as PromiseRejectedResult;
+    assert.ok(fallo.reason instanceof OrderError && fallo.reason.code === "OUT_OF_STOCK", String(fallo.reason));
+    assert.equal(stockDe(p.id), 0, "la última unidad se aparta una sola vez");
+    assert.equal(orders.reservations.filter((x) => x.status === "activa").length, 1);
+  });
+
   it("todo o nada: si una línea no alcanza, ninguna se descuenta", async () => {
     const hay = await producto(A, "Hay", 5);
     const poco = await producto(A, "Poco", 2);

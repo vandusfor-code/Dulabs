@@ -16,12 +16,17 @@ import { createSupabaseOrdersRepository } from "@/lib/catalogo/pedidos/repositor
 
 /** Igual que transferir_soporte del Flow: la IA calla 24 h en ESE chat (la asesora la devuelve antes desde el Inbox). */
 const PAUSA_HANDOFF_MS = 24 * 60 * 60 * 1000;
+/**
+ * Bloque 27 — pedido confirmado: la IA calla hasta que una persona la libere ("Devolver a IA" en el
+ * Inbox). Mismo plazo que "Tomar conversación" del Inbox (30 días), para que nunca vuelva sola.
+ */
+const PAUSA_HASTA_LIBERAR_MS = 30 * 24 * 60 * 60 * 1000;
 
 export function supabaseHandoffPort(supabase: SupabaseClient): HumanHandoffPort {
   return {
-    async pauseConversation({ contact }) {
+    async pauseConversation({ contact, until }) {
       // Nunca acorta una pausa más larga: si una asesora ya tomó el chat (30 días), sigue suya.
-      const pausa = await extenderPausaChat(supabase, contact.phoneNumberId, contact.waId, PAUSA_HANDOFF_MS);
+      const pausa = await extenderPausaChat(supabase, contact.phoneNumberId, contact.waId, until === "released" ? PAUSA_HASTA_LIBERAR_MS : PAUSA_HANDOFF_MS);
       if (!pausa.ok) return { ok: false };
       // "pending" en el Inbox (si la migración del estado no está, la pausa ya basta). Si una
       // persona ya la tenía, no se le cambia el estado que ella decidió.

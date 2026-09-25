@@ -26,6 +26,8 @@ export const businessConfigSchema = z
     politicas: z.array(z.string().trim().min(1).max(300)).max(12).optional(),
     /** Bloque 25: saludo del primer contacto (antes de la pregunta detal / por mayor). Texto fijo, sin IA. */
     saludo: z.string().trim().min(1).max(300).optional(),
+    /** Bloque 27: nombre comercial para el mensaje fijo del pedido confirmado ("Gracias por comprar en …"). */
+    nombre_negocio: z.string().trim().min(1).max(80).optional(),
   })
   .strict();
 
@@ -62,6 +64,11 @@ export interface AgentRuntimeConfig {
    * canal (dulabs_catalogo_clientes_canal) reemplaza a `channel`. Ausente/false => como antes.
    */
   classifyCustomers?: boolean;
+  /**
+   * Bloque 27 (columna checkout_conversacional, false por defecto): true => al querer comprar, el
+   * BACKEND conduce el checkout (datos, resumen, confirmación y asesora). Ausente/false => como antes.
+   */
+  checkoutEnabled?: boolean;
 }
 
 export type AgentConfigInvalidReason =
@@ -96,6 +103,8 @@ const rowSchema = z.object({
   limites: z.unknown().optional(),
   /** Bloque 25: puede faltar (fila leída antes de la migración de clasificación). */
   clasificacion_cliente: z.boolean().optional(),
+  /** Bloque 27: puede faltar (fila leída antes de la migración del checkout). */
+  checkout_conversacional: z.boolean().optional(),
 });
 
 export type AgentConfigRow = z.input<typeof rowSchema>;
@@ -137,6 +146,7 @@ export function parseAgentConfig(raw: unknown, expected: { tenantId: string; pho
       business: business.data,
       limits: limits.data,
       classifyCustomers: r.clasificacion_cliente === true,
+      checkoutEnabled: r.checkout_conversacional === true,
     },
   };
 }
@@ -169,7 +179,7 @@ export function createSupabaseAgentConfigStore(supabase: SupabaseClient): AgentC
       // como "sin agente": eso haría caer el número a otro bot.
       let data: unknown = null;
       let error: { code?: string } | null = null;
-      for (const extra of [", limites, clasificacion_cliente", ", limites", ""]) {
+      for (const extra of [", limites, clasificacion_cliente, checkout_conversacional", ", limites, clasificacion_cliente", ", limites", ""]) {
         ({ data, error } = await supabase.from("dulabs_agente_runtime_config").select(`${COLUMNS}${extra}`).eq("phone_number_id", phoneNumberId).maybeSingle());
         if (!error || (error.code !== "42703" && error.code !== "PGRST204")) break;
       }

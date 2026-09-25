@@ -15,7 +15,7 @@
  * id interno, el negocio y el contacto nunca salen en vistas públicas.
  */
 
-export const ORDER_STATUSES = ["draft", "validated", "pending_confirmation", "confirmed", "handoff", "completed", "cancelled", "expired"] as const;
+export const ORDER_STATUSES = ["draft", "validated", "pending_confirmation", "confirmed", "handoff", "completed", "cancelled", "expired", "rejected"] as const;
 export type OrderStatus = (typeof ORDER_STATUSES)[number];
 
 export const ORDER_SOURCES = ["catalog", "whatsapp", "agent", "manual"] as const;
@@ -49,6 +49,11 @@ export type OrderActor = "system" | "agent" | "human";
  * - confirmed: el cliente confirmó esa propuesta. No descuenta stock ni cobra (fase posterior).
  * - handoff: una asesora toma el pedido.
  * - completed / cancelled / expired: terminales.
+ * - rejected (Bloque 27): la EMPRESA rechaza el pedido (cancelled = lo cancela el cliente o la
+ *   operación). Terminal; libera la reserva igual que cancelar.
+ * Bloque 27: el checkout conversacional confirma como `agent` (la conversación, tras el "Confirmar"
+ * explícito del cliente; el sistema nunca confirma por el cliente) y el SISTEMA cancela una
+ * propuesta sin reserva (el cliente cancela o modifica el checkout).
  */
 const TRANSITIONS: Record<OrderStatus, Partial<Record<OrderStatus, readonly OrderActor[]>>> = {
   draft: { validated: ["system"], handoff: ["system", "agent", "human"], cancelled: ["system", "human"], expired: ["system"] },
@@ -57,18 +62,73 @@ const TRANSITIONS: Record<OrderStatus, Partial<Record<OrderStatus, readonly Orde
     confirmed: ["agent", "human"],
     draft: ["system"],
     handoff: ["system", "agent", "human"],
-    cancelled: ["human"],
+    cancelled: ["human", "system"],
     expired: ["system"],
   },
   // expired (system): la reserva de stock venció sin cerrar la venta (Bloque 19, cron horario).
-  confirmed: { handoff: ["system", "agent", "human"], completed: ["human"], cancelled: ["human"], expired: ["system"] },
-  handoff: { confirmed: ["human"], completed: ["human"], cancelled: ["human"] },
+  confirmed: { handoff: ["system", "agent", "human"], completed: ["human"], cancelled: ["human"], rejected: ["human"], expired: ["system"] },
+  handoff: { confirmed: ["human"], completed: ["human"], cancelled: ["human"], rejected: ["human"] },
   completed: {},
   cancelled: {},
   expired: {},
+  rejected: {},
 };
 
-export const TERMINAL_STATUSES: ReadonlySet<OrderStatus> = new Set(["completed", "cancelled", "expired"]);
+export const TERMINAL_STATUSES: ReadonlySet<OrderStatus> = new Set(["completed", "cancelled", "expired", "rejected"]);
+
+// ---------------------------------------------------------------------------
+// Bloque 27 — datos del checkout y operación del pedido
+// ---------------------------------------------------------------------------
+
+export const PAYMENT_METHODS = ["pago_en_tienda", "transferencia"] as const;
+export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
+/** El MÉTODO no es el pago: pendiente hasta que una persona del equipo registra el pago recibido. */
+export const PAYMENT_STATUSES = ["pendiente", "recibido"] as const;
+export type PaymentStatus = (typeof PAYMENT_STATUSES)[number];
+export const DELIVERY_TYPES = ["tienda", "domicilio"] as const;
+export type DeliveryType = (typeof DELIVERY_TYPES)[number];
+/**
+ * Etapa operativa del pedido mientras está activo (confirmed). Eje INDEPENDIENTE del pago:
+ *   confirmado -> en_preparacion -> enviado (solo domicilio) -> entregado
+ * (recoger en tienda: en_preparacion -> entregado). "Confirmado" NO significa pagado.
+ */
+export const ORDER_STAGES = ["confirmado", "en_preparacion", "enviado", "entregado"] as const;
+export type OrderStage = (typeof ORDER_STAGES)[number];
+
+/** Siguiente etapa permitida (misma regla que la BD: solo hacia adelante, de a un paso). */
+export function nextStage(stage: OrderStage, delivery: DeliveryType): OrderStage | null {
+  if (stage === "confirmado") return "en_preparacion";
+  if (stage === "en_preparacion") return delivery === "domicilio" ? "enviado" : "entregado";
+  if (stage === "enviado") return "entregado";
+  return null;
+}
+
+/** Cierre comercial: el pedido se entregó Y el pago se recibió (misma regla que la BD). */
+export function canCompleteStage(stage: OrderStage, payment: PaymentStatus): boolean {
+  return stage === "entregado" && payment === "recibido";
+}
+
+/** Antes de salir de la tienda (confirmado / en preparación) se puede cancelar o rechazar; después, no. */
+export function canCancelStage(stage: OrderStage): boolean {
+  return stage === "confirmado" || stage === "en_preparacion";
+}
+
+/** La reserva de 72 h solo vence si nadie del equipo tocó el pedido (sigue confirmado y sin pago). */
+export function reservationCanExpire(stage: OrderStage, payment: PaymentStatus): boolean {
+  return stage === "confirmado" && payment === "pendiente";
+}
+
+export interface OrderCheckout {
+  customerName: string;
+  paymentMethod: PaymentMethod;
+  paymentStatus: PaymentStatus;
+  delivery: DeliveryType;
+  /** Solo domicilio (obligatorios) y referencia opcional. */
+  address: string | null;
+  city: string | null;
+  deliveryReference: string | null;
+  stage: OrderStage;
+}
 
 export function canTransition(from: OrderStatus, to: OrderStatus, actor: OrderActor): boolean {
   return TRANSITIONS[from][to]?.includes(actor) ?? false;
@@ -139,6 +199,10 @@ export interface Order {
   issues: OrderIssue[];
   confirmation: OrderConfirmation | null;
   handoff: OrderHandoff | null;
+  /** Bloque 27: datos del checkout conversacional (null = pedido sin checkout, p. ej. anterior al Bloque 27). */
+  checkout: OrderCheckout | null;
+  /** Cuándo quedó confirmado (null = nunca se confirmó). */
+  confirmedAt: string | null;
   idempotencyKey: string;
   /** sha256 de lo pedido (referencias:cantidades). Misma clave + otra huella => CONFLICT. */
   requestFingerprint: string | null;

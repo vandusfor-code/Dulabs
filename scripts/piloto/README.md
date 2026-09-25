@@ -27,8 +27,18 @@ Preparación (una vez), con PostgreSQL 16 local:
 
 1. Una base con las tablas base del producto (`dulabs_clientes_config`, `dulabs_mensajes_log` con
    las columnas de `20260715090000`, `dulabs_pausas_chat`, `dulabs_chat_lock`,
-   `dulabs_suscripciones`, `dulabs_conversacion_estado`, `dulabs_clientes_conocidos`).
-2. Aplicar en orden `supabase/migrations/20261105000000_*` … `20261118000000_*`. Son idempotentes;
+   `dulabs_suscripciones`, `dulabs_conversacion_estado`, `dulabs_clientes_conocidos` con su
+   `unique (phone_number_id, telefono_cliente)` y `updated_at`).
+   Bloque 27 (equipo y asignaciones del Inbox): un esquema `auth` mínimo, las migraciones
+   `20260718090000_dulabs_miembros_equipo.sql` y `20260718090200_conversacion_asignaciones_y_eventos.sql`,
+   y la función auxiliar SOLO LOCAL para crear la persona del equipo de la prueba:
+   ```sql
+   create schema if not exists auth;
+   create table if not exists auth.users (id uuid primary key default gen_random_uuid(), email text);
+   create or replace function public.piloto_usuario_prueba(p_email text) returns uuid language sql security definer
+     set search_path = public, auth as $$ insert into auth.users(email) values (p_email) returning id $$;
+   ```
+2. Aplicar en orden `supabase/migrations/20261105000000_*` … `20261122000000_*`. Son idempotentes;
    en el Bloque 24 se aplicaron las 14 sin error.
 3. PostgREST contra esa base (rol anónimo = `service_role`) y el proxy
    `scripts/perf/proxy-supabase.mjs`:

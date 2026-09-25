@@ -16,6 +16,7 @@ import {
   Package,
   Contact,
   Inbox,
+  ShoppingBag,
   type LucideIcon,
 } from "lucide-react";
 import type { Rol } from "@/lib/team";
@@ -78,6 +79,9 @@ export const navSections: NavSection[] = [
         icon: Contact,
         modulo: "publibordados_clientes",
       },
+      // Bloque 27 -- pedidos reales (checkout conversacional): solo para negocios con el módulo
+      // "pedidos" habilitado (dulabs_tenant_modulos). La API autoriza por su cuenta.
+      { label: "Pedidos", labelEn: "Orders", href: "/dashboard/pedidos", icon: ShoppingBag, modulo: "pedidos" },
     ],
   },
   {

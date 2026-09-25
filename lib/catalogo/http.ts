@@ -12,7 +12,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { apiError } from "@/lib/agent-compiler/api/http";
 import { respuestaSiLimiteTasaExcedido } from "@/lib/rate-limit";
-import { CATALOG_ORDER_ROLES, CATALOG_WRITE_ROLES, requireCatalogo, type CatalogAccessMode } from "@/lib/catalogo/auth";
+import { CATALOG_ORDER_ROLES, CATALOG_WRITE_ROLES, requireCatalogo, type CatalogAccessMode, type CatalogModule } from "@/lib/catalogo/auth";
 import { firstIssueMessage } from "@/lib/catalogo/domain";
 import { isCatalogError } from "@/lib/catalogo/errors";
 import { createSupabaseCatalogRepository, type CatalogRepository } from "@/lib/catalogo/repository";
@@ -38,9 +38,9 @@ export async function withCatalog(
   mode: CatalogAccessMode,
   handler: (ctx: CatalogHandlerContext) => Promise<Response>,
   /** `recurso`: cubeta propia de rate limit (la carga masiva no debe agotar la del formulario, ni al revés). */
-  opts: { recurso?: string } = {},
+  opts: { recurso?: string; module?: CatalogModule } = {},
 ): Promise<Response> {
-  const access = await requireCatalogo(request, mode);
+  const access = await requireCatalogo(request, mode, undefined, opts.module);
   if (!access.ok) return access.response;
   const { supabase, actor, member } = access.ctx;
 

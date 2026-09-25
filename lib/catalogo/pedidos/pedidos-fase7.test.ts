@@ -115,7 +115,7 @@ describe("contrato: estados y transiciones", () => {
       .filter((f) => f.endsWith(".sql") && /function public\.dulabs_catalogo_pedido_transicion_valida\(/.test(readFileSync(`supabase/migrations/${f}`, "utf8")))
       .sort()
       .at(-1)!;
-    assert.equal(ultima, "20261116000000_dulabs_catalogo_reservas_stock.sql");
+    assert.equal(ultima, "20261122000000_dulabs_catalogo_pedidos_checkout.sql");
     const sql = readFileSync(`supabase/migrations/${ultima}`, "utf8");
     const bloque = /transicion_valida[\s\S]*?\(values([\s\S]*?)\) as t\(desde, hacia, actor\)/.exec(sql)?.[1] ?? "";
     const enSql = [...bloque.matchAll(/\('(\w+)', '(\w+)', '(\w+)'\)/g)].map((m) => `${m[1]}>${m[2]}>${m[3]}`).sort();
@@ -134,7 +134,7 @@ describe("contrato: estados y transiciones", () => {
     assert.equal(canTransition("confirmed", "completed", agente), false);
     assert.equal(canTransition("pending_confirmation", "cancelled", agente), false);
     assert.equal(canTransition("pending_confirmation", "confirmed", "system"), false, "el sistema nunca confirma por el cliente");
-    for (const terminal of ["completed", "cancelled", "expired"] as const) {
+    for (const terminal of ["completed", "cancelled", "expired", "rejected"] as const) {
       for (const to of ORDER_STATUSES) for (const actor of ["system", "agent", "human"] as const) assert.equal(canTransition(terminal, to, actor), false);
     }
   });

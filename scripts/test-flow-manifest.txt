@@ -454,6 +454,7 @@ lib/catalogo/limite-paginas.test.ts
 lib/catalogo/listado-admin.test.ts
 lib/catalogo/pedidos/historial.test.ts
 lib/catalogo/pedidos/panel-b25.test.ts
+lib/catalogo/pedidos/pedidos-b27.test.ts
 lib/catalogo/bloque18-seguridad.test.ts
 lib/catalogo/pedidos/reservas-stock.test.ts
 # Catálogo Fase 4 -- carga masiva: planillas (CSV/XLSX), análisis, servicio idempotente/multi-tenant y ZIP nativo.
@@ -469,6 +470,7 @@ lib/agente/agente-runtime.test.ts
 lib/agente/agente-webhook.test.ts
 lib/agente/agente-flujo-comercial.test.ts
 lib/agente/agente-clasificacion.test.ts
+lib/agente/agente-checkout.test.ts
 lib/agente/agente-meta-contexto.test.ts
 lib/agente/agente-busqueda.test.ts
 lib/agente/agente-buzon.test.ts

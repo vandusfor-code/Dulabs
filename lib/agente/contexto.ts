@@ -105,6 +105,10 @@ export function stateSection(state: ConversationState, facts: TurnFacts): string
   return JSON.stringify(data);
 }
 
+/** Bloque 27: con el checkout conversacional, el modelo solo detecta la intención de comprar. */
+const CHECKOUT_RULES =
+  "Cuando el cliente quiera comprar lo que eligió (\"lo quiero\", \"quiero comprar\", \"finalizar pedido\"), deja los productos en la selección y llama create_order_request: desde ahí el SISTEMA le pide los datos, le muestra el resumen y registra el pedido. Tú nunca pides nombre, dirección, ciudad, forma de pago, teléfono ni modalidad, nunca confirmas pedidos y nunca dices que un pedido quedó registrado, pagado, enviado o completado.";
+
 export function buildSystemInstruction(config: AgentRuntimeConfig, state: ConversationState, facts: TurnFacts): string {
   return [
     PLATFORM_RULES,
@@ -114,6 +118,7 @@ export function buildSystemInstruction(config: AgentRuntimeConfig, state: Conver
     "",
     "=== ESTADO DE LA CONVERSACIÓN (confiable, lo mantiene el sistema) ===",
     stateSection(state, facts),
+    ...(config.checkoutEnabled ? ["", "=== PEDIDOS (checkout del sistema) ===", CHECKOUT_RULES] : []),
   ].join("\n");
 }
 

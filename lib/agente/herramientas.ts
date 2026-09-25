@@ -97,6 +97,8 @@ export interface AgentTurnToolContext {
 export interface AgentToolsDeps extends CatalogToolDeps {
   /** Nombre conocido del cliente (dulabs_clientes_conocidos); null si no hay. */
   customerName?: (input: { tenantId: string; phoneNumberId: string; waId: string }) => Promise<string | null>;
+  /** Bloque 27: guarda el nombre que el cliente dio en el checkout (mejor esfuerzo; nunca rompe el turno). */
+  rememberCustomerName?: (input: { tenantId: string; phoneNumberId: string; waId: string }, name: string) => Promise<void>;
   /** Timeout por herramienta de lectura (ms). */
   toolTimeoutMs?: number;
   /**

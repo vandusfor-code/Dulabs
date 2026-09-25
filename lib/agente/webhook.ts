@@ -19,6 +19,7 @@ import { randomUUID } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ClienteConfig } from "@/lib/supabase";
 import { chatEnPausaHumana } from "@/lib/pausas-chat";
+import { recordarNombreCliente } from "@/lib/clientes-conocidos";
 import { MetaGraphApiError, enviarMedia, enviarTexto } from "@/lib/whatsapp";
 import { enviarBotones, incrementarUsoMensajes, registrarMensaje, resolverTokenMeta } from "@/lib/whatsapp-outbound";
 import { contactRef } from "@/lib/catalogo/pedidos/log";
@@ -303,7 +304,12 @@ export function productionAgentBoundaryDeps(supabase: SupabaseClient, cliente: C
     build(input) {
       const catalogDeps = productionAgentToolDeps(supabase);
       if (!catalogDeps) return null;
-      const tools: AgentToolsDeps = { ...catalogDeps, customerName: (k) => nombreConocido(supabase, k) };
+      const tools: AgentToolsDeps = {
+        ...catalogDeps,
+        customerName: (k) => nombreConocido(supabase, k),
+        // Bloque 27: el nombre que el cliente dio en el checkout (mismo registro que el resto de DuLabs).
+        rememberCustomerName: (k, nombre) => recordarNombreCliente(supabase, { idTenant: k.tenantId, phoneNumberId: k.phoneNumberId, telefonoCliente: k.waId, nombre }),
+      };
       return {
         tools,
         state: createSupabaseConversationStateStore(supabase),

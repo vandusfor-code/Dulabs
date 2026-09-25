@@ -59,9 +59,12 @@ export function useCatalogAccess(): { client: CatalogClient | null; canWrite: bo
   };
 }
 
-export function CatalogGate({ children }: { children: ReactNode }) {
+/** `modulo`: el módulo que exige la sección (Bloque 27: "pedidos" se habilita aparte del catálogo). */
+export function CatalogGate({ children, modulo = "catalogo" }: { children: ReactNode; modulo?: "catalogo" | "pedidos" }) {
   const { t } = useI18n();
-  const { enabled, ready } = useCatalogAccess();
+  const { ready } = useCatalogAccess();
+  const { modulos } = useDashboard();
+  const enabled = modulos.includes(modulo);
   if (!ready) {
     return (
       <div className="space-y-3 px-4 pt-6 md:px-8" aria-hidden>
@@ -78,7 +81,7 @@ export function CatalogGate({ children }: { children: ReactNode }) {
           <div className="mx-auto flex size-12 items-center justify-center rounded-xl bg-ink-2 text-mist">
             <Package className="size-6" />
           </div>
-          <h2 className="mt-4 text-base font-semibold text-fg">{t("Catálogo no habilitado", "Catalog not enabled")}</h2>
+          <h2 className="mt-4 text-base font-semibold text-fg">{modulo === "pedidos" ? t("Pedidos no habilitado", "Orders not enabled") : t("Catálogo no habilitado", "Catalog not enabled")}</h2>
           <p className="mt-1.5 text-sm text-mist">
             {t("Este módulo todavía no está activo para tu cuenta. Escríbenos si quieres habilitarlo.", "This module is not active for your account yet. Contact us to enable it.")}
           </p>

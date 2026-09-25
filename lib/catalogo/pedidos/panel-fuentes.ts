@@ -66,6 +66,34 @@ export function productionPanelFuentes(supabase: SupabaseClient): PanelFuentes {
       }
       return out;
     },
+    async atencion(_tenantId, contactos) {
+      // Los contactos salen de los pedidos DEL negocio de la sesión (números propios del negocio).
+      const out = new Map<string, { pausadaHasta: string | null; conversacion: "open" | "pending" | "closed" | null }>();
+      const ahora = Date.now();
+      for (const [pn, was] of porNumero(contactos)) {
+        const [pausas, estados] = await Promise.all([
+          supabase.from("dulabs_pausas_chat").select("telefono_cliente, pausado_hasta").eq("phone_number_id", pn).in("telefono_cliente", was),
+          supabase.from("dulabs_conversacion_estado").select("telefono_cliente, estado").eq("phone_number_id", pn).in("telefono_cliente", was),
+        ]);
+        if (pausas.error) throw new Error(`atencion ${pausas.error.code ?? "?"}`);
+        for (const wa of was) out.set(clave(pn, wa), { pausadaHasta: null, conversacion: null });
+        for (const r of (pausas.data ?? []) as Array<{ telefono_cliente: string; pausado_hasta: string }>) {
+          if (Date.parse(r.pausado_hasta) > ahora) out.set(clave(pn, r.telefono_cliente), { ...out.get(clave(pn, r.telefono_cliente))!, pausadaHasta: r.pausado_hasta });
+        }
+        // Sin la tabla de estados (migración del Inbox pendiente), la conversación queda sin estado.
+        if (!estados.error) {
+          for (const r of (estados.data ?? []) as Array<{ telefono_cliente: string; estado: "open" | "pending" | "closed" }>) {
+            out.set(clave(pn, r.telefono_cliente), { ...out.get(clave(pn, r.telefono_cliente))!, conversacion: r.estado });
+          }
+        }
+      }
+      return out;
+    },
+    async miembros(tenantId, ids) {
+      const { data, error } = await supabase.from("dulabs_miembros_equipo").select("id, nombre, email").eq("tenant_id", tenantId).in("id", [...ids].slice(0, 100));
+      if (error) throw new Error(`miembros ${error.code ?? "?"}`);
+      return new Map(((data ?? []) as Array<{ id: number; nombre: string | null; email: string | null }>).map((m) => [m.id, (m.nombre?.trim() || m.email || `#${m.id}`).slice(0, 80)]));
+    },
     async fotos(tenantId, references) {
       const out = new Map<string, string | null>();
       for (const p of await repo.getProductsByReferences(tenantId, [...references].slice(0, 300))) out.set(p.reference, p.primaryImage?.thumbUrl ?? null);
