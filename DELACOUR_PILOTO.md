@@ -474,7 +474,7 @@ apagado el agente funciona exactamente como antes.
 
 ## Activación en producción (manual, en el SQL Editor; NADA de esto se ejecutó)
 
-1. Pegar completa `supabase/migrations/20261121000000_dulabs_catalogo_pedidos_checkout.sql`. Es
+1. Pegar completa `supabase/migrations/20261122000000_dulabs_catalogo_pedidos_checkout.sql`. Es
    aditiva e idempotente y no cambia ningún comportamiento con el interruptor apagado.
 2. Verificar (solo lectura):
    ```sql
@@ -521,7 +521,7 @@ apagado el agente funciona exactamente como antes.
   cancelar/rechazar, vencimiento, traspaso sin cambiar el pedido, atención aparte, panel viejo,
   aislamiento, permisos, historial, pedidos anteriores, idempotencia, concurrencia, filtros y
   cursor.
-- `supabase/tests/20261121000000_dulabs_catalogo_pedidos_checkout.test.sql`: 12 controles en
+- `supabase/tests/20261122000000_dulabs_catalogo_pedidos_checkout.test.sql`: 12 controles en
   PostgreSQL (confirmar, datos obligatorios, etapas con compare-and-set, pago independiente y
   completar = entregado + pagado, tienda sin enviado, no cancelar lo enviado, inmutabilidad,
   vencimiento solo sin tocar, aislamiento, el sistema no confirma, historial inmutable, sin

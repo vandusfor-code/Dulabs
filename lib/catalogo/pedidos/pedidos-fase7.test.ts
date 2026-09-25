@@ -115,7 +115,7 @@ describe("contrato: estados y transiciones", () => {
       .filter((f) => f.endsWith(".sql") && /function public\.dulabs_catalogo_pedido_transicion_valida\(/.test(readFileSync(`supabase/migrations/${f}`, "utf8")))
       .sort()
       .at(-1)!;
-    assert.equal(ultima, "20261121000000_dulabs_catalogo_pedidos_checkout.sql");
+    assert.equal(ultima, "20261122000000_dulabs_catalogo_pedidos_checkout.sql");
     const sql = readFileSync(`supabase/migrations/${ultima}`, "utf8");
     const bloque = /transicion_valida[\s\S]*?\(values([\s\S]*?)\) as t\(desde, hacia, actor\)/.exec(sql)?.[1] ?? "";
     const enSql = [...bloque.matchAll(/\('(\w+)', '(\w+)', '(\w+)'\)/g)].map((m) => `${m[1]}>${m[2]}>${m[3]}`).sort();

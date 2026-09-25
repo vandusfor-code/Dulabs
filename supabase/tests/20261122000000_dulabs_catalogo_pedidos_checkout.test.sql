@@ -1,8 +1,8 @@
--- Bloque 27 — verificación de 20261121000000_dulabs_catalogo_pedidos_checkout.sql
+-- Bloque 27 — verificación de 20261122000000_dulabs_catalogo_pedidos_checkout.sql
 -- ⚠️  SOLO contra un PostgreSQL LOCAL EFÍMERO con las migraciones del catálogo aplicadas
 --     (ver 20261116000000_dulabs_catalogo_reservas_stock.test.sql). Negocios y datos FICTICIOS.
---   \i supabase/migrations/20261121000000_dulabs_catalogo_pedidos_checkout.sql   (dos veces: idempotente)
---   \i supabase/tests/20261121000000_dulabs_catalogo_pedidos_checkout.test.sql
+--   \i supabase/migrations/20261122000000_dulabs_catalogo_pedidos_checkout.sql   (dos veces: idempotente)
+--   \i supabase/tests/20261122000000_dulabs_catalogo_pedidos_checkout.test.sql
 \set ON_ERROR_STOP 1
 
 create or replace function pg_temp.pedido(p_tenant uuid, p_publico text, p_lineas jsonb) returns uuid language plpgsql as $$

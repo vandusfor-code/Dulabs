@@ -61,8 +61,8 @@ for nombre, f, a, b, test in M:
     finally:
         open(f, "w").write(orig)
 # --- Mutaciones en la BD: migración mutada -> la prueba SQL debe fallar -> se reaplica la original.
-MIG = "supabase/migrations/20261121000000_dulabs_catalogo_pedidos_checkout.sql"
-SQLT = "supabase/tests/20261121000000_dulabs_catalogo_pedidos_checkout.test.sql"
+MIG = "supabase/migrations/20261122000000_dulabs_catalogo_pedidos_checkout.sql"
+SQLT = "supabase/tests/20261122000000_dulabs_catalogo_pedidos_checkout.test.sql"
 # PostgreSQL LOCAL efímero con las migraciones del catálogo (nunca Supabase). Ajustable por entorno.
 PSQL = ["psql", "-h", os.environ.get("PGHOST", "/var/tmp/pgsock"), "-p", os.environ.get("PGPORT", "55432"), "-U", os.environ.get("PGUSER", "postgres"), "-d", os.environ.get("PGDATABASE", "piloto"), "-v", "ON_ERROR_STOP=1", "-q"]
 SQLM = [

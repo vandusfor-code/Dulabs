@@ -38,7 +38,7 @@ Preparación (una vez), con PostgreSQL 16 local:
    create or replace function public.piloto_usuario_prueba(p_email text) returns uuid language sql security definer
      set search_path = public, auth as $$ insert into auth.users(email) values (p_email) returning id $$;
    ```
-2. Aplicar en orden `supabase/migrations/20261105000000_*` … `20261121000000_*`. Son idempotentes;
+2. Aplicar en orden `supabase/migrations/20261105000000_*` … `20261122000000_*`. Son idempotentes;
    en el Bloque 24 se aplicaron las 14 sin error.
 3. PostgREST contra esa base (rol anónimo = `service_role`) y el proxy
    `scripts/perf/proxy-supabase.mjs`:
