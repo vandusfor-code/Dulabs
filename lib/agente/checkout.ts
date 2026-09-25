@@ -19,13 +19,46 @@
  * - Tras confirmar: una asesora sigue la conversación (pausa de la IA) con un mensaje FIJO.
  *
  * Todo detrás de dulabs_agente_runtime_config.checkout_conversacional (false por defecto).
+ *
+ * Bloque 28 — lenguaje humano (lib/agente/lenguaje): antes de leer el dato del paso, cada mensaje se
+ * clasifica: salida (cancelar / modificar) · duda · espera · PREGUNTA (se responde sin tocar nada y se
+ * repite la pregunta del paso) · cambio de productos (cantidad / quitar, con el producto claro o se
+ * pregunta cuál) · CORRECCIÓN de entrega o pago (se cambia ESE dato) · respuesta del paso (estricta:
+ * una intención o una risa nunca es un nombre ni una dirección). El nombre se guarda en el contacto
+ * solo cuando el pedido se confirma.
  */
 import { formatCop } from "@/lib/business-agent-quote";
 import { publicView, type OrderChannel, type OrderPublicView } from "@/lib/catalogo/pedidos/contrato";
-import { OrderError, type CheckoutData, type OrderEngine } from "@/lib/catalogo/pedidos/motor";
+import { OrderError, conversationKey, requestFingerprint, type CheckoutData, type OrderEngine } from "@/lib/catalogo/pedidos/motor";
+import { extractReferences } from "@/lib/catalogo/resolucion";
 import type { OrderContact } from "@/lib/catalogo/pedidos/repositorio";
 import { MAX_CART_LINES, type CheckoutState, type CheckoutStep, type ConversationState } from "@/lib/agente/estado";
 import { isExplicitConfirmation } from "@/lib/agente/etapa";
+import { resolveSelection } from "@/lib/agente/seleccion";
+import {
+  anunciaDireccion,
+  esAfirmacion,
+  esEspera,
+  esPregunta,
+  sinIntencionDeNombre,
+  esRelleno,
+  leerCantidad,
+  leerCiudad,
+  leerCorreccion,
+  leerDireccion,
+  leerEntrega,
+  leerNombre,
+  leerPago,
+  leerSalida,
+  pideCatalogo,
+  pideElPedido,
+  pideProducto,
+  pideQuitar,
+  pistasCheckout,
+  type Cantidad,
+} from "@/lib/agente/lenguaje/interpretar";
+import { NUMEROS_EN_LETRAS } from "@/lib/agente/lenguaje/lexico";
+import { normalizar } from "@/lib/agente/lenguaje/normalizar";
 
 type Button = { id: string; title: string };
 
@@ -73,6 +106,32 @@ export const CHECKOUT_MESSAGES = {
   cancelled: "Listo, cancelé el registro de tu pedido: no quedó ninguna compra ni reserva.\n\nTus productos siguen guardados por si quieres retomarlo; escríbeme *finalizar pedido* cuando quieras.",
   stale: "Ese resumen ya no está vigente. Escríbeme *finalizar pedido* y te muestro el resumen actualizado.",
   updatedSummary: "Te comparto el resumen actualizado:",
+  // --- Bloque 28: lenguaje humano dentro del checkout (fijos, sin IA) ---
+  /** Pregunta que el asistente no pudo responder con datos verificados: nunca se inventa. */
+  questionFallback: "Ese detalle te lo confirma una asesora apenas registremos tu pedido 😊",
+  waiting: "Claro, aquí te espero 😊",
+  doubt: "Claro 😊 ¿Qué quieres cambiar? Puedes escribirme, por ejemplo, *recoger en tienda*, *domicilio*, *transferencia* o *pago en tienda*. Para cambiar cantidades dime cuántas y de cuál producto.",
+  productsViaModify: "Para agregar otros productos escríbeme *modificar pedido* (lo que ya elegiste se conserva). Si solo quieres cambiar cantidades, dime cuántas y de cuál producto.",
+  whichProduct: (c: { tipo: "fijar" | "sumar" | "restar" | "quitar"; n: number }, lines: ReadonlyArray<{ product_name: string; quantity: number }>) =>
+    `${c.tipo === "quitar" ? "Claro. ¿Cuál producto quieres quitar?" : c.tipo === "fijar" ? `Claro. ¿De cuál producto quieres ${c.n} ${c.n === 1 ? "unidad" : "unidades"}?` : "Claro. ¿De cuál producto?"}\n\n${lines
+      .map((l, i) => `${i + 1}. ${l.product_name} (${l.quantity})`)
+      .join("\n")}\n\nRespóndeme con el número.`,
+  onlyProduct: "Ese es el único producto de tu pedido. Si ya no lo quieres, toca ❌ Cancelar; si quieres seguir, continuemos 😊",
+  updated: "Listo, actualicé tu pedido ✨",
+  noChange: (name: string, qty: number) => `Tu pedido ya tiene ${qty} ${qty === 1 ? "unidad" : "unidades"} de ${name}.`,
+  noted: (c: { entrega?: "tienda" | "domicilio"; pago?: "pago_en_tienda" | "transferencia" }) =>
+    [
+      c.entrega ? (c.entrega === "tienda" ? "Anotado: *recoger en tienda* 🏬" : "Anotado: entrega a *domicilio* 🏠") : null,
+      c.pago ? (c.pago === "transferencia" ? "Anotado: pago por *transferencia* 🏦" : "Anotado: pago *en tienda* 💵") : null,
+    ]
+      .filter(Boolean)
+      .join("\n"),
+  addressVague: "Para que llegue sin problema necesito la dirección exacta: calle o carrera, número y barrio 📍",
+  addressAnnounce: "Claro, envíamela cuando quieras 😊",
+  referenceAsk: "Claro, escríbeme la referencia (por ejemplo: portón azul, frente al parque).",
+  noCashOnDelivery: "Por ahora no manejamos pago contra entrega 🙏 Puedes pagar por *transferencia* o *en la tienda*.",
+  /** Ubicación compartida en el paso de la dirección (Bloque 28): se pide escrita, sin pasar a una asesora. */
+  locationNeedsText: "Recibí tu ubicación 📍, pero para registrar el pedido necesito la dirección escrita: calle o carrera, número y barrio.",
   notConfirmed: "Tu pedido NO quedó confirmado y no se reservó nada. Dime qué deseas cambiar y te ayudo.",
   /** Falla conocida (nada se escribió). */
   failed: "Disculpa, no pude registrar tu pedido en este momento; no quedó confirmado. ¿Me escribes de nuevo en un momento?",
@@ -106,52 +165,37 @@ export function isCheckoutButton(text: string, buttonId?: string | null): boolea
   return buttonOf(text, buttonId) !== null;
 }
 
-const NOT_A_NAME = new Set(
-  "si no ok okay dale listo hola buenas gracias cancelar cancela modificar confirmar confirmo domicilio tienda transferencia efectivo pago recoger detal mayor por mayor al detal nada ninguno ninguna yo mio"
-    .split(" ")
-    .concat(["buenos dias", "buenas tardes", "buenas noches", "a mi nombre", "mi nombre"]),
-);
-
-/** Nombre escrito por el cliente ("Laura Gómez", "me llamo Laura", "a nombre de Laura"). Nunca un teléfono. */
+/**
+ * Nombre escrito por el cliente ("Laura Gómez", "me llamo Laura", "es Duvan", "a nombre de Laura").
+ * Bloque 28: nunca un teléfono, una intención ("quiero dos aretes"), una pregunta, una risa ni un "ok".
+ */
 export function parseCustomerName(text: string): string | null {
-  let t = text.trim().replace(/\s+/g, " ");
-  t = t.replace(/^(a nombre de|mi nombre es|me llamo|soy|nombre\s*:)\s+/i, "").replace(/[.!,;]+$/g, "").trim();
-  if (t.length < 2 || t.length > 60) return null;
-  if (!/^\p{L}[\p{L} .'’-]*$/u.test(t)) return null;
-  if (t.split(" ").length > 6) return null;
-  if (NOT_A_NAME.has(bare(t))) return null;
-  return t;
+  return leerNombre(text);
 }
 
-/** Nombre guardado confiable: con letras, sin ser (ni contener) un número de teléfono. */
+/** Nombre guardado confiable: con letras, sin ser (ni contener) un número de teléfono ni palabras que no son de un nombre. */
 export function isTrustedName(name: string | null | undefined): name is string {
   const t = (name ?? "").trim();
   if (t.length < 2 || t.length > 60) return false;
   if (!/\p{L}/u.test(t)) return false;
   if ((t.match(/\d/g) ?? []).length >= 3) return false;
-  return !NOT_A_NAME.has(bare(t));
+  return sinIntencionDeNombre(t);
 }
 
 export function parseDelivery(text: string, buttonId?: string | null): "tienda" | "domicilio" | null {
   const b = buttonOf(text, buttonId);
   if (b === "checkout_tienda") return "tienda";
   if (b === "checkout_domicilio") return "domicilio";
-  const t = bare(text);
-  if (!t || t.length > 80) return null;
-  const store = /\b(recoger|recojo|recogerlo|recogerla|recogerlos|recogerlas|tienda|local|paso por el|voy por el)\b/.test(t);
-  const home = /\b(domicilio|envio|enviar|envien|enviarlo|enviarla|mandar|manden|mandarlo|a mi casa|a la casa)\b/.test(t);
-  return store === home ? null : store ? "tienda" : "domicilio";
+  return leerEntrega(text);
 }
 
-export function parsePayment(text: string, buttonId?: string | null): "pago_en_tienda" | "transferencia" | null {
+/** Pago elegido. `entrega` resuelve "cuando llegue" / "contra entrega" (con domicilio no se ofrece => null). */
+export function parsePayment(text: string, buttonId?: string | null, entrega: "tienda" | "domicilio" | null = null): "pago_en_tienda" | "transferencia" | null {
   const b = buttonOf(text, buttonId);
   if (b === "checkout_pago_tienda") return "pago_en_tienda";
   if (b === "checkout_transferencia") return "transferencia";
-  const t = bare(text);
-  if (!t || t.length > 80) return null;
-  const store = /\b(tienda|efectivo|local|en persona|al recoger|contra entrega)\b/.test(t);
-  const transfer = /\b(transferencia|transferir|transfiero|consignacion|consignar|consigno|nequi|daviplata|bancolombia|pse)\b/.test(t);
-  return store === transfer ? null : store ? "pago_en_tienda" : "transferencia";
+  const p = leerPago(text, entrega);
+  return p === "no_disponible" ? null : p;
 }
 
 /**
@@ -177,10 +221,14 @@ export function parseSummaryAction(text: string, buttonId?: string | null): "con
   return actions.size === 1 ? ([...actions][0] ?? null) : null;
 }
 
-/** En cualquier paso: el cliente cancela o quiere modificar (nunca "sí"). */
+/** En cualquier paso: el cliente cancela o quiere modificar (nunca "sí"). Bloque 28: también "cancela porfa", "ya no quiero", "mejor quiero otro". */
 export function parseEscape(text: string, buttonId?: string | null): "modify" | "cancel" | null {
   const a = parseSummaryAction(text, buttonId);
-  return a === "confirm" ? null : a;
+  if (a === "confirm") return null;
+  if (a) return a;
+  if (buttonId && buttonId.startsWith("checkout_")) return null;
+  const s = leerSalida(text);
+  return s === "cancel" || s === "modify" ? s : null;
 }
 
 const ENTRY = [
@@ -193,8 +241,9 @@ const ENTRY = [
 
 /** Frase FIJA de "quiero comprar lo que tengo" (sin productos nuevos). */
 export function wantsCheckout(text: string): boolean {
-  const t = bare(text).replace(/^(hola|buenas|buenos dias|buenas tardes|buenas noches|ok|listo|perfecto|dale|bueno)( |$)/, "").trim();
-  return t.length > 0 && t.length <= 60 && ENTRY.some((re) => re.test(t));
+  // Bloque 28: sobre el texto NORMALIZADO ("kiero el pedido", "QUIEROOO COMPRAR", "hagamos el pedido").
+  const t = normalizar(text).replace(/^(hola|buenas|buenos dias|buenas tardes|buenas noches|ok|listo|perfecto|dale|bueno)( |$)/, "").trim();
+  return (t.length > 0 && t.length <= 60 && ENTRY.some((re) => re.test(t))) || pideElPedido(text);
 }
 
 function freeText(text: string, min: number, max: number): string | null {
@@ -203,7 +252,7 @@ function freeText(text: string, min: number, max: number): string | null {
   if (!/[\p{L}\p{N}]/u.test(t)) return null;
   return t;
 }
-const NO_REFERENCE = new Set(["no", "ninguna", "ninguno", "no tengo", "sin referencia", "no hay", "nada", "no gracias", "asi esta bien", "no tengo referencia", "no ninguna"]);
+const NO_REFERENCE = new Set(["no", "nop", "ninguna", "ninguno", "no tengo", "sin referencia", "no hay", "nada", "no gracias", "asi esta bien", "no tengo referencia", "no ninguna", "no hay referencia", "ninguna referencia", "sin", "no necesito"]);
 
 // ---------------------------------------------------------------------------
 // Resumen (del motor, nunca de la IA)
@@ -241,7 +290,7 @@ export function summaryText(order: OrderPublicView, data: CheckoutData): string 
 // ---------------------------------------------------------------------------
 
 export interface CheckoutIO {
-  engine: Pick<OrderEngine, "validateOrder" | "confirmOrder" | "cancelProposal" | "getOrder">;
+  engine: Pick<OrderEngine, "validateOrder" | "confirmOrder" | "cancelProposal" | "getOrder" | "createOrder">;
   tenantId: string;
   contact: OrderContact;
   channel: OrderChannel;
@@ -258,6 +307,13 @@ export interface CheckoutIO {
   rememberName?(name: string): Promise<void>;
   /** Pausa la IA en ESTA conversación (una asesora sigue). false = no se pudo. */
   handOff(reason: string): Promise<boolean>;
+  /** Bloque 28: wamid del mensaje (idempotencia al rehacer la propuesta por un cambio de cantidad). */
+  wamid?: string;
+  /**
+   * Bloque 28: responde una PREGUNTA del cliente sin tocar el checkout (el modelo, solo con herramientas
+   * de LECTURA y el anclaje). null = sin respuesta verificable: se dice que una asesora lo confirma.
+   */
+  answerQuestion?(text: string, step: CheckoutStep): Promise<string | null>;
 }
 
 export type CheckoutAction =
@@ -273,7 +329,17 @@ export type CheckoutAction =
   | "cancelled"
   | "stale"
   | "failed"
-  | "pending";
+  | "pending"
+  // Bloque 28
+  | "question"
+  | "waiting"
+  | "doubt"
+  | "corrected"
+  | "updated"
+  | "unchanged"
+  | "ask_target"
+  | "only_product"
+  | "products_via_modify";
 
 export interface CheckoutResult {
   state: ConversationState;
@@ -306,6 +372,12 @@ function nextStep(ck: CheckoutState): CheckoutStep {
 }
 
 async function ask(io: CheckoutIO, step: CheckoutStep, prefix: string | null): Promise<string | null> {
+  // Un prefijo largo (p. ej. una respuesta a una pregunta) va aparte: el cuerpo con botones admite 1024 caracteres.
+  if (prefix && prefix.length > 700) {
+    const first = await io.sendText(prefix);
+    const rest = await ask(io, step, null);
+    return first && rest ? `${first}\n\n${rest}` : (first ?? rest);
+  }
   const p = (s: string) => (prefix ? `${prefix}\n\n${s}` : s);
   switch (step) {
     case "name":
@@ -335,22 +407,28 @@ function backToCart(state: ConversationState, order: OrderPublicView | null): Co
  * Empieza el checkout sobre una propuesta del motor (pending_confirmation) de ESTA conversación.
  * El nombre se reutiliza si hay uno confiable (nunca el teléfono).
  */
-export async function startCheckout(io: CheckoutIO, state: ConversationState, order: OrderPublicView): Promise<CheckoutResult> {
+export async function startCheckout(io: CheckoutIO, state: ConversationState, order: OrderPublicView, textoCompra: string | null = null): Promise<CheckoutResult> {
   const known = await io.knownName().catch(() => null);
+  // Bloque 28: lo que el cliente YA dijo en el mismo mensaje ("soy Laura…, domicilio y transferencia") llena
+  // campos vacíos; las preguntas del mensaje nunca cuentan. El resumen y el botón siguen siendo obligatorios.
+  const pistas = textoCompra ? pistasCheckout(textoCompra) : {};
   const ck: CheckoutState = {
     orderId: order.order_id,
     step: "name",
-    customerName: isTrustedName(known) ? known.trim() : null,
-    delivery: null,
+    // El nombre dado en un checkout anterior de ESTA conversación (se salió con Modificar) va antes que el del contacto.
+    customerName: pistas.nombre ?? (isTrustedName(state.checkoutName) ? state.checkoutName : isTrustedName(known) ? known.trim() : null),
+    delivery: pistas.entrega ?? null,
     address: null,
     city: null,
     deliveryReference: null,
-    paymentMethod: null,
+    paymentMethod: pistas.pago ?? null,
     summary: null,
     startedTurn: io.turn,
+    pendingChange: null,
   };
   ck.step = nextStep(ck);
   const next: ConversationState = { ...state, checkout: ck, activeOrderId: order.order_id, cart: [], ambiguity: null };
+  if (ck.step === "summary") return summarize(io, next, ck, CHECKOUT_MESSAGES.intro);
   const reply = await ask(io, ck.step, CHECKOUT_MESSAGES.intro);
   return done(next, reply, "started");
 }
@@ -437,7 +515,11 @@ async function confirm(io: CheckoutIO, state: ConversationState, ck: CheckoutSta
 
 /** Pedido confirmado: se cierra el checkout y una asesora sigue (mensaje FIJO, nunca de la IA). */
 async function finishConfirmed(io: CheckoutIO, state: ConversationState): Promise<CheckoutResult> {
+  // Bloque 28: el nombre se guarda en el contacto SOLO con el pedido confirmado (antes era un dato en curso).
+  const name = state.checkout?.customerName;
+  if (name && isTrustedName(name)) await io.rememberName?.(name).catch(() => undefined);
   const next: ConversationState = { ...state, checkout: null, proposal: null, cart: [], ambiguity: null };
+  delete next.checkoutName;
   const paused = await io.handOff("pedido confirmado").catch(() => false);
   const reply = await io.sendText(CHECKOUT_MESSAGES.confirmed(io.businessName));
   return done(paused ? { ...next, handoffTurn: io.turn } : next, reply, "confirmed", paused);
@@ -452,13 +534,159 @@ async function leave(io: CheckoutIO, state: ConversationState, ck: CheckoutState
     if (err.code === "INVALID_TRANSITION") return done({ ...state, checkout: null }, await io.sendText(CHECKOUT_MESSAGES.alreadyConfirmed), "already_confirmed");
     if (err.code !== "NOT_FOUND") return done(state, await io.sendText(CHECKOUT_MESSAGES.failed), "failed");
   }
-  const next = backToCart(state, order);
+  // El nombre se conserva SOLO en esta conversación (no en el contacto) para no volver a pedirlo tras modificar.
+  const name = isTrustedName(ck.customerName) ? ck.customerName : state.checkoutName;
+  const next: ConversationState = { ...backToCart(state, order), ...(name ? { checkoutName: name } : {}) };
   return done(next, await io.sendText(kind === "modify" ? CHECKOUT_MESSAGES.modify : CHECKOUT_MESSAGES.cancelled), kind === "modify" ? "modified" : "cancelled");
+}
+
+// ---------------------------------------------------------------------------
+// Bloque 28 — lenguaje humano dentro del checkout
+// ---------------------------------------------------------------------------
+
+type Entrega = "tienda" | "domicilio";
+type Pago = "pago_en_tienda" | "transferencia";
+type Cambio = { tipo: "fijar" | "sumar" | "restar" | "quitar"; n: number };
+type Linea = OrderPublicView["lines"][number];
+
+/** Lo que se le recuerda al cliente en cada paso (p. ej. tras una nota de voz). */
+export const CHECKOUT_STEP_HINT: Readonly<Record<CheckoutStep, string>> = {
+  name: "Escríbeme el nombre de la persona a nombre de quien registramos el pedido.",
+  delivery: "Escríbeme si prefieres *domicilio* o *recoger en tienda*.",
+  address: "Escríbeme la dirección (calle o carrera, número y barrio).",
+  city: "Escríbeme la ciudad.",
+  reference: "Escríbeme si tienes alguna referencia para la entrega (o *sin referencia*).",
+  payment: "Escríbeme si pagas por *transferencia* o *en tienda*.",
+  summary: "Toca ✅ Confirmar pedido, ✏️ Modificar pedido o ❌ Cancelar.",
+};
+
+/** Pregunta del cliente: se responde (solo lectura) y se repite la pregunta del paso. Nada cambia. */
+async function answerAndRepeat(io: CheckoutIO, state: ConversationState, ck: CheckoutState, text: string): Promise<CheckoutResult> {
+  const answer = io.answerQuestion ? await io.answerQuestion(text, ck.step).catch(() => null) : null;
+  return done(state, await ask(io, ck.step, answer?.trim() || CHECKOUT_MESSAGES.questionFallback), "question");
+}
+
+/** Corrige entrega y/o pago (en cualquier paso) y sigue con lo que falte (o un resumen NUEVO). */
+async function corregir(io: CheckoutIO, state: ConversationState, ck: CheckoutState, c: { entrega?: Entrega; pago?: Pago }): Promise<CheckoutResult> {
+  let n: CheckoutState = { ...ck, summary: null, pendingChange: null };
+  if (c.entrega) n = c.entrega === "tienda" ? { ...n, delivery: "tienda", address: null, city: null, deliveryReference: null } : { ...n, delivery: "domicilio" };
+  if (c.pago) n = { ...n, paymentMethod: c.pago };
+  const step = nextStep(n);
+  const prefix = CHECKOUT_MESSAGES.noted(c);
+  if (step === "summary") return summarize(io, state, { ...n, step }, prefix);
+  return done({ ...state, checkout: { ...n, step } }, await ask(io, step, prefix), "corrected");
+}
+
+const NUMERO = (w: string): number | null => (/^\d{1,2}$/.test(w) ? Number(w) : (NUMEROS_EN_LETRAS[w] ?? null));
+
+/** El producto del pedido al que se refiere el mensaje: el único, o el que la selección determinista señala. */
+function objetivo(text: string, lines: readonly Linea[]): string | "ambiguo" {
+  if (lines.length === 1) return lines[0].reference;
+  const sel = resolveSelection(
+    text,
+    lines.map((l) => ({ reference: l.reference, name: l.product_name })),
+    { typedReferences: extractReferences(text) },
+  );
+  return sel.selected.length === 1 ? sel.selected[0].reference : "ambiguo";
+}
+
+/** Cambio de cantidad EXPLÍCITO (no un número suelto: en un paso con opciones "2" puede ser la opción 2). */
+function cambioDeCantidad(text: string): { cambio: Cambio; objetivoTexto: string } | null {
+  const c: Cantidad | null = leerCantidad(text);
+  const t = normalizar(text);
+  if (c && !/^(\d{1,2}|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce)$/.test(t)) return { cambio: c, objetivoTexto: text };
+  // "3 del primero", "quiero 2 del dorado", "ponme 4 de la pulsera"
+  const m = /^(?:(?:quiero|ponme|dame|mejor|no|que sean|eran|cambia a|solo)\s+)*(\d{1,2}|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)(?:\s+(?:unidades?|und|uds|u))?\s+(?:del|de la|de el|de los|de las|de)\s+(.+)$/.exec(t);
+  if (m) {
+    const n = NUMERO(m[1]);
+    if (n && n >= 1 && n <= 99) return { cambio: { tipo: "fijar", n }, objetivoTexto: m[2] };
+  }
+  return null;
+}
+
+/** Cambia cantidades / quita un producto del pedido en curso: se rehace la propuesta y se conservan los datos del checkout. */
+async function aplicarCambio(io: CheckoutIO, state: ConversationState, ck: CheckoutState, order: OrderPublicView, ref: string, cambio: Cambio): Promise<CheckoutResult> {
+  const lines = order.lines.filter((l) => l.quantity > 0);
+  const actual = lines.find((l) => l.reference === ref);
+  if (!actual) return done(state, await ask(io, ck.step, CHECKOUT_MESSAGES.doubt), "doubt");
+  const base: CheckoutState = { ...ck, pendingChange: null };
+  const q = Math.min(99, cambio.tipo === "fijar" ? cambio.n : cambio.tipo === "sumar" ? actual.quantity + 1 : cambio.tipo === "restar" ? actual.quantity - 1 : 0);
+  const items = lines.map((l) => ({ reference: l.reference, quantity: l.reference === ref ? q : l.quantity })).filter((l) => l.quantity > 0);
+  if (items.length === 0) {
+    const cancel = CHECKOUT_BUTTONS.summary[2];
+    return done({ ...state, checkout: base }, await io.sendMenu(CHECKOUT_MESSAGES.onlyProduct, [cancel], `${CHECKOUT_MESSAGES.onlyProduct} (escríbeme *cancelar* si ya no lo quieres)`), "only_product");
+  }
+  if (q === actual.quantity) return done({ ...state, checkout: base }, await ask(io, ck.step, CHECKOUT_MESSAGES.noChange(actual.product_name, q)), "unchanged");
+  return rehacer(io, state, base, items);
+}
+
+/**
+ * Rehace la propuesta con las cantidades nuevas (el pedido confirmado nunca se toca: esto es ANTES de
+ * confirmar). La propuesta vieja se cancela (sin reserva, nada que devolver); la nueva sale del motor
+ * con precios y stock vigentes. Nombre, entrega y pago se conservan; el resumen se vuelve a mostrar.
+ */
+async function rehacer(io: CheckoutIO, state: ConversationState, ck: CheckoutState, items: Array<{ reference: string; quantity: number }>): Promise<CheckoutResult> {
+  try {
+    await io.engine.cancelProposal({ tenantId: io.tenantId, contact: io.contact, orderId: ck.orderId, reason: "checkout_quantity_change", requestId: io.requestId });
+  } catch (err) {
+    if (!(err instanceof OrderError)) return done(state, await io.sendText(CHECKOUT_MESSAGES.pending), "pending");
+    if (err.code === "INVALID_TRANSITION") return done({ ...state, checkout: null }, await io.sendText(CHECKOUT_MESSAGES.alreadyConfirmed), "already_confirmed");
+    if (err.code !== "NOT_FOUND") return done(state, await io.sendText(CHECKOUT_MESSAGES.failed), "failed");
+  }
+  let created;
+  try {
+    created = await io.engine.createOrder({
+      tenantId: io.tenantId,
+      channel: io.channel,
+      source: "agent",
+      contact: io.contact,
+      items,
+      // Idempotente por mensaje + contenido: el reintento del mismo mensaje no crea otra propuesta.
+      idempotencyKey: conversationKey("agent", io.contact, `${io.wamid ?? io.requestId}|${requestFingerprint(io.channel, items)}|checkout`),
+      requestId: io.requestId,
+    });
+  } catch (err) {
+    if (!(err instanceof OrderError)) throw err;
+    return done({ ...state, checkout: null, proposal: null, activeOrderId: null, cart: items.slice(0, MAX_CART_LINES) }, await io.sendText(CHECKOUT_MESSAGES.failed), "failed");
+  }
+  const o = publicView(created.order);
+  if (o.status !== "pending_confirmation" || !o.confirmation) {
+    const issues = o.issues.map((i) => i.message).slice(0, 5);
+    await io.engine.cancelProposal({ tenantId: io.tenantId, contact: io.contact, orderId: o.order_id, reason: "checkout_issues", requestId: io.requestId }).catch(() => null);
+    return done(backToCart(state, o), await io.sendText([...issues, CHECKOUT_MESSAGES.notConfirmed].join("\n\n")), "not_confirmed");
+  }
+  const n: CheckoutState = { ...ck, orderId: o.order_id, summary: null, pendingChange: null };
+  const next: ConversationState = { ...state, activeOrderId: o.order_id };
+  const step = ck.step === "summary" ? "summary" : nextStep(n);
+  if (step === "summary") return summarize(io, next, { ...n, step }, CHECKOUT_MESSAGES.updated);
+  return done({ ...next, checkout: { ...n, step } }, await ask(io, step, CHECKOUT_MESSAGES.updated), "updated");
+}
+
+/** Cambio de productos dentro del checkout (cantidad, quitar, "¿de cuál?" pendiente) o null si el mensaje no es eso. */
+async function cambiarProductos(io: CheckoutIO, state: ConversationState, ck: CheckoutState, order: OrderPublicView, text: string): Promise<CheckoutResult | null> {
+  const lines = order.lines.filter((l) => l.quantity > 0);
+  // Respuesta a "¿de cuál producto?": el número de la lista, la referencia, la posición o un nombre inequívoco.
+  if (ck.pendingChange) {
+    const t = normalizar(text);
+    const k = /^\d{1,2}$/.test(t) ? Number(t) : null;
+    const ref = k && k >= 1 && k <= lines.length ? lines[k - 1].reference : objetivo(text, lines);
+    if (ref !== "ambiguo") return aplicarCambio(io, state, ck, order, ref, ck.pendingChange);
+  }
+  const cant = cambioDeCantidad(text);
+  const quitar = !cant && pideQuitar(text);
+  if (!cant && !quitar) return pideProducto(text) ? done(state, await ask(io, ck.step, CHECKOUT_MESSAGES.productsViaModify), "products_via_modify") : null;
+  const cambio: Cambio = cant ? cant.cambio : { tipo: "quitar", n: 0 };
+  const ref = objetivo(cant ? cant.objetivoTexto : text, lines);
+  if (ref === "ambiguo") return done({ ...state, checkout: { ...ck, pendingChange: cambio } }, await io.sendText(CHECKOUT_MESSAGES.whichProduct(cambio, lines)), "ask_target");
+  return aplicarCambio(io, state, ck, order, ref, cambio);
 }
 
 /**
  * Un mensaje con el checkout en curso. null = el checkout ya no aplica (el pedido cambió por otro
  * camino: vencido, cancelado, en manos de una asesora): quien llama lo cierra y el turno sigue normal.
+ *
+ * Orden (Bloque 28): salida → botón de otro paso (corrección) → "¿de cuál?" pendiente → duda → espera
+ * → PREGUNTA (se responde, nada cambia) → cambio de productos → corrección de entrega/pago → dato del paso.
  */
 export async function continueCheckout(
   io: CheckoutIO,
@@ -475,57 +703,90 @@ export async function continueCheckout(
   if (!order || order.order_id !== ck.orderId || order.status !== "pending_confirmation") {
     return null;
   }
-  const escape = parseEscape(input.text, input.buttonId);
+  const text = input.text;
+  const escape = parseEscape(text, input.buttonId);
   if (escape) return leave(io, state, ck, order, escape);
 
-  const save = (patch: Partial<CheckoutState>) => ({ ...ck, ...patch });
+  const btn = buttonOf(text, input.buttonId);
+  // Botón de entrega o de pago de un mensaje anterior, tocado en otro paso: corrige ESE dato.
+  if ((btn === "checkout_tienda" || btn === "checkout_domicilio") && ck.step !== "delivery") return corregir(io, state, ck, { entrega: btn === "checkout_tienda" ? "tienda" : "domicilio" });
+  if ((btn === "checkout_pago_tienda" || btn === "checkout_transferencia") && ck.step !== "payment") return corregir(io, state, ck, { pago: btn === "checkout_pago_tienda" ? "pago_en_tienda" : "transferencia" });
+
+  if (!btn) {
+    if (ck.pendingChange) {
+      const r = await cambiarProductos(io, state, ck, order, text);
+      if (r) return r;
+    }
+    if (leerSalida(text) === "doubt") return done(state, await ask(io, ck.step, CHECKOUT_MESSAGES.doubt), "doubt");
+    if (esEspera(text)) return done(state, await io.sendText(CHECKOUT_MESSAGES.waiting), "waiting");
+    if (ck.step === "address" && anunciaDireccion(text)) return done(state, await io.sendText(CHECKOUT_MESSAGES.addressAnnounce), "waiting");
+    // Una PREGUNTA nunca es un dato: se responde y se repite la pregunta del paso (sin tocar nada).
+    if (esPregunta(text) || pideCatalogo(text)) return answerAndRepeat(io, state, ck, text);
+    const cambio = await cambiarProductos(io, state, ck, order, text);
+    if (cambio) return cambio;
+    const corr = leerCorreccion(text, ck.delivery);
+    if (corr && ((corr.entrega && ck.step !== "delivery") || (corr.pago && ck.step !== "payment"))) return corregir(io, state, ck, corr);
+  }
+
+  const save = (patch: Partial<CheckoutState>) => ({ ...ck, ...patch, pendingChange: null });
   const move = async (nextCk: CheckoutState, prefix: string | null = null) => {
     const step = nextStep(nextCk);
     if (step === "summary") return summarize(io, state, nextCk, prefix);
     return done({ ...state, checkout: { ...nextCk, step } }, await ask(io, step, prefix), "asked");
   };
   const again = async (text: string, step: CheckoutStep) => done(state, await ask(io, step, text), "invalid");
+  /** Otro dato que vino en el MISMO mensaje ("domicilio y transferencia"): solo llena lo vacío. */
+  const extra = (c: CheckoutState): CheckoutState => {
+    if (btn) return c;
+    const x = leerCorreccion(text, c.delivery);
+    return { ...c, ...(x?.pago && !c.paymentMethod && ck.step !== "payment" ? { paymentMethod: x.pago } : {}) };
+  };
 
   switch (ck.step) {
     case "name": {
-      const name = parseCustomerName(input.text);
+      const name = parseCustomerName(text);
       if (!name) return done(state, await io.sendText(CHECKOUT_MESSAGES.askNameAgain), "invalid");
-      await io.rememberName?.(name).catch(() => undefined);
+      // Bloque 28: el nombre queda en el pedido en curso; se guarda en el contacto solo al confirmar.
       return move(save({ customerName: name }));
     }
     case "delivery": {
-      const d = parseDelivery(input.text, input.buttonId);
+      const d = parseDelivery(text, input.buttonId);
       if (!d) return again(CHECKOUT_MESSAGES.chooseOption, "delivery");
       const patch: Partial<CheckoutState> = d === "tienda" ? { delivery: d, address: null, city: null, deliveryReference: null } : { delivery: d };
-      return move(save(patch));
+      return move(extra(save(patch)));
     }
     case "address": {
-      const a = freeText(input.text, 5, 300);
-      if (!a || NO_REFERENCE.has(bare(a))) return done(state, await io.sendText(CHECKOUT_MESSAGES.addressAgain), "invalid");
-      return move(save({ address: a }));
+      const a = leerDireccion(text);
+      if (a?.tipo === "vaga") return done(state, await io.sendText(CHECKOUT_MESSAGES.addressVague), "invalid");
+      if (a?.tipo === "anuncio") return done(state, await io.sendText(CHECKOUT_MESSAGES.addressAnnounce), "waiting");
+      if (!a || NO_REFERENCE.has(normalizar(a.valor))) return done(state, await io.sendText(CHECKOUT_MESSAGES.addressAgain), "invalid");
+      return move(save({ address: a.valor }));
     }
     case "city": {
-      const c = freeText(input.text, 2, 80);
-      if (!c || !/\p{L}/u.test(c) || NO_REFERENCE.has(bare(c))) return done(state, await io.sendText(CHECKOUT_MESSAGES.cityAgain), "invalid");
+      const c = leerCiudad(text);
+      if (!c || NO_REFERENCE.has(normalizar(c))) return done(state, await io.sendText(CHECKOUT_MESSAGES.cityAgain), "invalid");
       // La referencia es opcional, pero se pregunta (paso explícito).
       return move(save({ city: c, step: "reference" }));
     }
     case "reference": {
-      const skip = buttonOf(input.text, input.buttonId) === "checkout_sin_referencia" || NO_REFERENCE.has(bare(input.text));
-      const r = skip ? null : freeText(input.text, 2, 300);
+      const skip = btn === "checkout_sin_referencia" || NO_REFERENCE.has(normalizar(text));
+      if (!skip && esAfirmacion(text)) return done(state, await io.sendText(CHECKOUT_MESSAGES.referenceAsk), "invalid");
+      const r = skip ? null : esRelleno(text) ? null : freeText(text, 2, 300);
       if (!skip && !r) return again(CHECKOUT_MESSAGES.chooseOption, "reference");
       return move(save({ deliveryReference: r, step: "payment" }));
     }
     case "payment": {
-      const m = parsePayment(input.text, input.buttonId);
+      const m = btn ? parsePayment(text, input.buttonId) : leerPago(text, ck.delivery);
+      if (m === "no_disponible") return again(CHECKOUT_MESSAGES.noCashOnDelivery, "payment");
       if (!m) return again(CHECKOUT_MESSAGES.chooseOption, "payment");
       return move(save({ paymentMethod: m, step: "summary" }));
     }
     case "summary": {
-      const action = parseSummaryAction(input.text, input.buttonId);
+      const action = parseSummaryAction(text, input.buttonId);
       if (action === "confirm") return confirm(io, state, ck, order);
-      // "sí", "confirmo", "ok", "dale"…: nunca confirman; se pide el botón (acción inequívoca).
-      return again(isExplicitConfirmation(input.text) || /\bconfirm/i.test(bare(input.text)) ? CHECKOUT_MESSAGES.tapToConfirm : CHECKOUT_MESSAGES.chooseOption, "summary");
+      // "sí", "sii", "confirmo", "ok", "dale"…: nunca confirman; se pide el botón (acción inequívoca).
+      const afirma = esAfirmacion(text) || isExplicitConfirmation(text) || /\bconfirm/i.test(normalizar(text));
+      return again(afirma ? CHECKOUT_MESSAGES.tapToConfirm : CHECKOUT_MESSAGES.chooseOption, "summary");
     }
   }
 }

@@ -79,6 +79,8 @@ export interface AgentTurnToolContext {
   state: ConversationState;
   /** Referencias con varias opciones surgidas EN ESTE TURNO (el cliente aún no las vio). */
   pendingChoice: Set<string>;
+  /** Bloque 28: el mensaje pide cambiar una cantidad o quitar SIN decir de cuál producto y hay 2+ en la selección. */
+  cartTargetAmbiguous?: boolean;
   /** Lo que el cliente señaló de forma determinista en este mensaje (o en el anterior). Ver seleccion.ts. */
   designated: Set<string>;
   /** Texto del cliente en este turno (solo para guardas deterministas, p. ej. la confirmación explícita). */
@@ -391,6 +393,10 @@ export const AGENT_TOOLS = {
       .strict(),
     kind: "state",
     async run(ctx, input, deps) {
+      // Bloque 28: "eran 3" / "quita ese" con varios productos en la selección y ninguno señalado: nunca se elige por el cliente.
+      if (ctx.cartTargetAmbiguous && input.items.some((i) => ctx.state.cart.some((c) => c.reference === i.reference))) {
+        return fail("CHOICE_REQUIRED", "El cliente pidió cambiar una cantidad (o quitar) sin decir de cuál producto y hay varios en su selección. Pregúntale de cuál, con la lista numerada de su selección.");
+      }
       const additions = input.items.filter((i) => i.quantity > 0).map((i) => i.reference);
       for (const ref of additions) {
         const blocked = checkProvenance(ctx, ref, true);

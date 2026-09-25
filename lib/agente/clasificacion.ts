@@ -13,6 +13,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { OrderChannel } from "@/lib/catalogo/pedidos/contrato";
+import { normalizar } from "@/lib/agente/lenguaje/normalizar";
 
 export type CustomerChannelOrigin = "cliente" | "catalogo_detal" | "catalogo_mayorista" | "asesora";
 export type InitialChannelOrigin = Exclude<CustomerChannelOrigin, "asesora">;
@@ -179,7 +180,8 @@ const WHOLESALE = /\b(al por mayor|por mayor|mayorista|mayoristas|mayoreo|al may
  * ("no es al por mayor, es al detal") o ninguno, null: el backend no adivina.
  */
 export function parseChannelChoice(text: string): OrderChannel | null {
-  const t = norm(text).slice(0, 500);
+  // Bloque 28: sobre el texto normalizado ("por mallor", "mayorr", "x mayor" => por mayor).
+  const t = normalizar(norm(text).slice(0, 500));
   if (!t) return null;
   const retail = RETAIL.test(t);
   const wholesale = WHOLESALE.test(t);

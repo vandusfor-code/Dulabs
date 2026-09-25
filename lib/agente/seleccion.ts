@@ -16,6 +16,7 @@
  * Nunca se toma "el primero de la lista" ni el más probable.
  */
 import type { ConversationState } from "@/lib/agente/estado";
+import { leerCantidad } from "@/lib/agente/lenguaje/interpretar";
 
 export type SelectionVia = "image_reply" | "position" | "reference" | "name";
 
@@ -59,6 +60,8 @@ const ORDINALS: Array<[RegExp, number]> = ORDINAL_WORDS.map(([w, n]) => [
 const MARKED_NUMBER = /(?:\b(?:el|la|los|las|del|de\s+la|opcion|numero|nro|no\.|foto|imagen)\s*#?\s*|#\s*)(10|[1-9])\b(?!\s*(?:unidad|unidades|pieza|piezas|de\s+cada))/g;
 const LAST = /\bultim[oa]s?\b/;
 const ALL = /\b(?:todos|todas|ambos|ambas)\b/;
+/** Bloque 28: "los dos" / "las dos" = ambas SOLO si hay exactamente dos opciones a la vista. */
+const BOTH = /\b(?:los|las)\s+dos\b/;
 const DEICTIC =
   /\b(?:este|esta|estos|estas|ese|esa|esos|esas|eso|esto|aquel|aquella|aquellos|aquellas)\b|\b(?:el|la)\s+de\s+la\s+(?:foto|imagen)\b|\b(?:el|la)\s+(?:de\s+(?:arriba|abajo)|anterior|otr[oa])\b/;
 /** "el otro" / "la otra": solo se resuelve con exactamente dos opciones y una ya elegida. */
@@ -110,7 +113,7 @@ export function resolveSelection(
     for (const m of t.matchAll(MARKED_NUMBER)) positions.add(Number(m[1]));
     if (LAST.test(t)) positions.add(shown.length);
     for (const p of [...positions].sort((a, b) => a - b)) if (p >= 1 && p <= shown.length) add(shown[p - 1].reference, "position");
-    if (ALL.test(t) && shown.length > 1) for (const s of shown) add(s.reference, "position");
+    if ((ALL.test(t) && shown.length > 1) || (BOTH.test(t) && shown.length === 2)) for (const s of shown) add(s.reference, "position");
 
     if (shown.length > 1) {
       // Solo palabras que distinguen a UNA opción de las demás.
@@ -126,13 +129,14 @@ export function resolveSelection(
         const chosen = shown.filter((x) => previous.has(x.reference));
         if (chosen.length === 1) add(shown.find((x) => !previous.has(x.reference))!.reference, "position");
       }
-    } else if (shown.length === 1 && (DEICTIC.test(t) || QUANTITY_ONLY.test(t.trim()))) {
+    } else if (shown.length === 1 && (DEICTIC.test(t) || QUANTITY_ONLY.test(t.trim()) || leerCantidad(text) !== null)) {
       // Una sola opción a la vista: "ese" o "quiero 3" no son ambiguos.
       add(shown[0].reference, "position");
     }
   }
 
   const deictic = DEICTIC.test(t);
-  const quantityOnly = selected.length === 0 && QUANTITY_ONLY.test(t.trim());
+  // Bloque 28: también "x2", "2 und", "eran 3", "no mejor 3", "uno más" (lib/agente/lenguaje).
+  const quantityOnly = selected.length === 0 && (QUANTITY_ONLY.test(t.trim()) || leerCantidad(text) !== null);
   return { selected, deictic, quantityOnly, needsClarification: (deictic || quantityOnly) && selected.length === 0 && shown.length > 1 };
 }

@@ -541,3 +541,123 @@ apagado el agente funciona exactamente como antes.
 
   Las 39 se detectan (M04 la detecta la carrera real de dos confirmaciones simultáneas por la última
   unidad en `reservas-stock.test.ts`).
+
+# Bloque 28 — Lenguaje humano: ambigüedades y checkout conversacional blindado
+
+**Sin migración y sin interruptores nuevos.** Todo aplica solo donde ya está encendido
+`checkout_conversacional` (por número) y el módulo `pedidos` (por negocio). Con el interruptor
+apagado el agente funciona como antes. AMORE, Publi Bordados y los demás negocios no cambian.
+
+## Capa de lenguaje (una sola, reutilizable)
+
+`mensaje → normalizar → intención → datos → validación con el contexto → acción → backend → respuesta`
+
+- `lib/agente/lenguaje/normalizar.ts`: minúsculas, sin tildes, sin emojis ni signos, letras
+  repetidas colapsadas ("holaaa" → "hola") y errores/abreviaciones corregidos ("kiero",
+  "domisilio", "x mallor", "porfa", "q"). Nunca se usa para guardar el nombre o la dirección:
+  esos se guardan tal como los escribió el cliente.
+- `lib/agente/lenguaje/lexico.ts`: **diccionario declarativo** (solo datos). Incluye:
+  - entrega, pago, correcciones, salidas (cancelar/modificar), duda y espera;
+  - cantidades, nombre, dirección, catálogo, compra y modalidad inicial.
+
+  Una frase nueva se agrega aquí, no con un `if`.
+- `lib/agente/lenguaje/interpretar.ts`: funciones puras. Solo reconocen las respuestas a las
+  preguntas del backend y separan lo que **no** es una respuesta (pregunta, intención, risa,
+  relleno). Ante la duda devuelven `null` y el backend pregunta.
+
+Gemini interpreta el lenguaje libre (buscar, describir, opinar). Nunca decide precio, stock,
+estado, reserva ni confirmación.
+
+## Checkout: qué cambió
+
+1. **Una pregunta nunca es un dato.** Por ejemplo, "¿Cuánto cuesta el envío?" en la entrega o
+   "¿puedo pagar con Nequi?" en el pago:
+   - se responde con Gemini y **solo herramientas de lectura**; la respuesta pasa por el
+     anclaje: un monto o un estado sin respaldo no sale;
+   - luego se repite la pregunta del paso con sus botones;
+   - nada cambia en el pedido.
+2. **Correcciones al dato correcto**:
+   - "No, mejor recojo en tienda" en la dirección cambia la **entrega**; no se guarda como
+     dirección;
+   - "mejor transferencia" en el resumen cambia el pago y muestra un **resumen nuevo**;
+   - un botón de entrega o de pago de un mensaje anterior corrige ese dato;
+   - "cambié de opinión" pregunta qué cambiar; "espera" espera.
+3. **Nombre estricto**:
+   - no son nombre: una intención ("quiero dos aretes"), una pregunta, una risa, "ok" o un número;
+   - un nombre de negocio con una palabra propia ("Tienda La Perla", "Tienda Mayorista Luna")
+     **sí** es un nombre;
+   - el nombre llega al contacto **solo al confirmar**;
+   - si el cliente toca Modificar, el nombre se conserva **solo en esa conversación** para no
+     volver a pedirlo.
+4. **Dirección y ciudad estrictas**:
+   - "vivo por el centro" pide la dirección exacta;
+   - "te mando la dirección" espera;
+   - "quiero ese" o "jajaja" nunca es una dirección ni una ciudad;
+   - una **ubicación** de WhatsApp en ese paso pide la dirección escrita, sin asesora y sin romper
+     el checkout.
+5. **Cantidades humanas**:
+   - se entienden "x2", "2x", "2 und", "eran 3", "uno más" y "quita uno";
+   - con **un** producto, el backend rehace la propuesta: cancela la vieja sin reserva, crea una
+     nueva con la clave idempotente del `wamid` y muestra un resumen nuevo;
+   - con **varios** productos pregunta "¿De cuál producto…?" con la lista numerada;
+   - un número suelto en un paso con opciones no cambia cantidades;
+   - fuera del checkout, "eran 3" con dos productos en la selección hace que `update_cart`
+     devuelva `CHOICE_REQUIRED`: el agente nunca elige por el cliente.
+6. **Pago**: con domicilio, "cuando llegue" o "contra entrega" no se ofrece; se explican las
+   opciones y no se elige nada.
+7. **Confirmar sigue siendo solo el botón.** "sí", "dale" u "ok" responden "toca el botón".
+8. **Varias intenciones en un mensaje.** En "quiero comprar, a domicilio y pago por
+   transferencia", la entrega y el pago quedan prellenados. El resumen y el botón siguen siendo
+   obligatorios.
+9. **Nota de voz en el checkout**: se dice exactamente qué dato falta.
+10. **Estado real del pedido**:
+    - el agente recibe el seguimiento real: etapa, pago, entrega y método;
+    - el anclaje bloquea "enviado", "entregado", "pagado" o "en preparación" si la BD no lo
+      respalda, y también "actualicé tu pedido" si no hubo escritura;
+    - un pedido confirmado no se modifica por chat: pasa a una asesora.
+11. **Modalidad**:
+    - una frase ambigua ("tengo una tienda", "solo uno") nunca clasifica: se vuelve a preguntar;
+    - "soy particular" es detal; "x mallor" es mayorista;
+    - un detal que pide precio al por mayor pasa a una asesora con mensaje fijo y su modalidad
+      no cambia.
+
+## Pruebas
+
+- `lib/agente/agente-lenguaje.test.ts`: normalizador, **matriz de 70+ expresiones** (entrada ·
+  contexto · intención · acción) y conversaciones completas con el motor real en memoria.
+  Cubre:
+  - pregunta ≠ respuesta, correcciones, nombre y dirección estrictos, nombre de negocio y
+    nombre tras Modificar;
+  - cantidades, varias intenciones y mensajes sin texto;
+  - estado real y anclaje, modalidad, y aislamiento con el interruptor apagado.
+- `lib/agente/agente-checkout.test.ts`: B27 completo. El nombre llega al contacto solo al
+  confirmar.
+- `scripts/piloto/matriz-piloto.e2e.ts`, bloque **L** (L1–L7): webhook real → PostgreSQL real.
+  Cubre:
+  - pregunta en la entrega (solo lectura);
+  - corrección de la entrega en la dirección;
+  - nombre solo al confirmar;
+  - "eran 3" rehace la propuesta (la vieja cancelada sin reserva; confirma 3 con su stock);
+  - ubicación en la dirección;
+  - estado del pedido nunca inventado;
+  - "eran 3" con dos productos fuera del checkout.
+- `scripts/mutacion/b28.py`: mutaciones de lenguaje; cada una debe hacer fallar alguna prueba.
+- `scripts/eval/gemini-lenguaje.ts`: evaluación con **Gemini real** de las frases ambiguas.
+  - Usa almacenes en memoria y un negocio ficticio. Nunca toca Supabase ni Meta.
+  - Lee la clave **solo** del entorno (`GEMINI_EVAL_KEY` o `GEMINI_KEY_DELACOUR`) y nunca la
+    imprime.
+  - `--simulado` solo verifica el arnés.
+
+## Producción
+
+No hay migración ni SQL que ejecutar y no se cambia ninguna configuración de Delacour. El paso es
+solo el **despliegue** del código, después del merge autorizado.
+
+Rollback: revertir el merge. Los estados sin checkout en curso siguen siendo válidos con el código
+anterior, porque `checkoutName` es opcional y solo se escribe cuando existe. Se reinician de forma
+segura (el esquema estricto los descarta y empiezan de cero) solo dos casos:
+- las conversaciones con un checkout **en curso** en ese momento, porque su estado ya trae
+  `pendingChange`;
+- las que tocaron Modificar y conservan `checkoutName`.
+
+En ese caso el cliente vuelve a elegir. Ningún pedido cambia: la propuesta pendiente vence sola.
