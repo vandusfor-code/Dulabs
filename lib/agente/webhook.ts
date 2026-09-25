@@ -49,6 +49,8 @@ export interface AgentBoundaryInput {
   replyTo?: { wamid?: string | null; forwarded?: boolean } | null;
   /** Mensaje sin texto (Bloque 23): `text` vacío y la política determinista de entrada.ts. */
   nonText?: { kind: NonTextKind } | null;
+  /** Bloque 26: id del botón tocado (interactive.button_reply.id). Solo el turno directo lo usa; el buzón guarda el texto. */
+  buttonId?: string | null;
 }
 
 /**
@@ -126,7 +128,7 @@ async function atender(input: AgentBoundaryInput, deps: AgentBoundaryDeps): Prom
   const deps2: AgentRuntimeDeps = { ...runtimeDeps, config: cfg.config, provider: provider.provider, model: provider.model };
   const key = { tenantId: input.cliente.id_tenant, phoneNumberId: input.cliente.phone_number_id, waId: input.waId };
   const single = () =>
-    runAgentTurn(deps2, { ...key, wamid: input.wamid, text: input.text, replyTo: input.replyTo ?? null, nonText: input.nonText ?? null }).then((r) => ({ handled: true as const, outcome: r.outcome }));
+    runAgentTurn(deps2, { ...key, wamid: input.wamid, text: input.text, replyTo: input.replyTo ?? null, nonText: input.nonText ?? null, buttonId: input.buttonId ?? null }).then((r) => ({ handled: true as const, outcome: r.outcome }));
   let last: AgentTurnTrace["outcome"] | null = null;
   const runBatch = async (batch: MailboxMessage[]) => {
     const b = batchInput(batch);

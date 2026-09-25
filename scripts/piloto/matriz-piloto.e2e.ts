@@ -34,7 +34,7 @@ import { AGENT_TOOL_NAMES } from "@/lib/agente/nombres-herramientas";
 import { NON_TEXT_MESSAGES } from "@/lib/agente/entrada";
 import { FALLBACK_MESSAGES } from "@/lib/agente/runtime";
 import { liberarPausaChat } from "@/lib/pausas-chat";
-import { CHANNEL_QUESTION, CLASSIFICATION_MESSAGES, DEFAULT_WELCOME, createSupabaseCustomerChannelStore } from "@/lib/agente/clasificacion";
+import { CHANNEL_QUESTION, CLASSIFICATION_MESSAGES, DEFAULT_WELCOME, INTENT_MENU, START_MESSAGES, channelQuestionBody, createSupabaseCustomerChannelStore } from "@/lib/agente/clasificacion";
 import { procesarCambio, registrarMensajesEntrantesSincrono, type MetaChangeValue } from "@/app/webhook-dulabs/route";
 
 const db = createClient(URL_LOCAL, "local", { auth: { persistSession: false } });
@@ -47,7 +47,7 @@ const PN_B = num(920000000000000);
 const SLUG = `joyeria-piloto-${RUN}`;
 const DISPLAY = "573000000000";
 /** Clientes autorizados del piloto (ia_restringida_a) y uno que NO lo está. */
-const C = Array.from({ length: 28 }, (_, i) => `57310${RUN.replace(/\D/g, "7").padEnd(4, "7").slice(0, 4)}${String(i).padStart(3, "0")}`);
+const C = Array.from({ length: 32 }, (_, i) => `57310${RUN.replace(/\D/g, "7").padEnd(4, "7").slice(0, 4)}${String(i).padStart(3, "0")}`);
 const NO_AUTORIZADO = "573219990000";
 const CB = "573229990001";
 
@@ -775,11 +775,11 @@ describe("PILOTO DELACOUR — matriz de punta a punta (webhook real + PostgreSQL
     it("A/B. contacto nuevo: pregunta con BOTONES (sin Gemini); elige por botón 'al por mayor' → queda mayorista y ve precios mayoristas", async () => {
       const r0 = await turno(C[24], "hola, quiero ver aretes");
       assert.equal(r0.gemini.length, 0, "no se llama a Gemini antes de clasificar");
-      assert.deepEqual(r0.envios.map((e) => e.texto), [DEFAULT_WELCOME], "primero el saludo (texto), luego la pregunta con botones");
+      assert.deepEqual(r0.envios, [], "Bloque 26: saludo y pregunta van en UN mensaje con botones");
       const botones = meta.calls.slice(-1)[0].body as { type: string; interactive: { body: { text: string }; action: { buttons: Array<{ reply: { id: string; title: string } }> } } };
       assert.equal(botones.type, "interactive");
-      assert.equal(botones.interactive.body.text, CHANNEL_QUESTION.body);
-      assert.deepEqual(botones.interactive.action.buttons.map((b) => [b.reply.id, b.reply.title]), [["canal_detal", "Comprar al detal"], ["canal_mayor", "Comprar al por mayor"]]);
+      assert.equal(botones.interactive.body.text, channelQuestionBody(DEFAULT_WELCOME));
+      assert.deepEqual(botones.interactive.action.buttons.map((b) => [b.reply.id, b.reply.title]), CHANNEL_QUESTION.buttons.map((b) => [b.id, b.title]));
       assert.equal(r0.traza?.traza.classification.action, "asked");
       assert.equal(await canalDe(C[24]), null);
       const r1 = await turno(C[24], { type: "interactive", interactive: { type: "button_reply", button_reply: { id: "canal_mayor", title: "Comprar al por mayor" } } }, buscarLuna);
@@ -791,7 +791,9 @@ describe("PILOTO DELACOUR — matriz de punta a punta (webhook real + PostgreSQL
 
     it("A/C. detal: precios al detal; pedir el precio al por mayor => asesora con mensaje fijo, sin Gemini, sin precio mayorista", async () => {
       await turno(C[25], "buenas");
-      const r1 = await turno(C[25], "Comprar al detal", buscarLuna);
+      const r1a = await turno(C[25], "Comprar al detal");
+      assert.equal(r1a.gemini.length, 0, "Bloque 26: tras elegir detal, el menú fijo");
+      const r1 = await turno(C[25], "aretes luna", buscarLuna);
       assert.equal(candidatos(r1.gemini[1].body).find((c) => c.reference === P.luna.referencia)?.unit_price, 45_000);
       const r2 = await turno(C[25], `¿Y cuál es el precio al por mayor de ${P.luna.referencia}?`);
       assert.equal(r2.gemini.length, 0);
@@ -823,6 +825,73 @@ describe("PILOTO DELACOUR — matriz de punta a punta (webhook real + PostgreSQL
       await turno(C[24], "hagamos el pedido", [fn("create_order_request"), txt((b) => `Total: ${formatCop((resultados(b)[0] as { total: number }).total)}. ¿Confirmas?`)]);
       const { data } = await db.from("dulabs_catalogo_pedidos").select("canal, total").eq("id_tenant", T).eq("contacto_wa_id", C[24]).single();
       assert.deepEqual(data, { canal: "wholesale", total: 50_000 });
+    });
+  });
+
+  describe("J. Bloque 26 — flujo inicial modalidad → intención (webhook real, botones reales de Meta)", () => {
+    type Interactivo = { type: string; to: string; interactive: { body: { text: string }; action: { buttons: Array<{ reply: { id: string; title: string } }> } } };
+    const interactivos = (desde: number) => meta.calls.slice(desde).map((c) => c.body as unknown as Interactivo).filter((b) => b.type === "interactive");
+    const boton = (b: { id: string; title: string }) => ({ type: "interactive", interactive: { type: "button_reply", button_reply: { id: b.id, title: b.title } } });
+    const [DETAL] = CHANNEL_QUESTION.buttons;
+    const [BUSCAR, CATALOGO] = INTENT_MENU.buttons;
+    before(async () => {
+      await ok(setAgente({ clasificacion_cliente: true }));
+    });
+    after(async () => {
+      await ok(setAgente({ clasificacion_cliente: false }));
+      await ok(setConfig({ ia_pausada: false }));
+    });
+
+    it("A→B→C→D→E. saludo con botones → detal → menú → 'Buscar una joya' → 'aretes' (buscador real) → 'Ver catálogo' (enlace detal real)", async () => {
+      const m0 = meta.calls.length;
+      const r0 = await turno(C[28], "Hola");
+      assert.equal(r0.gemini.length, 0);
+      assert.deepEqual(interactivos(m0).map((b) => [b.interactive.body.text, b.interactive.action.buttons.map((x) => x.reply.id)]), [[channelQuestionBody(DEFAULT_WELCOME), ["canal_detal", "canal_mayor"]]]);
+      const m1 = meta.calls.length;
+      const r1 = await turno(C[28], boton(DETAL));
+      assert.equal(r1.gemini.length, 0);
+      assert.equal(r1.traza?.traza.start, "intent_menu");
+      assert.deepEqual(interactivos(m1).map((b) => [b.interactive.body.text, b.interactive.action.buttons.map((x) => x.reply.title)]), [[INTENT_MENU.body, INTENT_MENU.buttons.map((x) => x.title)]]);
+      assert.deepEqual((await db.from("dulabs_catalogo_clientes_canal").select("canal, origen").eq("phone_number_id", PN).eq("wa_id", C[28]).single()).data, { canal: "retail", origen: "cliente" });
+      const r2 = await turno(C[28], boton(BUSCAR));
+      assert.equal(r2.gemini.length, 0);
+      assert.deepEqual(r2.envios.map((e) => e.texto), [START_MESSAGES.searchPrompt]);
+      const r3 = await turno(C[28], "aretes luna", [fn("search_products", { query: "aretes luna" }), txt(lista)]);
+      assert.equal(candidatos(r3.gemini[1].body).find((c) => c.reference === P.luna.referencia)?.unit_price, 45_000, "precio al detal del backend");
+      assert.ok(!r3.gemini[0].body.systemInstruction.parts[0].text.includes(P.sol.nombre), "el catálogo no va en el prompt");
+      const r4 = await turno(C[28], boton(CATALOGO));
+      assert.equal(r4.gemini.length, 0);
+      assert.deepEqual(r4.envios.map((e) => e.texto), [START_MESSAGES.catalog(`https://dulabs.test/catalogo/${SLUG}`)]);
+    });
+
+    it("I. mayorista toca 'Ver catálogo' → solo el enlace mayorista firmado", async () => {
+      await createSupabaseCustomerChannelStore(db).setInitial({ tenantId: T, phoneNumberId: PN, waId: C[29] }, "wholesale", "cliente");
+      const r = await turno(C[29], boton(CATALOGO));
+      const token = ((await db.from("dulabs_catalogo_publicacion").select("token_mayor").eq("id_tenant", T).single()).data as { token_mayor: string }).token_mayor;
+      assert.deepEqual(r.envios.map((e) => e.texto), [START_MESSAGES.catalog(`https://dulabs.test/catalogo/${SLUG}/mayor/${token}`)]);
+    });
+
+    it("L. ia_pausada = true: el flujo nuevo NO se salta el apagado (ni botones, ni Gemini)", async () => {
+      await ok(setConfig({ ia_pausada: true }));
+      const m0 = meta.calls.length;
+      const r = await turno(C[30], "Hola");
+      await ok(setConfig({ ia_pausada: false }));
+      assert.equal(r.gemini.length, 0);
+      assert.equal(meta.calls.length, m0, "nada sale a WhatsApp");
+    });
+
+    it("M. número NO autorizado: el flujo nuevo no se activa", async () => {
+      const m0 = meta.calls.length;
+      const r = await turno(NO_AUTORIZADO, "Hola");
+      assert.equal(r.gemini.length, 0);
+      assert.equal(meta.calls.length, m0);
+    });
+
+    it("N. otro negocio (sin clasificación): sin botones; su agente conversa como siempre", async () => {
+      const m0 = meta.calls.length;
+      const r = await turno(CB, "Hola", [txt("¡Hola! ¿Qué buscas hoy?")], { pn: PN_B });
+      assert.equal(r.gemini.length, 1);
+      assert.equal(interactivos(m0).length, 0);
     });
   });
 

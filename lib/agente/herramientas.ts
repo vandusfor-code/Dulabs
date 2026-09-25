@@ -197,13 +197,19 @@ function checkProvenance(ctx: AgentTurnToolContext, ref: string, forCart: boolea
 }
 
 /** Enlaces públicos del catálogo del negocio (null si no está publicado o el módulo está apagado). */
-async function publication(ctx: AgentTurnToolContext, deps: AgentToolsDeps) {
-  const [pub, enabled] = await Promise.all([deps.catalog.getPublication(ctx.tenantId), deps.catalog.isModuleEnabled(ctx.tenantId)]);
+/**
+ * Publicación del catálogo para un CANAL que decide el backend (el de la conversación): el enlace
+ * mayorista (con su token) solo para wholesale. null = sin catálogo publicado o módulo apagado.
+ */
+export async function catalogPublication(deps: Pick<AgentToolsDeps, "catalog" | "siteUrl">, tenantId: string, channel: OrderChannel) {
+  const [pub, enabled] = await Promise.all([deps.catalog.getPublication(tenantId), deps.catalog.isModuleEnabled(tenantId)]);
   if (!pub || !pub.published || !enabled) return null;
   const origin = (deps.siteUrl ?? siteUrl)().replace(/\/+$/, "");
-  const base = ctx.channel === "wholesale" ? wholesalePath(pub.slug, pub.wholesaleToken) : retailPath(pub.slug);
+  const base = channel === "wholesale" ? wholesalePath(pub.slug, pub.wholesaleToken) : retailPath(pub.slug);
   return { slug: pub.slug, origin, base };
 }
+
+const publication = (ctx: AgentTurnToolContext, deps: AgentToolsDeps) => catalogPublication(deps, ctx.tenantId, ctx.channel);
 
 async function evaluateCart(ctx: AgentTurnToolContext, deps: AgentToolsDeps) {
   const ev = await deps.engine.evaluate(ctx.tenantId, ctx.channel, ctx.state.cart);

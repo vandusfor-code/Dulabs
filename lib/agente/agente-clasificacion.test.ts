@@ -25,7 +25,16 @@ import type { AgentToolsDeps } from "@/lib/agente/herramientas";
 import { AGENT_TOOL_NAMES } from "@/lib/agente/nombres-herramientas";
 import { FALLBACK_MESSAGES, runAgentTurn, type AgentTurnTrace } from "@/lib/agente/runtime";
 import { sanitizeTurnTrace } from "@/lib/agente/trazas";
-import { CHANNEL_QUESTION, CLASSIFICATION_MESSAGES, DEFAULT_WELCOME, createMemoryCustomerChannelStore, parseChannelChoice } from "@/lib/agente/clasificacion";
+import {
+  CHANNEL_QUESTION,
+  CLASSIFICATION_MESSAGES,
+  DEFAULT_WELCOME,
+  INTENT_MENU,
+  START_MESSAGES,
+  createMemoryCustomerChannelStore,
+  parseChannelChoice,
+  resolveStartAction,
+} from "@/lib/agente/clasificacion";
 
 const A: CatalogActor = { tenantId: "aaaaaaaa-0000-4000-8000-00000000000a", userId: "admin-a" };
 const B: CatalogActor = { tenantId: "bbbbbbbb-0000-4000-8000-00000000000b", userId: "admin-b" };
@@ -125,7 +134,7 @@ function toolDeps(): AgentToolsDeps {
   };
 }
 
-async function turno(script: SimulatedStep[], text: string, opts: { config?: AgentRuntimeConfig; wamid?: string; noStore?: boolean; noButtons?: boolean } = {}) {
+async function turno(script: SimulatedStep[], text: string, opts: { config?: AgentRuntimeConfig; wamid?: string; noStore?: boolean; noButtons?: boolean; buttonId?: string } = {}) {
   const provider = createSimulatedProvider(script);
   const wamid = opts.wamid ?? `wamid.in.${++seq}`;
   history.push({ direccion: "entrante", contenido: text, origen: "entrante", wamid });
@@ -165,7 +174,7 @@ async function turno(script: SimulatedStep[], text: string, opts: { config?: Age
       now: () => reloj,
       retry: { sleep: async () => {}, random: () => 0 },
     },
-    { tenantId: A.tenantId, phoneNumberId: PN_A, waId: CLIENTE, wamid, text },
+    { tenantId: A.tenantId, phoneNumberId: PN_A, waId: CLIENTE, wamid, text, buttonId: opts.buttonId ?? null },
   );
   return { ...r, provider };
 }
@@ -210,15 +219,19 @@ describe("B25 · A–B clasificación de un contacto nuevo", () => {
     const r0 = await turno([], "hola, busco aretes");
     assert.equal(r0.outcome, "replied");
     assert.equal(r0.provider.requests.length, 0, "no se llama al modelo antes de clasificar");
-    assert.deepEqual(buttons, [{ body: CHANNEL_QUESTION.body, ids: ["canal_detal", "canal_mayor"] }]);
-    assert.deepEqual(sent, [DEFAULT_WELCOME, CHANNEL_QUESTION.body], "saludo en un mensaje y, aparte, la pregunta con botones");
+    // Bloque 26: saludo + pregunta en UN solo mensaje con los botones.
+    assert.deepEqual(buttons, [{ body: `${DEFAULT_WELCOME}\n\n${CHANNEL_QUESTION.body}`, ids: ["canal_detal", "canal_mayor"] }]);
+    assert.equal(sent.length, 1);
     assert.deepEqual(r0.trace.classification, { action: "asked", channel: null, origin: null });
     assert.equal(await canales.get(KEY_A), null, "preguntar no clasifica");
 
-    const r1 = await turno([call("search_products", { query: "aretes" }), presentar], "Comprar al detal");
-    assert.deepEqual(r1.trace.classification, { action: "classified", channel: "retail", origin: "cliente" });
+    const r1a = await turno([], "Comprar al detal");
+    assert.deepEqual(r1a.trace.classification, { action: "classified", channel: "retail", origin: "cliente" });
+    assert.equal(r1a.trace.start, "intent_menu", "Bloque 26: tras elegir detal, el menú fijo (sin modelo)");
+    assert.equal(r1a.provider.requests.length, 0);
     assert.equal((await canales.get(KEY_A))?.channel, "retail", "guardado en el backend, no en la memoria del modelo");
     assert.equal(canales.events.length, 1);
+    const r1 = await turno([call("search_products", { query: "aretes" }), presentar], "aretes");
     const precios = new Map((lastToolOutputs(r1.provider.requests[1])[0].candidates as Array<{ reference: string; unit_price: number }>).map((c) => [c.reference, c.unit_price]));
     assert.deepEqual([precios.get(luna.reference), precios.get(sol.reference)], [45_000, 52_000], "precio al detal");
     assert.equal((await estado()).channel?.source, "customer_classification");
@@ -244,7 +257,7 @@ describe("B25 · A–B clasificación de un contacto nuevo", () => {
 
   it("saludo del negocio (negocio.saludo) antes de la pregunta", async () => {
     await turno([], "hola", { config: cfg({ negocio: { nombre_agente: "Sofía", saludo: "¡Hola! 💖 Bienvenid@ a Joyería Ficticia 💍" } }) });
-    assert.deepEqual(sent, ["¡Hola! 💖 Bienvenid@ a Joyería Ficticia 💍", CHANNEL_QUESTION.body]);
+    assert.deepEqual(sent, [`¡Hola! 💖 Bienvenid@ a Joyería Ficticia 💍\n\n${CHANNEL_QUESTION.body}`]);
   });
 
   it("si responde otra cosa, se le vuelve a preguntar (sin repetir el saludo); si los botones fallan, la pregunta sale en texto", async () => {
@@ -252,7 +265,7 @@ describe("B25 · A–B clasificación de un contacto nuevo", () => {
     const r = await turno([], "¿tienen anillos?");
     assert.equal(r.provider.requests.length, 0);
     assert.equal(buttons.length, 2);
-    assert.deepEqual(sent, [DEFAULT_WELCOME, CHANNEL_QUESTION.body, CHANNEL_QUESTION.body], "el saludo solo va en el primer mensaje");
+    assert.deepEqual(sent, [`${DEFAULT_WELCOME}\n\n${CHANNEL_QUESTION.body}`, CHANNEL_QUESTION.body], "el saludo solo va en el primer mensaje");
     buttonsFail = true;
     const r2 = await turno([], "?");
     assert.equal(r2.reply, CHANNEL_QUESTION.textFallback);
@@ -523,5 +536,163 @@ describe("B25.2 · última ronda: el modelo insiste en herramientas (caso real d
     assert.equal(r.outcome, "replied");
     assert.deepEqual(r.trace.grounding.values, ["$12.345"]);
     assert.ok(!JSON.stringify(sanitizeTurnTrace(r.trace)).includes("314.812"));
+  });
+});
+
+describe("B26 · flujo inicial de Delacour: modalidad → intención (sin modelo hasta que el cliente escribe)", () => {
+  const SALUDO = "¡Hola! 💖 Bienvenido/a a Delacour Joyería 💍";
+  const delacour = () => cfg({ negocio: { nombre_agente: "Sofía", saludo: SALUDO } });
+  const [DETAL, MAYOR] = CHANNEL_QUESTION.buttons;
+  const [BUSCAR, CATALOGO] = INTENT_MENU.buttons;
+
+  it("botones: títulos ≤ 20 (UTF-16, lo más estricto de Meta), ids únicos, acción por id o por título exacto", () => {
+    for (const b of [...CHANNEL_QUESTION.buttons, ...INTENT_MENU.buttons]) assert.ok(b.title.length <= 20, `${b.title} (${b.title.length})`);
+    assert.deepEqual(
+      [DETAL, MAYOR, BUSCAR, CATALOGO].map((b) => [resolveStartAction("x", b.id), resolveStartAction(b.title)]),
+      [
+        ["classify_retail", "classify_retail"],
+        ["classify_wholesale", "classify_wholesale"],
+        ["search_product", "search_product"],
+        ["open_catalog", "open_catalog"],
+      ],
+    );
+    // Solo el texto EXACTO del botón: un mensaje con más contenido va al agente normal.
+    for (const t of ["busco un catálogo de aretes", "quiero buscar una joya para regalo", "dijes", "hola"]) assert.equal(resolveStartAction(t), null, t);
+    assert.equal(resolveStartAction("Ver catálogo"), "open_catalog", "escrito a mano también (determinista)");
+    assert.equal(resolveStartAction("hola", "id_desconocido"), null, "un id que no es nuestro no hace nada");
+  });
+
+  it("A. contacto nuevo saluda → UN mensaje: saludo del negocio + pregunta, con los dos botones de modalidad (sin modelo)", async () => {
+    const r = await turno([], "Hola", { config: delacour() });
+    assert.equal(r.provider.requests.length, 0);
+    assert.deepEqual(buttons, [{ body: `${SALUDO}\n\n¿Tu compra es al detal o al por mayor?`, ids: ["canal_detal", "canal_mayor"] }]);
+    assert.equal(sent.length, 1, "un solo mensaje");
+  });
+
+  it("B. → toca 'Compra al detal' → queda DETAL en la BD y recibe el menú '¿Qué quieres hacer?' (sin modelo)", async () => {
+    await turno([], "Hola", { config: delacour() });
+    const r = await turno([], DETAL.title, { config: delacour(), buttonId: DETAL.id });
+    assert.equal(r.provider.requests.length, 0, "Gemini no pregunta qué joya busca");
+    assert.deepEqual(await canales.get(KEY_A).then((c) => [c?.channel, c?.origin]), ["retail", "cliente"]);
+    assert.deepEqual(buttons.at(-1), { body: "¡Perfecto! ✨ ¿Qué quieres hacer?", ids: ["accion_buscar", "accion_catalogo"] });
+    assert.equal(r.trace.start, "intent_menu");
+  });
+
+  it("B'. por el buzón (solo el texto del botón, sin id) funciona igual", async () => {
+    await turno([], "Hola", { config: delacour() });
+    const r = await turno([], DETAL.title, { config: delacour() });
+    assert.equal(r.trace.start, "intent_menu");
+    assert.equal((await canales.get(KEY_A))?.channel, "retail");
+  });
+
+  it("C. DETAL → 'Buscar una joya' → mensaje fijo de búsqueda libre (sin modelo, sin 10 botones)", async () => {
+    await turno([], "Hola", { config: delacour() });
+    await turno([], DETAL.title, { config: delacour(), buttonId: DETAL.id });
+    const nBotones = buttons.length;
+    const r = await turno([], BUSCAR.title, { config: delacour(), buttonId: BUSCAR.id });
+    assert.equal(r.provider.requests.length, 0);
+    assert.equal(r.reply, START_MESSAGES.searchPrompt);
+    assert.match(r.reply!, /Cuéntame qué estás buscando y te ayudo a encontrarlo\.\n\nPor ejemplo: dijes, aretes dorados, collar corazón…/);
+    assert.equal(buttons.length, nBotones, "no manda botones de categorías");
+    assert.equal(r.trace.start, "search_prompt");
+  });
+
+  it("D. DETAL → escribe 'dijes' → entra al buscador del agente (herramientas reales, precios al detal, sin catálogo en el prompt)", async () => {
+    const dije = await admin.createProduct(A, { name: "Dije Corazón", retailPrice: 27_000, wholesalePrice: 15_000, stock: 4, color: "Dorado" });
+    await admin.createProduct(A, { name: "Dije Luna", retailPrice: 11_000, wholesalePrice: 6_000, stock: 4, color: "Plateado" });
+    await turno([], "Hola", { config: delacour() });
+    await turno([], DETAL.title, { config: delacour(), buttonId: DETAL.id });
+    await turno([], BUSCAR.title, { config: delacour(), buttonId: BUSCAR.id });
+    const r = await turno([call("search_products", { query: "dijes" }), presentar], "dijes", { config: delacour() });
+    assert.equal(r.outcome, "replied");
+    assert.deepEqual(results(r), ["ok"]);
+    const c = lastToolOutputs(r.provider.requests[1])[0].candidates as Array<{ reference: string; unit_price: number }>;
+    assert.ok(c.length >= 2, "resultados reales del catálogo");
+    assert.equal(c.find((x) => x.reference === dije.reference)?.unit_price, 27_000, "precio al detal");
+    assert.ok(!r.provider.requests[0].system.includes("Dije Luna"), "el catálogo NO va en el prompt");
+    assert.equal(r.trace.start, null);
+  });
+
+  it("E/J. DETAL → 'Ver catálogo' → el enlace REAL de la tienda DETAL (sin token mayorista, sin modelo)", async () => {
+    await turno([], "Hola", { config: delacour() });
+    await turno([], DETAL.title, { config: delacour(), buttonId: DETAL.id });
+    const r = await turno([], CATALOGO.title, { config: delacour(), buttonId: CATALOGO.id });
+    assert.equal(r.provider.requests.length, 0);
+    assert.equal(r.trace.start, "catalog_link");
+    const url = `${SITE}/catalogo/${slug}`;
+    assert.equal(r.reply, START_MESSAGES.catalog(url));
+    assert.ok(!r.reply!.includes(wholesaleToken) && !r.reply!.includes("/mayor/"), "nunca el catálogo mayorista");
+  });
+
+  it("F. contacto nuevo → 'Compra por mayor' → queda MAYORISTA; el flujo del mayorista sigue como antes (conversa el agente)", async () => {
+    await admin.createProduct(A, { name: "Aretes Luna", retailPrice: 45_000, wholesalePrice: 25_000, stock: 5 });
+    await turno([], "Hola", { config: delacour() });
+    const r = await turno([{ text: "¡Perfecto! ¿Qué joya buscas?" }], MAYOR.title, { config: delacour(), buttonId: MAYOR.id });
+    assert.deepEqual(await canales.get(KEY_A).then((c) => [c?.channel, c?.origin]), ["wholesale", "cliente"]);
+    assert.equal(r.trace.start, null, "sin menú de intención para el mayorista");
+    assert.equal(r.provider.requests.length, 1);
+  });
+
+  it("G. MAYORISTA → búsqueda → precio mayorista", async () => {
+    const { luna } = await aretes();
+    await turno([], "Hola", { config: delacour() });
+    await turno([{ text: "¿Qué buscas?" }], MAYOR.title, { config: delacour(), buttonId: MAYOR.id });
+    const r = await turno([call("search_products", { query: "aretes luna" }), presentar], "aretes luna", { config: delacour() });
+    assert.equal((lastToolOutputs(r.provider.requests[1])[0].candidates as Array<{ reference: string; unit_price: number }>).find((x) => x.reference === luna.reference)?.unit_price, 25_000);
+  });
+
+  it("H. DETAL pide el catálogo mayorista → la protección existente: asesora, sin modelo, sin enlace", async () => {
+    await clasificar("retail");
+    const r = await turno([], "mándame el catálogo mayorista", { config: delacour() });
+    assert.equal(r.outcome, "handoff");
+    assert.equal(r.provider.requests.length, 0);
+    assert.ok(!r.reply!.includes("http"));
+    assert.deepEqual(pausas, [CLIENTE]);
+  });
+
+  it("I. MAYORISTA → 'Ver catálogo' → SOLO el enlace mayorista firmado", async () => {
+    await clasificar("wholesale");
+    const r = await turno([], CATALOGO.title, { config: delacour(), buttonId: CATALOGO.id });
+    assert.equal(r.reply, START_MESSAGES.catalog(`${SITE}/catalogo/${slug}/mayor/${wholesaleToken}`));
+    assert.ok(!r.reply!.includes(`${SITE}/catalogo/${slug}\n`), "no el detal");
+  });
+
+  it("K. contacto YA clasificado saluda → no se le vuelve a preguntar la modalidad", async () => {
+    await clasificar("retail");
+    const r = await turno([{ text: "¡Hola de nuevo! ¿Qué buscas hoy?" }], "Hola", { config: delacour() });
+    assert.equal(buttons.length, 0);
+    assert.equal(r.provider.requests.length, 1);
+    assert.equal(r.trace.classification?.action, "known");
+  });
+
+  it("clasificado por su solicitud del catálogo: sin menú (sigue el flujo del pedido)", async () => {
+    const { luna } = await aretes();
+    const publico = createPublicCatalogService({ repo: mem.repo, orders: { key: KEY, engine, now: () => new Date(reloj) } });
+    const vista = await publico.resolveSelection({ slug, references: [luna.reference] });
+    const sol = await publico.prepareOrder({ slug, items: [{ reference: luna.reference, quantity: 1 }], quote: vista!.quote!, requestKey: "intento-tienda-000261" });
+    const mensaje = (sol as { message: string }).message;
+    await engine.receiveWhatsappOrder({ tenantId: A.tenantId, contact: { phoneNumberId: PN_A, waId: CLIENTE }, messageId: "wamid.cat.26", text: mensaje });
+    const r = await turno([{ text: `Tu pedido: Aretes Luna × 1 — ${formatCop(45_000)}. ¿Confirmas?` }], mensaje, { config: delacour(), wamid: "wamid.cat.26" });
+    assert.equal(r.trace.classification?.origin, "catalogo_detal");
+    assert.equal(r.trace.start, null);
+    assert.equal(buttons.length, 0);
+  });
+
+  it("'detal, busco aretes dorados' (con más contenido) → clasifica y busca directo con el agente (no se pierde lo que escribió)", async () => {
+    await aretes();
+    await turno([], "Hola", { config: delacour() });
+    const r = await turno([call("search_products", { query: "aretes dorados" }), presentar], "al detal, busco aretes dorados", { config: delacour() });
+    assert.equal((await canales.get(KEY_A))?.channel, "retail");
+    assert.equal(r.trace.start, null);
+    assert.deepEqual(results(r), ["ok"]);
+  });
+
+  it("N. sin clasificación (otros negocios / interruptor apagado): los textos de los botones van al agente como siempre", async () => {
+    const off = cfg({ clasificacion_cliente: undefined, negocio: { nombre_agente: "Sofía" } });
+    const r = await turno([{ text: "Claro, ¿qué catálogo quieres?" }], "Ver catálogo", { config: off, buttonId: "accion_catalogo" });
+    assert.equal(r.provider.requests.length, 1);
+    assert.equal(r.trace.start, null);
+    assert.equal(buttons.length, 0);
+    assert.equal(canales.rows.size, 0);
   });
 });
