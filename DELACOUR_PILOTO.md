@@ -339,3 +339,39 @@ No hubo migraciones.
   (10 controles, incluidos la bitácora inmutable, el aislamiento y RLS).
 - `scripts/piloto/matriz-piloto.e2e.ts`, bloque I: webhook real con el botón de Meta, RPC real,
   bitácora inmutable y precio mayorista tras el cambio de una asesora.
+
+---
+
+# Bloque 26 — Flujo inicial: modalidad → intención
+
+Aplica solo a los números con `clasificacion_cliente = true` (hoy, solo Delacour). Ningún paso usa
+Gemini hasta que el cliente escribe lo que busca.
+
+1. **Contacto nuevo que saluda**: un solo mensaje con el saludo del negocio (`negocio.saludo`) y
+   debajo "¿Tu compra es al detal o al por mayor?", con los botones **🛍️ Compra al detal** /
+   **📦 Compra por mayor**. Meta limita cada botón a 20 caracteres y "📦 Comprar al por mayor" no
+   cabe; por eso el texto es "Compra …".
+2. **Detal** (botón, o si el cliente escribe solo "detal") → queda guardado como DETAL. Luego recibe
+   "¡Perfecto! ✨ ¿Qué quieres hacer?" con **🔎 Buscar una joya** / **📖 Ver catálogo**.
+3. **Buscar una joya** → "Cuéntame qué estás buscando y te ayudo a encontrarlo. Por ejemplo:
+   dijes, aretes dorados, collar corazón…". Lo que el cliente escriba después entra a la búsqueda
+   normal del agente, con sus herramientas y sin el catálogo en el prompt.
+4. **Ver catálogo** → el backend envía el enlace **real** de la publicación para la modalidad
+   **guardada**: detal → tienda detal; mayorista → enlace mayorista firmado. El modelo no interviene.
+5. **Mayorista** → queda guardado como MAYORISTA y el agente conversa como antes, con precios y
+   catálogo mayoristas.
+
+Cómo se decide la acción de cada botón: por su id (`canal_detal`, `canal_mayor`, `accion_buscar`,
+`accion_catalogo`) cuando el id llega, o por el texto **exacto** del botón. En producción los
+mensajes pasan por el buzón, que guarda solo el texto, así que ahí se usa el texto exacto. Un
+mensaje con más contenido ("detal, busco aretes") va directo a la búsqueda del agente.
+
+Todas las protecciones siguen igual: clientes ya clasificados, pedidos del catálogo, cambio solo
+por asesora, pedidos de otra modalidad, `ia_pausada`, números autorizados y pausa humana.
+
+Saludo de Delacour (texto del Bloque 26):
+```sql
+update dulabs_agente_runtime_config
+   set negocio = negocio || '{"saludo": "¡Hola! 💖 Bienvenido/a a Delacour Joyería 💍"}'::jsonb
+ where phone_number_id = '1428584886997210';
+```

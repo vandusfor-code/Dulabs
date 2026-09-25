@@ -32,7 +32,7 @@ import { resolveSelection } from "@/lib/agente/seleccion";
 import { STAGE_GUIDANCE, conversationStage, type ConversationStage } from "@/lib/agente/etapa";
 import { decideLimits, type UsageReader } from "@/lib/agente/limites";
 import { asksForHuman, detectIntent, type HandoffMotive, type SystemHandoffMotive, type TurnIntent } from "@/lib/agente/intencion";
-import { agentToolDeclarations, executeAgentTool, toolKind, type AgentToolsDeps, type AgentTurnToolContext, type QueuedImage } from "@/lib/agente/herramientas";
+import { agentToolDeclarations, catalogPublication, executeAgentTool, toolKind, type AgentToolsDeps, type AgentTurnToolContext, type QueuedImage } from "@/lib/agente/herramientas";
 import type { AgentToolName } from "@/lib/agente/nombres-herramientas";
 import { NON_TEXT_MESSAGES, NON_TEXT_NOTICE_COOLDOWN_MS, nonTextPolicy, type NonTextAction, type NonTextKind } from "@/lib/agente/entrada";
 import {
@@ -40,6 +40,10 @@ import {
   CHANNEL_QUESTION,
   CLASSIFICATION_MESSAGES,
   DEFAULT_WELCOME,
+  INTENT_MENU,
+  START_MESSAGES,
+  channelQuestionBody,
+  resolveStartAction,
   parseChannelChoice,
   type CustomerChannel,
   type CustomerChannelOrigin,
@@ -122,6 +126,11 @@ export interface AgentTurnInput {
    * determinista de entrada.ts, sin modelo. `text` llega vacío.
    */
   nonText?: { kind: NonTextKind } | null;
+  /**
+   * Bloque 26: id del botón de WhatsApp que tocó el cliente (solo si llegó; el buzón guarda solo el
+   * texto, y entonces la acción se decide por el título exacto del botón). Nunca lo interpreta el modelo.
+   */
+  buttonId?: string | null;
 }
 
 export type AgentTurnOutcome = "replied" | "handoff" | "fallback" | "preempted" | "safety" | "duplicate" | "rate_limited";
@@ -180,6 +189,8 @@ export interface AgentTurnTrace {
    * change_requested (pidió el otro canal: asesora), order_mismatch (pedido abierto de otro canal: asesora).
    */
   classification: { action: "asked" | "classified" | "known" | "change_requested" | "order_mismatch"; channel: OrderChannel | null; origin: CustomerChannelOrigin | null } | null;
+  /** Bloque 26 — acción de inicio que resolvió el backend sin modelo (menú, búsqueda guiada o catálogo). */
+  start: "intent_menu" | "search_prompt" | "catalog_link" | null;
 }
 
 // Mensajes FIJOS (sin IA): nunca afirman datos comerciales.
@@ -285,6 +296,7 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
     handoff: null,
     non_text: null,
     classification: null,
+    start: null,
     input: { wamids: (input.wamids && input.wamids.length > 0 ? [...input.wamids] : [input.wamid]).map((w) => w.slice(0, 200)).slice(0, 10), messages: input.wamids?.length || 1, chars: input.text.length },
     context: null,
   };
@@ -486,6 +498,19 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
       trace.delivery.text_error = r.error;
       return r.sent;
     };
+    /** Mensaje con botones; si los botones no salen, el mismo contenido en texto. Devuelve lo enviado (o null). */
+    const sendMenu = async (body: string, buttons: ReadonlyArray<{ id: string; title: string }>, fallback: string) => {
+      const b = deps.sender.sendButtons ? sendResult(await deps.sender.sendButtons(body, buttons).catch(() => false)) : null;
+      if (b?.sent) {
+        trace.sent = true;
+        trace.delivery.text_wamid = b.wamid;
+        return body;
+      }
+      return (await sendFixed(fallback)) ? fallback : null;
+    };
+    // Qué botón tocó (por id o por su texto exacto): lo decide el backend, nunca el modelo.
+    const startAction = resolveStartAction(input.text, input.buttonId);
+    const buttonChoice: OrderChannel | null = startAction === "classify_retail" ? "retail" : startAction === "classify_wholesale" ? "wholesale" : null;
     let current: CustomerChannel | null = null;
     try {
       if (!deps.classification) throw new Error("classification_store_missing");
@@ -495,7 +520,7 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
         // Primera vez: la solicitud del catálogo abierta de ESTA conversación (tienda detal o enlace
         // mayorista firmado) ya dice cómo compra; si no, lo que el cliente eligió en este mensaje.
         const fromCatalog = activeOrder && activeOrderSource === "catalog" && !["completed", "cancelled", "expired"].includes(activeOrder.status) ? activeOrder.channel : null;
-        const choice = fromCatalog ?? parseChannelChoice(input.text);
+        const choice = fromCatalog ?? buttonChoice ?? parseChannelChoice(input.text);
         if (choice) {
           const origin = fromCatalog ? (fromCatalog === "wholesale" ? "catalogo_mayorista" : "catalogo_detal") : "cliente";
           const w = await deps.classification.setInitial(key, choice, origin);
@@ -516,19 +541,12 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
     if (!current) {
       // Sin clasificar: la pregunta FIJA con botones (sin modelo). Ningún precio ni catálogo antes de elegir.
       trace.classification = { action: "asked", channel: null, origin: null };
-      // Primer mensaje de la conversación: saludo aparte (fijo, del negocio). Al volver a preguntar, no se repite.
-      if (loaded.state.turn === 0) await deps.sender.sendText(deps.config.business.saludo ?? DEFAULT_WELCOME).catch(() => false);
-      let text: string = CHANNEL_QUESTION.body;
-      const b = deps.sender.sendButtons ? sendResult(await deps.sender.sendButtons(CHANNEL_QUESTION.body, CHANNEL_QUESTION.buttons).catch(() => false)) : null;
-      if (b?.sent) {
-        trace.sent = true;
-        trace.delivery.text_wamid = b.wamid;
-      } else {
-        text = CHANNEL_QUESTION.textFallback;
-        await sendFixed(text);
-      }
+      // Primer mensaje de la conversación: el saludo del negocio va ARRIBA de la pregunta, en el mismo
+      // mensaje (Bloque 26). Al volver a preguntar, solo la pregunta.
+      const welcome = loaded.state.turn === 0 ? (deps.config.business.saludo ?? DEFAULT_WELCOME) : null;
+      const text = await sendMenu(channelQuestionBody(welcome), CHANNEL_QUESTION.buttons, welcome ? `${welcome}\n\n${CHANNEL_QUESTION.textFallback}` : CHANNEL_QUESTION.textFallback);
       trace.state_saved = await deps.state.save(key, state, loaded.version).catch(() => false);
-      return finish("replied", trace.sent ? text : null);
+      return finish("replied", text);
     }
     // Pedido abierto de OTRO canal (p. ej. solicitud de la tienda mayorista de un cliente al detal): asesora.
     // Va primero: el mensaje de esa solicitud nombra su canal y no es un pedido de cambio.
@@ -550,6 +568,27 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
         return finish("handoff", trace.sent ? message : null);
       }
       // Sin pausa: el turno sigue con SU canal (las herramientas nunca devuelven el otro precio).
+    }
+    // Bloque 26 — acciones de inicio, fijas y sin modelo. El canal es SIEMPRE el guardado del contacto.
+    const startDone = async (kind: NonNullable<AgentTurnTrace["start"]>, text: string | null) => {
+      trace.start = kind;
+      state = { ...state, channel: { value: current.channel, source: "customer_classification" } };
+      trace.state_saved = await deps.state.save(key, state, loaded.version).catch(() => false);
+      return finish("replied", text);
+    };
+    //   a) Acaba de elegir DETAL con el botón (o solo escribió "detal"): menú de intención. El mayorista
+    //      sigue como antes (el agente conversa); un mensaje con más contenido ("detal, busco aretes") también.
+    if (trace.classification?.action === "classified" && current.channel === "retail" && buttonChoice === "retail") {
+      return startDone("intent_menu", await sendMenu(INTENT_MENU.body, INTENT_MENU.buttons, INTENT_MENU.textFallback));
+    }
+    //   b) "Buscar una joya": se le pide que escriba; lo que escriba entra a la búsqueda normal del agente.
+    if (startAction === "search_product") return startDone("search_prompt", (await sendFixed(START_MESSAGES.searchPrompt)) ? START_MESSAGES.searchPrompt : null);
+    //   c) "Ver catálogo": el enlace REAL de la publicación para el canal GUARDADO (detal => tienda detal;
+    //      mayorista => enlace mayorista firmado). El modelo no elige ni arma el enlace.
+    if (startAction === "open_catalog") {
+      const pub = await catalogPublication(deps.tools, input.tenantId, current.channel).catch(() => null);
+      const text = pub ? START_MESSAGES.catalog(`${pub.origin}${pub.base}`) : START_MESSAGES.catalogUnavailable;
+      return startDone("catalog_link", (await sendFixed(text)) ? text : null);
     }
     classified = { channel: current.channel, source: "customer_classification" };
   }

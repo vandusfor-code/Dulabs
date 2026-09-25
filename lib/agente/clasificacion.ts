@@ -61,24 +61,93 @@ export interface CustomerChannelStore {
 // ---------------------------------------------------------------------------
 
 /**
- * Saludo del primer contacto (mensaje aparte, ANTES de la pregunta). Cada negocio puede poner el suyo
- * en dulabs_agente_runtime_config.negocio.saludo; si no, este.
+ * Saludo del primer contacto: va en el MISMO mensaje de la pregunta, encima (Bloque 26). Cada negocio
+ * puede poner el suyo en dulabs_agente_runtime_config.negocio.saludo; si no, este.
  */
 export const DEFAULT_WELCOME = "¡Hola! 💖 Te damos la bienvenida 💍";
 
 /**
- * Pregunta y botones FIJOS (sin IA). Títulos de botón: máx. 20 caracteres (Meta). El ícono de
- * "responder" que WhatsApp dibuja en cada botón es de la app: la API no permite quitarlo.
+ * Pregunta y botones FIJOS (sin IA). Títulos de botón: máx. 20 caracteres (Meta; aquí se cuentan en
+ * UTF-16, lo más estricto, porque un emoji ocupa 2 o 3). El ícono de "responder" que WhatsApp dibuja
+ * en cada botón es de la app: la API no permite quitarlo.
  */
 export const CHANNEL_QUESTION = {
-  body: "Para mostrarte el catálogo y los precios correctos, cuéntame: ¿tu compra es al detal o al por mayor?",
+  body: "¿Tu compra es al detal o al por mayor?",
   buttons: [
-    { id: "canal_detal", title: "Comprar al detal" },
-    { id: "canal_mayor", title: "Comprar al por mayor" },
+    { id: "canal_detal", title: "🛍️ Compra al detal" },
+    { id: "canal_mayor", title: "📦 Compra por mayor" },
   ],
   /** Si los botones no salen: la misma pregunta en texto. */
-  textFallback: "Para mostrarte el catálogo y los precios correctos, cuéntame: ¿tu compra es al detal o al por mayor? Respóndeme *detal* o *por mayor*.",
+  textFallback: "¿Tu compra es al detal o al por mayor? Respóndeme *detal* o *por mayor*.",
 } as const;
+
+/** Pregunta del primer contacto: saludo + pregunta en un solo mensaje (con los botones). */
+export const channelQuestionBody = (welcome: string | null) => (welcome ? `${welcome}\n\n${CHANNEL_QUESTION.body}` : CHANNEL_QUESTION.body);
+
+/**
+ * Bloque 26 — después de elegir DETAL, antes de cualquier IA: qué quiere hacer. Fijo, con botones.
+ * El cliente igual puede escribir lo que busca (ese texto va al agente normal).
+ */
+export const INTENT_MENU = {
+  body: "¡Perfecto! ✨ ¿Qué quieres hacer?",
+  buttons: [
+    { id: "accion_buscar", title: "🔎 Buscar una joya" },
+    { id: "accion_catalogo", title: "📖 Ver catálogo" },
+  ],
+  textFallback: "¡Perfecto! ✨ Escríbeme qué joya buscas (por ejemplo: dijes, aretes dorados…) o escribe *ver catálogo*.",
+} as const;
+
+/** Mensajes FIJOS de las acciones de inicio (sin IA). */
+export const START_MESSAGES = {
+  searchPrompt: "Cuéntame qué estás buscando y te ayudo a encontrarlo.\n\nPor ejemplo: dijes, aretes dorados, collar corazón…",
+  /** El enlace lo arma el backend con la publicación REAL del negocio y el canal GUARDADO del contacto. */
+  catalog: (url: string) => `Aquí tienes nuestro catálogo 📖✨\n${url}\n\nSi algo te gusta, escríbeme su nombre o referencia y te ayudo.`,
+  catalogUnavailable: "En este momento el catálogo en línea no está disponible. Cuéntame qué joya buscas y te ayudo por aquí.",
+} as const;
+
+/**
+ * Acción de inicio que pidió el cliente, decidida por el BACKEND (nunca por el modelo):
+ *   1) por el id del botón (cuando llega: turno directo);
+ *   2) si no, por el texto EXACTO de uno de nuestros botones (el buzón guarda solo el texto): los
+ *      títulos son fijos y distintos entre sí, así que la acción es inequívoca.
+ * Cualquier otro texto => null (sigue el flujo normal: búsqueda libre con el agente).
+ */
+export type StartAction = "classify_retail" | "classify_wholesale" | "search_product" | "open_catalog";
+
+const BUTTON_ACTIONS: Record<string, StartAction> = {
+  [CHANNEL_QUESTION.buttons[0].id]: "classify_retail",
+  [CHANNEL_QUESTION.buttons[1].id]: "classify_wholesale",
+  [INTENT_MENU.buttons[0].id]: "search_product",
+  [INTENT_MENU.buttons[1].id]: "open_catalog",
+};
+
+/** Solo letras y números (sin emojis, tildes ni signos), en minúsculas y con un espacio. */
+const bare = (text: string) =>
+  text
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+
+const EXACT_ACTIONS = new Map<string, StartAction>([
+  ...[...CHANNEL_QUESTION.buttons, ...INTENT_MENU.buttons].map((b) => [bare(b.title), BUTTON_ACTIONS[b.id]] as const),
+  // Títulos del Bloque 25 (mensajes ya enviados que el cliente todavía puede tocar) y respuestas mínimas.
+  ["comprar al detal", "classify_retail"],
+  ["comprar al por mayor", "classify_wholesale"],
+  ["al detal", "classify_retail"],
+  ["detal", "classify_retail"],
+  ["al por mayor", "classify_wholesale"],
+  ["por mayor", "classify_wholesale"],
+  ["ver catalogo", "open_catalog"],
+  ["catalogo", "open_catalog"],
+]);
+
+export function resolveStartAction(text: string, buttonId?: string | null): StartAction | null {
+  if (buttonId && BUTTON_ACTIONS[buttonId]) return BUTTON_ACTIONS[buttonId];
+  const t = bare(text).slice(0, 60);
+  return t ? (EXACT_ACTIONS.get(t) ?? null) : null;
+}
 
 export const CHANNEL_LABEL: Record<OrderChannel, string> = { retail: "al detal", wholesale: "al por mayor" };
 

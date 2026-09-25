@@ -177,8 +177,10 @@ describe("webhook: posición del agente y aislamiento de lo existente (guarda es
   it("el webhook le pasa al agente el mensaje CITADO (respuesta a una foto) o si fue reenviado", () => {
     const src = readFileSync(join(process.cwd(), "app/webhook-dulabs/route.ts"), "utf8");
     // Bloque 22: una ÚNICA lectura del context de Meta (replyToDeMeta, probada en agente-meta-contexto.test.ts).
-    assert.match(src, /const replyTo = replyToDeMeta\(mensaje\.context\);/);
-    assert.match(src, /atenderConAgenteSiAplica\(\{ cliente, waId: telefonoRemitente, destino, wamid: mensaje\.id, text: texto\.slice\(0, 4_000\), replyTo \}, deps\)/);
+    // Bloque 26: el toque de un botón no cita una foto (replyTo null) y lleva el id del botón.
+    assert.match(src, /const replyTo = boton \? null : replyToDeMeta\(mensaje\.context\);/);
+    assert.match(src, /atenderConAgenteSiAplica\(\{ cliente, waId: telefonoRemitente, destino, wamid: mensaje\.id, text: texto\.slice\(0, 4_000\), replyTo, buttonId: boton \}, deps\)/);
+    assert.match(src, /const replyTo = botonDelAgente\(mensaje\) \? null : replyToDeMeta\(mensaje\.context\);/);
   });
 
   it("frontera: el contexto de respuesta llega al runtime (una cita desconocida => aclaración, nunca adivina)", async () => {

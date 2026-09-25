@@ -1368,14 +1368,23 @@ async function intentarAgenteConversacionalSiAplica(cliente: ClienteConfig, mens
       return cfg.kind !== "none";
     }
     // Respuesta a una foto: el agente resuelve el producto con el registro de fotos enviadas (nunca adivinando).
-    const replyTo = replyToDeMeta(mensaje.context);
-    const r = await atenderConAgenteSiAplica({ cliente, waId: telefonoRemitente, destino, wamid: mensaje.id, text: texto.slice(0, 4_000), replyTo }, deps);
+    // Bloque 26: el toque de un botón NO cita una foto (su context es el mensaje de los botones) y
+    // lleva el id del botón para que el backend decida la acción.
+    const boton = botonDelAgente(mensaje);
+    const replyTo = boton ? null : replyToDeMeta(mensaje.context);
+    const r = await atenderConAgenteSiAplica({ cliente, waId: telefonoRemitente, destino, wamid: mensaje.id, text: texto.slice(0, 4_000), replyTo, buttonId: boton }, deps);
     return r.handled;
   } catch (err) {
     // Error inesperado: no se sabe si el número tiene agente => no se arriesga a que responda otro bot.
     console.error(`[webhook-dulabs] excepción en el agente conversacional (tenant ${cliente.id_tenant}):`, err instanceof Error ? err.message : err);
     return true;
   }
+}
+
+/** Bloque 26 — id del botón de respuesta que tocó el cliente (interactive.button_reply), o null. */
+function botonDelAgente(mensaje: MetaMessage): string | null {
+  const id = mensaje.type === "interactive" && mensaje.interactive?.type === "button_reply" ? mensaje.interactive.button_reply?.id?.trim() : "";
+  return id ? id.slice(0, 64) : null;
 }
 
 async function encolarMensajeSuperadoEnAgente(cliente: ClienteConfig, mensaje: MetaMessage, telefonoRemitente: string, destino: string): Promise<void> {
@@ -1389,7 +1398,7 @@ async function encolarMensajeSuperadoEnAgente(cliente: ClienteConfig, mensaje: M
   }
   try {
     const supabase = supabaseAdmin();
-    const replyTo = replyToDeMeta(mensaje.context);
+    const replyTo = botonDelAgente(mensaje) ? null : replyToDeMeta(mensaje.context);
     await encolarEnBuzonSiAplica(
       { cliente, waId: telefonoRemitente, destino: telefonoRemitente, wamid: mensaje.id, text: texto.slice(0, 4_000), replyTo },
       { configStore: productionAgentBoundaryDeps(supabase, cliente).configStore, mailbox: createSupabaseMailboxStore(supabase) },
