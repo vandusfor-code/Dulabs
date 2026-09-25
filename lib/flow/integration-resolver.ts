@@ -152,6 +152,8 @@ const INTERNAL_ACTION_TYPES = new Set([
   // casi se omite de nuevo acá. Registrada DESDE EL PRIMER COMMIT que la
   // introduce, precisamente para no repetirlo una tercera vez.
   "enviar_plantilla",
+  // Registro en un módulo del tenant: nativo, sin integración externa.
+  "registrar_en_modulo",
 ]);
 
 const INTERNAL_WEBHOOK_TAGS = new Set(["consultar_disponibilidad"]);

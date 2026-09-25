@@ -403,6 +403,16 @@ const actionNodeConfigSchema = z.discriminatedUnion("actionType", [
     templateName: z.string().trim().min(1),
     variables: z.record(z.string(), z.string()).optional(),
   }),
+  // Registro en un módulo del tenant (genérico, ver RegistrarEnModuloActionConfig).
+  z.object({
+    actionType: z.literal("registrar_en_modulo"),
+    semanticTag: semanticTagSchema,
+    modulo: z.string().regex(/^[a-z][a-z0-9_]{1,39}$/),
+    campos: z
+      .record(z.string().regex(/^[a-z][a-z0-9_]{0,39}$/), z.string().trim().min(1))
+      .refine((c) => Object.keys(c).length >= 1 && Object.keys(c).length <= 30, "entre 1 y 30 campos"),
+    outputVariables: z.array(z.string().trim().min(1)).optional(),
+  }),
 ]);
 
 const nodeBaseSchema = z.object({

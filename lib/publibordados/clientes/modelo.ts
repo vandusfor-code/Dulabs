@@ -1,183 +1,269 @@
 /**
- * Publi Bordados · módulo Clientes (dashboard Business) — modelo PURO, sin I/O.
+ * Publi Bordados · módulo Clientes — modelo PURO (sin I/O).
  *
- * Fuente de verdad: el contacto real existente (dulabs_clientes_conocidos),
- * una fila por (número de WhatsApp del negocio, teléfono del cliente). Los
- * datos viven en custom_fields con prefijo "pb_", con dueños separados:
- *   - el Flow (save_data, lib/flows/publibordados.flow.ts) escribe tipo,
- *     nombre, empresa, producto y cantidad;
- *   - la ficha del cliente escribe SOLO estado y asesor.
- * Ninguno toca las claves del otro. Sin estado guardado = "Nuevo".
- * Sin tabla nueva ni migración.
+ *   CLIENTE   = el contacto real (dulabs_clientes_conocidos), único por número + teléfono.
+ *   SOLICITUD = cada flow completado (dulabs_pb_solicitudes), con su propio estado y asesor.
+ *
+ * Un cliente tiene N solicitudes; ninguna sobrescribe a otra. El perfil que se muestra del
+ * cliente (tipo, nombre, empresa) es el de su última solicitud; si todavía no tiene (clientes
+ * del flujo anterior), el que quedó guardado en el contacto.
  */
 
-export const CAMPOS = {
-  tipo: "pb_tipo_cliente",
-  nombre: "pb_nombre",
-  empresa: "pb_nombre_empresa",
-  producto: "pb_producto",
-  cantidad: "pb_cantidad",
-  estado: "pb_estado",
-  asesor: "pb_asesor",
-} as const;
-
 export const ESTADOS = ["nuevo", "en_atencion", "atendido"] as const;
-export type EstadoCliente = (typeof ESTADOS)[number];
+export type EstadoSolicitud = (typeof ESTADOS)[number];
 
 export const TIPOS = ["persona_natural", "empresa"] as const;
 export type TipoCliente = (typeof TIPOS)[number];
 
-export const PRODUCTOS: Record<string, string> = {
+export const PRODUCTOS = ["gorras", "prendas_de_vestir", "uniformes", "otros"] as const;
+export type Producto = (typeof PRODUCTOS)[number];
+
+export const ETIQUETA_ESTADO: Record<EstadoSolicitud, string> = {
+  nuevo: "Nuevo",
+  en_atencion: "En atención",
+  atendido: "Atendido",
+};
+export const ETIQUETA_TIPO: Record<TipoCliente, string> = {
+  persona_natural: "Persona natural",
+  empresa: "Empresa",
+};
+export const ETIQUETA_PRODUCTO: Record<Producto, string> = {
   gorras: "Gorras",
   prendas_de_vestir: "Prendas de vestir",
   uniformes: "Uniformes",
   otros: "Otros",
 };
 
-export const ETIQUETA_ESTADO: Record<EstadoCliente, string> = {
-  nuevo: "Nuevo",
-  en_atencion: "En atención",
-  atendido: "Atendido",
-};
-
-export const ETIQUETA_TIPO: Record<TipoCliente, string> = {
-  persona_natural: "Persona natural",
-  empresa: "Empresa",
-};
-
-export const esEstado = (v: unknown): v is EstadoCliente => typeof v === "string" && (ESTADOS as readonly string[]).includes(v);
+export const esEstado = (v: unknown): v is EstadoSolicitud => typeof v === "string" && (ESTADOS as readonly string[]).includes(v);
 export const esTipo = (v: unknown): v is TipoCliente => typeof v === "string" && (TIPOS as readonly string[]).includes(v);
+export const esProducto = (v: unknown): v is Producto => typeof v === "string" && (PRODUCTOS as readonly string[]).includes(v);
 
-/** Fila de dulabs_clientes_conocidos tal como la lee el repositorio. */
-export interface FilaContacto {
-  id: number;
-  id_tenant: string;
-  phone_number_id: string;
-  telefono_cliente: string;
-  nombre: string;
-  custom_fields: Record<string, unknown> | null;
-  created_at: string;
-  updated_at: string;
-}
+export const etiquetaProducto = (p: string | null | undefined): string | null =>
+  p ? (esProducto(p) ? ETIQUETA_PRODUCTO[p] : p) : null;
+
+export const TAMANO_PAGINA = 25;
 
 export interface Asesor {
   id: number;
   nombre: string;
 }
 
-export interface Cliente {
+// ---------------------------------------------------------------------------
+// Solicitud
+// ---------------------------------------------------------------------------
+
+/** Fila tal como la devuelven las funciones SQL (dulabs_pb_solicitud_json). */
+export interface SolicitudDb {
+  id: number;
+  clienteId: number;
+  telefono: string;
+  tipoCliente: TipoCliente;
+  nombre: string;
+  nombreEmpresa: string | null;
+  producto: Producto;
+  cantidad: number;
+  estado: EstadoSolicitud;
+  asesorId: number | null;
+  asignadoAt: string | null;
+  atendidoAt: string | null;
+  version: number;
+  flowExecutionId: string;
+  eventoId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Solicitud extends Omit<SolicitudDb, "asesorId"> {
+  productoEtiqueta: string;
+  asesor: Asesor | null;
+}
+
+/** Nombres de TODO el equipo (incluidos suspendidos: un asesor asignado se sigue viendo). */
+export type NombresEquipo = ReadonlyMap<number, string>;
+
+function asesorDe(id: number | null | undefined, nombres: NombresEquipo): Asesor | null {
+  if (id === null || id === undefined) return null;
+  const nombre = nombres.get(id);
+  return nombre === undefined ? null : { id, nombre };
+}
+
+export function aSolicitud(fila: SolicitudDb, nombres: NombresEquipo): Solicitud {
+  const { asesorId, ...resto } = fila;
+  return { ...resto, productoEtiqueta: etiquetaProducto(fila.producto) ?? fila.producto, asesor: asesorDe(asesorId, nombres) };
+}
+
+// ---------------------------------------------------------------------------
+// Cliente
+// ---------------------------------------------------------------------------
+
+export interface ClienteDb {
   id: number;
   telefono: string;
+  tipoCliente: TipoCliente | null;
   nombre: string;
-  tipo: TipoCliente | null;
   nombreEmpresa: string | null;
-  producto: string | null;
-  productoEtiqueta: string | null;
-  cantidad: number | null;
-  estado: EstadoCliente;
-  asesor: Asesor | null;
-  registradoEn: string;
-  /** Fecha del último traspaso completado por el Flow (última solicitud). */
-  ultimaSolicitudEn: string | null;
-  /** Último mensaje (entrante o saliente) de la conversación. */
-  ultimoContactoEn: string | null;
+  registradoAt: string;
+  totalSolicitudes: number;
+  ultimaSolicitudAt: string | null;
+  ultimaSolicitud: { id: number; producto: Producto; cantidad: number; estado: EstadoSolicitud; asesorId: number | null } | null;
+  ultimoContactoAt: string | null;
 }
 
-const texto = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
-
-/** Cantidad guardada por el Flow como texto de dígitos ("06", "20"); cualquier otra cosa → null. */
-export function parsearCantidad(v: unknown): number | null {
-  const s = typeof v === "number" ? String(v) : typeof v === "string" ? v.trim() : "";
-  if (!/^\d{1,6}$/.test(s)) return null;
-  const n = Number(s);
-  return n >= 1 ? n : null;
+export interface Cliente extends Omit<ClienteDb, "ultimaSolicitud"> {
+  ultimaSolicitud: {
+    id: number;
+    producto: Producto;
+    productoEtiqueta: string;
+    cantidad: number;
+    estado: EstadoSolicitud;
+    asesor: Asesor | null;
+  } | null;
 }
 
-/** true si el contacto completó al menos una vez el Flow (tiene el tipo de cliente que solo guarda el Flow). */
-export function esClienteDelModulo(fila: Pick<FilaContacto, "custom_fields">): boolean {
-  return esTipo(fila.custom_fields?.[CAMPOS.tipo]);
-}
-
-export function aCliente(
-  fila: FilaContacto,
-  extra: { asesores: ReadonlyMap<number, string>; ultimaSolicitudEn?: string | null; ultimoContactoEn?: string | null },
-): Cliente {
-  const cf = fila.custom_fields ?? {};
-  const tipo = esTipo(cf[CAMPOS.tipo]) ? (cf[CAMPOS.tipo] as TipoCliente) : null;
-  const producto = texto(cf[CAMPOS.producto]);
-  const asesorId = Number(cf[CAMPOS.asesor]);
-  const asesorNombre = Number.isInteger(asesorId) ? extra.asesores.get(asesorId) : undefined;
-  // El Flow guarda el nombre en custom_fields; la columna `nombre` es el
-  // registro genérico (puede ser el teléfono como marcador).
-  const nombre = texto(cf[CAMPOS.nombre]) ?? (fila.nombre && fila.nombre !== fila.telefono_cliente ? fila.nombre : null) ?? fila.telefono_cliente;
+export function aCliente(fila: ClienteDb, nombres: NombresEquipo): Cliente {
+  const u = fila.ultimaSolicitud;
   return {
-    id: fila.id,
-    telefono: fila.telefono_cliente,
-    nombre,
-    tipo,
-    nombreEmpresa: tipo === "empresa" ? texto(cf[CAMPOS.empresa]) : null,
-    producto,
-    productoEtiqueta: producto ? (PRODUCTOS[producto] ?? producto) : null,
-    cantidad: parsearCantidad(cf[CAMPOS.cantidad]),
-    estado: esEstado(cf[CAMPOS.estado]) ? (cf[CAMPOS.estado] as EstadoCliente) : "nuevo",
-    asesor: asesorNombre !== undefined ? { id: asesorId, nombre: asesorNombre } : null,
-    registradoEn: fila.created_at,
-    ultimaSolicitudEn: extra.ultimaSolicitudEn ?? null,
-    ultimoContactoEn: extra.ultimoContactoEn ?? null,
+    ...fila,
+    tipoCliente: esTipo(fila.tipoCliente) ? fila.tipoCliente : null,
+    ultimaSolicitud: u
+      ? { id: u.id, producto: u.producto, productoEtiqueta: etiquetaProducto(u.producto) ?? u.producto, cantidad: u.cantidad, estado: u.estado, asesor: asesorDe(u.asesorId, nombres) }
+      : null,
   };
 }
 
-export type FiltroTipo = "todos" | TipoCliente;
+export interface ClienteDetalleDb {
+  cliente: {
+    id: number;
+    telefono: string;
+    registradoAt: string;
+    tipoCliente: TipoCliente | null;
+    nombre: string;
+    nombreEmpresa: string | null;
+    totalSolicitudes: number;
+    ultimoContactoAt: string | null;
+    /** Datos del flujo anterior (antes de existir solicitudes); solo informativos. */
+    datosAnteriores: { producto: string | null; cantidad: string | null } | null;
+  };
+  solicitudes: SolicitudDb[];
+}
+
+export interface ClienteDetalle {
+  cliente: ClienteDetalleDb["cliente"] & { datosAnteriores: { producto: string | null; cantidad: string | null } | null };
+  solicitudes: Solicitud[];
+}
+
+export function aClienteDetalle(detalle: ClienteDetalleDb, nombres: NombresEquipo): ClienteDetalle {
+  const anteriores = detalle.cliente.datosAnteriores;
+  return {
+    cliente: {
+      ...detalle.cliente,
+      tipoCliente: esTipo(detalle.cliente.tipoCliente) ? detalle.cliente.tipoCliente : null,
+      datosAnteriores: anteriores ? { producto: etiquetaProducto(anteriores.producto), cantidad: anteriores.cantidad } : null,
+    },
+    solicitudes: detalle.solicitudes.map((s) => aSolicitud(s, nombres)),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Filtros (query string) — nunca se confía en lo que manda el navegador
+// ---------------------------------------------------------------------------
 
 export interface FiltroClientes {
   q?: string;
-  tipo?: FiltroTipo;
-  estado?: EstadoCliente | "todos";
+  tipo?: TipoCliente;
 }
 
-const normalizar = (s: string) =>
-  s
-    .normalize("NFD")
-    .replace(/\p{M}/gu, "")
-    .toLowerCase()
-    .trim();
-
-/** Búsqueda por nombre, empresa o teléfono (sin tildes ni mayúsculas) + filtros por tipo y estado. */
-export function filtrarClientes<T extends Pick<Cliente, "nombre" | "nombreEmpresa" | "telefono" | "tipo" | "estado">>(
-  clientes: readonly T[],
-  filtro: FiltroClientes,
-): T[] {
-  const q = normalizar(filtro.q ?? "");
-  const qDigitos = q.replace(/\D/g, "");
-  return clientes.filter((c) => {
-    if (filtro.tipo && filtro.tipo !== "todos" && c.tipo !== filtro.tipo) return false;
-    if (filtro.estado && filtro.estado !== "todos" && c.estado !== filtro.estado) return false;
-    if (!q) return true;
-    if (normalizar(c.nombre).includes(q)) return true;
-    if (c.nombreEmpresa && normalizar(c.nombreEmpresa).includes(q)) return true;
-    return qDigitos.length >= 3 && c.telefono.includes(qDigitos);
-  });
+export interface FiltroSolicitudes {
+  q?: string;
+  estado?: EstadoSolicitud;
+  tipo?: TipoCliente;
+  producto?: Producto;
+  asesorId?: number;
+  sinAsesor?: boolean;
+  /** Fechas de Colombia (YYYY-MM-DD), ambos extremos incluidos. */
+  desde?: string;
+  hasta?: string;
 }
 
-export function leerFiltro(params: URLSearchParams): FiltroClientes {
+const FECHA = /^\d{4}-\d{2}-\d{2}$/;
+
+function fechaValida(v: string | null): string | undefined {
+  if (!v || !FECHA.test(v)) return undefined;
+  const d = new Date(`${v}T00:00:00-05:00`);
+  return Number.isNaN(d.getTime()) ? undefined : v;
+}
+
+function textoBusqueda(v: string | null): string | undefined {
+  const q = (v ?? "").trim().slice(0, 100);
+  return q || undefined;
+}
+
+export function leerPagina(params: URLSearchParams): number {
+  const n = Number(params.get("pagina") ?? "1");
+  return Number.isSafeInteger(n) && n >= 1 ? Math.min(n, 100_000) : 1;
+}
+
+export function leerFiltroClientes(params: URLSearchParams): FiltroClientes {
   const tipo = params.get("tipo");
+  return { q: textoBusqueda(params.get("q")), tipo: esTipo(tipo) ? tipo : undefined };
+}
+
+export function leerFiltroSolicitudes(params: URLSearchParams): FiltroSolicitudes {
   const estado = params.get("estado");
+  const tipo = params.get("tipo");
+  const producto = params.get("producto");
+  const asesor = params.get("asesor");
+  const asesorId = asesor && /^\d{1,15}$/.test(asesor) ? Number(asesor) : undefined;
   return {
-    q: (params.get("q") ?? "").slice(0, 100),
-    tipo: tipo === "persona_natural" || tipo === "empresa" ? tipo : "todos",
-    estado: esEstado(estado) ? estado : "todos",
+    q: textoBusqueda(params.get("q")),
+    estado: esEstado(estado) ? estado : undefined,
+    tipo: esTipo(tipo) ? tipo : undefined,
+    producto: esProducto(producto) ? producto : undefined,
+    asesorId: asesorId && asesorId > 0 ? asesorId : undefined,
+    sinAsesor: asesor === "ninguno" ? true : undefined,
+    desde: fechaValida(params.get("desde")),
+    hasta: fechaValida(params.get("hasta")),
   };
 }
 
-export type CambioCliente = { estado?: EstadoCliente; asesorId?: number | null };
+/** Filtro → parámetros de dulabs_pb_listar_solicitudes (fechas de Colombia → instantes). */
+export function filtroSolicitudesSql(filtro: FiltroSolicitudes, pagina: number): Record<string, unknown> {
+  const sql: Record<string, unknown> = { limite: TAMANO_PAGINA, offset: (pagina - 1) * TAMANO_PAGINA };
+  if (filtro.q) sql.q = filtro.q;
+  if (filtro.estado) sql.estado = filtro.estado;
+  if (filtro.tipo) sql.tipo = filtro.tipo;
+  if (filtro.producto) sql.producto = filtro.producto;
+  if (filtro.asesorId) sql.asesorId = filtro.asesorId;
+  if (filtro.sinAsesor) sql.sinAsesor = true;
+  if (filtro.desde) sql.desde = `${filtro.desde}T00:00:00-05:00`;
+  if (filtro.hasta) {
+    const fin = new Date(`${filtro.hasta}T00:00:00-05:00`);
+    fin.setUTCDate(fin.getUTCDate() + 1);
+    sql.hasta = fin.toISOString();
+  }
+  return sql;
+}
 
-/** Valida el cuerpo del PATCH de la ficha: solo estado y asesor; nada más se puede cambiar. */
-export function validarCambio(body: unknown): { ok: true; cambio: CambioCliente } | { ok: false; error: string } {
+export function filtroClientesSql(filtro: FiltroClientes, pagina: number): Record<string, unknown> {
+  const sql: Record<string, unknown> = { limite: TAMANO_PAGINA, offset: (pagina - 1) * TAMANO_PAGINA };
+  if (filtro.q) sql.q = filtro.q;
+  if (filtro.tipo) sql.tipo = filtro.tipo;
+  return sql;
+}
+
+// ---------------------------------------------------------------------------
+// Cambio de una solicitud (lo ÚNICO editable: estado y asesor)
+// ---------------------------------------------------------------------------
+
+export type CambioSolicitud = { version: number; estado?: EstadoSolicitud; asesorId?: number | null };
+
+export function validarCambioSolicitud(body: unknown): { ok: true; cambio: CambioSolicitud } | { ok: false; error: string } {
   if (!body || typeof body !== "object" || Array.isArray(body)) return { ok: false, error: "Cuerpo inválido" };
   const b = body as Record<string, unknown>;
-  const desconocidos = Object.keys(b).filter((k) => k !== "estado" && k !== "asesorId");
+  const desconocidos = Object.keys(b).filter((k) => k !== "estado" && k !== "asesorId" && k !== "version");
   if (desconocidos.length > 0) return { ok: false, error: `Campo no permitido: ${desconocidos[0]}` };
-  const cambio: CambioCliente = {};
+  if (typeof b.version !== "number" || !Number.isSafeInteger(b.version) || b.version < 1) return { ok: false, error: "Falta la versión de la solicitud" };
+  const cambio: CambioSolicitud = { version: b.version };
   if ("estado" in b) {
     if (!esEstado(b.estado)) return { ok: false, error: "Estado inválido" };
     cambio.estado = b.estado;
@@ -191,15 +277,9 @@ export function validarCambio(body: unknown): { ok: true; cambio: CambioCliente 
   return { ok: true, cambio };
 }
 
-/** custom_fields resultantes del cambio (merge: nunca borra lo que guardó el Flow). */
-export function aplicarCambio(customFields: Record<string, unknown> | null, cambio: CambioCliente): Record<string, unknown> {
-  const siguiente = { ...(customFields ?? {}) };
-  if (cambio.estado) siguiente[CAMPOS.estado] = cambio.estado;
-  if ("asesorId" in cambio) {
-    if (cambio.asesorId === null) delete siguiente[CAMPOS.asesor];
-    else siguiente[CAMPOS.asesor] = String(cambio.asesorId);
-  }
-  return siguiente;
+/** Id numérico de la URL; cualquier otra cosa → null (la API responde 404). */
+export function leerId(valor: string): number | null {
+  if (!/^\d{1,15}$/.test(valor)) return null;
+  const id = Number(valor);
+  return Number.isSafeInteger(id) && id > 0 ? id : null;
 }
-
-export const TAMANO_PAGINA = 25;

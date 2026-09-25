@@ -43,6 +43,8 @@ import {
 import { resolverEscenario, type ResolverEscenarioDeps } from "@/lib/bot-escenarios/resolver";
 import { nombreConocido, leerContactoActual, recordarNombreCliente } from "@/lib/clientes-conocidos";
 import { parseCustomerFieldsJson } from "@/lib/customer-data";
+import type { ManejadorRegistroModulo, ValorCampoModulo } from "@/lib/flow/registro-modulo";
+import { esModuloId, moduloHabilitado, type ModuloId } from "@/lib/tenant-modulos";
 // R4 (Business Agent, autorizado) -- recuperación de conocimiento por tenant.
 import { buscarConocimiento } from "@/lib/business-agent-knowledge/retrieval";
 import { KNOWLEDGE_SOURCES, type KnowledgeSource } from "@/lib/business-agent-knowledge/limits";
@@ -119,6 +121,13 @@ import type { ActionNodeConfig } from "@/lib/flow/types";
 export type { LeadEnterprise };
 
 export interface InternalActionDeps {
+  /**
+   * registrar_en_modulo (genérico): manejadores por módulo (lib/modulos/registros-flow.ts) y
+   * verificación de módulo habilitado. Opcionales: sin manejador, la acción falla de forma
+   * segura (NON_RETRYABLE) y ningún flow existente la usa.
+   */
+  registrosDeModulo?: Readonly<Partial<Record<string, ManejadorRegistroModulo>>>;
+  moduloHabilitado?: (supabase: SupabaseClient, tenantId: string, modulo: ModuloId) => Promise<boolean>;
   supabase: SupabaseClient;
   authorizer: InternalActionAuthorizer;
   guardarLeadEnterprise: (
@@ -229,6 +238,7 @@ export interface InternalActionDeps {
 }
 
 const OPERATION_CLASS: Partial<Record<string, InternalActionOperationClass>> = {
+  registrar_en_modulo: "WRITE",
   consultar_disponibilidad: "READ",
   crear_lead_enterprise: "WRITE",
   crear_lead_campana: "WRITE",
@@ -493,6 +503,8 @@ export class InternalActionExecutor implements EffectExecutor {
         return this.reprogramarCitaClienteAction(request, params, signal);
       case "enviar_plantilla":
         return this.enviarPlantillaAction(request, action, signal);
+      case "registrar_en_modulo":
+        return this.registrarEnModuloAction(request, action, signal);
       default:
         return {
           success: false,
@@ -500,6 +512,78 @@ export class InternalActionExecutor implements EffectExecutor {
           error: `internal_action_not_supported:${actionKey}`,
         };
     }
+  }
+
+  /**
+   * registrar_en_modulo — GENÉRICO. Orden de barreras: conversación y ejecución presentes →
+   * número del tenant → módulo conocido y HABILITADO para el tenant (estricto: un error de BD es
+   * reintentable, nunca "permitido") → manejador registrado por el módulo. El manejador recibe
+   * solo los campos que el flow declaró y la ejecución real (idempotencia).
+   */
+  private async registrarEnModuloAction(
+    request: EffectDispatchRequest,
+    action: ActionNodeConfig,
+    signal?: AbortSignal,
+  ): Promise<EffectDispatchResult> {
+    if (action.actionType !== "registrar_en_modulo") return this.tenantRejected();
+    const conversation = request.conversation;
+    if (!conversation || !request.executionRowId) {
+      return { success: false, classification: EFFECT_RESULT_CLASSIFICATIONS.VALIDATION_ERROR, error: "conversation_required" };
+    }
+    assertNotAborted(signal);
+    if (!(await this.deps.authorizer.assertPhoneNumberOwnedByTenant(request.tenantId, conversation.phoneNumberId))) {
+      return this.tenantRejected();
+    }
+    if (!esModuloId(action.modulo)) {
+      return { success: false, classification: EFFECT_RESULT_CLASSIFICATIONS.NON_RETRYABLE, error: "modulo_desconocido" };
+    }
+    let habilitado: boolean;
+    try {
+      habilitado = await (this.deps.moduloHabilitado ?? moduloHabilitado)(this.deps.supabase, request.tenantId, action.modulo);
+    } catch {
+      return { success: false, classification: EFFECT_RESULT_CLASSIFICATIONS.RETRYABLE, error: "modulo_no_verificable" };
+    }
+    if (!habilitado) {
+      return { success: false, classification: EFFECT_RESULT_CLASSIFICATIONS.SECURITY_REJECTED, error: "modulo_no_habilitado" };
+    }
+    const manejador = this.deps.registrosDeModulo?.[action.modulo];
+    if (!manejador) {
+      return { success: false, classification: EFFECT_RESULT_CLASSIFICATIONS.NON_RETRYABLE, error: "modulo_sin_registro" };
+    }
+    const campos: Record<string, ValorCampoModulo> = {};
+    for (const [campo, variable] of Object.entries(action.campos)) {
+      const valor = request.payload[variable];
+      campos[campo] = typeof valor === "string" || typeof valor === "number" || typeof valor === "boolean" ? valor : null;
+    }
+    assertNotAborted(signal);
+    let resultado: Awaited<ReturnType<ManejadorRegistroModulo>>;
+    try {
+      resultado = await manejador({
+        supabase: this.deps.supabase,
+        tenantId: request.tenantId,
+        phoneNumberId: conversation.phoneNumberId,
+        telefonoCliente: conversation.telefonoCliente,
+        flowExecutionId: request.executionRowId,
+        campos,
+      });
+    } catch {
+      return { success: false, classification: EFFECT_RESULT_CLASSIFICATIONS.EXTERNAL_AMBIGUOUS, error: "registro_fallo" };
+    }
+    if (!resultado.ok) {
+      return {
+        success: false,
+        classification: resultado.reintentable ? EFFECT_RESULT_CLASSIFICATIONS.RETRYABLE : EFFECT_RESULT_CLASSIFICATIONS.NON_RETRYABLE,
+        error: `registro_rechazado:${resultado.motivo}`,
+      };
+    }
+    const data = { registroId: resultado.registroId, registroCreado: resultado.creado };
+    return {
+      success: true,
+      classification: EFFECT_RESULT_CLASSIFICATIONS.SUCCESS,
+      data,
+      appliedResult: data,
+      metadata: { operationClass: OPERATION_CLASS.registrar_en_modulo },
+    };
   }
 
   private tenantRejected(): EffectDispatchResult {

@@ -4,7 +4,7 @@
  * Bienvenida → persona natural / empresa → nombre → (empresa: nombre de la
  * empresa) → producto (dos pantallas de botones: WhatsApp admite máximo 3
  * por mensaje) → cantidad → aviso de precio al por mayor si cantidad >= 6 →
- * guardar cliente → mensaje de traspaso → transferir_soporte → fin.
+ * registrar la solicitud → mensaje de traspaso → transferir_soporte → fin.
  *
  * Transferencia: mismo mecanismo genérico que Solo Talento y Daniela
  * (action actionType:"transferir_soporte" -> end), que pausa el chat en
@@ -25,12 +25,13 @@
  *    dejaba pasar o no explicaba). Se guarda como texto de dígitos; la
  *    condición de mayorista la compara numéricamente.
  *
- * Cliente: el nodo save_data escribe en custom_fields del contacto real
- * (dulabs_clientes_conocidos, por número del negocio + teléfono del cliente)
- * con el mecanismo existente del orquestador (persistContactCustomFields,
- * merge con escritura optimista). Claves con prefijo pb_. El flow guarda SOLO
- * los datos que capturó: nunca toca el estado ni el asesor que administran
- * las asesoras desde el módulo Clientes (un cliente sin estado es "Nuevo").
+ * Solicitud: justo antes del traspaso, el nodo `registrar_en_modulo` (acción
+ * GENÉRICA del motor) registra una SOLICITUD nueva en el módulo
+ * "publibordados_clientes": el cliente es el contacto real (se reutiliza, nunca
+ * se duplica) y cada flow completado crea exactamente una solicitud, idempotente
+ * por la ejecución real del flow (dulabs_pb_solicitudes). Estado y asesor son de
+ * cada solicitud y solo los cambian las asesoras. Si el registro fallara, el
+ * cliente igual pasa a la asesora (rama "failure" → mismo traspaso).
  *
  * Política de runtime propia (FlowDefinition.runtimePolicy, mecanismo genérico
  * del motor): determinista (sin atajos fuera del grafo ni IA legacy) y
@@ -62,13 +63,16 @@ const TEXTO_CON_LETRA = "^(?=.*\\p{L}).{1,80}$";
 /** Entero de 1 a 999999; admite ceros a la izquierda ("06"). */
 const CANTIDAD_ENTERA = "^0*[1-9][0-9]{0,5}$";
 
-/** custom_fields que el flow guarda en el contacto (dulabs_clientes_conocidos). */
-export const PUBLIBORDADOS_CAMPOS = {
-  tipo_cliente: "pb_tipo_cliente",
-  nombre: "pb_nombre",
-  nombre_empresa: "pb_nombre_empresa",
-  producto: "pb_producto",
-  cantidad: "pb_cantidad",
+/** Módulo del tenant que recibe las solicitudes (dulabs_tenant_modulos). */
+export const PUBLIBORDADOS_MODULO = "publibordados_clientes";
+
+/** Campos de la solicitud → variables del flow (los valida la BD al registrar). */
+export const PUBLIBORDADOS_CAMPOS_SOLICITUD = {
+  tipo_cliente: "tipo_cliente",
+  nombre: "nombre",
+  nombre_empresa: "nombre_empresa",
+  producto: "producto",
+  cantidad: "cantidad",
 } as const;
 
 export const PUBLIBORDADOS_PALABRAS_REINICIO = ["reiniciar", "menú", "menu", "inicio"];
@@ -172,14 +176,13 @@ export function publibordadosFlow(): FlowDefinition {
       },
       { id: "msg-mayorista", type: "message", config: { text: PUBLIBORDADOS_MAYORISTA } },
       {
-        id: "save-cliente",
-        type: "save_data",
+        id: "act-registrar-solicitud",
+        type: "action",
         config: {
-          mappings: Object.entries(PUBLIBORDADOS_CAMPOS).map(([variable, targetKey]) => ({
-            variable,
-            target: "custom_field" as const,
-            targetKey,
-          })),
+          actionType: "registrar_en_modulo",
+          modulo: PUBLIBORDADOS_MODULO,
+          campos: { ...PUBLIBORDADOS_CAMPOS_SOLICITUD },
+          outputVariables: ["registroId"],
         },
       },
       { id: "msg-traspaso", type: "message", config: { text: PUBLIBORDADOS_TRASPASO } },
@@ -213,9 +216,11 @@ export function publibordadosFlow(): FlowDefinition {
       { id: "e-reintento-producto-mas", source: "msg-reintento-producto-mas", target: "btn-producto-mas" },
       { id: "e-cantidad-cond", source: "q-cantidad", target: "cond-mayorista" },
       { id: "e-cond-true", source: "cond-mayorista", target: "msg-mayorista", sourceHandle: "true" },
-      { id: "e-cond-false", source: "cond-mayorista", target: "save-cliente", sourceHandle: "false" },
-      { id: "e-mayorista-save", source: "msg-mayorista", target: "save-cliente" },
-      { id: "e-save-traspaso", source: "save-cliente", target: "msg-traspaso" },
+      { id: "e-cond-false", source: "cond-mayorista", target: "act-registrar-solicitud", sourceHandle: "false" },
+      { id: "e-mayorista-registrar", source: "msg-mayorista", target: "act-registrar-solicitud" },
+      { id: "e-registrar-traspaso", source: "act-registrar-solicitud", target: "msg-traspaso" },
+      // Si el registro falla, el cliente IGUAL pasa a la asesora (el fallo queda registrado).
+      { id: "e-registrar-fallo-traspaso", source: "act-registrar-solicitud", target: "msg-traspaso", sourceHandle: "failure" },
       { id: "e-traspaso-act", source: "msg-traspaso", target: "act-transferir-soporte" },
       { id: "e-act-end", source: "act-transferir-soporte", target: "end-transferido" },
     ],

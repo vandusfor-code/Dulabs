@@ -263,6 +263,7 @@ export interface SaveDataMapping {
 // ---------------------------------------------------------------------------
 
 export type FlowActionType =
+  | "registrar_en_modulo"
   | "crear_lead_enterprise"
   | "crear_lead_campana"
   | "transferir_soporte"
@@ -453,7 +454,21 @@ export interface SimpleActionConfig extends ActionSemanticTag {
   params?: ActionParams;
 }
 
+/**
+ * Registra datos del flow en un MÓDULO del tenant (dulabs_tenant_modulos) —
+ * capacidad GENÉRICA: el motor no sabe qué guarda cada módulo. Verifica que el
+ * número sea del tenant y que el módulo esté habilitado, y delega en el
+ * manejador que el módulo registró (lib/modulos/registros-flow.ts). El flow
+ * declara QUÉ variables envía (campo del módulo → variable del flow).
+ */
+export interface RegistrarEnModuloActionConfig extends ActionSemanticTag {
+  actionType: "registrar_en_modulo";
+  modulo: string;
+  campos: Record<string, string>;
+}
+
 export type ActionNodeConfig =
+  | RegistrarEnModuloActionConfig
   | SimpleActionConfig
   | TransferirSoporteActionConfig
   | EtiquetarConversacionActionConfig

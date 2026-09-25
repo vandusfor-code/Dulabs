@@ -15,6 +15,7 @@ import {
   Blocks,
   Package,
   Contact,
+  Inbox,
   type LucideIcon,
 } from "lucide-react";
 import type { Rol } from "@/lib/team";
@@ -63,6 +64,13 @@ export const navSections: NavSection[] = [
       // Clientes de Publi Bordados (autorizado) -- módulo propio de ese negocio,
       // visible solo para tenants con "publibordados_clientes" habilitado
       // (dulabs_tenant_modulos). La API autoriza por su cuenta.
+      {
+        label: "Solicitudes",
+        labelEn: "Requests",
+        href: "/dashboard/publibordados/solicitudes",
+        icon: Inbox,
+        modulo: "publibordados_clientes",
+      },
       {
         label: "Clientes",
         labelEn: "Customers",
