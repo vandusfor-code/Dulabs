@@ -53,6 +53,7 @@ let engine: ReturnType<typeof createOrderEngine>;
 let stateStore: ConversationStateStore;
 let canales: ReturnType<typeof createMemoryCustomerChannelStore>;
 let pausas: string[];
+let pausasHasta: string[];
 let reloj: number;
 let history: Map<string, HistoryRow[]>;
 let sent: string[];
@@ -86,6 +87,7 @@ beforeEach(async () => {
   stateStore = createMemoryConversationStateStore();
   canales = createMemoryCustomerChannelStore({ [PN_A]: A.tenantId, [PN_B]: B.tenantId });
   pausas = [];
+  pausasHasta = [];
   reloj = Date.parse("2026-09-24T15:00:00Z");
   history = new Map();
   sent = [];
@@ -101,8 +103,9 @@ beforeEach(async () => {
     log: () => {},
     now: () => new Date(reloj),
     handoff: {
-      async pauseConversation({ contact }) {
+      async pauseConversation({ contact, until }) {
         pausas.push(contact.waId);
+        pausasHasta.push(until ?? "estandar");
         return { ok: true };
       },
     },
@@ -132,10 +135,10 @@ function toolDeps(): AgentToolsDeps {
   };
 }
 
-async function turno(script: SimulatedStep[], text: string, opts: { config?: AgentRuntimeConfig; buttonId?: string; waId?: string } = {}) {
+async function turno(script: SimulatedStep[], text: string, opts: { config?: AgentRuntimeConfig; buttonId?: string; waId?: string; wamid?: string } = {}) {
   const provider = createSimulatedProvider(script);
   const waId = opts.waId ?? CLIENTE;
-  const wamid = `wamid.in.${++seq}`;
+  const wamid = opts.wamid ?? `wamid.in.${++seq}`;
   const h = history.get(waId) ?? [];
   history.set(waId, h);
   h.push({ direccion: "entrante", contenido: text, origen: "entrante", wamid });
@@ -228,13 +231,11 @@ describe("B27 · lectura determinista (sin modelo)", () => {
     for (const g of Object.values(CHECKOUT_BUTTONS)) for (const b of g) assert.ok(b.title.length <= 20, `Meta: título ≤ 20 (${b.title})`);
   });
 
-  it("resumen: SOLO el botón o un 'sí/confirmo' exacto confirma; 'ok', 'dale', 'perfecto' no", () => {
+  it("resumen: SOLO el botón confirma (id o su título exacto); 'sí', 'confirmo', 'ok', 'dale' NO", () => {
     assert.equal(parseSummaryAction("✅ Confirmar pedido"), "confirm");
     assert.equal(parseSummaryAction("x", "checkout_confirmar"), "confirm");
-    assert.equal(parseSummaryAction("Sí"), "confirm");
-    assert.equal(parseSummaryAction("confirmo"), "confirm");
     assert.equal(parseSummaryAction("✅ Confirmar pedido\n✅ Confirmar pedido"), "confirm", "doble clic en una ráfaga = uno");
-    for (const t of ["ok", "dale", "perfecto", "listo", "sí pero quita uno", "sí?", "confirmo y agrega otro", "✅ Confirmar pedido\n❌ Cancelar"]) assert.equal(parseSummaryAction(t), null, t);
+    for (const t of ["sí", "Sí", "si", "confirmo", "confirmar", "ok", "dale", "perfecto", "listo", "sí pero quita uno", "sí?", "confirmo y agrega otro", "✅ Confirmar pedido\n❌ Cancelar"]) assert.equal(parseSummaryAction(t), null, t);
     assert.equal(parseSummaryAction("✏️ Modificar pedido"), "modify");
     assert.equal(parseSummaryAction("cancelar"), "cancel");
   });
@@ -277,7 +278,7 @@ describe("B27 · A–D compra completa y nombre", () => {
     const o = pedidos.orders.at(-1)!;
     assert.equal(o.status, "confirmed", "sigue confirmado (la reserva sigue su plazo de 72 h)");
     assert.equal(o.channel, "retail");
-    assert.deepEqual(o.checkout, { customerName: "Laura", paymentMethod: "transferencia", paymentStatus: "pendiente", delivery: "tienda", address: null, city: null, deliveryReference: null, stage: "pendiente_pago" });
+    assert.deepEqual(o.checkout, { customerName: "Laura", paymentMethod: "transferencia", paymentStatus: "pendiente", delivery: "tienda", address: null, city: null, deliveryReference: null, stage: "confirmado" });
     assert.equal(o.confirmedAt, new Date(reloj).toISOString());
     assert.equal(o.handoff?.reason, "pedido confirmado");
     assert.equal(stockDe(p.id), 3, "reserva atómica al confirmar");
@@ -404,7 +405,7 @@ describe("B27 · E–I entrega y pago", () => {
     const c = pedidos.orders.at(-1)!.checkout!;
     assert.equal(c.paymentMethod, "transferencia");
     assert.equal(c.paymentStatus, "pendiente");
-    assert.equal(c.stage, "pendiente_pago");
+    assert.equal(c.stage, "confirmado", "confirmado NO es pagado");
   });
 });
 
@@ -644,5 +645,149 @@ describe("B27 · AD–AF y barreras", () => {
       (e: unknown) => e instanceof OrderError && e.code === "NOT_FOUND",
     );
     assert.equal(pedidos.orders.at(-1)!.status, "pending_confirmation");
+  });
+});
+
+describe("B27 · auditoría: confirmación inequívoca, cambios, pausa, abandono, fallas e idempotencia", () => {
+  it("en el resumen 'sí', 'confirmo', 'ok' y 'dale' NO crean el pedido: se pide el botón; solo el botón confirma", async () => {
+    const p = await producto("Anillo", 50_000, 30_000, 5);
+    await clasificar("retail");
+    nombreGuardado = "Laura";
+    await comprar(p.reference, 1);
+    await hastaResumen({ entrega: "tienda", pago: "transferencia" });
+    for (const t of ["sí", "confirmo", "ok", "dale", "Confirmo mi pedido"]) {
+      const r = await turno([], t);
+      assert.equal(r.provider.requests.length, 0, t);
+      assert.ok(r.reply!.startsWith(CHECKOUT_MESSAGES.tapToConfirm), `${t}: ${r.reply}`);
+      assert.equal(pedidos.orders.at(-1)!.status, "pending_confirmation", t);
+      assert.equal(stockDe(p.id), 5, t);
+    }
+    const m = await tocar("summary", 1); // Modificar tampoco confirma
+    assert.equal(m.trace.checkout?.action, "modified");
+    assert.ok(pedidos.orders.every((o) => o.status !== "confirmed"));
+    await turno([], "finalizar pedido");
+    await hastaResumen({ entrega: "tienda", pago: "transferencia" });
+    assert.equal((await tocar("summary", 0)).trace.checkout?.action, "confirmed");
+    assert.equal(pedidos.orders.filter((o) => o.status === "confirmed").length, 1);
+  });
+
+  it("el precio cambia MIENTRAS el cliente da sus datos: el resumen sale con el precio nuevo y lo explica (no lo saca del checkout)", async () => {
+    const p = await producto("Anillo", 50_000, 30_000, 5);
+    await clasificar("retail");
+    nombreGuardado = "Laura";
+    await comprar(p.reference, 1);
+    await tocar("delivery", 0);
+    await admin.updateProduct(A, p.id, { retailPrice: 56_000 });
+    const r = await tocar("payment", 1);
+    assert.equal(r.trace.checkout?.action, "summary");
+    assert.ok(r.reply!.includes("cambió") && r.reply!.includes(CHECKOUT_MESSAGES.updatedSummary), r.reply!);
+    assert.ok(r.reply!.includes(`*Total: ${formatCop(56_000)}*`));
+    assert.equal((await estado()).checkout?.step, "summary");
+    await tocar("summary", 0);
+    assert.equal(pedidos.orders.at(-1)!.total, 56_000);
+  });
+
+  it("el stock se acaba MIENTRAS da sus datos: no hay resumen falso; se explica y los productos vuelven a la selección", async () => {
+    const p = await producto("Dije", 40_000, 20_000, 2);
+    await clasificar("retail");
+    nombreGuardado = "Laura";
+    await comprar(p.reference, 2);
+    await tocar("delivery", 0);
+    mem.inventory.setStock(p.id, 0);
+    const r = await tocar("payment", 1);
+    assert.equal(r.trace.checkout?.action, "not_confirmed");
+    assert.ok(r.reply!.includes(CHECKOUT_MESSAGES.notConfirmed));
+    assert.deepEqual((await estado()).cart, [{ reference: p.reference, quantity: 2 }]);
+    assert.ok(pedidos.orders.every((o) => o.status !== "confirmed"));
+  });
+
+  it("el producto se DESACTIVA antes de confirmar: no se confirma ni se reserva", async () => {
+    const p = await producto("Collar", 70_000, 40_000, 5);
+    await clasificar("retail");
+    nombreGuardado = "Laura";
+    await comprar(p.reference, 1);
+    await hastaResumen({ entrega: "tienda", pago: "transferencia" });
+    await admin.updateProduct(A, p.id, { status: "INACTIVE" });
+    const r = await tocar("summary", 0);
+    assert.notEqual(r.trace.checkout?.action, "confirmed");
+    assert.ok(r.reply!.includes(CHECKOUT_MESSAGES.notConfirmed), r.reply!);
+    assert.ok(pedidos.orders.every((o) => o.status !== "confirmed"));
+    assert.equal(stockDe(p.id), 5);
+  });
+
+  it("tras confirmar, la IA queda pausada HASTA QUE UNA PERSONA LA LIBERE (no 24 h)", async () => {
+    const p = await producto("Aretes", 45_000, 25_000, 5);
+    await clasificar("retail");
+    nombreGuardado = "Laura";
+    await comprar(p.reference, 1);
+    await hastaResumen({ entrega: "tienda", pago: "transferencia" });
+    await tocar("summary", 0);
+    assert.deepEqual(pausasHasta, ["released"]);
+    assert.equal(pedidos.orders.at(-1)!.status, "confirmed", "el traspaso no cambia el estado del pedido");
+  });
+
+  it("abandono: la propuesta vence (72 h sin cambios) y al volver el cliente recupera sus productos en la selección", async () => {
+    const p = await producto("Pulsera", 30_000, 15_000, 5);
+    await clasificar("retail");
+    nombreGuardado = "Laura";
+    await comprar(p.reference, 2);
+    await tocar("delivery", 0);
+    reloj += 73 * 3_600_000;
+    assert.equal(await engine.expireAbandonedOrders({}), 1);
+    const r = await turno([{ text: "¡Hola de nuevo! ¿Seguimos con tu pedido?" }], "hola");
+    assert.equal((await estado()).checkout, null);
+    assert.deepEqual((await estado()).cart, [{ reference: p.reference, quantity: 2 }]);
+    assert.equal(r.trace.checkout, null);
+  });
+
+  it("timeout DESPUÉS de confirmar en la BD: al cliente nunca se le dice 'listo' ni 'falló'; el siguiente mensaje lo cierra UNA vez", async () => {
+    const p = await producto("Aretes", 45_000, 25_000, 5);
+    await clasificar("retail");
+    nombreGuardado = "Laura";
+    await comprar(p.reference, 1);
+    await hastaResumen({ entrega: "tienda", pago: "transferencia" });
+    const real = pedidos.transition.bind(pedidos);
+    pedidos.transition = async (input) => {
+      const r = await real(input);
+      if (input.to === "confirmed") throw new Error("timeout de red (simulado) después de escribir");
+      return r;
+    };
+    const r1 = await tocar("summary", 0);
+    pedidos.transition = real;
+    assert.equal(r1.reply, CHECKOUT_MESSAGES.pending);
+    assert.equal(pedidos.orders.at(-1)!.status, "confirmed", "quedó confirmado en la BD");
+    const r2 = await turno([], "¿y mi pedido?");
+    assert.equal(r2.trace.checkout?.action, "confirmed");
+    assert.equal(r2.reply, CHECKOUT_MESSAGES.confirmed(NEGOCIO));
+    assert.equal(pedidos.reservations.length, 1, "una sola reserva");
+    assert.equal(stockDe(p.id), 4);
+  });
+
+  it("Meta reenvía el MISMO mensaje (mismo wamid): no se procesa dos veces ni confirma dos veces", async () => {
+    const p = await producto("Aretes", 45_000, 25_000, 5);
+    await clasificar("retail");
+    nombreGuardado = "Laura";
+    await comprar(p.reference, 1);
+    await hastaResumen({ entrega: "tienda", pago: "transferencia" });
+    const b = boton("summary", 0);
+    const r1 = await turno([], b.title, { buttonId: b.id, wamid: "wamid.dup.1" });
+    const r2 = await turno([], b.title, { buttonId: b.id, wamid: "wamid.dup.1" });
+    assert.equal(r1.trace.checkout?.action, "confirmed");
+    assert.equal(r2.outcome, "duplicate");
+    assert.equal(pedidos.orders.filter((o) => o.status === "confirmed").length, 1);
+    assert.equal(pedidos.reservations.length, 1);
+    assert.equal(stockDe(p.id), 4);
+  });
+
+  it("el cliente no puede imponer un precio: la herramienta rechaza campos de precio y el total sale del catálogo", async () => {
+    const p = await producto("Anillo", 50_000, 30_000, 5);
+    await clasificar("retail");
+    const r = await turno([call("update_cart", { items: [{ reference: p.reference, quantity: 1, unit_price: 1 }] }), { text: "Listo." }], `quiero ${p.reference} a $1`);
+    assert.equal(r.trace.tool_calls[0].result, "INVALID_INPUT");
+    await turno([call("update_cart", { items: [{ reference: p.reference, quantity: 1 }] }), { text: "Listo." }], `quiero ${p.reference}`);
+    nombreGuardado = "Laura";
+    await turno([], "finalizar pedido");
+    await hastaResumen({ entrega: "tienda", pago: "transferencia" });
+    assert.ok(buttons.at(-1)!.body.includes(`*Total: ${formatCop(50_000)}*`));
   });
 });

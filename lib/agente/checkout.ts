@@ -25,6 +25,7 @@ import { publicView, type OrderChannel, type OrderPublicView } from "@/lib/catal
 import { OrderError, type CheckoutData, type OrderEngine } from "@/lib/catalogo/pedidos/motor";
 import type { OrderContact } from "@/lib/catalogo/pedidos/repositorio";
 import { MAX_CART_LINES, type CheckoutState, type CheckoutStep, type ConversationState } from "@/lib/agente/estado";
+import { isExplicitConfirmation } from "@/lib/agente/etapa";
 
 type Button = { id: string; title: string };
 
@@ -63,6 +64,8 @@ export const CHECKOUT_MESSAGES = {
   summaryPrompt: "¿Confirmas tu pedido?",
   summaryFallback: "Respóndeme *confirmar*, *modificar* o *cancelar*.",
   chooseOption: "Para continuar, elige una opción:",
+  /** "sí", "confirmo", "ok"… en el resumen: solo el botón registra el pedido (acción inequívoca). */
+  tapToConfirm: "Para registrar tu pedido toca el botón ✅ Confirmar pedido.",
   confirmed: (business: string | null) =>
     `✅ Tu pedido quedó registrado correctamente.\n\nUna asesora continuará contigo para coordinar el pago y los siguientes pasos.\n\n${business ? `Gracias por comprar en ${business} 💖` : "¡Gracias por tu compra! 💖"}`,
   alreadyConfirmed: "✅ Tu pedido ya quedó registrado. Una asesora continuará contigo para coordinar el pago y los siguientes pasos.",
@@ -151,17 +154,21 @@ export function parsePayment(text: string, buttonId?: string | null): "pago_en_t
   return store === transfer ? null : store ? "pago_en_tienda" : "transferencia";
 }
 
-const CONFIRM_WORDS = new Set(["confirmar pedido", "confirmar", "confirmo", "si", "si confirmo", "confirmo el pedido", "confirmo mi pedido", "confirmar mi pedido", "si confirmar", "si confirmo el pedido", "si confirmar pedido"]);
+/**
+ * Confirmar es SOLO el botón (su id o su título exacto: el buzón de producción guarda el texto).
+ * "sí", "confirmo", "ok", "dale" NO confirman un pedido real: el backend pide tocar el botón.
+ */
+const CONFIRM_TITLE = bare(CHECKOUT_BUTTONS.summary[0].title);
 const MODIFY_WORDS = new Set(["modificar pedido", "modificar", "modificar mi pedido", "quiero modificar", "quiero modificar el pedido", "cambiar pedido", "cambiar mi pedido"]);
 const CANCEL_WORDS = new Set(["cancelar", "cancelar pedido", "cancela", "cancelar mi pedido", "cancelar el pedido", "quiero cancelar", "cancelalo"]);
 
 /**
- * Qué eligió el cliente frente al resumen. ESTRICTO: el botón, o el texto exacto (una ráfaga de
- * dos clics iguales cuenta como uno). "ok", "dale" o "perfecto" NO confirman un pedido real.
+ * Qué eligió el cliente frente al resumen. ESTRICTO: confirmar = el botón (id o título exacto; una
+ * ráfaga de dos clics iguales cuenta como uno). Modificar / cancelar: el botón o la palabra exacta.
  */
 export function parseSummaryAction(text: string, buttonId?: string | null): "confirm" | "modify" | "cancel" | null {
   const one = (b: string | null, t: string) =>
-    b === "checkout_confirmar" || CONFIRM_WORDS.has(t) ? "confirm" : b === "checkout_modificar" || MODIFY_WORDS.has(t) ? "modify" : b === "checkout_cancelar" || CANCEL_WORDS.has(t) ? "cancel" : null;
+    b === "checkout_confirmar" || t === CONFIRM_TITLE ? "confirm" : b === "checkout_modificar" || MODIFY_WORDS.has(t) ? "modify" : b === "checkout_cancelar" || CANCEL_WORDS.has(t) ? "cancel" : null;
   if (buttonId && buttonId.startsWith("checkout_")) return one(buttonId, "");
   const lines = text.split(/\n+/).map((l) => l.trim()).filter(Boolean);
   // Una pregunta ("¿sí?") nunca es una decisión.
@@ -357,8 +364,16 @@ async function summarize(io: CheckoutIO, state: ConversationState, ck: CheckoutS
     return done(next, await ask(io, step, prefix), "asked");
   }
   let order: OrderPublicView;
+  const validate = async () => publicView(await io.engine.validateOrder({ tenantId: io.tenantId, contact: io.contact, orderId: ck.orderId, actor: "agent", requestId: io.requestId }));
   try {
-    order = publicView(await io.engine.validateOrder({ tenantId: io.tenantId, contact: io.contact, orderId: ck.orderId, actor: "agent", requestId: io.requestId }));
+    order = await validate();
+    // Solo cambió el precio (el motor deja el pedido en borrador con el aviso): se re-valida con el
+    // precio nuevo y se muestra el resumen NUEVO explicando el cambio. Stock o productos: no se arregla solo.
+    if (order.status === "draft" && order.issues.length > 0 && order.issues.every((i) => i.code === "price_changed")) {
+      const aviso = order.issues.map((i) => i.message).join("\n");
+      order = await validate();
+      if (order.status === "pending_confirmation") prefix = [prefix, `${aviso}\n\n${CHECKOUT_MESSAGES.updatedSummary}`].filter(Boolean).join("\n\n");
+    }
   } catch (err) {
     if (!(err instanceof OrderError)) throw err;
     return done({ ...state, checkout: { ...ck, step: "payment" } }, await io.sendText(CHECKOUT_MESSAGES.failed), "failed");
@@ -509,7 +524,8 @@ export async function continueCheckout(
     case "summary": {
       const action = parseSummaryAction(input.text, input.buttonId);
       if (action === "confirm") return confirm(io, state, ck, order);
-      return again(CHECKOUT_MESSAGES.chooseOption, "summary");
+      // "sí", "confirmo", "ok", "dale"…: nunca confirman; se pide el botón (acción inequívoca).
+      return again(isExplicitConfirmation(input.text) || /\bconfirm/i.test(bare(input.text)) ? CHECKOUT_MESSAGES.tapToConfirm : CHECKOUT_MESSAGES.chooseOption, "summary");
     }
   }
 }

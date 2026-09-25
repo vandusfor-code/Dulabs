@@ -26,7 +26,7 @@ import { generateWithRetry } from "@/lib/ia-proveedores/reintentos";
 import { addCustomerEvidence, addEvidence, checkGrounding, emptyEvidence, type Evidence, type GroundingViolation } from "@/lib/agente/anclaje";
 import type { AgentRuntimeConfig } from "@/lib/agente/config";
 import { HISTORY_MAX_TURNS, HISTORY_WINDOW_MS, buildSystemInstruction, historyTurns, type HistoryStore, type ReplyContext, type TurnFacts } from "@/lib/agente/contexto";
-import { MAX_IMAGES_REMEMBERED, MAX_RECENT_WAMIDS, rememberReferences, type ConversationState, type ConversationStateStore } from "@/lib/agente/estado";
+import { MAX_CART_LINES, MAX_IMAGES_REMEMBERED, MAX_RECENT_WAMIDS, rememberReferences, type ConversationState, type ConversationStateStore } from "@/lib/agente/estado";
 import type { ProductMediaLedger } from "@/lib/agente/medios";
 import { resolveSelection } from "@/lib/agente/seleccion";
 import { STAGE_GUIDANCE, conversationStage, type ConversationStage } from "@/lib/agente/etapa";
@@ -648,7 +648,8 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
         rememberName: deps.tools.rememberCustomerName ? (name) => deps.tools.rememberCustomerName!(key, name) : undefined,
         handOff: async (reason) => {
           try {
-            const r = await deps.tools.engine.requestHandoff({ tenantId: input.tenantId, contact, reason, actor: "system", requestId });
+            // Pedido confirmado: la IA calla hasta que una persona la libere (nunca vuelve sola).
+            const r = await deps.tools.engine.requestHandoff({ tenantId: input.tenantId, contact, reason, actor: "system", requestId, pauseUntil: "released" });
             return r.paused;
           } catch {
             return false;
@@ -668,8 +669,18 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
       let r: CheckoutResult | null = null;
       if (state.checkout) {
         r = await continueCheckout(checkoutIO, state, { text: input.text, buttonId: input.buttonId }, activeOrder);
-        // El pedido cambió por otro camino (vencido, cancelado, una asesora lo tomó): el checkout se cierra.
-        if (!r) state = { ...state, checkout: null };
+        if (!r) {
+          // El pedido cambió por otro camino (vencido por abandono, cancelado, una asesora lo tomó): el
+          // checkout se cierra y, si esa propuesta ya no existe, sus productos vuelven a la selección.
+          const previo = state.checkout;
+          state = { ...state, checkout: null };
+          if (previo && state.cart.length === 0) {
+            const viejo = await deps.tools.engine.getOrder({ tenantId: input.tenantId, contact, orderId: previo.orderId, requestId }).catch(() => null);
+            if (viejo && (viejo.status === "expired" || viejo.status === "cancelled")) {
+              state = { ...state, cart: viejo.lines.filter((l) => l.quantity > 0).map((l) => ({ reference: l.reference, quantity: Math.min(l.quantity, 99) })).slice(0, MAX_CART_LINES) };
+            }
+          }
+        }
       } else if (isCheckoutButton(input.text, input.buttonId) && !(activeOrder?.status === "pending_confirmation" && parseSummaryAction(input.text, input.buttonId) === "confirm")) {
         // Un botón de un resumen viejo: nunca confirma ni cancela nada.
         r = await staleCheckoutButton(checkoutIO, state, activeOrder);

@@ -33,13 +33,16 @@ import { formatCop } from "@/lib/business-agent-quote";
 import { AGENT_TOOL_NAMES } from "@/lib/agente/nombres-herramientas";
 import { NON_TEXT_MESSAGES } from "@/lib/agente/entrada";
 import { FALLBACK_MESSAGES } from "@/lib/agente/runtime";
-import { liberarPausaChat } from "@/lib/pausas-chat";
+import { activarPausaChat, liberarPausaChat } from "@/lib/pausas-chat";
 import { CHANNEL_QUESTION, CLASSIFICATION_MESSAGES, DEFAULT_WELCOME, INTENT_MENU, START_MESSAGES, channelQuestionBody, createSupabaseCustomerChannelStore } from "@/lib/agente/clasificacion";
 import { procesarCambio, registrarMensajesEntrantesSincrono, type MetaChangeValue } from "@/app/webhook-dulabs/route";
 import { CHECKOUT_BUTTONS, CHECKOUT_MESSAGES } from "@/lib/agente/checkout";
 import { productionOrderEngine } from "@/lib/catalogo/pedidos/produccion";
 import { productionPanelFuentes } from "@/lib/catalogo/pedidos/panel-fuentes";
 import { accionGestion, detalleGestion, listarGestion } from "@/lib/catalogo/pedidos/gestion";
+import { ORDERS_MODULE, requireCatalogo } from "@/lib/catalogo/auth";
+import { moduloHabilitado } from "@/lib/tenant-modulos";
+import { NextRequest } from "next/server";
 
 const db = createClient(URL_LOCAL, "local", { auth: { persistSession: false } });
 const RUN = randomBytes(3).toString("hex");
@@ -51,7 +54,7 @@ const PN_B = num(920000000000000);
 const SLUG = `joyeria-piloto-${RUN}`;
 const DISPLAY = "573000000000";
 /** Clientes autorizados del piloto (ia_restringida_a) y uno que NO lo está. */
-const C = Array.from({ length: 32 }, (_, i) => `57310${RUN.replace(/\D/g, "7").padEnd(4, "7").slice(0, 4)}${String(i).padStart(3, "0")}`);
+const C = Array.from({ length: 48 }, (_, i) => `57310${RUN.replace(/\D/g, "7").padEnd(4, "7").slice(0, 4)}${String(i).padStart(3, "0")}`);
 const NO_AUTORIZADO = "573219990000";
 const CB = "573229990001";
 
@@ -899,35 +902,47 @@ describe("PILOTO DELACOUR — matriz de punta a punta (webhook real + PostgreSQL
     });
   });
 
-  describe("K. Bloque 27 — pedido real: checkout conversacional + operación en el panel (webhook real, PG real)", () => {
+  describe("K. Bloque 27 — pedido real punta a punta: WhatsApp → IA → backend → PostgreSQL → stock → asesora → Dashboard", () => {
     type Interactivo = { type: string; interactive: { body: { text: string }; action: { buttons: Array<{ reply: { id: string; title: string } }> } } };
     const salidas = (desde: number) =>
       meta.calls.slice(desde).flatMap((c) => {
-        const b = c.body as unknown as Interactivo & { text?: { body: string } };
-        if (b.type === "interactive") return [{ texto: b.interactive.body.text, botones: b.interactive.action.buttons.map((x) => x.reply.id) }];
-        if (b.type === "text") return [{ texto: b.text!.body, botones: [] as string[] }];
+        const b = c.body as unknown as Interactivo & { text?: { body: string }; image?: { link: string } };
+        if (b.type === "interactive") return [{ tipo: "botones", texto: b.interactive.body.text, botones: b.interactive.action.buttons.map((x) => x.reply.id) }];
+        if (b.type === "text") return [{ tipo: "texto", texto: b.text!.body, botones: [] as string[] }];
+        if (b.type === "image") return [{ tipo: "foto", texto: b.image!.link, botones: [] as string[] }];
         return [];
       });
     const tocar = (grupo: keyof typeof CHECKOUT_BUTTONS, i: number) => {
       const b = CHECKOUT_BUTTONS[grupo][i] as { id: string; title: string };
       return { type: "interactive", interactive: { type: "button_reply", button_reply: { id: b.id, title: b.title } } };
     };
-    const MIEMBRO = 7_777;
+    const boton = (b: { id: string; title: string }) => ({ type: "interactive", interactive: { type: "button_reply", button_reply: { id: b.id, title: b.title } } });
     const NEGOCIO = "Joyería Piloto";
+    let MIEMBRO = 0;
     const engine = () => productionOrderEngine(db)!;
-    const fuentesPanel = () => ({ fuentes: productionPanelFuentes(db), verTelefono: true });
-    const pedidoDb = async (wa: string) =>
-      (await db.from("dulabs_catalogo_pedidos").select("*").eq("id_tenant", T).eq("contacto_wa_id", wa).order("created_at", { ascending: false }).limit(1).single()).data as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
-    const actuar = async (pedido: string, accion: string, esperado: { estado: string; etapa: string | null }, motivo?: string, tenant = T) => {
-      const r = await accionGestion(engine(), tenant, pedido, { accion, esperado, ...(motivo ? { motivo } : {}) }, MIEMBRO);
-      return { status: r.status, body: (await r.json()) as { success: boolean; data: { pedido: { estado_visible: string; checkout: { estado_pago: string } | null }; repetido: boolean }; error?: { code: string } } };
+    const fuentesPanel = (verTelefono = true) => ({ fuentes: productionPanelFuentes(db), verTelefono });
+    type Fila = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+    const pedidoDb = async (wa: string, tenant = T) =>
+      (await db.from("dulabs_catalogo_pedidos").select("*").eq("id_tenant", tenant).eq("contacto_wa_id", wa).order("created_at", { ascending: false }).limit(1).maybeSingle()).data as Fila | null;
+    const pedidosDb = async (wa: string) => ((await db.from("dulabs_catalogo_pedidos").select("*").eq("id_tenant", T).eq("contacto_wa_id", wa)).data ?? []) as Fila[];
+    const visto = async (pedido: string, tenant = T) => {
+      const o = (await db.from("dulabs_catalogo_pedidos").select("estado, etapa, estado_pago").eq("id_tenant", tenant).eq("pedido_publico", pedido).maybeSingle()).data as Fila | null;
+      return o ? { estado: o.estado, etapa: o.etapa, pago: o.estado_pago } : { estado: "confirmed", etapa: "confirmado", pago: "pendiente" };
     };
+    /** Acción del panel sobre lo que la persona ve (como tras recargar). */
+    const actuar = async (pedido: string, accion: string, motivo?: string, tenant = T) => {
+      const r = await accionGestion(engine(), tenant, pedido, { accion, esperado: await visto(pedido, tenant), ...(motivo ? { motivo } : {}) }, MIEMBRO);
+      return { status: r.status, body: (await r.json()) as { success: boolean; data: { pedido: { estado_visible: string; estado_pago: string | null }; repetido: boolean }; error?: { code: string; message: string } } };
+    };
+    type Lista = { data: { pedidos: Array<{ pedido: string; estado_visible: string; estado_pago: string | null; canal: string; checkout: { nombre: string } | null; atencion: { ia_pausada_hasta: string | null; asignada: string | null } | null; contacto: { telefono: string | null } | null; lineas: Array<{ foto?: string | null }> }>; siguiente: string | null } };
+    const listar = async (qs: Record<string, string> = {}, tenant = T, ver = true) => (await (await listarGestion(engine(), tenant, new URLSearchParams(qs), fuentesPanel(ver))).json()) as Lista;
     /** Selección + el MODELO detecta la compra (create_order_request): desde ahí, el backend. */
     const comprar = async (wa: string, ref: string, qty: number) => {
       await turno(wa, `quiero ${qty} ${ref}`, [fn("update_cart", { items: [{ reference: ref, quantity: qty }] }), txt("Listo, lo agregué.")]);
-      return turno(wa, "me encantan", [fn("create_order_request"), txt("TEXTO DEL MODELO QUE NO DEBE SALIR")]);
+      return turno(wa, "me encantan, los quiero", [fn("create_order_request"), txt("TEXTO DEL MODELO QUE NO DEBE SALIR")]);
     };
-    const hastaResumen = async (wa: string, entrega: "tienda" | "domicilio", pago: 0 | 1) => {
+    const hastaResumen = async (wa: string, entrega: "tienda" | "domicilio", pago: 0 | 1, nombre?: string) => {
+      if (nombre) await turno(wa, nombre);
       await turno(wa, tocar("delivery", entrega === "tienda" ? 0 : 1));
       if (entrega === "domicilio") {
         await turno(wa, "Calle 5 # 10-20, barrio Centro");
@@ -936,186 +951,374 @@ describe("PILOTO DELACOUR — matriz de punta a punta (webhook real + PostgreSQL
       }
       return turno(wa, tocar("payment", pago));
     };
-    let ULTIMA: Prod;
-    /** Productos propios del bloque (el stock de los demás lo mueven los bloques anteriores). */
-    const KP: Record<string, Prod> = {};
+    const KP: Record<string, Prod & { mayor?: number }> = {};
 
     before(async () => {
       await ok(db.from("dulabs_tenant_modulos").insert({ id_tenant: T, modulo: "pedidos", habilitado: true }));
       await ok(setAgente({ clasificacion_cliente: true, checkout_conversacional: true, negocio: { nombre_agente: "Sofía", nombre_negocio: NEGOCIO } }));
       await ok(setConfig({ ia_pausada: false }));
-      const filas = (await ok(db.from("dulabs_inventario_productos").insert({ id_tenant: T, nombre: "Dije Última Unidad", precio: 70_000, stock: 1, color: "Dorado", material: "Oro", categoria: "Dije", controla_stock: true, activo: true }).select("id, referencia, nombre, precio, color, stock"))) as Prod[];
-      ULTIMA = filas[0];
-      for (const [clave, nombre, precio] of [["tob", "Tobillera Checkout", 25_000], ["pul", "Pulsera Checkout", 30_000], ["flor", "Aretes Checkout", 43_000]] as const) {
-        KP[clave] = ((await ok(db.from("dulabs_inventario_productos").insert({ id_tenant: T, nombre, precio, stock: 5, color: "Dorado", material: "Acero", categoria: "Checkout", controla_stock: true, activo: true }).select("id, referencia, nombre, precio, color, stock"))) as Prod[])[0];
+      // Persona del equipo real (auth.users + dulabs_miembros_equipo): ver scripts/piloto/README.md, paso 1.
+      const uid = (await ok(db.rpc("piloto_usuario_prueba", { p_email: `asesora-${RUN}@test.local` }))) as string;
+      await ok(db.from("dulabs_miembros_equipo").insert({ tenant_id: T, user_id: uid, email: `asesora-${RUN}@test.local`, nombre: "Carolina Piloto", rol: "agente", estado: "activo" }));
+      MIEMBRO = ((await db.from("dulabs_miembros_equipo").select("id").eq("tenant_id", T).single()).data as { id: number }).id;
+      // Productos propios del bloque (el stock de los demás lo mueven los bloques anteriores).
+      for (const [clave, nombre, precio, mayor, stockIni, foto] of [
+        ["aretes", "Aretes Checkout Luna", 40_000, 22_000, 10, true],
+        ["pulsera", "Pulsera Checkout Nube", 30_000, 18_000, 10, true],
+        ["tobillera", "Tobillera Checkout Mar", 25_000, 14_000, 10, false],
+        ["collar", "Collar Checkout Sol", 80_000, 50_000, 10, true],
+        ["ultima", "Dije Checkout Última", 70_000, 40_000, 1, false],
+        ["retirado", "Anillo Checkout Retirado", 20_000, 12_000, 5, false],
+        ["borrado", "Anillo Checkout Borrado", 21_000, 13_000, 5, false],
+        ["precio", "Anillo Checkout Precio", 50_000, 30_000, 5, false],
+        ["agotado", "Anillo Checkout Agotado", 45_000, 25_000, 2, false],
+      ] as const) {
+        const fila = ((await ok(db.from("dulabs_inventario_productos").insert({ id_tenant: T, nombre, precio, precio_mayor: mayor, stock: stockIni, color: "Dorado", material: "Acero", categoria: "Checkout", controla_stock: true, activo: true }).select("id, referencia, nombre, precio, color, stock"))) as Prod[])[0];
+        KP[clave] = { ...fila, mayor, foto };
+        if (foto) {
+          await ok(db.from("dulabs_catalogo_media").insert({ id_tenant: T, producto_id: fila.id, storage_path: `${T}/${fila.id}/foto.webp`, es_principal: true, orden: 0, mime_type: "image/webp", bytes: 120_000, ancho: 1200, alto: 1200 }));
+          // Igual que al confirmar la subida de una foto principal (el panel la muestra desde foto_url).
+          await ok(db.from("dulabs_inventario_productos").update({ foto_url: `https://storage.test/${T}/${fila.id}/foto.webp` }).eq("id", fila.id));
+        }
       }
-      for (const wa of [C[31], C[26], C[22], C[27]]) await createSupabaseCustomerChannelStore(db).setInitial({ tenantId: T, phoneNumberId: PN, waId: wa }, "retail", "cliente");
+      for (const wa of C.slice(33, 48)) await createSupabaseCustomerChannelStore(db).setInitial({ tenantId: T, phoneNumberId: PN, waId: wa }, wa === C[35] ? "wholesale" : "retail", "cliente");
     });
     after(async () => {
       await ok(setAgente({ clasificacion_cliente: false, checkout_conversacional: false, negocio: { nombre_agente: "Sofía", presentacion: "Asesora virtual de la joyería" } }));
     });
 
-    it("A·C·F·H. detal: nombre -> domicilio (dirección, ciudad, referencia) -> transferencia -> resumen -> confirmar: reserva, datos, asesora y mensaje fijo", async () => {
-      const wa = C[31];
-      const s0 = await stock(KP.tob.referencia);
+    it("A·F. conversación real desde cero: saludo → detal → buscar → consultar → fotos → agregar → cambiar cantidad → agregar otro → revisar → checkout → confirmar con el botón → PG → reserva → asesora → Dashboard", async () => {
+      const wa = C[32];
       const m0 = meta.calls.length;
-      const r0 = await comprar(wa, KP.tob.referencia, 2);
-      assert.equal(r0.gemini.length, 1, "tras crear la propuesta Gemini NO vuelve a hablar");
-      assert.equal(r0.traza?.traza.checkout?.action, "started");
       const g0 = gemini.length;
-      assert.equal((await turno(wa, "3001112233")).envios[0]?.texto, CHECKOUT_MESSAGES.askNameAgain, "un teléfono no es un nombre");
-      await turno(wa, "Laura Piloto");
-      await hastaResumen(wa, "domicilio", 1);
+      await turno(wa, "Hola");
+      await turno(wa, boton(CHANNEL_QUESTION.buttons[0]));
+      await turno(wa, boton(INTENT_MENU.buttons[0]));
+      assert.equal(gemini.length, g0, "saludo, modalidad y menú sin Gemini");
+      const b = await turno(wa, "aretes checkout luna", [fn("search_products", { query: "aretes checkout luna" }), txt(lista)]);
+      assert.ok(candidatos(b.gemini[1].body).some((c) => c.reference === KP.aretes.referencia && c.unit_price === 40_000), "precio DETAL del backend");
+      const d = await turno(wa, "cuéntame más del primero", [fn("get_product_details", { reference: KP.aretes.referencia }), txt("Son unos aretes dorados en acero.")]);
+      assert.equal(d.tools[0], "get_product_details:ok");
+      const f = await turno(wa, "¿tienes fotos?", [fn("request_product_images", { references: [KP.aretes.referencia] }), txt("¡Claro! Aquí tienes la foto.")]);
+      assert.equal(f.envios.filter((e) => e.tipo === "image").length, 1, "la foto real sale de WhatsApp");
+      await turno(wa, "quiero el primero", [fn("update_cart", { items: [{ reference: KP.aretes.referencia, quantity: 1 }] }), txt("Listo, agregué 1.")]);
+      await turno(wa, `mejor 2 de ${KP.aretes.referencia}`, [fn("update_cart", { items: [{ reference: KP.aretes.referencia, quantity: 2 }] }), txt("Listo, ahora son 2.")]);
+      await turno(wa, `agrega 1 ${KP.pulsera.referencia}`, [fn("update_cart", { items: [{ reference: KP.pulsera.referencia, quantity: 1 }] }), txt("Agregada.")]);
+      assert.deepEqual((await conv(wa))?.cart, [{ reference: KP.aretes.referencia, quantity: 2 }, { reference: KP.pulsera.referencia, quantity: 1 }]);
+      const rv = await turno(wa, "¿cómo va mi pedido?", [fn("resolve_order"), txt((bd) => `Tu selección suma ${formatCop((resultados(bd)[0] as { total: number }).total)}.`)]);
+      assert.ok(rv.envios[0].texto.includes(formatCop(110_000)), "el total lo calcula el backend");
+      const g1 = gemini.length;
+      const c0 = await turno(wa, "listo, lo quiero", [fn("create_order_request"), txt("TEXTO DEL MODELO QUE NO DEBE SALIR")]);
+      assert.equal(gemini.length - g1, 1, "tras crear la propuesta Gemini ya no habla");
+      assert.equal(c0.traza?.traza.checkout?.action, "started");
+      const propuesta = await pedidoDb(wa);
+      assert.deepEqual([propuesta!.estado, propuesta!.total, propuesta!.canal], ["pending_confirmation", 110_000, "retail"], "la propuesta YA existe en PostgreSQL");
+      assert.equal((await turno(wa, "3001112233")).envios[0].texto, CHECKOUT_MESSAGES.askNameAgain, "un teléfono no es un nombre");
+      await hastaResumen(wa, "tienda", 0, "Sofía Checkout");
       const out = salidas(m0);
-      assert.ok(!out.some((o) => o.texto.includes("TEXTO DEL MODELO")), "el texto del modelo nunca sale");
+      for (const o of out) assert.ok(!/TEXTO DEL MODELO/.test(o.texto) && !/tel[eé]fono|empresa|raz[oó]n social|mayorista/i.test(o.texto.replace(/Para registrar/, "")), `nunca se pregunta ni se filtra: ${o.texto.slice(0, 80)}`);
+      assert.ok(!out.some((o) => o.texto.includes(CHECKOUT_MESSAGES.address)), "recoger: nunca pide dirección");
       const resumen = out.at(-1)!;
       assert.deepEqual(resumen.botones, ["checkout_confirmar", "checkout_modificar", "checkout_cancelar"]);
-      assert.ok(resumen.texto.includes(`*Total: ${formatCop(50_000)}*`) && resumen.texto.includes("Calle 5 # 10-20, barrio Centro, Montería") && resumen.texto.includes("Pago: Transferencia"));
-      assert.equal(await stock(KP.tob.referencia), s0, "el resumen no reserva");
+      assert.ok(resumen.texto.includes(`× 2 — ${formatCop(80_000)}`) && resumen.texto.includes(`× 1 — ${formatCop(30_000)}`) && resumen.texto.includes(`*Total: ${formatCop(110_000)}*`));
+      assert.ok(resumen.texto.includes("Recoger en tienda") && resumen.texto.includes("Pago en tienda") && resumen.texto.includes("Sofía Checkout"));
+      const s0 = [await stock(KP.aretes.referencia), await stock(KP.pulsera.referencia)];
+      for (const t of ["sí", "confirmo", "ok", "dale"]) {
+        const mt = meta.calls.length;
+        await turno(wa, t);
+        const aviso = salidas(mt);
+        assert.ok(aviso.length === 1 && aviso[0].texto.startsWith(CHECKOUT_MESSAGES.tapToConfirm) && aviso[0].botones[0] === "checkout_confirmar", t);
+        assert.equal((await pedidoDb(wa))!.estado, "pending_confirmation", `${t} no confirma`);
+      }
+      assert.deepEqual([await stock(KP.aretes.referencia), await stock(KP.pulsera.referencia)], s0, "sin reserva hasta el botón");
       const rc = await turno(wa, tocar("summary", 0));
-      assert.equal(gemini.length, g0, "ningún paso del checkout llama a Gemini");
+      assert.equal(gemini.length - g1, 1, "ningún paso del checkout llamó a Gemini");
       assert.deepEqual(rc.envios.map((e) => e.texto), [CHECKOUT_MESSAGES.confirmed(NEGOCIO)]);
       assert.equal(rc.traza?.resultado, "handoff");
       assert.deepEqual(rc.traza?.traza.handoff, { source: "system", motive: "payment_or_delivery" });
-      assert.ok((await pausa(wa)) !== null, "IA pausada en ESE chat");
-      const o = await pedidoDb(wa);
+      const o = (await pedidoDb(wa))!;
       assert.deepEqual(
-        [o.estado, o.checkout, o.cliente_nombre, o.metodo_pago, o.estado_pago, o.tipo_entrega, o.direccion, o.ciudad, o.referencia_entrega, o.etapa, o.canal],
-        ["confirmed", true, "Laura Piloto", "transferencia", "pendiente", "domicilio", "Calle 5 # 10-20, barrio Centro", "Montería", "Portón azul", "pendiente_pago", "retail"],
+        [o.estado, o.checkout, o.cliente_nombre, o.metodo_pago, o.estado_pago, o.tipo_entrega, o.direccion, o.etapa, o.canal, o.total, o.contacto_wa_id],
+        ["confirmed", true, "Sofía Checkout", "pago_en_tienda", "pendiente", "tienda", null, "confirmado", "retail", 110_000, wa],
       );
       assert.ok(o.confirmado_at);
       assert.equal(o.handoff?.reason, "pedido confirmado");
-      assert.deepEqual(await reservas(o.id), [{ cantidad: 2, estado: "activa" }]);
-      assert.equal(await stock(KP.tob.referencia), s0 - 2);
-      assert.equal(((await db.from("dulabs_clientes_conocidos").select("nombre").eq("phone_number_id", PN).eq("telefono_cliente", wa).single()).data as { nombre: string }).nombre, "Laura Piloto");
-      const trazas = JSON.stringify((await db.from("dulabs_agente_trazas").select("traza").eq("id_tenant", T)).data ?? []);
-      assert.ok(!trazas.includes("Laura Piloto") && !trazas.includes("Calle 5"), "las trazas no guardan nombre ni dirección");
+      assert.deepEqual((await reservas(o.id)).map((r) => [r.cantidad, r.estado]).sort(), [[1, "activa"], [2, "activa"]]);
+      assert.deepEqual([await stock(KP.aretes.referencia), await stock(KP.pulsera.referencia)], [s0[0] - 2, s0[1] - 1]);
+      const hasta = (await pausa(wa))!;
+      assert.ok(hasta > Date.now() + 29 * 86_400_000, "IA pausada hasta que una persona la libere");
+      // Aparece INMEDIATAMENTE en Dashboard → Pedidos.
+      const l = await listar({ q: o.pedido_publico });
+      assert.equal(l.data.pedidos.length, 1);
+      const item = l.data.pedidos[0];
+      assert.deepEqual([item.estado_visible, item.estado_pago, item.canal, item.checkout?.nombre], ["confirmado", "pendiente", "retail", "Sofía Checkout"]);
+      assert.ok(item.atencion?.ia_pausada_hasta, "la atención (IA pausada) se ve aparte");
+      assert.ok(item.lineas.some((x) => x.foto), "con fotos");
+      // Operación completa: preparación → entregado (tienda) → pago (en tienda, al recoger) → completado.
+      for (const a of ["en_preparacion", "entregado", "pago_recibido", "completar"]) assert.equal((await actuar(o.pedido_publico, a)).status, 200, a);
+      assert.equal((await pedidoDb(wa))!.estado, "completed");
+      assert.deepEqual((await reservas(o.id)).map((r) => r.estado), ["consumida", "consumida"]);
     });
 
-    it("Q·R·S·U·AB. el panel opera el pedido en PG real: pago -> preparación -> enviado -> completado, con la persona en el historial", async () => {
-      const o = await pedidoDb(C[31]);
-      const s0 = await stock(KP.tob.referencia);
-      assert.equal((await actuar(o.pedido_publico, "completar", { estado: "confirmed", etapa: "pendiente_pago" })).status, 409, "sin saltos");
-      const q = await actuar(o.pedido_publico, "pago_recibido", { estado: "confirmed", etapa: "pendiente_pago" });
-      assert.deepEqual([q.status, q.body.data.pedido.estado_visible, q.body.data.pedido.checkout?.estado_pago], [200, "pago_recibido", "recibido"]);
-      assert.equal((await actuar(o.pedido_publico, "pago_recibido", { estado: "confirmed", etapa: "pendiente_pago" })).body.data.repetido, true, "doble clic");
-      assert.equal((await actuar(o.pedido_publico, "en_preparacion", { estado: "confirmed", etapa: "pago_recibido" })).body.data.pedido.estado_visible, "en_preparacion");
-      assert.equal((await actuar(o.pedido_publico, "enviado", { estado: "confirmed", etapa: "en_preparacion" })).body.data.pedido.estado_visible, "enviado");
-      assert.equal((await actuar(o.pedido_publico, "completar", { estado: "confirmed", etapa: "enviado" })).body.data.pedido.estado_visible, "completado");
-      assert.deepEqual(await reservas(o.id), [{ cantidad: 2, estado: "consumida" }]);
-      assert.equal(await stock(KP.tob.referencia), s0, "completar no devuelve stock");
-      const { data: ev } = await db.from("dulabs_catalogo_pedido_eventos").select("tipo, estado_desde, estado_hacia, miembro_id").eq("pedido_id", o.id).order("id");
+    it("B·O·P. domicilio + transferencia: dirección obligatoria; admin marca enviado y entregado; el pago aparte; completar", async () => {
+      const wa = C[33];
+      await comprar(wa, KP.collar.referencia, 1);
+      await turno(wa, "Laura Piloto");
+      await turno(wa, tocar("delivery", 1));
+      const sinDir = await turno(wa, "no");
+      assert.equal(sinDir.envios[0].texto, CHECKOUT_MESSAGES.addressAgain, "no avanza sin dirección");
+      await turno(wa, "Calle 5 # 10-20, barrio Centro");
+      await turno(wa, "Montería");
+      await turno(wa, tocar("reference", 0));
+      await turno(wa, tocar("payment", 1));
+      await turno(wa, tocar("summary", 0));
+      const o = (await pedidoDb(wa))!;
+      assert.deepEqual([o.tipo_entrega, o.direccion, o.ciudad, o.referencia_entrega, o.metodo_pago, o.estado_pago], ["domicilio", "Calle 5 # 10-20, barrio Centro", "Montería", null, "transferencia", "pendiente"]);
+      await actuar(o.pedido_publico, "en_preparacion");
+      assert.equal((await actuar(o.pedido_publico, "entregado")).status, 409, "domicilio: no se entrega sin enviar");
+      assert.equal((await actuar(o.pedido_publico, "enviado")).body.data.pedido.estado_visible, "enviado", "O. admin marca enviado");
+      assert.equal((await actuar(o.pedido_publico, "cancelar", "ya salió")).status, 409, "enviado no se cancela");
+      assert.equal((await actuar(o.pedido_publico, "entregado")).body.data.pedido.estado_visible, "entregado", "P. admin marca entregado");
+      assert.equal((await actuar(o.pedido_publico, "completar")).status, 409, "sin pago no se completa");
+      await actuar(o.pedido_publico, "pago_recibido", "Transferencia verificada");
+      assert.equal((await actuar(o.pedido_publico, "completar")).body.data.pedido.estado_visible, "completado");
+      const { data: ev } = await db.from("dulabs_catalogo_pedido_eventos").select("tipo, estado_desde, estado_hacia, miembro_id, motivo").eq("pedido_id", o.id).not("miembro_id", "is", null).order("id");
       assert.deepEqual(
-        (ev ?? []).filter((e) => e.miembro_id !== null).map((e) => `${e.tipo}:${e.estado_desde}>${e.estado_hacia}:${e.miembro_id}`),
-        [
-          `order.stage_changed:pendiente_pago>pago_recibido:${MIEMBRO}`,
-          `order.stage_changed:pago_recibido>en_preparacion:${MIEMBRO}`,
-          `order.stage_changed:en_preparacion>enviado:${MIEMBRO}`,
-          `order.status_changed:confirmed>completed:${MIEMBRO}`,
-        ],
+        (ev ?? []).map((e) => `${e.tipo}:${e.estado_desde}>${e.estado_hacia}`),
+        ["order.stage_changed:confirmado>en_preparacion", "order.stage_changed:en_preparacion>enviado", "order.stage_changed:enviado>entregado", "order.payment_changed:pendiente>recibido", "order.status_changed:confirmed>completed"],
       );
-      // AB. El historial no se edita (trigger de la BD).
+      assert.ok((ev ?? []).every((e) => e.miembro_id === MIEMBRO));
       const { error } = await db.from("dulabs_catalogo_pedido_eventos").update({ motivo: "editado" }).eq("pedido_id", o.id);
-      assert.ok(error, "historial inmutable");
-      const d = (await (await detalleGestion(engine(), T, o.pedido_publico, fuentesPanel())).json()) as { data: { historial: Array<{ hacia: string }> } };
-      assert.deepEqual(d.data.historial.map((h) => h.hacia).slice(-4), ["pago_recibido", "en_preparacion", "enviado", "completed"]);
+      assert.ok(error, "historial inmutable en la BD");
     });
 
-    it("E·I·L·T·Y. recoger + pago en tienda; el precio cambia antes de confirmar: nuevo resumen; 'enviado' bloqueado; pagado no vence", async () => {
-      const wa = C[27];
-      await comprar(wa, KP.pul.referencia, 1);
-      await turno(wa, "Carlos Piloto");
-      await hastaResumen(wa, "tienda", 0);
-      await ok(db.from("dulabs_inventario_productos").update({ precio: 33_000 }).eq("id", KP.pul.id));
-      const r = await turno(wa, tocar("summary", 0));
-      assert.equal(r.traza?.traza.checkout?.action, "resummarized");
-      const txtR = salidas(meta.calls.length - 2).map((x) => x.texto).join("\n");
-      assert.ok(txtR.includes(`*Total: ${formatCop(33_000)}*`));
-      assert.notEqual((await pedidoDb(wa)).estado, "confirmed");
-      const r2 = await turno(wa, tocar("summary", 0));
-      assert.equal(r2.traza?.traza.checkout?.action, "confirmed");
-      const o = await pedidoDb(wa);
-      assert.deepEqual([o.estado, o.total, o.tipo_entrega, o.metodo_pago, o.direccion], ["confirmed", 33_000, "tienda", "pago_en_tienda", null]);
-      await actuar(o.pedido_publico, "pago_recibido", { estado: "confirmed", etapa: "pendiente_pago" });
-      await actuar(o.pedido_publico, "en_preparacion", { estado: "confirmed", etapa: "pago_recibido" });
-      assert.equal((await actuar(o.pedido_publico, "enviado", { estado: "confirmed", etapa: "en_preparacion" })).status, 409, "recoger: sin 'enviado'");
-      // Y. Pagado: aunque la reserva pase su plazo, no vence.
-      await ok(db.from("dulabs_catalogo_reservas").update({ vence_at: new Date(Date.now() - 60_000).toISOString() }).eq("pedido_id", o.id));
-      await ok(db.rpc("dulabs_catalogo_reservas_vencer", { p_limite: 1000 }));
-      assert.equal((await pedidoDb(wa)).estado, "confirmed");
+    it("C. domicilio + pago en tienda: queda registrado y NO pagado", async () => {
+      const wa = C[34];
+      await comprar(wa, KP.tobillera.referencia, 1);
+      await hastaResumen(wa, "domicilio", 0, "Marta Piloto");
+      await turno(wa, tocar("summary", 0));
+      const o = (await pedidoDb(wa))!;
+      assert.deepEqual([o.estado, o.tipo_entrega, o.metodo_pago, o.estado_pago, o.etapa], ["confirmed", "domicilio", "pago_en_tienda", "pendiente", "confirmado"]);
     });
 
-    it("J·K. modificar (propuesta cancelada, productos guardados, el resumen viejo NO confirma) y cancelar desde cualquier paso", async () => {
-      const wa = C[26];
-      const s0 = await stock(KP.flor.referencia);
-      await comprar(wa, KP.flor.referencia, 1);
-      await turno(wa, "Marta Piloto");
-      await hastaResumen(wa, "tienda", 1);
-      const viejo = await pedidoDb(wa);
+    it("D. mayorista compra: precios mayoristas, pedido etiquetado mayorista", async () => {
+      const wa = C[35];
+      await comprar(wa, KP.aretes.referencia, 3);
+      const r = await hastaResumen(wa, "tienda", 1, "Tienda Mayorista Piloto");
+      assert.ok(salidas(meta.calls.length - 1)[0].texto.includes(`*Total: ${formatCop(66_000)}*`), "3 × $22.000 mayorista");
+      assert.ok(!JSON.stringify(r.envios).includes(formatCop(40_000)));
+      await turno(wa, tocar("summary", 0));
+      const o = (await pedidoDb(wa))!;
+      assert.deepEqual([o.canal, o.total, o.estado], ["wholesale", 66_000, "confirmed"]);
+    });
+
+    it("E·AE. detal pide catálogo / precio mayorista: pasa a una asesora; nunca ve el enlace ni el precio mayorista", async () => {
+      const wa = C[36];
+      const m0 = meta.calls.length;
+      const r = await turno(wa, "pásame el catálogo mayorista", [txt("NO DEBE SALIR")]);
+      assert.equal(r.gemini.length, 0);
+      assert.equal(r.traza?.resultado, "handoff");
+      assert.deepEqual(r.envios.map((e) => e.texto), [CLASSIFICATION_MESSAGES.changeRequested("retail")]);
+      const token = ((await db.from("dulabs_catalogo_publicacion").select("token_mayor").eq("id_tenant", T).single()).data as { token_mayor: string }).token_mayor;
+      assert.ok(!JSON.stringify(meta.calls.slice(m0)).includes(token), "sin enlace mayorista");
+      assert.ok(!JSON.stringify(meta.calls.slice(m0)).includes(formatCop(22_000)), "sin precio mayorista");
+    });
+
+    it("F·G. el cliente modifica (cambia cantidad) y luego cancela: nada se reserva; el resumen viejo no confirma", async () => {
+      const wa = C[37];
+      const s0 = await stock(KP.pulsera.referencia);
+      await comprar(wa, KP.pulsera.referencia, 3);
+      await hastaResumen(wa, "tienda", 1, "Paula Piloto");
       const m = await turno(wa, tocar("summary", 1));
       assert.deepEqual(m.envios.map((e) => e.texto), [CHECKOUT_MESSAGES.modify]);
-      assert.equal((await pedidoDb(wa)).estado, "cancelled");
-      assert.deepEqual((await conv(wa))?.cart, [{ reference: KP.flor.referencia, quantity: 1 }]);
-      const st = await turno(wa, tocar("summary", 0));
-      assert.deepEqual(st.envios.map((e) => e.texto), [CHECKOUT_MESSAGES.stale]);
-      assert.equal(st.gemini.length, 0);
-      assert.equal((await db.from("dulabs_catalogo_pedidos").select("estado").eq("id", viejo.id).single()).data?.estado, "cancelled");
-      // Vuelve con la frase fija (sin Gemini) y cancela en el paso de entrega.
+      assert.equal((await pedidoDb(wa))!.estado, "cancelled");
+      assert.deepEqual((await conv(wa))?.cart, [{ reference: KP.pulsera.referencia, quantity: 3 }]);
+      assert.deepEqual((await turno(wa, tocar("summary", 0))).envios.map((e) => e.texto), [CHECKOUT_MESSAGES.stale], "resumen viejo");
+      await turno(wa, `mejor 2 de ${KP.pulsera.referencia}`, [fn("update_cart", { items: [{ reference: KP.pulsera.referencia, quantity: 2 }] }), txt("Listo, 2.")]);
       const f = await turno(wa, "finalizar pedido");
       assert.equal(f.gemini.length, 0);
-      assert.equal(f.traza?.traza.checkout?.action, "started");
-      const c = await turno(wa, "cancelar");
+      await hastaResumen(wa, "tienda", 1);
+      assert.ok(salidas(meta.calls.length - 1)[0].texto.includes(`*Total: ${formatCop(60_000)}*`), "resumen NUEVO con la cantidad nueva");
+      const c = await turno(wa, tocar("summary", 2));
       assert.deepEqual(c.envios.map((e) => e.texto), [CHECKOUT_MESSAGES.cancelled]);
-      assert.equal(await stock(KP.flor.referencia), s0, "nunca se reservó");
-      const { data: ev } = await db.from("dulabs_catalogo_pedido_eventos").select("motivo, actor").eq("id_tenant", T).eq("estado_hacia", "cancelled").eq("motivo", "checkout_cancelled_by_customer");
-      assert.ok((ev ?? []).length >= 1 && ev!.every((e) => e.actor === "system"));
+      assert.ok((await pedidosDb(wa)).every((p) => p.estado === "cancelled"));
+      assert.equal(await stock(KP.pulsera.referencia), s0, "nunca se reservó");
     });
 
-    it("P·X. la última unidad entre dos clientes: una compra; la otra no se confirma; pendiente de pago vence y el stock vuelve", async () => {
-      await comprar(C[22], ULTIMA.referencia, 1);
-      await turno(C[22], "Ana Piloto");
-      await hastaResumen(C[22], "tienda", 1);
-      await comprar(C[26], ULTIMA.referencia, 1);
-      await hastaResumen(C[26], "tienda", 1);
-      const a = await turno(C[22], tocar("summary", 0));
-      const b = await turno(C[26], tocar("summary", 0));
-      assert.equal(a.traza?.traza.checkout?.action, "confirmed");
-      assert.equal(b.traza?.traza.checkout?.action, "not_confirmed");
-      assert.ok(b.envios.some((e) => e.texto.includes(CHECKOUT_MESSAGES.notConfirmed)));
-      assert.equal(await stock(ULTIMA.referencia), 0);
-      const ganador = await pedidoDb(C[22]);
-      await ok(db.from("dulabs_catalogo_reservas").update({ vence_at: new Date(Date.now() - 60_000).toISOString() }).eq("pedido_id", ganador.id));
+    it("H·I. stock y precio cambian antes de confirmar: nunca se confirma con información vieja", async () => {
+      const wa = C[38];
+      await comprar(wa, KP.agotado.referencia, 2);
+      await hastaResumen(wa, "tienda", 1, "Nora Piloto");
+      await ok(db.from("dulabs_inventario_productos").update({ stock: 1 }).eq("id", KP.agotado.id));
+      const h = await turno(wa, tocar("summary", 0));
+      assert.equal(h.traza?.traza.checkout?.action, "not_confirmed");
+      assert.ok(h.envios.some((e) => e.texto.includes(CHECKOUT_MESSAGES.notConfirmed)));
+      assert.notEqual((await pedidoDb(wa))!.estado, "confirmed");
+      assert.equal(await stock(KP.agotado.referencia), 1);
+      const wa2 = C[39];
+      await comprar(wa2, KP.precio.referencia, 1);
+      await hastaResumen(wa2, "tienda", 1, "Olga Piloto");
+      await ok(db.from("dulabs_inventario_productos").update({ precio: 55_000 }).eq("id", KP.precio.id));
+      const i = await turno(wa2, tocar("summary", 0));
+      assert.equal(i.traza?.traza.checkout?.action, "resummarized");
+      assert.notEqual((await pedidoDb(wa2))!.estado, "confirmed");
+      assert.ok(salidas(meta.calls.length - 1)[0].texto.includes(`*Total: ${formatCop(55_000)}*`));
+      await turno(wa2, tocar("summary", 0));
+      assert.deepEqual([(await pedidoDb(wa2))!.estado, (await pedidoDb(wa2))!.total], ["confirmed", 55_000], "confirma con el precio NUEVO");
+    });
+
+    it("J. producto desactivado o eliminado antes de confirmar: no se confirma ni se reserva", async () => {
+      const wa = C[40];
+      await comprar(wa, KP.retirado.referencia, 1);
+      await hastaResumen(wa, "tienda", 1, "Rita Piloto");
+      await ok(db.from("dulabs_inventario_productos").update({ activo: false }).eq("id", KP.retirado.id));
+      const r = await turno(wa, tocar("summary", 0));
+      assert.notEqual(r.traza?.traza.checkout?.action, "confirmed");
+      assert.notEqual((await pedidoDb(wa))!.estado, "confirmed");
+      const wa2 = C[41];
+      await comprar(wa2, KP.borrado.referencia, 1);
+      await hastaResumen(wa2, "tienda", 1, "Sara Piloto");
+      await ok(db.from("dulabs_inventario_productos").delete().eq("id", KP.borrado.id));
+      const r2 = await turno(wa2, tocar("summary", 0));
+      assert.notEqual(r2.traza?.traza.checkout?.action, "confirmed");
+      assert.ok(r2.envios.length > 0 && !r2.envios.some((e) => /inconveniente/i.test(e.texto) && !e.texto.includes("no quedó")), "sin error técnico al cliente");
+      assert.notEqual((await pedidoDb(wa2))!.estado, "confirmed");
+    });
+
+    it("K. la última unidad con dos clientes: una compra; la otra no se confirma", async () => {
+      await comprar(C[42], KP.ultima.referencia, 1);
+      await hastaResumen(C[42], "tienda", 1, "Ana Piloto");
+      await comprar(C[43], KP.ultima.referencia, 1);
+      await hastaResumen(C[43], "tienda", 1, "Eva Piloto");
+      const [a, b] = await Promise.all([turno(C[42], tocar("summary", 0)), turno(C[43], tocar("summary", 0))]);
+      const acciones = [a.traza?.traza.checkout?.action, b.traza?.traza.checkout?.action].sort();
+      assert.deepEqual(acciones, ["confirmed", "not_confirmed"]);
+      assert.equal(await stock(KP.ultima.referencia), 0);
+      const { data } = await db.from("dulabs_catalogo_pedidos").select("estado").eq("id_tenant", T).in("contacto_wa_id", [C[42], C[43]]).eq("estado", "confirmed");
+      assert.equal((data ?? []).length, 1);
+    });
+
+    it("L·M. confirmación duplicada (dos clics) y webhook duplicado (mismo wamid): un pedido, una reserva, un descuento", async () => {
+      const wa = C[44];
+      const s0 = await stock(KP.tobillera.referencia);
+      await comprar(wa, KP.tobillera.referencia, 1);
+      await hastaResumen(wa, "tienda", 1, "Luz Piloto");
+      const wamid = wamidNuevo();
+      const r1 = await turno(wa, tocar("summary", 0), [], { wamid });
+      const r2 = await turno(wa, tocar("summary", 0), [], { wamid }); // Meta reenvía el mismo mensaje
+      const r3 = await turno(wa, tocar("summary", 0)); // segundo clic (la IA ya está pausada)
+      assert.equal(r1.traza?.traza.checkout?.action, "confirmed");
+      assert.equal(r2.envios.length + r3.envios.length, 0, "ni el reenvío ni el segundo clic responden ni confirman");
+      const ps = await pedidosDb(wa);
+      assert.equal(ps.filter((p) => p.estado === "confirmed").length, 1);
+      assert.equal((await reservas(ps.find((p) => p.estado === "confirmed")!.id)).length, 1);
+      assert.equal(await stock(KP.tobillera.referencia), s0 - 1);
+      const { count } = await db.from("dulabs_mensajes_log").select("id", { count: "exact", head: true }).eq("phone_number_id", PN).eq("telefono_cliente", wa).eq("wamid", wamid);
+      assert.equal(count, 1, "el mensaje duplicado se registra una vez");
+    });
+
+    it("N. la asesora toma la conversación: la IA sigue callada, el pedido sigue confirmado y visible con su atención", async () => {
+      const wa = C[33];
+      await activarPausaChat(db, PN, wa, 30 * 86_400_000);
+      await ok(db.from("dulabs_conversacion_asignaciones").insert({ phone_number_id: PN, telefono_cliente: wa, miembro_id: MIEMBRO, asignado_por: MIEMBRO }));
+      const r = await turno(wa, "hola, ¿ya salió mi pedido?", [txt("NO DEBE SALIR")]);
+      assert.deepEqual([r.gemini.length, r.envios.length], [0, 0], "la IA no responde");
+      const o = (await pedidoDb(C[34]))!;
+      const l = await listar({ q: "Laura Piloto" });
+      assert.equal(l.data.pedidos.length, 1);
+      assert.equal(l.data.pedidos[0].atencion?.asignada, "Carolina Piloto");
+      assert.equal((await pedidoDb(wa))!.estado, "completed", "tomar la conversación no cambia el pedido");
+      assert.equal(o.estado, "confirmed");
+    });
+
+    it("Q. vencimiento: el confirmado que nadie tocó vence y devuelve el stock UNA vez; el que está en preparación no", async () => {
+      const wa = C[45];
+      await comprar(wa, KP.collar.referencia, 2);
+      await hastaResumen(wa, "tienda", 1, "Vera Piloto");
+      await turno(wa, tocar("summary", 0));
+      const quieto = (await pedidoDb(wa))!;
+      const wa2 = C[46];
+      await comprar(wa2, KP.collar.referencia, 1);
+      await hastaResumen(wa2, "tienda", 1, "Iris Piloto");
+      await turno(wa2, tocar("summary", 0));
+      const gestionado = (await pedidoDb(wa2))!;
+      await actuar(gestionado.pedido_publico, "en_preparacion");
+      const s0 = await stock(KP.collar.referencia);
+      await ok(db.from("dulabs_catalogo_reservas").update({ vence_at: new Date(Date.now() - 60_000).toISOString() }).in("pedido_id", [quieto.id, gestionado.id]));
       await ok(db.rpc("dulabs_catalogo_reservas_vencer", { p_limite: 1000 }));
-      assert.equal((await pedidoDb(C[22])).estado, "expired", "X. pendiente de pago: vence");
-      assert.equal(await stock(ULTIMA.referencia), 1, "el stock vuelve");
+      await ok(db.rpc("dulabs_catalogo_reservas_vencer", { p_limite: 1000 }));
+      assert.equal((await pedidoDb(wa))!.estado, "expired");
+      assert.equal((await pedidoDb(wa2))!.estado, "confirmed");
+      assert.equal(await stock(KP.collar.referencia), s0 + 2, "el stock vuelve una sola vez");
+      assert.equal((await actuar(quieto.pedido_publico, "cancelar", "tarde")).status, 409, "un vencido no se cancela");
     });
 
-    it("Z·AA·listado. el panel filtra en PG real y otro negocio no ve nada", async () => {
-      const r = await listarGestion(engine(), T, new URLSearchParams({ entrega: "domicilio" }), fuentesPanel());
-      const l = (await r.json()) as { data: { pedidos: Array<{ pedido: string; estado_visible: string }> } };
-      assert.deepEqual(l.data.pedidos.map((p) => p.estado_visible), ["completado"]);
-      const q = (await (await listarGestion(engine(), T, new URLSearchParams({ q: "carlos" }), fuentesPanel())).json()) as { data: { pedidos: unknown[] } };
-      assert.equal(q.data.pedidos.length, 1, "búsqueda por nombre del checkout");
-      const ref = (await (await listarGestion(engine(), T, new URLSearchParams({ q: KP.pul.referencia }), fuentesPanel())).json()) as { data: { pedidos: unknown[] } };
-      assert.equal(ref.data.pedidos.length, 1, "búsqueda por referencia (jsonb)");
-      // Cursor (keyset por última actualización) en PG real: páginas sin repetir ni saltar pedidos.
-      type Pagina = { data: { pedidos: Array<{ pedido: string }>; siguiente: string | null } };
-      const todos = ((await (await listarGestion(engine(), T, new URLSearchParams({ limite: "50" }), fuentesPanel())).json()) as Pagina).data.pedidos.map((p) => p.pedido);
+    it("R·S. Delacour vs otro negocio (AMORE): pedidos, acciones y módulo aislados en la BD real; permisos del panel", async () => {
+      // El otro negocio tiene su propio pedido confirmado (motor real contra la BD real).
+      const pb = PB.b1;
+      const { order } = await engine().createOrder({ tenantId: TB, channel: "retail", source: "agent", contact: { phoneNumberId: PN_B, waId: CB }, items: [{ reference: pb.referencia, quantity: 1 }], idempotencyKey: `agent:iso-${RUN}` });
+      await engine().confirmOrder({ tenantId: TB, contact: { phoneNumberId: PN_B, waId: CB }, orderId: order.orderId, confirmationId: order.confirmation!.id, actor: "agent", checkout: { customerName: "Cliente Otro", paymentMethod: "transferencia", delivery: "tienda", address: null, city: null, deliveryReference: null } });
+      const deA = (await listar()).data.pedidos.map((p) => p.pedido);
+      const deB = (await listar({}, TB)).data.pedidos.map((p) => p.pedido);
+      assert.ok(!deA.includes(order.orderId), "Delacour no ve pedidos del otro negocio");
+      assert.deepEqual(deB, [order.orderId], "el otro negocio solo ve el suyo");
+      const deDelacour = (await pedidoDb(C[34]))!.pedido_publico;
+      assert.equal((await detalleGestion(engine(), TB, deDelacour, fuentesPanel())).status, 404, "cambiar el número de pedido no da acceso");
+      for (const a of ["pago_recibido", "en_preparacion", "cancelar"]) assert.equal((await actuar(deDelacour, a, "ajeno", TB)).status, 404, a);
+      assert.equal((await actuar(order.orderId, "pago_recibido", undefined, T)).status, 404);
+      // Módulo exigido contra la tabla real: el otro negocio no tiene "pedidos".
+      const miembro = (tenantId: string, rol: "admin" | "agente" | "lectura") => ({ miembroId: 1, tenantId, userId: "u", rol, estado: "activo" as const });
+      const deps = (tenantId: string, rol: "admin" | "agente" | "lectura") => ({
+        authenticate: async () => ({ ok: true as const, supabase: db, member: miembro(tenantId, rol) }),
+        isModuleEnabled: (s: typeof db, t: string, m?: "catalogo" | "publibordados_clientes" | "pedidos") => moduloHabilitado(s, t, m ?? "catalogo"),
+      });
+      const req = (m = "GET") => new NextRequest("https://x.test/api/dashboard/pedidos", { method: m, headers: { authorization: "Bearer t" } });
+      const sinModulo = await requireCatalogo(req(), "read", deps(TB, "admin"), ORDERS_MODULE);
+      assert.ok(!sinModulo.ok && sinModulo.response.status === 403);
+      assert.ok((await requireCatalogo(req(), "read", deps(T, "lectura"), ORDERS_MODULE)).ok, "lectura consulta");
+      const lecturaActua = await requireCatalogo(req("POST"), "orders", deps(T, "lectura"), ORDERS_MODULE);
+      assert.ok(!lecturaActua.ok && lecturaActua.response.status === 403, "lectura no modifica");
+      assert.ok((await requireCatalogo(req("POST"), "orders", deps(T, "agente"), ORDERS_MODULE)).ok, "agente gestiona");
+      assert.ok((await requireCatalogo(req("POST"), "orders", deps(T, "admin"), ORDERS_MODULE)).ok, "admin gestiona");
+      const soloLectura = await listar({ q: "Marta Piloto" }, T, false);
+      assert.equal(soloLectura.data.pedidos[0].contacto?.telefono, null, "lectura no ve el teléfono completo");
+      assert.equal((await listar({ q: C[34].slice(-10) }, T, false)).data.pedidos.length, 0, "ni lo busca");
+      assert.equal((await listar({ q: C[34].slice(-10) }, T, true)).data.pedidos.length, 1);
+    });
+
+    it("T. búsqueda y filtros del Dashboard en PG real (pedido, cliente, referencia, estado, modalidad, método, pago, entrega) + cursor", async () => {
+      const uno = async (qs: Record<string, string>) => (await listar(qs)).data.pedidos.map((p) => p.pedido);
+      const marta = (await pedidoDb(C[34]))!.pedido_publico;
+      const mayor = (await pedidoDb(C[35]))!.pedido_publico;
+      assert.deepEqual(await uno({ q: marta }), [marta], "por número de pedido");
+      assert.deepEqual(await uno({ q: "marta" }), [marta], "por cliente");
+      assert.ok((await uno({ q: KP.aretes.referencia })).includes(mayor), "por referencia de producto (jsonb)");
+      assert.ok((await uno({ modalidad: "mayorista" })).includes(mayor));
+      assert.ok(!(await uno({ modalidad: "detal" })).includes(mayor));
+      assert.ok((await uno({ metodo: "pago_en_tienda", entrega: "domicilio" })).includes(marta));
+      assert.ok((await uno({ pago: "pendiente", estado: "confirmado" })).includes(marta));
+      assert.ok(!(await uno({ estado: "completado" })).includes(marta));
+      assert.ok((await uno({ estado: "vencido" })).length >= 1);
+      const todos = await uno({ limite: "50" });
       const vistos: string[] = [];
       let cursor: string | null = null;
       do {
-        const qs = new URLSearchParams({ limite: "2", ...(cursor ? { cursor } : {}) });
-        const pag = (await (await listarGestion(engine(), T, qs, fuentesPanel())).json()) as Pagina;
+        const pag = (await (await listarGestion(engine(), T, new URLSearchParams({ limite: "3", ...(cursor ? { cursor } : {}) }), fuentesPanel())).json()) as Lista;
         vistos.push(...pag.data.pedidos.map((p) => p.pedido));
         cursor = pag.data.siguiente;
       } while (cursor);
-      assert.ok(todos.length >= 3);
-      assert.deepEqual(vistos, todos);
-      const otro = (await (await listarGestion(engine(), TB, new URLSearchParams(), fuentesPanel())).json()) as { data: { pedidos: unknown[] } };
-      assert.deepEqual(otro.data.pedidos, []);
-      const o = await pedidoDb(C[27]);
-      assert.equal((await detalleGestion(engine(), TB, o.pedido_publico, fuentesPanel())).status, 404);
-      assert.equal((await actuar(o.pedido_publico, "cancelar", { estado: "confirmed", etapa: "en_preparacion" }, "ajeno", TB)).status, 404);
+      assert.ok(todos.length >= 8);
+      assert.deepEqual(vistos, todos, "el cursor no repite ni salta pedidos");
+    });
+
+    it("consistencia: ningún pedido quedó 'en conversación' sin existir en PostgreSQL", async () => {
+      for (const wa of C.slice(32, 47)) {
+        const s = (await db.from("dulabs_agente_conversaciones").select("estado").eq("id_tenant", T).eq("wa_id", wa).maybeSingle()).data as { estado: { activeOrderId: string | null; checkout: { orderId: string } | null } } | null;
+        for (const id of [s?.estado.activeOrderId, s?.estado.checkout?.orderId].filter(Boolean) as string[]) {
+          const { data } = await db.from("dulabs_catalogo_pedidos").select("pedido_publico").eq("id_tenant", T).eq("pedido_publico", id).maybeSingle();
+          assert.ok(data, `${id} de la conversación existe en PostgreSQL`);
+        }
+      }
     });
   });
 

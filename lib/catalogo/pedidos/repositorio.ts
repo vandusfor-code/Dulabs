@@ -17,8 +17,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   TERMINAL_STATUSES,
+  canCancelStage,
   canCompleteStage,
   canTransition,
+  reservationCanExpire,
   type Order,
   type OrderActor,
   type OrderChannel,
@@ -67,7 +69,7 @@ export interface TransitionInput {
 
 /** Bloque 27 — una entrada del historial del pedido (inmutable), tal como la ve el panel. */
 export interface OrderHistoryEntry {
-  type: "order.created" | "catalog.order_request.created" | "order.status_changed" | "order.handoff_requested" | "order.stage_changed";
+  type: "order.created" | "catalog.order_request.created" | "order.status_changed" | "order.handoff_requested" | "order.stage_changed" | "order.payment_changed";
   from: string | null;
   to: string | null;
   actor: OrderActor | null;
@@ -80,6 +82,19 @@ export type StageChangeResult =
   | { result: "ok" | "sin_cambio"; order: Order }
   | { result: "conflicto"; stage: OrderStage | null; status: OrderStatus | null }
   | { result: "no_encontrado" };
+
+export type PaymentChangeResult =
+  | { result: "ok" | "sin_cambio"; order: Order }
+  | { result: "conflicto"; status: OrderStatus | null }
+  | { result: "no_encontrado" };
+
+/** Pares de etapa que la BD acepta (el tipo de entrega lo valida aparte). */
+export const STAGE_PAIRS: ReadonlyArray<readonly [OrderStage, OrderStage]> = [
+  ["confirmado", "en_preparacion"],
+  ["en_preparacion", "enviado"],
+  ["en_preparacion", "entregado"],
+  ["enviado", "entregado"],
+];
 
 /** Bloque 27 — filtros del panel "Pedidos" (todos opcionales; el negocio lo pone el backend). */
 export interface PanelQuery {
@@ -164,6 +179,8 @@ export interface OrdersRepository {
   listStale(query: { statuses: readonly OrderStatus[]; updatedBefore: string; businessId?: string; limit: number }): Promise<Order[]>;
   /** Bloque 27 — cambia la etapa operativa (compare-and-set + evento; misma etapa = sin cambio). */
   setStage(input: { businessId: string; orderId: string; from: OrderStage; to: OrderStage; memberId: number; reason: string | null; eventId: string }): Promise<StageChangeResult>;
+  /** Bloque 27 — registra el pago recibido (eje independiente de la etapa; ya recibido = sin cambio). */
+  setPaymentReceived(input: { businessId: string; orderId: string; memberId: number; reason: string | null; eventId: string }): Promise<PaymentChangeResult>;
   /** Bloque 27 — pedidos YA confirmados del negocio, por actualización (más recientes primero). */
   listPanel(businessId: string, query: PanelQuery): Promise<Array<{ order: Order; updatedAtRaw: string }>>;
   /** Bloque 27 — historial completo del pedido (id interno), del más viejo al más nuevo. */
@@ -534,6 +551,24 @@ export function createSupabaseOrdersRepository(supabase: SupabaseClient, now: ()
       return { result: "no_encontrado" };
     },
 
+    async setPaymentReceived(input) {
+      const { data, error } = await supabase.rpc("dulabs_catalogo_pedido_pago", {
+        p_tenant: input.businessId,
+        p_pedido: input.orderId,
+        p_miembro: input.memberId,
+        p_motivo: input.reason,
+        p_evento_id: input.eventId,
+      });
+      if (error) {
+        if (error.code === "22023" || error.code === "23514") throw new InvalidTransition(error.message ?? "pago no permitido");
+        fail("setPaymentReceived", error);
+      }
+      const r = (data ?? {}) as { resultado?: string; estado?: OrderStatus | null; pedido?: OrderRow };
+      if ((r.resultado === "ok" || r.resultado === "sin_cambio") && r.pedido) return { result: r.resultado, order: orderFromRow(r.pedido) };
+      if (r.resultado === "conflicto") return { result: "conflicto", status: r.estado ?? null };
+      return { result: "no_encontrado" };
+    },
+
     async listPanel(businessId, q) {
       if (panelSearch(q.search, q.searchPhone === true)?.kind === "none") return [];
       const { data, error } = await read((cols) => {
@@ -703,10 +738,16 @@ export function createMemoryOrdersRepository(opts: { available?: boolean; invent
     const frozen = (o: Order) =>
       JSON.stringify([o.lines, o.total, o.channel, o.contact?.waId ?? null, o.confirmedAt, o.checkout?.customerName, o.checkout?.paymentMethod, o.checkout?.delivery, o.checkout?.address, o.checkout?.city, o.checkout?.deliveryReference]);
     if (!after.checkout || frozen(before) !== frozen(after)) throw new InvalidTransition(`el pedido ${before.orderId} ya está confirmado: sus productos y datos no se editan`);
+    if (after.status === "handoff" && before.status !== "handoff") throw new InvalidTransition(`el pedido ${before.orderId} sigue su propio ciclo: la asesora atiende la conversación`);
     if (after.checkout.stage !== before.checkout.stage || after.checkout.paymentStatus !== before.checkout.paymentStatus)
-      throw new InvalidTransition("la etapa y el pago solo cambian con setStage");
-    if (after.status === "completed" && before.status !== "completed" && !canCompleteStage(before.checkout.stage, before.checkout.delivery))
-      throw new InvalidTransition(`el pedido ${before.orderId} aún no se puede completar (etapa ${before.checkout.stage})`);
+      throw new InvalidTransition("la etapa y el pago solo cambian con setStage / setPaymentReceived");
+    if (after.status !== before.status) {
+      const c = before.checkout;
+      if (after.status === "completed" && !canCompleteStage(c.stage, c.paymentStatus)) throw new InvalidTransition(`el pedido ${before.orderId} aún no se puede completar (etapa ${c.stage}, pago ${c.paymentStatus})`);
+      if ((after.status === "cancelled" || after.status === "rejected") && before.status === "confirmed" && !canCancelStage(c.stage))
+        throw new InvalidTransition(`el pedido ${before.orderId} ya salió (etapa ${c.stage}): no se cancela ni se rechaza`);
+      if (after.status === "expired" && before.status === "confirmed" && !reservationCanExpire(c.stage, c.paymentStatus)) throw new InvalidTransition(`el pedido ${before.orderId} ya está en gestión: no vence`);
+    }
   }
 
   function record(order: Order, entry: Omit<OrderHistoryEntry, "at">) {
@@ -819,7 +860,8 @@ export function createMemoryOrdersRepository(opts: { available?: boolean; invent
       for (const o of orders) {
         if (n >= limit) break;
         if (o.status !== "confirmed") continue;
-        if (o.checkout?.paymentStatus === "recibido") continue;
+        // Solo lo que nadie tocó (misma regla que dulabs_catalogo_reservas_vencer).
+        if (o.checkout && !reservationCanExpire(o.checkout.stage, o.checkout.paymentStatus)) continue;
         if (!reservations.some((r) => r.orderId === o.id && r.status === "activa" && Date.parse(r.expiresAt) <= clock())) continue;
         const next = applyChanges(o, "expired", { confirmation: null }, new Date(clock()).toISOString());
         applyReservationRule(o, next);
@@ -831,23 +873,33 @@ export function createMemoryOrdersRepository(opts: { available?: boolean; invent
     },
 
     async setStage(input) {
-      const ok = (input.from === "pendiente_pago" && input.to === "pago_recibido") || (input.from === "pago_recibido" && input.to === "en_preparacion") || (input.from === "en_preparacion" && input.to === "enviado");
-      if (!ok) throw new InvalidTransition(`etapa no permitida: ${input.from} -> ${input.to}`);
+      if (!STAGE_PAIRS.some(([a, b]) => a === input.from && b === input.to)) throw new InvalidTransition(`etapa no permitida: ${input.from} -> ${input.to}`);
       if (!input.memberId) throw new Error("solo una persona del equipo cambia la etapa");
       const i = orders.findIndex((o) => o.businessId === input.businessId && o.orderId === input.orderId);
       if (i < 0) return { result: "no_encontrado" };
       const o = orders[i];
       if (!o.checkout) throw new InvalidTransition(`el pedido ${o.orderId} no tiene etapas`);
-      if (o.checkout.stage === input.to) return { result: "sin_cambio", order: clone(o) };
-      if (o.checkout.stage !== input.from || !["confirmed", "handoff"].includes(o.status)) return { result: "conflicto", stage: o.checkout.stage, status: o.status };
-      if (input.to === "enviado" && o.checkout.delivery !== "domicilio") throw new InvalidTransition("enviado solo aplica a domicilio");
-      const next: Order = {
-        ...o,
-        checkout: { ...o.checkout, stage: input.to, paymentStatus: input.to === "pago_recibido" ? "recibido" : o.checkout.paymentStatus },
-        updatedAt: new Date(clock()).toISOString(),
-      };
+      if (o.checkout.stage === input.to && o.status === "confirmed") return { result: "sin_cambio", order: clone(o) };
+      if (o.checkout.stage !== input.from || o.status !== "confirmed") return { result: "conflicto", stage: o.checkout.stage, status: o.status };
+      if (input.from === "en_preparacion" && input.to === "enviado" && o.checkout.delivery !== "domicilio") throw new InvalidTransition("enviado solo aplica a domicilio");
+      if (input.from === "en_preparacion" && input.to === "entregado" && o.checkout.delivery !== "tienda") throw new InvalidTransition("un domicilio se entrega después de enviarlo");
+      const next: Order = { ...o, checkout: { ...o.checkout, stage: input.to }, updatedAt: new Date(clock()).toISOString() };
       orders[i] = next;
       record(next, { type: "order.stage_changed", from: input.from, to: input.to, actor: "human", memberId: input.memberId, reason: input.reason?.slice(0, 500) ?? null });
+      return { result: "ok", order: clone(next) };
+    },
+
+    async setPaymentReceived(input) {
+      if (!input.memberId) throw new Error("solo una persona del equipo registra un pago");
+      const i = orders.findIndex((o) => o.businessId === input.businessId && o.orderId === input.orderId);
+      if (i < 0) return { result: "no_encontrado" };
+      const o = orders[i];
+      if (!o.checkout) throw new InvalidTransition(`el pedido ${o.orderId} no tiene estado de pago`);
+      if (o.checkout.paymentStatus === "recibido") return { result: "sin_cambio", order: clone(o) };
+      if (o.status !== "confirmed") return { result: "conflicto", status: o.status };
+      const next: Order = { ...o, checkout: { ...o.checkout, paymentStatus: "recibido" }, updatedAt: new Date(clock()).toISOString() };
+      orders[i] = next;
+      record(next, { type: "order.payment_changed", from: "pendiente", to: "recibido", actor: "human", memberId: input.memberId, reason: input.reason?.slice(0, 500) ?? null });
       return { result: "ok", order: clone(next) };
     },
 

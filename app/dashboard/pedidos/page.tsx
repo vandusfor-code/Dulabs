@@ -12,9 +12,9 @@ import type { PedidoGestion } from "@/lib/catalogo/pedidos/gestion";
 import type { PedidosFiltros } from "@/lib/catalogo-client";
 import { actionBtn, cn, formatPrice, useCatalogAccess } from "@/components/dashboard/catalogo/ui";
 import { CANAL_LABEL } from "@/components/dashboard/catalogo/PedidoDetalle";
-import { ENTREGA, ESTADO_VISIBLE, EstadoBadge, METODO, fecha, nombreCliente, telefonoCliente } from "@/components/dashboard/pedidos/ui";
+import { ENTREGA, ESTADO_VISIBLE, EstadoBadge, METODO, PagoBadge, atencionTexto, fecha, nombreCliente, telefonoCliente } from "@/components/dashboard/pedidos/ui";
 
-const ESTADOS = ["todos", "pendiente_pago", "pago_recibido", "en_preparacion", "enviado", "completado", "cancelado", "rechazado", "vencido"] as const;
+const ESTADOS = ["todos", "confirmado", "en_preparacion", "enviado", "entregado", "completado", "cancelado", "rechazado", "vencido"] as const;
 const select = "rounded-xl border border-edge bg-card px-3 py-1.5 text-sm text-fg";
 
 export default function PedidosGestionPage() {
@@ -139,6 +139,7 @@ export default function PedidosGestionPage() {
             <div className="flex flex-wrap items-center gap-2">
               <span className="font-mono text-sm font-semibold text-fg">{p.pedido}</span>
               <EstadoBadge estado={p.estado_visible} t={t} />
+              <PagoBadge pago={p.estado_pago} t={t} />
               <span className={cn("rounded-full px-2 py-0.5 text-[11px]", p.canal === "wholesale" ? "bg-violet-500/15 text-violet-400" : "bg-ink-2 text-mist")}>
                 {t(CANAL_LABEL[p.canal].es, CANAL_LABEL[p.canal].en)}
               </span>
@@ -151,16 +152,23 @@ export default function PedidosGestionPage() {
               {p.checkout ? (
                 <>
                   <span>{t(METODO[p.checkout.metodo_pago].es, METODO[p.checkout.metodo_pago].en)}</span>
-                  <span>{p.checkout.estado_pago === "recibido" ? t("Pago recibido", "Payment received") : t("Pago pendiente", "Payment pending")}</span>
                   <span>{t(ENTREGA[p.checkout.entrega].es, ENTREGA[p.checkout.entrega].en)}</span>
                 </>
               ) : (
                 <span>{t("Pedido anterior al checkout", "Pre-checkout order")}</span>
               )}
-              <span>{t("Asesora", "Advisor")}: {p.asesora?.asignada ?? t("sin asignar", "unassigned")}</span>
+              <span>{atencionTexto(p, t)}</span>
               <span>
                 {t("Creado", "Created")} {fecha(p.creado)}
               </span>
+              <span>
+                {t("Confirmado", "Confirmed")} {fecha(p.confirmado_en)}
+              </span>
+              {p.vence_reserva && (
+                <span className="text-amber-500">
+                  {t("Vence", "Expires")} {fecha(p.vence_reserva)}
+                </span>
+              )}
               <span>
                 {t("Actualizado", "Updated")} {fecha(p.actualizado)}
               </span>

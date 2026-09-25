@@ -13,7 +13,7 @@ import { useI18n } from "@/lib/i18n";
 import type { AccionPedido, HistorialEntrada, PedidoGestion } from "@/lib/catalogo/pedidos/gestion";
 import { ProductImage, actionBtn, cn, formatPrice, primaryBtn, useCatalogAccess, useCatalogToast } from "@/components/dashboard/catalogo/ui";
 import { CANAL_LABEL, inboxHref } from "@/components/dashboard/catalogo/PedidoDetalle";
-import { ACCION, ENTREGA, ESTADO_VISIBLE, EstadoBadge, METODO, fecha, nombreCliente, telefonoCliente } from "@/components/dashboard/pedidos/ui";
+import { ACCION, ENTREGA, ESTADO_VISIBLE, EstadoBadge, METODO, PAGO, PagoBadge, fecha, nombreCliente, telefonoCliente } from "@/components/dashboard/pedidos/ui";
 
 const ESTADO_MOTOR: Record<string, { es: string; en: string }> = {
   draft: { es: "Borrador", en: "Draft" },
@@ -43,7 +43,7 @@ function Seccion({ titulo, children }: { titulo: string; children: ReactNode }) 
 
 function etiquetaEstado(valor: string | null, t: (es: string, en: string) => string): string {
   if (!valor) return "—";
-  const v = ESTADO_VISIBLE[valor as keyof typeof ESTADO_VISIBLE] ?? ESTADO_MOTOR[valor];
+  const v = ESTADO_VISIBLE[valor as keyof typeof ESTADO_VISIBLE] ?? PAGO[valor as keyof typeof PAGO] ?? ESTADO_MOTOR[valor];
   return v ? t(v.es, v.en) : valor;
 }
 
@@ -129,13 +129,19 @@ export default function PedidoGestionPage() {
         {!p && !error && <div className="h-40 animate-pulse rounded-2xl bg-card lg:col-span-2" aria-hidden />}
         {p && (
           <>
-            <Seccion titulo={t("Estado", "Status")}>
+            <Seccion titulo={t("Estado del pedido y del pago", "Order and payment status")}>
               <div className="flex flex-wrap items-center gap-2">
                 <EstadoBadge estado={p.estado_visible} t={t} />
-                <span className="text-xs text-mist">
-                  {t("Confirmado", "Confirmed")} {fecha(p.confirmado_en)} · {t("actualizado", "updated")} {fecha(p.actualizado)}
-                </span>
+                <PagoBadge pago={p.estado_pago} t={t} />
               </div>
+              <p className="mt-2 text-xs text-mist">
+                {t("Creado", "Created")} {fecha(p.creado)} · {t("confirmado", "confirmed")} {fecha(p.confirmado_en)} · {t("actualizado", "updated")} {fecha(p.actualizado)}
+              </p>
+              <p className="mt-1 text-xs text-mist">
+                {p.vence_reserva
+                  ? t(`La reserva vence ${fecha(p.vence_reserva)} si nadie lo gestiona.`, `Reservation expires ${fecha(p.vence_reserva)} unless handled.`)
+                  : t("La reserva no vence (el pedido ya está en gestión o cerrado).", "The reservation does not expire (order in progress or closed).")}
+              </p>
               {canManageOrders && p.acciones.length > 0 && (
                 <div className="mt-3 flex flex-wrap gap-2">
                   {p.acciones.map((a) => (
@@ -239,9 +245,30 @@ export default function PedidoGestionPage() {
               )}
             </Seccion>
 
-            <Seccion titulo={t("Asesora", "Advisor")}>
-              <p>{p.asesora?.asignada ?? t("Sin asignar", "Unassigned")}</p>
-              {p.asesora?.motivo && <p className="text-xs text-mist">{t("Motivo", "Reason")}: {p.asesora.motivo}</p>}
+            <Seccion titulo={t("Atención de la conversación", "Conversation handling")}>
+              <p className="text-xs text-mist">{t("Es de la conversación, no del pedido: no cambia su estado.", "Belongs to the conversation, not the order: it does not change its status.")}</p>
+              <dl className="mt-2 grid gap-1 text-sm">
+                <div>
+                  <dt className="inline text-mist">{t("Asesora: ", "Advisor: ")}</dt>
+                  <dd className="inline">{p.atencion?.asignada ?? t("Sin asignar", "Unassigned")}</dd>
+                </div>
+                <div>
+                  <dt className="inline text-mist">{t("Asistente: ", "Assistant: ")}</dt>
+                  <dd className="inline">{p.atencion?.ia_pausada_hasta ? t(`pausado hasta ${fecha(p.atencion.ia_pausada_hasta)}`, `paused until ${fecha(p.atencion.ia_pausada_hasta)}`) : t("activo", "active")}</dd>
+                </div>
+                {p.atencion?.conversacion && (
+                  <div>
+                    <dt className="inline text-mist">{t("Inbox: ", "Inbox: ")}</dt>
+                    <dd className="inline">{p.atencion.conversacion === "pending" ? t("pendiente", "pending") : p.atencion.conversacion === "closed" ? t("cerrada", "closed") : t("abierta", "open")}</dd>
+                  </div>
+                )}
+                {p.motivo_traspaso && (
+                  <div>
+                    <dt className="inline text-mist">{t("Motivo del traspaso: ", "Handoff reason: ")}</dt>
+                    <dd className="inline">{p.motivo_traspaso}</dd>
+                  </div>
+                )}
+              </dl>
             </Seccion>
 
             <Seccion titulo={t("Historial", "History")}>

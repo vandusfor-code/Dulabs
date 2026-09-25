@@ -82,26 +82,40 @@ export const TERMINAL_STATUSES: ReadonlySet<OrderStatus> = new Set(["completed",
 
 export const PAYMENT_METHODS = ["pago_en_tienda", "transferencia"] as const;
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
-/** El MÉTODO no es el pago: pendiente hasta que una persona registra el pago recibido. */
+/** El MÉTODO no es el pago: pendiente hasta que una persona del equipo registra el pago recibido. */
 export const PAYMENT_STATUSES = ["pendiente", "recibido"] as const;
 export type PaymentStatus = (typeof PAYMENT_STATUSES)[number];
 export const DELIVERY_TYPES = ["tienda", "domicilio"] as const;
 export type DeliveryType = (typeof DELIVERY_TYPES)[number];
-/** Etapa operativa mientras el pedido está activo (confirmed / handoff). "enviado" solo con domicilio. */
-export const ORDER_STAGES = ["pendiente_pago", "pago_recibido", "en_preparacion", "enviado"] as const;
+/**
+ * Etapa operativa del pedido mientras está activo (confirmed). Eje INDEPENDIENTE del pago:
+ *   confirmado -> en_preparacion -> enviado (solo domicilio) -> entregado
+ * (recoger en tienda: en_preparacion -> entregado). "Confirmado" NO significa pagado.
+ */
+export const ORDER_STAGES = ["confirmado", "en_preparacion", "enviado", "entregado"] as const;
 export type OrderStage = (typeof ORDER_STAGES)[number];
 
 /** Siguiente etapa permitida (misma regla que la BD: solo hacia adelante, de a un paso). */
 export function nextStage(stage: OrderStage, delivery: DeliveryType): OrderStage | null {
-  if (stage === "pendiente_pago") return "pago_recibido";
-  if (stage === "pago_recibido") return "en_preparacion";
-  if (stage === "en_preparacion") return delivery === "domicilio" ? "enviado" : null;
+  if (stage === "confirmado") return "en_preparacion";
+  if (stage === "en_preparacion") return delivery === "domicilio" ? "enviado" : "entregado";
+  if (stage === "enviado") return "entregado";
   return null;
 }
 
-/** ¿Ya se puede completar? Domicilio: enviado. Recoger en tienda: en preparación. */
-export function canCompleteStage(stage: OrderStage, delivery: DeliveryType): boolean {
-  return delivery === "domicilio" ? stage === "enviado" : stage === "en_preparacion";
+/** Cierre comercial: el pedido se entregó Y el pago se recibió (misma regla que la BD). */
+export function canCompleteStage(stage: OrderStage, payment: PaymentStatus): boolean {
+  return stage === "entregado" && payment === "recibido";
+}
+
+/** Antes de salir de la tienda (confirmado / en preparación) se puede cancelar o rechazar; después, no. */
+export function canCancelStage(stage: OrderStage): boolean {
+  return stage === "confirmado" || stage === "en_preparacion";
+}
+
+/** La reserva de 72 h solo vence si nadie del equipo tocó el pedido (sigue confirmado y sin pago). */
+export function reservationCanExpire(stage: OrderStage, payment: PaymentStatus): boolean {
+  return stage === "confirmado" && payment === "pendiente";
 }
 
 export interface OrderCheckout {

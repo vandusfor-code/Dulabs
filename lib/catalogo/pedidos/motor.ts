@@ -24,6 +24,7 @@ import { createResolucionCatalogo } from "@/lib/catalogo/resolucion";
 import {
   CONFIRMATION_TTL_MS,
   TERMINAL_STATUSES,
+  canCancelStage,
   canCompleteStage,
   nextStage,
   type DeliveryType,
@@ -74,7 +75,8 @@ export class OrderError extends Error {
 
 /** Puerto del traspaso a una persona (en producción: pausa de la IA en ESE chat + estado "pending"). */
 export interface HumanHandoffPort {
-  pauseConversation(input: { tenantId: string; contact: OrderContact; reason: string }): Promise<{ ok: boolean }>;
+  /** `until: "released"` = hasta que una persona la libere (Bloque 27: pedido confirmado); por defecto, la pausa estándar. */
+  pauseConversation(input: { tenantId: string; contact: OrderContact; reason: string; until?: "released" }): Promise<{ ok: boolean }>;
 }
 
 export interface OrderEngineDeps {
@@ -595,7 +597,7 @@ export function createOrderEngine(deps: OrderEngineDeps) {
                     address: input.checkout.delivery === "domicilio" ? input.checkout.address?.trim() ?? null : null,
                     city: input.checkout.delivery === "domicilio" ? input.checkout.city?.trim() ?? null : null,
                     deliveryReference: input.checkout.delivery === "domicilio" ? input.checkout.deliveryReference?.trim() || null : null,
-                    stage: "pendiente_pago",
+                    stage: "confirmado",
                   },
                   confirmedAt: at,
                   // La asesora sigue la conversación (el pedido queda CONFIRMADO: la reserva sigue su plazo).
@@ -652,8 +654,14 @@ export function createOrderEngine(deps: OrderEngineDeps) {
         if (!allowed.includes(order.status)) {
           throw new OrderError("INVALID_TRANSITION", `El pedido ${order.orderId} está ${order.status}: no se puede ${verb}.`);
         }
-        if (input.action === "complete" && order.checkout && !canCompleteStage(order.checkout.stage, order.checkout.delivery)) {
-          throw new OrderError("INVALID_TRANSITION", `El pedido ${order.orderId} aún no se puede completar (etapa: ${order.checkout.stage}).`);
+        if (input.action === "complete" && order.checkout && !canCompleteStage(order.checkout.stage, order.checkout.paymentStatus)) {
+          throw new OrderError(
+            "INVALID_TRANSITION",
+            order.checkout.paymentStatus !== "recibido" ? `El pedido ${order.orderId} aún no tiene el pago recibido.` : `El pedido ${order.orderId} aún no está entregado.`,
+          );
+        }
+        if (input.action !== "complete" && order.checkout && order.status === "confirmed" && !canCancelStage(order.checkout.stage)) {
+          throw new OrderError("INVALID_TRANSITION", `El pedido ${order.orderId} ya salió (${order.checkout.stage}): no se puede ${verb}.`);
         }
         const reason =
           input.reason?.trim().slice(0, 500) || (input.action === "complete" ? "closed_by_advisor" : input.action === "reject" ? "rejected_by_company" : "cancelled_by_advisor");
@@ -669,8 +677,9 @@ export function createOrderEngine(deps: OrderEngineDeps) {
 
     /**
      * Bloque 27 — una persona del equipo avanza la ETAPA operativa de un pedido del checkout:
-     * pendiente de pago -> pago recibido -> en preparación -> enviado (solo domicilio). Compare-and-set
-     * sobre la etapa que la persona vio: repetir el mismo clic no hace nada; otra etapa = conflicto.
+     * confirmado -> en preparación -> enviado (solo domicilio) -> entregado (recoger: en preparación ->
+     * entregado). Compare-and-set sobre la etapa que la persona vio: repetir el mismo clic no hace
+     * nada; otra etapa = conflicto. Independiente del pago.
      */
     async advanceStage(input: { tenantId: string; orderId: string; from: OrderStage; to: OrderStage; memberId: number; reason?: string | null; requestId?: string }): Promise<{ order: Order; result: "ok" | "duplicate" }> {
       return traced("advance_stage", input, async () => {
@@ -680,7 +689,10 @@ export function createOrderEngine(deps: OrderEngineDeps) {
         if (!order.checkout) throw new OrderError("INVALID_TRANSITION", `El pedido ${order.orderId} no tiene etapas de operación.`);
         if (order.checkout.stage === input.to) return { order, result: "duplicate" as const };
         if (nextStage(input.from, order.checkout.delivery) !== input.to) {
-          throw new OrderError("INVALID_TRANSITION", input.to === "enviado" ? "Solo los pedidos a domicilio se marcan como enviados." : "Ese cambio de etapa no está permitido.");
+          throw new OrderError(
+            "INVALID_TRANSITION",
+            input.to === "enviado" ? "Solo los pedidos a domicilio se marcan como enviados." : input.to === "entregado" && input.from === "en_preparacion" ? "Un pedido a domicilio se marca enviado antes de entregado." : "Ese cambio de etapa no está permitido.",
+          );
         }
         let r;
         try {
@@ -695,6 +707,37 @@ export function createOrderEngine(deps: OrderEngineDeps) {
           });
         } catch (err) {
           if (err instanceof InvalidTransition) throw new OrderError("INVALID_TRANSITION", "Ese cambio de etapa no está permitido.");
+          throw err;
+        }
+        if (r.result === "no_encontrado") throw new OrderError("NOT_FOUND", `No encontramos el pedido ${input.orderId}.`);
+        if (r.result === "conflicto") throw new OrderError("CONFLICT", "El pedido cambió mientras lo procesábamos. Consulta el pedido de nuevo.");
+        return { order: r.order, result: r.result === "ok" ? ("ok" as const) : ("duplicate" as const) };
+      });
+    },
+
+    /**
+     * Bloque 27 — una persona del equipo registra el PAGO RECIBIDO (eje independiente de la etapa: se
+     * puede registrar en cualquier etapa del pedido activo). Repetirlo no hace nada.
+     */
+    async markPaymentReceived(input: { tenantId: string; orderId: string; memberId: number; reason?: string | null; requestId?: string }): Promise<{ order: Order; result: "ok" | "duplicate" }> {
+      return traced("payment_received", input, async () => {
+        await requireAvailable();
+        const order = await deps.orders.getByOrderId(input.tenantId, input.orderId);
+        if (!order) throw new OrderError("NOT_FOUND", `No encontramos el pedido ${input.orderId}.`);
+        if (!order.checkout) throw new OrderError("INVALID_TRANSITION", `El pedido ${order.orderId} no tiene estado de pago.`);
+        if (order.checkout.paymentStatus === "recibido") return { order, result: "duplicate" as const };
+        if (order.status !== "confirmed") throw new OrderError("INVALID_TRANSITION", `El pedido ${order.orderId} está ${order.status}: no se registra el pago.`);
+        let r;
+        try {
+          r = await deps.orders.setPaymentReceived({
+            businessId: input.tenantId,
+            orderId: input.orderId,
+            memberId: input.memberId,
+            reason: input.reason?.trim().slice(0, 500) || null,
+            eventId: eventIdFrom("payment", order.id, "recibido"),
+          });
+        } catch (err) {
+          if (err instanceof InvalidTransition) throw new OrderError("INVALID_TRANSITION", "No se puede registrar el pago en este momento.");
           throw err;
         }
         if (r.result === "no_encontrado") throw new OrderError("NOT_FOUND", `No encontramos el pedido ${input.orderId}.`);
@@ -812,6 +855,8 @@ export function createOrderEngine(deps: OrderEngineDeps) {
       orderId?: string;
       actor: OrderActor;
       requestId?: string;
+      /** Bloque 27: "released" = la IA calla hasta que una persona la libere (pedido confirmado). */
+      pauseUntil?: "released";
     }): Promise<{ order: Order | null; paused: boolean }> {
       return traced("handoff_to_human", input, async () => {
         let order: Order | null = null;
@@ -820,7 +865,9 @@ export function createOrderEngine(deps: OrderEngineDeps) {
           await requireAvailable();
           order = await load(input.tenantId, input.contact, input.orderId);
           if (TERMINAL_STATUSES.has(order.status)) throw new OrderError("INVALID_TRANSITION", `El pedido ${order.orderId} ya está cerrado (${order.status}).`);
-          if (order.status !== "handoff") {
+          // Bloque 27: la atención es de la CONVERSACIÓN; un pedido del checkout sigue su propio ciclo
+          // (su reserva y su vencimiento no dependen de que una asesora lo atienda).
+          if (order.status !== "handoff" && !order.checkout) {
             ({ order, eventId } = await move(
               order,
               "handoff",
@@ -831,7 +878,7 @@ export function createOrderEngine(deps: OrderEngineDeps) {
           }
         }
         if (!deps.handoff) throw new OrderError("UNAVAILABLE", "No se pudo avisar a una asesora en este momento.");
-        const paused = await deps.handoff.pauseConversation({ tenantId: input.tenantId, contact: input.contact, reason: input.reason });
+        const paused = await deps.handoff.pauseConversation({ tenantId: input.tenantId, contact: input.contact, reason: input.reason, ...(input.pauseUntil ? { until: input.pauseUntil } : {}) });
         if (!paused.ok) throw new OrderError("UNAVAILABLE", "No se pudo avisar a una asesora en este momento. Intenta de nuevo.");
         return { order, paused: true, eventId };
       });

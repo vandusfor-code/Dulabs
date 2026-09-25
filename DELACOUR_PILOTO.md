@@ -403,18 +403,22 @@ apagado el agente funciona exactamente como antes.
       [✅ Confirmar pedido] [✏️ Modificar pedido] [❌ Cancelar].
 
    Nunca se pregunta persona natural o empresa, razón social, teléfono ni modalidad.
-3. **Confirmar**: solo el botón o un "sí" / "confirmo" exacto ("ok", "dale" y "perfecto" no
-   confirman). Solo se confirma el resumen **mostrado**, en una sola transacción del motor, que:
+3. **Confirmar**: **solo el botón** [✅ Confirmar pedido]. Un "sí", "confirmo", "ok" o "dale"
+   escrito no confirma: se responde "Para registrar tu pedido toca el botón ✅ Confirmar pedido." y
+   se reenvía el resumen. Solo se confirma el resumen **mostrado**, en una sola transacción del
+   motor, que:
    - re-verifica modalidad, productos, precios, stock, `confirmation_id` y vigencia;
    - aparta el stock (reserva atómica);
-   - guarda nombre, entrega, pago, `estado_pago = pendiente`, `etapa = pendiente_pago`,
+   - guarda nombre, entrega, pago, `etapa = confirmado`, `estado_pago = pendiente`,
      `confirmado_at` y el evento.
 
-   Si cambió el precio o se acabó el stock, **no confirma**: explica qué pasó y muestra el resumen
-   nuevo. Si ya no se puede confirmar, los productos vuelven a la selección.
+   Si el precio cambió mientras el cliente daba sus datos, se muestra el **resumen nuevo** con el
+   aviso del cambio (no se confirma nada). Si se acabó el stock o el producto se desactivó, se
+   explica, se sale del checkout y los productos vuelven a la selección.
 4. **Después de confirmar**:
-   - la IA se pausa en ese chat (motivo `payment_or_delivery`; el pedido queda con
-     "pedido confirmado");
+   - la IA se pausa en ese chat **hasta que una asesora la libere** (igual que "Tomar
+     conversación"; motivo `payment_or_delivery`). La pausa es de la **conversación**: el pedido
+     sigue CONFIRMADO, no pasa a "con asesora";
    - sale el mensaje **fijo**: "✅ Tu pedido quedó registrado correctamente. Una asesora continuará
      contigo para coordinar el pago y los siguientes pasos. Gracias por comprar en Delacour
      Joyería 💖" (el nombre sale de `negocio.nombre_negocio`).
@@ -425,7 +429,10 @@ apagado el agente funciona exactamente como antes.
    viejo **nunca** confirma: responde "Ese resumen ya no está vigente…".
 6. **Cancelar** (en cualquier paso): cancela la propuesta sin reserva, conserva los productos,
    sale del checkout y queda el evento `checkout_cancelled_by_customer`.
-7. Doble "sí", doble clic o dos mensajes a la vez: **una** reserva y **un** pedido confirmado.
+7. Doble clic, webhook repetido por Meta (mismo `wamid`) o dos mensajes a la vez: **una** reserva
+   y **un** pedido confirmado.
+8. **Abandono**: si el cliente deja el checkout y la propuesta vence o se cancela, sus productos
+   vuelven a la selección.
 
 ## Módulo Pedidos (`/dashboard/pedidos` y `/dashboard/pedidos/DL-ORD-…`)
 
@@ -438,19 +445,30 @@ apagado el agente funciona exactamente como antes.
   - orden: última actualización; paginación por cursor.
 - **Detalle**: cliente, productos (foto, referencia, cantidad, precio, subtotal), total, entrega,
   pago, estado, asesora e **historial inmutable** con quién hizo cada cambio.
-- **Estados visibles**: PENDIENTE DE PAGO → PAGO RECIBIDO → EN PREPARACIÓN → ENVIADO (solo
-  domicilio) → COMPLETADO. Para recoger en tienda: EN PREPARACIÓN → COMPLETADO. Terminales:
-  CANCELADO (cliente/operación) y RECHAZADO (la empresa). Ambos devuelven el stock.
+- **Dos ejes independientes** (el estado del pedido no es el pago ni la atención):
+  - **Pedido**: CONFIRMADO → EN PREPARACIÓN → ENVIADO (solo domicilio) → ENTREGADO → COMPLETADO.
+    Recoger en tienda: EN PREPARACIÓN → ENTREGADO. Terminales: CANCELADO (cliente/operación) y
+    RECHAZADO (la empresa); ambos devuelven el stock y solo se permiten en CONFIRMADO o EN
+    PREPARACIÓN (lo enviado o entregado ya no se cancela).
+  - **Pago**: PENDIENTE → RECIBIDO. Lo registra un admin/agente en cualquier etapa activa y no se
+    deshace.
+  - **Completar** exige ENTREGADO **y** pago RECIBIDO.
+- **Atención de la conversación** (aparte, en su propia sección): asesora asignada, IA pausada
+  hasta, estado en Inbox y motivo del traspaso. Tomar la conversación no cambia el pedido; la BD
+  impide que un pedido del checkout pase a `handoff`.
 - **Acciones** (solo admin y agente, con confirmación; cancelar y rechazar exigen motivo):
-  marcar pago recibido, pasar a preparación, marcar enviado, completar, cancelar, rechazar,
-  tomar conversación y abrir en Inbox.
-  - Cada acción valida el estado que la persona **vio** (compare-and-set: si cambió, 409).
+  registrar pago recibido, pasar a preparación, marcar enviado, marcar entregado, completar,
+  cancelar, rechazar, tomar conversación y abrir en Inbox.
+  - Cada acción valida lo que la persona **vio** (estado, etapa y pago; compare-and-set: si
+    cambió, 409).
   - Repetir la misma acción no la repite.
-  - La BD vuelve a validar el orden (función `dulabs_catalogo_pedido_etapa` + trigger).
+  - La BD vuelve a validar el orden (funciones `dulabs_catalogo_pedido_etapa` y
+    `dulabs_catalogo_pedido_pago` + trigger `dulabs_catalogo_pedidos_checkout_reglas`).
   - Completar consume la reserva una sola vez.
 - Nunca se editan productos, precios, stock ni reservas de un pedido confirmado (la BD lo impide).
-- **Vencimiento**: las 72 h aplican solo a pedidos confirmados con el pago pendiente. Con el pago
-  recibido, la reserva no vence.
+- El panel viejo del catálogo no opera pedidos del checkout (409 "se gestiona en Pedidos").
+- **Vencimiento (72 h)**: solo si **nadie lo tocó**: CONFIRMADO y pago PENDIENTE. En preparación o
+  con el pago recibido, la reserva no vence. Lo ejecuta el cron diario y la apertura del panel.
 - **Pedidos anteriores**: no tienen checkout. Se ven en el módulo con su fecha de confirmación
   (tomada de su historial) y se pueden completar, cancelar o rechazar como antes.
 
@@ -464,11 +482,11 @@ apagado el agente funciona exactamente como antes.
      (select count(*) from information_schema.columns where table_name = 'dulabs_catalogo_pedidos'
         and column_name in ('checkout','cliente_nombre','metodo_pago','estado_pago','tipo_entrega','direccion','ciudad','referencia_entrega','etapa','confirmado_at')) as columnas_pedido,
      (select count(*) from information_schema.columns where table_name = 'dulabs_catalogo_pedido_eventos' and column_name = 'miembro_id') as columna_miembro,
-     (select count(*) from pg_proc where proname = 'dulabs_catalogo_pedido_etapa') as funcion_etapa,
+     (select count(*) from pg_proc where proname in ('dulabs_catalogo_pedido_etapa', 'dulabs_catalogo_pedido_pago')) as funciones,
      (select count(*) from pg_trigger where tgname = 'dulabs_catalogo_pedidos_checkout_reglas') as trigger_reglas,
      (select checkout_conversacional from dulabs_agente_runtime_config where phone_number_id = '1428584886997210') as checkout_delacour,
      (select count(*) from dulabs_tenant_modulos where id_tenant = '0d3ae22d-0c38-4fd6-ba48-fb9e29b7cdb4' and modulo = 'pedidos') as modulo_pedidos;
-   -- Esperado: 10 | 1 | 1 | 1 | false | 0
+   -- Esperado: 10 | 1 | 2 | 1 | false | 0
    ```
 3. Cuando se decida, en este orden:
    1. desplegar el código;
@@ -495,23 +513,31 @@ apagado el agente funciona exactamente como antes.
 
 ## Pruebas
 
-- `lib/agente/agente-checkout.test.ts`: A–P, AD–AG + barreras (el modelo no confirma; con el
-  interruptor apagado, todo como antes; aislamiento).
-- `lib/catalogo/pedidos/pedidos-b27.test.ts`: Q–Z, AA–AC, AH + filtros, cursor, permisos y el panel
-  viejo del catálogo.
-- `supabase/tests/20261121000000_dulabs_catalogo_pedidos_checkout.test.sql`: 11 controles en
-  PostgreSQL (datos obligatorios, etapas con compare-and-set, completar/rechazar, inmutabilidad,
-  vencimiento, aislamiento, el sistema no confirma, historial inmutable).
-- `scripts/piloto/matriz-piloto.e2e.ts`, bloque K: checkout completo por el webhook real con
-  botones de Meta, PG real (reserva, datos, pausa, nombre recordado) y la operación en el panel
-  contra PG real.
-- `scripts/mutacion/b27.py`: 20 pruebas de mutación. Se quita una protección a la vez y la prueba
-  correspondiente debe fallar:
-  - 16 en el código: confirmación estricta, `confirm_order` oculto, modalidad congelada, domicilio
-    sin dirección, teléfono como nombre, resumen viejo, asesora tras confirmar, botón viejo,
-    "enviado" en recoger, compare-and-set del panel, pagado no vence, confirmado inmutable,
-    teléfono por permiso, motivo obligatorio, módulo exigido, reintento idempotente;
-  - 4 en la BD: pagado no vence, el sistema no confirma, confirmado inmutable, completar exige
-    terminar.
+- `lib/agente/agente-checkout.test.ts` (35): A–P, AD–AG, barreras (el modelo no confirma; con el
+  interruptor apagado, todo como antes; aislamiento) y la auditoría: "sí"/"ok" no confirman,
+  precio cambiado → resumen nuevo, stock agotado, producto desactivado, pausa hasta liberar,
+  abandono, timeout tras confirmar en BD, `wamid` repetido y precio manipulado.
+- `lib/catalogo/pedidos/pedidos-b27.test.ts` (21): dos ejes, ciclo domicilio y tienda, sin saltos,
+  cancelar/rechazar, vencimiento, traspaso sin cambiar el pedido, atención aparte, panel viejo,
+  aislamiento, permisos, historial, pedidos anteriores, idempotencia, concurrencia, filtros y
+  cursor.
+- `supabase/tests/20261121000000_dulabs_catalogo_pedidos_checkout.test.sql`: 12 controles en
+  PostgreSQL (confirmar, datos obligatorios, etapas con compare-and-set, pago independiente y
+  completar = entregado + pagado, tienda sin enviado, no cancelar lo enviado, inmutabilidad,
+  vencimiento solo sin tocar, aislamiento, el sistema no confirma, historial inmutable, sin
+  `handoff`).
+- `scripts/piloto/matriz-piloto.e2e.ts`, bloque K (escenarios A–T): webhook real con botones de
+  Meta → motor → PostgreSQL real (reserva, stock, datos, pausa) → API del módulo Pedidos, con
+  concurrencia en la última unidad, duplicados, vencimiento, Delacour vs AMORE, permisos y
+  filtros.
+- `scripts/mutacion/b27.py`: 39 mutaciones. Se quita una protección a la vez y alguna prueba debe
+  fallar:
+  - 31 en el código: total, precio, modalidad, stock, reserva, confirmación, método de pago,
+    asesora y pausa, traspaso, abandono, webhook duplicado, creación duplicada, idempotencia y
+    compare-and-set del panel, estados (completar, enviado, cancelar, vencer), motivo, panel
+    viejo, tenant y permisos;
+  - 8 en la BD: vencimiento, el sistema no confirma, inmutabilidad, completar, `handoff`, cancelar
+    lo enviado, el pago no vuelve atrás, domicilio sin envío.
 
-  Las 20 se detectan.
+  Las 39 se detectan (M04 la detecta la carrera real de dos confirmaciones simultáneas por la última
+  unidad en `reservas-stock.test.ts`).
