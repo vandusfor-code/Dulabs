@@ -1,6 +1,6 @@
 # Pasos manuales pendientes en producción
 
-## ✅ APLICADA (25-sep-2026, según confirmación del responsable) — Registros de módulo: respaldo y conciliación de `registrar_en_modulo` (genérico)
+## ✅ APLICADA (25-sep-2026, verificada `5`) — Registros de módulo: respaldo y conciliación de `registrar_en_modulo` (genérico)
 
 Migración `supabase/migrations/20261121000000_dulabs_registros_modulo.sql`. **Aditiva**: crea la
 tabla `dulabs_registros_modulo` (RLS activo, sin acceso anon/authenticated) y las funciones
