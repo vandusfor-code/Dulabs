@@ -142,7 +142,11 @@ export interface AgentTurnTrace {
   usage: { input: number; output: number; thinking: number; cached: number };
   latency_ms: number;
   retries: number;
-  grounding: { violations: GroundingViolation["kind"][]; corrected: boolean };
+  /**
+   * `values`: solo los MONTOS bloqueados (con "$", "COP" o "mil"; nunca referencias, enlaces ni otros
+   * números, que podrían ser datos del cliente) para diagnosticar qué cifra inventó el modelo.
+   */
+  grounding: { violations: GroundingViolation["kind"][]; corrected: boolean; values?: string[] };
   order_id: string | null;
   images: number;
   error_kind: string | null;
@@ -608,6 +612,7 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
   let failure: "technical" | "safety" | "unverified" | "pending" | null = null;
   let corrected = false;
   let forceText = false;
+  let nudged = false;
 
   const call = async (toolMode: "auto" | "none"): Promise<AIGenerateResult> => {
     trace.rounds++;
@@ -675,6 +680,17 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
         if (ctx.handedOff) forceText = true;
         continue;
       }
+      // Última ronda (sin herramientas) y el modelo AÚN pide herramientas, sin texto: en vez de fallar,
+      // una sola vez se le responde que no hay más consultas y se le pide contestar con lo que ya tiene.
+      if (r.toolCalls.length > 0 && lastChance && !r.text && !nudged) {
+        nudged = true;
+        forceText = true;
+        turns.push({ role: "model", text: r.text, toolCalls: r.toolCalls, continuation: r.continuation });
+        const stop = { error: { code: "TOOL_LIMIT", message: "No hay más consultas en este mensaje. Responde AHORA en texto solo con los datos que ya devolvieron las herramientas." } };
+        turns.push({ role: "tool", results: r.toolCalls.map((tc) => ({ callId: tc.id, name: tc.name, output: stop })) });
+        for (const tc of r.toolCalls) trace.tool_calls.push({ name: tc.name.slice(0, 40), result: "TOOL_LIMIT", ms: 0, args: summarizeArgs(tc.args) });
+        continue;
+      }
       if (r.finish === "invalid_output" || !r.text) {
         failure = "technical";
         trace.error_kind = `model_${r.finish}`;
@@ -686,6 +702,8 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
         break;
       }
       trace.grounding.violations.push(...check.violations.map((v) => v.kind));
+      const montos = check.violations.filter((v) => v.kind === "amount" && /\$|cop|\bmil\b/i.test(v.value) && v.value.length <= 24).map((v) => v.value);
+      if (montos.length > 0) trace.grounding.values = [...(trace.grounding.values ?? []), ...montos].slice(0, 10);
       if (corrected) {
         failure = "unverified";
         break;

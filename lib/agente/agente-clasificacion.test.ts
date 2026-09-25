@@ -477,3 +477,51 @@ describe("B25 · fail-closed y traza", () => {
     assert.ok(!JSON.stringify(saved).includes(CLIENTE));
   });
 });
+
+describe("B25.2 · última ronda: el modelo insiste en herramientas (caso real de producción)", () => {
+  it("buscar → fotos → montos inventados (bloqueados) → vuelve a buscar → pide otra herramienta sin texto ⇒ se le pide texto y responde, sin mensaje de falla", async () => {
+    const { luna, sol } = await aretes();
+    await clasificar("retail");
+    const r = await turno(
+      [
+        call("search_products", { query: "aretes" }),
+        call("request_product_images", { references: [luna.reference, sol.reference] }),
+        { text: `Tengo Aretes Luna a ${formatCop(45_000)} y los dos por ${formatCop(88_000)}; también desde ${formatCop(9_000)}.` },
+        call("search_products", { query: "aretes" }),
+        call("search_products", { query: "aretes dorados" }),
+        presentar,
+      ],
+      "Si, estoy buscando unos aretes",
+    );
+    assert.equal(r.outcome, "replied", "no sale el mensaje fijo de falla técnica");
+    assert.notEqual(r.reply, FALLBACK_MESSAGES.technical);
+    assert.deepEqual(results(r), ["ok", "ok", "ok", "TOOL_LIMIT"], "la herramienta pedida en la ronda final no se ejecuta");
+    assert.equal(r.trace.error_kind, null);
+    assert.deepEqual(r.trace.grounding.violations, ["amount", "amount"]);
+    assert.deepEqual(r.trace.grounding.values, [formatCop(88_000), formatCop(9_000)], "la traza dice QUÉ montos se bloquearon");
+    assert.ok(!sent.some((t) => t.includes(formatCop(88_000)) || t.includes(formatCop(9_000))), "los montos inventados nunca salen");
+    // La ronda final y la siguiente van SIN herramientas.
+    assert.deepEqual(r.provider.requests.slice(-2).map((q) => q.toolMode), ["none", "none"]);
+  });
+
+  it("si aun así no responde en texto, mensaje fijo (una sola insistencia)", async () => {
+    await aretes();
+    await clasificar("retail");
+    const r = await turno(
+      [call("search_products", { query: "aretes" }), call("search_products", { query: "a" }), call("search_products", { query: "b" }), call("search_products", { query: "c" }), call("search_products", { query: "d" }), call("search_products", { query: "e" })],
+      "aretes",
+    );
+    assert.equal(r.outcome, "fallback");
+    assert.equal(r.trace.error_kind, "model_tool_calls");
+    assert.equal(results(r).filter((x) => x === "TOOL_LIMIT").length, 1);
+  });
+
+  it("la traza guarda montos bloqueados pero nunca números sin '$' (p. ej. un teléfono con puntos)", async () => {
+    await aretes();
+    await clasificar("retail");
+    const r = await turno([call("search_products", { query: "aretes" }), { text: "Escríbenos al 314.812.7388 o paga $12.345" }, { text: "Te ayudo con los aretes del catálogo." }], "aretes");
+    assert.equal(r.outcome, "replied");
+    assert.deepEqual(r.trace.grounding.values, ["$12.345"]);
+    assert.ok(!JSON.stringify(sanitizeTurnTrace(r.trace)).includes("314.812"));
+  });
+});
