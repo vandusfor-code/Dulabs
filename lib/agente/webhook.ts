@@ -49,7 +49,7 @@ export interface AgentBoundaryInput {
   /** context de Meta: mensaje citado (swipe-to-reply a una foto) o reenviado. */
   replyTo?: { wamid?: string | null; forwarded?: boolean } | null;
   /** Mensaje sin texto (Bloque 23): `text` vacío y la política determinista de entrada.ts. */
-  nonText?: { kind: NonTextKind } | null;
+  nonText?: { kind: NonTextKind; caption?: string | null } | null;
   /** Bloque 26: id del botón tocado (interactive.button_reply.id). Solo el turno directo lo usa; el buzón guarda el texto. */
   buttonId?: string | null;
 }

@@ -4,6 +4,7 @@
  * del carrito. Server Component (solo el "+" y la precarga por intención son de cliente).
  */
 import { ImageOff } from "lucide-react";
+import { MarcaReferencia } from "@/components/catalogo-publico/tienda/MarcaReferencia";
 import { formatCop } from "@/lib/business-agent-quote";
 import { cargaDeFoto, productPathIn, type PublicCatalogProduct } from "@/lib/catalogo/publicacion";
 import { AgregarAlCarrito } from "@/components/catalogo-publico/tienda/AgregarAlCarrito";
@@ -18,7 +19,7 @@ export function TarjetaProducto({ product, basePath, posicion }: { product: Publ
   const href = productPathIn(basePath, product.reference);
   return (
     <article className="group relative flex h-full flex-col overflow-hidden rounded-[20px] border border-edge/80 bg-card shadow-[0_1px_2px_rgba(60,40,20,0.04)] transition-transform duration-150 active:scale-[0.985]">
-      <EnlaceIntencion href={href} className="block aspect-square overflow-hidden bg-ink-2" tabIndex={-1} aria-hidden>
+      <EnlaceIntencion href={href} className="relative block aspect-square overflow-hidden bg-ink-2" tabIndex={-1} aria-hidden>
         {product.thumbUrl ? (
           // eslint-disable-next-line @next/next/no-img-element -- miniatura pública ya optimizada (WebP ≤ 400 px) en la carga
           <img
@@ -36,6 +37,7 @@ export function TarjetaProducto({ product, basePath, posicion }: { product: Publ
             <ImageOff className="size-7" strokeWidth={1.5} />
           </span>
         )}
+        {product.thumbUrl && <MarcaReferencia reference={product.reference} />}
       </EnlaceIntencion>
       <div className="flex flex-1 flex-col px-3.5 pb-3.5 pt-3">
         <h3 className="line-clamp-2 text-[14.5px] font-medium leading-snug text-fg">

@@ -8,8 +8,9 @@
 import { useEffect, useRef, useState } from "react";
 import { ImageOff } from "lucide-react";
 import type { PublicProductImages } from "@/lib/catalogo/publicacion";
+import { MarcaReferencia } from "@/components/catalogo-publico/tienda/MarcaReferencia";
 
-export function GaleriaProducto({ images, name }: { images: PublicProductImages[]; name: string }) {
+export function GaleriaProducto({ images, name, reference }: { images: PublicProductImages[]; name: string; reference?: string }) {
   const railRef = useRef<HTMLDivElement>(null);
   const [activa, setActiva] = useState(0);
 
@@ -48,7 +49,7 @@ export function GaleriaProducto({ images, name }: { images: PublicProductImages[
       <div className="relative overflow-hidden rounded-[26px] bg-ink-2">
         <div ref={railRef} className="tienda-scroll flex snap-x snap-mandatory overflow-x-auto overscroll-x-contain">
           {images.map((img, i) => (
-            <div key={img.imageUrl} data-index={i} className="aspect-square w-full shrink-0 snap-center">
+            <div key={img.imageUrl} data-index={i} className="relative aspect-square w-full shrink-0 snap-center">
               {/* eslint-disable-next-line @next/next/no-img-element -- foto pública ya optimizada (WebP) en la carga */}
               <img
                 src={img.detailUrl}
@@ -58,6 +59,7 @@ export function GaleriaProducto({ images, name }: { images: PublicProductImages[
                 decoding="async"
                 className="size-full object-cover"
               />
+              {reference && <MarcaReferencia reference={reference} className="bottom-3 left-3" />}
             </div>
           ))}
         </div>

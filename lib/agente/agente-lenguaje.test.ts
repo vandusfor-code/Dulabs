@@ -26,6 +26,7 @@ import { AGENT_TOOL_NAMES } from "@/lib/agente/nombres-herramientas";
 import { CART_CLARIFY, runAgentTurn, type AgentTurnTrace } from "@/lib/agente/runtime";
 import { createMemoryCustomerChannelStore, parseChannelChoice } from "@/lib/agente/clasificacion";
 import { CHECKOUT_BUTTONS, CHECKOUT_MESSAGES, CHECKOUT_STEP_HINT, parseCustomerName, parseDelivery, parsePayment, wantsCheckout } from "@/lib/agente/checkout";
+import { MEDIA_MESSAGES, NON_TEXT_MESSAGES } from "@/lib/agente/entrada";
 import { resolveSelection } from "@/lib/agente/seleccion";
 import { checkGrounding, emptyEvidence, addOrderStateEvidence } from "@/lib/agente/anclaje";
 import { normalizar } from "@/lib/agente/lenguaje/normalizar";
@@ -294,7 +295,7 @@ function toolDeps(): AgentToolsDeps {
   };
 }
 
-async function turno(script: SimulatedStep[], text: string, opts: { buttonId?: string; waId?: string; nonText?: { kind: "audio" | "location" | "image" }; config?: AgentRuntimeConfig } = {}) {
+async function turno(script: SimulatedStep[], text: string, opts: { buttonId?: string; waId?: string; nonText?: { kind: "audio" | "location" | "image" | "video" | "document"; caption?: string }; config?: AgentRuntimeConfig } = {}) {
   const provider = createSimulatedProvider(script);
   const waId = opts.waId ?? CLIENTE;
   const wamid = `wamid.in.${++seq}`;
@@ -693,13 +694,15 @@ describe("B28 · mensajes sin texto durante el checkout", () => {
     assert.equal((await estado()).checkout?.step, "address");
   });
 
-  it("foto durante el checkout: como siempre, pasa a una asesora (nunca se identifica un producto adivinando)", async () => {
+  it("foto durante el checkout (Bloque 29): se pide el dato que falta, escrito; sin asesora y sin adivinar un producto", async () => {
     const p = await producto("Pulsera Luna", 30_000, 5);
     await clasificar();
     await comprar([{ ref: p.reference, qty: 1 }]);
     const r = await turno([], "", { nonText: { kind: "image" } });
-    assert.equal(r.outcome, "handoff");
-    assert.deepEqual(pausas, [CLIENTE]);
+    assert.equal(r.reply, MEDIA_MESSAGES.enCheckout(CHECKOUT_STEP_HINT.delivery));
+    assert.equal(r.provider.requests.length, 0);
+    assert.deepEqual(pausas, []);
+    assert.equal((await estado()).checkout?.step, "delivery");
   });
 });
 
@@ -976,5 +979,112 @@ describe("B28 · regresión de la corrida con Gemini REAL", () => {
       assert.ok(checkGrounding(t, ev).violations.some((v) => v.kind === "order_status"), t);
     }
     assert.ok(checkGrounding("¿Ya recibiste tu pedido?", ev).ok);
+  });
+
+  it("ST03 (consistencia ×3) => 'me alegra saber que ya tienes tu pedido' / 'ya lo tienes contigo' tampoco salen sin respaldo; el carrito y el pedido confirmado sí", () => {
+    const ev = emptyEvidence();
+    for (const t of ["¡Qué alegría! Me alegra mucho saber que ya tienes tu pedido con tus Aretes Luna Dorados.", "Me alegra saber que ya lo tienes contigo 🥰"]) {
+      assert.ok(checkGrounding(t, ev).violations.some((v) => v.kind === "order_status"), t);
+    }
+    for (const t of ["Ya tienes tu pedido confirmado, te escribimos cuando salga.", "Listo, ya lo tienes en el carrito.", "Ya tienes tus Aretes Luna Dorados en el carrito."]) {
+      assert.ok(!checkGrounding(t, ev).violations.some((v) => v.kind === "order_status"), t);
+    }
+  });
+});
+
+describe("B29 · fotos, videos y archivos del cliente (solo con el checkout conversacional)", () => {
+  async function confirmado(pago: 0 | 1 = 1) {
+    const p = await producto("Aretes Sol", 45_000, 5);
+    await clasificar();
+    await comprar([{ ref: p.reference, qty: 1 }]);
+    await tocar("delivery", 0);
+    await tocar("payment", pago);
+    await tocar("summary", 0);
+    return ultimo();
+  }
+
+  it("foto SIN texto y sin pedido: pide la referencia (o varias) o una asesora; sin modelo, sin pausa; varias fotos seguidas => un solo aviso", async () => {
+    await clasificar();
+    const r = await turno([], "", { nonText: { kind: "image" } });
+    assert.equal(r.outcome, "replied");
+    assert.equal(r.reply, MEDIA_MESSAGES.pideReferencia("image"));
+    assert.match(r.reply ?? "", /referencia/);
+    assert.match(r.reply ?? "", /asesora/);
+    assert.equal(r.provider.requests.length, 0);
+    assert.deepEqual(pausas, []);
+    const r2 = await turno([], "", { nonText: { kind: "image" } });
+    assert.equal(r2.outcome, "rate_limited");
+    assert.equal(sent.filter((t) => t === MEDIA_MESSAGES.pideReferencia("image")).length, 1);
+  });
+
+  it("'sí' justo después del aviso => asesora; escribir la referencia => sigue la venta (sin asesora)", async () => {
+    await clasificar();
+    await turno([], "", { nonText: { kind: "image" } });
+    const si = await turno([], "sí");
+    assert.equal(si.outcome, "handoff");
+    assert.equal(si.trace.handoff?.motive, "customer_request");
+    assert.deepEqual(pausas, [CLIENTE]);
+
+    const otro = "573009990011";
+    const p = await producto("Collar Estrella", 80_000, 5);
+    await canales.setInitial({ tenantId: A.tenantId, phoneNumberId: PN_A, waId: otro }, "retail", "cliente");
+    await turno([], "", { nonText: { kind: "image" }, waId: otro });
+    const ref = await turno([call("get_product_details", { reference: p.reference }), { text: "¡Sí lo tenemos! 💖" }], `es el ${p.reference}`, { waId: otro });
+    assert.equal(ref.outcome, "replied");
+    assert.deepEqual(pausas, [CLIENTE], "escribir la referencia no pasa a una asesora");
+  });
+
+  it("'sí' en otro momento (sin aviso de foto justo antes) NO pasa a una asesora", async () => {
+    await clasificar();
+    await turno([], "", { nonText: { kind: "image" } });
+    await turno([{ text: "¿Qué pieza buscas?" }], "busco aretes");
+    await turno([{ text: "Claro." }], "sí");
+    assert.deepEqual(pausas, []);
+  });
+
+  it("foto CON leyenda: la leyenda se atiende como un mensaje de texto (turno normal con el modelo)", async () => {
+    await clasificar();
+    const r = await turno([{ text: "Tenemos aretes en plateado 😊" }], "", { nonText: { kind: "image", caption: "¿tienen estos aretes en plateado?" } });
+    assert.equal(r.outcome, "replied");
+    assert.equal(r.provider.requests.length, 1);
+    assert.ok(JSON.stringify(r.provider.requests[0]).includes("tienen estos aretes en plateado"), "el modelo recibe la leyenda");
+    assert.deepEqual(pausas, []);
+  });
+
+  it("pedido con transferencia PENDIENTE: foto o archivo => asesora (posible comprobante); el pago NO se marca", async () => {
+    const o = await confirmado(1);
+    const r = await turno([], "", { nonText: { kind: "image" } });
+    assert.equal(r.outcome, "handoff");
+    assert.equal(r.reply, MEDIA_MESSAGES.comprobante("image"));
+    assert.equal(r.trace.handoff?.motive, "payment_or_delivery");
+    assert.deepEqual(pausas.slice(-1), [CLIENTE]);
+    assert.equal((await engine.getOrder({ tenantId: A.tenantId, contact: { phoneNumberId: PN_A, waId: CLIENTE }, orderId: o.orderId })).checkout?.paymentStatus, "pendiente");
+  });
+
+  it("pedido con pago EN TIENDA: una foto no es un comprobante => se pide la referencia", async () => {
+    await confirmado(0);
+    const antes = pausas.length;
+    const r = await turno([], "", { nonText: { kind: "image" } });
+    assert.equal(r.reply, MEDIA_MESSAGES.pideReferencia("image"));
+    assert.equal(pausas.length, antes);
+  });
+
+  it("pedido entregado: una foto => asesora (puede ser un reclamo)", async () => {
+    const o = await confirmado(1);
+    await engine.markPaymentReceived({ tenantId: A.tenantId, orderId: o.orderId, memberId: ASESORA });
+    await engine.advanceStage({ tenantId: A.tenantId, orderId: o.orderId, from: "confirmado", to: "en_preparacion", memberId: ASESORA });
+    await engine.advanceStage({ tenantId: A.tenantId, orderId: o.orderId, from: "en_preparacion", to: "entregado", memberId: ASESORA });
+    const r = await turno([], "", { nonText: { kind: "document" } });
+    assert.equal(r.outcome, "handoff");
+    assert.equal(r.reply, NON_TEXT_MESSAGES.handoff("document"));
+    assert.equal(r.trace.handoff?.motive, "order_issue");
+  });
+
+  it("aislamiento: sin el checkout conversacional, una foto pasa a una asesora como antes", async () => {
+    await clasificar();
+    const r = await turno([], "", { nonText: { kind: "image", caption: "¿tienen este?" }, config: cfg({ checkout_conversacional: false }) });
+    assert.equal(r.outcome, "handoff");
+    assert.equal(r.reply, NON_TEXT_MESSAGES.handoff("image"));
+    assert.equal(r.provider.requests.length, 0);
   });
 });

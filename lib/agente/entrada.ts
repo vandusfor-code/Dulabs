@@ -108,3 +108,29 @@ export const NON_TEXT_MESSAGES = {
   /** El traspaso no se pudo registrar: se dice la verdad (no se promete una asesora que no viene). */
   handoffFailed: (kind: NonTextKind) => `Recibí ${QUE_RECIBI[kind] ?? "tu mensaje"}, pero por ahora no puedo revisarlo por aquí. ¿Me escribes lo que necesitas, por favor?`,
 } as const;
+
+/**
+ * Bloque 29 (solo con el checkout conversacional): foto, video o archivo del cliente.
+ *
+ *   situación                                           qué pasa
+ *   --------------------------------------------------  ------------------------------------------------
+ *   pedido con transferencia PENDIENTE (foto/archivo)   asesora: puede ser el comprobante (el bot nunca
+ *                                                       marca un pago como recibido)
+ *   pedido enviado, entregado o completado              asesora: puede ser un reclamo
+ *   con leyenda ("¿lo tienen en plateado?")             la leyenda se atiende como un mensaje de texto
+ *   en medio del registro del pedido                    se pide el dato que falta, escrito
+ *   sin texto                                           se pide la referencia (o varias) o una asesora;
+ *                                                       un "sí" justo después pasa a una asesora
+ *
+ * Si el pedido no se pudo consultar, se conserva lo de antes (asesora): nunca se pierde un comprobante.
+ */
+export const MEDIA_DEL_CLIENTE: ReadonlySet<NonTextKind> = new Set(["image", "video", "document"]);
+
+const LO_QUE_ENVIO: Readonly<Partial<Record<NonTextKind, string>>> = { image: "la foto", video: "el video", document: "el archivo" };
+
+export const MEDIA_MESSAGES = {
+  pideReferencia: (kind: NonTextKind) =>
+    `¡Gracias por ${LO_QUE_ENVIO[kind] ?? "tu mensaje"}! 😊 Por aquí no puedo ver imágenes ni archivos. ¿Me escribes la referencia del producto (aparece en la foto o en el catálogo)? Si son varios, escríbeme todas las referencias. Si prefieres, te comunico con una asesora.`,
+  comprobante: (kind: NonTextKind) => `Recibí ${QUE_RECIBI[kind] ?? "tu mensaje"} 🙌 Si es el comprobante de pago, una asesora lo revisa y te confirma en breve.`,
+  enCheckout: (hint: string) => `Por ahora no puedo ver imágenes ni archivos 🙏 ${hint}`,
+} as const;

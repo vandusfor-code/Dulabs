@@ -10,6 +10,7 @@
  * ya aplicada. Nunca agranda la imagen.
  */
 import sharp from "sharp";
+import { svgMarcaReferencia } from "@/lib/catalogo/marca-referencia";
 
 export const WHATSAPP_IMAGE_MAX_PX = 1200;
 /** Tope de lectura de la foto de origen (el catálogo sube ≤ 2048 px optimizados, muy por debajo). */
@@ -34,17 +35,24 @@ async function readAll(body: ReadableStream<Uint8Array>, maxBytes: number): Prom
   return Buffer.concat(chunks);
 }
 
-/** Convierte la foto (WebP, JPEG o PNG) a un JPEG apto para WhatsApp. */
-export async function toWhatsappJpeg(source: ReadableStream<Uint8Array> | Uint8Array): Promise<Buffer> {
+/**
+ * Convierte la foto (WebP, JPEG o PNG) a un JPEG apto para WhatsApp.
+ * Bloque 29: con `marca` (la referencia), la estampa en la esquina (marca-referencia.ts).
+ */
+export async function toWhatsappJpeg(source: ReadableStream<Uint8Array> | Uint8Array, opts: { marca?: string | null } = {}): Promise<Buffer> {
   const input = source instanceof Uint8Array ? Buffer.from(source) : await readAll(source, WHATSAPP_SOURCE_MAX_BYTES);
   if (input.byteLength === 0 || input.byteLength > WHATSAPP_SOURCE_MAX_BYTES) throw new WhatsappImageError("Foto de origen vacía o demasiado grande.");
   try {
-    return await sharp(input, { failOn: "error", limitInputPixels: 50_000_000 })
+    const base = sharp(input, { failOn: "error", limitInputPixels: 50_000_000 })
       .rotate()
       .resize(WHATSAPP_IMAGE_MAX_PX, WHATSAPP_IMAGE_MAX_PX, { fit: "inside", withoutEnlargement: true })
-      .flatten({ background: "#ffffff" })
-      .jpeg({ quality: 82, mozjpeg: true })
-      .toBuffer();
+      .flatten({ background: "#ffffff" });
+    if (!opts.marca) return await base.jpeg({ quality: 82, mozjpeg: true }).toBuffer();
+    // El tamaño final se conoce tras escalar: primero la foto, luego la marca a su medida.
+    const { data, info } = await base.png().toBuffer({ resolveWithObject: true });
+    const svg = svgMarcaReferencia(info.width, info.height, opts.marca);
+    const img = sharp(data);
+    return await (svg ? img.composite([{ input: Buffer.from(svg), top: 0, left: 0 }]) : img).jpeg({ quality: 82, mozjpeg: true }).toBuffer();
   } catch {
     throw new WhatsappImageError("No se pudo convertir la foto.");
   }

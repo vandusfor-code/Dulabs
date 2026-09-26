@@ -714,3 +714,51 @@ Corregido en esta auditoría (todo solo con `checkout_conversacional`; otros neg
   - ¿quieres todos o solo algunos?
 - **Estado inventado:** si el modelo afirma un estado sin respaldo ("ya está pagado"), sale el
   estado **real** del pedido.
+
+---
+
+## Bloque 29 · fotos del cliente y referencia en las fotos
+
+### Qué hace el agente con una foto, un video o un archivo
+
+Solo con `checkout_conversacional` (otros negocios siguen como antes: pasan a una asesora).
+
+| Situación | Qué pasa | ¿Asesora? |
+|---|---|---|
+| Pedido con **transferencia pendiente** y llega foto o archivo | "Recibí tu imagen 🙌 Si es el comprobante de pago, una asesora lo revisa y te confirma en breve." En el Inbox: "Posible comprobante de pago". El pago **no** se marca | Sí |
+| Pedido **enviado o entregado** | Mensaje de traspaso (puede ser un reclamo) | Sí |
+| Foto **con texto** ("¿lo tienen en plateado?") | El texto se atiende como un mensaje normal | No |
+| Foto en medio del registro del pedido | Se pide, escrito, el dato que falta | No |
+| Foto **sin texto** | Pide la referencia (o varias) que aparece en la foto o en el catálogo, u ofrece una asesora. Varias fotos seguidas reciben un solo aviso | Solo si responde "sí" o pide una asesora |
+
+Si el pedido no se pudo consultar, se conserva lo de antes (asesora): nunca se pierde un comprobante.
+
+### Referencia en las fotos (módulo `marca_referencia`)
+
+- **WhatsApp:** las fotos que manda el agente llevan la referencia en la esquina inferior derecha.
+- **Tienda web** (detal y mayor): la referencia aparece sobre la foto en las tarjetas y en la ficha.
+  Una captura de pantalla la incluye.
+- **Panel → Catálogo → producto:** botón **"Descargar con referencia"** (JPEG para Instagram o
+  estados).
+- La marca se pone **al servir** la foto: los archivos originales no cambian, sirve para las fotos
+  ya subidas y se quita apagando el módulo.
+- Muestra sin BD ni red: `npx tsx scripts/catalogo/muestra-marca-referencia.mts <carpeta>`.
+
+**Encender (manual, SQL Editor; no requiere migración):**
+```sql
+insert into dulabs_tenant_modulos (id_tenant, modulo, habilitado)
+values ('0d3ae22d-0c38-4fd6-ba48-fb9e29b7cdb4', 'marca_referencia', true)
+on conflict (id_tenant, modulo) do update set habilitado = true;
+```
+Apagar: el mismo `insert … on conflict` con `false`.
+
+**Caché:** las fotos de WhatsApp ya vistas quedan en la caché del CDN hasta 1 día. Para verlas con
+la marca de inmediato, purgar la caché del CDN del proyecto en Vercel.
+
+### Pruebas
+- `lib/agente/agente-lenguaje.test.ts` (B29): comprobante, entregado, leyenda, aviso único,
+  "sí" → asesora, "sí" en otro momento no, aislamiento; ST03 "ya tienes tu pedido".
+- `lib/catalogo/marca-referencia.test.ts`: solo trazos (sin fuentes), esquina, JPEG real.
+- `lib/catalogo/foto-http.test.ts` (B29): módulo apagado/encendido, aislado por negocio, tienda,
+  descarga del panel.
+- Mutación: `python3 scripts/mutacion/b29.py` (11 protecciones).

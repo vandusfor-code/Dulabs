@@ -6,7 +6,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
  * por nombre en el código -- un módulo se enciende insertando una fila para el
  * tenant. Agregar un módulo nuevo = agregar su id a MODULOS.
  */
-export const MODULOS = ["catalogo", "publibordados_clientes", "pedidos"] as const;
+// "marca_referencia" (Bloque 29): la referencia estampada en las fotos del catálogo; no tiene menú propio.
+export const MODULOS = ["catalogo", "publibordados_clientes", "pedidos", "marca_referencia"] as const;
 export type ModuloId = (typeof MODULOS)[number];
 
 export function esModuloId(valor: unknown): valor is ModuloId {

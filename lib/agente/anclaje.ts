@@ -74,7 +74,7 @@ export function addOrderStateEvidence(order: { status?: string; tracking?: Order
 /** Afirmaciones sobre el estado del pedido (enviado, entregado, pagado, en preparación). */
 const ESTADO_CLAIMS: ReadonlyArray<readonly [string, RegExp]> = [
   ["enviado", /\b(?:fue|est[aá]n?|qued[oó]|va|van|ha sido|ya)\s+(?:\S+\s+){0,2}?(?:enviad[oa]s?|despachad[oa]s?|en camino|en ruta)\b|\bya\s+(?:sali[oó]|lo enviamos|la enviamos|te lo enviamos|lo despachamos)\b/],
-  ["entregado", /\b(?:fue|est[aá]n?|qued[oó]|ha sido|ya)\s+(?:\S+\s+){0,2}?entregad[oa]s?\b|\b(?:ya\s+)?(?:lo\s+|la\s+)?recibiste\b|\bte\s+(?:lleg[oó]|ha\s+llegado)(?![a-záéíóúñ])/],
+  ["entregado", /\b(?:fue|est[aá]n?|qued[oó]|ha sido|ya)\s+(?:\S+\s+){0,2}?entregad[oa]s?\b|\b(?:ya\s+)?(?:lo\s+|la\s+)?recibiste\b|\bte\s+(?:lleg[oó]|ha\s+llegado)(?![a-záéíóúñ])|\bya\s+tienes\s+(?:contigo\s+)?(?:tu|el|su)\s+(?:pedido|compra|orden)\b(?!\s+(?:confirmad|registrad|creado|listo|en\s+(?:el|tu)\s+carrito))|\b(?:ya\s+)?(?:lo|la|los|las)\s+tienes\s+(?:contigo|en\s+tus\s+manos)\b/],
   ["pagado", /\b(?:tu|el|su)\s+pago\s+(?:ya\s+)?(?:fue|est[aá]|qued[oó]|ha sido)\s+(?:\S+\s+)?(?:recibido|confirmado|registrado|aprobado|verificado)\b|\b(?:est[aá]|qued[oó]|fue)\s+(?:\S+\s+)?pagad[oa]s?\b|\brecibimos\s+tu\s+pago\b/],
   ["preparado", /\b(?:est[aá]n?|qued[oó]|va|ya)\s+(?:\S+\s+){0,2}?(?:en preparaci[oó]n|preparando|preparad[oa]s?|listo para (?:recoger|enviar|entregar|despachar))\b/],
 ];

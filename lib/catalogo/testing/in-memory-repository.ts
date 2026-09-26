@@ -68,6 +68,7 @@ export function createInMemoryCatalogRepository() {
   const publications = new Map<string, CatalogPublication>();
   const profiles = new Map<string, { name: string | null; whatsapp: string | null }>();
   const modulesEnabled = new Set<string>();
+  const referenceMark = new Set<string>();
   const imports = new Map<string, ImportRecord & { tenantId: string }>();
   /** false = simula la BD sin la migración de carga masiva. */
   let importsEnabled = true;
@@ -427,6 +428,10 @@ export function createInMemoryCatalogRepository() {
       return modulesEnabled.has(tenantId);
     },
 
+    async isReferenceMarkEnabled(tenantId) {
+      return referenceMark.has(tenantId);
+    },
+
     async createSignedUpload(path) {
       signedPaths.push(path);
       return { path, token: `token-${path}`, signedUrl: `https://storage.test/upload/${path}?token=x` };
@@ -509,6 +514,11 @@ export function createInMemoryCatalogRepository() {
     enableModule(tenantId: string, enabled = true) {
       if (enabled) modulesEnabled.add(tenantId);
       else modulesEnabled.delete(tenantId);
+    },
+    /** Bloque 29: módulo "marca_referencia". */
+    enableReferenceMark(tenantId: string, enabled = true) {
+      if (enabled) referenceMark.add(tenantId);
+      else referenceMark.delete(tenantId);
     },
     /** Simula la BD sin la migración de búsqueda (el agente usa la búsqueda anterior). */
     setSearchEnabled(enabled: boolean) {

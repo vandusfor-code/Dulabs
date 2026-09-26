@@ -199,7 +199,7 @@ describe("webhook: posición del agente y aislamiento de lo existente (guarda es
     assert.match(src, /!esSolucionesFinancieras && !esMediaHaciaFlow && nonTextReachesAgent\(mensaje\.type\) && \(await numeroConAgenteMemo\(\)\)/);
     assert.equal((src.match(/&& !esNoTextoHaciaAgente\) continue;/g) ?? []).length, 2);
     // En el agente: política determinista, y el mensaje superado por la ráfaga igual se atiende.
-    assert.match(src, /nonText: \{ kind: politica\.kind \}/);
+    assert.match(src, /nonText: \{ kind: politica\.kind(?:, caption: leyendaDeMeta\(mensaje\))? \}/);
     assert.match(src, /if \(nonTextReachesAgent\(mensaje\.type\)\) await intentarAgenteConversacionalSiAplica\(cliente, mensaje, telefonoRemitente, destino\);/);
   });
 

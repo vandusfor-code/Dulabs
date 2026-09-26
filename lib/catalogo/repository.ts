@@ -142,6 +142,11 @@ export interface CatalogRepository {
   getBusinessProfile(tenantId: string): Promise<{ name: string | null; whatsapp: string | null }>;
   /** Módulo "catalogo" habilitado (estricto: un error de BD se propaga). */
   isModuleEnabled(tenantId: string): Promise<boolean>;
+  /**
+   * Bloque 29: módulo "marca_referencia" (la referencia estampada en las fotos). Best-effort: es
+   * presentación, un error de BD devuelve false (la foto se sirve sin marca, nunca falla).
+   */
+  isReferenceMarkEnabled?(tenantId: string): Promise<boolean>;
 
   /**
    * Búsqueda de texto completo del agente (dulabs_catalogo_buscar): SOLO referencias,
@@ -794,6 +799,8 @@ export function createSupabaseCatalogRepository(supabase: SupabaseClient): Catal
     },
 
     isModuleEnabled: (tenantId) => moduloHabilitado(supabase, tenantId, "catalogo"),
+
+    isReferenceMarkEnabled: (tenantId) => moduloHabilitado(supabase, tenantId, "marca_referencia").catch(() => false),
 
     async createSignedUpload(path) {
       // upsert false: una ruta emitida no puede sobrescribir un objeto existente.
