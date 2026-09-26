@@ -933,3 +933,48 @@ describe("B28 · auditoría final — estado real, fotos y datos del checkout", 
     assert.equal((await estado()).checkout?.address, "Calle 20 # 10-15");
   });
 });
+
+describe("B28 · regresión de la corrida con Gemini REAL", () => {
+  async function sembrar(parcial: Partial<ConversationState>) {
+    const k = { tenantId: A.tenantId, phoneNumberId: PN_A, waId: CLIENTE };
+    const l = await stateStore.load(k);
+    await stateStore.save(k, { ...l.state, ...parcial }, l.version);
+  }
+  const mostrados = (ps: Array<{ reference: string; name: string }>) => ({
+    lastShown: ps.map((p) => ({ reference: p.reference, name: p.name })),
+    known: ps.map((p) => ({ reference: p.reference, via: "tool" as const, turn: 0 })),
+    ...(ps.length > 1 ? { ambiguity: { references: ps.map((p) => p.reference), createdTurn: 0, presentedTurn: 0 } } : {}),
+  });
+
+  it("Q04/Q06 'uno más' con A×1: el modelo llama update_cart en bucle (2, 3, 4…) => solo el primer +1 entra (queda A×2)", async () => {
+    const a = await producto("Aretes Luna Dorados", 45_000, 10);
+    await clasificar();
+    await sembrar({ ...mostrados([a]), cart: [{ reference: a.reference, quantity: 1 }] });
+    const up = (q: number) => call("update_cart", { items: [{ reference: a.reference, quantity: q }] });
+    const r = await turno([up(2), up(3), up(4), { text: "Listo, ya tienes 2." }], "uno más");
+    assert.deepEqual(r.trace.tool_calls.map((t) => t.result), ["ok", "QUANTITY_NOT_STATED", "QUANTITY_NOT_STATED"]);
+    assert.deepEqual((await estado()).cart.map((c) => c.quantity), [2]);
+  });
+
+  it("AM01 'quiero el dorado' con 'Aretes Luna Dorados' y 'Collar Estrella Dorado': ambos son dorados => CHOICE_REQUIRED y se pregunta", async () => {
+    const a = await producto("Aretes Luna Dorados", 45_000, 10);
+    const b = await producto("Collar Estrella Dorado", 60_000, 10);
+    await clasificar();
+    await sembrar(mostrados([a, b]));
+    const texto = "Agregué el Collar Estrella Dorado a tu carrito.";
+    const r = await turno([call("update_cart", { items: [{ reference: b.reference, quantity: 1 }] }), { text: texto }, { text: texto }], "quiero el dorado");
+    assert.equal(r.trace.tool_calls[0].result, "CHOICE_REQUIRED");
+    assert.deepEqual((await estado()).cart, []);
+    assert.equal(sent.at(-1), CART_CLARIFY.CHOICE_REQUIRED);
+    // Con una palabra que sí distingue ("el collar"), se resuelve sin preguntar.
+    assert.deepEqual(resolveSelection("el collar dorado", mostrados([a, b]).lastShown, { lenguaje: true }).selected.map((x) => x.reference), [b.reference]);
+  });
+
+  it("ST03 'ya recibí' => el modelo no puede afirmar 'ya recibiste tu pedido' / 'te llegó' sin respaldo; preguntarlo sí puede", () => {
+    const ev = emptyEvidence();
+    for (const t of ["¡Qué excelente noticia! Ya recibiste tu pedido.", "Qué bien que te llegó 😊"]) {
+      assert.ok(checkGrounding(t, ev).violations.some((v) => v.kind === "order_status"), t);
+    }
+    assert.ok(checkGrounding("¿Ya recibiste tu pedido?", ev).ok);
+  });
+});

@@ -88,6 +88,11 @@ function tokens(text: string): Set<string> {
   );
 }
 
+/** Raíces sin plural ni género: "dorado", "dorada", "dorados" => "dorad". */
+function raices(text: string): Set<string> {
+  return new Set([...tokens(text)].map((t) => (t.length > 4 ? t.replace(/(?:es|s)$/, "").replace(/[oa]$/, "") : t)));
+}
+
 /**
  * @param replyReference referencia de la foto citada, ya verificada contra el registro de ESTA conversación.
  * @param typedReferences referencias escritas literalmente por el cliente (extractReferences).
@@ -133,8 +138,11 @@ export function resolveSelection(
 
     if (shown.length > 1) {
       // Solo palabras que distinguen a UNA opción de las demás.
-      const words = tokens(text);
-      const perItem = shown.map((s) => tokens(s.name));
+      // Bloque 28: con la capa de lenguaje se compara sin plural ni género ("el dorado" = "Dorados"):
+      // una palabra que comparten dos opciones nunca señala a una sola.
+      const tk = (x: string) => (opts.lenguaje ? raices(x) : tokens(x));
+      const words = tk(text);
+      const perItem = shown.map((s) => tk(s.name));
       shown.forEach((s, i) => {
         const distinctive = [...perItem[i]].filter((w) => perItem.every((other, j) => j === i || !other.has(w)));
         if (distinctive.some((w) => words.has(w))) add(s.reference, "name");
