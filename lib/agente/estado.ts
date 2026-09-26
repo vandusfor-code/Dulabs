@@ -134,6 +134,9 @@ export const conversationStateSchema = z
      */
     // Opcional (sin default): solo se escribe cuando existe, así un rollback no invalida los estados guardados.
     checkoutName: z.string().min(2).max(60).optional(),
+    // --- Bloque 29 ---
+    /** Turno en que se le pidió la referencia por una foto sin texto: un "sí" justo después pide una asesora. */
+    fotoPedidaTurn: z.number().int().min(0).optional(),
   })
   .strict();
 

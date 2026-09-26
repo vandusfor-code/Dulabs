@@ -17,7 +17,7 @@ type Service = Pick<ReturnType<typeof createPublicCatalogService>, "locateImage"
 
 export interface FotoDeps {
   servicio: () => Service;
-  aJpeg: (body: ReadableStream<Uint8Array>) => Promise<Buffer>;
+  aJpeg: (body: ReadableStream<Uint8Array>, opts?: { marca?: string | null }) => Promise<Buffer>;
 }
 
 const depsReales: FotoDeps = {
@@ -65,7 +65,8 @@ export async function responderFoto(
 
     if (whatsapp) {
       // Meta no acepta WebP como imagen: la foto de detalle se convierte a JPEG (el CDN la cachea por versión).
-      const jpeg = await deps.aJpeg(image.body);
+      // Bloque 29: con el módulo "marca_referencia", la referencia va estampada en la esquina.
+      const jpeg = await deps.aJpeg(image.body, location.mark ? { marca: location.mark } : {});
       return new Response(new Uint8Array(jpeg), {
         status: 200,
         headers: {

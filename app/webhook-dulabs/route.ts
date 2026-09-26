@@ -1353,6 +1353,12 @@ async function dentroDelCupoIA(cliente: ClienteConfig): Promise<boolean> {
 // mensaje.text.body sigue de largo hacia el camino existente (Flow hand-built
 // con su propio soporte de buttonId/media, o LEGACY), nunca se le pasa texto
 // vacío al Business Agent.
+/** Bloque 29: leyenda escrita por el cliente en una foto, video o archivo (Meta solo la trae en esos tres). */
+function leyendaDeMeta(mensaje: MetaMessage): string | null {
+  const c = mensaje.image?.caption ?? mensaje.video?.caption ?? mensaje.document?.caption;
+  return typeof c === "string" && c.trim() !== "" ? c.trim().slice(0, 1_000) : null;
+}
+
 async function intentarAgenteConversacionalSiAplica(cliente: ClienteConfig, mensaje: MetaMessage, telefonoRemitente: string, destino: string): Promise<boolean> {
   const texto = mensaje.text?.body?.trim();
   try {
@@ -1363,7 +1369,7 @@ async function intentarAgenteConversacionalSiAplica(cliente: ClienteConfig, mens
       const politica = nonTextPolicy(mensaje.type);
       if (politica && politica.action !== "ignore") {
         const r = await atenderConAgenteSiAplica(
-          { cliente, waId: telefonoRemitente, destino, wamid: mensaje.id, text: "", replyTo: replyToDeMeta(mensaje.context), nonText: { kind: politica.kind } },
+          { cliente, waId: telefonoRemitente, destino, wamid: mensaje.id, text: "", replyTo: replyToDeMeta(mensaje.context), nonText: { kind: politica.kind, caption: leyendaDeMeta(mensaje) } },
           deps,
         );
         return r.handled;

@@ -450,6 +450,7 @@ lib/catalogo/tienda-publica.test.ts
 lib/catalogo/busqueda-publica.test.ts
 lib/catalogo/busqueda-indice.test.ts
 lib/catalogo/foto-http.test.ts
+lib/catalogo/marca-referencia.test.ts
 lib/catalogo/limite-paginas.test.ts
 lib/catalogo/listado-admin.test.ts
 lib/catalogo/pedidos/historial.test.ts

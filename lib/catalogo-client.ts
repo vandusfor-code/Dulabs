@@ -211,6 +211,18 @@ export function createCatalogClient(accessToken: string) {
       return call(accessToken, "/publicacion/rotar-mayor", { method: "POST" });
     },
 
+    /** Bloque 29: la foto en JPEG con la referencia estampada (módulo "marca_referencia"), para descargarla. */
+    async downloadMarkedImage(productId: string, mediaId: string): Promise<CatalogResult<Blob>> {
+      try {
+        const r = await fetch(`${BASE}/productos/${encodeURIComponent(productId)}/imagenes/${encodeURIComponent(mediaId)}/marcada`, { headers: { Authorization: `Bearer ${accessToken}` } });
+        if (r.ok) return { ok: true, data: await r.blob() };
+        const body = (await r.json().catch(() => ({}))) as { error?: { code?: string; message?: string } };
+        return { ok: false, error: { code: body.error?.code ?? "INTERNAL_ERROR", message: body.error?.message ?? "No se pudo descargar la foto.", status: r.status } };
+      } catch {
+        return { ok: false, error: { code: "NETWORK_ERROR", message: "Sin conexión. Revisa tu internet e intenta de nuevo.", status: 0 } };
+      }
+    },
+
     deleteImage(mediaId: string): Promise<CatalogResult<{ deleted: true }>> {
       return call(accessToken, `/imagenes/${encodeURIComponent(mediaId)}`, { method: "DELETE" });
     },

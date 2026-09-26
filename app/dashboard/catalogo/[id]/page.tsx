@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ArrowLeft, ImagePlus, Loader2, Power, Star, Trash2 } from "lucide-react";
+import { ArrowLeft, Download, ImagePlus, Loader2, Power, Star, Trash2 } from "lucide-react";
+import { useDashboard } from "@/lib/dashboard-session";
 import { PageHeader } from "@/components/dashboard/shell/ui";
 import { useI18n } from "@/lib/i18n";
 import type { CatalogCategory, CatalogImage, CatalogProductDetail } from "@/lib/catalogo/domain";
@@ -30,6 +31,9 @@ export default function ProductoPage() {
   const [togglingStatus, setTogglingStatus] = useState(false);
   const [uploadStage, setUploadStage] = useState<UploadStage | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [downloading, setDownloading] = useState(false);
+  // Bloque 29: descargar la foto con la referencia estampada (módulo "marca_referencia" del negocio).
+  const marcaReferencia = useDashboard().modulos.includes("marca_referencia");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
 
@@ -125,6 +129,23 @@ export default function ProductoPage() {
     toast(t("Foto agregada", "Photo added"));
   };
 
+  const descargarConReferencia = async (image: CatalogImage) => {
+    if (!client || !product) return;
+    setDownloading(true);
+    const r = await client.downloadMarkedImage(product.id, image.id);
+    setDownloading(false);
+    if (!r.ok) {
+      toast(r.error.message, "error");
+      return;
+    }
+    const url = URL.createObjectURL(r.data);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${product.reference}.jpg`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1_000);
+  };
+
   const eliminar = async (image: CatalogImage) => {
     if (!client || readOnly) return;
     if (!window.confirm(t("¿Eliminar esta foto?", "Delete this photo?"))) return;
@@ -197,6 +218,12 @@ export default function ProductoPage() {
                 <StatusBadge status={product.status} />
               </div>
             </div>
+            {marcaReferencia && selected && (
+              <button type="button" onClick={() => descargarConReferencia(selected)} disabled={downloading} className={cn(actionBtn, "w-full justify-center")}>
+                {downloading ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
+                {t("Descargar con referencia", "Download with reference")}
+              </button>
+            )}
 
             <div className="grid grid-cols-5 gap-2">
               {images.map((img) => (

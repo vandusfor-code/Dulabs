@@ -34,7 +34,7 @@ import { decideLimits, type UsageReader } from "@/lib/agente/limites";
 import { asksForHuman, detectIntent, type HandoffMotive, type SystemHandoffMotive, type TurnIntent } from "@/lib/agente/intencion";
 import { agentToolDeclarations, catalogPublication, executeAgentTool, toolKind, type AgentToolsDeps, type AgentTurnToolContext, type QueuedImage } from "@/lib/agente/herramientas";
 import type { AgentToolName } from "@/lib/agente/nombres-herramientas";
-import { NON_TEXT_MESSAGES, NON_TEXT_NOTICE_COOLDOWN_MS, nonTextPolicy, type NonTextAction, type NonTextKind } from "@/lib/agente/entrada";
+import { MEDIA_DEL_CLIENTE, MEDIA_MESSAGES, NON_TEXT_MESSAGES, NON_TEXT_NOTICE_COOLDOWN_MS, nonTextPolicy, type NonTextAction, type NonTextKind } from "@/lib/agente/entrada";
 import {
   CHANNEL_LABEL,
   CHANNEL_QUESTION,
@@ -64,7 +64,7 @@ import {
   type CheckoutResult,
 } from "@/lib/agente/checkout";
 import type { CheckoutStep } from "@/lib/agente/estado";
-import { leerCantidad, modalidadInicial, numerosDelCliente, pideQuitar } from "@/lib/agente/lenguaje/interpretar";
+import { esAfirmacion, leerCantidad, modalidadInicial, numerosDelCliente, pideQuitar } from "@/lib/agente/lenguaje/interpretar";
 import { addOrderStateEvidence, type OrderTracking } from "@/lib/agente/anclaje";
 
 /**
@@ -142,7 +142,7 @@ export interface AgentTurnInput {
    * Mensaje SIN texto (nota de voz, imagen, documento…; Bloque 23): lo resuelve la política
    * determinista de entrada.ts, sin modelo. `text` llega vacío.
    */
-  nonText?: { kind: NonTextKind } | null;
+  nonText?: { kind: NonTextKind; caption?: string | null } | null;
   /**
    * Bloque 26: id del botón de WhatsApp que tocó el cliente (solo si llegó; el buzón guarda solo el
    * texto, y entonces la acción se decide por el título exacto del botón). Nunca lo interpreta el modelo.
@@ -423,6 +423,28 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
     trace.state_saved = await deps.state.save(key, { ...seen, handoffTurn: seen.turn }, loaded.version).catch(() => false);
     return true;
   };
+  /** Bloque 29: qué hacer con una foto, video o archivo del cliente según su pedido (tabla en entrada.ts). */
+  const mediaDelCliente = async (
+    kind: NonTextKind,
+    caption: string | null | undefined,
+    ckStep: string | null,
+  ): Promise<{ tipo: "comprobante" | "posventa"; orderId: string; etapa: string } | { tipo: "leyenda"; texto: string } | { tipo: "pedir" } | null> => {
+    let order: Awaited<ReturnType<typeof deps.tools.engine.getOrder>> | null = null;
+    try {
+      order = await deps.tools.engine.getOrder({ tenantId: input.tenantId, contact, requestId });
+    } catch (err) {
+      // Sin pedido abierto es lo normal; si NO se pudo consultar, se conserva lo de antes (asesora).
+      if (!(err instanceof OrderError)) return null;
+    }
+    const ck = order?.checkout ?? null;
+    if (order && ck) {
+      if (ck.stage === "enviado" || ck.stage === "entregado") return { tipo: "posventa", orderId: order.orderId, etapa: ck.stage };
+      if (kind !== "video" && ck.paymentMethod === "transferencia" && ck.paymentStatus === "pendiente") return { tipo: "comprobante", orderId: order.orderId, etapa: ck.stage };
+    }
+    const texto = typeof caption === "string" ? caption.trim().slice(0, 1_000) : "";
+    if (texto && !ckStep) return { tipo: "leyenda", texto };
+    return { tipo: "pedir" };
+  };
   if (limit.action !== "allow") {
     trace.turn = loaded.state.turn;
     if (limit.action === "throttle") {
@@ -464,51 +486,85 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
       trace.state_saved = await deps.state.save(key, seen, loaded.version).catch(() => false);
       return finish("replied", sent ? pideEscrito : null);
     }
-    if (policy.action === "handoff") {
-      const message = NON_TEXT_MESSAGES.handoff(policy.kind);
-      // Motivo de la lista cerrada existente ("algo que el asistente no puede resolver"); el tipo exacto queda en trace.non_text.
-      if (await handOffNow("out_of_scope", "system", "El cliente envió una imagen, archivo o ubicación que el asistente no puede revisar", message)) return finish("handoff", trace.sent ? message : null);
-      // La pausa no se pudo registrar: no se promete una asesora; se dice la verdad.
-      trace.error_kind = "handoff_failed";
-      const failed = NON_TEXT_MESSAGES.handoffFailed(policy.kind);
-      const sent = await sendFixed(failed);
-      trace.state_saved = await deps.state.save(key, seen, loaded.version).catch(() => false);
-      return finish("fallback", sent ? failed : null);
-    }
-    if (policy.action === "ignore") {
-      trace.state_saved = await deps.state.save(key, seen, loaded.version).catch(() => false);
-      return finish("rate_limited", null);
-    }
-    // ask_text: nota de voz / mensaje que Meta no pudo entregar. Si responde a una foto de ESTA
-    // conversación, el producto queda señalado para el siguiente mensaje ("quiero ese").
-    let next: ConversationState = { ...seen, turn: seen.turn + 1, lastInteractionAt: new Date(now()).toISOString() };
-    trace.turn = next.turn;
-    const photo = input.replyTo?.forwarded ? null : input.replyTo?.wamid ? await repliedPhoto(deps, input, key, input.replyTo.wamid) : null;
-    trace.reply_to = input.replyTo?.forwarded ? "forwarded" : input.replyTo?.wamid ? (photo ? "product_image" : "unknown_message") : null;
-    if (photo) {
-      next = rememberReferences(next, [photo.reference], "image");
-      next = { ...next, selection: [{ reference: photo.reference, via: "image_reply", turn: next.turn }] };
-      trace.selection = [{ reference: photo.reference, via: "image_reply" }];
-    }
-    const last = next.nonTextNoticeAt ? Date.parse(next.nonTextNoticeAt) : NaN;
-    if (Number.isFinite(last) && now() - last < NON_TEXT_NOTICE_COOLDOWN_MS) {
-      // Ya se le pidió escribir hace poco: no se repite el aviso (anti-spam), pero la foto citada queda señalada.
+    // Bloque 29 (solo con el checkout conversacional): foto, video o archivo del cliente (tabla en entrada.ts).
+    const media = deps.config.checkoutEnabled && MEDIA_DEL_CLIENTE.has(policy.kind) ? await mediaDelCliente(policy.kind, input.nonText.caption, ckStep) : null;
+    if (media?.tipo === "leyenda") {
+      // La leyenda se atiende como un mensaje de texto (turno normal, más abajo).
+      input = { ...input, text: media.texto, nonText: null };
+    } else {
+      if (media?.tipo === "comprobante") {
+        const message = MEDIA_MESSAGES.comprobante(policy.kind);
+        if (await handOffNow("payment_or_delivery", "system", `Posible comprobante de pago del pedido ${media.orderId} (transferencia pendiente)`, message, media.orderId)) return finish("handoff", trace.sent ? message : null);
+      } else if (media?.tipo === "posventa") {
+        const message = NON_TEXT_MESSAGES.handoff(policy.kind);
+        if (await handOffNow("order_issue", "system", `El cliente envió una imagen o archivo sobre el pedido ${media.orderId} (${media.etapa})`, message, media.orderId)) return finish("handoff", trace.sent ? message : null);
+      } else if (media?.tipo === "pedir") {
+        let next: ConversationState = { ...seen, turn: seen.turn + 1, lastInteractionAt: new Date(now()).toISOString() };
+        trace.turn = next.turn;
+        const last = next.nonTextNoticeAt ? Date.parse(next.nonTextNoticeAt) : NaN;
+        if (Number.isFinite(last) && now() - last < NON_TEXT_NOTICE_COOLDOWN_MS) {
+          // Varias fotos seguidas: un solo aviso (anti-spam).
+          trace.state_saved = await deps.state.save(key, next, loaded.version).catch(() => false);
+          return finish("rate_limited", null);
+        }
+        const text = ckStep ? MEDIA_MESSAGES.enCheckout(CHECKOUT_STEP_HINT[ckStep]) : MEDIA_MESSAGES.pideReferencia(policy.kind);
+        const sent = await sendFixed(text);
+        if (sent) next = { ...next, nonTextNoticeAt: new Date(now()).toISOString(), ...(ckStep ? {} : { fotoPedidaTurn: next.turn }) };
+        trace.state_saved = await deps.state.save(key, next, loaded.version).catch(() => false);
+        return finish("replied", sent ? text : null);
+      }
+      if (policy.action === "handoff") {
+        const message = NON_TEXT_MESSAGES.handoff(policy.kind);
+        // Motivo de la lista cerrada existente ("algo que el asistente no puede resolver"); el tipo exacto queda en trace.non_text.
+        if (await handOffNow("out_of_scope", "system", "El cliente envió una imagen, archivo o ubicación que el asistente no puede revisar", message)) return finish("handoff", trace.sent ? message : null);
+        // La pausa no se pudo registrar: no se promete una asesora; se dice la verdad.
+        trace.error_kind = "handoff_failed";
+        const failed = NON_TEXT_MESSAGES.handoffFailed(policy.kind);
+        const sent = await sendFixed(failed);
+        trace.state_saved = await deps.state.save(key, seen, loaded.version).catch(() => false);
+        return finish("fallback", sent ? failed : null);
+      }
+      if (policy.action === "ignore") {
+        trace.state_saved = await deps.state.save(key, seen, loaded.version).catch(() => false);
+        return finish("rate_limited", null);
+      }
+      // ask_text: nota de voz / mensaje que Meta no pudo entregar. Si responde a una foto de ESTA
+      // conversación, el producto queda señalado para el siguiente mensaje ("quiero ese").
+      let next: ConversationState = { ...seen, turn: seen.turn + 1, lastInteractionAt: new Date(now()).toISOString() };
+      trace.turn = next.turn;
+      const photo = input.replyTo?.forwarded ? null : input.replyTo?.wamid ? await repliedPhoto(deps, input, key, input.replyTo.wamid) : null;
+      trace.reply_to = input.replyTo?.forwarded ? "forwarded" : input.replyTo?.wamid ? (photo ? "product_image" : "unknown_message") : null;
+      if (photo) {
+        next = rememberReferences(next, [photo.reference], "image");
+        next = { ...next, selection: [{ reference: photo.reference, via: "image_reply", turn: next.turn }] };
+        trace.selection = [{ reference: photo.reference, via: "image_reply" }];
+      }
+      const last = next.nonTextNoticeAt ? Date.parse(next.nonTextNoticeAt) : NaN;
+      if (Number.isFinite(last) && now() - last < NON_TEXT_NOTICE_COOLDOWN_MS) {
+        // Ya se le pidió escribir hace poco: no se repite el aviso (anti-spam), pero la foto citada queda señalada.
+        trace.state_saved = await deps.state.save(key, next, loaded.version).catch(() => false);
+        return finish("rate_limited", null);
+      }
+      const text =
+        policy.kind === "unsupported"
+          ? NON_TEXT_MESSAGES.unsupported
+          : photo
+            ? NON_TEXT_MESSAGES.audioAboutProduct({ reference: photo.reference, name: photo.name, available: photo.status === "available" })
+            : ckStep
+              ? // Bloque 28: con un pedido en registro, se dice exactamente qué dato falta.
+                `Por ahora no puedo escuchar notas de voz 🙏 ${CHECKOUT_STEP_HINT[ckStep]}`
+              : NON_TEXT_MESSAGES.audio;
+      const sent = await sendFixed(text);
+      if (sent) next = { ...next, nonTextNoticeAt: new Date(now()).toISOString() };
       trace.state_saved = await deps.state.save(key, next, loaded.version).catch(() => false);
-      return finish("rate_limited", null);
+      return finish("replied", sent ? text : null);
     }
-    const text =
-      policy.kind === "unsupported"
-        ? NON_TEXT_MESSAGES.unsupported
-        : photo
-          ? NON_TEXT_MESSAGES.audioAboutProduct({ reference: photo.reference, name: photo.name, available: photo.status === "available" })
-          : ckStep
-            ? // Bloque 28: con un pedido en registro, se dice exactamente qué dato falta.
-              `Por ahora no puedo escuchar notas de voz 🙏 ${CHECKOUT_STEP_HINT[ckStep]}`
-            : NON_TEXT_MESSAGES.audio;
-    const sent = await sendFixed(text);
-    if (sent) next = { ...next, nonTextNoticeAt: new Date(now()).toISOString() };
-    trace.state_saved = await deps.state.save(key, next, loaded.version).catch(() => false);
-    return finish("replied", sent ? text : null);
+  }
+
+  // Bloque 29: "sí" justo después de "¿me escribes la referencia? … o te comunico con una asesora" => asesora.
+  if (deps.config.checkoutEnabled && loaded.state.fotoPedidaTurn === loaded.state.turn && esAfirmacion(input.text) && extractReferences(input.text).length === 0) {
+    trace.turn = loaded.state.turn;
+    if (await handOffNow("customer_request", "customer", "El cliente envió una foto y pidió una asesora")) return finish("handoff", trace.sent ? FALLBACK_MESSAGES.handoff : null);
   }
 
   // El cliente pide una persona: el backend lo pasa a una asesora sin depender del modelo.

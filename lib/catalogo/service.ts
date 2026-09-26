@@ -387,6 +387,20 @@ export function createCatalogService({ repo, newId = randomUUID }: CatalogServic
       return publicationView(updated, true);
     },
 
+    /**
+     * Bloque 29: foto de un producto para descargarla con la referencia estampada (publicar en
+     * Instagram o estados). Solo con el módulo "marca_referencia"; sirve la variante de detalle.
+     */
+    async openImageForMark(actor: CatalogActor, productId: string, mediaId: string): Promise<{ body: ReadableStream<Uint8Array>; reference: string }> {
+      if (!(await repo.isReferenceMarkEnabled?.(actor.tenantId))) throw new CatalogError("NOT_FOUND", "La marca con la referencia no está habilitada para este negocio.");
+      const product = await requireProduct(actor, productId);
+      const media = (await repo.listMedia(actor.tenantId, productId)).find((m) => m.id === mediaId);
+      if (!media) throw new CatalogError("NOT_FOUND", "La imagen no existe.");
+      const image = (await repo.openImage(detailPathOf(media.storagePath))) ?? (await repo.openImage(media.storagePath));
+      if (!image) throw new CatalogError("NOT_FOUND", "La imagen no existe.");
+      return { body: image.body, reference: product.reference };
+    },
+
     async deleteImage(actor: CatalogActor, mediaId: string): Promise<{ deleted: true }> {
       const removed = await repo.deleteMedia(actor.tenantId, actor.userId, mediaId);
       if (!removed) throw new CatalogError("NOT_FOUND", "La imagen no existe.");
@@ -445,6 +459,8 @@ export interface PublicImageLocation {
   /** Ruta en Storage que se sirve; `fallback` si la variante no existe (fotos anteriores a las variantes). */
   path: string;
   fallback: string | null;
+  /** Bloque 29: referencia que se estampa en la foto (solo el JPEG de WhatsApp y con el módulo "marca_referencia"). */
+  mark?: string | null;
 }
 
 /** Máximo de productos destacados en el inicio. */
@@ -470,6 +486,8 @@ export interface PublicStorefront {
   publicName: string;
   whatsapp: string | null;
   categories: CatalogCategory[];
+  /** Bloque 29: la referencia se muestra sobre las fotos (módulo "marca_referencia"). */
+  referenceMark: boolean;
 }
 
 export interface PublicHome {
@@ -596,10 +614,18 @@ export function createPublicCatalogService({ repo, orders }: { repo: CatalogRepo
     // La versión es la misma que llevan las URLs que la tienda y el agente publican.
     const versioned = input.file.variant === "thumb" ? src.thumb : src.main;
     const canonicalPath = input.whatsapp ? whatsappImagePath(pub.slug, reference, src.main) : productImagePath(pub.slug, reference, input.file, versioned);
+    if (input.whatsapp && (await referenceMarkOf(pub.tenantId))) {
+      return { version: imageVersion(versioned), canonicalPath, path: detailPathOf(src.main), fallback: src.main, mark: product.reference };
+    }
     if (input.file.variant === "thumb") return { version: imageVersion(versioned), canonicalPath, path: src.thumb, fallback: null };
     // Fotos anteriores a las variantes (o de AMORE) no tienen detalle: se sirve la principal.
     if (input.file.variant === "detail") return { version: imageVersion(versioned), canonicalPath, path: detailPathOf(src.main), fallback: src.main };
     return { version: imageVersion(versioned), canonicalPath, path: src.main, fallback: null };
+  }
+
+  /** Bloque 29: módulo "marca_referencia" (best-effort: sin él o con error, sin marca). */
+  async function referenceMarkOf(tenantId: string): Promise<boolean> {
+    return (await repo.isReferenceMarkEnabled?.(tenantId).catch(() => false)) ?? false;
   }
 
   /** Abre (Storage) una foto ya ubicada con locateImage. */
@@ -717,16 +743,16 @@ export function createPublicCatalogService({ repo, orders }: { repo: CatalogRepo
     async getStorefront(slug: string): Promise<PublicStorefront | null> {
       const pub = await openPublication(slug);
       if (!pub) return null;
-      const [categories, business] = await Promise.all([repo.listCategories(pub.tenantId), repo.getBusinessProfile(pub.tenantId)]);
-      return { slug: pub.slug, publicName: pub.publicName, whatsapp: business.whatsapp, categories };
+      const [categories, business, referenceMark] = await Promise.all([repo.listCategories(pub.tenantId), repo.getBusinessProfile(pub.tenantId), referenceMarkOf(pub.tenantId)]);
+      return { slug: pub.slug, publicName: pub.publicName, whatsapp: business.whatsapp, categories, referenceMark };
     },
 
     /** Marco de la tienda MAYORISTA: el mismo, pero solo con el token exacto de la publicación (si no, null => 404). */
     async getWholesaleStorefront(slug: string, token: string): Promise<PublicStorefront | null> {
       const pub = await openPublication(slug);
       if (!pub || !contextAllowed(pub, "wholesale", token)) return null;
-      const [categories, business] = await Promise.all([repo.listCategories(pub.tenantId), repo.getBusinessProfile(pub.tenantId)]);
-      return { slug: pub.slug, publicName: pub.publicName, whatsapp: business.whatsapp, categories };
+      const [categories, business, referenceMark] = await Promise.all([repo.listCategories(pub.tenantId), repo.getBusinessProfile(pub.tenantId), referenceMarkOf(pub.tenantId)]);
+      return { slug: pub.slug, publicName: pub.publicName, whatsapp: business.whatsapp, categories, referenceMark };
     },
 
     async getCatalog(input: PublicCatalogQuery): Promise<PublicCatalogPage | null> {

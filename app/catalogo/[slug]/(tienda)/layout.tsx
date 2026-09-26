@@ -32,7 +32,7 @@ export default async function TiendaLayout({ children, params }: { children: Rea
 
   return (
     <div className={`catalogo-tienda ${serifCatalogo.variable} min-h-screen w-full flex-1 bg-ink font-sans text-fg`}>
-      <TiendaProvider slug={tienda.slug} context="retail" basePath={basePath} whatsapp={tienda.whatsapp}>
+      <TiendaProvider slug={tienda.slug} context="retail" basePath={basePath} whatsapp={tienda.whatsapp} marcaReferencia={tienda.referenceMark}>
         <MarcadorLlegada />
         <Suspense fallback={<div className="h-16" aria-hidden />}>
           <TiendaHeader marca={marca} basePath={basePath} listPath={listPath} categorias={tienda.categories} />

@@ -17,9 +17,11 @@ const ORIGEN = "https://tienda.test";
 let mem: ReturnType<typeof createInMemoryCatalogRepository>;
 let admin: ReturnType<typeof createCatalogService>;
 let conversiones: number;
+let marcas: Array<string | null>;
 let deps: FotoDeps;
 let slug: string;
 let ref: string;
+let productoId: string;
 let urls: { imageUrl: string; thumbUrl: string; detailUrl: string };
 
 async function subir(actor: CatalogActor, productId: string) {
@@ -42,10 +44,12 @@ beforeEach(async () => {
   admin = createCatalogService({ repo: mem.repo });
   const publico = createPublicCatalogService({ repo: mem.repo });
   conversiones = 0;
+  marcas = [];
   deps = {
     servicio: () => publico,
-    aJpeg: async (body) => {
+    aJpeg: async (body, opts) => {
       conversiones++;
+      marcas.push(opts?.marca ?? null);
       await body.cancel().catch(() => {});
       return Buffer.from([0xff, 0xd8, 0xff]);
     },
@@ -59,6 +63,7 @@ beforeEach(async () => {
   const p = await admin.createProduct(A, { name: "Anillo Luna", retailPrice: 1000, stock: 2 });
   await subir(A, p.id);
   ref = p.reference;
+  productoId = p.id;
   const ficha = await publico.getProduct({ slug, reference: ref });
   urls = { imageUrl: ficha!.imageUrl!, thumbUrl: ficha!.thumbUrl!, detailUrl: ficha!.detailUrl! };
   mem.opened.length = 0;
@@ -149,5 +154,57 @@ describe("carga de las fotos de la tienda (móvil)", () => {
       { loading: "lazy", fetchPriority: "auto" },
     ]);
     assert.deepEqual(cargaDeFoto(undefined), { loading: "lazy", fetchPriority: "auto" }, "sin posición (otros usos): diferida");
+  });
+});
+
+describe("Bloque 29 · marca con la referencia (módulo marca_referencia)", () => {
+  const whatsapp = () => `/catalogo/${slug}/productos/${ref.toLowerCase()}/whatsapp.jpg?v=${new URL(ORIGEN + urls.imageUrl).searchParams.get("v")}`;
+  it("apagado (por defecto): el JPEG de WhatsApp sale sin marca", async () => {
+    const r = await pedir(whatsapp());
+    assert.equal(r.status, 200);
+    assert.deepEqual(marcas, [null]);
+  });
+
+  it("encendido: el JPEG de WhatsApp lleva la referencia; las fotos de la tienda (WebP) no se tocan", async () => {
+    mem.enableReferenceMark(A.tenantId);
+    const r = await pedir(whatsapp());
+    assert.equal(r.status, 200);
+    assert.deepEqual(marcas, [ref]);
+    const t = await pedir(urls.detailUrl);
+    assert.equal(t.status, 200);
+    await t.body?.cancel();
+    assert.equal(conversiones, 1, "la foto de la tienda no pasa por la conversión");
+  });
+
+  it("aislado por negocio: encenderlo en B no marca las fotos de A", async () => {
+    mem.enableReferenceMark(B.tenantId);
+    await pedir(whatsapp());
+    assert.deepEqual(marcas, [null]);
+  });
+});
+
+describe("Bloque 29 · descarga con la referencia desde el panel", () => {
+  it("solo con el módulo encendido, solo fotos del propio negocio; abre la variante de detalle", async () => {
+    const p = { id: productoId };
+    const media = (await admin.getProduct(A, p.id)).images[0];
+    await assert.rejects(admin.openImageForMark(A, p.id, media.id), /no está habilitada/);
+    mem.enableReferenceMark(A.tenantId);
+    const r = await admin.openImageForMark(A, p.id, media.id);
+    assert.equal(r.reference, ref);
+    await r.body.cancel().catch(() => {});
+    assert.match(String(mem.opened.at(-1)), /detail/);
+    mem.enableReferenceMark(B.tenantId);
+    await assert.rejects(admin.openImageForMark(B, p.id, media.id), /no existe/);
+  });
+});
+
+describe("Bloque 29 · referencia sobre las fotos de la tienda", () => {
+  it("la tienda (detal y mayor) solo la muestra con el módulo del negocio", async () => {
+    const publico = createPublicCatalogService({ repo: mem.repo });
+    assert.equal((await publico.getStorefront(slug))?.referenceMark, false);
+    mem.enableReferenceMark(B.tenantId);
+    assert.equal((await publico.getStorefront(slug))?.referenceMark, false, "encenderlo en otro negocio no cambia este");
+    mem.enableReferenceMark(A.tenantId);
+    assert.equal((await publico.getStorefront(slug))?.referenceMark, true);
   });
 });

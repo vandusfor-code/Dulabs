@@ -39,7 +39,7 @@ export function FichaProducto({ producto, categorias, basePath, listPath }: { pr
     <article className="pt-2 sm:pt-6">
       <BotonVolver listPath={listPath} />
       <div className="mt-2 grid gap-6 md:mt-4 md:grid-cols-2 md:gap-10 lg:gap-14">
-        <GaleriaProducto images={producto.gallery} name={producto.name} />
+        <GaleriaProducto images={producto.gallery} name={producto.name} reference={producto.reference} />
 
         <div className="flex flex-col gap-5 md:py-2">
           <div>

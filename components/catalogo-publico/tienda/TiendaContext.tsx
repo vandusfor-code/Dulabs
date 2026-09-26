@@ -17,6 +17,8 @@ interface TiendaValue {
   store: CartStore;
   basePath: string;
   whatsapp: string | null;
+  /** Bloque 29: la referencia se muestra sobre las fotos (módulo "marca_referencia"). */
+  marcaReferencia: boolean;
   carritoAbierto: boolean;
   abrirCarrito: () => void;
   cerrarCarrito: () => void;
@@ -24,19 +26,21 @@ interface TiendaValue {
   avisarAgregado: (nombre: string) => void;
 }
 
-const TiendaContext = createContext<TiendaValue | null>(null);
+export const TiendaContext = createContext<TiendaValue | null>(null);
 
 export function TiendaProvider({
   slug,
   context,
   basePath,
   whatsapp,
+  marcaReferencia = false,
   children,
 }: {
   slug: string;
   context: PriceContext;
   basePath: string;
   whatsapp: string | null;
+  marcaReferencia?: boolean;
   children: ReactNode;
 }) {
   const [carritoAbierto, setCarritoAbierto] = useState(false);
@@ -47,6 +51,7 @@ export function TiendaProvider({
       store: getCartStore(slug, context),
       basePath,
       whatsapp,
+      marcaReferencia,
       carritoAbierto,
       abrirCarrito: () => {
         setAgregado(null);
@@ -55,7 +60,7 @@ export function TiendaProvider({
       cerrarCarrito: () => setCarritoAbierto(false),
       avisarAgregado,
     }),
-    [slug, context, basePath, whatsapp, carritoAbierto, avisarAgregado],
+    [slug, context, basePath, whatsapp, marcaReferencia, carritoAbierto, avisarAgregado],
   );
   return (
     <TiendaContext.Provider value={value}>
