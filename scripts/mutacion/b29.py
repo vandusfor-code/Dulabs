@@ -12,7 +12,7 @@ MR = "lib/catalogo/marca-referencia.test.ts"
 RT = "lib/agente/runtime.ts"
 M = [
     ("M1 un posible comprobante no pasa a una asesora", RT,
-     'if (kind !== "video" && ck.paymentMethod === "transferencia" && ck.paymentStatus === "pendiente")', "if (false)", LG),
+     'if (media.kind !== "video" && ck.paymentMethod === "transferencia" && ck.paymentStatus === "pendiente")', "if (false)", LG),
     ("M2 foto sobre un pedido entregado no pasa a una asesora", RT,
      'if (ck.stage === "enviado" || ck.stage === "entregado")', "if (false)", LG),
     ("M3 la leyenda de la foto se ignora", RT,

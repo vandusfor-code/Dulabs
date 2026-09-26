@@ -140,9 +140,19 @@ export function hablaDePago(texto: string): boolean {
 
 const LO_QUE_ENVIO: Readonly<Partial<Record<NonTextKind, string>>> = { image: "la foto", video: "el video", document: "el archivo" };
 
+/**
+ * Bloque 30: una foto de producto de una RÁFAGA entra al buzón como texto (el turno atiende todas
+ * juntas y responde una sola vez): "[foto] <texto de la foto>\n(referencia en la foto: DL-…)" o,
+ * si no trae texto ni referencia legible, esta marca.
+ */
+export const FOTO_SIN_REFERENCIA = "[foto sin referencia]";
+export const PREFIJO_FOTO = "[foto]";
+
 export const MEDIA_MESSAGES = {
-  pideReferencia: (kind: NonTextKind) =>
-    `¡Gracias por ${LO_QUE_ENVIO[kind] ?? "tu mensaje"}! 😊 Por aquí no puedo ver imágenes ni archivos. ¿Me escribes la referencia del producto (aparece en la foto o en el catálogo)? Si son varios, escríbeme todas las referencias. Si prefieres, te comunico con una asesora.`,
+  pideReferencia: (kind: NonTextKind, fotos = 1) =>
+    fotos > 1
+      ? `¡Gracias por las ${fotos} fotos! 😊 Por aquí no puedo ver imágenes. ¿Me escribes las referencias de los productos (aparecen en la foto o en el catálogo)? Si prefieres, te comunico con una asesora.`
+      : `¡Gracias por ${LO_QUE_ENVIO[kind] ?? "tu mensaje"}! 😊 Por aquí no puedo ver imágenes ni archivos. ¿Me escribes la referencia del producto (aparece en la foto o en el catálogo)? Si son varios, escríbeme todas las referencias. Si prefieres, te comunico con una asesora.`,
   comprobante: (kind: NonTextKind) => `Recibí ${QUE_RECIBI[kind] ?? "tu mensaje"} 🙌 Si es el comprobante de pago, una asesora lo revisa y te confirma en breve.`,
   enCheckout: (hint: string) => `Por ahora no puedo ver imágenes ni archivos 🙏 ${hint}`,
 } as const;

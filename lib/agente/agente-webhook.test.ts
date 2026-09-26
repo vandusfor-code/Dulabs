@@ -200,7 +200,7 @@ describe("webhook: posición del agente y aislamiento de lo existente (guarda es
     assert.equal((src.match(/&& !esNoTextoHaciaAgente\) continue;/g) ?? []).length, 2);
     // En el agente: política determinista, y el mensaje superado por la ráfaga igual se atiende.
     assert.match(src, /nonText: \{ kind: politica\.kind(?:, caption: leyendaDeMeta\(mensaje\), mediaId: mensaje\.image\?\.id \?\? null)? \}/);
-    assert.match(src, /if \(nonTextReachesAgent\(mensaje\.type\)\) await intentarAgenteConversacionalSiAplica\(cliente, mensaje, telefonoRemitente, destino\);/);
+    assert.match(src, /if \(nonTextReachesAgent\(mensaje\.type\)\) await intentarAgenteConversacionalSiAplica\(cliente, mensaje, telefonoRemitente, destino(?:, true)?\);/);
   });
 
   it("la capa del agente y de proveedores no importa Anthropic, la IA legacy ni el Flow Engine", () => {

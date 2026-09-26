@@ -34,7 +34,7 @@ import { esTelefonoBloqueado } from "@/lib/blacklist-du";
 import { recibirPedidoWhatsapp } from "@/lib/catalogo/pedidos/intake";
 import { productionIntakeDeps } from "@/lib/catalogo/pedidos/produccion";
 import { createSupabaseAgentConfigStore, loadAgentConfig } from "@/lib/agente/config";
-import { atenderConAgenteSiAplica, encolarEnBuzonSiAplica, numeroConAgente, productionAgentBoundaryDeps, replyToDeMeta } from "@/lib/agente/webhook";
+import { atenderConAgenteSiAplica, encolarEnBuzonSiAplica, esperaDeRafagaMs, numeroConAgente, productionAgentBoundaryDeps, replyToDeMeta } from "@/lib/agente/webhook";
 import { inboxLabel, nonTextPolicy, nonTextReachesAgent } from "@/lib/agente/entrada";
 import { createSupabaseMailboxStore } from "@/lib/agente/buzon";
 import { getSurveyBot, getSession, saveSession } from "@/lib/survey-bot-store";
@@ -1011,7 +1011,15 @@ async function atenderMensaje(
   // mismo remitente: si lo hay, este mensaje se deja pasar en silencio --
   // el más nuevo, al procesarse, ya lo ve en el historial (obtenerHistorialConversacion)
   // y responde a la ráfaga completa de una sola vez.
-  await new Promise((resolve) => setTimeout(resolve, 2500));
+  // Bloque 30 (solo números con agente conversacional listo): "escribiendo…" desde que llega el
+  // mensaje, y un BOTÓN no espera el freno (es una acción completa, no el inicio de una ráfaga).
+  const agenteListo = await agenteConversacionalListo(cliente);
+  const tokenMeta = resolverTokenMeta(cliente);
+  if (agenteListo && tokenMeta) {
+    await marcarLeidoConTyping({ phoneNumberId: cliente.phone_number_id, token: tokenMeta, messageId: mensaje.id });
+  }
+  const esperaRafagaMs = esperaDeRafagaMs({ agenteListo, esBoton: botonDelAgente(mensaje) !== null });
+  if (esperaRafagaMs > 0) await new Promise((resolve) => setTimeout(resolve, esperaRafagaMs));
   const { data: masReciente } = await supabaseAdmin()
     .from("dulabs_mensajes_log")
     .select("wamid")
@@ -1033,9 +1041,8 @@ async function atenderMensaje(
   // mensaje -- se marca leído y se activa "escribiendo..." para que la
   // clienta vea que ya la estamos atendiendo mientras la IA procesa
   // (puede tardar unos segundos, sobre todo si hay que consultar la
-  // agenda). Nunca lanza, así que no puede frenar la respuesta real.
-  const tokenMeta = resolverTokenMeta(cliente);
-  if (tokenMeta) {
+  // agenda). Nunca lanza, así que no puede frenar la respuesta real. (Con agente ya se hizo arriba.)
+  if (tokenMeta && !agenteListo) {
     await marcarLeidoConTyping({ phoneNumberId: cliente.phone_number_id, token: tokenMeta, messageId: mensaje.id });
   }
 
@@ -1359,7 +1366,17 @@ function leyendaDeMeta(mensaje: MetaMessage): string | null {
   return typeof c === "string" && c.trim() !== "" ? c.trim().slice(0, 1_000) : null;
 }
 
-async function intentarAgenteConversacionalSiAplica(cliente: ClienteConfig, mensaje: MetaMessage, telefonoRemitente: string, destino: string): Promise<boolean> {
+/** Bloque 30: ¿el número tiene un agente conversacional habilitado y válido? Ante cualquier error, false (comportamiento de siempre). */
+async function agenteConversacionalListo(cliente: ClienteConfig): Promise<boolean> {
+  try {
+    const cfg = await loadAgentConfig(productionAgentBoundaryDeps(supabaseAdmin(), cliente).configStore, { tenantId: cliente.id_tenant, phoneNumberId: cliente.phone_number_id });
+    return cfg.kind === "ok";
+  } catch {
+    return false;
+  }
+}
+
+async function intentarAgenteConversacionalSiAplica(cliente: ClienteConfig, mensaje: MetaMessage, telefonoRemitente: string, destino: string, soloEncolar = false): Promise<boolean> {
   const texto = mensaje.text?.body?.trim();
   try {
     const supabase = supabaseAdmin();
@@ -1369,7 +1386,7 @@ async function intentarAgenteConversacionalSiAplica(cliente: ClienteConfig, mens
       const politica = nonTextPolicy(mensaje.type);
       if (politica && politica.action !== "ignore") {
         const r = await atenderConAgenteSiAplica(
-          { cliente, waId: telefonoRemitente, destino, wamid: mensaje.id, text: "", replyTo: replyToDeMeta(mensaje.context), nonText: { kind: politica.kind, caption: leyendaDeMeta(mensaje), mediaId: mensaje.image?.id ?? null } },
+          { cliente, waId: telefonoRemitente, destino, wamid: mensaje.id, text: "", replyTo: replyToDeMeta(mensaje.context), nonText: { kind: politica.kind, caption: leyendaDeMeta(mensaje), mediaId: mensaje.image?.id ?? null }, soloEncolar },
           deps,
         );
         return r.handled;
@@ -1404,7 +1421,8 @@ async function encolarMensajeSuperadoEnAgente(cliente: ClienteConfig, mensaje: M
     // Bloque 23 -- un mensaje sin texto no se suma a la ráfaga (no tiene texto): se le aplica su
     // política fija igual (p. ej. una imagen seguida de "¿tienen este?" igual pasa a una asesora).
     // Sin agente para el número: nada, como antes.
-    if (nonTextReachesAgent(mensaje.type)) await intentarAgenteConversacionalSiAplica(cliente, mensaje, telefonoRemitente, destino);
+    // Bloque 30: una foto de producto superada solo se encola (el turno del más nuevo responde a toda la ráfaga).
+    if (nonTextReachesAgent(mensaje.type)) await intentarAgenteConversacionalSiAplica(cliente, mensaje, telefonoRemitente, destino, true);
     return;
   }
   try {
