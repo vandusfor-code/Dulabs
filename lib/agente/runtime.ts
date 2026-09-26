@@ -945,6 +945,7 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
             numbers: numerosDelCliente([...rows.filter((r) => r.direccion === "entrante").slice(-4).map((r) => r.contenido ?? ""), input.text].join("\n")),
             cambio: leerCantidad(input.text),
             todos: selection.all ? selection.selected.map((x) => x.reference) : null,
+            inicio: new Map(state.cart.map((c) => [c.reference, c.quantity])),
           },
         }
       : {}),

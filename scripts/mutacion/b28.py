@@ -71,6 +71,13 @@ M = [
      "  \"y si\", \"que tal si\",", "  \"que tal si\",", LG),
     ("M27 foto en la dirección pasa a una asesora", "lib/agente/runtime.ts",
      "        : (ckStep === \"address\" || ckStep === \"city\") && (policy.kind === \"image\" || policy.kind === \"document\")", "        : false", LG),
+    # --- Regresión de la corrida con Gemini real ---
+    ("M28 'uno más' suma en cada llamada (bucle)", "lib/agente/herramientas.ts",
+     "(backing.cambio?.tipo === \"sumar\" && it.quantity === base + 1)", "(backing.cambio?.tipo === \"sumar\" && it.quantity === prev + 1)", LG),
+    ("M29 'el dorado' distingue plural/singular", "lib/agente/seleccion.ts",
+     "const tk = (x: string) => (opts.lenguaje ? raices(x) : tokens(x));", "const tk = (x: string) => tokens(x);", LG),
+    ("M30 'ya recibiste tu pedido' sin respaldo sale", "lib/agente/anclaje.ts",
+     "|\\b(?:ya\\s+)?(?:lo\\s+|la\\s+)?recibiste\\b|\\bte\\s+(?:lleg[oó]|ha\\s+llegado)(?![a-záéíóúñ])", "", LG),
 ]
 fallos = 0
 for nombre, f, a, b, test in M:

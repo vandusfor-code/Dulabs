@@ -88,7 +88,13 @@ export interface AgentTurnToolContext {
    * el carrito. Una cantidad nueva debe estar en sus mensajes recientes (o ser "uno más" / "quita uno"), y
    * "todos" / "los dos" exige agregar todas las opciones señaladas. El modelo nunca supone una cantidad.
    */
-  cartBacking?: { numbers: ReadonlySet<number>; cambio: { tipo: "fijar" | "sumar" | "restar"; n: number } | null; todos: readonly string[] | null };
+  cartBacking?: {
+    numbers: ReadonlySet<number>;
+    cambio: { tipo: "fijar" | "sumar" | "restar"; n: number } | null;
+    todos: readonly string[] | null;
+    /** Cantidades al EMPEZAR el turno: "uno más" suma UNA vez sobre esto (no en cada llamada). */
+    inicio: ReadonlyMap<string, number>;
+  };
   /** Lo que el cliente señaló de forma determinista en este mensaje (o en el anterior). Ver seleccion.ts. */
   designated: Set<string>;
   /** Texto del cliente en este turno (solo para guardas deterministas, p. ej. la confirmación explícita). */
@@ -410,11 +416,12 @@ export const AGENT_TOOLS = {
         for (const it of input.items) {
           const prev = ctx.state.cart.find((c) => c.reference === it.reference)?.quantity ?? 0;
           if (it.quantity === 0 || it.quantity === prev) continue;
+          const base = backing.inicio.get(it.reference) ?? 0;
           const stated =
             (prev === 0 && it.quantity === 1) ||
             backing.numbers.has(it.quantity) ||
-            (backing.cambio?.tipo === "sumar" && it.quantity === prev + 1) ||
-            (backing.cambio?.tipo === "restar" && it.quantity === prev - 1);
+            (backing.cambio?.tipo === "sumar" && it.quantity === base + 1) ||
+            (backing.cambio?.tipo === "restar" && it.quantity === base - 1);
           if (!stated) return fail("QUANTITY_NOT_STATED", `El cliente no pidió ${it.quantity} unidades. Nunca supongas la cantidad: pregúntale cuántas quiere.`);
         }
         const todos = backing.todos;
