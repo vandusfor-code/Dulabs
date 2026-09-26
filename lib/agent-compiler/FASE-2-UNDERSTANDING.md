@@ -23,7 +23,12 @@ Código: `lib/agent-compiler/understanding/`. Tests: `understanding.test.ts` (30
 | Clasificador semántico del Gate | Se mantiene: evalúa **políticas** del negocio, no intenciones. |
 | `lib/agente` (agente conversacional con su propia clasificación) | **No se tocó** (proyecto de la joyería en construcción). |
 
-**Hallazgo sobre el proveedor:** los nodos de IA del grafo compilado no declaran `provider`, así que `ai-provider-router.ts` los atiende con **Claude por defecto**; el clasificador del Gate (`runtime/production/ports.ts`) también instancia `ClaudeExecutor` directamente. El Understanding Engine usa **Gemini**. Alinear el resto del runtime con Gemini cambia el comportamiento en producción y queda como decisión explícita (no se hizo en esta fase).
+**Proveedor: todo el Business Agent usa Gemini.**
+
+- Antes de este cambio, los nodos de IA del grafo compilado (que no declaran `provider`) iban a **Claude** por el default de `ai-provider-router.ts`, y el clasificador del Gate usaba `ClaudeExecutor` directo.
+- Ahora el runtime del Business Agent arma el router con `defaultProvider: "gemini"` (`atender-business-agent.ts`), y el Gate usa `createGeminiSemanticClassifier` (`ports.ts`).
+- El default del router sigue siendo Claude para los demás productos (Flow Studio, etc.). Un nodo que declara su proveedor lo conserva.
+- Requisito: `GEMINI_KEY` configurada en el entorno de producción. Si falta, la IA falla cerrada (`gemini_api_key_missing`, `EXTERNAL_SERVICE_ERROR`).
 
 ## 2. Contratos
 

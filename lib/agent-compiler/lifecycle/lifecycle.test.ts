@@ -147,6 +147,14 @@ describe("FASE 1 — guardas estructurales de las rutas (el gate no se puede sal
     assert.equal(/\(error as Error\)\.message/.test(activate), false, "la respuesta 500 no devuelve error.message");
   });
 
+  it("proveedor de IA del Business Agent = Gemini (nodos del agente y clasificador del Gate), sin Anthropic", () => {
+    const runtime = readFileSync("lib/agent-compiler/runtime/production/atender-business-agent.ts", "utf8");
+    const ports = readFileSync("lib/agent-compiler/runtime/production/ports.ts", "utf8");
+    assert.ok(runtime.includes('aiProviderRouterDeps: { defaultProvider: "gemini" }'));
+    assert.ok(runtime.includes("createGeminiSemanticClassifier("));
+    assert.equal(/ClaudeExecutor|anthropic/i.test(ports), false);
+  });
+
   it("rollback: pasa por la misma readiness que publicar antes de re-apuntar la versión", () => {
     const readiness = rollback.indexOf("evaluateVersionReadiness(");
     const rollbackCall = rollback.indexOf("rollbackToVersion(");

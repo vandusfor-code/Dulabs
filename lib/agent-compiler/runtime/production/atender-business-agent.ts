@@ -37,7 +37,7 @@ import {
 } from "@/lib/agent-compiler/runtime/agent-runtime";
 import type { SemanticClassifier } from "@/lib/agent-compiler/runtime/guardrail-gate";
 import type { BusinessAgentResolver } from "@/lib/agent-compiler/runtime/production/business-agent-resolver";
-import { createWhatsAppGateSink, createClaudeSemanticClassifier } from "@/lib/agent-compiler/runtime/production/ports";
+import { createWhatsAppGateSink, createGeminiSemanticClassifier } from "@/lib/agent-compiler/runtime/production/ports";
 import { type BusinessAgentObserver, type BusinessAgentTrace } from "@/lib/agent-compiler/runtime/production/observability";
 import { resolveCommercialState } from "@/lib/agent-compiler/runtime/commercial-state-resolver";
 import { esTelefonoBloqueado } from "@/lib/blacklist-du";
@@ -198,6 +198,8 @@ export async function atenderMensajeConBusinessAgent(
           getIntegrationById: (tenantId, integrationId) => getIntegrationById(supabase, tenantId, integrationId),
           getIntegrationCredentials: (tenantId, integrationId) => getIntegrationCredentials(supabase, tenantId, integrationId),
         },
+        // Proveedor de IA del Business Agent: Gemini (GEMINI_KEY). Los nodos compilados no declaran proveedor.
+        registryOverrides: { aiProviderRouterDeps: { defaultProvider: "gemini" } },
       }),
       // FASE 1 — contratos de acción: la IA solo puede proponer los campos declarados de cada acción y nunca
       // reescribir variables capturadas, configuradas, derivadas o internas.
@@ -205,7 +207,7 @@ export async function atenderMensajeConBusinessAgent(
     });
 
   const gateSink = params.overrides?.gateSink ?? createWhatsAppGateSink(supabase, cliente);
-  const classifier = params.classifier ?? createClaudeSemanticClassifier({ tenantId: resolution.tenantId });
+  const classifier = params.classifier ?? createGeminiSemanticClassifier({ tenantId: resolution.tenantId });
 
   // 3.5) Bloque 11 -- commercialState REAL, derivado de la ejecución activa
   // (nunca del LLM, nunca de params sin verificar salvo override explícito de

@@ -2,15 +2,15 @@
 //
 // Adaptadores finos sobre abstracciones REALES existentes (no se duplica
 // ninguna): envío de WhatsApp, pausa/handoff, claim atómico de idempotencia y
-// clasificador semántico Claude. Todos inyectables para test.
+// clasificador semántico (Gemini). Todos inyectables para test.
 
 import { randomUUID } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ClienteConfig } from "@/lib/supabase";
 import { enviarWhatsApp } from "@/lib/whatsapp-outbound";
 import { activarPausaChat } from "@/lib/pausas-chat";
-import { ClaudeExecutor } from "@/lib/flow/executors/claude-executor";
-import { resolveAnthropicApiKeyFromEnv } from "@/lib/flow/claude/anthropic-client";
+import { GeminiExecutor } from "@/lib/flow/executors/gemini-executor";
+import { resolveGeminiApiKeyFromEnv } from "@/lib/flow/gemini/gemini-client";
 import type { EffectDispatchRequest, EffectDispatchResult } from "@/lib/flow/executor-types";
 import type { GateActionSink, GateIdempotencyStore } from "@/lib/agent-compiler/runtime/agent-runtime";
 import { GATE_CONTINUE_LABEL, type SemanticClassifier } from "@/lib/agent-compiler/runtime/guardrail-gate";
@@ -76,14 +76,14 @@ export function createMensajesLogIdempotency(supabase: SupabaseClient): GateIdem
 }
 
 // ---------------------------------------------------------------------------
-// SemanticClassifier real — Claude en modo classify (SOLO clasifica).
+// SemanticClassifier real — Gemini en modo classify (SOLO clasifica).
 // ---------------------------------------------------------------------------
 
-/** Dispatch de IA inyectable (para test). En prod = ClaudeExecutor real. */
+/** Dispatch de IA inyectable (para test). En prod = GeminiExecutor real (GEMINI_KEY). */
 export type ClassifierDispatch = (req: EffectDispatchRequest) => Promise<EffectDispatchResult>;
 
-function claudeDispatch(req: EffectDispatchRequest): Promise<EffectDispatchResult> {
-  const executor = new ClaudeExecutor({ resolveApiKey: async () => resolveAnthropicApiKeyFromEnv() });
+function geminiDispatch(req: EffectDispatchRequest): Promise<EffectDispatchResult> {
+  const executor = new GeminiExecutor({ resolveApiKey: async () => resolveGeminiApiKeyFromEnv() });
   return executor.dispatch(req, { tenantId: req.tenantId, internal: true });
 }
 
@@ -107,13 +107,13 @@ export function buildClassifierInstruction(policies: Array<{ label: string; desc
 }
 
 /**
- * Clasificador semántico del Gate respaldado por Claude en modo classify. SOLO
+ * Clasificador semántico del Gate respaldado por Gemini en modo classify. SOLO
  * interpreta lenguaje → devuelve una etiqueta de la lista dada. NUNCA decide la
  * acción (la política es de DuLabs, en la regla del Gate). Fail-safe: cualquier
  * error/ausencia => null (sin bloquear; las críticas son deterministas).
  */
-export function createClaudeSemanticClassifier(deps: { tenantId: string; dispatch?: ClassifierDispatch }): SemanticClassifier {
-  const dispatch = deps.dispatch ?? claudeDispatch;
+export function createGeminiSemanticClassifier(deps: { tenantId: string; dispatch?: ClassifierDispatch }): SemanticClassifier {
+  const dispatch = deps.dispatch ?? geminiDispatch;
   return async ({ message, labels, policies }) => {
     // Solo se pueden devolver etiquetas cuyo significado viajó en la instrucción (+ "continue").
     const descritas = policies.slice(0, MAX_CLASSIFIER_POLICIES).map((p) => p.label).filter((l) => labels.includes(l));

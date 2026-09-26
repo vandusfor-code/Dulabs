@@ -10,7 +10,7 @@ import { compileAndCreateDraftVersion, publishBusinessAgentVersion } from "@/lib
 import { createSupabaseBusinessAgentResolver, informationalRulesOf } from "@/lib/agent-compiler/runtime/production/business-agent-resolver";
 import { atenderMensajeConBusinessAgent, type BusinessAgentBoundaryOverrides } from "@/lib/agent-compiler/runtime/production/atender-business-agent";
 import { evaluateGuardrailGate, normalizePolicyText, type GateRule, type SemanticClassifier } from "@/lib/agent-compiler/runtime/guardrail-gate";
-import { buildClassifierInstruction, createClaudeSemanticClassifier } from "@/lib/agent-compiler/runtime/production/ports";
+import { buildClassifierInstruction, createGeminiSemanticClassifier } from "@/lib/agent-compiler/runtime/production/ports";
 import { buildRuntimePolicyManifest } from "@/lib/agent-compiler/contracts/policy-manifest";
 import { evaluateReadiness, type ReadinessFacts } from "@/lib/business-agent-readiness";
 import { photographySpec, salonSpec } from "@/lib/agent-compiler/runtime/fixtures";
@@ -86,7 +86,7 @@ describe("FASE 1 — prohibiciones: del Wizard al runtime", () => {
     assert.equal(regla.semantic?.description, "No hacemos domicilios ni entregas a casa.");
 
     const capturas: EffectDispatchRequest[] = [];
-    const classifier = createClaudeSemanticClassifier({ tenantId: TENANT_A, dispatch: dispatchQueEntiende(capturas) });
+    const classifier = createGeminiSemanticClassifier({ tenantId: TENANT_A, dispatch: dispatchQueEntiende(capturas) });
     const decision = await evaluateGuardrailGate({ rules: resolved.gateRules, context: { message: "¿Hacen domicilios a Chapinero?" }, classifier });
     assert.equal(decision.kind, "fixed_response");
     if (decision.kind === "fixed_response") {
@@ -102,14 +102,14 @@ describe("FASE 1 — prohibiciones: del Wizard al runtime", () => {
     const { store, flowId } = await publicar(specConDomicilios());
     const resolved = await createSupabaseBusinessAgentResolver({ store }).resolve({} as never, clienteDe(TENANT_A, flowId));
     if (resolved.kind !== "business_agent") return assert.fail();
-    const classifier = createClaudeSemanticClassifier({ tenantId: TENANT_A, dispatch: dispatchQueEntiende([]) });
+    const classifier = createGeminiSemanticClassifier({ tenantId: TENANT_A, dispatch: dispatchQueEntiende([]) });
     const decision = await evaluateGuardrailGate({ rules: resolved.gateRules, context: { message: "¿Cuánto cuesta una sesión?" }, classifier });
     assert.equal(decision.kind, "pass");
   });
 
   it("8b. el clasificador no puede devolver una etiqueta inexistente o sin contenido (se ignora => pass)", async () => {
     const capturas: EffectDispatchRequest[] = [];
-    const classifier = createClaudeSemanticClassifier({
+    const classifier = createGeminiSemanticClassifier({
       tenantId: TENANT_A,
       dispatch: async (req) => {
         capturas.push(req);
@@ -265,7 +265,7 @@ describe("FASE 1 — frontera de producción: fail-closed", () => {
   });
 
   it("clasificador semántico: un fallo del proveedor no bloquea (las críticas son deterministas) y no inventa una decisión", async () => {
-    const classifier: SemanticClassifier = createClaudeSemanticClassifier({ tenantId: TENANT_A, dispatch: async () => { throw new Error("503"); } });
+    const classifier: SemanticClassifier = createGeminiSemanticClassifier({ tenantId: TENANT_A, dispatch: async () => { throw new Error("503"); } });
     const { store, flowId } = await publicar(specConDomicilios());
     const resolved = await createSupabaseBusinessAgentResolver({ store }).resolve({} as never, clienteDe(TENANT_A, flowId));
     if (resolved.kind !== "business_agent") return assert.fail();
