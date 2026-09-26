@@ -34,7 +34,7 @@ import { decideLimits, type UsageReader } from "@/lib/agente/limites";
 import { asksForHuman, detectIntent, type HandoffMotive, type SystemHandoffMotive, type TurnIntent } from "@/lib/agente/intencion";
 import { agentToolDeclarations, catalogPublication, executeAgentTool, toolKind, type AgentToolsDeps, type AgentTurnToolContext, type QueuedImage } from "@/lib/agente/herramientas";
 import type { AgentToolName } from "@/lib/agente/nombres-herramientas";
-import { MEDIA_DEL_CLIENTE, MEDIA_MESSAGES, hablaDePago, NON_TEXT_MESSAGES, NON_TEXT_NOTICE_COOLDOWN_MS, nonTextPolicy, type NonTextAction, type NonTextKind } from "@/lib/agente/entrada";
+import { FOTO_SIN_REFERENCIA, MEDIA_DEL_CLIENTE, MEDIA_MESSAGES, hablaDePago, NON_TEXT_MESSAGES, NON_TEXT_NOTICE_COOLDOWN_MS, nonTextPolicy, type NonTextAction, type NonTextKind } from "@/lib/agente/entrada";
 import {
   CHANNEL_LABEL,
   CHANNEL_QUESTION,
@@ -86,6 +86,49 @@ export interface AgentSender {
   humanTookOver(): Promise<boolean>;
 }
 
+/**
+ * Bloque 30: aviso de espera. Si el MODELO tarda (el turno llama a Gemini y aún no se envió nada),
+ * pasados `ms` se envía UNA vez un aviso fijo para que el cliente no sienta silencio. Nunca sale
+ * después de la respuesta: cualquier envío del turno lo cancela y, si el aviso ya iba en camino,
+ * espera a que llegue primero (el orden en WhatsApp se conserva).
+ */
+export const HOLD_NOTICE_TEXT = "Un momento, por favor 🙏 Estoy revisando la información.";
+export const HOLD_NOTICE_MS = 6_000;
+
+export function withHoldNotice(base: AgentSender, ms: number, onSent: () => void): { sender: AgentSender; start: () => void; stop: () => void } {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let closed = false;
+  let inFlight: Promise<unknown> | null = null;
+  const stop = () => {
+    closed = true;
+    if (timer) clearTimeout(timer);
+    timer = null;
+  };
+  const beforeSend = async () => {
+    stop();
+    if (inFlight) await inFlight.catch(() => undefined);
+  };
+  const sender: AgentSender = {
+    sendText: async (t) => (await beforeSend(), base.sendText(t)),
+    sendImage: async (i) => (await beforeSend(), base.sendImage(i)),
+    ...(base.sendButtons ? { sendButtons: async (b: string, bs: ReadonlyArray<{ id: string; title: string }>) => (await beforeSend(), base.sendButtons!(b, bs)) } : {}),
+    humanTookOver: () => base.humanTookOver(),
+  };
+  const start = () => {
+    if (closed || timer || inFlight || ms <= 0) return;
+    timer = setTimeout(() => {
+      timer = null;
+      if (closed) return;
+      inFlight = base.sendText(HOLD_NOTICE_TEXT).then((r) => {
+        if (r === true || (typeof r === "object" && r !== null && (r as { sent?: boolean }).sent)) onSent();
+        return r;
+      });
+    }, ms);
+    (timer as { unref?: () => void }).unref?.();
+  };
+  return { sender, start, stop };
+}
+
 export interface AgentLimits {
   maxRounds: number;
   maxToolCalls: number;
@@ -118,6 +161,8 @@ export interface AgentRuntimeDeps {
   usage?: UsageReader;
   /** Bloque 29: lee las referencias escritas en una foto del cliente (lectura-referencias.ts). Sin él, se piden escritas. */
   readImageReferences?: (mediaId: string) => Promise<string[]>;
+  /** Bloque 30: ms antes del aviso de espera (solo con el checkout conversacional). 0 = sin aviso. Por defecto HOLD_NOTICE_MS. */
+  holdNoticeMs?: number;
   /** Bloque 25: canal por contacto. Obligatorio si config.classifyCustomers (sin él, el turno no sigue: fail-closed). */
   classification?: CustomerChannelStore;
   limits?: Partial<AgentLimits>;
@@ -204,6 +249,8 @@ export interface AgentTurnTrace {
   non_text: { kind: NonTextKind; action: NonTextAction } | null;
   /** Bloque 29: referencias leídas en la foto del cliente y cuántas existen en el catálogo (sin los códigos). */
   image_references?: { read: number; valid: number };
+  /** Bloque 30: se envió el aviso de espera ("un momento, por favor"). */
+  hold_notice?: boolean;
   /**
    * Bloque 25 — clasificación detal / por mayor del contacto (null = el número no clasifica):
    * asked (se le preguntó), classified (quedó clasificado en este turno), known (ya lo estaba),
@@ -323,6 +370,52 @@ async function repliedPhoto(
   };
 }
 
+/** Bloque 29/30: qué hacer con una foto, video o archivo del cliente (tabla en entrada.ts). */
+export type CustomerMediaDecision = (
+  | { tipo: "comprobante" | "posventa"; orderId: string; etapa: string }
+  | { tipo: "leyenda"; texto: string }
+  | { tipo: "pedir" }
+) & { read?: { read: number; valid: number } };
+
+/**
+ * Decide por el pedido abierto, el texto de la foto y la referencia escrita EN la foto (validada
+ * contra el catálogo). null = el pedido no se pudo consultar (se conserva lo de antes: asesora).
+ * La usan el turno (runAgentTurn) y el webhook, que agrupa varias fotos seguidas en el buzón.
+ */
+export async function classifyCustomerMedia(
+  deps: Pick<AgentRuntimeDeps, "tools" | "readImageReferences">,
+  who: { tenantId: string; contact: { phoneNumberId: string; waId: string }; requestId?: string },
+  media: { kind: NonTextKind; caption?: string | null; mediaId?: string | null; ckStep: string | null },
+): Promise<CustomerMediaDecision | null> {
+  let order: Awaited<ReturnType<AgentToolsDeps["engine"]["getOrder"]>> | null = null;
+  try {
+    order = await deps.tools.engine.getOrder({ tenantId: who.tenantId, contact: who.contact, requestId: who.requestId });
+  } catch (err) {
+    // Sin pedido abierto es lo normal; si NO se pudo consultar, se conserva lo de antes (asesora).
+    if (!(err instanceof OrderError)) return null;
+  }
+  const ck = order?.checkout ?? null;
+  const texto = typeof media.caption === "string" ? media.caption.trim().slice(0, 1_000) : "";
+  // Un texto que NO habla de pago ("me gustó esta", "¿lo tienen en plateado?") manda sobre el pedido abierto.
+  const deProducto = texto !== "" && !hablaDePago(texto);
+  if (order && ck && !deProducto) {
+    if (ck.stage === "enviado" || ck.stage === "entregado") return { tipo: "posventa", orderId: order.orderId, etapa: ck.stage };
+    if (media.kind !== "video" && ck.paymentMethod === "transferencia" && ck.paymentStatus === "pendiente") return { tipo: "comprobante", orderId: order.orderId, etapa: ck.stage };
+  }
+  if (media.ckStep) return { tipo: "pedir" };
+  // La referencia escrita EN la foto (la marca del catálogo): solo si existe en ESTE catálogo y está activa.
+  let refs: string[] = [];
+  let read: { read: number; valid: number } | undefined;
+  if (media.kind === "image" && media.mediaId && deps.readImageReferences) {
+    const leidas = (await deps.readImageReferences(media.mediaId).catch(() => [] as string[])).slice(0, 5);
+    const productos = leidas.length > 0 ? await deps.tools.catalog.getProductsByReferences(who.tenantId, leidas).catch(() => []) : [];
+    refs = leidas.filter((r) => productos.some((p) => p.reference === r && p.status === "ACTIVE"));
+    read = { read: leidas.length, valid: refs.length };
+  }
+  if (texto || refs.length > 0) return { tipo: "leyenda", texto: [texto, refs.length > 0 ? `(referencia en la foto: ${refs.join(", ")})` : ""].filter(Boolean).join("\n"), ...(read ? { read } : {}) };
+  return { tipo: "pedir", ...(read ? { read } : {}) };
+}
+
 export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput): Promise<{ outcome: AgentTurnOutcome; reply: string | null; trace: AgentTurnTrace }> {
   const limits = { ...DEFAULT_LIMITS, ...deps.limits };
   const now = deps.now ?? Date.now;
@@ -370,7 +463,9 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
     input: { wamids: (input.wamids && input.wamids.length > 0 ? [...input.wamids] : [input.wamid]).map((w) => w.slice(0, 200)).slice(0, 10), messages: input.wamids?.length || 1, chars: input.text.length },
     context: null,
   };
+  let hold: ReturnType<typeof withHoldNotice> | null = null;
   const finish = (outcome: AgentTurnOutcome, reply: string | null) => {
+    hold?.stop();
     trace.outcome = outcome;
     trace.intent = detectIntent(trace.tool_calls.map((c) => c.name), outcome);
     trace.latency_ms = now() - started;
@@ -382,6 +477,14 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
   if (deps.config.tenantId !== input.tenantId || deps.config.phoneNumberId !== input.phoneNumberId || deps.provider.id !== deps.config.provider) {
     trace.error_kind = "config_mismatch";
     return finish("fallback", null);
+  }
+  // Bloque 30 (solo con el checkout conversacional): aviso de espera si el modelo tarda.
+  const holdMs = deps.holdNoticeMs ?? HOLD_NOTICE_MS;
+  if (deps.config.checkoutEnabled && holdMs > 0) {
+    hold = withHoldNotice(deps.sender, holdMs, () => (trace.hold_notice = true));
+    const baseProvider = deps.provider;
+    const h = hold;
+    deps = { ...deps, sender: h.sender, provider: { id: baseProvider.id, generate: (req, signal) => (h.start(), baseProvider.generate(req, signal)) } };
   }
 
   // 1) Memoria estructurada.
@@ -433,33 +536,10 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
     caption: string | null | undefined,
     ckStep: string | null,
     mediaId: string | null | undefined,
-  ): Promise<{ tipo: "comprobante" | "posventa"; orderId: string; etapa: string } | { tipo: "leyenda"; texto: string } | { tipo: "pedir" } | null> => {
-    let order: Awaited<ReturnType<typeof deps.tools.engine.getOrder>> | null = null;
-    try {
-      order = await deps.tools.engine.getOrder({ tenantId: input.tenantId, contact, requestId });
-    } catch (err) {
-      // Sin pedido abierto es lo normal; si NO se pudo consultar, se conserva lo de antes (asesora).
-      if (!(err instanceof OrderError)) return null;
-    }
-    const ck = order?.checkout ?? null;
-    const texto = typeof caption === "string" ? caption.trim().slice(0, 1_000) : "";
-    // Un texto que NO habla de pago ("me gustó esta", "¿lo tienen en plateado?") manda sobre el pedido abierto.
-    const deProducto = texto !== "" && !hablaDePago(texto);
-    if (order && ck && !deProducto) {
-      if (ck.stage === "enviado" || ck.stage === "entregado") return { tipo: "posventa", orderId: order.orderId, etapa: ck.stage };
-      if (kind !== "video" && ck.paymentMethod === "transferencia" && ck.paymentStatus === "pendiente") return { tipo: "comprobante", orderId: order.orderId, etapa: ck.stage };
-    }
-    if (ckStep) return { tipo: "pedir" };
-    // La referencia escrita EN la foto (la marca del catálogo): solo si existe en ESTE catálogo y está activa.
-    let refs: string[] = [];
-    if (kind === "image" && mediaId && deps.readImageReferences) {
-      const leidas = (await deps.readImageReferences(mediaId).catch(() => [] as string[])).slice(0, 5);
-      const productos = leidas.length > 0 ? await deps.tools.catalog.getProductsByReferences(input.tenantId, leidas).catch(() => []) : [];
-      refs = leidas.filter((r) => productos.some((p) => p.reference === r && p.status === "ACTIVE"));
-      trace.image_references = { read: leidas.length, valid: refs.length };
-    }
-    if (texto || refs.length > 0) return { tipo: "leyenda", texto: [texto, refs.length > 0 ? `(referencia en la foto: ${refs.join(", ")})` : ""].filter(Boolean).join("\n") };
-    return { tipo: "pedir" };
+  ): Promise<CustomerMediaDecision | null> => {
+    const d = await classifyCustomerMedia(deps, { tenantId: input.tenantId, contact, requestId }, { kind, caption, mediaId, ckStep });
+    if (d?.read) trace.image_references = d.read;
+    return d;
   };
   if (limit.action !== "allow") {
     trace.turn = loaded.state.turn;
@@ -581,6 +661,29 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
   if (deps.config.checkoutEnabled && loaded.state.fotoPedidaTurn === loaded.state.turn && esAfirmacion(input.text) && extractReferences(input.text).length === 0) {
     trace.turn = loaded.state.turn;
     if (await handOffNow("customer_request", "customer", "El cliente envió una foto y pidió una asesora")) return finish("handoff", trace.sent ? FALLBACK_MESSAGES.handoff : null);
+  }
+
+  // Bloque 30: ráfaga SOLO de fotos sin texto ni referencia legible (agrupadas en el buzón): UN aviso que pide las referencias.
+  if (deps.config.checkoutEnabled) {
+    const lineas = input.text.split("\n").map((l) => l.trim()).filter(Boolean);
+    if (lineas.length > 0 && lineas.every((l) => l === FOTO_SIN_REFERENCIA)) {
+      let next: ConversationState = { ...seen, turn: seen.turn + 1, lastInteractionAt: new Date(now()).toISOString() };
+      trace.turn = next.turn;
+      // La ráfaga siguió en otro turno (más fotos de las que caben en uno): el aviso ya salió, no se repite.
+      const avisoAt = loaded.state.nonTextNoticeAt ? Date.parse(loaded.state.nonTextNoticeAt) : NaN;
+      if (loaded.state.fotoPedidaTurn === loaded.state.turn && Number.isFinite(avisoAt) && now() - avisoAt < NON_TEXT_NOTICE_COOLDOWN_MS) {
+        trace.state_saved = await deps.state.save(key, { ...next, fotoPedidaTurn: next.turn }, loaded.version).catch(() => false);
+        return finish("rate_limited", null);
+      }
+      const text = MEDIA_MESSAGES.pideReferencia("image", lineas.length);
+      const r = sendResult(await deps.sender.sendText(text).catch(() => false));
+      trace.sent = r.sent;
+      trace.delivery.text_wamid = r.wamid;
+      trace.delivery.text_error = r.error;
+      if (r.sent) next = { ...next, nonTextNoticeAt: new Date(now()).toISOString(), fotoPedidaTurn: next.turn };
+      trace.state_saved = await deps.state.save(key, next, loaded.version).catch(() => false);
+      return finish("replied", r.sent ? text : null);
+    }
   }
 
   // El cliente pide una persona: el backend lo pasa a una asesora sin depender del modelo.

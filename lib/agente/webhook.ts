@@ -32,12 +32,12 @@ import { createSupabaseHistoryStore } from "@/lib/agente/contexto";
 import { createSupabaseConversationStateStore } from "@/lib/agente/estado";
 import { createSupabaseProductMediaLedger } from "@/lib/agente/medios";
 import { batchInput, createSupabaseMailboxStore, drain, enqueueAndDrain, type DrainOptions, type MailboxMessage, type MailboxStore } from "@/lib/agente/buzon";
-import type { NonTextKind } from "@/lib/agente/entrada";
+import { FOTO_SIN_REFERENCIA, PREFIJO_FOTO, type NonTextKind } from "@/lib/agente/entrada";
 import { boundaryRecord, createSupabaseTraceSink, turnRecord } from "@/lib/agente/trazas";
 import { createSupabaseUsageReader } from "@/lib/agente/limites";
 import { createSupabaseCustomerChannelStore } from "@/lib/agente/clasificacion";
 import type { AgentToolsDeps } from "@/lib/agente/herramientas";
-import { runAgentTurn, type AgentRuntimeDeps, type AgentSender, type AgentTurnTrace } from "@/lib/agente/runtime";
+import { classifyCustomerMedia, runAgentTurn, type AgentRuntimeDeps, type AgentSender, type AgentTurnTrace } from "@/lib/agente/runtime";
 
 export interface AgentBoundaryInput {
   cliente: Pick<ClienteConfig, "id_tenant" | "phone_number_id">;
@@ -51,6 +51,8 @@ export interface AgentBoundaryInput {
   replyTo?: { wamid?: string | null; forwarded?: boolean } | null;
   /** Mensaje sin texto (Bloque 23): `text` vacío y la política determinista de entrada.ts. */
   nonText?: { kind: NonTextKind; caption?: string | null; mediaId?: string | null } | null;
+  /** Bloque 30: mensaje superado por uno más nuevo (freno de ráfaga): una foto de producto solo se encola en el buzón. */
+  soloEncolar?: boolean;
   /** Bloque 26: id del botón tocado (interactive.button_reply.id). Solo el turno directo lo usa; el buzón guarda el texto. */
   buttonId?: string | null;
 }
@@ -147,7 +149,20 @@ async function atender(input: AgentBoundaryInput, deps: AgentBoundaryDeps): Prom
     last = r.outcome;
     return r.trace.turn;
   };
-  if (input.nonText) {
+  // Bloque 30 (solo con el checkout conversacional): una FOTO de producto entra al buzón como texto,
+  // así una ráfaga de 3 o 10 fotos (cada una llega en su propio webhook) recibe UNA sola respuesta.
+  // Comprobante, posventa, registro del pedido o sin pedido consultable => la política de siempre (abajo).
+  let fotoEnBuzon: string | null = null;
+  if (input.nonText?.kind === "image" && cfg.config.checkoutEnabled && mailbox) {
+    fotoEnBuzon = await fotoParaBuzon(deps2, mailbox, key, input).catch(() => null);
+    if (fotoEnBuzon !== null && input.soloEncolar) {
+      // Foto superada por otra más nueva (freno de ráfaga): solo se encola; el turno del más nuevo la atiende.
+      const q = await mailbox.enqueue(key, { wamid: input.wamid, text: fotoEnBuzon, replyTo: null }).catch(() => "unavailable" as const);
+      if (q !== "unavailable") return { handled: true, outcome: "queued" };
+      fotoEnBuzon = null;
+    }
+  }
+  if (input.nonText && fotoEnBuzon === null) {
     // Sin texto (Bloque 23): no entra al buzón (no hay texto que sumar a la ráfaga). Primero se
     // atienden, en orden, los mensajes de texto que llegaron antes y quedaron en el buzón (el freno
     // de ráfaga los dejó ahí al llegar este); luego la política fija de este mensaje, sin modelo.
@@ -164,7 +179,7 @@ async function atender(input: AgentBoundaryInput, deps: AgentBoundaryDeps): Prom
   const drained = await enqueueAndDrain(
     mailbox,
     key,
-    { wamid: input.wamid, text: input.text, replyTo: input.replyTo ? { wamid: input.replyTo.wamid ?? null, forwarded: !!input.replyTo.forwarded } : null },
+    { wamid: input.wamid, text: fotoEnBuzon ?? input.text, replyTo: input.replyTo ? { wamid: input.replyTo.wamid ?? null, forwarded: !!input.replyTo.forwarded } : null },
     runBatch,
     drainOptions,
   ).catch((err) => {
@@ -172,10 +187,20 @@ async function atender(input: AgentBoundaryInput, deps: AgentBoundaryDeps): Prom
     return { status: "unavailable" as const };
   });
   // Sin la migración del buzón (o si falló al encolar): un turno directo, como antes.
-  if (drained.status === "unavailable") return single();
+  if (drained.status === "unavailable") return fotoEnBuzon !== null ? runAgentTurn(deps2, { ...key, wamid: input.wamid, text: fotoEnBuzon, replyTo: input.replyTo ?? null }).then((r) => ({ handled: true as const, outcome: r.outcome })) : single();
   if (drained.status === "queued") return { handled: true, outcome: "queued" };
   if (drained.leftPending) logError({ ...base, result: "mailbox_left_pending", turns: drained.turns });
   return { handled: true, outcome: last ?? "queued", turns: drained.turns };
+}
+
+/**
+ * Bloque 30: espera del freno de ráfaga del webhook (ms). Un BOTÓN de un número con agente no
+ * espera: es una acción completa (Detal/Mayor, entrega, pago, confirmar), no el inicio de una
+ * ráfaga, y sus pasos del checkout no usan el modelo. Todo lo demás, igual que siempre (2,5 s).
+ */
+export const ESPERA_RAFAGA_MS = 2_500;
+export function esperaDeRafagaMs(input: { agenteListo: boolean; esBoton: boolean }): number {
+  return input.agenteListo && input.esBoton ? 0 : ESPERA_RAFAGA_MS;
 }
 
 /**
@@ -183,6 +208,34 @@ async function atender(input: AgentBoundaryInput, deps: AgentBoundaryDeps): Prom
  * SIN texto se registra en el Inbox y llega al agente (Bloque 23). Si no se puede leer: false,
  * es decir, el comportamiento de siempre para ese mensaje (se descarta); el texto no depende de esto.
  */
+/** Máximo de fotos de una ráfaga que se leen (costo): de ahí en adelante se piden escritas. */
+export const MAX_FOTOS_LEIDAS_POR_RAFAGA = 10;
+
+/**
+ * Bloque 30: texto con el que una foto de producto entra al buzón, o null si no va al buzón
+ * (comprobante, posventa, registro del pedido en curso o pedido no consultable).
+ */
+export async function fotoParaBuzon(
+  deps: AgentRuntimeDeps,
+  mailbox: MailboxStore,
+  key: { tenantId: string; phoneNumberId: string; waId: string },
+  input: Pick<AgentBoundaryInput, "nonText">,
+): Promise<string | null> {
+  const loaded = await deps.state.load(key);
+  const ckStep = loaded.state.checkout?.step ?? null;
+  if (ckStep) return null;
+  const enCola = await mailbox.pending(key, MAX_FOTOS_LEIDAS_POR_RAFAGA + 1).catch(() => [] as MailboxMessage[]);
+  const leer = enCola.filter((m) => m.text.startsWith(PREFIJO_FOTO) || m.text === FOTO_SIN_REFERENCIA).length < MAX_FOTOS_LEIDAS_POR_RAFAGA;
+  const d = await classifyCustomerMedia(
+    leer ? deps : { tools: deps.tools },
+    { tenantId: key.tenantId, contact: { phoneNumberId: key.phoneNumberId, waId: key.waId } },
+    { kind: "image", caption: input.nonText?.caption ?? null, mediaId: input.nonText?.mediaId ?? null, ckStep: null },
+  );
+  if (d?.tipo === "leyenda") return `${PREFIJO_FOTO} ${d.texto}`;
+  if (d?.tipo === "pedir") return FOTO_SIN_REFERENCIA;
+  return null;
+}
+
 export async function numeroConAgente(store: AgentConfigStore, phoneNumberId: string): Promise<boolean> {
   try {
     return (await store.getByPhoneNumber(phoneNumberId)) !== null;

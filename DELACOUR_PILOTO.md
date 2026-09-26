@@ -775,3 +775,24 @@ la marca de inmediato, purgar la caché del CDN del proyecto en Vercel.
   descarga del panel.
 - `lib/agente/lectura-referencias.test.ts`: descarga de Meta, clave solo en el header, topes, nunca inventa.
 - Mutación: `python3 scripts/mutacion/b29.py` (15 protecciones).
+
+---
+
+## Bloque 30 · velocidad y ráfagas (solo números con agente; aviso y fotos solo con `checkout_conversacional`)
+
+- **Botones sin espera.** Todo mensaje espera 2,5 s por si el cliente sigue escribiendo (freno de
+  ráfaga). Un **botón** de un número con agente ya no espera: es una acción completa y sus pasos del
+  pedido no usan el modelo. Los demás números y mensajes, igual que siempre.
+- **"Escribiendo…" inmediato.** Con agente, el mensaje se marca leído y se muestra "escribiendo…"
+  apenas llega (antes: después de los 2,5 s).
+- **Aviso de espera.** Si el modelo tarda más de 6 s y aún no salió nada, se envía UNA vez:
+  "Un momento, por favor 🙏 Estoy revisando la información." Nunca sale después de la respuesta
+  (cualquier envío lo cancela; si ya iba en camino, llega primero). La traza marca `hold_notice`.
+- **Varias fotos seguidas (3, 10…)** reciben **una sola respuesta**: cada foto se lee al llegar (en
+  paralelo) y entra al buzón como texto (`[foto] …(referencia en la foto: DL-…)` o
+  `[foto sin referencia]`); el turno atiende la ráfaga completa. Si ninguna trae referencia legible,
+  sale un solo aviso que pide las referencias ("¡Gracias por las 3 fotos!…"). Tope: 10 fotos
+  leídas por ráfaga. Comprobante, posventa y fotos durante el registro del pedido siguen su camino
+  de siempre (no pasan por el buzón).
+
+Pruebas: `lib/agente/agente-rafaga-fotos.test.ts`. Mutación: `python3 scripts/mutacion/b30.py` (9).

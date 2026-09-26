@@ -474,6 +474,7 @@ lib/agente/agente-clasificacion.test.ts
 lib/agente/agente-checkout.test.ts
 lib/agente/agente-lenguaje.test.ts
 lib/agente/lectura-referencias.test.ts
+lib/agente/agente-rafaga-fotos.test.ts
 lib/agente/agente-meta-contexto.test.ts
 lib/agente/agente-busqueda.test.ts
 lib/agente/agente-buzon.test.ts
