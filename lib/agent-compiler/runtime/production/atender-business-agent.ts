@@ -41,6 +41,7 @@ import { createWhatsAppGateSink, createClaudeSemanticClassifier } from "@/lib/ag
 import { type BusinessAgentObserver, type BusinessAgentTrace } from "@/lib/agent-compiler/runtime/production/observability";
 import { resolveCommercialState } from "@/lib/agent-compiler/runtime/commercial-state-resolver";
 import { esTelefonoBloqueado } from "@/lib/blacklist-du";
+import { createBusinessAgentArgumentPolicy } from "@/lib/agent-compiler/contracts/argument-policy";
 
 export interface BusinessAgentBoundaryResult {
   /** true = el Business Agent atendió (o bloqueó fail-closed/blacklist) el
@@ -189,6 +190,9 @@ export async function atenderMensajeConBusinessAgent(
           getIntegrationCredentials: (tenantId, integrationId) => getIntegrationCredentials(supabase, tenantId, integrationId),
         },
       }),
+      // FASE 1 — contratos de acción: la IA solo puede proponer los campos declarados de cada acción y nunca
+      // reescribir variables capturadas, configuradas, derivadas o internas.
+      proposalArgumentPolicy: createBusinessAgentArgumentPolicy(),
     });
 
   const gateSink = params.overrides?.gateSink ?? createWhatsAppGateSink(supabase, cliente);

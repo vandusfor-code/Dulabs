@@ -12,6 +12,7 @@
  * que el real). Lo que sí es real: compiler, registry, resolver, boundary,
  * orquestador, motor de flujo, autorización propose->action, executor y booking.
  */
+import { createBusinessAgentArgumentPolicy } from "@/lib/agent-compiler/contracts/argument-policy";
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -206,7 +207,7 @@ async function mundo() {
     executors: [ia, accionEspiada, envio],
     integrationResolver: new IntegrationResolver({ getIntegrationById: async () => null, getIntegrationCredentials: async () => [] }),
   });
-  const orquestador = createExecutionOrchestrator({ store: orchStore, engine: { createFlowEngineState, runFlowEngine }, effectFramework: framework });
+  const orquestador = createExecutionOrchestrator({ store: orchStore, engine: { createFlowEngineState, runFlowEngine }, effectFramework: framework, proposalArgumentPolicy: createBusinessAgentArgumentPolicy({ log: () => {} }) });
 
   async function activar(spec: BusinessAgentSpec, tenantId: string) {
     const s = await publicar(spec, tenantId);
@@ -560,14 +561,19 @@ describe("R3 — E2E cadena completa: configurar datos -> WhatsApp (offline) -> 
     assert.match(fechaEvento, /^2030-03-16T15:00:00/, "en la fecha del CLIENTE (10:00 Colombia = 15:00Z), no en 2024: " + fechaEvento);
   });
 
-  it("16. R7: fecha pasada solo por la IA (el cliente habló de una fecha no resoluble) => NO se reserva nada", async () => {
+  it("16. R7 + FASE 1: la fecha pasada que propone la IA al RESERVAR nunca llega al calendario (manda la fecha que el sistema mostró)", async () => {
+    // Antes de FASE 1 la `fecha` de la propuesta de reserva REESCRIBÍA la fecha ya resuelta por la consulta de
+    // disponibilidad, y la protección dependía de que esa fecha inventada fuera pasada. Ahora `fecha` es una variable
+    // RUNTIME-DERIVED de la consulta (contrato de buscar_disponibilidad_nylas_generico): la IA no puede reescribirla.
     const m = await mundo();
     await m.conectarCalendario(TENANT_A);
     m.setIA((req) => (req.nodeId === "ai-book-propose" ? { actionProposal: { actionType: "crear_cita_nylas_generico", arguments: { fecha: "2024-05-04", hora: "10:00", servicio: "Corte" } } } : { responseText: "ok" }));
     const a = await m.activar(agenteNylas([NOMBRE, TEL]), TENANT_A);
     for (const [i, t] of ["Hola", "cita", "Ana", "cuando pueda esta semana", "a las 10"].entries()) await a.turno(t, `q${i}`);
-    assert.equal(m.eventos.length, 0, "una fecha pasada nunca llega al calendario");
-    assert.ok(m.accionesDe("act-book").length >= 1, "la acción se intentó y el backend la rechazó");
+    const reservas = m.accionesDe("act-book");
+    assert.ok(reservas.length >= 1, "la acción se intentó");
+    for (const r of reservas) assert.notEqual(r.payload.fecha, "2024-05-04", "la fecha de la IA nunca llega a la acción");
+    assert.equal(JSON.stringify(m.eventos).includes("2024-05-04"), false, "una fecha pasada nunca llega al calendario");
   });
 
   it("16b. una respuesta fuera de tema a '¿para qué día?' o '¿a qué hora?' se RE-PREGUNTA: no se consulta ni se reserva nada", async () => {

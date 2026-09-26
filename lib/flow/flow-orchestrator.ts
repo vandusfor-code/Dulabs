@@ -888,6 +888,12 @@ export class ExecutionOrchestrator {
             aiConfig: effect.ai,
             dispatchResult: raw,
             tenantId: params.tenantId,
+            argumentPolicy: this.deps.proposalArgumentPolicy,
+            context: {
+              executionRowId: params.executionRow.id,
+              flowId: params.executionRow.flow_id,
+              flowVersionId: params.executionRow.flow_version_id,
+            },
           });
           if (bridged.variablesPatch) {
             variablesPatch = { ...variablesPatch, ...bridged.variablesPatch };

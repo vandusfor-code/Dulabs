@@ -3,6 +3,7 @@
  * Coordina lifecycle + Store + Engine + routing de efectos (sin I/O real).
  */
 
+import type { ProposalArgumentPolicy } from "@/lib/flow/ai-runtime/ai-proposal-bridge";
 import type {
   EngineEffect,
   FlowEngineError,
@@ -265,6 +266,11 @@ export interface ExecutionOrchestratorDeps {
   /** Límite de eventos internos (effect_result síncronos) por invocación. */
   maxInternalEvents?: number;
   maxCasAttempts?: number;
+  /**
+   * Business Agent 2.0, FASE 1 — contrato de argumentos por acción aplicado a las propuestas de la IA.
+   * Ausente (Flow Studio, flows ajenos) = comportamiento previo, sin cambios.
+   */
+  proposalArgumentPolicy?: ProposalArgumentPolicy;
 }
 
 export const DEFAULT_MAX_CAS_ATTEMPTS = 5;
