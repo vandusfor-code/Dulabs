@@ -733,6 +733,18 @@ Solo con `checkout_conversacional` (otros negocios siguen como antes: pasan a un
 
 Si el pedido no se pudo consultar, se conserva lo de antes (asesora): nunca se pierde un comprobante.
 
+**Corrección tras la prueba real del piloto** (foto + "Me gustó esta" con un pedido de prueba con
+transferencia pendiente respondió "si es el comprobante…"):
+- Un texto **de producto** junto a la foto manda sobre el pedido abierto: se atiende como mensaje.
+  Solo se trata como comprobante si la foto viene sin texto o el texto habla de pago ("ya pagué",
+  "comprobante", "te transferí", "Nequi", "listo").
+- **Lectura de la referencia en la foto:** el agente descarga la foto de WhatsApp y le pide a Gemini
+  (misma clave y modelo del agente) **solo** los códigos con forma de referencia (`DL-000087`).
+  Un código se usa solo si existe y está activo en el catálogo; si no, se pide escrito. Nunca se
+  identifica una joya por cómo se ve. No se lee cuando puede ser un comprobante (transferencia
+  pendiente sin texto de producto). Topes: 5 MB, JPEG/PNG/WebP, 8 s; cualquier falla => se pide
+  escrita. La traza guarda cuántas se leyeron y cuántas existen (`image_references`), no los códigos.
+
 ### Referencia en las fotos (módulo `marca_referencia`)
 
 - **WhatsApp:** las fotos que manda el agente llevan la referencia en la esquina inferior derecha.
@@ -761,4 +773,5 @@ la marca de inmediato, purgar la caché del CDN del proyecto en Vercel.
 - `lib/catalogo/marca-referencia.test.ts`: solo trazos (sin fuentes), esquina, JPEG real.
 - `lib/catalogo/foto-http.test.ts` (B29): módulo apagado/encendido, aislado por negocio, tienda,
   descarga del panel.
-- Mutación: `python3 scripts/mutacion/b29.py` (11 protecciones).
+- `lib/agente/lectura-referencias.test.ts`: descarga de Meta, clave solo en el header, topes, nunca inventa.
+- Mutación: `python3 scripts/mutacion/b29.py` (15 protecciones).
