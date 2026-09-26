@@ -42,6 +42,7 @@ import { type BusinessAgentObserver, type BusinessAgentTrace } from "@/lib/agent
 import { resolveCommercialState } from "@/lib/agent-compiler/runtime/commercial-state-resolver";
 import { esTelefonoBloqueado } from "@/lib/blacklist-du";
 import { createBusinessAgentArgumentPolicy } from "@/lib/agent-compiler/contracts/argument-policy";
+import { categorizeRuntimeFailure } from "@/lib/agent-compiler/contracts/errors";
 
 export interface BusinessAgentBoundaryResult {
   /** true = el Business Agent atendió (o bloqueó fail-closed/blacklist) el
@@ -102,12 +103,13 @@ export async function atenderMensajeNoTextoConBusinessAgent(
     emit({ ...base, outcome: "blocked_number", llmInvoked: false, latencyMs: Date.now() - started } as BusinessAgentTrace);
     return { handled: true, outcome: "blocked_number" };
   }
+  if (!cliente.id_tenant) return failClosedSinTenant(emit, base, started, cliente.phone_number_id);
 
   let resolution;
   try {
     resolution = await params.resolver.resolve(supabase, cliente);
   } catch (err) {
-    emit({ ...base, outcome: "fail_closed", reason: "resolver_error", llmInvoked: false, latencyMs: Date.now() - started } as BusinessAgentTrace);
+    emit({ ...base, outcome: "fail_closed", reason: "resolver_error", errorCategory: categorizeRuntimeFailure("resolver_error"), llmInvoked: false, latencyMs: Date.now() - started } as BusinessAgentTrace);
     console.error(`[business-agent] resolver_error tenant=${cliente.id_tenant} phone=${cliente.phone_number_id}:`, err instanceof Error ? err.message : String(err));
     return { handled: true, outcome: "fail_closed", reason: "resolver_error" };
   }
@@ -115,8 +117,9 @@ export async function atenderMensajeNoTextoConBusinessAgent(
     emit({ ...base, outcome: "no_business_agent", reason: resolution.reason, llmInvoked: false, latencyMs: Date.now() - started } as BusinessAgentTrace);
     return { handled: false, outcome: "no_business_agent", reason: resolution.reason };
   }
+  if (resolution.kind === "invalid") return failClosedAgenteInvalido(emit, base, started, cliente, resolution.reason);
   if (resolution.tenantId !== cliente.id_tenant) {
-    emit({ ...base, outcome: "fail_closed", reason: "tenant_mismatch", flowId: resolution.flowId, checksum: resolution.checksum, llmInvoked: false, latencyMs: Date.now() - started } as BusinessAgentTrace);
+    emit({ ...base, outcome: "fail_closed", reason: "tenant_mismatch", errorCategory: categorizeRuntimeFailure("tenant_mismatch"), flowId: resolution.flowId, checksum: resolution.checksum, llmInvoked: false, latencyMs: Date.now() - started } as BusinessAgentTrace);
     return { handled: true, outcome: "fail_closed", reason: "tenant_mismatch" };
   }
 
@@ -149,6 +152,8 @@ export async function atenderMensajeConBusinessAgent(
     emit({ ...base, outcome: "blocked_number", llmInvoked: false, latencyMs: Date.now() - started } as BusinessAgentTrace);
     return { handled: true, outcome: "blocked_number" };
   }
+  // FASE 1 — sin tenant no hay contexto autenticado: nada se ejecuta (la frontera nunca lo infiere del mensaje).
+  if (!cliente.id_tenant) return failClosedSinTenant(emit, base, started, cliente.phone_number_id);
 
   // 1) Resolución tenant-scoped del Business Agent (fuente: fila real). Un
   // error real de infraestructura NUNCA propaga como excepción sin control
@@ -159,7 +164,7 @@ export async function atenderMensajeConBusinessAgent(
   try {
     resolution = await params.resolver.resolve(supabase, cliente);
   } catch (err) {
-    emit({ ...base, outcome: "fail_closed", reason: "resolver_error", llmInvoked: false, latencyMs: Date.now() - started } as BusinessAgentTrace);
+    emit({ ...base, outcome: "fail_closed", reason: "resolver_error", errorCategory: categorizeRuntimeFailure("resolver_error"), llmInvoked: false, latencyMs: Date.now() - started } as BusinessAgentTrace);
     console.error(`[business-agent] resolver_error tenant=${cliente.id_tenant} phone=${cliente.phone_number_id}:`, err instanceof Error ? err.message : String(err));
     return { handled: true, outcome: "fail_closed", reason: "resolver_error" };
   }
@@ -169,9 +174,13 @@ export async function atenderMensajeConBusinessAgent(
     return { handled: false, outcome: "no_business_agent", reason: resolution.reason };
   }
 
+  // FASE 1 — Business Agent real pero no servible con seguridad: NO cae al motor de flows genérico (que lo
+  // ejecutaría sin Gate ni contratos) ni a LEGACY. Silencio + error registrado.
+  if (resolution.kind === "invalid") return failClosedAgenteInvalido(emit, base, started, cliente, resolution.reason);
+
   // 2) Fail-closed multi-tenant: el artefacto DEBE ser del tenant del número.
   if (resolution.tenantId !== cliente.id_tenant) {
-    emit({ ...base, outcome: "fail_closed", reason: "tenant_mismatch", flowId: resolution.flowId, checksum: resolution.checksum, llmInvoked: false, latencyMs: Date.now() - started } as BusinessAgentTrace);
+    emit({ ...base, outcome: "fail_closed", reason: "tenant_mismatch", errorCategory: categorizeRuntimeFailure("tenant_mismatch"), flowId: resolution.flowId, checksum: resolution.checksum, llmInvoked: false, latencyMs: Date.now() - started } as BusinessAgentTrace);
     return { handled: true, outcome: "fail_closed", reason: "tenant_mismatch" };
   }
 
@@ -268,6 +277,7 @@ export async function atenderMensajeConBusinessAgent(
     orchestratorOutcome,
     outcome,
     reason: result.kind === "fail_closed" ? result.reason : undefined,
+    ...(result.kind === "fail_closed" ? { errorCategory: categorizeRuntimeFailure(result.reason) } : {}),
     // LLM sólo puede haberse invocado si el Gate PASÓ al Flow.
     llmInvoked: result.kind === "flow",
     latencyMs: Date.now() - started,
@@ -276,4 +286,28 @@ export async function atenderMensajeConBusinessAgent(
   // Un Business Agent SIEMPRE es dueño de su mensaje: nunca cae a LEGACY (ni
   // ante fail-closed) para no dejar que la IA legacy contradiga el estado real.
   return { handled: true, outcome, reason: result.kind === "fail_closed" ? result.reason : undefined };
+}
+
+function failClosedSinTenant(
+  emit: (t: BusinessAgentTrace) => void,
+  base: Partial<BusinessAgentTrace>,
+  started: number,
+  phoneNumberId: string,
+): BusinessAgentBoundaryResult {
+  emit({ ...base, outcome: "fail_closed", reason: "tenant_missing", errorCategory: categorizeRuntimeFailure("tenant_missing"), llmInvoked: false, latencyMs: Date.now() - started } as BusinessAgentTrace);
+  console.error(`[business-agent] tenant_missing phone=${phoneNumberId}: número vinculado a un Business Agent sin id_tenant`);
+  return { handled: true, outcome: "fail_closed", reason: "tenant_missing" };
+}
+
+function failClosedAgenteInvalido(
+  emit: (t: BusinessAgentTrace) => void,
+  base: Partial<BusinessAgentTrace>,
+  started: number,
+  cliente: ClienteConfig,
+  reason: string,
+): BusinessAgentBoundaryResult {
+  const errorCategory = reason === "tenant_unresolved" ? categorizeRuntimeFailure("tenant_unresolved") : "INTERNAL_ERROR";
+  emit({ ...base, outcome: "fail_closed", reason, errorCategory, llmInvoked: false, latencyMs: Date.now() - started } as BusinessAgentTrace);
+  console.error(`[business-agent] invalid_agent reason=${reason} tenant=${cliente.id_tenant} phone=${cliente.phone_number_id} flow=${cliente.flow_id}`);
+  return { handled: true, outcome: "fail_closed", reason };
 }

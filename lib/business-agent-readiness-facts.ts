@@ -12,8 +12,15 @@ import { createSupabaseCalendarStore } from "@/lib/agent-compiler/calendar/calen
 import { createSupabaseCatalogStore } from "@/lib/business-agent-catalog-store";
 import { detectDomainCapabilities } from "@/lib/flow/external-claim-security";
 import { assessClaimRisk } from "@/lib/business-agent-knowledge/claim-risk";
+import { withSemanticContent, type GateRule } from "@/lib/agent-compiler/runtime/guardrail-gate";
 
-export async function loadReadinessFacts(supabase: SupabaseClient, tenantId: string, spec: BusinessAgentSpec): Promise<ReadinessFacts> {
+export async function loadReadinessFacts(
+  supabase: SupabaseClient,
+  tenantId: string,
+  spec: BusinessAgentSpec,
+  /** FASE 1 — reglas del Gate de la versión evaluada: habilitan el manifiesto de políticas y su bloqueo. */
+  opts: { gateRules?: GateRule[] } = {},
+): Promise<ReadinessFacts> {
   const caps = spec.capabilities;
   const necesitaServicios = caps.scheduling || caps.catalog;
   const necesitaProductos = caps.catalog && spec.catalog.useProducts;
@@ -44,7 +51,15 @@ export async function loadReadinessFacts(supabase: SupabaseClient, tenantId: str
     caps.faq ? faqsConRiesgo(supabase, tenantId) : Promise.resolve([] as string[]),
   ]);
 
-  return { activeServices, activeProducts, hasKnowledge, calendarConnected, catalogNamesAtRisk, faqsAtRisk };
+  return {
+    activeServices,
+    activeProducts,
+    hasKnowledge,
+    calendarConnected,
+    catalogNamesAtRisk,
+    faqsAtRisk,
+    ...(opts.gateRules ? { gateRules: withSemanticContent(opts.gateRules, spec) } : {}),
+  };
 }
 
 /** Nombres activos del catálogo (servicios y/o productos según el Spec) que el filtro de afirmaciones del runtime bloquearía. */

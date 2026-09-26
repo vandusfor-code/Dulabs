@@ -39,6 +39,12 @@ export interface GateRule {
   condition?: { rules: ConditionRule[]; match: ConditionMatchMode };
   /** Etiqueta que el clasificador debe emitir para activar una regla semántica. */
   classification?: string;
+  /**
+   * FASE 1 — contenido semántico NORMALIZADO de la regla (lo que escribió el negocio). Sin esto el clasificador
+   * solo veía el id opaco (p. ej. "prohibicion-lz3k9a-x7f2") y no podía saber qué evaluar. Una regla semántica
+   * sin descripción NO se envía al clasificador (no es aplicable) y el manifiesto de políticas la marca.
+   */
+  semantic?: { description: string };
   action: GateAction;
   response?: string;
   pauseHours?: number;
@@ -89,6 +95,8 @@ export type GateDecision =
 export type SemanticClassifier = (input: {
   message: string;
   labels: string[];
+  /** FASE 1 — qué significa cada etiqueta (contenido de la regla configurada por el negocio). */
+  policies: Array<{ label: string; description: string }>;
   context: GateContext;
 }) => Promise<{ label: string } | null>;
 
@@ -193,6 +201,39 @@ function actionToKind(action: GateAction): "block" | "fixed_response" | "transfe
   return action === "BLOCK" ? "block" : action === "FIXED_RESPONSE" ? "fixed_response" : "transfer_human";
 }
 
+/** Límite del contenido semántico de una regla (lo que llega al clasificador). */
+export const MAX_POLICY_TEXT = 300;
+
+/**
+ * Normaliza el texto de una regla para el clasificador: sin saltos de línea ni caracteres de control (no puede
+ * alterar la estructura de la instrucción), espacios colapsados y largo acotado. Determinista.
+ */
+export function normalizePolicyText(text: string | undefined): string {
+  const limpio = (text ?? "")
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return limpio.length > MAX_POLICY_TEXT ? limpio.slice(0, MAX_POLICY_TEXT).trimEnd() : limpio;
+}
+
+/** Significado de cada tipo de disparador de traspaso (el disparador es un enum: su sentido lo fija DuLabs). */
+const HANDOFF_KIND_MEANING: Record<string, string> = {
+  agent_request: "El cliente pide hablar con una persona del equipo en lugar del asistente.",
+  complaint: "El cliente presenta una queja o un reclamo, o expresa inconformidad con el servicio o la atención.",
+  discount_request: "El cliente pide un descuento, una rebaja o un precio especial.",
+};
+
+/** Contenido semántico de una regla de traspaso: el sentido del disparador + la descripción del negocio. */
+export function handoffSemanticDescription(h: { description?: string; trigger: { kind: string; intent?: string; keywords?: string[] } }): string {
+  const partes: string[] = [];
+  const base = HANDOFF_KIND_MEANING[h.trigger.kind];
+  if (base) partes.push(base);
+  if (h.trigger.kind === "intent" && h.trigger.intent?.trim()) partes.push(`Intención del cliente: ${h.trigger.intent.trim()}.`);
+  if (h.trigger.kind === "keyword" && h.trigger.keywords?.length) partes.push(`El cliente menciona: ${h.trigger.keywords.join(", ")}.`);
+  if (h.description?.trim()) partes.push(`Regla del negocio: ${h.description.trim()}`);
+  return normalizePolicyText(partes.join(" "));
+}
+
 /**
  * Construye el ruleset ejecutable del Gate desde la IR. Orden estable:
  * prioridad desc, luego source (handoff antes que prohibition a igual
@@ -217,12 +258,14 @@ export function buildGateRules(ir: CompiledBusinessAgentIR): GateRule[] {
         provenance: { kind: "prohibition", sourceId: g.source.prohibitionId },
       });
     } else {
+      const descripcion = normalizePolicyText(g.description);
       rules.push({
         id: g.id,
         source: "prohibition",
         evaluation: "semantic",
         priority: g.priority,
         classification: g.id,
+        ...(descripcion ? { semantic: { description: descripcion } } : {}),
         action: g.action,
         response: g.response,
         pauseHours: g.action === "TRANSFER_HUMAN" ? DEFAULT_TRANSFER_PAUSE_HOURS : undefined,
@@ -269,6 +312,7 @@ export function buildGateRules(ir: CompiledBusinessAgentIR): GateRule[] {
         evaluation: "semantic",
         priority: HANDOFF_GATE_PRIORITY,
         classification: h.id,
+        semantic: { description: handoffSemanticDescription(h) },
         action: "TRANSFER_HUMAN",
         response: h.response,
         pauseHours,
@@ -284,6 +328,30 @@ export function buildGateRules(ir: CompiledBusinessAgentIR): GateRule[] {
       a.id.localeCompare(b.id),
   );
   return rules;
+}
+
+/**
+ * FASE 1 — completa el contenido semántico de reglas compiladas ANTES de FASE 1 (gate_rules persistidas sin
+ * `semantic`) desde el Spec de la MISMA versión, que es inmutable. Puro y determinista: no recompila ni cambia
+ * checksums; solo agrega lo que la regla ya significaba. Reglas deterministas o ya completas: sin cambios.
+ */
+export function withSemanticContent(
+  rules: GateRule[],
+  spec: {
+    policies: { prohibitions: Array<{ id: string; description?: string }> };
+    handoff: { rules: Array<{ id: string; description?: string; trigger: { kind: string; intent?: string; keywords?: string[] } }> };
+  },
+): GateRule[] {
+  return rules.map((rule) => {
+    if (rule.evaluation !== "semantic" || rule.semantic?.description) return rule;
+    if (rule.provenance.kind === "prohibition") {
+      const p = spec.policies.prohibitions.find((x) => x.id === rule.provenance.sourceId);
+      const descripcion = normalizePolicyText(p?.description);
+      return descripcion ? { ...rule, semantic: { description: descripcion } } : rule;
+    }
+    const h = spec.handoff.rules.find((x) => x.id === rule.provenance.sourceId);
+    return h ? { ...rule, semantic: { description: handoffSemanticDescription(h) } } : rule;
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -333,15 +401,24 @@ export async function evaluateGuardrailGate(input: {
   }
 
   // 2) Semánticas (clasificador controlado, solo si hay reglas + clasificador).
-  const semanticRules = input.rules.filter((r) => r.evaluation === "semantic" && r.classification);
+  // FASE 1: solo son evaluables las reglas semánticas CON contenido (descripción). Una etiqueta sin significado no
+  // se le pide al clasificador: adivinaría. Esas reglas quedan marcadas en el manifiesto de políticas.
+  const semanticRules = input.rules.filter((r) => r.evaluation === "semantic" && r.classification && r.semantic?.description);
   if (semanticRules.length === 0 || !input.classifier) {
     return { kind: "pass" };
   }
 
   const labels = [...new Set(semanticRules.map((r) => r.classification!)), GATE_CONTINUE_LABEL];
+  const vistos = new Set<string>();
+  const policies: Array<{ label: string; description: string }> = [];
+  for (const r of semanticRules) {
+    if (vistos.has(r.classification!)) continue;
+    vistos.add(r.classification!);
+    policies.push({ label: r.classification!, description: r.semantic!.description });
+  }
   let result: { label: string } | null = null;
   try {
-    result = await input.classifier({ message: input.context.message, labels, context: input.context });
+    result = await input.classifier({ message: input.context.message, labels, policies, context: input.context });
   } catch {
     // Fail-safe conversacional: un fallo del clasificador NO bloquea (las
     // críticas son deterministas). Se continúa al flujo controlado.

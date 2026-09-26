@@ -450,7 +450,7 @@ function StepReglas({ form, update }: { form: EditableBusinessAgentSpecForm; upd
   const pol = form.policies;
   return (
     <>
-      <SectionCard title={t("Cosas que el agente NUNCA debe hacer", "Things the agent must NEVER do")} description={t("Se evalúan ANTES del modelo -- si aplican, el modelo ni siquiera corre.", "Evaluated BEFORE the model -- if they apply, the model doesn't even run.")}>
+      <SectionCard title={t("Cosas que el agente NUNCA debe hacer", "Things the agent must NEVER do")} description={t("Se revisan antes de responder: si una aplica, el agente envía tu respuesta fija y no improvisa. Las que describes con palabras las reconoce un clasificador de IA a partir de tu descripción, así que escríbela clara y concreta.", "Checked before replying: if one applies, the agent sends your fixed reply and doesn't improvise. Rules described in words are recognized by an AI classifier from your description, so keep it clear and specific.")}>
         <div className="space-y-3">
           {pol.prohibitions.map((p, i) => (
             <div key={p.id} className="space-y-2 rounded-lg border border-edge bg-ink p-3">
@@ -493,7 +493,7 @@ function StepReglas({ form, update }: { form: EditableBusinessAgentSpecForm; upd
         </div>
       </SectionCard>
 
-      <SectionCard title={t("Reglas informativas", "Informative rules")} description={t("Recordatorios/requisitos que el agente debe tener en cuenta.", "Reminders/requirements the agent should keep in mind.")}>
+      <SectionCard title={t("Reglas informativas", "Informative rules")} description={t("Todavía no cambian las respuestas del agente: se guardan para una próxima versión. Si algo debe cumplirse sí o sí, créalo como prohibición.", "They don't change the agent's replies yet: they're saved for an upcoming version. If something must always be enforced, create it as a prohibition.")}>
         <div className="space-y-3">
           {pol.rules.map((r, i) => (
             <div key={r.id} className="flex items-center gap-2">

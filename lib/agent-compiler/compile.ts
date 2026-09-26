@@ -130,6 +130,7 @@ function construirIR(spec: BusinessAgentSpec, context: CompilerContext): Compile
     .map((p) => ({
       id: p.id,
       source: { kind: "prohibition", prohibitionId: p.id },
+      description: p.description,
       execution: "PRE_LLM",
       scope: p.scope,
       condition: p.condition,
@@ -158,7 +159,7 @@ function construirIR(spec: BusinessAgentSpec, context: CompilerContext): Compile
 
   const handoff: HandoffBindingIR[] = [...spec.handoff.rules]
     .sort((a, b) => a.id.localeCompare(b.id))
-    .map((h) => ({ id: h.id, trigger: h.trigger, action: h.action, response: h.response, pauseHours: h.pauseHours ?? spec.handoff.defaultPauseHours, runtimeBinding: "transferir_soporte" }));
+    .map((h) => ({ id: h.id, description: h.description, trigger: h.trigger, action: h.action, response: h.response, pauseHours: h.pauseHours ?? spec.handoff.defaultPauseHours, runtimeBinding: "transferir_soporte" }));
 
   const scheduling: SchedulingCapabilityIR = {
     requested: caps.scheduling,

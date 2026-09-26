@@ -17,6 +17,8 @@
 import type { BusinessAgentSpec } from "@/lib/agent-compiler/spec/types";
 import { tieneAlgunHorarioAbierto } from "@/lib/business-hours";
 import { CAPABILITY_BACKING, type CapabilityKey } from "@/lib/agent-compiler/spec/capabilities";
+import type { GateRule } from "@/lib/agent-compiler/runtime/guardrail-gate";
+import { buildRuntimePolicyManifest, type RuntimePolicyManifest } from "@/lib/agent-compiler/contracts/policy-manifest";
 
 export type ReadinessSeverity = "blocker" | "warning";
 
@@ -48,6 +50,12 @@ export interface ReadinessFacts {
    * "disponible", "pago"...): el cliente recibiría un mensaje genérico en vez de la respuesta. Opcional: si no se calcula, no avisa.
    */
   faqsAtRisk?: string[];
+  /**
+   * FASE 1 — reglas del Gate que el runtime sirve para ESTA versión (gate_rules persistidas, completadas con su
+   * contenido semántico). Con ellas se verifica que cada prohibición/traspaso configurado llega al runtime.
+   * Opcional: sin ellas no se calcula el manifiesto (compatibilidad con llamadores previos).
+   */
+  gateRules?: GateRule[];
 }
 
 export interface ReadinessSummaryItem {
@@ -61,6 +69,8 @@ export interface ReadinessReport {
   blockers: ReadinessIssue[];
   warnings: ReadinessIssue[];
   summary: ReadinessSummaryItem[];
+  /** FASE 1 — cómo llega cada regla configurada al runtime (solo si se pasaron `facts.gateRules`). */
+  policyManifest?: RuntimePolicyManifest;
 }
 
 const PROVIDER_LABEL: Record<string, string> = { nylas: "Google Calendar (Nylas)", internal: "especialistas de DuLabs", google_calendar: "Google Calendar", none: "sin proveedor" };
@@ -165,9 +175,31 @@ export function evaluateReadiness(spec: BusinessAgentSpec, facts: ReadinessFacts
     }
   }
 
+  // FASE 1 — ninguna regla que la UI presenta como funcional puede publicarse sin un camino verificable al runtime.
+  let policyManifest: RuntimePolicyManifest | undefined;
+  if (facts.gateRules) {
+    policyManifest = buildRuntimePolicyManifest(spec, facts.gateRules);
+    for (const e of policyManifest.unenforceable) {
+      bloqueo(
+        "POLICY_NOT_IN_RUNTIME",
+        e.kind === "handoff" ? "humanHandoff" : "general",
+        `La regla «${e.normalized || e.ruleId}» no puede aplicarse en el agente publicado. Revísala en el paso ${e.kind === "handoff" ? "Transferencia" : "Reglas"} y vuelve a guardar.`,
+        e.kind === "handoff" ? "handoff" : "reglas",
+      );
+    }
+  }
+  if (spec.policies.rules.length > 0) {
+    aviso(
+      "INFORMATIONAL_RULES_NOT_ENFORCED",
+      "general",
+      `Las reglas informativas (${spec.policies.rules.length}) se guardan, pero todavía no cambian las respuestas del agente.`,
+      "reglas",
+    );
+  }
+
   const blockers = issues.filter((i) => i.severity === "blocker");
   const warnings = issues.filter((i) => i.severity === "warning");
-  return { ready: blockers.length === 0, blockers, warnings, summary: resumen(spec, facts) };
+  return { ready: blockers.length === 0, blockers, warnings, summary: resumen(spec, facts), ...(policyManifest ? { policyManifest } : {}) };
 }
 
 function resumen(spec: BusinessAgentSpec, facts: ReadinessFacts): ReadinessSummaryItem[] {

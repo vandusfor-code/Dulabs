@@ -112,7 +112,7 @@ export function BusinessAgentPreview({ flowVersionId }: { flowVersionId: string 
       <div className="flex items-center justify-between border-b border-edge px-4 py-3">
         <div>
           <p className="text-sm font-semibold text-fg">{t("Vista previa conversacional", "Conversation preview")}</p>
-          <p className="mt-0.5 text-[11px] text-mist">{t("100% simulado -- no envía WhatsApp real ni ejecuta acciones de negocio.", "100% simulated -- no real WhatsApp sent, no business actions executed.")}</p>
+          <p className="mt-0.5 text-[11px] text-mist">{t("100% simulado: no envía WhatsApp real, no ejecuta acciones y las respuestas de IA son de ejemplo (no son las del agente real).", "100% simulated: no real WhatsApp, no actions executed, and AI replies are placeholders (not the real agent's).")}</p>
         </div>
         <button onClick={reset} className="flex items-center gap-1.5 rounded-lg border border-edge px-2.5 py-1.5 text-xs font-medium text-mist transition-colors hover:text-fg">
           <RotateCcw className="size-3.5" /> {t("Reiniciar", "Restart")}

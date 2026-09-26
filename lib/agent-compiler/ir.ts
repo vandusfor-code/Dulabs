@@ -69,6 +69,12 @@ export interface CapabilityBinding {
 export interface CompiledGuardrailIR {
   id: string;
   source: { kind: "prohibition"; prohibitionId: string };
+  /**
+   * FASE 1 — contenido semántico de la regla tal como lo escribió el negocio. Es lo que el clasificador del
+   * Gate necesita para evaluar una prohibición sin condición determinista (antes solo recibía el id opaco).
+   * Opcional para IRs compiladas antes de FASE 1 (se completa desde el Spec al resolver).
+   */
+  description?: string;
   /** Los guardrails críticos se evalúan ANTES del LLM. */
   execution: "PRE_LLM";
   scope: ProhibitionScope;
@@ -100,6 +106,8 @@ export interface CatalogBinding {
 
 export interface HandoffBindingIR {
   id: string;
+  /** FASE 1 — descripción de la regla de traspaso (contenido semántico para el clasificador). */
+  description?: string;
   trigger: HandoffTrigger;
   action: HandoffAction;
   response?: string;

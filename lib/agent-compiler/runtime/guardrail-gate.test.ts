@@ -69,6 +69,8 @@ const noEfectivo: CompiledGuardrailIR = {
 const quejaSemantica: CompiledGuardrailIR = {
   id: "queja",
   source: { kind: "prohibition", prohibitionId: "queja" },
+  // FASE 1: el compilador conserva el contenido de la regla; es lo que el clasificador necesita.
+  description: "El cliente presenta una queja o un reclamo.",
   execution: "PRE_LLM",
   scope: "business",
   condition: undefined, // sin condición determinista -> semántica
@@ -242,6 +244,28 @@ describe("R5 — agent_request: 'quiero hablar con una persona' NO depende del c
 });
 
 describe("evaluateGuardrailGate — semánticas (clasificador controlado)", () => {
+  it("FASE 1 — el clasificador recibe el SIGNIFICADO de cada regla, no solo su id", async () => {
+    let recibidas: Array<{ label: string; description: string }> = [];
+    const classifier: SemanticClassifier = async ({ policies }) => {
+      recibidas = policies;
+      return { label: "continue" };
+    };
+    await evaluateGuardrailGate({ rules: rulesFor({ guardrails: [quejaSemantica] }), context: { message: "hola" }, classifier });
+    assert.deepEqual(recibidas, [{ label: "queja", description: "El cliente presenta una queja o un reclamo." }]);
+  });
+
+  it("FASE 1 — una regla semántica SIN contenido no se le pide al clasificador (no es aplicable: no adivina)", async () => {
+    let llamado = false;
+    const classifier: SemanticClassifier = async () => {
+      llamado = true;
+      return { label: "queja" };
+    };
+    const sinContenido: CompiledGuardrailIR = { ...quejaSemantica, description: undefined };
+    const decision = await evaluateGuardrailGate({ rules: rulesFor({ guardrails: [sinContenido] }), context: { message: "esto es pésimo" }, classifier });
+    assert.equal(decision.kind, "pass");
+    assert.equal(llamado, false);
+  });
+
   it("clasifica intención y DuLabs decide la acción (transfer)", async () => {
     const classifier: SemanticClassifier = async ({ labels }) => {
       assert.ok(labels.includes("queja"));

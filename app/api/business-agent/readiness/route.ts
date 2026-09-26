@@ -28,7 +28,7 @@ export async function GET(request: NextRequest) {
   try {
     const version = await createSupabaseBusinessAgentRegistryStore(supabase).getVersion(miembro.tenantId, flowVersionId);
     if (!version) return apiError("NOT_FOUND", "Versión no encontrada.", 404);
-    const facts = await loadReadinessFacts(supabase, miembro.tenantId, version.spec);
+    const facts = await loadReadinessFacts(supabase, miembro.tenantId, version.spec, { gateRules: version.gateRules });
     return apiOk(evaluateReadiness(version.spec, facts));
   } catch {
     return apiError("INTERNAL_ERROR", "No se pudo evaluar el agente.", 500);

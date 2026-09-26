@@ -61,7 +61,7 @@ export async function POST(request: NextRequest) {
     // Las reglas estructurales del Spec (horario, datos del cliente...) ya las cubre spec/validate.ts al guardar.
     const version = await store.getVersion(miembro.tenantId, body.flowVersionId);
     if (version) {
-      const facts = await loadReadinessFacts(supabase, miembro.tenantId, version.spec);
+      const facts = await loadReadinessFacts(supabase, miembro.tenantId, version.spec, { gateRules: version.gateRules });
       const informe = evaluateReadiness(version.spec, facts);
       if (!informe.ready) {
         const [primero] = informe.blockers;
