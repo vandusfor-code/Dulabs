@@ -9,8 +9,7 @@ import { requireFlowAccess } from "@/lib/flow/api-auth";
 import { respuestaSiLimiteTasaExcedido } from "@/lib/rate-limit";
 import { apiError, apiOk } from "@/lib/agent-compiler/api/http";
 import { createSupabaseBusinessAgentRegistryStore } from "@/lib/agent-compiler/registry/registry-store-supabase";
-import { evaluateReadiness } from "@/lib/business-agent-readiness";
-import { loadReadinessFacts } from "@/lib/business-agent-readiness-facts";
+import { evaluateVersionReadiness } from "@/lib/agent-compiler/lifecycle/supabase";
 
 export const runtime = "nodejs";
 
@@ -28,8 +27,7 @@ export async function GET(request: NextRequest) {
   try {
     const version = await createSupabaseBusinessAgentRegistryStore(supabase).getVersion(miembro.tenantId, flowVersionId);
     if (!version) return apiError("NOT_FOUND", "Versión no encontrada.", 404);
-    const facts = await loadReadinessFacts(supabase, miembro.tenantId, version.spec, { gateRules: version.gateRules });
-    return apiOk(evaluateReadiness(version.spec, facts));
+    return apiOk(await evaluateVersionReadiness(supabase, miembro.tenantId, version));
   } catch {
     return apiError("INTERNAL_ERROR", "No se pudo evaluar el agente.", 500);
   }

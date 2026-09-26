@@ -14,6 +14,7 @@ import { createSupabaseBusinessAgentRegistryStore } from "@/lib/agent-compiler/r
 import { rollbackToVersion, isPlainObject } from "@/lib/agent-compiler/api/business-agent-api";
 import { apiError, apiOk } from "@/lib/agent-compiler/api/http";
 import { registrarAuditoriaAdmin } from "@/lib/auditoria-admin";
+import { evaluateVersionReadiness } from "@/lib/agent-compiler/lifecycle/supabase";
 
 export const runtime = "nodejs";
 
@@ -45,8 +46,21 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    const store = createSupabaseBusinessAgentRegistryStore(supabase);
+    // FASE 1 — volver a una versión anterior es PUBLICARLA: pasa por la MISMA readiness que /publish (antes no la
+    // revalidaba: una versión vieja podía re-publicarse aunque ya no pudiera funcionar, p. ej. sin calendario).
+    if (body.confirm === true) {
+      const version = await store.getVersion(miembro.tenantId, body.flowVersionId);
+      if (version) {
+        const informe = await evaluateVersionReadiness(supabase, miembro.tenantId, version);
+        if (!informe.ready) {
+          const [primero] = informe.blockers;
+          return apiError(primero!.code, informe.blockers.length > 1 ? `${primero!.message} (y ${informe.blockers.length - 1} problema(s) más).` : primero!.message, 422, informe.blockers);
+        }
+      }
+    }
     const result = await rollbackToVersion(
-      { store: createSupabaseBusinessAgentRegistryStore(supabase) },
+      { store },
       { tenantId: miembro.tenantId, flowVersionId: body.flowVersionId, confirm: body.confirm === true },
     );
     if (!result.ok) return apiError(result.reason.toUpperCase(), result.message, REASON_STATUS[result.reason] ?? 500);

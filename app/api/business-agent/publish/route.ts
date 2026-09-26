@@ -17,8 +17,7 @@ import { createSupabaseBusinessAgentRegistryStore } from "@/lib/agent-compiler/r
 import { publishDraftVersion, isPlainObject } from "@/lib/agent-compiler/api/business-agent-api";
 import { apiError, apiOk } from "@/lib/agent-compiler/api/http";
 import { registrarAuditoriaAdmin } from "@/lib/auditoria-admin";
-import { evaluateReadiness } from "@/lib/business-agent-readiness";
-import { loadReadinessFacts } from "@/lib/business-agent-readiness-facts";
+import { evaluateVersionReadiness } from "@/lib/agent-compiler/lifecycle/supabase";
 
 export const runtime = "nodejs";
 
@@ -61,8 +60,7 @@ export async function POST(request: NextRequest) {
     // Las reglas estructurales del Spec (horario, datos del cliente...) ya las cubre spec/validate.ts al guardar.
     const version = await store.getVersion(miembro.tenantId, body.flowVersionId);
     if (version) {
-      const facts = await loadReadinessFacts(supabase, miembro.tenantId, version.spec, { gateRules: version.gateRules });
-      const informe = evaluateReadiness(version.spec, facts);
+      const informe = await evaluateVersionReadiness(supabase, miembro.tenantId, version);
       if (!informe.ready) {
         const [primero] = informe.blockers;
         return apiError(primero!.code, informe.blockers.length > 1 ? `${primero!.message} (y ${informe.blockers.length - 1} problema(s) más: revisa el panel de publicación).` : primero!.message, 422, informe.blockers);
