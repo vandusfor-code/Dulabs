@@ -497,3 +497,8 @@ lib/flow/registrar-en-modulo.test.ts
 lib/publibordados/clientes/solicitudes.integracion.test.ts
 lib/flow/registro-modulo-conciliacion.integracion.test.ts
 app/webhook-dulabs/pausa-intervencion-humana-integracion.test.ts
+lib/agent-compiler/contracts/contracts.test.ts
+lib/agent-compiler/contracts/policies.test.ts
+lib/agent-compiler/lifecycle/lifecycle.test.ts
+lib/agent-compiler/understanding/understanding.test.ts
+lib/agent-compiler/understanding/real-cases.test.ts

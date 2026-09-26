@@ -145,7 +145,7 @@ export class ClaudeExecutor implements EffectExecutor {
             {
               name: STRUCTURED_TOOL_NAME,
               description: "Structured AI output for DuLabs Flow",
-              input_schema: buildAiOutputToolSchema(aiRequest.mode, aiRequest.classifications),
+              input_schema: buildAiOutputToolSchema(aiRequest.mode, aiRequest.classifications, ai.extractSchema),
             },
           ],
           // Fuerza que Claude SIEMPRE responda vía el tool estructurado --

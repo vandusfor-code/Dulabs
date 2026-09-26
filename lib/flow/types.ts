@@ -243,6 +243,12 @@ export interface AiNodeConfig {
   contextConfig?: AiContextConfig;
   /** Anti-invención -- ver AiGroundingConfig. Opcional y retrocompatible. */
   grounding?: AiGroundingConfig;
+  /**
+   * Business Agent 2.0, FASE 2 — solo modo extract: JSON Schema de la extracción que se le presenta al modelo en el
+   * tool estructurado (ver buildAiOutputToolSchema). Opcional y retrocompatible: ningún Flow publicado lo configura.
+   * No es validación: quien consume la extracción la valida con su propio contrato.
+   */
+  extractSchema?: Record<string, unknown>;
 }
 
 // ---------------------------------------------------------------------------
