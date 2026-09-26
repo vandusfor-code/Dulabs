@@ -1369,7 +1369,7 @@ async function intentarAgenteConversacionalSiAplica(cliente: ClienteConfig, mens
       const politica = nonTextPolicy(mensaje.type);
       if (politica && politica.action !== "ignore") {
         const r = await atenderConAgenteSiAplica(
-          { cliente, waId: telefonoRemitente, destino, wamid: mensaje.id, text: "", replyTo: replyToDeMeta(mensaje.context), nonText: { kind: politica.kind, caption: leyendaDeMeta(mensaje) } },
+          { cliente, waId: telefonoRemitente, destino, wamid: mensaje.id, text: "", replyTo: replyToDeMeta(mensaje.context), nonText: { kind: politica.kind, caption: leyendaDeMeta(mensaje), mediaId: mensaje.image?.id ?? null } },
           deps,
         );
         return r.handled;

@@ -25,7 +25,8 @@ import { enviarBotones, incrementarUsoMensajes, registrarMensaje, resolverTokenM
 import { contactRef } from "@/lib/catalogo/pedidos/log";
 import { productionAgentToolDeps } from "@/lib/catalogo/pedidos/produccion";
 import { createGeminiProvider } from "@/lib/ia-proveedores/gemini";
-import type { AIProviderFactories } from "@/lib/ia-proveedores/registro";
+import { validateAIProviderConfig, type AIProviderFactories } from "@/lib/ia-proveedores/registro";
+import { crearLectorDeReferencias } from "@/lib/agente/lectura-referencias";
 import { createSupabaseAgentConfigStore, loadAgentConfig, providerForConfig, type AgentConfigStore } from "@/lib/agente/config";
 import { createSupabaseHistoryStore } from "@/lib/agente/contexto";
 import { createSupabaseConversationStateStore } from "@/lib/agente/estado";
@@ -49,7 +50,7 @@ export interface AgentBoundaryInput {
   /** context de Meta: mensaje citado (swipe-to-reply a una foto) o reenviado. */
   replyTo?: { wamid?: string | null; forwarded?: boolean } | null;
   /** Mensaje sin texto (Bloque 23): `text` vacío y la política determinista de entrada.ts. */
-  nonText?: { kind: NonTextKind; caption?: string | null } | null;
+  nonText?: { kind: NonTextKind; caption?: string | null; mediaId?: string | null } | null;
   /** Bloque 26: id del botón tocado (interactive.button_reply.id). Solo el turno directo lo usa; el buzón guarda el texto. */
   buttonId?: string | null;
 }
@@ -73,13 +74,16 @@ export type AgentBoundaryResult =
   | { handled: false; reason: "no_agent" }
   | { handled: true; outcome: "disabled" | "invalid_config" | "unavailable" | "queued" | AgentTurnTrace["outcome"]; reason?: string; turns?: number };
 
+/** Bloque 29: lector de referencias en fotos del cliente, con la MISMA credencial y modelo del agente. */
+export type ImageReaderFactory = (gemini: { apiKey: string; model: string }) => (mediaId: string) => Promise<string[]>;
+
 export interface AgentBoundaryDeps {
   configStore: AgentConfigStore;
   /**
    * Construye el resto de dependencias solo si hay un agente válido (evita trabajo para los demás números).
    * Con `mailbox`, los mensajes pasan por el buzón y hay UN turno a la vez por conversación (Bloque 11).
    */
-  build(input: AgentBoundaryInput): (Omit<AgentRuntimeDeps, "config" | "provider" | "model"> & { mailbox?: MailboxStore; drain?: DrainOptions }) | null;
+  build(input: AgentBoundaryInput): (Omit<AgentRuntimeDeps, "config" | "provider" | "model"> & { mailbox?: MailboxStore; drain?: DrainOptions; imageReader?: ImageReaderFactory }) | null;
   env?: Record<string, string | undefined>;
   factories?: Partial<AIProviderFactories>;
   logError?: (entry: Record<string, unknown>) => void;
@@ -125,8 +129,14 @@ async function atender(input: AgentBoundaryInput, deps: AgentBoundaryDeps): Prom
     logError({ ...base, result: "unavailable", reason: "runtime_deps_unavailable" });
     return { handled: true, outcome: "unavailable", reason: "runtime_deps_unavailable" };
   }
-  const { mailbox, drain: drainOptions, ...runtimeDeps } = rest;
+  const { mailbox, drain: drainOptions, imageReader, ...runtimeDeps } = rest;
   const deps2: AgentRuntimeDeps = { ...runtimeDeps, config: cfg.config, provider: provider.provider, model: provider.model };
+  // Bloque 29 (solo con el checkout conversacional): leer la referencia escrita en una foto del cliente.
+  if (cfg.config.checkoutEnabled && imageReader && input.nonText?.kind === "image" && input.nonText.mediaId) {
+    const valid = validateAIProviderConfig({ provider: cfg.config.provider, model: cfg.config.model, credentialRef: cfg.config.credentialRef });
+    const apiKey = valid.ok ? (deps.env ?? process.env)[valid.envVar]?.trim() : undefined;
+    if (valid.ok && apiKey) deps2.readImageReferences = imageReader({ apiKey, model: valid.model });
+  }
   const key = { tenantId: input.cliente.id_tenant, phoneNumberId: input.cliente.phone_number_id, waId: input.waId };
   const single = () =>
     runAgentTurn(deps2, { ...key, wamid: input.wamid, text: input.text, replyTo: input.replyTo ?? null, nonText: input.nonText ?? null, buttonId: input.buttonId ?? null }).then((r) => ({ handled: true as const, outcome: r.outcome }));
@@ -319,6 +329,7 @@ export function productionAgentBoundaryDeps(supabase: SupabaseClient, cliente: C
         mailbox: createSupabaseMailboxStore(supabase),
         usage: createSupabaseUsageReader(supabase),
         classification: createSupabaseCustomerChannelStore(supabase),
+        imageReader: ({ apiKey, model }) => crearLectorDeReferencias({ token: resolverTokenMeta(cliente), apiKey, model, baseUrl }),
         log: (trace) => {
           console.info(JSON.stringify(trace));
           persist(traces.record(turnRecord(trace, cliente.phone_number_id)));

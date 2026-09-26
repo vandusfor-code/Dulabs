@@ -26,7 +26,7 @@ import { AGENT_TOOL_NAMES } from "@/lib/agente/nombres-herramientas";
 import { CART_CLARIFY, runAgentTurn, type AgentTurnTrace } from "@/lib/agente/runtime";
 import { createMemoryCustomerChannelStore, parseChannelChoice } from "@/lib/agente/clasificacion";
 import { CHECKOUT_BUTTONS, CHECKOUT_MESSAGES, CHECKOUT_STEP_HINT, parseCustomerName, parseDelivery, parsePayment, wantsCheckout } from "@/lib/agente/checkout";
-import { MEDIA_MESSAGES, NON_TEXT_MESSAGES } from "@/lib/agente/entrada";
+import { MEDIA_MESSAGES, NON_TEXT_MESSAGES, hablaDePago } from "@/lib/agente/entrada";
 import { resolveSelection } from "@/lib/agente/seleccion";
 import { checkGrounding, emptyEvidence, addOrderStateEvidence } from "@/lib/agente/anclaje";
 import { normalizar } from "@/lib/agente/lenguaje/normalizar";
@@ -295,7 +295,7 @@ function toolDeps(): AgentToolsDeps {
   };
 }
 
-async function turno(script: SimulatedStep[], text: string, opts: { buttonId?: string; waId?: string; nonText?: { kind: "audio" | "location" | "image" | "video" | "document"; caption?: string }; config?: AgentRuntimeConfig } = {}) {
+async function turno(script: SimulatedStep[], text: string, opts: { buttonId?: string; waId?: string; nonText?: { kind: "audio" | "location" | "image" | "video" | "document"; caption?: string; mediaId?: string }; leer?: (mediaId: string) => Promise<string[]>; config?: AgentRuntimeConfig } = {}) {
   const provider = createSimulatedProvider(script);
   const waId = opts.waId ?? CLIENTE;
   const wamid = `wamid.in.${++seq}`;
@@ -331,6 +331,7 @@ async function turno(script: SimulatedStep[], text: string, opts: { buttonId?: s
       log: (t) => traces.push(t),
       now: () => reloj,
       retry: { sleep: async () => {}, random: () => 0 },
+      ...(opts.leer ? { readImageReferences: opts.leer } : {}),
     },
     { tenantId: A.tenantId, phoneNumberId: PN_A, waId, wamid, text, buttonId: opts.buttonId ?? null, nonText: opts.nonText ?? null },
   );
@@ -1086,5 +1087,75 @@ describe("B29 · fotos, videos y archivos del cliente (solo con el checkout conv
     assert.equal(r.outcome, "handoff");
     assert.equal(r.reply, NON_TEXT_MESSAGES.handoff("image"));
     assert.equal(r.provider.requests.length, 0);
+  });
+});
+
+describe("B29 · foto con texto de producto y referencia leída en la foto (corrida real del piloto)", () => {
+  async function conTransferenciaPendiente() {
+    const p = await producto("Aretes Sol", 45_000, 5);
+    await clasificar();
+    await comprar([{ ref: p.reference, qty: 1 }]);
+    await tocar("delivery", 0);
+    await tocar("payment", 1);
+    await tocar("summary", 0);
+    return ultimo();
+  }
+
+  it("PILOTO: foto + 'Me gustó esta' con una transferencia pendiente => NO es comprobante; se atiende con la referencia leída", async () => {
+    await conTransferenciaPendiente();
+    const pulsera = await producto("Pulsera Corazón Lila", 60_000, 3);
+    const antes = pausas.length;
+    const leidas: string[] = [];
+    const r = await turno([{ text: "¡Qué linda elección! 💖" }], "", {
+      nonText: { kind: "image", caption: "Me gustó esta", mediaId: "media-1" },
+      leer: async (id) => {
+        leidas.push(id);
+        return [pulsera.reference];
+      },
+    });
+    assert.equal(r.outcome, "replied");
+    assert.notEqual(r.reply, MEDIA_MESSAGES.comprobante("image"));
+    assert.equal(pausas.length, antes, "no pasa a una asesora");
+    assert.deepEqual(leidas, ["media-1"]);
+    const pedido = JSON.stringify(r.provider.requests[0]);
+    assert.ok(pedido.includes("Me gustó esta") && pedido.includes(`referencia en la foto: ${pulsera.reference}`), "el modelo recibe el texto y la referencia validada");
+    assert.deepEqual(r.trace.image_references, { read: 1, valid: 1 });
+  });
+
+  it("foto + 'ya pagué' (o sin texto) con transferencia pendiente => comprobante; la foto NO se envía a leer", async () => {
+    await conTransferenciaPendiente();
+    let lecturas = 0;
+    const leer = async () => {
+      lecturas++;
+      return [];
+    };
+    const r = await turno([], "", { nonText: { kind: "image", caption: "ya pagué", mediaId: "m" }, leer });
+    assert.equal(r.reply, MEDIA_MESSAGES.comprobante("image"));
+    assert.equal(lecturas, 0);
+  });
+
+  it("foto SIN texto: referencia leída y existente => turno normal con esa referencia (sin pedirla escrita)", async () => {
+    await clasificar();
+    const p = await producto("Collar Estrella", 80_000, 5);
+    const r = await turno([call("get_product_details", { reference: p.reference }), { text: "¡Sí lo tenemos! 💖" }], "", { nonText: { kind: "image", mediaId: "m" }, leer: async () => [p.reference] });
+    assert.equal(r.outcome, "replied");
+    assert.equal(r.reply, "¡Sí lo tenemos! 💖");
+    assert.deepEqual(r.trace.selection, [{ reference: p.reference, via: "reference" }]);
+  });
+
+  it("referencia leída que NO existe en el catálogo, o lectura fallida => se pide escrita (nunca se inventa)", async () => {
+    await clasificar();
+    const r = await turno([], "", { nonText: { kind: "image", mediaId: "m" }, leer: async () => ["ZZ-999999"] });
+    assert.equal(r.reply, MEDIA_MESSAGES.pideReferencia("image"));
+    assert.deepEqual(r.trace.image_references, { read: 1, valid: 0 });
+    const otro = "573008887766";
+    await canales.setInitial({ tenantId: A.tenantId, phoneNumberId: PN_A, waId: otro }, "retail", "cliente");
+    const r2 = await turno([], "", { nonText: { kind: "image", mediaId: "m" }, leer: async () => Promise.reject(new Error("meta caída")), waId: otro });
+    assert.equal(r2.reply, MEDIA_MESSAGES.pideReferencia("image"));
+  });
+
+  it("hablaDePago: pagos y confirmaciones cortas sí; textos de producto no", () => {
+    for (const t of ["ya pagué", "Te envío el comprobante", "transferí por nequi", "listo", "ahí está", "ya"]) assert.ok(hablaDePago(t), t);
+    for (const t of ["Me gustó esta", "¿lo tienen en plateado?", "quiero este", "cuánto vale este collar"]) assert.ok(!hablaDePago(t), t);
   });
 });

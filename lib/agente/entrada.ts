@@ -126,6 +126,18 @@ export const NON_TEXT_MESSAGES = {
  */
 export const MEDIA_DEL_CLIENTE: ReadonlySet<NonTextKind> = new Set(["image", "video", "document"]);
 
+/**
+ * ¿El texto que acompaña la foto habla de un PAGO? ("ya pagué", "comprobante", "te transferí", "listo").
+ * Solo entonces una foto con texto, con una transferencia pendiente, se trata como comprobante; un
+ * texto de producto ("me gustó esta", "¿lo tienen en plateado?") se atiende como mensaje.
+ */
+export function hablaDePago(texto: string): boolean {
+  const t = texto.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+  if (/\b(pago|pague|pagado|pagada|pagar|comprobante|transferencia|transferi|transfiero|consigne|consignacion|consignado|nequi|daviplata|bancolombia|recibo|soporte|deposito|deposite|abono|abone|voucher)\b/.test(t)) return true;
+  // Confirmaciones cortas junto a una foto ("listo", "ya", "ahí está"): con una transferencia pendiente, es el comprobante.
+  return t.split(" ").length <= 3 && /^(listo|ya|hecho|ahi esta|ahi va|ahi te va|ya quedo|ya esta|enviado|envie|ok|dale|si)\b/.test(t);
+}
+
 const LO_QUE_ENVIO: Readonly<Partial<Record<NonTextKind, string>>> = { image: "la foto", video: "el video", document: "el archivo" };
 
 export const MEDIA_MESSAGES = {

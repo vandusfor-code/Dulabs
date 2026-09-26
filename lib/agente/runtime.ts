@@ -34,7 +34,7 @@ import { decideLimits, type UsageReader } from "@/lib/agente/limites";
 import { asksForHuman, detectIntent, type HandoffMotive, type SystemHandoffMotive, type TurnIntent } from "@/lib/agente/intencion";
 import { agentToolDeclarations, catalogPublication, executeAgentTool, toolKind, type AgentToolsDeps, type AgentTurnToolContext, type QueuedImage } from "@/lib/agente/herramientas";
 import type { AgentToolName } from "@/lib/agente/nombres-herramientas";
-import { MEDIA_DEL_CLIENTE, MEDIA_MESSAGES, NON_TEXT_MESSAGES, NON_TEXT_NOTICE_COOLDOWN_MS, nonTextPolicy, type NonTextAction, type NonTextKind } from "@/lib/agente/entrada";
+import { MEDIA_DEL_CLIENTE, MEDIA_MESSAGES, hablaDePago, NON_TEXT_MESSAGES, NON_TEXT_NOTICE_COOLDOWN_MS, nonTextPolicy, type NonTextAction, type NonTextKind } from "@/lib/agente/entrada";
 import {
   CHANNEL_LABEL,
   CHANNEL_QUESTION,
@@ -116,6 +116,8 @@ export interface AgentRuntimeDeps {
   media?: ProductMediaLedger;
   /** Consumo para los topes de costo/abuso (Bloque 14). Sin él, no se aplican topes. */
   usage?: UsageReader;
+  /** Bloque 29: lee las referencias escritas en una foto del cliente (lectura-referencias.ts). Sin él, se piden escritas. */
+  readImageReferences?: (mediaId: string) => Promise<string[]>;
   /** Bloque 25: canal por contacto. Obligatorio si config.classifyCustomers (sin él, el turno no sigue: fail-closed). */
   classification?: CustomerChannelStore;
   limits?: Partial<AgentLimits>;
@@ -142,7 +144,7 @@ export interface AgentTurnInput {
    * Mensaje SIN texto (nota de voz, imagen, documento…; Bloque 23): lo resuelve la política
    * determinista de entrada.ts, sin modelo. `text` llega vacío.
    */
-  nonText?: { kind: NonTextKind; caption?: string | null } | null;
+  nonText?: { kind: NonTextKind; caption?: string | null; mediaId?: string | null } | null;
   /**
    * Bloque 26: id del botón de WhatsApp que tocó el cliente (solo si llegó; el buzón guarda solo el
    * texto, y entonces la acción se decide por el título exacto del botón). Nunca lo interpreta el modelo.
@@ -200,6 +202,8 @@ export interface AgentTurnTrace {
   handoff: { source: "customer" | "model" | "system"; motive: HandoffMotive | SystemHandoffMotive } | null;
   /** Mensaje sin texto y la política que aplicó el backend (Bloque 23); null = mensaje de texto. */
   non_text: { kind: NonTextKind; action: NonTextAction } | null;
+  /** Bloque 29: referencias leídas en la foto del cliente y cuántas existen en el catálogo (sin los códigos). */
+  image_references?: { read: number; valid: number };
   /**
    * Bloque 25 — clasificación detal / por mayor del contacto (null = el número no clasifica):
    * asked (se le preguntó), classified (quedó clasificado en este turno), known (ya lo estaba),
@@ -428,6 +432,7 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
     kind: NonTextKind,
     caption: string | null | undefined,
     ckStep: string | null,
+    mediaId: string | null | undefined,
   ): Promise<{ tipo: "comprobante" | "posventa"; orderId: string; etapa: string } | { tipo: "leyenda"; texto: string } | { tipo: "pedir" } | null> => {
     let order: Awaited<ReturnType<typeof deps.tools.engine.getOrder>> | null = null;
     try {
@@ -437,12 +442,23 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
       if (!(err instanceof OrderError)) return null;
     }
     const ck = order?.checkout ?? null;
-    if (order && ck) {
+    const texto = typeof caption === "string" ? caption.trim().slice(0, 1_000) : "";
+    // Un texto que NO habla de pago ("me gustó esta", "¿lo tienen en plateado?") manda sobre el pedido abierto.
+    const deProducto = texto !== "" && !hablaDePago(texto);
+    if (order && ck && !deProducto) {
       if (ck.stage === "enviado" || ck.stage === "entregado") return { tipo: "posventa", orderId: order.orderId, etapa: ck.stage };
       if (kind !== "video" && ck.paymentMethod === "transferencia" && ck.paymentStatus === "pendiente") return { tipo: "comprobante", orderId: order.orderId, etapa: ck.stage };
     }
-    const texto = typeof caption === "string" ? caption.trim().slice(0, 1_000) : "";
-    if (texto && !ckStep) return { tipo: "leyenda", texto };
+    if (ckStep) return { tipo: "pedir" };
+    // La referencia escrita EN la foto (la marca del catálogo): solo si existe en ESTE catálogo y está activa.
+    let refs: string[] = [];
+    if (kind === "image" && mediaId && deps.readImageReferences) {
+      const leidas = (await deps.readImageReferences(mediaId).catch(() => [] as string[])).slice(0, 5);
+      const productos = leidas.length > 0 ? await deps.tools.catalog.getProductsByReferences(input.tenantId, leidas).catch(() => []) : [];
+      refs = leidas.filter((r) => productos.some((p) => p.reference === r && p.status === "ACTIVE"));
+      trace.image_references = { read: leidas.length, valid: refs.length };
+    }
+    if (texto || refs.length > 0) return { tipo: "leyenda", texto: [texto, refs.length > 0 ? `(referencia en la foto: ${refs.join(", ")})` : ""].filter(Boolean).join("\n") };
     return { tipo: "pedir" };
   };
   if (limit.action !== "allow") {
@@ -487,7 +503,7 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
       return finish("replied", sent ? pideEscrito : null);
     }
     // Bloque 29 (solo con el checkout conversacional): foto, video o archivo del cliente (tabla en entrada.ts).
-    const media = deps.config.checkoutEnabled && MEDIA_DEL_CLIENTE.has(policy.kind) ? await mediaDelCliente(policy.kind, input.nonText.caption, ckStep) : null;
+    const media = deps.config.checkoutEnabled && MEDIA_DEL_CLIENTE.has(policy.kind) ? await mediaDelCliente(policy.kind, input.nonText.caption, ckStep, input.nonText.mediaId) : null;
     if (media?.tipo === "leyenda") {
       // La leyenda se atiende como un mensaje de texto (turno normal, más abajo).
       input = { ...input, text: media.texto, nonText: null };

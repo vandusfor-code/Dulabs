@@ -16,7 +16,7 @@ M = [
     ("M2 foto sobre un pedido entregado no pasa a una asesora", RT,
      'if (ck.stage === "enviado" || ck.stage === "entregado")', "if (false)", LG),
     ("M3 la leyenda de la foto se ignora", RT,
-     '    if (texto && !ckStep) return { tipo: "leyenda", texto };\n', "", LG),
+     "if (texto || refs.length > 0) return", "if (refs.length > 0) return", LG),
     ("M4 'sí' tras el aviso de la foto no pasa a una asesora", RT,
      "loaded.state.fotoPedidaTurn === loaded.state.turn && esAfirmacion", "false && esAfirmacion", LG),
     ("M5 el manejo nuevo se aplica a todos los negocios", RT,
@@ -33,6 +33,15 @@ M = [
      '      if (!(await repo.isReferenceMarkEnabled?.(actor.tenantId))) throw new CatalogError("NOT_FOUND", "La marca con la referencia no está habilitada para este negocio.");\n', "", FH),
     ("M11 la tienda muestra la referencia sin el módulo", "lib/catalogo/service.ts",
      "return (await repo.isReferenceMarkEnabled?.(tenantId).catch(() => false)) ?? false;", "return true;", FH),
+    # --- Corrida real del piloto: foto + "Me gustó esta" con una transferencia pendiente ---
+    ("M12 un texto de producto no manda sobre la transferencia pendiente", RT,
+     "if (order && ck && !deProducto) {", "if (order && ck) {", LG),
+    ("M13 referencia leída sin validar contra el catálogo", RT,
+     'refs = leidas.filter((r) => productos.some((p) => p.reference === r && p.status === "ACTIVE"));', "refs = leidas;", LG),
+    ("M14 'ya pagué' con la foto no es comprobante", "lib/agente/entrada.ts",
+     "export function hablaDePago(texto: string): boolean {\n", "export function hablaDePago(texto: string): boolean {\n  if (texto) return false;\n", LG),
+    ("M15 la lectura acepta cualquier texto de Gemini", "lib/agente/lectura-referencias.ts",
+     "  return extraerReferencias(texto);\n}", "  return texto.trim() ? [texto.trim()] : [];\n}", "lib/agente/lectura-referencias.test.ts"),
 ]
 fallos = 0
 for nombre, f, a, b, test in M:
