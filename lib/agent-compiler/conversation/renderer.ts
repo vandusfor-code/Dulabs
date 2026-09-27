@@ -49,7 +49,9 @@ export interface RenderInput {
   /** FASE 8 — opciones configuradas de los datos tipo lista (p. ej. recurso), para mostrarlas al preguntar. */
   selectOptions?: Readonly<Record<string, readonly string[]>>;
   /** FASE 8 — resultado de VERIFICAR una escritura de desenlace desconocido en este turno (se le dice al cliente). */
-  verification?: { outcome: "found" | "not_found" | "unknown"; start?: string } | null;
+  verification?: { outcome: "found" | "not_found" | "unknown"; start?: string; action?: string } | null;
+  /** FASE 9 — referencia de soporte del mensaje: se agrega SOLO a los textos de error (el cliente la puede dictar). */
+  supportRef?: string;
 }
 
 /** FASE 7 — respaldo sin IA: nunca afirma nada ni ejecuta nada; pide reformular. */
@@ -237,12 +239,25 @@ function priceFactsText(input: RenderInput, p: Phrases): string | null {
   return p.prices(lines);
 }
 
+/** "No pude completar eso en este momento." → "No pude completar eso en este momento (Ref. K7M2Q9XA)." */
+export function withRef(text: string, ref: string | undefined): string {
+  if (!ref || !/^[A-Z0-9]{6,12}$/.test(ref)) return text;
+  return /[.!]$/.test(text) ? `${text.slice(0, -1)} (Ref. ${ref})${text.slice(-1)}` : `${text} (Ref. ${ref})`;
+}
+
 export function renderResponse(input: RenderInput): string | null {
   const text = renderCore(input);
   const v = input.verification;
   if (!v || v.outcome === "unknown") return text;
   const p = phrasebook(input.tone);
-  const note = v.outcome === "found" ? p.verifiedFound(v.start ? formatInstant(v.start, input.state.timezone) : null) : p.verifiedNotFound;
+  const when = v.start ? formatInstant(v.start, input.state.timezone) : null;
+  // FASE 9 — la nota dice QUÉ se verificó (reservar, cancelar o mover la cita).
+  const note =
+    v.action === "cancelar_cita_cliente"
+      ? v.outcome === "found" ? p.verifiedCancelled : p.verifiedCancelNotDone
+      : v.action === "reprogramar_cita_cliente"
+        ? v.outcome === "found" ? p.verifiedMoved(when) : p.verifiedMoveNotDone
+        : v.outcome === "found" ? p.verifiedFound(when) : p.verifiedNotFound;
   return [note, text].filter(Boolean).join("\n\n");
 }
 
@@ -351,8 +366,8 @@ function renderCore(input: RenderInput): string | null {
       return withExtra(p.howCanIHelp);
     case "ERROR_FALLBACK": {
       if (failure?.error?.reason === "NO_APPOINTMENT_TO_REMIND") return p.reminderNoAppointment;
-      if (failure?.error?.ambiguous) return `${p.errorAmbiguous}${offer(plan.offerHandoff)}`;
-      return `${p.errorGeneric}${offer(plan.offerHandoff)}`;
+      if (failure?.error?.ambiguous) return `${withRef(p.errorAmbiguous, input.supportRef)}${offer(plan.offerHandoff)}`;
+      return `${withRef(p.errorGeneric, input.supportRef)}${offer(plan.offerHandoff)}`;
     }
     case "CONVERSATIONAL": {
       switch (plan.conversationalIntent) {

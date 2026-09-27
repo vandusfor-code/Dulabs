@@ -28,6 +28,8 @@ import type { ReminderLifecyclePort } from "@/lib/agent-compiler/runtime/product
 import { compileBusinessAgent } from "@/lib/agent-compiler/compile";
 import { buildGateRules, type GateRule } from "@/lib/agent-compiler/runtime/guardrail-gate";
 import { runAgentTurn, type AgentTurnResult } from "@/lib/agent-compiler/runtime/agent-runtime";
+import type { CircuitRegistry } from "@/lib/agent-compiler/runtime/production/circuits";
+import type { RateLimiter } from "@/lib/agent-compiler/runtime/production/operations";
 
 export const START = Date.parse("2026-09-26T15:00:00Z"); // sábado 26-09-2026, 10:00 en Bogotá
 
@@ -113,6 +115,11 @@ export interface PipelineOptions {
   native?: ActionHandler;
   /** FASE 8 — ciclo de vida de recordatorios (cancelar / mover con la cita). */
   reminders?: ReminderLifecyclePort;
+  /** FASE 9 — circuitos por dependencia y contadores (límites / bucles), en memoria con la semántica de Postgres. */
+  circuits?: CircuitRegistry;
+  limiter?: RateLimiter;
+  /** FASE 9 — agentVersion servida (para probar integridad de versión); por defecto la del artefacto. */
+  versionRef?: string;
 }
 
 export function artifactOf(spec: BusinessAgentSpec, tenantId: string, agentId = "flow-1", versionRef = "v1"): CompiledAgentArtifact {
@@ -124,14 +131,14 @@ export function artifactOf(spec: BusinessAgentSpec, tenantId: string, agentId = 
 /** Un negocio con su runtime completo. Cada `say` es un mensaje de WhatsApp del mismo cliente. */
 export function createPipeline(spec: BusinessAgentSpec, opts: PipelineOptions) {
   const agentId = opts.agentId ?? "flow-1";
-  const artifact = artifactOf(spec, opts.tenantId, agentId);
+  const artifact = artifactOf(spec, opts.tenantId, agentId, opts.versionRef ?? "v1");
   const key: ConversationStateKey = { tenantId: opts.tenantId, phoneNumberId: opts.phoneNumberId ?? "pn-a", telefonoCliente: "573001112233", agentId };
   let now = START;
   const clock = () => new Date(now);
   const gemini = opts.gemini ?? fakeGemini();
   const conversationStore = opts.conversationStore ?? createInMemoryConversationStore();
   const handler = opts.handler ?? createFakeHandler();
-  const e = createTestEngine({ handler, store: opts.actionStore ?? createInMemoryActionStore(), ...(opts.native ? { native: opts.native } : {}) });
+  const e = createTestEngine({ handler, store: opts.actionStore ?? createInMemoryActionStore(), ...(opts.native ? { native: opts.native } : {}), ...(opts.circuits ? { circuits: opts.circuits } : {}), ...(opts.limiter ? { limiter: opts.limiter } : {}), random: () => 0.5 });
   const understandingEvents: UnderstandingEvent[] = [];
   const traces: BusinessAgentTurnTrace[] = [];
   const sent: string[] = [];
@@ -159,6 +166,7 @@ export function createPipeline(spec: BusinessAgentSpec, opts: PipelineOptions) {
     trace: (t) => traces.push(t),
     send: async (text) => void sent.push(text),
     ...(opts.reminders ? { reminders: opts.reminders } : {}),
+    ...(opts.limiter ? { limiter: opts.limiter } : {}),
   });
   let seq = 0;
 

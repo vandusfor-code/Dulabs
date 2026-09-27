@@ -311,6 +311,11 @@ export interface RuntimeResourceOption {
  */
 export interface AgentRuntimeConfig {
   engine: AgentEngineId;
+  /**
+   * FASE 9 — "explicit" = el administrador ELIGIÓ este motor (pantalla "Publicar y activar"). Un agente con elección
+   * explícita nunca cambia de motor por un despliegue gradual (canary / general); uno sin elección sí puede.
+   */
+  engineChoice?: "explicit";
   /** Tono de las respuestas (solo estilo). */
   tone?: AgentTone;
   /** Recordatorios que el cliente pide ("recuérdame mañana"). `offsetMinutes` = cuánto antes de su cita, si no dice hora. */

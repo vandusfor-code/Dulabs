@@ -11,6 +11,10 @@
 // Reglas duras (también en Postgres, migración 20261127000000): antes de la cita y no en el pasado.
 // Idempotencia: la misma solicitud (clave = operación del Action Engine) no crea dos; una hora nueva ACTUALIZA el único
 // recordatorio activo de esa cita. Cancelar / reprogramar la cita cancela / mueve el recordatorio.
+//
+// FASE 9 (migración 20261128000000): el texto se RENDERIZA AL ENVIAR (tono + servicio + inicio VIGENTE de la cita), así
+// una cita reprogramada nunca recibe el recordatorio con la hora vieja; cancelar / reprogramar un recordatorio que el
+// despachador YA tomó lo invalida (begin_send), y un envío de desenlace desconocido se VERIFICA, nunca se reenvía.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -75,9 +79,12 @@ export interface ScheduleReminderInput {
   service: string | null;
   remindAt: string;
   timezone: string;
+  /** Texto de respaldo (histórico). El que se envía se renderiza al enviar (ver reminder-dispatcher.ts). */
   message: string;
   /** Clave de idempotencia (32 hex): la de la operación del Action Engine. */
   idempotencyKey: string;
+  /** FASE 9 — tono del agente publicado (para renderizar el texto al enviar). */
+  tone?: string | null;
 }
 
 export type ScheduleOutcome = "scheduled" | "updated" | "unchanged" | "already_sending" | "after_appointment" | "in_past" | `closed_${string}`;
@@ -93,7 +100,16 @@ export interface DueReminder {
   remindAt: string;
   message: string;
   attempts: number;
+  /** FASE 9 — hechos para renderizar el texto al enviar. */
+  service: string | null;
+  timezone: string;
+  tone: string | null;
+  /** Cuándo lo tomó el despachador por última vez (ventana para verificar un envío desconocido). */
+  lastClaimedAt: string | null;
 }
+
+/** Justo antes de enviar: go = enviar; cancelled / rescheduled / lost = NO enviar. */
+export type BeginSendOutcome = "go" | "cancelled" | "rescheduled" | "lost";
 
 export interface ReminderStore {
   schedule(input: ScheduleReminderInput): Promise<{ outcome: ScheduleOutcome; remindAt: string }>;
@@ -101,12 +117,41 @@ export interface ReminderStore {
   reschedule(tenantId: string, conversationId: string, anchorRef: string | null, newStart: string, offsetMinutes: number): Promise<number>;
   claimDue(limit: number, leaseSeconds: number): Promise<DueReminder[]>;
   complete(input: { tenantId: string; id: string; attempts: number; status: "sent" | "failed" | "unknown" | "retry"; error: string | null; retryAt: string | null }): Promise<boolean>;
+  /** FASE 9 — revalida el recordatorio tomado justo antes de enviar (cancelado / reprogramado mientras tanto). */
+  beginSend(tenantId: string, id: string, attempts: number): Promise<BeginSendOutcome>;
+  /** FASE 9 — cierre como enviado con el id del mensaje del proveedor (fencing por attempts). */
+  markSent(tenantId: string, id: string, attempts: number, providerMessageId: string | null): Promise<boolean>;
+  /** FASE 9 — envíos de desenlace desconocido pendientes de verificar. */
+  unverified(limit: number): Promise<DueReminder[]>;
+  /** FASE 9 — resultado de la verificación: encontrado → sent; no encontrado → sigue unknown (nunca se reenvía). */
+  resolveUnknown(tenantId: string, id: string, found: boolean): Promise<boolean>;
+}
+
+const MISSING_FUNCTION = new Set(["PGRST202", "42883"]);
+
+function dueFromRow(r: Record<string, unknown>): DueReminder {
+  return {
+    id: String(r.id),
+    tenantId: String(r.id_tenant),
+    agentId: String(r.agent_id),
+    conversationId: String(r.conversation_id),
+    phoneNumberId: String(r.phone_number_id),
+    telefonoCliente: String(r.telefono_cliente),
+    appointmentStart: new Date(String(r.appointment_start)).toISOString(),
+    remindAt: new Date(String(r.remind_at)).toISOString(),
+    message: String(r.message),
+    attempts: Number(r.attempts),
+    service: typeof r.service === "string" ? r.service : null,
+    timezone: typeof r.timezone === "string" ? r.timezone : "America/Bogota",
+    tone: typeof r.tone === "string" ? r.tone : null,
+    lastClaimedAt: typeof r.last_claimed_at === "string" ? new Date(r.last_claimed_at).toISOString() : null,
+  };
 }
 
 export function createSupabaseReminderStore(supabase: SupabaseClient): ReminderStore {
   return {
     async schedule(i) {
-      const { data, error } = await supabase.rpc("dulabs_ba_reminder_schedule", {
+      const args = {
         p_tenant: i.tenantId,
         p_agent: i.agentId,
         p_conversation: i.conversationId,
@@ -119,7 +164,10 @@ export function createSupabaseReminderStore(supabase: SupabaseClient): ReminderS
         p_timezone: i.timezone,
         p_message: i.message,
         p_key: i.idempotencyKey,
-      });
+      };
+      let { data, error } = await supabase.rpc("dulabs_ba_reminder_schedule", { ...args, p_tone: i.tone ?? null });
+      // Sin la migración 20261128 (solo 20261127): la firma de 12 argumentos, sin tono (el despachador usa el texto guardado).
+      if (error && MISSING_FUNCTION.has(error.code ?? "")) ({ data, error } = await supabase.rpc("dulabs_ba_reminder_schedule", args));
       if (error) throw new Error(`reminder_schedule_failed:${error.code ?? "unknown"}`);
       const row = (Array.isArray(data) ? data[0] : data) as { outcome: string; remind_at: string } | undefined;
       if (!row) throw new Error("reminder_schedule_empty");
@@ -138,22 +186,31 @@ export function createSupabaseReminderStore(supabase: SupabaseClient): ReminderS
     async claimDue(limit, leaseSeconds) {
       const { data, error } = await supabase.rpc("dulabs_ba_reminder_claim_due", { p_limit: limit, p_lease_seconds: leaseSeconds });
       if (error) throw new Error(`reminder_claim_failed:${error.code ?? "unknown"}`);
-      return ((data ?? []) as Array<Record<string, unknown>>).map((r) => ({
-        id: String(r.id),
-        tenantId: String(r.id_tenant),
-        agentId: String(r.agent_id),
-        conversationId: String(r.conversation_id),
-        phoneNumberId: String(r.phone_number_id),
-        telefonoCliente: String(r.telefono_cliente),
-        appointmentStart: new Date(String(r.appointment_start)).toISOString(),
-        remindAt: new Date(String(r.remind_at)).toISOString(),
-        message: String(r.message),
-        attempts: Number(r.attempts),
-      }));
+      return ((data ?? []) as Array<Record<string, unknown>>).map(dueFromRow);
     },
     async complete(i) {
       const { data, error } = await supabase.rpc("dulabs_ba_reminder_complete", { p_tenant: i.tenantId, p_id: i.id, p_attempts: i.attempts, p_status: i.status, p_error: i.error, p_retry_at: i.retryAt });
       if (error) throw new Error(`reminder_complete_failed:${error.code ?? "unknown"}`);
+      return data === true;
+    },
+    async beginSend(tenantId, id, attempts) {
+      const { data, error } = await supabase.rpc("dulabs_ba_reminder_begin_send", { p_tenant: tenantId, p_id: id, p_attempts: attempts });
+      if (error) throw new Error(`reminder_begin_send_failed:${error.code ?? "unknown"}`);
+      return data === "go" || data === "cancelled" || data === "rescheduled" ? data : "lost";
+    },
+    async markSent(tenantId, id, attempts, providerMessageId) {
+      const { data, error } = await supabase.rpc("dulabs_ba_reminder_mark_sent", { p_tenant: tenantId, p_id: id, p_attempts: attempts, p_provider_message_id: providerMessageId });
+      if (error) throw new Error(`reminder_mark_sent_failed:${error.code ?? "unknown"}`);
+      return data === true;
+    },
+    async unverified(limit) {
+      const { data, error } = await supabase.rpc("dulabs_ba_reminder_unverified", { p_limit: limit });
+      if (error) throw new Error(`reminder_unverified_failed:${error.code ?? "unknown"}`);
+      return ((data ?? []) as Array<Record<string, unknown>>).map(dueFromRow);
+    },
+    async resolveUnknown(tenantId, id, found) {
+      const { data, error } = await supabase.rpc("dulabs_ba_reminder_resolve_unknown", { p_tenant: tenantId, p_id: id, p_found: found });
+      if (error) throw new Error(`reminder_resolve_unknown_failed:${error.code ?? "unknown"}`);
       return data === true;
     },
   };

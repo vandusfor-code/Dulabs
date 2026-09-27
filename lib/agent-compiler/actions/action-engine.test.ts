@@ -199,7 +199,9 @@ describe("FASE 4 — timeouts, reintentos y errores", () => {
     flaky.on("buscar_disponibilidad_nylas_generico", () => (++n === 1 ? fail("RETRYABLE", "disponibilidad_no_disponible:error_tecnico") : ok({ fecha: "2026-09-27", horariosDisponibles: ["16:00", "17:00"], hayCupos: true })));
     const { engine, sleeps } = createTestEngine({ handler: flaky });
     const r = await engine.execute(r0.actionRequest!, contextFor(barberSpec(), r0.state));
-    assert.deepEqual([r.status, n, sleeps], ["SUCCEEDED", 2, [300]]);
+    // FASE 9 — política única con jitter: base 300 ms × [50 %, 100 %].
+    assert.deepEqual([r.status, n, sleeps.length], ["SUCCEEDED", 2, 1]);
+    assert.ok(sleeps[0]! >= 150 && sleeps[0]! <= 300, `backoff con jitter acotado: ${sleeps[0]}`);
   });
 
   it("13. error permanente => sin reintentos; reintentables solo hasta el máximo", async () => {
@@ -318,7 +320,9 @@ describe("FASE 4 — registro y acciones reales", () => {
     for (const def of Object.values(ACTION_REGISTRY)) {
       const contract = getActionContract(def.action);
       assert.ok(contract, def.action);
-      if (def.mutation) assert.equal(def.retry.maxAttempts, 1, `${def.action}: una escritura no se reintenta`);
+      // FASE 9 — solo las escrituras IDEMPOTENTES del store propio (merge / upsert por clave) admiten un reintento acotado.
+      if (def.mutation && !def.idempotentWrite) assert.equal(def.retry.maxAttempts, 1, `${def.action}: una escritura no se reintenta`);
+      if (def.idempotentWrite) assert.ok(def.native && ["ba_guardar_lead", "ba_programar_recordatorio"].includes(def.action) && def.retry.maxAttempts <= 2, `${def.action}: reintento solo para escrituras idempotentes propias`);
       assert.ok(def.timeoutMs > 0 && def.timeoutMs <= 30_000, def.action);
       if (["write_external"].includes(contract!.sideEffects)) assert.equal(def.requiresConfirmation, true, `${def.action}: escritura externa exige confirmación`);
     }

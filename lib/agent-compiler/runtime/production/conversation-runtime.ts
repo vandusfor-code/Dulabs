@@ -31,6 +31,8 @@ import { MAX_OFFERED_SLOTS } from "@/lib/agent-compiler/conversation/renderer";
 import { stateCategoryFor, type ActionResult } from "@/lib/agent-compiler/actions/result";
 import { stateSnapshot } from "@/lib/agent-compiler/conversation/service";
 import { classifyActionError, classifyTurnError } from "@/lib/agent-compiler/runtime/production/error-taxonomy";
+import { phrasebook } from "@/lib/agent-compiler/conversation/phrasebook";
+import { correlationIdOf, supportRefOf, type RateLimiter } from "@/lib/agent-compiler/runtime/production/operations";
 import { defaultTurnTraceSink, shortHash, understandingTrace, type BusinessAgentTurnTrace, type TurnActionTrace } from "@/lib/agent-compiler/runtime/production/turn-trace";
 
 export const MAX_ACTIONS_PER_TURN = 3;
@@ -65,6 +67,11 @@ export interface ConversationRuntimeDeps {
   trace?: (trace: BusinessAgentTurnTrace) => void;
   /** FASE 7 — reloj monotónico para las latencias (inyectable en tests). */
   monotonic?: () => number;
+  /**
+   * FASE 9 — contadores en Postgres (operations.ts). Se usa para detectar BUCLES: la misma respuesta a la misma
+   * conversación por 3.ª vez en 15 min se reemplaza por una salida (persona / reformular); desde la 4.ª no se responde.
+   */
+  limiter?: RateLimiter;
   /**
    * FASE 8 — el recordatorio sigue a la cita: cancelarla lo cancela y reprogramarla lo mueve (ver migración
    * 20261127000000). Ausente = el agente no tiene recordatorios. Nunca se llama en simulación.
@@ -221,6 +228,9 @@ export function createConversationRuntime(deps: ConversationRuntimeDeps) {
         }
       },
     };
+    // FASE 9 — correlación estable del mensaje (un reintento del mismo wamid da la misma) y su referencia de soporte.
+    const correlationId = correlationIdOf(input.key.tenantId, input.wamid);
+    const supportRef = supportRefOf(correlationId);
     const emit = (outcome: ConversationRuntimeOutcome, extra: { understanding?: BusinessAgentTurnTrace["understanding"]; before?: BusinessAgentTurnTrace["stateBefore"]; after?: BusinessAgentTurnTrace["stateAfter"]; planIntent?: string | null; text?: string | null; responseMs?: number; stateMs?: number }): ConversationRuntimeOutcome => {
       const total = mono() - t0;
       const trace: BusinessAgentTurnTrace = {
@@ -249,6 +259,8 @@ export function createConversationRuntime(deps: ConversationRuntimeDeps) {
           const ba = [...(outcome.errorCode ? [classifyTurnError(outcome.errorCode).code] : []), ...actionTraces.map((a) => a.baError).filter((x): x is string => Boolean(x))];
           return ba.length > 0 ? { baErrors: [...new Set(ba)] } : {};
         })(),
+        correlationId,
+        supportRef,
         at: nowIso(),
       };
       try {
@@ -267,7 +279,7 @@ export function createConversationRuntime(deps: ConversationRuntimeDeps) {
     }
     // 0b. FASE 8 — escritura de desenlace DESCONOCIDO: antes de conversar, se VERIFICA con el proveedor (lectura) si
     //     ocurrió. Existe → completada (nunca se repite); no existe → se puede re-proponer como operación nueva.
-    let verification: (VerificationResult & { start?: string }) | null = null;
+    let verification: (VerificationResult & { start?: string; action?: string }) | null = null;
     const unresolved = before?.state.unresolvedAction;
     if (before && unresolved && before.state.status === "ERROR" && !deps.simulation && deps.engine.verifyOutcome) {
       const v = await deps.engine.verifyOutcome(unresolved, {
@@ -290,7 +302,18 @@ export function createConversationRuntime(deps: ConversationRuntimeDeps) {
           ...(v.outcome === "found" && v.booking ? { booking: v.booking } : {}),
           messageId: input.wamid,
         });
-        if (applied.outcome === "processed") verification = { ...v, ...(v.outcome === "found" && v.booking ? { start: v.booking.start } : {}) };
+        if (applied.outcome === "processed") {
+          verification = { ...v, action: unresolved.action, ...(v.outcome === "found" && v.booking ? { start: v.booking.start } : {}) };
+          // FASE 9 — una cancelación / reprogramación VERIFICADA mueve el recordatorio igual que una confirmada en vivo.
+          if (v.outcome === "found" && deps.reminders) {
+            try {
+              if (unresolved.action === "cancelar_cita_cliente") await deps.reminders.appointmentCancelled(before.state.scope.conversationId, unresolved.constraints.cita ?? null);
+              if (unresolved.action === "reprogramar_cita_cliente" && v.booking) await deps.reminders.appointmentMoved(before.state.scope.conversationId, unresolved.constraints.cita ?? null, v.booking.start);
+            } catch {
+              actionTraces.push({ action: "reminder_lifecycle", purpose: unresolved.purpose, requestRef: shortHash(unresolved.id), status: "FAILED", errorCode: "EXTERNAL_ERROR", reason: "REMINDER_LIFECYCLE_FAILED", simulated: false, replayed: false, durationMs: 0 });
+            }
+          }
+        }
       }
     }
     actionsMs += mono() - a0;
@@ -371,15 +394,27 @@ export function createConversationRuntime(deps: ConversationRuntimeDeps) {
       ...(verification ? { verification } : {}),
       ...(understandingFailed ? { understandingFailed: true } : {}),
       ...(deps.simulation ? { simulation: true } : {}),
+      supportRef,
     });
     let sent = false;
-    if (text) {
-      await deps.send(text);
+    let finalText = text;
+    let loopDetected = false;
+    if (text && deps.limiter && !deps.simulation) {
+      const repeat = await deps.limiter.hit("reply_repeat", `${input.key.tenantId}:${shortHash(`${input.key.agentId}|${input.key.phoneNumberId}|${input.key.telefonoCliente}`, 16)}:${shortHash(text, 16)}`);
+      if (repeat && !repeat.allowed) {
+        loopDetected = true;
+        // 3.ª vez: una salida explícita (una sola vez); desde la 4.ª: silencio (corta bucles bot↔bot).
+        finalText = repeat.hits === 3 ? phrasebook(deps.artifact.presentation.tone).loopBreak(deps.artifact.requirements.handoff.supported) : null;
+      }
+    }
+    if (finalText) {
+      await deps.send(finalText);
       sent = true;
     }
+    const errorCode = loopDetected ? "loop_detected" : understandingFailed && understood && !understood.ok ? understood.code : undefined;
     return emit(
-      { outcome: turn.outcome === "human_control" ? "human_control" : "processed", status: current.state.status, sent, actions: summary(), ...(understandingFailed && understood && !understood.ok ? { errorCode: understood.code } : {}) },
-      { ...base, text, responseMs: mono() - r0 },
+      { outcome: turn.outcome === "human_control" ? "human_control" : "processed", status: current.state.status, sent, actions: summary(), ...(errorCode ? { errorCode } : {}) },
+      { ...base, text: finalText, responseMs: mono() - r0 },
     );
   }
 

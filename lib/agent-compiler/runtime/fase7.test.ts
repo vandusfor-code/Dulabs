@@ -222,7 +222,8 @@ describe("FASE 7 — AI 11–20: negocio, reglas, seguridad y simulación", () =
       assert.doesNotMatch(r.reply!, /Listo|agend|reserv/i);
       // Las dos primeras: respaldo honesto; desde la 3.ª falla seguida la conversación pasa a ERROR y ofrece una persona.
       if (i < 2) assert.ok(r.reply!.startsWith(UNDERSTANDING_FALLBACK_TEXT), r.reply);
-      else assert.equal(r.reply, "No pude completar eso en este momento. Si prefieres, te comunico con una persona del equipo.");
+      // FASE 9 — el texto de error lleva la referencia de soporte del mensaje.
+      else assert.match(r.reply!, /^No pude completar eso en este momento \(Ref\. [A-HJ-NP-Z2-9]{8}\)\. Si prefieres, te comunico con una persona del equipo\.$/);
     }
     assert.deepEqual([p.handler.calls.length, (await p.state())!.goal], [0, null]);
   });
@@ -311,7 +312,7 @@ describe("FASE 7 — AI 21–30: fallas, resultados y respuesta", () => {
     const p = barber(BARBER, { handler });
     await proposal(p);
     const r = await p.say("sí", out("CONFIRMATION"));
-    assert.match(r.reply!, /^No pude confirmar la operación en este momento\. Una persona del equipo lo va a revisar\./);
+    assert.match(r.reply!, /^No pude confirmar la operación en este momento\. Una persona del equipo lo va a revisar \(Ref\. [A-HJ-NP-Z2-9]{8}\)\./);
     assert.doesNotMatch(r.reply!, /Listo|agendada/);
     const again = await p.say("sí, confírmala", out("CONFIRMATION"));
     assert.deepEqual([p.calls("crear_cita_nylas_generico").length, again.actions.length], [1, 0]);

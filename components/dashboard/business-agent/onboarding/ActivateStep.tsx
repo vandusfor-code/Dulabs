@@ -154,6 +154,8 @@ const ENGINE_SOURCE: Record<string, string> = {
   default: "motor predeterminado",
   env_allowlist: "habilitado por el equipo de DuLabs",
   kill_switch: "apagado de emergencia activo",
+  rollout: "despliegue gradual de DuLabs",
+  rollout_off: "motor conversacional pausado por DuLabs",
 };
 
 export function ActivateStep(props: {
@@ -220,6 +222,8 @@ export function ActivateStep(props: {
   };
 
   const ready = o.checklist.readyToActivate;
+  // FASE 9 — deriva de configuración ("cambios sin publicar" ya se muestra junto a la versión: no se repite).
+  const drift = (o.drift ?? []).filter((d) => d.code !== "DRAFT_NOT_PUBLISHED");
   const canPublish = !publishing && !props.hasLocalErrors && (o.pendingChanges || !o.publication);
 
   return (
@@ -236,6 +240,21 @@ export function ActivateStep(props: {
           </span>
         )}
       </div>
+
+      {drift.length > 0 && (
+        <section aria-labelledby="drift-title" className="rounded-2xl border border-amber-400/40 bg-amber-400/5 p-4">
+          <h3 id="drift-title" className="text-sm font-semibold text-fg">
+            Revisa la configuración
+          </h3>
+          <ul className="mt-2 space-y-1.5">
+            {drift.map((d) => (
+              <li key={d.code} className={`text-xs ${d.severity === "warning" ? "text-amber-400" : "text-mist"}`}>
+                • {d.message}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <section aria-labelledby="checklist-title" className="rounded-2xl border border-edge bg-card p-5">
         <h3 id="checklist-title" className="text-sm font-semibold text-fg">

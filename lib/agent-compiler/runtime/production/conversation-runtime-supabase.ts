@@ -31,6 +31,8 @@ import { createSupabaseLeadContactStore } from "@/lib/agent-compiler/actions/nat
 import { createSupabaseReminderStore } from "@/lib/agent-compiler/actions/native/reminders";
 import type { ProductInventoryPort } from "@/lib/agent-compiler/actions/native/products";
 import { createSupabaseCatalogStore } from "@/lib/business-agent-catalog-store";
+import { sharedCircuits } from "@/lib/agent-compiler/runtime/production/circuits";
+import { createSupabaseRateLimiter, withTenantAiLimit } from "@/lib/agent-compiler/runtime/production/operations";
 
 /** FASE 8 — inventario REAL del tenant (dulabs_inventario_productos vía el store de catálogo del Business Agent). */
 export function createSupabaseProductInventory(supabase: SupabaseClient): ProductInventoryPort {
@@ -138,7 +140,9 @@ export function createProductionConversationRuntime(input: {
         flowChecksum: input.flowChecksum,
         spec: input.spec,
       });
-      const provider = productionUnderstandingProvider();
+      // FASE 9 — límites en Postgres (fallan abierto): llamadas de IA por tenant y escrituras por conversación.
+      const limiter = createSupabaseRateLimiter(input.supabase);
+      const provider = withTenantAiLimit(productionUnderstandingProvider(), limiter, input.tenantId);
       const reminders = createSupabaseReminderStore(input.supabase);
       const actionExecutor = createDefaultExecutorRegistry(input.supabase).resolve("action");
       const runtime = createConversationRuntime({
@@ -161,8 +165,12 @@ export function createProductionConversationRuntime(input: {
             ...(artifact.actions.ba_guardar_lead ? { leads: createSupabaseLeadContactStore(input.supabase) } : {}),
             ...(artifact.actions.ba_programar_recordatorio ? { reminders } : {}),
           }),
+          // FASE 9 — circuito por dependencia externa y tenant (calendario vía Nylas).
+          circuits: sharedCircuits,
+          limiter,
         }),
         artifact,
+        limiter,
         ...(artifact.reminders.enabled
           ? {
               reminders: {

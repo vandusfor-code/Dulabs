@@ -41,6 +41,11 @@ export interface StepContext {
   previous: Record<string, unknown>;
   /** FASE 8 — agente del servidor (lo necesitan las acciones nativas que persisten por agente). */
   agentId?: string;
+  /**
+   * FASE 9 — tono publicado (presentación). Viaja con el paso y NO en la config compilada de la acción: el tono nunca
+   * debe cambiar la huella de ejecución (antes estaba en los params de ba_programar_recordatorio).
+   */
+  tone?: string;
 }
 
 /**
@@ -61,6 +66,11 @@ export interface ActionDefinition {
   purposes: readonly ActionPurpose[];
   /** Escritura externa / cambio de estado real: nunca se re-ejecuta tras un timeout o un worker caído. */
   mutation: boolean;
+  /**
+   * FASE 9 — escritura IDEMPOTENTE en un store propio (repetirla con la misma clave deja el mismo resultado: merge del
+   * contacto, upsert del recordatorio por clave/cita). Un timeout NO es ambiguo y se reintenta dentro de la política.
+   */
+  idempotentWrite?: true;
   requiresConfirmation: boolean;
   timeoutMs: number;
   retry: { maxAttempts: number; baseDelayMs: number };
@@ -289,6 +299,17 @@ export const ACTION_REGISTRY: Readonly<Record<string, ActionDefinition>> = {
     ],
     resultData: ["cancelada", "citaCanceladaTexto", "yaCancelada"],
     mapFailure: (r) => schedulingFailure(r, true),
+    // FASE 9 — ¿la cancelación ocurrió? La cita elegida ya no aparece en la agenda → sí; sigue ahí → no.
+    verifyOutcome: {
+      step: listAppointmentsStep(),
+      match: (req, data) => {
+        const citas = listed(data);
+        if (!Array.isArray(data.citasCliente)) return data.sinCitas === true ? { outcome: "found" } : { outcome: "unknown" };
+        if (req.constraints.cita) return citas.some((c) => c.id === req.constraints.cita) ? { outcome: "not_found" } : { outcome: "found" };
+        // Sin id elegido la acción operó sobre la ÚNICA cita: si ya no queda ninguna, se canceló; si queda alguna no se puede saber.
+        return citas.length === 0 ? { outcome: "found" } : { outcome: "unknown" };
+      },
+    },
   },
   reprogramar_cita_cliente: {
     action: "reprogramar_cita_cliente",
@@ -309,6 +330,22 @@ export const ACTION_REGISTRY: Readonly<Record<string, ActionDefinition>> = {
     ],
     resultData: ["movida", "citaMovidaTexto", "inicio", "fin"],
     mapFailure: (r) => schedulingFailure(r, true),
+    // FASE 9 — ¿la reprogramación ocurrió? Hay una cita a la hora NUEVA → sí; la elegida sigue a otra hora → no.
+    verifyOutcome: {
+      step: listAppointmentsStep(),
+      match: (req, data) => {
+        if (!Array.isArray(data.citasCliente)) return { outcome: "unknown" };
+        const fecha = req.arguments.fecha ?? req.constraints.fecha;
+        const hora = req.arguments.hora ?? req.constraints.hora;
+        const at = fecha && hora ? zonedToUtc(fecha, hora, SUPPORTED_SCHEDULING_TIMEZONE) : null;
+        if (!at) return { outcome: "unknown" };
+        const citas = listed(data);
+        const hit = citas.find((c) => c.inicioIso && new Date(c.inicioIso).getTime() === at.getTime() && (!req.constraints.cita || c.id === req.constraints.cita));
+        if (hit) return { outcome: "found", booking: { appointmentRef: hit.id, start: new Date(hit.inicioIso!).toISOString(), service: hit.servicio ?? req.arguments.servicio ?? null } };
+        if (req.constraints.cita && citas.some((c) => c.id === req.constraints.cita)) return { outcome: "not_found" };
+        return { outcome: "unknown" };
+      },
+    },
   },
   calcular_cotizacion: {
     action: "calcular_cotizacion",
@@ -395,27 +432,31 @@ export const ACTION_REGISTRY: Readonly<Record<string, ActionDefinition>> = {
     capability: "leadCapture",
     native: true,
     purposes: ["fulfill"],
-    // Escribe en el contacto: una sola vez por operación (claim), nunca se reintenta a ciegas.
+    // Escribe en el contacto (claim por operación). FASE 9: el guardado es un MERGE con concurrencia optimista —
+    // repetirlo deja el mismo contacto—, así que un timeout no es ambiguo y se reintenta (acotado).
     mutation: true,
+    idempotentWrite: true,
     requiresConfirmation: false,
     timeoutMs: 8_000,
-    retry: { maxAttempts: 1, baseDelayMs: 0 },
+    retry: { maxAttempts: 2, baseDelayMs: 300 },
     temporal: false,
     allowedConstraints: [...SLOT_CONSTRAINTS, "interes"],
     allowsCustomerData: true,
     steps: [{ action: "ba_guardar_lead", buildPayload: (req) => ({ ...req.customerData, ...(req.constraints.interes ? { interes: req.constraints.interes } : {}) }) }],
     resultData: ["leadGuardado", "camposGuardados"],
-    mapFailure: (r) => nativeFailure(r, true),
+    mapFailure: (r) => nativeFailure(r, false),
   },
   ba_programar_recordatorio: {
     action: "ba_programar_recordatorio",
     capability: "scheduling",
     native: true,
     purposes: ["fulfill"],
+    // FASE 9: upsert por (tenant, clave) + un único activo por cita en Postgres → repetir no duplica.
     mutation: true,
+    idempotentWrite: true,
     requiresConfirmation: false,
     timeoutMs: 8_000,
-    retry: { maxAttempts: 1, baseDelayMs: 0 },
+    retry: { maxAttempts: 2, baseDelayMs: 300 },
     // Calcula el momento en la zona del NEGOCIO (no depende del offset fijo de los handlers de agenda).
     temporal: false,
     allowedConstraints: [...SLOT_CONSTRAINTS, "citaInicio", "citaRef", "citaServicio"],
@@ -430,11 +471,12 @@ export const ACTION_REGISTRY: Readonly<Record<string, ActionDefinition>> = {
           ...(req.constraints.fecha ? { fecha: req.constraints.fecha } : {}),
           ...(req.constraints.hora ? { hora: req.constraints.hora } : {}),
           ...(ctx.agentId ? { agentId: ctx.agentId } : {}),
+          ...(ctx.tone ? { tono: ctx.tone } : {}),
         }),
       },
     ],
     resultData: ["programado", "recordatorioEn", "citaInicio", "actualizado"],
-    mapFailure: (r) => nativeFailure(r, true),
+    mapFailure: (r) => nativeFailure(r, false),
   },
 };
 

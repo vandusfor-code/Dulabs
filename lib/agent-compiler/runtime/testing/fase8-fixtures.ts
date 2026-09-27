@@ -90,12 +90,54 @@ interface Row {
   attempts: number;
   leaseUntil: number | null;
   lastError: string | null;
+  // FASE 9 (migración 20261128000000)
+  service: string | null;
+  timezone: string;
+  tone: string | null;
+  invalidated: boolean;
+  cancelRequested: boolean;
+  lastClaimedAt: number | null;
+  verification: "pending" | "verified_sent" | "not_found" | null;
+  providerMessageId: string | null;
 }
 
-/** Recordatorios en memoria con las MISMAS reglas que las funciones de Postgres (ver el test SQL de la migración). */
+const dueOf = (r: Row): DueReminder => ({
+  id: r.id,
+  tenantId: r.tenantId,
+  agentId: r.agentId,
+  conversationId: r.conversationId,
+  phoneNumberId: r.phoneNumberId,
+  telefonoCliente: r.telefonoCliente,
+  appointmentStart: r.appointmentStart,
+  remindAt: r.remindAt,
+  message: r.message,
+  attempts: r.attempts,
+  service: r.service,
+  timezone: r.timezone,
+  tone: r.tone,
+  lastClaimedAt: r.lastClaimedAt === null ? null : new Date(r.lastClaimedAt).toISOString(),
+});
+
+/** Recordatorios en memoria con las MISMAS reglas que las funciones de Postgres (ver los tests SQL de 20261127 y 20261128). */
 export function memoryReminders(now: () => number): ReminderStore & { rows: Row[] } {
   const rows: Row[] = [];
   let seq = 0;
+  const matches = (r: Row, tenantId: string, conversationId: string, anchor: string | null) => r.tenantId === tenantId && r.conversationId === conversationId && (!anchor || r.anchorRef === anchor);
+  const cancel = (tenantId: string, conversationId: string, anchor: string | null) => {
+    let n = 0;
+    for (const r of rows) {
+      if (!matches(r, tenantId, conversationId, anchor)) continue;
+      if (r.status === "scheduled") {
+        r.status = "cancelled";
+        n++;
+      } else if (r.status === "sending") {
+        r.invalidated = true;
+        r.cancelRequested = true;
+        n++;
+      }
+    }
+    return n;
+  };
   return {
     rows,
     async schedule(i) {
@@ -105,6 +147,7 @@ export function memoryReminders(now: () => number): ReminderStore & { rows: Row[
       const active = rows.find((r) => r.tenantId === i.tenantId && r.conversationId === i.conversationId && r.anchorRef === i.anchorRef && (r.status === "scheduled" || r.status === "sending"));
       if (active) {
         if (active.status === "sending") return { outcome: "already_sending", remindAt: active.remindAt };
+        active.tone = i.tone ?? null;
         if (active.remindAt === i.remindAt && active.appointmentStart === i.appointmentStart) return { outcome: "unchanged", remindAt: active.remindAt };
         active.remindAt = i.remindAt;
         active.appointmentStart = i.appointmentStart;
@@ -113,28 +156,47 @@ export function memoryReminders(now: () => number): ReminderStore & { rows: Row[
       }
       const byKey = rows.find((r) => r.tenantId === i.tenantId && r.key === i.idempotencyKey);
       if (byKey) return { outcome: `closed_${byKey.status}` as ScheduleOutcome, remindAt: byKey.remindAt };
-      rows.push({ id: `rem-${++seq}`, tenantId: i.tenantId, agentId: i.agentId, conversationId: i.conversationId, phoneNumberId: i.phoneNumberId, telefonoCliente: i.telefonoCliente, anchorRef: i.anchorRef, appointmentStart: i.appointmentStart, remindAt: i.remindAt, message: i.message, key: i.idempotencyKey, status: "scheduled", attempts: 0, leaseUntil: null, lastError: null });
+      rows.push({
+        id: `rem-${++seq}`,
+        tenantId: i.tenantId,
+        agentId: i.agentId,
+        conversationId: i.conversationId,
+        phoneNumberId: i.phoneNumberId,
+        telefonoCliente: i.telefonoCliente,
+        anchorRef: i.anchorRef,
+        appointmentStart: i.appointmentStart,
+        remindAt: i.remindAt,
+        message: i.message,
+        key: i.idempotencyKey,
+        status: "scheduled",
+        attempts: 0,
+        leaseUntil: null,
+        lastError: null,
+        service: i.service,
+        timezone: i.timezone,
+        tone: i.tone ?? null,
+        invalidated: false,
+        cancelRequested: false,
+        lastClaimedAt: null,
+        verification: null,
+        providerMessageId: null,
+      });
       return { outcome: "scheduled", remindAt: i.remindAt };
     },
     async cancel(tenantId, conversationId, anchor) {
-      let n = 0;
-      for (const r of rows) {
-        if (r.tenantId === tenantId && r.conversationId === conversationId && r.status === "scheduled" && (!anchor || r.anchorRef === anchor)) {
-          r.status = "cancelled";
-          n++;
-        }
-      }
-      return n;
+      return cancel(tenantId, conversationId, anchor);
     },
     async reschedule(tenantId, conversationId, anchor, newStart, offset) {
-      let n = 0;
       const at = new Date(Date.parse(newStart) - offset * 60_000).toISOString();
+      // El momento nuevo ya pasó: el recordatorio de la hora vieja NO debe dispararse.
+      if (Date.parse(at) <= now()) return cancel(tenantId, conversationId, anchor);
+      let n = 0;
       for (const r of rows) {
-        if (r.tenantId === tenantId && r.conversationId === conversationId && r.status === "scheduled" && (!anchor || r.anchorRef === anchor) && Date.parse(at) > now()) {
-          r.appointmentStart = newStart;
-          r.remindAt = at;
-          n++;
-        }
+        if (!matches(r, tenantId, conversationId, anchor) || (r.status !== "scheduled" && r.status !== "sending")) continue;
+        r.appointmentStart = newStart;
+        r.remindAt = at;
+        if (r.status === "sending") r.invalidated = true;
+        n++;
       }
       return n;
     },
@@ -144,6 +206,7 @@ export function memoryReminders(now: () => number): ReminderStore & { rows: Row[
           r.status = "unknown";
           r.lastError = "OUTCOME_UNKNOWN";
           r.leaseUntil = null;
+          r.verification = "pending";
         }
       }
       const due = rows.filter((r) => r.status === "scheduled" && Date.parse(r.remindAt) <= now() && r.attempts < 10).slice(0, limit);
@@ -151,8 +214,28 @@ export function memoryReminders(now: () => number): ReminderStore & { rows: Row[
         r.status = "sending";
         r.attempts++;
         r.leaseUntil = now() + leaseSeconds * 1000;
+        r.lastClaimedAt = now();
       }
-      return due.map((r): DueReminder => ({ id: r.id, tenantId: r.tenantId, agentId: r.agentId, conversationId: r.conversationId, phoneNumberId: r.phoneNumberId, telefonoCliente: r.telefonoCliente, appointmentStart: r.appointmentStart, remindAt: r.remindAt, message: r.message, attempts: r.attempts }));
+      return due.map(dueOf);
+    },
+    async beginSend(tenantId, id, attempts) {
+      const r = rows.find((x) => x.id === id && x.tenantId === tenantId);
+      if (!r || r.status !== "sending" || r.attempts !== attempts) return "lost";
+      if (!r.invalidated) return "go";
+      r.leaseUntil = null;
+      if (r.cancelRequested) {
+        r.status = "cancelled";
+        return "cancelled";
+      }
+      r.status = "scheduled";
+      r.invalidated = false;
+      return "rescheduled";
+    },
+    async markSent(tenantId, id, attempts, providerMessageId) {
+      const r = rows.find((x) => x.id === id && x.tenantId === tenantId && x.status === "sending" && x.attempts === attempts);
+      if (!r) return false;
+      Object.assign(r, { status: "sent", leaseUntil: null, lastError: null, providerMessageId });
+      return true;
     },
     async complete(i) {
       const r = rows.find((x) => x.id === i.id && x.tenantId === i.tenantId && x.status === "sending" && x.attempts === i.attempts);
@@ -169,6 +252,17 @@ export function memoryReminders(now: () => number): ReminderStore & { rows: Row[
         return true;
       }
       r.status = i.status;
+      if (i.status === "unknown") r.verification = "pending";
+      return true;
+    },
+    async unverified(limit) {
+      return rows.filter((r) => r.status === "unknown" && r.verification === "pending").slice(0, limit).map(dueOf);
+    },
+    async resolveUnknown(tenantId, id, found) {
+      const r = rows.find((x) => x.id === id && x.tenantId === tenantId && x.status === "unknown");
+      if (!r) return false;
+      if (found) Object.assign(r, { status: "sent", verification: "verified_sent" });
+      else r.verification = "not_found";
       return true;
     },
   };

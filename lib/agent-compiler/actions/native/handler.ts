@@ -98,7 +98,9 @@ export function createNativeActionHandler(deps: NativeActionDeps): ActionHandler
         const at = computeReminderAt({ appointmentStart: start, offsetMinutes: offset, date: str(req.payload.fecha), time: str(req.payload.hora), timeZone: tz, now: clock() });
         if (!at.ok) return fail("VALIDATION_ERROR", at.reason === "invalid_input" ? "momento_invalido:entrada" : `momento_invalido:${at.reason}`);
         const service = str(req.payload.citaServicio) ?? null;
-        const message = phrasebook(cfg.tone).reminderMessage(service, formatInstant(start, tz)).slice(0, 500);
+        // Tono: el del paso (presentación publicada); `cfg.tone` solo por compatibilidad con artefactos de FASE 8.
+        const tone = str(req.payload.tono) ?? cfg.tone;
+        const message = phrasebook(tone).reminderMessage(service, formatInstant(start, tz)).slice(0, 500);
         const key = req.effectId.split(":")[0]!;
         try {
           const r = await deps.reminders.schedule({
@@ -114,6 +116,7 @@ export function createNativeActionHandler(deps: NativeActionDeps): ActionHandler
             timezone: tz,
             message,
             idempotencyKey: /^[a-f0-9]{32}$/.test(key) ? key : "0".repeat(32),
+            tone: tone ?? null,
           });
           if (r.outcome === "after_appointment" || r.outcome === "in_past") return fail("VALIDATION_ERROR", `momento_invalido:${r.outcome}`);
           if (r.outcome === "already_sending" || r.outcome.startsWith("closed_")) return fail("NON_RETRYABLE", "recordatorio_cerrado");

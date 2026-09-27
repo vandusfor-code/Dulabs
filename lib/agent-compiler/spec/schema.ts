@@ -197,6 +197,7 @@ const slugKind = z.string().trim().regex(/^[a-z][a-z0-9_]{0,39}$/);
 export const runtimeSchema = z
   .object({
     engine: z.enum(AGENT_ENGINES),
+    engineChoice: z.literal("explicit").optional(),
     tone: z.enum(AGENT_TONES).optional(),
     reminders: z.object({ enabled: z.boolean(), offsetMinutes: z.number().int().min(15).max(2880) }).strict().optional(),
     resources: z

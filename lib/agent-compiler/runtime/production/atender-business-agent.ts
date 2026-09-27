@@ -44,8 +44,20 @@ import { resolveCommercialState } from "@/lib/agent-compiler/runtime/commercial-
 import { esTelefonoBloqueado } from "@/lib/blacklist-du";
 import { createBusinessAgentArgumentPolicy } from "@/lib/agent-compiler/contracts/argument-policy";
 import { categorizeRuntimeFailure } from "@/lib/agent-compiler/contracts/errors";
-import { describeAgentRuntime } from "@/lib/agent-compiler/runtime/production/engine-selection";
+import { describeAgentRuntime, specRolloutEligible } from "@/lib/agent-compiler/runtime/production/engine-selection";
 import { createProductionConversationRuntime } from "@/lib/agent-compiler/runtime/production/conversation-runtime-supabase";
+import {
+  bounded,
+  contactKey,
+  correlationIdOf,
+  createSupabaseOperations,
+  supportRefOf,
+  usageFromTurnTrace,
+  type BusinessAgentOperations,
+  type UsageDelta,
+} from "@/lib/agent-compiler/runtime/production/operations";
+import { classifyTurnError, type BaErrorClass } from "@/lib/agent-compiler/runtime/production/error-taxonomy";
+import type { BusinessAgentTurnTrace } from "@/lib/agent-compiler/runtime/production/turn-trace";
 
 export interface BusinessAgentBoundaryResult {
   /** true = el Business Agent atendió (o bloqueó fail-closed/blacklist) el
@@ -87,6 +99,18 @@ export interface AtenderConBusinessAgentParams {
   classifier?: SemanticClassifier;
   observer?: BusinessAgentObserver;
   overrides?: BusinessAgentBoundaryOverrides;
+  /**
+   * FASE 9 — límites de uso, uso/costo por tenant e incidentes (Postgres, migración 20261128000000). Ausente = los de
+   * producción sobre `supabase`; null = desactivado. Todo falla ABIERTO (nunca bloquea un mensaje por un error propio).
+   */
+  operations?: BusinessAgentOperations | null;
+}
+
+const OPERATIONS_BUDGET_MS = 1_500;
+
+function operationsFor(params: AtenderConBusinessAgentParams): BusinessAgentOperations | null {
+  if (params.operations !== undefined) return params.operations;
+  return typeof (params.supabase as { rpc?: unknown } | null)?.rpc === "function" ? createSupabaseOperations(params.supabase) : null;
 }
 
 /**
@@ -189,6 +213,33 @@ export async function atenderMensajeConBusinessAgent(
     return { handled: true, outcome: "fail_closed", reason: "tenant_mismatch" };
   }
 
+  // 2.5) FASE 9 — límites de PROTECCIÓN por contacto y por tenant (bucles bot↔bot, abuso, tormentas de costo). Contadores
+  // en Postgres (compartidos entre instancias). Excedido → sin IA, sin acciones, sin respuesta; queda un incidente (uno
+  // por ventana: solo el primer mensaje que excede). Si el contador no responde, se atiende igual (falla abierto).
+  const ops = operationsFor(params);
+  const correlationId = correlationIdOf(resolution.tenantId, wamid);
+  const supportRef = supportRefOf(correlationId);
+  if (ops) {
+    const [contact, tenant] = await bounded(
+      Promise.all([ops.limiter.hit("contact_messages", contactKey(resolution.tenantId, cliente.phone_number_id, telefonoCliente)), ops.limiter.hit("tenant_messages", resolution.tenantId)]),
+      ops.writeBudgetMs ?? OPERATIONS_BUDGET_MS,
+      [null, null] as const,
+    );
+    const limitedBy = contact && !contact.allowed ? { reason: "CONTACT_RATE_LIMITED", hits: contact.hits } : tenant && !tenant.allowed ? { reason: "TENANT_RATE_LIMITED", hits: tenant.hits } : null;
+    if (limitedBy) {
+      const rule = limitedBy.reason === "CONTACT_RATE_LIMITED" ? "contact_messages" : "tenant_messages";
+      if (limitedBy.hits === (rule === "contact_messages" ? 31 : 1_001)) {
+        await bounded(
+          ops.incidents.record({ tenantId: resolution.tenantId, ref: supportRef, correlationId, agentId: resolution.flowId, publishedVersion: resolution.flowVersionId, engine: null, code: `BA-SYSTEM-${limitedBy.reason}`, errorClass: "SYSTEM", dependency: null, cause: `limit_exceeded:${rule}`, occurredAt: new Date().toISOString() }),
+          ops.writeBudgetMs ?? OPERATIONS_BUDGET_MS,
+          false,
+        );
+      }
+      emit({ ...base, flowId: resolution.flowId, flowVersionId: resolution.flowVersionId, checksum: resolution.checksum, outcome: "rate_limited", reason: limitedBy.reason.toLowerCase(), llmInvoked: false, latencyMs: Date.now() - started, correlationId, supportRef } as BusinessAgentTrace);
+      return { handled: true, outcome: "rate_limited", reason: limitedBy.reason.toLowerCase() };
+    }
+  }
+
   // 3) Store + orquestador REAL (mismos executors que el Flow path existente).
   const store: Pick<FlowOrchestratorStore, "getActiveExecution"> =
     params.overrides?.store ?? createSupabaseFlowOrchestratorStore(supabase);
@@ -228,7 +279,14 @@ export async function atenderMensajeConBusinessAgent(
   // FASE 5 — el motor conversacional se configura SOLO con el artefacto publicado (Universal Business Model activo del
   // agente, o el Spec legacy vía adaptador → mismo compilador); se resuelve dentro del turno y falla cerrado si no es
   // publicable.
-  const runtimeDescriptor = describeAgentRuntime({ tenantId: resolution.tenantId, agentId: resolution.flowId, publishedVersion: resolution.flowVersionId, spec: resolution.spec });
+  const runtimeDescriptor = describeAgentRuntime({
+    tenantId: resolution.tenantId,
+    agentId: resolution.flowId,
+    publishedVersion: resolution.flowVersionId,
+    spec: resolution.spec,
+    // FASE 9 — despliegue gradual (canary / general): solo agentes sin elección explícita y que el motor soporta.
+    rolloutEligible: () => specRolloutEligible({ tenantId: resolution.tenantId, agentId: resolution.flowId, versionRef: resolution.flowVersionId, spec: resolution.spec }),
+  });
   const conversation =
     params.overrides?.conversation ??
     (runtimeDescriptor.engine === "state_machine_v1"
@@ -317,11 +375,92 @@ export async function atenderMensajeConBusinessAgent(
     latencyMs: Date.now() - started,
     engine: params.overrides?.conversation ? "state_machine_v1" : runtimeDescriptor.engine,
     engineSource: params.overrides?.conversation ? "override" : runtimeDescriptor.source,
+    correlationId,
+    supportRef,
   } as BusinessAgentTrace);
+
+  // FASE 9 — uso/costo del tenant e incidentes BA-* (localizables por la referencia de soporte). Acotado en tiempo.
+  if (ops) {
+    const engine = params.overrides?.conversation ? "state_machine_v1" : runtimeDescriptor.engine;
+    const turnTrace = result.kind === "conversation" ? (result.conversation as { trace?: BusinessAgentTurnTrace }).trace : undefined;
+    await bounded(
+      recordTurnOperations(ops, {
+        tenantId: resolution.tenantId,
+        agentId: resolution.flowId,
+        publishedVersion: turnTrace?.publishedVersion ?? resolution.flowVersionId,
+        engine,
+        correlationId,
+        supportRef,
+        turnTrace,
+        failClosedReason: result.kind === "fail_closed" ? result.reason : null,
+        llmInvoked: result.kind === "flow",
+        latencyMs: Date.now() - started,
+      }),
+      ops.writeBudgetMs ?? OPERATIONS_BUDGET_MS,
+      undefined,
+    );
+  }
 
   // Un Business Agent SIEMPRE es dueño de su mensaje: nunca cae a LEGACY (ni
   // ante fail-closed) para no dejar que la IA legacy contradiga el estado real.
   return { handled: true, outcome, reason: result.kind === "fail_closed" ? result.reason : undefined };
+}
+
+/** Dependencia externa detrás de un error BA-* (para agrupar incidentes). */
+function dependencyOfError(code: string, action: string | null): string | null {
+  if (code.startsWith("BA-AI-")) return "gemini";
+  if (action && /nylas|cita|disponibilidad/.test(action)) return "nylas_calendar";
+  if (action === "ba_consultar_producto") return "inventory";
+  return null;
+}
+
+async function recordTurnOperations(
+  ops: BusinessAgentOperations,
+  t: {
+    tenantId: string;
+    agentId: string;
+    publishedVersion: string;
+    engine: string;
+    correlationId: string;
+    supportRef: string;
+    turnTrace: BusinessAgentTurnTrace | undefined;
+    failClosedReason: string | null;
+    llmInvoked: boolean;
+    latencyMs: number;
+  },
+): Promise<void> {
+  const day = new Date().toISOString().slice(0, 10); // día UTC
+  const delta: UsageDelta = t.turnTrace
+    ? usageFromTurnTrace(t.turnTrace)
+    : { turns: 1, aiCalls: t.llmInvoked ? 1 : 0, inputTokens: 0, outputTokens: 0, estimatedCostMicroUsd: 0, actions: 0, actionErrors: 0, turnErrors: t.failClosedReason ? 1 : 0, latencyMs: Math.max(0, t.latencyMs) };
+  const errors: Array<{ code: string; action: string | null; cause: string | null }> = [];
+  if (t.turnTrace) {
+    for (const a of t.turnTrace.actions) if (a.baError) errors.push({ code: a.baError, action: a.action, cause: a.reason });
+    if (t.turnTrace.errorCode) errors.push({ code: classifyTurnError(t.turnTrace.errorCode).code, action: null, cause: t.turnTrace.errorCode });
+  }
+  if (t.failClosedReason) errors.push({ code: classifyTurnError(t.failClosedReason).code, action: null, cause: t.failClosedReason });
+  const at = new Date().toISOString();
+  await Promise.all([
+    ops.usage.record(t.tenantId, day, delta),
+    // Los errores del cliente (USER: horario ocupado, dato inválido) son conversación normal, no incidentes.
+    ...errors
+      .filter((e) => !e.code.startsWith("BA-USER-"))
+      .map((e) =>
+        ops.incidents.record({
+          tenantId: t.tenantId,
+          ref: t.supportRef,
+          correlationId: t.correlationId,
+          agentId: t.agentId,
+          publishedVersion: t.publishedVersion,
+          engine: t.engine === "graph_v1" || t.engine === "state_machine_v1" ? t.engine : null,
+          code: e.code,
+          errorClass: e.code.split("-")[1] as BaErrorClass,
+          dependency: dependencyOfError(e.code, e.action),
+          cause: e.cause,
+          occurredAt: at,
+        }),
+      ),
+  ]);
 }
 
 function failClosedSinTenant(

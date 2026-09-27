@@ -8,6 +8,7 @@
 //   publicar   etapas reales, en orden: revisar → validar → compilar → verificar → guardar versión → publicar (atómico)
 //   activar    solo con la última configuración publicada + gate de activación de FASE 1 (plan, número, readiness)
 
+import { detectConfigurationDrift, type ArtifactLink, type DriftFinding } from "@/lib/agent-compiler/lifecycle/drift";
 import { checksumOf } from "@/lib/agent-compiler/checksum";
 import { compileBusinessAgent } from "@/lib/agent-compiler/compile";
 import { compileIRToFlowDefinition } from "@/lib/agent-compiler/flow-compiler";
@@ -77,6 +78,8 @@ export interface OnboardingDeps {
   };
   /** FASE 8 — matriz de capacidades + motor + readiness (hechos reales). Ausente = no se muestra. */
   engineReport?(flowId: string, input: { publishedSpec: BusinessAgentSpec | null; draftSpec: BusinessAgentSpec | null; agentActive: boolean }): Promise<EngineReport>;
+  /** FASE 9 — artefacto activo del modelo de negocio y su vínculo con el registro (deriva de configuración). */
+  artifactLink?(flowId: string): Promise<ArtifactLink | null>;
   now?(): Date;
   log?(e: OnboardingEvent): void;
 }
@@ -170,6 +173,8 @@ export interface OnboardingOverview {
     warnings: string[];
     credentials: EngineReadiness["credentials"];
   } | null;
+  /** FASE 9 — deriva de configuración (piezas que deberían coincidir y no coinciden). */
+  drift: DriftFinding[];
 }
 
 /** GET: configuración actual, estado real, problemas y checklist. */
@@ -188,11 +193,12 @@ export async function getOnboarding(deps: OnboardingDeps): Promise<OnboardingOve
     facts = await deps.loadFacts(spec).catch(() => null);
     if (facts) readiness = evaluateReadiness(spec, facts);
   }
-  const [publication, numbers, plan, lifecycle] = await Promise.all([
+  const [publication, numbers, plan, lifecycle, artifactLink] = await Promise.all([
     deps.drafts.lastPublication(deps.tenantId, ctx.flowId),
     deps.listNumbers(ctx.flowId),
     deps.hasActivePlan(),
     deps.lifecycle(ctx.flowId).catch(() => null),
+    deps.artifactLink ? deps.artifactLink(ctx.flowId).catch(() => null) : Promise.resolve(null),
   ]);
   const st = deriveOnboardingStatus({
     hasDraft: ctx.stored.exists,
@@ -234,8 +240,17 @@ export async function getOnboarding(deps: OnboardingDeps): Promise<OnboardingOve
     numbers,
     ...(engine ? { engineBlockers: engine.blockers } : {}),
   });
+  const drift = detectConfigurationDrift({
+    registryPublishedFlowVersionId: ctx.publishedFlowVersionId,
+    publication,
+    artifact: artifactLink,
+    draftRevision: ctx.stored.revision,
+    lifecycle,
+    numbers,
+  });
   return {
     engine,
+    drift,
     draft,
     revision: ctx.stored.revision,
     savedAt: ctx.stored.savedAt,

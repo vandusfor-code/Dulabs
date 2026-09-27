@@ -79,6 +79,18 @@ export function createSupabaseOnboardingDeps(supabase: SupabaseClient, session: 
     },
     // FASE 8 — matriz de capacidades + motor + readiness con los hechos reales (misma función que el gate).
     engineReport: (flowId, input) => evaluateEngineReport(supabase, tenantId, flowId, input),
+    // FASE 9 — deriva: versión activa / última del modelo y a qué versión del registro quedó ligada (funciones de 25/26).
+    async artifactLink(flowId) {
+      const [active, latest, linked] = await Promise.all([
+        supabase.rpc("dulabs_ba_active_business_artifact", { p_tenant: tenantId, p_agent: flowId }),
+        supabase.rpc("dulabs_ba_latest_model_version", { p_tenant: tenantId, p_agent: flowId }),
+        supabase.rpc("dulabs_ba_active_artifact_flow_version", { p_tenant: tenantId, p_agent: flowId }),
+      ]);
+      if (active.error || latest.error || linked.error) throw new Error("artifact_link_unavailable");
+      const row = (Array.isArray(active.data) ? active.data[0] : active.data) as { published_version?: number } | null | undefined;
+      if (!row?.published_version) return null;
+      return { activeVersion: Number(row.published_version), latestVersion: Number(latest.data ?? row.published_version), flowVersionId: typeof linked.data === "string" ? linked.data : null };
+    },
   };
 }
 

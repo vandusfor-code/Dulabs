@@ -6,6 +6,7 @@
 // de servicios del negocio y el TRANSPORTE del modelo de lenguaje (salida del modelo con guion por mensaje: lo que se
 // prueba es todo lo que el backend hace con esa salida — validación, entidades, estado, acciones, respuesta).
 
+import type { ArtifactLink } from "@/lib/agent-compiler/lifecycle/drift";
 import type { ReadinessFacts } from "@/lib/business-agent-readiness";
 import { createInMemoryBusinessAgentRegistryStore } from "@/lib/agent-compiler/registry/testing/in-memory-registry-store";
 import type { BusinessAgentRegistryStore } from "@/lib/agent-compiler/registry/types";
@@ -37,6 +38,8 @@ export interface World {
   events: OnboardingEvent[];
   /** FASE 8 — credenciales del servidor (solo presencia). */
   credentials: CredentialFacts;
+  /** FASE 9 — vínculo del artefacto activo (deriva de configuración). Ausente = sin dato (no se inventa deriva). */
+  artifactLink?: ArtifactLink | null;
 }
 
 /** Un "mundo" compartido (misma base) para varios tenants. */
@@ -96,6 +99,7 @@ export function depsFor(world: World, tenantId: string, over: Partial<Onboarding
       const readiness = evaluateEngineReadiness({ spec: served, engine: engine.engine, artifactOk: input.publishedSpec ? Boolean(artifact) : true, credentials: world.credentials, killSwitchOn: false, matrix: servedMatrix });
       return { engine, matrix, readiness };
     },
+    ...(world.artifactLink !== undefined ? { artifactLink: async () => world.artifactLink ?? null } : {}),
     now: () => NOW,
     log: (e) => world.events.push(e),
     ...over,

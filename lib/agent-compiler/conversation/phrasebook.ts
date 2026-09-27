@@ -29,6 +29,8 @@ export interface Phrases {
   cancelAck: string;
   handoffDefault: string;
   handoffUnavailable: string;
+  /** FASE 9 — ruptura de bucle: el agente iba a repetir la misma respuesta por 3.ª vez. */
+  loopBreak(handoffAvailable: boolean): string;
   unsupported: string;
   offerHandoff: string;
   errorGeneric: string;
@@ -65,6 +67,11 @@ export interface Phrases {
   reminderInvalid: string;
   verifiedFound(when: string | null): string;
   verifiedNotFound: string;
+  /** FASE 9 — verificación de una cancelación / reprogramación de desenlace desconocido. */
+  verifiedCancelled: string;
+  verifiedCancelNotDone: string;
+  verifiedMoved(when: string | null): string;
+  verifiedMoveNotDone: string;
   /** Texto del recordatorio que se ENVÍA (hechos: servicio y hora ya formateados). */
   reminderMessage(service: string | null, when: string): string;
 }
@@ -79,6 +86,7 @@ const cercano: Phrases = {
   cancelAck: "Listo, no hago la reserva. Si necesitas algo más, aquí estoy.",
   handoffDefault: "Te comunico con una persona del equipo. En breve te escriben por aquí.",
   handoffUnavailable: "En este momento no puedo comunicarte con una persona por este medio. ¿Te ayudo con algo más?",
+  loopBreak: (h) => (h ? "Parece que no estoy logrando ayudarte con esto. ¿Quieres que te comunique con una persona del equipo?" : "Parece que no estoy logrando ayudarte con esto. ¿Me lo cuentas con otras palabras?"),
   unsupported: "Por ahora no puedo gestionar eso por aquí.",
   offerHandoff: " Si prefieres, te comunico con una persona del equipo.",
   errorGeneric: "No pude completar eso en este momento.",
@@ -130,6 +138,10 @@ const cercano: Phrases = {
   reminderMessage: (s, w) => `¡Hola! Te recordamos tu cita${s ? ` de ${s}` : ""} el ${end(w)} ¡Te esperamos!`,
   verifiedFound: (w) => `Revisé la agenda: tu cita${w ? ` del ${w}` : ""} sí quedó agendada.`,
   verifiedNotFound: "Revisé la agenda y la cita no alcanzó a quedar agendada.",
+  verifiedCancelled: "Revisé la agenda: tu cita sí quedó cancelada.",
+  verifiedCancelNotDone: "Revisé la agenda y tu cita sigue activa: la cancelación no alcanzó a hacerse.",
+  verifiedMoved: (w) => (w ? `Revisé la agenda: tu cita sí quedó movida al ${end(w)}` : "Revisé la agenda: tu cita sí quedó movida."),
+  verifiedMoveNotDone: "Revisé la agenda y tu cita sigue en su horario original: el cambio no alcanzó a hacerse.",
 };
 
 const profesional: Phrases = {
@@ -170,6 +182,7 @@ const formal: Phrases = {
   askChange: "Entendido. ¿Qué desea modificar?",
   cancelAck: "De acuerdo, no se realiza la reserva. Quedamos a su disposición.",
   handoffUnavailable: "En este momento no es posible comunicarle con una persona por este medio. ¿Puedo ayudarle con algo más?",
+  loopBreak: (h) => (h ? "Al parecer no estoy logrando ayudarle con esto. ¿Desea que lo comunique con una persona del equipo?" : "Al parecer no estoy logrando ayudarle con esto. ¿Podría explicarlo con otras palabras?"),
   unsupported: "Por el momento no es posible gestionar esa solicitud por este medio.",
   offerHandoff: " Si lo prefiere, puedo comunicarle con una persona del equipo.",
   errorGeneric: "No fue posible completar la solicitud en este momento.",
@@ -219,6 +232,10 @@ const formal: Phrases = {
   reminderMessage: (s, w) => `Buen día. Le recordamos su cita${s ? ` de ${s}` : ""} el ${end(w)} Le esperamos.`,
   verifiedFound: (w) => `Verifiqué la agenda: su cita${w ? ` del ${w}` : ""} sí quedó registrada.`,
   verifiedNotFound: "Verifiqué la agenda y la cita no alcanzó a quedar registrada.",
+  verifiedCancelled: "Verifiqué la agenda: su cita sí quedó cancelada.",
+  verifiedCancelNotDone: "Verifiqué la agenda y su cita continúa vigente: la cancelación no alcanzó a realizarse.",
+  verifiedMoved: (w) => (w ? `Verifiqué la agenda: su cita sí quedó reprogramada para el ${end(w)}` : "Verifiqué la agenda: su cita sí quedó reprogramada."),
+  verifiedMoveNotDone: "Verifiqué la agenda y su cita continúa en el horario original: el cambio no alcanzó a realizarse.",
 };
 
 export const PHRASEBOOKS: Readonly<Record<AgentTone, Phrases>> = { cercano, profesional, casual, formal };

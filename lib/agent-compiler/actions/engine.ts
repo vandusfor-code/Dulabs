@@ -26,6 +26,9 @@ import { conversationIdOf } from "@/lib/agent-compiler/conversation/store";
 import { appointmentSelection, getActionDefinition, type ActionDefinition, type FailureMapping } from "@/lib/agent-compiler/actions/registry";
 import { parseActionResult, type ActionErrorCode, type ActionResult, type ActionStatus } from "@/lib/agent-compiler/actions/result";
 import type { ActionExecutionStore } from "@/lib/agent-compiler/actions/store";
+import { RETRY_POLICIES, retryClassOf, retryDecision } from "@/lib/agent-compiler/runtime/production/retry-policy";
+import type { CircuitRegistry, Dependency } from "@/lib/agent-compiler/runtime/production/circuits";
+import type { RateLimiter } from "@/lib/agent-compiler/runtime/production/operations";
 
 /** Única zona que los handlers de agenda existentes soportan (fechas con offset fijo -05:00). */
 export const SUPPORTED_SCHEDULING_TIMEZONE = "America/Bogota";
@@ -81,7 +84,26 @@ export interface ActionEngineDeps {
   clock?: () => Date;
   sleep?: (ms: number) => Promise<void>;
   log?: (event: ActionEngineEvent) => void;
+  /** FASE 9 — circuitos por dependencia y tenant (runtime/production/circuits.ts). Sin registro = sin circuito. */
+  circuits?: CircuitRegistry;
+  /** FASE 9 — aleatoriedad del jitter (tests deterministas). */
+  random?: () => number;
+  /** FASE 9 — límite de acciones con efecto por conversación (Postgres). Sin limitador = sin límite. */
+  limiter?: RateLimiter;
 }
+
+/** FASE 9 — dependencia EXTERNA de una acción (la que protege su circuito). */
+export function dependencyOf(def: ActionDefinition): Dependency | null {
+  return def.schedulingProvider === "nylas" ? "nylas_calendar" : null;
+}
+
+/** Fallas que hablan de la salud del proveedor (no de la solicitud): timeout, 5xx, 429, red, credencial rechazada. */
+export function countsAgainstDependency(f: { code: string; reason: string; ambiguous: boolean }): boolean {
+  return f.ambiguous || f.code === "TIMEOUT" || f.code === "RATE_LIMITED" || (f.code === "EXTERNAL_ERROR" && f.reason !== "CIRCUIT_OPEN") || f.reason === "PROVIDER_AUTH_ERROR";
+}
+
+/** Escritura que NO se puede repetir a ciegas (externa o no idempotente). Las idempotentes del store propio sí. */
+const unsafeWrite = (def: ActionDefinition) => def.mutation && !def.idempotentWrite;
 
 export interface ExecuteHooks {
   /**
@@ -369,7 +391,7 @@ export function createActionEngine(deps: ActionEngineDeps) {
         nodeId: `ba-action:${step.action}`,
         kind: "action",
         attempt,
-        payload: { ...step.buildPayload(request, { userMessage: ctx.userMessage, previous, agentId: ctx.agentId }), ...modelPayload(request, ctx.artifact, step.action) },
+        payload: { ...step.buildPayload(request, { userMessage: ctx.userMessage, previous, agentId: ctx.agentId, tone: ctx.artifact.presentation.tone }), ...modelPayload(request, ctx.artifact, step.action) },
         action: { ...config, actionType: step.action } as ActionNodeConfig,
         conversation: ctx.conversation,
       };
@@ -380,10 +402,10 @@ export function createActionEngine(deps: ActionEngineDeps) {
         r = await withTimeout((signal) => handler(dispatch, signal), def.timeoutMs);
       } catch {
         // Excepción del handler: en una escritura no se sabe si el efecto ocurrió.
-        return { ok: false, failure: { code: "EXTERNAL_ERROR", reason: "HANDLER_EXCEPTION", retryable: !def.mutation, ambiguous: def.mutation && isMain, invalidSlots: [] } };
+        return { ok: false, failure: { code: "EXTERNAL_ERROR", reason: "HANDLER_EXCEPTION", retryable: !unsafeWrite(def), ambiguous: unsafeWrite(def) && isMain, invalidSlots: [] } };
       }
       if (r === "timeout") {
-        return { ok: false, failure: { code: "TIMEOUT", reason: isMain ? "ACTION_TIMEOUT" : "PRECHECK_TIMEOUT", retryable: !def.mutation || !isMain, ambiguous: def.mutation && isMain, invalidSlots: [] } };
+        return { ok: false, failure: { code: "TIMEOUT", reason: isMain ? "ACTION_TIMEOUT" : "PRECHECK_TIMEOUT", retryable: !unsafeWrite(def) || !isMain, ambiguous: unsafeWrite(def) && isMain, invalidSlots: [] } };
       }
       if (!r.success) return { ok: false, failure: def.mapFailure(r, request) };
       const data = (r.data ?? {}) as Record<string, unknown>;
@@ -437,7 +459,7 @@ export function createActionEngine(deps: ActionEngineDeps) {
         idempotencyKey: req.id,
         argumentsHash: argumentsHashOf(req),
         leaseSeconds: Math.min(300, Math.ceil((def.timeoutMs * def.retry.maxAttempts) / 1000) + 15),
-        retakeable: mode === "execute" && !def.mutation,
+        retakeable: mode === "execute" && !unsafeWrite(def),
       });
     } catch {
       return finish(result({ status: "FAILED", request: req, action: req.action, executionId: null, attempt: 0, started, now: clock().getTime(), error: { code: "INTERNAL_ERROR", reason: "EXECUTION_STORE_UNAVAILABLE", retryable: true, ambiguous: false, invalidSlots: [] } }), contractVersion);
@@ -495,13 +517,34 @@ export function createActionEngine(deps: ActionEngineDeps) {
       }
     }
 
+    // FASE 9 — límite de escrituras por conversación (bucles / abuso). Solo una ejecución NUEVA cuenta: un replay o una
+    // reanudación nunca se bloquea (su resultado ya existe o está en curso).
+    if (def.mutation && deps.limiter) {
+      const hit = await deps.limiter.hit("conversation_writes", `${ctx.tenantId}:${conversationRef}`);
+      if (hit && !hit.allowed) {
+        return complete(result({ status: "FAILED", request: req, action: req.action, executionId, attempt, started, now: clock().getTime(), error: rejectWith("RATE_LIMITED", "CONVERSATION_WRITE_LIMIT") }));
+      }
+    }
+
+    // FASE 9 — circuito de la dependencia externa (por tenant): abierto = falla rápida, sin llamar al proveedor.
+    const dependency = dependencyOf(def);
+    const breaker = dependency && deps.circuits ? deps.circuits.get(dependency, ctx.tenantId) : null;
+    // "skip" = no se llamó al proveedor (circuito abierto): nada que registrar.
+    let breakerOutcome: "skip" | "ok" | "fail" = "skip";
     try {
+      if (breaker && !breaker.allow(clock().getTime())) {
+        return complete(result({ status: "FAILED", request: req, action: req.action, executionId, attempt, started, now: clock().getTime(), error: { code: "EXTERNAL_ERROR", reason: "CIRCUIT_OPEN", retryable: true, ambiguous: false, invalidSlots: [] } }));
+      }
       let outcome = await runSteps(def, req, ctx, attempt);
-      // Reintentos: solo errores transitorios de acciones que se pueden repetir sin riesgo; backoff exponencial acotado.
-      for (let n = 1; !outcome.ok && outcome.failure.retryable && !def.mutation && n < def.retry.maxAttempts; n++) {
-        await sleep(def.retry.baseDelayMs * 2 ** (n - 1));
+      // Reintentos (política única, retry-policy.ts): solo lo RETRYABLE de acciones que se pueden repetir sin riesgo
+      // (lecturas y escrituras idempotentes del store propio); backoff exponencial con jitter y máximo de intentos.
+      for (let n = 1; !outcome.ok && (!def.mutation || def.idempotentWrite); n++) {
+        const d = retryDecision({ ...RETRY_POLICIES.action_read, maxAttempts: def.retry.maxAttempts, baseDelayMs: def.retry.baseDelayMs }, n, retryClassOf(outcome.failure), deps.random);
+        if (!d.retry) break;
+        await sleep(d.delayMs);
         outcome = await runSteps(def, req, ctx, attempt);
       }
+      breakerOutcome = !outcome.ok && countsAgainstDependency(outcome.failure) ? "fail" : "ok";
       if (!outcome.ok) {
         const status: ActionStatus = outcome.failure.code === "TIMEOUT" ? "TIMED_OUT" : "FAILED";
         return complete(result({ status, request: req, action: req.action, executionId, attempt, started, now: clock().getTime(), error: outcome.failure }));
@@ -518,7 +561,13 @@ export function createActionEngine(deps: ActionEngineDeps) {
         data = { ...rest, horariosDisponibles: within };
       }
       return complete(result({ status: "SUCCEEDED", request: req, action: req.action, executionId, attempt, started, now: clock().getTime(), data }));
+    } catch (e) {
+      breakerOutcome = "fail";
+      throw e;
     } finally {
+      // Siempre se registra el desenlace (un half-open nunca queda colgado).
+      if (breaker && breakerOutcome === "fail") breaker.failure(clock().getTime());
+      else if (breaker && breakerOutcome === "ok") breaker.success();
       if (lockKey) {
         try {
           await deps.store.releaseLock({ tenantId: ctx.tenantId, lockKey, holder });
@@ -552,15 +601,27 @@ export function createActionEngine(deps: ActionEngineDeps) {
       action: { ...config, actionType: verifier.step.action } as ActionNodeConfig,
       conversation: ctx.conversation,
     };
+    // FASE 9 — la verificación también es una llamada al proveedor: respeta (y alimenta) su circuito.
+    const dependency = dependencyOf(def);
+    const breaker = dependency && deps.circuits ? deps.circuits.get(dependency, ctx.tenantId) : null;
+    if (breaker && !breaker.allow(clock().getTime())) return { outcome: "unknown", reason: "CIRCUIT_OPEN" };
     let r: EffectDispatchResult | "timeout";
     try {
       r = await withTimeout((signal) => deps.handler(dispatch, signal), def.timeoutMs);
     } catch {
+      breaker?.failure(clock().getTime());
       return { outcome: "unknown", reason: "VERIFY_EXCEPTION" };
     }
-    if (r === "timeout") return { outcome: "unknown", reason: "VERIFY_TIMEOUT" };
-    if (!r.success) return /sin_citas/.test(r.error ?? "") ? { outcome: "not_found", reason: "NO_APPOINTMENTS" } : { outcome: "unknown", reason: "VERIFY_FAILED" };
-    const m = verifier.match(request, (r.data ?? {}) as Record<string, unknown>);
+    if (r === "timeout") {
+      breaker?.failure(clock().getTime());
+      return { outcome: "unknown", reason: "VERIFY_TIMEOUT" };
+    }
+    const noAppointments = !r.success && /sin_citas/.test(r.error ?? "");
+    if (!r.success && !noAppointments && r.classification !== "NON_RETRYABLE") breaker?.failure(clock().getTime());
+    else breaker?.success();
+    if (!r.success && !noAppointments) return { outcome: "unknown", reason: "VERIFY_FAILED" };
+    // "Sin citas" es un dato: para crear = no ocurrió; para cancelar = sí ocurrió (lo decide cada verificador).
+    const m = verifier.match(request, noAppointments ? { sinCitas: true } : ((r.data ?? {}) as Record<string, unknown>));
     return m.outcome === "found" ? { outcome: "found", reason: "FOUND", ...(m.booking ? { booking: m.booking } : {}) } : { outcome: m.outcome, reason: m.outcome === "not_found" ? "NOT_FOUND" : "UNDETERMINED" };
   }
 

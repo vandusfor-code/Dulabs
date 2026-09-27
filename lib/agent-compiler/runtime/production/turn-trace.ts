@@ -67,6 +67,9 @@ export interface BusinessAgentTurnTrace {
   errorCode?: string;
   /** FASE 8 — errores BA-* del turno (entendimiento + acciones), para agrupar por clase en observabilidad. */
   baErrors?: string[];
+  /** FASE 9 — correlación del mensaje (hash de tenant + wamid) y referencia de soporte que ve el cliente en un error. */
+  correlationId?: string;
+  supportRef?: string;
   at: string;
 }
 

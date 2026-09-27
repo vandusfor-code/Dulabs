@@ -129,6 +129,8 @@ export function buildRuntimeSpec(model: BusinessModel, draft: OnboardingDraft, p
     // (draft.engine); si no, se hereda el de la versión anterior (o el grafo).
     runtime: {
       engine: draft.engine ?? previous?.runtime?.engine ?? "graph_v1",
+      // FASE 9 — la elección explícita se marca (y se hereda) para que un despliegue gradual nunca la pise.
+      ...(draft.engine || previous?.runtime?.engineChoice === "explicit" ? { engineChoice: "explicit" as const } : {}),
       tone: DRAFT_TONE_TO_AGENT_TONE[draft.tone],
       ...(on("reminders") ? { reminders: { enabled: true, offsetMinutes: (cap("reminders")!.config as { offsetMinutes: number }).offsetMinutes } } : {}),
       ...(selectableResources(model).length > 0 ? { resources: selectableResources(model).map((r) => ({ id: r.id, name: r.name.slice(0, 80), kind: r.kind })) } : {}),

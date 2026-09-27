@@ -17,7 +17,7 @@ import { deriveAgentLifecycle, type AgentLifecycle } from "@/lib/agent-compiler/
 import type { BusinessAgentSpec } from "@/lib/agent-compiler/spec/types";
 import { compileLegacySpec } from "@/lib/agent-compiler/business-model/compile";
 import type { CompiledAgentArtifact } from "@/lib/agent-compiler/business-model/artifact";
-import { isEngineKillSwitchOn, selectAgentEngine } from "@/lib/agent-compiler/runtime/production/engine-selection";
+import { isEngineKillSwitchOn, selectAgentEngine, specRolloutEligible } from "@/lib/agent-compiler/runtime/production/engine-selection";
 import { understandingProviderConfigured } from "@/lib/agent-compiler/understanding/provider";
 import { buildCapabilityMatrix, evaluateEngineReadiness, type CredentialFacts, type EngineReport, type IntegrationFacts } from "@/lib/agent-compiler/lifecycle/capability-matrix";
 
@@ -53,7 +53,7 @@ export async function evaluateEngineReport(
   const current = input.draftSpec ?? input.publishedSpec;
   const served = input.publishedSpec ?? current;
   if (!current || !served) throw new Error("engine_report_without_spec");
-  const engine = selectAgentEngine({ tenantId, spec: served, env });
+  const engine = selectAgentEngine({ tenantId, spec: served, env, rolloutEligible: () => specRolloutEligible({ tenantId, agentId: flowId, versionRef: `spec-v${input.publishedSpec?.metadata.specVersion ?? 0}`, spec: input.publishedSpec ?? undefined }) });
   let artifact: CompiledAgentArtifact | null = null;
   if (input.publishedSpec) {
     const compiled = compileLegacySpec(input.publishedSpec, { tenantId, agentId: flowId, versionRef: "activation-check", publishedVersion: null });

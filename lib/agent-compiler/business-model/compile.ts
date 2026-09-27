@@ -80,7 +80,7 @@ function compileActions(model: BusinessModel, caps: ResolvedCapabilities, bookin
   if (caps.lead_capture) {
     add("ba_guardar_lead", "lead_capture", { ba_guardar_lead: { params: { fieldKeys: caps.lead_capture.config.fieldKeys.join(","), captureInterest: String(caps.lead_capture.config.captureInterest) } } });
   }
-  if (caps.reminders && booking) add("ba_programar_recordatorio", "reminders", { ba_programar_recordatorio: { params: { offsetMinutes: String(caps.reminders.config.offsetMinutes), timezone: model.identity.timezone, tone: model.presentation?.tone ?? "cercano" } } });
+  if (caps.reminders && booking) add("ba_programar_recordatorio", "reminders", { ba_programar_recordatorio: { params: { offsetMinutes: String(caps.reminders.config.offsetMinutes), timezone: model.identity.timezone } } });
   return actions;
 }
 

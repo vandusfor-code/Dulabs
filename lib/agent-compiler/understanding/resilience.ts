@@ -10,6 +10,7 @@
 // Si todo falla, el turno recibe UNDERSTANDING_FAILED: la state machine conserva el estado y el runtime no ejecuta
 // ninguna acción (ver conversation-runtime.ts).
 
+import { RETRY_POLICIES, retryDelay } from "@/lib/agent-compiler/runtime/production/retry-policy";
 import { createExecutorUnderstandingProvider, type ProviderFailureReason, type UnderstandingProvider, type UnderstandingProviderResult } from "@/lib/agent-compiler/understanding/provider";
 
 export interface UnderstandingRetryPolicy {
@@ -23,18 +24,18 @@ export interface UnderstandingRetryPolicy {
   maxDelayMs: number;
 }
 
+// FASE 9 — los números salen de la política única (runtime/production/retry-policy.ts).
 export const DEFAULT_UNDERSTANDING_RETRY: UnderstandingRetryPolicy = {
-  maxAttempts: 2,
-  attemptTimeoutMs: 8_000,
+  maxAttempts: RETRY_POLICIES.understanding.maxAttempts,
+  attemptTimeoutMs: RETRY_POLICIES.understanding.attemptTimeoutMs,
   totalBudgetMs: 15_000,
-  baseDelayMs: 300,
-  maxDelayMs: 1_200,
+  baseDelayMs: RETRY_POLICIES.understanding.baseDelayMs,
+  maxDelayMs: RETRY_POLICIES.understanding.maxDelayMs,
 };
 
 /** Espera antes del intento `attempt + 1`: base·2^(attempt−1) con techo, y jitter en [50 %, 100 %]. */
 export function backoffDelay(policy: UnderstandingRetryPolicy, attempt: number, random: () => number = Math.random): number {
-  const raw = Math.min(policy.maxDelayMs, policy.baseDelayMs * 2 ** Math.max(0, attempt - 1));
-  return Math.round(raw * (0.5 + random() / 2));
+  return retryDelay(policy, attempt, random);
 }
 
 export const realSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));

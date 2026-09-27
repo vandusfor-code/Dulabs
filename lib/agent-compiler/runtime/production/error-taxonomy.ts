@@ -67,8 +67,12 @@ const CONFIG_REASONS = new Set([
 ]);
 
 /** Resultado de una acción del Action Engine → error BA-*. */
+/** FASE 9 — límites de protección (bucles / abuso): los resuelve el sistema, no el proveedor ni el cliente. */
+const LIMIT_REASONS = new Set(["CONVERSATION_WRITE_LIMIT", "CONTACT_RATE_LIMITED", "TENANT_RATE_LIMITED", "LOOP_DETECTED"]);
+
 export function classifyActionError(e: ActionError): BaError {
   if (e.ambiguous || e.reason === "OUTCOME_UNKNOWN") return make("UNKNOWN", e.reason);
+  if (LIMIT_REASONS.has(e.reason)) return make("SYSTEM", e.reason);
   if (USER_REASONS.has(e.reason)) return make("USER", e.reason);
   if (CONFIG_REASONS.has(e.reason)) return make("CONFIG", e.reason);
   switch (e.code) {
@@ -91,6 +95,8 @@ export function classifyActionError(e: ActionError): BaError {
 
 /** Código del entendimiento / del turno (safeError.code) → error BA-*. */
 export function classifyTurnError(errorCode: string): BaError {
+  if (errorCode === "understanding_tenant_rate_limited") return make("SYSTEM", "TENANT_AI_RATE_LIMITED");
+  if (errorCode === "loop_detected") return make("SYSTEM", "LOOP_DETECTED");
   if (errorCode.startsWith("understanding_")) return make("AI", errorCode.replace(/^understanding_/, ""), errorCode.includes("timeout") || errorCode.includes("unavailable"));
   if (errorCode === "catalog_unavailable") return make("INTEGRATION", errorCode, true);
   if (errorCode.startsWith("business_model_artifact_")) return make(errorCode.includes("store_unavailable") ? "INTEGRATION" : "CONFIG", errorCode.replace(/^business_model_artifact_/, "artifact_"));

@@ -24,6 +24,7 @@ MIGRATIONS=(
   20261125000000_dulabs_ba_business_models
   20261126000000_dulabs_ba_onboarding
   20261127000000_dulabs_ba_reminders
+  20261128000000_dulabs_ba_production_hardening
 )
 
 run_pg() { if [ "$(id -u)" = "0" ]; then su postgres -s /bin/bash -c "$*"; else bash -c "$*"; fi; }

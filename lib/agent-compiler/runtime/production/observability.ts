@@ -18,7 +18,7 @@ export interface BusinessAgentTrace {
   /** Resultado del orquestador (cuando el Gate pasa). */
   orchestratorOutcome?: string;
   /** Outcome del boundary. */
-  outcome: "no_business_agent" | "guardrail_blocked" | "flow" | "conversation" | "fail_closed" | "duplicate" | "blocked_number" | "unsupported_message";
+  outcome: "no_business_agent" | "guardrail_blocked" | "flow" | "conversation" | "fail_closed" | "duplicate" | "blocked_number" | "unsupported_message" | "rate_limited";
   reason?: string;
   /** FASE 1 — categoría del contrato de errores (lib/agent-compiler/contracts/errors.ts) cuando hubo fallo. */
   errorCategory?: string;
@@ -28,6 +28,9 @@ export interface BusinessAgentTrace {
   /** FASE 8 — motor que atendió y por qué (versión publicada / lista de compatibilidad / kill switch / default). */
   engine?: string;
   engineSource?: string;
+  /** FASE 9 — correlación del mensaje (hash tenant + wamid) y referencia de soporte. */
+  correlationId?: string;
+  supportRef?: string;
 }
 
 export interface BusinessAgentObserver {

@@ -161,36 +161,45 @@ function contextBag(context: GateContext): Record<string, unknown> {
  * variantes donde aplica). Son frases largas a propósito ("con un asesor", no "asesor"):
  * una palabra suelta daría falsos positivos ("¿ofrecen asesoría?"). Solo se usan para las
  * reglas `agent_request`; las paráfrasis raras las cubre el clasificador semántico.
+ *
+ * FASE 9 — tabla POR LOCALE (un idioma nuevo = una entrada más, sin tocar el Gate). La lista combinada conserva el
+ * contenido y el orden de siempre: los agentes ya publicados reconocen exactamente las mismas frases.
  */
-export const HUMAN_REQUEST_PHRASES: readonly string[] = [
-  "con una persona",
-  "con un humano",
-  "con una humana",
-  "con un asesor",
-  "con una asesora",
-  "con un agente",
-  "con una agente",
-  "con alguien del equipo",
-  "con alguien de atención",
-  "con alguien de atencion",
-  "con un representante",
-  "con un encargado",
-  "con una encargada",
-  "atención humana",
-  "atencion humana",
-  "agente humano",
-  "asesor humano",
-  "persona real",
-  "persona de verdad",
-  "hablar con alguien",
-  "speak to a human",
-  "speak with a human",
-  "talk to a human",
-  "talk to a person",
-  "speak to a person",
-  "human agent",
-  "real person",
-];
+export const HUMAN_REQUEST_PHRASES_BY_LOCALE: Readonly<Record<"es" | "en", readonly string[]>> = {
+  es: [
+    "con una persona",
+    "con un humano",
+    "con una humana",
+    "con un asesor",
+    "con una asesora",
+    "con un agente",
+    "con una agente",
+    "con alguien del equipo",
+    "con alguien de atención",
+    "con alguien de atencion",
+    "con un representante",
+    "con un encargado",
+    "con una encargada",
+    "atención humana",
+    "atencion humana",
+    "agente humano",
+    "asesor humano",
+    "persona real",
+    "persona de verdad",
+    "hablar con alguien",
+  ],
+  en: [
+    "speak to a human",
+    "speak with a human",
+    "talk to a human",
+    "talk to a person",
+    "speak to a person",
+    "human agent",
+    "real person",
+  ],
+};
+
+export const HUMAN_REQUEST_PHRASES: readonly string[] = [...HUMAN_REQUEST_PHRASES_BY_LOCALE.es, ...HUMAN_REQUEST_PHRASES_BY_LOCALE.en];
 
 /** Condición determinista por keywords (message contains any). */
 function keywordCondition(keywords: string[]): { rules: ConditionRule[]; match: ConditionMatchMode } {

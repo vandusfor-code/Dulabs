@@ -135,6 +135,11 @@ export interface MatrixInput {
   agentActive: boolean;
 }
 
+/** FASE 9 — ¿el motor conversacional ejecuta TODO lo que este Spec tiene encendido? (elegibilidad de canary/general). */
+export function stateMachineSupportsSpec(spec: BusinessAgentSpec): boolean {
+  return MATRIX_CAPABILITIES.every((id) => !enabledInSpec(spec, id) || ENGINE_SUPPORT.state_machine_v1[id] !== "none");
+}
+
 function enabledInSpec(spec: BusinessAgentSpec, id: MatrixCapability): boolean {
   const c = spec.capabilities;
   const rt = spec.runtime;
