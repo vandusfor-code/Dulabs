@@ -51,7 +51,7 @@ describe("FASE 5 — schema y capacidades del Universal Business Model", () => {
       assert.equal(a.artifactSchema, "business-agent.artifact/1.0.0");
     }
     assert.deepEqual(Object.keys(compile(barberiaModel()).actions).sort(), ["buscar_conocimiento", "buscar_disponibilidad_nylas_generico", "cancelar_cita_cliente", "crear_cita_nylas_generico", "reprogramar_cita_cliente", "transferir_soporte"]);
-    assert.deepEqual(Object.keys(compile(tiendaModel()).actions).sort(), ["buscar_conocimiento", "calcular_cotizacion", "listar_catalogo_servicios", "transferir_soporte"]);
+    assert.deepEqual(Object.keys(compile(tiendaModel()).actions).sort(), ["ba_consultar_producto", "buscar_conocimiento", "calcular_cotizacion", "listar_catalogo_servicios", "transferir_soporte"]);
     assert.deepEqual(Object.keys(compile(restauranteModel()).actions).sort(), ["buscar_conocimiento", "buscar_disponibilidad_nylas_generico", "crear_cita_nylas_generico", "transferir_soporte"]);
     assert.deepEqual(Object.keys(compile(servicioProfesionalModel()).actions).sort(), ["agendar_cita_especialista", "buscar_conocimiento"]);
   });

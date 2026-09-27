@@ -44,7 +44,7 @@ import { resolveCommercialState } from "@/lib/agent-compiler/runtime/commercial-
 import { esTelefonoBloqueado } from "@/lib/blacklist-du";
 import { createBusinessAgentArgumentPolicy } from "@/lib/agent-compiler/contracts/argument-policy";
 import { categorizeRuntimeFailure } from "@/lib/agent-compiler/contracts/errors";
-import { isStateMachineRuntimeEnabled } from "@/lib/agent-compiler/runtime/production/conversation-runtime";
+import { describeAgentRuntime } from "@/lib/agent-compiler/runtime/production/engine-selection";
 import { createProductionConversationRuntime } from "@/lib/agent-compiler/runtime/production/conversation-runtime-supabase";
 
 export interface BusinessAgentBoundaryResult {
@@ -223,13 +223,15 @@ export async function atenderMensajeConBusinessAgent(
     params.commercialState ??
     (await resolveCommercialState(store, resolution.tenantId, { phoneNumberId: cliente.phone_number_id, telefonoCliente }).then((r) => r.commercialState));
 
-  // 3.6) FASE 4 — motor conversacional (state machine + Action Engine) SOLO para tenants habilitados explícitamente
-  // (BUSINESS_AGENT_STATE_MACHINE_TENANTS). Para todos los demás, el grafo compilado sigue exactamente igual.
-  // FASE 5 — ese motor se configura SOLO con el artefacto publicado (Universal Business Model activo del agente, o el
-  // Spec legacy vía adaptador → mismo compilador); se resuelve dentro del turno y falla cerrado si no es publicable.
+  // 3.6) FASE 8 — motor EXPLÍCITO del agente: el de su versión publicada (spec.runtime.engine), con el kill switch y la
+  // lista de compatibilidad de FASE 4 por encima (ver engine-selection.ts). Sin motor publicado: el grafo de siempre.
+  // FASE 5 — el motor conversacional se configura SOLO con el artefacto publicado (Universal Business Model activo del
+  // agente, o el Spec legacy vía adaptador → mismo compilador); se resuelve dentro del turno y falla cerrado si no es
+  // publicable.
+  const runtimeDescriptor = describeAgentRuntime({ tenantId: resolution.tenantId, agentId: resolution.flowId, publishedVersion: resolution.flowVersionId, spec: resolution.spec });
   const conversation =
     params.overrides?.conversation ??
-    (isStateMachineRuntimeEnabled(resolution.tenantId)
+    (runtimeDescriptor.engine === "state_machine_v1"
       ? createProductionConversationRuntime({
           supabase,
           tenantId: resolution.tenantId,
@@ -313,6 +315,8 @@ export async function atenderMensajeConBusinessAgent(
     // LLM sólo puede haberse invocado si el Gate PASÓ al Flow.
     llmInvoked: result.kind === "flow" || (result.kind === "conversation" && result.conversation.outcome === "processed"),
     latencyMs: Date.now() - started,
+    engine: params.overrides?.conversation ? "state_machine_v1" : runtimeDescriptor.engine,
+    engineSource: params.overrides?.conversation ? "override" : runtimeDescriptor.source,
   } as BusinessAgentTrace);
 
   // Un Business Agent SIEMPRE es dueño de su mensaje: nunca cae a LEGACY (ni

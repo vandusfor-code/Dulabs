@@ -35,7 +35,7 @@ import { determineNextStep, type NextStep } from "@/lib/agent-compiler/conversat
 import { planResponse, type ResponsePlan } from "@/lib/agent-compiler/conversation/response-plan";
 import { reduceConversation, type ConversationInputEvent, type DomainEvent } from "@/lib/agent-compiler/conversation/transitions";
 import { conversationIdOf, type ConversationStateKey, type ConversationStateStore } from "@/lib/agent-compiler/conversation/store";
-import { relevantOfferings, resolveTurnEntities, type CatalogPort, type EntityResolutionTrace, type TurnCatalog } from "@/lib/agent-compiler/conversation/entities";
+import { priceFactsFor, relevantOfferings, resolveTurnEntities, type CatalogPort, type EntityResolutionTrace, type PriceFact, type TurnCatalog } from "@/lib/agent-compiler/conversation/entities";
 import type { BusinessHours } from "@/lib/agent-compiler/spec/types";
 
 export const DEFAULT_IDLE_TIMEOUT_MS = 12 * 60 * 60 * 1000;
@@ -109,8 +109,13 @@ export type TurnUnderstanding =
   | { ok: true; understanding: StructuredUnderstanding; entities?: EntityResolutionTrace; offeringsInContext: number }
   | { ok: false; category: string; code: string };
 
+/** FASE 8 — hechos del backend para la respuesta de ESTE turno (precios reales del catálogo). */
+export interface TurnFacts {
+  prices?: PriceFact[];
+}
+
 export type ConversationTurnResult =
-  | ({ outcome: "processed"; transition: NonNullable<ConversationState["lastTransition"]>; domainEvents: DomainEvent[]; understanding?: TurnUnderstanding; stateBefore?: StateSnapshot } & TurnView)
+  | ({ outcome: "processed"; transition: NonNullable<ConversationState["lastTransition"]>; domainEvents: DomainEvent[]; understanding?: TurnUnderstanding; stateBefore?: StateSnapshot; facts?: TurnFacts } & TurnView)
   | ({ outcome: "duplicate" } & TurnView)
   | ({ outcome: "human_control" } & TurnView)
   | { outcome: "rejected"; error: BusinessAgentSafeError };
@@ -149,6 +154,13 @@ export function stateSnapshot(state: ConversationState, version: number): StateS
     slots: Object.fromEntries(Object.entries(state.slots).map(([k, v]) => [k, v.status])),
     pendingAction: state.pendingAction ? `${state.pendingAction.action}:${state.pendingAction.status}` : null,
   };
+}
+
+/** Opciones configuradas de los datos tipo lista del negocio (para "el segundo" en una pregunta de selección). */
+function selectOptionsOf(business: BusinessContextInput): Record<string, readonly string[]> {
+  const out: Record<string, readonly string[]> = {};
+  for (const d of business.businessSlots ?? []) if (d.kind === "select" && d.options?.length) out[d.name] = d.options;
+  return out;
 }
 
 function knownSlotsForUnderstanding(state: ConversationState): Record<string, string> {
@@ -251,6 +263,7 @@ export async function processConversationTurn(deps: ConversationServiceDeps, inp
 
     const before = stateSnapshot(loaded.state, loaded.version);
     let turnUnderstanding: TurnUnderstanding | undefined;
+    let facts: TurnFacts | undefined;
     if (humanActive !== true && !HUMAN_CONTROLLED_STATUSES.has(state.status)) {
       const pending = state.pendingConfirmation;
       const catalog = deps.catalog ? await loadCatalog() : null;
@@ -271,7 +284,14 @@ export async function processConversationTurn(deps: ConversationServiceDeps, inp
         business: offerings.length ? { ...deps.business, offerings } : deps.business,
       });
       const resolved = understood.ok
-        ? resolveTurnEntities({ understanding: understood.understanding, state, catalog: catalog && catalog !== "unavailable" ? catalog : null, businessHours: deps.businessHours ?? null })
+        ? resolveTurnEntities({
+            understanding: understood.understanding,
+            state,
+            catalog: catalog && catalog !== "unavailable" ? catalog : null,
+            businessHours: deps.businessHours ?? null,
+            text: input.text,
+            selectOptions: selectOptionsOf(deps.business),
+          })
         : null;
       const ev: ConversationInputEvent = !understood.ok
         ? { type: "UNDERSTANDING_FAILED", eventId: input.eventId, at: sentAt, category: understood.error.category, code: understood.error.code }
@@ -286,6 +306,14 @@ export async function processConversationTurn(deps: ConversationServiceDeps, inp
       if (!r.ok) return reject(safeError("INTERNAL_ERROR", `conversation_${r.code}`));
       steps.push({ previous: state.status, decisive: r.decisive, next: r.state.status, domainEvents: r.domainEvents });
       state = r.state;
+      // FASE 8 — "¿cuánto cuesta?": precios REALES del catálogo del negocio para lo que el cliente está mirando.
+      if (resolved && catalog && catalog !== "unavailable") {
+        const u = resolved.understanding;
+        if ([u.intent.primary, ...u.intent.secondary].some((i) => i.intent === "PRICE_INQUIRY")) {
+          const prices = priceFactsFor(catalog, state);
+          if (prices.length > 0) facts = { prices };
+        }
+      }
     }
 
     const last = steps.at(-1);
@@ -315,7 +343,7 @@ export async function processConversationTurn(deps: ConversationServiceDeps, inp
       });
     }
     if (humanActive === true) return { outcome: "human_control", ...v };
-    return { outcome: "processed", transition: state.lastTransition!, domainEvents: last.domainEvents, ...(turnUnderstanding ? { understanding: turnUnderstanding } : {}), stateBefore: before, ...v };
+    return { outcome: "processed", transition: state.lastTransition!, domainEvents: last.domainEvents, ...(turnUnderstanding ? { understanding: turnUnderstanding } : {}), ...(facts ? { facts } : {}), stateBefore: before, ...v };
   }
   return reject(safeError("INTERNAL_ERROR", "conversation_state_conflict"), { attempts: MAX_TURN_ATTEMPTS });
 }

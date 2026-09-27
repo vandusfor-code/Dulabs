@@ -28,7 +28,14 @@ export type RuntimeInjectedField =
   | "effectId"
   | "now";
 
-export type ActionSideEffect = "none" | "read_internal" | "read_external" | "write_external" | "pause_conversation";
+export type ActionSideEffect = "none" | "read_internal" | "read_external" | "write_internal" | "write_external" | "pause_conversation";
+
+/**
+ * FASE 8 — acciones NATIVAS del Business Agent (no existen en el grafo ni en InternalActionExecutor): las ejecuta el
+ * Action Engine con handlers propios del Business Agent (actions/native-handlers.ts). Prefijo `ba_` reservado.
+ */
+export const BA_NATIVE_ACTIONS = ["ba_consultar_producto", "ba_guardar_lead", "ba_programar_recordatorio"] as const;
+export type BaNativeAction = (typeof BA_NATIVE_ACTIONS)[number];
 
 export type IdempotencyStrategy =
   /** Solo lectura: repetirla no cambia nada. */
@@ -41,7 +48,7 @@ export type IdempotencyStrategy =
   | "upstream_dedupe_only";
 
 export interface BusinessAgentActionContract {
-  action: FlowActionType;
+  action: FlowActionType | BaNativeAction;
   /** SemVer del contrato (no del handler). Cambia cuando cambia lo que la IA puede proponer o lo que se produce. */
   version: string;
   description: string;
@@ -268,7 +275,62 @@ const CONTRATOS: readonly BusinessAgentActionContract[] = [
   },
 ];
 
-const POR_ACCION: ReadonlyMap<string, BusinessAgentActionContract> = new Map(CONTRATOS.map((c) => [c.action, c]));
+/**
+ * FASE 8 — contratos de las acciones nativas. Mismo principio: la IA solo puede aportar `llmArguments`; lo demás
+ * (tenant, conversación, cita anclada, datos del contacto) lo inyecta el backend desde el estado validado.
+ */
+export const BA_NATIVE_CONTRACTS: readonly BusinessAgentActionContract[] = [
+  {
+    action: "ba_consultar_producto",
+    version: "1.0.0",
+    description: "Busca un producto en el inventario real del negocio: existe / ambiguo / no existe / agotado, con precio y stock del backend.",
+    llmArguments: z.object({ producto: texto(200) }),
+    runtimeInjected: ["tenantId"],
+    businessConfiguredParams: [],
+    reads: [],
+    outputs: ["resultado", "productoNombre", "precio", "moneda", "stock", "controlaStock", "opciones", "consulta"],
+    permission: "runtime_internal",
+    tenantScope: "runtime_context",
+    sideEffects: "read_internal",
+    idempotency: "not_required",
+    timeoutMs: 8_000,
+    errors: { inventario_no_disponible: "EXTERNAL_SERVICE_ERROR" },
+  },
+  {
+    action: "ba_guardar_lead",
+    version: "1.0.0",
+    description: "Guarda los datos del contacto que el negocio configuró (y su interés) en el contacto del negocio.",
+    llmArguments: SIN_ARGUMENTOS,
+    runtimeInjected: ["tenantId", "conversation.phoneNumberId", "conversation.telefonoCliente"],
+    businessConfiguredParams: ["fieldKeys", "captureInterest"],
+    reads: [],
+    outputs: ["leadGuardado", "camposGuardados"],
+    permission: "runtime_internal",
+    tenantScope: "runtime_context",
+    sideEffects: "write_internal",
+    idempotency: "effect_scoped_key",
+    timeoutMs: 8_000,
+    errors: { contacto_no_disponible: "EXTERNAL_SERVICE_ERROR", sin_datos: "VALIDATION_ERROR" },
+  },
+  {
+    action: "ba_programar_recordatorio",
+    version: "1.0.0",
+    description: "Programa (o actualiza) el recordatorio de la cita que el agente agendó en esta conversación.",
+    llmArguments: SIN_ARGUMENTOS,
+    runtimeInjected: ["tenantId", "conversation.phoneNumberId", "conversation.telefonoCliente", "now"],
+    businessConfiguredParams: ["offsetMinutes"],
+    reads: [],
+    outputs: ["programado", "recordatorioEn", "citaInicio", "actualizado"],
+    permission: "runtime_internal",
+    tenantScope: "runtime_context",
+    sideEffects: "write_internal",
+    idempotency: "effect_scoped_key",
+    timeoutMs: 8_000,
+    errors: { sin_cita: "BUSINESS_RULE_ERROR", momento_invalido: "USER_ERROR", recordatorios_no_disponibles: "EXTERNAL_SERVICE_ERROR" },
+  },
+];
+
+const POR_ACCION: ReadonlyMap<string, BusinessAgentActionContract> = new Map([...CONTRATOS, ...BA_NATIVE_CONTRACTS].map((c) => [c.action, c]));
 
 export const BUSINESS_AGENT_ACTION_CONTRACTS: readonly BusinessAgentActionContract[] = CONTRATOS;
 

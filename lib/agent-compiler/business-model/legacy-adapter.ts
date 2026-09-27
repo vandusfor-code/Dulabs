@@ -70,6 +70,8 @@ export function legacyModelFromSpec(spec: BusinessAgentSpec): LegacyAdapterResul
   const sched = spec.scheduling;
   const provider = sched?.provider;
   const calendar = provider === "nylas";
+  const rt = spec.runtime;
+  const resources = rt?.resources ?? [];
 
   const capabilities: CapabilityEntry[] = [
     {
@@ -98,23 +100,30 @@ export function legacyModelFromSpec(spec: BusinessAgentSpec): LegacyAdapterResul
         bufferMinutes: 0,
         minimumNoticeMinutes: sched?.minNoticeMinutes ?? 0,
         maximumAdvanceDays: null,
-        resourceSelection: "none",
+        // FASE 8: con recursos configurados (spec.runtime.resources) el cliente elige; si no, no se pregunta.
+        resourceSelection: resources.length > 0 ? "customer_choice" : "none",
         // En el runtime legacy, cancelar/reprogramar solo se cablean con calendario (Nylas); con agenda interna no.
         cancellation: { allowed: Boolean(sched?.cancellation?.allowed && calendar), minimumNoticeHours: sched?.cancellation?.minNoticeHours ?? 0 },
         rescheduling: { allowed: Boolean(sched?.cancellation?.allowed && calendar) },
       },
     },
     { id: "handoff", version: "1.0.0", enabled: Boolean(caps.humanHandoff), config: { pauseHours: Math.max(1, spec.handoff?.defaultPauseHours ?? 24) } },
+    // FASE 8 — solo con configuración explícita del motor conversacional (spec.runtime); el flag legacy solo no basta.
+    ...(caps.leadCapture && rt?.leadCapture && rt.leadCapture.fieldKeys.length > 0
+      ? [{ id: "lead_capture", version: "1.0.0", enabled: true, config: { fieldKeys: [...rt.leadCapture.fieldKeys], captureInterest: rt.leadCapture.captureInterest } }]
+      : []),
+    ...(rt?.reminders?.enabled ? [{ id: "reminders", version: "1.0.0", enabled: true, config: { offsetMinutes: rt.reminders.offsetMinutes } }] : []),
     { id: "orders", version: "1.0.0", enabled: Boolean(caps.orders), config: {} },
     { id: "payments", version: "1.0.0", enabled: Boolean(caps.payments), config: {} },
   ];
 
-  if (caps.leadCapture) notes.push({ code: "LEAD_CAPTURE_FLOW_ONLY", path: "capabilities.leadCapture" });
-  if ((sched?.resources ?? []).length > 0) notes.push({ code: "RESOURCES_NOT_MAPPED", path: "scheduling.resources" });
+  if (caps.leadCapture && !(rt?.leadCapture && rt.leadCapture.fieldKeys.length > 0)) notes.push({ code: "LEAD_CAPTURE_FLOW_ONLY", path: "capabilities.leadCapture" });
+  if ((sched?.resources ?? []).length > 0 && resources.length === 0) notes.push({ code: "RESOURCES_NOT_MAPPED", path: "scheduling.resources" });
   if ((spec.policies?.prohibitions ?? []).length > 0 || (spec.policies?.rules ?? []).length > 0 || (spec.handoff?.rules ?? []).length > 0) {
     notes.push({ code: "GATE_POLICIES_STAY_IN_GATE", path: "policies" });
   }
-  notes.push({ code: "PERSONALITY_NOT_USED_BY_RENDERER", path: "personality" });
+  // FASE 8: el renderer aplica un TONO explícito (spec.runtime.tone). La personalidad legacy sigue siendo del grafo.
+  if (!rt?.tone) notes.push({ code: "PERSONALITY_NOT_USED_BY_RENDERER", path: "personality" });
   if (sched?.confirmation?.required) notes.push({ code: "CONFIRMATION_REMINDERS_NOT_MAPPED", path: "scheduling.confirmation" });
   if (sched?.cancellation?.allowed && !calendar) notes.push({ code: "CANCELLATION_REQUIRES_CALENDAR", path: "scheduling.cancellation" });
 
@@ -133,10 +142,11 @@ export function legacyModelFromSpec(spec: BusinessAgentSpec): LegacyAdapterResul
     catalogAuthority: "business_tables",
     services: [],
     products: [],
-    resources: [],
+    resources: resources.map((r) => ({ id: r.id, name: r.name, kind: r.kind, active: true, serviceIds: [] })),
     customerFields: (spec.customerData?.fields ?? []).map(field),
     businessHours: hoursToModel(sched?.businessHours),
     policies: { unsupportedRequest: caps.humanHandoff ? "offer_handoff" : "inform_only" },
+    ...(rt?.tone ? { presentation: { tone: rt.tone } } : {}),
   };
   return { model, notes };
 }

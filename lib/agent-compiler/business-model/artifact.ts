@@ -9,13 +9,14 @@ import { checksumOf } from "@/lib/agent-compiler/checksum";
 import type { AgentRequirements } from "@/lib/agent-compiler/conversation/requirements";
 import type { SlotDefinition } from "@/lib/agent-compiler/understanding/slots";
 import type { UbmCapabilityId } from "@/lib/agent-compiler/business-model/capabilities";
-import type { BusinessHours } from "@/lib/agent-compiler/spec/types";
+import type { AgentTone, BusinessHours } from "@/lib/agent-compiler/spec/types";
 import type { LegacyNoteCode } from "@/lib/agent-compiler/business-model/legacy-adapter";
 import type { BusinessContextInput } from "@/lib/agent-compiler/understanding/context";
 
 export const ARTIFACT_SCHEMA_VERSION = "business-agent.artifact/1.0.0" as const;
 /** Versión del compilador UBM → artefacto. Un artefacto de otra versión se recompila desde su modelo inmutable. */
-export const ARTIFACT_COMPILER_VERSION = "5.0.0" as const;
+/** 5.1.0 (FASE 8): presentación (tono/locale), recursos, recordatorios, captura de interesados y acciones nativas. */
+export const ARTIFACT_COMPILER_VERSION = "5.1.0" as const;
 
 export interface ArtifactActionEntry {
   capability: UbmCapabilityId;
@@ -51,7 +52,7 @@ export interface CompiledAgentArtifact {
   booking: ArtifactBooking | null;
   catalogAuthority: "business_tables" | "model";
   /** Servicios activos del modelo (vacío con catálogo en tablas). */
-  services: ReadonlyArray<{ id: string; name: string; durationMinutes: number; bookable: boolean }>;
+  services: ReadonlyArray<{ id: string; name: string; durationMinutes: number; bookable: boolean; price?: number | null }>;
   requirements: AgentRequirements;
   understanding: { businessName: string; businessSlots: readonly SlotDefinition[] };
   /** Pregunta configurada por slot. */
@@ -59,6 +60,14 @@ export interface CompiledAgentArtifact {
   handoff: { enabled: boolean; pauseHours: number; message: string };
   knowledge: { enabled: boolean; onNoAnswer: "message" | "handoff"; noAnswerMessage: string };
   policies: { offerHandoff: boolean };
+  /** FASE 8 — SOLO estilo de las respuestas: tono y locale del texto. No entra a la huella de ejecución. */
+  presentation: { tone: AgentTone; locale: string };
+  /** FASE 8 — recursos entre los que el cliente elige al reservar (vacío = no se pregunta). */
+  resources: ReadonlyArray<{ id: string; name: string; kind: string }>;
+  /** FASE 8 — recordatorios de cita que el cliente puede pedir. */
+  reminders: { enabled: boolean; offsetMinutes: number };
+  /** FASE 8 — captura de interesados: qué datos del contacto se guardan. */
+  leadCapture: { enabled: boolean; fieldKeys: readonly string[]; captureInterest: boolean };
   notes: ReadonlyArray<{ code: LegacyNoteCode; path: string }>;
   /**
    * Huella de lo que afecta a una EJECUCIÓN (acciones y su config, agenda, servicios, requisitos, zona). Una solicitud de

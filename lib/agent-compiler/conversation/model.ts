@@ -54,7 +54,8 @@ export const GOAL_TERMINAL_STATUSES: ReadonlySet<ConversationStatus> = new Set([
 // Objetivos
 // ---------------------------------------------------------------------------
 
-export const GOAL_KINDS = ["booking", "rescheduling", "cancellation", "quote", "order", "information"] as const;
+/** FASE 8: product (consulta contra el inventario), lead (captura de interesados), reminder (recordatorio de su cita). */
+export const GOAL_KINDS = ["booking", "rescheduling", "cancellation", "quote", "order", "information", "product", "lead", "reminder"] as const;
 export type GoalKind = (typeof GOAL_KINDS)[number];
 
 // ---------------------------------------------------------------------------
@@ -110,7 +111,7 @@ export const slotRecordSchema = z
     candidates: z.array(z.string().max(120)).max(10).optional(),
     reason: z.string().max(60).optional(),
     source: z.enum(["CURRENT_MESSAGE", "BUSINESS_DATA", "SYSTEM", "ACTION_RESULT"]),
-    normalizedBy: z.enum(["parser", "validated_model_reading", "business_catalog", "business_hours"]).optional(),
+    normalizedBy: z.enum(["parser", "validated_model_reading", "business_catalog", "business_hours", "offer_selection", "conversation_focus"]).optional(),
     /** "customer" sobrevive entre objetivos (nombre, correo); "goal" se reinicia con cada objetivo nuevo. */
     scope: z.enum(["customer", "goal"]),
     /** Momento del MENSAJE que aportó el valor (no del procesamiento): ordena mensajes fuera de orden. */
@@ -228,6 +229,28 @@ export const conversationStateSchema = z
     consecutiveFailures: z.number().int().min(0),
     /** Momento del mensaje más reciente aplicado (reloj del canal). */
     lastMessageAt: iso.nullable(),
+    /**
+     * FASE 8 — opciones que el BACKEND le mostró al cliente para un dato (horarios disponibles, citas para cancelar):
+     * "la segunda" se resuelve contra ESTA lista, nunca contra lo que el modelo crea recordar. Se descarta con el objetivo.
+     */
+    offers: z
+      .object({ slot: z.string().regex(/^[a-z][a-z0-9_]{0,39}$/), options: z.array(z.object({ value: z.string().max(200), label: z.string().max(200) }).strict()).min(1).max(10), turn: z.number().int().min(0) })
+      .strict()
+      .nullable()
+      .optional(),
+    /** FASE 8 — último producto que el backend resolvió en el inventario ("¿cuánto?" se refiere a él). Solo el nombre real. */
+    focus: z.object({ product: z.string().max(200).nullable() }).strict().nullable().optional(),
+    /** FASE 8 — última cita que el agente agendó en esta conversación (ancla de "recuérdame"). Datos del backend. */
+    lastBooking: z
+      .object({ actionId: z.string().max(64), appointmentRef: z.string().max(120).nullable(), start: iso, service: z.string().max(200).nullable(), at: iso })
+      .strict()
+      .nullable()
+      .optional(),
+    /**
+     * FASE 8 — escritura de desenlace DESCONOCIDO (timeout). Se conserva la solicitud para VERIFICAR contra el proveedor
+     * (¿la cita existe?) antes de ofrecer repetirla; nunca se re-ejecuta a ciegas.
+     */
+    unresolvedAction: actionRequestSchema.nullable().optional(),
     /** Zona IANA del negocio con que se normalizaron fechas y horas (FASE 2). */
     timezone: z.string().max(60),
     createdAt: iso,

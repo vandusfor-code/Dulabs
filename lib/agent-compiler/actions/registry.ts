@@ -12,6 +12,11 @@ import type { EffectDispatchResult } from "@/lib/flow/executor-types";
 import type { CapabilityKey } from "@/lib/agent-compiler/spec/capabilities";
 import type { ActionErrorCode } from "@/lib/agent-compiler/actions/result";
 import type { ActionPurpose, ActionRequest } from "@/lib/agent-compiler/conversation/model";
+import { formatearFechaHoraCita } from "@/lib/agent-compiler/calendar/nylas-appointments";
+import { zonedToUtc } from "@/lib/agent-compiler/actions/native/reminders";
+
+/** Única zona que los handlers de agenda existentes soportan (fechas con offset fijo -05:00). */
+const SUPPORTED_SCHEDULING_TIMEZONE = "America/Bogota";
 
 export interface FailureMapping {
   code: ActionErrorCode;
@@ -19,6 +24,8 @@ export interface FailureMapping {
   retryable: boolean;
   ambiguous: boolean;
   invalidSlots: string[];
+  /** FASE 8 — datos del backend que acompañan un fallo (p. ej. las citas entre las que el cliente debe elegir). */
+  data?: Record<string, unknown>;
 }
 
 export interface ActionStep {
@@ -32,6 +39,17 @@ export interface StepContext {
   userMessage: string;
   /** Datos de pasos previos del mismo request (p. ej. las citas listadas antes de cancelar). */
   previous: Record<string, unknown>;
+  /** FASE 8 — agente del servidor (lo necesitan las acciones nativas que persisten por agente). */
+  agentId?: string;
+}
+
+/**
+ * FASE 8 — verificación de una escritura de desenlace DESCONOCIDO: una LECTURA contra el proveedor que dice si el
+ * efecto ocurrió. Nunca escribe. "unknown" = no se puede saber (se deja para una persona).
+ */
+export interface OutcomeVerifier {
+  step: ActionStep;
+  match(request: ActionRequest, data: Record<string, unknown>): { outcome: "found"; booking?: { appointmentRef: string | null; start: string; service: string | null } } | { outcome: "not_found" } | { outcome: "unknown" };
 }
 
 export interface ActionDefinition {
@@ -59,6 +77,10 @@ export interface ActionDefinition {
   /** Resultado de éxito lógico (p. ej. listar citas con 0 citas no es éxito). */
   successCheck?(data: Record<string, unknown>): FailureMapping | null;
   mapFailure(result: EffectDispatchResult, request: ActionRequest): FailureMapping;
+  /** FASE 8 — acción NATIVA del Business Agent (handler propio, no el executor interno del grafo). */
+  native?: true;
+  /** FASE 8 — cómo verificar si una escritura de desenlace desconocido ocurrió. */
+  verifyOutcome?: OutcomeVerifier;
 }
 
 // ---------------------------------------------------------------------------
@@ -138,6 +160,8 @@ function readFailure(r: EffectDispatchResult): FailureMapping {
 
 /** Restricciones que el backend deriva de slots validados (conversation/actions.ts). Cualquier otra clave se rechaza. */
 const SLOT_CONSTRAINTS: readonly string[] = ["franjaHoraria", "fecha", "hora"];
+/** FASE 8 — la cita elegida de la lista del backend (id). */
+const APPOINTMENT_CONSTRAINTS: readonly string[] = [...SLOT_CONSTRAINTS, "cita"];
 
 /** Variables que los handlers de agenda existentes leen (fecha en YYYY-MM-DD y hora HH:MM: el parser las acepta tal cual). */
 function schedulingPayload(req: ActionRequest): Record<string, unknown> {
@@ -161,10 +185,26 @@ function listAppointmentsStep(): ActionStep {
   return { action: "listar_citas_cliente", buildPayload: () => ({}) };
 }
 
-/** Solo se opera sin preguntar "¿cuál?" si el cliente tiene exactamente UNA cita próxima (la selección es FASE 5+). */
-function singleAppointment(previous: Record<string, unknown>): { citasCliente: unknown[]; cita_pick: string } | null {
-  const citas = Array.isArray(previous.citasCliente) ? previous.citasCliente : [];
+type ListedAppointment = { id: string; servicio?: string | null; inicioIso?: string };
+const listed = (previous: Record<string, unknown>): ListedAppointment[] =>
+  (Array.isArray(previous.citasCliente) ? previous.citasCliente : []).filter((c): c is ListedAppointment => typeof (c as { id?: unknown })?.id === "string");
+
+/**
+ * La cita sobre la que se opera: la que el cliente ELIGIÓ de la lista que mostró el backend (constraint `cita` = id) o,
+ * si tiene exactamente UNA, esa. El índice se recalcula contra la lista ACTUAL (si la cita ya no está, no se opera).
+ */
+function chosenAppointment(req: ActionRequest, previous: Record<string, unknown>): { citasCliente: unknown[]; cita_pick: string } | null {
+  const citas = listed(previous);
+  if (req.constraints.cita) {
+    const i = citas.findIndex((c) => c.id === req.constraints.cita);
+    return i >= 0 ? { citasCliente: citas, cita_pick: String(i + 1) } : null;
+  }
   return citas.length === 1 ? { citasCliente: citas, cita_pick: "1" } : null;
+}
+
+/** Etiqueta de una cita listada (HECHO del backend): "Corte — sábado 14 de marzo, 3:00 p. m.". */
+function appointmentLabel(c: ListedAppointment): string {
+  return `${c.servicio ?? "Cita"} — ${c.inicioIso ? formatearFechaHoraCita(c.inicioIso) : ""}`.slice(0, 200);
 }
 
 export const ACTION_REGISTRY: Readonly<Record<string, ActionDefinition>> = {
@@ -200,6 +240,18 @@ export const ACTION_REGISTRY: Readonly<Record<string, ActionDefinition>> = {
     steps: [{ action: "crear_cita_nylas_generico", buildPayload: (req) => schedulingPayload(req) }],
     resultData: ["citaId", "status", "inicio", "fin", "reservaTexto"],
     mapFailure: (r) => schedulingFailure(r, true),
+    verifyOutcome: {
+      step: listAppointmentsStep(),
+      match: (req, data) => {
+        const fecha = req.arguments.fecha ?? req.constraints.fecha;
+        const hora = req.arguments.hora ?? req.constraints.hora;
+        if (!Array.isArray(data.citasCliente)) return data.sinCitas === true ? { outcome: "not_found" } : { outcome: "unknown" };
+        const at = fecha && hora ? zonedToUtc(fecha, hora, SUPPORTED_SCHEDULING_TIMEZONE) : null;
+        if (!at) return { outcome: "unknown" };
+        const hit = listed(data).find((c) => c.inicioIso && new Date(c.inicioIso).getTime() === at.getTime());
+        return hit ? { outcome: "found", booking: { appointmentRef: hit.id, start: new Date(hit.inicioIso!).toISOString(), service: hit.servicio ?? req.arguments.servicio ?? null } } : { outcome: "not_found" };
+      },
+    },
   },
   agendar_cita_especialista: {
     action: "agendar_cita_especialista",
@@ -229,11 +281,11 @@ export const ACTION_REGISTRY: Readonly<Record<string, ActionDefinition>> = {
     timeoutMs: 20_000,
     retry: { maxAttempts: 1, baseDelayMs: 0 },
     temporal: true,
-    allowedConstraints: SLOT_CONSTRAINTS,
+    allowedConstraints: APPOINTMENT_CONSTRAINTS,
     allowsCustomerData: true,
     steps: [
       listAppointmentsStep(),
-      { action: "cancelar_cita_cliente", buildPayload: (_req, ctx) => singleAppointment(ctx.previous) ?? {} },
+      { action: "cancelar_cita_cliente", buildPayload: (req, ctx) => chosenAppointment(req, ctx.previous) ?? {} },
     ],
     resultData: ["cancelada", "citaCanceladaTexto", "yaCancelada"],
     mapFailure: (r) => schedulingFailure(r, true),
@@ -249,11 +301,11 @@ export const ACTION_REGISTRY: Readonly<Record<string, ActionDefinition>> = {
     retry: { maxAttempts: 1, baseDelayMs: 0 },
     temporal: true,
     lockKey: bookingLock,
-    allowedConstraints: SLOT_CONSTRAINTS,
+    allowedConstraints: APPOINTMENT_CONSTRAINTS,
     allowsCustomerData: true,
     steps: [
       listAppointmentsStep(),
-      { action: "reprogramar_cita_cliente", buildPayload: (req, ctx) => ({ ...schedulingPayload(req), ...(singleAppointment(ctx.previous) ?? {}) }) },
+      { action: "reprogramar_cita_cliente", buildPayload: (req, ctx) => ({ ...schedulingPayload(req), ...(chosenAppointment(req, ctx.previous) ?? {}) }) },
     ],
     resultData: ["movida", "citaMovidaTexto", "inicio", "fin"],
     mapFailure: (r) => schedulingFailure(r, true),
@@ -319,14 +371,109 @@ export const ACTION_REGISTRY: Readonly<Record<string, ActionDefinition>> = {
     resultData: ["transferred", "pausadoHasta"],
     mapFailure: (r) => readFailure(r),
   },
+  // -------------------------------------------------------------------------
+  // FASE 8 — acciones NATIVAS del Business Agent (actions/native/handler.ts)
+  // -------------------------------------------------------------------------
+  ba_consultar_producto: {
+    action: "ba_consultar_producto",
+    capability: "catalog",
+    native: true,
+    purposes: ["lookup", "fulfill"],
+    mutation: false,
+    requiresConfirmation: false,
+    timeoutMs: 8_000,
+    retry: { maxAttempts: 2, baseDelayMs: 300 },
+    temporal: false,
+    allowedConstraints: [...SLOT_CONSTRAINTS, "contexto"],
+    allowsCustomerData: true,
+    steps: [{ action: "ba_consultar_producto", buildPayload: (req) => ({ producto: req.arguments.producto ?? "", ...(req.constraints.contexto ? { contexto: req.constraints.contexto } : {}) }) }],
+    resultData: ["resultado", "coincidencia", "productoNombre", "precio", "moneda", "stock", "controlaStock", "opciones", "consulta"],
+    mapFailure: (r) => nativeFailure(r, false),
+  },
+  ba_guardar_lead: {
+    action: "ba_guardar_lead",
+    capability: "leadCapture",
+    native: true,
+    purposes: ["fulfill"],
+    // Escribe en el contacto: una sola vez por operación (claim), nunca se reintenta a ciegas.
+    mutation: true,
+    requiresConfirmation: false,
+    timeoutMs: 8_000,
+    retry: { maxAttempts: 1, baseDelayMs: 0 },
+    temporal: false,
+    allowedConstraints: [...SLOT_CONSTRAINTS, "interes"],
+    allowsCustomerData: true,
+    steps: [{ action: "ba_guardar_lead", buildPayload: (req) => ({ ...req.customerData, ...(req.constraints.interes ? { interes: req.constraints.interes } : {}) }) }],
+    resultData: ["leadGuardado", "camposGuardados"],
+    mapFailure: (r) => nativeFailure(r, true),
+  },
+  ba_programar_recordatorio: {
+    action: "ba_programar_recordatorio",
+    capability: "scheduling",
+    native: true,
+    purposes: ["fulfill"],
+    mutation: true,
+    requiresConfirmation: false,
+    timeoutMs: 8_000,
+    retry: { maxAttempts: 1, baseDelayMs: 0 },
+    // Calcula el momento en la zona del NEGOCIO (no depende del offset fijo de los handlers de agenda).
+    temporal: false,
+    allowedConstraints: [...SLOT_CONSTRAINTS, "citaInicio", "citaRef", "citaServicio"],
+    allowsCustomerData: true,
+    steps: [
+      {
+        action: "ba_programar_recordatorio",
+        buildPayload: (req, ctx) => ({
+          citaInicio: req.constraints.citaInicio ?? "",
+          citaRef: req.constraints.citaRef ?? "",
+          ...(req.constraints.citaServicio ? { citaServicio: req.constraints.citaServicio } : {}),
+          ...(req.constraints.fecha ? { fecha: req.constraints.fecha } : {}),
+          ...(req.constraints.hora ? { hora: req.constraints.hora } : {}),
+          ...(ctx.agentId ? { agentId: ctx.agentId } : {}),
+        }),
+      },
+    ],
+    resultData: ["programado", "recordatorioEn", "citaInicio", "actualizado"],
+    mapFailure: (r) => nativeFailure(r, true),
+  },
 };
 
-/** Validaciones de éxito LÓGICO de pasos auxiliares (listar citas antes de cancelar/reprogramar). */
-export function appointmentSelection(previous: Record<string, unknown>): FailureMapping | null {
-  const citas = Array.isArray(previous.citasCliente) ? previous.citasCliente : [];
+/**
+ * Validaciones de éxito LÓGICO de pasos auxiliares (listar citas antes de cancelar/reprogramar). FASE 8: con varias
+ * citas, el fallo lleva las opciones REALES (id + etiqueta) para que el cliente elija ("la segunda").
+ */
+export function appointmentSelection(previous: Record<string, unknown>, request?: ActionRequest): FailureMapping | null {
+  const citas = listed(previous);
   if (citas.length === 0) return f("NOT_FOUND", "NO_APPOINTMENTS");
-  if (citas.length > 1) return f("BUSINESS_RULE_VIOLATION", "APPOINTMENT_SELECTION_REQUIRED");
+  if (request?.constraints.cita) return citas.some((c) => c.id === request.constraints.cita) ? null : f("NOT_FOUND", "APPOINTMENT_NOT_FOUND", ["appointment"]);
+  if (citas.length > 1) {
+    return { ...f("BUSINESS_RULE_VIOLATION", "APPOINTMENT_SELECTION_REQUIRED"), data: { opciones: citas.slice(0, 10).map((c) => ({ value: c.id, label: appointmentLabel(c) })) } };
+  }
   return null;
+}
+
+/** Fallos de las acciones nativas (códigos de actions/native/handler.ts). */
+function nativeFailure(r: EffectDispatchResult, mutation: boolean): FailureMapping {
+  const byClass = r.classification === "SECURITY_REJECTED" ? f("TENANT_ERROR", "HANDLER_SECURITY_REJECTED") : null;
+  if (byClass) return byClass;
+  const raw = r.error ?? "";
+  if (raw.startsWith("momento_invalido")) return f("INVALID_ARGUMENTS", "REMINDER_TIME_INVALID", ["date", "time"]);
+  switch (raw) {
+    case "sin_cita":
+      return f("NOT_FOUND", "NO_APPOINTMENT_TO_REMIND");
+    case "recordatorio_cerrado":
+      return f("BUSINESS_RULE_VIOLATION", "REMINDER_CLOSED");
+    case "sin_datos":
+      return f("INVALID_ARGUMENTS", "CUSTOMER_DATA_INCOMPLETE");
+    case "sin_producto":
+      return f("INVALID_ARGUMENTS", "NOTHING_TO_LOOK_UP", ["product"]);
+    case "inventario_no_configurado":
+    case "contacto_no_configurado":
+    case "recordatorios_no_configurados":
+      return f("INTERNAL_ERROR", "NATIVE_PORT_NOT_CONFIGURED");
+    default:
+      return r.classification === "RETRYABLE" ? f("EXTERNAL_ERROR", "SOURCE_UNAVAILABLE", [], !mutation) : f("INTERNAL_ERROR", "UNMAPPED_HANDLER_ERROR");
+  }
 }
 
 export function getActionDefinition(action: string): ActionDefinition | undefined {

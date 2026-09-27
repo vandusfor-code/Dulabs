@@ -16,10 +16,11 @@ import { buildGateRules, type GateRule } from "@/lib/agent-compiler/runtime/guar
 import { hasErrors } from "@/lib/agent-compiler/diagnostics";
 import { compileAndCreateDraftVersion } from "@/lib/agent-compiler/registry/registry";
 import type { BusinessAgentRegistryStore } from "@/lib/agent-compiler/registry/types";
-import type { BusinessAgentSpec } from "@/lib/agent-compiler/spec/types";
+import type { AgentEngineId, BusinessAgentSpec } from "@/lib/agent-compiler/spec/types";
 import { evaluateReadiness, type ReadinessFacts, type ReadinessReport } from "@/lib/business-agent-readiness";
 import type { AgentLifecycleState } from "@/lib/agent-compiler/lifecycle/lifecycle";
 import type { ActivationDecision } from "@/lib/agent-compiler/lifecycle/activation-gate";
+import type { CapabilityRow, EngineReadiness, EngineReport } from "@/lib/agent-compiler/lifecycle/capability-matrix";
 import { compileBusinessModel, compileLegacySpec } from "@/lib/agent-compiler/business-model/compile";
 import type { CompiledAgentArtifact } from "@/lib/agent-compiler/business-model/artifact";
 import { publishedVersionRef } from "@/lib/agent-compiler/business-model/store";
@@ -74,6 +75,8 @@ export interface OnboardingDeps {
     evaluate(flowId: string, phoneNumberId: string): Promise<ActivationDecision>;
     bind(flowId: string, phoneNumberId: string): Promise<boolean>;
   };
+  /** FASE 8 — matriz de capacidades + motor + readiness (hechos reales). Ausente = no se muestra. */
+  engineReport?(flowId: string, input: { publishedSpec: BusinessAgentSpec | null; draftSpec: BusinessAgentSpec | null; agentActive: boolean }): Promise<EngineReport>;
   now?(): Date;
   log?(e: OnboardingEvent): void;
 }
@@ -156,6 +159,17 @@ export interface OnboardingOverview {
   facts: Pick<ReadinessFacts, "activeServices" | "activeProducts" | "hasKnowledge" | "calendarConnected"> | null;
   /** El borrador guardado estaba dañado y se reconstruyó desde el agente existente. */
   recovered: boolean;
+  /** FASE 8 — matriz de capacidades, motor que atiende (y por qué) y readiness del motor (credenciales sin valores). */
+  engine: {
+    selected: AgentEngineId;
+    source: string;
+    /** Motor que la persona eligió para la PRÓXIMA publicación. */
+    requested: AgentEngineId;
+    capabilities: CapabilityRow[];
+    blockers: string[];
+    warnings: string[];
+    credentials: EngineReadiness["credentials"];
+  } | null;
 }
 
 /** GET: configuración actual, estado real, problemas y checklist. */
@@ -190,6 +204,27 @@ export async function getOnboarding(deps: OnboardingDeps): Promise<OnboardingOve
     registryPublishedFlowVersionId: ctx.publishedFlowVersionId,
     lifecycle,
   });
+  let engine: OnboardingOverview["engine"] = null;
+  if (deps.engineReport) {
+    try {
+      const publishedSpec = ctx.publishedFlowVersionId ? ((await deps.registry.getVersion(deps.tenantId, ctx.publishedFlowVersionId))?.spec ?? null) : null;
+      const draftSpec = structural.length === 0 ? specFor(deps, ctx, assembly, draft) : null;
+      if (publishedSpec || draftSpec) {
+        const r = await deps.engineReport(ctx.flowId, { publishedSpec, draftSpec, agentActive: lifecycle === "ACTIVE" });
+        engine = {
+          selected: r.engine.engine,
+          source: r.engine.source,
+          requested: draft.engine ?? publishedSpec?.runtime?.engine ?? "graph_v1",
+          capabilities: r.matrix,
+          blockers: r.readiness.blockers.map((b) => b.message),
+          warnings: r.readiness.warnings.map((w) => w.message),
+          credentials: r.readiness.credentials,
+        };
+      }
+    } catch {
+      engine = null;
+    }
+  }
   const checklist = buildChecklist({
     structuralErrors: structural.length,
     readinessBlockers: readiness ? readiness.blockers.length : null,
@@ -197,8 +232,10 @@ export async function getOnboarding(deps: OnboardingDeps): Promise<OnboardingOve
     publishedUpToDate: st.publishedUpToDate,
     hasActivePlan: plan,
     numbers,
+    ...(engine ? { engineBlockers: engine.blockers } : {}),
   });
   return {
+    engine,
     draft,
     revision: ctx.stored.revision,
     savedAt: ctx.stored.savedAt,

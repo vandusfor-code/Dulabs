@@ -20,7 +20,7 @@
 // 3. Contexto mínimo para el modelo: solo los nombres de servicios RELEVANTES al mensaje (no el catálogo completo).
 
 import type { StructuredUnderstanding, UnderstoodSlot } from "@/lib/agent-compiler/understanding/contract";
-import { foldText } from "@/lib/agent-compiler/understanding/slots";
+import { foldText, type NormalizedSlotValue } from "@/lib/agent-compiler/understanding/slots";
 import { slotDisplayValue } from "@/lib/agent-compiler/understanding/validate";
 import type { BusinessHours } from "@/lib/agent-compiler/spec/types";
 import { isSlotUsable, type ConversationState } from "@/lib/agent-compiler/conversation/model";
@@ -28,6 +28,8 @@ import { isSlotUsable, type ConversationState } from "@/lib/agent-compiler/conve
 export interface CatalogService {
   name: string;
   durationMinutes?: number;
+  /** FASE 8 — precio REAL del negocio (moneda del negocio, entero). null = sin precio fijo; ausente = no se conoce. */
+  price?: number | null;
 }
 
 /** Catálogo del turno. `source` dice de dónde salió (tablas del negocio o modelo publicado). */
@@ -161,10 +163,26 @@ export function matchService(raw: string, services: readonly CatalogService[]): 
 
 const ORDINALS: Record<string, number> = { primero: 1, primera: 1, "1": 1, segundo: 2, segunda: 2, "2": 2, tercero: 3, tercera: 3, "3": 3, cuarto: 4, cuarta: 4, "4": 4, quinto: 5, quinta: 5, "5": 5, sexto: 6, sexta: 6, "6": 6 };
 
-/** "el primero", "la segunda", "opción 2" → índice 1-based; null si no es una respuesta ordinal. */
+/**
+ * "el primero", "la segunda", "opción 2", "la 2 por favor" → índice 1-based; null si no es una respuesta ordinal. Solo
+ * reconoce el mensaje COMPLETO como elección (una frase con más contenido no se reinterpreta como número).
+ */
 export function ordinalAnswer(raw: string): number | null {
-  const t = foldText(raw).replace(/^(?:el|la|opcion|numero)\s+/, "").replace(/^(?:opcion|numero)\s+/, "").trim();
+  const t = foldText(raw)
+    .replace(/[.,;:!?¡¿]+/g, " ")
+    .replace(/\s+(?:por favor|porfa|gracias|opcion)\s*$/g, "")
+    .replace(/^(?:quiero|prefiero|me quedo con|dame)\s+/, "")
+    .replace(/^(?:el|la|opcion|numero)\s+/, "")
+    .replace(/^(?:opcion|numero)\s+/, "")
+    .replace(/\s+(?:opcion|hora|cita)$/, "")
+    .trim();
   return ORDINALS[t] ?? null;
+}
+
+/** Valor normalizado de una opción elegida según el tipo de dato. */
+function offerValue(slot: string, value: string): NormalizedSlotValue {
+  if (slot === "time" && /^\d{2}:\d{2}$/.test(value)) return { kind: "time", time: value };
+  return { kind: "text", text: value };
 }
 
 // ---------------------------------------------------------------------------
@@ -209,6 +227,10 @@ function parseRangeCandidate(c: string): { from?: string; to?: string } | null {
 export interface EntityResolutionInput {
   understanding: StructuredUnderstanding;
   state: ConversationState;
+  /** FASE 8 — texto del cliente (solo para reconocer una elección ordinal "la segunda"; nunca se interpreta otra cosa). */
+  text?: string;
+  /** FASE 8 — opciones configuradas de los datos tipo lista (select) del negocio, por slot. */
+  selectOptions?: Readonly<Record<string, readonly string[]>>;
   /** null = el catálogo no aplica a este agente (sin agenda con servicios ni catálogo de servicios). */
   catalog: TurnCatalog | null;
   businessHours: BusinessHours | null;
@@ -219,6 +241,8 @@ export interface EntityResolutionTrace {
   serviceRule?: string;
   time?: "business_hours" | "still_ambiguous";
   timeRange?: "business_hours" | "still_ambiguous";
+  /** FASE 8 — elección ordinal resuelta contra las opciones que mostró el backend. */
+  offer?: { slot: string; index: number };
 }
 
 function withChange(slot: UnderstoodSlot): UnderstoodSlot {
@@ -240,6 +264,22 @@ export function resolveTurnEntities(input: EntityResolutionInput): { understandi
   const state = input.state;
   const previousService = state.slots.service;
   const services = input.catalog?.services ?? [];
+
+  // 0. FASE 8 — "la segunda": elige de la lista que el BACKEND mostró para el dato que se preguntó (horarios, citas) o
+  //    de las opciones configuradas de un dato tipo lista (p. ej. el recurso). Fuera de rango = no se elige nada.
+  const ordinal = input.text !== undefined ? ordinalAnswer(input.text) : null;
+  const asked = state.lastQuestion?.slot;
+  if (ordinal !== null && asked && asked !== "service") {
+    const offered = state.offers?.slot === asked ? state.offers.options : null;
+    const configured = input.selectOptions?.[asked];
+    const pick = offered ? offered[ordinal - 1]?.value : configured?.[ordinal - 1];
+    if (pick) {
+      const value: NormalizedSlotValue = offered ? offerValue(asked, pick) : { kind: "select", option: pick };
+      u.slots[asked] = { name: asked, origin: offered ? "universal" : "business", raw: input.text!.slice(0, 200), status: "resolved", value, normalizedBy: "offer_selection", change: "new" };
+      u.ambiguities = u.ambiguities.filter((a) => a.slot !== asked);
+      trace.offer = { slot: asked, index: ordinal };
+    }
+  }
 
   // 1. Servicio.
   const said = u.slots.service;
@@ -348,7 +388,7 @@ export type ServiceTableReader = (tenantId: string) => Promise<CatalogService[]>
 type CatalogArtifact = {
   tenantId: string;
   catalogAuthority: "business_tables" | "model";
-  services: ReadonlyArray<{ name: string; durationMinutes: number; bookable: boolean }>;
+  services: ReadonlyArray<{ name: string; durationMinutes: number; bookable: boolean; price?: number | null }>;
   booking: { requiresService: boolean } | null;
   capabilities: ReadonlyArray<{ id: string; enabled: boolean }>;
 };
@@ -365,9 +405,35 @@ export function artifactUsesServices(artifact: Pick<CatalogArtifact, "booking" |
 export function catalogPortForArtifact(artifact: CatalogArtifact, readTables: ServiceTableReader | undefined): CatalogPort | undefined {
   if (!artifactUsesServices(artifact)) return undefined;
   if (artifact.catalogAuthority === "model") {
-    const services = artifact.services.filter((s) => s.bookable).map((s) => ({ name: s.name, durationMinutes: s.durationMinutes }));
+    const services = artifact.services.filter((s) => s.bookable).map((s) => ({ name: s.name, durationMinutes: s.durationMinutes, ...(s.price !== undefined ? { price: s.price } : {}) }));
     return { load: async () => ({ source: "model", services }) };
   }
   if (!readTables) return undefined;
   return { load: async () => ({ source: "business_tables", services: await readTables(artifact.tenantId) }) };
+}
+
+// ---------------------------------------------------------------------------
+// FASE 8 — hechos de precio del catálogo (backend), para "¿cuánto cuesta?" sin acción de cotización
+// ---------------------------------------------------------------------------
+
+export interface PriceFact {
+  name: string;
+  /** null = el negocio no tiene precio fijo para ese servicio (se dice así; nunca "$0"). */
+  amount: number | null;
+}
+
+/**
+ * Precios REALES de lo que el cliente está mirando: el servicio elegido o, si aún duda, las opciones que se le
+ * mostraron. Nada de precios de servicios que no estén en el catálogo; sin precio conocido, no hay hecho.
+ */
+export function priceFactsFor(catalog: TurnCatalog | null, state: ConversationState): PriceFact[] {
+  const services = catalog?.services ?? [];
+  if (services.length === 0) return [];
+  const slot = state.slots.service;
+  const names = isSlotUsable(slot) ? [slotDisplayValue(slot.value)] : (slot?.candidates ?? []);
+  return names
+    .map((n) => services.find((s) => s.name === n))
+    .filter((s): s is CatalogService => Boolean(s) && s!.price !== undefined)
+    .slice(0, MAX_SERVICE_CANDIDATES)
+    .map((s) => ({ name: s.name, amount: s.price ?? null }));
 }

@@ -17,7 +17,7 @@ import { BUSINESS_MODEL_SCHEMA_VERSION, WEEKDAYS, type BusinessModel, type Capab
 import { validateBusinessModel, type ModelError, type ResolvedCapabilities } from "@/lib/agent-compiler/business-model/validate";
 import { KNOWLEDGE_SOURCES } from "@/lib/business-agent-knowledge/limits";
 import { slugifyFieldKey } from "@/lib/business-agent-form";
-import type { OnboardingDraft } from "@/lib/agent-compiler/onboarding/draft";
+import { DRAFT_TONE_TO_AGENT_TONE, type OnboardingDraft } from "@/lib/agent-compiler/onboarding/draft";
 import { issue, SUPPORT_CODES, type OnboardingIssue } from "@/lib/agent-compiler/onboarding/issues";
 
 /**
@@ -28,7 +28,19 @@ import { issue, SUPPORT_CODES, type OnboardingIssue } from "@/lib/agent-compiler
 export const ONBOARDING_SLOT_MINUTES = 60;
 
 /** Orden fijo de capacidades en el modelo (permite traducir `capabilities[i]` de un error al paso correcto). */
-const CAP_ORDER = ["knowledge", "catalog", "quotes", "booking", "handoff"] as const;
+const CAP_ORDER = ["knowledge", "catalog", "quotes", "booking", "handoff", "lead_capture", "reminders"] as const;
+
+/** Id estable de un recurso a partir de su nombre ("Barbero 1" → "barbero-1"). */
+export function resourceIdOf(name: string): string {
+  const id = name
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60);
+  return id || "recurso";
+}
 
 const DAY_ES: Record<string, string> = { sunday: "domingo", monday: "lunes", tuesday: "martes", wednesday: "miércoles", thursday: "jueves", friday: "viernes", saturday: "sábado" };
 
@@ -47,9 +59,11 @@ const trimOrUndefined = (s: string | undefined) => (s && s.trim() ? s.trim() : u
 function customerFields(draft: OnboardingDraft, pre: OnboardingIssue[]): { fields: CustomerFieldModel[]; origins: FieldOrigin[] } {
   const fields: CustomerFieldModel[] = [];
   const origins: FieldOrigin[] = [];
-  // Los datos del cliente se piden para AGENDAR (así los usa el runtime): sin citas no se configuran (el Spec del runtime
-  // actual los rechazaría y la state machine no los exige para ningún otro objetivo). El borrador los conserva.
-  if (!draft.booking.enabled) return { fields, origins };
+  // Los datos del cliente se piden para AGENDAR o, desde FASE 8, para GUARDAR INTERESADOS (solo nombre y correo, que son
+  // del contacto). Sin ninguna de las dos no se configuran (el Spec del runtime los rechazaría). El borrador los conserva.
+  const lead = Boolean(draft.customerData.leadCapture?.enabled);
+  if (!draft.booking.enabled && !lead) return { fields, origins };
+  const bookingData = draft.booking.enabled;
   const scope = "booking";
   if (draft.customerData.askName) {
     fields.push({ key: "nombreCliente", label: "Nombre", type: "text", required: true, enabled: true, scope: "customer" });
@@ -59,6 +73,7 @@ function customerFields(draft: OnboardingDraft, pre: OnboardingIssue[]): { field
     fields.push({ key: "correoCliente", label: "Correo electrónico", type: "email", required: true, enabled: true, scope: "customer" });
     origins.push({ kind: "email" });
   }
+  if (!bookingData) return { fields, origins };
   if (draft.customerData.askNotes) {
     fields.push({ key: "notas", label: "Notas", type: "text", required: false, enabled: true, scope });
     origins.push({ kind: "notes" });
@@ -103,6 +118,18 @@ export function draftToModel(draft: OnboardingDraft): { model: BusinessModel; or
   const calendar = b.enabled && b.agenda === "calendar";
   const cap = (id: (typeof CAP_ORDER)[number], enabled: boolean, config: Record<string, unknown>): CapabilityEntry => ({ id, version: "1.0.0", enabled, config });
   const { fields, origins } = customerFields(draft, pre);
+  // FASE 8 — recursos (persona/silla/sala) entre los que el cliente elige: solo con Google Calendar.
+  const resources: string[] = [];
+  (b.enabled ? (b.resources ?? []) : []).forEach((r, i) => {
+    const name = r.name.trim();
+    if (!name) return void pre.push(issue("citas", SUPPORT_CODES.RESOURCE_INVALID, "Ponle nombre a esta opción o quítala.", `booking.resources.${i}.name`));
+    if (resources.some((x) => resourceIdOf(x) === resourceIdOf(name))) return void pre.push(issue("citas", SUPPORT_CODES.RESOURCE_INVALID, `Ya tienes una opción llamada «${name}».`, `booking.resources.${i}.name`));
+    resources.push(name);
+  });
+  if (resources.length > 0 && !calendar) pre.push(issue("citas", SUPPORT_CODES.RESOURCES_NEED_CALENDAR, "Elegir con quién se atiende solo funciona con Google Calendar.", "booking.resources"));
+  if (draft.customerData.leadCapture?.enabled && !draft.customerData.askName) {
+    pre.push(issue("atencion", SUPPORT_CODES.LEAD_NEEDS_NAME, "Para guardar a los interesados, pide al menos su nombre.", "customerData.askName"));
+  }
   draft.restrictedTopics.forEach((t, i) => {
     if (t.words.every((w) => !w.trim())) pre.push(issue("reglas", SUPPORT_CODES.TOPIC_INVALID, "Escribe al menos una palabra para este tema.", `restrictedTopics.${i}.words`));
   });
@@ -133,26 +160,33 @@ export function draftToModel(draft: OnboardingDraft): { model: BusinessModel; or
         bufferMinutes: 0,
         minimumNoticeMinutes: b.minimumNoticeMinutes,
         maximumAdvanceDays: null,
-        resourceSelection: "none",
+        // FASE 8: con recursos (solo Google Calendar) el cliente elige; la validación del modelo lo exige así.
+        resourceSelection: resources.length > 0 ? "customer_choice" : "none",
         cancellation: { allowed: b.allowChanges, minimumNoticeHours: b.changesNoticeHours },
         rescheduling: { allowed: b.allowChanges },
       }),
       cap("handoff", draft.support.handoff, { pauseHours: draft.support.pauseHours }),
+      cap("lead_capture", Boolean(draft.customerData.leadCapture?.enabled), {
+        fieldKeys: fields.filter((f) => f.scope === "customer").map((f) => f.key),
+        captureInterest: draft.customerData.leadCapture?.captureInterest ?? true,
+      }),
+      cap("reminders", Boolean(b.enabled && b.reminders?.enabled), { offsetMinutes: b.reminders?.offsetMinutes ?? 120 }),
     ],
     catalogAuthority: "business_tables",
     services: [],
     products: [],
-    resources: [],
+    resources: resources.map((name) => ({ id: resourceIdOf(name), name, kind: "resource", active: true, serviceIds: [] })),
     customerFields: fields,
     businessHours: calendar ? draft.hours : null,
     policies: { unsupportedRequest: draft.support.whenCannotHelp === "offer_person" ? "offer_handoff" : "inform_only" },
+    presentation: { tone: DRAFT_TONE_TO_AGENT_TONE[draft.tone] },
   };
   return { model, origins, pre };
 }
 
 function stepOfCapability(index: number): OnboardingIssue["step"] {
   const id = CAP_ORDER[index];
-  return id === "booking" ? "citas" : id === "knowledge" || id === "handoff" ? "atencion" : "oferta";
+  return id === "booking" || id === "reminders" ? "citas" : id === "knowledge" || id === "handoff" || id === "lead_capture" ? "atencion" : "oferta";
 }
 
 function fieldPath(origin: FieldOrigin | undefined): string | undefined {
@@ -185,6 +219,7 @@ export function humanizeModelError(e: ModelError, origins: FieldOrigin[]): Onboa
     case "CAPABILITY_DEPENDENCY_MISSING":
       if (e.path === "capabilities.quotes") return issue("oferta", SUPPORT_CODES.QUOTES_NEED_CATALOG, "Para dar precios, activa también que el agente muestre lo que ofreces.", "offer.quotes");
       if (e.path === "capabilities.knowledge") return issue("atencion", SUPPORT_CODES.HANDOFF_NEEDED, "Para pasar a una persona cuando no sepa la respuesta, activa que tu equipo pueda atender conversaciones.", "support.whenUnknown");
+      if (e.path === "capabilities.reminders") return issue("citas", SUPPORT_CODES.REMINDERS_NEED_BOOKING, "Los recordatorios son de citas: activa primero las reservas.", "booking.reminders");
       return issue("atencion", SUPPORT_CODES.MODEL_OTHER, "Falta activar algo que esta opción necesita.");
     case "CAPABILITY_CONFIG_INVALID":
       if (e.path.startsWith("capabilities.catalog")) return issue("oferta", SUPPORT_CODES.CATALOG_EMPTY, "Elige si ofreces servicios, productos o ambos.", "offer.services");
@@ -201,7 +236,18 @@ export function humanizeModelError(e: ModelError, origins: FieldOrigin[]): Onboa
       const code = e.code === "PROTECTED_FIELD" || /reservad|no es válida/.test(e.message) ? SUPPORT_CODES.FIELD_PROTECTED : SUPPORT_CODES.FIELD_INVALID;
       return issue("atencion", code, msg, fieldPath(origin));
     }
+    case "RESOURCE_SELECTION_NOT_SUPPORTED":
+      return issue("citas", SUPPORT_CODES.RESOURCES_NEED_CALENDAR, "Elegir con quién se atiende solo funciona con Google Calendar.", "booking.resources");
+    case "RESOURCES_REQUIRED":
+      return issue("citas", SUPPORT_CODES.RESOURCE_INVALID, "Agrega al menos una opción (persona, silla o sala) para que el cliente elija.", "booking.resources");
+    case "LEAD_FIELD_INVALID":
+      return issue("atencion", SUPPORT_CODES.LEAD_NEEDS_NAME, "Para guardar a los interesados, pide al menos su nombre.", "customerData.askName");
+    case "DUPLICATE_NAME":
+    case "DUPLICATE_ID":
+      if (e.path.startsWith("resources")) return issue("citas", SUPPORT_CODES.RESOURCE_INVALID, "Hay dos opciones con el mismo nombre.", "booking.resources");
+      return issue("negocio", SUPPORT_CODES.MODEL_OTHER, "Hay dos elementos con el mismo nombre.");
     case "SCHEMA_INVALID":
+      if (e.path.startsWith("resources")) return issue("citas", SUPPORT_CODES.RESOURCE_INVALID, "Revisa los nombres de las opciones: alguno es demasiado largo.", "booking.resources");
       if (e.path === "identity.name") return issue("negocio", SUPPORT_CODES.NAME_MISSING, "Escribe el nombre de tu negocio.", "business.name");
       if (e.path.startsWith("identity")) return issue("negocio", SUPPORT_CODES.MODEL_OTHER, "Revisa los datos de tu negocio: algún texto es demasiado largo o no es válido.", `business.${e.path.split(".")[1] ?? ""}`);
       if (e.path.startsWith("businessHours")) return issue("horario", SUPPORT_CODES.HOURS_INVALID, "Revisa tu horario: alguna hora no es válida.", "hours");

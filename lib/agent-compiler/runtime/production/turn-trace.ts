@@ -25,6 +25,8 @@ export interface TurnActionTrace {
   simulated: boolean;
   replayed: boolean;
   durationMs: number;
+  /** FASE 8 — error BA-* (clase + motivo) si la acción no tuvo éxito. */
+  baError?: string;
 }
 
 export interface TurnUnderstandingTrace {
@@ -63,6 +65,8 @@ export interface BusinessAgentTurnTrace {
   response: { planIntent: string | null; sent: boolean; chars: number; textHash: string | null };
   latencyMs: { understanding: number; state: number; actions: number; response: number; total: number };
   errorCode?: string;
+  /** FASE 8 — errores BA-* del turno (entendimiento + acciones), para agrupar por clase en observabilidad. */
+  baErrors?: string[];
   at: string;
 }
 
@@ -81,7 +85,9 @@ export function understandingTrace(u: TurnUnderstanding | undefined): TurnUnders
     band: x.intent.primary.band,
     secondary: x.intent.secondary.map((s) => s.intent),
     slots: Object.fromEntries(Object.entries(x.slots).map(([k, v]) => [k, v.normalizedBy ? `${v.status}:${v.normalizedBy}` : v.status])),
-    ...(u.entities && Object.keys(u.entities).length ? { entities: Object.fromEntries(Object.entries(u.entities).filter(([, v]) => v !== undefined)) as Record<string, string> } : {}),
+    ...(u.entities && Object.keys(u.entities).length
+      ? { entities: Object.fromEntries(Object.entries(u.entities).filter(([, v]) => v !== undefined).map(([k, v]) => [k, typeof v === "object" ? `${v.slot}#${v.index}` : String(v)])) }
+      : {}),
     ambiguities: x.ambiguities.map((a) => (a.slot ? `${a.kind}:${a.slot}` : a.kind)),
     handoff: x.signals.handoff.requested ? x.signals.handoff.source : null,
     provider: p.provider,

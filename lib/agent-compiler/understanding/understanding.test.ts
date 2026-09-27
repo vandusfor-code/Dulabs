@@ -459,7 +459,7 @@ describe("FASE 2 — proveedor (adapter existente), tiempo y contrato", () => {
   });
 
   it("taxonomía universal: sin intents por industria; slots del negocio desde customerData del Spec", () => {
-    assert.equal(UNDERSTANDING_INTENTS.length, 18);
+    assert.equal(UNDERSTANDING_INTENTS.length, 20); // FASE 8: + CONTACT_REQUEST, REMINDER_REQUEST (1.1.0)
     assert.equal(UNDERSTANDING_INTENTS.some((i) => /HAIR|FOOD|TABLE|SHIRT|PHOTO|JEWEL/.test(i)), false);
     const spec = photographySpec();
     spec.customerData = {

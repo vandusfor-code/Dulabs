@@ -146,7 +146,7 @@ describe("FASE 4 — E2E: handoff, disponibilidad, recuperación y Gate", () => 
     await t.say("Mañana", llm({ primaryIntent: intent("BOOKING_REQUEST", 0.7), slots: [S("date", "Mañana")] }));
     const r = await t.say("Después de las 4", llm({ primaryIntent: intent("BOOKING_REQUEST", 0.7), slots: [S("time_range", "Después de las 4", { value: "16:00-" })] }));
     assert.deepEqual([r.status, r.actions.map((a) => a.action)], ["COLLECTING_INFORMATION", ["buscar_disponibilidad_nylas_generico"]]);
-    assert.equal(t.sent.at(-1), "Estos son los horarios disponibles para el domingo 27 de septiembre: 4:00 p. m., 4:30 p. m., 5:00 p. m. ¿Cuál prefieres?");
+    assert.equal(t.sent.at(-1), "Estos son los horarios disponibles para el domingo 27 de septiembre:\n1. 4:00 p. m.\n2. 4:30 p. m.\n3. 5:00 p. m.\n¿Cuál prefieres?");
   });
 
   it("recuperación: un worker cayó con una reserva en curso => el siguiente mensaje NO la re-ejecuta (desenlace desconocido)", async () => {
@@ -168,9 +168,13 @@ describe("FASE 4 — E2E: handoff, disponibilidad, recuperación y Gate", () => 
     assert.equal(t.bookings(), 0, "nunca se re-ejecuta una escritura de desenlace desconocido");
     assert.deepEqual([next.actions[0]!.status, next.status], ["TIMED_OUT", "ERROR"]);
     assert.match(t.sent.at(-1)!, /No pude confirmar la operación/);
-    // Mensajes siguientes no re-proponen la reserva (pudo haber ocurrido): la conversación espera a una persona.
+    // FASE 8 (parte Z): antes de seguir se VERIFICA en la agenda. La cita no existe → el "sí" viejo NO confirma nada
+    // (el mensaje se consume); se informa y se re-propone como operación NUEVA, que exige una confirmación nueva.
     const otra = await t.say("Sí, resérvala", YES);
-    assert.deepEqual([otra.status, otra.actions, t.bookings()], ["ERROR", [], 0]);
+    assert.deepEqual([otra.status, otra.actions, t.bookings()], ["AWAITING_CONFIRMATION", [], 0]);
+    assert.match(t.sent.at(-1)!, /^Revisé la agenda y la cita no alcanzó a quedar agendada\.\n\nTe confirmo: /);
+    const confirmada = await t.say("Sí", YES);
+    assert.deepEqual([confirmada.status, t.bookings()], ["COMPLETED", 1]);
   });
 
   it("Gate PRE-LLM: una prohibición bloquea ANTES del motor conversacional; si pasa, atiende el motor (no el grafo)", async () => {

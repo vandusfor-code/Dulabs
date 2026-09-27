@@ -24,9 +24,13 @@ import {
 } from "@/lib/agent-compiler/conversation/service";
 import type { ConversationStateKey } from "@/lib/agent-compiler/conversation/store";
 import { renderResponse } from "@/lib/agent-compiler/conversation/renderer";
-import type { ActionEngine } from "@/lib/agent-compiler/actions/engine";
+import type { ActionEngine, VerificationResult } from "@/lib/agent-compiler/actions/engine";
+import type { ActionRequest } from "@/lib/agent-compiler/conversation/model";
+import type { OfferList } from "@/lib/agent-compiler/conversation/transitions";
+import { MAX_OFFERED_SLOTS } from "@/lib/agent-compiler/conversation/renderer";
 import { stateCategoryFor, type ActionResult } from "@/lib/agent-compiler/actions/result";
 import { stateSnapshot } from "@/lib/agent-compiler/conversation/service";
+import { classifyActionError, classifyTurnError } from "@/lib/agent-compiler/runtime/production/error-taxonomy";
 import { defaultTurnTraceSink, shortHash, understandingTrace, type BusinessAgentTurnTrace, type TurnActionTrace } from "@/lib/agent-compiler/runtime/production/turn-trace";
 
 export const MAX_ACTIONS_PER_TURN = 3;
@@ -61,6 +65,41 @@ export interface ConversationRuntimeDeps {
   trace?: (trace: BusinessAgentTurnTrace) => void;
   /** FASE 7 — reloj monotónico para las latencias (inyectable en tests). */
   monotonic?: () => number;
+  /**
+   * FASE 8 — el recordatorio sigue a la cita: cancelarla lo cancela y reprogramarla lo mueve (ver migración
+   * 20261127000000). Ausente = el agente no tiene recordatorios. Nunca se llama en simulación.
+   */
+  reminders?: ReminderLifecyclePort;
+}
+
+export interface ReminderLifecyclePort {
+  appointmentCancelled(conversationId: string, anchorRef: string | null): Promise<void>;
+  appointmentMoved(conversationId: string, anchorRef: string | null, newStart: string): Promise<void>;
+}
+
+const BOOKING_WRITES = new Set(["crear_cita_nylas_generico", "agendar_cita_especialista", "reprogramar_cita_cliente"]);
+
+/** Opciones que el backend le MOSTRÓ al cliente en este resultado (las mismas que numera el renderer). */
+function offersOf(result: ActionResult): OfferList | undefined {
+  if (result.action === "buscar_disponibilidad_nylas_generico" && result.status === "SUCCEEDED" && Array.isArray(result.data.horariosDisponibles)) {
+    const times = (result.data.horariosDisponibles as unknown[]).filter((x): x is string => typeof x === "string" && /^\d{2}:\d{2}$/.test(x)).slice(0, MAX_OFFERED_SLOTS);
+    return times.length > 0 ? { slot: "time", options: times.map((t) => ({ value: t, label: t })) } : undefined;
+  }
+  if (result.error?.reason === "APPOINTMENT_SELECTION_REQUIRED" && Array.isArray(result.data.opciones)) {
+    const options = (result.data.opciones as unknown[])
+      .filter((o): o is { value: string; label: string } => Boolean(o) && typeof (o as { value?: unknown }).value === "string" && typeof (o as { label?: unknown }).label === "string")
+      .slice(0, 10);
+    return options.length > 0 ? { slot: "appointment", options } : undefined;
+  }
+  return undefined;
+}
+
+/** Cita creada/movida según el BACKEND (ancla de recordatorios). */
+function bookingOf(request: ActionRequest, result: ActionResult): { appointmentRef: string | null; start: string; service: string | null } | undefined {
+  if (!BOOKING_WRITES.has(result.action) || result.status !== "SUCCEEDED" || result.simulated) return undefined;
+  const start = typeof result.data.inicio === "string" && !Number.isNaN(Date.parse(result.data.inicio)) ? new Date(result.data.inicio).toISOString() : null;
+  if (!start) return undefined;
+  return { appointmentRef: typeof result.data.citaId === "string" ? result.data.citaId : (request.constraints.cita ?? null), start, service: request.arguments.servicio ?? null };
 }
 
 export interface ConversationTurnInput {
@@ -81,6 +120,13 @@ export interface ConversationRuntimeOutcome {
   trace?: BusinessAgentTurnTrace;
 }
 
+/** Opciones de los datos tipo lista publicados (se muestran numeradas al preguntar). */
+function selectOptionsOfArtifact(artifact: CompiledAgentArtifact): Record<string, readonly string[]> {
+  const out: Record<string, readonly string[]> = {};
+  for (const d of artifact.understanding.businessSlots) if (d.kind === "select" && d.options?.length) out[d.name] = d.options;
+  return out;
+}
+
 export function createConversationRuntime(deps: ConversationRuntimeDeps) {
   const maxActions = deps.maxActionsPerTurn ?? MAX_ACTIONS_PER_TURN;
   // Una sola fuente: requisitos y contexto de entendimiento del MISMO artefacto (misma huella, mismo tenant y agente).
@@ -91,6 +137,8 @@ export function createConversationRuntime(deps: ConversationRuntimeDeps) {
   if ((deps.service.requirements.simulation === true) !== (deps.simulation === true)) throw new Error("conversation_runtime_simulation_mismatch");
 
   const mono = deps.monotonic ?? (() => performance.now());
+  /** Reloj de los eventos del sistema: el MISMO del servicio conversacional (tests y producción coherentes). */
+  const nowIso = () => (deps.service.clock?.() ?? new Date()).toISOString();
   const sink = deps.trace ?? defaultTurnTraceSink;
 
   /** Ejecuta la acción pendiente de la vista y aplica su resultado al estado. Devuelve la vista nueva. */
@@ -111,7 +159,7 @@ export function createConversationRuntime(deps: ConversationRuntimeDeps) {
       },
       {
         beforeExecute: async (executionId, attempt) => {
-          const started = await applySystemEvent(deps.service, key, { type: "ACTION_STARTED", eventId: `${request.id}:started:${attempt}`, at: new Date().toISOString(), actionId: request.id });
+          const started = await applySystemEvent(deps.service, key, { type: "ACTION_STARTED", eventId: `${request.id}:started:${attempt}`, at: nowIso(), actionId: request.id });
           return started.outcome === "processed" || started.outcome === "duplicate";
         },
       },
@@ -127,14 +175,29 @@ export function createConversationRuntime(deps: ConversationRuntimeDeps) {
       simulated: result.simulated === true,
       replayed: result.replayed,
       durationMs: result.durationMs,
+      ...(result.error ? { baError: classifyActionError(result.error).code } : {}),
     });
     // Otra ejecución está en curso (otro worker): no se toca el estado; ese worker aplicará el resultado.
     if (result.status === "IN_PROGRESS") return null;
     const eventId = `${request.id}:result:${result.executionId ?? "rejected"}:${result.attempt}`;
+    const offers = offersOf(result);
+    const booking = bookingOf(request, result);
+    const focusProduct = result.action === "ba_consultar_producto" && result.status === "SUCCEEDED" && typeof result.data.productoNombre === "string" ? result.data.productoNombre : undefined;
     const applied =
       result.status === "SUCCEEDED"
-        ? await applySystemEvent(deps.service, key, { type: "ACTION_SUCCEEDED", eventId, at: new Date().toISOString(), actionId: request.id })
-        : await applySystemEvent(deps.service, key, { type: "ACTION_FAILED", eventId, at: new Date().toISOString(), actionId: request.id, category: stateCategoryFor(result.error!, { replayed: result.replayed }), invalidSlots: result.invalidSlots, ambiguous: result.error!.ambiguous });
+        ? await applySystemEvent(deps.service, key, { type: "ACTION_SUCCEEDED", eventId, at: nowIso(), actionId: request.id, ...(offers ? { offers } : {}), ...(booking ? { booking } : {}), ...(focusProduct ? { focusProduct } : {}) })
+        : await applySystemEvent(deps.service, key, { type: "ACTION_FAILED", eventId, at: nowIso(), actionId: request.id, category: stateCategoryFor(result.error!, { replayed: result.replayed }), invalidSlots: result.invalidSlots, ambiguous: result.error!.ambiguous, ...(offers ? { offers } : {}) });
+    // FASE 8 — el recordatorio sigue a la cita (solo en producción y con un resultado real, no un replay de otra vuelta).
+    if (deps.reminders && !deps.simulation && result.status === "SUCCEEDED" && !result.simulated && !result.replayed) {
+      const conversationId = view.state.scope.conversationId;
+      try {
+        if (result.action === "cancelar_cita_cliente") await deps.reminders.appointmentCancelled(conversationId, request.constraints.cita ?? null);
+        if (result.action === "reprogramar_cita_cliente" && booking) await deps.reminders.appointmentMoved(conversationId, request.constraints.cita ?? null, booking.start);
+      } catch {
+        // Un recordatorio que no se pudo ajustar NUNCA revierte la cancelación/reprogramación (ya ocurrió). Queda en la traza.
+        traces.push({ action: "reminder_lifecycle", purpose: request.purpose, requestRef: shortHash(request.id), status: "FAILED", errorCode: "EXTERNAL_ERROR", reason: "REMINDER_LIFECYCLE_FAILED", simulated: false, replayed: false, durationMs: 0 });
+      }
+    }
     if (applied.outcome === "processed" || applied.outcome === "duplicate") return applied;
     // La solicitud ya no era la vigente (p. ej. STALE): se relee el estado actual.
     return loadTurnView(deps.service, key);
@@ -182,7 +245,11 @@ export function createConversationRuntime(deps: ConversationRuntimeDeps) {
           total: Math.round(total),
         },
         ...(outcome.errorCode ? { errorCode: outcome.errorCode } : {}),
-        at: new Date().toISOString(),
+        ...(() => {
+          const ba = [...(outcome.errorCode ? [classifyTurnError(outcome.errorCode).code] : []), ...actionTraces.map((a) => a.baError).filter((x): x is string => Boolean(x))];
+          return ba.length > 0 ? { baErrors: [...new Set(ba)] } : {};
+        })(),
+        at: nowIso(),
       };
       try {
         sink(trace);
@@ -198,7 +265,60 @@ export function createConversationRuntime(deps: ConversationRuntimeDeps) {
     if (before?.state.pendingAction && (before.state.status === "READY_FOR_ACTION" || before.state.status === "EXECUTING")) {
       await drive(input.key, input.agentVersion, before, input.text, results, actionTraces);
     }
+    // 0b. FASE 8 — escritura de desenlace DESCONOCIDO: antes de conversar, se VERIFICA con el proveedor (lectura) si
+    //     ocurrió. Existe → completada (nunca se repite); no existe → se puede re-proponer como operación nueva.
+    let verification: (VerificationResult & { start?: string }) | null = null;
+    const unresolved = before?.state.unresolvedAction;
+    if (before && unresolved && before.state.status === "ERROR" && !deps.simulation && deps.engine.verifyOutcome) {
+      const v = await deps.engine.verifyOutcome(unresolved, {
+        tenantId: input.key.tenantId,
+        agentId: input.key.agentId,
+        agentVersion: input.agentVersion,
+        conversation: { phoneNumberId: input.key.phoneNumberId, telefonoCliente: input.key.telefonoCliente },
+        artifact: deps.artifact,
+        state: before.state,
+        userMessage: "",
+      });
+      actionTraces.push({ action: `verify:${unresolved.action}`, purpose: unresolved.purpose, requestRef: shortHash(unresolved.id), status: v.outcome === "unknown" ? "FAILED" : "SUCCEEDED", errorCode: v.outcome === "unknown" ? "OUTCOME_UNKNOWN" : null, reason: `VERIFY_${v.outcome.toUpperCase()}:${v.reason}`.slice(0, 60), simulated: false, replayed: false, durationMs: 0 });
+      if (v.outcome !== "unknown") {
+        const applied = await applySystemEvent(deps.service, input.key, {
+          type: "OUTCOME_VERIFIED",
+          eventId: `${unresolved.id}:verified:${input.wamid}`,
+          at: nowIso(),
+          actionId: unresolved.id,
+          found: v.outcome === "found",
+          ...(v.outcome === "found" && v.booking ? { booking: v.booking } : {}),
+          messageId: input.wamid,
+        });
+        if (applied.outcome === "processed") verification = { ...v, ...(v.outcome === "found" && v.booking ? { start: v.booking.start } : {}) };
+      }
+    }
     actionsMs += mono() - a0;
+
+    // El turno de la verificación SOLO informa lo verificado (+ la propuesta nueva si no ocurrió): el mensaje quedó
+    // consumido y no se interpreta (un "sí" viejo nunca confirma una propuesta que el cliente no ha visto).
+    if (verification) {
+      const current = await loadTurnView(deps.service, input.key);
+      if (current) {
+        const text = renderResponse({
+          plan: current.responsePlan,
+          state: current.state,
+          actions: [],
+          businessName: deps.artifact.identity.name,
+          questions: deps.artifact.questions,
+          offerHandoff: deps.artifact.policies.offerHandoff,
+          tone: deps.artifact.presentation.tone,
+          locale: deps.artifact.presentation.locale,
+          currency: deps.artifact.identity.currency,
+          verification,
+        });
+        if (text) await deps.send(text);
+        return emit(
+          { outcome: "processed", status: current.state.status, sent: Boolean(text), actions: summary() },
+          { before: before ? stateSnapshot(before.state, before.version) : null, after: stateSnapshot(current.state, current.version), planIntent: current.responsePlan.intent, text },
+        );
+      }
+    }
 
     // 1. Mensaje → entendimiento → (entidades del negocio) → estado.
     const p0 = mono();
@@ -243,6 +363,12 @@ export function createConversationRuntime(deps: ConversationRuntimeDeps) {
       noAnswerMessage: deps.artifact.knowledge.noAnswerMessage,
       offerHandoff: deps.artifact.policies.offerHandoff,
       handoffAvailable: deps.artifact.requirements.handoff.supported,
+      tone: deps.artifact.presentation.tone,
+      locale: deps.artifact.presentation.locale,
+      currency: deps.artifact.identity.currency,
+      selectOptions: selectOptionsOfArtifact(deps.artifact),
+      ...(turn.outcome === "processed" && turn.facts ? { facts: turn.facts } : {}),
+      ...(verification ? { verification } : {}),
       ...(understandingFailed ? { understandingFailed: true } : {}),
       ...(deps.simulation ? { simulation: true } : {}),
     });

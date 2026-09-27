@@ -10,7 +10,7 @@
 // negocio existente no empiece de cero (draftFromSpec).
 
 import { z } from "zod";
-import { CUSTOMER_FIELD_TYPES, type BusinessAgentSpec } from "@/lib/agent-compiler/spec/types";
+import { AGENT_ENGINES, CUSTOMER_FIELD_TYPES, type AgentTone, type BusinessAgentSpec } from "@/lib/agent-compiler/spec/types";
 import { businessHoursSchema, WEEKDAYS, type BusinessHoursModel } from "@/lib/agent-compiler/business-model/schema";
 import { DEFAULT_TIMEZONE } from "@/lib/agent-compiler/onboarding/timezones";
 
@@ -68,6 +68,10 @@ export const onboardingDraftSchema = z
         minimumNoticeMinutes: z.number().int().min(0).max(10_080),
         allowChanges: z.boolean(),
         changesNoticeHours: z.number().int().min(0).max(720),
+        /** FASE 8 — personas/sillas/salas entre las que el cliente elige (solo con Google Calendar). Vacío = no se pregunta. */
+        resources: z.array(z.object({ name: text(80) }).strict()).max(20).optional(),
+        /** FASE 8 — el cliente puede pedir que le recuerden su cita ("recuérdame mañana"). */
+        reminders: z.object({ enabled: z.boolean(), offsetMinutes: z.number().int().min(15).max(2880) }).strict().optional(),
       })
       .strict(),
     hours: businessHoursSchema,
@@ -87,14 +91,33 @@ export const onboardingDraftSchema = z
         askEmail: z.boolean(),
         askNotes: z.boolean(),
         extra: z.array(extraFieldSchema).max(10),
+        /** FASE 8 — guardar a quien pide que lo contacten (nombre/correo en tus contactos). */
+        leadCapture: z.object({ enabled: z.boolean(), captureInterest: z.boolean() }).strict().optional(),
       })
       .strict(),
-    tone: z.enum(["friendly", "professional", "direct"]),
+    /** FASE 8: cuatro tonos (Cercano, Profesional, Casual, Formal). "direct" se conserva para borradores previos. */
+    tone: z.enum(["friendly", "professional", "direct", "casual", "formal"]),
+    /**
+     * FASE 8 — motor que atenderá la versión publicada. Ausente = el de la versión anterior (o el grafo). Solo la
+     * persona lo cambia (opt-in explícito); ningún agente cambia de motor solo.
+     */
+    engine: z.enum(AGENT_ENGINES).optional(),
     restrictedTopics: z.array(restrictedTopicSchema).max(10),
   })
   .strict();
 
 export type OnboardingDraft = z.infer<typeof onboardingDraftSchema>;
+
+/** Tono del borrador → tono del motor conversacional (solo estilo). */
+export const DRAFT_TONE_TO_AGENT_TONE: Readonly<Record<OnboardingDraft["tone"], AgentTone>> = {
+  friendly: "cercano",
+  professional: "profesional",
+  direct: "profesional",
+  casual: "casual",
+  formal: "formal",
+};
+
+export const DEFAULT_REMINDER_OFFSET_MINUTES = 120;
 export type ExtraField = z.infer<typeof extraFieldSchema>;
 
 /** Lunes a viernes 09:00–18:00; sábado y domingo cerrados (se ajusta en el editor). */
@@ -181,6 +204,13 @@ export function draftFromSpec(spec: BusinessAgentSpec): OnboardingDraft {
       .map((f) => ({ key: f.key, label: f.label, type: f.type, required: f.required, ...(f.options ? { options: f.options } : {}) })),
   };
   d.tone = spec.personality.primary === "professional" || spec.personality.primary === "consultative" ? "professional" : spec.personality.primary === "direct" ? "direct" : "friendly";
+  // FASE 8 — configuración del motor conversacional (si la versión la tenía).
+  const rt = spec.runtime;
+  if (rt?.tone) d.tone = (Object.entries(DRAFT_TONE_TO_AGENT_TONE).find(([k, v]) => v === rt.tone && k !== "direct")?.[0] ?? d.tone) as OnboardingDraft["tone"];
+  if (rt?.resources?.length) d.booking.resources = rt.resources.map((r) => ({ name: r.name.slice(0, 80) }));
+  if (rt?.reminders) d.booking.reminders = { enabled: rt.reminders.enabled, offsetMinutes: rt.reminders.offsetMinutes };
+  if (rt?.leadCapture && caps.leadCapture) d.customerData.leadCapture = { enabled: true, captureInterest: rt.leadCapture.captureInterest };
+  if (rt?.engine) d.engine = rt.engine;
   d.restrictedTopics = spec.policies.prohibitions
     .filter((p) => p.id.startsWith(ONBOARDING_RULE_PREFIX) && p.condition)
     .slice(0, 10)

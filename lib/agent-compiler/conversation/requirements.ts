@@ -15,7 +15,15 @@ import { CUSTOMER_FIELD_TO_UNIVERSAL_SLOT, UNIVERSAL_SLOTS } from "@/lib/agent-c
 import type { UnderstandingIntent } from "@/lib/agent-compiler/understanding/taxonomy";
 import type { GoalKind } from "@/lib/agent-compiler/conversation/model";
 import type { BusinessModel } from "@/lib/agent-compiler/business-model/schema";
-import { CAPABILITY_CATALOG, type BookingCapabilityConfig, type CatalogCapabilityConfig, type UbmCapabilityId } from "@/lib/agent-compiler/business-model/capabilities";
+import {
+  CAPABILITY_CATALOG,
+  type BookingCapabilityConfig,
+  type CatalogCapabilityConfig,
+  type LeadCaptureCapabilityConfig,
+  type RemindersCapabilityConfig,
+  type UbmCapabilityId,
+} from "@/lib/agent-compiler/business-model/capabilities";
+import { effectiveCustomerFields } from "@/lib/agent-compiler/business-model/resources";
 import { legacyModelFromSpec } from "@/lib/agent-compiler/business-model/legacy-adapter";
 
 /** Un requisito se cumple con cualquiera de sus slots; se pregunta por `ask`. */
@@ -45,6 +53,11 @@ export interface GoalRequirement {
   action: string | null;
   requiresConfirmation: boolean;
   lookup: LookupRequirement | null;
+  /**
+   * FASE 8 — datos que el objetivo NO pide de entrada pero que, si el backend los puso en juego (p. ej. "¿cuál de tus
+   * citas?" tras listar varias), bloquean hasta resolverse. Ausente = ninguno.
+   */
+  conditional?: readonly string[];
 }
 
 export interface AgentRequirements {
@@ -66,6 +79,10 @@ export interface AgentRequirements {
   artifactRef?: string;
   /** FASE 6 — requisitos de una simulación: toda solicitud construida con ellos va marcada `simulation: true`. */
   simulation?: boolean;
+  /** FASE 8 — captura de interesados publicada (qué datos del contacto se guardan). */
+  lead?: { fieldKeys: readonly string[]; captureInterest: boolean };
+  /** FASE 8 — recordatorios publicados (anticipación por defecto respecto a la cita). */
+  reminders?: { offsetMinutes: number };
 }
 
 function contractOrNull(action: string | null): string | null {
@@ -95,6 +112,9 @@ export interface RequirementInputs {
   knowledge: boolean;
   handoff: boolean;
   ordersRequested: boolean;
+  /** FASE 8. */
+  leadCapture?: LeadCaptureCapabilityConfig | null;
+  reminders?: RemindersCapabilityConfig | null;
 }
 
 /** Entradas de requisitos desde un modelo (tolerante: no valida publicación; eso es validateBusinessModel). */
@@ -109,7 +129,8 @@ export function requirementInputsFromModel(model: BusinessModel): RequirementInp
   const booking = parse<BookingCapabilityConfig>("booking");
   const catalog = parse<CatalogCapabilityConfig>("catalog");
   return {
-    customerFields: model.customerFields,
+    // FASE 8: la elección de recurso es un dato más de la reserva (resources.ts).
+    customerFields: effectiveCustomerFields(model),
     booking: booking ? { provider: booking.provider, requiresService: booking.requiresService, cancellation: booking.cancellation.allowed, rescheduling: booking.rescheduling.allowed } : null,
     bookingRequested: Boolean(entry("booking")),
     catalog,
@@ -117,6 +138,8 @@ export function requirementInputsFromModel(model: BusinessModel): RequirementInp
     knowledge: Boolean(parse("knowledge")),
     handoff: Boolean(parse("handoff")),
     ordersRequested: Boolean(entry("orders")),
+    leadCapture: parse<LeadCaptureCapabilityConfig>("lead_capture"),
+    reminders: booking ? parse<RemindersCapabilityConfig>("reminders") : null,
   };
 }
 
@@ -154,6 +177,15 @@ export function deriveRequirements(inputs: RequirementInputs): AgentRequirements
   const quoteAction = inputs.quotes && inputs.catalog ? contractOrNull("calcular_cotizacion") : null;
   const informationAction = inputs.knowledge ? contractOrNull("buscar_conocimiento") : inputs.catalog ? contractOrNull("listar_catalogo_servicios") : null;
   const ordersBacked = Boolean(inputs.ordersRequested && CAPABILITY_BACKING.orders.available);
+  const productAction = inputs.catalog?.includeProducts ? contractOrNull("ba_consultar_producto") : null;
+
+  // FASE 8 — captura de interesados: se exigen los datos marcados obligatorios de la lista; si ninguno lo es, el primero.
+  const lead = inputs.leadCapture ?? null;
+  const leadAction = lead ? contractOrNull("ba_guardar_lead") : null;
+  const leadSlotOf = (key: string) => CUSTOMER_FIELD_TO_UNIVERSAL_SLOT[key] ?? key;
+  const leadFields = lead ? lead.fieldKeys.map((k) => inputs.customerFields.find((f) => f.key === k && f.enabled)).filter((f): f is CustomerField => Boolean(f)) : [];
+  const leadRequired = (leadFields.some((f) => f.required) ? leadFields.filter((f) => f.required) : leadFields.slice(0, 1)).filter((f) => !isChannelSourced(f.key)).map((f) => one(leadSlotOf(f.key)));
+  const reminderAction = inputs.reminders && booking ? contractOrNull("ba_programar_recordatorio") : null;
 
   const goals: Record<GoalKind, GoalRequirement> = {
     booking: createAction
@@ -168,10 +200,10 @@ export function deriveRequirements(inputs: RequirementInputs): AgentRequirements
         })
       : goal("booking", { unsupportedReason: unsupportedScheduling }),
     rescheduling: calendar && booking!.rescheduling
-      ? goal("rescheduling", { supported: Boolean(contractOrNull("reprogramar_cita_cliente")), required: [one("date"), one("time")], action: contractOrNull("reprogramar_cita_cliente"), requiresConfirmation: true })
+      ? goal("rescheduling", { supported: Boolean(contractOrNull("reprogramar_cita_cliente")), required: [one("date"), one("time")], action: contractOrNull("reprogramar_cita_cliente"), requiresConfirmation: true, conditional: ["appointment"] })
       : goal("rescheduling", { unsupportedReason: unsupportedScheduling }),
     cancellation: calendar && booking!.cancellation
-      ? goal("cancellation", { supported: Boolean(contractOrNull("cancelar_cita_cliente")), action: contractOrNull("cancelar_cita_cliente"), requiresConfirmation: true })
+      ? goal("cancellation", { supported: Boolean(contractOrNull("cancelar_cita_cliente")), action: contractOrNull("cancelar_cita_cliente"), requiresConfirmation: true, conditional: ["appointment"] })
       : goal("cancellation", { unsupportedReason: unsupportedScheduling }),
     quote: quoteAction
       ? goal("quote", { supported: true, required: [item], action: quoteAction })
@@ -183,12 +215,23 @@ export function deriveRequirements(inputs: RequirementInputs): AgentRequirements
     information: informationAction
       ? goal("information", { supported: true, action: informationAction })
       : goal("information", { unsupportedReason: "capability_disabled" }),
+    // FASE 8 — consulta de un producto contra el inventario real (existencia, precio y stock los pone el backend).
+    product: productAction
+      ? goal("product", { supported: true, required: [one("product")], action: productAction })
+      : goal("product", { unsupportedReason: "capability_disabled", required: [one("product")] }),
+    lead: leadAction && leadRequired.length > 0
+      ? goal("lead", { supported: true, required: leadRequired, action: leadAction })
+      : goal("lead", { unsupportedReason: lead ? "no_runtime_action" : "capability_disabled" }),
+    // El ancla es la cita que el agente agendó (lastBooking); fecha y hora del recordatorio son opcionales.
+    reminder: reminderAction
+      ? goal("reminder", { supported: true, action: reminderAction, conditional: ["date", "time"] })
+      : goal("reminder", { unsupportedReason: "capability_disabled" }),
   };
 
   const handoffAction = inputs.handoff ? contractOrNull("transferir_soporte") : null;
   const known = [...Object.keys(customerFieldBySlot), ...universal].sort();
   const fingerprint = createHash("sha256")
-    .update(JSON.stringify({ goals, handoffAction, quoteAction, informationAction, customerSlots: [...customerSlots].sort(), known }))
+    .update(JSON.stringify({ goals, handoffAction, quoteAction, informationAction, customerSlots: [...customerSlots].sort(), known, lead, reminders: inputs.reminders ?? null }))
     .digest("hex")
     .slice(0, 16);
 
@@ -200,6 +243,8 @@ export function deriveRequirements(inputs: RequirementInputs): AgentRequirements
     quoteAction,
     customerSlots: [...customerSlots],
     customerFieldBySlot,
+    ...(lead && leadAction ? { lead: { fieldKeys: [...lead.fieldKeys], captureInterest: lead.captureInterest } } : {}),
+    ...(inputs.reminders && reminderAction ? { reminders: { offsetMinutes: inputs.reminders.offsetMinutes } } : {}),
   };
 }
 
@@ -224,15 +269,22 @@ export function goalForIntent(intent: UnderstandingIntent, req: AgentRequirement
     case "ORDER_REQUEST":
       return req.goals.order.supported ? "order" : req.goals.quote.supported ? "quote" : "order";
     case "PRICE_INQUIRY":
-      return req.goals.quote.supported ? "quote" : "information";
-    case "INFORMATION_REQUEST":
+      return req.goals.quote.supported ? "quote" : req.goals.product.supported ? "product" : "information";
     case "PRODUCT_INQUIRY":
+      return req.goals.product.supported ? "product" : "information";
+    case "INFORMATION_REQUEST":
     case "SERVICE_INQUIRY":
       return "information";
+    case "CONTACT_REQUEST":
+      return "lead";
+    case "REMINDER_REQUEST":
+      return "reminder";
     default:
       return null;
   }
 }
 
 /** Objetivos "de transacción" (desplazan a uno informativo en curso; uno informativo no los desplaza a ellos). */
-export const TRANSACTIONAL_GOALS: ReadonlySet<GoalKind> = new Set(["booking", "rescheduling", "cancellation", "order"]);
+export const TRANSACTIONAL_GOALS: ReadonlySet<GoalKind> = new Set(["booking", "rescheduling", "cancellation", "order", "lead", "reminder"]);
+/** Objetivos informativos (se pueden responder "al lado" de uno transaccional en curso). */
+export const INFORMATIVE_GOALS: ReadonlySet<GoalKind> = new Set(["quote", "information", "product"]);

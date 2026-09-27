@@ -13,6 +13,9 @@ import { defaultHours } from "@/lib/agent-compiler/onboarding/draft";
 import { assembleDraft } from "@/lib/agent-compiler/onboarding/assemble";
 import { saveOnboardingDraft, getOnboarding } from "@/lib/agent-compiler/onboarding/service";
 import { createInProcessApi } from "@/lib/agent-compiler/onboarding/testing/in-process-api";
+import { ActivateStep, CapabilityMatrix } from "@/components/dashboard/business-agent/onboarding/ActivateStep";
+import type { OnboardingOverview } from "@/lib/agent-compiler/onboarding/service";
+import type { CapabilityRow } from "@/lib/agent-compiler/lifecycle/capability-matrix";
 import { barberDraft, createWorld, depsFor, reading, storeDraft, TENANT_A, TENANT_B, type World } from "@/lib/agent-compiler/onboarding/testing/harness";
 
 const SESSIONS = { "tok-a": TENANT_A, "tok-b": TENANT_B };
@@ -260,3 +263,53 @@ describe("FASE 6 — E2E", () => {
   });
 });
 
+
+// ---------------------------------------------------------------------------
+// FASE 8 — motor y matriz de capacidades (lo que el servidor calculó; la pantalla solo lo muestra)
+// ---------------------------------------------------------------------------
+
+
+const ROWS: CapabilityRow[] = [
+  { id: "booking", label: "Agendar citas", enabled: true, configured: true, published: true, runtimeSupported: "full", integration: "available", active: true },
+  { id: "reminders", label: "Recordatorios de cita", enabled: true, configured: true, published: true, runtimeSupported: "none", integration: "not_verified", active: false, detail: "Solo funciona con el motor conversacional." },
+  { id: "orders", label: "Tomar pedidos", enabled: false, configured: false, published: false, runtimeSupported: "none", integration: "not_needed", active: false },
+];
+
+describe("FASE 8 — motor y matriz de capacidades", () => {
+  it("la matriz muestra SOLO lo encendido o publicado, con cada columna (configurada / publicada / motor / integración / activa)", () => {
+    render(<CapabilityMatrix rows={ROWS} />);
+    const table = screen.getByRole("table", { name: /Estado de cada función/ });
+    const rows = within(table).getAllByRole("row");
+    assert.equal(rows.length, 3, "encabezado + 2 funciones (pedidos apagado no se muestra)");
+    const reminders = within(table).getByRole("rowheader", { name: /Recordatorios de cita/ }).closest("tr")!;
+    assert.deepEqual(within(reminders as HTMLElement).getAllByRole("cell").map((c) => c.textContent), ["Sí", "Sí", "No", "Sin verificar", "No"]);
+    assert.ok(within(reminders as HTMLElement).getByText("Solo funciona con el motor conversacional."));
+  });
+
+  it("elegir el motor para la próxima publicación es explícito (no cambia nada hasta publicar) y los bloqueos se ven", () => {
+    let chosen: string | null = null;
+    const overview = {
+      status: "PUBLISHED",
+      pendingChanges: false,
+      publication: { publishedVersion: 3, flowVersionId: "fv", draftRevision: 2, publishedAt: "x" },
+      numbers: [],
+      checklist: { items: [], readyToActivate: false },
+      engine: {
+        selected: "graph_v1",
+        source: "published",
+        requested: "graph_v1",
+        capabilities: ROWS,
+        blockers: ["Recordatorios de cita: solo funciona con el motor conversacional. Actívalo o apaga esta opción."],
+        warnings: [],
+        credentials: [{ id: "gemini_key", label: "IA (Gemini)", present: true, required: false }, { id: "whatsapp_token", label: "WhatsApp (Meta)", present: false, required: true }],
+      },
+    } as unknown as OnboardingOverview;
+    render(<ActivateStep auth={{ accessToken: "t" }} overview={overview} revision={2} hasLocalErrors={false} ensureSaved={async () => true} onChanged={async () => {}} onConflict={() => {}} goTo={() => {}} requestedEngine="graph_v1" onEngineChange={(e) => (chosen = e)} />);
+    assert.ok(screen.getByText(/Hoy atiende:/).textContent!.includes("Motor clásico"));
+    fireEvent.click(screen.getByRole("radio", { name: /Conversacional/ }));
+    assert.equal(chosen, "state_machine_v1");
+    assert.ok(within(screen.getByRole("list", { name: "Bloqueos del motor" })).getByText(/solo funciona con el motor conversacional/));
+    assert.ok(screen.getByText("WhatsApp (Meta): falta"));
+    assert.equal(screen.queryByText(/IA \(Gemini\)/), null, "una credencial no obligatoria para este motor no se muestra");
+  });
+});

@@ -173,7 +173,7 @@ export function OnboardingFlow({ auth, slots = {}, options, advancedHref = "/das
               {step === "reglas" && <RulesStep {...stepProps} />}
               {step === "prueba" && <TestStep auth={auth} ensureSaved={ob.flush} blocked={hasErrors} />}
               {step === "activar" && (
-                <ActivateStep auth={auth} overview={ob.overview} revision={ob.revision} hasLocalErrors={hasErrors} ensureSaved={ob.flush} onChanged={ob.refreshOverview} onConflict={() => void ob.reload()} goTo={goTo} />
+                <ActivateStep auth={auth} requestedEngine={draft.engine} onEngineChange={(e) => setDraft((d) => ({ ...d, engine: e }))} overview={ob.overview} revision={ob.revision} hasLocalErrors={hasErrors} ensureSaved={ob.flush} onChanged={ob.refreshOverview} onConflict={() => void ob.reload()} goTo={goTo} />
               )}
             </div>
             <div className="mt-10 flex items-center justify-between gap-3 border-t border-edge pt-5">

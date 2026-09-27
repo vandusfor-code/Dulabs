@@ -9,7 +9,7 @@ import { createSupabaseBusinessAgentRegistryStore } from "@/lib/agent-compiler/r
 import { loadReadinessFacts } from "@/lib/business-agent-readiness-facts";
 import { planDelTenant } from "@/lib/plan-limits";
 import { createSupabaseAgentConfigStore } from "@/lib/agente/config";
-import { loadAgentLifecycle, createSupabaseActivationGateDeps } from "@/lib/agent-compiler/lifecycle/supabase";
+import { loadAgentLifecycle, createSupabaseActivationGateDeps, evaluateEngineReport } from "@/lib/agent-compiler/lifecycle/supabase";
 import { evaluateBusinessAgentActivation } from "@/lib/agent-compiler/lifecycle/activation-gate";
 import { activarFlowParaNumero } from "@/lib/flow/flow-activation";
 import { createDefaultExecutorRegistry } from "@/lib/flow/executor-factory";
@@ -17,6 +17,8 @@ import { understandMessage } from "@/lib/agent-compiler/understanding/engine";
 import { productionUnderstandingProvider } from "@/lib/agent-compiler/understanding/resilience";
 import { understandingProviderConfigured } from "@/lib/agent-compiler/understanding/provider";
 import { createGeminiSemanticClassifier } from "@/lib/agent-compiler/runtime/production/ports";
+import { createNativeActionHandler } from "@/lib/agent-compiler/actions/native/handler";
+import { createSupabaseProductInventory } from "@/lib/agent-compiler/runtime/production/conversation-runtime-supabase";
 import { createSupabaseServiceTableReader } from "@/lib/agent-compiler/runtime/production/catalog-supabase";
 import type { ActionHandler } from "@/lib/agent-compiler/actions/engine";
 import { createSupabaseOnboardingDraftStore, createSupabaseOnboardingPublisher } from "@/lib/agent-compiler/onboarding/store-supabase";
@@ -75,6 +77,8 @@ export function createSupabaseOnboardingDeps(supabase: SupabaseClient, session: 
       evaluate: (flowId, phoneNumberId) => evaluateBusinessAgentActivation(createSupabaseActivationGateDeps(supabase, registry), { tenantId, flowId, phoneNumberId }),
       bind: async (flowId, phoneNumberId) => (await activarFlowParaNumero(supabase, { tenantId, flowId, phoneNumberId })).ok,
     },
+    // FASE 8 — matriz de capacidades + motor + readiness con los hechos reales (misma función que el gate).
+    engineReport: (flowId, input) => evaluateEngineReport(supabase, tenantId, flowId, input),
   };
 }
 
@@ -93,5 +97,7 @@ export function createSupabaseSimulationDeps(supabase: SupabaseClient, tenantId:
     classifier: createGeminiSemanticClassifier({ tenantId }),
     readHandler: createSupabaseReadHandler(supabase),
     readServices: createSupabaseServiceTableReader(supabase),
+    // FASE 8 — la vista previa consulta el inventario REAL (lectura); guardar interesados o recordatorios se simula.
+    nativeReadHandler: createNativeActionHandler({ products: createSupabaseProductInventory(supabase) }),
   };
 }

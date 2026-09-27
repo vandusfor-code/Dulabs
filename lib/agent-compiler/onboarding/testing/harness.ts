@@ -18,6 +18,9 @@ import { understandMessage } from "@/lib/agent-compiler/understanding/engine";
 import type { UnderstandingProvider } from "@/lib/agent-compiler/understanding/provider";
 import type { SimulationDeps } from "@/lib/agent-compiler/onboarding/simulation";
 import type { EffectDispatchRequest, EffectDispatchResult } from "@/lib/flow/executor-types";
+import { selectAgentEngine } from "@/lib/agent-compiler/runtime/production/engine-selection";
+import { compileLegacySpec } from "@/lib/agent-compiler/business-model/compile";
+import { buildCapabilityMatrix, evaluateEngineReadiness, type CredentialFacts } from "@/lib/agent-compiler/lifecycle/capability-matrix";
 
 export const TENANT_A = "11111111-1111-4111-8111-111111111111";
 export const TENANT_B = "22222222-2222-4222-8222-222222222222";
@@ -32,6 +35,8 @@ export interface World {
   bound: Array<{ tenantId: string; flowId: string; phoneNumberId: string }>;
   lifecycle: AgentLifecycleState | null;
   events: OnboardingEvent[];
+  /** FASE 8 — credenciales del servidor (solo presencia). */
+  credentials: CredentialFacts;
 }
 
 /** Un "mundo" compartido (misma base) para varios tenants. */
@@ -49,6 +54,7 @@ export function createWorld(): World {
     bound: [],
     lifecycle: null,
     events: [],
+    credentials: { geminiKey: true, nylasApiKey: true, whatsappToken: true },
   };
 }
 
@@ -76,6 +82,19 @@ export function depsFor(world: World, tenantId: string, over: Partial<Onboarding
         world.bound.push({ tenantId, flowId, phoneNumberId });
         return true;
       },
+    },
+    // FASE 8 — la MISMA lógica pura que producción (lifecycle/supabase.ts::evaluateEngineReport) con los hechos del mundo.
+    async engineReport(flowId, input) {
+      const current = input.draftSpec ?? input.publishedSpec!;
+      const served = input.publishedSpec ?? current;
+      const engine = selectAgentEngine({ tenantId, spec: served, env: {} });
+      const compiled = input.publishedSpec ? compileLegacySpec(input.publishedSpec, { tenantId, agentId: flowId, versionRef: "check", publishedVersion: null }) : null;
+      const artifact = compiled?.ok ? compiled.artifact : null;
+      const facts = { ...world.facts, whatsappConnected: (world.numbers.get(tenantId) ?? []).length > 0, remindersStore: true, remindersDispatchVerified: false };
+      const matrix = buildCapabilityMatrix({ spec: current, published: artifact, engine: engine.engine, facts, agentActive: input.agentActive });
+      const servedMatrix = buildCapabilityMatrix({ spec: served, published: artifact, engine: engine.engine, facts, agentActive: input.agentActive });
+      const readiness = evaluateEngineReadiness({ spec: served, engine: engine.engine, artifactOk: input.publishedSpec ? Boolean(artifact) : true, credentials: world.credentials, killSwitchOn: false, matrix: servedMatrix });
+      return { engine, matrix, readiness };
     },
     now: () => NOW,
     log: (e) => world.events.push(e),

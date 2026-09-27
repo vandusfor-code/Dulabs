@@ -22,7 +22,9 @@ import { createConversationRuntime, type ConversationRuntimeOutcome } from "@/li
 import type { BusinessAgentTurnTrace } from "@/lib/agent-compiler/runtime/production/turn-trace";
 import type { ConversationStateKey } from "@/lib/agent-compiler/conversation/store";
 import { loadTurnView } from "@/lib/agent-compiler/conversation/service";
-import type { CatalogPort } from "@/lib/agent-compiler/conversation/entities";
+import type { CatalogPort, CatalogService } from "@/lib/agent-compiler/conversation/entities";
+import type { ActionHandler } from "@/lib/agent-compiler/actions/engine";
+import type { ReminderLifecyclePort } from "@/lib/agent-compiler/runtime/production/conversation-runtime";
 import { compileBusinessAgent } from "@/lib/agent-compiler/compile";
 import { buildGateRules, type GateRule } from "@/lib/agent-compiler/runtime/guardrail-gate";
 import { runAgentTurn, type AgentTurnResult } from "@/lib/agent-compiler/runtime/agent-runtime";
@@ -105,6 +107,12 @@ export interface PipelineOptions {
   gemini?: FakeGemini;
   /** Proveedor real (test en vivo con GEMINI_KEY). Sin él, el transporte del modelo es `fakeGemini`. */
   provider?: UnderstandingProvider;
+  /** FASE 8 — servicios con precio (en vez de `services` por nombre). */
+  catalogServices?: readonly CatalogService[];
+  /** FASE 8 — handler de acciones nativas (inventario / contactos / recordatorios en memoria). */
+  native?: ActionHandler;
+  /** FASE 8 — ciclo de vida de recordatorios (cancelar / mover con la cita). */
+  reminders?: ReminderLifecyclePort;
 }
 
 export function artifactOf(spec: BusinessAgentSpec, tenantId: string, agentId = "flow-1", versionRef = "v1"): CompiledAgentArtifact {
@@ -123,14 +131,13 @@ export function createPipeline(spec: BusinessAgentSpec, opts: PipelineOptions) {
   const gemini = opts.gemini ?? fakeGemini();
   const conversationStore = opts.conversationStore ?? createInMemoryConversationStore();
   const handler = opts.handler ?? createFakeHandler();
-  const e = createTestEngine({ handler, store: opts.actionStore ?? createInMemoryActionStore() });
+  const e = createTestEngine({ handler, store: opts.actionStore ?? createInMemoryActionStore(), ...(opts.native ? { native: opts.native } : {}) });
   const understandingEvents: UnderstandingEvent[] = [];
   const traces: BusinessAgentTurnTrace[] = [];
   const sent: string[] = [];
   const catalogLoads: string[] = [];
-  const catalog: CatalogPort | undefined = opts.services
-    ? { load: async () => (catalogLoads.push(opts.tenantId), { source: "business_tables" as const, services: opts.services!.map((name) => ({ name, durationMinutes: 30 })) }) }
-    : undefined;
+  const serviceList: readonly CatalogService[] | undefined = opts.catalogServices ?? opts.services?.map((name) => ({ name, durationMinutes: 30 }));
+  const catalog: CatalogPort | undefined = serviceList ? { load: async () => (catalogLoads.push(opts.tenantId), { source: "business_tables" as const, services: serviceList }) } : undefined;
   const circuit = opts.circuit ?? createCircuitBreaker();
   const provider = opts.provider ?? withCircuitBreaker(createExecutorUnderstandingProvider({ dispatch: geminiUnderstandingDispatch(gemini.client, async () => "test-key") }), circuit, () => now);
   const requirements = opts.simulation ? { ...artifactRequirements(artifact), simulation: true } : artifactRequirements(artifact);
@@ -151,6 +158,7 @@ export function createPipeline(spec: BusinessAgentSpec, opts: PipelineOptions) {
     simulation: opts.simulation === true,
     trace: (t) => traces.push(t),
     send: async (text) => void sent.push(text),
+    ...(opts.reminders ? { reminders: opts.reminders } : {}),
   });
   let seq = 0;
 

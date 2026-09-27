@@ -19,13 +19,22 @@ export function firstSlotProblem(state: ConversationState, required: readonly Re
     for (const name of r.anyOf) {
       const s = state.slots[name];
       // FASE 7: los motivos del catálogo (servicio inexistente / sugerencia / varios) viajan para explicarlos.
-      const detail = s?.reason?.startsWith("service_") ? { detail: s.reason } : {};
+      const detail = s?.reason?.startsWith("service_") || s?.reason === "selection_required" ? { detail: s.reason } : {};
       if (s?.status === "AMBIGUOUS") return { slot: name, reason: "ambiguous", ...(s.candidates ? { candidates: s.candidates } : {}), ...detail };
       if (s?.status === "INVALID") return { slot: name, reason: "invalid", ...(s.candidates && s.reason?.startsWith("service_") ? { candidates: s.candidates } : {}), ...detail };
     }
     return { slot: r.ask, reason: "missing" };
   }
   return null;
+}
+
+/**
+ * Datos que el objetivo exige EN ESTE estado: los obligatorios + los condicionales que el backend puso en juego
+ * (FASE 8: p. ej. "¿cuál de tus citas?" tras listar varias).
+ */
+export function goalSlots(g: GoalRequirement, state: ConversationState): readonly RequiredSlot[] {
+  const extra = (g.conditional ?? []).filter((s) => state.slots[s] && !g.required.some((r) => r.anyOf.includes(s)));
+  return extra.length === 0 ? g.required : [...g.required, ...extra.map((s) => ({ key: s, anyOf: [s], ask: s }))];
 }
 
 /** Slots obligatorios sin valor usable (MISSING derivado; nunca se guarda). */
@@ -42,7 +51,7 @@ export interface EvaluationContext {
   /** Intents del turno (para disparar una consulta pedida explícitamente, p. ej. disponibilidad). */
   turnIntents: ReadonlySet<UnderstandingIntent>;
   /** Pregunta informativa mientras hay otro objetivo en curso: se responde con una consulta y se sigue. */
-  sideQuestion: "information" | "quote" | null;
+  sideQuestion: "information" | "quote" | "product" | null;
 }
 
 export type EvaluationResult =
@@ -63,7 +72,13 @@ function lookupRequest(state: ConversationState, req: AgentRequirements, g: Goal
 }
 
 function sideRequest(state: ConversationState, req: AgentRequirements, ctx: EvaluationContext): ActionRequest | null {
-  const action = ctx.sideQuestion === "quote" && req.quoteAction && (isSlotUsable(state.slots.product) || isSlotUsable(state.slots.service)) ? req.quoteAction : req.informationAction;
+  const productAction = req.goals.product.supported && isSlotUsable(state.slots.product) ? req.goals.product.action : null;
+  const action =
+    ctx.sideQuestion === "quote" && req.quoteAction && (isSlotUsable(state.slots.product) || isSlotUsable(state.slots.service))
+      ? req.quoteAction
+      : ctx.sideQuestion === "product" && productAction
+        ? productAction
+        : req.informationAction;
   if (!ctx.sideQuestion || !action) return null;
   const built = buildActionRequest({ state, requirements: req, action, purpose: "lookup", requiresConfirmation: false, confirmationId: null, now: ctx.now });
   if (!built.ok || (state.lastLookup?.action === action && state.lastLookup.argsHash === built.argsHash)) return null;
@@ -98,7 +113,7 @@ export function evaluateGoal(state: ConversationState, req: AgentRequirements, c
   const side = sideRequest(state, req, ctx);
   if (side) return collecting(null, side);
 
-  const problem = firstSlotProblem(state, g.required);
+  const problem = firstSlotProblem(state, goalSlots(g, state));
   if (problem) return collecting(problem, lookupRequest(state, req, g, problem, ctx));
   if (state.proposalRejected) return collecting(null);
 
@@ -173,7 +188,7 @@ export function determineNextStep(state: ConversationState, req: AgentRequiremen
       const g = state.goal ? req.goals[state.goal.kind] : null;
       if (!g) return { kind: "RESPOND", intent: state.currentIntent?.intent ?? null };
       if (!g.supported) return { kind: "UNSUPPORTED", goal: g.goal, reason: g.unsupportedReason ?? "no_runtime_action", handoffAvailable: req.handoff.supported };
-      const problem = firstSlotProblem(state, g.required);
+      const problem = firstSlotProblem(state, goalSlots(g, state));
       if (problem) {
         const attempt = state.lastQuestion?.slot === problem.slot ? state.lastQuestion.count : 1;
         return { kind: "ASK_FOR_INFORMATION", slot: problem.slot, reason: problem.reason, ...(problem.candidates ? { candidates: problem.candidates } : {}), ...(problem.detail ? { detail: problem.detail } : {}), attempt };

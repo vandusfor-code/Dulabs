@@ -70,7 +70,7 @@ export function deriveOnboardingStatus(i: StatusInput): StatusResult {
 }
 
 export interface ChecklistItem {
-  id: "configuracion" | "datos" | "publicado" | "plan" | "whatsapp" | "numero_libre";
+  id: "configuracion" | "datos" | "publicado" | "plan" | "whatsapp" | "numero_libre" | "motor";
   ok: boolean;
   label: string;
   detail?: string;
@@ -84,6 +84,8 @@ export interface ChecklistInput {
   publishedUpToDate: boolean;
   hasActivePlan: boolean;
   numbers: WhatsAppNumberInfo[];
+  /** FASE 8 — bloqueos del motor que atenderá la versión publicada (capacidades, IA, artefacto). */
+  engineBlockers?: readonly string[];
 }
 
 /** "¿Se puede activar?" con razones. Activar solo se permite con TODO en verde (el servidor lo vuelve a exigir). */
@@ -110,5 +112,8 @@ export function buildChecklist(i: ChecklistInput): { items: ChecklistItem[]; rea
       step: "activar",
     },
   ];
+  if (i.engineBlockers) {
+    items.push({ id: "motor", ok: i.engineBlockers.length === 0, label: "El motor puede ejecutar todo lo que activaste", ...(i.engineBlockers.length > 0 ? { detail: i.engineBlockers[0] } : {}), step: "activar" });
+  }
   return { items, readyToActivate: items.every((x) => x.ok) };
 }

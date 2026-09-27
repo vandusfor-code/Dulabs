@@ -14,6 +14,72 @@ import { planDelTenant } from "@/lib/plan-limits";
 import { createSupabaseAgentConfigStore } from "@/lib/agente/config";
 import type { ActivationGateDeps } from "@/lib/agent-compiler/lifecycle/activation-gate";
 import { deriveAgentLifecycle, type AgentLifecycle } from "@/lib/agent-compiler/lifecycle/lifecycle";
+import type { BusinessAgentSpec } from "@/lib/agent-compiler/spec/types";
+import { compileLegacySpec } from "@/lib/agent-compiler/business-model/compile";
+import type { CompiledAgentArtifact } from "@/lib/agent-compiler/business-model/artifact";
+import { isEngineKillSwitchOn, selectAgentEngine } from "@/lib/agent-compiler/runtime/production/engine-selection";
+import { understandingProviderConfigured } from "@/lib/agent-compiler/understanding/provider";
+import { buildCapabilityMatrix, evaluateEngineReadiness, type CredentialFacts, type EngineReport, type IntegrationFacts } from "@/lib/agent-compiler/lifecycle/capability-matrix";
+
+/** ¿Existe la tabla de recordatorios (migración 20261127000000 aplicada)? Solo lectura, sin datos. */
+export async function remindersStoreAvailable(supabase: SupabaseClient): Promise<boolean> {
+  const { error } = await supabase.from("dulabs_ba_reminders").select("id", { count: "exact", head: true }).limit(1);
+  return !error;
+}
+
+/** Credenciales: SOLO presencia (nunca el valor). */
+export async function credentialFacts(supabase: SupabaseClient, tenantId: string, env: Record<string, string | undefined> = process.env): Promise<CredentialFacts> {
+  const { data } = await supabase.from("dulabs_clientes_config").select("meta_permanent_token").eq("id_tenant", tenantId).limit(5);
+  const rows = (data ?? []) as Array<{ meta_permanent_token: string | null }>;
+  return {
+    geminiKey: understandingProviderConfigured(env),
+    nylasApiKey: Boolean(env.NYLAS_API_KEY?.trim()),
+    whatsappToken: rows.some((r) => Boolean(r.meta_permanent_token)) || Boolean(env.META_ACCESS_TOKEN?.trim()),
+  };
+}
+
+/**
+ * Matriz + readiness del motor para una versión (Spec publicado) con los hechos REALES del tenant. La MISMA función
+ * alimenta el gate de activación y la pantalla (no hay dos verdades).
+ */
+export async function evaluateEngineReport(
+  supabase: SupabaseClient,
+  tenantId: string,
+  flowId: string,
+  input: { publishedSpec: BusinessAgentSpec | null; draftSpec?: BusinessAgentSpec | null; agentActive?: boolean; env?: Record<string, string | undefined> },
+): Promise<EngineReport> {
+  const env = input.env ?? process.env;
+  // "Habilitada" = lo que la persona configuró (borrador); "publicada" y el motor = lo que sirve producción.
+  const current = input.draftSpec ?? input.publishedSpec;
+  const served = input.publishedSpec ?? current;
+  if (!current || !served) throw new Error("engine_report_without_spec");
+  const engine = selectAgentEngine({ tenantId, spec: served, env });
+  let artifact: CompiledAgentArtifact | null = null;
+  if (input.publishedSpec) {
+    const compiled = compileLegacySpec(input.publishedSpec, { tenantId, agentId: flowId, versionRef: "activation-check", publishedVersion: null });
+    if (compiled.ok) artifact = compiled.artifact;
+  }
+  const [facts, reminders, credentials, numbers] = await Promise.all([
+    loadReadinessFacts(supabase, tenantId, current),
+    current.runtime?.reminders?.enabled || served.runtime?.reminders?.enabled ? remindersStoreAvailable(supabase) : Promise.resolve(false),
+    credentialFacts(supabase, tenantId, env),
+    supabase.from("dulabs_clientes_config").select("phone_number_id", { count: "exact", head: true }).eq("id_tenant", tenantId),
+  ]);
+  const integration: IntegrationFacts = {
+    calendarConnected: facts.calendarConnected,
+    activeServices: facts.activeServices,
+    activeProducts: facts.activeProducts,
+    hasKnowledge: facts.hasKnowledge,
+    whatsappConnected: (numbers.count ?? 0) > 0,
+    remindersStore: reminders,
+    // Un cron no se puede verificar desde la app: siempre "no verificado" hasta que operación lo confirme.
+    remindersDispatchVerified: false,
+  };
+  const matrix = buildCapabilityMatrix({ spec: current, published: artifact, engine: engine.engine, facts: integration, agentActive: Boolean(input.agentActive) });
+  const servedMatrix = served === current ? matrix : buildCapabilityMatrix({ spec: served, published: artifact, engine: engine.engine, facts: integration, agentActive: Boolean(input.agentActive) });
+  const readiness = evaluateEngineReadiness({ spec: served, engine: engine.engine, artifactOk: input.publishedSpec ? Boolean(artifact) : true, credentials, killSwitchOn: isEngineKillSwitchOn(tenantId, env), matrix: servedMatrix });
+  return { engine, matrix, readiness };
+}
 
 /** Readiness de una versión con los hechos reales del tenant: la MISMA evaluación en publicar, rollback y activar. */
 export async function evaluateVersionReadiness(supabase: SupabaseClient, tenantId: string, version: AgentVersionRow): Promise<ReadinessReport> {
@@ -45,6 +111,10 @@ export function createSupabaseActivationGateDeps(supabase: SupabaseClient, store
       return (await planDelTenant(supabase, tenantId)).id !== "sin_plan";
     },
     otherEngineOnNumber: (phoneNumberId) => otroMotorEnNumero(supabase, phoneNumberId),
+    async engineReadiness(tenantId, version) {
+      const report = await evaluateEngineReport(supabase, tenantId, version.flowId, { publishedSpec: version.spec });
+      return report.readiness.blockers.map((b) => b.message);
+    },
   };
 }
 

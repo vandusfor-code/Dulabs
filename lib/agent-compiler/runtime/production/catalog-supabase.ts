@@ -13,14 +13,15 @@ export function createSupabaseServiceTableReader(supabase: SupabaseClient): Serv
   return async (tenantId) => {
     const { data, error } = await supabase
       .from("dulabs_servicios")
-      .select("nombre, duracion_min")
+      .select("nombre, duracion_min, precio")
       .eq("id_tenant", tenantId)
       .eq("activo", true)
       .order("nombre", { ascending: true })
       .limit(MAX_CATALOG_SERVICES);
     if (error) throw new Error(`catalog_read_failed:${error.code ?? "unknown"}`);
-    return ((data ?? []) as Array<{ nombre: string; duracion_min: number | null }>)
+    return ((data ?? []) as Array<{ nombre: string; duracion_min: number | null; precio?: number | null }>)
       .filter((r) => typeof r.nombre === "string" && r.nombre.trim())
-      .map((r) => ({ name: r.nombre.trim(), ...(typeof r.duracion_min === "number" ? { durationMinutes: r.duracion_min } : {}) }));
+      // FASE 8: precio real (null = sin precio fijo) para responder "¿cuánto cuesta?" con datos del negocio.
+      .map((r) => ({ name: r.nombre.trim(), ...(typeof r.duracion_min === "number" ? { durationMinutes: r.duracion_min } : {}), ...(typeof r.precio === "number" ? { price: r.precio } : r.precio === null ? { price: null } : {}) }));
   };
 }

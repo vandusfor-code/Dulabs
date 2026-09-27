@@ -26,6 +26,22 @@ import { loadActiveArtifact, type BusinessModelStore } from "@/lib/agent-compile
 import { createSupabaseBusinessModelStore } from "@/lib/agent-compiler/business-model/store-supabase";
 import { catalogPortForArtifact } from "@/lib/agent-compiler/conversation/entities";
 import { createSupabaseServiceTableReader } from "@/lib/agent-compiler/runtime/production/catalog-supabase";
+import { createNativeActionHandler } from "@/lib/agent-compiler/actions/native/handler";
+import { createSupabaseLeadContactStore } from "@/lib/agent-compiler/actions/native/leads";
+import { createSupabaseReminderStore } from "@/lib/agent-compiler/actions/native/reminders";
+import type { ProductInventoryPort } from "@/lib/agent-compiler/actions/native/products";
+import { createSupabaseCatalogStore } from "@/lib/business-agent-catalog-store";
+
+/** FASE 8 — inventario REAL del tenant (dulabs_inventario_productos vía el store de catálogo del Business Agent). */
+export function createSupabaseProductInventory(supabase: SupabaseClient): ProductInventoryPort {
+  const store = createSupabaseCatalogStore(supabase);
+  return {
+    async list(tenantId) {
+      const rows = await store.listarProductos(tenantId);
+      return rows.map((r) => ({ name: r.nombre, price: r.precio, ...(typeof r.stock === "number" ? { stock: r.stock } : {}) }));
+    },
+  };
+}
 
 export interface ArtifactResolutionLog {
   tenantId: string;
@@ -123,6 +139,7 @@ export function createProductionConversationRuntime(input: {
         spec: input.spec,
       });
       const provider = productionUnderstandingProvider();
+      const reminders = createSupabaseReminderStore(input.supabase);
       const actionExecutor = createDefaultExecutorRegistry(input.supabase).resolve("action");
       const runtime = createConversationRuntime({
         service: {
@@ -138,8 +155,22 @@ export function createProductionConversationRuntime(input: {
         engine: createActionEngine({
           store: createSupabaseActionExecutionStore(input.supabase),
           handler: (request, signal) => actionExecutor.dispatch(request, { tenantId: request.tenantId, internal: true }, signal),
+          // FASE 8 — acciones nativas: solo se crean los puertos de lo que el artefacto publicado habilitó.
+          native: createNativeActionHandler({
+            ...(artifact.actions.ba_consultar_producto ? { products: createSupabaseProductInventory(input.supabase) } : {}),
+            ...(artifact.actions.ba_guardar_lead ? { leads: createSupabaseLeadContactStore(input.supabase) } : {}),
+            ...(artifact.actions.ba_programar_recordatorio ? { reminders } : {}),
+          }),
         }),
         artifact,
+        ...(artifact.reminders.enabled
+          ? {
+              reminders: {
+                appointmentCancelled: async (conversationId: string, anchor: string | null) => void (await reminders.cancel(input.tenantId, conversationId, anchor)),
+                appointmentMoved: async (conversationId: string, anchor: string | null, start: string) => void (await reminders.reschedule(input.tenantId, conversationId, anchor, start, artifact.reminders.offsetMinutes)),
+              },
+            }
+          : {}),
         send: (text) =>
           input.gateSink.sendMessage({ tenantId: input.tenantId, conversation: { phoneNumberId: input.phoneNumberId, telefonoCliente: input.telefonoCliente }, wamid: input.wamid, text }),
       });

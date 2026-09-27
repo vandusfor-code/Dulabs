@@ -60,7 +60,7 @@ const EDITABLE_SPEC_KEYS = [
 ] as const;
 
 /** Claves que el cliente JAMÁS puede enviar -- gestionadas 100% por el servidor. */
-const FORBIDDEN_TOP_LEVEL_KEYS = ["schemaVersion", "metadata", "tenantId", "tenant_id", "id_tenant", "tenant"];
+const FORBIDDEN_TOP_LEVEL_KEYS = ["schemaVersion", "metadata", "tenantId", "tenant_id", "id_tenant", "tenant", "runtime"];
 
 export function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -221,6 +221,10 @@ export async function createOrUpdateDraft(
   const now = new Date().toISOString();
   const nextSpecVersion = (latest?.versionNumber ?? 0) + 1;
   const spec = buildFullSpec(guard.editable, { specVersion: nextSpecVersion, now, authorId: params.userId }) as BusinessAgentSpec;
+  // FASE 8 — el motor publicado y su configuración son del SERVIDOR: una edición desde el editor avanzado los hereda
+  // de la versión anterior (nunca los borra en silencio ni deja que el cliente los elija).
+  const inherited = latest ? (await deps.store.getVersion(params.tenantId, latest.flowVersionId))?.spec.runtime : undefined;
+  if (inherited) spec.runtime = inherited;
 
   const compiled = await compileAndCreateDraftVersion(deps, { tenantId: params.tenantId, spec, createdBy: params.userId });
   if (!compiled.ok) {

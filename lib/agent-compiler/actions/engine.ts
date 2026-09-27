@@ -76,6 +76,8 @@ export interface ActionEngineEvent {
 export interface ActionEngineDeps {
   store: ActionExecutionStore;
   handler: ActionHandler;
+  /** FASE 8 — handler de las acciones NATIVAS del Business Agent (actions/native/handler.ts). */
+  native?: ActionHandler;
   clock?: () => Date;
   sleep?: (ms: number) => Promise<void>;
   log?: (event: ActionEngineEvent) => void;
@@ -171,7 +173,7 @@ function result(input: {
     idempotencyKey: input.request?.id && /^[a-f0-9]{32}$/.test(input.request.id) ? input.request.id : ZERO_KEY,
     attempt: input.attempt,
     replayed: input.replayed ?? false,
-    data: (input.data ?? {}) as ActionResult["data"],
+    data: (input.data ?? input.error?.data ?? {}) as ActionResult["data"],
     error: input.error ? { code: input.error.code, reason: input.error.reason, retryable: input.error.retryable, ambiguous: input.error.ambiguous } : null,
     invalidSlots: input.error?.invalidSlots ?? [],
     durationMs: Math.max(0, input.now - input.started),
@@ -227,7 +229,8 @@ export function validateActionRequest(raw: unknown, ctx: ActionExecutionContext,
   const entry = Object.prototype.hasOwnProperty.call(artifact.actions, request.action) ? artifact.actions[request.action] : undefined;
   if (!otherVersion) {
     const backing = CAPABILITY_BACKING[def.capability];
-    if (!entry || !backing.available || !backing.actions.includes(request.action as never)) {
+    // FASE 8: una acción nativa no está en el respaldo del grafo; la autoriza SOLO su entrada en el artefacto publicado.
+    if (!entry || (!def.native && (!backing.available || !backing.actions.includes(request.action as never)))) {
       return { ok: false, action, error: rejectWith("UNAUTHORIZED", "CAPABILITY_DISABLED") };
     }
     if (def.schedulingProvider && artifact.booking?.provider !== def.schedulingProvider) {
@@ -366,13 +369,15 @@ export function createActionEngine(deps: ActionEngineDeps) {
         nodeId: `ba-action:${step.action}`,
         kind: "action",
         attempt,
-        payload: { ...step.buildPayload(request, { userMessage: ctx.userMessage, previous }), ...modelPayload(request, ctx.artifact, step.action) },
+        payload: { ...step.buildPayload(request, { userMessage: ctx.userMessage, previous, agentId: ctx.agentId }), ...modelPayload(request, ctx.artifact, step.action) },
         action: { ...config, actionType: step.action } as ActionNodeConfig,
         conversation: ctx.conversation,
       };
       let r: EffectDispatchResult | "timeout";
       try {
-        r = await withTimeout((signal) => deps.handler(dispatch, signal), def.timeoutMs);
+        const handler = def.native ? deps.native : deps.handler;
+        if (!handler) return { ok: false, failure: rejectWith("INTERNAL_ERROR", "NATIVE_HANDLER_MISSING") };
+        r = await withTimeout((signal) => handler(dispatch, signal), def.timeoutMs);
       } catch {
         // Excepción del handler: en una escritura no se sabe si el efecto ocurrió.
         return { ok: false, failure: { code: "EXTERNAL_ERROR", reason: "HANDLER_EXCEPTION", retryable: !def.mutation, ambiguous: def.mutation && isMain, invalidSlots: [] } };
@@ -384,7 +389,7 @@ export function createActionEngine(deps: ActionEngineDeps) {
       const data = (r.data ?? {}) as Record<string, unknown>;
       if (!isMain) {
         Object.assign(previous, data);
-        const selection = step.action === "listar_citas_cliente" ? appointmentSelection(previous) : null;
+        const selection = step.action === "listar_citas_cliente" ? appointmentSelection(previous, request) : null;
         if (selection) return { ok: false, failure: selection };
         continue;
       }
@@ -524,7 +529,46 @@ export function createActionEngine(deps: ActionEngineDeps) {
     }
   }
 
-  return { execute };
+  /**
+   * FASE 8 — VERIFICA una escritura de desenlace desconocido con una LECTURA al proveedor (nunca escribe, nunca
+   * re-ejecuta). found = el efecto existe (p. ej. la cita está en la agenda); not_found = no ocurrió; unknown = no se
+   * puede saber (el proveedor falló o la acción no tiene verificación): se deja para una persona.
+   */
+  async function verifyOutcome(request: ActionRequest, ctx: ActionExecutionContext): Promise<VerificationResult> {
+    const def = getActionDefinition(request.action);
+    const verifier = def?.verifyOutcome;
+    if (!def || !verifier) return { outcome: "unknown", reason: "NO_VERIFIER" };
+    if (ctx.state.scope.tenantId !== ctx.tenantId || ctx.state.scope.conversationId !== conversationIdOf(ctx.conversation)) return { outcome: "unknown", reason: "SCOPE_MISMATCH" };
+    const config = ctx.artifact.actions[request.action]?.steps[verifier.step.action] ?? {};
+    const dispatch: EffectDispatchRequest = {
+      effectId: `${request.id}:verify:${verifier.step.action}`,
+      executionRowId: `ba-verify:${request.id}`,
+      executionLogicalId: `ba-verify:${request.id}`,
+      tenantId: ctx.tenantId,
+      nodeId: `ba-verify:${verifier.step.action}`,
+      kind: "action",
+      attempt: 1,
+      payload: verifier.step.buildPayload(request, { userMessage: "", previous: {}, agentId: ctx.agentId }),
+      action: { ...config, actionType: verifier.step.action } as ActionNodeConfig,
+      conversation: ctx.conversation,
+    };
+    let r: EffectDispatchResult | "timeout";
+    try {
+      r = await withTimeout((signal) => deps.handler(dispatch, signal), def.timeoutMs);
+    } catch {
+      return { outcome: "unknown", reason: "VERIFY_EXCEPTION" };
+    }
+    if (r === "timeout") return { outcome: "unknown", reason: "VERIFY_TIMEOUT" };
+    if (!r.success) return /sin_citas/.test(r.error ?? "") ? { outcome: "not_found", reason: "NO_APPOINTMENTS" } : { outcome: "unknown", reason: "VERIFY_FAILED" };
+    const m = verifier.match(request, (r.data ?? {}) as Record<string, unknown>);
+    return m.outcome === "found" ? { outcome: "found", reason: "FOUND", ...(m.booking ? { booking: m.booking } : {}) } : { outcome: m.outcome, reason: m.outcome === "not_found" ? "NOT_FOUND" : "UNDETERMINED" };
+  }
+
+  return { execute, verifyOutcome };
 }
+
+export type VerificationResult =
+  | { outcome: "found"; reason: string; booking?: { appointmentRef: string | null; start: string; service: string | null } }
+  | { outcome: "not_found" | "unknown"; reason: string };
 
 export type ActionEngine = ReturnType<typeof createActionEngine>;

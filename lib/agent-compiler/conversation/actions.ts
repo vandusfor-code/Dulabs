@@ -19,6 +19,7 @@ const SLOT_TO_ARGUMENT: Readonly<Record<string, string>> = {
   time: "hora",
   customer_name: "nombreCliente",
   notes: "notas",
+  product: "producto",
 };
 
 function stableStringify(value: unknown): string {
@@ -39,6 +40,45 @@ export function sha(value: string, length = 32): string {
 export function slotText(state: ConversationState, name: string): string | undefined {
   const slot = state.slots[name];
   return isSlotUsable(slot) ? slotDisplayValue(slot.value) : undefined;
+}
+
+/**
+ * FASE 8 — restricciones que el BACKEND deriva del estado para acciones concretas (nunca del texto del modelo):
+ *   cancelar/reprogramar  → `cita`: id de la cita que el cliente eligió de la lista que mostró el backend
+ *   consultar producto    → `contexto`: último producto resuelto ("¿hay talla M?" se busca también como "<producto> talla M")
+ *   guardar lead          → `interes`: lo que el cliente consultó (si el negocio lo pidió)
+ *   programar recordatorio → la cita anclada (inicio + referencia) que el agente agendó en esta conversación
+ */
+function derivedConstraints(state: ConversationState, req: AgentRequirements, action: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  switch (action) {
+    case "cancelar_cita_cliente":
+    case "reprogramar_cita_cliente": {
+      const cita = slotText(state, "appointment");
+      if (cita) out.cita = cita;
+      break;
+    }
+    case "ba_consultar_producto": {
+      const ctx = state.focus?.product;
+      if (ctx && ctx !== slotText(state, "product")) out.contexto = ctx.slice(0, 200);
+      break;
+    }
+    case "ba_guardar_lead": {
+      const interes = req.lead?.captureInterest ? (slotText(state, "product") ?? slotText(state, "service") ?? state.focus?.product ?? state.lastBooking?.service ?? undefined) : undefined;
+      if (interes) out.interes = interes.slice(0, 200);
+      break;
+    }
+    case "ba_programar_recordatorio": {
+      const b = state.lastBooking;
+      if (b) {
+        out.citaInicio = b.start;
+        out.citaRef = (b.appointmentRef ?? b.actionId).slice(0, 120);
+        if (b.service) out.citaServicio = b.service.slice(0, 200);
+      }
+      break;
+    }
+  }
+  return out;
 }
 
 export type BuildActionResult = { ok: true; request: ActionRequest; argsHash: string } | { ok: false; code: "action_contract_missing" | "action_arguments_invalid" };
@@ -76,6 +116,8 @@ export function buildActionRequest(input: {
   if (isSlotUsable(range)) constraints.franjaHoraria = slotDisplayValue(range.value);
   if (!accepted.has("fecha") && slotText(state, "date")) constraints.fecha = slotText(state, "date")!;
   if (!accepted.has("hora") && slotText(state, "time")) constraints.hora = slotText(state, "time")!;
+
+  Object.assign(constraints, derivedConstraints(state, input.requirements, input.action));
 
   const customerData: Record<string, string> = {};
   for (const [slot, fieldKey] of Object.entries(input.requirements.customerFieldBySlot)) {

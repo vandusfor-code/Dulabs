@@ -10,7 +10,7 @@ import type { BusinessAgentSpec } from "@/lib/agent-compiler/spec/types";
 import { compileBusinessAgent } from "@/lib/agent-compiler/compile";
 import { compileIRToFlowDefinition } from "@/lib/agent-compiler/flow-compiler";
 import type { FlowDefinition } from "@/lib/flow/types";
-import { createActionEngine, type ActionEngineEvent, type ActionExecutionContext } from "@/lib/agent-compiler/actions/engine";
+import { createActionEngine, type ActionEngineEvent, type ActionExecutionContext, type ActionHandler } from "@/lib/agent-compiler/actions/engine";
 import { createInMemoryActionStore, type InMemoryActionStore } from "@/lib/agent-compiler/actions/testing/in-memory-action-store";
 import type { ActionExecutionStore } from "@/lib/agent-compiler/actions/store";
 import type { ConversationState } from "@/lib/agent-compiler/conversation/model";
@@ -77,7 +77,7 @@ export function createFakeHandler(): FakeHandler {
   };
 }
 
-export function createTestEngine(opts: { store?: ActionExecutionStore; handler?: FakeHandler; sleep?: (ms: number) => Promise<void> } = {}) {
+export function createTestEngine(opts: { store?: ActionExecutionStore; handler?: FakeHandler; sleep?: (ms: number) => Promise<void>; native?: ActionHandler } = {}) {
   const store = opts.store ?? createInMemoryActionStore();
   const fake = opts.handler ?? createFakeHandler();
   const events: ActionEngineEvent[] = [];
@@ -85,6 +85,7 @@ export function createTestEngine(opts: { store?: ActionExecutionStore; handler?:
   const engine = createActionEngine({
     store,
     handler: fake.handler,
+    ...(opts.native ? { native: opts.native } : {}),
     clock: () => new Date("2026-09-26T15:10:00Z"),
     sleep: opts.sleep ?? (async (ms) => void sleeps.push(ms)),
     log: (e) => events.push(e),

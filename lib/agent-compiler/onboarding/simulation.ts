@@ -43,6 +43,8 @@ export interface SimulationDeps {
   readHandler?: ActionHandler;
   /** FASE 7 — servicios reales del negocio (solo lectura) para resolver "corte" igual que en producción. */
   readServices?: ServiceTableReader;
+  /** FASE 8 — lecturas NATIVAS (consulta de producto contra el inventario real). Las escrituras nativas se simulan. */
+  nativeReadHandler?: ActionHandler;
   /** FASE 7 — traza del turno simulado (marcada simulation=true). */
   trace?: (trace: BusinessAgentTurnTrace) => void;
   now?(): Date;
@@ -161,7 +163,7 @@ export async function runSimulationTurn(
       clock: deps.now,
       log: () => {},
     },
-    engine: createActionEngine({ store: ephemeralExecutionStore(), handler: readOnlyHandler(deps.readHandler), clock: deps.now, log: () => {} }),
+    engine: createActionEngine({ store: ephemeralExecutionStore(), handler: readOnlyHandler(deps.readHandler), native: readOnlyHandler(deps.nativeReadHandler), clock: deps.now, log: () => {} }),
     artifact: input.artifact,
     simulation: true,
     ...(deps.trace ? { trace: deps.trace } : {}),

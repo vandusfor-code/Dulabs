@@ -18,7 +18,7 @@ import {
   type GoalKind,
   type SlotRecord,
 } from "@/lib/agent-compiler/conversation/model";
-import { goalForIntent, TRANSACTIONAL_GOALS, type AgentRequirements } from "@/lib/agent-compiler/conversation/requirements";
+import { goalForIntent, INFORMATIVE_GOALS, TRANSACTIONAL_GOALS, type AgentRequirements } from "@/lib/agent-compiler/conversation/requirements";
 import { buildActionRequest } from "@/lib/agent-compiler/conversation/actions";
 import { STALE_REQUEST_CATEGORY } from "@/lib/agent-compiler/conversation/model";
 import { evaluateGoal, type EvaluationContext } from "@/lib/agent-compiler/conversation/next-step";
@@ -43,13 +43,45 @@ export type ConversationInputEvent =
     }
   | { type: "UNDERSTANDING_FAILED"; eventId: string; at: string; category: string; code: string }
   | { type: "ACTION_STARTED"; eventId: string; at: string; actionId: string }
-  | { type: "ACTION_SUCCEEDED"; eventId: string; at: string; actionId: string; proposedSlots?: Record<string, NormalizedSlotValue> }
-  | { type: "ACTION_FAILED"; eventId: string; at: string; actionId: string; category: string; invalidSlots?: string[]; ambiguous?: boolean }
+  | {
+      type: "ACTION_SUCCEEDED";
+      eventId: string;
+      at: string;
+      actionId: string;
+      proposedSlots?: Record<string, NormalizedSlotValue>;
+      /** FASE 8 — opciones que el backend le mostró al cliente (horarios disponibles) para elegir "la segunda". */
+      offers?: OfferList;
+      /** FASE 8 — cita creada/movida por el backend (ancla de los recordatorios). */
+      booking?: { appointmentRef: string | null; start: string; service: string | null };
+      /** FASE 8 — producto que el backend resolvió en el inventario (contexto de "¿cuánto?"). */
+      focusProduct?: string;
+    }
+  | { type: "ACTION_FAILED"; eventId: string; at: string; actionId: string; category: string; invalidSlots?: string[]; ambiguous?: boolean; offers?: OfferList }
+  /** FASE 8 — resultado de VERIFICAR contra el proveedor una escritura de desenlace desconocido. */
+  | {
+      type: "OUTCOME_VERIFIED";
+      eventId: string;
+      at: string;
+      actionId: string;
+      found: boolean;
+      booking?: { appointmentRef: string | null; start: string; service: string | null };
+      /**
+       * Mensaje del cliente que se respondió con la verificación: queda CONSUMIDO (no se interpreta después). Así un
+       * "sí" dirigido a la operación vieja nunca confirma la propuesta nueva que el cliente todavía no vio.
+       */
+      messageId?: string;
+    }
   | { type: "HUMAN_TOOK_OVER"; eventId: string; at: string }
   | { type: "RESUMED"; eventId: string; at: string }
   | { type: "TIMEOUT"; eventId: string; at: string };
 
-export const SYSTEM_EVENT_TYPES = ["ACTION_STARTED", "ACTION_SUCCEEDED", "ACTION_FAILED", "HUMAN_TOOK_OVER", "RESUMED", "TIMEOUT"] as const;
+/** Opciones mostradas por el backend (valor normalizado + etiqueta que vio el cliente). */
+export interface OfferList {
+  slot: string;
+  options: Array<{ value: string; label: string }>;
+}
+
+export const SYSTEM_EVENT_TYPES = ["ACTION_STARTED", "ACTION_SUCCEEDED", "ACTION_FAILED", "OUTCOME_VERIFIED", "HUMAN_TOOK_OVER", "RESUMED", "TIMEOUT"] as const;
 
 /**
  * Vocabulario de eventos de dominio (lo que ocurrió en el turno). El "evento decisivo" de cada turno es la clave de
@@ -76,6 +108,7 @@ export const DOMAIN_EVENTS = [
   "RESUMED",
   "TIMEOUT",
   "UNDERSTANDING_FAILED",
+  "OUTCOME_VERIFIED",
 ] as const;
 export type DomainEvent = (typeof DOMAIN_EVENTS)[number];
 
@@ -119,6 +152,8 @@ export const TRANSITIONS: readonly TransitionRule[] = [
   { from: ["HANDED_OFF", "PAUSED"], event: "RESUMED", to: [...EVALUATED, "EXECUTING"], sideEffects: ["drop_proposal"] },
   { from: AGENT_CONTROLLED, event: "TIMEOUT", to: ["NEW", "EXECUTING"], sideEffects: ["reset_goal_slots"] },
   { from: ALL, event: "UNDERSTANDING_FAILED", to: ["SAME", "ERROR"], sideEffects: [] },
+  // FASE 8: una escritura de desenlace desconocido se VERIFICA antes de ofrecer repetirla (existe → completada).
+  { from: ["ERROR", "HANDOFF_PENDING", "HANDED_OFF", "PAUSED"], event: "OUTCOME_VERIFIED", to: ["COMPLETED", "SAME", ...EVALUATED], sideEffects: ["resolve_unknown_outcome"] },
 ];
 
 /**
@@ -184,6 +219,14 @@ function resetGoal(state: ConversationState, req: AgentRequirements): void {
   state.lastLookup = null;
   state.lastQuestion = null;
   state.proposalRejected = false;
+  state.offers = null;
+}
+
+/** FASE 8 — opciones mostradas por el backend: se guardan acotadas (lo mismo que vio el cliente). */
+function recordOffers(state: ConversationState, offers: OfferList | undefined): void {
+  if (!offers || !/^[a-z][a-z0-9_]{0,39}$/.test(offers.slot)) return;
+  const options = offers.options.filter((o) => o.value && o.label).slice(0, 10).map((o) => ({ value: o.value.slice(0, 200), label: o.label.slice(0, 200) }));
+  state.offers = options.length > 0 ? { slot: offers.slot, options, turn: state.turn } : null;
 }
 
 function display(v: NormalizedSlotValue): string {
@@ -197,7 +240,8 @@ function applySlots(state: ConversationState, u: StructuredUnderstanding, ev: Ex
   for (const [name, us] of Object.entries(u.slots) as Array<[string, UnderstoodSlot]>) {
     const existing = state.slots[name];
     // Mensaje fuera de orden: no pisa un valor aportado por un mensaje posterior.
-    if (existing && ev.at < existing.observedAt) {
+    // (Solo entre mensajes del cliente: un dato que puso el backend —p. ej. "elige una de tus citas"— nunca bloquea la respuesta.)
+    if (existing && existing.source === "CURRENT_MESSAGE" && ev.at < existing.observedAt) {
       events.add("STALE_MESSAGE");
       continue;
     }
@@ -390,21 +434,22 @@ function reduceMessage(prev: ConversationState, ev: Extract<ConversationInputEve
   const candidateGoals = intents.map((i) => goalForIntent(i, req)).filter((g): g is GoalKind => g !== null);
   // Con varias intenciones, el objetivo transaccional manda y la pregunta informativa se responde al lado.
   const primaryGoal = candidateGoals.find((g) => TRANSACTIONAL_GOALS.has(g)) ?? candidateGoals[0] ?? null;
-  const informative = candidateGoals.find((g) => g === "quote" || g === "information");
-  if (primaryGoal && informative && primaryGoal !== informative) sideQuestion = informative;
+  const informative = candidateGoals.find((g) => INFORMATIVE_GOALS.has(g));
+  if (primaryGoal && informative && primaryGoal !== informative) sideQuestion = informative as NonNullable<EvaluationContext["sideQuestion"]>;
   if (primaryGoal) {
     if (!s.goal) {
       s.goal = { id: goalId(ev.eventId, primaryGoal), kind: primaryGoal, intent: intents.find((i) => goalForIntent(i, req) === primaryGoal) ?? intents[0]!, startedAt: ctx.now, startedTurn: s.turn };
       s.proposalRejected = false;
       events.add("GOAL_STARTED");
     } else if (s.goal.kind !== primaryGoal) {
-      if (TRANSACTIONAL_GOALS.has(primaryGoal) && !TRANSACTIONAL_GOALS.has(s.goal.kind)) {
+      // FASE 8: un objetivo que terminó en ERROR (sin desenlace desconocido: ese caso retorna antes) no bloquea pedir otra cosa.
+      if (TRANSACTIONAL_GOALS.has(primaryGoal) && (!TRANSACTIONAL_GOALS.has(s.goal.kind) || s.status === "ERROR")) {
         s.goal = { id: goalId(ev.eventId, primaryGoal), kind: primaryGoal, intent: u.intent.primary.intent, startedAt: ctx.now, startedTurn: s.turn };
         s.pendingConfirmation = null;
         s.pendingAction = null;
         events.add("GOAL_STARTED");
-      } else if (primaryGoal === "information" || primaryGoal === "quote") {
-        sideQuestion = primaryGoal;
+      } else if (INFORMATIVE_GOALS.has(primaryGoal)) {
+        sideQuestion = primaryGoal as NonNullable<EvaluationContext["sideQuestion"]>;
       }
     }
   }
@@ -412,6 +457,12 @@ function reduceMessage(prev: ConversationState, ev: Extract<ConversationInputEve
   // 5. Datos del mensaje.
   const changed = applySlots(s, u, ev, req, ctx.now, events, prev);
   reconcileTimeWithRange(s, ctx.now, events);
+  // FASE 8 — "¿cuánto?" tras consultar un producto: se refiere al ÚLTIMO producto que el backend resolvió (no a lo que el
+  // modelo recuerde). Solo si el mensaje no nombra otro.
+  if (s.goal && (s.goal.kind === "product" || s.goal.kind === "quote") && !s.slots.product && !s.slots.service && s.focus?.product) {
+    s.slots.product = { status: "KNOWN", value: { kind: "text", text: s.focus.product }, source: "SYSTEM", normalizedBy: "conversation_focus", scope: "goal", observedAt: ev.at, updatedAt: ctx.now, turn: s.turn };
+    events.add("SLOT_UPDATED");
+  }
   if (changed) s.proposalRejected = false;
 
   // 6. Confirmación / rechazo: solo valen contra una propuesta pendiente y compatible (y con confianza suficiente).
@@ -482,6 +533,8 @@ function systemEvent(prev: ConversationState, ev: Exclude<ConversationInputEvent
         s.status = "HANDED_OFF";
         return finish(s, from, events, ctx.now);
       }
+      if (ev.booking) s.lastBooking = { actionId: action.id, appointmentRef: ev.booking.appointmentRef?.slice(0, 120) ?? null, start: ev.booking.start, service: ev.booking.service?.slice(0, 200) ?? null, at: ctx.now };
+      if (ev.focusProduct) s.focus = { product: ev.focusProduct.slice(0, 200) };
       if (HUMAN_CONTROLLED_STATUSES.has(from)) return finish(s, from, events, ctx.now);
       if (action.purpose === "fulfill") {
         s.status = "COMPLETED";
@@ -490,6 +543,7 @@ function systemEvent(prev: ConversationState, ev: Exclude<ConversationInputEvent
       }
       // lookup: sus resultados solo completan datos que faltan; nunca pisan lo que dijo el cliente.
       s.lastLookup = { action: action.action, argsHash: lookupHash(prev, req, action.action, ctx.now), outcome: "succeeded" };
+      recordOffers(s, ev.offers);
       for (const [name, value] of Object.entries(ev.proposedSlots ?? {})) {
         if (s.slots[name] || !/^[a-z][a-z0-9_]{0,39}$/.test(name)) continue;
         s.slots[name] = { status: "KNOWN", value, source: "ACTION_RESULT", scope: "goal", observedAt: ev.at, updatedAt: ctx.now, turn: s.turn };
@@ -517,6 +571,17 @@ function systemEvent(prev: ConversationState, ev: Exclude<ConversationInputEvent
       if (ev.ambiguous && action.purpose !== "lookup") {
         s.status = "ERROR";
         s.lastActionResult = { ...s.lastActionResult!, category: OUTCOME_UNKNOWN };
+        // FASE 8: se conserva la solicitud para VERIFICAR con el proveedor (¿ocurrió?) antes de ofrecer repetirla.
+        s.unresolvedAction = { ...action, status: "executing" };
+        return finish(s, from, events, ctx.now);
+      }
+      // FASE 8: el backend necesita que el cliente ELIJA (p. ej. cuál de sus citas): se muestran las opciones reales y
+      // el dato queda por resolver; no es un error.
+      if (ev.offers && ev.offers.options.length > 0) {
+        recordOffers(s, ev.offers);
+        const slot = ev.offers.slot;
+        s.slots[slot] = { status: "AMBIGUOUS", value: null, candidates: ev.offers.options.map((o) => o.label.slice(0, 120)).slice(0, 10), reason: "selection_required", source: "ACTION_RESULT", scope: "goal", observedAt: ev.at, updatedAt: ctx.now, turn: s.turn };
+        applyEvaluation(s, req, baseCtx, events);
         return finish(s, from, events, ctx.now);
       }
       const markInvalid = () => {
@@ -543,6 +608,32 @@ function systemEvent(prev: ConversationState, ev: Exclude<ConversationInputEvent
         s.status = "ERROR";
         return finish(s, from, events, ctx.now);
       }
+      applyEvaluation(s, req, baseCtx, events);
+      return finish(s, from, events, ctx.now);
+    }
+    case "OUTCOME_VERIFIED": {
+      const pending = prev.unresolvedAction;
+      if (!pending || pending.id !== ev.actionId) return reject("no_unresolved_action", "action_mismatch");
+      events.add("OUTCOME_VERIFIED");
+      s.unresolvedAction = null;
+      if (ev.messageId) pushEventId(s, ev.messageId);
+      if (ev.found) {
+        // Sí ocurrió: la operación queda completada con lo que el proveedor confirma (nunca se repite).
+        s.lastActionResult = { actionId: pending.id, action: pending.action, outcome: "succeeded", category: null, at: ctx.now };
+        if (ev.booking) s.lastBooking = { actionId: pending.id, appointmentRef: ev.booking.appointmentRef?.slice(0, 120) ?? null, start: ev.booking.start, service: ev.booking.service?.slice(0, 200) ?? null, at: ctx.now };
+        if (HUMAN_CONTROLLED_STATUSES.has(from)) return finish(s, from, events, ctx.now);
+        s.status = "COMPLETED";
+        s.lastQuestion = null;
+        return finish(s, from, events, ctx.now);
+      }
+      // No ocurrió: se puede volver a proponer, pero como una operación NUEVA (otro objetivo = otra clave) y con una
+      // confirmación nueva del cliente. La ejecución vieja sigue registrada como desconocida en el Action Engine.
+      s.lastActionResult = { actionId: pending.id, action: pending.action, outcome: "failed", category: "VERIFIED_NOT_EXECUTED", at: ctx.now };
+      if (HUMAN_CONTROLLED_STATUSES.has(from)) return finish(s, from, events, ctx.now);
+      if (s.goal) s.goal = { ...s.goal, id: goalId(ev.eventId, s.goal.kind), startedAt: ctx.now, startedTurn: s.turn };
+      for (const [name, slot] of Object.entries(s.slots)) if (slot.status === "CONFIRMED") s.slots[name] = { ...slot, status: "KNOWN", updatedAt: ctx.now };
+      s.pendingConfirmation = null;
+      s.pendingAction = null;
       applyEvaluation(s, req, baseCtx, events);
       return finish(s, from, events, ctx.now);
     }
@@ -580,6 +671,7 @@ function systemEvent(prev: ConversationState, ev: Exclude<ConversationInputEvent
       events.add("TIMEOUT");
       if (from === "EXECUTING") return finish(s, from, events, ctx.now);
       resetGoal(s, req);
+      s.focus = null;
       s.status = "NEW";
       return finish(s, from, events, ctx.now);
     }

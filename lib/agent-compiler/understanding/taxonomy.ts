@@ -12,7 +12,8 @@
 //     pendiente (ver signals.confirmation en el contrato). Un "sí" suelto no confirma nada.
 //   - CORRECTION existe como intent (un mensaje que SOLO corrige: "mejor a las 5") y además como marca por slot.
 
-export const TAXONOMY_VERSION = "1.0.0";
+/** 1.1.0 (FASE 8): CONTACT_REQUEST y REMINDER_REQUEST (captura de interesados y recordatorios). */
+export const TAXONOMY_VERSION = "1.1.0";
 
 export const UNDERSTANDING_INTENTS = [
   "GREETING",
@@ -32,6 +33,8 @@ export const UNDERSTANDING_INTENTS = [
   "HUMAN_HANDOFF",
   "FOLLOW_UP",
   "CORRECTION",
+  "CONTACT_REQUEST",
+  "REMINDER_REQUEST",
   "UNKNOWN",
 ] as const;
 
@@ -65,6 +68,8 @@ export const INTENT_DEFINITIONS: Readonly<Record<UnderstandingIntent, IntentDefi
   HUMAN_HANDOFF: { description: "Pide hablar con una persona, asesor o humano.", expectedSlots: [] },
   FOLLOW_UP: { description: "Pregunta por el estado de algo ya pedido o reservado.", expectedSlots: [] },
   CORRECTION: { description: "Solo corrige un dato que dio antes (\"mejor a las 5\").", expectedSlots: [] },
+  CONTACT_REQUEST: { description: "Quiere que el negocio lo contacte o deja sus datos de contacto porque le interesa algo.", expectedSlots: [] },
+  REMINDER_REQUEST: { description: "Pide que le recuerden algo (su cita) en un momento.", expectedSlots: [] },
   UNKNOWN: { description: "No se puede determinar qué quiere, o el mensaje no tiene relación con el negocio.", expectedSlots: [] },
 };
 

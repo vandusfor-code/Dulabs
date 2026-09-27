@@ -17,6 +17,7 @@ import { BUSINESS_MODEL_SCHEMA_VERSION, type BusinessModel } from "@/lib/agent-c
 import { CAPABILITY_CATALOG, dependenciesOf, UBM_CAPABILITY_IDS, type UbmCapabilityId } from "@/lib/agent-compiler/business-model/capabilities";
 import { validateBusinessModel, type ModelError, type ResolvedCapabilities } from "@/lib/agent-compiler/business-model/validate";
 import { hoursToHandlerFormat, legacyModelFromSpec, type LegacyAdapterResult } from "@/lib/agent-compiler/business-model/legacy-adapter";
+import { effectiveCustomerFields, selectableResources } from "@/lib/agent-compiler/business-model/resources";
 import {
   ARTIFACT_COMPILER_VERSION,
   ARTIFACT_SCHEMA_VERSION,
@@ -56,7 +57,8 @@ function compileActions(model: BusinessModel, caps: ResolvedCapabilities, bookin
       const horario: Params = {};
       if (booking.businessHours) horario.businessHoursJson = JSON.stringify(booking.businessHours);
       horario.minNoticeMinutes = String(booking.minimumNoticeMinutes);
-      const fields = toCompiledFields(model.customerFields);
+      // FASE 8: la elección de recurso viaja como un dato más de la reserva (el handler lo valida contra las opciones).
+      const fields = toCompiledFields(effectiveCustomerFields(model));
       const bookParams: Params = { ...horario, ...(fields.length > 0 ? { customerFieldsJson: JSON.stringify(fields) } : {}) };
       add("buscar_disponibilidad_nylas_generico", "booking", { buscar_disponibilidad_nylas_generico: withParams(horario) });
       add(createAction, "booking", { [createAction]: withParams(bookParams) });
@@ -73,13 +75,19 @@ function compileActions(model: BusinessModel, caps: ResolvedCapabilities, bookin
   if (catalogParams && caps.quotes) add("calcular_cotizacion", "quotes", { calcular_cotizacion: { params: catalogParams } });
   if (caps.knowledge) add("buscar_conocimiento", "knowledge", { buscar_conocimiento: { params: { fuentes: caps.knowledge.config.sources.join(",") } } });
   if (caps.handoff) add("transferir_soporte", "handoff", { transferir_soporte: { pauseDurationHours: caps.handoff.config.pauseHours } });
+  // FASE 8 — acciones nativas del Business Agent.
+  if (caps.catalog?.config.includeProducts) add("ba_consultar_producto", "catalog", { ba_consultar_producto: { params: { moneda: model.identity.currency } } });
+  if (caps.lead_capture) {
+    add("ba_guardar_lead", "lead_capture", { ba_guardar_lead: { params: { fieldKeys: caps.lead_capture.config.fieldKeys.join(","), captureInterest: String(caps.lead_capture.config.captureInterest) } } });
+  }
+  if (caps.reminders && booking) add("ba_programar_recordatorio", "reminders", { ba_programar_recordatorio: { params: { offsetMinutes: String(caps.reminders.config.offsetMinutes), timezone: model.identity.timezone, tone: model.presentation?.tone ?? "cercano" } } });
   return actions;
 }
 
 /** Preguntas configuradas para cada dato del cliente, por slot. */
 function compileQuestions(model: BusinessModel): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const f of model.customerFields) {
+  for (const f of effectiveCustomerFields(model)) {
     if (!f.enabled) continue;
     const q = f.question?.trim() || WELL_KNOWN_FIELDS[f.key]?.question;
     if (q) out[CUSTOMER_FIELD_TO_UNIVERSAL_SLOT[f.key] ?? f.key] = q;
@@ -126,9 +134,9 @@ function compileValidated(model: BusinessModel, caps: ResolvedCapabilities, ctx:
     actions,
     booking,
     catalogAuthority: model.catalogAuthority,
-    services: model.services.filter((s) => s.active).map((s) => ({ id: s.id, name: s.name, durationMinutes: s.durationMinutes, bookable: s.bookingEnabled })),
+    services: model.services.filter((s) => s.active).map((s) => ({ id: s.id, name: s.name, durationMinutes: s.durationMinutes, bookable: s.bookingEnabled, ...(s.price ? { price: s.price.amount } : {}) })),
     requirements: deriveRequirements(requirementInputsFromModel(model)),
-    understanding: { businessName: model.identity.name, businessSlots: businessSlotsFromSpec({ customerData: { fields: model.customerFields } }) },
+    understanding: { businessName: model.identity.name, businessSlots: businessSlotsFromSpec({ customerData: { fields: effectiveCustomerFields(model) } }) },
     questions: compileQuestions(model),
     handoff: { enabled: Boolean(caps.handoff), pauseHours: caps.handoff?.config.pauseHours ?? 0, message: caps.handoff?.config.message?.trim() || DEFAULT_HANDOFF_MESSAGE },
     knowledge: {
@@ -137,6 +145,10 @@ function compileValidated(model: BusinessModel, caps: ResolvedCapabilities, ctx:
       noAnswerMessage: caps.knowledge?.config.noAnswerMessage?.trim() || DEFAULT_NO_ANSWER_MESSAGE,
     },
     policies: { offerHandoff: Boolean(caps.handoff) && model.policies.unsupportedRequest === "offer_handoff" },
+    presentation: { tone: model.presentation?.tone ?? "cercano", locale: model.identity.language },
+    resources: booking ? selectableResources(model) : [],
+    reminders: { enabled: Boolean(caps.reminders && booking), offsetMinutes: caps.reminders?.config.offsetMinutes ?? 0 },
+    leadCapture: { enabled: Boolean(caps.lead_capture), fieldKeys: caps.lead_capture ? [...caps.lead_capture.config.fieldKeys] : [], captureInterest: caps.lead_capture?.config.captureInterest ?? false },
     notes,
   };
   const executionFingerprint = executionFingerprintOf(content);

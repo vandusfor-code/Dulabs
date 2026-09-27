@@ -83,7 +83,7 @@ describe("FASE 7 — AI 1–10: conversación", () => {
     assert.equal((await p.say("corte", out("BOOKING_REQUEST", [S("service", "corte")]))).reply, "¿Para qué día?");
     assert.equal((await p.say("mañana", out("BOOKING_REQUEST", [S("date", "mañana")]))).reply, "¿A qué hora te gustaría?");
     const r = await p.say("después de las 4", out("BOOKING_REQUEST", [S("time_range", "después de las 4")]));
-    assert.match(r.reply!, /horarios disponibles para el domingo 27 de septiembre: 4:00 p\. m\., 4:30 p\. m\., 5:00 p\. m\. ¿Cuál prefieres\?/);
+    assert.match(r.reply!, /horarios disponibles para el domingo 27 de septiembre:\n1\. 4:00 p\. m\.\n2\. 4:30 p\. m\.\n3\. 5:00 p\. m\.\n¿Cuál prefieres\?/); // FASE 8: numerados ("la segunda")
     const st = (await p.state())!;
     assert.deepEqual([st.goal?.kind, st.slots.service?.value, st.slots.date?.value, st.slots.time_range?.value], ["booking", { kind: "text", text: "Corte clásico" }, { kind: "date", date: "2026-09-27" }, { kind: "time_range", from: "16:00" }]);
   });
@@ -414,7 +414,7 @@ describe("FASE 7 — E2E con lenguaje natural (camino del webhook: claim → Gat
     await p.webhook("Quiero corte mañana después de las 4", out("BOOKING_REQUEST", [S("service", "corte"), S("date", "mañana"), S("time_range", "después de las 4")]));
     const st = (await p.state())!;
     assert.deepEqual([st.slots.service?.value, st.slots.date?.value, st.slots.time_range?.value], [{ kind: "text", text: "Corte clásico" }, { kind: "date", date: "2026-09-27" }, { kind: "time_range", from: "16:00" }]);
-    assert.match(sent(p)!, /4:00 p\. m\., 4:30 p\. m\., 5:00 p\. m\./);
+    assert.match(sent(p)!, /1\. 4:00 p\. m\.\n2\. 4:30 p\. m\.\n3\. 5:00 p\. m\./);
     await p.webhook("mañana a las 4", out("BOOKING_REQUEST", [S("date", "mañana", "2024-02-02"), S("time", "a las 4")]));
     assert.deepEqual([await slotValue(p, "date"), await slotValue(p, "time")], [JSON.stringify({ kind: "date", date: "2026-09-27" }), JSON.stringify({ kind: "time", time: "16:00" })]);
     await p.webhook("soy Juan", out("BOOKING_REQUEST", [S("customer_name", "Juan")]));
@@ -432,7 +432,7 @@ describe("FASE 7 — E2E con lenguaje natural (camino del webhook: claim → Gat
     let st = (await p.state())!;
     assert.deepEqual([st.slots.service?.status, st.slots.date?.value, st.slots.time_range?.value], ["AMBIGUOUS", { kind: "date", date: "2026-09-27" }, { kind: "time_range", from: "16:00" }]);
     await p.webhook("sí", out("CONFIRMATION"));
-    assert.match(sent(p)!, /horarios disponibles para el domingo 27 de septiembre: 4:00 p\. m\., 4:30 p\. m\., 5:00 p\. m\./);
+    assert.match(sent(p)!, /horarios disponibles para el domingo 27 de septiembre:\n1\. 4:00 p\. m\.\n2\. 4:30 p\. m\.\n3\. 5:00 p\. m\./);
     await p.webhook("a las 4:30", out("BOOKING_REQUEST", [S("time", "a las 4:30")]));
     await p.webhook("Juan", out("BOOKING_REQUEST", [S("customer_name", "Juan")]));
     assert.match(sent(p)!, /Te confirmo: Corte clásico, el domingo 27 de septiembre, a las 4:30 p\. m\., a nombre de Juan\. ¿Lo reservo\?/);

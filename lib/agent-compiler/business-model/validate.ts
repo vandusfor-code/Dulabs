@@ -13,6 +13,8 @@ import {
   type CatalogCapabilityConfig,
   type HandoffCapabilityConfig,
   type KnowledgeCapabilityConfig,
+  type LeadCaptureCapabilityConfig,
+  type RemindersCapabilityConfig,
   type UbmCapabilityId,
 } from "@/lib/agent-compiler/business-model/capabilities";
 import { RESERVED_FIELD_KEYS, validateCustomerFieldsConfig, WELL_KNOWN_FIELDS } from "@/lib/customer-data";
@@ -40,6 +42,8 @@ export const MODEL_ERROR_CODES = [
   "BUSINESS_HOURS_OVERLAP",
   "BOOKING_BUFFER_NOT_SUPPORTED",
   "RESOURCE_SELECTION_NOT_SUPPORTED",
+  "RESOURCES_REQUIRED",
+  "LEAD_FIELD_INVALID",
   "BOOKING_POLICY_NOT_SUPPORTED",
   "BOOKING_WITHOUT_BOOKABLE_SERVICE",
   "DUPLICATE_ID",
@@ -66,7 +70,15 @@ export interface ResolvedCapabilities {
   quotes?: { version: string; config: Record<string, never> };
   booking?: { version: string; config: BookingCapabilityConfig };
   handoff?: { version: string; config: HandoffCapabilityConfig };
+  lead_capture?: { version: string; config: LeadCaptureCapabilityConfig };
+  reminders?: { version: string; config: RemindersCapabilityConfig };
 }
+
+/**
+ * FASE 8 — clave del dato de la reserva con el recurso elegido ("customer_choice"). Viaja con la reserva como un dato
+ * más del cliente (el handler de agenda lo valida contra las opciones y lo guarda con la cita).
+ */
+export const RESOURCE_FIELD_KEY = "recurso";
 
 export type BusinessModelValidation = { ok: true; model: BusinessModel; capabilities: ResolvedCapabilities } | { ok: false; code: "PUBLICATION_REJECTED"; errors: ModelError[] };
 
@@ -239,7 +251,13 @@ export function validateBusinessModel(raw: unknown): BusinessModelValidation {
       errors.push({ code: "BUSINESS_HOURS_REQUIRED", path: "businessHours", message: "La agenda con calendario exige un horario con al menos un día abierto." });
     }
     if (booking.bufferMinutes !== 0) errors.push({ code: "BOOKING_BUFFER_NOT_SUPPORTED", path: "capabilities.booking.config.bufferMinutes", message: "Los handlers de agenda no aplican margen entre reservas: solo se admite 0." });
-    if (booking.resourceSelection !== "none") errors.push({ code: "RESOURCE_SELECTION_NOT_SUPPORTED", path: "capabilities.booking.config.resourceSelection", message: "Elegir persona/mesa/sala no tiene runtime todavía." });
+    if (booking.resourceSelection === "customer_choice") {
+      // FASE 8: la elección viaja con la reserva del calendario (Nylas). La agenda interna asigna especialistas por
+      // sus propias tablas: ahí elegir un recurso del modelo no tiene runtime.
+      if (booking.provider !== "nylas") errors.push({ code: "RESOURCE_SELECTION_NOT_SUPPORTED", path: "capabilities.booking.config.resourceSelection", message: "Elegir persona/mesa/sala solo está disponible con la agenda de calendario." });
+      if (!model.resources.some((r) => r.active)) errors.push({ code: "RESOURCES_REQUIRED", path: "resources", message: "Para que el cliente elija, agrega al menos un recurso activo (persona, silla, sala…)." });
+      if (model.customerFields.some((f) => f.key === RESOURCE_FIELD_KEY)) errors.push({ code: "CUSTOMER_FIELD_INVALID", path: "customerFields", message: `"${RESOURCE_FIELD_KEY}" lo usa la elección de recurso.` });
+    }
     if (booking.provider !== "nylas" && (booking.cancellation.allowed || booking.rescheduling.allowed)) {
       errors.push({ code: "BOOKING_POLICY_NOT_SUPPORTED", path: "capabilities.booking.config", message: "Cancelar o reprogramar por aquí solo existe con el calendario (Nylas)." });
     }
@@ -284,6 +302,20 @@ export function validateBusinessModel(raw: unknown): BusinessModelValidation {
       errors.push({ code: "CAPABILITY_DEPENDENCY_MISSING", path: `customerFields[${i}].scope`, message: "Un dato de la reserva requiere la capacidad booking." });
     }
   });
+
+  // --- Captura de interesados: solo datos del CONTACTO que el negocio configuró ---
+  const lead = resolved.lead_capture?.config;
+  if (lead) {
+    const seenKeys = new Set<string>();
+    lead.fieldKeys.forEach((k, i) => {
+      const f = model.customerFields.find((x) => x.key === k);
+      const path = `capabilities.lead_capture.config.fieldKeys[${i}]`;
+      if (seenKeys.has(k)) errors.push({ code: "LEAD_FIELD_INVALID", path, message: `Dato repetido: ${k}.` });
+      else if (!f || !f.enabled) errors.push({ code: "LEAD_FIELD_INVALID", path, message: `"${k}" no es un dato activo del cliente.` });
+      else if (f.scope !== "customer") errors.push({ code: "LEAD_FIELD_INVALID", path, message: `"${k}" es un dato de la reserva, no del contacto.` });
+      seenKeys.add(k);
+    });
+  }
 
   // --- Políticas ---
   if (model.policies.unsupportedRequest === "offer_handoff" && !enabled.has("handoff")) {

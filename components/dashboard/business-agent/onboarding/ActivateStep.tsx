@@ -11,7 +11,9 @@ import type { OnboardingIssue, OnboardingStep } from "@/lib/agent-compiler/onboa
 import type { OnboardingOverview, PublishStageEvent, PublishStageId } from "@/lib/agent-compiler/onboarding/service";
 import type { OnboardingStatus, WhatsAppNumberInfo } from "@/lib/agent-compiler/onboarding/status";
 import { activateOnboarding, publishOnboarding, type OnboardingAuth } from "@/lib/business-agent-onboarding-client";
-import { ErrorBanner, primaryBtn, secondaryBtn } from "@/components/dashboard/business-agent/onboarding/controls";
+import { ChoiceGroup, ErrorBanner, primaryBtn, secondaryBtn } from "@/components/dashboard/business-agent/onboarding/controls";
+import type { AgentEngineId } from "@/lib/agent-compiler/spec/types";
+import type { CapabilityRow } from "@/lib/agent-compiler/lifecycle/capability-matrix";
 import { STEP_LABELS } from "@/components/dashboard/business-agent/onboarding/Progress";
 import { motion as styles } from "@/components/dashboard/business-agent/onboarding/motion";
 
@@ -69,8 +71,70 @@ export function PublishProgress({ stages }: { stages: Partial<Record<PublishStag
   );
 }
 
+const INTEGRATION_LABEL: Record<CapabilityRow["integration"], string> = {
+  available: "Lista",
+  missing: "Falta",
+  not_needed: "—",
+  not_verified: "Sin verificar",
+};
+
+const SUPPORT_LABEL: Record<CapabilityRow["runtimeSupported"], string> = { full: "Sí", partial: "Parcial", none: "No" };
+
+const yesNo = (v: boolean) => (v ? "Sí" : "No");
+
+/**
+ * FASE 8 — matriz de capacidades: habilitada (tu configuración) / configurada / publicada / el motor la ejecuta /
+ * integración disponible / activa. Todo sale del servidor (hechos reales); aquí solo se muestra.
+ */
+export function CapabilityMatrix({ rows }: { rows: readonly CapabilityRow[] }) {
+  const shown = rows.filter((r) => r.enabled || r.published);
+  if (shown.length === 0) return <p className="text-sm text-mist">Aún no activas ninguna función.</p>;
+  return (
+    <div className="-mx-1 overflow-x-auto px-1">
+      <table className="w-full min-w-[560px] text-left text-xs">
+        <caption className="sr-only">Estado de cada función de tu agente</caption>
+        <thead>
+          <tr className="text-mist">
+            <th scope="col" className="py-2 pr-3 font-medium">Función</th>
+            <th scope="col" className="px-2 py-2 font-medium">Configurada</th>
+            <th scope="col" className="px-2 py-2 font-medium">Publicada</th>
+            <th scope="col" className="px-2 py-2 font-medium">El motor la ejecuta</th>
+            <th scope="col" className="px-2 py-2 font-medium">Integración</th>
+            <th scope="col" className="px-2 py-2 font-medium">Activa</th>
+          </tr>
+        </thead>
+        <tbody>
+          {shown.map((r) => (
+            <tr key={r.id} className="border-t border-edge align-top">
+              <th scope="row" className="py-2 pr-3 font-medium text-fg">
+                {r.label}
+                {r.detail && <span className="block font-normal text-mist">{r.detail}</span>}
+              </th>
+              <td className="px-2 py-2 text-fg">{yesNo(r.configured)}</td>
+              <td className="px-2 py-2 text-fg">{yesNo(r.published)}</td>
+              <td className={`px-2 py-2 ${r.runtimeSupported === "none" ? "text-amber-400" : "text-fg"}`}>{SUPPORT_LABEL[r.runtimeSupported]}</td>
+              <td className={`px-2 py-2 ${r.integration === "missing" ? "text-red-400" : r.integration === "not_verified" ? "text-amber-400" : "text-fg"}`}>{INTEGRATION_LABEL[r.integration]}</td>
+              <td className={`px-2 py-2 font-semibold ${r.active ? "text-lime-text" : "text-mist"}`}>{yesNo(r.active)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+const ENGINE_SOURCE: Record<string, string> = {
+  published: "según tu versión publicada",
+  default: "motor predeterminado",
+  env_allowlist: "habilitado por el equipo de DuLabs",
+  kill_switch: "apagado de emergencia activo",
+};
+
 export function ActivateStep(props: {
   auth: OnboardingAuth;
+  /** FASE 8 — motor elegido para la próxima publicación (borrador) y cómo cambiarlo. */
+  requestedEngine?: AgentEngineId;
+  onEngineChange?: (e: AgentEngineId) => void;
   overview: OnboardingOverview;
   revision: number;
   hasLocalErrors: boolean;
@@ -168,6 +232,61 @@ export function ActivateStep(props: {
           ))}
         </ul>
       </section>
+
+      {o.engine && (
+        <section aria-labelledby="engine-title" className="space-y-4 rounded-2xl border border-edge bg-card p-5">
+          <div>
+            <h3 id="engine-title" className="text-sm font-semibold text-fg">
+              Motor y funciones
+            </h3>
+            <p className="text-xs text-mist">
+              Hoy atiende: <strong className="text-fg">{o.engine.selected === "state_machine_v1" ? "Motor conversacional" : "Motor clásico"}</strong> ({ENGINE_SOURCE[o.engine.source] ?? o.engine.source}).
+            </p>
+          </div>
+          {props.onEngineChange && (
+            <ChoiceGroup
+              label="Motor para tu próxima publicación"
+              value={props.requestedEngine ?? o.engine.requested}
+              onChange={(v) => props.onEngineChange!(v)}
+              options={[
+                { value: "graph_v1", title: "Clásico", description: "El de siempre. No incluye recordatorios ni elegir con quién." },
+                { value: "state_machine_v1", title: "Conversacional", description: "Entiende mejor, recordatorios, interesados, productos y elegir con quién." },
+              ]}
+            />
+          )}
+          <CapabilityMatrix rows={o.engine.capabilities} />
+          <div>
+            <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-mist">Conexiones</p>
+            <ul className="flex flex-wrap gap-2">
+              {o.engine.credentials
+                .filter((c) => c.required)
+                .map((c) => (
+                  <li key={c.id} className={`rounded-full px-3 py-1 text-xs ${c.present ? "bg-lime/15 text-lime-text" : "bg-red-500/15 text-red-400"}`}>
+                    {c.label}: {c.present ? "configurada" : "falta"}
+                  </li>
+                ))}
+            </ul>
+          </div>
+          {o.engine.blockers.length > 0 && (
+            <ul className="space-y-1" aria-label="Bloqueos del motor">
+              {o.engine.blockers.map((b, i) => (
+                <li key={i} className="text-xs text-red-400">
+                  • {b}
+                </li>
+              ))}
+            </ul>
+          )}
+          {o.engine.warnings.length > 0 && (
+            <ul className="space-y-1" aria-label="Avisos del motor">
+              {o.engine.warnings.map((w, i) => (
+                <li key={i} className="text-xs text-amber-400">
+                  • {w}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
 
       <section aria-labelledby="publish-title" className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">

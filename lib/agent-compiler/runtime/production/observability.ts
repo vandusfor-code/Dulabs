@@ -25,6 +25,9 @@ export interface BusinessAgentTrace {
   llmInvoked: boolean;
   latencyMs?: number;
   error?: string;
+  /** FASE 8 — motor que atendió y por qué (versión publicada / lista de compatibilidad / kill switch / default). */
+  engine?: string;
+  engineSource?: string;
 }
 
 export interface BusinessAgentObserver {

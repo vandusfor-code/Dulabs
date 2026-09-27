@@ -146,7 +146,7 @@ export interface UnderstoodSlot {
   status: "resolved" | "ambiguous" | "unresolved" | "invalid";
   value?: NormalizedSlotValue;
   /** FASE 7: "business_catalog" (servicio real del negocio) y "business_hours" (am/pm por horario de atención). */
-  normalizedBy?: "parser" | "validated_model_reading" | "business_catalog" | "business_hours";
+  normalizedBy?: "parser" | "validated_model_reading" | "business_catalog" | "business_hours" | "offer_selection" | "conversation_focus";
   reason?: string;
   candidates?: string[];
   change: SlotChange;

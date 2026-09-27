@@ -233,6 +233,12 @@ export function OfferStep({
 // 3. Citas
 // ---------------------------------------------------------------------------
 
+const REMINDER_OFFSETS = [
+  { value: "60", title: "1 hora antes" },
+  { value: "120", title: "2 horas antes" },
+  { value: "1440", title: "1 día antes" },
+];
+
 const NOTICE = [
   { value: "0", title: "Sin mínimo" },
   { value: "30", title: "30 minutos" },
@@ -310,6 +316,90 @@ export function BookingStep({
               onChange={(v) => set({ minimumNoticeMinutes: Number(v) })}
               options={withCurrent(NOTICE, b.minimumNoticeMinutes, "min")}
             />
+          </Question>
+          {b.agenda === "calendar" && (
+            <Question title="¿El cliente elige con quién se atiende?">
+              <p className="text-xs text-mist">
+                Por ejemplo, el barbero, la cabina o la sala. Si no agregas opciones, no se pregunta. La disponibilidad
+                sigue siendo la de tu calendario completo.
+              </p>
+              <ul className="space-y-2">
+                {(b.resources ?? []).map((r, i) => (
+                  <li key={i} className="flex items-start gap-2">
+                    <div className="min-w-0 flex-1">
+                      <TextField
+                        label={`Opción ${i + 1}`}
+                        value={r.name}
+                        maxLength={80}
+                        placeholder="Ej.: Barbero 1"
+                        onChange={(v) =>
+                          set({
+                            resources: (b.resources ?? []).map((x, j) =>
+                              j === i ? { name: v } : x,
+                            ),
+                          })
+                        }
+                        issues={I(issues, `booking.resources.${i}.name`)}
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      className={`${secondaryBtn} mt-6 min-h-11 min-w-11 justify-center`}
+                      aria-label={`Quitar opción ${i + 1}`}
+                      onClick={() =>
+                        set({
+                          resources: (b.resources ?? []).filter((_, j) => j !== i),
+                        })
+                      }
+                    >
+                      <Trash2 className="size-4" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <FieldError id="onb-resources-err" issues={I(issues, "booking.resources")} />
+              {(b.resources ?? []).length < 20 && (
+                <button
+                  type="button"
+                  className={secondaryBtn}
+                  onClick={() =>
+                    set({ resources: [...(b.resources ?? []), { name: "" }] })
+                  }
+                >
+                  <Plus className="size-4" /> Agregar opción
+                </button>
+              )}
+            </Question>
+          )}
+          <Question title="¿Tus clientes pueden pedir que les recuerdes su cita?">
+            <YesNo
+              label="Recordatorios de cita"
+              value={Boolean(b.reminders?.enabled)}
+              onChange={(v) =>
+                set({
+                  reminders: {
+                    enabled: v,
+                    offsetMinutes: b.reminders?.offsetMinutes ?? 120,
+                  },
+                })
+              }
+              yesHint="Si el cliente escribe «recuérdame», tu agente le escribe antes de su cita."
+              noHint="Tu agente no programará recordatorios."
+              issues={I(issues, "booking.reminders")}
+            />
+            {b.reminders?.enabled && (
+              <ChoiceGroup
+                label="Si no dice cuándo, ¿con cuánta anticipación?"
+                variant="chips"
+                value={String(b.reminders.offsetMinutes)}
+                onChange={(v) =>
+                  set({
+                    reminders: { enabled: true, offsetMinutes: Number(v) },
+                  })
+                }
+                options={withCurrent(REMINDER_OFFSETS, b.reminders.offsetMinutes, "min")}
+              />
+            )}
           </Question>
           {b.agenda === "calendar" && (
             <Question title="¿Pueden cancelar o cambiar su cita por WhatsApp?">
@@ -590,6 +680,44 @@ export function SupportStep({
           )}
         </Question>
       )}
+      <Question title="¿Guardas a quien pide que lo contacten?">
+        <YesNo
+          label="Guardar interesados"
+          value={Boolean(draft.customerData.leadCapture?.enabled)}
+          onChange={(v) =>
+            setDraft((d) => ({
+              ...d,
+              customerData: {
+                ...d.customerData,
+                leadCapture: {
+                  enabled: v,
+                  captureInterest: d.customerData.leadCapture?.captureInterest ?? true,
+                },
+                ...(v ? { askName: true } : {}),
+              },
+            }))
+          }
+          yesHint="Tu agente pide su nombre (y correo, si lo pides) y lo guarda en tus contactos."
+          noHint="Tu agente no guardará interesados."
+          issues={I(issues, "customerData.leadCapture")}
+        />
+        {draft.customerData.leadCapture?.enabled && (
+          <Toggle
+            label="Guardar también qué le interesó"
+            hint="Por ejemplo, el producto o servicio que consultó."
+            checked={draft.customerData.leadCapture.captureInterest}
+            onChange={(v) =>
+              setDraft((d) => ({
+                ...d,
+                customerData: {
+                  ...d.customerData,
+                  leadCapture: { enabled: true, captureInterest: v },
+                },
+              }))
+            }
+          />
+        )}
+      </Question>
       <Question title="¿Cómo quieres que hable tu agente?">
         <ChoiceGroup
           label="Tono"
@@ -605,13 +733,28 @@ export function SupportStep({
             {
               value: "professional",
               title: "Profesional",
-              description: "Formal y preciso.",
+              description: "Claro y preciso.",
             },
             {
-              value: "direct",
-              title: "Directo",
-              description: "Breve y al punto.",
+              value: "casual",
+              title: "Casual",
+              description: "Relajado, como un amigo.",
             },
+            {
+              value: "formal",
+              title: "Formal",
+              description: "Trata de «usted».",
+            },
+            // Borradores previos: "Directo" se conserva si ya estaba elegido.
+            ...(draft.tone === "direct"
+              ? [
+                  {
+                    value: "direct" as const,
+                    title: "Directo",
+                    description: "Breve y al punto.",
+                  },
+                ]
+              : []),
           ]}
         />
       </Question>

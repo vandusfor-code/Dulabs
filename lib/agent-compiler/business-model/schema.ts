@@ -10,7 +10,7 @@
 // Todo es estricto (.strict()): un campo desconocido es rechazo, no "se ignora".
 
 import { z } from "zod";
-import { CUSTOMER_FIELD_SCOPES, CUSTOMER_FIELD_TYPES } from "@/lib/agent-compiler/spec/types";
+import { AGENT_TONES, CUSTOMER_FIELD_SCOPES, CUSTOMER_FIELD_TYPES } from "@/lib/agent-compiler/spec/types";
 import { MAX_CUSTOMER_FIELDS, MAX_FIELD_DESCRIPTION_LENGTH, MAX_FIELD_KEY_LENGTH, MAX_FIELD_LABEL_LENGTH, MAX_FIELD_QUESTION_LENGTH, MAX_OPTION_LENGTH, MAX_SELECT_OPTIONS } from "@/lib/customer-data";
 
 export const BUSINESS_MODEL_SCHEMA_VERSION = "business-agent.business-model/1.0.0" as const;
@@ -163,6 +163,12 @@ export const policiesSchema = z
   })
   .strict();
 
+/**
+ * FASE 8 — presentación: SOLO estilo de las respuestas. Nunca entra en la huella de ejecución ni cambia un hecho
+ * (precio, fecha, disponibilidad, resultado): esos los pone el backend. Ausente = tono "cercano".
+ */
+export const presentationSchema = z.object({ tone: z.enum(AGENT_TONES) }).strict();
+
 // ---------------------------------------------------------------------------
 // Modelo completo
 // ---------------------------------------------------------------------------
@@ -187,6 +193,7 @@ export const businessModelSchema = z
     customerFields: z.array(customerFieldSchema).max(MAX_CUSTOMER_FIELDS),
     businessHours: businessHoursSchema.nullable(),
     policies: policiesSchema,
+    presentation: presentationSchema.optional(),
     metadata: customMetadataSchema.optional(),
   })
   .strict();

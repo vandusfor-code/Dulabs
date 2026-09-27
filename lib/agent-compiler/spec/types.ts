@@ -282,6 +282,45 @@ export interface SpecMetadata {
   authorId?: string;
 }
 
+// --- 11. RUNTIME (FASE 8) ----------------------------------------------------
+/**
+ * Motor que atiende la versión PUBLICADA. Lo fija el SERVIDOR al publicar desde la configuración guiada con aceptación
+ * explícita del administrador; el editor avanzado lo hereda de la versión anterior y el cliente nunca puede enviarlo.
+ * Ausente = "graph_v1" (el grafo compilado de siempre): ningún agente existente cambia de motor solo.
+ */
+export const AGENT_ENGINES = ["graph_v1", "state_machine_v1"] as const;
+export type AgentEngineId = (typeof AGENT_ENGINES)[number];
+
+/**
+ * Tono de las respuestas del motor conversacional (ESTILO, nunca hechos). Ausente = "cercano" (las plantillas de
+ * siempre). Precios, fechas, horarios y resultados salen del backend igual con cualquier tono.
+ */
+export const AGENT_TONES = ["profesional", "cercano", "casual", "formal"] as const;
+export type AgentTone = (typeof AGENT_TONES)[number];
+
+/** Recurso genérico que el cliente puede elegir (persona, silla, sala, consultorio…). `kind` lo define el negocio. */
+export interface RuntimeResourceOption {
+  id: string;
+  name: string;
+  kind: string;
+}
+
+/**
+ * Configuración que solo usa el motor conversacional (state_machine_v1). El grafo la ignora. Mismo carácter
+ * server-managed que `engine`.
+ */
+export interface AgentRuntimeConfig {
+  engine: AgentEngineId;
+  /** Tono de las respuestas (solo estilo). */
+  tone?: AgentTone;
+  /** Recordatorios que el cliente pide ("recuérdame mañana"). `offsetMinutes` = cuánto antes de su cita, si no dice hora. */
+  reminders?: { enabled: boolean; offsetMinutes: number };
+  /** Recursos entre los que el cliente elige al reservar. Vacío/ausente = no se pregunta. */
+  resources?: RuntimeResourceOption[];
+  /** Datos del contacto que el agente pide al captar un interesado (claves de customerData con scope "customer"). */
+  leadCapture?: { fieldKeys: string[]; captureInterest: boolean };
+}
+
 // --- Contrato completo -----------------------------------------------------
 export interface BusinessAgentSpec {
   schemaVersion: SpecSchemaVersion;
@@ -298,5 +337,7 @@ export interface BusinessAgentSpec {
    * traen y siguen compilando exactamente igual (compatibilidad hacia atrás).
    */
   customerData?: CustomerDataConfig;
+  /** FASE 8 — motor publicado y configuración del motor conversacional (server-managed). Ausente = graph_v1. */
+  runtime?: AgentRuntimeConfig;
   metadata: SpecMetadata;
 }

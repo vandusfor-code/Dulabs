@@ -11,7 +11,7 @@ import { z } from "zod";
 import { KNOWLEDGE_SOURCES } from "@/lib/business-agent-knowledge/limits";
 import type { CapabilityKey } from "@/lib/agent-compiler/spec/capabilities";
 
-export const UBM_CAPABILITY_IDS = ["knowledge", "catalog", "quotes", "booking", "handoff", "orders", "payments"] as const;
+export const UBM_CAPABILITY_IDS = ["knowledge", "catalog", "quotes", "booking", "handoff", "lead_capture", "reminders", "orders", "payments"] as const;
 export type UbmCapabilityId = (typeof UBM_CAPABILITY_IDS)[number];
 
 export const knowledgeConfigSchema = z
@@ -40,7 +40,10 @@ export const bookingConfigSchema = z
     minimumNoticeMinutes: z.number().int().min(0).max(10_080),
     /** Máxima anticipación (días); null = sin límite. La aplica el Action Engine antes de tocar la agenda. */
     maximumAdvanceDays: z.number().int().min(1).max(365).nullable(),
-    /** "customer_choice" (el cliente elige persona/mesa/sala) no tiene runtime: el validador lo rechaza. */
+    /**
+     * "customer_choice" (FASE 8): el cliente elige entre los recursos activos del modelo (persona, silla, sala…). La
+     * elección viaja con la reserva; la disponibilidad sigue siendo la del calendario del negocio (conservadora).
+     */
     resourceSelection: z.enum(["none", "customer_choice"]),
     cancellation: z.object({ allowed: z.boolean(), minimumNoticeHours: z.number().int().min(0).max(720) }).strict(),
     rescheduling: z.object({ allowed: z.boolean() }).strict(),
@@ -56,12 +59,28 @@ export const handoffConfigSchema = z
   })
   .strict();
 
+/**
+ * FASE 8 — captura de interesados: qué datos del CONTACTO pide el agente (claves de customerFields con scope
+ * "customer") y si guarda también el interés (lo que preguntó). Se guardan en el contacto del negocio (custom_fields).
+ */
+export const leadCaptureConfigSchema = z
+  .object({
+    fieldKeys: z.array(z.string().trim().min(1).max(64)).min(1).max(10),
+    captureInterest: z.boolean(),
+  })
+  .strict();
+
+/** FASE 8 — recordatorios que pide el cliente. `offsetMinutes`: cuánto antes de su cita, si no dice la hora. */
+export const remindersConfigSchema = z.object({ offsetMinutes: z.number().int().min(15).max(2880) }).strict();
+
 const emptyConfigSchema = z.object({}).strict();
 
 export type KnowledgeCapabilityConfig = z.infer<typeof knowledgeConfigSchema>;
 export type CatalogCapabilityConfig = z.infer<typeof catalogConfigSchema>;
 export type BookingCapabilityConfig = z.infer<typeof bookingConfigSchema>;
 export type HandoffCapabilityConfig = z.infer<typeof handoffConfigSchema>;
+export type LeadCaptureCapabilityConfig = z.infer<typeof leadCaptureConfigSchema>;
+export type RemindersCapabilityConfig = z.infer<typeof remindersConfigSchema>;
 
 export interface CapabilityDefinition {
   id: UbmCapabilityId;
@@ -75,13 +94,13 @@ export interface CapabilityDefinition {
   executable: boolean;
   /** Acciones del Action Registry que puede habilitar (cuáles exactamente lo decide el compilador con la config). */
   actions: readonly string[];
-  /** Capacidad equivalente del Spec legacy (solo para el adaptador). */
-  legacyKey: CapabilityKey;
+  /** Capacidad equivalente del Spec legacy (solo para el adaptador). Ausente = solo existe en el motor conversacional. */
+  legacyKey?: CapabilityKey;
 }
 
 export const CAPABILITY_CATALOG: Readonly<Record<UbmCapabilityId, CapabilityDefinition>> = {
   knowledge: { id: "knowledge", versions: ["1.0.0"], configSchema: knowledgeConfigSchema, dependsOn: [], conditionalDependsOn: ["handoff"], executable: true, actions: ["buscar_conocimiento"], legacyKey: "faq" },
-  catalog: { id: "catalog", versions: ["1.0.0"], configSchema: catalogConfigSchema, dependsOn: [], conditionalDependsOn: [], executable: true, actions: ["listar_catalogo_servicios"], legacyKey: "catalog" },
+  catalog: { id: "catalog", versions: ["1.0.0"], configSchema: catalogConfigSchema, dependsOn: [], conditionalDependsOn: [], executable: true, actions: ["listar_catalogo_servicios", "ba_consultar_producto"], legacyKey: "catalog" },
   quotes: { id: "quotes", versions: ["1.0.0"], configSchema: quotesConfigSchema, dependsOn: ["catalog"], conditionalDependsOn: [], executable: true, actions: ["calcular_cotizacion"], legacyKey: "sales" },
   booking: {
     id: "booking",
@@ -94,6 +113,9 @@ export const CAPABILITY_CATALOG: Readonly<Record<UbmCapabilityId, CapabilityDefi
     legacyKey: "scheduling",
   },
   handoff: { id: "handoff", versions: ["1.0.0"], configSchema: handoffConfigSchema, dependsOn: [], conditionalDependsOn: [], executable: true, actions: ["transferir_soporte"], legacyKey: "humanHandoff" },
+  lead_capture: { id: "lead_capture", versions: ["1.0.0"], configSchema: leadCaptureConfigSchema, dependsOn: [], conditionalDependsOn: [], executable: true, actions: ["ba_guardar_lead"], legacyKey: "leadCapture" },
+  // Un recordatorio es de UNA cita que el agente agendó: sin agenda no hay a qué anclarlo.
+  reminders: { id: "reminders", versions: ["1.0.0"], configSchema: remindersConfigSchema, dependsOn: ["booking"], conditionalDependsOn: [], executable: true, actions: ["ba_programar_recordatorio"] },
   orders: { id: "orders", versions: ["1.0.0"], configSchema: emptyConfigSchema, dependsOn: ["catalog"], conditionalDependsOn: [], executable: false, actions: [], legacyKey: "orders" },
   payments: { id: "payments", versions: ["1.0.0"], configSchema: emptyConfigSchema, dependsOn: ["orders"], conditionalDependsOn: [], executable: false, actions: [], legacyKey: "payments" },
 };

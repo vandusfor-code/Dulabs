@@ -23,7 +23,8 @@ export type ActivationBlockerCode =
   | "AGENT_INVALID"
   | "READINESS_BLOCKED"
   | "BILLING_REQUIRED"
-  | "ENGINE_CONFLICT";
+  | "ENGINE_CONFLICT"
+  | "ENGINE_NOT_READY";
 
 export interface ActivationBlocker {
   code: ActivationBlockerCode;
@@ -46,6 +47,11 @@ export interface ActivationGateDeps {
   hasActivePlan(tenantId: string): Promise<boolean>;
   /** Otro motor que atiende ANTES que Business Agent en el webhook tiene este número (null = ninguno). */
   otherEngineOnNumber(phoneNumberId: string): Promise<"agente_conversacional" | null>;
+  /**
+   * FASE 8 — ¿el MOTOR que atenderá la versión publicada puede ejecutarla? (capacidades soportadas por ese motor,
+   * credencial de IA, artefacto compilable). Devuelve los bloqueos en lenguaje humano. Ausente = no se evalúa.
+   */
+  engineReadiness?(tenantId: string, version: AgentVersionRow): Promise<string[]>;
 }
 
 export async function evaluateBusinessAgentActivation(
@@ -70,6 +76,9 @@ export async function evaluateBusinessAgentActivation(
     const readiness = await deps.evaluateReadiness(input.tenantId, version);
     if (!readiness.ready) {
       for (const b of readiness.blockers) blockers.push({ code: "READINESS_BLOCKED", category: "BUSINESS_RULE_ERROR", message: b.message });
+    }
+    if (deps.engineReadiness) {
+      for (const message of await deps.engineReadiness(input.tenantId, version)) blockers.push({ code: "ENGINE_NOT_READY", category: "BUSINESS_RULE_ERROR", message });
     }
   }
 

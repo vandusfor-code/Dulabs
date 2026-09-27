@@ -7,7 +7,8 @@ import type { BusinessModel } from "@/lib/agent-compiler/business-model/schema";
 import { hoursToHandlerFormat } from "@/lib/agent-compiler/business-model/legacy-adapter";
 import { BUSINESS_TYPE_OPTIONS } from "@/lib/business-agent-form";
 import { BUSINESS_TYPE_OTRO, CURRENT_SPEC_SCHEMA_VERSION, type BusinessAgentSpec, type HandoffRule, type Prohibition } from "@/lib/agent-compiler/spec/types";
-import { ONBOARDING_RULE_PREFIX, type OnboardingDraft } from "@/lib/agent-compiler/onboarding/draft";
+import { DRAFT_TONE_TO_AGENT_TONE, ONBOARDING_RULE_PREFIX, type OnboardingDraft } from "@/lib/agent-compiler/onboarding/draft";
+import { selectableResources } from "@/lib/agent-compiler/business-model/resources";
 
 const DEFAULT_TOPIC_REPLY = "Prefiero no hablar de ese tema. ¿Te ayudo con algo más?";
 export const HANDOFF_REQUEST_RULE_ID = `${ONBOARDING_RULE_PREFIX}handoff-persona`;
@@ -16,6 +17,8 @@ const PERSONALITY: Record<OnboardingDraft["tone"], BusinessAgentSpec["personalit
   friendly: { primary: "friendly", verbosity: "balanced", emojiPolicy: "limited", formality: "casual" },
   professional: { primary: "professional", verbosity: "balanced", emojiPolicy: "none", formality: "formal" },
   direct: { primary: "direct", verbosity: "concise", emojiPolicy: "none", formality: "neutral" },
+  casual: { primary: "friendly", verbosity: "concise", emojiPolicy: "limited", formality: "casual" },
+  formal: { primary: "professional", verbosity: "balanced", emojiPolicy: "none", formality: "formal" },
 };
 
 function stripAccents(s: string): string {
@@ -94,7 +97,8 @@ export function buildRuntimeSpec(model: BusinessModel, draft: OnboardingDraft, p
       faq: on("knowledge"),
       sales: on("quotes"),
       catalog: on("catalog"),
-      leadCapture: previous?.capabilities.leadCapture ?? false,
+      // FASE 8: guardar interesados es una opción de la configuración guiada (en el grafo = captura de datos del contacto).
+      leadCapture: on("lead_capture") || (previous?.capabilities.leadCapture ?? false),
       scheduling: on("booking"),
       orders: false,
       payments: false,
@@ -121,6 +125,15 @@ export function buildRuntimeSpec(model: BusinessModel, draft: OnboardingDraft, p
       ...(on("knowledge") && knowledge.noAnswerMessage ? { noAnswerMessage: knowledge.noAnswerMessage } : {}),
     },
     customerData: { fields: model.customerFields.map((f) => ({ ...f })) },
+    // FASE 8 — motor publicado + configuración del motor conversacional. El motor solo cambia por elección explícita
+    // (draft.engine); si no, se hereda el de la versión anterior (o el grafo).
+    runtime: {
+      engine: draft.engine ?? previous?.runtime?.engine ?? "graph_v1",
+      tone: DRAFT_TONE_TO_AGENT_TONE[draft.tone],
+      ...(on("reminders") ? { reminders: { enabled: true, offsetMinutes: (cap("reminders")!.config as { offsetMinutes: number }).offsetMinutes } } : {}),
+      ...(selectableResources(model).length > 0 ? { resources: selectableResources(model).map((r) => ({ id: r.id, name: r.name.slice(0, 80), kind: r.kind })) } : {}),
+      ...(on("lead_capture") ? { leadCapture: { ...(cap("lead_capture")!.config as { fieldKeys: string[]; captureInterest: boolean }) } } : {}),
+    },
     metadata: { specVersion: meta.specVersion, status: "draft", createdAt: meta.now, updatedAt: meta.now, ...(meta.authorId ? { authorId: meta.authorId } : {}) },
   };
 }
