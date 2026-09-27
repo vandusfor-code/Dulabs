@@ -27,6 +27,21 @@ export interface RenderInput {
   noAnswerMessage?: string;
   /** FASE 5 (artefacto, policies.unsupportedRequest): false = nunca ofrecer una persona. */
   offerHandoff?: boolean;
+  /** FASE 6 — vista previa: lo que se "haría" se dice como simulación, nunca como hecho. */
+  simulation?: boolean;
+}
+
+/** Texto de una acción con efecto que en la simulación NO se ejecutó (nunca se presenta como hecha). */
+const SIMULATED_TEXT: Readonly<Record<string, string>> = {
+  crear_cita_nylas_generico: "Aquí tu agente agendaría la cita en tu calendario.",
+  agendar_cita_especialista: "Aquí tu agente agendaría la cita con tu equipo.",
+  cancelar_cita_cliente: "Aquí tu agente cancelaría la cita.",
+  reprogramar_cita_cliente: "Aquí tu agente cambiaría la cita al nuevo horario.",
+  transferir_soporte: "Aquí tu agente pasaría la conversación a una persona de tu equipo y se pausaría.",
+};
+
+export function simulatedActionText(action: string): string {
+  return `🧪 Simulación: ${SIMULATED_TEXT[action] ?? "aquí tu agente haría esta acción."} (No se creó ni se envió nada real.)`;
 }
 
 const MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
@@ -129,6 +144,8 @@ const BOOKING_ACTIONS = new Set(["crear_cita_nylas_generico", "agendar_cita_espe
 export function renderResponse(input: RenderInput): string | null {
   const { plan, state, actions } = input;
   const last = actions.at(-1);
+  const simulated = lastOf(actions, (a) => a.simulated === true);
+  if (simulated) return simulatedActionText(simulated.action);
   const handoffDone = lastOf(actions, (a) => a.action === "transferir_soporte" && a.status === "SUCCEEDED");
   const failure = lastOf(actions, (a) => a.status !== "SUCCEEDED" && a.status !== "IN_PROGRESS");
   const extra = lookupText(lastOf(actions, (a) => ["calcular_cotizacion", "buscar_conocimiento", "listar_catalogo_servicios"].includes(a.action)), input.noAnswerMessage);

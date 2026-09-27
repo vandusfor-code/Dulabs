@@ -53,6 +53,8 @@ export interface ConversationRuntimeDeps {
   artifact: CompiledAgentArtifact;
   send(text: string): Promise<void>;
   maxActionsPerTurn?: number;
+  /** FASE 6 — vista previa / pruebas: el motor no ejecuta ninguna escritura (ver ActionExecutionContext.simulation). */
+  simulation?: boolean;
 }
 
 export interface ConversationTurnInput {
@@ -67,7 +69,7 @@ export interface ConversationRuntimeOutcome {
   outcome: "processed" | "duplicate" | "human_control" | "rejected";
   status?: string;
   sent: boolean;
-  actions: Array<{ action: string; status: string; errorCode: string | null; replayed: boolean }>;
+  actions: Array<{ action: string; status: string; errorCode: string | null; replayed: boolean; simulated?: boolean }>;
   errorCode?: string;
 }
 
@@ -77,6 +79,8 @@ export function createConversationRuntime(deps: ConversationRuntimeDeps) {
   if (deps.service.requirements.artifactRef !== deps.artifact.executionFingerprint || deps.service.business.tenantId !== deps.artifact.tenantId || deps.service.business.agentId !== deps.artifact.agentId) {
     throw new Error("conversation_runtime_artifact_mismatch");
   }
+  // Los requisitos de una simulación marcan cada solicitud; los de producción nunca.
+  if ((deps.service.requirements.simulation === true) !== (deps.simulation === true)) throw new Error("conversation_runtime_simulation_mismatch");
 
   /** Ejecuta la acción pendiente de la vista y aplica su resultado al estado. Devuelve la vista nueva. */
   async function drive(key: ConversationStateKey, agentVersion: string | null, view: TurnView, userMessage: string, results: ActionResult[]): Promise<TurnView | null> {
@@ -92,6 +96,7 @@ export function createConversationRuntime(deps: ConversationRuntimeDeps) {
         artifact: deps.artifact,
         state: view.state,
         userMessage,
+        ...(deps.simulation ? { simulation: true } : {}),
       },
       {
         beforeExecute: async (executionId, attempt) => {
@@ -115,7 +120,7 @@ export function createConversationRuntime(deps: ConversationRuntimeDeps) {
 
   async function handle(input: ConversationTurnInput): Promise<ConversationRuntimeOutcome> {
     const results: ActionResult[] = [];
-    const summary = () => results.map((r) => ({ action: r.action, status: r.status, errorCode: r.error?.code ?? null, replayed: r.replayed }));
+    const summary = () => results.map((r) => ({ action: r.action, status: r.status, errorCode: r.error?.code ?? null, replayed: r.replayed, ...(r.simulated ? { simulated: true } : {}) }));
 
     // 0. Acción pendiente de un turno anterior (reintento / worker caído): se resuelve primero.
     const before = await loadTurnView(deps.service, input.key);
@@ -150,6 +155,7 @@ export function createConversationRuntime(deps: ConversationRuntimeDeps) {
       handoffMessage: deps.artifact.handoff.message,
       noAnswerMessage: deps.artifact.knowledge.noAnswerMessage,
       offerHandoff: deps.artifact.policies.offerHandoff,
+      ...(deps.simulation ? { simulation: true } : {}),
     });
     let sent = false;
     if (text) {

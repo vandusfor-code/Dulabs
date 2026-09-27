@@ -64,6 +64,8 @@ export interface AgentRequirements {
    * identidad de cada solicitud de acción y de su confirmación: lo confirmado en una versión no autoriza otra.
    */
   artifactRef?: string;
+  /** FASE 6 — requisitos de una simulación: toda solicitud construida con ellos va marcada `simulation: true`. */
+  simulation?: boolean;
 }
 
 function contractOrNull(action: string | null): string | null {

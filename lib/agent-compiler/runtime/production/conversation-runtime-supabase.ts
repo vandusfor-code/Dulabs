@@ -30,6 +30,8 @@ export interface ArtifactResolutionLog {
   agentId: string;
   source: "business_model" | "legacy_spec" | "none";
   version: string | null;
+  /** El modelo activo no corresponde a la versión servida por el registro: se usó la del registro. */
+  artifactNotServed?: boolean;
   recompiled?: boolean;
   cached?: boolean;
   error?: string;
@@ -54,9 +56,22 @@ export async function resolveConversationArtifact(input: {
   const log = input.log ?? ((e: ArtifactResolutionLog) => console.info("[business-agent.artifact]", JSON.stringify(e)));
   const base = { tenantId: input.tenantId, agentId: input.flowId };
   const active = await loadActiveArtifact(input.store, { tenantId: input.tenantId, agentId: input.flowId });
+  let linkedElsewhere = false;
   if (active.kind === "ok") {
-    log({ ...base, source: "business_model", version: active.artifact.version.ref, recompiled: active.recompiled, cached: active.cached });
-    return active.artifact;
+    // FASE 6: el artefacto del modelo solo se usa si es el que se publicó JUNTO con la versión que el registro sirve
+    // hoy. Si el registro sirve otra (rollback o edición en el editor avanzado), manda esa versión (vía el adaptador).
+    let link: string | null | undefined;
+    try {
+      link = input.store.activeFlowVersionLink ? await input.store.activeFlowVersionLink(input.tenantId, input.flowId) : undefined;
+    } catch {
+      log({ ...base, source: "business_model", version: null, error: "store_unavailable" });
+      throw new Error("business_model_artifact_store_unavailable");
+    }
+    if (link === undefined || link === input.flowVersionId) {
+      log({ ...base, source: "business_model", version: active.artifact.version.ref, recompiled: active.recompiled, cached: active.cached });
+      return active.artifact;
+    }
+    linkedElsewhere = true;
   }
   if (active.kind === "error") {
     log({ ...base, source: "business_model", version: null, error: active.issue });
@@ -69,7 +84,7 @@ export async function resolveConversationArtifact(input: {
   const key = `${input.tenantId}:${input.flowId}:${input.flowVersionId}:${input.flowChecksum}`;
   const hit = legacyCache.get(key);
   if (hit) {
-    log({ ...base, source: "legacy_spec", version: hit.version.ref, cached: true });
+    log({ ...base, source: "legacy_spec", version: hit.version.ref, cached: true, ...(linkedElsewhere ? { artifactNotServed: true } : {}) });
     return hit;
   }
   const r = compileLegacySpec(input.spec, { tenantId: input.tenantId, agentId: input.flowId, versionRef: input.flowVersionId, publishedVersion: null });
@@ -79,7 +94,7 @@ export async function resolveConversationArtifact(input: {
   }
   if (legacyCache.size >= LEGACY_CACHE_MAX) legacyCache.delete(legacyCache.keys().next().value!);
   legacyCache.set(key, r.artifact);
-  log({ ...base, source: "legacy_spec", version: r.artifact.version.ref, cached: false });
+  log({ ...base, source: "legacy_spec", version: r.artifact.version.ref, cached: false, ...(linkedElsewhere ? { artifactNotServed: true } : {}) });
   return r.artifact;
 }
 

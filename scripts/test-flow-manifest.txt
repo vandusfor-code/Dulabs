@@ -512,3 +512,5 @@ lib/agent-compiler/runtime/production/atender-conversation.test.ts
 lib/agent-compiler/understanding/temporal-ba.test.ts
 lib/agent-compiler/business-model/business-model.test.ts
 lib/agent-compiler/business-model/e2e.test.ts
+lib/agent-compiler/onboarding/onboarding.test.ts
+components/dashboard/business-agent/onboarding/onboarding.dom.test.tsx

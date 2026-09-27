@@ -70,11 +70,17 @@ export const actionResultSchema = z
     /** Slots que el backend rechazó (horario ocupado → time): la state machine los marca INVALID. */
     invalidSlots: z.array(z.string().regex(/^[a-z][a-z0-9_]{0,39}$/)).max(10),
     durationMs: z.number().int().min(0),
+    /**
+     * FASE 6 — SIMULACIÓN (vista previa / pruebas): la acción NO se ejecutó; es lo que el agente habría hecho. Solo
+     * aparece con status SUCCEEDED y nunca en producción (un resultado simulado no se guarda en la base).
+     */
+    simulated: z.literal(true).optional(),
   })
   .strict()
   .superRefine((r, ctx) => {
     if (r.status === "SUCCEEDED" && r.error) ctx.addIssue({ code: "custom", message: "succeeded_with_error" });
     if (r.status !== "SUCCEEDED" && !r.error) ctx.addIssue({ code: "custom", message: "failure_without_error" });
+    if (r.simulated && r.status !== "SUCCEEDED") ctx.addIssue({ code: "custom", message: "simulated_must_be_succeeded" });
   });
 export type ActionResult = z.infer<typeof actionResultSchema>;
 

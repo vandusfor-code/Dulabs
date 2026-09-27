@@ -1,0 +1,127 @@
+// Business Agent 2.0, FASE 6 — utilidades de test del onboarding (sin red).
+//
+// Piezas REALES: borrador, ensamblado, validación UBM, compilador, Spec del runtime, registro en memoria con sus
+// invariantes, readiness, simulación (Gate + state machine + Action Engine + renderer). Dobles: stores con la semántica
+// de las migraciones (la SQL real: scripts/verify-ba-onboarding.sh), hechos del negocio, plan, números y el
+// entendimiento del modelo de lenguaje (lectura fija por mensaje).
+
+import type { ReadinessFacts } from "@/lib/business-agent-readiness";
+import { createInMemoryBusinessAgentRegistryStore } from "@/lib/agent-compiler/registry/testing/in-memory-registry-store";
+import type { BusinessAgentRegistryStore } from "@/lib/agent-compiler/registry/types";
+import type { AgentLifecycleState } from "@/lib/agent-compiler/lifecycle/lifecycle";
+import { emptyDraft, type OnboardingDraft } from "@/lib/agent-compiler/onboarding/draft";
+import type { OnboardingDeps, OnboardingEvent } from "@/lib/agent-compiler/onboarding/service";
+import type { WhatsAppNumberInfo } from "@/lib/agent-compiler/onboarding/status";
+import { createOnboardingFakes } from "@/lib/agent-compiler/onboarding/testing/in-memory";
+import { understandMessage } from "@/lib/agent-compiler/understanding/engine";
+import type { UnderstandingProvider } from "@/lib/agent-compiler/understanding/provider";
+import type { SimulationDeps } from "@/lib/agent-compiler/onboarding/simulation";
+import type { EffectDispatchRequest, EffectDispatchResult } from "@/lib/flow/executor-types";
+
+export const TENANT_A = "11111111-1111-4111-8111-111111111111";
+export const TENANT_B = "22222222-2222-4222-8222-222222222222";
+export const NOW = new Date("2026-09-26T15:00:00Z");
+
+export interface World {
+  registry: BusinessAgentRegistryStore & { _debug: { flows: Array<{ tenantId: string; id: string; publishedVersionId: string | null }>; versions: unknown[] } };
+  fakes: ReturnType<typeof createOnboardingFakes>;
+  facts: ReadinessFacts;
+  plan: boolean;
+  numbers: Map<string, WhatsAppNumberInfo[]>;
+  bound: Array<{ tenantId: string; flowId: string; phoneNumberId: string }>;
+  lifecycle: AgentLifecycleState | null;
+  events: OnboardingEvent[];
+}
+
+/** Un "mundo" compartido (misma base) para varios tenants. */
+export function createWorld(): World {
+  const registry = createInMemoryBusinessAgentRegistryStore() as World["registry"];
+  return {
+    registry,
+    fakes: createOnboardingFakes(registry),
+    facts: { activeServices: 2, activeProducts: 3, hasKnowledge: true, calendarConnected: true },
+    plan: true,
+    numbers: new Map([
+      [TENANT_A, [{ phoneNumberId: "pn-a", label: "Barbería · •••• 2233", status: "available" }]],
+      [TENANT_B, [{ phoneNumberId: "pn-b", label: "Tienda · •••• 9988", status: "available" }]],
+    ]),
+    bound: [],
+    lifecycle: null,
+    events: [],
+  };
+}
+
+export function depsFor(world: World, tenantId: string, over: Partial<OnboardingDeps> = {}): OnboardingDeps {
+  return {
+    tenantId,
+    userId: undefined,
+    drafts: world.fakes.drafts,
+    registry: world.registry,
+    publisher: world.fakes.publisher,
+    loadFacts: async () => world.facts,
+    hasActivePlan: async () => world.plan,
+    listNumbers: async (flowId) =>
+      (world.numbers.get(tenantId) ?? []).map((n) => (world.bound.some((b) => b.tenantId === tenantId && b.flowId === flowId && b.phoneNumberId === n.phoneNumberId) ? { ...n, status: "active" } : n)),
+    lifecycle: async (flowId) => (world.bound.some((b) => b.tenantId === tenantId && b.flowId === flowId) ? "ACTIVE" : world.lifecycle),
+    activation: {
+      async evaluate(flowId, phoneNumberId) {
+        if (!(world.numbers.get(tenantId) ?? []).some((n) => n.phoneNumberId === phoneNumberId)) return { kind: "blocked", blockers: [{ code: "NUMBER_NOT_FOUND", category: "TENANT_ERROR", message: "Número no encontrado." }] };
+        const published = await world.registry.resolvePublishedVersion(tenantId, flowId);
+        if (!published) return { kind: "blocked", blockers: [{ code: "NOT_PUBLISHED", category: "BUSINESS_RULE_ERROR", message: "Publica tu agente antes de activarlo en un número." }] };
+        if (!world.plan) return { kind: "blocked", blockers: [{ code: "BILLING_REQUIRED", category: "BUSINESS_RULE_ERROR", message: "Necesitas un plan activo para que tu agente responda en WhatsApp." }] };
+        return { kind: "allowed", flowVersionId: published.flowVersionId };
+      },
+      async bind(flowId, phoneNumberId) {
+        world.bound.push({ tenantId, flowId, phoneNumberId });
+        return true;
+      },
+    },
+    now: () => NOW,
+    log: (e) => world.events.push(e),
+    ...over,
+  };
+}
+
+export function barberDraft(): OnboardingDraft {
+  const d = emptyDraft();
+  d.business = { name: "Barbería Norte", description: "Cortes y barba en el centro.", category: "Barbería / Peluquería", timezone: "America/Bogota" };
+  d.offer = { services: true, products: false, showCatalog: true, quotes: true };
+  d.booking = { enabled: true, agenda: "calendar", minimumNoticeMinutes: 60, allowChanges: true, changesNoticeHours: 4 };
+  d.support = { handoff: true, pauseHours: 12, answerQuestions: true, whenUnknown: "say_so", whenCannotHelp: "offer_person" };
+  d.customerData = { askName: true, askEmail: false, askNotes: false, extra: [] };
+  d.restrictedTopics = [{ words: ["política"], reply: "De eso no hablamos por aquí." }];
+  return d;
+}
+
+export function storeDraft(): OnboardingDraft {
+  const d = emptyDraft();
+  d.business = { name: "Tienda Centro", category: "Tienda / Retail", timezone: "America/Bogota" };
+  d.offer = { services: false, products: true, showCatalog: true, quotes: true };
+  d.booking = { enabled: false, minimumNoticeMinutes: 60, allowChanges: false, changesNoticeHours: 4 };
+  d.support = { handoff: true, pauseHours: 24, answerQuestions: true, whenUnknown: "say_so", whenCannotHelp: "offer_person" };
+  d.customerData = { askName: true, askEmail: false, askNotes: false, extra: [] };
+  return d;
+}
+
+type Reading = Record<string, unknown>;
+export const reading = (intent: string, slots: Array<{ name: string; raw: string; value?: string }> = [], confidence = 0.95): Reading => ({ primaryIntent: { intent, confidence }, secondaryIntents: [], slots, ambiguities: [], language: "es" });
+
+/** Simulación con lectura fija por mensaje y un handler de lecturas espía. */
+export function simulationDeps(readings: Record<string, Reading>, seen: EffectDispatchRequest[] = []): SimulationDeps & { seen: EffectDispatchRequest[] } {
+  const provider: UnderstandingProvider = {
+    name: "test",
+    async understand(req) {
+      for (const [text, out] of Object.entries(readings)) if (req.userContent.includes(text)) return { ok: true, output: out, provider: "test" };
+      return { ok: true, output: reading("UNKNOWN", [], 0.4), provider: "test" };
+    },
+  };
+  return {
+    seen,
+    understand: (input) => understandMessage({ provider, clock: () => NOW, log: () => {} }, input),
+    readHandler: async (req): Promise<EffectDispatchResult> => {
+      seen.push(req);
+      return { success: true, classification: "SUCCESS", data: { conocimientoEncontrado: true, respuestaDirecta: "Atendemos de lunes a sábado.", catalogoTexto: "- Corte clásico $30.000", cantidadCatalogo: 1 } };
+    },
+    now: () => NOW,
+  };
+}

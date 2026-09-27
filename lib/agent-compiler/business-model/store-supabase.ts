@@ -47,6 +47,12 @@ export function createSupabaseBusinessModelStore(supabase: SupabaseClient): Busi
       return { publishedVersion: row.published_version, artifact: row.artifact, artifactChecksum: row.artifact_checksum, model: row.model };
     },
 
+    async activeFlowVersionLink(tenantId, agentId) {
+      const { data, error } = await supabase.rpc("dulabs_ba_active_artifact_flow_version", { p_tenant: tenantId, p_agent: agentId });
+      if (error) throw error;
+      return typeof data === "string" ? data : null;
+    },
+
     async activate(tenantId, agentId, version) {
       const { data, error } = await supabase.rpc("dulabs_ba_activate_business_model_version", { p_tenant: tenantId, p_agent: agentId, p_version: version });
       if (error) throw error;

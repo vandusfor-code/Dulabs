@@ -374,3 +374,30 @@ describe("FASE 4 — registro y acciones reales", () => {
     assert.deepEqual([r.status, r.error?.reason, r.idempotencyKey], ["REJECTED", "MALFORMED_REQUEST", "0".repeat(32)]);
   });
 });
+
+describe("FASE 6 — simulación en el Action Engine", () => {
+  it("una solicitud en vivo no corre en simulación, ni una simulada en vivo (SIMULATION_MISMATCH, sin tocar nada)", async () => {
+    const { state, request } = await readyBooking();
+    const { engine, fake } = createTestEngine();
+    const a = await engine.execute(request, { ...contextFor(barberSpec(), state), simulation: true });
+    assert.deepEqual([a.status, a.error?.code, a.error?.reason], ["REJECTED", "UNAUTHORIZED", "SIMULATION_MISMATCH"]);
+    const simulated = { ...request, simulation: true as const };
+    const b = await engine.execute(simulated, contextFor(barberSpec(), { ...state, pendingAction: simulated }));
+    assert.deepEqual([b.error?.reason, fake.calls.length], ["SIMULATION_MISMATCH", 0]);
+  });
+
+  it("simulación: una escritura confirmada es SUCCEEDED `simulated` sin claim, sin candado y sin handler", async () => {
+    const h = createHarness(barberSpec());
+    h.deps.requirements = { ...h.deps.requirements, simulation: true };
+    await h.say("Soy Juan, corte clásico mañana a las 5 de la tarde", llm({ primaryIntent: intent("BOOKING_REQUEST"), slots: [S("customer_name", "Juan"), S("service", "corte clásico"), S("date", "mañana"), S("time", "a las 5 de la tarde")] }));
+    const r = processed(await h.say("Sí", llm({ primaryIntent: intent("CONFIRMATION", 0.95) })));
+    assert.equal(r.actionRequest?.simulation, true, "la solicitud nace marcada");
+    const store = createInMemoryActionStore();
+    const { engine, fake } = createTestEngine({ store });
+    const res = await engine.execute(r.actionRequest!, { ...contextFor(barberSpec(), r.state), simulation: true });
+    assert.deepEqual([res.status, res.simulated, res.executionId, fake.calls.length, store.rows.size], ["SUCCEEDED", true, null, 0, 0]);
+    assert.ok(parseActionResult(res).ok);
+    // Un resultado simulado nunca puede ser un fallo (el schema lo impide).
+    assert.equal(parseActionResult({ ...res, status: "FAILED", error: { code: "TIMEOUT", reason: "X", retryable: false, ambiguous: false } }).ok, false);
+  });
+});

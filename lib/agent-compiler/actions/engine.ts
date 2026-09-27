@@ -44,6 +44,12 @@ export interface ActionExecutionContext {
   state: ConversationState;
   /** Mensaje actual del cliente (runtime-injected; solo para la consulta de conocimiento). */
   userMessage: string;
+  /**
+   * FASE 6 — SIMULACIÓN (lo fija el servidor, nunca el navegador): ninguna escritura se ejecuta. Una acción con efecto
+   * (reservar, cancelar, transferir…) devuelve SUCCEEDED `simulated` SIN tocar el handler ni el registro de ejecuciones.
+   * Una solicitud simulada no corre en vivo ni al revés (SIMULATION_MISMATCH).
+   */
+  simulation?: boolean;
 }
 
 /** Requisitos del artefacto con su huella de ejecución (la misma que usa la state machine para construir solicitudes). */
@@ -156,6 +162,7 @@ function result(input: {
   data?: Record<string, unknown>;
   error?: FailureMapping | null;
   replayed?: boolean;
+  simulated?: boolean;
 }): ActionResult {
   return {
     status: input.status,
@@ -168,6 +175,7 @@ function result(input: {
     error: input.error ? { code: input.error.code, reason: input.error.reason, retryable: input.error.retryable, ambiguous: input.error.ambiguous } : null,
     invalidSlots: input.error?.invalidSlots ?? [],
     durationMs: Math.max(0, input.now - input.started),
+    ...(input.simulated ? { simulated: true as const } : {}),
   };
 }
 
@@ -186,6 +194,8 @@ export function validateActionRequest(raw: unknown, ctx: ActionExecutionContext,
   const action = typeof (raw as { action?: unknown })?.action === "string" ? String((raw as { action: string }).action).slice(0, 80) : "unknown";
   if (!parsed.success) return { ok: false, action, error: rejectWith("INVALID_ACTION", "MALFORMED_REQUEST") };
   const request = parsed.data;
+  // Simulación y producción nunca se cruzan: lo decide el contexto del SERVIDOR, y la solicitud debe coincidir.
+  if ((request.simulation === true) !== (ctx.simulation === true)) return { ok: false, action, error: rejectWith("UNAUTHORIZED", "SIMULATION_MISMATCH") };
 
   const def = getActionDefinition(request.action);
   if (!def) return { ok: false, action, error: rejectWith("INVALID_ACTION", "UNKNOWN_ACTION") };
@@ -229,7 +239,11 @@ export function validateActionRequest(raw: unknown, ctx: ActionExecutionContext,
   const pending = ctx.state.pendingAction;
   if (!pending) return { ok: false, action, error: rejectWith("STALE_ACTION_REQUEST", "NO_PENDING_ACTION") };
   if (pending.id !== request.id) return { ok: false, action, error: rejectWith("STALE_ACTION_REQUEST", "SUPERSEDED_BY_NEWER_REQUEST") };
-  if (stableStringify(operationOf(pending)) !== stableStringify(operationOf(request)) || (pending.artifactRef ?? null) !== (request.artifactRef ?? null)) {
+  if (
+    stableStringify(operationOf(pending)) !== stableStringify(operationOf(request)) ||
+    (pending.artifactRef ?? null) !== (request.artifactRef ?? null) ||
+    (pending.simulation === true) !== (request.simulation === true)
+  ) {
     return { ok: false, action, error: rejectWith("STALE_ACTION_REQUEST", "REQUEST_DOES_NOT_MATCH_STATE") };
   }
   const expectedStatus = request.purpose === "handoff" ? ["HANDOFF_PENDING", "HANDED_OFF", "PAUSED"] : ["READY_FOR_ACTION", "EXECUTING"];
@@ -239,7 +253,7 @@ export function validateActionRequest(raw: unknown, ctx: ActionExecutionContext,
     if (request.status === "executing" && pending.status === "executing") return { ok: true, def, contractVersion: contract.version, mode: "resolve_only" };
     return { ok: false, action, error: rejectWith("STALE_ACTION_REQUEST", "AGENT_VERSION_CHANGED") };
   }
-  const rebuilt = buildActionRequest({ state: ctx.state, requirements: requirementsOf(artifact), action: request.action, purpose: request.purpose, requiresConfirmation: request.requiresConfirmation, confirmationId: request.confirmationId, now: nowIso });
+  const rebuilt = buildActionRequest({ state: ctx.state, requirements: { ...requirementsOf(artifact), ...(ctx.simulation ? { simulation: true } : {}) }, action: request.action, purpose: request.purpose, requiresConfirmation: request.requiresConfirmation, confirmationId: request.confirmationId, now: nowIso });
   if (!rebuilt.ok) return { ok: false, action, error: rejectWith("INVALID_ARGUMENTS", "CURRENT_DATA_VIOLATES_CONTRACT") };
   if (rebuilt.request.id !== request.id) return { ok: false, action, error: rejectWith("STALE_ACTION_REQUEST", "DATA_CHANGED_SINCE_REQUEST") };
 
@@ -399,6 +413,11 @@ export function createActionEngine(deps: ActionEngineDeps) {
     if (mode === "execute") {
       const pre = bookingPreconditions(req, ctx.artifact, clock());
       if (pre) return finish(result({ status: "FAILED", request: req, action: req.action, executionId: null, attempt: 0, started, now: clock().getTime(), error: pre }), contractVersion);
+    }
+
+    // SIMULACIÓN: una acción con efecto NUNCA llega al handler ni al registro de ejecuciones. Es lo que habría hecho.
+    if (ctx.simulation && def.mutation) {
+      return finish(result({ status: "SUCCEEDED", request: req, action: req.action, executionId: null, attempt: 0, started, now: clock().getTime(), simulated: true }), contractVersion);
     }
 
     // IDEMPOTENCIA: claim atómico en Postgres.

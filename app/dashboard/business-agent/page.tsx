@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Settings2, CalendarClock, MessageSquareText, ShieldBan, UploadCloud } from "lucide-react";
+import { Settings2, CalendarClock, MessageSquareText, ShieldBan, UploadCloud, Sparkles } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { PageHeader } from "@/components/dashboard/shell/ui";
 import { useDashboard } from "@/lib/dashboard-session";
 import { useI18n } from "@/lib/i18n";
@@ -40,6 +41,7 @@ function specToForm(spec: EditableBusinessAgentSpecForm): EditableBusinessAgentS
 export default function BusinessAgentPage() {
   const { t } = useI18n();
   const { session, negocios, rol } = useDashboard();
+  const router = useRouter();
   const [tab, setTab] = useState<Tab>(initialTabFromUrl);
   const [agent, setAgent] = useState<AgentSummaryPublic | null>(null);
   const [versions, setVersions] = useState<AgentVersionSummary[]>([]);
@@ -63,6 +65,13 @@ export default function BusinessAgentPage() {
       setLoading(false);
       return;
     }
+    // FASE 6: un negocio que todavía no tiene agente empieza por la configuración guiada.
+    const params = new URLSearchParams(window.location.search);
+    if (agentResult.data.recentVersions.length === 0 && params.get("avanzado") !== "1") {
+      // Vuelta de conectar el calendario (OAuth) durante la configuración guiada: se retoma en el paso de citas.
+      router.replace(`/dashboard/business-agent/onboarding?paso=${params.get("calendar") ? "citas" : "negocio"}`);
+      return;
+    }
     setAgent(agentResult.data);
     setVersions(versionsResult.ok ? versionsResult.data.versions : []);
     const fuente = agentResult.data.draft ?? agentResult.data.published;
@@ -73,7 +82,7 @@ export default function BusinessAgentPage() {
     }
     setLoadError(null);
     setLoading(false);
-  }, [session]);
+  }, [session, router]);
 
   useEffect(() => {
     // Carga al montar (mismo patrón que FlowsListPage) -- intencional.
@@ -160,6 +169,18 @@ export default function BusinessAgentPage() {
   return (
     <div className="pb-12">
       {header}
+      <div className="px-4 pt-4 md:px-8">
+        <a
+          href="/dashboard/business-agent/onboarding"
+          className="flex items-center justify-between gap-3 rounded-xl border border-lime/40 bg-lime/10 px-4 py-3 text-sm text-fg transition-colors hover:border-lime"
+        >
+          <span className="flex items-center gap-2">
+            <Sparkles className="size-4 text-lime-text" aria-hidden="true" />
+            {t("Configuración guiada: responde preguntas sobre tu negocio, pruébalo y actívalo.", "Guided setup: answer questions about your business, test it and activate it.")}
+          </span>
+          <span className="font-medium text-lime-text">{t("Abrir", "Open")}</span>
+        </a>
+      </div>
       <div className="flex items-center gap-1 overflow-x-auto border-b border-edge px-4 md:px-8">
         {TABS.map((tb) => (
           <button

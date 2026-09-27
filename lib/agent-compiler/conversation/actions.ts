@@ -85,7 +85,9 @@ export function buildActionRequest(input: {
 
   const artifactRef = input.requirements.artifactRef;
   // La versión del negocio (artefacto) es parte de la operación: otra versión = otra propuesta y otra confirmación.
-  const argsHash = sha(stableStringify({ action: input.action, args, constraints, customerData, ...(artifactRef ? { artifactRef } : {}) }));
+  const simulation = input.requirements.simulation === true;
+  // Una simulación nunca comparte identidad (ni idempotencia) con una operación real.
+  const argsHash = sha(stableStringify({ action: input.action, args, constraints, customerData, ...(artifactRef ? { artifactRef } : {}), ...(simulation ? { simulation } : {}) }));
   const goalId = state.goal?.id ?? null;
   const id = sha([state.scope.tenantId, state.scope.conversationId, goalId ?? "-", input.action, input.purpose, argsHash].join("|"));
   return {
@@ -106,6 +108,7 @@ export function buildActionRequest(input: {
       status: "requested",
       requestedAt: input.now,
       ...(artifactRef ? { artifactRef } : {}),
+      ...(simulation ? { simulation: true as const } : {}),
     },
   };
 }

@@ -164,6 +164,8 @@ export const actionRequestSchema = z
      * leer estados previos. El Action Engine no ejecuta una solicitud "requested" de otra versión.
      */
     artifactRef: z.string().regex(/^[a-f0-9]{32}$/).nullable().optional(),
+    /** FASE 6 — solicitud de una SIMULACIÓN (vista previa / pruebas): el Action Engine nunca ejecuta su efecto. */
+    simulation: z.literal(true).optional(),
   })
   .strict();
 export type ActionRequest = z.infer<typeof actionRequestSchema>;

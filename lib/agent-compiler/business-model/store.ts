@@ -29,6 +29,11 @@ export interface BusinessModelStore {
   }): Promise<{ outcome: "published" | "conflict" | "invalid"; publishedVersion: number | null }>;
   loadActive(tenantId: string, agentId: string): Promise<StoredArtifactRow | null>;
   activate(tenantId: string, agentId: string, version: number): Promise<boolean>;
+  /**
+   * FASE 6 — versión del registro (flow_version_id) enlazada al artefacto ACTIVO (null = sin enlace). Si el store la
+   * implementa, el runtime solo usa el artefacto cuando corresponde a la versión que producción sirve.
+   */
+  activeFlowVersionLink?(tenantId: string, agentId: string): Promise<string | null>;
 }
 
 export const publishedVersionRef = (n: number) => `ubm-v${n}`;
