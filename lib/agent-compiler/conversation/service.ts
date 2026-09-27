@@ -16,6 +16,7 @@
 import { safeError, type BusinessAgentSafeError } from "@/lib/agent-compiler/contracts/errors";
 import type { BusinessContextInput, UnderstandingInput } from "@/lib/agent-compiler/understanding/context";
 import type { UnderstandingResult } from "@/lib/agent-compiler/understanding/engine";
+import type { StructuredUnderstanding } from "@/lib/agent-compiler/understanding/contract";
 import { foldText } from "@/lib/agent-compiler/understanding/slots";
 import { slotDisplayValue } from "@/lib/agent-compiler/understanding/validate";
 import { buildTemporalContext } from "@/lib/agent-compiler/understanding/temporal";
@@ -34,6 +35,8 @@ import { determineNextStep, type NextStep } from "@/lib/agent-compiler/conversat
 import { planResponse, type ResponsePlan } from "@/lib/agent-compiler/conversation/response-plan";
 import { reduceConversation, type ConversationInputEvent, type DomainEvent } from "@/lib/agent-compiler/conversation/transitions";
 import { conversationIdOf, type ConversationStateKey, type ConversationStateStore } from "@/lib/agent-compiler/conversation/store";
+import { relevantOfferings, resolveTurnEntities, type CatalogPort, type EntityResolutionTrace, type TurnCatalog } from "@/lib/agent-compiler/conversation/entities";
+import type { BusinessHours } from "@/lib/agent-compiler/spec/types";
 
 export const DEFAULT_IDLE_TIMEOUT_MS = 12 * 60 * 60 * 1000;
 export const MAX_TURN_ATTEMPTS = 3;
@@ -70,6 +73,13 @@ export interface ConversationServiceDeps {
   /** Entendimiento de FASE 2 ya ligado a su proveedor (understandMessage). */
   understand: (input: UnderstandingInput) => Promise<UnderstandingResult>;
   humanControl?: HumanControlPort;
+  /**
+   * FASE 7 — catálogo REAL del negocio (servicios) del tenant del turno: resuelve "corte" contra lo que existe y arma el
+   * contexto mínimo del modelo. Sin él (agentes sin servicios), el servicio queda como lo dijo el cliente.
+   */
+  catalog?: CatalogPort;
+  /** FASE 7 — horario de atención publicado: resuelve "a las 4" a la única lectura posible dentro del horario. */
+  businessHours?: BusinessHours | null;
   clock?: () => Date;
   idleTimeoutMs?: number;
   log?: (entry: ConversationTransitionLog) => void;
@@ -94,8 +104,13 @@ export interface TurnView {
   actionRequest: ActionRequest | null;
 }
 
+/** FASE 7 — qué pasó con la interpretación del mensaje en ESTE turno (para el runtime y la traza). */
+export type TurnUnderstanding =
+  | { ok: true; understanding: StructuredUnderstanding; entities?: EntityResolutionTrace; offeringsInContext: number }
+  | { ok: false; category: string; code: string };
+
 export type ConversationTurnResult =
-  | ({ outcome: "processed"; transition: NonNullable<ConversationState["lastTransition"]>; domainEvents: DomainEvent[] } & TurnView)
+  | ({ outcome: "processed"; transition: NonNullable<ConversationState["lastTransition"]>; domainEvents: DomainEvent[]; understanding?: TurnUnderstanding; stateBefore?: StateSnapshot } & TurnView)
   | ({ outcome: "duplicate" } & TurnView)
   | ({ outcome: "human_control" } & TurnView)
   | { outcome: "rejected"; error: BusinessAgentSafeError };
@@ -114,6 +129,25 @@ function view(state: ConversationState, version: number, req: AgentRequirements)
     nextStep,
     responsePlan: planResponse(nextStep, state, req),
     actionRequest: nextStep.kind === "READY_FOR_ACTION" ? nextStep.request : nextStep.kind === "HANDOFF" ? nextStep.request : null,
+  };
+}
+
+/** Foto del estado para la traza: estado y ESTADO de cada dato, nunca sus valores. */
+export interface StateSnapshot {
+  status: ConversationStatus;
+  version: number;
+  goal: string | null;
+  slots: Record<string, string>;
+  pendingAction: string | null;
+}
+
+export function stateSnapshot(state: ConversationState, version: number): StateSnapshot {
+  return {
+    status: state.status,
+    version,
+    goal: state.goal?.kind ?? null,
+    slots: Object.fromEntries(Object.entries(state.slots).map(([k, v]) => [k, v.status])),
+    pendingAction: state.pendingAction ? `${state.pendingAction.action}:${state.pendingAction.status}` : null,
   };
 }
 
@@ -169,6 +203,11 @@ export async function processConversationTurn(deps: ConversationServiceDeps, inp
     return reject(safeError("TENANT_ERROR", "conversation_business_context_mismatch"));
   }
 
+  // FASE 7 — el catálogo se lee UNA vez por mensaje (no por reintento de concurrencia). Si no se puede leer, el mensaje
+  // se trata como no interpretado: no se resuelve un servicio "a ciegas" ni se ejecuta nada.
+  let catalogLoad: Promise<TurnCatalog | "unavailable"> | null = null;
+  const loadCatalog = () => (catalogLoad ??= deps.catalog ? deps.catalog.load().catch((): "unavailable" => "unavailable") : Promise.resolve(null as unknown as TurnCatalog));
+
   for (let attempt = 1; attempt <= MAX_TURN_ATTEMPTS; attempt++) {
     const nowDate = clock();
     const now = nowDate.toISOString();
@@ -210,9 +249,13 @@ export async function processConversationTurn(deps: ConversationServiceDeps, inp
       state = r.state;
     }
 
+    const before = stateSnapshot(loaded.state, loaded.version);
+    let turnUnderstanding: TurnUnderstanding | undefined;
     if (humanActive !== true && !HUMAN_CONTROLLED_STATUSES.has(state.status)) {
       const pending = state.pendingConfirmation;
-      const understood = await deps.understand({
+      const catalog = deps.catalog ? await loadCatalog() : null;
+      const offerings = catalog && catalog !== "unavailable" ? relevantOfferings(catalog, input.text, state) : [];
+      const understood: UnderstandingResult = catalog === "unavailable" ? { ok: false, error: safeError("EXTERNAL_SERVICE_ERROR", "catalog_unavailable") } : await deps.understand({
         scope: { tenantId: key.tenantId, conversationId: conversationIdOf(key), contactId: key.telefonoCliente, agentId: key.agentId, ...(input.agentVersion ? { flowVersionId: input.agentVersion } : {}) },
         message: { text: input.text },
         conversation: {
@@ -225,14 +268,20 @@ export async function processConversationTurn(deps: ConversationServiceDeps, inp
             : {}),
           ...(state.lastQuestion ? { lastAgentQuestion: `Se le pidió el dato: ${state.lastQuestion.slot}` } : {}),
         },
-        business: deps.business,
+        business: offerings.length ? { ...deps.business, offerings } : deps.business,
       });
-      const ev: ConversationInputEvent = understood.ok
-        ? { type: "MESSAGE_UNDERSTOOD", eventId: input.eventId, at: sentAt, understanding: understood.understanding, cues: { additive: ADDITIVE_CUE.test(foldText(input.text)) } }
-        : { type: "UNDERSTANDING_FAILED", eventId: input.eventId, at: sentAt, category: understood.error.category, code: understood.error.code };
+      const resolved = understood.ok
+        ? resolveTurnEntities({ understanding: understood.understanding, state, catalog: catalog && catalog !== "unavailable" ? catalog : null, businessHours: deps.businessHours ?? null })
+        : null;
+      const ev: ConversationInputEvent = !understood.ok
+        ? { type: "UNDERSTANDING_FAILED", eventId: input.eventId, at: sentAt, category: understood.error.category, code: understood.error.code }
+        : { type: "MESSAGE_UNDERSTOOD", eventId: input.eventId, at: sentAt, understanding: resolved!.understanding, cues: { additive: ADDITIVE_CUE.test(foldText(input.text)) } };
       if (!understood.ok && (understood.error.category === "TENANT_ERROR" || understood.error.category === "VALIDATION_ERROR")) {
         return reject(understood.error);
       }
+      turnUnderstanding = !understood.ok
+        ? { ok: false, category: understood.error.category, code: understood.error.code }
+        : { ok: true, understanding: resolved!.understanding, entities: resolved!.trace, offeringsInContext: offerings.length };
       const r = reduceConversation(state, ev, { requirements: deps.requirements, now });
       if (!r.ok) return reject(safeError("INTERNAL_ERROR", `conversation_${r.code}`));
       steps.push({ previous: state.status, decisive: r.decisive, next: r.state.status, domainEvents: r.domainEvents });
@@ -266,7 +315,7 @@ export async function processConversationTurn(deps: ConversationServiceDeps, inp
       });
     }
     if (humanActive === true) return { outcome: "human_control", ...v };
-    return { outcome: "processed", transition: state.lastTransition!, domainEvents: last.domainEvents, ...v };
+    return { outcome: "processed", transition: state.lastTransition!, domainEvents: last.domainEvents, ...(turnUnderstanding ? { understanding: turnUnderstanding } : {}), stateBefore: before, ...v };
   }
   return reject(safeError("INTERNAL_ERROR", "conversation_state_conflict"), { attempts: MAX_TURN_ATTEMPTS });
 }

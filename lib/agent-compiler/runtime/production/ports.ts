@@ -14,6 +14,7 @@ import { resolveGeminiApiKeyFromEnv } from "@/lib/flow/gemini/gemini-client";
 import type { EffectDispatchRequest, EffectDispatchResult } from "@/lib/flow/executor-types";
 import type { GateActionSink, GateIdempotencyStore } from "@/lib/agent-compiler/runtime/agent-runtime";
 import { GATE_CONTINUE_LABEL, type SemanticClassifier } from "@/lib/agent-compiler/runtime/guardrail-gate";
+import { sharedUnderstandingCircuit, type CircuitBreaker } from "@/lib/agent-compiler/understanding/resilience";
 
 // ---------------------------------------------------------------------------
 // GateActionSink real — reutiliza enviarWhatsApp + activarPausaChat.
@@ -80,11 +81,14 @@ export function createMensajesLogIdempotency(supabase: SupabaseClient): GateIdem
 // ---------------------------------------------------------------------------
 
 /** Dispatch de IA inyectable (para test). En prod = GeminiExecutor real (GEMINI_KEY). */
-export type ClassifierDispatch = (req: EffectDispatchRequest) => Promise<EffectDispatchResult>;
+export type ClassifierDispatch = (req: EffectDispatchRequest, signal?: AbortSignal) => Promise<EffectDispatchResult>;
 
-function geminiDispatch(req: EffectDispatchRequest): Promise<EffectDispatchResult> {
+/** FASE 7 — límite del clasificador del Gate: si la IA tarda, el Gate sigue (las reglas críticas son deterministas). */
+export const CLASSIFIER_TIMEOUT_MS = 5_000;
+
+function geminiDispatch(req: EffectDispatchRequest, signal?: AbortSignal): Promise<EffectDispatchResult> {
   const executor = new GeminiExecutor({ resolveApiKey: async () => resolveGeminiApiKeyFromEnv() });
-  return executor.dispatch(req, { tenantId: req.tenantId, internal: true });
+  return executor.dispatch(req, { tenantId: req.tenantId, internal: true }, signal);
 }
 
 /** Máximo de políticas que se le presentan al clasificador en una llamada (acota el tamaño de la instrucción). */
@@ -112,9 +116,13 @@ export function buildClassifierInstruction(policies: Array<{ label: string; desc
  * acción (la política es de DuLabs, en la regla del Gate). Fail-safe: cualquier
  * error/ausencia => null (sin bloquear; las críticas son deterministas).
  */
-export function createGeminiSemanticClassifier(deps: { tenantId: string; dispatch?: ClassifierDispatch }): SemanticClassifier {
+export function createGeminiSemanticClassifier(deps: { tenantId: string; dispatch?: ClassifierDispatch; timeoutMs?: number; circuit?: CircuitBreaker; clock?: () => number }): SemanticClassifier {
   const dispatch = deps.dispatch ?? geminiDispatch;
+  // FASE 7 — mismo circuito que el entendimiento (mismo proveedor): con la IA caída no se espera al clasificador.
+  const circuit = deps.circuit ?? (deps.dispatch ? undefined : sharedUnderstandingCircuit);
+  const clock = deps.clock ?? Date.now;
   return async ({ message, labels, policies }) => {
+    if (circuit && !circuit.allow(clock())) return null;
     // Solo se pueden devolver etiquetas cuyo significado viajó en la instrucción (+ "continue").
     const descritas = policies.slice(0, MAX_CLASSIFIER_POLICIES).map((p) => p.label).filter((l) => labels.includes(l));
     const permitidas = [...descritas, GATE_CONTINUE_LABEL];
@@ -133,13 +141,29 @@ export function createGeminiSemanticClassifier(deps: { tenantId: string; dispatc
       },
     };
 
-    let result: EffectDispatchResult;
+    let result: EffectDispatchResult | null;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      result = await dispatch(req);
+      result = await Promise.race([
+        dispatch(req, controller.signal),
+        new Promise<null>((resolve) => {
+          timer = setTimeout(() => {
+            controller.abort();
+            resolve(null);
+          }, deps.timeoutMs ?? CLASSIFIER_TIMEOUT_MS);
+        }),
+      ]);
     } catch {
+      result = null;
+    } finally {
+      clearTimeout(timer);
+    }
+    if (!result || !result.success) {
+      circuit?.failure(clock());
       return null;
     }
-    if (!result.success) return null;
+    circuit?.success();
     const data = (result.appliedResult ?? result.data ?? {}) as Record<string, unknown>;
     const label = typeof data.classification === "string" ? data.classification : null;
     if (!label || !permitidas.includes(label)) return null;

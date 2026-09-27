@@ -14,8 +14,10 @@ import { evaluateBusinessAgentActivation } from "@/lib/agent-compiler/lifecycle/
 import { activarFlowParaNumero } from "@/lib/flow/flow-activation";
 import { createDefaultExecutorRegistry } from "@/lib/flow/executor-factory";
 import { understandMessage } from "@/lib/agent-compiler/understanding/engine";
-import { createExecutorUnderstandingProvider } from "@/lib/agent-compiler/understanding/provider";
+import { productionUnderstandingProvider } from "@/lib/agent-compiler/understanding/resilience";
+import { understandingProviderConfigured } from "@/lib/agent-compiler/understanding/provider";
 import { createGeminiSemanticClassifier } from "@/lib/agent-compiler/runtime/production/ports";
+import { createSupabaseServiceTableReader } from "@/lib/agent-compiler/runtime/production/catalog-supabase";
 import type { ActionHandler } from "@/lib/agent-compiler/actions/engine";
 import { createSupabaseOnboardingDraftStore, createSupabaseOnboardingPublisher } from "@/lib/agent-compiler/onboarding/store-supabase";
 import type { OnboardingDeps } from "@/lib/agent-compiler/onboarding/service";
@@ -84,10 +86,12 @@ export function createSupabaseReadHandler(supabase: SupabaseClient): ActionHandl
 
 /** Vista previa con el entendimiento REAL (Gemini) y el Gate semántico real; efectos siempre simulados. */
 export function createSupabaseSimulationDeps(supabase: SupabaseClient, tenantId: string): SimulationDeps {
-  const provider = createExecutorUnderstandingProvider();
+  const provider = productionUnderstandingProvider();
   return {
+    available: understandingProviderConfigured(),
     understand: (input) => understandMessage({ provider }, input),
     classifier: createGeminiSemanticClassifier({ tenantId }),
     readHandler: createSupabaseReadHandler(supabase),
+    readServices: createSupabaseServiceTableReader(supabase),
   };
 }

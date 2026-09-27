@@ -15,7 +15,7 @@ import { SaveIndicator, STEP_LABELS, StepProgress } from "@/components/dashboard
 import { BookingStep, BusinessStep, HoursStep, OfferStep, RulesStep, SupportStep } from "@/components/dashboard/business-agent/onboarding/Steps";
 import { TestStep } from "@/components/dashboard/business-agent/onboarding/TestStep";
 import { ActivateStep, STATUS_LABEL } from "@/components/dashboard/business-agent/onboarding/ActivateStep";
-import { ErrorBanner, primaryBtn, secondaryBtn } from "@/components/dashboard/business-agent/onboarding/controls";
+import { ErrorBanner, focusRing, primaryBtn, secondaryBtn } from "@/components/dashboard/business-agent/onboarding/controls";
 import { motion as styles, MotionStyles } from "@/components/dashboard/business-agent/onboarding/motion";
 
 const STEP_INTRO: Record<OnboardingStep, string> = {
@@ -81,7 +81,7 @@ export function OnboardingFlow({ auth, slots = {}, options, advancedHref = "/das
         <div className="flex shrink-0 flex-wrap items-center gap-3">
           {ob.overview && <span className="rounded-full bg-edge/60 px-3 py-1 text-xs font-semibold text-fg">{STATUS_LABEL[ob.overview.status]}</span>}
           <SaveIndicator state={ob.saveState} />
-          <a href={advancedHref} className="inline-flex items-center gap-1.5 text-xs text-mist hover:text-fg">
+          <a href={advancedHref} className={`-my-3 inline-flex min-h-11 items-center gap-1.5 py-3 text-xs text-mist hover:text-fg ${focusRing}`}>
             <Settings2 className="size-3.5" aria-hidden="true" /> Editor avanzado
           </a>
         </div>

@@ -7,7 +7,7 @@ import { apiError, apiOk } from "@/lib/agent-compiler/api/http";
 import { readBody, isRevision } from "@/lib/agent-compiler/onboarding/http";
 import { activateOnboarding, getOnboarding, previewOnboarding, publishOnboarding, PUBLISH_STAGES, saveOnboardingDraft, testOnboardingAgent, validateOnboarding } from "@/lib/agent-compiler/onboarding/service";
 import { SUPPORT_CODES } from "@/lib/agent-compiler/onboarding/issues";
-import { depsFor, simulationDeps, type World } from "@/lib/agent-compiler/onboarding/testing/harness";
+import { BARBER_SERVICES, barberScenarioReadings, depsFor, simulationDeps, type World } from "@/lib/agent-compiler/onboarding/testing/harness";
 
 type Reading = Record<string, unknown>;
 
@@ -73,7 +73,7 @@ export function createInProcessApi(world: World, sessions: Record<string, string
       return apiOk(r);
     }
     if (path === "/test") {
-      const r = await testOnboardingAgent(deps, { readHandler: simulationDeps({}).readHandler });
+      const r = await testOnboardingAgent(deps, simulationDeps({ ...barberScenarioReadings(), ...readings }, [], BARBER_SERVICES));
       if (!r.ok) return apiError(r.code, r.message, 422);
       return apiOk(r);
     }

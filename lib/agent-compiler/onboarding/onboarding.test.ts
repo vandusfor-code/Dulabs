@@ -18,7 +18,7 @@ import { resolveConversationArtifact } from "@/lib/agent-compiler/runtime/produc
 import { clearArtifactCache } from "@/lib/agent-compiler/business-model/store";
 import { readOnlyHandler } from "@/lib/agent-compiler/onboarding/simulation";
 import { STAGE_ORDER } from "@/components/dashboard/business-agent/onboarding/ActivateStep";
-import { barberDraft, createWorld, depsFor, NOW, reading, simulationDeps, storeDraft, TENANT_A, TENANT_B } from "@/lib/agent-compiler/onboarding/testing/harness";
+import { BARBER_SERVICES, barberDraft, barberScenarioReadings, createWorld, depsFor, NOW, reading, simulationDeps, storeDraft, TENANT_A, TENANT_B } from "@/lib/agent-compiler/onboarding/testing/harness";
 import type { EffectDispatchRequest } from "@/lib/flow/executor-types";
 
 async function savedWorld(draft = barberDraft(), tenant = TENANT_A) {
@@ -249,10 +249,18 @@ describe("FASE 6 — simulación", () => {
 
   it("Prueba tu agente: conversaciones de ejemplo según la configuración, todas sin efectos reales", async () => {
     const { deps } = await savedWorld();
-    const r = await testOnboardingAgent(deps, { readHandler: simulationDeps({}).readHandler, now: () => NOW });
+    const r = await testOnboardingAgent(deps, simulationDeps(barberScenarioReadings(), [], BARBER_SERVICES));
     assert.ok(r.ok);
     assert.deepEqual(r.scenarios.map((s) => [s.id, s.passed]), [["saludo", true], ["reserva", true], ["persona", true], ["tema_restringido", true], ["pregunta", true]]);
     assert.ok(r.scenarios.every((s) => s.checks.some((c) => c.label === "No ejecutó acciones reales" && c.ok)));
+  });
+
+  it("FASE 7 — sin IA disponible, la vista previa y 'Prueba tu agente' lo dicen (no fingen un resultado)", async () => {
+    const { deps } = await savedWorld();
+    const off = { ...simulationDeps(barberScenarioReadings(), [], BARBER_SERVICES), available: false };
+    const t = await testOnboardingAgent(deps, off);
+    const pv = await previewOnboarding(deps, off, { text: "Hola", state: null, turnId: "t" });
+    assert.deepEqual([t.ok ? null : t.code, pv.ok ? null : pv.code], ["BA-SIM-002", "BA-SIM-002"]);
   });
 });
 

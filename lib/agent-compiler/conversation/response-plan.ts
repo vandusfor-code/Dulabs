@@ -34,6 +34,8 @@ export interface ResponsePlan {
   slot?: string;
   reason?: "missing" | "ambiguous" | "invalid";
   candidates?: string[];
+  /** FASE 7 — motivo del backend (dato inexistente en el negocio, sugerencia…), para explicarlo sin inventar. */
+  detail?: string;
   /** Veces que ya se preguntó por este dato (para variar la pregunta u ofrecer una persona). */
   attempt?: number;
   action?: string;
@@ -63,6 +65,7 @@ export function planResponse(step: NextStep, state: ConversationState, req: Agen
         slot: step.slot,
         reason: step.reason,
         ...(step.candidates ? { candidates: step.candidates } : {}),
+        ...(step.detail ? { detail: step.detail } : {}),
         attempt: step.attempt,
         goal,
         summary: summary(state),

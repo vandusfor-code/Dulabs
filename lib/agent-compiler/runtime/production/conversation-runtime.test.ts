@@ -146,7 +146,7 @@ describe("FASE 4 — E2E: handoff, disponibilidad, recuperación y Gate", () => 
     await t.say("Mañana", llm({ primaryIntent: intent("BOOKING_REQUEST", 0.7), slots: [S("date", "Mañana")] }));
     const r = await t.say("Después de las 4", llm({ primaryIntent: intent("BOOKING_REQUEST", 0.7), slots: [S("time_range", "Después de las 4", { value: "16:00-" })] }));
     assert.deepEqual([r.status, r.actions.map((a) => a.action)], ["COLLECTING_INFORMATION", ["buscar_disponibilidad_nylas_generico"]]);
-    assert.equal(t.sent.at(-1), "Estos son los horarios disponibles para el domingo 27 de septiembre: 4:00 p. m., 4:30 p. m., 5:00 p. m.. ¿Cuál prefieres?");
+    assert.equal(t.sent.at(-1), "Estos son los horarios disponibles para el domingo 27 de septiembre: 4:00 p. m., 4:30 p. m., 5:00 p. m. ¿Cuál prefieres?");
   });
 
   it("recuperación: un worker cayó con una reserva en curso => el siguiente mensaje NO la re-ejecuta (desenlace desconocido)", async () => {

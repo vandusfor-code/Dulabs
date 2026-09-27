@@ -154,6 +154,8 @@ export interface ReduceContext {
 }
 
 const MAX_FAILURES_BEFORE_ERROR = 3;
+/** Intenciones que llevan (o pueden llevar) a una escritura: exigen confianza media o alta. */
+const CONSEQUENTIAL_INTENTS: ReadonlySet<UnderstandingIntent> = new Set<UnderstandingIntent>(["BOOKING_REQUEST", "ORDER_REQUEST", "CANCELLATION", "RESCHEDULING", "CONFIRMATION"]);
 /** Categoría con la que queda registrada una escritura de desenlace desconocido. */
 export const OUTCOME_UNKNOWN = "OUTCOME_UNKNOWN";
 const MAX_ADDITIONAL = 5;
@@ -328,8 +330,15 @@ function reduceMessage(prev: ConversationState, ev: Extract<ConversationInputEve
   // Una persona tiene la conversación: el mensaje queda registrado, sin transición (FASE 3 prepara la coexistencia).
   if (HUMAN_CONTROLLED_STATUSES.has(from)) return finish(s, from, events, ctx.now);
 
-  const intents: UnderstandingIntent[] = [u.intent.primary.intent, ...u.intent.secondary.map((i) => i.intent)];
+  // FASE 7 — la confianza del modelo es una SEÑAL, no una autoridad: una intención de confianza BAJA no puede iniciar un
+  // objetivo transaccional, confirmar una propuesta ni cancelar (todo eso lleva a una escritura). Queda registrada y el
+  // agente pregunta. Las intenciones informativas sí se atienden (no cambian nada).
+  const band = new Map<UnderstandingIntent, string>([u.intent.primary, ...u.intent.secondary].map((i) => [i.intent, i.band]));
+  const trusted = (i: UnderstandingIntent) => band.get(i) !== "low";
+  const intents: UnderstandingIntent[] = [u.intent.primary.intent, ...u.intent.secondary.map((i) => i.intent)].filter((i) => trusted(i) || !CONSEQUENTIAL_INTENTS.has(i));
   const turnIntents = new Set(intents);
+  // Sin objetivo abierto, un pedido transaccional dudoso se trata como no entendido: el agente pregunta qué necesita.
+  if (!trusted(u.intent.primary.intent) && CONSEQUENTIAL_INTENTS.has(u.intent.primary.intent) && !s.goal) s.currentIntent = { intent: "UNKNOWN", band: "low" };
 
   // Durante la ejecución de una acción no se cambian datos (la acción ya está en curso); solo se honra el handoff.
   if (from === "EXECUTING" && !u.signals.handoff.requested) return finish(s, from, events, ctx.now);
@@ -405,9 +414,10 @@ function reduceMessage(prev: ConversationState, ev: Extract<ConversationInputEve
   reconcileTimeWithRange(s, ctx.now, events);
   if (changed) s.proposalRejected = false;
 
-  // 6. Confirmación / rechazo: solo valen contra una propuesta pendiente y compatible.
+  // 6. Confirmación / rechazo: solo valen contra una propuesta pendiente y compatible (y con confianza suficiente).
   let confirmedId: string | null = null;
-  const conf = u.signals.confirmation;
+  const conf = u.signals.confirmation && trusted(u.signals.confirmation.kind === "affirm" ? "CONFIRMATION" : "REJECTION") ? u.signals.confirmation : null;
+  if (u.signals.confirmation && !conf) events.add("CONFIRMATION_IGNORED");
   if (conf && from === "AWAITING_CONFIRMATION" && prev.pendingConfirmation) {
     if (conf.kind === "affirm" && conf.pendingRef === prev.pendingConfirmation.id && !changed && proposalStillCurrent(s, req, prev.pendingConfirmation, ctx.now)) {
       confirmedId = prev.pendingConfirmation.id;

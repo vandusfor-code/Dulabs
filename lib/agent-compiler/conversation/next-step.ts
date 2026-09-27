@@ -9,7 +9,8 @@ import type { AgentRequirements, GoalRequirement, RequiredSlot } from "@/lib/age
 import { buildActionRequest, sha } from "@/lib/agent-compiler/conversation/actions";
 import type { UnderstandingIntent } from "@/lib/agent-compiler/understanding/taxonomy";
 
-export type SlotProblem = { slot: string; reason: "missing" | "ambiguous" | "invalid"; candidates?: string[] };
+/** `detail` = motivo del backend (p. ej. "service_not_offered", "service_suggestion") para que la respuesta lo explique. */
+export type SlotProblem = { slot: string; reason: "missing" | "ambiguous" | "invalid"; candidates?: string[]; detail?: string };
 
 /** Primer requisito sin valor usable, en el orden que definió la configuración. */
 export function firstSlotProblem(state: ConversationState, required: readonly RequiredSlot[]): SlotProblem | null {
@@ -17,8 +18,10 @@ export function firstSlotProblem(state: ConversationState, required: readonly Re
     if (r.anyOf.some((s) => isSlotUsable(state.slots[s]))) continue;
     for (const name of r.anyOf) {
       const s = state.slots[name];
-      if (s?.status === "AMBIGUOUS") return { slot: name, reason: "ambiguous", ...(s.candidates ? { candidates: s.candidates } : {}) };
-      if (s?.status === "INVALID") return { slot: name, reason: "invalid" };
+      // FASE 7: los motivos del catálogo (servicio inexistente / sugerencia / varios) viajan para explicarlos.
+      const detail = s?.reason?.startsWith("service_") ? { detail: s.reason } : {};
+      if (s?.status === "AMBIGUOUS") return { slot: name, reason: "ambiguous", ...(s.candidates ? { candidates: s.candidates } : {}), ...detail };
+      if (s?.status === "INVALID") return { slot: name, reason: "invalid", ...(s.candidates && s.reason?.startsWith("service_") ? { candidates: s.candidates } : {}), ...detail };
     }
     return { slot: r.ask, reason: "missing" };
   }
@@ -127,7 +130,7 @@ export function evaluateGoal(state: ConversationState, req: AgentRequirements, c
 // ---------------------------------------------------------------------------
 
 export type NextStep =
-  | { kind: "ASK_FOR_INFORMATION"; slot: string; reason: "missing" | "ambiguous" | "invalid"; candidates?: string[]; attempt: number }
+  | { kind: "ASK_FOR_INFORMATION"; slot: string; reason: "missing" | "ambiguous" | "invalid"; candidates?: string[]; detail?: string; attempt: number }
   | { kind: "ASK_FOR_CHANGE" }
   | { kind: "WAIT_FOR_CONFIRMATION"; confirmationId: string; action: string }
   | { kind: "READY_FOR_ACTION"; request: ActionRequest }
@@ -173,7 +176,7 @@ export function determineNextStep(state: ConversationState, req: AgentRequiremen
       const problem = firstSlotProblem(state, g.required);
       if (problem) {
         const attempt = state.lastQuestion?.slot === problem.slot ? state.lastQuestion.count : 1;
-        return { kind: "ASK_FOR_INFORMATION", slot: problem.slot, reason: problem.reason, ...(problem.candidates ? { candidates: problem.candidates } : {}), attempt };
+        return { kind: "ASK_FOR_INFORMATION", slot: problem.slot, reason: problem.reason, ...(problem.candidates ? { candidates: problem.candidates } : {}), ...(problem.detail ? { detail: problem.detail } : {}), attempt };
       }
       if (state.proposalRejected) return { kind: "ASK_FOR_CHANGE" };
       if (state.currentIntent?.intent === "UNKNOWN") return { kind: "CLARIFY_INTENT" };

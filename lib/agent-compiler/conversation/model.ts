@@ -110,7 +110,7 @@ export const slotRecordSchema = z
     candidates: z.array(z.string().max(120)).max(10).optional(),
     reason: z.string().max(60).optional(),
     source: z.enum(["CURRENT_MESSAGE", "BUSINESS_DATA", "SYSTEM", "ACTION_RESULT"]),
-    normalizedBy: z.enum(["parser", "validated_model_reading"]).optional(),
+    normalizedBy: z.enum(["parser", "validated_model_reading", "business_catalog", "business_hours"]).optional(),
     /** "customer" sobrevive entre objetivos (nombre, correo); "goal" se reinicia con cada objetivo nuevo. */
     scope: z.enum(["customer", "goal"]),
     /** Momento del MENSAJE que aportó el valor (no del procesamiento): ordena mensajes fuera de orden. */

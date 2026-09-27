@@ -190,8 +190,8 @@ export function AgentTests({ auth, ensureSaved }: { auth: OnboardingAuth; ensure
         </ul>
       )}
       <p className="text-xs text-mist">
-        Estas pruebas leen cada mensaje de ejemplo de forma fija para darte un resultado estable. Cómo entiende mensajes escritos a tu manera lo ves en
-        «Habla con tu agente».
+        Cada mensaje de ejemplo pasa por tu agente de verdad, con la misma comprensión que usará en WhatsApp, en modo prueba: no se crea ni se envía
+        nada real. Como la comprensión usa IA, un resultado puede variar un poco entre pruebas; lo que nunca cambia son tus reglas.
       </p>
     </section>
   );

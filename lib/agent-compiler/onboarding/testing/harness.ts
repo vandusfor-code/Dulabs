@@ -2,8 +2,9 @@
 //
 // Piezas REALES: borrador, ensamblado, validación UBM, compilador, Spec del runtime, registro en memoria con sus
 // invariantes, readiness, simulación (Gate + state machine + Action Engine + renderer). Dobles: stores con la semántica
-// de las migraciones (la SQL real: scripts/verify-ba-onboarding.sh), hechos del negocio, plan, números y el
-// entendimiento del modelo de lenguaje (lectura fija por mensaje).
+// de las migraciones (la SQL real: scripts/verify-ba-onboarding.sh), hechos del negocio, plan, números, el catálogo
+// de servicios del negocio y el TRANSPORTE del modelo de lenguaje (salida del modelo con guion por mensaje: lo que se
+// prueba es todo lo que el backend hace con esa salida — validación, entidades, estado, acciones, respuesta).
 
 import type { ReadinessFacts } from "@/lib/business-agent-readiness";
 import { createInMemoryBusinessAgentRegistryStore } from "@/lib/agent-compiler/registry/testing/in-memory-registry-store";
@@ -106,22 +107,51 @@ export function storeDraft(): OnboardingDraft {
 type Reading = Record<string, unknown>;
 export const reading = (intent: string, slots: Array<{ name: string; raw: string; value?: string }> = [], confidence = 0.95): Reading => ({ primaryIntent: { intent, confidence }, secondaryIntents: [], slots, ambiguities: [], language: "es" });
 
-/** Simulación con lectura fija por mensaje y un handler de lecturas espía. */
-export function simulationDeps(readings: Record<string, Reading>, seen: EffectDispatchRequest[] = []): SimulationDeps & { seen: EffectDispatchRequest[] } {
+/** Servicios activos del negocio de prueba (lo que devolvería dulabs_servicios del tenant). */
+export const BARBER_SERVICES = ["Corte clásico", "Corte + barba", "Barba"];
+
+/**
+ * Simulación con salida del modelo con guion por mensaje y un handler de lecturas espía. `services` = catálogo del negocio
+ * (vacío por defecto: sin catálogo el servicio queda como lo dijo el cliente, como en FASE 6).
+ */
+export function simulationDeps(readings: Record<string, Reading>, seen: EffectDispatchRequest[] = [], services: readonly string[] = []): SimulationDeps & { seen: EffectDispatchRequest[] } {
   const provider: UnderstandingProvider = {
     name: "test",
     async understand(req) {
-      for (const [text, out] of Object.entries(readings)) if (req.userContent.includes(text)) return { ok: true, output: out, provider: "test" };
+      // Mensaje exacto primero (CURRENT_MESSAGE viaja como JSON); luego, por contenido.
+      const current = req.userContent.split("CURRENT_MESSAGE:\n")[1] ?? "";
+      for (const [text, out] of Object.entries(readings)) if (current === JSON.stringify(text)) return { ok: true, output: out, provider: "test" };
+      for (const [text, out] of Object.entries(readings)) if (current.includes(text)) return { ok: true, output: out, provider: "test" };
       return { ok: true, output: reading("UNKNOWN", [], 0.4), provider: "test" };
     },
   };
   return {
     seen,
     understand: (input) => understandMessage({ provider, clock: () => NOW, log: () => {} }, input),
+    readServices: async () => services.map((name) => ({ name, durationMinutes: 30 })),
     readHandler: async (req): Promise<EffectDispatchResult> => {
       seen.push(req);
       return { success: true, classification: "SUCCESS", data: { conocimientoEncontrado: true, respuestaDirecta: "Atendemos de lunes a sábado.", catalogoTexto: "- Corte clásico $30.000", cantidadCatalogo: 1 } };
     },
+    trace: () => {},
     now: () => NOW,
+  };
+}
+
+/** Salidas con guion para las conversaciones de ejemplo de "Prueba tu agente" con barberDraft(). */
+export function barberScenarioReadings(): Record<string, Reading> {
+  return {
+    "Hola, buenas": reading("GREETING"),
+    "Quiero agendar un Corte clásico para el lunes a las 10 de la mañana": reading("BOOKING_REQUEST", [
+      { name: "service", raw: "Corte clásico" },
+      { name: "date", raw: "el lunes" },
+      { name: "time", raw: "a las 10 de la mañana", value: "10:00" },
+    ]),
+    "Mis datos: Ana Prueba": reading("BOOKING_REQUEST", [{ name: "customer_name", raw: "Ana Prueba" }], 0.8),
+    "Sí, confírmala": reading("CONFIRMATION"),
+    "Quiero hablar con una persona": reading("HUMAN_HANDOFF"),
+    "¿Qué opinas de política?": reading("INFORMATION_REQUEST"),
+    "¿Qué horario tienen?": reading("INFORMATION_REQUEST"),
+    "Quiero agendar una cita para mañana": reading("BOOKING_REQUEST", [{ name: "date", raw: "mañana" }]),
   };
 }

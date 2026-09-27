@@ -29,7 +29,19 @@ export interface RenderInput {
   offerHandoff?: boolean;
   /** FASE 6 — vista previa: lo que se "haría" se dice como simulación, nunca como hecho. */
   simulation?: boolean;
+  /**
+   * FASE 7 — el mensaje de ESTE turno no se pudo interpretar (IA caída, sin respuesta válida tras los reintentos): no
+   * se ejecutó nada y el estado se conservó. Se dice con honestidad y se ofrece una persona si el negocio la tiene.
+   */
+  understandingFailed?: boolean;
+  /** FASE 7 — el negocio tiene traspaso a una persona (requisitos publicados). */
+  handoffAvailable?: boolean;
 }
+
+/** FASE 7 — respaldo sin IA: nunca afirma nada ni ejecuta nada; pide reformular. */
+export const UNDERSTANDING_FALLBACK_TEXT = "En este momento no pude entender tu mensaje. ¿Me lo puedes escribir de otra forma?";
+/** La frase sugerida la reconoce el backend SIN IA (HUMAN_REQUEST_PHRASES), así que funciona aunque el modelo esté caído. */
+export const UNDERSTANDING_FALLBACK_HANDOFF_TEXT = "Si prefieres, escribe «quiero hablar con una persona» y te comunico con alguien del equipo.";
 
 /** Texto de una acción con efecto que en la simulación NO se ejecutó (nunca se presenta como hecha). */
 const SIMULATED_TEXT: Readonly<Record<string, string>> = {
@@ -136,10 +148,26 @@ function availabilityText(a: ActionResult | undefined): string | null {
   const slots = Array.isArray(a.data.horariosDisponibles) ? (a.data.horariosDisponibles as unknown[]).filter((x): x is string => typeof x === "string") : [];
   if (slots.length === 0) return null;
   const fecha = typeof a.data.fecha === "string" ? formatDate(a.data.fecha) : "ese día";
-  return `Estos son los horarios disponibles para el ${fecha}: ${slots.slice(0, 8).map(formatTime).join(", ")}. ¿Cuál prefieres?`;
+  // "p. m." ya termina en punto: no se agrega otro.
+  return `Estos son los horarios disponibles para el ${fecha}: ${slots.slice(0, 8).map(formatTime).join(", ")} ¿Cuál prefieres?`;
 }
 
 const BOOKING_ACTIONS = new Set(["crear_cita_nylas_generico", "agendar_cita_especialista"]);
+
+/** Lectura de una franja candidata ("16:00-" / "-12:00" / "14:00-16:00") en palabras. */
+function formatRangeCandidate(c: string): string {
+  const [from, to] = c.split("-");
+  if (from && to) return `entre las ${formatTime(from)} y las ${formatTime(to)}`;
+  if (from) return `después de las ${formatTime(from)}`;
+  if (to) return `antes de las ${formatTime(to)}`;
+  return c;
+}
+
+function candidateText(slot: string | undefined, c: string): string {
+  if (slot === "time") return formatTime(c);
+  if (slot === "time_range") return formatRangeCandidate(c);
+  return c;
+}
 
 export function renderResponse(input: RenderInput): string | null {
   const { plan, state, actions } = input;
@@ -153,6 +181,12 @@ export function renderResponse(input: RenderInput): string | null {
   const offer = (yes: boolean | undefined) => (yes && input.offerHandoff !== false ? " Si prefieres, te comunico con una persona del equipo." : "");
 
   if (handoffDone) return input.handoffMessage ?? "Te comunico con una persona del equipo. En breve te escriben por aquí.";
+
+  // FASE 7 — la IA no pudo interpretar este mensaje: no se inventa una respuesta ni se retoma una pregunta como si se
+  // hubiera entendido. Tras varios fallos seguidos, la state machine pasa a ERROR y responde el respaldo con persona.
+  if (input.understandingFailed && plan.intent !== "NO_RESPONSE" && plan.intent !== "ERROR_FALLBACK") {
+    return `${UNDERSTANDING_FALLBACK_TEXT}${input.handoffAvailable && input.offerHandoff !== false ? ` ${UNDERSTANDING_FALLBACK_HANDOFF_TEXT}` : ""}`;
+  }
 
   switch (plan.intent) {
     case "NO_RESPONSE":
@@ -168,13 +202,22 @@ export function renderResponse(input: RenderInput): string | null {
       return withExtra(`${q}${offer(plan.offerHandoff)}`);
     }
     case "CLARIFY_SLOT": {
+      // FASE 7 — servicio que el negocio no tiene: se dice y se muestran SOLO los servicios reales.
+      if (plan.slot === "service" && plan.detail === "service_not_offered") {
+        const opts = plan.candidates ?? [];
+        return withExtra(`Ese servicio no lo tenemos.${opts.length ? ` Estos son nuestros servicios: ${opts.join(", ")}.` : ""} ¿Cuál te gustaría?${offer(plan.offerHandoff)}`);
+      }
+      if (plan.slot === "service" && plan.detail === "service_suggestion" && plan.candidates?.length === 1) {
+        return withExtra(`¿Te refieres a ${plan.candidates[0]}?`);
+      }
       if (plan.reason === "invalid") {
         const reason = failure?.error?.reason && INVALID_REASONS[failure.error.reason];
         const q = (plan.slot && (input.questions[plan.slot] ?? DEFAULT_QUESTIONS[plan.slot])) ?? "¿Me lo indicas de nuevo?";
         return withExtra(`${reason ?? "Ese dato no es válido."} ${q}${offer(plan.offerHandoff)}`);
       }
       if (plan.candidates && plan.candidates.length > 1) {
-        const opts = plan.slot === "time" ? plan.candidates.map(formatTime) : plan.candidates;
+        const opts = plan.candidates.map((c) => candidateText(plan.slot, c));
+        if (plan.slot === "service") return withExtra(`Tenemos varias opciones: ${opts.join(", ")}. ¿Cuál te gustaría?`);
         return withExtra(`¿Te refieres a ${opts.slice(0, -1).join(", ")} o a ${opts.at(-1)}?`);
       }
       const q = (plan.slot && (input.questions[plan.slot] ?? DEFAULT_QUESTIONS[plan.slot])) ?? "¿Me das un poco más de detalle?";

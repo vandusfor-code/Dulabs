@@ -145,7 +145,8 @@ export interface UnderstoodSlot {
   raw: string;
   status: "resolved" | "ambiguous" | "unresolved" | "invalid";
   value?: NormalizedSlotValue;
-  normalizedBy?: "parser" | "validated_model_reading";
+  /** FASE 7: "business_catalog" (servicio real del negocio) y "business_hours" (am/pm por horario de atención). */
+  normalizedBy?: "parser" | "validated_model_reading" | "business_catalog" | "business_hours";
   reason?: string;
   candidates?: string[];
   change: SlotChange;
@@ -193,5 +194,6 @@ export interface StructuredUnderstanding {
     correction: boolean;
   };
   temporal: TemporalContext;
-  provenance: { provider: string; model?: string; latencyMs?: number };
+  /** FASE 7 — intentos usados y tokens de todos los intentos (costo), si el proveedor los reporta. */
+  provenance: { provider: string; model?: string; latencyMs?: number; attempts?: number; usage?: { inputTokens?: number; outputTokens?: number } };
 }

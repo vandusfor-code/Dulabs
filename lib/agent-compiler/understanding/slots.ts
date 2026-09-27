@@ -157,7 +157,32 @@ function parseCount(raw: string): number | null {
   return words.length === 1 ? NUMBER_WORDS[words[0]!]! : null;
 }
 
+const RELATIVE_NUMBERS: Record<string, number> = { un: 1, una: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5, seis: 6, siete: 7, ocho: 8, nueve: 9, diez: 10, quince: 15 };
+const MAX_RELATIVE_DAYS = 365;
+
+/** Suma días a una fecha de calendario (YYYY-MM-DD) sin pasar por horas: inmune a cambios de horario (DST). */
+export function addCalendarDays(isoDate: string, days: number): string {
+  const [y, m, d] = isoDate.split("-").map(Number);
+  const dt = new Date(Date.UTC(y!, m! - 1, d! + days, 12));
+  return dt.toISOString().slice(0, 10);
+}
+
+/**
+ * FASE 7 — "en dos días", "dentro de 3 días", "en una semana": el BACKEND hace la aritmética sobre la fecha local del
+ * negocio (nunca el modelo). Devuelve null si el texto no es una expresión relativa de este tipo.
+ */
+export function relativeDate(raw: string, businessDate: string): string | null {
+  const m = /\b(?:en|dentro de)\s+(\d{1,3}|un|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|quince)\s+(dias?|semanas?)\b/.exec(foldText(raw));
+  if (!m) return null;
+  const n = /^\d+$/.test(m[1]!) ? Number(m[1]) : RELATIVE_NUMBERS[m[1]!]!;
+  const days = n * (m[2]!.startsWith("semana") ? 7 : 1);
+  if (!Number.isInteger(days) || days < 1 || days > MAX_RELATIVE_DAYS) return null;
+  return addCalendarDays(businessDate, days);
+}
+
 function normalizeDate(raw: string, modelValue: string | undefined, temporal: TemporalContext): SlotNormalization {
+  const relative = relativeDate(raw, temporal.businessDate);
+  if (relative) return { status: "resolved", value: { kind: "date", date: relative }, normalizedBy: "parser" };
   // "para el próximo sábado" / "el día 15 de marzo": el parser espera la expresión de fecha al inicio.
   const texto = raw.trim().replace(/^para\s+/i, "").replace(/^(?:el|la)\s+d[ií]a\s+/i, "");
   const r = resolverFechaSolicitada({ solicitudTexto: texto, fechaPropuesta: modelValue, hoyISO: temporal.businessDate });
@@ -186,6 +211,8 @@ function bareTwelveHourClock(raw: string): { hour: number; minute: string } | nu
 }
 
 function normalizeTime(raw: string, modelValue: string | undefined): SlotNormalization {
+  // FASE 7 — "a mediodía" / "al medio día": 12:00 sin ambigüedad.
+  if (/^(?:a |al |como a |tipo )?(?:las )?medio ?dia$/.test(foldText(raw))) return { status: "resolved", value: { kind: "time", time: "12:00" }, normalizedBy: "parser" };
   const bare = bareTwelveHourClock(raw);
   if (bare) {
     const am = `${String(bare.hour).padStart(2, "0")}:${bare.minute}`;
@@ -211,13 +238,26 @@ const PERIODS: Array<[RegExp, "morning" | "afternoon" | "evening"]> = [
   [/\b(?:en|por|de) la noche\b/, "evening"],
 ];
 
+/** Lecturas posibles de un lado de la franja sin am/pm ("después de las 4" → 04:00 o 16:00). */
+function sideCandidates(texto: string, propuesta: string | undefined): string[] {
+  const r = normalizeTime(texto, propuesta);
+  if (r.status === "resolved" && r.value.kind === "time") return [r.value.time];
+  return r.status === "ambiguous" ? (r.candidates ?? []) : [];
+}
+
 function normalizeTimeRange(raw: string, modelValue: string | undefined): SlotNormalization {
   const t = foldText(raw);
+  // FASE 7 — "a primera hora" / "temprano": la mañana (la hora exacta la da la disponibilidad real).
+  if (/\b(?:a primera hora|primera hora|bien temprano|temprano)\b/.test(t)) return { status: "resolved", value: { kind: "time_range", period: "morning" }, normalizedBy: "parser" };
   const [modelFrom, modelTo] = (modelValue ?? "").split("-").map((x) => x.trim() || undefined);
   const side = (texto: string, propuesta: string | undefined) => {
     const r = normalizeTime(texto, propuesta);
     return r.status === "resolved" && r.value.kind === "time" ? { time: r.value.time, by: r.normalizedBy } : null;
   };
+  // Franja ambigua: se devuelven las lecturas posibles ("HH:MM-" / "-HH:MM" / "HH:MM-HH:MM") para que el backend las
+  // resuelva con el horario del negocio o se las pregunte al cliente. Nunca se elige una por él aquí.
+  const ambiguousRange = (candidates: string[]): SlotNormalization =>
+    candidates.length > 1 ? { status: "ambiguous", reason: "time_range_am_pm_unspecified", candidates } : { status: "ambiguous", reason: "time_range_am_pm_unspecified" };
 
   const entre = /\bentre (?:las )?(.+?) y (?:las )?(.+)$/.exec(t);
   const desde = /\b(?:despues de|desde|a partir de)\s+(.+)$/.exec(t);
@@ -228,13 +268,19 @@ function normalizeTimeRange(raw: string, modelValue: string | undefined): SlotNo
     if (entre) {
       from = side(`a las ${entre[1]}`, modelFrom);
       to = side(`a las ${entre[2]}`, modelTo);
-      if (!from || !to) return { status: "ambiguous", reason: "time_range_am_pm_unspecified" };
+      if (!from || !to) {
+        const fs = from ? [from.time] : sideCandidates(`a las ${entre[1]}`, modelFrom);
+        const ts = to ? [to.time] : sideCandidates(`a las ${entre[2]}`, modelTo);
+        // Mismo medio día a ambos lados ("entre 2 y 4" = 02:00–04:00 o 14:00–16:00), nunca una franja cruzada.
+        const pairs = fs.length === 2 && ts.length === 2 ? fs.map((f, i) => [f, ts[i]!] as const) : fs.flatMap((f) => ts.map((x) => [f, x] as const));
+        return ambiguousRange(pairs.filter(([f, x]) => x > f && Number(x.slice(0, 2)) - Number(f.slice(0, 2)) <= 12).map(([f, x]) => `${f}-${x}`).slice(0, 4));
+      }
     } else if (desde) {
       from = side(desde[1]!, modelFrom);
-      if (!from) return { status: "ambiguous", reason: "time_range_am_pm_unspecified" };
+      if (!from) return ambiguousRange(sideCandidates(desde[1]!, modelFrom).map((f) => `${f}-`));
     } else if (hasta) {
       to = side(hasta![1]!, modelTo);
-      if (!to) return { status: "ambiguous", reason: "time_range_am_pm_unspecified" };
+      if (!to) return ambiguousRange(sideCandidates(hasta![1]!, modelTo).map((x) => `-${x}`));
     }
     if (from && to && from.time >= to.time) return { status: "invalid", reason: "time_range_inverted" };
     const by = from?.by === "validated_model_reading" || to?.by === "validated_model_reading" ? "validated_model_reading" : "parser";

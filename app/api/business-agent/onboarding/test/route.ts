@@ -1,12 +1,14 @@
 /**
  * POST /api/business-agent/onboarding/test — Business Agent 2.0, FASE 6 ("Prueba tu agente").
  * Conversaciones de ejemplo contra el borrador guardado, en SIMULACIÓN (sin efectos reales). admin/agente.
+ * FASE 7: con el MISMO pipeline real que la vista previa (entendimiento con IA, catálogo real, state machine, Action
+ * Engine en simulación); sin lecturas fijas.
  */
 import type { NextRequest } from "next/server";
 import { requireFlowAccess } from "@/lib/flow/api-auth";
 import { respuestaSiLimiteTasaExcedido } from "@/lib/rate-limit";
 import { apiError, apiOk } from "@/lib/agent-compiler/api/http";
-import { createSupabaseOnboardingDeps, createSupabaseReadHandler } from "@/lib/agent-compiler/onboarding/deps-supabase";
+import { createSupabaseOnboardingDeps, createSupabaseSimulationDeps } from "@/lib/agent-compiler/onboarding/deps-supabase";
 import { testOnboardingAgent } from "@/lib/agent-compiler/onboarding/service";
 import { unexpected } from "@/lib/agent-compiler/onboarding/http";
 import { SUPPORT_CODES } from "@/lib/agent-compiler/onboarding/issues";
@@ -20,7 +22,7 @@ export async function POST(request: NextRequest) {
   const limite = await respuestaSiLimiteTasaExcedido(supabase, { recurso: "business_agent_onboarding_test", tenantId: miembro.tenantId, categoria: "costosa" });
   if (limite) return limite;
   try {
-    const r = await testOnboardingAgent(createSupabaseOnboardingDeps(supabase, { tenantId: miembro.tenantId, userId: miembro.userId }), { readHandler: createSupabaseReadHandler(supabase) });
+    const r = await testOnboardingAgent(createSupabaseOnboardingDeps(supabase, { tenantId: miembro.tenantId, userId: miembro.userId }), createSupabaseSimulationDeps(supabase, miembro.tenantId));
     if (!r.ok) return apiError(r.code, r.message, 422, { issues: r.issues });
     return apiOk(r);
   } catch (err) {

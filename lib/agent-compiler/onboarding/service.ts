@@ -429,8 +429,12 @@ export type PreviewResult =
   | { ok: false; code: string; message: string; issues: OnboardingIssue[] };
 
 /** Un turno de la vista previa: el mensaje recorre el agente del borrador en SIMULACIÓN (nada real). */
+/** FASE 7 — sin proveedor de IA configurado, la vista previa y las pruebas no se ejecutan (no se finge un resultado). */
+export const SIM_UNAVAILABLE_MESSAGE = "La vista previa no está disponible en este momento. Intenta de nuevo en unos minutos.";
+
 export async function previewOnboarding(deps: OnboardingDeps, sim: SimulationDeps, input: { text: string; state: unknown; turnId: string }): Promise<PreviewResult> {
   const log = deps.log ?? defaultLog;
+  if (sim.available === false) return { ok: false, code: SUPPORT_CODES.SIM_UNAVAILABLE, message: SIM_UNAVAILABLE_MESSAGE, issues: [] };
   const d = await draftArtifact(deps);
   if (!d.ok) return d;
   if (input.state === null || input.state === undefined) log({ event: "preview_started", tenantId: deps.tenantId, agentId: d.artifact.agentId, revision: d.revision });
@@ -438,7 +442,7 @@ export async function previewOnboarding(deps: OnboardingDeps, sim: SimulationDep
   if (!r.ok) {
     return r.code === "STATE_INVALID"
       ? { ok: false, code: SUPPORT_CODES.SIM_STATE, message: "La conversación de prueba se reinició. Escribe de nuevo.", issues: [] }
-      : { ok: false, code: SUPPORT_CODES.SIM_UNAVAILABLE, message: "La vista previa no está disponible en este momento. Intenta de nuevo en unos minutos.", issues: [] };
+      : { ok: false, code: SUPPORT_CODES.SIM_UNAVAILABLE, message: SIM_UNAVAILABLE_MESSAGE, issues: [] };
   }
   return { ok: true, replies: r.result.replies, state: r.result.state, actions: r.result.actions, revision: d.revision };
 }
@@ -446,9 +450,10 @@ export async function previewOnboarding(deps: OnboardingDeps, sim: SimulationDep
 export type AgentTestResult = { ok: true; scenarios: ScenarioResult[]; passed: boolean; revision: number } | { ok: false; code: string; message: string; issues: OnboardingIssue[] };
 
 /** "Prueba tu agente": conversaciones de ejemplo contra el borrador, en simulación. */
-export async function testOnboardingAgent(deps: OnboardingDeps, sim: Pick<SimulationDeps, "readHandler" | "now">): Promise<AgentTestResult> {
+export async function testOnboardingAgent(deps: OnboardingDeps, sim: SimulationDeps): Promise<AgentTestResult> {
+  if (sim.available === false) return { ok: false, code: SUPPORT_CODES.SIM_UNAVAILABLE, message: SIM_UNAVAILABLE_MESSAGE, issues: [] };
   const d = await draftArtifact(deps);
   if (!d.ok) return d;
-  const scenarios = await runAgentScenarios({ artifact: d.artifact, gateRules: d.gateRules, draft: d.draft, readHandler: sim.readHandler, now: sim.now });
+  const scenarios = await runAgentScenarios({ artifact: d.artifact, gateRules: d.gateRules, draft: d.draft, sim });
   return { ok: true, scenarios, passed: scenarios.every((s) => s.passed), revision: d.revision };
 }

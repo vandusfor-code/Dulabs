@@ -15,7 +15,7 @@ import type { BusinessAgentSpec } from "@/lib/agent-compiler/spec/types";
 import { createDefaultExecutorRegistry } from "@/lib/flow/executor-factory";
 import type { ConversationTurnHandler, GateActionSink } from "@/lib/agent-compiler/runtime/agent-runtime";
 import { understandMessage } from "@/lib/agent-compiler/understanding/engine";
-import { createExecutorUnderstandingProvider } from "@/lib/agent-compiler/understanding/provider";
+import { productionUnderstandingProvider } from "@/lib/agent-compiler/understanding/resilience";
 import { createPausaChatHumanControl, createSupabaseConversationStateStore } from "@/lib/agent-compiler/conversation/store-supabase";
 import { createActionEngine } from "@/lib/agent-compiler/actions/engine";
 import { createSupabaseActionExecutionStore } from "@/lib/agent-compiler/actions/store-supabase";
@@ -24,6 +24,8 @@ import { artifactRequirements, businessContextFromArtifact, type CompiledAgentAr
 import { compileLegacySpec } from "@/lib/agent-compiler/business-model/compile";
 import { loadActiveArtifact, type BusinessModelStore } from "@/lib/agent-compiler/business-model/store";
 import { createSupabaseBusinessModelStore } from "@/lib/agent-compiler/business-model/store-supabase";
+import { catalogPortForArtifact } from "@/lib/agent-compiler/conversation/entities";
+import { createSupabaseServiceTableReader } from "@/lib/agent-compiler/runtime/production/catalog-supabase";
 
 export interface ArtifactResolutionLog {
   tenantId: string;
@@ -120,7 +122,7 @@ export function createProductionConversationRuntime(input: {
         flowChecksum: input.flowChecksum,
         spec: input.spec,
       });
-      const provider = createExecutorUnderstandingProvider();
+      const provider = productionUnderstandingProvider();
       const actionExecutor = createDefaultExecutorRegistry(input.supabase).resolve("action");
       const runtime = createConversationRuntime({
         service: {
@@ -129,6 +131,9 @@ export function createProductionConversationRuntime(input: {
           business: businessContextFromArtifact(artifact),
           understand: (u) => understandMessage({ provider }, u),
           humanControl: createPausaChatHumanControl(input.supabase),
+          // FASE 7 — entidades contra el negocio real: servicios (tablas del tenant o modelo publicado) y horario.
+          catalog: catalogPortForArtifact(artifact, createSupabaseServiceTableReader(input.supabase)),
+          businessHours: artifact.booking?.businessHours ?? null,
         },
         engine: createActionEngine({
           store: createSupabaseActionExecutionStore(input.supabase),

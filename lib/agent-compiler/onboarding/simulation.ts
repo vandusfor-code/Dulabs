@@ -23,6 +23,8 @@ import { createConversationRuntime } from "@/lib/agent-compiler/runtime/producti
 import { simulatedActionText } from "@/lib/agent-compiler/conversation/renderer";
 import type { UnderstandingInput } from "@/lib/agent-compiler/understanding/context";
 import type { UnderstandingResult } from "@/lib/agent-compiler/understanding/engine";
+import { catalogPortForArtifact, type ServiceTableReader } from "@/lib/agent-compiler/conversation/entities";
+import type { BusinessAgentTurnTrace } from "@/lib/agent-compiler/runtime/production/turn-trace";
 
 export const SIMULATION_PHONE_NUMBER_ID = "simulacion";
 export const SIMULATION_CONTACT = "0000000000";
@@ -33,10 +35,16 @@ export function simulationKey(artifact: CompiledAgentArtifact): ConversationStat
 
 export interface SimulationDeps {
   understand(input: UnderstandingInput): Promise<UnderstandingResult>;
+  /** FASE 7 — false = no hay proveedor de IA configurado: la vista previa y las pruebas lo dicen en vez de fingir. */
+  available?: boolean;
   /** Clasificador semántico del Gate (en producción, Gemini). Opcional: sin él se evalúan las reglas deterministas. */
   classifier?: SemanticClassifier;
   /** Lecturas reales del negocio (conocimiento, catálogo, cotización, disponibilidad). Sin él, las lecturas fallan. */
   readHandler?: ActionHandler;
+  /** FASE 7 — servicios reales del negocio (solo lectura) para resolver "corte" igual que en producción. */
+  readServices?: ServiceTableReader;
+  /** FASE 7 — traza del turno simulado (marcada simulation=true). */
+  trace?: (trace: BusinessAgentTurnTrace) => void;
   now?(): Date;
 }
 
@@ -148,12 +156,15 @@ export async function runSimulationTurn(
       requirements: { ...artifactRequirements(input.artifact), simulation: true },
       business: businessContextFromArtifact(input.artifact),
       understand: deps.understand,
+      catalog: catalogPortForArtifact(input.artifact, deps.readServices),
+      businessHours: input.artifact.booking?.businessHours ?? null,
       clock: deps.now,
       log: () => {},
     },
     engine: createActionEngine({ store: ephemeralExecutionStore(), handler: readOnlyHandler(deps.readHandler), clock: deps.now, log: () => {} }),
     artifact: input.artifact,
     simulation: true,
+    ...(deps.trace ? { trace: deps.trace } : {}),
     send: async (text) => void replies.push(text),
   });
   const out = await runtime.handle({ key, agentVersion: input.artifact.version.ref, wamid: input.turnId, text: input.text, sentAt: (deps.now?.() ?? new Date()).toISOString() });

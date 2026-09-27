@@ -2,6 +2,7 @@
 
 // Business Agent 2.0, FASE 6 — progreso de la configuración guiada y estado de guardado.
 
+import { useEffect, useRef } from "react";
 import { Check, CloudOff, Loader2, TriangleAlert } from "lucide-react";
 import { ONBOARDING_STEPS, type OnboardingIssue, type OnboardingStep } from "@/lib/agent-compiler/onboarding/issues";
 import type { SaveState } from "@/components/dashboard/business-agent/onboarding/useOnboarding";
@@ -30,7 +31,19 @@ export function stepState(step: OnboardingStep, current: OnboardingStep, visited
 }
 
 export function StepProgress(props: { current: OnboardingStep; visited: ReadonlySet<OnboardingStep>; issues: readonly OnboardingIssue[]; onSelect: (s: OnboardingStep) => void }) {
-  const index = ONBOARDING_STEPS.indexOf(props.current);
+  const { current } = props;
+  const index = ONBOARDING_STEPS.indexOf(current);
+  const listRef = useRef<HTMLOListElement>(null);
+  // Móvil: la lista de pasos se desplaza en horizontal; el paso actual siempre queda a la vista (sin mover la página).
+  useEffect(() => {
+    const list = listRef.current;
+    const currentBtn = list?.querySelector<HTMLElement>('[aria-current="step"]');
+    if (!list || !currentBtn || list.scrollWidth <= list.clientWidth) return;
+    const reduce = typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    // La lista es `relative`: offsetLeft del botón ya es relativo a ella.
+    const left = currentBtn.offsetLeft - (list.clientWidth - currentBtn.offsetWidth) / 2;
+    if (typeof list.scrollTo === "function") list.scrollTo({ left: Math.max(0, left), behavior: reduce ? "auto" : "smooth" });
+  }, [current]);
   return (
     <nav aria-label="Pasos de la configuración" className="lg:sticky lg:top-6">
       {/* Móvil: barra compacta */}
@@ -42,7 +55,7 @@ export function StepProgress(props: { current: OnboardingStep; visited: Readonly
           <div className="h-full rounded-full bg-lime transition-[width] duration-300 motion-reduce:transition-none" style={{ width: `${((index + 1) / ONBOARDING_STEPS.length) * 100}%` }} />
         </div>
       </div>
-      <ol className="mt-3 flex gap-1.5 overflow-x-auto pb-1 lg:mt-0 lg:flex-col lg:gap-1 lg:overflow-visible">
+      <ol ref={listRef} className="relative mt-3 flex gap-1.5 overflow-x-auto pb-1 lg:mt-0 lg:flex-col lg:gap-1 lg:overflow-visible">
         {ONBOARDING_STEPS.map((s, i) => {
           const st = stepState(s, props.current, props.visited, props.issues);
           const errors = props.issues.filter((x) => x.step === s && x.severity === "error").length;

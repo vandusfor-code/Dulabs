@@ -29,7 +29,8 @@ export function HoursEditor({ hours, onChange, issues }: { hours: BusinessHoursM
             <li key={d} className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start">
               <div className="flex w-full items-center justify-between sm:w-40 sm:shrink-0 sm:flex-col sm:items-start sm:gap-2">
                 <span className="text-sm font-semibold text-fg">{DAY_LABEL[d]}</span>
-                <label className="inline-flex cursor-pointer items-center gap-2 text-xs text-mist">
+                {/* Área táctil de 44 px (móvil) sin cambiar el alto visual de la fila. */}
+                <label className="-my-3 inline-flex min-h-11 cursor-pointer items-center gap-2 py-3 pl-3 text-xs text-mist">
                   <input
                     type="checkbox"
                     className={`size-4 accent-lime ${focusRing}`}
