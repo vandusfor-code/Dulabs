@@ -116,7 +116,7 @@ function aiInstruction(purpose: string, ir: CompiledBusinessAgentIR): string {
  * (AMORE, exige request.payload.agendamiento que solo produce su propio
  * motor de escenarios; un Business Agent genérico no puede producir eso).
  */
-function bookingCreateAction(provider: string): FlowActionType | null {
+export function bookingCreateAction(provider: string): FlowActionType | null {
   if (provider === "nylas") return "crear_cita_nylas_generico";
   if (provider === "internal") return "agendar_cita_especialista";
   return null;

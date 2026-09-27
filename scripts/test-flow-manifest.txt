@@ -502,3 +502,6 @@ lib/agent-compiler/contracts/policies.test.ts
 lib/agent-compiler/lifecycle/lifecycle.test.ts
 lib/agent-compiler/understanding/understanding.test.ts
 lib/agent-compiler/understanding/real-cases.test.ts
+lib/agent-compiler/conversation/conversation.test.ts
+lib/agent-compiler/conversation/scenarios.test.ts
+lib/agent-compiler/conversation/store-supabase.test.ts
