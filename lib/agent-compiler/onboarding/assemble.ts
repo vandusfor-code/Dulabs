@@ -118,15 +118,15 @@ export function draftToModel(draft: OnboardingDraft): { model: BusinessModel; or
   const calendar = b.enabled && b.agenda === "calendar";
   const cap = (id: (typeof CAP_ORDER)[number], enabled: boolean, config: Record<string, unknown>): CapabilityEntry => ({ id, version: "1.0.0", enabled, config });
   const { fields, origins } = customerFields(draft, pre);
-  // FASE 8 — recursos (persona/silla/sala) entre los que el cliente elige: solo con Google Calendar.
+  // FASE 8 — recursos (persona/silla/sala) entre los que el cliente elige: solo con Google Calendar. Con otra agenda la
+  // pantalla no los muestra, así que no se usan ni generan errores invisibles (el borrador los conserva).
   const resources: string[] = [];
-  (b.enabled ? (b.resources ?? []) : []).forEach((r, i) => {
+  (calendar ? (b.resources ?? []) : []).forEach((r, i) => {
     const name = r.name.trim();
     if (!name) return void pre.push(issue("citas", SUPPORT_CODES.RESOURCE_INVALID, "Ponle nombre a esta opción o quítala.", `booking.resources.${i}.name`));
     if (resources.some((x) => resourceIdOf(x) === resourceIdOf(name))) return void pre.push(issue("citas", SUPPORT_CODES.RESOURCE_INVALID, `Ya tienes una opción llamada «${name}».`, `booking.resources.${i}.name`));
     resources.push(name);
   });
-  if (resources.length > 0 && !calendar) pre.push(issue("citas", SUPPORT_CODES.RESOURCES_NEED_CALENDAR, "Elegir con quién se atiende solo funciona con Google Calendar.", "booking.resources"));
   if (draft.customerData.leadCapture?.enabled && !draft.customerData.askName) {
     pre.push(issue("atencion", SUPPORT_CODES.LEAD_NEEDS_NAME, "Para guardar a los interesados, pide al menos su nombre.", "customerData.askName"));
   }

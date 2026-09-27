@@ -118,6 +118,8 @@ export interface CapabilityRow {
   integration: IntegrationStatus;
   active: boolean;
   detail?: string;
+  /** Detalle de la integración (qué falta o qué no está verificado), independiente del motor. */
+  integrationDetail?: string;
 }
 
 export interface MatrixInput {
@@ -227,7 +229,8 @@ export function buildCapabilityMatrix(input: MatrixInput): CapabilityRow[] {
         : "detail" in integration
           ? integration.detail
           : undefined;
-    return { id, label: CAPABILITY_LABELS[id], enabled, configured, published, runtimeSupported, integration: integration.status, active, ...(detail ? { detail } : {}) };
+    const integrationDetail = "detail" in integration ? integration.detail : undefined;
+    return { id, label: CAPABILITY_LABELS[id], enabled, configured, published, runtimeSupported, integration: integration.status, active, ...(detail ? { detail } : {}), ...(integrationDetail ? { integrationDetail } : {}) };
   });
 }
 
@@ -263,7 +266,10 @@ export function evaluateEngineReadiness(input: {
     if (row.enabled && row.runtimeSupported === "none" && row.id !== "orders" && row.id !== "payments") {
       blockers.push({ code: "ENGINE_CAPABILITY_UNSUPPORTED", message: `${row.label}: solo funciona con el motor conversacional. Actívalo o apaga esta opción.` });
     }
-    if (row.enabled && row.integration === "not_verified") warnings.push({ code: "INTEGRATION_NOT_VERIFIED", message: `${row.label}: ${row.detail ?? "integración no verificada"}.` });
+    if (row.enabled && row.integration === "not_verified") {
+      const d = (row.integrationDetail ?? "integración no verificada").replace(/\.$/, "");
+      warnings.push({ code: "INTEGRATION_NOT_VERIFIED", message: `${row.label}: ${d.charAt(0).toLowerCase()}${d.slice(1)}.` });
+    }
   }
   if (sm && !input.credentials.geminiKey) blockers.push({ code: "AI_CREDENTIAL_MISSING", message: "El motor conversacional necesita la IA configurada en el servidor." });
   if (sm && !input.artifactOk) blockers.push({ code: "ARTIFACT_INVALID", message: "La versión publicada no se pudo preparar para el motor conversacional. Vuelve a publicar." });

@@ -538,7 +538,7 @@ describe("FASE 8 — tests 18–22: tono, locale, matriz, gate, credenciales", (
     assert.deepEqual(noAi.blockers.map((b) => b.code), ["AI_CREDENTIAL_MISSING"]);
     const ok2 = evaluateEngineReadiness({ spec, engine: "state_machine_v1", artifactOk: true, credentials: creds, killSwitchOn: false, matrix: buildCapabilityMatrix({ spec, published: artifact.artifact, engine: "state_machine_v1", facts, agentActive: false }) });
     assert.deepEqual(ok2.blockers, []);
-    assert.ok(ok2.warnings.some((w) => w.code === "INTEGRATION_NOT_VERIFIED"));
+    assert.deepEqual(ok2.warnings.map((w) => w.message), ["Recordatorios de cita: el envío programado de recordatorios no está verificado."]);
     // El gate de activación incorpora los bloqueos del motor.
     const version = { flowVersionId: "fv", tenantId: A, validationStatus: "validated", flow: {}, flowChecksum: "" } as never;
     const decision = await evaluateBusinessAgentActivation(
@@ -706,14 +706,22 @@ describe("FASE 8 — onboarding: tono, recursos, recordatorios, interesados y mo
     assert.equal(buildRuntimeSpec(a.model, d, prev, { specVersion: 2, now: "x" }).runtime?.engine, "state_machine_v1", "sin elección nueva se hereda");
   });
 
-  it("errores humanos: recursos sin Google Calendar, interesados sin nombre", () => {
+  it("errores humanos: opción sin nombre o repetida, interesados sin nombre; con otra agenda los recursos no se usan (ni dan errores invisibles)", () => {
     const d = emptyDraft();
     d.business.name = "X";
-    d.booking = { enabled: true, agenda: "team", minimumNoticeMinutes: 60, allowChanges: false, changesNoticeHours: 4, resources: [{ name: "Sala 1" }] };
+    d.booking = { enabled: true, agenda: "calendar", minimumNoticeMinutes: 60, allowChanges: false, changesNoticeHours: 4, resources: [{ name: "Sala 1" }, { name: " " }, { name: "sala 1" }] };
     d.customerData = { askName: false, askEmail: false, askNotes: false, extra: [], leadCapture: { enabled: true, captureInterest: false } };
-    const msgs = assembleDraft(d).issues.map((i) => i.message);
-    assert.ok(msgs.includes("Elegir con quién se atiende solo funciona con Google Calendar."));
-    assert.ok(msgs.includes("Para guardar a los interesados, pide al menos su nombre."));
+    const issues = assembleDraft(d).issues;
+    assert.deepEqual(issues.filter((i) => i.field?.startsWith("booking.resources")).map((i) => [i.field, i.message]), [
+      ["booking.resources.1.name", "Ponle nombre a esta opción o quítala."],
+      ["booking.resources.2.name", "Ya tienes una opción llamada «sala 1»."],
+    ]);
+    assert.ok(issues.some((i) => i.message === "Para guardar a los interesados, pide al menos su nombre."));
+    d.booking = { ...d.booking, agenda: "team" };
+    const team = assembleDraft(d);
+    assert.equal(team.issues.some((i) => i.field?.startsWith("booking.resources")), false);
+    assert.deepEqual(team.model.resources, []);
+    assert.equal((team.model.capabilities.find((c) => c.id === "booking")!.config as { resourceSelection: string }).resourceSelection, "none");
   });
 });
 

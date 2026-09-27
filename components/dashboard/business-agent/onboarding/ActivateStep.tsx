@@ -89,8 +89,33 @@ const yesNo = (v: boolean) => (v ? "Sí" : "No");
 export function CapabilityMatrix({ rows }: { rows: readonly CapabilityRow[] }) {
   const shown = rows.filter((r) => r.enabled || r.published);
   if (shown.length === 0) return <p className="text-sm text-mist">Aún no activas ninguna función.</p>;
+  const facts = (r: CapabilityRow): Array<[string, string, string]> => [
+    ["Configurada", yesNo(r.configured), "text-fg"],
+    ["Publicada", yesNo(r.published), "text-fg"],
+    ["El motor la ejecuta", SUPPORT_LABEL[r.runtimeSupported], r.runtimeSupported === "none" ? "text-amber-400" : "text-fg"],
+    ["Integración", INTEGRATION_LABEL[r.integration], r.integration === "missing" ? "text-red-400" : r.integration === "not_verified" ? "text-amber-400" : "text-fg"],
+    ["Activa", yesNo(r.active), r.active ? "text-lime-text font-semibold" : "text-mist"],
+  ];
   return (
-    <div className="-mx-1 overflow-x-auto px-1">
+    <>
+      {/* Móvil: una tarjeta por función (sin tabla que se corte). */}
+      <ul className="space-y-2 sm:hidden" aria-label="Estado de cada función de tu agente">
+        {shown.map((r) => (
+          <li key={r.id} className="rounded-xl border border-edge bg-ink p-3 text-xs">
+            <p className="font-medium text-fg">{r.label}</p>
+            {r.detail && <p className="text-mist">{r.detail}</p>}
+            <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1">
+              {facts(r).map(([k, v, cls]) => (
+                <div key={k} className="flex justify-between gap-2">
+                  <dt className="text-mist">{k}</dt>
+                  <dd className={cls}>{v}</dd>
+                </div>
+              ))}
+            </dl>
+          </li>
+        ))}
+      </ul>
+    <div className="-mx-1 hidden overflow-x-auto px-1 sm:block">
       <table className="w-full min-w-[560px] text-left text-xs">
         <caption className="sr-only">Estado de cada función de tu agente</caption>
         <thead>
@@ -120,6 +145,7 @@ export function CapabilityMatrix({ rows }: { rows: readonly CapabilityRow[] }) {
         </tbody>
       </table>
     </div>
+    </>
   );
 }
 
