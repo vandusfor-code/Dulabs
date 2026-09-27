@@ -38,6 +38,9 @@ const field = (key: string, label: string, type: CustomerField["type"], required
   ...(options ? { options } : {}),
 });
 
+/** Horario real de atención: todos los días 08:00–20:00 (necesario para compilar agendamiento Nylas). */
+const OPEN_EVERY_DAY = { week: Array.from({ length: 7 }, () => ({ closed: false, intervals: [{ open: "08:00", close: "20:00" }] })), exceptions: [] };
+
 const NYLAS_SCHEDULING: BusinessAgentSpec["scheduling"] = {
   enabled: true,
   provider: "nylas",
@@ -46,6 +49,7 @@ const NYLAS_SCHEDULING: BusinessAgentSpec["scheduling"] = {
   cancellation: { allowed: true, minNoticeHours: 4 },
   confirmation: { required: false, hoursBefore: 2 },
   resources: [],
+  businessHours: OPEN_EVERY_DAY,
 };
 
 /** Barbería: agenda Nylas (con consulta de disponibilidad y gestión de citas), cotiza, pide el nombre. */
@@ -100,6 +104,10 @@ export interface Harness {
   human: { active: boolean };
   /** Minutos transcurridos del reloj simulado. */
   advance(minutes: number): void;
+  /** Deja listo el guion del modelo para un texto (para quien procese el turno por otra vía, p. ej. el runtime). */
+  script(text: string, output: ModelOutput | null): void;
+  /** Reloj simulado actual. */
+  now(): Date;
   say(text: string, output: ModelOutput | null, opts?: { eventId?: string; sentAt?: string; key?: ConversationStateKey }): Promise<ConversationTurnResult>;
   system(event: Exclude<ConversationInputEvent, { type: "MESSAGE_UNDERSTOOD" | "UNDERSTANDING_FAILED" }>, key?: ConversationStateKey): Promise<ConversationTurnResult>;
 }
@@ -142,6 +150,10 @@ export function createHarness(spec: BusinessAgentSpec, opts: { humanControl?: bo
     advance(minutes) {
       now += minutes * 60_000;
     },
+    script(text, output) {
+      pending.set(text, output);
+    },
+    now: () => new Date(now),
     async say(text, output, o = {}) {
       pending.set(text, output);
       now += 60_000;

@@ -32,6 +32,7 @@ import { createDefaultEffectExecutorFramework } from "@/lib/flow/executor-factor
 import { getIntegrationById, getIntegrationCredentials } from "@/lib/flow/flow-store";
 import {
   runAgentTurn,
+  type ConversationTurnHandler,
   type GateActionSink,
   type GateIdempotencyStore,
 } from "@/lib/agent-compiler/runtime/agent-runtime";
@@ -43,6 +44,8 @@ import { resolveCommercialState } from "@/lib/agent-compiler/runtime/commercial-
 import { esTelefonoBloqueado } from "@/lib/blacklist-du";
 import { createBusinessAgentArgumentPolicy } from "@/lib/agent-compiler/contracts/argument-policy";
 import { categorizeRuntimeFailure } from "@/lib/agent-compiler/contracts/errors";
+import { isStateMachineRuntimeEnabled } from "@/lib/agent-compiler/runtime/production/conversation-runtime";
+import { createProductionConversationRuntime } from "@/lib/agent-compiler/runtime/production/conversation-runtime-supabase";
 
 export interface BusinessAgentBoundaryResult {
   /** true = el Business Agent atendió (o bloqueó fail-closed/blacklist) el
@@ -61,6 +64,8 @@ export interface BusinessAgentBoundaryOverrides {
   gateSink?: GateActionSink;
   idempotency?: GateIdempotencyStore;
   now?: () => string;
+  /** FASE 4 — runtime conversacional inyectado (tests). En producción se arma solo para tenants habilitados. */
+  conversation?: ConversationTurnHandler;
 }
 
 /**
@@ -218,6 +223,24 @@ export async function atenderMensajeConBusinessAgent(
     params.commercialState ??
     (await resolveCommercialState(store, resolution.tenantId, { phoneNumberId: cliente.phone_number_id, telefonoCliente }).then((r) => r.commercialState));
 
+  // 3.6) FASE 4 — motor conversacional (state machine + Action Engine) SOLO para tenants habilitados explícitamente
+  // (BUSINESS_AGENT_STATE_MACHINE_TENANTS). Para todos los demás, el grafo compilado sigue exactamente igual.
+  const conversation =
+    params.overrides?.conversation ??
+    (resolution.spec && isStateMachineRuntimeEnabled(resolution.tenantId)
+      ? createProductionConversationRuntime({
+          supabase,
+          tenantId: resolution.tenantId,
+          flowId: resolution.flowId,
+          phoneNumberId: cliente.phone_number_id,
+          telefonoCliente,
+          wamid,
+          spec: resolution.spec,
+          flow: resolution.flow,
+          gateSink,
+        })
+      : undefined);
+
   // 4) Ejecución vía Gate + orquestador. Observabilidad puenteada.
   let captured: BusinessAgentTrace["gateDecision"] | undefined;
   let matchedRuleId: string | undefined;
@@ -235,6 +258,8 @@ export async function atenderMensajeConBusinessAgent(
       classifier,
       idempotency: params.overrides?.idempotency,
       now: params.overrides?.now,
+      conversation,
+      agentVersion: resolution.flowVersionId,
       observer: {
         onTrace: (t) => {
           captured = t.gateDecision;
@@ -266,7 +291,9 @@ export async function atenderMensajeConBusinessAgent(
         ? "duplicate"
         : result.kind === "fail_closed"
           ? "fail_closed"
-          : "flow";
+          : result.kind === "conversation"
+            ? "conversation"
+            : "flow";
 
   emit({
     ...base,
@@ -281,7 +308,7 @@ export async function atenderMensajeConBusinessAgent(
     reason: result.kind === "fail_closed" ? result.reason : undefined,
     ...(result.kind === "fail_closed" ? { errorCategory: categorizeRuntimeFailure(result.reason) } : {}),
     // LLM sólo puede haberse invocado si el Gate PASÓ al Flow.
-    llmInvoked: result.kind === "flow",
+    llmInvoked: result.kind === "flow" || (result.kind === "conversation" && result.conversation.outcome === "processed"),
     latencyMs: Date.now() - started,
   } as BusinessAgentTrace);
 

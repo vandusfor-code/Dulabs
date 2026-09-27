@@ -308,3 +308,11 @@ export async function applySystemEvent(
   }
   return reject(safeError("INTERNAL_ERROR", "conversation_state_conflict"));
 }
+
+/** Vista actual (estado + siguiente paso + plan) sin aplicar eventos. Solo lectura; null si no hay estado. */
+export async function loadTurnView(deps: Pick<ConversationServiceDeps, "store" | "requirements">, key: ConversationStateKey): Promise<TurnView | null> {
+  if (!validKey(key)) return null;
+  const loaded = await deps.store.load(key);
+  if (loaded.kind !== "found") return null;
+  return view(loaded.state, loaded.version, deps.requirements);
+}

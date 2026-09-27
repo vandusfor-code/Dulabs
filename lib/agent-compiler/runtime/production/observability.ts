@@ -18,7 +18,7 @@ export interface BusinessAgentTrace {
   /** Resultado del orquestador (cuando el Gate pasa). */
   orchestratorOutcome?: string;
   /** Outcome del boundary. */
-  outcome: "no_business_agent" | "guardrail_blocked" | "flow" | "fail_closed" | "duplicate" | "blocked_number" | "unsupported_message";
+  outcome: "no_business_agent" | "guardrail_blocked" | "flow" | "conversation" | "fail_closed" | "duplicate" | "blocked_number" | "unsupported_message";
   reason?: string;
   /** FASE 1 — categoría del contrato de errores (lib/agent-compiler/contracts/errors.ts) cuando hubo fallo. */
   errorCategory?: string;

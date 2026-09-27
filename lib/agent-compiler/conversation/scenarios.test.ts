@@ -43,10 +43,11 @@ describe("FASE 3 — conversaciones completas", () => {
     const ofrecidos = processed(await h.system({ type: "ACTION_SUCCEEDED", eventId: "lk-1", at: at(), actionId: lookup.id }));
     assert.deepEqual([ofrecidos.state.status, ofrecidos.responsePlan.slot], ["COLLECTING_INFORMATION", "time"]);
 
-    // "a las 4:30" el parser lo lee 04:30, fuera de la franja que el cliente pidió: se aclara, no se adivina.
-    const dudosa = processed(await h.say("a las 4:30", llm({ primaryIntent: intent("BOOKING_REQUEST", 0.8), slots: [S("time", "a las 4:30", { value: "16:30" })] })));
+    // "a las 4:30" sin am/pm: la lectura 04:30 del modelo contradice la franja que pidió el cliente => se aclara.
+    const dudosa = processed(await h.say("a las 4:30", llm({ primaryIntent: intent("BOOKING_REQUEST", 0.8), slots: [S("time", "a las 4:30", { value: "04:30" })] })));
     assert.deepEqual([dudosa.responsePlan.intent, dudosa.responsePlan.candidates], ["CLARIFY_SLOT", ["04:30", "16:30"]]);
-    const hora = processed(await h.say("4:30 de la tarde", llm({ primaryIntent: intent("BOOKING_REQUEST", 0.8), slots: [S("time", "4:30 de la tarde")] })));
+    // La lectura 16:30 la respaldan los números del cliente y cae en su franja => se acepta.
+    const hora = processed(await h.say("4:30", llm({ primaryIntent: intent("BOOKING_REQUEST", 0.8), slots: [S("time", "4:30", { value: "16:30" })] })));
     assert.deepEqual([hora.state.status, hora.responsePlan.intent], ["AWAITING_CONFIRMATION", "CONFIRM_ACTION"]);
     const si = processed(await h.say("Sí", llm({ primaryIntent: intent("CONFIRMATION", 0.95) })));
     assert.deepEqual(si.actionRequest!.arguments, { servicio: "corte clásico", fecha: "2026-09-27", hora: "16:30", nombreCliente: "Juan" });

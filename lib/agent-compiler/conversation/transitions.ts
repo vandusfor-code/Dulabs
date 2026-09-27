@@ -43,7 +43,7 @@ export type ConversationInputEvent =
   | { type: "UNDERSTANDING_FAILED"; eventId: string; at: string; category: string; code: string }
   | { type: "ACTION_STARTED"; eventId: string; at: string; actionId: string }
   | { type: "ACTION_SUCCEEDED"; eventId: string; at: string; actionId: string; proposedSlots?: Record<string, NormalizedSlotValue> }
-  | { type: "ACTION_FAILED"; eventId: string; at: string; actionId: string; category: string; invalidSlots?: string[] }
+  | { type: "ACTION_FAILED"; eventId: string; at: string; actionId: string; category: string; invalidSlots?: string[]; ambiguous?: boolean }
   | { type: "HUMAN_TOOK_OVER"; eventId: string; at: string }
   | { type: "RESUMED"; eventId: string; at: string }
   | { type: "TIMEOUT"; eventId: string; at: string };
@@ -111,7 +111,7 @@ export const TRANSITIONS: readonly TransitionRule[] = [
   { from: ["AWAITING_CONFIRMATION"], event: "REJECTION_RECEIVED", to: ["COLLECTING_INFORMATION", "AWAITING_CONFIRMATION"], sideEffects: ["drop_proposal"] },
   { from: GOAL_OPEN, event: "GOAL_ABANDONED", to: ["CANCELLED"], sideEffects: ["drop_proposal", "drop_pending_action"] },
   { from: AGENT_CONTROLLED, event: "HANDOFF_REQUESTED", to: ["HANDOFF_PENDING", ...EVALUATED], sideEffects: ["emit_handoff_request", "remember_resume_status"] },
-  { from: ["READY_FOR_ACTION", "HANDOFF_PENDING"], event: "ACTION_STARTED", to: ["EXECUTING", "SAME"], sideEffects: ["lock_pending_action"] },
+  { from: ["READY_FOR_ACTION", "EXECUTING", "HANDOFF_PENDING", "HANDED_OFF", "PAUSED"], event: "ACTION_STARTED", to: ["EXECUTING", "SAME"], sideEffects: ["lock_pending_action"] },
   { from: ["READY_FOR_ACTION", "EXECUTING", "HANDOFF_PENDING", "HANDED_OFF", "PAUSED"], event: "ACTION_SUCCEEDED", to: ["COMPLETED", "HANDED_OFF", "SAME", ...EVALUATED], sideEffects: ["record_action_result", "release_pending_action"] },
   { from: ["READY_FOR_ACTION", "EXECUTING", "HANDOFF_PENDING", "HANDED_OFF", "PAUSED"], event: "ACTION_FAILED", to: ["ERROR", "SAME", ...EVALUATED], sideEffects: ["record_action_result", "mark_rejected_slots_invalid"] },
   { from: ALL, event: "HUMAN_TOOK_OVER", to: ["PAUSED", "HANDED_OFF", "SAME"], sideEffects: ["remember_resume_status"] },
@@ -141,6 +141,8 @@ export interface ReduceContext {
 }
 
 const MAX_FAILURES_BEFORE_ERROR = 3;
+/** Categoría con la que queda registrada una escritura de desenlace desconocido. */
+export const OUTCOME_UNKNOWN = "OUTCOME_UNKNOWN";
 const MAX_ADDITIONAL = 5;
 
 /** Marca de CORRECCIÓN que el contexto aporta: el cliente responde a una propuesta o a la pregunta por ese dato. */
@@ -318,6 +320,8 @@ function reduceMessage(prev: ConversationState, ev: Extract<ConversationInputEve
 
   // Durante la ejecución de una acción no se cambian datos (la acción ya está en curso); solo se honra el handoff.
   if (from === "EXECUTING" && !u.signals.handoff.requested) return finish(s, from, events, ctx.now);
+  // Tras una escritura de desenlace desconocido, la conversación espera a una persona: no se re-propone nada.
+  if (from === "ERROR" && prev.lastActionResult?.category === OUTCOME_UNKNOWN && !u.signals.handoff.requested) return finish(s, from, events, ctx.now);
 
   // 1. Handoff: gana sobre todo lo demás. Los datos del mensaje igual se conservan (le sirven a la persona).
   if (u.signals.handoff.requested) {
@@ -437,8 +441,9 @@ function systemEvent(prev: ConversationState, ev: Exclude<ConversationInputEvent
     }
     case "ACTION_STARTED": {
       if (!prev.pendingAction || prev.pendingAction.id !== ev.actionId) return reject("no_matching_pending_action", "action_mismatch");
-      if (prev.pendingAction.status === "executing") return reject("already_executing");
       events.add("ACTION_STARTED");
+      // Re-registrar el inicio de la MISMA acción (reintento tras un worker caído) es idempotente: no cambia nada.
+      if (prev.pendingAction.status === "executing") return finish(s, from, events, ctx.now);
       s.pendingAction = { ...prev.pendingAction, status: "executing" };
       if (from === "READY_FOR_ACTION") s.status = "EXECUTING";
       return finish(s, from, events, ctx.now);
@@ -478,19 +483,36 @@ function systemEvent(prev: ConversationState, ev: Exclude<ConversationInputEvent
       s.pendingConfirmation = null;
       s.lastActionResult = { actionId: action.id, action: action.action, outcome: "failed", category: ev.category.slice(0, 40), at: ctx.now };
       if (HUMAN_CONTROLLED_STATUSES.has(from)) return finish(s, from, events, ctx.now);
+      // Escritura con desenlace DESCONOCIDO (timeout / worker caído): pudo haber ocurrido. Nunca se vuelve a proponer
+      // automáticamente (sería una posible doble reserva): ERROR hasta que una persona lo revise.
+      if (ev.ambiguous && action.purpose !== "lookup") {
+        s.status = "ERROR";
+        s.lastActionResult = { ...s.lastActionResult!, category: OUTCOME_UNKNOWN };
+        return finish(s, from, events, ctx.now);
+      }
+      const markInvalid = () => {
+        let marked = 0;
+        for (const name of ev.invalidSlots ?? []) {
+          const slot = s.slots[name];
+          if (slot) {
+            s.slots[name] = { ...slot, status: "INVALID", reason: "rejected_by_backend", updatedAt: ctx.now };
+            marked++;
+          }
+        }
+        return marked;
+      };
       if (action.purpose === "lookup") {
         s.lastLookup = { action: action.action, argsHash: lookupHash(prev, req, action.action, ctx.now), outcome: "failed" };
+        markInvalid();
         applyEvaluation(s, req, baseCtx, events);
         return finish(s, from, events, ctx.now);
       }
       const recoverable = ev.category === "BUSINESS_RULE_ERROR" || ev.category === "USER_ERROR" || ev.category === "VALIDATION_ERROR";
-      if (!recoverable) {
+      // Solo es recuperable conversando si el backend señaló un dato que el cliente puede cambiar; si no (calendario
+      // desconectado, política, configuración), repetir la propuesta fallaría igual: ERROR (y se ofrece una persona).
+      if (!recoverable || markInvalid() === 0) {
         s.status = "ERROR";
         return finish(s, from, events, ctx.now);
-      }
-      for (const name of ev.invalidSlots ?? []) {
-        const slot = s.slots[name];
-        if (slot) s.slots[name] = { ...slot, status: "INVALID", reason: "rejected_by_backend", updatedAt: ctx.now };
       }
       applyEvaluation(s, req, baseCtx, events);
       return finish(s, from, events, ctx.now);

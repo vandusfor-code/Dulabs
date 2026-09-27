@@ -166,7 +166,34 @@ function normalizeDate(raw: string, modelValue: string | undefined, temporal: Te
   return { status: "unresolved", reason: "date_unresolved" };
 }
 
+/**
+ * Business Agent (FASE 4): "4:30" / "a las 4:30" SIN am/pm ni "de la tarde" es ambiguo al agendar. El parser compartido
+ * (lib/parse-hora-colombia.ts, NO se modifica) lo lee como 04:30 en 24h. Aquí solo se acepta la lectura del modelo si
+ * los números del cliente la respaldan (4 y 30 → 04:30 o 16:30); si no, queda ambiguo con ambas opciones.
+ */
+function bareTwelveHourClock(raw: string): { hour: number; minute: string } | null {
+  // foldText quita los dos puntos: aquí se normaliza sin perder "H:MM".
+  const t = raw
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[¿?¡!.,;"'«»()]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^(?:a )?(?:las? )/, "");
+  const m = /^([1-9]|1[01]):([0-5]\d)$/.exec(t);
+  return m ? { hour: Number(m[1]), minute: m[2]! } : null;
+}
+
 function normalizeTime(raw: string, modelValue: string | undefined): SlotNormalization {
+  const bare = bareTwelveHourClock(raw);
+  if (bare) {
+    const am = `${String(bare.hour).padStart(2, "0")}:${bare.minute}`;
+    const pm = `${String(bare.hour + 12).padStart(2, "0")}:${bare.minute}`;
+    const reading = /^\d{1,2}:\d{2}$/.test(modelValue ?? "") ? modelValue!.padStart(5, "0") : null;
+    if (reading === am || reading === pm) return { status: "resolved", value: { kind: "time", time: reading }, normalizedBy: "validated_model_reading" };
+    return { status: "ambiguous", reason: "time_am_pm_unspecified", candidates: [am, pm] };
+  }
   const r = resolverHoraSolicitada({ solicitudTexto: raw, horaPropuesta: modelValue });
   if (r.ok) return { status: "resolved", value: { kind: "time", time: r.hora }, normalizedBy: r.origen === "cliente" ? "parser" : "validated_model_reading" };
   const p = parseHoraColombia(raw);

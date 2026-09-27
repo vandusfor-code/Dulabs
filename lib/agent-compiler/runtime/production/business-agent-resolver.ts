@@ -25,7 +25,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ClienteConfig } from "@/lib/supabase";
 import type { FlowDefinition } from "@/lib/flow/types";
 import { normalizePolicyText, withSemanticContent, type GateRule } from "@/lib/agent-compiler/runtime/guardrail-gate";
-import type { RuleKind } from "@/lib/agent-compiler/spec/types";
+import type { BusinessAgentSpec, RuleKind } from "@/lib/agent-compiler/spec/types";
 import { checksumOf } from "@/lib/agent-compiler/checksum";
 import { createSupabaseBusinessAgentRegistryStore } from "@/lib/agent-compiler/registry/registry-store-supabase";
 import type { BusinessAgentRegistryStore } from "@/lib/agent-compiler/registry/types";
@@ -53,6 +53,8 @@ export interface ResolvedBusinessAgent {
    * 2/3 las consuma sin volver a leer el Spec, y para poder demostrar que llegaron al runtime.
    */
   informationalRules?: RuntimeInformationalRule[];
+  /** FASE 4 — Spec de la MISMA versión publicada (capacidades, agenda, datos del cliente) para el runtime conversacional. */
+  spec?: BusinessAgentSpec;
 }
 
 export interface RuntimeInformationalRule {
@@ -138,6 +140,7 @@ export function createSupabaseBusinessAgentResolver(deps: { store?: BusinessAgen
         gateRules: withSemanticContent(version.gateRules, version.spec),
         flow: version.flow,
         informationalRules: informationalRulesOf(version.spec),
+        spec: version.spec,
       };
     },
   };

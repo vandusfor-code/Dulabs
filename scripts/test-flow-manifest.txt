@@ -505,3 +505,8 @@ lib/agent-compiler/understanding/real-cases.test.ts
 lib/agent-compiler/conversation/conversation.test.ts
 lib/agent-compiler/conversation/scenarios.test.ts
 lib/agent-compiler/conversation/store-supabase.test.ts
+lib/agent-compiler/actions/action-engine.test.ts
+lib/agent-compiler/actions/store-supabase.test.ts
+lib/agent-compiler/runtime/production/conversation-runtime.test.ts
+lib/agent-compiler/runtime/production/atender-conversation.test.ts
+lib/agent-compiler/understanding/temporal-ba.test.ts
