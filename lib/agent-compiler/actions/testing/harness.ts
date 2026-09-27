@@ -1,7 +1,7 @@
 // Business Agent 2.0, FASE 4 — utilidades de test del Action Engine (sin red).
 //
-// La configuración de negocio es la REAL: el Spec de prueba se compila con el compilador del Business Agent y se leen
-// los params que embebió en el flow (horario, datos del cliente, política). El handler es un doble que reproduce los
+// La configuración de negocio es la REAL: la fixture se compila a su artefacto publicado (FASE 5) con el mismo
+// compilador que producción; `compiledConfig` además compila el flow del grafo para comparar ambos (paridad de params). El handler es un doble que reproduce los
 // códigos y formas de respuesta REALES de InternalActionExecutor; NO afirma que Nylas u otras integraciones funcionen:
 // eso no se puede verificar sin credenciales (ver reporte de FASE 4).
 
@@ -9,13 +9,24 @@ import type { EffectDispatchRequest, EffectDispatchResult } from "@/lib/flow/exe
 import type { BusinessAgentSpec } from "@/lib/agent-compiler/spec/types";
 import { compileBusinessAgent } from "@/lib/agent-compiler/compile";
 import { compileIRToFlowDefinition } from "@/lib/agent-compiler/flow-compiler";
-import { businessConfigFromFlow } from "@/lib/agent-compiler/runtime/production/conversation-runtime";
+import type { FlowDefinition } from "@/lib/flow/types";
 import { createActionEngine, type ActionEngineEvent, type ActionExecutionContext } from "@/lib/agent-compiler/actions/engine";
 import { createInMemoryActionStore, type InMemoryActionStore } from "@/lib/agent-compiler/actions/testing/in-memory-action-store";
 import type { ActionExecutionStore } from "@/lib/agent-compiler/actions/store";
 import type { ConversationState } from "@/lib/agent-compiler/conversation/model";
-import { buildAgentRequirements } from "@/lib/agent-compiler/conversation/requirements";
-import { KEY, TENANT } from "@/lib/agent-compiler/conversation/testing/harness";
+import { artifactFor, KEY, TENANT } from "@/lib/agent-compiler/conversation/testing/harness";
+import type { CompiledAgentArtifact } from "@/lib/agent-compiler/business-model/artifact";
+
+/** Config estática que el compilador del GRAFO embebió por acción (primer nodo con ese actionType). Solo para paridad. */
+export function businessConfigFromFlow(flow: FlowDefinition | undefined): (action: string) => Record<string, unknown> | null {
+  const byAction = new Map<string, Record<string, unknown>>();
+  for (const node of flow?.nodes ?? []) {
+    if (node.type !== "action") continue;
+    const config = node.config as unknown as Record<string, unknown> & { actionType?: string };
+    if (typeof config.actionType === "string" && !byAction.has(config.actionType)) byAction.set(config.actionType, config);
+  }
+  return (action) => byAction.get(action) ?? null;
+}
 
 export function compiledConfig(spec: BusinessAgentSpec) {
   const c = compileBusinessAgent(spec, { tenantId: TENANT });
@@ -81,16 +92,15 @@ export function createTestEngine(opts: { store?: ActionExecutionStore; handler?:
   return { engine, store: store as InMemoryActionStore, fake, events, sleeps };
 }
 
-export function contextFor(spec: BusinessAgentSpec, state: ConversationState, over: Partial<ActionExecutionContext> = {}): ActionExecutionContext {
+/** Contexto de ejecución con el ARTEFACTO publicado de la fixture (Spec legacy → UBM → compilador) o uno dado. */
+export function contextFor(source: BusinessAgentSpec | CompiledAgentArtifact, state: ConversationState, over: Partial<ActionExecutionContext> = {}): ActionExecutionContext {
   return {
     tenantId: KEY.tenantId,
     agentId: KEY.agentId,
     agentVersion: "v1",
     conversation: { phoneNumberId: KEY.phoneNumberId, telefonoCliente: KEY.telefonoCliente },
-    spec,
-    requirements: buildAgentRequirements(spec),
+    artifact: artifactFor(source),
     state,
-    businessConfig: compiledConfig(spec).config,
     userMessage: "hola",
     ...over,
   };

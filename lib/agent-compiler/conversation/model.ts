@@ -134,6 +134,9 @@ export type SlotRecord = z.infer<typeof slotRecordSchema>;
  *   fulfill  la operación del objetivo (reservar, cancelar, reprogramar, responder una consulta): al terminar, COMPLETED
  *   handoff  transferir a una persona: al terminar, HANDED_OFF
  */
+/** Categoría de ACTION_FAILED para una solicitud de otra versión / datos viejos (FASE 5): se re-evalúa, no es ERROR. */
+export const STALE_REQUEST_CATEGORY = "STALE_REQUEST";
+
 export const ACTION_PURPOSES = ["lookup", "fulfill", "handoff"] as const;
 export type ActionPurpose = (typeof ACTION_PURPOSES)[number];
 
@@ -156,6 +159,11 @@ export const actionRequestSchema = z
     goalId: z.string().max(64).nullable(),
     status: z.enum(["requested", "executing"]),
     requestedAt: iso,
+    /**
+     * FASE 5: huella de ejecución del artefacto publicado con que se construyó (versión del negocio). Opcional para
+     * leer estados previos. El Action Engine no ejecuta una solicitud "requested" de otra versión.
+     */
+    artifactRef: z.string().regex(/^[a-f0-9]{32}$/).nullable().optional(),
   })
   .strict();
 export type ActionRequest = z.infer<typeof actionRequestSchema>;

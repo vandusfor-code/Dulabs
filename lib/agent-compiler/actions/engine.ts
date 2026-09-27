@@ -7,6 +7,8 @@
 //   - El modelo nunca llega aquí: la solicitud la construyó el backend desde slots validados. Aun así se revalida todo
 //     contra el contrato de FASE 1, el estado VIGENTE y la configuración publicada del negocio.
 //   - Tenant, agente, conversación, capacidades y zona horaria salen del contexto del servidor, nunca de la solicitud.
+//   - FASE 5: lo único que autoriza y configura una acción es el ARTEFACTO publicado (Universal Business Model compilado):
+//     acción habilitada, config por paso, agenda (anticipación máxima, servicios reservables, duración) y versión.
 //   - Una misma operación (misma clave determinista) se ejecuta UNA vez: la garantía la da Postgres (claim atómico).
 //   - Un timeout o un worker caído en una ESCRITURA deja el desenlace como desconocido: nunca se re-ejecuta.
 //   - No redacta mensajes: devuelve un ActionResult estructurado.
@@ -14,13 +16,12 @@
 import { createHash } from "node:crypto";
 import { getActionContract } from "@/lib/agent-compiler/contracts/action-contracts";
 import { CAPABILITY_BACKING } from "@/lib/agent-compiler/spec/capabilities";
-import type { BusinessAgentSpec } from "@/lib/agent-compiler/spec/types";
 import type { ActionNodeConfig } from "@/lib/flow/types";
 import type { ConversationKey } from "@/lib/flow/orchestrator-types";
 import type { EffectDispatchRequest, EffectDispatchResult } from "@/lib/flow/executor-types";
 import { buildActionRequest, sha } from "@/lib/agent-compiler/conversation/actions";
 import { actionRequestSchema, type ActionRequest, type ConversationState } from "@/lib/agent-compiler/conversation/model";
-import type { AgentRequirements } from "@/lib/agent-compiler/conversation/requirements";
+import { artifactRequirements, type CompiledAgentArtifact } from "@/lib/agent-compiler/business-model/artifact";
 import { conversationIdOf } from "@/lib/agent-compiler/conversation/store";
 import { appointmentSelection, getActionDefinition, type ActionDefinition, type FailureMapping } from "@/lib/agent-compiler/actions/registry";
 import { parseActionResult, type ActionErrorCode, type ActionResult, type ActionStatus } from "@/lib/agent-compiler/actions/result";
@@ -37,19 +38,23 @@ export interface ActionExecutionContext {
   agentId: string;
   agentVersion: string | null;
   conversation: ConversationKey;
-  spec: Pick<BusinessAgentSpec, "capabilities" | "scheduling" | "identity" | "handoff">;
-  requirements: AgentRequirements;
+  /** Artefacto publicado vigente (FASE 5): autorización, configuración por paso, agenda y versión. */
+  artifact: CompiledAgentArtifact;
   /** Estado conversacional VIGENTE (recién leído del store). */
   state: ConversationState;
-  /** Configuración estática que el compilador embebió en el flow publicado para esa acción (null = no existe). */
-  businessConfig(action: string): Record<string, unknown> | null;
   /** Mensaje actual del cliente (runtime-injected; solo para la consulta de conocimiento). */
   userMessage: string;
 }
 
+/** Requisitos del artefacto con su huella de ejecución (la misma que usa la state machine para construir solicitudes). */
+export const requirementsOf = artifactRequirements;
+
 export interface ActionEngineEvent {
   tenantId: string;
   agentId: string;
+  /** Versión publicada del negocio (artefacto) con que se evaluó la solicitud. */
+  artifactVersion: string;
+  artifactRef: string;
   conversationRef: string;
   executionId: string | null;
   action: string;
@@ -168,7 +173,12 @@ function result(input: {
 
 const rejectWith = (code: ActionErrorCode, reason: string): FailureMapping => ({ code, reason, retryable: false, ambiguous: false, invalidSlots: [] });
 
-type Validation = { ok: true; def: ActionDefinition; contractVersion: string } | { ok: false; error: FailureMapping; action: string };
+/**
+ * execute       se ejecuta (claim → handler).
+ * resolve_only  la acción ya estaba EXECUTING cuando cambió la versión publicada: no se ejecuta nada nuevo; solo se
+ *               recupera su desenlace (replay / desconocido) o se cierra como STALE si nunca llegó a empezar.
+ */
+type Validation = { ok: true; def: ActionDefinition; contractVersion: string; mode: "execute" | "resolve_only" } | { ok: false; error: FailureMapping; action: string };
 
 /** VALIDATE + AUTHORIZE + ESTADO + CONFIRMACIÓN. Nada de esto toca la base ni ningún sistema externo. */
 export function validateActionRequest(raw: unknown, ctx: ActionExecutionContext, nowIso: string): Validation {
@@ -187,7 +197,8 @@ export function validateActionRequest(raw: unknown, ctx: ActionExecutionContext,
   // Argumentos: exactamente lo que el contrato permite (campos extra = rechazo, no "se ignoran").
   if (!contract.llmArguments.strict().safeParse(request.arguments).success) return { ok: false, action, error: rejectWith("INVALID_ARGUMENTS", "ARGUMENTS_VIOLATE_CONTRACT") };
   if (Object.keys(request.constraints).some((k) => !def.allowedConstraints.includes(k))) return { ok: false, action, error: rejectWith("INVALID_ARGUMENTS", "UNKNOWN_CONSTRAINT") };
-  const allowedCustomer = new Set(Object.values(ctx.requirements.customerFieldBySlot));
+  const artifact = ctx.artifact;
+  const allowedCustomer = new Set(Object.values(artifact.requirements.customerFieldBySlot));
   if (Object.keys(request.customerData).some((k) => !def.allowsCustomerData || !allowedCustomer.has(k))) return { ok: false, action, error: rejectWith("INVALID_ARGUMENTS", "UNKNOWN_CUSTOMER_FIELD") };
   if (!def.purposes.includes(request.purpose)) return { ok: false, action, error: rejectWith("INVALID_ARGUMENTS", "PURPOSE_NOT_ALLOWED") };
   if (def.requiresConfirmation !== request.requiresConfirmation) return { ok: false, action, error: rejectWith("INVALID_CONTRACT", "CONFIRMATION_POLICY_MISMATCH") };
@@ -198,23 +209,37 @@ export function validateActionRequest(raw: unknown, ctx: ActionExecutionContext,
     return { ok: false, action, error: rejectWith("TENANT_ERROR", "SCOPE_MISMATCH") };
   }
 
-  // Autorización: capacidad activa en el Spec publicado, respaldada por el runtime, y proveedor de agenda correcto.
-  const backing = CAPABILITY_BACKING[def.capability];
-  if (!ctx.spec.capabilities[def.capability] || !backing.available || !backing.actions.includes(request.action as never)) {
-    return { ok: false, action, error: rejectWith("UNAUTHORIZED", "CAPABILITY_DISABLED") };
-  }
-  if (def.schedulingProvider && (!ctx.spec.scheduling?.enabled || ctx.spec.scheduling.provider !== def.schedulingProvider)) {
-    return { ok: false, action, error: rejectWith("UNAUTHORIZED", "SCHEDULING_PROVIDER_MISMATCH") };
+  // Versión: la solicitud se construyó con OTRO artefacto publicado (v17 → v18). No se autoriza con la versión vieja.
+  const otherVersion = (request.artifactRef ?? null) !== artifact.executionFingerprint;
+
+  // Autorización: la acción debe estar HABILITADA en el artefacto publicado (capacidad activa con respaldo real del
+  // runtime) y, si es de agenda, con el mismo proveedor.
+  const entry = Object.prototype.hasOwnProperty.call(artifact.actions, request.action) ? artifact.actions[request.action] : undefined;
+  if (!otherVersion) {
+    const backing = CAPABILITY_BACKING[def.capability];
+    if (!entry || !backing.available || !backing.actions.includes(request.action as never)) {
+      return { ok: false, action, error: rejectWith("UNAUTHORIZED", "CAPABILITY_DISABLED") };
+    }
+    if (def.schedulingProvider && artifact.booking?.provider !== def.schedulingProvider) {
+      return { ok: false, action, error: rejectWith("UNAUTHORIZED", "SCHEDULING_PROVIDER_MISMATCH") };
+    }
   }
 
   // Estado: la solicitud debe ser EXACTAMENTE la pendiente del estado vigente, y recalcularse igual desde sus slots.
   const pending = ctx.state.pendingAction;
   if (!pending) return { ok: false, action, error: rejectWith("STALE_ACTION_REQUEST", "NO_PENDING_ACTION") };
   if (pending.id !== request.id) return { ok: false, action, error: rejectWith("STALE_ACTION_REQUEST", "SUPERSEDED_BY_NEWER_REQUEST") };
-  if (stableStringify(operationOf(pending)) !== stableStringify(operationOf(request))) return { ok: false, action, error: rejectWith("STALE_ACTION_REQUEST", "REQUEST_DOES_NOT_MATCH_STATE") };
+  if (stableStringify(operationOf(pending)) !== stableStringify(operationOf(request)) || (pending.artifactRef ?? null) !== (request.artifactRef ?? null)) {
+    return { ok: false, action, error: rejectWith("STALE_ACTION_REQUEST", "REQUEST_DOES_NOT_MATCH_STATE") };
+  }
   const expectedStatus = request.purpose === "handoff" ? ["HANDOFF_PENDING", "HANDED_OFF", "PAUSED"] : ["READY_FOR_ACTION", "EXECUTING"];
   if (!expectedStatus.includes(ctx.state.status)) return { ok: false, action, error: rejectWith("INVALID_STATE", `STATE_${ctx.state.status}`) };
-  const rebuilt = buildActionRequest({ state: ctx.state, requirements: ctx.requirements, action: request.action, purpose: request.purpose, requiresConfirmation: request.requiresConfirmation, confirmationId: request.confirmationId, now: nowIso });
+  if (otherVersion) {
+    // Ya en ejecución: solo se recupera su desenlace. Sin empezar: se re-propone (y se re-confirma) con la versión vigente.
+    if (request.status === "executing" && pending.status === "executing") return { ok: true, def, contractVersion: contract.version, mode: "resolve_only" };
+    return { ok: false, action, error: rejectWith("STALE_ACTION_REQUEST", "AGENT_VERSION_CHANGED") };
+  }
+  const rebuilt = buildActionRequest({ state: ctx.state, requirements: requirementsOf(artifact), action: request.action, purpose: request.purpose, requiresConfirmation: request.requiresConfirmation, confirmationId: request.confirmationId, now: nowIso });
   if (!rebuilt.ok) return { ok: false, action, error: rejectWith("INVALID_ARGUMENTS", "CURRENT_DATA_VIOLATES_CONTRACT") };
   if (rebuilt.request.id !== request.id) return { ok: false, action, error: rejectWith("STALE_ACTION_REQUEST", "DATA_CHANGED_SINCE_REQUEST") };
 
@@ -227,15 +252,67 @@ export function validateActionRequest(raw: unknown, ctx: ActionExecutionContext,
   }
 
   // Zona horaria: los handlers de agenda existentes operan con offset fijo de Colombia. Otra zona = no se agenda.
-  if (def.temporal && (ctx.spec.identity.timezone !== SUPPORTED_SCHEDULING_TIMEZONE || ctx.state.timezone !== SUPPORTED_SCHEDULING_TIMEZONE)) {
+  if (def.temporal && (artifact.identity.timezone !== SUPPORTED_SCHEDULING_TIMEZONE || ctx.state.timezone !== SUPPORTED_SCHEDULING_TIMEZONE)) {
     return { ok: false, action, error: rejectWith("BUSINESS_RULE_VIOLATION", "TIMEZONE_NOT_SUPPORTED") };
   }
 
-  // Configuración publicada: una acción de agenda sin su configuración compilada (horario, datos, política) no se ejecuta.
+  // Configuración publicada: cada paso debe tener su configuración compilada en el artefacto (horario, datos, política).
   for (const step of def.steps) {
-    if (def.temporal && !ctx.businessConfig(step.action)) return { ok: false, action, error: rejectWith("INTERNAL_ERROR", "AGENT_CONFIGURATION_MISSING") };
+    if (!entry?.steps[step.action]) return { ok: false, action, error: rejectWith("INTERNAL_ERROR", "AGENT_CONFIGURATION_MISSING") };
   }
-  return { ok: true, def, contractVersion: contract.version };
+  return { ok: true, def, contractVersion: contract.version, mode: "execute" };
+}
+
+const fold = (s: string) => s.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase().replace(/\s+/g, " ").trim();
+
+/** Fecha local (YYYY-MM-DD) del negocio para un instante. */
+export function businessDate(now: Date, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(now);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+  return `${get("year")}-${get("month")}-${get("day")}`;
+}
+
+function addDays(isoDate: string, days: number): string {
+  const d = new Date(`${isoDate}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+/** Acciones que operan sobre UNA reserva nueva/movida (fecha y servicio del cliente). */
+const BOOKING_SLOT_ACTIONS: ReadonlySet<string> = new Set(["buscar_disponibilidad_nylas_generico", "crear_cita_nylas_generico", "agendar_cita_especialista", "reprogramar_cita_cliente"]);
+const SERVICE_ACTIONS: ReadonlySet<string> = new Set(["buscar_disponibilidad_nylas_generico", "crear_cita_nylas_generico", "agendar_cita_especialista"]);
+
+/** Servicio reservable del modelo que nombró el cliente (solo con catálogo en el modelo). */
+function bookableService(artifact: CompiledAgentArtifact, name: string | undefined) {
+  if (!name) return undefined;
+  const wanted = fold(name);
+  return artifact.services.find((s) => s.bookable && fold(s.name) === wanted);
+}
+
+/**
+ * Reglas de negocio del MODELO que el Action Engine aplica antes de tocar la agenda (los handlers existentes no las
+ * conocen): anticipación máxima y servicio ofrecido. Nada se ejecuta si fallan.
+ */
+export function bookingPreconditions(request: ActionRequest, artifact: CompiledAgentArtifact, now: Date): FailureMapping | null {
+  const booking = artifact.booking;
+  if (!booking || !BOOKING_SLOT_ACTIONS.has(request.action)) return null;
+  const fecha = request.arguments.fecha ?? request.constraints.fecha;
+  if (booking.maximumAdvanceDays !== null && fecha && /^\d{4}-\d{2}-\d{2}$/.test(fecha)) {
+    const limit = addDays(businessDate(now, artifact.identity.timezone), booking.maximumAdvanceDays);
+    if (fecha > limit) return { code: "BUSINESS_RULE_VIOLATION", reason: "DATE_TOO_FAR", retryable: false, ambiguous: false, invalidSlots: ["date"] };
+  }
+  if (artifact.catalogAuthority === "model" && SERVICE_ACTIONS.has(request.action) && request.arguments.servicio && !bookableService(artifact, request.arguments.servicio)) {
+    return { code: "BUSINESS_RULE_VIOLATION", reason: "SERVICE_NOT_OFFERED", retryable: false, ambiguous: false, invalidSlots: ["service"] };
+  }
+  return null;
+}
+
+/** Datos del modelo que el handler de agenda Nylas recibe: duración del servicio (o la de una reserva sin servicio). */
+function modelPayload(request: ActionRequest, artifact: CompiledAgentArtifact, stepAction: string): Record<string, unknown> {
+  const booking = artifact.booking;
+  if (!booking || booking.provider !== "nylas" || (stepAction !== "crear_cita_nylas_generico" && stepAction !== "buscar_disponibilidad_nylas_generico")) return {};
+  const service = bookableService(artifact, request.arguments.servicio);
+  return { duracionMin: String(service?.durationMinutes ?? booking.slotDurationMinutes) };
 }
 
 function withTimeout(run: (signal: AbortSignal) => Promise<EffectDispatchResult>, ms: number): Promise<EffectDispatchResult | "timeout"> {
@@ -264,7 +341,7 @@ export function createActionEngine(deps: ActionEngineDeps) {
     for (let i = 0; i < def.steps.length; i++) {
       const step = def.steps[i]!;
       const isMain = i === def.steps.length - 1;
-      const config = ctx.businessConfig(step.action) ?? (step.action === "transferir_soporte" ? { pauseDurationHours: ctx.spec.handoff.defaultPauseHours } : {});
+      const config = ctx.artifact.actions[request.action]?.steps[step.action] ?? {};
       const dispatch: EffectDispatchRequest = {
         // effectId/executionRowId deterministas: la idempotencia propia de los handlers (ejecutarConIdempotencia)
         // usa la MISMA clave en cualquier reintento de esta operación.
@@ -275,7 +352,7 @@ export function createActionEngine(deps: ActionEngineDeps) {
         nodeId: `ba-action:${step.action}`,
         kind: "action",
         attempt,
-        payload: step.buildPayload(request, { userMessage: ctx.userMessage, previous }),
+        payload: { ...step.buildPayload(request, { userMessage: ctx.userMessage, previous }), ...modelPayload(request, ctx.artifact, step.action) },
         action: { ...config, actionType: step.action } as ActionNodeConfig,
         conversation: ctx.conversation,
       };
@@ -309,14 +386,20 @@ export function createActionEngine(deps: ActionEngineDeps) {
     const finish = (r: ActionResult, contractVersion: string): ActionResult => {
       const checked = parseActionResult(r);
       const final = checked.ok ? checked.result : result({ status: "FAILED", request, action: r.action, executionId: r.executionId, attempt: r.attempt, started, now: clock().getTime(), error: rejectWith("INTERNAL_ERROR", "RESULT_SCHEMA_VIOLATION") });
-      log({ tenantId: ctx.tenantId, agentId: ctx.agentId, conversationRef, executionId: final.executionId, action: final.action, contractVersion, status: final.status, attempt: final.attempt, durationMs: final.durationMs, errorCode: final.error?.code ?? null, reason: final.error?.reason ?? null, replayed: final.replayed });
+      log({ tenantId: ctx.tenantId, agentId: ctx.agentId, artifactVersion: ctx.artifact.version.ref, artifactRef: ctx.artifact.executionFingerprint.slice(0, 12), conversationRef, executionId: final.executionId, action: final.action, contractVersion, status: final.status, attempt: final.attempt, durationMs: final.durationMs, errorCode: final.error?.code ?? null, reason: final.error?.reason ?? null, replayed: final.replayed });
       return final;
     };
 
     const v = validateActionRequest(rawRequest, ctx, clock().toISOString());
     if (!v.ok) return finish(result({ status: "REJECTED", request, action: v.action, executionId: null, attempt: 0, started, now: clock().getTime(), error: v.error }), request?.contractVersion ?? "-");
-    const { def, contractVersion } = v;
+    const { def, contractVersion, mode } = v;
     const req = request!;
+
+    // Reglas del modelo (anticipación máxima, servicio ofrecido): se rechaza sin ejecutar nada ni reservar la clave.
+    if (mode === "execute") {
+      const pre = bookingPreconditions(req, ctx.artifact, clock());
+      if (pre) return finish(result({ status: "FAILED", request: req, action: req.action, executionId: null, attempt: 0, started, now: clock().getTime(), error: pre }), contractVersion);
+    }
 
     // IDEMPOTENCIA: claim atómico en Postgres.
     let claim;
@@ -330,7 +413,7 @@ export function createActionEngine(deps: ActionEngineDeps) {
         idempotencyKey: req.id,
         argumentsHash: argumentsHashOf(req),
         leaseSeconds: Math.min(300, Math.ceil((def.timeoutMs * def.retry.maxAttempts) / 1000) + 15),
-        retakeable: !def.mutation,
+        retakeable: mode === "execute" && !def.mutation,
       });
     } catch {
       return finish(result({ status: "FAILED", request: req, action: req.action, executionId: null, attempt: 0, started, now: clock().getTime(), error: { code: "INTERNAL_ERROR", reason: "EXECUTION_STORE_UNAVAILABLE", retryable: true, ambiguous: false, invalidSlots: [] } }), contractVersion);
@@ -362,6 +445,11 @@ export function createActionEngine(deps: ActionEngineDeps) {
       }
       return finish(r, contractVersion);
     };
+
+    // Versión cambiada y la ejecución anterior nunca llegó a empezar: se cierra sin ejecutar (la state machine re-propone).
+    if (mode === "resolve_only") {
+      return complete(result({ status: "REJECTED", request: req, action: req.action, executionId, attempt, started, now: clock().getTime(), error: rejectWith("STALE_ACTION_REQUEST", "AGENT_VERSION_CHANGED") }));
+    }
 
     // El estado registra ACTION_STARTED antes de cualquier efecto; si ya no corresponde, no se ejecuta.
     if (hooks.beforeExecute && !(await hooks.beforeExecute(executionId, attempt))) {

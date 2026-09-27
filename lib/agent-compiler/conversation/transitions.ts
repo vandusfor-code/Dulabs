@@ -20,6 +20,7 @@ import {
 } from "@/lib/agent-compiler/conversation/model";
 import { goalForIntent, TRANSACTIONAL_GOALS, type AgentRequirements } from "@/lib/agent-compiler/conversation/requirements";
 import { buildActionRequest } from "@/lib/agent-compiler/conversation/actions";
+import { STALE_REQUEST_CATEGORY } from "@/lib/agent-compiler/conversation/model";
 import { evaluateGoal, type EvaluationContext } from "@/lib/agent-compiler/conversation/next-step";
 import type { StructuredUnderstanding, UnderstoodSlot } from "@/lib/agent-compiler/understanding/contract";
 import type { UnderstandingIntent } from "@/lib/agent-compiler/understanding/taxonomy";
@@ -119,6 +120,18 @@ export const TRANSITIONS: readonly TransitionRule[] = [
   { from: AGENT_CONTROLLED, event: "TIMEOUT", to: ["NEW", "EXECUTING"], sideEffects: ["reset_goal_slots"] },
   { from: ALL, event: "UNDERSTANDING_FAILED", to: ["SAME", "ERROR"], sideEffects: [] },
 ];
+
+/**
+ * FASE 5: una confirmación solo vale para la propuesta que se presentó CON LA VERSIÓN VIGENTE del negocio. Si se publicó
+ * otra versión (otra huella de artefacto en los argumentos) o el objetivo ya no tiene esa acción, el "sí" se ignora y
+ * la evaluación vuelve a proponer (o informa que ya no se puede).
+ */
+function proposalStillCurrent(state: ConversationState, req: AgentRequirements, pending: NonNullable<ConversationState["pendingConfirmation"]>, now: string): boolean {
+  const g = state.goal ? req.goals[state.goal.kind] : null;
+  if (!g?.supported || g.action !== pending.action) return false;
+  const draft = buildActionRequest({ state, requirements: req, action: g.action, purpose: "fulfill", requiresConfirmation: true, confirmationId: null, now });
+  return draft.ok && draft.argsHash === pending.argsHash;
+}
 
 export function isTransitionAllowed(from: ConversationStatus, event: DomainEvent, to: ConversationStatus): boolean {
   return TRANSITIONS.some(
@@ -396,7 +409,7 @@ function reduceMessage(prev: ConversationState, ev: Extract<ConversationInputEve
   let confirmedId: string | null = null;
   const conf = u.signals.confirmation;
   if (conf && from === "AWAITING_CONFIRMATION" && prev.pendingConfirmation) {
-    if (conf.kind === "affirm" && conf.pendingRef === prev.pendingConfirmation.id && !changed) {
+    if (conf.kind === "affirm" && conf.pendingRef === prev.pendingConfirmation.id && !changed && proposalStillCurrent(s, req, prev.pendingConfirmation, ctx.now)) {
       confirmedId = prev.pendingConfirmation.id;
       events.add("CONFIRMATION_RECEIVED");
     } else if (conf.kind === "deny") {
@@ -483,6 +496,12 @@ function systemEvent(prev: ConversationState, ev: Exclude<ConversationInputEvent
       s.pendingConfirmation = null;
       s.lastActionResult = { actionId: action.id, action: action.action, outcome: "failed", category: ev.category.slice(0, 40), at: ctx.now };
       if (HUMAN_CONTROLLED_STATUSES.has(from)) return finish(s, from, events, ctx.now);
+      // FASE 5: la solicitud era de otra versión publicada del negocio (o de datos ya cambiados) y NO se ejecutó nada.
+      // Se re-evalúa con los requisitos vigentes: se vuelve a proponer (y a confirmar) con la versión actual.
+      if (ev.category === STALE_REQUEST_CATEGORY) {
+        applyEvaluation(s, req, baseCtx, events);
+        return finish(s, from, events, ctx.now);
+      }
       // Escritura con desenlace DESCONOCIDO (timeout / worker caído): pudo haber ocurrido. Nunca se vuelve a proponer
       // automáticamente (sería una posible doble reserva): ERROR hasta que una persona lo revise.
       if (ev.ambiguous && action.purpose !== "lookup") {

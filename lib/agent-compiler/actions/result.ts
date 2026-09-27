@@ -5,6 +5,9 @@
 // Nunca incluye lenguaje para el cliente: eso es del renderer.
 
 import { z } from "zod";
+import { STALE_REQUEST_CATEGORY } from "@/lib/agent-compiler/conversation/model";
+
+export { STALE_REQUEST_CATEGORY };
 
 export const ACTION_STATUSES = ["SUCCEEDED", "FAILED", "REJECTED", "TIMED_OUT", "IN_PROGRESS"] as const;
 export type ActionStatus = (typeof ACTION_STATUSES)[number];
@@ -82,8 +85,13 @@ export function parseActionResult(value: unknown): { ok: true; result: ActionRes
   return { ok: false, issue: `${i?.code ?? "invalid"}:${i?.path.join(".") ?? ""}:${i?.message ?? ""}` };
 }
 
-/** Categoría (contrato de errores de FASE 1) con la que la state machine interpreta un fallo. */
-export function stateCategoryFor(error: ActionError): string {
+/**
+ * Categoría (contrato de errores de FASE 1) con la que la state machine interpreta un fallo. Una solicitud vieja
+ * (STALE, p. ej. cambió la versión publicada del negocio) no es un error del negocio: se re-evalúa con la versión
+ * vigente. Si el rechazo STALE es un REPLAY (misma operación ya cerrada), re-evaluar la repetiría: es INTERNAL_ERROR.
+ */
+export function stateCategoryFor(error: ActionError, opts: { replayed?: boolean } = {}): string {
+  if (error.code === "STALE_ACTION_REQUEST") return opts.replayed ? "INTERNAL_ERROR" : STALE_REQUEST_CATEGORY;
   switch (error.code) {
     case "BUSINESS_RULE_VIOLATION":
     case "NOT_FOUND":

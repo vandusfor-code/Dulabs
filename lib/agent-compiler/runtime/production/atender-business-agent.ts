@@ -225,18 +225,21 @@ export async function atenderMensajeConBusinessAgent(
 
   // 3.6) FASE 4 — motor conversacional (state machine + Action Engine) SOLO para tenants habilitados explícitamente
   // (BUSINESS_AGENT_STATE_MACHINE_TENANTS). Para todos los demás, el grafo compilado sigue exactamente igual.
+  // FASE 5 — ese motor se configura SOLO con el artefacto publicado (Universal Business Model activo del agente, o el
+  // Spec legacy vía adaptador → mismo compilador); se resuelve dentro del turno y falla cerrado si no es publicable.
   const conversation =
     params.overrides?.conversation ??
-    (resolution.spec && isStateMachineRuntimeEnabled(resolution.tenantId)
+    (isStateMachineRuntimeEnabled(resolution.tenantId)
       ? createProductionConversationRuntime({
           supabase,
           tenantId: resolution.tenantId,
           flowId: resolution.flowId,
+          flowVersionId: resolution.flowVersionId,
+          flowChecksum: resolution.checksum,
           phoneNumberId: cliente.phone_number_id,
           telefonoCliente,
           wamid,
           spec: resolution.spec,
-          flow: resolution.flow,
           gateSink,
         })
       : undefined);

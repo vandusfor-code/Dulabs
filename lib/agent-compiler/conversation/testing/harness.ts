@@ -1,17 +1,17 @@
 // Business Agent 2.0, FASE 3 — harness de tests de la máquina de estados (sin red).
 //
-// Usa piezas REALES: Spec → requisitos (buildAgentRequirements), Understanding Engine de FASE 2 (understandMessage con
+// Usa piezas REALES: Spec → adaptador legacy → UBM → artefacto publicado (FASE 5) → requisitos, Understanding Engine de FASE 2 (understandMessage con
 // su validador y normalizador), reducer, servicio y store con la semántica de Postgres. Lo único con guion es la salida
 // del MODELO para cada mensaje (scriptedProvider), igual que en FASE 2: no hay GEMINI_KEY ni red en este entorno.
 
 import { understandMessage } from "@/lib/agent-compiler/understanding/engine";
 import type { UnderstandingInput } from "@/lib/agent-compiler/understanding/context";
-import { businessSlotsFromSpec } from "@/lib/agent-compiler/understanding/slots";
 import { scriptedProvider } from "@/lib/agent-compiler/understanding/testing/harness";
 import { slotDisplayValue } from "@/lib/agent-compiler/understanding/validate";
 import { photographySpec, retailSpec, salonSpec } from "@/lib/agent-compiler/runtime/fixtures";
 import type { BusinessAgentSpec, CustomerField } from "@/lib/agent-compiler/spec/types";
-import { buildAgentRequirements } from "@/lib/agent-compiler/conversation/requirements";
+import { compileLegacySpec } from "@/lib/agent-compiler/business-model/compile";
+import { artifactRequirements, businessContextFromArtifact, type CompiledAgentArtifact } from "@/lib/agent-compiler/business-model/artifact";
 import { createInMemoryConversationStore, type InMemoryConversationStore } from "@/lib/agent-compiler/conversation/testing/in-memory-conversation-store";
 import {
   applySystemEvent,
@@ -62,10 +62,14 @@ export function barberSpec(): BusinessAgentSpec {
   return s;
 }
 
-/** Tienda: cotiza productos (no toma pedidos: no existe acción de pedidos), con talla y color como datos del negocio. */
+/**
+ * Tienda: cotiza productos (no toma pedidos: no existe acción de pedidos), con talla y color como datos del negocio.
+ * FASE 5: los campos eran scope "booking" en un negocio SIN agenda, configuración que el validador de publicación (legacy
+ * y UBM) rechaza; ahora son del cliente para que la fixture sea publicable.
+ */
 export function storeSpec(): BusinessAgentSpec {
   const s = retailSpec();
-  s.customerData = { fields: [field("color", "Color", "text", false, "booking"), field("talla", "Talla", "select", false, "booking", ["S", "M", "L"])] };
+  s.customerData = { fields: [field("color", "Color", "text", false, "customer"), field("talla", "Talla", "select", false, "customer", ["S", "M", "L"])] };
   return s;
 }
 
@@ -97,6 +101,7 @@ export function llm(over: ModelOutput = {}): ModelOutput {
 export const intent = (name: string, confidence = 0.9) => ({ intent: name, confidence });
 
 export interface Harness {
+  artifact: CompiledAgentArtifact;
   deps: ConversationServiceDeps;
   store: InMemoryConversationStore;
   logs: ConversationTransitionLog[];
@@ -115,7 +120,16 @@ export interface Harness {
 /** Sábado 26-09-2026 10:00 en Bogotá. */
 export const START = Date.parse("2026-09-26T15:00:00Z");
 
-export function createHarness(spec: BusinessAgentSpec, opts: { humanControl?: boolean; store?: InMemoryConversationStore; tenantId?: string } = {}): Harness {
+/** Artefacto publicado de una fixture (Spec legacy → UBM → compilador), o el artefacto tal cual. Falla si no es publicable. */
+export function artifactFor(source: BusinessAgentSpec | CompiledAgentArtifact, opts: { tenantId?: string; versionRef?: string; agentId?: string } = {}): CompiledAgentArtifact {
+  if ("artifactSchema" in source) return source;
+  const r = compileLegacySpec(source, { tenantId: opts.tenantId ?? TENANT, agentId: opts.agentId ?? KEY.agentId, versionRef: opts.versionRef ?? "v1", publishedVersion: null });
+  if (!r.ok) throw new Error(`fixture no publicable: ${JSON.stringify(r.errors)}`);
+  return r.artifact;
+}
+
+export function createHarness(source: BusinessAgentSpec | CompiledAgentArtifact, opts: { humanControl?: boolean; store?: InMemoryConversationStore; tenantId?: string } = {}): Harness {
+  const artifact = artifactFor(source, { tenantId: opts.tenantId });
   let now = START;
   let seq = 0;
   const logs: ConversationTransitionLog[] = [];
@@ -128,8 +142,8 @@ export function createHarness(spec: BusinessAgentSpec, opts: { humanControl?: bo
   const humanControl: HumanControlPort | undefined = opts.humanControl ? { isActive: async () => human.active } : undefined;
   const deps: ConversationServiceDeps = {
     store,
-    requirements: buildAgentRequirements(spec),
-    business: { tenantId: opts.tenantId ?? TENANT, agentId: KEY.agentId, businessName: spec.identity.businessName, businessTimezone: spec.identity.timezone, businessSlots: businessSlotsFromSpec(spec) },
+    requirements: artifactRequirements(artifact),
+    business: businessContextFromArtifact(artifact),
     understand: async (input: UnderstandingInput) => {
       modelCalls.push(input.message.text);
       const out = pending.get(input.message.text);
@@ -142,6 +156,7 @@ export function createHarness(spec: BusinessAgentSpec, opts: { humanControl?: bo
   };
 
   return {
+    artifact,
     deps,
     store,
     logs,

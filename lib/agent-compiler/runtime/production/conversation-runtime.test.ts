@@ -8,23 +8,24 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { barberSpec, createHarness, intent, KEY, llm, OTHER_TENANT } from "@/lib/agent-compiler/conversation/testing/harness";
-import { compiledConfig, createFakeHandler, createInMemoryActionStore, createTestEngine, fail, ok } from "@/lib/agent-compiler/actions/testing/harness";
+import { createFakeHandler, createInMemoryActionStore, createTestEngine, fail, ok } from "@/lib/agent-compiler/actions/testing/harness";
 import { createConversationRuntime, isStateMachineRuntimeEnabled } from "@/lib/agent-compiler/runtime/production/conversation-runtime";
 import { runAgentTurn } from "@/lib/agent-compiler/runtime/agent-runtime";
 import { ACTION_REGISTRY } from "@/lib/agent-compiler/actions/registry";
 import { argumentsHashOf } from "@/lib/agent-compiler/actions/engine";
 import type { ModelOutput } from "@/lib/agent-compiler/conversation/testing/harness";
 import type { BusinessAgentSpec } from "@/lib/agent-compiler/spec/types";
+import type { CompiledAgentArtifact } from "@/lib/agent-compiler/business-model/artifact";
 
 const S = (name: string, raw: string, extra: Record<string, unknown> = {}) => ({ name, raw, ...extra });
 const FULL = llm({ primaryIntent: intent("BOOKING_REQUEST"), slots: [S("customer_name", "Juan"), S("service", "corte clásico"), S("date", "mañana"), S("time", "a las 5 de la tarde")] });
 const YES = llm({ primaryIntent: intent("CONFIRMATION", 0.95) });
 
-function setup(spec: BusinessAgentSpec = barberSpec(), opts: { handler?: ReturnType<typeof createFakeHandler>; humanControl?: boolean; actionStore?: ReturnType<typeof createInMemoryActionStore> } = {}) {
+function setup(spec: BusinessAgentSpec | CompiledAgentArtifact = barberSpec(), opts: { handler?: ReturnType<typeof createFakeHandler>; humanControl?: boolean; actionStore?: ReturnType<typeof createInMemoryActionStore> } = {}) {
   const h = createHarness(spec, { humanControl: opts.humanControl });
   const e = createTestEngine({ handler: opts.handler, store: opts.actionStore });
   const sent: string[] = [];
-  const runtime = createConversationRuntime({ service: h.deps, engine: e.engine, spec, businessConfig: compiledConfig(spec).config, send: async (t) => void sent.push(t) });
+  const runtime = createConversationRuntime({ service: h.deps, engine: e.engine, artifact: h.artifact, send: async (t) => void sent.push(t) });
   let seq = 0;
   const say = (text: string, output: ModelOutput | null, wamid = `wamid.${++seq}`) => {
     h.script(text, output);

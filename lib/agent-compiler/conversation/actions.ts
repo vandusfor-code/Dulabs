@@ -83,7 +83,9 @@ export function buildActionRequest(input: {
     if (v !== undefined) customerData[fieldKey] = v;
   }
 
-  const argsHash = sha(stableStringify({ action: input.action, args, constraints, customerData }));
+  const artifactRef = input.requirements.artifactRef;
+  // La versión del negocio (artefacto) es parte de la operación: otra versión = otra propuesta y otra confirmación.
+  const argsHash = sha(stableStringify({ action: input.action, args, constraints, customerData, ...(artifactRef ? { artifactRef } : {}) }));
   const goalId = state.goal?.id ?? null;
   const id = sha([state.scope.tenantId, state.scope.conversationId, goalId ?? "-", input.action, input.purpose, argsHash].join("|"));
   return {
@@ -103,6 +105,7 @@ export function buildActionRequest(input: {
       goalId,
       status: "requested",
       requestedAt: input.now,
+      ...(artifactRef ? { artifactRef } : {}),
     },
   };
 }

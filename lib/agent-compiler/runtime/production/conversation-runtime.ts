@@ -1,4 +1,5 @@
-// DuLabs Business — Business Agent 2.0, FASE 4 — runtime conversacional (state machine + Action Engine).
+// DuLabs Business — Business Agent 2.0, FASE 4/5 — runtime conversacional (state machine + Action Engine), configurado
+// ÚNICAMENTE por el artefacto publicado del Universal Business Model (FASE 5).
 //
 //   (Gate PRE-LLM ya pasó) → pausa humana → dedupe → Understanding → State Machine → Action Engine → ActionResult
 //   → State update → Response Plan → Renderer → WhatsApp
@@ -13,9 +14,7 @@
 //   - Máximo de acciones por turno acotado (sin bucles).
 //   - Solo se envía texto que produce el renderer; nada se envía con una persona a cargo.
 
-import type { BusinessAgentSpec } from "@/lib/agent-compiler/spec/types";
-import { WELL_KNOWN_FIELDS } from "@/lib/customer-data";
-import { CUSTOMER_FIELD_TO_UNIVERSAL_SLOT } from "@/lib/agent-compiler/understanding/slots";
+import type { CompiledAgentArtifact } from "@/lib/agent-compiler/business-model/artifact";
 import {
   applySystemEvent,
   loadTurnView,
@@ -27,7 +26,6 @@ import type { ConversationStateKey } from "@/lib/agent-compiler/conversation/sto
 import { renderResponse } from "@/lib/agent-compiler/conversation/renderer";
 import type { ActionEngine } from "@/lib/agent-compiler/actions/engine";
 import { stateCategoryFor, type ActionResult } from "@/lib/agent-compiler/actions/result";
-import type { FlowDefinition } from "@/lib/flow/types";
 
 export const MAX_ACTIONS_PER_TURN = 3;
 export const STATE_MACHINE_TENANTS_ENV = "BUSINESS_AGENT_STATE_MACHINE_TENANTS";
@@ -45,33 +43,14 @@ export function isStateMachineRuntimeEnabled(tenantId: string, env: Record<strin
     .includes(tenantId.toLowerCase());
 }
 
-/** Configuración estática que el compilador embebió en el flow publicado, por acción (primer nodo con ese actionType). */
-export function businessConfigFromFlow(flow: FlowDefinition | undefined): (action: string) => Record<string, unknown> | null {
-  const byAction = new Map<string, Record<string, unknown>>();
-  for (const node of flow?.nodes ?? []) {
-    if (node.type !== "action") continue;
-    const config = node.config as unknown as Record<string, unknown> & { actionType?: string };
-    if (typeof config.actionType === "string" && !byAction.has(config.actionType)) byAction.set(config.actionType, config);
-  }
-  return (action) => byAction.get(action) ?? null;
-}
-
-/** Preguntas configuradas por el negocio para cada dato del cliente (Spec), por nombre de slot. */
-export function questionsFromSpec(spec: Pick<BusinessAgentSpec, "customerData">): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const f of spec.customerData?.fields ?? []) {
-    if (!f.enabled) continue;
-    const q = f.question?.trim() || WELL_KNOWN_FIELDS[f.key]?.question;
-    if (q) out[CUSTOMER_FIELD_TO_UNIVERSAL_SLOT[f.key] ?? f.key] = q;
-  }
-  return out;
-}
-
 export interface ConversationRuntimeDeps {
   service: ConversationServiceDeps;
   engine: ActionEngine;
-  spec: Pick<BusinessAgentSpec, "capabilities" | "scheduling" | "identity" | "handoff" | "customerData">;
-  businessConfig(action: string): Record<string, unknown> | null;
+  /**
+   * Artefacto publicado (FASE 5): lo único que configura este runtime. `service.requirements` y `service.business`
+   * deben derivarse de ÉL (artifactRequirements / businessContextFromArtifact); createConversationRuntime lo verifica.
+   */
+  artifact: CompiledAgentArtifact;
   send(text: string): Promise<void>;
   maxActionsPerTurn?: number;
 }
@@ -94,6 +73,10 @@ export interface ConversationRuntimeOutcome {
 
 export function createConversationRuntime(deps: ConversationRuntimeDeps) {
   const maxActions = deps.maxActionsPerTurn ?? MAX_ACTIONS_PER_TURN;
+  // Una sola fuente: requisitos y contexto de entendimiento del MISMO artefacto (misma huella, mismo tenant y agente).
+  if (deps.service.requirements.artifactRef !== deps.artifact.executionFingerprint || deps.service.business.tenantId !== deps.artifact.tenantId || deps.service.business.agentId !== deps.artifact.agentId) {
+    throw new Error("conversation_runtime_artifact_mismatch");
+  }
 
   /** Ejecuta la acción pendiente de la vista y aplica su resultado al estado. Devuelve la vista nueva. */
   async function drive(key: ConversationStateKey, agentVersion: string | null, view: TurnView, userMessage: string, results: ActionResult[]): Promise<TurnView | null> {
@@ -106,10 +89,8 @@ export function createConversationRuntime(deps: ConversationRuntimeDeps) {
         agentId: key.agentId,
         agentVersion,
         conversation: { phoneNumberId: key.phoneNumberId, telefonoCliente: key.telefonoCliente },
-        spec: deps.spec,
-        requirements: deps.service.requirements,
+        artifact: deps.artifact,
         state: view.state,
-        businessConfig: deps.businessConfig,
         userMessage,
       },
       {
@@ -126,7 +107,7 @@ export function createConversationRuntime(deps: ConversationRuntimeDeps) {
     const applied =
       result.status === "SUCCEEDED"
         ? await applySystemEvent(deps.service, key, { type: "ACTION_SUCCEEDED", eventId, at: new Date().toISOString(), actionId: request.id })
-        : await applySystemEvent(deps.service, key, { type: "ACTION_FAILED", eventId, at: new Date().toISOString(), actionId: request.id, category: stateCategoryFor(result.error!), invalidSlots: result.invalidSlots, ambiguous: result.error!.ambiguous });
+        : await applySystemEvent(deps.service, key, { type: "ACTION_FAILED", eventId, at: new Date().toISOString(), actionId: request.id, category: stateCategoryFor(result.error!, { replayed: result.replayed }), invalidSlots: result.invalidSlots, ambiguous: result.error!.ambiguous });
     if (applied.outcome === "processed" || applied.outcome === "duplicate") return applied;
     // La solicitud ya no era la vigente (p. ej. STALE): se relee el estado actual.
     return loadTurnView(deps.service, key);
@@ -164,8 +145,11 @@ export function createConversationRuntime(deps: ConversationRuntimeDeps) {
       plan: current.responsePlan,
       state: current.state,
       actions: results,
-      businessName: deps.spec.identity.businessName,
-      questions: questionsFromSpec(deps.spec),
+      businessName: deps.artifact.identity.name,
+      questions: deps.artifact.questions,
+      handoffMessage: deps.artifact.handoff.message,
+      noAnswerMessage: deps.artifact.knowledge.noAnswerMessage,
+      offerHandoff: deps.artifact.policies.offerHandoff,
     });
     let sent = false;
     if (text) {

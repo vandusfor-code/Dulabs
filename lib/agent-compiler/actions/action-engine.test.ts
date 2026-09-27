@@ -6,7 +6,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { barberSpec, createHarness, intent, llm, processed, KEY, OTHER_TENANT, studioSpec } from "@/lib/agent-compiler/conversation/testing/harness";
+import { artifactFor, barberSpec, createHarness, intent, llm, processed, KEY, OTHER_TENANT, studioSpec } from "@/lib/agent-compiler/conversation/testing/harness";
 import { contextFor, createTestEngine, createFakeHandler, createInMemoryActionStore, fail, ok } from "@/lib/agent-compiler/actions/testing/harness";
 import { argumentsHashOf, filterSlotsByRange } from "@/lib/agent-compiler/actions/engine";
 import { ACTION_REGISTRY } from "@/lib/agent-compiler/actions/registry";
@@ -75,17 +75,22 @@ describe("FASE 4 — Action Engine: ejecución, validación y autorización", ()
     assert.equal(fake.calls.length, 0);
   });
 
-  it("5. autorización: capacidad desactivada o proveedor distinto en el Spec publicado => UNAUTHORIZED", async () => {
+  it("5. autorización: acción no habilitada o proveedor distinto en el ARTEFACTO publicado => UNAUTHORIZED", async () => {
     const { state, request } = await readyBooking();
     const { engine, fake } = createTestEngine();
+    // FASE 5: la autorización sale del artefacto. Un artefacto (misma versión) sin la acción de reserva no la ejecuta.
+    const barber = artifactFor(barberSpec());
+    const { crear_cita_nylas_generico: _omit, ...sinReserva } = barber.actions;
+    void _omit;
+    const a = await engine.execute(request, contextFor({ ...barber, actions: sinReserva }, state));
+    assert.deepEqual([a.error?.code, a.error?.reason], ["UNAUTHORIZED", "CAPABILITY_DISABLED"]);
+    const b = await engine.execute(request, contextFor({ ...barber, booking: { ...barber.booking!, provider: "internal" } }, state));
+    assert.deepEqual([b.error?.code, b.error?.reason], ["UNAUTHORIZED", "SCHEDULING_PROVIDER_MISMATCH"]);
+    // Una versión NUEVA publicada sin agenda: la solicitud de la versión anterior no se ejecuta (se re-evalúa).
     const sinAgenda = barberSpec();
     sinAgenda.capabilities = { ...sinAgenda.capabilities, scheduling: false };
-    const a = await engine.execute(request, { ...contextFor(barberSpec(), state), spec: sinAgenda });
-    assert.deepEqual([a.error?.code, a.error?.reason], ["UNAUTHORIZED", "CAPABILITY_DISABLED"]);
-    const interno = barberSpec();
-    interno.scheduling = { ...interno.scheduling, provider: "internal" };
-    const b = await engine.execute(request, { ...contextFor(barberSpec(), state), spec: interno });
-    assert.deepEqual([b.error?.code, b.error?.reason], ["UNAUTHORIZED", "SCHEDULING_PROVIDER_MISMATCH"]);
+    const c = await engine.execute(request, contextFor(sinAgenda, state));
+    assert.deepEqual([c.status, c.error?.code, c.error?.reason], ["REJECTED", "STALE_ACTION_REQUEST", "AGENT_VERSION_CHANGED"]);
     assert.equal(fake.calls.length, 0);
   });
 
@@ -221,12 +226,15 @@ describe("FASE 4 — timeouts, reintentos y errores", () => {
     assert.deepEqual([r.status, r.error?.code, r.error?.reason, r.invalidSlots], ["FAILED", "BUSINESS_RULE_VIOLATION", "SLOT_TAKEN", ["time"]]);
   });
 
-  it("zona horaria no soportada por los handlers de agenda => no se agenda (no se inventa la conversión)", async () => {
+  it("zona horaria no soportada por los handlers de agenda => no se publica; y el motor tampoco agenda (defensa)", async () => {
     const { state, request } = await readyBooking();
     const madrid = barberSpec();
     madrid.identity = { ...madrid.identity, timezone: "Europe/Madrid" };
+    // FASE 5: se rechaza al PUBLICAR (el artefacto no existe).
+    assert.throws(() => artifactFor(madrid), /TIMEZONE_NOT_SUPPORTED/);
+    const barber = artifactFor(barberSpec());
     const { engine, fake } = createTestEngine();
-    const r = await engine.execute(request, { ...contextFor(barberSpec(), state), spec: madrid });
+    const r = await engine.execute(request, contextFor({ ...barber, identity: { ...barber.identity, timezone: "Europe/Madrid" } }, state));
     assert.deepEqual([r.error?.code, r.error?.reason, fake.calls.length], ["BUSINESS_RULE_VIOLATION", "TIMEZONE_NOT_SUPPORTED", 0]);
   });
 });

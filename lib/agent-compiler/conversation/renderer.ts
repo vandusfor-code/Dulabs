@@ -21,6 +21,12 @@ export interface RenderInput {
   businessName: string;
   /** Pregunta configurada por el negocio para cada dato (customerData.question), por nombre de slot. */
   questions: Readonly<Record<string, string>>;
+  /** FASE 5 (artefacto): mensaje al transferir. */
+  handoffMessage?: string;
+  /** FASE 5 (artefacto): mensaje configurado cuando el conocimiento no tiene respuesta. */
+  noAnswerMessage?: string;
+  /** FASE 5 (artefacto, policies.unsupportedRequest): false = nunca ofrecer una persona. */
+  offerHandoff?: boolean;
 }
 
 const MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
@@ -65,6 +71,9 @@ const INVALID_REASONS: Readonly<Record<string, string>> = {
   DATE_IN_PAST: "Esa fecha ya pasó.",
   NO_AVAILABILITY: "Para ese día ya no tenemos cupos.",
   NO_AVAILABILITY_IN_RANGE: "No tenemos cupos en esa franja.",
+  // FASE 5 — reglas del Universal Business Model que aplica el Action Engine.
+  DATE_TOO_FAR: "Todavía no tenemos agenda abierta para esa fecha.",
+  SERVICE_NOT_OFFERED: "Ese servicio no lo tenemos disponible para reservar.",
 };
 
 function lastOf(actions: readonly ActionResult[], pred: (a: ActionResult) => boolean): ActionResult | undefined {
@@ -93,13 +102,13 @@ function bookingSummary(state: ConversationState): string {
 }
 
 /** Texto informativo de una consulta hecha en este turno (cotización, conocimiento, catálogo), redactado por el backend. */
-function lookupText(a: ActionResult | undefined): string | null {
+function lookupText(a: ActionResult | undefined, noAnswer = "No tengo esa información a la mano."): string | null {
   if (!a || a.status !== "SUCCEEDED") return null;
   switch (a.action) {
     case "calcular_cotizacion":
       return str(a.data.cotizacionTexto);
     case "buscar_conocimiento":
-      return a.data.conocimientoEncontrado === true ? (str(a.data.respuestaExacta) ?? str(a.data.respuestaDirecta)) : "No tengo esa información a la mano.";
+      return a.data.conocimientoEncontrado === true ? (str(a.data.respuestaExacta) ?? str(a.data.respuestaDirecta)) : noAnswer;
     case "listar_catalogo_servicios":
       return str(a.data.catalogoTexto);
     default:
@@ -122,11 +131,11 @@ export function renderResponse(input: RenderInput): string | null {
   const last = actions.at(-1);
   const handoffDone = lastOf(actions, (a) => a.action === "transferir_soporte" && a.status === "SUCCEEDED");
   const failure = lastOf(actions, (a) => a.status !== "SUCCEEDED" && a.status !== "IN_PROGRESS");
-  const extra = lookupText(lastOf(actions, (a) => ["calcular_cotizacion", "buscar_conocimiento", "listar_catalogo_servicios"].includes(a.action)));
+  const extra = lookupText(lastOf(actions, (a) => ["calcular_cotizacion", "buscar_conocimiento", "listar_catalogo_servicios"].includes(a.action)), input.noAnswerMessage);
   const withExtra = (text: string | null) => [extra, text].filter(Boolean).join("\n\n") || null;
-  const offer = (yes: boolean | undefined) => (yes ? " Si prefieres, te comunico con una persona del equipo." : "");
+  const offer = (yes: boolean | undefined) => (yes && input.offerHandoff !== false ? " Si prefieres, te comunico con una persona del equipo." : "");
 
-  if (handoffDone) return "Te comunico con una persona del equipo. En breve te escriben por aquí.";
+  if (handoffDone) return input.handoffMessage ?? "Te comunico con una persona del equipo. En breve te escriben por aquí.";
 
   switch (plan.intent) {
     case "NO_RESPONSE":
@@ -168,7 +177,7 @@ export function renderResponse(input: RenderInput): string | null {
       }
       if (last.action === "cancelar_cita_cliente") return `Listo, cancelé tu cita${str(last.data.citaCanceladaTexto) ? `: ${str(last.data.citaCanceladaTexto)}` : ""}.`;
       if (last.action === "reprogramar_cita_cliente") return `Listo, tu cita quedó para: ${str(last.data.citaMovidaTexto) ?? bookingSummary(state)}.`;
-      return lookupText(last);
+      return lookupText(last, input.noAnswerMessage);
     }
     case "CANCELLATION_ACK":
       return "Listo, no hago la reserva. Si necesitas algo más, aquí estoy.";

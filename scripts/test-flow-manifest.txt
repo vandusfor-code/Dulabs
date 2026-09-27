@@ -510,3 +510,5 @@ lib/agent-compiler/actions/store-supabase.test.ts
 lib/agent-compiler/runtime/production/conversation-runtime.test.ts
 lib/agent-compiler/runtime/production/atender-conversation.test.ts
 lib/agent-compiler/understanding/temporal-ba.test.ts
+lib/agent-compiler/business-model/business-model.test.ts
+lib/agent-compiler/business-model/e2e.test.ts
