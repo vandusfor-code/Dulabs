@@ -207,7 +207,7 @@ export type AgentTurnOutcome = "replied" | "handoff" | "fallback" | "preempted" 
 function checkoutTexts(b: AgentRuntimeConfig["business"]): CheckoutTexts | undefined {
   const p = b.pedido;
   if (!p) return undefined;
-  return { paymentQuestion: p.pregunta_pago, shippingNote: p.nota_envio_domicilio, wholesaleMinimum: p.minimo_mayorista, confirmedNote: p.nota_confirmado };
+  return { paymentQuestion: p.pregunta_pago, shippingNote: p.nota_envio_domicilio, wholesaleMinimum: p.minimo_mayorista, confirmedNote: p.nota_confirmado, storeAddress: p.direccion_tienda };
 }
 
 export interface AgentTurnTrace {

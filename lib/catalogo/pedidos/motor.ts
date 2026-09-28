@@ -803,6 +803,15 @@ export function createOrderEngine(deps: OrderEngineDeps) {
      */
     expireAbandonedOrders: (input: { businessId?: string; limit?: number } = {}) => expireAbandoned(input),
 
+    /**
+     * Bloque 32 — ¿el contacto ya COMPRÓ en este negocio (algún pedido confirmado o completado)?
+     * Lo usa la regla de compra inicial mayorista: la primera compra debe llegar al mínimo.
+     */
+    async hasPurchase(input: { tenantId: string; contact: OrderContact }): Promise<boolean> {
+      await requireAvailable();
+      return (await deps.orders.latestForContact(input.tenantId, input.contact, ["confirmed", "completed"])) !== null;
+    },
+
     /** Pedidos abiertos del negocio con su reserva de stock (panel de la asesora). */
     async listOpenOrders(tenantId: string, limit = 100): Promise<Array<{ order: Order; reservations: ReservationSummary[] }>> {
       await requireAvailable();

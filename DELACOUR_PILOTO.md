@@ -881,7 +881,8 @@ claves queda exactamente como antes.
 | `inicio.buscar` | Texto al tocar "Buscar una joya" |
 | `pedido.pregunta_pago` | Pregunta de pago (mismos botones: transferencia / pago en tienda) |
 | `pedido.nota_envio_domicilio` | Línea 🚚 del resumen, solo a domicilio |
-| `pedido.minimo_mayorista` | Compra inicial mayorista: por debajo, el resumen lo INFORMA (no bloquea; la asesora decide) |
+| `pedido.minimo_mayorista` | Compra INICIAL mayorista: si es la primera compra del contacto (ningún pedido confirmado o completado) y no llega al mínimo, NO arranca el registro ni sale el resumen: el bot dice cuánto suma, cuánto falta y conserva los productos. Quien ya compró no tiene mínimo. Solo por mayor |
+| `pedido.direccion_tienda` | Dirección del local: sale en el resumen y en el mensaje final cuando el cliente recoge en tienda |
 | `pedido.nota_confirmado` | Línea extra del mensaje de pedido registrado |
 
 Además (para todos los agentes): el modelo no enumera de memoria categorías que no conoce (regla 14),

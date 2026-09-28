@@ -100,8 +100,8 @@ export const CHECKOUT_MESSAGES = {
   chooseOption: "Para continuar, elige una opción:",
   /** "sí", "confirmo", "ok"… en el resumen: solo el botón registra el pedido (acción inequívoca). */
   tapToConfirm: "Para registrar tu pedido toca el botón ✅ Confirmar pedido.",
-  confirmed: (business: string | null, note?: string | null) =>
-    `✅ Tu pedido quedó registrado correctamente.\n\nUna asesora continuará contigo para coordinar el pago y los siguientes pasos.${note ? `\n\n${note}` : ""}\n\n${business ? `Gracias por comprar en ${business} 💖` : "¡Gracias por tu compra! 💖"}`,
+  confirmed: (business: string | null, note?: string | null, storeAddress?: string | null) =>
+    `✅ Tu pedido quedó registrado correctamente.\n\nUna asesora continuará contigo para coordinar el pago y los siguientes pasos.${note ? `\n\n${note}` : ""}${storeAddress ? `\n\n📍 Te esperamos en: ${storeAddress}` : ""}\n\n${business ? `Gracias por comprar en ${business} 💖` : "¡Gracias por tu compra! 💖"}`,
   alreadyConfirmed: "✅ Tu pedido ya quedó registrado. Una asesora continuará contigo para coordinar el pago y los siguientes pasos.",
   modify: "Claro 😊 Tus productos siguen guardados.\n\nDime qué deseas cambiar (agregar, quitar o cambiar cantidades). Cuando quieras terminar, escríbeme *finalizar pedido*.",
   cancelled: "Listo, cancelé el registro de tu pedido: no quedó ninguna compra ni reserva.\n\nTus productos siguen guardados por si quieres retomarlo; escríbeme *finalizar pedido* cuando quieras.",
@@ -281,29 +281,32 @@ export function checkoutData(ck: CheckoutState): CheckoutData | null {
 export interface CheckoutTexts {
   paymentQuestion?: string;
   shippingNote?: string;
+  /** Compra INICIAL mayorista (COP): la primera compra de un mayorista no se registra por debajo. */
   wholesaleMinimum?: number;
   confirmedNote?: string;
+  /** Dirección de la tienda (resumen y mensaje final cuando recoge en tienda). */
+  storeAddress?: string;
 }
 
-/** Aviso (informativo, nunca bloquea) cuando un pedido mayorista no llega a la compra inicial. */
-export const wholesaleMinimumNotice = (minimum: number) =>
-  `ℹ️ La compra inicial mayorista parte de ${formatCop(minimum)}. Una asesora te confirma las condiciones al revisar tu pedido 💎`;
+/** Mensaje FIJO cuando la primera compra mayorista no llega al mínimo (el pedido no se registra). */
+export const wholesaleMinimumBlocked = (total: number, minimum: number) =>
+  `Tu pedido suma *${formatCop(total)}* 💎\n\nPara tu primera compra al por mayor, el pedido mínimo es de *${formatCop(minimum)}*: te faltan *${formatCop(minimum - total)}*.\n\nTus productos siguen guardados: puedes agregar más referencias y, cuando quieras, escríbeme *finalizar pedido*. Si prefieres, te comunico con una asesora ✨`;
 
 export function summaryText(order: OrderPublicView, data: CheckoutData, texts: CheckoutTexts = {}): string {
   const lines = order.lines.map((l) => `• ${l.product_name} (${l.reference}) × ${l.quantity} — ${l.subtotal === null ? "precio a consultar" : formatCop(l.subtotal)}`);
   const out = [`📋 *Resumen de tu pedido* (${order.order_id})`, "", ...lines, "", `*Total: ${formatCop(order.total)}*`];
   if (order.unpriced_units > 0) out.push("Algunos productos tienen precio a consultar: una asesora te confirma su valor.");
   out.push("", `👤 A nombre de: ${data.customerName}`);
-  if (data.delivery === "tienda") out.push("🏬 Entrega: Recoger en tienda");
+  if (data.delivery === "tienda") {
+    out.push("🏬 Entrega: Recoger en tienda");
+    if (texts.storeAddress) out.push(`📍 Dirección de la tienda: ${texts.storeAddress}`);
+  }
   else {
     out.push("🏠 Entrega: Domicilio", `📍 Dirección: ${data.address}, ${data.city}`);
     if (data.deliveryReference) out.push(`📝 Referencia: ${data.deliveryReference}`);
   }
   out.push(`💳 Pago: ${data.paymentMethod === "transferencia" ? "Transferencia" : "Pago en tienda"}`);
   if (data.delivery === "domicilio" && texts.shippingNote) out.push(`🚚 ${texts.shippingNote}`);
-  if (order.channel === "wholesale" && texts.wholesaleMinimum && order.total < texts.wholesaleMinimum) {
-    out.push("", wholesaleMinimumNotice(texts.wholesaleMinimum));
-  }
   return out.join("\n");
 }
 
@@ -312,7 +315,7 @@ export function summaryText(order: OrderPublicView, data: CheckoutData, texts: C
 // ---------------------------------------------------------------------------
 
 export interface CheckoutIO {
-  engine: Pick<OrderEngine, "validateOrder" | "confirmOrder" | "cancelProposal" | "getOrder" | "createOrder">;
+  engine: Pick<OrderEngine, "validateOrder" | "confirmOrder" | "cancelProposal" | "getOrder" | "createOrder"> & Partial<Pick<OrderEngine, "hasPurchase">>;
   tenantId: string;
   contact: OrderContact;
   channel: OrderChannel;
@@ -430,10 +433,32 @@ function backToCart(state: ConversationState, order: OrderPublicView | null): Co
 }
 
 /**
+ * Bloque 32 — regla de COMPRA INICIAL mayorista (config `negocio.pedido.minimo_mayorista`): si es la
+ * primera compra del contacto (ningún pedido confirmado o completado) y el pedido no llega al mínimo,
+ * no se registra. Devuelve el mensaje a enviar, o null si el pedido puede seguir. Si no se puede saber
+ * si ya compró, se aplica la regla (la asesora puede atenderlo igual).
+ */
+async function minimoMayorista(io: CheckoutIO, order: OrderPublicView): Promise<string | null> {
+  const minimum = io.texts?.wholesaleMinimum;
+  if (!minimum || io.channel !== "wholesale" || order.channel !== "wholesale" || order.total >= minimum) return null;
+  const bought = io.engine.hasPurchase ? await io.engine.hasPurchase({ tenantId: io.tenantId, contact: io.contact }).catch(() => false) : false;
+  return bought ? null : wholesaleMinimumBlocked(order.total, minimum);
+}
+
+/** El pedido no llega a la compra inicial: se anula la propuesta y los productos vuelven al carrito. */
+async function blockedByMinimum(io: CheckoutIO, state: ConversationState, order: OrderPublicView, message: string, prefix: string | null = null): Promise<CheckoutResult> {
+  await io.engine.cancelProposal({ tenantId: io.tenantId, contact: io.contact, orderId: order.order_id, reason: "minimo_mayorista", requestId: io.requestId }).catch(() => null);
+  return done(backToCart(state, order), await io.sendText([prefix, message].filter(Boolean).join("\n\n")), "not_confirmed");
+}
+
+/**
  * Empieza el checkout sobre una propuesta del motor (pending_confirmation) de ESTA conversación.
  * El nombre se reutiliza si hay uno confiable (nunca el teléfono).
  */
 export async function startCheckout(io: CheckoutIO, state: ConversationState, order: OrderPublicView, textoCompra: string | null = null): Promise<CheckoutResult> {
+  // Bloque 32: la primera compra mayorista por debajo del mínimo no empieza el registro.
+  const bloqueo = await minimoMayorista(io, order);
+  if (bloqueo) return blockedByMinimum(io, state, order, bloqueo);
   const known = await io.knownName().catch(() => null);
   // Bloque 28: lo que el cliente YA dijo en el mismo mensaje ("soy Laura…, domicilio y transferencia") llena
   // campos vacíos; las preguntas del mensaje nunca cuentan. El resumen y el botón siguen siendo obligatorios.
@@ -493,6 +518,9 @@ async function summarize(io: CheckoutIO, state: ConversationState, ck: CheckoutS
     const text = [prefix, ...issues, CHECKOUT_MESSAGES.notConfirmed].filter(Boolean).join("\n\n");
     return done(backToCart(state, order), await io.sendText(text), "not_confirmed");
   }
+  // Bloque 32: si al revisar el pedido (p. ej. bajó cantidades) queda por debajo de la compra inicial.
+  const bloqueo = await minimoMayorista(io, order);
+  if (bloqueo) return blockedByMinimum(io, state, order, bloqueo, prefix);
   const summary = summaryText(order, data, io.texts);
   const nextCk: CheckoutState = { ...ck, step: "summary", summary: { confirmationId: order.confirmation.id, total: order.confirmation.total, turn: io.turn } };
   const next: ConversationState = { ...state, checkout: nextCk, activeOrderId: order.order_id };
@@ -547,7 +575,9 @@ async function finishConfirmed(io: CheckoutIO, state: ConversationState): Promis
   const next: ConversationState = { ...state, checkout: null, proposal: null, cart: [], ambiguity: null };
   delete next.checkoutName;
   const paused = await io.handOff("pedido confirmado").catch(() => false);
-  const reply = await io.sendText(CHECKOUT_MESSAGES.confirmed(io.businessName, io.texts?.confirmedNote));
+  // Bloque 32: quien recoge en tienda recibe la dirección del local al final.
+  const store = state.checkout?.delivery === "tienda" ? io.texts?.storeAddress : undefined;
+  const reply = await io.sendText(CHECKOUT_MESSAGES.confirmed(io.businessName, io.texts?.confirmedNote, store));
   return done(paused ? { ...next, handoffTurn: io.turn } : next, reply, "confirmed", paused);
 }
 

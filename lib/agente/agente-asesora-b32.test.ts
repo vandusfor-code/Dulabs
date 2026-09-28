@@ -20,7 +20,7 @@ import type { AgentToolsDeps } from "@/lib/agente/herramientas";
 import { AGENT_TOOL_NAMES } from "@/lib/agente/nombres-herramientas";
 import { runAgentTurn, type AgentTurnTrace } from "@/lib/agente/runtime";
 import { INTENT_MENU, RETAIL_GIFT_BUTTON, START_MESSAGES, WHOLESALE_MENU, createMemoryCustomerChannelStore, resolveStartAction } from "@/lib/agente/clasificacion";
-import { CHECKOUT_BUTTONS, CHECKOUT_MESSAGES, summaryText, wholesaleMinimumNotice } from "@/lib/agente/checkout";
+import { CHECKOUT_BUTTONS, CHECKOUT_MESSAGES, wholesaleMinimumBlocked } from "@/lib/agente/checkout";
 import { PLATFORM_RULES } from "@/lib/agente/contexto";
 import { ciudadEnDireccion } from "@/lib/agente/lenguaje/interpretar";
 import { mensajeNotificacion } from "@/lib/catalogo/pedidos/notificaciones";
@@ -168,6 +168,7 @@ async function turno(script: SimulatedStep[], text: string, opts: { config?: Age
 const call = (name: string, args: Record<string, unknown> = {}): SimulatedStep => ({ toolCalls: [{ name, args }] });
 const estado = async (waId = CLIENTE): Promise<ConversationState> => (await stateStore.load({ tenantId: A.tenantId, phoneNumberId: PN_A, waId })).state;
 const clasificar = (canal: "retail" | "wholesale", waId = CLIENTE) => canales.setInitial({ tenantId: A.tenantId, phoneNumberId: PN_A, waId }, canal, "cliente");
+const stockDe = (id: string) => mem.inventory.stockOf(id);
 const boton = (grupo: keyof typeof CHECKOUT_BUTTONS, i: number) => CHECKOUT_BUTTONS[grupo][i] as { id: string; title: string };
 const tocar = (grupo: keyof typeof CHECKOUT_BUTTONS, i: number, waId = CLIENTE) => turno([], boton(grupo, i).title, { buttonId: boton(grupo, i).id, waId });
 
@@ -204,6 +205,7 @@ const ARIA = {
     nota_envio_domicilio: "Envío por transportadora (aprox. 2 a 5 días). El valor te lo confirmamos según tu ciudad.",
     minimo_mayorista: MINIMO,
     nota_confirmado: "Una asesora te enviará los datos oficiales de pago 💎",
+    direccion_tienda: "Centro Comercial Ficticio, locales 1 y 2, Ciudad Prueba",
   },
 };
 const aria = () => cfg({ negocio: ARIA });
@@ -358,6 +360,35 @@ describe("B32 · resumen, pago y confirmación con los textos del negocio", () =
     assert.ok(sent.at(-1)!.includes(ARIA.pedido.nota_confirmado));
   });
 
+  it("recoger en tienda: la dirección de la tienda sale en el resumen y en el mensaje final", async () => {
+    const p = await producto("Dije Aurora", 18_000, 10_000, 5);
+    await clasificar("retail");
+    await comprar(p.reference, 1);
+    const c = aria();
+    await turno([], "Camila", { config: c });
+    await turno([], boton("delivery", 0).title, { config: c, buttonId: boton("delivery", 0).id });
+    await turno([], boton("payment", 0).title, { config: c, buttonId: boton("payment", 0).id });
+    assert.ok(buttons.at(-1)!.body.includes(`🏬 Entrega: Recoger en tienda\n📍 Dirección de la tienda: ${ARIA.pedido.direccion_tienda}`));
+    await turno([], boton("summary", 0).title, { config: c, buttonId: boton("summary", 0).id });
+    assert.equal(sent.at(-1), CHECKOUT_MESSAGES.confirmed(NEGOCIO, ARIA.pedido.nota_confirmado, ARIA.pedido.direccion_tienda));
+    assert.ok(sent.at(-1)!.includes(`📍 Te esperamos en: ${ARIA.pedido.direccion_tienda}`));
+  });
+
+  it("a domicilio: sin la dirección de la tienda (ni en el resumen ni al final)", async () => {
+    const p = await producto("Dije Brisa", 18_000, 10_000, 5);
+    await clasificar("retail");
+    await comprar(p.reference, 1);
+    const c = aria();
+    await turno([], "Camila", { config: c });
+    await turno([], boton("delivery", 1).title, { config: c, buttonId: boton("delivery", 1).id });
+    await turno([], "Cra 24 n 16-54 pasto", { config: c });
+    await turno([], "Sin referencia", { config: c, buttonId: "checkout_sin_referencia" });
+    await turno([], boton("payment", 1).title, { config: c, buttonId: boton("payment", 1).id });
+    assert.ok(!buttons.at(-1)!.body.includes("Dirección de la tienda"));
+    await turno([], boton("summary", 0).title, { config: c, buttonId: boton("summary", 0).id });
+    assert.ok(!sent.at(-1)!.includes("Te esperamos en"));
+  });
+
   it("recoger en tienda: sin nota de envío", async () => {
     const p = await producto("Dije Estrella", 18_000, 10_000, 5);
     await clasificar("retail");
@@ -369,28 +400,93 @@ describe("B32 · resumen, pago y confirmación con los textos del negocio", () =
     assert.ok(!buttons.at(-1)!.body.includes("🚚"));
   });
 
-  it("mayorista por debajo de la compra inicial: aviso informativo (no bloquea); por encima o sin config: nada", () => {
-    const base = { order_id: "DL-ORD-AAAAAA", status: "pending_confirmation", lines: [{ reference: "DL-000001", product_name: "Dije", quantity: 1, unit_price: 9_800, subtotal: 9_800 }], total_units: 1, unpriced_units: 0, issues: [], confirmation: null };
-    const data = { customerName: "Camila", paymentMethod: "transferencia" as const, delivery: "tienda" as const, address: null, city: null, deliveryReference: null };
-    const bajo = summaryText({ ...base, channel: "wholesale", total: 9_800 } as never, data, { wholesaleMinimum: MINIMO });
-    assert.ok(bajo.includes(wholesaleMinimumNotice(MINIMO)));
-    assert.match(wholesaleMinimumNotice(MINIMO), /\$750\.000/);
-    assert.ok(!summaryText({ ...base, channel: "wholesale", total: 800_000 } as never, data, { wholesaleMinimum: MINIMO }).includes("compra inicial"));
-    assert.ok(!summaryText({ ...base, channel: "retail", total: 9_800 } as never, data, { wholesaleMinimum: MINIMO }).includes("compra inicial"));
-    assert.ok(!summaryText({ ...base, channel: "wholesale", total: 9_800 } as never, data).includes("compra inicial"));
+});
+
+describe("B32 · compra inicial mayorista: la PRIMERA compra de un mayorista debe llegar al mínimo", () => {
+  /** Carrito + intención de compra con la config de Aria (el checkout arranca en el segundo turno). */
+  async function comprarAria(ref: string, qty: number) {
+    const c = aria();
+    await turno([call("update_cart", { items: [{ reference: ref, quantity: qty }] }), { text: "Listo, lo agregué." }], `quiero ${qty} ${ref}`, { config: c });
+    return turno([call("create_order_request"), { text: "TEXTO DEL MODELO QUE NO DEBE SALIR" }], "lo quiero", { config: c });
+  }
+  async function hastaResumenAria() {
+    const c = aria();
+    if ((await estado()).checkout?.step === "name") await turno([], "Camila", { config: c });
+    await turno([], boton("delivery", 0).title, { config: c, buttonId: boton("delivery", 0).id });
+    return turno([], boton("payment", 1).title, { config: c, buttonId: boton("payment", 1).id });
+  }
+
+  it("mensaje: total, mínimo y lo que falta", () => {
+    const t = wholesaleMinimumBlocked(47_000, MINIMO);
+    assert.match(t, /\$47\.000/);
+    assert.match(t, /\$750\.000/);
+    assert.match(t, /te faltan \*\$703\.000\*/);
+    assert.match(t, /primera compra al por mayor/);
   });
 
-  it("mayorista de punta a punta: el pedido por debajo del mínimo SE PUEDE confirmar (la asesora decide)", async () => {
-    const p = await producto("Pulsera Corazón", 16_000, 9_800, 5);
+  it("primera compra mayorista de $47.000 => NO arranca el registro; productos al carrito; ningún pedido confirmado", async () => {
+    const p = await producto("Pulsera Corazón", 60_000, 47_000, 5);
+    await clasificar("wholesale");
+    const r = await comprarAria(p.reference, 1);
+    assert.equal(r.trace.checkout?.action, "not_confirmed");
+    assert.equal(sent.at(-1), wholesaleMinimumBlocked(47_000, MINIMO));
+    assert.ok(!sent.includes(CHECKOUT_MESSAGES.askName), "no pide el nombre");
+    assert.ok(!sent.includes("TEXTO DEL MODELO QUE NO DEBE SALIR"));
+    const st = await estado();
+    assert.equal(st.checkout, null);
+    assert.deepEqual(st.cart, [{ reference: p.reference, quantity: 1 }], "los productos siguen guardados");
+    assert.ok(pedidos.orders.every((o) => o.status !== "confirmed"));
+    assert.equal(stockDe(p.id), 5, "no se apartó stock");
+  });
+
+  it("primera compra mayorista que llega EXACTO al mínimo => sí arranca el registro", async () => {
+    const p = await producto("Set Mayor", 900_000, 375_000, 5);
+    await clasificar("wholesale");
+    await comprarAria(p.reference, 2);
+    assert.equal((await estado()).checkout?.step, "name");
+    assert.equal(sent.at(-1), `${CHECKOUT_MESSAGES.intro}\n\n${CHECKOUT_MESSAGES.askName}`);
+  });
+
+  it("si baja cantidades en medio del registro y queda por debajo, el resumen NO sale (no se puede confirmar)", async () => {
+    const p = await producto("Cadena Mayor", 900_000, 400_000, 5);
+    await clasificar("wholesale");
+    await comprarAria(p.reference, 2);
+    await turno([], "Camila", { config: aria() });
+    await turno([], "quita uno", { config: aria() });
+    await hastaResumenAria();
+    assert.equal(sent.at(-1)!.endsWith(wholesaleMinimumBlocked(400_000, MINIMO)), true, sent.at(-1));
+    assert.ok(!buttons.some((b) => b.ids.includes("checkout_confirmar")), "nunca aparece el botón Confirmar");
+    assert.equal((await estado()).checkout, null);
+  });
+
+  it("un mayorista que YA compró (pedido confirmado) no tiene mínimo en la siguiente compra", async () => {
+    const grande = await producto("Set Mayor", 900_000, 400_000, 5);
+    const chico = await producto("Dije Pequeño", 20_000, 9_800, 5);
+    await clasificar("wholesale");
+    await comprarAria(grande.reference, 2);
+    await hastaResumenAria();
+    await turno([], boton("summary", 0).title, { config: aria(), buttonId: boton("summary", 0).id });
+    assert.equal(pedidos.orders.filter((o) => o.status === "confirmed").length, 1, "primera compra de $800.000 registrada");
+    pausas.length = 0;
+    // Segunda compra, pequeña: arranca normal.
+    await stateStore.save({ tenantId: A.tenantId, phoneNumberId: PN_A, waId: CLIENTE }, { ...(await estado()), handoffTurn: null } as ConversationState, (await stateStore.load({ tenantId: A.tenantId, phoneNumberId: PN_A, waId: CLIENTE })).version);
+    await comprarAria(chico.reference, 1);
+    assert.notEqual((await estado()).checkout, null, "la segunda compra no tiene mínimo");
+    assert.ok(!sent.some((t) => t.includes("te faltan")));
+  });
+
+  it("detal por debajo del mínimo mayorista => normal (la regla es solo mayorista); sin config => normal", async () => {
+    const p = await producto("Dije Luna", 27_000, 14_000, 5);
+    await clasificar("retail");
+    await comprarAria(p.reference, 1);
+    assert.equal((await estado()).checkout?.step, "name");
+  });
+
+  it("mayorista sin `minimo_mayorista` configurado => normal (otros negocios)", async () => {
+    const p = await producto("Dije Sol", 27_000, 14_000, 5);
     await clasificar("wholesale");
     await comprar(p.reference, 1);
-    const c = aria();
-    await turno([], "Camila", { config: c });
-    await turno([], boton("delivery", 0).title, { config: c, buttonId: boton("delivery", 0).id });
-    await turno([], boton("payment", 1).title, { config: c, buttonId: boton("payment", 1).id });
-    assert.ok(buttons.at(-1)!.body.includes(wholesaleMinimumNotice(MINIMO)));
-    await turno([], boton("summary", 0).title, { config: c, buttonId: boton("summary", 0).id });
-    assert.equal(pedidos.orders.at(-1)!.status, "confirmed");
+    assert.equal((await estado()).checkout?.step, "name");
   });
 });
 
