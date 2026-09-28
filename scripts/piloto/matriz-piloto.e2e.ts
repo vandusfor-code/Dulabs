@@ -39,7 +39,8 @@ import { procesarCambio, registrarMensajesEntrantesSincrono, type MetaChangeValu
 import { CHECKOUT_BUTTONS, CHECKOUT_MESSAGES } from "@/lib/agente/checkout";
 import { productionOrderEngine } from "@/lib/catalogo/pedidos/produccion";
 import { productionPanelFuentes } from "@/lib/catalogo/pedidos/panel-fuentes";
-import { accionGestion, detalleGestion, listarGestion } from "@/lib/catalogo/pedidos/gestion";
+import { accionGestion, detalleGestion, listarGestion, reintentarNotificacionGestion } from "@/lib/catalogo/pedidos/gestion";
+import { productionNotificador } from "@/lib/catalogo/pedidos/notificaciones-produccion";
 import { ORDERS_MODULE, requireCatalogo } from "@/lib/catalogo/auth";
 import { moduloHabilitado } from "@/lib/tenant-modulos";
 import { NextRequest } from "next/server";
@@ -1440,6 +1441,109 @@ describe("PILOTO DELACOUR — matriz de punta a punta (webhook real + PostgreSQL
           assert.ok(data, `${id} de la conversación existe en PostgreSQL`);
         }
       }
+    });
+
+    it("N. Bloque 31 — notificaciones de estado: Dashboard → backend → PostgreSQL → WhatsApp (sin IA, idempotente, ventana de 24 h, fallo de Meta y reintento, aislado)", async () => {
+      const notificador = productionNotificador(db);
+      type R = { status: number; body: { data: { repetido?: boolean; notificacion?: { estado: string; tipo?: string; motivo?: string | null; repetida?: boolean } } } };
+      const act = async (pedido: string, accion: string): Promise<R> => {
+        const r = await accionGestion(engine(), T, pedido, { accion, esperado: await visto(pedido) }, MIEMBRO, notificador);
+        return { status: r.status, body: await r.json() };
+      };
+      const textos = (desde: number) => salidas(desde).filter((x) => x.tipo === "texto").map((x) => x.texto);
+      const filas = async (pedidoId: string) =>
+        ((await db.from("dulabs_catalogo_pedido_notificaciones").select("*").eq("pedido_id", pedidoId).order("id")).data ?? []) as Fila[];
+      // Sin el módulo: el estado cambia y no se notifica (otros negocios, o Delacour antes de encender).
+      const wa = C[47];
+      await comprar(wa, KP.collar.referencia, 1);
+      await hastaResumen(wa, "domicilio", 1, "Valentina Notif");
+      await turno(wa, tocar("summary", 0));
+      const o = (await pedidoDb(wa))!;
+      assert.deepEqual([o.estado, o.tipo_entrega, o.metodo_pago], ["confirmed", "domicilio", "transferencia"]);
+      await ok(db.from("dulabs_tenant_modulos").insert({ id_tenant: T, modulo: "notificaciones_pedidos", habilitado: true }));
+      const pausaAntes = await pausa(wa);
+      const convAntes = JSON.stringify((await conv(wa)) ?? null);
+      const g0 = gemini.length;
+
+      // 1. En preparación -> WhatsApp inmediato, con el nombre y el número reales.
+      const m1 = meta.calls.length;
+      const r1 = await act(o.pedido_publico, "en_preparacion");
+      assert.equal(r1.status, 200);
+      assert.deepEqual(r1.body.data.notificacion, { estado: "enviada", tipo: "en_preparacion", motivo: null, repetida: false });
+      assert.equal(textos(m1).length, 1);
+      assert.match(textos(m1)[0], new RegExp(`^Hola, Valentina 💖\\n\\nTu pedido \\*${o.pedido_publico}\\* ya está en preparación`));
+      // 2. Doble clic / recarga: el estado no se repite y el mensaje tampoco.
+      const m2 = meta.calls.length;
+      const [d1, d2] = await Promise.all([act(o.pedido_publico, "en_preparacion"), act(o.pedido_publico, "en_preparacion")]);
+      assert.ok(d1.body.data.repetido && d2.body.data.repetido);
+      assert.equal(meta.calls.length, m2, "ningún mensaje extra");
+      // 3. Enviado -> entregado -> pago -> completado, cada uno una vez.
+      for (const [accion, patron] of [["enviado", /ya fue enviado/], ["entregado", /figura como entregado/], ["pago_recibido", /recibimos el pago/], ["completar", /ha sido completado[\s\S]*¡Gracias por comprar en /]] as const) {
+        const m = meta.calls.length;
+        const r = await act(o.pedido_publico, accion);
+        assert.equal(r.status, 200, accion);
+        assert.equal(r.body.data.notificacion?.estado, "enviada", accion);
+        assert.equal(textos(m).length, 1, accion);
+        assert.match(textos(m)[0], patron, accion);
+      }
+      const fs = await filas(o.id);
+      assert.deepEqual(fs.map((f) => [f.tipo, f.estado, f.intentos]), [["en_preparacion", "enviada", 1], ["enviado", "enviada", 1], ["entregado", "enviada", 1], ["pago_recibido", "enviada", 1], ["completado", "enviada", 1]]);
+      assert.ok(fs.every((f) => f.message_id && f.miembro_id === MIEMBRO && f.canal === "whatsapp" && f.phone_number_id === PN && f.telefono_cliente === wa));
+      assert.deepEqual(fs.slice(0, 3).map((f) => [f.estado_desde, f.estado_hacia]), [["confirmado", "en_preparacion"], ["en_preparacion", "enviado"], ["enviado", "entregado"]]);
+      // En el Inbox como mensaje del negocio, con el mismo wamid de Meta.
+      const log = ((await db.from("dulabs_mensajes_log").select("wamid, origen, direccion").in("wamid", fs.map((f) => f.message_id))).data ?? []) as Fila[];
+      assert.equal(log.length, 5);
+      assert.ok(log.every((l) => l.origen === "agente" && l.direccion === "saliente"));
+      // Sin IA, sin tocar la pausa ni la conversación.
+      assert.equal(gemini.length, g0, "Gemini no participa");
+      assert.equal(await pausa(wa), pausaAntes, "la pausa de la IA no cambia");
+      assert.equal(JSON.stringify((await conv(wa)) ?? null), convAntes, "el estado de la conversación del agente no cambia");
+
+      // 4. Ventana de 24 h vencida: el estado cambia, NO se llama a Meta y queda el motivo.
+      const wb = C[54];
+      await createSupabaseCustomerChannelStore(db).setInitial({ tenantId: T, phoneNumberId: PN, waId: wb }, "retail", "cliente");
+      await comprar(wb, KP.pulsera.referencia, 1);
+      await hastaResumen(wb, "tienda", 1, "Mariana Ventana");
+      await turno(wb, tocar("summary", 0));
+      const ob = (await pedidoDb(wb))!;
+      const g1 = gemini.length; // la compra de arriba sí usa la IA; desde aquí, ninguna notificación la usa.
+      await ok(db.from("dulabs_mensajes_log").update({ created_at: new Date(Date.now() - 25 * 3_600_000).toISOString() }).eq("phone_number_id", PN).eq("telefono_cliente", wb).eq("direccion", "entrante"));
+      const m4 = meta.calls.length;
+      const r4 = await act(ob.pedido_publico, "en_preparacion");
+      assert.equal(r4.status, 200);
+      assert.deepEqual(r4.body.data.notificacion, { estado: "ventana_vencida", tipo: "en_preparacion", motivo: "ventana_vencida", repetida: false });
+      assert.equal(meta.calls.length, m4, "sin mensaje libre fuera de la ventana");
+      assert.equal((await pedidoDb(wb))!.etapa, "en_preparacion", "el pedido sí se actualizó");
+      // El cliente vuelve a escribir (ventana abierta) -> Reintentar desde el panel -> enviada, una vez.
+      await ok(db.from("dulabs_mensajes_log").update({ created_at: new Date().toISOString() }).eq("phone_number_id", PN).eq("telefono_cliente", wb).eq("direccion", "entrante"));
+      const m5 = meta.calls.length;
+      const [x1, x2] = await Promise.all([1, 2].map(() => reintentarNotificacionGestion(engine(), T, ob.pedido_publico, { tipo: "en_preparacion" }, notificador)));
+      assert.deepEqual([x1.status, x2.status].sort(), [200, 409], "dos reintentos a la vez: uno solo envía");
+      assert.equal(textos(m5).length, 1);
+
+      // 5. Meta rechaza el envío: el pedido NO se revierte; la notificación queda fallida con el código.
+      meta.fallos.push({ tipo: "text", status: 400, code: 131026 });
+      const r6 = await act(ob.pedido_publico, "entregado");
+      assert.equal(r6.status, 200);
+      assert.equal(r6.body.data.notificacion?.estado, "fallida");
+      assert.equal((await pedidoDb(wb))!.etapa, "entregado");
+      const fb = (await filas(ob.id)).find((f) => f.tipo === "entregado")!;
+      assert.deepEqual([fb.estado, fb.error_codigo], ["fallida", "131026"]);
+      // Recuperación: reintento seguro -> enviada; otro reintento -> rechazado (ya enviada).
+      const m7 = meta.calls.length;
+      assert.equal((await reintentarNotificacionGestion(engine(), T, ob.pedido_publico, { tipo: "entregado" }, notificador)).status, 200);
+      assert.equal(textos(m7).length, 1);
+      assert.match(textos(m7)[0], /entregado en la tienda/);
+      assert.equal((await reintentarNotificacionGestion(engine(), T, ob.pedido_publico, { tipo: "entregado" }, notificador)).status, 409);
+      assert.equal(((await filas(ob.id)).find((f) => f.tipo === "entregado"))!.intentos, 2);
+
+      // 6. Aislamiento: el otro negocio no tiene filas ni envíos con este número.
+      const otro = ((await db.from("dulabs_catalogo_pedido_notificaciones").select("id").eq("id_tenant", TB)).data ?? []) as Fila[];
+      assert.equal(otro.length, 0);
+      // 7. Detalle del panel: soporte ve cada notificación con su resultado.
+      const det = (await (await detalleGestion(engine(), T, ob.pedido_publico, fuentesPanel(), notificador)).json()) as { data: { notificaciones: Array<{ tipo: string; estado: string; intentos: number }> } };
+      assert.deepEqual(det.data.notificaciones.map((n) => [n.tipo, n.estado, n.intentos]), [["en_preparacion", "enviada", 1], ["entregado", "enviada", 2]]);
+      assert.equal(gemini.length, g1, "Gemini nunca participó");
     });
   });
 

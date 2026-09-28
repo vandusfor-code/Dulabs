@@ -10,7 +10,8 @@ import { useParams } from "next/navigation";
 import { ArrowLeft, Hand, MessageCircle, RefreshCw } from "lucide-react";
 import { PageHeader } from "@/components/dashboard/shell/ui";
 import { useI18n } from "@/lib/i18n";
-import type { AccionPedido, HistorialEntrada, PedidoGestion } from "@/lib/catalogo/pedidos/gestion";
+import type { AccionPedido, HistorialEntrada, NotificacionVista, PedidoGestion } from "@/lib/catalogo/pedidos/gestion";
+import type { ResultadoNotificacion, TipoNotificacion } from "@/lib/catalogo/pedidos/notificaciones";
 import { ProductImage, actionBtn, cn, formatPrice, primaryBtn, useCatalogAccess, useCatalogToast } from "@/components/dashboard/catalogo/ui";
 import { CANAL_LABEL, inboxHref } from "@/components/dashboard/catalogo/PedidoDetalle";
 import { ACCION, ENTREGA, ESTADO_VISIBLE, EstadoBadge, METODO, PAGO, PagoBadge, fecha, nombreCliente, telefonoCliente } from "@/components/dashboard/pedidos/ui";
@@ -26,6 +27,46 @@ const ESTADO_MOTOR: Record<string, { es: string; en: string }> = {
   expired: { es: "Vencido", en: "Expired" },
   rejected: { es: "Rechazado", en: "Rejected" },
 };
+// Bloque 31: notificaciones al cliente por WhatsApp.
+const TIPO_NOTIF: Record<TipoNotificacion, { es: string; en: string }> = {
+  pago_recibido: { es: "Pago recibido", en: "Payment received" },
+  en_preparacion: { es: "En preparación", en: "Preparing" },
+  enviado: { es: "Enviado", en: "Shipped" },
+  entregado: { es: "Entregado", en: "Delivered" },
+  completado: { es: "Completado", en: "Completed" },
+  cancelado: { es: "Cancelado", en: "Cancelled" },
+  rechazado: { es: "Rechazado", en: "Rejected" },
+};
+const ESTADO_NOTIF: Record<NotificacionVista["estado"], { es: string; en: string; tono: string }> = {
+  pendiente: { es: "Pendiente", en: "Pending", tono: "text-mist" },
+  enviando: { es: "Enviando…", en: "Sending…", tono: "text-mist" },
+  enviada: { es: "Enviada", en: "Sent", tono: "text-lime" },
+  fallida: { es: "Fallida", en: "Failed", tono: "text-red-400" },
+  ventana_vencida: { es: "Ventana de 24 h vencida", en: "24 h window expired", tono: "text-amber-400" },
+  desconocido: { es: "Resultado desconocido", en: "Unknown result", tono: "text-amber-400" },
+  omitida: { es: "No enviada", en: "Not sent", tono: "text-mist" },
+};
+const MOTIVO_NOTIF: Record<string, { es: string; en: string }> = {
+  sin_contacto: { es: "el pedido no tiene contacto de WhatsApp", en: "the order has no WhatsApp contact" },
+  telefono_invalido: { es: "el teléfono del cliente no es válido", en: "invalid customer phone" },
+  sin_canal: { es: "el número de WhatsApp no es de este negocio", en: "the WhatsApp number does not belong to this business" },
+  sin_token: { es: "el número no tiene conexión con Meta", en: "the number has no Meta connection" },
+  ventana_vencida: { es: "el cliente no escribió en las últimas 24 h", en: "the customer did not write in the last 24 h" },
+  meta_ventana_cerrada: { es: "Meta indicó que la ventana de 24 h está cerrada", en: "Meta reported the 24 h window is closed" },
+};
+
+/** Mensaje del panel según lo que pasó con la notificación (nunca "todo bien" si WhatsApp falló). */
+function avisoNotificacion(n: ResultadoNotificacion | null | undefined, t: (es: string, en: string) => string): { texto: string; tipo: "success" | "error" } | null {
+  if (!n || n.estado === "desactivada") return null;
+  if (n.estado === "no_disponible") return { texto: t("⚠ El pedido fue actualizado, pero las notificaciones no están disponibles en este momento.", "⚠ Order updated, but notifications are unavailable right now."), tipo: "error" };
+  if (n.estado === "enviada") return { texto: n.repetida ? t("ℹ La notificación de este cambio ya se había enviado.", "ℹ This change was already notified.") : t("✓ Notificación enviada al cliente por WhatsApp.", "✓ Customer notified on WhatsApp."), tipo: "success" };
+  if (n.estado === "ventana_vencida") return { texto: t("ℹ La ventana de conversación de WhatsApp estaba vencida. No se envió mensaje.", "ℹ The WhatsApp conversation window had expired. No message was sent."), tipo: "error" };
+  if (n.estado === "omitida") return { texto: t(`ℹ No se envió notificación: ${MOTIVO_NOTIF[n.motivo ?? ""]?.es ?? n.motivo ?? ""}.`, `ℹ No notification sent: ${MOTIVO_NOTIF[n.motivo ?? ""]?.en ?? n.motivo ?? ""}.`), tipo: "error" };
+  if (n.estado === "desconocido") return { texto: t("⚠ No se sabe si la notificación llegó (sin respuesta de WhatsApp). Revisa el chat.", "⚠ Unknown whether the notification arrived. Check the chat."), tipo: "error" };
+  if (n.estado === "enviando") return { texto: t("ℹ La notificación se está enviando.", "ℹ The notification is being sent."), tipo: "success" };
+  return { texto: t("⚠ El pedido fue actualizado, pero no fue posible enviar la notificación por WhatsApp.", "⚠ Order updated, but the WhatsApp notification could not be sent."), tipo: "error" };
+}
+
 const ACTOR: Record<string, { es: string; en: string }> = {
   system: { es: "Sistema", en: "System" },
   agent: { es: "Asistente (cliente)", en: "Assistant (customer)" },
@@ -54,6 +95,7 @@ export default function PedidoGestionPage() {
   const { client, canManageOrders } = useCatalogAccess();
   const [p, setP] = useState<PedidoGestion | null>(null);
   const [historial, setHistorial] = useState<HistorialEntrada[]>([]);
+  const [notificaciones, setNotificaciones] = useState<NotificacionVista[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [enCurso, setEnCurso] = useState<string | null>(null);
   const [version, setVersion] = useState(0);
@@ -67,6 +109,7 @@ export default function PedidoGestionPage() {
       if (r.ok) {
         setP(r.data.pedido);
         setHistorial(r.data.historial);
+        setNotificaciones(r.data.notificaciones ?? []);
         setError(null);
       } else setError(r.error.message);
     });
@@ -93,7 +136,23 @@ export default function PedidoGestionPage() {
       cargar();
       return;
     }
-    toast(r.data.repetido ? t("Ese cambio ya estaba registrado.", "That change was already recorded.") : t(`${p.pedido}: ${ESTADO_VISIBLE[r.data.pedido.estado_visible].es}.`, `${p.pedido}: ${ESTADO_VISIBLE[r.data.pedido.estado_visible].en}.`));
+    toast(r.data.repetido ? t("Ese cambio ya estaba registrado.", "That change was already recorded.") : t(`✓ Pedido actualizado: ${ESTADO_VISIBLE[r.data.pedido.estado_visible].es}.`, `✓ Order updated: ${ESTADO_VISIBLE[r.data.pedido.estado_visible].en}.`));
+    const aviso = avisoNotificacion(r.data.notificacion, t);
+    if (aviso) toast(aviso.texto, aviso.tipo);
+    cargar();
+  }
+
+  async function reintentar(tipo: TipoNotificacion) {
+    if (!client || !p || enCurso) return;
+    if (!window.confirm(t("¿Reintentar el aviso por WhatsApp al cliente?", "Retry the WhatsApp notification to the customer?"))) return;
+    setEnCurso(`notif-${tipo}`);
+    const r = await client.retryOrderNotification(p.pedido, tipo);
+    setEnCurso(null);
+    if (!r.ok) toast(r.error.message, "error");
+    else {
+      const aviso = avisoNotificacion(r.data.notificacion, t);
+      if (aviso) toast(aviso.texto, aviso.tipo);
+    }
     cargar();
   }
 
@@ -270,6 +329,27 @@ export default function PedidoGestionPage() {
                 )}
               </dl>
             </Seccion>
+
+            {notificaciones.length > 0 && (
+              <Seccion titulo={t("Notificaciones al cliente (WhatsApp)", "Customer notifications (WhatsApp)")}>
+                <ol className="space-y-2">
+                  {notificaciones.map((n) => (
+                    <li key={n.tipo} className="text-xs">
+                      <span className="text-mist">{fecha(n.enviada_at ?? n.actualizada)}</span> · <span className="text-fg">{t(TIPO_NOTIF[n.tipo].es, TIPO_NOTIF[n.tipo].en)}</span> ·{" "}
+                      <span className={ESTADO_NOTIF[n.estado].tono}>{t(ESTADO_NOTIF[n.estado].es, ESTADO_NOTIF[n.estado].en)}</span>
+                      {n.motivo && MOTIVO_NOTIF[n.motivo] && <span className="text-mist"> · {t(MOTIVO_NOTIF[n.motivo].es, MOTIVO_NOTIF[n.motivo].en)}</span>}
+                      {n.error_codigo && <span className="text-mist"> · {t("error", "error")} {n.error_codigo}{n.error_mensaje ? `: ${n.error_mensaje}` : ""}</span>}
+                      {n.intentos > 1 && <span className="text-mist"> · {t(`${n.intentos} intentos`, `${n.intentos} attempts`)}</span>}
+                      {canManageOrders && ["fallida", "ventana_vencida", "omitida", "desconocido"].includes(n.estado) && (
+                        <button type="button" onClick={() => reintentar(n.tipo)} disabled={enCurso !== null} className="ml-2 text-lime underline-offset-2 hover:underline disabled:opacity-50">
+                          {t("Reintentar", "Retry")}
+                        </button>
+                      )}
+                    </li>
+                  ))}
+                </ol>
+              </Seccion>
+            )}
 
             <Seccion titulo={t("Historial", "History")}>
               {historial.length === 0 ? (
