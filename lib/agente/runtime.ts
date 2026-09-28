@@ -64,6 +64,7 @@ import {
   type CheckoutResult,
 } from "@/lib/agente/checkout";
 import type { CheckoutStep } from "@/lib/agente/estado";
+import { formatoWhatsApp } from "@/lib/agente/formato-whatsapp";
 import { esAfirmacion, leerCantidad, modalidadInicial, numerosDelCliente, pideQuitar } from "@/lib/agente/lenguaje/interpretar";
 import { addOrderStateEvidence, type OrderTracking } from "@/lib/agente/anclaje";
 
@@ -477,6 +478,11 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
   if (deps.config.tenantId !== input.tenantId || deps.config.phoneNumberId !== input.phoneNumberId || deps.provider.id !== deps.config.provider) {
     trace.error_kind = "config_mismatch";
     return finish("fallback", null);
+  }
+  // Formato de WhatsApp: el texto sale sin asteriscos de Markdown a la vista (**x** -> *x*).
+  {
+    const base = deps.sender;
+    deps = { ...deps, sender: { ...base, sendText: (t) => base.sendText(formatoWhatsApp(t)) } };
   }
   // Bloque 30 (solo con el checkout conversacional): aviso de espera si el modelo tarda.
   const holdMs = deps.holdNoticeMs ?? HOLD_NOTICE_MS;
