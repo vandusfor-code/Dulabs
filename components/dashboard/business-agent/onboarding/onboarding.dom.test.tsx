@@ -299,7 +299,7 @@ describe("FASE 8 — motor y matriz de capacidades", () => {
         source: "published",
         requested: "graph_v1",
         capabilities: ROWS,
-        blockers: ["Recordatorios de cita: solo funciona con el motor conversacional. Actívalo o apaga esta opción."],
+        blockers: ["Recordatorios de cita: todavía no está disponible con la configuración actual de tu agente."],
         warnings: [],
         credentials: [{ id: "gemini_key", label: "IA (Gemini)", present: true, required: false }, { id: "whatsapp_token", label: "WhatsApp (Meta)", present: false, required: true }],
       },
@@ -308,7 +308,7 @@ describe("FASE 8 — motor y matriz de capacidades", () => {
     assert.ok(screen.getByText(/Hoy atiende:/).textContent!.includes("Motor clásico"));
     fireEvent.click(screen.getByRole("radio", { name: /Conversacional/ }));
     assert.equal(chosen, "state_machine_v1");
-    assert.ok(within(screen.getByRole("list", { name: "Bloqueos del motor" })).getByText(/solo funciona con el motor conversacional/));
+    assert.ok(within(screen.getByRole("list", { name: "Bloqueos del motor" })).getByText(/todavía no está disponible con la configuración actual/));
     assert.ok(screen.getByText("WhatsApp (Meta): falta"));
     assert.equal(screen.queryByText(/IA \(Gemini\)/), null, "una credencial no obligatoria para este motor no se muestra");
   });

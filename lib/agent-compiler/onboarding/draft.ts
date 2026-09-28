@@ -120,7 +120,19 @@ export const DRAFT_TONE_TO_AGENT_TONE: Readonly<Record<OnboardingDraft["tone"], 
 export const DEFAULT_REMINDER_OFFSET_MINUTES = 120;
 export type ExtraField = z.infer<typeof extraFieldSchema>;
 
-/** Lunes a viernes 09:00–18:00; sábado y domingo cerrados (se ajusta en el editor). */
+/**
+ * FASE 10 — horario SIN configurar: todos los días cerrados. El borrador nunca trae un horario inventado: con agenda
+ * de calendario la validación exige que la persona marque sus días (HOURS_REQUIRED).
+ */
+export function emptyHours(): BusinessHoursModel {
+  const closed = () => ({ open: false, intervals: [] as Array<{ start: string; end: string }> });
+  return { week: { sunday: closed(), monday: closed(), tuesday: closed(), wednesday: closed(), thursday: closed(), friday: closed(), saturday: closed() }, exceptions: [] };
+}
+
+/**
+ * Plantilla lunes a viernes 09:00–18:00 (sábado y domingo cerrados). Solo se aplica cuando la persona la ELIGE en el
+ * editor ("Usar lunes a viernes 9:00–18:00"); nunca como valor por defecto del borrador.
+ */
 export function defaultHours(): BusinessHoursModel {
   const open = () => ({ open: true, intervals: [{ start: "09:00", end: "18:00" }] });
   const closed = () => ({ open: false, intervals: [] as Array<{ start: string; end: string }> });
@@ -133,7 +145,7 @@ export function emptyDraft(): OnboardingDraft {
     business: { timezone: DEFAULT_TIMEZONE },
     offer: { services: true, products: false, showCatalog: true, quotes: false },
     booking: { enabled: false, minimumNoticeMinutes: 60, allowChanges: false, changesNoticeHours: 4 },
-    hours: defaultHours(),
+    hours: emptyHours(),
     support: { handoff: true, pauseHours: 24, answerQuestions: true, whenUnknown: "say_so", whenCannotHelp: "offer_person" },
     customerData: { askName: true, askEmail: false, askNotes: false, extra: [] },
     tone: "friendly",

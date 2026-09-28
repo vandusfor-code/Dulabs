@@ -20,7 +20,7 @@ import type { BusinessAgentRegistryStore } from "@/lib/agent-compiler/registry/t
 import type { AgentEngineId, BusinessAgentSpec } from "@/lib/agent-compiler/spec/types";
 import { evaluateReadiness, type ReadinessFacts, type ReadinessReport } from "@/lib/business-agent-readiness";
 import type { AgentLifecycleState } from "@/lib/agent-compiler/lifecycle/lifecycle";
-import type { ActivationDecision } from "@/lib/agent-compiler/lifecycle/activation-gate";
+import { explainActivationBlocker, type ActivationBlocker, type ActivationDecision } from "@/lib/agent-compiler/lifecycle/activation-gate";
 import type { CapabilityRow, EngineReadiness, EngineReport } from "@/lib/agent-compiler/lifecycle/capability-matrix";
 import { compileBusinessModel, compileLegacySpec } from "@/lib/agent-compiler/business-model/compile";
 import type { CompiledAgentArtifact } from "@/lib/agent-compiler/business-model/artifact";
@@ -28,7 +28,7 @@ import { publishedVersionRef } from "@/lib/agent-compiler/business-model/store";
 import { draftFromSpec, emptyDraft, parseDraft, type OnboardingDraft } from "@/lib/agent-compiler/onboarding/draft";
 import { assembleDraft, type Assembly } from "@/lib/agent-compiler/onboarding/assemble";
 import { buildRuntimeSpec } from "@/lib/agent-compiler/onboarding/runtime-spec";
-import { issue, READINESS_STEP, SUPPORT_CODES, type OnboardingIssue } from "@/lib/agent-compiler/onboarding/issues";
+import { issue, READINESS_STEP, SUPPORT_CODES, type OnboardingIssue, type OnboardingStep } from "@/lib/agent-compiler/onboarding/issues";
 import { buildChecklist, deriveOnboardingStatus, type ChecklistItem, type OnboardingStatus, type PublicationRecord, type WhatsAppNumberInfo } from "@/lib/agent-compiler/onboarding/status";
 import type { OnboardingDraftStore, OnboardingPublisher } from "@/lib/agent-compiler/onboarding/store";
 import { runSimulationTurn, type SimulationDeps } from "@/lib/agent-compiler/onboarding/simulation";
@@ -424,7 +424,25 @@ export async function publishOnboarding(deps: OnboardingDeps, input: { expectedR
 // Activación
 // ---------------------------------------------------------------------------
 
-export type ActivateResult = { ok: true; phoneNumberId: string } | { ok: false; code: string; message: string; reasons: string[] };
+/** FASE 10 — un bloqueo explicado para el negocio: qué falta, por qué y cómo solucionarlo (y en qué paso). */
+export interface ActivationExplanation {
+  what: string;
+  why: string | null;
+  fix: string | null;
+  step: OnboardingStep | null;
+}
+
+export type ActivateResult =
+  | { ok: true; phoneNumberId: string }
+  | { ok: false; code: string; message: string; reasons: string[]; blockers: ActivationExplanation[] };
+
+/** Paso del configurador donde se soluciona cada bloqueo (null = no depende de la configuración). */
+function stepForBlocker(b: ActivationBlocker): OnboardingStep | null {
+  if (b.code === "READINESS_BLOCKED") return READINESS_STEP[b.readinessStep ?? ""] ?? "oferta";
+  if (b.code === "ENGINE_NOT_READY" && (b.detailCode === "ENGINE_CAPABILITY_UNSUPPORTED" || !b.detailCode)) return "activar";
+  if (b.code === "NOT_PUBLISHED" || b.code === "AGENT_INVALID" || (b.code === "ENGINE_NOT_READY" && b.detailCode === "ARTIFACT_INVALID")) return "activar";
+  return null;
+}
 
 /** Activa el agente publicado en un número del negocio. Nunca con cambios sin publicar ni sin artefacto publicado. */
 export async function activateOnboarding(deps: OnboardingDeps, input: { phoneNumberId: string }): Promise<ActivateResult> {
@@ -432,9 +450,16 @@ export async function activateOnboarding(deps: OnboardingDeps, input: { phoneNum
   const ctx = await loadContext(deps);
   const base = { tenantId: deps.tenantId, agentId: ctx.flowId };
   log({ event: "activation_started", ...base, revision: ctx.stored.revision });
-  const failure = (code: string, message: string, reasons: string[] = []): ActivateResult => {
+  const failure = (code: string, message: string, blockers: ActivationBlocker[] = []): ActivateResult => {
     log({ event: "activation_failed", ...base, code });
-    return { ok: false, code, message, reasons };
+    const explained = blockers.map(explainActivationBlocker);
+    return {
+      ok: false,
+      code,
+      message,
+      reasons: explained.map((b) => b.message),
+      blockers: explained.map((b) => ({ what: b.message, why: b.why ?? null, fix: b.fix ?? null, step: stepForBlocker(b) })),
+    };
   };
   const publication = await deps.drafts.lastPublication(deps.tenantId, ctx.flowId);
   if (!publication || publication.flowVersionId !== ctx.publishedFlowVersionId) {
@@ -447,7 +472,7 @@ export async function activateOnboarding(deps: OnboardingDeps, input: { phoneNum
   if (decision.kind === "not_business_agent") return failure(SUPPORT_CODES.ACTIVATE_NOT_PUBLISHED, "Publica tu agente antes de activarlo.");
   if (decision.kind === "blocked") {
     const notFound = decision.blockers.some((b) => b.code === "NUMBER_NOT_FOUND");
-    return failure(notFound ? SUPPORT_CODES.ACTIVATE_NUMBER : SUPPORT_CODES.ACTIVATE_BLOCKED, notFound ? "No encontramos ese número en tu cuenta." : "Todavía no se puede activar tu agente.", decision.blockers.map((b) => b.message));
+    return failure(notFound ? SUPPORT_CODES.ACTIVATE_NUMBER : SUPPORT_CODES.ACTIVATE_BLOCKED, notFound ? "No encontramos ese número en tu cuenta." : "Todavía no se puede activar tu agente.", decision.blockers);
   }
   if (!(await deps.activation.bind(ctx.flowId, input.phoneNumberId))) return failure(SUPPORT_CODES.ACTIVATE_NUMBER, "No encontramos ese número en tu cuenta.");
   log({ event: "activation_succeeded", ...base });

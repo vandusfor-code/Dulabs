@@ -113,7 +113,7 @@ export function createSupabaseActivationGateDeps(supabase: SupabaseClient, store
     otherEngineOnNumber: (phoneNumberId) => otroMotorEnNumero(supabase, phoneNumberId),
     async engineReadiness(tenantId, version) {
       const report = await evaluateEngineReport(supabase, tenantId, version.flowId, { publishedSpec: version.spec });
-      return report.readiness.blockers.map((b) => b.message);
+      return report.readiness.blockers.map((b) => ({ code: b.code, message: b.message }));
     },
   };
 }

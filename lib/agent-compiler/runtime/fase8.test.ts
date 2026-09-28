@@ -35,7 +35,7 @@ import { initialConversationState } from "@/lib/agent-compiler/conversation/mode
 import { BA_NATIVE_CONTRACTS, getActionContract } from "@/lib/agent-compiler/contracts/action-contracts";
 import { assembleDraft } from "@/lib/agent-compiler/onboarding/assemble";
 import { buildRuntimeSpec } from "@/lib/agent-compiler/onboarding/runtime-spec";
-import { emptyDraft, parseDraft } from "@/lib/agent-compiler/onboarding/draft";
+import { defaultHours, emptyDraft, parseDraft } from "@/lib/agent-compiler/onboarding/draft";
 import { barberDraft, createWorld, depsFor, TENANT_A } from "@/lib/agent-compiler/onboarding/testing/harness";
 import { getOnboarding, publishOnboarding, saveOnboardingDraft } from "@/lib/agent-compiler/onboarding/service";
 import { runtimeSchema } from "@/lib/agent-compiler/spec/schema";
@@ -303,8 +303,10 @@ describe("FASE 8 — tests 1–7: motor publicado, kill switch, runtime", () => 
     assert.deepEqual(selectAgentEngine({ tenantId: A, spec: undefined, env: {} }), { engine: "graph_v1", source: "default" });
   });
 
-  it("2. versión publicada con state_machine_v1 → motor conversacional (source published); valor desconocido = default", () => {
-    assert.deepEqual(selectAgentEngine({ tenantId: A, spec: withEngine("state_machine_v1"), env: {} }), { engine: "state_machine_v1", source: "published" });
+  it("2. versión publicada con state_machine_v1 → motor conversacional (source published) si DuLabs admitió al tenant; valor desconocido = default", () => {
+    // FASE 10: elegir el motor no basta; el tenant tiene que estar admitido (piloto seleccionado por DuLabs).
+    assert.deepEqual(selectAgentEngine({ tenantId: A, spec: withEngine("state_machine_v1"), env: { BUSINESS_AGENT_PILOT_TENANTS: A } }), { engine: "state_machine_v1", source: "published" });
+    assert.deepEqual(selectAgentEngine({ tenantId: A, spec: withEngine("state_machine_v1"), env: {} }), { engine: "graph_v1", source: "rollout_not_selected" });
     assert.deepEqual(selectAgentEngine({ tenantId: A, spec: { runtime: { engine: "v99" as never } }, env: {} }), { engine: "graph_v1", source: "default" });
   });
 
@@ -323,7 +325,7 @@ describe("FASE 8 — tests 1–7: motor publicado, kill switch, runtime", () => 
   });
 
   it("5. AgentRuntime: motor + versión + fuente + versión publicada + capacidades (sin datos del cliente)", () => {
-    const d = describeAgentRuntime({ tenantId: A, agentId: "flow-1", publishedVersion: "fv-9", spec: barberia8Spec(), env: {} });
+    const d = describeAgentRuntime({ tenantId: A, agentId: "flow-1", publishedVersion: "fv-9", spec: barberia8Spec(), env: { BUSINESS_AGENT_PILOT_TENANTS: A } });
     assert.deepEqual([d.engine, d.engineVersion, d.source, d.publishedVersion], ["state_machine_v1", "1", "published", "fv-9"]);
     assert.ok(d.capabilities.includes("leadCapture") && d.capabilities.includes("scheduling"));
   });
@@ -690,6 +692,7 @@ describe("FASE 8 — onboarding: tono, recursos, recordatorios, interesados y mo
     d.booking = { enabled: true, agenda: "calendar", minimumNoticeMinutes: 60, allowChanges: true, changesNoticeHours: 4, resources: [{ name: "Barbero 1" }, { name: "Barbero 2" }], reminders: { enabled: true, offsetMinutes: 60 } };
     d.customerData = { askName: true, askEmail: false, askNotes: false, extra: [], leadCapture: { enabled: true, captureInterest: true } };
     d.tone = "formal";
+    d.hours = defaultHours(); // FASE 10: el borrador vacío no trae horario; el negocio lo declara.
     assert.ok(parseDraft(d).ok);
     const a = assembleDraft(d);
     assert.deepEqual(a.issues.filter((i) => i.severity === "error"), []);
@@ -740,7 +743,7 @@ describe("FASE 8 — onboarding de punta a punta: configurado ≠ publicado ≠ 
     assert.ok(pub.ok, JSON.stringify(pub));
     o = await getOnboarding(deps);
     assert.deepEqual([o.engine!.selected, o.engine!.source], ["graph_v1", "published"]);
-    assert.ok(o.engine!.blockers.some((b) => /Recordatorios de cita: solo funciona con el motor conversacional/.test(b)));
+    assert.ok(o.engine!.blockers.some((b) => /Recordatorios de cita: todavía no está disponible con la configuración actual de tu agente/.test(b)));
     assert.equal(o.checklist.items.find((i) => i.id === "motor")!.ok, false);
     assert.equal(o.checklist.readyToActivate, false);
 

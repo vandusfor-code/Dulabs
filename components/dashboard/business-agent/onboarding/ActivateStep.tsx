@@ -8,10 +8,10 @@
 import { useState } from "react";
 import { Check, Circle, Loader2, PartyPopper, Rocket, X } from "lucide-react";
 import type { OnboardingIssue, OnboardingStep } from "@/lib/agent-compiler/onboarding/issues";
-import type { OnboardingOverview, PublishStageEvent, PublishStageId } from "@/lib/agent-compiler/onboarding/service";
+import type { ActivationExplanation, OnboardingOverview, PublishStageEvent, PublishStageId } from "@/lib/agent-compiler/onboarding/service";
 import type { OnboardingStatus, WhatsAppNumberInfo } from "@/lib/agent-compiler/onboarding/status";
 import { activateOnboarding, publishOnboarding, type OnboardingAuth } from "@/lib/business-agent-onboarding-client";
-import { ChoiceGroup, ErrorBanner, primaryBtn, secondaryBtn } from "@/components/dashboard/business-agent/onboarding/controls";
+import { ChoiceGroup, ErrorBanner, focusRing, primaryBtn, secondaryBtn } from "@/components/dashboard/business-agent/onboarding/controls";
 import type { AgentEngineId } from "@/lib/agent-compiler/spec/types";
 import type { CapabilityRow } from "@/lib/agent-compiler/lifecycle/capability-matrix";
 import { STEP_LABELS } from "@/components/dashboard/business-agent/onboarding/Progress";
@@ -156,6 +156,7 @@ const ENGINE_SOURCE: Record<string, string> = {
   kill_switch: "apagado de emergencia activo",
   rollout: "despliegue gradual de DuLabs",
   rollout_off: "motor conversacional pausado por DuLabs",
+  rollout_not_selected: "el motor conversacional se habilita por DuLabs negocio por negocio; te avisaremos cuando esté listo para el tuyo",
 };
 
 export function ActivateStep(props: {
@@ -177,7 +178,7 @@ export function ActivateStep(props: {
   const [error, setError] = useState<{ message: string; code: string; issues: OnboardingIssue[]; conflict?: boolean } | null>(null);
   const [activating, setActivating] = useState<string | null>(null);
   const [activated, setActivated] = useState<string | null>(null);
-  const [activationError, setActivationError] = useState<{ message: string; code: string; reasons: string[] } | null>(null);
+  const [activationError, setActivationError] = useState<{ message: string; code: string; blockers: ActivationExplanation[] } | null>(null);
   const o = props.overview;
   const status: OnboardingStatus = publishing ? "PUBLISHING" : o.status;
 
@@ -213,8 +214,9 @@ export function ActivateStep(props: {
     const r = await activateOnboarding(props.auth, { phoneNumberId });
     setActivating(null);
     if (!r.ok) {
-      const d = r.error.details as { reasons?: string[] } | undefined;
-      setActivationError({ message: r.error.message, code: r.error.code, reasons: d?.reasons ?? [] });
+      const d = r.error.details as { reasons?: string[]; blockers?: ActivationExplanation[] } | undefined;
+      const blockers = d?.blockers ?? (d?.reasons ?? []).map((what) => ({ what, why: null, fix: null, step: null }));
+      setActivationError({ message: r.error.message, code: r.error.code, blockers });
       return;
     }
     setActivated(phoneNumberId);
@@ -295,7 +297,7 @@ export function ActivateStep(props: {
               onChange={(v) => props.onEngineChange!(v)}
               options={[
                 { value: "graph_v1", title: "Clásico", description: "El de siempre. No incluye recordatorios ni elegir con quién." },
-                { value: "state_machine_v1", title: "Conversacional", description: "Entiende mejor, recordatorios, interesados, productos y elegir con quién." },
+                { value: "state_machine_v1", title: "Conversacional", description: "Entiende mejor, recordatorios, interesados, productos y elegir con quién. Lo habilita DuLabs para tu negocio." },
               ]}
             />
           )}
@@ -428,11 +430,18 @@ export function ActivateStep(props: {
         {!ready && o.numbers.length > 0 && <p className="text-xs text-mist">Podrás activar cuando todo lo de la lista esté listo.</p>}
         {activationError && (
           <ErrorBanner message={activationError.message} code={activationError.code}>
-            {activationError.reasons.length > 0 && (
-              <ul className="mt-2 space-y-1">
-                {activationError.reasons.map((r, i) => (
-                  <li key={i} className="text-xs text-red-300">
-                    • {r}
+            {activationError.blockers.length > 0 && (
+              <ul className="mt-3 space-y-3">
+                {activationError.blockers.map((b, i) => (
+                  <li key={i} className="rounded-xl border border-red-500/20 bg-red-500/5 p-3 text-xs">
+                    <p className="font-semibold text-red-200">{b.what}</p>
+                    {b.why && <p className="mt-1 text-red-300/90">{b.why}</p>}
+                    {b.fix && <p className="mt-1 text-fg">{b.fix}</p>}
+                    {b.step && b.step !== "activar" && (
+                      <button type="button" className={`mt-2 inline-flex min-h-11 items-center gap-1 font-semibold text-lime-text underline-offset-4 hover:underline ${focusRing}`} onClick={() => props.goTo(b.step!)}>
+                        Cómo solucionarlo →
+                      </button>
+                    )}
                   </li>
                 ))}
               </ul>

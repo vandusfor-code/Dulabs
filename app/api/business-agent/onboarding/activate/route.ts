@@ -29,7 +29,7 @@ export async function POST(request: NextRequest) {
   if (typeof phoneNumberId !== "string" || !phoneNumberId.trim() || phoneNumberId.length > 64) return apiError(SUPPORT_CODES.ACTIVATE_NUMBER, "Elige el número donde quieres activar tu agente.", 400);
   try {
     const r = await activateOnboarding(createSupabaseOnboardingDeps(supabase, { tenantId: miembro.tenantId, userId: miembro.userId }), { phoneNumberId });
-    if (!r.ok) return apiError(r.code, r.message, r.code === SUPPORT_CODES.ACTIVATE_NUMBER ? 404 : 409, { reasons: r.reasons });
+    if (!r.ok) return apiError(r.code, r.message, r.code === SUPPORT_CODES.ACTIVATE_NUMBER ? 404 : 409, { reasons: r.reasons, blockers: r.blockers });
     if (esAdminOverride) {
       await registrarAuditoriaAdmin(supabase, { operador: miembro, accion: "ACTIVATE_FLOW", idTenant: miembro.tenantId, recurso: phoneNumberId, metadata: { via: "onboarding" } }).catch(() => {});
     }

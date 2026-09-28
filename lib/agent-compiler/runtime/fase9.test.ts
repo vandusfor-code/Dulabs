@@ -691,7 +691,7 @@ describe("FASE 9 — tests 22–24: salud, readiness y recuperación", () => {
     assert.deepEqual([open.status, open.checks.find((c) => c.id === "circuits")!.detail], ["degraded", "nylas_calendar:1"]);
     assert.doesNotMatch(JSON.stringify(open), new RegExp(A), "sin ids de tenants");
     const killed = await evaluateReadiness(readinessDeps({ env: { BUSINESS_AGENT_ENGINE_KILL_SWITCH: "all", [ENGINE_ROLLOUT_ENV]: "canary:10" } }));
-    assert.deepEqual([killed.checks.find((c) => c.id === "kill_switch")!.detail, killed.checks.find((c) => c.id === "engine_rollout")!.detail], ["ALL", "CANARY"]);
+    assert.deepEqual([killed.checks.find((c) => c.id === "kill_switch")!.detail, killed.checks.find((c) => c.id === "engine_rollout")!.detail], ["ALL", "LIMITED:10 canary=0 pilot=0"]);
   });
 
   it("23. readiness del despacho: nunca corrió → not_configured; latido del propio despachador → ok; detenido o fallido → degraded", async () => {
@@ -746,32 +746,37 @@ describe("FASE 9 — tests 22–24: salud, readiness y recuperación", () => {
 // Kill switch, despliegue gradual, soporte
 // ---------------------------------------------------------------------------
 
-describe("FASE 9 — kill switch, despliegue OFF → PILOT → CANARY → GENERAL, soporte", () => {
+describe("FASE 9/10 — kill switch, despliegue OFF → CANARY → PILOT → LIMITED → GENERAL, soporte", () => {
   const explicitSm = { runtime: { engine: "state_machine_v1" as const, engineChoice: "explicit" as const } };
   const explicitGraph = { runtime: { engine: "graph_v1" as const, engineChoice: "explicit" as const } };
   const unpinned = { runtime: { engine: "graph_v1" as const } };
   const yes = () => true;
+  const pilotA = { BUSINESS_AGENT_PILOT_TENANTS: A };
 
   it("kill switch: 'all' y por tenant ganan a TODO (piloto, despliegue general, lista de compatibilidad)", () => {
     assert.deepEqual(selectAgentEngine({ tenantId: A, spec: explicitSm, env: { BUSINESS_AGENT_ENGINE_KILL_SWITCH: "all", [ENGINE_ROLLOUT_ENV]: "general" }, rolloutEligible: yes }), { engine: "graph_v1", source: "kill_switch" });
-    assert.deepEqual(selectAgentEngine({ tenantId: A, spec: explicitSm, env: { BUSINESS_AGENT_ENGINE_KILL_SWITCH: A } }), { engine: "graph_v1", source: "kill_switch" });
-    assert.deepEqual(selectAgentEngine({ tenantId: B, spec: explicitSm, env: { BUSINESS_AGENT_ENGINE_KILL_SWITCH: A } }), { engine: "state_machine_v1", source: "published" });
+    assert.deepEqual(selectAgentEngine({ tenantId: A, spec: explicitSm, env: { BUSINESS_AGENT_ENGINE_KILL_SWITCH: A, ...pilotA } }), { engine: "graph_v1", source: "kill_switch" });
+    assert.deepEqual(selectAgentEngine({ tenantId: B, spec: explicitSm, env: { BUSINESS_AGENT_ENGINE_KILL_SWITCH: A, BUSINESS_AGENT_PILOT_TENANTS: B } }), { engine: "state_machine_v1", source: "published" });
   });
 
-  it("OFF: nadie usa el motor conversacional; PILOT (o vacío / inválido): solo quien lo eligió — comportamiento de FASE 8", () => {
-    assert.deepEqual(selectAgentEngine({ tenantId: A, spec: explicitSm, env: { [ENGINE_ROLLOUT_ENV]: "off" } }), { engine: "graph_v1", source: "rollout_off" });
-    for (const v of [undefined, "pilot", "canary:0", "canary:101", "canary:abc", "everyone"]) {
+  it("OFF: nadie; PILOT (o vacío / inválido): solo los pilotos SELECCIONADOS por DuLabs — elegir el motor no basta", () => {
+    assert.deepEqual(selectAgentEngine({ tenantId: A, spec: explicitSm, env: { [ENGINE_ROLLOUT_ENV]: "off", ...pilotA } }), { engine: "graph_v1", source: "rollout_off" });
+    for (const v of [undefined, "pilot", "canary:0", "canary:101", "canary:abc", "limited:0", "everyone"]) {
       assert.equal(parseRollout(v).stage, "pilot", String(v));
       assert.deepEqual(selectAgentEngine({ tenantId: A, spec: unpinned, env: { [ENGINE_ROLLOUT_ENV]: v }, rolloutEligible: yes }), { engine: "graph_v1", source: "published" });
-      assert.deepEqual(selectAgentEngine({ tenantId: A, spec: explicitSm, env: { [ENGINE_ROLLOUT_ENV]: v } }), { engine: "state_machine_v1", source: "published" });
+      assert.deepEqual(selectAgentEngine({ tenantId: A, spec: explicitSm, env: { [ENGINE_ROLLOUT_ENV]: v } }), { engine: "graph_v1", source: "rollout_not_selected" });
+      assert.deepEqual(selectAgentEngine({ tenantId: A, spec: explicitSm, env: { [ENGINE_ROLLOUT_ENV]: v, ...pilotA } }), { engine: "state_machine_v1", source: "published" });
     }
   });
 
-  it("CANARY:N: el N % estable de tenants SIN elección explícita y elegibles; GENERAL: todos esos; una elección explícita nunca se pisa", () => {
+  it("LIMITED:N (antes canary:N): pilotos + el N % estable de tenants elegibles; GENERAL: todos; una elección explícita del grafo nunca se pisa", () => {
     const tenants = Array.from({ length: 200 }, (_, i) => `00000000-0000-4000-8000-${i.toString().padStart(12, "0")}`);
-    const moved = tenants.filter((t) => selectAgentEngine({ tenantId: t, spec: unpinned, env: { [ENGINE_ROLLOUT_ENV]: "canary:10" }, rolloutEligible: yes }).source === "rollout");
-    assert.ok(moved.length > 5 && moved.length < 40, `≈10 % de 200: ${moved.length}`);
-    assert.ok(moved.every((t) => rolloutBucket(t) < 10));
+    for (const v of ["limited:10", "canary:10"]) {
+      assert.deepEqual(parseRollout(v), { stage: "limited", percent: 10 });
+      const moved = tenants.filter((t) => selectAgentEngine({ tenantId: t, spec: unpinned, env: { [ENGINE_ROLLOUT_ENV]: v }, rolloutEligible: yes }).source === "rollout");
+      assert.ok(moved.length > 5 && moved.length < 40, `≈10 % de 200: ${moved.length}`);
+      assert.ok(moved.every((t) => rolloutBucket(t) < 10));
+    }
     assert.equal(rolloutBucket(tenants[0]!), rolloutBucket(tenants[0]!), "estable");
     assert.ok(tenants.every((t) => selectAgentEngine({ tenantId: t, spec: unpinned, env: { [ENGINE_ROLLOUT_ENV]: "general" }, rolloutEligible: yes }).engine === "state_machine_v1"));
     assert.ok(tenants.every((t) => selectAgentEngine({ tenantId: t, spec: explicitGraph, env: { [ENGINE_ROLLOUT_ENV]: "general" }, rolloutEligible: yes }).engine === "graph_v1"), "elección explícita del grafo respetada");

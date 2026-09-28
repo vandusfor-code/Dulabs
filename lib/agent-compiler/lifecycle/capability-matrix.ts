@@ -243,7 +243,7 @@ export function buildCapabilityMatrix(input: MatrixInput): CapabilityRow[] {
 // Readiness del motor (parte del activation gate)
 // ---------------------------------------------------------------------------
 
-export type EngineBlockerCode = "ENGINE_CAPABILITY_UNSUPPORTED" | "AI_CREDENTIAL_MISSING" | "ARTIFACT_INVALID" | "KILL_SWITCH_ON";
+export type EngineBlockerCode = "ENGINE_CAPABILITY_UNSUPPORTED" | "AI_CREDENTIAL_MISSING" | "ARTIFACT_INVALID" | "KILL_SWITCH_ON" | "WHATSAPP_CREDENTIAL_MISSING" | "CALENDAR_CREDENTIAL_MISSING";
 
 export interface EngineReadiness {
   blockers: Array<{ code: EngineBlockerCode; message: string }>;
@@ -269,7 +269,7 @@ export function evaluateEngineReadiness(input: {
   const sm = input.engine === "state_machine_v1";
   for (const row of input.matrix) {
     if (row.enabled && row.runtimeSupported === "none" && row.id !== "orders" && row.id !== "payments") {
-      blockers.push({ code: "ENGINE_CAPABILITY_UNSUPPORTED", message: `${row.label}: solo funciona con el motor conversacional. Actívalo o apaga esta opción.` });
+      blockers.push({ code: "ENGINE_CAPABILITY_UNSUPPORTED", message: `${row.label}: todavía no está disponible con la configuración actual de tu agente.` });
     }
     if (row.enabled && row.integration === "not_verified") {
       const d = (row.integrationDetail ?? "integración no verificada").replace(/\.$/, "");
@@ -280,6 +280,9 @@ export function evaluateEngineReadiness(input: {
   if (sm && !input.artifactOk) blockers.push({ code: "ARTIFACT_INVALID", message: "La versión publicada no se pudo preparar para el motor conversacional. Vuelve a publicar." });
   if (input.killSwitchOn && sm) warnings.push({ code: "KILL_SWITCH_ON", message: "El motor conversacional está apagado por emergencia: atiende el motor clásico." });
   const needsCalendar = input.spec.capabilities.scheduling && input.spec.scheduling.provider === "nylas";
+  // FASE 10 — una credencial REQUERIDA que falta bloquea (antes solo se listaba): sin ella el agente no podría cumplir.
+  if (!input.credentials.whatsappToken) blockers.push({ code: "WHATSAPP_CREDENTIAL_MISSING", message: "Tu WhatsApp no tiene una conexión válida con DuLabs." });
+  if (needsCalendar && !input.credentials.nylasApiKey) blockers.push({ code: "CALENDAR_CREDENTIAL_MISSING", message: "La agenda con calendario no está disponible en este momento." });
   return {
     blockers,
     warnings,

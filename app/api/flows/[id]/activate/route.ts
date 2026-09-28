@@ -56,7 +56,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       const [primero] = gate.blockers;
       const status = primero!.code === "NUMBER_NOT_FOUND" ? 404 : 409;
       return Response.json(
-        { error: primero!.message, code: primero!.code, category: primero!.category, blockers: gate.blockers.map(({ code, category, message }) => ({ code, category, message })) },
+        { error: primero!.message, code: primero!.code, category: primero!.category, blockers: gate.blockers.map(({ code, category, message, why, fix }) => ({ code, category, message, why: why ?? null, fix: fix ?? null })) },
         { status },
       );
     }

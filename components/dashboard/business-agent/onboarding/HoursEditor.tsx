@@ -7,6 +7,7 @@
 import { Copy, Plus, Trash2 } from "lucide-react";
 import { WEEKDAYS, type BusinessHoursModel, type Weekday } from "@/lib/agent-compiler/business-model/schema";
 import type { OnboardingIssue } from "@/lib/agent-compiler/onboarding/issues";
+import { defaultHours } from "@/lib/agent-compiler/onboarding/draft";
 import { FieldError, focusRing, inputCls, issuesFor, secondaryBtn } from "@/components/dashboard/business-agent/onboarding/controls";
 
 const DAY_LABEL: Record<Weekday, string> = { monday: "Lunes", tuesday: "Martes", wednesday: "Miércoles", thursday: "Jueves", friday: "Viernes", saturday: "Sábado", sunday: "Domingo" };
@@ -18,8 +19,17 @@ export function HoursEditor({ hours, onChange, issues }: { hours: BusinessHoursM
     const src = hours.week[d];
     onChange({ ...hours, week: Object.fromEntries(WEEKDAYS.map((w) => [w, { open: src.open, intervals: src.intervals.map((i) => ({ ...i })) }])) as BusinessHoursModel["week"] });
   };
+  const noneOpen = WEEKDAYS.every((w) => !hours.week[w].open);
   return (
     <div className="space-y-4">
+      {noneOpen && (
+        <div className="flex flex-col gap-3 rounded-2xl border border-edge bg-ink-2 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm text-mist">Todavía no indicas tu horario. Marca los días que abres, o empieza con una plantilla y ajústala.</p>
+          <button type="button" className={`${secondaryBtn} shrink-0 py-1.5 text-xs`} onClick={() => onChange({ ...defaultHours(), exceptions: hours.exceptions })}>
+            Usar lunes a viernes 9:00–18:00
+          </button>
+        </div>
+      )}
       <ul className="divide-y divide-edge overflow-hidden rounded-2xl border border-edge bg-ink">
         {ORDER.map((d) => {
           const day = hours.week[d];

@@ -11,7 +11,7 @@ import type { ReadinessFacts } from "@/lib/business-agent-readiness";
 import { createInMemoryBusinessAgentRegistryStore } from "@/lib/agent-compiler/registry/testing/in-memory-registry-store";
 import type { BusinessAgentRegistryStore } from "@/lib/agent-compiler/registry/types";
 import type { AgentLifecycleState } from "@/lib/agent-compiler/lifecycle/lifecycle";
-import { emptyDraft, type OnboardingDraft } from "@/lib/agent-compiler/onboarding/draft";
+import { defaultHours, emptyDraft, type OnboardingDraft } from "@/lib/agent-compiler/onboarding/draft";
 import type { OnboardingDeps, OnboardingEvent } from "@/lib/agent-compiler/onboarding/service";
 import type { WhatsAppNumberInfo } from "@/lib/agent-compiler/onboarding/status";
 import { createOnboardingFakes } from "@/lib/agent-compiler/onboarding/testing/in-memory";
@@ -40,6 +40,8 @@ export interface World {
   credentials: CredentialFacts;
   /** FASE 9 — vínculo del artefacto activo (deriva de configuración). Ausente = sin dato (no se inventa deriva). */
   artifactLink?: ArtifactLink | null;
+  /** FASE 10 — entorno de despliegue (qué tenants admitió DuLabs). Por defecto: A y B son pilotos seleccionados. */
+  engineEnv: Record<string, string | undefined>;
 }
 
 /** Un "mundo" compartido (misma base) para varios tenants. */
@@ -58,6 +60,7 @@ export function createWorld(): World {
     lifecycle: null,
     events: [],
     credentials: { geminiKey: true, nylasApiKey: true, whatsappToken: true },
+    engineEnv: { BUSINESS_AGENT_PILOT_TENANTS: `${TENANT_A},${TENANT_B}` },
   };
 }
 
@@ -90,7 +93,7 @@ export function depsFor(world: World, tenantId: string, over: Partial<Onboarding
     async engineReport(flowId, input) {
       const current = input.draftSpec ?? input.publishedSpec!;
       const served = input.publishedSpec ?? current;
-      const engine = selectAgentEngine({ tenantId, spec: served, env: {} });
+      const engine = selectAgentEngine({ tenantId, spec: served, env: world.engineEnv });
       const compiled = input.publishedSpec ? compileLegacySpec(input.publishedSpec, { tenantId, agentId: flowId, versionRef: "check", publishedVersion: null }) : null;
       const artifact = compiled?.ok ? compiled.artifact : null;
       const facts = { ...world.facts, whatsappConnected: (world.numbers.get(tenantId) ?? []).length > 0, remindersStore: true, remindersDispatchVerified: false };
@@ -111,6 +114,8 @@ export function barberDraft(): OnboardingDraft {
   d.business = { name: "Barbería Norte", description: "Cortes y barba en el centro.", category: "Barbería / Peluquería", timezone: "America/Bogota" };
   d.offer = { services: true, products: false, showCatalog: true, quotes: true };
   d.booking = { enabled: true, agenda: "calendar", minimumNoticeMinutes: 60, allowChanges: true, changesNoticeHours: 4 };
+  // El negocio DECLARA su horario (el borrador vacío no trae ninguno).
+  d.hours = defaultHours();
   d.support = { handoff: true, pauseHours: 12, answerQuestions: true, whenUnknown: "say_so", whenCannotHelp: "offer_person" };
   d.customerData = { askName: true, askEmail: false, askNotes: false, extra: [] };
   d.restrictedTopics = [{ words: ["política"], reply: "De eso no hablamos por aquí." }];

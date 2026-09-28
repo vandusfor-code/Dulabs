@@ -29,7 +29,40 @@ export type ActivationBlockerCode =
 export interface ActivationBlocker {
   code: ActivationBlockerCode;
   category: BusinessAgentErrorCategory;
+  /** QUÉ falta (texto para el negocio). */
   message: string;
+  /** FASE 10 — POR QUÉ importa y CÓMO solucionarlo (texto para el negocio; lo llena `explainActivationBlocker`). */
+  why?: string;
+  fix?: string;
+  /** Código del motivo concreto (readiness / motor), p. ej. WHATSAPP_CREDENTIAL_MISSING. */
+  detailCode?: string;
+  /** Paso del configurador donde se arregla un bloqueo de readiness (ids del Wizard FASE 1). */
+  readinessStep?: string;
+}
+
+/**
+ * FASE 10 — explicación humana ÚNICA de cada bloqueo (backend decide y explica; la pantalla solo muestra). Nunca
+ * jerga técnica: qué falta (message), por qué importa (why) y cómo solucionarlo (fix).
+ */
+const EXPLAIN: Readonly<Record<string, { why: string; fix: string }>> = {
+  NUMBER_NOT_FOUND: { why: "Ese número no aparece conectado a tu cuenta de DuLabs.", fix: "Elige uno de tus números conectados o conecta tu WhatsApp primero." },
+  NOT_PUBLISHED: { why: "Tu WhatsApp responde con la versión publicada de tu agente, y todavía no hay una.", fix: "Publica tu configuración y luego actívala." },
+  AGENT_INVALID: { why: "La versión publicada no pasó la verificación de seguridad, así que no la usamos para responder.", fix: "Publica de nuevo tu configuración. Si vuelve a pasar, escríbenos con el código de soporte." },
+  READINESS_BLOCKED: { why: "Tu agente ofrecería algo que todavía no puede cumplir con los datos o conexiones actuales de tu negocio.", fix: "Completa lo que se indica en el paso marcado y vuelve a publicar." },
+  BILLING_REQUIRED: { why: "Sin un plan activo tu agente no puede enviar mensajes por WhatsApp.", fix: "Activa o renueva tu plan en Facturación." },
+  ENGINE_CONFLICT: { why: "Un número de WhatsApp solo puede tener un agente, y este ya lo atiende otro.", fix: "Desactiva el otro agente en ese número o elige un número distinto." },
+  ENGINE_NOT_READY: { why: "Tu agente tiene activada una función que todavía no está disponible con la configuración actual.", fix: "Apaga esa función o escríbenos para habilitarla en tu negocio." },
+  // Motivos concretos del motor (evaluateEngineReadiness):
+  ENGINE_CAPABILITY_UNSUPPORTED: { why: "Tu agente tiene activada una función que todavía no está disponible con la configuración actual.", fix: "Apaga esa función o escríbenos para habilitarla en tu negocio." },
+  AI_CREDENTIAL_MISSING: { why: "El servicio de inteligencia artificial de DuLabs no está disponible en este momento.", fix: "No tienes que cambiar nada: es de nuestro lado. Inténtalo más tarde o escríbenos con el código de soporte." },
+  ARTIFACT_INVALID: { why: "No pudimos preparar tu versión publicada para responder mensajes.", fix: "Publica de nuevo tu configuración. Si vuelve a pasar, escríbenos con el código de soporte." },
+  WHATSAPP_CREDENTIAL_MISSING: { why: "Sin el permiso de Meta, tu agente no puede enviar respuestas por WhatsApp.", fix: "Vuelve a conectar tu WhatsApp desde Integraciones." },
+  CALENDAR_CREDENTIAL_MISSING: { why: "Tu agente agenda con calendario y esa conexión no está disponible en DuLabs en este momento.", fix: "Es de nuestro lado: escríbenos con el código de soporte, o cambia tu agenda a «con los horarios de tu equipo»." },
+};
+
+export function explainActivationBlocker(b: ActivationBlocker): ActivationBlocker {
+  const e = (b.detailCode && EXPLAIN[b.detailCode]) || EXPLAIN[b.code];
+  return e ? { ...b, why: b.why ?? e.why, fix: b.fix ?? e.fix } : b;
 }
 
 export type ActivationDecision =
@@ -51,7 +84,7 @@ export interface ActivationGateDeps {
    * FASE 8 — ¿el MOTOR que atenderá la versión publicada puede ejecutarla? (capacidades soportadas por ese motor,
    * credencial de IA, artefacto compilable). Devuelve los bloqueos en lenguaje humano. Ausente = no se evalúa.
    */
-  engineReadiness?(tenantId: string, version: AgentVersionRow): Promise<string[]>;
+  engineReadiness?(tenantId: string, version: AgentVersionRow): Promise<Array<string | { code: string; message: string }>>;
 }
 
 export async function evaluateBusinessAgentActivation(
@@ -63,7 +96,7 @@ export async function evaluateBusinessAgentActivation(
 
   // Primero el número: si no es del tenant no se evalúa (ni se revela) nada más.
   if (!(await deps.numberBelongsToTenant(input.tenantId, input.phoneNumberId))) {
-    return { kind: "blocked", blockers: [{ code: "NUMBER_NOT_FOUND", category: "TENANT_ERROR", message: "Número no encontrado." }] };
+    return { kind: "blocked", blockers: [explainActivationBlocker({ code: "NUMBER_NOT_FOUND", category: "TENANT_ERROR", message: "Número no encontrado." })] };
   }
 
   const blockers: ActivationBlocker[] = [];
@@ -75,10 +108,12 @@ export async function evaluateBusinessAgentActivation(
   } else {
     const readiness = await deps.evaluateReadiness(input.tenantId, version);
     if (!readiness.ready) {
-      for (const b of readiness.blockers) blockers.push({ code: "READINESS_BLOCKED", category: "BUSINESS_RULE_ERROR", message: b.message });
+      for (const b of readiness.blockers) blockers.push({ code: "READINESS_BLOCKED", category: "BUSINESS_RULE_ERROR", message: b.message, detailCode: b.code, ...(b.step ? { readinessStep: b.step } : {}) });
     }
     if (deps.engineReadiness) {
-      for (const message of await deps.engineReadiness(input.tenantId, version)) blockers.push({ code: "ENGINE_NOT_READY", category: "BUSINESS_RULE_ERROR", message });
+      for (const r of await deps.engineReadiness(input.tenantId, version)) {
+        blockers.push(typeof r === "string" ? { code: "ENGINE_NOT_READY", category: "BUSINESS_RULE_ERROR", message: r } : { code: "ENGINE_NOT_READY", category: "BUSINESS_RULE_ERROR", message: r.message, detailCode: r.code });
+      }
     }
   }
 
@@ -95,6 +130,6 @@ export async function evaluateBusinessAgentActivation(
     });
   }
 
-  if (blockers.length > 0) return { kind: "blocked", blockers };
+  if (blockers.length > 0) return { kind: "blocked", blockers: blockers.map(explainActivationBlocker) };
   return { kind: "allowed", flowVersionId: version!.flowVersionId };
 }

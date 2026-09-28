@@ -11,7 +11,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CircuitRegistry } from "@/lib/agent-compiler/runtime/production/circuits";
-import { ENGINE_KILL_SWITCH_ENV, ENGINE_ROLLOUT_ENV, parseRollout } from "@/lib/agent-compiler/runtime/production/engine-selection";
+import { ENGINE_KILL_SWITCH_ENV, rolloutSummary } from "@/lib/agent-compiler/runtime/production/engine-selection";
 import { REMINDER_DISPATCH_JOB, REMINDERS_DISABLED_ENV } from "@/lib/agent-compiler/runtime/production/reminder-dispatcher";
 
 export type CheckStatus = "ok" | "degraded" | "down" | "not_configured";
@@ -117,7 +117,9 @@ export async function evaluateReadiness(deps: ReadinessDeps): Promise<ReadinessR
   // Palancas operativas (informativas).
   const kill = (env[ENGINE_KILL_SWITCH_ENV] ?? "").trim().toLowerCase();
   checks.push({ id: "kill_switch", status: kill ? "degraded" : "ok", ...(kill ? { detail: kill === "all" ? "ALL" : "TENANTS" } : {}) });
-  checks.push({ id: "engine_rollout", status: "ok", detail: parseRollout(env[ENGINE_ROLLOUT_ENV]).stage.toUpperCase() });
+  // FASE 10 — etapa y cuántos tenants admite cada lista (nunca sus ids).
+  const r = rolloutSummary(env);
+  checks.push({ id: "engine_rollout", status: "ok", detail: `${r.stage.toUpperCase()}${r.percent !== null ? `:${r.percent}` : ""} canary=${r.canaryTenants} pilot=${r.pilotTenants}` });
 
   const status = checks.some((c) => c.id === "database" && c.status === "down") ? "not_ready" : checks.some((c) => c.status === "degraded" || (c.id === "ai" && c.status === "not_configured")) ? "degraded" : "ready";
   return { status, checks, at: now.toISOString() };

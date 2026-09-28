@@ -13,15 +13,19 @@
 // Nunca se "adivina": el resultado dice QUÉ motor y POR QUÉ (source). Ningún agente existente cambia de motor solo:
 // solo una publicación con aceptación explícita del administrador escribe state_machine_v1.
 //
-// FASE 9 — DESPLIEGUE GRADUAL (BUSINESS_AGENT_ENGINE_ROLLOUT), por debajo del kill switch:
-//   (sin valor) / "pilot"  comportamiento de FASE 8: solo los agentes que ELIGIERON el motor conversacional (pilotos).
-//   "off"                  nadie usa el motor conversacional (ni pilotos ni la lista de compatibilidad).
-//   "canary:N"             además, el N % de los tenants (hash estable del tenant) cuyos agentes NO eligieron motor.
-//   "general"              todos los agentes que NO eligieron motor.
-// Canary / general solo mueven un agente si el motor conversacional ejecuta TODAS sus capacidades encendidas y su
-// versión publicada compila (`rolloutEligible`); si no, sigue en el grafo. Una elección explícita (engineChoice) nunca
-// se pisa. Valor inválido = "pilot" (nunca amplía el despliegue por un error de escritura). Volver atrás = cambiar la
-// variable: no se republica a nadie.
+// FASE 9 — DESPLIEGUE GRADUAL (BUSINESS_AGENT_ENGINE_ROLLOUT), por debajo del kill switch.
+// FASE 10 — PRODUCCIÓN CONTROLADA: la entrada al motor conversacional la decide DuLabs con listas EXPLÍCITAS. Elegir el
+// motor en el configurador ya no basta: el negocio tiene que estar admitido por la etapa vigente.
+//   "off"         nadie usa el motor conversacional (ni pilotos ni la lista de compatibilidad).
+//   "canary"      solo los tenants internos de prueba de DuLabs (BUSINESS_AGENT_CANARY_TENANTS): 0 % de clientes.
+//   "pilot"       canary + los negocios piloto seleccionados (BUSINESS_AGENT_PILOT_TENANTS). (Sin valor / inválido.)
+//   "limited:N"   pilot + el N % estable de tenants (hash del tenant). "canary:N" (FASE 9) se lee como "limited:N".
+//   "general"     todos.
+// Un tenant ADMITIDO usa el motor conversacional si lo eligió explícitamente o si su agente es elegible (el motor
+// ejecuta todas sus capacidades encendidas y su versión publicada compila). Una elección explícita del grafo nunca se
+// pisa. Un tenant NO admitido que eligió el motor conversacional sigue en el grafo (fuente "rollout_not_selected") hasta
+// que DuLabs lo admita: nadie entra solo. Valor inválido = "pilot" (nunca amplía el despliegue por un error de
+// escritura). Volver atrás = cambiar la variable: no se republica a nadie ni se toca su configuración.
 
 import { createHash } from "node:crypto";
 import { AGENT_ENGINES, type AgentEngineId, type BusinessAgentSpec } from "@/lib/agent-compiler/spec/types";
@@ -31,22 +35,61 @@ import { compileLegacySpec } from "@/lib/agent-compiler/business-model/compile";
 
 export const ENGINE_KILL_SWITCH_ENV = "BUSINESS_AGENT_ENGINE_KILL_SWITCH";
 export const ENGINE_ROLLOUT_ENV = "BUSINESS_AGENT_ENGINE_ROLLOUT";
+/** FASE 10 — tenants internos de prueba de DuLabs (etapa canary). Lista de UUIDs separados por coma. */
+export const CANARY_TENANTS_ENV = "BUSINESS_AGENT_CANARY_TENANTS";
+/** FASE 10 — negocios piloto seleccionados explícitamente por DuLabs (etapa pilot). Lista de UUIDs separados por coma. */
+export const PILOT_TENANTS_ENV = "BUSINESS_AGENT_PILOT_TENANTS";
 export const DEFAULT_AGENT_ENGINE: AgentEngineId = "graph_v1";
 
-export type EngineSelectionSource = "kill_switch" | "rollout_off" | "env_allowlist" | "published" | "rollout" | "default";
+export type EngineSelectionSource = "kill_switch" | "rollout_off" | "env_allowlist" | "published" | "rollout" | "rollout_not_selected" | "default";
 
-export type RolloutStage = { stage: "off" } | { stage: "pilot" } | { stage: "canary"; percent: number } | { stage: "general" };
+export type RolloutStage = { stage: "off" } | { stage: "canary" } | { stage: "pilot" } | { stage: "limited"; percent: number } | { stage: "general" };
 
 export function parseRollout(raw: string | undefined): RolloutStage {
   const v = (raw ?? "").trim().toLowerCase();
   if (v === "off") return { stage: "off" };
+  if (v === "canary") return { stage: "canary" };
   if (v === "general") return { stage: "general" };
-  const m = /^canary:(\d{1,3})$/.exec(v);
+  const m = /^(?:limited|canary):(\d{1,3})$/.exec(v);
   if (m) {
     const percent = Number(m[1]);
-    if (percent >= 1 && percent <= 100) return { stage: "canary", percent };
+    if (percent >= 1 && percent <= 100) return { stage: "limited", percent };
   }
   return { stage: "pilot" };
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/** UUIDs válidos de una lista de entorno (los inválidos se ignoran: un error de escritura nunca admite a nadie). */
+function tenantList(raw: string | undefined): string[] {
+  return (raw ?? "")
+    .split(",")
+    .map((t) => t.trim().toLowerCase())
+    .filter((t) => UUID.test(t));
+}
+
+/** ¿La etapa vigente admite a este tenant en el motor conversacional? */
+export function rolloutAdmits(tenantId: string, env: Record<string, string | undefined> = process.env): boolean {
+  const rollout = parseRollout(env[ENGINE_ROLLOUT_ENV]);
+  const t = tenantId.toLowerCase();
+  if (rollout.stage === "off") return false;
+  if (tenantList(env[CANARY_TENANTS_ENV]).includes(t)) return true;
+  if (rollout.stage === "canary") return false;
+  if (tenantList(env[PILOT_TENANTS_ENV]).includes(t)) return true;
+  if (rollout.stage === "pilot") return false;
+  if (rollout.stage === "general") return true;
+  return rolloutBucket(t) < rollout.percent;
+}
+
+/** Resumen de la etapa SIN ids de tenants (salud / documentación operativa). */
+export function rolloutSummary(env: Record<string, string | undefined> = process.env): { stage: RolloutStage["stage"]; percent: number | null; canaryTenants: number; pilotTenants: number } {
+  const rollout = parseRollout(env[ENGINE_ROLLOUT_ENV]);
+  return {
+    stage: rollout.stage,
+    percent: rollout.stage === "limited" ? rollout.percent : null,
+    canaryTenants: tenantList(env[CANARY_TENANTS_ENV]).length,
+    pilotTenants: tenantList(env[PILOT_TENANTS_ENV]).length,
+  };
 }
 
 /** Balde estable 0–99 del tenant (el mismo tenant cae siempre en el mismo balde: sin parpadeo entre mensajes). */
@@ -58,8 +101,6 @@ export interface EngineSelection {
   engine: AgentEngineId;
   source: EngineSelectionSource;
 }
-
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 /** ¿El kill switch apaga el motor nuevo para este tenant? ("all" = todos; o lista de UUIDs). Valores inválidos se ignoran. */
 export function isEngineKillSwitchOn(tenantId: string, env: Record<string, string | undefined> = process.env): boolean {
@@ -83,7 +124,7 @@ export function selectAgentEngine(input: {
   tenantId: string;
   spec: Pick<BusinessAgentSpec, "runtime"> | undefined;
   env?: Record<string, string | undefined>;
-  /** FASE 9 — ¿el agente puede pasar al motor conversacional por despliegue gradual? Ausente = no. */
+  /** ¿El agente puede usar el motor conversacional (capacidades soportadas + versión publicable)? Ausente = no. */
   rolloutEligible?: () => boolean;
 }): EngineSelection {
   const env = input.env ?? process.env;
@@ -93,9 +134,13 @@ export function selectAgentEngine(input: {
   if (isStateMachineRuntimeEnabled(input.tenantId, env)) return { engine: "state_machine_v1", source: "env_allowlist" };
   const published = publishedEngineOf(input.spec);
   const explicit = input.spec?.runtime?.engineChoice === "explicit" || published === "state_machine_v1";
-  if (published && explicit) return { engine: published, source: "published" };
-  const inRollout = rollout.stage === "general" || (rollout.stage === "canary" && rolloutBucket(input.tenantId) < rollout.percent);
-  if (inRollout && input.rolloutEligible?.() === true) return { engine: "state_machine_v1", source: "rollout" };
+  // Elección explícita del grafo: nunca se pisa.
+  if (published === "graph_v1" && explicit) return { engine: "graph_v1", source: "published" };
+  const admitted = rolloutAdmits(input.tenantId, env);
+  if (published === "state_machine_v1" && explicit) {
+    return admitted ? { engine: "state_machine_v1", source: "published" } : { engine: "graph_v1", source: "rollout_not_selected" };
+  }
+  if (admitted && input.rolloutEligible?.() === true) return { engine: "state_machine_v1", source: "rollout" };
   if (published) return { engine: published, source: "published" };
   return { engine: DEFAULT_AGENT_ENGINE, source: "default" };
 }
