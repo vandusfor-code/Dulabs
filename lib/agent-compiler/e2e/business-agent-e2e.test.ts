@@ -18,6 +18,7 @@
 // PRODUCTION VERIFIED, no OFFLINE. Aquí se prueba que el GRAFO cablea esas
 // acciones y que la autorización/estado/gate son correctos.
 
+import { createBusinessAgentArgumentPolicy } from "@/lib/agent-compiler/contracts/argument-policy";
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { createFlowEngineState, runFlowEngine } from "@/lib/flow/flow-engine";
@@ -86,7 +87,7 @@ interface Harness {
 
 function harnessFor(setup: Awaited<ReturnType<typeof publishAgent>>, ai?: LegacyHandler, clienteOver: Partial<ClienteConfig> = {}): Harness {
   const framework = createRecordingEffectFramework(ai ? { ai } : {});
-  const orchestrator = createExecutionOrchestrator({ store: setup.orchStore, engine: { createFlowEngineState, runFlowEngine }, effectFramework: framework.framework });
+  const orchestrator = createExecutionOrchestrator({ store: setup.orchStore, engine: { createFlowEngineState, runFlowEngine }, effectFramework: framework.framework, proposalArgumentPolicy: createBusinessAgentArgumentPolicy({ log: () => {} }) });
   let calls = 0;
   const spyOrch = { process: (e: NormalizedFlowEvent) => { calls += 1; return orchestrator.process(e); } };
   const gate: Harness["gate"] = { sent: 0, transfers: 0 };

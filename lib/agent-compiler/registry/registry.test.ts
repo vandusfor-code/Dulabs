@@ -230,7 +230,8 @@ describe("Business Agent Registry — Step 8A", () => {
       {} as never,
       { phone_number_id: "+573000000003", id_tenant: TENANT_A, flow_activo: true, flow_id: draft.flowId },
     );
-    assert.deepEqual(tampered, { kind: "none", reason: "checksum_mismatch" });
+    // FASE 1: un Business Agent real con checksum alterado NO cae al motor genérico (sin Gate): falla cerrado.
+    assert.deepEqual(tampered, { kind: "invalid", reason: "checksum_mismatch" });
   });
 
   it("18. disabled agent: flow_activo=false => none/not_active (resolver)", async () => {
@@ -249,7 +250,7 @@ describe("Business Agent Registry — Step 8A", () => {
     assert.deepEqual(resolution, { kind: "none", reason: "not_active" });
   });
 
-  it("20. resolver tenant mismatch: el store devuelve una versión de OTRO tenant => none/tenant_unresolved", async () => {
+  it("20. resolver tenant mismatch: el store devuelve una versión de OTRO tenant => invalid/tenant_unresolved (fail-closed)", async () => {
     const store = createInMemoryBusinessAgentRegistryStore();
     const d = deps(store);
     const draft = await compileAndCreateDraftVersion(d, { tenantId: TENANT_A, spec: photographySpec() });
@@ -270,7 +271,7 @@ describe("Business Agent Registry — Step 8A", () => {
       {} as never,
       { phone_number_id: "x", id_tenant: TENANT_B, flow_activo: true, flow_id: draft.flowId },
     );
-    assert.deepEqual(resolution, { kind: "none", reason: "tenant_unresolved" });
+    assert.deepEqual(resolution, { kind: "invalid", reason: "tenant_unresolved" });
   });
 
   it("22. stale version: agente vinculado a un flow luego DESPUBLICADO (nunca publicado en otro tenant) => none/not_published", async () => {

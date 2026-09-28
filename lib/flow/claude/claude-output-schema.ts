@@ -71,7 +71,16 @@ export type ParsedAIOutput = z.infer<typeof aiOutputSchema>;
  * tool_use devuelva un valor fuera de la lista: no es una validación
  * posterior, es una restricción real de la llamada.
  */
-export function buildAiOutputToolSchema(mode: ClaudeAiMode, classifications?: string[]): Record<string, unknown> {
+export function buildAiOutputToolSchema(
+  mode: ClaudeAiMode,
+  classifications?: string[],
+  /**
+   * Business Agent 2.0, FASE 2 — JSON Schema opcional de `extracted` (solo modo extract). Guía la generación con la
+   * forma exacta que espera quien consume la extracción; no reemplaza su validación. Sin él (todo Flow existente),
+   * `extracted` sigue siendo un objeto libre, igual que antes.
+   */
+  extractSchema?: Record<string, unknown>,
+): Record<string, unknown> {
   switch (mode) {
     case "respond":
       return {
@@ -99,7 +108,10 @@ export function buildAiOutputToolSchema(mode: ClaudeAiMode, classifications?: st
       return {
         type: "object",
         additionalProperties: false,
-        properties: { mode: { type: "string", enum: ["extract"] }, extracted: { type: "object" } },
+        properties: {
+          mode: { type: "string", enum: ["extract"] },
+          extracted: extractSchema && extractSchema.type === "object" ? extractSchema : { type: "object" },
+        },
         required: ["mode", "extracted"],
       };
     case "propose_action":

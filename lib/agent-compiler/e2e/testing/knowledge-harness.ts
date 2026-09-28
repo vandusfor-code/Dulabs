@@ -12,6 +12,7 @@
  * conocimiento en memoria (la relevancia de Postgres se verifica en el E2E de la
  * BD), Nylas/calendario/idempotencia. Lo demás es el código real de producción.
  */
+import { createBusinessAgentArgumentPolicy } from "@/lib/agent-compiler/contracts/argument-policy";
 import assert from "node:assert/strict";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createFlowEngineState, runFlowEngine } from "@/lib/flow/flow-engine";
@@ -192,7 +193,7 @@ export async function mundo(knowledge: KnowledgeStore = createInMemoryKnowledgeS
     executors: [ia, accionEspiada, envio],
     integrationResolver: new IntegrationResolver({ getIntegrationById: async () => null, getIntegrationCredentials: async () => [] }),
   });
-  const orquestador = createExecutionOrchestrator({ store: orchStore, engine: { createFlowEngineState, runFlowEngine }, effectFramework: framework });
+  const orquestador = createExecutionOrchestrator({ store: orchStore, engine: { createFlowEngineState, runFlowEngine }, effectFramework: framework, proposalArgumentPolicy: createBusinessAgentArgumentPolicy({ log: () => {} }) });
 
   async function activar(spec: BusinessAgentSpec, tenantId: string) {
     const s = await publicar(spec, tenantId);

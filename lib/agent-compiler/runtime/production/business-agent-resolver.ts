@@ -24,7 +24,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ClienteConfig } from "@/lib/supabase";
 import type { FlowDefinition } from "@/lib/flow/types";
-import type { GateRule } from "@/lib/agent-compiler/runtime/guardrail-gate";
+import { normalizePolicyText, withSemanticContent, type GateRule } from "@/lib/agent-compiler/runtime/guardrail-gate";
+import type { BusinessAgentSpec, RuleKind } from "@/lib/agent-compiler/spec/types";
 import { checksumOf } from "@/lib/agent-compiler/checksum";
 import { createSupabaseBusinessAgentRegistryStore } from "@/lib/agent-compiler/registry/registry-store-supabase";
 import type { BusinessAgentRegistryStore } from "@/lib/agent-compiler/registry/types";
@@ -46,19 +47,39 @@ export interface ResolvedBusinessAgent {
   gateRules: GateRule[];
   /** FlowDefinition compilado (para validación defensiva; el orquestador lo carga del store). */
   flow?: FlowDefinition;
+  /**
+   * FASE 1 — reglas informativas del negocio (policies.rules) DISPONIBLES en runtime, normalizadas. Hoy ningún
+   * nodo las aplica (enforcement: "not_enforced", ver contracts/policy-manifest.ts): se exponen para que la FASE
+   * 2/3 las consuma sin volver a leer el Spec, y para poder demostrar que llegaron al runtime.
+   */
+  informationalRules?: RuntimeInformationalRule[];
+  /** FASE 4 — Spec de la MISMA versión publicada (capacidades, agenda, datos del cliente) para el runtime conversacional. */
+  spec?: BusinessAgentSpec;
+}
+
+export interface RuntimeInformationalRule {
+  id: string;
+  kind: RuleKind;
+  description: string;
+  response?: string;
+  priority: number;
+  enforcement: "not_enforced";
 }
 
 export type BusinessAgentResolution =
   | ResolvedBusinessAgent
-  | { kind: "none"; reason: BusinessAgentNoneReason };
+  | { kind: "none"; reason: BusinessAgentNoneReason }
+  /**
+   * FASE 1 — el número apunta a un Business Agent REAL (existe su versión en el Registry) pero no se puede servir
+   * con seguridad (checksum alterado, versión no validada, tenant inconsistente). Antes esto devolvía `none` y el
+   * mismo flow se ejecutaba por el motor de flows genérico SIN el Gate de prohibiciones ni los contratos de acción.
+   * Ahora el llamador falla cerrado (no responde) y lo registra como error.
+   */
+  | { kind: "invalid"; reason: BusinessAgentInvalidReason };
 
-export type BusinessAgentNoneReason =
-  | "registry_not_available"
-  | "not_business_agent"
-  | "not_published"
-  | "not_active"
-  | "checksum_mismatch"
-  | "tenant_unresolved";
+export type BusinessAgentInvalidReason = "checksum_mismatch" | "not_validated" | "tenant_unresolved";
+
+export type BusinessAgentNoneReason = "registry_not_available" | "not_business_agent" | "not_published" | "not_active";
 
 export interface BusinessAgentResolver {
   resolve(supabase: SupabaseClient, cliente: ClienteResolucion): Promise<BusinessAgentResolution>;
@@ -96,16 +117,16 @@ export function createSupabaseBusinessAgentResolver(deps: { store?: BusinessAgen
       }
 
       if (version.tenantId !== cliente.id_tenant) {
-        return { kind: "none", reason: "tenant_unresolved" };
+        return { kind: "invalid", reason: "tenant_unresolved" };
       }
 
       if (version.validationStatus !== "validated") {
-        return { kind: "none", reason: "not_business_agent" };
+        return { kind: "invalid", reason: "not_validated" };
       }
 
       const recomputedChecksum = checksumOf(version.flow);
       if (recomputedChecksum !== version.flowChecksum) {
-        return { kind: "none", reason: "checksum_mismatch" };
+        return { kind: "invalid", reason: "checksum_mismatch" };
       }
 
       return {
@@ -114,9 +135,28 @@ export function createSupabaseBusinessAgentResolver(deps: { store?: BusinessAgen
         flowId: version.flowId,
         flowVersionId: version.flowVersionId,
         checksum: version.flowChecksum,
-        gateRules: version.gateRules,
+        // FASE 1: reglas compiladas antes de esta fase se completan con su contenido semántico desde el Spec de la
+        // MISMA versión (inmutable): el clasificador recibe lo que cada regla significa, no un id opaco.
+        gateRules: withSemanticContent(version.gateRules, version.spec),
         flow: version.flow,
+        informationalRules: informationalRulesOf(version.spec),
+        spec: version.spec,
       };
     },
   };
+}
+
+/** Reglas informativas del Spec, normalizadas y ordenadas (prioridad desc, id asc). Puro. */
+export function informationalRulesOf(spec: { policies: { rules: Array<{ id: string; kind: RuleKind; description: string; response?: string; priority: number }> } }): RuntimeInformationalRule[] {
+  return [...(spec.policies.rules ?? [])]
+    .sort((a, b) => b.priority - a.priority || a.id.localeCompare(b.id))
+    .map((r) => ({
+      id: r.id,
+      kind: r.kind,
+      description: normalizePolicyText(r.description),
+      ...(r.response ? { response: normalizePolicyText(r.response) } : {}),
+      priority: r.priority,
+      enforcement: "not_enforced" as const,
+    }))
+    .filter((r) => r.description.length > 0);
 }

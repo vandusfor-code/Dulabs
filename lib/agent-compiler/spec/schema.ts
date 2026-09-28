@@ -15,7 +15,7 @@
 import { z } from "zod";
 import type { ConditionOperator } from "@/lib/flow/types";
 import { CAPABILITY_KEYS } from "@/lib/agent-compiler/spec/capabilities";
-import { BUSINESS_TYPE_OTRO } from "@/lib/agent-compiler/spec/types";
+import { AGENT_ENGINES, AGENT_TONES, BUSINESS_TYPE_OTRO } from "@/lib/agent-compiler/spec/types";
 import { customerDataSchema } from "@/lib/customer-data";
 
 // Topes de tamaño (hardening Bloque 18). Ajustados para no rechazar Specs reales.
@@ -192,6 +192,22 @@ export const metadataSchema = z.object({
   authorId: z.string().trim().max(MAX_ID).optional(),
 });
 
+// FASE 8 — motor publicado (server-managed; ver AgentRuntimeConfig en types.ts).
+const slugKind = z.string().trim().regex(/^[a-z][a-z0-9_]{0,39}$/);
+export const runtimeSchema = z
+  .object({
+    engine: z.enum(AGENT_ENGINES),
+    engineChoice: z.literal("explicit").optional(),
+    tone: z.enum(AGENT_TONES).optional(),
+    reminders: z.object({ enabled: z.boolean(), offsetMinutes: z.number().int().min(15).max(2880) }).strict().optional(),
+    resources: z
+      .array(z.object({ id: z.string().trim().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/), name: z.string().trim().min(1).max(80), kind: slugKind }).strict())
+      .max(20)
+      .optional(),
+    leadCapture: z.object({ fieldKeys: z.array(z.string().trim().min(1).max(64)).max(10), captureInterest: z.boolean() }).strict().optional(),
+  })
+  .strict();
+
 export const businessAgentSpecSchema = z.object({
   schemaVersion: z.literal("1.0.0"),
   identity: identitySchema,
@@ -210,6 +226,7 @@ export const businessAgentSpecSchema = z.object({
   knowledge: knowledgeSchema,
   // Opcional: los Specs previos no lo traen (compatibilidad hacia atrás).
   customerData: customerDataSchema.optional(),
+  runtime: runtimeSchema.optional(),
   metadata: metadataSchema,
 });
 

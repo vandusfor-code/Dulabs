@@ -7,6 +7,7 @@ import { PROHIBITED_EVIDENCE_FIELDS } from "@/lib/flow/claude/claude-types";
 import type { VerifiedActionResult } from "@/lib/flow/claude/claude-types";
 import type { ActionNodeConfig } from "@/lib/flow/types";
 import { resolveActionCapabilitySpec } from "@/lib/flow/action-capabilities";
+import { isSystemInternalVariableKey } from "@/lib/flow/ai-runtime/protected-variables";
 
 const PROHIBITED_SET = new Set<string>(PROHIBITED_EVIDENCE_FIELDS);
 
@@ -20,20 +21,48 @@ export function resolveActionSourceKey(config: ActionNodeConfig): string {
   return config.actionType;
 }
 
-/** Elimina campos de evidencia de argumentos propuestos por IA. */
-export function sanitizeProposalArguments(
-  args: Record<string, unknown> | undefined,
-): Record<string, string> {
+/** Motivo por el que un argumento propuesto por la IA no llegó a las variables de la ejecución. */
+export type DroppedArgumentReason = "evidence_field" | "system_internal" | "non_scalar";
+
+export interface SanitizedProposalArguments {
+  arguments: Record<string, string>;
+  /** Solo nombres de clave (nunca valores): apto para trazas y metadata persistida. */
+  dropped: Array<{ key: string; reason: DroppedArgumentReason }>;
+}
+
+/**
+ * Elimina de los argumentos propuestos por la IA: campos de evidencia, claves internas del runtime
+ * (FASE 1: `__*`, tenant/flow/versión/ejecución... ver protected-variables.ts) y valores no escalares.
+ * Devuelve además qué se descartó y por qué.
+ */
+export function sanitizeProposalArgumentsDetailed(args: Record<string, unknown> | undefined): SanitizedProposalArguments {
   const out: Record<string, string> = {};
-  if (!args) return out;
+  const dropped: SanitizedProposalArguments["dropped"] = [];
+  if (!args) return { arguments: out, dropped };
   for (const [key, value] of Object.entries(args)) {
-    if (PROHIBITED_SET.has(key)) continue;
+    if (PROHIBITED_SET.has(key)) {
+      dropped.push({ key, reason: "evidence_field" });
+      continue;
+    }
+    if (isSystemInternalVariableKey(key)) {
+      dropped.push({ key, reason: "system_internal" });
+      continue;
+    }
     if (value === null || value === undefined) continue;
     if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
       out[key] = String(value);
+    } else {
+      dropped.push({ key, reason: "non_scalar" });
     }
   }
-  return out;
+  return { arguments: out, dropped };
+}
+
+/** Elimina campos de evidencia y claves internas de argumentos propuestos por IA. */
+export function sanitizeProposalArguments(
+  args: Record<string, unknown> | undefined,
+): Record<string, string> {
+  return sanitizeProposalArgumentsDetailed(args).arguments;
 }
 
 export function wrapVerifiedActionResult(input: {

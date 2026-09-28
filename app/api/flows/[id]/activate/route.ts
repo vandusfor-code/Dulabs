@@ -3,6 +3,9 @@ import { requireFlowAccess } from "@/lib/flow/api-auth";
 import { getFlowById } from "@/lib/flow/flow-store";
 import { activarFlowParaNumero } from "@/lib/flow/flow-activation";
 import { registrarAuditoriaAdmin } from "@/lib/auditoria-admin";
+import { createSupabaseBusinessAgentRegistryStore } from "@/lib/agent-compiler/registry/registry-store-supabase";
+import { evaluateBusinessAgentActivation } from "@/lib/agent-compiler/lifecycle/activation-gate";
+import { createSupabaseActivationGateDeps } from "@/lib/agent-compiler/lifecycle/supabase";
 
 export const runtime = "nodejs";
 
@@ -42,6 +45,22 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       return Response.json({ error: "Solo se puede activar un Flow publicado" }, { status: 409 });
     }
 
+    // Business Agent 2.0, FASE 1 — gate de activación server-side (solo para flows que SON Business Agent; un
+    // flow de Flow Studio sigue exactamente igual): versión servible, readiness con datos reales, plan activo y
+    // ningún otro motor atendiendo ese número. La UI no puede saltárselo.
+    const gate = await evaluateBusinessAgentActivation(
+      createSupabaseActivationGateDeps(supabase, createSupabaseBusinessAgentRegistryStore(supabase)),
+      { tenantId: miembro.tenantId, flowId: id, phoneNumberId: body.phoneNumberId },
+    );
+    if (gate.kind === "blocked") {
+      const [primero] = gate.blockers;
+      const status = primero!.code === "NUMBER_NOT_FOUND" ? 404 : 409;
+      return Response.json(
+        { error: primero!.message, code: primero!.code, category: primero!.category, blockers: gate.blockers.map(({ code, category, message }) => ({ code, category, message })) },
+        { status },
+      );
+    }
+
     const resultado = await activarFlowParaNumero(supabase, {
       tenantId: miembro.tenantId,
       flowId: id,
@@ -61,6 +80,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     }
     return Response.json({ negocio: resultado.row });
   } catch (error) {
-    return Response.json({ error: (error as Error).message ?? "Error inesperado" }, { status: 500 });
+    // Contrato de errores (FASE 1): el detalle real se registra internamente, nunca se devuelve al cliente.
+    console.error(`[flows/activate] error tenant=${miembro.tenantId} flow=${id}:`, error instanceof Error ? error.message : String(error));
+    return Response.json({ error: "No se pudo activar. Intenta de nuevo.", code: "INTERNAL_ERROR", category: "INTERNAL_ERROR" }, { status: 500 });
   }
 }

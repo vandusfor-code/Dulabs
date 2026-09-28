@@ -79,7 +79,7 @@ export function createDefaultExecutorRegistry(
     /** Fase 5 (Actions + Integrations, autorizado) -- solo para tests (fetchImpl inyectable). */
     httpIntegrationDeps: HttpIntegrationDeps;
     /** Fase 6 (IA configurable, autorizado) -- deps propias de Claude/Gemini (ej. clientes inyectados en tests); resolveApiKey/assertAgentOwnedByTenant los pone SIEMPRE el router, nunca aquí. */
-    aiProviderRouterDeps: Pick<AiProviderRouterDeps, "claudeDeps" | "geminiDeps">;
+    aiProviderRouterDeps: Pick<AiProviderRouterDeps, "claudeDeps" | "geminiDeps" | "defaultProvider">;
   }>,
 ): ExecutorRegistry {
   const registry = new ExecutorRegistry();
@@ -133,6 +133,7 @@ export function createDefaultExecutorRegistry(
         supabase,
         claudeDeps: overrides?.aiProviderRouterDeps?.claudeDeps,
         geminiDeps: overrides?.aiProviderRouterDeps?.geminiDeps,
+        defaultProvider: overrides?.aiProviderRouterDeps?.defaultProvider,
       }),
   );
   return registry;

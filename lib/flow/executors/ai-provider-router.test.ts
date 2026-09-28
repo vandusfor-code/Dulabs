@@ -135,6 +135,21 @@ describe("Fase 6 — AI Provider Router: selección de proveedor", () => {
     assert.equal(result.data?.responseText, "ok gemini");
   });
 
+  it("3b. defaultProvider='gemini' (Business Agent): nodo sin provider -> Gemini; un provider explícito se respeta", async () => {
+    let claudeCalled = false;
+    const router = createAiProviderRouter({
+      supabase: crearSupabaseFalso([]),
+      defaultProvider: "gemini",
+      claudeDeps: { anthropicClient: mockAnthropicClient({ mode: "respond", responseText: "ok claude" }, { onCreate: () => (claudeCalled = true) }) },
+      geminiDeps: { geminiClient: mockGeminiClient({ mode: "respond", responseText: "ok gemini" }) },
+    });
+    const omitido = await router.dispatch(baseRequest(), { tenantId: TENANT_A, internal: true });
+    assert.equal(omitido.data?.responseText, "ok gemini");
+    assert.equal(claudeCalled, false, "sin provider declarado no se llama a Anthropic");
+    const explicito = await router.dispatch(baseRequest({ ai: { instruction: "x", mode: "respond", provider: "claude" } }), { tenantId: TENANT_A, internal: true });
+    assert.equal(explicito.data?.responseText, "ok claude");
+  });
+
   it("4. provider inválido -> rechazo (VALIDATION_ERROR), nunca llama a ningún proveedor", async () => {
     let anyCalled = false;
     const router = createAiProviderRouter({

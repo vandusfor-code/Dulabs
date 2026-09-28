@@ -39,6 +39,12 @@ export interface AiProviderRouterDeps {
   /** Deps propias de cada proveedor, SIN resolveApiKey/assertAgentOwnedByTenant -- esos los inyecta el router en cada dispatch. */
   claudeDeps?: Omit<ClaudeExecutorDeps, "resolveApiKey" | "assertAgentOwnedByTenant">;
   geminiDeps?: Omit<GeminiExecutorDeps, "resolveApiKey" | "assertAgentOwnedByTenant">;
+  /**
+   * Proveedor para los nodos que NO declaran `ai.provider`. Omitido = "claude" (comportamiento de siempre para
+   * Flow Studio y demás productos). Business Agent pasa "gemini" (atender-business-agent.ts). Un nodo que declara
+   * su proveedor explícitamente lo conserva.
+   */
+  defaultProvider?: "claude" | "gemini";
 }
 
 export function createAiProviderRouter(deps: AiProviderRouterDeps): EffectExecutor {
@@ -71,8 +77,9 @@ export function createAiProviderRouter(deps: AiProviderRouterDeps): EffectExecut
         };
       }
       // Retrocompatible: omitido -- TODO Flow existente hoy -- = "claude",
-      // exactamente el executor que ya se usaba antes de esta fase.
-      const provider = providerRaw ?? "claude";
+      // exactamente el executor que ya se usaba antes de esta fase, salvo que
+      // quien arma el router declare otro defaultProvider (Business Agent: gemini).
+      const provider = providerRaw ?? deps.defaultProvider ?? "claude";
 
       let effectiveRequest = request;
       let resolvedApiKey: string | null = null;

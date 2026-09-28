@@ -153,7 +153,7 @@ export class GeminiExecutor implements EffectExecutor {
             text: m.content,
           })),
           responseSchema: toGeminiResponseSchema(
-            buildAiOutputToolSchema(aiRequest.mode, aiRequest.classifications),
+            buildAiOutputToolSchema(aiRequest.mode, aiRequest.classifications, ai.extractSchema),
           ) as Record<string, unknown>,
           maxOutputTokens: 2048,
         },

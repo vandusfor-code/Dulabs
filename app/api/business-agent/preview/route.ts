@@ -16,6 +16,7 @@ import { respuestaSiLimiteTasaExcedido } from "@/lib/rate-limit";
 import { createSupabaseBusinessAgentRegistryStore } from "@/lib/agent-compiler/registry/registry-store-supabase";
 import { listAgentVersions, isPlainObject } from "@/lib/agent-compiler/api/business-agent-api";
 import { previewBusinessAgentTurn, type SimulationInputEvent } from "@/lib/agent-compiler/api/preview";
+import { withSemanticContent } from "@/lib/agent-compiler/runtime/guardrail-gate";
 import { apiError, apiOk } from "@/lib/agent-compiler/api/http";
 import type { FlowEngineState } from "@/lib/flow/engine-types";
 
@@ -41,7 +42,8 @@ export async function POST(request: NextRequest) {
   if (!access.ok) return access.response;
   const { supabase, miembro } = access.ctx;
 
-  // Rate limit por tenant: preview corre el LLM real -> operación costosa.
+  // Rate limit por tenant. Hoy el preview corre el Gate determinista y el grafo con executors SIMULADOS (sin LLM
+  // real, sin datos reales, ver lib/agent-compiler/api/preview.ts); el sandbox con el runtime real es la FASE 6.
   const limite = await respuestaSiLimiteTasaExcedido(supabase, { recurso: "business_agent_preview", tenantId: miembro.tenantId, categoria: "costosa" });
   if (limite) return limite;
 
@@ -76,7 +78,8 @@ export async function POST(request: NextRequest) {
 
     const result = await previewBusinessAgentTurn({
       flow: version.flow,
-      gateRules: version.gateRules,
+      // FASE 1: las mismas reglas que sirve producción (completadas con su contenido semántico).
+      gateRules: withSemanticContent(version.gateRules, version.spec),
       tenantId: miembro.tenantId,
       flowId: version.flowId,
       flowVersionId: version.flowVersionId,

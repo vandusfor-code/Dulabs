@@ -78,7 +78,24 @@ export type AgentTurnResult =
       catalogCalled: false;
       trace: AgentTurnTrace;
     }
-  | { kind: "flow"; orchestrator: OrchestratorResult; trace: AgentTurnTrace };
+  | { kind: "flow"; orchestrator: OrchestratorResult; trace: AgentTurnTrace }
+  | { kind: "conversation"; conversation: ConversationTurnOutcome; trace: AgentTurnTrace };
+
+/**
+ * FASE 4 — motor conversacional (state machine + Action Engine). Opcional: solo lo recibe un Business Agent habilitado
+ * explícitamente. Corre DESPUÉS del Gate (que sigue siendo la barrera determinista) y en lugar del orquestador.
+ */
+export interface ConversationTurnOutcome {
+  outcome: "processed" | "duplicate" | "human_control" | "rejected";
+  status?: string;
+  sent: boolean;
+  actions: Array<{ action: string; status: string; errorCode: string | null; replayed: boolean }>;
+  errorCode?: string;
+}
+
+export interface ConversationTurnHandler {
+  handle(input: { key: { tenantId: string; phoneNumberId: string; telefonoCliente: string; agentId: string }; agentVersion: string | null; wamid: string; text: string; sentAt?: string }): Promise<ConversationTurnOutcome>;
+}
 
 export interface AgentRuntimeDeps {
   /** Tenant del agente compilado (fuente de verdad del servidor, nunca del LLM). */
@@ -96,6 +113,10 @@ export interface AgentRuntimeDeps {
   idempotency?: GateIdempotencyStore;
   observer?: AgentTurnObserver;
   now?: () => string;
+  /** FASE 4 — si viene, reemplaza al orquestador del grafo después del Gate (activación explícita por tenant). */
+  conversation?: ConversationTurnHandler;
+  /** Versión publicada del agente (para el estado conversacional). */
+  agentVersion?: string | null;
 }
 
 export interface IncomingMessage {
@@ -211,6 +232,26 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, incoming: IncomingMes
         matchedBy: decision.matchedBy,
       }),
     };
+  }
+
+  // 3a) FASE 4 — Gate PASS con motor conversacional habilitado: state machine + Action Engine (sin orquestador).
+  if (deps.conversation) {
+    let conversation: ConversationTurnOutcome;
+    try {
+      conversation = await deps.conversation.handle({
+        key: { tenantId: incoming.tenantId, phoneNumberId: incoming.conversation.phoneNumberId, telefonoCliente: incoming.conversation.telefonoCliente, agentId: deps.flowId },
+        agentVersion: deps.agentVersion ?? null,
+        wamid: incoming.wamid,
+        text: incoming.text,
+      });
+    } catch (err) {
+      return {
+        kind: "fail_closed",
+        reason: "conversation_runtime_error",
+        trace: emit(deps.observer, { ...baseTrace, gateDecision: "fail_closed", error: err instanceof Error ? err.message : String(err) }),
+      };
+    }
+    return { kind: "conversation", conversation, trace: emit(deps.observer, { ...baseTrace, gateDecision: "pass" }) };
   }
 
   // 3) Gate PASS => Flow Engine (orquestador real). El estado es autoridad del

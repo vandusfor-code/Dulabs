@@ -7,6 +7,7 @@
 // aislamiento multi-tenant y observabilidad — más el test crítico anti-
 // alucinación (§24).
 
+import { createBusinessAgentArgumentPolicy } from "@/lib/agent-compiler/contracts/argument-policy";
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { createFlowEngineState, runFlowEngine } from "@/lib/flow/flow-engine";
@@ -110,6 +111,7 @@ function harness(opts: {
     store,
     engine: { createFlowEngineState, runFlowEngine },
     effectFramework: framework.framework,
+    proposalArgumentPolicy: createBusinessAgentArgumentPolicy({ log: () => {} }),
   });
   const spy = spyOrchestrator(orchestrator);
   const gate = gateSinkRecorder();
@@ -240,8 +242,8 @@ describe("Step 7 — cadena real (compiler + runtime)", () => {
 
 describe("Step 7 — matriz de comportamientos (1-18)", () => {
   it("1. mensaje normal => LLM (Flow corre, executor de IA invocado)", async () => {
-    const flow = toolFlow(["etiquetar_conversacion"], "etiquetar_conversacion");
-    const h = harness({ ir: irTrivial(), flow, aiHandler: () => aiProposes("etiquetar_conversacion") });
+    const flow = toolFlow(["listar_catalogo_servicios"], "listar_catalogo_servicios");
+    const h = harness({ ir: irTrivial(), flow, aiHandler: () => aiProposes("listar_catalogo_servicios") });
     const r = await runAgentTurn(h.deps, msg({ text: "hola" }));
     assert.equal(r.kind, "flow");
     assert.ok(h.framework.aiCalls().length >= 1);
@@ -270,15 +272,25 @@ describe("Step 7 — matriz de comportamientos (1-18)", () => {
   });
 
   it("5. tool AUTORIZADA => ejecución (action executor invocado)", async () => {
-    const flow = toolFlow(["etiquetar_conversacion"], "etiquetar_conversacion");
-    const h = harness({ ir: irTrivial(), flow, aiHandler: () => aiProposes("etiquetar_conversacion") });
+    const flow = toolFlow(["listar_catalogo_servicios"], "listar_catalogo_servicios");
+    const h = harness({ ir: irTrivial(), flow, aiHandler: () => aiProposes("listar_catalogo_servicios") });
     const r = await runAgentTurn(h.deps, msg());
     assert.equal(r.kind, "flow");
     assert.equal(h.framework.actionCalls().length, 1, "la tool autorizada se ejecutó exactamente una vez");
   });
 
-  it("6. tool NO autorizada (fuera de allowedTools) => rechazo, action NO ejecutada", async () => {
+  it("5b. FASE 1 — acción autorizada por el nodo pero SIN contrato de Business Agent => rechazo, NO se ejecuta", async () => {
+    // Un Business Agent solo ejecuta acciones con contrato explícito (lib/agent-compiler/contracts). Un nodo que
+    // autorice una acción sin contrato (p. ej. un flow alterado) falla cerrado por la rama de fallo del nodo.
     const flow = toolFlow(["etiquetar_conversacion"], "etiquetar_conversacion");
+    const h = harness({ ir: irTrivial(), flow, aiHandler: () => aiProposes("etiquetar_conversacion") });
+    const r = await runAgentTurn(h.deps, msg());
+    assert.equal(r.kind, "flow");
+    assert.equal(h.framework.actionCalls().length, 0, "sin contrato la acción JAMÁS se ejecuta");
+  });
+
+  it("6. tool NO autorizada (fuera de allowedTools) => rechazo, action NO ejecutada", async () => {
+    const flow = toolFlow(["listar_catalogo_servicios"], "listar_catalogo_servicios");
     // La IA intenta una tool distinta a la autorizada del nodo.
     const h = harness({ ir: irTrivial(), flow, aiHandler: () => aiProposes("get_contact") });
     const r = await runAgentTurn(h.deps, msg());
@@ -321,8 +333,8 @@ describe("Step 7 — matriz de comportamientos (1-18)", () => {
   });
 
   it("11. webhook duplicado (mismo wamid) => segundo turno DUPLICATE_EVENT, sin doble efecto", async () => {
-    const flow = toolFlow(["etiquetar_conversacion"], "etiquetar_conversacion");
-    const h = harness({ ir: irTrivial(), flow, aiHandler: () => aiProposes("etiquetar_conversacion") });
+    const flow = toolFlow(["listar_catalogo_servicios"], "listar_catalogo_servicios");
+    const h = harness({ ir: irTrivial(), flow, aiHandler: () => aiProposes("listar_catalogo_servicios") });
     const m = msg({ wamid: "dup-1" });
     const r1 = await runAgentTurn(h.deps, m);
     const r2 = await runAgentTurn(h.deps, m);
@@ -384,7 +396,7 @@ describe("Step 7 — matriz de comportamientos (1-18)", () => {
   });
 
   it("16. executor failure (IA falla) => se enruta a fallo, sin ejecutar la tool", async () => {
-    const flow = toolFlow(["etiquetar_conversacion"], "etiquetar_conversacion");
+    const flow = toolFlow(["listar_catalogo_servicios"], "listar_catalogo_servicios");
     const h = harness({ ir: irTrivial(), flow, aiHandler: () => ({ result: { success: false } }) });
     const r = await runAgentTurn(h.deps, msg());
     assert.equal(r.kind, "flow");

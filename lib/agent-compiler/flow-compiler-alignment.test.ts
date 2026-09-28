@@ -4,6 +4,7 @@
 // Corre el ORQUESTADOR REAL (createExecutionOrchestrator) con store en memoria
 // y executors con registro — sin Supabase ni LLM.
 
+import { createBusinessAgentArgumentPolicy } from "@/lib/agent-compiler/contracts/argument-policy";
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { createFlowEngineState, runFlowEngine } from "@/lib/flow/flow-engine";
@@ -51,7 +52,7 @@ function runtimeFor(s: BusinessAgentSpec, ai?: AiHandler, tenantId = TENANT) {
   const store = createInMemoryOrchestratorStore();
   const { flowId } = store.publishFlow({ tenantId, definition: fr.flow });
   const framework = createRecordingEffectFramework(ai ? { ai } : {});
-  const orch = createExecutionOrchestrator({ store, engine: { createFlowEngineState, runFlowEngine }, effectFramework: framework.framework });
+  const orch = createExecutionOrchestrator({ store, engine: { createFlowEngineState, runFlowEngine }, effectFramework: framework.framework, proposalArgumentPolicy: createBusinessAgentArgumentPolicy({ log: () => {} }) });
   let started = false;
   const turn = async (text: string, wamid: string): Promise<OrchestratorResult> => {
     const engineEvent: NormalizedFlowEvent["engineEvent"] = started
