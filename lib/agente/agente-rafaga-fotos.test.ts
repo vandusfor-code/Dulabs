@@ -229,3 +229,11 @@ describe("B30 · botones sin freno de ráfaga", () => {
     assert.doesNotMatch(src, /setTimeout\(resolve, 2500\)/, "la espera fija quedó en un solo lugar (esperaDeRafagaMs)");
   });
 });
+
+describe("Formato de WhatsApp en lo que envía el agente", () => {
+  it("**negrita** del modelo sale como *negrita* (sin asteriscos a la vista)", async () => {
+    const { d } = deps({ script: [{ text: "**¡Claro!** Tenemos __dijes__ muy lindos. ¿Qué estilo buscas?" }] });
+    await atenderConAgenteSiAplica({ cliente, waId: WA, destino: WA, wamid: "wamid.fmt", text: "quiero ver dijes" }, d);
+    assert.deepEqual(sent, ["*¡Claro!* Tenemos *dijes* muy lindos. ¿Qué estilo buscas?"]);
+  });
+});

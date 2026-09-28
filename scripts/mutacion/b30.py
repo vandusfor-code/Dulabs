@@ -29,6 +29,8 @@ M = [
      "        return finish(\"rate_limited\", null);\n      }\n      const text = MEDIA_MESSAGES.pideReferencia(\"image\", lineas.length);", "      }\n      const text = MEDIA_MESSAGES.pideReferencia(\"image\", lineas.length);", RF),
     ("M8 'escribiendo…' temprano para números sin agente", "app/webhook-dulabs/route.ts",
      "  if (agenteListo && tokenMeta) {\n", "  if (tokenMeta) {\n", RF),
+    ("M10 el texto sale con **Markdown** (asteriscos a la vista)", RT,
+     "sendText: (t) => base.sendText(formatoWhatsApp(t))", "sendText: (t) => base.sendText(t)", RF),
     ("M9 con el registro del pedido en curso la foto va al buzón", WH,
      "  if (ckStep) return null;\n", "", RF),
 ]
