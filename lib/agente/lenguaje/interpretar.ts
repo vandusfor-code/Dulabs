@@ -12,9 +12,12 @@
  */
 import {
   AFIRMACIONES,
+  ANTES_DE_BARRIO,
   ANTES_DE_CANTIDAD,
   ANUNCIA_DIRECCION,
   CAMBIO_PRODUCTO,
+  CIERRE_DIRECCION,
+  CIUDADES,
   COMPRA_PEDIDO,
   CONECTORES_OPCION,
   CORTESIA,
@@ -312,6 +315,42 @@ export function leerDireccion(text: string): LecturaDireccion {
   if (intencion || leerEntrega(valor) || leerPago(valor)) return null;
   if (alguna(normalizar(valor), UBICACION_VAGA) || ws.length >= 2) return { tipo: "vaga" };
   return null;
+}
+
+/**
+ * Bloque 32 — la ciudad que cierra una dirección ("Cra 24 n 16-54 pasto", "Calle 5 # 3-2, Ipiales,
+ * Nariño"): se separa para no volver a preguntarla. Conservador: la ciudad debe ser la ÚLTIMA parte,
+ * conocida (CIUDADES) y no venir tras "barrio", "sector", "urbanización"… ("barrio La Unión" no es
+ * la ciudad). Si queda duda, null: el checkout pregunta la ciudad como siempre.
+ */
+export function ciudadEnDireccion(valor: string): { direccion: string; ciudad: string } | null {
+  const toks = valor.trim().split(/[\s,]+/).filter(Boolean);
+  const flat = toks.map((t) => plano(t).replace(/ /g, ""));
+  const ciudadAlFinal = (hasta: number): { n: number; ciudad: string } | null => {
+    for (const n of [4, 3, 2, 1]) {
+      if (hasta - n < 1) continue;
+      const clave = flat.slice(hasta - n, hasta).join(" ");
+      if (CIUDADES[clave]) return { n, ciudad: CIUDADES[clave] };
+    }
+    return null;
+  };
+  // "… Pasto, Nariño" / "… Cali Colombia": se quita el cierre SOLO si antes queda una ciudad.
+  let hasta = toks.length;
+  for (let vuelta = 0; vuelta < 2; vuelta++) {
+    const cierre = [...CIERRE_DIRECCION].sort((a, b) => b.split(" ").length - a.split(" ").length).find((c) => {
+      const n = c.split(" ").length;
+      return hasta - n >= 2 && flat.slice(hasta - n, hasta).join(" ") === c && ciudadAlFinal(hasta - n) !== null;
+    });
+    if (!cierre) break;
+    hasta -= cierre.split(" ").length;
+  }
+  const m = ciudadAlFinal(hasta);
+  if (!m) return null;
+  const antes = flat[hasta - m.n - 1];
+  if (!antes || ANTES_DE_BARRIO.has(antes)) return null;
+  const direccion = toks.slice(0, hasta - m.n).join(" ").replace(/[\s,;.-]+$/g, "").trim();
+  if (direccion.length < 3) return null;
+  return { direccion, ciudad: m.ciudad };
 }
 
 /** Ciudad: "Montería", "Santa Marta", "Bogotá D.C.". Nunca una pregunta, un número, una intención ni un relleno. */

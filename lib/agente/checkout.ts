@@ -45,6 +45,7 @@ import {
   leerCantidad,
   leerCiudad,
   leerCorreccion,
+  ciudadEnDireccion,
   leerDireccion,
   leerEntrega,
   leerNombre,
@@ -99,8 +100,8 @@ export const CHECKOUT_MESSAGES = {
   chooseOption: "Para continuar, elige una opción:",
   /** "sí", "confirmo", "ok"… en el resumen: solo el botón registra el pedido (acción inequívoca). */
   tapToConfirm: "Para registrar tu pedido toca el botón ✅ Confirmar pedido.",
-  confirmed: (business: string | null) =>
-    `✅ Tu pedido quedó registrado correctamente.\n\nUna asesora continuará contigo para coordinar el pago y los siguientes pasos.\n\n${business ? `Gracias por comprar en ${business} 💖` : "¡Gracias por tu compra! 💖"}`,
+  confirmed: (business: string | null, note?: string | null) =>
+    `✅ Tu pedido quedó registrado correctamente.\n\nUna asesora continuará contigo para coordinar el pago y los siguientes pasos.${note ? `\n\n${note}` : ""}\n\n${business ? `Gracias por comprar en ${business} 💖` : "¡Gracias por tu compra! 💖"}`,
   alreadyConfirmed: "✅ Tu pedido ya quedó registrado. Una asesora continuará contigo para coordinar el pago y los siguientes pasos.",
   modify: "Claro 😊 Tus productos siguen guardados.\n\nDime qué deseas cambiar (agregar, quitar o cambiar cantidades). Cuando quieras terminar, escríbeme *finalizar pedido*.",
   cancelled: "Listo, cancelé el registro de tu pedido: no quedó ninguna compra ni reserva.\n\nTus productos siguen guardados por si quieres retomarlo; escríbeme *finalizar pedido* cuando quieras.",
@@ -276,7 +277,19 @@ export function checkoutData(ck: CheckoutState): CheckoutData | null {
   };
 }
 
-export function summaryText(order: OrderPublicView, data: CheckoutData): string {
+/** Bloque 32: textos del negocio para el checkout (config `negocio.pedido`). Todo opcional. */
+export interface CheckoutTexts {
+  paymentQuestion?: string;
+  shippingNote?: string;
+  wholesaleMinimum?: number;
+  confirmedNote?: string;
+}
+
+/** Aviso (informativo, nunca bloquea) cuando un pedido mayorista no llega a la compra inicial. */
+export const wholesaleMinimumNotice = (minimum: number) =>
+  `ℹ️ La compra inicial mayorista parte de ${formatCop(minimum)}. Una asesora te confirma las condiciones al revisar tu pedido 💎`;
+
+export function summaryText(order: OrderPublicView, data: CheckoutData, texts: CheckoutTexts = {}): string {
   const lines = order.lines.map((l) => `• ${l.product_name} (${l.reference}) × ${l.quantity} — ${l.subtotal === null ? "precio a consultar" : formatCop(l.subtotal)}`);
   const out = [`📋 *Resumen de tu pedido* (${order.order_id})`, "", ...lines, "", `*Total: ${formatCop(order.total)}*`];
   if (order.unpriced_units > 0) out.push("Algunos productos tienen precio a consultar: una asesora te confirma su valor.");
@@ -287,6 +300,10 @@ export function summaryText(order: OrderPublicView, data: CheckoutData): string 
     if (data.deliveryReference) out.push(`📝 Referencia: ${data.deliveryReference}`);
   }
   out.push(`💳 Pago: ${data.paymentMethod === "transferencia" ? "Transferencia" : "Pago en tienda"}`);
+  if (data.delivery === "domicilio" && texts.shippingNote) out.push(`🚚 ${texts.shippingNote}`);
+  if (order.channel === "wholesale" && texts.wholesaleMinimum && order.total < texts.wholesaleMinimum) {
+    out.push("", wholesaleMinimumNotice(texts.wholesaleMinimum));
+  }
   return out.join("\n");
 }
 
@@ -303,6 +320,8 @@ export interface CheckoutIO {
   turn: number;
   /** Nombre del negocio para el mensaje final (config del negocio; null = genérico). */
   businessName: string | null;
+  /** Bloque 32: textos del negocio (pregunta de pago, nota de envío, mínimo mayorista, nota final). */
+  texts?: CheckoutTexts;
   /** Texto enviado (o null si no salió). */
   sendText(text: string): Promise<string | null>;
   /** Botones; si no salen, el texto alternativo. Devuelve lo enviado (o null). */
@@ -396,7 +415,9 @@ async function ask(io: CheckoutIO, step: CheckoutStep, prefix: string | null): P
     case "reference":
       return io.sendMenu(p(CHECKOUT_MESSAGES.reference), CHECKOUT_BUTTONS.reference, p(CHECKOUT_MESSAGES.referenceFallback));
     case "payment":
-      return io.sendMenu(p(CHECKOUT_MESSAGES.payment), CHECKOUT_BUTTONS.payment, p(CHECKOUT_MESSAGES.paymentFallback));
+      return io.texts?.paymentQuestion
+        ? io.sendMenu(p(io.texts.paymentQuestion), CHECKOUT_BUTTONS.payment, p(`${io.texts.paymentQuestion}\n\nRespóndeme *pago en tienda* o *transferencia*.`))
+        : io.sendMenu(p(CHECKOUT_MESSAGES.payment), CHECKOUT_BUTTONS.payment, p(CHECKOUT_MESSAGES.paymentFallback));
     case "summary":
       return io.sendMenu(p(CHECKOUT_MESSAGES.summaryPrompt), CHECKOUT_BUTTONS.summary, p(`${CHECKOUT_MESSAGES.summaryPrompt} ${CHECKOUT_MESSAGES.summaryFallback}`));
   }
@@ -472,7 +493,7 @@ async function summarize(io: CheckoutIO, state: ConversationState, ck: CheckoutS
     const text = [prefix, ...issues, CHECKOUT_MESSAGES.notConfirmed].filter(Boolean).join("\n\n");
     return done(backToCart(state, order), await io.sendText(text), "not_confirmed");
   }
-  const summary = summaryText(order, data);
+  const summary = summaryText(order, data, io.texts);
   const nextCk: CheckoutState = { ...ck, step: "summary", summary: { confirmationId: order.confirmation.id, total: order.confirmation.total, turn: io.turn } };
   const next: ConversationState = { ...state, checkout: nextCk, activeOrderId: order.order_id };
   const head = [prefix, summary].filter(Boolean).join("\n\n");
@@ -526,7 +547,7 @@ async function finishConfirmed(io: CheckoutIO, state: ConversationState): Promis
   const next: ConversationState = { ...state, checkout: null, proposal: null, cart: [], ambiguity: null };
   delete next.checkoutName;
   const paused = await io.handOff("pedido confirmado").catch(() => false);
-  const reply = await io.sendText(CHECKOUT_MESSAGES.confirmed(io.businessName));
+  const reply = await io.sendText(CHECKOUT_MESSAGES.confirmed(io.businessName, io.texts?.confirmedNote));
   return done(paused ? { ...next, handoffTurn: io.turn } : next, reply, "confirmed", paused);
 }
 
@@ -765,6 +786,9 @@ export async function continueCheckout(
       if (a?.tipo === "vaga") return done(state, await io.sendText(CHECKOUT_MESSAGES.addressVague), "invalid");
       if (a?.tipo === "anuncio") return done(state, await io.sendText(CHECKOUT_MESSAGES.addressAnnounce), "waiting");
       if (!a || NO_REFERENCE.has(normalizar(a.valor))) return done(state, await io.sendText(CHECKOUT_MESSAGES.addressAgain), "invalid");
+      // Bloque 32: si la dirección ya trae la ciudad al final, no se vuelve a preguntar.
+      const conCiudad = ciudadEnDireccion(a.valor);
+      if (conCiudad && leerDireccion(conCiudad.direccion)?.tipo === "ok") return move(save({ address: conCiudad.direccion, city: conCiudad.ciudad, step: "reference" }));
       return move(save({ address: a.valor }));
     }
     case "city": {

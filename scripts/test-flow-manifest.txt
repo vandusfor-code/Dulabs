@@ -476,6 +476,7 @@ lib/agente/agente-lenguaje.test.ts
 lib/agente/lectura-referencias.test.ts
 lib/agente/agente-rafaga-fotos.test.ts
 lib/catalogo/pedidos/notificaciones.test.ts
+lib/agente/agente-asesora-b32.test.ts
 lib/agente/formato-whatsapp.test.ts
 lib/agente/agente-meta-contexto.test.ts
 lib/agente/agente-busqueda.test.ts

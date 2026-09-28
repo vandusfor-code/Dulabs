@@ -98,6 +98,26 @@ export const INTENT_MENU = {
   textFallback: "¡Perfecto! ✨ Escríbeme qué joya buscas (por ejemplo: dijes, aretes dorados…) o escribe *ver catálogo*.",
 } as const;
 
+/**
+ * Bloque 32 — con `negocio.inicio.detal`: el menú de detal suma "Es para regalo" (el texto va al agente,
+ * que pregunta para quién, la ocasión y el presupuesto). Sin esa config, el menú de siempre.
+ */
+export const RETAIL_GIFT_BUTTON = { id: "detal_regalo", title: "🎁 Es para regalo" } as const;
+
+/**
+ * Bloque 32 — después de elegir POR MAYOR, si el negocio configuró `negocio.inicio.mayor`: su mensaje
+ * FIJO (sin IA) con botones. Los dos primeros son respuestas a su pregunta (el texto va al agente); el
+ * tercero abre el catálogo mayorista (misma acción que "Ver catálogo").
+ */
+export const WHOLESALE_MENU = {
+  buttons: [
+    { id: "mayor_negocio", title: "🏪 Ya tengo negocio" },
+    { id: "mayor_emprender", title: "🌱 Voy a emprender" },
+    { id: "accion_catalogo", title: "📖 Ver catálogo" },
+  ],
+  textFallback: (body: string) => `${body}\n\nTambién puedes escribir *ver catálogo*.`,
+} as const;
+
 /** Mensajes FIJOS de las acciones de inicio (sin IA). */
 export const START_MESSAGES = {
   searchPrompt: "Cuéntame qué estás buscando y te ayudo a encontrarlo.\n\nPor ejemplo: dijes, aretes dorados, collar corazón…",

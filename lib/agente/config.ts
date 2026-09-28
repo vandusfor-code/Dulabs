@@ -28,6 +28,42 @@ export const businessConfigSchema = z
     saludo: z.string().trim().min(1).max(300).optional(),
     /** Bloque 27: nombre comercial para el mensaje fijo del pedido confirmado ("Gracias por comprar en …"). */
     nombre_negocio: z.string().trim().min(1).max(80).optional(),
+    /** Bloque 32: cómo conversa y vende (personalidad, estilo, pasos de la asesoría). */
+    personalidad: z.string().trim().min(1).max(1500).optional(),
+    /**
+     * Bloque 32: información OFICIAL del negocio (ubicación, líneas, mayoristas, envíos, pagos…). El
+     * asistente la usa tal cual; lo que no esté aquí ni en las herramientas, no lo sabe (nunca inventa).
+     */
+    conocimiento: z
+      .array(z.object({ tema: z.string().trim().min(1).max(60), info: z.string().trim().min(1).max(800) }).strict())
+      .max(40)
+      .optional(),
+    /** Bloque 32: mensajes FIJOS (sin IA) del inicio. Sin ellos, todo sigue como antes. */
+    inicio: z
+      .object({
+        /** Después de elegir DETAL (encima de los botones). */
+        detal: z.string().trim().min(1).max(600).optional(),
+        /** Después de elegir POR MAYOR (con botones). Sin él, conversa el modelo. */
+        mayor: z.string().trim().min(1).max(900).optional(),
+        /** Al tocar "Buscar una joya". */
+        buscar: z.string().trim().min(1).max(400).optional(),
+      })
+      .strict()
+      .optional(),
+    /** Bloque 32: textos del registro del pedido (checkout del sistema). */
+    pedido: z
+      .object({
+        /** Pregunta de la forma de pago (encima de los botones). */
+        pregunta_pago: z.string().trim().min(1).max(500).optional(),
+        /** Línea del resumen cuando la entrega es a domicilio (transportadora, tiempos, costo). */
+        nota_envio_domicilio: z.string().trim().min(1).max(300).optional(),
+        /** Compra inicial mayorista (COP). Por debajo, el resumen lo informa (no bloquea). */
+        minimo_mayorista: z.number().int().min(1).max(1_000_000_000).optional(),
+        /** Línea extra del mensaje de pedido registrado (p. ej. cómo llegan los datos de pago). */
+        nota_confirmado: z.string().trim().min(1).max(400).optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 
