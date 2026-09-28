@@ -41,6 +41,8 @@ import {
   CLASSIFICATION_MESSAGES,
   DEFAULT_WELCOME,
   INTENT_MENU,
+  RETAIL_GIFT_BUTTON,
+  WHOLESALE_MENU,
   START_MESSAGES,
   channelQuestionBody,
   resolveStartAction,
@@ -62,6 +64,7 @@ import {
   type CheckoutAction,
   type CheckoutIO,
   type CheckoutResult,
+  type CheckoutTexts,
 } from "@/lib/agente/checkout";
 import type { CheckoutStep } from "@/lib/agente/estado";
 import { formatoWhatsApp } from "@/lib/agente/formato-whatsapp";
@@ -200,6 +203,13 @@ export interface AgentTurnInput {
 
 export type AgentTurnOutcome = "replied" | "handoff" | "fallback" | "preempted" | "safety" | "duplicate" | "rate_limited";
 
+/** Bloque 32: textos del checkout configurados por el negocio (`negocio.pedido`). */
+function checkoutTexts(b: AgentRuntimeConfig["business"]): CheckoutTexts | undefined {
+  const p = b.pedido;
+  if (!p) return undefined;
+  return { paymentQuestion: p.pregunta_pago, shippingNote: p.nota_envio_domicilio, wholesaleMinimum: p.minimo_mayorista, confirmedNote: p.nota_confirmado };
+}
+
 export interface AgentTurnTrace {
   log: "agent_turn";
   request_id: string;
@@ -259,7 +269,7 @@ export interface AgentTurnTrace {
    */
   classification: { action: "asked" | "classified" | "known" | "change_requested" | "order_mismatch"; channel: OrderChannel | null; origin: CustomerChannelOrigin | null } | null;
   /** Bloque 26 — acción de inicio que resolvió el backend sin modelo (menú, búsqueda guiada o catálogo). */
-  start: "intent_menu" | "search_prompt" | "catalog_link" | null;
+  start: "intent_menu" | "wholesale_welcome" | "search_prompt" | "catalog_link" | null;
   /** Bloque 27 — checkout conversacional: paso en que quedó y qué decidió el backend (sin datos del cliente). */
   checkout?: { step: CheckoutStep | null; action: CheckoutAction } | null;
 }
@@ -849,12 +859,26 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
     };
     //   a) Acaba de elegir DETAL con el botón (o solo escribió "detal"): menú de intención. El mayorista
     //      sigue como antes (el agente conversa); un mensaje con más contenido ("detal, busco aretes") también.
+    const inicio = deps.config.business.inicio;
     if (trace.classification?.action === "classified" && current.channel === "retail" && buttonChoice === "retail") {
+      // Bloque 32: el negocio puede poner su propio mensaje (y suma "Es para regalo").
+      if (inicio?.detal) {
+        const buttons = [INTENT_MENU.buttons[0], RETAIL_GIFT_BUTTON, INTENT_MENU.buttons[1]];
+        return startDone("intent_menu", await sendMenu(inicio.detal, buttons, `${inicio.detal}\n\nEscríbeme qué joya buscas o escribe *ver catálogo*.`));
+      }
       return startDone("intent_menu", await sendMenu(INTENT_MENU.body, INTENT_MENU.buttons, INTENT_MENU.textFallback));
+    }
+    //   a2) Bloque 32 — acaba de elegir POR MAYOR y el negocio configuró su bienvenida: mensaje FIJO con
+    //      botones (sin modelo). Sin esa config, el mayorista sigue como antes (el agente conversa).
+    if (inicio?.mayor && trace.classification?.action === "classified" && current.channel === "wholesale" && buttonChoice === "wholesale") {
+      return startDone("wholesale_welcome", await sendMenu(inicio.mayor, WHOLESALE_MENU.buttons, WHOLESALE_MENU.textFallback(inicio.mayor)));
     }
     //   b) "Buscar una joya": se le pide que escriba; lo que escriba entra a la búsqueda normal del agente.
     // Con un pedido en registro, "catálogo" / "buscar" los atiende el checkout (responde y repite su pregunta).
-    if (startAction === "search_product" && !state.checkout) return startDone("search_prompt", (await sendFixed(START_MESSAGES.searchPrompt)) ? START_MESSAGES.searchPrompt : null);
+    if (startAction === "search_product" && !state.checkout) {
+      const prompt = inicio?.buscar ?? START_MESSAGES.searchPrompt;
+      return startDone("search_prompt", (await sendFixed(prompt)) ? prompt : null);
+    }
     //   c) "Ver catálogo": el enlace REAL de la publicación para el canal GUARDADO (detal => tienda detal;
     //      mayorista => enlace mayorista firmado). El modelo no elige ni arma el enlace.
     if (startAction === "open_catalog" && !state.checkout) {
@@ -878,6 +902,7 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
         requestId,
         turn: state.turn,
         businessName: deps.config.business.nombre_negocio ?? null,
+        texts: checkoutTexts(deps.config.business),
         sendText: async (text) => {
           const r = sendResult(await deps.sender.sendText(text).catch(() => false));
           trace.sent = r.sent;

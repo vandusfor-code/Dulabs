@@ -223,3 +223,40 @@ export const PIDE_CATALOGO = ["catalogo", "link", "enlace", "pagina", "tienda en
 export const DETAL_INICIAL = ["soy particular", "particular", "es para mi", "para mi", "para uso personal", "uso personal", "persona natural", "es un regalo", "para regalar", "compra personal", "compro para mi"] as const;
 /** MAYORISTA solo con la palabra explícita. Mensaje COMPLETO. "tengo una tienda" o "soy empresa" NO clasifican. */
 export const MAYOR_INICIAL = ["mayor", "al mayor", "por mayor", "al por mayor", "mayorista", "soy mayorista", "compra mayorista", "precio mayorista", "mayoreo"] as const;
+
+/**
+ * Bloque 32 — ciudades de Colombia que se reconocen AL FINAL de una dirección ("Cra 24 n 16-54 pasto")
+ * para no volver a preguntar la ciudad. Capitales, ciudades principales y municipios de Nariño (el
+ * negocio piloto está en Pasto). Clave: normalizada (sin tildes, minúsculas); valor: como se muestra.
+ */
+export const CIUDADES: Readonly<Record<string, string>> = {
+  bogota: "Bogotá", medellin: "Medellín", cali: "Cali", barranquilla: "Barranquilla", cartagena: "Cartagena",
+  cucuta: "Cúcuta", bucaramanga: "Bucaramanga", pereira: "Pereira", "santa marta": "Santa Marta", ibague: "Ibagué",
+  pasto: "Pasto", manizales: "Manizales", neiva: "Neiva", villavicencio: "Villavicencio", armenia: "Armenia",
+  valledupar: "Valledupar", monteria: "Montería", sincelejo: "Sincelejo", popayan: "Popayán", tunja: "Tunja",
+  riohacha: "Riohacha", quibdo: "Quibdó", florencia: "Florencia", yopal: "Yopal", mocoa: "Mocoa",
+  "san andres": "San Andrés", leticia: "Leticia", arauca: "Arauca", "san jose del guaviare": "San José del Guaviare",
+  inirida: "Inírida", mitu: "Mitú", "puerto carreno": "Puerto Carreño", soacha: "Soacha", bello: "Bello",
+  itagui: "Itagüí", envigado: "Envigado", palmira: "Palmira", buenaventura: "Buenaventura", tulua: "Tuluá",
+  soledad: "Soledad", dosquebradas: "Dosquebradas", girardot: "Girardot", fusagasuga: "Fusagasugá",
+  zipaquira: "Zipaquirá", chia: "Chía", facatativa: "Facatativá", sogamoso: "Sogamoso", duitama: "Duitama",
+  barrancabermeja: "Barrancabermeja", floridablanca: "Floridablanca", giron: "Girón", piedecuesta: "Piedecuesta",
+  apartado: "Apartadó", rionegro: "Rionegro", cartago: "Cartago", buga: "Buga", jamundi: "Jamundí",
+  yumbo: "Yumbo", magangue: "Magangué", maicao: "Maicao", "ocana": "Ocaña", pitalito: "Pitalito",
+  garzon: "Garzón", "puerto asis": "Puerto Asís", "orito": "Orito", "sibundoy": "Sibundoy",
+  // Nariño
+  ipiales: "Ipiales", tumaco: "Tumaco", tuquerres: "Túquerres", "la union": "La Unión", samaniego: "Samaniego",
+  sandona: "Sandoná", "la cruz": "La Cruz", barbacoas: "Barbacoas", cumbal: "Cumbal", guachucal: "Guachucal",
+  pupiales: "Pupiales", aldana: "Aldana", cordoba: "Córdoba", potosi: "Potosí", "el tambo": "El Tambo",
+  buesaco: "Buesaco", chachagui: "Chachagüí", tangua: "Tangua", yacuanquer: "Yacuanquer", consaca: "Consacá",
+  linares: "Linares", ancuya: "Ancuya", guaitarilla: "Guaitarilla", imues: "Imués", ospina: "Ospina",
+  sapuyes: "Sapuyes", tablon: "El Tablón de Gómez", "san pablo": "San Pablo", "la florida": "La Florida",
+  narino: "Nariño", funes: "Funes", iles: "Iles", contadero: "Contadero", gualmatan: "Gualmatán",
+  ricaurte: "Ricaurte", mallama: "Mallama", "el charco": "El Charco", "la tola": "La Tola",
+};
+
+/** Departamentos o país que a veces cierran la dirección ("… Pasto, Nariño", "… Cali Colombia"). */
+export const CIERRE_DIRECCION = ["colombia", "dc", "narino", "valle", "valle del cauca", "antioquia", "cundinamarca", "cauca", "putumayo", "atlantico", "bolivar", "santander", "huila", "tolima", "risaralda", "caldas", "quindio", "meta", "boyaca", "cordoba", "sucre", "cesar", "magdalena", "choco", "caqueta", "casanare", "la guajira", "norte de santander"] as const;
+
+/** Palabras que, justo antes de un nombre de ciudad, indican que es un barrio o sector (no la ciudad). */
+export const ANTES_DE_BARRIO = new Set(["barrio", "br", "b", "urbanizacion", "urb", "sector", "conjunto", "vereda", "corregimiento", "edificio", "condominio", "hotel", "centro", "cc", "calle", "carrera", "cra", "cr", "kr", "av", "avenida", "de", "del", "la", "el", "los", "las", "san", "santa"]);

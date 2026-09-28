@@ -863,3 +863,48 @@ order by created_at desc limit 50;
 - Matriz E2E (`scripts/piloto/matriz-piloto.e2e.ts`, bloque N): pedido real por chat → panel →
   PostgreSQL → Meta simulada; Gemini no participa.
 - Mutación: `python3 scripts/mutacion/b31.py` (16 protecciones).
+
+---
+
+## Bloque 32 · asesora "Aria" (manual de atención de la joyería)
+
+Todo por configuración del agente (`dulabs_agente_runtime_config.negocio`); un negocio sin estas
+claves queda exactamente como antes.
+
+| Clave de `negocio` | Qué hace |
+|---|---|
+| `nombre_agente`, `saludo` | "Aria" y el saludo del primer contacto (encima de la pregunta detal / por mayor) |
+| `personalidad` | Cómo conversa y vende: cercana, elegante, entiende → recomienda → facilita la compra, sin sonar a robot |
+| `conocimiento` | Hasta 40 temas `{tema, info}`: la información OFICIAL del negocio. El modelo la usa tal cual; lo que no esté ahí ni en las herramientas, no lo sabe (lo dice y ofrece una asesora) |
+| `inicio.detal` | Mensaje FIJO tras elegir detal, con botones Buscar una joya / 🎁 Es para regalo / Ver catálogo |
+| `inicio.mayor` | Mensaje FIJO tras elegir por mayor (sin modelo), con botones 🏪 Ya tengo negocio / 🌱 Voy a emprender / 📖 Ver catálogo |
+| `inicio.buscar` | Texto al tocar "Buscar una joya" |
+| `pedido.pregunta_pago` | Pregunta de pago (mismos botones: transferencia / pago en tienda) |
+| `pedido.nota_envio_domicilio` | Línea 🚚 del resumen, solo a domicilio |
+| `pedido.minimo_mayorista` | Compra inicial mayorista: por debajo, el resumen lo INFORMA (no bloquea; la asesora decide) |
+| `pedido.nota_confirmado` | Línea extra del mensaje de pedido registrado |
+
+Además (para todos los agentes): el modelo no enumera de memoria categorías que no conoce (regla 14),
+"muéstrame más" sin búsqueda previa pregunta preferencias, y el checkout reconoce la ciudad al final
+de la dirección ("Cra 24 n 16-54 pasto" → no vuelve a preguntar la ciudad; "barrio La Unión" no se
+toma como ciudad). El aviso de pago recibido usa el texto del manual.
+
+**Del manual NO se cargó:** el código interno de precios, el WhatsApp sin confirmar, datos bancarios
+y el 15 % del certificado electoral. Horario, garantías, cambios, devoluciones y separados están
+"pendientes de definir": el asistente no los inventa y pasa a una asesora. Cuando la joyería los
+defina, se actualiza el tema en `conocimiento` (sin código).
+
+### Aplicar (manual, en este orden)
+1. Migración `supabase/migrations/20261201000000_dulabs_agente_negocio_64kb.sql` (el tope de
+   `negocio` pasa de 8 KB a 64 KB; la configuración de Aria ocupa ~11 KB).
+2. Merge del PR y esperar a Vercel.
+3. `scripts/delacour/aria-config.sql` (paso 0: respaldo; paso 1: aplicar). Generado desde
+   `scripts/delacour/aria-negocio.json`; la prueba del bloque verifica que coincidan y que pase el
+   esquema. **Nunca antes del merge**: el código anterior no conoce las claves nuevas y la
+   configuración quedaría inválida (el asistente dejaría de responder).
+
+### Pruebas
+- `lib/agente/agente-asesora-b32.test.ts` (config fail-closed, contexto, bienvenidas, ciudad,
+  resumen/pago/confirmación, JSON y SQL entregados).
+- `supabase/tests/20261201000000_dulabs_agente_negocio_64kb.test.sql` (PostgreSQL real).
+- Mutación: `python3 scripts/mutacion/b32.py` (14).

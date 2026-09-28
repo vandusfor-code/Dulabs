@@ -313,7 +313,7 @@ export const AGENT_TOOLS = {
     kind: "read",
     async run(ctx, _input, deps) {
       const last = ctx.state.lastSearch;
-      if (!last) return fail("NOT_FOUND", "No hay una búsqueda anterior en esta conversación. Pregúntale al cliente qué busca.");
+      if (!last) return fail("NOT_FOUND", "No hay una búsqueda anterior en esta conversación. No muestres opciones al azar: pregúntale qué busca (tipo de producto, color o material, para quién y presupuesto aproximado).");
       const next = last.offset + SEARCH_PAGE;
       if (next >= last.total) {
         return { ok: true, data: { status: "candidates", count: 0, total: last.total, has_more: false, candidates: [], note: "Ya se mostraron todos los resultados de esta búsqueda. Ofrece el catálogo completo (get_catalog_link) o pregunta por otra cosa." } };

@@ -107,7 +107,7 @@ export function mensajeNotificacion(tipo: TipoNotificacion, d: DatosMensaje): st
   const tienda = d.entrega === "tienda";
   switch (tipo) {
     case "pago_recibido":
-      return `${saludo(d.nombre, true)}\n\nTe confirmamos que recibimos el pago de tu pedido ${ref}. ✨\n\nTe iremos contando por este medio cómo avanza.`;
+      return `${saludo(d.nombre, true)}\n\n¡Gracias! Te confirmamos que recibimos el pago de tu pedido ${ref}. ✨\n\nContinuamos con la preparación y te iremos contando por este medio cómo avanza.`;
     case "en_preparacion":
       return `${saludo(d.nombre, true)}\n\nTu pedido ${ref} ya está en preparación. 📦\n\n${tienda ? "Te avisaremos por este medio cualquier novedad." : "Te avisaremos cuando sea enviado."}`;
     case "enviado":
