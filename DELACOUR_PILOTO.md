@@ -796,3 +796,70 @@ la marca de inmediato, purgar la caché del CDN del proyecto en Vercel.
   de siempre (no pasan por el buzón).
 
 Pruebas: `lib/agente/agente-rafaga-fotos.test.ts`. Mutación: `python3 scripts/mutacion/b30.py` (9).
+
+---
+
+## Bloque 31 · notificaciones automáticas de estado de pedidos por WhatsApp (módulo `notificaciones_pedidos`)
+
+Cuando alguien del equipo cambia el estado de un pedido en **Dashboard → Pedidos**, el backend le
+escribe al cliente por WhatsApp. **Sin IA**: textos fijos con datos reales del pedido (nombre,
+número `DL-ORD-…`, domicilio o tienda, nombre del negocio). Nada de guías, fechas ni transportadora.
+
+| Acción del panel | Mensaje (resumen) |
+|---|---|
+| Pago recibido | "Te confirmamos que recibimos el pago de tu pedido *DL-ORD-…*" |
+| En preparación | "…ya está en preparación. 📦" (domicilio: "Te avisaremos cuando sea enviado") |
+| Enviado (solo domicilio) | "…ya fue enviado. 📦" |
+| Entregado | Domicilio: "…figura como entregado". Tienda: "…fue entregado en la tienda" (nunca "enviado") |
+| Completar | "…ha sido completado. ¡Gracias por comprar en {negocio}!" |
+| Cancelar / Rechazar | "…fue cancelado / rechazado" + "responde este mensaje y una asesora te ayudará" |
+
+"Confirmado" no se notifica: el cliente ya lo recibe en el chat al confirmar.
+
+### Orden y garantías
+1. Se valida la acción (sesión, rol, negocio, pedido, compare-and-set de lo que la persona vio,
+   transición permitida). Si es inválida: 409 y **ningún** mensaje.
+2. Se aplica el cambio (motor + BD). **Después**, y solo después, se notifica.
+3. **Idempotencia en la BD:** una fila por `(pedido, tipo)` en `dulabs_catalogo_pedido_notificaciones`
+   (clave única). Doble clic, recarga, dos pestañas o reintento del servidor => un solo WhatsApp.
+4. **Ventana de 24 h:** se mira el último mensaje **entrante** del cliente (`dulabs_mensajes_log`),
+   con 10 min de margen. Cerrada => no se llama a Meta, queda `ventana_vencida`. Si Meta igual
+   responde 131047, también `ventana_vencida`. No hay plantilla de Meta (fuera de alcance).
+5. **Si WhatsApp falla, el pedido NO se revierte.** Queda `fallida` (4xx: código y mensaje de Meta)
+   o `desconocido` (timeout/red: no se sabe si llegó). Sin tabla o con la BD caída: la acción
+   responde igual y el panel dice "no disponible".
+6. **Reintentar** (botón en el detalle del pedido) solo para `fallida`, `ventana_vencida`, `omitida`
+   y `desconocido` (este último pasados 10 min, para no duplicar). Compare-and-set: dos clics o dos
+   personas => un envío. Nunca reenvía una `enviada` ni una notificación ya superada por otro estado.
+7. El mensaje queda en el **Inbox** como mensaje del negocio (con el `wamid` de Meta). No toca
+   pausas de la IA, asesora asignada, dueño del chat ni el estado de la conversación del agente.
+8. Solo se usa el número de WhatsApp del pedido si pertenece al **mismo negocio** y tiene token.
+
+### Activar (manual, SQL Editor) — SOLO Delacour
+1. Aplicar la migración `supabase/migrations/20261130000000_dulabs_catalogo_pedido_notificaciones.sql`
+   (aditiva; solo crea la tabla; RLS sin políticas = solo `service_role`).
+2. Encender el módulo:
+```sql
+insert into dulabs_tenant_modulos (id_tenant, modulo, habilitado)
+values ('0d3ae22d-0c38-4fd6-ba48-fb9e29b7cdb4', 'notificaciones_pedidos', true)
+on conflict (id_tenant, modulo) do update set habilitado = true;
+```
+Apagar: el mismo `insert … on conflict` con `false` (el panel sigue cambiando estados, sin avisar).
+Rollback total: `drop table if exists public.dulabs_catalogo_pedido_notificaciones;`
+
+Revisar lo enviado:
+```sql
+select pedido_publico, tipo, estado, motivo, error_codigo, intentos, enviada_at, created_at
+from dulabs_catalogo_pedido_notificaciones
+where id_tenant = '0d3ae22d-0c38-4fd6-ba48-fb9e29b7cdb4'
+order by created_at desc limit 50;
+```
+
+### Pruebas
+- `lib/catalogo/pedidos/notificaciones.test.ts`: A–T (válido/ inválido, falla de Meta, 131047,
+  ventana, doble clic, reintento, domicilio, tienda, sin contacto, aislamiento, IA pausada, módulo
+  apagado, sin tabla, BD caída, reintentos seguros, panel, textos, errores de Meta).
+- `supabase/tests/20261130000000_dulabs_catalogo_pedido_notificaciones.test.sql` (PostgreSQL real).
+- Matriz E2E (`scripts/piloto/matriz-piloto.e2e.ts`, bloque N): pedido real por chat → panel →
+  PostgreSQL → Meta simulada; Gemini no participa.
+- Mutación: `python3 scripts/mutacion/b31.py` (16 protecciones).

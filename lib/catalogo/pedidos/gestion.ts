@@ -20,6 +20,16 @@ import { canCancelStage, canCompleteStage, nextStage, reservationCanExpire } fro
 import { OrderError, type OrderEngine } from "@/lib/catalogo/pedidos/motor";
 import type { OrderHistoryEntry, PanelQuery, ReservationSummary } from "@/lib/catalogo/pedidos/repositorio";
 import { PEDIDO_PUBLICO, enriquecerPedidos, pedidoPanel, type PanelExtras, type PedidoPanel } from "@/lib/catalogo/pedidos/panel";
+import {
+  TIPOS_NOTIFICACION,
+  TIPO_POR_ACCION,
+  notificarTransicion,
+  reintentarNotificacion,
+  type NotificadorDeps,
+  type RegistroNotificacion,
+  type ResultadoNotificacion,
+  type TipoNotificacion,
+} from "@/lib/catalogo/pedidos/notificaciones";
 
 export const ESTADOS_VISIBLES = [
   "confirmado",
@@ -276,7 +286,7 @@ export async function listarGestion(engine: OrderEngine | null, tenantId: string
   }
 }
 
-export async function detalleGestion(engine: OrderEngine | null, tenantId: string, pedido: string, extras: PanelExtras): Promise<Response> {
+export async function detalleGestion(engine: OrderEngine | null, tenantId: string, pedido: string, extras: PanelExtras, notificador?: NotificadorDeps): Promise<Response> {
   if (!engine) return apiError("UNAVAILABLE", "Los pedidos no están activados.", 503);
   if (!PEDIDO_PUBLICO.test(pedido)) return apiError("NOT_FOUND", "No encontramos ese pedido.", 404);
   try {
@@ -297,7 +307,9 @@ export async function detalleGestion(engine: OrderEngine | null, tenantId: strin
       motivo: h.reason,
       fecha: h.at,
     }));
-    return apiOk({ pedido: vista, historial });
+    // Bloque 31: notificaciones al cliente de este pedido (soporte ve qué se envió y qué falló).
+    const notificaciones = notificador ? await notificador.store.listar(tenantId, found.order.id).catch(() => [] as RegistroNotificacion[]) : [];
+    return apiOk({ pedido: vista, historial, notificaciones: notificaciones.map(notificacionVista) });
   } catch (err) {
     return errorGestion(err);
   }
@@ -307,7 +319,11 @@ export async function detalleGestion(engine: OrderEngine | null, tenantId: strin
 // Acciones: POST { accion, esperado: { estado, etapa, pago }, motivo? }
 // ---------------------------------------------------------------------------
 
-export async function accionGestion(engine: OrderEngine | null, tenantId: string, pedido: string, body: unknown, memberId: number): Promise<Response> {
+/**
+ * Bloque 31: `notificador` (opcional) avisa al cliente por WhatsApp DESPUÉS de que el cambio quedó
+ * aplicado (nunca antes, nunca si la transición no es válida). Sin él, todo como antes.
+ */
+export async function accionGestion(engine: OrderEngine | null, tenantId: string, pedido: string, body: unknown, memberId: number, notificador?: NotificadorDeps): Promise<Response> {
   if (!engine) return apiError("UNAVAILABLE", "Los pedidos no están activados.", 503);
   if (!PEDIDO_PUBLICO.test(pedido)) return apiError("NOT_FOUND", "No encontramos ese pedido.", 404);
   const b = (body ?? {}) as { accion?: unknown; esperado?: { estado?: unknown; etapa?: unknown; pago?: unknown } | null; motivo?: unknown };
@@ -326,8 +342,14 @@ export async function accionGestion(engine: OrderEngine | null, tenantId: string
     const found = await engine.panelOrder(tenantId, pedido);
     if (!found || !found.order.confirmedAt) return apiError("NOT_FOUND", "No encontramos ese pedido.", 404);
     const order = found.order;
-    // Reintento (doble clic, recarga): lo que ya se aplicó no se aplica dos veces.
-    if (yaAplicada(order, accion)) return apiOk({ pedido: pedidoGestion(order, found.reservations), repetido: true });
+    const tipo = TIPO_POR_ACCION[accion];
+    // Reintento (doble clic, recarga): lo que ya se aplicó no se aplica dos veces. La notificación de
+    // esa transición tampoco se repite (clave única pedido + tipo); si nunca llegó a registrarse
+    // (el primer intento se cortó), se registra y envía ahora, una sola vez.
+    if (yaAplicada(order, accion)) {
+      const notificacion = notificador ? await notificarTransicion(notificador, { tenantId, tipo, antes: null, despues: order, miembroId: memberId }) : null;
+      return apiOk({ pedido: pedidoGestion(order, found.reservations), repetido: true, notificacion });
+    }
     // Compare-and-set: la persona decidió sobre lo que VIO; si cambió, que lo vuelva a ver.
     if (order.status !== esperadoEstado || (order.checkout?.stage ?? null) !== esperadaEtapa || (order.checkout?.paymentStatus ?? null) !== esperadoPago) {
       return apiError("CONFLICT", "El pedido cambió mientras lo revisabas. Actualiza y vuelve a intentarlo.", 409);
@@ -360,7 +382,63 @@ export async function accionGestion(engine: OrderEngine | null, tenantId: string
       });
     }
     const after = await engine.panelOrder(tenantId, pedido);
-    return apiOk({ pedido: pedidoGestion(after?.order ?? result.order, after?.reservations ?? []), repetido: result.result === "duplicate" });
+    const despues = after?.order ?? result.order;
+    // El cambio YA quedó aplicado (motor + BD): ahora, y solo ahora, se avisa al cliente.
+    const notificacion = notificador ? await notificarTransicion(notificador, { tenantId, tipo, antes: order, despues, miembroId: memberId }) : null;
+    return apiOk({ pedido: pedidoGestion(despues, after?.reservations ?? []), repetido: result.result === "duplicate", notificacion });
+  } catch (err) {
+    return errorGestion(err);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Bloque 31: notificaciones al cliente (vista y reintento)
+// ---------------------------------------------------------------------------
+
+export interface NotificacionVista {
+  tipo: TipoNotificacion;
+  desde: string | null;
+  hacia: string;
+  estado: RegistroNotificacion["estado"];
+  motivo: string | null;
+  error_codigo: string | null;
+  error_mensaje: string | null;
+  message_id: string | null;
+  intentos: number;
+  enviada_at: string | null;
+  fecha: string;
+  actualizada: string;
+}
+
+export function notificacionVista(r: RegistroNotificacion): NotificacionVista {
+  return {
+    tipo: r.tipo,
+    desde: r.estadoDesde,
+    hacia: r.estadoHacia,
+    estado: r.estado,
+    motivo: r.motivo,
+    error_codigo: r.errorCodigo,
+    error_mensaje: r.errorMensaje,
+    message_id: r.messageId,
+    intentos: r.intentos,
+    enviada_at: r.enviadaAt,
+    fecha: r.createdAt,
+    actualizada: r.updatedAt,
+  };
+}
+
+/** POST { tipo }: reintenta una notificación fallida / con ventana vencida (idempotente, compare-and-set). */
+export async function reintentarNotificacionGestion(engine: OrderEngine | null, tenantId: string, pedido: string, body: unknown, notificador: NotificadorDeps): Promise<Response> {
+  if (!engine) return apiError("UNAVAILABLE", "Los pedidos no están activados.", 503);
+  if (!PEDIDO_PUBLICO.test(pedido)) return apiError("NOT_FOUND", "No encontramos ese pedido.", 404);
+  const tipo = (body as { tipo?: unknown } | null)?.tipo;
+  if (typeof tipo !== "string" || !(TIPOS_NOTIFICACION as readonly string[]).includes(tipo)) return apiError("VALIDATION_ERROR", "tipo de notificación no válido.", 400);
+  try {
+    const found = await engine.panelOrder(tenantId, pedido);
+    if (!found || !found.order.confirmedAt) return apiError("NOT_FOUND", "No encontramos ese pedido.", 404);
+    const r = await reintentarNotificacion(notificador, { tenantId, tipo: tipo as TipoNotificacion, pedido: found.order });
+    if (r.estado === "no_reintentable") return apiError("CONFLICT", r.motivo, 409);
+    return apiOk({ notificacion: r as ResultadoNotificacion });
   } catch (err) {
     return errorGestion(err);
   }

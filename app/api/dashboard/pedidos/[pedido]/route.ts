@@ -7,6 +7,8 @@
  *          esperado: { estado, etapa, pago },   // lo que la persona VIO (compare-and-set)
  *          motivo?: string }              // obligatorio para cancelar y rechazar
  *        Queda en el historial con la persona que la hizo. Repetir la misma acción no la repite.
+ *        Bloque 31: después del cambio, notificación por WhatsApp al cliente (idempotente; ver
+ *        lib/catalogo/pedidos/notificaciones.ts). La respuesta trae `notificacion` con el resultado.
  */
 import type { NextRequest } from "next/server";
 import { withCatalog } from "@/lib/catalogo/http";
@@ -14,6 +16,7 @@ import { ORDERS_MODULE } from "@/lib/catalogo/auth";
 import { accionGestion, detalleGestion } from "@/lib/catalogo/pedidos/gestion";
 import { productionOrderEngine } from "@/lib/catalogo/pedidos/produccion";
 import { productionPanelFuentes } from "@/lib/catalogo/pedidos/panel-fuentes";
+import { productionNotificador } from "@/lib/catalogo/pedidos/notificaciones-produccion";
 
 export const runtime = "nodejs";
 
@@ -25,7 +28,7 @@ export async function GET(request: NextRequest, { params }: Params) {
     request,
     "read",
     async ({ supabase, actor, canManageOrders }) =>
-      detalleGestion(productionOrderEngine(supabase), actor.tenantId, pedido.toUpperCase(), { fuentes: productionPanelFuentes(supabase), verTelefono: canManageOrders }),
+      detalleGestion(productionOrderEngine(supabase), actor.tenantId, pedido.toUpperCase(), { fuentes: productionPanelFuentes(supabase), verTelefono: canManageOrders }, productionNotificador(supabase)),
     { module: ORDERS_MODULE, recurso: "pedidos_lectura" },
   );
 }
@@ -37,7 +40,8 @@ export async function POST(request: NextRequest, { params }: Params) {
     "orders",
     async ({ supabase, actor, memberId }) => {
       const body = await request.json().catch(() => null);
-      return accionGestion(productionOrderEngine(supabase), actor.tenantId, pedido.toUpperCase(), body, memberId);
+      // Bloque 31: tras aplicar el cambio, aviso al cliente por WhatsApp (solo negocios con el módulo).
+      return accionGestion(productionOrderEngine(supabase), actor.tenantId, pedido.toUpperCase(), body, memberId, productionNotificador(supabase));
     },
     { module: ORDERS_MODULE, recurso: "pedidos_escritura" },
   );

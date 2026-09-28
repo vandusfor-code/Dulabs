@@ -29,7 +29,7 @@ M = [
  # --- idempotencia / duplicados ---
  ("M17 Meta reenvía: el mismo wamid se procesa dos veces", "lib/agente/runtime.ts", "if (wamids.every((w) => loaded.state.recentWamids.includes(w))) {", "if (false) {", CK),
  ("M18 botón viejo llega al modelo", "lib/agente/runtime.ts", '} else if (isCheckoutButton(input.text, input.buttonId) && !(', '} else if (false && isCheckoutButton(input.text, input.buttonId) && !(', CK),
- ("M19 reintento del panel aplica dos veces", "lib/catalogo/pedidos/gestion.ts", "if (yaAplicada(order, accion)) return apiOk", "if (false) return apiOk", PB),
+ ("M19 reintento del panel aplica dos veces", "lib/catalogo/pedidos/gestion.ts", "    if (yaAplicada(order, accion)) {\n", "    if (false) {\n", PB),
  ("M20 creación duplicada: la misma clave crea otro pedido", "lib/catalogo/pedidos/repositorio.ts", "      if (existing) return { created: false, order: clone(existing) };", "", F7),
  ("M21 sin compare-and-set del panel", "lib/catalogo/pedidos/gestion.ts", "if (order.status !== esperadoEstado || (order.checkout?.stage ?? null) !== esperadaEtapa || (order.checkout?.paymentStatus ?? null) !== esperadoPago) {", "if (false) {", PB),
  # --- estados / cancelación / vencimiento ---

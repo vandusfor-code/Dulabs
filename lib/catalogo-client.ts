@@ -12,7 +12,8 @@ import type { CategoryDecision, ImageInfo, ImportAnalysis, ImportHistoryItem, Im
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import type { PublicationView } from "@/lib/catalogo/service";
 import type { PedidoHistorial, PedidoPanel } from "@/lib/catalogo/pedidos/panel";
-import type { AccionPedido, EstadoVisible, HistorialEntrada, PedidoGestion } from "@/lib/catalogo/pedidos/gestion";
+import type { AccionPedido, EstadoVisible, HistorialEntrada, NotificacionVista, PedidoGestion } from "@/lib/catalogo/pedidos/gestion";
+import type { ResultadoNotificacion, TipoNotificacion } from "@/lib/catalogo/pedidos/notificaciones";
 
 /** Bloque 27 — filtros del listado del módulo "Pedidos" (todos opcionales). */
 export interface PedidosFiltros {
@@ -188,12 +189,17 @@ export function createCatalogClient(accessToken: string) {
     },
 
     /** Bloque 27 — detalle de un pedido con su historial. */
-    getManagedOrder(pedido: string): Promise<CatalogResult<{ pedido: PedidoGestion; historial: HistorialEntrada[] }>> {
+    getManagedOrder(pedido: string): Promise<CatalogResult<{ pedido: PedidoGestion; historial: HistorialEntrada[]; notificaciones?: NotificacionVista[] }>> {
       return call(accessToken, `/${encodeURIComponent(pedido)}`, {}, PEDIDOS_BASE);
     },
 
+    /** Bloque 31: reintenta la notificación por WhatsApp de una transición (idempotente). */
+    retryOrderNotification(pedido: string, tipo: TipoNotificacion): Promise<CatalogResult<{ notificacion: ResultadoNotificacion }>> {
+      return call(accessToken, `/${encodeURIComponent(pedido)}/notificaciones`, { method: "POST", body: JSON.stringify({ tipo }) }, PEDIDOS_BASE);
+    },
+
     /** Bloque 27 — acción de la operación sobre lo que la persona VIO (`esperado`); motivo para cancelar/rechazar. */
-    actOnOrder(pedido: string, input: { accion: AccionPedido; esperado: PedidoGestion["version"]; motivo?: string }): Promise<CatalogResult<{ pedido: PedidoGestion; repetido: boolean }>> {
+    actOnOrder(pedido: string, input: { accion: AccionPedido; esperado: PedidoGestion["version"]; motivo?: string }): Promise<CatalogResult<{ pedido: PedidoGestion; repetido: boolean; notificacion?: ResultadoNotificacion | null }>> {
       return call(accessToken, `/${encodeURIComponent(pedido)}`, { method: "POST", body: JSON.stringify(input) }, PEDIDOS_BASE);
     },
 
