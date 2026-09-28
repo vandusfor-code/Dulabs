@@ -197,4 +197,25 @@ LATE2=$(q "select dulabs_ba_reminder_begin_send('00000000-0000-4000-8000-0000000
 [ "$LATE" = "f" ] && [ "$LATE2" = "lost" ] && [ "$(q "select status from dulabs_ba_reminders where id = '$RID'")" = "unknown" ] || fail "C11 mark_sent=$LATE begin_send=$LATE2"
 echo "PASS C11 worker reiniciado (lease vencido): su cierre tardío se rechaza (fencing) y begin_send devuelve lost; queda unknown → verificar"
 
-echo "OK concurrencia real verificada (11 casos) en PostgreSQL $("${PSQL[@]}" -c 'show server_version')"
+# C12 -----------------------------------------------------------------------------------------------------------------
+# El despachador toma DE A UNO (claim_due(1, …)) justo antes de procesar cada recordatorio (presupuesto de tiempo por
+# ejecución). 8 despachadores tomando de a uno a la vez: cada recordatorio se toma exactamente una vez.
+q "do \$\$ declare i int; begin
+  for i in 1..200 loop
+    perform dulabs_ba_reminder_schedule(('00000000-0000-4000-8000-' || lpad(((i % 20) + 1)::text, 12, '0'))::uuid, 'f', 'pn:c12-' || i, 'pn', '57312' || i, 'cita-c12-' || i,
+      now() + interval '2 hour', 'Corte', now() + interval '1 hour', 'America/Bogota', 'x', lpad(to_hex(700000 + i), 32, '0'), 'cercano');
+  end loop;
+  update dulabs_ba_reminders set remind_at = now() - interval '1 second' where conversation_id like 'pn:c12-%';
+end \$\$;" >/dev/null
+for w in $(seq 1 8); do
+  ( for _ in $(seq 1 40); do "${PSQL[@]}" -c "select id from dulabs_ba_reminder_claim_due(1, 60)"; done > "$WORK/c12.$w" 2>&1 ) &
+done
+wait
+TOTAL=$(cat "$WORK"/c12.* | grep -c -E '^[0-9a-f-]{36}$' || true)
+UNIQ=$(cat "$WORK"/c12.* | grep -E '^[0-9a-f-]{36}$' | sort -u | wc -l)
+ERRS=$(cat "$WORK"/c12.* | grep -c -i 'error' || true)
+C12=$(q "select count(*) from dulabs_ba_reminders where conversation_id like 'pn:c12-%' and status = 'sending' and attempts = 1")
+[ "$TOTAL" = "$UNIQ" ] && [ "$C12" = "200" ] && [ "$ERRS" = "0" ] || fail "C12 tomas=$TOTAL únicas=$UNIQ c12_sending=$C12 errores=$ERRS"
+echo "PASS C12 8 despachadores tomando DE A UNO a la vez: 200 recordatorios, cada uno tomado exactamente una vez, 0 errores"
+
+echo "OK concurrencia real verificada (12 casos) en PostgreSQL $("${PSQL[@]}" -c 'show server_version')"
