@@ -179,7 +179,7 @@ export function draftToModel(draft: OnboardingDraft): { model: BusinessModel; or
     customerFields: fields,
     businessHours: calendar ? draft.hours : null,
     policies: { unsupportedRequest: draft.support.whenCannotHelp === "offer_person" ? "offer_handoff" : "inform_only" },
-    presentation: { tone: DRAFT_TONE_TO_AGENT_TONE[draft.tone] },
+    presentation: { tone: DRAFT_TONE_TO_AGENT_TONE[draft.tone], ...(draft.business.assistantName?.trim() ? { assistantName: draft.business.assistantName.trim() } : {}) },
   };
   return { model, origins, pre };
 }

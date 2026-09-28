@@ -154,6 +154,10 @@ describe("FASE 6 — E2E", () => {
     fireEvent.click(screen.getByRole("radio", { name: /Google Calendar/ }));
     goToStep("Horario");
     assert.ok(screen.getByText("Tu agente solo ofrece y reserva citas dentro de este horario."));
+    // FASE 10: el borrador no trae horario inventado; la persona lo indica (aquí, con la plantilla que ELIGE).
+    assert.ok(screen.getByText(/Todavía no indicas tu horario/));
+    fireEvent.click(screen.getByRole("button", { name: "Usar lunes a viernes 9:00–18:00" }));
+    assert.equal(screen.queryByText(/Todavía no indicas tu horario/), null);
     goToStep("Atención");
     assert.equal(screen.getAllByRole("radio", { name: /^Sí/ })[0]!.getAttribute("aria-checked"), "true", "handoff activo");
     await waitSaved();

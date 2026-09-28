@@ -167,7 +167,7 @@ export const policiesSchema = z
  * FASE 8 — presentación: SOLO estilo de las respuestas. Nunca entra en la huella de ejecución ni cambia un hecho
  * (precio, fecha, disponibilidad, resultado): esos los pone el backend. Ausente = tono "cercano".
  */
-export const presentationSchema = z.object({ tone: z.enum(AGENT_TONES) }).strict();
+export const presentationSchema = z.object({ tone: z.enum(AGENT_TONES), assistantName: optionalText(60) }).strict();
 
 // ---------------------------------------------------------------------------
 // Modelo completo

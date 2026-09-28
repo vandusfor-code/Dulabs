@@ -61,7 +61,8 @@ export interface CompiledAgentArtifact {
   knowledge: { enabled: boolean; onNoAnswer: "message" | "handoff"; noAnswerMessage: string };
   policies: { offerHandoff: boolean };
   /** FASE 8 — SOLO estilo de las respuestas: tono y locale del texto. No entra a la huella de ejecución. */
-  presentation: { tone: AgentTone; locale: string };
+  /** Estilo (NO entra en la huella de ejecución). FASE 10: nombre del asistente que configuró el negocio. */
+  presentation: { tone: AgentTone; locale: string; assistantName?: string };
   /** FASE 8 — recursos entre los que el cliente elige al reservar (vacío = no se pregunta). */
   resources: ReadonlyArray<{ id: string; name: string; kind: string }>;
   /** FASE 8 — recordatorios de cita que el cliente puede pedir. */

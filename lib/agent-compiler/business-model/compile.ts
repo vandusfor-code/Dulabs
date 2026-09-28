@@ -145,7 +145,7 @@ function compileValidated(model: BusinessModel, caps: ResolvedCapabilities, ctx:
       noAnswerMessage: caps.knowledge?.config.noAnswerMessage?.trim() || DEFAULT_NO_ANSWER_MESSAGE,
     },
     policies: { offerHandoff: Boolean(caps.handoff) && model.policies.unsupportedRequest === "offer_handoff" },
-    presentation: { tone: model.presentation?.tone ?? "cercano", locale: model.identity.language },
+    presentation: { tone: model.presentation?.tone ?? "cercano", locale: model.identity.language, ...(model.presentation?.assistantName ? { assistantName: model.presentation.assistantName } : {}) },
     resources: booking ? selectableResources(model) : [],
     reminders: { enabled: Boolean(caps.reminders && booking), offsetMinutes: caps.reminders?.config.offsetMinutes ?? 0 },
     leadCapture: { enabled: Boolean(caps.lead_capture), fieldKeys: caps.lead_capture ? [...caps.lead_capture.config.fieldKeys] : [], captureInterest: caps.lead_capture?.config.captureInterest ?? false },

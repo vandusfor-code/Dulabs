@@ -20,7 +20,8 @@ export const end = (text: string) => (text.endsWith(".") ? text : `${text}.`);
 export const SUPPORTED_LOCALES = ["es"] as const;
 
 export interface Phrases {
-  greeting(businessName: string): string;
+  /** FASE 10 — con el nombre del asistente que configuró el negocio (si lo hay). */
+  greeting(businessName: string, assistantName?: string): string;
   farewell: string;
   complaint: string;
   howCanIHelp: string;
@@ -77,7 +78,7 @@ export interface Phrases {
 }
 
 const cercano: Phrases = {
-  greeting: (n) => `¡Hola! Soy el asistente de ${n}. ¿En qué te puedo ayudar?`,
+  greeting: (n, a) => (a ? `¡Hola! Soy ${a}, el asistente de ${n}. ¿En qué te puedo ayudar?` : `¡Hola! Soy el asistente de ${n}. ¿En qué te puedo ayudar?`),
   farewell: "¡Gracias por escribirnos! Que tengas un buen día.",
   complaint: "Lamento el inconveniente. ¿Me cuentas qué pasó?",
   howCanIHelp: "¿En qué te puedo ayudar?",
@@ -146,7 +147,7 @@ const cercano: Phrases = {
 
 const profesional: Phrases = {
   ...cercano,
-  greeting: (n) => `Hola, soy el asistente virtual de ${n}. ¿En qué puedo ayudarte?`,
+  greeting: (n, a) => (a ? `Hola, soy ${a}, el asistente virtual de ${n}. ¿En qué puedo ayudarte?` : `Hola, soy el asistente virtual de ${n}. ¿En qué puedo ayudarte?`),
   farewell: "Gracias por comunicarte con nosotros. Que tengas un buen día.",
   complaint: "Lamento lo ocurrido. ¿Podrías contarme qué pasó?",
   howCanIHelp: "¿En qué puedo ayudarte?",
@@ -161,7 +162,7 @@ const profesional: Phrases = {
 
 const casual: Phrases = {
   ...cercano,
-  greeting: (n) => `¡Hola! 👋 Aquí el asistente de ${n}. ¿Qué necesitas?`,
+  greeting: (n, a) => (a ? `¡Hola! 👋 Aquí ${a}, del equipo de ${n}. ¿Qué necesitas?` : `¡Hola! 👋 Aquí el asistente de ${n}. ¿Qué necesitas?`),
   farewell: "¡Gracias por escribir! Que te vaya súper.",
   howCanIHelp: "¿Qué necesitas?",
   anythingElse: "¿Algo más en lo que te ayude?",
@@ -174,7 +175,7 @@ const casual: Phrases = {
 
 const formal: Phrases = {
   ...cercano,
-  greeting: (n) => `Buen día. Le atiende el asistente de ${n}. ¿En qué puedo servirle?`,
+  greeting: (n, a) => (a ? `Buen día. Le atiende ${a}, asistente de ${n}. ¿En qué puedo servirle?` : `Buen día. Le atiende el asistente de ${n}. ¿En qué puedo servirle?`),
   farewell: "Gracias por comunicarse con nosotros. Que tenga un buen día.",
   complaint: "Lamentamos el inconveniente. ¿Podría indicarnos qué sucedió?",
   howCanIHelp: "¿En qué puedo servirle?",

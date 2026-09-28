@@ -120,6 +120,8 @@ export interface PipelineOptions {
   limiter?: RateLimiter;
   /** FASE 9 — agentVersion servida (para probar integridad de versión); por defecto la del artefacto. */
   versionRef?: string;
+  /** FASE 10 — el artefacto PUBLICADO tal cual (lo que el runtime de producción carga cuando está enlazado). */
+  artifact?: CompiledAgentArtifact;
 }
 
 export function artifactOf(spec: BusinessAgentSpec, tenantId: string, agentId = "flow-1", versionRef = "v1"): CompiledAgentArtifact {
@@ -131,7 +133,7 @@ export function artifactOf(spec: BusinessAgentSpec, tenantId: string, agentId = 
 /** Un negocio con su runtime completo. Cada `say` es un mensaje de WhatsApp del mismo cliente. */
 export function createPipeline(spec: BusinessAgentSpec, opts: PipelineOptions) {
   const agentId = opts.agentId ?? "flow-1";
-  const artifact = artifactOf(spec, opts.tenantId, agentId, opts.versionRef ?? "v1");
+  const artifact = opts.artifact ?? artifactOf(spec, opts.tenantId, agentId, opts.versionRef ?? "v1");
   const key: ConversationStateKey = { tenantId: opts.tenantId, phoneNumberId: opts.phoneNumberId ?? "pn-a", telefonoCliente: "573001112233", agentId };
   let now = START;
   const clock = () => new Date(now);

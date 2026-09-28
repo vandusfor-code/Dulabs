@@ -22,6 +22,8 @@ export interface RenderInput {
   /** Resultados de acciones ejecutadas en ESTE turno (en orden). */
   actions: readonly ActionResult[];
   businessName: string;
+  /** FASE 10 — nombre del asistente que configuró el negocio (solo estilo). */
+  assistantName?: string;
   /** Pregunta configurada por el negocio para cada dato (customerData.question), por nombre de slot. */
   questions: Readonly<Record<string, string>>;
   /** FASE 5 (artefacto): mensaje al transferir. */
@@ -372,7 +374,7 @@ function renderCore(input: RenderInput): string | null {
     case "CONVERSATIONAL": {
       switch (plan.conversationalIntent) {
         case "GREETING":
-          return withExtra(p.greeting(input.businessName));
+          return withExtra(p.greeting(input.businessName, input.assistantName));
         case "FAREWELL":
           return p.farewell;
         case "COMPLAINT":
