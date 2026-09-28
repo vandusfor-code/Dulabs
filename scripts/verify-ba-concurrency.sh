@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Business Agent 2.0, FASE 9 — concurrencia REAL contra un PostgreSQL LOCAL EFÍMERO (nunca producción).
 #
-# Aplica la cadena 20261123 → 20261128 y lanza sesiones psql EN PARALELO (procesos distintos, conexiones distintas)
+# Aplica la cadena 20261123 → 20261129 y lanza sesiones psql EN PARALELO (procesos distintos, conexiones distintas)
 # sobre las funciones que protegen la operación multi-tenant. Cada caso afirma un invariante con números exactos:
 #
 #   C1  8 despachadores reclaman 300 recordatorios de 30 tenants → cada uno se toma UNA vez (0 duplicados)
 #   C2  10 sesiones programan el MISMO recordatorio (misma operación) → 1 fila
-#   C3  10 sesiones programan recordatorios para la MISMA cita con operaciones distintas → 1 activo
+#   C3  5 rondas × 10 sesiones programan la MISMA cita con operaciones distintas → 1 activo y 0 errores (20261129)
 #   C4  cancelar vs begin_send en carrera (50 recordatorios) → nunca se envía uno cancelado antes del envío
 #   C5  40 golpes simultáneos con límite 25 → exactamente 25 permitidos
 #   C6  40 registros de uso simultáneos → contador exacto (sin incrementos perdidos)
@@ -55,7 +55,8 @@ SQL
 chmod 644 "$WORK"/*.sql
 "${PSQL[@]}" -f "$WORK/prereq.sql" -f "$WORK/publish_fn.sql" -f "$WORK/updated_at_fn.sql" >/dev/null
 for m in 20261123000000_dulabs_ba_conversation_states 20261124000000_dulabs_ba_action_engine 20261125000000_dulabs_ba_business_models \
-         20261126000000_dulabs_ba_onboarding 20261127000000_dulabs_ba_reminders 20261128000000_dulabs_ba_production_hardening; do
+         20261126000000_dulabs_ba_onboarding 20261127000000_dulabs_ba_reminders 20261128000000_dulabs_ba_production_hardening \
+         20261129000000_dulabs_ba_reminder_schedule_lock; do
   "${PSQL[@]}" -f "$ROOT/supabase/migrations/$m.sql" >/dev/null
 done
 q() { "${PSQL[@]}" -c "$1"; }
@@ -94,14 +95,17 @@ ERRS=$(cat "$WORK"/c2.* | grep -c -i 'error' || true)
 echo "PASS C2 10 sesiones con la MISMA operación: 1 fila, 1 'scheduled', 9 idempotentes, 0 errores"
 
 # C3 ------------------------------------------------------------------------------------------------------------------
-for w in $(seq 1 10); do
-  ( "${PSQL[@]}" -c "select outcome from dulabs_ba_reminder_schedule('$T1', 'f', 'pn:c3', 'pn', '5731', 'cita-c3', now() + interval '3 hour', null, now() + interval '2 hour' - make_interval(mins => $w), 'America/Bogota', 'x', '$(KEYHEX $((910000 + w)))', 'cercano')" > "$WORK/c3.$w" 2>&1 ) &
+# Varias rondas: una sola ronda puede "ganar" la carrera por azar (así pasó C3 en FASE 9 antes de 20261129).
+for round in 1 2 3 4 5; do
+  for w in $(seq 1 10); do
+    ( "${PSQL[@]}" -c "select outcome from dulabs_ba_reminder_schedule('$T1', 'f', 'pn:c3-$round', 'pn', '5731', 'cita-c3', now() + interval '3 hour', null, now() + interval '2 hour' - make_interval(mins => $w), 'America/Bogota', 'x', '$(KEYHEX $((910000 + round * 100 + w)))', 'cercano')" > "$WORK/c3.$round.$w" 2>&1 ) &
+  done
+  wait
+  ACTIVE=$(q "select count(*) from dulabs_ba_reminders where conversation_id = 'pn:c3-$round' and status in ('scheduled', 'sending')")
+  ERRS=$(cat "$WORK"/c3.$round.* | grep -c -i 'error' || true)
+  [ "$ACTIVE" = "1" ] && [ "$ERRS" = "0" ] || { grep -h -m2 ERROR "$WORK"/c3.$round.*; fail "C3 ronda $round: activos=$ACTIVE errores=$ERRS"; }
 done
-wait
-ACTIVE=$(q "select count(*) from dulabs_ba_reminders where conversation_id = 'pn:c3' and status in ('scheduled', 'sending')")
-ERRS=$(cat "$WORK"/c3.* | grep -c -i 'error' || true)
-[ "$ACTIVE" = "1" ] && [ "$ERRS" = "0" ] || { cat "$WORK"/c3.*; fail "C3 activos=$ACTIVE errores=$ERRS"; }
-echo "PASS C3 10 operaciones distintas para la MISMA cita en paralelo: exactamente 1 recordatorio activo, 0 errores"
+echo "PASS C3 5 rondas × 10 operaciones distintas para la MISMA cita en paralelo: siempre 1 recordatorio activo, 0 errores"
 
 # C4 ------------------------------------------------------------------------------------------------------------------
 q "do \$\$ declare i int; begin

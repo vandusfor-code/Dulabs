@@ -61,7 +61,7 @@ verificar desconocidos → claim (lease + SKIP LOCKED) → begin_send → ventan
 
 | Garantía | Cómo | Evidencia |
 |---|---|---|
-| Un recordatorio activo por cita | índice único parcial + `schedule` = upsert por clave | test 1; Postgres C2/C3 |
+| Un recordatorio activo por cita | índice único parcial + `schedule` = upsert por clave, serializado por cita (20261129) | test 1; Postgres C2/C3 (C3: 5 rondas × 10) |
 | Reprogramar ⇒ el viejo no sale | `reschedule` mueve/invalida; texto al enviar | test 4; SQL PASS 1/3 |
 | Cancelar ⇒ cancelado (aun tomado) | `cancel` invalida `sending`; `begin_send` lo cierra | test 3; SQL PASS 2; Postgres C4 (50 carreras, 0 inconsistentes) |
 | Evento duplicado ⇒ nada duplicado | clave de la operación del Action Engine | test 1 |
@@ -183,7 +183,7 @@ con la IA caída (frases fijas) y la frase que sugiere cada tono la reconoce el 
 |---|---|
 | `lib/agent-compiler/runtime/fase9.test.ts` | 30/30 (tests 1–24 + 10b + kill switch, despliegue, onboarding, soporte) |
 | `lib/agent-compiler/runtime/fase8.test.ts` | 46/46 |
-| `scripts/verify-ba-migration-chain.sh` | 45 tests SQL PASS (9 nuevos) |
+| `scripts/verify-ba-migration-chain.sh` | 48 tests SQL PASS (9 de 28 + 3 de 29) |
 | `scripts/verify-ba-concurrency.sh` | 11/11 casos con sesiones psql paralelas |
 | `scripts/perf/ba-fase9-pgbench.sh` | 10/50/100 clientes: 0 transacciones fallidas, uso exacto |
 | `scripts/perf/ba-fase9-load.ts` | 10/50/100 tenants × 3 conversaciones en proceso: 0 estados cruzados, reservas exactas |
@@ -209,3 +209,20 @@ lleva `(Ref. XXXXXXXX)` con formato exacto).
 - Costo: estimación con tarifas declaradas; los turnos del grafo no reportan tokens.
 - Sin política automática de retención para `dulabs_ba_incidents` / `dulabs_ba_usage_daily` (crecen por día y error).
 - Nada de esto fue verificado contra Meta, Nylas o Gemini reales (sin credenciales en este entorno).
+
+## 14. Verificación de producción (posterior a FASE 9)
+
+**Defecto encontrado y corregido — `20261129000000_dulabs_ba_reminder_schedule_lock`.** `dulabs_ba_reminder_schedule`
+(20261127) buscaba el recordatorio activo con `SELECT … FOR UPDATE`; si aún no existía no había fila que bloquear y dos
+operaciones DISTINTAS para la misma cita en paralelo insertaban ambas: la segunda fallaba con `unique_violation` en
+`dulabs_ba_reminders_activo_uidx` en lugar de devolver `updated`. El invariante (un solo activo) se mantenía y en la app
+el reintento de la escritura idempotente lo absorbía, pero la función fallaba. El reporte de FASE 9 dio C3 por PASS con
+UNA corrida (la carrera no ocurrió); al repetirla falló (4 de 5 rondas con errores). Corrección: candado transaccional
+`pg_advisory_xact_lock` por (tenant, conversación, cita) al inicio de la MISMA función (misma firma; la de 13
+argumentos delega en ella). C3 ahora son 5 rondas × 10 sesiones: sin 20261129 falla; con ella 3/3 corridas completas OK.
+
+**Estado del despliegue (evidencia de GitHub):** el código de FASE 1–9 está en `claude/hola-a9cgg2` y NO en `main`
+(último commit de `main`: merge #147). Si producción despliega `main`, las rutas `/api/business-agent/health`,
+`/diagnostics` y `/reminders/dispatch` no existen allí. Desde este entorno no se pudo consultar `www.dulabs.co` ni QStash
+(la política de red los bloquea) ni Supabase (sin credenciales): la verificación en vivo queda pendiente con las
+consultas de solo lectura de verificación (esquema y ejecución).
