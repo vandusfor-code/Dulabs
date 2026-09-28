@@ -310,7 +310,7 @@ export async function processConversationTurn(deps: ConversationServiceDeps, inp
       if (resolved && catalog && catalog !== "unavailable") {
         const u = resolved.understanding;
         if ([u.intent.primary, ...u.intent.secondary].some((i) => i.intent === "PRICE_INQUIRY")) {
-          const prices = priceFactsFor(catalog, state);
+          const prices = priceFactsFor(catalog, state, u.slots.service);
           if (prices.length > 0) facts = { prices };
         }
       }

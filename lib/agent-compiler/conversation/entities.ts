@@ -426,11 +426,26 @@ export interface PriceFact {
  * Precios REALES de lo que el cliente está mirando: el servicio elegido o, si aún duda, las opciones que se le
  * mostraron. Nada de precios de servicios que no estén en el catálogo; sin precio conocido, no hay hecho.
  */
-export function priceFactsFor(catalog: TurnCatalog | null, state: ConversationState): PriceFact[] {
+/**
+ * FASE 10 — `understood`: el servicio que el cliente nombró en ESTE mensaje (resuelto contra el catálogo). Con él, un
+ * "¿cuánto cuesta el corte?" como PRIMER mensaje recibe el precio real aunque el estado todavía no tenga ese dato (antes
+ * caía a la búsqueda de conocimiento y, sin FAQ, decía que no sabía). Sin ningún servicio mencionado se listan los
+ * precios del catálogo (acotado); un servicio que no existe no lista nada (el negocio no lo ofrece).
+ */
+export function priceFactsFor(catalog: TurnCatalog | null, state: ConversationState, understood?: UnderstoodSlot): PriceFact[] {
   const services = catalog?.services ?? [];
   if (services.length === 0) return [];
   const slot = state.slots.service;
-  const names = isSlotUsable(slot) ? [slotDisplayValue(slot.value)] : (slot?.candidates ?? []);
+  let names: string[];
+  if (understood) {
+    // Lo que el cliente nombró EN ESTE mensaje manda sobre lo que quedó en el estado.
+    if (understood.status === "resolved" && understood.normalizedBy === "business_catalog" && understood.value) names = [slotDisplayValue(understood.value)];
+    else if (understood.status === "ambiguous") names = understood.candidates ?? [];
+    else return [];
+  } else {
+    names = isSlotUsable(slot) ? [slotDisplayValue(slot.value)] : (slot?.candidates ?? []);
+    if (names.length === 0) names = services.map((s) => s.name);
+  }
   return names
     .map((n) => services.find((s) => s.name === n))
     .filter((s): s is CatalogService => Boolean(s) && s!.price !== undefined)

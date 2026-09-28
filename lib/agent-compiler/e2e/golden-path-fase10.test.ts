@@ -184,10 +184,15 @@ describe("FASE 10 — golden path: barbería nueva (citas, precios, horario prop
     // Tono profesional y el nombre del asistente que el negocio configuró.
     assert.equal(p.sent.at(-1), "Hola, soy Leo, el asistente virtual de Barbería Los Andes. ¿En qué puedo ayudarte?");
 
-    // Precio: hecho del catálogo real (nunca del modelo).
+    // Precio: el negocio cotiza (quotes) → el BACKEND calcula la cotización con su catálogo (acción de lectura del
+    // tenant); el modelo nunca pone el precio. El texto es el que devuelve el handler de cotización.
+    const quoteCalls = p.calls("calcular_cotizacion").length;
     await say("¿Cuánto cuesta el corte clásico?", out("PRICE_INQUIRY", [S("service", "corte clásico", "Corte clásico")]));
+    const quote = p.calls("calcular_cotizacion");
+    assert.equal(quote.length, quoteCalls + 1);
+    assert.equal(quote.at(-1)!.tenantId, TENANT_A);
+    assert.match(String(quote.at(-1)!.payload.items), /Corte clásico/);
     assert.match(p.sent.at(-1)!, /Corte clásico: \$\s?30\.000/);
-    assert.doesNotMatch(p.sent.at(-1)!, /45\.000.*Corte clásico/);
 
     // Cita dentro del horario PROPIO (martes 6:30 p. m. existe aquí; con la plantilla 9–18 no existiría).
     await say(
@@ -326,5 +331,24 @@ describe("FASE 10 — golden path: negocio híbrido (productos ≠ servicios ≠
     const booked = p.calls("crear_cita_nylas_generico");
     assert.deepEqual([booked.length, booked[0]!.tenantId, booked[0]!.payload.servicio], [1, TENANT_C, "Corte de dama"]);
     assert.ok(inventory.reads.every((t) => t === TENANT_C));
+  });
+});
+
+describe("FASE 10 — defecto encontrado: '¿cuánto cuesta X?' como PRIMER mensaje (negocio SIN cotización)", () => {
+  it("responde el precio REAL del catálogo; un servicio inexistente no lista precios; sin servicio lista los precios", async () => {
+    const world = createWorld();
+    const d = barberiaDraft();
+    d.offer = { ...d.offer, quotes: false };
+    const { served, flowId, activeArtifact } = await configureAndPublish(world, TENANT_A, d);
+    const p = createPipeline(served.spec, { tenantId: TENANT_A, agentId: flowId, artifact: activeArtifact, catalogServices: BARBERIA_CATALOG });
+    // Antes: sin el servicio en el estado, la respuesta salía SOLO de la búsqueda de conocimiento (sin FAQ: "no sé").
+    p.handler.on("buscar_conocimiento", () => ({ success: true, classification: "SUCCESS", data: { conocimientoEncontrado: false } }));
+    const r = await p.say("¿Cuánto cuesta el corte clásico?", out("PRICE_INQUIRY", [S("service", "corte clásico", "Corte clásico")]));
+    assert.match(r.reply!, /Corte clásico: \$\s?30\.000/);
+    assert.doesNotMatch(r.reply!, /45\.000/, "solo el servicio preguntado");
+    const all = await p.say("¿Cuánto cuestan sus servicios?", out("PRICE_INQUIRY"));
+    assert.match(all.reply!, /Corte clásico: \$\s?30\.000[\s\S]*Corte \+ barba: \$\s?45\.000/);
+    const none = await p.say("¿Cuánto cuesta un masaje?", out("PRICE_INQUIRY", [S("service", "masaje")]));
+    assert.doesNotMatch(none.reply ?? "", /\$\s?\d/, "un servicio que no existe no recibe precios de otros");
   });
 });

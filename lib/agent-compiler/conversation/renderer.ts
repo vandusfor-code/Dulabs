@@ -354,6 +354,10 @@ function renderCore(input: RenderInput): string | null {
         return at ? p.reminderScheduled(formatInstant(at, state.timezone), last.data.actualizado === true) : null;
       }
       if (last.action === "ba_consultar_producto") return withExtra(lookupText(last, p, input, input.noAnswerMessage));
+      // FASE 10 — "¿cuánto cuesta X?" sin cotización: los precios REALES del catálogo van primero; lo que diga la
+      // búsqueda de conocimiento solo se agrega si encontró algo (nunca "no tengo esa información" junto a un precio real).
+      const priceFacts = last.action === "buscar_conocimiento" && !quoted ? priceFactsText(input, p) : null;
+      if (priceFacts) return [priceFacts, last.data.conocimientoEncontrado === true ? lookupText(last, p, input, input.noAnswerMessage) : null].filter(Boolean).join("\n\n");
       return lookupText(last, p, input, input.noAnswerMessage);
     }
     case "CANCELLATION_ACK":
