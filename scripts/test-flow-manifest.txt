@@ -519,3 +519,4 @@ lib/agent-compiler/runtime/fase8.test.ts
 lib/agent-compiler/runtime/fase9.test.ts
 lib/agent-compiler/runtime/dispatcher-budget.test.ts
 lib/agent-compiler/e2e/golden-path-fase10.test.ts
+lib/agent-compiler/e2e/safety-fase10.test.ts
