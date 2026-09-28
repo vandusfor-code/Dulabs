@@ -226,3 +226,41 @@ argumentos delega en ella). C3 ahora son 5 rondas × 10 sesiones: sin 20261129 f
 `/diagnostics` y `/reminders/dispatch` no existen allí. Desde este entorno no se pudo consultar `www.dulabs.co` ni QStash
 (la política de red los bloquea) ni Supabase (sin credenciales): la verificación en vivo queda pendiente con las
 consultas de solo lectura de verificación (esquema y ejecución).
+
+## 15. Investigación del despachador en producción (28-09-2026)
+
+**Evidencia (QStash Logs, hora local UTC−5, y `dulabs_ba_job_runs`).** Mensajes del schedule `*/5` a
+`/api/business-agent/reminders/dispatch`: 08:15–08:45 FAILED, 08:50 DELIVERED. La "Duration" de QStash es el tiempo del
+mensaje desde su creación hasta su estado final, **incluidos los reintentos**, no el tiempo de una ejecución. Backoff
+por defecto de QStash (documentación oficial): `delay = min(86400, e^(2.5·n))` → 12 s + 2 m 28 s + 30 m 8 s = 32 m 49 s
+para 3 reintentos. Duración media observada de los 8 mensajes: 32 m 58 s. Ninguna ejecución individual puede durar
+30 minutos: la ruta tiene `maxDuration = 60`.
+
+**Causa de los FAILED.** Hasta el merge del PR #148 (14:15 UTC) la ruta no existía en `main`: en el commit `d262514`
+(base del PR) no hay `app/api/business-agent/reminders/dispatch/route.ts`, y `proxy.ts` no intercepta
+`/api/business-agent`. Cada intento recibía una respuesta no-2xx; tras 4 intentos QStash marcaba FAILED (DLQ). El
+código HTTP exacto no se pudo leer desde este entorno (QStash bloqueado por la red): queda por confirmar en el detalle
+del mensaje en la consola.
+
+**Por qué 08:50 fue DELIVERED.** Su último reintento (creación 13:50:00 UTC + 32 m 05 s) llegó a las 14:22:05 UTC, ya con
+el despliegue activo. El latido de producción marca `last_finished_at = 14:22:05.78 UTC`, `last_ok = true`,
+`claimed = 0`. El último intento de 08:45 (14:17:35 UTC) todavía falló, así que el despliegue quedó activo entre
+14:17:35 y 14:19:44 UTC (primer `/health` = `alive`).
+
+**Defecto latente encontrado en la auditoría y corregido.** El despacho tomaba el lote completo (hasta 50) con un lease de
+60 s y lo recorría en serie, sin presupuesto de tiempo y sin timeout en las llamadas a Postgres, dentro de una función de
+60 s. Si la plataforma la cortaba a mitad del lote, los recordatorios que NUNCA llegaron a Meta quedaban en `sending`; el
+siguiente despacho los marcaba `unknown`, la verificación no los encontraba y, por diseño, no se reenvían: el cliente no
+recibía el recordatorio, la respuesta era 504 y no quedaba latido. Reproducción: `dispatcher-budget.test.ts` D1
+(50 vencidos, 1,5 s c/u → `rem-42…rem-50` quedaban `unknown` sin intento; ejecución cortada a 61,5 s).
+Corrección:
+- se toma DE A UNO (`claim_due(1, 60)`) justo antes de procesar cada recordatorio, mientras quede presupuesto
+  (`DISPATCH_BUDGET_MS = 15 s`); los que no alcanzan siguen `scheduled` para la próxima ejecución;
+- cliente de Postgres propio de la ruta con timeout por llamada (`DISPATCH_DB_TIMEOUT_MS = 3 s`);
+- peor caso: 15 + (8·3 + 10) + 2·3 = 55 s < 60 s, así que siempre hay respuesta y latido.
+
+No cambia el SQL: sin migración nueva. La idempotencia (claim con `SKIP LOCKED` + fencing por `attempts`), la
+cancelación y reprogramación (`begin_send`), el desenlace desconocido con verificación y el aislamiento por tenant siguen
+iguales. Evidencia: D1–D4, FASE 8 (46/46), FASE 9 (30/30), regresión del Business Agent 865/865,
+`verify-ba-concurrency.sh` 12/12 (C12: 8 despachadores tomando de a uno, 200 recordatorios, 0 duplicados), tsc, lint y
+build.
