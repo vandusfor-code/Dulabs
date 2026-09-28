@@ -81,7 +81,7 @@ export function createInProcessApi(world: World, sessions: Record<string, string
       const read = await readBody(request, ["phoneNumberId"]);
       if (!read.ok) return read.response;
       const r = await activateOnboarding(deps, { phoneNumberId: String(read.body.phoneNumberId) });
-      if (!r.ok) return apiError(r.code, r.message, 409, { reasons: r.reasons });
+      if (!r.ok) return apiError(r.code, r.message, 409, { reasons: r.reasons, blockers: r.blockers });
       return apiOk(r);
     }
     return Response.json({ error: "no encontrado" }, { status: 404 });
