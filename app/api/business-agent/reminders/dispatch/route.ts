@@ -8,18 +8,39 @@
  * capacidades como integración "no verificada"). FASE 9: cada ejecución deja un latido (readiness en /health).
  */
 import type { NextRequest } from "next/server";
-import { supabaseAdmin } from "@/lib/supabase";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { solicitudAutorizadaCron } from "@/lib/cron-auth";
-import { createProductionReminderDispatchDeps, dispatchDueReminders } from "@/lib/agent-compiler/runtime/production/reminder-dispatcher";
+import {
+  createProductionReminderDispatchDeps,
+  dispatchDueReminders,
+  DISPATCH_DB_TIMEOUT_MS,
+  fetchWithTimeout,
+} from "@/lib/agent-compiler/runtime/production/reminder-dispatcher";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
+
+// Cliente de Postgres PROPIO del despachador: cada llamada con timeout (una consulta colgada nunca consume los 60 s de
+// la función). No se toca el cliente compartido (lib/supabase).
+let client: SupabaseClient | null = null;
+function supabaseDespachador(): SupabaseClient {
+  if (!client) {
+    const url = process.env.SUPABASE_URL;
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!url || !key) throw new Error("Faltan SUPABASE_URL o SUPABASE_SERVICE_ROLE_KEY en las variables de entorno");
+    client = createClient(url, key, {
+      auth: { persistSession: false, autoRefreshToken: false },
+      global: { fetch: fetchWithTimeout(fetch, DISPATCH_DB_TIMEOUT_MS) },
+    });
+  }
+  return client;
+}
 
 async function manejar(request: NextRequest) {
   const cuerpo = await request.text();
   if (!(await solicitudAutorizadaCron(request, cuerpo))) return new Response("Unauthorized", { status: 401 });
   try {
-    const supabase = supabaseAdmin();
+    const supabase = supabaseDespachador();
     const summary = await dispatchDueReminders(createProductionReminderDispatchDeps(supabase), { limit: 50 });
     // FASE 9 — mantenimiento del mismo job: ventanas de límites de uso ya vencidas (> 2 h). Best-effort.
     const pruned = await supabase.rpc("dulabs_ba_rate_counters_prune", { p_older_than_seconds: 7200 }).then(

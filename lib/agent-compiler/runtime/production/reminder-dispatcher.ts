@@ -31,6 +31,23 @@ export const WHATSAPP_SESSION_WINDOW_MS = 24 * 60 * 60 * 1000;
 export const MAX_REMINDER_ATTEMPTS = RETRY_POLICIES.reminder_send.maxAttempts;
 export const REMINDER_LEASE_SECONDS = 60;
 export const REMINDER_DISPATCH_JOB = "reminders_dispatch";
+/**
+ * Presupuesto de una ejecución: después de este tiempo NO se toma ningún recordatorio nuevo (los que queden siguen
+ * 'scheduled' para la próxima). Peor caso: presupuesto + UN recordatorio en curso (8 llamadas a Postgres y Meta, todas
+ * con timeout) + latido + limpieza = 15 + (8·3 + 10) + 2·3 = 55 s < maxDuration (60 s): la función siempre responde.
+ */
+export const DISPATCH_BUDGET_MS = 15_000;
+/** Timeout de cada llamada a Postgres (PostgREST) del despachador. */
+export const DISPATCH_DB_TIMEOUT_MS = 3_000;
+
+/** fetch con timeout propio (y respetando la señal de quien llama) para el cliente de Postgres del despachador. */
+export function fetchWithTimeout(base: typeof fetch, ms: number): typeof fetch {
+  return (input, init) => {
+    const timeout = AbortSignal.timeout(ms);
+    const signal = init?.signal ? AbortSignal.any([init.signal, timeout]) : timeout;
+    return base(input, { ...init, signal });
+  };
+}
 
 export type SendOutcome = { kind: "sent"; providerMessageId?: string | null } | { kind: "retryable"; code: string } | { kind: "definitive"; code: string } | { kind: "ambiguous"; code: string };
 
@@ -84,9 +101,11 @@ export function renderReminderText(r: Pick<DueReminder, "tone" | "service" | "ap
   return phrasebook(r.tone).reminderMessage(r.service, formatInstant(r.appointmentStart, r.timezone)).slice(0, 500);
 }
 
-export async function dispatchDueReminders(deps: ReminderDispatchDeps, opts: { limit?: number } = {}): Promise<DispatchSummary> {
+export async function dispatchDueReminders(deps: ReminderDispatchDeps, opts: { limit?: number; budgetMs?: number } = {}): Promise<DispatchSummary> {
   const env = deps.env ?? process.env;
   const clock = deps.clock ?? (() => new Date());
+  const startedAt = clock().getTime();
+  const withinBudget = () => clock().getTime() - startedAt < (opts.budgetMs ?? DISPATCH_BUDGET_MS);
   const log = deps.log ?? ((e: ReminderDispatchEvent) => console.info("[business-agent.reminder]", JSON.stringify(e)));
   const summary: DispatchSummary = { disabled: false, claimed: 0, sent: 0, failed: 0, retried: 0, unknown: 0, skippedCancelled: 0, skippedRescheduled: 0, lost: 0, verifiedSent: 0, verifiedNotFound: 0 };
   const beat = async (ok: boolean) => {
@@ -109,6 +128,7 @@ export async function dispatchDueReminders(deps: ReminderDispatchDeps, opts: { l
     // 1. Desenlaces desconocidos: VERIFICAR (lectura) antes de cualquier envío nuevo. Nunca se reenvían.
     if (deps.findSent) {
       for (const r of await deps.store.unverified(limit)) {
+        if (!withinBudget()) break;
         let found: boolean;
         try {
           found = await deps.findSent(r, renderReminderText(r));
@@ -123,10 +143,13 @@ export async function dispatchDueReminders(deps: ReminderDispatchDeps, opts: { l
       }
     }
 
-    // 2. Vencidos.
-    const due = await deps.store.claimDue(limit, REMINDER_LEASE_SECONDS);
-    summary.claimed = due.length;
-    for (const r of due) {
+    // 2. Vencidos: se toman DE A UNO, justo antes de procesarlo, mientras quede presupuesto. Así el lease cubre solo el
+    //    recordatorio en curso y, si la función se corta, ninguno queda 'sending' sin haber llegado a Meta (el siguiente
+    //    despacho lo marcaría desconocido y nunca se enviaría). Los que no alcanzan siguen 'scheduled'.
+    while (summary.claimed < limit && withinBudget()) {
+      const [r] = await deps.store.claimDue(1, REMINDER_LEASE_SECONDS);
+      if (!r) break;
+      summary.claimed++;
       const close = async (status: "failed" | "unknown" | "retry", code: string, retryAt: string | null = null) => {
         await deps.store.complete({ tenantId: r.tenantId, id: r.id, attempts: r.attempts, status, error: code, retryAt });
         emit(r, status, code);
