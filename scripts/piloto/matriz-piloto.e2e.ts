@@ -43,6 +43,9 @@ import { accionGestion, detalleGestion, listarGestion, reintentarNotificacionGes
 import { productionNotificador } from "@/lib/catalogo/pedidos/notificaciones-produccion";
 import { ORDERS_MODULE, requireCatalogo } from "@/lib/catalogo/auth";
 import { moduloHabilitado } from "@/lib/tenant-modulos";
+import { createSupabaseClientesRepo } from "@/lib/catalogo/clientes/repositorio";
+import { detalleCliente, exportarClientes, guardarNotaCliente, listarClientes } from "@/lib/catalogo/clientes/servicio";
+import type { ClienteDetalle, ClienteFila } from "@/lib/catalogo/clientes/modelo";
 import { NextRequest } from "next/server";
 
 const db = createClient(URL_LOCAL, "local", { auth: { persistSession: false } });
@@ -1544,6 +1547,43 @@ describe("PILOTO DELACOUR — matriz de punta a punta (webhook real + PostgreSQL
       const det = (await (await detalleGestion(engine(), T, ob.pedido_publico, fuentesPanel(), notificador)).json()) as { data: { notificaciones: Array<{ tipo: string; estado: string; intentos: number }> } };
       assert.deepEqual(det.data.notificaciones.map((n) => [n.tipo, n.estado, n.intentos]), [["en_preparacion", "enviada", 1], ["entregado", "enviada", 2]]);
       assert.equal(gemini.length, g1, "Gemini nunca participó");
+    });
+
+    it("O. Bloque 33 — clientes: un cliente por contacto desde PostgreSQL real (pedidos del chat, filtros, búsqueda, nota con compare-and-set, CSV, aislado)", async () => {
+      const repo = createSupabaseClientesRepo(db);
+      type L = { data: { filas: ClienteFila[]; total: number } };
+      const listar = async (qs: string, tenant = T) => ((await (await listarClientes(repo, tenant, new URLSearchParams(qs))).json()) as L).data;
+      // Clientes reales de la matriz: Valentina (C[47]) completó su pedido; Mariana (C[54]) tiene uno confirmado.
+      const todos = await listar("");
+      assert.ok(todos.total >= 2);
+      const val = (await listar("q=Valentina")).filas;
+      assert.equal(val.length, 1);
+      assert.equal(val[0].waId, C[47]);
+      assert.equal(val[0].compras, 1);
+      assert.equal(val[0].ultimoEstado, "completed");
+      assert.ok(val[0].totalComprado > 0);
+      const mar = (await listar(`q=${C[54]}`)).filas[0];
+      assert.equal(mar?.nombre, "Mariana Ventana");
+      // Filtros sobre la BD real: quien compró aparece en "compraron" y no en "sin_compras".
+      assert.ok((await listar("filtro=compraron&q=Valentina")).total === 1);
+      assert.equal((await listar("filtro=sin_compras&q=Valentina")).total, 0);
+      // Ficha: pedidos reales del contacto, con su modalidad guardada.
+      const clave = `${PN}_${C[47]}`;
+      const ficha = (await (await detalleCliente(repo, createSupabaseCustomerChannelStore(db), T, clave)).json()) as { data: ClienteDetalle };
+      assert.ok(ficha.data.pedidos.some((p) => p.estado === "completed" && p.confirmado));
+      assert.equal(ficha.data.modalidad?.canal, "retail");
+      // Nota: crear, una edición vieja choca (409, nada se pisa), editar con la versión vista.
+      assert.equal((await guardarNotaCliente(repo, T, clave, { nota: "Cliente VIP", version: 0 }, MIEMBRO)).status, 200);
+      assert.equal((await guardarNotaCliente(repo, T, clave, { nota: "Otra persona", version: 0 }, MIEMBRO)).status, 409);
+      assert.equal((await guardarNotaCliente(repo, T, clave, { nota: "Cliente VIP, paga por Nequi", version: 1 }, MIEMBRO)).status, 200);
+      assert.deepEqual([(await repo.nota(T, PN, C[47]))?.texto, (await repo.nota(T, PN, C[47]))?.version], ["Cliente VIP, paga por Nequi", 2]);
+      assert.equal((await listar("q=Valentina")).filas[0].tieneNota, true);
+      // CSV de la lista filtrada, con la nota.
+      const csv = await (await exportarClientes(repo, T, new URLSearchParams("q=Valentina"))).text();
+      assert.match(csv, /Valentina[^\r\n]*;Cliente VIP, paga por Nequi\r\n$/);
+      // Aislamiento: el otro negocio no ve a estos clientes ni puede escribirles notas.
+      assert.equal((await listar(`q=${C[47]}`, TB)).total, 0);
+      assert.equal((await guardarNotaCliente(repo, TB, clave, { nota: "x", version: 0 }, MIEMBRO)).status, 404);
     });
   });
 

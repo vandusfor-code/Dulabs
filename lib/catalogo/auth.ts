@@ -27,7 +27,9 @@ export type CatalogAccessMode = "read" | "write" | "orders";
 export const CATALOG_MODULE = "catalogo" as const;
 /** Bloque 27: módulo "Pedidos" (gestión del pedido real). Se habilita por negocio, aparte del catálogo. */
 export const ORDERS_MODULE = "pedidos" as const;
-export type CatalogModule = typeof CATALOG_MODULE | typeof ORDERS_MODULE;
+/** Bloque 33: módulo "Clientes" del catálogo (un cliente por contacto). Se habilita por negocio. */
+export const CLIENTS_MODULE = "clientes_joyeria" as const;
+export type CatalogModule = typeof CATALOG_MODULE | typeof ORDERS_MODULE | typeof CLIENTS_MODULE;
 export const CATALOG_READ_ROLES: readonly Rol[] = ["admin", "agente", "lectura"];
 export const CATALOG_WRITE_ROLES: readonly Rol[] = ["admin"];
 export const CATALOG_ORDER_ROLES: readonly Rol[] = ["admin", "agente"];
@@ -53,7 +55,12 @@ export function decideCatalogAccess(input: { role: Rol; mode: CatalogAccessMode;
       allowed: false,
       status: 403,
       code: "MODULE_DISABLED",
-      message: input.module === ORDERS_MODULE ? "El módulo Pedidos no está habilitado para tu cuenta." : "El módulo Catálogo no está habilitado para tu cuenta.",
+      message:
+        input.module === ORDERS_MODULE
+          ? "El módulo Pedidos no está habilitado para tu cuenta."
+          : input.module === CLIENTS_MODULE
+            ? "El módulo Clientes no está habilitado para tu cuenta."
+            : "El módulo Catálogo no está habilitado para tu cuenta.",
     };
   }
   return { allowed: true };

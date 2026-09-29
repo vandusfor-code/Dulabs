@@ -14,6 +14,7 @@ import type { PublicationView } from "@/lib/catalogo/service";
 import type { PedidoHistorial, PedidoPanel } from "@/lib/catalogo/pedidos/panel";
 import type { AccionPedido, EstadoVisible, HistorialEntrada, NotificacionVista, PedidoGestion } from "@/lib/catalogo/pedidos/gestion";
 import type { ResultadoNotificacion, TipoNotificacion } from "@/lib/catalogo/pedidos/notificaciones";
+import type { ClienteDetalle, ClienteFila, FiltroClientes, NotaCliente } from "@/lib/catalogo/clientes/modelo";
 
 /** Bloque 27 — filtros del listado del módulo "Pedidos" (todos opcionales). */
 export interface PedidosFiltros {
@@ -75,6 +76,8 @@ export interface UploadTicket {
 const BASE = "/api/dashboard/catalogo";
 /** Bloque 27: módulo "Pedidos" (su propia API; exige el módulo "pedidos"). */
 const PEDIDOS_BASE = "/api/dashboard/pedidos";
+/** Bloque 33: módulo "Clientes" (su propia API; exige el módulo "clientes_joyeria"). */
+const CLIENTES_BASE = "/api/dashboard/clientes";
 
 async function call<T>(accessToken: string, path: string, init: RequestInit = {}, base: string = BASE): Promise<CatalogResult<T>> {
   let response: Response;
@@ -186,6 +189,41 @@ export function createCatalogClient(accessToken: string) {
       if (cursor) qs.set("cursor", cursor);
       const q = qs.toString();
       return call(accessToken, q ? `?${q}` : "", {}, PEDIDOS_BASE);
+    },
+
+    /** Bloque 33 — clientes (un cliente por contacto), filtrados y paginados por el backend. */
+    listClients(c: { q?: string; filtro?: FiltroClientes; pagina?: number }): Promise<CatalogResult<{ filas: ClienteFila[]; total: number; pagina: number; paginas: number; porPagina: number }>> {
+      const qs = new URLSearchParams();
+      if (c.q?.trim()) qs.set("q", c.q.trim());
+      if (c.filtro && c.filtro !== "todos") qs.set("filtro", c.filtro);
+      if (c.pagina && c.pagina > 1) qs.set("pagina", String(c.pagina));
+      const q = qs.toString();
+      return call(accessToken, q ? `?${q}` : "", {}, CLIENTES_BASE);
+    },
+
+    /** Bloque 33 — ficha de un cliente (`<phone_number_id>_<wa_id>`). */
+    getClient(clave: string): Promise<CatalogResult<ClienteDetalle>> {
+      return call(accessToken, `/${encodeURIComponent(clave)}`, {}, CLIENTES_BASE);
+    },
+
+    /** Bloque 33 — guarda la nota interna (compare-and-set con la versión que se VIO; 0 = nueva). */
+    saveClientNote(clave: string, nota: string, version: number): Promise<CatalogResult<{ nota: NotaCliente }>> {
+      return call(accessToken, `/${encodeURIComponent(clave)}/nota`, { method: "PUT", body: JSON.stringify({ nota, version }) }, CLIENTES_BASE);
+    },
+
+    /** Bloque 33 — CSV de la lista filtrada (para descargar). */
+    async exportClients(c: { q?: string; filtro?: FiltroClientes }): Promise<CatalogResult<{ blob: Blob; filename: string }>> {
+      const qs = new URLSearchParams();
+      if (c.q?.trim()) qs.set("q", c.q.trim());
+      if (c.filtro && c.filtro !== "todos") qs.set("filtro", c.filtro);
+      try {
+        const r = await fetch(`${CLIENTES_BASE}/exportar${qs.toString() ? `?${qs}` : ""}`, { headers: { Authorization: `Bearer ${accessToken}` } });
+        if (!r.ok) return { ok: false, error: { code: "EXPORT_FAILED", message: "No se pudo exportar la lista.", status: r.status } };
+        const filename = /filename="([^"]+)"/.exec(r.headers.get("Content-Disposition") ?? "")?.[1] ?? "clientes.csv";
+        return { ok: true, data: { blob: await r.blob(), filename } };
+      } catch {
+        return { ok: false, error: { code: "NETWORK_ERROR", message: "Sin conexión. Revisa tu internet e intenta de nuevo.", status: 0 } };
+      }
     },
 
     /** Bloque 27 — detalle de un pedido con su historial. */
