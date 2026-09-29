@@ -15,6 +15,7 @@
  *
  * Así, un número configurado con Gemini jamás termina respondido por Claude.
  */
+import { createSupabaseClientesRepo } from "@/lib/catalogo/clientes/repositorio";
 import { randomUUID } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ClienteConfig } from "@/lib/supabase";
@@ -370,6 +371,8 @@ export function productionAgentBoundaryDeps(supabase: SupabaseClient, cliente: C
       const tools: AgentToolsDeps = {
         ...catalogDeps,
         customerName: (k) => nombreConocido(supabase, k),
+        // Bloque 34: cliente antiguo marcado por el equipo (Dashboard → Clientes).
+        customerIsExisting: (k) => createSupabaseClientesRepo(supabase).yaCompro(k.tenantId, k.phoneNumberId, k.waId),
         // Bloque 27: el nombre que el cliente dio en el checkout (mismo registro que el resto de DuLabs).
         rememberCustomerName: (k, nombre) => recordarNombreCliente(supabase, { idTenant: k.tenantId, phoneNumberId: k.phoneNumberId, telefonoCliente: k.waId, nombre }),
       };

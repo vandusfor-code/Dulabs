@@ -47,6 +47,11 @@ export const businessConfigSchema = z
         mayor: z.string().trim().min(1).max(900).optional(),
         /** Al tocar "Buscar una joya". */
         buscar: z.string().trim().min(1).max(400).optional(),
+        /**
+         * Bloque 34: saludo de un cliente YA CONOCIDO (registrado por el equipo o que ya eligió su
+         * modalidad) que empieza una conversación con un saludo. `{nombre}` = su primer nombre.
+         */
+        saludo_conocido: z.string().trim().min(1).max(400).optional(),
       })
       .strict()
       .optional(),

@@ -325,6 +325,8 @@ export interface CheckoutIO {
   businessName: string | null;
   /** Bloque 32: textos del negocio (pregunta de pago, nota de envío, mínimo mayorista, nota final). */
   texts?: CheckoutTexts;
+  /** Bloque 34: el equipo lo marcó como cliente antiguo (ya compró fuera del bot): sin compra inicial. */
+  alreadyCustomer?: () => Promise<boolean>;
   /** Texto enviado (o null si no salió). */
   sendText(text: string): Promise<string | null>;
   /** Botones; si no salen, el texto alternativo. Devuelve lo enviado (o null). */
@@ -441,7 +443,9 @@ function backToCart(state: ConversationState, order: OrderPublicView | null): Co
 async function minimoMayorista(io: CheckoutIO, order: OrderPublicView): Promise<string | null> {
   const minimum = io.texts?.wholesaleMinimum;
   if (!minimum || io.channel !== "wholesale" || order.channel !== "wholesale" || order.total >= minimum) return null;
-  const bought = io.engine.hasPurchase ? await io.engine.hasPurchase({ tenantId: io.tenantId, contact: io.contact }).catch(() => false) : false;
+  const bought =
+    (io.engine.hasPurchase ? await io.engine.hasPurchase({ tenantId: io.tenantId, contact: io.contact }).catch(() => false) : false) ||
+    (io.alreadyCustomer ? await io.alreadyCustomer().catch(() => false) : false);
   return bought ? null : wholesaleMinimumBlocked(order.total, minimum);
 }
 

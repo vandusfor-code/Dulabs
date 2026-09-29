@@ -478,6 +478,8 @@ lib/agente/agente-rafaga-fotos.test.ts
 lib/catalogo/pedidos/notificaciones.test.ts
 lib/agente/agente-asesora-b32.test.ts
 lib/catalogo/clientes/clientes.test.ts
+lib/catalogo/clientes/registro-b34.test.ts
+lib/agente/agente-clientes-b34.test.ts
 lib/agente/formato-whatsapp.test.ts
 lib/agente/agente-meta-contexto.test.ts
 lib/agente/agente-busqueda.test.ts

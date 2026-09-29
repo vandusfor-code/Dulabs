@@ -9,6 +9,8 @@
 --
 -- Solo cambia la fila del agente de Delacour (su número). Conserva las demás claves de `negocio`.
 -- Generado desde scripts/delacour/aria-negocio.json (la prueba del bloque verifica que coincidan).
+-- Bloque 34: incluye `inicio.saludo_conocido` (saludo con el nombre de los clientes registrados). Si Aria ya
+-- está aplicada, basta con scripts/delacour/saludo-conocido.sql (solo agrega esa clave).
 
 -- 0) Respaldo: copia el resultado antes de aplicar (para volver atrás exactamente).
 select negocio from public.dulabs_agente_runtime_config
@@ -122,7 +124,8 @@ set negocio = coalesce(negocio, '{}'::jsonb) || $aria${
   "inicio": {
     "detal": "¡Con mucho gusto! 💖 Cuéntame qué estás buscando: ¿es para ti o para regalar?\n\nTambién puedes enviarme la foto o la referencia de la pieza que te gustó y te confirmo precio y disponibilidad ✨",
     "mayor": "¡Súper! 💎 Si estás buscando surtir tu negocio, estás en el lugar indicado.\n\nDesde 2009 acompañamos emprendimientos y negocios de joyería con más de 2.000 referencias en Plata 925, Acero quirúrgico 316, Rodio y Cover Gold ✨\n\nLa compra inicial mayorista parte de $750.000 (sujeta a condiciones vigentes) y escoges las referencias del inventario disponible.\n\nCuéntame, ¿ya tienes tu negocio o estás empezando a emprender?",
-    "buscar": "¡Claro! 💎 Cuéntame qué pieza buscas (tipo de joya, dorado o plateado, para quién…) o envíame la foto o la referencia y te ayudo a encontrarla."
+    "buscar": "¡Claro! 💎 Cuéntame qué pieza buscas (tipo de joya, dorado o plateado, para quién…) o envíame la foto o la referencia y te ayudo a encontrarla.",
+    "saludo_conocido": "¡Hola, {nombre}! ✨ Soy Aria, tu asesora de Delacour Joyería. Qué alegría saludarte 💎 ¿Qué estás buscando hoy?"
   },
   "pedido": {
     "pregunta_pago": "¿Cómo deseas pagar? 💎\n\n🏦 *Transferencia*: Nequi, Daviplata o cuenta bancaria\n💵 *Pago en tienda*: tarjeta o Addi\n\nUna asesora te envía los datos oficiales al confirmar.",
