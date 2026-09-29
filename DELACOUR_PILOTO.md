@@ -946,3 +946,51 @@ on conflict (id_tenant, modulo) do update set habilitado = true;
 - `supabase/tests/20261202000000_dulabs_catalogo_clientes.test.sql` (PostgreSQL real, 9 controles).
 - Matriz E2E, bloque O (pedidos reales del chat → clientes en PostgreSQL real).
 - Mutación: `python3 scripts/mutacion/b33.py` (15).
+
+## Bloque 34 · registrar clientes y que el asistente ya los conozca
+
+El equipo registra a sus clientes (uno a uno o desde Excel) con **nombre**, **celular**, **modalidad**
+(detal / mayorista) y, si aplica, **"Ya es cliente"** (ha comprado antes, fuera del bot). No hay tabla
+nueva de clientes: el nombre va a `dulabs_clientes_conocidos` (el mismo que usa el asistente), la
+modalidad por la misma RPC que el cambio de una asesora (origen `asesora`, con quién y por qué) y solo
+"ya es cliente" / "registrado" van a la tabla nueva `dulabs_catalogo_clientes_ficha`.
+
+- **Registrar cliente** (Dashboard → Clientes → *Registrar cliente*): el celular se normaliza
+  (Colombia por defecto: `300 111 2233`, `+57 300…` y `573001112233` son el mismo; otro país con `+`).
+  Si ese celular ya es cliente, avisa y enlaza su ficha (nada se pisa). Si el cliente eligió su
+  modalidad en el chat en ese mismo instante, gana la del cliente (compare-and-set) y se avisa.
+- **Editar** (en la ficha): nombre, modalidad (cambiarla pide el motivo y queda en el historial) y
+  "ya es cliente". Si dos personas editan a la vez, la segunda recibe un aviso.
+- **Importar desde Excel** (Dashboard → Clientes → *Importar desde Excel*): plantilla, archivo
+  `.xlsx` o `.csv` (máx. 2 MB y 500 clientes), **vista previa** por fila (nuevo / se actualiza / error
+  con el motivo, número de fila del Excel) y luego aplicar; el servidor vuelve a validar cada fila y
+  una fila con error no frena las demás.
+- **Lista y ficha:** etiquetas *Cliente antiguo* y *Registrado por el equipo*; filtro **Registrados**;
+  "Ya compraron" incluye a los clientes antiguos.
+
+**En WhatsApp (nunca se olvida):**
+- Un cliente registrado que escribe por **primera vez** con un saludo ("Hola", "Hola buenas tardes")
+  recibe un saludo **con su nombre** y los botones *Buscar una joya* / *Ver catálogo*, sin que se le
+  pregunte detal o por mayor (sin modelo). Si su primer mensaje trae algo más ("hola, ¿tienen
+  dijes?") o tiene un pedido abierto, lo atiende el asistente como siempre, ya con su nombre y su
+  modalidad. En conversaciones posteriores el asistente conoce su nombre y su modalidad.
+- **"Ya es cliente" + mayorista:** no se le exige el mínimo de la primera compra (750.000). Si la
+  ficha no se puede leer, el mínimo aplica (nunca se regala la exención por un error).
+- El saludo con nombre es configurable (`negocio.inicio.saludo_conocido`, `{nombre}` = primer nombre);
+  sin esa clave el negocio queda exactamente como antes.
+
+### Aplicar (manual, en este orden) — SOLO Delacour
+1. Migración `supabase/migrations/20261203000000_dulabs_catalogo_clientes_ficha.sql` (aditiva: tabla
+   de la ficha con RLS solo `service_role` y el listado actualizado; se puede aplicar antes del merge).
+2. **Después del merge** (y de que Vercel publique): `scripts/delacour/saludo-conocido.sql` (solo
+   agrega `inicio.saludo_conocido`; antes del merge dejaría al asistente sin responder).
+
+### Pruebas
+- `lib/catalogo/clientes/registro-b34.test.ts` (normalización, registro, 409, compare-and-set, número
+  del negocio, edición, importación, filtros, rutas).
+- `lib/agente/agente-clientes-b34.test.ts` (saludo con nombre, cuándo NO se usa, exención del mínimo,
+  fail-closed, configuración entregada).
+- `supabase/tests/20261203000000_dulabs_catalogo_clientes_ficha.test.sql` (PostgreSQL real, 6 controles).
+- Matriz E2E, bloque P (registrar → WhatsApp "Hola buenas tardes" → saludo con su nombre; editar e
+  importar en PostgreSQL real).
+- Mutación: `python3 scripts/mutacion/b34.py` (32).

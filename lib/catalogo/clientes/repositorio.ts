@@ -14,6 +14,14 @@ export interface ClientesRepo {
   notas(tenantId: string, claves: ReadonlyArray<{ phoneNumberId: string; waId: string }>): Promise<Map<string, string>>;
   /** Compare-and-set: `version` 0 = crearla; si otra persona la cambió antes, null (conflicto). */
   guardarNota(tenantId: string, phoneNumberId: string, waId: string, texto: string, version: number, miembroId: number | null): Promise<NotaCliente | null>;
+  /** Bloque 34: números de WhatsApp del negocio (donde puede escribir un cliente). */
+  numerosDelNegocio(tenantId: string): Promise<string[]>;
+  /** Bloque 34: nombre conocido del contacto (el mismo que usa el asistente). */
+  guardarNombre(tenantId: string, phoneNumberId: string, waId: string, nombre: string): Promise<void>;
+  /** Bloque 34: ficha del equipo (cliente antiguo / registrado). */
+  guardarFicha(tenantId: string, phoneNumberId: string, waId: string, cambios: { yaCompro?: boolean; registrado?: boolean }, miembroId: number | null): Promise<void>;
+  /** Bloque 34: ¿es cliente antiguo (ya compró fuera del bot)? */
+  yaCompro(tenantId: string, phoneNumberId: string, waId: string): Promise<boolean>;
 }
 
 // ---------------------------------------------------------------------------
@@ -37,6 +45,8 @@ type FilaDb = {
   primer_contacto: string | null;
   ultimo_contacto: string | null;
   tiene_nota: boolean | null;
+  ya_compro?: boolean | null;
+  registrado?: boolean | null;
 };
 
 export const filaDeDb = (r: FilaDb): ClienteFila => ({
@@ -56,6 +66,8 @@ export const filaDeDb = (r: FilaDb): ClienteFila => ({
   primerContacto: r.primer_contacto,
   ultimoContacto: r.ultimo_contacto,
   tieneNota: r.tiene_nota === true,
+  yaCompro: r.ya_compro === true,
+  registrado: r.registrado === true,
 });
 
 type NotaDb = { nota: string; version: number; actualizado_por: number | null; updated_at: string };
@@ -117,6 +129,44 @@ export function createSupabaseClientesRepo(supabase: SupabaseClient): ClientesRe
       return out;
     },
 
+    async numerosDelNegocio(tenantId) {
+      const { data, error } = await supabase.from("dulabs_clientes_config").select("phone_number_id").eq("id_tenant", tenantId);
+      if (error) fail("numeros", error);
+      return ((data ?? []) as Array<{ phone_number_id: string | null }>).map((r) => r.phone_number_id).filter((x): x is string => !!x);
+    },
+
+    async guardarNombre(tenantId, phoneNumberId, waId, nombre) {
+      const { error } = await supabase
+        .from("dulabs_clientes_conocidos")
+        .upsert({ id_tenant: tenantId, phone_number_id: phoneNumberId, telefono_cliente: waId, nombre, updated_at: new Date().toISOString() }, { onConflict: "phone_number_id,telefono_cliente" });
+      if (error) fail("guardar nombre", error);
+    },
+
+    async guardarFicha(tenantId, phoneNumberId, waId, cambios, miembroId) {
+      const { data, error } = await supabase.from("dulabs_catalogo_clientes_ficha").select("ya_compro, registrado").eq("id_tenant", tenantId).eq("phone_number_id", phoneNumberId).eq("wa_id", waId).maybeSingle();
+      if (error) fail("leer ficha", error);
+      const actual = (data ?? { ya_compro: false, registrado: false }) as { ya_compro: boolean; registrado: boolean };
+      const { error: e2 } = await supabase.from("dulabs_catalogo_clientes_ficha").upsert(
+        {
+          id_tenant: tenantId,
+          phone_number_id: phoneNumberId,
+          wa_id: waId,
+          ya_compro: cambios.yaCompro ?? actual.ya_compro,
+          registrado: cambios.registrado ?? actual.registrado,
+          actualizado_por: miembroId,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "id_tenant,phone_number_id,wa_id" },
+      );
+      if (e2) fail("guardar ficha", e2);
+    },
+
+    async yaCompro(tenantId, phoneNumberId, waId) {
+      const { data, error } = await supabase.from("dulabs_catalogo_clientes_ficha").select("ya_compro").eq("id_tenant", tenantId).eq("phone_number_id", phoneNumberId).eq("wa_id", waId).maybeSingle();
+      if (error) fail("ya compro", error);
+      return (data as { ya_compro?: boolean } | null)?.ya_compro === true;
+    },
+
     async guardarNota(tenantId, phoneNumberId, waId, texto, version, miembroId) {
       if (version === 0) {
         const { data, error } = await notas()
@@ -171,6 +221,8 @@ export function createMemoryClientesRepo(now: () => number = Date.now) {
   const conocidos: Array<{ tenantId: string; phoneNumberId: string; waId: string; nombre: string }> = [];
   const mensajes: Array<{ phoneNumberId: string; waId: string; at: string }> = [];
   const notas = new Map<string, NotaDb & { tenantId: string }>();
+  const fichas = new Map<string, { yaCompro: boolean; registrado: boolean; actualizadoPor: number | null }>();
+  const numeros: Record<string, string[]> = {};
   const k = (t: string, pn: string, wa: string) => `${t}|${pn}|${wa}`;
   const max = (...xs: Array<string | null | undefined>) => xs.filter((x): x is string => !!x).sort().at(-1) ?? null;
   const min = (...xs: Array<string | null | undefined>) => xs.filter((x): x is string => !!x).sort()[0] ?? null;
@@ -179,6 +231,10 @@ export function createMemoryClientesRepo(now: () => number = Date.now) {
     const contactos = new Map<string, { pn: string; wa: string }>();
     for (const c of canales) if (c.tenantId === tenantId) contactos.set(`${c.phoneNumberId}|${c.waId}`, { pn: c.phoneNumberId, wa: c.waId });
     for (const p of pedidos) if (p.tenantId === tenantId && p.waId && p.phoneNumberId) contactos.set(`${p.phoneNumberId}|${p.waId}`, { pn: p.phoneNumberId, wa: p.waId });
+    for (const key of fichas.keys()) {
+      const [t, pn, wa] = key.split("|");
+      if (t === tenantId) contactos.set(`${pn}|${wa}`, { pn, wa });
+    }
     return [...contactos.values()].map(({ pn, wa }) => {
       const cc = canales.find((c) => c.tenantId === tenantId && c.phoneNumberId === pn && c.waId === wa) ?? null;
       const ps = pedidos.filter((p) => p.tenantId === tenantId && p.phoneNumberId === pn && p.waId === wa).sort((a, b) => b.creado.localeCompare(a.creado));
@@ -190,7 +246,7 @@ export function createMemoryClientesRepo(now: () => number = Date.now) {
         waId: wa,
         canal: cc?.canal ?? ult?.canal ?? null,
         origen: cc?.origen ?? null,
-        nombre: ps.find((p) => p.nombre)?.nombre ?? conocidos.find((c) => c.tenantId === tenantId && c.phoneNumberId === pn && c.waId === wa)?.nombre ?? null,
+        nombre: conocidos.find((c) => c.tenantId === tenantId && c.phoneNumberId === pn && c.waId === wa)?.nombre ?? ps.find((p) => p.nombre)?.nombre ?? null,
         pedidos: ps.filter((p) => p.confirmado).length,
         compras: compras.length,
         totalComprado: compras.reduce((s, p) => s + p.total, 0),
@@ -202,6 +258,8 @@ export function createMemoryClientesRepo(now: () => number = Date.now) {
         primerContacto: min(cc?.creado, ps.at(-1)?.creado),
         ultimoContacto: max(...mensajes.filter((m) => m.phoneNumberId === pn && m.waId === wa).map((m) => m.at), ...ps.map((p) => p.actualizado ?? p.creado), cc?.actualizado),
         tieneNota: !!nota && nota.nota !== "",
+        yaCompro: fichas.get(k(tenantId, pn, wa))?.yaCompro ?? false,
+        registrado: fichas.get(k(tenantId, pn, wa))?.registrado ?? false,
       };
     });
   }
@@ -215,8 +273,9 @@ export function createMemoryClientesRepo(now: () => number = Date.now) {
           (q.filtro === "todos" ||
             (q.filtro === "detal" && f.canal === "retail") ||
             (q.filtro === "mayorista" && f.canal === "wholesale") ||
-            (q.filtro === "compraron" && f.compras > 0) ||
-            (q.filtro === "sin_compras" && f.compras === 0)) &&
+            (q.filtro === "compraron" && (f.compras > 0 || f.yaCompro)) ||
+            (q.filtro === "sin_compras" && f.compras === 0 && !f.yaCompro) ||
+            (q.filtro === "registrados" && f.registrado)) &&
           (!texto || (f.nombre ?? "").toLowerCase().includes(texto) || (digitos !== "" && f.waId.includes(digitos))),
       );
       out.sort((a, b) => (b.ultimoContacto ?? "").localeCompare(a.ultimoContacto ?? "") || a.waId.localeCompare(b.waId));
@@ -240,6 +299,21 @@ export function createMemoryClientesRepo(now: () => number = Date.now) {
       }
       return out;
     },
+    async numerosDelNegocio(tenantId) {
+      return numeros[tenantId] ?? [];
+    },
+    async guardarNombre(tenantId, pn, wa, nombre) {
+      const i = conocidos.findIndex((c) => c.phoneNumberId === pn && c.waId === wa);
+      if (i >= 0) conocidos[i] = { tenantId, phoneNumberId: pn, waId: wa, nombre };
+      else conocidos.push({ tenantId, phoneNumberId: pn, waId: wa, nombre });
+    },
+    async guardarFicha(tenantId, pn, wa, cambios, miembroId) {
+      const actual = fichas.get(k(tenantId, pn, wa)) ?? { yaCompro: false, registrado: false, actualizadoPor: null };
+      fichas.set(k(tenantId, pn, wa), { yaCompro: cambios.yaCompro ?? actual.yaCompro, registrado: cambios.registrado ?? actual.registrado, actualizadoPor: miembroId });
+    },
+    async yaCompro(tenantId, pn, wa) {
+      return fichas.get(k(tenantId, pn, wa))?.yaCompro === true;
+    },
     async guardarNota(tenantId, pn, wa, texto, version, miembroId) {
       const actual = notas.get(k(tenantId, pn, wa));
       if ((actual?.version ?? 0) !== version) return null;
@@ -248,5 +322,5 @@ export function createMemoryClientesRepo(now: () => number = Date.now) {
       return notaDeDb(n);
     },
   };
-  return { repo, canales, pedidos, conocidos, mensajes, notas };
+  return { repo, canales, pedidos, conocidos, mensajes, notas, fichas, numeros };
 }

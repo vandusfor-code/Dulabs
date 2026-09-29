@@ -68,7 +68,7 @@ import {
 } from "@/lib/agente/checkout";
 import type { CheckoutStep } from "@/lib/agente/estado";
 import { formatoWhatsApp } from "@/lib/agente/formato-whatsapp";
-import { esAfirmacion, leerCantidad, modalidadInicial, numerosDelCliente, pideQuitar } from "@/lib/agente/lenguaje/interpretar";
+import { esAfirmacion, esSoloSaludo, leerCantidad, modalidadInicial, numerosDelCliente, pideQuitar } from "@/lib/agente/lenguaje/interpretar";
 import { addOrderStateEvidence, type OrderTracking } from "@/lib/agente/anclaje";
 
 /**
@@ -203,6 +203,16 @@ export interface AgentTurnInput {
 
 export type AgentTurnOutcome = "replied" | "handoff" | "fallback" | "preempted" | "safety" | "duplicate" | "rate_limited";
 
+/**
+ * Bloque 34: saludo de un cliente conocido. `{nombre}` = su primer nombre; sin nombre confiable (o si
+ * es un teléfono), se quita con la coma o el espacio que lo acompaña ("¡Hola, {nombre}!" => "¡Hola!").
+ */
+export function saludoConocido(plantilla: string, nombre: string | null): string {
+  const primero = nombre?.trim().split(/\s+/)[0] ?? "";
+  const valido = primero.length >= 2 && primero.length <= 30 && /^\p{L}[\p{L}'’-]*$/u.test(primero);
+  return valido ? plantilla.replace(/\{nombre\}/g, primero) : plantilla.replace(/,?\s*\{nombre\}/g, "").replace(/\s+([!?.,])/g, "$1");
+}
+
 /** Bloque 32: textos del checkout configurados por el negocio (`negocio.pedido`). */
 function checkoutTexts(b: AgentRuntimeConfig["business"]): CheckoutTexts | undefined {
   const p = b.pedido;
@@ -269,7 +279,7 @@ export interface AgentTurnTrace {
    */
   classification: { action: "asked" | "classified" | "known" | "change_requested" | "order_mismatch"; channel: OrderChannel | null; origin: CustomerChannelOrigin | null } | null;
   /** Bloque 26 — acción de inicio que resolvió el backend sin modelo (menú, búsqueda guiada o catálogo). */
-  start: "intent_menu" | "wholesale_welcome" | "search_prompt" | "catalog_link" | null;
+  start: "intent_menu" | "wholesale_welcome" | "known_greeting" | "search_prompt" | "catalog_link" | null;
   /** Bloque 27 — checkout conversacional: paso en que quedó y qué decidió el backend (sin datos del cliente). */
   checkout?: { step: CheckoutStep | null; action: CheckoutAction } | null;
 }
@@ -873,6 +883,15 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
     if (inicio?.mayor && trace.classification?.action === "classified" && current.channel === "wholesale" && buttonChoice === "wholesale") {
       return startDone("wholesale_welcome", await sendMenu(inicio.mayor, WHOLESALE_MENU.buttons, WHOLESALE_MENU.textFallback(inicio.mayor)));
     }
+    //   a3) Bloque 34 — cliente YA CONOCIDO (registrado por el equipo o que ya eligió su modalidad) que
+    //      empieza una conversación nueva con un saludo: saludo fijo con su nombre y el menú (sin modelo).
+    //      Si su primer mensaje trae algo más ("hola, ¿tienen dijes?") o tiene un pedido abierto, lo
+    //      atiende el agente como siempre (con su nombre en el contexto).
+    if (inicio?.saludo_conocido && trace.classification?.action === "known" && loaded.state.turn === 0 && !state.checkout && !(activeOrder && !["completed", "cancelled", "expired", "rejected"].includes(activeOrder.status)) && !startAction && esSoloSaludo(input.text)) {
+      const nombre = deps.tools.customerName ? await deps.tools.customerName(key).catch(() => null) : null;
+      const texto = saludoConocido(inicio.saludo_conocido, nombre);
+      return startDone("known_greeting", await sendMenu(texto, INTENT_MENU.buttons, `${texto}\n\nEscríbeme qué joya buscas o escribe *ver catálogo*.`));
+    }
     //   b) "Buscar una joya": se le pide que escriba; lo que escriba entra a la búsqueda normal del agente.
     // Con un pedido en registro, "catálogo" / "buscar" los atiende el checkout (responde y repite su pregunta).
     if (startAction === "search_product" && !state.checkout) {
@@ -925,6 +944,7 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
           return r.sent ? fallback : null;
         },
         knownName: async () => (deps.tools.customerName ? deps.tools.customerName(key) : null),
+        alreadyCustomer: deps.tools.customerIsExisting ? () => deps.tools.customerIsExisting!(key) : undefined,
         rememberName: deps.tools.rememberCustomerName ? (name) => deps.tools.rememberCustomerName!(key, name) : undefined,
         handOff: async (reason) => {
           try {

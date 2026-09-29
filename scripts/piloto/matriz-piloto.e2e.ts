@@ -44,7 +44,7 @@ import { productionNotificador } from "@/lib/catalogo/pedidos/notificaciones-pro
 import { ORDERS_MODULE, requireCatalogo } from "@/lib/catalogo/auth";
 import { moduloHabilitado } from "@/lib/tenant-modulos";
 import { createSupabaseClientesRepo } from "@/lib/catalogo/clientes/repositorio";
-import { detalleCliente, exportarClientes, guardarNotaCliente, listarClientes } from "@/lib/catalogo/clientes/servicio";
+import { aplicarImportacion, detalleCliente, editarCliente, exportarClientes, guardarNotaCliente, listarClientes, previsualizarImportacion, registrarCliente } from "@/lib/catalogo/clientes/servicio";
 import type { ClienteDetalle, ClienteFila } from "@/lib/catalogo/clientes/modelo";
 import { NextRequest } from "next/server";
 
@@ -1584,6 +1584,69 @@ describe("PILOTO DELACOUR — matriz de punta a punta (webhook real + PostgreSQL
       // Aislamiento: el otro negocio no ve a estos clientes ni puede escribirles notas.
       assert.equal((await listar(`q=${C[47]}`, TB)).total, 0);
       assert.equal((await guardarNotaCliente(repo, TB, clave, { nota: "x", version: 0 }, MIEMBRO)).status, 404);
+    });
+
+    it("P. Bloque 34 — cliente REGISTRADO en el Dashboard escribe por primera vez: saludo con su nombre, sin preguntar detal / por mayor; editar e importar contra PostgreSQL real", async () => {
+      const repo = createSupabaseClientesRepo(db);
+      const canales = createSupabaseCustomerChannelStore(db);
+      const wa = C[55];
+      // 1. Registrar (como el formulario): nombre, celular escrito "a mano", mayorista, ya es cliente.
+      const tel = `+${wa.slice(0, 2)} ${wa.slice(2, 5)} ${wa.slice(5, 8)} ${wa.slice(8)}`;
+      const reg = await registrarCliente(repo, canales, T, { nombre: "Camila Registrada", telefono: tel, modalidad: "mayorista", yaCompro: true }, MIEMBRO);
+      assert.equal(reg.status, 201);
+      assert.equal((await registrarCliente(repo, canales, T, { nombre: "Otra", telefono: wa, modalidad: "detal" }, MIEMBRO)).status, 409, "el mismo celular no se registra dos veces");
+      const fila = (await (await listarClientes(repo, T, new URLSearchParams(`q=${wa}`))).json()) as { data: { filas: ClienteFila[] } };
+      assert.deepEqual(
+        [fila.data.filas[0]?.nombre, fila.data.filas[0]?.canal, fila.data.filas[0]?.origen, fila.data.filas[0]?.yaCompro, fila.data.filas[0]?.registrado],
+        ["Camila Registrada", "wholesale", "asesora", true, true],
+      );
+      assert.equal(await repo.yaCompro(T, PN, wa), true, "lo que lee el checkout (sin compra inicial)");
+      assert.equal(await repo.yaCompro(TB, PN, wa), false, "otro negocio: nada");
+      // 2. Escribe por PRIMERA vez con un saludo: el asistente ya sabe su nombre y su modalidad (sin Gemini).
+      await ok(setAgente({ negocio: { nombre_agente: "Sofía", nombre_negocio: NEGOCIO, inicio: { saludo_conocido: "¡Hola, {nombre}! ✨ Qué alegría saludarte 💎 ¿Qué estás buscando hoy?" } } }));
+      try {
+        const r = await turno(wa, "Hola buenas tardes");
+        assert.equal(r.gemini.length, 0, "sin modelo");
+        assert.equal(r.traza?.traza.start, "known_greeting");
+        const b = meta.calls.at(-1)!.body as { type: string; to: string; interactive: { body: { text: string }; action: { buttons: Array<{ reply: { id: string } }> } } };
+        assert.equal(b.type, "interactive");
+        assert.equal(b.to, wa);
+        assert.equal(b.interactive.body.text, "¡Hola, Camila! ✨ Qué alegría saludarte 💎 ¿Qué estás buscando hoy?");
+        assert.deepEqual(b.interactive.action.buttons.map((x) => x.reply.id), INTENT_MENU.buttons.map((x) => x.id));
+        assert.ok(!meta.calls.some((c) => JSON.stringify(c.body).includes(CHANNEL_QUESTION.buttons[0].id) && (c.body as { to?: string }).to === wa), "nunca le pregunta detal / por mayor");
+        assert.equal((await canales.get({ tenantId: T, phoneNumberId: PN, waId: wa }))?.channel, "wholesale");
+      } finally {
+        await ok(setAgente({ negocio: { nombre_agente: "Sofía", nombre_negocio: NEGOCIO } }));
+      }
+      // 3. Editar: cambiar la modalidad exige motivo; queda en el historial real con la persona.
+      const clave = `${PN}_${wa}`;
+      assert.equal((await editarCliente(repo, canales, T, clave, { modalidad: "detal", esperado: "wholesale" }, MIEMBRO)).status, 400);
+      assert.equal((await editarCliente(repo, canales, T, clave, { modalidad: "detal", esperado: "wholesale", motivo: "Ahora compra para ella", yaCompro: false }, MIEMBRO)).status, 200);
+      assert.equal((await editarCliente(repo, canales, T, clave, { modalidad: "mayorista", esperado: "wholesale", motivo: "Vista vieja" }, MIEMBRO)).status, 409, "compare-and-set en la RPC real");
+      const h = await canales.history({ tenantId: T, phoneNumberId: PN, waId: wa }, 5);
+      assert.deepEqual([h[0].to, h[0].reason, h[0].memberId], ["retail", "Ahora compra para ella", MIEMBRO]);
+      assert.equal(await repo.yaCompro(T, PN, wa), false);
+      // 4. Importar: vista previa (nada se escribe) y aplicar (crea + actualiza) en la BD real.
+      const nuevo = NO_AUTORIZADO.slice(0, -1) + "8";
+      const tabla = [
+        ["Nombre", "Celular", "Modalidad", "Ya es cliente"],
+        ["Camila Registrada", wa, "mayorista", "sí"],
+        ["Rosa Importada", nuevo, "detal", "no"],
+        ["Mal", "123", "detal", "no"],
+      ];
+      const vista = (await (await previsualizarImportacion(repo, T, tabla)).json()) as { data: { resumen: { nuevos: number; actualizar: number; errores: number } } };
+      assert.deepEqual(vista.data.resumen, { nuevos: 1, actualizar: 1, errores: 1 });
+      assert.equal((await (await listarClientes(repo, T, new URLSearchParams(`q=${nuevo}`))).json() as { data: { total: number } }).data.total, 0, "la vista previa no crea a nadie");
+      const ap = (await (await aplicarImportacion(repo, canales, T, { filas: [
+        { nombre: "Camila Registrada", telefono: `+${wa}`, modalidad: "mayorista", yaCompro: true },
+        { nombre: "Rosa Importada", telefono: `+${nuevo}`, modalidad: "detal", yaCompro: false },
+      ] }, MIEMBRO)).json()) as { data: { creados: number; actualizados: number; errores: unknown[] } };
+      assert.deepEqual([ap.data.creados, ap.data.actualizados, ap.data.errores.length], [1, 1, 0]);
+      const rosa = (await (await listarClientes(repo, T, new URLSearchParams(`q=${nuevo}`))).json()) as { data: { filas: ClienteFila[] } };
+      assert.deepEqual([rosa.data.filas[0]?.nombre, rosa.data.filas[0]?.canal, rosa.data.filas[0]?.registrado], ["Rosa Importada", "retail", true]);
+      assert.equal(await repo.yaCompro(T, PN, wa), true);
+      // Aislamiento: el otro negocio no ve a estos clientes registrados.
+      assert.equal(((await (await listarClientes(repo, TB, new URLSearchParams("filtro=registrados"))).json()) as { data: { total: number } }).data.total, 0);
     });
   });
 

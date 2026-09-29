@@ -2,14 +2,16 @@
 
 // Bloque 33 — módulo "Clientes": un cliente por contacto de WhatsApp (quien eligió detal / por mayor
 // o hizo un pedido), con sus compras. Búsqueda, filtros y paginación los hace el backend.
+// Bloque 34: registrar un cliente a mano o importarlos desde Excel.
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { ChevronLeft, ChevronRight, Download, RefreshCw, Search, StickyNote } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download, FileSpreadsheet, RefreshCw, Search, StickyNote, UserPlus } from "lucide-react";
 import { PageHeader } from "@/components/dashboard/shell/ui";
 import { useI18n } from "@/lib/i18n";
 import { claveCliente, esMayoristaNuevo, type ClienteFila, type FiltroClientes } from "@/lib/catalogo/clientes/modelo";
-import { actionBtn, cn, formatPrice, useCatalogAccess, useCatalogToast } from "@/components/dashboard/catalogo/ui";
+import { actionBtn, cn, formatPrice, primaryBtn, useCatalogAccess, useCatalogToast } from "@/components/dashboard/catalogo/ui";
 import { Badge, MODALIDAD, estadoPedido, fechaCorta, telefonoVisible } from "@/components/dashboard/clientes/ui";
+import { RegistrarCliente } from "@/components/dashboard/clientes/registro";
 
 const FILTROS: Array<{ id: FiltroClientes; es: string; en: string }> = [
   { id: "todos", es: "Todos", en: "All" },
@@ -17,6 +19,7 @@ const FILTROS: Array<{ id: FiltroClientes; es: string; en: string }> = [
   { id: "mayorista", es: "Mayorista", en: "Wholesale" },
   { id: "compraron", es: "Ya compraron", en: "Bought" },
   { id: "sin_compras", es: "Aún no compran", en: "Not yet bought" },
+  { id: "registrados", es: "Registrados", en: "Registered" },
 ];
 
 type Pagina = { filas: ClienteFila[]; total: number; pagina: number; paginas: number };
@@ -33,6 +36,7 @@ export default function ClientesPage() {
   const [error, setError] = useState<string | null>(null);
   const [version, setVersion] = useState(0);
   const [exportando, setExportando] = useState(false);
+  const [registrando, setRegistrando] = useState(false);
   const clave = JSON.stringify({ q, filtro, pagina });
 
   // La búsqueda se aplica al dejar de escribir.
@@ -83,10 +87,18 @@ export default function ClientesPage() {
         eyebrow={t("Operación", "Operations")}
         title={t("Clientes", "Customers")}
         description={t(
-          "Cada cliente una sola vez, con su modalidad, sus pedidos y lo que ha comprado. Aparecen cuando eligen detal o por mayor, o cuando hacen un pedido.",
-          "Each customer once, with their type, orders and purchases. They appear when they choose retail or wholesale, or place an order.",
+          "Cada cliente una sola vez, con su modalidad, sus pedidos y lo que ha comprado. Aparecen cuando eligen detal o por mayor, cuando hacen un pedido o cuando los registras.",
+          "Each customer once, with their type, orders and purchases. They appear when they choose retail or wholesale, place an order, or when you register them.",
         )}
       >
+        <button type="button" onClick={() => setRegistrando(true)} className={primaryBtn}>
+          <UserPlus className="size-4" />
+          {t("Registrar cliente", "Register customer")}
+        </button>
+        <Link href="/dashboard/clientes/importar" className={actionBtn}>
+          <FileSpreadsheet className="size-4" />
+          {t("Importar desde Excel", "Import from Excel")}
+        </Link>
         <button type="button" onClick={() => setVersion((v) => v + 1)} className={actionBtn}>
           <RefreshCw className="size-4" />
           {t("Actualizar", "Refresh")}
@@ -96,6 +108,12 @@ export default function ClientesPage() {
           {exportando ? t("Exportando…", "Exporting…") : t("Exportar a Excel", "Export to Excel")}
         </button>
       </PageHeader>
+
+      {registrando && (
+        <div className="px-4 pt-6 md:px-8">
+          <RegistrarCliente onClose={() => setRegistrando(false)} />
+        </div>
+      )}
 
       <div className="flex flex-col gap-3 px-4 pt-6 md:px-8 lg:flex-row lg:items-center">
         <div className="relative flex-1">
@@ -140,7 +158,7 @@ export default function ClientesPage() {
           <div className="rounded-2xl border border-edge bg-card p-8 text-center text-sm text-mist">
             {q || filtro !== "todos"
               ? t("Ningún cliente coincide con la búsqueda.", "No customers match your search.")
-              : t("Todavía no hay clientes. Aparecen cuando alguien elige detal o por mayor, o hace un pedido.", "No customers yet. They appear when someone chooses retail or wholesale, or places an order.")}
+              : t("Todavía no hay clientes. Aparecen cuando alguien elige detal o por mayor, hace un pedido o cuando los registras.", "No customers yet. They appear when someone chooses retail or wholesale, places an order, or when you register them.")}
           </div>
         )}
         {actual?.filas.map((c) => {
@@ -155,6 +173,8 @@ export default function ClientesPage() {
                 <span className="font-semibold text-fg">{c.nombre ?? t("Sin nombre", "No name")}</span>
                 {c.canal && <Badge tone={MODALIDAD[c.canal].tone}>{t(MODALIDAD[c.canal].es, MODALIDAD[c.canal].en)}</Badge>}
                 {esMayoristaNuevo(c) && <Badge tone="bg-amber-500/15 text-amber-500">{t("Mayorista nuevo", "New wholesale")}</Badge>}
+                {c.yaCompro && <Badge tone="bg-teal-500/15 text-teal-400">{t("Cliente antiguo", "Existing customer")}</Badge>}
+                {c.registrado && <Badge tone="bg-sky-500/15 text-sky-400">{t("Registrado por el equipo", "Registered by team")}</Badge>}
                 {c.tieneNota && <StickyNote className="size-3.5 text-mist" aria-label={t("Tiene nota", "Has a note")} />}
                 <span className="ml-auto font-semibold tabular-nums text-fg">{formatPrice(c.totalComprado)}</span>
                 <ChevronRight className="size-4 text-mist" aria-hidden />

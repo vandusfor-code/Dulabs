@@ -2,14 +2,15 @@
 
 // Bloque 33 — ficha de un cliente: datos, modalidad (con quién y por qué cambió), pedidos (cada uno
 // abre su detalle en Pedidos) y la nota interna del equipo (compare-and-set: nadie pisa a nadie).
+// Bloque 34: editar nombre, modalidad (con motivo si cambia) y "ya es cliente".
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { ArrowLeft, MessageCircle, RefreshCw } from "lucide-react";
 import { PageHeader } from "@/components/dashboard/shell/ui";
 import { useI18n } from "@/lib/i18n";
-import { NOTA_MAX, esMayoristaNuevo, type ClienteDetalle } from "@/lib/catalogo/clientes/modelo";
-import { actionBtn, cn, formatPrice, primaryBtn, useCatalogAccess, useCatalogToast } from "@/components/dashboard/catalogo/ui";
+import { NOTA_MAX, esMayoristaNuevo, type ClienteDetalle, type Modalidad } from "@/lib/catalogo/clientes/modelo";
+import { CField, actionBtn, cn, formatPrice, inputCls, primaryBtn, useCatalogAccess, useCatalogToast } from "@/components/dashboard/catalogo/ui";
 import { Badge, MODALIDAD, ORIGEN, estadoPedido, fechaCorta, telefonoVisible } from "@/components/dashboard/clientes/ui";
 
 function Dato({ label, children }: { label: string; children: React.ReactNode }) {
@@ -27,6 +28,87 @@ function Seccion({ titulo, children }: { titulo: string; children: React.ReactNo
       <h2 className="mb-3 text-sm font-semibold text-fg">{titulo}</h2>
       {children}
     </section>
+  );
+}
+
+const MODALIDAD_DE_CANAL = { retail: "detal", wholesale: "mayorista" } as const;
+
+/** Nombre, modalidad y "ya es cliente": lo que el asistente usa cuando el cliente escribe. */
+function EditarCliente({ clave, d, onSaved }: { clave: string; d: ClienteDetalle; onSaved: () => void }) {
+  const { t } = useI18n();
+  const { client } = useCatalogAccess();
+  const toast = useCatalogToast();
+  const guardada: Modalidad | null = d.modalidad ? MODALIDAD_DE_CANAL[d.modalidad.canal] : null;
+  const [nombre, setNombre] = useState(d.cliente.nombre ?? "");
+  const [modalidad, setModalidad] = useState<Modalidad | null>(guardada);
+  const [motivo, setMotivo] = useState("");
+  const [yaCompro, setYaCompro] = useState(d.cliente.yaCompro);
+  const [enviando, setEnviando] = useState(false);
+
+  const cambiaNombre = nombre.trim() !== "" && nombre.trim() !== (d.cliente.nombre ?? "");
+  const cambiaModalidad = modalidad !== null && modalidad !== guardada;
+  const cambiaYa = yaCompro !== d.cliente.yaCompro;
+  const pideMotivo = cambiaModalidad && guardada !== null;
+  const listo = (cambiaNombre || cambiaModalidad || cambiaYa) && (!pideMotivo || motivo.trim().length >= 3);
+
+  async function guardar() {
+    if (!client || enviando || !listo) return;
+    setEnviando(true);
+    const r = await client.updateClient(clave, {
+      ...(cambiaNombre ? { nombre } : {}),
+      ...(cambiaModalidad ? { modalidad: modalidad!, esperado: d.modalidad?.canal ?? null, ...(motivo.trim() ? { motivo } : {}) } : {}),
+      ...(cambiaYa ? { yaCompro } : {}),
+    });
+    setEnviando(false);
+    if (!r.ok) {
+      toast(r.error.message, "error");
+      if (r.error.status === 409) onSaved();
+      return;
+    }
+    setMotivo("");
+    toast(t("✓ Cliente actualizado.", "✓ Customer updated."));
+    onSaved();
+  }
+
+  return (
+    <div className="space-y-3">
+      <CField label={t("Nombre", "Name")} htmlFor="edit-nombre" hint={t("Así lo saluda el asistente.", "The assistant greets them by this name.")}>
+        <input id="edit-nombre" value={nombre} maxLength={60} onChange={(e) => setNombre(e.target.value)} className={inputCls} autoComplete="off" />
+      </CField>
+      <fieldset>
+        <legend className="mb-1.5 text-xs font-medium text-mist">{t("Modalidad", "Customer type")}</legend>
+        <div className="flex flex-wrap gap-2">
+          {(
+            [
+              ["detal", t("🛍️ Detal", "🛍️ Retail")],
+              ["mayorista", t("📦 Mayorista", "📦 Wholesale")],
+            ] as const
+          ).map(([id, texto]) => (
+            <label key={id} className={cn("cursor-pointer rounded-xl border px-4 py-2 text-sm transition-colors", modalidad === id ? "border-fg bg-ink font-medium text-fg" : "border-edge text-mist hover:text-fg")}>
+              <input type="radio" name="edit-modalidad" value={id} checked={modalidad === id} onChange={() => setModalidad(id)} className="sr-only" />
+              {texto}
+            </label>
+          ))}
+        </div>
+      </fieldset>
+      {pideMotivo && (
+        <CField label={t("¿Por qué cambias la modalidad?", "Why are you changing the type?")} htmlFor="edit-motivo" required>
+          <input id="edit-motivo" value={motivo} maxLength={300} onChange={(e) => setMotivo(e.target.value)} placeholder={t("Ej.: ahora compra por cantidad para su tienda", "E.g.: now buys in bulk for their store")} className={inputCls} />
+        </CField>
+      )}
+      <label className="flex items-start gap-2 text-sm text-fg">
+        <input type="checkbox" checked={yaCompro} onChange={(e) => setYaCompro(e.target.checked)} className="mt-0.5" />
+        <span>
+          {t("Ya es cliente (ha comprado antes)", "Existing customer (has bought before)")}
+          <span className="block text-xs text-mist">{t("Si es mayorista, no se le exige el mínimo de la primera compra.", "If wholesale, the first-purchase minimum doesn't apply.")}</span>
+        </span>
+      </label>
+      <div className="flex justify-end">
+        <button type="button" disabled={!listo || enviando} onClick={() => void guardar()} className={cn(primaryBtn, "disabled:opacity-50")}>
+          {enviando ? t("Guardando…", "Saving…") : t("Guardar cambios", "Save changes")}
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -109,6 +191,8 @@ export default function ClienteFichaPage() {
         <Seccion titulo={t("Datos del cliente", "Customer details")}>
           <div className="mb-3 flex flex-wrap gap-2">
             {c.canal && <Badge tone={MODALIDAD[c.canal].tone}>{t(MODALIDAD[c.canal].es, MODALIDAD[c.canal].en)}</Badge>}
+            {c.yaCompro && <Badge tone="bg-teal-500/15 text-teal-400">{t("Cliente antiguo", "Existing customer")}</Badge>}
+            {c.registrado && <Badge tone="bg-sky-500/15 text-sky-400">{t("Registrado por el equipo", "Registered by team")}</Badge>}
             {esMayoristaNuevo(c) && <Badge tone="bg-amber-500/15 text-amber-500">{t("Mayorista nuevo: su primera compra debe llegar al mínimo", "New wholesale: first purchase must reach the minimum")}</Badge>}
           </div>
           <dl>
@@ -168,6 +252,11 @@ export default function ClienteFichaPage() {
               })}
             </ul>
           )}
+        </Seccion>
+
+        <Seccion titulo={t("Editar cliente", "Edit customer")}>
+          {/* key: al recargar la ficha, el formulario arranca de lo guardado. */}
+          <EditarCliente key={`${c.nombre}|${d.modalidad?.canal ?? ""}|${c.yaCompro}`} clave={clave} d={d} onSaved={cargar} />
         </Seccion>
 
         <Seccion titulo={t("Modalidad", "Customer type")}>

@@ -14,7 +14,8 @@ import type { PublicationView } from "@/lib/catalogo/service";
 import type { PedidoHistorial, PedidoPanel } from "@/lib/catalogo/pedidos/panel";
 import type { AccionPedido, EstadoVisible, HistorialEntrada, NotificacionVista, PedidoGestion } from "@/lib/catalogo/pedidos/gestion";
 import type { ResultadoNotificacion, TipoNotificacion } from "@/lib/catalogo/pedidos/notificaciones";
-import type { ClienteDetalle, ClienteFila, FiltroClientes, NotaCliente } from "@/lib/catalogo/clientes/modelo";
+import type { ClienteDetalle, ClienteFila, FilaImportacion, FiltroClientes, Modalidad, NotaCliente } from "@/lib/catalogo/clientes/modelo";
+import type { OrderChannel } from "@/lib/catalogo/pedidos/contrato";
 
 /** Bloque 27 — filtros del listado del módulo "Pedidos" (todos opcionales). */
 export interface PedidosFiltros {
@@ -35,6 +36,8 @@ export interface CatalogClientError {
   code: string;
   message: string;
   status: number;
+  /** Datos extra del error (p. ej. Bloque 34: la `clave` del cliente que ya existe). */
+  diagnostics?: unknown;
 }
 
 export type CatalogResult<T> = { ok: true; data: T } | { ok: false; error: CatalogClientError };
@@ -89,7 +92,7 @@ async function call<T>(accessToken: string, path: string, init: RequestInit = {}
   } catch {
     return { ok: false, error: { code: "NETWORK_ERROR", message: "Sin conexión. Revisa tu internet e intenta de nuevo.", status: 0 } };
   }
-  let body: { success?: boolean; data?: T; error?: { code?: string; message?: string } | string } = {};
+  let body: { success?: boolean; data?: T; error?: { code?: string; message?: string; diagnostics?: unknown } | string } = {};
   try {
     body = await response.json();
   } catch {
@@ -104,6 +107,7 @@ async function call<T>(accessToken: string, path: string, init: RequestInit = {}
       code: typeof err === "object" && err?.code ? err.code : response.status === 429 ? "RATE_LIMITED" : "UNKNOWN",
       message: typeof err === "string" ? err : err?.message ?? "Ocurrió un error inesperado.",
       status: response.status,
+      ...(typeof err === "object" && err?.diagnostics !== undefined ? { diagnostics: err.diagnostics } : {}),
     },
   };
 }
@@ -224,6 +228,28 @@ export function createCatalogClient(accessToken: string) {
       } catch {
         return { ok: false, error: { code: "NETWORK_ERROR", message: "Sin conexión. Revisa tu internet e intenta de nuevo.", status: 0 } };
       }
+    },
+
+    /** Bloque 34 — registra un cliente (nombre, celular, modalidad). 409 ALREADY_EXISTS trae `diagnostics.clave`. */
+    registerClient(c: { nombre: string; telefono: string; modalidad: Modalidad; yaCompro: boolean; numero?: string }): Promise<CatalogResult<{ clave: string }>> {
+      return call(accessToken, "", { method: "POST", body: JSON.stringify(c) }, CLIENTES_BASE);
+    },
+
+    /** Bloque 34 — edita un cliente. `esperado` = la modalidad que se VIO (compare-and-set); cambiarla pide `motivo`. */
+    updateClient(clave: string, c: { nombre?: string; modalidad?: Modalidad; esperado?: OrderChannel | null; motivo?: string; yaCompro?: boolean }): Promise<CatalogResult<{ clave: string }>> {
+      return call(accessToken, `/${encodeURIComponent(clave)}`, { method: "PATCH", body: JSON.stringify(c) }, CLIENTES_BASE);
+    },
+
+    /** Bloque 34 — vista previa de un Excel/CSV de clientes (nada se escribe). */
+    previewClientImport(archivo: File): Promise<CatalogResult<{ filas: FilaImportacion[]; resumen: { nuevos: number; actualizar: number; errores: number } }>> {
+      const form = new FormData();
+      form.set("archivo", archivo);
+      return call(accessToken, "/importar", { method: "POST", body: form }, CLIENTES_BASE);
+    },
+
+    /** Bloque 34 — aplica la importación (el servidor vuelve a validar cada fila). */
+    applyClientImport(filas: Array<{ nombre: string; telefono: string; modalidad: Modalidad; yaCompro: boolean }>): Promise<CatalogResult<{ creados: number; actualizados: number; errores: Array<{ telefono: string; motivo: string }> }>> {
+      return call(accessToken, "/importar/aplicar", { method: "POST", body: JSON.stringify({ filas }) }, CLIENTES_BASE);
     },
 
     /** Bloque 27 — detalle de un pedido con su historial. */

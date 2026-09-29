@@ -74,6 +74,22 @@ export function esPregunta(text: string): boolean {
 
 export const esRisa = (text: string) => /^(?:(?:ja|je|ji|jo|ha|he|xd|lol|jaj|jej)+\s*)+$/.test(plano(text).replace(/\s+/g, ""));
 export const esSaludo = (text: string) => una(sinCortesia(normalizar(text)), SALUDOS);
+/**
+ * Bloque 34 — SOLO saludos, aunque vengan encadenados ("Hola, buenas tardes", "buenas buenas, ¿cómo
+ * estás?"). Cualquier otra palabra ("hola, ¿tienen dijes?") => false.
+ */
+const SALUDOS_LARGO_PRIMERO = [...SALUDOS, "como estas", "como esta", "como vas", "que mas", "hola hola"].sort((a, b) => b.length - a.length);
+export const esSoloSaludo = (text: string) => {
+  let t = sinCortesia(normalizar(text));
+  let saludos = 0;
+  for (let paso = 0; paso < 6 && t !== ""; paso++) {
+    const s = SALUDOS_LARGO_PRIMERO.find((x) => t === x || t.startsWith(`${x} `));
+    if (!s) break;
+    t = t.slice(s.length).trim();
+    saludos++;
+  }
+  return saludos > 0 && t === "";
+};
 export const esCortesia = (text: string) => una(normalizar(text), CORTESIA);
 export const esAfirmacion = (text: string) => una(sinCortesia(normalizar(text)), AFIRMACIONES);
 export const esNegacion = (text: string) => una(sinCortesia(normalizar(text)), NEGACIONES);

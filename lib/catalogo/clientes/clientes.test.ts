@@ -197,8 +197,11 @@ describe("B33 · permisos y módulo", () => {
   it("todas las rutas exigen el módulo Clientes y el modo 'orders' (admin/agente)", () => {
     for (const f of ["app/api/dashboard/clientes/route.ts", "app/api/dashboard/clientes/[cliente]/route.ts", "app/api/dashboard/clientes/[cliente]/nota/route.ts", "app/api/dashboard/clientes/exportar/route.ts"]) {
       const s = readFileSync(f, "utf8");
-      assert.match(s, /withCatalog\(\s*request,\s*"orders"/, f);
-      assert.match(s, /module: CLIENTS_MODULE/, f);
+      // CADA handler de la ruta (GET, POST, PATCH…), no solo uno.
+      const handlers = (s.match(/withCatalog\(/g) ?? []).length;
+      assert.ok(handlers >= 1, f);
+      assert.equal((s.match(/withCatalog\(\s*request,\s*"orders"/g) ?? []).length, handlers, `${f}: modo 'orders' en cada handler`);
+      assert.equal((s.match(/module: CLIENTS_MODULE/g) ?? []).length, handlers, `${f}: módulo Clientes en cada handler`);
       assert.ok(!/searchParams\.get\("tenant|body\.tenant/.test(s), `${f}: el negocio sale de la sesión`);
     }
   });
