@@ -57,8 +57,10 @@ export const businessConfigSchema = z
         pregunta_pago: z.string().trim().min(1).max(500).optional(),
         /** Línea del resumen cuando la entrega es a domicilio (transportadora, tiempos, costo). */
         nota_envio_domicilio: z.string().trim().min(1).max(300).optional(),
-        /** Compra inicial mayorista (COP). Por debajo, el resumen lo informa (no bloquea). */
+        /** Compra INICIAL mayorista (COP): la primera compra de un mayorista no se registra por debajo. */
         minimo_mayorista: z.number().int().min(1).max(1_000_000_000).optional(),
+        /** Dirección de la tienda: sale en el resumen y en el mensaje final cuando el cliente recoge en tienda. */
+        direccion_tienda: z.string().trim().min(1).max(200).optional(),
         /** Línea extra del mensaje de pedido registrado (p. ej. cómo llegan los datos de pago). */
         nota_confirmado: z.string().trim().min(1).max(400).optional(),
       })

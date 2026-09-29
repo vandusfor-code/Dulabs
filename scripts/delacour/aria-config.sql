@@ -128,6 +128,7 @@ set negocio = coalesce(negocio, '{}'::jsonb) || $aria${
     "pregunta_pago": "¿Cómo deseas pagar? 💎\n\n🏦 *Transferencia*: Nequi, Daviplata o cuenta bancaria\n💵 *Pago en tienda*: tarjeta o Addi\n\nUna asesora te envía los datos oficiales al confirmar.",
     "nota_envio_domicilio": "Envío por Interrapidísimo (aprox. 2 a 5 días). El valor del envío te lo confirmamos según tu ciudad.",
     "minimo_mayorista": 750000,
+    "direccion_tienda": "Centro Comercial Pontevedra, Carrera 24 #16-54, locales 214 y 215, Pasto (Nariño)",
     "nota_confirmado": "Si elegiste transferencia, te enviamos los datos oficiales de Nequi, Daviplata o cuenta bancaria. Antes de pagar confirmamos contigo referencias, cantidades y valor total 💎"
   }
 }$aria$::jsonb
