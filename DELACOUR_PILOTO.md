@@ -909,3 +909,40 @@ defina, se actualiza el tema en `conocimiento` (sin código).
   resumen/pago/confirmación, JSON y SQL entregados).
 - `supabase/tests/20261201000000_dulabs_agente_negocio_64kb.test.sql` (PostgreSQL real).
 - Mutación: `python3 scripts/mutacion/b32.py` (14).
+
+---
+
+## Bloque 33 · módulo Clientes (Dashboard → Clientes; módulo `clientes_joyeria`)
+
+Un cliente por contacto de WhatsApp: quien eligió detal o por mayor, o hizo algún pedido (quien solo
+saludó no aparece). No hay tabla de clientes: el listado se arma en la BD
+(`dulabs_catalogo_clientes_listar`) con los pedidos, la modalidad del contacto, los contactos
+conocidos y los mensajes. Lo único nuevo que se guarda es la **nota interna** del equipo.
+
+- **Lista:** nombre, teléfono, modalidad (🛍️ Detal / 📦 Mayorista), compras y pedidos, total comprado,
+  último pedido con su estado, ciudad, último contacto, 📝 si tiene nota. Búsqueda por nombre o
+  teléfono; filtros Todos / Detal / Mayorista / Ya compraron / Aún no compran; 25 por página.
+- **Ficha:** datos, "Mayorista nuevo" (aún no compró: su primera compra debe llegar al mínimo),
+  pedidos (los confirmados abren su detalle en Pedidos), modalidad con su historial (quién la cambió
+  y por qué), **Abrir chat** (Inbox) y la **nota interna** (máx. 1000 caracteres; si dos personas la
+  editan a la vez, la segunda recibe un aviso y nada se pisa).
+- **Exportar a Excel:** CSV de la lista filtrada (máx. 5.000), con la nota; separador `;`, tildes
+  correctas y teléfono como texto; ninguna celda puede ser una fórmula.
+- **Permisos:** solo admin y agente (datos personales); el rol lectura no ve el módulo.
+
+### Activar (manual, SQL Editor) — SOLO Delacour
+1. Migración `supabase/migrations/20261202000000_dulabs_catalogo_clientes.sql` (aditiva: una función de
+   solo lectura y la tabla de notas; RLS, solo `service_role`).
+2. Después del merge:
+```sql
+insert into dulabs_tenant_modulos (id_tenant, modulo, habilitado)
+values ('0d3ae22d-0c38-4fd6-ba48-fb9e29b7cdb4', 'clientes_joyeria', true)
+on conflict (id_tenant, modulo) do update set habilitado = true;
+```
+
+### Pruebas
+- `lib/catalogo/clientes/clientes.test.ts` (listado, filtros, búsqueda, aislamiento, paginación,
+  ficha, nota con compare-and-set, CSV, permisos).
+- `supabase/tests/20261202000000_dulabs_catalogo_clientes.test.sql` (PostgreSQL real, 9 controles).
+- Matriz E2E, bloque O (pedidos reales del chat → clientes en PostgreSQL real).
+- Mutación: `python3 scripts/mutacion/b33.py` (15).

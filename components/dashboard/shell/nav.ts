@@ -82,6 +82,9 @@ export const navSections: NavSection[] = [
       // Bloque 27 -- pedidos reales (checkout conversacional): solo para negocios con el módulo
       // "pedidos" habilitado (dulabs_tenant_modulos). La API autoriza por su cuenta.
       { label: "Pedidos", labelEn: "Orders", href: "/dashboard/pedidos", icon: ShoppingBag, modulo: "pedidos" },
+      // Bloque 33 -- clientes del catálogo (un cliente por contacto, con sus pedidos y nota): solo
+      // negocios con el módulo "clientes_joyeria". La API autoriza por su cuenta (admin y agente).
+      { label: "Clientes", labelEn: "Customers", href: "/dashboard/clientes", icon: Contact, modulo: "clientes_joyeria", rolesPermitidos: ["admin", "agente"] },
     ],
   },
   {
