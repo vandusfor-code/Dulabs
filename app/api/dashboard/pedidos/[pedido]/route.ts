@@ -9,11 +9,13 @@
  *        Queda en el historial con la persona que la hizo. Repetir la misma acción no la repite.
  *        Bloque 31: después del cambio, notificación por WhatsApp al cliente (idempotente; ver
  *        lib/catalogo/pedidos/notificaciones.ts). La respuesta trae `notificacion` con el resultado.
+ *   DELETE (Bloque 35, solo administradores): elimina un pedido CERRADO (completado, cancelado,
+ *        rechazado o vencido) con su historial; una copia queda en la auditoría. Uno activo => 409.
  */
 import type { NextRequest } from "next/server";
 import { withCatalog } from "@/lib/catalogo/http";
 import { ORDERS_MODULE } from "@/lib/catalogo/auth";
-import { accionGestion, detalleGestion } from "@/lib/catalogo/pedidos/gestion";
+import { accionGestion, detalleGestion, eliminarGestion } from "@/lib/catalogo/pedidos/gestion";
 import { productionOrderEngine } from "@/lib/catalogo/pedidos/produccion";
 import { productionPanelFuentes } from "@/lib/catalogo/pedidos/panel-fuentes";
 import { productionNotificador } from "@/lib/catalogo/pedidos/notificaciones-produccion";
@@ -44,5 +46,15 @@ export async function POST(request: NextRequest, { params }: Params) {
       return accionGestion(productionOrderEngine(supabase), actor.tenantId, pedido.toUpperCase(), body, memberId, productionNotificador(supabase));
     },
     { module: ORDERS_MODULE, recurso: "pedidos_escritura" },
+  );
+}
+
+export async function DELETE(request: NextRequest, { params }: Params) {
+  const { pedido } = await params;
+  return withCatalog(
+    request,
+    "write",
+    async ({ supabase, actor, memberId }) => eliminarGestion(productionOrderEngine(supabase), actor.tenantId, pedido.toUpperCase(), memberId),
+    { module: ORDERS_MODULE, recurso: "pedidos_eliminar" },
   );
 }

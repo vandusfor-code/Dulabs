@@ -5,8 +5,8 @@
 // Bloque 34: editar nombre, modalidad (con motivo si cambia) y "ya es cliente".
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
-import { ArrowLeft, MessageCircle, RefreshCw } from "lucide-react";
+import { useParams, useRouter } from "next/navigation";
+import { ArrowLeft, MessageCircle, RefreshCw, Trash2 } from "lucide-react";
 import { PageHeader } from "@/components/dashboard/shell/ui";
 import { useI18n } from "@/lib/i18n";
 import { NOTA_MAX, esMayoristaNuevo, type ClienteDetalle, type Modalidad } from "@/lib/catalogo/clientes/modelo";
@@ -112,11 +112,62 @@ function EditarCliente({ clave, d, onSaved }: { clave: string; d: ClienteDetalle
   );
 }
 
+/** Bloque 35 — eliminar el cliente (solo administradores): todo lo suyo en el negocio, menos el chat. */
+function EliminarCliente({ clave, d }: { clave: string; d: ClienteDetalle }) {
+  const { t } = useI18n();
+  const { client } = useCatalogAccess();
+  const toast = useCatalogToast();
+  const router = useRouter();
+  const [enCurso, setEnCurso] = useState(false);
+  const nombre = d.cliente.nombre ?? telefonoVisible(d.cliente.waId);
+  const activos = d.pedidos.filter((p) => ["confirmed", "handoff"].includes(p.estado)).length;
+
+  async function eliminar() {
+    if (!client || enCurso) return;
+    const ok = window.confirm(
+      t(
+        `¿Eliminar a ${nombre}? Se borran su modalidad, su nombre, su nota, su ficha y sus ${d.pedidos.length} pedido(s). El chat del Inbox se conserva y, si vuelve a escribir, el asistente empieza de cero. No se puede deshacer.`,
+        `Delete ${nombre}? Their type, name, note, profile and ${d.pedidos.length} order(s) are removed. The Inbox chat is kept and, if they write again, the assistant starts from scratch. This cannot be undone.`,
+      ),
+    );
+    if (!ok) return;
+    setEnCurso(true);
+    const r = await client.deleteClient(clave);
+    setEnCurso(false);
+    if (!r.ok) return toast(r.error.message, "error");
+    toast(t(`✓ Cliente eliminado.`, `✓ Customer deleted.`));
+    router.push("/dashboard/clientes");
+  }
+
+  return (
+    <div>
+      {activos > 0 && (
+        <p className="mb-3 text-xs text-amber-500">
+          {t(
+            `Tiene ${activos} pedido(s) activo(s): cancélalos primero en Pedidos (el stock apartado vuelve) para poder eliminarlo.`,
+            `Has ${activos} active order(s): cancel them first in Orders (reserved stock returns) to delete it.`,
+          )}
+        </p>
+      )}
+      <button type="button" disabled={enCurso || activos > 0} onClick={() => void eliminar()} className={cn(actionBtn, "text-red-400 hover:text-red-300 disabled:opacity-50")}>
+        <Trash2 className="size-4" />
+        {enCurso ? t("Eliminando…", "Deleting…") : t("Eliminar cliente", "Delete customer")}
+      </button>
+      <p className="mt-2 text-xs text-mist">
+        {t(
+          "Borra su modalidad, nombre, nota, ficha y pedidos cerrados. El chat del Inbox se conserva. No se puede deshacer.",
+          "Removes their type, name, note, profile and closed orders. The Inbox chat is kept. This cannot be undone.",
+        )}
+      </p>
+    </div>
+  );
+}
+
 export default function ClienteFichaPage() {
   const { t } = useI18n();
   const params = useParams<{ cliente: string }>();
   const clave = decodeURIComponent(params.cliente ?? "");
-  const { client } = useCatalogAccess();
+  const { client, canWrite } = useCatalogAccess();
   const toast = useCatalogToast();
   const [d, setD] = useState<ClienteDetalle | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -281,6 +332,12 @@ export default function ClienteFichaPage() {
             </>
           )}
         </Seccion>
+
+        {canWrite && (
+          <Seccion titulo={t("Eliminar cliente", "Delete customer")}>
+            <EliminarCliente clave={clave} d={d} />
+          </Seccion>
+        )}
       </div>
     </div>
   );

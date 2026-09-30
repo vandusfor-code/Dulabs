@@ -415,7 +415,10 @@ describe("B34 · rutas y SQL", () => {
       // CADA handler de la ruta (GET, POST, PATCH…), no solo uno.
       const handlers = (s.match(/withCatalog\(/g) ?? []).length;
       assert.ok(handlers >= 1, f);
-      assert.equal((s.match(/withCatalog\(\s*request,\s*"orders"/g) ?? []).length, handlers, `${f}: modo 'orders' en cada handler`);
+      // Bloque 35: eliminar (DELETE) es solo de administradores ("write"); lo demás, admin y agente ("orders").
+      const eliminar = (s.match(/export async function DELETE/g) ?? []).length;
+      assert.equal((s.match(/withCatalog\(\s*request,\s*"orders"/g) ?? []).length, handlers - eliminar, `${f}: modo 'orders' en cada handler`);
+      assert.equal((s.match(/withCatalog\(\s*request,\s*"write"/g) ?? []).length, eliminar, `${f}: 'write' solo para eliminar`);
       assert.equal((s.match(/module: CLIENTS_MODULE/g) ?? []).length, handlers, `${f}: módulo Clientes en cada handler`);
       assert.ok(!/searchParams\.get\("tenant|body\.tenant|body\?\.tenant/.test(s), `${f}: el negocio sale de la sesión`);
     }
