@@ -199,6 +199,10 @@ export function createOrderEngine(deps: OrderEngineDeps) {
     await sink.publish(event).catch((err: unknown) => console.error("[catalogo/pedidos] no se pudo publicar el evento:", err instanceof Error ? err.message : err));
   }
 
+  /** Rendimiento del panel: última vez que se vencieron reservas desde esta instancia del motor. */
+  let ultimoVencimiento = Number.NEGATIVE_INFINITY;
+  const VENCER_CADA_MS = 60_000;
+
   async function requireAvailable() {
     if (!(await deps.orders.available())) throw new OrderError("UNAVAILABLE", "Los pedidos por WhatsApp todavía no están activados para este negocio.");
   }
@@ -771,7 +775,12 @@ export function createOrderEngine(deps: OrderEngineDeps) {
      */
     async panelOrders(tenantId: string, query: Omit<PanelQuery, "limit"> & { limit: number }): Promise<{ items: Array<{ order: Order; reservations: ReservationSummary[] }>; next: { updatedAt: string; orderId: string } | null }> {
       await requireAvailable();
-      await deps.orders.expireReservations(200).catch((err: unknown) => console.error("[catalogo/pedidos] vencer reservas:", err instanceof Error ? err.message : "?"));
+      // Rendimiento: vencer lo que ya pasó su plazo como mucho una vez por minuto en esta instancia
+      // (el cron diario y las demás lecturas también vencen); así el panel no espera en cada carga.
+      if (now().getTime() - ultimoVencimiento >= VENCER_CADA_MS) {
+        ultimoVencimiento = now().getTime();
+        await deps.orders.expireReservations(200).catch((err: unknown) => console.error("[catalogo/pedidos] vencer reservas:", err instanceof Error ? err.message : "?"));
+      }
       const limit = Math.min(Math.max(Math.trunc(query.limit), 1), 100);
       const rows = await deps.orders.listPanel(tenantId, { ...query, limit: limit + 1 });
       const page = rows.slice(0, limit);

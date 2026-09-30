@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import { useDashboard } from "@/lib/dashboard-session";
+import { olvidarMe, useDashboard } from "@/lib/dashboard-session";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import { useI18n } from "@/lib/i18n";
 import { PLANES, resolverPlanId, familiaDePlan, type PlanId } from "@/lib/planes";
@@ -221,6 +221,7 @@ export default function CuentaPage() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error ?? t("No se pudo eliminar la cuenta.", "Couldn't delete the account."));
+      olvidarMe();
       await supabaseBrowser().auth.signOut();
       router.push("/");
     } catch (err) {

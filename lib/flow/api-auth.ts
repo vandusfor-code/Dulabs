@@ -10,6 +10,7 @@
 import type { NextRequest } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabaseAdmin } from "@/lib/supabase";
+import { usuarioDeToken } from "@/lib/auth-cache";
 import { resolverMiembroEquipo, requireRol, type Miembro, type Rol } from "@/lib/team";
 import { esAdminDulabs } from "@/lib/admin-tenant";
 
@@ -61,12 +62,13 @@ export async function requireFlowAccess(
   }
 
   const supabase = supabaseAdmin();
-  const { data: userData, error } = await supabase.auth.getUser(token);
-  if (error || !userData.user) {
+  // Token válido recordado hasta 60 s (lib/auth-cache.ts); el miembro (rol / estado) se lee siempre.
+  const usuario = await usuarioDeToken(supabase, token);
+  if (!usuario) {
     return { ok: false, response: Response.json({ error: "Sesión inválida" }, { status: 401 }) };
   }
 
-  const miembro = await resolverMiembroEquipo(supabase, userData.user.id);
+  const miembro = await resolverMiembroEquipo(supabase, usuario.id);
 
   if (opts?.allowAdminOverride) {
     const tenantOverride = request.headers.get(ADMIN_TENANT_OVERRIDE_HEADER);

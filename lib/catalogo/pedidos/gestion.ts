@@ -174,10 +174,15 @@ export function pedidoGestion(order: Order, reservations: readonly ReservationSu
   };
 }
 
+type MapaAtencion = Map<string, { pausadaHasta: string | null; conversacion: "open" | "pending" | "closed" | null }>;
+
 /** Atención de cada conversación (fuente opcional; si falla, el pedido se muestra sin ella). */
-async function conAtencion(tenantId: string, pedidos: PedidoGestion[], orders: Order[], extras: PanelExtras): Promise<PedidoGestion[]> {
+async function leerAtencion(tenantId: string, orders: Order[], extras: PanelExtras): Promise<MapaAtencion> {
   const contactos = [...new Map(orders.flatMap((o) => (o.contact ? [[`${o.contact.phoneNumberId}|${o.contact.waId}`, o.contact] as const] : []))).values()];
-  const mapa = contactos.length && extras.fuentes.atencion ? await extras.fuentes.atencion(tenantId, contactos).catch(() => new Map()) : new Map();
+  return contactos.length && extras.fuentes.atencion ? await extras.fuentes.atencion(tenantId, contactos).catch(() => new Map()) : new Map();
+}
+
+function aplicarAtencion(pedidos: PedidoGestion[], orders: Order[], mapa: MapaAtencion): PedidoGestion[] {
   return pedidos.map((p, i) => {
     const c = orders[i].contact;
     const a = c ? mapa.get(`${c.phoneNumberId}|${c.waId}`) : undefined;
@@ -305,12 +310,14 @@ export async function listarGestion(engine: OrderEngine | null, tenantId: string
   const cursor = cursorTexto ? decodificarCursorGestion(cursorTexto) : null;
   if (cursorTexto && !cursor) return apiError("VALIDATION_ERROR", "cursor inválido.", 400);
   try {
+    // Bloque 35: contador de cada pestaña con los MISMOS filtros (sin el de estado), solo en la primera
+    // página. Rendimiento: corre AL MISMO TIEMPO que la lista (no después).
+    const conteosP = cursor ? Promise.resolve(null) : contarGrupos(engine, tenantId, f.filtros).catch(() => null);
     const r = await engine.panelOrders(tenantId, { ...f.filtros, before: cursor, limit: limite });
     const base = r.items.map((i) => ({ vista: pedidoGestion(i.order, i.reservations), order: i.order, reservations: i.reservations }));
-    const pedidos = await conAtencion(tenantId, await enriquecerPedidos(tenantId, base, extras), base.map((b) => b.order), extras);
-    // Bloque 35: contador de cada pestaña con los MISMOS filtros (sin el de estado), solo en la primera página.
-    const conteos = cursor ? null : await contarGrupos(engine, tenantId, f.filtros).catch(() => null);
-    return apiOk({ pedidos, siguiente: r.next ? codificarCursorGestion(r.next) : null, conteos });
+    const [enriquecidos, atencion] = await Promise.all([enriquecerPedidos(tenantId, base, extras), leerAtencion(tenantId, base.map((b) => b.order), extras)]);
+    const pedidos = aplicarAtencion(enriquecidos, base.map((b) => b.order), atencion);
+    return apiOk({ pedidos, siguiente: r.next ? codificarCursorGestion(r.next) : null, conteos: await conteosP });
   } catch (err) {
     return errorGestion(err);
   }
@@ -353,9 +360,15 @@ export async function detalleGestion(engine: OrderEngine | null, tenantId: strin
     const found = await engine.panelOrder(tenantId, pedido);
     // Un pedido que nunca se confirmó (propuesta, borrador) no es parte del módulo.
     if (!found || !found.order.confirmedAt) return apiError("NOT_FOUND", "No encontramos ese pedido.", 404);
-    const [enriquecido] = await enriquecerPedidos(tenantId, [{ vista: pedidoGestion(found.order, found.reservations), order: found.order, reservations: found.reservations }], extras);
-    const [vista] = await conAtencion(tenantId, [enriquecido], [found.order], extras);
-    const historia = await engine.orderHistory(tenantId, found.order);
+    // Rendimiento: lo que no depende entre sí va en paralelo (datos del cliente, atención, historial y avisos).
+    const [[enriquecido], atencion, historia, registros] = await Promise.all([
+      enriquecerPedidos(tenantId, [{ vista: pedidoGestion(found.order, found.reservations), order: found.order, reservations: found.reservations }], extras),
+      leerAtencion(tenantId, [found.order], extras),
+      engine.orderHistory(tenantId, found.order),
+      // Bloque 31: notificaciones al cliente de este pedido (soporte ve qué se envió y qué falló).
+      notificador ? notificador.store.listar(tenantId, found.order.id).catch(() => [] as RegistroNotificacion[]) : Promise.resolve([] as RegistroNotificacion[]),
+    ]);
+    const [vista] = aplicarAtencion([enriquecido], [found.order], atencion);
     const ids = [...new Set(historia.flatMap((h) => (h.memberId !== null ? [h.memberId] : [])))];
     const nombres = ids.length && extras.fuentes.miembros ? await extras.fuentes.miembros(tenantId, ids).catch(() => new Map<number, string>()) : new Map<number, string>();
     const historial: HistorialEntrada[] = historia.map((h) => ({
@@ -367,9 +380,7 @@ export async function detalleGestion(engine: OrderEngine | null, tenantId: strin
       motivo: h.reason,
       fecha: h.at,
     }));
-    // Bloque 31: notificaciones al cliente de este pedido (soporte ve qué se envió y qué falló).
-    const notificaciones = notificador ? await notificador.store.listar(tenantId, found.order.id).catch(() => [] as RegistroNotificacion[]) : [];
-    return apiOk({ pedido: vista, historial, notificaciones: notificaciones.map(notificacionVista) });
+    return apiOk({ pedido: vista, historial, notificaciones: registros.map(notificacionVista) });
   } catch (err) {
     return errorGestion(err);
   }

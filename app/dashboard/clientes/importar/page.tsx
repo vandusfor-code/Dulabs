@@ -15,7 +15,7 @@ type Vista = { filas: FilaImportacion[]; resumen: { nuevos: number; actualizar: 
 type Resultado = { creados: number; actualizados: number; errores: Array<{ telefono: string; motivo: string }> };
 
 const ACCION: Record<FilaImportacion["accion"], { es: string; en: string; tone: string }> = {
-  nuevo: { es: "Nuevo", en: "New", tone: "bg-lime-soft text-lime-text" },
+  nuevo: { es: "Nuevo", en: "New", tone: "bg-emerald-500/15 text-emerald-400" },
   actualizar: { es: "Se actualiza", en: "Update", tone: "bg-sky-500/15 text-sky-400" },
   error: { es: "Error", en: "Error", tone: "bg-red-500/15 text-red-400" },
 };

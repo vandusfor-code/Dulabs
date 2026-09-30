@@ -1,6 +1,7 @@
 import { after } from "next/server";
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { usuarioDeToken } from "@/lib/auth-cache";
 import { consultarEstadoNumero } from "@/lib/meta-numero";
 import { descifrarSecreto } from "@/lib/crypto";
 import { puedeUsarDumo } from "@/lib/dumo-acceso";
@@ -25,10 +26,12 @@ export async function GET(request: NextRequest) {
   }
 
   const supabase = supabaseAdmin();
-  const { data: userData, error: userError } = await supabase.auth.getUser(token);
-  if (userError || !userData.user) {
+  // Token válido recordado hasta 60 s (lib/auth-cache.ts); la membresía se lee siempre.
+  const usuario = await usuarioDeToken(supabase, token);
+  if (!usuario) {
     return Response.json({ error: "Sesión inválida" }, { status: 401 });
   }
+  const userData = { user: usuario };
 
   // Esta ruta necesita ver membresías invitado/suspendido también (no solo
   // activo), para poder completar la primera invitación y rechazar accesos
@@ -66,19 +69,33 @@ export async function GET(request: NextRequest) {
     return Response.json({ error: error.message }, { status: 500 });
   }
 
+  // Rendimiento: todo lo que depende solo del negocio y de sus números va EN PARALELO (antes eran
+  // idas y vueltas seguidas a la base de datos).
+  const phoneNumberIds = (data ?? []).map((n) => n.phone_number_id);
+  const idsAgentesAsignados = [...new Set((data ?? []).map((n) => n.agente_id).filter((id): id is number => id !== null))];
+  const hace30d = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const inicioHoy = new Date();
+  inicioHoy.setHours(0, 0, 0, 0);
+  const [agentesRes, mensajesRes, estadosRes, suscripcionRes, modulos] = await Promise.all([
+    idsAgentesAsignados.length > 0 ? supabase.from("dulabs_agentes").select("id, nombre").in("id", idsAgentesAsignados) : Promise.resolve({ data: [] as Array<{ id: number; nombre: string }> }),
+    phoneNumberIds.length > 0
+      ? supabase.from("dulabs_mensajes_log").select("phone_number_id, created_at").in("phone_number_id", phoneNumberIds).eq("direccion", "saliente").gte("created_at", hace30d.toISOString())
+      : Promise.resolve({ data: [] as Array<{ phone_number_id: string; created_at: string }> }),
+    // FASE 8.5: consulta AISLADA y best-effort de `estado_conexion` (ver el comentario más abajo).
+    phoneNumberIds.length > 0 ? supabase.from("dulabs_clientes_config").select("phone_number_id, estado_conexion").in("phone_number_id", phoneNumberIds) : Promise.resolve({ data: [], error: null }),
+    supabase.from("dulabs_suscripciones").select("plan, precio_cop, estado, fecha_proximo_cobro, cancelar_al_vencer").eq("id_tenant", tenantId).maybeSingle(),
+    // Catálogo (autorizado) -- solo para mostrar/ocultar módulos en el nav;
+    // best-effort (tabla sin migrar => []). La autorización real vive en cada
+    // endpoint del módulo (lib/catalogo/auth.ts), que nunca confía en esto.
+    modulosHabilitados(supabase, tenantId),
+  ]);
+
   // Nombre efectivo del agente que responde en cada número: el de su
   // agente asignado (dulabs_agentes) si tiene uno, o su nombre legado si no
   // — así el resto del dashboard (Números, Playground) no necesita saber
   // de la distinción agente-nuevo/legado, solo lee "nombre_agente".
-  const idsAgentesAsignados = [...new Set((data ?? []).map((n) => n.agente_id).filter((id): id is number => id !== null))];
   const nombrePorAgenteId = new Map<number, string>();
-  if (idsAgentesAsignados.length > 0) {
-    const { data: agentesAsignados } = await supabase
-      .from("dulabs_agentes")
-      .select("id, nombre")
-      .in("id", idsAgentesAsignados);
-    for (const a of agentesAsignados ?? []) nombrePorAgenteId.set(a.id, a.nombre);
-  }
+  for (const a of (agentesRes.data ?? []) as Array<{ id: number; nombre: string }>) nombrePorAgenteId.set(a.id, a.nombre);
 
   // Resincroniza el estado operativo real del número (calidad, límite de
   // mensajería, verificación) desde Meta si nunca se hizo o si ya pasó más
@@ -121,26 +138,12 @@ export async function GET(request: NextRequest) {
 
   // Enviados reales por número (30 días) y hoy, para el cupo diario y el
   // total de capacidad de la pantalla de Números.
-  const phoneNumberIds = (data ?? []).map((n) => n.phone_number_id);
   const enviados30dPorNumero = new Map<string, number>();
   const enviadosHoyPorNumero = new Map<string, number>();
-  if (phoneNumberIds.length > 0) {
-    const hace30d = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-    const inicioHoy = new Date();
-    inicioHoy.setHours(0, 0, 0, 0);
-
-    const { data: mensajes30d } = await supabase
-      .from("dulabs_mensajes_log")
-      .select("phone_number_id, created_at")
-      .in("phone_number_id", phoneNumberIds)
-      .eq("direccion", "saliente")
-      .gte("created_at", hace30d.toISOString());
-
-    for (const m of mensajes30d ?? []) {
-      enviados30dPorNumero.set(m.phone_number_id, (enviados30dPorNumero.get(m.phone_number_id) ?? 0) + 1);
-      if (new Date(m.created_at) >= inicioHoy) {
-        enviadosHoyPorNumero.set(m.phone_number_id, (enviadosHoyPorNumero.get(m.phone_number_id) ?? 0) + 1);
-      }
+  for (const m of (mensajesRes.data ?? []) as Array<{ phone_number_id: string; created_at: string }>) {
+    enviados30dPorNumero.set(m.phone_number_id, (enviados30dPorNumero.get(m.phone_number_id) ?? 0) + 1);
+    if (new Date(m.created_at) >= inicioHoy) {
+      enviadosHoyPorNumero.set(m.phone_number_id, (enviadosHoyPorNumero.get(m.phone_number_id) ?? 0) + 1);
     }
   }
 
@@ -157,15 +160,9 @@ export async function GET(request: NextRequest) {
   // valor real de todo tenant hoy) -- se autoactiva solo, sin otro deploy,
   // en cuanto se aplique la migración.
   const estadoConexionPorNumero = new Map<string, string>();
-  if (phoneNumberIds.length > 0) {
-    const { data: estados, error: estadosError } = await supabase
-      .from("dulabs_clientes_config")
-      .select("phone_number_id, estado_conexion")
-      .in("phone_number_id", phoneNumberIds);
-    if (!estadosError) {
-      for (const e of estados ?? []) {
-        if (e.estado_conexion) estadoConexionPorNumero.set(e.phone_number_id, e.estado_conexion);
-      }
+  if (!estadosRes.error) {
+    for (const e of (estadosRes.data ?? []) as Array<{ phone_number_id: string; estado_conexion: string | null }>) {
+      if (e.estado_conexion) estadoConexionPorNumero.set(e.phone_number_id, e.estado_conexion);
     }
   }
 
@@ -209,17 +206,7 @@ export async function GET(request: NextRequest) {
     };
   });
 
-  const [{ data: suscripcion }, modulos] = await Promise.all([
-    supabase
-      .from("dulabs_suscripciones")
-      .select("plan, precio_cop, estado, fecha_proximo_cobro, cancelar_al_vencer")
-      .eq("id_tenant", tenantId)
-      .maybeSingle(),
-    // Catálogo (autorizado) -- solo para mostrar/ocultar módulos en el nav;
-    // best-effort (tabla sin migrar => []). La autorización real vive en cada
-    // endpoint del módulo (lib/catalogo/auth.ts), que nunca confía en esto.
-    modulosHabilitados(supabase, tenantId),
-  ]);
+  const suscripcion = suscripcionRes.data;
 
   return Response.json({
     email: userData.user.email,

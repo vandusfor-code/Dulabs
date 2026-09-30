@@ -33,7 +33,7 @@ export function estadoPedido(estado: string | null, etapa: string | null, t: T):
   }
   const m: Record<string, [string, string, string]> = {
     pending_confirmation: ["Solicitud sin confirmar", "Unconfirmed request", "bg-amber-500/15 text-amber-500"],
-    completed: ["Completado", "Completed", "bg-lime-soft text-lime-text"],
+    completed: ["Completado", "Completed", "bg-emerald-500/15 text-emerald-400"],
     cancelled: ["Cancelado", "Cancelled", "bg-ink-2 text-mist"],
     rejected: ["Rechazado", "Rejected", "bg-red-500/15 text-red-400"],
     expired: ["Vencido", "Expired", "bg-ink-2 text-mist"],
