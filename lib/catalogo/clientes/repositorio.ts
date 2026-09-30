@@ -22,7 +22,14 @@ export interface ClientesRepo {
   guardarFicha(tenantId: string, phoneNumberId: string, waId: string, cambios: { yaCompro?: boolean; registrado?: boolean }, miembroId: number | null): Promise<void>;
   /** Bloque 34: ¿es cliente antiguo (ya compró fuera del bot)? */
   yaCompro(tenantId: string, phoneNumberId: string, waId: string): Promise<boolean>;
+  /**
+   * Bloque 35: elimina TODO lo del contacto en el negocio (pedidos, modalidad, nombre, ficha, nota y
+   * conversación del asistente; el chat del Inbox no). Con un pedido activo no toca nada.
+   */
+  eliminar(tenantId: string, phoneNumberId: string, waId: string, miembroId: number): Promise<ResultadoEliminarCliente>;
 }
+
+export type ResultadoEliminarCliente = { resultado: "eliminado"; pedidos: number } | { resultado: "pedidos_activos"; activos: number } | { resultado: "no_encontrado" };
 
 // ---------------------------------------------------------------------------
 // Supabase
@@ -161,6 +168,15 @@ export function createSupabaseClientesRepo(supabase: SupabaseClient): ClientesRe
       if (e2) fail("guardar ficha", e2);
     },
 
+    async eliminar(tenantId, phoneNumberId, waId, miembroId) {
+      const { data, error } = await supabase.rpc("dulabs_catalogo_cliente_eliminar", { p_tenant: tenantId, p_pn: phoneNumberId, p_wa: waId, p_miembro: miembroId });
+      if (error) fail("eliminar", error);
+      const r = (data ?? {}) as { resultado?: string; pedidos?: number; activos?: number };
+      if (r.resultado === "eliminado") return { resultado: "eliminado", pedidos: Number(r.pedidos ?? 0) };
+      if (r.resultado === "pedidos_activos") return { resultado: "pedidos_activos", activos: Number(r.activos ?? 1) };
+      return { resultado: "no_encontrado" };
+    },
+
     async yaCompro(tenantId, phoneNumberId, waId) {
       const { data, error } = await supabase.from("dulabs_catalogo_clientes_ficha").select("ya_compro").eq("id_tenant", tenantId).eq("phone_number_id", phoneNumberId).eq("wa_id", waId).maybeSingle();
       if (error) fail("ya compro", error);
@@ -223,6 +239,8 @@ export function createMemoryClientesRepo(now: () => number = Date.now) {
   const notas = new Map<string, NotaDb & { tenantId: string }>();
   const fichas = new Map<string, { yaCompro: boolean; registrado: boolean; actualizadoPor: number | null }>();
   const numeros: Record<string, string[]> = {};
+  /** Bloque 35: auditoría de clientes eliminados. */
+  const eliminados: Array<{ tenantId: string; clave: string; miembroId: number; pedidos: number }> = [];
   const k = (t: string, pn: string, wa: string) => `${t}|${pn}|${wa}`;
   const max = (...xs: Array<string | null | undefined>) => xs.filter((x): x is string => !!x).sort().at(-1) ?? null;
   const min = (...xs: Array<string | null | undefined>) => xs.filter((x): x is string => !!x).sort()[0] ?? null;
@@ -314,6 +332,25 @@ export function createMemoryClientesRepo(now: () => number = Date.now) {
     async yaCompro(tenantId, pn, wa) {
       return fichas.get(k(tenantId, pn, wa))?.yaCompro === true;
     },
+    async eliminar(tenantId, pn, wa, miembroId) {
+      if (!(numeros[tenantId] ?? []).includes(pn)) return { resultado: "no_encontrado" };
+      const esDelContacto = (x: { tenantId: string; phoneNumberId: string | null; waId: string | null }) => x.tenantId === tenantId && x.phoneNumberId === pn && x.waId === wa;
+      const suyos = pedidos.filter(esDelContacto);
+      const activos = suyos.filter((p) => p.estado === "confirmed" || p.estado === "handoff").length;
+      if (activos > 0) return { resultado: "pedidos_activos", activos };
+      const hay = suyos.length > 0 || canales.some(esDelContacto) || conocidos.some(esDelContacto) || fichas.has(k(tenantId, pn, wa)) || notas.has(k(tenantId, pn, wa));
+      if (!hay) return { resultado: "no_encontrado" };
+      eliminados.push({ tenantId, clave: `${pn}_${wa}`, miembroId, pedidos: suyos.length });
+      const quitar = <T extends { tenantId: string; phoneNumberId: string | null; waId: string | null }>(arr: T[]) => {
+        for (let i = arr.length - 1; i >= 0; i--) if (esDelContacto(arr[i])) arr.splice(i, 1);
+      };
+      quitar(pedidos);
+      quitar(canales);
+      quitar(conocidos);
+      fichas.delete(k(tenantId, pn, wa));
+      notas.delete(k(tenantId, pn, wa));
+      return { resultado: "eliminado", pedidos: suyos.length };
+    },
     async guardarNota(tenantId, pn, wa, texto, version, miembroId) {
       const actual = notas.get(k(tenantId, pn, wa));
       if ((actual?.version ?? 0) !== version) return null;
@@ -322,5 +359,5 @@ export function createMemoryClientesRepo(now: () => number = Date.now) {
       return notaDeDb(n);
     },
   };
-  return { repo, canales, pedidos, conocidos, mensajes, notas, fichas, numeros };
+  return { repo, canales, pedidos, conocidos, mensajes, notas, fichas, numeros, eliminados };
 }

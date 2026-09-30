@@ -261,3 +261,31 @@ export async function aplicarImportacion(repo: ClientesRepo, canales: CustomerCh
   }
   return apiOk({ creados, actualizados, errores });
 }
+
+// ---------------------------------------------------------------------------
+// Bloque 35 — eliminar un cliente (solo administradores; lo exige la ruta)
+// ---------------------------------------------------------------------------
+
+/**
+ * Borra todo lo del contacto en el negocio (pedidos cerrados, modalidad, nombre, ficha, nota y la
+ * conversación del asistente; el chat del Inbox se conserva). Con un pedido activo: 409 (primero se
+ * cancela, así el stock apartado vuelve). Una copia de lo borrado queda en la auditoría.
+ */
+export async function eliminarCliente(repo: ClientesRepo, tenantId: string, clave: string, miembroId: number): Promise<Response> {
+  const k = leerClave(clave);
+  if (!k) return apiError("NOT_FOUND", "No encontramos ese cliente.", 404);
+  if (!(await buscar(repo, tenantId, k.phoneNumberId, k.waId))) return apiError("NOT_FOUND", "No encontramos ese cliente.", 404);
+  const r = await repo.eliminar(tenantId, k.phoneNumberId, k.waId, miembroId);
+  if (r.resultado === "pedidos_activos") {
+    return apiError(
+      "ACTIVE_ORDERS",
+      r.activos === 1
+        ? "Este cliente tiene un pedido activo. Cancélalo primero en Pedidos (el stock apartado vuelve) y luego elimina el cliente."
+        : `Este cliente tiene ${r.activos} pedidos activos. Cancélalos primero en Pedidos (el stock apartado vuelve) y luego elimina el cliente.`,
+      409,
+      { activos: r.activos },
+    );
+  }
+  if (r.resultado === "no_encontrado") return apiError("NOT_FOUND", "No encontramos ese cliente.", 404);
+  return apiOk({ eliminado: clave, pedidos: r.pedidos });
+}

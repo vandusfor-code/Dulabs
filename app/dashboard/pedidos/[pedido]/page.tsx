@@ -6,8 +6,8 @@
 // piden, con confirmación y motivo cuando corresponde. Nunca se editan productos, precios ni stock.
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
-import { ArrowLeft, Hand, MessageCircle, RefreshCw } from "lucide-react";
+import { useParams, useRouter } from "next/navigation";
+import { ArrowLeft, Hand, MessageCircle, RefreshCw, Trash2 } from "lucide-react";
 import { PageHeader } from "@/components/dashboard/shell/ui";
 import { useI18n } from "@/lib/i18n";
 import type { AccionPedido, HistorialEntrada, NotificacionVista, PedidoGestion } from "@/lib/catalogo/pedidos/gestion";
@@ -92,7 +92,8 @@ export default function PedidoGestionPage() {
   const { t } = useI18n();
   const toast = useCatalogToast();
   const { pedido: id } = useParams<{ pedido: string }>();
-  const { client, canManageOrders } = useCatalogAccess();
+  const { client, canManageOrders, canWrite } = useCatalogAccess();
+  const router = useRouter();
   const [p, setP] = useState<PedidoGestion | null>(null);
   const [historial, setHistorial] = useState<HistorialEntrada[]>([]);
   const [notificaciones, setNotificaciones] = useState<NotificacionVista[]>([]);
@@ -167,6 +168,23 @@ export default function PedidoGestionPage() {
     cargar();
   }
 
+  async function eliminar() {
+    if (!client || !p || enCurso) return;
+    const ok = window.confirm(
+      t(
+        `¿Eliminar el pedido ${p.pedido}? Se borra con su historial y ya no aparecerá en Pedidos ni en Clientes. No se puede deshacer.`,
+        `Delete order ${p.pedido}? It is removed with its history and will no longer appear in Orders or Customers. This cannot be undone.`,
+      ),
+    );
+    if (!ok) return;
+    setEnCurso("eliminar");
+    const r = await client.deleteManagedOrder(p.pedido);
+    setEnCurso(null);
+    if (!r.ok) return toast(r.error.message, "error");
+    toast(t(`✓ Pedido ${p.pedido} eliminado.`, `✓ Order ${p.pedido} deleted.`));
+    router.push("/dashboard/pedidos");
+  }
+
   const c = p?.checkout ?? null;
   const inbox = p?.contacto ? inboxHref(p.contacto) : null;
 
@@ -217,6 +235,16 @@ export default function PedidoGestionPage() {
                 </div>
               )}
               {!canManageOrders && <p className="mt-2 text-xs text-mist">{t("Solo lectura.", "Read only.")}</p>}
+              {/* Bloque 35: solo pedidos cerrados y solo administradores. */}
+              {canWrite && p.eliminable && (
+                <div className="mt-4 border-t border-edge pt-3">
+                  <button type="button" disabled={enCurso !== null} onClick={() => void eliminar()} className={cn(actionBtn, "text-red-400 hover:text-red-300")}>
+                    <Trash2 className="size-4" />
+                    {enCurso === "eliminar" ? t("Eliminando…", "Deleting…") : t("Eliminar pedido", "Delete order")}
+                  </button>
+                  <p className="mt-1.5 text-xs text-mist">{t("Se borra con su historial. No se puede deshacer.", "It is removed with its history. This cannot be undone.")}</p>
+                </div>
+              )}
             </Seccion>
 
             <Seccion titulo={t("Cliente", "Customer")}>

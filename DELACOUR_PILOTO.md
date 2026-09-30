@@ -994,3 +994,35 @@ modalidad por la misma RPC que el cambio de una asesora (origen `asesora`, con q
 - Matriz E2E, bloque P (registrar → WhatsApp "Hola buenas tardes" → saludo con su nombre; editar e
   importar en PostgreSQL real).
 - Mutación: `python3 scripts/mutacion/b34.py` (32).
+
+## Bloque 35 · Pedidos más limpio + eliminar pedidos y clientes
+
+**Dashboard → Pedidos:**
+- **Filtros:** Pago, Detal/mayorista, Método, Entrega, **Periodo** (Hoy / 7 / 30 / 90 días / Todo /
+  Personalizado; por defecto 30 días) y la búsqueda.
+- **Pestañas con contador**, debajo de los filtros: Todos · Pendientes (confirmados sin empezar) ·
+  En preparación · Enviados · Entregados · Completados · Cancelados (con rechazados y vencidos). Los
+  contadores respetan los demás filtros.
+- **Tarjeta de 2 líneas:** número (copiar), cliente · teléfono · chat; estado, pago y modalidad;
+  entrega · asesora; total, "Hace 2 h" y, si aplica, "Vence en …". Método, IA y fechas exactas están
+  en el detalle del pedido.
+
+**Eliminar (solo administradores):**
+- **Pedido:** solo si ya está cerrado (completado, cancelado, rechazado o vencido). Uno activo se
+  cancela primero (el stock apartado vuelve) y luego se elimina. Se hace desde la papelera de la
+  tarjeta o desde el detalle. Se borra con su historial; el stock no cambia.
+- **Cliente** (en su ficha): se borran sus pedidos cerrados, su modalidad, su nombre, su ficha, su
+  nota y la conversación del asistente (si vuelve a escribir, empieza de cero). **El chat del Inbox se
+  conserva.** Con un pedido activo no se deja eliminar.
+- Una **copia** de todo lo eliminado queda en `dulabs_catalogo_eliminados` (quién y cuándo).
+
+### Aplicar (manual)
+Migración `supabase/migrations/20261204000000_dulabs_catalogo_eliminar.sql` (aditiva: tabla de
+auditoría, dos funciones y el permiso de borrado controlado de los historiales). Sin ella la vista
+nueva funciona; solo eliminar responde con error.
+
+### Pruebas
+- `lib/catalogo/pedidos/pedidos-b35.test.ts` y `lib/catalogo/clientes/eliminar-b35.test.ts`.
+- `supabase/tests/20261204000000_dulabs_catalogo_eliminar.test.sql` (PostgreSQL real, 7 controles).
+- Matriz E2E, bloque Q.
+- Mutación: `python3 scripts/mutacion/b35.py` (17).

@@ -1,48 +1,78 @@
 "use client";
 
 // Bloque 27 — módulo "Pedidos": pedidos YA confirmados del negocio, por última actualización, con
-// filtros (estado, pago, modalidad, método, entrega, fechas y búsqueda). Todo lo filtra y pagina el
+// filtros (pago, modalidad, método, entrega, periodo y búsqueda). Todo lo filtra y pagina el
 // backend (cursor); esta vista solo muestra. El teléfono solo lo ve quien atiende (admin / agente).
+// Bloque 35: pestañas con contador (Todos, Pendientes, En preparación…), periodo, tarjetas compactas
+// (el resto del detalle vive en la página del pedido) y eliminar pedidos cerrados (solo admin).
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { ChevronRight, RefreshCw, Search } from "lucide-react";
+import { Check, ChevronRight, Clock, Copy, MessageCircle, Package, RefreshCw, Search, Store, Trash2, Truck } from "lucide-react";
 import { PageHeader } from "@/components/dashboard/shell/ui";
 import { useI18n } from "@/lib/i18n";
-import type { PedidoGestion } from "@/lib/catalogo/pedidos/gestion";
+import type { GrupoPedidos, PedidoGestion } from "@/lib/catalogo/pedidos/gestion";
 import type { PedidosFiltros } from "@/lib/catalogo-client";
-import { actionBtn, cn, formatPrice, useCatalogAccess } from "@/components/dashboard/catalogo/ui";
+import { actionBtn, cn, formatPrice, useCatalogAccess, useCatalogToast } from "@/components/dashboard/catalogo/ui";
 import { CANAL_LABEL } from "@/components/dashboard/catalogo/PedidoDetalle";
-import { ENTREGA, ESTADO_VISIBLE, EstadoBadge, METODO, PagoBadge, atencionTexto, fecha, nombreCliente, telefonoCliente } from "@/components/dashboard/pedidos/ui";
+import { ENTREGA, EstadoBadge, METODO, PagoBadge, fecha, hace, nombreCliente, rangoPeriodo, telefonoCliente, type Periodo } from "@/components/dashboard/pedidos/ui";
 
-const ESTADOS = ["todos", "confirmado", "en_preparacion", "enviado", "entregado", "completado", "cancelado", "rechazado", "vencido"] as const;
+const PESTANAS: Array<{ id: GrupoPedidos; es: string; en: string }> = [
+  { id: "todos", es: "Todos", en: "All" },
+  { id: "pendientes", es: "Pendientes", en: "Pending" },
+  { id: "en_preparacion", es: "En preparación", en: "Preparing" },
+  { id: "enviados", es: "Enviados", en: "Shipped" },
+  { id: "entregados", es: "Entregados", en: "Delivered" },
+  { id: "completados", es: "Completados", en: "Completed" },
+  { id: "cancelados", es: "Cancelados", en: "Cancelled" },
+];
+
+const PERIODOS: Array<{ id: Periodo; es: string; en: string }> = [
+  { id: "hoy", es: "Hoy", en: "Today" },
+  { id: "7d", es: "Últimos 7 días", en: "Last 7 days" },
+  { id: "30d", es: "Últimos 30 días", en: "Last 30 days" },
+  { id: "90d", es: "Últimos 90 días", en: "Last 90 days" },
+  { id: "todo", es: "Todo el tiempo", en: "All time" },
+  { id: "rango", es: "Personalizado", en: "Custom" },
+];
+
 const select = "rounded-xl border border-edge bg-card px-3 py-1.5 text-sm text-fg";
 
 export default function PedidosGestionPage() {
   const { t } = useI18n();
-  const { client, canManageOrders } = useCatalogAccess();
-  const [filtros, setFiltros] = useState<PedidosFiltros>({ estado: "todos" });
+  const { client, canManageOrders, canWrite } = useCatalogAccess();
+  const toast = useCatalogToast();
+  const [grupo, setGrupo] = useState<GrupoPedidos>("todos");
+  const [periodo, setPeriodo] = useState<Periodo>("30d");
+  const [rango, setRango] = useState<{ desde?: string; hasta?: string }>({});
+  const [filtros, setFiltros] = useState<Omit<PedidosFiltros, "grupo" | "desde" | "hasta" | "estado">>({});
   const [busqueda, setBusqueda] = useState("");
   const [pagina, setPagina] = useState<{ clave: string; pedidos: PedidoGestion[]; siguiente: string | null } | null>(null);
+  const [conteos, setConteos] = useState<Record<GrupoPedidos, number> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [cargandoMas, setCargandoMas] = useState(false);
   const [version, setVersion] = useState(0);
-  const clave = JSON.stringify(filtros);
+  const [copiado, setCopiado] = useState<string | null>(null);
+  const [eliminando, setEliminando] = useState<string | null>(null);
 
-  // Primera página de cada combinación de filtros; una respuesta vieja nunca pisa la nueva.
+  const consulta: PedidosFiltros = { ...filtros, grupo, ...(periodo === "rango" ? rango : rangoPeriodo(periodo)) };
+  const clave = JSON.stringify(consulta);
+
+  // Primera página (con los contadores) de cada combinación; una respuesta vieja nunca pisa la nueva.
   useEffect(() => {
     if (!client) return;
     let vivo = true;
-    void client.listManagedOrders(filtros).then((r) => {
+    void client.listManagedOrders(consulta).then((r) => {
       if (!vivo) return;
       if (r.ok) {
         setPagina({ clave, pedidos: r.data.pedidos, siguiente: r.data.siguiente });
+        if (r.data.conteos !== undefined) setConteos(r.data.conteos);
         setError(null);
       } else setError(r.error.message);
     });
     return () => {
       vivo = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- `clave` resume `filtros`
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `clave` resume la consulta
   }, [client, clave, version]);
 
   const actual = pagina?.clave === clave ? pagina : null;
@@ -51,10 +81,37 @@ export default function PedidosGestionPage() {
   async function cargarMas() {
     if (!client || !actual?.siguiente) return;
     setCargandoMas(true);
-    const r = await client.listManagedOrders(filtros, actual.siguiente);
+    const r = await client.listManagedOrders(consulta, actual.siguiente);
     setCargandoMas(false);
     if (!r.ok) return setError(r.error.message);
     setPagina((p) => (p && p.clave === clave ? { clave, pedidos: [...p.pedidos, ...r.data.pedidos], siguiente: r.data.siguiente } : p));
+  }
+
+  async function copiar(pedido: string) {
+    try {
+      await navigator.clipboard.writeText(pedido);
+      setCopiado(pedido);
+      window.setTimeout(() => setCopiado((c) => (c === pedido ? null : c)), 1500);
+    } catch {
+      toast(t("No se pudo copiar.", "Could not copy."), "error");
+    }
+  }
+
+  async function eliminar(p: PedidoGestion) {
+    if (!client || eliminando) return;
+    const ok = window.confirm(
+      t(
+        `¿Eliminar el pedido ${p.pedido}? Se borra con su historial y ya no aparecerá en Pedidos ni en Clientes. No se puede deshacer.`,
+        `Delete order ${p.pedido}? It is removed with its history and will no longer appear in Orders or Customers. This cannot be undone.`,
+      ),
+    );
+    if (!ok) return;
+    setEliminando(p.pedido);
+    const r = await client.deleteManagedOrder(p.pedido);
+    setEliminando(null);
+    if (!r.ok) return toast(r.error.message, "error");
+    toast(t(`✓ Pedido ${p.pedido} eliminado.`, `✓ Order ${p.pedido} deleted.`));
+    setVersion((v) => v + 1);
   }
 
   return (
@@ -80,16 +137,6 @@ export default function PedidosGestionPage() {
           set({ q: busqueda.trim() || undefined });
         }}
       >
-        <label className="sr-only" htmlFor="estado">
-          {t("Estado", "Status")}
-        </label>
-        <select id="estado" className={select} value={filtros.estado ?? "todos"} onChange={(e) => set({ estado: e.target.value as PedidosFiltros["estado"] })}>
-          {ESTADOS.map((e) => (
-            <option key={e} value={e}>
-              {e === "todos" ? t("Todos los estados", "All statuses") : t(ESTADO_VISIBLE[e].es, ESTADO_VISIBLE[e].en)}
-            </option>
-          ))}
-        </select>
         <select aria-label={t("Pago", "Payment")} className={select} value={filtros.pago ?? ""} onChange={(e) => set({ pago: (e.target.value || undefined) as PedidosFiltros["pago"] })}>
           <option value="">{t("Pago: todos", "Payment: all")}</option>
           <option value="pendiente">{t("Pago pendiente", "Payment pending")}</option>
@@ -110,8 +157,19 @@ export default function PedidosGestionPage() {
           <option value="tienda">{t(ENTREGA.tienda.es, ENTREGA.tienda.en)}</option>
           <option value="domicilio">{t(ENTREGA.domicilio.es, ENTREGA.domicilio.en)}</option>
         </select>
-        <input type="date" aria-label={t("Desde", "From")} className={select} value={filtros.desde ?? ""} onChange={(e) => set({ desde: e.target.value || undefined })} />
-        <input type="date" aria-label={t("Hasta", "To")} className={select} value={filtros.hasta ?? ""} onChange={(e) => set({ hasta: e.target.value || undefined })} />
+        <select aria-label={t("Periodo", "Period")} className={select} value={periodo} onChange={(e) => setPeriodo(e.target.value as Periodo)}>
+          {PERIODOS.map((p) => (
+            <option key={p.id} value={p.id}>
+              {t(p.es, p.en)}
+            </option>
+          ))}
+        </select>
+        {periodo === "rango" && (
+          <>
+            <input type="date" aria-label={t("Desde", "From")} className={select} value={rango.desde ?? ""} onChange={(e) => setRango((r) => ({ ...r, desde: e.target.value || undefined }))} />
+            <input type="date" aria-label={t("Hasta", "To")} className={select} value={rango.hasta ?? ""} onChange={(e) => setRango((r) => ({ ...r, hasta: e.target.value || undefined }))} />
+          </>
+        )}
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <input
             type="search"
@@ -119,7 +177,7 @@ export default function PedidosGestionPage() {
             value={busqueda}
             onChange={(e) => setBusqueda(e.target.value)}
             placeholder={canManageOrders ? t("Pedido, nombre, referencia o teléfono", "Order, name, reference or phone") : t("Pedido, nombre o referencia", "Order, name or reference")}
-            className={cn(select, "min-w-0 flex-1")}
+            className={cn(select, "min-w-[12rem] flex-1")}
           />
           <button type="submit" className={actionBtn}>
             <Search className="size-4" />
@@ -128,53 +186,114 @@ export default function PedidosGestionPage() {
         </div>
       </form>
 
-      <div className="space-y-3 px-4 pt-4 md:px-8">
+      <nav className="mt-4 flex gap-1 overflow-x-auto border-b border-edge px-4 md:px-8" aria-label={t("Estado de los pedidos", "Order status")}>
+        {PESTANAS.map((p) => {
+          const activa = grupo === p.id;
+          const n = conteos?.[p.id];
+          return (
+            <button
+              key={p.id}
+              type="button"
+              aria-pressed={activa}
+              onClick={() => setGrupo(p.id)}
+              className={cn(
+                "-mb-px flex shrink-0 items-center gap-2 border-b-2 px-3 py-2.5 text-sm transition-colors",
+                activa ? "border-lime font-medium text-fg" : "border-transparent text-mist hover:text-fg",
+              )}
+            >
+              {t(p.es, p.en)}
+              {n !== undefined && (
+                <span className={cn("rounded-full px-1.5 py-0.5 text-[11px] tabular-nums", activa ? "bg-lime text-lime-fg" : "bg-ink-2 text-mist")}>{n}</span>
+              )}
+            </button>
+          );
+        })}
+      </nav>
+
+      <div className="space-y-2.5 px-4 pt-4 md:px-8">
         {error && <p className="rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-400">{error}</p>}
         {!actual && !error && <div className="h-32 animate-pulse rounded-2xl bg-card" aria-hidden />}
         {actual && actual.pedidos.length === 0 && (
           <div className="rounded-2xl border border-edge bg-card p-8 text-center text-sm text-mist">{t("No hay pedidos con estos filtros.", "No orders match these filters.")}</div>
         )}
-        {actual?.pedidos.map((p) => (
-          <Link key={p.pedido} href={`/dashboard/pedidos/${p.pedido}`} className="block rounded-2xl border border-edge bg-card p-4 transition hover:border-fg/40 sm:p-5">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="font-mono text-sm font-semibold text-fg">{p.pedido}</span>
-              <EstadoBadge estado={p.estado_visible} t={t} />
-              <PagoBadge pago={p.estado_pago} t={t} />
-              <span className={cn("rounded-full px-2 py-0.5 text-[11px]", p.canal === "wholesale" ? "bg-violet-500/15 text-violet-400" : "bg-ink-2 text-mist")}>
-                {t(CANAL_LABEL[p.canal].es, CANAL_LABEL[p.canal].en)}
-              </span>
-              <span className="ml-auto font-semibold tabular-nums text-fg">{formatPrice(p.total)}</span>
-              <ChevronRight className="size-4 text-mist" aria-hidden />
+        {actual?.pedidos.map((p) => {
+          const tel = telefonoCliente(p);
+          const chat = p.contacto?.telefono ? `/dashboard/mensajes?${new URLSearchParams({ phone_number_id: p.contacto.numero, telefono_cliente: p.contacto.telefono })}` : null;
+          const entrega = p.checkout?.entrega ?? null;
+          return (
+            <div key={p.pedido} className="relative rounded-2xl border border-edge bg-card px-4 py-3.5 transition hover:border-fg/40 sm:px-5">
+              {/* Toda la tarjeta abre el pedido; los botones de adentro van por encima. */}
+              <Link href={`/dashboard/pedidos/${p.pedido}`} className="absolute inset-0 rounded-2xl" aria-label={t(`Abrir pedido ${p.pedido}`, `Open order ${p.pedido}`)} />
+              <div className="grid items-center gap-x-6 gap-y-2 md:grid-cols-[minmax(0,1.1fr)_minmax(0,1.4fr)_auto]">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <span className="truncate font-mono text-sm font-semibold text-fg">{p.pedido}</span>
+                    <button type="button" onClick={() => void copiar(p.pedido)} className="relative z-10 rounded p-1 text-mist hover:text-fg" aria-label={t("Copiar número de pedido", "Copy order number")}>
+                      {copiado === p.pedido ? <Check className="size-3.5 text-lime-text" /> : <Copy className="size-3.5" />}
+                    </button>
+                  </div>
+                  <div className="mt-0.5 flex items-center gap-1.5 text-xs text-mist">
+                    <span className="truncate text-fg/90">{nombreCliente(p, t)}</span>
+                    {tel && (
+                      <>
+                        <span aria-hidden>·</span>
+                        <span className="tabular-nums">{tel}</span>
+                      </>
+                    )}
+                    {chat && (
+                      <Link href={chat} className="relative z-10 rounded p-0.5 text-emerald-500 hover:text-emerald-400" aria-label={t("Abrir chat", "Open chat")}>
+                        <MessageCircle className="size-3.5" />
+                      </Link>
+                    )}
+                  </div>
+                </div>
+
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <EstadoBadge estado={p.estado_visible} t={t} />
+                    <PagoBadge pago={p.estado_pago} t={t} />
+                    <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-medium", p.canal === "wholesale" ? "bg-violet-500/15 text-violet-400" : "bg-ink-2 text-mist")}>
+                      {t(CANAL_LABEL[p.canal].es, CANAL_LABEL[p.canal].en)}
+                    </span>
+                  </div>
+                  <div className="mt-1 flex items-center gap-1.5 text-xs text-mist">
+                    {entrega === "tienda" ? <Store className="size-3.5" aria-hidden /> : entrega === "domicilio" ? <Truck className="size-3.5" aria-hidden /> : <Package className="size-3.5" aria-hidden />}
+                    <span>{entrega ? t(ENTREGA[entrega].es, ENTREGA[entrega].en) : t("Pedido anterior al checkout", "Pre-checkout order")}</span>
+                    <span aria-hidden>·</span>
+                    <span className="truncate">{p.asesora?.asignada ?? t("Sin asignar", "Unassigned")}</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 md:justify-end">
+                  <div className="text-left md:text-right">
+                    <div className="font-semibold tabular-nums text-fg">{formatPrice(p.total)}</div>
+                    <div className="mt-0.5 flex items-center gap-1 text-xs text-mist md:justify-end" title={fecha(p.actualizado)}>
+                      <Clock className="size-3" aria-hidden />
+                      {hace(p.actualizado, t)}
+                    </div>
+                    {p.vence_reserva && (
+                      <div className="mt-0.5 text-[11px] text-amber-500" title={fecha(p.vence_reserva)}>
+                        {t("Vence", "Expires")} {hace(p.vence_reserva, t)}
+                      </div>
+                    )}
+                  </div>
+                  {canWrite && p.eliminable && (
+                    <button
+                      type="button"
+                      disabled={eliminando === p.pedido}
+                      onClick={() => void eliminar(p)}
+                      className="relative z-10 rounded-lg p-1.5 text-mist hover:bg-red-500/10 hover:text-red-400 disabled:opacity-50"
+                      aria-label={t(`Eliminar pedido ${p.pedido}`, `Delete order ${p.pedido}`)}
+                    >
+                      <Trash2 className="size-4" />
+                    </button>
+                  )}
+                  <ChevronRight className="size-4 text-mist" aria-hidden />
+                </div>
+              </div>
             </div>
-            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-mist">
-              <span className="text-fg">{nombreCliente(p, t)}</span>
-              {telefonoCliente(p) && <span className="tabular-nums">{telefonoCliente(p)}</span>}
-              {p.checkout ? (
-                <>
-                  <span>{t(METODO[p.checkout.metodo_pago].es, METODO[p.checkout.metodo_pago].en)}</span>
-                  <span>{t(ENTREGA[p.checkout.entrega].es, ENTREGA[p.checkout.entrega].en)}</span>
-                </>
-              ) : (
-                <span>{t("Pedido anterior al checkout", "Pre-checkout order")}</span>
-              )}
-              <span>{atencionTexto(p, t)}</span>
-              <span>
-                {t("Creado", "Created")} {fecha(p.creado)}
-              </span>
-              <span>
-                {t("Confirmado", "Confirmed")} {fecha(p.confirmado_en)}
-              </span>
-              {p.vence_reserva && (
-                <span className="text-amber-500">
-                  {t("Vence", "Expires")} {fecha(p.vence_reserva)}
-                </span>
-              )}
-              <span>
-                {t("Actualizado", "Updated")} {fecha(p.actualizado)}
-              </span>
-            </div>
-          </Link>
-        ))}
+          );
+        })}
         {actual?.siguiente && (
           <button type="button" disabled={cargandoMas} onClick={() => void cargarMas()} className={cn(actionBtn, "w-full justify-center")}>
             {cargandoMas ? t("Cargando…", "Loading…") : t("Ver más", "Load more")}

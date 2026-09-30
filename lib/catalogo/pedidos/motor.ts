@@ -41,7 +41,7 @@ import {
 } from "@/lib/catalogo/pedidos/contrato";
 import { eventIdFrom, logOrderEventSink, orderEvent, type OrderEvent, type OrderEventSink, type OrderEventType } from "@/lib/catalogo/pedidos/eventos";
 import { contactRef, logOrderOperation, type OrderLogger } from "@/lib/catalogo/pedidos/log";
-import { InvalidTransition, ProductNotSellable, PublicIdTaken, StockUnavailable, applyChanges, type NewOrder, type OrderChanges, type OrderContact, type OrderCursor, type OrdersRepository, type PanelQuery, type ReservationSummary } from "@/lib/catalogo/pedidos/repositorio";
+import { InvalidTransition, ProductNotSellable, PublicIdTaken, StockUnavailable, applyChanges, type NewOrder, type OrderChanges, type OrderContact, type OrderCursor, type OrdersRepository, type PanelFilters, type PanelQuery, type ReservationSummary } from "@/lib/catalogo/pedidos/repositorio";
 import { parseWhatsappOrderText } from "@/lib/catalogo/pedidos/whatsapp";
 
 /** Errores DETERMINISTAS (mismo insumo => mismo código). El mensaje es apto para el cliente. */
@@ -781,6 +781,19 @@ export function createOrderEngine(deps: OrderEngineDeps) {
         items: page.map(({ order }) => ({ order, reservations: reservations.filter((r) => r.orderId === order.id) })),
         next: rows.length > limit && last ? { updatedAt: last.updatedAtRaw, orderId: last.order.orderId } : null,
       };
+    },
+
+    /** Bloque 35 — cuántos pedidos confirmados cumplen esos filtros (null = el repositorio no cuenta). */
+    async panelCount(tenantId: string, query: PanelFilters): Promise<number | null> {
+      await requireAvailable();
+      return deps.orders.countPanel ? deps.orders.countPanel(tenantId, query) : null;
+    },
+
+    /** Bloque 35 — elimina un pedido CERRADO (copia en la auditoría). Activo => "activo", sin tocarlo. */
+    async deleteClosedOrder(input: { tenantId: string; orderId: string; memberId: number }): Promise<"eliminado" | "activo" | "no_encontrado"> {
+      await requireAvailable();
+      if (!deps.orders.deleteClosed) throw new OrderError("UNAVAILABLE", "Eliminar pedidos no está disponible.");
+      return deps.orders.deleteClosed({ businessId: input.tenantId, orderId: input.orderId, memberId: input.memberId });
     },
 
     /** Bloque 27 — un pedido del negocio para el panel (null = no existe en ESTE negocio). */

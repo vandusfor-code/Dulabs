@@ -109,3 +109,34 @@ export function telefonoCliente(p: PedidoGestion): string | null {
 export function fecha(iso: string | null | undefined): string {
   return iso ? new Date(iso).toLocaleString("es-CO", { dateStyle: "medium", timeStyle: "short", timeZone: "America/Bogota" }) : "—";
 }
+
+/** Bloque 35 — "Hace 2 h" / "en 3 h" (cerca de ahora); más de una semana: la fecha. */
+export function hace(iso: string | null | undefined, t: T, ahora: number = Date.now()): string {
+  if (!iso) return "—";
+  const ms = Date.parse(iso) - ahora;
+  if (Number.isNaN(ms)) return "—";
+  const futuro = ms > 0;
+  const min = Math.round(Math.abs(ms) / 60_000);
+  const texto = (es: string, en: string) => (futuro ? t(`en ${es}`, `in ${en}`) : t(`Hace ${es}`, `${en} ago`));
+  if (min < 1) return t("Ahora", "Now");
+  if (min < 60) return texto(`${min} min`, `${min} min`);
+  const h = Math.round(min / 60);
+  if (h < 24) return texto(`${h} h`, `${h} h`);
+  const d = Math.round(h / 24);
+  if (d <= 7) return texto(d === 1 ? "1 día" : `${d} días`, d === 1 ? "1 day" : `${d} days`);
+  return new Date(iso).toLocaleDateString("es-CO", { day: "numeric", month: "short", timeZone: "America/Bogota" });
+}
+
+/** Bloque 35 — periodo del filtro (fechas de Colombia). "rango" = fechas que elige la persona. */
+export type Periodo = "hoy" | "7d" | "30d" | "90d" | "todo" | "rango";
+
+/** Día de Colombia (YYYY-MM-DD) `dias` días antes de `ahora`. */
+function diaBogota(ahora: number, dias: number): string {
+  return new Date(ahora - dias * 86_400_000).toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
+}
+
+/** Desde / hasta (inclusive, YYYY-MM-DD) del periodo; "todo" y "rango" no fijan fechas aquí. */
+export function rangoPeriodo(p: Periodo, ahora: number = Date.now()): { desde?: string; hasta?: string } {
+  const dias = p === "hoy" ? 1 : p === "7d" ? 7 : p === "30d" ? 30 : p === "90d" ? 90 : 0;
+  return dias ? { desde: diaBogota(ahora, dias - 1), hasta: diaBogota(ahora, 0) } : {};
+}

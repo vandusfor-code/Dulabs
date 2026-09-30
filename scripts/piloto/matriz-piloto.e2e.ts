@@ -39,12 +39,12 @@ import { procesarCambio, registrarMensajesEntrantesSincrono, type MetaChangeValu
 import { CHECKOUT_BUTTONS, CHECKOUT_MESSAGES } from "@/lib/agente/checkout";
 import { productionOrderEngine } from "@/lib/catalogo/pedidos/produccion";
 import { productionPanelFuentes } from "@/lib/catalogo/pedidos/panel-fuentes";
-import { accionGestion, detalleGestion, listarGestion, reintentarNotificacionGestion } from "@/lib/catalogo/pedidos/gestion";
+import { accionGestion, detalleGestion, eliminarGestion, listarGestion, reintentarNotificacionGestion, type PedidoGestion } from "@/lib/catalogo/pedidos/gestion";
 import { productionNotificador } from "@/lib/catalogo/pedidos/notificaciones-produccion";
 import { ORDERS_MODULE, requireCatalogo } from "@/lib/catalogo/auth";
 import { moduloHabilitado } from "@/lib/tenant-modulos";
 import { createSupabaseClientesRepo } from "@/lib/catalogo/clientes/repositorio";
-import { aplicarImportacion, detalleCliente, editarCliente, exportarClientes, guardarNotaCliente, listarClientes, previsualizarImportacion, registrarCliente } from "@/lib/catalogo/clientes/servicio";
+import { aplicarImportacion, detalleCliente, editarCliente, eliminarCliente, exportarClientes, guardarNotaCliente, listarClientes, previsualizarImportacion, registrarCliente } from "@/lib/catalogo/clientes/servicio";
 import type { ClienteDetalle, ClienteFila } from "@/lib/catalogo/clientes/modelo";
 import { NextRequest } from "next/server";
 
@@ -1647,6 +1647,55 @@ describe("PILOTO DELACOUR — matriz de punta a punta (webhook real + PostgreSQL
       assert.equal(await repo.yaCompro(T, PN, wa), true);
       // Aislamiento: el otro negocio no ve a estos clientes registrados.
       assert.equal(((await (await listarClientes(repo, TB, new URLSearchParams("filtro=registrados"))).json()) as { data: { total: number } }).data.total, 0);
+    });
+
+    it("Q. Bloque 35 — pestañas con contador y ELIMINAR pedidos y clientes contra PostgreSQL real (auditoría, activos protegidos, aislado)", async () => {
+      const engine = productionOrderEngine(db)!;
+      const ex = { fuentes: productionPanelFuentes(db), verTelefono: true };
+      type L = { data: { pedidos: PedidoGestion[]; conteos: Record<string, number> | null } };
+      const listar = async (qs: Record<string, string>, tenant = T) => ((await (await listarGestion(engine, tenant, new URLSearchParams(qs), ex)).json()) as L).data;
+      // 1. Contadores reales: cada pestaña cuenta lo que lista; los grupos no se pisan.
+      const todos = await listar({});
+      const c = todos.conteos!;
+      assert.ok(c.todos >= 3);
+      for (const g of ["pendientes", "en_preparacion", "enviados", "entregados", "completados", "cancelados"]) {
+        const l = await listar({ grupo: g, limite: "50" });
+        assert.equal(l.pedidos.length, Math.min(c[g], 50), g);
+      }
+      assert.ok(c.pendientes + c.en_preparacion + c.enviados + c.entregados + c.completados + c.cancelados <= c.todos);
+      assert.equal((await listar({}, TB)).conteos!.todos >= 0, true);
+      // 2. Un pedido cerrado se elimina con su historial (copia en la auditoría); uno activo, no.
+      const cerrado = (await listar({ grupo: "cancelados" })).pedidos[0];
+      assert.ok(cerrado, "hay pedidos cancelados en la matriz");
+      const activo = (await listar({ grupo: "pendientes" })).pedidos[0] ?? (await listar({ grupo: "en_preparacion" })).pedidos[0];
+      assert.ok(activo, "hay pedidos activos en la matriz");
+      assert.equal((await eliminarGestion(engine, T, activo.pedido, MIEMBRO)).status, 409);
+      assert.ok(await engine.panelOrder(T, activo.pedido));
+      assert.equal((await eliminarGestion(engine, TB, cerrado.pedido, MIEMBRO)).status, 404, "otro negocio");
+      assert.equal((await eliminarGestion(engine, T, cerrado.pedido, MIEMBRO)).status, 200);
+      assert.equal(await engine.panelOrder(T, cerrado.pedido), null);
+      const { data: aud } = await db.from("dulabs_catalogo_eliminados").select("tipo, referencia, miembro_id, datos").eq("id_tenant", T).eq("referencia", cerrado.pedido);
+      assert.equal(aud?.length, 1);
+      assert.equal((aud![0] as { miembro_id: number }).miembro_id, MIEMBRO);
+      assert.ok(((aud![0] as { datos: { eventos: unknown[] } }).datos.eventos).length >= 1, "su historial quedó copiado");
+      assert.equal((await listar({})).conteos!.todos, c.todos - 1);
+      // 3. Cliente: con un pedido activo no se toca; sin activos se borra todo lo suyo (el chat se conserva).
+      const repo = createSupabaseClientesRepo(db);
+      const ocupado = (await engine.panelOrder(T, activo.pedido))!.order.contact!;
+      const r409 = await eliminarCliente(repo, T, `${ocupado.phoneNumberId}_${ocupado.waId}`, MIEMBRO);
+      assert.equal(r409.status, 409);
+      const wa = C[55];
+      const antesMsgs = (await db.from("dulabs_mensajes_log").select("id", { count: "exact", head: true }).eq("phone_number_id", PN).eq("telefono_cliente", wa)).count ?? 0;
+      assert.ok(antesMsgs > 0, "C[55] conversó en el bloque P");
+      const r = await eliminarCliente(repo, T, `${PN}_${wa}`, MIEMBRO);
+      assert.equal(r.status, 200);
+      assert.equal(((await (await listarClientes(repo, T, new URLSearchParams(`q=${wa}`))).json()) as { data: { total: number } }).data.total, 0);
+      for (const [tabla, col] of [["dulabs_catalogo_clientes_canal", "wa_id"], ["dulabs_clientes_conocidos", "telefono_cliente"], ["dulabs_catalogo_clientes_ficha", "wa_id"], ["dulabs_agente_conversaciones", "wa_id"]] as const) {
+        const { count } = await db.from(tabla).select("*", { count: "exact", head: true }).eq("phone_number_id", PN).eq(col, wa);
+        assert.equal(count, 0, tabla);
+      }
+      assert.equal((await db.from("dulabs_mensajes_log").select("id", { count: "exact", head: true }).eq("phone_number_id", PN).eq("telefono_cliente", wa)).count, antesMsgs, "el chat del Inbox se conserva");
+      assert.equal((await eliminarCliente(repo, T, `${PN}_${wa}`, MIEMBRO)).status, 404);
     });
   });
 

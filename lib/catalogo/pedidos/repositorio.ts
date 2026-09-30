@@ -113,6 +113,9 @@ export interface PanelQuery {
   limit: number;
 }
 
+/** Filtros del panel sin paginación (Bloque 35: conteos). */
+export type PanelFilters = Omit<PanelQuery, "before" | "limit">;
+
 /** El id público derivado ya lo usa OTRO pedido del negocio (colisión de 30 bits): se re-deriva. */
 export class PublicIdTaken extends Error {}
 /** Transición no permitida por la máquina de estados (código o BD). */
@@ -185,7 +188,17 @@ export interface OrdersRepository {
   listPanel(businessId: string, query: PanelQuery): Promise<Array<{ order: Order; updatedAtRaw: string }>>;
   /** Bloque 27 — historial completo del pedido (id interno), del más viejo al más nuevo. */
   historyFor(businessId: string, orderId: string): Promise<OrderHistoryEntry[]>;
+  /** Bloque 35 — cuántos pedidos YA confirmados cumplen los filtros del panel (pestañas con contador). */
+  countPanel?(businessId: string, query: PanelFilters): Promise<number>;
+  /**
+   * Bloque 35 — elimina un pedido CERRADO (completado, cancelado, rechazado o vencido) con su historial;
+   * una copia queda en la auditoría. Un pedido activo no se toca ("activo").
+   */
+  deleteClosed?(input: { businessId: string; orderId: string; memberId: number }): Promise<"eliminado" | "activo" | "no_encontrado">;
 }
+
+/** Bloque 35 — estados en que un pedido ya está cerrado (se puede eliminar). */
+export const CLOSED_STATUSES: readonly OrderStatus[] = ["completed", "cancelled", "rejected", "expired"];
 
 /** Aplica cambios a un pedido (misma regla que la función SQL): para armar el evento ANTES de escribir. */
 export function applyChanges(order: Order, to: OrderStatus, changes: OrderChanges, updatedAt: string): Order {
@@ -373,6 +386,27 @@ export function panelSearch(raw: string | undefined, allowPhone: boolean): { kin
   if (/^[\d\s()+-]+$/.test(t) && digits.length >= 4) return allowPhone ? { kind: "phone", value: digits.slice(-12) } : { kind: "none", value: "" };
   const name = t.replace(/[^\p{L}\p{N} .'-]/gu, "").trim();
   return name.length >= 2 ? { kind: "name", value: name } : null;
+}
+
+/** Filtros del panel sobre una consulta de pedidos (lista y conteos usan EXACTAMENTE los mismos). */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- el builder de PostgREST cambia de tipo según el select
+function panelFilters<Q extends { in: any; eq: any; gte: any; lt: any; contains: any; like: any; ilike: any }>(query: Q, q: PanelFilters): Q {
+  let r = query;
+  if (q.statuses?.length) r = r.in("estado", [...q.statuses]);
+  if (q.stages?.length) r = r.in("etapa", [...q.stages]);
+  if (q.paymentStatus) r = r.eq("estado_pago", q.paymentStatus);
+  if (q.channel) r = r.eq("canal", q.channel);
+  if (q.paymentMethod) r = r.eq("metodo_pago", q.paymentMethod);
+  if (q.delivery) r = r.eq("tipo_entrega", q.delivery);
+  if (q.from) r = r.gte("created_at", q.from);
+  if (q.to) r = r.lt("created_at", q.to);
+  const search = panelSearch(q.search, q.searchPhone === true);
+  if (search?.kind === "order") r = r.eq("pedido_publico", search.value);
+  // jsonb: el valor va como JSON (un arreglo JS lo serializaría como arreglo de Postgres). Referencia ya validada.
+  else if (search?.kind === "reference") r = r.contains("lineas", JSON.stringify([{ reference: search.value }]));
+  else if (search?.kind === "phone") r = r.like("contacto_wa_id", `%${search.value}%`);
+  else if (search?.kind === "name") r = r.ilike("cliente_nombre", `%${search.value}%`);
+  return r;
 }
 
 export function createSupabaseOrdersRepository(supabase: SupabaseClient, now: () => number = Date.now): OrdersRepository {
@@ -572,21 +606,7 @@ export function createSupabaseOrdersRepository(supabase: SupabaseClient, now: ()
     async listPanel(businessId, q) {
       if (panelSearch(q.search, q.searchPhone === true)?.kind === "none") return [];
       const { data, error } = await read((cols) => {
-        let query = supabase.from(T_PEDIDOS).select(cols).eq("id_tenant", businessId).not("confirmado_at", "is", null);
-        if (q.statuses?.length) query = query.in("estado", [...q.statuses]);
-        if (q.stages?.length) query = query.in("etapa", [...q.stages]);
-        if (q.paymentStatus) query = query.eq("estado_pago", q.paymentStatus);
-        if (q.channel) query = query.eq("canal", q.channel);
-        if (q.paymentMethod) query = query.eq("metodo_pago", q.paymentMethod);
-        if (q.delivery) query = query.eq("tipo_entrega", q.delivery);
-        if (q.from) query = query.gte("created_at", q.from);
-        if (q.to) query = query.lt("created_at", q.to);
-        const search = panelSearch(q.search, q.searchPhone === true);
-        if (search?.kind === "order") query = query.eq("pedido_publico", search.value);
-        // jsonb: el valor va como JSON (un arreglo JS lo serializaría como arreglo de Postgres). Referencia ya validada.
-        else if (search?.kind === "reference") query = query.contains("lineas", JSON.stringify([{ reference: search.value }]));
-        else if (search?.kind === "phone") query = query.like("contacto_wa_id", `%${search.value}%`);
-        else if (search?.kind === "name") query = query.ilike("cliente_nombre", `%${search.value}%`);
+        let query = panelFilters(supabase.from(T_PEDIDOS).select(cols).eq("id_tenant", businessId).not("confirmado_at", "is", null), q);
         // Keyset por (updated_at, pedido_publico) DESC; ambos valores llegan validados (nunca texto libre).
         if (q.before) query = query.lte("updated_at", q.before.updatedAt).or(`updated_at.lt."${q.before.updatedAt}",pedido_publico.lt."${q.before.orderId}"`);
         return query
@@ -596,6 +616,23 @@ export function createSupabaseOrdersRepository(supabase: SupabaseClient, now: ()
       });
       if (error) fail("listPanel", error);
       return ((data ?? []) as unknown as OrderRow[]).map((r) => ({ order: orderFromRow(r), updatedAtRaw: r.updated_at }));
+    },
+
+    async countPanel(businessId, q) {
+      if (panelSearch(q.search, q.searchPhone === true)?.kind === "none") return 0;
+      const { count, error } = await panelFilters(
+        supabase.from(T_PEDIDOS).select("id", { count: "exact", head: true }).eq("id_tenant", businessId).not("confirmado_at", "is", null),
+        q,
+      );
+      if (error) fail("countPanel", error);
+      return count ?? 0;
+    },
+
+    async deleteClosed(input) {
+      const { data, error } = await supabase.rpc("dulabs_catalogo_pedido_eliminar", { p_tenant: input.businessId, p_pedido: input.orderId, p_miembro: input.memberId });
+      if (error) fail("deleteClosed", error);
+      const r = (data ?? {}) as { resultado?: string };
+      return r.resultado === "eliminado" || r.resultado === "activo" ? r.resultado : "no_encontrado";
     },
 
     async historyFor(businessId, orderId) {
@@ -670,6 +707,8 @@ export function createMemoryOrdersRepository(opts: { available?: boolean; invent
   const events: OrderEvent[] = [];
   const reservations: MemoryReservation[] = [];
   const history: Array<{ businessId: string; orderId: string; entry: OrderHistoryEntry }> = [];
+  /** Bloque 35 — auditoría de pedidos eliminados. */
+  const deleted: Array<{ order: Order; memberId: number }> = [];
   let seq = 0;
   const clone = <T>(v: T): T => structuredClone(v);
   const clock = opts.now ?? Date.now;
@@ -765,11 +804,12 @@ export function createMemoryOrdersRepository(opts: { available?: boolean; invent
     else close(after.id, "liberada");
   }
 
-  const repo: OrdersRepository & { orders: Order[]; events: OrderEvent[]; reservations: MemoryReservation[]; history: typeof history; isAvailable: boolean } = {
+  const repo: OrdersRepository & { orders: Order[]; events: OrderEvent[]; reservations: MemoryReservation[]; history: typeof history; deleted: typeof deleted; isAvailable: boolean } = {
     orders,
     events,
     reservations,
     history,
+    deleted,
     isAvailable: opts.available ?? true,
 
     async available() {
@@ -901,6 +941,22 @@ export function createMemoryOrdersRepository(opts: { available?: boolean; invent
       orders[i] = next;
       record(next, { type: "order.payment_changed", from: "pendiente", to: "recibido", actor: "human", memberId: input.memberId, reason: input.reason?.slice(0, 500) ?? null });
       return { result: "ok", order: clone(next) };
+    },
+
+    async countPanel(businessId, q) {
+      return (await repo.listPanel(businessId, { ...q, before: null, limit: Number.MAX_SAFE_INTEGER })).length;
+    },
+
+    async deleteClosed(input) {
+      const i = orders.findIndex((o) => o.businessId === input.businessId && o.orderId === input.orderId);
+      if (i < 0) return "no_encontrado";
+      const o = orders[i];
+      if (!CLOSED_STATUSES.includes(o.status)) return "activo";
+      deleted.push({ order: clone(o), memberId: input.memberId });
+      orders.splice(i, 1);
+      for (let j = history.length - 1; j >= 0; j--) if (history[j].businessId === input.businessId && history[j].orderId === o.id) history.splice(j, 1);
+      for (let j = reservations.length - 1; j >= 0; j--) if (reservations[j].orderId === o.id) reservations.splice(j, 1);
+      return "eliminado";
     },
 
     async listPanel(businessId, q) {

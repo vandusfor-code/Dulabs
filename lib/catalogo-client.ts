@@ -12,7 +12,7 @@ import type { CategoryDecision, ImageInfo, ImportAnalysis, ImportHistoryItem, Im
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import type { PublicationView } from "@/lib/catalogo/service";
 import type { PedidoHistorial, PedidoPanel } from "@/lib/catalogo/pedidos/panel";
-import type { AccionPedido, EstadoVisible, HistorialEntrada, NotificacionVista, PedidoGestion } from "@/lib/catalogo/pedidos/gestion";
+import type { AccionPedido, EstadoVisible, GrupoPedidos, HistorialEntrada, NotificacionVista, PedidoGestion } from "@/lib/catalogo/pedidos/gestion";
 import type { ResultadoNotificacion, TipoNotificacion } from "@/lib/catalogo/pedidos/notificaciones";
 import type { ClienteDetalle, ClienteFila, FilaImportacion, FiltroClientes, Modalidad, NotaCliente } from "@/lib/catalogo/clientes/modelo";
 import type { OrderChannel } from "@/lib/catalogo/pedidos/contrato";
@@ -20,6 +20,8 @@ import type { OrderChannel } from "@/lib/catalogo/pedidos/contrato";
 /** Bloque 27 — filtros del listado del módulo "Pedidos" (todos opcionales). */
 export interface PedidosFiltros {
   estado?: EstadoVisible | "todos";
+  /** Bloque 35: pestaña (manda sobre `estado`). */
+  grupo?: GrupoPedidos;
   pago?: "pendiente" | "recibido";
   modalidad?: "detal" | "mayorista";
   metodo?: "pago_en_tienda" | "transferencia";
@@ -187,7 +189,7 @@ export function createCatalogClient(accessToken: string) {
     },
 
     /** Bloque 27 — módulo "Pedidos": pedidos confirmados con filtros y cursor. */
-    listManagedOrders(filtros: PedidosFiltros, cursor: string | null = null): Promise<CatalogResult<{ pedidos: PedidoGestion[]; siguiente: string | null }>> {
+    listManagedOrders(filtros: PedidosFiltros, cursor: string | null = null): Promise<CatalogResult<{ pedidos: PedidoGestion[]; siguiente: string | null; conteos?: Record<GrupoPedidos, number> | null }>> {
       const qs = new URLSearchParams();
       for (const [k, v] of Object.entries(filtros)) if (typeof v === "string" && v.trim()) qs.set(k, v.trim());
       if (cursor) qs.set("cursor", cursor);
@@ -250,6 +252,16 @@ export function createCatalogClient(accessToken: string) {
     /** Bloque 34 — aplica la importación (el servidor vuelve a validar cada fila). */
     applyClientImport(filas: Array<{ nombre: string; telefono: string; modalidad: Modalidad; yaCompro: boolean }>): Promise<CatalogResult<{ creados: number; actualizados: number; errores: Array<{ telefono: string; motivo: string }> }>> {
       return call(accessToken, "/importar/aplicar", { method: "POST", body: JSON.stringify({ filas }) }, CLIENTES_BASE);
+    },
+
+    /** Bloque 35 — elimina un pedido CERRADO (solo administradores). */
+    deleteManagedOrder(pedido: string): Promise<CatalogResult<{ eliminado: string }>> {
+      return call(accessToken, `/${encodeURIComponent(pedido)}`, { method: "DELETE" }, PEDIDOS_BASE);
+    },
+
+    /** Bloque 35 — elimina un cliente y todo lo suyo en el negocio (solo administradores). */
+    deleteClient(clave: string): Promise<CatalogResult<{ eliminado: string; pedidos: number }>> {
+      return call(accessToken, `/${encodeURIComponent(clave)}`, { method: "DELETE" }, CLIENTES_BASE);
     },
 
     /** Bloque 27 — detalle de un pedido con su historial. */

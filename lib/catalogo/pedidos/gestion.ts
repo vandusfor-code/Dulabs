@@ -18,7 +18,7 @@ import { apiError, apiOk } from "@/lib/agent-compiler/api/http";
 import type { Order, OrderStage, OrderStatus, PaymentStatus } from "@/lib/catalogo/pedidos/contrato";
 import { canCancelStage, canCompleteStage, nextStage, reservationCanExpire } from "@/lib/catalogo/pedidos/contrato";
 import { OrderError, type OrderEngine } from "@/lib/catalogo/pedidos/motor";
-import type { OrderHistoryEntry, PanelQuery, ReservationSummary } from "@/lib/catalogo/pedidos/repositorio";
+import { CLOSED_STATUSES, type OrderHistoryEntry, type PanelFilters, type ReservationSummary } from "@/lib/catalogo/pedidos/repositorio";
 import { PEDIDO_PUBLICO, enriquecerPedidos, pedidoPanel, type PanelExtras, type PedidoPanel } from "@/lib/catalogo/pedidos/panel";
 import {
   TIPOS_NOTIFICACION,
@@ -44,6 +44,23 @@ export const ESTADOS_VISIBLES = [
   "con_asesora",
 ] as const;
 export type EstadoVisible = (typeof ESTADOS_VISIBLES)[number];
+
+/**
+ * Bloque 35 — pestañas del módulo (con contador): agrupan estados para la operación del día a día.
+ * "Pendientes" = confirmados que nadie ha empezado a preparar. Los anteriores al checkout (sin etapa)
+ * y los que están con una asesora solo salen en "Todos".
+ */
+export const GRUPOS = ["todos", "pendientes", "en_preparacion", "enviados", "entregados", "completados", "cancelados"] as const;
+export type GrupoPedidos = (typeof GRUPOS)[number];
+const FILTRO_GRUPO: Record<GrupoPedidos, Pick<PanelFilters, "statuses" | "stages">> = {
+  todos: {},
+  pendientes: { statuses: ["confirmed"], stages: ["confirmado"] },
+  en_preparacion: { statuses: ["confirmed"], stages: ["en_preparacion"] },
+  enviados: { statuses: ["confirmed"], stages: ["enviado"] },
+  entregados: { statuses: ["confirmed"], stages: ["entregado"] },
+  completados: { statuses: ["completed"] },
+  cancelados: { statuses: ["cancelled", "rejected", "expired"] },
+};
 
 export const ACCIONES = ["pago_recibido", "en_preparacion", "enviado", "entregado", "completar", "cancelar", "rechazar"] as const;
 export type AccionPedido = (typeof ACCIONES)[number];
@@ -113,6 +130,8 @@ export interface PedidoGestion extends PedidoPanel {
   atencion: AtencionConversacion | null;
   /** Estado del pedido + etapa + pago que la persona VIO (compare-and-set de las acciones). */
   version: { estado: OrderStatus; etapa: OrderStage | null; pago: PaymentStatus | null };
+  /** Bloque 35 — ya cerrado: un administrador lo puede eliminar. */
+  eliminable: boolean;
 }
 
 export interface HistorialEntrada {
@@ -151,6 +170,7 @@ export function pedidoGestion(order: Order, reservations: readonly ReservationSu
     motivo_traspaso: order.handoff?.reason ?? null,
     atencion: null,
     version: { estado: order.status, etapa: c?.stage ?? null, pago: c?.paymentStatus ?? null },
+    eliminable: CLOSED_STATUSES.includes(order.status),
   };
 }
 
@@ -197,7 +217,7 @@ function dia(valor: string, fin: boolean): string | null {
   return new Date(t + (fin ? 86_400_000 : 0)).toISOString();
 }
 
-type Filtros = Omit<PanelQuery, "before" | "limit">;
+type Filtros = PanelFilters;
 
 /** Filtros del query string. Todo validado contra listas cerradas; texto libre solo en `q` (saneado en el repositorio). */
 export function filtrosGestion(params: URLSearchParams, verTelefono: boolean): { ok: true; filtros: Filtros } | { ok: false; message: string } {
@@ -215,6 +235,14 @@ export function filtrosGestion(params: URLSearchParams, verTelefono: boolean): {
       f.statuses = ["confirmed"];
       f.stages = [e];
     }
+  }
+  // Bloque 35: la pestaña manda sobre `estado` (compatibilidad con enlaces viejos).
+  const grupo = params.get("grupo");
+  if (grupo) {
+    if (!(GRUPOS as readonly string[]).includes(grupo)) return { ok: false, message: "grupo no válido." };
+    delete f.statuses;
+    delete f.stages;
+    Object.assign(f, FILTRO_GRUPO[grupo as GrupoPedidos]);
   }
   const pago = params.get("pago");
   if (pago) {
@@ -280,7 +308,39 @@ export async function listarGestion(engine: OrderEngine | null, tenantId: string
     const r = await engine.panelOrders(tenantId, { ...f.filtros, before: cursor, limit: limite });
     const base = r.items.map((i) => ({ vista: pedidoGestion(i.order, i.reservations), order: i.order, reservations: i.reservations }));
     const pedidos = await conAtencion(tenantId, await enriquecerPedidos(tenantId, base, extras), base.map((b) => b.order), extras);
-    return apiOk({ pedidos, siguiente: r.next ? codificarCursorGestion(r.next) : null });
+    // Bloque 35: contador de cada pestaña con los MISMOS filtros (sin el de estado), solo en la primera página.
+    const conteos = cursor ? null : await contarGrupos(engine, tenantId, f.filtros).catch(() => null);
+    return apiOk({ pedidos, siguiente: r.next ? codificarCursorGestion(r.next) : null, conteos });
+  } catch (err) {
+    return errorGestion(err);
+  }
+}
+
+async function contarGrupos(engine: OrderEngine, tenantId: string, filtros: Filtros): Promise<Record<GrupoPedidos, number> | null> {
+  const base: Filtros = { ...filtros };
+  delete base.statuses;
+  delete base.stages;
+  const valores = await Promise.all(GRUPOS.map((g) => engine.panelCount(tenantId, { ...base, ...FILTRO_GRUPO[g] })));
+  if (valores.some((v) => v === null)) return null;
+  return Object.fromEntries(GRUPOS.map((g, i) => [g, valores[i] as number])) as Record<GrupoPedidos, number>;
+}
+
+/** Bloque 35 — ¿se puede eliminar? Solo pedidos cerrados (el activo se cancela primero: el stock vuelve). */
+export const puedeEliminarse = (o: Pick<Order, "status">) => CLOSED_STATUSES.includes(o.status);
+
+/** DELETE: elimina un pedido CERRADO del negocio (copia en la auditoría). Solo administradores (lo exige la ruta). */
+export async function eliminarGestion(engine: OrderEngine | null, tenantId: string, pedido: string, memberId: number): Promise<Response> {
+  if (!engine) return apiError("UNAVAILABLE", "Los pedidos no están activados.", 503);
+  if (!PEDIDO_PUBLICO.test(pedido)) return apiError("NOT_FOUND", "No encontramos ese pedido.", 404);
+  try {
+    const found = await engine.panelOrder(tenantId, pedido);
+    // Solo pedidos del módulo (alguna vez confirmados); las propuestas del chat no se eliminan desde aquí.
+    if (!found || !found.order.confirmedAt) return apiError("NOT_FOUND", "No encontramos ese pedido.", 404);
+    if (!puedeEliminarse(found.order)) return apiError("ACTIVE_ORDER", "Este pedido está activo. Cancélalo primero (el stock apartado vuelve al inventario) y luego elimínalo.", 409);
+    const r = await engine.deleteClosedOrder({ tenantId, orderId: pedido, memberId });
+    if (r === "activo") return apiError("ACTIVE_ORDER", "Este pedido está activo. Cancélalo primero (el stock apartado vuelve al inventario) y luego elimínalo.", 409);
+    if (r === "no_encontrado") return apiError("NOT_FOUND", "No encontramos ese pedido.", 404);
+    return apiOk({ eliminado: pedido });
   } catch (err) {
     return errorGestion(err);
   }

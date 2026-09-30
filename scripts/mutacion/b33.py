@@ -13,7 +13,8 @@ RE = "lib/catalogo/clientes/repositorio.ts"
 T = "lib/catalogo/clientes/clientes.test.ts"
 M = [
     ("M1 nota para un contacto que no es cliente del negocio", SV,
-     "  if (!(await buscar(repo, tenantId, k.phoneNumberId, k.waId))) return apiError(\"NOT_FOUND\", \"No encontramos ese cliente.\", 404);\n", ""),
+     "nota suelta para un número cualquiera).\n  if (!(await buscar(repo, tenantId, k.phoneNumberId, k.waId))) return apiError(\"NOT_FOUND\", \"No encontramos ese cliente.\", 404);\n",
+     "nota suelta para un número cualquiera).\n"),
     ("M2 ficha de un contacto ajeno", SV,
      "  if (!cliente) return apiError(\"NOT_FOUND\", \"No encontramos ese cliente.\", 404);\n  const key =", "  const key ="),
     ("M3 nota más larga que el tope", SV,
