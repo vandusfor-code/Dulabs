@@ -11,7 +11,7 @@ export const ESTADO_VISIBLE: Record<EstadoVisible, { es: string; en: string; ton
   en_preparacion: { es: "En preparación", en: "Preparing", tone: "bg-violet-500/15 text-violet-400" },
   enviado: { es: "Enviado", en: "Shipped", tone: "bg-indigo-500/15 text-indigo-400" },
   entregado: { es: "Entregado", en: "Delivered", tone: "bg-teal-500/15 text-teal-400" },
-  completado: { es: "Completado", en: "Completed", tone: "bg-lime-soft text-lime-text" },
+  completado: { es: "Completado", en: "Completed", tone: "bg-emerald-500/15 text-emerald-400" },
   cancelado: { es: "Cancelado", en: "Cancelled", tone: "bg-ink-2 text-mist" },
   rechazado: { es: "Rechazado", en: "Rejected", tone: "bg-red-500/15 text-red-400" },
   vencido: { es: "Vencido", en: "Expired", tone: "bg-ink-2 text-mist" },
@@ -21,7 +21,7 @@ export const ESTADO_VISIBLE: Record<EstadoVisible, { es: string; en: string; ton
 /** Estado del PAGO: eje aparte del estado del pedido ("confirmado" no es pagado). */
 export const PAGO: Record<"pendiente" | "recibido", { es: string; en: string; tone: string }> = {
   pendiente: { es: "Pendiente de pago", en: "Payment pending", tone: "bg-amber-500/15 text-amber-500" },
-  recibido: { es: "Pago recibido", en: "Payment received", tone: "bg-lime-soft text-lime-text" },
+  recibido: { es: "Pago recibido", en: "Payment received", tone: "bg-green-500/15 text-green-400" },
 };
 
 export const METODO: Record<"pago_en_tienda" | "transferencia", { es: string; en: string }> = {

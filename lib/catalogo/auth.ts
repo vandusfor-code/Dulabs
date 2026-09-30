@@ -95,12 +95,26 @@ const defaultDeps: CatalogAuthDeps = {
   isModuleEnabled: (supabase, tenantId, module) => moduloHabilitado(supabase, tenantId, module ?? CATALOG_MODULE),
 };
 
-export async function requireCatalogo(request: NextRequest, mode: CatalogAccessMode, deps: CatalogAuthDeps = defaultDeps, module: CatalogModule = CATALOG_MODULE): Promise<CatalogAuthResult> {
+/**
+ * `enParalelo` (rendimiento): una verificación extra del negocio (p. ej. el límite de tasa) que corre AL
+ * MISMO TIEMPO que la del módulo, en vez de después. Solo cuenta si el acceso ya fue permitido; si
+ * devuelve una respuesta, esa se usa (y nada más corre).
+ */
+export async function requireCatalogo(
+  request: NextRequest,
+  mode: CatalogAccessMode,
+  deps: CatalogAuthDeps = defaultDeps,
+  module: CatalogModule = CATALOG_MODULE,
+  enParalelo?: (supabase: SupabaseClient, tenantId: string) => Promise<Response | null>,
+): Promise<CatalogAuthResult> {
   const auth = await deps.authenticate(request);
   if (!auth.ok) {
     return { ok: false, response: apiError(auth.status === 401 ? "UNAUTHENTICATED" : "FORBIDDEN", auth.message, auth.status) };
   }
 
+  const extra = enParalelo ? enParalelo(auth.supabase, auth.member.tenantId) : Promise.resolve(null);
+  // Si el módulo falla, la verificación extra no debe quedar como promesa rechazada sin atender.
+  extra.catch(() => null);
   let moduleEnabled: boolean;
   try {
     moduleEnabled = await deps.isModuleEnabled(auth.supabase, auth.member.tenantId, module);
@@ -111,6 +125,9 @@ export async function requireCatalogo(request: NextRequest, mode: CatalogAccessM
 
   const decision = decideCatalogAccess({ role: auth.member.rol, mode, moduleEnabled, module });
   if (!decision.allowed) return { ok: false, response: apiError(decision.code, decision.message, decision.status) };
+
+  const bloqueo = await extra;
+  if (bloqueo) return { ok: false, response: bloqueo };
 
   return {
     ok: true,

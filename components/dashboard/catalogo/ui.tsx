@@ -65,15 +65,10 @@ export function CatalogGate({ children, modulo = "catalogo" }: { children: React
   const { ready } = useCatalogAccess();
   const { modulos } = useDashboard();
   const enabled = modulos.includes(modulo);
-  if (!ready) {
-    return (
-      <div className="space-y-3 px-4 pt-6 md:px-8" aria-hidden>
-        <div className="h-8 w-56 animate-pulse rounded-lg bg-ink-2" />
-        <div className="h-32 animate-pulse rounded-2xl bg-card" />
-        <div className="h-64 animate-pulse rounded-xl bg-card" />
-      </div>
-    );
-  }
+  // Rendimiento: mientras llegan los datos de la sesión (/me) la página ya se muestra y pide SUS datos
+  // en paralelo (antes esperaba a /me y solo después pedía los suyos). La autorización real está en
+  // cada API; si al final el módulo no está habilitado, se muestra el aviso de abajo.
+  if (!ready) return <>{children}</>;
   if (!enabled) {
     return (
       <div className="px-4 pt-10 md:px-8">

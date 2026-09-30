@@ -1026,3 +1026,24 @@ nueva funciona; solo eliminar responde con error.
 - `supabase/tests/20261204000000_dulabs_catalogo_eliminar.test.sql` (PostgreSQL real, 7 controles).
 - Matriz E2E, bloque Q.
 - Mutación: `python3 scripts/mutacion/b35.py` (17).
+
+## Bloque 36 · Panel más rápido (Pedidos, Clientes, Catálogo)
+
+Sin cambiar qué se autoriza ni qué se muestra, menos idas y vueltas SEGUIDAS a la base de datos:
+- **La página no espera a la sesión:** Pedidos / Clientes piden sus datos a la vez que `/me` (antes
+  esperaban a que terminara). Lo último que se vio en la pestaña se muestra al instante al recargar
+  (`sessionStorage`, solo del mismo usuario; se borra al cerrar sesión).
+- **Sesión recordada 60 s** en el servidor (`lib/auth-cache.ts`): el token válido no se revalida con
+  Supabase Auth en cada llamada (nunca más allá de su expiración; un token inválido nunca se
+  recuerda). El rol y el estado del miembro se siguen leyendo SIEMPRE (una suspensión aplica ya).
+- **En paralelo:** módulo + límite de tasa; en `/me`, agentes, mensajes, estado de conexión,
+  suscripción y módulos; en la lista de Pedidos, los contadores de las pestañas con la lista y la
+  atención con los datos del cliente; en el detalle, cliente, atención, historial y avisos.
+- **Vencer reservas** vencidas desde la lista: como mucho una vez por minuto por instancia (el cron y
+  las demás lecturas también vencen). La verificación "pedidos activos" se comparte entre las
+  consultas que arrancan a la vez.
+- **Medición:** cada respuesta del catálogo trae `Server-Timing` (`auth`, `datos`; visible en el
+  navegador → Red) y las llamadas de más de 2,5 s quedan en los logs (`catalogo_llamada_lenta`).
+
+Medido contra PostgreSQL real con 150 ms por consulta (lista de Pedidos): primera carga 1.144 → 845 ms,
+recarga 973 → 488 ms; la autorización pasa de 4 a 2 idas y vueltas (con la sesión recordada).

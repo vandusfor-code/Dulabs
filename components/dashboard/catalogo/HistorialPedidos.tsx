@@ -22,7 +22,7 @@ const FILTROS: Array<{ id: Filtro; es: string; en: string }> = [
 ];
 
 const ESTADO: Record<string, { es: string; en: string; tone: string }> = {
-  completed: { es: "Venta cerrada", en: "Sold", tone: "bg-lime-soft text-lime-text" },
+  completed: { es: "Venta cerrada", en: "Sold", tone: "bg-emerald-500/15 text-emerald-400" },
   cancelled: { es: "Cancelado", en: "Cancelled", tone: "bg-ink-2 text-mist" },
   expired: { es: "Vencido", en: "Expired", tone: "bg-amber-500/15 text-amber-500" },
   rejected: { es: "Rechazado", en: "Rejected", tone: "bg-red-500/15 text-red-500" },

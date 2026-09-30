@@ -40,24 +40,45 @@ export async function withCatalog(
   /** `recurso`: cubeta propia de rate limit (la carga masiva no debe agotar la del formulario, ni al revés). */
   opts: { recurso?: string; module?: CatalogModule } = {},
 ): Promise<Response> {
-  const access = await requireCatalogo(request, mode, undefined, opts.module);
+  const inicio = performance.now();
+  // El límite de tasa corre a la vez que la verificación del módulo (una ida y vuelta menos).
+  const access = await requireCatalogo(request, mode, undefined, opts.module, (supabase, tenantId) =>
+    respuestaSiLimiteTasaExcedido(supabase, {
+      recurso: opts.recurso ?? (mode === "read" ? "catalogo_lectura" : "catalogo_escritura"),
+      tenantId,
+      categoria: mode === "read" ? "lectura" : "escritura",
+    }),
+  );
   if (!access.ok) return access.response;
   const { supabase, actor, member } = access.ctx;
-
-  const limite = await respuestaSiLimiteTasaExcedido(supabase, {
-    recurso: opts.recurso ?? (mode === "read" ? "catalogo_lectura" : "catalogo_escritura"),
-    tenantId: actor.tenantId,
-    categoria: mode === "read" ? "lectura" : "escritura",
-  });
-  if (limite) return limite;
+  const autorizado = performance.now();
 
   const repo = createSupabaseCatalogRepository(supabase);
   const service = createCatalogService({ repo });
+  let res: Response;
   try {
-    return await handler({ service, repo, actor, canWrite: CATALOG_WRITE_ROLES.includes(member.rol), canManageOrders: CATALOG_ORDER_ROLES.includes(member.rol), memberId: member.miembroId, supabase });
+    res = await handler({ service, repo, actor, canWrite: CATALOG_WRITE_ROLES.includes(member.rol), canManageOrders: CATALOG_ORDER_ROLES.includes(member.rol), memberId: member.miembroId, supabase });
   } catch (err) {
-    return catalogErrorResponse(err);
+    res = catalogErrorResponse(err);
   }
+  return conTiempos(res, opts.recurso ?? mode, autorizado - inicio, performance.now() - autorizado);
+}
+
+/** Por encima de esto, la llamada queda en los logs (sin datos personales) para saber qué optimizar. */
+export const LLAMADA_LENTA_MS = 2500;
+
+/**
+ * Rendimiento: `Server-Timing` (se ve en las herramientas del navegador, pestaña Red) con lo que tardó
+ * la autorización y lo que tardaron los datos; y un log de las llamadas lentas.
+ */
+export function conTiempos(res: Response, recurso: string, authMs: number, datosMs: number): Response {
+  try {
+    res.headers.set("Server-Timing", `auth;dur=${authMs.toFixed(0)}, datos;dur=${datosMs.toFixed(0)}`);
+  } catch {
+    // Encabezados inmutables (p. ej. una respuesta copiada de fetch): se omite.
+  }
+  if (authMs + datosMs > LLAMADA_LENTA_MS) console.warn(JSON.stringify({ log: "catalogo_llamada_lenta", recurso, auth_ms: Math.round(authMs), datos_ms: Math.round(datosMs) }));
+  return res;
 }
 
 export function catalogErrorResponse(err: unknown): Response {

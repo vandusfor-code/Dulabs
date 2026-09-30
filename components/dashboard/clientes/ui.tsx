@@ -7,7 +7,7 @@ import { cn } from "@/components/dashboard/catalogo/ui";
 type T = (es: string, en: string) => string;
 
 export const MODALIDAD: Record<OrderChannel, { es: string; en: string; tone: string }> = {
-  retail: { es: "🛍️ Detal", en: "🛍️ Retail", tone: "bg-ink-2 text-mist" },
+  retail: { es: "🛍️ Detal", en: "🛍️ Retail", tone: "bg-pink-500/15 text-pink-400" },
   wholesale: { es: "📦 Mayorista", en: "📦 Wholesale", tone: "bg-violet-500/15 text-violet-400" },
 };
 
@@ -33,7 +33,7 @@ export function estadoPedido(estado: string | null, etapa: string | null, t: T):
   }
   const m: Record<string, [string, string, string]> = {
     pending_confirmation: ["Solicitud sin confirmar", "Unconfirmed request", "bg-amber-500/15 text-amber-500"],
-    completed: ["Completado", "Completed", "bg-lime-soft text-lime-text"],
+    completed: ["Completado", "Completed", "bg-emerald-500/15 text-emerald-400"],
     cancelled: ["Cancelado", "Cancelled", "bg-ink-2 text-mist"],
     rejected: ["Rechazado", "Rejected", "bg-red-500/15 text-red-400"],
     expired: ["Vencido", "Expired", "bg-ink-2 text-mist"],

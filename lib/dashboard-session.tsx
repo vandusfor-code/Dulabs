@@ -86,6 +86,39 @@ const NUMERO_ACTIVO_KEY = "du_labs_numero_activo";
 export const supabaseConfigFaltante =
   !process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- forma de /api/dashboard/me (ver su route.ts)
+type MeRespuesta = Record<string, any>;
+const ME_KEY = "dulabs_me_v1";
+
+/** Última respuesta de /me de esta pestaña (sessionStorage), solo si es del MISMO usuario. */
+function leerMeRecordado(userId: string): MeRespuesta | null {
+  try {
+    const raw = window.sessionStorage.getItem(ME_KEY);
+    if (!raw) return null;
+    const x = JSON.parse(raw) as { userId?: string; data?: MeRespuesta };
+    return x.userId === userId && x.data ? x.data : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Al cerrar sesión: nada de la sesión anterior queda en la pestaña. */
+export function olvidarMe() {
+  try {
+    window.sessionStorage.removeItem(ME_KEY);
+  } catch {
+    // sin sessionStorage: nada que borrar.
+  }
+}
+
+function recordarMe(userId: string, data: MeRespuesta) {
+  try {
+    window.sessionStorage.setItem(ME_KEY, JSON.stringify({ userId, data }));
+  } catch {
+    // sessionStorage lleno o bloqueado (modo privado): no es crítico.
+  }
+}
+
 export function DashboardSessionProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
   const [session, setSession] = useState<Session | null | "verificando">("verificando");
@@ -119,7 +152,18 @@ export function DashboardSessionProvider({ children }: { children: ReactNode }) 
     }
   }, []);
 
-  const cargarNegocios = useCallback(async (accessToken?: string) => {
+  /** Aplica la respuesta de /me (la fresca o la recordada de esta pestaña). */
+  const aplicarMe = useCallback((data: MeRespuesta) => {
+    setNegocios(data.negocios ?? []);
+    setSuscripcion(data.suscripcion ?? null);
+    setRol(data.rol ?? null);
+    setMiembroId(data.miembro_id ?? null);
+    setPuedeUsarDumo(Boolean(data.puede_usar_dumo));
+    setEsAdminDulabs(Boolean(data.es_admin_dulabs));
+    setModulos(Array.isArray(data.modulos) ? data.modulos.filter(esModuloId) : []);
+  }, []);
+
+  const cargarNegocios = useCallback(async (accessToken?: string, userId?: string) => {
     const token = accessToken ?? (session !== "verificando" && session?.access_token);
     if (!token) return;
     try {
@@ -128,17 +172,14 @@ export function DashboardSessionProvider({ children }: { children: ReactNode }) 
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Error cargando tu panel");
-      setNegocios(data.negocios ?? []);
-      setSuscripcion(data.suscripcion ?? null);
-      setRol(data.rol ?? null);
-      setMiembroId(data.miembro_id ?? null);
-      setPuedeUsarDumo(Boolean(data.puede_usar_dumo));
-      setEsAdminDulabs(Boolean(data.es_admin_dulabs));
-      setModulos(Array.isArray(data.modulos) ? data.modulos.filter(esModuloId) : []);
+      aplicarMe(data);
+      setErrorNegocios(null);
+      const uid = userId ?? (session !== "verificando" ? session?.user.id : undefined);
+      if (uid) recordarMe(uid, data);
     } catch (err) {
       setErrorNegocios(err instanceof Error ? err.message : String(err));
     }
-  }, [session]);
+  }, [session, aplicarMe]);
 
   useEffect(() => {
     if (supabaseConfigFaltante) return;
@@ -150,7 +191,11 @@ export function DashboardSessionProvider({ children }: { children: ReactNode }) 
         return;
       }
       setSession(data.session);
-      cargarNegocios(data.session.access_token);
+      // Rendimiento: lo último que se vio en ESTA pestaña para este usuario se muestra de inmediato;
+      // /me lo actualiza enseguida (el backend autoriza cada llamada; esto es solo presentación).
+      const recordado = leerMeRecordado(data.session.user.id);
+      if (recordado) aplicarMe(recordado);
+      cargarNegocios(data.session.access_token, data.session.user.id);
     });
 
     const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => {

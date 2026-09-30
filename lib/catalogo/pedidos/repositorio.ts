@@ -411,6 +411,7 @@ function panelFilters<Q extends { in: any; eq: any; gte: any; lt: any; contains:
 
 export function createSupabaseOrdersRepository(supabase: SupabaseClient, now: () => number = Date.now): OrdersRepository {
   let probe: { value: boolean; at: number } | null = null;
+  let probing: Promise<boolean> | null = null;
   // Bloque 27: sin la migración 20261121 las columnas del checkout no existen: se lee sin ellas
   // (los pedidos quedan sin checkout) en vez de romper el motor.
   let columns = COLUMNS;
@@ -426,11 +427,20 @@ export function createSupabaseOrdersRepository(supabase: SupabaseClient, now: ()
   return {
     async available() {
       if (probe && now() - probe.at < PROBE_TTL_MS) return probe.value;
-      // GET con limit(0) (no HEAD): así llega el código que distingue "falta la migración" de una caída.
-      const { error } = await supabase.from(T_PEDIDOS).select("id").limit(0);
-      if (error && !isMissingSchema(error)) fail("available", error);
-      probe = { value: !error, at: now() };
-      return probe.value;
+      // Rendimiento: las consultas que arrancan a la vez (lista + contadores) comparten UNA verificación.
+      if (probing) return probing;
+      probing = (async () => {
+        // GET con limit(0) (no HEAD): así llega el código que distingue "falta la migración" de una caída.
+        const { error } = await supabase.from(T_PEDIDOS).select("id").limit(0);
+        if (error && !isMissingSchema(error)) fail("available", error);
+        probe = { value: !error, at: now() };
+        return probe.value;
+      })();
+      try {
+        return await probing;
+      } finally {
+        probing = null;
+      }
     },
 
     async create(order, event) {

@@ -5,7 +5,7 @@ import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import { LogOut, TrendingUp } from "lucide-react";
 import { navItemVisible, navSections } from "./nav";
-import { useDashboard } from "@/lib/dashboard-session";
+import { olvidarMe, useDashboard } from "@/lib/dashboard-session";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import { useI18n } from "@/lib/i18n";
 import { PLANES, resolverPlanId } from "@/lib/planes";
@@ -21,6 +21,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const { t } = useI18n();
 
   const cerrarSesion = async () => {
+    olvidarMe();
     await supabaseBrowser().auth.signOut();
     router.replace("/login");
   };
