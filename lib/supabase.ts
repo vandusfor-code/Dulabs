@@ -95,6 +95,22 @@ export type PausaChat = {
 
 let client: SupabaseClient | null = null;
 
+/**
+ * Cliente NUEVO en cada llamada, SOLO para operaciones que guardan una sesión en el cliente
+ * (signInWithPassword…). Nunca usar el singleton de supabaseAdmin() para eso: supabase-js firma
+ * cada consulta con la sesión que tenga en memoria (aunque persistSession sea false), así que un
+ * login sobre el compartido haría que TODAS las consultas siguientes de esa instancia del servidor
+ * (panel, webhook, crons) salieran con el token de esa persona y la seguridad de filas las filtrara.
+ */
+export function supabaseAuthEfimero(): SupabaseClient {
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) {
+    throw new Error("Faltan SUPABASE_URL o SUPABASE_SERVICE_ROLE_KEY en las variables de entorno");
+  }
+  return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+}
+
 export function supabaseAdmin(): SupabaseClient {
   if (!client) {
     const url = process.env.SUPABASE_URL;

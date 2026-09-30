@@ -1,5 +1,5 @@
 import type { NextRequest } from "next/server";
-import { supabaseAdmin } from "@/lib/supabase";
+import { supabaseAdmin, supabaseAuthEfimero } from "@/lib/supabase";
 import { resolverMiembroEquipo } from "@/lib/team";
 import { esAdminDulabs } from "@/lib/admin-tenant";
 
@@ -40,7 +40,9 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+  // Cliente propio de esta petición: el login deja la sesión guardada en el cliente, y sobre el
+  // compartido (supabaseAdmin) todas las consultas siguientes del servidor saldrían como esta persona.
+  const { data, error } = await supabaseAuthEfimero().auth.signInWithPassword({ email, password });
 
   if (error || !data.session) {
     await supabase.from("dulabs_intentos_login_fallidos").insert({ email });

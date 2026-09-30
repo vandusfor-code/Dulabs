@@ -571,7 +571,8 @@ export default function ConexionPage() {
           </div>
         )}
 
-        {planPendiente && (
+        {/* Solo sin suscripción: con una ya activa, el plan que quedó guardado en el navegador es viejo. */}
+        {planPendiente && negocios !== null && !suscripcion && (
           <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-lime/40 bg-lime/10 p-4 text-sm">
             <span className="text-fg">
               {/* El identificador crudo de localStorage ("growth") se muestra
