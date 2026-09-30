@@ -252,7 +252,7 @@ export default function PedidosGestionPage() {
                   <div className="flex flex-wrap items-center gap-1.5">
                     <EstadoBadge estado={p.estado_visible} t={t} />
                     <PagoBadge pago={p.estado_pago} t={t} />
-                    <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-medium", p.canal === "wholesale" ? "bg-violet-500/15 text-violet-400" : "bg-ink-2 text-mist")}>
+                    <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-medium", p.canal === "wholesale" ? "bg-violet-500/15 text-violet-400" : "bg-pink-500/15 text-pink-400")}>
                       {t(CANAL_LABEL[p.canal].es, CANAL_LABEL[p.canal].en)}
                     </span>
                   </div>

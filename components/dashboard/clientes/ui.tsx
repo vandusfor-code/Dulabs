@@ -7,7 +7,7 @@ import { cn } from "@/components/dashboard/catalogo/ui";
 type T = (es: string, en: string) => string;
 
 export const MODALIDAD: Record<OrderChannel, { es: string; en: string; tone: string }> = {
-  retail: { es: "🛍️ Detal", en: "🛍️ Retail", tone: "bg-ink-2 text-mist" },
+  retail: { es: "🛍️ Detal", en: "🛍️ Retail", tone: "bg-pink-500/15 text-pink-400" },
   wholesale: { es: "📦 Mayorista", en: "📦 Wholesale", tone: "bg-violet-500/15 text-violet-400" },
 };
 
