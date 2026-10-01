@@ -9,6 +9,10 @@
  * interpreta el modelo; las reglas comerciales (precio, stock, modalidad, estado) las decide el backend.
  *
  * Regla de oro: ante la duda, null (el backend pregunta). Nunca se adivina un dato.
+ *
+ * Multi-negocio: lo que depende del negocio llega EXPLÍCITO (lib/agente/perfil-negocio.ts): su
+ * vocabulario (sin él, el NEUTRAL: "producto") y los pagos que ofrece (obligatorios: un pago que el
+ * negocio no ofrece nunca se reconoce como elegido).
  */
 import {
   AFIRMACIONES,
@@ -50,9 +54,12 @@ import {
   VERBOS_PRODUCTO,
 } from "@/lib/agente/lenguaje/lexico";
 import { contieneFrase, normalizar, plano } from "@/lib/agente/lenguaje/normalizar";
+import { VOCABULARIO_NEUTRAL, pagosPara, type CheckoutOpciones, type PerfilNegocio, type Vocabulario } from "@/lib/agente/perfil-negocio";
+import type { DeliveryType, PaymentMethod } from "@/lib/catalogo/pedidos/contrato";
 
-type Entrega = "tienda" | "domicilio";
-type Pago = "pago_en_tienda" | "transferencia";
+type Entrega = DeliveryType;
+type Pago = PaymentMethod;
+type OpcionesPago = Pick<CheckoutOpciones, "entregas" | "pagos">;
 
 const alguna = (t: string, frases: readonly string[]) => frases.some((f) => contieneFrase(t, f));
 const una = (t: string, frases: readonly string[]) => (frases as readonly string[]).includes(t);
@@ -115,8 +122,24 @@ export function leerSalida(text: string): "cancel" | "modify" | "doubt" | null {
 // Entrega y pago
 // ---------------------------------------------------------------------------
 
-/** ¿El texto (normalizado) nombra el PAGO? ("pago", "pagar", "efectivo", "transferencia", "nequi"…). */
-const nombraPago = (t: string) => /\b(pago|pagar|pagaria|pagarlo|efectivo|presencial|transferencia|transferir|transfiero|nequi|daviplata|bancolombia|pse|consignacion|consignar|consigno)\b/.test(t);
+/**
+ * ¿El texto (normalizado) nombra el PAGO? ("pago", "pagar", "efectivo", "transferencia", "nequi"…). Las
+ * palabras de contra entrega y de link de pago cuentan SOLO si el negocio ofrece ese pago.
+ */
+const nombraPago = (t: string, o: OpcionesPago) => {
+  if (/\b(pago|pagar|pagaria|pagarlo|efectivo|presencial|transferencia|transferir|transfiero|nequi|daviplata|bancolombia|pse|consignacion|consignar|consigno)\b/.test(t)) return true;
+  const ofrecidos = pagosPara(o, null);
+  if (ofrecidos.includes("contra_entrega") && /\b(contra entrega|contraentrega)\b/.test(t)) return true;
+  return ofrecidos.includes("link_pago") && /\b(link|enlace|tarjeta)\b/.test(t);
+};
+
+/** Frases con las que se nombra cada pago (catálogo de la plataforma; contra entrega se lee por la entrega). */
+const FRASES_PAGO: Readonly<Record<Pago, readonly string[]>> = {
+  pago_en_tienda: PAGO.pago_en_tienda,
+  transferencia: PAGO.transferencia,
+  contra_entrega: [],
+  link_pago: PAGO.link_pago,
+};
 
 /** Entrega nombrada en el texto (botón o palabras). Las dos o ninguna => null. No mira si es pregunta: eso lo decide quien llama. */
 export function leerEntrega(text: string): Entrega | null {
@@ -128,18 +151,22 @@ export function leerEntrega(text: string): Entrega | null {
 }
 
 /**
- * Pago nombrado en el texto. "Cuando llegue" / "contra entrega" dependen de la entrega: con recoger en
- * tienda es pago en tienda; con domicilio sería contra entrega, que no se ofrece => "no_disponible".
+ * Pago nombrado en el texto, SOLO entre los que el negocio ofrece con esa entrega (`opciones`). "Cuando
+ * llegue" / "contra entrega" dependen de la entrega: con recoger en tienda es pago en tienda; con
+ * domicilio, contra entrega. Si ese pago no se ofrece (y no nombró otro) => "no_disponible": el backend
+ * explica las opciones, nunca elige por el cliente. Dos pagos o ninguno => null.
  */
-export function leerPago(text: string, entrega: Entrega | null = null): Pago | "no_disponible" | null {
+export function leerPago(text: string, entrega: Entrega | null, opciones: OpcionesPago): Pago | "no_disponible" | null {
   const t = normalizar(text);
   if (!t || t.length > 120) return null;
-  const transfer = alguna(t, PAGO.transferencia);
-  const segun = alguna(t, PAGO.segun_entrega);
-  const tienda = alguna(t, PAGO.pago_en_tienda) || (segun && entrega === "tienda");
-  if (segun && !transfer && !tienda && entrega === "domicilio") return "no_disponible";
-  if (tienda === transfer) return null;
-  return tienda ? "pago_en_tienda" : "transferencia";
+  const ofrecidos = pagosPara(opciones, entrega);
+  const nombrados = new Set(ofrecidos.filter((p) => alguna(t, FRASES_PAGO[p])));
+  if (entrega && alguna(t, PAGO.segun_entrega)) {
+    const segun: Pago = entrega === "tienda" ? "pago_en_tienda" : "contra_entrega";
+    if (ofrecidos.includes(segun)) nombrados.add(segun);
+    else if (nombrados.size === 0) return "no_disponible";
+  }
+  return nombrados.size === 1 ? [...nombrados][0] : null;
 }
 
 /**
@@ -147,10 +174,19 @@ export function leerPago(text: string, entrega: Entrega | null = null): Pago | "
  * "perdón, era domicilio"). Estricta para no confundir una dirección con una corrección: sin números,
  * sin pregunta, corta (≤ 8 palabras) y con marcador de corrección o formada SOLO por la opción.
  */
-/** Palabras que forman las opciones de entrega y pago, más sus conectores. */
-const PALABRAS_DE_OPCION = new Set([...CONECTORES_OPCION, ...[...ENTREGA.tienda, ...ENTREGA.domicilio, ...PAGO.pago_en_tienda, ...PAGO.transferencia].flatMap((f) => f.split(" "))]);
+/** Palabras que forman las opciones de entrega y de los pagos que ofrece el negocio, más sus conectores. */
+function palabrasDeOpcion(o: OpcionesPago): Set<string> {
+  const ofrecidos = pagosPara(o, null);
+  const frases = [
+    ...ENTREGA.tienda,
+    ...ENTREGA.domicilio,
+    ...ofrecidos.flatMap((p) => FRASES_PAGO[p]),
+    ...(ofrecidos.includes("contra_entrega") ? PAGO.segun_entrega : []),
+  ];
+  return new Set([...CONECTORES_OPCION, ...frases.flatMap((f) => f.split(" "))]);
+}
 
-export function leerCorreccion(text: string, entregaActual: Entrega | null): { entrega?: Entrega; pago?: Pago } | null {
+export function leerCorreccion(text: string, entregaActual: Entrega | null, opciones: OpcionesPago): { entrega?: Entrega; pago?: Pago } | null {
   if (esPregunta(text) || /\d/.test(text)) return null;
   const t = sinCortesia(normalizar(text));
   const ws = t.split(" ").filter(Boolean);
@@ -158,16 +194,17 @@ export function leerCorreccion(text: string, entregaActual: Entrega | null): { e
   const marcador = MARCADORES_CORRECCION.some((m) => t === m || t.startsWith(`${m} `) || contieneFrase(t, m));
   // Sin marcador, solo si el mensaje ES la opción ("domicilio", "transferencia", "recoger en tienda").
   // y sin palabras propias: "Tienda Mayorista Luna" es un nombre, no "recoger en tienda".
-  const soloOpcion = ws.length <= 4 && ws.every((w) => PALABRAS_DE_OPCION.has(w));
+  const opcion = palabrasDeOpcion(opciones);
+  const soloOpcion = ws.length <= 4 && ws.every((w) => opcion.has(w));
   if (!marcador && !soloOpcion) return null;
   // "pago en tienda" nombra el PAGO, no la entrega: se lee primero el pago y la entrega sin esas frases.
   // El pago solo se corrige si se NOMBRA ("mejor transferencia", "pago allá"); "recojo en tienda" es la entrega.
-  const pago = nombraPago(t) ? leerPago(text, entregaActual) : null;
+  const pago = nombraPago(t, opciones) ? leerPago(text, entregaActual, opciones) : null;
   const sinFrasesDePago = ` ${t} `.replace(/ pago en tienda | pago en el local | efectivo en tienda | pago al recoger | al recoger /g, " ").trim();
   const entrega = /\bpago\b|\bpagar\b|\befectivo\b/.test(t) && !alguna(t, ["recoger", "recojo", "domicilio", "envio", "lo recojo", "voy a recoger"]) ? null : leerEntrega(sinFrasesDePago);
   const out: { entrega?: Entrega; pago?: Pago } = {};
   if (entrega) out.entrega = entrega;
-  if (pago === "pago_en_tienda" || pago === "transferencia") out.pago = pago;
+  if (pago && pago !== "no_disponible") out.pago = pago;
   return out.entrega || out.pago ? out : null;
 }
 
@@ -241,14 +278,15 @@ export function pideQuitar(text: string): boolean {
 
 /**
  * Pide ELEGIR o AGREGAR un producto ("quiero dos aretes", "también quiero ese", "agrégame el collar"):
- * verbo de elegir + joya o deíctico, sin números de dirección. Dentro del checkout no es un dato del paso.
+ * verbo de elegir + producto del negocio (su vocabulario) o deíctico, sin números de dirección. Dentro
+ * del checkout no es un dato del paso.
  */
-export function pideProducto(text: string): boolean {
+export function pideProducto(text: string, vocabulario: Vocabulario = VOCABULARIO_NEUTRAL): boolean {
   if (/\d/.test(text)) return false;
   const t = sinCortesia(normalizar(text));
   if (!t || t.split(" ").length > 12) return false;
   if (una(t, CAMBIO_PRODUCTO)) return true;
-  return VERBOS_PRODUCTO.some((v) => t === v || t.startsWith(`${v} `) || contieneFrase(t, v)) && alguna(t, PALABRAS_PRODUCTO);
+  return VERBOS_PRODUCTO.some((v) => t === v || t.startsWith(`${v} `) || contieneFrase(t, v)) && (alguna(t, PALABRAS_PRODUCTO) || alguna(t, vocabulario.palabras_producto));
 }
 
 /** Pide el catálogo o un enlace ("pásame el catálogo", "mándame el link", "catologo"). */
@@ -275,7 +313,7 @@ function quitarPrefijo(raw: string, prefijos: readonly string[]): string {
  * "es Duvan", "a nombre de Ana". NUNCA una intención ("quiero dos aretes"), una pregunta, una risa,
  * un número o una respuesta corta ("ok", "sí").
  */
-export function leerNombre(text: string): string | null {
+export function leerNombre(text: string, vocabulario: Vocabulario = VOCABULARIO_NEUTRAL): string | null {
   let raw = text.trim().replace(/\s+/g, " ").replace(/[.!,;]+$/g, "").trim();
   if (!raw || raw.length > 80 || /[?¿\d@#/]/.test(raw)) return null;
   if (esRelleno(raw)) return null;
@@ -284,20 +322,25 @@ export function leerNombre(text: string): string | null {
   if (!/^\p{L}[\p{L} .'’-]*$/u.test(raw)) return null;
   const ws = raw.split(" ").filter(Boolean);
   if (ws.length > 5 || !ws.some((w) => w.replace(/[.'’-]/g, "").length >= 2)) return null;
-  if (!sinIntencionDeNombre(raw)) return null;
+  if (!sinIntencionDeNombre(raw, vocabulario)) return null;
   if (esRelleno(raw)) return null;
   return raw;
 }
 
+/** Palabra que nunca es (parte de) un nombre: léxico genérico + productos del negocio. */
+const noEsNombre = (w: string, v: Vocabulario) => NO_ES_NOMBRE.has(w) || v.no_es_nombre.includes(w);
+const nombreComercial = (w: string, v: Vocabulario) => NOMBRE_COMERCIAL.has(w) || v.nombre_comercial.includes(w);
+
 /**
- * ¿Las palabras pueden ser un nombre? Ninguna intención/pregunta/producto (NO_ES_NOMBRE). Las palabras de
- * negocio ("tienda", "mayorista", "joyas") valen solo junto a una palabra propia ("Tienda Mayorista Luna").
+ * ¿Las palabras pueden ser un nombre? Ninguna intención/pregunta/producto (NO_ES_NOMBRE + vocabulario
+ * del negocio). Las palabras de negocio ("tienda", "mayorista") valen solo junto a una palabra propia
+ * ("Tienda Mayorista Luna").
  */
-export function sinIntencionDeNombre(nombre: string): boolean {
+export function sinIntencionDeNombre(nombre: string, vocabulario: Vocabulario = VOCABULARIO_NEUTRAL): boolean {
   const ws = normalizar(nombre).split(" ").filter(Boolean);
-  if (ws.some((w) => NO_ES_NOMBRE.has(w) && !NOMBRE_COMERCIAL.has(w))) return false;
-  if (!ws.some((w) => NOMBRE_COMERCIAL.has(w))) return true;
-  return ws.some((w) => !NOMBRE_COMERCIAL.has(w) && !CONECTORES_OPCION.has(w) && w.length >= 2);
+  if (ws.some((w) => noEsNombre(w, vocabulario) && !nombreComercial(w, vocabulario))) return false;
+  if (!ws.some((w) => nombreComercial(w, vocabulario))) return true;
+  return ws.some((w) => !nombreComercial(w, vocabulario) && !CONECTORES_OPCION.has(w) && w.length >= 2);
 }
 
 export type LecturaDireccion = { tipo: "ok"; valor: string } | { tipo: "vaga" } | { tipo: "anuncio" } | null;
@@ -307,7 +350,10 @@ export type LecturaDireccion = { tipo: "ok"; valor: string } | { tipo: "vaga" } 
  * Sin calle/número/barrio ("vivo por el centro") => "vaga" (se pide la exacta). Una pregunta, una intención
  * ("quiero ese", "mejor tienda") o un relleno ("jajaja", "ok", "espera") => null. "Te mando la dirección" => "anuncio".
  */
-export function leerDireccion(text: string): LecturaDireccion {
+/** Palabras que, sin número, dicen que el mensaje no es una dirección (las de producto las pone el negocio). */
+const INTENCION_NO_DIRECCION = ["quiero", "comprar", "pedido", "precio", "cuanto", "catalogo", "ese", "esa", "este", "esta", "tienda", "recoger", "recojo", "transferencia", "efectivo"];
+
+export function leerDireccion(text: string, perfil: PerfilNegocio): LecturaDireccion {
   const raw = text.trim().replace(/\s+/g, " ");
   if (raw.length < 3 || raw.length > 300) return null;
   if (anunciaDireccion(raw)) return { tipo: "anuncio" };
@@ -317,9 +363,12 @@ export function leerDireccion(text: string): LecturaDireccion {
   const ws = plano(valor).split(" ").filter(Boolean);
   const numero = /\d/.test(valor);
   const marca = /#/.test(valor) || ws.some((w) => MARCAS_DIRECCION.has(w));
-  const intencion = ws.some((w) => ["quiero", "comprar", "pedido", "precio", "cuanto", "catalogo", "ese", "esa", "este", "esta", "aretes", "collar", "dije", "dijes", "pulsera", "anillo", "tienda", "recoger", "recojo", "transferencia", "efectivo"].includes(w));
+  const v = perfil.vocabulario;
+  const deProducto = v.palabras_producto_direccion ?? v.palabras_producto.filter((p) => !p.includes(" "));
+  const intencion = ws.some((w) => INTENCION_NO_DIRECCION.includes(w) || deProducto.includes(w));
+  const nombraPagoOEntrega = () => leerEntrega(valor) || leerPago(valor, null, perfil.opciones);
   if (numero || marca) {
-    if (!numero && (intencion || leerEntrega(valor) || leerPago(valor))) return null;
+    if (!numero && (intencion || nombraPagoOEntrega())) return null;
     // Suficiente: calle y número de casa ("Calle 20 # 10-15", "Mz 3 casa 5"), un lugar con número
     // ("barrio X casa 12") o una dirección rural (finca, vereda, km). "calle 20" o "por la 30" no bastan.
     const grupos = (valor.match(/\d+/g) ?? []).length;
@@ -328,7 +377,7 @@ export function leerDireccion(text: string): LecturaDireccion {
     if (grupos >= 2 || rural || (grupos >= 1 && lugar)) return { tipo: "ok", valor };
     return { tipo: "vaga" };
   }
-  if (intencion || leerEntrega(valor) || leerPago(valor)) return null;
+  if (intencion || nombraPagoOEntrega()) return null;
   if (alguna(normalizar(valor), UBICACION_VAGA) || ws.length >= 2) return { tipo: "vaga" };
   return null;
 }
@@ -370,14 +419,14 @@ export function ciudadEnDireccion(valor: string): { direccion: string; ciudad: s
 }
 
 /** Ciudad: "Montería", "Santa Marta", "Bogotá D.C.". Nunca una pregunta, un número, una intención ni un relleno. */
-export function leerCiudad(text: string): string | null {
+export function leerCiudad(text: string, perfil: PerfilNegocio): string | null {
   let raw = text.trim().replace(/\s+/g, " ").replace(/[!,;]+$/g, "").trim();
   if (!raw || raw.length > 80 || esPregunta(raw) || /\d/.test(raw) || esRelleno(raw) || anunciaDireccion(raw)) return null;
   raw = quitarPrefijo(raw, ["vivo en", "estoy en", "soy de", "somos de", "queda en", "la ciudad es", "mi ciudad es", "ciudad", "en la ciudad de", "en", "es en", "es", "de"]).trim();
   if (raw.length < 2 || !/^\p{L}[\p{L} .'’-]*$/u.test(raw) || raw.split(" ").length > 5) return null;
   const ws = normalizar(raw).split(" ");
-  if (ws.some((w) => NO_ES_NOMBRE.has(w) && !["de", "la", "el", "los", "las"].includes(w))) return null;
-  if (leerEntrega(raw) || leerPago(raw)) return null;
+  if (ws.some((w) => noEsNombre(w, perfil.vocabulario) && !["de", "la", "el", "los", "las"].includes(w))) return null;
+  if (leerEntrega(raw) || leerPago(raw, null, perfil.opciones)) return null;
   return raw;
 }
 
@@ -390,20 +439,20 @@ export function leerCiudad(text: string): string | null {
  * por comas / "y" / "pero"; los fragmentos con pregunta se ignoran (nunca mutan nada). Solo se usan
  * para llenar campos VACÍOS; el resumen y el botón siguen siendo obligatorios.
  */
-export function pistasCheckout(text: string): { nombre?: string; entrega?: Entrega; pago?: Pago } {
+export function pistasCheckout(text: string, perfil: PerfilNegocio): { nombre?: string; entrega?: Entrega; pago?: Pago } {
   const out: { nombre?: string; entrega?: Entrega; pago?: Pago } = {};
   const partes = text.split(/[,.;\n]+|\s+y\s+|\s+pero\s+|\s+ademas\s+/i).map((s) => s.trim()).filter(Boolean);
   for (const parte of partes) {
     if (esPregunta(parte) || /\d/.test(parte) || parte.split(/\s+/).length > 7) continue;
     const p = plano(parte);
     if (!out.nombre && /^(soy|me llamo|mi nombre es|a nombre de)\s/.test(p)) {
-      const n = leerNombre(parte);
+      const n = leerNombre(parte, perfil.vocabulario);
       if (n) out.nombre = n;
       continue;
     }
     const e = leerEntrega(parte);
-    const pg = leerPago(parte, out.entrega ?? null);
-    if (!out.pago && (pg === "pago_en_tienda" || pg === "transferencia") && nombraPago(normalizar(parte))) out.pago = pg;
+    const pg = leerPago(parte, out.entrega ?? null, perfil.opciones);
+    if (!out.pago && pg && pg !== "no_disponible" && nombraPago(normalizar(parte), perfil.opciones)) out.pago = pg;
     else if (!out.entrega && e) out.entrega = e;
   }
   return out;

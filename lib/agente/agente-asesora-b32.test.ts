@@ -19,8 +19,15 @@ import { createMemoryConversationStateStore, type ConversationState, type Conver
 import type { AgentToolsDeps } from "@/lib/agente/herramientas";
 import { AGENT_TOOL_NAMES } from "@/lib/agente/nombres-herramientas";
 import { runAgentTurn, type AgentTurnTrace } from "@/lib/agente/runtime";
-import { INTENT_MENU, RETAIL_GIFT_BUTTON, START_MESSAGES, WHOLESALE_MENU, createMemoryCustomerChannelStore, resolveStartAction } from "@/lib/agente/clasificacion";
-import { CHECKOUT_BUTTONS, CHECKOUT_MESSAGES, wholesaleMinimumBlocked } from "@/lib/agente/checkout";
+import { RETAIL_GIFT_BUTTON, WHOLESALE_MENU, createMemoryCustomerChannelStore, intentMenu, resolveStartAction as resolveStartActionCon, startMessages } from "@/lib/agente/clasificacion";
+import { CHECKOUT_MESSAGES, checkoutButtons, wholesaleMinimumBlocked } from "@/lib/agente/checkout";
+import { PERFIL_LEGADO } from "@/lib/agente/perfil-negocio";
+
+// Pruebas del perfil de DELACOUR (Aria): su vocabulario y su checkout, ahora configuración EXPLÍCITA.
+const INTENT_MENU = intentMenu(PERFIL_LEGADO.vocabulario);
+const START_MESSAGES = startMessages(PERFIL_LEGADO.vocabulario);
+const CHECKOUT_BUTTONS = checkoutButtons(PERFIL_LEGADO.opciones);
+const resolveStartAction = (text: string, buttonId?: string | null) => resolveStartActionCon(text, buttonId, PERFIL_LEGADO.vocabulario);
 import { PLATFORM_RULES } from "@/lib/agente/contexto";
 import { ciudadEnDireccion } from "@/lib/agente/lenguaje/interpretar";
 import { mensajeNotificacion } from "@/lib/catalogo/pedidos/notificaciones";

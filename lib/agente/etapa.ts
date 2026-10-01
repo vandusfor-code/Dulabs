@@ -18,6 +18,7 @@
  */
 import type { TurnFacts } from "@/lib/agente/contexto";
 import type { ConversationState } from "@/lib/agente/estado";
+import type { Vocabulario } from "@/lib/agente/perfil-negocio";
 
 export const CONVERSATION_STAGES = ["inicio", "explorando", "eligiendo", "armando_pedido", "esperando_confirmacion", "pedido_con_problemas", "pedido_confirmado"] as const;
 export type ConversationStage = (typeof CONVERSATION_STAGES)[number];
@@ -33,9 +34,15 @@ export function conversationStage(state: ConversationState, facts: Pick<TurnFact
   return "inicio";
 }
 
-/** Qué conviene hacer en cada etapa (orientación para el modelo; las guardas deciden). */
-export const STAGE_GUIDANCE: Readonly<Record<ConversationStage, string>> = {
-  inicio: "Saluda y entiende qué busca (tipo de joya, color, material, presupuesto) o si prefiere ver el catálogo.",
+/**
+ * Qué conviene hacer en cada etapa (orientación para el modelo; las guardas deciden). Al inicio, qué
+ * entender sale del vocabulario del negocio (`pistas_busqueda`; sin él, el neutral).
+ */
+export function stageGuidance(stage: ConversationStage, vocabulario: Pick<Vocabulario, "pistas_busqueda">): string {
+  return stage === "inicio" ? `Saluda y entiende qué busca (${vocabulario.pistas_busqueda}) o si prefiere ver el catálogo.` : STAGE_GUIDANCE[stage];
+}
+
+const STAGE_GUIDANCE: Readonly<Record<Exclude<ConversationStage, "inicio">, string>> = {
   explorando: "Ayúdalo a encontrar: búsqueda, más resultados, parecidos, fotos o el catálogo.",
   eligiendo: "Hay varias opciones abiertas: pregúntale cuál quiere (número, referencia o que responda a la foto). No agregues nada sin su elección.",
   armando_pedido: "Confirma cantidades, ofrece agregar algo más y, cuando esté listo, crea la solicitud y muéstrale la propuesta con el total.",

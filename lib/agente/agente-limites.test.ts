@@ -70,10 +70,15 @@ describe("topes: configuración y decisión", () => {
     };
     const store = createSupabaseAgentConfigStore(fake as never);
     assert.deepEqual(await store.getByPhoneNumber(PN), fila);
-    // Bloque 27: primero con checkout_conversacional, luego limites + clasificacion_cliente, luego solo limites, luego sin ninguna.
-    assert.equal(calls.length, 4);
-    assert.ok(calls[0].includes("checkout_conversacional") && !calls[1].includes("checkout_conversacional") && calls[1].includes("clasificacion_cliente"));
-    assert.ok(!calls[2].includes("clasificacion_cliente") && !calls[3].includes("limites"));
+    // FASE 2: primero con transcripcion_audio; multi-negocio: luego con el perfil (vocabulario, checkout_opciones,
+    // meta_token_plataforma); Bloque 27: luego con checkout_conversacional, luego limites + clasificacion_cliente, luego
+    // solo limites, luego sin ninguna.
+    assert.equal(calls.length, 6);
+    assert.ok(calls[0].includes("transcripcion_audio") && calls[0].includes("vocabulario"));
+    assert.ok(!calls[1].includes("transcripcion_audio") && calls[1].includes("vocabulario") && calls[1].includes("checkout_opciones") && calls[1].includes("meta_token_plataforma"));
+    assert.ok(!calls[2].includes("vocabulario") && calls[2].includes("checkout_conversacional"));
+    assert.ok(!calls[3].includes("checkout_conversacional") && calls[3].includes("clasificacion_cliente"));
+    assert.ok(!calls[4].includes("clasificacion_cliente") && !calls[5].includes("limites"));
   });
 
   it("Bloque 25: sin la columna clasificacion_cliente se lee con limites (sin clasificación, como antes)", async () => {
@@ -94,7 +99,7 @@ describe("topes: configuración y decisión", () => {
     const store = createSupabaseAgentConfigStore(fake as never);
     const r = await store.getByPhoneNumber(PN);
     assert.deepEqual(r, fila);
-    assert.equal(calls.length, 3);
+    assert.equal(calls.length, 5);
     const cfg = parseAgentConfig(r, { tenantId: T, phoneNumberId: PN });
     assert.equal(cfg.kind === "ok" && cfg.config.classifyCustomers, false);
     const on = parseAgentConfig({ ...fila, clasificacion_cliente: true }, { tenantId: T, phoneNumberId: PN });
@@ -118,7 +123,7 @@ describe("topes: configuración y decisión", () => {
     };
     const r = await createSupabaseAgentConfigStore(fake as never).getByPhoneNumber(PN);
     assert.deepEqual(r, fila);
-    assert.equal(calls.length, 2);
+    assert.equal(calls.length, 4);
     const cfg = parseAgentConfig(r, { tenantId: T, phoneNumberId: PN });
     assert.ok(cfg.kind === "ok" && cfg.config.classifyCustomers === true && cfg.config.checkoutEnabled === false);
     const off = parseAgentConfig({ ...fila, checkout_conversacional: false }, { tenantId: T, phoneNumberId: PN });

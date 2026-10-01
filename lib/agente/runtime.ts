@@ -29,7 +29,7 @@ import { HISTORY_MAX_TURNS, HISTORY_WINDOW_MS, buildSystemInstruction, historyTu
 import { MAX_CART_LINES, MAX_IMAGES_REMEMBERED, MAX_RECENT_WAMIDS, rememberReferences, type ConversationState, type ConversationStateStore } from "@/lib/agente/estado";
 import type { ProductMediaLedger } from "@/lib/agente/medios";
 import { resolveSelection } from "@/lib/agente/seleccion";
-import { STAGE_GUIDANCE, conversationStage, type ConversationStage } from "@/lib/agente/etapa";
+import { conversationStage, stageGuidance, type ConversationStage } from "@/lib/agente/etapa";
 import { decideLimits, type UsageReader } from "@/lib/agente/limites";
 import { asksForHuman, detectIntent, type HandoffMotive, type SystemHandoffMotive, type TurnIntent } from "@/lib/agente/intencion";
 import { agentToolDeclarations, catalogPublication, executeAgentTool, toolKind, type AgentToolsDeps, type AgentTurnToolContext, type QueuedImage } from "@/lib/agente/herramientas";
@@ -40,11 +40,11 @@ import {
   CHANNEL_QUESTION,
   CLASSIFICATION_MESSAGES,
   DEFAULT_WELCOME,
-  INTENT_MENU,
   RETAIL_GIFT_BUTTON,
   WHOLESALE_MENU,
-  START_MESSAGES,
   channelQuestionBody,
+  intentMenu,
+  startMessages,
   resolveStartAction,
   parseChannelChoice,
   type CustomerChannel,
@@ -54,7 +54,7 @@ import {
 import { isExplicitConfirmation } from "@/lib/agente/etapa";
 import {
   CHECKOUT_MESSAGES,
-  CHECKOUT_STEP_HINT,
+  checkoutStepHint,
   continueCheckout,
   isCheckoutButton,
   parseSummaryAction,
@@ -86,9 +86,14 @@ export interface AgentSender {
   sendImage(image: QueuedImage): Promise<SendOutcome>;
   /** Mensaje con botones de respuesta (Bloque 25: pregunta detal / por mayor). Sin él, la pregunta sale en texto. */
   sendButtons?(body: string, buttons: ReadonlyArray<{ id: string; title: string }>): Promise<SendOutcome>;
+  /** Lista de WhatsApp (más de 3 opciones: p. ej. 4 formas de pago). Sin ella, las opciones salen en texto. */
+  sendList?(body: string, buttonLabel: string, rows: ReadonlyArray<{ id: string; title: string }>): Promise<SendOutcome>;
   /** ¿Una asesora tomó el chat mientras el agente pensaba? (última barrera antes de enviar) */
   humanTookOver(): Promise<boolean>;
 }
+
+/** Texto del botón que abre una lista de WhatsApp (más de 3 opciones). */
+export const LIST_BUTTON_LABEL = "Ver opciones";
 
 /**
  * Bloque 30: aviso de espera. Si el MODELO tarda (el turno llama a Gemini y aún no se envió nada),
@@ -116,6 +121,7 @@ export function withHoldNotice(base: AgentSender, ms: number, onSent: () => void
     sendText: async (t) => (await beforeSend(), base.sendText(t)),
     sendImage: async (i) => (await beforeSend(), base.sendImage(i)),
     ...(base.sendButtons ? { sendButtons: async (b: string, bs: ReadonlyArray<{ id: string; title: string }>) => (await beforeSend(), base.sendButtons!(b, bs)) } : {}),
+    ...(base.sendList ? { sendList: async (b: string, l: string, rs: ReadonlyArray<{ id: string; title: string }>) => (await beforeSend(), base.sendList!(b, l, rs)) } : {}),
     humanTookOver: () => base.humanTookOver(),
   };
   const start = () => {
@@ -193,7 +199,13 @@ export interface AgentTurnInput {
    * Mensaje SIN texto (nota de voz, imagen, documento…; Bloque 23): lo resuelve la política
    * determinista de entrada.ts, sin modelo. `text` llega vacío.
    */
-  nonText?: { kind: NonTextKind; caption?: string | null; mediaId?: string | null } | null;
+  nonText?: {
+    kind: NonTextKind;
+    caption?: string | null;
+    mediaId?: string | null;
+    /** FASE 2: el número transcribe notas de voz y ESTA no se pudo entender: se pide escrita (sin decir que no escucha audios). */
+    audioNoEntendido?: boolean;
+  } | null;
   /**
    * Bloque 26: id del botón de WhatsApp que tocó el cliente (solo si llegó; el buzón guarda solo el
    * texto, y entonces la acción se decide por el título exacto del botón). Nunca lo interpreta el modelo.
@@ -594,7 +606,10 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
     };
     // Bloque 28: con un pedido en registro, una ubicación en el paso de la dirección no pasa a una asesora:
     // se pide la dirección escrita (el checkout sigue).
-    const ckStep = deps.config.checkoutEnabled ? (loaded.state.checkout?.step ?? null) : null;
+    // (Con el checkout encendido, la config ya garantiza las opciones del negocio: sin ellas es inválida.)
+    const ckOpciones = deps.config.checkoutEnabled ? deps.config.checkoutOptions : null;
+    const ckStep = ckOpciones ? (loaded.state.checkout?.step ?? null) : null;
+    const pasoHint = (step: CheckoutStep) => checkoutStepHint(ckOpciones!, step, loaded.state.checkout?.delivery ?? null);
     // Igual una foto o un documento en la dirección o la ciudad (una captura de la dirección): se pide escrito.
     const pideEscrito =
       ckStep === "address" && policy.kind === "location"
@@ -629,7 +644,7 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
           trace.state_saved = await deps.state.save(key, next, loaded.version).catch(() => false);
           return finish("rate_limited", null);
         }
-        const text = ckStep ? MEDIA_MESSAGES.enCheckout(CHECKOUT_STEP_HINT[ckStep]) : MEDIA_MESSAGES.pideReferencia(policy.kind);
+        const text = ckStep ? MEDIA_MESSAGES.enCheckout(pasoHint(ckStep)) : MEDIA_MESSAGES.pideReferencia(policy.kind);
         const sent = await sendFixed(text);
         if (sent) next = { ...next, nonTextNoticeAt: new Date(now()).toISOString(), ...(ckStep ? {} : { fotoPedidaTurn: next.turn }) };
         trace.state_saved = await deps.state.save(key, next, loaded.version).catch(() => false);
@@ -667,6 +682,8 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
         trace.state_saved = await deps.state.save(key, next, loaded.version).catch(() => false);
         return finish("rate_limited", null);
       }
+      // FASE 2: el número transcribe notas de voz, pero esta no se entendió: se pide escrita sin decir "no escucho audios".
+      const noEntendido = policy.kind === "audio" && input.nonText?.audioNoEntendido === true;
       const text =
         policy.kind === "unsupported"
           ? NON_TEXT_MESSAGES.unsupported
@@ -674,8 +691,12 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
             ? NON_TEXT_MESSAGES.audioAboutProduct({ reference: photo.reference, name: photo.name, available: photo.status === "available" })
             : ckStep
               ? // Bloque 28: con un pedido en registro, se dice exactamente qué dato falta.
-                `Por ahora no puedo escuchar notas de voz 🙏 ${CHECKOUT_STEP_HINT[ckStep]}`
-              : NON_TEXT_MESSAGES.audio;
+                noEntendido
+                ? NON_TEXT_MESSAGES.audioNoEntendidoEnCheckout(pasoHint(ckStep))
+                : `Por ahora no puedo escuchar notas de voz 🙏 ${pasoHint(ckStep)}`
+              : noEntendido
+                ? NON_TEXT_MESSAGES.audioNoEntendido
+                : NON_TEXT_MESSAGES.audio;
       const sent = await sendFixed(text);
       if (sent) next = { ...next, nonTextNoticeAt: new Date(now()).toISOString() };
       trace.state_saved = await deps.state.save(key, next, loaded.version).catch(() => false);
@@ -799,7 +820,8 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
       return (await sendFixed(fallback)) ? fallback : null;
     };
     // Qué botón tocó (por id o por su texto exacto): lo decide el backend, nunca el modelo.
-    const startAction = resolveStartAction(input.text, input.buttonId);
+    const vocabulario = deps.config.vocabulary;
+    const startAction = resolveStartAction(input.text, input.buttonId, vocabulario);
     const buttonChoice: OrderChannel | null = startAction === "classify_retail" ? "retail" : startAction === "classify_wholesale" ? "wholesale" : null;
     let current: CustomerChannel | null = null;
     try {
@@ -870,13 +892,14 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
     //   a) Acaba de elegir DETAL con el botón (o solo escribió "detal"): menú de intención. El mayorista
     //      sigue como antes (el agente conversa); un mensaje con más contenido ("detal, busco aretes") también.
     const inicio = deps.config.business.inicio;
+    const menu = intentMenu(vocabulario);
     if (trace.classification?.action === "classified" && current.channel === "retail" && buttonChoice === "retail") {
       // Bloque 32: el negocio puede poner su propio mensaje (y suma "Es para regalo").
       if (inicio?.detal) {
-        const buttons = [INTENT_MENU.buttons[0], RETAIL_GIFT_BUTTON, INTENT_MENU.buttons[1]];
-        return startDone("intent_menu", await sendMenu(inicio.detal, buttons, `${inicio.detal}\n\nEscríbeme qué joya buscas o escribe *ver catálogo*.`));
+        const buttons = [menu.buttons[0], RETAIL_GIFT_BUTTON, menu.buttons[1]];
+        return startDone("intent_menu", await sendMenu(inicio.detal, buttons, `${inicio.detal}\n\n${menu.writeOrCatalog}`));
       }
-      return startDone("intent_menu", await sendMenu(INTENT_MENU.body, INTENT_MENU.buttons, INTENT_MENU.textFallback));
+      return startDone("intent_menu", await sendMenu(menu.body, menu.buttons, menu.textFallback));
     }
     //   a2) Bloque 32 — acaba de elegir POR MAYOR y el negocio configuró su bienvenida: mensaje FIJO con
     //      botones (sin modelo). Sin esa config, el mayorista sigue como antes (el agente conversa).
@@ -890,19 +913,20 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
     if (inicio?.saludo_conocido && trace.classification?.action === "known" && loaded.state.turn === 0 && !state.checkout && !(activeOrder && !["completed", "cancelled", "expired", "rejected"].includes(activeOrder.status)) && !startAction && esSoloSaludo(input.text)) {
       const nombre = deps.tools.customerName ? await deps.tools.customerName(key).catch(() => null) : null;
       const texto = saludoConocido(inicio.saludo_conocido, nombre);
-      return startDone("known_greeting", await sendMenu(texto, INTENT_MENU.buttons, `${texto}\n\nEscríbeme qué joya buscas o escribe *ver catálogo*.`));
+      return startDone("known_greeting", await sendMenu(texto, menu.buttons, `${texto}\n\n${menu.writeOrCatalog}`));
     }
-    //   b) "Buscar una joya": se le pide que escriba; lo que escriba entra a la búsqueda normal del agente.
+    //   b) "Buscar …" (botón del vocabulario del negocio): se le pide que escriba; lo que escriba entra a la búsqueda normal del agente.
     // Con un pedido en registro, "catálogo" / "buscar" los atiende el checkout (responde y repite su pregunta).
+    const inicioTextos = startMessages(vocabulario);
     if (startAction === "search_product" && !state.checkout) {
-      const prompt = inicio?.buscar ?? START_MESSAGES.searchPrompt;
+      const prompt = inicio?.buscar ?? inicioTextos.searchPrompt;
       return startDone("search_prompt", (await sendFixed(prompt)) ? prompt : null);
     }
     //   c) "Ver catálogo": el enlace REAL de la publicación para el canal GUARDADO (detal => tienda detal;
     //      mayorista => enlace mayorista firmado). El modelo no elige ni arma el enlace.
     if (startAction === "open_catalog" && !state.checkout) {
       const pub = await catalogPublication(deps.tools, input.tenantId, current.channel).catch(() => null);
-      const text = pub ? START_MESSAGES.catalog(`${pub.origin}${pub.base}`) : START_MESSAGES.catalogUnavailable;
+      const text = pub ? inicioTextos.catalog(`${pub.origin}${pub.base}`) : inicioTextos.catalogUnavailable;
       return startDone("catalog_link", (await sendFixed(text)) ? text : null);
     }
     classified = { channel: current.channel, source: "customer_classification" };
@@ -912,7 +936,9 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
 
   // Bloque 27 — CHECKOUT CONVERSACIONAL (solo si el número lo tiene encendido): lo conduce el BACKEND,
   // sin modelo. El modelo solo detecta la intención (create_order_request, más abajo).
-  const checkoutIO: CheckoutIO | null = deps.config.checkoutEnabled
+  // (Encendido sin opciones de entrega/pago del negocio no llega aquí: la config es inválida.)
+  const checkoutOptions = deps.config.checkoutEnabled ? deps.config.checkoutOptions : null;
+  const checkoutIO: CheckoutIO | null = checkoutOptions
     ? {
         engine: deps.tools.engine,
         tenantId: input.tenantId,
@@ -921,6 +947,7 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
         requestId,
         turn: state.turn,
         businessName: deps.config.business.nombre_negocio ?? null,
+        perfil: { vocabulario: deps.config.vocabulary, opciones: checkoutOptions },
         texts: checkoutTexts(deps.config.business),
         sendText: async (text) => {
           const r = sendResult(await deps.sender.sendText(text).catch(() => false));
@@ -930,7 +957,16 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
           return r.sent ? text : null;
         },
         sendMenu: async (body, buttons, fallback) => {
-          const b = deps.sender.sendButtons ? sendResult(await deps.sender.sendButtons(body, buttons).catch(() => false)) : null;
+          // WhatsApp admite hasta 3 botones; con más opciones (p. ej. 4 formas de pago) va una LISTA.
+          // Si no sale (o el canal no la tiene), las mismas opciones en texto.
+          const b =
+            buttons.length <= 3
+              ? deps.sender.sendButtons
+                ? sendResult(await deps.sender.sendButtons(body, buttons).catch(() => false))
+                : null
+              : deps.sender.sendList
+                ? sendResult(await deps.sender.sendList(body, LIST_BUTTON_LABEL, buttons).catch(() => false))
+                : null;
           if (b?.sent) {
             trace.sent = true;
             trace.delivery.text_wamid = b.wamid;
@@ -1065,14 +1101,14 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
             }
           }
         }
-      } else if (isCheckoutButton(input.text, input.buttonId) && !(activeOrder?.status === "pending_confirmation" && parseSummaryAction(input.text, input.buttonId) === "confirm")) {
+      } else if (isCheckoutButton(input.text, input.buttonId, checkoutIO.perfil.opciones) && !(activeOrder?.status === "pending_confirmation" && parseSummaryAction(input.text, input.buttonId) === "confirm")) {
         // Un botón de un resumen viejo: nunca confirma ni cancela nada.
         r = await staleCheckoutButton(checkoutIO, state, activeOrder);
       } else if (
         activeOrder?.status === "pending_confirmation" &&
         activeOrder.channel === channel &&
         // "Confirmar" de un resumen viejo con otra propuesta abierta: se muestra el resumen NUEVO (nunca se confirma).
-        (isCheckoutButton(input.text, input.buttonId) ||
+        (isCheckoutButton(input.text, input.buttonId, checkoutIO.perfil.opciones) ||
           wantsCheckout(input.text) ||
           input.text.toUpperCase().includes(`SOLICITUD: ${activeOrder.order_id}`) ||
           (state.proposal?.orderId === activeOrder.order_id && state.proposal.presentedTurn !== null && isExplicitConfirmation(input.text)))
@@ -1129,7 +1165,7 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
     selection: { selected: selection.selected, needsClarification: trace.clarification_needed && selection.selected.length === 0 },
   };
   const stage = conversationStage(state, facts);
-  facts.stage = { name: stage, guidance: STAGE_GUIDANCE[stage] };
+  facts.stage = { name: stage, guidance: stageGuidance(stage, deps.config.vocabulary) };
   trace.stage.start = stage;
   trace.context = {
     channel,

@@ -24,6 +24,7 @@ import { verificarFirmaMeta, compararVerifyToken } from "@/lib/meta-firma";
 import { marcarLeidoConTyping } from "@/lib/whatsapp";
 import {
   resolverTokenMeta as libResolverTokenMeta,
+  resolverTokenMetaAgente,
   enviarWhatsApp as libEnviarWhatsApp,
   enviarWhatsAppPartes as libEnviarWhatsAppPartes,
   enviarBotonesWhatsApp,
@@ -33,7 +34,7 @@ import { descifrarSecreto } from "@/lib/crypto";
 import { esTelefonoBloqueado } from "@/lib/blacklist-du";
 import { recibirPedidoWhatsapp } from "@/lib/catalogo/pedidos/intake";
 import { productionIntakeDeps } from "@/lib/catalogo/pedidos/produccion";
-import { createSupabaseAgentConfigStore, loadAgentConfig } from "@/lib/agente/config";
+import { createSupabaseAgentConfigStore, loadAgentConfig, type AgentRuntimeConfig } from "@/lib/agente/config";
 import { atenderConAgenteSiAplica, encolarEnBuzonSiAplica, esperaDeRafagaMs, numeroConAgente, productionAgentBoundaryDeps, replyToDeMeta } from "@/lib/agente/webhook";
 import { inboxLabel, nonTextPolicy, nonTextReachesAgent } from "@/lib/agente/entrada";
 import { createSupabaseMailboxStore } from "@/lib/agente/buzon";
@@ -100,7 +101,7 @@ export type MetaMessage = {
   // enviarBotonesWhatsApp en lib/whatsapp-outbound.ts) -- Meta lo entrega
   // como type "interactive" con interactive.button_reply, distinto del
   // "button" de arriba.
-  interactive?: { type?: string; button_reply?: { id?: string; title?: string } };
+  interactive?: { type?: string; button_reply?: { id?: string; title?: string }; list_reply?: { id?: string; title?: string } };
   // Mensaje citado (swipe-to-reply): `id` = wamid del mensaje respondido. Un mensaje
   // reenviado trae `forwarded`/`frequently_forwarded` (y no `id`).
   context?: { id?: string; from?: string; forwarded?: boolean; frequently_forwarded?: boolean };
@@ -599,6 +600,10 @@ export function extraerTextoMensajeCrudo(mensaje: MetaMessage, incluirPlaceholde
   if (mensaje.type === "interactive" && mensaje.interactive?.type === "button_reply" && mensaje.interactive.button_reply?.title) {
     return mensaje.interactive.button_reply.title;
   }
+  // Fila de una lista (solo la envía el agente conversacional con más de 3 opciones): igual que un botón.
+  if (mensaje.type === "interactive" && mensaje.interactive?.type === "list_reply" && mensaje.interactive.list_reply?.title) {
+    return mensaje.interactive.list_reply.title;
+  }
   if (mensaje.type === "text" && mensaje.text?.body) return mensaje.text.body;
   // FASE F8.4 (WhatsApp Media inbound, autorizado) -- ver placeholderMediaEntrante
   // y el gate de registrarMensajesEntrantesSincrono (incluirPlaceholderMedia).
@@ -728,6 +733,11 @@ export async function procesarCambio(phoneNumberId: string, value: MetaChangeVal
     // "escribió" la clienta.
     if (mensaje.type === "interactive" && mensaje.interactive?.type === "button_reply" && mensaje.interactive.button_reply?.title) {
       mensaje.text = { body: mensaje.interactive.button_reply.title };
+    }
+    // Fila de una lista interactiva (solo la envía el agente conversacional, con más de 3 opciones):
+    // mismo criterio que un botón -- el título lo definimos nosotros.
+    if (mensaje.type === "interactive" && mensaje.interactive?.type === "list_reply" && mensaje.interactive.list_reply?.title) {
+      mensaje.text = { body: mensaje.interactive.list_reply.title };
     }
     // Soluciones Financieras traspasa a Charlotte CUALQUIER mensaje fuera de
     // sus 3 botones -- incluye audios/imágenes/etc (ver spec), así que para
@@ -1013,8 +1023,10 @@ async function atenderMensaje(
   // y responde a la ráfaga completa de una sola vez.
   // Bloque 30 (solo números con agente conversacional listo): "escribiendo…" desde que llega el
   // mensaje, y un BOTÓN no espera el freno (es una acción completa, no el inicio de una ráfaga).
-  const agenteListo = await agenteConversacionalListo(cliente);
-  const tokenMeta = resolverTokenMeta(cliente);
+  const agente = await agenteConversacionalListo(cliente);
+  const agenteListo = agente !== null;
+  // Número con agente: SU credencial (la de la plataforma solo si su fila lo autoriza). Sin agente: como siempre.
+  const tokenMeta = agente ? resolverTokenMetaAgente(cliente, agente.metaPlatformToken) : resolverTokenMeta(cliente);
   if (agenteListo && tokenMeta) {
     await marcarLeidoConTyping({ phoneNumberId: cliente.phone_number_id, token: tokenMeta, messageId: mensaje.id });
   }
@@ -1366,13 +1378,13 @@ function leyendaDeMeta(mensaje: MetaMessage): string | null {
   return typeof c === "string" && c.trim() !== "" ? c.trim().slice(0, 1_000) : null;
 }
 
-/** Bloque 30: ¿el número tiene un agente conversacional habilitado y válido? Ante cualquier error, false (comportamiento de siempre). */
-async function agenteConversacionalListo(cliente: ClienteConfig): Promise<boolean> {
+/** Bloque 30: config del agente conversacional del número si está habilitado y es válido; si no (o ante cualquier error), null (comportamiento de siempre). */
+async function agenteConversacionalListo(cliente: ClienteConfig): Promise<AgentRuntimeConfig | null> {
   try {
     const cfg = await loadAgentConfig(productionAgentBoundaryDeps(supabaseAdmin(), cliente).configStore, { tenantId: cliente.id_tenant, phoneNumberId: cliente.phone_number_id });
-    return cfg.kind === "ok";
+    return cfg.kind === "ok" ? cfg.config : null;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -1383,10 +1395,12 @@ async function intentarAgenteConversacionalSiAplica(cliente: ClienteConfig, mens
     const deps = productionAgentBoundaryDeps(supabase, cliente);
     if (!texto) {
       // Bloque 23 -- sin texto (nota de voz, imagen, documento…): política determinista del agente, sin modelo.
+      // FASE 2: la nota de voz lleva su mediaId (solo se transcribe si el número lo tiene encendido).
       const politica = nonTextPolicy(mensaje.type);
       if (politica && politica.action !== "ignore") {
+        const mediaId = mensaje.image?.id ?? (mensaje.type === "audio" ? mensaje.audio?.id : null) ?? null;
         const r = await atenderConAgenteSiAplica(
-          { cliente, waId: telefonoRemitente, destino, wamid: mensaje.id, text: "", replyTo: replyToDeMeta(mensaje.context), nonText: { kind: politica.kind, caption: leyendaDeMeta(mensaje), mediaId: mensaje.image?.id ?? null }, soloEncolar },
+          { cliente, waId: telefonoRemitente, destino, wamid: mensaje.id, text: "", replyTo: replyToDeMeta(mensaje.context), nonText: { kind: politica.kind, caption: leyendaDeMeta(mensaje), mediaId }, soloEncolar },
           deps,
         );
         return r.handled;
@@ -1409,9 +1423,10 @@ async function intentarAgenteConversacionalSiAplica(cliente: ClienteConfig, mens
   }
 }
 
-/** Bloque 26 — id del botón de respuesta que tocó el cliente (interactive.button_reply), o null. */
+/** Bloque 26 — id del botón de respuesta (interactive.button_reply) o de la fila de una lista (list_reply) que tocó el cliente, o null. */
 function botonDelAgente(mensaje: MetaMessage): string | null {
-  const id = mensaje.type === "interactive" && mensaje.interactive?.type === "button_reply" ? mensaje.interactive.button_reply?.id?.trim() : "";
+  const i = mensaje.type === "interactive" ? mensaje.interactive : undefined;
+  const id = i?.type === "button_reply" ? i.button_reply?.id?.trim() : i?.type === "list_reply" ? i.list_reply?.id?.trim() : "";
   return id ? id.slice(0, 64) : null;
 }
 

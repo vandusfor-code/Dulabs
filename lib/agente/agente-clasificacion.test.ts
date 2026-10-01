@@ -29,12 +29,18 @@ import {
   CHANNEL_QUESTION,
   CLASSIFICATION_MESSAGES,
   DEFAULT_WELCOME,
-  INTENT_MENU,
-  START_MESSAGES,
   createMemoryCustomerChannelStore,
+  intentMenu,
   parseChannelChoice,
-  resolveStartAction,
+  resolveStartAction as resolveStartActionCon,
+  startMessages,
 } from "@/lib/agente/clasificacion";
+import { VOCABULARIO_LEGADO } from "@/lib/agente/perfil-negocio";
+
+// Pruebas del vocabulario de DELACOUR (joyería), ahora configuración EXPLÍCITA (antes implícita en el motor).
+const INTENT_MENU = intentMenu(VOCABULARIO_LEGADO);
+const START_MESSAGES = startMessages(VOCABULARIO_LEGADO);
+const resolveStartAction = (text: string, buttonId?: string | null) => resolveStartActionCon(text, buttonId, VOCABULARIO_LEGADO);
 
 const A: CatalogActor = { tenantId: "aaaaaaaa-0000-4000-8000-00000000000a", userId: "admin-a" };
 const B: CatalogActor = { tenantId: "bbbbbbbb-0000-4000-8000-00000000000b", userId: "admin-b" };

@@ -99,6 +99,9 @@ const QUE_RECIBI: Readonly<Partial<Record<NonTextKind, string>>> = {
 /** Mensajes FIJOS (sin IA). Solo nombran un producto con datos que el backend acaba de verificar. */
 export const NON_TEXT_MESSAGES = {
   audio: "Por ahora no puedo escuchar notas de voz. ¿Me escribes lo que necesitas, por favor?",
+  /** FASE 2: el número transcribe notas de voz, pero ESTA no se pudo entender (o no se pudo descargar). */
+  audioNoEntendido: "No pude entender bien tu nota de voz 🙏 ¿Me escribes lo que necesitas, por favor?",
+  audioNoEntendidoEnCheckout: (hint: string) => `No pude entender bien tu nota de voz 🙏 ${hint}`,
   unsupported: "No pude abrir ese mensaje. ¿Me lo escribes, por favor?",
   audioAboutProduct: (p: { reference: string; name: string; available: boolean }) =>
     p.available

@@ -15,6 +15,7 @@ import { z } from "zod";
 import type { AIProvider, AIProviderId, AIThinkingLevel } from "@/lib/ia-proveedores/contrato";
 import { resolveAIProvider, validateAIProviderConfig, type AIProviderConfigError, type AIProviderFactories } from "@/lib/ia-proveedores/registro";
 import { isAgentToolName, type AgentToolName } from "@/lib/agente/nombres-herramientas";
+import { resolverCheckoutOpciones, resolverVocabulario, type CheckoutOpciones, type Vocabulario } from "@/lib/agente/perfil-negocio";
 import type { OrderChannel } from "@/lib/catalogo/pedidos/contrato";
 
 /** Configuración del negocio (confiable: la escribe DuLabs). Acotada: nunca el catálogo. */
@@ -45,7 +46,7 @@ export const businessConfigSchema = z
         detal: z.string().trim().min(1).max(600).optional(),
         /** Después de elegir POR MAYOR (con botones). Sin él, conversa el modelo. */
         mayor: z.string().trim().min(1).max(900).optional(),
-        /** Al tocar "Buscar una joya". */
+        /** Al tocar el botón de búsqueda del menú de inicio (su título sale del vocabulario: "Buscar una joya", "Buscar producto"…). */
         buscar: z.string().trim().min(1).max(400).optional(),
         /**
          * Bloque 34: saludo de un cliente YA CONOCIDO (registrado por el equipo o que ya eligió su
@@ -112,6 +113,32 @@ export interface AgentRuntimeConfig {
    * BACKEND conduce el checkout (datos, resumen, confirmación y asesora). Ausente/false => como antes.
    */
   checkoutEnabled?: boolean;
+  /**
+   * Multi-negocio (columna vocabulario): cómo se nombra lo que vende el negocio. Sin configurar
+   * (null) => el NEUTRAL ("producto"). Ver lib/agente/perfil-negocio.ts.
+   */
+  vocabulary: Vocabulario;
+  /**
+   * Multi-negocio (columna checkout_opciones): entregas y pagos que el negocio OFRECE. null = sin
+   * configurar: con el checkout encendido la config es inválida (nunca se inventa un método).
+   */
+  checkoutOptions: CheckoutOpciones | null;
+  /**
+   * true => la fila se leyó SIN las columnas del perfil (migración 20261205000000 pendiente): se
+   * conserva el comportamiento anterior (perfil legado). Queda en la traza de cada turno.
+   */
+  legacyProfile: boolean;
+  /**
+   * Columna meta_token_plataforma: sin token propio, el número puede enviar con el token de la
+   * plataforma SOLO si su fila lo autoriza explícitamente. Sin la columna (migración pendiente): true,
+   * como antes. Ver resolverTokenMetaAgente (lib/whatsapp-outbound.ts).
+   */
+  metaPlatformToken: boolean;
+  /**
+   * FASE 2 (columna transcripcion_audio, false por defecto): true => una nota de voz se transcribe y
+   * entra como TEXTO del cliente (misma autoridad). Ausente/false => como antes (se pide escrito).
+   */
+  audioTranscription: boolean;
 }
 
 export type AgentConfigInvalidReason =
@@ -121,6 +148,9 @@ export type AgentConfigInvalidReason =
   | "tools_invalid"
   | "business_config_invalid"
   | "limits_invalid"
+  | "vocabulary_invalid"
+  | "checkout_options_invalid"
+  | "checkout_options_missing"
   | "row_invalid";
 
 export type AgentConfigResult =
@@ -148,6 +178,12 @@ const rowSchema = z.object({
   clasificacion_cliente: z.boolean().optional(),
   /** Bloque 27: puede faltar (fila leída antes de la migración del checkout). */
   checkout_conversacional: z.boolean().optional(),
+  /** Multi-negocio: pueden faltar (fila leída antes de la migración del perfil). Ausente ≠ null. */
+  vocabulario: z.unknown().optional(),
+  checkout_opciones: z.unknown().optional(),
+  meta_token_plataforma: z.boolean().nullable().optional(),
+  /** FASE 2: puede faltar (fila leída antes de la migración de la transcripción de audio). */
+  transcripcion_audio: z.boolean().optional(),
 });
 
 export type AgentConfigRow = z.input<typeof rowSchema>;
@@ -174,6 +210,13 @@ export function parseAgentConfig(raw: unknown, expected: { tenantId: string; pho
   if (!business.success) return { kind: "invalid", reason: "business_config_invalid" };
   const limits = agentLimitsSchema.safeParse(r.limites ?? {});
   if (!limits.success) return { kind: "invalid", reason: "limits_invalid" };
+  const vocabulary = resolverVocabulario(r.vocabulario);
+  if (!vocabulary.ok) return { kind: "invalid", reason: "vocabulary_invalid" };
+  const options = resolverCheckoutOpciones(r.checkout_opciones);
+  if (!options.ok) return { kind: "invalid", reason: "checkout_options_invalid" };
+  const checkoutEnabled = r.checkout_conversacional === true;
+  // Checkout encendido sin decir qué entregas y pagos ofrece el negocio: no se adivina (fail-closed).
+  if (checkoutEnabled && !options.opciones) return { kind: "invalid", reason: "checkout_options_missing" };
   return {
     kind: "ok",
     config: {
@@ -189,7 +232,12 @@ export function parseAgentConfig(raw: unknown, expected: { tenantId: string; pho
       business: business.data,
       limits: limits.data,
       classifyCustomers: r.clasificacion_cliente === true,
-      checkoutEnabled: r.checkout_conversacional === true,
+      checkoutEnabled,
+      vocabulary: vocabulary.vocabulario,
+      checkoutOptions: options.opciones,
+      legacyProfile: vocabulary.legado || options.legado,
+      metaPlatformToken: r.meta_token_plataforma === undefined ? true : r.meta_token_plataforma === true,
+      audioTranscription: r.transcripcion_audio === true,
     },
   };
 }
@@ -222,7 +270,14 @@ export function createSupabaseAgentConfigStore(supabase: SupabaseClient): AgentC
       // como "sin agente": eso haría caer el número a otro bot.
       let data: unknown = null;
       let error: { code?: string } | null = null;
-      for (const extra of [", limites, clasificacion_cliente, checkout_conversacional", ", limites, clasificacion_cliente", ", limites", ""]) {
+      for (const extra of [
+        ", limites, clasificacion_cliente, checkout_conversacional, vocabulario, checkout_opciones, meta_token_plataforma, transcripcion_audio",
+        ", limites, clasificacion_cliente, checkout_conversacional, vocabulario, checkout_opciones, meta_token_plataforma",
+        ", limites, clasificacion_cliente, checkout_conversacional",
+        ", limites, clasificacion_cliente",
+        ", limites",
+        "",
+      ]) {
         ({ data, error } = await supabase.from("dulabs_agente_runtime_config").select(`${COLUMNS}${extra}`).eq("phone_number_id", phoneNumberId).maybeSingle());
         if (!error || (error.code !== "42703" && error.code !== "PGRST204")) break;
       }

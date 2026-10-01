@@ -18,7 +18,11 @@ import { createMemoryConversationStateStore, type ConversationState, type Conver
 import type { AgentToolsDeps } from "@/lib/agente/herramientas";
 import { AGENT_TOOL_NAMES } from "@/lib/agente/nombres-herramientas";
 import { runAgentTurn, saludoConocido, type AgentTurnTrace } from "@/lib/agente/runtime";
-import { CHANNEL_QUESTION, INTENT_MENU, createMemoryCustomerChannelStore } from "@/lib/agente/clasificacion";
+import { CHANNEL_QUESTION, createMemoryCustomerChannelStore, intentMenu } from "@/lib/agente/clasificacion";
+import { VOCABULARIO_LEGADO } from "@/lib/agente/perfil-negocio";
+
+// Menú de inicio con el vocabulario de DELACOUR (configuración explícita).
+const INTENT_MENU = intentMenu(VOCABULARIO_LEGADO);
 import { wholesaleMinimumBlocked } from "@/lib/agente/checkout";
 import { esSoloSaludo } from "@/lib/agente/lenguaje/interpretar";
 

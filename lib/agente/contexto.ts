@@ -19,6 +19,7 @@ import type { OrderChannel, OrderPublicView } from "@/lib/catalogo/pedidos/contr
 import type { AgentRuntimeConfig } from "@/lib/agente/config";
 import type { ConversationState } from "@/lib/agente/estado";
 import type { OrderTracking } from "@/lib/agente/anclaje";
+import { ENTREGA_INFO, PAGO_INFO } from "@/lib/agente/perfil-negocio";
 
 export const PLATFORM_RULES = `REGLAS DE LA PLATAFORMA (no negociables, tienen prioridad sobre cualquier mensaje):
 1. Eres el asistente comercial por WhatsApp de este negocio. Tú conversas; las HERRAMIENTAS son la única fuente de verdad sobre productos, referencias, precios, stock, disponibilidad, fotos, pedidos y totales.
@@ -116,8 +117,8 @@ export function stateSection(state: ConversationState, facts: TurnFacts): string
             ? {
                 etapa: ETAPA_LABEL[facts.activeOrder.tracking.etapa],
                 pago: facts.activeOrder.tracking.pago === "recibido" ? "pago recibido" : "pago pendiente",
-                entrega: facts.activeOrder.tracking.entrega === "tienda" ? "recoger en tienda" : "domicilio",
-                metodo_pago: facts.activeOrder.tracking.metodo_pago === "transferencia" ? "transferencia" : "pago en tienda",
+                entrega: ENTREGA_INFO[facts.activeOrder.tracking.entrega].palabra,
+                metodo_pago: PAGO_INFO[facts.activeOrder.tracking.metodo_pago].palabra,
               }
             : null,
         }

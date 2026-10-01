@@ -8,6 +8,10 @@
  * backend y de las herramientas. Este léxico solo sirve para que el backend reconozca, sin adivinar,
  * las respuestas a SUS preguntas (entrega, pago, cantidades, correcciones, salidas) y para que no
  * confunda una pregunta o una intención con un dato.
+ *
+ * Es GENÉRICO (sirve a cualquier negocio). Las palabras del rubro de cada negocio (p. ej. "aretes",
+ * "dijes") van en su vocabulario (lib/agente/perfil-negocio.ts), y los pagos que ofrece, en sus
+ * opciones del checkout: aquí solo está cómo se NOMBRA cada método del catálogo de la plataforma.
  */
 
 // ---------------------------------------------------------------------------
@@ -86,9 +90,15 @@ export const PAGO = {
     "transferencia", "transferir", "transfiero", "te transfiero", "consignacion", "consignar", "consigno", "nequi", "daviplata", "bancolombia", "pse",
     "transferencia bancaria", "por transferencia", "pago por transferencia",
   ],
+  /** Link de pago / tarjeta. Solo se reconoce si el negocio ofrece "link_pago". */
+  link_pago: [
+    "link de pago", "enlace de pago", "link para pagar", "enlace para pagar", "pago con link", "por link", "con link", "tarjeta", "con tarjeta",
+    "pago con tarjeta", "tarjeta de credito", "tarjeta credito", "tarjeta de debito", "tarjeta debito",
+  ],
   /**
-   * Depende de la entrega: con "recoger en tienda" es pago en tienda; con domicilio sería contra entrega,
-   * que Delacour no ofrece: entonces el backend explica las opciones (nunca elige por el cliente).
+   * Depende de la entrega: con "recoger en tienda" es pago en tienda; con domicilio es contra entrega.
+   * Si el negocio no ofrece ese pago para esa entrega, el backend explica las opciones (nunca elige
+   * por el cliente). "contra_entrega" no tiene frases propias: siempre se lee por aquí.
    */
   segun_entrega: ["contra entrega", "contraentrega", "cuando llegue", "al llegar", "cuando me llegue", "pago cuando llegue", "pago al recibir", "al recibir"],
 } as const;
@@ -153,12 +163,13 @@ export const QUITAR = ["quita", "quitar", "quitale", "elimina", "eliminar", "bor
 
 // ---------------------------------------------------------------------------
 // 7. Nombre: palabras que NUNCA forman parte de un nombre (intención, comando, producto, pregunta)
+//    Las del rubro de cada negocio ("aretes", "dijes"…) van en su vocabulario (`no_es_nombre`).
 // ---------------------------------------------------------------------------
 export const NO_ES_NOMBRE = new Set([
   "quiero", "quiere", "comprar", "compra", "pedido", "pedir", "pedirlo", "precio", "precios", "vale", "valor", "cuanto", "cuesta", "cuestan", "cuando", "donde",
   "como", "catalogo", "link", "mandame", "enviame", "pasame", "muestrame", "espera", "esperame", "mejor", "domicilio", "tienda", "transferencia", "efectivo",
-  "pago", "pagar", "envio", "recoger", "recojo", "arete", "aretes", "collar", "collares", "dije", "dijes", "pulsera", "pulseras", "anillo", "anillos",
-  "cadena", "cadenas", "joya", "joyas", "producto", "productos", "ese", "esa", "este", "esta", "eso", "esto", "esos", "esas", "otro", "otra", "unidades",
+  "pago", "pagar", "envio", "recoger", "recojo",
+  "producto", "productos", "ese", "esa", "este", "esta", "eso", "esto", "esos", "esas", "otro", "otra", "unidades",
   "gracias", "hola", "buenas", "si", "no", "ok", "listo", "dale", "usa", "usar", "mismo", "misma", "numero", "telefono", "whatsapp", "cancelar", "modificar",
   "confirmar", "confirmo", "direccion", "calle", "carrera", "ciudad", "barrio", "referencia", "foto", "fotos", "asesora", "asesor", "ayuda", "cambiar",
   "cambia", "agregar", "agrega", "quita", "quitar", "nada", "ninguno", "ninguna", "yo", "mio", "mia", "claro", "perfecto", "bueno", "igual", "tambien",
@@ -168,10 +179,11 @@ export const NO_ES_NOMBRE = new Set([
   "primero", "primera", "segundo", "segunda", "tercero", "tercera", "ultimo", "ultima", "arriba", "abajo", "color", "talla", "ahorita", "mando", "paso",
 ]);
 /**
- * Palabras de NO_ES_NOMBRE que SÍ aparecen en nombres de negocio ("Tienda Mayorista Luna", "Joyas Mary"):
- * se aceptan si el nombre trae además una palabra propia; solas ("tienda", "mayorista") nunca son un nombre.
+ * Palabras de NO_ES_NOMBRE que SÍ aparecen en nombres de negocio ("Tienda Mayorista Luna"): se aceptan
+ * si el nombre trae además una palabra propia; solas ("tienda", "mayorista") nunca son un nombre. Las del
+ * rubro ("Joyas Mary") van en el vocabulario del negocio (`nombre_comercial`).
  */
-export const NOMBRE_COMERCIAL = new Set(["tienda", "local", "mayor", "mayorista", "detal", "joya", "joyas"]);
+export const NOMBRE_COMERCIAL = new Set(["tienda", "local", "mayor", "mayorista", "detal"]);
 /** Palabras que acompañan una opción de entrega/pago sin ser un dato ("prefiero a domicilio", "mejor en el local"). */
 export const CONECTORES_OPCION = new Set([
   "a", "al", "el", "la", "los", "las", "en", "de", "del", "por", "para", "mi", "me", "lo", "que", "y", "o", "es", "mejor", "prefiero", "quiero", "seria",
@@ -206,8 +218,11 @@ export const COMPRA_PEDIDO = [
 
 /** Verbos de ELEGIR/AGREGAR un producto ("también quiero ese", "agrégame el collar"): dentro del checkout se orienta a "modificar pedido". */
 export const VERBOS_PRODUCTO = ["quiero", "agrega", "agregame", "agregar", "anade", "anademe", "tambien", "ponme", "dame", "me llevo", "me interesa", "muestrame", "busco", "mandame", "enviame", "quisiera"] as const;
-/** Lo que el cliente puede estar pidiendo como producto (nombres de joyas y deícticos). */
-export const PALABRAS_PRODUCTO = ["arete", "aretes", "collar", "collares", "dije", "dijes", "pulsera", "pulseras", "anillo", "anillos", "cadena", "cadenas", "tobillera", "tobilleras", "candonga", "candongas", "joya", "joyas", "producto", "productos", "ese", "esa", "este", "esta", "esos", "esas", "otro producto", "otra joya", "otra cosa", "algo mas"] as const;
+/**
+ * Lo que el cliente puede estar pidiendo como producto (genérico y deícticos). Los nombres de los
+ * productos del rubro ("aretes", "dijes"…) van en el vocabulario del negocio (`palabras_producto`).
+ */
+export const PALABRAS_PRODUCTO = ["producto", "productos", "ese", "esa", "este", "esta", "esos", "esas", "otro producto", "otra cosa", "algo mas"] as const;
 /** Dentro del checkout: cambiar de producto ("mejor el otro", "no ese no") se hace con Modificar; nunca es un dato del paso. */
 export const CAMBIO_PRODUCTO = [
   "mejor el otro", "mejor la otra", "el otro", "la otra", "mejor otro", "mejor otra", "no ese no", "no esa no", "ese no", "esa no", "no ese", "no esa",

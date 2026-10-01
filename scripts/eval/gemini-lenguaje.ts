@@ -35,7 +35,12 @@ import { AGENT_TOOL_NAMES } from "@/lib/agente/nombres-herramientas";
 import { runAgentTurn, type AgentTurnTrace } from "@/lib/agente/runtime";
 import { createMemoryCustomerChannelStore } from "@/lib/agente/clasificacion";
 import { createMemoryProductMediaLedger } from "@/lib/agente/medios";
-import { CHECKOUT_BUTTONS, CHECKOUT_MESSAGES } from "@/lib/agente/checkout";
+import { CHECKOUT_MESSAGES, checkoutButtons, checkoutOptionTexts } from "@/lib/agente/checkout";
+import { CHECKOUT_OPCIONES_LEGADO } from "@/lib/agente/perfil-negocio";
+
+// Evaluación del perfil de DELACOUR (sus entregas, pagos y textos, ahora configuración explícita).
+const CHECKOUT_BUTTONS = checkoutButtons(CHECKOUT_OPCIONES_LEGADO);
+const SIN_CONTRA_ENTREGA = checkoutOptionTexts(CHECKOUT_OPCIONES_LEGADO).paymentUnavailable("contra_entrega", "domicilio");
 import type { NonTextKind } from "@/lib/agente/entrada";
 
 const MODO = process.argv.includes("--real") ? "real" : process.argv.includes("--adversario") ? "adversario" : "cooperativo";
@@ -397,7 +402,7 @@ function casos(P: Mundo["P"]): Caso[] {
   for (const [frase, esperado] of [["transferencia", "transferencia"], ["te transfiero", "transferencia"], ["ya te hice la transferencia", "transferencia"], ["pago por transferencia", "transferencia"], ["pago en tienda", "pago_en_tienda"], ["lo pago allá", "pago_en_tienda"], ["pago cuando vaya", "pago_en_tienda"], ["contra entrega", "pago_en_tienda"]] as const) {
     add({ id: `P0${L.filter((x) => x.grupo === "Pago").length + 1}`, grupo: "Pago", ctx: "ck:payment", pasos: [frase], espera: `pago = ${esperado} (recoger en tienda); el pago NUNCA queda "recibido"`, verificar: (r) => todo(ok(ck(r)?.paymentMethod === esperado, `pago=${ck(r)?.paymentMethod}`), ok(!pagoRecibido(r), "marcó pago recibido")) });
   }
-  add({ id: "P09", grupo: "Pago", ctx: "ck:payment-dom", pasos: ["contra entrega"], espera: "domicilio: contra entrega NO se ofrece; no elige", verificar: (r) => todo(ok(ck(r)?.paymentMethod === null, `pago=${ck(r)?.paymentMethod}`), ok(r.salidas.at(-1)?.startsWith(CHECKOUT_MESSAGES.noCashOnDelivery) ?? false, "no explicó")) });
+  add({ id: "P09", grupo: "Pago", ctx: "ck:payment-dom", pasos: ["contra entrega"], espera: "domicilio: contra entrega NO se ofrece; no elige", verificar: (r) => todo(ok(ck(r)?.paymentMethod === null, `pago=${ck(r)?.paymentMethod}`), ok(r.salidas.at(-1)?.startsWith(SIN_CONTRA_ENTREGA) ?? false, "no explicó")) });
   add({ id: "P10", grupo: "Pago", ctx: "ck:payment-dom", pasos: ["ya te hice la transferencia"], espera: "método transferencia; pago sigue pendiente", verificar: (r) => todo(ok(ck(r)?.paymentMethod === "transferencia", `pago=${ck(r)?.paymentMethod}`), ok(!pagoRecibido(r), "marcó pago recibido")) });
 
   // ---- 2j. Preguntas durante el checkout ----------------------------------------------------

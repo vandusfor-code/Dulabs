@@ -15,8 +15,8 @@
  * checkout) se leen igual y solo se completan/cancelan/rechazan.
  */
 import { apiError, apiOk } from "@/lib/agent-compiler/api/http";
-import type { Order, OrderStage, OrderStatus, PaymentStatus } from "@/lib/catalogo/pedidos/contrato";
-import { canCancelStage, canCompleteStage, nextStage, reservationCanExpire } from "@/lib/catalogo/pedidos/contrato";
+import type { DeliveryType, Order, OrderStage, OrderStatus, PaymentMethod, PaymentStatus } from "@/lib/catalogo/pedidos/contrato";
+import { PAYMENT_METHODS, canCancelStage, canCompleteStage, nextStage, reservationCanExpire } from "@/lib/catalogo/pedidos/contrato";
 import { OrderError, type OrderEngine } from "@/lib/catalogo/pedidos/motor";
 import { CLOSED_STATUSES, type OrderHistoryEntry, type PanelFilters, type ReservationSummary } from "@/lib/catalogo/pedidos/repositorio";
 import { PEDIDO_PUBLICO, enriquecerPedidos, pedidoPanel, type PanelExtras, type PedidoPanel } from "@/lib/catalogo/pedidos/panel";
@@ -114,9 +114,9 @@ export interface PedidoGestion extends PedidoPanel {
   acciones: AccionPedido[];
   checkout: {
     nombre: string;
-    metodo_pago: "pago_en_tienda" | "transferencia";
+    metodo_pago: PaymentMethod;
     estado_pago: PaymentStatus;
-    entrega: "tienda" | "domicilio";
+    entrega: DeliveryType;
     direccion: string | null;
     ciudad: string | null;
     referencia_entrega: string | null;
@@ -256,8 +256,8 @@ export function filtrosGestion(params: URLSearchParams, verTelefono: boolean): {
   }
   const metodo = params.get("metodo");
   if (metodo) {
-    if (metodo !== "pago_en_tienda" && metodo !== "transferencia") return { ok: false, message: "método de pago no válido." };
-    f.paymentMethod = metodo;
+    if (!(PAYMENT_METHODS as readonly string[]).includes(metodo)) return { ok: false, message: "método de pago no válido." };
+    f.paymentMethod = metodo as PaymentMethod;
   }
   const entrega = params.get("entrega");
   if (entrega) {

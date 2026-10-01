@@ -27,15 +27,25 @@ import { runAgentTurn, type AgentTurnTrace } from "@/lib/agente/runtime";
 import { sanitizeTurnTrace } from "@/lib/agente/trazas";
 import { CLASSIFICATION_MESSAGES, createMemoryCustomerChannelStore } from "@/lib/agente/clasificacion";
 import {
-  CHECKOUT_BUTTONS,
+  CHECKOUT_BUTTONS as BOTONES_FIJOS,
   CHECKOUT_MESSAGES,
+  DELIVERY_BUTTONS,
+  PAYMENT_BUTTONS,
+  checkoutButtons,
   isTrustedName,
   parseCustomerName,
-  parseDelivery,
-  parsePayment,
+  parseDelivery as parseDeliveryCon,
+  parsePayment as parsePaymentCon,
   parseSummaryAction,
   wantsCheckout,
 } from "@/lib/agente/checkout";
+import { CHECKOUT_OPCIONES_LEGADO } from "@/lib/agente/perfil-negocio";
+
+// Estas pruebas fijan el checkout de DELACOUR: sus entregas y pagos, antes implícitos en el motor, ahora
+// son configuración EXPLÍCITA (CHECKOUT_OPCIONES_LEGADO = lo que la migración escribe en su fila).
+const CHECKOUT_BUTTONS = checkoutButtons(CHECKOUT_OPCIONES_LEGADO);
+const parseDelivery = (t: string, buttonId: string | null = null) => parseDeliveryCon(t, CHECKOUT_OPCIONES_LEGADO, buttonId);
+const parsePayment = (t: string, buttonId: string | null = null) => parsePaymentCon(t, CHECKOUT_OPCIONES_LEGADO, buttonId);
 
 const A: CatalogActor = { tenantId: "aaaaaaaa-0000-4000-8000-00000000000a", userId: "admin-a" };
 const B: CatalogActor = { tenantId: "bbbbbbbb-0000-4000-8000-00000000000b", userId: "admin-b" };
@@ -228,7 +238,8 @@ describe("B27 · lectura determinista (sin modelo)", () => {
     assert.equal(parsePayment("💵 Pago en tienda"), "pago_en_tienda");
     assert.equal(parsePayment("por nequi"), "transferencia");
     assert.equal(parsePayment("como quieras"), null);
-    for (const g of Object.values(CHECKOUT_BUTTONS)) for (const b of g) assert.ok(b.title.length <= 20, `Meta: título ≤ 20 (${b.title})`);
+    // Todos los botones de la plataforma (también los métodos que Delacour no ofrece).
+    for (const b of [...Object.values(BOTONES_FIJOS).flat(), ...Object.values(DELIVERY_BUTTONS), ...Object.values(PAYMENT_BUTTONS)]) assert.ok(b.title.length <= 20, `Meta: título ≤ 20 (${b.title})`);
   });
 
   it("resumen: SOLO el botón confirma (id o su título exacto); 'sí', 'confirmo', 'ok', 'dale' NO", () => {
